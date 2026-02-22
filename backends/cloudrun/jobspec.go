@@ -3,6 +3,7 @@ package cloudrun
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	runpb "cloud.google.com/go/run/apiv2/runpb"
 	"github.com/sockerless/api"
@@ -90,11 +91,15 @@ func (s *Server) buildJobSpec(containerID string, container *api.Container, agen
 		}
 	}
 
+	tags := core.TagSet{
+		ContainerID: containerID,
+		Backend:     "cloudrun",
+		InstanceID:  s.Desc.InstanceID,
+		CreatedAt:   time.Now(),
+	}
+
 	return &runpb.Job{
-		Labels: map[string]string{
-			"sockerless-container-id": containerID[:12],
-			"managed-by":             "sockerless",
-		},
+		Labels: tags.AsGCPLabels(),
 		Template: &runpb.ExecutionTemplate{
 			TaskCount:   1,
 			Parallelism: 1,

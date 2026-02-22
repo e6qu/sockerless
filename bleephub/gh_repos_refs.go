@@ -63,7 +63,7 @@ func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 	if branches == nil {
 		branches = []map[string]interface{}{}
 	}
-	writeJSON(w, http.StatusOK, branches)
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, branches))
 }
 
 func (s *Server) handleGetBranch(w http.ResponseWriter, r *http.Request) {

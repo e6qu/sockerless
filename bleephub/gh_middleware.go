@@ -78,6 +78,11 @@ func (rw *ghResponseWriter) WriteHeader(code int) {
 		rw.wroteHeader = true
 		h := rw.Header()
 
+		// Upgrade Content-Type to include charset
+		if ct := h.Get("Content-Type"); ct == "application/json" {
+			h.Set("Content-Type", "application/json; charset=utf-8")
+		}
+
 		if rw.token != nil {
 			h.Set("X-OAuth-Scopes", rw.token.Scopes)
 		}

@@ -197,6 +197,15 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.Registry.Register(core.ResourceEntry{
+		ContainerID:  id,
+		Backend:      "aca",
+		ResourceType: "job",
+		ResourceID:   jobName,
+		InstanceID:   s.Desc.InstanceID,
+		CreatedAt:    time.Now(),
+	})
+
 	// Start the job (creates an execution)
 	startPoller, err := s.azure.Jobs.BeginStart(s.ctx(), s.config.ResourceGroup, jobName, nil)
 	if err != nil {
@@ -389,6 +398,7 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 	acaState, _ := s.ACA.Get(id)
 	if acaState.JobName != "" {
 		s.deleteJob(acaState.JobName)
+		s.Registry.MarkCleanedUp(acaState.JobName)
 	}
 
 	s.Store.Containers.Delete(id)

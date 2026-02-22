@@ -106,6 +106,10 @@ func (s *Server) handleCompleteRequest(w http.ResponseWriter, r *http.Request) {
 	s.store.mu.Unlock()
 
 	s.logger.Info().Int64("requestId", reqID).Str("result", result).Msg("job request completed (DELETE)")
+
+	// Notify workflow engine of job completion
+	s.onJobCompleted(job.ID, job.Result)
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -142,6 +146,9 @@ func (s *Server) handleFinishJob(w http.ResponseWriter, r *http.Request) {
 		}
 		s.store.mu.Unlock()
 		s.logger.Info().Str("jobId", job.ID).Str("result", job.Result).Msg("job status updated")
+
+		// Notify workflow engine of job completion
+		s.onJobCompleted(job.ID, job.Result)
 	} else {
 		s.logger.Warn().Str("planId", planID).Msg("could not find job for finish")
 	}

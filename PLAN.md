@@ -1,8 +1,8 @@
 # Sockerless — Roadmap
 
-> Phases 1-38 complete (342 tasks). This document covers future work.
+> Phases 1-43 complete (382 tasks). This document covers future work.
 >
-> **Production target:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners (GitHub Actions from github.com, GitLab CI from gitlab.com), and custom SDK clients — backed by real cloud infrastructure (AWS, GCP, Azure). Phases 39-46 build out the testing infrastructure and bleephub. Phase 47 achieves general Docker API production readiness. Phases 48-49 achieve production CI. Phases 50-51 harden for production operations.
+> **Production target:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners (GitHub Actions from github.com, GitLab CI from gitlab.com), and custom SDK clients — backed by real cloud infrastructure (AWS, GCP, Azure). Phases 39-46 build out the testing infrastructure and bleephub. Phases 47-49 achieve general Docker API production readiness. Phases 50-53 achieve production CI. Phases 54-55 harden for production operations.
 
 ## Guiding Principles
 
@@ -65,122 +65,65 @@
 
 ---
 
-## Phase 39 — bleephub: Issues + Labels + Milestones
+## Phase 39 — bleephub: Issues + Labels + Milestones ✓
 
-**Goal:** Full issue tracking. `gh` uses GraphQL exclusively for issue CRUD and listing. Issues are also the foundation for PR metadata (labels, assignees, milestones are shared concepts).
-
-**State save:** Every task ends with: update `PLAN.md` (mark done), `STATUS.md`, `WHAT_WE_DID.md` (append), `MEMORY.md` (learnings), `_tasks/done/P39-NNN.md`.
-
-| Task | Description |
-|---|---|
-| P39-001 | Issue store: per-repo sequential numbering. Fields: `id`, `nodeID`, `number`, `title`, `body`, `state` (OPEN/CLOSED), `stateReason` (COMPLETED/NOT_PLANNED), `author`, `assignees`, `labels`, `milestone`, `createdAt`, `updatedAt`, `closedAt`. Save state |
-| P39-002 | Label store: per-repo. `GET/POST /api/v3/repos/{owner}/{repo}/labels`, `GET/PATCH/DELETE /api/v3/repos/{owner}/{repo}/labels/{name}`. Issue ↔ label association. Save state |
-| P39-003 | Milestone store: per-repo. `GET/POST /api/v3/repos/{owner}/{repo}/milestones`, `GET/PATCH/DELETE /api/v3/repos/{owner}/{repo}/milestones/{number}`. Save state |
-| P39-004 | REST issue endpoints: `GET/POST /api/v3/repos/{owner}/{repo}/issues`, `GET/PATCH /api/v3/repos/{owner}/{repo}/issues/{number}`. Filtering by state, assignee, label, milestone. Save state |
-| P39-005 | Issue comments: `GET/POST /api/v3/repos/{owner}/{repo}/issues/{number}/comments`, `PATCH/DELETE /api/v3/repos/{owner}/{repo}/issues/comments/{id}`. Save state |
-| P39-006 | GraphQL: `createIssue` mutation (repositoryId, title, body, assigneeIds, labelIds, milestoneId). Save state |
-| P39-007 | GraphQL: `closeIssue` mutation with `stateReason` (COMPLETED/NOT_PLANNED). Feature detection query. Save state |
-| P39-008 | GraphQL: issue listing — `repository.issues` connection with state/assignee/author filters + `search(type: ISSUE)` query. Save state |
-| P39-009 | GraphQL: issue view — full field selection (number, url, state, title, body, author, assignees, labels, milestone, comments, reactionGroups, stateReason). Save state |
-| P39-010 | Reactions: basic emoji reaction support on issues and comments (thumbsUp, thumbsDown, laugh, hooray, confused, heart, rocket, eyes). Save state |
-| P39-011 | Unit tests: issue CRUD, comments, labels, milestones, GraphQL queries. Save state |
-| P39-012 | `gh` CLI validation: `gh issue create`, `gh issue list`, `gh issue view`, `gh issue close` work against bleephub. Save state |
-| P39-013 | Save final state |
-
-**Verification:** Full `gh issue` lifecycle works. Filtering and search return correct results.
+**Completed.** Full issue tracking with labels, milestones, comments, and reactions. 6 new files (~1,700 lines), 28 new unit tests (79 total). REST endpoints for labels, milestones, issues, comments, and issue-label management. GraphQL mutations (createIssue, closeIssue, reopenIssue, addComment, updateIssue) and queries (repository.issues, repository.issue, repository.labels, repository.milestones, repository.assignableUsers). IssueState/MilestoneState/IssueClosedStateReason enums for `gh` compatibility. Static reactionGroups (8 types). hasIssuesEnabled, viewerPermission, merge*Allowed fields on Repository type. All `gh api` commands work for issue lifecycle.
 
 ---
 
-## Phase 40 — bleephub: Pull Requests
+## Phase 40 — bleephub: Pull Requests ✓
 
-**Goal:** Pull request lifecycle — create, review, merge, close. PRs are the most complex entity, depending on git (branches, diffs, merge), issues (labels, assignees), and users (reviewers). `gh` uses GraphQL for all PR operations with REST for branch deletion and reviewer assignment.
-
-**State save:** Every task ends with: update `PLAN.md` (mark done), `STATUS.md`, `WHAT_WE_DID.md` (append), `MEMORY.md` (learnings), `_tasks/done/P40-NNN.md`.
-
-| Task | Description |
-|---|---|
-| P40-001 | PR store: per-repo, sequential numbering (shared with issues). Fields: `id`, `nodeID`, `number`, `title`, `body`, `state` (OPEN/CLOSED/MERGED), `draft`, `baseRefName`, `headRefName`, `headRepositoryOwner`, `isCrossRepository`, `mergeable`, `additions`, `deletions`, `commits`, `author`, `assignees`, `labels`, `milestone`, `createdAt`, `mergedAt`, `closedAt`. Save state |
-| P40-002 | PR creation: validate head/base branches exist in git storage, compute diff stats (additions/deletions), create merge-check ref. Save state |
-| P40-003 | PR merging: implement merge/squash/rebase strategies using `go-git`. Update default branch ref. Optionally delete head branch. Save state |
-| P40-004 | GraphQL mutations: `createPullRequest`, `closePullRequest`, `mergePullRequest` (with mergeMethod MERGE/SQUASH/REBASE), `enablePullRequestAutoMerge`, `disablePullRequestAutoMerge`. Save state |
-| P40-005 | GraphQL queries: PR listing via `repository.pullRequests` connection + `search(type: ISSUE)`. PR view with full field selection (state, body, author, isDraft, mergeable, additions, deletions, commits, baseRefName, headRefName, reviews, statusCheckRollup). Save state |
-| P40-006 | GraphQL: merge text queries — `viewerMergeHeadlineText`, `viewerMergeBodyText`. Save state |
-| P40-007 | PR reviews: `requestReviews` mutation, `pullRequest.reviews` connection, `pullRequest.reviewRequests` connection. Save state |
-| P40-008 | REST supporting endpoints: `DELETE /api/v3/repos/{owner}/{repo}/git/refs/heads/{branch}` (post-merge branch delete), `POST/DELETE /api/v3/repos/{owner}/{repo}/pulls/{number}/requested_reviewers`. Save state |
-| P40-009 | PR files/commits: `GET /api/v3/repos/{owner}/{repo}/pulls/{number}/files`, `GET /api/v3/repos/{owner}/{repo}/pulls/{number}/commits`. Save state |
-| P40-010 | Checks/status: basic status check framework for PR mergeability (`statusCheckRollup` in GraphQL). Save state |
-| P40-011 | Unit tests: PR lifecycle, merge strategies, diff stats, GraphQL queries. Save state |
-| P40-012 | `gh` CLI validation: `gh pr create`, `gh pr list`, `gh pr view`, `gh pr merge`, `gh pr close` work against bleephub. Save state |
-| P40-013 | Save final state |
-
-**Verification:** Full `gh pr` lifecycle works — create from branch, review, merge (all 3 strategies), branch cleanup.
+**Completed.** Full pull request lifecycle with reviews, merge, and shared issue/PR numbering. 4 new files (~1,650 lines), 28 new unit tests (107 total). PullRequest + PullRequestReview store types with 7 CRUD methods. REST endpoints for PR CRUD, merge, reviews, and reviewer requests. GraphQL mutations (createPullRequest, closePullRequest, reopenPullRequest, mergePullRequest, updatePullRequest) and queries (repository.pullRequests connection with state/label/head/base filters, repository.pullRequest by number). PR-prefixed GraphQL types to avoid name collisions. Review decision derived from reviews (APPROVED/CHANGES_REQUESTED). StatusCheckRollup stub. All `gh pr` operations work against bleephub.
 
 ---
 
-## Phase 41 — bleephub: API Conformance + `gh` CLI Test Suite
+## Phase 41 — bleephub: API Conformance + `gh` CLI Test Suite ✓
 
-**Goal:** Validate bleephub against GitHub's published OpenAPI spec and build a comprehensive `gh` CLI test suite. Fix any protocol gaps discovered.
-
-**State save:** Every task ends with: update `PLAN.md` (mark done), `STATUS.md`, `WHAT_WE_DID.md` (append), `MEMORY.md` (learnings), `_tasks/done/P41-NNN.md`.
-
-| Task | Description |
-|---|---|
-| P41-001 | Download and parse GitHub's OpenAPI spec (`github/rest-api-description`). Build a conformance checker that validates bleephub's responses against the spec schemas. Save state |
-| P41-002 | Pagination conformance: `Link` header format for REST, Relay cursor spec for GraphQL. Verify with multi-page result sets. Save state |
-| P41-003 | Error format conformance: `{"message": "...", "documentation_url": "..."}` for REST, `{"errors": [...]}` for GraphQL. HTTP status codes match spec. Save state |
-| P41-004 | Rate limit headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Used`, `X-RateLimit-Reset`, `X-RateLimit-Resource` on all responses. Save state |
-| P41-005 | Content negotiation: `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28` header handling. Save state |
-| P41-006 | `gh` CLI integration test suite: Docker-based, runs `gh auth login`, `gh repo create/list/view/clone`, `gh issue create/list/view/close`, `gh pr create/list/view/merge/close`, `gh org list` against bleephub. Save state |
-| P41-007 | `gh api` raw endpoint testing: verify key REST endpoints return spec-compliant JSON. Save state |
-| P41-008 | Fix protocol gaps discovered during conformance testing (expect iteration). Save state |
-| P41-009 | Save final state |
-
-**Verification:** `gh` CLI test suite passes. OpenAPI conformance checker reports no schema violations on exercised endpoints.
+**Completed.** Added REST pagination with RFC 5988 Link headers (15 list handlers). GitHub-standard 422 validation error format with `errors` array (`resource`, `field`, `code`). Content-Type charset upgrade (`application/json; charset=utf-8`) in middleware. Repo `permissions` object in REST responses. OpenAPI schema validation test suite (vendored schemas for 8 resource types). Comprehensive conformance tests: error formats (401/404/422), content negotiation, rate limit headers, cross-endpoint REST↔GraphQL consistency. Docker-based `gh` CLI integration test (`make bleephub-gh-test`) exercising full lifecycle: repos, labels, issues, PRs, reviews, merges, orgs, pagination, GraphQL queries. 148 unit tests pass (107→148: +7 pagination, +23 conformance, +11 OpenAPI).
 
 ---
 
-## Phase 42 — bleephub: Runner Enhancements (Actions + Multi-Job)
+## Phase 42 — bleephub: Runner Enhancements (Actions + Multi-Job) ✓
 
-**Goal:** Expand the runner protocol to support `uses:` actions and multi-job workflows, building on the GitHub API foundation from phases 36-41.
+**Completed.** Expanded bleephub to support `uses:` actions (tarball proxy with in-memory cache), multi-job workflows with `needs:` dependency graph execution, matrix strategy expansion (Cartesian product + include/exclude), workflow YAML parsing (`gopkg.in/yaml.v3`), artifact upload/download (Twirp-style stubs for `@actions/artifact` v4), and cache API stubs (miss/discard). 7 new files (~1,300 lines), 42 new unit tests (190 total). Integration test updated with multi-job workflow test.
 
 **State save:** Every task ends with: update `PLAN.md` (mark done), `STATUS.md`, `WHAT_WE_DID.md` (append), `MEMORY.md` (learnings), `_tasks/done/P42-NNN.md`.
 
 | Task | Description |
 |---|---|
-| P42-001 | Action resolution: serve action tarballs from upstream GitHub (cache locally). Implement `ActionDownloadInfo` with real download URLs. Save state |
-| P42-002 | Multi-job workflows: `needs:` dependencies, job graph execution, result propagation. Save state |
-| P42-003 | Matrix strategies: expand matrix configurations into parallel job requests. Save state |
-| P42-004 | Workflow YAML parsing: accept raw workflow YAML (not just simplified JSON) as job input. Save state |
-| P42-005 | Artifacts + cache API stubs: `actions/upload-artifact`, `actions/download-artifact`, `actions/cache`. Save state |
-| P42-006 | Integration test: multi-step workflow with `uses:` actions, matrix, and artifacts. Save state |
-| P42-007 | Save final state |
+| P42-001 ✓ | Workflow YAML parsing: `ParseWorkflow()`, types for WorkflowDef/JobDef/StepDef/MatrixDef/StrategyDef |
+| P42-002 ✓ | Action resolution: `ActionDownloadInfo` with tarball URLs, tarball proxy with in-memory cache |
+| P42-003 ✓ | Multi-job workflow engine: `submitWorkflow`, `dispatchReadyJobs`, `onJobCompleted`, `buildJobMessageFromDef` |
+| P42-004 ✓ | Workflow submission endpoint + matrix expansion: `ExpandMatrix`, `expandMatrixJobs`, `POST /api/v3/bleephub/workflow` |
+| P42-005 ✓ | Artifacts + cache API stubs: Twirp artifact service (create/upload/finalize/list/download), cache stubs (204 miss) |
+| P42-006 ✓ | Integration test: multi-job workflow with `needs:` dependency via `POST /api/v3/bleephub/workflow` |
+| P42-007 ✓ | Save final state |
 
-**Verification:** Workflow with `uses: actions/checkout@v4` + matrix + artifact upload/download runs through bleephub.
+**Verification:** 190 unit tests pass. Integration test covers single-job + multi-job workflow with `needs:` dependencies.
 
 ---
 
-## Phase 43 — Cloud Resource Tracking
+## Phase 43 — Cloud Resource Tracking ✓
 
-**Goal:** Identify, tag, and track all cloud resources created, modified, or used by Sockerless. Enables resource accounting, leak detection, cleanup after crashes, and operational visibility. Uses cloud-native tagging (AWS tags, GCP labels, Azure tags) plus local metadata for cross-cloud consistency.
+**Completed.** Unified cloud resource tagging, tracking, and crash recovery across all 6 backends. Shared tag builder in `backends/core/tags.go` with 3 output formats (AWS map, GCP labels, Azure pointer map). 5 standard tags: `sockerless-managed`, `sockerless-container-id`, `sockerless-backend`, `sockerless-instance`, `sockerless-created-at`. Resource registry with JSON persistence and REST endpoints. CloudScanner interface for crash recovery in all 6 backends. AWS ECS + Lambda simulators updated to store and return tags.
 
 **State save:** Every task ends with: update `PLAN.md` (mark done), `STATUS.md`, `WHAT_WE_DID.md` (append), `MEMORY.md` (learnings), `_tasks/done/P43-NNN.md`.
 
 | Task | Description |
 |---|---|
-| P43-001 | **Research cloud tagging systems.** Document AWS resource tags, GCP labels, Azure tags — capabilities, limits, propagation rules, which resource types support them. Identify cross-cloud common denominator. Save state |
-| P43-002 | **Design tagging schema.** Define standard tag set: `sockerless:instance-id`, `sockerless:backend`, `sockerless:container-id`, `sockerless:job-id`, `sockerless:created-at`. Document in `docs/resource-tracking.md`. Save state |
-| P43-003 | **Local resource registry.** Create `backends/core/resources.go`: in-memory registry tracking all cloud resources by type (task, function, storage, log stream, etc.), cloud ID, tags, state, timestamps. Serializable to JSON for crash recovery. Save state |
-| P43-004 | **AWS backend tagging.** Add tags to ECS tasks, Lambda functions, CloudWatch log groups/streams, S3 objects, ECR repos created by the ecs/lambda backends. Propagate through simulator API calls. Save state |
-| P43-005 | **GCP backend labeling.** Add labels to Cloud Run jobs, Cloud Functions, Cloud Logging, GCS objects created by cloudrun/gcf backends. Save state |
-| P43-006 | **Azure backend tagging.** Add tags to Container Apps jobs, Azure Functions, Log Analytics, Blob Storage created by aca/azf backends. Save state |
-| P43-007 | **Resource listing endpoint.** `GET /api/v3/sockerless/resources` — list all tracked resources with filters (backend, type, state, age). Save state |
-| P43-008 | **Resource cleanup command.** `DELETE /api/v3/sockerless/resources?older_than=1h` — clean up orphaned/stale resources. Also usable as CLI: `sockerless cleanup --older-than 1h`. Save state |
-| P43-009 | **Crash recovery.** On startup, scan cloud APIs for resources matching Sockerless tags that aren't in local registry (orphans from previous crashes). Reconcile or offer cleanup. Save state |
-| P43-010 | **Simulator support.** Simulators store and return tags/labels on created resources (ECS tasks, Cloud Run jobs, etc.) so tagging can be tested without real clouds. Save state |
-| P43-011 | **Unit + integration tests.** Tag propagation tests per cloud, resource registry tests, cleanup tests, orphan detection tests. Save state |
-| P43-012 | **Save final state** |
+| P43-001 ✓ | Shared tag builder (`backends/core/tags.go`): TagSet with AsMap, AsGCPLabels, AsAzurePtrMap + 6 unit tests |
+| P43-002 ✓ | Tag ECS resources: tags on RegisterTaskDefinition + RunTask, registry register/cleanup |
+| P43-003 ✓ | Tag Lambda resources: tags on CreateFunction, registry register/cleanup |
+| P43-004 ✓ | Tag GCF resources: labels on CreateFunction via AsGCPLabels, registry register/cleanup |
+| P43-005 ✓ | Tag Azure Functions resources: tags on Site via AsAzurePtrMap, registry register/cleanup |
+| P43-006 ✓ | Normalize Cloud Run + ACA to shared tag builder (replace hardcoded labels/tags) |
+| P43-007 ✓ | AWS simulator tag support: ECSTag struct, Tags on ECSTaskDefinition/ECSTask, Lambda Tags + ListTags/TagResource |
+| P43-008 ✓ | Resource registry (`backends/core/resource_registry.go`): register/cleanup/save/load + REST endpoints + 5 unit tests |
+| P43-009 ✓ | Crash recovery: CloudScanner interface + RecoverOnStartup + 6 backend implementations |
+| P43-010 ✓ | Integration tests: TestResourceTaggingIntegration + sim-test-all pass |
+| P43-011 ✓ | Save final state |
 
-**Verification:** Resources created by Sockerless are identifiable via cloud-native tags/labels. `sockerless cleanup` finds and removes orphaned resources. Crash → restart → orphans detected.
+**Verification:** 11 new unit tests (6 tag + 5 registry), all sim-test-all tests pass. Tags applied to every cloud resource across all 6 backends.
 
 ---
 
@@ -227,7 +170,10 @@
 
 ---
 
-## Phase 46 — Capability Negotiation
+## **CANCELLED** Phase 46 — Capability Negotiation
+
+Note. this phase will be skipped because we do not want capabilities. All backends should support all tests.
+Skip to next non-cancelled phase.
 
 **Goal:** Backends advertise what they support so runners/tests can adapt.
 
@@ -243,11 +189,11 @@
 
 ---
 
-## Phase 47 — Production Docker API: CLI, Compose, TestContainers, SDK Clients
+## Phase 47 — Production Docker API: Core Infrastructure & `docker run`
 
-**Goal:** Make `docker run`, `docker compose`, TestContainers, and arbitrary Docker SDK clients work against Sockerless on real cloud infrastructure. This is the foundational production milestone — all other production use cases (CI runners, custom tooling) build on this.
+**Goal:** Establish the production foundation — host provisioning, real registry image pulls, all `DOCKER_HOST` connectivity modes, and validated `docker run` + env/volume support across all 6 cloud backends. This phase proves that a single container can be created, run, and managed on real cloud infrastructure.
 
-**State save:** Every task ends with state save.
+**State save:** Every task ends with: update `PLAN.md` (mark done), `STATUS.md`, `WHAT_WE_DID.md` (append), `MEMORY.md` (learnings), `_tasks/done/P47-NNN.md`.
 
 | Task | Description |
 |---|---|
@@ -256,111 +202,167 @@
 | P47-003 | **`DOCKER_HOST` connectivity modes.** Validate all three connection modes: (a) local TCP — `DOCKER_HOST=tcp://localhost:2375 docker run alpine echo hello`, (b) remote TCP — `DOCKER_HOST=tcp://remote-host:2375 docker run alpine echo hello` from a separate machine, (c) SSH — `DOCKER_HOST=ssh://user@remote-host docker run alpine echo hello` where the Docker CLI opens an SSH tunnel to the remote Sockerless frontend. Frontend must support unix socket (`/var/run/docker.sock` symlink or listen path) for the SSH case (SSH tunnels to the remote unix socket). Test all three modes on at least one cloud backend. Save state |
 | P47-004 | **`docker run` end-to-end.** Validate full lifecycle on each of the 6 cloud backends: `docker run --rm alpine echo hello`, `docker run -d nginx` + `docker exec` + `docker stop`, `docker run -p 8080:80 nginx` with port access. Test via all `DOCKER_HOST` modes from P47-003. Save state |
 | P47-005 | **Environment and volume mapping.** `-e` env vars, `--env-file`, `-v` bind mounts, named volumes, `--tmpfs`. Verify data persists across exec calls within a container, and that bind mounts map to real cloud storage (EFS, GCS FUSE, Azure Files). Save state |
-| P47-006 | **Docker Compose.** Validate `docker compose up/down/ps/logs/exec` for a multi-service stack (e.g., web app + database + cache). Inter-container networking via Compose service names. `depends_on` with health checks. Save state |
-| P47-007 | **TestContainers integration.** Validate the TestContainers library (Go, Java, Python, Node) works against Sockerless. Test with standard modules: PostgreSQL, Redis, Kafka, LocalStack. Fix any API gaps (container wait strategies, log consumers, exposed port detection). Save state |
-| P47-008 | **Docker SDK clients.** Validate programmatic usage via Go (`docker/docker` client), Python (`docker-py`), Java (`docker-java`). Run a non-trivial integration test suite (create, start, exec, logs, stop, remove) against each cloud backend. Save state |
-| P47-009 | **Docker build on real cloud.** `docker build` produces an image that can be used in subsequent `docker run` commands. Multi-stage builds, COPY from build context, ARG/ENV propagation. Images stored in-memory or pushed to a real registry. Save state |
-| P47-010 | **Networking between containers.** User-defined bridge networks, `docker network create/connect/disconnect`, DNS resolution by container name, exposed ports. Critical for Compose and TestContainers. Save state |
-| P47-011 | **Streaming and logging.** `docker logs -f`, `docker attach`, `docker exec -it` (interactive TTY). Verify output is complete, ordered, and low-latency on each cloud backend. Save state |
-| P47-012 | **Error handling and edge cases.** Container OOM, cloud-side timeout, image not found, permission denied, quota exceeded — all must return proper Docker API error codes so clients can handle failures gracefully. Save state |
-| P47-013 | **Validation matrix.** Run the full test suite (`docker run`, Compose stack, TestContainers, SDK tests) across all 6 cloud backends, via all three `DOCKER_HOST` modes (local TCP, remote TCP, SSH). Document pass/fail/gap matrix. Save state |
-| P47-014 | **Save final state** |
+| P47-006 | **Save final state** |
 
-**Verification:** `DOCKER_HOST=tcp://localhost:2375 docker run --rm alpine echo hello` works on all 6 cloud backends. `DOCKER_HOST=ssh://user@remote docker run --rm alpine echo hello` works over SSH. `docker compose up` with a 3-service stack (app + postgres + redis) works on ECS, Cloud Run, and ACA. TestContainers Go and Java test suites pass on at least 3 cloud backends.
+**Verification:** `DOCKER_HOST=tcp://localhost:2375 docker run --rm alpine echo hello` works on all 6 cloud backends. `DOCKER_HOST=ssh://user@remote docker run --rm alpine echo hello` works over SSH. `docker run -e FOO=bar -v /data:/data alpine` works with real cloud storage on at least 3 backends.
 
 ---
 
-## Phase 48 — Production GitHub Actions: Self-Hosted Runner on Real Cloud
+## Phase 48 — Production Docker API: Networking, Build, & Streaming
 
-**Goal:** Run real GitHub Actions workflows from github.com through a self-hosted runner backed by Sockerless on real cloud infrastructure.
+**Goal:** Add the Docker engine features that multi-service scenarios (Compose, TestContainers) depend on — container networking, image builds, log streaming, and robust error handling. Builds on the single-container foundation from Phase 47.
 
-**State save:** Every task ends with state save.
+**State save:** Every task ends with: update `PLAN.md` (mark done), `STATUS.md`, `WHAT_WE_DID.md` (append), `MEMORY.md` (learnings), `_tasks/done/P48-NNN.md`.
 
 | Task | Description |
 |---|---|
-| P48-001 | **Runner host provisioning.** Extend the Phase 47 VM module to also run the `actions/runner` binary alongside Sockerless. Systemd unit for the runner process. Save state |
-| P48-002 | **Runner registration automation.** Script that registers the `actions/runner` with a GitHub repo as a self-hosted runner, configures `DOCKER_HOST` to point at the local Sockerless frontend, and validates connectivity. Save state |
-| P48-003 | **`actions/checkout` end-to-end.** Validate that `uses: actions/checkout@v4` works: runner downloads the action tarball from github.com, executes it, clones the repo via git. Save state |
-| P48-004 | **Marketplace action support.** Ensure the runner can download and execute JavaScript and Docker actions from github.com. Fix any Docker API gaps (e.g., `docker build` for Dockerfile-based actions, volume mounts for action workspaces). Save state |
-| P48-005 | **Service containers.** Validate `services:` in workflow files work on real cloud backends — health checks, networking between job container and service containers, port mapping. Save state |
-| P48-006 | **Artifact upload/download.** Ensure `actions/upload-artifact` and `actions/download-artifact` work. The runner talks to the GitHub artifact API (hosted by github.com) — verify artifacts survive the full upload/download round-trip. Save state |
-| P48-007 | **Caching.** Validate `actions/cache` works through github.com's cache API. Save state |
-| P48-008 | **Secrets and encrypted variables.** Ensure GitHub-encrypted secrets are correctly decrypted and injected into the runner environment. Validate with real repo secrets from github.com. Save state |
-| P48-009 | **Multi-job workflows.** Validate `needs:` dependencies, matrix strategies, and `outputs:` passing between jobs when running through a self-hosted runner pool. May require multiple runner instances. Save state |
-| P48-010 | **Concurrency and queueing.** Multiple runners sharing a backend. Job queue management, resource limits, graceful scaling. Save state |
-| P48-011 | **Logging and observability.** Runner logs, backend logs, and cloud workload logs unified. Structured logging with job/step correlation IDs. Save state |
-| P48-012 | **Validation matrix.** Run a representative set of real-world GitHub Actions workflows (build + test for Go, Node, Python, Rust projects) across all 6 cloud backends. Document pass/fail/gap matrix. Save state |
-| P48-013 | **Save final state** |
+| P48-001 | **Networking between containers.** User-defined bridge networks, `docker network create/connect/disconnect`, DNS resolution by container name, exposed ports. Critical for Compose and TestContainers. Save state |
+| P48-002 | **Docker build on real cloud.** `docker build` produces an image that can be used in subsequent `docker run` commands. Multi-stage builds, COPY from build context, ARG/ENV propagation. Images stored in-memory or pushed to a real registry. Save state |
+| P48-003 | **Streaming and logging.** `docker logs -f`, `docker attach`, `docker exec -it` (interactive TTY). Verify output is complete, ordered, and low-latency on each cloud backend. Save state |
+| P48-004 | **Error handling and edge cases.** Container OOM, cloud-side timeout, image not found, permission denied, quota exceeded — all must return proper Docker API error codes so clients can handle failures gracefully. Save state |
+| P48-005 | **Save final state** |
 
-**Verification:** A public GitHub repo with standard CI workflows (build, test, lint, deploy) runs all jobs through a self-hosted runner backed by Sockerless on ECS. Workflows pass identically to GitHub-hosted runners.
+**Verification:** Two containers on the same user-defined network can resolve each other by name. `docker build -t myapp . && docker run myapp` works on at least 3 backends. `docker logs -f` streams output in real-time. Cloud-side failures return meaningful Docker API errors.
 
 ---
 
-## Phase 49 — Production GitLab CI: Runner on Real Cloud
+## Phase 49 — Production Docker API: Compose, TestContainers, & SDK Clients
 
-**Goal:** Run real GitLab CI pipelines from gitlab.com through a GitLab Runner (docker executor) backed by Sockerless on real cloud infrastructure.
+**Goal:** Validate that higher-level Docker clients — Compose, TestContainers, and SDK libraries — work against Sockerless on real cloud infrastructure. Run the full validation matrix across all backends and connectivity modes.
 
-**State save:** Every task ends with state save.
+**State save:** Every task ends with: update `PLAN.md` (mark done), `STATUS.md`, `WHAT_WE_DID.md` (append), `MEMORY.md` (learnings), `_tasks/done/P49-NNN.md`.
 
 | Task | Description |
 |---|---|
-| P49-001 | **Runner registration automation.** Script that registers `gitlab-runner` with a gitlab.com project, configures `host = "tcp://localhost:2375"` in `config.toml` to point at Sockerless, and validates connectivity. Save state |
-| P49-002 | **Helper image compatibility.** GitLab Runner uses `gitlab/gitlab-runner-helper` for git clone, artifacts, and cache. Ensure this image works correctly through Sockerless on real cloud backends (the helper uses `docker cp`, `docker exec`, and stdin injection). Save state |
-| P49-003 | **Git clone via helper.** Validate the full clone flow: runner creates helper container, starts it, uses `docker exec` to inject git credentials and clone the repo. This is the most complex Docker API interaction in the GitLab runner. Save state |
-| P49-004 | **Artifact upload/download.** Validate `artifacts:paths`, `artifacts:reports`, and inter-job artifact passing. The helper container handles artifact collection via `docker cp`. Save state |
-| P49-005 | **Cache support.** Validate `cache:key` and `cache:paths`. GitLab Runner uses a cache container or S3/GCS backend for caching. Ensure both paths work through Sockerless. Save state |
-| P49-006 | **Service containers.** Validate `services:` in `.gitlab-ci.yml` — health checks, networking, aliases. GitLab creates service containers as separate Docker containers linked via network. Save state |
-| P49-007 | **Multi-stage pipelines.** Validate complex pipeline topologies: stages, `needs:` DAG dependencies, `rules:`, `only:/except:`, `when: manual`, `allow_failure:`. Save state |
-| P49-008 | **Docker-in-Docker (DinD).** Some GitLab CI jobs use `docker:dind` as a service. Determine how this interacts with Sockerless (the inner Docker daemon would need to be real or also Sockerless). Document supported patterns. Save state |
-| P49-009 | **Secrets and variables.** Ensure CI/CD variables (protected, masked, file-type) are correctly passed through to containers. Validate with real gitlab.com project variables. Save state |
-| P49-010 | **Runner autoscaling.** GitLab Runner supports autoscaling via Docker Machine or Kubernetes. Design a Sockerless-compatible autoscaling approach (multiple runner instances sharing a backend, or a runner per backend instance). Save state |
-| P49-011 | **Logging and observability.** Job logs flow from Sockerless backend → cloud workload → runner → gitlab.com. Ensure log streaming works without gaps or delays. Save state |
-| P49-012 | **Validation matrix.** Run a representative set of real-world GitLab CI pipelines (build + test for Go, Node, Python, Rust projects) across all 6 cloud backends. Document pass/fail/gap matrix. Save state |
-| P49-013 | **Save final state** |
+| P49-001 | **Docker Compose.** Validate `docker compose up/down/ps/logs/exec` for a multi-service stack (e.g., web app + database + cache). Inter-container networking via Compose service names. `depends_on` with health checks. Save state |
+| P49-002 | **TestContainers integration.** Validate the TestContainers library (Go, Java, Python, Node) works against Sockerless. Test with standard modules: PostgreSQL, Redis, Kafka, LocalStack. Fix any API gaps (container wait strategies, log consumers, exposed port detection). Save state |
+| P49-003 | **Docker SDK clients.** Validate programmatic usage via Go (`docker/docker` client), Python (`docker-py`), Java (`docker-java`). Run a non-trivial integration test suite (create, start, exec, logs, stop, remove) against each cloud backend. Save state |
+| P49-004 | **Validation matrix.** Run the full test suite (`docker run`, Compose stack, TestContainers, SDK tests) across all 6 cloud backends, via all three `DOCKER_HOST` modes (local TCP, remote TCP, SSH). Document pass/fail/gap matrix. Save state |
+| P49-005 | **Save final state** |
 
-**Verification:** A gitlab.com project with standard CI pipelines (build, test, lint, deploy) runs all jobs through a self-hosted runner backed by Sockerless on Cloud Run. Pipelines pass identically to shared runners.
+**Verification:** `docker compose up` with a 3-service stack (app + postgres + redis) works on ECS, Cloud Run, and ACA. TestContainers Go and Java test suites pass on at least 3 cloud backends. SDK integration tests pass across all 6 backends.
 
 ---
 
-## Phase 50 — Docker API Hardening for Production
+## Phase 50 — Production GitHub Actions: Runner Setup & Single-Job Workflows
 
-**Goal:** Fix Docker API gaps and edge cases discovered during production validation (Phases 47-49). Real-world clients will inevitably exercise API paths that simulators and local tests miss.
+**Goal:** Get a self-hosted GitHub Actions runner running on real cloud infrastructure via Sockerless. Validate single-job workflows end-to-end: checkout, marketplace actions, service containers, artifacts, caching, and secrets.
 
-**State save:** Every task ends with state save.
+**State save:** Every task ends with: update `PLAN.md` (mark done), `STATUS.md`, `WHAT_WE_DID.md` (append), `MEMORY.md` (learnings), `_tasks/done/P50-NNN.md`.
 
 | Task | Description |
 |---|---|
-| P50-001 | **Docker build production paths.** Expand `POST /build` to support multi-stage builds, build args, `.dockerignore`, layer caching, and BuildKit-style output. Many marketplace actions, GitLab CI jobs, and TestContainers modules build images. Save state |
-| P50-002 | **Volume lifecycle.** Named volumes, volume mounts between containers (data sharing between Compose services, job and service containers), tmpfs mounts, bind mount permissions. Save state |
-| P50-003 | **Network fidelity.** Container-to-container DNS resolution, user-defined bridge networks, network aliases, exposed ports. Critical for Compose, TestContainers, and CI service containers. Save state |
-| P50-004 | **Container restart and retry.** Handle container restart policies, OOM kills, timeout-based cleanup. Cloud backends need graceful handling of cloud-side failures (ECS task failures, Lambda timeouts, etc.). Save state |
-| P50-005 | **Streaming fidelity.** `docker logs --follow`, `docker attach`, `docker exec` interactive mode, TTY allocation. Ensure output is never lost or reordered. Save state |
-| P50-006 | **Large file handling.** `docker cp` with large tarballs (artifacts, build contexts), image layers >1GB, long-running log streams. Test with realistic payloads. Save state |
-| P50-007 | **Concurrent operations.** Multiple containers running simultaneously (Compose stacks, parallel CI jobs, service containers + job container + helper containers). Backend must handle concurrent cloud API calls without races or deadlocks. Save state |
-| P50-008 | **Error propagation.** Cloud API errors (rate limits, quota exceeded, permission denied, transient failures) must be translated to meaningful Docker API error responses so clients can retry or fail gracefully. Save state |
+| P50-001 | **Runner host provisioning.** Extend the Phase 47 VM module to also run the `actions/runner` binary alongside Sockerless. Systemd unit for the runner process. Save state |
+| P50-002 | **Runner registration automation.** Script that registers the `actions/runner` with a GitHub repo as a self-hosted runner, configures `DOCKER_HOST` to point at the local Sockerless frontend, and validates connectivity. Save state |
+| P50-003 | **`actions/checkout` end-to-end.** Validate that `uses: actions/checkout@v4` works: runner downloads the action tarball from github.com, executes it, clones the repo via git. Save state |
+| P50-004 | **Marketplace action support.** Ensure the runner can download and execute JavaScript and Docker actions from github.com. Fix any Docker API gaps (e.g., `docker build` for Dockerfile-based actions, volume mounts for action workspaces). Save state |
+| P50-005 | **Service containers.** Validate `services:` in workflow files work on real cloud backends — health checks, networking between job container and service containers, port mapping. Save state |
+| P50-006 | **Artifact upload/download.** Ensure `actions/upload-artifact` and `actions/download-artifact` work. The runner talks to the GitHub artifact API (hosted by github.com) — verify artifacts survive the full upload/download round-trip. Save state |
+| P50-007 | **Caching.** Validate `actions/cache` works through github.com's cache API. Save state |
+| P50-008 | **Secrets and encrypted variables.** Ensure GitHub-encrypted secrets are correctly decrypted and injected into the runner environment. Validate with real repo secrets from github.com. Save state |
 | P50-009 | **Save final state** |
 
-**Verification:** All production validation matrices from P47-013, P48-012, and P49-012 pass at 100%. No Docker API gaps remain for the tested client/workflow set.
+**Verification:** A single-job GitHub Actions workflow with `actions/checkout`, a marketplace action, service containers, artifact upload/download, caching, and secrets runs successfully through a self-hosted runner backed by Sockerless on at least 3 cloud backends.
 
 ---
 
-## Phase 51 — Production Hardening and Operations
+## Phase 51 — Production GitHub Actions: Multi-Job, Scaling, & Validation
+
+**Goal:** Extend the self-hosted runner to support multi-job workflows, concurrent execution, and full cross-backend validation. Builds on the single-job foundation from Phase 50.
+
+**State save:** Every task ends with: update `PLAN.md` (mark done), `STATUS.md`, `WHAT_WE_DID.md` (append), `MEMORY.md` (learnings), `_tasks/done/P51-NNN.md`.
+
+| Task | Description |
+|---|---|
+| P51-001 | **Multi-job workflows.** Validate `needs:` dependencies, matrix strategies, and `outputs:` passing between jobs when running through a self-hosted runner pool. May require multiple runner instances. Save state |
+| P51-002 | **Concurrency and queueing.** Multiple runners sharing a backend. Job queue management, resource limits, graceful scaling. Save state |
+| P51-003 | **Logging and observability.** Runner logs, backend logs, and cloud workload logs unified. Structured logging with job/step correlation IDs. Save state |
+| P51-004 | **Validation matrix.** Run a representative set of real-world GitHub Actions workflows (build + test for Go, Node, Python, Rust projects) across all 6 cloud backends. Document pass/fail/gap matrix. Save state |
+| P51-005 | **Save final state** |
+
+**Verification:** A public GitHub repo with standard CI workflows (build, test, lint, deploy) including multi-job `needs:` dependencies and matrix strategies runs all jobs through self-hosted runners backed by Sockerless on ECS. Workflows pass identically to GitHub-hosted runners.
+
+---
+
+## Phase 52 — Production GitLab CI: Runner Setup & Single-Job Pipelines
+
+**Goal:** Get a GitLab Runner (docker executor) running on real cloud infrastructure via Sockerless. Validate single-job pipelines end-to-end: helper image, git clone, artifacts, caching, service containers, and secrets.
+
+**State save:** Every task ends with: update `PLAN.md` (mark done), `STATUS.md`, `WHAT_WE_DID.md` (append), `MEMORY.md` (learnings), `_tasks/done/P52-NNN.md`.
+
+| Task | Description |
+|---|---|
+| P52-001 | **Runner registration automation.** Script that registers `gitlab-runner` with a gitlab.com project, configures `host = "tcp://localhost:2375"` in `config.toml` to point at Sockerless, and validates connectivity. Save state |
+| P52-002 | **Helper image compatibility.** GitLab Runner uses `gitlab/gitlab-runner-helper` for git clone, artifacts, and cache. Ensure this image works correctly through Sockerless on real cloud backends (the helper uses `docker cp`, `docker exec`, and stdin injection). Save state |
+| P52-003 | **Git clone via helper.** Validate the full clone flow: runner creates helper container, starts it, uses `docker exec` to inject git credentials and clone the repo. This is the most complex Docker API interaction in the GitLab runner. Save state |
+| P52-004 | **Artifact upload/download.** Validate `artifacts:paths`, `artifacts:reports`, and inter-job artifact passing. The helper container handles artifact collection via `docker cp`. Save state |
+| P52-005 | **Cache support.** Validate `cache:key` and `cache:paths`. GitLab Runner uses a cache container or S3/GCS backend for caching. Ensure both paths work through Sockerless. Save state |
+| P52-006 | **Service containers.** Validate `services:` in `.gitlab-ci.yml` — health checks, networking, aliases. GitLab creates service containers as separate Docker containers linked via network. Save state |
+| P52-007 | **Secrets and variables.** Ensure CI/CD variables (protected, masked, file-type) are correctly passed through to containers. Validate with real gitlab.com project variables. Save state |
+| P52-008 | **Save final state** |
+
+**Verification:** A single-job GitLab CI pipeline with git clone, build, test, artifact upload, cache, service containers, and secrets runs successfully through a GitLab Runner backed by Sockerless on at least 3 cloud backends.
+
+---
+
+## Phase 53 — Production GitLab CI: Advanced Pipelines, Scaling, & Validation
+
+**Goal:** Extend GitLab CI support to multi-stage pipelines, DinD, autoscaling, and full cross-backend validation. Builds on the single-job foundation from Phase 52.
+
+**State save:** Every task ends with: update `PLAN.md` (mark done), `STATUS.md`, `WHAT_WE_DID.md` (append), `MEMORY.md` (learnings), `_tasks/done/P53-NNN.md`.
+
+| Task | Description |
+|---|---|
+| P53-001 | **Multi-stage pipelines.** Validate complex pipeline topologies: stages, `needs:` DAG dependencies, `rules:`, `only:/except:`, `when: manual`, `allow_failure:`. Save state |
+| P53-002 | **Docker-in-Docker (DinD).** Some GitLab CI jobs use `docker:dind` as a service. Determine how this interacts with Sockerless (the inner Docker daemon would need to be real or also Sockerless). Document supported patterns. Save state |
+| P53-003 | **Runner autoscaling.** GitLab Runner supports autoscaling via Docker Machine or Kubernetes. Design a Sockerless-compatible autoscaling approach (multiple runner instances sharing a backend, or a runner per backend instance). Save state |
+| P53-004 | **Logging and observability.** Job logs flow from Sockerless backend → cloud workload → runner → gitlab.com. Ensure log streaming works without gaps or delays. Save state |
+| P53-005 | **Validation matrix.** Run a representative set of real-world GitLab CI pipelines (build + test for Go, Node, Python, Rust projects) across all 6 cloud backends. Document pass/fail/gap matrix. Save state |
+| P53-006 | **Save final state** |
+
+**Verification:** A gitlab.com project with standard CI pipelines (build, test, lint, deploy) including multi-stage `needs:` DAG dependencies runs all jobs through a self-hosted runner backed by Sockerless on Cloud Run. Pipelines pass identically to shared runners.
+
+---
+
+## Phase 54 — Docker API Hardening for Production
+
+**Goal:** Fix Docker API gaps and edge cases discovered during production validation (Phases 47-53). Real-world clients will inevitably exercise API paths that simulators and local tests miss.
+
+**State save:** Every task ends with: update `PLAN.md` (mark done), `STATUS.md`, `WHAT_WE_DID.md` (append), `MEMORY.md` (learnings), `_tasks/done/P54-NNN.md`.
+
+| Task | Description |
+|---|---|
+| P54-001 | **Docker build production paths.** Expand `POST /build` to support multi-stage builds, build args, `.dockerignore`, layer caching, and BuildKit-style output. Many marketplace actions, GitLab CI jobs, and TestContainers modules build images. Save state |
+| P54-002 | **Volume lifecycle.** Named volumes, volume mounts between containers (data sharing between Compose services, job and service containers), tmpfs mounts, bind mount permissions. Save state |
+| P54-003 | **Network fidelity.** Container-to-container DNS resolution, user-defined bridge networks, network aliases, exposed ports. Critical for Compose, TestContainers, and CI service containers. Save state |
+| P54-004 | **Container restart and retry.** Handle container restart policies, OOM kills, timeout-based cleanup. Cloud backends need graceful handling of cloud-side failures (ECS task failures, Lambda timeouts, etc.). Save state |
+| P54-005 | **Streaming fidelity.** `docker logs --follow`, `docker attach`, `docker exec` interactive mode, TTY allocation. Ensure output is never lost or reordered. Save state |
+| P54-006 | **Large file handling.** `docker cp` with large tarballs (artifacts, build contexts), image layers >1GB, long-running log streams. Test with realistic payloads. Save state |
+| P54-007 | **Concurrent operations.** Multiple containers running simultaneously (Compose stacks, parallel CI jobs, service containers + job container + helper containers). Backend must handle concurrent cloud API calls without races or deadlocks. Save state |
+| P54-008 | **Error propagation.** Cloud API errors (rate limits, quota exceeded, permission denied, transient failures) must be translated to meaningful Docker API error responses so clients can retry or fail gracefully. Save state |
+| P54-009 | **Save final state** |
+
+**Verification:** All production validation matrices from P49-004, P51-004, and P53-005 pass at 100%. No Docker API gaps remain for the tested client/workflow set.
+
+---
+
+## Phase 55 — Production Hardening and Operations
 
 **Goal:** Make Sockerless production-ready for continuous operation: monitoring, alerting, upgrade procedures, security, and documentation.
 
-**State save:** Every task ends with state save.
+**State save:** Every task ends with: update `PLAN.md` (mark done), `STATUS.md`, `WHAT_WE_DID.md` (append), `MEMORY.md` (learnings), `_tasks/done/P55-NNN.md`.
 
 | Task | Description |
 |---|---|
-| P51-001 | **Health checks and readiness probes.** Frontend and backend expose `/healthz` and `/readyz` endpoints. Cloud load balancers and systemd use these for routing and restart decisions. Save state |
-| P51-002 | **Metrics and monitoring.** Prometheus metrics: request latency, container lifecycle durations, cloud API call counts/errors, active containers, queue depth. Grafana dashboard template. Save state |
-| P51-003 | **Alerting.** Alert rules: cloud API error rate spike, container start latency degradation, orphaned resource accumulation, backend unreachable. Save state |
-| P51-004 | **Security audit.** Agent token authentication, frontend access control, secrets handling, network exposure review. Document the threat model and security boundaries. Save state |
-| P51-005 | **TLS everywhere.** Frontend ↔ backend, backend ↔ agent, all cloud API calls. Certificate management (Let's Encrypt or cloud-native cert managers). Save state |
-| P51-006 | **Upgrade procedures.** Zero-downtime backend upgrades (drain running jobs, switch, resume). Frontend is stateless so trivially replaceable. Document the upgrade runbook. Save state |
-| P51-007 | **Cost controls.** Per-container and per-runner resource limits. Automatic cleanup of idle cloud resources. Cost alerting thresholds. Save state |
-| P51-008 | **Operations guide.** Complete operations documentation: deployment, configuration, monitoring, troubleshooting, upgrade, backup/restore. Save state |
-| P51-009 | **Save final state** |
+| P55-001 | **Health checks and readiness probes.** Frontend and backend expose `/healthz` and `/readyz` endpoints. Cloud load balancers and systemd use these for routing and restart decisions. Save state |
+| P55-002 | **Metrics and monitoring.** Prometheus metrics: request latency, container lifecycle durations, cloud API call counts/errors, active containers, queue depth. Grafana dashboard template. Save state |
+| P55-003 | **Alerting.** Alert rules: cloud API error rate spike, container start latency degradation, orphaned resource accumulation, backend unreachable. Save state |
+| P55-004 | **Security audit.** Agent token authentication, frontend access control, secrets handling, network exposure review. Document the threat model and security boundaries. Save state |
+| P55-005 | **TLS everywhere.** Frontend ↔ backend, backend ↔ agent, all cloud API calls. Certificate management (Let's Encrypt or cloud-native cert managers). Save state |
+| P55-006 | **Upgrade procedures.** Zero-downtime backend upgrades (drain running jobs, switch, resume). Frontend is stateless so trivially replaceable. Document the upgrade runbook. Save state |
+| P55-007 | **Cost controls.** Per-container and per-runner resource limits. Automatic cleanup of idle cloud resources. Cost alerting thresholds. Save state |
+| P55-008 | **Operations guide.** Complete operations documentation: deployment, configuration, monitoring, troubleshooting, upgrade, backup/restore. Save state |
+| P55-009 | **Save final state** |
 
 **Verification:** Sockerless runs continuously for 7 days under mixed load (Docker Compose stacks, TestContainers suites, CI jobs). No leaked resources, no crashes, no silent failures. Monitoring dashboard shows all key metrics. Alert rules fire correctly on injected failures.
 

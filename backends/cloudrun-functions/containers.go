@@ -140,12 +140,21 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		serviceConfig.ServiceAccountEmail = s.config.ServiceAccount
 	}
 
+	// Build resource labels
+	tags := core.TagSet{
+		ContainerID: id,
+		Backend:     "gcf",
+		InstanceID:  s.Desc.InstanceID,
+		CreatedAt:   time.Now(),
+	}
+
 	// Create the Cloud Run Function
 	createReq := &functionspb.CreateFunctionRequest{
 		Parent:     parent,
 		FunctionId: funcName,
 		Function: &functionspb.Function{
 			Name: fullFunctionName,
+			Labels: tags.AsGCPLabels(),
 			BuildConfig: &functionspb.BuildConfig{
 				Runtime:    "docker",
 				EntryPoint: "",
@@ -173,6 +182,15 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 	if result.ServiceConfig != nil {
 		functionURL = result.ServiceConfig.Uri
 	}
+
+	s.Registry.Register(core.ResourceEntry{
+		ContainerID:  id,
+		Backend:      "gcf",
+		ResourceType: "function",
+		ResourceID:   fullFunctionName,
+		InstanceID:   s.Desc.InstanceID,
+		CreatedAt:    time.Now(),
+	})
 
 	s.Store.Containers.Put(id, container)
 	s.Store.ContainerNames.Put(name, id)
@@ -361,6 +379,7 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			_ = op.Wait(s.ctx()) // best-effort wait
 		}
+		s.Registry.MarkCleanedUp(fullName)
 	}
 
 	s.Store.Containers.Delete(id)

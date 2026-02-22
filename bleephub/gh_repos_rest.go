@@ -35,7 +35,7 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Name == "" {
-		writeGHError(w, http.StatusUnprocessableEntity, "Repository creation failed.")
+		writeGHValidationError(w, "Repository", "name", "missing_field")
 		return
 	}
 
@@ -149,7 +149,7 @@ func (s *Server) handleListAuthUserRepos(w http.ResponseWriter, r *http.Request)
 	for _, repo := range repos {
 		result = append(result, repoToJSON(repo, base))
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
 
 func (s *Server) handleListUserRepos(w http.ResponseWriter, r *http.Request) {
@@ -160,7 +160,7 @@ func (s *Server) handleListUserRepos(w http.ResponseWriter, r *http.Request) {
 	for _, repo := range repos {
 		result = append(result, repoToJSON(repo, base))
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
 
 // baseURL computes the external base URL from the request.
@@ -203,8 +203,13 @@ func repoToJSON(repo *Repo, baseURL string) map[string]interface{} {
 		"archived":         repo.Archived,
 		"stargazers_count": repo.StargazersCount,
 		"topics":           topics,
-		"created_at":       repo.CreatedAt.Format(time.RFC3339),
-		"updated_at":       repo.UpdatedAt.Format(time.RFC3339),
-		"pushed_at":        repo.PushedAt.Format(time.RFC3339),
+		"permissions": map[string]bool{
+			"admin": true,
+			"push":  true,
+			"pull":  true,
+		},
+		"created_at": repo.CreatedAt.Format(time.RFC3339),
+		"updated_at": repo.UpdatedAt.Format(time.RFC3339),
+		"pushed_at":  repo.PushedAt.Format(time.RFC3339),
 	}
 }

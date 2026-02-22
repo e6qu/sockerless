@@ -1,0 +1,137 @@
+{
+  "Repository": {
+    "required": ["id", "node_id", "name", "full_name", "owner", "private", "html_url", "url", "clone_url", "default_branch", "created_at", "updated_at"],
+    "properties": {
+      "id": {"type": "number"},
+      "node_id": {"type": "string"},
+      "name": {"type": "string"},
+      "full_name": {"type": "string"},
+      "owner": {"type": "object"},
+      "private": {"type": "boolean"},
+      "html_url": {"type": "string"},
+      "description": {"type": "string"},
+      "fork": {"type": "boolean"},
+      "url": {"type": "string"},
+      "clone_url": {"type": "string"},
+      "ssh_url": {"type": "string"},
+      "default_branch": {"type": "string"},
+      "visibility": {"type": "string"},
+      "archived": {"type": "boolean"},
+      "topics": {"type": "array"},
+      "permissions": {"type": "object"},
+      "created_at": {"type": "string", "format": "date-time"},
+      "updated_at": {"type": "string", "format": "date-time"},
+      "pushed_at": {"type": "string", "format": "date-time"}
+    }
+  },
+  "Issue": {
+    "required": ["id", "node_id", "url", "html_url", "number", "title", "state", "user", "labels", "created_at", "updated_at"],
+    "properties": {
+      "id": {"type": "number"},
+      "node_id": {"type": "string"},
+      "url": {"type": "string"},
+      "html_url": {"type": "string"},
+      "repository_url": {"type": "string"},
+      "number": {"type": "number"},
+      "title": {"type": "string"},
+      "body": {"type": "string"},
+      "state": {"type": "string"},
+      "user": {"type": "object"},
+      "labels": {"type": "array"},
+      "assignees": {"type": "array"},
+      "locked": {"type": "boolean"},
+      "comments": {"type": "number"},
+      "created_at": {"type": "string", "format": "date-time"},
+      "updated_at": {"type": "string", "format": "date-time"}
+    }
+  },
+  "PullRequest": {
+    "required": ["id", "node_id", "url", "html_url", "number", "title", "state", "user", "head", "base", "created_at", "updated_at"],
+    "properties": {
+      "id": {"type": "number"},
+      "node_id": {"type": "string"},
+      "url": {"type": "string"},
+      "html_url": {"type": "string"},
+      "diff_url": {"type": "string"},
+      "patch_url": {"type": "string"},
+      "number": {"type": "number"},
+      "title": {"type": "string"},
+      "body": {"type": "string"},
+      "state": {"type": "string"},
+      "draft": {"type": "boolean"},
+      "user": {"type": "object"},
+      "head": {"type": "object"},
+      "base": {"type": "object"},
+      "labels": {"type": "array"},
+      "merged": {"type": "boolean"},
+      "mergeable": {"type": "boolean"},
+      "created_at": {"type": "string", "format": "date-time"},
+      "updated_at": {"type": "string", "format": "date-time"}
+    }
+  },
+  "Label": {
+    "required": ["id", "node_id", "url", "name", "color"],
+    "properties": {
+      "id": {"type": "number"},
+      "node_id": {"type": "string"},
+      "url": {"type": "string"},
+      "name": {"type": "string"},
+      "description": {"type": "string"},
+      "color": {"type": "string"},
+      "default": {"type": "boolean"}
+    }
+  },
+  "Milestone": {
+    "required": ["id", "node_id", "url", "number", "title", "state", "created_at", "updated_at"],
+    "properties": {
+      "id": {"type": "number"},
+      "node_id": {"type": "string"},
+      "url": {"type": "string"},
+      "html_url": {"type": "string"},
+      "number": {"type": "number"},
+      "title": {"type": "string"},
+      "description": {"type": "string"},
+      "state": {"type": "string"},
+      "created_at": {"type": "string", "format": "date-time"},
+      "updated_at": {"type": "string", "format": "date-time"}
+    }
+  },
+  "User": {
+    "required": ["login", "id", "node_id", "url", "type"],
+    "properties": {
+      "login": {"type": "string"},
+      "id": {"type": "number"},
+      "node_id": {"type": "string"},
+      "avatar_url": {"type": "string"},
+      "url": {"type": "string"},
+      "html_url": {"type": "string"},
+      "type": {"type": "string"},
+      "site_admin": {"type": "boolean"},
+      "created_at": {"type": "string", "format": "date-time"},
+      "updated_at": {"type": "string", "format": "date-time"}
+    }
+  },
+  "Organization": {
+    "required": ["login", "id", "node_id", "url", "type"],
+    "properties": {
+      "login": {"type": "string"},
+      "id": {"type": "number"},
+      "node_id": {"type": "string"},
+      "url": {"type": "string"},
+      "repos_url": {"type": "string"},
+      "description": {"type": "string"},
+      "name": {"type": "string"},
+      "type": {"type": "string"},
+      "html_url": {"type": "string"},
+      "created_at": {"type": "string", "format": "date-time"},
+      "updated_at": {"type": "string", "format": "date-time"}
+    }
+  },
+  "Error": {
+    "required": ["message", "documentation_url"],
+    "properties": {
+      "message": {"type": "string"},
+      "documentation_url": {"type": "string"}
+    }
+  }
+}

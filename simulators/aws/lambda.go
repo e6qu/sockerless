@@ -27,6 +27,7 @@ type LambdaFunction struct {
 	MemorySize   int                    `json:"MemorySize"`
 	Timeout      int                    `json:"Timeout"`
 	Environment  *LambdaEnvironment     `json:"Environment,omitempty"`
+	Tags         map[string]string      `json:"Tags,omitempty"`
 	State        string                 `json:"State"`
 	LastModified string                 `json:"LastModified"`
 	RevisionId   string                 `json:"RevisionId"`
@@ -76,6 +77,8 @@ func registerLambda(srv *sim.Server) {
 	mux.HandleFunc("POST /2015-03-31/functions/{name}/invocations", handleLambdaInvoke)
 	mux.HandleFunc("GET /2015-03-31/functions", handleLambdaListFunctions)
 	mux.HandleFunc("GET /2015-03-31/functions/", handleLambdaListFunctions)
+	mux.HandleFunc("GET /2017-03-31/tags/{arn...}", handleLambdaListTags)
+	mux.HandleFunc("POST /2017-03-31/tags/{arn...}", handleLambdaTagResource)
 }
 
 func handleLambdaCreateFunction(w http.ResponseWriter, r *http.Request) {
@@ -89,6 +92,7 @@ func handleLambdaCreateFunction(w http.ResponseWriter, r *http.Request) {
 		MemorySize    int                 `json:"MemorySize"`
 		Timeout       int                 `json:"Timeout"`
 		Environment   *LambdaEnvironment  `json:"Environment"`
+		Tags          map[string]string   `json:"Tags"`
 		PackageType   string              `json:"PackageType"`
 		Architectures []string            `json:"Architectures"`
 		ImageConfig   *LambdaImageConfig  `json:"ImageConfig"`
@@ -137,6 +141,7 @@ func handleLambdaCreateFunction(w http.ResponseWriter, r *http.Request) {
 		MemorySize:    req.MemorySize,
 		Timeout:       req.Timeout,
 		Environment:   req.Environment,
+		Tags:          req.Tags,
 		State:         "Active",
 		LastModified:  time.Now().UTC().Format(time.RFC3339),
 		RevisionId:    generateUUID(),
@@ -351,4 +356,68 @@ func stopAgentProcess(procs *sync.Map, key string) {
 		_ = cmd.Process.Kill()
 		log.Printf("[lambda] stopped agent subprocess for %s", key)
 	}
+}
+
+func handleLambdaListTags(w http.ResponseWriter, r *http.Request) {
+	arn := r.PathValue("arn")
+	// Extract function name from ARN
+	name := arn
+	if strings.Contains(arn, ":function:") {
+		parts := strings.SplitN(arn, ":function:", 2)
+		if len(parts) == 2 {
+			name = parts[1]
+		}
+	}
+
+	fn, ok := lambdaFunctions.Get(name)
+	if !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
+			"Function not found: %s", lambdaArn(name))
+		return
+	}
+
+	tags := fn.Tags
+	if tags == nil {
+		tags = map[string]string{}
+	}
+
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"Tags": tags,
+	})
+}
+
+func handleLambdaTagResource(w http.ResponseWriter, r *http.Request) {
+	arn := r.PathValue("arn")
+	name := arn
+	if strings.Contains(arn, ":function:") {
+		parts := strings.SplitN(arn, ":function:", 2)
+		if len(parts) == 2 {
+			name = parts[1]
+		}
+	}
+
+	var req struct {
+		Tags map[string]string `json:"Tags"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidParameterValueException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	found := lambdaFunctions.Update(name, func(fn *LambdaFunction) {
+		if fn.Tags == nil {
+			fn.Tags = make(map[string]string)
+		}
+		for k, v := range req.Tags {
+			fn.Tags[k] = v
+		}
+	})
+
+	if !found {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
+			"Function not found: %s", lambdaArn(name))
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

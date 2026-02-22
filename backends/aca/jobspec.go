@@ -3,6 +3,7 @@ package aca
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v2"
 	"github.com/sockerless/api"
@@ -62,8 +63,16 @@ func (s *Server) buildJobSpec(containerID string, container *api.Container, agen
 
 	triggerType := armappcontainers.TriggerTypeManual
 
+	tags := core.TagSet{
+		ContainerID: containerID,
+		Backend:     "aca",
+		InstanceID:  s.Desc.InstanceID,
+		CreatedAt:   time.Now(),
+	}
+
 	return armappcontainers.Job{
 		Location: ptr(s.config.Location),
+		Tags:     tags.AsAzurePtrMap(),
 		Properties: &armappcontainers.JobProperties{
 			EnvironmentID: ptr(environmentID),
 			Configuration: &armappcontainers.JobConfiguration{
@@ -89,10 +98,6 @@ func (s *Server) buildJobSpec(containerID string, container *api.Container, agen
 					},
 				},
 			},
-		},
-		Tags: map[string]*string{
-			"sockerless-container-id": ptr(containerID[:12]),
-			"managed-by":             ptr("sockerless"),
 		},
 	}
 }

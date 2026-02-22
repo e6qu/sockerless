@@ -155,9 +155,18 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		siteConfig.AppCommandLine = ptr(startupCommand)
 	}
 
+	// Build resource tags
+	tags := core.TagSet{
+		ContainerID: id,
+		Backend:     "azf",
+		InstanceID:  s.Desc.InstanceID,
+		CreatedAt:   time.Now(),
+	}
+
 	site := armappservice.Site{
 		Location: ptr(s.config.Location),
 		Kind:     ptr("functionapp,linux,container"),
+		Tags:     tags.AsAzurePtrMap(),
 		Properties: &armappservice.SiteProperties{
 			SiteConfig: siteConfig,
 		},
@@ -186,6 +195,15 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 	if result.ID != nil {
 		resourceID = *result.ID
 	}
+
+	s.Registry.Register(core.ResourceEntry{
+		ContainerID:  id,
+		Backend:      "azf",
+		ResourceType: "site",
+		ResourceID:   resourceID,
+		InstanceID:   s.Desc.InstanceID,
+		CreatedAt:    time.Now(),
+	})
 
 	functionURL := ""
 	if result.Properties != nil && result.Properties.DefaultHostName != nil {
@@ -381,6 +399,10 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			s.Logger.Debug().Err(err).Str("functionApp", azfState.FunctionAppName).Msg("failed to delete Function App")
 		}
+	}
+
+	if azfState.ResourceID != "" {
+		s.Registry.MarkCleanedUp(azfState.ResourceID)
 	}
 
 	s.Store.Containers.Delete(id)

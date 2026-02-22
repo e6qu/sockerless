@@ -112,6 +112,14 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Build resource tags
+	tags := core.TagSet{
+		ContainerID: id,
+		Backend:     "lambda",
+		InstanceID:  s.Desc.InstanceID,
+		CreatedAt:   time.Now(),
+	}
+
 	// Create Lambda function
 	createInput := &awslambda.CreateFunctionInput{
 		FunctionName: aws.String(funcName),
@@ -122,6 +130,7 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		},
 		MemorySize: aws.Int32(int32(s.config.MemorySize)),
 		Timeout:    aws.Int32(int32(s.config.Timeout)),
+		Tags:       tags.AsMap(),
 	}
 
 	if len(envVars) > 0 {
@@ -186,11 +195,22 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	functionARN := aws.ToString(result.FunctionArn)
+
+	s.Registry.Register(core.ResourceEntry{
+		ContainerID:  id,
+		Backend:      "lambda",
+		ResourceType: "function",
+		ResourceID:   functionARN,
+		InstanceID:   s.Desc.InstanceID,
+		CreatedAt:    time.Now(),
+	})
+
 	s.Store.Containers.Put(id, container)
 	s.Store.ContainerNames.Put(name, id)
 	s.Lambda.Put(id, LambdaState{
 		FunctionName: funcName,
-		FunctionARN:  aws.ToString(result.FunctionArn),
+		FunctionARN:  functionARN,
 		AgentToken:   agentToken,
 	})
 
@@ -362,6 +382,10 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 		_, _ = s.aws.Lambda.DeleteFunction(s.ctx(), &awslambda.DeleteFunctionInput{
 			FunctionName: aws.String(lambdaState.FunctionName),
 		})
+	}
+
+	if lambdaState.FunctionARN != "" {
+		s.Registry.MarkCleanedUp(lambdaState.FunctionARN)
 	}
 
 	s.Store.Containers.Delete(id)

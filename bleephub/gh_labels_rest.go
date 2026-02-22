@@ -64,13 +64,13 @@ func (s *Server) handleCreateLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Name == "" {
-		writeGHError(w, http.StatusUnprocessableEntity, "Validation Failed")
+		writeGHValidationError(w, "Label", "name", "missing_field")
 		return
 	}
 
 	label := s.store.CreateLabel(repo.ID, req.Name, req.Description, req.Color)
 	if label == nil {
-		writeGHError(w, http.StatusUnprocessableEntity, "Validation Failed")
+		writeGHValidationError(w, "Label", "name", "already_exists")
 		return
 	}
 
@@ -92,7 +92,7 @@ func (s *Server) handleListLabels(w http.ResponseWriter, r *http.Request) {
 	for _, l := range labels {
 		result = append(result, issueLabelToJSON(l, base, repo.FullName))
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
 
 func (s *Server) handleGetLabel(w http.ResponseWriter, r *http.Request) {
@@ -253,7 +253,7 @@ func (s *Server) handleListMilestones(w http.ResponseWriter, r *http.Request) {
 	for _, ms := range milestones {
 		result = append(result, milestoneToJSON(ms, base, repo.FullName))
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
 
 func (s *Server) handleGetMilestone(w http.ResponseWriter, r *http.Request) {

@@ -13,7 +13,11 @@ func (s *Server) registerJobRoutes() {
 	s.mux.HandleFunc("POST /api/v3/bleephub/submit", s.handleSubmitJob)
 	s.mux.HandleFunc("GET /api/v3/bleephub/jobs/{jobId}", s.handleGetJobStatus)
 
-	// ActionDownloadInfo — runner requests download URLs for actions
+	// Workflow YAML submission
+	s.mux.HandleFunc("POST /api/v3/bleephub/workflow", s.handleSubmitWorkflow)
+	s.mux.HandleFunc("GET /api/v3/bleephub/workflows/{workflowId}", s.handleGetWorkflowStatus)
+
+	// ActionDownloadInfo — runner requests download URLs for actions (handler in actions.go)
 	s.mux.HandleFunc("POST /_apis/v1/ActionDownloadInfo/{scopeId}/{hubName}/{planId}", s.handleActionDownloadInfo)
 
 	// Tasks endpoint (runner may request task definitions)
@@ -107,12 +111,168 @@ func (s *Server) handleGetJobStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleActionDownloadInfo(w http.ResponseWriter, r *http.Request) {
-	s.logger.Debug().Msg("action download info requested")
-	// Return empty actions — run: steps don't need action downloads
+// WorkflowSubmitRequest is the workflow YAML submission format.
+type WorkflowSubmitRequest struct {
+	Workflow string `json:"workflow"` // raw YAML
+	Image    string `json:"image"`    // default container image
+}
+
+func (s *Server) handleSubmitWorkflow(w http.ResponseWriter, r *http.Request) {
+	var req WorkflowSubmitRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if req.Workflow == "" {
+		http.Error(w, "workflow YAML required", http.StatusBadRequest)
+		return
+	}
+
+	wfDef, err := ParseWorkflow([]byte(req.Workflow))
+	if err != nil {
+		http.Error(w, "parse workflow: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Image == "" {
+		req.Image = "alpine:latest"
+	}
+
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	serverURL := scheme + "://" + r.Host
+
+	// Expand matrix strategies
+	expandedDef := expandMatrixJobs(wfDef)
+
+	// Store serverURL for re-dispatch after job completion
+	if expandedDef.Env == nil {
+		expandedDef.Env = make(map[string]string)
+	}
+	expandedDef.Env["__serverURL"] = serverURL
+	expandedDef.Env["__defaultImage"] = req.Image
+
+	workflow, err := s.submitWorkflow(serverURL, expandedDef, req.Image)
+	if err != nil {
+		http.Error(w, "submit: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	s.logger.Info().
+		Str("workflowId", workflow.ID).
+		Int("jobs", len(workflow.Jobs)).
+		Msg("workflow submitted")
+
+	// Build response with job info
+	jobs := make(map[string]interface{}, len(workflow.Jobs))
+	for key, wfJob := range workflow.Jobs {
+		jobs[key] = map[string]interface{}{
+			"jobId":  wfJob.JobID,
+			"status": wfJob.Status,
+			"name":   wfJob.DisplayName,
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"actions": map[string]interface{}{},
+		"workflowId": workflow.ID,
+		"jobs":       jobs,
+		"status":     workflow.Status,
 	})
+}
+
+func (s *Server) handleGetWorkflowStatus(w http.ResponseWriter, r *http.Request) {
+	wfID := r.PathValue("workflowId")
+
+	s.store.mu.RLock()
+	wf, ok := s.store.Workflows[wfID]
+	s.store.mu.RUnlock()
+
+	if !ok {
+		http.Error(w, "workflow not found", http.StatusNotFound)
+		return
+	}
+
+	jobs := make(map[string]interface{}, len(wf.Jobs))
+	for key, wfJob := range wf.Jobs {
+		jobs[key] = map[string]interface{}{
+			"jobId":  wfJob.JobID,
+			"status": wfJob.Status,
+			"result": wfJob.Result,
+			"name":   wfJob.DisplayName,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"workflowId": wf.ID,
+		"status":     wf.Status,
+		"result":     wf.Result,
+		"jobs":       jobs,
+	})
+}
+
+// expandMatrixJobs expands matrix strategies in a WorkflowDef, creating
+// multiple job entries per matrix combination.
+func expandMatrixJobs(wf *WorkflowDef) *WorkflowDef {
+	expanded := &WorkflowDef{
+		Name: wf.Name,
+		Env:  wf.Env,
+		Jobs: make(map[string]*JobDef),
+	}
+
+	for key, jd := range wf.Jobs {
+		if jd.Strategy == nil || len(jd.Strategy.Matrix.Values) == 0 {
+			expanded.Jobs[key] = jd
+			continue
+		}
+
+		combos := ExpandMatrix(&jd.Strategy.Matrix)
+		if len(combos) == 0 {
+			expanded.Jobs[key] = jd
+			continue
+		}
+
+		for i, combo := range combos {
+			newKey := fmt.Sprintf("%s_%d", key, i)
+			newJD := *jd // shallow copy
+			newJD.Name = MatrixJobName(key, combo)
+			// Store matrix values in a way the workflow engine can use
+			// We'll use a convention: the expanded jobs get the same needs
+			// but their own key
+			expanded.Jobs[newKey] = &newJD
+
+			// We need to track matrix values — stash them so submitWorkflow can set them.
+			// Use a special env prefix since MatrixValues lives on WorkflowJob.
+			if newJD.Env == nil {
+				newJD.Env = make(map[string]string)
+			}
+			for mk, mv := range combo {
+				newJD.Env["__matrix_"+mk] = fmt.Sprintf("%v", mv)
+			}
+		}
+
+		// Update needs references: any job that depends on the original key
+		// should depend on ALL expanded keys
+		expandedKeys := make([]string, 0, len(combos))
+		for i := range combos {
+			expandedKeys = append(expandedKeys, fmt.Sprintf("%s_%d", key, i))
+		}
+		for _, otherJD := range expanded.Jobs {
+			newNeeds := make([]string, 0, len(otherJD.Needs))
+			for _, dep := range otherJD.Needs {
+				if dep == key {
+					newNeeds = append(newNeeds, expandedKeys...)
+				} else {
+					newNeeds = append(newNeeds, dep)
+				}
+			}
+			otherJD.Needs = newNeeds
+		}
+	}
+
+	return expanded
 }
 
 func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {

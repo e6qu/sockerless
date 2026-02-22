@@ -193,12 +193,20 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		assignPublicIP = ecstypes.AssignPublicIpEnabled
 	}
 
+	tags := core.TagSet{
+		ContainerID: id,
+		Backend:     "ecs",
+		InstanceID:  s.Desc.InstanceID,
+		CreatedAt:   time.Now(),
+	}
+
 	sgs := s.config.SecurityGroups
 	runResult, err := s.aws.ECS.RunTask(s.ctx(), &awsecs.RunTaskInput{
 		Cluster:        aws.String(s.config.Cluster),
 		TaskDefinition: aws.String(ecsState.TaskDefARN),
 		LaunchType:     ecstypes.LaunchTypeFargate,
 		Count:          aws.Int32(1),
+		Tags:           mapToECSTags(tags.AsMap()),
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
 				Subnets:        s.config.Subnets,
@@ -223,6 +231,15 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 
 	taskARN := aws.ToString(runResult.Tasks[0].TaskArn)
 	clusterARN := aws.ToString(runResult.Tasks[0].ClusterArn)
+
+	s.Registry.Register(core.ResourceEntry{
+		ContainerID:  id,
+		Backend:      "ecs",
+		ResourceType: "task",
+		ResourceID:   taskARN,
+		InstanceID:   s.Desc.InstanceID,
+		CreatedAt:    time.Now(),
+	})
 
 	s.ECS.Update(id, func(state *ECSState) {
 		state.TaskARN = taskARN
@@ -408,6 +425,10 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	if ecsState.TaskARN != "" {
+		s.Registry.MarkCleanedUp(ecsState.TaskARN)
+	}
+
 	s.Store.Containers.Delete(id)
 	s.Store.ContainerNames.Delete(c.Name)
 	s.ECS.Delete(id)
@@ -524,6 +545,18 @@ func (s *Server) waitForTaskStopped(taskARN string, exitCh chan struct{}) {
 			}
 		}
 	}
+}
+
+// mapToECSTags converts a map[string]string to ECS SDK tag format.
+func mapToECSTags(m map[string]string) []ecstypes.Tag {
+	tags := make([]ecstypes.Tag, 0, len(m))
+	for k, v := range m {
+		tags = append(tags, ecstypes.Tag{
+			Key:   aws.String(k),
+			Value: aws.String(v),
+		})
+	}
+	return tags
 }
 
 // pollTaskExit monitors an ECS task and updates container state when it stops.
