@@ -18,7 +18,7 @@ remote_state {
   }
 }
 
-# Override the provider to point at the AWS simulator (LocalStack)
+# Override the provider to point at the AWS simulator
 generate "provider_override" {
   path      = "provider_override.tf"
   if_exists = "overwrite_terragrunt"

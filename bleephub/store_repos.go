@@ -23,11 +23,13 @@ type Repo struct {
 	Private         bool      `json:"private"`
 	Fork            bool      `json:"fork"`
 	Archived        bool      `json:"archived"`
-	StargazersCount int       `json:"stargazers_count"`
-	Topics          []string  `json:"topics"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
-	PushedAt        time.Time `json:"pushed_at"`
+	StargazersCount     int       `json:"stargazers_count"`
+	Topics              []string  `json:"topics"`
+	NextIssueNumber     int       `json:"-"`
+	NextMilestoneNumber int       `json:"-"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+	PushedAt            time.Time `json:"pushed_at"`
 }
 
 // CreateRepo creates a new repository with an initialized bare git storage.
@@ -47,19 +49,21 @@ func (st *Store) CreateRepo(owner *User, name, description string, private bool)
 	}
 
 	repo := &Repo{
-		ID:            st.NextRepo,
-		NodeID:        fmt.Sprintf("R_kgDO%08d", st.NextRepo),
-		Name:          name,
-		FullName:      fullName,
-		Description:   description,
-		DefaultBranch: "main",
-		Visibility:    visibility,
-		Owner:         owner,
-		Private:       private,
-		Topics:        []string{},
-		CreatedAt:     now,
-		UpdatedAt:     now,
-		PushedAt:      now,
+		ID:                  st.NextRepo,
+		NodeID:              fmt.Sprintf("R_kgDO%08d", st.NextRepo),
+		Name:                name,
+		FullName:            fullName,
+		Description:         description,
+		DefaultBranch:       "main",
+		Visibility:          visibility,
+		Owner:               owner,
+		Private:             private,
+		Topics:              []string{},
+		NextIssueNumber:     1,
+		NextMilestoneNumber: 1,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+		PushedAt:            now,
 	}
 	st.NextRepo++
 

@@ -56,6 +56,11 @@ func (s *Server) handleGetRepo(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
+	user := ghUserFromContext(r.Context())
+	if repo.Private && !canReadRepo(s.store, user, repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
 	writeJSON(w, http.StatusOK, repoToJSON(repo, s.baseURL(r)))
 }
 
@@ -73,7 +78,7 @@ func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	if repo.Owner.ID != user.ID {
+	if !canAdminRepo(s.store, user, repo) {
 		writeGHError(w, http.StatusForbidden, "Must have admin rights to Repository.")
 		return
 	}
@@ -122,7 +127,7 @@ func (s *Server) handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	if repo.Owner.ID != user.ID {
+	if !canAdminRepo(s.store, user, repo) {
 		writeGHError(w, http.StatusForbidden, "Must have admin rights to Repository.")
 		return
 	}

@@ -2,14 +2,19 @@
 
 Sockerless implements the Docker API without Docker. Any Docker client (CLI, SDK, CI runner) can connect to Sockerless and run containers backed by cloud services (AWS ECS, Lambda, GCP Cloud Run, Cloud Functions, Azure Container Apps, Azure Functions) or an in-process WASM sandbox.
 
+The production goal: **replace Docker Engine with Sockerless and run containers on real cloud infrastructure.** Any program that talks to Docker — `docker run`, `docker compose`, CI runners (GitHub Actions, GitLab CI), test frameworks (TestContainers), or custom Docker SDK clients — works unchanged. Set `DOCKER_HOST` to point at Sockerless, and every container operation becomes a cloud API call to ECS, Lambda, Cloud Run, or whichever backend is configured.
+
 ## High-Level Overview
 
 ```mermaid
 graph TB
     subgraph Clients
-        CLI["Docker CLI"]
-        SDK["Docker SDK"]
-        ACT["GitHub Actions<br/>(act runner)"]
+        CLI["Docker CLI<br/><i>docker run / exec</i>"]
+        COMPOSE["Docker Compose"]
+        TC["TestContainers"]
+        SDK["Docker SDK<br/><i>Go / Python / Java / ...</i>"]
+        ACT["GitHub Actions<br/>(act)"]
+        GHR["GitHub Actions<br/>(official runner)"]
         GLR["GitLab Runner"]
     end
 
@@ -17,6 +22,7 @@ graph TB
         FE["Frontend<br/><i>Docker REST API v1.44</i>"]
         BE["Backend<br/><i>Internal API</i>"]
         AG["Agent<br/><i>Exec/Attach bridge</i>"]
+        BPH["bleephub<br/><i>Runner service API</i>"]
     end
 
     subgraph "Cloud / Local"
@@ -27,20 +33,25 @@ graph TB
         ACA["Azure Container Apps"]
         AZF["Azure Functions"]
         WASM["WASM Sandbox"]
+        DOCK["Docker Daemon"]
     end
 
-    CLI & SDK & ACT & GLR -->|"Docker API<br/>(HTTP/TCP)"| FE
+    CLI & COMPOSE & TC & SDK & ACT & GLR -->|"Docker API<br/>(HTTP/TCP)"| FE
+    GHR -->|"Docker API"| FE
+    GHR <-->|"Runner protocol<br/>(HTTP/JSON)"| BPH
     FE -->|"/internal/v1/*<br/>(HTTP/JSON)"| BE
     BE -->|"Cloud SDK"| ECS & LAM & CR & GCF & ACA & AZF
     BE -->|"In-process"| WASM
+    BE -->|"Docker SDK"| DOCK
     AG -.->|"WebSocket"| BE
 ```
 
-The system has three layers:
+The system has four layers:
 
 - **Frontend** — Stateless HTTP server implementing Docker REST API v1.44. Translates Docker protocol to internal API calls.
-- **Backend** — Stateful server managing container lifecycle. Seven implementations share a common core.
-- **Agent** — Binary injected into containers for exec/attach. Bridges commands between backend and the container's shell.
+- **Backend** — Stateful server managing container lifecycle. Eight implementations share a common core.
+- **Agent** — Binary injected into cloud containers for exec/attach. Bridges commands between backend and the container's shell.
+- **bleephub** — GitHub Actions runner service API. Dispatches jobs to the official `actions/runner`, which executes them through the Docker frontend.
 
 ---
 
@@ -71,7 +82,7 @@ For streaming operations (exec, attach, logs), the frontend hijacks the HTTP con
 
 ## Backends
 
-All seven backends embed a shared `core.BaseServer` that provides HTTP routing, in-memory state (`Store`), agent registry, and default handlers. Each backend overrides specific handlers via `RouteOverrides` to implement cloud-specific logic.
+All eight backends embed a shared `core.BaseServer` that provides HTTP routing, in-memory state (`Store`), agent registry, and default handlers. Each backend overrides specific handlers via `RouteOverrides` to implement cloud-specific logic.
 
 ```mermaid
 graph TB
@@ -98,17 +109,22 @@ graph TB
 
 ### Backend Matrix
 
-| Backend | Driver | Cloud Service | Agent Mode | Execution |
-|---------|--------|--------------|------------|-----------|
-| **memory** | memory | — | — | WASM sandbox (wazero) |
-| **ecs** | ecs | ECS/Fargate | Forward or Reverse | Real container |
-| **lambda** | lambda | Lambda | Reverse | Function invoke |
-| **cloudrun** | cloudrun | Cloud Run Jobs | Forward or Reverse | Job execution |
-| **gcf** | gcf | Cloud Run Functions | Reverse | Function invoke |
-| **aca** | aca | Container Apps Jobs | Forward or Reverse | Job execution |
-| **azf** | azf | Azure Functions | Reverse | Function invoke |
+| Backend | Cloud Service | Agent Mode | Execution |
+|---------|--------------|------------|-----------|
+| **memory** | — | — | WASM sandbox (wazero) |
+| **docker** | — | — | Docker daemon passthrough |
+| **ecs** | ECS/Fargate | Forward or Reverse | Real container |
+| **lambda** | Lambda | Reverse | Function invoke |
+| **cloudrun** | Cloud Run Jobs | Forward or Reverse | Job execution |
+| **gcf** | Cloud Run Functions | Reverse | Function invoke |
+| **aca** | Container Apps Jobs | Forward or Reverse | Job execution |
+| **azf** | Azure Functions | Reverse | Function invoke |
 
-Container backends (ECS, CloudRun, ACA) use **forward agent** in production (backend dials agent inside container) and **reverse agent** in simulator mode (agent dials back to backend). FaaS backends (Lambda, GCF, AZF) always use reverse agent.
+**Local backends** (memory, docker) need no agent — memory runs commands in a WASM sandbox, docker proxies to a real Docker daemon.
+
+**Container backends** (ECS, CloudRun, ACA) use **forward agent** in production (backend dials agent inside container) and **reverse agent** in simulator mode (agent dials back to backend).
+
+**FaaS backends** (Lambda, GCF, AZF) always use **reverse agent** — inbound connections aren't possible, so the agent inside the function dials out to the backend via a callback URL.
 
 ---
 
@@ -237,6 +253,149 @@ The agent runs the original command as its main process and handles exec/attach 
 
 ---
 
+## Production Use Cases
+
+Sockerless is a drop-in replacement for Docker Engine. Anything that talks to the Docker REST API works — CI runners, Docker Compose, test frameworks, custom SDK clients. All three standard `DOCKER_HOST` connection modes are supported:
+
+| Mode | `DOCKER_HOST` | How it works |
+|------|---------------|--------------|
+| Local TCP | `tcp://localhost:2375` | Client connects directly to frontend on same host |
+| Remote TCP | `tcp://remote-host:2375` | Client connects to frontend on a different machine |
+| SSH tunnel | `ssh://user@remote-host` | Docker CLI opens SSH tunnel to remote unix socket |
+
+For SSH mode, the Sockerless frontend must listen on a unix socket (e.g., `/var/run/docker.sock`). The Docker CLI's built-in SSH transport tunnels to the socket over SSH — no extra configuration needed.
+
+### Docker CLI and Compose
+
+```bash
+# Local — frontend on same machine
+export DOCKER_HOST=tcp://localhost:2375
+docker run --rm -p 8080:8080 my-app:latest
+
+# Remote — frontend on a cloud VM
+export DOCKER_HOST=tcp://sockerless.example.com:2375
+docker run --rm alpine echo "running on remote cloud"
+
+# SSH — tunnel to remote frontend's unix socket
+export DOCKER_HOST=ssh://user@sockerless.example.com
+docker run --rm alpine echo "running via SSH tunnel"
+
+# Compose stack — each service becomes a cloud workload
+docker compose up -d
+docker compose logs -f
+docker compose down
+```
+
+### TestContainers and Docker SDK Clients
+
+Any library that uses the Docker HTTP REST API works without modification:
+
+- **[TestContainers](https://testcontainers.com/)** (Java, Go, Python, .NET, Node, Rust) — integration tests that spin up databases, message queues, and other dependencies as containers
+- **Docker SDK** (Go `docker/docker`, Python `docker-py`, Java `docker-java`, etc.) — custom orchestration code
+- **Drone CI, Woodpecker CI, Buildkite** — any CI system that talks to Docker
+
+All of these just need `DOCKER_HOST` pointed at the Sockerless frontend. Containers run on whichever cloud backend is configured.
+
+### CI Runners — GitHub Actions & GitLab CI
+
+The production deployment model for CI is the same: a **self-hosted runner** registers with the upstream CI service (github.com or gitlab.com), receives jobs, and uses Sockerless as its Docker daemon. The runner doesn't know or care that Docker is absent — it issues standard Docker API calls, and Sockerless routes them to the configured cloud backend.
+
+### GitHub Actions (production)
+
+```mermaid
+sequenceDiagram
+    participant GH as github.com
+    participant R as actions/runner<br/>(self-hosted)
+    participant FE as Sockerless Frontend
+    participant BE as Sockerless Backend
+    participant CL as Cloud (ECS / Lambda / ...)
+
+    Note over GH,R: Runner registered as self-hosted runner
+    GH-->>R: Job dispatched (workflow trigger)
+    R->>FE: docker create (job image)
+    FE->>BE: POST /internal/v1/containers
+    BE->>CL: RunTask / CreateFunction / ...
+    R->>FE: docker start
+    R->>FE: docker exec (each step)
+    R->>FE: docker stop / rm
+    R-->>GH: Job result + logs
+```
+
+The runner is configured with `DOCKER_HOST` pointing at the Sockerless frontend. GitHub dispatches jobs to it like any self-hosted runner. No modifications to the runner binary, no custom actions — standard GitHub Actions workflows work unchanged.
+
+### GitLab CI (production)
+
+```mermaid
+sequenceDiagram
+    participant GL as gitlab.com
+    participant R as gitlab-runner<br/>(docker executor)
+    participant FE as Sockerless Frontend
+    participant BE as Sockerless Backend
+    participant CL as Cloud (ECS / CloudRun / ...)
+
+    Note over GL,R: Runner registered with gitlab.com
+    GL-->>R: Job dispatched (pipeline trigger)
+    R->>FE: docker create (job image)
+    R->>FE: docker create (helper image)
+    R->>FE: docker start
+    R->>FE: docker exec (script steps)
+    R->>FE: docker cp (artifacts)
+    R->>FE: docker stop / rm
+    R-->>GL: Job result + artifacts
+```
+
+GitLab Runner's docker executor talks directly to the Docker API. By setting `host` in the runner's `config.toml` to the Sockerless frontend address (`tcp://localhost:2375`), all container operations route through Sockerless. No runner modifications needed.
+
+### bleephub — Local GitHub API Simulator
+
+For **local testing** without github.com, `bleephub/` (`bleephub/`) implements the internal Azure DevOps-derived runner service API that the official `actions/runner` speaks. This lets us run the real runner binary in a fully offline test harness.
+
+```mermaid
+sequenceDiagram
+    participant J as Test Harness
+    participant BPH as bleephub
+    participant R as actions/runner
+    participant FE as Sockerless Frontend
+    participant BE as Sockerless Backend
+
+    Note over BPH,R: 1. Runner registers with bleephub
+    R->>BPH: POST /api/v3/actions/runner-registration
+    R->>BPH: GET /_apis/connectionData
+    R->>BPH: POST /_apis/v1/Agent/{poolId}
+    R->>BPH: POST /_apis/v1/AgentSession/{poolId}
+
+    Note over BPH,R: 2. Runner long-polls for jobs
+    R->>BPH: GET /_apis/v1/Message/{poolId} (30s poll)
+
+    Note over J,BPH: 3. Test submits job
+    J->>BPH: POST /api/v3/bleephub/submit
+    BPH-->>R: Job message (via long-poll response)
+
+    Note over R,BE: 4. Runner executes via Docker API
+    R->>FE: docker create / start / exec
+    FE->>BE: /internal/v1/...
+
+    Note over BPH,R: 5. Runner reports completion
+    R->>BPH: PATCH /_apis/v1/Timeline (step results)
+    R->>BPH: DELETE /_apis/v1/AgentRequest?result=Succeeded
+```
+
+bleephub also implements enough of the GitHub REST/GraphQL API and Git smart HTTP protocol for `gh` CLI and `actions/checkout` to work locally.
+
+| Service Group | Purpose |
+|--------------|---------|
+| **Auth & discovery** | Runner registration, connection data (service GUIDs), JWT tokens |
+| **Agent management** | Agent pools, registration, labels, status |
+| **Broker** | Session creation, message long-poll (30s), job delivery via Go channels |
+| **Run service** | Job acquire/renew/complete lifecycle |
+| **Timeline & logs** | Step status tracking, log upload, web console output |
+| **GitHub API** | REST + GraphQL (repos, orgs, teams, users) for `gh` CLI and runner context |
+| **Git HTTP** | Smart HTTP protocol (`go-git`) for `actions/checkout` |
+
+**Current scope:** `run:` (script) steps only. `uses:` (marketplace actions), multi-job workflows, matrix strategies, artifacts, caching, and secrets are planned (see PLAN.md phases 42+).
+
+---
+
 ## Memory Backend + WASM Sandbox
 
 The memory backend runs containers entirely in-process using a WebAssembly sandbox. No cloud resources, no Docker daemon, no containers — just WASM.
@@ -315,7 +474,7 @@ Key points:
 
 ## Module Structure
 
-The project is organized as a Go workspace with 14+ modules:
+The project is organized as a Go workspace with 15+ modules:
 
 ```
 sockerless/
@@ -325,6 +484,7 @@ sockerless/
 ├── backends/
 │   ├── core/                     # Shared backend library
 │   ├── memory/                   # WASM sandbox backend
+│   ├── docker/                   # Docker daemon passthrough
 │   ├── ecs/                      # AWS ECS/Fargate
 │   ├── lambda/                   # AWS Lambda
 │   ├── cloudrun/                 # GCP Cloud Run Jobs
@@ -333,6 +493,7 @@ sockerless/
 │   └── azure-functions/          # Azure Functions
 ├── agent/                        # WebSocket agent binary
 ├── sandbox/                      # WASM runtime (wazero + busybox)
+├── bleephub/                     # GitHub Actions runner service API
 ├── simulators/
 │   ├── aws/                      # AWS API simulator
 │   ├── gcp/                      # GCP API simulator
@@ -355,9 +516,10 @@ graph TB
         ST["Sim-backend tests<br/><i>make sim-test-all</i>"]
     end
 
-    subgraph "E2E (12 workflows × 7 backends)"
-        GH["GitHub Actions runner<br/><i>make e2e-github-all</i>"]
-        GL["GitLab CI runner<br/><i>make e2e-gitlab-all</i>"]
+    subgraph "E2E (CI Runners)"
+        GH["act (GitHub Actions)<br/><i>make e2e-github-all</i>"]
+        GL["GitLab Runner<br/><i>make e2e-gitlab-all</i>"]
+        BPH["Official GitHub Runner<br/><i>make bleephub-test</i>"]
     end
 
     subgraph "Infrastructure"
@@ -369,8 +531,10 @@ graph TB
     ST -->|"runs Docker SDK<br/>against backend"| BE3["Backend"]
     GH -->|"act runs workflows<br/>against full stack"| STACK["Simulator + Backend + Frontend"]
     GL -->|"gitlab-runner runs<br/>pipelines against stack"| STACK
+    BPH -->|"runner ↔ bleephub<br/>↔ Sockerless"| BSTACK["bleephub + Backend + Frontend"]
 ```
 
-- **Sim-backend tests**: Start a simulator + backend pair, run 107 Docker SDK tests against them.
-- **E2E tests**: Start the full stack (simulator + backend + frontend), run real CI workflows (GitHub Actions via `act`, GitLab CI via `gitlab-runner`) that exercise container create/start/exec/stop/remove.
+- **Sim-backend tests**: Start a simulator + backend pair, run 108 Docker SDK tests against them.
+- **E2E tests (act + GitLab)**: Start the full stack (simulator + backend + frontend), run real CI workflows (GitHub Actions via `act`, GitLab CI via `gitlab-runner`) that exercise container create/start/exec/stop/remove.
+- **E2E tests (official runner)**: Start bleephub + Sockerless, run the official `actions/runner` through the full job lifecycle (`make bleephub-test`, Docker-only).
 - **Terraform integration tests**: Apply real Terraform modules against simulators to verify IaC compatibility.

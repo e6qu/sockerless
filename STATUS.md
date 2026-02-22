@@ -1,6 +1,6 @@
 # Sockerless — Current Status
 
-**Phase 37 complete. 332 tasks done across 37 phases. Next: Phase 38 (bleephub organizations + teams + RBAC).**
+**Phase 38 complete. 342 tasks done across 38 phases. Next: Phase 39 (bleephub issues + labels + milestones).**
 
 ## Test Results (Latest)
 
@@ -19,7 +19,7 @@
 | Cloud SDK tests | AWS 17, GCP 20, Azure 13 | `make docker-test` per cloud |
 | Cloud CLI tests | AWS 21, GCP 15, Azure 14 | `make docker-test` per cloud |
 | bleephub integration | 1 PASS (full runner lifecycle) | `make bleephub-test` |
-| bleephub unit tests | 33 PASS (7 runner + 12 GitHub API + 14 git repos) | `cd bleephub && go test -v ./...` |
+| bleephub unit tests | 51 PASS (7 runner + 12 GitHub API + 14 git repos + 18 orgs/teams) | `cd bleephub && go test -v ./...` |
 
 ### Upstream Act (Informational — not all expected to pass)
 
@@ -39,7 +39,7 @@ Remaining failures: missing `node` runtime (16), service containers/networking (
 
 The official `actions/runner` binary (C#) registers, receives jobs, executes them through Sockerless, and reports completion. Tested with a container workflow (`run:` steps only, no `uses:` actions). Runner communicates via Azure DevOps-derived internal API (5 services on GHES-style path prefixes). Test runs in Docker: bleephub + memory backend + Docker frontend + official runner binary.
 
-### bleephub GitHub API (Phases 36-37)
+### bleephub GitHub API (Phases 36-38)
 
 bleephub now also serves GitHub REST API and GraphQL endpoints, validated against the `gh` CLI. Features:
 - **User accounts** with token authentication (`Authorization: token {pat}`)
@@ -48,16 +48,20 @@ bleephub now also serves GitHub REST API and GraphQL endpoints, validated agains
 - **Git repositories** — in-memory bare repos via `go-git/go-git/v5` with smart HTTP protocol (`git clone`, `git push`)
 - **Repository CRUD** — REST + GraphQL create/read/update/delete, Relay cursor pagination
 - **Git objects** — commits, trees, blobs, README, branches, refs
+- **Organizations** — org CRUD, team management, membership, RBAC enforcement on repos
+- **Teams** — team CRUD, team membership, team-repo permissions (pull/push/admin)
+- **RBAC** — org admins, team permissions, public/private repo visibility
 - **Response headers**: `X-OAuth-Scopes`, `X-RateLimit-*`, `X-GitHub-Request-Id`, `X-GitHub-Api-Version`
 - **TLS support** via `BPH_TLS_CERT`/`BPH_TLS_KEY` env vars
 
 ## Architecture
 
-### Backends (7)
+### Backends (8)
 
 | Backend | Cloud | Execution | Agent |
 |---|---|---|---|
 | memory | none | WASM sandbox (in-process) | none |
+| docker | none | Docker daemon passthrough | none |
 | ecs | AWS | ECS tasks | forward |
 | lambda | AWS | Lambda invocation | reverse |
 | cloudrun | GCP | Cloud Run jobs | forward |

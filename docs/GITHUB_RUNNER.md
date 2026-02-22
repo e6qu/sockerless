@@ -84,7 +84,7 @@ make e2e-github-all
 To run against real cloud infrastructure instead of simulators:
 
 ```bash
-# Set cloud credentials + Sockerless env vars per DEPLOYMENT.md
+# Set cloud credentials + Sockerless env vars per each backend's README.md
 export AWS_ACCESS_KEY_ID=...
 export SOCKERLESS_ECS_CLUSTER=...
 # etc.
