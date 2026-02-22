@@ -1,0 +1,24 @@
+name: multi-job
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Build
+        run: |
+          echo "build-done" > /tmp/build-marker
+          test -f /tmp/build-marker
+          test "$(cat /tmp/build-marker)" = "build-done"
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+    container:
+      image: alpine:latest
+    steps:
+      - name: Test
+        run: |
+          echo "test-done" > /tmp/test-marker
+          test -f /tmp/test-marker
+          test "$(cat /tmp/test-marker)" = "test-done"

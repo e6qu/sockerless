@@ -1,0 +1,16 @@
+name: exit-codes
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Failing step
+        continue-on-error: true
+        run: exit 1
+      - name: Should still run
+        run: |
+          echo "post-failure-ok" > /tmp/exit-codes-marker
+          test -f /tmp/exit-codes-marker
+          test "$(cat /tmp/exit-codes-marker)" = "post-failure-ok"

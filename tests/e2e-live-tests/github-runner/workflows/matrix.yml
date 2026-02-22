@@ -1,0 +1,20 @@
+name: matrix
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        greeting: [hello, world]
+    container:
+      image: alpine:latest
+    steps:
+      - name: Print greeting
+        run: echo "Greeting is ${{ matrix.greeting }}"
+      - name: Verify exact value
+        env:
+          GREETING: ${{ matrix.greeting }}
+        run: |
+          test "$GREETING" = "hello" || test "$GREETING" = "world"
+          echo "$GREETING" > "/tmp/matrix-${GREETING}.txt"
+          test "$(cat /tmp/matrix-${GREETING}.txt)" = "$GREETING"

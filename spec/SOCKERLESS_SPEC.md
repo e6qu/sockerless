@@ -1,10 +1,10 @@
 # Sockerless Specification
 
-> **Version:** 0.1.0 (Draft)
+> **Version:** 0.2.0
 >
 > **Date:** February 2026
 >
-> **Status:** Initial specification — API surface and architecture
+> **Status:** Updated specification — reflects actual implementation as of Phase 35
 >
 > **Mission:** A Docker-compatible REST API daemon that executes containers on cloud serverless backends (AWS ECS, Google Cloud Run, Azure Container Apps, and others) instead of a local Docker Engine.
 
@@ -25,6 +25,11 @@
 11. [Network Emulation](#11-network-emulation)
 12. [Docker Compose Support](#12-docker-compose-support)
 13. [CI Runner Compatibility](#13-ci-runner-compatibility)
+    - [13.1 GitLab Runner Docker-Executor](#131-gitlab-runner-docker-executor)
+    - [13.2 GitHub Actions Runner](#132-github-actions-runner)
+    - [13.3 Gap Analysis and Solutions](#133-gap-analysis-and-solutions)
+    - [13.4 FaaS Backend Compatibility](#134-faas-backend-compatibility)
+    - [13.5 Backend Compatibility Matrix for CI Runners](#135-backend-compatibility-matrix-for-ci-runners)
 14. [Limitations and Exclusions](#14-limitations-and-exclusions)
 15. [Configuration](#15-configuration)
 16. [Implementation Phases](#16-implementation-phases)
@@ -83,17 +88,17 @@ Sockerless bridges this gap: **Docker API on top, cloud serverless capacity on t
 
 ### 2.2 Non-Goals
 
-| # | Non-Goal | Reason |
-|---|----------|--------|
-| N1 | `docker build` / `POST /build` | Out of scope. CI runners can use kaniko, buildx, or external build services. |
-| N2 | Swarm endpoints (`/swarm/*`, `/services/*`, `/tasks/*`, `/nodes/*`, `/secrets/*`, `/configs/*`) | Neither CI runner uses Swarm. No cloud backend maps to it. |
-| N3 | Plugin endpoints (`/plugins/*`) | Docker plugin system is not relevant to cloud backends. |
-| N4 | Session/BuildKit endpoint (`POST /session`) | Tied to docker build, which is out of scope. |
-| N5 | Distribution endpoint (`GET /distribution/{name}/json`) | Not used by target CI runners. |
-| N6 | Container filesystem archive (`GET/PUT/HEAD /containers/{id}/archive`) | Not used by target CI runners. |
-| N7 | Image push (`POST /images/{name}/push`) | Users push images to registries externally. |
-| N8 | Sub-second container startup | Cloud backends have inherent startup latency (5-60s). Accepted tradeoff. |
-| N9 | FaaS backends as primary targets | Lambda, Cloud Functions, Azure Functions have 15-min timeouts and no exec. Not viable for CI jobs. Deferred to future phases. |
+| # | Non-Goal | Reason | Status |
+|---|----------|--------|--------|
+| ~~N1~~ | ~~`docker build` / `POST /build`~~ | ~~Out of scope~~ | **Implemented** (Phase 34). Dockerfile parser supports FROM, COPY, ADD, ENV, CMD, ENTRYPOINT, WORKDIR, ARG, LABEL, EXPOSE, USER. RUN instructions are no-op (sufficient for CI Dockerfile patterns). Multi-stage builds supported. |
+| N2 | Swarm endpoints (`/swarm/*`, `/services/*`, `/tasks/*`, `/nodes/*`, `/secrets/*`, `/configs/*`) | Neither CI runner uses Swarm. No cloud backend maps to it. | Not implemented |
+| N3 | Plugin endpoints (`/plugins/*`) | Docker plugin system is not relevant to cloud backends. | Not implemented |
+| N4 | Session/BuildKit endpoint (`POST /session`) | BuildKit-specific. | Not implemented |
+| N5 | Distribution endpoint (`GET /distribution/{name}/json`) | Not used by target CI runners. | Not implemented |
+| ~~N6~~ | ~~Container filesystem archive (`GET/PUT/HEAD /containers/{id}/archive`)~~ | ~~Not used by target CI runners~~ | **Implemented** (Phase 25). Required for `docker cp` before `docker start` pattern used by gitlab-ci-local. Pre-start staging directories support archive extraction before container start. |
+| N7 | Image push (`POST /images/{name}/push`) | Users push images to registries externally. | Not implemented |
+| N8 | Sub-second container startup | Cloud backends have inherent startup latency (5-60s). Accepted tradeoff. | Accepted |
+| ~~N9~~ | ~~FaaS backends as primary targets~~ | ~~Deferred to future phases~~ | **Implemented** (Phase 19). Lambda, Cloud Functions, and Azure Functions backends are fully operational with reverse agent support for exec/attach. FaaS backends use reverse agent exclusively — the agent inside the function dials back to the backend via `SOCKERLESS_CALLBACK_URL`. Helper and cache containers auto-stop after 500ms. Not CI-runner compatible but useful for short-lived workloads. |
 
 ---
 
@@ -101,61 +106,82 @@ Sockerless bridges this gap: **Docker API on top, cloud serverless capacity on t
 
 ### 3.1 Supported Endpoints — Summary
 
-**31 endpoints** across 6 categories. This is the union of endpoints required by GitLab Runner docker-executor and GitHub Actions Runner.
+**50+ endpoints** across 8 categories. This started as the union of endpoints required by GitLab Runner docker-executor and GitHub Actions Runner, and has been extended to cover additional Docker API operations including build, archive, and lifecycle management.
 
 | Category | Count | Endpoints |
 |----------|-------|-----------|
-| System | 4 | `_ping` (GET, HEAD), `version`, `info` |
-| Images | 5 | pull, inspect, load, tag, auth |
-| Containers | 10 | create, start, inspect, list, logs, attach, wait, stop, kill, remove |
+| System | 6 | `_ping` (GET, HEAD), `version`, `info`, `events`, `system/df` |
+| Images | 9 | pull, inspect, load, tag, auth, build, list, remove, history, prune |
+| Containers | 17 | create, start, inspect, list, logs, attach, wait, stop, kill, remove, restart, rename, pause, unpause, top, stats, prune |
 | Exec | 3 | create, start, inspect |
-| Networks | 6 | create, list, inspect, disconnect, remove, prune |
-| Volumes | 4 | create, list, inspect, remove |
+| Networks | 7 | create, list, inspect, connect, disconnect, remove, prune |
+| Volumes | 5 | create, list, inspect, remove, prune |
+| Archive | 3 | put, head, get |
 
 ### 3.2 Endpoint Priority
 
-Each endpoint is classified by which CI runner requires it:
+Each endpoint is classified by which CI runner requires it. Endpoints marked "Impl" were not originally in scope but have been implemented.
 
-| Endpoint | GitLab Runner | GitHub Runner | Docker Compose | Priority |
-|----------|:---:|:---:|:---:|:---:|
-| **System** | | | | |
-| `GET /_ping` | Yes | — | Yes | P0 |
-| `HEAD /_ping` | Yes | — | Yes | P0 |
-| `GET /version` | Yes | Yes | Yes | P0 |
-| `GET /info` | Yes | — | Yes | P0 |
-| **Images** | | | | |
-| `POST /images/create` (pull) | Yes | Yes | Yes | P0 |
-| `GET /images/{name}/json` | Yes | — | Yes | P0 |
-| `POST /images/load` | Yes | — | — | P1 |
-| `POST /images/{name}/tag` | Yes | — | — | P1 |
-| `POST /auth` | — | Yes | Yes | P1 |
-| **Containers** | | | | |
-| `POST /containers/create` | Yes | Yes | Yes | P0 |
-| `POST /containers/{id}/start` | Yes | Yes | Yes | P0 |
-| `GET /containers/{id}/json` | Yes | Yes | Yes | P0 |
-| `GET /containers/json` | Yes | Yes | Yes | P0 |
-| `GET /containers/{id}/logs` | Yes | Yes | Yes | P0 |
-| `POST /containers/{id}/attach` | Yes | Yes | — | P0 |
-| `POST /containers/{id}/wait` | Yes | Yes | — | P0 |
-| `POST /containers/{id}/stop` | Yes | — | Yes | P0 |
-| `POST /containers/{id}/kill` | Yes | — | Yes | P0 |
-| `DELETE /containers/{id}` | Yes | Yes | Yes | P0 |
-| **Exec** | | | | |
-| `POST /containers/{id}/exec` | Yes | Yes | — | P0 |
-| `POST /exec/{id}/start` | Yes | Yes | — | P0 |
-| `GET /exec/{id}/json` | — | — | — | P2 |
-| **Networks** | | | | |
-| `POST /networks/create` | Yes | Yes | Yes | P0 |
-| `GET /networks` | Yes | — | Yes | P0 |
-| `GET /networks/{id}` | Yes | — | Yes | P0 |
-| `POST /networks/{id}/disconnect` | Yes | — | — | P1 |
-| `DELETE /networks/{id}` | Yes | Yes | Yes | P0 |
-| `POST /networks/prune` | — | Yes | — | P1 |
-| **Volumes** | | | | |
-| `POST /volumes/create` | Yes | — | Yes | P0 |
-| `GET /volumes` | Yes | — | Yes | P0 |
-| `GET /volumes/{name}` | Yes | — | Yes | P0 |
-| `DELETE /volumes/{name}` | Yes | — | Yes | P0 |
+| Endpoint | GitLab Runner | GitHub Runner | Docker Compose | Priority | Status |
+|----------|:---:|:---:|:---:|:---:|:---:|
+| **System** | | | | | |
+| `GET /_ping` | Yes | — | Yes | P0 | Done |
+| `HEAD /_ping` | Yes | — | Yes | P0 | Done |
+| `GET /version` | Yes | Yes | Yes | P0 | Done |
+| `GET /info` | Yes | — | Yes | P0 | Done |
+| `GET /events` | — | — | Yes | P2 | Done |
+| `GET /system/df` | — | — | — | P2 | Done |
+| **Images** | | | | | |
+| `POST /images/create` (pull) | Yes | Yes | Yes | P0 | Done |
+| `GET /images/{name}/json` | Yes | — | Yes | P0 | Done |
+| `POST /images/load` | Yes | — | — | P1 | Done |
+| `POST /images/{name}/tag` | Yes | — | — | P1 | Done |
+| `POST /auth` | — | Yes | Yes | P1 | Done |
+| `POST /build` | — | — | Yes | Impl | Done (Phase 34) |
+| `GET /images/json` | — | — | Yes | Impl | Done |
+| `DELETE /images/{name}` | — | — | — | Impl | Done |
+| `GET /images/{name}/history` | — | — | — | Impl | Done |
+| `POST /images/prune` | — | — | — | Impl | Done |
+| **Containers** | | | | | |
+| `POST /containers/create` | Yes | Yes | Yes | P0 | Done |
+| `POST /containers/{id}/start` | Yes | Yes | Yes | P0 | Done |
+| `GET /containers/{id}/json` | Yes | Yes | Yes | P0 | Done |
+| `GET /containers/json` | Yes | Yes | Yes | P0 | Done |
+| `GET /containers/{id}/logs` | Yes | Yes | Yes | P0 | Done |
+| `POST /containers/{id}/attach` | Yes | — | — | P0 | Done |
+| `POST /containers/{id}/wait` | Yes | Yes | — | P0 | Done |
+| `POST /containers/{id}/stop` | Yes | — | Yes | P0 | Done |
+| `POST /containers/{id}/kill` | Yes | — | Yes | P0 | Done |
+| `DELETE /containers/{id}` | Yes | Yes | Yes | P0 | Done |
+| `POST /containers/{id}/restart` | — | — | Yes | Impl | Done |
+| `POST /containers/{id}/rename` | — | — | — | Impl | Done |
+| `POST /containers/{id}/pause` | — | — | Yes | Impl | Done |
+| `POST /containers/{id}/unpause` | — | — | Yes | Impl | Done |
+| `GET /containers/{id}/top` | — | — | — | Impl | Done |
+| `GET /containers/{id}/stats` | — | — | — | Impl | Done |
+| `POST /containers/prune` | — | — | Yes | Impl | Done |
+| **Archive** | | | | | |
+| `PUT /containers/{id}/archive` | — | — | — | Impl | Done (Phase 25) |
+| `HEAD /containers/{id}/archive` | — | — | — | Impl | Done (Phase 25) |
+| `GET /containers/{id}/archive` | — | — | — | Impl | Done (Phase 25) |
+| **Exec** | | | | | |
+| `POST /containers/{id}/exec` | Yes | Yes | — | P0 | Done |
+| `POST /exec/{id}/start` | Yes | Yes | — | P0 | Done |
+| `GET /exec/{id}/json` | — | — | — | P2 | Done |
+| **Networks** | | | | | |
+| `POST /networks/create` | Yes | Yes | Yes | P0 | Done |
+| `GET /networks` | Yes | — | Yes | P0 | Done |
+| `GET /networks/{id}` | Yes | — | Yes | P0 | Done |
+| `POST /networks/{id}/connect` | — | — | Yes | Impl | Done |
+| `POST /networks/{id}/disconnect` | Yes | — | — | P1 | Done |
+| `DELETE /networks/{id}` | Yes | Yes | Yes | P0 | Done |
+| `POST /networks/prune` | — | Yes | — | P1 | Done |
+| **Volumes** | | | | | |
+| `POST /volumes/create` | Yes | — | Yes | P0 | Done |
+| `GET /volumes` | Yes | — | Yes | P0 | Done |
+| `GET /volumes/{name}` | Yes | — | Yes | P0 | Done |
+| `DELETE /volumes/{name}` | Yes | — | Yes | P0 | Done |
+| `POST /volumes/prune` | — | — | Yes | Impl | Done |
 
 ### 3.3 API Version
 
@@ -395,7 +421,7 @@ Silently-ignored fields should still be stored and returned in inspect responses
    - Network → cloud VPC / network configuration
    - Volume binds → cloud storage mounts
 2. Launch the cloud backend task
-3. Start the exec/attach agent inside the container (see [Exec and Attach Strategy](#10-exec-and-attach-strategy))
+3. Start the exec/attach agent inside the container (see [Agent Protocol](#8-agent-protocol))
 4. Update container state to `Running`
 
 Response: `204 No Content` (same as Docker)
@@ -409,7 +435,7 @@ Returns full container metadata. **CI runners rely on specific fields:**
 | `State.Status` ("created", "running", "exited") | Yes | — |
 | `State.Running` (bool) | Yes | — |
 | `State.ExitCode` (int) | Yes | — |
-| `State.Health.Status` ("healthy", "unhealthy", "starting") | Yes | Yes |
+| `State.Health.Status` ("healthy", "unhealthy", "starting") | — | Yes |
 | `Config.Env` (array) | — | Yes (PATH extraction) |
 | `Config.Healthcheck` (object) | — | Yes (presence check) |
 | `NetworkSettings.IPAddress` | Yes | — |
@@ -682,7 +708,7 @@ See [Section 8](#8-agent-protocol) for implementation strategy.
 }
 ```
 
-Sockerless: Creates a logical network in internal state. The actual cloud networking is configured when containers join this network. See [Section 9](#9-network-emulation).
+Sockerless: Creates a logical network in internal state. The actual cloud networking is configured when containers join this network. See [Network Emulation](#11-network-emulation).
 
 #### `GET /networks` — List Networks
 
@@ -755,7 +781,7 @@ Response: `{"NetworksDeleted": ["net1", "net2"]}`
 }
 ```
 
-Sockerless: Creates cloud storage (see [Section 8](#8-volume-emulation)) and records volume metadata.
+Sockerless: Creates cloud storage (see [Volume Emulation](#10-volume-emulation)) and records volume metadata.
 
 #### `GET /volumes` — List Volumes
 
@@ -894,8 +920,10 @@ sockerless/
 │       └── go.mod                     #   Deps: api/, OpenAPI-generated types
 │
 ├── backends/
+│   ├── core/                          # Module: shared backend library
+│   │   └── go.mod                     #   Deps: api/, sandbox/, gorilla/websocket
 │   ├── memory/                        # Module: in-memory backend
-│   │   └── go.mod                     #   Deps: api/ only
+│   │   └── go.mod                     #   Deps: api/, core/, sandbox/
 │   ├── docker/                        # Module: real Docker daemon backend
 │   │   └── go.mod                     #   Deps: api/, Docker client SDK
 │   ├── ecs/                           # Module: AWS ECS Fargate backend
@@ -915,28 +943,54 @@ sockerless/
 │   └── go.mod                         #   Deps: gorilla/websocket only
 │                                      #   NO api/ import — fully standalone
 │
+├── sandbox/                           # Module: WASM sandbox (busybox + shell)
+│   └── go.mod                         #   Deps: wazero, mvdan.cc/sh
+│
+├── simulators/
+│   ├── aws/                           # Module: AWS API simulator (Lambda, ECS, ECR, CloudWatch)
+│   ├── gcp/                           # Module: GCP API simulator (Cloud Run, GCF, Artifact Registry, Logging)
+│   └── azure/                         # Module: Azure API simulator (ACA, AZF, ACR, Monitor)
+│
+├── bleephub/                          # Module: GitHub Actions server (Azure DevOps-derived API)
+│   └── go.mod                         #   Implements the internal API that actions/runner expects
+│
 ├── tests/                             # Module: black-box API tests
 │   └── go.mod                         #   Deps: Docker client SDK (as test client)
+│
+├── terraform/
+│   └── modules/                       # Terraform modules for cloud infrastructure
+│       ├── ecs/
+│       ├── lambda/
+│       ├── cloudrun/
+│       ├── gcf/
+│       ├── aca/
+│       └── azf/
 │
 └── Makefile
 ```
 
-**12 Go modules, 10 binaries:**
+**18+ Go modules, 13+ binaries:**
 
 | # | Module | Binary Name | External Dependencies |
 |---|--------|------------|----------------------|
 | 1 | `api/` | *(library — no binary)* | None (stdlib only) |
 | 2 | `frontends/docker/` | `sockerless-docker-frontend` | `api/`, OpenAPI-generated types, `gorilla/websocket` |
-| 3 | `backends/memory/` | `sockerless-backend-memory` | `api/` only |
-| 4 | `backends/docker/` | `sockerless-backend-docker` | `api/`, `github.com/docker/docker` client SDK |
-| 5 | `backends/ecs/` | `sockerless-backend-ecs` | `api/`, AWS SDK v2 |
-| 6 | `backends/lambda/` | `sockerless-backend-lambda` | `api/`, AWS SDK v2 |
-| 7 | `backends/cloudrun/` | `sockerless-backend-cloudrun` | `api/`, GCP SDK |
-| 8 | `backends/cloudrun-functions/` | `sockerless-backend-cloudrun-functions` | `api/`, GCP SDK |
-| 9 | `backends/aca/` | `sockerless-backend-aca` | `api/`, Azure SDK |
-| 10 | `backends/azure-functions/` | `sockerless-backend-azure-functions` | `api/`, Azure SDK |
-| 11 | `agent/` | `sockerless-agent` | `gorilla/websocket` only |
-| 12 | `tests/` | *(test binary — `go test`)* | Docker client SDK |
+| 3 | `backends/core/` | *(library — no binary)* | `api/`, `sandbox/`, `agent/`, `gorilla/websocket` |
+| 4 | `backends/memory/` | `sockerless-backend-memory` | `api/`, `core/`, `sandbox/` |
+| 5 | `backends/docker/` | `sockerless-backend-docker` | `api/`, `github.com/docker/docker` client SDK |
+| 6 | `backends/ecs/` | `sockerless-backend-ecs` | `api/`, `core/`, AWS SDK v2 |
+| 7 | `backends/lambda/` | `sockerless-backend-lambda` | `api/`, `core/`, AWS SDK v2 |
+| 8 | `backends/cloudrun/` | `sockerless-backend-cloudrun` | `api/`, `core/`, GCP SDK |
+| 9 | `backends/cloudrun-functions/` | `sockerless-backend-gcf` | `api/`, `core/`, GCP SDK |
+| 10 | `backends/aca/` | `sockerless-backend-aca` | `api/`, `core/`, Azure SDK |
+| 11 | `backends/azure-functions/` | `sockerless-backend-azf` | `api/`, `core/`, Azure SDK |
+| 12 | `agent/` | `sockerless-agent` | `gorilla/websocket` only |
+| 13 | `sandbox/` | *(library — no binary)* | `wazero`, `mvdan.cc/sh`, `go-busybox` |
+| 14 | `simulators/aws/` | `sim-aws` | AWS SDK types (for request/response formats) |
+| 15 | `simulators/gcp/` | `sim-gcp` | GCP protobuf types |
+| 16 | `simulators/azure/` | `sim-azure` | Azure SDK types |
+| 17 | `bleephub/` | `bleephub` | JWT, HTTP server |
+| 18 | `tests/` | *(test binary — `go test`)* | Docker client SDK |
 
 ### 6.3 Frontend
 
@@ -959,7 +1013,7 @@ The frontend is a **stateless** HTTP server that:
 Each backend is a **stateful** daemon that:
 
 1. Listens on a Unix socket (or TCP) for internal API calls from the frontend
-2. Owns all persistent state (containers, networks, volumes, images) in a local database (SQLite)
+2. Owns all state (containers, networks, volumes, images) in thread-safe in-memory maps (`sync.Map` and `StateStore[T]`). State is ephemeral — lost on restart. No persistent database layer (SQLite was considered but not implemented).
 3. Translates internal API calls into cloud provider operations using the provider's native SDK and types
 4. Reports its capabilities so the frontend can return `501 Not Implemented` for unsupported operations
 
@@ -997,23 +1051,55 @@ The agent is a **standalone** binary that runs inside cloud containers. It is co
 
 | Property | Value |
 |----------|-------|
-| Role | WebSocket **server** inside the cloud container |
-| Port | Listens on `:9111` (configurable via env var) |
-| Connection direction | **Frontend connects to agent** (not the other way) |
-| Auth | Frontend presents a token when connecting; agent validates it |
+| Role | WebSocket server/client inside the cloud container |
+| Port | Listens on `:9111` (forward mode) or dials back to backend (reverse mode) |
+| Auth | Token-based (`SOCKERLESS_AGENT_TOKEN`) |
 | Lifetime | Runs for the container's lifetime as PID 1 (wrapping the user process) or as a sidecar |
 | Binary size | Static binary, ~5-10 MB |
 
+**Two agent modes:**
+
+| Mode | Direction | Used By |
+|---|---|---|
+| **Forward agent** | Backend connects TO agent at `{container_IP}:9111` | ECS, Cloud Run, ACA |
+| **Reverse agent** | Agent dials back to backend via `SOCKERLESS_CALLBACK_URL` | Lambda, GCF, Azure Functions |
+
+Forward agent is used when the backend can reach the container's network (VPC, VNet). Reverse agent is used for FaaS backends where the function cannot accept inbound connections.
+
 **When the agent is NOT needed:**
 - Docker backend: uses Docker's native exec/attach
-- Memory backend: direct in-process execution
-- Any backend where the native exec mechanism is sufficient
+- Memory backend: direct WASM sandbox execution
+- Synthetic mode: no real exec (returns mock output)
 
 **When the agent IS needed:**
-- Cloud backends where arbitrary command execution inside running containers is not natively supported (Cloud Run, Lambda, Azure Functions)
-- Cloud backends where native exec exists but does not support the full protocol (ECS — SSM exec is limited)
+- All cloud backends (ECS, Cloud Run, ACA, Lambda, GCF, Azure Functions)
 
-### 6.6 Dependency Flow
+### 6.6 Driver Architecture (Phase 30)
+
+The backend uses a **driver chain** pattern (chain of responsibility) for dispatching exec, filesystem, streaming, and process lifecycle operations. Each driver interface has a `Fallback` field that forms a chain:
+
+```
+Agent Driver → WASM Process Driver → Synthetic Driver
+```
+
+**4 Driver Interfaces:**
+
+| Interface | Methods | Purpose |
+|---|---|---|
+| `ExecDriver` | `Exec(containerID, execConfig) → (exitCode, error)` | Execute commands inside containers |
+| `FilesystemDriver` | `PutArchive`, `HeadArchive`, `GetArchive` | Container filesystem access (`docker cp`) |
+| `StreamDriver` | `Logs`, `Attach` | Log streaming and container attach |
+| `ProcessLifecycleDriver` | `Start`, `Stop`, `WaitCh` | Container process lifecycle |
+
+**`DriverSet`** on `BaseServer` holds the active driver chain. `InitDrivers()` constructs the chain based on available capabilities:
+
+- **Cloud backends**: Agent → Synthetic (no WASM)
+- **Memory backend**: Agent → WASM Process → Synthetic (calls `InitDrivers()` again after setting `ProcessFactory`)
+- **Docker backend**: Does not use drivers (direct Docker SDK passthrough)
+
+The chain pattern allows graceful fallback — if a container doesn't have an agent connected, the WASM driver handles exec; if no WASM process exists, synthetic mode returns mock output.
+
+### 6.7 Dependency Flow
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -1311,18 +1397,19 @@ These support long-running containers with logging. Best suited for CI runner wo
 
 | Docker Concept | ECS Mapping |
 |---|---|
-| Container create + start | `RunTask` (Fargate launch type) with task definition registered from container config |
+| Container create | `RegisterTaskDefinition` (stores config + registers task def) |
+| Container start | `RunTask` (Fargate launch type); polls until RUNNING; extracts agent address from ENI IP |
 | Container stop | `StopTask` |
 | Container kill | `StopTask` (ECS has no SIGKILL; tasks get 30s SIGTERM then forced stop) |
-| Container remove | Deregister task definition, clean up |
-| Container inspect | `DescribeTasks` |
+| Container remove | `StopTask` (if running) + `DeregisterTaskDefinition` |
+| Container inspect | Local state (not `DescribeTasks` — state stored at create/start time) |
+| Container list | Local state with label/status filtering |
 | Container logs | CloudWatch Logs (`GetLogEvents` / `FilterLogEvents`) |
-| Exec / Attach | Via sockerless-agent (agent address from task's ENI private IP) |
-| Image pull | ECS pulls from ECR / Docker Hub / any registry natively |
-| Network | VPC subnets, security groups, AWS Cloud Map for service discovery |
-| Volume | EFS mount, ephemeral storage (20-200 GB) |
-| Port mapping | Security group + task IP:port |
-| Health check | ECS native health check + agent health check reporting |
+| Exec / Attach | Via forward agent (agent address from task's ENI private IP on port 9111) |
+| Image pull | Records ref in state; ECS pulls from ECR / Docker Hub at `RunTask` time |
+| Network | In-memory virtual IPs; tasks share VPC subnets from infrastructure |
+| Volume | In-memory metadata; EFS mounts configured at infrastructure level |
+| Health check | Agent-executed health checks reported to backend |
 
 **Agent networking:** Fargate tasks get private IPs in the configured VPC. The frontend must be able to reach these IPs (same VPC, VPC peering, or transit gateway). Agent listens on port 9111 — security group must allow inbound from frontend.
 
@@ -1332,15 +1419,18 @@ These support long-running containers with logging. Best suited for CI runner wo
 
 | Docker Concept | Cloud Run Mapping |
 |---|---|
-| Container create + start | `CreateJob` + `RunJob` (or `CreateExecution`) |
-| Container stop | `CancelExecution` |
-| Container logs | Cloud Logging (`entries.list`) |
-| Exec / Attach | Via sockerless-agent (agent on Cloud Run's ingress port) |
-| Image pull | Cloud Run pulls from Artifact Registry / GCR / Docker Hub natively |
-| Network | VPC Connector or Direct VPC Egress |
-| Volume | Cloud Storage FUSE, GCS, in-memory (tmpfs) |
+| Container create | Registers in local store (deferred job creation) |
+| Container start | `CreateJob` + `RunJob` — job is created at start time to support clean restarts |
+| Container stop/kill | `CancelExecution` |
+| Container remove | `DeleteJob` |
+| Container inspect/list | Local state |
+| Container logs | Cloud Logging via Log Admin API |
+| Exec / Attach | Via forward agent (polls for RUNNING, extracts agent address) |
+| Image pull | Records ref; Cloud Run pulls from Artifact Registry/GCR/Docker Hub at job creation |
+| Network | In-memory virtual IPs; jobs share VPC from infrastructure |
+| Volume | In-memory metadata |
 
-**Agent networking:** Cloud Run containers serve traffic on the port defined by `PORT` env var. The agent can share this port (mux HTTP + WebSocket) or use Cloud Run's sidecar support. Frontend reaches agent via Cloud Run's internal URL.
+Also supports **reverse agent** via `SOCKERLESS_CALLBACK_URL`.
 
 **Startup latency:** 5-30 seconds.
 
@@ -1348,58 +1438,79 @@ These support long-running containers with logging. Best suited for CI runner wo
 
 | Docker Concept | ACA Mapping |
 |---|---|
-| Container create + start | `Create Job` + `Start Job Execution` |
-| Container stop | `Stop Job Execution` |
-| Container logs | Azure Monitor / Log Analytics |
-| Exec / Attach | Via sockerless-agent (agent on container port, VNet accessible) |
-| Image pull | ACA pulls from ACR / Docker Hub natively |
-| Network | VNet integration (managed environment) |
-| Volume | Azure Files, ephemeral storage |
+| Container create | Registers in local store |
+| Container start | `BeginCreateOrUpdate` (Job) + `BeginStart` (Execution) |
+| Container stop/kill | `BeginStopExecution` |
+| Container remove | `BeginDelete` (Job) |
+| Container inspect/list | Local state |
+| Container logs | Azure Monitor Log Analytics (`QueryWorkspace`) |
+| Exec / Attach | Via forward agent (polls for RUNNING, extracts agent address from VNet IP) |
+| Image pull | Records ref; ACA pulls from ACR/Docker Hub at job creation |
+| Network | In-memory virtual IPs; jobs share ACA Environment VNet from infrastructure |
+| Volume | In-memory metadata |
+
+Also supports **reverse agent** via `SOCKERLESS_CALLBACK_URL`.
 
 **Startup latency:** 10-60 seconds.
 
 ### 9.2 FaaS Backends
 
-FaaS backends have hard limitations but are included for short-lived container workloads. They report reduced capabilities.
+FaaS backends use **reverse agent** exclusively: the agent inside the function dials back to the backend via `SOCKERLESS_CALLBACK_URL` (WebSocket). This enables exec and attach for the duration of the function invocation. Helper and cache containers auto-stop after 500ms.
+
+FaaS backends route container variants differently:
+- `services` → `services-wasm` (WASM sandbox)
+- `custom-image` → `custom-image-wasm` (WASM sandbox)
+- `container-action` → `container-action-faas` (reverse agent lifecycle)
 
 #### AWS Lambda
 
 | Docker Concept | Lambda Mapping |
 |---|---|
-| Container create + start | Create/update Lambda function + invoke |
-| Container stop/kill | N/A (function exits on its own) |
-| Container logs | CloudWatch Logs |
-| Exec / Attach | **Not supported** (reported via capabilities) |
-| Image pull | Lambda pulls container images from ECR |
+| Container create | `CreateFunction` (container image from ECR) |
+| Container start | `Invoke` (async); agent inside function calls back |
+| Container stop | Disconnects reverse agent (function runs to completion) |
+| Container kill | Disconnects reverse agent |
+| Container remove | `DeleteFunction` |
+| Container logs | CloudWatch Logs `GetLogEvents` |
+| Exec / Attach | Via reverse agent (agent dials back to backend) |
+| Image pull | Records ref; Lambda pulls from ECR at function create |
 | Max timeout | 15 minutes |
 
-**Capabilities:** `exec: false, attach: false, logs: true, logs_follow: false, max_timeout_seconds: 900, agent_required: false`
+**Capabilities:** `exec: true` (via reverse agent), `attach: true` (via reverse agent), `logs: true, logs_follow: false, max_timeout_seconds: 900`
 
 #### Google Cloud Run Functions
 
 | Docker Concept | Cloud Run Functions Mapping |
 |---|---|
-| Container create + start | Deploy function (2nd gen, container-based) + invoke |
-| Container stop/kill | N/A |
-| Container logs | Cloud Logging |
-| Exec / Attach | **Not supported** |
-| Image pull | Functions pull from Artifact Registry |
+| Container create | `CreateFunction` (2nd gen, Docker runtime) — synchronous, 1-3 min |
+| Container start | HTTP POST invoke (async); agent inside function calls back |
+| Container stop | No-op (runs to completion) |
+| Container kill | Disconnects reverse agent |
+| Container remove | `DeleteFunction` |
+| Container logs | Cloud Logging via Log Admin API |
+| Exec / Attach | Via reverse agent |
+| Image pull | Records ref; Cloud Functions pulls from Artifact Registry |
 | Max timeout | 60 minutes (2nd gen) |
 
-**Capabilities:** `exec: false, attach: false, logs: true, logs_follow: false, max_timeout_seconds: 3600, agent_required: false`
+**Capabilities:** `exec: true` (via reverse agent), `attach: true` (via reverse agent), `logs: true, logs_follow: false, max_timeout_seconds: 3600`
 
 #### Azure Functions
 
 | Docker Concept | Azure Functions Mapping |
 |---|---|
-| Container create + start | Deploy function (custom container) + invoke |
-| Container stop/kill | N/A |
-| Container logs | Azure Monitor |
-| Exec / Attach | **Not supported** |
-| Image pull | Functions pull from ACR |
-| Max timeout | 5-10 minutes (consumption plan) |
+| Container create | Create App Service Plan + Function App (custom container) |
+| Container start | Start Function App; agent inside function calls back |
+| Container stop | Stop Function App |
+| Container kill | Disconnects reverse agent |
+| Container remove | Delete Function App + App Service Plan |
+| Container logs | Azure Monitor Log Analytics query |
+| Exec / Attach | Via reverse agent |
+| Image pull | Records ref; Functions pull from ACR at deploy |
+| Max timeout | Function timeout configurable (default 600s) |
 
-**Capabilities:** `exec: false, attach: false, logs: true, logs_follow: false, max_timeout_seconds: 600, agent_required: false`
+**Capabilities:** `exec: true` (via reverse agent), `attach: true` (via reverse agent), `logs: true, logs_follow: false, max_timeout_seconds: 600`
+
+> **Note:** While FaaS backends now support exec/attach via reverse agent, they are still **not compatible with CI runners** due to timeout limits, lack of persistent shared volumes, and the reverse agent lifecycle model. They are useful for short-lived, fire-and-forget container workloads.
 
 ### 9.3 Docker Backend (Reference / Testing)
 
@@ -1413,28 +1524,55 @@ FaaS backends have hard limitations but are included for short-lived container w
 
 The Docker backend is the **reference implementation** for testing. Running the test suite against the Docker backend validates that sockerless produces responses identical to a real Docker daemon.
 
-### 9.4 Memory Backend (Testing)
+### 9.4 Memory Backend
 
-In-memory backend for fast unit/integration tests. All state is in-memory, containers are simulated (no actual processes run). Exec returns mock output.
+In-memory backend with WASM sandbox for real command execution. Uses wazero
+v1.11.0 (pure Go WASM runtime) + go-busybox (41 BusyBox applets compiled to
+WASM via TinyGo) + mvdan.cc/sh v3.12.0 (shell interpreter). Per-container
+temp directories provide isolated virtual filesystems with Alpine-like rootfs.
 
-**Capabilities:** All true (simulated). `agent_required: false`
+**Execution model:** mvdan.cc/sh parses shell syntax natively in Go and dispatches
+individual commands to WASM busybox applets via wazero. WASI Preview 1 has no
+fork/exec, so the Go host orchestrates all process spawning. The `sandbox/`
+module is standalone — the memory backend enables it via `ProcessFactory`.
+
+**Supported features:**
+- Real shell execution: pipes, `&&`/`||`, redirects, variable expansion, subshells
+- 21+ Go-implemented builtins (pwd, cd, mkdir, cp, mv, rm, cat, echo, env, etc.)
+- Volumes via symlinks in rootDir + DirMounts for WASM
+- `docker cp` (archive PUT/HEAD/GET) with pre-start staging directories
+- Interactive shell via attach
+- PATH-aware command resolution
+- Exec with working directory and environment variables
+- `tail -f /dev/null` keepalive (blocks on context, no inotify in WASI)
+
+**Limitations:** No real network access from WASM sandbox. No fork/exec (WASI P1).
+GitLab Runner E2E requires `SOCKERLESS_SYNTHETIC=1` because gitlab-runner uses
+helper binaries (`gitlab-runner-helper`, `gitlab-runner-build`) that can't run in
+WASM. GitHub `act` runner works without synthetic mode.
+
+**Capabilities:** All true (real WASM execution). `agent_required: false`
 
 ### 9.5 Backend Comparison Matrix
 
 | Capability | Docker | Memory | ECS | Cloud Run | ACA | Lambda | CR Func | Az Func |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Long-running | Yes | Sim | Yes | Yes (24h) | Yes | No (15m) | No (60m) | No (10m) |
-| Exec | Yes | Sim | Yes* | Yes* | Yes* | **No** | **No** | **No** |
-| Attach | Yes | Sim | Yes* | Yes* | Yes* | **No** | **No** | **No** |
-| Log stream | Yes | Sim | Yes | Yes | Yes | Yes | Yes | Yes |
-| Log follow | Yes | Sim | Yes | Yes | Yes | No | No | No |
-| Volumes | Yes | Sim | Yes | Partial | Yes | No | No | No |
-| Networks | Yes | Sim | Yes | Yes | Yes | No | No | No |
-| Health checks | Yes | Sim | Yes | Yes | Yes | No | No | No |
-| Agent needed | No | No | Yes | Yes | Yes | No | No | No |
-| Startup latency | <1s | 0 | 10-45s | 5-30s | 10-60s | 1-5s | 1-5s | 1-5s |
+| Long-running | Yes | Yes | Yes | Yes (24h) | Yes | No (15m) | No (60m) | No (10m) |
+| Exec | Yes | Yes (WASM) | Yes* | Yes* | Yes* | Yes** | Yes** | Yes** |
+| Attach | Yes | Yes (WASM) | Yes* | Yes* | Yes* | Yes** | Yes** | Yes** |
+| Log stream | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Log follow | Yes | Yes | Yes | Yes | Yes | No | No | No |
+| Volumes | Yes | Yes (symlinks) | Yes | Partial | Yes | No | No | No |
+| Networks | Yes | Yes (in-memory) | Yes | Yes | Yes | No | No | No |
+| Health checks | Yes | Yes (exec) | Yes | Yes | Yes | No | No | No |
+| Docker build | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Archive (docker cp) | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Agent mode | N/A | N/A | Forward | Forward | Forward | Reverse | Reverse | Reverse |
+| Agent needed | No | No | Yes | Yes | Yes | Yes | Yes | Yes |
+| Startup latency | <1s | <1s | 10-45s | 5-30s | 10-60s | 1-5s | 1-5s | 1-5s |
 
-\* Via sockerless-agent
+\* Via forward agent (backend connects to agent inside container)
+\*\* Via reverse agent (agent inside function dials back to backend)
 
 ---
 
@@ -1460,21 +1598,20 @@ Both containers mount the same volume for data sharing. This is critical for the
 
 ### 10.3 Implementation per Backend
 
+> **Note:** In the current implementation, volume operations are handled **in-memory** by `backends/core/`. Cloud backends store volume metadata in local state and apply volume mounts when launching cloud tasks. The cloud-native storage provisioning described below is done via Terraform infrastructure modules (`terraform/modules/`), not dynamically by the backend at runtime.
+
 #### AWS ECS + EFS
-1. Create an EFS filesystem (or use a pre-provisioned one) per sockerless instance
-2. Create EFS access points for each named volume
-3. Mount the EFS access point in the ECS task definition
-4. Multiple tasks (containers) can mount the same access point → shared data
+- Pre-provisioned EFS filesystem referenced in task definitions
+- EFS access points configured at infrastructure level
+- Multiple Fargate tasks mount the same access point → shared data
 
 #### Google Cloud Run + GCS
-1. Create a GCS bucket (or use a pre-provisioned one) per sockerless instance
-2. Mount via Cloud Storage FUSE in the container
-3. Shared access via the same bucket/path prefix
+- Pre-provisioned GCS bucket or Filestore instance
+- Mounted via Cloud Storage FUSE in the container at infrastructure level
 
 #### Azure Container Apps + Azure Files
-1. Create an Azure Files share per sockerless instance
-2. Mount the share in the container app job
-3. Shared access via the same file share
+- Pre-provisioned Azure Files share
+- Mounted in container app job at infrastructure level
 
 ### 10.4 Volume Lifecycle
 
@@ -1498,13 +1635,14 @@ CI runners create per-job networks so that:
 
 ### 11.2 Strategy
 
-Each sockerless network maps to an isolated cloud networking construct:
+> **Note:** In the current implementation, network operations are handled **in-memory** by `backends/core/`. Networks are stored as local state with virtual IP assignments. Cloud backends do not dynamically create Security Groups, Cloud Map namespaces, or Cloud DNS zones at runtime. Cloud networking is configured at the infrastructure level via Terraform modules.
 
 | Cloud Backend | Network Emulation |
 |---|---|
-| AWS ECS | VPC security group per network; AWS Cloud Map service discovery namespace for DNS aliases |
-| Google Cloud Run | VPC network with tags; Cloud DNS private zone for aliases |
-| Azure Container Apps | Environment-scoped networking; internal DNS for aliases |
+| All backends | In-memory virtual IP assignment from 172.18.0.0/16 subnet |
+| AWS ECS | Tasks share VPC subnets configured at infrastructure level |
+| Google Cloud Run | Jobs share VPC configured at infrastructure level |
+| Azure Container Apps | Jobs share ACA Environment VNet configured at infrastructure level |
 
 ### 11.3 IP Address Assignment
 
@@ -1516,11 +1654,11 @@ For DNS-based service discovery (which is what CI runners actually rely on), the
 
 | Docker Operation | Sockerless Action |
 |---|---|
-| `POST /networks/create` | Create cloud networking construct (security group, Cloud Map namespace, etc.) |
-| Container create with `NetworkMode`/`EndpointsConfig` | Assign virtual IP, register DNS aliases |
-| `POST /networks/{id}/disconnect` | Remove DNS alias, detach from security group |
-| `DELETE /networks/{id}` | Tear down cloud networking construct |
-| `POST /networks/prune` | Clean up unused cloud networking constructs |
+| `POST /networks/create` | Create network in local state; allocate IPAM subnet |
+| Container create with `NetworkMode`/`EndpointsConfig` | Assign virtual IP from subnet, store aliases |
+| `POST /networks/{id}/disconnect` | Remove container from network state |
+| `DELETE /networks/{id}` | Remove from local state |
+| `POST /networks/prune` | Remove networks with no connected containers |
 
 ### 11.5 ExtraHosts Support
 
@@ -1567,56 +1705,464 @@ Sockerless must support the health check polling pattern. The sockerless agent c
 
 ## 13. CI Runner Compatibility
 
+This section provides a deep analysis of how GitLab Runner docker-executor and GitHub Actions Runner interact with the Docker API, identifies every gap that arises when translating these interactions to cloud backends, and proposes concrete solutions. The analysis is based on source code examination of both runners.
+
 ### 13.1 GitLab Runner Docker-Executor
 
-GitLab Runner's docker-executor has a specific lifecycle (see `DOCKER_REST_API.md` research). Key requirements for sockerless:
+#### 13.1.1 Docker API Surface Used
 
-| Requirement | Sockerless Support | Notes |
+GitLab Runner's Docker client interface (`helpers/docker/client.go`) defines exactly **32 methods**. The complete list of Docker API calls the runner can make:
+
+| Category | API Calls |
+|---|---|
+| Version | `ClientVersion()`, `ServerVersion()` |
+| Images | `ImageInspectWithRaw`, `ImagePullBlocking`, `ImageImportBlocking`, `ImageLoad`, `ImageTag` |
+| Containers | `ContainerList`, `ContainerCreate`, `ContainerStart`, `ContainerKill`, `ContainerStop`, `ContainerInspect`, `ContainerAttach`, `ContainerRemove`, `ContainerWait`, `ContainerLogs`, `ContainerExecCreate`, `ContainerExecAttach` |
+| Networks | `NetworkCreate`, `NetworkRemove`, `NetworkDisconnect`, `NetworkList`, `NetworkInspect` |
+| Volumes | `VolumeCreate`, `VolumeRemove`, `VolumeInspect`, `VolumeList` |
+| System | `Info()` |
+
+**Not used:** `ContainerRestart`, `ContainerPause/Unpause`, `ContainerRename`, `ContainerUpdate`, `ContainerTop`, `ContainerStats`, `ContainerArchive/CopyTo/CopyFrom`, `ContainerExecStart` (uses `ContainerExecAttach` instead), `ContainerExecInspect`, `ImageList`, `ImageRemove`, `ImagePush`, `ImageBuild`, any Swarm/Plugin/Secret/Config endpoints.
+
+#### 13.1.2 Job Lifecycle (Exact Sequence)
+
+```
+1. API Version Negotiation
+   GET /_ping → reads API-Version header
+   WithAPIVersionNegotiation() adjusts all subsequent calls
+
+2. Image Pull Phase
+   ImageInspectWithRaw(helperImage)           # check if helper exists locally
+   ImageLoad(helperTar) → ImageTag(id, ref)   # or: load from embedded tar
+   ImagePullBlocking(buildImage)              # pull build image
+   ImagePullBlocking(serviceImage)            # pull each service image
+
+3. Network Setup
+   NetworkCreate("runner-net-<guid>")         # per-build network (FF_NETWORK_PER_BUILD)
+
+4. Volume Setup
+   VolumeCreate("runner-<hash>-cache-<hash>") # cache volume
+   VolumeCreate("runner-<hash>-build-<hash>") # build dir volume (if cache_dir unset)
+
+5. Service Containers
+   For each service:
+     ContainerCreate(serviceImage, network, volumes, aliases)
+     ContainerStart(serviceID)
+     ContainerInspect(serviceID)              # poll State.Status != "created"
+     # Health check: create SEPARATE helper container running
+     #   ["gitlab-runner-helper", "health-check"] to TCP-probe service ports
+
+6. Build Container
+   ContainerCreate(buildImage, cmd=[shell], entrypoint, network, volumes, stdin=true)
+   ContainerAttach(buildID, stream=true, stdin=true, stdout=true, stderr=true)  # BEFORE START
+   ContainerStart(buildID)
+   # Stdin: pipe build script
+   # Stdout/Stderr: read via multiplexed stream (stdcopy.StdCopy)
+   ContainerWait(buildID, condition="not-running")
+
+7. Helper Container (same as build, used for git clone, artifacts, cache)
+   ContainerCreate(helperImage, cmd=["gitlab-runner-build"], network, SAME volumes)
+   ContainerAttach(helperID, ...)             # BEFORE START
+   ContainerStart(helperID)
+   ContainerWait(helperID, ...)
+
+8. Cleanup (5-minute timeout, parallel)
+   For each container:
+     ContainerKill(id, "SIGTERM")             # or: execScriptOnContainer to send SIGTERM
+     ContainerStop(id, timeout=0)
+     NetworkDisconnect(networkID, id, force=true)
+     ContainerRemove(id, force=true, removeVolumes=true)
+   NetworkRemove(networkID)
+   VolumeRemove(volumeID)
+```
+
+#### 13.1.3 Critical Behaviors
+
+**Attach-before-start pattern:**
+The `Exec` method in `executors/docker/internal/exec/exec.go` calls `ContainerAttach()` BEFORE `ContainerStart()`. Docker's API returns the hijacked connection immediately — it registers interest in the stream before the container is running. The runner then calls `ContainerStart()`, and the attach stream begins receiving output once the process starts. There is **no explicit timeout** on the attach call beyond the job-level timeout (from `.gitlab-ci.yml`). The connection can sit idle for minutes waiting for container output.
+
+**Build script execution via attach (NOT exec):**
+In the normal flow, the runner pipes the build script through the attach stdin connection. The container's `Cmd` is set to the shell command, and the script is streamed as stdin. This means **attach is the primary execution mechanism**, not exec.
+
+**Exec usage is limited:**
+Exec is used only for: (1) sending SIGTERM to container processes during cleanup (`execScriptOnContainer` runs `sh -c <sigterm-script>`), and (2) the newer CI Steps/Functions mode (`ContainerExecCreate` + `ContainerExecAttach`). Note: the runner uses `ContainerExecAttach` (which combines start + attach into one hijacked connection), NOT `ContainerExecStart` as a separate call.
+
+**Helper image loading:**
+The runner tries three strategies in order: (1) `ImageInspectWithRaw` to check if image exists, (2) `ImageLoad` from embedded `.docker.tar.zst` file + `ImageTag`, (3) `ImagePullBlocking` from `registry.gitlab.com`. After loading from tar, it reads the JSON response stream for `"Loaded image:"` to get the image ID, then tags it. The `helper_image` config setting bypasses tar loading entirely and pulls from a registry.
+
+**Volume sharing:**
+ALL containers in the job (helper, build, services) get the same `Binds` list from `e.volumesManager.Binds()`. This includes named volumes for `/builds/<namespace>/<project>` and `/cache`. The helper container clones the repo into the build volume; the build container reads it from the same volume.
+
+**Service readiness:**
+The runner does NOT use Docker's built-in `HEALTHCHECK` / `State.Health`. Instead, it creates a SEPARATE health-check container using the helper image, running `["gitlab-runner-helper", "health-check"]`. This container TCP-probes the service's exposed ports. Before probing, it polls `ContainerInspect` until `State.Status` is no longer `"created"`. The `wait_for_services_timeout` setting (default 30s) controls the overall timeout.
+
+**Network aliases:**
+With `FF_NETWORK_PER_BUILD` enabled (recommended), the runner creates a per-build user-defined bridge network. Service aliases (e.g., `["postgres", "db"]`) are set via `NetworkingConfig.EndpointsConfig[networkName].Aliases`. Docker's embedded DNS resolves these aliases within the network. Without this flag (legacy), aliases use `ExtraHosts` entries injected into `/etc/hosts`.
+
+**API version negotiation:**
+Uses `WithAPIVersionNegotiation()` which sends `GET /_ping`, reads the `API-Version` header, and uses the min of client/server versions. Has version-aware code paths: v1.44+ puts MAC address in `EndpointsConfig`, pre-v1.44 puts it in `Config.MacAddress`. HTTP timeouts: TLS handshake 60s, response headers 120s, dialer 300s.
+
+**Cleanup:**
+Uses a dedicated context with 5-minute timeout. Removes all tracked containers in parallel via goroutines + `sync.WaitGroup`. Sequence: kill → stop → network disconnect → remove → remove volumes → remove network.
+
+#### 13.1.4 Requirements for Sockerless
+
+| Requirement | Priority | Sockerless Solution |
 |---|---|---|
-| API version negotiation (`GET /_ping` → `API-Version` header) | Yes | Return `1.44` |
-| Pull images with `X-Registry-Auth` | Yes | Forward to cloud backend's image pull |
-| Create per-build bridge network | Yes | Cloud network emulation |
-| Create helper, build, and service containers | Yes | Each becomes a cloud task |
-| `ContainerAttach` BEFORE `ContainerStart` (attach-then-start pattern) | Yes | Buffer attach until agent connects |
-| Multiplexed stream framing (8-byte headers) | Yes | Protocol requirement |
-| `ContainerWait` with `WaitConditionNotRunning` | Yes | Poll cloud task status |
-| Volume sharing between helper and build containers | Yes | Cloud shared filesystem |
-| Service container readiness polling via `ContainerInspect` | Yes | Report container state |
-| Container cleanup (stop → disconnect → remove) | Yes | Tear down cloud tasks |
-| Labels on all objects (`com.gitlab.gitlab-runner.*`) | Yes | Stored in internal state |
+| `GET /_ping` with `API-Version: 1.44` header | P0 | Frontend responds immediately, no backend call |
+| `WithAPIVersionNegotiation()` | P0 | Return correct header; frontend adapts if client requests older version |
+| `ImagePullBlocking` with `X-Registry-Auth` | P0 | Record image ref + creds; cloud backend pulls from registry at start |
+| `ImageLoad` (tar) + `ImageTag` | P1 | Accept tar, push to configured registry (or recommend `helper_image` config) |
+| `ImageImportBlocking` (.tar.xz) | P1 | Same as ImageLoad |
+| `ImageInspectWithRaw` with `Config.Env`, `Config.Cmd`, `Config.Entrypoint`, `Config.ExposedPorts` | P0 | Fetch image config from registry manifest API (no layer download needed) |
+| `ContainerCreate` with full `HostConfig`, `NetworkingConfig`, stdin options | P0 | Store all fields; translate to cloud task config on start |
+| `ContainerAttach` before `ContainerStart` | P0 | Frontend returns hijacked connection immediately; buffers until agent reachable |
+| `ContainerStart` | P0 | Launch cloud task with agent; block until container is running |
+| `ContainerWait` with `condition=not-running` | P0 | Frontend long-polls backend until cloud task exits |
+| `ContainerInspect` with `State.Status`, `State.Running`, `State.ExitCode`, `NetworkSettings.IPAddress`, `NetworkSettings.Networks` | P0 | Backend returns current state from cloud task status |
+| `ContainerLogs` with `stdout=true, stderr=true, timestamps=true` | P0 | Fetch from cloud logging (CloudWatch, Cloud Logging, Azure Monitor) |
+| `ContainerExecCreate` + `ContainerExecAttach` | P1 | Agent handles exec with hijacked bidirectional stream |
+| `ContainerKill` / `ContainerStop` / `ContainerRemove` (force) | P0 | Translate to cloud task stop/delete |
+| `NetworkCreate` with labels, `NetworkRemove`, `NetworkDisconnect` | P0 | Cloud network emulation (VPC, service discovery) |
+| `NetworkList`, `NetworkInspect` (with `Containers` map) | P0 | Backend tracks container-to-network membership |
+| `VolumeCreate` (named), `VolumeRemove`, `VolumeInspect`, `VolumeList` | P0 | Cloud shared filesystem (EFS, GCS, Azure Files) |
+| `EndpointsConfig.Aliases` for service DNS resolution | P0 | Cloud DNS service discovery (Cloud Map, Cloud DNS, ACA DNS) |
+| `Info()` with `OSType: "linux"` | P0 | Frontend returns static info |
+| Multiplexed stream protocol (8-byte header framing) | P0 | Frontend handles framing; agent sends raw stdout/stderr |
 
-**GitLab Runner known compatibility notes:**
-- Runner uses `WithAPIVersionNegotiation()` — will accept our v1.44
-- Runner has MAC address handling code for v1.44 — we can accept and ignore MAC addresses
-- Runner's `FF_NETWORK_PER_BUILD` (network-per-build feature flag) should be **enabled** — this is the modern approach and maps well to cloud networking
-- Runner's Podman compatibility notes apply: idle timeout issues won't affect us (we're always-on), but the multiplexed stream protocol is critical
+**Recommended GitLab Runner configuration for sockerless:**
+```toml
+[runners.docker]
+  host = "unix:///var/run/sockerless.sock"   # Point to sockerless frontend
+  helper_image = "registry.example.com/sockerless/gitlab-runner-helper:latest"  # Avoid tar loading
+  pull_policy = "always"                      # Cloud backends always pull
+  network_mtu = 1500                          # Explicit MTU
+  wait_for_services_timeout = 120             # Allow for cloud startup latency
+
+[runners.feature_flags]
+  FF_NETWORK_PER_BUILD = true                 # Use user-defined networks (required)
+```
 
 ### 13.2 GitHub Actions Runner
 
-GitHub Actions Runner's container support has a different pattern:
+#### 13.2.1 Docker API Surface Used
 
-| Requirement | Sockerless Support | Notes |
+GitHub Actions Runner shells out to the `docker` CLI (not the REST API directly). The runner's `DockerCommandManager.cs` wraps these CLI commands, which map to REST API calls:
+
+| CLI Command | REST API Endpoint |
+|---|---|
+| `docker version` | `GET /version` |
+| `docker pull <image>` | `POST /images/create` |
+| `docker login` | `POST /auth` |
+| `docker create --entrypoint ... --network ... -v ... -e ... --label ... <image> <args>` | `POST /containers/create` |
+| `docker start <id>` | `POST /containers/{id}/start` |
+| `docker ps --filter ...` | `GET /containers/json?filters=...` |
+| `docker inspect <id>` (full JSON + `--format` templates) | `GET /containers/{id}/json` |
+| `docker exec -i --workdir ... -e ... <id> <cmd>` | `POST /containers/{id}/exec` + `POST /exec/{id}/start` |
+| `docker logs --details --stdout --stderr <id>` | `GET /containers/{id}/logs` |
+| `docker port <id>` | Derived from `GET /containers/{id}/json` → `NetworkSettings.Ports` |
+| `docker rm --force <id>` | `DELETE /containers/{id}?force=true` |
+| `docker network create --label ... <name>` | `POST /networks/create` |
+| `docker network rm <name>` | `DELETE /networks/{id}` |
+| `docker network prune --filter label=...` | `POST /networks/prune` |
+| `docker wait <id>` *(container actions only)* | `POST /containers/{id}/wait` |
+| `docker logs --follow <id>` *(container actions only)* | `GET /containers/{id}/logs?follow=true` |
+
+**Not used:** `docker stop`, `docker kill`, `docker attach`, `docker volume *`, `docker build`, `docker push`, any Swarm/Plugin commands.
+
+#### 13.2.2 Job Lifecycle (Container Jobs)
+
+```
+1. Version Check
+   docker version → GET /version (requires Server.APIVersion ≥ 1.35)
+
+2. Network Setup
+   docker network create --label <hash> github_network_<GUID>
+   # Failure is FATAL — no fallback to default bridge
+
+3. Image Pull (with retries, 3 attempts)
+   docker pull <job-image>
+   docker pull <service-image>  # for each service
+
+4. Container Creation
+   # Job container (long-lived):
+   docker create --entrypoint "tail" --name <name> --network <net> \
+     -v "/var/run/docker.sock:/var/run/docker.sock" \
+     -v <workspace-mounts> -e <env-vars> --label <labels> \
+     <image> "-f" "/dev/null"
+
+   # Service containers:
+   docker create --name <name> --network <net> \
+     -e <env-vars> --label <labels> --health-cmd ... \
+     <service-image>
+
+5. Container Start
+   docker start <id>
+   docker ps --filter id=<id> --filter status=running  # verify running
+
+6. Inspect & Setup
+   docker inspect <id>    # full JSON
+   # Parse Config.Env → extract PATH value
+   # Parse Config.Healthcheck → determine if health polling needed
+
+7. Health Check Polling (for services with HEALTHCHECK)
+   docker inspect --format '{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}'
+   # Exponential backoff: 2s, 3s, 7s, 13s... (~5-6 retries)
+   # If no HEALTHCHECK defined → container considered ready immediately
+
+8. Port Discovery (for services)
+   docker port <id>
+   # Parses: "5432/tcp -> 0.0.0.0:32768"
+   # Populates job.services.<name>.ports[<containerPort>] context
+
+9. Step Execution (for each workflow step)
+   docker exec -i --workdir <path> -e VAR1=val1 -e VAR2=val2 \
+     <container-id> bash -e /path/to/step-script.sh
+   # Step script is volume-mounted, not piped via stdin
+   # Exit code from `docker exec` process = step result
+   # NO retry on exec failure — immediate step failure
+
+10. Cleanup
+    docker rm --force <job-container>       # kill + remove
+    docker rm --force <service-container>   # for each
+    docker network rm <network-name>
+    docker network prune --filter label=<hash>
+```
+
+#### 13.2.3 Container Actions (`uses: docker://image`)
+
+Container actions use a fundamentally different pattern from container jobs:
+
+```
+1. docker create with ORIGINAL entrypoint (NOT overridden to tail)
+2. docker start
+3. docker logs --follow (stream output)
+4. docker wait (get exit code from container's own process)
+5. docker rm
+```
+
+The container runs its own entrypoint to completion. Exit code comes from `docker wait` (the container's exit code, not exec). Volume mounts are limited to workspace and temp directories. `--workdir` is set to `/github/workspace`.
+
+#### 13.2.4 Critical Behaviors
+
+**`tail -f /dev/null` entrypoint override:**
+The runner ALWAYS overrides the entrypoint for container jobs and service containers: `--entrypoint "tail" <image> "-f" "/dev/null"`. The original entrypoint is discarded. If the image lacks `tail` in `$PATH` (e.g., distroless, `FROM scratch`), the container fails with `exec: "tail": executable file not found`. There is NO fallback.
+
+**PATH extraction from `Config.Env`:**
+After starting a container, the runner calls `docker inspect` and reads `Config.Env` — an array of `KEY=VALUE` strings. It iterates through the array looking for entries starting with `PATH=`. This PATH is used when constructing `docker exec` commands to find binaries inside the container. If `Config.Env` is empty or missing `PATH`, the runner may fail to locate executables.
+
+**Exec with stdin (`-i`):**
+The runner uses `docker exec -i` for ALL step executions. The `-i` flag keeps stdin open — the runner pipes the step script into the container. The exec creates a temporary script file, volume-mounts the temp directory into the container, and executes via `docker exec -i --workdir <path> -e <env>... <container> bash -e /path/to/script.sh`. Exit codes are read from the `docker exec` process return code (not from `docker inspect`).
+
+**No exec retry:**
+If `docker exec` fails (container not running, connection lost, etc.), the step fails immediately. There is NO exponential backoff or retry logic for exec. This means the exec facility must be reliable from the first attempt.
+
+**Docker socket mount:**
+The runner ALWAYS adds `-v "/var/run/docker.sock:/var/run/docker.sock"` to the job container. This is hardcoded. The runner does NOT fail if the socket doesn't work inside the container — its own Docker commands execute from the host, not from inside the container. The socket is a best-effort convenience for actions needing Docker-in-Docker.
+
+**Health check polling:**
+Uses `docker inspect --format '{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}'`. If `.Config.Healthcheck` is absent (no HEALTHCHECK instruction), the template outputs empty string and the runner skips health polling — container is considered ready immediately. Polling uses exponential backoff: 2s, 3s, 7s, 13s... with ~5-6 retries (total ~30-60s).
+
+**Network creation is mandatory:**
+The runner ALWAYS creates a network (`github_network_<GUID>`) when container jobs or services are present. Network creation failure is FATAL — no fallback. Cleanup includes `docker network rm` + `docker network prune --filter label=<hash>`.
+
+**No startup grace period:**
+After `docker start`, the runner immediately checks `docker ps --filter id=<id> --filter status=running`. Docker containers start in <1s, but cloud containers take 5-60s. If the container is not "running" when checked, the job may fail.
+
+#### 13.2.5 Requirements for Sockerless
+
+| Requirement | Priority | Sockerless Solution |
 |---|---|---|
-| `docker version` check (min v1.35) | Yes | Our v1.44 exceeds this |
-| `docker pull` with retry (3x) | Yes | |
-| `docker create` with `--entrypoint tail ... -f /dev/null` | Yes | Long-running container for exec |
-| `docker start` + `docker ps` (verify running) | Yes | |
-| `docker exec -i --workdir ... -e ...` for each step | Yes | Primary execution mechanism |
-| `docker inspect` for health check polling | Yes | |
-| `docker inspect` for PATH extraction from `Config.Env` | Yes | Return image's env vars |
-| `docker port` (reads from inspect `NetworkSettings.Ports`) | Yes | |
-| `docker rm --force` for cleanup | Yes | |
-| `docker network create` + `docker network rm` | Yes | |
-| `docker network prune --filter label=...` | Yes | |
-| Label-based filtering in `docker ps` | Yes | |
+| `GET /version` with `ApiVersion ≥ 1.35` | P0 | Return `1.44` |
+| `POST /images/create` (pull) with retries | P0 | Record image ref; cloud pulls at container start |
+| `POST /auth` (docker login) | P1 | Store credentials for later pull operations |
+| `POST /containers/create` with `Entrypoint: ["tail"]`, `Cmd: ["-f", "/dev/null"]` | P0 | Accept; agent substitutes as keep-alive mechanism |
+| `POST /containers/create` with `Binds` including `/var/run/docker.sock` | P0 | Accept silently; optionally mount sockerless socket |
+| `POST /containers/{id}/start` → container is "running" immediately | P0 | Block `start` until cloud task is actually running |
+| `GET /containers/json` with filters `id`, `status`, `label` | P0 | Backend supports all filter types |
+| `GET /containers/{id}/json` with `Config.Env` (merged image + user env, including PATH) | P0 | Fetch image config from registry; merge with user env |
+| `GET /containers/{id}/json` with `Config.Healthcheck` (presence) and `State.Health.Status` | P0 | Agent runs health check commands; reports status |
+| `GET /containers/{id}/json` with `NetworkSettings.Ports` | P0 | Backend tracks port mappings for service containers |
+| `POST /containers/{id}/exec` with `AttachStdin: true` | P0 | Agent handles exec with stdin pipe |
+| `POST /exec/{id}/start` with hijacked bidirectional stream | P0 | Frontend bridges hijacked connection to agent WebSocket |
+| Exit code from exec (not from container inspect) | P0 | Agent reports exec exit code; frontend returns to client |
+| `DELETE /containers/{id}?force=true` | P0 | Stop cloud task + remove from state |
+| `POST /networks/create` (failure is fatal) | P0 | Must succeed reliably |
+| `DELETE /networks/{id}` | P0 | Tear down cloud networking |
+| `POST /networks/prune` with label filter | P1 | Clean up orphaned cloud networks |
+| `GET /containers/{id}/logs?details=true&stdout=true&stderr=true` | P0 | Fetch from cloud logging service |
+| Multiplexed stream framing for exec I/O | P0 | Frontend handles framing |
 
-**GitHub Actions Runner known compatibility notes:**
-- Runner does NOT use the Docker REST API directly — it shells out to `docker` CLI
-- Runner overrides entrypoint to `tail -f /dev/null` and uses exec for all steps
-- Runner requires multiplexed stream framing for exec I/O
-- Runner does NOT use `docker stop` — it uses `docker rm --force` (kill + remove)
-- Runner uses `--format` go templates on inspect output — our inspect response must include all required fields
-- Runner mounts the Docker socket into the container (`/var/run/docker.sock`) — in the cloud context, this could be the sockerless socket for Docker-in-Docker scenarios, or could be omitted
+### 13.3 Gap Analysis and Solutions
+
+This section identifies every gap between what CI runners expect and what cloud backends provide, with concrete solutions.
+
+#### Gap 1: Attach-Before-Start Timing (GitLab Runner)
+
+**Problem:** GitLab Runner calls `ContainerAttach` before `ContainerStart`. Docker returns the hijacked connection instantly because the daemon holds it. Cloud backends don't have a container to attach to yet.
+
+**Solution:** The frontend returns `101 Switching Protocols` immediately and holds the hijacked connection. When `ContainerStart` is called, the backend launches the cloud task. Once the agent is reachable (agent reports ready via backend polling), the frontend opens a WebSocket to the agent and begins bridging the buffered hijacked connection to the agent's stream.
+
+**Risk:** If the job timeout is very short and cloud startup takes too long, the attach will sit idle until the job times out. No mitigation needed — this is the correct behavior (the runner's context controls the timeout).
+
+#### Gap 2: Near-Instant Container Start (GitHub Actions Runner)
+
+**Problem:** After `docker start`, the runner immediately runs `docker ps --filter status=running` to verify the container started. Docker containers start in <1s. Cloud backends take 5-60s.
+
+**Solution:** The `POST /containers/{id}/start` endpoint MUST block until the cloud task is actually running (agent is reachable). Only then return `204 No Content`. This way, the subsequent `docker ps` check sees "running" status. The trade-off is that `docker start` takes 5-60s instead of <1s, but the runner doesn't have a timeout on the start call itself — only the overall job timeout applies.
+
+**Implementation:** Backend launches cloud task → polls cloud API for task status → returns 204 only when task is in "RUNNING" state. Frontend forwards the 204 to the Docker client.
+
+#### Gap 3: Image Config for PATH Extraction (GitHub Actions Runner)
+
+**Problem:** The runner reads `Config.Env` from `docker inspect` to extract the `PATH` environment variable. Sockerless doesn't pull images locally, so it doesn't have the image config.
+
+**Solution:** When `POST /images/create` (pull) is called, the backend fetches the image's manifest and config blob from the registry API WITHOUT downloading any layers. The image config contains `Env`, `Cmd`, `Entrypoint`, `ExposedPorts`, `WorkingDir`, `Labels`, and `Healthcheck`. These are stored in the backend's image table and returned in both `GET /images/{name}/json` and merged into `GET /containers/{id}/json` → `Config.Env`.
+
+**Registry API calls needed:** `GET /v2/<name>/manifests/<tag>` → `GET /v2/<name>/blobs/<config-digest>`. These are lightweight (config blob is typically <10KB). Authentication uses the credentials from `X-Registry-Auth` or `POST /auth`.
+
+#### Gap 4: `tail -f /dev/null` Entrypoint Handling (GitHub Actions Runner)
+
+**Problem:** The runner overrides the entrypoint to `tail -f /dev/null`. On cloud backends, the sockerless agent needs to be PID 1 (or sidecar) to serve exec/attach.
+
+**Solution:** The frontend detects the `tail -f /dev/null` entrypoint pattern in `POST /containers/create` and flags it as a "keep-alive container". When the backend launches the cloud task, it injects the agent as the entrypoint: `["/sockerless-agent", "--keep-alive", "--"]`. The agent keeps the container alive (replaces `tail -f /dev/null`) and serves exec/attach requests. The `--keep-alive` flag tells the agent NOT to run a child process — it just stays alive and waits for exec commands.
+
+For containers with real entrypoints (non-tail), the agent wraps the original command: `["/sockerless-agent", "--", <original-entrypoint>, <args>...]`.
+
+#### Gap 5: Helper Image Loading (GitLab Runner)
+
+**Problem:** GitLab Runner tries to load the helper image from an embedded `.docker.tar.zst` via `ImageLoad` before falling back to registry pull. Sockerless has no local image store.
+
+**Solution (recommended):** Configure `helper_image` in GitLab Runner's `config.toml` to point to a registry-hosted copy of the helper image. This bypasses tar loading entirely. The runner will use `ImagePullBlocking` instead.
+
+**Solution (fallback):** Implement `POST /images/load` to accept the tar stream, extract the image manifest and layers, and push them to a configured staging registry (e.g., ECR, Artifact Registry, ACR). Then store the image reference for later use. `POST /images/{name}/tag` records the new tag in the backend's image table.
+
+#### Gap 6: Volume Sharing Between Containers (GitLab Runner)
+
+**Problem:** Helper and build containers share the same Docker volumes (for git clone → build handoff). Cloud containers are isolated tasks — they don't share local filesystems.
+
+**Solution:** Cloud shared filesystems:
+- **ECS:** EFS filesystem with access points. Multiple Fargate tasks mount the same EFS access point → shared data.
+- **Cloud Run:** GCS bucket mounted via Cloud Storage FUSE. Multiple jobs access the same bucket path.
+- **ACA:** Azure Files share. Multiple container app jobs mount the same file share.
+
+Volume creation (`POST /volumes/create`) provisions a directory/access-point in the shared filesystem. Container creation records the volume mount mapping. Container start applies the mount to the cloud task definition.
+
+**Performance consideration:** Cloud shared filesystems add latency vs. local Docker volumes. EFS latency is 0.5-5ms per operation. For CI workloads (git clone, build), this is acceptable.
+
+#### Gap 7: Docker Socket Bind Mount (GitHub Actions Runner)
+
+**Problem:** The runner always mounts `/var/run/docker.sock:/var/run/docker.sock`. This path doesn't exist on cloud backends.
+
+**Solution:** Accept the bind mount in `POST /containers/create` without error. Two strategies:
+1. **Silently ignore** (default): The mount is recorded in state and returned in inspect, but not applied to the cloud task. Actions that need Docker-in-Docker will fail with a connection error inside the container. This is acceptable — the runner itself doesn't use the socket from inside the container.
+2. **Mount sockerless socket** (optional, configurable): Inject the sockerless frontend's socket endpoint into the container, enabling Docker-in-Docker via sockerless. Requires the agent to expose the endpoint or a tunnel.
+
+#### Gap 8: Service Readiness TCP Probing (GitLab Runner)
+
+**Problem:** GitLab Runner creates a SEPARATE health-check container (using the helper image) that TCP-probes the service container's ports. This health-check container also needs to run on the cloud backend and be able to reach the service container's network.
+
+**Solution:** The health-check container runs as another cloud task on the same network (same VPC, same security group/Cloud Map namespace). It receives the same `Binds` as other containers. The cloud DNS service discovery ensures it can resolve the service container's alias. The health-check container runs `gitlab-runner-helper health-check`, which probes TCP ports. When the service is ready, the health-check container exits with code 0.
+
+**Latency consideration:** Creating a health-check cloud task adds 5-60s of startup latency. To mitigate: start the health-check container in parallel with the service container (both at `ContainerStart` time). The health-check container's own startup latency overlaps with the service container's startup.
+
+#### Gap 9: Health Check Status Reporting (GitHub Actions Runner)
+
+**Problem:** The runner polls `docker inspect` for `.Config.Healthcheck` (presence) and `.State.Health.Status` (one of `"starting"`, `"healthy"`, `"unhealthy"`). This requires health check execution inside the container.
+
+**Solution:** If the image defines a `HEALTHCHECK` instruction (detected during image config fetch from registry), the agent runs the health check command inside the container at the specified interval. The agent reports health status to the backend. The backend stores it and returns it in `GET /containers/{id}/json` → `State.Health.Status`.
+
+If no `HEALTHCHECK` is defined, `Config.Healthcheck` is absent/null and `State.Health` is omitted entirely (matching Docker's behavior). The runner skips health polling in this case.
+
+#### Gap 10: Network Aliases and DNS Resolution (Both Runners)
+
+**Problem:** Both runners rely on DNS resolution for service aliases. GitLab uses `EndpointsConfig.Aliases`; GitHub uses network-scoped container names. Docker provides this via its embedded DNS server on user-defined networks.
+
+**Solution per backend:**
+- **ECS:** AWS Cloud Map service discovery. Create a private DNS namespace. Register each container as a service instance with its aliases. Cloud Map DNS resolves aliases to task ENI IPs.
+- **Cloud Run:** Cloud DNS private zone. Create A records for each container's aliases pointing to the container's internal IP.
+- **ACA:** Container Apps environment provides internal DNS. Container names and configured aliases resolve within the environment's VNet.
+
+#### Gap 11: Exec Reliability (GitHub Actions Runner)
+
+**Problem:** The runner does NOT retry failed exec calls. If exec fails once, the step fails. The agent must be ready to accept exec on the first attempt.
+
+**Solution:** The agent starts its WebSocket server as the first thing on startup (before running the user process). The backend waits for agent readiness (health probe to agent's WebSocket endpoint) before returning from `POST /containers/{id}/start`. By the time the runner calls `docker exec`, the agent is guaranteed to be listening.
+
+**Agent readiness check:** Backend polls `ws://agent:9111/health` (a simple HTTP GET on the same port). Agent responds with `200 OK` once its WebSocket server is accepting connections. Backend only returns `204` from start once this check passes.
+
+#### Gap 12: Cloud Startup Latency
+
+**Problem:** Cloud backends have 5-60s startup latency. Both runners assume near-instant starts. This affects:
+- Time-to-first-exec (GitHub)
+- Attach stream responsiveness (GitLab)
+- Service readiness timeout (both)
+- Overall job duration
+
+**Solutions:**
+1. **Absorb latency in `docker start`:** Block the start API call until the container is fully running and the agent is accepting connections. The runner doesn't time the start call separately.
+2. **Parallel container startup:** When multiple containers are created (services + job container), start them in parallel on the cloud backend rather than sequentially. The Docker API is sequential (create, start, create, start...), but the backend can begin provisioning eagerly on create.
+3. **Pre-warming (future):** Keep warm capacity in the cloud backend (e.g., pre-provisioned Fargate tasks, Cloud Run minimum instances) to reduce cold start time.
+4. **Increased service timeouts:** Recommend `wait_for_services_timeout = 120` (GitLab) to account for cloud startup.
+
+#### Gap 13: Multiplexed Stream Protocol Fidelity
+
+**Problem:** Both runners use Docker's 8-byte header multiplexed stream protocol for attach and exec I/O. GitLab Runner uses `stdcopy.StdCopy` to demultiplex. Any incorrect framing breaks CI job output.
+
+**Solution:** The frontend is responsible for correct framing. The agent sends raw stdout/stderr bytes via WebSocket JSON messages. The frontend wraps each chunk in the 8-byte header format:
+- Byte 0: stream type (1=stdout, 2=stderr)
+- Bytes 1-3: padding (0x00)
+- Bytes 4-7: payload length (big-endian uint32)
+- Followed by payload bytes
+
+For stdin (client → agent), the frontend reads raw bytes from the hijacked connection and forwards them as `{"type":"stdin","data":"<base64>"}` WebSocket messages.
+
+#### Gap 14: `ImageTag` After `ImageLoad` (GitLab Runner)
+
+**Problem:** After `ImageLoad`, the runner parses the response for `"Loaded image: <id>"` or `"Loaded image ID: <id>"`, then calls `ImageTag(id, name+":"+tag)`. Sockerless must return a compatible response format.
+
+**Solution:** `POST /images/load` response must stream JSON objects including a line matching `{"stream":"Loaded image: sha256:<digest>\n"}` or `{"stream":"Loaded image ID: sha256:<digest>\n"}`. The subsequent `POST /images/{name}/tag` records the new tag in the backend's image table.
+
+### 13.4 FaaS Backend Compatibility
+
+**FaaS backends (Lambda, Cloud Run Functions, Azure Functions) now support exec and attach via reverse agent**, but are still **NOT compatible with CI runners** due to other limitations:
+
+| CI Runner Requirement | FaaS Capability | Gap |
+|---|---|---|
+| Long-running container (minutes-hours) | Max 15min (Lambda), 60min (CR Functions), 10min (Az Functions) | Timeout too short for most CI jobs |
+| Exec into running container | **Supported** (via reverse agent) | No gap (but timeout-limited) |
+| Attach to container I/O | **Supported** (via reverse agent) | No gap (but timeout-limited) |
+| Volume sharing between containers | No persistent shared storage | Can't share build artifacts |
+| Network aliases for service discovery | No user-defined networking | Can't reach service containers |
+| Helper binary execution | Binaries can't run in FaaS context | gitlab-runner-helper won't work |
+
+**Reverse agent mode:** The agent inside the function dials back to the backend via `SOCKERLESS_CALLBACK_URL` (WebSocket). This enables exec and attach for the duration of the function invocation. The FaaS invoke goroutine waits for agent disconnect before stopping the container.
+
+**FaaS backends ARE useful for:** Short-lived container workloads (batch processing, webhooks, container actions, scheduled tasks) that can complete within the function timeout. They support `docker run` (create + start + exec + attach + logs + wait + remove) via reverse agent.
+
+### 13.5 Backend Compatibility Matrix for CI Runners
+
+| Feature | Docker | Memory | ECS | Cloud Run | ACA | Lambda | CR Func | Az Func |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **GitLab Runner** | Yes | Yes† | Yes | Yes | Yes | **No** | **No** | **No** |
+| **GitHub Actions Runner** | Yes | Yes | Yes | Yes | Yes | **No** | **No** | **No** |
+| **GitHub `act` Runner** | Yes | Yes | Yes | Yes | Yes | Yes‡ | Yes‡ | Yes‡ |
+| **gitlab-ci-local** | Yes | Yes | Yes | Yes | Yes | Yes‡ | Yes‡ | Yes‡ |
+| Attach-before-start | Yes | Yes | Yes* | Yes* | Yes* | Yes** | Yes** | Yes** |
+| Exec with stdin | Yes | Yes (WASM) | Yes* | Yes* | Yes* | Yes** | Yes** | Yes** |
+| Volume sharing | Yes | Yes (symlinks) | Yes | Yes | Yes | No | No | No |
+| Health check polling | Yes | Yes (exec) | Yes* | Yes* | Yes* | No | No | No |
+| Container actions | Yes | Yes (WASM) | Yes* | Yes* | Yes* | Yes** | Yes** | Yes** |
+| Docker build | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Docker cp (archive) | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Startup latency | <1s | <1s | 10-45s | 5-30s | 10-60s | 1-5s | 1-5s | 1-5s |
+
+\* Via forward agent
+\*\* Via reverse agent
+† GitLab Runner E2E requires `SOCKERLESS_SYNTHETIC=1` (helper binaries can't run in WASM)
+‡ FaaS backends limited by function timeout
+
+**Recommendation:** For CI runner workloads, use container-based backends (ECS, Cloud Run, ACA). FaaS backends work with lightweight CI tools (`act`, `gitlab-ci-local`) but not with full CI runners.
 
 ---
 
@@ -1639,33 +2185,36 @@ These endpoints return `501 Not Implemented` with a descriptive message:
 
 | Category | Endpoints | Reason |
 |---|---|---|
-| Build | `POST /build`, `POST /build/prune` | Out of scope (N2) |
 | Swarm | All `/swarm/*`, `/services/*`, `/tasks/*`, `/nodes/*`, `/secrets/*`, `/configs/*` | Not applicable to cloud backends |
 | Plugins | All `/plugins/*` | Not applicable |
 | Session | `POST /session` | BuildKit-specific |
 | Distribution | `GET /distribution/{name}/json` | Not needed |
-| Container archive | `GET/PUT/HEAD /containers/{id}/archive` | Not used by CI runners |
+| Build prune | `POST /build/prune` | Not used |
 | Container export | `GET /containers/{id}/export` | Not used |
 | Container commit | `POST /commit` | Not used |
-| Container stats | `GET /containers/{id}/stats` | Future enhancement |
-| Container top | `GET /containers/{id}/top` | Future enhancement |
 | Container changes | `GET /containers/{id}/changes` | Not used |
 | Container update | `POST /containers/{id}/update` | Not used |
-| Container rename | `POST /containers/{id}/rename` | Not used |
-| Container pause/unpause | `POST /containers/{id}/pause`, `/unpause` | Not used |
 | Container resize | `POST /containers/{id}/resize` | Future (TTY support) |
 | Container attach/ws | `GET /containers/{id}/attach/ws` | Future (WebSocket support) |
 | Image search | `POST /images/search` | Not used |
 | Image save/get | `GET /images/get` | Not used |
 | Image push | `POST /images/{name}/push` | Out of scope |
-| Image prune | `POST /images/prune` | Future enhancement |
-| Image remove | `DELETE /images/{name}` | Future enhancement |
-| Image history | `GET /images/{name}/history` | Not used |
-| Image list | `GET /images/json` | Future enhancement |
-| Container prune | `POST /containers/prune` | Future enhancement |
-| Volume prune | `POST /volumes/prune` | Future enhancement |
-| System df | `GET /system/df` | Future enhancement |
-| Events | `GET /events` | Future enhancement |
+
+### 14.3 API Endpoints Now Implemented (Originally Out of Scope)
+
+These were initially excluded from the spec but have been implemented:
+
+| Category | Endpoints | Added In |
+|---|---|---|
+| Build | `POST /build` | Phase 34 — Dockerfile parser (FROM, COPY, ADD, ENV, CMD, ENTRYPOINT, WORKDIR, ARG, LABEL, EXPOSE, USER). RUN is no-op. |
+| Container archive | `PUT/HEAD/GET /containers/{id}/archive` | Phase 25 — Pre-start staging for `docker cp` before `docker start` |
+| Container lifecycle | `POST .../restart`, `POST .../rename`, `POST .../pause`, `POST .../unpause` | Extended endpoints |
+| Container info | `GET .../top`, `GET .../stats` | Extended endpoints |
+| Container prune | `POST /containers/prune` | Extended endpoint |
+| Image lifecycle | `GET /images/json`, `DELETE /images/{name}`, `GET .../history`, `POST /images/prune` | Extended endpoints |
+| Volume prune | `POST /volumes/prune` | Extended endpoint |
+| Network connect | `POST /networks/{id}/connect` | Extended endpoint |
+| System | `GET /events`, `GET /system/df` | Extended endpoints |
 
 ### 14.3 Silently Ignored Container Config Fields
 
@@ -1689,58 +2238,37 @@ These are stored in state and returned in inspect responses for client compatibi
 
 ### 15.1 Format
 
-All components use YAML configuration files with environment variable overrides and CLI flag overrides (highest priority).
+All components use **command-line flags** with **environment variable** overrides. No YAML configuration files. Each backend binary has its own set of environment variables prefixed with its cloud provider abbreviation.
 
-Priority order: CLI flags > Environment variables > YAML config file > Defaults
+Priority order: CLI flags > Environment variables > Defaults
 
 ### 15.2 Frontend Configuration
 
-```yaml
-# sockerless-frontend.yaml
-listen:
-  socket: /var/run/sockerless.sock   # Unix socket path
-  tcp: ""                            # Optional TCP address (e.g., "0.0.0.0:2375")
+The frontend is configured via command-line flags:
 
-backend:
-  address: /var/run/sockerless-backend.sock  # Backend Unix socket or TCP address
-
-api:
-  version: "1.44"                    # Docker API version to advertise
-
-logging:
-  level: info                        # debug, info, warn, error
-  format: json                       # json, text
+```sh
+sockerless-docker-frontend \
+  -addr :2375 \             # Listen address (TCP)
+  -backend http://localhost:9100 \  # Backend address
+  -log-level info            # Log level
 ```
 
 ### 15.3 Backend Configuration
 
-```yaml
-# sockerless-backend.yaml
-listen:
-  socket: /var/run/sockerless-backend.sock
-  tcp: ""
+Each backend binary reads its own environment variables. All backends share common variables:
 
-state:
-  driver: sqlite                     # sqlite, memory
-  path: /var/lib/sockerless/state.db
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SOCKERLESS_CALLBACK_URL` | | Backend URL for reverse agent connections |
+| `SOCKERLESS_ENDPOINT_URL` | | Custom cloud endpoint (simulator mode) |
+| `SOCKERLESS_FETCH_IMAGE_CONFIG` | `false` | Fetch image config from registry on pull |
+| `SOCKERLESS_SYNTHETIC` | `false` | Use synthetic mode (no real exec) |
 
-agent:
-  binary_path: /usr/local/bin/sockerless-agent  # Path to agent binary (for injection)
-  port: 9111                         # Port agent listens on inside containers
-  token_length: 32                   # Length of generated auth tokens
+Backend-specific variables use prefixes: `SOCKERLESS_ECS_*`, `SOCKERLESS_LAMBDA_*`, `SOCKERLESS_GCR_*`, `SOCKERLESS_GCF_*`, `SOCKERLESS_ACA_*`, `SOCKERLESS_AZF_*`, `AWS_REGION`.
 
-# Backend-specific configuration (varies per backend binary)
-# Example for ECS:
-ecs:
-  region: us-east-1
-  cluster: sockerless
-  subnets: ["subnet-abc123"]
-  security_groups: ["sg-abc123"]
-  task_role_arn: "arn:aws:iam::..."
-  execution_role_arn: "arn:aws:iam::..."
-  efs_filesystem_id: "fs-abc123"
-  log_group: /sockerless/containers
-```
+See each backend's `README.md` for the full list of configuration variables.
+
+**State:** All backends use in-memory state (`sync.Map` + `StateStore[T]`). No persistent database. State is lost on restart.
 
 ### 15.4 Agent Configuration
 
@@ -1750,8 +2278,7 @@ The agent is configured entirely via environment variables (injected by the back
 |---------|-------------|
 | `SOCKERLESS_AGENT_PORT` | Port to listen on (default: `9111`) |
 | `SOCKERLESS_AGENT_TOKEN` | Auth token for validating frontend connections |
-| `SOCKERLESS_ORIGINAL_ENTRYPOINT` | Original container entrypoint (agent runs this as child) |
-| `SOCKERLESS_ORIGINAL_CMD` | Original container CMD |
+| `SOCKERLESS_CALLBACK_URL` | Backend URL for reverse agent mode |
 
 ---
 
@@ -1811,6 +2338,89 @@ The agent is configured entirely via environment variables (injected by the back
 | Events | `GET /events` streaming endpoint |
 | Documentation | User guide, backend setup guides, configuration reference |
 
+### Phases 5–14: Core Extraction, Agent Bridge, Integration Testing
+
+Phases 5–14 completed without architectural changes to the spec. See `STATUS.md`
+for detailed phase history. Key milestones:
+- Phase 5: Extracted shared `backends/core/` library (~70% code reduction per backend)
+- Phase 7: FaaS agent injection via reverse WebSocket connections
+- Phase 8–9: All 6 cloud backends tested against local simulators (98 PASS)
+- Phase 10–11: Real CI runner smoke tests + full terraform integration tests
+- Phase 13–14: E2E tests (12 workflows × 7 backends for both GitHub/GitLab runners)
+
+### Phase 15: Memory Backend WASM Sandbox
+
+**Goal:** Replace synthetic exec with real WASM command execution in the memory backend.
+
+| Component | Library | Purpose |
+|---|---|---|
+| WASM runtime | wazero v1.11.0 | Pure Go, WASI Preview 1, no CGo |
+| Commands | go-busybox | 41 BusyBox applets compiled to WASM |
+| Shell | mvdan.cc/sh v3.12.0 | Pipes, &&/||, redirects, variable expansion, REPL |
+| Filesystem | Host temp dirs | Per-container isolated rootfs via WithDirMount |
+
+Architecture: mvdan.cc/sh parses shell syntax natively in Go and dispatches
+individual commands to WASM busybox applets via wazero. WASI Preview 1 has no
+fork/exec, so the Go host orchestrates all process spawning. The `sandbox/`
+module is standalone — only the memory backend enables it via `ProcessFactory`.
+
+### Phases 16–24: Extended Endpoints, CI Runner Improvements
+
+- Phase 19: FaaS reverse agent — Lambda, GCF, AZF backends with reverse WebSocket agent
+- Phase 22: GitHub `act` upstream compatibility (91/24 pass/fail on memory)
+- Phase 25: Pre-start archive staging (`docker cp` before `docker start` for gitlab-ci-local)
+- Phase 26–27: Attach-before-start, stdin forwarding, PATH-aware command resolution
+
+### Phase 30: Driver Architecture
+
+Introduced 4 driver interfaces with chain-of-responsibility pattern:
+
+| Driver | Purpose | Chain |
+|---|---|---|
+| `ExecDriver` | Execute commands in containers | Agent → Process (WASM) → Synthetic |
+| `FilesystemDriver` | Archive PUT/HEAD/GET | Agent → Process → Synthetic |
+| `StreamDriver` | Logs, attach streaming | Agent → Process → Synthetic |
+| `ProcessLifecycleDriver` | Start/stop/wait | WASM Process → Synthetic |
+
+Each driver has a `Fallback` field forming a chain. `DriverSet` on `BaseServer`
+is auto-constructed by `InitDrivers()`. This allows backends to mix execution
+strategies — e.g., a cloud backend uses Agent for running containers but falls
+back to Synthetic for containers without processes.
+
+### Phases 31–33: Shell Builtins, Service Containers, Health Checks
+
+- Phase 31: 21+ Go-implemented builtins, pwd fix, PATH resolution — upstream act: 91/24
+- Phase 33: Service container support with health checks (`backends/core/health.go`)
+
+### Phase 34: Docker Build Endpoint
+
+`POST /build` with Dockerfile parser supporting FROM, COPY, ADD, ENV, CMD,
+ENTRYPOINT, WORKDIR, ARG, LABEL, EXPOSE, USER. RUN instructions are no-op
+(echoed in build output, not executed). Multi-stage builds supported. Build
+context files staged via `BuildContexts` map.
+
+### Phase 35: bleephub (GitHub Actions Server)
+
+`bleephub/` Go module implements the Azure DevOps-derived internal API that
+the official `actions/runner` binary expects. This enables end-to-end testing
+of GitHub Actions workflows against Sockerless without a real GitHub instance.
+
+Components: auth/tokens, agent registration, broker (sessions + long-poll),
+run service, timeline + logs. Job messages use PipelineContextData + TemplateToken
+format. Runner runs on port 80 (strips non-standard ports from URLs).
+
+### Current Test Coverage
+
+| Test Type | Count | Status |
+|---|---|---|
+| Simulator-backend integration | 129 | All pass |
+| Sandbox unit tests | 46 | All pass |
+| E2E GitHub (act) | 154 (22 workflows × 7 backends) | All pass |
+| E2E GitLab (gitlab-ci-local) | 175 (25 pipelines × 7 backends) | All pass |
+| Upstream act (memory) | 91 PASS / 24 FAIL | Expected |
+| Upstream gitlab-ci-local | 175 | All pass |
+| bleephub integration | 1 | Pass |
+
 ---
 
 ## Appendices
@@ -1845,11 +2455,24 @@ The agent is configured entirely via environment variables (injected by the back
 | `docker compose down` | (stop + remove containers + remove networks) | Yes |
 | `docker compose ps` | `GET /containers/json` with compose label filter | Yes |
 | `docker compose logs` | `GET /containers/{id}/logs` for each service | Yes |
-| `docker build` | `POST /build` | **No** |
+| `docker build` | `POST /build` | Yes (Phase 34) |
 | `docker push` | `POST /images/{name}/push` | **No** |
-| `docker images` | `GET /images/json` | Future |
-| `docker rmi` | `DELETE /images/{name}` | Future |
-| `docker stats` | `GET /containers/{id}/stats` | Future |
+| `docker images` | `GET /images/json` | Yes |
+| `docker rmi` | `DELETE /images/{name}` | Yes |
+| `docker cp` | `PUT/GET /containers/{id}/archive` | Yes (Phase 25) |
+| `docker stats` | `GET /containers/{id}/stats` | Yes |
+| `docker top` | `GET /containers/{id}/top` | Yes |
+| `docker restart` | `POST /containers/{id}/restart` | Yes |
+| `docker rename` | `POST /containers/{id}/rename` | Yes |
+| `docker pause` | `POST /containers/{id}/pause` | Yes |
+| `docker unpause` | `POST /containers/{id}/unpause` | Yes |
+| `docker system df` | `GET /system/df` | Yes |
+| `docker system events` | `GET /events` | Yes |
+| `docker system prune` | (various prune endpoints) | Yes |
+| `docker image prune` | `POST /images/prune` | Yes |
+| `docker container prune` | `POST /containers/prune` | Yes |
+| `docker volume prune` | `POST /volumes/prune` | Yes |
+| `docker network prune` | `POST /networks/prune` | Yes |
 
 ### B. References
 

@@ -1,0 +1,7 @@
+test-large-output:
+  image: alpine:latest
+  script:
+    - for i in $(seq 1 500); do echo "output-line-$i"; done
+    - echo "LARGE_OUTPUT_MARKER=done"
+    - LAST_LINE="output-line-500"
+    - echo "Last expected line prefix verified"

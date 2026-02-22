@@ -1,0 +1,4 @@
+test-job:
+  image: alpine:latest
+  script:
+    - echo "Hello from Sockerless"

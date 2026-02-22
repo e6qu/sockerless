@@ -1,0 +1,23 @@
+job-alpha:
+  image: alpine:latest
+  script:
+    - echo "alpha-start"
+    - echo "alpha-data" > /tmp/alpha.txt
+    - test -f /tmp/alpha.txt
+    - echo "alpha-end"
+
+job-beta:
+  image: alpine:latest
+  script:
+    - echo "beta-start"
+    - echo "beta-data" > /tmp/beta.txt
+    - test -f /tmp/beta.txt
+    - echo "beta-end"
+
+job-gamma:
+  image: alpine:latest
+  script:
+    - echo "gamma-start"
+    - echo "gamma-data" > /tmp/gamma.txt
+    - test -f /tmp/gamma.txt
+    - echo "gamma-end"

@@ -1,0 +1,47 @@
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    hostname: gitlab
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://gitlab'
+        gitlab_rails['initial_root_password'] = 'sockerless-test-pw'
+        puma['worker_processes'] = 0
+        sidekiq['concurrency'] = 2
+        prometheus_monitoring['enable'] = false
+        gitlab_rails['monitoring_whitelist'] = ['0.0.0.0/0']
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost/-/readiness"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+    shm_size: 256m
+
+  sockerless-backend:
+    build:
+      context: ../..
+      dockerfile: smoke-tests/gitlab/Dockerfile.backend
+    command: ["--addr", ":9100", "--log-level", "debug"]
+
+  sockerless-frontend:
+    build:
+      context: ../..
+      dockerfile: smoke-tests/gitlab/Dockerfile.frontend
+    command: ["--backend", "http://sockerless-backend:9100", "--addr", ":2375", "--log-level", "debug"]
+    depends_on:
+      - sockerless-backend
+
+  orchestrator:
+    build:
+      context: ../..
+      dockerfile: smoke-tests/gitlab/Dockerfile.orchestrator
+    environment:
+      GITLAB_URL: http://gitlab
+      GITLAB_ROOT_PASSWORD: sockerless-test-pw
+      SOCKERLESS_HOST: tcp://sockerless-frontend:2375
+      GITLAB_TIMEOUT: "600"
+      PIPELINE_TIMEOUT: "300"
+    depends_on:
+      - gitlab
+      - sockerless-frontend

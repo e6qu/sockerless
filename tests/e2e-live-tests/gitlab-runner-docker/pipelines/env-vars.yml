@@ -1,0 +1,16 @@
+variables:
+  GLOBAL_VAR: "global-value"
+
+test-job:
+  image: alpine:latest
+  variables:
+    JOB_VAR: "job-value"
+  script:
+    - echo "GLOBAL_VAR=$GLOBAL_VAR"
+    - test "$GLOBAL_VAR" = "global-value"
+    - echo "JOB_VAR=$JOB_VAR"
+    - test "$JOB_VAR" = "job-value"
+    - echo "CI_PROJECT_NAME=$CI_PROJECT_NAME"
+    - test -n "$CI_PROJECT_NAME"
+    - echo "CI=$CI"
+    - test "$CI" = "true"

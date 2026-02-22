@@ -1,0 +1,14 @@
+test-job:
+  image: alpine:latest
+  script:
+    - |
+      i=1
+      while [ $i -le 1000 ]; do
+        echo "Line $i: The quick brown fox jumps over the lazy dog"
+        i=$((i + 1))
+      done > /tmp/large-output.txt
+      cat /tmp/large-output.txt
+    - LINES=$(wc -l < /tmp/large-output.txt)
+    - test "$LINES" -eq 1000
+    - head -1 /tmp/large-output.txt | grep -q "Line 1:"
+    - tail -1 /tmp/large-output.txt | grep -q "Line 1000:"

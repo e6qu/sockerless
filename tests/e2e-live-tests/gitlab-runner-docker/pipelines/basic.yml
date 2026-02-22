@@ -1,0 +1,9 @@
+test-job:
+  image: alpine:latest
+  script:
+    - OUTPUT=$(echo "Hello from Sockerless E2E")
+    - echo "$OUTPUT"
+    - test "$OUTPUT" = "Hello from Sockerless E2E"
+    - echo "basic-ok" > /tmp/basic-marker
+    - test -f /tmp/basic-marker
+    - test "$(cat /tmp/basic-marker)" = "basic-ok"

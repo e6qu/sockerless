@@ -1,0 +1,18 @@
+name: basic
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Hello
+        run: |
+          OUTPUT=$(echo "Hello from Sockerless E2E")
+          echo "$OUTPUT"
+          test "$OUTPUT" = "Hello from Sockerless E2E"
+      - name: Verify
+        run: |
+          echo "basic-ok" > /tmp/basic-marker
+          test -f /tmp/basic-marker
+          test "$(cat /tmp/basic-marker)" = "basic-ok"

@@ -1,0 +1,17 @@
+name: outputs
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Set output
+        id: producer
+        run: echo "result=hello-from-output" >> "$GITHUB_OUTPUT"
+      - name: Use output
+        env:
+          RESULT: ${{ steps.producer.outputs.result }}
+        run: |
+          echo "Got output: $RESULT"
+          test "$RESULT" = "hello-from-output"

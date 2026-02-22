@@ -1,0 +1,18 @@
+name: container-action-faas
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Simulate action
+        run: |
+          echo 'action-ok' > /tmp/action-marker
+          test -f /tmp/action-marker
+          test "$(cat /tmp/action-marker)" = "action-ok"
+      - name: Verify action ran
+        run: |
+          echo "container-action-done" > /tmp/ca-marker
+          test -f /tmp/ca-marker
+          test "$(cat /tmp/ca-marker)" = "container-action-done"

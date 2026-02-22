@@ -1,0 +1,13 @@
+failing-job:
+  image: alpine:latest
+  script:
+    - echo "This job will fail"
+    - exit 1
+  allow_failure: true
+
+passing-job:
+  image: alpine:latest
+  script:
+    - echo "pass-ok" > /tmp/exit-codes-marker
+    - test -f /tmp/exit-codes-marker
+    - test "$(cat /tmp/exit-codes-marker)" = "pass-ok"

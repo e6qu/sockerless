@@ -1,0 +1,19 @@
+go 1.24.2
+
+use (
+	./agent
+	./api
+	./backends/aca
+	./backends/azure-functions
+	./backends/cloudrun
+	./backends/cloudrun-functions
+	./backends/core
+	./backends/docker
+	./backends/ecs
+	./backends/lambda
+	./backends/memory
+	./frontends/docker
+	./sandbox
+	./tests
+	./bleephub
+)

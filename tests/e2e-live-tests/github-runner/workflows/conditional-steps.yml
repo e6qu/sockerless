@@ -1,0 +1,29 @@
+name: conditional-steps
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Always runs
+        run: echo "always-ran" > /tmp/cond-always.txt
+
+      - name: Runs on success
+        if: success()
+        run: |
+          test -f /tmp/cond-always.txt
+          echo "success-step-ran" > /tmp/cond-success.txt
+
+      - name: Verify success step ran
+        run: |
+          test -f /tmp/cond-success.txt
+          test "$(cat /tmp/cond-success.txt)" = "success-step-ran"
+
+      - name: Step with env condition
+        env:
+          CHECK: "yes"
+        if: success()
+        run: |
+          test "$CHECK" = "yes"
+          echo "conditional-ok"

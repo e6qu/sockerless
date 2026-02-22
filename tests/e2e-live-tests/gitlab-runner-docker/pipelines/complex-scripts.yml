@@ -1,0 +1,23 @@
+test-complex:
+  image: alpine:latest
+  before_script:
+    - echo "setup-phase"
+    - export SETUP_TOKEN="abc123"
+    - mkdir -p /tmp/complex-test
+  script:
+    - echo "main-phase"
+    - test "$SETUP_TOKEN" = "abc123"
+    - echo "data-from-main" > /tmp/complex-test/main.txt
+    - test -f /tmp/complex-test/main.txt
+    - |
+      LINES=""
+      for i in 1 2 3; do
+        LINES="${LINES}line${i} "
+      done
+      echo "$LINES" > /tmp/complex-test/loop.txt
+    - grep -q "line1" /tmp/complex-test/loop.txt
+    - grep -q "line3" /tmp/complex-test/loop.txt
+  after_script:
+    - echo "cleanup-phase"
+    - test -f /tmp/complex-test/main.txt
+    - echo "after-script-ok"

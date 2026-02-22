@@ -1,0 +1,35 @@
+name: Simulator Tests
+on:
+  workflow_dispatch:
+    inputs:
+      cloud:
+        description: 'Cloud to test (aws, gcp, azure, all)'
+        required: true
+        default: 'all'
+        type: choice
+        options: [all, aws, gcp, azure]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+      - name: Lint
+        run: make lint
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud: [aws, gcp, azure]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests in Docker
+        if: inputs.cloud == 'all' || inputs.cloud == matrix.cloud
+        run: cd simulators/${{ matrix.cloud }} && make docker-test

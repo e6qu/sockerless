@@ -1,0 +1,26 @@
+name: defaults-shell
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Create workdir
+        run: mkdir -p /tmp/myworkdir
+
+      - name: Write in custom workdir
+        working-directory: /tmp/myworkdir
+        run: |
+          echo "workdir-data" > result.txt
+
+      - name: Verify from root
+        run: |
+          test -f /tmp/myworkdir/result.txt
+          test "$(cat /tmp/myworkdir/result.txt)" = "workdir-data"
+
+      - name: Write and read in another workdir
+        working-directory: /tmp
+        run: |
+          echo "tmpdir-data" > tmp-result.txt
+          test "$(cat tmp-result.txt)" = "tmpdir-data"

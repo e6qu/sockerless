@@ -1,0 +1,41 @@
+name: env-inheritance
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    env:
+      JOB_VAR: "job-level"
+      SHARED_VAR: "from-job"
+    steps:
+      - name: Step overrides job env
+        env:
+          SHARED_VAR: "from-step"
+          STEP_ONLY: "step-value"
+        run: |
+          test "$SHARED_VAR" = "from-step"
+          test "$JOB_VAR" = "job-level"
+          test "$STEP_ONLY" = "step-value"
+
+      - name: Job env restored after step
+        run: |
+          test "$SHARED_VAR" = "from-job"
+          test -z "${STEP_ONLY:-}"
+
+      - name: Special characters in values
+        env:
+          WITH_SPACES: "hello world"
+          WITH_EQUALS: "key=value"
+          WITH_QUOTES: "it's a \"test\""
+        run: |
+          test "$WITH_SPACES" = "hello world"
+          test "$WITH_EQUALS" = "key=value"
+
+      - name: Empty vs unset distinction
+        env:
+          EMPTY_VAR: ""
+        run: |
+          test "${EMPTY_VAR:-fallback}" = "fallback"
+          test "${UNSET_VAR:-fallback}" = "fallback"
+          test -z "$EMPTY_VAR"

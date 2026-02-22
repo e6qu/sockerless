@@ -1,0 +1,10 @@
+provider-src/
+terraform-provider-azurestack
+simulator-azure
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+
+# Stray nested build artifacts
+simulators/

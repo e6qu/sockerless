@@ -1,0 +1,45 @@
+name: E2E Runner Tests
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Runner to test'
+        required: true
+        default: 'all'
+        type: choice
+        options: [all, github, gitlab]
+      backend:
+        description: 'Backend to test'
+        required: true
+        default: 'all'
+        type: choice
+        options: [all, memory, ecs, lambda, cloudrun, gcf, aca, azf]
+
+jobs:
+  github-runner:
+    if: inputs.runner == 'all' || inputs.runner == 'github'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [memory, ecs, lambda, cloudrun, gcf, aca, azf]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run E2E GitHub (${{ matrix.backend }})
+        if: inputs.backend == 'all' || inputs.backend == matrix.backend
+        run: make e2e-github-${{ matrix.backend }}
+        timeout-minutes: 20
+
+  gitlab-runner:
+    if: inputs.runner == 'all' || inputs.runner == 'gitlab'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [memory, ecs, lambda, cloudrun, gcf, aca, azf]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run E2E GitLab (${{ matrix.backend }})
+        if: inputs.backend == 'all' || inputs.backend == matrix.backend
+        run: make e2e-gitlab-${{ matrix.backend }}
+        timeout-minutes: 45

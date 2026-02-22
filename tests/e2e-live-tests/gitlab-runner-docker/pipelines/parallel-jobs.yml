@@ -1,0 +1,23 @@
+job-a:
+  image: alpine:latest
+  script:
+    - echo "Job A running"
+    - echo "job-a-done" > /tmp/job-a-marker
+    - test -f /tmp/job-a-marker
+    - test "$(cat /tmp/job-a-marker)" = "job-a-done"
+
+job-b:
+  image: alpine:latest
+  script:
+    - echo "Job B running"
+    - echo "job-b-done" > /tmp/job-b-marker
+    - test -f /tmp/job-b-marker
+    - test "$(cat /tmp/job-b-marker)" = "job-b-done"
+
+job-c:
+  image: alpine:latest
+  script:
+    - echo "Job C running"
+    - echo "job-c-done" > /tmp/job-c-marker
+    - test -f /tmp/job-c-marker
+    - test "$(cat /tmp/job-c-marker)" = "job-c-done"

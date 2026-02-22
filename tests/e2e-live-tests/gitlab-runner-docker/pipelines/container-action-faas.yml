@@ -1,0 +1,9 @@
+test-job:
+  image: alpine:latest
+  script:
+    - echo 'action-ok' > /tmp/action-marker
+    - test -f /tmp/action-marker
+    - test "$(cat /tmp/action-marker)" = "action-ok"
+    - echo "container-action-done" > /tmp/ca-marker
+    - test -f /tmp/ca-marker
+    - test "$(cat /tmp/ca-marker)" = "container-action-done"

@@ -1,0 +1,22 @@
+test-job:
+  image: alpine:latest
+  script:
+    - echo "hello-world" > /tmp/applet-test.txt
+    - test "$(cat /tmp/applet-test.txt)" = "hello-world"
+    - printf '%b\n' "apple\nbanana\ncherry" > /tmp/fruits.txt
+    - test "$(grep 'ban' /tmp/fruits.txt)" = "banana"
+    - RESULT=$(sed 's/apple/orange/' /tmp/fruits.txt | head -1)
+    - test "$RESULT" = "orange"
+    - printf '%b\n' "3\n1\n2\n1\n3" > /tmp/nums.txt
+    - test "$(sort /tmp/nums.txt | uniq | wc -l)" -eq 3
+    - test "$(printf '%s-%s' hello world)" = "hello-world"
+    - printf '%b\n' "aaa\nbbb\nccc\nddd\neee" > /tmp/lines.txt
+    - test "$(head -1 /tmp/lines.txt)" = "aaa"
+    - test "$(tail -1 /tmp/lines.txt)" = "eee"
+    - test "$(echo 'hello' | tr 'a-z' 'A-Z')" = "HELLO"
+    - test "$(echo 'a:b:c' | cut -d':' -f2)" = "b"
+    - mkdir -p /tmp/findtest/sub1/sub2
+    - echo "found" > /tmp/findtest/sub1/sub2/target.txt
+    - test -f /tmp/findtest/sub1/sub2/target.txt
+    - test "$(cat /tmp/findtest/sub1/sub2/target.txt)" = "found"
+    - ls /tmp/findtest/sub1/sub2/ | grep -q "target.txt"

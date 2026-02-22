@@ -1,0 +1,55 @@
+test-job:
+  image: alpine:latest
+  script:
+    # Variable expansion
+    - export MY_VAR="hello"
+    - test "$MY_VAR" = "hello"
+    - test "${MY_VAR}" = "hello"
+    - test "${UNSET_VAR:-default_val}" = "default_val"
+    - test "${MY_VAR:+alt_val}" = "alt_val"
+    - test -z "${UNSET_VAR:+alt_val}"
+
+    # Command substitution
+    - RESULT=$(echo "computed")
+    - test "$RESULT" = "computed"
+    - NESTED=$(echo "$(echo "deep")")
+    - test "$NESTED" = "deep"
+
+    # Pipes and redirects
+    - echo "line1" > /tmp/sf-pipe.txt
+    - echo "line2" >> /tmp/sf-pipe.txt
+    - COUNT=$(cat /tmp/sf-pipe.txt | wc -l | tr -d ' ')
+    - test "$COUNT" = "2"
+    - echo "stderr-test" 2>&1 | grep -q "stderr-test"
+
+    # Conditionals
+    - |
+      echo "marker" > /tmp/sf-cond.txt
+      if [ -f /tmp/sf-cond.txt ]; then
+        RESULT="exists"
+      else
+        RESULT="missing"
+      fi
+      test "$RESULT" = "exists"
+
+    # Loops
+    - |
+      CONCAT=""
+      for i in a b c; do
+        CONCAT="${CONCAT}${i}"
+      done
+      test "$CONCAT" = "abc"
+
+    # Arithmetic expansion
+    - X=5
+    - Y=$((X + 3))
+    - test "$Y" = "8"
+    - Z=$((Y * 2))
+    - test "$Z" = "16"
+
+    # set -e behavior
+    - |
+      set -e
+      true
+      echo "set-e-ok" > /tmp/sf-sete.txt
+      test "$(cat /tmp/sf-sete.txt)" = "set-e-ok"

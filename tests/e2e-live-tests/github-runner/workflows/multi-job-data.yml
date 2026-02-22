@@ -1,0 +1,31 @@
+name: multi-job-data
+on: push
+jobs:
+  producer:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    outputs:
+      build-id: ${{ steps.gen.outputs.build-id }}
+      version: ${{ steps.gen.outputs.version }}
+    steps:
+      - name: Generate outputs
+        id: gen
+        run: |
+          echo "build-id=build-12345" >> "$GITHUB_OUTPUT"
+          echo "version=2.0.0" >> "$GITHUB_OUTPUT"
+
+  consumer:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    needs: producer
+    steps:
+      - name: Verify producer outputs
+        env:
+          BUILD_ID: ${{ needs.producer.outputs.build-id }}
+          VERSION: ${{ needs.producer.outputs.version }}
+        run: |
+          test "$BUILD_ID" = "build-12345"
+          test "$VERSION" = "2.0.0"
+          echo "Cross-job data verified"

@@ -1,0 +1,21 @@
+stages:
+  - build
+  - test
+
+build-job:
+  stage: build
+  image: alpine:latest
+  script:
+    - mkdir -p output
+    - echo "build-artifact-content" > output/result.txt
+  artifacts:
+    paths:
+      - output/
+
+test-job:
+  stage: test
+  image: alpine:latest
+  script:
+    - cat output/result.txt
+    - test "$(cat output/result.txt)" = "build-artifact-content"
+    - echo "Artifact test passed"

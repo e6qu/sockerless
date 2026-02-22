@@ -1,0 +1,32 @@
+name: job-outputs
+on: push
+jobs:
+  producer:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    outputs:
+      result: ${{ steps.gen.outputs.result }}
+      count: ${{ steps.gen.outputs.count }}
+    steps:
+      - name: Generate outputs
+        id: gen
+        run: |
+          echo "result=cross-job-value" >> "$GITHUB_OUTPUT"
+          echo "count=42" >> "$GITHUB_OUTPUT"
+
+  consumer:
+    runs-on: ubuntu-latest
+    needs: producer
+    container:
+      image: alpine:latest
+    steps:
+      - name: Verify job outputs
+        env:
+          RESULT: ${{ needs.producer.outputs.result }}
+          COUNT: ${{ needs.producer.outputs.count }}
+        run: |
+          echo "Got result: $RESULT"
+          echo "Got count: $COUNT"
+          test "$RESULT" = "cross-job-value"
+          test "$COUNT" = "42"
