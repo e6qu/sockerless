@@ -55,12 +55,27 @@ type Store struct {
 	Repos        map[int]*Repo
 	ReposByName  map[string]*Repo            // "owner/name" → repo
 	GitStorages  map[string]*memory.Storage   // "owner/name" → go-git memory storage
+	Orgs         map[int]*Org                // id → org
+	OrgsByLogin  map[string]*Org             // login → org
+	Teams        map[int]*Team               // id → team
+	TeamsBySlug  map[string]*Team            // "org/slug" → team
+	Memberships  map[string]*Membership      // "org/user" → membership
+	Issues       map[int]*Issue              // id → issue
+	Labels       map[int]*IssueLabel         // id → label
+	Milestones   map[int]*Milestone          // id → milestone
+	Comments     map[int]*Comment            // id → comment
 	NextAgent    int
 	NextMsg      int64
 	NextLog      int
 	NextReqID    int64
 	NextUser     int
 	NextRepo     int
+	NextOrg      int
+	NextTeam     int
+	NextIssue    int
+	NextLabel    int
+	NextMilestone int
+	NextComment  int
 	mu           sync.RWMutex
 }
 
@@ -142,12 +157,27 @@ func NewStore() *Store {
 		Repos:        make(map[int]*Repo),
 		ReposByName:  make(map[string]*Repo),
 		GitStorages:  make(map[string]*memory.Storage),
+		Orgs:         make(map[int]*Org),
+		OrgsByLogin:  make(map[string]*Org),
+		Teams:        make(map[int]*Team),
+		TeamsBySlug:  make(map[string]*Team),
+		Memberships:  make(map[string]*Membership),
+		Issues:       make(map[int]*Issue),
+		Labels:       make(map[int]*IssueLabel),
+		Milestones:   make(map[int]*Milestone),
+		Comments:     make(map[int]*Comment),
 		NextAgent:    1,
 		NextMsg:      1,
 		NextLog:      1,
 		NextReqID:    1,
 		NextUser:     1,
 		NextRepo:     1,
+		NextOrg:      1,
+		NextTeam:     1,
+		NextIssue:    1,
+		NextLabel:    1,
+		NextMilestone: 1,
+		NextComment:  1,
 	}
 }
 

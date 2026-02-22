@@ -72,6 +72,7 @@ backends/
   cloudrun-functions/         GCP Cloud Functions
   aca/                        Azure Container Apps Jobs
   azure-functions/            Azure Functions
+bleephub/                     GitHub Actions runner service API (official runner support)
 simulators/
   aws/                        AWS API simulator (ECS, ECR, IAM, VPC, EFS, Lambda, ...)
   gcp/                        GCP API simulator (Cloud Run, Compute, DNS, GCS, AR, ...)
@@ -79,7 +80,7 @@ simulators/
 terraform/
   modules/                    Terraform modules (one per backend)
   environments/               Terragrunt environments (live + simulator per backend)
-tests/                        Integration tests (Docker SDK, 105 tests)
+tests/                        Integration tests (Docker SDK, 108 tests)
 smoke-tests/                  Real CI runner validation (act + gitlab-runner)
 spec/                         Specification documents
 ```
@@ -202,14 +203,18 @@ make apply-ecs-simulator  # Apply against local simulator
 
 ## Deploying to Cloud
 
-See [`DEPLOYMENT.md`](DEPLOYMENT.md) for step-by-step instructions covering all 6 backends across AWS, GCP, and Azure — including terraform state bootstrap, image push, environment variable mapping, validation, and cost estimates.
+Each backend has a complete deployment walkthrough in its `examples/terraform/` directory covering infrastructure provisioning, image push, environment setup, validation, and tear-down.
+
+- **Infrastructure provisioning** — [`terraform/README.md`](terraform/README.md) (modules, state backends, CI/CD workflows)
+- **Step-by-step walkthroughs** — each backend's [`examples/terraform/README.md`](backends/ecs/examples/terraform/) (terraform apply through validation)
+- **Configuration reference** — each backend's [`README.md`](backends/) (env vars, terraform output mapping)
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
 | [`spec/SOCKERLESS_SPEC.md`](spec/SOCKERLESS_SPEC.md) | Full specification (API surface, architecture, protocols) |
-| [`DEPLOYMENT.md`](DEPLOYMENT.md) | Cloud deployment guide |
-| [`terraform/README.md`](terraform/README.md) | Terraform module and environment reference |
+| [`terraform/README.md`](terraform/README.md) | Terraform modules, state backends, and CI/CD deployment |
+| [`backends/*/README.md`](backends/) | Per-backend configuration and terraform output mapping |
 | [`PLAN.md`](PLAN.md) | Implementation plan and task tracking |
 | [`STATUS.md`](STATUS.md) | Project status and phase history |

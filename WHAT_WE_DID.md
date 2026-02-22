@@ -15,7 +15,7 @@ CI Runner (act, gitlab-runner, gitlab-ci-local)
 Frontend (Docker REST API)
     │
     ▼
-Backend (ecs | lambda | cloudrun | gcf | aca | azf | memory)
+Backend (ecs | lambda | cloudrun | gcf | aca | azf | memory | docker)
     │                                                    │
     ▼                                                    ▼
 Cloud Simulator (AWS | GCP | Azure)              WASM Sandbox
@@ -24,7 +24,7 @@ Cloud Simulator (AWS | GCP | Azure)              WASM Sandbox
 Agent (inside container or reverse-connected)
 ```
 
-**7 backends** share a common core (`backends/core/`) with driver interfaces:
+**8 backends** share a common core (`backends/core/`) with driver interfaces:
 - **ExecDriver** — runs commands (WASM shell, forward agent, reverse agent, or synthetic echo)
 - **FilesystemDriver** — manages container filesystem (temp dirs, agent bridge, staging)
 - **StreamDriver** — attach/logs streaming (pipes, WebSocket relay, log buffer)
@@ -223,12 +223,64 @@ Added in-memory git repository hosting to bleephub using `go-git/go-git/v5` with
 
 **Test results:** 33 unit tests pass (19 existing + 14 new), 0 lint issues in new code. All `gh api` + `git push`/`git clone` work.
 
+## Phase 38 — bleephub: Organizations + Teams + RBAC
+
+Added organization accounts, team management, memberships, and role-based access control to bleephub.
+
+**New files (7):**
+- `store_orgs.go` (~290 lines) — Org, Membership, Team types + all CRUD methods (18 store methods)
+- `gh_orgs_rest.go` (~190 lines) — REST: org create/get/update/delete/list, org repo create
+- `gh_teams_rest.go` (~180 lines) — REST: team CRUD endpoints
+- `gh_members_rest.go` (~250 lines) — REST: membership + team member/repo management
+- `rbac.go` (~105 lines) — Permission checking: canReadRepo, canWriteRepo, canAdminRepo, canAdminOrg
+- `gh_orgs_graphql.go` (~150 lines) — GraphQL: Organization type, viewer.organizations, organization query
+- `gh_orgs_test.go` (~310 lines) — 18 unit tests
+
+**Modified files (4):**
+- `store.go` — Added Orgs/OrgsByLogin/Teams/TeamsBySlug/Memberships maps + NextOrg/NextTeam counters
+- `server.go` — Wired `registerGHOrgRoutes()` into route registration
+- `gh_graphql.go` — Called `addOrgFieldsToSchema()` in schema init
+- `gh_repos_rest.go` — Replaced owner-only checks with RBAC-based `canAdminRepo()`
+
+**Endpoints added:**
+- `POST/GET /api/v3/user/orgs` — create and list user's orgs
+- `GET/PATCH/DELETE /api/v3/orgs/{org}` — org CRUD
+- `GET /api/v3/users/{username}/orgs` — list user's orgs
+- `POST /api/v3/orgs/{org}/repos` — create org-owned repo
+- `POST/GET /api/v3/orgs/{org}/teams` — team create/list
+- `GET/PATCH/DELETE /api/v3/orgs/{org}/teams/{slug}` — team CRUD
+- `GET/PUT/DELETE /api/v3/orgs/{org}/memberships/{username}` — membership management
+- `GET/PUT/DELETE /api/v3/orgs/{org}/teams/{slug}/memberships/{username}` — team members
+- `PUT/DELETE /api/v3/orgs/{org}/teams/{slug}/repos/{owner}/{repo}` — team repo access
+- GraphQL: `viewer { organizations(first, after) { nodes, totalCount, pageInfo } }`
+- GraphQL: `organization(login) { login, name, description, ... }`
+
+**Design decisions:**
+- `graphql-go` requires unique type names — used `OrgPageInfo` to avoid conflict with repo's `PageInfo`
+- RBAC is permission-level based: pull < push < admin; teams grant minimum permission level on assigned repos
+- Org creator is auto-added as admin member
+- Team slugs are auto-generated from team name (lowercased, spaces → hyphens)
+
+**Test results:** 51 unit tests pass (33 existing + 18 new), 0 lint issues in new code.
+
+## Documentation Overhaul (Post Phase 38)
+
+Comprehensive restructuring and correction of project documentation:
+
+1. **Removed `DEPLOYMENT.md`** (812 lines). Redistributed all content: state backend bootstrap commands and CI/CD workflow examples moved to `terraform/README.md`; terraform output → env var mapping tables added to each of the 6 cloud backend READMEs; root `README.md` updated with direct pointers to child docs. Fixed dangling references in `docs/GITHUB_RUNNER.md` and `docs/GITLAB_RUNNER_DOCKER.md`.
+
+2. **Terraform/Terragrunt audit.** Fixed stale "LocalStack" references (project uses custom simulators in `simulators/{aws,gcp,azure}/`). Updated environment matrix, prerequisites, and comments in `terraform/README.md` and `terraform/environments/lambda/simulator/terragrunt.hcl`.
+
+3. **ARCHITECTURE.md rewrite.** Fixed backend count (7→8, added docker passthrough). Added bleephub section with sequence diagram. Added production use cases section covering Docker CLI/Compose, TestContainers/SDK, CI runners (GitHub Actions + GitLab CI) with production sequence diagrams. Documented all three `DOCKER_HOST` connection modes (local TCP, remote TCP, SSH tunnel). Updated module structure and test architecture diagrams.
+
+4. **Production milestones.** Added Phases 47-51 to `PLAN.md`: Phase 47 (general Docker API production readiness including `DOCKER_HOST` connectivity), Phase 48 (production GitHub Actions), Phase 49 (production GitLab CI), Phase 50 (Docker API hardening), Phase 51 (production operations).
+
 ## Project Stats
 
-- **37 phases**, 332 tasks completed
+- **38 phases**, 342 tasks completed
 - **15 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, tests
 - **21 Go-implemented builtins** in WASM sandbox
 - **8 driver interface methods** across 4 driver types (was 4 interfaces × ~3 methods, now complete)
 - **6 external test consumers**: `act`, `gitlab-runner`, `gitlab-ci-local`, upstream act test suite, official `actions/runner`, `gh` CLI
 - **3 cloud simulators** validated against SDKs, CLIs, and Terraform
-- **7 backends** sharing a common driver architecture
+- **8 backends** sharing a common driver architecture

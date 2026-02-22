@@ -40,6 +40,21 @@ go build -o sockerless-backend-azf ./cmd/sockerless-backend-azf
 | `SOCKERLESS_CALLBACK_URL` | | Backend URL for reverse agent connections |
 | `SOCKERLESS_ENDPOINT_URL` | | Custom Azure endpoint (simulator mode) |
 
+### Terraform outputs
+
+The `terraform/modules/azf` module produces these outputs. Use `terragrunt output` from `terraform/environments/azf/live` to extract them.
+
+| Terraform Output | Environment Variable |
+|---|---|
+| `resource_group_name` | `SOCKERLESS_AZF_RESOURCE_GROUP` |
+| `location` | `SOCKERLESS_AZF_LOCATION` |
+| `storage_account_name` | `SOCKERLESS_AZF_STORAGE_ACCOUNT` |
+| `acr_login_server` | `SOCKERLESS_AZF_REGISTRY` |
+| `app_service_plan_id` | `SOCKERLESS_AZF_APP_SERVICE_PLAN` |
+| `log_analytics_workspace_id` | `SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE` |
+
+`SOCKERLESS_AZF_SUBSCRIPTION_ID` is not a terraform output — use `az account show --query id -o tsv`.
+
 ## Project structure
 
 ```

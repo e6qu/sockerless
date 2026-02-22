@@ -105,7 +105,7 @@ cd tests/e2e-live-tests/gitlab-runner-docker
 ./run.sh --backend ecs --mode live
 ```
 
-In live mode, set cloud credentials and Sockerless env vars per `DEPLOYMENT.md`.
+In live mode, set cloud credentials and Sockerless env vars per each backend's `README.md` (see the Configuration and Terraform outputs sections).
 
 ## Log Files
 

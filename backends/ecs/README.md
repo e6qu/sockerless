@@ -45,6 +45,21 @@ All configuration is via environment variables:
 | `SOCKERLESS_CALLBACK_URL` | | Backend URL for reverse agent mode |
 | `SOCKERLESS_ENDPOINT_URL` | | Custom AWS endpoint (simulator mode) |
 
+### Terraform outputs
+
+The `terraform/modules/ecs` module produces these outputs. Use `terragrunt output` from `terraform/environments/ecs/live` to extract them.
+
+| Terraform Output | Environment Variable |
+|---|---|
+| `ecs_cluster_name` | `SOCKERLESS_ECS_CLUSTER` |
+| `private_subnet_ids` | `SOCKERLESS_ECS_SUBNETS` (comma-separated via `jq -r 'join(",")'`) |
+| `task_security_group_id` | `SOCKERLESS_ECS_SECURITY_GROUPS` |
+| `task_role_arn` | `SOCKERLESS_ECS_TASK_ROLE_ARN` |
+| `execution_role_arn` | `SOCKERLESS_ECS_EXECUTION_ROLE_ARN` |
+| `log_group_name` | `SOCKERLESS_ECS_LOG_GROUP` |
+| `efs_filesystem_id` | `SOCKERLESS_AGENT_EFS_ID` |
+| `ecr_repository_url` | `SOCKERLESS_AGENT_IMAGE` (after building and pushing) |
+
 ## Project structure
 
 ```

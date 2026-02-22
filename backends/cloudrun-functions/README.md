@@ -39,6 +39,17 @@ go build -o sockerless-backend-gcf ./cmd/sockerless-backend-gcf
 | `SOCKERLESS_CALLBACK_URL` | | Backend URL for reverse agent connections |
 | `SOCKERLESS_ENDPOINT_URL` | | Custom GCP endpoint (simulator mode) |
 
+### Terraform outputs
+
+The `terraform/modules/gcf` module produces these outputs. Use `terragrunt output` from `terraform/environments/gcf/live` to extract them.
+
+| Terraform Output | Environment Variable |
+|---|---|
+| `project_id` | `SOCKERLESS_GCF_PROJECT` |
+| `region` | `SOCKERLESS_GCF_REGION` |
+| `service_account_email` | `SOCKERLESS_GCF_SERVICE_ACCOUNT` |
+| `artifact_registry_repository_url` | _(used for image push)_ |
+
 ## Project structure
 
 ```

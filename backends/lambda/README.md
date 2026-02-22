@@ -40,6 +40,16 @@ go build -o sockerless-backend-lambda ./cmd/sockerless-backend-lambda
 | `SOCKERLESS_CALLBACK_URL` | | Backend URL for reverse agent connections |
 | `SOCKERLESS_ENDPOINT_URL` | | Custom AWS endpoint (simulator mode) |
 
+### Terraform outputs
+
+The `terraform/modules/lambda` module produces these outputs. Use `terragrunt output` from `terraform/environments/lambda/live` to extract them.
+
+| Terraform Output | Environment Variable |
+|---|---|
+| `execution_role_arn` | `SOCKERLESS_LAMBDA_ROLE_ARN` |
+| `log_group_name` | `SOCKERLESS_LAMBDA_LOG_GROUP` |
+| `ecr_repository_url` | _(used for image push)_ |
+
 ## Project structure
 
 ```

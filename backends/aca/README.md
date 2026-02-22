@@ -42,6 +42,21 @@ go build -o sockerless-backend-aca ./cmd/sockerless-backend-aca
 | `SOCKERLESS_CALLBACK_URL` | | Backend URL for reverse agent mode |
 | `SOCKERLESS_ENDPOINT_URL` | | Custom Azure endpoint (simulator mode) |
 
+### Terraform outputs
+
+The `terraform/modules/aca` module produces these outputs. Use `terragrunt output` from `terraform/environments/aca/live` to extract them.
+
+| Terraform Output | Environment Variable |
+|---|---|
+| `resource_group_name` | `SOCKERLESS_ACA_RESOURCE_GROUP` |
+| `managed_environment_name` | `SOCKERLESS_ACA_ENVIRONMENT` |
+| `location` | `SOCKERLESS_ACA_LOCATION` |
+| `log_analytics_workspace_name` | `SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE` |
+| `storage_account_name` | `SOCKERLESS_ACA_STORAGE_ACCOUNT` |
+| `acr_login_server` | `SOCKERLESS_ACA_AGENT_IMAGE` (after building and pushing) |
+
+`SOCKERLESS_ACA_SUBSCRIPTION_ID` is not a terraform output — use `az account show --query id -o tsv`.
+
 ## Project structure
 
 ```
