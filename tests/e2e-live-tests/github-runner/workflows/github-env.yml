@@ -1,0 +1,25 @@
+name: github-env
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Set env via GITHUB_ENV
+        run: |
+          echo "DYNAMIC_VAR=from-github-env" >> "$GITHUB_ENV"
+          echo "MULTI_LINE<<EOF" >> "$GITHUB_ENV"
+          echo "line1" >> "$GITHUB_ENV"
+          echo "line2" >> "$GITHUB_ENV"
+          echo "EOF" >> "$GITHUB_ENV"
+
+      - name: Use env from GITHUB_ENV
+        run: |
+          echo "DYNAMIC_VAR=$DYNAMIC_VAR"
+          test "$DYNAMIC_VAR" = "from-github-env"
+
+      - name: Verify multi-line env
+        run: |
+          echo "MULTI_LINE=$MULTI_LINE"
+          echo "$MULTI_LINE" | head -1 | grep -q "line1"

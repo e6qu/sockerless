@@ -1,0 +1,12 @@
+test-job:
+  image: alpine:latest
+  script:
+    - mkdir -p /tmp/shared
+    - echo "producer-data" > /tmp/shared/state.txt
+    - test -f /tmp/shared/state.txt
+    - test "$(cat /tmp/shared/state.txt)" = "producer-data"
+    - echo "consumer-data" >> /tmp/shared/state.txt
+    - LINES=$(wc -l < /tmp/shared/state.txt)
+    - test "$LINES" -eq 2
+    - head -1 /tmp/shared/state.txt | grep -q "producer-data"
+    - tail -1 /tmp/shared/state.txt | grep -q "consumer-data"

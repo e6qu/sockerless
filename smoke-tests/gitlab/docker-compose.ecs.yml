@@ -1,0 +1,9 @@
+services:
+  sockerless-backend:
+    build:
+      context: ../..
+      dockerfile: smoke-tests/gitlab/Dockerfile.backend-ecs
+    command: []
+    environment:
+      CLOUD: aws
+      BACKEND_ADDR: ":9100"

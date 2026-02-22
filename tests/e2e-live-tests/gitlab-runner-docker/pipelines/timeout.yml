@@ -1,0 +1,17 @@
+should-succeed:
+  image: alpine:latest
+  timeout: 2m
+  script:
+    - echo "This job should complete quickly"
+    - echo "timeout-ok" > /tmp/timeout-marker
+    - test -f /tmp/timeout-marker
+    - test "$(cat /tmp/timeout-marker)" = "timeout-ok"
+
+should-timeout:
+  image: alpine:latest
+  timeout: 10s
+  allow_failure: true
+  script:
+    - echo "This job should be killed after 10s"
+    - sleep 60
+    - echo "ERROR this line should never execute"

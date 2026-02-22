@@ -1,0 +1,55 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+  settings:
+    errcheck:
+      exclude-functions:
+        # HTTP response writing — errors indicate client disconnected
+        - (net/http.ResponseWriter).Write
+        - (*encoding/json.Encoder).Encode
+        - (*encoding/json.Decoder).Decode
+        # Streaming / copying
+        - io.Copy
+        # Writer helpers
+        - (*bufio.Writer).WriteString
+        - (*archive/tar.Writer).WriteHeader
+        - (*bytes.Buffer).Write
+        - (*bytes.Buffer).WriteString
+        # Crypto / formatting
+        - (crypto/rand).Read
+        - fmt.Sscanf
+        # Shell output — best effort
+        - fmt.Fprintf
+        - fmt.Fprint
+        - fmt.Fprintln
+        # Cleanup — best effort
+        - os.RemoveAll
+        - os.Remove
+        # Close / Flush — deferred cleanup, error not actionable
+        - (io.Closer).Close
+        - (*net.TCPConn).Close
+        - (*net.UnixConn).Close
+        - (net.Conn).Close
+        - (*bufio.Writer).Flush
+        - (*net/http.Response).Body.Close
+        # WebSocket
+        - (*github.com/gorilla/websocket.Conn).WriteJSON
+        # Process signals (fire-and-forget)
+        - (*os.Process).Signal
+        - (*os.Process).Kill
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+    paths:
+      - .build

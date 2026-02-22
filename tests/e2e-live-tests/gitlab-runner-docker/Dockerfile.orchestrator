@@ -1,0 +1,7 @@
+FROM gitlab/gitlab-runner:latest
+RUN apt-get update && apt-get install -y --no-install-recommends curl jq git && rm -rf /var/lib/apt/lists/*
+COPY tests/e2e-live-tests/gitlab-runner-docker/orchestrate.sh /orchestrate.sh
+COPY tests/e2e-live-tests/gitlab-runner-docker/pipelines/ /pipelines/
+RUN chmod +x /orchestrate.sh
+RUN mkdir -p /etc/gitlab-runner /results
+ENTRYPOINT ["/orchestrate.sh"]

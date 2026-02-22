@@ -1,0 +1,9 @@
+services:
+  sockerless-backend:
+    build:
+      context: ../..
+      dockerfile: smoke-tests/gitlab/Dockerfile.backend-aca
+    command: []
+    environment:
+      CLOUD: azure
+      BACKEND_ADDR: ":9100"

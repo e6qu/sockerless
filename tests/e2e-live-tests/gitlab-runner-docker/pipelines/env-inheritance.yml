@@ -1,0 +1,37 @@
+variables:
+  GLOBAL_VAR: "global-level"
+  SHARED_VAR: "from-global"
+
+job-precedence:
+  image: alpine:latest
+  variables:
+    JOB_VAR: "job-level"
+    SHARED_VAR: "from-job"
+  script:
+    # Job var overrides global var
+    - test "$SHARED_VAR" = "from-job"
+    - test "$GLOBAL_VAR" = "global-level"
+    - test "$JOB_VAR" = "job-level"
+
+job-special-chars:
+  image: alpine:latest
+  variables:
+    WITH_SPACES: "hello world"
+    WITH_EQUALS: "key=value"
+  script:
+    - test "$WITH_SPACES" = "hello world"
+    - test "$WITH_EQUALS" = "key=value"
+
+job-empty-vs-unset:
+  image: alpine:latest
+  variables:
+    EMPTY_VAR: ""
+  script:
+    - test "${EMPTY_VAR:-fallback}" = "fallback"
+    - test "${UNSET_VAR:-fallback}" = "fallback"
+    - test -z "$EMPTY_VAR"
+
+job-path:
+  image: alpine:latest
+  script:
+    - test -n "$PATH"

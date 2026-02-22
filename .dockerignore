@@ -1,0 +1,9 @@
+.git
+.build
+**/.terraform
+**/.terragrunt-cache
+**/.terraform.lock.hcl
+**/*.tfstate
+**/*.tfstate.backup
+_tasks
+spec

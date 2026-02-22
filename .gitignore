@@ -1,0 +1,69 @@
+# Build outputs
+.build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go
+*.test
+*.out
+__debug_bin*
+
+# Simulator binaries (built by `go build` in simulators/)
+simulator-aws
+simulator-gcp
+simulator-azure
+
+# Backend binaries
+sockerless-backend-*
+sockerless-docker-frontend
+sockerless-agent
+
+# Terraform
+.terraform/
+.terragrunt-cache/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+*.tfvars
+!*.tfvars.example
+
+# Test outputs
+tests/upstream/act/results/
+tests/upstream/gitlab-ci-local/results/
+tests/e2e-live-tests/logs/*
+!tests/e2e-live-tests/logs/.gitignore
+coverage.out
+coverage.html
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Secrets / credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Node (for upstream gitlab-ci-local tests)
+node_modules/
+
+# Misc
+*.log
+tmp/

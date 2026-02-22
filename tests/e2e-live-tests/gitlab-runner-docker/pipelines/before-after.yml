@@ -1,0 +1,14 @@
+test-job:
+  image: alpine:latest
+  before_script:
+    - echo "Before script running"
+    - export SETUP_VAR="setup-done"
+  script:
+    - echo "Main script running"
+    - echo "SETUP_VAR=$SETUP_VAR"
+    - test "$SETUP_VAR" = "setup-done"
+    - echo "before-script-ok" > /tmp/before-after-marker
+    - test -f /tmp/before-after-marker
+  after_script:
+    - echo "After script running (cleanup)"
+    - echo "after-ok" > /tmp/after-marker

@@ -1,0 +1,23 @@
+FROM golang:1.24 AS builder
+
+# Build simulator
+WORKDIR /sim
+COPY simulators/aws/ /sim/
+RUN GOWORK=off go build -o /simulator-aws .
+
+# Build backend
+WORKDIR /src
+COPY api/ api/
+COPY agent/ agent/
+COPY sandbox/ sandbox/
+COPY backends/core/ backends/core/
+COPY backends/ecs/ backends/ecs/
+RUN cd backends/ecs && GOWORK=off go mod download && GOWORK=off go build -o /sockerless-backend-ecs ./cmd/sockerless-backend-ecs
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /simulator-aws /usr/local/bin/simulator-aws
+COPY --from=builder /sockerless-backend-ecs /usr/local/bin/sockerless-backend-ecs
+COPY smoke-tests/gitlab/start-with-sim.sh /start-with-sim.sh
+RUN chmod +x /start-with-sim.sh
+ENTRYPOINT ["/start-with-sim.sh"]

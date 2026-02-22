@@ -1,0 +1,25 @@
+name: step-outputs
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Produce multiple outputs
+        id: producer
+        run: |
+          echo "name=alice" >> "$GITHUB_OUTPUT"
+          echo "count=42" >> "$GITHUB_OUTPUT"
+          echo "status=success" >> "$GITHUB_OUTPUT"
+
+      - name: Consume outputs
+        env:
+          NAME: ${{ steps.producer.outputs.name }}
+          COUNT: ${{ steps.producer.outputs.count }}
+          STATUS: ${{ steps.producer.outputs.status }}
+        run: |
+          test "$NAME" = "alice"
+          test "$COUNT" = "42"
+          test "$STATUS" = "success"
+          echo "All outputs verified"

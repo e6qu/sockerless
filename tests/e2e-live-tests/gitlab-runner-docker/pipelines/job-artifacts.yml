@@ -1,0 +1,25 @@
+stages:
+  - generate
+  - verify
+
+generate-job:
+  stage: generate
+  image: alpine:latest
+  script:
+    - mkdir -p build-output
+    - echo "artifact-payload-v1" > build-output/data.txt
+    - echo "checksum-abc" > build-output/checksum.txt
+    - ls -la build-output/
+  artifacts:
+    paths:
+      - build-output/
+
+verify-job:
+  stage: verify
+  image: alpine:latest
+  script:
+    - test -f build-output/data.txt
+    - test "$(cat build-output/data.txt)" = "artifact-payload-v1"
+    - test -f build-output/checksum.txt
+    - test "$(cat build-output/checksum.txt)" = "checksum-abc"
+    - echo "artifacts-verified"

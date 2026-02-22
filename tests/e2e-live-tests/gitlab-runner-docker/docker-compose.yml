@@ -1,0 +1,45 @@
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    hostname: gitlab
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://gitlab'
+        gitlab_rails['initial_root_password'] = 'sockerless-test-pw'
+        puma['worker_processes'] = 0
+        sidekiq['concurrency'] = 2
+        prometheus_monitoring['enable'] = false
+        gitlab_rails['monitoring_whitelist'] = ['0.0.0.0/0']
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost/-/readiness"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+    shm_size: 256m
+    mem_limit: 4g
+
+  sockerless-backend:
+    build:
+      context: ../../..
+      dockerfile: tests/e2e-live-tests/gitlab-runner-docker/${DOCKERFILE_BACKEND:-Dockerfile.backend}
+    command: ["--backend", "${BACKEND:-memory}", "--mode", "${MODE:-simulator}", "--backend-addr", "0.0.0.0:9100", "--frontend-addr", "0.0.0.0:2375"]
+    environment:
+      BACKEND: ${BACKEND:-memory}
+      MODE: ${MODE:-simulator}
+      SOCKERLESS_SYNTHETIC: ${SOCKERLESS_SYNTHETIC:-}
+
+  orchestrator:
+    build:
+      context: ../../..
+      dockerfile: tests/e2e-live-tests/gitlab-runner-docker/Dockerfile.orchestrator
+    environment:
+      GITLAB_URL: http://gitlab
+      GITLAB_ROOT_PASSWORD: sockerless-test-pw
+      SOCKERLESS_HOST: tcp://sockerless-backend:2375
+      GITLAB_TIMEOUT: "600"
+      PIPELINE_TIMEOUT: "600"
+      PIPELINE: ${PIPELINE:-basic}
+    depends_on:
+      - gitlab
+      - sockerless-backend

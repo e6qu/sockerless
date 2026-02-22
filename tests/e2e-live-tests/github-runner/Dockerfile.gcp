@@ -1,0 +1,50 @@
+FROM golang:1.24 AS builder
+
+# --- Build GCP simulator ---
+WORKDIR /sim-gcp
+COPY simulators/gcp/ /sim-gcp/
+RUN GOWORK=off go build -o /out/simulator-gcp .
+
+# --- Copy shared source for backends ---
+WORKDIR /src
+COPY api/ api/
+COPY agent/ agent/
+COPY sandbox/ sandbox/
+COPY backends/core/ backends/core/
+
+# --- Build GCP backends (cloudrun + gcf) ---
+COPY backends/cloudrun/ backends/cloudrun/
+RUN cd backends/cloudrun && GOWORK=off go mod download && \
+    GOWORK=off go build -o /out/sockerless-backend-cloudrun ./cmd/sockerless-backend-cloudrun
+
+COPY backends/cloudrun-functions/ backends/cloudrun-functions/
+RUN cd backends/cloudrun-functions && GOWORK=off go mod download && \
+    GOWORK=off go build -o /out/sockerless-backend-gcf ./cmd/sockerless-backend-gcf
+
+# --- Build frontend ---
+COPY frontends/docker/ frontends/docker/
+RUN cd frontends/docker && GOWORK=off go mod download && \
+    GOWORK=off go build -o /out/sockerless-frontend-docker ./cmd
+
+# --- Build agent ---
+RUN cd agent && GOWORK=off go mod download && \
+    GOWORK=off go build -o /out/sockerless-agent ./cmd/sockerless-agent
+
+# --- Runtime stage ---
+FROM golang:1.24
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+RUN go install github.com/nektos/act@latest
+
+# Copy all binaries
+COPY --from=builder /out/ /usr/local/bin/
+
+# Copy test scripts and workflows
+COPY tests/e2e-live-tests/lib.sh /test/lib.sh
+COPY tests/e2e-live-tests/start-backend.sh /test/start-backend.sh
+COPY tests/e2e-live-tests/github-runner/run.sh /test/run.sh
+COPY tests/e2e-live-tests/github-runner/workflows/ /test/workflows/
+RUN chmod +x /test/*.sh
+
+WORKDIR /test
+ENTRYPOINT ["/test/run.sh"]

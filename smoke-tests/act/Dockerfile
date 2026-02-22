@@ -1,0 +1,25 @@
+FROM golang:1.24
+
+# Install act and curl
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+RUN go install github.com/nektos/act@latest
+
+# Copy source and build Sockerless binaries
+WORKDIR /src
+COPY api/ api/
+COPY agent/ agent/
+COPY sandbox/ sandbox/
+COPY backends/core/ backends/core/
+COPY backends/memory/ backends/memory/
+COPY frontends/docker/ frontends/docker/
+
+RUN cd backends/memory && GOWORK=off go mod download && GOWORK=off go build -o /usr/local/bin/sockerless-backend-memory ./cmd
+RUN cd frontends/docker && GOWORK=off go mod download && GOWORK=off go build -o /usr/local/bin/sockerless-frontend-docker ./cmd
+
+# Copy test files
+COPY smoke-tests/act/workflows/ /test/workflows/
+COPY smoke-tests/act/run.sh /test/run.sh
+RUN chmod +x /test/run.sh
+
+WORKDIR /test
+ENTRYPOINT ["/test/run.sh"]

@@ -1,0 +1,52 @@
+stages:
+  - test
+
+.install-terraform: &install-terraform
+  - curl -fsSL "https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip" -o tf.zip
+  - unzip tf.zip -d /usr/local/bin && rm tf.zip
+
+lint:
+  stage: test
+  image: golang:1.24
+  before_script:
+    - go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+  script:
+    - make lint
+
+test-aws:
+  stage: test
+  image: golang:1.24
+  before_script:
+    - apt-get update && apt-get install -y unzip curl
+    - curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
+    - unzip awscliv2.zip && ./aws/install && rm -rf awscliv2.zip aws
+    - *install-terraform
+  script:
+    - cd simulators/aws && make test
+  when: manual
+
+test-gcp:
+  stage: test
+  image: golang:1.24
+  before_script:
+    - apt-get update && apt-get install -y curl python3 apt-transport-https gnupg unzip
+    - echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" > /etc/apt/sources.list.d/google-cloud-sdk.list
+    - curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+    - apt-get update && apt-get install -y google-cloud-cli
+    - *install-terraform
+  script:
+    - cd simulators/gcp && make test
+  when: manual
+
+test-azure:
+  stage: test
+  image: golang:1.24
+  before_script:
+    - apt-get update && apt-get install -y curl gnupg lsb-release unzip
+    - curl -sL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg
+    - echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ $(lsb_release -cs) main" > /etc/apt/sources.list.d/azure-cli.list
+    - apt-get update && apt-get install -y azure-cli
+    - *install-terraform
+  script:
+    - cd simulators/azure && make test
+  when: manual

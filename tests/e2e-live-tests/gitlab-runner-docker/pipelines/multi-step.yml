@@ -1,0 +1,12 @@
+test-job:
+  image: alpine:latest
+  script:
+    - echo "step-1" > /tmp/multi-step-marker
+    - echo "Step 2"
+    - echo "step-2" >> /tmp/multi-step-marker
+    - test -n "$(date)"
+    - test -n "$(uname -a)"
+    - echo "step-3" >> /tmp/multi-step-marker
+    - LINES=$(wc -l < /tmp/multi-step-marker)
+    - test "$LINES" -eq 3
+    - echo "Step ordering verified"

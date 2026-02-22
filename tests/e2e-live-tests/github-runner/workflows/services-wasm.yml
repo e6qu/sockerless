@@ -1,0 +1,26 @@
+name: services-wasm
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Write shared data
+        run: |
+          mkdir -p /tmp/shared
+          echo "producer-data" > /tmp/shared/state.txt
+          test -f /tmp/shared/state.txt
+      - name: Read and verify shared data
+        run: |
+          test "$(cat /tmp/shared/state.txt)" = "producer-data"
+      - name: Append to shared state
+        run: |
+          echo "consumer-data" >> /tmp/shared/state.txt
+          LINES=$(wc -l < /tmp/shared/state.txt)
+          test "$LINES" -eq 2
+      - name: Verify final state
+        run: |
+          head -1 /tmp/shared/state.txt | grep -q "producer-data"
+          tail -1 /tmp/shared/state.txt | grep -q "consumer-data"
+          test "$(wc -l < /tmp/shared/state.txt)" -eq 2

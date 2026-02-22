@@ -1,0 +1,28 @@
+name: env-vars
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    env:
+      JOB_VAR: "job-level-value"
+    steps:
+      - name: Check job-level env
+        run: |
+          echo "JOB_VAR=$JOB_VAR"
+          test "$JOB_VAR" = "job-level-value"
+      - name: Check step-level env
+        env:
+          STEP_VAR: "step-level-value"
+        run: |
+          echo "STEP_VAR=$STEP_VAR"
+          test "$STEP_VAR" = "step-level-value"
+      - name: Step var does not leak
+        run: |
+          echo "STEP_VAR should be empty: '${STEP_VAR:-}'"
+          test -z "${STEP_VAR:-}"
+      - name: Check CI variable
+        run: |
+          echo "CI=$CI"
+          test "$CI" = "true"

@@ -1,0 +1,20 @@
+variables:
+  GLOBAL_VAR: "global-value"
+  OVERRIDE_VAR: "from-global"
+
+test-vars:
+  image: alpine:latest
+  variables:
+    JOB_VAR: "job-value"
+    OVERRIDE_VAR: "from-job"
+    COMPOSED: "${GLOBAL_VAR}-${JOB_VAR}"
+  script:
+    - echo "GLOBAL_VAR=$GLOBAL_VAR"
+    - test "$GLOBAL_VAR" = "global-value"
+    - echo "JOB_VAR=$JOB_VAR"
+    - test "$JOB_VAR" = "job-value"
+    - echo "OVERRIDE_VAR=$OVERRIDE_VAR"
+    - test "$OVERRIDE_VAR" = "from-job"
+    - echo "COMPOSED=$COMPOSED"
+    - test "$COMPOSED" = "global-value-job-value"
+    - echo "variable-features-ok"

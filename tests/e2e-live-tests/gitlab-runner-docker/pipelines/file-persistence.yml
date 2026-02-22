@@ -1,0 +1,22 @@
+test-job:
+  image: alpine:latest
+  script:
+    # Step 1: Create file
+    - echo "step1-content" > /tmp/persist-test.txt
+    - chmod 644 /tmp/persist-test.txt
+
+    # Step 2: Verify file persists
+    - test -f /tmp/persist-test.txt
+    - test "$(cat /tmp/persist-test.txt)" = "step1-content"
+
+    # Step 3: Append to file
+    - echo "step3-append" >> /tmp/persist-test.txt
+    - LINES=$(cat /tmp/persist-test.txt | wc -l | tr -d ' ')
+    - test "$LINES" = "2"
+
+    # Step 4: Verify combined content
+    - FIRST=$(head -1 /tmp/persist-test.txt)
+    - SECOND=$(tail -1 /tmp/persist-test.txt)
+    - test "$FIRST" = "step1-content"
+    - test "$SECOND" = "step3-append"
+    - test -f /tmp/persist-test.txt

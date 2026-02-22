@@ -1,0 +1,28 @@
+name: multi-step
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Step 1
+        run: |
+          echo "step-1" > /tmp/multi-step-marker
+          test -f /tmp/multi-step-marker
+      - name: Step 2
+        run: |
+          echo "Second step"
+          echo "with multiple lines"
+          echo "step-2" >> /tmp/multi-step-marker
+      - name: Step 3
+        run: |
+          echo "Third step"
+          test -n "$(date)"
+          test -n "$(uname -a)"
+          echo "step-3" >> /tmp/multi-step-marker
+      - name: Step 4
+        run: |
+          echo "Final step"
+          LINES=$(wc -l < /tmp/multi-step-marker)
+          test "$LINES" -eq 3

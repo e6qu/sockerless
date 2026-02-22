@@ -1,0 +1,31 @@
+name: file-persistence
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Create file
+        run: |
+          echo "step1-content" > /tmp/persist-test.txt
+          chmod 644 /tmp/persist-test.txt
+
+      - name: Verify file persists
+        run: |
+          test -f /tmp/persist-test.txt
+          test "$(cat /tmp/persist-test.txt)" = "step1-content"
+
+      - name: Append to file
+        run: |
+          echo "step3-append" >> /tmp/persist-test.txt
+          LINES=$(cat /tmp/persist-test.txt | wc -l | tr -d ' ')
+          test "$LINES" = "2"
+
+      - name: Verify combined content
+        run: |
+          FIRST=$(head -1 /tmp/persist-test.txt)
+          SECOND=$(tail -1 /tmp/persist-test.txt)
+          test "$FIRST" = "step1-content"
+          test "$SECOND" = "step3-append"
+          test -f /tmp/persist-test.txt

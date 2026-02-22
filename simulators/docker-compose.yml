@@ -1,0 +1,42 @@
+services:
+  aws:
+    build:
+      context: ./aws
+    ports:
+      - "4566:4566"
+    environment:
+      SIM_LISTEN_ADDR: ":4566"
+      SIM_LOG_LEVEL: info
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4566/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  gcp:
+    build:
+      context: ./gcp
+    ports:
+      - "4567:4567"
+    environment:
+      SIM_LISTEN_ADDR: ":4567"
+      SIM_LOG_LEVEL: info
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4567/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  azure:
+    build:
+      context: ./azure
+    ports:
+      - "4568:4568"
+    environment:
+      SIM_LISTEN_ADDR: ":4568"
+      SIM_LOG_LEVEL: info
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4568/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3

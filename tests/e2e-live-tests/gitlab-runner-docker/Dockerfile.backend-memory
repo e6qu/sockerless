@@ -1,0 +1,29 @@
+FROM golang:1.24 AS builder
+
+# --- Copy shared source for backends ---
+WORKDIR /src
+COPY api/ api/
+COPY agent/ agent/
+COPY sandbox/ sandbox/
+COPY backends/core/ backends/core/
+
+# --- Build memory backend only ---
+COPY backends/memory/ backends/memory/
+RUN cd backends/memory && GOWORK=off go mod download && \
+    GOWORK=off go build -o /out/sockerless-backend-memory ./cmd
+
+# --- Build frontend ---
+COPY frontends/docker/ frontends/docker/
+RUN cd frontends/docker && GOWORK=off go mod download && \
+    GOWORK=off go build -o /out/sockerless-frontend-docker ./cmd
+
+# --- Runtime stage ---
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /out/ /usr/local/bin/
+COPY tests/e2e-live-tests/lib.sh /app/lib.sh
+COPY tests/e2e-live-tests/start-backend.sh /app/start-backend.sh
+RUN chmod +x /app/*.sh
+
+ENTRYPOINT ["/app/start-backend.sh"]

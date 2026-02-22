@@ -1,0 +1,14 @@
+name: smoke-test
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Hello
+        run: echo "Hello from Sockerless"
+      - name: Multi-line
+        run: |
+          echo "Step 2"
+          echo "Done"

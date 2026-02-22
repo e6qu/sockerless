@@ -1,0 +1,21 @@
+name: working-dir
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Create directory
+        run: mkdir -p /tmp/workdir
+      - name: Work in directory
+        working-directory: /tmp/workdir
+        run: |
+          pwd
+          echo "test-content" > output.txt
+      - name: Verify from workdir
+        working-directory: /tmp/workdir
+        run: |
+          test -f output.txt
+          test "$(cat output.txt)" = "test-content"
+          echo "Working directory test passed"
