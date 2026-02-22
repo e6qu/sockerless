@@ -108,6 +108,23 @@ func writeGHError(w http.ResponseWriter, status int, message string) {
 	})
 }
 
+// writeGHValidationError writes a GitHub 422 validation error with detailed errors array.
+func writeGHValidationError(w http.ResponseWriter, resource, field, code string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnprocessableEntity)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":           "Validation Failed",
+		"documentation_url": "https://docs.github.com/rest",
+		"errors": []map[string]string{
+			{
+				"resource": resource,
+				"field":    field,
+				"code":     code,
+			},
+		},
+	})
+}
+
 // userToJSON converts a User to a JSON-compatible map.
 func userToJSON(u *User) map[string]interface{} {
 	return map[string]interface{}{

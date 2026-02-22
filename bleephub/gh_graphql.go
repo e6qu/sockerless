@@ -50,10 +50,16 @@ func (s *Server) initGraphQLSchema() {
 	})
 
 	// Add repository types, queries, and mutations
-	mutationType := s.addRepoFieldsToSchema(userType, queryType)
+	repoType, mutationType := s.addRepoFieldsToSchema(userType, queryType)
 
 	// Add organization types and queries
 	s.addOrgFieldsToSchema(userType, queryType)
+
+	// Add issue types, queries, and mutations
+	issueType := s.addIssueFieldsToSchema(userType, repoType, mutationType, queryType)
+
+	// Add pull request types, queries, and mutations
+	s.addPullRequestFieldsToSchema(userType, issueType, repoType, mutationType, queryType)
 
 	schema, err := graphql.NewSchema(graphql.SchemaConfig{
 		Query:    queryType,

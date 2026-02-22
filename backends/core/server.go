@@ -19,6 +19,7 @@ type BackendDescriptor struct {
 	Architecture    string
 	NCPU            int
 	MemTotal        int64
+	InstanceID      string
 }
 
 // RouteOverrides allows backends to provide custom handlers for operations
@@ -52,6 +53,7 @@ type BaseServer struct {
 	AgentRegistry  *AgentRegistry
 	ProcessFactory ProcessFactory
 	Drivers        DriverSet
+	Registry       *ResourceRegistry
 }
 
 // NewBaseServer creates a new base server with the given store, descriptor,
@@ -64,6 +66,7 @@ func NewBaseServer(store *Store, desc BackendDescriptor, overrides RouteOverride
 		Desc:          desc,
 		Mux:           http.NewServeMux(),
 		AgentRegistry: NewAgentRegistry(),
+		Registry:      NewResourceRegistry(""),
 	}
 	s.InitDrivers()
 	s.registerRoutes(overrides)
@@ -81,6 +84,11 @@ func (s *BaseServer) registerRoutes(o RouteOverrides) {
 
 	// System
 	s.Mux.HandleFunc("GET /internal/v1/info", s.handleInfo)
+
+	// Resource registry
+	s.Mux.HandleFunc("GET /internal/v1/resources", s.handleResourceList)
+	s.Mux.HandleFunc("GET /internal/v1/resources/orphaned", s.handleResourceOrphaned)
+	s.Mux.HandleFunc("POST /internal/v1/resources/cleanup", s.handleResourceCleanup)
 
 	// Agent reverse connection
 	s.Mux.HandleFunc("GET /internal/v1/agent/connect", s.handleAgentConnect)
@@ -273,5 +281,54 @@ func (s *BaseServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 		Architecture:      s.Desc.Architecture,
 		NCPU:              s.Desc.NCPU,
 		MemTotal:          s.Desc.MemTotal,
+	})
+}
+
+// handleResourceList returns tracked resources, optionally filtered by active status.
+func (s *BaseServer) handleResourceList(w http.ResponseWriter, r *http.Request) {
+	active := r.URL.Query().Get("active")
+	var entries []ResourceEntry
+	if active == "true" {
+		entries = s.Registry.ListActive()
+	} else {
+		entries = s.Registry.ListAll()
+	}
+	if entries == nil {
+		entries = []ResourceEntry{}
+	}
+	WriteJSON(w, http.StatusOK, entries)
+}
+
+// handleResourceOrphaned returns active resources older than max_age.
+func (s *BaseServer) handleResourceOrphaned(w http.ResponseWriter, r *http.Request) {
+	maxAgeStr := r.URL.Query().Get("max_age")
+	maxAge := time.Hour // default 1 hour
+	if maxAgeStr != "" {
+		if d, err := time.ParseDuration(maxAgeStr); err == nil {
+			maxAge = d
+		}
+	}
+	entries := s.Registry.ListOrphaned(maxAge)
+	if entries == nil {
+		entries = []ResourceEntry{}
+	}
+	WriteJSON(w, http.StatusOK, entries)
+}
+
+// handleResourceCleanup triggers best-effort cleanup of orphaned resources.
+func (s *BaseServer) handleResourceCleanup(w http.ResponseWriter, r *http.Request) {
+	maxAgeStr := r.URL.Query().Get("max_age")
+	maxAge := time.Hour
+	if maxAgeStr != "" {
+		if d, err := time.ParseDuration(maxAgeStr); err == nil {
+			maxAge = d
+		}
+	}
+	orphans := s.Registry.ListOrphaned(maxAge)
+	for _, o := range orphans {
+		s.Registry.MarkCleanedUp(o.ResourceID)
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"cleaned": len(orphans),
 	})
 }

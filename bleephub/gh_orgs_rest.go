@@ -136,7 +136,7 @@ func (s *Server) handleListAuthUserOrgs(w http.ResponseWriter, r *http.Request) 
 	for _, org := range orgs {
 		result = append(result, orgToJSON(org, base))
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
 
 func (s *Server) handleListUserOrgs(w http.ResponseWriter, r *http.Request) {
@@ -153,7 +153,7 @@ func (s *Server) handleListUserOrgs(w http.ResponseWriter, r *http.Request) {
 	for _, org := range orgs {
 		result = append(result, orgToJSON(org, base))
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
 
 func (s *Server) handleCreateOrgRepo(w http.ResponseWriter, r *http.Request) {

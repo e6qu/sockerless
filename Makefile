@@ -1,7 +1,7 @@
 .PHONY: sim-test-ecs sim-test-lambda sim-test-cloudrun sim-test-gcf sim-test-aca sim-test-azf
 .PHONY: sim-test-aws sim-test-gcp sim-test-azure sim-test-all
 .PHONY: test lint
-.PHONY: bleephub-test
+.PHONY: bleephub-test bleephub-gh-test
 .PHONY: smoke-test-act smoke-test-act-ecs smoke-test-act-cloudrun smoke-test-act-aca smoke-test-act-all
 .PHONY: smoke-test-gitlab smoke-test-gitlab-ecs smoke-test-gitlab-cloudrun smoke-test-gitlab-aca smoke-test-gitlab-all
 .PHONY: e2e-github-all e2e-gitlab-all e2e-all
@@ -294,3 +294,7 @@ upstream-test-gcl-all:
 bleephub-test:
 	docker build -f bleephub/Dockerfile -t sockerless-bleephub-test .
 	docker run --rm sockerless-bleephub-test
+
+bleephub-gh-test:
+	docker build -f bleephub/Dockerfile.gh-test -t sockerless-bleephub-gh-test .
+	docker run --rm sockerless-bleephub-gh-test

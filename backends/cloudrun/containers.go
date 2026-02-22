@@ -209,6 +209,15 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 
 	jobFullName := job.Name
 
+	s.Registry.Register(core.ResourceEntry{
+		ContainerID:  id,
+		Backend:      "cloudrun",
+		ResourceType: "job",
+		ResourceID:   jobFullName,
+		InstanceID:   s.Desc.InstanceID,
+		CreatedAt:    time.Now(),
+	})
+
 	// Run the job (creates an execution)
 	runOp, err := s.gcp.Jobs.RunJob(s.ctx(), &runpb.RunJobRequest{
 		Name: jobFullName,
@@ -400,6 +409,7 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 	crState, _ := s.CloudRun.Get(id)
 	if crState.JobName != "" {
 		s.deleteJob(crState.JobName)
+		s.Registry.MarkCleanedUp(crState.JobName)
 	}
 
 	s.Store.Containers.Delete(id)

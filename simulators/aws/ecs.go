@@ -80,6 +80,11 @@ type ECSEfsAuthorizationConfig struct {
 	Iam           string `json:"iam,omitempty"`
 }
 
+type ECSTag struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
 type ECSTaskDefinition struct {
 	TaskDefinitionArn    string                   `json:"taskDefinitionArn"`
 	Family               string                   `json:"family"`
@@ -92,6 +97,7 @@ type ECSTaskDefinition struct {
 	ExecutionRoleArn     string                   `json:"executionRoleArn,omitempty"`
 	TaskRoleArn          string                   `json:"taskRoleArn,omitempty"`
 	Volumes              []ECSVolume              `json:"volumes,omitempty"`
+	Tags                 []ECSTag                 `json:"tags,omitempty"`
 	Status               string                   `json:"status"`
 }
 
@@ -127,6 +133,7 @@ type ECSTask struct {
 	StopCode          string             `json:"stopCode,omitempty"`
 	StoppedReason     string             `json:"stoppedReason,omitempty"`
 	Attachments       []ECSAttachment    `json:"attachments,omitempty"`
+	Tags              []ECSTag           `json:"tags,omitempty"`
 	LaunchType        string             `json:"launchType,omitempty"`
 	Cpu               string             `json:"cpu,omitempty"`
 	Memory            string             `json:"memory,omitempty"`
@@ -254,6 +261,7 @@ func handleECSRegisterTaskDefinition(w http.ResponseWriter, r *http.Request) {
 		ExecutionRoleArn        string                   `json:"executionRoleArn,omitempty"`
 		TaskRoleArn             string                   `json:"taskRoleArn,omitempty"`
 		Volumes                 []ECSVolume              `json:"volumes,omitempty"`
+		Tags                    []ECSTag                 `json:"tags,omitempty"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -286,6 +294,7 @@ func handleECSRegisterTaskDefinition(w http.ResponseWriter, r *http.Request) {
 		ExecutionRoleArn:        req.ExecutionRoleArn,
 		TaskRoleArn:             req.TaskRoleArn,
 		Volumes:                 req.Volumes,
+		Tags:                    req.Tags,
 		Status:                  "ACTIVE",
 	}
 
@@ -380,11 +389,13 @@ func handleECSDescribeTaskDefinition(w http.ResponseWriter, r *http.Request) {
 
 func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Cluster        string `json:"cluster"`
-		TaskDefinition string `json:"taskDefinition"`
-		Count          int    `json:"count"`
-		LaunchType     string `json:"launchType"`
-		Group          string `json:"group"`
+		Cluster        string   `json:"cluster"`
+		TaskDefinition string   `json:"taskDefinition"`
+		Count          int      `json:"count"`
+		LaunchType     string   `json:"launchType"`
+		Group          string   `json:"group"`
+		Tags           []ECSTag `json:"tags,omitempty"`
+		PropagateTags  string   `json:"propagateTags,omitempty"`
 		NetworkConfiguration *struct {
 			AwsvpcConfiguration *struct {
 				Subnets        []string `json:"subnets"`
@@ -471,6 +482,13 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
+		// Merge tags: request tags take priority, then inherited from task def
+		var taskTags []ECSTag
+		if req.PropagateTags == "TASK_DEFINITION" && len(td.Tags) > 0 {
+			taskTags = append(taskTags, td.Tags...)
+		}
+		taskTags = append(taskTags, req.Tags...)
+
 		task := ECSTask{
 			TaskArn:           taskArn,
 			TaskDefinitionArn: td.TaskDefinitionArn,
@@ -478,6 +496,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 			LastStatus:        "PENDING",
 			DesiredStatus:     "RUNNING",
 			Containers:        containers,
+			Tags:              taskTags,
 			LaunchType:        req.LaunchType,
 			Cpu:               td.Cpu,
 			Memory:            td.Memory,
@@ -818,8 +837,33 @@ func handleECSListTagsForResource(w http.ResponseWriter, r *http.Request) {
 	}
 	sim.ReadJSON(r, &req)
 
+	var tags []ECSTag
+
+	// Check if it's a task definition ARN
+	if strings.Contains(req.ResourceArn, ":task-definition/") {
+		key := extractTDKey(req.ResourceArn)
+		if td, ok := ecsTaskDefinitions.Get(key); ok {
+			tags = td.Tags
+		}
+	}
+
+	// Check if it's a task ARN
+	if strings.Contains(req.ResourceArn, ":task/") {
+		parts := strings.Split(req.ResourceArn, "/")
+		if len(parts) > 0 {
+			taskID := parts[len(parts)-1]
+			if task, ok := ecsTasks.Get(taskID); ok {
+				tags = task.Tags
+			}
+		}
+	}
+
+	if tags == nil {
+		tags = []ECSTag{}
+	}
+
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"tags": []any{},
+		"tags": tags,
 	})
 }
 

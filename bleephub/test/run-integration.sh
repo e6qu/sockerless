@@ -116,8 +116,35 @@ done
 # Give the runner a moment to establish its session
 sleep 5
 
-# --- 6. Submit test job ---
-log "Submitting test job..."
+# Helper: wait for a single job to complete (by job ID)
+wait_for_job() {
+    local job_id="$1" label="$2" max="${3:-90}"
+    log "Waiting for $label ($job_id) (max ${max}s)..."
+    for i in $(seq 1 "$max"); do
+        STATUS_RESP=$(curl -sf "http://$BLEEPHUB_ADDR/api/v3/bleephub/jobs/$job_id" 2>/dev/null || echo '{}')
+        STATUS=$(echo "$STATUS_RESP" | jq -r '.status // "unknown"')
+        RESULT=$(echo "$STATUS_RESP" | jq -r '.result // ""')
+
+        if [ "$STATUS" = "completed" ]; then
+            log "$label completed with result: $RESULT"
+            if [ "$RESULT" = "Succeeded" ] || [ "$RESULT" = "succeeded" ]; then
+                return 0
+            else
+                return 1
+            fi
+        fi
+
+        if [ "$i" -eq 45 ]; then
+            log "Still waiting for $label... status=$STATUS (${i}s)"
+        fi
+        sleep 1
+    done
+    log "Timeout waiting for $label (last status: $STATUS)"
+    return 1
+}
+
+# ===== TEST 1: Single-job submission =====
+log "===== TEST 1: Single-job submission ====="
 SUBMIT_RESP=$(curl -sf -X POST "http://$BLEEPHUB_ADDR/api/v3/bleephub/submit" \
     -H "Content-Type: application/json" \
     -d '{"image":"alpine:latest","steps":[{"run":"echo Hello from bleephub via Sockerless"},{"run":"uname -a"}]}')
@@ -128,31 +155,78 @@ if [ -z "$JOB_ID" ] || [ "$JOB_ID" = "null" ]; then
 fi
 log "Job submitted: $JOB_ID"
 
-# --- 7. Wait for job completion ---
-log "Waiting for job completion (max 90s)..."
-for i in $(seq 1 90); do
-    STATUS_RESP=$(curl -sf "http://$BLEEPHUB_ADDR/api/v3/bleephub/jobs/$JOB_ID" 2>/dev/null || echo '{}')
-    STATUS=$(echo "$STATUS_RESP" | jq -r '.status // "unknown"')
-    RESULT=$(echo "$STATUS_RESP" | jq -r '.result // ""')
+if ! wait_for_job "$JOB_ID" "single-job"; then
+    show_diag
+    fail "Single-job test failed"
+fi
+log "TEST 1 PASSED: Single-job submission"
+
+# Give runner a moment to reset between tests
+sleep 3
+
+# ===== TEST 2: Multi-job workflow (needs:) =====
+log "===== TEST 2: Multi-job workflow ====="
+WORKFLOW_YAML='name: multi-job-test
+jobs:
+  build:
+    runs-on: self-hosted
+    steps:
+      - run: echo "Building..."
+      - run: echo "Build complete"
+  test:
+    needs: [build]
+    runs-on: self-hosted
+    steps:
+      - run: echo "Testing after build..."
+      - run: echo "All tests passed"
+'
+
+WF_RESP=$(curl -sf -X POST "http://$BLEEPHUB_ADDR/api/v3/bleephub/workflow" \
+    -H "Content-Type: application/json" \
+    -d "$(jq -n --arg wf "$WORKFLOW_YAML" '{workflow: $wf, image: "alpine:latest"}')")
+
+WF_ID=$(echo "$WF_RESP" | jq -r '.workflowId')
+if [ -z "$WF_ID" ] || [ "$WF_ID" = "null" ]; then
+    fail "Workflow submission failed: $WF_RESP"
+fi
+log "Workflow submitted: $WF_ID (jobs: $(echo "$WF_RESP" | jq -r '.jobs | keys | join(", ")'))"
+
+# Poll workflow status
+log "Waiting for workflow completion (max 180s)..."
+for i in $(seq 1 180); do
+    WF_STATUS=$(curl -sf "http://$BLEEPHUB_ADDR/api/v3/bleephub/workflows/$WF_ID" 2>/dev/null || echo '{}')
+    STATUS=$(echo "$WF_STATUS" | jq -r '.status // "unknown"')
+    RESULT=$(echo "$WF_STATUS" | jq -r '.result // ""')
 
     if [ "$STATUS" = "completed" ]; then
-        log "Job completed with result: $RESULT"
-        show_diag
-        if [ "$RESULT" = "Succeeded" ] || [ "$RESULT" = "succeeded" ]; then
-            log "SUCCESS: Job passed"
-            exit 0
+        log "Workflow completed with result: $RESULT"
+
+        # Check both jobs completed successfully
+        BUILD_RESULT=$(echo "$WF_STATUS" | jq -r '.jobs.build.result // "unknown"')
+        TEST_RESULT=$(echo "$WF_STATUS" | jq -r '.jobs.test.result // "unknown"')
+        log "  build: $BUILD_RESULT, test: $TEST_RESULT"
+
+        if [ "$RESULT" = "success" ]; then
+            log "TEST 2 PASSED: Multi-job workflow"
+            break
         else
-            fail "Job completed but result was: $RESULT"
+            show_diag
+            fail "Multi-job workflow failed: result=$RESULT build=$BUILD_RESULT test=$TEST_RESULT"
         fi
     fi
 
-    # Show diagnostics at 45s
-    if [ "$i" -eq 45 ]; then
-        log "Still waiting... status=$STATUS (${i}s)"
-        show_diag
+    if [ "$i" -eq 90 ]; then
+        log "Still waiting for workflow... status=$STATUS (${i}s)"
+        JOBS_STATUS=$(echo "$WF_STATUS" | jq -r '.jobs | to_entries[] | "\(.key): \(.value.status) \(.value.result)"')
+        log "Job statuses: $JOBS_STATUS"
     fi
     sleep 1
 done
 
-show_diag
-fail "Timeout waiting for job to complete (last status: $STATUS)"
+if [ "$STATUS" != "completed" ]; then
+    show_diag
+    fail "Timeout waiting for workflow (last status: $STATUS)"
+fi
+
+# ===== All tests passed =====
+log "===== ALL INTEGRATION TESTS PASSED ====="

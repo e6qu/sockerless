@@ -22,15 +22,19 @@ type Server struct {
 	logger        zerolog.Logger
 	store         *Store
 	graphqlSchema graphql.Schema
+	actionCache   *ActionCache
+	artifactStore *ArtifactStore
 }
 
 // NewServer creates a bleephub server with all routes registered.
 func NewServer(addr string, logger zerolog.Logger) *Server {
 	s := &Server{
-		addr:   addr,
-		mux:    http.NewServeMux(),
-		logger: logger,
-		store:  NewStore(),
+		addr:        addr,
+		mux:         http.NewServeMux(),
+		logger:      logger,
+		store:       NewStore(),
+		actionCache:   NewActionCache(),
+		artifactStore: NewArtifactStore(),
 	}
 	s.store.SeedDefaultUser()
 	s.initGraphQLSchema()
@@ -57,6 +61,12 @@ func (s *Server) registerRoutes() {
 	// Job submission (jobs.go)
 	s.registerJobRoutes()
 
+	// Action resolution + tarball proxy (actions.go)
+	s.registerActionRoutes()
+
+	// Artifact + cache stubs (artifacts.go)
+	s.registerArtifactRoutes()
+
 	// Run service: acquire/renew/complete (run_service.go)
 	s.registerRunServiceRoutes()
 
@@ -68,6 +78,7 @@ func (s *Server) registerRoutes() {
 	s.registerGHRepoRoutes()
 	s.registerGHOrgRoutes()
 	s.registerGHIssueRoutes()
+	s.registerGHPullRoutes()
 	s.registerGHOAuthRoutes()
 	s.registerGHGraphQLRoutes()
 

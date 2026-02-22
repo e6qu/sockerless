@@ -32,7 +32,7 @@ func (s *Server) handleListOrgMembers(w http.ResponseWriter, r *http.Request) {
 	for _, u := range members {
 		result = append(result, userToJSON(u))
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
 
 func (s *Server) handleGetOrgMembership(w http.ResponseWriter, r *http.Request) {
@@ -171,7 +171,7 @@ func (s *Server) handleListTeamMembers(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.mu.RUnlock()
 
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
 
 func (s *Server) handleAddTeamMember(w http.ResponseWriter, r *http.Request) {

@@ -77,7 +77,7 @@ func (s *Server) handleListTeams(w http.ResponseWriter, r *http.Request) {
 	for _, team := range teams {
 		result = append(result, teamToJSON(team, org, base))
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
 
 func (s *Server) handleGetTeam(w http.ResponseWriter, r *http.Request) {

@@ -13,7 +13,7 @@ import (
 
 // addRepoFieldsToSchema adds repository types, queries, and mutations to the schema.
 // Called from initGraphQLSchema after userType and queryType are created.
-func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) *graphql.Object {
+func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*graphql.Object, *graphql.Object) {
 	refType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "Ref",
 		Fields: graphql.Fields{
@@ -285,7 +285,7 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) *gra
 		},
 	})
 
-	return mutationType
+	return repoType, mutationType
 }
 
 // repoToGraphQL converts a Repo to a map for GraphQL resolvers.

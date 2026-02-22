@@ -1,6 +1,6 @@
 # Sockerless — Current Status
 
-**Phase 38 complete. 342 tasks done across 38 phases. Next: Phase 39 (bleephub issues + labels + milestones).**
+**Phase 43 complete. 382 tasks done across 43 phases. Next: Phase 44 (crash-only software).**
 
 ## Test Results (Latest)
 
@@ -19,7 +19,10 @@
 | Cloud SDK tests | AWS 17, GCP 20, Azure 13 | `make docker-test` per cloud |
 | Cloud CLI tests | AWS 21, GCP 15, Azure 14 | `make docker-test` per cloud |
 | bleephub integration | 1 PASS (full runner lifecycle) | `make bleephub-test` |
-| bleephub unit tests | 51 PASS (7 runner + 12 GitHub API + 14 git repos + 18 orgs/teams) | `cd bleephub && go test -v ./...` |
+| bleephub unit tests | 190 PASS (148 prior + 12 workflow parsing + 6 actions + 10 workflow engine + 8 matrix + 6 artifacts) | `cd bleephub && go test -v ./...` |
+| bleephub gh CLI test | 1 PASS (35 assertions, Docker-based) | `make bleephub-gh-test` |
+| Core tag builder | 6 PASS (AsMap, AsGCPLabels, AsAzurePtrMap, truncation, DefaultInstanceID) | `cd backends/core && go test -v -run TestTag ./...` |
+| Core resource registry | 5 PASS (register, cleanup, orphaned, save/load, non-existent) | `cd backends/core && go test -v -run TestRegistry ./...` |
 
 ### Upstream Act (Informational — not all expected to pass)
 
@@ -51,8 +54,23 @@ bleephub now also serves GitHub REST API and GraphQL endpoints, validated agains
 - **Organizations** — org CRUD, team management, membership, RBAC enforcement on repos
 - **Teams** — team CRUD, team membership, team-repo permissions (pull/push/admin)
 - **RBAC** — org admins, team permissions, public/private repo visibility
+- **Issues** — issue CRUD with per-repo sequential numbering, state (OPEN/CLOSED), stateReason (COMPLETED/NOT_PLANNED)
+- **Labels** — per-repo label CRUD, issue-label association
+- **Milestones** — per-repo milestone CRUD with sequential numbering
+- **Comments** — issue comment CRUD
+- **Reactions** — static reaction groups (8 types) on issues and PRs
+- **Pull Requests** — PR CRUD with shared issue/PR numbering, state (OPEN/CLOSED/MERGED), draft support, head/base ref tracking
+- **PR Merge** — merge via REST and GraphQL with merge method support (MERGE/SQUASH/REBASE)
+- **PR Reviews** — review CRUD (APPROVED/CHANGES_REQUESTED/COMMENTED), review decision derivation
+- **GraphQL mutations** — createIssue, closeIssue, reopenIssue, addComment, updateIssue, createPullRequest, closePullRequest, reopenPullRequest, mergePullRequest, updatePullRequest
+- **GraphQL queries** — repository.issues (with state/label/assignee filtering), repository.issue, repository.labels, repository.milestones, repository.assignableUsers, repository.pullRequests (with state/label/head/base filtering), repository.pullRequest
 - **Response headers**: `X-OAuth-Scopes`, `X-RateLimit-*`, `X-GitHub-Request-Id`, `X-GitHub-Api-Version`
 - **TLS support** via `BPH_TLS_CERT`/`BPH_TLS_KEY` env vars
+- **REST pagination** — `Link` headers (RFC 5988) on all list endpoints, configurable `page`/`per_page`
+- **Error conformance** — 422 responses include `errors` array with `resource`/`field`/`code`
+- **Content negotiation** — `Content-Type: application/json; charset=utf-8`, `X-GitHub-Api-Version` header
+- **OpenAPI schema validation** — vendored schemas for 8 resource types, validated in unit tests
+- **`gh` CLI integration test** — Docker-based end-to-end test using `gh api` with TLS
 
 ## Architecture
 
@@ -90,6 +108,10 @@ Each simulator implements enough cloud API for its backends. Validated against o
 | AWS | ecs, lambda | 17 PASS | 21 PASS | 26 PASS |
 | GCP | cloudrun, gcf | 20 PASS | 15 PASS | 20 PASS |
 | Azure | aca, azf | 13 PASS | 14 PASS | 29 PASS |
+
+### Cloud Resource Tracking (Phase 43)
+
+All cloud resources tagged with 5 standard tags. Local resource registry tracks creates/deletes. CloudScanner interface enables crash recovery. REST endpoints for listing and cleanup.
 
 ## Known Limitations
 

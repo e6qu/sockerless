@@ -82,7 +82,7 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 	if commits == nil {
 		commits = []map[string]interface{}{}
 	}
-	writeJSON(w, http.StatusOK, commits)
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, commits))
 }
 
 func (s *Server) handleGetTree(w http.ResponseWriter, r *http.Request) {

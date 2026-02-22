@@ -64,6 +64,9 @@ type Store struct {
 	Labels       map[int]*IssueLabel         // id → label
 	Milestones   map[int]*Milestone          // id → milestone
 	Comments     map[int]*Comment            // id → comment
+	PullRequests map[int]*PullRequest       // id → PR
+	PRReviews    map[int]*PullRequestReview // id → review
+	Workflows    map[string]*Workflow       // id → workflow
 	NextAgent    int
 	NextMsg      int64
 	NextLog      int
@@ -76,6 +79,9 @@ type Store struct {
 	NextLabel    int
 	NextMilestone int
 	NextComment  int
+	NextPR       int
+	NextPRReview int
+	NextRunID    int
 	mu           sync.RWMutex
 }
 
@@ -166,6 +172,9 @@ func NewStore() *Store {
 		Labels:       make(map[int]*IssueLabel),
 		Milestones:   make(map[int]*Milestone),
 		Comments:     make(map[int]*Comment),
+		PullRequests: make(map[int]*PullRequest),
+		PRReviews:    make(map[int]*PullRequestReview),
+		Workflows:    make(map[string]*Workflow),
 		NextAgent:    1,
 		NextMsg:      1,
 		NextLog:      1,
@@ -178,6 +187,9 @@ func NewStore() *Store {
 		NextLabel:    1,
 		NextMilestone: 1,
 		NextComment:  1,
+		NextPR:       1,
+		NextPRReview: 1,
+		NextRunID:    1,
 	}
 }
 

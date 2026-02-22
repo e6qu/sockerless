@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
@@ -106,6 +107,13 @@ func (s *Server) registerTaskDefinition(ctx context.Context, containerID string,
 	// Task definition family name
 	family := fmt.Sprintf("sockerless-%s", containerID[:12])
 
+	tags := core.TagSet{
+		ContainerID: containerID,
+		Backend:     "ecs",
+		InstanceID:  s.Desc.InstanceID,
+		CreatedAt:   time.Now(),
+	}
+
 	input := &awsecs.RegisterTaskDefinitionInput{
 		Family:                  aws.String(family),
 		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityFargate},
@@ -114,6 +122,7 @@ func (s *Server) registerTaskDefinition(ctx context.Context, containerID string,
 		Memory:                  aws.String("512"),
 		ContainerDefinitions:    []ecstypes.ContainerDefinition{containerDef},
 		Volumes:                 volumes,
+		Tags:                    mapToECSTags(tags.AsMap()),
 	}
 
 	if s.config.ExecutionRoleARN != "" {
