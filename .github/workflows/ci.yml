@@ -62,36 +62,23 @@ jobs:
         env:
           GOWORK: "off"
         run: |
-          echo "=== bleephub ==="
-          cd bleephub && go build -o /dev/null ./cmd && cd ..
-          echo "=== frontend ==="
-          cd frontends/docker && go build -o /dev/null ./cmd && cd ../..
-          echo "=== cli ==="
-          cd cmd/sockerless && go build -o /dev/null . && cd ../..
-          echo "=== agent ==="
-          cd agent && go build -o /dev/null ./cmd && cd ..
-          echo "=== backend-memory ==="
-          cd backends/memory && go build -o /dev/null ./cmd && cd ../..
-          echo "=== backend-ecs ==="
-          cd backends/ecs && go build -o /dev/null ./cmd/sockerless-backend-ecs && cd ../..
-          echo "=== backend-lambda ==="
-          cd backends/lambda && go build -o /dev/null ./cmd/sockerless-backend-lambda && cd ../..
-          echo "=== backend-cloudrun ==="
-          cd backends/cloudrun && go build -o /dev/null ./cmd/sockerless-backend-cloudrun && cd ../..
-          echo "=== backend-gcf ==="
-          cd backends/cloudrun-functions && go build -o /dev/null ./cmd/sockerless-backend-gcf && cd ../..
-          echo "=== backend-aca ==="
-          cd backends/aca && go build -o /dev/null ./cmd/sockerless-backend-aca && cd ../..
-          echo "=== backend-azf ==="
-          cd backends/azure-functions && go build -o /dev/null ./cmd/sockerless-backend-azf && cd ../..
-          echo "=== gitlabhub ==="
-          cd gitlabhub && go build -o /dev/null ./cmd && cd ..
-          echo "=== simulator-aws ==="
-          cd simulators/aws && go build -o /dev/null . && cd ../..
-          echo "=== simulator-gcp ==="
-          cd simulators/gcp && go build -o /dev/null . && cd ../..
-          echo "=== simulator-azure ==="
-          cd simulators/azure && go build -o /dev/null . && cd ../..
+          set -e
+          build() { echo "=== $1 ===" && (cd "$1" && go build -o /dev/null "$2"); }
+          build bleephub ./cmd
+          build frontends/docker ./cmd
+          build cmd/sockerless .
+          build agent ./cmd/sockerless-agent
+          build backends/memory ./cmd
+          build backends/ecs ./cmd/sockerless-backend-ecs
+          build backends/lambda ./cmd/sockerless-backend-lambda
+          build backends/cloudrun ./cmd/sockerless-backend-cloudrun
+          build backends/cloudrun-functions ./cmd/sockerless-backend-gcf
+          build backends/aca ./cmd/sockerless-backend-aca
+          build backends/azure-functions ./cmd/sockerless-backend-azf
+          build gitlabhub ./cmd
+          build simulators/aws .
+          build simulators/gcp .
+          build simulators/azure .
 
   build-check-arm64:
     runs-on: ubuntu-latest
@@ -108,33 +95,20 @@ jobs:
           CGO_ENABLED: "0"
           GOWORK: "off"
         run: |
-          echo "=== bleephub ==="
-          cd bleephub && go build -o /dev/null ./cmd && cd ..
-          echo "=== frontend ==="
-          cd frontends/docker && go build -o /dev/null ./cmd && cd ../..
-          echo "=== cli ==="
-          cd cmd/sockerless && go build -o /dev/null . && cd ../..
-          echo "=== agent ==="
-          cd agent && go build -o /dev/null ./cmd && cd ..
-          echo "=== backend-memory ==="
-          cd backends/memory && go build -o /dev/null ./cmd && cd ../..
-          echo "=== backend-ecs ==="
-          cd backends/ecs && go build -o /dev/null ./cmd/sockerless-backend-ecs && cd ../..
-          echo "=== backend-lambda ==="
-          cd backends/lambda && go build -o /dev/null ./cmd/sockerless-backend-lambda && cd ../..
-          echo "=== backend-cloudrun ==="
-          cd backends/cloudrun && go build -o /dev/null ./cmd/sockerless-backend-cloudrun && cd ../..
-          echo "=== backend-gcf ==="
-          cd backends/cloudrun-functions && go build -o /dev/null ./cmd/sockerless-backend-gcf && cd ../..
-          echo "=== backend-aca ==="
-          cd backends/aca && go build -o /dev/null ./cmd/sockerless-backend-aca && cd ../..
-          echo "=== backend-azf ==="
-          cd backends/azure-functions && go build -o /dev/null ./cmd/sockerless-backend-azf && cd ../..
-          echo "=== gitlabhub ==="
-          cd gitlabhub && go build -o /dev/null ./cmd && cd ..
-          echo "=== simulator-aws ==="
-          cd simulators/aws && go build -o /dev/null . && cd ../..
-          echo "=== simulator-gcp ==="
-          cd simulators/gcp && go build -o /dev/null . && cd ../..
-          echo "=== simulator-azure ==="
-          cd simulators/azure && go build -o /dev/null . && cd ../..
+          set -e
+          build() { echo "=== $1 ===" && (cd "$1" && go build -o /dev/null "$2"); }
+          build bleephub ./cmd
+          build frontends/docker ./cmd
+          build cmd/sockerless .
+          build agent ./cmd/sockerless-agent
+          build backends/memory ./cmd
+          build backends/ecs ./cmd/sockerless-backend-ecs
+          build backends/lambda ./cmd/sockerless-backend-lambda
+          build backends/cloudrun ./cmd/sockerless-backend-cloudrun
+          build backends/cloudrun-functions ./cmd/sockerless-backend-gcf
+          build backends/aca ./cmd/sockerless-backend-aca
+          build backends/azure-functions ./cmd/sockerless-backend-azf
+          build gitlabhub ./cmd
+          build simulators/aws .
+          build simulators/gcp .
+          build simulators/azure .
