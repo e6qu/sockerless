@@ -3,6 +3,7 @@ package frontend
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/sockerless/api"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // BackendClient makes HTTP calls to the backend's internal API.
@@ -27,11 +29,11 @@ func NewBackendClient(baseURL string) *BackendClient {
 		baseURL: baseURL,
 		httpClient: &http.Client{
 			Timeout: 0, // no timeout for long-poll (wait, attach)
-			Transport: &http.Transport{
+			Transport: otelhttp.NewTransport(&http.Transport{
 				MaxIdleConns:       100,
 				IdleConnTimeout:    90 * time.Second,
 				DisableCompression: true,
-			},
+			}),
 		},
 	}
 }
@@ -40,11 +42,15 @@ func (c *BackendClient) url(path string) string {
 	return c.baseURL + "/internal/v1" + path
 }
 
-func (c *BackendClient) get(path string) (*http.Response, error) {
-	return c.httpClient.Get(c.url(path))
+func (c *BackendClient) get(ctx context.Context, path string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.url(path), nil)
+	if err != nil {
+		return nil, err
+	}
+	return c.httpClient.Do(req)
 }
 
-func (c *BackendClient) post(path string, body any) (*http.Response, error) {
+func (c *BackendClient) post(ctx context.Context, path string, body any) (*http.Response, error) {
 	var r io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -53,55 +59,74 @@ func (c *BackendClient) post(path string, body any) (*http.Response, error) {
 		}
 		r = bytes.NewReader(data)
 	}
-	return c.httpClient.Post(c.url(path), "application/json", r)
+	req, err := http.NewRequestWithContext(ctx, "POST", c.url(path), r)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return c.httpClient.Do(req)
 }
 
-func (c *BackendClient) postRaw(path string, contentType string, body io.Reader) (*http.Response, error) {
-	return c.httpClient.Post(c.url(path), contentType, body)
+func (c *BackendClient) postRaw(ctx context.Context, path string, contentType string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST", c.url(path), body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	return c.httpClient.Do(req)
 }
 
-func (c *BackendClient) postRawWithQuery(path string, query url.Values, contentType string, body io.Reader) (*http.Response, error) {
+func (c *BackendClient) postRawWithQuery(ctx context.Context, path string, query url.Values, contentType string, body io.Reader) (*http.Response, error) {
 	u := c.url(path)
 	if len(query) > 0 {
 		u += "?" + query.Encode()
 	}
-	return c.httpClient.Post(u, contentType, body)
+	req, err := http.NewRequestWithContext(ctx, "POST", u, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	return c.httpClient.Do(req)
 }
 
-func (c *BackendClient) delete(path string) (*http.Response, error) {
-	req, err := http.NewRequest("DELETE", c.url(path), nil)
+func (c *BackendClient) delete(ctx context.Context, path string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.url(path), nil)
 	if err != nil {
 		return nil, err
 	}
 	return c.httpClient.Do(req)
 }
 
-func (c *BackendClient) deleteWithQuery(path string, query url.Values) (*http.Response, error) {
+func (c *BackendClient) deleteWithQuery(ctx context.Context, path string, query url.Values) (*http.Response, error) {
 	u := c.url(path)
 	if len(query) > 0 {
 		u += "?" + query.Encode()
 	}
-	req, err := http.NewRequest("DELETE", u, nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", u, nil)
 	if err != nil {
 		return nil, err
 	}
 	return c.httpClient.Do(req)
 }
 
-func (c *BackendClient) getWithQuery(path string, query url.Values) (*http.Response, error) {
+func (c *BackendClient) getWithQuery(ctx context.Context, path string, query url.Values) (*http.Response, error) {
 	u := c.url(path)
 	if len(query) > 0 {
 		u += "?" + query.Encode()
 	}
-	return c.httpClient.Get(u)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	return c.httpClient.Do(req)
 }
 
-func (c *BackendClient) putWithQuery(path string, query url.Values, body io.Reader) (*http.Response, error) {
+func (c *BackendClient) putWithQuery(ctx context.Context, path string, query url.Values, body io.Reader) (*http.Response, error) {
 	u := c.url(path)
 	if len(query) > 0 {
 		u += "?" + query.Encode()
 	}
-	req, err := http.NewRequest("PUT", u, body)
+	req, err := http.NewRequestWithContext(ctx, "PUT", u, body)
 	if err != nil {
 		return nil, err
 	}
@@ -109,19 +134,19 @@ func (c *BackendClient) putWithQuery(path string, query url.Values, body io.Read
 	return c.httpClient.Do(req)
 }
 
-func (c *BackendClient) headWithQuery(path string, query url.Values) (*http.Response, error) {
+func (c *BackendClient) headWithQuery(ctx context.Context, path string, query url.Values) (*http.Response, error) {
 	u := c.url(path)
 	if len(query) > 0 {
 		u += "?" + query.Encode()
 	}
-	req, err := http.NewRequest("HEAD", u, nil)
+	req, err := http.NewRequestWithContext(ctx, "HEAD", u, nil)
 	if err != nil {
 		return nil, err
 	}
 	return c.httpClient.Do(req)
 }
 
-func (c *BackendClient) postWithQuery(path string, query url.Values, body any) (*http.Response, error) {
+func (c *BackendClient) postWithQuery(ctx context.Context, path string, query url.Values, body any) (*http.Response, error) {
 	u := c.url(path)
 	if len(query) > 0 {
 		u += "?" + query.Encode()
@@ -134,12 +159,17 @@ func (c *BackendClient) postWithQuery(path string, query url.Values, body any) (
 		}
 		r = bytes.NewReader(data)
 	}
-	return c.httpClient.Post(u, "application/json", r)
+	req, err := http.NewRequestWithContext(ctx, "POST", u, r)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return c.httpClient.Do(req)
 }
 
 // Info returns backend system information.
-func (c *BackendClient) Info() (*api.BackendInfo, error) {
-	resp, err := c.get("/info")
+func (c *BackendClient) Info(ctx context.Context) (*api.BackendInfo, error) {
+	resp, err := c.get(ctx, "/info")
 	if err != nil {
 		return nil, err
 	}

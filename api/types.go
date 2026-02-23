@@ -62,6 +62,7 @@ type ContainerConfig struct {
 	Labels       map[string]string   `json:"Labels"`
 	StopSignal   string              `json:"StopSignal,omitempty"`
 	StopTimeout  *int                `json:"StopTimeout,omitempty"`
+	Shell        []string            `json:"Shell,omitempty"`
 	Healthcheck  *HealthcheckConfig  `json:"Healthcheck,omitempty"`
 }
 

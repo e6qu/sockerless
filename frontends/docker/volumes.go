@@ -15,7 +15,7 @@ func (s *Server) handleVolumeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := s.backend.post("/volumes", &req)
+	resp, err := s.backend.post(r.Context(), "/volumes", &req)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -37,7 +37,7 @@ func (s *Server) handleVolumeList(w http.ResponseWriter, r *http.Request) {
 	if filters := r.URL.Query().Get("filters"); filters != "" {
 		query.Set("filters", filters)
 	}
-	resp, err := s.backend.getWithQuery("/volumes", query)
+	resp, err := s.backend.getWithQuery(r.Context(), "/volumes", query)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -48,7 +48,7 @@ func (s *Server) handleVolumeList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleVolumeInspect(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	resp, err := s.backend.get("/volumes/" + name)
+	resp, err := s.backend.get(r.Context(), "/volumes/"+name)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -63,7 +63,7 @@ func (s *Server) handleVolumeRemove(w http.ResponseWriter, r *http.Request) {
 	if force := r.URL.Query().Get("force"); force != "" {
 		query.Set("force", force)
 	}
-	resp, err := s.backend.deleteWithQuery("/volumes/"+name, query)
+	resp, err := s.backend.deleteWithQuery(r.Context(), "/volumes/"+name, query)
 	if err != nil {
 		writeError(w, err)
 		return

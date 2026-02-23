@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: [main, implementation]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+      - name: Lint
+        run: make lint
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: sandbox
+            cmd: cd sandbox && go test -v -timeout 1m ./...
+          - suite: core
+            cmd: cd backends/core && go test -v -timeout 2m ./...
+          - suite: bleephub
+            cmd: cd bleephub && go test -v -timeout 3m ./...
+          - suite: frontend
+            cmd: cd frontends/docker && go test -v -timeout 1m ./...
+          - suite: integration
+            cmd: cd tests && go test -v -timeout 5m ./...
+    name: test (${{ matrix.suite }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+      - name: Run tests
+        run: ${{ matrix.cmd }}
+
+  build-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+      - name: Build all binaries
+        env:
+          GOWORK: "off"
+        run: |
+          echo "=== bleephub ==="
+          cd bleephub && go build -o /dev/null ./cmd && cd ..
+          echo "=== frontend ==="
+          cd frontends/docker && go build -o /dev/null ./cmd && cd ../..
+          echo "=== cli ==="
+          cd cmd/sockerless && go build -o /dev/null . && cd ../..
+          echo "=== agent ==="
+          cd agent && go build -o /dev/null ./cmd && cd ..
+          echo "=== backend-memory ==="
+          cd backends/memory && go build -o /dev/null ./cmd && cd ../..
+          echo "=== backend-ecs ==="
+          cd backends/ecs && go build -o /dev/null ./cmd/sockerless-backend-ecs && cd ../..
+          echo "=== backend-lambda ==="
+          cd backends/lambda && go build -o /dev/null ./cmd/sockerless-backend-lambda && cd ../..
+          echo "=== backend-cloudrun ==="
+          cd backends/cloudrun && go build -o /dev/null ./cmd/sockerless-backend-cloudrun && cd ../..
+          echo "=== backend-gcf ==="
+          cd backends/cloudrun-functions && go build -o /dev/null ./cmd/sockerless-backend-gcf && cd ../..
+          echo "=== backend-aca ==="
+          cd backends/aca && go build -o /dev/null ./cmd/sockerless-backend-aca && cd ../..
+          echo "=== backend-azf ==="
+          cd backends/azure-functions && go build -o /dev/null ./cmd/sockerless-backend-azf && cd ../..
+          echo "=== gitlabhub ==="
+          cd gitlabhub && go build -o /dev/null ./cmd && cd ..
+          echo "=== simulator-aws ==="
+          cd simulators/aws && go build -o /dev/null . && cd ../..
+          echo "=== simulator-gcp ==="
+          cd simulators/gcp && go build -o /dev/null . && cd ../..
+          echo "=== simulator-azure ==="
+          cd simulators/azure && go build -o /dev/null . && cd ../..
+
+  build-check-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+      - name: Cross-compile all binaries for ARM64
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: "0"
+          GOWORK: "off"
+        run: |
+          echo "=== bleephub ==="
+          cd bleephub && go build -o /dev/null ./cmd && cd ..
+          echo "=== frontend ==="
+          cd frontends/docker && go build -o /dev/null ./cmd && cd ../..
+          echo "=== cli ==="
+          cd cmd/sockerless && go build -o /dev/null . && cd ../..
+          echo "=== agent ==="
+          cd agent && go build -o /dev/null ./cmd && cd ..
+          echo "=== backend-memory ==="
+          cd backends/memory && go build -o /dev/null ./cmd && cd ../..
+          echo "=== backend-ecs ==="
+          cd backends/ecs && go build -o /dev/null ./cmd/sockerless-backend-ecs && cd ../..
+          echo "=== backend-lambda ==="
+          cd backends/lambda && go build -o /dev/null ./cmd/sockerless-backend-lambda && cd ../..
+          echo "=== backend-cloudrun ==="
+          cd backends/cloudrun && go build -o /dev/null ./cmd/sockerless-backend-cloudrun && cd ../..
+          echo "=== backend-gcf ==="
+          cd backends/cloudrun-functions && go build -o /dev/null ./cmd/sockerless-backend-gcf && cd ../..
+          echo "=== backend-aca ==="
+          cd backends/aca && go build -o /dev/null ./cmd/sockerless-backend-aca && cd ../..
+          echo "=== backend-azf ==="
+          cd backends/azure-functions && go build -o /dev/null ./cmd/sockerless-backend-azf && cd ../..
+          echo "=== gitlabhub ==="
+          cd gitlabhub && go build -o /dev/null ./cmd && cd ..
+          echo "=== simulator-aws ==="
+          cd simulators/aws && go build -o /dev/null . && cd ../..
+          echo "=== simulator-gcp ==="
+          cd simulators/gcp && go build -o /dev/null . && cd ../..
+          echo "=== simulator-azure ==="
+          cd simulators/azure && go build -o /dev/null . && cd ../..

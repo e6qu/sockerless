@@ -25,7 +25,7 @@ func (s *Server) handleImageCreate(w http.ResponseWriter, r *http.Request) {
 
 	auth := r.Header.Get("X-Registry-Auth")
 
-	resp, err := s.backend.post("/images/pull", &api.ImagePullRequest{
+	resp, err := s.backend.post(r.Context(), "/images/pull", &api.ImagePullRequest{
 		Reference: ref,
 		Auth:      auth,
 	})
@@ -78,7 +78,7 @@ func (s *Server) handleImageCatchAll(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleImageInspectByName(w http.ResponseWriter, r *http.Request, name string) {
 	query := url.Values{}
 	query.Set("name", name)
-	resp, err := s.backend.getWithQuery("/images/inspect", query)
+	resp, err := s.backend.getWithQuery(r.Context(), "/images/inspect", query)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -88,7 +88,7 @@ func (s *Server) handleImageInspectByName(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleImageLoad(w http.ResponseWriter, r *http.Request) {
-	resp, err := s.backend.postRaw("/images/load", "application/x-tar", r.Body)
+	resp, err := s.backend.postRaw(r.Context(), "/images/load", "application/x-tar", r.Body)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -107,7 +107,7 @@ func (s *Server) handleImageTagByName(w http.ResponseWriter, r *http.Request, na
 		query.Set("tag", tag)
 	}
 
-	resp, err := s.backend.postWithQuery("/images/tag", query, nil)
+	resp, err := s.backend.postWithQuery(r.Context(), "/images/tag", query, nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -124,7 +124,7 @@ func (s *Server) handleImageList(w http.ResponseWriter, r *http.Request) {
 	if filters := r.URL.Query().Get("filters"); filters != "" {
 		query.Set("filters", filters)
 	}
-	resp, err := s.backend.getWithQuery("/images", query)
+	resp, err := s.backend.getWithQuery(r.Context(), "/images", query)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -141,7 +141,7 @@ func (s *Server) handleImageRemoveByName(w http.ResponseWriter, r *http.Request,
 	if noprune := r.URL.Query().Get("noprune"); noprune != "" {
 		query.Set("noprune", noprune)
 	}
-	resp, err := s.backend.deleteWithQuery("/images/"+url.PathEscape(name), query)
+	resp, err := s.backend.deleteWithQuery(r.Context(), "/images/"+url.PathEscape(name), query)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -151,7 +151,7 @@ func (s *Server) handleImageRemoveByName(w http.ResponseWriter, r *http.Request,
 }
 
 func (s *Server) handleImageHistoryByName(w http.ResponseWriter, r *http.Request, name string) {
-	resp, err := s.backend.get("/images/" + url.PathEscape(name) + "/history")
+	resp, err := s.backend.get(r.Context(), "/images/"+url.PathEscape(name)+"/history")
 	if err != nil {
 		writeError(w, err)
 		return
@@ -165,7 +165,7 @@ func (s *Server) handleImagePrune(w http.ResponseWriter, r *http.Request) {
 	if filters := r.URL.Query().Get("filters"); filters != "" {
 		query.Set("filters", filters)
 	}
-	resp, err := s.backend.postWithQuery("/images/prune", query, nil)
+	resp, err := s.backend.postWithQuery(r.Context(), "/images/prune", query, nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -182,7 +182,7 @@ func (s *Server) handleImageBuild(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp, err := s.backend.postRawWithQuery("/images/build", query, "application/x-tar", r.Body)
+	resp, err := s.backend.postRawWithQuery(r.Context(), "/images/build", query, "application/x-tar", r.Body)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -214,7 +214,7 @@ func (s *Server) handleContainerCommit(w http.ResponseWriter, r *http.Request) {
 			query.Set(key, v)
 		}
 	}
-	resp, err := s.backend.postRawWithQuery("/commit", query, "application/json", r.Body)
+	resp, err := s.backend.postRawWithQuery(r.Context(), "/commit", query, "application/json", r.Body)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -230,7 +230,7 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := s.backend.post("/auth", &req)
+	resp, err := s.backend.post(r.Context(), "/auth", &req)
 	if err != nil {
 		writeError(w, err)
 		return

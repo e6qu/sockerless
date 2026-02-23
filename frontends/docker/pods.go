@@ -6,7 +6,7 @@ import (
 )
 
 func (s *Server) handlePodCreate(w http.ResponseWriter, r *http.Request) {
-	resp, err := s.backend.postRaw("/libpod/pods/create", "application/json", r.Body)
+	resp, err := s.backend.postRaw(r.Context(), "/libpod/pods/create", "application/json", r.Body)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -16,7 +16,7 @@ func (s *Server) handlePodCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePodList(w http.ResponseWriter, r *http.Request) {
-	resp, err := s.backend.get("/libpod/pods/json")
+	resp, err := s.backend.get(r.Context(), "/libpod/pods/json")
 	if err != nil {
 		writeError(w, err)
 		return
@@ -27,7 +27,7 @@ func (s *Server) handlePodList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePodInspect(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	resp, err := s.backend.get("/libpod/pods/" + name + "/json")
+	resp, err := s.backend.get(r.Context(), "/libpod/pods/"+name+"/json")
 	if err != nil {
 		writeError(w, err)
 		return
@@ -38,7 +38,7 @@ func (s *Server) handlePodInspect(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePodExists(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	resp, err := s.backend.get("/libpod/pods/" + name + "/exists")
+	resp, err := s.backend.get(r.Context(), "/libpod/pods/"+name+"/exists")
 	if err != nil {
 		writeError(w, err)
 		return
@@ -49,7 +49,7 @@ func (s *Server) handlePodExists(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePodStart(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	resp, err := s.backend.post("/libpod/pods/"+name+"/start", nil)
+	resp, err := s.backend.post(r.Context(), "/libpod/pods/"+name+"/start", nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -60,7 +60,7 @@ func (s *Server) handlePodStart(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePodStop(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	resp, err := s.backend.post("/libpod/pods/"+name+"/stop", nil)
+	resp, err := s.backend.post(r.Context(), "/libpod/pods/"+name+"/stop", nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -71,7 +71,7 @@ func (s *Server) handlePodStop(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePodKill(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	resp, err := s.backend.post("/libpod/pods/"+name+"/kill", nil)
+	resp, err := s.backend.post(r.Context(), "/libpod/pods/"+name+"/kill", nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -86,7 +86,7 @@ func (s *Server) handlePodRemove(w http.ResponseWriter, r *http.Request) {
 	if force := r.URL.Query().Get("force"); force != "" {
 		query.Set("force", force)
 	}
-	resp, err := s.backend.deleteWithQuery("/libpod/pods/"+name, query)
+	resp, err := s.backend.deleteWithQuery(r.Context(), "/libpod/pods/"+name, query)
 	if err != nil {
 		writeError(w, err)
 		return

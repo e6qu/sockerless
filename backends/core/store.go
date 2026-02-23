@@ -92,6 +92,21 @@ func (s *StateStore[T]) Update(id string, fn func(*T)) bool {
 	return ok
 }
 
+// PruneIf atomically removes all items matching the predicate, holding the
+// write lock for the entire operation to prevent races with concurrent creates.
+func (s *StateStore[T]) PruneIf(pred func(key string, val T) bool) []T {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var pruned []T
+	for k, v := range s.items {
+		if pred(k, v) {
+			delete(s.items, k)
+			pruned = append(pruned, v)
+		}
+	}
+	return pruned
+}
+
 // Keys returns all stored keys.
 func (s *StateStore[T]) Keys() []string {
 	s.mu.RLock()
@@ -120,6 +135,7 @@ type Store struct {
 	StagingDirs    sync.Map // containerID → string (pre-start archive staging dir)
 	HealthChecks   sync.Map // containerID → context.CancelFunc
 	BuildContexts  sync.Map // imageID → string (temp dir with COPY files at destination paths)
+	IPAlloc        *IPAllocator
 	RestartHook    func(containerID string, exitCode int) bool
 }
 
@@ -134,6 +150,7 @@ func NewStore() *Store {
 		Execs:          NewStateStore[api.ExecInstance](),
 		Creds:          NewStateStore[api.AuthRequest](),
 		Pods:           NewPodRegistry(),
+		IPAlloc:        NewIPAllocator(),
 	}
 }
 

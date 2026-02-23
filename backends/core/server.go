@@ -10,6 +10,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/sockerless/api"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // BackendDescriptor holds static metadata about a backend.
@@ -290,6 +291,14 @@ func (s *BaseServer) InitDrivers() {
 	} else {
 		s.Drivers.ProcessLifecycle = &SyntheticProcessLifecycleDriver{}
 	}
+
+	// Build network driver
+	syntheticNet := &SyntheticNetworkDriver{Store: s.Store, IPAlloc: s.Store.IPAlloc}
+	if platformDriver := NewPlatformNetworkDriver(syntheticNet, s.Logger); platformDriver != nil {
+		s.Drivers.Network = platformDriver
+	} else {
+		s.Drivers.Network = syntheticNet
+	}
 }
 
 // RecoverRegistry loads persisted registry state and scans the cloud for orphaned resources.
@@ -318,7 +327,7 @@ func (s *BaseServer) ListenAndServe(addr string) error {
 
 	srv := &http.Server{
 		Addr:    addr,
-		Handler: MetricsMiddleware(s.Metrics, s.Mux),
+		Handler: otelhttp.NewHandler(MetricsMiddleware(s.Metrics, s.Mux), "sockerless-backend"),
 	}
 	return srv.ListenAndServe()
 }

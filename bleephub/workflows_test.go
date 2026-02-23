@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 )
@@ -16,7 +17,7 @@ func TestWorkflowSingleJobSubmit(t *testing.T) {
 		},
 	}
 
-	workflow, err := s.submitWorkflow("http://localhost", wf, "alpine:latest")
+	workflow, err := s.submitWorkflow(context.Background(), "http://localhost", wf, "alpine:latest")
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
@@ -47,7 +48,7 @@ func TestWorkflowTwoJobsWithNeeds(t *testing.T) {
 		},
 	}
 
-	workflow, err := s.submitWorkflow("http://localhost", wf, "alpine:latest")
+	workflow, err := s.submitWorkflow(context.Background(), "http://localhost", wf, "alpine:latest")
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
@@ -65,7 +66,7 @@ func TestWorkflowTwoJobsWithNeeds(t *testing.T) {
 
 	// Simulate build completion — store serverURL in env for re-dispatch
 	workflow.Env = map[string]string{"__serverURL": "http://localhost", "__defaultImage": "alpine:latest"}
-	s.onJobCompleted(buildJob.JobID, "Succeeded")
+	s.onJobCompleted(context.Background(),buildJob.JobID, "Succeeded")
 
 	if testJob.Status != "queued" {
 		t.Errorf("test status after build = %q, want queued", testJob.Status)
@@ -84,7 +85,7 @@ func TestWorkflowDiamondDependency(t *testing.T) {
 		},
 	}
 
-	workflow, err := s.submitWorkflow("http://localhost", wf, "alpine:latest")
+	workflow, err := s.submitWorkflow(context.Background(), "http://localhost", wf, "alpine:latest")
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
@@ -103,7 +104,7 @@ func TestWorkflowDiamondDependency(t *testing.T) {
 	}
 
 	// Complete A → B and C should dispatch
-	s.onJobCompleted(workflow.Jobs["a"].JobID, "Succeeded")
+	s.onJobCompleted(context.Background(),workflow.Jobs["a"].JobID, "Succeeded")
 	if workflow.Jobs["b"].Status != "queued" {
 		t.Errorf("b after a = %q, want queued", workflow.Jobs["b"].Status)
 	}
@@ -115,13 +116,13 @@ func TestWorkflowDiamondDependency(t *testing.T) {
 	}
 
 	// Complete B → D still pending (C not done)
-	s.onJobCompleted(workflow.Jobs["b"].JobID, "Succeeded")
+	s.onJobCompleted(context.Background(),workflow.Jobs["b"].JobID, "Succeeded")
 	if workflow.Jobs["d"].Status != "pending" {
 		t.Errorf("d after b = %q, want pending", workflow.Jobs["d"].Status)
 	}
 
 	// Complete C → D dispatches, workflow complete
-	s.onJobCompleted(workflow.Jobs["c"].JobID, "Succeeded")
+	s.onJobCompleted(context.Background(),workflow.Jobs["c"].JobID, "Succeeded")
 	if workflow.Jobs["d"].Status != "queued" {
 		t.Errorf("d after c = %q, want queued", workflow.Jobs["d"].Status)
 	}
@@ -137,7 +138,7 @@ func TestWorkflowFailedJobSkipsDependents(t *testing.T) {
 		},
 	}
 
-	workflow, err := s.submitWorkflow("http://localhost", wf, "alpine:latest")
+	workflow, err := s.submitWorkflow(context.Background(), "http://localhost", wf, "alpine:latest")
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
@@ -145,7 +146,7 @@ func TestWorkflowFailedJobSkipsDependents(t *testing.T) {
 	workflow.Env = map[string]string{"__serverURL": "http://localhost", "__defaultImage": "alpine:latest"}
 
 	// Build fails
-	s.onJobCompleted(workflow.Jobs["build"].JobID, "Failed")
+	s.onJobCompleted(context.Background(),workflow.Jobs["build"].JobID, "Failed")
 
 	if workflow.Jobs["test"].Status != "skipped" {
 		t.Errorf("test status = %q, want skipped", workflow.Jobs["test"].Status)
@@ -211,7 +212,7 @@ func TestWorkflowUsesStepReference(t *testing.T) {
 		},
 	}
 
-	workflow, err := s.submitWorkflow("http://localhost", wf, "alpine:latest")
+	workflow, err := s.submitWorkflow(context.Background(), "http://localhost", wf, "alpine:latest")
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
@@ -315,7 +316,7 @@ func TestBuildJobMessageWithServices(t *testing.T) {
 		},
 	}
 
-	workflow, err := s.submitWorkflow("http://localhost", wf, "alpine:latest")
+	workflow, err := s.submitWorkflow(context.Background(), "http://localhost", wf, "alpine:latest")
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
@@ -372,7 +373,7 @@ func TestBuildJobMessageNoServices(t *testing.T) {
 		},
 	}
 
-	workflow, err := s.submitWorkflow("http://localhost", wf, "alpine:latest")
+	workflow, err := s.submitWorkflow(context.Background(), "http://localhost", wf, "alpine:latest")
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}

@@ -12,9 +12,10 @@ use (
 	./backends/ecs
 	./backends/lambda
 	./backends/memory
-	./frontends/docker
-	./sandbox
-	./tests
 	./bleephub
 	./cmd/sockerless
+	./frontends/docker
+	./gitlabhub
+	./sandbox
+	./tests
 )

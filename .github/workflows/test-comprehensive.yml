@@ -1,0 +1,88 @@
+name: Comprehensive Tests
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: 'Test suite to run'
+        required: true
+        default: 'all'
+        type: choice
+        options: [all, simulators, bleephub, e2e-github, e2e-gitlab, terraform, upstream-act]
+
+jobs:
+  simulator-tests:
+    if: github.event_name == 'push' || inputs.suite == 'all' || inputs.suite == 'simulators'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud: [aws, gcp, azure]
+    name: sim (${{ matrix.cloud }})
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run simulator tests
+        run: cd simulators/${{ matrix.cloud }} && make docker-test
+        timeout-minutes: 15
+
+  bleephub-integration:
+    if: github.event_name == 'push' || inputs.suite == 'all' || inputs.suite == 'bleephub'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: integration
+            cmd: make bleephub-test
+          - name: gh-cli
+            cmd: make bleephub-gh-test
+    name: bleephub (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run bleephub integration tests
+        run: ${{ matrix.cmd }}
+        timeout-minutes: 15
+
+  e2e-github:
+    if: github.event_name == 'push' || inputs.suite == 'all' || inputs.suite == 'e2e-github'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run GitHub E2E (memory)
+        run: make e2e-github-memory
+        timeout-minutes: 20
+
+  e2e-gitlab:
+    if: github.event_name == 'push' || inputs.suite == 'all' || inputs.suite == 'e2e-gitlab'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run GitLab E2E (memory)
+        run: make e2e-gitlab-memory
+        timeout-minutes: 45
+
+  terraform-tests:
+    if: inputs.suite == 'all' || inputs.suite == 'terraform'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud: [aws, gcp, azure]
+    name: terraform (${{ matrix.cloud }})
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Terraform tests
+        run: make tf-int-test-${{ matrix.cloud }}
+        timeout-minutes: 20
+
+  upstream-act:
+    if: inputs.suite == 'all' || inputs.suite == 'upstream-act'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run upstream act tests (memory)
+        run: make upstream-test-act-memory
+        timeout-minutes: 30

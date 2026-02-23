@@ -5,6 +5,8 @@ import (
 	"os"
 )
 
+var version = "dev"
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -48,7 +50,7 @@ func main() {
 	case "check":
 		cmdCheck()
 	case "version":
-		fmt.Println("sockerless v0.1.0")
+		fmt.Printf("sockerless %s\n", version)
 	default:
 		usage()
 		os.Exit(1)

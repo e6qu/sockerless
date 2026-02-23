@@ -293,10 +293,95 @@ func (s *BaseServer) handleImageHistory(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *BaseServer) handleImagePrune(w http.ResponseWriter, r *http.Request) {
-	// Prune dangling images (none in memory backend)
+	filters := ParseFilters(r.URL.Query().Get("filters"))
+
+	// Collect image IDs referenced by running or stopped containers
+	referencedImages := make(map[string]bool)
+	for _, c := range s.Store.Containers.List() {
+		referencedImages[c.Config.Image] = true
+		referencedImages[c.Image] = true
+	}
+
+	// Check dangling filter
+	danglingOnly := false
+	if vals, ok := filters["dangling"]; ok {
+		for _, v := range vals {
+			if v == "true" || v == "1" {
+				danglingOnly = true
+			}
+		}
+	}
+
+	var deleted []*api.ImageDeleteResponse
+	var spaceReclaimed uint64
+
+	// Deduplicate: Images store has many aliases pointing to the same image.
+	// Track which image IDs we've already pruned.
+	prunedIDs := make(map[string]bool)
+
+	for _, img := range s.Store.Images.List() {
+		if prunedIDs[img.ID] {
+			continue
+		}
+
+		// Skip images referenced by any container
+		inUse := referencedImages[img.ID]
+		if !inUse {
+			for _, tag := range img.RepoTags {
+				if referencedImages[tag] {
+					inUse = true
+					break
+				}
+				// Also check name without tag
+				if idx := strings.Index(tag, ":"); idx >= 0 {
+					if referencedImages[tag[:idx]] {
+						inUse = true
+						break
+					}
+				}
+			}
+		}
+		if inUse {
+			continue
+		}
+
+		// If dangling filter is set, only prune images with no tags
+		if danglingOnly && len(img.RepoTags) > 0 {
+			hasRealTag := false
+			for _, tag := range img.RepoTags {
+				if !strings.Contains(tag, "<none>") {
+					hasRealTag = true
+					break
+				}
+			}
+			if hasRealTag {
+				continue
+			}
+		}
+
+		prunedIDs[img.ID] = true
+		for _, tag := range img.RepoTags {
+			deleted = append(deleted, &api.ImageDeleteResponse{Untagged: tag})
+		}
+		deleted = append(deleted, &api.ImageDeleteResponse{Deleted: img.ID})
+		spaceReclaimed += uint64(img.Size)
+
+		// Remove from store (all aliases)
+		s.Store.Images.Delete(img.ID)
+		for _, tag := range img.RepoTags {
+			s.Store.Images.Delete(tag)
+			if idx := strings.Index(tag, ":"); idx >= 0 {
+				s.Store.Images.Delete(tag[:idx])
+			}
+		}
+	}
+
+	if deleted == nil {
+		deleted = []*api.ImageDeleteResponse{}
+	}
 	WriteJSON(w, http.StatusOK, api.ImagePruneResponse{
-		ImagesDeleted:  []*api.ImageDeleteResponse{},
-		SpaceReclaimed: 0,
+		ImagesDeleted:  deleted,
+		SpaceReclaimed: spaceReclaimed,
 	})
 }
 

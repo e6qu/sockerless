@@ -212,3 +212,161 @@ func TestParseDockerfileNoFrom(t *testing.T) {
 		t.Errorf("error = %q, want 'no FROM'", err.Error())
 	}
 }
+
+func TestParseDockerfileHealthcheckShell(t *testing.T) {
+	p, err := parseDockerfile("FROM alpine\nHEALTHCHECK CMD curl -f http://localhost/", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.config.Healthcheck == nil {
+		t.Fatal("expected Healthcheck to be set")
+	}
+	if len(p.config.Healthcheck.Test) != 2 || p.config.Healthcheck.Test[0] != "CMD-SHELL" {
+		t.Errorf("test = %v, want [CMD-SHELL curl -f http://localhost/]", p.config.Healthcheck.Test)
+	}
+}
+
+func TestParseDockerfileHealthcheckExec(t *testing.T) {
+	p, err := parseDockerfile(`FROM alpine
+HEALTHCHECK CMD ["curl", "-f", "http://localhost/"]`, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.config.Healthcheck == nil {
+		t.Fatal("expected Healthcheck to be set")
+	}
+	if len(p.config.Healthcheck.Test) != 4 || p.config.Healthcheck.Test[0] != "CMD" {
+		t.Errorf("test = %v, want [CMD curl -f http://localhost/]", p.config.Healthcheck.Test)
+	}
+}
+
+func TestParseDockerfileHealthcheckNone(t *testing.T) {
+	p, err := parseDockerfile("FROM alpine\nHEALTHCHECK NONE", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.config.Healthcheck == nil {
+		t.Fatal("expected Healthcheck to be set")
+	}
+	if len(p.config.Healthcheck.Test) != 1 || p.config.Healthcheck.Test[0] != "NONE" {
+		t.Errorf("test = %v, want [NONE]", p.config.Healthcheck.Test)
+	}
+}
+
+func TestParseDockerfileHealthcheckOptions(t *testing.T) {
+	p, err := parseDockerfile("FROM alpine\nHEALTHCHECK --interval=5s --timeout=3s --retries=3 --start-period=10s CMD curl -f http://localhost/", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	hc := p.config.Healthcheck
+	if hc == nil {
+		t.Fatal("expected Healthcheck to be set")
+	}
+	if hc.Interval != 5000000000 { // 5s in nanoseconds
+		t.Errorf("interval = %d, want 5000000000", hc.Interval)
+	}
+	if hc.Timeout != 3000000000 {
+		t.Errorf("timeout = %d, want 3000000000", hc.Timeout)
+	}
+	if hc.Retries != 3 {
+		t.Errorf("retries = %d, want 3", hc.Retries)
+	}
+	if hc.StartPeriod != 10000000000 {
+		t.Errorf("start period = %d, want 10000000000", hc.StartPeriod)
+	}
+}
+
+func TestParseDockerfileHealthcheckMultiStageReset(t *testing.T) {
+	dockerfile := `FROM node:16
+HEALTHCHECK CMD curl -f http://localhost/
+FROM alpine
+CMD ["echo"]`
+	p, err := parseDockerfile(dockerfile, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// HEALTHCHECK from first stage should be reset
+	if p.config.Healthcheck != nil {
+		t.Errorf("expected nil Healthcheck after multi-stage reset, got %v", p.config.Healthcheck)
+	}
+}
+
+func TestParseDockerfileBuildPreservesHealthcheck(t *testing.T) {
+	dockerfile := `FROM alpine
+HEALTHCHECK --interval=30s CMD wget -qO- http://localhost/ || exit 1`
+	p, err := parseDockerfile(dockerfile, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.config.Healthcheck == nil {
+		t.Fatal("expected Healthcheck to be preserved")
+	}
+	if p.config.Healthcheck.Test[0] != "CMD-SHELL" {
+		t.Errorf("test[0] = %q, want CMD-SHELL", p.config.Healthcheck.Test[0])
+	}
+	if p.config.Healthcheck.Interval != 30000000000 {
+		t.Errorf("interval = %d, want 30000000000", p.config.Healthcheck.Interval)
+	}
+}
+
+func TestParseDockerfileShell(t *testing.T) {
+	p, err := parseDockerfile(`FROM alpine
+SHELL ["/bin/bash", "-c"]`, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(p.config.Shell) != 2 || p.config.Shell[0] != "/bin/bash" || p.config.Shell[1] != "-c" {
+		t.Errorf("shell = %v, want [/bin/bash -c]", p.config.Shell)
+	}
+}
+
+func TestParseDockerfileShellMultiStageReset(t *testing.T) {
+	dockerfile := `FROM node:16
+SHELL ["/bin/bash", "-c"]
+FROM alpine
+CMD ["echo"]`
+	p, err := parseDockerfile(dockerfile, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(p.config.Shell) != 0 {
+		t.Errorf("expected nil Shell after multi-stage reset, got %v", p.config.Shell)
+	}
+}
+
+func TestParseDockerfileStopSignal(t *testing.T) {
+	p, err := parseDockerfile("FROM alpine\nSTOPSIGNAL SIGTERM", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.config.StopSignal != "SIGTERM" {
+		t.Errorf("stop signal = %q, want SIGTERM", p.config.StopSignal)
+	}
+}
+
+func TestParseDockerfileVolumeJSON(t *testing.T) {
+	p, err := parseDockerfile(`FROM alpine
+VOLUME ["/data", "/logs"]`, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := p.config.Volumes["/data"]; !ok {
+		t.Errorf("volumes = %v, want /data", p.config.Volumes)
+	}
+	if _, ok := p.config.Volumes["/logs"]; !ok {
+		t.Errorf("volumes = %v, want /logs", p.config.Volumes)
+	}
+}
+
+func TestParseDockerfileVolumeSpaceSeparated(t *testing.T) {
+	p, err := parseDockerfile("FROM alpine\nVOLUME /data /logs", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := p.config.Volumes["/data"]; !ok {
+		t.Errorf("volumes = %v, want /data", p.config.Volumes)
+	}
+	if _, ok := p.config.Volumes["/logs"]; !ok {
+		t.Errorf("volumes = %v, want /logs", p.config.Volumes)
+	}
+}

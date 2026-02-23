@@ -58,6 +58,10 @@ func (s *Server) handleCreatePullRequest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	repoKey := owner + "/" + name
+	s.emitWebhookEvent(repoKey, "pull_request", "opened", buildPullRequestPayload(repo, pr, user, "opened"))
+	go s.triggerWorkflowsForEvent(repoKey, "pull_request", "refs/heads/"+pr.HeadRefName)
+
 	writeJSON(w, http.StatusCreated, pullRequestToJSON(pr, s.store, s.baseURL(r), repo.FullName))
 }
 
@@ -211,6 +215,18 @@ func (s *Server) handleUpdatePullRequest(w http.ResponseWriter, r *http.Request)
 	})
 
 	updated := s.store.GetPullRequest(pr.ID)
+
+	if v, ok := req["state"].(string); ok {
+		action := "edited"
+		if v == "closed" {
+			action = "closed"
+		} else if v == "open" {
+			action = "reopened"
+		}
+		repoKey := owner + "/" + repoName
+		s.emitWebhookEvent(repoKey, "pull_request", action, buildPullRequestPayload(repo, updated, user, action))
+	}
+
 	writeJSON(w, http.StatusOK, pullRequestToJSON(updated, s.store, s.baseURL(r), repo.FullName))
 }
 
@@ -258,6 +274,10 @@ func (s *Server) handleMergePullRequest(w http.ResponseWriter, r *http.Request) 
 		p.ClosedAt = &now
 		p.MergedByID = user.ID
 	})
+
+	merged := s.store.GetPullRequest(pr.ID)
+	repoKey := owner + "/" + repoName
+	s.emitWebhookEvent(repoKey, "pull_request", "closed", buildPullRequestPayload(repo, merged, user, "closed"))
 
 	sha := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("merge-%d-%d", pr.ID, time.Now().UnixNano()))))[:40]
 	writeJSON(w, http.StatusOK, map[string]interface{}{

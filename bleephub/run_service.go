@@ -105,10 +105,14 @@ func (s *Server) handleCompleteRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.mu.Unlock()
 
-	s.logger.Info().Int64("requestId", reqID).Str("result", result).Msg("job request completed (DELETE)")
+	s.logger.Info().
+		Int64("requestId", reqID).
+		Str("job_id", job.ID).
+		Str("result", result).
+		Msg("job request completed (DELETE)")
 
 	// Notify workflow engine of job completion
-	s.onJobCompleted(job.ID, job.Result)
+	s.onJobCompleted(r.Context(), job.ID, job.Result)
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -126,7 +130,6 @@ func (s *Server) handleFinishJob(w http.ResponseWriter, r *http.Request) {
 		Str("planId", planID).
 		Str("jobId", jobID).
 		Str("result", result).
-		Interface("body", body).
 		Msg("job finished")
 
 	// Update job status — try both plan ID lookup and job ID lookup
@@ -147,13 +150,59 @@ func (s *Server) handleFinishJob(w http.ResponseWriter, r *http.Request) {
 		s.store.mu.Unlock()
 		s.logger.Info().Str("jobId", job.ID).Str("result", job.Result).Msg("job status updated")
 
+		// Capture output variables from the runner
+		s.captureJobOutputs(job.ID, body)
+
 		// Notify workflow engine of job completion
-		s.onJobCompleted(job.ID, job.Result)
+		s.onJobCompleted(r.Context(), job.ID, job.Result)
 	} else {
 		s.logger.Warn().Str("planId", planID).Msg("could not find job for finish")
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok"})
+}
+
+// captureJobOutputs resolves output variables from a runner body and stores
+// them on the corresponding WorkflowJob.
+func (s *Server) captureJobOutputs(jobID string, body map[string]interface{}) {
+	outputVars := extractOutputVariables(body)
+	if len(outputVars) == 0 {
+		return
+	}
+
+	s.store.mu.RLock()
+	var wfJob *WorkflowJob
+	for _, wf := range s.store.Workflows {
+		if j, ok := wf.Jobs[""]; ok && j.JobID == jobID {
+			wfJob = j
+			break
+		}
+		for _, j := range wf.Jobs {
+			if j.JobID == jobID {
+				wfJob = j
+				break
+			}
+		}
+		if wfJob != nil {
+			break
+		}
+	}
+	s.store.mu.RUnlock()
+
+	if wfJob == nil || wfJob.Def == nil {
+		return
+	}
+
+	resolved := resolveJobOutputs(outputVars, wfJob.Def.Outputs)
+	if len(resolved) > 0 {
+		for k, v := range resolved {
+			wfJob.Outputs[k] = v
+		}
+		s.logger.Info().
+			Str("jobId", jobID).
+			Interface("outputs", resolved).
+			Msg("job outputs captured")
+	}
 }
 
 func (s *Server) handleJobEvents(w http.ResponseWriter, r *http.Request) {

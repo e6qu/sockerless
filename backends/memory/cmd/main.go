@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"os"
 
@@ -27,6 +28,13 @@ func main() {
 		Logger()
 
 	core.LoadContextEnv(logger)
+
+	shutdown, err := core.InitTracer("sockerless-backend")
+	if err != nil {
+		logger.Fatal().Err(err).Msg("failed to init tracer")
+	}
+	defer shutdown(context.Background())
+
 	s := memory.NewServer(logger)
 	logger.Info().Str("addr", *addr).Msg("starting memory backend")
 	if err := s.ListenAndServe(*addr); err != nil {

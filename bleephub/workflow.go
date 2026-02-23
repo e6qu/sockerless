@@ -7,25 +7,34 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ConcurrencyDef represents workflow-level concurrency control.
+type ConcurrencyDef struct {
+	Group            string `yaml:"group" json:"group"`
+	CancelInProgress bool   `yaml:"cancel-in-progress" json:"cancel_in_progress"`
+}
+
 // WorkflowDef represents a parsed GitHub Actions workflow YAML.
 type WorkflowDef struct {
-	Name string            `yaml:"name"`
-	Env  map[string]string `yaml:"env"`
-	Jobs map[string]*JobDef
+	Name        string            `yaml:"name"`
+	Env         map[string]string `yaml:"env"`
+	Concurrency *ConcurrencyDef
+	Jobs        map[string]*JobDef
 }
 
 // JobDef represents a single job definition within a workflow.
 type JobDef struct {
-	Name      string                   `yaml:"name"`
-	RunsOn    interface{}              `yaml:"runs-on"`
-	Container interface{}              `yaml:"container"` // string or object
-	Services  map[string]*ServiceDef   // parsed from string or ServiceDef object
-	Needs     []string                 // parsed from string or list
-	Env       map[string]string        `yaml:"env"`
-	Outputs   map[string]string        `yaml:"outputs"`
-	Strategy  *StrategyDef             `yaml:"strategy"`
-	Steps     []StepDef                `yaml:"steps"`
-	If        string                   `yaml:"if"`
+	Name            string                   `yaml:"name"`
+	RunsOn          interface{}              `yaml:"runs-on"`
+	Container       interface{}              `yaml:"container"` // string or object
+	Services        map[string]*ServiceDef   // parsed from string or ServiceDef object
+	Needs           []string                 // parsed from string or list
+	Env             map[string]string        `yaml:"env"`
+	Outputs         map[string]string        `yaml:"outputs"`
+	Strategy        *StrategyDef             `yaml:"strategy"`
+	Steps           []StepDef                `yaml:"steps"`
+	If              string                   `yaml:"if"`
+	ContinueOnError bool                     `yaml:"continue-on-error"`
+	TimeoutMinutes  int                      `yaml:"timeout-minutes"`
 }
 
 // StrategyDef represents a job's strategy configuration.
@@ -78,22 +87,25 @@ type ServiceDef struct {
 
 // rawWorkflow is the intermediate YAML structure before normalization.
 type rawWorkflow struct {
-	Name string                    `yaml:"name"`
-	Env  map[string]string         `yaml:"env"`
-	Jobs map[string]*rawJobDef     `yaml:"jobs"`
+	Name        string                `yaml:"name"`
+	Env         map[string]string     `yaml:"env"`
+	Concurrency interface{}           `yaml:"concurrency"` // string or object
+	Jobs        map[string]*rawJobDef `yaml:"jobs"`
 }
 
 type rawJobDef struct {
-	Name      string                 `yaml:"name"`
-	RunsOn    interface{}            `yaml:"runs-on"`
-	Container interface{}            `yaml:"container"`
-	Services  map[string]interface{} `yaml:"services"` // string or ServiceDef object
-	Needs     interface{}            `yaml:"needs"`     // string or []string
-	Env       map[string]string      `yaml:"env"`
-	Outputs   map[string]string      `yaml:"outputs"`
-	Strategy  *rawStrategyDef        `yaml:"strategy"`
-	Steps     []StepDef              `yaml:"steps"`
-	If        string                 `yaml:"if"`
+	Name            string                 `yaml:"name"`
+	RunsOn          interface{}            `yaml:"runs-on"`
+	Container       interface{}            `yaml:"container"`
+	Services        map[string]interface{} `yaml:"services"` // string or ServiceDef object
+	Needs           interface{}            `yaml:"needs"`     // string or []string
+	Env             map[string]string      `yaml:"env"`
+	Outputs         map[string]string      `yaml:"outputs"`
+	Strategy        *rawStrategyDef        `yaml:"strategy"`
+	Steps           []StepDef              `yaml:"steps"`
+	If              string                 `yaml:"if"`
+	ContinueOnError bool                   `yaml:"continue-on-error"`
+	TimeoutMinutes  int                    `yaml:"timeout-minutes"`
 }
 
 type rawStrategyDef struct {
@@ -119,6 +131,23 @@ func ParseWorkflow(yamlBytes []byte) (*WorkflowDef, error) {
 		Jobs: make(map[string]*JobDef, len(raw.Jobs)),
 	}
 
+	// Parse concurrency: string → {Group: s}, object → decode
+	if raw.Concurrency != nil {
+		switch v := raw.Concurrency.(type) {
+		case string:
+			wf.Concurrency = &ConcurrencyDef{Group: v}
+		case map[string]interface{}:
+			cd := &ConcurrencyDef{}
+			if g, ok := v["group"].(string); ok {
+				cd.Group = g
+			}
+			if ci, ok := v["cancel-in-progress"].(bool); ok {
+				cd.CancelInProgress = ci
+			}
+			wf.Concurrency = cd
+		}
+	}
+
 	for key, rj := range raw.Jobs {
 		jd, err := normalizeJob(rj)
 		if err != nil {
@@ -133,13 +162,15 @@ func ParseWorkflow(yamlBytes []byte) (*WorkflowDef, error) {
 // normalizeJob converts a rawJobDef into a JobDef, handling quirks.
 func normalizeJob(rj *rawJobDef) (*JobDef, error) {
 	jd := &JobDef{
-		Name:      rj.Name,
-		RunsOn:    rj.RunsOn,
-		Container: rj.Container,
-		Env:       rj.Env,
-		Outputs:   rj.Outputs,
-		Steps:     rj.Steps,
-		If:        rj.If,
+		Name:            rj.Name,
+		RunsOn:          rj.RunsOn,
+		Container:       rj.Container,
+		Env:             rj.Env,
+		Outputs:         rj.Outputs,
+		Steps:           rj.Steps,
+		If:              rj.If,
+		ContinueOnError: rj.ContinueOnError,
+		TimeoutMinutes:  rj.TimeoutMinutes,
 	}
 
 	// Normalize needs: string → []string

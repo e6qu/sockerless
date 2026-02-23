@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -62,6 +63,14 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	s.store.Sessions[sessionID] = session
 	s.store.mu.Unlock()
 
+	// Update session count metric
+	if s.metrics != nil {
+		s.metrics.SetActiveSessions(int64(s.sessionCount()))
+	}
+
+	// Drain any pending messages to the new session
+	s.drainPendingMessages()
+
 	s.logger.Info().Str("sessionId", sessionID).Msg("session created")
 
 	// Return session WITHOUT encryption key — the runner will use plaintext messages
@@ -83,6 +92,10 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		delete(s.store.Sessions, sessionID)
 	}
 	s.store.mu.Unlock()
+
+	if s.metrics != nil {
+		s.metrics.SetActiveSessions(int64(s.sessionCount()))
+	}
 
 	s.logger.Info().Str("sessionId", sessionID).Bool("found", ok).Msg("session deleted")
 	w.WriteHeader(http.StatusOK)
@@ -125,14 +138,31 @@ func (s *Server) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// sendMessageToAgent sends a TaskAgentMessage to the first available session.
+// sendMessageToAgent sends a TaskAgentMessage to the next available session
+// using round-robin distribution for fair load balancing.
 func (s *Server) sendMessageToAgent(msg *TaskAgentMessage) bool {
 	s.store.mu.RLock()
 	defer s.store.mu.RUnlock()
 
-	for _, session := range s.store.Sessions {
+	if len(s.store.Sessions) == 0 {
+		return false
+	}
+
+	// Sort session IDs for deterministic ordering
+	ids := make([]string, 0, len(s.store.Sessions))
+	for id := range s.store.Sessions {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	// Round-robin from lastSessionIdx
+	n := len(ids)
+	for i := 0; i < n; i++ {
+		idx := (s.lastSessionIdx + i) % n
+		session := s.store.Sessions[ids[idx]]
 		select {
 		case session.MsgCh <- msg:
+			s.lastSessionIdx = (idx + 1) % n
 			s.logger.Info().
 				Int64("messageId", msg.MessageID).
 				Str("sessionId", session.SessionID).
@@ -143,6 +173,34 @@ func (s *Server) sendMessageToAgent(msg *TaskAgentMessage) bool {
 		}
 	}
 	return false
+}
+
+// requeuePendingMessage stores a message for later delivery when no session is available.
+func (s *Server) requeuePendingMessage(msg *TaskAgentMessage) {
+	s.store.mu.Lock()
+	s.store.PendingMessages = append(s.store.PendingMessages, msg)
+	s.store.mu.Unlock()
+}
+
+// drainPendingMessages sends any queued messages to available sessions.
+func (s *Server) drainPendingMessages() {
+	s.store.mu.Lock()
+	pending := s.store.PendingMessages
+	s.store.PendingMessages = nil
+	s.store.mu.Unlock()
+
+	var remaining []*TaskAgentMessage
+	for _, msg := range pending {
+		if !s.sendMessageToAgent(msg) {
+			remaining = append(remaining, msg)
+		}
+	}
+
+	if len(remaining) > 0 {
+		s.store.mu.Lock()
+		s.store.PendingMessages = append(remaining, s.store.PendingMessages...)
+		s.store.mu.Unlock()
+	}
 }
 
 // nextMessageID returns the next message ID.
@@ -192,6 +250,13 @@ func (s *Server) lookupJobByRequestID(reqID int64) *Job {
 		}
 	}
 	return nil
+}
+
+// sessionCount returns the current number of active sessions.
+func (s *Server) sessionCount() int {
+	s.store.mu.RLock()
+	defer s.store.mu.RUnlock()
+	return len(s.store.Sessions)
 }
 
 // lookupJobByPlanID finds a job by its plan ID.

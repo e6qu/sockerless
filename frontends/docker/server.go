@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 var versionPrefix = regexp.MustCompile(`^/v\d+\.\d+/`)
@@ -165,7 +166,7 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 // If addr starts with /, it listens on a Unix socket (TLS is ignored).
 // If certFile and keyFile are both non-empty, the TCP listener uses TLS.
 func (s *Server) ListenAndServe(addr, certFile, keyFile string) error {
-	handler := s.requestLogger(stripVersionPrefix(s.mux))
+	handler := otelhttp.NewHandler(s.requestLogger(stripVersionPrefix(s.mux)), "sockerless-frontend")
 
 	if strings.HasPrefix(addr, "/") {
 		os.Remove(addr)

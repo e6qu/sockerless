@@ -15,7 +15,7 @@ func (s *Server) handleNetworkCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := s.backend.post("/networks", &req)
+	resp, err := s.backend.post(r.Context(), "/networks", &req)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -37,7 +37,7 @@ func (s *Server) handleNetworkList(w http.ResponseWriter, r *http.Request) {
 	if filters := r.URL.Query().Get("filters"); filters != "" {
 		query.Set("filters", filters)
 	}
-	resp, err := s.backend.getWithQuery("/networks", query)
+	resp, err := s.backend.getWithQuery(r.Context(), "/networks", query)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -48,7 +48,7 @@ func (s *Server) handleNetworkList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleNetworkInspect(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	resp, err := s.backend.get("/networks/" + id)
+	resp, err := s.backend.get(r.Context(), "/networks/"+id)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -65,7 +65,7 @@ func (s *Server) handleNetworkDisconnect(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	resp, err := s.backend.post("/networks/"+id+"/disconnect", &req)
+	resp, err := s.backend.post(r.Context(), "/networks/"+id+"/disconnect", &req)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -76,7 +76,7 @@ func (s *Server) handleNetworkDisconnect(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleNetworkRemove(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	resp, err := s.backend.delete("/networks/" + id)
+	resp, err := s.backend.delete(r.Context(), "/networks/"+id)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -86,7 +86,7 @@ func (s *Server) handleNetworkRemove(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNetworkPrune(w http.ResponseWriter, r *http.Request) {
-	resp, err := s.backend.post("/networks/prune", nil)
+	resp, err := s.backend.post(r.Context(), "/networks/prune", nil)
 	if err != nil {
 		writeError(w, err)
 		return

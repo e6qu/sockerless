@@ -8,6 +8,9 @@ stages:
 lint:
   stage: test
   image: golang:1.24
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
   before_script:
     - go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
   script:

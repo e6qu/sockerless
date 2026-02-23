@@ -5,6 +5,8 @@ import (
 	"io"
 	"net"
 	"os"
+
+	"github.com/sockerless/api"
 )
 
 // --- Driver Interfaces ---
@@ -102,4 +104,5 @@ type DriverSet struct {
 	Filesystem       FilesystemDriver
 	Stream           StreamDriver
 	ProcessLifecycle ProcessLifecycleDriver
+	Network          api.NetworkDriver
 }

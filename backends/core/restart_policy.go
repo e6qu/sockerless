@@ -31,6 +31,20 @@ func ShouldRestart(policy api.RestartPolicy, exitCode int, restartCount int) boo
 	}
 }
 
+// RestartDelay computes the exponential backoff delay for the given restart count.
+// Formula: min(100ms * 2^restartCount, 60s).
+func RestartDelay(restartCount int) time.Duration {
+	base := 100 * time.Millisecond
+	delay := base
+	for i := 0; i < restartCount; i++ {
+		delay *= 2
+		if delay > 60*time.Second {
+			return 60 * time.Second
+		}
+	}
+	return delay
+}
+
 // handleRestartPolicy checks if a container should be restarted and, if so,
 // re-spawns the process. Returns true if the restart was handled (caller should
 // not close the wait channel).
@@ -44,10 +58,13 @@ func (s *BaseServer) handleRestartPolicy(containerID string, exitCode int) bool 
 		return false
 	}
 
-	// Increment restart count
+	// Increment restart count and apply exponential backoff delay
 	s.Store.Containers.Update(containerID, func(c *api.Container) {
 		c.RestartCount++
 	})
+
+	delay := RestartDelay(c.RestartCount)
+	time.Sleep(delay)
 
 	// Clean up old process
 	s.Drivers.ProcessLifecycle.Cleanup(containerID)

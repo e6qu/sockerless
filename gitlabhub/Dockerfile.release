@@ -1,0 +1,9 @@
+FROM golang:1.24-alpine AS builder
+WORKDIR /src
+COPY gitlabhub/ ./gitlabhub/
+WORKDIR /src/gitlabhub
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /gitlabhub ./cmd
+
+FROM alpine:3.20
+COPY --from=builder /gitlabhub /usr/local/bin/gitlabhub
+ENTRYPOINT ["gitlabhub"]

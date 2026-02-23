@@ -16,7 +16,7 @@ func (s *Server) handleExecCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := s.backend.post("/containers/"+containerID+"/exec", &req)
+	resp, err := s.backend.post(r.Context(), "/containers/"+containerID+"/exec", &req)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -35,7 +35,7 @@ func (s *Server) handleExecCreate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleExecInspect(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	resp, err := s.backend.get("/exec/" + id)
+	resp, err := s.backend.get(r.Context(), "/exec/"+id)
 	if err != nil {
 		writeError(w, err)
 		return

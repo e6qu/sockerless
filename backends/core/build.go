@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/sockerless/api"
 )
@@ -71,6 +72,7 @@ func parseDockerfile(content string, buildArgs map[string]string) (*parsedDocker
 				}
 				result.copies = nil
 			}
+
 			// FROM image [AS name]
 			fromParts := strings.Fields(rest)
 			result.from = fromParts[0]
@@ -161,7 +163,36 @@ func parseDockerfile(content string, buildArgs map[string]string) (*parsedDocker
 		case "USER":
 			result.config.User = rest
 
-		case "RUN", "SHELL", "STOPSIGNAL", "VOLUME", "ONBUILD", "HEALTHCHECK":
+		case "HEALTHCHECK":
+			hc := parseHealthcheckInstruction(rest)
+			result.config.Healthcheck = hc
+
+		case "SHELL":
+			result.config.Shell = parseShellOrExec(rest)
+
+		case "STOPSIGNAL":
+			result.config.StopSignal = rest
+
+		case "VOLUME":
+			if result.config.Volumes == nil {
+				result.config.Volumes = make(map[string]struct{})
+			}
+			// JSON array form: VOLUME ["/data", "/logs"]
+			if strings.HasPrefix(strings.TrimSpace(rest), "[") {
+				var arr []string
+				if json.Unmarshal([]byte(rest), &arr) == nil {
+					for _, v := range arr {
+						result.config.Volumes[v] = struct{}{}
+					}
+				}
+			} else {
+				// Space-separated form: VOLUME /data /logs
+				for _, v := range strings.Fields(rest) {
+					result.config.Volumes[v] = struct{}{}
+				}
+			}
+
+		case "RUN", "ONBUILD":
 			// Ignored for our purposes
 		}
 	}
@@ -210,6 +241,81 @@ func parseShellOrExec(rest string) []string {
 		}
 	}
 	return strings.Fields(rest)
+}
+
+// parseHealthcheckInstruction parses the arguments of a HEALTHCHECK instruction.
+// Supports: HEALTHCHECK NONE, HEALTHCHECK [options] CMD <command>, HEALTHCHECK [options] CMD ["cmd","arg"].
+func parseHealthcheckInstruction(rest string) *api.HealthcheckConfig {
+	rest = strings.TrimSpace(rest)
+
+	if strings.EqualFold(rest, "NONE") {
+		return &api.HealthcheckConfig{Test: []string{"NONE"}}
+	}
+
+	hc := &api.HealthcheckConfig{}
+	// Parse options
+	for {
+		rest = strings.TrimSpace(rest)
+		if !strings.HasPrefix(rest, "--") {
+			break
+		}
+		// Find end of option (next space)
+		endIdx := strings.IndexFunc(rest, unicode.IsSpace)
+		if endIdx < 0 {
+			break
+		}
+		opt := rest[:endIdx]
+		rest = rest[endIdx:]
+
+		if eqIdx := strings.Index(opt, "="); eqIdx >= 0 {
+			key := opt[:eqIdx]
+			val := opt[eqIdx+1:]
+			dur := parseDuration(val)
+			switch key {
+			case "--interval":
+				hc.Interval = int64(dur)
+			case "--timeout":
+				hc.Timeout = int64(dur)
+			case "--start-period":
+				hc.StartPeriod = int64(dur)
+			case "--retries":
+				n := 0
+				for _, ch := range val {
+					if ch >= '0' && ch <= '9' {
+						n = n*10 + int(ch-'0')
+					}
+				}
+				hc.Retries = n
+			}
+		}
+	}
+
+	rest = strings.TrimSpace(rest)
+	if !strings.HasPrefix(strings.ToUpper(rest), "CMD") {
+		return hc
+	}
+	rest = strings.TrimSpace(rest[3:])
+
+	// Parse CMD — exec form ["cmd","arg"] or shell form
+	if strings.HasPrefix(rest, "[") {
+		var arr []string
+		if err := json.Unmarshal([]byte(rest), &arr); err == nil {
+			hc.Test = append([]string{"CMD"}, arr...)
+			return hc
+		}
+	}
+	// Shell form
+	hc.Test = []string{"CMD-SHELL", rest}
+	return hc
+}
+
+// parseDuration parses a Docker-style duration string like "5s", "1m30s", "500ms".
+func parseDuration(s string) time.Duration {
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0
+	}
+	return d
 }
 
 // parseLabels parses LABEL key=value [key2=value2 ...] into the labels map.
@@ -303,26 +409,26 @@ func (s *BaseServer) handleImageBuild(w http.ResponseWriter, r *http.Request) {
 	// Extract tar body to temp dir
 	contextDir, err := os.MkdirTemp("", "docker-build-")
 	if err != nil {
-		http.Error(w, "failed to create temp dir: "+err.Error(), http.StatusInternalServerError)
+		WriteError(w, &api.ServerError{Message: "failed to create temp dir: " + err.Error()})
 		return
 	}
 	defer os.RemoveAll(contextDir)
 
 	if err := extractTar(r.Body, contextDir); err != nil {
-		http.Error(w, "failed to extract build context: "+err.Error(), http.StatusInternalServerError)
+		WriteError(w, &api.ServerError{Message: "failed to extract build context: " + err.Error()})
 		return
 	}
 
 	// Read the Dockerfile
 	dfContent, err := os.ReadFile(filepath.Join(contextDir, dockerfileName))
 	if err != nil {
-		http.Error(w, "failed to read Dockerfile: "+err.Error(), http.StatusInternalServerError)
+		WriteError(w, &api.ServerError{Message: "failed to read Dockerfile: " + err.Error()})
 		return
 	}
 
 	parsed, err := parseDockerfile(string(dfContent), buildArgs)
 	if err != nil {
-		http.Error(w, "failed to parse Dockerfile: "+err.Error(), http.StatusInternalServerError)
+		WriteError(w, &api.ServerError{Message: "failed to parse Dockerfile: " + err.Error()})
 		return
 	}
 
@@ -362,6 +468,23 @@ func (s *BaseServer) handleImageBuild(w http.ResponseWriter, r *http.Request) {
 	}
 	for k, v := range parsed.config.ExposedPorts {
 		finalConfig.ExposedPorts[k] = v
+	}
+	if parsed.config.Healthcheck != nil {
+		finalConfig.Healthcheck = parsed.config.Healthcheck
+	}
+	if len(parsed.config.Shell) > 0 {
+		finalConfig.Shell = parsed.config.Shell
+	}
+	if parsed.config.StopSignal != "" {
+		finalConfig.StopSignal = parsed.config.StopSignal
+	}
+	if len(parsed.config.Volumes) > 0 {
+		if finalConfig.Volumes == nil {
+			finalConfig.Volumes = make(map[string]struct{})
+		}
+		for k, v := range parsed.config.Volumes {
+			finalConfig.Volumes[k] = v
+		}
 	}
 
 	// Generate image ID

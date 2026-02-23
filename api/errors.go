@@ -81,3 +81,16 @@ func (e *NotModifiedError) Error() string {
 func (e *NotModifiedError) StatusCode() int {
 	return http.StatusNotModified
 }
+
+// ServerError indicates an internal server error.
+type ServerError struct {
+	Message string
+}
+
+func (e *ServerError) Error() string {
+	return e.Message
+}
+
+func (e *ServerError) StatusCode() int {
+	return http.StatusInternalServerError
+}

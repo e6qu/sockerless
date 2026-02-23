@@ -367,6 +367,13 @@ func (s *BaseServer) handleContainerRemove(w http.ResponseWriter, r *http.Reques
 	// Clean up container process
 	s.Drivers.ProcessLifecycle.Cleanup(id)
 
+	// Clean up network associations via driver (allows Linux driver to remove veth pairs)
+	for _, ep := range c.NetworkSettings.Networks {
+		if ep != nil && ep.NetworkID != "" {
+			_ = s.Drivers.Network.Disconnect(r.Context(), ep.NetworkID, id)
+		}
+	}
+
 	s.Store.Containers.Delete(id)
 	s.Store.ContainerNames.Delete(c.Name)
 	s.Store.LogBuffers.Delete(id)
