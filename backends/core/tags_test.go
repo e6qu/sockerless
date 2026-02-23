@@ -43,9 +43,6 @@ func TestTagSetAsGCPLabels(t *testing.T) {
 
 	// Keys should use underscores instead of hyphens
 	for k := range m {
-		if k != k {
-			t.Errorf("key should be lowercase: %q", k)
-		}
 		for _, c := range k {
 			if c == '-' {
 				// GCP labels can have hyphens, but our convention uses underscores for keys
