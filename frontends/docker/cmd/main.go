@@ -42,7 +42,7 @@ func main() {
 	if err != nil {
 		logger.Fatal().Err(err).Msg("failed to init tracer")
 	}
-	defer shutdown(context.Background())
+	defer func() { _ = shutdown(context.Background()) }()
 
 	s := frontend.NewServer(logger, *backend)
 

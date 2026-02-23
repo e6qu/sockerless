@@ -33,7 +33,7 @@ func main() {
 	if err != nil {
 		logger.Fatal().Err(err).Msg("failed to init tracer")
 	}
-	defer shutdown(context.Background())
+	defer func() { _ = shutdown(context.Background()) }()
 
 	srv := gitlabhub.NewServer(*addr, logger)
 	if err := srv.ListenAndServe(); err != nil {

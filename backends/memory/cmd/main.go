@@ -33,7 +33,7 @@ func main() {
 	if err != nil {
 		logger.Fatal().Err(err).Msg("failed to init tracer")
 	}
-	defer shutdown(context.Background())
+	defer func() { _ = shutdown(context.Background()) }()
 
 	s := memory.NewServer(logger)
 	logger.Info().Str("addr", *addr).Msg("starting memory backend")
