@@ -1,0 +1,18 @@
+variables:
+  RUN_DEPLOY: "false"
+
+test-job:
+  image: alpine:latest
+  script:
+    - echo "test-runs-ok" > /tmp/rules-marker
+    - test -f /tmp/rules-marker
+    - test "$(cat /tmp/rules-marker)" = "test-runs-ok"
+  rules:
+    - when: always
+
+deploy-job:
+  image: alpine:latest
+  script:
+    - echo "this should not run"
+  rules:
+    - if: $RUN_DEPLOY == "true"

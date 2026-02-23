@@ -8,6 +8,26 @@ import (
 	"github.com/sockerless/api"
 )
 
+// flushingCopy copies from src to w, flushing after each read chunk.
+// This ensures streaming responses (pull progress, build output, events)
+// are delivered incrementally instead of buffering until stream close.
+func flushingCopy(w http.ResponseWriter, src io.Reader) {
+	flusher, canFlush := w.(http.Flusher)
+	buf := make([]byte, 4096)
+	for {
+		n, err := src.Read(buf)
+		if n > 0 {
+			_, _ = w.Write(buf[:n])
+			if canFlush {
+				flusher.Flush()
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

@@ -1,0 +1,26 @@
+name: container-env-create
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+      env:
+        CONTAINER_VAR: from-container
+    env:
+      JOB_VAR: from-job
+    steps:
+      - name: Check container env
+        run: |
+          echo "CONTAINER_VAR=$CONTAINER_VAR"
+          test "$CONTAINER_VAR" = "from-container"
+      - name: Check job env
+        run: |
+          echo "JOB_VAR=$JOB_VAR"
+          test "$JOB_VAR" = "from-job"
+      - name: Step env overrides
+        env:
+          STEP_VAR: from-step
+        run: |
+          test "$STEP_VAR" = "from-step"
+          echo "env-merge-ok"

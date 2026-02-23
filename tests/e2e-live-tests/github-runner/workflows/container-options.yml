@@ -1,0 +1,19 @@
+name: container-options
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+      options: --user root
+    steps:
+      - name: Verify user
+        run: |
+          WHOAMI=$(id -u)
+          echo "Running as uid=$WHOAMI"
+          test "$WHOAMI" = "0"
+      - name: Verify env
+        run: |
+          echo "container-options-ok" > /tmp/options-marker
+          test -f /tmp/options-marker
+          test "$(cat /tmp/options-marker)" = "container-options-ok"

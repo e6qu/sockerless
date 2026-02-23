@@ -251,14 +251,80 @@ func (s *BaseServer) handleContainerUnpause(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *BaseServer) handleSystemEvents(w http.ResponseWriter, r *http.Request) {
-	// Stream events - for memory backend, just keep connection open
+	filters := ParseFilters(r.URL.Query().Get("filters"))
+	typeFilter := filters["type"]
+
+	subID := GenerateID()[:16]
+	ch := s.EventBus.Subscribe(subID)
+	defer s.EventBus.Unsubscribe(subID)
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
-	// Block until client disconnects
-	<-r.Context().Done()
+
+	enc := json.NewEncoder(w)
+	for {
+		select {
+		case event, ok := <-ch:
+			if !ok {
+				return
+			}
+			if len(typeFilter) > 0 {
+				matched := false
+				for _, t := range typeFilter {
+					if event.Type == t {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					continue
+				}
+			}
+			_ = enc.Encode(event)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
+func (s *BaseServer) handleContainerUpdate(w http.ResponseWriter, r *http.Request) {
+	ref := r.PathValue("id")
+	id, ok := s.Store.ResolveContainerID(ref)
+	if !ok {
+		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
+		return
+	}
+
+	var req api.ContainerUpdateRequest
+	if err := ReadJSON(r, &req); err != nil {
+		// Empty body is fine — just return success with no changes
+		WriteJSON(w, http.StatusOK, api.ContainerUpdateResponse{Warnings: []string{}})
+		return
+	}
+
+	s.Store.Containers.Update(id, func(c *api.Container) {
+		if req.RestartPolicy.Name != "" {
+			c.HostConfig.RestartPolicy = req.RestartPolicy
+		}
+	})
+
+	WriteJSON(w, http.StatusOK, api.ContainerUpdateResponse{Warnings: []string{}})
+}
+
+func (s *BaseServer) handleContainerChanges(w http.ResponseWriter, r *http.Request) {
+	ref := r.PathValue("id")
+	_, ok := s.Store.ResolveContainerID(ref)
+	if !ok {
+		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
+		return
+	}
+	WriteJSON(w, http.StatusOK, []api.ContainerChangeItem{})
 }
 
 func (s *BaseServer) handleSystemDf(w http.ResponseWriter, r *http.Request) {

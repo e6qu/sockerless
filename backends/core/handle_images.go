@@ -2,6 +2,7 @@ package core
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -87,8 +88,21 @@ func (s *BaseServer) handleImagePull(w http.ResponseWriter, r *http.Request) {
 		Labels: make(map[string]string),
 	}
 
-	// Try to fetch real config from registry (if enabled)
-	if realConfig, _ := FetchImageConfig(ref); realConfig != nil {
+	// Build auth credential chain: X-Registry-Auth header → Store.Creds → ~/.docker/config.json
+	basicAuth := ""
+	rc := parseImageRef(ref)
+	if user, pass := decodeRegistryAuth(req.Auth); user != "" {
+		basicAuth = base64.StdEncoding.EncodeToString([]byte(user + ":" + pass))
+	} else if cred, ok := s.Store.Creds.Get(rc.Registry); ok {
+		basicAuth = base64.StdEncoding.EncodeToString([]byte(cred.Username + ":" + cred.Password))
+	} else if cfg, err := LoadDockerConfig(DefaultDockerConfigPath()); err == nil {
+		if u, p, ok := cfg.GetRegistryAuth(rc.Registry); ok {
+			basicAuth = base64.StdEncoding.EncodeToString([]byte(u + ":" + p))
+		}
+	}
+
+	// Try to fetch real config from registry
+	if realConfig, _ := FetchImageConfig(ref, basicAuth); realConfig != nil {
 		if len(realConfig.Env) > 0 {
 			imgConfig.Env = realConfig.Env
 		}
@@ -302,4 +316,28 @@ func (s *BaseServer) handleAuth(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, api.AuthResponse{
 		Status: "Login Succeeded",
 	})
+}
+
+// decodeRegistryAuth decodes Docker's X-Registry-Auth header value.
+// The header is base64-encoded JSON: {"username":"...","password":"..."}.
+// Returns empty strings on any decoding failure.
+func decodeRegistryAuth(header string) (user, pass string) {
+	if header == "" {
+		return "", ""
+	}
+	decoded, err := base64.URLEncoding.DecodeString(header)
+	if err != nil {
+		decoded, err = base64.StdEncoding.DecodeString(header)
+		if err != nil {
+			return "", ""
+		}
+	}
+	var auth struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if json.Unmarshal(decoded, &auth) != nil {
+		return "", ""
+	}
+	return auth.Username, auth.Password
 }

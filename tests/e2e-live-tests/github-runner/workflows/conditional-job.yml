@@ -1,0 +1,30 @@
+name: conditional-job
+on: push
+jobs:
+  always-run:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: This runs
+        run: |
+          echo "always-ran" > /tmp/always-marker
+          test -f /tmp/always-marker
+  skipped-job:
+    runs-on: ubuntu-latest
+    if: ${{ false }}
+    container:
+      image: alpine:latest
+    steps:
+      - name: This never runs
+        run: echo "should not execute"
+  after-skip:
+    runs-on: ubuntu-latest
+    needs: [always-run]
+    container:
+      image: alpine:latest
+    steps:
+      - name: Runs after always-run
+        run: |
+          echo "after-skip-ok" > /tmp/after-skip-marker
+          test -f /tmp/after-skip-marker

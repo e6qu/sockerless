@@ -1,6 +1,6 @@
 # Sockerless — Current Status
 
-**Phase 43 complete. 382 tasks done across 43 phases. Next: Phase 44 (crash-only software).**
+**Phase 56 complete. 461 tasks done across 56 phases. Next: Phase 57.**
 
 ## Test Results (Latest)
 
@@ -12,17 +12,43 @@
 | Sim-backend integration | 129 PASS / 0 FAIL | `make sim-test-all` |
 | Lint (14 modules) | 0 issues | `make lint` |
 | Unit + integration | ALL PASS | `make test` |
-| GitHub E2E | 22 workflows × 7 backends = 154 PASS | `make e2e-github-{memory,aws,gcp,azure}` |
-| GitLab E2E | 17 pipelines × 7 backends = 119 PASS | `make e2e-gitlab-{memory,aws,gcp,azure}` |
-| Upstream gitlab-ci-local | 25 tests × 7 backends = 175 PASS | `make upstream-test-gitlab-ci-local-{backend}` |
+| GitHub E2E | 31 workflows × 7 backends = 217 PASS | `make e2e-github-{memory,aws,gcp,azure}` |
+| GitLab E2E | 22 pipelines × 7 backends = 154 PASS | `make e2e-gitlab-{memory,aws,gcp,azure}` |
+| Upstream gitlab-ci-local | 36 tests × 7 backends = 252 PASS | `make upstream-test-gitlab-ci-local-{backend}` |
 | Terraform integration | 75 PASS (ECS 21, Lambda 5, CR 13, GCF 7, ACA 18, AZF 11) | `make tf-int-test-all` |
 | Cloud SDK tests | AWS 17, GCP 20, Azure 13 | `make docker-test` per cloud |
 | Cloud CLI tests | AWS 21, GCP 15, Azure 14 | `make docker-test` per cloud |
 | bleephub integration | 1 PASS (full runner lifecycle) | `make bleephub-test` |
-| bleephub unit tests | 190 PASS (148 prior + 12 workflow parsing + 6 actions + 10 workflow engine + 8 matrix + 6 artifacts) | `cd bleephub && go test -v ./...` |
+| bleephub unit tests | 196 PASS (190 prior + 4 service parsing + 2 job message services) | `cd bleephub && go test -v ./...` |
 | bleephub gh CLI test | 1 PASS (35 assertions, Docker-based) | `make bleephub-gh-test` |
 | Core tag builder | 6 PASS (AsMap, AsGCPLabels, AsAzurePtrMap, truncation, DefaultInstanceID) | `cd backends/core && go test -v -run TestTag ./...` |
-| Core resource registry | 5 PASS (register, cleanup, orphaned, save/load, non-existent) | `cd backends/core && go test -v -run TestRegistry ./...` |
+| Core resource registry | 11 PASS (register, cleanup, orphaned, save/load, non-existent, auto-save, atomic, status, backward-compat, metadata) | `cd backends/core && go test -v -run TestRegistry ./...` |
+| Core crash recovery | 7 PASS (load-from-disk, merge-orphans, scan-error, reconstruct, skip-existing, skip-cleaned, default-name) | `cd backends/core && go test -v -run "TestRecover\|TestReconstruct" ./...` |
+| Core pod registry + API | 21 PASS (8 registry, 7 API handler, 6 container-pod association) | `cd backends/core && go test -v -run "TestPod\|TestHandle.*Pod\|TestContainer.*Pod\|TestImplicit\|TestBuiltin\|TestNetwork.*Joins" ./...` |
+| Core pod deferred start | 8 PASS (5 deferred start, 1 idempotency, 1 rejection, 1 compat) | `cd backends/core && go test -v -run "TestPodDeferred\|TestMarkStarted\|TestMemory.*Reject\|TestSingleContainer.*Pod" ./...` |
+| Core context loader | 6 PASS (no-context no-op, sets vars, no override, missing file, invalid JSON, active file) | `cd backends/core && go test -v -run "TestLoadContext\|TestActiveContext" ./...` |
+| Core management API | 7 PASS (healthz, status, container summary, summary empty, check, check-no-checker, reload) | `cd backends/core && go test -v -run "TestHandleHealthz\|TestHandleMgmt\|TestHandleContainerSummary\|TestHandleCheck\|TestHandleReload" ./...` |
+| Core metrics | 4 PASS (record, percentiles, middleware, handler) | `cd backends/core && go test -v -run "TestMetrics\|TestHandleMetrics" ./...` |
+| Core pod health wait | 3 PASS (all-healthy, timeout, no-healthcheck) | `cd backends/core && go test -v -run "TestWaitForServiceHealth" ./...` |
+| Core docker config | 6 PASS (multi-registry, empty-auths, missing-file, invalid-json, hub-alias, auth-decode) | `cd backends/core && go test -v -run "TestLoadDockerConfig\|TestDockerConfig" ./...` |
+| Core auth decode | 3 PASS (valid, invalid, empty) | `cd backends/core && go test -v -run "TestDecodeRegistryAuth" ./...` |
+| Core tmpfs mounts | 3 PASS (creates-temp-dirs, empty-map, merges-with-binds) | `cd backends/core && go test -v -run "TestResolveTmpfsMounts" ./...` |
+| Core log filter | 6 PASS (tail-lastN, tail-all, tail-zero, since, until, parse-timestamp) | `cd backends/core && go test -v -run "TestFilterLog\|TestParseDocker" ./...` |
+| Core log follow | 3 PASS (buffered-then-close, empty-logs, tail-and-follow) | `cd backends/core && go test -v -run "TestSyntheticLogSubscribe\|TestLogFollow" ./...` |
+| Core extra hosts | 3 PASS (format-env, format-empty, build-hosts-file) | `cd backends/core && go test -v -run "TestFormatExtraHosts\|TestBuildHostsFile" ./...` |
+| Core DNS hosts | 3 PASS (same-pod, no-pod, includes-hostname) | `cd backends/core && go test -v -run "TestResolvePeerHosts" ./...` |
+| Core restart policy | 3 PASS (on-failure, max-retry, no-policy) | `cd backends/core && go test -v -run "TestShouldRestart" ./...` |
+| Core network disconnect | 4 PASS (basic, not-found-network, not-found-container, force) | `cd backends/core && go test -v -run "TestNetworkDisconnect" ./...` |
+| Core event bus | 3 PASS (publish-subscribe, multiple-subscribers, unsubscribe) | `cd backends/core && go test -v -run "TestEventBus" ./...` |
+| Core container update | 3 PASS (restart-policy, not-found, empty-body) | `cd backends/core && go test -v -run "TestContainerUpdate" ./...` |
+| Core volume filters | 2 PASS (filter-by-name, filter-by-label) | `cd backends/core && go test -v -run "TestVolumeList_Filter" ./...` |
+| Core container changes | 1 PASS (empty) | `cd backends/core && go test -v -run "TestContainerChanges" ./...` |
+| Core event emission | 2 PASS (container-create, network-remove) | `cd backends/core && go test -v -run "TestEventEmission" ./...` |
+| Core container list | 4 PASS (limit, limit-zero, sort-by-created, all-false-excludes-stopped) | `cd backends/core && go test -v -run "TestContainerList_" ./...` |
+| Core container filters | 5 PASS (ancestor, ancestor-no-match, network, health, before-since) | `cd backends/core && go test -v -run "TestContainerFilter_" ./...` |
+| Core container export | 2 PASS (not-found, synthetic-empty) | `cd backends/core && go test -v -run "TestContainerExport_" ./...` |
+| Core commit | 3 PASS (basic, not-found, config-override) | `cd backends/core && go test -v -run "TestCommit_" ./...` |
+| Frontend TLS | 4 PASS (tls-https, non-tls-fallback, unix-ignores-tls, mgmt-tls) | `cd frontends/docker && go test -v -run "TestTLS\|TestNonTLS\|TestUnixSocket\|TestMgmt" ./...` |
 
 ### Upstream Act (Informational — not all expected to pass)
 
@@ -36,7 +62,13 @@
 | aca | 58 | 29 | monolithic |
 | azf | 69 | 16 | individual |
 
-Remaining failures: missing `node` runtime (16), service containers/networking (4, health poll no longer hangs), edge cases (2-4). All bash/shell tests now pass (Phase 31). Health check infrastructure added (Phase 33). `POST /build` implemented (Phase 34) — `local-action-dockerfile` should now pass.
+Remaining failure categories:
+- **Node.js 16 required** (16 tests): `uses: actions/*` steps need `node16` binary — not available in WASM sandbox or FaaS containers
+- **Networking/services** (4 tests): Service container health polling and inter-container networking
+- **Docker build** (2 tests): Multi-stage builds with RUN instructions that execute real commands
+- **Shell edge cases** (2 tests): POSIX shell differences between busybox ash and bash
+
+All bash/shell tests now pass (Phase 31). Health check infrastructure added (Phase 33). `POST /build` implemented (Phase 34).
 
 ### bleephub (Official GitHub Actions Runner)
 
@@ -95,7 +127,7 @@ Handler code dispatches through driver interfaces instead of if/else chains:
 Agent Driver → Process Driver → Synthetic Driver
 ```
 
-8 interface methods: `ExecDriver` (1), `FilesystemDriver` (4), `StreamDriver` (2), `ProcessLifecycleDriver` (8).
+10 interface methods: `ExecDriver` (1), `FilesystemDriver` (4), `StreamDriver` (4), `ProcessLifecycleDriver` (8).
 
 `DriverSet` on `BaseServer` auto-constructs the chain via `InitDrivers()`. Handlers call only through driver methods — zero `ProcessFactory`/`Store.Processes` references in handler files (Phase 32).
 
@@ -109,9 +141,9 @@ Each simulator implements enough cloud API for its backends. Validated against o
 | GCP | cloudrun, gcf | 20 PASS | 15 PASS | 20 PASS |
 | Azure | aca, azf | 13 PASS | 14 PASS | 29 PASS |
 
-### Cloud Resource Tracking (Phase 43)
+### Cloud Resource Tracking + Crash Recovery (Phases 43-44)
 
-All cloud resources tagged with 5 standard tags. Local resource registry tracks creates/deletes. CloudScanner interface enables crash recovery. REST endpoints for listing and cleanup.
+All cloud resources tagged with 5 standard tags. Persistent resource registry auto-saves on every mutation (atomic writes). Metadata (image, name, backend-specific IDs) stored per entry. Status lifecycle: pending → active → cleanedUp. RecoverOnStartup called in all 6 cloud backends. Container state reconstructed from registry on startup. bleephub made crash-only (no graceful shutdown). REST endpoints for listing and cleanup.
 
 ## Known Limitations
 

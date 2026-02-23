@@ -1,0 +1,42 @@
+name: diamond-deps
+on: push
+jobs:
+  root:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Root job
+        run: |
+          echo "root-done" > /tmp/root-marker
+          test -f /tmp/root-marker
+  left:
+    runs-on: ubuntu-latest
+    needs: root
+    container:
+      image: alpine:latest
+    steps:
+      - name: Left job
+        run: |
+          echo "left-done" > /tmp/left-marker
+          test -f /tmp/left-marker
+  right:
+    runs-on: ubuntu-latest
+    needs: root
+    container:
+      image: alpine:latest
+    steps:
+      - name: Right job
+        run: |
+          echo "right-done" > /tmp/right-marker
+          test -f /tmp/right-marker
+  merge:
+    runs-on: ubuntu-latest
+    needs: [left, right]
+    container:
+      image: alpine:latest
+    steps:
+      - name: Merge job
+        run: |
+          echo "merge-done" > /tmp/merge-marker
+          test -f /tmp/merge-marker

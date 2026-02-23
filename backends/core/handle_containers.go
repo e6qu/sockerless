@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -79,6 +80,71 @@ func (s *BaseServer) handleContainerCreate(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Pod association via query param (Podman convention: ?pod=<nameOrID>)
+	if podRef := r.URL.Query().Get("pod"); podRef != "" {
+		pod, ok := s.Store.Pods.GetPod(podRef)
+		if !ok {
+			WriteError(w, &api.NotFoundError{Resource: "pod", ID: podRef})
+			return
+		}
+		s.Store.Pods.AddContainer(pod.ID, id)
+	}
+
+	// Implicit pod grouping: NetworkMode "container:<id>" joins the referenced
+	// container's pod (or creates one if it doesn't exist yet)
+	if strings.HasPrefix(hostConfig.NetworkMode, "container:") {
+		refID := strings.TrimPrefix(hostConfig.NetworkMode, "container:")
+		refID, _ = s.Store.ResolveContainerID(refID)
+		if _, inPod := s.Store.Pods.GetPodForContainer(id); !inPod {
+			if pod, exists := s.Store.Pods.GetPodForContainer(refID); exists {
+				s.Store.Pods.AddContainer(pod.ID, id)
+			} else {
+				short := refID
+				if len(short) > 12 {
+					short = short[:12]
+				}
+				pod := s.Store.Pods.CreatePod("container-"+short, nil)
+				s.Store.Pods.AddContainer(pod.ID, refID)
+				s.Store.Pods.AddContainer(pod.ID, id)
+			}
+		}
+	}
+
+	// Implicit pod grouping: containers sharing a user-defined network form a pod
+	if _, inPod := s.Store.Pods.GetPodForContainer(id); !inPod {
+		for netName := range container.NetworkSettings.Networks {
+			if netName == "bridge" || netName == "host" || netName == "none" || netName == "default" {
+				continue
+			}
+			if pod, exists := s.Store.Pods.GetPodForNetwork(netName); exists {
+				s.Store.Pods.AddContainer(pod.ID, id)
+				break
+			}
+			// Check if the network already has other containers
+			if net, netExists := s.Store.ResolveNetwork(netName); netExists && len(net.Containers) > 1 {
+				// More than just this container on the network — create implicit pod
+				podName := "net-" + netName
+				pod := s.Store.Pods.CreatePod(podName, nil)
+				s.Store.Pods.SetNetwork(pod.ID, netName)
+				for existingID := range net.Containers {
+					if existingID == id {
+						continue
+					}
+					if _, alreadyInPod := s.Store.Pods.GetPodForContainer(existingID); !alreadyInPod {
+						s.Store.Pods.AddContainer(pod.ID, existingID)
+					}
+				}
+				s.Store.Pods.AddContainer(pod.ID, id)
+				break
+			}
+		}
+	}
+
+	s.emitEvent("container", "create", id, map[string]string{
+		"name":  strings.TrimPrefix(name, "/"),
+		"image": config.Image,
+	})
+
 	WriteJSON(w, http.StatusCreated, api.ContainerCreateResponse{
 		ID:       id,
 		Warnings: []string{},
@@ -99,6 +165,14 @@ func (s *BaseServer) handleContainerStart(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Multi-container pods are not supported by the memory backend
+	if pod, inPod := s.Store.Pods.GetPodForContainer(id); inPod && len(pod.ContainerIDs) > 1 {
+		WriteError(w, &api.InvalidParameterError{
+			Message: "multi-container pods are not supported by the memory backend",
+		})
+		return
+	}
+
 	// Inject HOSTNAME and user env vars into container config
 	if c.Config.Hostname != "" {
 		s.Store.Containers.Update(id, func(c *api.Container) {
@@ -112,6 +186,13 @@ func (s *BaseServer) handleContainerStart(w http.ResponseWriter, r *http.Request
 			if len(parts) == 2 {
 				c.Config.Env = append(c.Config.Env, "SOCKERLESS_GID="+parts[1])
 			}
+		})
+	}
+
+	// Inject ExtraHosts env var
+	if len(c.HostConfig.ExtraHosts) > 0 {
+		s.Store.Containers.Update(id, func(c *api.Container) {
+			c.Config.Env = append(c.Config.Env, "SOCKERLESS_EXTRA_HOSTS="+FormatExtraHostsEnv(c.HostConfig.ExtraHosts))
 		})
 	}
 
@@ -131,6 +212,8 @@ func (s *BaseServer) handleContainerStart(w http.ResponseWriter, r *http.Request
 		c.State.ExitCode = 0
 	})
 
+	s.emitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+
 	// Start health check if configured
 	if c.Config.Healthcheck != nil && len(c.Config.Healthcheck.Test) > 0 &&
 		(len(c.Config.Healthcheck.Test) != 1 || !strings.EqualFold(c.Config.Healthcheck.Test[0], "NONE")) {
@@ -140,6 +223,13 @@ func (s *BaseServer) handleContainerStart(w http.ResponseWriter, r *http.Request
 	// Process execution: spawn via ProcessLifecycleDriver
 	cmd := append([]string{c.Path}, c.Args...)
 	binds := s.resolveBindMounts(c.HostConfig.Binds, c.HostConfig.Mounts)
+	tmpfs := resolveTmpfsMounts(c.HostConfig.Tmpfs)
+	for k, v := range tmpfs {
+		if binds == nil {
+			binds = make(map[string]string)
+		}
+		binds[k] = v
+	}
 	started, err := s.Drivers.ProcessLifecycle.Start(id, cmd, c.Config.Env, binds)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("container", id).Msg("failed to start container process")
@@ -149,6 +239,17 @@ func (s *BaseServer) handleContainerStart(w http.ResponseWriter, r *http.Request
 		// Merge pre-start archive files (from docker cp before start)
 		if rootPath, err := s.Drivers.Filesystem.RootPath(id); err == nil && rootPath != "" {
 			s.mergeStagingDir(id, rootPath)
+
+			// Write /etc/hosts with extra hosts + peer DNS
+			extraHosts := c.HostConfig.ExtraHosts
+			peerHosts := ResolvePeerHosts(s.Store, id)
+			allHosts := append(extraHosts, peerHosts...)
+			if len(allHosts) > 0 || c.Config.Hostname != "" {
+				hostsContent := BuildHostsFile(c.Config.Hostname, allHosts)
+				etcDir := joinCleanPath(rootPath, "/etc")
+				os.MkdirAll(etcDir, 0o755)
+				os.WriteFile(joinCleanPath(rootPath, "/etc/hosts"), hostsContent, 0o644)
+			}
 		}
 
 		w.WriteHeader(http.StatusNoContent)
@@ -192,7 +293,8 @@ func (s *BaseServer) handleContainerStop(w http.ResponseWriter, r *http.Request)
 	}
 
 	s.Drivers.ProcessLifecycle.Stop(id)
-	s.Store.StopContainer(id, 0)
+	s.Store.ForceStopContainer(id, 0)
+	s.emitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -234,6 +336,7 @@ func (s *BaseServer) handleContainerKill(w http.ResponseWriter, r *http.Request)
 		close(ch.(chan struct{}))
 	}
 
+	s.emitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -256,7 +359,7 @@ func (s *BaseServer) handleContainerRemove(w http.ResponseWriter, r *http.Reques
 	}
 
 	if c.State.Running {
-		s.Store.StopContainer(id, 0)
+		s.Store.ForceStopContainer(id, 0)
 	}
 
 	s.StopHealthCheck(id)
@@ -269,6 +372,7 @@ func (s *BaseServer) handleContainerRemove(w http.ResponseWriter, r *http.Reques
 	s.Store.LogBuffers.Delete(id)
 	s.Store.WaitChs.Delete(id)
 
+	s.emitEvent("container", "destroy", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -283,7 +387,7 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 	c, _ := s.Store.Containers.Get(id)
 	if c.State.Running {
 		s.Drivers.ProcessLifecycle.Stop(id)
-		s.Store.StopContainer(id, 0)
+		s.Store.ForceStopContainer(id, 0)
 	}
 
 	// Clean up old process

@@ -203,6 +203,7 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		ResourceID:   resourceID,
 		InstanceID:   s.Desc.InstanceID,
 		CreatedAt:    time.Now(),
+		Metadata:     map[string]string{"image": container.Image, "name": container.Name, "functionAppName": funcAppName},
 	})
 
 	functionURL := ""
@@ -240,6 +241,14 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	c, _ := s.Store.Containers.Get(id)
 	if c.State.Running {
 		core.WriteError(w, &api.NotModifiedError{})
+		return
+	}
+
+	// Multi-container pods are not supported by FaaS backends
+	if pod, inPod := s.Store.Pods.GetPodForContainer(id); inPod && len(pod.ContainerIDs) > 1 {
+		core.WriteError(w, &api.InvalidParameterError{
+			Message: "multi-container pods are not supported by the azure-functions backend",
+		})
 		return
 	}
 

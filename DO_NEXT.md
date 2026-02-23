@@ -2,19 +2,45 @@
 
 ## Current State
 
-Phase 43 complete. **382 tasks done across 43 phases.** All cloud resources are now tagged, tracked, and recoverable. Shared tag builder with 3 output formats, resource registry with REST endpoints, crash recovery via CloudScanner interface for all 6 backends. 11 new unit tests.
+Phase 47 complete. **409 tasks done across 47 phases.** The `sockerless` CLI manages named backend contexts (`~/.sockerless/contexts/{name}/config.json`). All 8 backends load context env vars at startup (env vars override context values).
 
-## Immediate Priority: Phase 44 — Crash-Only Software
+## Immediate Priority: Phase 48 — CI Service Container Integration
 
-Make Sockerless a "crash-only" system — always safe to crash and restart.
+Wire pod context into CI service container flows. bleephub `services:` parsing, GitLab CI compatibility, health checks, E2E tests.
 
-1. **Research crash-only software** — Candea & Fox (2003), recovery-oriented computing
-2. **Persistent resource registry** — WAL or append-only file (build on Phase 43 registry)
-3. **Idempotent operations** — audit all backend operations for replay safety
-4. **Startup recovery** — replay registry + scan cloud + reconcile (no separate "clean start" path)
-5. **Session recovery** — CI runner reconnection after restart
-6. **Remove clean shutdown paths** — SIGTERM = immediate exit, startup always assumes crash
-7. **Chaos testing** — kill at random points, restart, verify correctness
+## After Phase 44
+
+| Phase | What | Status |
+|---|---|---|
+| 44 | Crash-only software | ✓ Safe to crash at any point, startup = recovery |
+| 45 | Podman Pod API + core pod abstraction | ✓ PodContext, PodRegistry, /libpod/pods/*, implicit grouping |
+| 46 | Cloud backend multi-container specs | ✓ Deferred start, ECS/CloudRun/ACA multi-container specs, FaaS rejection |
+| 47 | sockerless CLI + context management | ✓ CLI module, core context loader, wired into all 8 backends |
+| 48 | CI service container integration | bleephub services:, GitLab CI services, health checks, E2E |
+| 49 | Upstream test expansion | More external validation |
+
+## Production Phases
+
+| Phase | What | Why |
+|---|---|---|
+| 50 | Production Docker API | `docker run`, DOCKER_HOST modes (TCP/SSH), registry auth |
+| 51 | Production networking + build + streaming | DNS, `docker build`, log streaming |
+| 52 | Production Compose + TestContainers + SDK | Higher-level Docker clients on real cloud |
+| 53 | Production GitHub Actions | Self-hosted runner + github.com on real cloud |
+| 54 | Production GitHub Actions scaling | Multi-job, concurrency, validation matrix |
+| 55 | Production GitLab CI | gitlab-runner + gitlab.com on real cloud |
+| 56 | Production GitLab CI advanced | Multi-stage, DinD, autoscaling |
+| 57 | Docker API hardening | Fix gaps found during production validation |
+| 58 | Production operations | Monitoring, alerting, security, TLS, upgrades |
+
+## Future Crash-Only Enhancements (Deferred)
+
+These were scoped out of Phase 44 for future phases:
+- **WAL/append-only log** — more robust than JSON overwrite for crash safety
+- **Session recovery** — CI runner reconnection after restart
+- **Idempotency audit** — ensure all backend operations are replay-safe
+- **Chaos testing harness** — kill at random points, restart, verify correctness
+- **Operation deduplication** — prevent duplicate cloud resource creation on replay
 
 ## bleephub Expansion Roadmap
 
@@ -27,28 +53,6 @@ Make Sockerless a "crash-only" system — always safe to crash and restart.
 | **40** | Pull requests (create, review, merge) | ✓ |
 | **41** | API conformance + `gh` CLI test suite | ✓ |
 | **42** | Runner enhancements (actions, multi-job, matrix, artifacts) | ✓ |
-
-## After Phase 44
-
-| Phase | What | Why |
-|---|---|---|
-| 44 | Crash-only software | Safe to crash at any point, startup = recovery |
-| 45 | Upstream test expansion | More external validation |
-| 46 | ~~Capability negotiation~~ | CANCELLED — all backends should support all tests |
-
-## Production Phases
-
-| Phase | What | Why |
-|---|---|---|
-| 47 | Production Docker API | `docker run`, Compose, TestContainers, SDK, DOCKER_HOST modes (TCP/SSH) |
-| 48 | Production networking + build + streaming | Multi-container, `docker build`, log streaming |
-| 49 | Production Compose + TestContainers + SDK | Higher-level Docker clients on real cloud |
-| 50 | Production GitHub Actions | Self-hosted runner + github.com on real cloud |
-| 51 | Production GitHub Actions scaling | Multi-job, concurrency, validation matrix |
-| 52 | Production GitLab CI | gitlab-runner + gitlab.com on real cloud |
-| 53 | Production GitLab CI advanced | Multi-stage, DinD, autoscaling |
-| 54 | Docker API hardening | Fix gaps found during production validation |
-| 55 | Production operations | Monitoring, alerting, security, TLS, upgrades |
 
 ## Test Commands Reference
 

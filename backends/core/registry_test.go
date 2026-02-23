@@ -94,7 +94,8 @@ func TestSplitAuthParams(t *testing.T) {
 }
 
 func TestFetchImageConfigDisabled(t *testing.T) {
-	os.Unsetenv("SOCKERLESS_FETCH_IMAGE_CONFIG")
+	os.Setenv("SOCKERLESS_SKIP_IMAGE_CONFIG", "true")
+	defer os.Unsetenv("SOCKERLESS_SKIP_IMAGE_CONFIG")
 	cfg, err := FetchImageConfig("alpine:latest")
 	if err != nil {
 		t.Fatal(err)
@@ -110,8 +111,7 @@ func TestFetchImageConfigCaching(t *testing.T) {
 	imageConfigCache.m = make(map[string]*api.ContainerConfig)
 	imageConfigCache.Unlock()
 
-	os.Setenv("SOCKERLESS_FETCH_IMAGE_CONFIG", "true")
-	defer os.Unsetenv("SOCKERLESS_FETCH_IMAGE_CONFIG")
+	os.Unsetenv("SOCKERLESS_SKIP_IMAGE_CONFIG")
 
 	// Pre-populate cache
 	testCfg := &api.ContainerConfig{
@@ -407,8 +407,7 @@ func TestFetchImageConfigGracefulFallback(t *testing.T) {
 	imageConfigCache.m = make(map[string]*api.ContainerConfig)
 	imageConfigCache.Unlock()
 
-	os.Setenv("SOCKERLESS_FETCH_IMAGE_CONFIG", "true")
-	defer os.Unsetenv("SOCKERLESS_FETCH_IMAGE_CONFIG")
+	os.Unsetenv("SOCKERLESS_SKIP_IMAGE_CONFIG")
 
 	// Try to fetch from a non-existent registry — should return nil, nil
 	cfg, err := FetchImageConfig("nonexistent.invalid/image:tag")

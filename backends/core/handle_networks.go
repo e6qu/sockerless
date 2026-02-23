@@ -76,6 +76,7 @@ func (s *BaseServer) handleNetworkCreate(w http.ResponseWriter, r *http.Request)
 
 	s.Store.Networks.Put(id, network)
 
+	s.emitEvent("network", "create", id, map[string]string{"name": req.Name})
 	WriteJSON(w, http.StatusCreated, api.NetworkCreateResponse{ID: id})
 }
 
@@ -108,7 +109,7 @@ func (s *BaseServer) handleNetworkInspect(w http.ResponseWriter, r *http.Request
 
 func (s *BaseServer) handleNetworkDisconnect(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
-	_, ok := s.Store.ResolveNetwork(ref)
+	net, ok := s.Store.ResolveNetwork(ref)
 	if !ok {
 		WriteError(w, &api.NotFoundError{Resource: "network", ID: ref})
 		return
@@ -120,6 +121,27 @@ func (s *BaseServer) handleNetworkDisconnect(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	containerID, found := s.Store.ResolveContainerID(req.Container)
+	if !found {
+		if req.Force {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		WriteError(w, &api.NotFoundError{Resource: "container", ID: req.Container})
+		return
+	}
+
+	// Remove container from network's Containers map
+	s.Store.Networks.Update(net.ID, func(n *api.Network) {
+		delete(n.Containers, containerID)
+	})
+
+	// Remove network from container's NetworkSettings.Networks
+	s.Store.Containers.Update(containerID, func(c *api.Container) {
+		delete(c.NetworkSettings.Networks, net.Name)
+	})
+
+	s.emitEvent("network", "disconnect", net.ID, map[string]string{"container": containerID})
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -139,6 +161,7 @@ func (s *BaseServer) handleNetworkRemove(w http.ResponseWriter, r *http.Request)
 	}
 
 	s.Store.Networks.Delete(n.ID)
+	s.emitEvent("network", "destroy", n.ID, map[string]string{"name": n.Name})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -222,6 +245,15 @@ func (s *BaseServer) handleNetworkConnect(w http.ResponseWriter, r *http.Request
 	s.Store.Containers.Update(containerID, func(c *api.Container) {
 		c.NetworkSettings.Networks[net.Name] = &endpoint
 	})
+
+	s.emitEvent("network", "connect", networkID, map[string]string{"container": containerID})
+
+	// Implicit pod grouping: if this network already has a pod, join it
+	if pod, exists := s.Store.Pods.GetPodForNetwork(net.Name); exists {
+		if _, inPod := s.Store.Pods.GetPodForContainer(containerID); !inPod {
+			s.Store.Pods.AddContainer(pod.ID, containerID)
+		}
+	}
 
 	w.WriteHeader(http.StatusOK)
 }

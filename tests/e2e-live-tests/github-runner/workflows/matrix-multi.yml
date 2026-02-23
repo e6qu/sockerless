@@ -1,0 +1,27 @@
+name: matrix-multi
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [alpine, debian]
+        ver: [one, two]
+    container:
+      image: alpine:latest
+    steps:
+      - name: Print combo
+        env:
+          OS_VAL: ${{ matrix.os }}
+          VER_VAL: ${{ matrix.ver }}
+        run: |
+          echo "os=$OS_VAL ver=$VER_VAL"
+          test -n "$OS_VAL"
+          test -n "$VER_VAL"
+      - name: Verify unique
+        env:
+          OS_VAL: ${{ matrix.os }}
+          VER_VAL: ${{ matrix.ver }}
+        run: |
+          echo "${OS_VAL}-${VER_VAL}" > "/tmp/matrix-${OS_VAL}-${VER_VAL}.txt"
+          test "$(cat /tmp/matrix-${OS_VAL}-${VER_VAL}.txt)" = "${OS_VAL}-${VER_VAL}"

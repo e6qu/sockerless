@@ -494,6 +494,190 @@ YAML
 init_git "$TEST_DIR"
 run_test "variable-interpolation" "$TEST_DIR"
 
+# Test 26: Default image
+TEST_DIR=$(make_test_dir default-image)
+cat > "$TEST_DIR/.gitlab-ci.yml" <<'YAML'
+default:
+  image: alpine:latest
+
+test-default:
+  script:
+    - echo "using default image"
+    - echo "default-ok"
+YAML
+init_git "$TEST_DIR"
+run_test "default-image" "$TEST_DIR"
+
+# Test 27: Multi-image (two jobs with different images)
+TEST_DIR=$(make_test_dir multi-image)
+cat > "$TEST_DIR/.gitlab-ci.yml" <<'YAML'
+job-alpine:
+  image: alpine:latest
+  script:
+    - echo "alpine-job-ok"
+
+job-debian:
+  image: debian:bookworm-slim
+  script:
+    - echo "debian-job-ok"
+YAML
+init_git "$TEST_DIR"
+run_test "multi-image" "$TEST_DIR"
+
+# Test 28: Many env vars with interpolation
+TEST_DIR=$(make_test_dir env-file-like)
+cat > "$TEST_DIR/.gitlab-ci.yml" <<'YAML'
+variables:
+  APP_NAME: "myapp"
+  APP_ENV: "test"
+  APP_PORT: "8080"
+  APP_URL: "http://${APP_NAME}:${APP_PORT}"
+  APP_DESC: "${APP_NAME}-${APP_ENV}"
+
+test-env:
+  image: alpine:latest
+  script:
+    - echo "APP_URL=$APP_URL"
+    - echo "APP_DESC=$APP_DESC"
+    - test "$APP_DESC" = "myapp-test"
+YAML
+init_git "$TEST_DIR"
+run_test "env-file-like" "$TEST_DIR"
+
+# Test 29: Complex multiline script (for loop + pipes + subshell)
+TEST_DIR=$(make_test_dir script-multiline)
+cat > "$TEST_DIR/.gitlab-ci.yml" <<'YAML'
+test-multiline:
+  image: alpine:latest
+  script:
+    - |
+      TOTAL=0
+      for i in 1 2 3 4 5; do
+        TOTAL=$((TOTAL + i))
+      done
+      echo "total=$TOTAL"
+      test "$TOTAL" = "15"
+    - COUNT=$(echo "a b c" | wc -w | tr -d ' ')
+    - test "$COUNT" = "3"
+YAML
+init_git "$TEST_DIR"
+run_test "script-multiline-complex" "$TEST_DIR"
+
+# Test 30: Rules with variable conditions
+TEST_DIR=$(make_test_dir rules-if)
+cat > "$TEST_DIR/.gitlab-ci.yml" <<'YAML'
+variables:
+  DEPLOY_ENABLED: "true"
+
+deploy-job:
+  image: alpine:latest
+  script:
+    - echo "deploy runs"
+  rules:
+    - if: $DEPLOY_ENABLED == "true"
+
+skip-job:
+  image: alpine:latest
+  script:
+    - echo "this should be skipped"
+  rules:
+    - if: $DEPLOY_ENABLED == "false"
+YAML
+init_git "$TEST_DIR"
+run_test "rules-if-variable" "$TEST_DIR"
+
+# Test 31: Retry zero
+TEST_DIR=$(make_test_dir retry-zero)
+cat > "$TEST_DIR/.gitlab-ci.yml" <<'YAML'
+test-retry:
+  image: alpine:latest
+  retry: 0
+  script:
+    - echo "no-retry-ok"
+YAML
+init_git "$TEST_DIR"
+run_test "retry-zero" "$TEST_DIR"
+
+# Test 32: Tags keyword (ignored by gitlab-ci-local but must not error)
+TEST_DIR=$(make_test_dir tags-keyword)
+cat > "$TEST_DIR/.gitlab-ci.yml" <<'YAML'
+test-tags:
+  image: alpine:latest
+  tags:
+    - docker
+  script:
+    - echo "tags-ok"
+YAML
+init_git "$TEST_DIR"
+run_test "tags-keyword" "$TEST_DIR"
+
+# Test 33: Services with alias
+TEST_DIR=$(make_test_dir services-basic)
+cat > "$TEST_DIR/.gitlab-ci.yml" <<'YAML'
+test-services:
+  image: alpine:latest
+  services:
+    - name: alpine:latest
+      alias: helper
+  script:
+    - echo "services-ok"
+YAML
+init_git "$TEST_DIR"
+run_test "services-basic" "$TEST_DIR"
+
+# Test 34: Include local
+TEST_DIR=$(make_test_dir include-local)
+cat > "$TEST_DIR/templates.yml" <<'YAML'
+.base-template:
+  image: alpine:latest
+  before_script:
+    - echo "from-template"
+YAML
+cat > "$TEST_DIR/.gitlab-ci.yml" <<'YAML'
+include:
+  - local: templates.yml
+
+test-include:
+  extends: .base-template
+  script:
+    - echo "include-ok"
+YAML
+init_git "$TEST_DIR"
+run_test "include-local" "$TEST_DIR"
+
+# Test 35: Cache basic
+TEST_DIR=$(make_test_dir cache-basic)
+cat > "$TEST_DIR/.gitlab-ci.yml" <<'YAML'
+test-cache:
+  image: alpine:latest
+  cache:
+    key: test-cache-key
+    paths:
+      - .cache/
+  script:
+    - mkdir -p .cache
+    - echo "cached" > .cache/data.txt
+    - echo "cache-ok"
+YAML
+init_git "$TEST_DIR"
+run_test "cache-basic" "$TEST_DIR"
+
+# Test 36: Nested variable references
+TEST_DIR=$(make_test_dir nested-vars)
+cat > "$TEST_DIR/.gitlab-ci.yml" <<'YAML'
+variables:
+  BASE: "hello"
+  GREETING: "${BASE}-world"
+  FULL: "${GREETING}-final"
+
+test-nested:
+  image: alpine:latest
+  script:
+    - echo "FULL=$FULL"
+YAML
+init_git "$TEST_DIR"
+run_test "nested-variables" "$TEST_DIR"
+
 # --- Print summary ---
 log ""
 log "=============================="

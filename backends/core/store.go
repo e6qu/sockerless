@@ -112,6 +112,7 @@ type Store struct {
 	Volumes        *StateStore[api.Volume]
 	Execs          *StateStore[api.ExecInstance]
 	Creds          *StateStore[api.AuthRequest]
+	Pods           *PodRegistry
 	WaitChs        sync.Map // containerID → chan struct{}
 	LogBuffers     sync.Map // containerID → []byte
 	Processes      sync.Map // containerID → ContainerProcess
@@ -119,6 +120,7 @@ type Store struct {
 	StagingDirs    sync.Map // containerID → string (pre-start archive staging dir)
 	HealthChecks   sync.Map // containerID → context.CancelFunc
 	BuildContexts  sync.Map // imageID → string (temp dir with COPY files at destination paths)
+	RestartHook    func(containerID string, exitCode int) bool
 }
 
 // NewStore creates a new store with all sub-stores initialized.
@@ -131,16 +133,36 @@ func NewStore() *Store {
 		Volumes:        NewStateStore[api.Volume](),
 		Execs:          NewStateStore[api.ExecInstance](),
 		Creds:          NewStateStore[api.AuthRequest](),
+		Pods:           NewPodRegistry(),
 	}
 }
 
 // StopContainer transitions a container to the exited state and closes wait channels.
+// If a RestartHook is set and returns true, the container is restarted instead of exiting.
 func (st *Store) StopContainer(id string, exitCode int) {
 	// Cancel health check goroutine if running
 	if cancel, ok := st.HealthChecks.LoadAndDelete(id); ok {
 		cancel.(context.CancelFunc)()
 	}
 
+	// Check restart policy before transitioning to exited
+	if st.RestartHook != nil && st.RestartHook(id, exitCode) {
+		return
+	}
+
+	st.forceStop(id, exitCode)
+}
+
+// ForceStopContainer transitions a container to exited, bypassing any restart policy.
+// Used by explicit stop/kill handlers where the user intends to stop the container.
+func (st *Store) ForceStopContainer(id string, exitCode int) {
+	if cancel, ok := st.HealthChecks.LoadAndDelete(id); ok {
+		cancel.(context.CancelFunc)()
+	}
+	st.forceStop(id, exitCode)
+}
+
+func (st *Store) forceStop(id string, exitCode int) {
 	st.Containers.Update(id, func(c *api.Container) {
 		c.State.Status = "exited"
 		c.State.Running = false

@@ -104,6 +104,14 @@ func (d *AgentStreamDriver) LogBytes(containerID string) []byte {
 	return d.Fallback.LogBytes(containerID)
 }
 
+func (d *AgentStreamDriver) LogSubscribe(containerID, subID string) chan []byte {
+	return d.Fallback.LogSubscribe(containerID, subID)
+}
+
+func (d *AgentStreamDriver) LogUnsubscribe(containerID, subID string) {
+	d.Fallback.LogUnsubscribe(containerID, subID)
+}
+
 func (d *AgentStreamDriver) Attach(ctx context.Context, containerID string, tty bool, conn net.Conn) error {
 	c, _ := d.Store.Containers.Get(containerID)
 

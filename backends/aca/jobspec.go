@@ -10,14 +10,23 @@ import (
 	core "github.com/sockerless/backend-core"
 )
 
+// containerInput groups the data needed to build one ACA container spec.
+type containerInput struct {
+	ID         string
+	Container  *api.Container
+	AgentToken string
+	IsMain     bool // true = inject agent entrypoint
+}
+
 // buildJobName generates an ACA Job name from a container ID.
 func buildJobName(containerID string) string {
 	return fmt.Sprintf("sockerless-%s", containerID[:12])
 }
 
-// buildJobSpec creates an ACA Job resource from a container config.
-func (s *Server) buildJobSpec(containerID string, container *api.Container, agentToken string) armappcontainers.Job {
-	config := container.Config
+// buildContainerSpec builds a single ACA container spec.
+// IsMain containers get agent injection; sidecars use their original entrypoint.
+func (s *Server) buildContainerSpec(ci containerInput) *armappcontainers.Container {
+	config := ci.Container.Config
 
 	// Build environment variables
 	var envVars []*armappcontainers.EnvironmentVar
@@ -31,22 +40,30 @@ func (s *Server) buildJobSpec(containerID string, container *api.Container, agen
 		}
 	}
 
-	// Add agent env vars
-	envVars = append(envVars,
-		&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_AGENT_TOKEN"), Value: ptr(agentToken)},
-	)
-
-	// Build entrypoint: callback mode or forward agent mode
 	var entrypoint []string
-	if s.config.CallbackURL != "" {
-		callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, containerID, agentToken)
-		entrypoint = core.BuildAgentCallbackEntrypoint(config, callbackURL)
+	if ci.IsMain {
+		// Agent injection for main container
 		envVars = append(envVars,
-			&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_CONTAINER_ID"), Value: ptr(containerID)},
-			&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_AGENT_CALLBACK_URL"), Value: ptr(callbackURL)},
+			&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_AGENT_TOKEN"), Value: ptr(ci.AgentToken)},
 		)
+
+		if s.config.CallbackURL != "" {
+			callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, ci.ID, ci.AgentToken)
+			entrypoint = core.BuildAgentCallbackEntrypoint(config, callbackURL)
+			envVars = append(envVars,
+				&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_CONTAINER_ID"), Value: ptr(ci.ID)},
+				&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_AGENT_CALLBACK_URL"), Value: ptr(callbackURL)},
+			)
+		} else {
+			entrypoint, _ = core.BuildAgentEntrypoint(config)
+		}
 	} else {
-		entrypoint, _ = core.BuildAgentEntrypoint(config)
+		// Sidecar: use original entrypoint, no agent
+		if len(config.Entrypoint) > 0 {
+			entrypoint = config.Entrypoint
+		} else if len(config.Cmd) > 0 {
+			entrypoint = config.Cmd
+		}
 	}
 
 	// Convert entrypoint to []*string
@@ -55,7 +72,33 @@ func (s *Server) buildJobSpec(containerID string, container *api.Container, agen
 		command = append(command, ptr(arg))
 	}
 
+	// Container name
+	defName := "main"
+	if !ci.IsMain {
+		defName = sanitizeContainerName(ci.Container.Name)
+	}
+
 	cpu, memory := mapCPUTier()
+
+	return &armappcontainers.Container{
+		Name:    ptr(defName),
+		Image:   ptr(config.Image),
+		Command: command,
+		Env:     envVars,
+		Resources: &armappcontainers.ContainerResources{
+			CPU:    &cpu,
+			Memory: ptr(memory),
+		},
+	}
+}
+
+// buildJobSpec creates an ACA Job resource from one or more containers.
+func (s *Server) buildJobSpec(containers []containerInput) armappcontainers.Job {
+	var specs []*armappcontainers.Container
+	for _, ci := range containers {
+		specs = append(specs, s.buildContainerSpec(ci))
+	}
+
 	replicaTimeout := int32(3600 * 4) // 4 hours max
 
 	environmentID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/managedEnvironments/%s",
@@ -64,7 +107,7 @@ func (s *Server) buildJobSpec(containerID string, container *api.Container, agen
 	triggerType := armappcontainers.TriggerTypeManual
 
 	tags := core.TagSet{
-		ContainerID: containerID,
+		ContainerID: containers[0].ID,
 		Backend:     "aca",
 		InstanceID:  s.Desc.InstanceID,
 		CreatedAt:   time.Now(),
@@ -85,18 +128,7 @@ func (s *Server) buildJobSpec(containerID string, container *api.Container, agen
 				ReplicaRetryLimit: ptr(int32(0)),
 			},
 			Template: &armappcontainers.JobTemplate{
-				Containers: []*armappcontainers.Container{
-					{
-						Name:    ptr("main"),
-						Image:   ptr(config.Image),
-						Command: command,
-						Env:     envVars,
-						Resources: &armappcontainers.ContainerResources{
-							CPU:    &cpu,
-							Memory: ptr(memory),
-						},
-					},
-				},
+				Containers: specs,
 			},
 		},
 	}
@@ -111,4 +143,28 @@ func mapCPUTier() (float64, string) {
 
 func ptr[T any](v T) *T {
 	return &v
+}
+
+// sanitizeContainerName converts a container name to a valid ACA container name.
+// Strips leading "/" and replaces non-alphanumeric characters with "-". Lowercased.
+func sanitizeContainerName(name string) string {
+	name = strings.TrimPrefix(name, "/")
+	if name == "" {
+		return "sidecar"
+	}
+	var b strings.Builder
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
+			b.WriteRune(c)
+		} else if c >= 'A' && c <= 'Z' {
+			b.WriteRune(c + 32) // lowercase
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	result := b.String()
+	if result == "" {
+		return "sidecar"
+	}
+	return result
 }

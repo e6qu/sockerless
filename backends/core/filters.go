@@ -61,6 +61,48 @@ func MatchContainerFilters(c api.Container, filters map[string][]string) bool {
 					}
 				}
 			}
+		case "ancestor":
+			matched := false
+			for _, v := range values {
+				if c.Config.Image == v {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+		case "network":
+			matched := false
+			for _, v := range values {
+				for netName := range c.NetworkSettings.Networks {
+					if netName == v {
+						matched = true
+						break
+					}
+				}
+				if matched {
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+		case "health":
+			status := "none"
+			if c.State.Health != nil {
+				status = c.State.Health.Status
+			}
+			matched := false
+			for _, v := range values {
+				if status == v {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
 		}
 	}
 	return true

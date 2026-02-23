@@ -225,6 +225,23 @@ func createTar(w io.Writer, srcPath string, baseName string) {
 	})
 }
 
+// resolveTmpfsMounts creates temporary directories for each tmpfs mount entry.
+// Returns a map of containerPath → hostDir, or nil if there are no tmpfs mounts.
+func resolveTmpfsMounts(tmpfs map[string]string) map[string]string {
+	if len(tmpfs) == 0 {
+		return nil
+	}
+	result := make(map[string]string)
+	for containerPath := range tmpfs {
+		dir, err := os.MkdirTemp("", "tmpfs-")
+		if err != nil {
+			continue
+		}
+		result[containerPath] = dir
+	}
+	return result
+}
+
 // buildContainerFromConfig creates a new Container from the given config and host config.
 func (s *BaseServer) buildContainerFromConfig(id, name string, config api.ContainerConfig, hostConfig api.HostConfig, networkingConfig *api.NetworkingConfig) api.Container {
 	path := ""

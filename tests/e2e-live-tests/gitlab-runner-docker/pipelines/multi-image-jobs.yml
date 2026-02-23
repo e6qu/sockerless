@@ -1,0 +1,13 @@
+job-alpine:
+  image: alpine:latest
+  script:
+    - echo "alpine-ok" > /tmp/alpine-marker
+    - test -f /tmp/alpine-marker
+    - test "$(cat /tmp/alpine-marker)" = "alpine-ok"
+
+job-debian:
+  image: debian:bookworm-slim
+  script:
+    - echo "debian-ok" > /tmp/debian-marker
+    - test -f /tmp/debian-marker
+    - test "$(cat /tmp/debian-marker)" = "debian-ok"

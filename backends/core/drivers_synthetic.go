@@ -91,6 +91,20 @@ func (d *SyntheticStreamDriver) LogBytes(containerID string) []byte {
 	return nil
 }
 
+func (d *SyntheticStreamDriver) LogSubscribe(containerID, _ string) chan []byte {
+	ch := make(chan []byte, 1)
+	// Send buffered content then close when container exits
+	go func() {
+		if waitCh, ok := d.Store.WaitChs.Load(containerID); ok {
+			<-waitCh.(chan struct{})
+		}
+		close(ch)
+	}()
+	return ch
+}
+
+func (d *SyntheticStreamDriver) LogUnsubscribe(_, _ string) {}
+
 func (d *SyntheticStreamDriver) Attach(_ context.Context, containerID string, _ bool, conn net.Conn) error {
 	logData, _ := d.Store.LogBuffers.Load(containerID)
 	if logData != nil {

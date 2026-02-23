@@ -2,6 +2,9 @@ package core
 
 import (
 	"context"
+	"time"
+
+	"github.com/sockerless/api"
 )
 
 // CloudScanner lists and cleans up Sockerless-managed resources.
@@ -41,4 +44,45 @@ func RecoverOnStartup(ctx context.Context, registry *ResourceRegistry, scanner C
 	}
 
 	return registry.Save()
+}
+
+// ReconstructContainerState rebuilds in-memory Store container entries
+// from active registry entries so the backend can track and clean them up.
+// Returns the count of reconstructed containers.
+func ReconstructContainerState(store *Store, registry *ResourceRegistry) int {
+	active := registry.ListActive()
+	recovered := 0
+	for _, entry := range active {
+		if _, exists := store.Containers.Get(entry.ContainerID); exists {
+			continue
+		}
+		name := entry.Metadata["name"]
+		if name == "" {
+			id := entry.ContainerID
+			if len(id) > 12 {
+				id = id[:12]
+			}
+			name = "/" + id
+		}
+		image := entry.Metadata["image"]
+		container := api.Container{
+			ID:      entry.ContainerID,
+			Name:    name,
+			Created: entry.CreatedAt.UTC().Format(time.RFC3339Nano),
+			Image:   image,
+			State: api.ContainerState{
+				Status:    "running",
+				Running:   true,
+				Pid:       1,
+				StartedAt: entry.CreatedAt.UTC().Format(time.RFC3339Nano),
+			},
+			Config:          api.ContainerConfig{Image: image},
+			NetworkSettings: api.NetworkSettings{Networks: make(map[string]*api.EndpointSettings)},
+			Mounts:          make([]api.MountPoint, 0),
+		}
+		store.Containers.Put(entry.ContainerID, container)
+		store.ContainerNames.Put(name, entry.ContainerID)
+		recovered++
+	}
+	return recovered
 }

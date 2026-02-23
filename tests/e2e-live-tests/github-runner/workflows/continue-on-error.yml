@@ -1,0 +1,18 @@
+name: continue-on-error
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Failing step
+        continue-on-error: true
+        run: |
+          echo "about to fail"
+          exit 1
+      - name: After failure
+        run: |
+          echo "continued-ok" > /tmp/continue-marker
+          test -f /tmp/continue-marker
+          test "$(cat /tmp/continue-marker)" = "continued-ok"

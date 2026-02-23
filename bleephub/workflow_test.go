@@ -266,6 +266,120 @@ func TestParseActionRef(t *testing.T) {
 	}
 }
 
+func TestParseWorkflowServices(t *testing.T) {
+	yaml := `
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+    steps:
+      - run: echo hello
+`
+	wf, err := ParseWorkflow([]byte(yaml))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	job := wf.Jobs["test"]
+	if len(job.Services) != 1 {
+		t.Fatalf("services = %d, want 1", len(job.Services))
+	}
+	redis := job.Services["redis"]
+	if redis == nil {
+		t.Fatal("redis service is nil")
+	}
+	if redis.Image != "redis:7" {
+		t.Errorf("redis.image = %q, want redis:7", redis.Image)
+	}
+}
+
+func TestParseWorkflowServicesStringImage(t *testing.T) {
+	yaml := `
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      redis: redis:7
+    steps:
+      - run: echo hello
+`
+	wf, err := ParseWorkflow([]byte(yaml))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	job := wf.Jobs["test"]
+	redis := job.Services["redis"]
+	if redis == nil {
+		t.Fatal("redis service is nil")
+	}
+	if redis.Image != "redis:7" {
+		t.Errorf("redis.image = %q, want redis:7", redis.Image)
+	}
+}
+
+func TestParseWorkflowServicesWithEnvPorts(t *testing.T) {
+	yaml := `
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        volumes:
+          - /data:/var/lib/postgresql/data
+        options: --health-cmd pg_isready
+    steps:
+      - run: echo hello
+`
+	wf, err := ParseWorkflow([]byte(yaml))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	job := wf.Jobs["test"]
+	pg := job.Services["postgres"]
+	if pg == nil {
+		t.Fatal("postgres service is nil")
+	}
+	if pg.Image != "postgres:15" {
+		t.Errorf("image = %q, want postgres:15", pg.Image)
+	}
+	if pg.Env["POSTGRES_PASSWORD"] != "test" {
+		t.Errorf("env = %v", pg.Env)
+	}
+	if len(pg.Ports) != 1 {
+		t.Errorf("ports = %v, want 1 entry", pg.Ports)
+	}
+	if len(pg.Volumes) != 1 || pg.Volumes[0] != "/data:/var/lib/postgresql/data" {
+		t.Errorf("volumes = %v", pg.Volumes)
+	}
+	if pg.Options != "--health-cmd pg_isready" {
+		t.Errorf("options = %q", pg.Options)
+	}
+}
+
+func TestParseWorkflowNoServices(t *testing.T) {
+	yaml := `
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hello
+`
+	wf, err := ParseWorkflow([]byte(yaml))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	job := wf.Jobs["test"]
+	if job.Services != nil {
+		t.Errorf("services should be nil, got %v", job.Services)
+	}
+}
+
 func TestWorkflowParseStrategyFailFast(t *testing.T) {
 	yaml := `
 jobs:
