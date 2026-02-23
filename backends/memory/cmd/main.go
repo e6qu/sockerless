@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/rs/zerolog"
+	core "github.com/sockerless/backend-core"
 	memory "github.com/sockerless/backend-memory"
 )
 
@@ -25,6 +26,7 @@ func main() {
 		Str("component", "backend-memory").
 		Logger()
 
+	core.LoadContextEnv(logger)
 	s := memory.NewServer(logger)
 	logger.Info().Str("addr", *addr).Msg("starting memory backend")
 	if err := s.ListenAndServe(*addr); err != nil {

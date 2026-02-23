@@ -1,0 +1,15 @@
+expected-failure:
+  image: alpine:latest
+  script:
+    - echo "will exit 42"
+    - exit 42
+  allow_failure:
+    exit_codes:
+      - 42
+
+passing-job:
+  image: alpine:latest
+  script:
+    - echo "pass-ok" > /tmp/allow-marker
+    - test -f /tmp/allow-marker
+    - test "$(cat /tmp/allow-marker)" = "pass-ok"

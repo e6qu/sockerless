@@ -1,0 +1,39 @@
+stages:
+  - build
+  - test
+  - deploy
+
+build-a:
+  stage: build
+  image: alpine:latest
+  script:
+    - echo "build-a-done" > /tmp/build-a-marker
+    - test -f /tmp/build-a-marker
+
+build-b:
+  stage: build
+  image: alpine:latest
+  script:
+    - echo "build-b-done" > /tmp/build-b-marker
+    - test -f /tmp/build-b-marker
+
+test-a:
+  stage: test
+  image: alpine:latest
+  needs:
+    - build-a
+  script:
+    - echo "test-a after build-a"
+    - echo "test-a-done" > /tmp/test-a-marker
+    - test -f /tmp/test-a-marker
+
+deploy-all:
+  stage: deploy
+  image: alpine:latest
+  needs:
+    - test-a
+    - build-b
+  script:
+    - echo "deploy after test-a and build-b"
+    - echo "deploy-done" > /tmp/deploy-marker
+    - test -f /tmp/deploy-marker

@@ -1,0 +1,14 @@
+name: timeout-job
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    container:
+      image: alpine:latest
+    steps:
+      - name: Fast step
+        run: |
+          echo "timeout-ok" > /tmp/timeout-marker
+          test -f /tmp/timeout-marker
+          test "$(cat /tmp/timeout-marker)" = "timeout-ok"

@@ -27,7 +27,7 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	flushingCopy(w, resp.Body)
 }
 
 func (s *Server) handleContainerAttach(w http.ResponseWriter, r *http.Request) {
@@ -143,22 +143,7 @@ func (s *Server) handleContainerStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-
-	// Use flushing copy for streaming stats
-	flusher, canFlush := w.(http.Flusher)
-	buf := make([]byte, 4096)
-	for {
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			_, _ = w.Write(buf[:n])
-			if canFlush {
-				flusher.Flush()
-			}
-		}
-		if err != nil {
-			break
-		}
-	}
+	flushingCopy(w, resp.Body)
 }
 
 func (s *Server) handleContainerPutArchive(w http.ResponseWriter, r *http.Request) {

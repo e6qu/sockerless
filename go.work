@@ -16,4 +16,5 @@ use (
 	./sandbox
 	./tests
 	./bleephub
+	./cmd/sockerless
 )

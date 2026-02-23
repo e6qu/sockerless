@@ -1,0 +1,18 @@
+name: services-http
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    services:
+      web:
+        image: alpine:latest
+        options: --entrypoint "sh -c 'mkdir -p /www && echo ok > /www/index.html && httpd -f -p 8080 -h /www'"
+        ports:
+          - 8080:8080
+    steps:
+      - name: Wait for service
+        run: sleep 2
+      - name: Check service reachable
+        run: wget -qO- http://web:8080/ | grep -q ok

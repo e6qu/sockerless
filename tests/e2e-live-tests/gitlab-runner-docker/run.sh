@@ -70,7 +70,7 @@ docker rm -f gitlab-runner-docker-sockerless-backend-1 gitlab-runner-docker-gitl
 
 # --- Route pipelines through variant mapping ---
 if [ "$PIPELINE" = "all" ]; then
-    ALL_PIPELINES="basic multi-step env-vars exit-codes before-after multi-stage artifacts services large-output parallel-jobs custom-image timeout complex-scripts variable-features job-artifacts large-script-output concurrent-lifecycle"
+    ALL_PIPELINES="basic multi-step env-vars exit-codes before-after multi-stage artifacts services large-output parallel-jobs custom-image timeout complex-scripts variable-features job-artifacts large-script-output concurrent-lifecycle services-http dag-dependencies rules-conditional multi-image-jobs allow-failure-exit-code"
     FILTERED=""
     for pl in $ALL_PIPELINES; do
         VARIANT=$(get_test_variant "$BACKEND" "$pl")

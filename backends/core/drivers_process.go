@@ -150,6 +150,21 @@ func (d *WASMStreamDriver) Attach(ctx context.Context, containerID string, tty b
 	return nil
 }
 
+func (d *WASMStreamDriver) LogSubscribe(containerID, subID string) chan []byte {
+	if wp, ok := d.Store.Processes.Load(containerID); ok {
+		return wp.(ContainerProcess).Subscribe(subID)
+	}
+	return d.Fallback.LogSubscribe(containerID, subID)
+}
+
+func (d *WASMStreamDriver) LogUnsubscribe(containerID, subID string) {
+	if wp, ok := d.Store.Processes.Load(containerID); ok {
+		wp.(ContainerProcess).Unsubscribe(subID)
+		return
+	}
+	d.Fallback.LogUnsubscribe(containerID, subID)
+}
+
 func (d *WASMStreamDriver) LogBytes(containerID string) []byte {
 	if wp, ok := d.Store.Processes.Load(containerID); ok {
 		return wp.(ContainerProcess).LogBytes()

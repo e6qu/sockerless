@@ -1,6 +1,7 @@
 package frontend
 
 import (
+	"crypto/tls"
 	"net"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ type Server struct {
 	logger  zerolog.Logger
 	backend *BackendClient
 	mux     *http.ServeMux
+	Mgmt    *MgmtServer
 }
 
 // NewServer creates a new Docker frontend server.
@@ -60,9 +62,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("PUT /containers/{id}/archive", s.handleContainerPutArchive)
 	s.mux.HandleFunc("HEAD /containers/{id}/archive", s.handleContainerHeadArchive)
 	s.mux.HandleFunc("GET /containers/{id}/archive", s.handleContainerGetArchive)
-	s.mux.HandleFunc("GET /containers/{id}/changes", s.handleNotImplemented)
-	s.mux.HandleFunc("GET /containers/{id}/export", s.handleNotImplemented)
-	s.mux.HandleFunc("POST /containers/{id}/update", s.handleNotImplemented)
+	s.mux.HandleFunc("GET /containers/{id}/changes", s.handleContainerChanges)
+	s.mux.HandleFunc("GET /containers/{id}/export", s.handleContainerExport)
+	s.mux.HandleFunc("POST /containers/{id}/update", s.handleContainerUpdate)
 
 	// Exec
 	s.mux.HandleFunc("POST /containers/{id}/exec", s.handleExecCreate)
@@ -104,9 +106,19 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /events", s.handleSystemEvents)
 	s.mux.HandleFunc("GET /system/df", s.handleSystemDf)
 
+	// Podman Libpod pod API (Sockerless extension)
+	s.mux.HandleFunc("POST /libpod/pods/create", s.handlePodCreate)
+	s.mux.HandleFunc("GET /libpod/pods/json", s.handlePodList)
+	s.mux.HandleFunc("GET /libpod/pods/{name}/json", s.handlePodInspect)
+	s.mux.HandleFunc("GET /libpod/pods/{name}/exists", s.handlePodExists)
+	s.mux.HandleFunc("POST /libpod/pods/{name}/start", s.handlePodStart)
+	s.mux.HandleFunc("POST /libpod/pods/{name}/stop", s.handlePodStop)
+	s.mux.HandleFunc("POST /libpod/pods/{name}/kill", s.handlePodKill)
+	s.mux.HandleFunc("DELETE /libpod/pods/{name}", s.handlePodRemove)
+
 	// Unsupported endpoints (501)
 	s.mux.HandleFunc("POST /build", s.handleImageBuild)
-	s.mux.HandleFunc("POST /commit", s.handleNotImplemented)
+	s.mux.HandleFunc("POST /commit", s.handleContainerCommit)
 	s.mux.HandleFunc("POST /swarm/", s.handleNotImplemented)
 	s.mux.HandleFunc("GET /swarm", s.handleNotImplemented)
 	s.mux.HandleFunc("GET /nodes", s.handleNotImplemented)
@@ -142,13 +154,17 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 			Str("path", r.URL.Path).
 			Str("query", r.URL.RawQuery).
 			Msg("docker-api")
+		if s.Mgmt != nil {
+			s.Mgmt.IncrementRequests()
+		}
 		next.ServeHTTP(w, r)
 	})
 }
 
 // ListenAndServe starts the server on the given address.
-// If addr starts with /, it listens on a Unix socket.
-func (s *Server) ListenAndServe(addr string) error {
+// If addr starts with /, it listens on a Unix socket (TLS is ignored).
+// If certFile and keyFile are both non-empty, the TCP listener uses TLS.
+func (s *Server) ListenAndServe(addr, certFile, keyFile string) error {
 	handler := s.requestLogger(stripVersionPrefix(s.mux))
 
 	if strings.HasPrefix(addr, "/") {
@@ -165,6 +181,14 @@ func (s *Server) ListenAndServe(addr string) error {
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: handler,
+	}
+	if certFile != "" && keyFile != "" {
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return err
+		}
+		srv.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}}
+		return srv.ListenAndServeTLS("", "")
 	}
 	return srv.ListenAndServe()
 }

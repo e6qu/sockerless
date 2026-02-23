@@ -63,8 +63,13 @@ func (s *BaseServer) handleVolumeCreate(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *BaseServer) handleVolumeList(w http.ResponseWriter, r *http.Request) {
+	filters := ParseFilters(r.URL.Query().Get("filters"))
+
 	var vols []*api.Volume
 	for _, v := range s.Store.Volumes.List() {
+		if !MatchVolumeFilters(v, filters) {
+			continue
+		}
 		v := v
 		vols = append(vols, &v)
 	}

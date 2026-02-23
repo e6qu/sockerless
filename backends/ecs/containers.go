@@ -120,20 +120,32 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		agentToken = core.GenerateToken()
 	}
 
-	// Register ECS task definition (don't run yet — that's in Start)
-	taskDefARN, err := s.registerTaskDefinition(s.ctx(), id, &container, agentToken)
-	if err != nil {
-		s.Logger.Error().Err(err).Msg("failed to register task definition")
-		core.WriteError(w, fmt.Errorf("failed to register task definition: %w", err))
-		return
-	}
-
 	s.Store.Containers.Put(id, container)
 	s.Store.ContainerNames.Put(name, id)
-	s.ECS.Put(id, ECSState{
-		TaskDefARN: taskDefARN,
-		AgentToken: agentToken,
-	})
+
+	// If container is in a multi-container pod, defer task def to start time
+	pod, inPod := s.Store.Pods.GetPodForContainer(id)
+	if inPod && len(pod.ContainerIDs) > 1 {
+		s.ECS.Put(id, ECSState{
+			AgentToken: agentToken,
+		})
+	} else {
+		// Register ECS task definition (don't run yet — that's in Start)
+		taskDefARN, err := s.registerTaskDefinition(s.ctx(), []containerInput{
+			{ID: id, Container: &container, AgentToken: agentToken, IsMain: true},
+		})
+		if err != nil {
+			s.Logger.Error().Err(err).Msg("failed to register task definition")
+			s.Store.Containers.Delete(id)
+			s.Store.ContainerNames.Delete(name)
+			core.WriteError(w, fmt.Errorf("failed to register task definition: %w", err))
+			return
+		}
+		s.ECS.Put(id, ECSState{
+			TaskDefARN: taskDefARN,
+			AgentToken: agentToken,
+		})
+	}
 
 	core.WriteJSON(w, http.StatusCreated, api.ContainerCreateResponse{
 		ID:       id,
@@ -171,6 +183,19 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	exitCh := make(chan struct{})
 	s.Store.WaitChs.Store(id, exitCh)
 
+	// Deferred start: if container is in a multi-container pod, wait for all siblings
+	shouldDefer, podContainers := s.PodDeferredStart(id)
+	if shouldDefer {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if len(podContainers) > 1 {
+		// Multi-container pod: register combined task definition and run a single task
+		s.startMultiContainerTask(w, id, podContainers, exitCh)
+		return
+	}
+
 	// Helper/cache containers (non-tail-dev-null commands like "chmod -R 777 /cache")
 	// don't need the full invoke+agent flow. Auto-stop them after a brief delay.
 	if s.config.CallbackURL != "" && !core.IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd) {
@@ -188,58 +213,12 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Run ECS task
-	assignPublicIP := ecstypes.AssignPublicIpDisabled
-	if s.config.AssignPublicIP {
-		assignPublicIP = ecstypes.AssignPublicIpEnabled
-	}
-
-	tags := core.TagSet{
-		ContainerID: id,
-		Backend:     "ecs",
-		InstanceID:  s.Desc.InstanceID,
-		CreatedAt:   time.Now(),
-	}
-
-	sgs := s.config.SecurityGroups
-	runResult, err := s.aws.ECS.RunTask(s.ctx(), &awsecs.RunTaskInput{
-		Cluster:        aws.String(s.config.Cluster),
-		TaskDefinition: aws.String(ecsState.TaskDefARN),
-		LaunchType:     ecstypes.LaunchTypeFargate,
-		Count:          aws.Int32(1),
-		Tags:           mapToECSTags(tags.AsMap()),
-		NetworkConfiguration: &ecstypes.NetworkConfiguration{
-			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
-				Subnets:        s.config.Subnets,
-				SecurityGroups: sgs,
-				AssignPublicIp: assignPublicIP,
-			},
-		},
-	})
+	taskDefARN := ecsState.TaskDefARN
+	taskARN, clusterARN, err := s.runECSTask(id, taskDefARN, &c)
 	if err != nil {
-		core.WriteError(w, fmt.Errorf("failed to run task: %w", err))
+		core.WriteError(w, err)
 		return
 	}
-
-	if len(runResult.Tasks) == 0 {
-		msg := "no tasks launched"
-		if len(runResult.Failures) > 0 {
-			msg = aws.ToString(runResult.Failures[0].Reason)
-		}
-		core.WriteError(w, fmt.Errorf("failed to launch task: %s", msg))
-		return
-	}
-
-	taskARN := aws.ToString(runResult.Tasks[0].TaskArn)
-	clusterARN := aws.ToString(runResult.Tasks[0].ClusterArn)
-
-	s.Registry.Register(core.ResourceEntry{
-		ContainerID:  id,
-		Backend:      "ecs",
-		ResourceType: "task",
-		ResourceID:   taskARN,
-		InstanceID:   s.Desc.InstanceID,
-		CreatedAt:    time.Now(),
-	})
 
 	s.ECS.Update(id, func(state *ECSState) {
 		state.TaskARN = taskARN
@@ -301,6 +280,166 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 
 		// Start background poller to detect task exit
 		go s.pollTaskExit(id, taskARN, exitCh)
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// runECSTask runs a single ECS task with the given task definition.
+// Returns the task ARN and cluster ARN.
+func (s *Server) runECSTask(containerID, taskDefARN string, c *api.Container) (taskARN, clusterARN string, err error) {
+	assignPublicIP := ecstypes.AssignPublicIpDisabled
+	if s.config.AssignPublicIP {
+		assignPublicIP = ecstypes.AssignPublicIpEnabled
+	}
+
+	tags := core.TagSet{
+		ContainerID: containerID,
+		Backend:     "ecs",
+		InstanceID:  s.Desc.InstanceID,
+		CreatedAt:   time.Now(),
+	}
+
+	runResult, err := s.aws.ECS.RunTask(s.ctx(), &awsecs.RunTaskInput{
+		Cluster:        aws.String(s.config.Cluster),
+		TaskDefinition: aws.String(taskDefARN),
+		LaunchType:     ecstypes.LaunchTypeFargate,
+		Count:          aws.Int32(1),
+		Tags:           mapToECSTags(tags.AsMap()),
+		NetworkConfiguration: &ecstypes.NetworkConfiguration{
+			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
+				Subnets:        s.config.Subnets,
+				SecurityGroups: s.config.SecurityGroups,
+				AssignPublicIp: assignPublicIP,
+			},
+		},
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("failed to run task: %w", err)
+	}
+
+	if len(runResult.Tasks) == 0 {
+		msg := "no tasks launched"
+		if len(runResult.Failures) > 0 {
+			msg = aws.ToString(runResult.Failures[0].Reason)
+		}
+		return "", "", fmt.Errorf("failed to launch task: %s", msg)
+	}
+
+	taskARN = aws.ToString(runResult.Tasks[0].TaskArn)
+	clusterARN = aws.ToString(runResult.Tasks[0].ClusterArn)
+
+	s.Registry.Register(core.ResourceEntry{
+		ContainerID:  containerID,
+		Backend:      "ecs",
+		ResourceType: "task",
+		ResourceID:   taskARN,
+		InstanceID:   s.Desc.InstanceID,
+		CreatedAt:    time.Now(),
+		Metadata:     map[string]string{"image": c.Image, "name": c.Name, "taskArn": taskARN},
+	})
+
+	return taskARN, clusterARN, nil
+}
+
+// startMultiContainerTask registers a combined task definition for all pod containers
+// and runs a single ECS task. Called when the last container in a pod is started.
+func (s *Server) startMultiContainerTask(w http.ResponseWriter, triggerID string, podContainers []api.Container, exitCh chan struct{}) {
+	// Build containerInput slice: first container is main (gets agent)
+	var inputs []containerInput
+	for i, pc := range podContainers {
+		state, _ := s.ECS.Get(pc.ID)
+		pcCopy := pc
+		inputs = append(inputs, containerInput{
+			ID:         pc.ID,
+			Container:  &pcCopy,
+			AgentToken: state.AgentToken,
+			IsMain:     i == 0,
+		})
+	}
+
+	// Register combined task definition
+	taskDefARN, err := s.registerTaskDefinition(s.ctx(), inputs)
+	if err != nil {
+		s.Logger.Error().Err(err).Msg("failed to register multi-container task definition")
+		core.WriteError(w, fmt.Errorf("failed to register task definition: %w", err))
+		return
+	}
+
+	// Use the main (first) container for the task
+	mainContainer := &podContainers[0]
+	mainID := mainContainer.ID
+	mainState, _ := s.ECS.Get(mainID)
+
+	// Pre-create done channel for reverse agent on main container
+	if s.config.CallbackURL != "" {
+		s.AgentRegistry.Prepare(mainID)
+	}
+
+	// Run the combined task
+	taskARN, clusterARN, err := s.runECSTask(mainID, taskDefARN, mainContainer)
+	if err != nil {
+		core.WriteError(w, err)
+		return
+	}
+
+	// Store cloud state on ALL pod containers (so stop/remove works for any)
+	for _, pc := range podContainers {
+		s.ECS.Update(pc.ID, func(state *ECSState) {
+			state.TaskDefARN = taskDefARN
+			state.TaskARN = taskARN
+			state.ClusterARN = clusterARN
+		})
+	}
+
+	if s.config.CallbackURL != "" {
+		// Reverse agent mode
+		go func() {
+			s.waitForTaskStopped(taskARN, exitCh)
+			_ = s.AgentRegistry.WaitForDisconnect(mainID, 30*time.Minute)
+			s.Store.StopContainer(mainID, 0)
+		}()
+
+		agentTimeout := 60 * time.Second
+		if s.config.EndpointURL != "" {
+			agentTimeout = 5 * time.Second
+		}
+		if err := s.AgentRegistry.WaitForAgent(mainID, agentTimeout); err != nil {
+			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
+		} else {
+			s.Store.Containers.Update(mainID, func(c *api.Container) {
+				c.AgentAddress = "reverse"
+				c.AgentToken = mainState.AgentToken
+			})
+		}
+	} else {
+		// Forward agent mode
+		agentAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
+		if err != nil {
+			s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
+			core.WriteError(w, fmt.Errorf("task failed to start: %w", err))
+			return
+		}
+
+		agentURL := fmt.Sprintf("http://%s/health", agentAddr)
+		agentHealthy := true
+		if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
+			s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
+			agentHealthy = false
+		}
+
+		if agentHealthy {
+			s.Store.Containers.Update(mainID, func(c *api.Container) {
+				c.AgentAddress = agentAddr
+				c.AgentToken = mainState.AgentToken
+			})
+		}
+
+		s.ECS.Update(mainID, func(state *ECSState) {
+			state.AgentAddress = agentAddr
+		})
+
+		go s.pollTaskExit(mainID, taskARN, exitCh)
 	}
 
 	w.WriteHeader(http.StatusNoContent)

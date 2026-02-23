@@ -294,6 +294,103 @@ func TestNormalizeResult(t *testing.T) {
 	}
 }
 
+func TestBuildJobMessageWithServices(t *testing.T) {
+	s := newTestServer()
+	wf := &WorkflowDef{
+		Name: "svc-test",
+		Jobs: map[string]*JobDef{
+			"test": {
+				Services: map[string]*ServiceDef{
+					"redis": {
+						Image: "redis:7",
+						Ports: []interface{}{"6379:6379"},
+					},
+					"postgres": {
+						Image: "postgres:15",
+						Env:   map[string]string{"POSTGRES_PASSWORD": "test"},
+					},
+				},
+				Steps: []StepDef{{Run: "echo hello"}},
+			},
+		},
+	}
+
+	workflow, err := s.submitWorkflow("http://localhost", wf, "alpine:latest")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+
+	s.store.mu.RLock()
+	job := s.store.Jobs[workflow.Jobs["test"].JobID]
+	s.store.mu.RUnlock()
+
+	var msg map[string]interface{}
+	if err := json.Unmarshal([]byte(job.Message), &msg); err != nil {
+		t.Fatalf("parse message: %v", err)
+	}
+
+	svcContainers, ok := msg["jobServiceContainers"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("jobServiceContainers is %T, want map", msg["jobServiceContainers"])
+	}
+	if len(svcContainers) != 2 {
+		t.Fatalf("service containers = %d, want 2", len(svcContainers))
+	}
+
+	redis, ok := svcContainers["redis"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("redis is %T", svcContainers["redis"])
+	}
+	if redis["image"] != "redis:7" {
+		t.Errorf("redis.image = %v", redis["image"])
+	}
+
+	pg, ok := svcContainers["postgres"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("postgres is %T", svcContainers["postgres"])
+	}
+	if pg["image"] != "postgres:15" {
+		t.Errorf("postgres.image = %v", pg["image"])
+	}
+	env, ok := pg["environment"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("postgres.environment is %T", pg["environment"])
+	}
+	if env["POSTGRES_PASSWORD"] != "test" {
+		t.Errorf("postgres.env = %v", env)
+	}
+}
+
+func TestBuildJobMessageNoServices(t *testing.T) {
+	s := newTestServer()
+	wf := &WorkflowDef{
+		Name: "no-svc",
+		Jobs: map[string]*JobDef{
+			"test": {
+				Steps: []StepDef{{Run: "echo hello"}},
+			},
+		},
+	}
+
+	workflow, err := s.submitWorkflow("http://localhost", wf, "alpine:latest")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+
+	s.store.mu.RLock()
+	job := s.store.Jobs[workflow.Jobs["test"].JobID]
+	s.store.mu.RUnlock()
+
+	var msg map[string]interface{}
+	if err := json.Unmarshal([]byte(job.Message), &msg); err != nil {
+		t.Fatalf("parse message: %v", err)
+	}
+
+	if msg["jobServiceContainers"] != nil {
+		t.Errorf("jobServiceContainers should be nil, got %v", msg["jobServiceContainers"])
+	}
+}
+
 // jsonUnmarshal is a test helper.
 func jsonUnmarshal(data []byte, v interface{}) error {
 	return json.Unmarshal(data, v)

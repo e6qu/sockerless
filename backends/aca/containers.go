@@ -161,6 +161,19 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	exitCh := make(chan struct{})
 	s.Store.WaitChs.Store(id, exitCh)
 
+	// Deferred start: if container is in a multi-container pod, wait for all siblings
+	shouldDefer, podContainers := s.PodDeferredStart(id)
+	if shouldDefer {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if len(podContainers) > 1 {
+		// Multi-container pod: build combined job and run
+		s.startMultiContainerJob(w, id, podContainers, exitCh)
+		return
+	}
+
 	// Helper/cache containers (non-tail-dev-null commands like "chmod -R 777 /cache")
 	// don't need the full invoke+agent flow. Auto-stop them after a brief delay.
 	if s.config.CallbackURL != "" && !core.IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd) {
@@ -179,7 +192,9 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 
 	// Build ACA Job spec
 	jobName := buildJobName(id)
-	jobSpec := s.buildJobSpec(id, &c, acaState.AgentToken)
+	jobSpec := s.buildJobSpec([]containerInput{
+		{ID: id, Container: &c, AgentToken: acaState.AgentToken, IsMain: true},
+	})
 
 	// Create the ACA Job
 	createPoller, err := s.azure.Jobs.BeginCreateOrUpdate(s.ctx(), s.config.ResourceGroup, jobName, jobSpec, nil)
@@ -204,6 +219,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		ResourceID:   jobName,
 		InstanceID:   s.Desc.InstanceID,
 		CreatedAt:    time.Now(),
+		Metadata:     map[string]string{"image": c.Image, "name": c.Name, "jobName": jobName},
 	})
 
 	// Start the job (creates an execution)
@@ -290,6 +306,141 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 
 		// Start background poller to detect execution exit
 		go s.pollExecutionExit(id, jobName, executionName, exitCh)
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// startMultiContainerJob creates and runs an ACA Job with all pod containers.
+// Called when the last container in a pod is started.
+func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string, podContainers []api.Container, exitCh chan struct{}) {
+	// Build containerInput slice: first container is main (gets agent)
+	var inputs []containerInput
+	for i, pc := range podContainers {
+		state, _ := s.ACA.Get(pc.ID)
+		pcCopy := pc
+		inputs = append(inputs, containerInput{
+			ID:         pc.ID,
+			Container:  &pcCopy,
+			AgentToken: state.AgentToken,
+			IsMain:     i == 0,
+		})
+	}
+
+	mainID := podContainers[0].ID
+	mainState, _ := s.ACA.Get(mainID)
+
+	// Pre-create done channel for reverse agent on main container
+	if s.config.CallbackURL != "" {
+		s.AgentRegistry.Prepare(mainID)
+	}
+
+	// Build and create the combined job
+	jobName := buildJobName(mainID)
+	jobSpec := s.buildJobSpec(inputs)
+
+	createPoller, err := s.azure.Jobs.BeginCreateOrUpdate(s.ctx(), s.config.ResourceGroup, jobName, jobSpec, nil)
+	if err != nil {
+		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to create multi-container ACA Job")
+		core.WriteError(w, fmt.Errorf("failed to create job: %w", err))
+		return
+	}
+
+	_, err = createPoller.PollUntilDone(s.ctx(), nil)
+	if err != nil {
+		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
+		core.WriteError(w, fmt.Errorf("job creation failed: %w", err))
+		return
+	}
+
+	s.Registry.Register(core.ResourceEntry{
+		ContainerID:  mainID,
+		Backend:      "aca",
+		ResourceType: "job",
+		ResourceID:   jobName,
+		InstanceID:   s.Desc.InstanceID,
+		CreatedAt:    time.Now(),
+		Metadata:     map[string]string{"image": podContainers[0].Image, "name": podContainers[0].Name, "jobName": jobName},
+	})
+
+	startPoller, err := s.azure.Jobs.BeginStart(s.ctx(), s.config.ResourceGroup, jobName, nil)
+	if err != nil {
+		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to start ACA Job")
+		s.deleteJob(jobName)
+		core.WriteError(w, fmt.Errorf("failed to start job: %w", err))
+		return
+	}
+
+	startResp, err := startPoller.PollUntilDone(s.ctx(), nil)
+	if err != nil {
+		s.Logger.Error().Err(err).Str("job", jobName).Msg("start job failed")
+		s.deleteJob(jobName)
+		core.WriteError(w, fmt.Errorf("start job failed: %w", err))
+		return
+	}
+
+	executionName := ""
+	if startResp.Name != nil {
+		executionName = *startResp.Name
+	}
+
+	// Store cloud state on ALL pod containers
+	for _, pc := range podContainers {
+		s.ACA.Update(pc.ID, func(state *ACAState) {
+			state.JobName = jobName
+			state.ExecutionName = executionName
+		})
+	}
+
+	if s.config.CallbackURL != "" {
+		// Reverse agent mode
+		go func() {
+			s.waitForExecutionComplete(jobName, executionName, exitCh)
+			_ = s.AgentRegistry.WaitForDisconnect(mainID, 30*time.Minute)
+			s.Store.StopContainer(mainID, 0)
+		}()
+
+		agentTimeout := 60 * time.Second
+		if s.config.EndpointURL != "" {
+			agentTimeout = 5 * time.Second
+		}
+		if err := s.AgentRegistry.WaitForAgent(mainID, agentTimeout); err != nil {
+			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
+		} else {
+			s.Store.Containers.Update(mainID, func(c *api.Container) {
+				c.AgentAddress = "reverse"
+				c.AgentToken = mainState.AgentToken
+			})
+		}
+	} else {
+		// Forward agent mode
+		agentAddr, err := s.waitForExecutionRunning(s.ctx(), jobName, executionName)
+		if err != nil {
+			s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
+			s.deleteJob(jobName)
+			core.WriteError(w, fmt.Errorf("execution failed to start: %w", err))
+			return
+		}
+
+		agentURL := fmt.Sprintf("http://%s/health", agentAddr)
+		agentHealthy := true
+		if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
+			s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
+			agentHealthy = false
+		}
+
+		if agentHealthy {
+			s.Store.Containers.Update(mainID, func(c *api.Container) {
+				c.AgentAddress = agentAddr
+				c.AgentToken = mainState.AgentToken
+			})
+		}
+
+		s.ACA.Update(mainID, func(state *ACAState) {
+			state.AgentAddress = agentAddr
+		})
+
+		go s.pollExecutionExit(mainID, jobName, executionName, exitCh)
 	}
 
 	w.WriteHeader(http.StatusNoContent)

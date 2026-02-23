@@ -432,7 +432,7 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 		"requestId":      requestID,
 		"lockedUntil":    "0001-01-01T00:00:00",
 		"jobContainer":         image,
-		"jobServiceContainers": nil,
+		"jobServiceContainers": buildServiceContainers(jd.Services),
 		"jobOutputs":           nil,
 		"resources": map[string]interface{}{
 			"endpoints": []map[string]interface{}{
@@ -505,6 +505,34 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 		"actionsEnvironment":   nil,
 		"fileTable":            []string{".github/workflows/test.yml"},
 	}
+}
+
+// buildServiceContainers converts parsed ServiceDefs to the runner's expected
+// jobServiceContainers format: map of alias → container spec.
+func buildServiceContainers(services map[string]*ServiceDef) interface{} {
+	if len(services) == 0 {
+		return nil
+	}
+	result := make(map[string]interface{}, len(services))
+	for name, svc := range services {
+		spec := map[string]interface{}{
+			"image": svc.Image,
+		}
+		if len(svc.Env) > 0 {
+			spec["environment"] = svc.Env
+		}
+		if len(svc.Ports) > 0 {
+			spec["ports"] = svc.Ports
+		}
+		if len(svc.Volumes) > 0 {
+			spec["volumes"] = svc.Volumes
+		}
+		if svc.Options != "" {
+			spec["options"] = svc.Options
+		}
+		result[name] = spec
+	}
+	return result
 }
 
 // buildNeedsContext builds the "needs" PipelineContextData from completed

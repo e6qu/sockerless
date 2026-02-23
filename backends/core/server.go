@@ -1,7 +1,11 @@
 package core
 
 import (
+	"context"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -54,21 +58,42 @@ type BaseServer struct {
 	ProcessFactory ProcessFactory
 	Drivers        DriverSet
 	Registry       *ResourceRegistry
+	StartedAt      time.Time
+	Metrics        *Metrics
+	HealthChecker  HealthChecker
+	EventBus       *EventBus
 }
 
 // NewBaseServer creates a new base server with the given store, descriptor,
 // route overrides, and logger. It registers all routes and initializes the
 // default bridge network.
 func NewBaseServer(store *Store, desc BackendDescriptor, overrides RouteOverrides, logger zerolog.Logger) *BaseServer {
+	if desc.InstanceID == "" {
+		desc.InstanceID = DefaultInstanceID()
+	}
+
+	registryPath := os.Getenv("SOCKERLESS_REGISTRY_PATH")
+	if registryPath == "" {
+		dataDir := os.Getenv("SOCKERLESS_DATA_DIR")
+		if dataDir == "" {
+			dataDir = "."
+		}
+		registryPath = filepath.Join(dataDir, "sockerless-registry.json")
+	}
+
 	s := &BaseServer{
 		Store:         store,
 		Logger:        logger,
 		Desc:          desc,
 		Mux:           http.NewServeMux(),
 		AgentRegistry: NewAgentRegistry(),
-		Registry:      NewResourceRegistry(""),
+		Registry:      NewResourceRegistry(registryPath, logger),
+		StartedAt:     time.Now(),
+		Metrics:       NewMetrics(),
+		EventBus:      NewEventBus(),
 	}
 	s.InitDrivers()
+	store.RestartHook = s.handleRestartPolicy
 	s.registerRoutes(overrides)
 	s.InitDefaultNetwork()
 	return s
@@ -85,13 +110,29 @@ func (s *BaseServer) registerRoutes(o RouteOverrides) {
 	// System
 	s.Mux.HandleFunc("GET /internal/v1/info", s.handleInfo)
 
+	// Management
+	s.Mux.HandleFunc("GET /internal/v1/healthz", s.handleHealthz)
+	s.Mux.HandleFunc("GET /internal/v1/status", s.handleMgmtStatus)
+	s.Mux.HandleFunc("GET /internal/v1/containers/summary", s.handleContainerSummary)
+	s.Mux.HandleFunc("GET /internal/v1/metrics", s.handleMetrics)
+	s.Mux.HandleFunc("GET /internal/v1/check", s.handleCheck)
+	s.Mux.HandleFunc("POST /internal/v1/reload", s.handleReload)
+
 	// Resource registry
 	s.Mux.HandleFunc("GET /internal/v1/resources", s.handleResourceList)
 	s.Mux.HandleFunc("GET /internal/v1/resources/orphaned", s.handleResourceOrphaned)
 	s.Mux.HandleFunc("POST /internal/v1/resources/cleanup", s.handleResourceCleanup)
-
-	// Agent reverse connection
 	s.Mux.HandleFunc("GET /internal/v1/agent/connect", s.handleAgentConnect)
+
+	// Podman Libpod pod API
+	s.Mux.HandleFunc("POST /internal/v1/libpod/pods/create", s.handlePodCreate)
+	s.Mux.HandleFunc("GET /internal/v1/libpod/pods/json", s.handlePodList)
+	s.Mux.HandleFunc("GET /internal/v1/libpod/pods/{name}/json", s.handlePodInspect)
+	s.Mux.HandleFunc("GET /internal/v1/libpod/pods/{name}/exists", s.handlePodExists)
+	s.Mux.HandleFunc("POST /internal/v1/libpod/pods/{name}/start", s.handlePodStart)
+	s.Mux.HandleFunc("POST /internal/v1/libpod/pods/{name}/stop", s.handlePodStop)
+	s.Mux.HandleFunc("POST /internal/v1/libpod/pods/{name}/kill", s.handlePodKill)
+	s.Mux.HandleFunc("DELETE /internal/v1/libpod/pods/{name}", s.handlePodRemove)
 
 	// Containers
 	s.Mux.HandleFunc("POST /internal/v1/containers", or(o.ContainerCreate, s.handleContainerCreate))
@@ -148,8 +189,10 @@ func (s *BaseServer) registerRoutes(o RouteOverrides) {
 	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/rename", s.handleContainerRename)
 	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/pause", or(o.ContainerPause, s.handleContainerPause))
 	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/unpause", or(o.ContainerUnpause, s.handleContainerUnpause))
+	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/update", s.handleContainerUpdate)
+	s.Mux.HandleFunc("GET /internal/v1/containers/{id}/changes", s.handleContainerChanges)
+	s.Mux.HandleFunc("GET /internal/v1/containers/{id}/export", s.handleContainerExport)
 
-	// Extended network operations
 	s.Mux.HandleFunc("POST /internal/v1/networks/{id}/connect", s.handleNetworkConnect)
 
 	// Extended image operations
@@ -157,6 +200,8 @@ func (s *BaseServer) registerRoutes(o RouteOverrides) {
 	s.Mux.HandleFunc("DELETE /internal/v1/images/{name}", s.handleImageRemove)
 	s.Mux.HandleFunc("GET /internal/v1/images/{name}/history", s.handleImageHistory)
 	s.Mux.HandleFunc("POST /internal/v1/images/prune", s.handleImagePrune)
+
+	s.Mux.HandleFunc("POST /internal/v1/commit", s.handleContainerCommit)
 
 	// System
 	s.Mux.HandleFunc("GET /internal/v1/events", s.handleSystemEvents)
@@ -247,11 +292,33 @@ func (s *BaseServer) InitDrivers() {
 	}
 }
 
+// RecoverRegistry loads persisted registry state and scans the cloud for orphaned resources.
+func (s *BaseServer) RecoverRegistry(ctx context.Context, scanner CloudScanner) error {
+	s.Logger.Info().Msg("recovering resource registry")
+	if err := RecoverOnStartup(ctx, s.Registry, scanner, s.Desc.InstanceID); err != nil {
+		return fmt.Errorf("registry recovery failed: %w", err)
+	}
+	active := s.Registry.ListActive()
+	recovered := ReconstructContainerState(s.Store, s.Registry)
+	s.Logger.Info().
+		Int("active_resources", len(active)).
+		Int("recovered_containers", recovered).
+		Msg("registry recovery complete")
+	return nil
+}
+
 // ListenAndServe starts the HTTP server.
 func (s *BaseServer) ListenAndServe(addr string) error {
+	// Crash-only startup: load persisted registry state
+	if err := s.Registry.Load(); err != nil {
+		s.Logger.Warn().Err(err).Msg("failed to load resource registry")
+	} else if active := s.Registry.ListActive(); len(active) > 0 {
+		s.Logger.Info().Int("active_resources", len(active)).Msg("loaded resource registry from disk")
+	}
+
 	srv := &http.Server{
 		Addr:    addr,
-		Handler: s.Mux,
+		Handler: MetricsMiddleware(s.Metrics, s.Mux),
 	}
 	return srv.ListenAndServe()
 }

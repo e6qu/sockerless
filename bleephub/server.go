@@ -5,9 +5,7 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/graphql-go/graphql"
@@ -104,7 +102,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "bleephub"})
 }
 
-// ListenAndServe starts the HTTP server with graceful shutdown.
+// ListenAndServe starts the HTTP server (crash-only, no graceful shutdown).
 func (s *Server) ListenAndServe() error {
 	inner := s.prefixStripMiddleware(s.mux)
 	ghWrapped := s.ghHeadersMiddleware(inner)
@@ -117,15 +115,6 @@ func (s *Server) ListenAndServe() error {
 		WriteTimeout: 60 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
-
-	// Graceful shutdown on signal
-	go func() {
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-		sig := <-sigCh
-		s.logger.Info().Str("signal", sig.String()).Msg("shutting down")
-		srv.Close()
-	}()
 
 	// Resolve addr for log output
 	host, port, _ := net.SplitHostPort(s.addr)

@@ -77,6 +77,9 @@ get_backend_env() {
     local backend="$1"
     local sim_port
 
+    # Skip real registry config fetch in E2E tests (uses synthetic configs)
+    export SOCKERLESS_SKIP_IMAGE_CONFIG="${SOCKERLESS_SKIP_IMAGE_CONFIG:-true}"
+
     case "$backend" in
         ecs)
             sim_port=4566
@@ -215,6 +218,7 @@ get_test_variant() {
     if [ "$backend" = "memory" ]; then
         case "$test_name" in
             services)          echo "services-wasm" ;;
+            services-http)     echo "services-wasm" ;;
             custom-image)      echo "custom-image-wasm" ;;
             container-action)  echo "container-action-faas" ;;
             *)                 echo "$test_name" ;;
@@ -225,6 +229,7 @@ get_test_variant() {
         # compatible variants.
         case "$test_name" in
             services)          echo "services-wasm" ;;
+            services-http)     echo "services-wasm" ;;
             custom-image)      echo "custom-image-wasm" ;;
             container-action)  echo "container-action-faas" ;;
             *)                 echo "$test_name" ;;

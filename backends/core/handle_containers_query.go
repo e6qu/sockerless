@@ -2,6 +2,7 @@ package core
 
 import (
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,10 @@ func (s *BaseServer) handleContainerInspect(w http.ResponseWriter, r *http.Reque
 func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request) {
 	all := r.URL.Query().Get("all") == "1" || r.URL.Query().Get("all") == "true"
 	filters := ParseFilters(r.URL.Query().Get("filters"))
+	limit := 0
+	if l := r.URL.Query().Get("limit"); l != "" {
+		limit, _ = strconv.Atoi(l)
+	}
 
 	var result []*api.ContainerSummary
 	for _, c := range s.Store.Containers.List() {
@@ -60,6 +65,43 @@ func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request)
 		}
 		result = append(result, summary)
 	}
+
+	// Sort by Created descending (newest first), matching Docker API behavior
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Created > result[j].Created
+	})
+
+	// Apply before/since post-filters (need Store access to resolve references)
+	if beforeRef := filters["before"]; len(beforeRef) > 0 {
+		if bc, ok := s.Store.ResolveContainer(beforeRef[0]); ok {
+			beforeTime, _ := time.Parse(time.RFC3339Nano, bc.Created)
+			var filtered []*api.ContainerSummary
+			for _, cs := range result {
+				if cs.Created < beforeTime.Unix() {
+					filtered = append(filtered, cs)
+				}
+			}
+			result = filtered
+		}
+	}
+	if sinceRef := filters["since"]; len(sinceRef) > 0 {
+		if sc, ok := s.Store.ResolveContainer(sinceRef[0]); ok {
+			sinceTime, _ := time.Parse(time.RFC3339Nano, sc.Created)
+			var filtered []*api.ContainerSummary
+			for _, cs := range result {
+				if cs.Created > sinceTime.Unix() {
+					filtered = append(filtered, cs)
+				}
+			}
+			result = filtered
+		}
+	}
+
+	// Apply limit
+	if limit > 0 && limit < len(result) {
+		result = result[:limit]
+	}
+
 	if result == nil {
 		result = []*api.ContainerSummary{}
 	}
@@ -85,30 +127,88 @@ func (s *BaseServer) handleContainerLogs(w http.ResponseWriter, r *http.Request)
 	}
 
 	timestamps := r.URL.Query().Get("timestamps") == "1" || r.URL.Query().Get("timestamps") == "true"
+	follow := r.URL.Query().Get("follow") == "1" || r.URL.Query().Get("follow") == "true"
 
 	// Read from container process or synthetic log buffer via driver chain
 	logBytes := s.Drivers.Stream.LogBytes(id)
 
-	// Add timestamp prefix if requested
-	if timestamps && len(logBytes) > 0 {
+	// Split into lines and stamp each with a timestamp for filtering
+	var lines []string
+	if len(logBytes) > 0 {
 		ts := time.Now().UTC().Format(time.RFC3339Nano)
-		lines := strings.Split(strings.TrimRight(string(logBytes), "\n"), "\n")
-		var out []byte
-		for _, line := range lines {
-			out = append(out, []byte(ts+" "+line+"\n")...)
+		raw := strings.Split(strings.TrimRight(string(logBytes), "\n"), "\n")
+		for _, line := range raw {
+			lines = append(lines, ts+" "+line)
 		}
-		logBytes = out
+	}
+
+	// Apply since/until filters
+	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
+		if since, err := ParseDockerTimestamp(sinceStr); err == nil {
+			lines = FilterLogSince(lines, since)
+		}
+	}
+	if untilStr := r.URL.Query().Get("until"); untilStr != "" {
+		if until, err := ParseDockerTimestamp(untilStr); err == nil {
+			lines = FilterLogUntil(lines, until)
+		}
+	}
+
+	// Apply tail filter
+	if tailStr := r.URL.Query().Get("tail"); tailStr != "" && tailStr != "all" {
+		if n, err := strconv.Atoi(tailStr); err == nil {
+			lines = FilterLogTail(lines, n)
+		}
+	}
+
+	// Strip timestamps if not requested
+	if !timestamps {
+		for i, line := range lines {
+			if idx := strings.IndexByte(line, ' '); idx >= 0 {
+				lines[i] = line[idx+1:]
+			}
+		}
+	}
+
+	// Reassemble into bytes
+	var filtered []byte
+	for _, line := range lines {
+		filtered = append(filtered, []byte(line+"\n")...)
 	}
 
 	// Write multiplexed stream (stdout header + data)
 	w.Header().Set("Content-Type", "application/vnd.docker.multiplexed-stream")
 	w.WriteHeader(http.StatusOK)
-	if len(logBytes) > 0 {
-		// Write stdout header: [1, 0, 0, 0, size (4 bytes big-endian)]
-		size := len(logBytes)
-		header := []byte{1, 0, 0, 0, byte(size >> 24), byte(size >> 16), byte(size >> 8), byte(size)}
-		w.Write(header)
-		w.Write(logBytes)
+	if len(filtered) > 0 {
+		writeMuxChunk(w, 1, filtered)
+	}
+
+	// Follow: stream live output
+	if follow {
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		subID := GenerateID()[:16]
+		ch := s.Drivers.Stream.LogSubscribe(id, subID)
+		if ch != nil {
+			defer s.Drivers.Stream.LogUnsubscribe(id, subID)
+			for {
+				select {
+				case chunk, ok := <-ch:
+					if !ok {
+						return
+					}
+					if len(chunk) > 0 {
+						writeMuxChunk(w, 1, chunk)
+						if f, ok := w.(http.Flusher); ok {
+							f.Flush()
+						}
+					}
+				case <-r.Context().Done():
+					return
+				}
+			}
+		}
 	}
 }
 

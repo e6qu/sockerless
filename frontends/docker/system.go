@@ -1,7 +1,6 @@
 package frontend
 
 import (
-	"io"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -167,7 +166,7 @@ func (s *Server) handleSystemEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	flushingCopy(w, resp.Body)
 }
 
 func (s *Server) handleSystemDf(w http.ResponseWriter, r *http.Request) {

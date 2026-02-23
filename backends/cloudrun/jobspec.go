@@ -11,6 +11,14 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
+// containerInput groups the data needed to build one Cloud Run container spec.
+type containerInput struct {
+	ID         string
+	Container  *api.Container
+	AgentToken string
+	IsMain     bool // true = inject agent entrypoint + port 9111
+}
+
 // buildJobName generates a Cloud Run Job name from a container ID.
 func buildJobName(containerID string) string {
 	return fmt.Sprintf("sockerless-%s", containerID[:12])
@@ -21,9 +29,10 @@ func (s *Server) buildJobParent() string {
 	return fmt.Sprintf("projects/%s/locations/%s", s.config.Project, s.config.Region)
 }
 
-// buildJobSpec creates a Cloud Run Job protobuf from a container config.
-func (s *Server) buildJobSpec(containerID string, container *api.Container, agentToken string) *runpb.Job {
-	config := container.Config
+// buildContainerSpec builds a single Cloud Run container spec.
+// IsMain containers get agent injection and port 9111; sidecars use their original entrypoint.
+func (s *Server) buildContainerSpec(ci containerInput) *runpb.Container {
+	config := ci.Container.Config
 
 	// Build environment variables
 	var envVars []*runpb.EnvVar
@@ -37,28 +46,42 @@ func (s *Server) buildJobSpec(containerID string, container *api.Container, agen
 		}
 	}
 
-	// Add agent env vars
-	envVars = append(envVars,
-		&runpb.EnvVar{Name: "SOCKERLESS_AGENT_TOKEN", Values: &runpb.EnvVar_Value{Value: agentToken}},
-	)
-
-	// Build entrypoint: callback mode or forward agent mode
 	var entrypoint []string
-	if s.config.CallbackURL != "" {
-		callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, containerID, agentToken)
-		entrypoint = core.BuildAgentCallbackEntrypoint(config, callbackURL)
+	if ci.IsMain {
+		// Agent injection for main container
 		envVars = append(envVars,
-			&runpb.EnvVar{Name: "SOCKERLESS_CONTAINER_ID", Values: &runpb.EnvVar_Value{Value: containerID}},
-			&runpb.EnvVar{Name: "SOCKERLESS_AGENT_CALLBACK_URL", Values: &runpb.EnvVar_Value{Value: callbackURL}},
+			&runpb.EnvVar{Name: "SOCKERLESS_AGENT_TOKEN", Values: &runpb.EnvVar_Value{Value: ci.AgentToken}},
 		)
+
+		if s.config.CallbackURL != "" {
+			callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, ci.ID, ci.AgentToken)
+			entrypoint = core.BuildAgentCallbackEntrypoint(config, callbackURL)
+			envVars = append(envVars,
+				&runpb.EnvVar{Name: "SOCKERLESS_CONTAINER_ID", Values: &runpb.EnvVar_Value{Value: ci.ID}},
+				&runpb.EnvVar{Name: "SOCKERLESS_AGENT_CALLBACK_URL", Values: &runpb.EnvVar_Value{Value: callbackURL}},
+			)
+		} else {
+			entrypoint, _ = core.BuildAgentEntrypoint(config)
+		}
 	} else {
-		entrypoint, _ = core.BuildAgentEntrypoint(config)
+		// Sidecar: use original entrypoint, no agent
+		if len(config.Entrypoint) > 0 {
+			entrypoint = config.Entrypoint
+		} else if len(config.Cmd) > 0 {
+			entrypoint = config.Cmd
+		}
+	}
+
+	// Container name
+	defName := "main"
+	if !ci.IsMain {
+		defName = sanitizeContainerName(ci.Container.Name)
 	}
 
 	cpu, memory := mapCPUMemory()
 
 	containerSpec := &runpb.Container{
-		Name:    "main",
+		Name:    defName,
 		Image:   config.Image,
 		Command: entrypoint,
 		Env:     envVars,
@@ -68,17 +91,31 @@ func (s *Server) buildJobSpec(containerID string, container *api.Container, agen
 				"memory": memory,
 			},
 		},
-		Ports: []*runpb.ContainerPort{
+	}
+
+	// Port mapping for agent (main container only)
+	if ci.IsMain {
+		containerSpec.Ports = []*runpb.ContainerPort{
 			{ContainerPort: 9111},
-		},
+		}
 	}
 
 	if config.WorkingDir != "" {
 		containerSpec.WorkingDir = config.WorkingDir
 	}
 
+	return containerSpec
+}
+
+// buildJobSpec creates a Cloud Run Job protobuf from one or more containers.
+func (s *Server) buildJobSpec(containers []containerInput) *runpb.Job {
+	var specs []*runpb.Container
+	for _, ci := range containers {
+		specs = append(specs, s.buildContainerSpec(ci))
+	}
+
 	taskTemplate := &runpb.TaskTemplate{
-		Containers: []*runpb.Container{containerSpec},
+		Containers: specs,
 		Retries:    &runpb.TaskTemplate_MaxRetries{MaxRetries: 0},
 		Timeout:    durationpb.New(3600 * 4), // 4 hour max
 	}
@@ -92,7 +129,7 @@ func (s *Server) buildJobSpec(containerID string, container *api.Container, agen
 	}
 
 	tags := core.TagSet{
-		ContainerID: containerID,
+		ContainerID: containers[0].ID,
 		Backend:     "cloudrun",
 		InstanceID:  s.Desc.InstanceID,
 		CreatedAt:   time.Now(),
@@ -112,4 +149,28 @@ func (s *Server) buildJobSpec(containerID string, container *api.Container, agen
 // Cloud Run valid CPU: 1, 2, 4, 8. Default: 1 CPU, 512Mi.
 func mapCPUMemory() (string, string) {
 	return "1", "512Mi"
+}
+
+// sanitizeContainerName converts a container name to a valid Cloud Run container name.
+// Strips leading "/" and replaces non-alphanumeric characters with "-".
+func sanitizeContainerName(name string) string {
+	name = strings.TrimPrefix(name, "/")
+	if name == "" {
+		return "sidecar"
+	}
+	var b strings.Builder
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
+			b.WriteRune(c)
+		} else if c >= 'A' && c <= 'Z' {
+			b.WriteRune(c + 32) // lowercase
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	result := b.String()
+	if result == "" {
+		return "sidecar"
+	}
+	return result
 }

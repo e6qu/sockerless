@@ -1,0 +1,28 @@
+name: working-dir-nested
+on: push
+defaults:
+  run:
+    working-directory: /tmp/nested
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Create nested dir
+        working-directory: /tmp
+        run: mkdir -p nested/deep/sub
+      - name: Write in defaults workdir
+        run: |
+          echo "nested-data" > result.txt
+      - name: Write in deep sub
+        working-directory: /tmp/nested/deep/sub
+        run: |
+          echo "deep-data" > deep-result.txt
+      - name: Verify all files
+        working-directory: /tmp
+        run: |
+          test -f nested/result.txt
+          test "$(cat nested/result.txt)" = "nested-data"
+          test -f nested/deep/sub/deep-result.txt
+          test "$(cat nested/deep/sub/deep-result.txt)" = "deep-data"

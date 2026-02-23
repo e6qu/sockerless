@@ -160,6 +160,19 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	exitCh := make(chan struct{})
 	s.Store.WaitChs.Store(id, exitCh)
 
+	// Deferred start: if container is in a multi-container pod, wait for all siblings
+	shouldDefer, podContainers := s.PodDeferredStart(id)
+	if shouldDefer {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if len(podContainers) > 1 {
+		// Multi-container pod: build combined job and run
+		s.startMultiContainerJob(w, id, podContainers, exitCh)
+		return
+	}
+
 	// Helper/cache containers (non-tail-dev-null commands like "chmod -R 777 /cache")
 	// don't need the full invoke+agent flow. Auto-stop them after a brief delay.
 	if s.config.CallbackURL != "" && !core.IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd) {
@@ -177,15 +190,15 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Clean up any existing Cloud Run Job from a previous start
-	// (e.g., if the execution completed and the container was stopped,
-	// then the runner restarts the same container for cleanup steps).
 	if crState.JobName != "" {
 		s.deleteJob(crState.JobName)
 	}
 
 	// Build Cloud Run Job spec
 	jobName := buildJobName(id)
-	jobSpec := s.buildJobSpec(id, &c, crState.AgentToken)
+	jobSpec := s.buildJobSpec([]containerInput{
+		{ID: id, Container: &c, AgentToken: crState.AgentToken, IsMain: true},
+	})
 
 	// Create the Cloud Run Job
 	createOp, err := s.gcp.Jobs.CreateJob(s.ctx(), &runpb.CreateJobRequest{
@@ -216,6 +229,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		ResourceID:   jobFullName,
 		InstanceID:   s.Desc.InstanceID,
 		CreatedAt:    time.Now(),
+		Metadata:     map[string]string{"image": c.Image, "name": c.Name, "jobName": jobName},
 	})
 
 	// Run the job (creates an execution)
@@ -301,6 +315,146 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 
 		// Start background poller to detect execution exit
 		go s.pollExecutionExit(id, executionName, exitCh)
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// startMultiContainerJob creates and runs a Cloud Run Job with all pod containers.
+// Called when the last container in a pod is started.
+func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string, podContainers []api.Container, exitCh chan struct{}) {
+	// Build containerInput slice: first container is main (gets agent)
+	var inputs []containerInput
+	for i, pc := range podContainers {
+		state, _ := s.CloudRun.Get(pc.ID)
+		pcCopy := pc
+		inputs = append(inputs, containerInput{
+			ID:         pc.ID,
+			Container:  &pcCopy,
+			AgentToken: state.AgentToken,
+			IsMain:     i == 0,
+		})
+	}
+
+	mainID := podContainers[0].ID
+	mainState, _ := s.CloudRun.Get(mainID)
+
+	// Pre-create done channel for reverse agent on main container
+	if s.config.CallbackURL != "" {
+		s.AgentRegistry.Prepare(mainID)
+	}
+
+	// Build and create the combined job
+	jobName := buildJobName(mainID)
+	jobSpec := s.buildJobSpec(inputs)
+
+	createOp, err := s.gcp.Jobs.CreateJob(s.ctx(), &runpb.CreateJobRequest{
+		Parent: s.buildJobParent(),
+		JobId:  jobName,
+		Job:    jobSpec,
+	})
+	if err != nil {
+		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to create multi-container Cloud Run Job")
+		core.WriteError(w, fmt.Errorf("failed to create job: %w", err))
+		return
+	}
+
+	job, err := createOp.Wait(s.ctx())
+	if err != nil {
+		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
+		core.WriteError(w, fmt.Errorf("job creation failed: %w", err))
+		return
+	}
+
+	jobFullName := job.Name
+
+	s.Registry.Register(core.ResourceEntry{
+		ContainerID:  mainID,
+		Backend:      "cloudrun",
+		ResourceType: "job",
+		ResourceID:   jobFullName,
+		InstanceID:   s.Desc.InstanceID,
+		CreatedAt:    time.Now(),
+		Metadata:     map[string]string{"image": podContainers[0].Image, "name": podContainers[0].Name, "jobName": jobName},
+	})
+
+	runOp, err := s.gcp.Jobs.RunJob(s.ctx(), &runpb.RunJobRequest{
+		Name: jobFullName,
+	})
+	if err != nil {
+		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("failed to run job")
+		s.deleteJob(jobFullName)
+		core.WriteError(w, fmt.Errorf("failed to run job: %w", err))
+		return
+	}
+
+	execution, err := runOp.Wait(s.ctx())
+	if err != nil {
+		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("run job failed")
+		s.deleteJob(jobFullName)
+		core.WriteError(w, fmt.Errorf("run job failed: %w", err))
+		return
+	}
+
+	executionName := execution.Name
+
+	// Store cloud state on ALL pod containers
+	for _, pc := range podContainers {
+		s.CloudRun.Update(pc.ID, func(state *CloudRunState) {
+			state.JobName = jobFullName
+			state.ExecutionName = executionName
+		})
+	}
+
+	if s.config.CallbackURL != "" {
+		// Reverse agent mode
+		go func() {
+			s.waitForExecutionComplete(executionName, exitCh)
+			_ = s.AgentRegistry.WaitForDisconnect(mainID, 30*time.Minute)
+			s.Store.StopContainer(mainID, 0)
+		}()
+
+		agentTimeout := 60 * time.Second
+		if s.config.EndpointURL != "" {
+			agentTimeout = 5 * time.Second
+		}
+		if err := s.AgentRegistry.WaitForAgent(mainID, agentTimeout); err != nil {
+			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
+		} else {
+			s.Store.Containers.Update(mainID, func(c *api.Container) {
+				c.AgentAddress = "reverse"
+				c.AgentToken = mainState.AgentToken
+			})
+		}
+	} else {
+		// Forward agent mode
+		agentAddr, err := s.waitForExecutionRunning(s.ctx(), executionName)
+		if err != nil {
+			s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
+			s.deleteJob(jobFullName)
+			core.WriteError(w, fmt.Errorf("execution failed to start: %w", err))
+			return
+		}
+
+		agentURL := fmt.Sprintf("http://%s/health", agentAddr)
+		agentHealthy := true
+		if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
+			s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
+			agentHealthy = false
+		}
+
+		if agentHealthy {
+			s.Store.Containers.Update(mainID, func(c *api.Container) {
+				c.AgentAddress = agentAddr
+				c.AgentToken = mainState.AgentToken
+			})
+		}
+
+		s.CloudRun.Update(mainID, func(state *CloudRunState) {
+			state.AgentAddress = agentAddr
+		})
+
+		go s.pollExecutionExit(mainID, executionName, exitCh)
 	}
 
 	w.WriteHeader(http.StatusNoContent)

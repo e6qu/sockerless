@@ -40,7 +40,7 @@ if [ ! -d "$WORKFLOW_DIR" ]; then
     WORKFLOW_DIR="/test/workflows"
 fi
 
-ALL_WORKFLOWS="basic multi-step env-vars exit-codes multi-job container-action services large-output matrix custom-image working-dir outputs shell-features file-persistence job-outputs concurrent-jobs env-inheritance github-env step-outputs defaults-shell conditional-steps multi-job-data"
+ALL_WORKFLOWS="basic multi-step env-vars exit-codes multi-job container-action services large-output matrix custom-image working-dir outputs shell-features file-persistence job-outputs concurrent-jobs env-inheritance github-env step-outputs defaults-shell conditional-steps multi-job-data services-http container-options container-env-create diamond-deps matrix-multi conditional-job continue-on-error timeout-job working-dir-nested"
 
 # --- Timestamp for logs ---
 TS="$(date '+%Y%m%d-%H%M%S')"

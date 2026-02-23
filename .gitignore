@@ -21,6 +21,9 @@ sockerless-backend-*
 sockerless-docker-frontend
 sockerless-agent
 
+# CLI binary
+cmd/sockerless/cli
+
 # Terraform
 .terraform/
 .terragrunt-cache/

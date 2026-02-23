@@ -18,6 +18,9 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 	if name := r.URL.Query().Get("name"); name != "" {
 		query.Set("name", name)
 	}
+	if pod := r.URL.Query().Get("pod"); pod != "" {
+		query.Set("pod", pod)
+	}
 
 	resp, err := s.backend.postWithQuery("/containers", query, &req)
 	if err != nil {
@@ -192,6 +195,28 @@ func (s *Server) handleContainerUnpause(w http.ResponseWriter, r *http.Request) 
 	proxyPassthrough(w, resp)
 }
 
+func (s *Server) handleContainerUpdate(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	resp, err := s.backend.postRaw("/containers/"+id+"/update", "application/json", r.Body)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer resp.Body.Close()
+	proxyPassthrough(w, resp)
+}
+
+func (s *Server) handleContainerChanges(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	resp, err := s.backend.get("/containers/" + id + "/changes")
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer resp.Body.Close()
+	proxyPassthrough(w, resp)
+}
+
 func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 	query := url.Values{}
 	if filters := r.URL.Query().Get("filters"); filters != "" {
@@ -204,4 +229,21 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 	proxyPassthrough(w, resp)
+}
+
+func (s *Server) handleContainerExport(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	resp, err := s.backend.get("/containers/" + id + "/export")
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer resp.Body.Close()
+	for k, vs := range resp.Header {
+		for _, v := range vs {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	flushingCopy(w, resp.Body)
 }

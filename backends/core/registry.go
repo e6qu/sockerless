@@ -27,16 +27,11 @@ var imageConfigCache = struct {
 	m map[string]*api.ContainerConfig
 }{m: make(map[string]*api.ContainerConfig)}
 
-// FetchImageConfigEnabled returns true if image config fetching is enabled.
-func FetchImageConfigEnabled() bool {
-	return os.Getenv("SOCKERLESS_FETCH_IMAGE_CONFIG") == "true"
-}
-
 // FetchImageConfig fetches the real image config from a Docker v2 registry.
-// Returns nil, nil if config fetching is disabled or the image reference
-// can't be resolved (graceful fallback to synthetic config).
-func FetchImageConfig(ref string) (*api.ContainerConfig, error) {
-	if !FetchImageConfigEnabled() {
+// Returns nil, nil if fetching is skipped (SOCKERLESS_SKIP_IMAGE_CONFIG=true)
+// or the image reference can't be resolved (graceful fallback to synthetic config).
+func FetchImageConfig(ref string, basicAuth ...string) (*api.ContainerConfig, error) {
+	if os.Getenv("SOCKERLESS_SKIP_IMAGE_CONFIG") == "true" {
 		return nil, nil
 	}
 
@@ -50,7 +45,12 @@ func FetchImageConfig(ref string) (*api.ContainerConfig, error) {
 
 	rc := parseImageRef(ref)
 
-	cfg, err := fetchConfigFromRegistry(rc)
+	auth := ""
+	if len(basicAuth) > 0 {
+		auth = basicAuth[0]
+	}
+
+	cfg, err := fetchConfigFromRegistry(rc, auth)
 	if err != nil {
 		// Graceful fallback: return nil so caller uses synthetic config
 		return nil, nil
@@ -116,9 +116,9 @@ var registryClient = &http.Client{
 }
 
 // fetchConfigFromRegistry fetches the container config from a v2 registry.
-func fetchConfigFromRegistry(rc registryConfig) (*api.ContainerConfig, error) {
+func fetchConfigFromRegistry(rc registryConfig, basicAuth string) (*api.ContainerConfig, error) {
 	// Step 1: Get auth token
-	token, err := getRegistryToken(rc)
+	token, err := getRegistryToken(rc, basicAuth)
 	if err != nil {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
@@ -144,8 +144,9 @@ type tokenResponse struct {
 	AccessToken string `json:"access_token"`
 }
 
-// getRegistryToken gets an anonymous auth token for the given registry/repo.
-func getRegistryToken(rc registryConfig) (string, error) {
+// getRegistryToken gets an auth token for the given registry/repo.
+// If basicAuth is non-empty, it is sent as Basic auth on the token exchange.
+func getRegistryToken(rc registryConfig, basicAuth string) (string, error) {
 	// Try to access the manifests endpoint first to discover auth
 	manifestURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s",
 		rc.Registry, rc.Repository, rc.Tag)
@@ -189,6 +190,9 @@ func getRegistryToken(rc registryConfig) (string, error) {
 	req, err := http.NewRequest("GET", tokenURL.String(), nil)
 	if err != nil {
 		return "", err
+	}
+	if basicAuth != "" {
+		req.Header.Set("Authorization", "Basic "+basicAuth)
 	}
 
 	resp, err = registryClient.Do(req)

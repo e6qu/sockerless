@@ -54,6 +54,13 @@ type StreamDriver interface {
 
 	// LogBytes returns the buffered log output for a container.
 	LogBytes(containerID string) []byte
+
+	// LogSubscribe returns a channel that receives live log chunks for follow mode.
+	// The channel is closed when the container exits. Returns nil if not supported.
+	LogSubscribe(containerID, subID string) chan []byte
+
+	// LogUnsubscribe removes a log subscription.
+	LogUnsubscribe(containerID, subID string)
 }
 
 // ProcessLifecycleDriver manages container process start/stop/wait.

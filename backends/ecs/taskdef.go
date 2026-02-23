@@ -13,9 +13,18 @@ import (
 	core "github.com/sockerless/backend-core"
 )
 
-// registerTaskDefinition creates an ECS task definition from a container config.
-func (s *Server) registerTaskDefinition(ctx context.Context, containerID string, container *api.Container, agentToken string) (string, error) {
-	config := container.Config
+// containerInput groups the data needed to build one ECS container definition.
+type containerInput struct {
+	ID         string
+	Container  *api.Container
+	AgentToken string
+	IsMain     bool // true = inject agent entrypoint + port 9111
+}
+
+// buildContainerDef builds a single ECS container definition.
+// IsMain containers get agent injection and port 9111; sidecars use their original entrypoint.
+func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinition, []ecstypes.Volume) {
+	config := ci.Container.Config
 
 	// Build environment variables
 	var envVars []ecstypes.KeyValuePair
@@ -29,36 +38,49 @@ func (s *Server) registerTaskDefinition(ctx context.Context, containerID string,
 		}
 	}
 
-	// Build the entrypoint/command with agent injection
 	var entrypoint, command []string
-	if s.config.CallbackURL != "" {
-		callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, containerID, agentToken)
-		entrypoint = core.BuildAgentCallbackEntrypoint(config, callbackURL)
-
-		// Add agent env vars
-		envVars = append(envVars,
-			ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_CONTAINER_ID"), Value: aws.String(containerID)},
-			ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_AGENT_TOKEN"), Value: aws.String(agentToken)},
-			ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_AGENT_CALLBACK_URL"), Value: aws.String(callbackURL)},
-		)
+	if ci.IsMain {
+		// Agent injection for main container
+		if s.config.CallbackURL != "" {
+			callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, ci.ID, ci.AgentToken)
+			entrypoint = core.BuildAgentCallbackEntrypoint(config, callbackURL)
+			envVars = append(envVars,
+				ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_CONTAINER_ID"), Value: aws.String(ci.ID)},
+				ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_AGENT_TOKEN"), Value: aws.String(ci.AgentToken)},
+				ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_AGENT_CALLBACK_URL"), Value: aws.String(callbackURL)},
+			)
+		} else {
+			entrypoint, command = core.BuildAgentEntrypoint(config)
+		}
 	} else {
-		entrypoint, command = core.BuildAgentEntrypoint(config)
+		// Sidecar: use original entrypoint/command, no agent
+		if len(config.Entrypoint) > 0 {
+			entrypoint = config.Entrypoint
+		}
+		if len(config.Cmd) > 0 {
+			command = config.Cmd
+		}
 	}
 
-	// Container definition
+	// Container name: "main" for the primary, sanitized name for sidecars
+	defName := "main"
+	if !ci.IsMain {
+		defName = sanitizeContainerName(ci.Container.Name)
+	}
+
 	containerDef := ecstypes.ContainerDefinition{
-		Name:       aws.String("main"),
-		Image:      aws.String(config.Image),
-		Essential:  aws.Bool(true),
-		EntryPoint: entrypoint,
-		Command:    command,
+		Name:        aws.String(defName),
+		Image:       aws.String(config.Image),
+		Essential:   aws.Bool(ci.IsMain),
+		EntryPoint:  entrypoint,
+		Command:     command,
 		Environment: envVars,
 		LogConfiguration: &ecstypes.LogConfiguration{
 			LogDriver: ecstypes.LogDriverAwslogs,
 			Options: map[string]string{
 				"awslogs-group":         s.config.LogGroup,
 				"awslogs-region":        s.config.Region,
-				"awslogs-stream-prefix": containerID[:12],
+				"awslogs-stream-prefix": ci.ID[:12],
 			},
 		},
 	}
@@ -71,23 +93,25 @@ func (s *Server) registerTaskDefinition(ctx context.Context, containerID string,
 		containerDef.User = aws.String(config.User)
 	}
 
-	// Port mapping for agent
-	containerDef.PortMappings = []ecstypes.PortMapping{
-		{
-			ContainerPort: aws.Int32(9111),
-			Protocol:      ecstypes.TransportProtocolTcp,
-		},
+	// Port mapping for agent (main container only)
+	if ci.IsMain {
+		containerDef.PortMappings = []ecstypes.PortMapping{
+			{
+				ContainerPort: aws.Int32(9111),
+				Protocol:      ecstypes.TransportProtocolTcp,
+			},
+		}
 	}
 
 	// Build volumes and mount points for bind mounts
 	var volumes []ecstypes.Volume
 	var mountPoints []ecstypes.MountPoint
-	for i, bind := range container.HostConfig.Binds {
+	for i, bind := range ci.Container.HostConfig.Binds {
 		parts := strings.SplitN(bind, ":", 3)
 		if len(parts) < 2 {
 			continue
 		}
-		volName := fmt.Sprintf("bind-%d", i)
+		volName := fmt.Sprintf("%s-bind-%d", defName, i)
 		volumes = append(volumes, ecstypes.Volume{
 			Name: aws.String(volName),
 		})
@@ -104,11 +128,25 @@ func (s *Server) registerTaskDefinition(ctx context.Context, containerID string,
 
 	containerDef.MountPoints = mountPoints
 
-	// Task definition family name
-	family := fmt.Sprintf("sockerless-%s", containerID[:12])
+	return containerDef, volumes
+}
+
+// registerTaskDefinition creates an ECS task definition from one or more containers.
+func (s *Server) registerTaskDefinition(ctx context.Context, containers []containerInput) (string, error) {
+	var allDefs []ecstypes.ContainerDefinition
+	var allVolumes []ecstypes.Volume
+
+	for _, ci := range containers {
+		def, vols := s.buildContainerDef(ci)
+		allDefs = append(allDefs, def)
+		allVolumes = append(allVolumes, vols...)
+	}
+
+	// Family name uses the first (main) container ID
+	family := fmt.Sprintf("sockerless-%s", containers[0].ID[:12])
 
 	tags := core.TagSet{
-		ContainerID: containerID,
+		ContainerID: containers[0].ID,
 		Backend:     "ecs",
 		InstanceID:  s.Desc.InstanceID,
 		CreatedAt:   time.Now(),
@@ -120,8 +158,8 @@ func (s *Server) registerTaskDefinition(ctx context.Context, containerID string,
 		NetworkMode:             ecstypes.NetworkModeAwsvpc,
 		Cpu:                     aws.String("256"),
 		Memory:                  aws.String("512"),
-		ContainerDefinitions:    []ecstypes.ContainerDefinition{containerDef},
-		Volumes:                 volumes,
+		ContainerDefinitions:    allDefs,
+		Volumes:                 allVolumes,
 		Tags:                    mapToECSTags(tags.AsMap()),
 	}
 
@@ -138,4 +176,26 @@ func (s *Server) registerTaskDefinition(ctx context.Context, containerID string,
 	}
 
 	return aws.ToString(result.TaskDefinition.TaskDefinitionArn), nil
+}
+
+// sanitizeContainerName converts a container name to a valid ECS container definition name.
+// Strips leading "/" and replaces non-alphanumeric characters with "-".
+func sanitizeContainerName(name string) string {
+	name = strings.TrimPrefix(name, "/")
+	if name == "" {
+		return "sidecar"
+	}
+	var b strings.Builder
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' {
+			b.WriteRune(c)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	result := b.String()
+	if result == "" {
+		return "sidecar"
+	}
+	return result
 }

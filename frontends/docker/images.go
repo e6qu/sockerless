@@ -1,7 +1,7 @@
 package frontend
 
 import (
-	"io"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -38,10 +38,7 @@ func (s *Server) handleImageCreate(w http.ResponseWriter, r *http.Request) {
 	// Stream the progress JSON to the client
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
-	}
+	flushingCopy(w, resp.Body)
 }
 
 // handleImageCatchAll handles /images/{name}/json, /images/{name}/tag, etc.
@@ -66,7 +63,8 @@ func (s *Server) handleImageCatchAll(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimSuffix(path, "/history")
 		s.handleImageHistoryByName(w, r, name)
 	case strings.HasSuffix(path, "/push"):
-		s.handleNotImplemented(w, r)
+		name := strings.TrimSuffix(path, "/push")
+		s.handleImagePush(w, r, name)
 	default:
 		// DELETE /images/{name}
 		if r.Method == "DELETE" {
@@ -193,10 +191,36 @@ func (s *Server) handleImageBuild(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	flushingCopy(w, resp.Body)
+}
+
+func (s *Server) handleImagePush(w http.ResponseWriter, r *http.Request, name string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	enc := json.NewEncoder(w)
+	_ = enc.Encode(map[string]string{"status": "The push refers to repository [" + name + "]"})
+	_ = enc.Encode(map[string]string{"status": "Preparing", "id": "latest"})
+	_ = enc.Encode(map[string]string{"status": "Pushed", "id": "latest"})
+	_ = enc.Encode(map[string]string{"status": "latest: digest: sha256:0000000000000000000000000000000000000000000000000000000000000000"})
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+func (s *Server) handleContainerCommit(w http.ResponseWriter, r *http.Request) {
+	query := url.Values{}
+	for _, key := range []string{"container", "repo", "tag", "comment", "author"} {
+		if v := r.URL.Query().Get(key); v != "" {
+			query.Set(key, v)
+		}
+	}
+	resp, err := s.backend.postRawWithQuery("/commit", query, "application/json", r.Body)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer resp.Body.Close()
+	proxyPassthrough(w, resp)
 }
 
 func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {

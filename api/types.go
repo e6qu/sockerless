@@ -548,6 +548,42 @@ type EventsOptions struct {
 	Filters map[string][]string `json:"Filters,omitempty"`
 }
 
+// Event represents a Docker system event.
+type Event struct {
+	Type   string     `json:"Type"`
+	Action string     `json:"Action"`
+	Actor  EventActor `json:"Actor"`
+	Time   int64      `json:"time"`
+	TimeNano int64    `json:"timeNano"`
+}
+
+// EventActor identifies the object that generated an event.
+type EventActor struct {
+	ID         string            `json:"ID"`
+	Attributes map[string]string `json:"Attributes"`
+}
+
+// ContainerUpdateRequest holds fields that can be updated on a running container.
+type ContainerUpdateRequest struct {
+	RestartPolicy RestartPolicy `json:"RestartPolicy"`
+}
+
+// ContainerUpdateResponse is the response from updating a container.
+type ContainerUpdateResponse struct {
+	Warnings []string `json:"Warnings"`
+}
+
+// ContainerChangeItem represents a single filesystem change in a container.
+type ContainerChangeItem struct {
+	Path string `json:"Path"`
+	Kind int    `json:"Kind"` // 0=Modified, 1=Added, 2=Deleted
+}
+
+// ContainerCommitResponse is the response from committing a container.
+type ContainerCommitResponse struct {
+	ID string `json:"Id"`
+}
+
 // DiskUsageResponse holds the response from system df.
 type DiskUsageResponse struct {
 	LayersSize int64                    `json:"LayersSize"`

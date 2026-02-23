@@ -16,15 +16,16 @@ type WorkflowDef struct {
 
 // JobDef represents a single job definition within a workflow.
 type JobDef struct {
-	Name      string            `yaml:"name"`
-	RunsOn    interface{}       `yaml:"runs-on"`
-	Container interface{}       `yaml:"container"` // string or object
-	Needs     []string          // parsed from string or list
-	Env       map[string]string `yaml:"env"`
-	Outputs   map[string]string `yaml:"outputs"`
-	Strategy  *StrategyDef      `yaml:"strategy"`
-	Steps     []StepDef         `yaml:"steps"`
-	If        string            `yaml:"if"`
+	Name      string                   `yaml:"name"`
+	RunsOn    interface{}              `yaml:"runs-on"`
+	Container interface{}              `yaml:"container"` // string or object
+	Services  map[string]*ServiceDef   // parsed from string or ServiceDef object
+	Needs     []string                 // parsed from string or list
+	Env       map[string]string        `yaml:"env"`
+	Outputs   map[string]string        `yaml:"outputs"`
+	Strategy  *StrategyDef             `yaml:"strategy"`
+	Steps     []StepDef                `yaml:"steps"`
+	If        string                   `yaml:"if"`
 }
 
 // StrategyDef represents a job's strategy configuration.
@@ -62,6 +63,19 @@ type ContainerDef struct {
 	Options string            `yaml:"options"`
 }
 
+// ServiceDef represents a service container configuration.
+type ServiceDef struct {
+	Image       string            `yaml:"image"`
+	Env         map[string]string `yaml:"env"`
+	Ports       []interface{}     `yaml:"ports"`
+	Volumes     []string          `yaml:"volumes"`
+	Options     string            `yaml:"options"`
+	Credentials struct {
+		Username string `yaml:"username"`
+		Password string `yaml:"password"`
+	} `yaml:"credentials"`
+}
+
 // rawWorkflow is the intermediate YAML structure before normalization.
 type rawWorkflow struct {
 	Name string                    `yaml:"name"`
@@ -70,15 +84,16 @@ type rawWorkflow struct {
 }
 
 type rawJobDef struct {
-	Name      string            `yaml:"name"`
-	RunsOn    interface{}       `yaml:"runs-on"`
-	Container interface{}       `yaml:"container"`
-	Needs     interface{}       `yaml:"needs"` // string or []string
-	Env       map[string]string `yaml:"env"`
-	Outputs   map[string]string `yaml:"outputs"`
-	Strategy  *rawStrategyDef   `yaml:"strategy"`
-	Steps     []StepDef         `yaml:"steps"`
-	If        string            `yaml:"if"`
+	Name      string                 `yaml:"name"`
+	RunsOn    interface{}            `yaml:"runs-on"`
+	Container interface{}            `yaml:"container"`
+	Services  map[string]interface{} `yaml:"services"` // string or ServiceDef object
+	Needs     interface{}            `yaml:"needs"`     // string or []string
+	Env       map[string]string      `yaml:"env"`
+	Outputs   map[string]string      `yaml:"outputs"`
+	Strategy  *rawStrategyDef        `yaml:"strategy"`
+	Steps     []StepDef              `yaml:"steps"`
+	If        string                 `yaml:"if"`
 }
 
 type rawStrategyDef struct {
@@ -144,6 +159,30 @@ func normalizeJob(rj *rawJobDef) (*JobDef, error) {
 		}
 	default:
 		return nil, fmt.Errorf("needs must be string or list, got %T", v)
+	}
+
+	// Parse services: each value can be a string (image name) or an object
+	if len(rj.Services) > 0 {
+		jd.Services = make(map[string]*ServiceDef, len(rj.Services))
+		for name, val := range rj.Services {
+			switch v := val.(type) {
+			case string:
+				jd.Services[name] = &ServiceDef{Image: v}
+			case map[string]interface{}:
+				svc := &ServiceDef{}
+				// Re-marshal via YAML to decode into struct cleanly
+				yamlBytes, err := yaml.Marshal(v)
+				if err != nil {
+					return nil, fmt.Errorf("service %q: %w", name, err)
+				}
+				if err := yaml.Unmarshal(yamlBytes, svc); err != nil {
+					return nil, fmt.Errorf("service %q: %w", name, err)
+				}
+				jd.Services[name] = svc
+			default:
+				return nil, fmt.Errorf("service %q: must be string or object, got %T", name, val)
+			}
+		}
 	}
 
 	// Parse strategy/matrix
