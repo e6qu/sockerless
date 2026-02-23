@@ -422,7 +422,9 @@ func TestAgentExecConcurrent(t *testing.T) {
 	deadline := time.Now().Add(10 * time.Second)
 	conn.SetReadDeadline(deadline)
 
-	for len(results) < 3 && time.Now().Before(deadline) {
+	// We need both stdout and exit for all 3 sessions.
+	// Exit messages can arrive before stdout, so keep reading until we have all 6.
+	for time.Now().Before(deadline) {
 		_, data, err := conn.ReadMessage()
 		if err != nil {
 			break
@@ -440,9 +442,10 @@ func TestAgentExecConcurrent(t *testing.T) {
 				exitCodes[msg.ID] = *msg.Code
 			}
 		}
+		done := len(exitCodes) >= 3 && len(results) >= 3
 		mu.Unlock()
 
-		if len(exitCodes) >= 3 {
+		if done {
 			break
 		}
 	}
