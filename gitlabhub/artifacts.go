@@ -116,7 +116,7 @@ func extractFileFromZip(zipData []byte, filename string) string {
 			}
 			defer rc.Close()
 			buf := new(bytes.Buffer)
-			buf.ReadFrom(rc)
+			_, _ = buf.ReadFrom(rc)
 			return buf.String()
 		}
 	}

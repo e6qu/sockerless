@@ -230,16 +230,6 @@ func (s *Server) nextLogID() int {
 	return id
 }
 
-// agentIDForSession returns the agent ID associated with a session.
-func (s *Server) agentIDForSession(sessionID string) int {
-	s.store.mu.RLock()
-	defer s.store.mu.RUnlock()
-	if sess, ok := s.store.Sessions[sessionID]; ok && sess.Agent != nil {
-		return sess.Agent.ID
-	}
-	return 0
-}
-
 // lookupJobByRequestID finds a job by its request ID.
 func (s *Server) lookupJobByRequestID(reqID int64) *Job {
 	s.store.mu.RLock()

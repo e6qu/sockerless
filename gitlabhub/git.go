@@ -51,7 +51,7 @@ func (s *Server) createProjectRepo(name string, files map[string]string) (string
 		blob.SetType(plumbing.BlobObject)
 		blob.SetSize(int64(len(content)))
 		w, _ := blob.Writer()
-		w.Write([]byte(content))
+		_, _ = w.Write([]byte(content))
 		w.Close()
 		blobHash, err := stor.SetEncodedObject(blob)
 		if err != nil {

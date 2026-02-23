@@ -45,14 +45,6 @@ func (p *exprParser) skipWhitespace() {
 	}
 }
 
-func (p *exprParser) peek() byte {
-	p.skipWhitespace()
-	if p.pos >= len(p.input) {
-		return 0
-	}
-	return p.input[p.pos]
-}
-
 func (p *exprParser) parseOr() bool {
 	left := p.parseAnd()
 	for {

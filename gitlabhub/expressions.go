@@ -41,14 +41,6 @@ func (p *glExprParser) skipWhitespace() {
 	}
 }
 
-func (p *glExprParser) peek() byte {
-	p.skipWhitespace()
-	if p.pos >= len(p.input) {
-		return 0
-	}
-	return p.input[p.pos]
-}
-
 // parseOr handles || (logical OR).
 func (p *glExprParser) parseOr() bool {
 	left := p.parseAnd()

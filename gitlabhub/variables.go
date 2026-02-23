@@ -62,9 +62,7 @@ func (s *Server) buildJobVariables(pipeline *Pipeline, job *PipelineJob, jobDef 
 	// Add project-level variables
 	if project != nil {
 		for _, pv := range project.Variables {
-			if pv.Protected {
-				// Only inject protected vars on protected branches (we treat all as protected)
-			}
+			// Protected vars only on protected branches — we treat all as protected.
 			vars = append(vars, VariableDef{
 				Key:    pv.Key,
 				Value:  pv.Value,

@@ -28,13 +28,6 @@ func ghAppFromContext(ctx context.Context) *App {
 	return a
 }
 
-// ghInstallationFromContext extracts the installation from the request context.
-func ghInstallationFromContext(ctx context.Context) *Installation {
-	i, _ := ctx.Value(ctxInstallation).(*Installation)
-	return i
-}
-
-
 // ghHeadersMiddleware injects GitHub-compatible response headers on /api/ routes
 // and sets the authenticated user in request context.
 func (s *Server) ghHeadersMiddleware(next http.Handler) http.Handler {

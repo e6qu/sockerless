@@ -3,7 +3,6 @@ package gitlabhub
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,10 +10,6 @@ import (
 
 	"github.com/rs/zerolog"
 )
-
-func itoa(n int) string {
-	return fmt.Sprintf("%d", n)
-}
 
 func newTestServer(t *testing.T) *Server {
 	t.Helper()

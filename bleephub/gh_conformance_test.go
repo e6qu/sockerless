@@ -1,7 +1,6 @@
 package bleephub
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -521,13 +520,3 @@ func doGHRequest(req *http.Request) (*http.Response, error) {
 	return http.DefaultClient.Do(req)
 }
 
-// decodeJSONArrayRaw decodes a JSON array from a response body into []interface{}.
-func decodeJSONArrayRaw(t *testing.T, resp *http.Response) []interface{} {
-	t.Helper()
-	defer resp.Body.Close()
-	var data []interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		t.Fatalf("failed to decode JSON array: %v", err)
-	}
-	return data
-}

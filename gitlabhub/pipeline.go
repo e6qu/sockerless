@@ -73,21 +73,6 @@ type CacheEntry struct {
 	Policy string   `json:"policy,omitempty"` // pull, push, pull-push
 }
 
-// rawPipeline is the intermediate YAML structure before normalization.
-type rawPipeline struct {
-	Stages    interface{}            `yaml:"stages"`
-	Variables map[string]interface{} `yaml:"variables"`
-	Image     interface{}            `yaml:"image"`
-	Default   *rawDefault            `yaml:"default"`
-	// All other keys are jobs — handled via a second-pass decode
-}
-
-type rawDefault struct {
-	Image        interface{} `yaml:"image"`
-	BeforeScript interface{} `yaml:"before_script"`
-	AfterScript  interface{} `yaml:"after_script"`
-}
-
 type rawJobDef struct {
 	Stage        string              `yaml:"stage"`
 	Image        interface{}         `yaml:"image"`
@@ -317,10 +302,7 @@ func normalizeJobDef(key string, rj *rawJobDef, stages []string, globalVars map[
 
 	// Parse rules
 	for _, rr := range rj.Rules {
-		jd.Rules = append(jd.Rules, RuleDef{
-			If:   rr.If,
-			When: rr.When,
-		})
+		jd.Rules = append(jd.Rules, RuleDef(rr))
 	}
 
 	// Parse allow_failure
