@@ -117,7 +117,7 @@ func (s *BaseServer) handleContainerCreate(w http.ResponseWriter, r *http.Reques
 				continue
 			}
 			if pod, exists := s.Store.Pods.GetPodForNetwork(netName); exists {
-				s.Store.Pods.AddContainer(pod.ID, id)
+				_ = s.Store.Pods.AddContainer(pod.ID, id)
 				break
 			}
 			// Check if the network already has other containers
@@ -131,10 +131,10 @@ func (s *BaseServer) handleContainerCreate(w http.ResponseWriter, r *http.Reques
 						continue
 					}
 					if _, alreadyInPod := s.Store.Pods.GetPodForContainer(existingID); !alreadyInPod {
-						s.Store.Pods.AddContainer(pod.ID, existingID)
+						_ = s.Store.Pods.AddContainer(pod.ID, existingID)
 					}
 				}
-				s.Store.Pods.AddContainer(pod.ID, id)
+				_ = s.Store.Pods.AddContainer(pod.ID, id)
 				break
 			}
 		}
