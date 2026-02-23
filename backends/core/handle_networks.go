@@ -149,7 +149,7 @@ func (s *BaseServer) handleNetworkConnect(w http.ResponseWriter, r *http.Request
 	// Implicit pod grouping: if this network already has a pod, join it
 	if pod, exists := s.Store.Pods.GetPodForNetwork(net.Name); exists {
 		if _, inPod := s.Store.Pods.GetPodForContainer(containerID); !inPod {
-			s.Store.Pods.AddContainer(pod.ID, containerID)
+			_ = s.Store.Pods.AddContainer(pod.ID, containerID)
 		}
 	}
 
