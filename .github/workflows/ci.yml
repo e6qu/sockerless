@@ -82,6 +82,29 @@ jobs:
           build simulators/gcp .
           build simulators/azure .
 
+  smoke-test-act:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: memory
+            dockerfile: smoke-tests/act/Dockerfile
+          - backend: ecs
+            dockerfile: smoke-tests/act/Dockerfile.ecs
+          - backend: cloudrun
+            dockerfile: smoke-tests/act/Dockerfile.cloudrun
+          - backend: aca
+            dockerfile: smoke-tests/act/Dockerfile.aca
+    name: smoke-act (${{ matrix.backend }})
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run smoke test
+        run: |
+          docker build -t smoke-act-${{ matrix.backend }} -f ${{ matrix.dockerfile }} .
+          docker run --rm smoke-act-${{ matrix.backend }}
+        timeout-minutes: 10
+
   build-check-arm64:
     runs-on: ubuntu-latest
     steps:

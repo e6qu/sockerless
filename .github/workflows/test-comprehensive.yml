@@ -10,7 +10,7 @@ on:
         required: true
         default: 'all'
         type: choice
-        options: [all, simulators, bleephub, e2e-github, e2e-gitlab, terraform, upstream-act]
+        options: [all, simulators, bleephub, e2e-github, e2e-gitlab, terraform, upstream-act, smoke-gitlab]
 
 jobs:
   simulator-tests:
@@ -75,6 +75,28 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run Terraform tests
         run: make tf-int-test-${{ matrix.cloud }}
+        timeout-minutes: 20
+
+  smoke-gitlab:
+    if: github.event_name == 'push' || inputs.suite == 'all' || inputs.suite == 'smoke-gitlab'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: memory
+            cmd: make smoke-test-gitlab
+          - backend: ecs
+            cmd: make smoke-test-gitlab-ecs
+          - backend: cloudrun
+            cmd: make smoke-test-gitlab-cloudrun
+          - backend: aca
+            cmd: make smoke-test-gitlab-aca
+    name: smoke-gitlab (${{ matrix.backend }})
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run GitLab smoke test
+        run: ${{ matrix.cmd }}
         timeout-minutes: 20
 
   upstream-act:
