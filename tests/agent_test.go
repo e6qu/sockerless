@@ -395,15 +395,17 @@ func TestAgentExecConcurrent(t *testing.T) {
 	conn := dialAgent(t, addr)
 	defer conn.Close()
 
-	// Launch 3 concurrent exec sessions
+	// Launch 3 concurrent exec sessions.
+	// Use sh -c with a small sleep to prevent processes from completing
+	// before all commands are dispatched on the agent side.
 	sessions := []struct {
 		id  string
 		cmd []string
 		exp string
 	}{
-		{"concurrent-1", []string{"echo", "one"}, "one"},
-		{"concurrent-2", []string{"echo", "two"}, "two"},
-		{"concurrent-3", []string{"echo", "three"}, "three"},
+		{"concurrent-1", []string{"sh", "-c", "sleep 0.1 && echo one"}, "one"},
+		{"concurrent-2", []string{"sh", "-c", "sleep 0.1 && echo two"}, "two"},
+		{"concurrent-3", []string{"sh", "-c", "sleep 0.1 && echo three"}, "three"},
 	}
 
 	// Start reader goroutine before sending commands to avoid missing
