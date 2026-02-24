@@ -34,7 +34,10 @@ func (s *Server) handleRunnerRegistration(w http.ResponseWriter, r *http.Request
 		URL         string `json:"url"`
 		RunnerEvent string `json:"runner_event"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
 
 	// Build server URL from request host
 	scheme := "http"

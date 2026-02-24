@@ -231,7 +231,10 @@ func (s *Server) handlePingHook(w http.ResponseWriter, r *http.Request) {
 }
 
 func mustMarshal(v interface{}) []byte {
-	b, _ := json.Marshal(v)
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic("mustMarshal: " + err.Error())
+	}
 	return b
 }
 

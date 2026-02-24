@@ -92,7 +92,10 @@ func (as *ArtifactStore) persistMeta(art *Artifact) {
 	}
 	dir := filepath.Join(as.dataDir, "artifacts", strconv.FormatInt(art.ID, 10))
 	os.MkdirAll(dir, 0o755)
-	data, _ := json.Marshal(art)
+	data, err := json.Marshal(art)
+	if err != nil {
+		return
+	}
 	os.WriteFile(filepath.Join(dir, "meta.json"), data, 0o644)
 }
 
@@ -205,7 +208,10 @@ func (s *Server) handleFinalizeArtifact(w http.ResponseWriter, r *http.Request) 
 		Name string `json:"name"`
 		Size int64  `json:"size"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
 
 	s.artifactStore.mu.Lock()
 	var found *Artifact
@@ -260,7 +266,10 @@ func (s *Server) handleGetSignedArtifactURL(w http.ResponseWriter, r *http.Reque
 	var req struct {
 		Name string `json:"name"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
 
 	s.artifactStore.mu.RLock()
 	var found *Artifact

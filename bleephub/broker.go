@@ -141,8 +141,8 @@ func (s *Server) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 // sendMessageToAgent sends a TaskAgentMessage to the next available session
 // using round-robin distribution for fair load balancing.
 func (s *Server) sendMessageToAgent(msg *TaskAgentMessage) bool {
-	s.store.mu.RLock()
-	defer s.store.mu.RUnlock()
+	s.store.mu.Lock()
+	defer s.store.mu.Unlock()
 
 	if len(s.store.Sessions) == 0 {
 		return false

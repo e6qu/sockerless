@@ -51,8 +51,17 @@ type WorkflowJob struct {
 	Def             *JobDef                `json:"-"`
 }
 
+// WorkflowEventMeta carries event metadata to be set on the workflow before dispatch.
+type WorkflowEventMeta struct {
+	EventName string
+	Ref       string
+	Sha       string
+	Repo      string
+	Inputs    map[string]string
+}
+
 // submitWorkflow creates a Workflow from a WorkflowDef and begins dispatching jobs.
-func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *WorkflowDef, defaultImage string) (*Workflow, error) {
+func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *WorkflowDef, defaultImage string, eventMeta ...*WorkflowEventMeta) (*Workflow, error) {
 	ctx, span := otel.Tracer("bleephub").Start(ctx, "submitWorkflow",
 		trace.WithAttributes(attribute.String("workflow.name", wf.Name)))
 	defer span.End()
@@ -132,6 +141,16 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 		workflow.Jobs[key] = wfJob
 	}
 
+	// Apply event metadata before any goroutines can observe the workflow
+	if len(eventMeta) > 0 && eventMeta[0] != nil {
+		m := eventMeta[0]
+		workflow.EventName = m.EventName
+		workflow.Ref = m.Ref
+		workflow.Sha = m.Sha
+		workflow.RepoFullName = m.Repo
+		workflow.Inputs = m.Inputs
+	}
+
 	// Handle concurrency control
 	if workflow.ConcurrencyGroup != "" {
 		s.store.mu.RLock()
@@ -188,7 +207,10 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 		trace.WithAttributes(attribute.String("workflow.id", wf.ID)))
 	defer span.End()
 	for {
+		// Hold write lock while evaluating and updating job statuses
+		s.store.mu.Lock()
 		changed := false
+		var toDispatch []*WorkflowJob
 		for _, wfJob := range wf.Jobs {
 			if wfJob.Status != "pending" {
 				continue
@@ -275,10 +297,19 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 				}
 			}
 
-			// Dispatch this job
-			s.dispatchWorkflowJob(ctx, wf, wfJob, serverURL, defaultImage)
+			// Mark as queued now so max-parallel checks in this iteration see it
+			wfJob.Status = "queued"
+			wfJob.StartedAt = time.Now()
+			toDispatch = append(toDispatch, wfJob)
 			changed = true
 		}
+		s.store.mu.Unlock()
+
+		// Dispatch collected jobs outside the lock (dispatchWorkflowJob acquires its own locks)
+		for _, wfJob := range toDispatch {
+			s.dispatchWorkflowJob(ctx, wf, wfJob, serverURL, defaultImage)
+		}
+
 		if !changed {
 			break
 		}
@@ -297,7 +328,11 @@ func (s *Server) dispatchWorkflowJob(ctx context.Context, wf *Workflow, wfJob *W
 	requestID := s.nextRequestID()
 
 	msg := s.buildJobMessageFromDef(serverURL, wf, wfJob, planID, timelineID, requestID, defaultImage)
-	msgJSON, _ := json.Marshal(msg)
+	msgJSON, err := json.Marshal(msg)
+	if err != nil {
+		s.logger.Error().Err(err).Str("job", wfJob.Key).Msg("failed to marshal job message")
+		return
+	}
 
 	job := &Job{
 		ID:          wfJob.JobID,
@@ -312,9 +347,6 @@ func (s *Server) dispatchWorkflowJob(ctx context.Context, wf *Workflow, wfJob *W
 	s.store.mu.Lock()
 	s.store.Jobs[wfJob.JobID] = job
 	s.store.mu.Unlock()
-
-	wfJob.Status = "queued"
-	wfJob.StartedAt = time.Now()
 
 	envelope := &TaskAgentMessage{
 		MessageID:   s.nextMessageID(),
@@ -346,7 +378,9 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 			attribute.String("job.id", jobID),
 			attribute.String("job.result", result)))
 	defer span.End()
-	s.store.mu.RLock()
+
+	// Find the workflow and job under write lock, update status atomically
+	s.store.mu.Lock()
 	var foundWf *Workflow
 	var foundJob *WorkflowJob
 	for _, wf := range s.store.Workflows {
@@ -361,27 +395,14 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 			break
 		}
 	}
-	s.store.mu.RUnlock()
 
 	if foundWf == nil {
+		s.store.mu.Unlock()
 		return // Not a workflow job
 	}
 
 	foundJob.Status = "completed"
 	foundJob.Result = normalizeResult(result)
-
-	if s.metrics != nil {
-		duration := time.Since(foundWf.CreatedAt)
-		s.metrics.RecordJobCompletion(foundJob.Result, duration)
-	}
-
-	s.logger.Info().
-		Str("workflow_id", foundWf.ID).
-		Str("workflow_name", foundWf.Name).
-		Str("job_key", foundJob.Key).
-		Str("job_id", foundJob.JobID).
-		Str("result", foundJob.Result).
-		Msg("workflow job completed")
 
 	// Matrix fail-fast: if this job failed and it's in a matrix group, cancel siblings
 	if foundJob.Result == "failure" && foundJob.MatrixGroup != "" {
@@ -408,6 +429,20 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 			}
 		}
 	}
+	s.store.mu.Unlock()
+
+	if s.metrics != nil {
+		duration := time.Since(foundWf.CreatedAt)
+		s.metrics.RecordJobCompletion(foundJob.Result, duration)
+	}
+
+	s.logger.Info().
+		Str("workflow_id", foundWf.ID).
+		Str("workflow_name", foundWf.Name).
+		Str("job_key", foundJob.Key).
+		Str("job_id", foundJob.JobID).
+		Str("result", foundJob.Result).
+		Msg("workflow job completed")
 
 	// Dispatch any newly-ready jobs (this may also mark some as skipped)
 	if foundWf.Env != nil {
@@ -418,6 +453,7 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 	}
 
 	// Check if all jobs are done (after dispatch, which may skip dependents)
+	s.store.mu.Lock()
 	allDone := true
 	anyFailed := false
 	for _, wfJob := range foundWf.Jobs {
@@ -436,6 +472,11 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 		} else {
 			foundWf.Result = "success"
 		}
+	}
+	concurrencyGroup := foundWf.ConcurrencyGroup
+	s.store.mu.Unlock()
+
+	if allDone {
 		if s.metrics != nil {
 			s.metrics.RecordWorkflowComplete()
 		}
@@ -451,14 +492,15 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 			Msg("workflow completed")
 
 		// Check for pending-concurrency workflows in the same group
-		if foundWf.ConcurrencyGroup != "" {
-			s.startPendingConcurrencyWorkflow(foundWf.ConcurrencyGroup)
+		if concurrencyGroup != "" {
+			s.startPendingConcurrencyWorkflow(concurrencyGroup)
 		}
 	}
 }
 
 // cancelWorkflow cancels all pending/queued jobs and marks the workflow as cancelled.
 func (s *Server) cancelWorkflow(wf *Workflow) {
+	s.store.mu.Lock()
 	for _, wfJob := range wf.Jobs {
 		if wfJob.Status == "pending" || wfJob.Status == "queued" {
 			wfJob.Status = "completed"
@@ -467,6 +509,8 @@ func (s *Server) cancelWorkflow(wf *Workflow) {
 	}
 	wf.Status = "completed"
 	wf.Result = "cancelled"
+	s.store.mu.Unlock()
+
 	if wf.cancelTimeout != nil {
 		wf.cancelTimeout()
 	}
@@ -482,7 +526,7 @@ func (s *Server) cancelWorkflow(wf *Workflow) {
 // startPendingConcurrencyWorkflow finds and starts the next pending-concurrency
 // workflow in the given concurrency group.
 func (s *Server) startPendingConcurrencyWorkflow(group string) {
-	s.store.mu.RLock()
+	s.store.mu.Lock()
 	var pendingWf *Workflow
 	for _, wf := range s.store.Workflows {
 		if wf.ConcurrencyGroup == group && wf.Status == "pending_concurrency" {
@@ -491,13 +535,15 @@ func (s *Server) startPendingConcurrencyWorkflow(group string) {
 			}
 		}
 	}
-	s.store.mu.RUnlock()
 
 	if pendingWf == nil {
+		s.store.mu.Unlock()
 		return
 	}
 
 	pendingWf.Status = "running"
+	s.store.mu.Unlock()
+
 	if s.metrics != nil {
 		s.metrics.RecordWorkflowSubmit()
 	}
@@ -549,10 +595,13 @@ func (s *Server) startTimeoutWatcher(wf *Workflow) {
 
 // checkJobTimeouts cancels jobs that have exceeded their timeout.
 func (s *Server) checkJobTimeouts(wf *Workflow) {
+	s.store.mu.Lock()
 	if wf.Status == "completed" {
+		s.store.mu.Unlock()
 		return
 	}
 	now := time.Now()
+	var timedOut bool
 	for _, wfJob := range wf.Jobs {
 		if wfJob.Status != "queued" && wfJob.Status != "running" {
 			continue
@@ -572,11 +621,16 @@ func (s *Server) checkJobTimeouts(wf *Workflow) {
 				Msg("job timed out, marking cancelled")
 			wfJob.Status = "completed"
 			wfJob.Result = "cancelled"
-			// Re-dispatch to handle dependents
-			if wf.Env != nil {
-				if serverURL, ok := wf.Env["__serverURL"]; ok {
-					s.dispatchReadyJobs(context.Background(), wf, serverURL, wf.Env["__defaultImage"])
-				}
+			timedOut = true
+		}
+	}
+	s.store.mu.Unlock()
+
+	// Re-dispatch to handle dependents (outside lock since dispatchReadyJobs acquires locks)
+	if timedOut {
+		if wf.Env != nil {
+			if serverURL, ok := wf.Env["__serverURL"]; ok {
+				s.dispatchReadyJobs(context.Background(), wf, serverURL, wf.Env["__defaultImage"])
 			}
 		}
 	}
