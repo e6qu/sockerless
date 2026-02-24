@@ -1,0 +1,76 @@
+# simulator
+
+Shared framework for building cloud service simulators. Provides HTTP server infrastructure, request routing, in-memory state management, authentication passthrough, and provider-specific error formatting.
+
+All three cloud simulators (AWS, GCP, Azure) import this library as `sim`.
+
+## Components
+
+| File | Purpose |
+|------|---------|
+| `server.go` | HTTP server with graceful shutdown, TLS support, health endpoint |
+| `config.go` | Configuration from environment variables |
+| `router.go` | AWS (`X-Amz-Target`), GCP (REST path), and Azure (ARM path) request routers |
+| `state.go` | Generic thread-safe `StateStore[T]` for in-memory resources |
+| `errors.go` | Provider-specific error formatters (AWS JSON, GCP JSON, Azure ARM, AWS XML) |
+| `middleware.go` | Request ID generation, identity extraction, request logging |
+
+## StateStore
+
+Generic, thread-safe key-value store for simulated resources:
+
+```go
+store := sim.NewStateStore[*VPC]()
+store.Put("vpc-123", &VPC{ID: "vpc-123"})
+vpc, ok := store.Get("vpc-123")
+store.Delete("vpc-123")
+store.List()   // returns all values
+store.Count()  // returns count
+```
+
+## Routers
+
+### AWSRouter
+Routes by `X-Amz-Target` header (AWS JSON protocol):
+```go
+router := sim.NewAWSRouter()
+router.Register("AmazonEC2ContainerServiceV20141113.RunTask", handleRunTask)
+```
+
+### Path-based routing
+GCP and Azure simulators register handlers on the server mux directly.
+
+## Error formatting
+
+```go
+sim.AWSError(w, "ResourceNotFoundException", "Cluster not found", 400)
+sim.GCPError(w, 404, "Zone not found", "NOT_FOUND")
+sim.AzureError(w, 404, "ResourceNotFound", "Resource group not found")
+```
+
+## Configuration
+
+Loaded from environment variables via `sim.ConfigFromEnv(provider)`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SIM_LISTEN_ADDR` | `:8443` | Listen address |
+| `SIM_TLS_CERT` | — | TLS certificate file path |
+| `SIM_TLS_KEY` | — | TLS private key file path |
+| `SIM_LOG_LEVEL` | `info` | Log level: trace, debug, info, warn, error |
+
+## Usage
+
+```go
+cfg := sim.ConfigFromEnv("aws")
+srv := sim.NewServer(cfg)
+
+// Register service handlers
+srv.Handle("/ecs/", ecsHandler)
+
+srv.Run() // blocks until SIGTERM/SIGINT
+```
+
+## Testing
+
+This library is tested transitively through the simulator and SDK/CLI/Terraform test suites.
