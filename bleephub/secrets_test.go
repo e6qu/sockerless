@@ -54,7 +54,10 @@ func TestSecretsUpdate(t *testing.T) {
 		bytes.NewBufferString(`{"value":"v1"}`))
 	req.Header.Set("Authorization", "token "+token)
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resp.Body.Close()
 	if resp.StatusCode != 201 {
 		t.Fatalf("create: status %d, want 201", resp.StatusCode)
@@ -65,7 +68,10 @@ func TestSecretsUpdate(t *testing.T) {
 		bytes.NewBufferString(`{"value":"v2"}`))
 	req2.Header.Set("Authorization", "token "+token)
 	req2.Header.Set("Content-Type", "application/json")
-	resp2, _ := http.DefaultClient.Do(req2)
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resp2.Body.Close()
 	if resp2.StatusCode != 204 {
 		t.Fatalf("update: status %d, want 204", resp2.StatusCode)
@@ -80,13 +86,19 @@ func TestSecretsValueNotExposed(t *testing.T) {
 		bytes.NewBufferString(`{"value":"top-secret"}`))
 	req.Header.Set("Authorization", "token "+token)
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resp.Body.Close()
 
 	// GET single secret — should not contain value
 	req2, _ := http.NewRequest("GET", testBaseURL+"/api/v3/repos/owner/repo/actions/secrets/HIDDEN_VAL", nil)
 	req2.Header.Set("Authorization", "token "+token)
-	resp2, _ := http.DefaultClient.Do(req2)
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp2.Body.Close()
 
 	body, _ := io.ReadAll(resp2.Body)
@@ -103,13 +115,19 @@ func TestSecretsDelete(t *testing.T) {
 		bytes.NewBufferString(`{"value":"val"}`))
 	req.Header.Set("Authorization", "token "+token)
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resp.Body.Close()
 
 	// Delete
 	req2, _ := http.NewRequest("DELETE", testBaseURL+"/api/v3/repos/owner/repo/actions/secrets/DELETE_ME", nil)
 	req2.Header.Set("Authorization", "token "+token)
-	resp2, _ := http.DefaultClient.Do(req2)
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resp2.Body.Close()
 	if resp2.StatusCode != 204 {
 		t.Fatalf("delete: status %d, want 204", resp2.StatusCode)
@@ -118,7 +136,10 @@ func TestSecretsDelete(t *testing.T) {
 	// Verify gone
 	req3, _ := http.NewRequest("GET", testBaseURL+"/api/v3/repos/owner/repo/actions/secrets/DELETE_ME", nil)
 	req3.Header.Set("Authorization", "token "+token)
-	resp3, _ := http.DefaultClient.Do(req3)
+	resp3, err := http.DefaultClient.Do(req3)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resp3.Body.Close()
 	if resp3.StatusCode != 404 {
 		t.Fatalf("after delete: status %d, want 404", resp3.StatusCode)
@@ -142,7 +163,10 @@ func TestSecretsMissingRepo404(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", testBaseURL+"/api/v3/repos/nonexist/repo/actions/secrets/NOPE", nil)
 	req.Header.Set("Authorization", "token "+token)
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resp.Body.Close()
 	if resp.StatusCode != 404 {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)

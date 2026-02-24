@@ -121,7 +121,10 @@ func (s *Server) handleFinishJob(w http.ResponseWriter, r *http.Request) {
 	planID := r.PathValue("planId")
 
 	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
 
 	result, _ := body["result"].(string)
 	jobID, _ := body["jobId"].(string)
@@ -170,7 +173,7 @@ func (s *Server) captureJobOutputs(jobID string, body map[string]interface{}) {
 		return
 	}
 
-	s.store.mu.RLock()
+	s.store.mu.Lock()
 	var wfJob *WorkflowJob
 	for _, wf := range s.store.Workflows {
 		if j, ok := wf.Jobs[""]; ok && j.JobID == jobID {
@@ -187,17 +190,19 @@ func (s *Server) captureJobOutputs(jobID string, body map[string]interface{}) {
 			break
 		}
 	}
-	s.store.mu.RUnlock()
 
 	if wfJob == nil || wfJob.Def == nil {
+		s.store.mu.Unlock()
 		return
 	}
 
 	resolved := resolveJobOutputs(outputVars, wfJob.Def.Outputs)
+	for k, v := range resolved {
+		wfJob.Outputs[k] = v
+	}
+	s.store.mu.Unlock()
+
 	if len(resolved) > 0 {
-		for k, v := range resolved {
-			wfJob.Outputs[k] = v
-		}
 		s.logger.Info().
 			Str("jobId", jobID).
 			Interface("outputs", resolved).

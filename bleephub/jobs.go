@@ -61,7 +61,11 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 	requestID := s.nextRequestID()
 
 	msg := buildJobMessage(serverURL, jobID, planID, timelineID, requestID, &req)
-	msgJSON, _ := json.Marshal(msg)
+	msgJSON, err := json.Marshal(msg)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 
 	job := &Job{
 		ID:          jobID,
@@ -197,18 +201,19 @@ func (s *Server) handleSubmitWorkflow(w http.ResponseWriter, r *http.Request) {
 	expandedDef.Env["__serverURL"] = serverURL
 	expandedDef.Env["__defaultImage"] = req.Image
 
-	workflow, err := s.submitWorkflow(r.Context(), serverURL, expandedDef, req.Image)
+	eventMeta := WorkflowEventMeta{
+		EventName: eventName,
+		Ref:       ref,
+		Sha:       sha,
+		Repo:      repo,
+		Inputs:    req.Inputs,
+	}
+
+	workflow, err := s.submitWorkflow(r.Context(), serverURL, expandedDef, req.Image, &eventMeta)
 	if err != nil {
 		http.Error(w, "submit: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	// Set event metadata on the workflow
-	workflow.EventName = eventName
-	workflow.Ref = ref
-	workflow.Sha = sha
-	workflow.RepoFullName = repo
-	workflow.Inputs = req.Inputs
 
 	s.logger.Info().
 		Str("workflow_id", workflow.ID).
