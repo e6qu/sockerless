@@ -16,14 +16,15 @@ import (
 
 // ExecSession handles an exec request: fork+exec a child process.
 type ExecSession struct {
-	id     string
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	ptmx   *os.File // non-nil when TTY mode
-	conn   *websocket.Conn
-	connMu *sync.Mutex
-	logger zerolog.Logger
-	done   chan struct{}
+	id       string
+	cmd      *exec.Cmd
+	stdin    io.WriteCloser
+	ptmx     *os.File // non-nil when TTY mode
+	conn     *websocket.Conn
+	connMu   *sync.Mutex
+	logger   zerolog.Logger
+	done     chan struct{}
+	streamWg sync.WaitGroup // tracks readStream/readPTY goroutines
 }
 
 // NewExecSession creates and starts an exec session.
@@ -75,6 +76,7 @@ func (s *ExecSession) startWithPTY() error {
 	s.ptmx = ptmx
 	s.stdin = ptmx
 
+	s.streamWg.Add(1)
 	go s.readPTY(ptmx)
 	go s.waitAndNotify()
 	return nil
@@ -100,6 +102,7 @@ func (s *ExecSession) startWithPipes() error {
 		return err
 	}
 
+	s.streamWg.Add(2)
 	go s.readStream(stdout, TypeStdout)
 	go s.readStream(stderr, TypeStderr)
 	go s.waitAndNotify()
@@ -107,6 +110,7 @@ func (s *ExecSession) startWithPipes() error {
 }
 
 func (s *ExecSession) readPTY(r io.Reader) {
+	defer s.streamWg.Done()
 	buf := make([]byte, 32*1024)
 	for {
 		n, err := r.Read(buf)
@@ -120,6 +124,7 @@ func (s *ExecSession) readPTY(r io.Reader) {
 }
 
 func (s *ExecSession) readStream(r io.Reader, streamType string) {
+	defer s.streamWg.Done()
 	buf := make([]byte, 32*1024)
 	for {
 		n, err := r.Read(buf)
@@ -156,6 +161,10 @@ func (s *ExecSession) waitAndNotify() {
 			code = 1
 		}
 	}
+
+	// Wait for stream readers to finish sending all output before sending exit.
+	s.streamWg.Wait()
+
 	s.logger.Debug().Int("code", code).Msg("process exited")
 
 	msg := Message{
