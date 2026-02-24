@@ -395,28 +395,25 @@ func TestAgentExecConcurrent(t *testing.T) {
 	conn := dialAgent(t, addr)
 	defer conn.Close()
 
-	// Launch 3 concurrent exec sessions.
-	// Use sh -c with a small sleep to prevent processes from completing
-	// before all commands are dispatched on the agent side.
+	// Use "cat" which blocks on stdin — we control exactly when each
+	// process produces output and exits by writing stdin then closing it.
 	sessions := []struct {
 		id  string
-		cmd []string
 		exp string
 	}{
-		{"concurrent-1", []string{"sh", "-c", "sleep 0.1 && echo one"}, "one"},
-		{"concurrent-2", []string{"sh", "-c", "sleep 0.1 && echo two"}, "two"},
-		{"concurrent-3", []string{"sh", "-c", "sleep 0.1 && echo three"}, "three"},
+		{"concurrent-1", "one"},
+		{"concurrent-2", "two"},
+		{"concurrent-3", "three"},
 	}
 
-	// Start reader goroutine before sending commands to avoid missing
-	// responses that arrive before we call ReadMessage.
+	// Start reader in background — collects all messages.
 	results := make(map[string]string)
 	exitCodes := make(map[string]int)
 	var mu sync.Mutex
-	done := make(chan struct{})
+	readerDone := make(chan struct{})
 
 	go func() {
-		defer close(done)
+		defer close(readerDone)
 		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 		for {
 			_, data, err := conn.ReadMessage()
@@ -436,7 +433,7 @@ func TestAgentExecConcurrent(t *testing.T) {
 					exitCodes[msg.ID] = *msg.Code
 				}
 			}
-			complete := len(exitCodes) >= 3 && len(results) >= 3
+			complete := len(exitCodes) >= 3
 			mu.Unlock()
 
 			if complete {
@@ -445,15 +442,29 @@ func TestAgentExecConcurrent(t *testing.T) {
 		}
 	}()
 
+	// Launch all 3 "cat" sessions — they block on stdin.
 	for _, s := range sessions {
 		conn.WriteJSON(agentMessage{
 			Type: "exec",
 			ID:   s.id,
-			Cmd:  s.cmd,
+			Cmd:  []string{"cat"},
 		})
 	}
 
-	<-done
+	// Feed each session its input and close stdin to let it exit.
+	for _, s := range sessions {
+		conn.WriteJSON(agentMessage{
+			Type: "stdin",
+			ID:   s.id,
+			Data: base64.StdEncoding.EncodeToString([]byte(s.exp + "\n")),
+		})
+		conn.WriteJSON(agentMessage{
+			Type: "close_stdin",
+			ID:   s.id,
+		})
+	}
+
+	<-readerDone
 	conn.SetReadDeadline(time.Time{})
 
 	mu.Lock()
