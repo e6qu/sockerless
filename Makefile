@@ -66,38 +66,34 @@ lint:
 	    cd $(CURDIR)/$$mod && golangci-lint run ./... || exit 1; \
 	done
 
-# Simulator integration tests — individual backends
+# Simulator integration tests — individual backends (per-module)
 sim-test-ecs:
-	cd tests && SOCKERLESS_SIM=ecs go test -run 'TestECS' -v -timeout 5m
+	cd backends/ecs && $(MAKE) integration-test
 
 sim-test-lambda:
-	cd tests && SOCKERLESS_SIM=lambda go test -run 'TestLambda' -v -timeout 5m
+	cd backends/lambda && $(MAKE) integration-test
 
 sim-test-cloudrun:
-	cd tests && SOCKERLESS_SIM=cloudrun go test -run 'TestCloudRun' -v -timeout 5m
+	cd backends/cloudrun && $(MAKE) integration-test
 
 sim-test-gcf:
-	cd tests && SOCKERLESS_SIM=gcf go test -run 'TestGCF' -v -timeout 5m
+	cd backends/cloudrun-functions && $(MAKE) integration-test
 
 sim-test-aca:
-	cd tests && SOCKERLESS_SIM=aca go test -run 'TestACA' -v -timeout 5m
+	cd backends/aca && $(MAKE) integration-test
 
 sim-test-azf:
-	cd tests && SOCKERLESS_SIM=azf go test -run 'TestAZF' -v -timeout 5m
+	cd backends/azure-functions && $(MAKE) integration-test
 
 # Simulator integration tests — per cloud
-sim-test-aws:
-	cd tests && SOCKERLESS_SIM=ecs,lambda go test -run 'TestECS|TestLambda' -v -timeout 5m
+sim-test-aws: sim-test-ecs sim-test-lambda
 
-sim-test-gcp:
-	cd tests && SOCKERLESS_SIM=cloudrun,gcf go test -run 'TestCloudRun|TestGCF' -v -timeout 5m
+sim-test-gcp: sim-test-cloudrun sim-test-gcf
 
-sim-test-azure:
-	cd tests && SOCKERLESS_SIM=aca,azf go test -run 'TestACA|TestAZF' -v -timeout 5m
+sim-test-azure: sim-test-aca sim-test-azf
 
 # Simulator integration tests — all backends
-sim-test-all:
-	cd tests && SOCKERLESS_SIM=ecs,lambda,cloudrun,gcf,aca,azf go test -v -timeout 10m
+sim-test-all: sim-test-aws sim-test-gcp sim-test-azure
 
 # Smoke tests — act (GitHub Actions runner)
 smoke-test-act:
