@@ -1,6 +1,7 @@
 .PHONY: sim-test-ecs sim-test-lambda sim-test-cloudrun sim-test-gcf sim-test-aca sim-test-azf
 .PHONY: sim-test-aws sim-test-gcp sim-test-azure sim-test-all
-.PHONY: test lint
+.PHONY: test test-unit test-e2e lint
+.PHONY: test-agent test-sandbox test-core test-frontend test-bleephub test-gitlabhub
 .PHONY: bleephub-test bleephub-gh-test gitlabhub-test
 .PHONY: smoke-test-act smoke-test-act-ecs smoke-test-act-cloudrun smoke-test-act-aca smoke-test-act-all
 .PHONY: smoke-test-gitlab smoke-test-gitlab-ecs smoke-test-gitlab-cloudrun smoke-test-gitlab-aca smoke-test-gitlab-all
@@ -17,10 +18,41 @@
 .PHONY: upstream-test-gcl-cloudrun upstream-test-gcl-gcf upstream-test-gcl-aca upstream-test-gcl-azf
 .PHONY: upstream-test-gcl-all
 
-# Run unit/integration tests against the memory backend
-test:
-	cd sandbox && go test -v -timeout 1m
-	cd tests && go test -v -timeout 2m
+# Per-module unit test targets
+test-agent:
+	@echo "=== test agent ==="
+	cd agent && go test -v -race -timeout 2m ./...
+
+test-sandbox:
+	@echo "=== test sandbox ==="
+	cd sandbox && go test -v -timeout 1m ./...
+
+test-core:
+	@echo "=== test backends/core ==="
+	cd backends/core && go test -v -timeout 2m ./...
+
+test-frontend:
+	@echo "=== test frontends/docker ==="
+	cd frontends/docker && go test -v -timeout 1m ./...
+
+test-bleephub:
+	@echo "=== test bleephub ==="
+	cd bleephub && go test -v -timeout 3m ./...
+
+test-gitlabhub:
+	@echo "=== test gitlabhub ==="
+	cd gitlabhub && go test -v -timeout 3m ./...
+
+# E2E integration tests (builds + starts backend/frontend/agent binaries)
+test-e2e:
+	@echo "=== test e2e ==="
+	cd tests && go test -v -timeout 5m ./...
+
+# All unit tests (per-module)
+test-unit: test-agent test-sandbox test-core test-frontend test-bleephub test-gitlabhub
+
+# All tests (unit + e2e)
+test: test-unit test-e2e
 
 # Lint all Go modules (golangci-lint required)
 MODULES = api agent sandbox frontends/docker backends/core backends/memory \
