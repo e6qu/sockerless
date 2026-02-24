@@ -69,7 +69,11 @@ func contextCreate(args []string) {
 		os.Exit(1)
 	}
 
-	data, _ := json.MarshalIndent(cfg, "", "  ")
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), data, 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -258,7 +262,9 @@ func contextReload() {
 			fmt.Fprintf(os.Stderr, "Backend reload failed: %v\n", err)
 		} else {
 			var resp map[string]any
-			json.Unmarshal(data, &resp)
+			if err := json.Unmarshal(data, &resp); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not parse reload response: %v\n", err)
+			}
 			changed, _ := resp["changed"].(float64)
 			fmt.Printf("Backend reloaded (%d vars changed)\n", int(changed))
 			reloaded++

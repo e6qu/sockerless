@@ -119,7 +119,10 @@ func resourcesCleanup() {
 	}
 
 	var resp map[string]any
-	json.Unmarshal(data, &resp)
+	if err := json.Unmarshal(data, &resp); err != nil {
+		fmt.Fprintf(os.Stderr, "error: could not parse cleanup response: %v\n", err)
+		os.Exit(1)
+	}
 	cleaned, _ := resp["cleaned"].(float64)
 	fmt.Printf("Cleaned up %d resource(s)\n", int(cleaned))
 }

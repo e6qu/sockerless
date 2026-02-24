@@ -28,7 +28,10 @@ func (s *Server) handleVolumeCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var vol api.Volume
-	json.NewDecoder(resp.Body).Decode(&vol)
+	if err := json.NewDecoder(resp.Body).Decode(&vol); err != nil {
+		writeError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusCreated, vol)
 }
 

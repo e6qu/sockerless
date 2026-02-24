@@ -45,13 +45,26 @@ func genSelfSignedCert(t *testing.T, tmpDir string) (certFile, keyFile string) {
 	certFile = filepath.Join(tmpDir, "cert.pem")
 	keyFile = filepath.Join(tmpDir, "key.pem")
 
-	cf, _ := os.Create(certFile)
-	pem.Encode(cf, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	cf, err := os.Create(certFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pem.Encode(cf, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+		t.Fatal(err)
+	}
 	cf.Close()
 
-	keyDER, _ := x509.MarshalECPrivateKey(key)
-	kf, _ := os.Create(keyFile)
-	pem.Encode(kf, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kf, err := os.Create(keyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pem.Encode(kf, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}); err != nil {
+		t.Fatal(err)
+	}
 	kf.Close()
 
 	return certFile, keyFile
@@ -77,7 +90,10 @@ func TestTLSListenerAcceptsHTTPS(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Load cert for verification
-	certPEM, _ := os.ReadFile(certFile)
+	certPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		t.Fatal(err)
+	}
 	pool := x509.NewCertPool()
 	pool.AppendCertsFromPEM(certPEM)
 
@@ -172,7 +188,10 @@ func TestMgmtTLS(t *testing.T) {
 	}()
 	time.Sleep(100 * time.Millisecond)
 
-	certPEM, _ := os.ReadFile(certFile)
+	certPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		t.Fatal(err)
+	}
 	pool := x509.NewCertPool()
 	pool.AppendCertsFromPEM(certPEM)
 
