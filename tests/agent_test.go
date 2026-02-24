@@ -406,6 +406,43 @@ func TestAgentExecConcurrent(t *testing.T) {
 		{"concurrent-3", []string{"echo", "three"}, "three"},
 	}
 
+	// Start reader goroutine before sending commands to avoid missing
+	// responses that arrive before we call ReadMessage.
+	results := make(map[string]string)
+	exitCodes := make(map[string]int)
+	var mu sync.Mutex
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+		for {
+			_, data, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var msg agentMessage
+			json.Unmarshal(data, &msg)
+
+			mu.Lock()
+			switch msg.Type {
+			case "stdout":
+				decoded, _ := base64.StdEncoding.DecodeString(msg.Data)
+				results[msg.ID] += string(decoded)
+			case "exit":
+				if msg.Code != nil {
+					exitCodes[msg.ID] = *msg.Code
+				}
+			}
+			complete := len(exitCodes) >= 3 && len(results) >= 3
+			mu.Unlock()
+
+			if complete {
+				return
+			}
+		}
+	}()
+
 	for _, s := range sessions {
 		conn.WriteJSON(agentMessage{
 			Type: "exec",
@@ -414,43 +451,11 @@ func TestAgentExecConcurrent(t *testing.T) {
 		})
 	}
 
-	// Collect all results
-	results := make(map[string]string)
-	var mu sync.Mutex
-	exitCodes := make(map[string]int)
-
-	deadline := time.Now().Add(10 * time.Second)
-	conn.SetReadDeadline(deadline)
-
-	// We need both stdout and exit for all 3 sessions.
-	// Exit messages can arrive before stdout, so keep reading until we have all 6.
-	for time.Now().Before(deadline) {
-		_, data, err := conn.ReadMessage()
-		if err != nil {
-			break
-		}
-		var msg agentMessage
-		json.Unmarshal(data, &msg)
-
-		mu.Lock()
-		switch msg.Type {
-		case "stdout":
-			decoded, _ := base64.StdEncoding.DecodeString(msg.Data)
-			results[msg.ID] += string(decoded)
-		case "exit":
-			if msg.Code != nil {
-				exitCodes[msg.ID] = *msg.Code
-			}
-		}
-		done := len(exitCodes) >= 3 && len(results) >= 3
-		mu.Unlock()
-
-		if done {
-			break
-		}
-	}
+	<-done
 	conn.SetReadDeadline(time.Time{})
 
+	mu.Lock()
+	defer mu.Unlock()
 	for _, s := range sessions {
 		if exitCodes[s.id] != 0 {
 			t.Errorf("session %s: expected exit code 0, got %d", s.id, exitCodes[s.id])
