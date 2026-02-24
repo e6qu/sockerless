@@ -1,9 +1,10 @@
-package tests
+package agent
 
 import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -32,19 +33,12 @@ type agentMessage struct {
 	Height  int      `json:"height,omitempty"`
 }
 
-var (
-	agentAddr string
-	agentCmd  *exec.Cmd
-)
-
 // startAgent builds and starts the agent binary for tests.
 func startAgent(t *testing.T, keepAlive bool, args ...string) (addr string, cleanup func()) {
 	t.Helper()
 
-	// Build agent
-	agentDir := findModuleDir("agent")
+	// Build agent from within the agent module
 	buildCmd := exec.Command("go", "build", "-o", "sockerless-agent-test", "./cmd/sockerless-agent/")
-	buildCmd.Dir = agentDir
 	buildCmd.Stdout = os.Stderr
 	buildCmd.Stderr = os.Stderr
 	if err := buildCmd.Run(); err != nil {
@@ -61,7 +55,7 @@ func startAgent(t *testing.T, keepAlive bool, args ...string) (addr string, clea
 		cmdArgs = append(cmdArgs, args...)
 	}
 
-	agentBin := agentDir + "/sockerless-agent-test"
+	agentBin := "./sockerless-agent-test"
 	cmd := exec.Command(agentBin, cmdArgs...)
 	cmd.Env = append(os.Environ(), "SOCKERLESS_AGENT_TOKEN=testtoken")
 	cmd.Stdout = os.Stderr
@@ -147,6 +141,31 @@ func collectOutput(t *testing.T, conn *websocket.Conn, sessionID string, timeout
 	}
 	t.Fatal("timeout waiting for exit message")
 	return
+}
+
+func findFreePort() int {
+	l, err := net.Listen("tcp", ":0")
+	if err != nil {
+		panic(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	return port
+}
+
+func waitForReady(url string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(url)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				return nil
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("timeout waiting for %s", url)
 }
 
 // --- Tests ---
