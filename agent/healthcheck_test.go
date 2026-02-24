@@ -58,9 +58,9 @@ func TestHealthCheckUnhealthy(t *testing.T) {
 
 func TestHealthCheckTimeout(t *testing.T) {
 	hc := NewHealthChecker(HealthcheckConfig{
-		Test:     []string{"CMD-SHELL", "sleep 60"},
+		Test:     []string{"CMD", "sleep", "60"},
 		Interval: 50 * time.Millisecond,
-		Timeout:  100 * time.Millisecond,
+		Timeout:  1 * time.Second,
 		Retries:  1,
 	}, testLogger())
 	hc.Start()
