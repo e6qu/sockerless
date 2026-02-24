@@ -108,7 +108,9 @@ func serverStart(args []string) {
 		fmt.Fprintf(os.Stderr, "error starting backend: %v\n", err)
 		os.Exit(1)
 	}
-	os.WriteFile(filepath.Join(runDir, "backend.pid"), []byte(strconv.Itoa(backendCmd.Process.Pid)), 0o644)
+	if err := os.WriteFile(filepath.Join(runDir, "backend.pid"), []byte(strconv.Itoa(backendCmd.Process.Pid)), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not write backend PID file: %v\n", err)
+	}
 	fmt.Printf("Backend started (PID %d) on %s\n", backendCmd.Process.Pid, *backendAddr)
 
 	// Start frontend
@@ -119,7 +121,9 @@ func serverStart(args []string) {
 		fmt.Fprintf(os.Stderr, "error starting frontend: %v\n", err)
 		os.Exit(1)
 	}
-	os.WriteFile(filepath.Join(runDir, "frontend.pid"), []byte(strconv.Itoa(frontendCmd.Process.Pid)), 0o644)
+	if err := os.WriteFile(filepath.Join(runDir, "frontend.pid"), []byte(strconv.Itoa(frontendCmd.Process.Pid)), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not write frontend PID file: %v\n", err)
+	}
 	fmt.Printf("Frontend started (PID %d) on %s (mgmt: %s)\n", frontendCmd.Process.Pid, *frontendAddr, *mgmtAddr)
 
 	// Brief health check wait

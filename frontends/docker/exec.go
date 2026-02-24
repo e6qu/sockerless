@@ -29,7 +29,10 @@ func (s *Server) handleExecCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var result api.ExecCreateResponse
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		writeError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusCreated, result)
 }
 

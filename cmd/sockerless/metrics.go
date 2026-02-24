@@ -19,10 +19,13 @@ func cmdMetrics() {
 			fmt.Fprintf(os.Stderr, "Frontend metrics unavailable: %v\n", err)
 		} else {
 			var m map[string]any
-			json.Unmarshal(data, &m)
-			fmt.Println("=== Frontend Metrics ===")
-			printMetricsMap(m)
-			fmt.Println()
+			if err := json.Unmarshal(data, &m); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not parse frontend metrics: %v\n", err)
+			} else {
+				fmt.Println("=== Frontend Metrics ===")
+				printMetricsMap(m)
+				fmt.Println()
+			}
 		}
 	}
 
@@ -32,9 +35,12 @@ func cmdMetrics() {
 			fmt.Fprintf(os.Stderr, "Backend metrics unavailable: %v\n", err)
 		} else {
 			var m map[string]any
-			json.Unmarshal(data, &m)
-			fmt.Println("=== Backend Metrics ===")
-			printMetricsMap(m)
+			if err := json.Unmarshal(data, &m); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not parse backend metrics: %v\n", err)
+			} else {
+				fmt.Println("=== Backend Metrics ===")
+				printMetricsMap(m)
+			}
 		}
 	}
 }

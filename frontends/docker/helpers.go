@@ -70,7 +70,9 @@ func proxyPassthrough(w http.ResponseWriter, resp *http.Response) {
 // proxyErrorResponse reads an error from the backend and writes it to the client.
 func proxyErrorResponse(w http.ResponseWriter, resp *http.Response) {
 	var errResp api.ErrorResponse
-	json.NewDecoder(resp.Body).Decode(&errResp)
+	if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+		errResp.Message = http.StatusText(resp.StatusCode)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	json.NewEncoder(w).Encode(errResp)

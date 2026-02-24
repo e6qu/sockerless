@@ -242,7 +242,7 @@ func (c *BackendClient) dialUpgrade(method, path string, body any) (net.Conn, *b
 	// Error response — read the body and return error
 	defer resp.Body.Close()
 	var errResp api.ErrorResponse
-	json.NewDecoder(resp.Body).Decode(&errResp)
+	_ = json.NewDecoder(resp.Body).Decode(&errResp)
 	conn.Close()
 	return nil, nil, &httpError{status: resp.StatusCode, message: errResp.Message}
 }

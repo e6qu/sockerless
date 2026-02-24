@@ -28,7 +28,10 @@ func (s *Server) handleNetworkCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var result api.NetworkCreateResponse
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		writeError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusCreated, result)
 }
 
