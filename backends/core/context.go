@@ -34,7 +34,7 @@ func LoadContextEnv(logger zerolog.Logger) {
 	applied := 0
 	for k, v := range cfg.Env {
 		if os.Getenv(k) == "" {
-			os.Setenv(k, v)
+			_ = os.Setenv(k, v)
 			applied++
 		}
 	}

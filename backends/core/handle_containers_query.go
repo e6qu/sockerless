@@ -176,11 +176,20 @@ func (s *BaseServer) handleContainerLogs(w http.ResponseWriter, r *http.Request)
 		filtered = append(filtered, []byte(line+"\n")...)
 	}
 
-	// Write multiplexed stream (stdout header + data)
-	w.Header().Set("Content-Type", "application/vnd.docker.multiplexed-stream")
+	// Write stream — raw for TTY containers, multiplexed otherwise
+	tty := c.Config.Tty
+	if tty {
+		w.Header().Set("Content-Type", "application/vnd.docker.raw-stream")
+	} else {
+		w.Header().Set("Content-Type", "application/vnd.docker.multiplexed-stream")
+	}
 	w.WriteHeader(http.StatusOK)
 	if len(filtered) > 0 {
-		writeMuxChunk(w, 1, filtered)
+		if tty {
+			w.Write(filtered)
+		} else {
+			writeMuxChunk(w, 1, filtered)
+		}
 	}
 
 	// Follow: stream live output
@@ -199,7 +208,11 @@ func (s *BaseServer) handleContainerLogs(w http.ResponseWriter, r *http.Request)
 						return
 					}
 					if len(chunk) > 0 {
-						writeMuxChunk(w, 1, chunk)
+						if tty {
+							w.Write(chunk)
+						} else {
+							writeMuxChunk(w, 1, chunk)
+						}
 						if f, ok := w.(http.Flusher); ok {
 							f.Flush()
 						}
@@ -231,13 +244,13 @@ func (s *BaseServer) handleContainerAttach(w http.ResponseWriter, r *http.Reques
 	// Hijack the connection for bidirectional streaming
 	hj, ok := w.(http.Hijacker)
 	if !ok {
-		http.Error(w, "hijacking not supported", http.StatusInternalServerError)
+		WriteError(w, &api.ServerError{Message: "hijacking not supported"})
 		return
 	}
 
 	conn, buf, err := hj.Hijack()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		WriteError(w, &api.ServerError{Message: err.Error()})
 		return
 	}
 	defer conn.Close()

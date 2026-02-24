@@ -87,7 +87,7 @@ func (s *BaseServer) handleContainerCreate(w http.ResponseWriter, r *http.Reques
 			WriteError(w, &api.NotFoundError{Resource: "pod", ID: podRef})
 			return
 		}
-		s.Store.Pods.AddContainer(pod.ID, id)
+		_ = s.Store.Pods.AddContainer(pod.ID, id)
 	}
 
 	// Implicit pod grouping: NetworkMode "container:<id>" joins the referenced
@@ -97,15 +97,15 @@ func (s *BaseServer) handleContainerCreate(w http.ResponseWriter, r *http.Reques
 		refID, _ = s.Store.ResolveContainerID(refID)
 		if _, inPod := s.Store.Pods.GetPodForContainer(id); !inPod {
 			if pod, exists := s.Store.Pods.GetPodForContainer(refID); exists {
-				s.Store.Pods.AddContainer(pod.ID, id)
+				_ = s.Store.Pods.AddContainer(pod.ID, id)
 			} else {
 				short := refID
 				if len(short) > 12 {
 					short = short[:12]
 				}
 				pod := s.Store.Pods.CreatePod("container-"+short, nil)
-				s.Store.Pods.AddContainer(pod.ID, refID)
-				s.Store.Pods.AddContainer(pod.ID, id)
+				_ = s.Store.Pods.AddContainer(pod.ID, refID)
+				_ = s.Store.Pods.AddContainer(pod.ID, id)
 			}
 		}
 	}
@@ -117,7 +117,7 @@ func (s *BaseServer) handleContainerCreate(w http.ResponseWriter, r *http.Reques
 				continue
 			}
 			if pod, exists := s.Store.Pods.GetPodForNetwork(netName); exists {
-				s.Store.Pods.AddContainer(pod.ID, id)
+				_ = s.Store.Pods.AddContainer(pod.ID, id)
 				break
 			}
 			// Check if the network already has other containers
@@ -131,10 +131,10 @@ func (s *BaseServer) handleContainerCreate(w http.ResponseWriter, r *http.Reques
 						continue
 					}
 					if _, alreadyInPod := s.Store.Pods.GetPodForContainer(existingID); !alreadyInPod {
-						s.Store.Pods.AddContainer(pod.ID, existingID)
+						_ = s.Store.Pods.AddContainer(pod.ID, existingID)
 					}
 				}
-				s.Store.Pods.AddContainer(pod.ID, id)
+				_ = s.Store.Pods.AddContainer(pod.ID, id)
 				break
 			}
 		}
@@ -247,8 +247,8 @@ func (s *BaseServer) handleContainerStart(w http.ResponseWriter, r *http.Request
 			if len(allHosts) > 0 || c.Config.Hostname != "" {
 				hostsContent := BuildHostsFile(c.Config.Hostname, allHosts)
 				etcDir := joinCleanPath(rootPath, "/etc")
-				os.MkdirAll(etcDir, 0o755)
-				os.WriteFile(joinCleanPath(rootPath, "/etc/hosts"), hostsContent, 0o644)
+				_ = os.MkdirAll(etcDir, 0o755)
+				_ = os.WriteFile(joinCleanPath(rootPath, "/etc/hosts"), hostsContent, 0o644)
 			}
 		}
 
@@ -366,6 +366,13 @@ func (s *BaseServer) handleContainerRemove(w http.ResponseWriter, r *http.Reques
 
 	// Clean up container process
 	s.Drivers.ProcessLifecycle.Cleanup(id)
+
+	// Clean up network associations via driver (allows Linux driver to remove veth pairs)
+	for _, ep := range c.NetworkSettings.Networks {
+		if ep != nil && ep.NetworkID != "" {
+			_ = s.Drivers.Network.Disconnect(r.Context(), ep.NetworkID, id)
+		}
+	}
 
 	s.Store.Containers.Delete(id)
 	s.Store.ContainerNames.Delete(c.Name)

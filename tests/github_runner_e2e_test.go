@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
 // TestGitHubRunnerContainerJob simulates a GitHub Actions container job.
@@ -113,12 +115,14 @@ func TestGitHubRunnerContainerJob(t *testing.T) {
 			if err != nil {
 				t.Fatalf("exec start failed: %v", err)
 			}
-			output, _ := io.ReadAll(hijacked.Reader)
+			var stdoutBuf, stderrBuf bytes.Buffer
+			stdcopy.StdCopy(&stdoutBuf, &stderrBuf, hijacked.Reader)
 			hijacked.Close()
-			t.Logf("step output: %q", string(output))
+			output := stdoutBuf.String()
+			t.Logf("step output: %q", output)
 
-			if !strings.Contains(string(output), "hello from github runner") {
-				t.Error("expected output to contain 'hello from github runner'")
+			if !strings.Contains(output, "hello from github runner") {
+				t.Errorf("expected output to contain 'hello from github runner', got: %q", output)
 			}
 
 			// === Step 7: Collect logs ===

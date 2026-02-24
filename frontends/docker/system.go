@@ -18,7 +18,7 @@ func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
-	info, _ := s.backend.Info()
+	info, _ := s.backend.Info(r.Context())
 	version := "0.1.0"
 	if info != nil && info.ServerVersion != "" {
 		version = info.ServerVersion
@@ -51,12 +51,19 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 					"BuildTime":     "2024-01-01T00:00:00.000000000+00:00",
 				},
 			},
+			{
+				"Name":    "containerd",
+				"Version": "1.7.0",
+				"Details": map[string]string{
+					"GitCommit": "sockerless",
+				},
+			},
 		},
 	})
 }
 
 func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
-	info, err := s.backend.Info()
+	info, err := s.backend.Info(r.Context())
 	if err != nil {
 		writeError(w, err)
 		return
@@ -103,6 +110,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		},
 		"DefaultRuntime": "runc",
 		"Swarm":          map[string]any{"LocalNodeState": "inactive"},
+		"Containerd":     map[string]any{"Address": ""},
 	})
 }
 
@@ -119,7 +127,7 @@ func (s *Server) handleNetworkConnect(w http.ResponseWriter, r *http.Request) {
 		writeError(w, &api.InvalidParameterError{Message: err.Error()})
 		return
 	}
-	resp, err := s.backend.post("/networks/"+id+"/connect", &req)
+	resp, err := s.backend.post(r.Context(), "/networks/"+id+"/connect", &req)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -133,7 +141,7 @@ func (s *Server) handleVolumePrune(w http.ResponseWriter, r *http.Request) {
 	if filters := r.URL.Query().Get("filters"); filters != "" {
 		query.Set("filters", filters)
 	}
-	resp, err := s.backend.postWithQuery("/volumes/prune", query, nil)
+	resp, err := s.backend.postWithQuery(r.Context(), "/volumes/prune", query, nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -153,7 +161,7 @@ func (s *Server) handleSystemEvents(w http.ResponseWriter, r *http.Request) {
 	if filters := r.URL.Query().Get("filters"); filters != "" {
 		query.Set("filters", filters)
 	}
-	resp, err := s.backend.getWithQuery("/events", query)
+	resp, err := s.backend.getWithQuery(r.Context(), "/events", query)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -170,7 +178,7 @@ func (s *Server) handleSystemEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSystemDf(w http.ResponseWriter, r *http.Request) {
-	resp, err := s.backend.get("/system/df")
+	resp, err := s.backend.get(r.Context(), "/system/df")
 	if err != nil {
 		writeError(w, err)
 		return

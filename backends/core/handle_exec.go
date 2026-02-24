@@ -133,13 +133,13 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	// Hijack the connection
 	hj, ok := w.(http.Hijacker)
 	if !ok {
-		http.Error(w, "hijacking not supported", http.StatusInternalServerError)
+		WriteError(w, &api.ServerError{Message: "hijacking not supported"})
 		return
 	}
 
 	conn, buf, err := hj.Hijack()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		WriteError(w, &api.ServerError{Message: err.Error()})
 		return
 	}
 	defer conn.Close()

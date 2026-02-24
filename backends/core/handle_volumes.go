@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/sockerless/api"
@@ -94,10 +96,32 @@ func (s *BaseServer) handleVolumeInspect(w http.ResponseWriter, r *http.Request)
 
 func (s *BaseServer) handleVolumeRemove(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !s.Store.Volumes.Delete(name) {
+	force := r.URL.Query().Get("force") == "1" || r.URL.Query().Get("force") == "true"
+
+	if _, ok := s.Store.Volumes.Get(name); !ok {
 		WriteError(w, &api.NotFoundError{Resource: "volume", ID: name})
 		return
 	}
+
+	// Check if volume is in use by any container
+	if !force {
+		for _, c := range s.Store.Containers.List() {
+			for _, m := range c.Mounts {
+				if m.Name == name {
+					cShort := c.ID
+					if len(cShort) > 12 {
+						cShort = cShort[:12]
+					}
+					WriteError(w, &api.ConflictError{
+						Message: fmt.Sprintf("volume is in use - [%s]", cShort),
+					})
+					return
+				}
+			}
+		}
+	}
+
+	s.Store.Volumes.Delete(name)
 	if dir, ok := s.Store.VolumeDirs.LoadAndDelete(name); ok {
 		os.RemoveAll(dir.(string))
 	}
@@ -105,31 +129,32 @@ func (s *BaseServer) handleVolumeRemove(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *BaseServer) handleVolumePrune(w http.ResponseWriter, r *http.Request) {
-	var deleted []string
-	// Delete volumes that have no containers using them
-	for _, v := range s.Store.Volumes.List() {
-		inUse := false
-		for _, c := range s.Store.Containers.List() {
-			for _, m := range c.Mounts {
-				if m.Name == v.Name {
-					inUse = true
-					break
-				}
-			}
-			if inUse {
-				break
+	// Collect in-use volume names from containers
+	inUseNames := make(map[string]bool)
+	for _, c := range s.Store.Containers.List() {
+		for _, m := range c.Mounts {
+			if m.Name != "" {
+				inUseNames[m.Name] = true
 			}
 		}
-		if !inUse {
-			s.Store.Volumes.Delete(v.Name)
-			if dir, ok := s.Store.VolumeDirs.LoadAndDelete(v.Name); ok {
-				os.RemoveAll(dir.(string))
+		// Also check bind-style volume references
+		for _, bind := range c.HostConfig.Binds {
+			parts := strings.SplitN(bind, ":", 3)
+			if len(parts) >= 2 && !filepath.IsAbs(parts[0]) {
+				inUseNames[parts[0]] = true
 			}
-			deleted = append(deleted, v.Name)
 		}
 	}
-	if deleted == nil {
-		deleted = []string{}
+
+	pruned := s.Store.Volumes.PruneIf(func(_ string, v api.Volume) bool {
+		return !inUseNames[v.Name]
+	})
+	deleted := make([]string, 0, len(pruned))
+	for _, v := range pruned {
+		if dir, ok := s.Store.VolumeDirs.LoadAndDelete(v.Name); ok {
+			os.RemoveAll(dir.(string))
+		}
+		deleted = append(deleted, v.Name)
 	}
 	WriteJSON(w, http.StatusOK, api.VolumePruneResponse{
 		VolumesDeleted: deleted,

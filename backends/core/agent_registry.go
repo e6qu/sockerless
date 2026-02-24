@@ -8,6 +8,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/sockerless/agent"
+	"github.com/sockerless/api"
 )
 
 // AgentRegistry manages reverse agent connections from FaaS functions.
@@ -131,19 +132,19 @@ func (s *BaseServer) handleAgentConnect(w http.ResponseWriter, r *http.Request) 
 	token := r.URL.Query().Get("token")
 
 	if containerID == "" {
-		http.Error(w, "missing id parameter", http.StatusBadRequest)
+		WriteError(w, &api.InvalidParameterError{Message: "missing id parameter"})
 		return
 	}
 
 	// Validate token against the container's stored agent token
 	c, ok := s.Store.Containers.Get(containerID)
 	if !ok {
-		http.Error(w, "unknown container", http.StatusNotFound)
+		WriteError(w, &api.NotFoundError{Resource: "container", ID: containerID})
 		return
 	}
 
 	if c.AgentToken != "" && c.AgentToken != token {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		WriteJSON(w, http.StatusUnauthorized, api.ErrorResponse{Message: "unauthorized"})
 		return
 	}
 

@@ -39,31 +39,6 @@ func canReadRepo(st *Store, user *User, repo *Repo) bool {
 	return hasTeamAccess(st, orgLogin, user.ID, repo.FullName, "pull")
 }
 
-// canWriteRepo checks if a user can write to a repository.
-func canWriteRepo(st *Store, user *User, repo *Repo) bool {
-	if user == nil {
-		return false
-	}
-	// Owner can always write
-	if repo.Owner != nil && repo.Owner.ID == user.ID {
-		return true
-	}
-	parts := strings.SplitN(repo.FullName, "/", 2)
-	if len(parts) != 2 {
-		return false
-	}
-	orgLogin := parts[0]
-	org := st.GetOrg(orgLogin)
-	if org == nil {
-		return false
-	}
-	// Org admins have full access
-	if canAdminOrg(st, user, org) {
-		return true
-	}
-	return hasTeamAccess(st, orgLogin, user.ID, repo.FullName, "push")
-}
-
 // canAdminRepo checks if a user has admin rights to a repository.
 func canAdminRepo(st *Store, user *User, repo *Repo) bool {
 	if user == nil {

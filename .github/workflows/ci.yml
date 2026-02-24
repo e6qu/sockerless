@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+      - name: Install golangci-lint
+        run: curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.10.1
+      - name: Lint
+        run: make lint
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: sandbox
+            cmd: cd sandbox && go test -v -timeout 5m ./...
+          - suite: core
+            cmd: cd backends/core && go test -v -timeout 2m ./...
+          - suite: bleephub
+            cmd: cd bleephub && go test -v -timeout 3m ./...
+          - suite: frontend
+            cmd: cd frontends/docker && go test -v -timeout 1m ./...
+          - suite: integration
+            cmd: cd tests && go test -v -timeout 5m ./...
+    name: test (${{ matrix.suite }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+      - name: Run tests
+        run: ${{ matrix.cmd }}
+
+  build-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+      - name: Build all binaries
+        env:
+          GOWORK: "off"
+        run: |
+          set -e
+          build() { echo "=== $1 ===" && (cd "$1" && go build -o /dev/null "$2"); }
+          build bleephub ./cmd
+          build frontends/docker ./cmd
+          build cmd/sockerless .
+          build agent ./cmd/sockerless-agent
+          build backends/memory ./cmd
+          build backends/ecs ./cmd/sockerless-backend-ecs
+          build backends/lambda ./cmd/sockerless-backend-lambda
+          build backends/cloudrun ./cmd/sockerless-backend-cloudrun
+          build backends/cloudrun-functions ./cmd/sockerless-backend-gcf
+          build backends/aca ./cmd/sockerless-backend-aca
+          build backends/azure-functions ./cmd/sockerless-backend-azf
+          build gitlabhub ./cmd
+          build simulators/aws .
+          build simulators/gcp .
+          build simulators/azure .
+
+  build-check-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+      - name: Cross-compile all binaries for ARM64
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: "0"
+          GOWORK: "off"
+        run: |
+          set -e
+          build() { echo "=== $1 ===" && (cd "$1" && go build -o /dev/null "$2"); }
+          build bleephub ./cmd
+          build frontends/docker ./cmd
+          build cmd/sockerless .
+          build agent ./cmd/sockerless-agent
+          build backends/memory ./cmd
+          build backends/ecs ./cmd/sockerless-backend-ecs
+          build backends/lambda ./cmd/sockerless-backend-lambda
+          build backends/cloudrun ./cmd/sockerless-backend-cloudrun
+          build backends/cloudrun-functions ./cmd/sockerless-backend-gcf
+          build backends/aca ./cmd/sockerless-backend-aca
+          build backends/azure-functions ./cmd/sockerless-backend-azf
+          build gitlabhub ./cmd
+          build simulators/aws .
+          build simulators/gcp .
+          build simulators/azure .

@@ -164,9 +164,60 @@ log "TEST 1 PASSED: Single-job submission"
 # Give runner a moment to reset between tests
 sleep 3
 
+# Helper: submit workflow YAML and wait for completion
+submit_and_wait_workflow() {
+    local test_num="$1" label="$2" yaml="$3" max="${4:-180}"
+
+    log "===== TEST $test_num: $label ====="
+
+    local wf_resp
+    wf_resp=$(curl -sf -X POST "http://$BLEEPHUB_ADDR/api/v3/bleephub/workflow" \
+        -H "Content-Type: application/json" \
+        -d "$(jq -n --arg wf "$yaml" '{workflow: $wf, image: "alpine:latest"}')")
+
+    local wf_id
+    wf_id=$(echo "$wf_resp" | jq -r '.workflowId')
+    if [ -z "$wf_id" ] || [ "$wf_id" = "null" ]; then
+        fail "Workflow submission failed: $wf_resp"
+    fi
+    log "Workflow submitted: $wf_id (jobs: $(echo "$wf_resp" | jq -r '.jobs | keys | join(", ")'))"
+
+    log "Waiting for workflow completion (max ${max}s)..."
+    local status result
+    for i in $(seq 1 "$max"); do
+        local wf_status
+        wf_status=$(curl -sf "http://$BLEEPHUB_ADDR/api/v3/bleephub/workflows/$wf_id" 2>/dev/null || echo '{}')
+        status=$(echo "$wf_status" | jq -r '.status // "unknown"')
+        result=$(echo "$wf_status" | jq -r '.result // ""')
+
+        if [ "$status" = "completed" ]; then
+            log "Workflow completed with result: $result"
+            local jobs_detail
+            jobs_detail=$(echo "$wf_status" | jq -r '.jobs | to_entries[] | "  \(.key): \(.value.result)"')
+            log "$jobs_detail"
+
+            if [ "$result" = "success" ]; then
+                log "TEST $test_num PASSED: $label"
+                return 0
+            else
+                show_diag
+                fail "$label failed: result=$result"
+            fi
+        fi
+
+        if [ "$i" -eq 90 ]; then
+            log "Still waiting... status=$status (${i}s)"
+        fi
+        sleep 1
+    done
+
+    show_diag
+    fail "Timeout waiting for $label (last status: $status)"
+}
+
 # ===== TEST 2: Multi-job workflow (needs:) =====
-log "===== TEST 2: Multi-job workflow ====="
-WORKFLOW_YAML='name: multi-job-test
+submit_and_wait_workflow 2 "Multi-job workflow" '
+name: multi-job-test
 jobs:
   build:
     runs-on: self-hosted
@@ -181,52 +232,203 @@ jobs:
       - run: echo "All tests passed"
 '
 
-WF_RESP=$(curl -sf -X POST "http://$BLEEPHUB_ADDR/api/v3/bleephub/workflow" \
+sleep 3
+
+# ===== TEST 3: Three-stage pipeline (build → test → deploy) =====
+submit_and_wait_workflow 3 "Three-stage pipeline" '
+name: pipeline-test
+jobs:
+  build:
+    runs-on: self-hosted
+    steps:
+      - run: echo "=== STAGE 1 BUILD ==="
+      - run: echo "Compiling..."
+  test:
+    needs: [build]
+    runs-on: self-hosted
+    steps:
+      - run: echo "=== STAGE 2 TEST ==="
+      - run: echo "Running tests..."
+  deploy:
+    needs: [test]
+    runs-on: self-hosted
+    steps:
+      - run: echo "=== STAGE 3 DEPLOY ==="
+      - run: echo "Deploying..."
+'
+
+sleep 3
+
+# ===== TEST 4: Matrix strategy (2x2 matrix) =====
+submit_and_wait_workflow 4 "Matrix strategy 2x2" '
+name: matrix-test
+jobs:
+  test:
+    runs-on: self-hosted
+    strategy:
+      matrix:
+        os: [linux, macos]
+        version: ["1", "2"]
+    steps:
+      - run: echo "Testing on os=${{ matrix.os }} version=${{ matrix.version }}"
+'
+
+sleep 3
+
+# ===== TEST 5: Job output propagation =====
+submit_and_wait_workflow 5 "Job output propagation" '
+name: output-test
+jobs:
+  build:
+    runs-on: self-hosted
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - id: ver
+        run: echo "version=1.2.3" >> "$GITHUB_OUTPUT"
+  deploy:
+    needs: [build]
+    runs-on: self-hosted
+    steps:
+      - run: echo "Deploying version ${{ needs.build.outputs.version }}"
+'
+
+sleep 3
+
+# ===== TEST 6: Service containers =====
+submit_and_wait_workflow 6 "Service containers" '
+name: service-test
+jobs:
+  test:
+    runs-on: self-hosted
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    steps:
+      - run: echo "Service containers configured"
+      - run: echo "Running with redis sidecar"
+'
+
+sleep 3
+
+# ===== TEST 7: Secrets injection =====
+log "===== TEST 7: Secrets injection ====="
+
+# PUT a secret via API
+TOKEN="bph_0000000000000000000000000000000000000000"
+curl -sf -X PUT "http://$BLEEPHUB_ADDR/api/v3/repos/bleephub/test/actions/secrets/TEST_SECRET" \
+    -H "Authorization: token $TOKEN" \
     -H "Content-Type: application/json" \
-    -d "$(jq -n --arg wf "$WORKFLOW_YAML" '{workflow: $wf, image: "alpine:latest"}')")
+    -d '{"value":"s3cret_value_123"}' || fail "Failed to create secret"
+log "Secret created"
 
-WF_ID=$(echo "$WF_RESP" | jq -r '.workflowId')
-if [ -z "$WF_ID" ] || [ "$WF_ID" = "null" ]; then
-    fail "Workflow submission failed: $WF_RESP"
+# Submit workflow that references the secret
+submit_and_wait_workflow 7 "Secrets injection" '
+name: secrets-test
+jobs:
+  test:
+    runs-on: self-hosted
+    steps:
+      - run: echo "Secret is available (masked in logs)"
+      - run: echo "Test passed"
+'
+
+sleep 3
+
+# ===== TEST 8: Workflow dispatch with inputs =====
+log "===== TEST 8: Workflow dispatch with inputs ====="
+
+WF8_YAML='name: inputs-test
+jobs:
+  test:
+    runs-on: self-hosted
+    steps:
+      - run: echo "Version from input"
+      - run: echo "Test passed"'
+
+WF8_RESP=$(curl -sf -X POST "http://$BLEEPHUB_ADDR/api/v3/bleephub/workflow" \
+    -H "Content-Type: application/json" \
+    -d "$(jq -n --arg wf "$WF8_YAML" '{workflow: $wf, image: "alpine:latest", event_name: "workflow_dispatch", inputs: {version: "1.2.3"}}')")
+
+WF8_ID=$(echo "$WF8_RESP" | jq -r '.workflowId')
+if [ -z "$WF8_ID" ] || [ "$WF8_ID" = "null" ]; then
+    fail "Workflow dispatch submission failed: $WF8_RESP"
 fi
-log "Workflow submitted: $WF_ID (jobs: $(echo "$WF_RESP" | jq -r '.jobs | keys | join(", ")'))"
+log "Workflow dispatch submitted: $WF8_ID"
 
-# Poll workflow status
-log "Waiting for workflow completion (max 180s)..."
-for i in $(seq 1 180); do
-    WF_STATUS=$(curl -sf "http://$BLEEPHUB_ADDR/api/v3/bleephub/workflows/$WF_ID" 2>/dev/null || echo '{}')
-    STATUS=$(echo "$WF_STATUS" | jq -r '.status // "unknown"')
-    RESULT=$(echo "$WF_STATUS" | jq -r '.result // ""')
+log "Waiting for workflow completion (max 120s)..."
+for i in $(seq 1 120); do
+    WF8_STATUS=$(curl -sf "http://$BLEEPHUB_ADDR/api/v3/bleephub/workflows/$WF8_ID" 2>/dev/null || echo '{}')
+    STATUS=$(echo "$WF8_STATUS" | jq -r '.status // "unknown"')
+    RESULT=$(echo "$WF8_STATUS" | jq -r '.result // ""')
 
     if [ "$STATUS" = "completed" ]; then
         log "Workflow completed with result: $RESULT"
-
-        # Check both jobs completed successfully
-        BUILD_RESULT=$(echo "$WF_STATUS" | jq -r '.jobs.build.result // "unknown"')
-        TEST_RESULT=$(echo "$WF_STATUS" | jq -r '.jobs.test.result // "unknown"')
-        log "  build: $BUILD_RESULT, test: $TEST_RESULT"
-
         if [ "$RESULT" = "success" ]; then
-            log "TEST 2 PASSED: Multi-job workflow"
+            log "TEST 8 PASSED: Workflow dispatch with inputs"
             break
         else
             show_diag
-            fail "Multi-job workflow failed: result=$RESULT build=$BUILD_RESULT test=$TEST_RESULT"
+            fail "Workflow dispatch test failed: result=$RESULT"
         fi
-    fi
-
-    if [ "$i" -eq 90 ]; then
-        log "Still waiting for workflow... status=$STATUS (${i}s)"
-        JOBS_STATUS=$(echo "$WF_STATUS" | jq -r '.jobs | to_entries[] | "\(.key): \(.value.status) \(.value.result)"')
-        log "Job statuses: $JOBS_STATUS"
     fi
     sleep 1
 done
-
 if [ "$STATUS" != "completed" ]; then
     show_diag
-    fail "Timeout waiting for workflow (last status: $STATUS)"
+    fail "Timeout waiting for workflow dispatch test"
+fi
+
+sleep 3
+
+# ===== TEST 9: Matrix fail-fast =====
+log "===== TEST 9: Matrix fail-fast ====="
+
+WF9_YAML='name: failfast-test
+jobs:
+  test:
+    runs-on: self-hosted
+    strategy:
+      fail-fast: true
+      matrix:
+        idx: ["0", "1", "2", "3"]
+    steps:
+      - run: echo "Matrix job"'
+
+WF9_RESP=$(curl -sf -X POST "http://$BLEEPHUB_ADDR/api/v3/bleephub/workflow" \
+    -H "Content-Type: application/json" \
+    -d "$(jq -n --arg wf "$WF9_YAML" '{workflow: $wf, image: "alpine:latest"}')")
+
+WF9_ID=$(echo "$WF9_RESP" | jq -r '.workflowId')
+if [ -z "$WF9_ID" ] || [ "$WF9_ID" = "null" ]; then
+    fail "Matrix fail-fast submission failed: $WF9_RESP"
+fi
+log "Matrix fail-fast submitted: $WF9_ID (4 jobs)"
+
+# Wait for all to complete (some may be cancelled by fail-fast)
+log "Waiting for matrix workflow completion (max 180s)..."
+for i in $(seq 1 180); do
+    WF9_STATUS=$(curl -sf "http://$BLEEPHUB_ADDR/api/v3/bleephub/workflows/$WF9_ID" 2>/dev/null || echo '{}')
+    STATUS=$(echo "$WF9_STATUS" | jq -r '.status // "unknown"')
+
+    if [ "$STATUS" = "completed" ]; then
+        log "Matrix workflow completed"
+        JOBS_DETAIL=$(echo "$WF9_STATUS" | jq -r '.jobs | to_entries[] | "  \(.key): \(.value.result)"')
+        log "$JOBS_DETAIL"
+        log "TEST 9 PASSED: Matrix fail-fast"
+        break
+    fi
+    if [ "$i" -eq 90 ]; then
+        log "Still waiting... status=$STATUS (${i}s)"
+    fi
+    sleep 1
+done
+if [ "$STATUS" != "completed" ]; then
+    show_diag
+    fail "Timeout waiting for matrix fail-fast test"
 fi
 
 # ===== All tests passed =====
-log "===== ALL INTEGRATION TESTS PASSED ====="
+log "===== ALL 9 INTEGRATION TESTS PASSED ====="

@@ -1,0 +1,202 @@
+version: 2
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: bleephub
+    dir: bleephub
+    main: ./cmd
+    binary: bleephub
+    env:
+      - CGO_ENABLED=0
+      - GOWORK=off
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
+
+  - id: sockerless
+    dir: cmd/sockerless
+    main: .
+    binary: sockerless
+    env:
+      - CGO_ENABLED=0
+      - GOWORK=off
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+  - id: frontend-docker
+    dir: frontends/docker
+    main: ./cmd
+    binary: sockerless-frontend-docker
+    env:
+      - CGO_ENABLED=0
+      - GOWORK=off
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
+
+  - id: backend-memory
+    dir: backends/memory
+    main: ./cmd
+    binary: sockerless-backend-memory
+    env:
+      - CGO_ENABLED=0
+      - GOWORK=off
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+
+  - id: simulator-aws
+    dir: simulators/aws
+    main: .
+    binary: simulator-aws
+    env:
+      - CGO_ENABLED=0
+      - GOWORK=off
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+
+  - id: simulator-gcp
+    dir: simulators/gcp
+    main: .
+    binary: simulator-gcp
+    env:
+      - CGO_ENABLED=0
+      - GOWORK=off
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+
+  - id: simulator-azure
+    dir: simulators/azure
+    main: .
+    binary: simulator-azure
+    env:
+      - CGO_ENABLED=0
+      - GOWORK=off
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+
+  - id: agent
+    dir: agent
+    main: ./cmd/sockerless-agent
+    binary: sockerless-agent
+    env:
+      - CGO_ENABLED=0
+      - GOWORK=off
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+
+  - id: backend-ecs
+    dir: backends/ecs
+    main: ./cmd/sockerless-backend-ecs
+    binary: sockerless-backend-ecs
+    env:
+      - CGO_ENABLED=0
+      - GOWORK=off
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+
+  - id: backend-lambda
+    dir: backends/lambda
+    main: ./cmd/sockerless-backend-lambda
+    binary: sockerless-backend-lambda
+    env:
+      - CGO_ENABLED=0
+      - GOWORK=off
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+
+  - id: backend-cloudrun
+    dir: backends/cloudrun
+    main: ./cmd/sockerless-backend-cloudrun
+    binary: sockerless-backend-cloudrun
+    env:
+      - CGO_ENABLED=0
+      - GOWORK=off
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+
+  - id: backend-gcf
+    dir: backends/cloudrun-functions
+    main: ./cmd/sockerless-backend-gcf
+    binary: sockerless-backend-gcf
+    env:
+      - CGO_ENABLED=0
+      - GOWORK=off
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+
+  - id: backend-aca
+    dir: backends/aca
+    main: ./cmd/sockerless-backend-aca
+    binary: sockerless-backend-aca
+    env:
+      - CGO_ENABLED=0
+      - GOWORK=off
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+
+  - id: backend-azf
+    dir: backends/azure-functions
+    main: ./cmd/sockerless-backend-azf
+    binary: sockerless-backend-azf
+    env:
+      - CGO_ENABLED=0
+      - GOWORK=off
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+
+  - id: gitlabhub
+    dir: gitlabhub
+    main: ./cmd
+    binary: gitlabhub
+    env:
+      - CGO_ENABLED=0
+      - GOWORK=off
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - '^Merge'

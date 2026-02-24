@@ -13,6 +13,8 @@ import (
 type contextKey string
 
 const ctxUser contextKey = "gh-user"
+const ctxApp contextKey = "gh-app"
+const ctxInstallation contextKey = "gh-installation"
 
 // ghUserFromContext extracts the authenticated user from the request context.
 func ghUserFromContext(ctx context.Context) *User {
@@ -20,6 +22,11 @@ func ghUserFromContext(ctx context.Context) *User {
 	return u
 }
 
+// ghAppFromContext extracts the JWT-authenticated app from the request context.
+func ghAppFromContext(ctx context.Context) *App {
+	a, _ := ctx.Value(ctxApp).(*App)
+	return a
+}
 
 // ghHeadersMiddleware injects GitHub-compatible response headers on /api/ routes
 // and sets the authenticated user in request context.
@@ -33,9 +40,10 @@ func (s *Server) ghHeadersMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Parse Authorization header: "token {pat}" or "Bearer {pat}"
+		// Parse Authorization header: "token {pat}", "Bearer {pat}", JWT, or ghs_ token
 		var token *Token
 		var user *User
+		ctx := r.Context()
 		if auth := r.Header.Get("Authorization"); auth != "" {
 			var tokenStr string
 			if strings.HasPrefix(auth, "token ") {
@@ -44,12 +52,26 @@ func (s *Server) ghHeadersMiddleware(next http.Handler) http.Handler {
 				tokenStr = strings.TrimPrefix(auth, "Bearer ")
 			}
 			if tokenStr != "" {
-				token, user = s.store.LookupToken(tokenStr)
+				if looksLikeJWT(tokenStr) {
+					if app, err := s.store.parseAndVerifyAppJWT(tokenStr); err == nil {
+						ctx = context.WithValue(ctx, ctxApp, app)
+					}
+				} else if strings.HasPrefix(tokenStr, "ghs_") {
+					if instToken, inst := s.store.LookupInstallationToken(tokenStr); instToken != nil {
+						ctx = context.WithValue(ctx, ctxInstallation, inst)
+						app := s.store.GetApp(instToken.AppID)
+						if app != nil {
+							botUser := &User{Login: app.Slug + "[bot]", Type: "Bot", ID: -app.ID}
+							ctx = context.WithValue(ctx, ctxUser, botUser)
+						}
+					}
+				} else {
+					token, user = s.store.LookupToken(tokenStr)
+				}
 			}
 		}
 
 		// Store user in context
-		ctx := r.Context()
 		if user != nil {
 			ctx = context.WithValue(ctx, ctxUser, user)
 		}

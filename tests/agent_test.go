@@ -395,59 +395,80 @@ func TestAgentExecConcurrent(t *testing.T) {
 	conn := dialAgent(t, addr)
 	defer conn.Close()
 
-	// Launch 3 concurrent exec sessions
+	// Use "cat" which blocks on stdin — we control exactly when each
+	// process produces output and exits by writing stdin then closing it.
 	sessions := []struct {
 		id  string
-		cmd []string
 		exp string
 	}{
-		{"concurrent-1", []string{"echo", "one"}, "one"},
-		{"concurrent-2", []string{"echo", "two"}, "two"},
-		{"concurrent-3", []string{"echo", "three"}, "three"},
+		{"concurrent-1", "one"},
+		{"concurrent-2", "two"},
+		{"concurrent-3", "three"},
 	}
 
+	// Start reader in background — collects all messages.
+	results := make(map[string]string)
+	exitCodes := make(map[string]int)
+	var mu sync.Mutex
+	readerDone := make(chan struct{})
+
+	go func() {
+		defer close(readerDone)
+		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+		for {
+			_, data, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var msg agentMessage
+			json.Unmarshal(data, &msg)
+
+			mu.Lock()
+			switch msg.Type {
+			case "stdout":
+				decoded, _ := base64.StdEncoding.DecodeString(msg.Data)
+				results[msg.ID] += string(decoded)
+			case "exit":
+				if msg.Code != nil {
+					exitCodes[msg.ID] = *msg.Code
+				}
+			}
+			complete := len(exitCodes) >= 3
+			mu.Unlock()
+
+			if complete {
+				return
+			}
+		}
+	}()
+
+	// Launch all 3 "cat" sessions — they block on stdin.
 	for _, s := range sessions {
 		conn.WriteJSON(agentMessage{
 			Type: "exec",
 			ID:   s.id,
-			Cmd:  s.cmd,
+			Cmd:  []string{"cat"},
 		})
 	}
 
-	// Collect all results
-	results := make(map[string]string)
-	var mu sync.Mutex
-	exitCodes := make(map[string]int)
-
-	deadline := time.Now().Add(10 * time.Second)
-	conn.SetReadDeadline(deadline)
-
-	for len(results) < 3 && time.Now().Before(deadline) {
-		_, data, err := conn.ReadMessage()
-		if err != nil {
-			break
-		}
-		var msg agentMessage
-		json.Unmarshal(data, &msg)
-
-		mu.Lock()
-		switch msg.Type {
-		case "stdout":
-			decoded, _ := base64.StdEncoding.DecodeString(msg.Data)
-			results[msg.ID] += string(decoded)
-		case "exit":
-			if msg.Code != nil {
-				exitCodes[msg.ID] = *msg.Code
-			}
-		}
-		mu.Unlock()
-
-		if len(exitCodes) >= 3 {
-			break
-		}
+	// Feed each session its input and close stdin to let it exit.
+	for _, s := range sessions {
+		conn.WriteJSON(agentMessage{
+			Type: "stdin",
+			ID:   s.id,
+			Data: base64.StdEncoding.EncodeToString([]byte(s.exp + "\n")),
+		})
+		conn.WriteJSON(agentMessage{
+			Type: "close_stdin",
+			ID:   s.id,
+		})
 	}
+
+	<-readerDone
 	conn.SetReadDeadline(time.Time{})
 
+	mu.Lock()
+	defer mu.Unlock()
 	for _, s := range sessions {
 		if exitCodes[s.id] != 0 {
 			t.Errorf("session %s: expected exit code 0, got %d", s.id, exitCodes[s.id])

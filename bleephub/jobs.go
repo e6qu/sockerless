@@ -17,6 +17,9 @@ func (s *Server) registerJobRoutes() {
 	s.mux.HandleFunc("POST /api/v3/bleephub/workflow", s.handleSubmitWorkflow)
 	s.mux.HandleFunc("GET /api/v3/bleephub/workflows/{workflowId}", s.handleGetWorkflowStatus)
 
+	// Workflow cancellation
+	s.mux.HandleFunc("POST /api/v3/bleephub/workflows/{workflowId}/cancel", s.handleCancelWorkflow)
+
 	// ActionDownloadInfo — runner requests download URLs for actions (handler in actions.go)
 	s.mux.HandleFunc("POST /_apis/v1/ActionDownloadInfo/{scopeId}/{hubName}/{planId}", s.handleActionDownloadInfo)
 
@@ -113,8 +116,13 @@ func (s *Server) handleGetJobStatus(w http.ResponseWriter, r *http.Request) {
 
 // WorkflowSubmitRequest is the workflow YAML submission format.
 type WorkflowSubmitRequest struct {
-	Workflow string `json:"workflow"` // raw YAML
-	Image    string `json:"image"`    // default container image
+	Workflow  string            `json:"workflow"`   // raw YAML
+	Image     string            `json:"image"`      // default container image
+	EventName string            `json:"event_name"` // default "push"
+	Ref       string            `json:"ref"`        // default "refs/heads/main"
+	Sha       string            `json:"sha"`        // default "0000..."
+	Repo      string            `json:"repo"`       // default "bleephub/test"
+	Inputs    map[string]string `json:"inputs"`     // workflow_dispatch inputs
 }
 
 func (s *Server) handleSubmitWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -135,6 +143,22 @@ func (s *Server) handleSubmitWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Enforce concurrent workflow limit
+	if s.maxConcurrentWorkflows > 0 {
+		s.store.mu.RLock()
+		active := 0
+		for _, wf := range s.store.Workflows {
+			if wf.Status == "running" {
+				active++
+			}
+		}
+		s.store.mu.RUnlock()
+		if active >= s.maxConcurrentWorkflows {
+			http.Error(w, "too many concurrent workflows", http.StatusTooManyRequests)
+			return
+		}
+	}
+
 	if req.Image == "" {
 		req.Image = "alpine:latest"
 	}
@@ -144,6 +168,24 @@ func (s *Server) handleSubmitWorkflow(w http.ResponseWriter, r *http.Request) {
 		scheme = "https"
 	}
 	serverURL := scheme + "://" + r.Host
+
+	// Apply defaults for event metadata
+	eventName := req.EventName
+	if eventName == "" {
+		eventName = "push"
+	}
+	ref := req.Ref
+	if ref == "" {
+		ref = "refs/heads/main"
+	}
+	sha := req.Sha
+	if sha == "" {
+		sha = "0000000000000000000000000000000000000000"
+	}
+	repo := req.Repo
+	if repo == "" {
+		repo = "bleephub/test"
+	}
 
 	// Expand matrix strategies
 	expandedDef := expandMatrixJobs(wfDef)
@@ -155,14 +197,22 @@ func (s *Server) handleSubmitWorkflow(w http.ResponseWriter, r *http.Request) {
 	expandedDef.Env["__serverURL"] = serverURL
 	expandedDef.Env["__defaultImage"] = req.Image
 
-	workflow, err := s.submitWorkflow(serverURL, expandedDef, req.Image)
+	workflow, err := s.submitWorkflow(r.Context(), serverURL, expandedDef, req.Image)
 	if err != nil {
 		http.Error(w, "submit: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	// Set event metadata on the workflow
+	workflow.EventName = eventName
+	workflow.Ref = ref
+	workflow.Sha = sha
+	workflow.RepoFullName = repo
+	workflow.Inputs = req.Inputs
+
 	s.logger.Info().
-		Str("workflowId", workflow.ID).
+		Str("workflow_id", workflow.ID).
+		Str("workflow_name", workflow.Name).
 		Int("jobs", len(workflow.Jobs)).
 		Msg("workflow submitted")
 
@@ -213,13 +263,40 @@ func (s *Server) handleGetWorkflowStatus(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+func (s *Server) handleCancelWorkflow(w http.ResponseWriter, r *http.Request) {
+	wfID := r.PathValue("workflowId")
+
+	s.store.mu.RLock()
+	wf, ok := s.store.Workflows[wfID]
+	s.store.mu.RUnlock()
+
+	if !ok {
+		http.Error(w, "workflow not found", http.StatusNotFound)
+		return
+	}
+
+	if wf.Status == "completed" {
+		http.Error(w, "workflow already completed", http.StatusConflict)
+		return
+	}
+
+	s.cancelWorkflow(wf)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"workflowId": wf.ID,
+		"status":     wf.Status,
+		"result":     wf.Result,
+	})
+}
+
 // expandMatrixJobs expands matrix strategies in a WorkflowDef, creating
 // multiple job entries per matrix combination.
 func expandMatrixJobs(wf *WorkflowDef) *WorkflowDef {
 	expanded := &WorkflowDef{
-		Name: wf.Name,
-		Env:  wf.Env,
-		Jobs: make(map[string]*JobDef),
+		Name:        wf.Name,
+		Env:         wf.Env,
+		Jobs:        make(map[string]*JobDef),
+		Concurrency: wf.Concurrency,
 	}
 
 	for key, jd := range wf.Jobs {
@@ -406,58 +483,21 @@ func buildJobMessage(serverURL, jobID, planID, timelineID string, requestID int6
 			"strategy": nil,
 		},
 		"variables": map[string]interface{}{
-			"system.github.job":                        varVal("test"),
-			"system.github.runid":                      varVal("1"),
-			"system.github.token":                      varSecret(jobToken),
-			"github_token":                             varSecret(jobToken),
-			"system.phaseDisplayName":                  varVal("test"),
-			"system.runnerGroupName":                   varVal("Default"),
-			"DistributedTask.NewActionMetadata":        varVal("true"),
-			"DistributedTask.EnableCompositeActions":   varVal("true"),
+			"system.github.job":                      varVal("test"),
+			"system.github.runid":                    varVal("1"),
+			"system.github.token":                    varSecret(jobToken),
+			"github_token":                           varSecret(jobToken),
+			"system.phaseDisplayName":                varVal("test"),
+			"system.runnerGroupName":                 varVal("Default"),
+			"DistributedTask.NewActionMetadata":      varVal("true"),
+			"DistributedTask.EnableCompositeActions": varVal("true"),
 		},
-		"mask":                  []interface{}{},
-		"steps":                 steps,
-		"workspace":             map[string]interface{}{},
-		"defaults":              nil,
-		"environmentVariables":  nil,
-		"actionsEnvironment":    nil,
-		"fileTable":             []string{".github/workflows/test.yml"},
+		"mask":                 []interface{}{},
+		"steps":                steps,
+		"workspace":            map[string]interface{}{},
+		"defaults":             nil,
+		"environmentVariables": nil,
+		"actionsEnvironment":   nil,
+		"fileTable":            []string{".github/workflows/test.yml"},
 	}
-}
-
-// dictContextData builds a PipelineContextData DictionaryContextData.
-// Args are alternating key, value strings.
-func dictContextData(kvs ...string) map[string]interface{} {
-	entries := make([]map[string]interface{}, 0, len(kvs)/2)
-	for i := 0; i+1 < len(kvs); i += 2 {
-		entries = append(entries, map[string]interface{}{
-			"k": kvs[i],
-			"v": kvs[i+1], // String values are bare JSON strings
-		})
-	}
-	return map[string]interface{}{
-		"t": 2,
-		"d": entries,
-	}
-}
-
-func varVal(value string) map[string]interface{} {
-	return map[string]interface{}{
-		"value":    value,
-		"isSecret": false,
-	}
-}
-
-func varSecret(value string) map[string]interface{} {
-	return map[string]interface{}{
-		"value":    value,
-		"isSecret": true,
-	}
-}
-
-func truncateDisplay(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "..."
 }

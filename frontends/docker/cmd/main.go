@@ -1,12 +1,18 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"os"
 
 	"github.com/rs/zerolog"
 	core "github.com/sockerless/backend-core"
 	frontend "github.com/sockerless/frontend"
+)
+
+var (
+	version = "dev"
+	commit  = "none"
 )
 
 func main() {
@@ -31,6 +37,13 @@ func main() {
 		Logger()
 
 	core.LoadContextEnv(logger)
+
+	shutdown, err := frontend.InitTracer("sockerless-frontend")
+	if err != nil {
+		logger.Fatal().Err(err).Msg("failed to init tracer")
+	}
+	defer func() { _ = shutdown(context.Background()) }()
+
 	s := frontend.NewServer(logger, *backend)
 
 	// Start management API in background, linked to frontend for request counting
@@ -42,7 +55,7 @@ func main() {
 		}
 	}()
 
-	logger.Info().Str("addr", *addr).Str("backend", *backend).Msg("starting docker frontend")
+	logger.Info().Str("version", version).Str("commit", commit).Str("addr", *addr).Str("backend", *backend).Msg("starting docker frontend")
 	if err := s.ListenAndServe(*addr, *tlsCert, *tlsKey); err != nil {
 		logger.Fatal().Err(err).Msg("server failed")
 	}

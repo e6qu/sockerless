@@ -273,6 +273,17 @@ func (s *Server) handleGitReceivePack(w http.ResponseWriter, r *http.Request, ow
 		}
 	}
 
+	// Emit webhook events for each pushed ref
+	repoKey := owner + "/" + repoName
+	for _, cmd := range req.Commands {
+		ref := cmd.Name.String()
+		before := cmd.Old.String()
+		after := cmd.New.String()
+		payload := buildPushPayload(repo, nil, ref, before, after)
+		s.emitWebhookEvent(repoKey, "push", "", payload)
+		go s.triggerWorkflowsForEvent(repoKey, "push", ref)
+	}
+
 	w.Header().Set("Content-Type", "application/x-git-receive-pack-result")
 	if result != nil {
 		if err := result.Encode(w); err != nil {

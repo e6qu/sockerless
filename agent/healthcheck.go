@@ -167,7 +167,8 @@ func (hc *HealthChecker) check() {
 		}
 		hc.recordResult(start, exitCode, outBuf.String())
 	case <-time.After(hc.config.Timeout):
-		cmd.Process.Kill()
+		_ = cmd.Process.Kill()
+		<-done
 		hc.recordResult(start, 1, "health check timed out")
 	}
 }

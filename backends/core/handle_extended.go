@@ -65,19 +65,16 @@ func (s *BaseServer) handleContainerTop(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *BaseServer) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
-	var deleted []string
-	for _, c := range s.Store.Containers.List() {
-		if c.State.Status == "exited" || c.State.Status == "dead" {
-			s.Store.Containers.Delete(c.ID)
-			s.Store.ContainerNames.Delete(c.Name)
-			s.Store.LogBuffers.Delete(c.ID)
-			s.Store.WaitChs.Delete(c.ID)
-			s.Drivers.ProcessLifecycle.Cleanup(c.ID)
-			deleted = append(deleted, c.ID)
-		}
-	}
-	if deleted == nil {
-		deleted = []string{}
+	pruned := s.Store.Containers.PruneIf(func(_ string, c api.Container) bool {
+		return c.State.Status == "exited" || c.State.Status == "dead"
+	})
+	deleted := make([]string, 0, len(pruned))
+	for _, c := range pruned {
+		s.Store.ContainerNames.Delete(c.Name)
+		s.Store.LogBuffers.Delete(c.ID)
+		s.Store.WaitChs.Delete(c.ID)
+		s.Drivers.ProcessLifecycle.Cleanup(c.ID)
+		deleted = append(deleted, c.ID)
 	}
 	WriteJSON(w, http.StatusOK, api.ContainerPruneResponse{
 		ContainersDeleted: deleted,

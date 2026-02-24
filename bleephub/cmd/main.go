@@ -1,11 +1,17 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"os"
 
 	"github.com/rs/zerolog"
 	"github.com/sockerless/bleephub"
+)
+
+var (
+	version = "dev"
+	commit  = "none"
 )
 
 func main() {
@@ -20,6 +26,14 @@ func main() {
 	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).
 		With().Timestamp().Str("service", "bleephub").Logger().
 		Level(level)
+
+	logger.Info().Str("version", version).Str("commit", commit).Msg("starting")
+
+	shutdown, err := bleephub.InitTracer("bleephub")
+	if err != nil {
+		logger.Fatal().Err(err).Msg("failed to init tracer")
+	}
+	defer func() { _ = shutdown(context.Background()) }()
 
 	srv := bleephub.NewServer(*addr, logger)
 	if err := srv.ListenAndServe(); err != nil {

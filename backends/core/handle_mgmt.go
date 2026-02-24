@@ -157,7 +157,7 @@ func (s *BaseServer) handleReload(w http.ResponseWriter, r *http.Request) {
 	for k, v := range cfg.Env {
 		current := os.Getenv(k)
 		if current != v {
-			os.Setenv(k, v)
+			_ = os.Setenv(k, v)
 			changed++
 		}
 	}

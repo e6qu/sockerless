@@ -14,7 +14,7 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 			query.Set(key, v)
 		}
 	}
-	resp, err := s.backend.getWithQuery("/containers/"+id+"/logs", query)
+	resp, err := s.backend.getWithQuery(r.Context(), "/containers/"+id+"/logs", query)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -115,7 +115,7 @@ func (s *Server) handleContainerTop(w http.ResponseWriter, r *http.Request) {
 	if ps := r.URL.Query().Get("ps_args"); ps != "" {
 		query.Set("ps_args", ps)
 	}
-	resp, err := s.backend.getWithQuery("/containers/"+id+"/top", query)
+	resp, err := s.backend.getWithQuery(r.Context(), "/containers/"+id+"/top", query)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -130,7 +130,7 @@ func (s *Server) handleContainerStats(w http.ResponseWriter, r *http.Request) {
 	if stream := r.URL.Query().Get("stream"); stream != "" {
 		query.Set("stream", stream)
 	}
-	resp, err := s.backend.getWithQuery("/containers/"+id+"/stats", query)
+	resp, err := s.backend.getWithQuery(r.Context(), "/containers/"+id+"/stats", query)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -152,7 +152,7 @@ func (s *Server) handleContainerPutArchive(w http.ResponseWriter, r *http.Reques
 	if p := r.URL.Query().Get("path"); p != "" {
 		query.Set("path", p)
 	}
-	resp, err := s.backend.putWithQuery("/containers/"+id+"/archive", query, r.Body)
+	resp, err := s.backend.putWithQuery(r.Context(), "/containers/"+id+"/archive", query, r.Body)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -167,7 +167,7 @@ func (s *Server) handleContainerHeadArchive(w http.ResponseWriter, r *http.Reque
 	if p := r.URL.Query().Get("path"); p != "" {
 		query.Set("path", p)
 	}
-	resp, err := s.backend.headWithQuery("/containers/"+id+"/archive", query)
+	resp, err := s.backend.headWithQuery(r.Context(), "/containers/"+id+"/archive", query)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -187,7 +187,7 @@ func (s *Server) handleContainerGetArchive(w http.ResponseWriter, r *http.Reques
 	if p := r.URL.Query().Get("path"); p != "" {
 		query.Set("path", p)
 	}
-	resp, err := s.backend.getWithQuery("/containers/"+id+"/archive", query)
+	resp, err := s.backend.getWithQuery(r.Context(), "/containers/"+id+"/archive", query)
 	if err != nil {
 		writeError(w, err)
 		return

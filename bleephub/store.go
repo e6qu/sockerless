@@ -66,8 +66,17 @@ type Store struct {
 	Comments     map[int]*Comment            // id → comment
 	PullRequests map[int]*PullRequest       // id → PR
 	PRReviews    map[int]*PullRequestReview // id → review
-	Workflows    map[string]*Workflow       // id → workflow
-	NextAgent    int
+	Workflows       map[string]*Workflow       // id → workflow
+	PendingMessages []*TaskAgentMessage        // messages awaiting delivery
+	RepoSecrets     map[string]map[string]*Secret // "owner/repo" → name → secret
+	Hooks           map[string][]*Webhook            // "owner/repo" → hooks
+	HookDeliveries  map[int][]*WebhookDelivery       // hookID → deliveries
+	Apps              map[int]*App                    // id → app
+	AppsBySlug        map[string]*App                 // slug → app
+	Installations     map[int]*Installation           // id → installation
+	InstallationTokens map[string]*InstallationToken  // token value → token
+	ManifestCodes     map[string]int                  // code → appID (one-time-use)
+	NextAgent       int
 	NextMsg      int64
 	NextLog      int
 	NextReqID    int64
@@ -80,9 +89,13 @@ type Store struct {
 	NextMilestone int
 	NextComment  int
 	NextPR       int
-	NextPRReview int
-	NextRunID    int
-	mu           sync.RWMutex
+	NextPRReview   int
+	NextRunID      int
+	NextHookID     int
+	NextDeliveryID int
+	NextAppID          int
+	NextInstallationID int
+	mu             sync.RWMutex
 }
 
 // Agent represents a registered runner agent.
@@ -175,7 +188,15 @@ func NewStore() *Store {
 		PullRequests: make(map[int]*PullRequest),
 		PRReviews:    make(map[int]*PullRequestReview),
 		Workflows:    make(map[string]*Workflow),
-		NextAgent:    1,
+		RepoSecrets:    make(map[string]map[string]*Secret),
+		Hooks:              make(map[string][]*Webhook),
+		HookDeliveries:     make(map[int][]*WebhookDelivery),
+		Apps:               make(map[int]*App),
+		AppsBySlug:         make(map[string]*App),
+		Installations:      make(map[int]*Installation),
+		InstallationTokens: make(map[string]*InstallationToken),
+		ManifestCodes:      make(map[string]int),
+		NextAgent:      1,
 		NextMsg:      1,
 		NextLog:      1,
 		NextReqID:    1,
@@ -188,8 +209,12 @@ func NewStore() *Store {
 		NextMilestone: 1,
 		NextComment:  1,
 		NextPR:       1,
-		NextPRReview: 1,
-		NextRunID:    1,
+		NextPRReview:   1,
+		NextRunID:      1,
+		NextHookID:         1,
+		NextDeliveryID:     1,
+		NextAppID:          1,
+		NextInstallationID: 1,
 	}
 }
 

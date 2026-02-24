@@ -5,34 +5,55 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/graphql-go/graphql"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // Server is the bleephub HTTP server implementing the GitHub Actions
 // runner service API (GHES-style endpoints).
 type Server struct {
-	addr          string
-	mux           *http.ServeMux
-	logger        zerolog.Logger
-	store         *Store
-	graphqlSchema graphql.Schema
-	actionCache   *ActionCache
-	artifactStore *ArtifactStore
+	addr                 string
+	mux                  *http.ServeMux
+	logger               zerolog.Logger
+	store                *Store
+	graphqlSchema        graphql.Schema
+	actionCache          *ActionCache
+	artifactStore        *ArtifactStore
+	metrics              *Metrics
+	lastSessionIdx       int // round-robin index for session distribution
+	maxConcurrentWorkflows int
 }
 
 // NewServer creates a bleephub server with all routes registered.
 func NewServer(addr string, logger zerolog.Logger) *Server {
+	maxWF := 10
+	if v := os.Getenv("BLEEPHUB_MAX_WORKFLOWS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxWF = n
+		}
+	}
+	dataDir := os.Getenv("BLEEPHUB_DATA_DIR")
+	var artifactStore *ArtifactStore
+	if dataDir != "" {
+		artifactStore = NewArtifactStore(dataDir)
+	} else {
+		artifactStore = NewArtifactStore()
+	}
+
 	s := &Server{
-		addr:        addr,
-		mux:         http.NewServeMux(),
-		logger:      logger,
-		store:       NewStore(),
-		actionCache:   NewActionCache(),
-		artifactStore: NewArtifactStore(),
+		addr:                   addr,
+		mux:                    http.NewServeMux(),
+		logger:                 logger,
+		store:                  NewStore(),
+		actionCache:            NewActionCache(),
+		artifactStore:          artifactStore,
+		metrics:                NewMetrics(),
+		maxConcurrentWorkflows: maxWF,
 	}
 	s.store.SeedDefaultUser()
 	s.initGraphQLSchema()
@@ -71,6 +92,15 @@ func (s *Server) registerRoutes() {
 	// Timeline + logs (timeline.go)
 	s.registerTimelineRoutes()
 
+	// Secrets API (secrets.go)
+	s.registerSecretsRoutes()
+
+	// Webhooks API (gh_hooks_rest.go)
+	s.registerGHHookRoutes()
+
+	// GitHub Apps API (gh_apps_rest.go)
+	s.registerGHAppsRoutes()
+
 	// GitHub API: REST, GraphQL, OAuth (gh_*.go)
 	s.registerGHRestRoutes()
 	s.registerGHRepoRoutes()
@@ -79,6 +109,10 @@ func (s *Server) registerRoutes() {
 	s.registerGHPullRoutes()
 	s.registerGHOAuthRoutes()
 	s.registerGHGraphQLRoutes()
+
+	// Management API (metrics, status)
+	s.mux.HandleFunc("GET /internal/metrics", s.handleInternalMetrics)
+	s.mux.HandleFunc("GET /internal/status", s.handleInternalStatus)
 
 	// Catch-all: tries smart HTTP git protocol, then logs unmatched
 	s.mux.HandleFunc("/", s.handleCatchAll)
@@ -102,11 +136,38 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "bleephub"})
 }
 
+func (s *Server) handleInternalMetrics(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.metrics.Snapshot())
+}
+
+func (s *Server) handleInternalStatus(w http.ResponseWriter, r *http.Request) {
+	s.store.mu.RLock()
+	activeWfs := 0
+	jobsByStatus := make(map[string]int)
+	for _, wf := range s.store.Workflows {
+		if wf.Status == "running" {
+			activeWfs++
+		}
+		for _, j := range wf.Jobs {
+			jobsByStatus[j.Status]++
+		}
+	}
+	sessions := len(s.store.Sessions)
+	s.store.mu.RUnlock()
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"active_workflows":   activeWfs,
+		"jobs_by_status":     jobsByStatus,
+		"connected_runners":  sessions,
+		"uptime_seconds":     int(time.Since(s.metrics.StartedAt).Seconds()),
+	})
+}
+
 // ListenAndServe starts the HTTP server (crash-only, no graceful shutdown).
 func (s *Server) ListenAndServe() error {
 	inner := s.prefixStripMiddleware(s.mux)
 	ghWrapped := s.ghHeadersMiddleware(inner)
-	handler := s.loggingMiddleware(ghWrapped)
+	handler := otelhttp.NewHandler(s.loggingMiddleware(ghWrapped), "bleephub")
 
 	srv := &http.Server{
 		Addr:         s.addr,

@@ -74,6 +74,9 @@ func (s *Server) handleCreateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	repoKey := owner + "/" + name
+	s.emitWebhookEvent(repoKey, "issues", "opened", buildIssuesPayload(repo, issue, user, "opened"))
+
 	writeJSON(w, http.StatusCreated, issueToJSON(issue, s.store, s.baseURL(r), repo.FullName))
 }
 
@@ -230,6 +233,18 @@ func (s *Server) handleUpdateIssue(w http.ResponseWriter, r *http.Request) {
 	})
 
 	updated := s.store.GetIssue(issue.ID)
+
+	if v, ok := req["state"].(string); ok {
+		action := "edited"
+		if v == "closed" {
+			action = "closed"
+		} else if v == "open" {
+			action = "reopened"
+		}
+		repoKey := owner + "/" + repoName
+		s.emitWebhookEvent(repoKey, "issues", action, buildIssuesPayload(repo, updated, user, action))
+	}
+
 	writeJSON(w, http.StatusOK, issueToJSON(updated, s.store, s.baseURL(r), repo.FullName))
 }
 

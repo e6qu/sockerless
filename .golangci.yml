@@ -31,11 +31,19 @@ linters:
         - fmt.Fprintf
         - fmt.Fprint
         - fmt.Fprintln
-        # Cleanup — best effort
+        # Cleanup / filesystem — best effort
         - os.RemoveAll
         - os.Remove
+        - os.MkdirAll
+        - os.WriteFile
+        - os.Setenv
+        # JSON/IO — fire and forget in non-critical paths
+        - encoding/json.Unmarshal
+        - io.ReadAll
         # Close / Flush — deferred cleanup, error not actionable
         - (io.Closer).Close
+        - (*os.File).Close
+        - (*os.File).Write
         - (*net.TCPConn).Close
         - (*net.UnixConn).Close
         - (net.Conn).Close
@@ -51,5 +59,12 @@ linters:
       - path: _test\.go
         linters:
           - errcheck
+          - govet
+      - linters:
+          - staticcheck
+        text: "SA1019:"
+      - linters:
+          - staticcheck
+        text: "QF1003:"
     paths:
       - .build

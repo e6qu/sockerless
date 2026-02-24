@@ -164,16 +164,14 @@ func (mp *MainProcess) wait() {
 			code = 1
 		}
 	}
+
 	mp.mu.Lock()
 	mp.exitCode = &code
-	mp.mu.Unlock()
-
-	// Notify all listeners of exit
-	mp.mu.RLock()
 	for _, ch := range mp.listeners {
 		close(ch)
 	}
-	mp.mu.RUnlock()
+	mp.listeners = nil
+	mp.mu.Unlock()
 
 	close(mp.done)
 }

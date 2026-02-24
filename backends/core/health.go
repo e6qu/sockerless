@@ -116,21 +116,27 @@ func (s *BaseServer) runHealthCheckLoop(ctx context.Context, containerID string,
 				Output:   truncateOutput(output, 4096),
 			}
 
-			// Append log entry, cap at maxHealthLogEntries
-			c.State.Health.Log = append(c.State.Health.Log, entry)
-			if len(c.State.Health.Log) > maxHealthLogEntries {
-				c.State.Health.Log = c.State.Health.Log[len(c.State.Health.Log)-maxHealthLogEntries:]
+			// Deep-copy HealthState to avoid racing with concurrent Get() callers
+			// that hold a reference to the old *HealthState pointer.
+			newHealth := *c.State.Health
+			newLog := make([]api.HealthLog, len(newHealth.Log))
+			copy(newLog, newHealth.Log)
+			newLog = append(newLog, entry)
+			if len(newLog) > maxHealthLogEntries {
+				newLog = newLog[len(newLog)-maxHealthLogEntries:]
 			}
+			newHealth.Log = newLog
 
 			if exitCode == 0 {
-				c.State.Health.Status = "healthy"
-				c.State.Health.FailingStreak = 0
+				newHealth.Status = "healthy"
+				newHealth.FailingStreak = 0
 			} else {
-				c.State.Health.FailingStreak++
-				if c.State.Health.FailingStreak >= retries {
-					c.State.Health.Status = "unhealthy"
+				newHealth.FailingStreak++
+				if newHealth.FailingStreak >= retries {
+					newHealth.Status = "unhealthy"
 				}
 			}
+			c.State.Health = &newHealth
 		})
 
 		select {

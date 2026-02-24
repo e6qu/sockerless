@@ -12,14 +12,14 @@
 __debug_bin*
 
 # Simulator binaries (built by `go build` in simulators/)
-simulator-aws
-simulator-gcp
-simulator-azure
+**/simulator-aws
+**/simulator-gcp
+**/simulator-azure
 
-# Backend binaries
-sockerless-backend-*
-sockerless-docker-frontend
-sockerless-agent
+# Backend/agent built binaries (match only actual binary files, not cmd/ source dirs)
+backends/*/sockerless-backend-*
+agent/sockerless-agent
+frontends/docker/sockerless-docker-frontend
 
 # CLI binary
 cmd/sockerless/cli

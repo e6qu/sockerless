@@ -271,7 +271,7 @@ func (s *BaseServer) buildContainerFromConfig(id, name string, config api.Contai
 		NetworkSettings: api.NetworkSettings{
 			Networks: make(map[string]*api.EndpointSettings),
 		},
-		Mounts:   make([]api.MountPoint, 0),
+		Mounts:   buildMounts(hostConfig),
 		Platform: "linux",
 		Driver:   s.Desc.Driver,
 	}
@@ -309,38 +309,30 @@ func (s *BaseServer) buildContainerFromConfig(id, name string, config api.Contai
 }
 
 // buildEndpointForNetwork creates an EndpointSettings for a network, resolving
-// IPAM from the store and adding the container to the Network.Containers map.
+// IPAM from the IPAllocator and adding the container to the Network.Containers map.
 func (s *BaseServer) buildEndpointForNetwork(netRef, containerID, containerName string, reqEndpoint *api.EndpointSettings) *api.EndpointSettings {
-	endpoint := &api.EndpointSettings{
-		EndpointID:  GenerateID()[:16],
-		IPPrefixLen: 16,
-		MacAddress:  "02:42:ac:11:00:02",
+	net, found := s.Store.ResolveNetwork(netRef)
+	if !found {
+		// Fallback for unknown networks
+		return &api.EndpointSettings{
+			NetworkID:   netRef,
+			EndpointID:  GenerateID()[:16],
+			Gateway:     "172.17.0.1",
+			IPAddress:   fmt.Sprintf("172.17.0.%d", s.Store.Containers.Len()+2),
+			IPPrefixLen: 16,
+			MacAddress:  "02:42:ac:11:00:02",
+		}
 	}
 
-	net, found := s.Store.ResolveNetwork(netRef)
-	if found {
-		endpoint.NetworkID = net.ID
-		// Use IPAM from the actual network
-		if len(net.IPAM.Config) > 0 {
-			endpoint.Gateway = net.IPAM.Config[0].Gateway
-			endpoint.IPAddress = fmt.Sprintf("%s%d",
-				net.IPAM.Config[0].Gateway[:strings.LastIndex(net.IPAM.Config[0].Gateway, ".")+1],
-				len(net.Containers)+2)
-		}
-		// Add container to network's Containers map
-		s.Store.Networks.Update(net.ID, func(n *api.Network) {
-			n.Containers[containerID] = api.EndpointResource{
-				Name:        strings.TrimPrefix(containerName, "/"),
-				EndpointID:  endpoint.EndpointID,
-				MacAddress:  endpoint.MacAddress,
-				IPv4Address: endpoint.IPAddress + "/16",
-			}
-		})
-	} else {
-		// Fallback for unknown networks
-		endpoint.NetworkID = netRef
-		endpoint.Gateway = "172.17.0.1"
-		endpoint.IPAddress = fmt.Sprintf("172.17.0.%d", s.Store.Containers.Len()+2)
+	ip, prefixLen, gateway, mac := s.Store.IPAlloc.AllocateIP(net.ID)
+
+	endpoint := &api.EndpointSettings{
+		NetworkID:   net.ID,
+		EndpointID:  GenerateID()[:16],
+		Gateway:     gateway,
+		IPAddress:   ip,
+		IPPrefixLen: prefixLen,
+		MacAddress:  mac,
 	}
 
 	// Copy fields from request endpoint config
@@ -353,7 +345,80 @@ func (s *BaseServer) buildEndpointForNetwork(netRef, containerID, containerName 
 		}
 	}
 
+	// Add container to network's Containers map
+	s.Store.Networks.Update(net.ID, func(n *api.Network) {
+		n.Containers[containerID] = api.EndpointResource{
+			Name:        strings.TrimPrefix(containerName, "/"),
+			EndpointID:  endpoint.EndpointID,
+			MacAddress:  endpoint.MacAddress,
+			IPv4Address: endpoint.IPAddress + fmt.Sprintf("/%d", endpoint.IPPrefixLen),
+		}
+	})
+
 	return endpoint
+}
+
+// buildMounts constructs the Container.Mounts slice from HostConfig.Binds,
+// HostConfig.Mounts, and HostConfig.Tmpfs so that docker inspect returns mount info.
+func buildMounts(hostConfig api.HostConfig) []api.MountPoint {
+	var mounts []api.MountPoint
+
+	// Parse Binds: "source:destination[:mode]"
+	for _, bind := range hostConfig.Binds {
+		parts := strings.SplitN(bind, ":", 3)
+		if len(parts) < 2 {
+			continue
+		}
+		source, dest := parts[0], parts[1]
+		rw := true
+		mode := ""
+		if len(parts) == 3 {
+			mode = parts[2]
+			if mode == "ro" {
+				rw = false
+			}
+		}
+		mountType := "bind"
+		name := ""
+		if !filepath.IsAbs(source) {
+			mountType = "volume"
+			name = source
+		}
+		mounts = append(mounts, api.MountPoint{
+			Type:        mountType,
+			Name:        name,
+			Source:      source,
+			Destination: dest,
+			Mode:        mode,
+			RW:          rw,
+		})
+	}
+
+	// Parse HostConfig.Mounts
+	for _, m := range hostConfig.Mounts {
+		rw := !m.ReadOnly
+		mounts = append(mounts, api.MountPoint{
+			Type:        m.Type,
+			Name:        m.Source,
+			Source:      m.Source,
+			Destination: m.Target,
+			RW:          rw,
+		})
+	}
+
+	// Parse Tmpfs
+	for containerPath := range hostConfig.Tmpfs {
+		mounts = append(mounts, api.MountPoint{
+			Type:        "tmpfs",
+			Destination: containerPath,
+			RW:          true,
+		})
+	}
+
+	if mounts == nil {
+		mounts = []api.MountPoint{}
+	}
+	return mounts
 }
 
 // resolveBindMounts converts Docker bind specs (e.g. "volName:/container/path")
@@ -377,6 +442,21 @@ func (s *BaseServer) resolveBindMounts(binds []string, mounts []api.Mount) map[s
 			if info, err := os.Stat(source); err == nil && info.IsDir() {
 				result[target] = source
 			}
+		} else {
+			// Named volume that doesn't exist yet — auto-create
+			volDir, err := os.MkdirTemp("", "vol-"+source+"-")
+			if err == nil {
+				s.Store.VolumeDirs.Store(source, volDir)
+				s.Store.Volumes.Put(source, api.Volume{
+					Name:       source,
+					Driver:     "local",
+					Mountpoint: fmt.Sprintf("/var/lib/sockerless/volumes/%s/_data", source),
+					CreatedAt:  time.Now().UTC().Format(time.RFC3339Nano),
+					Labels:     make(map[string]string),
+					Scope:      "local",
+				})
+				result[target] = volDir
+			}
 		}
 	}
 	// Also resolve HostConfig.Mounts (used by Docker SDK clients like act)
@@ -389,6 +469,14 @@ func (s *BaseServer) resolveBindMounts(binds []string, mounts []api.Mount) map[s
 				volDir, err := os.MkdirTemp("", "vol-"+m.Source+"-")
 				if err == nil {
 					s.Store.VolumeDirs.Store(m.Source, volDir)
+					s.Store.Volumes.Put(m.Source, api.Volume{
+						Name:       m.Source,
+						Driver:     "local",
+						Mountpoint: fmt.Sprintf("/var/lib/sockerless/volumes/%s/_data", m.Source),
+						CreatedAt:  time.Now().UTC().Format(time.RFC3339Nano),
+						Labels:     make(map[string]string),
+						Scope:      "local",
+					})
 					result[m.Target] = volDir
 				}
 			}

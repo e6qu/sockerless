@@ -22,7 +22,7 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		query.Set("pod", pod)
 	}
 
-	resp, err := s.backend.postWithQuery("/containers", query, &req)
+	resp, err := s.backend.postWithQuery(r.Context(), "/containers", query, &req)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -49,7 +49,7 @@ func (s *Server) handleContainerList(w http.ResponseWriter, r *http.Request) {
 		query.Set("limit", limit)
 	}
 
-	resp, err := s.backend.getWithQuery("/containers", query)
+	resp, err := s.backend.getWithQuery(r.Context(), "/containers", query)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -60,7 +60,7 @@ func (s *Server) handleContainerList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleContainerInspect(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	resp, err := s.backend.get("/containers/" + id)
+	resp, err := s.backend.get(r.Context(), "/containers/"+id)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -71,7 +71,7 @@ func (s *Server) handleContainerInspect(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	resp, err := s.backend.post("/containers/"+id+"/start", nil)
+	resp, err := s.backend.post(r.Context(), "/containers/"+id+"/start", nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -86,7 +86,7 @@ func (s *Server) handleContainerStop(w http.ResponseWriter, r *http.Request) {
 	if t := r.URL.Query().Get("t"); t != "" {
 		query.Set("t", t)
 	}
-	resp, err := s.backend.postWithQuery("/containers/"+id+"/stop", query, nil)
+	resp, err := s.backend.postWithQuery(r.Context(), "/containers/"+id+"/stop", query, nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -101,7 +101,7 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 	if t := r.URL.Query().Get("t"); t != "" {
 		query.Set("t", t)
 	}
-	resp, err := s.backend.postWithQuery("/containers/"+id+"/restart", query, nil)
+	resp, err := s.backend.postWithQuery(r.Context(), "/containers/"+id+"/restart", query, nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -116,7 +116,7 @@ func (s *Server) handleContainerKill(w http.ResponseWriter, r *http.Request) {
 	if signal := r.URL.Query().Get("signal"); signal != "" {
 		query.Set("signal", signal)
 	}
-	resp, err := s.backend.postWithQuery("/containers/"+id+"/kill", query, nil)
+	resp, err := s.backend.postWithQuery(r.Context(), "/containers/"+id+"/kill", query, nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -134,7 +134,7 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 	if v := r.URL.Query().Get("v"); v != "" {
 		query.Set("v", v)
 	}
-	resp, err := s.backend.deleteWithQuery("/containers/"+id, query)
+	resp, err := s.backend.deleteWithQuery(r.Context(), "/containers/"+id, query)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -149,7 +149,7 @@ func (s *Server) handleContainerWait(w http.ResponseWriter, r *http.Request) {
 	if condition := r.URL.Query().Get("condition"); condition != "" {
 		query.Set("condition", condition)
 	}
-	resp, err := s.backend.postWithQuery("/containers/"+id+"/wait", query, nil)
+	resp, err := s.backend.postWithQuery(r.Context(), "/containers/"+id+"/wait", query, nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -164,7 +164,7 @@ func (s *Server) handleContainerRename(w http.ResponseWriter, r *http.Request) {
 	if name := r.URL.Query().Get("name"); name != "" {
 		query.Set("name", name)
 	}
-	resp, err := s.backend.postWithQuery("/containers/"+id+"/rename", query, nil)
+	resp, err := s.backend.postWithQuery(r.Context(), "/containers/"+id+"/rename", query, nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -175,7 +175,7 @@ func (s *Server) handleContainerRename(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleContainerPause(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	resp, err := s.backend.post("/containers/"+id+"/pause", nil)
+	resp, err := s.backend.post(r.Context(), "/containers/"+id+"/pause", nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -186,7 +186,7 @@ func (s *Server) handleContainerPause(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleContainerUnpause(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	resp, err := s.backend.post("/containers/"+id+"/unpause", nil)
+	resp, err := s.backend.post(r.Context(), "/containers/"+id+"/unpause", nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -197,7 +197,7 @@ func (s *Server) handleContainerUnpause(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleContainerUpdate(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	resp, err := s.backend.postRaw("/containers/"+id+"/update", "application/json", r.Body)
+	resp, err := s.backend.postRaw(r.Context(), "/containers/"+id+"/update", "application/json", r.Body)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -208,7 +208,7 @@ func (s *Server) handleContainerUpdate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleContainerChanges(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	resp, err := s.backend.get("/containers/" + id + "/changes")
+	resp, err := s.backend.get(r.Context(), "/containers/"+id+"/changes")
 	if err != nil {
 		writeError(w, err)
 		return
@@ -222,7 +222,7 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 	if filters := r.URL.Query().Get("filters"); filters != "" {
 		query.Set("filters", filters)
 	}
-	resp, err := s.backend.postWithQuery("/containers/prune", query, nil)
+	resp, err := s.backend.postWithQuery(r.Context(), "/containers/prune", query, nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -233,7 +233,7 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleContainerExport(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	resp, err := s.backend.get("/containers/" + id + "/export")
+	resp, err := s.backend.get(r.Context(), "/containers/"+id+"/export")
 	if err != nil {
 		writeError(w, err)
 		return
