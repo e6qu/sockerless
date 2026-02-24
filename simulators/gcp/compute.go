@@ -70,7 +70,10 @@ func registerCompute(srv *sim.Server) {
 				RoutingMode string `json:"routingMode"`
 			} `json:"routingConfig"`
 		}
-		sim.ReadJSON(r, &req)
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
 
 		selfLink := fmt.Sprintf("projects/%s/global/networks/%s", project, req.Name)
 		net := ComputeNetwork{
@@ -145,7 +148,10 @@ func registerCompute(srv *sim.Server) {
 				RoutingMode string `json:"routingMode"`
 			} `json:"routingConfig"`
 		}
-		sim.ReadJSON(r, &req)
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
 
 		networks.Update(selfLink, func(n *ComputeNetwork) {
 			if req.RoutingConfig.RoutingMode != "" {
@@ -168,7 +174,10 @@ func registerCompute(srv *sim.Server) {
 			IpCidrRange           string `json:"ipCidrRange"`
 			PrivateIpGoogleAccess bool   `json:"privateIpGoogleAccess"`
 		}
-		sim.ReadJSON(r, &req)
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
 
 		selfLink := fmt.Sprintf("projects/%s/regions/%s/subnetworks/%s", project, region, req.Name)
 		subnet := ComputeSubnetwork{

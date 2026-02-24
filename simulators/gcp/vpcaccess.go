@@ -32,7 +32,10 @@ func registerVPCAccess(srv *sim.Server) {
 		location := sim.PathParam(r, "location")
 
 		var req VPCAccessConnector
-		sim.ReadJSON(r, &req)
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
 
 		connectorId := r.URL.Query().Get("connectorId")
 		if connectorId == "" {

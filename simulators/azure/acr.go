@@ -73,7 +73,10 @@ func registerACR(srv *sim.Server) {
 			Name string `json:"name"`
 			Type string `json:"type"`
 		}
-		sim.ReadJSON(r, &req)
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
 			"nameAvailable": true,
 		})
@@ -238,7 +241,11 @@ func registerACR(srv *sim.Server) {
 			}
 
 			// Read remaining body data
-			body, _ := io.ReadAll(r.Body)
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				writeOCIError(w, "BLOB_UPLOAD_UNKNOWN", "failed to read body", http.StatusInternalServerError)
+				return
+			}
 			data := append(upload.Data, body...)
 
 			blobKey := upload.Repo + "@" + digest
@@ -337,7 +344,11 @@ func registerACR(srv *sim.Server) {
 				return
 			}
 
-			body, _ := io.ReadAll(r.Body)
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				writeOCIError(w, "BLOB_UPLOAD_UNKNOWN", "failed to read body", http.StatusInternalServerError)
+				return
+			}
 			data := append(upload.Data, body...)
 
 			blobKey := upload.Repo + "@" + digest
@@ -385,7 +396,11 @@ func registerACR(srv *sim.Server) {
 				return
 			}
 
-			body, _ := io.ReadAll(r.Body)
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				writeOCIError(w, "BLOB_UPLOAD_UNKNOWN", "failed to read body", http.StatusInternalServerError)
+				return
+			}
 			upload.Data = append(upload.Data, body...)
 			uploads.Put(uuid, upload)
 

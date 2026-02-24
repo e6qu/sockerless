@@ -206,7 +206,10 @@ func registerAuthorization(srv *sim.Server) {
 							PrincipalType    string `json:"principalType"`
 						} `json:"properties"`
 					}
-					sim.ReadJSON(r, &req)
+					if err := sim.ReadJSON(r, &req); err != nil {
+						sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+						return
+					}
 
 					_, exists := roleAssignments.Get(resourceID)
 
