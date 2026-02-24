@@ -425,7 +425,7 @@ func registerDockerImageFromManifest(dockerImages *sim.StateStore[DockerImage], 
 	var manifest struct {
 		MediaType string `json:"mediaType"`
 	}
-	json.Unmarshal(data, &manifest)
+	_ = json.Unmarshal(data, &manifest) // best-effort: manifest may not contain mediaType
 
 	now := nowTimestamp()
 	imgName := imageName + "/dockerImages/" + reference

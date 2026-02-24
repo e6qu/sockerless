@@ -73,7 +73,10 @@ func registerIAM(srv *sim.Server) {
 				Description string `json:"description"`
 			} `json:"serviceAccount"`
 		}
-		sim.ReadJSON(r, &req)
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
 
 		email := fmt.Sprintf("%s@%s.iam.gserviceaccount.com", req.AccountId, project)
 		name := fmt.Sprintf("projects/%s/serviceAccounts/%s", project, email)
@@ -149,7 +152,10 @@ func registerIAM(srv *sim.Server) {
 			var req struct {
 				Policy IAMPolicy `json:"policy"`
 			}
-			sim.ReadJSON(r, &req)
+			if err := sim.ReadJSON(r, &req); err != nil {
+				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+				return
+			}
 
 			req.Policy.Etag = generateUUID()[:8]
 			if req.Policy.Version == 0 {
@@ -182,7 +188,10 @@ func registerIAM(srv *sim.Server) {
 			var req struct {
 				Policy IAMPolicy `json:"policy"`
 			}
-			sim.ReadJSON(r, &req)
+			if err := sim.ReadJSON(r, &req); err != nil {
+				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+				return
+			}
 
 			req.Policy.Etag = generateUUID()[:8]
 			if req.Policy.Version == 0 {
@@ -215,7 +224,10 @@ func registerIAM(srv *sim.Server) {
 		bucket := sim.PathParam(r, "bucket")
 
 		var policy IAMPolicy
-		sim.ReadJSON(r, &policy)
+		if err := sim.ReadJSON(r, &policy); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
 
 		policy.Etag = generateUUID()[:8]
 		if policy.Version == 0 {
@@ -244,7 +256,10 @@ func handleResourceIAM(w http.ResponseWriter, r *http.Request, store *sim.StateS
 		var req struct {
 			Policy IAMPolicy `json:"policy"`
 		}
-		sim.ReadJSON(r, &req)
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
 		req.Policy.Etag = generateUUID()[:8]
 		if req.Policy.Version == 0 {
 			req.Policy.Version = 1

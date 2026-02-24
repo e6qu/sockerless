@@ -276,11 +276,18 @@ func registerGCS(srv *sim.Server) {
 		ct := r.Header.Get("Content-Type")
 		mediaType, params, _ := mime.ParseMediaType(ct)
 
+		defer r.Body.Close()
+
 		if mediaType == "multipart/related" {
 			// Multipart upload: first part is metadata JSON, second part is data
 			mr := multipart.NewReader(r.Body, params["boundary"])
 			// Skip metadata part
-			mr.NextPart()
+			metaPart, err := mr.NextPart()
+			if err != nil {
+				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "failed to read metadata part: %v", err)
+				return
+			}
+			metaPart.Close()
 			// Read data part
 			dataPart, err := mr.NextPart()
 			if err != nil {
@@ -288,13 +295,21 @@ func registerGCS(srv *sim.Server) {
 				return
 			}
 			objContentType = dataPart.Header.Get("Content-Type")
-			data, _ = io.ReadAll(dataPart)
+			data, err = io.ReadAll(dataPart)
+			if err != nil {
+				sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "failed to read data: %v", err)
+				return
+			}
 		} else {
 			// Simple upload
-			data, _ = io.ReadAll(r.Body)
+			var err error
+			data, err = io.ReadAll(r.Body)
+			if err != nil {
+				sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "failed to read body: %v", err)
+				return
+			}
 			objContentType = ct
 		}
-		defer r.Body.Close()
 
 		if objContentType == "" {
 			objContentType = "application/octet-stream"

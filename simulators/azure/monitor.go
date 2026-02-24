@@ -150,7 +150,10 @@ func registerAzureMonitor(srv *sim.Server) {
 
 		// Apply partial update from request body
 		var patch Workspace
-		sim.ReadJSON(r, &patch)
+		if err := sim.ReadJSON(r, &patch); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 		if patch.Tags != nil {
 			ws.Tags = patch.Tags
 		}

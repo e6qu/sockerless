@@ -96,7 +96,10 @@ func registerServiceUsage(srv *sim.Server) {
 		var req struct {
 			ServiceIds []string `json:"serviceIds"`
 		}
-		sim.ReadJSON(r, &req)
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
 
 		for _, serviceId := range req.ServiceIds {
 			name := fmt.Sprintf("projects/%s/services/%s", project, serviceId)

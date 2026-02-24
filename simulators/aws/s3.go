@@ -257,13 +257,13 @@ func handleS3PutObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	defer r.Body.Close()
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		sim.S3ErrorXML(w, "InternalError", "Failed to read request body",
 			key, sim.RequestID(r.Context()), http.StatusInternalServerError)
 		return
 	}
-	defer r.Body.Close()
 
 	hash := md5.Sum(body)
 	etag := fmt.Sprintf("\"%x\"", hash)

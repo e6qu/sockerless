@@ -30,7 +30,10 @@ func registerResourceGroups(srv *sim.Server) {
 			Location string            `json:"location"`
 			Tags     map[string]string `json:"tags,omitempty"`
 		}
-		sim.ReadJSON(r, &req)
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s", sub, rgName)
 

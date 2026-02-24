@@ -93,8 +93,6 @@ func registerAzureFiles(srv *sim.Server) {
 
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Storage/storageAccounts/%s", sub, rg, name)
 
-		storageAccounts.Get(resourceID)
-
 		kind := req.Kind
 		if kind == "" {
 			kind = "StorageV2"

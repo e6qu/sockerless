@@ -136,9 +136,12 @@ func handleIAMUpdateAssumeRolePolicy(w http.ResponseWriter, r *http.Request) {
 		policyDoc = decoded
 	}
 
-	iamRoles.Update(name, func(role *IAMRole) {
+	if ok := iamRoles.Update(name, func(role *IAMRole) {
 		role.AssumeRolePolicyDocument = policyDoc
-	})
+	}); !ok {
+		iamErrorXML(w, "NoSuchEntity", fmt.Sprintf("The role with name %s cannot be found.", name), http.StatusNotFound)
+		return
+	}
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<UpdateAssumeRolePolicyResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">

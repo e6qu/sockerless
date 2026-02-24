@@ -118,7 +118,10 @@ func registerNetwork(srv *sim.Server) {
 		vnetName := sim.PathParam(r, "vnetName")
 
 		var req VirtualNetwork
-		sim.ReadJSON(r, &req)
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/virtualNetworks/%s",
 			sub, rg, vnetName)
@@ -202,7 +205,10 @@ func registerNetwork(srv *sim.Server) {
 		subnetName := sim.PathParam(r, "subnetName")
 
 		var req Subnet
-		sim.ReadJSON(r, &req)
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/virtualNetworks/%s/subnets/%s",
 			sub, rg, vnetName, subnetName)
@@ -272,7 +278,10 @@ func registerNetwork(srv *sim.Server) {
 		nsgName := sim.PathParam(r, "nsgName")
 
 		var req NetworkSecurityGroup
-		sim.ReadJSON(r, &req)
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/networkSecurityGroups/%s",
 			sub, rg, nsgName)
