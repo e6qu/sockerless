@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
@@ -203,6 +204,9 @@ func (s *ExecSession) Signal(sig string) error {
 	if osSignal == nil {
 		return &sessionError{"unknown signal: " + sig}
 	}
+	if s.cmd.Process == nil {
+		return &sessionError{"process not started"}
+	}
 	return s.cmd.Process.Signal(osSignal)
 }
 
@@ -220,29 +224,33 @@ func (s *ExecSession) Resize(width, height int) error {
 // Close cleans up the session.
 func (s *ExecSession) Close() {
 	if s.cmd.Process != nil {
-		s.cmd.Process.Signal(syscall.SIGKILL)
+		_ = s.cmd.Process.Signal(syscall.SIGKILL)
 	}
 	if s.ptmx != nil {
 		_ = s.ptmx.Close()
+	}
+	select {
+	case <-s.done:
+	case <-time.After(3 * time.Second):
 	}
 }
 
 func parseSignal(sig string) os.Signal {
 	sig = strings.ToUpper(strings.TrimPrefix(strings.ToUpper(sig), "SIG"))
 	switch sig {
-	case "TERM", "SIGTERM":
+	case "TERM":
 		return syscall.SIGTERM
-	case "KILL", "SIGKILL":
+	case "KILL":
 		return syscall.SIGKILL
-	case "INT", "SIGINT":
+	case "INT":
 		return syscall.SIGINT
-	case "HUP", "SIGHUP":
+	case "HUP":
 		return syscall.SIGHUP
-	case "QUIT", "SIGQUIT":
+	case "QUIT":
 		return syscall.SIGQUIT
-	case "USR1", "SIGUSR1":
+	case "USR1":
 		return syscall.SIGUSR1
-	case "USR2", "SIGUSR2":
+	case "USR2":
 		return syscall.SIGUSR2
 	default:
 		return nil

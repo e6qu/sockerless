@@ -47,12 +47,6 @@ func (s *AttachSession) stream() {
 		s.sendOutput(TypeStderr, stderrBuf)
 	}
 
-	// Check if process already exited
-	if code := s.mp.ExitCode(); code != nil {
-		s.sendExit(*code)
-		return
-	}
-
 	// Stream live output
 	for evt := range ch {
 		s.sendOutput(evt.Stream, evt.Data)
