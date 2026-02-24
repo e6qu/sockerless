@@ -535,14 +535,6 @@ func waitForUnixSocket(socketPath string, timeout time.Duration) error {
 	return fmt.Errorf("timeout waiting for socket %s", socketPath)
 }
 
-func generateTestID(parts ...string) string {
-	id := time.Now().Format("150405")
-	for _, p := range parts {
-		id += "-" + p
-	}
-	return id
-}
-
 func filterBuildEnv(env []string, extra ...string) []string {
 	var filtered []string
 	for _, e := range env {
