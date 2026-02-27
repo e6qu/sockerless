@@ -1,8 +1,8 @@
 # simulator
 
-Shared framework for building cloud service simulators. Provides HTTP server infrastructure, request routing, in-memory state management, authentication passthrough, and provider-specific error formatting.
+Shared framework for building local cloud service reimplementations. Provides HTTP server infrastructure, request routing, in-memory state management, authentication passthrough, and provider-specific error formatting.
 
-All three cloud simulators (AWS, GCP, Azure) import this library as `sim`.
+All three cloud simulators (AWS, GCP, Azure) import this library as `sim`. The simulators built on this framework are not mocks or stubs — they reimplement actual cloud service semantics, with execution behavior driven by the same configuration (timeouts, replica counts, etc.) that the real services honor.
 
 ## Components
 

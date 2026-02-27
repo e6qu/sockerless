@@ -1,6 +1,6 @@
 # simulator-aws
 
-In-memory AWS API simulator implementing the services used by the Sockerless ECS and Lambda backends.
+Local reimplementation of the AWS APIs used by the Sockerless ECS and Lambda backends. This is not a mock — ECS tasks run with real execution semantics (they stay running until the process exits or `StopTask` is called, just like real ECS), Lambda functions invoke and return responses, CloudWatch Logs are written and queryable, and ECR stores real image manifests.
 
 ## Services
 
@@ -99,3 +99,7 @@ cd terraform-tests && go test -v ./...
 ```
 
 Tests build the simulator binary, start it on a free port, run the test suite, and shut it down. No external dependencies needed.
+
+## Execution model
+
+ECS tasks have no native execution timeout — they run until the container process exits or `StopTask` is called. The simulator faithfully reproduces this: started tasks remain in `RUNNING` state until explicitly stopped. When agent integration is active (`SOCKERLESS_AGENT_CALLBACK_URL`), the backend manages the task lifecycle through the agent subprocess. Lambda invocations are synchronous and return immediately with the function response.

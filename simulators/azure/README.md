@@ -1,6 +1,6 @@
 # simulator-azure
 
-In-memory Azure API simulator implementing the services used by the Sockerless ACA and Azure Functions backends.
+Local reimplementation of the Azure APIs used by the Sockerless ACA and Azure Functions backends. This is not a mock — Container Apps job executions respect `replicaTimeout` for completion, Azure Functions invoke and produce real AppTraces entries, KQL queries parse and filter against real log data, and ACR stores real OCI manifests with chunked upload support.
 
 ## Services
 
@@ -130,6 +130,10 @@ azure/
 - [Using with the Azure CLI](docs/cli.md)
 - [Using with Terraform](docs/terraform.md)
 - [Using with the Azure SDK for Python](docs/python-sdk.md)
+
+## Execution model
+
+Container Apps job executions honor the `replicaTimeout` configuration (in seconds). When a replica timeout is configured, the execution auto-completes with `Succeeded` status after that duration. When no timeout is set, the execution stays running until explicitly stopped. Azure Functions invocations are synchronous and inject AppTraces entries queryable via KQL. When agent integration is active (`SOCKERLESS_AGENT_CALLBACK_URL`), the backend manages the execution lifecycle through the agent subprocess.
 
 ## Testing
 
