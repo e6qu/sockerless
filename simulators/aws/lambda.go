@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
@@ -272,6 +274,9 @@ func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 		startAgentProcess(&lambdaAgentProcs, name, callbackURL)
 	}
 
+	// Auto-create CloudWatch log group/stream and inject a log entry
+	injectLambdaLogs(fn.FunctionName)
+
 	// Determine invocation type
 	invocationType := r.Header.Get("X-Amz-Invocation-Type")
 	if invocationType == "" {
@@ -356,6 +361,51 @@ func stopAgentProcess(procs *sync.Map, key string) {
 		_ = cmd.Process.Kill()
 		log.Printf("[lambda] stopped agent subprocess for %s", key)
 	}
+}
+
+// injectLambdaLogs creates a CloudWatch log group, stream, and initial log
+// entries for a Lambda function invocation, mirroring the ECS pattern in ecs.go.
+func injectLambdaLogs(functionName string) {
+	logGroup := fmt.Sprintf("/aws/lambda/%s", functionName)
+	now := time.Now()
+	nowMs := now.UnixMilli()
+
+	// Create log group if not exists
+	if _, exists := cwLogGroups.Get(logGroup); !exists {
+		cwLogGroups.Put(logGroup, CWLogGroup{
+			LogGroupName: logGroup,
+			Arn:          cwLogGroupArn(logGroup),
+			CreationTime: nowMs,
+		})
+	}
+
+	// Build stream name: YYYY/MM/DD/[$LATEST]<16-char hex>
+	hexBytes := make([]byte, 8)
+	if _, err := rand.Read(hexBytes); err != nil {
+		hexBytes = []byte{0, 0, 0, 0, 0, 0, 0, 0}
+	}
+	hexSuffix := hex.EncodeToString(hexBytes)
+	logStreamName := fmt.Sprintf("%s/[$LATEST]%s", now.Format("2006/01/02"), hexSuffix)
+
+	// Create log stream
+	key := cwEventsKey(logGroup, logStreamName)
+	cwLogStreams.Put(key, CWLogStream{
+		LogStreamName:       logStreamName,
+		LogGroupName:        logGroup,
+		CreationTime:        nowMs,
+		FirstEventTimestamp: nowMs,
+		LastEventTimestamp:  nowMs,
+		Arn:                 cwLogStreamArn(logGroup, logStreamName),
+		UploadSequenceToken: "1",
+	})
+
+	// Inject log entries mimicking real Lambda output
+	requestID := generateUUID()
+	cwLogEvents.Put(key, []CWLogEvent{
+		{Timestamp: nowMs, Message: fmt.Sprintf("START RequestId: %s Version: $LATEST", requestID), IngestionTime: nowMs},
+		{Timestamp: nowMs + 1, Message: fmt.Sprintf("END RequestId: %s", requestID), IngestionTime: nowMs + 1},
+		{Timestamp: nowMs + 2, Message: fmt.Sprintf("REPORT RequestId: %s\tDuration: 1.00 ms\tBilled Duration: 1 ms\tMemory Size: 128 MB\tMax Memory Used: 64 MB", requestID), IngestionTime: nowMs + 2},
+	})
 }
 
 func handleLambdaListTags(w http.ResponseWriter, r *http.Request) {
