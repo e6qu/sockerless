@@ -140,6 +140,12 @@ func registerCloudFunctions(srv *sim.Server) {
 			}
 		}
 
+		// Inject log entry for the invocation
+		if fn != nil {
+			project := strings.Split(fn.Name, "/")[1] // projects/{project}/...
+			injectCloudFunctionLog(project, functionID, "Function invoked")
+		}
+
 		// Start agent subprocess if the function has a callback URL configured
 		if fn != nil {
 			if callbackURL := gcfGetAgentCallbackURL(*fn); callbackURL != "" {
@@ -173,6 +179,17 @@ func registerCloudFunctions(srv *sim.Server) {
 		lro := newLRO(project, location, fn, "type.googleapis.com/google.cloud.functions.v2.Function")
 		sim.WriteJSON(w, http.StatusOK, lro)
 	})
+}
+
+// injectCloudFunctionLog writes a log entry to the Cloud Logging store for a
+// Cloud Function invocation, using the resource type and labels that the
+// Cloud Functions backend's log filter expects.
+func injectCloudFunctionLog(project, functionName, text string) {
+	logName := fmt.Sprintf("projects/%s/logs/run.googleapis.com%%2Fstdout", project)
+	writeLogEntries(logName, &MonitoredResource{
+		Type:   "cloud_run_revision",
+		Labels: map[string]string{"service_name": functionName},
+	}, nil, []LogEntry{{TextPayload: text}})
 }
 
 // gcfGetAgentCallbackURL extracts the agent callback URL from the function's
