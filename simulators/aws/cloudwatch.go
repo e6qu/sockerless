@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -220,6 +221,8 @@ func handleCWDescribeLogStreams(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		LogGroupName        string `json:"logGroupName"`
 		LogStreamNamePrefix string `json:"logStreamNamePrefix"`
+		OrderBy             string `json:"orderBy"`
+		Descending          *bool  `json:"descending"`
 		Limit               int    `json:"limit"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
@@ -242,6 +245,26 @@ func handleCWDescribeLogStreams(w http.ResponseWriter, r *http.Request) {
 	})
 	if streams == nil {
 		streams = []CWLogStream{}
+	}
+
+	// Sort by OrderBy + Descending
+	if req.OrderBy == "LastEventTime" {
+		desc := req.Descending != nil && *req.Descending
+		sort.Slice(streams, func(i, j int) bool {
+			if desc {
+				return streams[i].LastEventTimestamp > streams[j].LastEventTimestamp
+			}
+			return streams[i].LastEventTimestamp < streams[j].LastEventTimestamp
+		})
+	} else {
+		// Default: sort by LogStreamName ascending
+		desc := req.Descending != nil && *req.Descending
+		sort.Slice(streams, func(i, j int) bool {
+			if desc {
+				return streams[i].LogStreamName > streams[j].LogStreamName
+			}
+			return streams[i].LogStreamName < streams[j].LogStreamName
+		})
 	}
 
 	if req.Limit > 0 && len(streams) > req.Limit {
