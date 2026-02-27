@@ -2,6 +2,7 @@ package gcp_sdk_test
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -66,4 +67,40 @@ func TestCloudFunctions_InvokeInjectsLogEntries(t *testing.T) {
 
 	require.GreaterOrEqual(t, len(messages), 1, "should have at least one log entry from invocation")
 	assert.Equal(t, "Function invoked", messages[0])
+}
+
+func TestCloudFunctions_InvokeURLMatchesEndpoint(t *testing.T) {
+	// Create a function
+	fn := map[string]any{
+		"buildConfig": map[string]any{
+			"runtime":    "go121",
+			"entryPoint": "Handler",
+		},
+	}
+	body, _ := json.Marshal(fn)
+	createReq, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/v2/projects/test-project/locations/us-central1/functions?functionId=url-test-fn",
+		strings.NewReader(string(body)))
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp, err := http.DefaultClient.Do(createReq)
+	require.NoError(t, err)
+	defer createResp.Body.Close()
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+
+	// Parse LRO response to get the function's ServiceConfig.Uri
+	var lro map[string]any
+	data, _ := io.ReadAll(createResp.Body)
+	require.NoError(t, json.Unmarshal(data, &lro))
+	response := lro["response"].(map[string]any)
+	svcConfig := response["serviceConfig"].(map[string]any)
+	uri := svcConfig["uri"].(string)
+
+	// Verify the URI contains the expected invoke path
+	assert.Contains(t, uri, "/v2-functions-invoke/url-test-fn")
+
+	// POST to the returned URI — it should be reachable
+	invokeResp, err := http.DefaultClient.Post(uri, "application/json", strings.NewReader("{}"))
+	require.NoError(t, err)
+	defer invokeResp.Body.Close()
+	assert.Equal(t, http.StatusOK, invokeResp.StatusCode)
 }
