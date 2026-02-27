@@ -242,6 +242,11 @@ func registerAzureFunctions(srv *sim.Server) {
 			}
 		}
 
+		// Inject log entry for the invocation
+		if matchedSite != nil {
+			injectAppTrace(matchedSite.Name, "Function invoked")
+		}
+
 		// Start agent subprocess if the function app has a callback URL configured
 		if matchedSite != nil {
 			if callbackURL := azfGetAgentCallbackURL(*matchedSite); callbackURL != "" {
