@@ -131,8 +131,73 @@ func TestECS_ExitCodeNilWhileRunning(t *testing.T) {
 
 	stoppedTask := descOut2.Tasks[0]
 	assert.Equal(t, "STOPPED", *stoppedTask.LastStatus)
+	assert.Equal(t, ecstypes.TaskStopCodeEssentialContainerExited, stoppedTask.StopCode)
 	for _, c := range stoppedTask.Containers {
 		require.NotNil(t, c.ExitCode, "ExitCode should be set when task is STOPPED")
 		assert.Equal(t, int32(0), *c.ExitCode)
 	}
+}
+
+func TestECS_StopCodeUserInitiated(t *testing.T) {
+	client := ecsClient()
+
+	clusterName := "stopcode-user-cluster"
+	_, err := client.CreateCluster(ctx, &ecs.CreateClusterInput{
+		ClusterName: aws.String(clusterName),
+	})
+	require.NoError(t, err)
+
+	tdOut, err := client.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
+		Family:                  aws.String("stopcode-task"),
+		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityFargate},
+		NetworkMode:             ecstypes.NetworkModeAwsvpc,
+		Cpu:                     aws.String("256"),
+		Memory:                  aws.String("512"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{
+			{
+				Name:  aws.String("app"),
+				Image: aws.String("alpine:latest"),
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	runOut, err := client.RunTask(ctx, &ecs.RunTaskInput{
+		Cluster:        aws.String(clusterName),
+		TaskDefinition: aws.String(*tdOut.TaskDefinition.TaskDefinitionArn),
+		Count:          aws.Int32(1),
+		LaunchType:     ecstypes.LaunchTypeFargate,
+		NetworkConfiguration: &ecstypes.NetworkConfiguration{
+			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
+				Subnets: []string{"subnet-12345"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, runOut.Tasks, 1)
+	taskArn := *runOut.Tasks[0].TaskArn
+
+	// Wait for RUNNING
+	time.Sleep(800 * time.Millisecond)
+
+	// Stop task via API
+	_, err = client.StopTask(ctx, &ecs.StopTaskInput{
+		Cluster: aws.String(clusterName),
+		Task:    aws.String(taskArn),
+		Reason:  aws.String("testing stop"),
+	})
+	require.NoError(t, err)
+
+	// Describe — StopCode should be UserInitiated
+	descOut, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+		Cluster: aws.String(clusterName),
+		Tasks:   []string{taskArn},
+	})
+	require.NoError(t, err)
+	require.Len(t, descOut.Tasks, 1)
+
+	task := descOut.Tasks[0]
+	assert.Equal(t, "STOPPED", *task.LastStatus)
+	assert.Equal(t, ecstypes.TaskStopCodeUserInitiated, task.StopCode)
+	assert.Equal(t, "testing stop", *task.StoppedReason)
 }
