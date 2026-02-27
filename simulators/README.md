@@ -1,6 +1,8 @@
 # Simulators
 
-In-memory cloud API simulators for local development and testing. Each simulator implements the subset of a cloud provider's APIs used by the Sockerless backends, allowing the full system to run without real cloud credentials or infrastructure.
+Local reimplementations of cloud provider APIs. Each simulator implements the subset of a cloud provider's services used by the Sockerless backends, providing real execution semantics — not mocks or stubs. Jobs run, functions execute, timeouts fire, and logs are produced, all driven by the same configuration knobs (replica timeouts, task timeouts, etc.) that the real cloud services honor.
+
+The goal is full behavioral fidelity: code that works against the simulators works against the real cloud, and vice versa. Simulators run locally first, with the architecture designed to eventually distribute across multiple machines.
 
 ## Overview
 
@@ -11,6 +13,17 @@ In-memory cloud API simulators for local development and testing. Each simulator
 | [azure](azure/) | `:4568` | Container Apps, Azure Functions, ACR, Storage, Monitor, App Insights, Private DNS, Network, Managed Identity, Authorization |
 
 All simulators share a common framework (`shared/`) providing HTTP server setup, middleware (request ID, logging, auth passthrough), thread-safe state management, and provider-specific routing/error formatting.
+
+## Design philosophy
+
+Simulators are **real implementations**, not fakes. They don't approximate cloud behavior with synthetic timers or hardcoded responses — they reimplement the actual service semantics:
+
+- **Execution lifecycle** is driven by cloud-native configuration. Azure ACA jobs respect `replicaTimeout`. GCP Cloud Run jobs respect the task template `timeout`. AWS ECS tasks run until the process exits or `StopTask` is called, because ECS has no native execution timeout.
+- **Log injection** writes entries to the same tables and log groups that the real services would, queryable through the same APIs (KQL for Azure, Cloud Logging filters for GCP, CloudWatch for AWS).
+- **Agent integration** spawns real subprocesses — the same `sockerless-agent` binary used in production — enabling full exec/attach through simulated cloud resources.
+- **SDK and Terraform compatibility** is tested with the real official clients, not custom HTTP calls. If the Azure SDK expects a 200 for a sync create, the simulator returns 200. If the GCP SDK expects an LRO wrapper, the simulator returns one.
+
+The simulators run locally on a single machine today. The architecture is designed so they can eventually run distributed across multiple machines, with the same API surface.
 
 ## Running
 

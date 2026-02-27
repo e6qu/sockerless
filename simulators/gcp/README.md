@@ -1,6 +1,6 @@
 # simulator-gcp
 
-In-memory GCP API simulator implementing the services used by the Sockerless Cloud Run and Cloud Functions backends.
+Local reimplementation of the GCP APIs used by the Sockerless Cloud Run and Cloud Functions backends. This is not a mock — Cloud Run job executions respect the task template `timeout` for completion, Cloud Functions invoke and produce real log entries, Cloud Logging entries are written and queryable with the standard filter syntax, and Artifact Registry stores real OCI manifests.
 
 ## Services
 
@@ -84,6 +84,10 @@ gcp/
 - [Using with the gcloud CLI](docs/cli.md)
 - [Using with Terraform](docs/terraform.md)
 - [Using with Google Cloud Python libraries](docs/python-sdk.md)
+
+## Execution model
+
+Cloud Run job executions honor the task template `timeout` field (e.g., `"600s"`). When a timeout is configured, the execution auto-completes after that duration. When no timeout is set, the execution stays running until explicitly cancelled. Cloud Functions invocations are synchronous. When agent integration is active (`SOCKERLESS_AGENT_CALLBACK_URL`), the backend manages the execution lifecycle through the agent subprocess.
 
 ## Testing
 
