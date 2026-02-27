@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -377,6 +378,25 @@ func handleCWGetLogEvents(w http.ResponseWriter, r *http.Request) {
 		filtered = append(filtered, e)
 	}
 
+	// Parse offset from NextToken (format: "f/{offset}" or "b/{offset}")
+	offset := 0
+	if req.NextToken != "" {
+		parts := strings.SplitN(req.NextToken, "/", 2)
+		if len(parts) == 2 {
+			if n, err := strconv.Atoi(parts[1]); err == nil && n >= 0 {
+				offset = n
+			}
+		}
+	}
+
+	// Apply offset — skip events already consumed
+	if offset > 0 && offset <= len(filtered) {
+		filtered = filtered[offset:]
+	} else if offset > len(filtered) {
+		filtered = nil
+	}
+
+	// Apply limit after offset
 	if req.Limit > 0 && len(filtered) > req.Limit {
 		filtered = filtered[:req.Limit]
 	}
@@ -384,10 +404,13 @@ func handleCWGetLogEvents(w http.ResponseWriter, r *http.Request) {
 		filtered = []CWLogEvent{}
 	}
 
+	// New forward token = offset + events returned
+	newForwardOffset := offset + len(filtered)
+
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"events":            filtered,
-		"nextForwardToken":  "f/0",
-		"nextBackwardToken": "b/0",
+		"nextForwardToken":  fmt.Sprintf("f/%d", newForwardOffset),
+		"nextBackwardToken": fmt.Sprintf("b/%d", offset),
 	})
 }
 
