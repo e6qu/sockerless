@@ -183,3 +183,99 @@ func TestCloudRun_RunJobInjectsLogEntries(t *testing.T) {
 	assert.Equal(t, "Container started", messages[0])
 	assert.Equal(t, "Execution completed successfully", messages[1])
 }
+
+// createAndRunJob creates a job and runs it, returning the execution name from the LRO response.
+func createAndRunJob(t *testing.T, jobID string) string {
+	t.Helper()
+	job := map[string]any{
+		"template": map[string]any{
+			"template": map[string]any{
+				"containers": []map[string]any{
+					{"image": "gcr.io/test/status:latest"},
+				},
+			},
+		},
+	}
+	body, _ := json.Marshal(job)
+	createReq, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/v2/projects/test-project/locations/us-central1/jobs?jobId="+jobID,
+		strings.NewReader(string(body)))
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp, err := http.DefaultClient.Do(createReq)
+	require.NoError(t, err)
+	createResp.Body.Close()
+
+	runReq, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/v2/projects/test-project/locations/us-central1/jobs/"+jobID+":run",
+		strings.NewReader("{}"))
+	runReq.Header.Set("Content-Type", "application/json")
+	runResp, err := http.DefaultClient.Do(runReq)
+	require.NoError(t, err)
+	defer runResp.Body.Close()
+	require.Equal(t, http.StatusOK, runResp.StatusCode)
+
+	var lro map[string]any
+	data, _ := io.ReadAll(runResp.Body)
+	require.NoError(t, json.Unmarshal(data, &lro))
+	response := lro["response"].(map[string]any)
+	return response["name"].(string)
+}
+
+// getExecution fetches an execution and returns it as a map.
+func getExecution(t *testing.T, execName string) map[string]any {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(ctx, "GET", baseURL+"/v2/"+execName, nil)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var result map[string]any
+	data, _ := io.ReadAll(resp.Body)
+	require.NoError(t, json.Unmarshal(data, &result))
+	return result
+}
+
+func TestCloudRun_ExecutionRunningState(t *testing.T) {
+	execName := createAndRunJob(t, "status-running-job")
+
+	// Immediately check — should be running
+	exec := getExecution(t, execName)
+	assert.Equal(t, float64(1), exec["runningCount"])
+	assert.Equal(t, float64(0), exec["succeededCount"])
+	assert.Equal(t, float64(0), exec["failedCount"])
+	assert.Empty(t, exec["completionTime"])
+}
+
+func TestCloudRun_ExecutionSucceededState(t *testing.T) {
+	execName := createAndRunJob(t, "status-succeeded-job")
+
+	// Wait for auto-completion (3s + buffer)
+	time.Sleep(4 * time.Second)
+
+	exec := getExecution(t, execName)
+	assert.Equal(t, float64(0), exec["runningCount"])
+	assert.Equal(t, float64(1), exec["succeededCount"])
+	assert.Equal(t, float64(0), exec["failedCount"])
+	assert.NotEmpty(t, exec["completionTime"])
+}
+
+func TestCloudRun_ExecutionCancelledState(t *testing.T) {
+	execName := createAndRunJob(t, "status-cancel-job")
+
+	// Cancel immediately
+	parts := strings.SplitN(execName, "/executions/", 2)
+	cancelURL := baseURL + "/v2/" + parts[0] + "/executions/" + parts[1] + ":cancel"
+	cancelReq, _ := http.NewRequestWithContext(ctx, "POST", cancelURL, strings.NewReader("{}"))
+	cancelReq.Header.Set("Content-Type", "application/json")
+	cancelResp, err := http.DefaultClient.Do(cancelReq)
+	require.NoError(t, err)
+	cancelResp.Body.Close()
+	require.Equal(t, http.StatusOK, cancelResp.StatusCode)
+
+	exec := getExecution(t, execName)
+	assert.Equal(t, float64(0), exec["runningCount"])
+	assert.Equal(t, float64(1), exec["cancelledCount"])
+	assert.Equal(t, float64(0), exec["failedCount"])
+	assert.NotEmpty(t, exec["completionTime"])
+}

@@ -104,6 +104,7 @@ type Execution struct {
 	RunningCount   int32              `json:"runningCount"`
 	SucceededCount int32              `json:"succeededCount"`
 	FailedCount    int32              `json:"failedCount"`
+	CancelledCount int32             `json:"cancelledCount"`
 	Conditions     []Condition        `json:"conditions,omitempty"`
 	TaskCount      int32              `json:"taskCount"`
 	Template       *TaskTemplate      `json:"template,omitempty"`
@@ -434,6 +435,7 @@ func registerCloudRunJobs(srv *sim.Server) {
 		ok := executions.Update(name, func(e *Execution) {
 			now := nowTimestamp()
 			e.CompletionTime = now
+			e.CancelledCount = e.RunningCount
 			e.RunningCount = 0
 			e.Conditions = []Condition{
 				{Type: "Ready", State: "CONDITION_SUCCEEDED", LastTransitionTime: now},
