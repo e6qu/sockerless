@@ -305,13 +305,13 @@ func registerContainerApps(srv *sim.Server) {
 			acaStartAgentProcess(&acaAgentProcs, execID, callbackURL)
 		}
 
-		// Auto-stop execution after 3 seconds (only if no agent)
+		// Auto-stop execution after timeout (only if no agent)
 		go func(id, jobShortName string, hasAgent bool) {
 			if hasAgent {
 				// Agent-managed: don't auto-stop. Backend will stop when done.
 				return
 			}
-			time.Sleep(3 * time.Second)
+			time.Sleep(execTimeout())
 			completed := false
 			executions.Update(id, func(e *JobExecution) {
 				if e.Status != "Running" {
