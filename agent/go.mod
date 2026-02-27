@@ -1,8 +1,7 @@
 module github.com/sockerless/agent
 
-go 1.24.0
+go 1.25.0
 
-toolchain go1.24.2
 
 require (
 	github.com/creack/pty v1.1.24

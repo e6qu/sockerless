@@ -1,6 +1,6 @@
 module github.com/sockerless/backend-gcf
 
-go 1.24.2
+go 1.25.0
 
 require (
 	cloud.google.com/go/functions v1.19.3

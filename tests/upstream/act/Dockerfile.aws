@@ -1,4 +1,4 @@
-FROM golang:1.24 AS builder
+FROM golang:1.25 AS builder
 
 # --- Build AWS simulator ---
 WORKDIR /sim-aws
@@ -36,7 +36,7 @@ RUN git clone --depth 1 --branch ${ACT_REF} https://github.com/nektos/act.git /a
 RUN cd /act && go mod download
 
 # --- Runtime stage ---
-FROM golang:1.24
+FROM golang:1.25
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl git && rm -rf /var/lib/apt/lists/*
 

@@ -1,4 +1,4 @@
-FROM golang:1.24
+FROM golang:1.25
 
 # Install act and curl
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*

@@ -1,4 +1,4 @@
-FROM golang:1.24 AS builder
+FROM golang:1.25 AS builder
 
 # --- Build all 3 simulators ---
 WORKDIR /sim-aws
@@ -59,7 +59,7 @@ RUN cd agent && GOWORK=off go mod download && \
     GOWORK=off go build -o /out/sockerless-agent ./cmd/sockerless-agent
 
 # --- Runtime stage ---
-FROM golang:1.24
+FROM golang:1.25
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 RUN go install github.com/nektos/act@latest
