@@ -95,6 +95,19 @@ func injectContainerAppLog(jobName, message string) {
 	monitorLogs.Put(storeKey, existing)
 }
 
+// injectAppTrace writes a log entry to the AppTraces table.
+func injectAppTrace(appRoleName, message string) {
+	row := monitorLogRow{
+		"TimeGenerated": time.Now().UTC().Format(time.RFC3339),
+		"AppRoleName":   appRoleName,
+		"Message":       message,
+	}
+	storeKey := "default:AppTraces"
+	existing, _ := monitorLogs.Get(storeKey)
+	existing = append(existing, row)
+	monitorLogs.Put(storeKey, existing)
+}
+
 func registerAzureMonitor(srv *sim.Server) {
 	workspaces := sim.NewStateStore[Workspace]()
 
