@@ -1,8 +1,7 @@
 module github.com/sockerless/simulator-azure-sdk-tests
 
-go 1.24.0
+go 1.25.0
 
-toolchain go1.24.2
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.21.0

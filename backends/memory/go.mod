@@ -1,6 +1,6 @@
 module github.com/sockerless/backend-memory
 
-go 1.24.2
+go 1.25.0
 
 require (
 	github.com/rs/zerolog v1.34.0

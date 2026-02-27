@@ -7,7 +7,7 @@ stages:
 
 lint:
   stage: test
-  image: golang:1.24
+  image: golang:1.25
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -18,7 +18,7 @@ lint:
 
 test-aws:
   stage: test
-  image: golang:1.24
+  image: golang:1.25
   before_script:
     - apt-get update && apt-get install -y unzip curl
     - curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
@@ -30,7 +30,7 @@ test-aws:
 
 test-gcp:
   stage: test
-  image: golang:1.24
+  image: golang:1.25
   before_script:
     - apt-get update && apt-get install -y curl python3 apt-transport-https gnupg unzip
     - echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" > /etc/apt/sources.list.d/google-cloud-sdk.list
@@ -43,7 +43,7 @@ test-gcp:
 
 test-azure:
   stage: test
-  image: golang:1.24
+  image: golang:1.25
   before_script:
     - apt-get update && apt-get install -y curl gnupg lsb-release unzip
     - curl -sL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg

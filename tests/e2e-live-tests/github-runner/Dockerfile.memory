@@ -1,4 +1,4 @@
-FROM golang:1.24 AS builder
+FROM golang:1.25 AS builder
 
 # --- Copy shared source for backends ---
 WORKDIR /src
@@ -17,7 +17,7 @@ RUN cd frontends/docker && GOWORK=off go mod download && \
     GOWORK=off go build -o /out/sockerless-frontend-docker ./cmd
 
 # --- Runtime stage ---
-FROM golang:1.24
+FROM golang:1.25
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 RUN go install github.com/nektos/act@latest

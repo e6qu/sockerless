@@ -6,10 +6,11 @@
 //
 // Configure with environment variables:
 //
-//	SIM_LISTEN_ADDR  — listen address (default ":4567")
-//	SIM_TLS_CERT     — TLS certificate file (optional)
-//	SIM_TLS_KEY      — TLS key file (optional)
-//	SIM_LOG_LEVEL    — log level: trace, debug, info, warn, error (default "info")
+//	SIM_LISTEN_ADDR     — HTTP listen address (default ":4567")
+//	SIM_GCP_GRPC_PORT   — gRPC listen port for Cloud Logging (default: HTTP port + 1)
+//	SIM_TLS_CERT        — TLS certificate file (optional)
+//	SIM_TLS_KEY         — TLS key file (optional)
+//	SIM_LOG_LEVEL       — log level: trace, debug, info, warn, error (default "info")
 //
 // SDK configuration:
 //
@@ -18,10 +19,15 @@
 package main
 
 import (
+	"fmt"
 	"log"
+	"net"
 	"os"
+	"strconv"
+	"strings"
 
 	sim "github.com/sockerless/simulator"
+	"google.golang.org/grpc"
 )
 
 func main() {
@@ -36,7 +42,7 @@ func main() {
 
 	srv := sim.NewServer(cfg)
 
-	// Register GCP service routes
+	// Register GCP service routes (HTTP/REST)
 	registerCloudRunJobs(srv)
 	registerCloudLogging(srv)
 	registerCloudDNS(srv)
@@ -51,7 +57,45 @@ func main() {
 	registerVPCAccess(srv)
 	registerIAM(srv)
 
+	// Start gRPC server for Cloud Logging
+	grpcPort := grpcPortFromConfig(cfg.ListenAddr)
+	if p := os.Getenv("SIM_GCP_GRPC_PORT"); p != "" {
+		grpcPort = p
+	}
+	go startGRPCServer(grpcPort)
+
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// grpcPortFromConfig derives the gRPC port from the HTTP listen address.
+// Default: HTTP port + 1.
+func grpcPortFromConfig(listenAddr string) string {
+	// Extract port from ":4567" or "0.0.0.0:4567"
+	_, portStr, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		// Might be just ":4567"
+		portStr = strings.TrimPrefix(listenAddr, ":")
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return "4568"
+	}
+	return strconv.Itoa(port + 1)
+}
+
+func startGRPCServer(port string) {
+	lis, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		log.Fatalf("gRPC: failed to listen on :%s: %v", port, err)
+	}
+
+	gs := grpc.NewServer()
+	registerCloudLoggingGRPC(gs)
+
+	fmt.Fprintf(os.Stderr, "  gRPC Cloud Logging on :%s\n", port)
+	if err := gs.Serve(lis); err != nil {
+		log.Fatalf("gRPC: failed to serve: %v", err)
 	}
 }

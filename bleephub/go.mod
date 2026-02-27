@@ -1,6 +1,6 @@
 module github.com/sockerless/bleephub
 
-go 1.24.2
+go 1.25.0
 
 require (
 	github.com/go-git/go-billy/v5 v5.6.2
