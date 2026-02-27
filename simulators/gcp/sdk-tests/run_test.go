@@ -6,9 +6,12 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	"cloud.google.com/go/logging/logadmin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/api/iterator"
 )
 
 // Cloud Run Jobs v2 uses REST API.
@@ -117,4 +120,66 @@ func TestCloudRun_DeleteJob(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestCloudRun_RunJobInjectsLogEntries(t *testing.T) {
+	// Create a job with a unique name for this test
+	job := map[string]any{
+		"template": map[string]any{
+			"template": map[string]any{
+				"containers": []map[string]any{
+					{"image": "gcr.io/test/logtest:latest"},
+				},
+			},
+		},
+	}
+	body, _ := json.Marshal(job)
+	createReq, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/v2/projects/test-project/locations/us-central1/jobs?jobId=log-inject-job",
+		strings.NewReader(string(body)))
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp, err := http.DefaultClient.Do(createReq)
+	require.NoError(t, err)
+	createResp.Body.Close()
+
+	// Run the job
+	runReq, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/v2/projects/test-project/locations/us-central1/jobs/log-inject-job:run",
+		strings.NewReader("{}"))
+	runReq.Header.Set("Content-Type", "application/json")
+	runResp, err := http.DefaultClient.Do(runReq)
+	require.NoError(t, err)
+	runResp.Body.Close()
+	require.Equal(t, http.StatusOK, runResp.StatusCode)
+
+	// Wait for execution to complete (auto-completes after 3s)
+	time.Sleep(4 * time.Second)
+
+	// Query log entries using logadmin with the same filter the backend uses
+	client := logadminClient(t)
+	filter := `resource.type="cloud_run_job" AND resource.labels.job_name="log-inject-job"`
+	it := client.Entries(ctx, logadmin.Filter(filter))
+
+	var messages []string
+	for {
+		entry, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		require.NoError(t, err)
+
+		// Verify resource type and label
+		assert.Equal(t, "cloud_run_job", entry.Resource.Type)
+		assert.Equal(t, "log-inject-job", entry.Resource.Labels["job_name"])
+
+		if entry.Payload != nil {
+			if s, ok := entry.Payload.(string); ok {
+				messages = append(messages, s)
+			}
+		}
+	}
+
+	require.GreaterOrEqual(t, len(messages), 2, "should have at least start and completion log entries")
+	assert.Equal(t, "Container started", messages[0])
+	assert.Equal(t, "Execution completed successfully", messages[1])
 }

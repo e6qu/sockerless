@@ -340,6 +340,9 @@ func registerCloudRunJobs(srv *sim.Server) {
 
 		executions.Put(execName, exec)
 
+		// Inject log entries for the execution
+		injectCloudRunJobLog(project, jobID, "Container started")
+
 		// Start agent subprocess if a container has a callback URL configured
 		callbackURL := crjGetAgentCallbackURL(job)
 		if callbackURL != "" {
@@ -347,16 +350,18 @@ func registerCloudRunJobs(srv *sim.Server) {
 		}
 
 		// Auto-complete execution after 3 seconds (only if no agent)
-		go func(id string, tc int32, hasAgent bool) {
+		go func(id string, tc int32, hasAgent bool, proj, job string) {
 			if hasAgent {
 				// Agent-managed: don't auto-complete. Backend will cancel when done.
 				return
 			}
 			time.Sleep(3 * time.Second)
+			completed := false
 			executions.Update(id, func(e *Execution) {
 				if e.RunningCount == 0 {
 					return
 				}
+				completed = true
 				completionTime := nowTimestamp()
 				e.CompletionTime = completionTime
 				e.RunningCount = 0
@@ -367,7 +372,10 @@ func registerCloudRunJobs(srv *sim.Server) {
 				}
 				e.Reconciling = false
 			})
-		}(execName, taskCount, callbackURL != "")
+			if completed {
+				injectCloudRunJobLog(proj, job, "Execution completed successfully")
+			}
+		}(execName, taskCount, callbackURL != "", project, jobID)
 
 		// Increment execution count on the job
 		jobs.Update(name, func(j *Job) {
@@ -433,6 +441,9 @@ func registerCloudRunJobs(srv *sim.Server) {
 			}
 			e.Reconciling = false
 		})
+		if ok {
+			injectCloudRunJobLog(project, jobID, "Execution cancelled")
+		}
 		if !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "execution %q not found", name)
 			return
@@ -442,6 +453,17 @@ func registerCloudRunJobs(srv *sim.Server) {
 		lro := newLRO(project, location, exec, "type.googleapis.com/google.cloud.run.v2.Execution")
 		sim.WriteJSON(w, http.StatusOK, lro)
 	})
+}
+
+// injectCloudRunJobLog writes a log entry to the Cloud Logging store for a
+// Cloud Run Job execution, using the same resource type and labels that the
+// backend's log filter expects.
+func injectCloudRunJobLog(project, jobName, text string) {
+	logName := fmt.Sprintf("projects/%s/logs/run.googleapis.com%%2Fstdout", project)
+	writeLogEntries(logName, &MonitoredResource{
+		Type:   "cloud_run_job",
+		Labels: map[string]string{"job_name": jobName},
+	}, nil, []LogEntry{{TextPayload: text}})
 }
 
 // crjGetAgentCallbackURL extracts the agent callback URL from the job's
