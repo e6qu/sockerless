@@ -2,6 +2,7 @@ package aws_sdk_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
@@ -56,4 +57,82 @@ func TestECS_RegisterTaskDefinition(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test-task", *out.TaskDefinition.Family)
 	assert.Equal(t, int32(1), out.TaskDefinition.Revision)
+}
+
+func TestECS_ExitCodeNilWhileRunning(t *testing.T) {
+	client := ecsClient()
+
+	// Setup: cluster + task definition
+	clusterName := "exitcode-test-cluster"
+	_, err := client.CreateCluster(ctx, &ecs.CreateClusterInput{
+		ClusterName: aws.String(clusterName),
+	})
+	require.NoError(t, err)
+
+	tdOut, err := client.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
+		Family:                  aws.String("exitcode-task"),
+		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityFargate},
+		NetworkMode:             ecstypes.NetworkModeAwsvpc,
+		Cpu:                     aws.String("256"),
+		Memory:                  aws.String("512"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{
+			{
+				Name:  aws.String("app"),
+				Image: aws.String("alpine:latest"),
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	// Run task
+	runOut, err := client.RunTask(ctx, &ecs.RunTaskInput{
+		Cluster:        aws.String(clusterName),
+		TaskDefinition: aws.String(*tdOut.TaskDefinition.TaskDefinitionArn),
+		Count:          aws.Int32(1),
+		LaunchType:     ecstypes.LaunchTypeFargate,
+		NetworkConfiguration: &ecstypes.NetworkConfiguration{
+			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
+				Subnets: []string{"subnet-12345"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, runOut.Tasks, 1)
+	taskArn := *runOut.Tasks[0].TaskArn
+
+	// Wait briefly for task to transition to RUNNING (500ms in simulator)
+	time.Sleep(800 * time.Millisecond)
+
+	// Describe task while RUNNING — ExitCode should be nil
+	descOut, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+		Cluster: aws.String(clusterName),
+		Tasks:   []string{taskArn},
+	})
+	require.NoError(t, err)
+	require.Len(t, descOut.Tasks, 1)
+	require.NotEmpty(t, descOut.Tasks[0].Containers)
+
+	runningTask := descOut.Tasks[0]
+	assert.Equal(t, "RUNNING", *runningTask.LastStatus)
+	for _, c := range runningTask.Containers {
+		assert.Nil(t, c.ExitCode, "ExitCode should be nil while task is RUNNING")
+	}
+
+	// Wait for auto-stop (3s from RUNNING)
+	time.Sleep(4 * time.Second)
+
+	// Describe task after STOPPED — ExitCode should be set
+	descOut2, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+		Cluster: aws.String(clusterName),
+		Tasks:   []string{taskArn},
+	})
+	require.NoError(t, err)
+	require.Len(t, descOut2.Tasks, 1)
+
+	stoppedTask := descOut2.Tasks[0]
+	assert.Equal(t, "STOPPED", *stoppedTask.LastStatus)
+	for _, c := range stoppedTask.Containers {
+		require.NotNil(t, c.ExitCode, "ExitCode should be set when task is STOPPED")
+		assert.Equal(t, int32(0), *c.ExitCode)
+	}
 }
