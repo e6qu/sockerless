@@ -77,10 +77,26 @@ type LogEntry struct {
 	AppRoleName string `json:"AppRoleName,omitempty"`
 }
 
+// monitorLogs stores rows keyed by "workspaceID:tableName".
+// Package-level so other handlers (e.g., Container Apps) can inject log entries.
+var monitorLogs = sim.NewStateStore[[]monitorLogRow]()
+
+// injectContainerAppLog writes a log entry to the ContainerAppConsoleLogs_CL table.
+func injectContainerAppLog(jobName, message string) {
+	row := monitorLogRow{
+		"TimeGenerated":        time.Now().UTC().Format(time.RFC3339),
+		"ContainerGroupName_s": jobName,
+		"Log_s":                message,
+		"Stream_s":             "stdout",
+	}
+	storeKey := "default:ContainerAppConsoleLogs_CL"
+	existing, _ := monitorLogs.Get(storeKey)
+	existing = append(existing, row)
+	monitorLogs.Put(storeKey, existing)
+}
+
 func registerAzureMonitor(srv *sim.Server) {
 	workspaces := sim.NewStateStore[Workspace]()
-	// monitorLogs stores rows keyed by "workspaceID:tableName"
-	monitorLogs := sim.NewStateStore[[]monitorLogRow]()
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.OperationalInsights"
 
