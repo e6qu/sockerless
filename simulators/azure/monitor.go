@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -67,17 +66,21 @@ type Column struct {
 	Type string `json:"type"`
 }
 
-// LogEntry represents a stored log entry for the simulator.
+// LogEntry represents a stored log entry for the simulator (used for ingestion API).
 type LogEntry struct {
 	TimeGenerated      string `json:"TimeGenerated"`
 	ContainerGroupName string `json:"ContainerGroupName_s,omitempty"`
 	Log                string `json:"Log_s,omitempty"`
 	Stream             string `json:"Stream_s,omitempty"`
+	// AppTraces fields
+	Message     string `json:"Message,omitempty"`
+	AppRoleName string `json:"AppRoleName,omitempty"`
 }
 
 func registerAzureMonitor(srv *sim.Server) {
 	workspaces := sim.NewStateStore[Workspace]()
-	logs := sim.NewStateStore[[]LogEntry]()
+	// monitorLogs stores rows keyed by "workspaceID:tableName"
+	monitorLogs := sim.NewStateStore[[]monitorLogRow]()
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.OperationalInsights"
 
@@ -234,21 +237,40 @@ func registerAzureMonitor(srv *sim.Server) {
 			return
 		}
 
-		// Look up log entries for this workspace and filter based on simple KQL parsing
-		entries, _ := logs.Get(workspaceID)
-		rows := queryLogEntries(entries, req.Query)
+		parsed := parseKQL(req.Query)
+
+		// Look up the table schema
+		columns, ok := kqlTableSchemas[parsed.Table]
+		if !ok {
+			// Default to ContainerAppConsoleLogs_CL schema
+			columns = kqlTableSchemas["ContainerAppConsoleLogs_CL"]
+		}
+
+		// Look up log entries for this workspace + table
+		storeKey := workspaceID + ":" + parsed.Table
+		entries, _ := monitorLogs.Get(storeKey)
+		// Also check "default" workspace for backward compat
+		if len(entries) == 0 {
+			entries, _ = monitorLogs.Get("default:" + parsed.Table)
+		}
+
+		var rows [][]any
+		for _, row := range entries {
+			if !row.matchesFilters(parsed.Filters) {
+				continue
+			}
+			rows = append(rows, row.toRow(columns))
+			if parsed.Limit > 0 && len(rows) >= parsed.Limit {
+				break
+			}
+		}
 
 		resp := QueryResponse{
 			Tables: []Table{
 				{
-					Name: "PrimaryResult",
-					Columns: []Column{
-						{Name: "TimeGenerated", Type: "datetime"},
-						{Name: "ContainerGroupName_s", Type: "string"},
-						{Name: "Log_s", Type: "string"},
-						{Name: "Stream_s", Type: "string"},
-					},
-					Rows: rows,
+					Name:    "PrimaryResult",
+					Columns: columns,
+					Rows:    rows,
 				},
 			},
 		}
@@ -264,80 +286,39 @@ func registerAzureMonitor(srv *sim.Server) {
 			return
 		}
 
-		// Add timestamps to entries missing them
-		for i := range entries {
-			if entries[i].TimeGenerated == "" {
-				entries[i].TimeGenerated = time.Now().UTC().Format(time.RFC3339)
+		now := time.Now().UTC().Format(time.RFC3339)
+		for _, e := range entries {
+			if e.TimeGenerated == "" {
+				e.TimeGenerated = now
 			}
-		}
+			row := monitorLogRow{"TimeGenerated": e.TimeGenerated}
+			// Detect table by which fields are populated
+			tableName := "ContainerAppConsoleLogs_CL"
+			if e.ContainerGroupName != "" {
+				row["ContainerGroupName_s"] = e.ContainerGroupName
+			}
+			if e.Log != "" {
+				row["Log_s"] = e.Log
+			}
+			if e.Stream != "" {
+				row["Stream_s"] = e.Stream
+			}
+			if e.Message != "" || e.AppRoleName != "" {
+				tableName = "AppTraces"
+				row["Message"] = e.Message
+				row["AppRoleName"] = e.AppRoleName
+			}
 
-		// Store logs keyed by a default workspace ID
-		// In a real simulator we would map DCR to workspace; for simplicity store under "default"
-		existing, _ := logs.Get("default")
-		existing = append(existing, entries...)
-		logs.Put("default", existing)
+			storeKey := "default:" + tableName
+			existing, _ := monitorLogs.Get(storeKey)
+			existing = append(existing, row)
+			monitorLogs.Put(storeKey, existing)
+		}
 
 		w.WriteHeader(http.StatusNoContent)
 	})
 }
 
-// queryLogEntries performs simple KQL-style filtering on log entries.
-// It handles basic "where" and "take" clauses.
-func queryLogEntries(entries []LogEntry, query string) [][]any {
-	var rows [][]any
-
-	// Simple filter: look for 'where ContainerGroupName_s == "value"'
-	var filterField, filterValue string
-	parts := strings.Split(query, "|")
-	limit := -1
-
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if strings.HasPrefix(part, "where ") {
-			clause := strings.TrimPrefix(part, "where ")
-			// Parse simple equality: field == 'value' or field == "value"
-			if idx := strings.Index(clause, "=="); idx > 0 {
-				filterField = strings.TrimSpace(clause[:idx])
-				val := strings.TrimSpace(clause[idx+2:])
-				val = strings.Trim(val, "'\"")
-				filterValue = val
-			}
-		}
-		if strings.HasPrefix(part, "take ") {
-			fmt.Sscanf(strings.TrimPrefix(part, "take "), "%d", &limit)
-		}
-		if strings.HasPrefix(part, "limit ") {
-			fmt.Sscanf(strings.TrimPrefix(part, "limit "), "%d", &limit)
-		}
-	}
-
-	for _, e := range entries {
-		if filterField != "" && filterValue != "" {
-			match := false
-			switch filterField {
-			case "ContainerGroupName_s":
-				match = e.ContainerGroupName == filterValue
-			case "Log_s":
-				match = e.Log == filterValue
-			case "Stream_s":
-				match = e.Stream == filterValue
-			default:
-				match = true // Unknown field, include all
-			}
-			if !match {
-				continue
-			}
-		}
-
-		rows = append(rows, []any{e.TimeGenerated, e.ContainerGroupName, e.Log, e.Stream})
-
-		if limit > 0 && len(rows) >= limit {
-			break
-		}
-	}
-
-	return rows
-}
 
 // generateUUID generates a random UUID string.
 func generateUUID() string {
