@@ -2,6 +2,7 @@ package azure_sdk_test
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -78,4 +79,54 @@ func TestAzureFunctions_InvokeInjectsLogEntries(t *testing.T) {
 	lastRow := table.Rows[len(table.Rows)-1]
 	assert.Equal(t, "Function invoked", lastRow[msgIdx])
 	assert.Equal(t, "log-func-app", lastRow[roleIdx])
+}
+
+func TestAzureFunctions_DefaultHostNameReachability(t *testing.T) {
+	// Ensure resource group exists
+	rgBody := `{"location":"eastus"}`
+	rgReq, _ := http.NewRequestWithContext(ctx, "PUT",
+		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/func-host-rg?api-version=2023-07-01",
+		strings.NewReader(rgBody))
+	rgReq.Header.Set("Content-Type", "application/json")
+	rgReq.Header.Set("Authorization", "Bearer fake-token")
+	rgResp, err := http.DefaultClient.Do(rgReq)
+	require.NoError(t, err)
+	rgResp.Body.Close()
+
+	// Create function app
+	site := map[string]any{
+		"location": "eastus",
+		"kind":     "functionapp",
+		"properties": map[string]any{
+			"serverFarmId": "/subscriptions/" + subscriptionID + "/resourceGroups/func-host-rg/providers/Microsoft.Web/serverFarms/plan",
+		},
+	}
+	siteBody, _ := json.Marshal(site)
+	siteReq, _ := http.NewRequestWithContext(ctx, "PUT",
+		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/func-host-rg/providers/Microsoft.Web/sites/host-func-app?api-version=2023-12-01",
+		strings.NewReader(string(siteBody)))
+	siteReq.Header.Set("Content-Type", "application/json")
+	siteReq.Header.Set("Authorization", "Bearer fake-token")
+	siteResp, err := http.DefaultClient.Do(siteReq)
+	require.NoError(t, err)
+	defer siteResp.Body.Close()
+	require.Equal(t, http.StatusOK, siteResp.StatusCode)
+
+	// Extract DefaultHostName from response
+	var result map[string]any
+	data, _ := io.ReadAll(siteResp.Body)
+	require.NoError(t, json.Unmarshal(data, &result))
+	props := result["properties"].(map[string]any)
+	defaultHostName := props["defaultHostName"].(string)
+	require.NotEmpty(t, defaultHostName, "DefaultHostName should be set")
+
+	// Construct invocation URL using DefaultHostName and POST to it
+	invokeURL := "http://" + defaultHostName + "/api/function"
+	invokeReq, _ := http.NewRequestWithContext(ctx, "POST", invokeURL, strings.NewReader("{}"))
+	invokeReq.Header.Set("Content-Type", "application/json")
+	invokeResp, err := http.DefaultClient.Do(invokeReq)
+	require.NoError(t, err)
+	defer invokeResp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, invokeResp.StatusCode)
 }
