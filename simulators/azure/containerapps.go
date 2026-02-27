@@ -296,6 +296,9 @@ func registerContainerApps(srv *sim.Server) {
 
 		executions.Put(execID, exec)
 
+		// Inject log entry for execution start
+		injectContainerAppLog(name, "Container started")
+
 		// Start agent subprocess if a container has a callback URL configured
 		callbackURL := acaGetAgentCallbackURL(job)
 		if callbackURL != "" {
@@ -303,20 +306,25 @@ func registerContainerApps(srv *sim.Server) {
 		}
 
 		// Auto-stop execution after 3 seconds (only if no agent)
-		go func(id string, hasAgent bool) {
+		go func(id, jobShortName string, hasAgent bool) {
 			if hasAgent {
 				// Agent-managed: don't auto-stop. Backend will stop when done.
 				return
 			}
 			time.Sleep(3 * time.Second)
+			completed := false
 			executions.Update(id, func(e *JobExecution) {
 				if e.Status != "Running" {
 					return
 				}
+				completed = true
 				e.Status = "Succeeded"
 				e.EndTime = time.Now().UTC().Format(time.RFC3339)
 			})
-		}(execID, callbackURL != "")
+			if completed {
+				injectContainerAppLog(jobShortName, "Execution completed successfully")
+			}
+		}(execID, name, callbackURL != "")
 
 		// Return 202 with Location header for LRO polling.
 		// The Azure SDK's BeginStart uses FinalStateViaLocation,
@@ -395,6 +403,9 @@ func registerContainerApps(srv *sim.Server) {
 			e.Status = "Stopped"
 			e.EndTime = time.Now().UTC().Format(time.RFC3339)
 		})
+		if ok {
+			injectContainerAppLog(jobName, "Execution stopped")
+		}
 
 		if !ok {
 			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
