@@ -588,14 +588,14 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 
-			// Auto-stop after 3 seconds (simulates short-lived task).
+			// Auto-stop after timeout (simulates short-lived task).
 			// Only auto-stop if no agent subprocess is running (agent-managed tasks
 			// stay alive until the backend stops or kills them).
 			if _, hasAgent := ecsAgentProcs.Load(id); hasAgent {
 				// Agent-managed: don't auto-stop. The backend will StopTask when done.
 				return
 			}
-			time.Sleep(3 * time.Second)
+			time.Sleep(execTimeout())
 			stopTime := time.Now().Unix()
 			stopped := false
 			ecsTasks.Update(id, func(t *ECSTask) {

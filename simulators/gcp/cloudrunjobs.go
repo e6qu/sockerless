@@ -350,13 +350,13 @@ func registerCloudRunJobs(srv *sim.Server) {
 			crjStartAgentProcess(&crjAgentProcs, execName, callbackURL)
 		}
 
-		// Auto-complete execution after 3 seconds (only if no agent)
+		// Auto-complete execution after timeout (only if no agent)
 		go func(id string, tc int32, hasAgent bool, proj, job string) {
 			if hasAgent {
 				// Agent-managed: don't auto-complete. Backend will cancel when done.
 				return
 			}
-			time.Sleep(3 * time.Second)
+			time.Sleep(execTimeout())
 			completed := false
 			executions.Update(id, func(e *Execution) {
 				if e.RunningCount == 0 {
