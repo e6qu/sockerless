@@ -137,6 +137,126 @@ func TestContainerApps_StartJobInjectsLogs(t *testing.T) {
 	assert.Equal(t, "Execution completed successfully", table.Rows[1][logIdx])
 }
 
+// acaCreateJob creates a Container Apps Job and returns its resource ID.
+func acaCreateJob(t *testing.T, rg, jobName string) {
+	t.Helper()
+
+	// Ensure resource group exists
+	rgBody := `{"location":"eastus"}`
+	rgReq, _ := http.NewRequestWithContext(ctx, "PUT",
+		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"?api-version=2023-07-01",
+		strings.NewReader(rgBody))
+	rgReq.Header.Set("Content-Type", "application/json")
+	rgReq.Header.Set("Authorization", "Bearer fake-token")
+	rgResp, err := http.DefaultClient.Do(rgReq)
+	require.NoError(t, err)
+	rgResp.Body.Close()
+
+	job := map[string]any{
+		"location": "eastus",
+		"properties": map[string]any{
+			"configuration": map[string]any{
+				"triggerType":    "Manual",
+				"replicaTimeout": 300,
+			},
+			"template": map[string]any{
+				"containers": []map[string]any{
+					{"name": "worker", "image": "mcr.microsoft.com/test:latest"},
+				},
+			},
+		},
+	}
+	body, _ := json.Marshal(job)
+	req, _ := http.NewRequestWithContext(ctx, "PUT",
+		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.App/jobs/"+jobName+"?api-version=2024-03-01",
+		strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer fake-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Contains(t, []int{200, 201}, resp.StatusCode)
+}
+
+// acaStartExecution starts a job execution and returns the execution name from the response.
+func acaStartExecution(t *testing.T, rg, jobName string) string {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.App/jobs/"+jobName+"/start?api-version=2024-03-01",
+		strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer fake-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+
+	var result map[string]any
+	data, _ := io.ReadAll(resp.Body)
+	require.NoError(t, json.Unmarshal(data, &result))
+	return result["name"].(string)
+}
+
+// acaGetExecution returns the execution status.
+func acaGetExecution(t *testing.T, rg, jobName, execName string) map[string]any {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.App/jobs/"+jobName+"/executions/"+execName+"?api-version=2024-03-01",
+		nil)
+	req.Header.Set("Authorization", "Bearer fake-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var result map[string]any
+	data, _ := io.ReadAll(resp.Body)
+	require.NoError(t, json.Unmarshal(data, &result))
+	return result
+}
+
+func TestContainerApps_ExecutionRunningState(t *testing.T) {
+	acaCreateJob(t, "status-rg", "running-job")
+	execName := acaStartExecution(t, "status-rg", "running-job")
+
+	// Immediately check — should be Running
+	exec := acaGetExecution(t, "status-rg", "running-job", execName)
+	assert.Equal(t, "Running", exec["status"])
+	assert.NotEmpty(t, exec["startTime"])
+}
+
+func TestContainerApps_ExecutionSucceededState(t *testing.T) {
+	acaCreateJob(t, "status-rg", "succeed-job")
+	execName := acaStartExecution(t, "status-rg", "succeed-job")
+
+	// Wait for auto-completion (3s + buffer)
+	time.Sleep(4 * time.Second)
+
+	exec := acaGetExecution(t, "status-rg", "succeed-job", execName)
+	assert.Equal(t, "Succeeded", exec["status"])
+	assert.NotEmpty(t, exec["endTime"])
+}
+
+func TestContainerApps_ExecutionStoppedState(t *testing.T) {
+	acaCreateJob(t, "status-rg", "stop-job")
+	execName := acaStartExecution(t, "status-rg", "stop-job")
+
+	// Stop the execution
+	stopReq, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/status-rg/providers/Microsoft.App/jobs/stop-job/executions/"+execName+"/stop?api-version=2024-03-01",
+		strings.NewReader("{}"))
+	stopReq.Header.Set("Content-Type", "application/json")
+	stopReq.Header.Set("Authorization", "Bearer fake-token")
+	stopResp, err := http.DefaultClient.Do(stopReq)
+	require.NoError(t, err)
+	stopResp.Body.Close()
+	require.Equal(t, http.StatusOK, stopResp.StatusCode)
+
+	exec := acaGetExecution(t, "status-rg", "stop-job", execName)
+	assert.Equal(t, "Stopped", exec["status"])
+	assert.NotEmpty(t, exec["endTime"])
+}
+
 func TestContainerApps_GetJob(t *testing.T) {
 	req, _ := http.NewRequestWithContext(ctx, "GET",
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/aca-rg/providers/Microsoft.App/jobs/test-job?api-version=2024-03-01",
