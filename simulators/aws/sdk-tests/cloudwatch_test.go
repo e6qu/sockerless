@@ -97,3 +97,83 @@ func TestCloudWatch_GetLogEventsPagination(t *testing.T) {
 	// New token should be different
 	assert.NotEqual(t, *token, *result3.NextForwardToken, "token should change when new events exist")
 }
+
+func TestCloudWatch_DescribeLogStreamsOrdering(t *testing.T) {
+	cw := cwLogsClient()
+
+	logGroup := "/test/stream-ordering"
+	_, err := cw.CreateLogGroup(ctx, &cloudwatchlogs.CreateLogGroupInput{
+		LogGroupName: aws.String(logGroup),
+	})
+	require.NoError(t, err)
+	defer cw.DeleteLogGroup(ctx, &cloudwatchlogs.DeleteLogGroupInput{
+		LogGroupName: aws.String(logGroup),
+	})
+
+	// Create 3 streams
+	streams := []string{"stream-a", "stream-b", "stream-c"}
+	for _, s := range streams {
+		_, err := cw.CreateLogStream(ctx, &cloudwatchlogs.CreateLogStreamInput{
+			LogGroupName:  aws.String(logGroup),
+			LogStreamName: aws.String(s),
+		})
+		require.NoError(t, err)
+	}
+
+	now := time.Now().UnixMilli()
+
+	// Put events at different times: stream-b gets the newest event
+	_, err = cw.PutLogEvents(ctx, &cloudwatchlogs.PutLogEventsInput{
+		LogGroupName:  aws.String(logGroup),
+		LogStreamName: aws.String("stream-a"),
+		LogEvents:     []cwlogtypes.InputLogEvent{{Timestamp: aws.Int64(now), Message: aws.String("old")}},
+	})
+	require.NoError(t, err)
+
+	_, err = cw.PutLogEvents(ctx, &cloudwatchlogs.PutLogEventsInput{
+		LogGroupName:  aws.String(logGroup),
+		LogStreamName: aws.String("stream-c"),
+		LogEvents:     []cwlogtypes.InputLogEvent{{Timestamp: aws.Int64(now + 100), Message: aws.String("medium")}},
+	})
+	require.NoError(t, err)
+
+	_, err = cw.PutLogEvents(ctx, &cloudwatchlogs.PutLogEventsInput{
+		LogGroupName:  aws.String(logGroup),
+		LogStreamName: aws.String("stream-b"),
+		LogEvents:     []cwlogtypes.InputLogEvent{{Timestamp: aws.Int64(now + 200), Message: aws.String("newest")}},
+	})
+	require.NoError(t, err)
+
+	// Describe with OrderBy=LastEventTime, Descending=true
+	result, err := cw.DescribeLogStreams(ctx, &cloudwatchlogs.DescribeLogStreamsInput{
+		LogGroupName: aws.String(logGroup),
+		OrderBy:      cwlogtypes.OrderByLastEventTime,
+		Descending:   aws.Bool(true),
+	})
+	require.NoError(t, err)
+	require.Len(t, result.LogStreams, 3)
+	assert.Equal(t, "stream-b", *result.LogStreams[0].LogStreamName, "newest stream should be first")
+	assert.Equal(t, "stream-c", *result.LogStreams[1].LogStreamName)
+	assert.Equal(t, "stream-a", *result.LogStreams[2].LogStreamName, "oldest stream should be last")
+
+	// With Limit=1, should return only the newest stream
+	limited, err := cw.DescribeLogStreams(ctx, &cloudwatchlogs.DescribeLogStreamsInput{
+		LogGroupName: aws.String(logGroup),
+		OrderBy:      cwlogtypes.OrderByLastEventTime,
+		Descending:   aws.Bool(true),
+		Limit:        aws.Int32(1),
+	})
+	require.NoError(t, err)
+	require.Len(t, limited.LogStreams, 1)
+	assert.Equal(t, "stream-b", *limited.LogStreams[0].LogStreamName)
+
+	// Default ordering (by name, ascending)
+	byName, err := cw.DescribeLogStreams(ctx, &cloudwatchlogs.DescribeLogStreamsInput{
+		LogGroupName: aws.String(logGroup),
+	})
+	require.NoError(t, err)
+	require.Len(t, byName.LogStreams, 3)
+	assert.Equal(t, "stream-a", *byName.LogStreams[0].LogStreamName)
+	assert.Equal(t, "stream-b", *byName.LogStreams[1].LogStreamName)
+	assert.Equal(t, "stream-c", *byName.LogStreams[2].LogStreamName)
+}
