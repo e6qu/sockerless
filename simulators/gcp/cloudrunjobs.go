@@ -353,20 +353,6 @@ func registerCloudRunJobs(srv *sim.Server) {
 			crjStartAgentProcess(&crjAgentProcs, execName, callbackURL)
 		}
 
-		// Detect agent containers (forward or reverse mode) via SOCKERLESS_AGENT_TOKEN env var
-		isAgent := callbackURL != ""
-		if !isAgent && tmpl != nil {
-			for _, c := range tmpl.Containers {
-				for _, ev := range c.Env {
-					if ev.Name == "SOCKERLESS_AGENT_TOKEN" {
-						isAgent = true
-						break
-					}
-				}
-				break // first container only
-			}
-		}
-
 		// Auto-complete execution after task timeout or process exit (only if no agent)
 		go func(id string, tc int32, hasAgent bool, proj, job string, taskTmpl *TaskTemplate) {
 			if hasAgent {
@@ -442,7 +428,7 @@ func registerCloudRunJobs(srv *sim.Server) {
 			if completed {
 				injectCloudRunJobLog(proj, job, "Execution completed successfully")
 			}
-		}(execName, taskCount, isAgent, project, jobID, tmpl)
+		}(execName, taskCount, callbackURL != "", project, jobID, tmpl)
 
 		// Increment execution count on the job
 		jobs.Update(name, func(j *Job) {
