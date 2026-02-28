@@ -2,7 +2,7 @@ BINARY  := simulator-gcp
 IMAGE   := sockerless-simulator-gcp
 PORT    := 4567
 
-.PHONY: build clean run docker-build docker-run test sdk-test cli-test terraform-test docker-test-build docker-test fmt vet
+.PHONY: build clean run docker-build docker-run test shared-test sdk-test cli-test terraform-test docker-test-build docker-test fmt vet
 
 build:
 	CGO_ENABLED=0 go build -ldflags="-s -w" -o $(BINARY) .
@@ -22,6 +22,9 @@ docker-run: docker-build
 		-e SIM_LOG_LEVEL=info \
 		$(IMAGE)
 
+shared-test:
+	cd shared && GOWORK=off go test -v -count=1 ./...
+
 sdk-test: build
 	cd sdk-tests && go test -v -count=1 ./...
 
@@ -31,7 +34,7 @@ cli-test: build
 terraform-test: build
 	cd terraform-tests && go test -v -count=1 -timeout 300s ./...
 
-test: sdk-test cli-test terraform-test
+test: shared-test sdk-test cli-test terraform-test
 
 docker-test-build:
 	docker build -t sockerless-test-gcp -f Dockerfile.test .
