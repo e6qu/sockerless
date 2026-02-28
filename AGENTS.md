@@ -16,3 +16,21 @@ The simulators run locally on a single machine today. The architecture is design
 ## Never merge PRs
 
 Create PRs with `gh pr create`. Never run `gh pr merge`. The user handles all merges.
+
+## Branch hygiene
+
+Before pushing a PR branch, always rebase it on top of `origin/main`:
+
+```
+git fetch origin main
+git rebase origin/main
+```
+
+After rebasing and pushing, sync local `main` with `origin/main`:
+
+```
+git checkout main
+git pull origin main
+```
+
+This is an acceptance criterion for every task — a PR is not ready until the branch is rebased on `origin/main` and local `main` is in sync.

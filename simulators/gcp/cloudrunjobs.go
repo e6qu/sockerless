@@ -350,13 +350,19 @@ func registerCloudRunJobs(srv *sim.Server) {
 			crjStartAgentProcess(&crjAgentProcs, execName, callbackURL)
 		}
 
-		// Auto-complete execution after timeout (only if no agent)
-		go func(id string, tc int32, hasAgent bool, proj, job string) {
+		// Auto-complete execution after task timeout (only if no agent)
+		go func(id string, tc int32, hasAgent bool, proj, job string, taskTmpl *TaskTemplate) {
 			if hasAgent {
 				// Agent-managed: don't auto-complete. Backend will cancel when done.
 				return
 			}
-			time.Sleep(execTimeout())
+			timeout := 600 * time.Second // GCP default
+			if taskTmpl != nil && taskTmpl.Timeout != "" {
+				if d, err := time.ParseDuration(taskTmpl.Timeout); err == nil {
+					timeout = d
+				}
+			}
+			time.Sleep(timeout)
 			completed := false
 			executions.Update(id, func(e *Execution) {
 				if e.RunningCount == 0 {
@@ -376,7 +382,7 @@ func registerCloudRunJobs(srv *sim.Server) {
 			if completed {
 				injectCloudRunJobLog(proj, job, "Execution completed successfully")
 			}
-		}(execName, taskCount, callbackURL != "", project, jobID)
+		}(execName, taskCount, callbackURL != "", project, jobID, tmpl)
 
 		// Increment execution count on the job
 		jobs.Update(name, func(j *Job) {

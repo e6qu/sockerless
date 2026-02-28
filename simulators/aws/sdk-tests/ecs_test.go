@@ -118,8 +118,12 @@ func TestECS_ExitCodeNilWhileRunning(t *testing.T) {
 		assert.Nil(t, c.ExitCode, "ExitCode should be nil while task is RUNNING")
 	}
 
-	// Wait for auto-stop (3s from RUNNING)
-	time.Sleep(4 * time.Second)
+	// Stop task explicitly (real ECS has no task timeout — tasks run until stopped)
+	_, err = client.StopTask(ctx, &ecs.StopTaskInput{
+		Cluster: aws.String(clusterName),
+		Task:    aws.String(taskArn),
+	})
+	require.NoError(t, err)
 
 	// Describe task after STOPPED — ExitCode should be set
 	descOut2, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
@@ -131,7 +135,7 @@ func TestECS_ExitCodeNilWhileRunning(t *testing.T) {
 
 	stoppedTask := descOut2.Tasks[0]
 	assert.Equal(t, "STOPPED", *stoppedTask.LastStatus)
-	assert.Equal(t, ecstypes.TaskStopCodeEssentialContainerExited, stoppedTask.StopCode)
+	assert.Equal(t, ecstypes.TaskStopCodeUserInitiated, stoppedTask.StopCode)
 	for _, c := range stoppedTask.Containers {
 		require.NotNil(t, c.ExitCode, "ExitCode should be set when task is STOPPED")
 		assert.Equal(t, int32(0), *c.ExitCode)

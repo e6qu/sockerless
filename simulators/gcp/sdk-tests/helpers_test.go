@@ -51,7 +51,6 @@ func TestMain(m *testing.M) {
 	simCmd.Env = append(os.Environ(),
 		fmt.Sprintf("SIM_LISTEN_ADDR=:%d", port),
 		fmt.Sprintf("SIM_GCP_GRPC_PORT=%d", grpcPort),
-		"SIM_EXEC_TIMEOUT=3s",
 	)
 	simCmd.Stdout = os.Stdout
 	simCmd.Stderr = os.Stderr

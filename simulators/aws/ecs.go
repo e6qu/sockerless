@@ -588,56 +588,6 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 
-			// Auto-stop after timeout (simulates short-lived task).
-			// Only auto-stop if no agent subprocess is running (agent-managed tasks
-			// stay alive until the backend stops or kills them).
-			if _, hasAgent := ecsAgentProcs.Load(id); hasAgent {
-				// Agent-managed: don't auto-stop. The backend will StopTask when done.
-				return
-			}
-			time.Sleep(execTimeout())
-			stopTime := time.Now().Unix()
-			stopped := false
-			ecsTasks.Update(id, func(t *ECSTask) {
-				if t.LastStatus != "RUNNING" {
-					return // already stopped
-				}
-				stopped = true
-				t.LastStatus = "STOPPED"
-				t.DesiredStatus = "STOPPED"
-				t.StoppedAt = &stopTime
-				t.StopCode = "EssentialContainerExited"
-				t.StoppedReason = "Essential container in task exited"
-				exitCode := 0
-				for j := range t.Containers {
-					t.Containers[j].LastStatus = "STOPPED"
-					t.Containers[j].ExitCode = &exitCode
-				}
-			})
-
-			// Add completion log event
-			if stopped {
-				for _, cd := range td.ContainerDefinitions {
-					if cd.LogConfiguration == nil || cd.LogConfiguration.LogDriver != "awslogs" {
-						continue
-					}
-					logGroup := cd.LogConfiguration.Options["awslogs-group"]
-					streamPrefix := cd.LogConfiguration.Options["awslogs-stream-prefix"]
-					if logGroup == "" || streamPrefix == "" {
-						continue
-					}
-					logStreamName := fmt.Sprintf("%s/%s/%s", streamPrefix, cd.Name, id)
-					key := cwEventsKey(logGroup, logStreamName)
-					stopMs := stopTime * 1000
-					cwLogEvents.Update(key, func(events *[]CWLogEvent) {
-						*events = append(*events, CWLogEvent{
-							Timestamp:     stopMs,
-							Message:       "task completed",
-							IngestionTime: stopMs,
-						})
-					})
-				}
-			}
 		}(taskID, td)
 	}
 

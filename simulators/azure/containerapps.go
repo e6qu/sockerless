@@ -305,13 +305,21 @@ func registerContainerApps(srv *sim.Server) {
 			acaStartAgentProcess(&acaAgentProcs, execID, callbackURL)
 		}
 
-		// Auto-stop execution after timeout (only if no agent)
-		go func(id, jobShortName string, hasAgent bool) {
+		// Auto-stop execution after replica timeout (only if no agent)
+		replicaTimeout := 0
+		if job.Properties.Configuration != nil {
+			replicaTimeout = job.Properties.Configuration.ReplicaTimeout
+		}
+		go func(id, jobShortName string, hasAgent bool, replicaTimeout int) {
 			if hasAgent {
 				// Agent-managed: don't auto-stop. Backend will stop when done.
 				return
 			}
-			time.Sleep(execTimeout())
+			timeout := 1800 * time.Second // Azure default
+			if replicaTimeout > 0 {
+				timeout = time.Duration(replicaTimeout) * time.Second
+			}
+			time.Sleep(timeout)
 			completed := false
 			executions.Update(id, func(e *JobExecution) {
 				if e.Status != "Running" {
@@ -324,7 +332,7 @@ func registerContainerApps(srv *sim.Server) {
 			if completed {
 				injectContainerAppLog(jobShortName, "Execution completed successfully")
 			}
-		}(execID, name, callbackURL != "")
+		}(execID, name, callbackURL != "", replicaTimeout)
 
 		// Return 202 with Location header for LRO polling.
 		// The Azure SDK's BeginStart uses FinalStateViaLocation,
