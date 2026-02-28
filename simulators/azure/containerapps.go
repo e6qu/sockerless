@@ -308,6 +308,20 @@ func registerContainerApps(srv *sim.Server) {
 			acaStartAgentProcess(&acaAgentProcs, execID, callbackURL)
 		}
 
+		// Detect agent containers (forward or reverse mode) via SOCKERLESS_AGENT_TOKEN env var
+		isAgent := callbackURL != ""
+		if !isAgent && template != nil {
+			for _, c := range template.Containers {
+				for _, ev := range c.Env {
+					if ev.Name == "SOCKERLESS_AGENT_TOKEN" {
+						isAgent = true
+						break
+					}
+				}
+				break // first container only
+			}
+		}
+
 		// Auto-stop execution after replica timeout or process exit (only if no agent)
 		replicaTimeout := 0
 		if job.Properties.Configuration != nil {
@@ -374,7 +388,7 @@ func registerContainerApps(srv *sim.Server) {
 			if completed {
 				injectContainerAppLog(jobShortName, "Execution completed successfully")
 			}
-		}(execID, name, callbackURL != "", replicaTimeout, template)
+		}(execID, name, isAgent, replicaTimeout, template)
 
 		// Return 202 with Location header for LRO polling.
 		// The Azure SDK's BeginStart uses FinalStateViaLocation,

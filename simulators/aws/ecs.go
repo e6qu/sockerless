@@ -541,6 +541,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 			// Build combined command from first container definition
 			var fullCmd []string
 			var cmdEnv map[string]string
+			isAgent := false
 			for _, cd := range td.ContainerDefinitions {
 				fullCmd = append(fullCmd, cd.EntryPoint...)
 				fullCmd = append(fullCmd, cd.Command...)
@@ -548,6 +549,9 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 					cmdEnv = make(map[string]string, len(cd.Environment))
 					for _, ev := range cd.Environment {
 						cmdEnv[ev.Name] = ev.Value
+						if ev.Name == "SOCKERLESS_AGENT_TOKEN" {
+							isAgent = true
+						}
 					}
 				}
 				break // use first container only
@@ -600,8 +604,8 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 					},
 				})
 
-				// If command is non-empty, stream real output to this log stream
-				if len(fullCmd) > 0 {
+				// If command is non-empty and not agent-managed, stream real output to this log stream
+				if len(fullCmd) > 0 && !isAgent {
 					sink := &cwLogSink{logGroup: logGroup, logStream: logStreamName}
 					handle := sim.StartProcess(sim.ProcessConfig{
 						Command: fullCmd,
