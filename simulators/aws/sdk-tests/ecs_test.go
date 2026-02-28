@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/stretchr/testify/assert"
@@ -204,4 +205,179 @@ func TestECS_StopCodeUserInitiated(t *testing.T) {
 	assert.Equal(t, "STOPPED", *task.LastStatus)
 	assert.Equal(t, ecstypes.TaskStopCodeUserInitiated, task.StopCode)
 	assert.Equal(t, "testing stop", *task.StoppedReason)
+}
+
+// ecsRunTaskHelper creates a cluster, registers a task definition, and runs a task.
+// Returns the ECS client, cluster name, and task ARN.
+func ecsRunTaskHelper(t *testing.T, name string, containerDef ecstypes.ContainerDefinition) (*ecs.Client, string, string) {
+	t.Helper()
+	client := ecsClient()
+	clusterName := name + "-cluster"
+
+	_, err := client.CreateCluster(ctx, &ecs.CreateClusterInput{
+		ClusterName: aws.String(clusterName),
+	})
+	require.NoError(t, err)
+
+	tdOut, err := client.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
+		Family:                  aws.String(name + "-task"),
+		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityFargate},
+		NetworkMode:             ecstypes.NetworkModeAwsvpc,
+		Cpu:                     aws.String("256"),
+		Memory:                  aws.String("512"),
+		ContainerDefinitions:    []ecstypes.ContainerDefinition{containerDef},
+	})
+	require.NoError(t, err)
+
+	runOut, err := client.RunTask(ctx, &ecs.RunTaskInput{
+		Cluster:        aws.String(clusterName),
+		TaskDefinition: aws.String(*tdOut.TaskDefinition.TaskDefinitionArn),
+		Count:          aws.Int32(1),
+		LaunchType:     ecstypes.LaunchTypeFargate,
+		NetworkConfiguration: &ecstypes.NetworkConfiguration{
+			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
+				Subnets: []string{"subnet-12345"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, runOut.Tasks, 1)
+
+	return client, clusterName, *runOut.Tasks[0].TaskArn
+}
+
+func TestECS_TaskExecutesCommand(t *testing.T) {
+	client, cluster, taskArn := ecsRunTaskHelper(t, "exec-cmd", ecstypes.ContainerDefinition{
+		Name:    aws.String("app"),
+		Image:   aws.String("alpine:latest"),
+		Command: []string{"echo", "hello"},
+		LogConfiguration: &ecstypes.LogConfiguration{
+			LogDriver: ecstypes.LogDriverAwslogs,
+			Options: map[string]string{
+				"awslogs-group":         "/ecs/exec-cmd",
+				"awslogs-stream-prefix": "ecs",
+			},
+		},
+	})
+
+	// Wait for process to complete (500ms startup + command execution + buffer)
+	time.Sleep(2 * time.Second)
+
+	descOut, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+		Cluster: aws.String(cluster),
+		Tasks:   []string{taskArn},
+	})
+	require.NoError(t, err)
+	require.Len(t, descOut.Tasks, 1)
+
+	task := descOut.Tasks[0]
+	assert.Equal(t, "STOPPED", *task.LastStatus)
+	require.NotEmpty(t, task.Containers)
+	require.NotNil(t, task.Containers[0].ExitCode)
+	assert.Equal(t, int32(0), *task.Containers[0].ExitCode)
+}
+
+func TestECS_TaskExitCodeNonZero(t *testing.T) {
+	client, cluster, taskArn := ecsRunTaskHelper(t, "exec-fail", ecstypes.ContainerDefinition{
+		Name:    aws.String("app"),
+		Image:   aws.String("alpine:latest"),
+		Command: []string{"sh", "-c", "exit 1"},
+		LogConfiguration: &ecstypes.LogConfiguration{
+			LogDriver: ecstypes.LogDriverAwslogs,
+			Options: map[string]string{
+				"awslogs-group":         "/ecs/exec-fail",
+				"awslogs-stream-prefix": "ecs",
+			},
+		},
+	})
+
+	time.Sleep(2 * time.Second)
+
+	descOut, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+		Cluster: aws.String(cluster),
+		Tasks:   []string{taskArn},
+	})
+	require.NoError(t, err)
+	require.Len(t, descOut.Tasks, 1)
+
+	task := descOut.Tasks[0]
+	assert.Equal(t, "STOPPED", *task.LastStatus)
+	require.NotEmpty(t, task.Containers)
+	require.NotNil(t, task.Containers[0].ExitCode)
+	assert.Equal(t, int32(1), *task.Containers[0].ExitCode)
+}
+
+func TestECS_TaskLogsToCloudWatch(t *testing.T) {
+	_, _, _ = ecsRunTaskHelper(t, "exec-logs", ecstypes.ContainerDefinition{
+		Name:    aws.String("app"),
+		Image:   aws.String("alpine:latest"),
+		Command: []string{"echo", "hello from process"},
+		LogConfiguration: &ecstypes.LogConfiguration{
+			LogDriver: ecstypes.LogDriverAwslogs,
+			Options: map[string]string{
+				"awslogs-group":         "/ecs/exec-logs",
+				"awslogs-stream-prefix": "ecs",
+			},
+		},
+	})
+
+	// Wait for process to complete and logs to be written
+	time.Sleep(2 * time.Second)
+
+	cw := cwLogsClient()
+	out, err := cw.GetLogEvents(ctx, &cloudwatchlogs.GetLogEventsInput{
+		LogGroupName:  aws.String("/ecs/exec-logs"),
+		LogStreamName: aws.String("ecs/app/" + "exec-logs-cluster"), // approximate; use filter
+	})
+	// If exact stream name doesn't work, try listing streams
+	if err != nil {
+		streams, serr := cw.DescribeLogStreams(ctx, &cloudwatchlogs.DescribeLogStreamsInput{
+			LogGroupName: aws.String("/ecs/exec-logs"),
+		})
+		require.NoError(t, serr)
+		require.NotEmpty(t, streams.LogStreams)
+		out, err = cw.GetLogEvents(ctx, &cloudwatchlogs.GetLogEventsInput{
+			LogGroupName:  aws.String("/ecs/exec-logs"),
+			LogStreamName: streams.LogStreams[0].LogStreamName,
+		})
+	}
+	require.NoError(t, err)
+
+	// Should have at least the initial log event + real process output
+	var messages []string
+	for _, e := range out.Events {
+		messages = append(messages, *e.Message)
+	}
+	assert.Contains(t, messages, "hello from process", "process stdout should appear in CloudWatch logs")
+}
+
+func TestECS_TaskNoCommandStaysRunning(t *testing.T) {
+	client, cluster, taskArn := ecsRunTaskHelper(t, "exec-nocmd", ecstypes.ContainerDefinition{
+		Name:  aws.String("app"),
+		Image: aws.String("alpine:latest"),
+		// No command — should stay RUNNING
+		LogConfiguration: &ecstypes.LogConfiguration{
+			LogDriver: ecstypes.LogDriverAwslogs,
+			Options: map[string]string{
+				"awslogs-group":         "/ecs/exec-nocmd",
+				"awslogs-stream-prefix": "ecs",
+			},
+		},
+	})
+
+	// Wait a bit and verify still RUNNING
+	time.Sleep(1500 * time.Millisecond)
+
+	descOut, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+		Cluster: aws.String(cluster),
+		Tasks:   []string{taskArn},
+	})
+	require.NoError(t, err)
+	require.Len(t, descOut.Tasks, 1)
+
+	task := descOut.Tasks[0]
+	assert.Equal(t, "RUNNING", *task.LastStatus, "task with no command should stay RUNNING")
+	for _, c := range task.Containers {
+		assert.Nil(t, c.ExitCode, "ExitCode should be nil while RUNNING")
+	}
 }

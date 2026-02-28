@@ -171,6 +171,9 @@ func newLRO(project, location string, resource any, typeName string) Operation {
 // Agent subprocess tracker for Cloud Run Jobs
 var crjAgentProcs sync.Map // map[execName]*exec.Cmd
 
+// Process handle tracker for Cloud Run Jobs real execution
+var crjProcessHandles sync.Map // map[execName]*sim.ProcessHandle
+
 func registerCloudRunJobs(srv *sim.Server) {
 	jobs := sim.NewStateStore[Job]()
 	executions := sim.NewStateStore[Execution]()
@@ -350,7 +353,7 @@ func registerCloudRunJobs(srv *sim.Server) {
 			crjStartAgentProcess(&crjAgentProcs, execName, callbackURL)
 		}
 
-		// Auto-complete execution after task timeout (only if no agent)
+		// Auto-complete execution after task timeout or process exit (only if no agent)
 		go func(id string, tc int32, hasAgent bool, proj, job string, taskTmpl *TaskTemplate) {
 			if hasAgent {
 				// Agent-managed: don't auto-complete. Backend will cancel when done.
@@ -362,7 +365,42 @@ func registerCloudRunJobs(srv *sim.Server) {
 					timeout = d
 				}
 			}
-			time.Sleep(timeout)
+
+			// Build command from first container
+			var fullCmd []string
+			var cmdEnv map[string]string
+			if taskTmpl != nil {
+				for _, c := range taskTmpl.Containers {
+					fullCmd = append(fullCmd, c.Command...)
+					fullCmd = append(fullCmd, c.Args...)
+					if len(c.Env) > 0 {
+						cmdEnv = make(map[string]string, len(c.Env))
+						for _, ev := range c.Env {
+							cmdEnv[ev.Name] = ev.Value
+						}
+					}
+					break // first container only
+				}
+			}
+
+			succeeded := true
+			if len(fullCmd) > 0 {
+				// Real process execution
+				sink := &crjLogSink{project: proj, jobName: job}
+				handle := sim.StartProcess(sim.ProcessConfig{
+					Command: fullCmd,
+					Env:     cmdEnv,
+					Timeout: timeout,
+				}, sink)
+				crjProcessHandles.Store(id, handle)
+				result := handle.Wait()
+				crjProcessHandles.Delete(id)
+				succeeded = result.ExitCode == 0
+			} else {
+				// No command — sleep for timeout (preserves current behavior)
+				time.Sleep(timeout)
+			}
+
 			completed := false
 			executions.Update(id, func(e *Execution) {
 				if e.RunningCount == 0 {
@@ -372,10 +410,18 @@ func registerCloudRunJobs(srv *sim.Server) {
 				completionTime := nowTimestamp()
 				e.CompletionTime = completionTime
 				e.RunningCount = 0
-				e.SucceededCount = tc
+				if succeeded {
+					e.SucceededCount = tc
+				} else {
+					e.FailedCount = tc
+				}
+				state := "CONDITION_SUCCEEDED"
+				if !succeeded {
+					state = "CONDITION_FAILED"
+				}
 				e.Conditions = []Condition{
-					{Type: "Ready", State: "CONDITION_SUCCEEDED", LastTransitionTime: completionTime},
-					{Type: "Completed", State: "CONDITION_SUCCEEDED", LastTransitionTime: completionTime},
+					{Type: "Ready", State: state, LastTransitionTime: completionTime},
+					{Type: "Completed", State: state, LastTransitionTime: completionTime},
 				}
 				e.Reconciling = false
 			})
@@ -437,6 +483,11 @@ func registerCloudRunJobs(srv *sim.Server) {
 
 		// Stop agent subprocess if running
 		crjStopAgentProcess(&crjAgentProcs, name)
+
+		// Cancel running process if any
+		if v, ok := crjProcessHandles.LoadAndDelete(name); ok {
+			v.(*sim.ProcessHandle).Cancel()
+		}
 
 		ok := executions.Update(name, func(e *Execution) {
 			now := nowTimestamp()
@@ -532,4 +583,14 @@ func crjStopAgentProcess(procs *sync.Map, key string) {
 		_ = cmd.Process.Kill()
 		log.Printf("[cloudrun-jobs] stopped agent subprocess for %s", key)
 	}
+}
+
+// crjLogSink implements sim.LogSink and writes log lines to Cloud Logging.
+type crjLogSink struct {
+	project string
+	jobName string
+}
+
+func (s *crjLogSink) WriteLog(line sim.LogLine) {
+	injectCloudRunJobLog(s.project, s.jobName, line.Text)
 }

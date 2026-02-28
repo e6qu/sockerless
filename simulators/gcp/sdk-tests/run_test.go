@@ -281,3 +281,98 @@ func TestCloudRun_ExecutionCancelledState(t *testing.T) {
 	assert.Equal(t, float64(0), exec["failedCount"])
 	assert.NotEmpty(t, exec["completionTime"])
 }
+
+// createAndRunJobWithCommand creates a job with a command and runs it.
+func createAndRunJobWithCommand(t *testing.T, jobID string, cmd []string, timeout string) string {
+	t.Helper()
+	containers := []map[string]any{
+		{
+			"image":   "gcr.io/test/worker:latest",
+			"command": cmd,
+		},
+	}
+	job := map[string]any{
+		"template": map[string]any{
+			"template": map[string]any{
+				"timeout":    timeout,
+				"containers": containers,
+			},
+		},
+	}
+	body, _ := json.Marshal(job)
+	createReq, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/v2/projects/test-project/locations/us-central1/jobs?jobId="+jobID,
+		strings.NewReader(string(body)))
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp, err := http.DefaultClient.Do(createReq)
+	require.NoError(t, err)
+	createResp.Body.Close()
+
+	runReq, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/v2/projects/test-project/locations/us-central1/jobs/"+jobID+":run",
+		strings.NewReader("{}"))
+	runReq.Header.Set("Content-Type", "application/json")
+	runResp, err := http.DefaultClient.Do(runReq)
+	require.NoError(t, err)
+	defer runResp.Body.Close()
+	require.Equal(t, http.StatusOK, runResp.StatusCode)
+
+	var lro map[string]any
+	data, _ := io.ReadAll(runResp.Body)
+	require.NoError(t, json.Unmarshal(data, &lro))
+	response := lro["response"].(map[string]any)
+	return response["name"].(string)
+}
+
+func TestCloudRun_ExecutionRunsCommand(t *testing.T) {
+	execName := createAndRunJobWithCommand(t, "exec-cmd-job", []string{"echo", "hello"}, "5s")
+
+	// Wait for process to complete
+	time.Sleep(2 * time.Second)
+
+	exec := getExecution(t, execName)
+	assert.Equal(t, float64(0), exec["runningCount"])
+	assert.Equal(t, float64(1), exec["succeededCount"])
+	assert.Equal(t, float64(0), exec["failedCount"])
+	assert.NotEmpty(t, exec["completionTime"])
+}
+
+func TestCloudRun_ExecutionFailedState(t *testing.T) {
+	execName := createAndRunJobWithCommand(t, "exec-fail-job", []string{"sh", "-c", "exit 1"}, "5s")
+
+	// Wait for process to complete
+	time.Sleep(2 * time.Second)
+
+	exec := getExecution(t, execName)
+	assert.Equal(t, float64(0), exec["runningCount"])
+	assert.Equal(t, float64(0), exec["succeededCount"])
+	assert.Equal(t, float64(1), exec["failedCount"])
+	assert.NotEmpty(t, exec["completionTime"])
+}
+
+func TestCloudRun_ExecutionLogsRealOutput(t *testing.T) {
+	_ = createAndRunJobWithCommand(t, "exec-log-job", []string{"echo", "real output from process"}, "5s")
+
+	// Wait for process to complete and logs to be written
+	time.Sleep(2 * time.Second)
+
+	client := logadminClient(t)
+	filter := `resource.type="cloud_run_job" AND resource.labels.job_name="exec-log-job"`
+	it := client.Entries(ctx, logadmin.Filter(filter))
+
+	var messages []string
+	for {
+		entry, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		require.NoError(t, err)
+		if entry.Payload != nil {
+			if s, ok := entry.Payload.(string); ok {
+				messages = append(messages, s)
+			}
+		}
+	}
+
+	assert.Contains(t, messages, "real output from process", "process stdout should appear in Cloud Logging")
+}

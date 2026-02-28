@@ -17,6 +17,9 @@ import (
 // Agent subprocess tracker for Container Apps Jobs
 var acaAgentProcs sync.Map // map[execID]*exec.Cmd
 
+// Process handle tracker for Container Apps Jobs real execution
+var acaProcessHandles sync.Map // map[execID]*sim.ProcessHandle
+
 // ContainerAppJob represents an Azure Container Apps Job resource.
 type ContainerAppJob struct {
 	ID         string            `json:"id"`
@@ -305,12 +308,12 @@ func registerContainerApps(srv *sim.Server) {
 			acaStartAgentProcess(&acaAgentProcs, execID, callbackURL)
 		}
 
-		// Auto-stop execution after replica timeout (only if no agent)
+		// Auto-stop execution after replica timeout or process exit (only if no agent)
 		replicaTimeout := 0
 		if job.Properties.Configuration != nil {
 			replicaTimeout = job.Properties.Configuration.ReplicaTimeout
 		}
-		go func(id, jobShortName string, hasAgent bool, replicaTimeout int) {
+		go func(id, jobShortName string, hasAgent bool, replicaTimeout int, tmpl *JobTemplate) {
 			if hasAgent {
 				// Agent-managed: don't auto-stop. Backend will stop when done.
 				return
@@ -319,20 +322,59 @@ func registerContainerApps(srv *sim.Server) {
 			if replicaTimeout > 0 {
 				timeout = time.Duration(replicaTimeout) * time.Second
 			}
-			time.Sleep(timeout)
+
+			// Build command from first container
+			var fullCmd []string
+			var cmdEnv map[string]string
+			if tmpl != nil {
+				for _, c := range tmpl.Containers {
+					fullCmd = append(fullCmd, c.Command...)
+					fullCmd = append(fullCmd, c.Args...)
+					if len(c.Env) > 0 {
+						cmdEnv = make(map[string]string, len(c.Env))
+						for _, ev := range c.Env {
+							cmdEnv[ev.Name] = ev.Value
+						}
+					}
+					break // first container only
+				}
+			}
+
+			succeeded := true
+			if len(fullCmd) > 0 {
+				// Real process execution
+				sink := &acaLogSink{jobName: jobShortName}
+				handle := sim.StartProcess(sim.ProcessConfig{
+					Command: fullCmd,
+					Env:     cmdEnv,
+					Timeout: timeout,
+				}, sink)
+				acaProcessHandles.Store(id, handle)
+				result := handle.Wait()
+				acaProcessHandles.Delete(id)
+				succeeded = result.ExitCode == 0
+			} else {
+				// No command — sleep for timeout (preserves current behavior)
+				time.Sleep(timeout)
+			}
+
 			completed := false
 			executions.Update(id, func(e *JobExecution) {
 				if e.Status != "Running" {
 					return
 				}
 				completed = true
-				e.Status = "Succeeded"
+				if succeeded {
+					e.Status = "Succeeded"
+				} else {
+					e.Status = "Failed"
+				}
 				e.EndTime = time.Now().UTC().Format(time.RFC3339)
 			})
 			if completed {
 				injectContainerAppLog(jobShortName, "Execution completed successfully")
 			}
-		}(execID, name, callbackURL != "", replicaTimeout)
+		}(execID, name, callbackURL != "", replicaTimeout, template)
 
 		// Return 202 with Location header for LRO polling.
 		// The Azure SDK's BeginStart uses FinalStateViaLocation,
@@ -406,6 +448,11 @@ func registerContainerApps(srv *sim.Server) {
 
 		// Stop agent subprocess if running
 		acaStopAgentProcess(&acaAgentProcs, execID)
+
+		// Cancel running process if any
+		if v, ok := acaProcessHandles.LoadAndDelete(execID); ok {
+			v.(*sim.ProcessHandle).Cancel()
+		}
 
 		ok := executions.Update(execID, func(e *JobExecution) {
 			e.Status = "Stopped"
@@ -494,4 +541,13 @@ func acaStopAgentProcess(procs *sync.Map, key string) {
 		_ = cmd.Process.Kill()
 		log.Printf("[aca] stopped agent subprocess for %s", key)
 	}
+}
+
+// acaLogSink implements sim.LogSink and writes log lines to Log Analytics.
+type acaLogSink struct {
+	jobName string
+}
+
+func (s *acaLogSink) WriteLog(line sim.LogLine) {
+	injectContainerAppLog(s.jobName, line.Text)
 }

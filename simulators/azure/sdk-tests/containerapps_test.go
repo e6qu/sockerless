@@ -257,6 +257,106 @@ func TestContainerApps_ExecutionStoppedState(t *testing.T) {
 	assert.NotEmpty(t, exec["endTime"])
 }
 
+// acaCreateJobWithCommand creates a Container Apps Job with a command.
+func acaCreateJobWithCommand(t *testing.T, rg, jobName string, cmd []string) {
+	t.Helper()
+
+	// Ensure resource group exists
+	rgBody := `{"location":"eastus"}`
+	rgReq, _ := http.NewRequestWithContext(ctx, "PUT",
+		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"?api-version=2023-07-01",
+		strings.NewReader(rgBody))
+	rgReq.Header.Set("Content-Type", "application/json")
+	rgReq.Header.Set("Authorization", "Bearer fake-token")
+	rgResp, err := http.DefaultClient.Do(rgReq)
+	require.NoError(t, err)
+	rgResp.Body.Close()
+
+	container := map[string]any{
+		"name":    "worker",
+		"image":   "mcr.microsoft.com/test:latest",
+		"command": cmd,
+	}
+	job := map[string]any{
+		"location": "eastus",
+		"properties": map[string]any{
+			"configuration": map[string]any{
+				"triggerType":    "Manual",
+				"replicaTimeout": 5,
+			},
+			"template": map[string]any{
+				"containers": []map[string]any{container},
+			},
+		},
+	}
+	body, _ := json.Marshal(job)
+	req, _ := http.NewRequestWithContext(ctx, "PUT",
+		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.App/jobs/"+jobName+"?api-version=2024-03-01",
+		strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer fake-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Contains(t, []int{200, 201}, resp.StatusCode)
+}
+
+func TestContainerApps_ExecutionRunsCommand(t *testing.T) {
+	acaCreateJobWithCommand(t, "exec-rg", "exec-cmd-job", []string{"echo", "hello"})
+	execName := acaStartExecution(t, "exec-rg", "exec-cmd-job")
+
+	// Wait for process to complete
+	time.Sleep(2 * time.Second)
+
+	exec := acaGetExecution(t, "exec-rg", "exec-cmd-job", execName)
+	assert.Equal(t, "Succeeded", exec["status"])
+	assert.NotEmpty(t, exec["endTime"])
+}
+
+func TestContainerApps_ExecutionFailedStatus(t *testing.T) {
+	acaCreateJobWithCommand(t, "exec-rg", "exec-fail-job", []string{"sh", "-c", "exit 1"})
+	execName := acaStartExecution(t, "exec-rg", "exec-fail-job")
+
+	// Wait for process to complete
+	time.Sleep(2 * time.Second)
+
+	exec := acaGetExecution(t, "exec-rg", "exec-fail-job", execName)
+	assert.Equal(t, "Failed", exec["status"])
+	assert.NotEmpty(t, exec["endTime"])
+}
+
+func TestContainerApps_ExecutionLogsRealOutput(t *testing.T) {
+	acaCreateJobWithCommand(t, "exec-rg", "exec-log-job", []string{"echo", "real aca output"})
+	_ = acaStartExecution(t, "exec-rg", "exec-log-job")
+
+	// Wait for process to complete and logs to be written
+	time.Sleep(2 * time.Second)
+
+	// Query logs via KQL
+	kql := `ContainerAppConsoleLogs_CL | where ContainerGroupName_s == "exec-log-job"`
+	result := queryWorkspace(t, "default", kql)
+
+	require.Len(t, result.Tables, 1)
+	table := result.Tables[0]
+
+	// Find Log_s column index
+	logIdx := -1
+	for i, col := range table.Columns {
+		if col.Name == "Log_s" {
+			logIdx = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, logIdx, 0)
+
+	// Should have at least "Container started" and "real aca output"
+	var logs []string
+	for _, row := range table.Rows {
+		logs = append(logs, row[logIdx].(string))
+	}
+	assert.Contains(t, logs, "real aca output", "process stdout should appear in Log Analytics")
+}
+
 func TestContainerApps_GetJob(t *testing.T) {
 	req, _ := http.NewRequestWithContext(ctx, "GET",
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/aca-rg/providers/Microsoft.App/jobs/test-job?api-version=2024-03-01",
