@@ -105,6 +105,6 @@ Each simulator has usage guides for the official cloud tools:
 | GCP | [gcloud CLI](gcp/docs/cli.md) | [hashicorp/google](gcp/docs/terraform.md) | [google-cloud-*](gcp/docs/python-sdk.md) |
 | Azure | [az CLI](azure/docs/cli.md) | [hashicorp/azurestack](azure/docs/terraform.md) | [azure-mgmt-*](azure/docs/python-sdk.md) |
 
-## Agent integration
+## Process execution
 
-The ECS, Lambda, Cloud Run Jobs, Cloud Functions, Container Apps, and Azure Functions simulators support agent process management. When a container/function/job is started with a `SOCKERLESS_AGENT_CALLBACK_URL` environment variable, the simulator spawns a `sockerless-agent` subprocess in reverse-connect mode, enabling full exec/attach through the simulated cloud resources.
+The ECS, Cloud Run Jobs, and Container Apps simulators execute real processes from container command/entrypoint specs. Process output is streamed to the corresponding cloud-native log sink (CloudWatch, Cloud Logging, Log Analytics). Functions simulators (Lambda, Cloud Functions, Azure Functions) return synchronous responses without spawning processes.

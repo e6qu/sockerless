@@ -2,12 +2,8 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"net/http"
-	"os"
-	"os/exec"
 	"strings"
-	"sync"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -44,9 +40,6 @@ type ServiceConfig struct {
 	MinInstanceCount     int               `json:"minInstanceCount,omitempty"`
 	EnvironmentVariables map[string]string `json:"environmentVariables,omitempty"`
 }
-
-// Agent subprocess tracker
-var gcfAgentProcs sync.Map // map[functionName]*exec.Cmd
 
 func registerCloudFunctions(srv *sim.Server) {
 	functions := sim.NewStateStore[Function]()
@@ -146,13 +139,6 @@ func registerCloudFunctions(srv *sim.Server) {
 			injectCloudFunctionLog(project, functionID, "Function invoked")
 		}
 
-		// Start agent subprocess if the function has a callback URL configured
-		if fn != nil {
-			if callbackURL := gcfGetAgentCallbackURL(*fn); callbackURL != "" {
-				gcfStartAgentProcess(functionID, callbackURL)
-			}
-		}
-
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("{}"))
@@ -173,9 +159,6 @@ func registerCloudFunctions(srv *sim.Server) {
 
 		functions.Delete(name)
 
-		// Kill any agent subprocess for this function
-		gcfStopAgentProcess(functionID)
-
 		lro := newLRO(project, location, fn, "type.googleapis.com/google.cloud.functions.v2.Function")
 		sim.WriteJSON(w, http.StatusOK, lro)
 	})
@@ -192,52 +175,3 @@ func injectCloudFunctionLog(project, functionName, text string) {
 	}, nil, []LogEntry{{TextPayload: text}})
 }
 
-// gcfGetAgentCallbackURL extracts the agent callback URL from the function's
-// environment variables, if present.
-func gcfGetAgentCallbackURL(fn Function) string {
-	if fn.ServiceConfig == nil || fn.ServiceConfig.EnvironmentVariables == nil {
-		return ""
-	}
-	return fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_AGENT_CALLBACK_URL"]
-}
-
-func gcfStartAgentProcess(key, callbackURL string) {
-	if _, loaded := gcfAgentProcs.Load(key); loaded {
-		return
-	}
-
-	agentBin, err := exec.LookPath("sockerless-agent")
-	if err != nil {
-		log.Printf("[gcf] agent binary not found in PATH, skipping agent start for %s", key)
-		return
-	}
-
-	cmd := exec.Command(agentBin, "--callback", callbackURL, "--keep-alive", "--", "tail", "-f", "/dev/null")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Start(); err != nil {
-		log.Printf("[gcf] failed to start agent for %s: %v", key, err)
-		return
-	}
-
-	log.Printf("[gcf] started agent subprocess for %s (pid=%d)", key, cmd.Process.Pid)
-	gcfAgentProcs.Store(key, cmd)
-
-	go func() {
-		_ = cmd.Wait()
-		gcfAgentProcs.Delete(key)
-	}()
-}
-
-func gcfStopAgentProcess(key string) {
-	v, ok := gcfAgentProcs.LoadAndDelete(key)
-	if !ok {
-		return
-	}
-	cmd := v.(*exec.Cmd)
-	if cmd.Process != nil {
-		_ = cmd.Process.Kill()
-		log.Printf("[gcf] stopped agent subprocess for %s", key)
-	}
-}

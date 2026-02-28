@@ -48,19 +48,25 @@ func (s *Server) buildContainerSpec(ci containerInput) *runpb.Container {
 
 	var entrypoint []string
 	if ci.IsMain {
-		// Agent injection for main container
-		envVars = append(envVars,
-			&runpb.EnvVar{Name: "SOCKERLESS_AGENT_TOKEN", Values: &runpb.EnvVar_Value{Value: ci.AgentToken}},
-		)
-
-		if s.config.CallbackURL != "" {
+		if s.config.EndpointURL != "" {
+			// Simulator mode: pass original command through, no agent wrapping
+			if len(config.Entrypoint) > 0 {
+				entrypoint = config.Entrypoint
+			} else if len(config.Cmd) > 0 {
+				entrypoint = config.Cmd
+			}
+		} else if s.config.CallbackURL != "" {
 			callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, ci.ID, ci.AgentToken)
 			entrypoint = core.BuildAgentCallbackEntrypoint(config, callbackURL)
 			envVars = append(envVars,
 				&runpb.EnvVar{Name: "SOCKERLESS_CONTAINER_ID", Values: &runpb.EnvVar_Value{Value: ci.ID}},
+				&runpb.EnvVar{Name: "SOCKERLESS_AGENT_TOKEN", Values: &runpb.EnvVar_Value{Value: ci.AgentToken}},
 				&runpb.EnvVar{Name: "SOCKERLESS_AGENT_CALLBACK_URL", Values: &runpb.EnvVar_Value{Value: callbackURL}},
 			)
 		} else {
+			envVars = append(envVars,
+				&runpb.EnvVar{Name: "SOCKERLESS_AGENT_TOKEN", Values: &runpb.EnvVar_Value{Value: ci.AgentToken}},
+			)
 			entrypoint, _ = core.BuildAgentEntrypoint(config)
 		}
 	} else {
@@ -93,8 +99,8 @@ func (s *Server) buildContainerSpec(ci containerInput) *runpb.Container {
 		},
 	}
 
-	// Port mapping for agent (main container only)
-	if ci.IsMain {
+	// Port mapping for agent (main container only, skip in simulator mode)
+	if ci.IsMain && s.config.EndpointURL == "" {
 		containerSpec.Ports = []*runpb.ContainerPort{
 			{ContainerPort: 9111},
 		}

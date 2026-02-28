@@ -1,6 +1,6 @@
 # Sockerless — Roadmap
 
-> Phases 1-67, 69 complete (578 tasks). This document covers future work.
+> Phases 1-67, 69 complete (578 tasks). Phase 70 in progress. This document covers current and future work.
 >
 > **Production target:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners (GitHub Actions from github.com, GitLab CI from gitlab.com), and custom SDK clients — backed by real cloud infrastructure (AWS, GCP, Azure).
 
@@ -17,34 +17,77 @@
 
 ---
 
-## Completed Phases (1-63)
+## Completed Phases (1-69)
 
 Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per-task logs in `_tasks/done/`.
 
 | Phase | Summary |
 |---|---|
 | 1-10 | Foundation: 3 cloud simulators (AWS/GCP/Azure), 8 backends, agent bridge, Docker REST API frontend |
-| 11-20 | WASM sandbox (wazero + mvdan.cc/sh + go-busybox), process execution, archive ops, bind mounts |
-| 21-34 | E2E tests (GitHub 217 + GitLab 154), driver interfaces, gitlab-ci-local 252, sandbox builtins, Docker build |
+| 11-34 | WASM sandbox, E2E tests (217+154), driver interfaces, gitlab-ci-local 252, Docker build |
 | 35-42 | bleephub: GitHub API server + runner internal API + multi-job engine. 190 unit tests |
-| 43-52 | Crash safety, pod API, CLI, management API, service containers, upstream test expansion |
-| 53-56 | Production Docker API: TLS, auth, logs, DNS, restart, events, filters, export, commit |
+| 43-56 | CLI, crash safety, pods, service containers, production Docker API (TLS/auth/logs/DNS/restart/events/filters/export/commit) |
 | 57-59 | Production GitHub Actions: multi-job, matrix, secrets, expressions, cancellation, concurrency, artifacts |
 | 60-61 | Production GitLab CI: gitlabhub coordinator, DAG engine, expressions, extends, include, parallel, retry, DinD |
-| 62-63 | Docker API hardening + Compose E2E: HEALTHCHECK, volumes, mounts, prune, SHELL/STOPSIGNAL/VOLUME directives, race fixes. 249 core tests |
-| 64 | Webhooks for bleephub: per-repo CRUD, HMAC-SHA256 signing, async delivery with retry, delivery log API, event payloads (push/PR/issues/ping), CI trigger via push/PR events. 270 bleephub tests |
-| 65 | GitHub Apps for bleephub: App store + RSA keygen, RS256 JWT sign/verify, installation tokens (ghs_), auth middleware (JWT + ghs_ + PAT), 9 REST endpoints, manifest code flow. 293 bleephub tests |
-| 66 | Optional OpenTelemetry tracing: InitTracer in 4 modules (OTLP HTTP exporter, no-op when env unset), otelhttp middleware on all 4 servers, context propagation through BackendClient (11 methods), workflow/pipeline engine spans. 8 new tests |
-| 67 | Network Isolation: IPAllocator, SyntheticNetworkDriver, Linux NetnsManager, LinuxNetworkDriver wrapper, refactored handlers to driver pattern. 14 new tests, 255 core tests |
-| 69 | ARM64 / Multi-Arch Completion: goreleaser 8→15 builds (added 6 cloud backends + gitlabhub), gitlabhub Dockerfile.release, docker.yml 6→7 images, CI build-check 8→15 binaries + ARM64 cross-compile job |
+| 62-63 | Docker API hardening + Compose E2E: HEALTHCHECK, volumes, mounts, prune, directives, race fixes. 249→255 core tests |
+| 64-65 | bleephub: Webhooks (HMAC-SHA256, async delivery, CI trigger) + GitHub Apps (JWT, installation tokens). 293 tests |
+| 66 | Optional OpenTelemetry tracing: OTLP HTTP, otelhttp middleware, context propagation, workflow/pipeline spans |
+| 67 | Network Isolation: IPAllocator, SyntheticNetworkDriver, Linux NetnsManager, 14 new tests |
+| 69 | ARM64/Multi-Arch: goreleaser 15 builds, gitlabhub Dockerfile, docker.yml 7 images, ARM64 CI |
 
 ---
 
-## Phase 68 — (Next)
+## Phase 70 — Simulator Fidelity (In Progress)
+
+**Goal:** Bring all three cloud simulators to production quality — real process execution, structured log queries, correct status enums, and full SDK/CLI/Terraform compatibility.
+
+### Milestone 1: AWS Fidelity (P70-001 → P70-006)
+
+| Task | Status | Description |
+|---|---|---|
+| P70-001 | ✅ | Lambda log stream auto-creation |
+| P70-002 | ✅ | CloudWatch GetLogEvents pagination tokens |
+| P70-003 | ✅ | DescribeTasks nil ExitCode handling |
+| P70-004 | ✅ | ECS StopCode field |
+| P70-005 | ✅ | Lambda DescribeLogStreams ordering |
+| P70-006 | ✅ | AWS smoke test — ECS + Lambda integration |
+
+### Milestone 2: GCP Fidelity (P70-007 → P70-012)
+
+| Task | Status | Description |
+|---|---|---|
+| P70-007 | ✅ | Cloud Logging structured filter parser |
+| P70-008 | ✅ | Cloud Run log entry injection |
+| P70-009 | ✅ | Cloud Functions log entry injection |
+| P70-010 | ✅ | Cloud Functions invoke URL fidelity |
+| P70-011 | ✅ | Execution status field completeness |
+| P70-012 | ✅ | GCP smoke test — Cloud Run + Cloud Functions |
+
+### Milestone 3: Azure Fidelity (P70-013 → P70-018)
+
+| Task | Status | Description |
+|---|---|---|
+| P70-013 | ✅ | KQL query parser for backend patterns |
+| P70-014 | ✅ | Container Apps log injection |
+| P70-015 | ✅ | Functions log injection |
+| P70-016 | ✅ | Execution status enum values |
+| P70-017 | ✅ | Function App DefaultHostName reachability |
+| P70-018 | ✅ | Azure smoke test — ACA + Azure Functions |
+
+### Milestone 4: Cross-Cloud (P70-019 → P70-023)
+
+| Task | Status | Description |
+|---|---|---|
+| P70-019 | ✅ | Configurable execution timeout — replace hardcoded 3s with cloud-native timeouts |
+| P70-020 | ✅ | Shared ProcessRunner engine — `StartProcess()` in shared simulator library |
+| P70-021 | ✅ | AWS ECS real execution — RunTask executes container command, real exit codes + CloudWatch logs |
+| P70-022 | ✅ | GCP Cloud Run real execution — executions run container command, real exit codes + Cloud Logging |
+| P70-023 | ✅ | Azure ACA real execution — executions run container command, real exit codes + Log Analytics |
+| P70-024 | | CI integration for simulator smoke tests |
 
 ---
 
-## Phase 68 — Multi-Tenant Backend Pools
+## Phase 68 — Multi-Tenant Backend Pools (Next)
 
 **Goal:** Named pools of backends with scheduling and resource limits. Each pool has a backend type, concurrency limit, and queue. Requests are routed to pools by label or explicit selection.
 
@@ -67,23 +110,6 @@ Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per
 | P68-008 | **Resource limits** — per-pool max containers, max total memory (advisory, enforced at scheduling time) |
 | P68-009 | **Unit + integration tests** — pool CRUD, routing, concurrency limits, queue overflow, metrics |
 | P68-010 | **Save final state** |
-
-**Verification:** Requests route to correct pool, concurrency limits enforced, queue overflow returns 429. Tests pass.
-
----
-
-## Phase 69 — ARM64 / Multi-Arch Completion ✅
-
-**Goal:** Fill remaining multi-arch gaps: missing goreleaser builds, gitlabhub Docker image, ARM64 CI verification.
-
-| Task | Status | Description |
-|---|---|---|
-| P69-001 | ✅ | **Goreleaser builds** — added 7 missing builds (6 cloud backends + gitlabhub), total 15×2×2 = 60 binaries |
-| P69-002 | ✅ | **Gitlabhub Dockerfile.release** — golang:1.24-alpine builder → alpine:3.20 runtime |
-| P69-003 | ✅ | **Docker workflow** — added gitlabhub to docker.yml matrix (7 images total) |
-| P69-004 | ✅ | **ARM64 CI job** — new `build-check-arm64` job in ci.yml, all 15 binaries |
-| P69-005 | ✅ | **Expanded build-check** — existing job now builds all 15 binaries (was 8) |
-| P69-006 | ✅ | **Save final state** |
 
 ---
 

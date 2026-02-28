@@ -24,10 +24,6 @@ All services use REST/JSON routing with Go 1.22+ path patterns.
 
 Create/delete operations return an LRO wrapper with the resource in the `response` field and `done: true`. This satisfies both SDK and Terraform clients that poll for completion.
 
-### Agent integration
-
-Cloud Run Jobs and Cloud Functions support agent process management. When a job execution or function invocation includes `SOCKERLESS_AGENT_CALLBACK_URL` in its environment, the simulator spawns a `sockerless-agent` subprocess in reverse-connect mode.
-
 ## Building
 
 ```sh
@@ -87,7 +83,7 @@ gcp/
 
 ## Execution model
 
-Cloud Run job executions honor the task template `timeout` field (e.g., `"600s"`). When a timeout is configured, the execution auto-completes after that duration. When no timeout is set, the execution stays running until explicitly cancelled. Cloud Functions invocations are synchronous. When agent integration is active (`SOCKERLESS_AGENT_CALLBACK_URL`), the backend manages the execution lifecycle through the agent subprocess.
+Cloud Run job executions honor the task template `timeout` field (e.g., `"600s"`). When a timeout is configured, the execution auto-completes after that duration. When a command is provided, the simulator executes it as a real process and streams output to Cloud Logging. When no command and no timeout are set, the execution stays running until explicitly cancelled. Cloud Functions invocations are synchronous and return immediately.
 
 ## Testing
 

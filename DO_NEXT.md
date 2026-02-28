@@ -2,57 +2,28 @@
 
 ## Current State
 
-Phase 47 complete. **409 tasks done across 47 phases.** The `sockerless` CLI manages named backend contexts (`~/.sockerless/contexts/{name}/config.json`). All 8 backends load context env vars at startup (env vars override context values).
+Phase 70 (Simulator Fidelity) nearly complete. **578+ tasks done across 69 phases.** All three simulators now execute real processes with real exit codes and real log output, validated by 10 new SDK tests.
 
-## Immediate Priority: Phase 48 — CI Service Container Integration
+## Immediate: P70-024 — CI Integration for Simulator Smoke Tests
 
-Wire pod context into CI service container flows. bleephub `services:` parsing, GitLab CI compatibility, health checks, E2E tests.
+Add the SDK smoke tests (including new real-execution tests) to CI so they run on every push/PR. Either extend `test-comprehensive.yml` or add them to the `ci.yml` test matrix. The smoke tests are self-contained Go test files in `simulators/{cloud}/sdk-tests/`.
 
-## After Phase 44
+## Next Phase: Phase 68 — Multi-Tenant Backend Pools
 
-| Phase | What | Status |
-|---|---|---|
-| 44 | Crash-only software | ✓ Safe to crash at any point, startup = recovery |
-| 45 | Podman Pod API + core pod abstraction | ✓ PodContext, PodRegistry, /libpod/pods/*, implicit grouping |
-| 46 | Cloud backend multi-container specs | ✓ Deferred start, ECS/CloudRun/ACA multi-container specs, FaaS rejection |
-| 47 | sockerless CLI + context management | ✓ CLI module, core context loader, wired into all 8 backends |
-| 48 | CI service container integration | bleephub services:, GitLab CI services, health checks, E2E |
-| 49 | Upstream test expansion | More external validation |
+Named pools of backends with scheduling and resource limits. Each pool has a backend type, concurrency limit, and queue. Requests are routed by label or default.
 
-## Production Phases
-
-| Phase | What | Why |
-|---|---|---|
-| 50 | Production Docker API | `docker run`, DOCKER_HOST modes (TCP/SSH), registry auth |
-| 51 | Production networking + build + streaming | DNS, `docker build`, log streaming |
-| 52 | Production Compose + TestContainers + SDK | Higher-level Docker clients on real cloud |
-| 53 | Production GitHub Actions | Self-hosted runner + github.com on real cloud |
-| 54 | Production GitHub Actions scaling | Multi-job, concurrency, validation matrix |
-| 55 | Production GitLab CI | gitlab-runner + gitlab.com on real cloud |
-| 56 | Production GitLab CI advanced | Multi-stage, DinD, autoscaling |
-| 57 | Docker API hardening | Fix gaps found during production validation |
-| 58 | Production operations | Monitoring, alerting, security, TLS, upgrades |
-
-## Future Crash-Only Enhancements (Deferred)
-
-These were scoped out of Phase 44 for future phases:
-- **WAL/append-only log** — more robust than JSON overwrite for crash safety
-- **Session recovery** — CI runner reconnection after restart
-- **Idempotency audit** — ensure all backend operations are replay-safe
-- **Chaos testing harness** — kill at random points, restart, verify correctness
-- **Operation deduplication** — prevent duplicate cloud resource creation on replay
-
-## bleephub Expansion Roadmap
-
-| Phase | What | Status |
-|---|---|---|
-| **36** | Users + Auth + GraphQL engine | ✓ |
-| **37** | Git repositories | ✓ |
-| **38** | Organizations + teams + RBAC | ✓ |
-| **39** | Issues + labels + milestones | ✓ |
-| **40** | Pull requests (create, review, merge) | ✓ |
-| **41** | API conformance + `gh` CLI test suite | ✓ |
-| **42** | Runner enhancements (actions, multi-job, matrix, artifacts) | ✓ |
+| Task | Description |
+|---|---|
+| P68-001 | Pool configuration — YAML/JSON config |
+| P68-002 | Pool registry — in-memory, each with own BaseServer + Store |
+| P68-003 | Request router — route by label (`com.sockerless.pool`) or default |
+| P68-004 | Concurrency limiter — per-pool semaphore, 429 on overflow |
+| P68-005 | Pool lifecycle — create/destroy at runtime via management API |
+| P68-006 | Pool metrics — per-pool counts on `/internal/metrics` |
+| P68-007 | Round-robin scheduling — multi-backend pools |
+| P68-008 | Resource limits — per-pool max containers, max memory |
+| P68-009 | Unit + integration tests |
+| P68-010 | Save final state |
 
 ## Test Commands Reference
 
@@ -60,27 +31,32 @@ These were scoped out of Phase 44 for future phases:
 # Unit + integration
 make test
 
-# Lint all 14 modules
+# Lint all 15 modules
 make lint
+
+# Simulator SDK tests (per cloud)
+cd simulators/aws/sdk-tests && GOWORK=off go test -v -count=1
+cd simulators/gcp/sdk-tests && GOWORK=off go test -v -count=1
+cd simulators/azure/sdk-tests && GOWORK=off go test -v -count=1
+
+# Shared ProcessRunner tests (per cloud)
+cd simulators/aws/shared && GOWORK=off go test -run TestStartProcess -v
 
 # Simulator-backend integration (all backends)
 make sim-test-all
 
-# E2E GitHub (per cloud)
+# E2E GitHub / GitLab
 make e2e-github-memory
-
-# E2E GitLab (per cloud)
 make e2e-gitlab-memory
 
 # Upstream act / gitlab-ci-local
 make upstream-test-act
 make upstream-test-gitlab-ci-local-memory
 
-# bleephub (official GitHub Actions runner)
+# bleephub / gitlabhub
 make bleephub-test
-
-# bleephub unit tests
 cd bleephub && go test -v ./...
+cd gitlabhub && go test -v ./...
 
 # Terraform integration
 make tf-int-test-all

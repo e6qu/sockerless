@@ -3,10 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"fmt"
-	"log"
 	"net/http"
-	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -147,7 +144,7 @@ var (
 	ecsTasks           *sim.StateStore[ECSTask]
 	ecsRevisionMu      sync.Mutex
 	ecsRevisions       map[string]int // family -> latest revision
-	ecsAgentProcs      sync.Map       // map[taskID]*exec.Cmd
+	ecsProcessHandles  sync.Map       // map[taskID]*sim.ProcessHandle
 )
 
 func generateUUID() string {
@@ -517,7 +514,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		ecsTasks.Put(taskID, task)
 		tasks = append(tasks, task)
 
-		// Simulate async transition to RUNNING, then STOPPED
+		// Simulate async transition to RUNNING, then execute process if command provided
 		go func(id string, td ECSTaskDefinition) {
 			time.Sleep(500 * time.Millisecond)
 			now := time.Now().Unix()
@@ -532,9 +529,19 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				}
 			})
 
-			// Start agent subprocess if a container has a callback URL configured
-			if callbackURL := ecsGetAgentCallbackURL(td); callbackURL != "" {
-				ecsStartAgentProcess(&ecsAgentProcs, id, callbackURL)
+			// Build combined command from first container definition
+			var fullCmd []string
+			var cmdEnv map[string]string
+			for _, cd := range td.ContainerDefinitions {
+				fullCmd = append(fullCmd, cd.EntryPoint...)
+				fullCmd = append(fullCmd, cd.Command...)
+				if len(cd.Environment) > 0 {
+					cmdEnv = make(map[string]string, len(cd.Environment))
+					for _, ev := range cd.Environment {
+						cmdEnv[ev.Name] = ev.Value
+					}
+				}
+				break // use first container only
 			}
 
 			// Inject CloudWatch logs for containers with awslogs log driver
@@ -571,11 +578,8 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 					UploadSequenceToken: "1",
 				})
 
-				// Insert log event with the container command
-				var parts []string
-				parts = append(parts, cd.EntryPoint...)
-				parts = append(parts, cd.Command...)
-				cmdOutput := strings.Join(parts, " ")
+				// Insert initial log event
+				cmdOutput := strings.Join(fullCmd, " ")
 				if cmdOutput == "" {
 					cmdOutput = "container started"
 				}
@@ -586,6 +590,37 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 						IngestionTime: nowMs,
 					},
 				})
+
+				// If command is non-empty, stream real output to this log stream
+				if len(fullCmd) > 0 {
+					sink := &cwLogSink{logGroup: logGroup, logStream: logStreamName}
+					handle := sim.StartProcess(sim.ProcessConfig{
+						Command: fullCmd,
+						Env:     cmdEnv,
+					}, sink)
+					ecsProcessHandles.Store(id, handle)
+
+					go func(taskID string, handle *sim.ProcessHandle) {
+						result := handle.Wait()
+						ecsProcessHandles.Delete(taskID)
+						stoppedAt := time.Now().Unix()
+						ecsTasks.Update(taskID, func(t *ECSTask) {
+							if t.LastStatus == "STOPPED" {
+								return // already stopped
+							}
+							t.LastStatus = "STOPPED"
+							t.DesiredStatus = "STOPPED"
+							t.StoppedAt = &stoppedAt
+							t.StopCode = "EssentialContainerExited"
+							t.StoppedReason = "Essential container in task exited"
+							exitCode := result.ExitCode
+							for j := range t.Containers {
+								t.Containers[j].LastStatus = "STOPPED"
+								t.Containers[j].ExitCode = &exitCode
+							}
+						})
+					}(id, handle)
+				}
 			}
 
 		}(taskID, td)
@@ -660,8 +695,10 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Stop agent subprocess if running
-	ecsStopAgentProcess(&ecsAgentProcs, taskID)
+	// Cancel running process if any
+	if v, ok := ecsProcessHandles.LoadAndDelete(taskID); ok {
+		v.(*sim.ProcessHandle).Cancel()
+	}
 
 	now := time.Now().Unix()
 	found := ecsTasks.Update(taskID, func(t *ECSTask) {
@@ -826,59 +863,20 @@ func extractTDKey(arn string) string {
 	return arn
 }
 
-// ecsGetAgentCallbackURL extracts the agent callback URL from the task definition's
-// container environment variables, if present.
-func ecsGetAgentCallbackURL(td ECSTaskDefinition) string {
-	for _, cd := range td.ContainerDefinitions {
-		for _, env := range cd.Environment {
-			if env.Name == "SOCKERLESS_AGENT_CALLBACK_URL" {
-				return env.Value
-			}
-		}
-	}
-	return ""
+// cwLogSink implements sim.LogSink and writes log lines to CloudWatch.
+type cwLogSink struct {
+	logGroup  string
+	logStream string
 }
 
-// ecsStartAgentProcess starts a sockerless-agent subprocess that dials back to the
-// backend at callbackURL. The subprocess is tracked in procs for later cleanup.
-func ecsStartAgentProcess(procs *sync.Map, key, callbackURL string) {
-	if _, loaded := procs.Load(key); loaded {
-		return
-	}
-
-	agentBin, err := exec.LookPath("sockerless-agent")
-	if err != nil {
-		log.Printf("[ecs] agent binary not found in PATH, skipping agent start for %s", key)
-		return
-	}
-
-	cmd := exec.Command(agentBin, "--callback", callbackURL, "--keep-alive", "--", "tail", "-f", "/dev/null")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Start(); err != nil {
-		log.Printf("[ecs] failed to start agent for %s: %v", key, err)
-		return
-	}
-
-	log.Printf("[ecs] started agent subprocess for %s (pid=%d)", key, cmd.Process.Pid)
-	procs.Store(key, cmd)
-
-	go func() {
-		_ = cmd.Wait()
-		procs.Delete(key)
-	}()
-}
-
-// ecsStopAgentProcess kills an agent subprocess for the given key.
-func ecsStopAgentProcess(procs *sync.Map, key string) {
-	v, ok := procs.LoadAndDelete(key)
-	if !ok {
-		return
-	}
-	cmd := v.(*exec.Cmd)
-	if cmd.Process != nil {
-		_ = cmd.Process.Kill()
-		log.Printf("[ecs] stopped agent subprocess for %s", key)
-	}
+func (s *cwLogSink) WriteLog(line sim.LogLine) {
+	key := cwEventsKey(s.logGroup, s.logStream)
+	nowMs := time.Now().UnixMilli()
+	cwLogEvents.Update(key, func(events *[]CWLogEvent) {
+		*events = append(*events, CWLogEvent{
+			Timestamp:     nowMs,
+			Message:       line.Text,
+			IngestionTime: nowMs,
+		})
+	})
 }

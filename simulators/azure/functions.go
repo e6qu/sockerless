@@ -2,12 +2,8 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"net/http"
-	"os"
-	"os/exec"
 	"strings"
-	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -73,9 +69,6 @@ type FunctionEnvelopeProperties struct {
 	Language       string         `json:"language,omitempty"`
 	IsDisabled     bool           `json:"isDisabled"`
 }
-
-// Agent subprocess tracker
-var azfAgentProcs sync.Map // map[siteName]*exec.Cmd
 
 func registerAzureFunctions(srv *sim.Server) {
 	sites := sim.NewStateStore[Site]()
@@ -175,9 +168,6 @@ func registerAzureFunctions(srv *sim.Server) {
 				functionConfigs.Delete(f.ID)
 			}
 
-			// Kill any agent subprocess for this function app
-			azfStopAgentProcess(name)
-
 			w.WriteHeader(http.StatusOK)
 		} else {
 			w.WriteHeader(http.StatusNoContent)
@@ -247,70 +237,9 @@ func registerAzureFunctions(srv *sim.Server) {
 			injectAppTrace(matchedSite.Name, "Function invoked")
 		}
 
-		// Start agent subprocess if the function app has a callback URL configured
-		if matchedSite != nil {
-			if callbackURL := azfGetAgentCallbackURL(*matchedSite); callbackURL != "" {
-				azfStartAgentProcess(matchedSite.Name, callbackURL)
-			}
-		}
-
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("{}"))
 	})
 }
 
-// azfGetAgentCallbackURL extracts the agent callback URL from the site's
-// app settings, if present.
-func azfGetAgentCallbackURL(site Site) string {
-	if site.Properties.SiteConfig == nil {
-		return ""
-	}
-	for _, s := range site.Properties.SiteConfig.AppSettings {
-		if s.Name == "SOCKERLESS_AGENT_CALLBACK_URL" {
-			return s.Value
-		}
-	}
-	return ""
-}
-
-func azfStartAgentProcess(key, callbackURL string) {
-	if _, loaded := azfAgentProcs.Load(key); loaded {
-		return
-	}
-
-	agentBin, err := exec.LookPath("sockerless-agent")
-	if err != nil {
-		log.Printf("[azf] agent binary not found in PATH, skipping agent start for %s", key)
-		return
-	}
-
-	cmd := exec.Command(agentBin, "--callback", callbackURL, "--keep-alive", "--", "tail", "-f", "/dev/null")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Start(); err != nil {
-		log.Printf("[azf] failed to start agent for %s: %v", key, err)
-		return
-	}
-
-	log.Printf("[azf] started agent subprocess for %s (pid=%d)", key, cmd.Process.Pid)
-	azfAgentProcs.Store(key, cmd)
-
-	go func() {
-		_ = cmd.Wait()
-		azfAgentProcs.Delete(key)
-	}()
-}
-
-func azfStopAgentProcess(key string) {
-	v, ok := azfAgentProcs.LoadAndDelete(key)
-	if !ok {
-		return
-	}
-	cmd := v.(*exec.Cmd)
-	if cmd.Process != nil {
-		_ = cmd.Process.Kill()
-		log.Printf("[azf] stopped agent subprocess for %s", key)
-	}
-}
