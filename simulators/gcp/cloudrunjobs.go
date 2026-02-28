@@ -4,10 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
-	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -168,9 +165,6 @@ func newLRO(project, location string, resource any, typeName string) Operation {
 	}
 }
 
-// Agent subprocess tracker for Cloud Run Jobs
-var crjAgentProcs sync.Map // map[execName]*exec.Cmd
-
 // Process handle tracker for Cloud Run Jobs real execution
 var crjProcessHandles sync.Map // map[execName]*sim.ProcessHandle
 
@@ -285,12 +279,11 @@ func registerCloudRunJobs(srv *sim.Server) {
 
 		jobs.Delete(name)
 
-		// Also delete associated executions (and stop any agents)
+		// Also delete associated executions
 		execs := executions.Filter(func(e Execution) bool {
 			return strings.HasPrefix(e.Name, name+"/executions/")
 		})
 		for _, e := range execs {
-			crjStopAgentProcess(&crjAgentProcs, e.Name)
 			executions.Delete(e.Name)
 		}
 
@@ -347,18 +340,8 @@ func registerCloudRunJobs(srv *sim.Server) {
 		// Inject log entries for the execution
 		injectCloudRunJobLog(project, jobID, "Container started")
 
-		// Start agent subprocess if a container has a callback URL configured
-		callbackURL := crjGetAgentCallbackURL(job)
-		if callbackURL != "" {
-			crjStartAgentProcess(&crjAgentProcs, execName, callbackURL)
-		}
-
-		// Auto-complete execution after task timeout or process exit (only if no agent)
-		go func(id string, tc int32, hasAgent bool, proj, job string, taskTmpl *TaskTemplate) {
-			if hasAgent {
-				// Agent-managed: don't auto-complete. Backend will cancel when done.
-				return
-			}
+		// Auto-complete execution after task timeout or process exit
+		go func(id string, tc int32, proj, job string, taskTmpl *TaskTemplate) {
 			timeout := 600 * time.Second // GCP default
 			if taskTmpl != nil && taskTmpl.Timeout != "" {
 				if d, err := time.ParseDuration(taskTmpl.Timeout); err == nil {
@@ -428,7 +411,7 @@ func registerCloudRunJobs(srv *sim.Server) {
 			if completed {
 				injectCloudRunJobLog(proj, job, "Execution completed successfully")
 			}
-		}(execName, taskCount, callbackURL != "", project, jobID, tmpl)
+		}(execName, taskCount, project, jobID, tmpl)
 
 		// Increment execution count on the job
 		jobs.Update(name, func(j *Job) {
@@ -481,9 +464,6 @@ func registerCloudRunJobs(srv *sim.Server) {
 		execID, _, _ := strings.Cut(execAction, ":")
 		name := fmt.Sprintf("projects/%s/locations/%s/jobs/%s/executions/%s", project, location, jobID, execID)
 
-		// Stop agent subprocess if running
-		crjStopAgentProcess(&crjAgentProcs, name)
-
 		// Cancel running process if any
 		if v, ok := crjProcessHandles.LoadAndDelete(name); ok {
 			v.(*sim.ProcessHandle).Cancel()
@@ -523,66 +503,6 @@ func injectCloudRunJobLog(project, jobName, text string) {
 		Type:   "cloud_run_job",
 		Labels: map[string]string{"job_name": jobName},
 	}, nil, []LogEntry{{TextPayload: text}})
-}
-
-// crjGetAgentCallbackURL extracts the agent callback URL from the job's
-// container environment variables, if present.
-func crjGetAgentCallbackURL(job Job) string {
-	if job.Template == nil || job.Template.Template == nil {
-		return ""
-	}
-	for _, c := range job.Template.Template.Containers {
-		for _, env := range c.Env {
-			if env.Name == "SOCKERLESS_AGENT_CALLBACK_URL" {
-				return env.Value
-			}
-		}
-	}
-	return ""
-}
-
-// crjStartAgentProcess starts a sockerless-agent subprocess that dials back to the
-// backend at callbackURL. The subprocess is tracked in procs for later cleanup.
-func crjStartAgentProcess(procs *sync.Map, key, callbackURL string) {
-	if _, loaded := procs.Load(key); loaded {
-		return
-	}
-
-	agentBin, err := exec.LookPath("sockerless-agent")
-	if err != nil {
-		log.Printf("[cloudrun-jobs] agent binary not found in PATH, skipping agent start for %s", key)
-		return
-	}
-
-	cmd := exec.Command(agentBin, "--callback", callbackURL, "--keep-alive", "--", "tail", "-f", "/dev/null")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Start(); err != nil {
-		log.Printf("[cloudrun-jobs] failed to start agent for %s: %v", key, err)
-		return
-	}
-
-	log.Printf("[cloudrun-jobs] started agent subprocess for %s (pid=%d)", key, cmd.Process.Pid)
-	procs.Store(key, cmd)
-
-	go func() {
-		_ = cmd.Wait()
-		procs.Delete(key)
-	}()
-}
-
-// crjStopAgentProcess kills an agent subprocess for the given key.
-func crjStopAgentProcess(procs *sync.Map, key string) {
-	v, ok := procs.LoadAndDelete(key)
-	if !ok {
-		return
-	}
-	cmd := v.(*exec.Cmd)
-	if cmd.Process != nil {
-		_ = cmd.Process.Kill()
-		log.Printf("[cloudrun-jobs] stopped agent subprocess for %s", key)
-	}
 }
 
 // crjLogSink implements sim.LogSink and writes log lines to Cloud Logging.

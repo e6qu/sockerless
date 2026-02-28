@@ -42,19 +42,25 @@ func (s *Server) buildContainerSpec(ci containerInput) *armappcontainers.Contain
 
 	var entrypoint []string
 	if ci.IsMain {
-		// Agent injection for main container
-		envVars = append(envVars,
-			&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_AGENT_TOKEN"), Value: ptr(ci.AgentToken)},
-		)
-
-		if s.config.CallbackURL != "" {
+		if s.config.EndpointURL != "" {
+			// Simulator mode: pass original command through, no agent wrapping
+			if len(config.Entrypoint) > 0 {
+				entrypoint = config.Entrypoint
+			} else if len(config.Cmd) > 0 {
+				entrypoint = config.Cmd
+			}
+		} else if s.config.CallbackURL != "" {
 			callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, ci.ID, ci.AgentToken)
 			entrypoint = core.BuildAgentCallbackEntrypoint(config, callbackURL)
 			envVars = append(envVars,
 				&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_CONTAINER_ID"), Value: ptr(ci.ID)},
+				&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_AGENT_TOKEN"), Value: ptr(ci.AgentToken)},
 				&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_AGENT_CALLBACK_URL"), Value: ptr(callbackURL)},
 			)
 		} else {
+			envVars = append(envVars,
+				&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_AGENT_TOKEN"), Value: ptr(ci.AgentToken)},
+			)
 			entrypoint, _ = core.BuildAgentEntrypoint(config)
 		}
 	} else {

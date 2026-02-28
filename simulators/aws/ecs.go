@@ -3,10 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"fmt"
-	"log"
 	"net/http"
-	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -147,7 +144,6 @@ var (
 	ecsTasks           *sim.StateStore[ECSTask]
 	ecsRevisionMu      sync.Mutex
 	ecsRevisions       map[string]int // family -> latest revision
-	ecsAgentProcs      sync.Map       // map[taskID]*exec.Cmd
 	ecsProcessHandles  sync.Map       // map[taskID]*sim.ProcessHandle
 )
 
@@ -533,11 +529,6 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				}
 			})
 
-			// Start agent subprocess if a container has a callback URL configured
-			if callbackURL := ecsGetAgentCallbackURL(td); callbackURL != "" {
-				ecsStartAgentProcess(&ecsAgentProcs, id, callbackURL)
-			}
-
 			// Build combined command from first container definition
 			var fullCmd []string
 			var cmdEnv map[string]string
@@ -703,9 +694,6 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 			taskID = parts[len(parts)-1]
 		}
 	}
-
-	// Stop agent subprocess if running
-	ecsStopAgentProcess(&ecsAgentProcs, taskID)
 
 	// Cancel running process if any
 	if v, ok := ecsProcessHandles.LoadAndDelete(taskID); ok {
@@ -873,63 +861,6 @@ func extractTDKey(arn string) string {
 		return parts[len(parts)-1]
 	}
 	return arn
-}
-
-// ecsGetAgentCallbackURL extracts the agent callback URL from the task definition's
-// container environment variables, if present.
-func ecsGetAgentCallbackURL(td ECSTaskDefinition) string {
-	for _, cd := range td.ContainerDefinitions {
-		for _, env := range cd.Environment {
-			if env.Name == "SOCKERLESS_AGENT_CALLBACK_URL" {
-				return env.Value
-			}
-		}
-	}
-	return ""
-}
-
-// ecsStartAgentProcess starts a sockerless-agent subprocess that dials back to the
-// backend at callbackURL. The subprocess is tracked in procs for later cleanup.
-func ecsStartAgentProcess(procs *sync.Map, key, callbackURL string) {
-	if _, loaded := procs.Load(key); loaded {
-		return
-	}
-
-	agentBin, err := exec.LookPath("sockerless-agent")
-	if err != nil {
-		log.Printf("[ecs] agent binary not found in PATH, skipping agent start for %s", key)
-		return
-	}
-
-	cmd := exec.Command(agentBin, "--callback", callbackURL, "--keep-alive", "--", "tail", "-f", "/dev/null")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Start(); err != nil {
-		log.Printf("[ecs] failed to start agent for %s: %v", key, err)
-		return
-	}
-
-	log.Printf("[ecs] started agent subprocess for %s (pid=%d)", key, cmd.Process.Pid)
-	procs.Store(key, cmd)
-
-	go func() {
-		_ = cmd.Wait()
-		procs.Delete(key)
-	}()
-}
-
-// ecsStopAgentProcess kills an agent subprocess for the given key.
-func ecsStopAgentProcess(procs *sync.Map, key string) {
-	v, ok := procs.LoadAndDelete(key)
-	if !ok {
-		return
-	}
-	cmd := v.(*exec.Cmd)
-	if cmd.Process != nil {
-		_ = cmd.Process.Kill()
-		log.Printf("[ecs] stopped agent subprocess for %s", key)
-	}
 }
 
 // cwLogSink implements sim.LogSink and writes log lines to CloudWatch.

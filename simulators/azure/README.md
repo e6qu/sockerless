@@ -133,7 +133,7 @@ azure/
 
 ## Execution model
 
-Container Apps job executions honor the `replicaTimeout` configuration (in seconds). When a replica timeout is configured, the execution auto-completes with `Succeeded` status after that duration. When no timeout is set, the execution stays running until explicitly stopped. Azure Functions invocations are synchronous and inject AppTraces entries queryable via KQL. When agent integration is active (`SOCKERLESS_AGENT_CALLBACK_URL`), the backend manages the execution lifecycle through the agent subprocess.
+Container Apps job executions honor the `replicaTimeout` configuration (in seconds). When a command is provided, the simulator executes it as a real process and streams output to Log Analytics. When a replica timeout is configured and no command is present, the execution auto-completes with `Succeeded` status after that duration. When no timeout and no command are set, the execution stays running until explicitly stopped. Azure Functions invocations are synchronous and inject AppTraces entries queryable via KQL.
 
 ## Testing
 

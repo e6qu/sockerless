@@ -4,12 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"net/http"
-	"os"
-	"os/exec"
 	"strings"
-	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -59,9 +55,6 @@ type LambdaImageConfig struct {
 
 // State store
 var lambdaFunctions *sim.StateStore[LambdaFunction]
-
-// Agent subprocess tracker
-var lambdaAgentProcs sync.Map // map[functionName]*exec.Cmd
 
 func lambdaArn(name string) string {
 	return fmt.Sprintf("arn:aws:lambda:us-east-1:123456789012:function:%s", name)
@@ -192,9 +185,6 @@ func handleLambdaDeleteFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Kill any agent subprocess for this function
-	stopAgentProcess(&lambdaAgentProcs, name)
-
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -269,11 +259,6 @@ func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Start agent subprocess if the function has a callback URL configured
-	if callbackURL := lambdaGetAgentCallbackURL(fn); callbackURL != "" {
-		startAgentProcess(&lambdaAgentProcs, name, callbackURL)
-	}
-
 	// Auto-create CloudWatch log group/stream and inject a log entry
 	injectLambdaLogs(fn.FunctionName)
 
@@ -307,60 +292,6 @@ func handleLambdaListFunctions(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"Functions": functions,
 	})
-}
-
-// lambdaGetAgentCallbackURL extracts the agent callback URL from the function's
-// environment variables, if present.
-func lambdaGetAgentCallbackURL(fn LambdaFunction) string {
-	if fn.Environment == nil || fn.Environment.Variables == nil {
-		return ""
-	}
-	return fn.Environment.Variables["SOCKERLESS_AGENT_CALLBACK_URL"]
-}
-
-// startAgentProcess starts a sockerless-agent subprocess that dials back to the
-// backend at callbackURL. The subprocess is tracked in procs for later cleanup.
-func startAgentProcess(procs *sync.Map, key, callbackURL string) {
-	// Don't start a second agent if one is already running
-	if _, loaded := procs.Load(key); loaded {
-		return
-	}
-
-	agentBin, err := exec.LookPath("sockerless-agent")
-	if err != nil {
-		log.Printf("[lambda] agent binary not found in PATH, skipping agent start for %s", key)
-		return
-	}
-
-	cmd := exec.Command(agentBin, "--callback", callbackURL, "--keep-alive", "--", "tail", "-f", "/dev/null")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Start(); err != nil {
-		log.Printf("[lambda] failed to start agent for %s: %v", key, err)
-		return
-	}
-
-	log.Printf("[lambda] started agent subprocess for %s (pid=%d)", key, cmd.Process.Pid)
-	procs.Store(key, cmd)
-
-	go func() {
-		_ = cmd.Wait()
-		procs.Delete(key)
-	}()
-}
-
-// stopAgentProcess kills an agent subprocess for the given key.
-func stopAgentProcess(procs *sync.Map, key string) {
-	v, ok := procs.LoadAndDelete(key)
-	if !ok {
-		return
-	}
-	cmd := v.(*exec.Cmd)
-	if cmd.Process != nil {
-		_ = cmd.Process.Kill()
-		log.Printf("[lambda] stopped agent subprocess for %s", key)
-	}
 }
 
 // injectLambdaLogs creates a CloudWatch log group, stream, and initial log

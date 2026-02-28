@@ -40,8 +40,11 @@ func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinit
 
 	var entrypoint, command []string
 	if ci.IsMain {
-		// Agent injection for main container
-		if s.config.CallbackURL != "" {
+		if s.config.EndpointURL != "" {
+			// Simulator mode: pass original command through, no agent wrapping
+			entrypoint = config.Entrypoint
+			command = config.Cmd
+		} else if s.config.CallbackURL != "" {
 			callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, ci.ID, ci.AgentToken)
 			entrypoint = core.BuildAgentCallbackEntrypoint(config, callbackURL)
 			envVars = append(envVars,
@@ -93,8 +96,8 @@ func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinit
 		containerDef.User = aws.String(config.User)
 	}
 
-	// Port mapping for agent (main container only)
-	if ci.IsMain {
+	// Port mapping for agent (main container only, skip in simulator mode)
+	if ci.IsMain && s.config.EndpointURL == "" {
 		containerDef.PortMappings = []ecstypes.PortMapping{
 			{
 				ContainerPort: aws.Int32(9111),

@@ -102,4 +102,4 @@ Tests build the simulator binary, start it on a free port, run the test suite, a
 
 ## Execution model
 
-ECS tasks have no native execution timeout — they run until the container process exits or `StopTask` is called. The simulator faithfully reproduces this: started tasks remain in `RUNNING` state until explicitly stopped. When agent integration is active (`SOCKERLESS_AGENT_CALLBACK_URL`), the backend manages the task lifecycle through the agent subprocess. Lambda invocations are synchronous and return immediately with the function response.
+ECS tasks have no native execution timeout — they run until the container process exits or `StopTask` is called. The simulator faithfully reproduces this: started tasks remain in `RUNNING` state until explicitly stopped. When a task definition includes an entrypoint/command, the simulator executes it as a real process and streams output to CloudWatch logs. Lambda invocations are synchronous and return immediately with the function response.
