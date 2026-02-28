@@ -127,6 +127,7 @@ func TestCloudRun_RunJobInjectsLogEntries(t *testing.T) {
 	job := map[string]any{
 		"template": map[string]any{
 			"template": map[string]any{
+				"timeout": "1s",
 				"containers": []map[string]any{
 					{"image": "gcr.io/test/logtest:latest"},
 				},
@@ -152,8 +153,8 @@ func TestCloudRun_RunJobInjectsLogEntries(t *testing.T) {
 	runResp.Body.Close()
 	require.Equal(t, http.StatusOK, runResp.StatusCode)
 
-	// Wait for execution to complete (auto-completes after 3s)
-	time.Sleep(4 * time.Second)
+	// Wait for execution to complete (1s timeout + buffer)
+	time.Sleep(2 * time.Second)
 
 	// Query log entries using logadmin with the same filter the backend uses
 	client := logadminClient(t)
@@ -190,6 +191,7 @@ func createAndRunJob(t *testing.T, jobID string) string {
 	job := map[string]any{
 		"template": map[string]any{
 			"template": map[string]any{
+				"timeout": "1s",
 				"containers": []map[string]any{
 					{"image": "gcr.io/test/status:latest"},
 				},
@@ -250,8 +252,8 @@ func TestCloudRun_ExecutionRunningState(t *testing.T) {
 func TestCloudRun_ExecutionSucceededState(t *testing.T) {
 	execName := createAndRunJob(t, "status-succeeded-job")
 
-	// Wait for auto-completion (3s + buffer)
-	time.Sleep(4 * time.Second)
+	// Wait for auto-completion (1s timeout + buffer)
+	time.Sleep(2 * time.Second)
 
 	exec := getExecution(t, execName)
 	assert.Equal(t, float64(0), exec["runningCount"])

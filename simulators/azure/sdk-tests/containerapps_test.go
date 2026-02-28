@@ -33,7 +33,7 @@ func TestContainerApps_CreateJob(t *testing.T) {
 		"properties": map[string]any{
 			"configuration": map[string]any{
 				"triggerType":  "Manual",
-				"replicaTimeout": 300,
+				"replicaTimeout": 1,
 			},
 			"template": map[string]any{
 				"containers": []map[string]any{
@@ -82,7 +82,7 @@ func TestContainerApps_StartJobInjectsLogs(t *testing.T) {
 		"properties": map[string]any{
 			"configuration": map[string]any{
 				"triggerType":    "Manual",
-				"replicaTimeout": 300,
+				"replicaTimeout": 1,
 			},
 			"template": map[string]any{
 				"containers": []map[string]any{
@@ -112,8 +112,8 @@ func TestContainerApps_StartJobInjectsLogs(t *testing.T) {
 	startResp.Body.Close()
 	require.Equal(t, http.StatusAccepted, startResp.StatusCode)
 
-	// Wait for auto-completion (3s + buffer)
-	time.Sleep(4 * time.Second)
+	// Wait for auto-completion (1s timeout + buffer)
+	time.Sleep(2 * time.Second)
 
 	// Query logs via KQL
 	kql := `ContainerAppConsoleLogs_CL | where ContainerGroupName_s == "log-test-job"`
@@ -157,7 +157,7 @@ func acaCreateJob(t *testing.T, rg, jobName string) {
 		"properties": map[string]any{
 			"configuration": map[string]any{
 				"triggerType":    "Manual",
-				"replicaTimeout": 300,
+				"replicaTimeout": 1,
 			},
 			"template": map[string]any{
 				"containers": []map[string]any{
@@ -229,8 +229,8 @@ func TestContainerApps_ExecutionSucceededState(t *testing.T) {
 	acaCreateJob(t, "status-rg", "succeed-job")
 	execName := acaStartExecution(t, "status-rg", "succeed-job")
 
-	// Wait for auto-completion (3s + buffer)
-	time.Sleep(4 * time.Second)
+	// Wait for auto-completion (1s timeout + buffer)
+	time.Sleep(2 * time.Second)
 
 	exec := acaGetExecution(t, "status-rg", "succeed-job", execName)
 	assert.Equal(t, "Succeeded", exec["status"])

@@ -117,7 +117,7 @@ func (s *Server) buildJobSpec(containers []containerInput) *runpb.Job {
 	taskTemplate := &runpb.TaskTemplate{
 		Containers: specs,
 		Retries:    &runpb.TaskTemplate_MaxRetries{MaxRetries: 0},
-		Timeout:    durationpb.New(3600 * 4), // 4 hour max
+		Timeout:    durationpb.New(4 * time.Hour),
 	}
 
 	// Add VPC connector if configured
