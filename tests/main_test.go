@@ -14,9 +14,10 @@ import (
 )
 
 var (
-	dockerClient *client.Client
-	frontendAddr string
-	ctx          = context.Background()
+	dockerClient  *client.Client
+	frontendAddr  string
+	evalBinaryPath string
+	ctx           = context.Background()
 )
 
 func TestMain(m *testing.M) {
@@ -32,6 +33,20 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 		os.Exit(m.Run())
+	}
+
+	// Build eval-arithmetic binary
+	evalDir := findModuleDir("simulators/testdata/eval-arithmetic")
+	evalBinaryPath = evalDir + "/eval-arithmetic"
+	fmt.Println("Building eval-arithmetic...")
+	evalBuild := exec.Command("go", "build", "-o", "eval-arithmetic", ".")
+	evalBuild.Dir = evalDir
+	evalBuild.Env = append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off")
+	evalBuild.Stdout = os.Stderr
+	evalBuild.Stderr = os.Stderr
+	if err := evalBuild.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Build binaries

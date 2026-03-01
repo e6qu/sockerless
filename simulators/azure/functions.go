@@ -2,8 +2,11 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -236,9 +239,25 @@ func registerAzureFunctions(srv *sim.Server) {
 
 		responseBody := []byte("{}")
 		if matchedSite != nil {
-			// Real execution when SimCommand is set
-			if matchedSite.Properties.SiteConfig != nil && len(matchedSite.Properties.SiteConfig.SimCommand) > 0 {
-				responseBody = invokeAzureFunctionProcess(matchedSite)
+			// Allow X-Sim-Command header to override SimCommand for Docker API integration
+			simCmd := matchedSite.Properties.SiteConfig != nil && len(matchedSite.Properties.SiteConfig.SimCommand) > 0
+			if cmdHeader := r.Header.Get("X-Sim-Command"); cmdHeader != "" {
+				if decoded, err := base64.StdEncoding.DecodeString(cmdHeader); err == nil {
+					var cmdParts []string
+					if json.Unmarshal(decoded, &cmdParts) == nil && len(cmdParts) > 0 {
+						if matchedSite.Properties.SiteConfig == nil {
+							matchedSite.Properties.SiteConfig = &SiteConfig{}
+						}
+						matchedSite.Properties.SiteConfig.SimCommand = cmdParts
+						simCmd = true
+					}
+				}
+			}
+
+			if simCmd {
+				var exitCode int
+				responseBody, exitCode = invokeAzureFunctionProcess(matchedSite)
+				w.Header().Set("X-Sim-Exit-Code", strconv.Itoa(exitCode))
 			} else {
 				injectAppTrace(matchedSite.Name, "Function invoked")
 			}
@@ -251,11 +270,11 @@ func registerAzureFunctions(srv *sim.Server) {
 }
 
 // invokeAzureFunctionProcess executes a function app's SimCommand via sim.StartProcess
-// and returns the stdout output as the response body.
-func invokeAzureFunctionProcess(site *Site) []byte {
+// and returns the stdout output as the response body plus the process exit code.
+func invokeAzureFunctionProcess(site *Site) ([]byte, int) {
 	cmd := site.Properties.SiteConfig.SimCommand
 	if len(cmd) == 0 {
-		return []byte("{}")
+		return []byte("{}"), 0
 	}
 
 	// Extract environment from app settings
@@ -292,9 +311,9 @@ func invokeAzureFunctionProcess(site *Site) []byte {
 
 	output := strings.TrimRight(stdout.String(), "\n")
 	if output == "" {
-		return []byte("{}")
+		return []byte("{}"), result.ExitCode
 	}
-	return []byte(output)
+	return []byte(output), result.ExitCode
 }
 
 // funcLogSink implements sim.LogSink and writes log lines to AppTraces

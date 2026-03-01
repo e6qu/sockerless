@@ -2,8 +2,11 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -140,9 +143,25 @@ func registerCloudFunctions(srv *sim.Server) {
 		if fn != nil {
 			project := strings.Split(fn.Name, "/")[1] // projects/{project}/...
 
-			// Real execution when SimCommand is set
-			if fn.ServiceConfig != nil && len(fn.ServiceConfig.SimCommand) > 0 {
-				responseBody = invokeCloudFunctionProcess(fn, project, functionID)
+			// Allow X-Sim-Command header to override SimCommand for Docker API integration
+			simCmd := fn.ServiceConfig != nil && len(fn.ServiceConfig.SimCommand) > 0
+			if cmdHeader := r.Header.Get("X-Sim-Command"); cmdHeader != "" {
+				if decoded, err := base64.StdEncoding.DecodeString(cmdHeader); err == nil {
+					var cmdParts []string
+					if json.Unmarshal(decoded, &cmdParts) == nil && len(cmdParts) > 0 {
+						if fn.ServiceConfig == nil {
+							fn.ServiceConfig = &ServiceConfig{}
+						}
+						fn.ServiceConfig.SimCommand = cmdParts
+						simCmd = true
+					}
+				}
+			}
+
+			if simCmd {
+				var exitCode int
+				responseBody, exitCode = invokeCloudFunctionProcess(fn, project, functionID)
+				w.Header().Set("X-Sim-Exit-Code", strconv.Itoa(exitCode))
 			} else {
 				injectCloudFunctionLog(project, functionID, "Function invoked")
 			}
@@ -174,11 +193,11 @@ func registerCloudFunctions(srv *sim.Server) {
 }
 
 // invokeCloudFunctionProcess executes a Cloud Function's SimCommand via sim.StartProcess
-// and returns the stdout output as the response body.
-func invokeCloudFunctionProcess(fn *Function, project, functionID string) []byte {
+// and returns the stdout output as the response body plus the process exit code.
+func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byte, int) {
 	cmd := fn.ServiceConfig.SimCommand
 	if len(cmd) == 0 {
-		return []byte("{}")
+		return []byte("{}"), 0
 	}
 
 	var cmdEnv map[string]string
@@ -215,9 +234,9 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) []byte
 
 	output := strings.TrimRight(stdout.String(), "\n")
 	if output == "" {
-		return []byte("{}")
+		return []byte("{}"), result.ExitCode
 	}
-	return []byte(output)
+	return []byte(output), result.ExitCode
 }
 
 // cfLogSink implements sim.LogSink and writes log lines to Cloud Logging

@@ -1,6 +1,6 @@
 # Sockerless — Roadmap
 
-> Phases 1-67, 69-71 complete (622 tasks). Phase 68 in progress. This document covers current and future work.
+> Phases 1-67, 69-72 complete (637 tasks). Phase 68 in progress, Phase 72 complete. This document covers current and future work.
 >
 > **Production target:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners (GitHub Actions from github.com, GitLab CI from gitlab.com), and custom SDK clients — backed by real cloud infrastructure (AWS, GCP, Azure).
 
@@ -36,6 +36,10 @@ Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per
 | 69 | ARM64/Multi-Arch: goreleaser 15 builds, gitlabhub Dockerfile, docker.yml 7 images, ARM64 CI |
 | 70 | Simulator Fidelity: real process execution, structured logs, correct status enums, SDK/CLI/Terraform compat |
 | 71 | SDK/CLI Verification & Documentation: FaaS real execution, CLI execution+log tests, README quick-starts |
+| 72A | Full-Stack E2E Tests: forward-agent arithmetic integration tests (ECS/CloudRun/ACA), fast-exit fix |
+| 72B | FaaS real execution via Docker API: Lambda/GCF/AZF invoke with container Cmd, X-Sim-Command header |
+| 72C | FaaS arithmetic E2E tests (Lambda/GCF/AZF), ECS test name collision fix |
+| 72D | Central arithmetic E2E tests (shell arithmetic, exec-in-container) |
 
 ---
 
@@ -131,6 +135,47 @@ Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per
 | P70-022 | ✅ | GCP Cloud Run real execution — executions run container command, real exit codes + Cloud Logging |
 | P70-023 | ✅ | Azure ACA real execution — executions run container command, real exit codes + Log Analytics |
 | P70-024 | ✅ | CI integration for simulator smoke tests |
+
+---
+
+## Phase 72 — Full-Stack E2E Tests (In Progress)
+
+**Goal:** Real arithmetic execution through full Docker API stack (Frontend → Backend → Simulator).
+
+### Milestone A: Forward-Agent Backend E2E Tests (P72-001 → P72-004)
+
+| Task | Status | Description |
+|---|---|---|
+| P72-001 | ✅ | ECS arithmetic integration tests — 6 tests via Docker API |
+| P72-002 | ✅ | CloudRun arithmetic integration tests — 6 tests, gRPC logadmin fix |
+| P72-003 | ✅ | ACA arithmetic integration tests — 6 tests, soft log assertions |
+| P72-004 | ✅ | Forward-agent regression — 147 PASS (was 129), fast-exit fix for CloudRun/ACA |
+
+### Milestone B: FaaS Backend Real Execution (P72-005 → P72-008)
+
+| Task | Status | Description |
+|---|---|---|
+| P72-005 | ✅ | Lambda real execution via Docker API — invoke function, use FunctionError for exit code |
+| P72-006 | ✅ | GCF real execution via Docker API — X-Sim-Command header, base64-encoded JSON |
+| P72-007 | ✅ | AZF real execution via Docker API — same X-Sim-Command pattern as GCF |
+| P72-008 | ✅ | FaaS helper container regression — all 147 sim-test-all PASS, SDK tests PASS |
+
+### Milestone C: FaaS Backend E2E Tests (P72-009 → P72-012)
+
+| Task | Status | Description |
+|---|---|---|
+| P72-009 | ✅ | Lambda arithmetic integration tests — 6 tests |
+| P72-010 | ✅ | GCF arithmetic integration tests — 6 tests, soft log assertions (gRPC Cloud Logging) |
+| P72-011 | ✅ | AZF arithmetic integration tests — 6 tests, soft log assertions (Azure Monitor TLS) |
+| P72-012 | ✅ | Full FaaS regression — 75 sim-test-all PASS, ECS hardcoded name fix |
+
+### Milestone D: Central Multi-Backend E2E Tests (P72-013 → P72-015)
+
+| Task | Status | Description |
+|---|---|---|
+| P72-013 | ✅ | Central arithmetic E2E tests — 3 tests (execution, non-zero exit, exec-in-container) |
+| P72-014 | ✅ | Verified with memory backend — 64 test-e2e PASS (was 61) |
+| P72-015 | ✅ | Final state save |
 
 ---
 

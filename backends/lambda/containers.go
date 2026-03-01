@@ -259,13 +259,38 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	exitCh := make(chan struct{})
 	s.Store.WaitChs.Store(id, exitCh)
 
-	// Helper/cache containers (non-tail-dev-null commands like "chmod -R 777 /cache")
-	// don't need the full invoke+agent flow. Auto-stop them after a brief delay.
+	// Non-tail-dev-null containers: invoke the function with the container's command
+	// to get real execution, then stop with the real exit code.
 	if !core.IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd) {
-		go func() {
-			time.Sleep(500 * time.Millisecond)
-			s.Store.StopContainer(id, 0)
-		}()
+		cmd := core.BuildOriginalCommand(c.Config.Entrypoint, c.Config.Cmd)
+		if len(cmd) > 0 && s.config.EndpointURL != "" {
+			// Simulator mode: invoke the function (already has ImageConfig.Command from create)
+			go func() {
+				exitCode := 0
+				result, err := s.aws.Lambda.Invoke(s.ctx(), &awslambda.InvokeInput{
+					FunctionName: aws.String(lambdaState.FunctionName),
+				})
+				if err != nil {
+					s.Logger.Error().Err(err).Str("function", lambdaState.FunctionName).Msg("Lambda invocation failed")
+					exitCode = 1
+				} else {
+					if result.FunctionError != nil {
+						exitCode = 1
+					}
+					// Store response payload in log buffer for container logs
+					if len(result.Payload) > 0 && string(result.Payload) != "{}" {
+						s.Store.LogBuffers.Store(id, result.Payload)
+					}
+				}
+				s.Store.StopContainer(id, exitCode)
+			}()
+		} else {
+			// No command or production mode: auto-stop after brief delay
+			go func() {
+				time.Sleep(500 * time.Millisecond)
+				s.Store.StopContainer(id, 0)
+			}()
+		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

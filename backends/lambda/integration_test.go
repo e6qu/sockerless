@@ -20,6 +20,7 @@ import (
 )
 
 var dockerClient *client.Client
+var evalBinaryPath string
 
 func TestMain(m *testing.M) {
 	if os.Getenv("SOCKERLESS_INTEGRATION") != "1" {
@@ -33,6 +34,20 @@ func TestMain(m *testing.M) {
 		for i := len(cleanups) - 1; i >= 0; i-- {
 			cleanups[i]()
 		}
+	}
+
+	// Build eval-arithmetic binary
+	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
+	evalBinaryPath = evalDir + "/eval-arithmetic"
+	fmt.Println("[sim] Building eval-arithmetic...")
+	evalBuild := exec.Command("go", "build", "-o", "eval-arithmetic", ".")
+	evalBuild.Dir = evalDir
+	evalBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off")
+	evalBuild.Stdout = os.Stderr
+	evalBuild.Stderr = os.Stderr
+	if err := evalBuild.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Build simulator

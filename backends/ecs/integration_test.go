@@ -20,6 +20,7 @@ import (
 )
 
 var dockerClient *client.Client
+var evalBinaryPath string
 
 func TestMain(m *testing.M) {
 	if os.Getenv("SOCKERLESS_INTEGRATION") != "1" {
@@ -34,6 +35,21 @@ func TestMain(m *testing.M) {
 			cleanups[i]()
 		}
 	}
+
+	// Build eval-arithmetic binary
+	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
+	evalBinaryPath = evalDir + "/eval-arithmetic"
+	fmt.Println("[sim] Building eval-arithmetic...")
+	evalBuild := exec.Command("go", "build", "-o", "eval-arithmetic", ".")
+	evalBuild.Dir = evalDir
+	evalBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off")
+	evalBuild.Stdout = os.Stderr
+	evalBuild.Stderr = os.Stderr
+	if err := evalBuild.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic: %v\n", err)
+		os.Exit(1)
+	}
+	cleanups = append(cleanups, func() { os.Remove(evalBinaryPath) })
 
 	// Build simulator
 	simDir := repoRoot + "/simulators/aws"
@@ -208,7 +224,7 @@ func TestECSContainerLifecycle(t *testing.T) {
 		Image: "alpine:latest",
 		Cmd:   []string{"echo", "hello from ecs"},
 		Tty:   false,
-	}, nil, nil, nil, "ecs-lifecycle-test")
+	}, nil, nil, nil, "ecs-lifecycle-"+generateTestID())
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
@@ -259,7 +275,7 @@ func TestECSContainerLogs(t *testing.T) {
 	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
 		Image: "alpine:latest",
 		Cmd:   []string{"echo", "log-test-output"},
-	}, nil, nil, nil, "ecs-logs-test")
+	}, nil, nil, nil, "ecs-logs-"+generateTestID())
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
@@ -312,7 +328,7 @@ func TestECSContainerExec(t *testing.T) {
 		Cmd:       []string{"tail", "-f", "/dev/null"},
 		OpenStdin: true,
 		Tty:       true,
-	}, nil, nil, nil, "ecs-exec-test")
+	}, nil, nil, nil, "ecs-exec-"+generateTestID())
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
@@ -365,7 +381,7 @@ func TestECSContainerList(t *testing.T) {
 		Image:  "alpine:latest",
 		Cmd:    []string{"sleep", "30"},
 		Labels: map[string]string{"test": "ecs-list"},
-	}, nil, nil, nil, "ecs-list-test")
+	}, nil, nil, nil, "ecs-list-"+generateTestID())
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
@@ -401,7 +417,8 @@ func TestECSNetworkOperations(t *testing.T) {
 	ctx := context.Background()
 
 	// Create network
-	netResp, err := dockerClient.NetworkCreate(ctx, "ecs-test-net", network.CreateOptions{
+	netName := "ecs-test-net-" + generateTestID()
+	netResp, err := dockerClient.NetworkCreate(ctx, netName, network.CreateOptions{
 		Driver: "bridge",
 	})
 	if err != nil {
@@ -414,8 +431,8 @@ func TestECSNetworkOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("network inspect failed: %v", err)
 	}
-	if netInfo.Name != "ecs-test-net" {
-		t.Errorf("expected name 'ecs-test-net', got %q", netInfo.Name)
+	if netInfo.Name != netName {
+		t.Errorf("expected name %q, got %q", netName, netInfo.Name)
 	}
 
 	// List
@@ -439,7 +456,8 @@ func TestECSVolumeOperations(t *testing.T) {
 	ctx := context.Background()
 
 	// Create volume
-	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: "ecs-test-vol"})
+	volName := "ecs-test-vol-" + generateTestID()
+	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: volName})
 	if err != nil {
 		t.Fatalf("volume create failed: %v", err)
 	}
@@ -450,8 +468,8 @@ func TestECSVolumeOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("volume inspect failed: %v", err)
 	}
-	if volInfo.Name != "ecs-test-vol" {
-		t.Errorf("expected name 'ecs-test-vol', got %q", volInfo.Name)
+	if volInfo.Name != volName {
+		t.Errorf("expected name %q, got %q", volName, volInfo.Name)
 	}
 
 	// List
@@ -461,7 +479,7 @@ func TestECSVolumeOperations(t *testing.T) {
 	}
 	found := false
 	for _, v := range volList.Volumes {
-		if v.Name == "ecs-test-vol" {
+		if v.Name == volName {
 			found = true
 			break
 		}
@@ -533,6 +551,14 @@ func waitForUnixSocket(socketPath string, timeout time.Duration) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("timeout waiting for socket %s", socketPath)
+}
+
+func generateTestID(parts ...string) string {
+	id := time.Now().Format("150405")
+	for _, p := range parts {
+		id += "-" + p
+	}
+	return id
 }
 
 func filterBuildEnv(env []string, extra ...string) []string {
