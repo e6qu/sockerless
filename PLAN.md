@@ -17,7 +17,7 @@
 
 ---
 
-## Completed Phases (1-71)
+## Completed Phases (1-72)
 
 Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per-task logs in `_tasks/done/`.
 
@@ -138,7 +138,7 @@ Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per
 
 ---
 
-## Phase 72 — Full-Stack E2E Tests (In Progress)
+## Phase 72 — Full-Stack E2E Tests (Complete)
 
 **Goal:** Real arithmetic execution through full Docker API stack (Frontend → Backend → Simulator).
 
@@ -173,8 +173,8 @@ Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per
 
 | Task | Status | Description |
 |---|---|---|
-| P72-013 | ✅ | Central arithmetic E2E tests — 3 tests (execution, non-zero exit, exec-in-container) |
-| P72-014 | ✅ | Verified with memory backend — 64 test-e2e PASS (was 61) |
+| P72-013 | ✅ | Central arithmetic E2E tests — 4 tests (execution, non-zero exit, exec-in-container, eval binary) |
+| P72-014 | ✅ | Verified with memory backend — 65 test-e2e PASS (was 61) |
 | P72-015 | ✅ | Final state save |
 
 ---

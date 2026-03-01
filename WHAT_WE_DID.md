@@ -191,7 +191,7 @@ All 6 test suites (`{aws,gcp,azure}/{sdk,cli}-tests`) build the evaluator binary
 
 **Tests**: SDK: AWS 35→42, GCP 36→43, Azure 31→38 | CLI: AWS 24→26, GCP 19→21, Azure 14→19
 
-## Phase 72 — Full-Stack E2E Tests (In Progress)
+## Phase 72 — Full-Stack E2E Tests (Complete)
 
 ### Milestone A: Forward-Agent Backend E2E Tests (P72-001 → P72-004)
 
@@ -258,7 +258,7 @@ Added `PoolConfig` and `PoolsConfig` types to `backends/core/` for defining name
 
 ## Project Stats
 
-- **72 phases** (1-67, 69-72), 634+ tasks completed
+- **72 phases** (1-67, 69-72), 637+ tasks completed
 - **16 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, tests
 - **21 Go-implemented builtins** in WASM sandbox
 - **18 driver interface methods** across 5 driver types
