@@ -1,6 +1,6 @@
 # Sockerless — Current Status
 
-**Phase 70 (Simulator Fidelity) nearly complete. 578+ tasks done across 69 phases. Next: P70-024 (CI smoke tests), then Phase 68.**
+**Phase 68 (Multi-Tenant Backend Pools) in progress. 595+ tasks done across 71 phases.**
 
 ## Test Results (Latest)
 
@@ -24,17 +24,28 @@
 | GitLab E2E | 22 pipelines x 7 backends = 154 PASS | `make e2e-gitlab-{backend}` |
 | Upstream gitlab-ci-local | 36 tests x 7 backends = 252 PASS | `make upstream-test-gitlab-ci-local-{backend}` |
 | Terraform integration | 75 PASS (ECS 21, Lambda 5, CR 13, GCF 7, ACA 18, AZF 11) | `make tf-int-test-all` |
-| Cloud SDK tests | AWS 21, GCP 23, Azure 16 | `make docker-test` per cloud |
-| Cloud CLI tests | AWS 21, GCP 15, Azure 14 | `make docker-test` per cloud |
+| Cloud SDK tests | AWS 35, GCP 36, Azure 31 | `make docker-test` per cloud |
+| Cloud CLI tests | AWS 24, GCP 19, Azure 17 | `make docker-test` per cloud |
 | Lint (15 modules) | 0 issues | `make lint` |
 
-### Cloud SDK Test Breakdown (Phase 70 additions)
+### Cloud SDK Test Breakdown (Phase 70-71 additions)
 
-| Cloud | Before P70 | After P70 | New tests |
+| Cloud | Before P70 | After P70 | After P71 | P71 new tests |
+|---|---|---|---|---|
+| AWS ECS | 4 | 8 | 8 | — |
+| AWS Lambda | 13 | 13 | 27 | `InvokeExecutesCommand`, `InvokeNonZeroExit`, `InvokeLogsToCloudWatch` |
+| GCP Cloud Run | 8 | 11 | 11 | — |
+| GCP Cloud Functions | 12 | 12 | 25 | `InvokeExecutesCommand`, `InvokeNonZeroExit`, `InvokeLogsRealOutput` |
+| Azure ACA | 7 | 10 | 10 | — |
+| Azure Functions | 9 | 9 | 21 | `InvokeExecutesCommand`, `InvokeNonZeroExit`, `InvokeLogsRealOutput`, `DefaultHostNameReachability` |
+
+### Cloud CLI Test Breakdown (Phase 71 additions)
+
+| Cloud | Before P71 | After P71 | P71 new tests |
 |---|---|---|---|
-| AWS ECS | 4 | 8 | `TaskExecutesCommand`, `TaskExitCodeNonZero`, `TaskLogsToCloudWatch`, `TaskNoCommandStaysRunning` |
-| GCP Cloud Run | 8 | 11 | `ExecutionRunsCommand`, `ExecutionFailedState`, `ExecutionLogsRealOutput` |
-| Azure ACA | 7 | 10 | `ExecutionRunsCommand`, `ExecutionFailedStatus`, `ExecutionLogsRealOutput` |
+| AWS | 21 | 24 | `TestECS_CLI_RunTaskAndCheckLogs`, `TestECS_CLI_RunTaskNonZeroExit`, `TestLambda_CLI_InvokeAndCheckLogs` |
+| GCP | 15 | 19 | `TestCloudRun_CLI_RunJobAndCheckLogs`, `TestCloudRun_CLI_RunJobFailure`, `TestFunctions_CLI_InvokeAndCheckLogs`, `TestFunctions_CLI_Delete` |
+| Azure | 14 | 17 | `TestContainerApps_CLI_StartAndCheckLogs`, `TestContainerApps_CLI_StartFailure`, `TestFunctionApp_CLI_InvokeAndCheckLogs` |
 
 ### Core Test Breakdown (255 PASS)
 
@@ -69,9 +80,9 @@
 
 | Simulator | SDK | CLI | Terraform |
 |---|---|---|---|
-| AWS | 21 | 21 | 26 |
-| GCP | 23 | 15 | 20 |
-| Azure | 16 | 14 | 29 |
+| AWS | 35 | 24 | 26 |
+| GCP | 36 | 19 | 20 |
+| Azure | 31 | 17 | 29 |
 
 ## Known Limitations
 

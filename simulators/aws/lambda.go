@@ -1,15 +1,20 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
 )
+
+// lambdaProcessHandles tracks running Lambda processes for cancellation.
+var lambdaProcessHandles sync.Map // map[requestID]*sim.ProcessHandle
 
 // Lambda types
 
@@ -259,9 +264,6 @@ func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auto-create CloudWatch log group/stream and inject a log entry
-	injectLambdaLogs(fn.FunctionName)
-
 	// Determine invocation type
 	invocationType := r.Header.Get("X-Amz-Invocation-Type")
 	if invocationType == "" {
@@ -272,15 +274,131 @@ func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 
 	switch strings.ToLower(invocationType) {
 	case "event":
+		injectLambdaLogs(fn.FunctionName)
 		w.WriteHeader(http.StatusAccepted)
 	case "dryrun":
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		// RequestResponse
+		// RequestResponse — execute real process if image function has a command
+		responseBody := []byte("{}")
+		if fn.PackageType == "Image" && fn.ImageConfig != nil && len(fn.ImageConfig.Command) > 0 {
+			responseBody = invokeLambdaProcess(fn)
+		} else {
+			injectLambdaLogs(fn.FunctionName)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{}"))
+		w.Write(responseBody)
 	}
+}
+
+// invokeLambdaProcess executes a Lambda function's image command via sim.StartProcess
+// and returns the stdout output as the response body.
+func invokeLambdaProcess(fn LambdaFunction) []byte {
+	// Build command from EntryPoint + Command (mirrors real Lambda container image support)
+	var fullCmd []string
+	if fn.ImageConfig != nil {
+		fullCmd = append(fullCmd, fn.ImageConfig.EntryPoint...)
+		fullCmd = append(fullCmd, fn.ImageConfig.Command...)
+	}
+	if len(fullCmd) == 0 {
+		return []byte("{}")
+	}
+
+	// Extract environment variables
+	var cmdEnv map[string]string
+	if fn.Environment != nil && len(fn.Environment.Variables) > 0 {
+		cmdEnv = fn.Environment.Variables
+	}
+
+	// Set up CloudWatch log group and stream
+	logGroup := fmt.Sprintf("/aws/lambda/%s", fn.FunctionName)
+	now := time.Now()
+	nowMs := now.UnixMilli()
+
+	if _, exists := cwLogGroups.Get(logGroup); !exists {
+		cwLogGroups.Put(logGroup, CWLogGroup{
+			LogGroupName: logGroup,
+			Arn:          cwLogGroupArn(logGroup),
+			CreationTime: nowMs,
+		})
+	}
+
+	hexBytes := make([]byte, 8)
+	if _, err := rand.Read(hexBytes); err != nil {
+		hexBytes = []byte{0, 0, 0, 0, 0, 0, 0, 0}
+	}
+	hexSuffix := hex.EncodeToString(hexBytes)
+	logStreamName := fmt.Sprintf("%s/[$LATEST]%s", now.Format("2006/01/02"), hexSuffix)
+
+	key := cwEventsKey(logGroup, logStreamName)
+	cwLogStreams.Put(key, CWLogStream{
+		LogStreamName:       logStreamName,
+		LogGroupName:        logGroup,
+		CreationTime:        nowMs,
+		FirstEventTimestamp: nowMs,
+		LastEventTimestamp:  nowMs,
+		Arn:                 cwLogStreamArn(logGroup, logStreamName),
+		UploadSequenceToken: "1",
+	})
+
+	// Inject START log entry
+	requestID := generateUUID()
+	cwLogEvents.Put(key, []CWLogEvent{
+		{Timestamp: nowMs, Message: fmt.Sprintf("START RequestId: %s Version: $LATEST", requestID), IngestionTime: nowMs},
+	})
+
+	// Execute the command
+	timeout := time.Duration(fn.Timeout) * time.Second
+	if timeout == 0 {
+		timeout = 3 * time.Second
+	}
+
+	sink := &lambdaLogSink{logGroup: logGroup, logStream: logStreamName}
+	var stdout bytes.Buffer
+	collectSink := sim.FuncSink(func(line sim.LogLine) {
+		sink.WriteLog(line)
+		if line.Stream == "stdout" {
+			stdout.WriteString(line.Text)
+			stdout.WriteByte('\n')
+		}
+	})
+
+	handle := sim.StartProcess(sim.ProcessConfig{
+		Command: fullCmd,
+		Env:     cmdEnv,
+		Timeout: timeout,
+	}, collectSink)
+	lambdaProcessHandles.Store(requestID, handle)
+	result := handle.Wait()
+	lambdaProcessHandles.Delete(requestID)
+
+	// Inject END and REPORT log entries
+	endMs := time.Now().UnixMilli()
+	duration := float64(result.StoppedAt.Sub(result.StartedAt).Microseconds()) / 1000.0
+	cwLogEvents.Update(key, func(events *[]CWLogEvent) {
+		*events = append(*events,
+			CWLogEvent{Timestamp: endMs, Message: fmt.Sprintf("END RequestId: %s", requestID), IngestionTime: endMs},
+			CWLogEvent{Timestamp: endMs + 1, Message: fmt.Sprintf("REPORT RequestId: %s\tDuration: %.2f ms\tBilled Duration: %d ms\tMemory Size: %d MB\tMax Memory Used: %d MB",
+				requestID, duration, int64(duration)+1, fn.MemorySize, fn.MemorySize/2), IngestionTime: endMs + 1},
+		)
+	})
+
+	if result.ExitCode != 0 {
+		cwLogEvents.Update(key, func(events *[]CWLogEvent) {
+			*events = append(*events, CWLogEvent{
+				Timestamp:     endMs + 2,
+				Message:       fmt.Sprintf("ERROR RequestId: %s Process exited with code %d", requestID, result.ExitCode),
+				IngestionTime: endMs + 2,
+			})
+		})
+	}
+
+	output := strings.TrimRight(stdout.String(), "\n")
+	if output == "" {
+		return []byte("{}")
+	}
+	return []byte(output)
 }
 
 func handleLambdaListFunctions(w http.ResponseWriter, r *http.Request) {
@@ -364,6 +482,25 @@ func handleLambdaListTags(w http.ResponseWriter, r *http.Request) {
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"Tags": tags,
+	})
+}
+
+// lambdaLogSink implements sim.LogSink and writes log lines to CloudWatch
+// for Lambda function invocations.
+type lambdaLogSink struct {
+	logGroup  string
+	logStream string
+}
+
+func (s *lambdaLogSink) WriteLog(line sim.LogLine) {
+	key := cwEventsKey(s.logGroup, s.logStream)
+	nowMs := time.Now().UnixMilli()
+	cwLogEvents.Update(key, func(events *[]CWLogEvent) {
+		*events = append(*events, CWLogEvent{
+			Timestamp:     nowMs,
+			Message:       line.Text,
+			IngestionTime: nowMs,
+		})
 	})
 }
 

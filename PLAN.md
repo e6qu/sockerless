@@ -1,6 +1,6 @@
 # Sockerless — Roadmap
 
-> Phases 1-67, 69 complete (578 tasks). Phase 70 in progress. This document covers current and future work.
+> Phases 1-67, 69-71 complete (595 tasks). Phase 68 in progress. This document covers current and future work.
 >
 > **Production target:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners (GitHub Actions from github.com, GitLab CI from gitlab.com), and custom SDK clients — backed by real cloud infrastructure (AWS, GCP, Azure).
 
@@ -17,7 +17,7 @@
 
 ---
 
-## Completed Phases (1-69)
+## Completed Phases (1-70)
 
 Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per-task logs in `_tasks/done/`.
 
@@ -34,10 +34,54 @@ Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per
 | 66 | Optional OpenTelemetry tracing: OTLP HTTP, otelhttp middleware, context propagation, workflow/pipeline spans |
 | 67 | Network Isolation: IPAllocator, SyntheticNetworkDriver, Linux NetnsManager, 14 new tests |
 | 69 | ARM64/Multi-Arch: goreleaser 15 builds, gitlabhub Dockerfile, docker.yml 7 images, ARM64 CI |
+| 70 | Simulator Fidelity: real process execution, structured logs, correct status enums, SDK/CLI/Terraform compat |
+| 71 | SDK/CLI Verification & Documentation: FaaS real execution, CLI execution+log tests, README quick-starts |
 
 ---
 
-## Phase 70 — Simulator Fidelity (In Progress)
+## Phase 71 — SDK/CLI Verification & Documentation (Complete)
+
+**Goal:** Close three gaps: (1) FaaS services lack real execution, (2) CLI tests don't verify execution or logs, (3) READMEs lack usage examples.
+
+### Milestone A: FaaS Real Execution (P71-001 → P71-006)
+
+| Task | Status | Description |
+|---|---|---|
+| P71-001 | ✅ | Lambda real execution — `invokeLambdaProcess` via `sim.StartProcess()`, `lambdaLogSink` to CloudWatch |
+| P71-002 | ✅ | Lambda execution SDK tests — `InvokeExecutesCommand`, `InvokeNonZeroExit`, `InvokeLogsToCloudWatch` |
+| P71-003 | ✅ | Cloud Functions real execution — `SimCommand` on `ServiceConfig`, `cfLogSink` to Cloud Logging |
+| P71-004 | ✅ | Cloud Functions execution SDK tests — `InvokeExecutesCommand`, `InvokeNonZeroExit`, `InvokeLogsRealOutput` |
+| P71-005 | ✅ | Azure Functions real execution — `SimCommand` on `SiteConfig`, `funcLogSink` to AppTraces |
+| P71-006 | ✅ | Azure Functions execution SDK tests — `InvokeExecutesCommand`, `InvokeNonZeroExit`, `InvokeLogsRealOutput` |
+
+### Milestone B: CLI Execution & Log Verification (P71-007 → P71-012)
+
+| Task | Status | Description |
+|---|---|---|
+| P71-007 | ✅ | AWS CLI — ECS `RunTaskAndCheckLogs`, `RunTaskNonZeroExit` |
+| P71-008 | ✅ | AWS CLI — Lambda `InvokeAndCheckLogs` |
+| P71-009 | ✅ | GCP CLI — Cloud Run `RunJobAndCheckLogs`, `RunJobFailure` |
+| P71-010 | ✅ | GCP CLI — Cloud Functions `InvokeAndCheckLogs` |
+| P71-011 | ✅ | Azure CLI — Container Apps `StartAndCheckLogs`, `StartFailure` |
+| P71-012 | ✅ | Azure CLI — Functions `InvokeAndCheckLogs` |
+
+### Milestone C: README Documentation (P71-013 → P71-015)
+
+| Task | Status | Description |
+|---|---|---|
+| P71-013 | ✅ | AWS README quick-start — ECS, Lambda, CloudWatch, ECR, S3 |
+| P71-014 | ✅ | GCP README quick-start — Cloud Run Jobs, Cloud Functions, Cloud Logging, AR, GCS |
+| P71-015 | ✅ | Azure README quick-start — Container Apps Jobs, Azure Functions, Log Analytics, ACR, Storage |
+
+### Milestone D: Final Verification (P71-016)
+
+| Task | Status | Description |
+|---|---|---|
+| P71-016 | ✅ | Cross-cloud verification + state save |
+
+---
+
+## Phase 70 — Simulator Fidelity (Complete)
 
 **Goal:** Bring all three cloud simulators to production quality — real process execution, structured log queries, correct status enums, and full SDK/CLI/Terraform compatibility.
 
@@ -83,33 +127,33 @@ Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per
 | P70-021 | ✅ | AWS ECS real execution — RunTask executes container command, real exit codes + CloudWatch logs |
 | P70-022 | ✅ | GCP Cloud Run real execution — executions run container command, real exit codes + Cloud Logging |
 | P70-023 | ✅ | Azure ACA real execution — executions run container command, real exit codes + Log Analytics |
-| P70-024 | | CI integration for simulator smoke tests |
+| P70-024 | ✅ | CI integration for simulator smoke tests |
 
 ---
 
-## Phase 68 — Multi-Tenant Backend Pools (Next)
+## Phase 68 — Multi-Tenant Backend Pools (In Progress)
 
 **Goal:** Named pools of backends with scheduling and resource limits. Each pool has a backend type, concurrency limit, and queue. Requests are routed to pools by label or explicit selection.
 
 ### P68-A: Pool Infrastructure (~6 tasks)
 
-| Task | Description |
-|---|---|
-| P68-001 | **Pool configuration** — YAML/JSON config: pool name, backend type, max concurrency, queue size |
-| P68-002 | **Pool registry** — in-memory registry of pools, each with its own `BaseServer` + `Store` |
-| P68-003 | **Request router** — route Docker API requests to pools by label (`com.sockerless.pool`) or default pool |
-| P68-004 | **Concurrency limiter** — per-pool semaphore, queue overflow returns 429 |
-| P68-005 | **Pool lifecycle** — create/destroy pools at runtime via management API |
-| P68-006 | **Pool metrics** — per-pool container count, queue depth, utilization exposed on `/internal/metrics` |
+| Task | Status | Description |
+|---|---|---|
+| P68-001 | ✅ | **Pool configuration** — JSON config: pool name, backend type, max concurrency, queue size |
+| P68-002 | | **Pool registry** — in-memory registry of pools, each with its own `BaseServer` + `Store` |
+| P68-003 | | **Request router** — route Docker API requests to pools by label (`com.sockerless.pool`) or default pool |
+| P68-004 | | **Concurrency limiter** — per-pool semaphore, queue overflow returns 429 |
+| P68-005 | | **Pool lifecycle** — create/destroy pools at runtime via management API |
+| P68-006 | | **Pool metrics** — per-pool container count, queue depth, utilization exposed on `/internal/metrics` |
 
 ### P68-B: Scheduling + Tests (~4 tasks)
 
-| Task | Description |
-|---|---|
-| P68-007 | **Round-robin scheduling** — distribute requests across pool instances when pool has multiple backends |
-| P68-008 | **Resource limits** — per-pool max containers, max total memory (advisory, enforced at scheduling time) |
-| P68-009 | **Unit + integration tests** — pool CRUD, routing, concurrency limits, queue overflow, metrics |
-| P68-010 | **Save final state** |
+| Task | Status | Description |
+|---|---|---|
+| P68-007 | | **Round-robin scheduling** — distribute requests across pool instances when pool has multiple backends |
+| P68-008 | | **Resource limits** — per-pool max containers, max total memory (advisory, enforced at scheduling time) |
+| P68-009 | | **Unit + integration tests** — pool CRUD, routing, concurrency limits, queue overflow, metrics |
+| P68-010 | | **Save final state** |
 
 ---
 

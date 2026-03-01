@@ -99,6 +99,30 @@ func TestFunctions_List(t *testing.T) {
 	httpDoJSON(t, "DELETE", functionsURL("list-test-func"), "")
 }
 
+func TestFunctions_CLI_InvokeAndCheckLogs(t *testing.T) {
+	// Create a function
+	url := functionsBaseURL() + "?functionId=cli-invoke-fn"
+	httpDoJSON(t, "POST", url, `{
+		"buildConfig": {"runtime": "go121", "entryPoint": "Handler"},
+		"serviceConfig": {}
+	}`)
+
+	// Invoke the function
+	httpDoJSON(t, "POST", baseURL+"/v2-functions-invoke/cli-invoke-fn", "{}")
+
+	// Query Cloud Logging for the function's log entries
+	out := runCLI(t, gcloudCLI("logging", "read",
+		`resource.type="cloud_run_revision" AND resource.labels.service_name="cli-invoke-fn"`,
+		"--format", "json",
+	))
+
+	// Verify "Function invoked" appears in logs
+	assert.Contains(t, out, "Function invoked", "expected invocation log entry")
+
+	// Cleanup
+	httpDoJSON(t, "DELETE", functionsURL("cli-invoke-fn"), "")
+}
+
 func TestFunctions_Delete(t *testing.T) {
 	url := functionsBaseURL() + "?functionId=delete-test-func"
 	httpDoJSON(t, "POST", url, `{

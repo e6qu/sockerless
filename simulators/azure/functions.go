@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"strings"
@@ -37,10 +38,11 @@ type SiteProperties struct {
 
 // SiteConfig holds the site configuration for a function app.
 type SiteConfig struct {
-	AppSettings          []NameValuePair `json:"appSettings,omitempty"`
-	LinuxFxVersion       string          `json:"linuxFxVersion,omitempty"`
-	FunctionAppScaleLimit int            `json:"functionAppScaleLimit,omitempty"`
-	FtpsState            string          `json:"ftpsState,omitempty"`
+	AppSettings           []NameValuePair `json:"appSettings,omitempty"`
+	LinuxFxVersion        string          `json:"linuxFxVersion,omitempty"`
+	FunctionAppScaleLimit int             `json:"functionAppScaleLimit,omitempty"`
+	FtpsState             string          `json:"ftpsState,omitempty"`
+	SimCommand            []string        `json:"simCommand,omitempty"` // Simulator-only: command to execute on invoke
 }
 
 // NameValuePair holds a name-value pair for app settings.
@@ -232,14 +234,76 @@ func registerAzureFunctions(srv *sim.Server) {
 			}
 		}
 
-		// Inject log entry for the invocation
+		responseBody := []byte("{}")
 		if matchedSite != nil {
-			injectAppTrace(matchedSite.Name, "Function invoked")
+			// Real execution when SimCommand is set
+			if matchedSite.Properties.SiteConfig != nil && len(matchedSite.Properties.SiteConfig.SimCommand) > 0 {
+				responseBody = invokeAzureFunctionProcess(matchedSite)
+			} else {
+				injectAppTrace(matchedSite.Name, "Function invoked")
+			}
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{}"))
+		w.Write(responseBody)
 	})
+}
+
+// invokeAzureFunctionProcess executes a function app's SimCommand via sim.StartProcess
+// and returns the stdout output as the response body.
+func invokeAzureFunctionProcess(site *Site) []byte {
+	cmd := site.Properties.SiteConfig.SimCommand
+	if len(cmd) == 0 {
+		return []byte("{}")
+	}
+
+	// Extract environment from app settings
+	var cmdEnv map[string]string
+	if site.Properties.SiteConfig != nil && len(site.Properties.SiteConfig.AppSettings) > 0 {
+		cmdEnv = make(map[string]string, len(site.Properties.SiteConfig.AppSettings))
+		for _, s := range site.Properties.SiteConfig.AppSettings {
+			cmdEnv[s.Name] = s.Value
+		}
+	}
+
+	timeout := 230 * time.Second // Azure Functions default timeout
+	sink := &funcLogSink{appName: site.Name}
+	var stdout bytes.Buffer
+	collectSink := sim.FuncSink(func(line sim.LogLine) {
+		sink.WriteLog(line)
+		if line.Stream == "stdout" {
+			stdout.WriteString(line.Text)
+			stdout.WriteByte('\n')
+		}
+	})
+
+	handle := sim.StartProcess(sim.ProcessConfig{
+		Command: cmd,
+		Env:     cmdEnv,
+		Timeout: timeout,
+	}, collectSink)
+	result := handle.Wait()
+
+	if result.ExitCode != 0 {
+		injectAppTrace(site.Name,
+			fmt.Sprintf("Function execution error: process exited with code %d", result.ExitCode))
+	}
+
+	output := strings.TrimRight(stdout.String(), "\n")
+	if output == "" {
+		return []byte("{}")
+	}
+	return []byte(output)
+}
+
+// funcLogSink implements sim.LogSink and writes log lines to AppTraces
+// for Azure Function invocations.
+type funcLogSink struct {
+	appName string
+}
+
+func (s *funcLogSink) WriteLog(line sim.LogLine) {
+	injectAppTrace(s.appName, line.Text)
 }
 

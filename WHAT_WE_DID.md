@@ -112,7 +112,7 @@ IPAllocator, SyntheticNetworkDriver (8 methods), Linux NetnsManager (build-tagge
 
 Goreleaser 8→15 builds (added 6 cloud backends + gitlabhub), gitlabhub Dockerfile.release, docker.yml 6→7 images, CI build-check 8→15 binaries + ARM64 cross-compile job.
 
-## Phase 70 — Simulator Fidelity (In Progress)
+## Phase 70 — Simulator Fidelity (Complete)
 
 ### Milestones 1-3: Cloud-Specific Fidelity (P70-001 → P70-018)
 
@@ -146,13 +146,52 @@ Wired ProcessRunner into ACA Jobs auto-complete goroutine. Process exit code det
 
 **New tests**: `TestContainerApps_ExecutionRunsCommand`, `TestContainerApps_ExecutionFailedStatus`, `TestContainerApps_ExecutionLogsRealOutput`
 
+#### P70-024: CI Integration for Simulator Tests ✅
+Added simulator tests to PR-level CI (`ci.yml`): `sim-shared` matrix entry runs 15 ProcessRunner unit tests (5 per cloud), new `simulator-sdk-tests` job runs SDK integration tests for all 3 clouds via `make sdk-test`. Added `shared-test` target to each simulator Makefile, included in `make test`.
+
+## Phase 71 — SDK/CLI Verification & Documentation (Complete)
+
+Closed three gaps across all three cloud simulators:
+
+### Milestone A: FaaS Real Execution (P71-001 → P71-006)
+
+Wired `sim.StartProcess()` into each FaaS invoke handler so functions with commands execute real processes and stream output to cloud log systems:
+
+- **Lambda** (P71-001): Uses existing `ImageConfig.Command` field for `PackageType == "Image"`. Added `invokeLambdaProcess` + `lambdaLogSink` (CloudWatch). Injects START/END/REPORT/ERROR entries matching real Lambda format.
+- **Cloud Functions** (P71-003): Added `SimCommand []string` to `ServiceConfig`. `cfLogSink` streams to Cloud Logging via `injectCloudFunctionLog`.
+- **Azure Functions** (P71-005): Added `SimCommand []string` to `SiteConfig`. `funcLogSink` streams to AppTraces via `injectAppTrace`. Extracts env from AppSettings.
+
+All three fall back to synthetic log injection when no command is present (backward compatible).
+
+**SDK Tests** (P71-002, P71-004, P71-006): 9 new tests across 3 clouds — `InvokeExecutesCommand`, `InvokeNonZeroExit`, `InvokeLogsRealOutput` for each. Azure also added `DefaultHostNameReachability` test.
+
+### Milestone B: CLI Execution & Log Verification (P71-007 → P71-012)
+
+Full lifecycle CLI tests: create → execute/invoke → query cloud logs → verify output → cleanup.
+
+- **AWS** (P71-007, P71-008): ECS `RunTaskAndCheckLogs`/`RunTaskNonZeroExit` (new `ecs_test.go`), Lambda `InvokeAndCheckLogs`
+- **GCP** (P71-009, P71-010): Cloud Run `RunJobAndCheckLogs`/`RunJobFailure` (new `run_test.go`), Cloud Functions `InvokeAndCheckLogs`
+- **Azure** (P71-011, P71-012): Container Apps `StartAndCheckLogs`/`StartFailure` (new `containerapps_test.go`), Functions `InvokeAndCheckLogs`
+
+### Milestone C: README Quick-Starts (P71-013 → P71-015)
+
+Added Quick Start sections to each simulator's README with CLI commands + expected output + Go SDK snippets for all major services (ECS, Lambda, CloudWatch, ECR, S3, Cloud Run Jobs, Cloud Functions, Cloud Logging, AR, GCS, Container Apps Jobs, Azure Functions, Log Analytics, ACR, Storage).
+
+**Tests**: SDK: AWS 21→35, GCP 23→36, Azure 16→31 | CLI: AWS 21→24, GCP 15→19, Azure 14→17
+
+## Phase 68 — Multi-Tenant Backend Pools (In Progress)
+
+### P68-001: Pool Configuration ✅
+Added `PoolConfig` and `PoolsConfig` types to `backends/core/` for defining named backend pools with concurrency limits and queue sizes. `ValidatePoolsConfig()` checks 8 rules (non-empty pools, unique names, valid backend types, non-negative limits, default pool exists). `LoadPoolsConfig()` loads from `SOCKERLESS_POOLS_CONFIG` env var → `$SOCKERLESS_HOME/pools.json` → default single-pool config. Includes `GetPool()` and `PoolNames()` convenience methods. 18 tests.
+
 ## Project Stats
 
-- **69 phases** (1-67, 69-70), 578+ tasks completed
+- **71 phases** (1-67, 69-71), 595+ tasks completed
 - **16 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, tests
 - **21 Go-implemented builtins** in WASM sandbox
 - **18 driver interface methods** across 5 driver types
 - **7 external test consumers**: `act`, `gitlab-runner`, `gitlab-ci-local`, upstream act, `actions/runner`, `gh` CLI, gitlabhub gitlab-runner
 - **Core tests**: 255 PASS | **Frontend tests**: 7 PASS | **bleephub tests**: 298 PASS | **gitlabhub tests**: 129 PASS | **Shared ProcessRunner**: 15 PASS
-- **3 cloud simulators** validated against SDKs, CLIs, and Terraform — now with real process execution
+- **Cloud SDK tests**: AWS 35, GCP 36, Azure 31 | **Cloud CLI tests**: AWS 24, GCP 19, Azure 17
+- **3 cloud simulators** validated against SDKs, CLIs, and Terraform — now with real process execution for all services (container + FaaS)
 - **8 backends** sharing a common driver architecture

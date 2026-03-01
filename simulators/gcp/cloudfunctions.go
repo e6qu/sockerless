@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -39,6 +41,7 @@ type ServiceConfig struct {
 	MaxInstanceCount     int               `json:"maxInstanceCount,omitempty"`
 	MinInstanceCount     int               `json:"minInstanceCount,omitempty"`
 	EnvironmentVariables map[string]string `json:"environmentVariables,omitempty"`
+	SimCommand           []string          `json:"simCommand,omitempty"` // Simulator-only: command to execute on invoke
 }
 
 func registerCloudFunctions(srv *sim.Server) {
@@ -133,15 +136,21 @@ func registerCloudFunctions(srv *sim.Server) {
 			}
 		}
 
-		// Inject log entry for the invocation
+		responseBody := []byte("{}")
 		if fn != nil {
 			project := strings.Split(fn.Name, "/")[1] // projects/{project}/...
-			injectCloudFunctionLog(project, functionID, "Function invoked")
+
+			// Real execution when SimCommand is set
+			if fn.ServiceConfig != nil && len(fn.ServiceConfig.SimCommand) > 0 {
+				responseBody = invokeCloudFunctionProcess(fn, project, functionID)
+			} else {
+				injectCloudFunctionLog(project, functionID, "Function invoked")
+			}
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{}"))
+		w.Write(responseBody)
 	})
 
 	// Delete function
@@ -162,6 +171,64 @@ func registerCloudFunctions(srv *sim.Server) {
 		lro := newLRO(project, location, fn, "type.googleapis.com/google.cloud.functions.v2.Function")
 		sim.WriteJSON(w, http.StatusOK, lro)
 	})
+}
+
+// invokeCloudFunctionProcess executes a Cloud Function's SimCommand via sim.StartProcess
+// and returns the stdout output as the response body.
+func invokeCloudFunctionProcess(fn *Function, project, functionID string) []byte {
+	cmd := fn.ServiceConfig.SimCommand
+	if len(cmd) == 0 {
+		return []byte("{}")
+	}
+
+	var cmdEnv map[string]string
+	if fn.ServiceConfig.EnvironmentVariables != nil {
+		cmdEnv = fn.ServiceConfig.EnvironmentVariables
+	}
+
+	timeout := 60 * time.Second // GCP default
+	if fn.ServiceConfig.TimeoutSeconds > 0 {
+		timeout = time.Duration(fn.ServiceConfig.TimeoutSeconds) * time.Second
+	}
+
+	sink := &cfLogSink{project: project, functionName: functionID}
+	var stdout bytes.Buffer
+	collectSink := sim.FuncSink(func(line sim.LogLine) {
+		sink.WriteLog(line)
+		if line.Stream == "stdout" {
+			stdout.WriteString(line.Text)
+			stdout.WriteByte('\n')
+		}
+	})
+
+	handle := sim.StartProcess(sim.ProcessConfig{
+		Command: cmd,
+		Env:     cmdEnv,
+		Timeout: timeout,
+	}, collectSink)
+	result := handle.Wait()
+
+	if result.ExitCode != 0 {
+		injectCloudFunctionLog(project, functionID,
+			fmt.Sprintf("Function execution error: process exited with code %d", result.ExitCode))
+	}
+
+	output := strings.TrimRight(stdout.String(), "\n")
+	if output == "" {
+		return []byte("{}")
+	}
+	return []byte(output)
+}
+
+// cfLogSink implements sim.LogSink and writes log lines to Cloud Logging
+// for Cloud Function invocations.
+type cfLogSink struct {
+	project      string
+	functionName string
+}
+
+func (s *cfLogSink) WriteLog(line sim.LogLine) {
+	injectCloudFunctionLog(s.project, s.functionName, line.Text)
 }
 
 // injectCloudFunctionLog writes a log entry to the Cloud Logging store for a
