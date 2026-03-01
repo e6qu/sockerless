@@ -13,12 +13,12 @@ COPY sandbox/ sandbox/
 COPY backends/core/ backends/core/
 COPY backends/memory/ backends/memory/
 RUN cd backends/memory && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-backend-memory ./cmd
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-memory ./cmd
 
 # --- Build Docker frontend ---
 COPY frontends/docker/ frontends/docker/
 RUN cd frontends/docker && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-frontend-docker ./cmd
+    GOWORK=off go build -tags noui -o /out/sockerless-frontend-docker ./cmd
 
 # --- Runtime stage ---
 FROM ubuntu:22.04

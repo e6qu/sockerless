@@ -37,5 +37,7 @@ func NewServer(logger zerolog.Logger) *core.BaseServer {
 		logger.Info().Msg("synthetic mode: WASM sandbox disabled")
 	}
 
+	registerUI(s)
+
 	return s
 }

@@ -15,16 +15,16 @@ COPY backends/core/ backends/core/
 # --- Build GCP backends (cloudrun + gcf) ---
 COPY backends/cloudrun/ backends/cloudrun/
 RUN cd backends/cloudrun && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-backend-cloudrun ./cmd/sockerless-backend-cloudrun
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-cloudrun ./cmd/sockerless-backend-cloudrun
 
 COPY backends/cloudrun-functions/ backends/cloudrun-functions/
 RUN cd backends/cloudrun-functions && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-backend-gcf ./cmd/sockerless-backend-gcf
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-gcf ./cmd/sockerless-backend-gcf
 
 # --- Build frontend ---
 COPY frontends/docker/ frontends/docker/
 RUN cd frontends/docker && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-frontend-docker ./cmd
+    GOWORK=off go build -tags noui -o /out/sockerless-frontend-docker ./cmd
 
 # --- Build agent ---
 RUN cd agent && GOWORK=off go mod download && \

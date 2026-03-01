@@ -1,6 +1,6 @@
 # Sockerless — Roadmap
 
-> Phases 1-67, 69-72 complete (637 tasks). Phase 68 in progress, Phase 72 complete. This document covers current and future work.
+> Phases 1-67, 69-74 complete (664 tasks). Phase 68 in progress. This document covers current and future work.
 >
 > **Production target:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners (GitHub Actions from github.com, GitLab CI from gitlab.com), and custom SDK clients — backed by real cloud infrastructure (AWS, GCP, Azure).
 
@@ -34,148 +34,11 @@ Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per
 | 66 | Optional OpenTelemetry tracing: OTLP HTTP, otelhttp middleware, context propagation, workflow/pipeline spans |
 | 67 | Network Isolation: IPAllocator, SyntheticNetworkDriver, Linux NetnsManager, 14 new tests |
 | 69 | ARM64/Multi-Arch: goreleaser 15 builds, gitlabhub Dockerfile, docker.yml 7 images, ARM64 CI |
-| 70 | Simulator Fidelity: real process execution, structured logs, correct status enums, SDK/CLI/Terraform compat |
-| 71 | SDK/CLI Verification & Documentation: FaaS real execution, CLI execution+log tests, README quick-starts |
-| 72A | Full-Stack E2E Tests: forward-agent arithmetic integration tests (ECS/CloudRun/ACA), fast-exit fix |
-| 72B | FaaS real execution via Docker API: Lambda/GCF/AZF invoke with container Cmd, X-Sim-Command header |
-| 72C | FaaS arithmetic E2E tests (Lambda/GCF/AZF), ECS test name collision fix |
-| 72D | Central arithmetic E2E tests (shell arithmetic, exec-in-container) |
-
----
-
-## Phase 71 — SDK/CLI Verification & Documentation (Complete)
-
-**Goal:** Close three gaps: (1) FaaS services lack real execution, (2) CLI tests don't verify execution or logs, (3) READMEs lack usage examples.
-
-### Milestone A: FaaS Real Execution (P71-001 → P71-006)
-
-| Task | Status | Description |
-|---|---|---|
-| P71-001 | ✅ | Lambda real execution — `invokeLambdaProcess` via `sim.StartProcess()`, `lambdaLogSink` to CloudWatch |
-| P71-002 | ✅ | Lambda execution SDK tests — `InvokeExecutesCommand`, `InvokeNonZeroExit`, `InvokeLogsToCloudWatch` |
-| P71-003 | ✅ | Cloud Functions real execution — `SimCommand` on `ServiceConfig`, `cfLogSink` to Cloud Logging |
-| P71-004 | ✅ | Cloud Functions execution SDK tests — `InvokeExecutesCommand`, `InvokeNonZeroExit`, `InvokeLogsRealOutput` |
-| P71-005 | ✅ | Azure Functions real execution — `SimCommand` on `SiteConfig`, `funcLogSink` to AppTraces |
-| P71-006 | ✅ | Azure Functions execution SDK tests — `InvokeExecutesCommand`, `InvokeNonZeroExit`, `InvokeLogsRealOutput` |
-
-### Milestone B: CLI Execution & Log Verification (P71-007 → P71-012)
-
-| Task | Status | Description |
-|---|---|---|
-| P71-007 | ✅ | AWS CLI — ECS `RunTaskAndCheckLogs`, `RunTaskNonZeroExit` |
-| P71-008 | ✅ | AWS CLI — Lambda `InvokeAndCheckLogs` |
-| P71-009 | ✅ | GCP CLI — Cloud Run `RunJobAndCheckLogs`, `RunJobFailure` |
-| P71-010 | ✅ | GCP CLI — Cloud Functions `InvokeAndCheckLogs` |
-| P71-011 | ✅ | Azure CLI — Container Apps `StartAndCheckLogs`, `StartFailure` |
-| P71-012 | ✅ | Azure CLI — Functions `InvokeAndCheckLogs` |
-
-### Milestone C: README Documentation (P71-013 → P71-015)
-
-| Task | Status | Description |
-|---|---|---|
-| P71-013 | ✅ | AWS README quick-start — ECS, Lambda, CloudWatch, ECR, S3 |
-| P71-014 | ✅ | GCP README quick-start — Cloud Run Jobs, Cloud Functions, Cloud Logging, AR, GCS |
-| P71-015 | ✅ | Azure README quick-start — Container Apps Jobs, Azure Functions, Log Analytics, ACR, Storage |
-
-### Milestone D: Non-Trivial Arithmetic Evaluator Tests (P71-016 → P71-019)
-
-| Task | Status | Description |
-|---|---|---|
-| P71-016 | ✅ | Arithmetic evaluator program — recursive-descent parser in `simulators/testdata/eval-arithmetic/` |
-| P71-017 | ✅ | SDK arithmetic tests — 7 per cloud (4 FaaS + 3 container), 21 total |
-| P71-018 | ✅ | CLI arithmetic tests — 2 per cloud (container service), 6 total |
-| P71-019 | ✅ | Cross-cloud verification + state save |
-
----
-
-## Phase 70 — Simulator Fidelity (Complete)
-
-**Goal:** Bring all three cloud simulators to production quality — real process execution, structured log queries, correct status enums, and full SDK/CLI/Terraform compatibility.
-
-### Milestone 1: AWS Fidelity (P70-001 → P70-006)
-
-| Task | Status | Description |
-|---|---|---|
-| P70-001 | ✅ | Lambda log stream auto-creation |
-| P70-002 | ✅ | CloudWatch GetLogEvents pagination tokens |
-| P70-003 | ✅ | DescribeTasks nil ExitCode handling |
-| P70-004 | ✅ | ECS StopCode field |
-| P70-005 | ✅ | Lambda DescribeLogStreams ordering |
-| P70-006 | ✅ | AWS smoke test — ECS + Lambda integration |
-
-### Milestone 2: GCP Fidelity (P70-007 → P70-012)
-
-| Task | Status | Description |
-|---|---|---|
-| P70-007 | ✅ | Cloud Logging structured filter parser |
-| P70-008 | ✅ | Cloud Run log entry injection |
-| P70-009 | ✅ | Cloud Functions log entry injection |
-| P70-010 | ✅ | Cloud Functions invoke URL fidelity |
-| P70-011 | ✅ | Execution status field completeness |
-| P70-012 | ✅ | GCP smoke test — Cloud Run + Cloud Functions |
-
-### Milestone 3: Azure Fidelity (P70-013 → P70-018)
-
-| Task | Status | Description |
-|---|---|---|
-| P70-013 | ✅ | KQL query parser for backend patterns |
-| P70-014 | ✅ | Container Apps log injection |
-| P70-015 | ✅ | Functions log injection |
-| P70-016 | ✅ | Execution status enum values |
-| P70-017 | ✅ | Function App DefaultHostName reachability |
-| P70-018 | ✅ | Azure smoke test — ACA + Azure Functions |
-
-### Milestone 4: Cross-Cloud (P70-019 → P70-023)
-
-| Task | Status | Description |
-|---|---|---|
-| P70-019 | ✅ | Configurable execution timeout — replace hardcoded 3s with cloud-native timeouts |
-| P70-020 | ✅ | Shared ProcessRunner engine — `StartProcess()` in shared simulator library |
-| P70-021 | ✅ | AWS ECS real execution — RunTask executes container command, real exit codes + CloudWatch logs |
-| P70-022 | ✅ | GCP Cloud Run real execution — executions run container command, real exit codes + Cloud Logging |
-| P70-023 | ✅ | Azure ACA real execution — executions run container command, real exit codes + Log Analytics |
-| P70-024 | ✅ | CI integration for simulator smoke tests |
-
----
-
-## Phase 72 — Full-Stack E2E Tests (Complete)
-
-**Goal:** Real arithmetic execution through full Docker API stack (Frontend → Backend → Simulator).
-
-### Milestone A: Forward-Agent Backend E2E Tests (P72-001 → P72-004)
-
-| Task | Status | Description |
-|---|---|---|
-| P72-001 | ✅ | ECS arithmetic integration tests — 6 tests via Docker API |
-| P72-002 | ✅ | CloudRun arithmetic integration tests — 6 tests, gRPC logadmin fix |
-| P72-003 | ✅ | ACA arithmetic integration tests — 6 tests, soft log assertions |
-| P72-004 | ✅ | Forward-agent regression — 147 PASS (was 129), fast-exit fix for CloudRun/ACA |
-
-### Milestone B: FaaS Backend Real Execution (P72-005 → P72-008)
-
-| Task | Status | Description |
-|---|---|---|
-| P72-005 | ✅ | Lambda real execution via Docker API — invoke function, use FunctionError for exit code |
-| P72-006 | ✅ | GCF real execution via Docker API — X-Sim-Command header, base64-encoded JSON |
-| P72-007 | ✅ | AZF real execution via Docker API — same X-Sim-Command pattern as GCF |
-| P72-008 | ✅ | FaaS helper container regression — all 147 sim-test-all PASS, SDK tests PASS |
-
-### Milestone C: FaaS Backend E2E Tests (P72-009 → P72-012)
-
-| Task | Status | Description |
-|---|---|---|
-| P72-009 | ✅ | Lambda arithmetic integration tests — 6 tests |
-| P72-010 | ✅ | GCF arithmetic integration tests — 6 tests, soft log assertions (gRPC Cloud Logging) |
-| P72-011 | ✅ | AZF arithmetic integration tests — 6 tests, soft log assertions (Azure Monitor TLS) |
-| P72-012 | ✅ | Full FaaS regression — 75 sim-test-all PASS, ECS hardcoded name fix |
-
-### Milestone D: Central Multi-Backend E2E Tests (P72-013 → P72-015)
-
-| Task | Status | Description |
-|---|---|---|
-| P72-013 | ✅ | Central arithmetic E2E tests — 4 tests (execution, non-zero exit, exec-in-container, eval binary) |
-| P72-014 | ✅ | Verified with memory backend — 65 test-e2e PASS (was 61) |
-| P72-015 | ✅ | Final state save |
+| 70 | Simulator Fidelity: real process execution, structured logs, SDK/CLI/Terraform compat. 24 tasks |
+| 71 | SDK/CLI Verification: FaaS real execution, CLI log tests, README quick-starts, arithmetic evaluator. 19 tasks |
+| 72 | Full-Stack E2E Tests: forward-agent + FaaS arithmetic through Docker API, central multi-backend tests. 15 tasks |
+| 73 | UI Foundation: Bun/Vite/React 19/Tailwind 4 monorepo, shared core, SPAHandler, memory backend dashboard. 15 tasks |
+| 74 | All Backend Dashboards: shared BackendApp, 9 new SPAs (6 cloud + docker backend + docker frontend), mgmt endpoints. 12 tasks |
 
 ---
 
@@ -202,6 +65,107 @@ Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per
 | P68-008 | | **Resource limits** — per-pool max containers, max total memory (advisory, enforced at scheduling time) |
 | P68-009 | | **Unit + integration tests** — pool CRUD, routing, concurrency limits, queue overflow, metrics |
 | P68-010 | | **Save final state** |
+
+---
+
+## Phase 74 — All Backend Dashboards + Docker Frontend
+
+**Goal:** Roll out dashboard to all 7 remaining backends + Docker frontend. Each shares `core.BaseServer` and the same management API.
+
+| Task | Status | Description |
+|---|---|---|
+| P74-001 | ✅ | **Extract shared pages + BackendApp** — Moved 4 pages to `@sockerless/ui-core/pages`, created `BackendApp` component |
+| P74-002 | ✅ | **BackendInfoCard component** — Backend-type-specific details from `/internal/v1/status`, 2 tests |
+| P74-003 | ✅ | **ECS backend SPA + embed** |
+| P74-004 | ✅ | **Lambda backend SPA + embed** |
+| P74-005 | ✅ | **CloudRun backend SPA + embed** |
+| P74-006 | ✅ | **GCF backend SPA + embed** |
+| P74-007 | ✅ | **ACA backend SPA + embed** |
+| P74-008 | ✅ | **AZF backend SPA + embed** |
+| P74-009 | ✅ | **Docker backend SPA + embed** — Management endpoints + SPA on Docker backend (non-BaseServer) |
+| P74-010 | ✅ | **Docker frontend mgmt SPA** — Custom SPA on MgmtServer with `/healthz`, `/status`, `/metrics` |
+| P74-011 | ✅ | **Build integration + tests + CI** — Makefile expanded (18 new targets), CI updated with `-tags noui` |
+| P74-012 | ✅ | **Verification + state save** — 10 SPAs build, 16 Vitest tests pass, 9 Go noui builds pass |
+
+---
+
+## Phase 75 — Simulator Dashboards (AWS, GCP, Azure)
+
+**Goal:** Add dashboards to cloud simulators showing simulated resources. Browser calls simulator's own cloud APIs (same-origin).
+
+| Task | Status | Description |
+|---|---|---|
+| P75-001 | | **Simulator SPA handler** — Add `SPAHandler()` to simulator shared server, register at `/ui/` |
+| P75-002 | | **Simulator core components** — `SimulatorShell.tsx`, cloud resource types, cloud API client functions |
+| P75-003 | | **AWS SPA** — Pages: ECS tasks, Lambda functions, ECR repos, S3 buckets, CloudWatch logs |
+| P75-004 | | **AWS API client** — Wrappers calling simulator AWS APIs |
+| P75-005 | | **AWS embed** — `simulators/aws/ui_embed.go`, register in `main.go` |
+| P75-006 | | **GCP SPA** — Pages: Cloud Run Jobs, Functions, Logging, AR, GCS |
+| P75-007 | | **GCP API client** — Wrappers for GCP REST APIs |
+| P75-008 | | **GCP embed** — `simulators/gcp/ui_embed.go` |
+| P75-009 | | **Azure SPA** — Pages: Container Apps, Functions, ACR, Files, Monitor |
+| P75-010 | | **Azure API client** — Wrappers for Azure ARM REST APIs |
+| P75-011 | | **Azure embed** — `simulators/azure/ui_embed.go` |
+| P75-012 | | **Tests** — Per-simulator resource list renders with mock data. 12+ tests |
+| P75-013 | | **State save** |
+
+---
+
+## Phase 76 — bleephub Dashboard (GitHub Actions)
+
+**Goal:** Dashboard for the GitHub Actions coordinator — workflows, jobs, runners, logs.
+
+| Task | Status | Description |
+|---|---|---|
+| P76-001 | | **bleephub API types** — TS types for Workflow, Job, Session, Repo, Webhook |
+| P76-002 | | **New management endpoints** — `/internal/workflows`, `/internal/sessions`, `/internal/repos` |
+| P76-003 | | **bleephub API client** — Wrappers for management + GitHub API endpoints |
+| P76-004 | | **bleephub SPA** — Pages: Overview, Workflows, Jobs, Runners |
+| P76-005 | | **Workflow list + detail pages** — Status badges, job timeline, step-by-step view |
+| P76-006 | | **LogViewer component** — Shared `LogViewer.tsx` in core with ANSI color support |
+| P76-007 | | **Runner session view** — Connected agents, message queue status |
+| P76-008 | | **Metrics dashboard** — Workflow submissions/min, completion rates, goroutines, heap |
+| P76-009 | | **bleephub embed** — `bleephub/ui_embed.go` + serve at `/ui/` before catch-all |
+| P76-010 | | **Tests** — Workflow list, job timeline, log viewer. 10+ tests |
+| P76-011 | | **State save** |
+
+---
+
+## Phase 77 — gitlabhub Dashboard (GitLab CI)
+
+**Goal:** Dashboard for the GitLab CI coordinator — pipelines, stages, jobs, runners.
+
+| Task | Status | Description |
+|---|---|---|
+| P77-001 | | **gitlabhub API types** — TS types for Pipeline, Job, Runner, Stage |
+| P77-002 | | **New management endpoints** — `/internal/pipelines`, `/internal/runners` |
+| P77-003 | | **gitlabhub API client** — Wrappers for management endpoints |
+| P77-004 | | **gitlabhub SPA** — Pages: Overview, Pipelines, Jobs, Runners |
+| P77-005 | | **Pipeline list + stage view** — Stages as columns, jobs as rows, DAG dependency lines |
+| P77-006 | | **Job log viewer** — Reuse `LogViewer.tsx`, trace reconstruction from incremental uploads |
+| P77-007 | | **Runner management view** — Registered runners, status, job history |
+| P77-008 | | **gitlabhub embed** — `gitlabhub/ui_embed.go` + modify `server.go` |
+| P77-009 | | **Tests** — Pipeline list, stage view, log viewer. 8+ tests |
+| P77-010 | | **State save** |
+
+---
+
+## Phase 78 — Polish, Dark Mode, Cross-Component UX
+
+**Goal:** Cross-cutting UI polish: dark mode, error handling, accessibility, performance, documentation.
+
+| Task | Status | Description |
+|---|---|---|
+| P78-001 | | **Dark mode** — Tailwind class-based strategy, localStorage preference, toggle in header |
+| P78-002 | | **Design system tokens** — Shared color palette, spacing, typography, per-component theme variants |
+| P78-003 | | **Error handling UX** — Connection lost indicator, retry buttons, stale data warnings |
+| P78-004 | | **Container detail modal** — Click container → inspect data, streaming logs, actions |
+| P78-005 | | **Auto-refresh controls** — Global toggle, configurable interval, Page Visibility API pause |
+| P78-006 | | **Performance audit** — Bundle size < 200KB gzipped per SPA, code splitting, build time < 30s |
+| P78-007 | | **Accessibility** — Keyboard nav, ARIA labels, color contrast (light + dark) |
+| P78-008 | | **E2E smoke test** — Go test: start memory backend, fetch `/ui/`, verify React root + API coexistence |
+| P78-009 | | **Documentation** — `ui/README.md`: dev setup, architecture, component catalog. Update root README |
+| P78-010 | | **Final state save** |
 
 ---
 

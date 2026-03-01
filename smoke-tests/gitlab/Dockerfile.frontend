@@ -2,7 +2,7 @@ FROM golang:1.25 AS builder
 WORKDIR /src
 COPY api/ api/
 COPY frontends/docker/ frontends/docker/
-RUN cd frontends/docker && GOWORK=off go mod download && GOWORK=off go build -o /sockerless-frontend-docker ./cmd
+RUN cd frontends/docker && GOWORK=off go mod download && GOWORK=off go build -tags noui -o /sockerless-frontend-docker ./cmd
 
 FROM debian:bookworm-slim
 COPY --from=builder /sockerless-frontend-docker /usr/local/bin/sockerless-frontend-docker

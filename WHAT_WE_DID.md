@@ -44,63 +44,20 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 | 43-52 | CLI, crash safety, pods, service containers, upstream expansion | sockerless CLI, PodContext, resource registry |
 | 53-56 | Production Docker API: TLS, auth, logs, DNS, restart, events, filters, export, commit | 16+18+15+14 new tests |
 
-## Phase 57 — Production GitHub Actions: Multi-Job, Scaling, & Validation
+## Phases 57-66 — CI Runners, API Hardening, bleephub Features, OTel
 
-Made bleephub's multi-job workflow engine production-ready: output capture, continue-on-error, max-parallel, job timeout, round-robin distribution, pending message queue, concurrent workflow limits, metrics collector, management API, structured logging.
-
-**Tests**: 221 unit tests (+25), 6 integration scenarios (+4)
-
-## Phase 58 — CI Pipeline & Publishing
-
-Established CI/CD: core CI workflow (push/PR), comprehensive test workflow (post-merge), production Dockerfiles, Docker image workflow (6 images on GHCR), version injection, goreleaser (8 binaries), release workflow (v* tags).
-
-## Phase 59 — Production GitHub Actions Runner
-
-Closed critical production gaps: secrets store & API, secrets injection & masking, expression evaluator, job-level `if:` evaluation, matrix fail-fast, workflow cancellation API, concurrency control, event context, persistent artifacts.
-
-**Tests**: 259 unit tests (+38), 9 integration scenarios (+3)
-
-## Phase 60 — Production GitLab CI: gitlabhub
-
-Built **gitlabhub** — GitLab Runner coordinator API server. Runner registration, pipeline YAML parser, job request endpoint (30s long-poll), stage-ordered + DAG engine, job lifecycle, 30+ CI variables, in-memory git repos, artifacts, cache, services, secrets, pipeline management API, metrics.
-
-**Tests**: 62 unit tests, 9 integration scenarios
-
-## Phase 61 — Advanced GitLab CI Pipelines
-
-Expression evaluator (`rules:if:`), `extends:` (deep-merge), `include:local:`, `parallel:matrix:`, timeout/retry, dotenv artifacts, pipeline cancellation, resource groups, DinD support.
-
-**Tests**: 129 unit tests (+67), 17 integration scenarios (+8)
-
-## Phase 62 — Docker API Hardening
-
-HEALTHCHECK parsing, volume auto-creation, container mounts population, network cleanup on remove, restart delay (exponential backoff), error consistency, TTY log mode, atomic prune, compose compat.
-
-**Tests**: 230 core PASS (+53)
-
-## Phase 63 — Docker Compose E2E
-
-Health check race fix (deep-copy `HealthState`), SHELL/STOPSIGNAL/VOLUME directives, image prune.
-
-**Tests**: 249 core PASS (+19)
-
-## Phase 64 — Webhooks for bleephub
-
-Per-repo CRUD, HMAC-SHA256 signing, async delivery with 3-retry backoff, delivery log API, event payloads (push/PR/issues/ping), CI trigger via push/PR events.
-
-**Tests**: 270 bleephub PASS (+11)
-
-## Phase 65 — GitHub Apps for bleephub
-
-App store + RSA keygen, RS256 JWT sign/verify, installation tokens (`ghs_`), auth middleware (JWT + ghs_ + PAT), 9 REST endpoints, manifest code flow.
-
-**Tests**: 293 bleephub PASS (+23)
-
-## Phase 66 — Optional OpenTelemetry Tracing
-
-InitTracer in 4 modules (OTLP HTTP exporter, no-op when env unset), otelhttp middleware on all 4 servers, context propagation through BackendClient, workflow/pipeline engine spans.
-
-**Tests**: 241 core + 298 bleephub + 129 gitlabhub + 7 frontend PASS
+| Phase | What | Key Results |
+|---|---|---|
+| 57 | Production GitHub Actions multi-job engine | 221 bleephub unit + 6 integration |
+| 58 | CI/CD pipeline, Dockerfiles, goreleaser, GHCR images | Core CI + release workflows |
+| 59 | Secrets, expressions, matrix fail-fast, concurrency | 259 bleephub unit + 9 integration |
+| 60 | gitlabhub: GitLab Runner coordinator + DAG engine | 62 unit + 9 integration |
+| 61 | Advanced GitLab CI: expressions, extends, include, matrix | 129 unit + 17 integration |
+| 62 | Docker API hardening: HEALTHCHECK, volumes, mounts, prune | 230 core PASS |
+| 63 | Compose E2E: health race fix, SHELL/VOLUME directives | 249 core PASS |
+| 64 | bleephub webhooks: HMAC-SHA256, async delivery, CI trigger | 270 bleephub PASS |
+| 65 | GitHub Apps: JWT auth, installation tokens, manifest flow | 293 bleephub PASS |
+| 66 | OTel tracing: OTLP HTTP, otelhttp middleware, spans | 241 core + 298 bleephub + 129 gitlabhub + 7 frontend |
 
 ## Phase 67 — Network Isolation (Linux)
 
@@ -112,158 +69,63 @@ IPAllocator, SyntheticNetworkDriver (8 methods), Linux NetnsManager (build-tagge
 
 Goreleaser 8→15 builds (added 6 cloud backends + gitlabhub), gitlabhub Dockerfile.release, docker.yml 6→7 images, CI build-check 8→15 binaries + ARM64 cross-compile job.
 
-## Phase 70 — Simulator Fidelity (Complete)
+## Phase 70 — Simulator Fidelity
 
-### Milestones 1-3: Cloud-Specific Fidelity (P70-001 → P70-018)
+Brought all three cloud simulators to production quality: real process execution via shared ProcessRunner engine, structured log queries (CloudWatch/Cloud Logging/Log Analytics), correct status enums, SDK/CLI/Terraform compatibility. 24 tasks, 15 shared ProcessRunner tests.
 
-Brought all three simulators to production quality:
-- **AWS** (P70-001→006): Lambda log stream auto-creation, CloudWatch pagination, nil ExitCode handling, StopCode field, DescribeLogStreams ordering, integration smoke test
-- **GCP** (P70-007→012): Cloud Logging structured filter parser, Cloud Run/Functions log injection, invoke URL fidelity, execution status completeness, integration smoke test
-- **Azure** (P70-013→018): KQL query parser, Container Apps/Functions log injection, execution status enums, DefaultHostName reachability, integration smoke test
+**Tests**: SDK: AWS 8→21, GCP 8→23, Azure 7→16 | Shared ProcessRunner: 15 PASS
 
-### Milestone 4: Cross-Cloud Real Execution (P70-019 → P70-023)
+## Phase 71 — SDK/CLI Verification & Documentation
 
-#### P70-019: Configurable Execution Timeout ✅
-Replaced hardcoded synthetic timeouts with cloud-native execution timeouts. Each simulator now reads the timeout from the container/job spec (ECS has no timeout, GCP uses `TaskTemplate.Timeout`, Azure uses `ReplicaTimeout`). Fixed a `durationpb.New()` bug that passed 14400 nanoseconds instead of 4 hours.
+Closed three gaps: FaaS real execution (Lambda/GCF/AZF), CLI execution+log verification tests, README quick-starts. Built arithmetic evaluator (recursive-descent parser) with 27 new tests (21 SDK + 6 CLI) across all clouds.
 
-#### P70-020: Shared ProcessRunner Engine ✅
-Created `ProcessConfig`, `LogLine`, `LogSink`, `ProcessResult`, `ProcessHandle` types and `StartProcess()` function in the shared simulator library (`simulators/{aws,gcp,azure}/shared/process.go`). Non-blocking process launch with stdout/stderr streaming via `bufio.Scanner`, context-based cancellation and timeout, real exit codes via `cmd.ProcessState.ExitCode()`. Includes `NoopSink` and `FuncSink` convenience types.
+**Tests**: SDK: AWS 42, GCP 43, Azure 38 | CLI: AWS 26, GCP 21, Azure 19
 
-**Tests**: 5 unit tests × 3 clouds = 15 PASS (captures output, exit code, timeout, cancel, env vars)
+## Phase 72 — Full-Stack E2E Tests
 
-#### P70-021: AWS ECS Real Execution ✅
-Wired ProcessRunner into ECS `RunTask` goroutine. Non-agent tasks with commands execute the real process, producing real stdout/stderr streamed to CloudWatch via `cwLogSink`. Process completion transitions task to STOPPED with real exit code. `StopTask` cancels running processes via `ecsProcessHandles` sync.Map. Tasks with no command stay RUNNING (matches real ECS).
+Real arithmetic execution through full Docker API stack (Frontend → Backend → Simulator). Forward-agent backends (ECS/CloudRun/ACA): 18 arithmetic tests + fast-exit fix. FaaS backends (Lambda/GCF/AZF): enabled real execution via invoke-with-command, 18 arithmetic tests. Central multi-backend tests in `tests/` module (4 tests). Fixed ECS test name collisions.
 
-**New tests**: `TestECS_TaskExecutesCommand`, `TestECS_TaskExitCodeNonZero`, `TestECS_TaskLogsToCloudWatch`, `TestECS_TaskNoCommandStaysRunning`
-
-#### P70-022: GCP Cloud Run Real Execution ✅
-Wired ProcessRunner into Cloud Run Jobs auto-complete goroutine. Replaces `time.Sleep(timeout)` with real process execution when command is present. Process exit code determines succeeded vs failed count. Cancel handler kills running processes via `crjProcessHandles` sync.Map.
-
-**New tests**: `TestCloudRun_ExecutionRunsCommand`, `TestCloudRun_ExecutionFailedState`, `TestCloudRun_ExecutionLogsRealOutput`
-
-#### P70-023: Azure ACA Real Execution ✅
-Wired ProcessRunner into ACA Jobs auto-complete goroutine. Process exit code determines Succeeded vs Failed status. Stop handler kills running processes via `acaProcessHandles` sync.Map.
-
-**New tests**: `TestContainerApps_ExecutionRunsCommand`, `TestContainerApps_ExecutionFailedStatus`, `TestContainerApps_ExecutionLogsRealOutput`
-
-#### P70-024: CI Integration for Simulator Tests ✅
-Added simulator tests to PR-level CI (`ci.yml`): `sim-shared` matrix entry runs 15 ProcessRunner unit tests (5 per cloud), new `simulator-sdk-tests` job runs SDK integration tests for all 3 clouds via `make sdk-test`. Added `shared-test` target to each simulator Makefile, included in `make test`.
-
-## Phase 71 — SDK/CLI Verification & Documentation (Complete)
-
-Closed three gaps across all three cloud simulators:
-
-### Milestone A: FaaS Real Execution (P71-001 → P71-006)
-
-Wired `sim.StartProcess()` into each FaaS invoke handler so functions with commands execute real processes and stream output to cloud log systems:
-
-- **Lambda** (P71-001): Uses existing `ImageConfig.Command` field for `PackageType == "Image"`. Added `invokeLambdaProcess` + `lambdaLogSink` (CloudWatch). Injects START/END/REPORT/ERROR entries matching real Lambda format.
-- **Cloud Functions** (P71-003): Added `SimCommand []string` to `ServiceConfig`. `cfLogSink` streams to Cloud Logging via `injectCloudFunctionLog`.
-- **Azure Functions** (P71-005): Added `SimCommand []string` to `SiteConfig`. `funcLogSink` streams to AppTraces via `injectAppTrace`. Extracts env from AppSettings.
-
-All three fall back to synthetic log injection when no command is present (backward compatible).
-
-**SDK Tests** (P71-002, P71-004, P71-006): 9 new tests across 3 clouds — `InvokeExecutesCommand`, `InvokeNonZeroExit`, `InvokeLogsRealOutput` for each. Azure also added `DefaultHostNameReachability` test.
-
-### Milestone B: CLI Execution & Log Verification (P71-007 → P71-012)
-
-Full lifecycle CLI tests: create → execute/invoke → query cloud logs → verify output → cleanup.
-
-- **AWS** (P71-007, P71-008): ECS `RunTaskAndCheckLogs`/`RunTaskNonZeroExit` (new `ecs_test.go`), Lambda `InvokeAndCheckLogs`
-- **GCP** (P71-009, P71-010): Cloud Run `RunJobAndCheckLogs`/`RunJobFailure` (new `run_test.go`), Cloud Functions `InvokeAndCheckLogs`
-- **Azure** (P71-011, P71-012): Container Apps `StartAndCheckLogs`/`StartFailure` (new `containerapps_test.go`), Functions `InvokeAndCheckLogs`
-
-### Milestone C: README Quick-Starts (P71-013 → P71-015)
-
-Added Quick Start sections to each simulator's README with CLI commands + expected output + Go SDK snippets for all major services (ECS, Lambda, CloudWatch, ECR, S3, Cloud Run Jobs, Cloud Functions, Cloud Logging, AR, GCS, Container Apps Jobs, Azure Functions, Log Analytics, ACR, Storage).
-
-**Tests**: SDK: AWS 21→35, GCP 23→36, Azure 16→31 | CLI: AWS 21→24, GCP 15→19, Azure 14→17
-
-### Milestone D: Non-Trivial Arithmetic Evaluator Tests (P71-016 → P71-019)
-
-Built a standalone recursive-descent arithmetic expression evaluator (`simulators/testdata/eval-arithmetic/main.go`, ~180 lines) that parses and evaluates expressions with correct operator precedence, parentheses, unary minus, and division-by-zero checking. Logs parsing details (expression, tokens, result) to stderr; prints result to stdout; exits 1 with `ERROR:` on invalid input.
-
-All 6 test suites (`{aws,gcp,azure}/{sdk,cli}-tests`) build the evaluator binary in TestMain alongside the simulator binary.
-
-**SDK tests** (21 new): 7 per cloud — 4 FaaS (Lambda/CloudFunctions/AzureFunctions: basic `3+4*2→11`, parentheses `(3+4)*2→14`, invalid `3+→ERROR`, logs+complex `((2+3)*4-1)/3→6.333`) + 3 container (ECS/CloudRunJobs/ContainerApps: `(10+5)*2→30`, invalid→exit 1, division `10/3→3.333` with log verification).
-
-**CLI tests** (6 new): 2 per cloud — container service tests (`(3+4)*2→14` success, `3+`→exit 1 failure).
-
-**Tests**: SDK: AWS 35→42, GCP 36→43, Azure 31→38 | CLI: AWS 24→26, GCP 19→21, Azure 14→19
-
-## Phase 72 — Full-Stack E2E Tests (Complete)
-
-### Milestone A: Forward-Agent Backend E2E Tests (P72-001 → P72-004)
-
-Added real arithmetic execution tests through the full Docker API stack (Frontend → Backend → Simulator) for all three forward-agent backends. Each backend gets 6 tests: success (`3+4*2→11`), parentheses (`(3+4)*2→14`), invalid (`3+`→exit 1, ERROR), division (`10/3→3.333`), labels+filter (`100-42→58`), env vars.
-
-**Critical fix: Fast-exit path for CloudRun/ACA.** Short-lived commands completed before the forward agent could be reached. Changed `waitForExecutionRunning` to return `(agentAddr, completedExitCode, error)` — when execution succeeds/fails before agent connection, the container is stopped with the real exit code instead of erroring.
-
-**CloudRun gRPC logging fix.** `logadmin` client uses gRPC but was connecting to HTTP port. GCP simulator runs gRPC on HTTP port + 1. Added `grpcAddrFromEndpoint()` helper in `gcp.go`.
-
-**ACA soft log assertions.** Azure `azquery` SDK refuses HTTP credentials — uses `checkLogs` helper with soft assertions matching existing `TestACAContainerLogs` pattern.
-
-**Files**: 3 new `arithmetic_integration_test.go`, 3 modified `integration_test.go` (eval binary build in TestMain), `cloudrun/containers.go` + `aca/containers.go` (fast-exit fix), `cloudrun/gcp.go` (gRPC logging fix)
-
-**Tests**: sim-test-all: 129 → 147 PASS (+18 arithmetic tests)
-
-### Milestone B: FaaS Backend Real Execution (P72-005 → P72-008)
-
-Enabled real execution for FaaS backends (Lambda, GCF, AZF) through Docker API. Previously, non-tail-dev-null containers auto-stopped after 500ms without invoking the function.
-
-**Lambda**: When `!IsTailDevNull` in simulator mode, invokes the Lambda function (which already has `ImageConfig.Command` from create). Checks `FunctionError` for exit code. Stores response payload in `LogBuffers`.
-
-**GCF/AZF**: Uses `X-Sim-Command` header (base64-encoded JSON command array) on the invoke HTTP POST. Simulators decode the header and execute via `sim.StartProcess()`. Response includes `X-Sim-Exit-Code` header.
-
-**Simulator changes**: All three simulators' invoke functions now return `([]byte, int)` (body + exit code). Lambda sets `X-Amz-Function-Error: Unhandled` on non-zero exit. GCF/AZF set `X-Sim-Exit-Code` header.
-
-**Files**: 3 simulator invoke handlers modified (`lambda.go`, `cloudfunctions.go`, `functions.go`), 3 backend containers.go modified (Lambda, GCF, AZF)
-
-**Tests**: All 75 sim-test-all PASS, all SDK tests PASS (no regression)
-
-### Milestone C: FaaS Backend E2E Tests (P72-009 → P72-012)
-
-Added arithmetic integration tests for all three FaaS backends (Lambda, GCF, AZF), matching the forward-agent test matrix from Milestone A.
-
-**Lambda (P72-009)**: 6 arithmetic tests with hard log assertions. Lambda's CloudWatch-based log handler works in integration tests (HTTP, not gRPC).
-
-**GCF (P72-010)**: 6 arithmetic tests with soft log assertions via `checkLogs` helper. GCF uses gRPC Cloud Logging which gets "context deadline exceeded" in integration tests.
-
-**AZF (P72-011)**: 6 arithmetic tests with soft log assertions via `checkLogs` helper. AZF uses Azure Monitor which requires TLS in integration tests.
-
-**ECS naming fix (P72-012)**: Fixed pre-existing flaky test bug — ECS integration tests used hardcoded container names (`ecs-lifecycle-test`, `ecs-logs-test`, etc.) causing conflicts on re-run. Added `generateTestID()` helper and unique names for all container/network/volume resources.
-
-**Files**: 3 new `arithmetic_integration_test.go` (Lambda, GCF, AZF), 3 modified `integration_test.go` (eval binary build in TestMain), `backends/ecs/integration_test.go` (generateTestID + unique names)
-
-**Tests**: sim-test-all: 75 PASS (39 pre-existing + 36 new arithmetic tests across all 6 backends)
-
-### Milestone D: Central Multi-Backend E2E Tests (P72-013 → P72-015)
-
-Added 4 arithmetic E2E tests to the central `tests/` module using `availableRunnerClients()`:
-- `TestArithmeticExecution`: shell arithmetic `$((3 + 4 * 2))` → exit 0, logs contain "11"
-- `TestArithmeticNonZeroExit`: shell `exit 1` → exit code 1
-- `TestArithmeticExecInContainer`: exec `$((7 * 6))` in running container → output "42"
-- `TestArithmeticEvalBinary`: eval-arithmetic binary `(3 + 4) * 2` → exit 0, logs "14" (skipped on memory/WASM)
-
-Also added eval-arithmetic binary build to `tests/main_test.go`.
-
-**Files**: `tests/arithmetic_e2e_test.go` (new), `tests/main_test.go` (modified)
-
-**Tests**: test-e2e: 65 PASS (was 61, +4 new)
+**Tests**: sim-test-all: 75 PASS, test-e2e: 65 PASS
 
 ## Phase 68 — Multi-Tenant Backend Pools (In Progress)
 
 ### P68-001: Pool Configuration ✅
 Added `PoolConfig` and `PoolsConfig` types to `backends/core/` for defining named backend pools with concurrency limits and queue sizes. `ValidatePoolsConfig()` checks 8 rules (non-empty pools, unique names, valid backend types, non-negative limits, default pool exists). `LoadPoolsConfig()` loads from `SOCKERLESS_POOLS_CONFIG` env var → `$SOCKERLESS_HOME/pools.json` → default single-pool config. Includes `GetPool()` and `PoolNames()` convenience methods. 18 tests.
 
+## Phase 73 — UI Foundation + Shared Core + Memory Backend Dashboard
+
+Established the web UI monorepo and delivered the first working embedded SPA. Key deliverables:
+
+- **Monorepo scaffold**: Bun workspaces + Turborepo + TypeScript 5.8, `ui/` root with `packages/core/` and `packages/backend-memory/`
+- **Shared core package** (`@sockerless/ui-core`): API client + types mirroring Go structs, 7 TanStack Query hooks (health/status/containers/metrics/resources/check/info), 7 Tailwind-styled components (AppShell, StatusBadge, MetricsCard, RefreshButton, ErrorBoundary, Spinner, DataTable)
+- **Memory backend SPA**: React 19 + Vite 6.4 + React Router 7 + Tailwind CSS 4. Four dashboard pages: Overview (status + health checks + system info), Containers (DataTable with sorting/filtering), Resources (registry entries), Metrics (goroutines, heap, request latencies P50/P95/P99)
+- **Go embed system**: `SPAHandler` with index.html fallback for client-side routing, `RegisterUI(fs.FS)` on BaseServer (zero impact on backends without UI), build-tagged `ui_embed.go`/`ui_noembed.go` in memory backend
+- **Build integration**: Makefile targets (`ui-build`, `ui-test`, `build-memory-with-ui`, `build-memory-noui`), CI `ui` job with `oven-sh/setup-bun`, `-tags noui` for build-check jobs
+- **Verified end-to-end**: 307 redirect `/` → `/ui/`, SPA HTML served at `/ui/`, fallback routing for `/ui/containers`, API still works alongside UI
+
+**Tests**: 12 Vitest PASS (6 API client + 3 hooks + 3 DataTable) + 5 Go SPAHandler PASS
+
+## Phase 74 — All Backend Dashboards + Docker Frontend
+
+Rolled out UI dashboards to all 7 remaining backends + Docker frontend (9 new SPAs total). Key deliverables:
+
+- **Shared BackendApp component**: Extracted 4 dashboard pages (Overview, Containers, Resources, Metrics) from `backend-memory` into `@sockerless/ui-core/pages`, created `BackendApp` component that assembles BrowserRouter + AppShell + Routes. Each new SPA is a thin wrapper (~30 lines of unique code)
+- **BackendInfoCard**: New component showing backend-type badge, instance ID, and context from `/internal/v1/status`
+- **6 cloud backend SPAs**: ECS, Lambda, CloudRun, GCF, ACA, AZF — each with `ui_embed.go`/`ui_noembed.go` + `registerUI()` in `server.go`
+- **Docker backend SPA**: Added management endpoints (`/internal/v1/healthz`, `/status`, `/metrics`, `/containers/summary`, `/check`, `/resources`) to `backends/docker/` (non-BaseServer), SPA with build-tagged embed
+- **Docker frontend SPA**: Custom SPA for MgmtServer showing docker_requests, goroutines, heap, configuration. Custom API client for non-standard paths (`/healthz`, `/status`, `/metrics`)
+- **Build integration**: Makefile expanded with 18 new targets (`build-*-with-ui`, `build-*-noui`), `ui-build` copies dist/ for all 9 backends, CI build-check uses `-tags noui` for all 9 modules with embed
+
+**Tests**: 16 Vitest PASS (+4: 2 BackendApp + 2 BackendInfoCard) + 5 Go SPAHandler PASS
+
 ## Project Stats
 
-- **72 phases** (1-67, 69-72), 637+ tasks completed
+- **74 phases** (1-67, 69-74), 664 tasks completed
 - **16 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, tests
 - **21 Go-implemented builtins** in WASM sandbox
 - **18 driver interface methods** across 5 driver types
 - **7 external test consumers**: `act`, `gitlab-runner`, `gitlab-ci-local`, upstream act, `actions/runner`, `gh` CLI, gitlabhub gitlab-runner
-- **Core tests**: 255 PASS | **Frontend tests**: 7 PASS | **bleephub tests**: 298 PASS | **gitlabhub tests**: 129 PASS | **Shared ProcessRunner**: 15 PASS
+- **Core tests**: 255 PASS (+5 SPAHandler) | **Frontend tests**: 7 PASS | **UI tests**: 16 PASS (Vitest) | **bleephub tests**: 298 PASS | **gitlabhub tests**: 129 PASS | **Shared ProcessRunner**: 15 PASS
 - **Cloud SDK tests**: AWS 42, GCP 43, Azure 38 | **Cloud CLI tests**: AWS 26, GCP 21, Azure 19
 - **3 cloud simulators** validated against SDKs, CLIs, and Terraform — now with real process execution for all services (container + FaaS)
 - **8 backends** sharing a common driver architecture

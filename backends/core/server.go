@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -299,6 +300,20 @@ func (s *BaseServer) InitDrivers() {
 	} else {
 		s.Drivers.Network = syntheticNet
 	}
+}
+
+// RegisterUI registers a single-page application served from the given filesystem
+// at /ui/. A redirect from GET / to /ui/ is also registered. If fsys is nil, this
+// is a no-op so backends without a UI are unaffected.
+func (s *BaseServer) RegisterUI(fsys fs.FS) {
+	if fsys == nil {
+		return
+	}
+	s.Mux.Handle("/ui/", SPAHandler(fsys, "/ui/"))
+	s.Mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/ui/", http.StatusTemporaryRedirect)
+	})
+	s.Logger.Info().Msg("UI registered at /ui/")
 }
 
 // RecoverRegistry loads persisted registry state and scans the cloud for orphaned resources.

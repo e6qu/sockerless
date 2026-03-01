@@ -55,6 +55,8 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		VolumePrune:      s.handleVolumePrune,
 	}, logger)
 
+	registerUI(s.BaseServer)
+
 	return s
 }
 

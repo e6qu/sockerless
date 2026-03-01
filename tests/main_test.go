@@ -51,7 +51,7 @@ func TestMain(m *testing.M) {
 
 	// Build binaries
 	fmt.Println("Building backend...")
-	buildBackend := exec.Command("go", "build", "-o", "sockerless-backend-memory", "./cmd/")
+	buildBackend := exec.Command("go", "build", "-tags", "noui", "-o", "sockerless-backend-memory", "./cmd/")
 	buildBackend.Dir = findModuleDir("backends/memory")
 	buildBackend.Stdout = os.Stderr
 	buildBackend.Stderr = os.Stderr
@@ -61,7 +61,7 @@ func TestMain(m *testing.M) {
 	}
 
 	fmt.Println("Building frontend...")
-	buildFrontend := exec.Command("go", "build", "-o", "sockerless-docker-frontend", "./cmd/")
+	buildFrontend := exec.Command("go", "build", "-tags", "noui", "-o", "sockerless-docker-frontend", "./cmd/")
 	buildFrontend.Dir = findModuleDir("frontends/docker")
 	buildFrontend.Stdout = os.Stderr
 	buildFrontend.Stderr = os.Stderr

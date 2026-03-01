@@ -15,16 +15,16 @@ COPY backends/core/ backends/core/
 # --- Build AWS backends (ecs + lambda) ---
 COPY backends/ecs/ backends/ecs/
 RUN cd backends/ecs && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-backend-ecs ./cmd/sockerless-backend-ecs
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-ecs ./cmd/sockerless-backend-ecs
 
 COPY backends/lambda/ backends/lambda/
 RUN cd backends/lambda && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-backend-lambda ./cmd/sockerless-backend-lambda
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-lambda ./cmd/sockerless-backend-lambda
 
 # --- Build frontend ---
 COPY frontends/docker/ frontends/docker/
 RUN cd frontends/docker && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-frontend-docker ./cmd
+    GOWORK=off go build -tags noui -o /out/sockerless-frontend-docker ./cmd
 
 # --- Build agent ---
 RUN cd agent && GOWORK=off go mod download && \

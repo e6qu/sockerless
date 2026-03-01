@@ -5,7 +5,7 @@ COPY agent/ agent/
 COPY sandbox/ sandbox/
 COPY backends/core/ backends/core/
 COPY backends/memory/ backends/memory/
-RUN cd backends/memory && GOWORK=off go mod download && GOWORK=off go build -o /sockerless-backend-memory ./cmd
+RUN cd backends/memory && GOWORK=off go mod download && GOWORK=off go build -tags noui -o /sockerless-backend-memory ./cmd
 
 FROM debian:bookworm-slim
 COPY --from=builder /sockerless-backend-memory /usr/local/bin/sockerless-backend-memory

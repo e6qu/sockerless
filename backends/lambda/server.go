@@ -45,6 +45,8 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		ImageLoad:      s.handleImageLoad,
 	}, logger)
 
+	registerUI(s.BaseServer)
+
 	return s
 }
 

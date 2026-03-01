@@ -53,6 +53,8 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		VolumePrune:      s.handleVolumePrune,
 	}, logger)
 
+	registerUI(s.BaseServer)
+
 	return s
 }
 

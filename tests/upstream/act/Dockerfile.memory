@@ -10,12 +10,12 @@ COPY backends/core/ backends/core/
 # --- Build memory backend only ---
 COPY backends/memory/ backends/memory/
 RUN cd backends/memory && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-backend-memory ./cmd
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-memory ./cmd
 
 # --- Build frontend ---
 COPY frontends/docker/ frontends/docker/
 RUN cd frontends/docker && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-frontend-docker ./cmd
+    GOWORK=off go build -tags noui -o /out/sockerless-frontend-docker ./cmd
 
 # --- Clone and prep act ---
 ARG ACT_REF=v0.2.84

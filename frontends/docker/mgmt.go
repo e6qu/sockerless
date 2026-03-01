@@ -34,6 +34,7 @@ func NewMgmtServer(logger zerolog.Logger, dockerAddr, backendAddr string) *MgmtS
 	m.mux.HandleFunc("GET /status", m.handleStatus)
 	m.mux.HandleFunc("GET /metrics", m.handleMetrics)
 	m.mux.HandleFunc("POST /reload", m.handleReload)
+	registerUI(m)
 	return m
 }
 
