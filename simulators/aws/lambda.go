@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -282,7 +283,12 @@ func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 		// RequestResponse — execute real process if image function has a command
 		responseBody := []byte("{}")
 		if fn.PackageType == "Image" && fn.ImageConfig != nil && len(fn.ImageConfig.Command) > 0 {
-			responseBody = invokeLambdaProcess(fn)
+			var exitCode int
+			responseBody, exitCode = invokeLambdaProcess(fn)
+			w.Header().Set("X-Sim-Exit-Code", strconv.Itoa(exitCode))
+			if exitCode != 0 {
+				w.Header().Set("X-Amz-Function-Error", "Unhandled")
+			}
 		} else {
 			injectLambdaLogs(fn.FunctionName)
 		}
@@ -293,8 +299,8 @@ func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 }
 
 // invokeLambdaProcess executes a Lambda function's image command via sim.StartProcess
-// and returns the stdout output as the response body.
-func invokeLambdaProcess(fn LambdaFunction) []byte {
+// and returns the combined output as the response body plus the process exit code.
+func invokeLambdaProcess(fn LambdaFunction) ([]byte, int) {
 	// Build command from EntryPoint + Command (mirrors real Lambda container image support)
 	var fullCmd []string
 	if fn.ImageConfig != nil {
@@ -302,7 +308,7 @@ func invokeLambdaProcess(fn LambdaFunction) []byte {
 		fullCmd = append(fullCmd, fn.ImageConfig.Command...)
 	}
 	if len(fullCmd) == 0 {
-		return []byte("{}")
+		return []byte("{}"), 0
 	}
 
 	// Extract environment variables
@@ -396,9 +402,9 @@ func invokeLambdaProcess(fn LambdaFunction) []byte {
 
 	output := strings.TrimRight(stdout.String(), "\n")
 	if output == "" {
-		return []byte("{}")
+		return []byte("{}"), result.ExitCode
 	}
-	return []byte(output)
+	return []byte(output), result.ExitCode
 }
 
 func handleLambdaListFunctions(w http.ResponseWriter, r *http.Request) {

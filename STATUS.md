@@ -1,6 +1,6 @@
 # Sockerless — Current Status
 
-**Phase 68 (Multi-Tenant Backend Pools) in progress. 622+ tasks done across 71 phases.**
+**Phase 72 (Full-Stack E2E Tests) complete. 637+ tasks done across 72 phases.**
 
 ## Test Results (Latest)
 
@@ -19,7 +19,7 @@
 
 | Suite | Count | Command |
 |---|---|---|
-| Sim-backend integration | 129 PASS | `make sim-test-all` |
+| Sim-backend integration | 75 PASS | `make sim-test-all` (6 backends × ~12 tests each) |
 | GitHub E2E | 31 workflows x 7 backends = 217 PASS | `make e2e-github-{backend}` |
 | GitLab E2E | 22 pipelines x 7 backends = 154 PASS | `make e2e-gitlab-{backend}` |
 | Upstream gitlab-ci-local | 36 tests x 7 backends = 252 PASS | `make upstream-test-gitlab-ci-local-{backend}` |

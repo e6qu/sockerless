@@ -20,6 +20,7 @@ import (
 )
 
 var dockerClient *client.Client
+var evalBinaryPath string
 
 func TestMain(m *testing.M) {
 	if os.Getenv("SOCKERLESS_INTEGRATION") != "1" {
@@ -34,6 +35,21 @@ func TestMain(m *testing.M) {
 			cleanups[i]()
 		}
 	}
+
+	// Build eval-arithmetic binary
+	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
+	evalBinaryPath = evalDir + "/eval-arithmetic"
+	fmt.Println("[sim] Building eval-arithmetic...")
+	evalBuild := exec.Command("go", "build", "-o", "eval-arithmetic", ".")
+	evalBuild.Dir = evalDir
+	evalBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off")
+	evalBuild.Stdout = os.Stderr
+	evalBuild.Stderr = os.Stderr
+	if err := evalBuild.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic: %v\n", err)
+		os.Exit(1)
+	}
+	cleanups = append(cleanups, func() { os.Remove(evalBinaryPath) })
 
 	// Build simulator
 	simDir := repoRoot + "/simulators/azure"
@@ -97,6 +113,7 @@ func TestMain(m *testing.M) {
 		"SOCKERLESS_ENDPOINT_URL="+simURL,
 		"SOCKERLESS_ACA_SUBSCRIPTION_ID=00000000-0000-0000-0000-000000000001",
 		"SOCKERLESS_ACA_RESOURCE_GROUP=sim-rg",
+		"SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE=default",
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr

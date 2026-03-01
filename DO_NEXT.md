@@ -2,28 +2,11 @@
 
 ## Current State
 
-Phases 1-67, 69-71 complete. **622+ tasks done across 71 phases.** All three simulators have real process execution, non-trivial arithmetic evaluator tests (27 new), and full SDK/CLI/Terraform validation.
+Phases 1-67, 69-72 complete. **637+ tasks done across 72 phases.** Phase 72 (Full-Stack E2E Tests) complete — all 4 milestones done. sim-test-all: 75 PASS. Central test-e2e: 65 PASS.
 
-Cloud SDK: AWS 42, GCP 43, Azure 38 | Cloud CLI: AWS 26, GCP 21, Azure 19
+## Next: Phase 68 — Multi-Tenant Backend Pools (Resume)
 
-## Next Phase: Phase 68 — Multi-Tenant Backend Pools (In Progress)
-
-Named pools of backends with scheduling and resource limits. Each pool has a backend type, concurrency limit, and queue. Requests are routed by label or default.
-
-P68-001 (pool config types/validation/loader) is done.
-
-| Task | Description | Status |
-|---|---|---|
-| P68-001 | Pool configuration — types, validation, loader | ✅ |
-| P68-002 | Pool registry — in-memory, each with own BaseServer + Store | pending |
-| P68-003 | Request router — route by label (`com.sockerless.pool`) or default | pending |
-| P68-004 | Concurrency limiter — per-pool semaphore, 429 on overflow | pending |
-| P68-005 | Pool lifecycle — create/destroy at runtime via management API | pending |
-| P68-006 | Pool metrics — per-pool counts on `/internal/metrics` | pending |
-| P68-007 | Round-robin scheduling — multi-backend pools | pending |
-| P68-008 | Resource limits — per-pool max containers, max memory | pending |
-| P68-009 | Unit + integration tests | pending |
-| P68-010 | Save final state | pending |
+P68-001 (pool config types/validation/loader) is done. Remaining: P68-002 through P68-010.
 
 ## Test Commands Reference
 

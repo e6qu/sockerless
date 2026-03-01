@@ -286,7 +286,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// Forward agent mode: poll for execution RUNNING and health check
-		agentAddr, err := s.waitForExecutionRunning(s.ctx(), executionName)
+		agentAddr, completedExitCode, err := s.waitForExecutionRunning(s.ctx(), executionName)
 		if err != nil {
 			s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
 			s.deleteJob(jobFullName)
@@ -294,27 +294,35 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Wait for agent health
-		agentURL := fmt.Sprintf("http://%s/health", agentAddr)
-		agentHealthy := true
-		if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
-			s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
-			agentHealthy = false
-		}
+		if completedExitCode >= 0 {
+			// Execution completed before agent could be reached (short-lived command).
+			// Treat as a fast exit — stop the container with the real exit code.
+			go func() {
+				s.Store.StopContainer(id, completedExitCode)
+			}()
+		} else {
+			// Wait for agent health
+			agentURL := fmt.Sprintf("http://%s/health", agentAddr)
+			agentHealthy := true
+			if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
+				s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
+				agentHealthy = false
+			}
 
-		if agentHealthy {
-			s.Store.Containers.Update(id, func(c *api.Container) {
-				c.AgentAddress = agentAddr
-				c.AgentToken = crState.AgentToken
+			if agentHealthy {
+				s.Store.Containers.Update(id, func(c *api.Container) {
+					c.AgentAddress = agentAddr
+					c.AgentToken = crState.AgentToken
+				})
+			}
+
+			s.CloudRun.Update(id, func(state *CloudRunState) {
+				state.AgentAddress = agentAddr
 			})
+
+			// Start background poller to detect execution exit
+			go s.pollExecutionExit(id, executionName, exitCh)
 		}
-
-		s.CloudRun.Update(id, func(state *CloudRunState) {
-			state.AgentAddress = agentAddr
-		})
-
-		// Start background poller to detect execution exit
-		go s.pollExecutionExit(id, executionName, exitCh)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -428,7 +436,7 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 		}
 	} else {
 		// Forward agent mode
-		agentAddr, err := s.waitForExecutionRunning(s.ctx(), executionName)
+		agentAddr, completedExitCode, err := s.waitForExecutionRunning(s.ctx(), executionName)
 		if err != nil {
 			s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
 			s.deleteJob(jobFullName)
@@ -436,25 +444,31 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 			return
 		}
 
-		agentURL := fmt.Sprintf("http://%s/health", agentAddr)
-		agentHealthy := true
-		if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
-			s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
-			agentHealthy = false
-		}
+		if completedExitCode >= 0 {
+			go func() {
+				s.Store.StopContainer(mainID, completedExitCode)
+			}()
+		} else {
+			agentURL := fmt.Sprintf("http://%s/health", agentAddr)
+			agentHealthy := true
+			if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
+				s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
+				agentHealthy = false
+			}
 
-		if agentHealthy {
-			s.Store.Containers.Update(mainID, func(c *api.Container) {
-				c.AgentAddress = agentAddr
-				c.AgentToken = mainState.AgentToken
+			if agentHealthy {
+				s.Store.Containers.Update(mainID, func(c *api.Container) {
+					c.AgentAddress = agentAddr
+					c.AgentToken = mainState.AgentToken
+				})
+			}
+
+			s.CloudRun.Update(mainID, func(state *CloudRunState) {
+				state.AgentAddress = agentAddr
 			})
+
+			go s.pollExecutionExit(mainID, executionName, exitCh)
 		}
-
-		s.CloudRun.Update(mainID, func(state *CloudRunState) {
-			state.AgentAddress = agentAddr
-		})
-
-		go s.pollExecutionExit(mainID, executionName, exitCh)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -575,7 +589,11 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 }
 
 // waitForExecutionRunning polls a Cloud Run execution until it reaches RUNNING state.
-func (s *Server) waitForExecutionRunning(ctx context.Context, executionName string) (string, error) {
+// waitForExecutionRunning polls until the execution reaches RUNNING state.
+// Returns (agentAddr, -1, nil) if the execution is running.
+// Returns ("", exitCode, nil) if the execution completed before the agent was reachable.
+// Returns ("", -1, err) on failure.
+func (s *Server) waitForExecutionRunning(ctx context.Context, executionName string) (string, int, error) {
 	timeout := time.After(5 * time.Minute)
 	pollInterval := 2 * time.Second
 	if s.config.EndpointURL != "" {
@@ -587,9 +605,9 @@ func (s *Server) waitForExecutionRunning(ctx context.Context, executionName stri
 	for {
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return "", -1, ctx.Err()
 		case <-timeout:
-			return "", fmt.Errorf("timeout waiting for execution to reach RUNNING state")
+			return "", -1, fmt.Errorf("timeout waiting for execution to reach RUNNING state")
 		case <-ticker.C:
 			exec, err := s.gcp.Executions.GetExecution(ctx, &runpb.GetExecutionRequest{
 				Name: executionName,
@@ -601,15 +619,21 @@ func (s *Server) waitForExecutionRunning(ctx context.Context, executionName stri
 
 			if exec.RunningCount > 0 {
 				agentAddr := fmt.Sprintf("%s:9111", executionName)
-				return agentAddr, nil
+				return agentAddr, -1, nil
 			}
 
-			if exec.FailedCount > 0 || exec.CancelledCount > 0 {
-				return "", fmt.Errorf("execution failed or was cancelled")
+			if exec.CancelledCount > 0 {
+				return "", -1, fmt.Errorf("execution was cancelled")
+			}
+
+			if exec.FailedCount > 0 {
+				// Execution failed — treat as fast exit with code 1
+				return "", 1, nil
 			}
 
 			if exec.SucceededCount > 0 {
-				return "", fmt.Errorf("execution completed before agent could be reached")
+				// Execution completed before agent was reachable — fast exit with code 0
+				return "", 0, nil
 			}
 		}
 	}

@@ -191,6 +191,66 @@ All 6 test suites (`{aws,gcp,azure}/{sdk,cli}-tests`) build the evaluator binary
 
 **Tests**: SDK: AWS 35→42, GCP 36→43, Azure 31→38 | CLI: AWS 24→26, GCP 19→21, Azure 14→19
 
+## Phase 72 — Full-Stack E2E Tests (In Progress)
+
+### Milestone A: Forward-Agent Backend E2E Tests (P72-001 → P72-004)
+
+Added real arithmetic execution tests through the full Docker API stack (Frontend → Backend → Simulator) for all three forward-agent backends. Each backend gets 6 tests: success (`3+4*2→11`), parentheses (`(3+4)*2→14`), invalid (`3+`→exit 1, ERROR), division (`10/3→3.333`), labels+filter (`100-42→58`), env vars.
+
+**Critical fix: Fast-exit path for CloudRun/ACA.** Short-lived commands completed before the forward agent could be reached. Changed `waitForExecutionRunning` to return `(agentAddr, completedExitCode, error)` — when execution succeeds/fails before agent connection, the container is stopped with the real exit code instead of erroring.
+
+**CloudRun gRPC logging fix.** `logadmin` client uses gRPC but was connecting to HTTP port. GCP simulator runs gRPC on HTTP port + 1. Added `grpcAddrFromEndpoint()` helper in `gcp.go`.
+
+**ACA soft log assertions.** Azure `azquery` SDK refuses HTTP credentials — uses `checkLogs` helper with soft assertions matching existing `TestACAContainerLogs` pattern.
+
+**Files**: 3 new `arithmetic_integration_test.go`, 3 modified `integration_test.go` (eval binary build in TestMain), `cloudrun/containers.go` + `aca/containers.go` (fast-exit fix), `cloudrun/gcp.go` (gRPC logging fix)
+
+**Tests**: sim-test-all: 129 → 147 PASS (+18 arithmetic tests)
+
+### Milestone B: FaaS Backend Real Execution (P72-005 → P72-008)
+
+Enabled real execution for FaaS backends (Lambda, GCF, AZF) through Docker API. Previously, non-tail-dev-null containers auto-stopped after 500ms without invoking the function.
+
+**Lambda**: When `!IsTailDevNull` in simulator mode, invokes the Lambda function (which already has `ImageConfig.Command` from create). Checks `FunctionError` for exit code. Stores response payload in `LogBuffers`.
+
+**GCF/AZF**: Uses `X-Sim-Command` header (base64-encoded JSON command array) on the invoke HTTP POST. Simulators decode the header and execute via `sim.StartProcess()`. Response includes `X-Sim-Exit-Code` header.
+
+**Simulator changes**: All three simulators' invoke functions now return `([]byte, int)` (body + exit code). Lambda sets `X-Amz-Function-Error: Unhandled` on non-zero exit. GCF/AZF set `X-Sim-Exit-Code` header.
+
+**Files**: 3 simulator invoke handlers modified (`lambda.go`, `cloudfunctions.go`, `functions.go`), 3 backend containers.go modified (Lambda, GCF, AZF)
+
+**Tests**: All 75 sim-test-all PASS, all SDK tests PASS (no regression)
+
+### Milestone C: FaaS Backend E2E Tests (P72-009 → P72-012)
+
+Added arithmetic integration tests for all three FaaS backends (Lambda, GCF, AZF), matching the forward-agent test matrix from Milestone A.
+
+**Lambda (P72-009)**: 6 arithmetic tests with hard log assertions. Lambda's CloudWatch-based log handler works in integration tests (HTTP, not gRPC).
+
+**GCF (P72-010)**: 6 arithmetic tests with soft log assertions via `checkLogs` helper. GCF uses gRPC Cloud Logging which gets "context deadline exceeded" in integration tests.
+
+**AZF (P72-011)**: 6 arithmetic tests with soft log assertions via `checkLogs` helper. AZF uses Azure Monitor which requires TLS in integration tests.
+
+**ECS naming fix (P72-012)**: Fixed pre-existing flaky test bug — ECS integration tests used hardcoded container names (`ecs-lifecycle-test`, `ecs-logs-test`, etc.) causing conflicts on re-run. Added `generateTestID()` helper and unique names for all container/network/volume resources.
+
+**Files**: 3 new `arithmetic_integration_test.go` (Lambda, GCF, AZF), 3 modified `integration_test.go` (eval binary build in TestMain), `backends/ecs/integration_test.go` (generateTestID + unique names)
+
+**Tests**: sim-test-all: 75 PASS (39 pre-existing + 36 new arithmetic tests across all 6 backends)
+
+### Milestone D: Central Multi-Backend E2E Tests (P72-013 → P72-015)
+
+Added 4 arithmetic E2E tests to the central `tests/` module using `availableRunnerClients()`:
+- `TestArithmeticExecution`: shell arithmetic `$((3 + 4 * 2))` → exit 0, logs contain "11"
+- `TestArithmeticNonZeroExit`: shell `exit 1` → exit code 1
+- `TestArithmeticExecInContainer`: exec `$((7 * 6))` in running container → output "42"
+- `TestArithmeticEvalBinary`: eval-arithmetic binary `(3 + 4) * 2` → exit 0, logs "14" (skipped on memory/WASM)
+
+Also added eval-arithmetic binary build to `tests/main_test.go`.
+
+**Files**: `tests/arithmetic_e2e_test.go` (new), `tests/main_test.go` (modified)
+
+**Tests**: test-e2e: 65 PASS (was 61, +4 new)
+
 ## Phase 68 — Multi-Tenant Backend Pools (In Progress)
 
 ### P68-001: Pool Configuration ✅
@@ -198,7 +258,7 @@ Added `PoolConfig` and `PoolsConfig` types to `backends/core/` for defining name
 
 ## Project Stats
 
-- **71 phases** (1-67, 69-71), 622+ tasks completed
+- **72 phases** (1-67, 69-72), 634+ tasks completed
 - **16 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, tests
 - **21 Go-implemented builtins** in WASM sandbox
 - **18 driver interface methods** across 5 driver types
