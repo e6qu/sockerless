@@ -55,6 +55,8 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		VolumePrune:      s.handleVolumePrune,
 	}, logger)
 
+	registerUI(s.BaseServer)
+
 	return s
 }
 

@@ -76,6 +76,17 @@ jobs:
         env:
           GOWORK: "off"
 
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3'
+      - run: cd ui && bun install --frozen-lockfile
+      - run: cd ui && bunx turbo run build
+      - run: cd ui && bunx turbo run test
+
   build-check:
     runs-on: ubuntu-latest
     steps:
@@ -90,17 +101,19 @@ jobs:
         run: |
           set -e
           build() { echo "=== $1 ===" && (cd "$1" && go build -o /dev/null "$2"); }
+          noui() { echo "=== $1 (noui) ===" && (cd "$1" && go build -tags noui -o /dev/null "$2"); }
           build bleephub ./cmd
-          build frontends/docker ./cmd
+          noui frontends/docker ./cmd
           build cmd/sockerless .
           build agent ./cmd/sockerless-agent
-          build backends/memory ./cmd
-          build backends/ecs ./cmd/sockerless-backend-ecs
-          build backends/lambda ./cmd/sockerless-backend-lambda
-          build backends/cloudrun ./cmd/sockerless-backend-cloudrun
-          build backends/cloudrun-functions ./cmd/sockerless-backend-gcf
-          build backends/aca ./cmd/sockerless-backend-aca
-          build backends/azure-functions ./cmd/sockerless-backend-azf
+          noui backends/memory ./cmd
+          noui backends/ecs ./cmd/sockerless-backend-ecs
+          noui backends/lambda ./cmd/sockerless-backend-lambda
+          noui backends/cloudrun ./cmd/sockerless-backend-cloudrun
+          noui backends/cloudrun-functions ./cmd/sockerless-backend-gcf
+          noui backends/aca ./cmd/sockerless-backend-aca
+          noui backends/azure-functions ./cmd/sockerless-backend-azf
+          noui backends/docker ./cmd/sockerless-backend-docker
           build gitlabhub ./cmd
           build simulators/aws .
           build simulators/gcp .
@@ -146,17 +159,19 @@ jobs:
         run: |
           set -e
           build() { echo "=== $1 ===" && (cd "$1" && go build -o /dev/null "$2"); }
+          noui() { echo "=== $1 (noui) ===" && (cd "$1" && go build -tags noui -o /dev/null "$2"); }
           build bleephub ./cmd
-          build frontends/docker ./cmd
+          noui frontends/docker ./cmd
           build cmd/sockerless .
           build agent ./cmd/sockerless-agent
-          build backends/memory ./cmd
-          build backends/ecs ./cmd/sockerless-backend-ecs
-          build backends/lambda ./cmd/sockerless-backend-lambda
-          build backends/cloudrun ./cmd/sockerless-backend-cloudrun
-          build backends/cloudrun-functions ./cmd/sockerless-backend-gcf
-          build backends/aca ./cmd/sockerless-backend-aca
-          build backends/azure-functions ./cmd/sockerless-backend-azf
+          noui backends/memory ./cmd
+          noui backends/ecs ./cmd/sockerless-backend-ecs
+          noui backends/lambda ./cmd/sockerless-backend-lambda
+          noui backends/cloudrun ./cmd/sockerless-backend-cloudrun
+          noui backends/cloudrun-functions ./cmd/sockerless-backend-gcf
+          noui backends/aca ./cmd/sockerless-backend-aca
+          noui backends/azure-functions ./cmd/sockerless-backend-azf
+          noui backends/docker ./cmd/sockerless-backend-docker
           build gitlabhub ./cmd
           build simulators/aws .
           build simulators/gcp .

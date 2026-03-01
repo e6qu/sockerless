@@ -1,6 +1,6 @@
 # Sockerless — Current Status
 
-**Phase 72 (Full-Stack E2E Tests) complete. 637+ tasks done across 72 phases.**
+**Phase 74 (All Backend Dashboards) complete. 664 tasks done across 74 phases.**
 
 ## Test Results (Latest)
 
@@ -10,6 +10,8 @@
 |---|---|
 | **Core unit tests** | 255 PASS (`cd backends/core && go test -race -v ./...`) — includes 3 OTel + 14 network driver/IPAM tests |
 | **Frontend tests** | 4 PASS (TLS) + 3 PASS (mux) |
+| **UI tests (Vitest)** | 16 PASS (6 API client + 3 hooks + 3 DataTable + 2 BackendApp + 2 BackendInfoCard) |
+| **SPAHandler tests** | 5 PASS (Go, in core) |
 | **bleephub** | 298 unit + 9 integration + 1 gh CLI (35 assertions) — includes 5 OTel tests |
 | **gitlabhub** | 129 unit + 17 integration |
 | **Sandbox** | 46 PASS |
@@ -27,25 +29,6 @@
 | Cloud SDK tests | AWS 42, GCP 43, Azure 38 | `make docker-test` per cloud |
 | Cloud CLI tests | AWS 26, GCP 21, Azure 19 | `make docker-test` per cloud |
 | Lint (15 modules) | 0 issues | `make lint` |
-
-### Cloud SDK Test Breakdown (Phase 70-71 additions)
-
-| Cloud | Before P70 | After P70 | After P71 | P71 arith tests | Total |
-|---|---|---|---|---|---|
-| AWS ECS | 4 | 8 | 8 | +3 (`TaskArithmetic`, `TaskArithmeticInvalid`, `TaskArithmeticLogs`) | 11 |
-| AWS Lambda | 13 | 13 | 27 | +4 (`InvokeArithmetic`, `InvokeArithmeticParentheses`, `InvokeArithmeticInvalid`, `InvokeArithmeticLogs`) | 31 |
-| GCP Cloud Run | 8 | 11 | 11 | +3 (`JobArithmetic`, `JobArithmeticInvalid`, `JobArithmeticLogs`) | 14 |
-| GCP Cloud Functions | 12 | 12 | 25 | +4 (`InvokeArithmetic`, `InvokeArithmeticParentheses`, `InvokeArithmeticInvalid`, `InvokeArithmeticLogs`) | 29 |
-| Azure ACA | 7 | 10 | 10 | +3 (`JobArithmetic`, `JobArithmeticInvalid`, `JobArithmeticLogs`) | 13 |
-| Azure Functions | 9 | 9 | 21 | +4 (`InvokeArithmetic`, `InvokeArithmeticParentheses`, `InvokeArithmeticInvalid`, `InvokeArithmeticLogs`) | 25 |
-
-### Cloud CLI Test Breakdown (Phase 71 additions)
-
-| Cloud | Before P71 | After P71 | P71 arith tests | Total |
-|---|---|---|---|---|
-| AWS | 21 | 24 | +2 (`TestECS_CLI_ArithmeticEval`, `TestECS_CLI_ArithmeticInvalid`) | 26 |
-| GCP | 15 | 19 | +2 (`TestCloudRun_CLI_ArithmeticEval`, `TestCloudRun_CLI_ArithmeticInvalid`) | 21 |
-| Azure | 14 | 17 | +2 (`TestContainerApps_CLI_ArithmeticEval`, `TestContainerApps_CLI_ArithmeticInvalid`) | 19 |
 
 ### Core Test Breakdown (255 PASS)
 

@@ -2,11 +2,23 @@
 
 ## Current State
 
-Phases 1-67, 69-72 complete. **637+ tasks done across 72 phases.** Phase 72 (Full-Stack E2E Tests) complete — all 4 milestones done. sim-test-all: 75 PASS. Central test-e2e: 65 PASS.
+Phases 1-67, 69-74 complete. **664 tasks done across 74 phases.** Phase 68 (Multi-Tenant Backend Pools) paused after P68-001.
 
-## Next: Phase 68 — Multi-Tenant Backend Pools (Resume)
+## Next: Phase 75 — Simulator Dashboards (AWS, GCP, Azure)
 
-P68-001 (pool config types/validation/loader) is done. Remaining: P68-002 through P68-010.
+Add dashboards to cloud simulators showing simulated resources. Browser calls simulator's own cloud APIs (same-origin).
+
+**13 tasks** (P75-001 → P75-013): Simulator SPA handler, shared components, AWS/GCP/Azure SPAs with API clients and embed files, tests.
+
+## After Phase 75
+
+| Phase | Description | Depends on |
+|---|---|---|
+| 76 | bleephub Dashboard — GitHub Actions (11 tasks) | 74 |
+| 77 | gitlabhub Dashboard — GitLab CI (10 tasks) | 74 |
+| 78 | Polish, Dark Mode, Cross-Component UX (10 tasks) | 75, 76, 77 |
+
+Phases 75, 76, 77 are independent and can be done in any order after 74.
 
 ## Test Commands Reference
 
@@ -14,43 +26,20 @@ P68-001 (pool config types/validation/loader) is done. Remaining: P68-002 throug
 # Unit + integration
 make test
 
+# UI build + test
+make ui-build    # builds all 10 SPAs + copies dist/
+make ui-test     # runs Vitest (16 tests)
+
+# Per-backend build with UI
+make build-memory-with-ui
+make build-ecs-with-ui
+make build-docker-backend-with-ui
+make build-frontend-with-ui
+
+# Per-backend build without UI (CI mode)
+make build-memory-noui
+make build-ecs-noui
+
 # Lint all 15 modules
 make lint
-
-# Simulator SDK tests (per cloud)
-cd simulators/aws/sdk-tests && GOWORK=off go test -v -count=1
-cd simulators/gcp/sdk-tests && GOWORK=off go test -v -count=1
-cd simulators/azure/sdk-tests && GOWORK=off go test -v -count=1
-
-# Simulator CLI tests (per cloud, requires aws/gcloud/az CLIs)
-cd simulators/aws/cli-tests && GOWORK=off go test -v -count=1
-cd simulators/gcp/cli-tests && GOWORK=off go test -v -count=1
-cd simulators/azure/cli-tests && GOWORK=off go test -v -count=1
-
-# Arithmetic evaluator tests only
-cd simulators/aws/sdk-tests && GOWORK=off go test -v -run Arithmetic -count=1
-cd simulators/gcp/sdk-tests && GOWORK=off go test -v -run Arithmetic -count=1
-cd simulators/azure/sdk-tests && GOWORK=off go test -v -run Arithmetic -count=1
-
-# Shared ProcessRunner tests (per cloud)
-cd simulators/aws/shared && GOWORK=off go test -run TestStartProcess -v
-
-# Simulator-backend integration (all backends)
-make sim-test-all
-
-# E2E GitHub / GitLab
-make e2e-github-memory
-make e2e-gitlab-memory
-
-# Upstream act / gitlab-ci-local
-make upstream-test-act
-make upstream-test-gitlab-ci-local-memory
-
-# bleephub / gitlabhub
-make bleephub-test
-cd bleephub && go test -v ./...
-cd gitlabhub && go test -v ./...
-
-# Terraform integration
-make tf-int-test-all
 ```

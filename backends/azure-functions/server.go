@@ -47,6 +47,8 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		ImageLoad:      s.handleImageLoad,
 	}, logger)
 
+	registerUI(s.BaseServer)
+
 	return s
 }
 

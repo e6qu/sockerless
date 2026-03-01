@@ -13,6 +13,7 @@ type Server struct {
 	docker *dockerclient.Client
 	logger zerolog.Logger
 	mux    *http.ServeMux
+	mgmt   *mgmtState
 }
 
 // NewServer creates a new Docker backend server.
@@ -37,6 +38,8 @@ func NewServer(logger zerolog.Logger, dockerHost string) (*Server, error) {
 		mux:    http.NewServeMux(),
 	}
 	s.registerRoutes()
+	s.registerMgmt()
+	registerUI(s)
 	return s, nil
 }
 

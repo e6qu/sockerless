@@ -73,6 +73,23 @@ coverage.html
 # Node (for upstream gitlab-ci-local tests)
 node_modules/
 
+# UI monorepo
+ui/node_modules/
+ui/packages/*/node_modules/
+ui/packages/*/dist/
+ui/.turbo/
+
+# Embedded UI build artifacts
+backends/memory/dist/
+backends/ecs/dist/
+backends/lambda/dist/
+backends/cloudrun/dist/
+backends/cloudrun-functions/dist/
+backends/aca/dist/
+backends/azure-functions/dist/
+backends/docker/dist/
+frontends/docker/dist/
+
 # Misc
 *.log
 tmp/

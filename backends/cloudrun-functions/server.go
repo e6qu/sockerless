@@ -47,6 +47,8 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		ImageLoad:      s.handleImageLoad,
 	}, logger)
 
+	registerUI(s.BaseServer)
+
 	return s
 }
 

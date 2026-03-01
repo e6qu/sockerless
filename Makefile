@@ -331,3 +331,94 @@ bleephub-gh-test:
 gitlabhub-test:
 	docker build -f gitlabhub/Dockerfile -t sockerless-gitlabhub-test .
 	docker run --rm sockerless-gitlabhub-test
+
+# UI monorepo targets
+.PHONY: ui-install ui-build ui-dev ui-test ui-clean
+.PHONY: build-memory-with-ui build-memory-noui
+.PHONY: build-ecs-with-ui build-ecs-noui build-lambda-with-ui build-lambda-noui
+.PHONY: build-cloudrun-with-ui build-cloudrun-noui build-gcf-with-ui build-gcf-noui
+.PHONY: build-aca-with-ui build-aca-noui build-azf-with-ui build-azf-noui
+.PHONY: build-docker-backend-with-ui build-docker-backend-noui
+.PHONY: build-frontend-with-ui build-frontend-noui
+
+ui-install:
+	cd ui && bun install
+
+ui-build: ui-install
+	cd ui && bunx turbo run build
+	rm -rf backends/memory/dist && cp -r ui/packages/backend-memory/dist backends/memory/dist
+	rm -rf backends/ecs/dist && cp -r ui/packages/backend-ecs/dist backends/ecs/dist
+	rm -rf backends/lambda/dist && cp -r ui/packages/backend-lambda/dist backends/lambda/dist
+	rm -rf backends/cloudrun/dist && cp -r ui/packages/backend-cloudrun/dist backends/cloudrun/dist
+	rm -rf backends/cloudrun-functions/dist && cp -r ui/packages/backend-gcf/dist backends/cloudrun-functions/dist
+	rm -rf backends/aca/dist && cp -r ui/packages/backend-aca/dist backends/aca/dist
+	rm -rf backends/azure-functions/dist && cp -r ui/packages/backend-azf/dist backends/azure-functions/dist
+	rm -rf backends/docker/dist && cp -r ui/packages/backend-docker/dist backends/docker/dist
+	rm -rf frontends/docker/dist && cp -r ui/packages/frontend-docker/dist frontends/docker/dist
+
+ui-dev:
+	cd ui && bunx turbo run dev --filter=@sockerless/ui-backend-memory
+
+ui-test:
+	cd ui && bunx turbo run test
+
+ui-clean:
+	rm -rf ui/node_modules ui/packages/*/node_modules ui/packages/*/dist ui/.turbo
+	rm -rf backends/memory/dist backends/ecs/dist backends/lambda/dist
+	rm -rf backends/cloudrun/dist backends/cloudrun-functions/dist
+	rm -rf backends/aca/dist backends/azure-functions/dist
+	rm -rf backends/docker/dist frontends/docker/dist
+
+build-memory-with-ui: ui-build
+	cd backends/memory && go build -o sockerless-backend-memory ./cmd
+
+build-memory-noui:
+	cd backends/memory && go build -tags noui -o /dev/null ./cmd
+
+build-ecs-with-ui: ui-build
+	cd backends/ecs && go build -o sockerless-backend-ecs ./cmd/sockerless-backend-ecs
+
+build-ecs-noui:
+	cd backends/ecs && go build -tags noui -o /dev/null ./cmd/sockerless-backend-ecs
+
+build-lambda-with-ui: ui-build
+	cd backends/lambda && go build -o sockerless-backend-lambda ./cmd/sockerless-backend-lambda
+
+build-lambda-noui:
+	cd backends/lambda && go build -tags noui -o /dev/null ./cmd/sockerless-backend-lambda
+
+build-cloudrun-with-ui: ui-build
+	cd backends/cloudrun && go build -o sockerless-backend-cloudrun ./cmd/sockerless-backend-cloudrun
+
+build-cloudrun-noui:
+	cd backends/cloudrun && go build -tags noui -o /dev/null ./cmd/sockerless-backend-cloudrun
+
+build-gcf-with-ui: ui-build
+	cd backends/cloudrun-functions && go build -o sockerless-backend-gcf ./cmd/sockerless-backend-gcf
+
+build-gcf-noui:
+	cd backends/cloudrun-functions && go build -tags noui -o /dev/null ./cmd/sockerless-backend-gcf
+
+build-aca-with-ui: ui-build
+	cd backends/aca && go build -o sockerless-backend-aca ./cmd/sockerless-backend-aca
+
+build-aca-noui:
+	cd backends/aca && go build -tags noui -o /dev/null ./cmd/sockerless-backend-aca
+
+build-azf-with-ui: ui-build
+	cd backends/azure-functions && go build -o sockerless-backend-azf ./cmd/sockerless-backend-azf
+
+build-azf-noui:
+	cd backends/azure-functions && go build -tags noui -o /dev/null ./cmd/sockerless-backend-azf
+
+build-docker-backend-with-ui: ui-build
+	cd backends/docker && go build -o sockerless-backend-docker ./cmd/sockerless-backend-docker
+
+build-docker-backend-noui:
+	cd backends/docker && go build -tags noui -o /dev/null ./cmd/sockerless-backend-docker
+
+build-frontend-with-ui: ui-build
+	cd frontends/docker && go build -o sockerless-docker-frontend ./cmd
+
+build-frontend-noui:
+	cd frontends/docker && go build -tags noui -o /dev/null ./cmd
