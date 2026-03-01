@@ -120,8 +120,8 @@ azure/
 ├── insights.go             Application Insights (169 lines)
 ├── dns.go                  Private DNS zones, A records, VNet links (406 lines)
 ├── shared/                 Shared simulator framework
-├── sdk-tests/              SDK integration tests (13 tests)
-├── cli-tests/              CLI integration tests (14 tests)
+├── sdk-tests/              SDK integration tests (31 tests)
+├── cli-tests/              CLI integration tests (17 tests)
 └── terraform-tests/        Terraform apply/destroy tests (Docker-only, TLS)
 ```
 

@@ -70,8 +70,8 @@ gcp/
 ├── serviceusage.go         Service enable/disable (116 lines)
 ├── operations.go           LRO status (49 lines)
 ├── shared/                 Shared simulator framework
-├── sdk-tests/              SDK integration tests (20 tests)
-├── cli-tests/              CLI integration tests (15 tests)
+├── sdk-tests/              SDK integration tests (36 tests)
+├── cli-tests/              CLI integration tests (19 tests)
 └── terraform-tests/        Terraform apply/destroy tests
 ```
 

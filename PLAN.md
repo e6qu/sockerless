@@ -17,7 +17,7 @@
 
 ---
 
-## Completed Phases (1-70)
+## Completed Phases (1-71)
 
 Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per-task logs in `_tasks/done/`.
 

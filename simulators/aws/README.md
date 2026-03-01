@@ -74,8 +74,8 @@ aws/
 ├── efs.go               File systems, mount targets, access points (461 lines)
 ├── lambda.go            Functions, invoke (354 lines)
 ├── shared/              Shared simulator framework
-├── sdk-tests/           SDK integration tests (17 tests)
-├── cli-tests/           CLI integration tests (21 tests)
+├── sdk-tests/           SDK integration tests (35 tests)
+├── cli-tests/           CLI integration tests (24 tests)
 └── terraform-tests/     Terraform apply/destroy tests
 ```
 
