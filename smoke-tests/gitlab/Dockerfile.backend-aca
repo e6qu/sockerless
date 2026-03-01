@@ -12,7 +12,7 @@ COPY agent/ agent/
 COPY sandbox/ sandbox/
 COPY backends/core/ backends/core/
 COPY backends/aca/ backends/aca/
-RUN cd backends/aca && GOWORK=off go mod download && GOWORK=off go build -o /sockerless-backend-aca ./cmd/sockerless-backend-aca
+RUN cd backends/aca && GOWORK=off go mod download && GOWORK=off go build -tags noui -o /sockerless-backend-aca ./cmd/sockerless-backend-aca
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*

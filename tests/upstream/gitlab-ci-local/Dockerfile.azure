@@ -15,16 +15,16 @@ COPY backends/core/ backends/core/
 # --- Build Azure backends (aca + azf) ---
 COPY backends/aca/ backends/aca/
 RUN cd backends/aca && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-backend-aca ./cmd/sockerless-backend-aca
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-aca ./cmd/sockerless-backend-aca
 
 COPY backends/azure-functions/ backends/azure-functions/
 RUN cd backends/azure-functions && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-backend-azf ./cmd/sockerless-backend-azf
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-azf ./cmd/sockerless-backend-azf
 
 # --- Build frontend ---
 COPY frontends/docker/ frontends/docker/
 RUN cd frontends/docker && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-frontend-docker ./cmd
+    GOWORK=off go build -tags noui -o /out/sockerless-frontend-docker ./cmd
 
 # --- Build agent ---
 RUN cd agent && GOWORK=off go mod download && \

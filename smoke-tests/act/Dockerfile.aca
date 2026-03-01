@@ -18,8 +18,8 @@ COPY backends/core/ backends/core/
 COPY backends/aca/ backends/aca/
 COPY frontends/docker/ frontends/docker/
 
-RUN cd backends/aca && GOWORK=off go mod download && GOWORK=off go build -o /usr/local/bin/sockerless-backend-aca ./cmd/sockerless-backend-aca
-RUN cd frontends/docker && GOWORK=off go mod download && GOWORK=off go build -o /usr/local/bin/sockerless-frontend-docker ./cmd
+RUN cd backends/aca && GOWORK=off go mod download && GOWORK=off go build -tags noui -o /usr/local/bin/sockerless-backend-aca ./cmd/sockerless-backend-aca
+RUN cd frontends/docker && GOWORK=off go mod download && GOWORK=off go build -tags noui -o /usr/local/bin/sockerless-frontend-docker ./cmd
 
 # Copy test files
 COPY smoke-tests/act/workflows/ /test/workflows/

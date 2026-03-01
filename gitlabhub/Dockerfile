@@ -18,11 +18,11 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /usr/local/bin/gitlabhub ./cmd
 
 # Build memory backend
 WORKDIR /src/backends/memory
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /usr/local/bin/sockerless-backend-memory ./cmd
+RUN CGO_ENABLED=0 go build -tags noui -ldflags="-s -w" -o /usr/local/bin/sockerless-backend-memory ./cmd
 
 # Build Docker frontend
 WORKDIR /src/frontends/docker
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /usr/local/bin/sockerless-frontend-docker ./cmd
+RUN CGO_ENABLED=0 go build -tags noui -ldflags="-s -w" -o /usr/local/bin/sockerless-frontend-docker ./cmd
 
 # Runtime image with gitlab-runner
 FROM gitlab/gitlab-runner:latest

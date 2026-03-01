@@ -33,7 +33,7 @@ func TestReverseAgentCallback(t *testing.T) {
 
 	// Build memory backend
 	memDir := findModuleDir("backends/memory")
-	buildMem := exec.Command("go", "build", "-o", "sockerless-backend-reverse-test", "./cmd/")
+	buildMem := exec.Command("go", "build", "-tags", "noui", "-o", "sockerless-backend-reverse-test", "./cmd/")
 	buildMem.Dir = memDir
 	buildMem.Stdout = os.Stderr
 	buildMem.Stderr = os.Stderr

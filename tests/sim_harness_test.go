@@ -194,7 +194,7 @@ func buildBackendBinary(info simBackendInfo) (string, error) {
 	binaryPath := backendDir + "/" + info.BinaryName
 
 	fmt.Printf("[sim] Building %s...\n", info.BinaryName)
-	build := exec.Command("go", "build", "-o", info.BinaryName, info.CmdDir)
+	build := exec.Command("go", "build", "-tags", "noui", "-o", info.BinaryName, info.CmdDir)
 	build.Dir = backendDir
 	build.Stdout = os.Stderr
 	build.Stderr = os.Stderr

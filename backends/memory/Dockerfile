@@ -7,7 +7,7 @@ COPY backends/core/ ./backends/core/
 COPY backends/memory/ ./backends/memory/
 WORKDIR /src/backends/memory
 ENV GOWORK=off
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /sockerless-backend-memory ./cmd
+RUN CGO_ENABLED=0 go build -tags noui -ldflags="-s -w" -o /sockerless-backend-memory ./cmd
 
 FROM alpine:3.20
 COPY --from=builder /sockerless-backend-memory /usr/local/bin/sockerless-backend-memory

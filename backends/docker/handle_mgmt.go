@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"runtime"
-	"sync/atomic"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -13,8 +12,7 @@ import (
 
 // mgmtState tracks management metrics for the Docker backend.
 type mgmtState struct {
-	startedAt    time.Time
-	requestCount atomic.Int64
+	startedAt time.Time
 }
 
 // registerMgmt registers management API endpoints on the server's mux.

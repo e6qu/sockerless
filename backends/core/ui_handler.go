@@ -26,7 +26,7 @@ func SPAHandler(fsys fs.FS, pathPrefix string) http.Handler {
 		f, err := fsys.Open(reqPath)
 		if err == nil {
 			stat, statErr := f.Stat()
-			f.Close()
+			_ = f.Close()
 			if statErr == nil && !stat.IsDir() {
 				// File exists — serve it directly
 				stripped.ServeHTTP(w, r)
@@ -40,7 +40,7 @@ func SPAHandler(fsys fs.FS, pathPrefix string) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		defer indexFile.Close()
+		defer func() { _ = indexFile.Close() }()
 
 		stat, err := indexFile.Stat()
 		if err != nil {

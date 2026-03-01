@@ -33,7 +33,7 @@ test-core:
 
 test-frontend:
 	@echo "=== test frontends/docker ==="
-	cd frontends/docker && go test -v -timeout 1m ./...
+	cd frontends/docker && go test -tags noui -v -timeout 1m ./...
 
 test-bleephub:
 	@echo "=== test bleephub ==="
@@ -55,15 +55,21 @@ test-unit: test-agent test-sandbox test-core test-frontend test-bleephub test-gi
 test: test-unit test-e2e
 
 # Lint all Go modules (golangci-lint required)
-MODULES = api agent sandbox frontends/docker backends/core backends/memory \
-  backends/docker backends/ecs backends/lambda backends/cloudrun \
-  backends/cloudrun-functions backends/aca backends/azure-functions \
-  bleephub gitlabhub
+# Modules without UI embed
+MODULES = api agent sandbox backends/core bleephub gitlabhub
+# Modules with UI embed (require --build-tags noui when dist/ is absent)
+MODULES_UI = frontends/docker backends/memory backends/docker \
+  backends/ecs backends/lambda backends/cloudrun \
+  backends/cloudrun-functions backends/aca backends/azure-functions
 
 lint:
 	@for mod in $(MODULES); do \
 	    echo "=== lint $$mod ===" && \
 	    cd $(CURDIR)/$$mod && golangci-lint run ./... || exit 1; \
+	done
+	@for mod in $(MODULES_UI); do \
+	    echo "=== lint $$mod ===" && \
+	    cd $(CURDIR)/$$mod && golangci-lint run --build-tags noui ./... || exit 1; \
 	done
 
 # Simulator integration tests — individual backends (per-module)
@@ -412,10 +418,10 @@ build-azf-noui:
 	cd backends/azure-functions && go build -tags noui -o /dev/null ./cmd/sockerless-backend-azf
 
 build-docker-backend-with-ui: ui-build
-	cd backends/docker && go build -o sockerless-backend-docker ./cmd/sockerless-backend-docker
+	cd backends/docker && go build -o sockerless-backend-docker ./cmd
 
 build-docker-backend-noui:
-	cd backends/docker && go build -tags noui -o /dev/null ./cmd/sockerless-backend-docker
+	cd backends/docker && go build -tags noui -o /dev/null ./cmd
 
 build-frontend-with-ui: ui-build
 	cd frontends/docker && go build -o sockerless-docker-frontend ./cmd

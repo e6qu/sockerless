@@ -23,36 +23,36 @@ COPY backends/core/ backends/core/
 # --- Build all 7 backends ---
 COPY backends/memory/ backends/memory/
 RUN cd backends/memory && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-backend-memory ./cmd
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-memory ./cmd
 
 COPY backends/ecs/ backends/ecs/
 RUN cd backends/ecs && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-backend-ecs ./cmd/sockerless-backend-ecs
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-ecs ./cmd/sockerless-backend-ecs
 
 COPY backends/lambda/ backends/lambda/
 RUN cd backends/lambda && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-backend-lambda ./cmd/sockerless-backend-lambda
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-lambda ./cmd/sockerless-backend-lambda
 
 COPY backends/cloudrun/ backends/cloudrun/
 RUN cd backends/cloudrun && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-backend-cloudrun ./cmd/sockerless-backend-cloudrun
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-cloudrun ./cmd/sockerless-backend-cloudrun
 
 COPY backends/cloudrun-functions/ backends/cloudrun-functions/
 RUN cd backends/cloudrun-functions && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-backend-gcf ./cmd/sockerless-backend-gcf
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-gcf ./cmd/sockerless-backend-gcf
 
 COPY backends/aca/ backends/aca/
 RUN cd backends/aca && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-backend-aca ./cmd/sockerless-backend-aca
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-aca ./cmd/sockerless-backend-aca
 
 COPY backends/azure-functions/ backends/azure-functions/
 RUN cd backends/azure-functions && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-backend-azf ./cmd/sockerless-backend-azf
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-azf ./cmd/sockerless-backend-azf
 
 # --- Build frontend ---
 COPY frontends/docker/ frontends/docker/
 RUN cd frontends/docker && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-frontend-docker ./cmd
+    GOWORK=off go build -tags noui -o /out/sockerless-frontend-docker ./cmd
 
 # --- Build agent ---
 RUN cd agent && GOWORK=off go mod download && \

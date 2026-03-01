@@ -13,8 +13,8 @@ COPY backends/core/ backends/core/
 COPY backends/memory/ backends/memory/
 COPY frontends/docker/ frontends/docker/
 
-RUN cd backends/memory && GOWORK=off go mod download && GOWORK=off go build -o /usr/local/bin/sockerless-backend-memory ./cmd
-RUN cd frontends/docker && GOWORK=off go mod download && GOWORK=off go build -o /usr/local/bin/sockerless-frontend-docker ./cmd
+RUN cd backends/memory && GOWORK=off go mod download && GOWORK=off go build -tags noui -o /usr/local/bin/sockerless-backend-memory ./cmd
+RUN cd frontends/docker && GOWORK=off go mod download && GOWORK=off go build -tags noui -o /usr/local/bin/sockerless-frontend-docker ./cmd
 
 # Copy test files
 COPY smoke-tests/act/workflows/ /test/workflows/
