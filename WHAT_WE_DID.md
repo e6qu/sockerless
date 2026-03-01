@@ -179,6 +179,18 @@ Added Quick Start sections to each simulator's README with CLI commands + expect
 
 **Tests**: SDK: AWS 21→35, GCP 23→36, Azure 16→31 | CLI: AWS 21→24, GCP 15→19, Azure 14→17
 
+### Milestone D: Non-Trivial Arithmetic Evaluator Tests (P71-016 → P71-019)
+
+Built a standalone recursive-descent arithmetic expression evaluator (`simulators/testdata/eval-arithmetic/main.go`, ~180 lines) that parses and evaluates expressions with correct operator precedence, parentheses, unary minus, and division-by-zero checking. Logs parsing details (expression, tokens, result) to stderr; prints result to stdout; exits 1 with `ERROR:` on invalid input.
+
+All 6 test suites (`{aws,gcp,azure}/{sdk,cli}-tests`) build the evaluator binary in TestMain alongside the simulator binary.
+
+**SDK tests** (21 new): 7 per cloud — 4 FaaS (Lambda/CloudFunctions/AzureFunctions: basic `3+4*2→11`, parentheses `(3+4)*2→14`, invalid `3+→ERROR`, logs+complex `((2+3)*4-1)/3→6.333`) + 3 container (ECS/CloudRunJobs/ContainerApps: `(10+5)*2→30`, invalid→exit 1, division `10/3→3.333` with log verification).
+
+**CLI tests** (6 new): 2 per cloud — container service tests (`(3+4)*2→14` success, `3+`→exit 1 failure).
+
+**Tests**: SDK: AWS 35→42, GCP 36→43, Azure 31→38 | CLI: AWS 24→26, GCP 19→21, Azure 14→19
+
 ## Phase 68 — Multi-Tenant Backend Pools (In Progress)
 
 ### P68-001: Pool Configuration ✅
@@ -192,6 +204,6 @@ Added `PoolConfig` and `PoolsConfig` types to `backends/core/` for defining name
 - **18 driver interface methods** across 5 driver types
 - **7 external test consumers**: `act`, `gitlab-runner`, `gitlab-ci-local`, upstream act, `actions/runner`, `gh` CLI, gitlabhub gitlab-runner
 - **Core tests**: 255 PASS | **Frontend tests**: 7 PASS | **bleephub tests**: 298 PASS | **gitlabhub tests**: 129 PASS | **Shared ProcessRunner**: 15 PASS
-- **Cloud SDK tests**: AWS 35, GCP 36, Azure 31 | **Cloud CLI tests**: AWS 24, GCP 19, Azure 17
+- **Cloud SDK tests**: AWS 42, GCP 43, Azure 38 | **Cloud CLI tests**: AWS 26, GCP 21, Azure 19
 - **3 cloud simulators** validated against SDKs, CLIs, and Terraform — now with real process execution for all services (container + FaaS)
 - **8 backends** sharing a common driver architecture

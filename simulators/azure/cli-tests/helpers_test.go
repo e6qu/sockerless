@@ -15,10 +15,11 @@ import (
 )
 
 var (
-	baseURL    string
-	simCmd     *exec.Cmd
-	binaryPath string
-	tmpDir     string
+	baseURL        string
+	simCmd         *exec.Cmd
+	binaryPath     string
+	evalBinaryPath string
+	tmpDir         string
 
 	subscriptionID = "00000000-0000-0000-0000-000000000001"
 	resourceGroup  = "cli-test-rg"
@@ -39,6 +40,16 @@ func TestMain(m *testing.M) {
 	build.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := build.CombinedOutput(); err != nil {
 		log.Fatalf("Failed to build simulator: %v\n%s", err, out)
+	}
+
+	// Build eval-arithmetic binary
+	evalDir, _ := filepath.Abs("../../testdata/eval-arithmetic")
+	evalBinaryPath = filepath.Join(evalDir, "eval-arithmetic")
+	evalBuild := exec.Command("go", "build", "-o", evalBinaryPath, ".")
+	evalBuild.Dir = evalDir
+	evalBuild.Env = append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off")
+	if out, err := evalBuild.CombinedOutput(); err != nil {
+		log.Fatalf("Failed to build eval-arithmetic: %v\n%s", err, out)
 	}
 
 	// Find free port

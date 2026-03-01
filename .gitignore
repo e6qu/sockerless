@@ -16,6 +16,9 @@ __debug_bin*
 **/simulator-gcp
 **/simulator-azure
 
+# Test program binaries
+simulators/testdata/eval-arithmetic/eval-arithmetic
+
 # Backend/agent built binaries (match only actual binary files, not cmd/ source dirs)
 backends/*/sockerless-backend-*
 agent/sockerless-agent

@@ -17,10 +17,11 @@ import (
 )
 
 var (
-	baseURL    string
-	simCmd     *exec.Cmd
-	binaryPath string
-	ctx        = context.Background()
+	baseURL        string
+	simCmd         *exec.Cmd
+	binaryPath     string
+	evalBinaryPath string
+	ctx            = context.Background()
 )
 
 func sdkConfig() aws.Config {
@@ -39,6 +40,16 @@ func TestMain(m *testing.M) {
 	build.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := build.CombinedOutput(); err != nil {
 		log.Fatalf("Failed to build simulator: %v\n%s", err, out)
+	}
+
+	// Build eval-arithmetic binary
+	evalDir, _ := filepath.Abs("../../testdata/eval-arithmetic")
+	evalBinaryPath = filepath.Join(evalDir, "eval-arithmetic")
+	evalBuild := exec.Command("go", "build", "-o", evalBinaryPath, ".")
+	evalBuild.Dir = evalDir
+	evalBuild.Env = append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off")
+	if out, err := evalBuild.CombinedOutput(); err != nil {
+		log.Fatalf("Failed to build eval-arithmetic: %v\n%s", err, out)
 	}
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
