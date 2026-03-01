@@ -1,6 +1,6 @@
 # Sockerless — Current Status
 
-**Phase 74 (All Backend Dashboards) complete. 664 tasks done across 74 phases.**
+**Phase 75 (Simulator Dashboards) complete. 677 tasks done across 75 phases.**
 
 ## Test Results (Latest)
 
@@ -10,7 +10,7 @@
 |---|---|
 | **Core unit tests** | 255 PASS (`cd backends/core && go test -race -v ./...`) — includes 3 OTel + 14 network driver/IPAM tests |
 | **Frontend tests** | 4 PASS (TLS) + 3 PASS (mux) |
-| **UI tests (Vitest)** | 16 PASS (6 API client + 3 hooks + 3 DataTable + 2 BackendApp + 2 BackendInfoCard) |
+| **UI tests (Vitest)** | 18 PASS (6 API client + 3 hooks + 3 DataTable + 2 BackendApp + 2 BackendInfoCard + 2 SimulatorApp) |
 | **SPAHandler tests** | 5 PASS (Go, in core) |
 | **bleephub** | 298 unit + 9 integration + 1 gh CLI (35 assertions) — includes 5 OTel tests |
 | **gitlabhub** | 129 unit + 17 integration |
@@ -28,7 +28,7 @@
 | Terraform integration | 75 PASS (ECS 21, Lambda 5, CR 13, GCF 7, ACA 18, AZF 11) | `make tf-int-test-all` |
 | Cloud SDK tests | AWS 42, GCP 43, Azure 38 | `make docker-test` per cloud |
 | Cloud CLI tests | AWS 26, GCP 21, Azure 19 | `make docker-test` per cloud |
-| Lint (15 modules) | 0 issues | `make lint` |
+| Lint (18 modules) | 0 issues | `make lint` |
 
 ### Core Test Breakdown (255 PASS)
 

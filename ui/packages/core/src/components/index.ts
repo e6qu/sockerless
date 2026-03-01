@@ -14,3 +14,5 @@ export { BackendApp } from "./BackendApp.js";
 export type { BackendAppProps } from "./BackendApp.js";
 export { BackendInfoCard } from "./BackendInfoCard.js";
 export type { BackendInfoCardProps } from "./BackendInfoCard.js";
+export { SimulatorApp } from "./SimulatorApp.js";
+export type { SimulatorAppProps } from "./SimulatorApp.js";

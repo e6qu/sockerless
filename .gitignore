@@ -12,9 +12,9 @@
 __debug_bin*
 
 # Simulator binaries (built by `go build` in simulators/)
-**/simulator-aws
-**/simulator-gcp
-**/simulator-azure
+simulators/aws/simulator-aws
+simulators/gcp/simulator-gcp
+simulators/azure/simulator-azure
 
 # Test program binaries
 simulators/testdata/eval-arithmetic/eval-arithmetic
@@ -89,6 +89,9 @@ backends/aca/dist/
 backends/azure-functions/dist/
 backends/docker/dist/
 frontends/docker/dist/
+simulators/aws/dist/
+simulators/gcp/dist/
+simulators/azure/dist/
 
 # Misc
 *.log

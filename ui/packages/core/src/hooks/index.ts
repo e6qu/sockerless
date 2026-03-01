@@ -9,3 +9,5 @@ export {
   useCheck,
   useInfo,
 } from "./queries.js";
+export { useSimHealth, useSimSummary } from "./simulator-queries.js";
+export type { SimHealth, SimSummary } from "./simulator-queries.js";

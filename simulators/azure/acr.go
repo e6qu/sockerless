@@ -56,8 +56,12 @@ type BlobUpload struct {
 	Data []byte `json:"data"`
 }
 
+// Package-level store for dashboard access.
+var acrRegistries *sim.StateStore[Registry]
+
 func registerACR(srv *sim.Server) {
 	registries := sim.NewStateStore[Registry]()
+	acrRegistries = registries
 	// manifests stores manifests keyed by "repo:reference" (tag or digest)
 	manifests := sim.NewStateStore[OCIManifest]()
 	// blobs stores blobs keyed by "repo@digest"

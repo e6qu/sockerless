@@ -75,8 +75,12 @@ type FunctionEnvelopeProperties struct {
 	IsDisabled     bool           `json:"isDisabled"`
 }
 
+// Package-level store for dashboard access.
+var azfSites *sim.StateStore[Site]
+
 func registerAzureFunctions(srv *sim.Server) {
 	sites := sim.NewStateStore[Site]()
+	azfSites = sites
 	functionConfigs := sim.NewStateStore[FunctionEnvelope]()
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Web"

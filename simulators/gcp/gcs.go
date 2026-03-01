@@ -35,8 +35,12 @@ type GCSObject struct {
 	data        []byte // unexported: raw object data
 }
 
+// Package-level store for dashboard access.
+var gcsBuckets *sim.StateStore[Bucket]
+
 func registerGCS(srv *sim.Server) {
 	buckets := sim.NewStateStore[Bucket]()
+	gcsBuckets = buckets
 	objects := sim.NewStateStore[GCSObject]()
 
 	// Create bucket

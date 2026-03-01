@@ -118,14 +118,29 @@ Rolled out UI dashboards to all 7 remaining backends + Docker frontend (9 new SP
 
 **Tests**: 16 Vitest PASS (+4: 2 BackendApp + 2 BackendInfoCard) + 5 Go SPAHandler PASS
 
+## Phase 75 — Simulator Dashboards (AWS, GCP, Azure)
+
+Added web dashboards to all 3 cloud simulators. Unlike backend dashboards (which share `BackendApp` + management endpoints), simulator dashboards are cloud-specific — each shows its own resource types via custom pages and `/sim/v1/` JSON summary endpoints.
+
+- **SimulatorApp component**: New shared component in `@sockerless/ui-core` — like BackendApp but accepts custom `navItems` + `children` routes. New `useSimHealth()` and `useSimSummary()` hooks
+- **SPAHandler in simulator shared libs**: Copied `spaHandler()` + `RegisterUI()` to each simulator's `shared/server.go` (avoids cross-module dependency on backend-core)
+- **AWS SPA** (6 pages): Overview, ECS Tasks, Lambda Functions, ECR Repos, S3 Buckets, CloudWatch Log Groups
+- **GCP SPA** (6 pages): Overview, Cloud Run Jobs, Cloud Functions, Artifact Registry, GCS Buckets, Cloud Logging
+- **Azure SPA** (6 pages): Overview, Container Apps Jobs, Azure Functions, ACR Registries, Storage Accounts, Monitor Logs
+- **Dashboard endpoints**: Each simulator gets `dashboard.go` with 6 JSON endpoints under `/sim/v1/` — avoids parsing complex cloud-native response formats in the browser
+- **Store promotions**: GCP/Azure local stores promoted to package-level globals for dashboard access (AWS stores were already global)
+- **Build integration**: Makefile `ui-build` copies 3 new dist/ dirs, `MODULES_SIM_UI` lint list with `GOWORK=off`, CI `build-check` uses `noui` for simulators
+
+**Tests**: 18 Vitest PASS (+2 SimulatorApp) + 13 UI packages build + 3 simulators compile with noui
+
 ## Project Stats
 
-- **74 phases** (1-67, 69-74), 664 tasks completed
+- **75 phases** (1-67, 69-75), 677 tasks completed
 - **16 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, tests
 - **21 Go-implemented builtins** in WASM sandbox
 - **18 driver interface methods** across 5 driver types
 - **7 external test consumers**: `act`, `gitlab-runner`, `gitlab-ci-local`, upstream act, `actions/runner`, `gh` CLI, gitlabhub gitlab-runner
-- **Core tests**: 255 PASS (+5 SPAHandler) | **Frontend tests**: 7 PASS | **UI tests**: 16 PASS (Vitest) | **bleephub tests**: 298 PASS | **gitlabhub tests**: 129 PASS | **Shared ProcessRunner**: 15 PASS
+- **Core tests**: 255 PASS (+5 SPAHandler) | **Frontend tests**: 7 PASS | **UI tests**: 18 PASS (Vitest) | **bleephub tests**: 298 PASS | **gitlabhub tests**: 129 PASS | **Shared ProcessRunner**: 15 PASS
 - **Cloud SDK tests**: AWS 42, GCP 43, Azure 38 | **Cloud CLI tests**: AWS 26, GCP 21, Azure 19
 - **3 cloud simulators** validated against SDKs, CLIs, and Terraform — now with real process execution for all services (container + FaaS)
 - **8 backends** sharing a common driver architecture

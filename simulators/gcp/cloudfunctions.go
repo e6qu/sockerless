@@ -47,8 +47,12 @@ type ServiceConfig struct {
 	SimCommand           []string          `json:"simCommand,omitempty"` // Simulator-only: command to execute on invoke
 }
 
+// Package-level store for dashboard access.
+var gcfFunctions *sim.StateStore[Function]
+
 func registerCloudFunctions(srv *sim.Server) {
 	functions := sim.NewStateStore[Function]()
+	gcfFunctions = functions
 
 	// Create function
 	srv.HandleFunc("POST /v2/projects/{project}/locations/{location}/functions", func(w http.ResponseWriter, r *http.Request) {
