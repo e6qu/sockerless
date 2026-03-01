@@ -1,6 +1,7 @@
 package aws_sdk_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -87,6 +88,145 @@ func TestLambda_InvokeCreatesLogStream(t *testing.T) {
 	cw.DeleteLogGroup(ctx, &cloudwatchlogs.DeleteLogGroupInput{
 		LogGroupName: aws.String(logGroupName),
 	})
+}
+
+func TestLambda_InvokeExecutesCommand(t *testing.T) {
+	lc := lambdaClient()
+
+	fnName := "exec-test-fn"
+
+	// Create an Image-type Lambda function with a command
+	_, err := lc.CreateFunction(ctx, &lambda.CreateFunctionInput{
+		FunctionName: aws.String(fnName),
+		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
+		PackageType:  lambdatypes.PackageTypeImage,
+		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String("test:latest")},
+		ImageConfig: &lambdatypes.ImageConfig{
+			Command: []string{"echo", "hello"},
+		},
+	})
+	require.NoError(t, err)
+	defer lc.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(fnName)})
+
+	// Invoke the function
+	invokeOut, err := lc.Invoke(ctx, &lambda.InvokeInput{
+		FunctionName: aws.String(fnName),
+	})
+	require.NoError(t, err)
+
+	// Response body should contain "hello"
+	assert.Contains(t, string(invokeOut.Payload), "hello")
+}
+
+func TestLambda_InvokeNonZeroExit(t *testing.T) {
+	lc := lambdaClient()
+	cw := cwLogsClient()
+
+	fnName := "exec-fail-fn"
+
+	_, err := lc.CreateFunction(ctx, &lambda.CreateFunctionInput{
+		FunctionName: aws.String(fnName),
+		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
+		PackageType:  lambdatypes.PackageTypeImage,
+		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String("test:latest")},
+		ImageConfig: &lambdatypes.ImageConfig{
+			Command: []string{"sh", "-c", "exit 1"},
+		},
+	})
+	require.NoError(t, err)
+	defer lc.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(fnName)})
+
+	// Invoke the function
+	_, err = lc.Invoke(ctx, &lambda.InvokeInput{
+		FunctionName: aws.String(fnName),
+	})
+	require.NoError(t, err)
+
+	// Verify CloudWatch logs contain error
+	logGroupName := "/aws/lambda/" + fnName
+	events, err := cw.FilterLogEvents(ctx, &cloudwatchlogs.FilterLogEventsInput{
+		LogGroupName: aws.String(logGroupName),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, events.Events, "expected log events for failed invocation")
+
+	var messages []string
+	for _, e := range events.Events {
+		messages = append(messages, *e.Message)
+	}
+	// Should have ERROR entry about exit code
+	found := false
+	for _, m := range messages {
+		if strings.Contains(m, "ERROR") && strings.Contains(m, "exit") {
+			found = true
+		}
+	}
+	assert.True(t, found, "expected ERROR log entry about non-zero exit, got: %v", messages)
+
+	// Cleanup
+	cw.DeleteLogGroup(ctx, &cloudwatchlogs.DeleteLogGroupInput{LogGroupName: aws.String(logGroupName)})
+}
+
+func TestLambda_InvokeLogsToCloudWatch(t *testing.T) {
+	lc := lambdaClient()
+	cw := cwLogsClient()
+
+	fnName := "exec-logs-fn"
+
+	_, err := lc.CreateFunction(ctx, &lambda.CreateFunctionInput{
+		FunctionName: aws.String(fnName),
+		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
+		PackageType:  lambdatypes.PackageTypeImage,
+		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String("test:latest")},
+		ImageConfig: &lambdatypes.ImageConfig{
+			Command: []string{"echo", "real-lambda-output"},
+		},
+	})
+	require.NoError(t, err)
+	defer lc.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(fnName)})
+
+	// Invoke the function
+	_, err = lc.Invoke(ctx, &lambda.InvokeInput{
+		FunctionName: aws.String(fnName),
+	})
+	require.NoError(t, err)
+
+	// Verify CloudWatch logs contain the real output
+	logGroupName := "/aws/lambda/" + fnName
+	events, err := cw.FilterLogEvents(ctx, &cloudwatchlogs.FilterLogEventsInput{
+		LogGroupName: aws.String(logGroupName),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, events.Events, "expected log events")
+
+	var messages []string
+	for _, e := range events.Events {
+		messages = append(messages, *e.Message)
+	}
+
+	// Should have START, real output, END, REPORT
+	assert.Contains(t, messages, "real-lambda-output", "process stdout should appear in CloudWatch logs")
+
+	hasStart := false
+	hasEnd := false
+	hasReport := false
+	for _, m := range messages {
+		if strings.Contains(m, "START RequestId:") {
+			hasStart = true
+		}
+		if strings.Contains(m, "END RequestId:") {
+			hasEnd = true
+		}
+		if strings.Contains(m, "REPORT RequestId:") {
+			hasReport = true
+		}
+	}
+	assert.True(t, hasStart, "should have START log entry")
+	assert.True(t, hasEnd, "should have END log entry")
+	assert.True(t, hasReport, "should have REPORT log entry")
+
+	// Cleanup
+	cw.DeleteLogGroup(ctx, &cloudwatchlogs.DeleteLogGroupInput{LogGroupName: aws.String(logGroupName)})
 }
 
 func TestLambda_MultipleInvokesCreateMultipleStreams(t *testing.T) {

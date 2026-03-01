@@ -57,6 +57,36 @@ func TestFunctionApp_CreateAndShow(t *testing.T) {
 	runCLI(t, azRest("DELETE", planURL, ""))
 }
 
+func TestFunctionApp_CLI_InvokeAndCheckLogs(t *testing.T) {
+	// Create function app
+	url := funcURL("sites/cli-invoke-funcapp")
+	body := `{
+		"location": "eastus",
+		"kind": "functionapp",
+		"properties": {
+			"serverFarmId": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/cli-test-rg/providers/Microsoft.Web/serverfarms/invoke-plan",
+			"siteConfig": {}
+		}
+	}`
+	runCLI(t, azRest("PUT", url, body))
+
+	// Invoke function via HTTP POST to /api/function
+	// We need to use az rest to the simulator's baseURL
+	invokeURL := baseURL + "/api/function"
+	runCLI(t, azRest("POST", invokeURL, "{}"))
+
+	// Query AppTraces for the function app
+	queryURL := baseURL + "/v1/workspaces/default/query"
+	kqlBody := `{"query": "AppTraces | where AppRoleName == \"cli-invoke-funcapp\""}`
+	out := runCLI(t, azRest("POST", queryURL, kqlBody))
+
+	// Verify "Function invoked" appears in logs
+	assert.Contains(t, out, "Function invoked", "expected invocation log entry in AppTraces")
+
+	// Cleanup
+	runCLI(t, azRest("DELETE", url, ""))
+}
+
 func TestFunctionApp_Delete(t *testing.T) {
 	url := funcURL("sites/delete-test-funcapp")
 	runCLI(t, azRest("PUT", url, `{"location":"eastus","properties":{}}`))

@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -154,6 +155,65 @@ func TestLambda_UpdateFunctionConfiguration(t *testing.T) {
 
 	// Cleanup
 	runCLI(t, awsCLI("lambda", "delete-function", "--function-name", "update-test-func"))
+}
+
+func TestLambda_CLI_InvokeAndCheckLogs(t *testing.T) {
+	zipPath := createDummyZip(t)
+
+	fnName := "cli-log-invoke-func"
+
+	runCLI(t, awsCLI("lambda", "create-function",
+		"--function-name", fnName,
+		"--runtime", "nodejs18.x",
+		"--role", "arn:aws:iam::123456789012:role/test-role",
+		"--handler", "index.handler",
+		"--zip-file", "fileb://"+zipPath,
+	))
+
+	// Invoke the function
+	outFile := filepath.Join(tmpDir, "cli-log-invoke-output.json")
+	runCLI(t, awsCLI("lambda", "invoke",
+		"--function-name", fnName,
+		outFile,
+		"--output", "json",
+	))
+
+	// Query CloudWatch logs for this function
+	logGroupName := "/aws/lambda/" + fnName
+	out := runCLI(t, awsCLI("logs", "filter-log-events",
+		"--log-group-name", logGroupName,
+		"--output", "json",
+	))
+
+	var logResult struct {
+		Events []struct {
+			Message string `json:"message"`
+		} `json:"events"`
+	}
+	parseJSON(t, out, &logResult)
+	require.NotEmpty(t, logResult.Events, "expected log events for Lambda invocation")
+
+	// Verify START/END/REPORT log entries
+	var messages []string
+	for _, e := range logResult.Events {
+		messages = append(messages, e.Message)
+	}
+
+	hasStart := false
+	hasEnd := false
+	for _, m := range messages {
+		if strings.Contains(m, "START RequestId:") {
+			hasStart = true
+		}
+		if strings.Contains(m, "END RequestId:") {
+			hasEnd = true
+		}
+	}
+	assert.True(t, hasStart, "expected START log entry, got: %v", messages)
+	assert.True(t, hasEnd, "expected END log entry, got: %v", messages)
+
+	// Cleanup
+	runCLI(t, awsCLI("lambda", "delete-function", "--function-name", fnName))
 }
 
 func TestLambda_DeleteFunction(t *testing.T) {

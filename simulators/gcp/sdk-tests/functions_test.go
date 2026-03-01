@@ -69,6 +69,148 @@ func TestCloudFunctions_InvokeInjectsLogEntries(t *testing.T) {
 	assert.Equal(t, "Function invoked", messages[0])
 }
 
+func TestCloudFunctions_InvokeExecutesCommand(t *testing.T) {
+	// Create a function with SimCommand
+	fn := map[string]any{
+		"buildConfig": map[string]any{
+			"runtime":    "go121",
+			"entryPoint": "Handler",
+		},
+		"serviceConfig": map[string]any{
+			"simCommand": []string{"echo", "hello-from-cf"},
+		},
+	}
+	body, _ := json.Marshal(fn)
+	createReq, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/v2/projects/test-project/locations/us-central1/functions?functionId=exec-test-fn",
+		strings.NewReader(string(body)))
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp, err := http.DefaultClient.Do(createReq)
+	require.NoError(t, err)
+	createResp.Body.Close()
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+
+	// Invoke the function
+	invokeReq, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/v2-functions-invoke/exec-test-fn",
+		strings.NewReader("{}"))
+	invokeReq.Header.Set("Content-Type", "application/json")
+	invokeResp, err := http.DefaultClient.Do(invokeReq)
+	require.NoError(t, err)
+	defer invokeResp.Body.Close()
+	require.Equal(t, http.StatusOK, invokeResp.StatusCode)
+
+	respBody, _ := io.ReadAll(invokeResp.Body)
+	assert.Contains(t, string(respBody), "hello-from-cf")
+}
+
+func TestCloudFunctions_InvokeNonZeroExit(t *testing.T) {
+	fn := map[string]any{
+		"buildConfig": map[string]any{
+			"runtime":    "go121",
+			"entryPoint": "Handler",
+		},
+		"serviceConfig": map[string]any{
+			"simCommand": []string{"sh", "-c", "exit 1"},
+		},
+	}
+	body, _ := json.Marshal(fn)
+	createReq, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/v2/projects/test-project/locations/us-central1/functions?functionId=exec-fail-fn",
+		strings.NewReader(string(body)))
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp, err := http.DefaultClient.Do(createReq)
+	require.NoError(t, err)
+	createResp.Body.Close()
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+
+	// Invoke
+	invokeReq, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/v2-functions-invoke/exec-fail-fn",
+		strings.NewReader("{}"))
+	invokeReq.Header.Set("Content-Type", "application/json")
+	invokeResp, err := http.DefaultClient.Do(invokeReq)
+	require.NoError(t, err)
+	invokeResp.Body.Close()
+	require.Equal(t, http.StatusOK, invokeResp.StatusCode)
+
+	// Verify error log entry was injected
+	client := logadminClient(t)
+	filter := `resource.type="cloud_run_revision" AND resource.labels.service_name="exec-fail-fn"`
+	it := client.Entries(ctx, logadmin.Filter(filter))
+
+	var messages []string
+	for {
+		entry, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		require.NoError(t, err)
+		if s, ok := entry.Payload.(string); ok {
+			messages = append(messages, s)
+		}
+	}
+
+	found := false
+	for _, m := range messages {
+		if strings.Contains(m, "error") && strings.Contains(m, "exit") {
+			found = true
+		}
+	}
+	assert.True(t, found, "expected error log entry about non-zero exit, got: %v", messages)
+}
+
+func TestCloudFunctions_InvokeLogsRealOutput(t *testing.T) {
+	fn := map[string]any{
+		"buildConfig": map[string]any{
+			"runtime":    "go121",
+			"entryPoint": "Handler",
+		},
+		"serviceConfig": map[string]any{
+			"simCommand": []string{"echo", "real-cf-output"},
+		},
+	}
+	body, _ := json.Marshal(fn)
+	createReq, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/v2/projects/test-project/locations/us-central1/functions?functionId=exec-logs-fn",
+		strings.NewReader(string(body)))
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp, err := http.DefaultClient.Do(createReq)
+	require.NoError(t, err)
+	createResp.Body.Close()
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+
+	// Invoke
+	invokeReq, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/v2-functions-invoke/exec-logs-fn",
+		strings.NewReader("{}"))
+	invokeReq.Header.Set("Content-Type", "application/json")
+	invokeResp, err := http.DefaultClient.Do(invokeReq)
+	require.NoError(t, err)
+	invokeResp.Body.Close()
+	require.Equal(t, http.StatusOK, invokeResp.StatusCode)
+
+	// Verify real output appears in Cloud Logging
+	client := logadminClient(t)
+	filter := `resource.type="cloud_run_revision" AND resource.labels.service_name="exec-logs-fn"`
+	it := client.Entries(ctx, logadmin.Filter(filter))
+
+	var messages []string
+	for {
+		entry, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		require.NoError(t, err)
+		if s, ok := entry.Payload.(string); ok {
+			messages = append(messages, s)
+		}
+	}
+
+	require.NotEmpty(t, messages, "should have log entries from execution")
+	assert.Contains(t, messages, "real-cf-output", "process stdout should appear in Cloud Logging")
+}
+
 func TestCloudFunctions_InvokeURLMatchesEndpoint(t *testing.T) {
 	// Create a function
 	fn := map[string]any{
