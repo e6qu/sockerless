@@ -1,6 +1,6 @@
 # Sockerless — Roadmap
 
-> Phases 1-67, 69-71 complete (595 tasks). Phase 68 in progress. This document covers current and future work.
+> Phases 1-67, 69-71 complete (622 tasks). Phase 68 in progress. This document covers current and future work.
 >
 > **Production target:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners (GitHub Actions from github.com, GitLab CI from gitlab.com), and custom SDK clients — backed by real cloud infrastructure (AWS, GCP, Azure).
 
@@ -73,11 +73,14 @@ Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per
 | P71-014 | ✅ | GCP README quick-start — Cloud Run Jobs, Cloud Functions, Cloud Logging, AR, GCS |
 | P71-015 | ✅ | Azure README quick-start — Container Apps Jobs, Azure Functions, Log Analytics, ACR, Storage |
 
-### Milestone D: Final Verification (P71-016)
+### Milestone D: Non-Trivial Arithmetic Evaluator Tests (P71-016 → P71-019)
 
 | Task | Status | Description |
 |---|---|---|
-| P71-016 | ✅ | Cross-cloud verification + state save |
+| P71-016 | ✅ | Arithmetic evaluator program — recursive-descent parser in `simulators/testdata/eval-arithmetic/` |
+| P71-017 | ✅ | SDK arithmetic tests — 7 per cloud (4 FaaS + 3 container), 21 total |
+| P71-018 | ✅ | CLI arithmetic tests — 2 per cloud (container service), 6 total |
+| P71-019 | ✅ | Cross-cloud verification + state save |
 
 ---
 
