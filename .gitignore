@@ -92,6 +92,18 @@ frontends/docker/dist/
 simulators/aws/dist/
 simulators/gcp/dist/
 simulators/azure/dist/
+cmd/sockerless-admin/dist/
+cmd/sockerless-admin/sockerless-admin
+
+# Playwright
+ui/packages/admin/test-results/
+ui/packages/admin/playwright-report/
+ui/packages/backend-*/test-results/
+ui/packages/backend-*/playwright-report/
+ui/packages/simulator-*/test-results/
+ui/packages/simulator-*/playwright-report/
+ui/packages/frontend-docker/test-results/
+ui/packages/frontend-docker/playwright-report/
 
 # Misc
 *.log

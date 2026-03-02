@@ -1,6 +1,6 @@
 # Sockerless — Roadmap
 
-> Phases 1-67, 69-75 complete (677 tasks). Phase 68 in progress. This document covers current and future work.
+> Phases 1-67, 69-75, 79 complete (684 tasks). Phase 68 in progress. This document covers current and future work.
 >
 > **Production target:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners (GitHub Actions from github.com, GitLab CI from gitlab.com), and custom SDK clients — backed by real cloud infrastructure (AWS, GCP, Azure).
 
@@ -40,6 +40,7 @@ Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per
 | 73 | UI Foundation: Bun/Vite/React 19/Tailwind 4 monorepo, shared core, SPAHandler, memory backend dashboard. 15 tasks |
 | 74 | All Backend Dashboards: shared BackendApp, 9 new SPAs (6 cloud + docker backend + docker frontend), mgmt endpoints. 12 tasks |
 | 75 | Simulator Dashboards: 3 simulator SPAs (AWS/GCP/Azure), `/sim/v1/` summary endpoints, SimulatorApp component. 13 tasks |
+| 79 | Admin Dashboard: standalone `sockerless-admin` server + SPA aggregating health, metrics, containers from all components. 7 tasks |
 
 ---
 
@@ -109,6 +110,22 @@ Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per
 | P75-011 | | **Azure embed** — `simulators/azure/ui_embed.go` |
 | P75-012 | | **Tests** — Per-simulator resource list renders with mock data. 12+ tests |
 | P75-013 | | **State save** |
+
+---
+
+## Phase 79 — Admin Dashboard (Sockerless Control Plane UI) ✅
+
+**Goal:** Standalone admin server + SPA aggregating health, metrics, containers, and resources from all components.
+
+| Task | Status | Description |
+|---|---|---|
+| P79-001 | ✅ | **Admin server skeleton + registry** — Go binary `cmd/sockerless-admin/`, component registry, health polling, flag parsing |
+| P79-002 | ✅ | **Admin API handlers** — `/api/v1/` endpoints: components, overview, containers, resources, contexts, proxy |
+| P79-003 | ✅ | **Admin SPA** — React SPA `ui/packages/admin/`: Dashboard, Components, Containers, Resources, Metrics, Contexts pages |
+| P79-004 | ✅ | **Admin embed files** — `ui_embed.go`, `ui_noembed.go`, `spa.go` with build tags |
+| P79-005 | ✅ | **Build integration** — Makefile targets, .gitignore, CI build-check, go.work, lint |
+| P79-006 | ✅ | **Tests** — 9 Go tests (registry, handlers, normalizeAddr) + 4 Vitest tests (DashboardPage) |
+| P79-007 | ✅ | **State save** |
 
 ---
 

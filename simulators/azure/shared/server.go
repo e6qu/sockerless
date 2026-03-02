@@ -145,7 +145,7 @@ func (s *Server) ListenAndServe() error {
 
 // RegisterUI registers an embedded SPA at /ui/ and redirects GET / to /ui/.
 func (s *Server) RegisterUI(fsys fs.FS) {
-	s.mux.Handle("/ui/", spaHandler(fsys, "/ui/"))
+	s.mux.Handle("GET /ui/", spaHandler(fsys, "/ui/"))
 	s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/ui/", http.StatusTemporaryRedirect)
 	})
