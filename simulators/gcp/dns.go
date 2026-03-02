@@ -62,7 +62,7 @@ func registerCloudDNS(srv *sim.Server) {
 		if zone.ID == "" {
 			// DNS API expects a numeric uint64 ID
 			b := make([]byte, 8)
-			rand.Read(b)
+			_, _ = rand.Read(b)
 			zone.ID = fmt.Sprintf("%d", binary.BigEndian.Uint64(b)>>1)
 		}
 		if zone.Visibility == "" {

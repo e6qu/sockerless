@@ -291,7 +291,7 @@ func registerGCS(srv *sim.Server) {
 				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "failed to read metadata part: %v", err)
 				return
 			}
-			metaPart.Close()
+			_ = metaPart.Close()
 			// Read data part
 			dataPart, err := mr.NextPart()
 			if err != nil {

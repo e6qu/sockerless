@@ -13,7 +13,7 @@ import (
 
 func computeNumericID() string {
 	b := make([]byte, 8)
-	rand.Read(b)
+	_, _ = rand.Read(b)
 	return fmt.Sprintf("%d", binary.BigEndian.Uint64(b)>>1)
 }
 

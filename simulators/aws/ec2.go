@@ -632,10 +632,6 @@ func handleReleaseAddress(w http.ResponseWriter, r *http.Request) {
 
 func handleDescribeAddressesAttribute(w http.ResponseWriter, r *http.Request) {
 	allocId := r.FormValue("AllocationId.1")
-	attr := r.FormValue("Attribute")
-	if attr == "" {
-		attr = "domain-name"
-	}
 
 	w.Header().Set("Content-Type", "text/xml")
 	if allocId != "" {

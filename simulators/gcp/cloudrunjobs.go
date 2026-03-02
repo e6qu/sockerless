@@ -134,7 +134,7 @@ type OperationError struct {
 
 func generateUUID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	_, _ = rand.Read(b)
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
@@ -356,17 +356,15 @@ func registerCloudRunJobs(srv *sim.Server) {
 			// Build command from first container
 			var fullCmd []string
 			var cmdEnv map[string]string
-			if taskTmpl != nil {
-				for _, c := range taskTmpl.Containers {
-					fullCmd = append(fullCmd, c.Command...)
-					fullCmd = append(fullCmd, c.Args...)
-					if len(c.Env) > 0 {
-						cmdEnv = make(map[string]string, len(c.Env))
-						for _, ev := range c.Env {
-							cmdEnv[ev.Name] = ev.Value
-						}
+			if taskTmpl != nil && len(taskTmpl.Containers) > 0 {
+				c := taskTmpl.Containers[0]
+				fullCmd = append(fullCmd, c.Command...)
+				fullCmd = append(fullCmd, c.Args...)
+				if len(c.Env) > 0 {
+					cmdEnv = make(map[string]string, len(c.Env))
+					for _, ev := range c.Env {
+						cmdEnv[ev.Name] = ev.Value
 					}
-					break // first container only
 				}
 			}
 

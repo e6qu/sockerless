@@ -313,17 +313,15 @@ func registerContainerApps(srv *sim.Server) {
 			// Build command from first container
 			var fullCmd []string
 			var cmdEnv map[string]string
-			if tmpl != nil {
-				for _, c := range tmpl.Containers {
-					fullCmd = append(fullCmd, c.Command...)
-					fullCmd = append(fullCmd, c.Args...)
-					if len(c.Env) > 0 {
-						cmdEnv = make(map[string]string, len(c.Env))
-						for _, ev := range c.Env {
-							cmdEnv[ev.Name] = ev.Value
-						}
+			if tmpl != nil && len(tmpl.Containers) > 0 {
+				c := tmpl.Containers[0]
+				fullCmd = append(fullCmd, c.Command...)
+				fullCmd = append(fullCmd, c.Args...)
+				if len(c.Env) > 0 {
+					cmdEnv = make(map[string]string, len(c.Env))
+					for _, ev := range c.Env {
+						cmdEnv[ev.Name] = ev.Value
 					}
-					break // first container only
 				}
 			}
 
@@ -460,7 +458,7 @@ func registerContainerApps(srv *sim.Server) {
 func randomSuffix(n int) string {
 	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, n)
-	rand.Read(b)
+	_, _ = rand.Read(b)
 	for i := range b {
 		b[i] = chars[int(b[i])%len(chars)]
 	}

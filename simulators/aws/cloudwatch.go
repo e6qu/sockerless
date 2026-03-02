@@ -518,7 +518,7 @@ func handleCWPutRetentionPolicy(w http.ResponseWriter, r *http.Request) {
 
 func handleCWListTagsForResource(w http.ResponseWriter, r *http.Request) {
 	// Terraform uses this to read tags for log groups
-	sim.ReadJSON(r, &struct{}{})
+	_ = sim.ReadJSON(r, &struct{}{})
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"tags": map[string]string{},
 	})
@@ -526,6 +526,6 @@ func handleCWListTagsForResource(w http.ResponseWriter, r *http.Request) {
 
 func handleCWTagResource(w http.ResponseWriter, r *http.Request) {
 	// Accept and discard tag operations
-	sim.ReadJSON(r, &struct{}{})
+	_ = sim.ReadJSON(r, &struct{}{})
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }

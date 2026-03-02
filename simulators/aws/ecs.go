@@ -149,7 +149,7 @@ var (
 
 func generateUUID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	_, _ = rand.Read(b)
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
@@ -532,7 +532,8 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 			// Build combined command from first container definition
 			var fullCmd []string
 			var cmdEnv map[string]string
-			for _, cd := range td.ContainerDefinitions {
+			if len(td.ContainerDefinitions) > 0 {
+				cd := td.ContainerDefinitions[0]
 				fullCmd = append(fullCmd, cd.EntryPoint...)
 				fullCmd = append(fullCmd, cd.Command...)
 				if len(cd.Environment) > 0 {
@@ -541,7 +542,6 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 						cmdEnv[ev.Name] = ev.Value
 					}
 				}
-				break // use first container only
 			}
 
 			// Inject CloudWatch logs for containers with awslogs log driver
@@ -822,7 +822,7 @@ func handleECSListTagsForResource(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ResourceArn string `json:"resourceArn"`
 	}
-	sim.ReadJSON(r, &req)
+	_ = sim.ReadJSON(r, &req)
 
 	var tags []ECSTag
 

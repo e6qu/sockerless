@@ -352,7 +352,7 @@ func registerAzureMonitor(srv *sim.Server) {
 // generateUUID generates a random UUID string.
 func generateUUID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	_, _ = rand.Read(b)
 	b[6] = (b[6] & 0x0f) | 0x40 // Version 4
 	b[8] = (b[8] & 0x3f) | 0x80 // Variant 1
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",

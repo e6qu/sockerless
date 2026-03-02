@@ -13,6 +13,10 @@ When modifying simulators, always ask: "How does the real cloud service behave?"
 
 The simulators run locally on a single machine today. The architecture is designed to eventually distribute execution across multiple machines, with the same API surface.
 
+## Always fix CI failures and test failures
+
+If CI fails or tests fail, fix the issue — even if the failure is "pre-existing" and not caused by the current change. We do not tolerate broken CI on any branch. If adding a module to lint or expanding test coverage reveals old issues, fix them in the same PR.
+
 ## Never merge PRs
 
 Create PRs with `gh pr create`. Never run `gh pr merge`. The user handles all merges.
