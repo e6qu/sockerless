@@ -16,3 +16,5 @@ export { BackendInfoCard } from "./BackendInfoCard.js";
 export type { BackendInfoCardProps } from "./BackendInfoCard.js";
 export { SimulatorApp } from "./SimulatorApp.js";
 export type { SimulatorAppProps } from "./SimulatorApp.js";
+export { LogViewer } from "./LogViewer.js";
+export type { LogViewerProps } from "./LogViewer.js";

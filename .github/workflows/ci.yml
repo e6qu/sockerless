@@ -37,7 +37,7 @@ jobs:
           - suite: frontend
             cmd: cd frontends/docker && go test -tags noui -v -timeout 1m ./...
           - suite: bleephub
-            cmd: cd bleephub && go test -v -timeout 3m ./...
+            cmd: cd bleephub && go test -tags noui -v -timeout 3m ./...
           - suite: gitlabhub
             cmd: cd gitlabhub && go test -v -timeout 3m ./...
           - suite: sim-shared
@@ -102,7 +102,7 @@ jobs:
           set -e
           build() { echo "=== $1 ===" && (cd "$1" && go build -o /dev/null "$2"); }
           noui() { echo "=== $1 (noui) ===" && (cd "$1" && go build -tags noui -o /dev/null "$2"); }
-          build bleephub ./cmd
+          noui bleephub ./cmd
           noui frontends/docker ./cmd
           build cmd/sockerless .
           build agent ./cmd/sockerless-agent
@@ -161,7 +161,7 @@ jobs:
           set -e
           build() { echo "=== $1 ===" && (cd "$1" && go build -o /dev/null "$2"); }
           noui() { echo "=== $1 (noui) ===" && (cd "$1" && go build -tags noui -o /dev/null "$2"); }
-          build bleephub ./cmd
+          noui bleephub ./cmd
           noui frontends/docker ./cmd
           build cmd/sockerless .
           build agent ./cmd/sockerless-agent

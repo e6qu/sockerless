@@ -94,6 +94,8 @@ simulators/gcp/dist/
 simulators/azure/dist/
 cmd/sockerless-admin/dist/
 cmd/sockerless-admin/sockerless-admin
+bleephub/dist/
+bleephub/bleephub-server
 
 # Playwright
 ui/packages/admin/test-results/
@@ -104,6 +106,8 @@ ui/packages/simulator-*/test-results/
 ui/packages/simulator-*/playwright-report/
 ui/packages/frontend-docker/test-results/
 ui/packages/frontend-docker/playwright-report/
+ui/packages/bleephub/test-results/
+ui/packages/bleephub/playwright-report/
 
 # Misc
 *.log
