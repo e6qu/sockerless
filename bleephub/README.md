@@ -16,17 +16,29 @@ The official runner does not use the public GitHub REST or GraphQL API. Instead,
 | Timeline + logs | `/_apis/v1/Timeline/`, `/_apis/v1/Logfiles/` | Step status tracking, log upload |
 | Job submission | `/api/v3/bleephub/submit` | Simplified JSON job input (not part of runner protocol) |
 
+## What it implements beyond the core protocol
+
+- `uses: docker://` actions (container actions with entrypoints)
+- Multi-job workflows with `needs:` dependencies
+- Matrix strategies (`strategy.matrix`) with fail-fast
+- Persistent artifacts (`actions/upload-artifact`, `actions/download-artifact`)
+- Secrets injection (job-level and organization-level)
+- Expression evaluation (`${{ }}` syntax)
+- Concurrency groups with cancel-in-progress
+- Output passing between steps and jobs via `$GITHUB_OUTPUT`
+- GitHub REST + GraphQL API (repos, orgs, teams, users, issues, PRs) for `gh` CLI
+- Git smart HTTP protocol (`go-git`) for `actions/checkout`
+- Webhooks (HMAC-SHA256, async delivery with 3 retries)
+- GitHub Apps (RS256 JWT, installation tokens, `ghs_`-prefixed)
+- OpenTelemetry tracing (optional, OTLP HTTP)
+- Embedded React dashboard at `/ui/`
+
 ## What it does not implement
 
-- Git hosting, pull requests, webhooks, or any GitHub UI
-- Public REST/GraphQL API (`/repos/`, `/users/`, etc.)
-- `uses:` actions — only `run:` (script) steps work
-- Multi-job workflows, matrix strategies, `needs:` dependencies
-- Artifacts, caching (`actions/upload-artifact`, `actions/cache`)
-- Secrets or encrypted variables
 - Runner auto-update (`AgentRefreshMessage`)
 - V2 broker flow (uses legacy V1 pipelines paths)
-- Multi-runner support (single runner at a time)
+- Reusable workflows (`uses: ./.github/workflows/`)
+- Composite actions
 
 ## How it works
 
@@ -102,17 +114,17 @@ This builds the Docker image (`bleephub/Dockerfile`), starts all services, confi
 
 ## Source files
 
-| File | Lines | Purpose |
+~53 Go source files organized by domain:
+
+| Group | Files | Purpose |
 |---|---|---|
-| `cmd/main.go` | ~30 | Entry point, flag parsing |
-| `server.go` | ~160 | HTTP server, route registration, middleware |
-| `store.go` | ~100 | In-memory state (agents, sessions, jobs) |
-| `auth.go` | ~170 | JWT generation, OAuth exchange, connection data |
-| `agents.go` | ~180 | Runner registration, agent pools |
-| `broker.go` | ~210 | Sessions, 30s message long-poll, job delivery |
-| `jobs.go` | ~300 | Job submission, message builder (TemplateToken format) |
-| `run_service.go` | ~120 | Job acquire/renew/complete lifecycle |
-| `timeline.go` | ~130 | Timeline CRUD, log upload stubs |
+| Core protocol | `server.go`, `auth.go`, `agents.go`, `broker.go`, `run_service.go`, `timeline.go` | Runner registration, job delivery, lifecycle |
+| Jobs & workflows | `jobs.go`, `workflow.go`, `workflows.go`, `workflows_msg.go`, `matrix.go`, `outputs.go`, `secrets.go`, `expressions.go`, `actions.go`, `artifacts.go` | Multi-job, matrix, secrets, expressions, artifacts |
+| GitHub API | `gh_rest.go`, `gh_graphql.go`, `gh_repos_*.go`, `gh_orgs_*.go`, `gh_issues_*.go`, `gh_pulls_*.go`, `gh_teams_rest.go`, `gh_labels_rest.go`, `gh_members_rest.go` | REST + GraphQL for `gh` CLI |
+| GitHub Apps | `gh_apps_jwt.go`, `gh_apps_rest.go`, `gh_apps_store.go`, `gh_oauth.go` | JWT auth, installation tokens, OAuth device flow |
+| Webhooks | `webhooks.go`, `webhooks_store.go`, `webhooks_payloads.go`, `gh_hooks_rest.go` | HMAC-SHA256 delivery with retry |
+| Git | `git_http.go` | Smart HTTP protocol (go-git) |
+| Infrastructure | `store.go`, `store_*.go`, `rbac.go`, `metrics.go`, `otel.go`, `handle_mgmt.go`, `ui_embed.go` | State, RBAC, metrics, OTel, dashboard |
 
 ## Prior art
 

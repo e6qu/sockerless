@@ -117,4 +117,4 @@ cd gitlabhub
 go test -v ./...
 ```
 
-129 unit tests + 17 integration tests covering pipeline parsing, DAG dispatch, expression evaluation, matrix expansion, retry, resource groups, and the full runner coordinator protocol.
+136 unit tests + 17 integration tests covering pipeline parsing, DAG dispatch, expression evaluation, matrix expansion, retry, resource groups, and the full runner coordinator protocol.

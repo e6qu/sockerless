@@ -2,23 +2,19 @@
 
 ## Current State
 
-Phases 1-67, 69-74 complete. **664 tasks done across 74 phases.** Phase 68 (Multi-Tenant Backend Pools) paused after P68-001.
+Phases 1-67, 69-77, 79-80 complete. **713 tasks done across 78 complete phases.** Phase 68 (Multi-Tenant Backend Pools) paused after P68-001 (9 tasks remaining).
 
-## Next: Phase 75 — Simulator Dashboards (AWS, GCP, Azure)
+## Next: Phase 78 — Polish, Dark Mode, Cross-Component UX
 
-Add dashboards to cloud simulators showing simulated resources. Browser calls simulator's own cloud APIs (same-origin).
+Final UI phase. Depends on Phases 75, 76, 77 (all complete).
 
-**13 tasks** (P75-001 → P75-013): Simulator SPA handler, shared components, AWS/GCP/Azure SPAs with API clients and embed files, tests.
+**10 tasks**: Dark mode toggle, responsive breakpoints, cross-component navigation, search/filter UX, accessibility improvements, error boundaries, loading states, settings persistence, keyboard shortcuts, final test pass.
 
-## After Phase 75
+## After Phase 78
 
-| Phase | Description | Depends on |
+| Phase | Description | Status |
 |---|---|---|
-| 76 | bleephub Dashboard — GitHub Actions (11 tasks) | 74 |
-| 77 | gitlabhub Dashboard — GitLab CI (10 tasks) | 74 |
-| 78 | Polish, Dark Mode, Cross-Component UX (10 tasks) | 75, 76, 77 |
-
-Phases 75, 76, 77 are independent and can be done in any order after 74.
+| 68 | Multi-Tenant Backend Pools (9 remaining tasks) | Paused |
 
 ## Test Commands Reference
 
@@ -27,8 +23,11 @@ Phases 75, 76, 77 are independent and can be done in any order after 74.
 make test
 
 # UI build + test
-make ui-build    # builds all 10 SPAs + copies dist/
-make ui-test     # runs Vitest (16 tests)
+make ui-build    # builds all 16 SPAs + copies dist/
+make ui-test     # runs Vitest (57 tests)
+
+# Admin E2E
+make admin-e2e   # Playwright (17 tests)
 
 # Per-backend build with UI
 make build-memory-with-ui
@@ -40,6 +39,15 @@ make build-frontend-with-ui
 make build-memory-noui
 make build-ecs-noui
 
-# Lint all 15 modules
+# Lint all 19 modules
 make lint
+
+# Simulator tests
+make sim-test-all        # 6 backends × ~12 tests = 75 PASS
+make docker-test         # Cloud SDK/CLI tests per simulator
+
+# E2E runner tests
+make e2e-github-all      # 31 workflows × 7 backends = 217 PASS
+make e2e-gitlab-all      # 22 pipelines × 7 backends = 154 PASS
+make bleephub-test       # Official GitHub runner integration
 ```

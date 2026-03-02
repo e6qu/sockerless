@@ -80,9 +80,9 @@ make sim-test-all        # Simulator-backend integration tests
 
 | Cloud | SDK tests | CLI tests | Terraform tests |
 |-------|-----------|-----------|-----------------|
-| AWS | 17 | 21 | ~30s apply/destroy |
-| GCP | 20 | 15 | ~5s apply/destroy |
-| Azure | 13 | 14 | ~1s apply/destroy |
+| AWS | 42 | 26 | ~30s apply/destroy |
+| GCP | 43 | 21 | ~5s apply/destroy |
+| Azure | 38 | 19 | ~1s apply/destroy |
 
 ## Shared framework
 
