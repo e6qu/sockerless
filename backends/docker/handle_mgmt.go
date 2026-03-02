@@ -24,6 +24,7 @@ func (s *Server) registerMgmt() {
 	s.mux.HandleFunc("GET /internal/v1/metrics", s.handleMgmtMetrics)
 	s.mux.HandleFunc("GET /internal/v1/containers/summary", s.handleMgmtContainersSummary)
 	s.mux.HandleFunc("GET /internal/v1/check", s.handleMgmtCheck)
+	s.mux.HandleFunc("GET /internal/v1/provider", s.handleMgmtProvider)
 	s.mux.HandleFunc("GET /internal/v1/resources", s.handleMgmtResources)
 }
 
@@ -135,6 +136,19 @@ func (s *Server) handleMgmtCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"checks": checks})
+}
+
+func (s *Server) handleMgmtProvider(w http.ResponseWriter, r *http.Request) {
+	dockerHost := s.docker.DaemonHost()
+	resources := map[string]string{}
+	if dockerHost != "" {
+		resources["docker_host"] = dockerHost
+	}
+	writeJSON(w, http.StatusOK, core.ProviderInfo{
+		Provider:  "docker",
+		Mode:      "local",
+		Resources: resources,
+	})
 }
 
 func (s *Server) handleMgmtResources(w http.ResponseWriter, r *http.Request) {

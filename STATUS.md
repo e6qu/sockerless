@@ -1,6 +1,6 @@
 # Sockerless — Current Status
 
-**77 phases fully complete (1-67, 69-77, 79-80). Phase 68 partially done (1 of 10 tasks). 713 tasks done.**
+**Phase 82 (Admin Projects) complete. 725 tasks done across 80 phases.**
 
 ## Test Results (Latest)
 
@@ -8,10 +8,10 @@
 
 | Category | Count |
 |---|---|
-| **Core unit tests** | 255 PASS (`cd backends/core && go test -race -v ./...`) — includes 3 OTel + 14 network driver/IPAM tests |
+| **Core unit tests** | 257 PASS (`cd backends/core && go test -race -v ./...`) — includes 3 OTel + 14 network driver/IPAM + 2 ProviderInfo tests |
 | **Frontend tests** | 4 PASS (TLS) + 3 PASS (mux) |
-| **UI tests (Vitest)** | 57 PASS (6 API client + 3 hooks + 3 DataTable + 2 BackendApp + 2 BackendInfoCard + 2 SimulatorApp + 3 LogViewer + 4 Admin DashboardPage + 16 bleephub pages + 16 gitlabhub pages) |
-| **Admin tests** | 9 PASS (registry, handlers, normalizeAddr, healthEndpoint, contexts) |
+| **UI tests (Vitest)** | 86 PASS (6 API client + 3 hooks + 3 DataTable + 2 BackendApp + 2 BackendInfoCard + 2 SimulatorApp + 3 LogViewer + 4 Admin DashboardPage + 4 Admin ProcessesPage + 3 Admin ProcessDetailPage + 4 Admin CleanupPage + 6 Admin ProjectsPage + 4 Admin ProjectCreatePage + 5 Admin ProjectDetailPage + 3 Admin ProjectLogsPage + 16 bleephub pages + 16 gitlabhub pages) |
+| **Admin tests** | 70 PASS (31 existing + 14 project model + 11 bootstrap + 9 project API + 5 project manager) |
 | **Admin Playwright E2E** | 17 PASS (dashboard, components, detail, containers, resources, metrics, contexts, navigation) |
 | **SPAHandler tests** | 5 PASS (Go, in core) |
 | **bleephub** | 304 unit + 9 integration + 1 gh CLI (35 assertions) — includes 5 OTel + 6 mgmt endpoint tests |

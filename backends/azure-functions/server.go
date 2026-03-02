@@ -47,6 +47,22 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		ImageLoad:      s.handleImageLoad,
 	}, logger)
 
+	mode := "cloud"
+	if config.EndpointURL != "" {
+		mode = "simulator"
+	}
+	s.ProviderInfo = &core.ProviderInfo{
+		Provider: "azure",
+		Mode:     mode,
+		Region:   config.Location,
+		Endpoint: config.EndpointURL,
+		Resources: map[string]string{
+			"subscription_id": config.SubscriptionID,
+			"resource_group":  config.ResourceGroup,
+			"storage_account": config.StorageAccount,
+		},
+	}
+
 	registerUI(s.BaseServer)
 
 	return s

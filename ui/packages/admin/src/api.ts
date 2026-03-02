@@ -46,6 +46,81 @@ export interface ContextInfo {
   backend_addr?: string;
 }
 
+export interface ProcessInfo {
+  name: string;
+  binary: string;
+  status: string;
+  pid: number;
+  addr: string;
+  started_at: string;
+  exit_code: number;
+  type: string;
+}
+
+export interface CleanupItem {
+  category: string;
+  name: string;
+  description: string;
+  size?: number;
+  age: string;
+}
+
+export interface CleanupScanResult {
+  items: CleanupItem[];
+  scanned_at: string;
+}
+
+export interface ProviderInfo {
+  provider: string;
+  mode: string;
+  region?: string;
+  endpoint?: string;
+  resources?: Record<string, string>;
+}
+
+export type CloudType = "aws" | "gcp" | "azure";
+export type BackendType = "ecs" | "lambda" | "cloudrun" | "gcf" | "aca" | "azf";
+
+export interface ProjectConfig {
+  name: string;
+  cloud: CloudType;
+  backend: BackendType;
+  log_level: string;
+  sim_port: number;
+  backend_port: number;
+  frontend_port: number;
+  frontend_mgmt_port: number;
+  created_at: string;
+}
+
+export interface ProjectStatus extends ProjectConfig {
+  status: string;
+  sim_status: string;
+  backend_status: string;
+  frontend_status: string;
+}
+
+export interface ProjectConnection {
+  docker_host: string;
+  env_export: string;
+  podman_connection: string;
+  simulator_addr: string;
+  backend_addr: string;
+  frontend_addr: string;
+  frontend_mgmt_addr: string;
+}
+
+export interface CreateProjectRequest {
+  name: string;
+  cloud: CloudType;
+  backend: BackendType;
+  log_level?: string;
+  sim_port?: number;
+  backend_port?: number;
+  frontend_port?: number;
+  frontend_mgmt_port?: number;
+}
+
 /** Error thrown when the admin API returns a non-ok response. */
 export class AdminApiError extends Error {
   constructor(
@@ -71,6 +146,28 @@ export class AdminApiClient {
 
   private async post<T>(path: string): Promise<T> {
     const res = await fetch(path, { method: "POST" });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new AdminApiError(res.status, res.statusText, body);
+    }
+    return res.json() as Promise<T>;
+  }
+
+  private async postJSON<T>(path: string, body: unknown): Promise<T> {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new AdminApiError(res.status, res.statusText, text);
+    }
+    return res.json() as Promise<T>;
+  }
+
+  private async del<T>(path: string): Promise<T> {
+    const res = await fetch(path, { method: "DELETE" });
     if (!res.ok) {
       const body = await res.text();
       throw new AdminApiError(res.status, res.statusText, body);
@@ -113,5 +210,82 @@ export class AdminApiClient {
 
   contexts(): Promise<ContextInfo[]> {
     return this.request("/api/v1/contexts");
+  }
+
+  // Process management
+  processes(): Promise<ProcessInfo[]> {
+    return this.request("/api/v1/processes");
+  }
+
+  processStart(name: string): Promise<ProcessInfo> {
+    return this.post(`/api/v1/processes/${name}/start`);
+  }
+
+  processStop(name: string): Promise<ProcessInfo> {
+    return this.post(`/api/v1/processes/${name}/stop`);
+  }
+
+  processLogs(name: string, lines?: number): Promise<string[]> {
+    const qs = lines ? `?lines=${lines}` : "";
+    return this.request(`/api/v1/processes/${name}/logs${qs}`);
+  }
+
+  // Cleanup
+  cleanupScan(): Promise<CleanupScanResult> {
+    return this.request("/api/v1/cleanup/scan");
+  }
+
+  cleanupProcesses(): Promise<{ cleaned: number }> {
+    return this.post("/api/v1/cleanup/processes");
+  }
+
+  cleanupTmp(): Promise<{ cleaned: number }> {
+    return this.post("/api/v1/cleanup/tmp");
+  }
+
+  cleanupContainers(): Promise<{ cleaned: number }> {
+    return this.post("/api/v1/cleanup/containers");
+  }
+
+  // Provider info
+  componentProvider(name: string): Promise<ProviderInfo> {
+    return this.request(`/api/v1/components/${name}/provider`);
+  }
+
+  // Projects
+  projects(): Promise<ProjectStatus[]> {
+    return this.request("/api/v1/projects");
+  }
+
+  projectGet(name: string): Promise<ProjectStatus> {
+    return this.request(`/api/v1/projects/${name}`);
+  }
+
+  projectCreate(req: CreateProjectRequest): Promise<ProjectStatus> {
+    return this.postJSON("/api/v1/projects", req);
+  }
+
+  projectStart(name: string): Promise<ProjectStatus> {
+    return this.post(`/api/v1/projects/${name}/start`);
+  }
+
+  projectStop(name: string): Promise<ProjectStatus> {
+    return this.post(`/api/v1/projects/${name}/stop`);
+  }
+
+  projectDelete(name: string): Promise<{ deleted: string }> {
+    return this.del(`/api/v1/projects/${name}`);
+  }
+
+  projectLogs(name: string, component?: string, lines?: number): Promise<string[]> {
+    const params = new URLSearchParams();
+    if (component) params.set("component", component);
+    if (lines) params.set("lines", String(lines));
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    return this.request(`/api/v1/projects/${name}/logs${qs}`);
+  }
+
+  projectConnection(name: string): Promise<ProjectConnection> {
+    return this.request(`/api/v1/projects/${name}/connection`);
   }
 }

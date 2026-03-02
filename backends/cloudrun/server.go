@@ -55,6 +55,21 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		VolumePrune:      s.handleVolumePrune,
 	}, logger)
 
+	mode := "cloud"
+	if config.EndpointURL != "" {
+		mode = "simulator"
+	}
+	s.ProviderInfo = &core.ProviderInfo{
+		Provider: "gcp",
+		Mode:     mode,
+		Region:   config.Region,
+		Endpoint: config.EndpointURL,
+		Resources: map[string]string{
+			"project":       config.Project,
+			"vpc_connector": config.VPCConnector,
+		},
+	}
+
 	registerUI(s.BaseServer)
 
 	return s

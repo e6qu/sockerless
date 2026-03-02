@@ -50,6 +50,15 @@ type RouteOverrides struct {
 	VolumePrune      http.HandlerFunc
 }
 
+// ProviderInfo describes the cloud provider connection for a backend.
+type ProviderInfo struct {
+	Provider  string            `json:"provider"`  // aws, gcp, azure, memory, docker
+	Mode      string            `json:"mode"`      // cloud, simulator, local
+	Region    string            `json:"region"`     // us-east-1, us-central1, eastus
+	Endpoint  string            `json:"endpoint"`  // custom endpoint if simulator
+	Resources map[string]string `json:"resources"` // backend-specific: cluster, project, etc.
+}
+
 // BaseServer is the common HTTP server used by all non-Docker backends.
 type BaseServer struct {
 	Store          *Store
@@ -64,6 +73,7 @@ type BaseServer struct {
 	Metrics        *Metrics
 	HealthChecker  HealthChecker
 	EventBus       *EventBus
+	ProviderInfo   *ProviderInfo
 }
 
 // NewBaseServer creates a new base server with the given store, descriptor,
@@ -118,6 +128,7 @@ func (s *BaseServer) registerRoutes(o RouteOverrides) {
 	s.Mux.HandleFunc("GET /internal/v1/containers/summary", s.handleContainerSummary)
 	s.Mux.HandleFunc("GET /internal/v1/metrics", s.handleMetrics)
 	s.Mux.HandleFunc("GET /internal/v1/check", s.handleCheck)
+	s.Mux.HandleFunc("GET /internal/v1/provider", s.handleMgmtProvider)
 	s.Mux.HandleFunc("POST /internal/v1/reload", s.handleReload)
 
 	// Resource registry

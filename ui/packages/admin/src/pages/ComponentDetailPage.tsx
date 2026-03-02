@@ -14,6 +14,8 @@ export function ComponentDetailPage() {
     queryFn: () => api.components(),
   });
 
+  const comp = components?.find((c: AdminComponent) => c.name === name);
+
   const { data: status } = useQuery({
     queryKey: ["component-status", name],
     queryFn: () => api.componentStatus(name!),
@@ -26,12 +28,16 @@ export function ComponentDetailPage() {
     enabled: !!name,
   });
 
+  const { data: provider } = useQuery({
+    queryKey: ["component-provider", name],
+    queryFn: () => api.componentProvider(name!),
+    enabled: !!name && comp?.type === "backend",
+  });
+
   const reload = useMutation({
     mutationFn: () => api.componentReload(name!),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["components"] }),
   });
-
-  const comp = components?.find((c: AdminComponent) => c.name === name);
 
   if (!comp) return <Spinner />;
 
@@ -66,6 +72,57 @@ export function ComponentDetailPage() {
         >
           {reload.isPending ? "Reloading..." : "Reload"}
         </button>
+      )}
+
+      {provider && comp.type === "backend" && (
+        <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+          <h3 className="mb-3 text-lg font-medium">Cloud Connection</h3>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+            <div>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Provider</p>
+              <p className="font-medium">{provider.provider}</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Mode</p>
+              <span
+                className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                  provider.mode === "cloud"
+                    ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+                    : provider.mode === "simulator"
+                      ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+                      : "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300"
+                }`}
+              >
+                {provider.mode}
+              </span>
+            </div>
+            {provider.region && (
+              <div>
+                <p className="text-xs text-gray-500 dark:text-gray-400">Region</p>
+                <p className="font-medium">{provider.region}</p>
+              </div>
+            )}
+          </div>
+          {provider.endpoint && (
+            <div className="mt-3">
+              <p className="text-xs text-gray-500 dark:text-gray-400">Endpoint</p>
+              <p className="text-sm font-mono">{provider.endpoint}</p>
+            </div>
+          )}
+          {provider.resources && Object.keys(provider.resources).length > 0 && (
+            <div className="mt-3">
+              <p className="mb-1 text-xs text-gray-500 dark:text-gray-400">Resources</p>
+              <div className="space-y-1">
+                {Object.entries(provider.resources).map(([key, value]) => (
+                  <div key={key} className="flex gap-2 text-sm">
+                    <span className="text-gray-500 dark:text-gray-400">{key}:</span>
+                    <span className="font-mono">{value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       {statusObj && (

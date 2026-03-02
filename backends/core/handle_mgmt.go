@@ -122,6 +122,15 @@ func (s *BaseServer) handleCheck(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleMgmtProvider returns cloud provider connection info for this backend.
+func (s *BaseServer) handleMgmtProvider(w http.ResponseWriter, r *http.Request) {
+	if s.ProviderInfo == nil {
+		WriteJSON(w, http.StatusOK, ProviderInfo{Provider: "unknown", Mode: "local"})
+		return
+	}
+	WriteJSON(w, http.StatusOK, s.ProviderInfo)
+}
+
 // handleReload re-reads the active context config and applies env vars.
 func (s *BaseServer) handleReload(w http.ResponseWriter, r *http.Request) {
 	name := activeContextName()

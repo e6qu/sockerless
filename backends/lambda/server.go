@@ -2,6 +2,7 @@ package lambda
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/rs/zerolog"
 	core "github.com/sockerless/backend-core"
@@ -44,6 +45,22 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		ImagePull:      s.handleImagePull,
 		ImageLoad:      s.handleImageLoad,
 	}, logger)
+
+	mode := "cloud"
+	if config.EndpointURL != "" {
+		mode = "simulator"
+	}
+	s.ProviderInfo = &core.ProviderInfo{
+		Provider: "aws",
+		Mode:     mode,
+		Region:   config.Region,
+		Endpoint: config.EndpointURL,
+		Resources: map[string]string{
+			"role_arn":    config.RoleARN,
+			"memory_size": fmt.Sprintf("%d", config.MemorySize),
+			"timeout":     fmt.Sprintf("%d", config.Timeout),
+		},
+	}
 
 	registerUI(s.BaseServer)
 
