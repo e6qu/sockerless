@@ -78,7 +78,7 @@ make sim-test-azure
 Full Terraform integration tests deploy real cloud resources:
 
 ```sh
-make terraform-test-ecs
-make terraform-test-cloudrun
-make terraform-test-aca
+make tf-int-test-aws      # ECS + Lambda
+make tf-int-test-gcp      # CloudRun + GCF
+make tf-int-test-azure    # ACA + AZF
 ```

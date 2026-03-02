@@ -170,8 +170,8 @@ Built a React SPA dashboard for the gitlabhub GitLab CI coordinator, following t
 
 ## Project Stats
 
-- **78 phases** (1-67, 69-77, 79), 705 tasks completed
-- **17 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, admin, tests
+- **78 phases** (1-67, 69-77, 79-80), 713 tasks completed
+- **18 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, CLI, admin, tests
 - **21 Go-implemented builtins** in WASM sandbox
 - **18 driver interface methods** across 5 driver types
 - **7 external test consumers**: `act`, `gitlab-runner`, `gitlab-ci-local`, upstream act, `actions/runner`, `gh` CLI, gitlabhub gitlab-runner

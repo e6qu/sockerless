@@ -73,6 +73,10 @@ backends/
   aca/                        Azure Container Apps Jobs
   azure-functions/            Azure Functions
 bleephub/                     GitHub Actions runner service API (official runner support)
+gitlabhub/                    GitLab CI runner coordinator (DAG + stage-based dispatch)
+cmd/sockerless/               CLI tool (context management, server control)
+cmd/sockerless-admin/         Admin dashboard server (aggregates all components)
+ui/                           React SPA monorepo (Bun, Vite, Tailwind, TanStack)
 simulators/
   aws/                        AWS API simulator (ECS, ECR, IAM, VPC, EFS, Lambda, ...)
   gcp/                        GCP API simulator (Cloud Run, Compute, DNS, GCS, AR, ...)
@@ -80,16 +84,16 @@ simulators/
 terraform/
   modules/                    Terraform modules (one per backend)
   environments/               Terragrunt environments (live + simulator per backend)
-tests/                        Integration tests (Docker SDK, 108 tests)
+tests/                        Integration tests (Docker SDK, 59 test functions)
 smoke-tests/                  Real CI runner validation (act + gitlab-runner)
 spec/                         Specification documents
 ```
 
-Each backend, the agent, the frontend, and the test suite are separate Go modules connected via `go.work`.
+Each backend, the agent, the frontend, and the test suite are separate Go modules connected via `go.work`. Major components embed React dashboards at `/ui/`.
 
 ## Prerequisites
 
-- Go 1.23+
+- Go 1.25+
 - Docker (for smoke tests and terraform integration tests)
 
 For terraform operations:
@@ -101,7 +105,7 @@ For terraform operations:
 ```bash
 # Build frontend + memory backend
 go build -o sockerless-frontend-docker ./frontends/docker/cmd
-go build -o sockerless-backend-memory  ./backends/memory/cmd/sockerless-backend-memory
+go build -o sockerless-backend-memory  ./backends/memory/cmd
 
 # Start backend and frontend
 ./sockerless-backend-memory --addr :9100 &
@@ -214,7 +218,13 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 | Document | Description |
 |----------|-------------|
 | [`spec/SOCKERLESS_SPEC.md`](spec/SOCKERLESS_SPEC.md) | Full specification (API surface, architecture, protocols) |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | System architecture, component diagrams, test architecture |
 | [`terraform/README.md`](terraform/README.md) | Terraform modules, state backends, and CI/CD deployment |
+| [`COMPATIBILITY_MATRIX.md`](COMPATIBILITY_MATRIX.md) | Backend feature matrix, simulator/runner/terraform test results |
 | [`backends/*/README.md`](backends/) | Per-backend configuration and terraform output mapping |
+| [`docs/GITHUB_RUNNER.md`](docs/GITHUB_RUNNER.md) | GitHub Actions E2E test guide (act + official runner) |
+| [`docs/GITLAB_RUNNER_DOCKER.md`](docs/GITLAB_RUNNER_DOCKER.md) | GitLab Runner docker executor E2E test guide |
+| [`AGENTS.md`](AGENTS.md) | Agent architecture (forward/reverse modes) |
+| [`DECISIONS.md`](DECISIONS.md) | Technical decision log across all phases |
 | [`PLAN.md`](PLAN.md) | Implementation plan and task tracking |
 | [`STATUS.md`](STATUS.md) | Project status and phase history |
