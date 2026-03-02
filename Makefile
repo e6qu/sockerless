@@ -60,7 +60,8 @@ MODULES = api agent sandbox backends/core bleephub gitlabhub
 # Modules with UI embed (require --build-tags noui when dist/ is absent)
 MODULES_UI = frontends/docker backends/memory backends/docker \
   backends/ecs backends/lambda backends/cloudrun \
-  backends/cloudrun-functions backends/aca backends/azure-functions
+  backends/cloudrun-functions backends/aca backends/azure-functions \
+  cmd/sockerless-admin
 # Simulator modules with UI embed (separate go.mod, need GOWORK=off)
 MODULES_SIM_UI = simulators/aws simulators/gcp simulators/azure
 
@@ -353,6 +354,13 @@ gitlabhub-test:
 .PHONY: build-docker-backend-with-ui build-docker-backend-noui
 .PHONY: build-frontend-with-ui build-frontend-noui
 .PHONY: build-sim-aws-noui build-sim-gcp-noui build-sim-azure-noui
+.PHONY: build-sim-aws-with-ui build-sim-gcp-with-ui build-sim-azure-with-ui
+.PHONY: build-admin-with-ui build-admin-noui
+.PHONY: ui-e2e-admin
+.PHONY: ui-e2e-backend-memory ui-e2e-backend-ecs ui-e2e-backend-lambda ui-e2e-backend-cloudrun
+.PHONY: ui-e2e-backend-gcf ui-e2e-backend-aca ui-e2e-backend-azf ui-e2e-backend-docker
+.PHONY: ui-e2e-sim-aws ui-e2e-sim-gcp ui-e2e-sim-azure
+.PHONY: ui-e2e-frontend ui-e2e-all
 
 ui-install:
 	cd ui && bun install
@@ -371,6 +379,7 @@ ui-build: ui-install
 	rm -rf simulators/aws/dist && cp -r ui/packages/simulator-aws/dist simulators/aws/dist
 	rm -rf simulators/gcp/dist && cp -r ui/packages/simulator-gcp/dist simulators/gcp/dist
 	rm -rf simulators/azure/dist && cp -r ui/packages/simulator-azure/dist simulators/azure/dist
+	rm -rf cmd/sockerless-admin/dist && cp -r ui/packages/admin/dist cmd/sockerless-admin/dist
 
 ui-dev:
 	cd ui && bunx turbo run dev --filter=@sockerless/ui-backend-memory
@@ -385,6 +394,7 @@ ui-clean:
 	rm -rf backends/aca/dist backends/azure-functions/dist
 	rm -rf backends/docker/dist frontends/docker/dist
 	rm -rf simulators/aws/dist simulators/gcp/dist simulators/azure/dist
+	rm -rf cmd/sockerless-admin/dist
 
 build-memory-with-ui: ui-build
 	cd backends/memory && go build -o sockerless-backend-memory ./cmd
@@ -448,3 +458,59 @@ build-sim-gcp-noui:
 
 build-sim-azure-noui:
 	cd simulators/azure && GOWORK=off go build -tags noui -o /dev/null .
+
+build-admin-with-ui: ui-build
+	cd cmd/sockerless-admin && go build -o sockerless-admin .
+
+build-admin-noui:
+	cd cmd/sockerless-admin && go build -tags noui -o /dev/null .
+
+ui-e2e-admin: build-admin-with-ui
+	cd ui/packages/admin && ADMIN_BIN="$(CURDIR)/cmd/sockerless-admin/sockerless-admin" bunx playwright test
+
+build-sim-aws-with-ui: ui-build
+	cd simulators/aws && GOWORK=off go build -o simulator-aws .
+
+build-sim-gcp-with-ui: ui-build
+	cd simulators/gcp && GOWORK=off go build -o simulator-gcp .
+
+build-sim-azure-with-ui: ui-build
+	cd simulators/azure && GOWORK=off go build -o simulator-azure .
+
+ui-e2e-backend-memory: build-memory-with-ui
+	cd ui/packages/backend-memory && BACKEND_BIN="$(CURDIR)/backends/memory/sockerless-backend-memory" bunx playwright test
+
+ui-e2e-backend-ecs: build-ecs-with-ui
+	cd ui/packages/backend-ecs && SOCKERLESS_ENDPOINT_URL=http://localhost:1 BACKEND_BIN="$(CURDIR)/backends/ecs/sockerless-backend-ecs" bunx playwright test
+
+ui-e2e-backend-lambda: build-lambda-with-ui
+	cd ui/packages/backend-lambda && SOCKERLESS_ENDPOINT_URL=http://localhost:1 BACKEND_BIN="$(CURDIR)/backends/lambda/sockerless-backend-lambda" bunx playwright test
+
+ui-e2e-backend-cloudrun: build-cloudrun-with-ui
+	cd ui/packages/backend-cloudrun && SOCKERLESS_ENDPOINT_URL=http://localhost:1 BACKEND_BIN="$(CURDIR)/backends/cloudrun/sockerless-backend-cloudrun" bunx playwright test
+
+ui-e2e-backend-gcf: build-gcf-with-ui
+	cd ui/packages/backend-gcf && SOCKERLESS_ENDPOINT_URL=http://localhost:1 BACKEND_BIN="$(CURDIR)/backends/cloudrun-functions/sockerless-backend-gcf" bunx playwright test
+
+ui-e2e-backend-aca: build-aca-with-ui
+	cd ui/packages/backend-aca && SOCKERLESS_ENDPOINT_URL=http://localhost:1 BACKEND_BIN="$(CURDIR)/backends/aca/sockerless-backend-aca" bunx playwright test
+
+ui-e2e-backend-azf: build-azf-with-ui
+	cd ui/packages/backend-azf && SOCKERLESS_ENDPOINT_URL=http://localhost:1 BACKEND_BIN="$(CURDIR)/backends/azure-functions/sockerless-backend-azf" bunx playwright test
+
+ui-e2e-backend-docker: build-docker-backend-with-ui
+	cd ui/packages/backend-docker && BACKEND_BIN="$(CURDIR)/backends/docker/sockerless-backend-docker" bunx playwright test
+
+ui-e2e-sim-aws: build-sim-aws-with-ui
+	cd ui/packages/simulator-aws && SERVER_BIN="$(CURDIR)/simulators/aws/simulator-aws" bunx playwright test
+
+ui-e2e-sim-gcp: build-sim-gcp-with-ui
+	cd ui/packages/simulator-gcp && SERVER_BIN="$(CURDIR)/simulators/gcp/simulator-gcp" bunx playwright test
+
+ui-e2e-sim-azure: build-sim-azure-with-ui
+	cd ui/packages/simulator-azure && SERVER_BIN="$(CURDIR)/simulators/azure/simulator-azure" bunx playwright test
+
+ui-e2e-frontend: build-frontend-with-ui
+	cd ui/packages/frontend-docker && SERVER_BIN="$(CURDIR)/frontends/docker/sockerless-docker-frontend" bunx playwright test
+
+ui-e2e-all: ui-e2e-admin ui-e2e-backend-memory ui-e2e-backend-ecs ui-e2e-backend-lambda ui-e2e-backend-cloudrun ui-e2e-backend-gcf ui-e2e-backend-aca ui-e2e-backend-azf ui-e2e-backend-docker ui-e2e-sim-aws ui-e2e-sim-gcp ui-e2e-sim-azure ui-e2e-frontend

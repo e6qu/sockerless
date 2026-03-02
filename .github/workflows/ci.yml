@@ -118,6 +118,7 @@ jobs:
           noui simulators/aws .
           noui simulators/gcp .
           noui simulators/azure .
+          noui cmd/sockerless-admin .
 
   smoke-test-act:
     runs-on: ubuntu-latest
@@ -176,3 +177,4 @@ jobs:
           noui simulators/aws .
           noui simulators/gcp .
           noui simulators/azure .
+          noui cmd/sockerless-admin .

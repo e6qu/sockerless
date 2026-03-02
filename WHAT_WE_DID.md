@@ -133,14 +133,26 @@ Added web dashboards to all 3 cloud simulators. Unlike backend dashboards (which
 
 **Tests**: 18 Vitest PASS (+2 SimulatorApp) + 13 UI packages build + 3 simulators compile with noui
 
+## Phase 79 — Admin Dashboard (Sockerless Control Plane UI)
+
+Built a standalone admin server (`sockerless-admin`) and React SPA that aggregates health, metrics, containers, and resources from all Sockerless components into a single dashboard.
+
+- **Admin Go server** (`cmd/sockerless-admin/`): Standalone binary with component registry, background health polling (5s interval), context discovery from `~/.sockerless/`, and CLI flags for component addresses
+- **Admin API** (`/api/v1/`): 10 endpoints — components list, overview (aggregated KPIs), containers (merged from all backends), resources (merged), contexts, plus per-component proxy endpoints for health/status/metrics/reload
+- **Admin SPA** (`ui/packages/admin/`): 7 pages — Dashboard (health grid + KPI cards), Components (DataTable with click-through), Component Detail (status + metrics + reload), Containers, Resources, Metrics (side-by-side panels), Contexts
+- **Build integration**: go.work, Makefile (build-admin-with-ui, build-admin-noui), .gitignore, CI build-check + ARM64 cross-compile
+- **Embed pattern**: Same `ui_embed.go`/`ui_noembed.go`/`spa.go` pattern as other components, with `!noui` build tags
+
+**Tests**: 9 Go PASS (registry CRUD, ListByType, overwrite, healthEndpoint, normalizeAddr, handleComponents, handleComponentProxy 404, handleContexts) + 4 Vitest PASS (DashboardPage: heading, KPIs, health cards, status badges) + 17 Playwright E2E PASS (dashboard overview, component table/detail/reload, containers with filter, resources, metrics panels, contexts, full navigation flow). 14 UI packages build. Lint clean (19 modules).
+
 ## Project Stats
 
-- **75 phases** (1-67, 69-75), 677 tasks completed
-- **16 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, tests
+- **76 phases** (1-67, 69-75, 79), 684 tasks completed
+- **17 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, admin, tests
 - **21 Go-implemented builtins** in WASM sandbox
 - **18 driver interface methods** across 5 driver types
 - **7 external test consumers**: `act`, `gitlab-runner`, `gitlab-ci-local`, upstream act, `actions/runner`, `gh` CLI, gitlabhub gitlab-runner
-- **Core tests**: 255 PASS (+5 SPAHandler) | **Frontend tests**: 7 PASS | **UI tests**: 18 PASS (Vitest) | **bleephub tests**: 298 PASS | **gitlabhub tests**: 129 PASS | **Shared ProcessRunner**: 15 PASS
+- **Core tests**: 255 PASS (+5 SPAHandler) | **Frontend tests**: 7 PASS | **UI tests**: 22 PASS (Vitest) | **Admin tests**: 9 PASS | **bleephub tests**: 298 PASS | **gitlabhub tests**: 129 PASS | **Shared ProcessRunner**: 15 PASS
 - **Cloud SDK tests**: AWS 42, GCP 43, Azure 38 | **Cloud CLI tests**: AWS 26, GCP 21, Azure 19
 - **3 cloud simulators** validated against SDKs, CLIs, and Terraform — now with real process execution for all services (container + FaaS)
 - **8 backends** sharing a common driver architecture
