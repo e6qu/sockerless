@@ -110,9 +110,16 @@ func (s *Server) registerRoutes() {
 	s.registerGHOAuthRoutes()
 	s.registerGHGraphQLRoutes()
 
-	// Management API (metrics, status)
+	// Management API (metrics, status, dashboard data)
 	s.mux.HandleFunc("GET /internal/metrics", s.handleInternalMetrics)
 	s.mux.HandleFunc("GET /internal/status", s.handleInternalStatus)
+	s.registerMgmtRoutes()
+
+	// UI dashboard
+	s.registerUI()
+	s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/ui/", http.StatusTemporaryRedirect)
+	})
 
 	// Catch-all: tries smart HTTP git protocol, then logs unmatched
 	s.mux.HandleFunc("/", s.handleCatchAll)

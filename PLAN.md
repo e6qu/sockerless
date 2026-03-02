@@ -135,17 +135,17 @@ Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per
 
 | Task | Status | Description |
 |---|---|---|
-| P76-001 | | **bleephub API types** — TS types for Workflow, Job, Session, Repo, Webhook |
-| P76-002 | | **New management endpoints** — `/internal/workflows`, `/internal/sessions`, `/internal/repos` |
-| P76-003 | | **bleephub API client** — Wrappers for management + GitHub API endpoints |
-| P76-004 | | **bleephub SPA** — Pages: Overview, Workflows, Jobs, Runners |
-| P76-005 | | **Workflow list + detail pages** — Status badges, job timeline, step-by-step view |
-| P76-006 | | **LogViewer component** — Shared `LogViewer.tsx` in core with ANSI color support |
-| P76-007 | | **Runner session view** — Connected agents, message queue status |
-| P76-008 | | **Metrics dashboard** — Workflow submissions/min, completion rates, goroutines, heap |
-| P76-009 | | **bleephub embed** — `bleephub/ui_embed.go` + serve at `/ui/` before catch-all |
-| P76-010 | | **Tests** — Workflow list, job timeline, log viewer. 10+ tests |
-| P76-011 | | **State save** |
+| P76-001 | ✅ | **bleephub API types** — TS types for Workflow, Job, Session, Repo, Webhook |
+| P76-002 | ✅ | **New management endpoints** — `/internal/workflows`, `/internal/sessions`, `/internal/repos` |
+| P76-003 | ✅ | **bleephub API client** — Wrappers for management + GitHub API endpoints |
+| P76-004 | ✅ | **bleephub SPA** — Pages: Overview, Workflows, Jobs, Runners |
+| P76-005 | ✅ | **Workflow list + detail pages** — Status badges, job timeline, step-by-step view |
+| P76-006 | ✅ | **LogViewer component** — Shared `LogViewer.tsx` in core with ANSI color support |
+| P76-007 | ✅ | **Runner session view** — Connected agents, message queue status |
+| P76-008 | ✅ | **Metrics dashboard** — Workflow submissions/min, completion rates, goroutines, heap |
+| P76-009 | ✅ | **bleephub embed** — `bleephub/ui_embed.go` + serve at `/ui/` before catch-all |
+| P76-010 | ✅ | **Tests** — Workflow list, job timeline, log viewer. 10+ tests |
+| P76-011 | ✅ | **State save** |
 
 ---
 

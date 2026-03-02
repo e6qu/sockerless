@@ -104,6 +104,7 @@ func (s *Server) handleUploadLog(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWebConsoleLog(w http.ResponseWriter, r *http.Request) {
+	planID := r.PathValue("planId")
 	recordID := r.PathValue("recordId")
 
 	var lines []string
@@ -114,6 +115,23 @@ func (s *Server) handleWebConsoleLog(w http.ResponseWriter, r *http.Request) {
 
 	for _, line := range lines {
 		s.logger.Info().Str("recordId", recordID).Str("line", line).Msg("console")
+	}
+
+	// Capture log lines keyed by jobID for the management dashboard
+	if planID != "" && len(lines) > 0 {
+		job := s.lookupJobByPlanID(planID)
+		if job != nil {
+			s.store.mu.Lock()
+			existing := s.store.LogLines[job.ID]
+			remaining := 500 - len(existing)
+			if remaining > 0 {
+				if len(lines) > remaining {
+					lines = lines[:remaining]
+				}
+				s.store.LogLines[job.ID] = append(existing, lines...)
+			}
+			s.store.mu.Unlock()
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"count": len(lines)})

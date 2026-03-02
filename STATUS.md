@@ -1,6 +1,6 @@
 # Sockerless — Current Status
 
-**Phase 79 (Admin Dashboard) complete. 684 tasks done across 76 phases.**
+**Phase 79 (Admin Dashboard) + Phase 76 (bleephub Dashboard) complete. 695 tasks done across 77 phases.**
 
 ## Test Results (Latest)
 
@@ -10,11 +10,11 @@
 |---|---|
 | **Core unit tests** | 255 PASS (`cd backends/core && go test -race -v ./...`) — includes 3 OTel + 14 network driver/IPAM tests |
 | **Frontend tests** | 4 PASS (TLS) + 3 PASS (mux) |
-| **UI tests (Vitest)** | 22 PASS (6 API client + 3 hooks + 3 DataTable + 2 BackendApp + 2 BackendInfoCard + 2 SimulatorApp + 4 Admin DashboardPage) |
+| **UI tests (Vitest)** | 41 PASS (6 API client + 3 hooks + 3 DataTable + 2 BackendApp + 2 BackendInfoCard + 2 SimulatorApp + 3 LogViewer + 4 Admin DashboardPage + 16 bleephub pages) |
 | **Admin tests** | 9 PASS (registry, handlers, normalizeAddr, healthEndpoint, contexts) |
 | **Admin Playwright E2E** | 17 PASS (dashboard, components, detail, containers, resources, metrics, contexts, navigation) |
 | **SPAHandler tests** | 5 PASS (Go, in core) |
-| **bleephub** | 298 unit + 9 integration + 1 gh CLI (35 assertions) — includes 5 OTel tests |
+| **bleephub** | 304 unit + 9 integration + 1 gh CLI (35 assertions) — includes 5 OTel + 6 mgmt endpoint tests |
 | **gitlabhub** | 129 unit + 17 integration |
 | **Sandbox** | 46 PASS |
 | **Shared ProcessRunner** | 15 PASS (5 × 3 clouds) |

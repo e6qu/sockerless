@@ -145,14 +145,26 @@ Built a standalone admin server (`sockerless-admin`) and React SPA that aggregat
 
 **Tests**: 9 Go PASS (registry CRUD, ListByType, overwrite, healthEndpoint, normalizeAddr, handleComponents, handleComponentProxy 404, handleContexts) + 4 Vitest PASS (DashboardPage: heading, KPIs, health cards, status badges) + 17 Playwright E2E PASS (dashboard overview, component table/detail/reload, containers with filter, resources, metrics panels, contexts, full navigation flow). 14 UI packages build. Lint clean (19 modules).
 
+## Phase 76 — bleephub Dashboard (GitHub Actions)
+
+Built a React SPA dashboard for the bleephub GitHub Actions coordinator, giving operators visibility into workflow execution, connected runners, and system metrics.
+
+- **Go management endpoints** (`bleephub/handle_mgmt.go`): 5 new endpoints — `/internal/workflows` (list, sorted by CreatedAt desc), `/internal/workflows/{id}` (detail), `/internal/workflows/{id}/logs` (captured console log lines), `/internal/sessions` (connected runners + pending messages), `/internal/repos` (all repositories)
+- **Log capture** (`bleephub/timeline.go`): Web console log lines stored in `store.LogLines[jobID]` (capped at 500 lines per job) for retrieval via the dashboard
+- **bleephub SPA** (`ui/packages/bleephub/`): 6 pages — Overview (health badge, MetricsCards, recent workflows table), Workflows (DataTable with click-through, 3s refetch), Workflow Detail (header, job table, LogViewer per job), Runners (session table + pending messages), Repos (DataTable), Metrics (MetricsCards, jobs by status, job completions)
+- **LogViewer component** (`ui/packages/core/src/components/LogViewer.tsx`): Shared component with scrollable `<pre>`, line numbers, ANSI color support via regex SGR→CSS mapping (30-37, 90-97 foreground, bold, reset)
+- **Build integration**: bleephub moved from MODULES to MODULES_UI, `ui_embed.go`/`ui_noembed.go` with SPA handler, dist copy in Makefile, CI `build→noui`, .gitignore entries
+
+**Tests**: 6 Go mgmt endpoint tests PASS (304 total bleephub) + 16 Vitest PASS (4 OverviewPage + 3 WorkflowsPage + 2 WorkflowDetailPage + 3 RunnersPage + 4 MetricsPage) + 3 LogViewer tests PASS (core). 15 UI packages build. Lint clean (19 modules, bleephub now with `--build-tags noui`).
+
 ## Project Stats
 
-- **76 phases** (1-67, 69-75, 79), 684 tasks completed
+- **77 phases** (1-67, 69-76, 79), 695 tasks completed
 - **17 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, admin, tests
 - **21 Go-implemented builtins** in WASM sandbox
 - **18 driver interface methods** across 5 driver types
 - **7 external test consumers**: `act`, `gitlab-runner`, `gitlab-ci-local`, upstream act, `actions/runner`, `gh` CLI, gitlabhub gitlab-runner
-- **Core tests**: 255 PASS (+5 SPAHandler) | **Frontend tests**: 7 PASS | **UI tests**: 22 PASS (Vitest) | **Admin tests**: 9 PASS | **bleephub tests**: 298 PASS | **gitlabhub tests**: 129 PASS | **Shared ProcessRunner**: 15 PASS
+- **Core tests**: 255 PASS (+5 SPAHandler) | **Frontend tests**: 7 PASS | **UI tests**: 41 PASS (Vitest) | **Admin tests**: 9 PASS | **bleephub tests**: 304 PASS | **gitlabhub tests**: 129 PASS | **Shared ProcessRunner**: 15 PASS
 - **Cloud SDK tests**: AWS 42, GCP 43, Azure 38 | **Cloud CLI tests**: AWS 26, GCP 21, Azure 19
 - **3 cloud simulators** validated against SDKs, CLIs, and Terraform — now with real process execution for all services (container + FaaS)
 - **8 backends** sharing a common driver architecture

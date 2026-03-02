@@ -76,6 +76,7 @@ type Store struct {
 	Installations     map[int]*Installation           // id → installation
 	InstallationTokens map[string]*InstallationToken  // token value → token
 	ManifestCodes     map[string]int                  // code → appID (one-time-use)
+	LogLines          map[string][]string             // jobID → captured console log lines
 	NextAgent       int
 	NextMsg      int64
 	NextLog      int
@@ -196,6 +197,7 @@ func NewStore() *Store {
 		Installations:      make(map[int]*Installation),
 		InstallationTokens: make(map[string]*InstallationToken),
 		ManifestCodes:      make(map[string]int),
+		LogLines:           make(map[string][]string),
 		NextAgent:      1,
 		NextMsg:      1,
 		NextLog:      1,

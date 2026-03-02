@@ -14,7 +14,10 @@ import (
 	"github.com/rs/zerolog"
 )
 
-var testBaseURL string
+var (
+	testBaseURL string
+	testServer  *Server
+)
 
 func TestMain(m *testing.M) {
 	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).
@@ -32,6 +35,7 @@ func TestMain(m *testing.M) {
 	testBaseURL = "http://" + addr
 
 	srv := NewServer(addr, logger)
+	testServer = srv
 	go srv.ListenAndServe()
 
 	// Wait for server to be ready
