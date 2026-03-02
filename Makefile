@@ -41,7 +41,7 @@ test-bleephub:
 
 test-gitlabhub:
 	@echo "=== test gitlabhub ==="
-	cd gitlabhub && go test -v -timeout 3m ./...
+	cd gitlabhub && go test -tags noui -v -timeout 3m ./...
 
 # E2E integration tests (builds + starts backend/frontend/agent binaries)
 test-e2e:
@@ -56,12 +56,12 @@ test: test-unit test-e2e
 
 # Lint all Go modules (golangci-lint required)
 # Modules without UI embed
-MODULES = api agent sandbox backends/core gitlabhub
+MODULES = api agent sandbox backends/core
 # Modules with UI embed (require --build-tags noui when dist/ is absent)
 MODULES_UI = frontends/docker backends/memory backends/docker \
   backends/ecs backends/lambda backends/cloudrun \
   backends/cloudrun-functions backends/aca backends/azure-functions \
-  cmd/sockerless-admin bleephub
+  cmd/sockerless-admin bleephub gitlabhub
 # Simulator modules with UI embed (separate go.mod, need GOWORK=off)
 MODULES_SIM_UI = simulators/aws simulators/gcp simulators/azure
 
@@ -357,7 +357,8 @@ gitlabhub-test:
 .PHONY: build-sim-aws-with-ui build-sim-gcp-with-ui build-sim-azure-with-ui
 .PHONY: build-admin-with-ui build-admin-noui
 .PHONY: build-bleephub-with-ui build-bleephub-noui
-.PHONY: ui-e2e-admin ui-e2e-bleephub
+.PHONY: build-gitlabhub-with-ui build-gitlabhub-noui
+.PHONY: ui-e2e-admin ui-e2e-bleephub ui-e2e-gitlabhub
 .PHONY: ui-e2e-backend-memory ui-e2e-backend-ecs ui-e2e-backend-lambda ui-e2e-backend-cloudrun
 .PHONY: ui-e2e-backend-gcf ui-e2e-backend-aca ui-e2e-backend-azf ui-e2e-backend-docker
 .PHONY: ui-e2e-sim-aws ui-e2e-sim-gcp ui-e2e-sim-azure
@@ -382,6 +383,7 @@ ui-build: ui-install
 	rm -rf simulators/azure/dist && cp -r ui/packages/simulator-azure/dist simulators/azure/dist
 	rm -rf cmd/sockerless-admin/dist && cp -r ui/packages/admin/dist cmd/sockerless-admin/dist
 	rm -rf bleephub/dist && cp -r ui/packages/bleephub/dist bleephub/dist
+	rm -rf gitlabhub/dist && cp -r ui/packages/gitlabhub/dist gitlabhub/dist
 
 ui-dev:
 	cd ui && bunx turbo run dev --filter=@sockerless/ui-backend-memory
@@ -396,7 +398,7 @@ ui-clean:
 	rm -rf backends/aca/dist backends/azure-functions/dist
 	rm -rf backends/docker/dist frontends/docker/dist
 	rm -rf simulators/aws/dist simulators/gcp/dist simulators/azure/dist
-	rm -rf cmd/sockerless-admin/dist bleephub/dist
+	rm -rf cmd/sockerless-admin/dist bleephub/dist gitlabhub/dist
 
 build-memory-with-ui: ui-build
 	cd backends/memory && go build -o sockerless-backend-memory ./cmd
@@ -473,8 +475,17 @@ build-bleephub-with-ui: ui-build
 build-bleephub-noui:
 	cd bleephub && go build -tags noui -o /dev/null ./cmd
 
+build-gitlabhub-with-ui: ui-build
+	cd gitlabhub && go build -o gitlabhub-server ./cmd
+
+build-gitlabhub-noui:
+	cd gitlabhub && go build -tags noui -o /dev/null ./cmd
+
 ui-e2e-bleephub: build-bleephub-with-ui
 	cd ui/packages/bleephub && SERVER_BIN="$(CURDIR)/bleephub/bleephub-server" bunx playwright test
+
+ui-e2e-gitlabhub: build-gitlabhub-with-ui
+	cd ui/packages/gitlabhub && SERVER_BIN="$(CURDIR)/gitlabhub/gitlabhub-server" bunx playwright test
 
 ui-e2e-admin: build-admin-with-ui
 	cd ui/packages/admin && ADMIN_BIN="$(CURDIR)/cmd/sockerless-admin/sockerless-admin" bunx playwright test
@@ -524,4 +535,4 @@ ui-e2e-sim-azure: build-sim-azure-with-ui
 ui-e2e-frontend: build-frontend-with-ui
 	cd ui/packages/frontend-docker && SERVER_BIN="$(CURDIR)/frontends/docker/sockerless-docker-frontend" bunx playwright test
 
-ui-e2e-all: ui-e2e-admin ui-e2e-bleephub ui-e2e-backend-memory ui-e2e-backend-ecs ui-e2e-backend-lambda ui-e2e-backend-cloudrun ui-e2e-backend-gcf ui-e2e-backend-aca ui-e2e-backend-azf ui-e2e-backend-docker ui-e2e-sim-aws ui-e2e-sim-gcp ui-e2e-sim-azure ui-e2e-frontend
+ui-e2e-all: ui-e2e-admin ui-e2e-bleephub ui-e2e-gitlabhub ui-e2e-backend-memory ui-e2e-backend-ecs ui-e2e-backend-lambda ui-e2e-backend-cloudrun ui-e2e-backend-gcf ui-e2e-backend-aca ui-e2e-backend-azf ui-e2e-backend-docker ui-e2e-sim-aws ui-e2e-sim-gcp ui-e2e-sim-azure ui-e2e-frontend

@@ -96,6 +96,8 @@ cmd/sockerless-admin/dist/
 cmd/sockerless-admin/sockerless-admin
 bleephub/dist/
 bleephub/bleephub-server
+gitlabhub/dist/
+gitlabhub/gitlabhub-server
 
 # Playwright
 ui/packages/admin/test-results/
@@ -108,6 +110,8 @@ ui/packages/frontend-docker/test-results/
 ui/packages/frontend-docker/playwright-report/
 ui/packages/bleephub/test-results/
 ui/packages/bleephub/playwright-report/
+ui/packages/gitlabhub/test-results/
+ui/packages/gitlabhub/playwright-report/
 
 # Misc
 *.log

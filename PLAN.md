@@ -1,6 +1,6 @@
 # Sockerless — Roadmap
 
-> Phases 1-67, 69-75, 79 complete (684 tasks). Phase 68 in progress. This document covers current and future work.
+> Phases 1-67, 69-77, 79 complete (705 tasks). Phase 68 in progress. This document covers current and future work.
 >
 > **Production target:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners (GitHub Actions from github.com, GitLab CI from gitlab.com), and custom SDK clients — backed by real cloud infrastructure (AWS, GCP, Azure).
 
@@ -155,16 +155,16 @@ Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per
 
 | Task | Status | Description |
 |---|---|---|
-| P77-001 | | **gitlabhub API types** — TS types for Pipeline, Job, Runner, Stage |
-| P77-002 | | **New management endpoints** — `/internal/pipelines`, `/internal/runners` |
-| P77-003 | | **gitlabhub API client** — Wrappers for management endpoints |
-| P77-004 | | **gitlabhub SPA** — Pages: Overview, Pipelines, Jobs, Runners |
-| P77-005 | | **Pipeline list + stage view** — Stages as columns, jobs as rows, DAG dependency lines |
-| P77-006 | | **Job log viewer** — Reuse `LogViewer.tsx`, trace reconstruction from incremental uploads |
-| P77-007 | | **Runner management view** — Registered runners, status, job history |
-| P77-008 | | **gitlabhub embed** — `gitlabhub/ui_embed.go` + modify `server.go` |
-| P77-009 | | **Tests** — Pipeline list, stage view, log viewer. 8+ tests |
-| P77-010 | | **State save** |
+| P77-001 | ✅ | **gitlabhub API types** — TS types for Pipeline, Job, Runner, Stage |
+| P77-002 | ✅ | **New management endpoints** — `/internal/pipelines`, `/internal/runners` |
+| P77-003 | ✅ | **gitlabhub API client** — Wrappers for management endpoints |
+| P77-004 | ✅ | **gitlabhub SPA** — Pages: Overview, Pipelines, Jobs, Runners |
+| P77-005 | ✅ | **Pipeline list + stage view** — Stages as columns, jobs as rows |
+| P77-006 | ✅ | **Job log viewer** — Reuse `LogViewer.tsx`, trace data split server-side |
+| P77-007 | ✅ | **Runner management view** — Registered runners, status, tags |
+| P77-008 | ✅ | **gitlabhub embed** — `gitlabhub/ui_embed.go` + modify `server.go` |
+| P77-009 | ✅ | **Tests** — 7 Go mgmt + 16 Vitest + 5 Playwright E2E |
+| P77-010 | ✅ | **State save** |
 
 ---
 
