@@ -7,7 +7,7 @@ RUN go install github.com/nektos/act@latest
 # Build simulator (independent module, not in go.work)
 WORKDIR /sim
 COPY simulators/azure/ /sim/
-RUN GOWORK=off go build -o /usr/local/bin/simulator-azure .
+RUN GOWORK=off go build -tags noui -o /usr/local/bin/simulator-azure .
 
 # Copy source and build Sockerless binaries
 WORKDIR /src

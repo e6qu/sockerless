@@ -1,7 +1,7 @@
 FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /simulator-azure .
+RUN CGO_ENABLED=0 go build -tags noui -ldflags="-s -w" -o /simulator-azure .
 
 FROM alpine:3.20
 RUN apk add --no-cache wget

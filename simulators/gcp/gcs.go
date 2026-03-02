@@ -35,8 +35,12 @@ type GCSObject struct {
 	data        []byte // unexported: raw object data
 }
 
+// Package-level store for dashboard access.
+var gcsBuckets *sim.StateStore[Bucket]
+
 func registerGCS(srv *sim.Server) {
 	buckets := sim.NewStateStore[Bucket]()
+	gcsBuckets = buckets
 	objects := sim.NewStateStore[GCSObject]()
 
 	// Create bucket
@@ -287,7 +291,7 @@ func registerGCS(srv *sim.Server) {
 				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "failed to read metadata part: %v", err)
 				return
 			}
-			metaPart.Close()
+			_ = metaPart.Close()
 			// Read data part
 			dataPart, err := mr.NextPart()
 			if err != nil {

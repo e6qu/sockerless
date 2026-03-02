@@ -61,6 +61,8 @@ MODULES = api agent sandbox backends/core bleephub gitlabhub
 MODULES_UI = frontends/docker backends/memory backends/docker \
   backends/ecs backends/lambda backends/cloudrun \
   backends/cloudrun-functions backends/aca backends/azure-functions
+# Simulator modules with UI embed (separate go.mod, need GOWORK=off)
+MODULES_SIM_UI = simulators/aws simulators/gcp simulators/azure
 
 lint:
 	@for mod in $(MODULES); do \
@@ -70,6 +72,10 @@ lint:
 	@for mod in $(MODULES_UI); do \
 	    echo "=== lint $$mod ===" && \
 	    cd $(CURDIR)/$$mod && golangci-lint run --build-tags noui ./... || exit 1; \
+	done
+	@for mod in $(MODULES_SIM_UI); do \
+	    echo "=== lint $$mod ===" && \
+	    cd $(CURDIR)/$$mod && GOWORK=off golangci-lint run --build-tags noui ./... || exit 1; \
 	done
 
 # Simulator integration tests — individual backends (per-module)
@@ -346,6 +352,7 @@ gitlabhub-test:
 .PHONY: build-aca-with-ui build-aca-noui build-azf-with-ui build-azf-noui
 .PHONY: build-docker-backend-with-ui build-docker-backend-noui
 .PHONY: build-frontend-with-ui build-frontend-noui
+.PHONY: build-sim-aws-noui build-sim-gcp-noui build-sim-azure-noui
 
 ui-install:
 	cd ui && bun install
@@ -361,6 +368,9 @@ ui-build: ui-install
 	rm -rf backends/azure-functions/dist && cp -r ui/packages/backend-azf/dist backends/azure-functions/dist
 	rm -rf backends/docker/dist && cp -r ui/packages/backend-docker/dist backends/docker/dist
 	rm -rf frontends/docker/dist && cp -r ui/packages/frontend-docker/dist frontends/docker/dist
+	rm -rf simulators/aws/dist && cp -r ui/packages/simulator-aws/dist simulators/aws/dist
+	rm -rf simulators/gcp/dist && cp -r ui/packages/simulator-gcp/dist simulators/gcp/dist
+	rm -rf simulators/azure/dist && cp -r ui/packages/simulator-azure/dist simulators/azure/dist
 
 ui-dev:
 	cd ui && bunx turbo run dev --filter=@sockerless/ui-backend-memory
@@ -374,6 +384,7 @@ ui-clean:
 	rm -rf backends/cloudrun/dist backends/cloudrun-functions/dist
 	rm -rf backends/aca/dist backends/azure-functions/dist
 	rm -rf backends/docker/dist frontends/docker/dist
+	rm -rf simulators/aws/dist simulators/gcp/dist simulators/azure/dist
 
 build-memory-with-ui: ui-build
 	cd backends/memory && go build -o sockerless-backend-memory ./cmd
@@ -428,3 +439,12 @@ build-frontend-with-ui: ui-build
 
 build-frontend-noui:
 	cd frontends/docker && go build -tags noui -o /dev/null ./cmd
+
+build-sim-aws-noui:
+	cd simulators/aws && GOWORK=off go build -tags noui -o /dev/null .
+
+build-sim-gcp-noui:
+	cd simulators/gcp && GOWORK=off go build -tags noui -o /dev/null .
+
+build-sim-azure-noui:
+	cd simulators/azure && GOWORK=off go build -tags noui -o /dev/null .

@@ -3,15 +3,15 @@ FROM golang:1.25 AS builder
 # --- Build all 3 simulators ---
 WORKDIR /sim-aws
 COPY simulators/aws/ /sim-aws/
-RUN GOWORK=off go build -o /out/simulator-aws .
+RUN GOWORK=off go build -tags noui -o /out/simulator-aws .
 
 WORKDIR /sim-gcp
 COPY simulators/gcp/ /sim-gcp/
-RUN GOWORK=off go build -o /out/simulator-gcp .
+RUN GOWORK=off go build -tags noui -o /out/simulator-gcp .
 
 WORKDIR /sim-azure
 COPY simulators/azure/ /sim-azure/
-RUN GOWORK=off go build -o /out/simulator-azure .
+RUN GOWORK=off go build -tags noui -o /out/simulator-azure .
 
 # --- Copy shared source for backends ---
 WORKDIR /src

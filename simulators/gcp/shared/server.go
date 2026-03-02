@@ -3,9 +3,12 @@ package simulator
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
+	"strings"
 	"syscall"
 	"time"
 
@@ -129,6 +132,57 @@ func (s *Server) ListenAndServe() error {
 		return <-done
 	}
 	return err
+}
+
+// RegisterUI registers an embedded SPA at /ui/ and redirects GET / to /ui/.
+func (s *Server) RegisterUI(fsys fs.FS) {
+	s.mux.Handle("/ui/", spaHandler(fsys, "/ui/"))
+	s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/ui/", http.StatusTemporaryRedirect)
+	})
+	s.logger.Info().Msg("UI registered at /ui/")
+}
+
+// spaHandler serves a single-page application from the given filesystem.
+func spaHandler(fsys fs.FS, pathPrefix string) http.Handler {
+	fileServer := http.FileServer(http.FS(fsys))
+	stripped := http.StripPrefix(pathPrefix, fileServer)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqPath := strings.TrimPrefix(r.URL.Path, pathPrefix)
+		if reqPath == "" {
+			reqPath = "."
+		}
+		reqPath = path.Clean(reqPath)
+
+		f, err := fsys.Open(reqPath)
+		if err == nil {
+			stat, statErr := f.Stat()
+			_ = f.Close()
+			if statErr == nil && !stat.IsDir() {
+				stripped.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		indexFile, err := fsys.Open("index.html")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer func() { _ = indexFile.Close() }()
+
+		stat, err := indexFile.Stat()
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		http.ServeContent(w, r, "index.html", stat.ModTime(), indexFile.(interface {
+			Read([]byte) (int, error)
+			Seek(int64, int) (int64, error)
+		}))
+	})
 }
 
 func (s *Server) printBanner() {

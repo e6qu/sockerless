@@ -67,6 +67,12 @@ func main() {
 	registerLambda(srv)
 	registerS3(srv)
 
+	// Dashboard summary endpoints for UI
+	registerDashboard(srv)
+
+	// Embedded UI (no-op with -tags noui)
+	registerUI(srv)
+
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}

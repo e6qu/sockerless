@@ -157,7 +157,7 @@ func handleECRDeleteRepository(w http.ResponseWriter, r *http.Request) {
 
 func handleECRGetAuthorizationToken(w http.ResponseWriter, r *http.Request) {
 	// Consume request body
-	sim.ReadJSON(r, &struct{}{})
+	_ = sim.ReadJSON(r, &struct{}{})
 
 	token := base64.StdEncoding.EncodeToString([]byte("AWS:password"))
 	expiresAt := time.Now().Add(12 * time.Hour).Unix()
@@ -379,7 +379,7 @@ func handleECRDeleteLifecyclePolicy(w http.ResponseWriter, r *http.Request) {
 
 func handleECRListTagsForResource(w http.ResponseWriter, r *http.Request) {
 	// Terraform uses this to read tags for ECR repositories
-	sim.ReadJSON(r, &struct{}{})
+	_ = sim.ReadJSON(r, &struct{}{})
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"tags": []any{},
 	})
@@ -387,6 +387,6 @@ func handleECRListTagsForResource(w http.ResponseWriter, r *http.Request) {
 
 func handleECRTagResource(w http.ResponseWriter, r *http.Request) {
 	// Accept and discard tag operations
-	sim.ReadJSON(r, &struct{}{})
+	_ = sim.ReadJSON(r, &struct{}{})
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }

@@ -57,6 +57,12 @@ func main() {
 	registerVPCAccess(srv)
 	registerIAM(srv)
 
+	// Dashboard summary endpoints for UI
+	registerDashboard(srv)
+
+	// Embedded UI (no-op with -tags noui)
+	registerUI(srv)
+
 	// Start gRPC server for Cloud Logging
 	grpcPort := grpcPortFromConfig(cfg.ListenAddr)
 	if p := os.Getenv("SIM_GCP_GRPC_PORT"); p != "" {

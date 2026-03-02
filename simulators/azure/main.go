@@ -66,6 +66,12 @@ func main() {
 	registerAppServicePlan(srv)
 	registerSubscription(srv)
 
+	// Dashboard summary endpoints for UI
+	registerDashboard(srv)
+
+	// Embedded UI (no-op with -tags noui)
+	registerUI(srv)
+
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}

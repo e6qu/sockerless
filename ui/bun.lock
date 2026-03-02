@@ -207,6 +207,66 @@
         "vite": "^6.3.0",
       },
     },
+    "packages/simulator-aws": {
+      "name": "@sockerless/ui-simulator-aws",
+      "version": "0.1.0",
+      "dependencies": {
+        "@sockerless/ui-core": "workspace:*",
+        "@tanstack/react-query": "^5.75.0",
+        "react": "^19.1.0",
+        "react-dom": "^19.1.0",
+        "react-router": "^7.6.0",
+      },
+      "devDependencies": {
+        "@tailwindcss/vite": "^4.1.0",
+        "@types/react": "^19.1.0",
+        "@types/react-dom": "^19.1.0",
+        "@vitejs/plugin-react": "^4.5.0",
+        "tailwindcss": "^4.1.0",
+        "typescript": "^5.8.0",
+        "vite": "^6.3.0",
+      },
+    },
+    "packages/simulator-azure": {
+      "name": "@sockerless/ui-simulator-azure",
+      "version": "0.1.0",
+      "dependencies": {
+        "@sockerless/ui-core": "workspace:*",
+        "@tanstack/react-query": "^5.75.0",
+        "react": "^19.1.0",
+        "react-dom": "^19.1.0",
+        "react-router": "^7.6.0",
+      },
+      "devDependencies": {
+        "@tailwindcss/vite": "^4.1.0",
+        "@types/react": "^19.1.0",
+        "@types/react-dom": "^19.1.0",
+        "@vitejs/plugin-react": "^4.5.0",
+        "tailwindcss": "^4.1.0",
+        "typescript": "^5.8.0",
+        "vite": "^6.3.0",
+      },
+    },
+    "packages/simulator-gcp": {
+      "name": "@sockerless/ui-simulator-gcp",
+      "version": "0.1.0",
+      "dependencies": {
+        "@sockerless/ui-core": "workspace:*",
+        "@tanstack/react-query": "^5.75.0",
+        "react": "^19.1.0",
+        "react-dom": "^19.1.0",
+        "react-router": "^7.6.0",
+      },
+      "devDependencies": {
+        "@tailwindcss/vite": "^4.1.0",
+        "@types/react": "^19.1.0",
+        "@types/react-dom": "^19.1.0",
+        "@vitejs/plugin-react": "^4.5.0",
+        "tailwindcss": "^4.1.0",
+        "typescript": "^5.8.0",
+        "vite": "^6.3.0",
+      },
+    },
   },
   "packages": {
     "@adobe/css-tools": ["@adobe/css-tools@4.4.4", "", {}, "sha512-Elp+iwUx5rN5+Y8xLt5/GRoG20WGoDCQ/1Fb+1LiGtvwbDavuSk0jhD/eZdckHAuzcDzccnkv+rEjyWfRx18gg=="],
@@ -396,6 +456,12 @@
     "@sockerless/ui-core": ["@sockerless/ui-core@workspace:packages/core"],
 
     "@sockerless/ui-frontend-docker": ["@sockerless/ui-frontend-docker@workspace:packages/frontend-docker"],
+
+    "@sockerless/ui-simulator-aws": ["@sockerless/ui-simulator-aws@workspace:packages/simulator-aws"],
+
+    "@sockerless/ui-simulator-azure": ["@sockerless/ui-simulator-azure@workspace:packages/simulator-azure"],
+
+    "@sockerless/ui-simulator-gcp": ["@sockerless/ui-simulator-gcp@workspace:packages/simulator-gcp"],
 
     "@tailwindcss/node": ["@tailwindcss/node@4.2.1", "", { "dependencies": { "@jridgewell/remapping": "^2.3.5", "enhanced-resolve": "^5.19.0", "jiti": "^2.6.1", "lightningcss": "1.31.1", "magic-string": "^0.30.21", "source-map-js": "^1.2.1", "tailwindcss": "4.2.1" } }, "sha512-jlx6sLk4EOwO6hHe1oCGm1Q4AN/s0rSrTTPBGPM0/RQ6Uylwq17FuU8IeJJKEjtc6K6O07zsvP+gDO6MMWo7pg=="],
 

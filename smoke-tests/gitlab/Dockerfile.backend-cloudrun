@@ -3,7 +3,7 @@ FROM golang:1.25 AS builder
 # Build simulator
 WORKDIR /sim
 COPY simulators/gcp/ /sim/
-RUN GOWORK=off go build -o /simulator-gcp .
+RUN GOWORK=off go build -tags noui -o /simulator-gcp .
 
 # Build backend
 WORKDIR /src

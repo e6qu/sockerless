@@ -5,7 +5,7 @@ PORT    := 4568
 .PHONY: build clean run docker-build docker-run test shared-test sdk-test cli-test terraform-test docker-test-build docker-test fmt vet
 
 build:
-	CGO_ENABLED=0 go build -ldflags="-s -w" -o $(BINARY) .
+	CGO_ENABLED=0 go build -tags noui -ldflags="-s -w" -o $(BINARY) .
 
 clean:
 	rm -f $(BINARY)

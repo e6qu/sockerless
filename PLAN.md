@@ -1,6 +1,6 @@
 # Sockerless — Roadmap
 
-> Phases 1-67, 69-74 complete (664 tasks). Phase 68 in progress. This document covers current and future work.
+> Phases 1-67, 69-75 complete (677 tasks). Phase 68 in progress. This document covers current and future work.
 >
 > **Production target:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners (GitHub Actions from github.com, GitLab CI from gitlab.com), and custom SDK clients — backed by real cloud infrastructure (AWS, GCP, Azure).
 
@@ -39,6 +39,7 @@ Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per
 | 72 | Full-Stack E2E Tests: forward-agent + FaaS arithmetic through Docker API, central multi-backend tests. 15 tasks |
 | 73 | UI Foundation: Bun/Vite/React 19/Tailwind 4 monorepo, shared core, SPAHandler, memory backend dashboard. 15 tasks |
 | 74 | All Backend Dashboards: shared BackendApp, 9 new SPAs (6 cloud + docker backend + docker frontend), mgmt endpoints. 12 tasks |
+| 75 | Simulator Dashboards: 3 simulator SPAs (AWS/GCP/Azure), `/sim/v1/` summary endpoints, SimulatorApp component. 13 tasks |
 
 ---
 

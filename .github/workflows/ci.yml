@@ -115,9 +115,9 @@ jobs:
           noui backends/azure-functions ./cmd/sockerless-backend-azf
           noui backends/docker ./cmd
           build gitlabhub ./cmd
-          build simulators/aws .
-          build simulators/gcp .
-          build simulators/azure .
+          noui simulators/aws .
+          noui simulators/gcp .
+          noui simulators/azure .
 
   smoke-test-act:
     runs-on: ubuntu-latest
@@ -173,6 +173,6 @@ jobs:
           noui backends/azure-functions ./cmd/sockerless-backend-azf
           noui backends/docker ./cmd
           build gitlabhub ./cmd
-          build simulators/aws .
-          build simulators/gcp .
-          build simulators/azure .
+          noui simulators/aws .
+          noui simulators/gcp .
+          noui simulators/azure .

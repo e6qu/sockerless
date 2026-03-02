@@ -50,8 +50,12 @@ type OCIUpload struct {
 	Data []byte
 }
 
+// Package-level store for dashboard access.
+var arRepos *sim.StateStore[Repository]
+
 func registerArtifactRegistry(srv *sim.Server) {
 	repos := sim.NewStateStore[Repository]()
+	arRepos = repos
 	dockerImages := sim.NewStateStore[DockerImage]()
 
 	// OCI Distribution stores

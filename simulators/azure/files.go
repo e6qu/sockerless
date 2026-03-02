@@ -64,8 +64,12 @@ type FileShareProperties struct {
 	LeaseState       string `json:"leaseState,omitempty"`
 }
 
+// Package-level store for dashboard access.
+var azStorageAccounts *sim.StateStore[StorageAccount]
+
 func registerAzureFiles(srv *sim.Server) {
 	storageAccounts := sim.NewStateStore[StorageAccount]()
+	azStorageAccounts = storageAccounts
 	fileShares := sim.NewStateStore[FileShare]()
 	fileData := sim.NewStateStore[[]byte]()
 	// dataPlaneShares tracks shares created via either ARM or data-plane APIs

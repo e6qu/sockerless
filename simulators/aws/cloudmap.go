@@ -359,21 +359,8 @@ func handleCMListInstances(w http.ResponseWriter, r *http.Request) {
 		return true
 	})
 
-	// We need to filter by service ID properly since the filter above
-	// doesn't have access to the key. Let's collect matching instances.
+	// Collect matching instances by iterating known instance IDs.
 	var result []CMInstance
-	allInstances := cmInstances.List()
-	for _, inst := range allInstances {
-		// Check if this instance belongs to the service
-		key := cmInstanceKey(req.ServiceId, inst.Id)
-		if _, ok := cmInstances.Get(key); ok {
-			result = append(result, inst)
-		}
-	}
-
-	// Deduplicate: instances appear in allInstances regardless of service,
-	// so we need a different approach. We'll iterate known instance IDs.
-	result = nil
 	seen := make(map[string]bool)
 	for _, inst := range instances {
 		key := cmInstanceKey(req.ServiceId, inst.Id)
@@ -445,14 +432,14 @@ func handleCMGetOperation(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCMListTagsForResource(w http.ResponseWriter, r *http.Request) {
-	sim.ReadJSON(r, &struct{}{})
+	_ = sim.ReadJSON(r, &struct{}{})
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"Tags": []any{},
 	})
 }
 
 func handleCMTagResource(w http.ResponseWriter, r *http.Request) {
-	sim.ReadJSON(r, &struct{}{})
+	_ = sim.ReadJSON(r, &struct{}{})
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 

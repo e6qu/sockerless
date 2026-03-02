@@ -69,12 +69,6 @@ type s3ObjectInfo struct {
 	StorageClass string `xml:"StorageClass"`
 }
 
-type s3CopyObjectResult struct {
-	XMLName      xml.Name `xml:"CopyObjectResult"`
-	ETag         string   `xml:"ETag"`
-	LastModified string   `xml:"LastModified"`
-}
-
 // State stores
 var (
 	s3Buckets_ *sim.StateStore[S3Bucket]

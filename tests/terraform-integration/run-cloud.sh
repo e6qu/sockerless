@@ -55,7 +55,7 @@ wait_for_url() {
 
 # --- Build and start shared simulator ---
 echo "=== Building $CLOUD simulator ==="
-(cd "$SIM_DIR" && GOWORK=off go build -o "$BUILD_DIR/simulator-$CLOUD" .)
+(cd "$SIM_DIR" && GOWORK=off go build -tags noui -o "$BUILD_DIR/simulator-$CLOUD" .)
 
 echo "=== Starting shared $CLOUD simulator on :$SIM_PORT ==="
 SIM_LISTEN_ADDR=":$SIM_PORT" "$BUILD_DIR/simulator-$CLOUD" &

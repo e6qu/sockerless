@@ -3,7 +3,7 @@ FROM golang:1.25 AS builder
 # --- Build Azure simulator ---
 WORKDIR /sim-azure
 COPY simulators/azure/ /sim-azure/
-RUN GOWORK=off go build -o /out/simulator-azure .
+RUN GOWORK=off go build -tags noui -o /out/simulator-azure .
 
 # --- Copy shared source for backends ---
 WORKDIR /src
