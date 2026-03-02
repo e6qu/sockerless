@@ -3,7 +3,7 @@ FROM golang:1.25 AS builder
 # --- Build AWS simulator ---
 WORKDIR /sim-aws
 COPY simulators/aws/ /sim-aws/
-RUN GOWORK=off go build -o /out/simulator-aws .
+RUN GOWORK=off go build -tags noui -o /out/simulator-aws .
 
 # --- Copy shared source for backends ---
 WORKDIR /src

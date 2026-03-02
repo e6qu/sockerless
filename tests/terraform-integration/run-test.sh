@@ -112,7 +112,7 @@ generate_tls_certs() {
 # --- Step 1: Build simulator ---
 if [ -z "${SIM_PID_EXTERNAL:-}" ]; then
     echo "=== Building $CLOUD simulator ==="
-    (cd "$SIM_DIR" && GOWORK=off go build -o "$BUILD_DIR/simulator-$CLOUD" .)
+    (cd "$SIM_DIR" && GOWORK=off go build -tags noui -o "$BUILD_DIR/simulator-$CLOUD" .)
 fi
 
 # --- Step 2: Start simulator ---
