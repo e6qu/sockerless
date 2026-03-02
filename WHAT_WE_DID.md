@@ -157,14 +157,25 @@ Built a React SPA dashboard for the bleephub GitHub Actions coordinator, giving 
 
 **Tests**: 6 Go mgmt endpoint tests PASS (304 total bleephub) + 16 Vitest PASS (4 OverviewPage + 3 WorkflowsPage + 2 WorkflowDetailPage + 3 RunnersPage + 4 MetricsPage) + 3 LogViewer tests PASS (core). 15 UI packages build. Lint clean (19 modules, bleephub now with `--build-tags noui`).
 
+## Phase 77 — gitlabhub Dashboard (GitLab CI)
+
+Built a React SPA dashboard for the gitlabhub GitLab CI coordinator, following the bleephub pattern from Phase 76. Key differentiator: pipelines are visualized with **stage-grouped columns** (build → test → deploy) rather than flat job lists.
+
+- **Go management endpoints** (`gitlabhub/handle_mgmt.go`): 5 new endpoints — `/internal/pipelines` (list, sorted by CreatedAt desc, with `project_name` joined from store), `/internal/pipelines/{id}` (detail), `/internal/pipelines/{id}/logs` (job name → trace lines, split from `job.TraceData` on `\n`), `/internal/runners` (registered runners, sorted by ID), `/internal/projects` (all projects, sorted by ID)
+- **gitlabhub SPA** (`ui/packages/gitlabhub/`): 6 pages — Overview (health badge, MetricsCards, recent pipelines table), Pipelines (DataTable with click-through, 3s refetch), Pipeline Detail (header + **stage columns** with jobs grouped by `pipeline.stages` ordering + LogViewer per job), Runners (DataTable with active badge, tags), Projects (DataTable: ID, Name), Metrics (MetricsCards, jobs by status, job completions)
+- **Stage-grouped pipeline view** (`PipelineDetailPage.tsx`): Jobs displayed as horizontal stage columns (stages left-to-right, jobs stacked vertically within each stage), with StatusBadge and allow_failure flag per job
+- **Build integration**: gitlabhub moved from MODULES to MODULES_UI, `ui_embed.go`/`ui_noembed.go` with SPA handler, dist copy in Makefile, CI `build→noui`, .gitignore entries, Dockerfile.release updated with `-tags noui`
+
+**Tests**: 7 Go mgmt endpoint tests PASS (136 total gitlabhub) + 16 Vitest PASS (4 OverviewPage + 3 PipelinesPage + 3 PipelineDetailPage + 3 RunnersPage + 3 MetricsPage) + 5 Playwright E2E tests. 16 UI packages build. Lint clean.
+
 ## Project Stats
 
-- **77 phases** (1-67, 69-76, 79), 695 tasks completed
+- **78 phases** (1-67, 69-77, 79), 705 tasks completed
 - **17 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, admin, tests
 - **21 Go-implemented builtins** in WASM sandbox
 - **18 driver interface methods** across 5 driver types
 - **7 external test consumers**: `act`, `gitlab-runner`, `gitlab-ci-local`, upstream act, `actions/runner`, `gh` CLI, gitlabhub gitlab-runner
-- **Core tests**: 255 PASS (+5 SPAHandler) | **Frontend tests**: 7 PASS | **UI tests**: 41 PASS (Vitest) | **Admin tests**: 9 PASS | **bleephub tests**: 304 PASS | **gitlabhub tests**: 129 PASS | **Shared ProcessRunner**: 15 PASS
+- **Core tests**: 255 PASS (+5 SPAHandler) | **Frontend tests**: 7 PASS | **UI tests**: 57 PASS (Vitest) | **Admin tests**: 9 PASS | **bleephub tests**: 304 PASS | **gitlabhub tests**: 136 PASS | **Shared ProcessRunner**: 15 PASS
 - **Cloud SDK tests**: AWS 42, GCP 43, Azure 38 | **Cloud CLI tests**: AWS 26, GCP 21, Azure 19
 - **3 cloud simulators** validated against SDKs, CLIs, and Terraform — now with real process execution for all services (container + FaaS)
 - **8 backends** sharing a common driver architecture

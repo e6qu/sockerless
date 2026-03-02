@@ -72,9 +72,16 @@ func (s *Server) registerRoutes() {
 	// Management API (pipeline_api.go)
 	s.registerPipelineAPIRoutes()
 
-	// Management: metrics + status
+	// Management: metrics + status + dashboard data
 	s.mux.HandleFunc("GET /internal/metrics", s.handleInternalMetrics)
 	s.mux.HandleFunc("GET /internal/status", s.handleInternalStatus)
+	s.registerMgmtRoutes()
+
+	// Embedded UI
+	s.registerUI()
+	s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/ui/", http.StatusFound)
+	})
 
 	// Catch-all: tries smart HTTP git protocol, then logs unmatched
 	s.mux.HandleFunc("/", s.handleCatchAll)
