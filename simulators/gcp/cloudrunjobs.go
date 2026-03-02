@@ -170,13 +170,11 @@ var crjProcessHandles sync.Map // map[execName]*sim.ProcessHandle
 
 // Package-level stores for dashboard access.
 var crjJobs *sim.StateStore[Job]
-var crjExecutions *sim.StateStore[Execution]
 
 func registerCloudRunJobs(srv *sim.Server) {
 	jobs := sim.NewStateStore[Job]()
 	executions := sim.NewStateStore[Execution]()
 	crjJobs = jobs
-	crjExecutions = executions
 
 	// Create job
 	srv.HandleFunc("POST /v2/projects/{project}/locations/{location}/jobs", func(w http.ResponseWriter, r *http.Request) {
