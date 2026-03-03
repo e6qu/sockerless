@@ -182,6 +182,12 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 
 	result, err := op.Wait(s.ctx())
 	if err != nil {
+		// Best-effort: delete potentially-created function
+		if delOp, delErr := s.gcp.Functions.DeleteFunction(s.ctx(), &functionspb.DeleteFunctionRequest{
+			Name: fullFunctionName,
+		}); delErr == nil {
+			_ = delOp.Wait(s.ctx())
+		}
 		s.Logger.Error().Err(err).Str("function", funcName).Msg("failed to wait for Cloud Run Function creation")
 		core.WriteError(w, mapGCPError(err, "function", funcName))
 		return

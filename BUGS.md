@@ -212,3 +212,75 @@ PutArchive error was logged but the handler unconditionally wrote `200 OK`. Clie
 ### Details
 
 `registerTaskDefinition` succeeds, then `runECSTask` fails — function returned without deregistering the task definition. Orphaned task defs accumulate in ECS. Added best-effort `DeregisterTaskDefinition` on the `runECSTask` error path for both single-container and multi-container flows.
+
+---
+
+## BUG-063: `ExecProcessConfig.Privileged` should be `*bool` with `omitempty`
+
+**Severity**: Low
+**Component**: `api/types.go`
+**Status**: Fixed — changed to `*bool` with `omitempty`
+
+### Details
+
+Docker API uses `*bool` with `omitempty` for `ExecProcessConfig.Privileged`. Our API used plain `bool`, causing `"privileged":false` to appear in JSON responses instead of being omitted. Fixed by changing the field type to `*bool` with `omitempty` tag.
+
+---
+
+## BUG-064: Cloud backends leave containers stuck "running" when cloud operation fails
+
+**Severity**: High
+**Component**: `backends/ecs/containers.go`, `backends/aca/containers.go`, `backends/cloudrun/containers.go`
+**Status**: Fixed — added `Store.RevertToCreated()` on all failure paths
+
+### Details
+
+All 3 container backends (ECS, ACA, CloudRun) set container state to "running" (including WaitCh) BEFORE calling the cloud API. If the cloud operation fails, the handler returns an HTTP error but the container remains "running" in the store — it can never exit, stop, or be waited on correctly. Fixed by adding `RevertToCreated()` helper to `Store` and calling it on every cloud operation failure path.
+
+---
+
+## BUG-065: ACA job not cleaned up when `PollUntilDone` fails during start
+
+**Severity**: Medium
+**Component**: `backends/aca/containers.go`
+**Status**: Fixed — added `s.deleteJob(jobName)` on PollUntilDone failure paths
+
+### Details
+
+`BeginCreateOrUpdate` starts the LRO (Azure may have created the job), then `PollUntilDone` fails. Handler returned error without deleting the orphaned job. Contrast with BeginStart failure which correctly called `s.deleteJob()`. Fixed by adding cleanup on both single and multi-container PollUntilDone failure paths.
+
+---
+
+## BUG-066: CloudRun job not cleaned up when `createOp.Wait` fails during start
+
+**Severity**: Medium
+**Component**: `backends/cloudrun/containers.go`
+**Status**: Fixed — added `s.deleteJob()` on createOp.Wait failure paths
+
+### Details
+
+`CreateJob` LRO starts, `Wait()` fails. Job may exist in GCP but is never cleaned up. Contrast with RunJob failure which correctly deletes. Fixed by constructing the full job name from parent + jobName and calling `s.deleteJob()` on both single and multi-container Wait failure paths.
+
+---
+
+## BUG-067: GCF function not cleaned up when `op.Wait` fails during create
+
+**Severity**: Medium
+**Component**: `backends/cloudrun-functions/containers.go`
+**Status**: Fixed — added best-effort function deletion on Wait failure path
+
+### Details
+
+`CreateFunction` LRO starts, `op.Wait()` fails. Function may have been created in GCP but the handler returns error, container isn't stored, and the orphaned function can never be cleaned up. Fixed by calling `DeleteFunction` (best-effort) before returning the error.
+
+---
+
+## BUG-068: AZF Function App not cleaned up when `PollUntilDone` fails during create
+
+**Severity**: Medium
+**Component**: `backends/azure-functions/containers.go`
+**Status**: Fixed — added best-effort Function App deletion on PollUntilDone failure path
+
+### Details
+
+`BeginCreateOrUpdate` starts the LRO, `PollUntilDone` fails. Function App may exist in Azure but handler returns error, container isn't stored, orphaned app remains. Fixed by calling `WebApps.Delete()` (best-effort) before returning the error.
