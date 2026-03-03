@@ -33,10 +33,20 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 	var deleted []string
 	for _, c := range s.Store.Containers.List() {
 		if c.State.Status == "exited" || c.State.Status == "dead" {
+			// Clean up Azure Functions cloud resources
+			azfState, _ := s.AZF.Get(c.ID)
+			if azfState.FunctionAppName != "" {
+				_, _ = s.azure.WebApps.Delete(s.ctx(), s.config.ResourceGroup, azfState.FunctionAppName, nil)
+			}
+			if azfState.ResourceID != "" {
+				s.Registry.MarkCleanedUp(azfState.ResourceID)
+			}
+
 			s.Store.Containers.Delete(c.ID)
 			s.Store.ContainerNames.Delete(c.Name)
 			s.AZF.Delete(c.ID)
 			s.Store.WaitChs.Delete(c.ID)
+			s.Store.LogBuffers.Delete(c.ID)
 			deleted = append(deleted, c.ID)
 		}
 	}

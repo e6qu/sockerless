@@ -3,6 +3,8 @@ package lambda
 import (
 	"net/http"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awslambda "github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 )
@@ -11,10 +13,22 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 	var deleted []string
 	for _, c := range s.Store.Containers.List() {
 		if c.State.Status == "exited" || c.State.Status == "dead" {
+			// Clean up Lambda cloud resources
+			lambdaState, _ := s.Lambda.Get(c.ID)
+			if lambdaState.FunctionName != "" {
+				_, _ = s.aws.Lambda.DeleteFunction(s.ctx(), &awslambda.DeleteFunctionInput{
+					FunctionName: aws.String(lambdaState.FunctionName),
+				})
+			}
+			if lambdaState.FunctionARN != "" {
+				s.Registry.MarkCleanedUp(lambdaState.FunctionARN)
+			}
+
 			s.Store.Containers.Delete(c.ID)
 			s.Store.ContainerNames.Delete(c.Name)
 			s.Lambda.Delete(c.ID)
 			s.Store.WaitChs.Delete(c.ID)
+			s.Store.LogBuffers.Delete(c.ID)
 			deleted = append(deleted, c.ID)
 		}
 	}
