@@ -20,7 +20,7 @@ function statusLabel(status: string): string {
 export function ProcessesPage() {
   const queryClient = useQueryClient();
 
-  const { data: processes, isLoading } = useQuery({
+  const { data: processes, isLoading, isError, error } = useQuery({
     queryKey: ["processes"],
     queryFn: () => api.processes(),
     refetchInterval: 3000,
@@ -36,7 +36,9 @@ export function ProcessesPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["processes"] }),
   });
 
-  if (isLoading || !processes) return <Spinner />;
+  if (isLoading) return <Spinner />;
+  if (isError) return <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">Error: {error?.message ?? "Failed to load"}</div>;
+  if (!processes) return <Spinner />;
 
   return (
     <div className="space-y-6">
@@ -76,7 +78,7 @@ export function ProcessesPage() {
                   {proc.status === "running" ? (
                     <button
                       onClick={() => stop.mutate(proc.name)}
-                      disabled={stop.isPending}
+                      disabled={stop.isPending && stop.variables === proc.name}
                       className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
                     >
                       Stop
@@ -84,7 +86,7 @@ export function ProcessesPage() {
                   ) : (
                     <button
                       onClick={() => start.mutate(proc.name)}
-                      disabled={start.isPending || proc.status === "starting" || proc.status === "stopping"}
+                      disabled={(start.isPending && start.variables === proc.name) || proc.status === "starting" || proc.status === "stopping"}
                       className="rounded-md bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
                     >
                       Start

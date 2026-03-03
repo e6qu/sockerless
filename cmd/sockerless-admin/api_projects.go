@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // registerProjectAPI registers project management API routes.
@@ -88,7 +89,7 @@ func handleProjectStart(projectMgr *ProjectManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		if err := projectMgr.Start(name); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeJSON(w, projectErrorStatus(err), map[string]string{"error": err.Error()})
 			return
 		}
 		status, _ := projectMgr.Get(name)
@@ -101,7 +102,7 @@ func handleProjectStop(projectMgr *ProjectManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		if err := projectMgr.Stop(name); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeJSON(w, projectErrorStatus(err), map[string]string{"error": err.Error()})
 			return
 		}
 		status, _ := projectMgr.Get(name)
@@ -114,11 +115,19 @@ func handleProjectDelete(projectMgr *ProjectManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		if err := projectMgr.Delete(name); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeJSON(w, projectErrorStatus(err), map[string]string{"error": err.Error()})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"deleted": name})
 	}
+}
+
+// projectErrorStatus maps project manager errors to HTTP status codes.
+func projectErrorStatus(err error) int {
+	if strings.Contains(err.Error(), "not found") {
+		return http.StatusNotFound
+	}
+	return http.StatusInternalServerError
 }
 
 // handleProjectLogs returns logs for a project, optionally filtered by component.

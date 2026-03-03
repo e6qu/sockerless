@@ -54,6 +54,22 @@ export function CleanupPage() {
 
       {scan.isPending && <Spinner />}
 
+      {scan.isError && (
+        <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">Scan failed: {scan.error?.message ?? "Unknown error"}</div>
+      )}
+
+      {cleanProcesses.isError && (
+        <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">Clean processes failed: {cleanProcesses.error?.message ?? "Unknown error"}</div>
+      )}
+
+      {cleanTmp.isError && (
+        <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">Clean tmp failed: {cleanTmp.error?.message ?? "Unknown error"}</div>
+      )}
+
+      {cleanContainers.isError && (
+        <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">Clean containers failed: {cleanContainers.error?.message ?? "Unknown error"}</div>
+      )}
+
       {scanResult && (
         <div className="space-y-6">
           <p className="text-sm text-gray-500 dark:text-gray-400">

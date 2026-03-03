@@ -29,12 +29,14 @@ function ComponentMetricsPanel({ component }: { component: AdminComponent }) {
 }
 
 export function MetricsPage() {
-  const { data: components, isLoading } = useQuery({
+  const { data: components, isLoading, isError, error } = useQuery({
     queryKey: ["components"],
     queryFn: () => api.components(),
   });
 
-  if (isLoading || !components) return <Spinner />;
+  if (isLoading) return <Spinner />;
+  if (isError) return <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">Error: {error?.message ?? "Failed to load"}</div>;
+  if (!components) return <Spinner />;
 
   return (
     <div className="space-y-4">

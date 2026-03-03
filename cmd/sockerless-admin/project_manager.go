@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -37,6 +39,9 @@ func (m *ProjectManager) Create(cfg ProjectConfig) error {
 
 	if cfg.Name == "" {
 		return fmt.Errorf("project name is required")
+	}
+	if !isValidProjectName(cfg.Name) {
+		return fmt.Errorf("invalid project name %q: must match [a-z0-9][a-z0-9_-]*", cfg.Name)
 	}
 	if _, ok := m.projects[cfg.Name]; ok {
 		return fmt.Errorf("project %q already exists", cfg.Name)
@@ -86,10 +91,12 @@ func (m *ProjectManager) Create(cfg ProjectConfig) error {
 		}
 	}
 
-	// Reserve explicit ports
-	explicitPorts := []int{}
-	if needed == 0 {
-		explicitPorts = []int{cfg.SimPort, cfg.BackendPort, cfg.FrontendPort, cfg.FrontendMgmtPort}
+	// Reserve explicit ports (non-zero ports not auto-allocated above)
+	var explicitPorts []int
+	for _, p := range []int{cfg.SimPort, cfg.BackendPort, cfg.FrontendPort, cfg.FrontendMgmtPort} {
+		if p > 0 {
+			explicitPorts = append(explicitPorts, p)
+		}
 	}
 	if len(explicitPorts) > 0 {
 		if err := m.ports.Reserve(cfg.Name, explicitPorts); err != nil {
@@ -134,12 +141,18 @@ func (m *ProjectManager) Create(cfg ProjectConfig) error {
 	})
 
 	stored := cfg
-	m.projects[cfg.Name] = &stored
 
-	// Persist
+	// Persist before in-memory registration so failures can be rolled back
 	if m.storeDir != "" {
-		_ = SaveProject(m.storeDir, &stored)
+		if err := SaveProject(m.storeDir, &stored); err != nil {
+			_ = m.pm.RemoveProcess(frontendName)
+			_ = m.pm.RemoveProcess(backendName)
+			_ = m.pm.RemoveProcess(simName)
+			m.ports.Release(cfg.Name)
+			return fmt.Errorf("persist project: %w", err)
+		}
 	}
+	m.projects[cfg.Name] = &stored
 
 	return nil
 }
@@ -156,6 +169,8 @@ func (m *ProjectManager) Start(name string) error {
 	cloud := cfg.Cloud
 	backend := cfg.Backend
 	simPort := cfg.SimPort
+	backendPort := cfg.BackendPort
+	frontendMgmtPort := cfg.FrontendMgmtPort
 	m.mu.Unlock()
 
 	// 1. Start simulator
@@ -181,7 +196,7 @@ func (m *ProjectManager) Start(name string) error {
 		return fmt.Errorf("start backend: %w", err)
 	}
 
-	backendAddr := fmt.Sprintf("http://localhost:%d", m.projects[name].BackendPort)
+	backendAddr := fmt.Sprintf("http://localhost:%d", backendPort)
 	if err := waitForHealth(m.client, backendAddr, "/internal/v1/healthz", 15*time.Second); err != nil {
 		_ = m.pm.Stop(backendName)
 		_ = m.pm.Stop(simName)
@@ -195,7 +210,7 @@ func (m *ProjectManager) Start(name string) error {
 		return fmt.Errorf("start frontend: %w", err)
 	}
 
-	mgmtAddr := fmt.Sprintf("http://localhost:%d", m.projects[name].FrontendMgmtPort)
+	mgmtAddr := fmt.Sprintf("http://localhost:%d", frontendMgmtPort)
 	if err := waitForHealth(m.client, mgmtAddr, "/healthz", 10*time.Second); err != nil {
 		_ = m.pm.Stop(frontendName)
 		_ = m.pm.Stop(backendName)
@@ -231,7 +246,7 @@ func (m *ProjectManager) Stop(name string) error {
 	}
 
 	if len(errs) > 0 {
-		return errs[0]
+		return errors.Join(errs...)
 	}
 	return nil
 }
@@ -386,7 +401,9 @@ func (m *ProjectManager) LoadProject(cfg *ProjectConfig) {
 	m.projects[cfg.Name] = &stored
 
 	// Reserve ports
-	_ = m.ports.Reserve(cfg.Name, []int{cfg.SimPort, cfg.BackendPort, cfg.FrontendPort, cfg.FrontendMgmtPort})
+	if err := m.ports.Reserve(cfg.Name, []int{cfg.SimPort, cfg.BackendPort, cfg.FrontendPort, cfg.FrontendMgmtPort}); err != nil {
+		log.Printf("warning: port conflict loading project %q: %v", cfg.Name, err)
+	}
 
 	// Register processes
 	simName, backendName, frontendName := processNames(cfg.Name)

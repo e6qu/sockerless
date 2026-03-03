@@ -29,7 +29,7 @@ function statusLabel(status: string): string {
 export function ProjectsPage() {
   const queryClient = useQueryClient();
 
-  const { data: projects, isLoading } = useQuery({
+  const { data: projects, isLoading, isError, error } = useQuery({
     queryKey: ["projects"],
     queryFn: () => api.projects(),
     refetchInterval: 3000,
@@ -45,7 +45,9 @@ export function ProjectsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["projects"] }),
   });
 
-  if (isLoading || !projects) return <Spinner />;
+  if (isLoading) return <Spinner />;
+  if (isError) return <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">Error: {error?.message ?? "Failed to load"}</div>;
+  if (!projects) return <Spinner />;
 
   return (
     <div className="space-y-6">
@@ -99,7 +101,7 @@ export function ProjectsPage() {
                 {proj.status === "running" || proj.status === "partial" ? (
                   <button
                     onClick={(e) => { e.preventDefault(); stop.mutate(proj.name); }}
-                    disabled={stop.isPending}
+                    disabled={stop.isPending && stop.variables === proj.name}
                     className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
                   >
                     Stop
@@ -107,7 +109,7 @@ export function ProjectsPage() {
                 ) : (
                   <button
                     onClick={(e) => { e.preventDefault(); start.mutate(proj.name); }}
-                    disabled={start.isPending || proj.status === "starting"}
+                    disabled={(start.isPending && start.variables === proj.name) || proj.status === "starting"}
                     className="rounded-md bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
                   >
                     Start

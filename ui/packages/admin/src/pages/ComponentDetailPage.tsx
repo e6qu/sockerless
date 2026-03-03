@@ -9,7 +9,7 @@ export function ComponentDetailPage() {
   const { name } = useParams<{ name: string }>();
   const queryClient = useQueryClient();
 
-  const { data: components } = useQuery({
+  const { data: components, isLoading, isError, error } = useQuery({
     queryKey: ["components"],
     queryFn: () => api.components(),
   });
@@ -39,7 +39,10 @@ export function ComponentDetailPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["components"] }),
   });
 
-  if (!comp) return <Spinner />;
+  if (isLoading) return <Spinner />;
+  if (isError) return <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">Error: {error?.message ?? "Failed to load"}</div>;
+  if (!components) return <Spinner />;
+  if (!comp) return <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">Component &quot;{name}&quot; not found</div>;
 
   const statusObj = status as Record<string, unknown> | undefined;
   const metricsObj = metrics as Record<string, unknown> | undefined;

@@ -197,6 +197,31 @@ Added a Projects concept to the admin dashboard — named bundles of 3 processes
 
 **Tests**: 39 new Go admin tests PASS (70 total: 14 project model + 11 bootstrap + 9 project API + 5 project manager) + 18 new Vitest tests PASS (33 total admin, 86 total UI: 6 ProjectsPage + 4 ProjectCreatePage + 5 ProjectDetailPage + 3 ProjectLogsPage). Build check with `-tags noui` passes.
 
+## Bug Fix Sprint — BUGS.md Triage & Fixes
+
+Triaged all 20 bugs in BUGS.md. Removed 3 invalid/already-fixed (BUG-003, 006, 010), deferred 2 architectural issues (BUG-001, 002), and fixed the remaining 15.
+
+**Go backend fixes (6 files)**:
+- **BUG-004**: Added `LoggingMiddleware` to `backends/core/server.go` — logs method, path, status, duration at Debug level via `statusRecorder` wrapper. Inserted into handler chain: otelhttp → LoggingMiddleware → MetricsMiddleware → Mux.
+- **BUG-005**: Fixed race condition in `ProjectManager.Start()` — copied `BackendPort` and `FrontendMgmtPort` to locals before releasing lock, replacing unsafe map reads at lines 184/198.
+- **BUG-007**: Fixed explicit port reservation — changed `if needed == 0` to collect all non-zero ports regardless of auto-allocation count.
+- **BUG-008**: Changed `LoadProject()` from `_ = m.ports.Reserve(...)` to `log.Printf` on error.
+- **BUG-009**: Added length guard before `c.ID[:12]` in `ScanStoppedContainers`.
+- **BUG-011**: Added `partial string` carry-over buffer to `RingBuffer.Write()` — incomplete lines are buffered and prepended to the next Write.
+- **BUG-012**: Added `isValidProjectName()` regex `^[a-z0-9][a-z0-9_-]*$` — rejects path traversal, spaces, uppercase.
+- **BUG-013**: Moved `SaveProject` before in-memory registration with full rollback (remove processes + release ports) on failure.
+- **BUG-014**: Changed `ScanOrphanedProcesses` to check `errors.Is(err, syscall.ESRCH)` specifically instead of any error.
+- **BUG-015**: Changed `Stop()` from `return errs[0]` to `errors.Join(errs...)`.
+- **BUG-016**: Added `projectErrorStatus()` helper — returns 404 for "not found", 500 for server-side failures (was always 400).
+
+**UI fixes (11 pages)**:
+- **BUG-017**: Added error state to all 8 list/overview pages — destructure `isError`/`error`, render red error box.
+- **BUG-018**: Added "not found" state to ComponentDetailPage and ProcessDetailPage.
+- **BUG-019**: Per-row pending state via `mutation.variables === name` in ProcessesPage and ProjectsPage.
+- **BUG-020**: Error display for all 4 mutations in CleanupPage.
+
+**Tests**: 77 admin Go tests PASS (was 70: +4 ring buffer carry-over + 2 project name validation + 1 short container ID). 33 admin Vitest PASS. All lint 0 issues.
+
 ## Project Stats
 
 - **80 phases** (1-67, 69-77, 79-82), 725 tasks completed
@@ -204,7 +229,7 @@ Added a Projects concept to the admin dashboard — named bundles of 3 processes
 - **21 Go-implemented builtins** in WASM sandbox
 - **18 driver interface methods** across 5 driver types
 - **7 external test consumers**: `act`, `gitlab-runner`, `gitlab-ci-local`, upstream act, `actions/runner`, `gh` CLI, gitlabhub gitlab-runner
-- **Core tests**: 257 PASS (+5 SPAHandler) | **Frontend tests**: 7 PASS | **UI tests**: 86 PASS (Vitest) | **Admin tests**: 70 PASS | **bleephub tests**: 304 PASS | **gitlabhub tests**: 136 PASS | **Shared ProcessRunner**: 15 PASS
+- **Core tests**: 257 PASS (+5 SPAHandler) | **Frontend tests**: 7 PASS | **UI tests**: 86 PASS (Vitest) | **Admin tests**: 77 PASS | **bleephub tests**: 304 PASS | **gitlabhub tests**: 136 PASS | **Shared ProcessRunner**: 15 PASS
 - **Cloud SDK tests**: AWS 42, GCP 43, Azure 38 | **Cloud CLI tests**: AWS 26, GCP 21, Azure 19
 - **3 cloud simulators** validated against SDKs, CLIs, and Terraform — now with real process execution for all services (container + FaaS)
 - **8 backends** sharing a common driver architecture

@@ -5,12 +5,14 @@ import { AdminApiClient } from "../api.js";
 const api = new AdminApiClient();
 
 export function DashboardPage() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ["overview"],
     queryFn: () => api.overview(),
   });
 
-  if (isLoading || !data) return <Spinner />;
+  if (isLoading) return <Spinner />;
+  if (isError) return <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">Error: {error?.message ?? "Failed to load"}</div>;
+  if (!data) return <Spinner />;
 
   return (
     <div className="space-y-6">

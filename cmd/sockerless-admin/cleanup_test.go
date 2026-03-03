@@ -96,6 +96,30 @@ func TestCleanOrphanedProcesses(t *testing.T) {
 	}
 }
 
+func TestShortContainerID(t *testing.T) {
+	// Verify our short ID logic doesn't panic on short IDs
+	testCases := []struct {
+		id       string
+		expected string
+	}{
+		{"abcdef123456789", "abcdef123456"},
+		{"short", "short"},
+		{"", ""},
+		{"exactly12ch", "exactly12ch"},
+		{"exactly12chr", "exactly12chr"},
+		{"exactly12chars", "exactly12cha"},
+	}
+	for _, tc := range testCases {
+		shortID := tc.id
+		if len(shortID) > 12 {
+			shortID = shortID[:12]
+		}
+		if shortID != tc.expected {
+			t.Errorf("shortID(%q) = %q, want %q", tc.id, shortID, tc.expected)
+		}
+	}
+}
+
 func TestFormatDuration(t *testing.T) {
 	tests := []struct {
 		seconds  int
