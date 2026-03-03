@@ -32,7 +32,7 @@
 | Cloud CLI tests | AWS 26, GCP 21, Azure 19 | `make docker-test` per cloud |
 | Lint (19 modules) | 0 issues | `make lint` |
 
-### Core Test Breakdown (255 PASS)
+### Core Test Breakdown (257 PASS)
 
 | Area | Tests | Key coverage |
 |---|---|---|

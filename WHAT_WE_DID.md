@@ -44,7 +44,7 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 | 43-52 | CLI, crash safety, pods, service containers, upstream expansion | sockerless CLI, PodContext, resource registry |
 | 53-56 | Production Docker API: TLS, auth, logs, DNS, restart, events, filters, export, commit | 16+18+15+14 new tests |
 
-## Phases 57-66 — CI Runners, API Hardening, bleephub Features, OTel
+## Phases 57-67 — CI Runners, API Hardening, bleephub Features, OTel, Network Isolation
 
 | Phase | What | Key Results |
 |---|---|---|
@@ -58,288 +58,59 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 | 64 | bleephub webhooks: HMAC-SHA256, async delivery, CI trigger | 270 bleephub PASS |
 | 65 | GitHub Apps: JWT auth, installation tokens, manifest flow | 293 bleephub PASS |
 | 66 | OTel tracing: OTLP HTTP, otelhttp middleware, spans | 241 core + 298 bleephub + 129 gitlabhub + 7 frontend |
+| 67 | Network Isolation: IPAllocator, SyntheticNetworkDriver, Linux NetnsManager | 255 core PASS (+14) |
 
-## Phase 67 — Network Isolation (Linux)
+## Phases 69-72 — ARM64, Simulator Fidelity, SDK Verification, Full-Stack E2E
 
-IPAllocator, SyntheticNetworkDriver (8 methods), Linux NetnsManager (build-tagged), LinuxNetworkDriver wrapper, handler refactoring to driver pattern.
-
-**Tests**: 255 core PASS (+14)
-
-## Phase 69 — ARM64 / Multi-Arch Completion
-
-Goreleaser 8→15 builds (added 6 cloud backends + gitlabhub), gitlabhub Dockerfile.release, docker.yml 6→7 images, CI build-check 8→15 binaries + ARM64 cross-compile job.
-
-## Phase 70 — Simulator Fidelity
-
-Brought all three cloud simulators to production quality: real process execution via shared ProcessRunner engine, structured log queries (CloudWatch/Cloud Logging/Log Analytics), correct status enums, SDK/CLI/Terraform compatibility. 24 tasks, 15 shared ProcessRunner tests.
-
-**Tests**: SDK: AWS 8→21, GCP 8→23, Azure 7→16 | Shared ProcessRunner: 15 PASS
-
-## Phase 71 — SDK/CLI Verification & Documentation
-
-Closed three gaps: FaaS real execution (Lambda/GCF/AZF), CLI execution+log verification tests, README quick-starts. Built arithmetic evaluator (recursive-descent parser) with 27 new tests (21 SDK + 6 CLI) across all clouds.
-
-**Tests**: SDK: AWS 42, GCP 43, Azure 38 | CLI: AWS 26, GCP 21, Azure 19
-
-## Phase 72 — Full-Stack E2E Tests
-
-Real arithmetic execution through full Docker API stack (Frontend → Backend → Simulator). Forward-agent backends (ECS/CloudRun/ACA): 18 arithmetic tests + fast-exit fix. FaaS backends (Lambda/GCF/AZF): enabled real execution via invoke-with-command, 18 arithmetic tests. Central multi-backend tests in `tests/` module (4 tests). Fixed ECS test name collisions.
-
-**Tests**: sim-test-all: 75 PASS, test-e2e: 65 PASS
+| Phase | What | Key Results |
+|---|---|---|
+| 69 | ARM64/Multi-Arch: goreleaser 15 builds, docker.yml 7 images | CI build-check 15 binaries + ARM64 cross-compile |
+| 70 | Simulator Fidelity: real process execution, structured logs | SDK: AWS 8→21, GCP 8→23, Azure 7→16. ProcessRunner: 15 PASS |
+| 71 | SDK/CLI Verification: FaaS real execution, arithmetic evaluator | SDK: AWS 42, GCP 43, Azure 38. CLI: AWS 26, GCP 21, Azure 19 |
+| 72 | Full-Stack E2E: arithmetic through Docker API stack | sim-test-all: 75 PASS, test-e2e: 65 PASS |
 
 ## Phase 68 — Multi-Tenant Backend Pools (In Progress)
 
-### P68-001: Pool Configuration ✅
-Added `PoolConfig` and `PoolsConfig` types to `backends/core/` for defining named backend pools with concurrency limits and queue sizes. `ValidatePoolsConfig()` checks 8 rules (non-empty pools, unique names, valid backend types, non-negative limits, default pool exists). `LoadPoolsConfig()` loads from `SOCKERLESS_POOLS_CONFIG` env var → `$SOCKERLESS_HOME/pools.json` → default single-pool config. Includes `GetPool()` and `PoolNames()` convenience methods. 18 tests.
+P68-001 done: `PoolConfig`/`PoolsConfig` types, `ValidatePoolsConfig()` (8 rules), `LoadPoolsConfig()`, 18 tests. 9 tasks remaining.
 
-## Phase 73 — UI Foundation + Shared Core + Memory Backend Dashboard
+## Phases 73-75 — UI Foundation, Backend Dashboards, Simulator Dashboards
 
-Established the web UI monorepo and delivered the first working embedded SPA. Key deliverables:
+**Phase 73**: Bun/Vite/React 19/Tailwind 4 monorepo, shared core package (API client, 7 hooks, 7 components), memory backend SPA (4 pages), Go `SPAHandler` with embed. 12 Vitest + 5 Go SPAHandler PASS.
 
-- **Monorepo scaffold**: Bun workspaces + Turborepo + TypeScript 5.8, `ui/` root with `packages/core/` and `packages/backend-memory/`
-- **Shared core package** (`@sockerless/ui-core`): API client + types mirroring Go structs, 7 TanStack Query hooks (health/status/containers/metrics/resources/check/info), 7 Tailwind-styled components (AppShell, StatusBadge, MetricsCard, RefreshButton, ErrorBoundary, Spinner, DataTable)
-- **Memory backend SPA**: React 19 + Vite 6.4 + React Router 7 + Tailwind CSS 4. Four dashboard pages: Overview (status + health checks + system info), Containers (DataTable with sorting/filtering), Resources (registry entries), Metrics (goroutines, heap, request latencies P50/P95/P99)
-- **Go embed system**: `SPAHandler` with index.html fallback for client-side routing, `RegisterUI(fs.FS)` on BaseServer (zero impact on backends without UI), build-tagged `ui_embed.go`/`ui_noembed.go` in memory backend
-- **Build integration**: Makefile targets (`ui-build`, `ui-test`, `build-memory-with-ui`, `build-memory-noui`), CI `ui` job with `oven-sh/setup-bun`, `-tags noui` for build-check jobs
-- **Verified end-to-end**: 307 redirect `/` → `/ui/`, SPA HTML served at `/ui/`, fallback routing for `/ui/containers`, API still works alongside UI
+**Phase 74**: Rolled out dashboards to all 7 remaining backends + Docker frontend (9 new SPAs). Shared `BackendApp` component, `BackendInfoCard`, Makefile with 18 new targets, CI `-tags noui`. 16 Vitest PASS.
 
-**Tests**: 12 Vitest PASS (6 API client + 3 hooks + 3 DataTable) + 5 Go SPAHandler PASS
+**Phase 75**: 3 simulator SPAs (AWS/GCP/Azure) with cloud-specific resource pages, `/sim/v1/` summary endpoints, `SimulatorApp` component. Store promotions for dashboard access. 18 Vitest PASS.
 
-## Phase 74 — All Backend Dashboards + Docker Frontend
+## Phases 76-77 — bleephub & gitlabhub Dashboards
 
-Rolled out UI dashboards to all 7 remaining backends + Docker frontend (9 new SPAs total). Key deliverables:
+**Phase 76**: bleephub SPA (6 pages), 5 Go management endpoints, log capture (500 lines/job), shared `LogViewer` component with ANSI→CSS. 6 Go mgmt + 16 Vitest + 3 LogViewer PASS.
 
-- **Shared BackendApp component**: Extracted 4 dashboard pages (Overview, Containers, Resources, Metrics) from `backend-memory` into `@sockerless/ui-core/pages`, created `BackendApp` component that assembles BrowserRouter + AppShell + Routes. Each new SPA is a thin wrapper (~30 lines of unique code)
-- **BackendInfoCard**: New component showing backend-type badge, instance ID, and context from `/internal/v1/status`
-- **6 cloud backend SPAs**: ECS, Lambda, CloudRun, GCF, ACA, AZF — each with `ui_embed.go`/`ui_noembed.go` + `registerUI()` in `server.go`
-- **Docker backend SPA**: Added management endpoints (`/internal/v1/healthz`, `/status`, `/metrics`, `/containers/summary`, `/check`, `/resources`) to `backends/docker/` (non-BaseServer), SPA with build-tagged embed
-- **Docker frontend SPA**: Custom SPA for MgmtServer showing docker_requests, goroutines, heap, configuration. Custom API client for non-standard paths (`/healthz`, `/status`, `/metrics`)
-- **Build integration**: Makefile expanded with 18 new targets (`build-*-with-ui`, `build-*-noui`), `ui-build` copies dist/ for all 9 backends, CI build-check uses `-tags noui` for all 9 modules with embed
+**Phase 77**: gitlabhub SPA (6 pages), 5 Go management endpoints, stage-grouped pipeline view (stages left-to-right, jobs stacked vertically). 7 Go mgmt + 16 Vitest + 5 Playwright E2E PASS.
 
-**Tests**: 16 Vitest PASS (+4: 2 BackendApp + 2 BackendInfoCard) + 5 Go SPAHandler PASS
+## Phases 79-82 — Admin Dashboard, Docs, Process Management, Projects
 
-## Phase 75 — Simulator Dashboards (AWS, GCP, Azure)
+**Phase 79**: Standalone `sockerless-admin` server + SPA (7 pages), component registry, health polling, `/api/v1/` endpoints, context discovery. 9 Go + 4 Vitest + 17 Playwright E2E PASS.
 
-Added web dashboards to all 3 cloud simulators. Unlike backend dashboards (which share `BackendApp` + management endpoints), simulator dashboards are cloud-specific — each shows its own resource types via custom pages and `/sim/v1/` JSON summary endpoints.
+**Phase 80**: Fixed stale docs, updated test counts, verified quick-starts, fixed bleephub README. 8 tasks.
 
-- **SimulatorApp component**: New shared component in `@sockerless/ui-core` — like BackendApp but accepts custom `navItems` + `children` routes. New `useSimHealth()` and `useSimSummary()` hooks
-- **SPAHandler in simulator shared libs**: Copied `spaHandler()` + `RegisterUI()` to each simulator's `shared/server.go` (avoids cross-module dependency on backend-core)
-- **AWS SPA** (6 pages): Overview, ECS Tasks, Lambda Functions, ECR Repos, S3 Buckets, CloudWatch Log Groups
-- **GCP SPA** (6 pages): Overview, Cloud Run Jobs, Cloud Functions, Artifact Registry, GCS Buckets, Cloud Logging
-- **Azure SPA** (6 pages): Overview, Container Apps Jobs, Azure Functions, ACR Registries, Storage Accounts, Monitor Logs
-- **Dashboard endpoints**: Each simulator gets `dashboard.go` with 6 JSON endpoints under `/sim/v1/` — avoids parsing complex cloud-native response formats in the browser
-- **Store promotions**: GCP/Azure local stores promoted to package-level globals for dashboard access (AWS stores were already global)
-- **Build integration**: Makefile `ui-build` copies 3 new dist/ dirs, `MODULES_SIM_UI` lint list with `GOWORK=off`, CI `build-check` uses `noui` for simulators
+**Phase 81**: ProcessManager (Start/Stop/StopAll with ring buffer logs), cleanup scanner (orphaned PIDs, stale tmp, stopped containers, stale cloud resources), `ProviderInfo` on all 8 backends. 22 new Go + 11 Vitest PASS.
 
-**Tests**: 18 Vitest PASS (+2 SimulatorApp) + 13 UI packages build + 3 simulators compile with noui
+**Phase 82**: Project bundles (sim+backend+frontend), `PortAllocator`, orchestrated startup with rollback, JSON persistence, 8 API endpoints, 4 UI pages (list/create/detail/logs). 39 Go + 18 Vitest PASS.
 
-## Phase 79 — Admin Dashboard (Sockerless Control Plane UI)
+## Bug Fix Sprints (BUG-001→051)
 
-Built a standalone admin server (`sockerless-admin`) and React SPA that aggregates health, metrics, containers, and resources from all Sockerless components into a single dashboard.
+| Sprint | Bugs Fixed | Key Changes | Test Delta |
+|---|---|---|---|
+| 1 | BUG-001→020 | LoggingMiddleware, race fixes, project name validation, RingBuffer carry-over, error states on 8 UI pages, per-row pending state | 70→77 Go, 86→86 Vitest |
+| 2 | BUG-003→016 (14) | opLock concurrency, graceful HTTP shutdown, LogViewer XSS fix, DataTable onRowClick, confirm guards | 77→83 Go, 86→89 Vitest |
+| 3 | BUG-003→023 (21) | StopAll bypass opLock, context cancel cleanup, processErrorStatus, ANSI rewrite, URL encoding on 14 endpoints, empty states | 83→86 Go, 89→92 Vitest |
+| 4 | BUG-024→033 (10) | HTTP status codes (409 Conflict), ScanStoppedContainers age, RingBuffer negative guard, auto-refresh | 86→87 Go, 92 Vitest |
+| 5 | BUG-034→042 (9) | Stop/Start race (generation check), start/stop button guards, 404 route, concurrent error display | 87→88 Go, 92 Vitest |
+| 6 | BUG-043→046 (4) | "stopping" state detection, error display fix, health badge mapping, provider cache invalidation | 88 Go, 92 Vitest |
 
-- **Admin Go server** (`cmd/sockerless-admin/`): Standalone binary with component registry, background health polling (5s interval), context discovery from `~/.sockerless/`, and CLI flags for component addresses
-- **Admin API** (`/api/v1/`): 10 endpoints — components list, overview (aggregated KPIs), containers (merged from all backends), resources (merged), contexts, plus per-component proxy endpoints for health/status/metrics/reload
-- **Admin SPA** (`ui/packages/admin/`): 7 pages — Dashboard (health grid + KPI cards), Components (DataTable with click-through), Component Detail (status + metrics + reload), Containers, Resources, Metrics (side-by-side panels), Contexts
-- **Build integration**: go.work, Makefile (build-admin-with-ui, build-admin-noui), .gitignore, CI build-check + ARM64 cross-compile
-- **Embed pattern**: Same `ui_embed.go`/`ui_noembed.go`/`spa.go` pattern as other components, with `!noui` build tags
+## Simulator Command Protocol Cleanup (BUG-047→051)
 
-**Tests**: 9 Go PASS (registry CRUD, ListByType, overwrite, healthEndpoint, normalizeAddr, handleComponents, handleComponentProxy 404, handleContexts) + 4 Vitest PASS (DashboardPage: heading, KPIs, health cards, status badges) + 17 Playwright E2E PASS (dashboard overview, component table/detail/reload, containers with filter, resources, metrics panels, contexts, full navigation flow). 14 UI packages build. Lint clean (19 modules).
-
-## Phase 76 — bleephub Dashboard (GitHub Actions)
-
-Built a React SPA dashboard for the bleephub GitHub Actions coordinator, giving operators visibility into workflow execution, connected runners, and system metrics.
-
-- **Go management endpoints** (`bleephub/handle_mgmt.go`): 5 new endpoints — `/internal/workflows` (list, sorted by CreatedAt desc), `/internal/workflows/{id}` (detail), `/internal/workflows/{id}/logs` (captured console log lines), `/internal/sessions` (connected runners + pending messages), `/internal/repos` (all repositories)
-- **Log capture** (`bleephub/timeline.go`): Web console log lines stored in `store.LogLines[jobID]` (capped at 500 lines per job) for retrieval via the dashboard
-- **bleephub SPA** (`ui/packages/bleephub/`): 6 pages — Overview (health badge, MetricsCards, recent workflows table), Workflows (DataTable with click-through, 3s refetch), Workflow Detail (header, job table, LogViewer per job), Runners (session table + pending messages), Repos (DataTable), Metrics (MetricsCards, jobs by status, job completions)
-- **LogViewer component** (`ui/packages/core/src/components/LogViewer.tsx`): Shared component with scrollable `<pre>`, line numbers, ANSI color support via regex SGR→CSS mapping (30-37, 90-97 foreground, bold, reset)
-- **Build integration**: bleephub moved from MODULES to MODULES_UI, `ui_embed.go`/`ui_noembed.go` with SPA handler, dist copy in Makefile, CI `build→noui`, .gitignore entries
-
-**Tests**: 6 Go mgmt endpoint tests PASS (304 total bleephub) + 16 Vitest PASS (4 OverviewPage + 3 WorkflowsPage + 2 WorkflowDetailPage + 3 RunnersPage + 4 MetricsPage) + 3 LogViewer tests PASS (core). 15 UI packages build. Lint clean (19 modules, bleephub now with `--build-tags noui`).
-
-## Phase 77 — gitlabhub Dashboard (GitLab CI)
-
-Built a React SPA dashboard for the gitlabhub GitLab CI coordinator, following the bleephub pattern from Phase 76. Key differentiator: pipelines are visualized with **stage-grouped columns** (build → test → deploy) rather than flat job lists.
-
-- **Go management endpoints** (`gitlabhub/handle_mgmt.go`): 5 new endpoints — `/internal/pipelines` (list, sorted by CreatedAt desc, with `project_name` joined from store), `/internal/pipelines/{id}` (detail), `/internal/pipelines/{id}/logs` (job name → trace lines, split from `job.TraceData` on `\n`), `/internal/runners` (registered runners, sorted by ID), `/internal/projects` (all projects, sorted by ID)
-- **gitlabhub SPA** (`ui/packages/gitlabhub/`): 6 pages — Overview (health badge, MetricsCards, recent pipelines table), Pipelines (DataTable with click-through, 3s refetch), Pipeline Detail (header + **stage columns** with jobs grouped by `pipeline.stages` ordering + LogViewer per job), Runners (DataTable with active badge, tags), Projects (DataTable: ID, Name), Metrics (MetricsCards, jobs by status, job completions)
-- **Stage-grouped pipeline view** (`PipelineDetailPage.tsx`): Jobs displayed as horizontal stage columns (stages left-to-right, jobs stacked vertically within each stage), with StatusBadge and allow_failure flag per job
-- **Build integration**: gitlabhub moved from MODULES to MODULES_UI, `ui_embed.go`/`ui_noembed.go` with SPA handler, dist copy in Makefile, CI `build→noui`, .gitignore entries, Dockerfile.release updated with `-tags noui`
-
-**Tests**: 7 Go mgmt endpoint tests PASS (136 total gitlabhub) + 16 Vitest PASS (4 OverviewPage + 3 PipelinesPage + 3 PipelineDetailPage + 3 RunnersPage + 3 MetricsPage) + 5 Playwright E2E tests. 16 UI packages build. Lint clean.
-
-## Phase 81 — Admin Process Management, Cleanup & Cloud Connections
-
-Added three capabilities to the admin dashboard: process lifecycle management, stale resource cleanup, and cloud provider connection visibility.
-
-- **Process Manager** (`cmd/sockerless-admin/process.go`): `ProcessManager` struct with Start/Stop/StopAll/List/GetLogs methods, `ManagedProcess` with ring buffer log capture, auto-registration in component Registry, graceful SIGTERM→SIGKILL shutdown with done-channel synchronization. Config extended with `ProcessConfig` in `admin.json`.
-- **Process API** (`api_processes.go`): 4 endpoints — `GET /api/v1/processes` (list), `POST .../start` (start), `POST .../stop` (stop), `GET .../logs?lines=N` (tail logs). Signal handling in main.go calls `StopAll()` on SIGINT/SIGTERM.
-- **Cleanup Scanner** (`cleanup.go`): 4 scan functions — orphaned PID files (`~/.sockerless/run/`), stale `/tmp/sockerless-*` dirs (>1h), stopped containers across backends, stale cloud resources (>1h). 3 cleanup actions — remove PID files, remove tmp dirs, prune containers via existing backend endpoints.
-- **Cleanup API** (`api_cleanup.go`): 4 endpoints — `GET /api/v1/cleanup/scan` (combined scan), `POST .../processes` (clean PIDs), `POST .../tmp` (clean tmp), `POST .../containers` (prune containers).
-- **Cloud Connection Info** (`backends/core/server.go`): New `ProviderInfo` struct (provider, mode, region, endpoint, resources) + `handleMgmtProvider` handler at `GET /internal/v1/provider`. Populated in all 8 backends — ECS/Lambda detect simulator via `EndpointURL`, GCP/Azure likewise, memory/docker report "local" mode. Docker backend has inline handler in `handle_mgmt.go`.
-- **Admin UI**: ProcessesPage (table with Start/Stop buttons, 3s auto-refresh), ProcessDetailPage (info cards + Start/Stop + LogViewer with 2s refresh), CleanupPage (Scan button + category-grouped results with Clean/Prune actions). ComponentDetailPage extended with Cloud Connection card showing provider badge (green "cloud" / yellow "simulator"), region, endpoint, and resource details.
-- **Ring Buffer** (`ring_buffer.go`): Thread-safe circular buffer (1000 lines) implementing `io.Writer`, used for capturing process stdout/stderr.
-
-**Tests**: 22 new Go admin tests PASS (31 total: ring buffer 4, process mgr 4, process API 5, cleanup 6, cleanup API 3) + 2 ProviderInfo tests in core (257 total) + 11 new Vitest tests PASS (68 total: 4 ProcessesPage + 3 ProcessDetailPage + 4 CleanupPage). All 8 backends build with new ProviderInfo field.
-
-## Phase 82 — Admin Projects
-
-Added a Projects concept to the admin dashboard — named bundles of 3 processes (simulator + backend + frontend) for a single cloud provider, with orchestrated lifecycle, automatic port allocation, connection instructions, and aggregated logs.
-
-- **Project data model** (`cmd/sockerless-admin/project.go`): `CloudType` (aws/gcp/azure), `BackendType` (ecs/lambda/cloudrun/gcf/aca/azf), `ProjectConfig`, `ProjectStatus`, `ProjectConnection`. Helper functions: `ValidBackends()`, `SimulatorBinary()`, `BackendBinary()`, `processNames()`. `PortAllocator` with `Allocate()`/`Reserve()`/`Release()` using `net.Listen("tcp", "127.0.0.1:0")` for ephemeral port discovery.
-- **Cloud bootstrapper** (`bootstrap.go`): `BootstrapSimulator()` — ECS CreateCluster via JSON API, no-op for others. `SimulatorEnv()`, `BackendEnv()` (all 6 backends with correct env vars), `BackendArgs()`, `FrontendArgs()`.
-- **ProjectManager** (`project_manager.go`): Orchestrated startup (sim → health wait → bootstrap → backend → health wait → frontend → health wait, with rollback on failure), reverse-order shutdown, create/delete with port allocation/release, `LoadProject()` for persistence recovery. Added `RemoveProcess()` to `ProcessManager`.
-- **Persistence** (`project_store.go`): JSON files in `~/.sockerless/admin/projects/`, loaded on startup.
-- **API** (`api_projects.go`): 8 endpoints — list, create (201), get, start, stop, delete, logs (with component filter), connection info (docker_host, env_export, podman_connection, component addrs).
-- **UI**: 4 new pages — ProjectsPage (card grid with Start/Stop, empty state, New Project button), ProjectCreatePage (3-step wizard: cloud → backend → config with auto-assign ports), ProjectDetailPage (info grid, component cards with status, connection info with copy buttons, View Logs / Delete actions), ProjectLogsPage (component selector tabs + LogViewer with 2s auto-refresh).
-- **TypeScript API client**: Added project types + 8 methods + `postJSON()`/`del()` private helpers to `AdminApiClient`.
-- **App.tsx**: "Projects" nav item + 4 routes (/ui/projects, /new, /:name, /:name/logs).
-
-**Tests**: 39 new Go admin tests PASS (70 total: 14 project model + 11 bootstrap + 9 project API + 5 project manager) + 18 new Vitest tests PASS (33 total admin, 86 total UI: 6 ProjectsPage + 4 ProjectCreatePage + 5 ProjectDetailPage + 3 ProjectLogsPage). Build check with `-tags noui` passes.
-
-## Bug Fix Sprint — BUGS.md Triage & Fixes
-
-Triaged all 20 bugs in BUGS.md. Removed 3 invalid/already-fixed (BUG-003, 006, 010), deferred 2 architectural issues (BUG-001, 002), and fixed the remaining 15.
-
-**Go backend fixes (6 files)**:
-- **BUG-004**: Added `LoggingMiddleware` to `backends/core/server.go` — logs method, path, status, duration at Debug level via `statusRecorder` wrapper. Inserted into handler chain: otelhttp → LoggingMiddleware → MetricsMiddleware → Mux.
-- **BUG-005**: Fixed race condition in `ProjectManager.Start()` — copied `BackendPort` and `FrontendMgmtPort` to locals before releasing lock, replacing unsafe map reads at lines 184/198.
-- **BUG-007**: Fixed explicit port reservation — changed `if needed == 0` to collect all non-zero ports regardless of auto-allocation count.
-- **BUG-008**: Changed `LoadProject()` from `_ = m.ports.Reserve(...)` to `log.Printf` on error.
-- **BUG-009**: Added length guard before `c.ID[:12]` in `ScanStoppedContainers`.
-- **BUG-011**: Added `partial string` carry-over buffer to `RingBuffer.Write()` — incomplete lines are buffered and prepended to the next Write.
-- **BUG-012**: Added `isValidProjectName()` regex `^[a-z0-9][a-z0-9_-]*$` — rejects path traversal, spaces, uppercase.
-- **BUG-013**: Moved `SaveProject` before in-memory registration with full rollback (remove processes + release ports) on failure.
-- **BUG-014**: Changed `ScanOrphanedProcesses` to check `errors.Is(err, syscall.ESRCH)` specifically instead of any error.
-- **BUG-015**: Changed `Stop()` from `return errs[0]` to `errors.Join(errs...)`.
-- **BUG-016**: Added `projectErrorStatus()` helper — returns 404 for "not found", 500 for server-side failures (was always 400).
-
-**UI fixes (11 pages)**:
-- **BUG-017**: Added error state to all 8 list/overview pages — destructure `isError`/`error`, render red error box.
-- **BUG-018**: Added "not found" state to ComponentDetailPage and ProcessDetailPage.
-- **BUG-019**: Per-row pending state via `mutation.variables === name` in ProcessesPage and ProjectsPage.
-- **BUG-020**: Error display for all 4 mutations in CleanupPage.
-
-**Tests**: 77 admin Go tests PASS (was 70: +4 ring buffer carry-over + 2 project name validation + 1 short container ID). 33 admin Vitest PASS. All lint 0 issues.
-
-## Bug Sprint 2 — Admin Module Bugs (BUG-003 through BUG-016)
-
-Fixed 14 admin bugs across Go backend and UI.
-
-**Go fixes (6 bugs)**:
-- **BUG-007/008**: Added per-project operation lock (`opLock map[string]string`) to prevent concurrent Start/Stop/Delete on same project — `tryLockOp`/`unlockOp` under `m.mu`.
-- **BUG-009**: Simplified `stopIfRunning` to call `pm.Stop()` directly and tolerate "not running" errors (eliminates TOCTOU race).
-- **BUG-010**: Fixed port leak — `m.ports.Release(cfg.Name)` before returning on Reserve failure.
-- **BUG-011**: Replaced `os.Exit(0)` with `http.Server` + `srv.Shutdown(ctx)` for graceful HTTP drain.
-- **BUG-012**: Changed `sockerlessDir()` to fall back to `os.TempDir()` when `os.UserHomeDir()` fails.
-- **BUG-016**: Changed `PollLoop` to accept `done <-chan struct{}` with `time.NewTicker` + `select` for clean cancellation.
-
-**UI fixes (8 bugs)**:
-- **BUG-003**: Added `escapeHtml()` before ANSI replacement in LogViewer — prevents XSS via `dangerouslySetInnerHTML`. Fixed multi-code ANSI sequences (bold+green now both apply).
-- **BUG-004**: Added `onRowClick` prop to DataTable — ComponentsPage uses row data instead of fragile DOM scraping.
-- **BUG-005**: Added error states to ProjectDetailPage and ProjectLogsPage — destructure `isError`/`error`, render red error box.
-- **BUG-006**: Added `window.confirm()` guards to CleanupPage destructive buttons.
-- **BUG-013**: Invalidate `["project-connection", name]` on start/stop mutation success.
-- **BUG-014**: Added client-side project name validation with `validNameRE`, inline error, `<form onSubmit>` wrapper, `maxLength`.
-- **BUG-015**: Added `warning`, `starting`, `stopping`, `stopped` to StatusBadge color map.
-
-**Tests**: 83 admin Go tests PASS (was 77: +3 op lock + 1 stopIfRunning + 1 port leak + 1 PollLoop + 2 config). 89 UI Vitest PASS (was 86: +2 LogViewer XSS/multi-code + 1 DataTable onRowClick).
-
-## Bug Audit Round 3 — BUGS.md Refresh
-
-Thorough re-audit of admin Go backend (`cmd/sockerless-admin/`) and admin UI (`ui/packages/admin/`, `ui/packages/core/`). Removed 14 fixed entries (BUG-003→016 from Sprint 2), kept 2 deferred (BUG-001/002), added 21 newly discovered bugs (BUG-003→023).
-
-**New bugs by category**:
-- Go backend medium (4): opLock shutdown orphan, context cancel leak, process API 400-vs-404, bootstrap error body discarded
-- Go backend low (4): health check body drain, log reset on restart, spa.go type assertion, pollOnce nil check
-- UI medium (4): API client URL encoding, link route param encoding, swallowed mutation errors, ANSI reset+color sequence
-- UI low (9): project link encoding, clipboard error handling, reload cache invalidation, create/delete cache invalidation, unclosed ANSI spans, missing empty states, DataTable a11y label, ErrorBoundary recovery
-
-Documentation-only change — no code modifications, no test count changes.
-
-## Bug Sprint 3 — 21 Bug Fixes (BUG-003 through BUG-023)
-
-Fixed all 21 bugs identified in Bug Audit Round 3.
-
-**Go backend fixes (8 bugs, 7 files)**:
-- **BUG-003**: `StopAll` now calls `stopProcesses(name)` directly, bypassing opLock — no more orphaned processes on shutdown
-- **BUG-004**: Context cancel called after `cmd.Wait()` and in `Stop()` — nil-out under lock for idempotency
-- **BUG-005**: Added `processErrorStatus()` — returns 404 for "not found" (was always 400)
-- **BUG-006**: Bootstrap error now includes response body (up to 1024 bytes)
-- **BUG-007**: `waitForHealth` drains response body with `io.Copy(io.Discard)` before close
-- **BUG-008**: Added `RingBuffer.Reset()`, called in `Start()` before each restart
-- **BUG-009**: `spa.go` type assertion guarded with comma-ok, returns 500 on failure
-- **BUG-010**: `pollOnce` nil-checks component after map lookup
-
-**UI core fixes (4 bugs, 3 files)**:
-- **BUG-014/020**: Rewrote `ansiToHtml` — tracks open state, handles reset+color combined sequences, closes unclosed spans
-- **BUG-022**: Added `aria-label="Filter table"` to DataTable input
-- **BUG-023**: Added "Reload page" button to ErrorBoundary
-
-**Admin UI fixes (10 bugs, 12 files)**:
-- **BUG-011**: All 14 API client URL interpolations wrapped with `encodeURIComponent()`
-- **BUG-012**: ProcessesPage/ProjectsPage links encode route params
-- **BUG-013**: Mutation error display added to 5 pages (ProcessesPage, ProjectsPage, ProcessDetailPage, ProjectDetailPage, ComponentDetailPage)
-- **BUG-015**: ProjectDetailPage/ProjectLogsPage links encode name
-- **BUG-016**: ConnectionField copy button with async/await, try/catch, "Copied!" feedback
-- **BUG-017**: ComponentDetailPage reload invalidates status + metrics queries
-- **BUG-018**: ProjectCreatePage invalidates projects cache after create
-- **BUG-019**: ProjectDetailPage delete invalidates projects cache
-- **BUG-021**: Empty states on MetricsPage, ContainersPage, ResourcesPage, ContextsPage, DashboardPage
-
-**Tests**: 86 admin Go PASS (was 83: +2 RingBuffer Reset + 1 bootstrap error body). 92 UI Vitest PASS (was 89: +2 LogViewer reset/unclosed + 1 DataTable a11y).
-
-## Bug Sprint 4 — BUG-024 through BUG-033 (10 bugs fixed)
-
-Audited admin Go backend and UI for remaining bugs after Sprint 3. Found and fixed 10 new bugs (6 Go, 4 UI).
-
-**Go backend fixes (6)**:
-- **BUG-024**: `handleProjectCreate` returns proper HTTP status (409 for "already exists", 500 for port/persist, 400 for validation)
-- **BUG-025**: `projectErrorStatus` maps "is busy" to 409 Conflict
-- **BUG-026**: `processErrorStatus` maps "already"/"is not running" to 409 Conflict instead of 400
-- **BUG-027**: `ScanStoppedContainers` now unmarshals `Created` field, Age populated from RFC3339 timestamp
-- **BUG-028**: `handleProjectLogs` returns 400 for "invalid component" instead of 404
-- **BUG-029**: `RingBuffer.Lines` guards against negative `n` (was panic on `make([]string, -1)`)
-
-**UI fixes (4)**:
-- **BUG-030**: `ComponentMetricsPanel` displays query errors
-- **BUG-031**: ProcessesPage empty state renders instead of (not below) empty table
-- **BUG-032**: ComponentDetailPage status/metrics queries auto-refresh every 5s
-- **BUG-033**: ProjectCreatePage navigate uses `encodeURIComponent`
-
-**Tests**: 87 admin Go PASS (was 86: +1 RingBuffer Lines negative). 92 UI Vitest PASS (unchanged).
-
-## Bug Sprint 5 — BUG-034 through BUG-042 (9 bugs fixed)
-
-Audited admin Go backend and UI for remaining bugs after Sprint 4. Found and fixed 9 new bugs (2 Go, 7 UI).
-
-**Go backend fixes (2)**:
-- **BUG-034**: `ProcessManager.Stop` race condition — added generation check using `doneCh` identity to prevent clobbering re-started process PID/cancel
-- **BUG-035**: `handleOverview` counts "unknown" health as "down" — changed to only count explicitly "down"
-
-**UI fixes (7)**:
-- **BUG-036/037**: ProjectDetailPage and ProjectsPage Start button enabled during "stopping" — added disabled guard
-- **BUG-038**: ProjectDetailPage Delete button enabled during starting/stopping — added disabled guard
-- **BUG-039**: ComponentDetailPage uptime only shows minutes — now uses same `Xh Ym` format as ComponentsPage
-- **BUG-040**: ProjectCreatePage double-submission via rapid Enter — added `create.isPending` guard in handleSubmit
-- **BUG-041**: Error display `||` hides concurrent errors — changed to array filter+map showing all errors (ProcessesPage, ProjectsPage, ProjectDetailPage)
-- **BUG-042**: App.tsx no catch-all 404 route — added `<Route path="*">` fallback
-
-**Tests**: 88 admin Go PASS (was 87: +1 Stop/Start race test). 92 UI Vitest PASS (unchanged).
-
-## Bug Sprint 6 — BUG-043 through BUG-046 (4 bugs fixed)
-
-Audited admin Go backend and UI for remaining bugs after Sprint 5. Found and fixed 4 new bugs (1 Go, 3 UI). Removed 9 fixed Sprint-5 bugs from BUGS.md.
-
-**Go backend fix (1)**:
-- **BUG-043**: `buildStatus` doesn't detect "stopping" state — added "stopping" check after existing "starting" check
-
-**UI fixes (3)**:
-- **BUG-044**: ProcessDetailPage error display uses `||` hiding concurrent errors — same fix as BUG-041, missed page
-- **BUG-045**: Health badge shows "error" for "unknown" health — mapped "unknown" to "warning" in ComponentsPage, ComponentDetailPage, DashboardPage
-- **BUG-046**: ComponentDetailPage reload doesn't invalidate provider cache — added provider query invalidation to onSuccess
-
-**Tests**: 88 admin Go PASS (unchanged). 92 UI Vitest PASS (unchanged).
+Eliminated simulator-specific command protocol from FaaS backends (Lambda/GCF/AZF). Replaced `SimCommand`/`ImageConfig.Command` JSON fields with standard `SOCKERLESS_CMD` env var. Configurable `AgentTimeout` (default 30s, tests use 5s). 5 bugs fixed, all 75 sim-backend tests pass.
 
 ## Project Stats
 

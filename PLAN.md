@@ -8,7 +8,7 @@
 
 1. **Docker API fidelity** — The frontend must match Docker's REST API exactly. CI runners should not need patching.
 2. **Real execution** — Simulators and backends must actually run commands and produce real output. Synthetic/echo mode is a last resort.
-3. **External validation** — Correctness is proven by running unmodified external test suites (`act`, `gitlab-runner`, `gitlab-ci-local`, `gh` CLI, cloud SDKs/CLIs/Terraform).
+3. **External validation** — Correctness is proven by running unmodified external test suites (`act`, `gitlab-runner`, `gitlab-ci-local`, upstream act, `actions/runner`, `gh` CLI, gitlabhub gitlab-runner).
 4. **No new frontend abstractions** — The Docker REST API is the only interface. No Kubernetes, no Podman, no custom APIs.
 5. **Driver-first handlers** — All handler code must operate through driver interfaces, never through direct `Store.Processes` access or `ProcessFactory` checks.
 6. **LLM-editable files** — Keep source files under 400 lines.
@@ -17,7 +17,7 @@
 
 ---
 
-## Completed Phases (1-72)
+## Completed Phases (1-82)
 
 Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per-task logs in `_tasks/done/`.
 
@@ -40,8 +40,12 @@ Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per
 | 73 | UI Foundation: Bun/Vite/React 19/Tailwind 4 monorepo, shared core, SPAHandler, memory backend dashboard. 15 tasks |
 | 74 | All Backend Dashboards: shared BackendApp, 9 new SPAs (6 cloud + docker backend + docker frontend), mgmt endpoints. 12 tasks |
 | 75 | Simulator Dashboards: 3 simulator SPAs (AWS/GCP/Azure), `/sim/v1/` summary endpoints, SimulatorApp component. 13 tasks |
+| 76 | bleephub Dashboard: management endpoints, SPA (overview/workflows/runners/metrics), LogViewer component, Go embed. 11 tasks |
+| 77 | gitlabhub Dashboard: management endpoints, SPA (overview/pipelines/runners/metrics), stage-grouped view, Go embed. 10 tasks |
 | 79 | Admin Dashboard: standalone `sockerless-admin` server + SPA aggregating health, metrics, containers from all components. 7 tasks |
 | 80 | Documentation Review & Tutorial Verification: fixed stale docs, updated test counts, verified quick-starts, fixed bleephub README. 8 tasks |
+| 81 | Admin Process Management, Cleanup & Cloud Connections: ProcessManager, cleanup scanner, ProviderInfo, 3 new UI pages. 8 tasks |
+| 82 | Admin Projects: orchestrated sim+backend+frontend bundles, port allocator, project API, 4 UI pages. 12 tasks |
 
 ---
 
@@ -68,125 +72,6 @@ Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per
 | P68-008 | | **Resource limits** — per-pool max containers, max total memory (advisory, enforced at scheduling time) |
 | P68-009 | | **Unit + integration tests** — pool CRUD, routing, concurrency limits, queue overflow, metrics |
 | P68-010 | | **Save final state** |
-
----
-
-## Phase 74 — All Backend Dashboards + Docker Frontend
-
-**Goal:** Roll out dashboard to all 7 remaining backends + Docker frontend. Each shares `core.BaseServer` and the same management API.
-
-| Task | Status | Description |
-|---|---|---|
-| P74-001 | ✅ | **Extract shared pages + BackendApp** — Moved 4 pages to `@sockerless/ui-core/pages`, created `BackendApp` component |
-| P74-002 | ✅ | **BackendInfoCard component** — Backend-type-specific details from `/internal/v1/status`, 2 tests |
-| P74-003 | ✅ | **ECS backend SPA + embed** |
-| P74-004 | ✅ | **Lambda backend SPA + embed** |
-| P74-005 | ✅ | **CloudRun backend SPA + embed** |
-| P74-006 | ✅ | **GCF backend SPA + embed** |
-| P74-007 | ✅ | **ACA backend SPA + embed** |
-| P74-008 | ✅ | **AZF backend SPA + embed** |
-| P74-009 | ✅ | **Docker backend SPA + embed** — Management endpoints + SPA on Docker backend (non-BaseServer) |
-| P74-010 | ✅ | **Docker frontend mgmt SPA** — Custom SPA on MgmtServer with `/healthz`, `/status`, `/metrics` |
-| P74-011 | ✅ | **Build integration + tests + CI** — Makefile expanded (18 new targets), CI updated with `-tags noui` |
-| P74-012 | ✅ | **Verification + state save** — 10 SPAs build, 16 Vitest tests pass, 9 Go noui builds pass |
-
----
-
-## Phase 75 — Simulator Dashboards (AWS, GCP, Azure)
-
-**Goal:** Add dashboards to cloud simulators showing simulated resources. Browser calls simulator's own cloud APIs (same-origin).
-
-| Task | Status | Description |
-|---|---|---|
-| P75-001 | | **Simulator SPA handler** — Add `SPAHandler()` to simulator shared server, register at `/ui/` |
-| P75-002 | | **Simulator core components** — `SimulatorShell.tsx`, cloud resource types, cloud API client functions |
-| P75-003 | | **AWS SPA** — Pages: ECS tasks, Lambda functions, ECR repos, S3 buckets, CloudWatch logs |
-| P75-004 | | **AWS API client** — Wrappers calling simulator AWS APIs |
-| P75-005 | | **AWS embed** — `simulators/aws/ui_embed.go`, register in `main.go` |
-| P75-006 | | **GCP SPA** — Pages: Cloud Run Jobs, Functions, Logging, AR, GCS |
-| P75-007 | | **GCP API client** — Wrappers for GCP REST APIs |
-| P75-008 | | **GCP embed** — `simulators/gcp/ui_embed.go` |
-| P75-009 | | **Azure SPA** — Pages: Container Apps, Functions, ACR, Files, Monitor |
-| P75-010 | | **Azure API client** — Wrappers for Azure ARM REST APIs |
-| P75-011 | | **Azure embed** — `simulators/azure/ui_embed.go` |
-| P75-012 | | **Tests** — Per-simulator resource list renders with mock data. 12+ tests |
-| P75-013 | | **State save** |
-
----
-
-## Phase 79 — Admin Dashboard (Sockerless Control Plane UI) ✅
-
-**Goal:** Standalone admin server + SPA aggregating health, metrics, containers, and resources from all components.
-
-| Task | Status | Description |
-|---|---|---|
-| P79-001 | ✅ | **Admin server skeleton + registry** — Go binary `cmd/sockerless-admin/`, component registry, health polling, flag parsing |
-| P79-002 | ✅ | **Admin API handlers** — `/api/v1/` endpoints: components, overview, containers, resources, contexts, proxy |
-| P79-003 | ✅ | **Admin SPA** — React SPA `ui/packages/admin/`: Dashboard, Components, Containers, Resources, Metrics, Contexts pages |
-| P79-004 | ✅ | **Admin embed files** — `ui_embed.go`, `ui_noembed.go`, `spa.go` with build tags |
-| P79-005 | ✅ | **Build integration** — Makefile targets, .gitignore, CI build-check, go.work, lint |
-| P79-006 | ✅ | **Tests** — 9 Go tests (registry, handlers, normalizeAddr) + 4 Vitest tests (DashboardPage) |
-| P79-007 | ✅ | **State save** |
-
----
-
-## Phase 76 — bleephub Dashboard (GitHub Actions)
-
-**Goal:** Dashboard for the GitHub Actions coordinator — workflows, jobs, runners, logs.
-
-| Task | Status | Description |
-|---|---|---|
-| P76-001 | ✅ | **bleephub API types** — TS types for Workflow, Job, Session, Repo, Webhook |
-| P76-002 | ✅ | **New management endpoints** — `/internal/workflows`, `/internal/sessions`, `/internal/repos` |
-| P76-003 | ✅ | **bleephub API client** — Wrappers for management + GitHub API endpoints |
-| P76-004 | ✅ | **bleephub SPA** — Pages: Overview, Workflows, Jobs, Runners |
-| P76-005 | ✅ | **Workflow list + detail pages** — Status badges, job timeline, step-by-step view |
-| P76-006 | ✅ | **LogViewer component** — Shared `LogViewer.tsx` in core with ANSI color support |
-| P76-007 | ✅ | **Runner session view** — Connected agents, message queue status |
-| P76-008 | ✅ | **Metrics dashboard** — Workflow submissions/min, completion rates, goroutines, heap |
-| P76-009 | ✅ | **bleephub embed** — `bleephub/ui_embed.go` + serve at `/ui/` before catch-all |
-| P76-010 | ✅ | **Tests** — Workflow list, job timeline, log viewer. 10+ tests |
-| P76-011 | ✅ | **State save** |
-
----
-
-## Phase 77 — gitlabhub Dashboard (GitLab CI)
-
-**Goal:** Dashboard for the GitLab CI coordinator — pipelines, stages, jobs, runners.
-
-| Task | Status | Description |
-|---|---|---|
-| P77-001 | ✅ | **gitlabhub API types** — TS types for Pipeline, Job, Runner, Stage |
-| P77-002 | ✅ | **New management endpoints** — `/internal/pipelines`, `/internal/runners` |
-| P77-003 | ✅ | **gitlabhub API client** — Wrappers for management endpoints |
-| P77-004 | ✅ | **gitlabhub SPA** — Pages: Overview, Pipelines, Jobs, Runners |
-| P77-005 | ✅ | **Pipeline list + stage view** — Stages as columns, jobs as rows |
-| P77-006 | ✅ | **Job log viewer** — Reuse `LogViewer.tsx`, trace data split server-side |
-| P77-007 | ✅ | **Runner management view** — Registered runners, status, tags |
-| P77-008 | ✅ | **gitlabhub embed** — `gitlabhub/ui_embed.go` + modify `server.go` |
-| P77-009 | ✅ | **Tests** — 7 Go mgmt + 16 Vitest + 5 Playwright E2E |
-| P77-010 | ✅ | **State save** |
-
----
-
-## Phase 82 — Admin Projects ✅
-
-**Goal:** Named project bundles (simulator + backend + frontend) with orchestrated lifecycle, auto port allocation, connection info, and aggregated logs.
-
-| Task | Status | Description |
-|---|---|---|
-| P82-001 | ✅ | **Project data model + port allocator** — CloudType, BackendType, ProjectConfig, ProjectStatus, PortAllocator |
-| P82-002 | ✅ | **Cloud bootstrapper + env builders** — BootstrapSimulator, SimulatorEnv, BackendEnv, BackendArgs, FrontendArgs |
-| P82-003 | ✅ | **ProjectManager** — orchestrated lifecycle (Create/Start/Stop/Delete/Get/List/Logs/Connection), RemoveProcess |
-| P82-004 | ✅ | **Project persistence + main.go wiring** — JSON store, LoadProjects, ProjectManager in main.go + shutdown handler |
-| P82-005 | ✅ | **Project API routes** — 8 endpoints (list/create/get/start/stop/delete/logs/connection) |
-| P82-006 | ✅ | **Go backend tests** — 39 new tests (project_test.go + bootstrap_test.go + api_projects_test.go) |
-| P82-007 | ✅ | **TypeScript API client** — Project types + 8 API methods + postJSON/del helpers |
-| P82-008 | ✅ | **Projects list page** — Card grid with Start/Stop, New Project button, empty state |
-| P82-009 | ✅ | **Create project wizard** — 3-step form (cloud → backend → config), auto-assign ports |
-| P82-010 | ✅ | **Project detail page** — Info grid, component cards, connection info with copy buttons |
-| P82-011 | ✅ | **Project logs page** — Component selector (All/Sim/Backend/Frontend) + LogViewer |
-| P82-012 | ✅ | **Vitest tests + state save** — 18 new tests (6 ProjectsPage + 4 ProjectCreatePage + 5 ProjectDetailPage + 3 ProjectLogsPage) |
 
 ---
 
