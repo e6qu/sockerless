@@ -32,6 +32,8 @@ func (s *BaseServer) handlePutArchive(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.Drivers.Filesystem.PutArchive(id, path, r.Body); err != nil {
 		s.Logger.Error().Err(err).Str("container", id).Msg("failed to extract archive")
+		WriteError(w, &api.ServerError{Message: "failed to extract archive: " + err.Error()})
+		return
 	}
 	w.WriteHeader(http.StatusOK)
 }
@@ -98,7 +100,9 @@ func (s *BaseServer) handleGetArchive(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Docker-Container-Path-Stat", base64.StdEncoding.EncodeToString(statJSON))
 	w.Header().Set("Content-Type", "application/x-tar")
 	w.WriteHeader(http.StatusOK)
-	_, _ = s.Drivers.Filesystem.GetArchive(id, path, w)
+	if _, err := s.Drivers.Filesystem.GetArchive(id, path, w); err != nil {
+		s.Logger.Error().Err(err).Str("container", id).Str("path", path).Msg("failed to write archive")
+	}
 }
 
 // extractTar extracts a tar archive into destDir.
@@ -124,7 +128,10 @@ func extractTar(r io.Reader, destDir string) error {
 			if err != nil {
 				return err
 			}
-			io.Copy(f, tr)
+			if _, err := io.Copy(f, tr); err != nil {
+				f.Close()
+				return err
+			}
 			_ = f.Close()
 		}
 	}
@@ -149,79 +156,93 @@ func (s *BaseServer) mergeStagingDir(containerID string, rootPath string) {
 		rel, _ := filepath.Rel(stagingDir, path)
 		dest := filepath.Join(rootPath, rel)
 		if info.IsDir() {
-			_ = os.MkdirAll(dest, info.Mode())
+			if err := os.MkdirAll(dest, info.Mode()); err != nil {
+				s.Logger.Warn().Err(err).Str("dir", rel).Msg("staging merge: mkdir failed")
+			}
 			return nil
 		}
-		_ = os.MkdirAll(filepath.Dir(dest), 0755)
+		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+			s.Logger.Warn().Err(err).Str("file", rel).Msg("staging merge: mkdir parent failed")
+			return nil
+		}
 		src, err := os.Open(path)
 		if err != nil {
+			s.Logger.Warn().Err(err).Str("file", rel).Msg("staging merge: open source failed")
 			return nil
 		}
 		defer func() { _ = src.Close() }()
 		dst, err := os.Create(dest)
 		if err != nil {
+			s.Logger.Warn().Err(err).Str("file", rel).Msg("staging merge: create dest failed")
 			return nil
 		}
 		defer func() { _ = dst.Close() }()
-		_, _ = io.Copy(dst, src)
-		_ = dst.Chmod(info.Mode())
+		if _, err := io.Copy(dst, src); err != nil {
+			s.Logger.Warn().Err(err).Str("file", rel).Msg("staging merge: copy failed")
+		}
+		if err := dst.Chmod(info.Mode()); err != nil {
+			s.Logger.Warn().Err(err).Str("file", rel).Msg("staging merge: chmod failed")
+		}
 		return nil
 	})
 }
 
 // createTar creates a tar archive from a path and writes it to w.
-func createTar(w io.Writer, srcPath string, baseName string) {
+func createTar(w io.Writer, srcPath string, baseName string) error {
 	tw := tar.NewWriter(w)
 	defer func() { _ = tw.Close() }()
 
 	info, err := os.Stat(srcPath)
 	if err != nil {
-		return
+		return err
 	}
 
 	if !info.IsDir() {
-		tw.WriteHeader(&tar.Header{
+		if err := tw.WriteHeader(&tar.Header{
 			Name: baseName,
 			Size: info.Size(),
 			Mode: int64(info.Mode().Perm()),
-		})
+		}); err != nil {
+			return err
+		}
 		f, err := os.Open(srcPath)
 		if err != nil {
-			return
+			return err
 		}
-		io.Copy(tw, f)
+		_, copyErr := io.Copy(tw, f)
 		_ = f.Close()
-		return
+		return copyErr
 	}
 
-	_ = filepath.Walk(srcPath, func(path string, fi os.FileInfo, err error) error {
+	return filepath.Walk(srcPath, func(path string, fi os.FileInfo, err error) error {
 		if err != nil {
-			return nil
+			return err
 		}
 		rel, _ := filepath.Rel(srcPath, path)
 		name := filepath.Join(baseName, rel)
 
 		if fi.IsDir() {
-			tw.WriteHeader(&tar.Header{
+			return tw.WriteHeader(&tar.Header{
 				Name:     name + "/",
 				Typeflag: tar.TypeDir,
 				Mode:     int64(fi.Mode().Perm()),
 			})
-			return nil
 		}
 
-		tw.WriteHeader(&tar.Header{
+		if err := tw.WriteHeader(&tar.Header{
 			Name: name,
 			Size: fi.Size(),
 			Mode: int64(fi.Mode().Perm()),
-		})
+		}); err != nil {
+			return err
+		}
 		f, err := os.Open(path)
 		if err != nil {
-			return nil
+			return err
 		}
-		io.Copy(tw, f)
+		_, copyErr := io.Copy(tw, f)
 		_ = f.Close()
-		return nil
+		return copyErr
 	})
 }
 

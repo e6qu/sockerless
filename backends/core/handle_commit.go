@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -46,7 +47,10 @@ func (s *BaseServer) handleContainerCommit(w http.ResponseWriter, r *http.Reques
 	}
 	if r.Body != nil {
 		defer r.Body.Close()
-		json.NewDecoder(r.Body).Decode(&overrides)
+		if err := json.NewDecoder(r.Body).Decode(&overrides); err != nil && err != io.EOF {
+			WriteError(w, &api.InvalidParameterError{Message: "invalid commit config: " + err.Error()})
+			return
+		}
 		if len(overrides.Cmd) > 0 {
 			imgConfig.Cmd = overrides.Cmd
 		}

@@ -403,7 +403,10 @@ func (s *BaseServer) handleImageBuild(w http.ResponseWriter, r *http.Request) {
 	// Parse buildargs from query param (JSON string)
 	var buildArgs map[string]string
 	if ba := r.URL.Query().Get("buildargs"); ba != "" {
-		_ = json.Unmarshal([]byte(ba), &buildArgs)
+		if err := json.Unmarshal([]byte(ba), &buildArgs); err != nil {
+			WriteError(w, &api.InvalidParameterError{Message: "invalid buildargs JSON: " + err.Error()})
+			return
+		}
 	}
 
 	// Extract tar body to temp dir

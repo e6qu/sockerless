@@ -28,5 +28,7 @@ func (s *BaseServer) handleContainerExport(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	createTar(w, rootPath, ".")
+	if err := createTar(w, rootPath, "."); err != nil {
+		s.Logger.Error().Err(err).Str("container", id).Msg("failed to create export tar")
+	}
 }
