@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 )
@@ -41,7 +42,8 @@ func BootstrapSimulator(cloud CloudType, backend BackendType, simAddr, projectNa
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("create cluster returned %d", resp.StatusCode)
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("create cluster returned %d: %s", resp.StatusCode, string(errBody))
 	}
 	return nil
 }

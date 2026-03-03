@@ -66,6 +66,7 @@ export function App() {
             <Route path="/ui/cleanup" element={<CleanupPage />} />
             <Route path="/ui/metrics" element={<MetricsPage />} />
             <Route path="/ui/contexts" element={<ContextsPage />} />
+            <Route path="*" element={<div className="p-4 text-sm text-gray-500 dark:text-gray-400">Page not found</div>} />
           </Routes>
         </AppShell>
       </BrowserRouter>

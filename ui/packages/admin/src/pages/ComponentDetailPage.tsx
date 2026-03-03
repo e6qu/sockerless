@@ -20,12 +20,14 @@ export function ComponentDetailPage() {
     queryKey: ["component-status", name],
     queryFn: () => api.componentStatus(name!),
     enabled: !!name,
+    refetchInterval: 5000,
   });
 
   const { data: metrics } = useQuery({
     queryKey: ["component-metrics", name],
     queryFn: () => api.componentMetrics(name!),
     enabled: !!name,
+    refetchInterval: 5000,
   });
 
   const { data: provider } = useQuery({
@@ -36,7 +38,11 @@ export function ComponentDetailPage() {
 
   const reload = useMutation({
     mutationFn: () => api.componentReload(name!),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["components"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["components"] });
+      queryClient.invalidateQueries({ queryKey: ["component-status", name] });
+      queryClient.invalidateQueries({ queryKey: ["component-metrics", name] });
+    },
   });
 
   if (isLoading) return <Spinner />;
@@ -59,7 +65,11 @@ export function ComponentDetailPage() {
         <MetricsCard title="Address" value={comp.addr} />
         <MetricsCard
           title="Uptime"
-          value={comp.uptime > 0 ? `${Math.floor(comp.uptime / 60)}m` : "-"}
+          value={comp.uptime > 0 ? (() => {
+            const h = Math.floor(comp.uptime / 3600);
+            const m = Math.floor((comp.uptime % 3600) / 60);
+            return h > 0 ? `${h}h ${m}m` : `${m}m`;
+          })() : "-"}
         />
         <MetricsCard
           title="Containers"
@@ -75,6 +85,12 @@ export function ComponentDetailPage() {
         >
           {reload.isPending ? "Reloading..." : "Reload"}
         </button>
+      )}
+
+      {reload.error && (
+        <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">
+          {(reload.error as Error)?.message}
+        </div>
       )}
 
       {provider && comp.type === "backend" && (

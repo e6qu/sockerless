@@ -34,7 +34,11 @@ export function ResourcesPage() {
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold">Cloud Resources ({data.length})</h2>
-      <DataTable data={data} columns={columns} filterPlaceholder="Filter resources..." />
+      {data.length === 0 ? (
+        <p className="text-sm text-gray-500 dark:text-gray-400">No resources found.</p>
+      ) : (
+        <DataTable data={data} columns={columns} filterPlaceholder="Filter resources..." />
+      )}
     </div>
   );
 }

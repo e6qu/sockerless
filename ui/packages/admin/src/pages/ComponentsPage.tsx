@@ -43,17 +43,12 @@ export function ComponentsPage() {
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold">Components</h2>
-      <div
-        onClick={(e) => {
-          const row = (e.target as HTMLElement).closest("tr");
-          if (!row) return;
-          const nameCell = row.querySelector("td");
-          if (nameCell) navigate(`/ui/components/${nameCell.textContent}`);
-        }}
-        className="cursor-pointer"
-      >
-        <DataTable data={data} columns={columns} filterPlaceholder="Filter components..." />
-      </div>
+      <DataTable
+        data={data}
+        columns={columns}
+        filterPlaceholder="Filter components..."
+        onRowClick={(comp) => navigate(`/ui/components/${encodeURIComponent(comp.name)}`)}
+      />
     </div>
   );
 }

@@ -184,19 +184,19 @@ export class AdminApiClient {
   }
 
   componentHealth(name: string): Promise<unknown> {
-    return this.request(`/api/v1/components/${name}/health`);
+    return this.request(`/api/v1/components/${encodeURIComponent(name)}/health`);
   }
 
   componentStatus(name: string): Promise<unknown> {
-    return this.request(`/api/v1/components/${name}/status`);
+    return this.request(`/api/v1/components/${encodeURIComponent(name)}/status`);
   }
 
   componentMetrics(name: string): Promise<unknown> {
-    return this.request(`/api/v1/components/${name}/metrics`);
+    return this.request(`/api/v1/components/${encodeURIComponent(name)}/metrics`);
   }
 
   componentReload(name: string): Promise<unknown> {
-    return this.post(`/api/v1/components/${name}/reload`);
+    return this.post(`/api/v1/components/${encodeURIComponent(name)}/reload`);
   }
 
   containers(): Promise<AdminContainer[]> {
@@ -218,16 +218,16 @@ export class AdminApiClient {
   }
 
   processStart(name: string): Promise<ProcessInfo> {
-    return this.post(`/api/v1/processes/${name}/start`);
+    return this.post(`/api/v1/processes/${encodeURIComponent(name)}/start`);
   }
 
   processStop(name: string): Promise<ProcessInfo> {
-    return this.post(`/api/v1/processes/${name}/stop`);
+    return this.post(`/api/v1/processes/${encodeURIComponent(name)}/stop`);
   }
 
   processLogs(name: string, lines?: number): Promise<string[]> {
     const qs = lines ? `?lines=${lines}` : "";
-    return this.request(`/api/v1/processes/${name}/logs${qs}`);
+    return this.request(`/api/v1/processes/${encodeURIComponent(name)}/logs${qs}`);
   }
 
   // Cleanup
@@ -249,7 +249,7 @@ export class AdminApiClient {
 
   // Provider info
   componentProvider(name: string): Promise<ProviderInfo> {
-    return this.request(`/api/v1/components/${name}/provider`);
+    return this.request(`/api/v1/components/${encodeURIComponent(name)}/provider`);
   }
 
   // Projects
@@ -258,7 +258,7 @@ export class AdminApiClient {
   }
 
   projectGet(name: string): Promise<ProjectStatus> {
-    return this.request(`/api/v1/projects/${name}`);
+    return this.request(`/api/v1/projects/${encodeURIComponent(name)}`);
   }
 
   projectCreate(req: CreateProjectRequest): Promise<ProjectStatus> {
@@ -266,15 +266,15 @@ export class AdminApiClient {
   }
 
   projectStart(name: string): Promise<ProjectStatus> {
-    return this.post(`/api/v1/projects/${name}/start`);
+    return this.post(`/api/v1/projects/${encodeURIComponent(name)}/start`);
   }
 
   projectStop(name: string): Promise<ProjectStatus> {
-    return this.post(`/api/v1/projects/${name}/stop`);
+    return this.post(`/api/v1/projects/${encodeURIComponent(name)}/stop`);
   }
 
   projectDelete(name: string): Promise<{ deleted: string }> {
-    return this.del(`/api/v1/projects/${name}`);
+    return this.del(`/api/v1/projects/${encodeURIComponent(name)}`);
   }
 
   projectLogs(name: string, component?: string, lines?: number): Promise<string[]> {
@@ -282,10 +282,10 @@ export class AdminApiClient {
     if (component) params.set("component", component);
     if (lines) params.set("lines", String(lines));
     const qs = params.toString() ? `?${params.toString()}` : "";
-    return this.request(`/api/v1/projects/${name}/logs${qs}`);
+    return this.request(`/api/v1/projects/${encodeURIComponent(name)}/logs${qs}`);
   }
 
   projectConnection(name: string): Promise<ProjectConnection> {
-    return this.request(`/api/v1/projects/${name}/connection`);
+    return this.request(`/api/v1/projects/${encodeURIComponent(name)}/connection`);
   }
 }

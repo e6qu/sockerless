@@ -42,7 +42,10 @@ func sockerlessDir() string {
 	if d := os.Getenv("SOCKERLESS_HOME"); d != "" {
 		return d
 	}
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(os.TempDir(), ".sockerless")
+	}
 	return filepath.Join(home, ".sockerless")
 }
 

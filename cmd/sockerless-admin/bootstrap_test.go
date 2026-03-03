@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -150,6 +152,22 @@ func TestFrontendArgs(t *testing.T) {
 	}
 	if args[5] != ":9200" {
 		t.Errorf("mgmt port = %s, want :9200", args[5])
+	}
+}
+
+func TestBootstrapSimulatorErrorBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"cluster limit exceeded"}`))
+	}))
+	defer srv.Close()
+
+	err := BootstrapSimulator(CloudAWS, BackendECS, srv.URL, "test", srv.Client())
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "cluster limit exceeded") {
+		t.Errorf("error should contain response body, got: %v", err)
 	}
 }
 

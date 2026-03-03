@@ -26,22 +26,26 @@ export function DashboardPage() {
       </div>
 
       <h3 className="text-lg font-medium">Component Health</h3>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {data.components.map((c) => (
-          <div
-            key={c.name}
-            className="flex items-center justify-between rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800"
-          >
-            <div>
-              <p className="font-medium">{c.name}</p>
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-              {c.type} &middot; {c.addr}
-            </p>
+      {data.components.length === 0 ? (
+        <p className="text-sm text-gray-500 dark:text-gray-400">No components found.</p>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {data.components.map((c) => (
+            <div
+              key={c.name}
+              className="flex items-center justify-between rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800"
+            >
+              <div>
+                <p className="font-medium">{c.name}</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                {c.type} &middot; {c.addr}
+              </p>
+              </div>
+              <StatusBadge status={c.health === "up" ? "ok" : "error"} />
             </div>
-            <StatusBadge status={c.health === "up" ? "ok" : "error"} />
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -15,7 +15,7 @@ func handleOverview(reg *Registry, client *http.Client) http.HandlerFunc {
 		for _, c := range components {
 			if c.Health == "up" {
 				up++
-			} else {
+			} else if c.Health == "down" {
 				down++
 			}
 		}

@@ -62,7 +62,7 @@ func handleProjectCreate(projectMgr *ProjectManager) http.HandlerFunc {
 		}
 
 		if err := projectMgr.Create(cfg); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeJSON(w, createErrorStatus(err), map[string]string{"error": err.Error()})
 			return
 		}
 
@@ -122,10 +122,26 @@ func handleProjectDelete(projectMgr *ProjectManager) http.HandlerFunc {
 	}
 }
 
+// createErrorStatus maps project creation errors to HTTP status codes.
+func createErrorStatus(err error) int {
+	msg := err.Error()
+	if strings.Contains(msg, "already exists") {
+		return http.StatusConflict
+	}
+	if strings.Contains(msg, "port allocation") || strings.Contains(msg, "persist project") {
+		return http.StatusInternalServerError
+	}
+	return http.StatusBadRequest
+}
+
 // projectErrorStatus maps project manager errors to HTTP status codes.
 func projectErrorStatus(err error) int {
-	if strings.Contains(err.Error(), "not found") {
+	msg := err.Error()
+	if strings.Contains(msg, "not found") {
 		return http.StatusNotFound
+	}
+	if strings.Contains(msg, "is busy") {
+		return http.StatusConflict
 	}
 	return http.StatusInternalServerError
 }
@@ -144,7 +160,11 @@ func handleProjectLogs(projectMgr *ProjectManager) http.HandlerFunc {
 
 		logs, err := projectMgr.Logs(name, component, lines)
 		if err != nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			status := http.StatusNotFound
+			if strings.Contains(err.Error(), "invalid component") {
+				status = http.StatusBadRequest
+			}
+			writeJSON(w, status, map[string]string{"error": err.Error()})
 			return
 		}
 		if logs == nil {

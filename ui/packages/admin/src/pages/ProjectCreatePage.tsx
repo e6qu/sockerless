@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { AdminApiClient, type CloudType, type BackendType, type CreateProjectRequest } from "../api.js";
 
@@ -26,6 +26,8 @@ const backendsByCloud: Record<CloudType, { value: BackendType; label: string; de
   ],
 };
 
+const validNameRE = /^[a-z0-9][a-z0-9_-]*$/;
+
 type Step = "cloud" | "backend" | "config";
 
 export function ProjectCreatePage() {
@@ -41,9 +43,14 @@ export function ProjectCreatePage() {
   const [frontendMgmtPort, setFrontendMgmtPort] = useState(0);
   const [autoAssign, setAutoAssign] = useState(true);
 
+  const queryClient = useQueryClient();
+
   const create = useMutation({
     mutationFn: (req: CreateProjectRequest) => api.projectCreate(req),
-    onSuccess: (data) => navigate(`/ui/projects/${data.name}`),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      navigate(`/ui/projects/${encodeURIComponent(data.name)}`);
+    },
   });
 
   const selectCloud = (c: CloudType) => {
@@ -58,8 +65,14 @@ export function ProjectCreatePage() {
     setStep("config");
   };
 
-  const handleSubmit = () => {
-    if (!cloud || !backend || !name) return;
+  const nameError = name.length > 0 && !validNameRE.test(name)
+    ? "Must start with a-z/0-9 and contain only lowercase, digits, hyphens, or underscores"
+    : "";
+
+  const handleSubmit = (e?: { preventDefault(): void }) => {
+    e?.preventDefault();
+    if (create.isPending) return;
+    if (!cloud || !backend || !name || !!nameError) return;
     create.mutate({
       name,
       cloud,
@@ -149,7 +162,7 @@ export function ProjectCreatePage() {
             Back to backend selection
           </button>
 
-          <div className="max-w-md space-y-4">
+          <form onSubmit={handleSubmit} className="max-w-md space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
                 Project Name
@@ -159,8 +172,12 @@ export function ProjectCreatePage() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="my-project"
+                maxLength={64}
                 className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
               />
+              {nameError && (
+                <p className="mt-1 text-xs text-red-600 dark:text-red-400">{nameError}</p>
+              )}
             </div>
 
             <div>
@@ -248,13 +265,13 @@ export function ProjectCreatePage() {
             )}
 
             <button
-              onClick={handleSubmit}
-              disabled={!name || create.isPending}
+              type="submit"
+              disabled={!name || !!nameError || create.isPending}
               className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
               {create.isPending ? "Creating..." : "Create Project"}
             </button>
-          </div>
+          </form>
         </div>
       )}
     </div>
