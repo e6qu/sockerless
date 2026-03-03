@@ -1,9 +1,11 @@
 package core
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -342,6 +344,46 @@ func (s *BaseServer) RecoverRegistry(ctx context.Context, scanner CloudScanner) 
 	return nil
 }
 
+// LoggingMiddleware logs HTTP requests at Debug level with method, path, status, and duration.
+func LoggingMiddleware(logger zerolog.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		logger.Debug().
+			Str("method", r.Method).
+			Str("path", r.URL.Path).
+			Int("status", rec.status).
+			Dur("duration", time.Since(start)).
+			Msg("http request")
+	})
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	sr.status = code
+	sr.ResponseWriter.WriteHeader(code)
+}
+
+// Hijack implements http.Hijacker so exec/attach connection upgrades work.
+func (sr *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := sr.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, fmt.Errorf("hijack not supported")
+}
+
+// Flush implements http.Flusher so streaming responses work.
+func (sr *statusRecorder) Flush() {
+	if f, ok := sr.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // ListenAndServe starts the HTTP server.
 func (s *BaseServer) ListenAndServe(addr string) error {
 	// Crash-only startup: load persisted registry state
@@ -353,7 +395,7 @@ func (s *BaseServer) ListenAndServe(addr string) error {
 
 	srv := &http.Server{
 		Addr:    addr,
-		Handler: otelhttp.NewHandler(MetricsMiddleware(s.Metrics, s.Mux), "sockerless-backend"),
+		Handler: otelhttp.NewHandler(LoggingMiddleware(s.Logger, MetricsMiddleware(s.Metrics, s.Mux)), "sockerless-backend"),
 	}
 	return srv.ListenAndServe()
 }

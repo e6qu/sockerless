@@ -175,6 +175,45 @@ func TestProcessNames(t *testing.T) {
 	}
 }
 
+func TestIsValidProjectName(t *testing.T) {
+	valid := []string{"myapp", "my-app", "my_app", "app123", "a", "test-aws-ecs"}
+	for _, name := range valid {
+		if !isValidProjectName(name) {
+			t.Errorf("expected %q to be valid", name)
+		}
+	}
+
+	invalid := []string{
+		"",
+		"../etc/evil",
+		"/root",
+		"my app",
+		"My-App",
+		"test.project",
+		"-start-with-dash",
+		"_start-with-underscore",
+	}
+	for _, name := range invalid {
+		if isValidProjectName(name) {
+			t.Errorf("expected %q to be invalid", name)
+		}
+	}
+}
+
+func TestProjectManagerCreateInvalidName(t *testing.T) {
+	pm := NewProcessManager(nil)
+	projMgr := NewProjectManager(pm, nil, "")
+
+	err := projMgr.Create(ProjectConfig{
+		Name:    "../evil",
+		Cloud:   CloudAWS,
+		Backend: BackendECS,
+	})
+	if err == nil {
+		t.Error("expected error for invalid project name")
+	}
+}
+
 func TestProjectManagerCreateGetListDelete(t *testing.T) {
 	storeDir := t.TempDir()
 	reg := NewRegistry()

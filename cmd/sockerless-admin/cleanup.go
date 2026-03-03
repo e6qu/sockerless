@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -56,8 +57,8 @@ func ScanOrphanedProcesses() []CleanupItem {
 			continue
 		}
 
-		// Check if process is alive
-		if err := syscall.Kill(pid, 0); err != nil {
+		// Check if process is alive — only ESRCH means the process is gone
+		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
 			// Process is dead — orphaned PID file
 			info, _ := e.Info()
 			age := ""
@@ -140,10 +141,14 @@ func ScanStoppedContainers(reg *Registry, client *http.Client) []CleanupItem {
 			var items []CleanupItem
 			for _, c := range containers {
 				if c.State == "exited" || c.State == "dead" {
-					items = append(items, CleanupItem{
+					shortID := c.ID
+				if len(shortID) > 12 {
+					shortID = shortID[:12]
+				}
+				items = append(items, CleanupItem{
 						Category:    "container",
 						Name:        c.Name,
-						Description: fmt.Sprintf("Container %s on %s (state: %s)", c.ID[:12], comp.Name, c.State),
+						Description: fmt.Sprintf("Container %s on %s (state: %s)", shortID, comp.Name, c.State),
 					})
 				}
 			}

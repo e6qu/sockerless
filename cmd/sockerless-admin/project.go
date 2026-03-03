@@ -3,8 +3,16 @@ package main
 import (
 	"fmt"
 	"net"
+	"regexp"
 	"sync"
 )
+
+var validProjectNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+// isValidProjectName checks if a project name contains only allowed characters.
+func isValidProjectName(name string) bool {
+	return validProjectNameRE.MatchString(name)
+}
 
 // CloudType represents a supported cloud provider.
 type CloudType string

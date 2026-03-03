@@ -11,7 +11,7 @@
 | **Core unit tests** | 257 PASS (`cd backends/core && go test -race -v ./...`) — includes 3 OTel + 14 network driver/IPAM + 2 ProviderInfo tests |
 | **Frontend tests** | 4 PASS (TLS) + 3 PASS (mux) |
 | **UI tests (Vitest)** | 86 PASS (6 API client + 3 hooks + 3 DataTable + 2 BackendApp + 2 BackendInfoCard + 2 SimulatorApp + 3 LogViewer + 4 Admin DashboardPage + 4 Admin ProcessesPage + 3 Admin ProcessDetailPage + 4 Admin CleanupPage + 6 Admin ProjectsPage + 4 Admin ProjectCreatePage + 5 Admin ProjectDetailPage + 3 Admin ProjectLogsPage + 16 bleephub pages + 16 gitlabhub pages) |
-| **Admin tests** | 70 PASS (31 existing + 14 project model + 11 bootstrap + 9 project API + 5 project manager) |
+| **Admin tests** | 77 PASS (31 existing + 14 project model + 11 bootstrap + 9 project API + 5 project manager + 4 ring buffer carry-over + 2 project name validation + 1 short container ID) |
 | **Admin Playwright E2E** | 17 PASS (dashboard, components, detail, containers, resources, metrics, contexts, navigation) |
 | **SPAHandler tests** | 5 PASS (Go, in core) |
 | **bleephub** | 304 unit + 9 integration + 1 gh CLI (35 assertions) — includes 5 OTel + 6 mgmt endpoint tests |

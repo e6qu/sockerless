@@ -4,11 +4,12 @@ import "sync"
 
 // RingBuffer is a thread-safe ring buffer that captures the last N lines.
 type RingBuffer struct {
-	mu    sync.Mutex
-	lines []string
-	pos   int
-	cap   int
-	full  bool
+	mu      sync.Mutex
+	lines   []string
+	pos     int
+	cap     int
+	full    bool
+	partial string // carry-over buffer for incomplete lines
 }
 
 // NewRingBuffer creates a ring buffer with the given capacity.
@@ -26,9 +27,15 @@ func (rb *RingBuffer) Write(p []byte) (int, error) {
 
 	// Split on newlines
 	start := 0
+	first := true
 	for i, b := range p {
 		if b == '\n' {
 			line := string(p[start:i])
+			if first && rb.partial != "" {
+				line = rb.partial + line
+				rb.partial = ""
+			}
+			first = false
 			rb.lines[rb.pos] = line
 			rb.pos++
 			if rb.pos >= rb.cap {
@@ -38,14 +45,13 @@ func (rb *RingBuffer) Write(p []byte) (int, error) {
 			start = i + 1
 		}
 	}
-	// Remaining bytes (partial line without trailing newline)
+	// Remaining bytes (partial line without trailing newline) — carry over
 	if start < len(p) {
-		line := string(p[start:])
-		rb.lines[rb.pos] = line
-		rb.pos++
-		if rb.pos >= rb.cap {
-			rb.pos = 0
-			rb.full = true
+		tail := string(p[start:])
+		if first && rb.partial != "" {
+			rb.partial += tail
+		} else {
+			rb.partial = tail
 		}
 	}
 
