@@ -61,6 +61,12 @@ export function ProjectsPage() {
         </Link>
       </div>
 
+      {[start.error, stop.error].filter(Boolean).map((e, i) => (
+        <div key={i} className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">
+          {(e as Error)?.message}
+        </div>
+      ))}
+
       {projects.length === 0 ? (
         <p className="text-sm text-gray-500 dark:text-gray-400">
           No projects configured. Create a project to get started with a simulator + backend + frontend environment.
@@ -74,7 +80,7 @@ export function ProjectsPage() {
             >
               <div className="mb-3 flex items-center justify-between">
                 <Link
-                  to={`/ui/projects/${proj.name}`}
+                  to={`/ui/projects/${encodeURIComponent(proj.name)}`}
                   className="text-lg font-medium text-blue-600 hover:underline dark:text-blue-400"
                 >
                   {proj.name}
@@ -109,7 +115,7 @@ export function ProjectsPage() {
                 ) : (
                   <button
                     onClick={(e) => { e.preventDefault(); start.mutate(proj.name); }}
-                    disabled={(start.isPending && start.variables === proj.name) || proj.status === "starting"}
+                    disabled={(start.isPending && start.variables === proj.name) || proj.status === "starting" || proj.status === "stopping"}
                     className="rounded-md bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
                   >
                     Start

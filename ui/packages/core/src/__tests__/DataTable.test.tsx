@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, fireEvent, cleanup } from "@testing-library/react";
 import { createColumnHelper } from "@tanstack/react-table";
 import { DataTable } from "../components/DataTable.js";
@@ -72,5 +72,26 @@ describe("DataTable", () => {
     const rows = container.querySelectorAll("tbody tr");
     expect(rows).toHaveLength(1);
     expect(rows[0].querySelectorAll("td")[0].textContent).toBe("Alice");
+  });
+
+  it("has accessible label on filter input", () => {
+    const { container } = render(<DataTable data={data} columns={columns} />);
+    const input = container.querySelector("input");
+    expect(input?.getAttribute("aria-label")).toBe("Filter table");
+  });
+
+  it("calls onRowClick with row data when a row is clicked", () => {
+    const onClick = vi.fn();
+    const { container } = render(
+      <DataTable data={data} columns={columns} onRowClick={onClick} />,
+    );
+
+    const rows = container.querySelectorAll("tbody tr");
+    fireEvent.click(rows[0]);
+    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(onClick).toHaveBeenCalledWith(expect.objectContaining({ name: expect.any(String) }));
+
+    // Rows should have cursor-pointer class
+    expect(rows[0].className).toContain("cursor-pointer");
   });
 });

@@ -86,8 +86,8 @@ func TestHandleProcessStartNotFound(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", w.Code)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
 	}
 }
 
@@ -114,6 +114,56 @@ func TestHandleProcessLogs(t *testing.T) {
 	if len(logs) == 0 {
 		t.Error("expected at least one log line")
 	}
+}
+
+func TestProcessStopThenStartRace(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sleep binary not available on windows")
+	}
+
+	pm := NewProcessManager(nil)
+	pm.AddProcess(ProcessConfig{Name: "race-test", Binary: "sleep", Args: []string{"60"}, Type: "backend"})
+
+	// Start initial process
+	if err := pm.Start("race-test"); err != nil {
+		t.Fatalf("initial start failed: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// Get initial PID
+	info, _ := pm.Get("race-test")
+	if info.PID == 0 {
+		t.Fatal("expected non-zero PID after start")
+	}
+
+	// Stop in background
+	stopDone := make(chan error, 1)
+	go func() {
+		stopDone <- pm.Stop("race-test")
+	}()
+
+	// Wait for stop to complete
+	if err := <-stopDone; err != nil {
+		t.Fatalf("stop failed: %v", err)
+	}
+
+	// Re-start with a new process
+	if err := pm.Start("race-test"); err != nil {
+		t.Fatalf("re-start failed: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify new process is still running with valid PID
+	info, _ = pm.Get("race-test")
+	if info.Status != "running" {
+		t.Errorf("expected status=running after re-start, got %s", info.Status)
+	}
+	if info.PID == 0 {
+		t.Error("expected non-zero PID after re-start, got 0 (Stop clobbered new process)")
+	}
+
+	// Cleanup
+	_ = pm.Stop("race-test")
 }
 
 func TestHandleProcessLogsNotFound(t *testing.T) {

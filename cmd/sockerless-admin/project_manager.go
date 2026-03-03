@@ -3,8 +3,10 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -13,6 +15,7 @@ import (
 type ProjectManager struct {
 	mu       sync.Mutex
 	projects map[string]*ProjectConfig
+	opLock   map[string]string // per-project operation guard (name -> op)
 	pm       *ProcessManager
 	reg      *Registry
 	ports    *PortAllocator
@@ -24,6 +27,7 @@ type ProjectManager struct {
 func NewProjectManager(pm *ProcessManager, reg *Registry, storeDir string) *ProjectManager {
 	return &ProjectManager{
 		projects: make(map[string]*ProjectConfig),
+		opLock:   make(map[string]string),
 		pm:       pm,
 		reg:      reg,
 		ports:    NewPortAllocator(),
@@ -100,6 +104,7 @@ func (m *ProjectManager) Create(cfg ProjectConfig) error {
 	}
 	if len(explicitPorts) > 0 {
 		if err := m.ports.Reserve(cfg.Name, explicitPorts); err != nil {
+			m.ports.Release(cfg.Name)
 			return err
 		}
 	}
@@ -165,6 +170,10 @@ func (m *ProjectManager) Start(name string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("project %q not found", name)
 	}
+	if err := m.tryLockOp(name, "starting"); err != nil {
+		m.mu.Unlock()
+		return err
+	}
 	simName, backendName, frontendName := processNames(name)
 	cloud := cfg.Cloud
 	backend := cfg.Backend
@@ -172,6 +181,7 @@ func (m *ProjectManager) Start(name string) error {
 	backendPort := cfg.BackendPort
 	frontendMgmtPort := cfg.FrontendMgmtPort
 	m.mu.Unlock()
+	defer func() { m.mu.Lock(); m.unlockOp(name); m.mu.Unlock() }()
 
 	// 1. Start simulator
 	if err := m.pm.Start(simName); err != nil {
@@ -229,8 +239,18 @@ func (m *ProjectManager) Stop(name string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("project %q not found", name)
 	}
+	if err := m.tryLockOp(name, "stopping"); err != nil {
+		m.mu.Unlock()
+		return err
+	}
 	m.mu.Unlock()
+	defer func() { m.mu.Lock(); m.unlockOp(name); m.mu.Unlock() }()
 
+	return m.stopProcesses(name)
+}
+
+// stopProcesses stops a project's 3 processes in reverse order without acquiring the op lock.
+func (m *ProjectManager) stopProcesses(name string) error {
 	simName, backendName, frontendName := processNames(name)
 
 	// Stop in reverse order: frontend → backend → simulator
@@ -259,10 +279,15 @@ func (m *ProjectManager) Delete(name string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("project %q not found", name)
 	}
+	if err := m.tryLockOp(name, "deleting"); err != nil {
+		m.mu.Unlock()
+		return err
+	}
 	m.mu.Unlock()
+	defer func() { m.mu.Lock(); m.unlockOp(name); m.mu.Unlock() }()
 
-	// Stop if running
-	_ = m.Stop(name)
+	// Stop if running (using stopProcesses directly to avoid re-acquiring op lock)
+	_ = m.stopProcesses(name)
 
 	simName, backendName, frontendName := processNames(name)
 
@@ -388,7 +413,7 @@ func (m *ProjectManager) StopAll() {
 	m.mu.Unlock()
 
 	for _, name := range names {
-		_ = m.Stop(name)
+		_ = m.stopProcesses(name)
 	}
 }
 
@@ -483,16 +508,13 @@ func (m *ProjectManager) buildStatus(cfg ProjectConfig) ProjectStatus {
 	}
 }
 
-// stopIfRunning stops a process only if it's running.
+// stopIfRunning stops a process, ignoring "not running" errors.
 func (m *ProjectManager) stopIfRunning(name string) error {
-	info, ok := m.pm.Get(name)
-	if !ok {
+	err := m.pm.Stop(name)
+	if err != nil && strings.Contains(err.Error(), "is not running") {
 		return nil
 	}
-	if info.Status != "running" {
-		return nil
-	}
-	return m.pm.Stop(name)
+	return err
 }
 
 // waitForHealth polls a health endpoint until it returns 200 or times out.
@@ -501,6 +523,7 @@ func waitForHealth(client *http.Client, addr, path string, timeout time.Duration
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(addr + path)
 		if err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return nil
@@ -523,6 +546,20 @@ func sliceToEnvMap(env []string) map[string]string {
 		}
 	}
 	return m
+}
+
+// tryLockOp attempts to set an operation lock for a project. Must be called under m.mu.
+func (m *ProjectManager) tryLockOp(name, op string) error {
+	if current, ok := m.opLock[name]; ok {
+		return fmt.Errorf("project %q is busy (%s)", name, current)
+	}
+	m.opLock[name] = op
+	return nil
+}
+
+// unlockOp clears the operation lock for a project. Must be called under m.mu.
+func (m *ProjectManager) unlockOp(name string) {
+	delete(m.opLock, name)
 }
 
 // componentLabel returns a short label for a process name.

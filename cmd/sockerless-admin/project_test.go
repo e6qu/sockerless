@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -382,6 +383,108 @@ func TestProjectManagerRemoveProcessNotFound(t *testing.T) {
 	err := pm.RemoveProcess("nonexistent")
 	if err == nil {
 		t.Error("expected error for nonexistent process")
+	}
+}
+
+func TestProjectManagerOpLockBlocking(t *testing.T) {
+	reg := NewRegistry()
+	pm := NewProcessManager(reg)
+	projMgr := NewProjectManager(pm, reg, "")
+
+	_ = projMgr.Create(ProjectConfig{
+		Name:    "lock-test",
+		Cloud:   CloudAWS,
+		Backend: BackendECS,
+	})
+
+	// Manually set an op lock to simulate a busy project
+	projMgr.mu.Lock()
+	projMgr.opLock["lock-test"] = "starting"
+	projMgr.mu.Unlock()
+
+	// All operations should fail with "busy"
+	err := projMgr.Start("lock-test")
+	if err == nil || !strings.Contains(err.Error(), "busy") {
+		t.Errorf("Start should fail with busy, got: %v", err)
+	}
+
+	err = projMgr.Stop("lock-test")
+	if err == nil || !strings.Contains(err.Error(), "busy") {
+		t.Errorf("Stop should fail with busy, got: %v", err)
+	}
+
+	err = projMgr.Delete("lock-test")
+	if err == nil || !strings.Contains(err.Error(), "busy") {
+		t.Errorf("Delete should fail with busy, got: %v", err)
+	}
+
+	// Clear lock and verify operations work
+	projMgr.mu.Lock()
+	delete(projMgr.opLock, "lock-test")
+	projMgr.mu.Unlock()
+
+	err = projMgr.Delete("lock-test")
+	if err != nil {
+		t.Errorf("Delete should work after lock cleared: %v", err)
+	}
+}
+
+func TestStopIfRunningAlreadyStopped(t *testing.T) {
+	pm := NewProcessManager(nil)
+	pm.AddProcess(ProcessConfig{
+		Name:   "idle-proc",
+		Binary: "sleep",
+		Args:   []string{"1"},
+		Type:   "backend",
+	})
+
+	reg := NewRegistry()
+	projMgr := NewProjectManager(pm, reg, "")
+
+	// stopIfRunning should return nil for a stopped process (not running)
+	err := projMgr.stopIfRunning("idle-proc")
+	if err != nil {
+		t.Errorf("stopIfRunning should tolerate stopped process, got: %v", err)
+	}
+}
+
+func TestCreateReserveFailureReleasePorts(t *testing.T) {
+	reg := NewRegistry()
+	pm := NewProcessManager(reg)
+	projMgr := NewProjectManager(pm, reg, "")
+
+	// Create first project that takes specific ports
+	_ = projMgr.Create(ProjectConfig{
+		Name:             "blocker",
+		Cloud:            CloudAWS,
+		Backend:          BackendECS,
+		SimPort:          9000,
+		BackendPort:      9001,
+		FrontendPort:     9002,
+		FrontendMgmtPort: 9003,
+	})
+
+	// Create second project with auto-allocated ports but one explicit port that conflicts
+	err := projMgr.Create(ProjectConfig{
+		Name:         "leaker",
+		Cloud:        CloudGCP,
+		Backend:      BackendCloudRun,
+		SimPort:      9000, // conflicts with blocker
+		BackendPort:  0,    // auto-allocated
+		FrontendPort: 0,    // auto-allocated
+	})
+	if err == nil {
+		t.Fatal("expected port conflict error")
+	}
+
+	// The auto-allocated ports should have been released — creating another project should work
+	err = projMgr.Create(ProjectConfig{
+		Name:    "after-leak",
+		Cloud:   CloudGCP,
+		Backend: BackendCloudRun,
+	})
+	if err != nil {
+		t.Fatalf("create after port-leak fix should work: %v", err)
 	}
 }
 

@@ -91,6 +91,8 @@ func (pm *ProcessManager) Start(name string) error {
 		return fmt.Errorf("process %q is already %s", name, proc.Status)
 	}
 
+	proc.Logs.Reset()
+
 	// Resolve binary
 	binPath, err := exec.LookPath(proc.Binary)
 	if err != nil {
@@ -159,7 +161,13 @@ func (pm *ProcessManager) Start(name string) error {
 			proc.ExitCode = 0
 		}
 		proc.cmd = nil
+		cancelFn := proc.cancel
+		proc.cancel = nil
 		pm.mu.Unlock()
+
+		if cancelFn != nil {
+			cancelFn()
+		}
 
 		close(doneCh)
 
@@ -209,8 +217,18 @@ func (pm *ProcessManager) Stop(name string) error {
 	}
 
 	pm.mu.Lock()
-	proc.PID = 0
-	pm.mu.Unlock()
+	// Only clean up if process hasn't been re-started while we waited
+	if proc.done == doneCh {
+		proc.PID = 0
+		cancelFn := proc.cancel
+		proc.cancel = nil
+		pm.mu.Unlock()
+		if cancelFn != nil {
+			cancelFn()
+		}
+	} else {
+		pm.mu.Unlock()
+	}
 
 	return nil
 }

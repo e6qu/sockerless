@@ -14,9 +14,10 @@ export interface DataTableProps<T> {
   data: T[];
   columns: ColumnDef<T, any>[];
   filterPlaceholder?: string;
+  onRowClick?: (row: T) => void;
 }
 
-export function DataTable<T>({ data, columns, filterPlaceholder }: DataTableProps<T>) {
+export function DataTable<T>({ data, columns, filterPlaceholder, onRowClick }: DataTableProps<T>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
 
@@ -38,6 +39,7 @@ export function DataTable<T>({ data, columns, filterPlaceholder }: DataTableProp
         value={globalFilter}
         onChange={(e) => setGlobalFilter(e.target.value)}
         placeholder={filterPlaceholder ?? "Search..."}
+        aria-label="Filter table"
         className="mb-3 w-full max-w-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm placeholder:text-gray-400"
       />
       <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
@@ -62,7 +64,11 @@ export function DataTable<T>({ data, columns, filterPlaceholder }: DataTableProp
           </thead>
           <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-900">
             {table.getRowModel().rows.map((row) => (
-              <tr key={row.id} className="hover:bg-gray-50 dark:hover:bg-gray-800">
+              <tr
+                key={row.id}
+                onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                className={`hover:bg-gray-50 dark:hover:bg-gray-800${onRowClick ? " cursor-pointer" : ""}`}
+              >
                 {row.getVisibleCells().map((cell) => (
                   <td key={cell.id} className="whitespace-nowrap px-4 py-2 text-sm">
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}

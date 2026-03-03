@@ -11,21 +11,45 @@ const ansiColors: Record<string, string> = {
   "94": "#55f", "95": "#f5f", "96": "#5ff", "97": "#fff",
 };
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function ansiToHtml(text: string): string {
-  // Replace ANSI escape sequences with spans
-  return text.replace(
-    /\x1b\[([0-9;]+)m/g,
+  const escaped = escapeHtml(text);
+  let open = false;
+  const result = escaped.replace(
+    /\x1b\[([0-9;]*)m/g,
     (_, codes: string) => {
       const parts = codes.split(";");
+      const styles: string[] = [];
+      let hasReset = false;
       for (const code of parts) {
-        if (code === "0" || code === "") return "</span>";
-        if (code === "1") return '<span style="font-weight:bold">';
+        if (code === "0" || code === "") {
+          hasReset = true;
+          continue;
+        }
+        if (code === "1") styles.push("font-weight:bold");
         const color = ansiColors[code];
-        if (color) return `<span style="color:${color}">`;
+        if (color) styles.push(`color:${color}`);
       }
-      return "";
+      let out = "";
+      if (open && (hasReset || styles.length > 0)) {
+        out += "</span>";
+        open = false;
+      }
+      if (styles.length > 0) {
+        out += `<span style="${styles.join(";")}">`;
+        open = true;
+      }
+      return out;
     },
   );
+  return open ? result + "</span>" : result;
 }
 
 export function LogViewer({ lines, maxHeight = "24rem" }: LogViewerProps) {

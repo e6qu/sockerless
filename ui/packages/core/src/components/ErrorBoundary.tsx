@@ -28,6 +28,12 @@ export class ErrorBoundary extends Component<Props, State> {
         <div className="p-6 text-red-600 dark:text-red-400">
           <h2 className="text-lg font-semibold">Something went wrong</h2>
           <pre className="mt-2 text-sm whitespace-pre-wrap">{this.state.error?.message}</pre>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+          >
+            Reload page
+          </button>
         </div>
       );
     }

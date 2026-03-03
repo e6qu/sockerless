@@ -94,6 +94,8 @@ simulators/gcp/dist/
 simulators/azure/dist/
 cmd/sockerless-admin/dist/
 cmd/sockerless-admin/sockerless-admin
+cmd/sockerless-admin/admin
+/admin
 bleephub/dist/
 bleephub/bleephub-server
 gitlabhub/dist/

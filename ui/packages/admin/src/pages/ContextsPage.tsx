@@ -38,7 +38,11 @@ export function ContextsPage() {
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold">CLI Contexts</h2>
-      <DataTable data={data} columns={columns} filterPlaceholder="Filter contexts..." />
+      {data.length === 0 ? (
+        <p className="text-sm text-gray-500 dark:text-gray-400">No contexts found.</p>
+      ) : (
+        <DataTable data={data} columns={columns} filterPlaceholder="Filter contexts..." />
+      )}
     </div>
   );
 }

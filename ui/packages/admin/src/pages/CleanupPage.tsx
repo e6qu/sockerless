@@ -88,7 +88,7 @@ export function CleanupPage() {
                 </h3>
                 {category === "process" && (
                   <button
-                    onClick={() => cleanProcesses.mutate()}
+                    onClick={() => { if (window.confirm("Clean orphaned processes? This cannot be undone.")) cleanProcesses.mutate(); }}
                     disabled={cleanProcesses.isPending}
                     className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
                   >
@@ -97,7 +97,7 @@ export function CleanupPage() {
                 )}
                 {category === "tmp" && (
                   <button
-                    onClick={() => cleanTmp.mutate()}
+                    onClick={() => { if (window.confirm("Delete stale temp files? This cannot be undone.")) cleanTmp.mutate(); }}
                     disabled={cleanTmp.isPending}
                     className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
                   >
@@ -106,7 +106,7 @@ export function CleanupPage() {
                 )}
                 {category === "container" && (
                   <button
-                    onClick={() => cleanContainers.mutate()}
+                    onClick={() => { if (window.confirm("Prune stopped containers? This cannot be undone.")) cleanContainers.mutate(); }}
                     disabled={cleanContainers.isPending}
                     className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
                   >

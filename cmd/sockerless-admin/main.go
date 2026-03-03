@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -92,7 +93,8 @@ func main() {
 	}
 
 	// Start background health polling
-	go reg.PollLoop(5 * time.Second)
+	done := make(chan struct{})
+	go reg.PollLoop(5*time.Second, done)
 
 	mux := http.NewServeMux()
 	registerAPI(mux, reg, procMgr, projectMgr)
@@ -103,19 +105,24 @@ func main() {
 		http.Redirect(w, r, "/ui/", http.StatusFound)
 	})
 
+	srv := &http.Server{Addr: *addr, Handler: mux}
+
 	// Handle graceful shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		log.Println("shutting down, stopping managed processes...")
+		log.Println("shutting down...")
+		close(done)
 		projectMgr.StopAll()
 		procMgr.StopAll()
-		os.Exit(0)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
 	}()
 
 	log.Printf("sockerless-admin %s listening on %s (%d components)", version, *addr, reg.Len())
-	if err := http.ListenAndServe(*addr, mux); err != nil {
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
 	}
 }

@@ -17,7 +17,7 @@ export function ProjectLogsPage() {
   const { name } = useParams<{ name: string }>();
   const [component, setComponent] = useState("");
 
-  const { data: logs, isLoading } = useQuery({
+  const { data: logs, isLoading, isError, error } = useQuery({
     queryKey: ["project-logs", name, component],
     queryFn: () => api.projectLogs(name!, component || undefined, 200),
     enabled: !!name,
@@ -28,7 +28,7 @@ export function ProjectLogsPage() {
     <div className="space-y-6">
       <div className="flex items-center gap-4">
         <Link
-          to={`/ui/projects/${name}`}
+          to={`/ui/projects/${encodeURIComponent(name!)}`}
           className="text-sm text-blue-600 hover:underline dark:text-blue-400"
         >
           Back to {name}
@@ -53,7 +53,15 @@ export function ProjectLogsPage() {
         ))}
       </div>
 
-      {isLoading ? <Spinner /> : <LogViewer lines={logs ?? []} />}
+      {isLoading ? (
+        <Spinner />
+      ) : isError ? (
+        <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">
+          Error: {error?.message ?? "Failed to load logs"}
+        </div>
+      ) : (
+        <LogViewer lines={logs ?? []} />
+      )}
     </div>
   );
 }

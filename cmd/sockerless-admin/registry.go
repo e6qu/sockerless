@@ -95,11 +95,18 @@ func healthEndpoint(typ string) string {
 }
 
 // PollLoop polls all components' health endpoints at the given interval.
-func (r *Registry) PollLoop(interval time.Duration) {
+// It stops when the done channel is closed.
+func (r *Registry) PollLoop(interval time.Duration, done <-chan struct{}) {
 	client := &http.Client{Timeout: 3 * time.Second}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 	for {
 		r.pollOnce(client)
-		time.Sleep(interval)
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -126,6 +133,10 @@ func (r *Registry) pollOnce(client *http.Client) {
 			defer wg.Done()
 			r.mu.RLock()
 			c := r.components[name]
+			if c == nil {
+				r.mu.RUnlock()
+				return
+			}
 			addr := c.Addr
 			typ := c.Type
 			r.mu.RUnlock()

@@ -222,6 +222,111 @@ Triaged all 20 bugs in BUGS.md. Removed 3 invalid/already-fixed (BUG-003, 006, 0
 
 **Tests**: 77 admin Go tests PASS (was 70: +4 ring buffer carry-over + 2 project name validation + 1 short container ID). 33 admin Vitest PASS. All lint 0 issues.
 
+## Bug Sprint 2 — Admin Module Bugs (BUG-003 through BUG-016)
+
+Fixed 14 admin bugs across Go backend and UI.
+
+**Go fixes (6 bugs)**:
+- **BUG-007/008**: Added per-project operation lock (`opLock map[string]string`) to prevent concurrent Start/Stop/Delete on same project — `tryLockOp`/`unlockOp` under `m.mu`.
+- **BUG-009**: Simplified `stopIfRunning` to call `pm.Stop()` directly and tolerate "not running" errors (eliminates TOCTOU race).
+- **BUG-010**: Fixed port leak — `m.ports.Release(cfg.Name)` before returning on Reserve failure.
+- **BUG-011**: Replaced `os.Exit(0)` with `http.Server` + `srv.Shutdown(ctx)` for graceful HTTP drain.
+- **BUG-012**: Changed `sockerlessDir()` to fall back to `os.TempDir()` when `os.UserHomeDir()` fails.
+- **BUG-016**: Changed `PollLoop` to accept `done <-chan struct{}` with `time.NewTicker` + `select` for clean cancellation.
+
+**UI fixes (8 bugs)**:
+- **BUG-003**: Added `escapeHtml()` before ANSI replacement in LogViewer — prevents XSS via `dangerouslySetInnerHTML`. Fixed multi-code ANSI sequences (bold+green now both apply).
+- **BUG-004**: Added `onRowClick` prop to DataTable — ComponentsPage uses row data instead of fragile DOM scraping.
+- **BUG-005**: Added error states to ProjectDetailPage and ProjectLogsPage — destructure `isError`/`error`, render red error box.
+- **BUG-006**: Added `window.confirm()` guards to CleanupPage destructive buttons.
+- **BUG-013**: Invalidate `["project-connection", name]` on start/stop mutation success.
+- **BUG-014**: Added client-side project name validation with `validNameRE`, inline error, `<form onSubmit>` wrapper, `maxLength`.
+- **BUG-015**: Added `warning`, `starting`, `stopping`, `stopped` to StatusBadge color map.
+
+**Tests**: 83 admin Go tests PASS (was 77: +3 op lock + 1 stopIfRunning + 1 port leak + 1 PollLoop + 2 config). 89 UI Vitest PASS (was 86: +2 LogViewer XSS/multi-code + 1 DataTable onRowClick).
+
+## Bug Audit Round 3 — BUGS.md Refresh
+
+Thorough re-audit of admin Go backend (`cmd/sockerless-admin/`) and admin UI (`ui/packages/admin/`, `ui/packages/core/`). Removed 14 fixed entries (BUG-003→016 from Sprint 2), kept 2 deferred (BUG-001/002), added 21 newly discovered bugs (BUG-003→023).
+
+**New bugs by category**:
+- Go backend medium (4): opLock shutdown orphan, context cancel leak, process API 400-vs-404, bootstrap error body discarded
+- Go backend low (4): health check body drain, log reset on restart, spa.go type assertion, pollOnce nil check
+- UI medium (4): API client URL encoding, link route param encoding, swallowed mutation errors, ANSI reset+color sequence
+- UI low (9): project link encoding, clipboard error handling, reload cache invalidation, create/delete cache invalidation, unclosed ANSI spans, missing empty states, DataTable a11y label, ErrorBoundary recovery
+
+Documentation-only change — no code modifications, no test count changes.
+
+## Bug Sprint 3 — 21 Bug Fixes (BUG-003 through BUG-023)
+
+Fixed all 21 bugs identified in Bug Audit Round 3.
+
+**Go backend fixes (8 bugs, 7 files)**:
+- **BUG-003**: `StopAll` now calls `stopProcesses(name)` directly, bypassing opLock — no more orphaned processes on shutdown
+- **BUG-004**: Context cancel called after `cmd.Wait()` and in `Stop()` — nil-out under lock for idempotency
+- **BUG-005**: Added `processErrorStatus()` — returns 404 for "not found" (was always 400)
+- **BUG-006**: Bootstrap error now includes response body (up to 1024 bytes)
+- **BUG-007**: `waitForHealth` drains response body with `io.Copy(io.Discard)` before close
+- **BUG-008**: Added `RingBuffer.Reset()`, called in `Start()` before each restart
+- **BUG-009**: `spa.go` type assertion guarded with comma-ok, returns 500 on failure
+- **BUG-010**: `pollOnce` nil-checks component after map lookup
+
+**UI core fixes (4 bugs, 3 files)**:
+- **BUG-014/020**: Rewrote `ansiToHtml` — tracks open state, handles reset+color combined sequences, closes unclosed spans
+- **BUG-022**: Added `aria-label="Filter table"` to DataTable input
+- **BUG-023**: Added "Reload page" button to ErrorBoundary
+
+**Admin UI fixes (10 bugs, 12 files)**:
+- **BUG-011**: All 14 API client URL interpolations wrapped with `encodeURIComponent()`
+- **BUG-012**: ProcessesPage/ProjectsPage links encode route params
+- **BUG-013**: Mutation error display added to 5 pages (ProcessesPage, ProjectsPage, ProcessDetailPage, ProjectDetailPage, ComponentDetailPage)
+- **BUG-015**: ProjectDetailPage/ProjectLogsPage links encode name
+- **BUG-016**: ConnectionField copy button with async/await, try/catch, "Copied!" feedback
+- **BUG-017**: ComponentDetailPage reload invalidates status + metrics queries
+- **BUG-018**: ProjectCreatePage invalidates projects cache after create
+- **BUG-019**: ProjectDetailPage delete invalidates projects cache
+- **BUG-021**: Empty states on MetricsPage, ContainersPage, ResourcesPage, ContextsPage, DashboardPage
+
+**Tests**: 86 admin Go PASS (was 83: +2 RingBuffer Reset + 1 bootstrap error body). 92 UI Vitest PASS (was 89: +2 LogViewer reset/unclosed + 1 DataTable a11y).
+
+## Bug Sprint 4 — BUG-024 through BUG-033 (10 bugs fixed)
+
+Audited admin Go backend and UI for remaining bugs after Sprint 3. Found and fixed 10 new bugs (6 Go, 4 UI).
+
+**Go backend fixes (6)**:
+- **BUG-024**: `handleProjectCreate` returns proper HTTP status (409 for "already exists", 500 for port/persist, 400 for validation)
+- **BUG-025**: `projectErrorStatus` maps "is busy" to 409 Conflict
+- **BUG-026**: `processErrorStatus` maps "already"/"is not running" to 409 Conflict instead of 400
+- **BUG-027**: `ScanStoppedContainers` now unmarshals `Created` field, Age populated from RFC3339 timestamp
+- **BUG-028**: `handleProjectLogs` returns 400 for "invalid component" instead of 404
+- **BUG-029**: `RingBuffer.Lines` guards against negative `n` (was panic on `make([]string, -1)`)
+
+**UI fixes (4)**:
+- **BUG-030**: `ComponentMetricsPanel` displays query errors
+- **BUG-031**: ProcessesPage empty state renders instead of (not below) empty table
+- **BUG-032**: ComponentDetailPage status/metrics queries auto-refresh every 5s
+- **BUG-033**: ProjectCreatePage navigate uses `encodeURIComponent`
+
+**Tests**: 87 admin Go PASS (was 86: +1 RingBuffer Lines negative). 92 UI Vitest PASS (unchanged).
+
+## Bug Sprint 5 — BUG-034 through BUG-042 (9 bugs fixed)
+
+Audited admin Go backend and UI for remaining bugs after Sprint 4. Found and fixed 9 new bugs (2 Go, 7 UI).
+
+**Go backend fixes (2)**:
+- **BUG-034**: `ProcessManager.Stop` race condition — added generation check using `doneCh` identity to prevent clobbering re-started process PID/cancel
+- **BUG-035**: `handleOverview` counts "unknown" health as "down" — changed to only count explicitly "down"
+
+**UI fixes (7)**:
+- **BUG-036/037**: ProjectDetailPage and ProjectsPage Start button enabled during "stopping" — added disabled guard
+- **BUG-038**: ProjectDetailPage Delete button enabled during starting/stopping — added disabled guard
+- **BUG-039**: ComponentDetailPage uptime only shows minutes — now uses same `Xh Ym` format as ComponentsPage
+- **BUG-040**: ProjectCreatePage double-submission via rapid Enter — added `create.isPending` guard in handleSubmit
+- **BUG-041**: Error display `||` hides concurrent errors — changed to array filter+map showing all errors (ProcessesPage, ProjectsPage, ProjectDetailPage)
+- **BUG-042**: App.tsx no catch-all 404 route — added `<Route path="*">` fallback
+
+**Tests**: 88 admin Go PASS (was 87: +1 Stop/Start race test). 92 UI Vitest PASS (unchanged).
+
 ## Project Stats
 
 - **80 phases** (1-67, 69-77, 79-82), 725 tasks completed
@@ -229,7 +334,7 @@ Triaged all 20 bugs in BUGS.md. Removed 3 invalid/already-fixed (BUG-003, 006, 0
 - **21 Go-implemented builtins** in WASM sandbox
 - **18 driver interface methods** across 5 driver types
 - **7 external test consumers**: `act`, `gitlab-runner`, `gitlab-ci-local`, upstream act, `actions/runner`, `gh` CLI, gitlabhub gitlab-runner
-- **Core tests**: 257 PASS (+5 SPAHandler) | **Frontend tests**: 7 PASS | **UI tests**: 86 PASS (Vitest) | **Admin tests**: 77 PASS | **bleephub tests**: 304 PASS | **gitlabhub tests**: 136 PASS | **Shared ProcessRunner**: 15 PASS
+- **Core tests**: 257 PASS (+5 SPAHandler) | **Frontend tests**: 7 PASS | **UI tests**: 92 PASS (Vitest) | **Admin tests**: 88 PASS | **bleephub tests**: 304 PASS | **gitlabhub tests**: 136 PASS | **Shared ProcessRunner**: 15 PASS
 - **Cloud SDK tests**: AWS 42, GCP 43, Azure 38 | **Cloud CLI tests**: AWS 26, GCP 21, Azure 19
 - **3 cloud simulators** validated against SDKs, CLIs, and Terraform — now with real process execution for all services (container + FaaS)
 - **8 backends** sharing a common driver architecture

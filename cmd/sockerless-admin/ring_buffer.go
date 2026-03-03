@@ -58,6 +58,18 @@ func (rb *RingBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// Reset clears all lines and resets the buffer to empty.
+func (rb *RingBuffer) Reset() {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+	for i := range rb.lines {
+		rb.lines[i] = ""
+	}
+	rb.pos = 0
+	rb.full = false
+	rb.partial = ""
+}
+
 // Lines returns the last n lines from the buffer.
 func (rb *RingBuffer) Lines(n int) []string {
 	rb.mu.Lock()
@@ -66,6 +78,9 @@ func (rb *RingBuffer) Lines(n int) []string {
 	total := rb.pos
 	if rb.full {
 		total = rb.cap
+	}
+	if n <= 0 {
+		return nil
 	}
 	if n > total {
 		n = total

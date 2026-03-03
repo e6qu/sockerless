@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { StatusBadge, MetricsCard, Spinner } from "@sockerless/ui-core/components";
@@ -29,7 +30,7 @@ export function ProjectDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const { data: project, isLoading } = useQuery({
+  const { data: project, isLoading, isError, error } = useQuery({
     queryKey: ["project", name],
     queryFn: () => api.projectGet(name!),
     enabled: !!name,
@@ -44,20 +45,31 @@ export function ProjectDetailPage() {
 
   const start = useMutation({
     mutationFn: () => api.projectStart(name!),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["project", name] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["project", name] });
+      queryClient.invalidateQueries({ queryKey: ["project-connection", name] });
+    },
   });
 
   const stop = useMutation({
     mutationFn: () => api.projectStop(name!),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["project", name] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["project", name] });
+      queryClient.invalidateQueries({ queryKey: ["project-connection", name] });
+    },
   });
 
   const remove = useMutation({
     mutationFn: () => api.projectDelete(name!),
-    onSuccess: () => navigate("/ui/projects"),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      navigate("/ui/projects");
+    },
   });
 
-  if (isLoading || !project) return <Spinner />;
+  if (isLoading) return <Spinner />;
+  if (isError) return <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">Error: {error?.message ?? "Failed to load project"}</div>;
+  if (!project) return <Spinner />;
 
   const handleDelete = () => {
     if (window.confirm(`Delete project "${name}"? This will stop all components.`)) {
@@ -103,26 +115,32 @@ export function ProjectDetailPage() {
         ) : (
           <button
             onClick={() => start.mutate()}
-            disabled={start.isPending || project.status === "starting"}
+            disabled={start.isPending || project.status === "starting" || project.status === "stopping"}
             className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
           >
             {start.isPending ? "Starting..." : "Start"}
           </button>
         )}
         <Link
-          to={`/ui/projects/${name}/logs`}
+          to={`/ui/projects/${encodeURIComponent(name!)}/logs`}
           className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
         >
           View Logs
         </Link>
         <button
           onClick={handleDelete}
-          disabled={remove.isPending}
+          disabled={remove.isPending || project.status === "starting" || project.status === "stopping"}
           className="rounded-md border border-red-300 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/30"
         >
           {remove.isPending ? "Deleting..." : "Delete"}
         </button>
       </div>
+
+      {[start.error, stop.error, remove.error].filter(Boolean).map((e, i) => (
+        <div key={i} className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">
+          {(e as Error)?.message}
+        </div>
+      ))}
 
       {/* Components */}
       <div>
@@ -179,7 +197,17 @@ export function ProjectDetailPage() {
 }
 
 function ConnectionField({ label, value }: { label: string; value: string }) {
-  const copy = () => navigator.clipboard.writeText(value);
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard API may fail in insecure contexts
+    }
+  };
 
   return (
     <div className="flex items-center gap-2">
@@ -189,7 +217,7 @@ function ConnectionField({ label, value }: { label: string; value: string }) {
         onClick={copy}
         className="shrink-0 rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
       >
-        Copy
+        {copied ? "Copied!" : "Copy"}
       </button>
     </div>
   );

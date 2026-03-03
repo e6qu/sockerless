@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // registerProcessAPI registers process management API routes.
@@ -25,7 +26,7 @@ func handleProcessStart(procMgr *ProcessManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		if err := procMgr.Start(name); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeJSON(w, processErrorStatus(err), map[string]string{"error": err.Error()})
 			return
 		}
 		info, _ := procMgr.Get(name)
@@ -38,7 +39,7 @@ func handleProcessStop(procMgr *ProcessManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		if err := procMgr.Stop(name); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeJSON(w, processErrorStatus(err), map[string]string{"error": err.Error()})
 			return
 		}
 		info, _ := procMgr.Get(name)
@@ -67,4 +68,16 @@ func handleProcessLogs(procMgr *ProcessManager) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, logLines)
 	}
+}
+
+// processErrorStatus maps process manager errors to HTTP status codes.
+func processErrorStatus(err error) int {
+	msg := err.Error()
+	if strings.Contains(msg, "not found") {
+		return http.StatusNotFound
+	}
+	if strings.Contains(msg, "already") || strings.Contains(msg, "is not running") {
+		return http.StatusConflict
+	}
+	return http.StatusBadRequest
 }

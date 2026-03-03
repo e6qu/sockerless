@@ -35,7 +35,11 @@ export function ContainersPage() {
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold">Containers ({data.length})</h2>
-      <DataTable data={data} columns={columns} filterPlaceholder="Filter containers..." />
+      {data.length === 0 ? (
+        <p className="text-sm text-gray-500 dark:text-gray-400">No containers found.</p>
+      ) : (
+        <DataTable data={data} columns={columns} filterPlaceholder="Filter containers..." />
+      )}
     </div>
   );
 }
