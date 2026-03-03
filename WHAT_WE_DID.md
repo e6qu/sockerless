@@ -112,6 +112,15 @@ P68-001 done: `PoolConfig`/`PoolsConfig` types, `ValidatePoolsConfig()` (8 rules
 
 Eliminated simulator-specific command protocol from FaaS backends (Lambda/GCF/AZF). Replaced `SimCommand`/`ImageConfig.Command` JSON fields with standard `SOCKERLESS_CMD` env var. Configurable `AgentTimeout` (default 30s, tests use 5s). 5 bugs fixed, all 75 sim-backend tests pass.
 
+## Bug Audit: api, backends, frontends (BUG-052→062)
+
+Audited `api/`, `backends/core/`, all 8 backend implementations, and `frontends/docker/` for correctness bugs. Found and fixed 9 real bugs:
+- **High**: `extractTar` silent file corruption (BUG-052), `handlePutArchive` swallowing errors (BUG-053), network prune filter not forwarded (BUG-058)
+- **Medium**: `mergeStagingDir` silent errors (BUG-054), `createTar` ignoring write errors (BUG-055), commit JSON decode error ignored (BUG-059), buildargs unmarshal error ignored (BUG-060), ECS task definition leak (BUG-062)
+- **Low**: Agent drivers ignoring container-not-found (BUG-061)
+
+Changed `createTar` signature to return `error`, updated 5 callers. Added 10 new tests. All 286 core tests pass, 0 lint issues across 19 modules.
+
 ## Project Stats
 
 - **80 phases** (1-67, 69-77, 79-82), 725 tasks completed
@@ -119,7 +128,7 @@ Eliminated simulator-specific command protocol from FaaS backends (Lambda/GCF/AZ
 - **21 Go-implemented builtins** in WASM sandbox
 - **18 driver interface methods** across 5 driver types
 - **7 external test consumers**: `act`, `gitlab-runner`, `gitlab-ci-local`, upstream act, `actions/runner`, `gh` CLI, gitlabhub gitlab-runner
-- **Core tests**: 257 PASS (+5 SPAHandler) | **Frontend tests**: 7 PASS | **UI tests**: 92 PASS (Vitest) | **Admin tests**: 88 PASS | **bleephub tests**: 304 PASS | **gitlabhub tests**: 136 PASS | **Shared ProcessRunner**: 15 PASS
+- **Core tests**: 286 PASS (+5 SPAHandler) | **Frontend tests**: 7 PASS | **UI tests**: 92 PASS (Vitest) | **Admin tests**: 88 PASS | **bleephub tests**: 304 PASS | **gitlabhub tests**: 136 PASS | **Shared ProcessRunner**: 15 PASS
 - **Cloud SDK tests**: AWS 42, GCP 43, Azure 38 | **Cloud CLI tests**: AWS 26, GCP 21, Azure 19
 - **3 cloud simulators** validated against SDKs, CLIs, and Terraform — now with real process execution for all services (container + FaaS)
 - **8 backends** sharing a common driver architecture

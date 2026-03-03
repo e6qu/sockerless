@@ -64,7 +64,9 @@ func (d *WASMFilesystemDriver) GetArchive(containerID string, path string, w io.
 		if err != nil {
 			return nil, err
 		}
-		createTar(w, realPath, info.Name())
+		if err := createTar(w, realPath, info.Name()); err != nil {
+			return info, err
+		}
 		return info, nil
 	}
 	return d.Fallback.GetArchive(containerID, path, w)

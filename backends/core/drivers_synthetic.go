@@ -46,7 +46,9 @@ func (d *SyntheticFilesystemDriver) GetArchive(containerID string, path string, 
 	if sd, ok := d.Store.StagingDirs.Load(containerID); ok {
 		realPath := joinCleanPath(sd.(string), path)
 		if info, err := os.Stat(realPath); err == nil {
-			createTar(w, realPath, info.Name())
+			if tarErr := createTar(w, realPath, info.Name()); tarErr != nil {
+				return info, tarErr
+			}
 			return info, nil
 		}
 	}

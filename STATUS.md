@@ -1,6 +1,6 @@
 # Sockerless — Current Status
 
-**Phase 82 (Admin Projects) complete. 725 tasks done across 80 phases. Bug Sprint 6 (BUG-043→046) fixed.**
+**Phase 82 (Admin Projects) complete. 725 tasks done across 80 phases. Bug Sprint 8 (BUG-052→062) fixed.**
 
 ## Test Results (Latest)
 
@@ -8,7 +8,7 @@
 
 | Category | Count |
 |---|---|
-| **Core unit tests** | 257 PASS (`cd backends/core && go test -race -v ./...`) — includes 3 OTel + 14 network driver/IPAM + 2 ProviderInfo tests |
+| **Core unit tests** | 286 PASS (`cd backends/core && go test -race -v ./...`) — includes 3 OTel + 14 network driver/IPAM + 2 ProviderInfo + 10 archive/commit/build bugfix tests |
 | **Frontend tests** | 4 PASS (TLS) + 3 PASS (mux) |
 | **UI tests (Vitest)** | 92 PASS (6 API client + 3 hooks + 5 DataTable + 2 BackendApp + 2 BackendInfoCard + 2 SimulatorApp + 7 LogViewer + 4 Admin DashboardPage + 4 Admin ProcessesPage + 3 Admin ProcessDetailPage + 4 Admin CleanupPage + 6 Admin ProjectsPage + 4 Admin ProjectCreatePage + 5 Admin ProjectDetailPage + 3 Admin ProjectLogsPage + 16 bleephub pages + 16 gitlabhub pages) |
 | **Admin tests** | 88 PASS (83 existing + 2 RingBuffer Reset + 1 bootstrap error body + 1 RingBuffer Lines negative + 1 Stop/Start race) |
@@ -32,7 +32,7 @@
 | Cloud CLI tests | AWS 26, GCP 21, Azure 19 | `make docker-test` per cloud |
 | Lint (19 modules) | 0 issues | `make lint` |
 
-### Core Test Breakdown (257 PASS)
+### Core Test Breakdown (286 PASS)
 
 | Area | Tests | Key coverage |
 |---|---|---|

@@ -89,7 +89,11 @@ func (s *Server) handleNetworkRemove(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNetworkPrune(w http.ResponseWriter, r *http.Request) {
-	resp, err := s.backend.post(r.Context(), "/networks/prune", nil)
+	query := url.Values{}
+	if filters := r.URL.Query().Get("filters"); filters != "" {
+		query.Set("filters", filters)
+	}
+	resp, err := s.backend.postWithQuery(r.Context(), "/networks/prune", query, nil)
 	if err != nil {
 		writeError(w, err)
 		return

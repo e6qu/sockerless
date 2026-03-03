@@ -205,6 +205,10 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	taskDefARN := ecsState.TaskDefARN
 	taskARN, clusterARN, err := s.runECSTask(id, taskDefARN, &c)
 	if err != nil {
+		// Best-effort cleanup of orphaned task definition
+		_, _ = s.aws.ECS.DeregisterTaskDefinition(s.ctx(), &awsecs.DeregisterTaskDefinitionInput{
+			TaskDefinition: aws.String(taskDefARN),
+		})
 		core.WriteError(w, err)
 		return
 	}
@@ -371,6 +375,10 @@ func (s *Server) startMultiContainerTask(w http.ResponseWriter, triggerID string
 	// Run the combined task
 	taskARN, clusterARN, err := s.runECSTask(mainID, taskDefARN, mainContainer)
 	if err != nil {
+		// Best-effort cleanup of orphaned task definition
+		_, _ = s.aws.ECS.DeregisterTaskDefinition(s.ctx(), &awsecs.DeregisterTaskDefinitionInput{
+			TaskDefinition: aws.String(taskDefARN),
+		})
 		core.WriteError(w, err)
 		return
 	}

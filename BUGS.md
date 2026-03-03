@@ -104,3 +104,111 @@ Lambda simulator set `X-Sockerless-Exit-Code` response header, but the Lambda ba
 ### Details
 
 `SimCommand` is explicitly "simulator-only" on types that mirror real cloud APIs. After this fix, backends use `SOCKERLESS_CMD` environment variable (GCF) or app setting (AZF) instead. Simulators read `SOCKERLESS_CMD` first, falling back to `SimCommand` for backward compatibility with SDK tests that set the field directly.
+
+---
+
+## BUG-052: `extractTar` ignores `io.Copy` error — silent file corruption
+
+**Severity**: High
+**Component**: `backends/core/handle_containers_archive.go`
+**Status**: Fixed — Sprint 8: check error, close file, return error
+
+### Details
+
+`io.Copy(f, tr)` return value was ignored. A truncated tar entry would silently produce a corrupt file on disk. Now checks error, closes the file on failure, and returns the error to the caller.
+
+---
+
+## BUG-053: `handlePutArchive` swallows driver error — returns 200 on failure
+
+**Severity**: High
+**Component**: `backends/core/handle_containers_archive.go`
+**Status**: Fixed — Sprint 8: return 500 error response when PutArchive fails
+
+### Details
+
+PutArchive error was logged but the handler unconditionally wrote `200 OK`. Clients had no way to know the archive extraction failed. Now returns 500 with error message.
+
+---
+
+## BUG-054: `mergeStagingDir` silently ignores all file copy errors
+
+**Severity**: Medium
+**Component**: `backends/core/handle_containers_archive.go`
+**Status**: Fixed — Sprint 8: log per-file errors via s.Logger.Warn()
+
+### Details
+
+`os.MkdirAll`, `os.Create`, `io.Copy`, `dst.Chmod` errors were all discarded with `_`. Walk return was ignored. The function is best-effort by design (pre-start staging, shouldn't block container start), but operators had no diagnostics. Now logs warnings per-file.
+
+---
+
+## BUG-055: `createTar` ignores `tw.WriteHeader` and `io.Copy` errors — corrupt tar output
+
+**Severity**: Medium
+**Component**: `backends/core/handle_containers_archive.go`
+**Status**: Fixed — Sprint 8: changed signature to return error, updated 5 callers
+
+### Details
+
+`tw.WriteHeader(...)` at 3 sites and `io.Copy(tw, f)` at 2 sites all had return values ignored. Changed `createTar` to return `error`. Updated callers in `handle_containers_export.go`, `drivers_agent.go`, `drivers_process.go`, `drivers_synthetic.go`, and `handle_containers_archive.go` (handleGetArchive). HTTP callers that have already written response headers log errors; filesystem drivers propagate errors.
+
+---
+
+## BUG-058: `handleNetworkPrune` doesn't forward `filters` query parameter
+
+**Severity**: High
+**Component**: `frontends/docker/networks.go`
+**Status**: Fixed — Sprint 8: copy pattern from handleContainerPrune, use postWithQuery
+
+### Details
+
+`s.backend.post(r.Context(), "/networks/prune", nil)` — filters not forwarded to backend. All other prune handlers (container, image, volume) correctly forwarded filters. Now extracts `filters` from query and uses `postWithQuery`.
+
+---
+
+## BUG-059: `handleContainerCommit` ignores JSON decode error on request body
+
+**Severity**: Medium
+**Component**: `backends/core/handle_commit.go`
+**Status**: Fixed — Sprint 8: check error, return 400 for malformed non-empty body
+
+### Details
+
+`json.NewDecoder(r.Body).Decode(&overrides)` — error was ignored. Malformed JSON body was silently accepted with no overrides applied. Now returns 400 with descriptive message. Empty body (io.EOF) is still valid (no overrides).
+
+---
+
+## BUG-060: `handleImageBuild` ignores `buildargs` JSON unmarshal error
+
+**Severity**: Medium
+**Component**: `backends/core/build.go`
+**Status**: Fixed — Sprint 8: check error, return 400 with descriptive message
+
+### Details
+
+`_ = json.Unmarshal([]byte(ba), &buildArgs)` — invalid JSON silently dropped all build args, causing builds to proceed without any args. Now returns 400 error.
+
+---
+
+## BUG-061: Agent drivers ignore container-not-found from Store.Get
+
+**Severity**: Low
+**Component**: `backends/core/drivers_agent.go`
+**Status**: Fixed — Sprint 8: check ok bool, fall through to Fallback driver
+
+### Details
+
+`c, _ := d.Store.Containers.Get(containerID)` — `ok` bool discarded in all 6 callsites (Exec, PutArchive, GetArchive, StatPath, Attach). Zero-value container (empty AgentAddress) silently fell through to the wrong fallback path. Now checks `ok` and delegates to Fallback driver when container is not found.
+
+---
+
+## BUG-062: ECS `startMultiContainerTask` leaks task definition on `runECSTask` failure
+
+**Severity**: Medium
+**Component**: `backends/ecs/containers.go`
+**Status**: Fixed — Sprint 8: best-effort DeregisterTaskDefinition on error path (2 locations)
+
+### Details
+
+`registerTaskDefinition` succeeds, then `runECSTask` fails — function returned without deregistering the task definition. Orphaned task defs accumulate in ECS. Added best-effort `DeregisterTaskDefinition` on the `runECSTask` error path for both single-container and multi-container flows.

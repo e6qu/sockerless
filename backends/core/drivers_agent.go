@@ -24,7 +24,10 @@ func (d *AgentExecDriver) Exec(ctx context.Context, containerID string, execID s
 	cmd []string, env []string, workDir string, tty bool,
 	conn net.Conn) int {
 
-	c, _ := d.Store.Containers.Get(containerID)
+	c, ok := d.Store.Containers.Get(containerID)
+	if !ok {
+		return d.Fallback.Exec(ctx, containerID, execID, cmd, env, workDir, tty, conn)
+	}
 
 	if c.AgentAddress == "reverse" {
 		revConn := d.AgentRegistry.Get(containerID)
@@ -57,7 +60,10 @@ type AgentFilesystemDriver struct {
 }
 
 func (d *AgentFilesystemDriver) PutArchive(containerID string, path string, tarStream io.Reader) error {
-	c, _ := d.Store.Containers.Get(containerID)
+	c, ok := d.Store.Containers.Get(containerID)
+	if !ok {
+		return d.Fallback.PutArchive(containerID, path, tarStream)
+	}
 	if c.AgentAddress == "reverse" {
 		destDir := filepath.Clean(path)
 		return extractTar(tarStream, destDir)
@@ -66,21 +72,29 @@ func (d *AgentFilesystemDriver) PutArchive(containerID string, path string, tarS
 }
 
 func (d *AgentFilesystemDriver) GetArchive(containerID string, path string, w io.Writer) (os.FileInfo, error) {
-	c, _ := d.Store.Containers.Get(containerID)
+	c, ok := d.Store.Containers.Get(containerID)
+	if !ok {
+		return d.Fallback.GetArchive(containerID, path, w)
+	}
 	if c.AgentAddress == "reverse" {
 		realPath := filepath.Clean(path)
 		info, err := os.Stat(realPath)
 		if err != nil {
 			return nil, err
 		}
-		createTar(w, realPath, info.Name())
+		if err := createTar(w, realPath, info.Name()); err != nil {
+			return info, err
+		}
 		return info, nil
 	}
 	return d.Fallback.GetArchive(containerID, path, w)
 }
 
 func (d *AgentFilesystemDriver) StatPath(containerID string, path string) (os.FileInfo, error) {
-	c, _ := d.Store.Containers.Get(containerID)
+	c, ok := d.Store.Containers.Get(containerID)
+	if !ok {
+		return d.Fallback.StatPath(containerID, path)
+	}
 	if c.AgentAddress == "reverse" {
 		return os.Stat(filepath.Clean(path))
 	}
@@ -113,7 +127,10 @@ func (d *AgentStreamDriver) LogUnsubscribe(containerID, subID string) {
 }
 
 func (d *AgentStreamDriver) Attach(ctx context.Context, containerID string, tty bool, conn net.Conn) error {
-	c, _ := d.Store.Containers.Get(containerID)
+	c, ok := d.Store.Containers.Get(containerID)
+	if !ok {
+		return d.Fallback.Attach(ctx, containerID, tty, conn)
+	}
 
 	if c.AgentAddress == "reverse" {
 		revConn := d.AgentRegistry.Get(containerID)
