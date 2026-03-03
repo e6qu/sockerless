@@ -499,6 +499,14 @@ func (m *ProjectManager) buildStatus(cfg ProjectConfig) ProjectStatus {
 		}
 	}
 
+	// Check if any is stopping
+	for _, s := range []string{simInfo.Status, backendInfo.Status, frontendInfo.Status} {
+		if s == "stopping" {
+			status = "stopping"
+			break
+		}
+	}
+
 	return ProjectStatus{
 		ProjectConfig:  cfg,
 		Status:         status,

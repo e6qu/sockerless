@@ -327,6 +327,20 @@ Audited admin Go backend and UI for remaining bugs after Sprint 4. Found and fix
 
 **Tests**: 88 admin Go PASS (was 87: +1 Stop/Start race test). 92 UI Vitest PASS (unchanged).
 
+## Bug Sprint 6 — BUG-043 through BUG-046 (4 bugs fixed)
+
+Audited admin Go backend and UI for remaining bugs after Sprint 5. Found and fixed 4 new bugs (1 Go, 3 UI). Removed 9 fixed Sprint-5 bugs from BUGS.md.
+
+**Go backend fix (1)**:
+- **BUG-043**: `buildStatus` doesn't detect "stopping" state — added "stopping" check after existing "starting" check
+
+**UI fixes (3)**:
+- **BUG-044**: ProcessDetailPage error display uses `||` hiding concurrent errors — same fix as BUG-041, missed page
+- **BUG-045**: Health badge shows "error" for "unknown" health — mapped "unknown" to "warning" in ComponentsPage, ComponentDetailPage, DashboardPage
+- **BUG-046**: ComponentDetailPage reload doesn't invalidate provider cache — added provider query invalidation to onSuccess
+
+**Tests**: 88 admin Go PASS (unchanged). 92 UI Vitest PASS (unchanged).
+
 ## Project Stats
 
 - **80 phases** (1-67, 69-77, 79-82), 725 tasks completed
