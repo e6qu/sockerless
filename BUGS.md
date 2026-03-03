@@ -4,7 +4,7 @@
 
 **Severity**: High
 **Component**: ECS backend (and likely CloudRun, ACA backends too)
-**Status**: Deferred — requires new simulator-direct execution mode (architectural change)
+**Status**: Fixed — replaced EndpointURL checks with IsTailDevNull, added agent PATH resolution in simulators
 **Discovered**: 2026-03-02 during Phase 80 manual E2E verification
 
 ### Symptoms
@@ -29,7 +29,7 @@ This doesn't affect CI runner workflows (which use `tail -f /dev/null` container
 
 **Severity**: Medium
 **Component**: ECS backend (and likely CloudRun, ACA backends too)
-**Status**: Deferred — same root cause as BUG-001 Issue B
+**Status**: Fixed — same fix as BUG-001 (agent injection based on command type, not simulator detection)
 **Related**: BUG-001 Issue B
 
 ### Symptoms
@@ -46,32 +46,61 @@ Same as BUG-001 — doesn't affect CI runner workflows, but breaks interactive u
 
 ---
 
-## BUG-043: `buildStatus` doesn't detect "stopping" state
+## BUG-047: `gofmt` violations in cleanup.go and project.go
 
-**Severity**: Low
-**Component**: `cmd/sockerless-admin/project_manager.go`
-**Status**: Fixed — Sprint 6: Added "stopping" check after "starting" check in `buildStatus`
+**Severity**: Low (formatting only)
+**Component**: `cmd/sockerless-admin/cleanup.go`, `cmd/sockerless-admin/project.go`
+**Status**: Fixed — Sprint 7: Ran `gofmt -w` on both files
 
----
+### Details
 
-## BUG-044: ProcessDetailPage error display uses `||`, hiding concurrent errors
-
-**Severity**: Low
-**Component**: `ui/packages/admin/src/pages/ProcessDetailPage.tsx`
-**Status**: Fixed — Sprint 6: Replaced `||` with array filter+map pattern (same fix as BUG-041, missed page)
+- `cleanup.go:146-158`: Wrong indentation inside `if c.State == "exited" || c.State == "dead"` block — code compiles correctly (Go uses braces) but violates `gofmt` formatting
+- `project.go:62-68`: `ProjectConnection` struct has extra padding on field tags (`DockerHost        string` instead of `DockerHost       string`)
 
 ---
 
-## BUG-045: Health badge shows "error" for "unknown" health
+## BUG-048: GCF backend uses non-cloud-native `X-Sockerless-Command` header
 
-**Severity**: Low
-**Component**: `ui/packages/admin/src/pages/ComponentsPage.tsx`, `ComponentDetailPage.tsx`, `DashboardPage.tsx`
-**Status**: Fixed — Sprint 6: Map "unknown" health to "warning" StatusBadge instead of "error"
+**Severity**: Medium
+**Component**: `backends/cloudrun-functions/containers.go`, `simulators/gcp/cloudfunctions.go`
+**Status**: Fixed — command now set at create time via `SOCKERLESS_CMD` environment variable
+
+### Details
+
+GCF backend sent `X-Sockerless-Command` header at invoke time to pass the command to the function runtime. Real Cloud Functions don't support custom headers for command passing. Command is now set at function create time via `SOCKERLESS_CMD` env var (base64-encoded JSON), matching the Lambda pattern of setting command at creation rather than invocation.
 
 ---
 
-## BUG-046: ComponentDetailPage reload doesn't invalidate provider cache
+## BUG-049: AZF backend uses non-cloud-native `X-Sockerless-Command` header
+
+**Severity**: Medium
+**Component**: `backends/azure-functions/containers.go`, `simulators/azure/functions.go`
+**Status**: Fixed — command now set at create time via `SOCKERLESS_CMD` app setting
+
+### Details
+
+Same issue as BUG-048. AZF backend already used `AppCommandLine` for agent callback mode but not for short-lived commands. Command is now set at create time via `SOCKERLESS_CMD` app setting (base64-encoded JSON), and the function is invoked with a plain HTTP POST.
+
+---
+
+## BUG-050: Lambda simulator sets unused `X-Sockerless-Exit-Code` header
 
 **Severity**: Low
-**Component**: `ui/packages/admin/src/pages/ComponentDetailPage.tsx`
-**Status**: Fixed — Sprint 6: Added `["component-provider", name]` invalidation to reload onSuccess
+**Component**: `simulators/aws/lambda.go`
+**Status**: Fixed — removed vestigial header
+
+### Details
+
+Lambda simulator set `X-Sockerless-Exit-Code` response header, but the Lambda backend never reads it (uses `FunctionError` / `X-Amz-Function-Error` from the SDK). Vestigial from a previous naming round.
+
+---
+
+## BUG-051: `SimCommand` field on simulator types is non-cloud-native
+
+**Severity**: Low
+**Component**: `simulators/gcp/cloudfunctions.go`, `simulators/azure/functions.go`
+**Status**: Fixed — backends now use `SOCKERLESS_CMD` env var/app setting; `SimCommand` retained as backward-compat fallback for SDK tests
+
+### Details
+
+`SimCommand` is explicitly "simulator-only" on types that mirror real cloud APIs. After this fix, backends use `SOCKERLESS_CMD` environment variable (GCF) or app setting (AZF) instead. Simulators read `SOCKERLESS_CMD` first, falling back to `SimCommand` for backward compatibility with SDK tests that set the field directly.

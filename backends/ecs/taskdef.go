@@ -40,20 +40,23 @@ func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinit
 
 	var entrypoint, command []string
 	if ci.IsMain {
-		if s.config.EndpointURL != "" {
-			// Simulator mode: pass original command through, no agent wrapping
+		if core.IsTailDevNull(config.Entrypoint, config.Cmd) {
+			// CI job container: inject agent for exec support
+			if s.config.CallbackURL != "" {
+				callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, ci.ID, ci.AgentToken)
+				entrypoint = core.BuildAgentCallbackEntrypoint(config, callbackURL)
+				envVars = append(envVars,
+					ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_CONTAINER_ID"), Value: aws.String(ci.ID)},
+					ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_AGENT_TOKEN"), Value: aws.String(ci.AgentToken)},
+					ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_AGENT_CALLBACK_URL"), Value: aws.String(callbackURL)},
+				)
+			} else {
+				entrypoint, command = core.BuildAgentEntrypoint(config)
+			}
+		} else {
+			// Short-lived command: pass through without agent
 			entrypoint = config.Entrypoint
 			command = config.Cmd
-		} else if s.config.CallbackURL != "" {
-			callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, ci.ID, ci.AgentToken)
-			entrypoint = core.BuildAgentCallbackEntrypoint(config, callbackURL)
-			envVars = append(envVars,
-				ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_CONTAINER_ID"), Value: aws.String(ci.ID)},
-				ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_AGENT_TOKEN"), Value: aws.String(ci.AgentToken)},
-				ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_AGENT_CALLBACK_URL"), Value: aws.String(callbackURL)},
-			)
-		} else {
-			entrypoint, command = core.BuildAgentEntrypoint(config)
 		}
 	} else {
 		// Sidecar: use original entrypoint/command, no agent
@@ -96,8 +99,8 @@ func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinit
 		containerDef.User = aws.String(config.User)
 	}
 
-	// Port mapping for agent (main container only, skip in simulator mode)
-	if ci.IsMain && s.config.EndpointURL == "" {
+	// Port mapping for agent (main container only, forward mode with CI job)
+	if ci.IsMain && core.IsTailDevNull(config.Entrypoint, config.Cmd) && s.config.CallbackURL == "" {
 		containerDef.PortMappings = []ecstypes.PortMapping{
 			{
 				ContainerPort: aws.Int32(9111),

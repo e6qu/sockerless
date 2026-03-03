@@ -110,6 +110,8 @@ func TestMain(m *testing.M) {
 	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
 	backendCmd.Env = append(os.Environ(),
 		"SOCKERLESS_ENDPOINT_URL="+simURL,
+		"SOCKERLESS_POLL_INTERVAL=500ms",
+		"SOCKERLESS_LOG_TIMEOUT=2s",
 		"SOCKERLESS_GCF_PROJECT=sim-project",
 	)
 	backendCmd.Stdout = os.Stderr

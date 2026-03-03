@@ -93,12 +93,8 @@ func (s *Server) fetchAndWriteLogs(w http.ResponseWriter, filter string, after t
 		logFilter += fmt.Sprintf(` AND timestamp>"%s"`, after.UTC().Format(time.RFC3339Nano))
 	}
 
-	ctx := s.ctx()
-	if s.config.EndpointURL != "" {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 2*time.Second)
-		defer cancel()
-	}
+	ctx, cancel := context.WithTimeout(s.ctx(), s.config.LogTimeout)
+	defer cancel()
 
 	it := s.gcp.LogAdmin.Entries(ctx, logadmin.Filter(logFilter))
 

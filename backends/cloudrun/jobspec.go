@@ -48,26 +48,29 @@ func (s *Server) buildContainerSpec(ci containerInput) *runpb.Container {
 
 	var entrypoint []string
 	if ci.IsMain {
-		if s.config.EndpointURL != "" {
-			// Simulator mode: pass original command through, no agent wrapping
+		if core.IsTailDevNull(config.Entrypoint, config.Cmd) {
+			// CI job container: inject agent for exec support
+			if s.config.CallbackURL != "" {
+				callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, ci.ID, ci.AgentToken)
+				entrypoint = core.BuildAgentCallbackEntrypoint(config, callbackURL)
+				envVars = append(envVars,
+					&runpb.EnvVar{Name: "SOCKERLESS_CONTAINER_ID", Values: &runpb.EnvVar_Value{Value: ci.ID}},
+					&runpb.EnvVar{Name: "SOCKERLESS_AGENT_TOKEN", Values: &runpb.EnvVar_Value{Value: ci.AgentToken}},
+					&runpb.EnvVar{Name: "SOCKERLESS_AGENT_CALLBACK_URL", Values: &runpb.EnvVar_Value{Value: callbackURL}},
+				)
+			} else {
+				envVars = append(envVars,
+					&runpb.EnvVar{Name: "SOCKERLESS_AGENT_TOKEN", Values: &runpb.EnvVar_Value{Value: ci.AgentToken}},
+				)
+				entrypoint, _ = core.BuildAgentEntrypoint(config)
+			}
+		} else {
+			// Short-lived command: pass through without agent
 			if len(config.Entrypoint) > 0 {
 				entrypoint = config.Entrypoint
 			} else if len(config.Cmd) > 0 {
 				entrypoint = config.Cmd
 			}
-		} else if s.config.CallbackURL != "" {
-			callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, ci.ID, ci.AgentToken)
-			entrypoint = core.BuildAgentCallbackEntrypoint(config, callbackURL)
-			envVars = append(envVars,
-				&runpb.EnvVar{Name: "SOCKERLESS_CONTAINER_ID", Values: &runpb.EnvVar_Value{Value: ci.ID}},
-				&runpb.EnvVar{Name: "SOCKERLESS_AGENT_TOKEN", Values: &runpb.EnvVar_Value{Value: ci.AgentToken}},
-				&runpb.EnvVar{Name: "SOCKERLESS_AGENT_CALLBACK_URL", Values: &runpb.EnvVar_Value{Value: callbackURL}},
-			)
-		} else {
-			envVars = append(envVars,
-				&runpb.EnvVar{Name: "SOCKERLESS_AGENT_TOKEN", Values: &runpb.EnvVar_Value{Value: ci.AgentToken}},
-			)
-			entrypoint, _ = core.BuildAgentEntrypoint(config)
 		}
 	} else {
 		// Sidecar: use original entrypoint, no agent
@@ -99,8 +102,8 @@ func (s *Server) buildContainerSpec(ci containerInput) *runpb.Container {
 		},
 	}
 
-	// Port mapping for agent (main container only, skip in simulator mode)
-	if ci.IsMain && s.config.EndpointURL == "" {
+	// Port mapping for agent (main container only, forward mode with CI job)
+	if ci.IsMain && core.IsTailDevNull(config.Entrypoint, config.Cmd) && s.config.CallbackURL == "" {
 		containerSpec.Ports = []*runpb.ContainerPort{
 			{ContainerPort: 9111},
 		}

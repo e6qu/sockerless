@@ -49,7 +49,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 
 	mode := "cloud"
 	if config.EndpointURL != "" {
-		mode = "simulator"
+		mode = "custom-endpoint"
 	}
 	s.ProviderInfo = &core.ProviderInfo{
 		Provider: "gcp",

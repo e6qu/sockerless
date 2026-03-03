@@ -51,6 +51,21 @@ func TestMain(m *testing.M) {
 	}
 	cleanups = append(cleanups, func() { os.Remove(evalBinaryPath) })
 
+	// Build agent binary
+	agentDir := repoRoot + "/agent"
+	agentBinaryPath := agentDir + "/sockerless-agent"
+	fmt.Println("[sim] Building sockerless-agent...")
+	agentBuild := exec.Command("go", "build", "-o", "sockerless-agent", "./cmd/sockerless-agent")
+	agentBuild.Dir = agentDir
+	agentBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0")
+	agentBuild.Stdout = os.Stderr
+	agentBuild.Stderr = os.Stderr
+	if err := agentBuild.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build agent: %v\n", err)
+		os.Exit(1)
+	}
+	cleanups = append(cleanups, func() { os.Remove(agentBinaryPath) })
+
 	// Build simulator
 	simDir := repoRoot + "/simulators/gcp"
 	simBinary := simDir + "/simulator-gcp"
@@ -72,7 +87,10 @@ func TestMain(m *testing.M) {
 	simURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
 	fmt.Printf("[sim] Starting simulator-gcp on %s...\n", simAddr)
 	simCmd := exec.Command(simBinary)
-	simCmd.Env = append(os.Environ(), "SIM_LISTEN_ADDR="+simAddr)
+	simCmd.Env = append(os.Environ(),
+		"SIM_LISTEN_ADDR="+simAddr,
+		"PATH="+agentDir+":"+os.Getenv("PATH"),
+	)
 	simCmd.Stdout = os.Stderr
 	simCmd.Stderr = os.Stderr
 	if err := simCmd.Start(); err != nil {
@@ -111,6 +129,8 @@ func TestMain(m *testing.M) {
 	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
 	backendCmd.Env = append(os.Environ(),
 		"SOCKERLESS_ENDPOINT_URL="+simURL,
+		"SOCKERLESS_POLL_INTERVAL=500ms",
+		"SOCKERLESS_LOG_TIMEOUT=2s",
 		"SOCKERLESS_GCR_PROJECT=sim-project",
 	)
 	backendCmd.Stdout = os.Stderr

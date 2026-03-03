@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"context"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 )
 
@@ -69,7 +71,15 @@ func StartProcess(cfg ProcessConfig, sink LogSink) *ProcessHandle {
 		ctx, cancel = context.WithTimeout(context.Background(), cfg.Timeout)
 	}
 
-	cmd := exec.CommandContext(ctx, cfg.Command[0], cfg.Command[1:]...)
+	binary := cfg.Command[0]
+	if filepath.IsAbs(binary) {
+		if _, err := os.Stat(binary); os.IsNotExist(err) {
+			if resolved, lookErr := exec.LookPath(filepath.Base(binary)); lookErr == nil {
+				binary = resolved
+			}
+		}
+	}
+	cmd := exec.CommandContext(ctx, binary, cfg.Command[1:]...)
 
 	if cfg.Dir != "" {
 		cmd.Dir = cfg.Dir

@@ -130,6 +130,13 @@ func NewMainProcess(logger zerolog.Logger, args []string, env []string) (*MainPr
 }
 
 func (mp *MainProcess) fanOut(r io.Reader, stream string, buf *RingBuffer) {
+	var osStream io.Writer
+	if stream == "stdout" {
+		osStream = os.Stdout
+	} else {
+		osStream = os.Stderr
+	}
+
 	data := make([]byte, 32*1024)
 	for {
 		n, err := r.Read(data)
@@ -137,6 +144,7 @@ func (mp *MainProcess) fanOut(r io.Reader, stream string, buf *RingBuffer) {
 			chunk := make([]byte, n)
 			copy(chunk, data[:n])
 			_, _ = buf.Write(chunk) // bytes.Buffer.Write never fails
+			_, _ = osStream.Write(chunk)
 
 			mp.mu.RLock()
 			for _, ch := range mp.listeners {

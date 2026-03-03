@@ -49,7 +49,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 
 	mode := "cloud"
 	if config.EndpointURL != "" {
-		mode = "simulator"
+		mode = "custom-endpoint"
 	}
 	s.ProviderInfo = &core.ProviderInfo{
 		Provider: "azure",

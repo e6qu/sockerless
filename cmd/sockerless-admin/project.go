@@ -59,13 +59,13 @@ type ProjectStatus struct {
 
 // ProjectConnection holds Docker/Podman connection info.
 type ProjectConnection struct {
-	DockerHost        string `json:"docker_host"`
-	EnvExport         string `json:"env_export"`
-	PodmanConnection  string `json:"podman_connection"`
-	SimulatorAddr     string `json:"simulator_addr"`
-	BackendAddr       string `json:"backend_addr"`
-	FrontendAddr      string `json:"frontend_addr"`
-	FrontendMgmtAddr  string `json:"frontend_mgmt_addr"`
+	DockerHost       string `json:"docker_host"`
+	EnvExport        string `json:"env_export"`
+	PodmanConnection string `json:"podman_connection"`
+	SimulatorAddr    string `json:"simulator_addr"`
+	BackendAddr      string `json:"backend_addr"`
+	FrontendAddr     string `json:"frontend_addr"`
+	FrontendMgmtAddr string `json:"frontend_mgmt_addr"`
 }
 
 // ValidClouds returns all valid cloud types.

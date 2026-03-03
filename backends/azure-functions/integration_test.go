@@ -110,6 +110,7 @@ func TestMain(m *testing.M) {
 	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
 	backendCmd.Env = append(os.Environ(),
 		"SOCKERLESS_ENDPOINT_URL="+simURL,
+		"SOCKERLESS_POLL_INTERVAL=500ms",
 		"SOCKERLESS_AZF_SUBSCRIPTION_ID=00000000-0000-0000-0000-000000000001",
 		"SOCKERLESS_AZF_RESOURCE_GROUP=sim-rg",
 		"SOCKERLESS_AZF_STORAGE_ACCOUNT=simstorage",

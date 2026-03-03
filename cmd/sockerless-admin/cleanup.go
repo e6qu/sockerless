@@ -143,14 +143,14 @@ func ScanStoppedContainers(reg *Registry, client *http.Client) []CleanupItem {
 			for _, c := range containers {
 				if c.State == "exited" || c.State == "dead" {
 					shortID := c.ID
-				if len(shortID) > 12 {
-					shortID = shortID[:12]
-				}
-				age := ""
-				if created, err := time.Parse(time.RFC3339, c.Created); err == nil {
-					age = formatDuration(time.Since(created))
-				}
-				items = append(items, CleanupItem{
+					if len(shortID) > 12 {
+						shortID = shortID[:12]
+					}
+					age := ""
+					if created, err := time.Parse(time.RFC3339, c.Created); err == nil {
+						age = formatDuration(time.Since(created))
+					}
+					items = append(items, CleanupItem{
 						Category:    "container",
 						Name:        c.Name,
 						Description: fmt.Sprintf("Container %s on %s (state: %s)", shortID, comp.Name, c.State),
