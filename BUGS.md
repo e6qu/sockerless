@@ -284,3 +284,75 @@ All 3 container backends (ECS, ACA, CloudRun) set container state to "running" (
 ### Details
 
 `BeginCreateOrUpdate` starts the LRO, `PollUntilDone` fails. Function App may exist in Azure but handler returns error, container isn't stored, orphaned app remains. Fixed by calling `WebApps.Delete()` (best-effort) before returning the error.
+
+---
+
+## BUG-069: `handleImageRemove` doesn't delete tag aliases from store
+
+**Severity**: Medium
+**Component**: `backends/core/handle_images.go`
+**Status**: Fixed — Sprint 10: delete all RepoTags and name-without-tag aliases after deleting by ID
+
+### Details
+
+`Store.Images.Delete(img.ID)` only deletes the image ID key. `StoreImageWithAliases` stores images under up to 6 keys (ID, ref, name-without-tag, docker.io short aliases). Tag entries remained in the store and still resolved to the "deleted" image. Contrast: `handleImagePrune` correctly deleted all aliases. Fixed by copying the alias deletion pattern from prune.
+
+---
+
+## BUG-070: ECS `handleContainerPrune` doesn't clean up cloud resources
+
+**Severity**: High
+**Component**: `backends/ecs/extended.go`
+**Status**: Fixed — Sprint 10: added task definition deregistration and resource registry cleanup
+
+### Details
+
+Prune only deleted local state (Containers, ContainerNames, ECS store, WaitChs). Did not deregister task definitions or call `MarkCleanedUp`. Contrast: `handleContainerRemove` correctly called `DeregisterTaskDefinition` and `MarkCleanedUp`. Fixed by adding cloud resource cleanup before local state deletion in the prune loop.
+
+---
+
+## BUG-071: FaaS `handleContainerKill` doesn't update container state
+
+**Severity**: High
+**Component**: `backends/lambda/containers.go`, `backends/cloudrun-functions/containers.go`, `backends/azure-functions/containers.go`
+**Status**: Fixed — Sprint 10: added signal parsing, state transition to "exited", and WaitChs close
+
+### Details
+
+All 3 FaaS kill handlers only disconnected the reverse agent (`AgentRegistry.Remove`) but didn't transition the container to "exited" state or close WaitChs. Container remained "running" indefinitely. Contrast: ECS, ACA, CloudRun kill handlers correctly parsed signal, stopped cloud resource, updated state, and closed WaitChs. Fixed by adding signal parsing (SIGKILL→137), state update, and WaitChs close — minus the cloud stop call since FaaS functions run to completion.
+
+---
+
+## BUG-072: FaaS `handleContainerPrune` doesn't clean up cloud resources
+
+**Severity**: High
+**Component**: `backends/lambda/extended.go`, `backends/cloudrun-functions/extended.go`, `backends/azure-functions/extended.go`
+**Status**: Fixed — Sprint 10: added cloud function deletion and resource registry cleanup
+
+### Details
+
+All 3 FaaS prune handlers only deleted local state. Did not delete cloud functions or call `MarkCleanedUp`. Contrast: each backend's `handleContainerRemove` correctly deleted the cloud function and called `MarkCleanedUp`. Fixed by adding cloud resource cleanup (Lambda `DeleteFunction`, GCF `DeleteFunction`, AZF `WebApps.Delete`) and `MarkCleanedUp` to each prune handler.
+
+---
+
+## BUG-073: FaaS prune and remove don't clean up LogBuffers
+
+**Severity**: Medium
+**Component**: `backends/lambda/containers.go`, `backends/lambda/extended.go`, `backends/cloudrun-functions/containers.go`, `backends/cloudrun-functions/extended.go`, `backends/azure-functions/containers.go`, `backends/azure-functions/extended.go`
+**Status**: Fixed — Sprint 10: added `LogBuffers.Delete(c.ID)` to all 6 locations
+
+### Details
+
+FaaS backends store function output in `LogBuffers` during invocation, but neither prune nor remove deleted these entries. Memory leak — log buffers accumulated indefinitely. Contrast: core's `handleContainerPrune` and `handleContainerRemove` both call `LogBuffers.Delete(c.ID)`. Fixed by adding `LogBuffers.Delete` to all 3 FaaS backends' prune and remove handlers.
+
+---
+
+## BUG-074: Docker backend `mapContainerFromDocker` doesn't populate Mounts
+
+**Severity**: High
+**Component**: `backends/docker/containers.go`
+**Status**: Fixed — Sprint 10: map `info.Mounts` to `api.MountPoint` slice
+
+### Details
+
+`c.Mounts = make([]api.MountPoint, 0)` — initialized empty but never populated from `info.Mounts`. Container inspect always returned empty Mounts array, even for containers with volumes or bind mounts. Fixed by iterating `info.Mounts` and mapping Type, Name, Source, Destination, Driver, Mode, RW, and Propagation fields.

@@ -3,6 +3,8 @@ package ecs
 import (
 	"net/http"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 )
@@ -11,6 +13,17 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 	var deleted []string
 	for _, c := range s.Store.Containers.List() {
 		if c.State.Status == "exited" || c.State.Status == "dead" {
+			// Clean up ECS cloud resources
+			ecsState, _ := s.ECS.Get(c.ID)
+			if ecsState.TaskDefARN != "" {
+				_, _ = s.aws.ECS.DeregisterTaskDefinition(s.ctx(), &awsecs.DeregisterTaskDefinitionInput{
+					TaskDefinition: aws.String(ecsState.TaskDefARN),
+				})
+			}
+			if ecsState.TaskARN != "" {
+				s.Registry.MarkCleanedUp(ecsState.TaskARN)
+			}
+
 			s.Store.Containers.Delete(c.ID)
 			s.Store.ContainerNames.Delete(c.Name)
 			s.ECS.Delete(c.ID)

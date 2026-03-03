@@ -328,7 +328,19 @@ func mapContainerFromDocker(info types.ContainerJSON) api.Container {
 		}
 	}
 
-	c.Mounts = make([]api.MountPoint, 0)
+	c.Mounts = make([]api.MountPoint, 0, len(info.Mounts))
+	for _, m := range info.Mounts {
+		c.Mounts = append(c.Mounts, api.MountPoint{
+			Type:        string(m.Type),
+			Name:        m.Name,
+			Source:      m.Source,
+			Destination: m.Destination,
+			Driver:      m.Driver,
+			Mode:        m.Mode,
+			RW:          m.RW,
+			Propagation: string(m.Propagation),
+		})
+	}
 	return c
 }
 

@@ -407,6 +407,25 @@ func (s *Server) handleContainerKill(w http.ResponseWriter, r *http.Request) {
 	// Disconnect reverse agent if connected (unblocks invoke goroutine)
 	s.AgentRegistry.Remove(id)
 
+	// Parse signal and transition container to exited state
+	signal := r.URL.Query().Get("signal")
+	exitCode := 0
+	if signal == "SIGKILL" || signal == "9" || signal == "KILL" {
+		exitCode = 137
+	}
+
+	s.Store.Containers.Update(id, func(c *api.Container) {
+		c.State.Status = "exited"
+		c.State.Running = false
+		c.State.Pid = 0
+		c.State.ExitCode = exitCode
+		c.State.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	})
+
+	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+		close(ch.(chan struct{}))
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -452,6 +471,7 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 	s.Store.ContainerNames.Delete(c.Name)
 	s.AZF.Delete(id)
 	s.Store.WaitChs.Delete(id)
+	s.Store.LogBuffers.Delete(id)
 
 	w.WriteHeader(http.StatusNoContent)
 }

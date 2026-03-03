@@ -263,6 +263,12 @@ func (s *BaseServer) handleImageRemove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.Store.Images.Delete(img.ID)
+	for _, tag := range img.RepoTags {
+		s.Store.Images.Delete(tag)
+		if idx := strings.Index(tag, ":"); idx >= 0 {
+			s.Store.Images.Delete(tag[:idx])
+		}
+	}
 
 	var resp []*api.ImageDeleteResponse
 	for _, tag := range img.RepoTags {

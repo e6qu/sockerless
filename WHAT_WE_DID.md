@@ -134,6 +134,19 @@ Audited `api/` and all 8 `backends/` for Docker-to-cloud translation fidelity. F
 
 All 75 sim-backend tests pass. 0 lint issues across 19 modules.
 
+## Bug Sprint 10 — API & Backends Audit (BUG-069→074)
+
+Audited Docker-to-cloud translation fidelity: resource lifecycle cleanup, kill semantics, image store consistency, and Docker passthrough completeness. Found 6 real bugs — 1 core image store bug, 1 ECS prune resource leak, 1 cross-cutting kill semantics bug across 3 FaaS backends, 1 cross-cutting prune resource leak across 3 FaaS backends, 1 cross-cutting LogBuffers memory leak across 3 FaaS backends, and 1 Docker passthrough fidelity bug.
+
+- **BUG-069**: `handleImageRemove` now deletes all tag aliases (copied pattern from `handleImagePrune`)
+- **BUG-070**: ECS `handleContainerPrune` now deregisters task definitions and calls `MarkCleanedUp`
+- **BUG-071**: FaaS `handleContainerKill` now parses signal, transitions to "exited", closes WaitChs (Lambda/GCF/AZF)
+- **BUG-072**: FaaS `handleContainerPrune` now deletes cloud functions and calls `MarkCleanedUp` (Lambda/GCF/AZF)
+- **BUG-073**: FaaS prune and remove now clean up `LogBuffers` (6 locations across Lambda/GCF/AZF)
+- **BUG-074**: Docker backend `mapContainerFromDocker` now populates Mounts from `info.Mounts`
+
+All 75 sim-backend tests pass. 0 lint issues across 19 modules.
+
 ## Project Stats
 
 - **80 phases** (1-67, 69-77, 79-82), 725 tasks completed
