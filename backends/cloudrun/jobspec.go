@@ -48,24 +48,17 @@ func (s *Server) buildContainerSpec(ci containerInput) *runpb.Container {
 
 	var entrypoint []string
 	if ci.IsMain {
-		if core.IsTailDevNull(config.Entrypoint, config.Cmd) {
-			// CI job container: inject agent for exec support
-			if s.config.CallbackURL != "" {
-				callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, ci.ID, ci.AgentToken)
-				entrypoint = core.BuildAgentCallbackEntrypoint(config, callbackURL)
-				envVars = append(envVars,
-					&runpb.EnvVar{Name: "SOCKERLESS_CONTAINER_ID", Values: &runpb.EnvVar_Value{Value: ci.ID}},
-					&runpb.EnvVar{Name: "SOCKERLESS_AGENT_TOKEN", Values: &runpb.EnvVar_Value{Value: ci.AgentToken}},
-					&runpb.EnvVar{Name: "SOCKERLESS_AGENT_CALLBACK_URL", Values: &runpb.EnvVar_Value{Value: callbackURL}},
-				)
-			} else {
-				envVars = append(envVars,
-					&runpb.EnvVar{Name: "SOCKERLESS_AGENT_TOKEN", Values: &runpb.EnvVar_Value{Value: ci.AgentToken}},
-				)
-				entrypoint, _ = core.BuildAgentEntrypoint(config)
-			}
+		if core.IsTailDevNull(config.Entrypoint, config.Cmd) && s.config.CallbackURL != "" {
+			// CI job container with reverse agent: inject callback entrypoint
+			callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, ci.ID, ci.AgentToken)
+			entrypoint = core.BuildAgentCallbackEntrypoint(config, callbackURL)
+			envVars = append(envVars,
+				&runpb.EnvVar{Name: "SOCKERLESS_CONTAINER_ID", Values: &runpb.EnvVar_Value{Value: ci.ID}},
+				&runpb.EnvVar{Name: "SOCKERLESS_AGENT_TOKEN", Values: &runpb.EnvVar_Value{Value: ci.AgentToken}},
+				&runpb.EnvVar{Name: "SOCKERLESS_AGENT_CALLBACK_URL", Values: &runpb.EnvVar_Value{Value: callbackURL}},
+			)
 		} else {
-			// Short-lived command: pass through without agent
+			// Pass through original command (short-lived or forward agent mode)
 			if len(config.Entrypoint) > 0 {
 				entrypoint = config.Entrypoint
 			} else if len(config.Cmd) > 0 {

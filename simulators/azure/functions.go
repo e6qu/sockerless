@@ -260,6 +260,7 @@ func registerAzureFunctions(srv *sim.Server) {
 				var exitCode int
 				responseBody, exitCode = invokeAzureFunctionProcess(matchedSite)
 				if exitCode != 0 {
+					// Real Azure Functions returns HTTP error when function crashes
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(responseBody)

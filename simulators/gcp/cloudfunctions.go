@@ -161,6 +161,7 @@ func registerCloudFunctions(srv *sim.Server) {
 				var exitCode int
 				responseBody, exitCode = invokeCloudFunctionProcess(fn, project, functionID)
 				if exitCode != 0 {
+					// Real Cloud Functions returns HTTP error when function crashes
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(responseBody)

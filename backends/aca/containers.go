@@ -252,7 +252,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		}()
 
 		// Wait for reverse agent callback
-		agentTimeout := 30 * time.Second
+		agentTimeout := s.config.AgentTimeout
 		if err := s.AgentRegistry.WaitForAgent(id, agentTimeout); err != nil {
 			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
 			s.AgentRegistry.Remove(id)
@@ -264,43 +264,47 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// Forward agent mode: poll for execution RUNNING and health check
-		agentAddr, completedExitCode, err := s.waitForExecutionRunning(s.ctx(), jobName, executionName)
-		if err != nil {
-			s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
-			s.deleteJob(jobName)
-			core.WriteError(w, fmt.Errorf("execution failed to start: %w", err))
-			return
-		}
+		isLongRunning := core.IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd)
 
-		if completedExitCode >= 0 {
-			// Execution completed before agent could be reached (short-lived command).
-			// Treat as a fast exit — stop the container with the real exit code.
-			go func() {
-				s.Store.StopContainer(id, completedExitCode)
-			}()
-		} else {
-			// Wait for agent health
-			agentURL := fmt.Sprintf("http://%s/health", agentAddr)
-			agentHealthy := true
-			if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
-				s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
-				agentHealthy = false
+		if isLongRunning {
+			// Long-running container: wait for RUNNING and check agent health
+			agentAddr, completedExitCode, err := s.waitForExecutionRunning(s.ctx(), jobName, executionName)
+			if err != nil {
+				s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
+				s.deleteJob(jobName)
+				core.WriteError(w, fmt.Errorf("execution failed to start: %w", err))
+				return
 			}
 
-			if agentHealthy {
-				s.Store.Containers.Update(id, func(c *api.Container) {
-					c.AgentAddress = agentAddr
-					c.AgentToken = acaState.AgentToken
+			if completedExitCode >= 0 {
+				// Execution completed before agent could be reached.
+				go func() {
+					s.Store.StopContainer(id, completedExitCode)
+				}()
+			} else {
+				// Wait for agent health
+				agentURL := fmt.Sprintf("http://%s/health", agentAddr)
+				agentHealthy := true
+				if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
+					s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
+					agentHealthy = false
+				}
+
+				if agentHealthy {
+					s.Store.Containers.Update(id, func(c *api.Container) {
+						c.AgentAddress = agentAddr
+						c.AgentToken = acaState.AgentToken
+					})
+				}
+
+				s.ACA.Update(id, func(state *ACAState) {
+					state.AgentAddress = agentAddr
 				})
 			}
-
-			s.ACA.Update(id, func(state *ACAState) {
-				state.AgentAddress = agentAddr
-			})
-
-			// Start background poller to detect execution exit
-			go s.pollExecutionExit(id, jobName, executionName, exitCh)
 		}
+
+		// Start background poller to detect execution exit
+		go s.pollExecutionExit(id, jobName, executionName, exitCh)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -395,7 +399,7 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 			s.Store.StopContainer(mainID, 0)
 		}()
 
-		agentTimeout := 30 * time.Second
+		agentTimeout := s.config.AgentTimeout
 		if err := s.AgentRegistry.WaitForAgent(mainID, agentTimeout); err != nil {
 			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
 			s.AgentRegistry.Remove(mainID)
@@ -615,7 +619,7 @@ func (s *Server) waitForExecutionRunning(ctx context.Context, jobName, execution
 
 // waitForAgentHealth polls the agent's /health endpoint.
 func (s *Server) waitForAgentHealth(ctx context.Context, healthURL string) error {
-	timeout := time.After(30 * time.Second)
+	timeout := time.After(s.config.AgentTimeout)
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 

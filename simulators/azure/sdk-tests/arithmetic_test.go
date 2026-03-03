@@ -34,7 +34,7 @@ func TestAzureFunctions_InvokeArithmeticInvalid(t *testing.T) {
 	azureCreateSite(t, rg, name, []string{evalBinaryPath, "3 +"})
 	defer azureDeleteSite(rg, name)
 
-	azureInvokeFunction(t)
+	azureInvokeFunctionExpectError(t)
 
 	kql := `AppTraces | where AppRoleName == "arith-invalid-app"`
 	result := queryWorkspace(t, "default", kql)

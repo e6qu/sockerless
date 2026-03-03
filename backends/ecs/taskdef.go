@@ -40,21 +40,17 @@ func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinit
 
 	var entrypoint, command []string
 	if ci.IsMain {
-		if core.IsTailDevNull(config.Entrypoint, config.Cmd) {
-			// CI job container: inject agent for exec support
-			if s.config.CallbackURL != "" {
-				callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, ci.ID, ci.AgentToken)
-				entrypoint = core.BuildAgentCallbackEntrypoint(config, callbackURL)
-				envVars = append(envVars,
-					ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_CONTAINER_ID"), Value: aws.String(ci.ID)},
-					ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_AGENT_TOKEN"), Value: aws.String(ci.AgentToken)},
-					ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_AGENT_CALLBACK_URL"), Value: aws.String(callbackURL)},
-				)
-			} else {
-				entrypoint, command = core.BuildAgentEntrypoint(config)
-			}
+		if core.IsTailDevNull(config.Entrypoint, config.Cmd) && s.config.CallbackURL != "" {
+			// CI job container with reverse agent: inject callback entrypoint
+			callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, ci.ID, ci.AgentToken)
+			entrypoint = core.BuildAgentCallbackEntrypoint(config, callbackURL)
+			envVars = append(envVars,
+				ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_CONTAINER_ID"), Value: aws.String(ci.ID)},
+				ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_AGENT_TOKEN"), Value: aws.String(ci.AgentToken)},
+				ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_AGENT_CALLBACK_URL"), Value: aws.String(callbackURL)},
+			)
 		} else {
-			// Short-lived command: pass through without agent
+			// Pass through original command (short-lived or forward agent mode)
 			entrypoint = config.Entrypoint
 			command = config.Cmd
 		}

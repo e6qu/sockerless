@@ -23,6 +23,7 @@ type Config struct {
 	CallbackURL     string        // Backend URL for reverse agent connections
 	EndpointURL     string        // Custom endpoint URL
 	PollInterval    time.Duration // Cloud API poll interval (default 2s)
+	AgentTimeout    time.Duration // Agent health check timeout (default 30s)
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -42,6 +43,7 @@ func ConfigFromEnv() Config {
 		CallbackURL:      os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		EndpointURL:      os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:     parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
+		AgentTimeout:     parseDuration(os.Getenv("SOCKERLESS_AGENT_TIMEOUT"), 30*time.Second),
 	}
 }
 

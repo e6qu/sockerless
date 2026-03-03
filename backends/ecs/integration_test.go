@@ -145,6 +145,7 @@ func TestMain(m *testing.M) {
 	backendCmd.Env = append(os.Environ(),
 		"SOCKERLESS_ENDPOINT_URL="+simURL,
 		"SOCKERLESS_POLL_INTERVAL=500ms",
+		"SOCKERLESS_AGENT_TIMEOUT=2s",
 		"SOCKERLESS_ECS_CLUSTER=sim-cluster",
 		"SOCKERLESS_ECS_SUBNETS=subnet-sim",
 		"SOCKERLESS_ECS_EXECUTION_ROLE_ARN=arn:aws:iam::000000000000:role/sim",

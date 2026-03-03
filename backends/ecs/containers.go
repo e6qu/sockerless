@@ -227,7 +227,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		}()
 
 		// Wait for reverse agent callback
-		agentTimeout := 30 * time.Second
+		agentTimeout := s.config.AgentTimeout
 		if err := s.AgentRegistry.WaitForAgent(id, agentTimeout); err != nil {
 			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
 			s.AgentRegistry.Remove(id)
@@ -239,31 +239,36 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// Forward agent mode: poll for task RUNNING and health check
-		agentAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
-		if err != nil {
-			s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
-			core.WriteError(w, fmt.Errorf("task failed to start: %w", err))
-			return
-		}
+		isLongRunning := core.IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd)
 
-		// Wait for agent health
-		agentURL := fmt.Sprintf("http://%s/health", agentAddr)
-		agentHealthy := true
-		if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
-			s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
-			agentHealthy = false
-		}
+		if isLongRunning {
+			// Long-running container: wait for RUNNING and check agent health
+			agentAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
+			if err != nil {
+				s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
+				core.WriteError(w, fmt.Errorf("task failed to start: %w", err))
+				return
+			}
 
-		if agentHealthy {
-			s.Store.Containers.Update(id, func(c *api.Container) {
-				c.AgentAddress = agentAddr
-				c.AgentToken = ecsState.AgentToken
+			// Wait for agent health
+			agentURL := fmt.Sprintf("http://%s/health", agentAddr)
+			agentHealthy := true
+			if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
+				s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
+				agentHealthy = false
+			}
+
+			if agentHealthy {
+				s.Store.Containers.Update(id, func(c *api.Container) {
+					c.AgentAddress = agentAddr
+					c.AgentToken = ecsState.AgentToken
+				})
+			}
+
+			s.ECS.Update(id, func(state *ECSState) {
+				state.AgentAddress = agentAddr
 			})
 		}
-
-		s.ECS.Update(id, func(state *ECSState) {
-			state.AgentAddress = agentAddr
-		})
 
 		// Start background poller to detect task exit
 		go s.pollTaskExit(id, taskARN, exitCh)
@@ -387,7 +392,7 @@ func (s *Server) startMultiContainerTask(w http.ResponseWriter, triggerID string
 			s.Store.StopContainer(mainID, 0)
 		}()
 
-		agentTimeout := 30 * time.Second
+		agentTimeout := s.config.AgentTimeout
 		if err := s.AgentRegistry.WaitForAgent(mainID, agentTimeout); err != nil {
 			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
 			s.AgentRegistry.Remove(mainID)
@@ -606,7 +611,7 @@ func (s *Server) waitForTaskRunning(ctx context.Context, taskARN string) (string
 
 // waitForAgentHealth polls the agent's /health endpoint.
 func (s *Server) waitForAgentHealth(ctx context.Context, healthURL string) error {
-	timeout := time.After(30 * time.Second)
+	timeout := time.After(s.config.AgentTimeout)
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
