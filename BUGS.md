@@ -46,72 +46,32 @@ Same as BUG-001 — doesn't affect CI runner workflows, but breaks interactive u
 
 ---
 
-## BUG-034: `ProcessManager.Stop` clobbers PID/cancel of re-started process (race condition)
-
-**Severity**: Medium
-**Component**: `cmd/sockerless-admin/process.go`
-**Status**: Fixed — Sprint 5: Added generation check using `doneCh` identity; only cleans up if process hasn't been re-started
-
----
-
-## BUG-035: `handleOverview` counts "unknown" health as "down"
+## BUG-043: `buildStatus` doesn't detect "stopping" state
 
 **Severity**: Low
-**Component**: `cmd/sockerless-admin/api_overview.go`
-**Status**: Fixed — Sprint 5: Changed to only count explicitly "down" as down
+**Component**: `cmd/sockerless-admin/project_manager.go`
+**Status**: Fixed — Sprint 6: Added "stopping" check after "starting" check in `buildStatus`
 
 ---
 
-## BUG-036: ProjectDetailPage Start button enabled during "stopping" status
+## BUG-044: ProcessDetailPage error display uses `||`, hiding concurrent errors
 
-**Severity**: Medium
-**Component**: `ui/packages/admin/src/pages/ProjectDetailPage.tsx`
-**Status**: Fixed — Sprint 5: Added `|| project.status === "stopping"` to disabled prop
-
----
-
-## BUG-037: ProjectsPage Start button enabled during "stopping" status
-
-**Severity**: Medium
-**Component**: `ui/packages/admin/src/pages/ProjectsPage.tsx`
-**Status**: Fixed — Sprint 5: Added `|| proj.status === "stopping"` to disabled prop
+**Severity**: Low
+**Component**: `ui/packages/admin/src/pages/ProcessDetailPage.tsx`
+**Status**: Fixed — Sprint 6: Replaced `||` with array filter+map pattern (same fix as BUG-041, missed page)
 
 ---
 
-## BUG-038: ProjectDetailPage Delete button enabled during starting/stopping
+## BUG-045: Health badge shows "error" for "unknown" health
 
-**Severity**: Medium
-**Component**: `ui/packages/admin/src/pages/ProjectDetailPage.tsx`
-**Status**: Fixed — Sprint 5: Added `|| project.status === "starting" || project.status === "stopping"` to disabled prop
+**Severity**: Low
+**Component**: `ui/packages/admin/src/pages/ComponentsPage.tsx`, `ComponentDetailPage.tsx`, `DashboardPage.tsx`
+**Status**: Fixed — Sprint 6: Map "unknown" health to "warning" StatusBadge instead of "error"
 
 ---
 
-## BUG-039: ComponentDetailPage uptime only shows minutes, inconsistent with ComponentsPage
+## BUG-046: ComponentDetailPage reload doesn't invalidate provider cache
 
 **Severity**: Low
 **Component**: `ui/packages/admin/src/pages/ComponentDetailPage.tsx`
-**Status**: Fixed — Sprint 5: Uses same `Xh Ym` format as ComponentsPage for uptimes >= 3600s
-
----
-
-## BUG-040: ProjectCreatePage `handleSubmit` allows double-submission via rapid Enter
-
-**Severity**: Low
-**Component**: `ui/packages/admin/src/pages/ProjectCreatePage.tsx`
-**Status**: Fixed — Sprint 5: Added `if (create.isPending) return;` guard at top of handleSubmit
-
----
-
-## BUG-041: Error display uses `||`, hiding concurrent start+stop errors
-
-**Severity**: Low
-**Component**: `ui/packages/admin/src/pages/ProcessesPage.tsx`, `ProjectsPage.tsx`, `ProjectDetailPage.tsx`
-**Status**: Fixed — Sprint 5: Changed to array filter+map pattern showing all errors
-
----
-
-## BUG-042: App.tsx has no catch-all 404 route
-
-**Severity**: Low
-**Component**: `ui/packages/admin/src/App.tsx`
-**Status**: Fixed — Sprint 5: Added `<Route path="*">` fallback with "Page not found" message
+**Status**: Fixed — Sprint 6: Added `["component-provider", name]` invalidation to reload onSuccess

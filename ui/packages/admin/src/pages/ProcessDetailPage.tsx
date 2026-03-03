@@ -78,11 +78,11 @@ export function ProcessDetailPage() {
         )}
       </div>
 
-      {(start.error || stop.error) && (
-        <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">
-          {(start.error as Error)?.message || (stop.error as Error)?.message}
+      {[start.error, stop.error].filter(Boolean).map((e, i) => (
+        <div key={i} className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">
+          {(e as Error)?.message}
         </div>
-      )}
+      ))}
 
       {proc.exit_code !== 0 && proc.status !== "running" && (
         <p className="text-sm text-red-600 dark:text-red-400">

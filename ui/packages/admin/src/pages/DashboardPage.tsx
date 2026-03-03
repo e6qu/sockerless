@@ -41,7 +41,7 @@ export function DashboardPage() {
                 {c.type} &middot; {c.addr}
               </p>
               </div>
-              <StatusBadge status={c.health === "up" ? "ok" : "error"} />
+              <StatusBadge status={c.health === "up" ? "ok" : c.health === "unknown" ? "warning" : "error"} />
             </div>
           ))}
         </div>

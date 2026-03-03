@@ -13,7 +13,7 @@ const columns: ColumnDef<AdminComponent, any>[] = [
   {
     accessorKey: "health",
     header: "Health",
-    cell: ({ getValue }) => <StatusBadge status={getValue() === "up" ? "ok" : "error"} />,
+    cell: ({ getValue }) => <StatusBadge status={getValue() === "up" ? "ok" : getValue() === "unknown" ? "warning" : "error"} />,
   },
   {
     accessorKey: "uptime",

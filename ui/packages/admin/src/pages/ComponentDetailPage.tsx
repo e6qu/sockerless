@@ -42,6 +42,7 @@ export function ComponentDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["components"] });
       queryClient.invalidateQueries({ queryKey: ["component-status", name] });
       queryClient.invalidateQueries({ queryKey: ["component-metrics", name] });
+      queryClient.invalidateQueries({ queryKey: ["component-provider", name] });
     },
   });
 
@@ -57,7 +58,7 @@ export function ComponentDetailPage() {
     <div className="space-y-6">
       <div className="flex items-center gap-4">
         <h2 className="text-xl font-semibold">{comp.name}</h2>
-        <StatusBadge status={comp.health === "up" ? "ok" : "error"} />
+        <StatusBadge status={comp.health === "up" ? "ok" : comp.health === "unknown" ? "warning" : "error"} />
       </div>
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
