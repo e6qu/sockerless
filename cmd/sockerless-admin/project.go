@@ -167,7 +167,7 @@ func (pa *PortAllocator) Allocate(project string, n int) ([]int, error) {
 		if err != nil {
 			// Close already-opened listeners
 			for _, l := range listeners {
-				l.Close()
+				_ = l.Close()
 			}
 			return nil, fmt.Errorf("failed to allocate port: %w", err)
 		}
@@ -178,7 +178,7 @@ func (pa *PortAllocator) Allocate(project string, n int) ([]int, error) {
 
 	// Close listeners so the ports can be used
 	for _, ln := range listeners {
-		ln.Close()
+		_ = ln.Close()
 	}
 
 	// Track ports
