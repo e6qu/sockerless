@@ -26,6 +26,12 @@ func NewServer(logger zerolog.Logger) *core.BaseServer {
 		MemTotal:        1073741824,
 	}, core.RouteOverrides{}, logger)
 
+	s.ProviderInfo = &core.ProviderInfo{
+		Provider:  "memory",
+		Mode:      "local",
+		Resources: map[string]string{},
+	}
+
 	if os.Getenv("SOCKERLESS_SYNTHETIC") != "1" {
 		factory, err := newSandboxFactory(context.Background())
 		if err != nil {

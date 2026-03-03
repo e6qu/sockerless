@@ -16,6 +16,17 @@ type adminConfig struct {
 		Type string `json:"type"`
 		Addr string `json:"addr"`
 	} `json:"components"`
+	Processes []ProcessConfig `json:"processes,omitempty"`
+}
+
+// ProcessConfig defines a managed process in admin.json.
+type ProcessConfig struct {
+	Name   string            `json:"name"`
+	Binary string            `json:"binary"`
+	Args   []string          `json:"args"`
+	Env    map[string]string `json:"env"`
+	Addr   string            `json:"addr"`
+	Type   string            `json:"type"` // backend, frontend, simulator, coordinator
 }
 
 // contextConfig mirrors the CLI context config structure.
@@ -36,16 +47,16 @@ func sockerlessDir() string {
 }
 
 // loadConfigFile loads components from an admin.json config file.
-func loadConfigFile(reg *Registry, path string) error {
+func loadConfigFile(reg *Registry, path string) (*adminConfig, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer f.Close()
 
 	var cfg adminConfig
 	if err := json.NewDecoder(f).Decode(&cfg); err != nil {
-		return err
+		return nil, err
 	}
 
 	for _, c := range cfg.Components {
@@ -55,7 +66,7 @@ func loadConfigFile(reg *Registry, path string) error {
 			Addr: normalizeAddr(c.Addr),
 		})
 	}
-	return nil
+	return &cfg, nil
 }
 
 // discoverFromContexts scans ~/.sockerless/contexts/ for component addresses.
@@ -103,7 +114,7 @@ func discoverFromContexts(reg *Registry) {
 	// Also check for admin.json in the sockerless dir
 	adminPath := filepath.Join(sockerlessDir(), "admin.json")
 	if _, err := os.Stat(adminPath); err == nil {
-		if err := loadConfigFile(reg, adminPath); err != nil {
+		if _, err := loadConfigFile(reg, adminPath); err != nil {
 			log.Printf("warning: failed to load %s: %v", adminPath, err)
 		}
 	}

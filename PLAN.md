@@ -1,6 +1,6 @@
 # Sockerless — Roadmap
 
-> Phases 1-67, 69-77, 79-80 complete (713 tasks). Phase 68 in progress. This document covers current and future work.
+> Phases 1-67, 69-77, 79-82 complete (725 tasks). Phase 68 in progress. This document covers current and future work.
 >
 > **Production target:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners (GitHub Actions from github.com, GitLab CI from gitlab.com), and custom SDK clients — backed by real cloud infrastructure (AWS, GCP, Azure).
 
@@ -166,6 +166,27 @@ Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per
 | P77-008 | ✅ | **gitlabhub embed** — `gitlabhub/ui_embed.go` + modify `server.go` |
 | P77-009 | ✅ | **Tests** — 7 Go mgmt + 16 Vitest + 5 Playwright E2E |
 | P77-010 | ✅ | **State save** |
+
+---
+
+## Phase 82 — Admin Projects ✅
+
+**Goal:** Named project bundles (simulator + backend + frontend) with orchestrated lifecycle, auto port allocation, connection info, and aggregated logs.
+
+| Task | Status | Description |
+|---|---|---|
+| P82-001 | ✅ | **Project data model + port allocator** — CloudType, BackendType, ProjectConfig, ProjectStatus, PortAllocator |
+| P82-002 | ✅ | **Cloud bootstrapper + env builders** — BootstrapSimulator, SimulatorEnv, BackendEnv, BackendArgs, FrontendArgs |
+| P82-003 | ✅ | **ProjectManager** — orchestrated lifecycle (Create/Start/Stop/Delete/Get/List/Logs/Connection), RemoveProcess |
+| P82-004 | ✅ | **Project persistence + main.go wiring** — JSON store, LoadProjects, ProjectManager in main.go + shutdown handler |
+| P82-005 | ✅ | **Project API routes** — 8 endpoints (list/create/get/start/stop/delete/logs/connection) |
+| P82-006 | ✅ | **Go backend tests** — 39 new tests (project_test.go + bootstrap_test.go + api_projects_test.go) |
+| P82-007 | ✅ | **TypeScript API client** — Project types + 8 API methods + postJSON/del helpers |
+| P82-008 | ✅ | **Projects list page** — Card grid with Start/Stop, New Project button, empty state |
+| P82-009 | ✅ | **Create project wizard** — 3-step form (cloud → backend → config), auto-assign ports |
+| P82-010 | ✅ | **Project detail page** — Info grid, component cards, connection info with copy buttons |
+| P82-011 | ✅ | **Project logs page** — Component selector (All/Sim/Backend/Frontend) + LogViewer |
+| P82-012 | ✅ | **Vitest tests + state save** — 18 new tests (6 ProjectsPage + 4 ProjectCreatePage + 5 ProjectDetailPage + 3 ProjectLogsPage) |
 
 ---
 

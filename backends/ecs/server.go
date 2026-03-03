@@ -2,6 +2,7 @@ package ecs
 
 import (
 	"context"
+	"strings"
 
 	"github.com/rs/zerolog"
 	core "github.com/sockerless/backend-core"
@@ -52,6 +53,23 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		VolumeRemove:     s.handleVolumeRemove,
 		VolumePrune:      s.handleVolumePrune,
 	}, logger)
+
+	mode := "cloud"
+	if config.EndpointURL != "" {
+		mode = "simulator"
+	}
+	s.ProviderInfo = &core.ProviderInfo{
+		Provider: "aws",
+		Mode:     mode,
+		Region:   config.Region,
+		Endpoint: config.EndpointURL,
+		Resources: map[string]string{
+			"cluster":            config.Cluster,
+			"subnets":            strings.Join(config.Subnets, ","),
+			"execution_role_arn": config.ExecutionRoleARN,
+			"log_group":          config.LogGroup,
+		},
+	}
 
 	registerUI(s.BaseServer)
 

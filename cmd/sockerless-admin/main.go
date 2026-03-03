@@ -7,7 +7,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -48,18 +50,31 @@ func main() {
 	}
 
 	reg := NewRegistry()
+	procMgr := NewProcessManager(reg)
+	projectMgr := NewProjectManager(procMgr, reg, defaultProjectStoreDir())
 
 	// 1. Load from config file
 	if *configPath != "" {
-		if err := loadConfigFile(reg, *configPath); err != nil {
+		cfg, err := loadConfigFile(reg, *configPath)
+		if err != nil {
 			log.Fatalf("failed to load config: %v", err)
+		}
+		for _, p := range cfg.Processes {
+			procMgr.AddProcess(p)
 		}
 	}
 
 	// 2. Auto-discover from ~/.sockerless/contexts/
 	discoverFromContexts(reg)
 
-	// 3. CLI flags (highest priority — override any discovered components)
+	// 3. Load persisted projects
+	if projects, err := LoadProjects(defaultProjectStoreDir()); err == nil {
+		for _, p := range projects {
+			projectMgr.LoadProject(p)
+		}
+	}
+
+	// 4. CLI flags (highest priority — override any discovered components)
 	for _, b := range backends.entries {
 		reg.Add(Component{Name: b.name, Type: "backend", Addr: normalizeAddr(b.addr)})
 	}
@@ -80,13 +95,24 @@ func main() {
 	go reg.PollLoop(5 * time.Second)
 
 	mux := http.NewServeMux()
-	registerAPI(mux, reg)
+	registerAPI(mux, reg, procMgr, projectMgr)
 	registerUI(mux)
 
 	// Redirect / to /ui/
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/ui/", http.StatusFound)
 	})
+
+	// Handle graceful shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		log.Println("shutting down, stopping managed processes...")
+		projectMgr.StopAll()
+		procMgr.StopAll()
+		os.Exit(0)
+	}()
 
 	log.Printf("sockerless-admin %s listening on %s (%d components)", version, *addr, reg.Len())
 	if err := http.ListenAndServe(*addr, mux); err != nil {

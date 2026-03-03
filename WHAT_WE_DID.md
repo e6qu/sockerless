@@ -168,14 +168,43 @@ Built a React SPA dashboard for the gitlabhub GitLab CI coordinator, following t
 
 **Tests**: 7 Go mgmt endpoint tests PASS (136 total gitlabhub) + 16 Vitest PASS (4 OverviewPage + 3 PipelinesPage + 3 PipelineDetailPage + 3 RunnersPage + 3 MetricsPage) + 5 Playwright E2E tests. 16 UI packages build. Lint clean.
 
+## Phase 81 — Admin Process Management, Cleanup & Cloud Connections
+
+Added three capabilities to the admin dashboard: process lifecycle management, stale resource cleanup, and cloud provider connection visibility.
+
+- **Process Manager** (`cmd/sockerless-admin/process.go`): `ProcessManager` struct with Start/Stop/StopAll/List/GetLogs methods, `ManagedProcess` with ring buffer log capture, auto-registration in component Registry, graceful SIGTERM→SIGKILL shutdown with done-channel synchronization. Config extended with `ProcessConfig` in `admin.json`.
+- **Process API** (`api_processes.go`): 4 endpoints — `GET /api/v1/processes` (list), `POST .../start` (start), `POST .../stop` (stop), `GET .../logs?lines=N` (tail logs). Signal handling in main.go calls `StopAll()` on SIGINT/SIGTERM.
+- **Cleanup Scanner** (`cleanup.go`): 4 scan functions — orphaned PID files (`~/.sockerless/run/`), stale `/tmp/sockerless-*` dirs (>1h), stopped containers across backends, stale cloud resources (>1h). 3 cleanup actions — remove PID files, remove tmp dirs, prune containers via existing backend endpoints.
+- **Cleanup API** (`api_cleanup.go`): 4 endpoints — `GET /api/v1/cleanup/scan` (combined scan), `POST .../processes` (clean PIDs), `POST .../tmp` (clean tmp), `POST .../containers` (prune containers).
+- **Cloud Connection Info** (`backends/core/server.go`): New `ProviderInfo` struct (provider, mode, region, endpoint, resources) + `handleMgmtProvider` handler at `GET /internal/v1/provider`. Populated in all 8 backends — ECS/Lambda detect simulator via `EndpointURL`, GCP/Azure likewise, memory/docker report "local" mode. Docker backend has inline handler in `handle_mgmt.go`.
+- **Admin UI**: ProcessesPage (table with Start/Stop buttons, 3s auto-refresh), ProcessDetailPage (info cards + Start/Stop + LogViewer with 2s refresh), CleanupPage (Scan button + category-grouped results with Clean/Prune actions). ComponentDetailPage extended with Cloud Connection card showing provider badge (green "cloud" / yellow "simulator"), region, endpoint, and resource details.
+- **Ring Buffer** (`ring_buffer.go`): Thread-safe circular buffer (1000 lines) implementing `io.Writer`, used for capturing process stdout/stderr.
+
+**Tests**: 22 new Go admin tests PASS (31 total: ring buffer 4, process mgr 4, process API 5, cleanup 6, cleanup API 3) + 2 ProviderInfo tests in core (257 total) + 11 new Vitest tests PASS (68 total: 4 ProcessesPage + 3 ProcessDetailPage + 4 CleanupPage). All 8 backends build with new ProviderInfo field.
+
+## Phase 82 — Admin Projects
+
+Added a Projects concept to the admin dashboard — named bundles of 3 processes (simulator + backend + frontend) for a single cloud provider, with orchestrated lifecycle, automatic port allocation, connection instructions, and aggregated logs.
+
+- **Project data model** (`cmd/sockerless-admin/project.go`): `CloudType` (aws/gcp/azure), `BackendType` (ecs/lambda/cloudrun/gcf/aca/azf), `ProjectConfig`, `ProjectStatus`, `ProjectConnection`. Helper functions: `ValidBackends()`, `SimulatorBinary()`, `BackendBinary()`, `processNames()`. `PortAllocator` with `Allocate()`/`Reserve()`/`Release()` using `net.Listen("tcp", "127.0.0.1:0")` for ephemeral port discovery.
+- **Cloud bootstrapper** (`bootstrap.go`): `BootstrapSimulator()` — ECS CreateCluster via JSON API, no-op for others. `SimulatorEnv()`, `BackendEnv()` (all 6 backends with correct env vars), `BackendArgs()`, `FrontendArgs()`.
+- **ProjectManager** (`project_manager.go`): Orchestrated startup (sim → health wait → bootstrap → backend → health wait → frontend → health wait, with rollback on failure), reverse-order shutdown, create/delete with port allocation/release, `LoadProject()` for persistence recovery. Added `RemoveProcess()` to `ProcessManager`.
+- **Persistence** (`project_store.go`): JSON files in `~/.sockerless/admin/projects/`, loaded on startup.
+- **API** (`api_projects.go`): 8 endpoints — list, create (201), get, start, stop, delete, logs (with component filter), connection info (docker_host, env_export, podman_connection, component addrs).
+- **UI**: 4 new pages — ProjectsPage (card grid with Start/Stop, empty state, New Project button), ProjectCreatePage (3-step wizard: cloud → backend → config with auto-assign ports), ProjectDetailPage (info grid, component cards with status, connection info with copy buttons, View Logs / Delete actions), ProjectLogsPage (component selector tabs + LogViewer with 2s auto-refresh).
+- **TypeScript API client**: Added project types + 8 methods + `postJSON()`/`del()` private helpers to `AdminApiClient`.
+- **App.tsx**: "Projects" nav item + 4 routes (/ui/projects, /new, /:name, /:name/logs).
+
+**Tests**: 39 new Go admin tests PASS (70 total: 14 project model + 11 bootstrap + 9 project API + 5 project manager) + 18 new Vitest tests PASS (33 total admin, 86 total UI: 6 ProjectsPage + 4 ProjectCreatePage + 5 ProjectDetailPage + 3 ProjectLogsPage). Build check with `-tags noui` passes.
+
 ## Project Stats
 
-- **78 phases** (1-67, 69-77, 79-80), 713 tasks completed
+- **80 phases** (1-67, 69-77, 79-82), 725 tasks completed
 - **18 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, CLI, admin, tests
 - **21 Go-implemented builtins** in WASM sandbox
 - **18 driver interface methods** across 5 driver types
 - **7 external test consumers**: `act`, `gitlab-runner`, `gitlab-ci-local`, upstream act, `actions/runner`, `gh` CLI, gitlabhub gitlab-runner
-- **Core tests**: 255 PASS (+5 SPAHandler) | **Frontend tests**: 7 PASS | **UI tests**: 57 PASS (Vitest) | **Admin tests**: 9 PASS | **bleephub tests**: 304 PASS | **gitlabhub tests**: 136 PASS | **Shared ProcessRunner**: 15 PASS
+- **Core tests**: 257 PASS (+5 SPAHandler) | **Frontend tests**: 7 PASS | **UI tests**: 86 PASS (Vitest) | **Admin tests**: 70 PASS | **bleephub tests**: 304 PASS | **gitlabhub tests**: 136 PASS | **Shared ProcessRunner**: 15 PASS
 - **Cloud SDK tests**: AWS 42, GCP 43, Azure 38 | **Cloud CLI tests**: AWS 26, GCP 21, Azure 19
 - **3 cloud simulators** validated against SDKs, CLIs, and Terraform — now with real process execution for all services (container + FaaS)
 - **8 backends** sharing a common driver architecture

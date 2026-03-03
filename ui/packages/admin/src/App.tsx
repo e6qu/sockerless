@@ -8,12 +8,22 @@ import { ContainersPage } from "./pages/ContainersPage.js";
 import { ResourcesPage } from "./pages/ResourcesPage.js";
 import { MetricsPage } from "./pages/MetricsPage.js";
 import { ContextsPage } from "./pages/ContextsPage.js";
+import { ProcessesPage } from "./pages/ProcessesPage.js";
+import { ProcessDetailPage } from "./pages/ProcessDetailPage.js";
+import { CleanupPage } from "./pages/CleanupPage.js";
+import { ProjectsPage } from "./pages/ProjectsPage.js";
+import { ProjectCreatePage } from "./pages/ProjectCreatePage.js";
+import { ProjectDetailPage } from "./pages/ProjectDetailPage.js";
+import { ProjectLogsPage } from "./pages/ProjectLogsPage.js";
 
 const navItems: NavItem[] = [
   { label: "Dashboard", to: "/ui/" },
+  { label: "Projects", to: "/ui/projects" },
   { label: "Components", to: "/ui/components" },
+  { label: "Processes", to: "/ui/processes" },
   { label: "Containers", to: "/ui/containers" },
   { label: "Resources", to: "/ui/resources" },
+  { label: "Cleanup", to: "/ui/cleanup" },
   { label: "Metrics", to: "/ui/metrics" },
   { label: "Contexts", to: "/ui/contexts" },
 ];
@@ -45,8 +55,15 @@ export function App() {
             <Route path="/ui/" element={<DashboardPage />} />
             <Route path="/ui/components" element={<ComponentsPage />} />
             <Route path="/ui/components/:name" element={<ComponentDetailPage />} />
+            <Route path="/ui/projects" element={<ProjectsPage />} />
+            <Route path="/ui/projects/new" element={<ProjectCreatePage />} />
+            <Route path="/ui/projects/:name" element={<ProjectDetailPage />} />
+            <Route path="/ui/projects/:name/logs" element={<ProjectLogsPage />} />
+            <Route path="/ui/processes" element={<ProcessesPage />} />
+            <Route path="/ui/processes/:name" element={<ProcessDetailPage />} />
             <Route path="/ui/containers" element={<ContainersPage />} />
             <Route path="/ui/resources" element={<ResourcesPage />} />
+            <Route path="/ui/cleanup" element={<CleanupPage />} />
             <Route path="/ui/metrics" element={<MetricsPage />} />
             <Route path="/ui/contexts" element={<ContextsPage />} />
           </Routes>

@@ -32,7 +32,9 @@ export function DashboardPage() {
           >
             <div>
               <p className="font-medium">{c.name}</p>
-              <p className="text-xs text-gray-500 dark:text-gray-400">{c.type} &middot; {c.addr}</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+              {c.type} &middot; {c.addr}
+            </p>
             </div>
             <StatusBadge status={c.health === "up" ? "ok" : "error"} />
           </div>

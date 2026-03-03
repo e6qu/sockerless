@@ -204,6 +204,72 @@ func TestHandleCheckNoChecker(t *testing.T) {
 	}
 }
 
+func TestHandleMgmtProviderNil(t *testing.T) {
+	s := newMgmtTestServer()
+	// ProviderInfo is nil by default
+
+	req := httptest.NewRequest("GET", "/internal/v1/provider", nil)
+	w := httptest.NewRecorder()
+	s.handleMgmtProvider(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var info ProviderInfo
+	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if info.Provider != "unknown" {
+		t.Errorf("provider = %q, want unknown", info.Provider)
+	}
+	if info.Mode != "local" {
+		t.Errorf("mode = %q, want local", info.Mode)
+	}
+}
+
+func TestHandleMgmtProviderPopulated(t *testing.T) {
+	s := newMgmtTestServer()
+	s.ProviderInfo = &ProviderInfo{
+		Provider: "aws",
+		Mode:     "simulator",
+		Region:   "us-east-1",
+		Endpoint: "http://localhost:4566",
+		Resources: map[string]string{
+			"cluster":  "test-cluster",
+			"log_group": "/sockerless/ecs",
+		},
+	}
+
+	req := httptest.NewRequest("GET", "/internal/v1/provider", nil)
+	w := httptest.NewRecorder()
+	s.handleMgmtProvider(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var info ProviderInfo
+	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if info.Provider != "aws" {
+		t.Errorf("provider = %q, want aws", info.Provider)
+	}
+	if info.Mode != "simulator" {
+		t.Errorf("mode = %q, want simulator", info.Mode)
+	}
+	if info.Region != "us-east-1" {
+		t.Errorf("region = %q, want us-east-1", info.Region)
+	}
+	if info.Endpoint != "http://localhost:4566" {
+		t.Errorf("endpoint = %q, want http://localhost:4566", info.Endpoint)
+	}
+	if info.Resources["cluster"] != "test-cluster" {
+		t.Errorf("resources.cluster = %q, want test-cluster", info.Resources["cluster"])
+	}
+}
+
 func TestHandleReload(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("SOCKERLESS_HOME", tmp)
