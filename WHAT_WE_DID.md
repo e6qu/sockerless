@@ -121,6 +121,19 @@ Audited `api/`, `backends/core/`, all 8 backend implementations, and `frontends/
 
 Changed `createTar` signature to return `error`, updated 5 callers. Added 10 new tests. All 286 core tests pass, 0 lint issues across 19 modules.
 
+## Bug Sprint 9 — API & Backends Audit (BUG-063→068)
+
+Audited `api/` and all 8 `backends/` for Docker-to-cloud translation fidelity. Found 6 real bugs — 1 API type fidelity issue, 1 cross-cutting state-consistency bug across 3 container backends, and 4 cloud resource leaks across 4 backends.
+
+- **BUG-063**: `ExecProcessConfig.Privileged` changed from `bool` to `*bool` with `omitempty` (Docker API fidelity)
+- **BUG-064**: Added `Store.RevertToCreated()` — ECS/ACA/CloudRun now revert container state on cloud operation failure instead of leaving containers stuck "running"
+- **BUG-065**: ACA job cleanup on `PollUntilDone` failure (single + multi-container)
+- **BUG-066**: CloudRun job cleanup on `createOp.Wait` failure (single + multi-container)
+- **BUG-067**: GCF function cleanup on `op.Wait` failure (best-effort `DeleteFunction`)
+- **BUG-068**: AZF Function App cleanup on `PollUntilDone` failure (best-effort `WebApps.Delete`)
+
+All 75 sim-backend tests pass. 0 lint issues across 19 modules.
+
 ## Project Stats
 
 - **80 phases** (1-67, 69-77, 79-82), 725 tasks completed

@@ -197,6 +197,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to create Cloud Run Job")
+		s.Store.RevertToCreated(id)
 		core.WriteError(w, fmt.Errorf("failed to create job: %w", err))
 		return
 	}
@@ -204,6 +205,8 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	// Wait for job creation to complete
 	job, err := createOp.Wait(s.ctx())
 	if err != nil {
+		s.deleteJob(fmt.Sprintf("%s/jobs/%s", s.buildJobParent(), jobName))
+		s.Store.RevertToCreated(id)
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
 		core.WriteError(w, fmt.Errorf("job creation failed: %w", err))
 		return
@@ -228,6 +231,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("failed to run job")
 		s.deleteJob(jobFullName)
+		s.Store.RevertToCreated(id)
 		core.WriteError(w, fmt.Errorf("failed to run job: %w", err))
 		return
 	}
@@ -237,6 +241,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("run job failed")
 		s.deleteJob(jobFullName)
+		s.Store.RevertToCreated(id)
 		core.WriteError(w, fmt.Errorf("run job failed: %w", err))
 		return
 	}
@@ -281,6 +286,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
 				s.deleteJob(jobFullName)
+				s.Store.RevertToCreated(id)
 				core.WriteError(w, fmt.Errorf("execution failed to start: %w", err))
 				return
 			}
@@ -354,12 +360,15 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 	})
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to create multi-container Cloud Run Job")
+		s.Store.RevertToCreated(triggerID)
 		core.WriteError(w, fmt.Errorf("failed to create job: %w", err))
 		return
 	}
 
 	job, err := createOp.Wait(s.ctx())
 	if err != nil {
+		s.deleteJob(fmt.Sprintf("%s/jobs/%s", s.buildJobParent(), jobName))
+		s.Store.RevertToCreated(triggerID)
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
 		core.WriteError(w, fmt.Errorf("job creation failed: %w", err))
 		return
@@ -383,6 +392,7 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("failed to run job")
 		s.deleteJob(jobFullName)
+		s.Store.RevertToCreated(triggerID)
 		core.WriteError(w, fmt.Errorf("failed to run job: %w", err))
 		return
 	}
@@ -391,6 +401,7 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("run job failed")
 		s.deleteJob(jobFullName)
+		s.Store.RevertToCreated(triggerID)
 		core.WriteError(w, fmt.Errorf("run job failed: %w", err))
 		return
 	}
@@ -429,6 +440,7 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 		if err != nil {
 			s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
 			s.deleteJob(jobFullName)
+			s.Store.RevertToCreated(triggerID)
 			core.WriteError(w, fmt.Errorf("execution failed to start: %w", err))
 			return
 		}

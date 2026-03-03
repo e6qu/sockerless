@@ -81,7 +81,6 @@ func (s *BaseServer) handleExecCreate(w http.ResponseWriter, r *http.Request) {
 			Tty:        req.Tty,
 			Entrypoint: entrypoint,
 			Arguments:  arguments,
-			Privileged: req.Privileged,
 			User:       req.User,
 			Env:        req.Env,
 			WorkingDir: req.WorkingDir,

@@ -199,6 +199,8 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 
 	result, err := poller.PollUntilDone(s.ctx(), nil)
 	if err != nil {
+		// Best-effort: delete potentially-created Function App
+		_, _ = s.azure.WebApps.Delete(s.ctx(), s.config.ResourceGroup, funcAppName, nil)
 		s.Logger.Error().Err(err).Str("functionApp", funcAppName).Msg("Function App creation failed")
 		core.WriteError(w, mapAzureError(err, "function app", funcAppName))
 		return

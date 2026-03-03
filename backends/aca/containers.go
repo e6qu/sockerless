@@ -189,6 +189,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	createPoller, err := s.azure.Jobs.BeginCreateOrUpdate(s.ctx(), s.config.ResourceGroup, jobName, jobSpec, nil)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to create ACA Job")
+		s.Store.RevertToCreated(id)
 		core.WriteError(w, fmt.Errorf("failed to create job: %w", err))
 		return
 	}
@@ -196,6 +197,8 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	// Wait for job creation to complete
 	_, err = createPoller.PollUntilDone(s.ctx(), nil)
 	if err != nil {
+		s.deleteJob(jobName)
+		s.Store.RevertToCreated(id)
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
 		core.WriteError(w, fmt.Errorf("job creation failed: %w", err))
 		return
@@ -216,6 +219,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to start ACA Job")
 		s.deleteJob(jobName)
+		s.Store.RevertToCreated(id)
 		core.WriteError(w, fmt.Errorf("failed to start job: %w", err))
 		return
 	}
@@ -225,6 +229,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("start job failed")
 		s.deleteJob(jobName)
+		s.Store.RevertToCreated(id)
 		core.WriteError(w, fmt.Errorf("start job failed: %w", err))
 		return
 	}
@@ -272,6 +277,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
 				s.deleteJob(jobName)
+				s.Store.RevertToCreated(id)
 				core.WriteError(w, fmt.Errorf("execution failed to start: %w", err))
 				return
 			}
@@ -341,12 +347,15 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 	createPoller, err := s.azure.Jobs.BeginCreateOrUpdate(s.ctx(), s.config.ResourceGroup, jobName, jobSpec, nil)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to create multi-container ACA Job")
+		s.Store.RevertToCreated(triggerID)
 		core.WriteError(w, fmt.Errorf("failed to create job: %w", err))
 		return
 	}
 
 	_, err = createPoller.PollUntilDone(s.ctx(), nil)
 	if err != nil {
+		s.deleteJob(jobName)
+		s.Store.RevertToCreated(triggerID)
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
 		core.WriteError(w, fmt.Errorf("job creation failed: %w", err))
 		return
@@ -366,6 +375,7 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to start ACA Job")
 		s.deleteJob(jobName)
+		s.Store.RevertToCreated(triggerID)
 		core.WriteError(w, fmt.Errorf("failed to start job: %w", err))
 		return
 	}
@@ -374,6 +384,7 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("start job failed")
 		s.deleteJob(jobName)
+		s.Store.RevertToCreated(triggerID)
 		core.WriteError(w, fmt.Errorf("start job failed: %w", err))
 		return
 	}
@@ -415,6 +426,7 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 		if err != nil {
 			s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
 			s.deleteJob(jobName)
+			s.Store.RevertToCreated(triggerID)
 			core.WriteError(w, fmt.Errorf("execution failed to start: %w", err))
 			return
 		}

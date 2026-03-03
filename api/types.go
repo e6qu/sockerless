@@ -256,7 +256,7 @@ type ExecProcessConfig struct {
 	Tty        bool     `json:"tty"`
 	Entrypoint string   `json:"entrypoint"`
 	Arguments  []string `json:"arguments"`
-	Privileged bool     `json:"privileged"`
+	Privileged *bool    `json:"privileged,omitempty"`
 	User       string   `json:"user"`
 	Env        []string `json:"env,omitempty"`
 	WorkingDir string   `json:"workingDir,omitempty"`

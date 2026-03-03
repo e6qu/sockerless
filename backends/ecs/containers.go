@@ -209,6 +209,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		_, _ = s.aws.ECS.DeregisterTaskDefinition(s.ctx(), &awsecs.DeregisterTaskDefinitionInput{
 			TaskDefinition: aws.String(taskDefARN),
 		})
+		s.Store.RevertToCreated(id)
 		core.WriteError(w, err)
 		return
 	}
@@ -250,6 +251,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 			agentAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
 			if err != nil {
 				s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
+				s.Store.RevertToCreated(id)
 				core.WriteError(w, fmt.Errorf("task failed to start: %w", err))
 				return
 			}
@@ -379,6 +381,7 @@ func (s *Server) startMultiContainerTask(w http.ResponseWriter, triggerID string
 		_, _ = s.aws.ECS.DeregisterTaskDefinition(s.ctx(), &awsecs.DeregisterTaskDefinitionInput{
 			TaskDefinition: aws.String(taskDefARN),
 		})
+		s.Store.RevertToCreated(triggerID)
 		core.WriteError(w, err)
 		return
 	}
@@ -415,6 +418,7 @@ func (s *Server) startMultiContainerTask(w http.ResponseWriter, triggerID string
 		agentAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
 		if err != nil {
 			s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
+			s.Store.RevertToCreated(triggerID)
 			core.WriteError(w, fmt.Errorf("task failed to start: %w", err))
 			return
 		}
