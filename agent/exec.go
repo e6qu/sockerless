@@ -153,6 +153,13 @@ func (s *ExecSession) sendOutput(streamType string, data []byte) {
 
 func (s *ExecSession) waitAndNotify() {
 	defer close(s.done)
+
+	// Wait for stream readers to finish before cmd.Wait(), because
+	// cmd.Wait() closes the pipe descriptors. When the process exits,
+	// it closes its stdout/stderr write ends, causing readStream to
+	// get EOF and return — independent of cmd.Wait().
+	s.streamWg.Wait()
+
 	err := s.cmd.Wait()
 	code := 0
 	if err != nil {
@@ -162,9 +169,6 @@ func (s *ExecSession) waitAndNotify() {
 			code = 1
 		}
 	}
-
-	// Wait for stream readers to finish sending all output before sending exit.
-	s.streamWg.Wait()
 
 	s.logger.Debug().Int("code", code).Msg("process exited")
 
