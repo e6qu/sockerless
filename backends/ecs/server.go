@@ -56,7 +56,7 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 
 	mode := "cloud"
 	if config.EndpointURL != "" {
-		mode = "simulator"
+		mode = "custom-endpoint"
 	}
 	s.ProviderInfo = &core.ProviderInfo{
 		Provider: "aws",

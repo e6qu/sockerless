@@ -54,6 +54,18 @@ func gcpInvokeFunction(t *testing.T, fnID string) string {
 	return string(data)
 }
 
+func gcpInvokeFunctionExpectError(t *testing.T, fnID string) {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/v2-functions-invoke/"+fnID,
+		strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+}
+
 func gcpFunctionLogMessages(t *testing.T, fnID string) []string {
 	t.Helper()
 	client := logadminClient(t)
@@ -90,7 +102,7 @@ func TestCloudFunctions_InvokeArithmeticParentheses(t *testing.T) {
 func TestCloudFunctions_InvokeArithmeticInvalid(t *testing.T) {
 	fnID := "arith-invalid-cf"
 	gcpCreateFunction(t, fnID, []string{evalBinaryPath, "3 +"})
-	gcpInvokeFunction(t, fnID)
+	gcpInvokeFunctionExpectError(t, fnID)
 
 	messages := gcpFunctionLogMessages(t, fnID)
 	found := false

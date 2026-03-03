@@ -49,12 +49,8 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		funcName,
 	)
 
-	ctx := s.ctx()
-	if s.config.EndpointURL != "" {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 2*time.Second)
-		defer cancel()
-	}
+	ctx, cancel := context.WithTimeout(s.ctx(), s.config.LogTimeout)
+	defer cancel()
 
 	it := s.gcp.LogAdmin.Entries(ctx, logadmin.Filter(filter))
 

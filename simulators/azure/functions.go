@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -243,25 +242,30 @@ func registerAzureFunctions(srv *sim.Server) {
 
 		responseBody := []byte("{}")
 		if matchedSite != nil {
-			// Allow X-Sim-Command header to override SimCommand for Docker API integration
-			simCmd := matchedSite.Properties.SiteConfig != nil && len(matchedSite.Properties.SiteConfig.SimCommand) > 0
-			if cmdHeader := r.Header.Get("X-Sim-Command"); cmdHeader != "" {
-				if decoded, err := base64.StdEncoding.DecodeString(cmdHeader); err == nil {
-					var cmdParts []string
-					if json.Unmarshal(decoded, &cmdParts) == nil && len(cmdParts) > 0 {
-						if matchedSite.Properties.SiteConfig == nil {
-							matchedSite.Properties.SiteConfig = &SiteConfig{}
-						}
-						matchedSite.Properties.SiteConfig.SimCommand = cmdParts
+			// Check for SOCKERLESS_CMD app setting (cloud-native) or SimCommand fallback
+			simCmd := false
+			if matchedSite.Properties.SiteConfig != nil {
+				for _, setting := range matchedSite.Properties.SiteConfig.AppSettings {
+					if setting.Name == "SOCKERLESS_CMD" {
 						simCmd = true
+						break
 					}
+				}
+				if !simCmd && len(matchedSite.Properties.SiteConfig.SimCommand) > 0 {
+					simCmd = true
 				}
 			}
 
 			if simCmd {
 				var exitCode int
 				responseBody, exitCode = invokeAzureFunctionProcess(matchedSite)
-				w.Header().Set("X-Sim-Exit-Code", strconv.Itoa(exitCode))
+				if exitCode != 0 {
+					// Real Azure Functions returns HTTP error when function crashes
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(responseBody)
+					return
+				}
 			} else {
 				injectAppTrace(matchedSite.Name, "Function invoked")
 			}
@@ -276,7 +280,22 @@ func registerAzureFunctions(srv *sim.Server) {
 // invokeAzureFunctionProcess executes a function app's SimCommand via sim.StartProcess
 // and returns the stdout output as the response body plus the process exit code.
 func invokeAzureFunctionProcess(site *Site) ([]byte, int) {
-	cmd := site.Properties.SiteConfig.SimCommand
+	var cmd []string
+	if site.Properties.SiteConfig != nil {
+		// Cloud-native: read SOCKERLESS_CMD from function's app settings
+		for _, s := range site.Properties.SiteConfig.AppSettings {
+			if s.Name == "SOCKERLESS_CMD" {
+				if decoded, err := base64.StdEncoding.DecodeString(s.Value); err == nil {
+					json.Unmarshal(decoded, &cmd)
+				}
+				break
+			}
+		}
+		// Fallback: SimCommand (backward compat for SDK tests)
+		if len(cmd) == 0 {
+			cmd = site.Properties.SiteConfig.SimCommand
+		}
+	}
 	if len(cmd) == 0 {
 		return []byte("{}"), 0
 	}

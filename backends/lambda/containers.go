@@ -263,8 +263,8 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	// to get real execution, then stop with the real exit code.
 	if !core.IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd) {
 		cmd := core.BuildOriginalCommand(c.Config.Entrypoint, c.Config.Cmd)
-		if len(cmd) > 0 && s.config.EndpointURL != "" {
-			// Simulator mode: invoke the function (already has ImageConfig.Command from create)
+		if len(cmd) > 0 {
+			// Invoke the function (already has ImageConfig.Command from create)
 			go func() {
 				exitCode := 0
 				result, err := s.aws.Lambda.Invoke(s.ctx(), &awslambda.InvokeInput{
@@ -285,7 +285,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 				s.Store.StopContainer(id, exitCode)
 			}()
 		} else {
-			// No command or production mode: auto-stop after brief delay
+			// No command: auto-stop after brief delay
 			go func() {
 				time.Sleep(500 * time.Millisecond)
 				s.Store.StopContainer(id, 0)
@@ -327,12 +327,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 
 	// Wait for reverse agent callback if configured
 	if s.config.CallbackURL != "" {
-		agentTimeout := 60 * time.Second
-		if s.config.EndpointURL != "" {
-			// Simulator mode: agent subprocess needs startup time
-			agentTimeout = 5 * time.Second
-		}
-		if err := s.AgentRegistry.WaitForAgent(id, agentTimeout); err != nil {
+		if err := s.AgentRegistry.WaitForAgent(id, 30*time.Second); err != nil {
 			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
 		} else {
 			s.Store.Containers.Update(id, func(c *api.Container) {

@@ -74,6 +74,19 @@ func azureInvokeFunction(t *testing.T) []byte {
 	return body
 }
 
+func azureInvokeFunctionExpectError(t *testing.T) {
+	t.Helper()
+	invokeReq, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/api/function",
+		strings.NewReader("{}"))
+	invokeReq.Header.Set("Content-Type", "application/json")
+	invokeReq.Host = baseURL[len("http://"):]
+	invokeResp, err := http.DefaultClient.Do(invokeReq)
+	require.NoError(t, err)
+	invokeResp.Body.Close()
+	require.Equal(t, http.StatusInternalServerError, invokeResp.StatusCode)
+}
+
 func TestAzureFunctions_InvokeInjectsLogEntries(t *testing.T) {
 	rg, name := "func-log-rg", "log-func-app"
 	azureCreateSite(t, rg, name, nil)
@@ -120,7 +133,7 @@ func TestAzureFunctions_InvokeNonZeroExit(t *testing.T) {
 	azureCreateSite(t, rg, name, []string{"sh", "-c", "exit 1"})
 	defer azureDeleteSite(rg, name)
 
-	azureInvokeFunction(t)
+	azureInvokeFunctionExpectError(t)
 
 	kql := `AppTraces | where AppRoleName == "fail-func-app"`
 	result := queryWorkspace(t, "default", kql)

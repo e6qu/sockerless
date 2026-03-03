@@ -110,6 +110,7 @@ func TestMain(m *testing.M) {
 	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
 	backendCmd.Env = append(os.Environ(),
 		"SOCKERLESS_ENDPOINT_URL="+simURL,
+		"SOCKERLESS_POLL_INTERVAL=500ms",
 		"SOCKERLESS_LAMBDA_ROLE_ARN=arn:aws:iam::000000000000:role/sim",
 	)
 	backendCmd.Stdout = os.Stderr

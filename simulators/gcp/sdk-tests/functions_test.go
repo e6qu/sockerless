@@ -132,7 +132,7 @@ func TestCloudFunctions_InvokeNonZeroExit(t *testing.T) {
 	invokeResp, err := http.DefaultClient.Do(invokeReq)
 	require.NoError(t, err)
 	invokeResp.Body.Close()
-	require.Equal(t, http.StatusOK, invokeResp.StatusCode)
+	require.Equal(t, http.StatusInternalServerError, invokeResp.StatusCode)
 
 	// Verify error log entry was injected
 	client := logadminClient(t)

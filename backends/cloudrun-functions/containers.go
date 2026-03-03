@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -130,6 +129,13 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		envVars["SOCKERLESS_CONTAINER_ID"] = id
 		envVars["SOCKERLESS_AGENT_TOKEN"] = agentToken
 		envVars["SOCKERLESS_AGENT_CALLBACK_URL"] = callbackURL
+	} else {
+		// Pass command via environment variable (cloud-native) for short-lived containers
+		cmd := core.BuildOriginalCommand(config.Entrypoint, config.Cmd)
+		if len(cmd) > 0 {
+			cmdJSON, _ := json.Marshal(cmd)
+			envVars["SOCKERLESS_CMD"] = base64.StdEncoding.EncodeToString(cmdJSON)
+		}
 	}
 
 	// Build service config
@@ -254,17 +260,27 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	// to get real execution, then stop with the real exit code.
 	if !core.IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd) {
 		cmd := core.BuildOriginalCommand(c.Config.Entrypoint, c.Config.Cmd)
-		if len(cmd) > 0 && s.config.EndpointURL != "" && gcfState.FunctionURL != "" {
-			// Simulator mode: invoke with X-Sim-Command header to pass the command
+		if len(cmd) > 0 && gcfState.FunctionURL != "" {
 			go func() {
-				exitCode, body := s.invokeWithCommand(gcfState.FunctionURL, cmd)
-				if len(body) > 0 && string(body) != "{}" {
-					s.Store.LogBuffers.Store(id, body)
+				exitCode := 0
+				resp, err := http.Post(gcfState.FunctionURL, "application/json", nil)
+				if err != nil {
+					s.Logger.Error().Err(err).Str("function", gcfState.FunctionName).Msg("function invocation failed")
+					exitCode = 1
+				} else {
+					body, _ := io.ReadAll(resp.Body)
+					resp.Body.Close()
+					if len(body) > 0 && string(body) != "{}" {
+						s.Store.LogBuffers.Store(id, body)
+					}
+					if resp.StatusCode >= 400 {
+						exitCode = 1
+					}
 				}
 				s.Store.StopContainer(id, exitCode)
 			}()
 		} else {
-			// No command or production mode: auto-stop after brief delay
+			// No command or no function URL: auto-stop after brief delay
 			go func() {
 				time.Sleep(500 * time.Millisecond)
 				s.Store.StopContainer(id, 0)
@@ -312,12 +328,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 
 	// Wait for reverse agent callback if configured
 	if s.config.CallbackURL != "" {
-		agentTimeout := 60 * time.Second
-		if s.config.EndpointURL != "" {
-			// Simulator mode: agent subprocess needs startup time
-			agentTimeout = 5 * time.Second
-		}
-		if err := s.AgentRegistry.WaitForAgent(id, agentTimeout); err != nil {
+		if err := s.AgentRegistry.WaitForAgent(id, 30*time.Second); err != nil {
 			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
 		} else {
 			s.Store.Containers.Update(id, func(c *api.Container) {
@@ -416,35 +427,3 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// invokeWithCommand invokes a function URL with X-Sim-Command header containing
-// the command to execute. Returns the exit code and response body.
-func (s *Server) invokeWithCommand(functionURL string, cmd []string) (int, []byte) {
-	req, err := http.NewRequestWithContext(s.ctx(), "POST", functionURL, strings.NewReader("{}"))
-	if err != nil {
-		s.Logger.Error().Err(err).Msg("failed to create invoke request")
-		return 1, nil
-	}
-	req.Header.Set("Content-Type", "application/json")
-	cmdJSON, _ := json.Marshal(cmd)
-	req.Header.Set("X-Sim-Command", base64.StdEncoding.EncodeToString(cmdJSON))
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		s.Logger.Error().Err(err).Msg("function invocation failed")
-		return 1, nil
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-
-	exitCode := 0
-	if ecStr := resp.Header.Get("X-Sim-Exit-Code"); ecStr != "" {
-		if ec, err := strconv.Atoi(ecStr); err == nil {
-			exitCode = ec
-		}
-	} else if resp.StatusCode >= 400 {
-		exitCode = 1
-	}
-
-	return exitCode, body
-}

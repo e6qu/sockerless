@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 // Config holds ECS backend configuration.
@@ -19,8 +20,10 @@ type Config struct {
 	AgentEFSID      string   // EFS filesystem ID for agent binary
 	AgentToken      string   // Default agent token
 	AssignPublicIP  bool
-	CallbackURL     string   // Backend URL for reverse agent connections
-	EndpointURL     string   // Custom endpoint URL for simulator mode
+	CallbackURL     string        // Backend URL for reverse agent connections
+	EndpointURL     string        // Custom endpoint URL
+	PollInterval    time.Duration // Cloud API poll interval (default 2s)
+	AgentTimeout    time.Duration // Agent health check timeout (default 30s)
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -39,14 +42,13 @@ func ConfigFromEnv() Config {
 		AssignPublicIP:   os.Getenv("SOCKERLESS_ECS_PUBLIC_IP") == "true",
 		CallbackURL:      os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		EndpointURL:      os.Getenv("SOCKERLESS_ENDPOINT_URL"),
+		PollInterval:     parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
+		AgentTimeout:     parseDuration(os.Getenv("SOCKERLESS_AGENT_TIMEOUT"), 30*time.Second),
 	}
 }
 
 // Validate checks required configuration.
 func (c Config) Validate() error {
-	if c.EndpointURL != "" {
-		return nil // simulator mode: skip infra checks
-	}
 	if c.Cluster == "" {
 		return fmt.Errorf("ECS cluster name is required")
 	}
@@ -64,6 +66,17 @@ func envOrDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func parseDuration(s string, def time.Duration) time.Duration {
+	if s == "" {
+		return def
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return def
+	}
+	return d
 }
 
 func splitCSV(s string) []string {

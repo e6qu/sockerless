@@ -64,6 +64,7 @@ func BackendEnv(cloud CloudType, backend BackendType, simPort int, projectName s
 	endpoint := fmt.Sprintf("http://localhost:%d", simPort)
 	env := []string{
 		"SOCKERLESS_ENDPOINT_URL=" + endpoint,
+		"SOCKERLESS_POLL_INTERVAL=500ms",
 	}
 
 	switch backend {
@@ -82,10 +83,12 @@ func BackendEnv(cloud CloudType, backend BackendType, simPort int, projectName s
 	case BackendCloudRun:
 		env = append(env,
 			"SOCKERLESS_GCR_PROJECT=sim-project",
+			"SOCKERLESS_LOG_TIMEOUT=2s",
 		)
 	case BackendGCF:
 		env = append(env,
 			"SOCKERLESS_GCF_PROJECT=sim-project",
+			"SOCKERLESS_LOG_TIMEOUT=2s",
 		)
 	case BackendACA:
 		env = append(env,

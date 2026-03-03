@@ -232,7 +232,7 @@ func TestHandleMgmtProviderPopulated(t *testing.T) {
 	s := newMgmtTestServer()
 	s.ProviderInfo = &ProviderInfo{
 		Provider: "aws",
-		Mode:     "simulator",
+		Mode:     "custom-endpoint",
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:4566",
 		Resources: map[string]string{
@@ -256,7 +256,7 @@ func TestHandleMgmtProviderPopulated(t *testing.T) {
 	if info.Provider != "aws" {
 		t.Errorf("provider = %q, want aws", info.Provider)
 	}
-	if info.Mode != "simulator" {
+	if info.Mode != "custom-endpoint" {
 		t.Errorf("mode = %q, want simulator", info.Mode)
 	}
 	if info.Region != "us-east-1" {

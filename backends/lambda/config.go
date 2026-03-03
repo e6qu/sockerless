@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config holds Lambda backend configuration.
@@ -16,8 +17,9 @@ type Config struct {
 	Timeout          int
 	SubnetIDs        []string
 	SecurityGroupIDs []string
-	CallbackURL      string // Backend URL for reverse agent connections
-	EndpointURL      string // Custom endpoint URL for simulator mode
+	CallbackURL      string        // Backend URL for reverse agent connections
+	EndpointURL      string        // Custom endpoint URL
+	PollInterval     time.Duration // Cloud API poll interval (default 2s)
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -32,14 +34,12 @@ func ConfigFromEnv() Config {
 		SecurityGroupIDs: splitCSV(os.Getenv("SOCKERLESS_LAMBDA_SECURITY_GROUPS")),
 		CallbackURL:      os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		EndpointURL:      os.Getenv("SOCKERLESS_ENDPOINT_URL"),
+		PollInterval:     parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 	}
 }
 
 // Validate checks required configuration.
 func (c Config) Validate() error {
-	if c.EndpointURL != "" {
-		return nil // simulator mode: skip infra checks
-	}
 	if c.RoleARN == "" {
 		return fmt.Errorf("SOCKERLESS_LAMBDA_ROLE_ARN is required")
 	}
@@ -60,6 +60,17 @@ func envOrDefaultInt(key string, def int) int {
 		}
 	}
 	return def
+}
+
+func parseDuration(s string, def time.Duration) time.Duration {
+	if s == "" {
+		return def
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return def
+	}
+	return d
 }
 
 func splitCSV(s string) []string {

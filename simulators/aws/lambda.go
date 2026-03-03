@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -285,7 +284,6 @@ func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 		if fn.PackageType == "Image" && fn.ImageConfig != nil && len(fn.ImageConfig.Command) > 0 {
 			var exitCode int
 			responseBody, exitCode = invokeLambdaProcess(fn)
-			w.Header().Set("X-Sim-Exit-Code", strconv.Itoa(exitCode))
 			if exitCode != 0 {
 				w.Header().Set("X-Amz-Function-Error", "Unhandled")
 			}

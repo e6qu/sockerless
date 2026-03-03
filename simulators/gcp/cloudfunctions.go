@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -147,25 +146,27 @@ func registerCloudFunctions(srv *sim.Server) {
 		if fn != nil {
 			project := strings.Split(fn.Name, "/")[1] // projects/{project}/...
 
-			// Allow X-Sim-Command header to override SimCommand for Docker API integration
-			simCmd := fn.ServiceConfig != nil && len(fn.ServiceConfig.SimCommand) > 0
-			if cmdHeader := r.Header.Get("X-Sim-Command"); cmdHeader != "" {
-				if decoded, err := base64.StdEncoding.DecodeString(cmdHeader); err == nil {
-					var cmdParts []string
-					if json.Unmarshal(decoded, &cmdParts) == nil && len(cmdParts) > 0 {
-						if fn.ServiceConfig == nil {
-							fn.ServiceConfig = &ServiceConfig{}
-						}
-						fn.ServiceConfig.SimCommand = cmdParts
-						simCmd = true
-					}
+			// Check for SOCKERLESS_CMD env var (cloud-native) or SimCommand fallback
+			simCmd := false
+			if fn.ServiceConfig != nil {
+				if _, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_CMD"]; ok {
+					simCmd = true
+				}
+				if !simCmd && len(fn.ServiceConfig.SimCommand) > 0 {
+					simCmd = true
 				}
 			}
 
 			if simCmd {
 				var exitCode int
 				responseBody, exitCode = invokeCloudFunctionProcess(fn, project, functionID)
-				w.Header().Set("X-Sim-Exit-Code", strconv.Itoa(exitCode))
+				if exitCode != 0 {
+					// Real Cloud Functions returns HTTP error when function crashes
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(responseBody)
+					return
+				}
 			} else {
 				injectCloudFunctionLog(project, functionID, "Function invoked")
 			}
@@ -199,13 +200,25 @@ func registerCloudFunctions(srv *sim.Server) {
 // invokeCloudFunctionProcess executes a Cloud Function's SimCommand via sim.StartProcess
 // and returns the stdout output as the response body plus the process exit code.
 func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byte, int) {
-	cmd := fn.ServiceConfig.SimCommand
+	var cmd []string
+	if fn.ServiceConfig != nil {
+		// Cloud-native: read SOCKERLESS_CMD from function's environment variables
+		if cmdB64, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_CMD"]; ok {
+			if decoded, err := base64.StdEncoding.DecodeString(cmdB64); err == nil {
+				json.Unmarshal(decoded, &cmd)
+			}
+		}
+		// Fallback: SimCommand field (backward compat for SDK tests)
+		if len(cmd) == 0 {
+			cmd = fn.ServiceConfig.SimCommand
+		}
+	}
 	if len(cmd) == 0 {
 		return []byte("{}"), 0
 	}
 
 	var cmdEnv map[string]string
-	if fn.ServiceConfig.EnvironmentVariables != nil {
+	if fn.ServiceConfig != nil && fn.ServiceConfig.EnvironmentVariables != nil {
 		cmdEnv = fn.ServiceConfig.EnvironmentVariables
 	}
 

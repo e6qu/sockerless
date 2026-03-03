@@ -174,17 +174,6 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Helper/cache containers (non-tail-dev-null commands like "chmod -R 777 /cache")
-	// don't need the full invoke+agent flow. Auto-stop them after a brief delay.
-	if s.config.CallbackURL != "" && !core.IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd) {
-		go func() {
-			time.Sleep(500 * time.Millisecond)
-			s.Store.StopContainer(id, 0)
-		}()
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
 	// Pre-create done channel so invoke goroutine can wait for agent disconnect
 	if s.config.CallbackURL != "" {
 		s.AgentRegistry.Prepare(id)
@@ -263,12 +252,10 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		}()
 
 		// Wait for reverse agent callback
-		agentTimeout := 60 * time.Second
-		if s.config.EndpointURL != "" {
-			agentTimeout = 5 * time.Second
-		}
+		agentTimeout := s.config.AgentTimeout
 		if err := s.AgentRegistry.WaitForAgent(id, agentTimeout); err != nil {
 			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
+			s.AgentRegistry.Remove(id)
 		} else {
 			s.Store.Containers.Update(id, func(c *api.Container) {
 				c.AgentAddress = "reverse"
@@ -277,43 +264,47 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// Forward agent mode: poll for execution RUNNING and health check
-		agentAddr, completedExitCode, err := s.waitForExecutionRunning(s.ctx(), jobName, executionName)
-		if err != nil {
-			s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
-			s.deleteJob(jobName)
-			core.WriteError(w, fmt.Errorf("execution failed to start: %w", err))
-			return
-		}
+		isLongRunning := core.IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd)
 
-		if completedExitCode >= 0 {
-			// Execution completed before agent could be reached (short-lived command).
-			// Treat as a fast exit — stop the container with the real exit code.
-			go func() {
-				s.Store.StopContainer(id, completedExitCode)
-			}()
-		} else {
-			// Wait for agent health
-			agentURL := fmt.Sprintf("http://%s/health", agentAddr)
-			agentHealthy := true
-			if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
-				s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
-				agentHealthy = false
+		if isLongRunning {
+			// Long-running container: wait for RUNNING and check agent health
+			agentAddr, completedExitCode, err := s.waitForExecutionRunning(s.ctx(), jobName, executionName)
+			if err != nil {
+				s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
+				s.deleteJob(jobName)
+				core.WriteError(w, fmt.Errorf("execution failed to start: %w", err))
+				return
 			}
 
-			if agentHealthy {
-				s.Store.Containers.Update(id, func(c *api.Container) {
-					c.AgentAddress = agentAddr
-					c.AgentToken = acaState.AgentToken
+			if completedExitCode >= 0 {
+				// Execution completed before agent could be reached.
+				go func() {
+					s.Store.StopContainer(id, completedExitCode)
+				}()
+			} else {
+				// Wait for agent health
+				agentURL := fmt.Sprintf("http://%s/health", agentAddr)
+				agentHealthy := true
+				if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
+					s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
+					agentHealthy = false
+				}
+
+				if agentHealthy {
+					s.Store.Containers.Update(id, func(c *api.Container) {
+						c.AgentAddress = agentAddr
+						c.AgentToken = acaState.AgentToken
+					})
+				}
+
+				s.ACA.Update(id, func(state *ACAState) {
+					state.AgentAddress = agentAddr
 				})
 			}
-
-			s.ACA.Update(id, func(state *ACAState) {
-				state.AgentAddress = agentAddr
-			})
-
-			// Start background poller to detect execution exit
-			go s.pollExecutionExit(id, jobName, executionName, exitCh)
 		}
+
+		// Start background poller to detect execution exit
+		go s.pollExecutionExit(id, jobName, executionName, exitCh)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -408,12 +399,10 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 			s.Store.StopContainer(mainID, 0)
 		}()
 
-		agentTimeout := 60 * time.Second
-		if s.config.EndpointURL != "" {
-			agentTimeout = 5 * time.Second
-		}
+		agentTimeout := s.config.AgentTimeout
 		if err := s.AgentRegistry.WaitForAgent(mainID, agentTimeout); err != nil {
 			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
+			s.AgentRegistry.Remove(mainID)
 		} else {
 			s.Store.Containers.Update(mainID, func(c *api.Container) {
 				c.AgentAddress = "reverse"
@@ -580,11 +569,7 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 // Returns ("", -1, err) on failure.
 func (s *Server) waitForExecutionRunning(ctx context.Context, jobName, executionName string) (string, int, error) {
 	timeout := time.After(5 * time.Minute)
-	pollInterval := 2 * time.Second
-	if s.config.EndpointURL != "" {
-		pollInterval = 500 * time.Millisecond
-	}
-	ticker := time.NewTicker(pollInterval)
+	ticker := time.NewTicker(s.config.PollInterval)
 	defer ticker.Stop()
 
 	for {
@@ -634,11 +619,7 @@ func (s *Server) waitForExecutionRunning(ctx context.Context, jobName, execution
 
 // waitForAgentHealth polls the agent's /health endpoint.
 func (s *Server) waitForAgentHealth(ctx context.Context, healthURL string) error {
-	agentTimeout := 60 * time.Second
-	if s.config.EndpointURL != "" {
-		agentTimeout = 2 * time.Second
-	}
-	timeout := time.After(agentTimeout)
+	timeout := time.After(s.config.AgentTimeout)
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
@@ -666,11 +647,7 @@ func (s *Server) waitForAgentHealth(ctx context.Context, healthURL string) error
 // waitForExecutionComplete blocks until the ACA Job execution completes or exitCh is closed.
 // Used in reverse agent mode where the goroutine needs to wait for the cloud job to finish.
 func (s *Server) waitForExecutionComplete(jobName, executionName string, exitCh chan struct{}) {
-	pollInterval := 5 * time.Second
-	if s.config.EndpointURL != "" {
-		pollInterval = 1 * time.Second
-	}
-	ticker := time.NewTicker(pollInterval)
+	ticker := time.NewTicker(s.config.PollInterval * 2)
 	defer ticker.Stop()
 
 	for {
@@ -706,11 +683,7 @@ func (s *Server) waitForExecutionComplete(jobName, executionName string, exitCh 
 
 // pollExecutionExit monitors an ACA Job execution and updates container state when it completes.
 func (s *Server) pollExecutionExit(containerID, jobName, executionName string, exitCh chan struct{}) {
-	pollInterval := 5 * time.Second
-	if s.config.EndpointURL != "" {
-		pollInterval = 1 * time.Second
-	}
-	ticker := time.NewTicker(pollInterval)
+	ticker := time.NewTicker(s.config.PollInterval * 2)
 	defer ticker.Stop()
 
 	for {

@@ -21,6 +21,9 @@ wait_for_url() {
     return 1
 }
 
+export SOCKERLESS_POLL_INTERVAL="500ms"
+export SOCKERLESS_AGENT_TIMEOUT="2s"
+
 case "$CLOUD" in
     aws)
         SIM_LISTEN_ADDR=":4566" simulator-aws &
