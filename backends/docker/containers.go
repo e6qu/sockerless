@@ -234,17 +234,18 @@ func (s *Server) handleContainerList(w http.ResponseWriter, r *http.Request) {
 	result := make([]*api.ContainerSummary, 0, len(containers))
 	for _, c := range containers {
 		summary := &api.ContainerSummary{
-			ID:      c.ID,
-			Names:   c.Names,
-			Image:   c.Image,
-			ImageID: c.ImageID,
-			Command: c.Command,
-			Created: c.Created,
-			State:   c.State,
-			Status:  c.Status,
-			Labels:  c.Labels,
-			SizeRw:  c.SizeRw,
-			Mounts:  mapMountsFromSummary(c.Mounts),
+			ID:         c.ID,
+			Names:      c.Names,
+			Image:      c.Image,
+			ImageID:    c.ImageID,
+			Command:    c.Command,
+			Created:    c.Created,
+			State:      c.State,
+			Status:     c.Status,
+			Labels:     c.Labels,
+			SizeRw:     c.SizeRw,
+			SizeRootFs: c.SizeRootFs,
+			Mounts:     mapMountsFromSummary(c.Mounts),
 		}
 		for _, p := range c.Ports {
 			summary.Ports = append(summary.Ports, api.Port{
@@ -647,7 +648,8 @@ func mapDockerError(err error) error {
 	msg := err.Error()
 
 	if strings.Contains(msg, "No such") || strings.Contains(msg, "not found") {
-		return &api.NotFoundError{Resource: "resource", ID: ""}
+		resource, id := parseDockerNotFound(msg)
+		return &api.NotFoundError{Resource: resource, ID: id}
 	}
 	if strings.Contains(msg, "is already") || strings.Contains(msg, "Conflict") || strings.Contains(msg, "conflict") {
 		return &api.ConflictError{Message: msg}
@@ -665,6 +667,29 @@ func mapDockerError(err error) error {
 	}
 
 	return fmt.Errorf("%s", msg)
+}
+
+// parseDockerNotFound extracts the resource type and ID from Docker "No such X: Y" error messages.
+func parseDockerNotFound(msg string) (resource, id string) {
+	resource = "resource"
+	// Docker errors: "No such container: abc123", "No such image: foo:bar", etc.
+	if i := strings.Index(msg, "No such "); i >= 0 {
+		rest := msg[i+8:]
+		if j := strings.Index(rest, ": "); j >= 0 {
+			resource = rest[:j]
+			id = rest[j+2:]
+			return resource, id
+		}
+	}
+	// "X not found" pattern
+	if i := strings.Index(msg, " not found"); i >= 0 {
+		id = msg[:i]
+		// Try to get last word as the ID
+		if j := strings.LastIndex(id, " "); j >= 0 {
+			id = id[j+1:]
+		}
+	}
+	return resource, id
 }
 
 // Prevent unused import error

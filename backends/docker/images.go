@@ -45,7 +45,7 @@ func (s *Server) handleImageInspect(w http.ResponseWriter, r *http.Request) {
 		Comment:       info.Comment,
 		Created:       info.Created,
 		Size:          info.Size,
-		VirtualSize:   info.Size,
+		VirtualSize:   info.VirtualSize,
 		Architecture:  info.Architecture,
 		Os:            info.Os,
 		Author:        info.Author,
@@ -97,7 +97,8 @@ func (s *Server) handleImageInspect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleImageLoad(w http.ResponseWriter, r *http.Request) {
-	resp, err := s.docker.ImageLoad(r.Context(), r.Body, false)
+	quiet := r.URL.Query().Get("quiet") == "1" || r.URL.Query().Get("quiet") == "true"
+	resp, err := s.docker.ImageLoad(r.Context(), r.Body, quiet)
 	if err != nil {
 		writeError(w, mapDockerError(err))
 		return

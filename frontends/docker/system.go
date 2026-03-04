@@ -10,10 +10,16 @@ import (
 
 func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("API-Version", "1.44")
+	w.Header().Set("Builder-Version", "2")
 	w.Header().Set("Docker-Experimental", "false")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Length", "2")
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	w.Write([]byte("OK"))
 }
 
@@ -108,6 +114,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"Runtimes": map[string]any{
 			"runc": map[string]string{"path": "runc"},
 		},
+		"LoggingDriver":  "json-file",
 		"DefaultRuntime": "runc",
 		"Swarm":          map[string]any{"LocalNodeState": "inactive"},
 		"Containerd":     map[string]any{"Address": ""},
