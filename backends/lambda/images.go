@@ -34,6 +34,29 @@ func (s *Server) handleImagePull(w http.ResponseWriter, r *http.Request) {
 	hash := sha256.Sum256([]byte(ref))
 	imageID := fmt.Sprintf("sha256:%x", hash)
 
+	imgConfig := api.ContainerConfig{
+		Image: ref,
+	}
+
+	// Try to fetch real config from registry
+	if realConfig, _ := core.FetchImageConfig(ref, ""); realConfig != nil {
+		if len(realConfig.Env) > 0 {
+			imgConfig.Env = realConfig.Env
+		}
+		if len(realConfig.Cmd) > 0 {
+			imgConfig.Cmd = realConfig.Cmd
+		}
+		if len(realConfig.Entrypoint) > 0 {
+			imgConfig.Entrypoint = realConfig.Entrypoint
+		}
+		if realConfig.WorkingDir != "" {
+			imgConfig.WorkingDir = realConfig.WorkingDir
+		}
+		if len(realConfig.Labels) > 0 {
+			imgConfig.Labels = realConfig.Labels
+		}
+	}
+
 	image := api.Image{
 		ID:           imageID,
 		RepoTags:     []string{ref},
@@ -44,9 +67,7 @@ func (s *Server) handleImagePull(w http.ResponseWriter, r *http.Request) {
 		Architecture: "amd64",
 		Os:           "linux",
 		RootFS:       api.RootFS{Type: "layers"},
-		Config: api.ContainerConfig{
-			Image: ref,
-		},
+		Config:       imgConfig,
 	}
 
 	core.StoreImageWithAliases(s.Store, ref, image)

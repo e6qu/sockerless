@@ -747,7 +747,7 @@ func (s *Server) pollTaskExit(containerID, taskARN string, exitCh chan struct{})
 						break
 					}
 				}
-				if _, ok := s.Store.Containers.Get(containerID); ok {
+				if c, ok := s.Store.Containers.Get(containerID); ok && c.State.Running {
 					s.Store.StopContainer(containerID, exitCode)
 				}
 				return

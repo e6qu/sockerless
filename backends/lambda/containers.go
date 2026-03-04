@@ -292,7 +292,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 			// No command: auto-stop after brief delay
 			go func() {
 				time.Sleep(500 * time.Millisecond)
-				if _, ok := s.Store.Containers.Get(id); ok {
+				if c, ok := s.Store.Containers.Get(id); ok && c.State.Running {
 					s.Store.StopContainer(id, 0)
 				}
 			}()

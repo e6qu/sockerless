@@ -430,6 +430,33 @@ func (s *BaseServer) handleContainerUpdate(w http.ResponseWriter, r *http.Reques
 		if req.RestartPolicy.Name != "" {
 			c.HostConfig.RestartPolicy = req.RestartPolicy
 		}
+		if req.Memory != 0 {
+			c.HostConfig.Memory = req.Memory
+		}
+		if req.MemorySwap != 0 {
+			c.HostConfig.MemorySwap = req.MemorySwap
+		}
+		if req.MemoryReservation != 0 {
+			c.HostConfig.MemoryReservation = req.MemoryReservation
+		}
+		if req.CpuShares != 0 {
+			c.HostConfig.CpuShares = req.CpuShares
+		}
+		if req.CpuQuota != 0 {
+			c.HostConfig.CpuQuota = req.CpuQuota
+		}
+		if req.CpuPeriod != 0 {
+			c.HostConfig.CpuPeriod = req.CpuPeriod
+		}
+		if req.CpusetCpus != "" {
+			c.HostConfig.CpusetCpus = req.CpusetCpus
+		}
+		if req.CpusetMems != "" {
+			c.HostConfig.CpusetMems = req.CpusetMems
+		}
+		if req.BlkioWeight != 0 {
+			c.HostConfig.BlkioWeight = req.BlkioWeight
+		}
 	})
 
 	WriteJSON(w, http.StatusOK, api.ContainerUpdateResponse{Warnings: []string{}})
@@ -501,6 +528,7 @@ func (s *BaseServer) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 		Images:     dedupImages,
 		Containers: containers,
 		Volumes:    volumes,
+		BuildCache: []*api.BuildCache{},
 	})
 }
 

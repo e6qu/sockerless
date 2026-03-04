@@ -772,18 +772,18 @@ func (s *Server) pollExecutionExit(containerID, jobName, executionName string, e
 					}
 					switch *exec.Status {
 					case armappcontainers.JobExecutionRunningStateSucceeded:
-						if _, ok := s.Store.Containers.Get(containerID); ok {
+						if c, ok := s.Store.Containers.Get(containerID); ok && c.State.Running {
 							s.Store.StopContainer(containerID, 0)
 						}
 						return
 					case armappcontainers.JobExecutionRunningStateFailed,
 						armappcontainers.JobExecutionRunningStateDegraded:
-						if _, ok := s.Store.Containers.Get(containerID); ok {
+						if c, ok := s.Store.Containers.Get(containerID); ok && c.State.Running {
 							s.Store.StopContainer(containerID, 1)
 						}
 						return
 					case armappcontainers.JobExecutionRunningStateStopped:
-						if _, ok := s.Store.Containers.Get(containerID); ok {
+						if c, ok := s.Store.Containers.Get(containerID); ok && c.State.Running {
 							s.Store.StopContainer(containerID, 137)
 						}
 						return
@@ -794,22 +794,22 @@ func (s *Server) pollExecutionExit(containerID, jobName, executionName string, e
 	}
 }
 
-// stopExecution stops an ACA Job execution (best-effort).
+// stopExecution stops an ACA Job execution (best-effort), waiting for completion.
 func (s *Server) stopExecution(jobName, executionName string) {
 	poller, err := s.azure.Jobs.BeginStopExecution(s.ctx(), s.config.ResourceGroup, jobName, executionName, nil)
 	if err != nil {
 		s.Logger.Debug().Err(err).Str("execution", executionName).Msg("failed to stop execution")
 		return
 	}
-	_ = poller
+	_, _ = poller.PollUntilDone(s.ctx(), nil)
 }
 
-// deleteJob deletes an ACA Job (best-effort).
+// deleteJob deletes an ACA Job (best-effort), waiting for completion.
 func (s *Server) deleteJob(jobName string) {
 	poller, err := s.azure.Jobs.BeginDelete(s.ctx(), s.config.ResourceGroup, jobName, nil)
 	if err != nil {
 		s.Logger.Debug().Err(err).Str("job", jobName).Msg("failed to delete job")
 		return
 	}
-	_ = poller
+	_, _ = poller.PollUntilDone(s.ctx(), nil)
 }

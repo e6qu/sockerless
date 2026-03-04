@@ -1,8 +1,8 @@
 # Known Bugs
 
-## Fixed (BUG-001 → BUG-251)
+## Fixed (BUG-001 → BUG-269)
 
-251 bugs fixed across 23 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
+269 bugs fixed across 24 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
@@ -24,32 +24,11 @@
 | 21 | BUG-177→201 | Resource leaks, cloud parity, Docker field mapping, lifecycle safety |
 | 22 | BUG-202→226 | Core lifecycle safety, Docker API parity, API type gaps, frontend conformance |
 | 23 | BUG-227→251 | Forward agent fix (CloudRun/ACA), Docker parity, lifecycle safety |
+| 24 | BUG-252→269 | Final 18: BuildCache, FaaS image config, events, image load, LRO waits, API types |
 
 ## Open Bugs
 
-### Medium Severity
-
-| Bug | File | Issue |
-|-----|------|-------|
-| OB-018 | `docker/extended.go:324-390` | Docker system df drops BuildCache |
-| OB-056 | `lambda/images.go`, `gcf/images.go`, `azf/images.go` | FaaS image pull uses synthetic config (no registry fetch) — containers lose default CMD/ENV |
-
-### Low Severity
-
-| Bug | File | Issue |
-|-----|------|-------|
-| OB-060 | `core/handle_images.go`, `core/handle_extended.go`, `core/handle_volumes.go` | Missing Docker-compatible events for image tag/remove, volume create/destroy |
-| OB-063 | `core/handle_extended.go:325-347` | Container update ignores resource fields — only handles RestartPolicy |
-| OB-064 | `core/handle_images.go:181-209` | Image load always stores as "loaded:latest" (overwrites, no manifest extraction) |
-| OB-066 | `lambda/logs.go`, `gcf/logs.go`, `azf/logs.go` | FaaS logs endpoint ignores buffered LogBuffers data (only queries cloud logging) |
-| OB-068 | `api/types.go` | API types missing fields: NetworkSettings top-level (Gateway, IPAddress, Bridge, etc.), HostConfig (DNS, Memory, CpuShares, PidMode, etc.), HealthcheckConfig.StartInterval, EndpointSettings IPv6 fields, Image.GraphDriver, ExecInstance.DetachKeys |
-| OB-103 | `ecs/containers.go:522-525` | ECS kill exitCh — background polling goroutine continues after force-stop (self-terminates eventually) |
-| OB-104 | `ecs/containers.go:551-576`, `cloudrun/containers.go:579`, `aca/containers.go:565` | Cloud force remove + background poller race — StopContainer called twice (may double-close channel) |
-| OB-105 | `aca/containers.go:748-765`, `cloudrun/containers.go:738` | ACA/CloudRun fire-and-forget LRO pollers — stop/delete jobs not actually waited on |
-| OB-108 | `lambda/containers.go:248-296` | Lambda start goroutine calls StopContainer on already-removed container (benign but noisy) |
-| OB-113 | `api/types.go:589-595` | DiskUsageResponse missing BuildCache field and BuildCache type |
-| OB-116 | `frontends/docker/images.go:177-195` | Frontend handleImageBuild missing query params: labels, target, platform, pull, etc. |
-| OB-117 | `frontends/docker/images.go:210-224` | Frontend handleContainerCommit missing pause and changes params |
+None — all known bugs have been fixed.
 
 ## False Positives
 
