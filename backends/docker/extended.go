@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -440,11 +441,31 @@ func (s *Server) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 		volumes = []*api.Volume{}
 	}
 
+	var buildCache []*api.BuildCache
+	for _, bc := range du.BuildCache {
+		buildCache = append(buildCache, &api.BuildCache{
+			ID:          bc.ID,
+			Parent:      bc.Parent,
+			Type:        bc.Type,
+			Description: bc.Description,
+			InUse:       bc.InUse,
+			Shared:      bc.Shared,
+			Size:        bc.Size,
+			CreatedAt:   bc.CreatedAt.Format(time.RFC3339Nano),
+			LastUsedAt:  bc.LastUsedAt.Format(time.RFC3339Nano),
+			UsageCount:  bc.UsageCount,
+		})
+	}
+	if buildCache == nil {
+		buildCache = []*api.BuildCache{}
+	}
+
 	writeJSON(w, http.StatusOK, api.DiskUsageResponse{
 		LayersSize: du.LayersSize,
 		Images:     images,
 		Containers: containers,
 		Volumes:    volumes,
+		BuildCache: buildCache,
 	})
 }
 

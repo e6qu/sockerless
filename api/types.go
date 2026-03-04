@@ -77,18 +77,33 @@ type HostConfig struct {
 	PortBindings  map[string][]PortBinding    `json:"PortBindings,omitempty"`
 	RestartPolicy RestartPolicy               `json:"RestartPolicy"`
 	// Fields below are accepted, stored, and returned on inspect — but not enforced.
-	Privileged  bool              `json:"Privileged,omitempty"`
-	CapAdd      []string          `json:"CapAdd,omitempty"`
-	CapDrop     []string          `json:"CapDrop,omitempty"`
-	Init        *bool             `json:"Init,omitempty"`
-	UsernsMode  string            `json:"UsernsMode,omitempty"`
-	ShmSize     int64             `json:"ShmSize,omitempty"`
-	Tmpfs       map[string]string `json:"Tmpfs,omitempty"`
-	SecurityOpt []string          `json:"SecurityOpt,omitempty"`
-	LogConfig   *LogConfig        `json:"LogConfig,omitempty"`
-	ExtraHosts  []string          `json:"ExtraHosts,omitempty"`
-	Mounts      []Mount           `json:"Mounts,omitempty"`
-	Isolation   string            `json:"Isolation,omitempty"`
+	Privileged        bool              `json:"Privileged,omitempty"`
+	CapAdd            []string          `json:"CapAdd,omitempty"`
+	CapDrop           []string          `json:"CapDrop,omitempty"`
+	Init              *bool             `json:"Init,omitempty"`
+	UsernsMode        string            `json:"UsernsMode,omitempty"`
+	ShmSize           int64             `json:"ShmSize,omitempty"`
+	Tmpfs             map[string]string `json:"Tmpfs,omitempty"`
+	SecurityOpt       []string          `json:"SecurityOpt,omitempty"`
+	LogConfig         *LogConfig        `json:"LogConfig,omitempty"`
+	ExtraHosts        []string          `json:"ExtraHosts,omitempty"`
+	Mounts            []Mount           `json:"Mounts,omitempty"`
+	Isolation         string            `json:"Isolation,omitempty"`
+	Dns               []string          `json:"Dns,omitempty"`
+	DnsSearch         []string          `json:"DnsSearch,omitempty"`
+	DnsOptions        []string          `json:"DnsOptions,omitempty"`
+	Memory            int64             `json:"Memory,omitempty"`
+	MemorySwap        int64             `json:"MemorySwap,omitempty"`
+	MemoryReservation int64             `json:"MemoryReservation,omitempty"`
+	CpuShares         int64             `json:"CpuShares,omitempty"`
+	CpuQuota          int64             `json:"CpuQuota,omitempty"`
+	CpuPeriod         int64             `json:"CpuPeriod,omitempty"`
+	CpusetCpus        string            `json:"CpusetCpus,omitempty"`
+	CpusetMems        string            `json:"CpusetMems,omitempty"`
+	BlkioWeight       uint16            `json:"BlkioWeight,omitempty"`
+	PidMode           string            `json:"PidMode,omitempty"`
+	IpcMode           string            `json:"IpcMode,omitempty"`
+	UTSMode           string            `json:"UTSMode,omitempty"`
 }
 
 // PortBinding represents a port binding between the host and a container.
@@ -153,6 +168,10 @@ type NetworkSettings struct {
 	LinkLocalIPv6Address   string                       `json:"LinkLocalIPv6Address"`
 	LinkLocalIPv6PrefixLen int                          `json:"LinkLocalIPv6PrefixLen"`
 	SandboxKey             string                       `json:"SandboxKey"`
+	Gateway                string                       `json:"Gateway"`
+	IPAddress              string                       `json:"IPAddress"`
+	IPPrefixLen            int                          `json:"IPPrefixLen"`
+	MacAddress             string                       `json:"MacAddress"`
 	Networks               map[string]*EndpointSettings `json:"Networks"`
 	Ports                  map[string][]PortBinding     `json:"Ports,omitempty"`
 }
@@ -299,6 +318,7 @@ type ExecInstance struct {
 	OpenStderr    bool              `json:"OpenStderr"`
 	ProcessConfig ExecProcessConfig `json:"ProcessConfig"`
 	CanRemove     bool              `json:"CanRemove"`
+	DetachKeys    string            `json:"DetachKeys,omitempty"`
 }
 
 // ExecProcessConfig holds the process configuration for an exec instance.
@@ -352,8 +372,15 @@ type Image struct {
 	Parent        string           `json:"Parent,omitempty"`
 	Comment       string           `json:"Comment,omitempty"`
 	DockerVersion string           `json:"DockerVersion,omitempty"`
+	GraphDriver   GraphDriverData  `json:"GraphDriver"`
 	RootFS        RootFS           `json:"RootFS"`
 	Metadata      ImageMetadata    `json:"Metadata"`
+}
+
+// GraphDriverData holds information about the storage driver for an image.
+type GraphDriverData struct {
+	Name string            `json:"Name"`
+	Data map[string]string `json:"Data,omitempty"`
 }
 
 // RootFS describes the root filesystem of an image.
@@ -512,11 +539,12 @@ type BackendInfo struct {
 
 // HealthcheckConfig holds the health check configuration for a container.
 type HealthcheckConfig struct {
-	Test        []string `json:"Test"`
-	Interval    int64    `json:"Interval,omitempty"`
-	Timeout     int64    `json:"Timeout,omitempty"`
-	StartPeriod int64    `json:"StartPeriod,omitempty"`
-	Retries     int      `json:"Retries,omitempty"`
+	Test          []string `json:"Test"`
+	Interval      int64    `json:"Interval,omitempty"`
+	Timeout       int64    `json:"Timeout,omitempty"`
+	StartPeriod   int64    `json:"StartPeriod,omitempty"`
+	StartInterval int64    `json:"StartInterval,omitempty"`
+	Retries       int      `json:"Retries,omitempty"`
 }
 
 // HealthState holds the current health state of a container.
@@ -625,7 +653,16 @@ type EventActor struct {
 
 // ContainerUpdateRequest holds fields that can be updated on a running container.
 type ContainerUpdateRequest struct {
-	RestartPolicy RestartPolicy `json:"RestartPolicy"`
+	RestartPolicy     RestartPolicy `json:"RestartPolicy"`
+	Memory            int64         `json:"Memory,omitempty"`
+	MemorySwap        int64         `json:"MemorySwap,omitempty"`
+	MemoryReservation int64         `json:"MemoryReservation,omitempty"`
+	CpuShares         int64         `json:"CpuShares,omitempty"`
+	CpuQuota          int64         `json:"CpuQuota,omitempty"`
+	CpuPeriod         int64         `json:"CpuPeriod,omitempty"`
+	CpusetCpus        string        `json:"CpusetCpus,omitempty"`
+	CpusetMems        string        `json:"CpusetMems,omitempty"`
+	BlkioWeight       uint16        `json:"BlkioWeight,omitempty"`
 }
 
 // ContainerUpdateResponse is the response from updating a container.
@@ -650,4 +687,19 @@ type DiskUsageResponse struct {
 	Images     []*ImageSummary          `json:"Images"`
 	Containers []*ContainerSummary      `json:"Containers"`
 	Volumes    []*Volume                `json:"Volumes"`
+	BuildCache []*BuildCache            `json:"BuildCache"`
+}
+
+// BuildCache holds information about a build cache entry.
+type BuildCache struct {
+	ID          string `json:"ID"`
+	Parent      string `json:"Parent,omitempty"`
+	Type        string `json:"Type"`
+	Description string `json:"Description,omitempty"`
+	InUse       bool   `json:"InUse"`
+	Shared      bool   `json:"Shared"`
+	Size        int64  `json:"Size"`
+	CreatedAt   string `json:"CreatedAt"`
+	LastUsedAt  string `json:"LastUsedAt,omitempty"`
+	UsageCount  int    `json:"UsageCount"`
 }

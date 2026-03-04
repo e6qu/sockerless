@@ -1,6 +1,7 @@
 package core
 
 import (
+	"archive/tar"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -180,15 +181,20 @@ func (s *BaseServer) handleImageInspect(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *BaseServer) handleImageLoad(w http.ResponseWriter, r *http.Request) {
-	// Read the tar but don't actually process layers
 	defer r.Body.Close()
-	io.Copy(io.Discard, r.Body)
 
-	// Create a synthetic loaded image
+	// Parse the tar to extract manifest.json and config for image metadata
+	repoTags, imgConfig := parseImageTar(r.Body)
+
+	// Fallback to "loaded:latest" if no manifest found
+	if len(repoTags) == 0 {
+		repoTags = []string{"loaded:latest"}
+	}
+
 	id := "sha256:" + GenerateID()
 	img := api.Image{
 		ID:           id,
-		RepoTags:     []string{"loaded:latest"},
+		RepoTags:     repoTags,
 		Created:      time.Now().UTC().Format(time.RFC3339Nano),
 		Size:         0,
 		Architecture: "amd64",
@@ -198,15 +204,101 @@ func (s *BaseServer) handleImageLoad(w http.ResponseWriter, r *http.Request) {
 		},
 		RootFS: api.RootFS{Type: "layers"},
 	}
-	s.Store.Images.Put(id, img)
-	s.Store.Images.Put("loaded:latest", img)
-	s.Store.Images.Put("loaded", img)
 
+	// Merge parsed config
+	if imgConfig != nil {
+		if len(imgConfig.Env) > 0 {
+			img.Config.Env = imgConfig.Env
+		}
+		if len(imgConfig.Cmd) > 0 {
+			img.Config.Cmd = imgConfig.Cmd
+		}
+		if len(imgConfig.Entrypoint) > 0 {
+			img.Config.Entrypoint = imgConfig.Entrypoint
+		}
+		if imgConfig.WorkingDir != "" {
+			img.Config.WorkingDir = imgConfig.WorkingDir
+		}
+		if len(imgConfig.Labels) > 0 {
+			img.Config.Labels = imgConfig.Labels
+		}
+	}
+
+	// Store under all tags
+	for _, tag := range repoTags {
+		StoreImageWithAliases(s.Store, tag, img)
+	}
+	s.Store.Images.Put(id, img)
+
+	displayTag := repoTags[0]
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
-		"stream": "Loaded image: loaded:latest\n",
+		"stream": fmt.Sprintf("Loaded image: %s\n", displayTag),
 	})
+}
+
+// parseImageTar reads a docker save tar and extracts RepoTags from manifest.json
+// and Env/Cmd/Entrypoint/WorkingDir/Labels from the image config JSON.
+func parseImageTar(body io.Reader) (repoTags []string, config *api.ContainerConfig) {
+	tr := tar.NewReader(body)
+	var manifestData []byte
+	configFiles := make(map[string][]byte)
+
+	for {
+		hdr, err := tr.Next()
+		if err != nil {
+			break
+		}
+
+		switch {
+		case hdr.Name == "manifest.json":
+			manifestData, _ = io.ReadAll(tr)
+		case strings.HasSuffix(hdr.Name, ".json") && hdr.Name != "manifest.json" && !strings.Contains(hdr.Name, "/"):
+			data, _ := io.ReadAll(tr)
+			configFiles[hdr.Name] = data
+		default:
+			io.Copy(io.Discard, tr)
+		}
+	}
+
+	if manifestData == nil {
+		return nil, nil
+	}
+
+	var manifest []struct {
+		Config   string   `json:"Config"`
+		RepoTags []string `json:"RepoTags"`
+	}
+	if json.Unmarshal(manifestData, &manifest) != nil || len(manifest) == 0 {
+		return nil, nil
+	}
+
+	repoTags = manifest[0].RepoTags
+
+	// Parse config file for container config
+	if configData, ok := configFiles[manifest[0].Config]; ok {
+		var imgJSON struct {
+			Config struct {
+				Env        []string          `json:"Env"`
+				Cmd        []string          `json:"Cmd"`
+				Entrypoint []string          `json:"Entrypoint"`
+				WorkingDir string            `json:"WorkingDir"`
+				Labels     map[string]string `json:"Labels"`
+			} `json:"config"`
+		}
+		if json.Unmarshal(configData, &imgJSON) == nil {
+			config = &api.ContainerConfig{
+				Env:        imgJSON.Config.Env,
+				Cmd:        imgJSON.Config.Cmd,
+				Entrypoint: imgJSON.Config.Entrypoint,
+				WorkingDir: imgJSON.Config.WorkingDir,
+				Labels:     imgJSON.Config.Labels,
+			}
+		}
+	}
+
+	return repoTags, config
 }
 
 func (s *BaseServer) handleImageTag(w http.ResponseWriter, r *http.Request) {
@@ -230,6 +322,10 @@ func (s *BaseServer) handleImageTag(w http.ResponseWriter, r *http.Request) {
 	for _, existingTag := range img.RepoTags {
 		StoreImageWithAliases(s.Store, existingTag, img)
 	}
+
+	s.emitEvent("image", "tag", img.ID, map[string]string{
+		"name": newRef,
+	})
 
 	w.WriteHeader(http.StatusCreated)
 }
@@ -324,8 +420,16 @@ func (s *BaseServer) handleImageRemove(w http.ResponseWriter, r *http.Request) {
 	var resp []*api.ImageDeleteResponse
 	for _, tag := range img.RepoTags {
 		resp = append(resp, &api.ImageDeleteResponse{Untagged: tag})
+		s.emitEvent("image", "untag", img.ID, map[string]string{
+			"name": tag,
+		})
 	}
 	resp = append(resp, &api.ImageDeleteResponse{Deleted: img.ID})
+
+	s.emitEvent("image", "delete", img.ID, map[string]string{
+		"name": name,
+	})
+
 	WriteJSON(w, http.StatusOK, resp)
 }
 

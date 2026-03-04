@@ -188,7 +188,13 @@ func (s *Server) handleImagePrune(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleImageBuild(w http.ResponseWriter, r *http.Request) {
 	query := url.Values{}
-	for _, key := range []string{"t", "dockerfile", "buildargs", "rm", "forcerm", "nocache"} {
+	for _, key := range []string{
+		"t", "dockerfile", "buildargs", "rm", "forcerm", "nocache",
+		"labels", "target", "platform", "pull", "cachefrom",
+		"q", "memory", "memswap", "cpushares", "cpuquota",
+		"cpuperiod", "cpusetcpus", "cpusetmems", "shmsize",
+		"extrahosts", "networkmode", "squash",
+	} {
 		if v := r.URL.Query().Get(key); v != "" {
 			query.Set(key, v)
 		}
@@ -221,7 +227,7 @@ func (s *Server) handleImagePush(w http.ResponseWriter, r *http.Request, name st
 
 func (s *Server) handleContainerCommit(w http.ResponseWriter, r *http.Request) {
 	query := url.Values{}
-	for _, key := range []string{"container", "repo", "tag", "comment", "author"} {
+	for _, key := range []string{"container", "repo", "tag", "comment", "author", "pause", "changes"} {
 		if v := r.URL.Query().Get(key); v != "" {
 			query.Set(key, v)
 		}

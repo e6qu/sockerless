@@ -61,6 +61,11 @@ func (s *BaseServer) handleVolumeCreate(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.Store.Volumes.Put(name, vol)
+
+	s.emitEvent("volume", "create", name, map[string]string{
+		"driver": driver,
+	})
+
 	WriteJSON(w, http.StatusCreated, vol)
 }
 
@@ -121,10 +126,17 @@ func (s *BaseServer) handleVolumeRemove(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	vol, _ := s.Store.Volumes.Get(name)
+
 	s.Store.Volumes.Delete(name)
 	if dir, ok := s.Store.VolumeDirs.LoadAndDelete(name); ok {
 		os.RemoveAll(dir.(string))
 	}
+
+	s.emitEvent("volume", "destroy", name, map[string]string{
+		"driver": vol.Driver,
+	})
+
 	w.WriteHeader(http.StatusNoContent)
 }
 

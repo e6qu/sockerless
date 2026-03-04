@@ -43,6 +43,18 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		defer f.Flush()
 	}
 
+	// Check LogBuffers first for buffered output
+	if buf, ok := s.Store.LogBuffers.Load(id); ok {
+		data := buf.([]byte)
+		if len(data) > 0 {
+			header := make([]byte, 8)
+			header[0] = 1 // stdout
+			binary.BigEndian.PutUint32(header[4:], uint32(len(data)))
+			w.Write(header)
+			w.Write(data)
+		}
+	}
+
 	// Build filter for Cloud Logging — Cloud Run Functions 2nd gen run as Cloud Run services
 	filter := fmt.Sprintf(
 		`resource.type="cloud_run_revision" AND resource.labels.service_name="%s"`,

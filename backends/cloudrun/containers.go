@@ -768,7 +768,7 @@ func (s *Server) pollExecutionExit(containerID, executionName string, exitCh cha
 				if exec.FailedCount > 0 {
 					exitCode = 1
 				}
-				if _, ok := s.Store.Containers.Get(containerID); ok {
+				if c, ok := s.Store.Containers.Get(containerID); ok && c.State.Running {
 					s.Store.StopContainer(containerID, exitCode)
 				}
 				return
@@ -777,7 +777,7 @@ func (s *Server) pollExecutionExit(containerID, executionName string, exitCh cha
 	}
 }
 
-// cancelExecution cancels a Cloud Run execution (best-effort).
+// cancelExecution cancels a Cloud Run execution (best-effort), waiting for completion.
 func (s *Server) cancelExecution(executionName string) {
 	op, err := s.gcp.Executions.CancelExecution(s.ctx(), &runpb.CancelExecutionRequest{
 		Name: executionName,
@@ -786,10 +786,10 @@ func (s *Server) cancelExecution(executionName string) {
 		s.Logger.Debug().Err(err).Str("execution", executionName).Msg("failed to cancel execution")
 		return
 	}
-	_ = op
+	_, _ = op.Wait(s.ctx())
 }
 
-// deleteJob deletes a Cloud Run Job (best-effort).
+// deleteJob deletes a Cloud Run Job (best-effort), waiting for completion.
 func (s *Server) deleteJob(jobName string) {
 	op, err := s.gcp.Jobs.DeleteJob(s.ctx(), &runpb.DeleteJobRequest{
 		Name: jobName,
@@ -798,5 +798,5 @@ func (s *Server) deleteJob(jobName string) {
 		s.Logger.Debug().Err(err).Str("job", jobName).Msg("failed to delete job")
 		return
 	}
-	_ = op
+	_, _ = op.Wait(s.ctx())
 }
