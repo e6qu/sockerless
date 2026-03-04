@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	dockerimage "github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/go-connections/nat"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sockerless/api"
@@ -36,6 +37,7 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		config.Labels = cc.Labels
 		config.Tty = cc.Tty
 		config.OpenStdin = cc.OpenStdin
+		config.StdinOnce = cc.StdinOnce
 		config.AttachStdin = cc.AttachStdin
 		config.AttachStdout = cc.AttachStdout
 		config.AttachStderr = cc.AttachStderr
@@ -43,7 +45,26 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		config.Entrypoint = cc.Entrypoint
 		config.User = cc.User
 		config.Hostname = cc.Hostname
+		config.Domainname = cc.Domainname
 		config.StopSignal = cc.StopSignal
+		config.StopTimeout = cc.StopTimeout
+		config.Shell = cc.Shell
+		config.Volumes = cc.Volumes
+		if len(cc.ExposedPorts) > 0 {
+			config.ExposedPorts = make(nat.PortSet, len(cc.ExposedPorts))
+			for p := range cc.ExposedPorts {
+				config.ExposedPorts[nat.Port(p)] = struct{}{}
+			}
+		}
+		if cc.Healthcheck != nil {
+			config.Healthcheck = &container.HealthConfig{
+				Test:        cc.Healthcheck.Test,
+				Interval:    time.Duration(cc.Healthcheck.Interval),
+				Timeout:     time.Duration(cc.Healthcheck.Timeout),
+				StartPeriod: time.Duration(cc.Healthcheck.StartPeriod),
+				Retries:     cc.Healthcheck.Retries,
+			}
+		}
 	}
 
 	var hostConfig *container.HostConfig
@@ -52,6 +73,50 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 			NetworkMode: container.NetworkMode(req.HostConfig.NetworkMode),
 			Binds:       req.HostConfig.Binds,
 			AutoRemove:  req.HostConfig.AutoRemove,
+			Privileged:  req.HostConfig.Privileged,
+			CapAdd:      req.HostConfig.CapAdd,
+			CapDrop:     req.HostConfig.CapDrop,
+			Init:        req.HostConfig.Init,
+			UsernsMode:  container.UsernsMode(req.HostConfig.UsernsMode),
+			ShmSize:     req.HostConfig.ShmSize,
+			Tmpfs:       req.HostConfig.Tmpfs,
+			SecurityOpt: req.HostConfig.SecurityOpt,
+			ExtraHosts:  req.HostConfig.ExtraHosts,
+			Isolation:   container.Isolation(req.HostConfig.Isolation),
+			RestartPolicy: container.RestartPolicy{
+				Name:              container.RestartPolicyMode(req.HostConfig.RestartPolicy.Name),
+				MaximumRetryCount: req.HostConfig.RestartPolicy.MaximumRetryCount,
+			},
+		}
+		if len(req.HostConfig.PortBindings) > 0 {
+			hostConfig.PortBindings = make(nat.PortMap, len(req.HostConfig.PortBindings))
+			for port, bindings := range req.HostConfig.PortBindings {
+				var nb []nat.PortBinding
+				for _, b := range bindings {
+					nb = append(nb, nat.PortBinding{HostIP: b.HostIP, HostPort: b.HostPort})
+				}
+				hostConfig.PortBindings[nat.Port(port)] = nb
+			}
+		}
+		if req.HostConfig.LogConfig != nil {
+			hostConfig.LogConfig = container.LogConfig{
+				Type:   req.HostConfig.LogConfig.Type,
+				Config: req.HostConfig.LogConfig.Config,
+			}
+		}
+		for _, m := range req.HostConfig.Mounts {
+			dm := mount.Mount{
+				Type:     mount.Type(m.Type),
+				Source:   m.Source,
+				Target:   m.Target,
+				ReadOnly: m.ReadOnly,
+			}
+			if m.BindOptions != nil {
+				dm.BindOptions = &mount.BindOptions{
+					Propagation: mount.Propagation(m.BindOptions.Propagation),
+				}
+			}
+			hostConfig.Mounts = append(hostConfig.Mounts, dm)
 		}
 	}
 
@@ -415,6 +480,7 @@ func mapContainerFromDocker(info types.ContainerJSON) api.Container {
 					IPAddress:   ep.IPAddress,
 					IPPrefixLen: ep.IPPrefixLen,
 					MacAddress:  ep.MacAddress,
+					Aliases:     ep.Aliases,
 				}
 			}
 		}

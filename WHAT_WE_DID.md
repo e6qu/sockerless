@@ -162,6 +162,21 @@ Audited cross-backend lifecycle consistency (restart semantics) and Docker passt
 
 All 75 sim-backend tests pass. 286 core tests pass. 0 lint issues across 19 modules.
 
+## Bug Sprint 12 — API & Backends Audit (BUG-083→090)
+
+Audited Docker CREATE direction (API→Docker), FaaS backend lifecycle consistency, core handler correctness, and Docker network/inspect field gaps. Found 8 real bugs — 2 Docker create mapping gaps (21 missing fields total), 1 cross-cutting FaaS pause/unpause bug across 3 backends, 3 core handler correctness bugs, and 2 Docker Aliases mapping gaps.
+
+- **BUG-083**: Docker `handleContainerCreate` now maps all 17 HostConfig fields (was 3) — added PortBindings, RestartPolicy, Privileged, CapAdd/CapDrop, Init, Mounts, LogConfig, etc.
+- **BUG-084**: Docker `handleContainerCreate` now maps all 19 Config fields (was 14) — added StdinOnce, Domainname, Shell, StopTimeout, ExposedPorts, Volumes, Healthcheck
+- **BUG-085**: Lambda/GCF/AZF now register `ContainerPause`/`ContainerUnpause` overrides returning `NotImplementedError` (was falling through to core which corrupted FaaS state)
+- **BUG-086**: Core `handleContainerPause` now checks `c.State.Paused` before `!c.State.Running`, returns `409 Conflict` for already-paused containers
+- **BUG-087**: Core `handleExecStart` now checks container existence (was discarding `ok` bool from `Store.Containers.Get`)
+- **BUG-088**: Core rename, pause, and unpause now emit Docker-compatible events via `emitEvent()`
+- **BUG-089**: Docker `handleNetworkConnect` now maps `Aliases` field to Docker SDK's `network.EndpointSettings`
+- **BUG-090**: Docker `mapContainerFromDocker` now maps `Aliases` in `NetworkSettings.Networks` endpoint mapping
+
+All 286 core tests pass. 0 lint issues across 19 modules.
+
 ## Project Stats
 
 - **80 phases** (1-67, 69-77, 79-82), 725 tasks completed

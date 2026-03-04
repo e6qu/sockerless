@@ -452,3 +452,99 @@ Network mapping skipped IPAM and Containers fields. Both exist in `api.Network`.
 ### Details
 
 Only mapped 5 of 19 `api.ContainerConfig` fields for image config: `Env`, `Cmd`, `Entrypoint`, `WorkingDir`, `Labels`. Fixed by mapping all remaining fields including `ExposedPorts`, `Volumes`, `Healthcheck`, `StopSignal`, `User`, `Hostname`, `Domainname`, `Tty`, `OpenStdin`, `StdinOnce`, `AttachStdin`, `AttachStdout`, `AttachStderr`, `Shell`, `StopTimeout`.
+
+---
+
+## BUG-083: Docker `handleContainerCreate` missing 14 HostConfig fields
+
+**Severity**: High
+**Component**: `backends/docker/containers.go`
+**Status**: Fixed — Sprint 12: map all 14 missing HostConfig fields including PortBindings, RestartPolicy, Mounts, LogConfig
+
+### Details
+
+Only forwarded 3 of 17 `api.HostConfig` fields to Docker SDK: `NetworkMode`, `Binds`, `AutoRemove`. Missing: `PortBindings`, `RestartPolicy`, `Privileged`, `CapAdd`, `CapDrop`, `Init`, `UsernsMode`, `ShmSize`, `Tmpfs`, `SecurityOpt`, `LogConfig`, `ExtraHosts`, `Mounts`, `Isolation`. Containers created through Docker backend silently dropped port bindings, restart policies, privilege settings, etc. Fixed by mapping all fields with `nat.PortMap` conversion for PortBindings and `mount.Mount` for Mounts.
+
+---
+
+## BUG-084: Docker `handleContainerCreate` missing 7 Config fields
+
+**Severity**: Medium
+**Component**: `backends/docker/containers.go`
+**Status**: Fixed — Sprint 12: map StdinOnce, Domainname, Shell, StopTimeout, ExposedPorts, Volumes, Healthcheck
+
+### Details
+
+Mapped 14 of 19 `api.ContainerConfig` fields to Docker's `container.Config`. Missing: `ExposedPorts`, `Volumes`, `Domainname`, `StdinOnce`, `Shell`, `StopTimeout`, `Healthcheck`. Fixed by mapping all missing fields with `nat.PortSet` conversion for ExposedPorts and `container.HealthConfig` for Healthcheck.
+
+---
+
+## BUG-085: FaaS backends missing pause/unpause overrides
+
+**Severity**: High
+**Component**: `backends/lambda/extended.go`, `backends/cloudrun-functions/extended.go`, `backends/azure-functions/extended.go`
+**Status**: Fixed — Sprint 12: added handleContainerPause/Unpause returning NotImplementedError
+
+### Details
+
+Lambda, GCF, and AZF didn't register `ContainerPause`/`ContainerUnpause` overrides. Fell through to core's handlers which set `State.Paused=true` and `State.Status="paused"` — corrupting FaaS container state (FaaS functions run to completion; pausing is meaningless). Contrast: ECS, CloudRun, and ACA all register proper overrides that return `NotImplementedError`. Fixed by adding the same pattern to all 3 FaaS backends.
+
+---
+
+## BUG-086: Core `handleContainerPause` doesn't check already-paused
+
+**Severity**: Medium
+**Component**: `backends/core/handle_extended.go`
+**Status**: Fixed — Sprint 12: added `c.State.Paused` check returning ConflictError
+
+### Details
+
+Only checked `!c.State.Running`. If container was already paused, it silently re-paused. Docker returns `409 Conflict: "Container X is already paused"`. Fixed by adding `c.State.Paused` check before the `!c.State.Running` check.
+
+---
+
+## BUG-087: Core `handleExecStart` missing container existence check
+
+**Severity**: Medium
+**Component**: `backends/core/handle_exec.go`
+**Status**: Fixed — Sprint 12: check `ok` bool, return ConflictError if container removed
+
+### Details
+
+`c, _ := s.Store.Containers.Get(exec.ContainerID)` discarded the `ok` boolean. If the container was deleted between exec create and exec start, `c` was a zero-value `api.Container` and the exec proceeded with empty config. Fixed by checking `ok` and returning ConflictError.
+
+---
+
+## BUG-088: Core rename, pause, and unpause missing event emission
+
+**Severity**: Medium
+**Component**: `backends/core/handle_extended.go`
+**Status**: Fixed — Sprint 12: added emitEvent calls for "rename", "pause", "unpause" actions
+
+### Details
+
+All lifecycle handlers in `handle_containers.go` call `s.emitEvent()` (create, start, stop, kill, destroy). But rename, pause, and unpause in `handle_extended.go` never emitted events. Docker emits `"rename"`, `"pause"`, and `"unpause"` events. Fixed by adding `s.emitEvent("container", ...)` after each successful operation.
+
+---
+
+## BUG-089: Docker `handleNetworkConnect` missing Aliases field
+
+**Severity**: Medium
+**Component**: `backends/docker/extended.go`
+**Status**: Fixed — Sprint 12: added `Aliases: req.EndpointConfig.Aliases`
+
+### Details
+
+Mapped `NetworkID`, `EndpointID`, `Gateway`, `IPAddress`, `MacAddress` to Docker's `network.EndpointSettings` but omitted `Aliases`. Both our `api.EndpointSettings` and Docker SDK's `network.EndpointSettings` have `Aliases`. Fixed by adding the field to the mapping.
+
+---
+
+## BUG-090: Docker `mapContainerFromDocker` missing Aliases in NetworkSettings
+
+**Severity**: Medium
+**Component**: `backends/docker/containers.go`
+**Status**: Fixed — Sprint 12: added `Aliases: ep.Aliases` to endpoint mapping
+
+### Details
+
+Sprint 10 expanded inspect mapping but `NetworkSettings.Networks` endpoint mapping still omitted `Aliases`. Fixed by adding `Aliases: ep.Aliases` to the `EndpointSettings` mapping in `mapContainerFromDocker`.

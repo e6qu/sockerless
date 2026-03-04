@@ -196,6 +196,11 @@ func (s *BaseServer) handleContainerRename(w http.ResponseWriter, r *http.Reques
 		c.Name = newName
 	})
 
+	s.emitEvent("container", "rename", id, map[string]string{
+		"name":    strings.TrimPrefix(newName, "/"),
+		"oldName": strings.TrimPrefix(oldName, "/"),
+	})
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -208,6 +213,12 @@ func (s *BaseServer) handleContainerPause(w http.ResponseWriter, r *http.Request
 	}
 
 	c, _ := s.Store.Containers.Get(id)
+	if c.State.Paused {
+		WriteError(w, &api.ConflictError{
+			Message: fmt.Sprintf("Container %s is already paused", ref),
+		})
+		return
+	}
 	if !c.State.Running {
 		WriteError(w, &api.ConflictError{
 			Message: fmt.Sprintf("Container %s is not running", ref),
@@ -218,6 +229,10 @@ func (s *BaseServer) handleContainerPause(w http.ResponseWriter, r *http.Request
 	s.Store.Containers.Update(id, func(c *api.Container) {
 		c.State.Paused = true
 		c.State.Status = "paused"
+	})
+
+	s.emitEvent("container", "pause", id, map[string]string{
+		"name": strings.TrimPrefix(c.Name, "/"),
 	})
 
 	w.WriteHeader(http.StatusNoContent)
@@ -242,6 +257,10 @@ func (s *BaseServer) handleContainerUnpause(w http.ResponseWriter, r *http.Reque
 	s.Store.Containers.Update(id, func(c *api.Container) {
 		c.State.Paused = false
 		c.State.Status = "running"
+	})
+
+	s.emitEvent("container", "unpause", id, map[string]string{
+		"name": strings.TrimPrefix(c.Name, "/"),
 	})
 
 	w.WriteHeader(http.StatusNoContent)
