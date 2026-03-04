@@ -88,7 +88,12 @@ func (s *Server) handleNetworkList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleNetworkInspect(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	n, err := s.docker.NetworkInspect(r.Context(), id, network.InspectOptions{})
+	verbose := r.URL.Query().Get("verbose") == "1" || r.URL.Query().Get("verbose") == "true"
+	scope := r.URL.Query().Get("scope")
+	n, err := s.docker.NetworkInspect(r.Context(), id, network.InspectOptions{
+		Verbose: verbose,
+		Scope:   scope,
+	})
 	if err != nil {
 		writeError(w, mapDockerError(err))
 		return

@@ -55,6 +55,7 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 				s.deleteJob(acaState.JobName)
 				s.Registry.MarkCleanedUp(acaState.JobName)
 			}
+			s.AgentRegistry.Remove(c.ID)
 			s.Store.Containers.Delete(c.ID)
 			s.Store.ContainerNames.Delete(c.Name)
 			s.ACA.Delete(c.ID)

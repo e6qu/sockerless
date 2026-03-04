@@ -299,13 +299,15 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 					body, _ := io.ReadAll(resp.Body)
 					resp.Body.Close()
 					if len(body) > 0 && string(body) != "{}" {
-						s.Store.LogBuffers.Store(id, body)
+						if c, ok := s.Store.Containers.Get(id); ok && c.State.Running {
+							s.Store.LogBuffers.Store(id, body)
+						}
 					}
 					if resp.StatusCode >= 400 {
 						exitCode = 1
 					}
 				}
-				if _, ok := s.Store.Containers.Get(id); ok {
+				if c, ok := s.Store.Containers.Get(id); ok && c.State.Running {
 					s.Store.StopContainer(id, exitCode)
 				}
 			}()

@@ -181,9 +181,9 @@ func (c *BackendClient) Info(ctx context.Context) (*api.BackendInfo, error) {
 	return &info, nil
 }
 
-// dialUpgrade sends an HTTP request to the backend and expects a 101 Upgrade response.
+// dialUpgradeCtx sends an HTTP request to the backend and expects a 101 Upgrade response.
 // It returns the raw bidirectional connection for streaming (exec/attach).
-func (c *BackendClient) dialUpgrade(method, path string, body any) (net.Conn, *bufio.Reader, error) {
+func (c *BackendClient) dialUpgradeCtx(ctx context.Context, method, path string, body any) (net.Conn, *bufio.Reader, error) {
 	u, err := url.Parse(c.url(path))
 	if err != nil {
 		return nil, nil, err
@@ -198,7 +198,8 @@ func (c *BackendClient) dialUpgrade(method, path string, body any) (net.Conn, *b
 		}
 	}
 
-	conn, err := net.DialTimeout("tcp", host, 10*time.Second)
+	dialer := net.Dialer{Timeout: 10 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", host)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to dial backend: %w", err)
 	}

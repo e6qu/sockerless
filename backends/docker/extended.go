@@ -382,6 +382,20 @@ func (s *Server) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 				Type:        p.Type,
 			})
 		}
+		if c.NetworkSettings != nil && len(c.NetworkSettings.Networks) > 0 {
+			nets := make(map[string]*api.EndpointSettings, len(c.NetworkSettings.Networks))
+			for name, ep := range c.NetworkSettings.Networks {
+				nets[name] = &api.EndpointSettings{
+					NetworkID:   ep.NetworkID,
+					EndpointID:  ep.EndpointID,
+					Gateway:     ep.Gateway,
+					IPAddress:   ep.IPAddress,
+					IPPrefixLen: ep.IPPrefixLen,
+					MacAddress:  ep.MacAddress,
+				}
+			}
+			cs.NetworkSettings = &api.SummaryNetworkSettings{Networks: nets}
+		}
 		containers = append(containers, cs)
 	}
 	if containers == nil {
@@ -449,6 +463,109 @@ func mapMountsFromDf(mounts []types.MountPoint) []api.MountPoint {
 		})
 	}
 	return result
+}
+
+// handleContainerUpdate updates container resources.
+func (s *Server) handleContainerUpdate(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var updateConfig container.UpdateConfig
+	if err := json.NewDecoder(r.Body).Decode(&updateConfig); err != nil {
+		writeError(w, &api.InvalidParameterError{Message: err.Error()})
+		return
+	}
+	resp, err := s.docker.ContainerUpdate(r.Context(), id, updateConfig)
+	if err != nil {
+		writeError(w, mapDockerError(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleContainerChanges returns filesystem changes in a container.
+func (s *Server) handleContainerChanges(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	changes, err := s.docker.ContainerDiff(r.Context(), id)
+	if err != nil {
+		writeError(w, mapDockerError(err))
+		return
+	}
+	var result []api.ContainerChangeItem
+	for _, c := range changes {
+		result = append(result, api.ContainerChangeItem{
+			Kind: int(c.Kind),
+			Path: c.Path,
+		})
+	}
+	if result == nil {
+		result = []api.ContainerChangeItem{}
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// handleContainerExport exports a container's filesystem as a tar archive.
+func (s *Server) handleContainerExport(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	rc, err := s.docker.ContainerExport(r.Context(), id)
+	if err != nil {
+		writeError(w, mapDockerError(err))
+		return
+	}
+	defer rc.Close()
+	w.Header().Set("Content-Type", "application/x-tar")
+	w.WriteHeader(http.StatusOK)
+	io.Copy(w, rc)
+}
+
+// handleContainerCommit creates a new image from a container's changes.
+func (s *Server) handleContainerCommit(w http.ResponseWriter, r *http.Request) {
+	containerID := r.URL.Query().Get("container")
+	repo := r.URL.Query().Get("repo")
+	tag := r.URL.Query().Get("tag")
+	comment := r.URL.Query().Get("comment")
+	author := r.URL.Query().Get("author")
+
+	resp, err := s.docker.ContainerCommit(r.Context(), containerID, container.CommitOptions{
+		Reference: repo + ":" + tag,
+		Comment:   comment,
+		Author:    author,
+	})
+	if err != nil {
+		writeError(w, mapDockerError(err))
+		return
+	}
+	writeJSON(w, http.StatusCreated, api.ContainerCommitResponse{ID: resp.ID})
+}
+
+// handleContainerResize resizes the TTY of a container.
+func (s *Server) handleContainerResize(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	h, _ := strconv.ParseUint(r.URL.Query().Get("h"), 10, 32)
+	cw, _ := strconv.ParseUint(r.URL.Query().Get("w"), 10, 32)
+	err := s.docker.ContainerResize(r.Context(), id, container.ResizeOptions{
+		Height: uint(h),
+		Width:  uint(cw),
+	})
+	if err != nil {
+		writeError(w, mapDockerError(err))
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleExecResize resizes the TTY of an exec instance.
+func (s *Server) handleExecResize(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	h, _ := strconv.ParseUint(r.URL.Query().Get("h"), 10, 32)
+	cw, _ := strconv.ParseUint(r.URL.Query().Get("w"), 10, 32)
+	err := s.docker.ContainerExecResize(r.Context(), id, container.ResizeOptions{
+		Height: uint(h),
+		Width:  uint(cw),
+	})
+	if err != nil {
+		writeError(w, mapDockerError(err))
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 // Prevent unused import errors

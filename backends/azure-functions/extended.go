@@ -50,6 +50,7 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 				s.Registry.MarkCleanedUp(azfState.ResourceID)
 			}
 
+			s.AgentRegistry.Remove(c.ID)
 			s.Store.Containers.Delete(c.ID)
 			s.Store.ContainerNames.Delete(c.Name)
 			s.AZF.Delete(c.ID)

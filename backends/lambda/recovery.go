@@ -11,32 +11,36 @@ import (
 
 // ScanOrphanedResources discovers Sockerless-managed Lambda functions.
 func (s *Server) ScanOrphanedResources(ctx context.Context, instanceID string) ([]core.ResourceEntry, error) {
-	listResult, err := s.aws.Lambda.ListFunctions(ctx, &awslambda.ListFunctionsInput{})
-	if err != nil {
-		return nil, err
-	}
-
 	var orphans []core.ResourceEntry
-	for _, fn := range listResult.Functions {
-		arn := aws.ToString(fn.FunctionArn)
-		tagsResult, err := s.aws.Lambda.ListTags(ctx, &awslambda.ListTagsInput{
-			Resource: aws.String(arn),
-		})
+
+	paginator := awslambda.NewListFunctionsPaginator(s.aws.Lambda, &awslambda.ListFunctionsInput{})
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
 		if err != nil {
-			continue
+			return nil, err
 		}
 
-		managed := tagsResult.Tags["sockerless-managed"] == "true"
-		matchesInstance := tagsResult.Tags["sockerless-instance"] == instanceID
-
-		if managed && matchesInstance {
-			orphans = append(orphans, core.ResourceEntry{
-				Backend:      "lambda",
-				ResourceType: "function",
-				ResourceID:   arn,
-				InstanceID:   instanceID,
-				CreatedAt:    time.Now(),
+		for _, fn := range page.Functions {
+			arn := aws.ToString(fn.FunctionArn)
+			tagsResult, err := s.aws.Lambda.ListTags(ctx, &awslambda.ListTagsInput{
+				Resource: aws.String(arn),
 			})
+			if err != nil {
+				continue
+			}
+
+			managed := tagsResult.Tags["sockerless-managed"] == "true"
+			matchesInstance := tagsResult.Tags["sockerless-instance"] == instanceID
+
+			if managed && matchesInstance {
+				orphans = append(orphans, core.ResourceEntry{
+					Backend:      "lambda",
+					ResourceType: "function",
+					ResourceID:   arn,
+					InstanceID:   instanceID,
+					CreatedAt:    time.Now(),
+				})
+			}
 		}
 	}
 

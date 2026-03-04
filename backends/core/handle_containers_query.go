@@ -84,7 +84,10 @@ func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request)
 	// Apply before/since post-filters (need Store access to resolve references)
 	if beforeRef := filters["before"]; len(beforeRef) > 0 {
 		if bc, ok := s.Store.ResolveContainer(beforeRef[0]); ok {
-			beforeTime, _ := time.Parse(time.RFC3339Nano, bc.Created)
+			beforeTime, err := time.Parse(time.RFC3339Nano, bc.Created)
+			if err != nil {
+				beforeTime, _ = time.Parse(time.RFC3339, bc.Created)
+			}
 			var filtered []*api.ContainerSummary
 			for _, cs := range result {
 				if cs.Created < beforeTime.Unix() {
@@ -96,7 +99,10 @@ func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request)
 	}
 	if sinceRef := filters["since"]; len(sinceRef) > 0 {
 		if sc, ok := s.Store.ResolveContainer(sinceRef[0]); ok {
-			sinceTime, _ := time.Parse(time.RFC3339Nano, sc.Created)
+			sinceTime, err := time.Parse(time.RFC3339Nano, sc.Created)
+			if err != nil {
+				sinceTime, _ = time.Parse(time.RFC3339, sc.Created)
+			}
 			var filtered []*api.ContainerSummary
 			for _, cs := range result {
 				if cs.Created > sinceTime.Unix() {

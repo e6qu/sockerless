@@ -152,6 +152,19 @@ func (s *BaseServer) execHealthCheck(ctx context.Context, containerID string, cm
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	execID := "healthcheck-" + GenerateID()[:8]
+
+	// Track the exec in Store.Execs so it's visible to the exec API
+	s.Store.Execs.Put(execID, api.ExecInstance{
+		ID:          execID,
+		ContainerID: containerID,
+		Running:     true,
+		ProcessConfig: api.ExecProcessConfig{
+			Entrypoint: cmd[0],
+			Arguments:  cmd[1:],
+		},
+	})
+
 	clientConn, serverConn := net.Pipe()
 	var exitCode int
 	done := make(chan struct{})
@@ -159,7 +172,7 @@ func (s *BaseServer) execHealthCheck(ctx context.Context, containerID string, cm
 	go func() {
 		defer close(done)
 		defer serverConn.Close()
-		exitCode = s.Drivers.Exec.Exec(execCtx, containerID, "healthcheck-"+GenerateID()[:8],
+		exitCode = s.Drivers.Exec.Exec(execCtx, containerID, execID,
 			cmd, nil, "", true, serverConn)
 	}()
 
@@ -167,6 +180,12 @@ func (s *BaseServer) execHealthCheck(ctx context.Context, containerID string, cm
 	_, _ = io.Copy(&buf, clientConn)
 	clientConn.Close()
 	<-done
+
+	// Update exec to non-running
+	s.Store.Execs.Update(execID, func(e *api.ExecInstance) {
+		e.Running = false
+		e.ExitCode = exitCode
+	})
 
 	return exitCode, buf.String()
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -225,10 +226,10 @@ func (s *BaseServer) handleImageTag(w http.ResponseWriter, r *http.Request) {
 	newRef := repo + ":" + tag
 	img.RepoTags = append(img.RepoTags, newRef)
 
-	// Update existing and store under new reference
-	s.Store.Images.Put(img.ID, img)
-	s.Store.Images.Put(newRef, img)
-	s.Store.Images.Put(repo, img)
+	// Update all existing aliases to reflect the new RepoTags list
+	for _, existingTag := range img.RepoTags {
+		StoreImageWithAliases(s.Store, existingTag, img)
+	}
 
 	w.WriteHeader(http.StatusCreated)
 }
@@ -289,6 +290,11 @@ func (s *BaseServer) handleImageRemove(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
+
+	// Clean up build context staging directory
+	if stagingDir, ok := s.Store.BuildContexts.LoadAndDelete(img.ID); ok {
+		os.RemoveAll(stagingDir.(string))
 	}
 
 	s.Store.Images.Delete(img.ID)

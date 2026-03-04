@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 
 	"github.com/sockerless/api"
 )
@@ -55,7 +56,7 @@ func (s *Server) handleExecStart(w http.ResponseWriter, r *http.Request) {
 
 	// Dial the backend with connection upgrade for bidirectional streaming.
 	// The backend handles agent communication internally if needed.
-	backendConn, backendBuf, err := s.backend.dialUpgrade("POST", "/exec/"+id+"/start", &req)
+	backendConn, backendBuf, err := s.backend.dialUpgradeCtx(r.Context(), "POST", "/exec/"+id+"/start", &req)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -120,5 +121,19 @@ func (s *Server) handleExecStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleExecResize(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
+	id := r.PathValue("id")
+	query := url.Values{}
+	if h := r.URL.Query().Get("h"); h != "" {
+		query.Set("h", h)
+	}
+	if cw := r.URL.Query().Get("w"); cw != "" {
+		query.Set("w", cw)
+	}
+	resp, err := s.backend.postWithQuery(r.Context(), "/exec/"+id+"/resize", query, nil)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer resp.Body.Close()
+	proxyPassthrough(w, resp)
 }

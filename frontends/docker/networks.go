@@ -51,7 +51,14 @@ func (s *Server) handleNetworkList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleNetworkInspect(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	resp, err := s.backend.get(r.Context(), "/networks/"+id)
+	query := url.Values{}
+	if verbose := r.URL.Query().Get("verbose"); verbose != "" {
+		query.Set("verbose", verbose)
+	}
+	if scope := r.URL.Query().Get("scope"); scope != "" {
+		query.Set("scope", scope)
+	}
+	resp, err := s.backend.getWithQuery(r.Context(), "/networks/"+id, query)
 	if err != nil {
 		writeError(w, err)
 		return

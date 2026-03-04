@@ -138,6 +138,15 @@ func extractTar(r io.Reader, destDir string) error {
 				return err
 			}
 			_ = f.Close()
+		case tar.TypeSymlink:
+			_ = os.MkdirAll(filepath.Dir(target), 0755)
+			_ = os.Remove(target)
+			_ = os.Symlink(hdr.Linkname, target)
+		case tar.TypeLink:
+			linkTarget := filepath.Join(destDir, filepath.Clean(hdr.Linkname))
+			_ = os.MkdirAll(filepath.Dir(target), 0755)
+			_ = os.Remove(target)
+			_ = os.Link(linkTarget, target)
 		}
 	}
 }

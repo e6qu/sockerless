@@ -199,6 +199,15 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		functionURL = result.ServiceConfig.Uri
 	}
 
+	s.Store.Containers.Put(id, container)
+	s.Store.ContainerNames.Put(name, id)
+	s.GCF.Put(id, GCFState{
+		FunctionName: funcName,
+		FunctionURL:  functionURL,
+		LogResource:  funcName,
+		AgentToken:   agentToken,
+	})
+
 	s.Registry.Register(core.ResourceEntry{
 		ContainerID:  id,
 		Backend:      "gcf",
@@ -207,15 +216,6 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		InstanceID:   s.Desc.InstanceID,
 		CreatedAt:    time.Now(),
 		Metadata:     map[string]string{"image": container.Image, "name": container.Name, "functionName": funcName},
-	})
-
-	s.Store.Containers.Put(id, container)
-	s.Store.ContainerNames.Put(name, id)
-	s.GCF.Put(id, GCFState{
-		FunctionName: funcName,
-		FunctionURL:  functionURL,
-		LogResource:  funcName,
-		AgentToken:   agentToken,
 	})
 
 	core.WriteJSON(w, http.StatusCreated, api.ContainerCreateResponse{
@@ -277,13 +277,15 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 					body, _ := io.ReadAll(resp.Body)
 					resp.Body.Close()
 					if len(body) > 0 && string(body) != "{}" {
-						s.Store.LogBuffers.Store(id, body)
+						if c, ok := s.Store.Containers.Get(id); ok && c.State.Running {
+							s.Store.LogBuffers.Store(id, body)
+						}
 					}
 					if resp.StatusCode >= 400 {
 						exitCode = 1
 					}
 				}
-				if _, ok := s.Store.Containers.Get(id); ok {
+				if c, ok := s.Store.Containers.Get(id); ok && c.State.Running {
 					s.Store.StopContainer(id, exitCode)
 				}
 			}()

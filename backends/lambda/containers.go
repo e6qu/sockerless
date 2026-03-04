@@ -197,6 +197,14 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 
 	functionARN := aws.ToString(result.FunctionArn)
 
+	s.Store.Containers.Put(id, container)
+	s.Store.ContainerNames.Put(name, id)
+	s.Lambda.Put(id, LambdaState{
+		FunctionName: funcName,
+		FunctionARN:  functionARN,
+		AgentToken:   agentToken,
+	})
+
 	s.Registry.Register(core.ResourceEntry{
 		ContainerID:  id,
 		Backend:      "lambda",
@@ -205,14 +213,6 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		InstanceID:   s.Desc.InstanceID,
 		CreatedAt:    time.Now(),
 		Metadata:     map[string]string{"image": container.Image, "name": container.Name, "functionName": funcName},
-	})
-
-	s.Store.Containers.Put(id, container)
-	s.Store.ContainerNames.Put(name, id)
-	s.Lambda.Put(id, LambdaState{
-		FunctionName: funcName,
-		FunctionARN:  functionARN,
-		AgentToken:   agentToken,
 	})
 
 	core.WriteJSON(w, http.StatusCreated, api.ContainerCreateResponse{
@@ -279,10 +279,12 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 					}
 					// Store response payload in log buffer for container logs
 					if len(result.Payload) > 0 && string(result.Payload) != "{}" {
-						s.Store.LogBuffers.Store(id, result.Payload)
+						if c, ok := s.Store.Containers.Get(id); ok && c.State.Running {
+							s.Store.LogBuffers.Store(id, result.Payload)
+						}
 					}
 				}
-				if _, ok := s.Store.Containers.Get(id); ok {
+				if c, ok := s.Store.Containers.Get(id); ok && c.State.Running {
 					s.Store.StopContainer(id, exitCode)
 				}
 			}()

@@ -135,6 +135,7 @@ type Store struct {
 	StagingDirs    sync.Map // containerID → string (pre-start archive staging dir)
 	HealthChecks   sync.Map // containerID → context.CancelFunc
 	BuildContexts  sync.Map // imageID → string (temp dir with COPY files at destination paths)
+	TmpfsDirs      sync.Map // containerID → []string (tmpfs temp dir paths)
 	IPAlloc        *IPAllocator
 	RenameMu       sync.Mutex
 	RestartHook    func(containerID string, exitCode int) bool

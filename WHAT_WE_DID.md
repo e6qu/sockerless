@@ -81,13 +81,14 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 | 20 | BUG-158→176 | Core kill/stop events, cloud restart parity, AgentRegistry leak, API types |
 | 21 | BUG-177→201 | Resource leaks, cloud parity, Docker field mapping, lifecycle safety |
 | 22 | BUG-202→226 | Core lifecycle safety, Docker API parity, API type gaps, frontend conformance |
+| 23 | BUG-227→251 | Forward agent fix (CloudRun/ACA), Docker parity, lifecycle safety |
 
-43 open bugs remain — see `BUGS.md`.
+18 open bugs remain — see `BUGS.md`.
 
 ## Project Stats
 
 - **80 phases** (1-67, 69-77, 79-82), 725 tasks completed
-- **22 bug sprints**, 226 bugs fixed (BUG-001→226), 43 open
+- **23 bug sprints**, 251 bugs fixed (BUG-001→251), 18 open
 - **18 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, CLI, admin, tests
 - **Core tests**: 302 PASS | **Frontend**: 7 | **UI (Vitest)**: 92 | **Admin**: 88 | **bleephub**: 304 | **gitlabhub**: 136 | **ProcessRunner**: 15
 - **Cloud SDK**: AWS 42, GCP 43, Azure 38 | **Cloud CLI**: AWS 26, GCP 21, Azure 19

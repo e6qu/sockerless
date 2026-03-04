@@ -2,6 +2,7 @@ package azf
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	core "github.com/sockerless/backend-core"
@@ -54,10 +55,7 @@ func (s *Server) ScanOrphanedResources(ctx context.Context, instanceID string) (
 func (s *Server) CleanupResource(ctx context.Context, entry core.ResourceEntry) error {
 	// Extract function app name from resource ID
 	// Resource IDs look like: /subscriptions/.../resourceGroups/.../providers/Microsoft.Web/sites/<name>
-	name := ""
-	if azfState, ok := findAZFByResourceID(s, entry.ResourceID); ok {
-		name = azfState.FunctionAppName
-	}
+	name := extractResourceName(entry.ResourceID)
 	if name == "" {
 		return nil
 	}
@@ -65,11 +63,10 @@ func (s *Server) CleanupResource(ctx context.Context, entry core.ResourceEntry) 
 	return err
 }
 
-func findAZFByResourceID(s *Server, resourceID string) (AZFState, bool) {
-	for _, state := range s.AZF.List() {
-		if state.ResourceID == resourceID {
-			return state, true
-		}
+// extractResourceName extracts the last path segment from an Azure resource ID.
+func extractResourceName(resourceID string) string {
+	if i := strings.LastIndex(resourceID, "/"); i >= 0 && i < len(resourceID)-1 {
+		return resourceID[i+1:]
 	}
-	return AZFState{}, false
+	return ""
 }

@@ -290,7 +290,10 @@ func (s *Server) handleContainerInspect(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	err := s.docker.ContainerStart(r.Context(), id, container.StartOptions{})
+	err := s.docker.ContainerStart(r.Context(), id, container.StartOptions{
+		CheckpointID:  r.URL.Query().Get("checkpoint"),
+		CheckpointDir: r.URL.Query().Get("checkpointDir"),
+	})
 	if err != nil {
 		writeError(w, mapDockerError(err))
 		return
@@ -350,6 +353,7 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		ShowStderr: r.URL.Query().Get("stderr") == "1" || r.URL.Query().Get("stderr") == "true",
 		Follow:     r.URL.Query().Get("follow") == "1" || r.URL.Query().Get("follow") == "true",
 		Timestamps: r.URL.Query().Get("timestamps") == "1" || r.URL.Query().Get("timestamps") == "true",
+		Details:    r.URL.Query().Get("details") == "1" || r.URL.Query().Get("details") == "true",
 		Tail:       r.URL.Query().Get("tail"),
 		Since:      r.URL.Query().Get("since"),
 		Until:      r.URL.Query().Get("until"),
@@ -391,10 +395,12 @@ func (s *Server) handleContainerAttach(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	resp, err := s.docker.ContainerAttach(r.Context(), id, container.AttachOptions{
-		Stream: true,
-		Stdin:  r.URL.Query().Get("stdin") == "1",
-		Stdout: r.URL.Query().Get("stdout") != "0",
-		Stderr: r.URL.Query().Get("stderr") != "0",
+		Stream:     true,
+		Stdin:      r.URL.Query().Get("stdin") == "1",
+		Stdout:     r.URL.Query().Get("stdout") != "0",
+		Stderr:     r.URL.Query().Get("stderr") != "0",
+		Logs:       r.URL.Query().Get("logs") == "1",
+		DetachKeys: r.URL.Query().Get("detachKeys"),
 	})
 	if err != nil {
 		writeError(w, mapDockerError(err))
@@ -428,6 +434,11 @@ func (s *Server) handleContainerAttach(w http.ResponseWriter, r *http.Request) {
 	buf.WriteString("Upgrade: tcp\r\n")
 	buf.WriteString("\r\n")
 	buf.Flush()
+
+	// Stdin: client → Docker
+	if r.URL.Query().Get("stdin") == "1" {
+		go func() { _, _ = io.Copy(resp.Conn, conn) }()
+	}
 
 	io.Copy(conn, resp.Reader)
 }
