@@ -28,6 +28,7 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 			s.Store.ContainerNames.Delete(c.Name)
 			s.ECS.Delete(c.ID)
 			s.Store.WaitChs.Delete(c.ID)
+			s.Store.LogBuffers.Delete(c.ID)
 			deleted = append(deleted, c.ID)
 		}
 	}

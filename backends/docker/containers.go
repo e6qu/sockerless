@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	dockerimage "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sockerless/api"
@@ -120,6 +121,24 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Map NetworkingConfig
+	var networkingConfig *network.NetworkingConfig
+	if req.NetworkingConfig != nil && len(req.NetworkingConfig.EndpointsConfig) > 0 {
+		networkingConfig = &network.NetworkingConfig{
+			EndpointsConfig: make(map[string]*network.EndpointSettings, len(req.NetworkingConfig.EndpointsConfig)),
+		}
+		for name, ep := range req.NetworkingConfig.EndpointsConfig {
+			networkingConfig.EndpointsConfig[name] = &network.EndpointSettings{
+				NetworkID:  ep.NetworkID,
+				EndpointID: ep.EndpointID,
+				Gateway:    ep.Gateway,
+				IPAddress:  ep.IPAddress,
+				MacAddress: ep.MacAddress,
+				Aliases:    ep.Aliases,
+			}
+		}
+	}
+
 	// Auto-pull image if needed
 	_, _, err := s.docker.ImageInspectWithRaw(r.Context(), config.Image)
 	if err != nil {
@@ -132,7 +151,7 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		rc.Close()
 	}
 
-	resp, err := s.docker.ContainerCreate(r.Context(), config, hostConfig, nil, (*ocispec.Platform)(nil), name)
+	resp, err := s.docker.ContainerCreate(r.Context(), config, hostConfig, networkingConfig, (*ocispec.Platform)(nil), name)
 	if err != nil {
 		writeError(w, mapDockerError(err))
 		return
@@ -191,6 +210,7 @@ func (s *Server) handleContainerList(w http.ResponseWriter, r *http.Request) {
 					IPAddress:   ep.IPAddress,
 					IPPrefixLen: ep.IPPrefixLen,
 					MacAddress:  ep.MacAddress,
+					Aliases:     ep.Aliases,
 				}
 			}
 			summary.NetworkSettings = &api.SummaryNetworkSettings{Networks: nets}
@@ -351,13 +371,20 @@ func (s *Server) handleContainerAttach(w http.ResponseWriter, r *http.Request) {
 
 func mapContainerFromDocker(info types.ContainerJSON) api.Container {
 	c := api.Container{
-		ID:      info.ID,
-		Name:    info.Name,
-		Created: info.Created,
-		Path:    info.Path,
-		Args:    info.Args,
-		Image:   info.Image,
-		Driver:  info.Driver,
+		ID:             info.ID,
+		Name:           info.Name,
+		Created:        info.Created,
+		Path:           info.Path,
+		Args:           info.Args,
+		Image:          info.Image,
+		Driver:         info.Driver,
+		Platform:       info.Platform,
+		RestartCount:   info.RestartCount,
+		LogPath:        info.LogPath,
+		ResolvConfPath: info.ResolvConfPath,
+		HostnamePath:   info.HostnamePath,
+		HostsPath:      info.HostsPath,
+		ExecIDs:        info.ExecIDs,
 	}
 
 	if info.State != nil {

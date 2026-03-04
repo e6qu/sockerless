@@ -177,6 +177,21 @@ Audited Docker CREATE direction (API→Docker), FaaS backend lifecycle consisten
 
 All 286 core tests pass. 0 lint issues across 19 modules.
 
+## Bug Sprint 13 — API & Backends Audit (BUG-091→098)
+
+Audited Docker create NetworkingConfig gap, container backend prune/remove cleanup gaps, and Docker inspect/list/network/image remaining field gaps. Found 8 real bugs — 1 high-severity Docker create NetworkingConfig drop, 1 high-severity cross-cutting LogBuffers memory leak across 3 container backends, 1 cross-cutting Registry.MarkCleanedUp gap in 2 backends, and 5 Docker passthrough field mapping gaps.
+
+- **BUG-091**: Docker `handleContainerCreate` now maps `NetworkingConfig` to Docker SDK's `network.NetworkingConfig` (was hardcoded `nil`, dropping network pre-connect config)
+- **BUG-092**: ECS/CloudRun/ACA now call `s.Store.LogBuffers.Delete(id)` in both prune and remove handlers (6 locations total — was leaking log buffers indefinitely)
+- **BUG-093**: CloudRun/ACA prune now calls `s.Registry.MarkCleanedUp(...)` after `deleteJob` (ECS already had it; remove handlers had it but prune didn't)
+- **BUG-094**: Docker `mapContainerFromDocker` now maps `RestartCount` and `ExecIDs`
+- **BUG-095**: Docker `mapContainerFromDocker` now maps `Platform`, `LogPath`, `ResolvConfPath`, `HostnamePath`, `HostsPath`
+- **BUG-096**: Docker `handleNetworkCreate` now forwards `IPAM.Options` (inspect path already mapped it back)
+- **BUG-097**: Docker `handleImageInspect` now maps `Parent` and `Comment`
+- **BUG-098**: Docker container list now maps `Aliases` in network endpoint settings (Sprint 12 BUG-090 only fixed inspect)
+
+All 286 core tests pass. 0 lint issues across 19 modules.
+
 ## Project Stats
 
 - **80 phases** (1-67, 69-77, 79-82), 725 tasks completed

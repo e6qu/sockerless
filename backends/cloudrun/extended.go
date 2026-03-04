@@ -44,11 +44,13 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 			crState, _ := s.CloudRun.Get(c.ID)
 			if crState.JobName != "" {
 				s.deleteJob(crState.JobName)
+				s.Registry.MarkCleanedUp(crState.JobName)
 			}
 			s.Store.Containers.Delete(c.ID)
 			s.Store.ContainerNames.Delete(c.Name)
 			s.CloudRun.Delete(c.ID)
 			s.Store.WaitChs.Delete(c.ID)
+			s.Store.LogBuffers.Delete(c.ID)
 			deleted = append(deleted, c.ID)
 		}
 	}

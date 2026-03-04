@@ -44,11 +44,13 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 			acaState, _ := s.ACA.Get(c.ID)
 			if acaState.JobName != "" {
 				s.deleteJob(acaState.JobName)
+				s.Registry.MarkCleanedUp(acaState.JobName)
 			}
 			s.Store.Containers.Delete(c.ID)
 			s.Store.ContainerNames.Delete(c.Name)
 			s.ACA.Delete(c.ID)
 			s.Store.WaitChs.Delete(c.ID)
+			s.Store.LogBuffers.Delete(c.ID)
 			deleted = append(deleted, c.ID)
 		}
 	}
