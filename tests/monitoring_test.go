@@ -115,10 +115,19 @@ func TestContainerStatsNotRunning(t *testing.T) {
 	}, nil)
 	defer removeContainer(t, id)
 
-	// Don't start the container — stats should fail
-	_, err := dockerClient.ContainerStats(ctx, id, false)
-	if err == nil {
-		t.Error("expected error for stats on non-running container")
+	// Don't start the container — stats with stream=false should return a snapshot (BUG-297)
+	resp, err := dockerClient.ContainerStats(ctx, id, false)
+	if err != nil {
+		t.Fatalf("expected stats snapshot for non-running container, got error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var stats map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
+		t.Fatalf("failed to decode stats: %v", err)
+	}
+	if _, ok := stats["id"]; !ok {
+		t.Error("stats response missing 'id' field")
 	}
 }
 
