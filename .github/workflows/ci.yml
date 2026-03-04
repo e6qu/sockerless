@@ -28,10 +28,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - suite: agent
-            cmd: cd agent && go test -v -race -timeout 2m ./...
-          - suite: sandbox
-            cmd: cd sandbox && go test -v -timeout 5m ./...
           - suite: core
             cmd: cd backends/core && go test -v -timeout 2m ./...
           - suite: frontend
@@ -40,13 +36,17 @@ jobs:
             cmd: cd bleephub && go test -tags noui -v -timeout 3m ./...
           - suite: gitlabhub
             cmd: cd gitlabhub && go test -tags noui -v -timeout 3m ./...
-          - suite: sim-shared
-            cmd: |
-              cd simulators/aws/shared && GOWORK=off go test -v -timeout 1m ./...
-              cd ../../../simulators/gcp/shared && GOWORK=off go test -v -timeout 1m ./...
-              cd ../../../simulators/azure/shared && GOWORK=off go test -v -timeout 1m ./...
+          - suite: sandbox
+            cmd: cd sandbox && go test -v -timeout 5m ./...
           - suite: e2e
             cmd: cd tests && go test -v -timeout 5m ./...
+          - suite: fast
+            cmd: |
+              cd agent && go test -v -race -timeout 2m ./...
+              cd ../cmd/sockerless-admin && go test -tags noui -v -timeout 2m ./...
+              cd ../../simulators/aws/shared && GOWORK=off go test -v -timeout 1m ./...
+              cd ../../../simulators/gcp/shared && GOWORK=off go test -v -timeout 1m ./...
+              cd ../../../simulators/azure/shared && GOWORK=off go test -v -timeout 1m ./...
     name: test (${{ matrix.suite }})
     steps:
       - uses: actions/checkout@v4
@@ -95,8 +95,35 @@ jobs:
         with:
           go-version: '1.25'
           cache: true
-      - name: Build all binaries
+      - name: Build all binaries (amd64)
         env:
+          GOWORK: "off"
+        run: |
+          set -e
+          build() { echo "=== $1 ===" && (cd "$1" && go build -o /dev/null "$2"); }
+          noui() { echo "=== $1 (noui) ===" && (cd "$1" && go build -tags noui -o /dev/null "$2"); }
+          noui bleephub ./cmd
+          noui frontends/docker ./cmd
+          build cmd/sockerless .
+          build agent ./cmd/sockerless-agent
+          noui backends/memory ./cmd
+          noui backends/ecs ./cmd/sockerless-backend-ecs
+          noui backends/lambda ./cmd/sockerless-backend-lambda
+          noui backends/cloudrun ./cmd/sockerless-backend-cloudrun
+          noui backends/cloudrun-functions ./cmd/sockerless-backend-gcf
+          noui backends/aca ./cmd/sockerless-backend-aca
+          noui backends/azure-functions ./cmd/sockerless-backend-azf
+          noui backends/docker ./cmd
+          noui gitlabhub ./cmd
+          noui simulators/aws .
+          noui simulators/gcp .
+          noui simulators/azure .
+          noui cmd/sockerless-admin .
+      - name: Cross-compile all binaries (arm64)
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: "0"
           GOWORK: "off"
         run: |
           set -e
@@ -142,39 +169,3 @@ jobs:
           docker build -t smoke-act-${{ matrix.backend }} -f ${{ matrix.dockerfile }} .
           docker run --rm smoke-act-${{ matrix.backend }}
         timeout-minutes: 10
-
-  build-check-arm64:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-          cache: true
-      - name: Cross-compile all binaries for ARM64
-        env:
-          GOOS: linux
-          GOARCH: arm64
-          CGO_ENABLED: "0"
-          GOWORK: "off"
-        run: |
-          set -e
-          build() { echo "=== $1 ===" && (cd "$1" && go build -o /dev/null "$2"); }
-          noui() { echo "=== $1 (noui) ===" && (cd "$1" && go build -tags noui -o /dev/null "$2"); }
-          noui bleephub ./cmd
-          noui frontends/docker ./cmd
-          build cmd/sockerless .
-          build agent ./cmd/sockerless-agent
-          noui backends/memory ./cmd
-          noui backends/ecs ./cmd/sockerless-backend-ecs
-          noui backends/lambda ./cmd/sockerless-backend-lambda
-          noui backends/cloudrun ./cmd/sockerless-backend-cloudrun
-          noui backends/cloudrun-functions ./cmd/sockerless-backend-gcf
-          noui backends/aca ./cmd/sockerless-backend-aca
-          noui backends/azure-functions ./cmd/sockerless-backend-azf
-          noui backends/docker ./cmd
-          noui gitlabhub ./cmd
-          noui simulators/aws .
-          noui simulators/gcp .
-          noui simulators/azure .
-          noui cmd/sockerless-admin .
