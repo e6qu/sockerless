@@ -183,8 +183,7 @@ func (st *Store) ForceStopContainer(id string, exitCode int) {
 
 // RevertToCreated reverts a container from "running" back to "created" state.
 // Used when a cloud operation fails after the container was optimistically set to running.
-// The wait channel is deleted but NOT closed — closing would cause waiters to read
-// a false exit code 0 even though the container never ran successfully.
+// The wait channel is closed so waiters are unblocked and can observe the reverted state.
 func (st *Store) RevertToCreated(id string) {
 	st.Containers.Update(id, func(c *api.Container) {
 		c.State.Status = "created"
@@ -192,7 +191,9 @@ func (st *Store) RevertToCreated(id string) {
 		c.State.Pid = 0
 		c.State.StartedAt = "0001-01-01T00:00:00Z"
 	})
-	st.WaitChs.Delete(id)
+	if ch, ok := st.WaitChs.LoadAndDelete(id); ok {
+		close(ch.(chan struct{}))
+	}
 }
 
 func (st *Store) forceStop(id string, exitCode int) {

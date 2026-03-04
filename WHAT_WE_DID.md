@@ -58,9 +58,9 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 | 81 | Admin: ProcessManager, cleanup scanner, ProviderInfo |
 | 82 | Admin Projects: orchestrated sim+backend+frontend bundles, port allocator, 4 UI pages |
 
-## Bug Fix Sprints (BUG-001 → BUG-138)
+## Bug Fix Sprints (BUG-001 → BUG-336)
 
-138 bugs fixed across 18 sprints. Per-sprint details in `_tasks/done/BUG-SPRINT-*.md`.
+311 bugs fixed across 27 sprints. Per-sprint details in `_tasks/done/BUG-SPRINT-*.md`.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
@@ -85,13 +85,18 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 | 24 | BUG-252→269 | Final 18: BuildCache, FaaS image config, events, image load, LRO waits, API types |
 | 25 | BUG-270→294 | Core lifecycle, API serialization, cloud parity, Docker field mapping |
 | 26 | BUG-295→319 | WaitCh leaks, HTTP status codes, symlink traversal, cloud events, API types |
+| 27 | BUG-320→336 | WaitChs.Delete close gaps (all 8 backends), ACA restart guard, Docker commit ref, frontend logs query param |
 
 0 open bugs remain — see `BUGS.md`.
+
+## Sprint 27 Summary (BUG-320 → BUG-336)
+
+17 bugs fixed. The dominant pattern was `WaitChs.Delete` calls that deleted the channel from the map without closing it first, leaving any goroutine blocked on `<-ch` waiting forever. This affected `handleContainerRemove` and `handleContainerPrune` across all six cloud backends (ECS, CloudRun, ACA, Lambda, GCF, AZF) plus two core paths (`handleContainerRemove` and `store.RevertToCreated`) — 14 fixes in total. Two additional correctness bugs were fixed: ACA `handleContainerRestart` called `MarkCleanedUp` without an empty-check guard and deleted container state prematurely before the re-create sequence completed (BUG-334); and Docker `handleContainerCommit` constructed an image reference as `"repo:"` when the tag parameter was empty, producing an invalid ref that would be rejected by image stores (BUG-335). Finally, the frontend `handleContainerLogs` was not forwarding the `details` query parameter to the backend, silently dropping it for any client that set it (BUG-336).
 
 ## Project Stats
 
 - **80 phases** (1-67, 69-77, 79-82), 725 tasks completed
-- **26 bug sprints**, 294 bugs fixed (BUG-001→294), 0 open
+- **27 bug sprints**, 311 bugs fixed (BUG-001→336), 0 open
 - **18 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, CLI, admin, tests
 - **Core tests**: 302 PASS | **Frontend**: 7 | **UI (Vitest)**: 92 | **Admin**: 88 | **bleephub**: 304 | **gitlabhub**: 136 | **ProcessRunner**: 15
 - **Cloud SDK**: AWS 42, GCP 43, Azure 38 | **Cloud CLI**: AWS 26, GCP 21, Azure 19

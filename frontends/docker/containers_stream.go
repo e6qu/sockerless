@@ -9,7 +9,7 @@ import (
 func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	query := url.Values{}
-	for _, key := range []string{"stdout", "stderr", "follow", "timestamps", "tail", "since", "until"} {
+	for _, key := range []string{"stdout", "stderr", "follow", "timestamps", "tail", "since", "until", "details"} {
 		if v := r.URL.Query().Get(key); v != "" {
 			query.Set(key, v)
 		}

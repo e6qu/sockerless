@@ -546,7 +546,12 @@ func (s *Server) handleContainerCommit(w http.ResponseWriter, r *http.Request) {
 	author := r.URL.Query().Get("author")
 
 	resp, err := s.docker.ContainerCommit(r.Context(), containerID, container.CommitOptions{
-		Reference: repo + ":" + tag,
+		Reference: func() string {
+			if tag != "" {
+				return repo + ":" + tag
+			}
+			return repo
+		}(),
 		Comment:   comment,
 		Author:    author,
 	})

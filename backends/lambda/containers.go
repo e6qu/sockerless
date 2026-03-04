@@ -472,7 +472,9 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 	s.Store.Containers.Delete(id)
 	s.Store.ContainerNames.Delete(c.Name)
 	s.Lambda.Delete(id)
-	s.Store.WaitChs.Delete(id)
+	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+		close(ch.(chan struct{}))
+	}
 	s.Store.LogBuffers.Delete(id)
 	s.Store.StagingDirs.Delete(id)
 	for _, eid := range c.ExecIDs {

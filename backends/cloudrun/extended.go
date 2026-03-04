@@ -70,7 +70,9 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 			s.Store.Containers.Delete(c.ID)
 			s.Store.ContainerNames.Delete(c.Name)
 			s.CloudRun.Delete(c.ID)
-			s.Store.WaitChs.Delete(c.ID)
+			if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
+				close(ch.(chan struct{}))
+			}
 			s.Store.LogBuffers.Delete(c.ID)
 			s.Store.StagingDirs.Delete(c.ID)
 			for _, eid := range c.ExecIDs {
