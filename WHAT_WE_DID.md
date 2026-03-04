@@ -77,13 +77,16 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 | 16 | BUG-115→122 | Tar traversal, prune cleanup, cloud AgentRegistry, Docker events/df |
 | 17 | BUG-123→130 | Start revert, kill signals, exec ordering, image dedup, Docker df/auth |
 | 18 | BUG-131→138 | Core restart (health/events/stale), ImageID, image aliases, AgentRegistry leak, FaaS restart, Docker list params |
+| 19 | BUG-139→157 | Core lifecycle (stop/restart/start/exec), cloud AgentRegistry leaks, Docker exec detach, frontend attach |
+| 20 | BUG-158→176 | Core kill/stop events, cloud restart parity, AgentRegistry leak, API types |
+| 21 | BUG-177→201 | Resource leaks, cloud parity, Docker field mapping, lifecycle safety |
 
-23 open bugs remain — see `BUGS.md`.
+68 open bugs remain — see `BUGS.md`.
 
 ## Project Stats
 
 - **80 phases** (1-67, 69-77, 79-82), 725 tasks completed
-- **20 bug sprints**, 176 bugs fixed (BUG-001→176), 92 open
+- **21 bug sprints**, 201 bugs fixed (BUG-001→201), 68 open
 - **18 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, CLI, admin, tests
 - **Core tests**: 286 PASS | **Frontend**: 7 | **UI (Vitest)**: 92 | **Admin**: 88 | **bleephub**: 304 | **gitlabhub**: 136 | **ProcessRunner**: 15
 - **Cloud SDK**: AWS 42, GCP 43, Azure 38 | **Cloud CLI**: AWS 26, GCP 21, Azure 19

@@ -65,6 +65,9 @@ func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request)
 			Status:  status,
 			Ports:   buildPortList(c.HostConfig.PortBindings, c.Config.ExposedPorts),
 			Labels:  c.Config.Labels,
+			HostConfig: &api.HostConfigSummary{
+				NetworkMode: c.HostConfig.NetworkMode,
+			},
 			Mounts:  c.Mounts,
 			NetworkSettings: &api.SummaryNetworkSettings{
 				Networks: c.NetworkSettings.Networks,

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -108,14 +109,33 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, m := range req.HostConfig.Mounts {
 			dm := mount.Mount{
-				Type:     mount.Type(m.Type),
-				Source:   m.Source,
-				Target:   m.Target,
-				ReadOnly: m.ReadOnly,
+				Type:        mount.Type(m.Type),
+				Source:      m.Source,
+				Target:      m.Target,
+				ReadOnly:    m.ReadOnly,
+				Consistency: mount.Consistency(m.Consistency),
 			}
 			if m.BindOptions != nil {
 				dm.BindOptions = &mount.BindOptions{
 					Propagation: mount.Propagation(m.BindOptions.Propagation),
+				}
+			}
+			if m.VolumeOptions != nil {
+				dm.VolumeOptions = &mount.VolumeOptions{
+					NoCopy: m.VolumeOptions.NoCopy,
+					Labels: m.VolumeOptions.Labels,
+				}
+				if m.VolumeOptions.DriverConfig != nil {
+					dm.VolumeOptions.DriverConfig = &mount.Driver{
+						Name:    m.VolumeOptions.DriverConfig.Name,
+						Options: m.VolumeOptions.DriverConfig.Options,
+					}
+				}
+			}
+			if m.TmpfsOptions != nil {
+				dm.TmpfsOptions = &mount.TmpfsOptions{
+					SizeBytes: m.TmpfsOptions.SizeBytes,
+					Mode:      os.FileMode(m.TmpfsOptions.Mode),
 				}
 			}
 			hostConfig.Mounts = append(hostConfig.Mounts, dm)
@@ -129,14 +149,27 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 			EndpointsConfig: make(map[string]*network.EndpointSettings, len(req.NetworkingConfig.EndpointsConfig)),
 		}
 		for name, ep := range req.NetworkingConfig.EndpointsConfig {
-			networkingConfig.EndpointsConfig[name] = &network.EndpointSettings{
-				NetworkID:  ep.NetworkID,
-				EndpointID: ep.EndpointID,
-				Gateway:    ep.Gateway,
-				IPAddress:  ep.IPAddress,
-				MacAddress: ep.MacAddress,
-				Aliases:    ep.Aliases,
+			es := &network.EndpointSettings{
+				NetworkID:           ep.NetworkID,
+				EndpointID:          ep.EndpointID,
+				Gateway:             ep.Gateway,
+				IPAddress:           ep.IPAddress,
+				IPPrefixLen:         ep.IPPrefixLen,
+				IPv6Gateway:         ep.IPv6Gateway,
+				GlobalIPv6Address:   ep.GlobalIPv6Address,
+				GlobalIPv6PrefixLen: ep.GlobalIPv6PrefixLen,
+				MacAddress:          ep.MacAddress,
+				Aliases:             ep.Aliases,
+				DriverOpts:          ep.DriverOpts,
 			}
+			if ep.IPAMConfig != nil {
+				es.IPAMConfig = &network.EndpointIPAMConfig{
+					IPv4Address:  ep.IPAMConfig.IPv4Address,
+					IPv6Address:  ep.IPAMConfig.IPv6Address,
+					LinkLocalIPs: ep.IPAMConfig.LinkLocalIPs,
+				}
+			}
+			networkingConfig.EndpointsConfig[name] = es
 		}
 	}
 
@@ -382,8 +415,14 @@ func (s *Server) handleContainerAttach(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 	defer resp.Close()
 
+	// Inspect container to determine TTY mode for Content-Type
+	contentType := "application/vnd.docker.multiplexed-stream"
+	if info, err := s.docker.ContainerInspect(r.Context(), id); err == nil && info.Config != nil && info.Config.Tty {
+		contentType = "application/vnd.docker.raw-stream"
+	}
+
 	buf.WriteString("HTTP/1.1 101 UPGRADED\r\n")
-	buf.WriteString("Content-Type: application/vnd.docker.multiplexed-stream\r\n")
+	buf.WriteString("Content-Type: " + contentType + "\r\n")
 	buf.WriteString("Connection: Upgrade\r\n")
 	buf.WriteString("Upgrade: tcp\r\n")
 	buf.WriteString("\r\n")

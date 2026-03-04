@@ -282,13 +282,17 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 						s.Store.LogBuffers.Store(id, result.Payload)
 					}
 				}
-				s.Store.StopContainer(id, exitCode)
+				if _, ok := s.Store.Containers.Get(id); ok {
+					s.Store.StopContainer(id, exitCode)
+				}
 			}()
 		} else {
 			// No command: auto-stop after brief delay
 			go func() {
 				time.Sleep(500 * time.Millisecond)
-				s.Store.StopContainer(id, 0)
+				if _, ok := s.Store.Containers.Get(id); ok {
+					s.Store.StopContainer(id, 0)
+				}
 			}()
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -322,7 +326,9 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 			_ = s.AgentRegistry.WaitForDisconnect(id, 30*time.Minute)
 		}
 
-		s.Store.StopContainer(id, exitCode)
+		if _, ok := s.Store.Containers.Get(id); ok {
+			s.Store.StopContainer(id, exitCode)
+		}
 	}()
 
 	// Wait for reverse agent callback if configured
@@ -424,7 +430,7 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 	s.AgentRegistry.Remove(id)
 
 	if c.State.Running {
-		s.Store.StopContainer(id, 0)
+		s.Store.ForceStopContainer(id, 0)
 	}
 
 	// Delete Lambda function (best-effort)

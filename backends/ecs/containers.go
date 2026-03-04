@@ -229,7 +229,9 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 			// Wait for reverse agent to disconnect before stopping
 			_ = s.AgentRegistry.WaitForDisconnect(id, 30*time.Minute)
 
-			s.Store.StopContainer(id, 0)
+			if _, ok := s.Store.Containers.Get(id); ok {
+				s.Store.StopContainer(id, 0)
+			}
 		}()
 
 		// Wait for reverse agent callback
@@ -252,6 +254,13 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 			agentAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
 			if err != nil {
 				s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
+				// Stop the ECS task that was already launched
+				_, _ = s.aws.ECS.StopTask(s.ctx(), &awsecs.StopTaskInput{
+					Cluster: aws.String(clusterARN),
+					Task:    aws.String(taskARN),
+					Reason:  aws.String("Task failed to reach RUNNING state"),
+				})
+				s.Registry.MarkCleanedUp(taskARN)
 				s.AgentRegistry.Remove(id)
 				s.Store.RevertToCreated(id)
 				core.WriteError(w, fmt.Errorf("task failed to start: %w", err))
@@ -407,7 +416,9 @@ func (s *Server) startMultiContainerTask(w http.ResponseWriter, triggerID string
 		go func() {
 			s.waitForTaskStopped(taskARN, exitCh)
 			_ = s.AgentRegistry.WaitForDisconnect(mainID, 30*time.Minute)
-			s.Store.StopContainer(mainID, 0)
+			if _, ok := s.Store.Containers.Get(mainID); ok {
+				s.Store.StopContainer(mainID, 0)
+			}
 		}()
 
 		agentTimeout := s.config.AgentTimeout
@@ -568,7 +579,7 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 				Reason:  aws.String("Container removed"),
 			})
 		}
-		s.Store.StopContainer(id, 0)
+		s.Store.ForceStopContainer(id, 0)
 	}
 
 	// Deregister task definition (best-effort)
@@ -736,7 +747,9 @@ func (s *Server) pollTaskExit(containerID, taskARN string, exitCh chan struct{})
 						break
 					}
 				}
-				s.Store.StopContainer(containerID, exitCode)
+				if _, ok := s.Store.Containers.Get(containerID); ok {
+					s.Store.StopContainer(containerID, exitCode)
+				}
 				return
 			}
 		}

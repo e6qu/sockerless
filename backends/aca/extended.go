@@ -29,6 +29,8 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 			s.stopExecution(acaState.JobName, acaState.ExecutionName)
 		}
 		s.Store.ForceStopContainer(id, 0)
+		s.Registry.MarkCleanedUp(acaState.JobName)
+		s.ACA.Delete(id)
 		s.EmitEvent("container", "die", id, map[string]string{
 			"exitCode": "0",
 			"name":     strings.TrimPrefix(c.Name, "/"),

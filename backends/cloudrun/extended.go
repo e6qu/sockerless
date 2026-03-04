@@ -28,6 +28,9 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 		if crState.ExecutionName != "" {
 			s.cancelExecution(crState.ExecutionName)
 		}
+		if crState.JobName != "" {
+			s.Registry.MarkCleanedUp(crState.JobName)
+		}
 		s.Store.ForceStopContainer(id, 0)
 		s.EmitEvent("container", "die", id, map[string]string{
 			"exitCode": "0",

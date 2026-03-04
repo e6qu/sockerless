@@ -80,6 +80,9 @@ func (s *BaseServer) handleContainerPrune(w http.ResponseWriter, r *http.Request
 				_ = s.Drivers.Network.Disconnect(r.Context(), ep.NetworkID, c.ID)
 			}
 		}
+		if pod, inPod := s.Store.Pods.GetPodForContainer(c.ID); inPod {
+			s.Store.Pods.RemoveContainer(pod.ID, c.ID)
+		}
 		s.Store.StagingDirs.Delete(c.ID)
 		for _, eid := range c.ExecIDs {
 			s.Store.Execs.Delete(eid)
@@ -192,6 +195,10 @@ func (s *BaseServer) handleContainerRename(w http.ResponseWriter, r *http.Reques
 		newName = "/" + newName
 	}
 
+	// Serialize renames to prevent race between conflict check and swap
+	s.Store.RenameMu.Lock()
+	defer s.Store.RenameMu.Unlock()
+
 	c, _ := s.Store.Containers.Get(id)
 	oldName := c.Name
 
@@ -239,6 +246,8 @@ func (s *BaseServer) handleContainerPause(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	s.StopHealthCheck(id)
+
 	s.Store.Containers.Update(id, func(c *api.Container) {
 		c.State.Paused = true
 		c.State.Status = "paused"
@@ -271,6 +280,12 @@ func (s *BaseServer) handleContainerUnpause(w http.ResponseWriter, r *http.Reque
 		c.State.Paused = false
 		c.State.Status = "running"
 	})
+
+	// Re-start health check if configured
+	if c.Config.Healthcheck != nil && len(c.Config.Healthcheck.Test) > 0 &&
+		(len(c.Config.Healthcheck.Test) != 1 || !strings.EqualFold(c.Config.Healthcheck.Test[0], "NONE")) {
+		s.StartHealthCheck(id)
+	}
 
 	s.emitEvent("container", "unpause", id, map[string]string{
 		"name": strings.TrimPrefix(c.Name, "/"),

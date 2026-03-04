@@ -142,13 +142,24 @@ func (s *Server) handleNetworkConnect(w http.ResponseWriter, r *http.Request) {
 	var epConfig *network.EndpointSettings
 	if req.EndpointConfig != nil {
 		epConfig = &network.EndpointSettings{
-			NetworkID:   req.EndpointConfig.NetworkID,
-			EndpointID:  req.EndpointConfig.EndpointID,
-			Gateway:     req.EndpointConfig.Gateway,
-			IPAddress:   req.EndpointConfig.IPAddress,
-			IPPrefixLen: req.EndpointConfig.IPPrefixLen,
-			MacAddress:  req.EndpointConfig.MacAddress,
-			Aliases:     req.EndpointConfig.Aliases,
+			NetworkID:           req.EndpointConfig.NetworkID,
+			EndpointID:          req.EndpointConfig.EndpointID,
+			Gateway:             req.EndpointConfig.Gateway,
+			IPAddress:           req.EndpointConfig.IPAddress,
+			IPPrefixLen:         req.EndpointConfig.IPPrefixLen,
+			IPv6Gateway:         req.EndpointConfig.IPv6Gateway,
+			GlobalIPv6Address:   req.EndpointConfig.GlobalIPv6Address,
+			GlobalIPv6PrefixLen: req.EndpointConfig.GlobalIPv6PrefixLen,
+			MacAddress:          req.EndpointConfig.MacAddress,
+			Aliases:             req.EndpointConfig.Aliases,
+			DriverOpts:          req.EndpointConfig.DriverOpts,
+		}
+		if req.EndpointConfig.IPAMConfig != nil {
+			epConfig.IPAMConfig = &network.EndpointIPAMConfig{
+				IPv4Address:  req.EndpointConfig.IPAMConfig.IPv4Address,
+				IPv6Address:  req.EndpointConfig.IPAMConfig.IPv6Address,
+				LinkLocalIPs: req.EndpointConfig.IPAMConfig.LinkLocalIPs,
+			}
 		}
 	}
 
