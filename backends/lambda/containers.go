@@ -354,7 +354,8 @@ func (s *Server) handleContainerStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Lambda functions run to completion — stop is a no-op
+	// Lambda functions run to completion — stop transitions state
+	s.Store.StopContainer(id, 0)
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -384,7 +384,8 @@ func (s *Server) handleContainerStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Azure Functions run to completion -- stop is a no-op
+	// Azure Functions run to completion — stop transitions state
+	s.Store.StopContainer(id, 0)
 	w.WriteHeader(http.StatusNoContent)
 }
 

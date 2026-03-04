@@ -1,6 +1,7 @@
 package ecs
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -8,6 +9,37 @@ import (
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 )
+
+// handleContainerRestart stops and then starts a container.
+func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) {
+	ref := r.PathValue("id")
+	id, ok := s.Store.ResolveContainerID(ref)
+	if !ok {
+		core.WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
+		return
+	}
+
+	c, _ := s.Store.Containers.Get(id)
+
+	// Stop if running
+	if c.State.Running {
+		ecsState, _ := s.ECS.Get(id)
+		if ecsState.TaskARN != "" {
+			_, _ = s.aws.ECS.StopTask(s.ctx(), &awsecs.StopTaskInput{
+				Cluster: aws.String(s.config.Cluster),
+				Task:    aws.String(ecsState.TaskARN),
+				Reason:  aws.String("Container restarted via API"),
+			})
+		}
+		s.Store.StopContainer(id, 0)
+	}
+
+	// Re-dispatch to start handler
+	startURL := fmt.Sprintf("/internal/v1/containers/%s/start", id)
+	startReq, _ := http.NewRequestWithContext(r.Context(), "POST", startURL, nil)
+	startReq.SetPathValue("id", id)
+	s.handleContainerStart(w, startReq)
+}
 
 func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 	var deleted []string

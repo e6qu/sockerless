@@ -644,3 +644,99 @@ Network create forwarded `IPAM.Driver` and `IPAM.Config` but not `IPAM.Options`.
 ### Details
 
 Sprint 12 BUG-090 fixed Aliases in container inspect, but the container list handler still mapped endpoint settings without Aliases. Docker SDK list provides them.
+
+---
+
+## BUG-099: FaaS `handleContainerStop` doesn't transition container state
+
+**Severity**: High
+**Component**: `backends/lambda/containers.go`, `backends/cloudrun-functions/containers.go`, `backends/azure-functions/containers.go`
+**Status**: Fixed — Sprint 14: added `s.Store.StopContainer(id, 0)` before 204 response in all 3 FaaS stop handlers
+
+### Details
+
+All three FaaS stop handlers validated the container was running, then returned 204 without calling `s.Store.StopContainer(id, 0)`. Container stayed in "running" state after stop. Kill handlers properly transitioned state. Container backends (ECS/CloudRun/ACA) also called StopContainer in their stop handlers.
+
+---
+
+## BUG-100: ECS backend missing `ContainerRestart` handler override
+
+**Severity**: High
+**Component**: `backends/ecs/server.go`, `backends/ecs/extended.go`
+**Status**: Fixed — Sprint 14: added `handleContainerRestart` to `extended.go` and registered in RouteOverrides
+
+### Details
+
+ECS had no ContainerRestart override. Fell back to core's handler which calls `ProcessLifecycle.Stop(id)` — doesn't know about ECS tasks. Old task kept running. CloudRun and ACA both had restart overrides that cancel cloud execution then re-dispatch to start.
+
+---
+
+## BUG-101: Core `handleExecCreate` drops `Privileged` flag
+
+**Severity**: Medium
+**Component**: `backends/core/handle_exec.go`
+**Status**: Fixed — Sprint 14: added `Privileged: &req.Privileged` to ExecProcessConfig
+
+### Details
+
+`ExecProcessConfig` was built with Tty, Entrypoint, Arguments, User, Env, WorkingDir but not `Privileged`. `req.Privileged` exists as bool and `api.ExecProcessConfig.Privileged` is `*bool`.
+
+---
+
+## BUG-102: Docker `handleContainerLogs` missing `Since` and `Until` parameters
+
+**Severity**: Medium
+**Component**: `backends/docker/containers.go`
+**Status**: Fixed — Sprint 14: added `Since` and `Until` query parameter mapping to LogsOptions
+
+### Details
+
+Handler mapped 5 of 7 `container.LogsOptions` fields. Missing `Since` and `Until` query parameters. Log filtering by time range was silently ignored.
+
+---
+
+## BUG-103: Docker `handleNetworkConnect` missing `IPPrefixLen` field
+
+**Severity**: Medium
+**Component**: `backends/docker/extended.go`
+**Status**: Fixed — Sprint 14: added `IPPrefixLen: req.EndpointConfig.IPPrefixLen` to EndpointSettings mapping
+
+### Details
+
+When mapping `req.EndpointConfig` to Docker SDK's `network.EndpointSettings`, `IPPrefixLen` was not included. Container list/inspect endpoints properly mapped this field.
+
+---
+
+## BUG-104: Docker volume create/inspect/list missing `Status` field
+
+**Severity**: Medium
+**Component**: `backends/docker/volumes.go`
+**Status**: Fixed — Sprint 14: added `Status: vol.Status` to all 3 volume response mappings
+
+### Details
+
+`api.Volume` has `Status map[string]any`. Docker SDK's `volume.Volume` provides `Status map[string]interface{}`. Not mapped in any of the 3 handlers. Volume driver status info was silently dropped.
+
+---
+
+## BUG-105: CloudRun and ACA `handleVolumePrune` is a no-op
+
+**Severity**: Medium
+**Component**: `backends/cloudrun/extended.go`, `backends/aca/extended.go`
+**Status**: Fixed — Sprint 14: copied ECS's volume prune logic (iterate volumes, check mount usage, delete unused)
+
+### Details
+
+Both returned an empty `VolumePruneResponse` without checking or pruning any volumes. ECS iterates volumes, checks container mount usage, and deletes unused ones. Unused volumes accumulated indefinitely.
+
+---
+
+## BUG-106: Docker `handleContainerList` missing `Limit` and `Filters` parameters
+
+**Severity**: Medium
+**Component**: `backends/docker/containers.go`
+**Status**: Fixed — Sprint 14: parsed `limit` and `filters` query parameters, added `filters` import
+
+### Details
+
+Handler only read `all` query parameter. `container.ListOptions` supports `Limit` and `Filters`. Clients filtering container lists by name, label, status, or network got all containers instead of filtered results.

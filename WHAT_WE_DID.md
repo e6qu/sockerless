@@ -203,3 +203,18 @@ All 286 core tests pass. 0 lint issues across 19 modules.
 - **Cloud SDK tests**: AWS 42, GCP 43, Azure 38 | **Cloud CLI tests**: AWS 26, GCP 21, Azure 19
 - **3 cloud simulators** validated against SDKs, CLIs, and Terraform — now with real process execution for all services (container + FaaS)
 - **8 backends** sharing a common driver architecture
+
+## Bug Sprint 14 — API & Backends Audit (BUG-099→106)
+
+Audited FaaS stop handler state transitions, ECS restart override gap, core exec Privileged flag, Docker passthrough field/parameter gaps, and CloudRun/ACA volume prune consistency. Found 8 real bugs — 2 high-severity (FaaS stop state, ECS restart leak) and 6 medium-severity field/parameter gaps.
+
+- **BUG-099**: Lambda/GCF/AzF `handleContainerStop` now calls `s.Store.StopContainer(id, 0)` before 204 response (was leaving container in "running" state after stop)
+- **BUG-100**: ECS now has `handleContainerRestart` in `extended.go` registered in RouteOverrides (was falling back to core handler that doesn't know about ECS tasks — resource leak)
+- **BUG-101**: Core `handleExecCreate` now includes `Privileged: &req.Privileged` in ExecProcessConfig (was dropping the flag)
+- **BUG-102**: Docker `handleContainerLogs` now maps `Since` and `Until` query parameters to LogsOptions (was silently ignoring time-range filtering)
+- **BUG-103**: Docker `handleNetworkConnect` now maps `IPPrefixLen` in EndpointSettings (inspect/list had it, connect didn't)
+- **BUG-104**: Docker volume create/inspect/list now map `Status` field (volume driver status info was silently dropped)
+- **BUG-105**: CloudRun/ACA `handleVolumePrune` now iterates volumes, checks mount usage, deletes unused (was no-op returning empty response)
+- **BUG-106**: Docker `handleContainerList` now parses `limit` and `filters` query parameters (was only reading `all`)
+
+All 286 core tests pass. 0 lint issues across 19 modules.
