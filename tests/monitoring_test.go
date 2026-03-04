@@ -125,8 +125,8 @@ func TestContainerStatsNotRunning(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
 		t.Fatalf("failed to decode stats: %v", err)
 	}
-	if _, ok := stats["id"]; !ok {
-		t.Error("stats response missing 'id' field")
+	if _, ok := stats["read"]; !ok {
+		t.Error("stats response missing 'read' field")
 	}
 }
 
