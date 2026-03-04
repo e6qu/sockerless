@@ -58,3 +58,23 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 		SpaceReclaimed:    0,
 	})
 }
+
+func (s *Server) handleContainerPause(w http.ResponseWriter, r *http.Request) {
+	ref := r.PathValue("id")
+	_, ok := s.Store.ResolveContainerID(ref)
+	if !ok {
+		core.WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
+		return
+	}
+	core.WriteError(w, &api.NotImplementedError{Message: "Azure Functions backend does not support pause"})
+}
+
+func (s *Server) handleContainerUnpause(w http.ResponseWriter, r *http.Request) {
+	ref := r.PathValue("id")
+	_, ok := s.Store.ResolveContainerID(ref)
+	if !ok {
+		core.WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
+		return
+	}
+	core.WriteError(w, &api.NotImplementedError{Message: "Azure Functions backend does not support unpause"})
+}

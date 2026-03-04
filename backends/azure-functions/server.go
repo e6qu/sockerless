@@ -42,7 +42,9 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		ContainerRemove:  s.handleContainerRemove,
 		ContainerLogs:    s.handleContainerLogs,
 		ContainerRestart: s.handleContainerRestart,
-		ContainerPrune: s.handleContainerPrune,
+		ContainerPrune:   s.handleContainerPrune,
+		ContainerPause:   s.handleContainerPause,
+		ContainerUnpause: s.handleContainerUnpause,
 		ImagePull:      s.handleImagePull,
 		ImageLoad:      s.handleImageLoad,
 	}, logger)

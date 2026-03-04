@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -127,7 +128,13 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// Look up container for env merging
-	c, _ := s.Store.Containers.Get(exec.ContainerID)
+	c, ok := s.Store.Containers.Get(exec.ContainerID)
+	if !ok {
+		WriteError(w, &api.ConflictError{
+			Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID),
+		})
+		return
+	}
 
 	// Hijack the connection
 	hj, ok := w.(http.Hijacker)
