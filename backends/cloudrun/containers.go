@@ -181,6 +181,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	// Clean up any existing Cloud Run Job from a previous start
 	if crState.JobName != "" {
 		s.deleteJob(crState.JobName)
+		s.Registry.MarkCleanedUp(crState.JobName)
 	}
 
 	// Build Cloud Run Job spec
@@ -266,7 +267,9 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 			// Wait for reverse agent to disconnect before stopping
 			_ = s.AgentRegistry.WaitForDisconnect(id, 30*time.Minute)
 
-			s.Store.StopContainer(id, 0)
+			if _, ok := s.Store.Containers.Get(id); ok {
+				s.Store.StopContainer(id, 0)
+			}
 		}()
 
 		// Wait for reverse agent callback
@@ -299,7 +302,9 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 			if completedExitCode >= 0 {
 				// Execution completed before agent could be reached.
 				go func() {
-					s.Store.StopContainer(id, completedExitCode)
+					if _, ok := s.Store.Containers.Get(id); ok {
+						s.Store.StopContainer(id, completedExitCode)
+					}
 				}()
 			} else {
 				// Wait for agent health
@@ -446,7 +451,9 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 		go func() {
 			s.waitForExecutionComplete(executionName, exitCh)
 			_ = s.AgentRegistry.WaitForDisconnect(mainID, 30*time.Minute)
-			s.Store.StopContainer(mainID, 0)
+			if _, ok := s.Store.Containers.Get(mainID); ok {
+				s.Store.StopContainer(mainID, 0)
+			}
 		}()
 
 		agentTimeout := s.config.AgentTimeout
@@ -477,7 +484,9 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 
 		if completedExitCode >= 0 {
 			go func() {
-				s.Store.StopContainer(mainID, completedExitCode)
+				if _, ok := s.Store.Containers.Get(mainID); ok {
+					s.Store.StopContainer(mainID, completedExitCode)
+				}
 			}()
 		} else {
 			agentURL := fmt.Sprintf("http://%s/health", agentAddr)
@@ -602,7 +611,7 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 		if crState.ExecutionName != "" {
 			s.cancelExecution(crState.ExecutionName)
 		}
-		s.Store.StopContainer(id, 0)
+		s.Store.ForceStopContainer(id, 0)
 	}
 
 	// Delete Cloud Run Job (best-effort)
@@ -745,7 +754,9 @@ func (s *Server) pollExecutionExit(containerID, executionName string, exitCh cha
 				if exec.FailedCount > 0 {
 					exitCode = 1
 				}
-				s.Store.StopContainer(containerID, exitCode)
+				if _, ok := s.Store.Containers.Get(containerID); ok {
+					s.Store.StopContainer(containerID, exitCode)
+				}
 				return
 			}
 		}

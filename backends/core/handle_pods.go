@@ -206,7 +206,9 @@ func (s *BaseServer) handlePodRemove(w http.ResponseWriter, r *http.Request) {
 			s.Store.Containers.Delete(cid)
 			s.Store.ContainerNames.Delete(c.Name)
 			s.Store.LogBuffers.Delete(cid)
-			s.Store.WaitChs.Delete(cid)
+			if ch, ok := s.Store.WaitChs.LoadAndDelete(cid); ok {
+				close(ch.(chan struct{}))
+			}
 			s.Store.StagingDirs.Delete(cid)
 			for _, eid := range c.ExecIDs {
 				s.Store.Execs.Delete(eid)

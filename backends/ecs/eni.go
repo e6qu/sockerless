@@ -7,10 +7,13 @@ import (
 // extractENIIP extracts the private IP address from a Fargate task's ENI attachment.
 func extractENIIP(task ecstypes.Task) string {
 	for _, attachment := range task.Attachments {
-		if *attachment.Type != "ElasticNetworkInterface" {
+		if attachment.Type == nil || *attachment.Type != "ElasticNetworkInterface" {
 			continue
 		}
 		for _, detail := range attachment.Details {
+			if detail.Name == nil || detail.Value == nil {
+				continue
+			}
 			if *detail.Name == "privateIPv4Address" {
 				return *detail.Value
 			}

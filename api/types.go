@@ -114,14 +114,35 @@ type Mount struct {
 	Type        string       `json:"Type"`
 	Source      string       `json:"Source"`
 	Target      string       `json:"Target"`
-	ReadOnly    bool         `json:"ReadOnly,omitempty"`
-	Consistency string       `json:"Consistency,omitempty"`
-	BindOptions *BindOptions `json:"BindOptions,omitempty"`
+	ReadOnly      bool           `json:"ReadOnly,omitempty"`
+	Consistency   string         `json:"Consistency,omitempty"`
+	BindOptions   *BindOptions   `json:"BindOptions,omitempty"`
+	VolumeOptions *VolumeOptions `json:"VolumeOptions,omitempty"`
+	TmpfsOptions  *TmpfsOptions  `json:"TmpfsOptions,omitempty"`
 }
 
 // BindOptions holds options for bind mounts.
 type BindOptions struct {
 	Propagation string `json:"Propagation,omitempty"`
+}
+
+// VolumeOptions holds options for volume mounts.
+type VolumeOptions struct {
+	NoCopy       bool                `json:"NoCopy,omitempty"`
+	Labels       map[string]string   `json:"Labels,omitempty"`
+	DriverConfig *VolumeDriverConfig `json:"DriverConfig,omitempty"`
+}
+
+// VolumeDriverConfig holds the driver-specific options for a volume mount.
+type VolumeDriverConfig struct {
+	Name    string            `json:"Name,omitempty"`
+	Options map[string]string `json:"Options,omitempty"`
+}
+
+// TmpfsOptions holds options for tmpfs mounts.
+type TmpfsOptions struct {
+	SizeBytes int64  `json:"SizeBytes,omitempty"`
+	Mode      uint32 `json:"Mode,omitempty"`
 }
 
 // NetworkSettings holds the network settings for a container.
@@ -171,6 +192,11 @@ type MountPoint struct {
 	Propagation string `json:"Propagation,omitempty"`
 }
 
+// HostConfigSummary holds the host config fields returned in container list.
+type HostConfigSummary struct {
+	NetworkMode string `json:"NetworkMode"`
+}
+
 // ContainerSummary is the short form returned by container list.
 type ContainerSummary struct {
 	ID              string            `json:"Id"`
@@ -185,6 +211,7 @@ type ContainerSummary struct {
 	Labels          map[string]string `json:"Labels"`
 	SizeRw          int64             `json:"SizeRw,omitempty"`
 	SizeRootFs      int64             `json:"SizeRootFs,omitempty"`
+	HostConfig      *HostConfigSummary      `json:"HostConfig,omitempty"`
 	NetworkSettings *SummaryNetworkSettings `json:"NetworkSettings,omitempty"`
 	Mounts          []MountPoint      `json:"Mounts"`
 }

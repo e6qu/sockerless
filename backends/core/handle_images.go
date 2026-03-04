@@ -267,6 +267,30 @@ func (s *BaseServer) handleImageRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	force := r.URL.Query().Get("force") == "1" || r.URL.Query().Get("force") == "true"
+
+	// Check if any container references this image
+	if !force {
+		for _, c := range s.Store.Containers.List() {
+			if c.Image == img.ID || c.Config.Image == name {
+				for _, tag := range img.RepoTags {
+					if c.Config.Image == tag || c.Config.Image == strings.SplitN(tag, ":", 2)[0] {
+						WriteError(w, &api.ConflictError{
+							Message: fmt.Sprintf("conflict: unable to remove repository reference \"%s\" (container %s is using its referenced image %s)", name, c.ID[:12], img.ID[:19]),
+						})
+						return
+					}
+				}
+				if c.Image == img.ID {
+					WriteError(w, &api.ConflictError{
+						Message: fmt.Sprintf("conflict: unable to delete %s (cannot be forced) - image is being used by running container %s", img.ID[:19], c.ID[:12]),
+					})
+					return
+				}
+			}
+		}
+	}
+
 	s.Store.Images.Delete(img.ID)
 	for _, tag := range img.RepoTags {
 		s.Store.Images.Delete(tag)

@@ -97,8 +97,13 @@ func (s *Server) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 	defer resp.Close()
 
+	contentType := "application/vnd.docker.multiplexed-stream"
+	if req.Tty {
+		contentType = "application/vnd.docker.raw-stream"
+	}
+
 	buf.WriteString("HTTP/1.1 101 UPGRADED\r\n")
-	buf.WriteString("Content-Type: application/vnd.docker.multiplexed-stream\r\n")
+	buf.WriteString("Content-Type: " + contentType + "\r\n")
 	buf.WriteString("Connection: Upgrade\r\n")
 	buf.WriteString("Upgrade: tcp\r\n")
 	buf.WriteString("\r\n")

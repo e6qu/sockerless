@@ -41,6 +41,15 @@ func (a *IPAllocator) AllocateSubnet(networkID string, requested *api.IPAMConfig
 	if requested != nil && requested.Subnet != "" {
 		// Parse user-provided subnet
 		gateway := requested.Gateway
+		if gateway == "" {
+			// Derive gateway from subnet: e.g. "10.0.0.0/24" → "10.0.0.1"
+			subnetIP := requested.Subnet
+			if idx := strings.Index(subnetIP, "/"); idx >= 0 {
+				subnetIP = subnetIP[:idx]
+			}
+			base := subnetIP[:strings.LastIndex(subnetIP, ".")+1]
+			gateway = base + "1"
+		}
 		base := gateway[:strings.LastIndex(gateway, ".")+1]
 		mask := 16
 		if idx := strings.Index(requested.Subnet, "/"); idx >= 0 {

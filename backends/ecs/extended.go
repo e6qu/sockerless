@@ -33,6 +33,7 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 				Task:    aws.String(ecsState.TaskARN),
 				Reason:  aws.String("Container restarted via API"),
 			})
+			s.Registry.MarkCleanedUp(ecsState.TaskARN)
 		}
 		s.Store.ForceStopContainer(id, 0)
 		s.EmitEvent("container", "die", id, map[string]string{

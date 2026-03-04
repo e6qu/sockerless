@@ -209,6 +209,10 @@ func (s *BaseServer) scheduleExecAutoStop(containerID string) {
 			return
 		}
 	}
+	s.emitEvent("container", "die", containerID, map[string]string{
+		"exitCode": "0",
+		"name":     strings.TrimPrefix(c.Name, "/"),
+	})
 	s.Store.StopContainer(containerID, 0)
 }
 

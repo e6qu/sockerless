@@ -81,6 +81,15 @@ func (s *BaseServer) handleContainerCreate(w http.ResponseWriter, r *http.Reques
 		hostConfig.NetworkMode = "default"
 	}
 
+	// Pod association via query param (Podman convention: ?pod=<nameOrID>)
+	// Validate BEFORE storing the container to avoid leaking on failure.
+	if podRef := r.URL.Query().Get("pod"); podRef != "" {
+		if _, ok := s.Store.Pods.GetPod(podRef); !ok {
+			WriteError(w, &api.NotFoundError{Resource: "pod", ID: podRef})
+			return
+		}
+	}
+
 	container := s.buildContainerFromConfig(id, name, config, hostConfig, req.NetworkingConfig)
 	s.Store.Containers.Put(id, container)
 	s.Store.ContainerNames.Put(name, id)
@@ -92,13 +101,9 @@ func (s *BaseServer) handleContainerCreate(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Pod association via query param (Podman convention: ?pod=<nameOrID>)
+	// Pod association — pod was validated above
 	if podRef := r.URL.Query().Get("pod"); podRef != "" {
-		pod, ok := s.Store.Pods.GetPod(podRef)
-		if !ok {
-			WriteError(w, &api.NotFoundError{Resource: "pod", ID: podRef})
-			return
-		}
+		pod, _ := s.Store.Pods.GetPod(podRef)
 		_ = s.Store.Pods.AddContainer(pod.ID, id)
 	}
 
@@ -294,6 +299,10 @@ func (s *BaseServer) handleContainerStart(w http.ResponseWriter, r *http.Request
 	go func() {
 		time.Sleep(delay)
 		if c, ok := s.Store.Containers.Get(id); ok && c.State.Running {
+			s.emitEvent("container", "die", id, map[string]string{
+				"exitCode": "0",
+				"name":     strings.TrimPrefix(c.Name, "/"),
+			})
 			s.Store.StopContainer(id, 0)
 		}
 	}()
@@ -406,6 +415,11 @@ func (s *BaseServer) handleContainerRemove(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Clean up pod registry
+	if pod, inPod := s.Store.Pods.GetPodForContainer(id); inPod {
+		s.Store.Pods.RemoveContainer(pod.ID, id)
+	}
+
 	s.Store.Containers.Delete(id)
 	s.Store.ContainerNames.Delete(c.Name)
 	s.Store.LogBuffers.Delete(id)
@@ -463,6 +477,13 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 	// Re-spawn process (wait-and-stop goroutine is handled by the driver)
 	cmd := append([]string{c.Path}, c.Args...)
 	binds := s.resolveBindMounts(c.HostConfig.Binds, c.HostConfig.Mounts)
+	tmpfs := resolveTmpfsMounts(c.HostConfig.Tmpfs)
+	for k, v := range tmpfs {
+		if binds == nil {
+			binds = make(map[string]string)
+		}
+		binds[k] = v
+	}
 	_, err := s.Drivers.ProcessLifecycle.Start(id, cmd, c.Config.Env, binds)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("container", id).Msg("failed to restart container process")

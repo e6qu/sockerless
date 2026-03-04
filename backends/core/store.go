@@ -136,6 +136,7 @@ type Store struct {
 	HealthChecks   sync.Map // containerID → context.CancelFunc
 	BuildContexts  sync.Map // imageID → string (temp dir with COPY files at destination paths)
 	IPAlloc        *IPAllocator
+	RenameMu       sync.Mutex
 	RestartHook    func(containerID string, exitCode int) bool
 }
 
@@ -181,6 +182,8 @@ func (st *Store) ForceStopContainer(id string, exitCode int) {
 
 // RevertToCreated reverts a container from "running" back to "created" state.
 // Used when a cloud operation fails after the container was optimistically set to running.
+// The wait channel is deleted but NOT closed — closing would cause waiters to read
+// a false exit code 0 even though the container never ran successfully.
 func (st *Store) RevertToCreated(id string) {
 	st.Containers.Update(id, func(c *api.Container) {
 		c.State.Status = "created"
@@ -188,9 +191,7 @@ func (st *Store) RevertToCreated(id string) {
 		c.State.Pid = 0
 		c.State.StartedAt = "0001-01-01T00:00:00Z"
 	})
-	if ch, ok := st.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
-	}
+	st.WaitChs.Delete(id)
 }
 
 func (st *Store) forceStop(id string, exitCode int) {

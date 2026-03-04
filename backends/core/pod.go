@@ -85,6 +85,26 @@ func (pr *PodRegistry) AddContainer(podID, containerID string) error {
 	return nil
 }
 
+// RemoveContainer removes a container from its pod. If the container is not
+// in any pod, this is a no-op.
+func (pr *PodRegistry) RemoveContainer(podID, containerID string) {
+	pr.mu.Lock()
+	defer pr.mu.Unlock()
+
+	pod, ok := pr.pods[podID]
+	if !ok {
+		return
+	}
+
+	for i, cid := range pod.ContainerIDs {
+		if cid == containerID {
+			pod.ContainerIDs = append(pod.ContainerIDs[:i], pod.ContainerIDs[i+1:]...)
+			break
+		}
+	}
+	delete(pr.byContainer, containerID)
+}
+
 // GetPod looks up a pod by ID first, then by name.
 func (pr *PodRegistry) GetPod(nameOrID string) (*PodContext, bool) {
 	pr.mu.RLock()

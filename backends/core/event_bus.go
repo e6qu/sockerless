@@ -77,6 +77,7 @@ func (s *BaseServer) emitEvent(eventType, action, actorID string, attrs map[stri
 	if s.EventBus == nil {
 		return
 	}
+	now := time.Now()
 	s.EventBus.Publish(api.Event{
 		Type:   eventType,
 		Action: action,
@@ -84,7 +85,7 @@ func (s *BaseServer) emitEvent(eventType, action, actorID string, attrs map[stri
 			ID:         actorID,
 			Attributes: attrs,
 		},
-		Time:     time.Now().Unix(),
-		TimeNano: time.Now().UnixNano(),
+		Time:     now.Unix(),
+		TimeNano: now.UnixNano(),
 	})
 }
