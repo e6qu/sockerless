@@ -34,215 +34,59 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 
 **3 simulators** (`simulators/{aws,gcp,azure}/`) implement enough cloud API surface for the backends to work. Each is tested against the real SDK, CLI, and Terraform provider for that cloud.
 
-## Completed Phases (1-56) — Summary
+## Completed Phases (1-82)
 
-| Phase | What | Key Artifacts |
-|---|---|---|
-| 1-10 | Foundation: simulators (AWS/GCP/Azure), backends, agent, frontend | 3 simulators, 8 backends, Docker REST API frontend |
-| 11-34 | WASM sandbox, E2E tests, driver interfaces, Docker build | 217 GitHub + 154 GitLab E2E, 46 sandbox tests |
-| 35-42 | bleephub: GitHub API + runner + multi-job engine | 190 unit tests, users, auth, git, orgs, issues, PRs, `gh` CLI |
-| 43-52 | CLI, crash safety, pods, service containers, upstream expansion | sockerless CLI, PodContext, resource registry |
-| 53-56 | Production Docker API: TLS, auth, logs, DNS, restart, events, filters, export, commit | 16+18+15+14 new tests |
+| Phase | What |
+|---|---|
+| 1-10 | Foundation: 3 simulators, 8 backends, agent, Docker REST API frontend |
+| 11-34 | WASM sandbox, E2E tests (217 GitHub + 154 GitLab), driver interfaces, Docker build |
+| 35-42 | bleephub: GitHub API + runner + multi-job engine (190 unit tests) |
+| 43-52 | CLI, crash safety, pods, service containers, upstream expansion |
+| 53-56 | Production Docker API: TLS, auth, logs, DNS, restart, events, filters, export, commit |
+| 57-59 | Production GitHub Actions: multi-job, matrix, secrets, expressions, concurrency |
+| 60-61 | Production GitLab CI: gitlabhub coordinator, DAG engine, expressions, extends, include |
+| 62-63 | Docker API hardening + Compose E2E: HEALTHCHECK, volumes, mounts, prune, directives |
+| 64-65 | bleephub: Webhooks (HMAC-SHA256) + GitHub Apps (JWT, installation tokens) |
+| 66 | OTel tracing: OTLP HTTP, otelhttp middleware, context propagation |
+| 67 | Network Isolation: IPAllocator, SyntheticNetworkDriver, Linux NetnsManager |
+| 69 | ARM64/Multi-Arch: goreleaser 15 builds, docker.yml 7 images |
+| 70-72 | Simulator Fidelity + SDK/CLI Verification + Full-Stack E2E (real process execution) |
+| 73-75 | UI: Bun/Vite/React 19 monorepo, 10 backend SPAs, 3 simulator SPAs, SPAHandler |
+| 76-77 | bleephub + gitlabhub dashboards with management endpoints and LogViewer |
+| 79 | Admin Dashboard: standalone server + SPA, health polling, context discovery |
+| 80 | Documentation review + tutorial verification |
+| 81 | Admin: ProcessManager, cleanup scanner, ProviderInfo |
+| 82 | Admin Projects: orchestrated sim+backend+frontend bundles, port allocator, 4 UI pages |
 
-## Phases 57-67 — CI Runners, API Hardening, bleephub Features, OTel, Network Isolation
+## Bug Fix Sprints (BUG-001 → BUG-138)
 
-| Phase | What | Key Results |
-|---|---|---|
-| 57 | Production GitHub Actions multi-job engine | 221 bleephub unit + 6 integration |
-| 58 | CI/CD pipeline, Dockerfiles, goreleaser, GHCR images | Core CI + release workflows |
-| 59 | Secrets, expressions, matrix fail-fast, concurrency | 259 bleephub unit + 9 integration |
-| 60 | gitlabhub: GitLab Runner coordinator + DAG engine | 62 unit + 9 integration |
-| 61 | Advanced GitLab CI: expressions, extends, include, matrix | 129 unit + 17 integration |
-| 62 | Docker API hardening: HEALTHCHECK, volumes, mounts, prune | 230 core PASS |
-| 63 | Compose E2E: health race fix, SHELL/VOLUME directives | 249 core PASS |
-| 64 | bleephub webhooks: HMAC-SHA256, async delivery, CI trigger | 270 bleephub PASS |
-| 65 | GitHub Apps: JWT auth, installation tokens, manifest flow | 293 bleephub PASS |
-| 66 | OTel tracing: OTLP HTTP, otelhttp middleware, spans | 241 core + 298 bleephub + 129 gitlabhub + 7 frontend |
-| 67 | Network Isolation: IPAllocator, SyntheticNetworkDriver, Linux NetnsManager | 255 core PASS (+14) |
+138 bugs fixed across 18 sprints. Per-sprint details in `_tasks/done/BUG-SPRINT-*.md`.
 
-## Phases 69-72 — ARM64, Simulator Fidelity, SDK Verification, Full-Stack E2E
+| Sprint | Bugs | Focus |
+|--------|------|-------|
+| 1-6 | BUG-001→046 | Admin UI: races, concurrency, error states, XSS, HTTP status codes |
+| SimCmd | BUG-047→051 | FaaS simulator command protocol → `SOCKERLESS_CMD` env var |
+| 7 | BUG-052→062 | Core: tar corruption, error swallowing, cloud resource leaks |
+| 9 | BUG-063→068 | API types (`*bool`), cloud state revert, cloud resource cleanup |
+| 10 | BUG-069→074 | Image store aliases, FaaS kill/prune lifecycle, Docker Mounts |
+| 11 | BUG-075→082 | Lambda restart, Docker inspect/list field mapping (5 bugs) |
+| 12 | BUG-083→090 | Docker create mapping (21 fields), FaaS pause, core events |
+| 13 | BUG-091→098 | Docker NetworkingConfig, LogBuffers leak, 5 Docker field gaps |
+| 14 | BUG-099→106 | FaaS stop state, ECS restart, Docker params, volume prune |
+| 15 | BUG-107→114 | Pod cleanup, CloudRun/ACA Args, Docker auth/filters |
+| 16 | BUG-115→122 | Tar traversal, prune cleanup, cloud AgentRegistry, Docker events/df |
+| 17 | BUG-123→130 | Start revert, kill signals, exec ordering, image dedup, Docker df/auth |
+| 18 | BUG-131→138 | Core restart (health/events/stale), ImageID, image aliases, AgentRegistry leak, FaaS restart, Docker list params |
 
-| Phase | What | Key Results |
-|---|---|---|
-| 69 | ARM64/Multi-Arch: goreleaser 15 builds, docker.yml 7 images | CI build-check 15 binaries + ARM64 cross-compile |
-| 70 | Simulator Fidelity: real process execution, structured logs | SDK: AWS 8→21, GCP 8→23, Azure 7→16. ProcessRunner: 15 PASS |
-| 71 | SDK/CLI Verification: FaaS real execution, arithmetic evaluator | SDK: AWS 42, GCP 43, Azure 38. CLI: AWS 26, GCP 21, Azure 19 |
-| 72 | Full-Stack E2E: arithmetic through Docker API stack | sim-test-all: 75 PASS, test-e2e: 65 PASS |
-
-## Phase 68 — Multi-Tenant Backend Pools (In Progress)
-
-P68-001 done: `PoolConfig`/`PoolsConfig` types, `ValidatePoolsConfig()` (8 rules), `LoadPoolsConfig()`, 18 tests. 9 tasks remaining.
-
-## Phases 73-75 — UI Foundation, Backend Dashboards, Simulator Dashboards
-
-**Phase 73**: Bun/Vite/React 19/Tailwind 4 monorepo, shared core package (API client, 7 hooks, 7 components), memory backend SPA (4 pages), Go `SPAHandler` with embed. 12 Vitest + 5 Go SPAHandler PASS.
-
-**Phase 74**: Rolled out dashboards to all 7 remaining backends + Docker frontend (9 new SPAs). Shared `BackendApp` component, `BackendInfoCard`, Makefile with 18 new targets, CI `-tags noui`. 16 Vitest PASS.
-
-**Phase 75**: 3 simulator SPAs (AWS/GCP/Azure) with cloud-specific resource pages, `/sim/v1/` summary endpoints, `SimulatorApp` component. Store promotions for dashboard access. 18 Vitest PASS.
-
-## Phases 76-77 — bleephub & gitlabhub Dashboards
-
-**Phase 76**: bleephub SPA (6 pages), 5 Go management endpoints, log capture (500 lines/job), shared `LogViewer` component with ANSI→CSS. 6 Go mgmt + 16 Vitest + 3 LogViewer PASS.
-
-**Phase 77**: gitlabhub SPA (6 pages), 5 Go management endpoints, stage-grouped pipeline view (stages left-to-right, jobs stacked vertically). 7 Go mgmt + 16 Vitest + 5 Playwright E2E PASS.
-
-## Phases 79-82 — Admin Dashboard, Docs, Process Management, Projects
-
-**Phase 79**: Standalone `sockerless-admin` server + SPA (7 pages), component registry, health polling, `/api/v1/` endpoints, context discovery. 9 Go + 4 Vitest + 17 Playwright E2E PASS.
-
-**Phase 80**: Fixed stale docs, updated test counts, verified quick-starts, fixed bleephub README. 8 tasks.
-
-**Phase 81**: ProcessManager (Start/Stop/StopAll with ring buffer logs), cleanup scanner (orphaned PIDs, stale tmp, stopped containers, stale cloud resources), `ProviderInfo` on all 8 backends. 22 new Go + 11 Vitest PASS.
-
-**Phase 82**: Project bundles (sim+backend+frontend), `PortAllocator`, orchestrated startup with rollback, JSON persistence, 8 API endpoints, 4 UI pages (list/create/detail/logs). 39 Go + 18 Vitest PASS.
-
-## Bug Fix Sprints (BUG-001→051)
-
-| Sprint | Bugs Fixed | Key Changes | Test Delta |
-|---|---|---|---|
-| 1 | BUG-001→020 | LoggingMiddleware, race fixes, project name validation, RingBuffer carry-over, error states on 8 UI pages, per-row pending state | 70→77 Go, 86→86 Vitest |
-| 2 | BUG-003→016 (14) | opLock concurrency, graceful HTTP shutdown, LogViewer XSS fix, DataTable onRowClick, confirm guards | 77→83 Go, 86→89 Vitest |
-| 3 | BUG-003→023 (21) | StopAll bypass opLock, context cancel cleanup, processErrorStatus, ANSI rewrite, URL encoding on 14 endpoints, empty states | 83→86 Go, 89→92 Vitest |
-| 4 | BUG-024→033 (10) | HTTP status codes (409 Conflict), ScanStoppedContainers age, RingBuffer negative guard, auto-refresh | 86→87 Go, 92 Vitest |
-| 5 | BUG-034→042 (9) | Stop/Start race (generation check), start/stop button guards, 404 route, concurrent error display | 87→88 Go, 92 Vitest |
-| 6 | BUG-043→046 (4) | "stopping" state detection, error display fix, health badge mapping, provider cache invalidation | 88 Go, 92 Vitest |
-
-## Simulator Command Protocol Cleanup (BUG-047→051)
-
-Eliminated simulator-specific command protocol from FaaS backends (Lambda/GCF/AZF). Replaced `SimCommand`/`ImageConfig.Command` JSON fields with standard `SOCKERLESS_CMD` env var. Configurable `AgentTimeout` (default 30s, tests use 5s). 5 bugs fixed, all 75 sim-backend tests pass.
-
-## Bug Audit: api, backends, frontends (BUG-052→062)
-
-Audited `api/`, `backends/core/`, all 8 backend implementations, and `frontends/docker/` for correctness bugs. Found and fixed 9 real bugs:
-- **High**: `extractTar` silent file corruption (BUG-052), `handlePutArchive` swallowing errors (BUG-053), network prune filter not forwarded (BUG-058)
-- **Medium**: `mergeStagingDir` silent errors (BUG-054), `createTar` ignoring write errors (BUG-055), commit JSON decode error ignored (BUG-059), buildargs unmarshal error ignored (BUG-060), ECS task definition leak (BUG-062)
-- **Low**: Agent drivers ignoring container-not-found (BUG-061)
-
-Changed `createTar` signature to return `error`, updated 5 callers. Added 10 new tests. All 286 core tests pass, 0 lint issues across 19 modules.
-
-## Bug Sprint 9 — API & Backends Audit (BUG-063→068)
-
-Audited `api/` and all 8 `backends/` for Docker-to-cloud translation fidelity. Found 6 real bugs — 1 API type fidelity issue, 1 cross-cutting state-consistency bug across 3 container backends, and 4 cloud resource leaks across 4 backends.
-
-- **BUG-063**: `ExecProcessConfig.Privileged` changed from `bool` to `*bool` with `omitempty` (Docker API fidelity)
-- **BUG-064**: Added `Store.RevertToCreated()` — ECS/ACA/CloudRun now revert container state on cloud operation failure instead of leaving containers stuck "running"
-- **BUG-065**: ACA job cleanup on `PollUntilDone` failure (single + multi-container)
-- **BUG-066**: CloudRun job cleanup on `createOp.Wait` failure (single + multi-container)
-- **BUG-067**: GCF function cleanup on `op.Wait` failure (best-effort `DeleteFunction`)
-- **BUG-068**: AZF Function App cleanup on `PollUntilDone` failure (best-effort `WebApps.Delete`)
-
-All 75 sim-backend tests pass. 0 lint issues across 19 modules.
-
-## Bug Sprint 10 — API & Backends Audit (BUG-069→074)
-
-Audited Docker-to-cloud translation fidelity: resource lifecycle cleanup, kill semantics, image store consistency, and Docker passthrough completeness. Found 6 real bugs — 1 core image store bug, 1 ECS prune resource leak, 1 cross-cutting kill semantics bug across 3 FaaS backends, 1 cross-cutting prune resource leak across 3 FaaS backends, 1 cross-cutting LogBuffers memory leak across 3 FaaS backends, and 1 Docker passthrough fidelity bug.
-
-- **BUG-069**: `handleImageRemove` now deletes all tag aliases (copied pattern from `handleImagePrune`)
-- **BUG-070**: ECS `handleContainerPrune` now deregisters task definitions and calls `MarkCleanedUp`
-- **BUG-071**: FaaS `handleContainerKill` now parses signal, transitions to "exited", closes WaitChs (Lambda/GCF/AZF)
-- **BUG-072**: FaaS `handleContainerPrune` now deletes cloud functions and calls `MarkCleanedUp` (Lambda/GCF/AZF)
-- **BUG-073**: FaaS prune and remove now clean up `LogBuffers` (6 locations across Lambda/GCF/AZF)
-- **BUG-074**: Docker backend `mapContainerFromDocker` now populates Mounts from `info.Mounts`
-
-All 75 sim-backend tests pass. 0 lint issues across 19 modules.
-
-## Bug Sprint 11 — API & Backends Audit (BUG-075→082)
-
-Audited cross-backend lifecycle consistency (restart semantics) and Docker passthrough mapping fidelity (missing fields that our API types define but the Docker backend silently drops). Found 8 real bugs — 1 Lambda restart crash bug, 5 Docker backend inspect/list mapping gaps, 1 Docker network mapping gap, and 1 Docker image mapping gap.
-
-- **BUG-075**: Lambda now has no-op restart handler (matching GCF/AZF pattern) instead of inheriting core's process-based restart
-- **BUG-076**: Docker `mapContainerFromDocker` now maps all 17 HostConfig fields (was 3: NetworkMode, Binds, AutoRemove)
-- **BUG-077**: Docker `mapContainerFromDocker` now maps Config.ExposedPorts, Volumes, Shell, Healthcheck, StopTimeout
-- **BUG-078**: Docker `mapContainerFromDocker` now maps State.Health (Status, FailingStreak, Log entries)
-- **BUG-079**: Docker `mapContainerFromDocker` now maps NetworkSettings.Ports via shared `mapPortBindings` helper
-- **BUG-080**: Docker `handleContainerList` now maps Ports, Mounts, SizeRw, NetworkSettings in list response
-- **BUG-081**: Docker network list and inspect now map IPAM (Driver, Config, Options) and Containers
-- **BUG-082**: Docker `handleImageInspect` now maps all 19 ContainerConfig fields (was 5)
-
-All 75 sim-backend tests pass. 286 core tests pass. 0 lint issues across 19 modules.
-
-## Bug Sprint 12 — API & Backends Audit (BUG-083→090)
-
-Audited Docker CREATE direction (API→Docker), FaaS backend lifecycle consistency, core handler correctness, and Docker network/inspect field gaps. Found 8 real bugs — 2 Docker create mapping gaps (21 missing fields total), 1 cross-cutting FaaS pause/unpause bug across 3 backends, 3 core handler correctness bugs, and 2 Docker Aliases mapping gaps.
-
-- **BUG-083**: Docker `handleContainerCreate` now maps all 17 HostConfig fields (was 3) — added PortBindings, RestartPolicy, Privileged, CapAdd/CapDrop, Init, Mounts, LogConfig, etc.
-- **BUG-084**: Docker `handleContainerCreate` now maps all 19 Config fields (was 14) — added StdinOnce, Domainname, Shell, StopTimeout, ExposedPorts, Volumes, Healthcheck
-- **BUG-085**: Lambda/GCF/AZF now register `ContainerPause`/`ContainerUnpause` overrides returning `NotImplementedError` (was falling through to core which corrupted FaaS state)
-- **BUG-086**: Core `handleContainerPause` now checks `c.State.Paused` before `!c.State.Running`, returns `409 Conflict` for already-paused containers
-- **BUG-087**: Core `handleExecStart` now checks container existence (was discarding `ok` bool from `Store.Containers.Get`)
-- **BUG-088**: Core rename, pause, and unpause now emit Docker-compatible events via `emitEvent()`
-- **BUG-089**: Docker `handleNetworkConnect` now maps `Aliases` field to Docker SDK's `network.EndpointSettings`
-- **BUG-090**: Docker `mapContainerFromDocker` now maps `Aliases` in `NetworkSettings.Networks` endpoint mapping
-
-All 286 core tests pass. 0 lint issues across 19 modules.
-
-## Bug Sprint 13 — API & Backends Audit (BUG-091→098)
-
-Audited Docker create NetworkingConfig gap, container backend prune/remove cleanup gaps, and Docker inspect/list/network/image remaining field gaps. Found 8 real bugs — 1 high-severity Docker create NetworkingConfig drop, 1 high-severity cross-cutting LogBuffers memory leak across 3 container backends, 1 cross-cutting Registry.MarkCleanedUp gap in 2 backends, and 5 Docker passthrough field mapping gaps.
-
-- **BUG-091**: Docker `handleContainerCreate` now maps `NetworkingConfig` to Docker SDK's `network.NetworkingConfig` (was hardcoded `nil`, dropping network pre-connect config)
-- **BUG-092**: ECS/CloudRun/ACA now call `s.Store.LogBuffers.Delete(id)` in both prune and remove handlers (6 locations total — was leaking log buffers indefinitely)
-- **BUG-093**: CloudRun/ACA prune now calls `s.Registry.MarkCleanedUp(...)` after `deleteJob` (ECS already had it; remove handlers had it but prune didn't)
-- **BUG-094**: Docker `mapContainerFromDocker` now maps `RestartCount` and `ExecIDs`
-- **BUG-095**: Docker `mapContainerFromDocker` now maps `Platform`, `LogPath`, `ResolvConfPath`, `HostnamePath`, `HostsPath`
-- **BUG-096**: Docker `handleNetworkCreate` now forwards `IPAM.Options` (inspect path already mapped it back)
-- **BUG-097**: Docker `handleImageInspect` now maps `Parent` and `Comment`
-- **BUG-098**: Docker container list now maps `Aliases` in network endpoint settings (Sprint 12 BUG-090 only fixed inspect)
-
-All 286 core tests pass. 0 lint issues across 19 modules.
+23 open bugs remain — see `BUGS.md`.
 
 ## Project Stats
 
 - **80 phases** (1-67, 69-77, 79-82), 725 tasks completed
+- **18 bug sprints**, 138 bugs fixed, 23 open
 - **18 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, CLI, admin, tests
-- **21 Go-implemented builtins** in WASM sandbox
-- **18 driver interface methods** across 5 driver types
-- **7 external test consumers**: `act`, `gitlab-runner`, `gitlab-ci-local`, upstream act, `actions/runner`, `gh` CLI, gitlabhub gitlab-runner
-- **Core tests**: 286 PASS (+5 SPAHandler) | **Frontend tests**: 7 PASS | **UI tests**: 92 PASS (Vitest) | **Admin tests**: 88 PASS | **bleephub tests**: 304 PASS | **gitlabhub tests**: 136 PASS | **Shared ProcessRunner**: 15 PASS
-- **Cloud SDK tests**: AWS 42, GCP 43, Azure 38 | **Cloud CLI tests**: AWS 26, GCP 21, Azure 19
-- **3 cloud simulators** validated against SDKs, CLIs, and Terraform — now with real process execution for all services (container + FaaS)
+- **Core tests**: 286 PASS | **Frontend**: 7 | **UI (Vitest)**: 92 | **Admin**: 88 | **bleephub**: 304 | **gitlabhub**: 136 | **ProcessRunner**: 15
+- **Cloud SDK**: AWS 42, GCP 43, Azure 38 | **Cloud CLI**: AWS 26, GCP 21, Azure 19
+- **E2E**: 371 GitHub+GitLab workflows | **Sim-backend**: 75 | **Terraform**: 75 | **Upstream**: 252
+- **3 cloud simulators** validated against SDKs, CLIs, and Terraform
 - **8 backends** sharing a common driver architecture
-
-## Bug Sprint 14 — API & Backends Audit (BUG-099→106)
-
-Audited FaaS stop handler state transitions, ECS restart override gap, core exec Privileged flag, Docker passthrough field/parameter gaps, and CloudRun/ACA volume prune consistency. Found 8 real bugs — 2 high-severity (FaaS stop state, ECS restart leak) and 6 medium-severity field/parameter gaps.
-
-- **BUG-099**: Lambda/GCF/AzF `handleContainerStop` now calls `s.Store.StopContainer(id, 0)` before 204 response (was leaving container in "running" state after stop)
-- **BUG-100**: ECS now has `handleContainerRestart` in `extended.go` registered in RouteOverrides (was falling back to core handler that doesn't know about ECS tasks — resource leak)
-- **BUG-101**: Core `handleExecCreate` now includes `Privileged: &req.Privileged` in ExecProcessConfig (was dropping the flag)
-- **BUG-102**: Docker `handleContainerLogs` now maps `Since` and `Until` query parameters to LogsOptions (was silently ignoring time-range filtering)
-- **BUG-103**: Docker `handleNetworkConnect` now maps `IPPrefixLen` in EndpointSettings (inspect/list had it, connect didn't)
-- **BUG-104**: Docker volume create/inspect/list now map `Status` field (volume driver status info was silently dropped)
-- **BUG-105**: CloudRun/ACA `handleVolumePrune` now iterates volumes, checks mount usage, deletes unused (was no-op returning empty response)
-- **BUG-106**: Docker `handleContainerList` now parses `limit` and `filters` query parameters (was only reading `all`)
-
-All 286 core tests pass. 0 lint issues across 19 modules.
-
-## Bug Sprint 15 — API & Backends Audit (BUG-107→114)
-
-Follow-up audit focusing on core handler cleanup gaps, CloudRun/ACA Cmd mapping, FaaS AgentRegistry leaks, and Docker passthrough filter/auth gaps. Found 8 real bugs — 4 high-severity (pod force-remove leaks, CloudRun/ACA Args lost, Docker auth dropped) and 4 medium-severity cleanup/filter gaps.
-
-- **BUG-107**: Core `handlePodRemove` force path now performs full cleanup — StopHealthCheck, ProcessLifecycle.Cleanup, Network.Disconnect, LogBuffers/WaitChs/StagingDirs/Execs delete (was only deleting store entries)
-- **BUG-108**: Core `handleContainerRemove` and `handleContainerPrune` now clean up StagingDirs and Execs (memory leak — staging dirs and exec instances accumulated indefinitely)
-- **BUG-109**: CloudRun `buildContainerSpec` now tracks entrypoint and command separately, sets `Args` on container spec (Cmd was silently lost when both Entrypoint and Cmd were set)
-- **BUG-110**: ACA `buildContainerSpec` now tracks entrypoint and command separately, sets `Args` on container spec (same as BUG-109)
-- **BUG-111**: All 3 FaaS backends now call `AgentRegistry.Remove(id)` on agent callback timeout (stale registry entries and pending channels accumulated)
-- **BUG-112**: Docker `handleImagePull` now sets `PullOptions{RegistryAuth: req.Auth}` (auth credentials were silently dropped — private image pulls failed)
-- **BUG-113**: All 4 Docker prune handlers (container, volume, image, network) now parse `filters` query param via `filters.FromJSON()` (was pruning everything regardless of filters)
-- **BUG-114**: Docker network/volume/image list handlers now parse `filters` query param (was returning unfiltered results)
-
-All 286 core tests pass. 0 lint issues across 19 modules.
-
-### Bug Sprint 16 (BUG-115 → BUG-122) — 8 fixes
-
-- **BUG-115**: `extractTar` path traversal — added `strings.HasPrefix` check to prevent writing files outside destination directory via malicious tar archives
-- **BUG-116**: `handleContainerPrune` missing network disconnect — added `Network.Disconnect` loop matching `handleContainerRemove`
-- **BUG-117**: `handleContainerRestart` missing health check restart — added `StartHealthCheck(id)` after process re-spawn
-- **BUG-118**: All 6 cloud stop handlers — added `AgentRegistry.Remove(id)` and changed `StopContainer` → `ForceStopContainer`
-- **BUG-119**: All 3 container backend restart handlers — added `AgentRegistry.Remove(id)` and changed `StopContainer` → `ForceStopContainer`
-- **BUG-120**: Docker `handleSystemEvents` — parse `since`, `until`, `filters` query params (was passing empty `events.ListOptions{}`)
-- **BUG-121**: Docker `handleSystemDf` — added `SizeRw` and `SizeRootFs` to container mapping; added `SizeRootFs` field to `api.ContainerSummary`
-- **BUG-122**: All 6 cloud backends' remove and prune handlers — added `StagingDirs.Delete` and exec ID cleanup loop (12 handlers total)
-
-All 286 core tests pass. 0 lint issues across 19 modules.

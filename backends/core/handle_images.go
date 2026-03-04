@@ -234,8 +234,13 @@ func (s *BaseServer) handleImageTag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *BaseServer) handleImageList(w http.ResponseWriter, r *http.Request) {
+	seen := make(map[string]bool)
 	var result []*api.ImageSummary
 	for _, img := range s.Store.Images.List() {
+		if seen[img.ID] {
+			continue
+		}
+		seen[img.ID] = true
 		created, _ := time.Parse(time.RFC3339Nano, img.Created)
 		result = append(result, &api.ImageSummary{
 			ID:          img.ID,
@@ -265,8 +270,24 @@ func (s *BaseServer) handleImageRemove(w http.ResponseWriter, r *http.Request) {
 	s.Store.Images.Delete(img.ID)
 	for _, tag := range img.RepoTags {
 		s.Store.Images.Delete(tag)
-		if idx := strings.Index(tag, ":"); idx >= 0 {
-			s.Store.Images.Delete(tag[:idx])
+		parts := strings.SplitN(tag, ":", 2)
+		if len(parts) >= 1 {
+			s.Store.Images.Delete(parts[0])
+			// Delete docker.io short aliases
+			nameWithoutTag := parts[0]
+			if strings.HasPrefix(nameWithoutTag, "docker.io/library/") {
+				short := strings.TrimPrefix(nameWithoutTag, "docker.io/library/")
+				s.Store.Images.Delete(short)
+				if len(parts) == 2 {
+					s.Store.Images.Delete(short + ":" + parts[1])
+				}
+			} else if strings.HasPrefix(nameWithoutTag, "docker.io/") {
+				short := strings.TrimPrefix(nameWithoutTag, "docker.io/")
+				s.Store.Images.Delete(short)
+				if len(parts) == 2 {
+					s.Store.Images.Delete(short + ":" + parts[1])
+				}
+			}
 		}
 	}
 

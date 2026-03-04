@@ -189,6 +189,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	createPoller, err := s.azure.Jobs.BeginCreateOrUpdate(s.ctx(), s.config.ResourceGroup, jobName, jobSpec, nil)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to create ACA Job")
+		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
 		core.WriteError(w, fmt.Errorf("failed to create job: %w", err))
 		return
@@ -198,6 +199,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	_, err = createPoller.PollUntilDone(s.ctx(), nil)
 	if err != nil {
 		s.deleteJob(jobName)
+		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
 		core.WriteError(w, fmt.Errorf("job creation failed: %w", err))
@@ -219,6 +221,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to start ACA Job")
 		s.deleteJob(jobName)
+		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
 		core.WriteError(w, fmt.Errorf("failed to start job: %w", err))
 		return
@@ -229,6 +232,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("start job failed")
 		s.deleteJob(jobName)
+		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
 		core.WriteError(w, fmt.Errorf("start job failed: %w", err))
 		return

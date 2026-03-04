@@ -337,7 +337,7 @@ func (s *Server) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 
 	var containers []*api.ContainerSummary
 	for _, c := range du.Containers {
-		containers = append(containers, &api.ContainerSummary{
+		cs := &api.ContainerSummary{
 			ID:         c.ID,
 			Names:      c.Names,
 			Image:      c.Image,
@@ -349,7 +349,17 @@ func (s *Server) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 			Labels:     c.Labels,
 			SizeRw:     c.SizeRw,
 			SizeRootFs: c.SizeRootFs,
-		})
+			Mounts:     mapMountsFromDf(c.Mounts),
+		}
+		for _, p := range c.Ports {
+			cs.Ports = append(cs.Ports, api.Port{
+				IP:          p.IP,
+				PrivatePort: p.PrivatePort,
+				PublicPort:  p.PublicPort,
+				Type:        p.Type,
+			})
+		}
+		containers = append(containers, cs)
 	}
 	if containers == nil {
 		containers = []*api.ContainerSummary{}
@@ -359,11 +369,13 @@ func (s *Server) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 	for _, img := range du.Images {
 		images = append(images, &api.ImageSummary{
 			ID:          img.ID,
+			ParentID:    img.ParentID,
 			RepoTags:    img.RepoTags,
 			RepoDigests: img.RepoDigests,
 			Created:     img.Created,
 			Size:        img.Size,
 			SharedSize:  img.SharedSize,
+			VirtualSize: img.Size,
 			Labels:      img.Labels,
 			Containers:  img.Containers,
 		})
@@ -383,6 +395,7 @@ func (s *Server) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 				Labels:     v.Labels,
 				Scope:      v.Scope,
 				Options:    v.Options,
+				Status:     v.Status,
 			})
 		}
 	}
@@ -396,6 +409,23 @@ func (s *Server) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 		Containers: containers,
 		Volumes:    volumes,
 	})
+}
+
+func mapMountsFromDf(mounts []types.MountPoint) []api.MountPoint {
+	result := make([]api.MountPoint, 0, len(mounts))
+	for _, m := range mounts {
+		result = append(result, api.MountPoint{
+			Type:        string(m.Type),
+			Name:        m.Name,
+			Source:      m.Source,
+			Destination: m.Destination,
+			Driver:      m.Driver,
+			Mode:        m.Mode,
+			RW:          m.RW,
+			Propagation: string(m.Propagation),
+		})
+	}
+	return result
 }
 
 // Prevent unused import errors

@@ -1,8 +1,8 @@
 # Sockerless — Roadmap
 
-> Phases 1-67, 69-77, 79-82 complete (725 tasks). Phase 68 in progress. This document covers current and future work.
+> Phases 1-67, 69-77, 79-82 complete (725 tasks). Phase 68 in progress. 138 bugs fixed, 23 open.
 >
-> **Production target:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners (GitHub Actions from github.com, GitLab CI from gitlab.com), and custom SDK clients — backed by real cloud infrastructure (AWS, GCP, Azure).
+> **Production target:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners (GitHub Actions, GitLab CI) — backed by real cloud infrastructure (AWS, GCP, Azure).
 
 ## Guiding Principles
 
@@ -13,39 +13,21 @@
 5. **Driver-first handlers** — All handler code must operate through driver interfaces, never through direct `Store.Processes` access or `ProcessFactory` checks.
 6. **LLM-editable files** — Keep source files under 400 lines.
 7. **GitHub API fidelity** — bleephub must match the real GitHub API closely enough that unmodified `gh` CLI commands work against it.
-8. **State persistence** — Every task must end with a state save: update `PLAN.md` (mark task done), `STATUS.md` (test counts), `WHAT_WE_DID.md` (append summary), `MEMORY.md` (add learnings), and `_tasks/done/` (completion log).
+8. **State persistence** — Every task must end with a state save: update `PLAN.md`, `STATUS.md`, `WHAT_WE_DID.md`, `MEMORY.md`, and `_tasks/done/`.
 
 ---
 
 ## Completed Phases (1-82)
 
-Technical decisions from all phases are recorded in `DECISIONS.md`. Detailed per-task logs in `_tasks/done/`.
+See `WHAT_WE_DID.md` for details and `_tasks/done/` for per-task logs.
 
 | Phase | Summary |
 |---|---|
-| 1-10 | Foundation: 3 cloud simulators (AWS/GCP/Azure), 8 backends, agent bridge, Docker REST API frontend |
-| 11-34 | WASM sandbox, E2E tests (217+154), driver interfaces, gitlab-ci-local 252, Docker build |
-| 35-42 | bleephub: GitHub API server + runner internal API + multi-job engine. 190 unit tests |
-| 43-56 | CLI, crash safety, pods, service containers, production Docker API (TLS/auth/logs/DNS/restart/events/filters/export/commit) |
-| 57-59 | Production GitHub Actions: multi-job, matrix, secrets, expressions, cancellation, concurrency, artifacts |
-| 60-61 | Production GitLab CI: gitlabhub coordinator, DAG engine, expressions, extends, include, parallel, retry, DinD |
-| 62-63 | Docker API hardening + Compose E2E: HEALTHCHECK, volumes, mounts, prune, directives, race fixes. 249→255 core tests |
-| 64-65 | bleephub: Webhooks (HMAC-SHA256, async delivery, CI trigger) + GitHub Apps (JWT, installation tokens). 293 tests |
-| 66 | Optional OpenTelemetry tracing: OTLP HTTP, otelhttp middleware, context propagation, workflow/pipeline spans |
-| 67 | Network Isolation: IPAllocator, SyntheticNetworkDriver, Linux NetnsManager, 14 new tests |
-| 69 | ARM64/Multi-Arch: goreleaser 15 builds, gitlabhub Dockerfile, docker.yml 7 images, ARM64 CI |
-| 70 | Simulator Fidelity: real process execution, structured logs, SDK/CLI/Terraform compat. 24 tasks |
-| 71 | SDK/CLI Verification: FaaS real execution, CLI log tests, README quick-starts, arithmetic evaluator. 19 tasks |
-| 72 | Full-Stack E2E Tests: forward-agent + FaaS arithmetic through Docker API, central multi-backend tests. 15 tasks |
-| 73 | UI Foundation: Bun/Vite/React 19/Tailwind 4 monorepo, shared core, SPAHandler, memory backend dashboard. 15 tasks |
-| 74 | All Backend Dashboards: shared BackendApp, 9 new SPAs (6 cloud + docker backend + docker frontend), mgmt endpoints. 12 tasks |
-| 75 | Simulator Dashboards: 3 simulator SPAs (AWS/GCP/Azure), `/sim/v1/` summary endpoints, SimulatorApp component. 13 tasks |
-| 76 | bleephub Dashboard: management endpoints, SPA (overview/workflows/runners/metrics), LogViewer component, Go embed. 11 tasks |
-| 77 | gitlabhub Dashboard: management endpoints, SPA (overview/pipelines/runners/metrics), stage-grouped view, Go embed. 10 tasks |
-| 79 | Admin Dashboard: standalone `sockerless-admin` server + SPA aggregating health, metrics, containers from all components. 7 tasks |
-| 80 | Documentation Review & Tutorial Verification: fixed stale docs, updated test counts, verified quick-starts, fixed bleephub README. 8 tasks |
-| 81 | Admin Process Management, Cleanup & Cloud Connections: ProcessManager, cleanup scanner, ProviderInfo, 3 new UI pages. 8 tasks |
-| 82 | Admin Projects: orchestrated sim+backend+frontend bundles, port allocator, project API, 4 UI pages. 12 tasks |
+| 1-56 | Foundation: 3 simulators, 8 backends, agent, frontend, WASM sandbox, bleephub, CLI, pods, Docker API |
+| 57-67 | CI runners (GitHub Actions + GitLab CI), API hardening, webhooks, GitHub Apps, OTel, network isolation |
+| 69-72 | ARM64, simulator fidelity, SDK/CLI verification, full-stack E2E |
+| 73-77 | UI: 13 SPAs (Bun/Vite/React 19), bleephub + gitlabhub dashboards, LogViewer |
+| 79-82 | Admin: dashboard, docs, process management, project bundles |
 
 ---
 

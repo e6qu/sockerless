@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -233,6 +234,10 @@ func (s *BaseServer) handleContainerStart(w http.ResponseWriter, r *http.Request
 	started, err := s.Drivers.ProcessLifecycle.Start(id, cmd, c.Config.Env, binds)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("container", id).Msg("failed to start container process")
+		s.StopHealthCheck(id)
+		s.Store.RevertToCreated(id)
+		WriteError(w, &api.ServerError{Message: "failed to start container process: " + err.Error()})
+		return
 	}
 
 	if started {
@@ -318,10 +323,7 @@ func (s *BaseServer) handleContainerKill(w http.ResponseWriter, r *http.Request)
 	s.StopHealthCheck(id)
 
 	signal := r.URL.Query().Get("signal")
-	exitCode := 0
-	if signal == "SIGKILL" || signal == "9" || signal == "KILL" {
-		exitCode = 137
-	}
+	exitCode := signalToExitCode(signal)
 
 	s.Store.Containers.Update(id, func(c *api.Container) {
 		c.State.Status = "exited"
@@ -397,8 +399,13 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 
 	c, _ := s.Store.Containers.Get(id)
 	if c.State.Running {
+		s.StopHealthCheck(id)
 		s.Drivers.ProcessLifecycle.Stop(id)
 		s.Store.ForceStopContainer(id, 0)
+		s.emitEvent("container", "die", id, map[string]string{
+			"exitCode": "0",
+			"name":     strings.TrimPrefix(c.Name, "/"),
+		})
 	}
 
 	// Clean up old process
@@ -419,6 +426,9 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 		c.RestartCount++
 	})
 
+	// Re-fetch fresh container after state update
+	c, _ = s.Store.Containers.Get(id)
+
 	// Re-spawn process (wait-and-stop goroutine is handled by the driver)
 	cmd := append([]string{c.Path}, c.Args...)
 	binds := s.resolveBindMounts(c.HostConfig.Binds, c.HostConfig.Mounts)
@@ -426,6 +436,10 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		s.Logger.Error().Err(err).Str("container", id).Msg("failed to restart container process")
 	}
+
+	s.emitEvent("container", "start", id, map[string]string{
+		"name": strings.TrimPrefix(c.Name, "/"),
+	})
 
 	// Re-start health check if configured
 	c, _ = s.Store.Containers.Get(id)
@@ -491,5 +505,27 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 	case <-r.Context().Done():
 		return
 	}
+}
+
+// signalToExitCode maps a signal name or number to the corresponding
+// exit code (128 + signal number), matching Docker's behavior.
+func signalToExitCode(signal string) int {
+	signalMap := map[string]int{
+		"SIGHUP": 129, "HUP": 129, "1": 129,
+		"SIGINT": 130, "INT": 130, "2": 130,
+		"SIGQUIT": 131, "QUIT": 131, "3": 131,
+		"SIGABRT": 134, "ABRT": 134, "6": 134,
+		"SIGKILL": 137, "KILL": 137, "9": 137,
+		"SIGUSR1": 138, "USR1": 138, "10": 138,
+		"SIGUSR2": 140, "USR2": 140, "12": 140,
+		"SIGTERM": 143, "TERM": 143, "15": 143,
+	}
+	if code, ok := signalMap[signal]; ok {
+		return code
+	}
+	if n, err := strconv.Atoi(signal); err == nil && n > 0 {
+		return 128 + n
+	}
+	return 137 // default to SIGKILL
 }
 

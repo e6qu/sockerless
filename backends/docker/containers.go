@@ -143,7 +143,9 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 	// Auto-pull image if needed
 	_, _, err := s.docker.ImageInspectWithRaw(r.Context(), config.Image)
 	if err != nil {
-		rc, pullErr := s.docker.ImagePull(r.Context(), config.Image, dockerimage.PullOptions{})
+		rc, pullErr := s.docker.ImagePull(r.Context(), config.Image, dockerimage.PullOptions{
+			RegistryAuth: r.Header.Get("X-Registry-Auth"),
+		})
 		if pullErr != nil {
 			writeError(w, &api.NotFoundError{Resource: "image", ID: config.Image})
 			return
@@ -176,6 +178,13 @@ func (s *Server) handleContainerList(w http.ResponseWriter, r *http.Request) {
 	if l := r.URL.Query().Get("limit"); l != "" {
 		opts.Limit, _ = strconv.Atoi(l)
 	}
+	if b := r.URL.Query().Get("before"); b != "" {
+		opts.Before = b
+	}
+	if since := r.URL.Query().Get("since"); since != "" {
+		opts.Since = since
+	}
+	opts.Size = r.URL.Query().Get("size") == "1" || r.URL.Query().Get("size") == "true"
 	if f := r.URL.Query().Get("filters"); f != "" {
 		args, err := filters.FromJSON(f)
 		if err == nil {
