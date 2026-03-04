@@ -154,7 +154,7 @@ func (s *Server) handleNetworkDisconnect(w http.ResponseWriter, r *http.Request)
 		writeError(w, mapDockerError(err))
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleNetworkRemove(w http.ResponseWriter, r *http.Request) {

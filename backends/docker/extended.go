@@ -217,7 +217,7 @@ func (s *Server) handleImageList(w http.ResponseWriter, r *http.Request) {
 			Created:     img.Created,
 			Size:        img.Size,
 			SharedSize:  img.SharedSize,
-			VirtualSize: img.Size,
+			VirtualSize: img.VirtualSize,
 			Labels:      img.Labels,
 			Containers:  img.Containers,
 		})
@@ -317,13 +317,25 @@ func (s *Server) handleSystemEvents(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher, canFlush := w.(http.Flusher)
 
+	enc := json.NewEncoder(w)
 	for {
 		select {
 		case event, ok := <-eventsCh:
 			if !ok {
 				return
 			}
-			json.NewEncoder(w).Encode(event)
+			mapped := api.Event{
+				Type:     string(event.Type),
+				Action:   string(event.Action),
+				Scope:    event.Scope,
+				Time:     event.Time,
+				TimeNano: event.TimeNano,
+				Actor: api.EventActor{
+					ID:         event.Actor.ID,
+					Attributes: event.Actor.Attributes,
+				},
+			}
+			enc.Encode(mapped)
 			if canFlush {
 				flusher.Flush()
 			}
@@ -386,7 +398,7 @@ func (s *Server) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 			Created:     img.Created,
 			Size:        img.Size,
 			SharedSize:  img.SharedSize,
-			VirtualSize: img.Size,
+			VirtualSize: img.VirtualSize,
 			Labels:      img.Labels,
 			Containers:  img.Containers,
 		})

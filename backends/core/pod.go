@@ -42,6 +42,12 @@ func NewPodRegistry() *PodRegistry {
 
 // CreatePod creates a new pod with the given name and labels.
 func (pr *PodRegistry) CreatePod(name string, labels map[string]string) *PodContext {
+	return pr.CreatePodWithOpts(name, labels, "", nil)
+}
+
+// CreatePodWithOpts creates a new pod with the given name, labels, hostname, and shared namespaces.
+// If sharedNS is nil, defaults to ["ipc", "net", "uts"].
+func (pr *PodRegistry) CreatePodWithOpts(name string, labels map[string]string, hostname string, sharedNS []string) *PodContext {
 	pr.mu.Lock()
 	defer pr.mu.Unlock()
 
@@ -49,12 +55,16 @@ func (pr *PodRegistry) CreatePod(name string, labels map[string]string) *PodCont
 	if labels == nil {
 		labels = make(map[string]string)
 	}
+	if sharedNS == nil {
+		sharedNS = []string{"ipc", "net", "uts"}
+	}
 	pod := &PodContext{
 		ID:       id,
 		Name:     name,
 		Status:   "created",
 		Labels:   labels,
-		SharedNS: []string{"ipc", "net", "uts"},
+		Hostname: hostname,
+		SharedNS: sharedNS,
 		Created:  time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	pr.pods[id] = pod

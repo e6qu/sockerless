@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 
@@ -38,20 +39,48 @@ func (s *Server) handleExecCreate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleExecInspect(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	info, err := s.docker.ContainerExecInspect(r.Context(), id)
+
+	// Use raw HTTP to get ProcessConfig fields not exposed by the SDK
+	resp, err := s.docker.ContainerExecInspect(r.Context(), id)
 	if err != nil {
 		writeError(w, mapDockerError(err))
 		return
 	}
 
 	exec := api.ExecInstance{
-		ID:          info.ExecID,
-		ContainerID: info.ContainerID,
-		Running:     info.Running,
-		ExitCode:    info.ExitCode,
-		Pid:         info.Pid,
-		CanRemove:   !info.Running,
+		ID:          resp.ExecID,
+		ContainerID: resp.ContainerID,
+		Running:     resp.Running,
+		ExitCode:    resp.ExitCode,
+		Pid:         resp.Pid,
+		CanRemove:   !resp.Running,
 	}
+
+	// The Docker SDK's ExecInspect struct omits ProcessConfig.
+	// Fetch raw JSON via the HTTP API to extract it.
+	rawResp, rawErr := s.httpGet(r.Context(), "/exec/"+id+"/json")
+	if rawErr == nil {
+		defer rawResp.Body.Close()
+		var raw struct {
+			ProcessConfig *struct {
+				Entrypoint string   `json:"entrypoint"`
+				Arguments  []string `json:"arguments"`
+				Tty        bool     `json:"tty"`
+				User       string   `json:"user"`
+				Privileged *bool    `json:"privileged,omitempty"`
+			} `json:"ProcessConfig"`
+		}
+		if json.NewDecoder(rawResp.Body).Decode(&raw) == nil && raw.ProcessConfig != nil {
+			exec.ProcessConfig = api.ExecProcessConfig{
+				Entrypoint: raw.ProcessConfig.Entrypoint,
+				Arguments:  raw.ProcessConfig.Arguments,
+				Tty:        raw.ProcessConfig.Tty,
+				User:       raw.ProcessConfig.User,
+				Privileged: raw.ProcessConfig.Privileged,
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, exec)
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/sockerless/api"
 )
@@ -72,14 +73,12 @@ func (s *BaseServer) handlePodCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pod := s.Store.Pods.CreatePod(req.Name, req.Labels)
-
-	if req.Hostname != "" {
-		pod.Hostname = req.Hostname
-	}
+	hostname := req.Hostname
+	var sharedNS []string
 	if req.Share != "" {
-		pod.SharedNS = strings.Split(req.Share, ",")
+		sharedNS = strings.Split(req.Share, ",")
 	}
+	pod := s.Store.Pods.CreatePodWithOpts(req.Name, req.Labels, hostname, sharedNS)
 
 	WriteJSON(w, http.StatusCreated, PodCreateResponse{ID: pod.ID})
 }
@@ -140,10 +139,23 @@ func (s *BaseServer) handlePodStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, cid := range pod.ContainerIDs {
+		c, ok := s.Store.Containers.Get(cid)
+		if !ok || c.State.Running {
+			continue
+		}
+		s.Store.Containers.Update(cid, func(c *api.Container) {
+			c.State.Status = "running"
+			c.State.Running = true
+			c.State.Pid = 42
+			c.State.StartedAt = now
+		})
+	}
 	s.Store.Pods.SetStatus(pod.ID, "running")
 	WriteJSON(w, http.StatusOK, map[string]any{
-		"Id":     pod.ID,
-		"Errs":   []string{},
+		"Id":   pod.ID,
+		"Errs": []string{},
 	})
 }
 
@@ -155,10 +167,20 @@ func (s *BaseServer) handlePodStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	for _, cid := range pod.ContainerIDs {
+		c, ok := s.Store.Containers.Get(cid)
+		if !ok || !c.State.Running {
+			continue
+		}
+		s.StopHealthCheck(cid)
+		s.Drivers.ProcessLifecycle.Stop(cid)
+		s.Drivers.ProcessLifecycle.Cleanup(cid)
+		s.Store.ForceStopContainer(cid, 0)
+	}
 	s.Store.Pods.SetStatus(pod.ID, "stopped")
 	WriteJSON(w, http.StatusOK, map[string]any{
-		"Id":     pod.ID,
-		"Errs":   []string{},
+		"Id":   pod.ID,
+		"Errs": []string{},
 	})
 }
 
@@ -170,10 +192,19 @@ func (s *BaseServer) handlePodKill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	for _, cid := range pod.ContainerIDs {
+		c, ok := s.Store.Containers.Get(cid)
+		if !ok || !c.State.Running {
+			continue
+		}
+		s.Drivers.ProcessLifecycle.Kill(cid)
+		s.StopHealthCheck(cid)
+		s.Store.ForceStopContainer(cid, 137)
+	}
 	s.Store.Pods.SetStatus(pod.ID, "exited")
 	WriteJSON(w, http.StatusOK, map[string]any{
-		"Id":     pod.ID,
-		"Errs":   []string{},
+		"Id":   pod.ID,
+		"Errs": []string{},
 	})
 }
 
@@ -185,8 +216,22 @@ func (s *BaseServer) handlePodRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Remove containers if force is set
 	force := r.URL.Query().Get("force") == "true" || r.URL.Query().Get("force") == "1"
+
+	// Without force, reject if any containers are running
+	if !force {
+		for _, cid := range pod.ContainerIDs {
+			c, ok := s.Store.Containers.Get(cid)
+			if ok && c.State.Running {
+				WriteError(w, &api.ConflictError{
+					Message: fmt.Sprintf("pod %s has running containers, cannot remove without force", ref),
+				})
+				return
+			}
+		}
+	}
+
+	// Remove containers if force is set
 	if force {
 		for _, cid := range pod.ContainerIDs {
 			c, ok := s.Store.Containers.Get(cid)

@@ -119,6 +119,12 @@ func (d *SyntheticNetworkDriver) Connect(_ context.Context, networkID, container
 		return fmt.Errorf("network %s not found", networkID)
 	}
 
+	// Release old IP if container is already connected to this network (BUG-207)
+	c, _ := d.Store.Containers.Get(containerID)
+	if ep, exists := c.NetworkSettings.Networks[net.Name]; exists && ep != nil {
+		d.IPAlloc.ReleaseIP(net.ID, ep.IPAddress)
+	}
+
 	ip, prefixLen, gateway, mac := d.IPAlloc.AllocateIP(net.ID)
 
 	endpoint := api.EndpointSettings{
@@ -140,7 +146,7 @@ func (d *SyntheticNetworkDriver) Connect(_ context.Context, networkID, container
 	}
 
 	// Add container to network's Containers map
-	c, _ := d.Store.Containers.Get(containerID)
+	c, _ = d.Store.Containers.Get(containerID)
 	d.Store.Networks.Update(net.ID, func(n *api.Network) {
 		n.Containers[containerID] = api.EndpointResource{
 			Name:        strings.TrimPrefix(c.Name, "/"),

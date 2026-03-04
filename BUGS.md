@@ -1,8 +1,8 @@
 # Known Bugs
 
-## Fixed (BUG-001 → BUG-201)
+## Fixed (BUG-001 → BUG-226)
 
-201 bugs fixed across 21 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
+226 bugs fixed across 22 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
@@ -22,6 +22,7 @@
 | 19 | BUG-139→157 | Core lifecycle (stop/restart/start/exec), cloud AgentRegistry leaks, Docker exec detach, frontend attach |
 | 20 | BUG-158→176 | Core kill/stop events, cloud restart parity, AgentRegistry leak, API types |
 | 21 | BUG-177→201 | Resource leaks, cloud parity, Docker field mapping, lifecycle safety |
+| 22 | BUG-202→226 | Core lifecycle safety, Docker API parity, API type gaps, frontend conformance |
 
 ## Open Bugs
 
@@ -36,20 +37,14 @@
 
 | Bug | File | Issue |
 |-----|------|-------|
-| OB-005 | `core/handle_pods.go:180-219` | Pod remove without force doesn't check running containers |
-| OB-006 | `core/handle_pods.go:135-178` | Pod start/stop/kill don't cascade to containers |
 | OB-013 | `core/handle_images.go:226-231` | Image tag doesn't update old alias store entries |
 | OB-014 | `core/handle_containers_archive.go:251-264` | tmpfs temp dirs never cleaned up |
 | OB-015 | `docker/containers.go:347-355` | Docker attach drops logs/detachKeys params |
 | OB-016 | `docker/containers.go:303-313` | Docker logs drops details param |
 | OB-018 | `docker/extended.go:324-390` | Docker system df drops BuildCache |
-| OB-040 | `core/handle_extended.go:67-96` | Core container prune ignores `filters` query param (prunes everything) |
 | OB-045 | `docker/containers.go:356-393`, `docker/exec.go:58-95` | Docker attach/exec ignores stdin — unidirectional copy only (interactive sessions broken) |
-| OB-046 | `docker/exec.go:39-56` | Docker exec inspect drops all ProcessConfig fields (empty config returned) |
 | OB-047 | `docker/server.go:46-106` | Docker backend missing routes: container update, changes, export, commit, resize, exec resize |
-| OB-049 | `docker/extended.go:294-328` | Docker system events passed raw without mapping to api.Event type |
 | OB-050 | `docker/extended.go:330-412` | Docker system df missing NetworkSettings in container summaries |
-| OB-051 | `docker/containers.go:201-239` | Docker container list missing SizeRootFs field mapping |
 | OB-055 | `lambda/containers.go:390-401`, `gcf/containers.go`, `azf/containers.go` | FaaS kill + background invocation goroutine race on WaitCh and container state |
 | OB-056 | `lambda/images.go`, `gcf/images.go`, `azf/images.go` | FaaS image pull uses synthetic config (no registry fetch) — containers lose default CMD/ENV |
 | OB-077 | `core/build.go:519-523` | BuildContexts entry and staging dir leaked if image is built but never used as container |
@@ -64,46 +59,27 @@
 
 | Bug | File | Issue |
 |-----|------|-------|
-| OB-023 | `core/handle_extended.go:114-133` | Stats streams forever after container exits |
-| OB-025 | `core/handle_extended.go:324-329` | Container update treats malformed JSON as empty body |
 | OB-026 | `docker/networks.go:91` | Docker network inspect drops verbose/scope params |
 | OB-027 | `docker/containers.go:248-256` | Docker container start drops checkpoint options |
 | OB-028 | `docker/images.go:40-96` | Docker image inspect missing Metadata.LastTagTime |
-| OB-029 | `docker/images.go:100` | Docker image load hardcodes quiet=false |
-| OB-059 | `core/handle_extended.go:282-323` | Core events handler only filters by "type" — ignores event/container/image/label filters |
 | OB-060 | `core/handle_images.go`, `core/handle_extended.go`, `core/handle_volumes.go` | Missing Docker-compatible events for image tag/remove, volume create/destroy |
-| OB-061 | `core/handle_extended.go:359-405` | System df image count wrong — aliases not deduplicated by image ID |
-| OB-062 | `core/handle_extended.go:178-218` | Container rename doesn't update network Containers map (stale name in network inspect) |
 | OB-063 | `core/handle_extended.go:325-347` | Container update ignores resource fields — only handles RestartPolicy |
 | OB-064 | `core/handle_images.go:181-209` | Image load always stores as "loaded:latest" (overwrites, no manifest extraction) |
 | OB-065 | All 6 cloud backends | Prune handlers skip AgentRegistry.Remove (stale entries for stopped containers) |
 | OB-066 | `lambda/logs.go`, `gcf/logs.go`, `azf/logs.go` | FaaS logs endpoint ignores buffered LogBuffers data (only queries cloud logging) |
-| OB-067 | `docker/client.go:22` | handleInfo uses context.Background() instead of request context |
-| OB-068 | `api/types.go` | API types missing fields: NetworkSettings top-level (Gateway, IPAddress, Bridge, etc.), HostConfig (DNS, Memory, CpuShares, PidMode, etc.), Event.Scope, HealthcheckConfig.StartInterval, EndpointSettings IPv6 fields, Image.GraphDriver, ExecInstance.DetachKeys |
-| OB-097 | `core/handle_extended.go:220-251` | Pause check-then-act race — container can be paused after it has exited |
+| OB-068 | `api/types.go` | API types missing fields: NetworkSettings top-level (Gateway, IPAddress, Bridge, etc.), HostConfig (DNS, Memory, CpuShares, PidMode, etc.), HealthcheckConfig.StartInterval, EndpointSettings IPv6 fields, Image.GraphDriver, ExecInstance.DetachKeys |
 | OB-098 | `core/handle_containers_archive.go:109-143` | Symlinks and hardlinks silently dropped during tar extraction |
-| OB-099 | `core/handle_pods.go:55-84` | Pod Hostname/SharedNS set outside registry mutex — concurrent read race |
 | OB-100 | `core/handle_containers_query.go:82-105` | Malformed Created timestamp causes incorrect before/since filter results |
-| OB-101 | `core/drivers_network.go:116-158` | Redundant network connect allocates second IP without releasing first — IP leak |
-| OB-102 | `core/handle_containers.go:216` | Start event emitted with pre-update container snapshot (fragile, stale reference) |
 | OB-103 | `ecs/containers.go:522-525` | ECS kill exitCh — background polling goroutine continues after force-stop (self-terminates eventually) |
 | OB-104 | `ecs/containers.go:551-576`, `cloudrun/containers.go:579`, `aca/containers.go:565` | Cloud force remove + background poller race — StopContainer called twice (may double-close channel) |
 | OB-105 | `aca/containers.go:748-765`, `cloudrun/containers.go:738` | ACA/CloudRun fire-and-forget LRO pollers — stop/delete jobs not actually waited on |
 | OB-106 | `lambda/recovery.go:14-43` | Lambda ScanOrphanedResources no pagination — misses functions beyond first 50 |
 | OB-107 | `azure-functions/recovery.go:54-66` | AZF CleanupResource always no-op — AZF state not persisted, lookup always fails at startup |
 | OB-108 | `lambda/containers.go:248-296` | Lambda start goroutine calls StopContainer on already-removed container (benign but noisy) |
-| OB-109 | `docker/extended.go:209,378`, `docker/images.go:48` | Docker VirtualSize hardcoded to Size in image list/inspect/df — loses shared layer info |
-| OB-110 | `docker/networks.go:157` | Docker network disconnect returns 200 instead of 204 No Content |
-| OB-111 | `docker/containers.go:610-612` | mapDockerError loses container ID from Docker not-found error messages |
-| OB-112 | `api/types.go:398-407` | Volume missing UsageData field — docker system df shows no volume usage data |
 | OB-113 | `api/types.go:589-595` | DiskUsageResponse missing BuildCache field and BuildCache type |
-| OB-114 | `api/types.go:492-496` | EndpointSettings missing Links field — docker network connect --link silently dropped |
-| OB-115 | `api/types.go:368-378` | NetworkCreateRequest missing CheckDuplicate field |
 | OB-116 | `frontends/docker/images.go:177-195` | Frontend handleImageBuild missing query params: labels, target, platform, pull, etc. |
 | OB-117 | `frontends/docker/images.go:210-224` | Frontend handleContainerCommit missing pause and changes params |
 | OB-118 | `frontends/docker/networks.go:52-61` | Frontend handleNetworkInspect drops verbose/scope params — never forwarded to backend |
-| OB-119 | `frontends/docker/system.go:65-115` | Frontend handleInfo missing LoggingDriver field — may break Compose log driver detection |
-| OB-120 | `frontends/docker/system.go:11-18` | Frontend handlePing sends body on HEAD; missing Content-Length and Builder-Version headers |
 
 ## False Positives
 

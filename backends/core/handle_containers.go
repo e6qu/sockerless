@@ -253,6 +253,9 @@ func (s *BaseServer) handleContainerStart(w http.ResponseWriter, r *http.Request
 		c.State.ExitCode = 0
 	})
 
+	// Re-fetch after state update for accurate event data (BUG-208)
+	c, _ = s.Store.Containers.Get(id)
+
 	s.emitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 
 	// Start health check if configured

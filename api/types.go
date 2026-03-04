@@ -170,6 +170,7 @@ type EndpointSettings struct {
 	GlobalIPv6PrefixLen int                 `json:"GlobalIPv6PrefixLen"`
 	MacAddress          string              `json:"MacAddress"`
 	Aliases             []string            `json:"Aliases,omitempty"`
+	Links               []string            `json:"Links,omitempty"`
 	DriverOpts          map[string]string   `json:"DriverOpts,omitempty"`
 }
 
@@ -414,15 +415,16 @@ type EndpointResource struct {
 
 // NetworkCreateRequest is the request to create a network.
 type NetworkCreateRequest struct {
-	Name       string            `json:"Name"`
-	Driver     string            `json:"Driver"`
-	Internal   bool              `json:"Internal"`
-	Attachable bool              `json:"Attachable"`
-	Ingress    bool              `json:"Ingress"`
-	EnableIPv6 bool              `json:"EnableIPv6"`
-	IPAM       *IPAM             `json:"IPAM,omitempty"`
-	Options    map[string]string `json:"Options,omitempty"`
-	Labels     map[string]string `json:"Labels,omitempty"`
+	Name           string            `json:"Name"`
+	CheckDuplicate bool              `json:"CheckDuplicate"`
+	Driver         string            `json:"Driver"`
+	Internal       bool              `json:"Internal"`
+	Attachable     bool              `json:"Attachable"`
+	Ingress        bool              `json:"Ingress"`
+	EnableIPv6     bool              `json:"EnableIPv6"`
+	IPAM           *IPAM             `json:"IPAM,omitempty"`
+	Options        map[string]string `json:"Options,omitempty"`
+	Labels         map[string]string `json:"Labels,omitempty"`
 }
 
 // NetworkCreateResponse is the response from creating a network.
@@ -452,6 +454,13 @@ type Volume struct {
 	Labels     map[string]string `json:"Labels"`
 	Scope      string            `json:"Scope"`
 	Options    map[string]string `json:"Options,omitempty"`
+	UsageData  *VolumeUsageData  `json:"UsageData,omitempty"`
+}
+
+// VolumeUsageData holds usage data about a volume.
+type VolumeUsageData struct {
+	Size     int64 `json:"Size"`
+	RefCount int64 `json:"RefCount"`
 }
 
 // VolumeCreateRequest is the request to create a volume.
@@ -600,11 +609,12 @@ type EventsOptions struct {
 
 // Event represents a Docker system event.
 type Event struct {
-	Type   string     `json:"Type"`
-	Action string     `json:"Action"`
-	Actor  EventActor `json:"Actor"`
-	Time   int64      `json:"time"`
-	TimeNano int64    `json:"timeNano"`
+	Type     string     `json:"Type"`
+	Action   string     `json:"Action"`
+	Actor    EventActor `json:"Actor"`
+	Scope    string     `json:"scope,omitempty"`
+	Time     int64      `json:"time"`
+	TimeNano int64      `json:"timeNano"`
 }
 
 // EventActor identifies the object that generated an event.

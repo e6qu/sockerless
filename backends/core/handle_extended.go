@@ -3,7 +3,9 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -65,8 +67,21 @@ func (s *BaseServer) handleContainerTop(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *BaseServer) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
+	filters := ParseFilters(r.URL.Query().Get("filters"))
+	labelFilters := filters["label"]
+	untilFilters := filters["until"]
+
 	pruned := s.Store.Containers.PruneIf(func(_ string, c api.Container) bool {
-		return c.State.Status == "exited" || c.State.Status == "dead"
+		if c.State.Status != "exited" && c.State.Status != "dead" {
+			return false
+		}
+		if len(labelFilters) > 0 && !matchLabels(c.Config.Labels, labelFilters) {
+			return false
+		}
+		if len(untilFilters) > 0 && !matchUntil(c.Created, untilFilters) {
+			return false
+		}
+		return true
 	})
 	deleted := make([]string, 0, len(pruned))
 	for _, c := range pruned {
@@ -141,6 +156,10 @@ func (s *BaseServer) handleContainerStats(w http.ResponseWriter, r *http.Request
 		case <-r.Context().Done():
 			return
 		case <-time.After(1 * time.Second):
+			// Stop streaming if container is no longer running (BUG-209)
+			if cur, ok := s.Store.Containers.Get(id); !ok || !cur.State.Running {
+				return
+			}
 		}
 	}
 }
@@ -216,6 +235,19 @@ func (s *BaseServer) handleContainerRename(w http.ResponseWriter, r *http.Reques
 		c.Name = newName
 	})
 
+	// Update name in each network's Containers map (BUG-210)
+	c, _ = s.Store.Containers.Get(id)
+	for _, ep := range c.NetworkSettings.Networks {
+		if ep != nil && ep.NetworkID != "" {
+			s.Store.Networks.Update(ep.NetworkID, func(n *api.Network) {
+				if er, ok := n.Containers[id]; ok {
+					er.Name = strings.TrimPrefix(newName, "/")
+					n.Containers[id] = er
+				}
+			})
+		}
+	}
+
 	s.emitEvent("container", "rename", id, map[string]string{
 		"name":    strings.TrimPrefix(newName, "/"),
 		"oldName": strings.TrimPrefix(oldName, "/"),
@@ -232,29 +264,35 @@ func (s *BaseServer) handleContainerPause(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	c, _ := s.Store.Containers.Get(id)
-	if c.State.Paused {
-		WriteError(w, &api.ConflictError{
-			Message: fmt.Sprintf("Container %s is already paused", ref),
-		})
-		return
-	}
-	if !c.State.Running {
-		WriteError(w, &api.ConflictError{
-			Message: fmt.Sprintf("Container %s is not running", ref),
-		})
+	// Atomic check-and-set inside Update to prevent TOCTOU race
+	var name string
+	var conflict error
+	s.Store.Containers.Update(id, func(c *api.Container) {
+		if c.State.Paused {
+			conflict = &api.ConflictError{
+				Message: fmt.Sprintf("Container %s is already paused", ref),
+			}
+			return
+		}
+		if !c.State.Running {
+			conflict = &api.ConflictError{
+				Message: fmt.Sprintf("Container %s is not running", ref),
+			}
+			return
+		}
+		c.State.Paused = true
+		c.State.Status = "paused"
+		name = c.Name
+	})
+	if conflict != nil {
+		WriteError(w, conflict)
 		return
 	}
 
 	s.StopHealthCheck(id)
 
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		c.State.Paused = true
-		c.State.Status = "paused"
-	})
-
 	s.emitEvent("container", "pause", id, map[string]string{
-		"name": strings.TrimPrefix(c.Name, "/"),
+		"name": strings.TrimPrefix(name, "/"),
 	})
 
 	w.WriteHeader(http.StatusNoContent)
@@ -268,35 +306,45 @@ func (s *BaseServer) handleContainerUnpause(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	c, _ := s.Store.Containers.Get(id)
-	if !c.State.Paused {
-		WriteError(w, &api.ConflictError{
-			Message: fmt.Sprintf("Container %s is not paused", ref),
-		})
+	// Atomic check-and-set inside Update to prevent TOCTOU race
+	var name string
+	var hasHealthcheck bool
+	var conflict error
+	s.Store.Containers.Update(id, func(c *api.Container) {
+		if !c.State.Paused {
+			conflict = &api.ConflictError{
+				Message: fmt.Sprintf("Container %s is not paused", ref),
+			}
+			return
+		}
+		c.State.Paused = false
+		c.State.Status = "running"
+		name = c.Name
+		hasHealthcheck = c.Config.Healthcheck != nil && len(c.Config.Healthcheck.Test) > 0 &&
+			(len(c.Config.Healthcheck.Test) != 1 || !strings.EqualFold(c.Config.Healthcheck.Test[0], "NONE"))
+	})
+	if conflict != nil {
+		WriteError(w, conflict)
 		return
 	}
 
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		c.State.Paused = false
-		c.State.Status = "running"
-	})
-
-	// Re-start health check if configured
-	if c.Config.Healthcheck != nil && len(c.Config.Healthcheck.Test) > 0 &&
-		(len(c.Config.Healthcheck.Test) != 1 || !strings.EqualFold(c.Config.Healthcheck.Test[0], "NONE")) {
+	if hasHealthcheck {
 		s.StartHealthCheck(id)
 	}
 
 	s.emitEvent("container", "unpause", id, map[string]string{
-		"name": strings.TrimPrefix(c.Name, "/"),
+		"name": strings.TrimPrefix(name, "/"),
 	})
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *BaseServer) handleSystemEvents(w http.ResponseWriter, r *http.Request) {
-	filters := ParseFilters(r.URL.Query().Get("filters"))
-	typeFilter := filters["type"]
+	evFilters := ParseFilters(r.URL.Query().Get("filters"))
+	typeFilter := evFilters["type"]
+	actionFilter := evFilters["action"]
+	containerFilter := evFilters["container"]
+	labelFilter := evFilters["label"]
 
 	subID := GenerateID()[:16]
 	ch := s.EventBus.Subscribe(subID)
@@ -315,10 +363,16 @@ func (s *BaseServer) handleSystemEvents(w http.ResponseWriter, r *http.Request) 
 			if !ok {
 				return
 			}
-			if len(typeFilter) > 0 {
+			if !matchEventFilter(typeFilter, event.Type) {
+				continue
+			}
+			if !matchEventFilter(actionFilter, event.Action) {
+				continue
+			}
+			if len(containerFilter) > 0 {
 				matched := false
-				for _, t := range typeFilter {
-					if event.Type == t {
+				for _, cf := range containerFilter {
+					if event.Actor.ID == cf || event.Actor.Attributes["name"] == cf {
 						matched = true
 						break
 					}
@@ -326,6 +380,9 @@ func (s *BaseServer) handleSystemEvents(w http.ResponseWriter, r *http.Request) 
 				if !matched {
 					continue
 				}
+			}
+			if len(labelFilter) > 0 && !matchLabels(event.Actor.Attributes, labelFilter) {
+				continue
 			}
 			_ = enc.Encode(event)
 			if f, ok := w.(http.Flusher); ok {
@@ -335,6 +392,19 @@ func (s *BaseServer) handleSystemEvents(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
+}
+
+// matchEventFilter returns true if no filter is set or value matches one of the filter values.
+func matchEventFilter(filter []string, value string) bool {
+	if len(filter) == 0 {
+		return true
+	}
+	for _, f := range filter {
+		if value == f {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *BaseServer) handleContainerUpdate(w http.ResponseWriter, r *http.Request) {
@@ -347,8 +417,12 @@ func (s *BaseServer) handleContainerUpdate(w http.ResponseWriter, r *http.Reques
 
 	var req api.ContainerUpdateRequest
 	if err := ReadJSON(r, &req); err != nil {
-		// Empty body is fine — just return success with no changes
-		WriteJSON(w, http.StatusOK, api.ContainerUpdateResponse{Warnings: []string{}})
+		// Empty body is fine — return success. Malformed JSON is 400.
+		if err == io.EOF || r.ContentLength == 0 {
+			WriteJSON(w, http.StatusOK, api.ContainerUpdateResponse{Warnings: []string{}})
+			return
+		}
+		WriteError(w, &api.InvalidParameterError{Message: err.Error()})
 		return
 	}
 
@@ -412,9 +486,62 @@ func (s *BaseServer) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 		volumes = append(volumes, &vCopy)
 	}
 
+	// Deduplicate images by ID (BUG-211)
+	seen := make(map[string]bool, len(images))
+	dedupImages := make([]*api.ImageSummary, 0, len(images))
+	for _, img := range images {
+		if seen[img.ID] {
+			continue
+		}
+		seen[img.ID] = true
+		dedupImages = append(dedupImages, img)
+	}
+
 	WriteJSON(w, http.StatusOK, api.DiskUsageResponse{
-		Images:     images,
+		Images:     dedupImages,
 		Containers: containers,
 		Volumes:    volumes,
 	})
+}
+
+// matchLabels checks whether a container's labels satisfy label filter expressions.
+// Each filter is "key" (key must exist) or "key=value" (key must equal value).
+func matchLabels(labels map[string]string, filters []string) bool {
+	for _, f := range filters {
+		if k, v, ok := strings.Cut(f, "="); ok {
+			if labels[k] != v {
+				return false
+			}
+		} else {
+			if _, exists := labels[f]; !exists {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// matchUntil checks whether a container was created before the given until timestamps.
+func matchUntil(created string, filters []string) bool {
+	ct, err := time.Parse(time.RFC3339Nano, created)
+	if err != nil {
+		return false
+	}
+	for _, f := range filters {
+		// Try as Unix timestamp first
+		if secs, err := strconv.ParseInt(f, 10, 64); err == nil {
+			if !ct.Before(time.Unix(secs, 0)) {
+				return false
+			}
+			continue
+		}
+		// Try as RFC3339
+		if t, err := time.Parse(time.RFC3339Nano, f); err == nil {
+			if !ct.Before(t) {
+				return false
+			}
+			continue
+		}
+	}
+	return true
 }
