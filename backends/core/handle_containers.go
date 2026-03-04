@@ -362,7 +362,13 @@ func (s *BaseServer) handleContainerKill(w http.ResponseWriter, r *http.Request)
 		close(ch.(chan struct{}))
 	}
 
+	s.Drivers.ProcessLifecycle.Cleanup(id) // BUG-159: clean up WASM resources
 	s.emitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+	s.emitEvent("container", "die", id, map[string]string{
+		"exitCode": fmt.Sprintf("%d", exitCode),
+		"signal":   signal,
+		"name":     strings.TrimPrefix(c.Name, "/"),
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -430,6 +436,7 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 			"exitCode": "0",
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
+		s.emitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	}
 
 	// Clean up old process

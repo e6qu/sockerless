@@ -3,6 +3,7 @@ package ecs
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
@@ -23,6 +24,7 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 
 	// Stop if running
 	if c.State.Running {
+		s.StopHealthCheck(id)
 		s.AgentRegistry.Remove(id)
 		ecsState, _ := s.ECS.Get(id)
 		if ecsState.TaskARN != "" {
@@ -33,6 +35,10 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 			})
 		}
 		s.Store.ForceStopContainer(id, 0)
+		s.EmitEvent("container", "die", id, map[string]string{
+			"exitCode": "0",
+			"name":     strings.TrimPrefix(c.Name, "/"),
+		})
 	}
 
 	// Re-dispatch to start handler

@@ -3,6 +3,7 @@ package aca
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
@@ -21,12 +22,17 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 
 	// Stop if running
 	if c.State.Running {
+		s.StopHealthCheck(id)
 		s.AgentRegistry.Remove(id)
 		acaState, _ := s.ACA.Get(id)
 		if acaState.JobName != "" && acaState.ExecutionName != "" {
 			s.stopExecution(acaState.JobName, acaState.ExecutionName)
 		}
 		s.Store.ForceStopContainer(id, 0)
+		s.EmitEvent("container", "die", id, map[string]string{
+			"exitCode": "0",
+			"name":     strings.TrimPrefix(c.Name, "/"),
+		})
 	}
 
 	// Re-dispatch to start handler
