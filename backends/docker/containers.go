@@ -12,6 +12,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	dockerimage "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
@@ -171,7 +172,18 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleContainerList(w http.ResponseWriter, r *http.Request) {
 	all := r.URL.Query().Get("all") == "1" || r.URL.Query().Get("all") == "true"
 
-	containers, err := s.docker.ContainerList(r.Context(), container.ListOptions{All: all})
+	opts := container.ListOptions{All: all}
+	if l := r.URL.Query().Get("limit"); l != "" {
+		opts.Limit, _ = strconv.Atoi(l)
+	}
+	if f := r.URL.Query().Get("filters"); f != "" {
+		args, err := filters.FromJSON(f)
+		if err == nil {
+			opts.Filters = args
+		}
+	}
+
+	containers, err := s.docker.ContainerList(r.Context(), opts)
 	if err != nil {
 		writeError(w, mapDockerError(err))
 		return
@@ -296,6 +308,8 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		Follow:     r.URL.Query().Get("follow") == "1" || r.URL.Query().Get("follow") == "true",
 		Timestamps: r.URL.Query().Get("timestamps") == "1" || r.URL.Query().Get("timestamps") == "true",
 		Tail:       r.URL.Query().Get("tail"),
+		Since:      r.URL.Query().Get("since"),
+		Until:      r.URL.Query().Get("until"),
 	})
 	if err != nil {
 		writeError(w, mapDockerError(err))

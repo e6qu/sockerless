@@ -33,6 +33,7 @@ func (s *Server) handleVolumeCreate(w http.ResponseWriter, r *http.Request) {
 		Labels:     vol.Labels,
 		Scope:      vol.Scope,
 		Options:    vol.Options,
+		Status:     vol.Status,
 	})
 }
 
@@ -53,6 +54,7 @@ func (s *Server) handleVolumeList(w http.ResponseWriter, r *http.Request) {
 			Labels:     v.Labels,
 			Scope:      v.Scope,
 			Options:    v.Options,
+			Status:     v.Status,
 		})
 	}
 
@@ -78,6 +80,7 @@ func (s *Server) handleVolumeInspect(w http.ResponseWriter, r *http.Request) {
 		Labels:     vol.Labels,
 		Scope:      vol.Scope,
 		Options:    vol.Options,
+		Status:     vol.Status,
 	})
 }
 

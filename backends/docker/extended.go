@@ -138,12 +138,13 @@ func (s *Server) handleNetworkConnect(w http.ResponseWriter, r *http.Request) {
 	var epConfig *network.EndpointSettings
 	if req.EndpointConfig != nil {
 		epConfig = &network.EndpointSettings{
-			NetworkID:  req.EndpointConfig.NetworkID,
-			EndpointID: req.EndpointConfig.EndpointID,
-			Gateway:    req.EndpointConfig.Gateway,
-			IPAddress:  req.EndpointConfig.IPAddress,
-			MacAddress: req.EndpointConfig.MacAddress,
-			Aliases:    req.EndpointConfig.Aliases,
+			NetworkID:   req.EndpointConfig.NetworkID,
+			EndpointID:  req.EndpointConfig.EndpointID,
+			Gateway:     req.EndpointConfig.Gateway,
+			IPAddress:   req.EndpointConfig.IPAddress,
+			IPPrefixLen: req.EndpointConfig.IPPrefixLen,
+			MacAddress:  req.EndpointConfig.MacAddress,
+			Aliases:     req.EndpointConfig.Aliases,
 		}
 	}
 

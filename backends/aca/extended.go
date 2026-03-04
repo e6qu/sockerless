@@ -96,8 +96,31 @@ func (s *Server) handleVolumeRemove(w http.ResponseWriter, r *http.Request) {
 
 // handleVolumePrune removes unused volumes.
 func (s *Server) handleVolumePrune(w http.ResponseWriter, r *http.Request) {
+	var deleted []string
+	for _, v := range s.Store.Volumes.List() {
+		inUse := false
+		for _, c := range s.Store.Containers.List() {
+			for _, m := range c.Mounts {
+				if m.Name == v.Name {
+					inUse = true
+					break
+				}
+			}
+			if inUse {
+				break
+			}
+		}
+		if !inUse {
+			s.Store.Volumes.Delete(v.Name)
+			s.VolumeState.Delete(v.Name)
+			deleted = append(deleted, v.Name)
+		}
+	}
+	if deleted == nil {
+		deleted = []string{}
+	}
 	core.WriteJSON(w, http.StatusOK, api.VolumePruneResponse{
-		VolumesDeleted: []string{},
+		VolumesDeleted: deleted,
 		SpaceReclaimed: 0,
 	})
 }

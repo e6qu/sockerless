@@ -45,6 +45,7 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		ContainerKill:    s.handleContainerKill,
 		ContainerRemove:  s.handleContainerRemove,
 		ContainerLogs:    s.handleContainerLogs,
+		ContainerRestart: s.handleContainerRestart,
 		ContainerPrune:   s.handleContainerPrune,
 		ContainerPause:   s.handleContainerPause,
 		ContainerUnpause: s.handleContainerUnpause,
