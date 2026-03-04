@@ -386,7 +386,8 @@ func (s *Server) handleContainerStop(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Azure Functions run to completion — stop transitions state
-	s.Store.StopContainer(id, 0)
+	s.AgentRegistry.Remove(id)
+	s.Store.ForceStopContainer(id, 0)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -474,6 +475,10 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 	s.AZF.Delete(id)
 	s.Store.WaitChs.Delete(id)
 	s.Store.LogBuffers.Delete(id)
+	s.Store.StagingDirs.Delete(id)
+	for _, eid := range c.ExecIDs {
+		s.Store.Execs.Delete(eid)
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }

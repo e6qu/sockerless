@@ -23,6 +23,7 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 
 	// Stop if running
 	if c.State.Running {
+		s.AgentRegistry.Remove(id)
 		ecsState, _ := s.ECS.Get(id)
 		if ecsState.TaskARN != "" {
 			_, _ = s.aws.ECS.StopTask(s.ctx(), &awsecs.StopTaskInput{
@@ -31,7 +32,7 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 				Reason:  aws.String("Container restarted via API"),
 			})
 		}
-		s.Store.StopContainer(id, 0)
+		s.Store.ForceStopContainer(id, 0)
 	}
 
 	// Re-dispatch to start handler
@@ -61,6 +62,10 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 			s.ECS.Delete(c.ID)
 			s.Store.WaitChs.Delete(c.ID)
 			s.Store.LogBuffers.Delete(c.ID)
+			s.Store.StagingDirs.Delete(c.ID)
+			for _, eid := range c.ExecIDs {
+				s.Store.Execs.Delete(eid)
+			}
 			deleted = append(deleted, c.ID)
 		}
 	}

@@ -163,6 +163,7 @@ type ContainerSummary struct {
 	Ports           []Port            `json:"Ports"`
 	Labels          map[string]string `json:"Labels"`
 	SizeRw          int64             `json:"SizeRw,omitempty"`
+	SizeRootFs      int64             `json:"SizeRootFs,omitempty"`
 	NetworkSettings *SummaryNetworkSettings `json:"NetworkSettings,omitempty"`
 	Mounts          []MountPoint      `json:"Mounts"`
 }

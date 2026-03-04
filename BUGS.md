@@ -836,3 +836,99 @@ All 4 prune handlers (container, volume, image, network) passed hardcoded `filte
 ### Details
 
 Network list, volume list, and image list handlers passed empty options to the Docker SDK. The `filters` query parameter was never parsed. Clients filtering lists by name, label, driver, etc. got unfiltered results.
+
+---
+
+## BUG-115: `extractTar` path traversal allows writing files outside destination directory
+
+**Severity**: High
+**Component**: `backends/core/handle_containers_archive.go`
+**Status**: Fixed — Sprint 16: added `strings.HasPrefix` check after `filepath.Join` to ensure target stays within destDir
+
+### Details
+
+The `extractTar` function computed `target := filepath.Join(destDir, filepath.Clean(hdr.Name))` without verifying that the result stayed within `destDir`. A malicious tar archive with `../../etc/passwd` entries could write files outside the destination directory via `docker cp` or `docker build`.
+
+---
+
+## BUG-116: `handleContainerPrune` missing network disconnect cleanup
+
+**Severity**: Medium
+**Component**: `backends/core/handle_extended.go`
+**Status**: Fixed — Sprint 16: added `Network.Disconnect` loop matching `handleContainerRemove`
+
+### Details
+
+Container prune cleaned up names, logs, waits, process, staging, and execs but did not call `Drivers.Network.Disconnect()` for each container's network endpoints. This left stale container entries in `Network.Containers` maps, causing `docker network inspect` to show removed containers and `docker network prune` to skip networks that appeared to still have containers.
+
+---
+
+## BUG-117: `handleContainerRestart` does not restart health checks
+
+**Severity**: Medium
+**Component**: `backends/core/handle_containers.go`
+**Status**: Fixed — Sprint 16: added `StartHealthCheck(id)` after process re-start
+
+### Details
+
+After restarting a container, the health check goroutine (stopped by `ForceStopContainer`) was not re-started. The container's `State.Health.Status` became permanently stale. Compare with `handleContainerStart` which correctly starts health checks if configured.
+
+---
+
+## BUG-118: Cloud backend stop handlers missing `AgentRegistry.Remove` and using `StopContainer` instead of `ForceStopContainer`
+
+**Severity**: High
+**Component**: All 6 cloud backends' `containers.go`
+**Status**: Fixed — Sprint 16: added `AgentRegistry.Remove(id)` and changed `StopContainer` → `ForceStopContainer`
+
+### Details
+
+All 6 cloud stop handlers (ECS, CloudRun, ACA, Lambda, Cloud Run Functions, Azure Functions) had two issues: (a) they didn't call `AgentRegistry.Remove(id)` to disconnect reverse agents, causing goroutine leaks blocked on `WaitForDisconnect` for up to 30 minutes; (b) they called `StopContainer` instead of `ForceStopContainer`, which could trigger restart policy instead of actually stopping.
+
+---
+
+## BUG-119: Cloud backend restart handlers missing `AgentRegistry.Remove`
+
+**Severity**: High
+**Component**: `backends/ecs/extended.go`, `backends/cloudrun/extended.go`, `backends/aca/extended.go`
+**Status**: Fixed — Sprint 16: added `AgentRegistry.Remove(id)` before stop and changed `StopContainer` → `ForceStopContainer`
+
+### Details
+
+None of the 3 container backend restart handlers called `AgentRegistry.Remove(id)` before stopping the old container. The old agent connection persisted while a new start began, causing stale agent state or potential deadlock in `WaitForAgent`.
+
+---
+
+## BUG-120: Docker `handleSystemEvents` drops `since`, `until`, and `filters` query parameters
+
+**Severity**: High
+**Component**: `backends/docker/extended.go`
+**Status**: Fixed — Sprint 16: parse `since`, `until`, `filters` from query params into `events.ListOptions`
+
+### Details
+
+The Docker backend's event streaming handler created `events.ListOptions{}` with empty options, dropping all 3 query parameters. Clients requesting filtered events (e.g., only container events since a timestamp) received ALL events unfiltered.
+
+---
+
+## BUG-121: Docker `handleSystemDf` drops container `SizeRw` and `SizeRootFs`
+
+**Severity**: High
+**Component**: `backends/docker/extended.go`, `api/types.go`
+**Status**: Fixed — Sprint 16: added `SizeRw` and `SizeRootFs` to container mapping; added `SizeRootFs` field to `api.ContainerSummary`
+
+### Details
+
+The container mapping in `handleSystemDf` only copied ID, Names, Image, ImageID, Command, Created, State, Status, and Labels from the Docker SDK response. `SizeRw` and `SizeRootFs` were not included, causing `docker system df` to always show zero container sizes.
+
+---
+
+## BUG-122: Cloud backend remove/prune missing `StagingDirs` and `Execs` cleanup
+
+**Severity**: Medium
+**Component**: All 6 cloud backends' `containers.go` (remove) and `extended.go` (prune)
+**Status**: Fixed — Sprint 16: added `StagingDirs.Delete` and exec ID cleanup loop to all 12 handlers
+
+### Details
+
+BUG-108 added StagingDirs/Execs cleanup to the core backend, but all 6 cloud backends have their own overriding remove/prune handlers that didn't include this cleanup. Orphaned staging dirs and exec instances accumulated for removed/pruned containers on cloud backends.

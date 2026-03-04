@@ -293,7 +293,14 @@ func (s *Server) handleImagePrune(w http.ResponseWriter, r *http.Request) {
 
 // handleSystemEvents streams Docker events to the client.
 func (s *Server) handleSystemEvents(w http.ResponseWriter, r *http.Request) {
-	eventsCh, errCh := s.docker.Events(r.Context(), events.ListOptions{})
+	opts := events.ListOptions{
+		Since: r.URL.Query().Get("since"),
+		Until: r.URL.Query().Get("until"),
+	}
+	if fj := r.URL.Query().Get("filters"); fj != "" {
+		opts.Filters, _ = filters.FromJSON(fj)
+	}
+	eventsCh, errCh := s.docker.Events(r.Context(), opts)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -331,15 +338,17 @@ func (s *Server) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 	var containers []*api.ContainerSummary
 	for _, c := range du.Containers {
 		containers = append(containers, &api.ContainerSummary{
-			ID:      c.ID,
-			Names:   c.Names,
-			Image:   c.Image,
-			ImageID: c.ImageID,
-			Command: c.Command,
-			Created: c.Created,
-			State:   c.State,
-			Status:  c.Status,
-			Labels:  c.Labels,
+			ID:         c.ID,
+			Names:      c.Names,
+			Image:      c.Image,
+			ImageID:    c.ImageID,
+			Command:    c.Command,
+			Created:    c.Created,
+			State:      c.State,
+			Status:     c.Status,
+			Labels:     c.Labels,
+			SizeRw:     c.SizeRw,
+			SizeRootFs: c.SizeRootFs,
 		})
 	}
 	if containers == nil {
