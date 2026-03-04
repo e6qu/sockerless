@@ -585,6 +585,7 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 	s.Store.ContainerNames.Delete(c.Name)
 	s.CloudRun.Delete(id)
 	s.Store.WaitChs.Delete(id)
+	s.Store.LogBuffers.Delete(id)
 
 	w.WriteHeader(http.StatusNoContent)
 }

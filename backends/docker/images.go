@@ -41,6 +41,8 @@ func (s *Server) handleImageInspect(w http.ResponseWriter, r *http.Request) {
 		ID:            info.ID,
 		RepoTags:      info.RepoTags,
 		RepoDigests:   info.RepoDigests,
+		Parent:        info.Parent,
+		Comment:       info.Comment,
 		Created:       info.Created,
 		Size:          info.Size,
 		VirtualSize:   info.Size,

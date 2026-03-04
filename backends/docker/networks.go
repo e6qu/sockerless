@@ -35,8 +35,9 @@ func (s *Server) handleNetworkCreate(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		opts.IPAM = &network.IPAM{
-			Driver: req.IPAM.Driver,
-			Config: ipamConfigs,
+			Driver:  req.IPAM.Driver,
+			Config:  ipamConfigs,
+			Options: req.IPAM.Options,
 		}
 	}
 

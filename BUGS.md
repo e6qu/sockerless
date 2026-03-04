@@ -548,3 +548,99 @@ Mapped `NetworkID`, `EndpointID`, `Gateway`, `IPAddress`, `MacAddress` to Docker
 ### Details
 
 Sprint 10 expanded inspect mapping but `NetworkSettings.Networks` endpoint mapping still omitted `Aliases`. Fixed by adding `Aliases: ep.Aliases` to the `EndpointSettings` mapping in `mapContainerFromDocker`.
+
+---
+
+## BUG-091: Docker `handleContainerCreate` drops NetworkingConfig
+
+**Severity**: High
+**Component**: `backends/docker/containers.go`
+**Status**: Fixed — Sprint 13: map `req.NetworkingConfig` to Docker SDK's `network.NetworkingConfig` and pass to `ContainerCreate`
+
+### Details
+
+The 3rd arg to `ContainerCreate` was hardcoded `nil`, silently dropping any `NetworkingConfig.EndpointsConfig` from the request. Clients that pre-connect containers to networks during create (e.g. `docker compose up`) lost network config. Fixed by mapping `req.NetworkingConfig` to `network.NetworkingConfig` with all endpoint fields including Aliases.
+
+---
+
+## BUG-092: Container backends (ECS/CloudRun/ACA) missing `LogBuffers.Delete` in prune and remove
+
+**Severity**: High
+**Component**: `backends/ecs/`, `backends/cloudrun/`, `backends/aca/`
+**Status**: Fixed — Sprint 13: added `s.Store.LogBuffers.Delete(id)` in all 6 locations
+
+### Details
+
+All three cloud container backends called `s.Store.WaitChs.Delete(id)` in prune and remove but never `s.Store.LogBuffers.Delete(id)`. FaaS backends had this fixed in Sprint 10 (BUG-073). Log buffers for removed/pruned containers accumulated indefinitely causing a memory leak.
+
+---
+
+## BUG-093: CloudRun and ACA prune missing `Registry.MarkCleanedUp`
+
+**Severity**: Medium
+**Component**: `backends/cloudrun/extended.go`, `backends/aca/extended.go`
+**Status**: Fixed — Sprint 13: added `s.Registry.MarkCleanedUp(...)` after `deleteJob` in prune handlers
+
+### Details
+
+Both CloudRun and ACA prune handlers called `s.deleteJob(...)` but never `s.Registry.MarkCleanedUp(...)`. ECS prune already called `MarkCleanedUp`. The remove handlers for CloudRun/ACA did call it, but prune didn't. This caused the cleanup scanner to report pruned cloud resources as orphaned.
+
+---
+
+## BUG-094: Docker `mapContainerFromDocker` missing `RestartCount` and `ExecIDs`
+
+**Severity**: Medium
+**Component**: `backends/docker/containers.go`
+**Status**: Fixed — Sprint 13: added `RestartCount: info.RestartCount` and `ExecIDs: info.ExecIDs`
+
+### Details
+
+`api.Container` has `RestartCount int` and `ExecIDs []string`. Docker SDK's `ContainerJSONBase` provides both. Not mapped in inspect response.
+
+---
+
+## BUG-095: Docker `mapContainerFromDocker` missing 5 path/platform fields
+
+**Severity**: Medium
+**Component**: `backends/docker/containers.go`
+**Status**: Fixed — Sprint 13: added `Platform`, `LogPath`, `ResolvConfPath`, `HostnamePath`, `HostsPath`
+
+### Details
+
+`api.Container` has `Platform`, `LogPath`, `ResolvConfPath`, `HostnamePath`, `HostsPath`. Docker SDK's `ContainerJSONBase` provides all. Not mapped in inspect response.
+
+---
+
+## BUG-096: Docker `handleNetworkCreate` missing IPAM `Options`
+
+**Severity**: Medium
+**Component**: `backends/docker/networks.go`
+**Status**: Fixed — Sprint 13: added `Options: req.IPAM.Options` to network create IPAM mapping
+
+### Details
+
+Network create forwarded `IPAM.Driver` and `IPAM.Config` but not `IPAM.Options`. The inspect/list path correctly mapped Options back, but create dropped them.
+
+---
+
+## BUG-097: Docker `handleImageInspect` missing `Parent` and `Comment`
+
+**Severity**: Medium
+**Component**: `backends/docker/images.go`
+**Status**: Fixed — Sprint 13: added `Parent: info.Parent` and `Comment: info.Comment`
+
+### Details
+
+`api.Image` has `Parent` and `Comment` fields. Docker SDK's `types.ImageInspect` provides both. Not mapped in image inspect response.
+
+---
+
+## BUG-098: Docker container list missing `Aliases` in network endpoint settings
+
+**Severity**: Medium
+**Component**: `backends/docker/containers.go`
+**Status**: Fixed — Sprint 13: added `Aliases: ep.Aliases` to container list endpoint mapping
+
+### Details
+
+Sprint 12 BUG-090 fixed Aliases in container inspect, but the container list handler still mapped endpoint settings without Aliases. Docker SDK list provides them.
