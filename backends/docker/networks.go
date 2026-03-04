@@ -54,7 +54,11 @@ func (s *Server) handleNetworkCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNetworkList(w http.ResponseWriter, r *http.Request) {
-	networks, err := s.docker.NetworkList(r.Context(), network.ListOptions{})
+	opts := network.ListOptions{}
+	if fj := r.URL.Query().Get("filters"); fj != "" {
+		opts.Filters, _ = filters.FromJSON(fj)
+	}
+	networks, err := s.docker.NetworkList(r.Context(), opts)
 	if err != nil {
 		writeError(w, mapDockerError(err))
 		return
@@ -163,7 +167,11 @@ func (s *Server) handleNetworkRemove(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNetworkPrune(w http.ResponseWriter, r *http.Request) {
-	report, err := s.docker.NetworksPrune(r.Context(), filters.Args{})
+	var f filters.Args
+	if fj := r.URL.Query().Get("filters"); fj != "" {
+		f, _ = filters.FromJSON(fj)
+	}
+	report, err := s.docker.NetworksPrune(r.Context(), f)
 	if err != nil {
 		writeError(w, mapDockerError(err))
 		return

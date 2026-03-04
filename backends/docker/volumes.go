@@ -3,6 +3,7 @@ package docker
 import (
 	"net/http"
 
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/sockerless/api"
 )
@@ -38,7 +39,11 @@ func (s *Server) handleVolumeCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleVolumeList(w http.ResponseWriter, r *http.Request) {
-	vols, err := s.docker.VolumeList(r.Context(), volume.ListOptions{})
+	opts := volume.ListOptions{}
+	if fj := r.URL.Query().Get("filters"); fj != "" {
+		opts.Filters, _ = filters.FromJSON(fj)
+	}
+	vols, err := s.docker.VolumeList(r.Context(), opts)
 	if err != nil {
 		writeError(w, mapDockerError(err))
 		return

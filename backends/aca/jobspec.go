@@ -40,7 +40,7 @@ func (s *Server) buildContainerSpec(ci containerInput) *armappcontainers.Contain
 		}
 	}
 
-	var entrypoint []string
+	var entrypoint, cmdArgs []string
 	if ci.IsMain {
 		if core.IsTailDevNull(config.Entrypoint, config.Cmd) && s.config.CallbackURL != "" {
 			// CI job container with reverse agent: inject callback entrypoint
@@ -52,26 +52,24 @@ func (s *Server) buildContainerSpec(ci containerInput) *armappcontainers.Contain
 				&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_AGENT_CALLBACK_URL"), Value: ptr(callbackURL)},
 			)
 		} else {
-			// Pass through original command (short-lived or forward agent mode)
-			if len(config.Entrypoint) > 0 {
-				entrypoint = config.Entrypoint
-			} else if len(config.Cmd) > 0 {
-				entrypoint = config.Cmd
-			}
+			// Pass through original entrypoint and command separately
+			entrypoint = config.Entrypoint
+			cmdArgs = config.Cmd
 		}
 	} else {
-		// Sidecar: use original entrypoint, no agent
-		if len(config.Entrypoint) > 0 {
-			entrypoint = config.Entrypoint
-		} else if len(config.Cmd) > 0 {
-			entrypoint = config.Cmd
-		}
+		// Sidecar: use original entrypoint and command, no agent
+		entrypoint = config.Entrypoint
+		cmdArgs = config.Cmd
 	}
 
-	// Convert entrypoint to []*string
+	// Convert entrypoint and command to []*string
 	var command []*string
 	for _, arg := range entrypoint {
 		command = append(command, ptr(arg))
+	}
+	var args []*string
+	for _, arg := range cmdArgs {
+		args = append(args, ptr(arg))
 	}
 
 	// Container name
@@ -86,6 +84,7 @@ func (s *Server) buildContainerSpec(ci containerInput) *armappcontainers.Contain
 		Name:    ptr(defName),
 		Image:   ptr(config.Image),
 		Command: command,
+		Args:    args,
 		Env:     envVars,
 		Resources: &armappcontainers.ContainerResources{
 			CPU:    &cpu,

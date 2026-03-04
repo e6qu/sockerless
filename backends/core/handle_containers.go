@@ -378,6 +378,10 @@ func (s *BaseServer) handleContainerRemove(w http.ResponseWriter, r *http.Reques
 	s.Store.ContainerNames.Delete(c.Name)
 	s.Store.LogBuffers.Delete(id)
 	s.Store.WaitChs.Delete(id)
+	s.Store.StagingDirs.Delete(id)
+	for _, eid := range c.ExecIDs {
+		s.Store.Execs.Delete(eid)
+	}
 
 	s.emitEvent("container", "destroy", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	w.WriteHeader(http.StatusNoContent)

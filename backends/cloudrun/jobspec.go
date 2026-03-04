@@ -46,7 +46,7 @@ func (s *Server) buildContainerSpec(ci containerInput) *runpb.Container {
 		}
 	}
 
-	var entrypoint []string
+	var entrypoint, command []string
 	if ci.IsMain {
 		if core.IsTailDevNull(config.Entrypoint, config.Cmd) && s.config.CallbackURL != "" {
 			// CI job container with reverse agent: inject callback entrypoint
@@ -58,20 +58,14 @@ func (s *Server) buildContainerSpec(ci containerInput) *runpb.Container {
 				&runpb.EnvVar{Name: "SOCKERLESS_AGENT_CALLBACK_URL", Values: &runpb.EnvVar_Value{Value: callbackURL}},
 			)
 		} else {
-			// Pass through original command (short-lived or forward agent mode)
-			if len(config.Entrypoint) > 0 {
-				entrypoint = config.Entrypoint
-			} else if len(config.Cmd) > 0 {
-				entrypoint = config.Cmd
-			}
+			// Pass through original entrypoint and command separately
+			entrypoint = config.Entrypoint
+			command = config.Cmd
 		}
 	} else {
-		// Sidecar: use original entrypoint, no agent
-		if len(config.Entrypoint) > 0 {
-			entrypoint = config.Entrypoint
-		} else if len(config.Cmd) > 0 {
-			entrypoint = config.Cmd
-		}
+		// Sidecar: use original entrypoint and command, no agent
+		entrypoint = config.Entrypoint
+		command = config.Cmd
 	}
 
 	// Container name
@@ -86,6 +80,7 @@ func (s *Server) buildContainerSpec(ci containerInput) *runpb.Container {
 		Name:    defName,
 		Image:   config.Image,
 		Command: entrypoint,
+		Args:    command,
 		Env:     envVars,
 		Resources: &runpb.ResourceRequirements{
 			Limits: map[string]string{

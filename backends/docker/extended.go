@@ -54,7 +54,11 @@ func (s *Server) handleContainerTop(w http.ResponseWriter, r *http.Request) {
 
 // handleContainerPrune removes all stopped containers.
 func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
-	report, err := s.docker.ContainersPrune(r.Context(), filters.Args{})
+	var f filters.Args
+	if fj := r.URL.Query().Get("filters"); fj != "" {
+		f, _ = filters.FromJSON(fj)
+	}
+	report, err := s.docker.ContainersPrune(r.Context(), f)
 	if err != nil {
 		writeError(w, mapDockerError(err))
 		return
@@ -158,7 +162,11 @@ func (s *Server) handleNetworkConnect(w http.ResponseWriter, r *http.Request) {
 
 // handleVolumePrune removes unused volumes.
 func (s *Server) handleVolumePrune(w http.ResponseWriter, r *http.Request) {
-	report, err := s.docker.VolumesPrune(r.Context(), filters.Args{})
+	var f filters.Args
+	if fj := r.URL.Query().Get("filters"); fj != "" {
+		f, _ = filters.FromJSON(fj)
+	}
+	report, err := s.docker.VolumesPrune(r.Context(), f)
 	if err != nil {
 		writeError(w, mapDockerError(err))
 		return
@@ -178,7 +186,11 @@ func (s *Server) handleVolumePrune(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleImageList(w http.ResponseWriter, r *http.Request) {
 	all := r.URL.Query().Get("all") == "1" || r.URL.Query().Get("all") == "true"
 
-	images, err := s.docker.ImageList(r.Context(), image.ListOptions{All: all})
+	opts := image.ListOptions{All: all}
+	if fj := r.URL.Query().Get("filters"); fj != "" {
+		opts.Filters, _ = filters.FromJSON(fj)
+	}
+	images, err := s.docker.ImageList(r.Context(), opts)
 	if err != nil {
 		writeError(w, mapDockerError(err))
 		return
@@ -253,7 +265,11 @@ func (s *Server) handleImageHistory(w http.ResponseWriter, r *http.Request) {
 
 // handleImagePrune removes unused images.
 func (s *Server) handleImagePrune(w http.ResponseWriter, r *http.Request) {
-	report, err := s.docker.ImagesPrune(r.Context(), filters.Args{})
+	var f filters.Args
+	if fj := r.URL.Query().Get("filters"); fj != "" {
+		f, _ = filters.FromJSON(fj)
+	}
+	report, err := s.docker.ImagesPrune(r.Context(), f)
 	if err != nil {
 		writeError(w, mapDockerError(err))
 		return

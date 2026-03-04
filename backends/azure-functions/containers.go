@@ -359,6 +359,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	if s.config.CallbackURL != "" {
 		if err := s.AgentRegistry.WaitForAgent(id, 30*time.Second); err != nil {
 			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
+			s.AgentRegistry.Remove(id)
 		} else {
 			s.Store.Containers.Update(id, func(c *api.Container) {
 				c.AgentAddress = "reverse"
