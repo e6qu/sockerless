@@ -67,6 +67,11 @@ func (eb *EventBus) Close() {
 	}
 }
 
+// EmitEvent is the exported version of emitEvent for use by cloud backends.
+func (s *BaseServer) EmitEvent(eventType, action, actorID string, attrs map[string]string) {
+	s.emitEvent(eventType, action, actorID, attrs)
+}
+
 // emitEvent is a convenience method on BaseServer to publish a Docker-compatible event.
 func (s *BaseServer) emitEvent(eventType, action, actorID string, attrs map[string]string) {
 	if s.EventBus == nil {

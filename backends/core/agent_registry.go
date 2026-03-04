@@ -117,6 +117,11 @@ func (r *AgentRegistry) WaitForAgent(containerID string, timeout time.Duration) 
 	case <-ch:
 		return nil
 	case <-time.After(timeout):
+		r.mu.Lock()
+		if current, ok := r.ready[containerID]; ok && current == ch {
+			delete(r.ready, containerID)
+		}
+		r.mu.Unlock()
 		return fmt.Errorf("timeout waiting for agent callback for container %s", containerID)
 	}
 }

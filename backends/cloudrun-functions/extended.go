@@ -3,6 +3,7 @@ package gcf
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	functionspb "cloud.google.com/go/functions/apiv2/functionspb"
 	"github.com/sockerless/api"
@@ -20,8 +21,13 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 
 	c, _ := s.Store.Containers.Get(id)
 	if c.State.Running {
+		s.StopHealthCheck(id)
 		s.AgentRegistry.Remove(id)
 		s.Store.ForceStopContainer(id, 0)
+		s.EmitEvent("container", "die", id, map[string]string{
+			"exitCode": "0",
+			"name":     strings.TrimPrefix(c.Name, "/"),
+		})
 	}
 
 	// Re-dispatch to start handler

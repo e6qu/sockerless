@@ -64,6 +64,9 @@ type ContainerConfig struct {
 	StopTimeout  *int                `json:"StopTimeout,omitempty"`
 	Shell        []string            `json:"Shell,omitempty"`
 	Healthcheck  *HealthcheckConfig  `json:"Healthcheck,omitempty"`
+	ArgsEscaped  bool                `json:"ArgsEscaped,omitempty"`
+	MacAddress   string              `json:"MacAddress,omitempty"`
+	OnBuild      []string            `json:"OnBuild,omitempty"`
 }
 
 // HostConfig holds host-specific container configuration.
@@ -123,19 +126,37 @@ type BindOptions struct {
 
 // NetworkSettings holds the network settings for a container.
 type NetworkSettings struct {
-	Networks map[string]*EndpointSettings `json:"Networks"`
-	Ports    map[string][]PortBinding     `json:"Ports,omitempty"`
+	Bridge                 string                       `json:"Bridge"`
+	SandboxID              string                       `json:"SandboxID"`
+	HairpinMode            bool                         `json:"HairpinMode"`
+	LinkLocalIPv6Address   string                       `json:"LinkLocalIPv6Address"`
+	LinkLocalIPv6PrefixLen int                          `json:"LinkLocalIPv6PrefixLen"`
+	SandboxKey             string                       `json:"SandboxKey"`
+	Networks               map[string]*EndpointSettings `json:"Networks"`
+	Ports                  map[string][]PortBinding     `json:"Ports,omitempty"`
 }
 
 // EndpointSettings holds the endpoint settings for a container on a network.
 type EndpointSettings struct {
-	NetworkID  string `json:"NetworkID"`
-	EndpointID string `json:"EndpointID"`
-	Gateway    string `json:"Gateway"`
-	IPAddress  string `json:"IPAddress"`
-	IPPrefixLen int   `json:"IPPrefixLen"`
-	MacAddress string   `json:"MacAddress"`
-	Aliases    []string `json:"Aliases,omitempty"`
+	IPAMConfig          *EndpointIPAMConfig `json:"IPAMConfig,omitempty"`
+	NetworkID           string              `json:"NetworkID"`
+	EndpointID          string              `json:"EndpointID"`
+	Gateway             string              `json:"Gateway"`
+	IPAddress           string              `json:"IPAddress"`
+	IPPrefixLen         int                 `json:"IPPrefixLen"`
+	IPv6Gateway         string              `json:"IPv6Gateway"`
+	GlobalIPv6Address   string              `json:"GlobalIPv6Address"`
+	GlobalIPv6PrefixLen int                 `json:"GlobalIPv6PrefixLen"`
+	MacAddress          string              `json:"MacAddress"`
+	Aliases             []string            `json:"Aliases,omitempty"`
+	DriverOpts          map[string]string   `json:"DriverOpts,omitempty"`
+}
+
+// EndpointIPAMConfig holds IPAM configuration for an endpoint.
+type EndpointIPAMConfig struct {
+	IPv4Address  string   `json:"IPv4Address,omitempty"`
+	IPv6Address  string   `json:"IPv6Address,omitempty"`
+	LinkLocalIPs []string `json:"LinkLocalIPs,omitempty"`
 }
 
 // MountPoint represents a mount point in a container.
@@ -170,7 +191,7 @@ type ContainerSummary struct {
 
 // Port represents a port exposed by a container.
 type Port struct {
-	IP          string `json:"IP,omitempty"`
+	IP          string `json:"IP"`
 	PrivatePort uint16 `json:"PrivatePort"`
 	PublicPort  uint16 `json:"PublicPort,omitempty"`
 	Type        string `json:"Type"`
