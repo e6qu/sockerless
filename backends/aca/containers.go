@@ -280,6 +280,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 			agentAddr, completedExitCode, err := s.waitForExecutionRunning(s.ctx(), jobName, executionName)
 			if err != nil {
 				s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
+				s.AgentRegistry.Remove(id)
 				s.deleteJob(jobName)
 				s.Store.RevertToCreated(id)
 				core.WriteError(w, fmt.Errorf("execution failed to start: %w", err))
@@ -351,7 +352,12 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 	createPoller, err := s.azure.Jobs.BeginCreateOrUpdate(s.ctx(), s.config.ResourceGroup, jobName, jobSpec, nil)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to create multi-container ACA Job")
-		s.Store.RevertToCreated(triggerID)
+		if s.config.CallbackURL != "" {
+			s.AgentRegistry.Remove(mainID)
+		}
+		for _, pc := range podContainers {
+			s.Store.RevertToCreated(pc.ID)
+		}
 		core.WriteError(w, fmt.Errorf("failed to create job: %w", err))
 		return
 	}
@@ -359,7 +365,12 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 	_, err = createPoller.PollUntilDone(s.ctx(), nil)
 	if err != nil {
 		s.deleteJob(jobName)
-		s.Store.RevertToCreated(triggerID)
+		if s.config.CallbackURL != "" {
+			s.AgentRegistry.Remove(mainID)
+		}
+		for _, pc := range podContainers {
+			s.Store.RevertToCreated(pc.ID)
+		}
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
 		core.WriteError(w, fmt.Errorf("job creation failed: %w", err))
 		return
@@ -379,7 +390,12 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to start ACA Job")
 		s.deleteJob(jobName)
-		s.Store.RevertToCreated(triggerID)
+		if s.config.CallbackURL != "" {
+			s.AgentRegistry.Remove(mainID)
+		}
+		for _, pc := range podContainers {
+			s.Store.RevertToCreated(pc.ID)
+		}
 		core.WriteError(w, fmt.Errorf("failed to start job: %w", err))
 		return
 	}
@@ -388,7 +404,12 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("start job failed")
 		s.deleteJob(jobName)
-		s.Store.RevertToCreated(triggerID)
+		if s.config.CallbackURL != "" {
+			s.AgentRegistry.Remove(mainID)
+		}
+		for _, pc := range podContainers {
+			s.Store.RevertToCreated(pc.ID)
+		}
 		core.WriteError(w, fmt.Errorf("start job failed: %w", err))
 		return
 	}
@@ -430,7 +451,12 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 		if err != nil {
 			s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
 			s.deleteJob(jobName)
-			s.Store.RevertToCreated(triggerID)
+			if s.config.CallbackURL != "" {
+				s.AgentRegistry.Remove(mainID)
+			}
+			for _, pc := range podContainers {
+				s.Store.RevertToCreated(pc.ID)
+			}
 			core.WriteError(w, fmt.Errorf("execution failed to start: %w", err))
 			return
 		}

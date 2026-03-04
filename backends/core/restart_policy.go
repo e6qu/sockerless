@@ -1,6 +1,7 @@
 package core
 
 import (
+	"strings"
 	"time"
 
 	"github.com/sockerless/api"
@@ -66,10 +67,18 @@ func (s *BaseServer) handleRestartPolicy(containerID string, exitCode int) bool 
 	delay := RestartDelay(c.RestartCount)
 	time.Sleep(delay)
 
+	// Stop old health check before cleanup (BUG-147)
+	s.StopHealthCheck(containerID)
+
 	// Clean up old process
 	s.Drivers.ProcessLifecycle.Cleanup(containerID)
 
-	// Re-spawn
+	// Close old wait channel before creating new one (BUG-149)
+	if old, ok := s.Store.WaitChs.LoadAndDelete(containerID); ok {
+		close(old.(chan struct{}))
+	}
+
+	// Create new wait channel
 	exitCh := make(chan struct{})
 	s.Store.WaitChs.Store(containerID, exitCh)
 
@@ -83,12 +92,23 @@ func (s *BaseServer) handleRestartPolicy(containerID string, exitCode int) bool 
 		c.State.ExitCode = 0
 	})
 
+	// Re-fetch fresh container after state update (BUG-148)
+	c, _ = s.Store.Containers.Get(containerID)
+
 	cmd := append([]string{c.Path}, c.Args...)
 	binds := s.resolveBindMounts(c.HostConfig.Binds, c.HostConfig.Mounts)
 	_, err := s.Drivers.ProcessLifecycle.Start(containerID, cmd, c.Config.Env, binds)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("container", containerID).Msg("failed to restart container")
+		s.Store.RevertToCreated(containerID) // BUG-146
 		return false
+	}
+
+	// Re-start health check if configured (BUG-147)
+	c, _ = s.Store.Containers.Get(containerID)
+	if c.Config.Healthcheck != nil && len(c.Config.Healthcheck.Test) > 0 &&
+		(len(c.Config.Healthcheck.Test) != 1 || !strings.EqualFold(c.Config.Healthcheck.Test[0], "NONE")) {
+		s.StartHealthCheck(containerID)
 	}
 
 	return true

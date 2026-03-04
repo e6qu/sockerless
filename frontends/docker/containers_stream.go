@@ -42,7 +42,7 @@ func (s *Server) handleContainerAttach(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	backendConn, backendBuf, err := s.backend.dialUpgrade("POST", "/containers/"+id+"/attach", nil)
+	backendConn, backendBuf, err := s.backend.dialUpgrade("POST", "/containers/"+id+"/attach?"+query.Encode(), nil)
 	if err != nil {
 		writeError(w, err)
 		return

@@ -146,7 +146,10 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 
 	conn, buf, err := hj.Hijack()
 	if err != nil {
-		WriteError(w, &api.ServerError{Message: err.Error()})
+		s.Store.Execs.Update(id, func(e *api.ExecInstance) {
+			e.Running = false
+			e.Pid = 0
+		})
 		return
 	}
 	defer conn.Close()
