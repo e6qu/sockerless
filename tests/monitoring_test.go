@@ -115,7 +115,6 @@ func TestContainerStatsNotRunning(t *testing.T) {
 	}, nil)
 	defer removeContainer(t, id)
 
-	// Don't start the container — stats with stream=false should return a snapshot (BUG-297)
 	resp, err := dockerClient.ContainerStats(ctx, id, false)
 	if err != nil {
 		t.Fatalf("expected stats snapshot for non-running container, got error: %v", err)
