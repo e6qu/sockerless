@@ -8,7 +8,7 @@ import (
 	core "github.com/sockerless/backend-core"
 )
 
-// handleContainerRestart is not meaningful for Azure Functions (run-to-completion).
+// handleContainerRestart stops and then starts a container.
 func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
 	id, ok := s.Store.ResolveContainerID(ref)
@@ -18,14 +18,16 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 	}
 
 	c, _ := s.Store.Containers.Get(id)
-	if !c.State.Running {
-		core.WriteError(w, &api.ConflictError{
-			Message: fmt.Sprintf("Container %s is not running", ref),
-		})
-		return
+	if c.State.Running {
+		s.AgentRegistry.Remove(id)
+		s.Store.ForceStopContainer(id, 0)
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	// Re-dispatch to start handler
+	startURL := fmt.Sprintf("/internal/v1/containers/%s/start", id)
+	startReq, _ := http.NewRequestWithContext(r.Context(), "POST", startURL, nil)
+	startReq.SetPathValue("id", id)
+	s.handleContainerStart(w, startReq)
 }
 
 // handleContainerPrune removes all stopped containers and their AZF state.

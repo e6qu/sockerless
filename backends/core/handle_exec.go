@@ -122,13 +122,7 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	var req api.ExecStartRequest
 	_ = ReadJSON(r, &req)
 
-	// Mark as running
-	s.Store.Execs.Update(id, func(e *api.ExecInstance) {
-		e.Running = true
-		e.Pid = 43
-	})
-
-	// Look up container for env merging
+	// Look up container BEFORE marking exec as running
 	c, ok := s.Store.Containers.Get(exec.ContainerID)
 	if !ok {
 		WriteError(w, &api.ConflictError{
@@ -136,6 +130,12 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+
+	// Mark as running
+	s.Store.Execs.Update(id, func(e *api.ExecInstance) {
+		e.Running = true
+		e.Pid = 43
+	})
 
 	// Hijack the connection
 	hj, ok := w.(http.Hijacker)

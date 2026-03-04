@@ -209,6 +209,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		_, _ = s.aws.ECS.DeregisterTaskDefinition(s.ctx(), &awsecs.DeregisterTaskDefinitionInput{
 			TaskDefinition: aws.String(taskDefARN),
 		})
+		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
 		core.WriteError(w, err)
 		return

@@ -47,11 +47,18 @@ func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request)
 		created, _ := time.Parse(time.RFC3339Nano, c.Created)
 		status := FormatStatus(c.State)
 
+		imageID := ""
+		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
+			imageID = img.ID
+		} else {
+			imageID = "sha256:" + GenerateID()
+		}
+
 		summary := &api.ContainerSummary{
 			ID:      c.ID,
 			Names:   []string{c.Name},
 			Image:   c.Config.Image,
-			ImageID: "sha256:" + GenerateID(),
+			ImageID: imageID,
 			Command: command,
 			Created: created.Unix(),
 			State:   c.State.Status,

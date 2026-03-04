@@ -70,6 +70,7 @@ func (s *BaseServer) handleContainerPrune(w http.ResponseWriter, r *http.Request
 	})
 	deleted := make([]string, 0, len(pruned))
 	for _, c := range pruned {
+		s.StopHealthCheck(c.ID)
 		s.Store.ContainerNames.Delete(c.Name)
 		s.Store.LogBuffers.Delete(c.ID)
 		s.Store.WaitChs.Delete(c.ID)
@@ -83,6 +84,9 @@ func (s *BaseServer) handleContainerPrune(w http.ResponseWriter, r *http.Request
 		for _, eid := range c.ExecIDs {
 			s.Store.Execs.Delete(eid)
 		}
+		s.emitEvent("container", "destroy", c.ID, map[string]string{
+			"name": strings.TrimPrefix(c.Name, "/"),
+		})
 		deleted = append(deleted, c.ID)
 	}
 	WriteJSON(w, http.StatusOK, api.ContainerPruneResponse{

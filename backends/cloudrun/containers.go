@@ -197,6 +197,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to create Cloud Run Job")
+		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
 		core.WriteError(w, fmt.Errorf("failed to create job: %w", err))
 		return
@@ -206,6 +207,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	job, err := createOp.Wait(s.ctx())
 	if err != nil {
 		s.deleteJob(fmt.Sprintf("%s/jobs/%s", s.buildJobParent(), jobName))
+		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
 		core.WriteError(w, fmt.Errorf("job creation failed: %w", err))
@@ -231,6 +233,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("failed to run job")
 		s.deleteJob(jobFullName)
+		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
 		core.WriteError(w, fmt.Errorf("failed to run job: %w", err))
 		return
@@ -241,6 +244,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("run job failed")
 		s.deleteJob(jobFullName)
+		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
 		core.WriteError(w, fmt.Errorf("run job failed: %w", err))
 		return

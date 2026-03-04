@@ -50,6 +50,7 @@ func (s *Server) handleExecInspect(w http.ResponseWriter, r *http.Request) {
 		Running:     info.Running,
 		ExitCode:    info.ExitCode,
 		Pid:         info.Pid,
+		CanRemove:   !info.Running,
 	}
 	writeJSON(w, http.StatusOK, exec)
 }
