@@ -52,11 +52,35 @@ func (s *Server) handleImageInspect(w http.ResponseWriter, r *http.Request) {
 
 	if info.Config != nil {
 		img.Config = api.ContainerConfig{
-			Env:        info.Config.Env,
-			Cmd:        info.Config.Cmd,
-			Entrypoint: info.Config.Entrypoint,
-			WorkingDir: info.Config.WorkingDir,
-			Labels:     info.Config.Labels,
+			Hostname:     info.Config.Hostname,
+			Domainname:   info.Config.Domainname,
+			User:         info.Config.User,
+			AttachStdin:  info.Config.AttachStdin,
+			AttachStdout: info.Config.AttachStdout,
+			AttachStderr: info.Config.AttachStderr,
+			ExposedPorts: mapExposedPorts(info.Config.ExposedPorts),
+			Tty:          info.Config.Tty,
+			OpenStdin:    info.Config.OpenStdin,
+			StdinOnce:    info.Config.StdinOnce,
+			Env:          info.Config.Env,
+			Cmd:          info.Config.Cmd,
+			Image:        info.Config.Image,
+			Volumes:      info.Config.Volumes,
+			WorkingDir:   info.Config.WorkingDir,
+			Entrypoint:   info.Config.Entrypoint,
+			Labels:       info.Config.Labels,
+			StopSignal:   info.Config.StopSignal,
+			StopTimeout:  info.Config.StopTimeout,
+			Shell:        info.Config.Shell,
+		}
+		if info.Config.Healthcheck != nil {
+			img.Config.Healthcheck = &api.HealthcheckConfig{
+				Test:        info.Config.Healthcheck.Test,
+				Interval:    int64(info.Config.Healthcheck.Interval),
+				Timeout:     int64(info.Config.Healthcheck.Timeout),
+				StartPeriod: int64(info.Config.Healthcheck.StartPeriod),
+				Retries:     info.Config.Healthcheck.Retries,
+			}
 		}
 	}
 

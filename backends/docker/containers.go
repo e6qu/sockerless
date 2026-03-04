@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	dockerimage "github.com/docker/docker/api/types/image"
+	"github.com/docker/go-connections/nat"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sockerless/api"
 )
@@ -103,6 +105,30 @@ func (s *Server) handleContainerList(w http.ResponseWriter, r *http.Request) {
 			State:   c.State,
 			Status:  c.Status,
 			Labels:  c.Labels,
+			SizeRw:  c.SizeRw,
+			Mounts:  mapMountsFromSummary(c.Mounts),
+		}
+		for _, p := range c.Ports {
+			summary.Ports = append(summary.Ports, api.Port{
+				IP:          p.IP,
+				PrivatePort: p.PrivatePort,
+				PublicPort:  p.PublicPort,
+				Type:        p.Type,
+			})
+		}
+		if c.NetworkSettings != nil && len(c.NetworkSettings.Networks) > 0 {
+			nets := make(map[string]*api.EndpointSettings, len(c.NetworkSettings.Networks))
+			for name, ep := range c.NetworkSettings.Networks {
+				nets[name] = &api.EndpointSettings{
+					NetworkID:   ep.NetworkID,
+					EndpointID:  ep.EndpointID,
+					Gateway:     ep.Gateway,
+					IPAddress:   ep.IPAddress,
+					IPPrefixLen: ep.IPPrefixLen,
+					MacAddress:  ep.MacAddress,
+				}
+			}
+			summary.NetworkSettings = &api.SummaryNetworkSettings{Networks: nets}
 		}
 		result = append(result, summary)
 	}
@@ -283,6 +309,22 @@ func mapContainerFromDocker(info types.ContainerJSON) api.Container {
 			StartedAt:  info.State.StartedAt,
 			FinishedAt: info.State.FinishedAt,
 		}
+		if info.State.Health != nil {
+			logs := make([]api.HealthLog, 0, len(info.State.Health.Log))
+			for _, l := range info.State.Health.Log {
+				logs = append(logs, api.HealthLog{
+					Start:    l.Start.Format(time.RFC3339Nano),
+					End:      l.End.Format(time.RFC3339Nano),
+					ExitCode: l.ExitCode,
+					Output:   l.Output,
+				})
+			}
+			c.State.Health = &api.HealthState{
+				Status:        string(info.State.Health.Status),
+				FailingStreak: info.State.Health.FailingStreak,
+				Log:           logs,
+			}
+		}
 	}
 
 	if info.Config != nil {
@@ -293,16 +335,29 @@ func mapContainerFromDocker(info types.ContainerJSON) api.Container {
 			AttachStdin:  info.Config.AttachStdin,
 			AttachStdout: info.Config.AttachStdout,
 			AttachStderr: info.Config.AttachStderr,
+			ExposedPorts: mapExposedPorts(info.Config.ExposedPorts),
 			Tty:          info.Config.Tty,
 			OpenStdin:    info.Config.OpenStdin,
 			StdinOnce:    info.Config.StdinOnce,
 			Env:          info.Config.Env,
 			Cmd:          info.Config.Cmd,
 			Image:        info.Config.Image,
+			Volumes:      info.Config.Volumes,
 			WorkingDir:   info.Config.WorkingDir,
 			Entrypoint:   info.Config.Entrypoint,
 			Labels:       info.Config.Labels,
 			StopSignal:   info.Config.StopSignal,
+			StopTimeout:  info.Config.StopTimeout,
+			Shell:        info.Config.Shell,
+		}
+		if info.Config.Healthcheck != nil {
+			c.Config.Healthcheck = &api.HealthcheckConfig{
+				Test:        info.Config.Healthcheck.Test,
+				Interval:    int64(info.Config.Healthcheck.Interval),
+				Timeout:     int64(info.Config.Healthcheck.Timeout),
+				StartPeriod: int64(info.Config.Healthcheck.StartPeriod),
+				Retries:     info.Config.Healthcheck.Retries,
+			}
 		}
 	}
 
@@ -311,20 +366,60 @@ func mapContainerFromDocker(info types.ContainerJSON) api.Container {
 			NetworkMode: string(info.HostConfig.NetworkMode),
 			Binds:       info.HostConfig.Binds,
 			AutoRemove:  info.HostConfig.AutoRemove,
+			PortBindings: mapPortBindings(info.HostConfig.PortBindings),
+			RestartPolicy: api.RestartPolicy{
+				Name:              string(info.HostConfig.RestartPolicy.Name),
+				MaximumRetryCount: info.HostConfig.RestartPolicy.MaximumRetryCount,
+			},
+			Privileged:  info.HostConfig.Privileged,
+			CapAdd:      info.HostConfig.CapAdd,
+			CapDrop:     info.HostConfig.CapDrop,
+			Init:        info.HostConfig.Init,
+			UsernsMode:  string(info.HostConfig.UsernsMode),
+			ShmSize:     info.HostConfig.ShmSize,
+			Tmpfs:       info.HostConfig.Tmpfs,
+			SecurityOpt: info.HostConfig.SecurityOpt,
+			ExtraHosts:  info.HostConfig.ExtraHosts,
+			Isolation:   string(info.HostConfig.Isolation),
+		}
+		if info.HostConfig.LogConfig.Type != "" {
+			c.HostConfig.LogConfig = &api.LogConfig{
+				Type:   info.HostConfig.LogConfig.Type,
+				Config: info.HostConfig.LogConfig.Config,
+			}
+		}
+		for _, m := range info.HostConfig.Mounts {
+			am := api.Mount{
+				Type:     string(m.Type),
+				Source:   m.Source,
+				Target:   m.Target,
+				ReadOnly: m.ReadOnly,
+			}
+			if m.BindOptions != nil {
+				am.BindOptions = &api.BindOptions{
+					Propagation: string(m.BindOptions.Propagation),
+				}
+			}
+			c.HostConfig.Mounts = append(c.HostConfig.Mounts, am)
 		}
 	}
 
 	c.NetworkSettings.Networks = make(map[string]*api.EndpointSettings)
-	if info.NetworkSettings != nil && info.NetworkSettings.Networks != nil {
-		for name, ep := range info.NetworkSettings.Networks {
-			c.NetworkSettings.Networks[name] = &api.EndpointSettings{
-				NetworkID:   ep.NetworkID,
-				EndpointID:  ep.EndpointID,
-				Gateway:     ep.Gateway,
-				IPAddress:   ep.IPAddress,
-				IPPrefixLen: ep.IPPrefixLen,
-				MacAddress:  ep.MacAddress,
+	if info.NetworkSettings != nil {
+		if info.NetworkSettings.Networks != nil {
+			for name, ep := range info.NetworkSettings.Networks {
+				c.NetworkSettings.Networks[name] = &api.EndpointSettings{
+					NetworkID:   ep.NetworkID,
+					EndpointID:  ep.EndpointID,
+					Gateway:     ep.Gateway,
+					IPAddress:   ep.IPAddress,
+					IPPrefixLen: ep.IPPrefixLen,
+					MacAddress:  ep.MacAddress,
+				}
 			}
+		}
+		if len(info.NetworkSettings.Ports) > 0 {
+			c.NetworkSettings.Ports = mapPortBindings(info.NetworkSettings.Ports)
 		}
 	}
 
@@ -342,6 +437,52 @@ func mapContainerFromDocker(info types.ContainerJSON) api.Container {
 		})
 	}
 	return c
+}
+
+func mapExposedPorts(ports nat.PortSet) map[string]struct{} {
+	if len(ports) == 0 {
+		return nil
+	}
+	result := make(map[string]struct{}, len(ports))
+	for port := range ports {
+		result[string(port)] = struct{}{}
+	}
+	return result
+}
+
+func mapPortBindings(pb nat.PortMap) map[string][]api.PortBinding {
+	if len(pb) == 0 {
+		return nil
+	}
+	result := make(map[string][]api.PortBinding, len(pb))
+	for port, bindings := range pb {
+		var mapped []api.PortBinding
+		for _, b := range bindings {
+			mapped = append(mapped, api.PortBinding{
+				HostIP:   b.HostIP,
+				HostPort: b.HostPort,
+			})
+		}
+		result[string(port)] = mapped
+	}
+	return result
+}
+
+func mapMountsFromSummary(mounts []types.MountPoint) []api.MountPoint {
+	result := make([]api.MountPoint, 0, len(mounts))
+	for _, m := range mounts {
+		result = append(result, api.MountPoint{
+			Type:        string(m.Type),
+			Name:        m.Name,
+			Source:      m.Source,
+			Destination: m.Destination,
+			Driver:      m.Driver,
+			Mode:        m.Mode,
+			RW:          m.RW,
+			Propagation: string(m.Propagation),
+		})
+	}
+	return result
 }
 
 func mapDockerError(err error) error {
