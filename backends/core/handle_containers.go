@@ -226,6 +226,13 @@ func (s *BaseServer) handleContainerStart(w http.ResponseWriter, r *http.Request
 	cmd := append([]string{c.Path}, c.Args...)
 	binds := s.resolveBindMounts(c.HostConfig.Binds, c.HostConfig.Mounts)
 	tmpfs := resolveTmpfsMounts(c.HostConfig.Tmpfs)
+	if len(tmpfs) > 0 {
+		dirs := make([]string, 0, len(tmpfs))
+		for _, v := range tmpfs {
+			dirs = append(dirs, v)
+		}
+		s.Store.TmpfsDirs.Store(id, dirs)
+	}
 	for k, v := range tmpfs {
 		if binds == nil {
 			binds = make(map[string]string)
@@ -428,6 +435,11 @@ func (s *BaseServer) handleContainerRemove(w http.ResponseWriter, r *http.Reques
 	s.Store.LogBuffers.Delete(id)
 	s.Store.WaitChs.Delete(id)
 	s.Store.StagingDirs.Delete(id)
+	if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(id); ok {
+		for _, d := range dirs.([]string) {
+			os.RemoveAll(d)
+		}
+	}
 	for _, eid := range c.ExecIDs {
 		s.Store.Execs.Delete(eid)
 	}
@@ -477,10 +489,24 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 	// Re-fetch fresh container after state update
 	c, _ = s.Store.Containers.Get(id)
 
+	// Clean up old tmpfs dirs before creating new ones
+	if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(id); ok {
+		for _, d := range dirs.([]string) {
+			os.RemoveAll(d)
+		}
+	}
+
 	// Re-spawn process (wait-and-stop goroutine is handled by the driver)
 	cmd := append([]string{c.Path}, c.Args...)
 	binds := s.resolveBindMounts(c.HostConfig.Binds, c.HostConfig.Mounts)
 	tmpfs := resolveTmpfsMounts(c.HostConfig.Tmpfs)
+	if len(tmpfs) > 0 {
+		dirs := make([]string, 0, len(tmpfs))
+		for _, v := range tmpfs {
+			dirs = append(dirs, v)
+		}
+		s.Store.TmpfsDirs.Store(id, dirs)
+	}
 	for k, v := range tmpfs {
 		if binds == nil {
 			binds = make(map[string]string)

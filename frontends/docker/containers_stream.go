@@ -42,7 +42,7 @@ func (s *Server) handleContainerAttach(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	backendConn, backendBuf, err := s.backend.dialUpgrade("POST", "/containers/"+id+"/attach?"+query.Encode(), nil)
+	backendConn, backendBuf, err := s.backend.dialUpgradeCtx(r.Context(), "POST", "/containers/"+id+"/attach?"+query.Encode(), nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -106,7 +106,21 @@ func (s *Server) handleContainerAttach(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleContainerResize(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
+	id := r.PathValue("id")
+	query := url.Values{}
+	if h := r.URL.Query().Get("h"); h != "" {
+		query.Set("h", h)
+	}
+	if cw := r.URL.Query().Get("w"); cw != "" {
+		query.Set("w", cw)
+	}
+	resp, err := s.backend.postWithQuery(r.Context(), "/containers/"+id+"/resize", query, nil)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer resp.Body.Close()
+	proxyPassthrough(w, resp)
 }
 
 func (s *Server) handleContainerTop(w http.ResponseWriter, r *http.Request) {

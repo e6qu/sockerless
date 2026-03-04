@@ -306,6 +306,21 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 						s.Store.StopContainer(id, completedExitCode)
 					}
 				}()
+			} else if agentAddr == "reverse" {
+				// Use reverse agent callback
+				s.AgentRegistry.Prepare(id)
+				if err := s.AgentRegistry.WaitForAgent(id, s.config.AgentTimeout); err != nil {
+					s.Logger.Warn().Err(err).Msg("agent callback timeout")
+					s.AgentRegistry.Remove(id)
+				} else {
+					s.Store.Containers.Update(id, func(c *api.Container) {
+						c.AgentAddress = "reverse"
+						c.AgentToken = crState.AgentToken
+					})
+				}
+				s.CloudRun.Update(id, func(state *CloudRunState) {
+					state.AgentAddress = "reverse"
+				})
 			} else {
 				// Wait for agent health
 				agentURL := fmt.Sprintf("http://%s/health", agentAddr)
@@ -660,8 +675,7 @@ func (s *Server) waitForExecutionRunning(ctx context.Context, executionName stri
 			}
 
 			if exec.RunningCount > 0 {
-				agentAddr := fmt.Sprintf("%s:9111", executionName)
-				return agentAddr, -1, nil
+				return "reverse", -1, nil
 			}
 
 			if exec.CancelledCount > 0 {

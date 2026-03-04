@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/registry"
@@ -91,6 +92,10 @@ func (s *Server) handleImageInspect(w http.ResponseWriter, r *http.Request) {
 			Type:   info.RootFS.Type,
 			Layers: info.RootFS.Layers,
 		}
+	}
+
+	if !info.Metadata.LastTagTime.IsZero() {
+		img.Metadata.LastTagTime = info.Metadata.LastTagTime.Format(time.RFC3339Nano)
 	}
 
 	writeJSON(w, http.StatusOK, img)

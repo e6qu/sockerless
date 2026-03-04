@@ -54,6 +54,7 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 				s.Registry.MarkCleanedUp(fullName)
 			}
 
+			s.AgentRegistry.Remove(c.ID)
 			s.Store.Containers.Delete(c.ID)
 			s.Store.ContainerNames.Delete(c.Name)
 			s.GCF.Delete(c.ID)

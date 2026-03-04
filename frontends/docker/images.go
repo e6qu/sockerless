@@ -10,6 +10,18 @@ import (
 )
 
 func (s *Server) handleImageCreate(w http.ResponseWriter, r *http.Request) {
+	// docker import: fromSrc is set (e.g. "-" for stdin tar)
+	if fromSrc := r.URL.Query().Get("fromSrc"); fromSrc != "" {
+		resp, err := s.backend.postRaw(r.Context(), "/images/load", "application/x-tar", r.Body)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		defer resp.Body.Close()
+		proxyPassthrough(w, resp)
+		return
+	}
+
 	fromImage := r.URL.Query().Get("fromImage")
 	tag := r.URL.Query().Get("tag")
 	if tag == "" {

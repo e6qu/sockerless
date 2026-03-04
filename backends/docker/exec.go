@@ -138,5 +138,8 @@ func (s *Server) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	buf.WriteString("\r\n")
 	buf.Flush()
 
+	// Stdin: client → Docker exec
+	go func() { _, _ = io.Copy(resp.Conn, conn) }()
+
 	io.Copy(conn, resp.Reader)
 }

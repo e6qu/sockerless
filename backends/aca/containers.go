@@ -296,6 +296,21 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 						s.Store.StopContainer(id, completedExitCode)
 					}
 				}()
+			} else if agentAddr == "reverse" {
+				// Use reverse agent callback
+				s.AgentRegistry.Prepare(id)
+				if err := s.AgentRegistry.WaitForAgent(id, s.config.AgentTimeout); err != nil {
+					s.Logger.Warn().Err(err).Msg("agent callback timeout")
+					s.AgentRegistry.Remove(id)
+				} else {
+					s.Store.Containers.Update(id, func(c *api.Container) {
+						c.AgentAddress = "reverse"
+						c.AgentToken = acaState.AgentToken
+					})
+				}
+				s.ACA.Update(id, func(state *ACAState) {
+					state.AgentAddress = "reverse"
+				})
 			} else {
 				// Wait for agent health
 				agentURL := fmt.Sprintf("http://%s/health", agentAddr)
@@ -649,14 +664,9 @@ func (s *Server) waitForExecutionRunning(ctx context.Context, jobName, execution
 					if exec.Status == nil {
 						continue
 					}
-					name := executionName
-					if name == "" && exec.Name != nil {
-						name = *exec.Name
-					}
 					switch *exec.Status {
 					case armappcontainers.JobExecutionRunningStateRunning:
-						agentAddr := fmt.Sprintf("%s:9111", name)
-						return agentAddr, -1, nil
+						return "reverse", -1, nil
 					case armappcontainers.JobExecutionRunningStateFailed,
 						armappcontainers.JobExecutionRunningStateDegraded:
 						// Execution failed — treat as fast exit with code 1

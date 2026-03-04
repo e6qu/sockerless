@@ -103,6 +103,12 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /internal/v1/images/prune", s.handleImagePrune)
 	s.mux.HandleFunc("GET /internal/v1/events", s.handleSystemEvents)
 	s.mux.HandleFunc("GET /internal/v1/system/df", s.handleSystemDf)
+	s.mux.HandleFunc("POST /internal/v1/containers/{id}/update", s.handleContainerUpdate)
+	s.mux.HandleFunc("GET /internal/v1/containers/{id}/changes", s.handleContainerChanges)
+	s.mux.HandleFunc("GET /internal/v1/containers/{id}/export", s.handleContainerExport)
+	s.mux.HandleFunc("POST /internal/v1/commit", s.handleContainerCommit)
+	s.mux.HandleFunc("POST /internal/v1/containers/{id}/resize", s.handleContainerResize)
+	s.mux.HandleFunc("POST /internal/v1/exec/{id}/resize", s.handleExecResize)
 }
 
 // ListenAndServe starts the HTTP server.
