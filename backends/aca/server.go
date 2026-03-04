@@ -2,6 +2,7 @@ package aca
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/rs/zerolog"
 	core "github.com/sockerless/backend-core"
@@ -10,8 +11,9 @@ import (
 // Server is the ACA backend server.
 type Server struct {
 	*core.BaseServer
-	config Config
-	azure  *AzureClients
+	config    Config
+	azure     *AzureClients
+	ipCounter atomic.Int32
 
 	ACA          *core.StateStore[ACAState]
 	NetworkState *core.StateStore[NetworkState]
@@ -27,6 +29,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		NetworkState: core.NewStateStore[NetworkState](),
 		VolumeState:  core.NewStateStore[VolumeState](),
 	}
+	s.ipCounter.Store(2)
 
 	s.BaseServer = core.NewBaseServer(core.NewStore(), core.BackendDescriptor{
 		ID:              "aca-backend-" + config.ResourceGroup,

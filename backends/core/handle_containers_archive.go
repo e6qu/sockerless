@@ -35,7 +35,7 @@ func (s *BaseServer) handlePutArchive(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, &api.ServerError{Message: "failed to extract archive: " + err.Error()})
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleHeadArchive returns a stat header for the requested path.
@@ -139,6 +139,15 @@ func extractTar(r io.Reader, destDir string) error {
 			}
 			_ = f.Close()
 		case tar.TypeSymlink:
+			// Validate symlink target stays within destDir
+			linkTarget := hdr.Linkname
+			if !filepath.IsAbs(linkTarget) {
+				linkTarget = filepath.Join(filepath.Dir(target), linkTarget)
+			}
+			cleanLink := filepath.Clean(linkTarget)
+			if !strings.HasPrefix(cleanLink+string(os.PathSeparator), filepath.Clean(destDir)+string(os.PathSeparator)) {
+				continue // skip symlinks that escape destDir
+			}
 			_ = os.MkdirAll(filepath.Dir(target), 0755)
 			_ = os.Remove(target)
 			_ = os.Symlink(hdr.Linkname, target)
@@ -489,6 +498,7 @@ func (s *BaseServer) resolveBindMounts(binds []string, mounts []api.Mount) map[s
 					CreatedAt:  time.Now().UTC().Format(time.RFC3339Nano),
 					Labels:     make(map[string]string),
 					Scope:      "local",
+					Options:    make(map[string]string),
 				})
 				result[target] = volDir
 			}

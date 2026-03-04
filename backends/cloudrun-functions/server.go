@@ -2,6 +2,7 @@ package gcf
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/rs/zerolog"
 	core "github.com/sockerless/backend-core"
@@ -10,8 +11,9 @@ import (
 // Server is the Cloud Run Functions backend server.
 type Server struct {
 	*core.BaseServer
-	config Config
-	gcp    *GCPClients
+	config    Config
+	gcp       *GCPClients
+	ipCounter atomic.Int32
 
 	GCF *core.StateStore[GCFState]
 }
@@ -23,6 +25,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		gcp:    gcpClients,
 		GCF:    core.NewStateStore[GCFState](),
 	}
+	s.ipCounter.Store(2)
 
 	s.BaseServer = core.NewBaseServer(core.NewStore(), core.BackendDescriptor{
 		ID:              "gcf-backend",

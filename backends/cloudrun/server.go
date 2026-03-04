@@ -2,6 +2,7 @@ package cloudrun
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/rs/zerolog"
 	core "github.com/sockerless/backend-core"
@@ -10,8 +11,9 @@ import (
 // Server is the Cloud Run backend server.
 type Server struct {
 	*core.BaseServer
-	config Config
-	gcp    *GCPClients
+	config    Config
+	gcp       *GCPClients
+	ipCounter atomic.Int32
 
 	CloudRun     *core.StateStore[CloudRunState]
 	NetworkState *core.StateStore[NetworkState]
@@ -27,6 +29,8 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		NetworkState: core.NewStateStore[NetworkState](),
 		VolumeState:  core.NewStateStore[VolumeState](),
 	}
+
+	s.ipCounter.Store(2)
 
 	s.BaseServer = core.NewBaseServer(core.NewStore(), core.BackendDescriptor{
 		ID:              "cloudrun-backend-" + config.Project,

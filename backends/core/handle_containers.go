@@ -376,11 +376,6 @@ func (s *BaseServer) handleContainerKill(w http.ResponseWriter, r *http.Request)
 		c.State.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	})
 
-	// Close wait channel
-	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
-	}
-
 	s.Drivers.ProcessLifecycle.Cleanup(id) // BUG-159: clean up WASM resources
 	s.emitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	s.emitEvent("container", "die", id, map[string]string{
@@ -388,6 +383,11 @@ func (s *BaseServer) handleContainerKill(w http.ResponseWriter, r *http.Request)
 		"signal":   signal,
 		"name":     strings.TrimPrefix(c.Name, "/"),
 	})
+
+	// Close wait channel after emitting events so watchers see events first
+	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+		close(ch.(chan struct{}))
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -410,6 +410,11 @@ func (s *BaseServer) handleContainerRemove(w http.ResponseWriter, r *http.Reques
 	}
 
 	if c.State.Running {
+		s.emitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+		s.emitEvent("container", "die", id, map[string]string{
+			"exitCode": "0",
+			"name":     strings.TrimPrefix(c.Name, "/"),
+		})
 		s.Store.ForceStopContainer(id, 0)
 	}
 
@@ -433,7 +438,9 @@ func (s *BaseServer) handleContainerRemove(w http.ResponseWriter, r *http.Reques
 	s.Store.Containers.Delete(id)
 	s.Store.ContainerNames.Delete(c.Name)
 	s.Store.LogBuffers.Delete(id)
-	s.Store.WaitChs.Delete(id)
+	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+		close(ch.(chan struct{}))
+	}
 	s.Store.StagingDirs.Delete(id)
 	if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(id); ok {
 		for _, d := range dirs.([]string) {
@@ -516,6 +523,9 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 	_, err := s.Drivers.ProcessLifecycle.Start(id, cmd, c.Config.Env, binds)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("container", id).Msg("failed to restart container process")
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
+		}
 		s.StopHealthCheck(id)
 		s.Store.RevertToCreated(id)
 		WriteError(w, &api.ServerError{Message: "failed to restart container process: " + err.Error()})
@@ -560,6 +570,7 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 	// - handleExecStart: 500ms after all synthetic execs complete (build)
 	ch, ok := s.Store.WaitChs.Load(id)
 	if !ok {
+		c, _ = s.Store.Containers.Get(id)
 		WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{
 			StatusCode: c.State.ExitCode,
 		})

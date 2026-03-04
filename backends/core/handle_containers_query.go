@@ -54,6 +54,14 @@ func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request)
 			imageID = "sha256:" + GenerateID()
 		}
 
+		labels := c.Config.Labels
+		if labels == nil {
+			labels = make(map[string]string)
+		}
+		mounts := c.Mounts
+		if mounts == nil {
+			mounts = []api.MountPoint{}
+		}
 		summary := &api.ContainerSummary{
 			ID:      c.ID,
 			Names:   []string{c.Name},
@@ -64,11 +72,11 @@ func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request)
 			State:   c.State.Status,
 			Status:  status,
 			Ports:   buildPortList(c.HostConfig.PortBindings, c.Config.ExposedPorts),
-			Labels:  c.Config.Labels,
+			Labels:  labels,
 			HostConfig: &api.HostConfigSummary{
 				NetworkMode: c.HostConfig.NetworkMode,
 			},
-			Mounts:  c.Mounts,
+			Mounts:  mounts,
 			NetworkSettings: &api.SummaryNetworkSettings{
 				Networks: c.NetworkSettings.Networks,
 			},
@@ -148,12 +156,18 @@ func (s *BaseServer) handleContainerLogs(w http.ResponseWriter, r *http.Request)
 	// Read from container process or synthetic log buffer via driver chain
 	logBytes := s.Drivers.Stream.LogBytes(id)
 
-	// Split into lines and stamp each with a timestamp for filtering
+	// Split into lines and stamp each with the container's start time for filtering (BUG-276)
 	var lines []string
 	if len(logBytes) > 0 {
-		ts := time.Now().UTC().Format(time.RFC3339Nano)
+		ts := c.State.StartedAt
+		if ts == "" || ts == "0001-01-01T00:00:00Z" {
+			ts = time.Now().UTC().Format(time.RFC3339Nano)
+		}
 		raw := strings.Split(strings.TrimRight(string(logBytes), "\n"), "\n")
 		for _, line := range raw {
+			if line == "" {
+				continue // BUG-277: skip phantom empty lines
+			}
 			lines = append(lines, ts+" "+line)
 		}
 	}
@@ -213,11 +227,24 @@ func (s *BaseServer) handleContainerLogs(w http.ResponseWriter, r *http.Request)
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
+
+		// BUG-278: parse until for follow mode
+		var followUntil time.Time
+		if untilStr := r.URL.Query().Get("until"); untilStr != "" {
+			if t, err := ParseDockerTimestamp(untilStr); err == nil {
+				followUntil = t
+			}
+		}
+
 		subID := GenerateID()[:16]
 		ch := s.Drivers.Stream.LogSubscribe(id, subID)
 		if ch != nil {
 			defer s.Drivers.Stream.LogUnsubscribe(id, subID)
 			for {
+				// BUG-278: stop following if until time has passed
+				if !followUntil.IsZero() && time.Now().After(followUntil) {
+					return
+				}
 				select {
 				case chunk, ok := <-ch:
 					if !ok {

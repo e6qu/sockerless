@@ -50,32 +50,42 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
+	filters := core.ParseFilters(r.URL.Query().Get("filters"))
+	labelFilters := filters["label"]
+	untilFilters := filters["until"]
+
 	var deleted []string
 	for _, c := range s.Store.Containers.List() {
-		if c.State.Status == "exited" || c.State.Status == "dead" {
-			// Clean up ECS cloud resources
-			ecsState, _ := s.ECS.Get(c.ID)
-			if ecsState.TaskDefARN != "" {
-				_, _ = s.aws.ECS.DeregisterTaskDefinition(s.ctx(), &awsecs.DeregisterTaskDefinitionInput{
-					TaskDefinition: aws.String(ecsState.TaskDefARN),
-				})
-			}
-			if ecsState.TaskARN != "" {
-				s.Registry.MarkCleanedUp(ecsState.TaskARN)
-			}
-
-			s.AgentRegistry.Remove(c.ID)
-			s.Store.Containers.Delete(c.ID)
-			s.Store.ContainerNames.Delete(c.Name)
-			s.ECS.Delete(c.ID)
-			s.Store.WaitChs.Delete(c.ID)
-			s.Store.LogBuffers.Delete(c.ID)
-			s.Store.StagingDirs.Delete(c.ID)
-			for _, eid := range c.ExecIDs {
-				s.Store.Execs.Delete(eid)
-			}
-			deleted = append(deleted, c.ID)
+		if c.State.Status != "exited" && c.State.Status != "dead" {
+			continue
 		}
+		if len(labelFilters) > 0 && !core.MatchLabels(c.Config.Labels, labelFilters) {
+			continue
+		}
+		if len(untilFilters) > 0 && !core.MatchUntil(c.Created, untilFilters) {
+			continue
+		}
+		ecsState, _ := s.ECS.Get(c.ID)
+		if ecsState.TaskDefARN != "" {
+			_, _ = s.aws.ECS.DeregisterTaskDefinition(s.ctx(), &awsecs.DeregisterTaskDefinitionInput{
+				TaskDefinition: aws.String(ecsState.TaskDefARN),
+			})
+		}
+		if ecsState.TaskARN != "" {
+			s.Registry.MarkCleanedUp(ecsState.TaskARN)
+		}
+
+		s.AgentRegistry.Remove(c.ID)
+		s.Store.Containers.Delete(c.ID)
+		s.Store.ContainerNames.Delete(c.Name)
+		s.ECS.Delete(c.ID)
+		s.Store.WaitChs.Delete(c.ID)
+		s.Store.LogBuffers.Delete(c.ID)
+		s.Store.StagingDirs.Delete(c.ID)
+		for _, eid := range c.ExecIDs {
+			s.Store.Execs.Delete(eid)
+		}
+		deleted = append(deleted, c.ID)
 	}
 	if deleted == nil {
 		deleted = []string{}

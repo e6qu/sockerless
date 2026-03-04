@@ -101,7 +101,7 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 				hostConfig.PortBindings[nat.Port(port)] = nb
 			}
 		}
-		if req.HostConfig.LogConfig != nil {
+		if req.HostConfig.LogConfig.Type != "" {
 			hostConfig.LogConfig = container.LogConfig{
 				Type:   req.HostConfig.LogConfig.Type,
 				Config: req.HostConfig.LogConfig.Config,
@@ -549,7 +549,7 @@ func mapContainerFromDocker(info types.ContainerJSON) api.Container {
 			Isolation:   string(info.HostConfig.Isolation),
 		}
 		if info.HostConfig.LogConfig.Type != "" {
-			c.HostConfig.LogConfig = &api.LogConfig{
+			c.HostConfig.LogConfig = api.LogConfig{
 				Type:   info.HostConfig.LogConfig.Type,
 				Config: info.HostConfig.LogConfig.Config,
 			}

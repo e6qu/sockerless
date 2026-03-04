@@ -47,9 +47,19 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 
 // handleContainerPrune removes all stopped containers.
 func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
+	filters := core.ParseFilters(r.URL.Query().Get("filters"))
+	labelFilters := filters["label"]
+	untilFilters := filters["until"]
+
 	var deleted []string
 	for _, c := range s.Store.Containers.List() {
 		if c.State.Status == "exited" || c.State.Status == "dead" {
+			if len(labelFilters) > 0 && !core.MatchLabels(c.Config.Labels, labelFilters) {
+				continue
+			}
+			if len(untilFilters) > 0 && !core.MatchUntil(c.Created, untilFilters) {
+				continue
+			}
 			// Clean up Cloud Run resources
 			crState, _ := s.CloudRun.Get(c.ID)
 			if crState.JobName != "" {
