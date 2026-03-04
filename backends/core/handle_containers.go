@@ -11,6 +11,17 @@ import (
 	"github.com/sockerless/api"
 )
 
+// hasEnvKey checks whether an env slice already contains a variable with the given key.
+func hasEnvKey(env []string, key string) bool {
+	prefix := key + "="
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // --- Default overridable container handlers (memory-like behavior) ---
 
 func (s *BaseServer) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
@@ -174,18 +185,22 @@ func (s *BaseServer) handleContainerStart(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Inject HOSTNAME and user env vars into container config
+	// Inject HOSTNAME and user env vars into container config (guard against duplicates on re-start)
 	if c.Config.Hostname != "" {
 		s.Store.Containers.Update(id, func(c *api.Container) {
-			c.Config.Env = append(c.Config.Env, "HOSTNAME="+c.Config.Hostname)
+			if !hasEnvKey(c.Config.Env, "HOSTNAME") {
+				c.Config.Env = append(c.Config.Env, "HOSTNAME="+c.Config.Hostname)
+			}
 		})
 	}
 	if c.Config.User != "" {
 		parts := strings.SplitN(c.Config.User, ":", 2)
 		s.Store.Containers.Update(id, func(c *api.Container) {
-			c.Config.Env = append(c.Config.Env, "SOCKERLESS_UID="+parts[0])
-			if len(parts) == 2 {
-				c.Config.Env = append(c.Config.Env, "SOCKERLESS_GID="+parts[1])
+			if !hasEnvKey(c.Config.Env, "SOCKERLESS_UID") {
+				c.Config.Env = append(c.Config.Env, "SOCKERLESS_UID="+parts[0])
+				if len(parts) == 2 {
+					c.Config.Env = append(c.Config.Env, "SOCKERLESS_GID="+parts[1])
+				}
 			}
 		})
 	}
@@ -193,15 +208,35 @@ func (s *BaseServer) handleContainerStart(w http.ResponseWriter, r *http.Request
 	// Inject ExtraHosts env var
 	if len(c.HostConfig.ExtraHosts) > 0 {
 		s.Store.Containers.Update(id, func(c *api.Container) {
-			c.Config.Env = append(c.Config.Env, "SOCKERLESS_EXTRA_HOSTS="+FormatExtraHostsEnv(c.HostConfig.ExtraHosts))
+			if !hasEnvKey(c.Config.Env, "SOCKERLESS_EXTRA_HOSTS") {
+				c.Config.Env = append(c.Config.Env, "SOCKERLESS_EXTRA_HOSTS="+FormatExtraHostsEnv(c.HostConfig.ExtraHosts))
+			}
 		})
 	}
 
-	exitCh := make(chan struct{})
-	s.Store.WaitChs.Store(id, exitCh)
-
 	// Re-read container after env updates
 	c, _ = s.Store.Containers.Get(id)
+
+	// Process execution: spawn via ProcessLifecycleDriver
+	cmd := append([]string{c.Path}, c.Args...)
+	binds := s.resolveBindMounts(c.HostConfig.Binds, c.HostConfig.Mounts)
+	tmpfs := resolveTmpfsMounts(c.HostConfig.Tmpfs)
+	for k, v := range tmpfs {
+		if binds == nil {
+			binds = make(map[string]string)
+		}
+		binds[k] = v
+	}
+	started, err := s.Drivers.ProcessLifecycle.Start(id, cmd, c.Config.Env, binds)
+	if err != nil {
+		s.Logger.Error().Err(err).Str("container", id).Msg("failed to start container process")
+		WriteError(w, &api.ServerError{Message: "failed to start container process: " + err.Error()})
+		return
+	}
+
+	// Start() succeeded — now create wait channel and update state
+	exitCh := make(chan struct{})
+	s.Store.WaitChs.Store(id, exitCh)
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	s.Store.Containers.Update(id, func(c *api.Container) {
@@ -219,25 +254,6 @@ func (s *BaseServer) handleContainerStart(w http.ResponseWriter, r *http.Request
 	if c.Config.Healthcheck != nil && len(c.Config.Healthcheck.Test) > 0 &&
 		(len(c.Config.Healthcheck.Test) != 1 || !strings.EqualFold(c.Config.Healthcheck.Test[0], "NONE")) {
 		s.StartHealthCheck(id)
-	}
-
-	// Process execution: spawn via ProcessLifecycleDriver
-	cmd := append([]string{c.Path}, c.Args...)
-	binds := s.resolveBindMounts(c.HostConfig.Binds, c.HostConfig.Mounts)
-	tmpfs := resolveTmpfsMounts(c.HostConfig.Tmpfs)
-	for k, v := range tmpfs {
-		if binds == nil {
-			binds = make(map[string]string)
-		}
-		binds[k] = v
-	}
-	started, err := s.Drivers.ProcessLifecycle.Start(id, cmd, c.Config.Env, binds)
-	if err != nil {
-		s.Logger.Error().Err(err).Str("container", id).Msg("failed to start container process")
-		s.StopHealthCheck(id)
-		s.Store.RevertToCreated(id)
-		WriteError(w, &api.ServerError{Message: "failed to start container process: " + err.Error()})
-		return
 	}
 
 	if started {
@@ -277,7 +293,9 @@ func (s *BaseServer) handleContainerStart(w http.ResponseWriter, r *http.Request
 	}
 	go func() {
 		time.Sleep(delay)
-		s.Store.StopContainer(id, 0)
+		if c, ok := s.Store.Containers.Get(id); ok && c.State.Running {
+			s.Store.StopContainer(id, 0)
+		}
 	}()
 
 	w.WriteHeader(http.StatusNoContent)
@@ -297,8 +315,14 @@ func (s *BaseServer) handleContainerStop(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	s.StopHealthCheck(id)
 	s.Drivers.ProcessLifecycle.Stop(id)
+	s.Drivers.ProcessLifecycle.Cleanup(id)
 	s.Store.ForceStopContainer(id, 0)
+	s.emitEvent("container", "die", id, map[string]string{
+		"exitCode": "0",
+		"name":     strings.TrimPrefix(c.Name, "/"),
+	})
 	s.emitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -435,6 +459,10 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 	_, err := s.Drivers.ProcessLifecycle.Start(id, cmd, c.Config.Env, binds)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("container", id).Msg("failed to restart container process")
+		s.StopHealthCheck(id)
+		s.Store.RevertToCreated(id)
+		WriteError(w, &api.ServerError{Message: "failed to restart container process: " + err.Error()})
+		return
 	}
 
 	s.emitEvent("container", "start", id, map[string]string{

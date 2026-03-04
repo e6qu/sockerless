@@ -60,6 +60,19 @@ func (s *Server) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	var req api.ExecStartRequest
 	_ = readJSON(r, &req)
 
+	if req.Detach {
+		err := s.docker.ContainerExecStart(r.Context(), id, container.ExecStartOptions{
+			Detach: true,
+			Tty:    req.Tty,
+		})
+		if err != nil {
+			writeError(w, mapDockerError(err))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
 	resp, err := s.docker.ContainerExecAttach(r.Context(), id, container.ExecAttachOptions{
 		Detach: req.Detach,
 		Tty:    req.Tty,
