@@ -74,6 +74,7 @@ func (s *Server) handleNetworkList(w http.ResponseWriter, r *http.Request) {
 			Labels:     n.Labels,
 			Options:    n.Options,
 		}
+		mapNetworkIPAMAndContainers(net, n.IPAM, n.Containers)
 		result = append(result, net)
 	}
 
@@ -101,7 +102,38 @@ func (s *Server) handleNetworkInspect(w http.ResponseWriter, r *http.Request) {
 		Labels:     n.Labels,
 		Options:    n.Options,
 	}
+	mapNetworkIPAMAndContainers(&net, n.IPAM, n.Containers)
 	writeJSON(w, http.StatusOK, net)
+}
+
+func mapNetworkIPAMAndContainers(net *api.Network, ipam network.IPAM, containers map[string]network.EndpointResource) {
+	if ipam.Driver != "" || len(ipam.Config) > 0 {
+		configs := make([]api.IPAMConfig, 0, len(ipam.Config))
+		for _, c := range ipam.Config {
+			configs = append(configs, api.IPAMConfig{
+				Subnet:  c.Subnet,
+				IPRange: c.IPRange,
+				Gateway: c.Gateway,
+			})
+		}
+		net.IPAM = api.IPAM{
+			Driver:  ipam.Driver,
+			Config:  configs,
+			Options: ipam.Options,
+		}
+	}
+	if len(containers) > 0 {
+		net.Containers = make(map[string]api.EndpointResource, len(containers))
+		for id, ep := range containers {
+			net.Containers[id] = api.EndpointResource{
+				Name:        ep.Name,
+				EndpointID:  ep.EndpointID,
+				MacAddress:  ep.MacAddress,
+				IPv4Address: ep.IPv4Address,
+				IPv6Address: ep.IPv6Address,
+			}
+		}
+	}
 }
 
 func (s *Server) handleNetworkDisconnect(w http.ResponseWriter, r *http.Request) {

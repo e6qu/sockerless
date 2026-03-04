@@ -356,3 +356,99 @@ FaaS backends store function output in `LogBuffers` during invocation, but neith
 ### Details
 
 `c.Mounts = make([]api.MountPoint, 0)` — initialized empty but never populated from `info.Mounts`. Container inspect always returned empty Mounts array, even for containers with volumes or bind mounts. Fixed by iterating `info.Mounts` and mapping Type, Name, Source, Destination, Driver, Mode, RW, and Propagation fields.
+
+---
+
+## BUG-075: Lambda missing restart handler override
+
+**Severity**: High
+**Component**: `backends/lambda/server.go`, `backends/lambda/extended.go`
+**Status**: Fixed — Sprint 11: added no-op restart handler matching GCF/AZF pattern
+
+### Details
+
+Lambda didn't override `handleContainerRestart`, inheriting core's restart logic which calls `ProcessLifecycle.Stop()`, `ForceStopContainer()`, `ProcessLifecycle.Cleanup()`, `ProcessLifecycle.Start()` — attempting to re-invoke a Lambda function via process lifecycle. CloudRun Functions and Azure Functions both had explicit no-op restart handlers. Fixed by adding the same pattern to Lambda.
+
+---
+
+## BUG-076: Docker `mapContainerFromDocker` missing HostConfig fields
+
+**Severity**: High
+**Component**: `backends/docker/containers.go`
+**Status**: Fixed — Sprint 11: map all 14 missing HostConfig fields
+
+### Details
+
+Only mapped 3 of 17 `api.HostConfig` fields: `NetworkMode`, `Binds`, `AutoRemove`. Missing: `PortBindings`, `RestartPolicy`, `Privileged`, `CapAdd`, `CapDrop`, `Init`, `UsernsMode`, `ShmSize`, `Tmpfs`, `SecurityOpt`, `LogConfig`, `ExtraHosts`, `Mounts`, `Isolation`. Fixed by mapping all fields with appropriate type conversions (e.g., `nat.PortMap` → `map[string][]PortBinding`).
+
+---
+
+## BUG-077: Docker `mapContainerFromDocker` missing Config fields
+
+**Severity**: Medium
+**Component**: `backends/docker/containers.go`
+**Status**: Fixed — Sprint 11: map ExposedPorts, Volumes, Shell, Healthcheck, StopTimeout
+
+### Details
+
+Mapped 14 of 19 `api.ContainerConfig` fields. Missing: `ExposedPorts`, `Volumes`, `Healthcheck`, `Shell`, `StopTimeout`. Fixed by mapping all 5 fields with `nat.PortSet` → `map[string]struct{}` conversion for ExposedPorts and `container.HealthConfig` → `api.HealthcheckConfig` conversion for Healthcheck.
+
+---
+
+## BUG-078: Docker `mapContainerFromDocker` missing State.Health
+
+**Severity**: High
+**Component**: `backends/docker/containers.go`
+**Status**: Fixed — Sprint 11: map info.State.Health to api.HealthState
+
+### Details
+
+Mapped all `ContainerState` fields except `Health`. Our `api.ContainerState` has `Health *HealthState` but it was never populated from `info.State.Health`. Fixed by mapping Status, FailingStreak, and Log entries with `time.RFC3339Nano` formatting.
+
+---
+
+## BUG-079: Docker `mapContainerFromDocker` missing NetworkSettings.Ports
+
+**Severity**: High
+**Component**: `backends/docker/containers.go`
+**Status**: Fixed — Sprint 11: map info.NetworkSettings.Ports to api.NetworkSettings.Ports
+
+### Details
+
+Mapped `Networks` but not `Ports`. Our `api.NetworkSettings` has `Ports map[string][]PortBinding` but it was never populated. Fixed by reusing `mapPortBindings` helper to convert `nat.PortMap` to `map[string][]api.PortBinding`.
+
+---
+
+## BUG-080: Docker `handleContainerList` missing Ports, Mounts, NetworkSettings
+
+**Severity**: High
+**Component**: `backends/docker/containers.go`
+**Status**: Fixed — Sprint 11: map Ports, Mounts, SizeRw, NetworkSettings in list response
+
+### Details
+
+`ContainerSummary` only mapped 9 of 13 fields. Missing: `Ports`, `Mounts`, `SizeRw`, `NetworkSettings`. Fixed by mapping `c.Ports` → `[]api.Port`, `c.Mounts` → `[]api.MountPoint` (via `mapMountsFromSummary` helper), `c.SizeRw`, and `c.NetworkSettings` → `*api.SummaryNetworkSettings`.
+
+---
+
+## BUG-081: Docker network inspect and list missing IPAM and Containers
+
+**Severity**: High
+**Component**: `backends/docker/networks.go`
+**Status**: Fixed — Sprint 11: map IPAM and Containers in both list and inspect
+
+### Details
+
+Network mapping skipped IPAM and Containers fields. Both exist in `api.Network`. Fixed by adding `mapNetworkIPAMAndContainers` helper that maps `network.IPAM` → `api.IPAM` (Driver, Config, Options) and `map[string]network.EndpointResource` → `map[string]api.EndpointResource`.
+
+---
+
+## BUG-082: Docker `handleImageInspect` missing Config fields
+
+**Severity**: Medium
+**Component**: `backends/docker/images.go`
+**Status**: Fixed — Sprint 11: map all remaining ContainerConfig fields
+
+### Details
+
+Only mapped 5 of 19 `api.ContainerConfig` fields for image config: `Env`, `Cmd`, `Entrypoint`, `WorkingDir`, `Labels`. Fixed by mapping all remaining fields including `ExposedPorts`, `Volumes`, `Healthcheck`, `StopSignal`, `User`, `Hostname`, `Domainname`, `Tty`, `OpenStdin`, `StdinOnce`, `AttachStdin`, `AttachStdout`, `AttachStderr`, `Shell`, `StopTimeout`.

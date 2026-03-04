@@ -147,6 +147,21 @@ Audited Docker-to-cloud translation fidelity: resource lifecycle cleanup, kill s
 
 All 75 sim-backend tests pass. 0 lint issues across 19 modules.
 
+## Bug Sprint 11 — API & Backends Audit (BUG-075→082)
+
+Audited cross-backend lifecycle consistency (restart semantics) and Docker passthrough mapping fidelity (missing fields that our API types define but the Docker backend silently drops). Found 8 real bugs — 1 Lambda restart crash bug, 5 Docker backend inspect/list mapping gaps, 1 Docker network mapping gap, and 1 Docker image mapping gap.
+
+- **BUG-075**: Lambda now has no-op restart handler (matching GCF/AZF pattern) instead of inheriting core's process-based restart
+- **BUG-076**: Docker `mapContainerFromDocker` now maps all 17 HostConfig fields (was 3: NetworkMode, Binds, AutoRemove)
+- **BUG-077**: Docker `mapContainerFromDocker` now maps Config.ExposedPorts, Volumes, Shell, Healthcheck, StopTimeout
+- **BUG-078**: Docker `mapContainerFromDocker` now maps State.Health (Status, FailingStreak, Log entries)
+- **BUG-079**: Docker `mapContainerFromDocker` now maps NetworkSettings.Ports via shared `mapPortBindings` helper
+- **BUG-080**: Docker `handleContainerList` now maps Ports, Mounts, SizeRw, NetworkSettings in list response
+- **BUG-081**: Docker network list and inspect now map IPAM (Driver, Config, Options) and Containers
+- **BUG-082**: Docker `handleImageInspect` now maps all 19 ContainerConfig fields (was 5)
+
+All 75 sim-backend tests pass. 286 core tests pass. 0 lint issues across 19 modules.
+
 ## Project Stats
 
 - **80 phases** (1-67, 69-77, 79-82), 725 tasks completed

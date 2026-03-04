@@ -1,6 +1,7 @@
 package lambda
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -8,6 +9,26 @@ import (
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 )
+
+// handleContainerRestart is not supported — Lambda functions run to completion.
+func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) {
+	ref := r.PathValue("id")
+	id, ok := s.Store.ResolveContainerID(ref)
+	if !ok {
+		core.WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
+		return
+	}
+
+	c, _ := s.Store.Containers.Get(id)
+	if !c.State.Running {
+		core.WriteError(w, &api.ConflictError{
+			Message: fmt.Sprintf("Container %s is not running", ref),
+		})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
 
 func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 	var deleted []string
