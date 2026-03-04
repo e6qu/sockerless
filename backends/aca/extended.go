@@ -29,8 +29,9 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 			s.stopExecution(acaState.JobName, acaState.ExecutionName)
 		}
 		s.Store.ForceStopContainer(id, 0)
-		s.Registry.MarkCleanedUp(acaState.JobName)
-		s.ACA.Delete(id)
+		if acaState.JobName != "" {
+			s.Registry.MarkCleanedUp(acaState.JobName)
+		}
 		s.EmitEvent("container", "die", id, map[string]string{
 			"exitCode": "0",
 			"name":     strings.TrimPrefix(c.Name, "/"),
@@ -46,9 +47,18 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 
 // handleContainerPrune removes all stopped containers.
 func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
+	filters := core.ParseFilters(r.URL.Query().Get("filters"))
+	labelFilters := filters["label"]
+	untilFilters := filters["until"]
 	var deleted []string
 	for _, c := range s.Store.Containers.List() {
 		if c.State.Status == "exited" || c.State.Status == "dead" {
+			if len(labelFilters) > 0 && !core.MatchLabels(c.Config.Labels, labelFilters) {
+				continue
+			}
+			if len(untilFilters) > 0 && !core.MatchUntil(c.Created, untilFilters) {
+				continue
+			}
 			// Clean up ACA resources
 			acaState, _ := s.ACA.Get(c.ID)
 			if acaState.JobName != "" {

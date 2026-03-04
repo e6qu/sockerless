@@ -3,6 +3,7 @@ package lambda
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/rs/zerolog"
 	core "github.com/sockerless/backend-core"
@@ -11,9 +12,10 @@ import (
 // Server is the Lambda backend server.
 type Server struct {
 	*core.BaseServer
-	config Config
-	aws    *AWSClients
-	Lambda *core.StateStore[LambdaState]
+	config    Config
+	aws       *AWSClients
+	Lambda    *core.StateStore[LambdaState]
+	ipCounter atomic.Int32
 }
 
 // NewServer creates a new Lambda backend server.
@@ -23,6 +25,7 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		aws:    awsClients,
 		Lambda: core.NewStateStore[LambdaState](),
 	}
+	s.ipCounter.Store(2)
 
 	s.BaseServer = core.NewBaseServer(core.NewStore(), core.BackendDescriptor{
 		ID:              "lambda-backend",

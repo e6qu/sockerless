@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -75,10 +76,10 @@ func (s *BaseServer) handleContainerPrune(w http.ResponseWriter, r *http.Request
 		if c.State.Status != "exited" && c.State.Status != "dead" {
 			return false
 		}
-		if len(labelFilters) > 0 && !matchLabels(c.Config.Labels, labelFilters) {
+		if len(labelFilters) > 0 && !MatchLabels(c.Config.Labels, labelFilters) {
 			return false
 		}
-		if len(untilFilters) > 0 && !matchUntil(c.Created, untilFilters) {
+		if len(untilFilters) > 0 && !MatchUntil(c.Created, untilFilters) {
 			return false
 		}
 		return true
@@ -88,7 +89,9 @@ func (s *BaseServer) handleContainerPrune(w http.ResponseWriter, r *http.Request
 		s.StopHealthCheck(c.ID)
 		s.Store.ContainerNames.Delete(c.Name)
 		s.Store.LogBuffers.Delete(c.ID)
-		s.Store.WaitChs.Delete(c.ID)
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
+			close(ch.(chan struct{}))
+		}
 		s.Drivers.ProcessLifecycle.Cleanup(c.ID)
 		for _, ep := range c.NetworkSettings.Networks {
 			if ep != nil && ep.NetworkID != "" {
@@ -99,6 +102,11 @@ func (s *BaseServer) handleContainerPrune(w http.ResponseWriter, r *http.Request
 			s.Store.Pods.RemoveContainer(pod.ID, c.ID)
 		}
 		s.Store.StagingDirs.Delete(c.ID)
+		if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(c.ID); ok {
+			for _, d := range dirs.([]string) {
+				os.RemoveAll(d)
+			}
+		}
 		for _, eid := range c.ExecIDs {
 			s.Store.Execs.Delete(eid)
 		}
@@ -122,15 +130,13 @@ func (s *BaseServer) handleContainerStats(w http.ResponseWriter, r *http.Request
 	}
 
 	c, _ := s.Store.Containers.Get(id)
+	stream := r.URL.Query().Get("stream") != "false"
+
 	if !c.State.Running {
-		WriteError(w, &api.ConflictError{
-			Message: fmt.Sprintf("Container %s is not running", ref),
-		})
+		now := time.Now().UTC()
+		WriteJSON(w, http.StatusOK, s.buildStatsEntry(id, now, "0001-01-01T00:00:00Z"))
 		return
 	}
-
-	// stream=true (default) sends JSON lines every 1s; stream=false sends one snapshot
-	stream := r.URL.Query().Get("stream") != "false"
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -381,7 +387,7 @@ func (s *BaseServer) handleSystemEvents(w http.ResponseWriter, r *http.Request) 
 					continue
 				}
 			}
-			if len(labelFilter) > 0 && !matchLabels(event.Actor.Attributes, labelFilter) {
+			if len(labelFilter) > 0 && !MatchLabels(event.Actor.Attributes, labelFilter) {
 				continue
 			}
 			_ = enc.Encode(event)
@@ -532,9 +538,9 @@ func (s *BaseServer) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// matchLabels checks whether a container's labels satisfy label filter expressions.
+// MatchLabels checks whether a container's labels satisfy label filter expressions.
 // Each filter is "key" (key must exist) or "key=value" (key must equal value).
-func matchLabels(labels map[string]string, filters []string) bool {
+func MatchLabels(labels map[string]string, filters []string) bool {
 	for _, f := range filters {
 		if k, v, ok := strings.Cut(f, "="); ok {
 			if labels[k] != v {
@@ -549,8 +555,8 @@ func matchLabels(labels map[string]string, filters []string) bool {
 	return true
 }
 
-// matchUntil checks whether a container was created before the given until timestamps.
-func matchUntil(created string, filters []string) bool {
+// MatchUntil checks whether a container was created before the given until timestamps.
+func MatchUntil(created string, filters []string) bool {
 	ct, err := time.Parse(time.RFC3339Nano, created)
 	if err != nil {
 		return false

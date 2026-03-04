@@ -186,8 +186,8 @@ func TestHandlePutArchive_Success(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.handlePutArchive(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

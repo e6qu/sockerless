@@ -1,8 +1,8 @@
 # Known Bugs
 
-## Fixed (BUG-001 → BUG-269)
+## Fixed (BUG-001 → BUG-294)
 
-269 bugs fixed across 24 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
+294 bugs fixed across 26 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
@@ -25,6 +25,8 @@
 | 22 | BUG-202→226 | Core lifecycle safety, Docker API parity, API type gaps, frontend conformance |
 | 23 | BUG-227→251 | Forward agent fix (CloudRun/ACA), Docker parity, lifecycle safety |
 | 24 | BUG-252→269 | Final 18: BuildCache, FaaS image config, events, image load, LRO waits, API types |
+| 25 | BUG-270→294 | Core lifecycle, API serialization, cloud parity, Docker field mapping |
+| 26 | BUG-295→319 | WaitCh leaks, HTTP status codes, symlink traversal, cloud events, API types |
 
 ## Open Bugs
 

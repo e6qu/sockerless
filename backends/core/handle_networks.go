@@ -72,7 +72,7 @@ func (s *BaseServer) handleNetworkDisconnect(w http.ResponseWriter, r *http.Requ
 	containerID, found := s.Store.ResolveContainerID(req.Container)
 	if !found {
 		if req.Force {
-			w.WriteHeader(http.StatusOK)
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		WriteError(w, &api.NotFoundError{Resource: "container", ID: req.Container})
@@ -82,7 +82,7 @@ func (s *BaseServer) handleNetworkDisconnect(w http.ResponseWriter, r *http.Requ
 	_ = s.Drivers.Network.Disconnect(r.Context(), net.ID, containerID)
 
 	s.emitEvent("network", "disconnect", net.ID, map[string]string{"container": containerID})
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *BaseServer) handleNetworkRemove(w http.ResponseWriter, r *http.Request) {
@@ -153,5 +153,5 @@ func (s *BaseServer) handleNetworkConnect(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }

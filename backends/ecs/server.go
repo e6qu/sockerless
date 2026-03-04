@@ -3,6 +3,7 @@ package ecs
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 
 	"github.com/rs/zerolog"
 	core "github.com/sockerless/backend-core"
@@ -16,6 +17,7 @@ type Server struct {
 	ECS          *core.StateStore[ECSState]
 	NetworkState *core.StateStore[NetworkState]
 	VolumeState  *core.StateStore[VolumeState]
+	ipCounter    atomic.Int32
 }
 
 // NewServer creates a new ECS backend server.
@@ -27,6 +29,8 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		NetworkState: core.NewStateStore[NetworkState](),
 		VolumeState:  core.NewStateStore[VolumeState](),
 	}
+
+	s.ipCounter.Store(2)
 
 	s.BaseServer = core.NewBaseServer(core.NewStore(), core.BackendDescriptor{
 		ID:              "ecs-backend-" + config.Cluster,

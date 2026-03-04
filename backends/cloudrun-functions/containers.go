@@ -101,6 +101,20 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		Driver:   "cloud-run-functions",
 	}
 
+	// Set up default network
+	netName := hostConfig.NetworkMode
+	if netName == "default" {
+		netName = "bridge"
+	}
+	container.NetworkSettings.Networks[netName] = &api.EndpointSettings{
+		NetworkID:   netName,
+		EndpointID:  core.GenerateID()[:16],
+		Gateway:     "172.17.0.1",
+		IPAddress:   fmt.Sprintf("172.17.0.%d", int(s.ipCounter.Add(1))),
+		IPPrefixLen: 16,
+		MacAddress:  "02:42:ac:11:00:02",
+	}
+
 	// Build function name from container ID
 	funcName := "skls-" + id[:12]
 
@@ -262,6 +276,9 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	exitCh := make(chan struct{})
 	s.Store.WaitChs.Store(id, exitCh)
 
+	c, _ = s.Store.Containers.Get(id)
+	s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+
 	// Non-tail-dev-null containers: invoke the function with the container's command
 	// to get real execution, then stop with the real exit code.
 	if !core.IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd) {
@@ -293,7 +310,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 			// No command or no function URL: auto-stop after brief delay
 			go func() {
 				time.Sleep(500 * time.Millisecond)
-				if _, ok := s.Store.Containers.Get(id); ok {
+				if c, ok := s.Store.Containers.Get(id); ok && c.State.Running {
 					s.Store.StopContainer(id, 0)
 				}
 			}()
@@ -373,6 +390,9 @@ func (s *Server) handleContainerStop(w http.ResponseWriter, r *http.Request) {
 	// Cloud Run Functions run to completion — stop transitions state
 	s.AgentRegistry.Remove(id)
 	s.Store.ForceStopContainer(id, 0)
+	c, _ = s.Store.Containers.Get(id)
+	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", c.State.ExitCode), "name": strings.TrimPrefix(c.Name, "/")})
+	s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -414,6 +434,8 @@ func (s *Server) handleContainerKill(w http.ResponseWriter, r *http.Request) {
 		close(ch.(chan struct{}))
 	}
 
+	s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", exitCode), "name": strings.TrimPrefix(c.Name, "/")})
 	w.WriteHeader(http.StatusNoContent)
 }
 

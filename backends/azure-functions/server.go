@@ -2,6 +2,7 @@ package azf
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/rs/zerolog"
 	core "github.com/sockerless/backend-core"
@@ -10,8 +11,9 @@ import (
 // Server is the Azure Functions backend server.
 type Server struct {
 	*core.BaseServer
-	config Config
-	azure  *AzureClients
+	config    Config
+	azure     *AzureClients
+	ipCounter atomic.Int32
 
 	AZF *core.StateStore[AZFState]
 }
@@ -23,6 +25,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		azure:  azureClients,
 		AZF:    core.NewStateStore[AZFState](),
 	}
+	s.ipCounter.Store(2)
 
 	s.BaseServer = core.NewBaseServer(core.NewStore(), core.BackendDescriptor{
 		ID:              "azf-backend-" + config.ResourceGroup,

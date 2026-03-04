@@ -65,6 +65,7 @@ type ContainerConfig struct {
 	Shell        []string            `json:"Shell,omitempty"`
 	Healthcheck  *HealthcheckConfig  `json:"Healthcheck,omitempty"`
 	ArgsEscaped  bool                `json:"ArgsEscaped,omitempty"`
+	NetworkDisabled bool             `json:"NetworkDisabled,omitempty"`
 	MacAddress   string              `json:"MacAddress,omitempty"`
 	OnBuild      []string            `json:"OnBuild,omitempty"`
 }
@@ -85,7 +86,7 @@ type HostConfig struct {
 	ShmSize           int64             `json:"ShmSize,omitempty"`
 	Tmpfs             map[string]string `json:"Tmpfs,omitempty"`
 	SecurityOpt       []string          `json:"SecurityOpt,omitempty"`
-	LogConfig         *LogConfig        `json:"LogConfig,omitempty"`
+	LogConfig         LogConfig         `json:"LogConfig"`
 	ExtraHosts        []string          `json:"ExtraHosts,omitempty"`
 	Mounts            []Mount           `json:"Mounts,omitempty"`
 	Isolation         string            `json:"Isolation,omitempty"`
@@ -104,6 +105,17 @@ type HostConfig struct {
 	PidMode           string            `json:"PidMode,omitempty"`
 	IpcMode           string            `json:"IpcMode,omitempty"`
 	UTSMode           string            `json:"UTSMode,omitempty"`
+	VolumesFrom       []string          `json:"VolumesFrom,omitempty"`
+	GroupAdd          []string          `json:"GroupAdd,omitempty"`
+	ReadonlyRootfs    bool              `json:"ReadonlyRootfs,omitempty"`
+	OomKillDisable    *bool             `json:"OomKillDisable,omitempty"`
+	PidsLimit         *int64            `json:"PidsLimit,omitempty"`
+	Sysctls           map[string]string `json:"Sysctls,omitempty"`
+	Runtime           string            `json:"Runtime,omitempty"`
+	Links             []string          `json:"Links,omitempty"`
+	PublishAllPorts   bool              `json:"PublishAllPorts,omitempty"`
+	CgroupnsMode      string            `json:"CgroupnsMode,omitempty"`
+	ConsoleSize       [2]uint           `json:"ConsoleSize,omitempty"`
 }
 
 // PortBinding represents a port binding between the host and a container.
@@ -121,7 +133,7 @@ type RestartPolicy struct {
 // LogConfig holds the logging configuration for a container.
 type LogConfig struct {
 	Type   string            `json:"Type"`
-	Config map[string]string `json:"Config,omitempty"`
+	Config map[string]string `json:"Config"`
 }
 
 // Mount represents a mount configuration for container create.
@@ -172,8 +184,12 @@ type NetworkSettings struct {
 	IPAddress              string                       `json:"IPAddress"`
 	IPPrefixLen            int                          `json:"IPPrefixLen"`
 	MacAddress             string                       `json:"MacAddress"`
+	EndpointID             string                       `json:"EndpointID"`
+	GlobalIPv6Address      string                       `json:"GlobalIPv6Address"`
+	GlobalIPv6PrefixLen    int                          `json:"GlobalIPv6PrefixLen"`
+	IPv6Gateway            string                       `json:"IPv6Gateway"`
 	Networks               map[string]*EndpointSettings `json:"Networks"`
-	Ports                  map[string][]PortBinding     `json:"Ports,omitempty"`
+	Ports                  map[string][]PortBinding     `json:"Ports"`
 }
 
 // EndpointSettings holds the endpoint settings for a container on a network.
@@ -190,6 +206,7 @@ type EndpointSettings struct {
 	MacAddress          string              `json:"MacAddress"`
 	Aliases             []string            `json:"Aliases,omitempty"`
 	Links               []string            `json:"Links,omitempty"`
+	DNSNames            []string            `json:"DNSNames,omitempty"`
 	DriverOpts          map[string]string   `json:"DriverOpts,omitempty"`
 }
 
@@ -240,7 +257,7 @@ type ContainerSummary struct {
 type Port struct {
 	IP          string `json:"IP"`
 	PrivatePort uint16 `json:"PrivatePort"`
-	PublicPort  uint16 `json:"PublicPort,omitempty"`
+	PublicPort  uint16 `json:"PublicPort"`
 	Type        string `json:"Type"`
 }
 
@@ -353,8 +370,9 @@ type ExecCreateResponse struct {
 
 // ExecStartRequest is the request to start an exec instance.
 type ExecStartRequest struct {
-	Detach bool `json:"Detach"`
-	Tty    bool `json:"Tty"`
+	Detach      bool       `json:"Detach"`
+	Tty         bool       `json:"Tty"`
+	ConsoleSize *[2]uint   `json:"ConsoleSize,omitempty"`
 }
 
 // Image represents an image.
@@ -426,9 +444,10 @@ type IPAM struct {
 
 // IPAMConfig holds an IPAM pool configuration.
 type IPAMConfig struct {
-	Subnet  string `json:"Subnet"`
-	IPRange string `json:"IPRange,omitempty"`
-	Gateway string `json:"Gateway"`
+	Subnet             string            `json:"Subnet"`
+	IPRange            string            `json:"IPRange,omitempty"`
+	Gateway            string            `json:"Gateway"`
+	AuxiliaryAddresses map[string]string `json:"AuxiliaryAddresses,omitempty"`
 }
 
 // EndpointResource holds endpoint info as shown in network inspect.
@@ -480,7 +499,7 @@ type Volume struct {
 	Status     map[string]any    `json:"Status,omitempty"`
 	Labels     map[string]string `json:"Labels"`
 	Scope      string            `json:"Scope"`
-	Options    map[string]string `json:"Options,omitempty"`
+	Options    map[string]string `json:"Options"`
 	UsageData  *VolumeUsageData  `json:"UsageData,omitempty"`
 }
 

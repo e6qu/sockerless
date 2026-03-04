@@ -41,6 +41,11 @@ func (s *BaseServer) handleVolumeCreate(w http.ResponseWriter, r *http.Request) 
 		labels = make(map[string]string)
 	}
 
+	options := req.DriverOpts
+	if options == nil {
+		options = make(map[string]string)
+	}
+
 	vol := api.Volume{
 		Name:       name,
 		Driver:     driver,
@@ -48,7 +53,7 @@ func (s *BaseServer) handleVolumeCreate(w http.ResponseWriter, r *http.Request) 
 		CreatedAt:  time.Now().UTC().Format(time.RFC3339Nano),
 		Labels:     labels,
 		Scope:      "local",
-		Options:    req.DriverOpts,
+		Options:    options,
 	}
 
 	// For backends with real processes, create a host directory for volume data
@@ -141,6 +146,10 @@ func (s *BaseServer) handleVolumeRemove(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *BaseServer) handleVolumePrune(w http.ResponseWriter, r *http.Request) {
+	filters := ParseFilters(r.URL.Query().Get("filters"))
+	labelFilters := filters["label"]
+	untilFilters := filters["until"]
+
 	// Collect in-use volume names from containers
 	inUseNames := make(map[string]bool)
 	for _, c := range s.Store.Containers.List() {
@@ -159,7 +168,16 @@ func (s *BaseServer) handleVolumePrune(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pruned := s.Store.Volumes.PruneIf(func(_ string, v api.Volume) bool {
-		return !inUseNames[v.Name]
+		if inUseNames[v.Name] {
+			return false
+		}
+		if len(labelFilters) > 0 && !MatchLabels(v.Labels, labelFilters) {
+			return false
+		}
+		if len(untilFilters) > 0 && !MatchUntil(v.CreatedAt, untilFilters) {
+			return false
+		}
+		return true
 	})
 	deleted := make([]string, 0, len(pruned))
 	for _, v := range pruned {

@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -145,11 +146,16 @@ func (s *BaseServer) handlePodStart(w http.ResponseWriter, r *http.Request) {
 		if !ok || c.State.Running {
 			continue
 		}
+		exitCh := make(chan struct{})
+		s.Store.WaitChs.Store(cid, exitCh)
 		s.Store.Containers.Update(cid, func(c *api.Container) {
 			c.State.Status = "running"
 			c.State.Running = true
 			c.State.Pid = 42
 			c.State.StartedAt = now
+		})
+		s.emitEvent("container", "start", cid, map[string]string{
+			"name": strings.TrimPrefix(c.Name, "/"),
 		})
 	}
 	s.Store.Pods.SetStatus(pod.ID, "running")
@@ -255,6 +261,11 @@ func (s *BaseServer) handlePodRemove(w http.ResponseWriter, r *http.Request) {
 				close(ch.(chan struct{}))
 			}
 			s.Store.StagingDirs.Delete(cid)
+			if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(cid); ok {
+				for _, d := range dirs.([]string) {
+					os.RemoveAll(d)
+				}
+			}
 			for _, eid := range c.ExecIDs {
 				s.Store.Execs.Delete(eid)
 			}

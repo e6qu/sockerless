@@ -108,7 +108,7 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		NetworkID:   netName,
 		EndpointID:  core.GenerateID()[:16],
 		Gateway:     "172.17.0.1",
-		IPAddress:   fmt.Sprintf("172.17.0.%d", s.Store.Containers.Len()+2),
+		IPAddress:   fmt.Sprintf("172.17.0.%d", int(s.ipCounter.Add(1))),
 		IPPrefixLen: 16,
 		MacAddress:  "02:42:ac:11:00:02",
 	}
@@ -159,6 +159,9 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 
 	exitCh := make(chan struct{})
 	s.Store.WaitChs.Store(id, exitCh)
+
+	c, _ = s.Store.Containers.Get(id)
+	s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 
 	// Deferred start: if container is in a multi-container pod, wait for all siblings
 	shouldDefer, podContainers := s.PodDeferredStart(id)
@@ -286,6 +289,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// Forward agent mode: poll for execution RUNNING and health check
 		isLongRunning := core.IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd)
+		skipPoller := false
 
 		if isLongRunning {
 			// Long-running container: wait for RUNNING and check agent health
@@ -300,7 +304,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if completedExitCode >= 0 {
-				// Execution completed before agent could be reached.
+				skipPoller = true
 				go func() {
 					if _, ok := s.Store.Containers.Get(id); ok {
 						s.Store.StopContainer(id, completedExitCode)
@@ -343,8 +347,9 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Start background poller to detect execution exit
-		go s.pollExecutionExit(id, executionName, exitCh)
+		if !skipPoller {
+			go s.pollExecutionExit(id, executionName, exitCh)
+		}
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -551,6 +556,9 @@ func (s *Server) handleContainerStop(w http.ResponseWriter, r *http.Request) {
 
 	s.AgentRegistry.Remove(id)
 	s.Store.ForceStopContainer(id, 0)
+	c, _ = s.Store.Containers.Get(id)
+	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", c.State.ExitCode), "name": strings.TrimPrefix(c.Name, "/")})
+	s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -597,6 +605,8 @@ func (s *Server) handleContainerKill(w http.ResponseWriter, r *http.Request) {
 		close(ch.(chan struct{}))
 	}
 
+	s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", exitCode), "name": strings.TrimPrefix(c.Name, "/")})
 	w.WriteHeader(http.StatusNoContent)
 }
 

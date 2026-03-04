@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -331,6 +332,11 @@ func (s *BaseServer) handleImageTag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *BaseServer) handleImageList(w http.ResponseWriter, r *http.Request) {
+	filters := ParseFilters(r.URL.Query().Get("filters"))
+	referenceFilters := filters["reference"]
+	danglingFilters := filters["dangling"]
+	labelFilters := filters["label"]
+
 	seen := make(map[string]bool)
 	var result []*api.ImageSummary
 	for _, img := range s.Store.Images.List() {
@@ -338,6 +344,46 @@ func (s *BaseServer) handleImageList(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		seen[img.ID] = true
+
+		// BUG-279: apply reference filter
+		if len(referenceFilters) > 0 {
+			matched := false
+			for _, ref := range referenceFilters {
+				for _, tag := range img.RepoTags {
+					if m, _ := path.Match(ref, tag); m {
+						matched = true
+						break
+					}
+				}
+				if matched {
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+
+		// BUG-279: apply dangling filter
+		if len(danglingFilters) > 0 {
+			isDangling := true
+			for _, tag := range img.RepoTags {
+				if !strings.Contains(tag, "<none>") {
+					isDangling = false
+					break
+				}
+			}
+			wantDangling := danglingFilters[0] == "true" || danglingFilters[0] == "1"
+			if wantDangling != isDangling {
+				continue
+			}
+		}
+
+		// BUG-279: apply label filter
+		if len(labelFilters) > 0 && !MatchLabels(img.Config.Labels, labelFilters) {
+			continue
+		}
+
 		created, _ := time.Parse(time.RFC3339Nano, img.Created)
 		result = append(result, &api.ImageSummary{
 			ID:          img.ID,
