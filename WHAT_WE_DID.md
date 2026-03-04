@@ -218,3 +218,18 @@ Audited FaaS stop handler state transitions, ECS restart override gap, core exec
 - **BUG-106**: Docker `handleContainerList` now parses `limit` and `filters` query parameters (was only reading `all`)
 
 All 286 core tests pass. 0 lint issues across 19 modules.
+
+## Bug Sprint 15 — API & Backends Audit (BUG-107→114)
+
+Follow-up audit focusing on core handler cleanup gaps, CloudRun/ACA Cmd mapping, FaaS AgentRegistry leaks, and Docker passthrough filter/auth gaps. Found 8 real bugs — 4 high-severity (pod force-remove leaks, CloudRun/ACA Args lost, Docker auth dropped) and 4 medium-severity cleanup/filter gaps.
+
+- **BUG-107**: Core `handlePodRemove` force path now performs full cleanup — StopHealthCheck, ProcessLifecycle.Cleanup, Network.Disconnect, LogBuffers/WaitChs/StagingDirs/Execs delete (was only deleting store entries)
+- **BUG-108**: Core `handleContainerRemove` and `handleContainerPrune` now clean up StagingDirs and Execs (memory leak — staging dirs and exec instances accumulated indefinitely)
+- **BUG-109**: CloudRun `buildContainerSpec` now tracks entrypoint and command separately, sets `Args` on container spec (Cmd was silently lost when both Entrypoint and Cmd were set)
+- **BUG-110**: ACA `buildContainerSpec` now tracks entrypoint and command separately, sets `Args` on container spec (same as BUG-109)
+- **BUG-111**: All 3 FaaS backends now call `AgentRegistry.Remove(id)` on agent callback timeout (stale registry entries and pending channels accumulated)
+- **BUG-112**: Docker `handleImagePull` now sets `PullOptions{RegistryAuth: req.Auth}` (auth credentials were silently dropped — private image pulls failed)
+- **BUG-113**: All 4 Docker prune handlers (container, volume, image, network) now parse `filters` query param via `filters.FromJSON()` (was pruning everything regardless of filters)
+- **BUG-114**: Docker network/volume/image list handlers now parse `filters` query param (was returning unfiltered results)
+
+All 286 core tests pass. 0 lint issues across 19 modules.

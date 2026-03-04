@@ -1,6 +1,6 @@
 # Sockerless — Current Status
 
-**Phase 82 (Admin Projects) complete. 725 tasks done across 80 phases. Bug Sprint 14 (BUG-099→106) fixed.**
+**Phase 82 (Admin Projects) complete. 725 tasks done across 80 phases. Bug Sprint 15 (BUG-107→114) fixed.**
 
 ## Test Results (Latest)
 

@@ -740,3 +740,99 @@ Both returned an empty `VolumePruneResponse` without checking or pruning any vol
 ### Details
 
 Handler only read `all` query parameter. `container.ListOptions` supports `Limit` and `Filters`. Clients filtering container lists by name, label, status, or network got all containers instead of filtered results.
+
+---
+
+## BUG-107: `handlePodRemove` force path missing cleanup (health, process, network, logs, wait)
+
+**Severity**: High
+**Component**: `backends/core/handle_pods.go`
+**Status**: Fixed — Sprint 15: added StopHealthCheck, ProcessLifecycle.Cleanup, Network.Disconnect, LogBuffers/WaitChs/StagingDirs/Execs cleanup
+
+### Details
+
+When force-removing a pod, the handler only called `ForceStopContainer`, `Containers.Delete`, `ContainerNames.Delete` for each container. Missing: health check stop, process cleanup, network disconnect, log buffers, wait channels, staging dirs, and exec instances. Health check goroutines leaked, process resources leaked, network veth pairs remained.
+
+---
+
+## BUG-108: `handleContainerRemove` and `handleContainerPrune` missing StagingDirs and Execs cleanup
+
+**Severity**: Medium
+**Component**: `backends/core/handle_containers.go`, `backends/core/handle_extended.go`
+**Status**: Fixed — Sprint 15: added `StagingDirs.Delete(id)` and Execs cleanup loop in both handlers
+
+### Details
+
+Neither handler cleaned up `s.Store.StagingDirs` (populated by `handlePutArchive` for pre-start archive staging) or exec instances from `s.Store.Execs`. Staging directory entries and exec instances accumulated indefinitely for removed/pruned containers.
+
+---
+
+## BUG-109: CloudRun `buildContainerSpec` missing `Args` field (Cmd lost)
+
+**Severity**: High
+**Component**: `backends/cloudrun/jobspec.go`
+**Status**: Fixed — Sprint 15: track entrypoint and command separately, set `Args` on container spec
+
+### Details
+
+When a container had both `Entrypoint` and `Cmd`, the code merged them into a single `entrypoint` variable. Cloud Run's `Container` has separate `Command` (=Docker Entrypoint) and `Args` (=Docker Cmd) fields. Only `Command` was set; `Args` was never set. Container arguments were silently lost.
+
+---
+
+## BUG-110: ACA `buildContainerSpec` missing `Args` field (Cmd lost)
+
+**Severity**: High
+**Component**: `backends/aca/jobspec.go`
+**Status**: Fixed — Sprint 15: track entrypoint and command separately, set `Args` on container spec
+
+### Details
+
+Same pattern as BUG-109. ACA's `Container` has separate `Command []*string` and `Args []*string` fields. Only `Command` was set; `Args` was never set. Container arguments were silently lost when both Entrypoint and Cmd were set.
+
+---
+
+## BUG-111: FaaS backends missing `AgentRegistry.Remove` on agent callback timeout
+
+**Severity**: Medium
+**Component**: `backends/lambda/containers.go`, `backends/cloudrun-functions/containers.go`, `backends/azure-functions/containers.go`
+**Status**: Fixed — Sprint 15: added `AgentRegistry.Remove(id)` in timeout error branch
+
+### Details
+
+All three FaaS backends called `AgentRegistry.WaitForAgent(id, 30*time.Second)` and on timeout only logged a warning without calling `AgentRegistry.Remove(id)`. Stale agent registry entries and pending channels accumulated indefinitely.
+
+---
+
+## BUG-112: Docker `handleImagePull` drops auth credentials
+
+**Severity**: High
+**Component**: `backends/docker/images.go`
+**Status**: Fixed — Sprint 15: set `PullOptions{RegistryAuth: req.Auth}`
+
+### Details
+
+Handler read `req.Auth` (base64-encoded registry credentials) but passed empty `image.PullOptions{}` to the Docker SDK. The `RegistryAuth` field was never set. Private image pulls failed silently — auth credentials were dropped.
+
+---
+
+## BUG-113: Docker prune handlers ignore `filters` query parameter
+
+**Severity**: Medium
+**Component**: `backends/docker/extended.go`, `backends/docker/networks.go`
+**Status**: Fixed — Sprint 15: parse `filters` query param via `filters.FromJSON()` in all 4 prune handlers
+
+### Details
+
+All 4 prune handlers (container, volume, image, network) passed hardcoded `filters.Args{}` to the Docker SDK. The `filters` query parameter from the request was never parsed. Prune always removed all stopped/unused resources regardless of client-specified filters.
+
+---
+
+## BUG-114: Docker list handlers ignore `filters` query parameter (network, volume, image)
+
+**Severity**: Medium
+**Component**: `backends/docker/networks.go`, `backends/docker/volumes.go`, `backends/docker/extended.go`
+**Status**: Fixed — Sprint 15: parse `filters` query param via `filters.FromJSON()` in all 3 list handlers
+
+### Details
+
+Network list, volume list, and image list handlers passed empty options to the Docker SDK. The `filters` query parameter was never parsed. Clients filtering lists by name, label, driver, etc. got unfiltered results.

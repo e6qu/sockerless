@@ -196,8 +196,21 @@ func (s *BaseServer) handlePodRemove(w http.ResponseWriter, r *http.Request) {
 			if c.State.Running {
 				s.Store.ForceStopContainer(cid, 0)
 			}
+			s.StopHealthCheck(cid)
+			s.Drivers.ProcessLifecycle.Cleanup(cid)
+			for _, ep := range c.NetworkSettings.Networks {
+				if ep != nil && ep.NetworkID != "" {
+					_ = s.Drivers.Network.Disconnect(r.Context(), ep.NetworkID, cid)
+				}
+			}
 			s.Store.Containers.Delete(cid)
 			s.Store.ContainerNames.Delete(c.Name)
+			s.Store.LogBuffers.Delete(cid)
+			s.Store.WaitChs.Delete(cid)
+			s.Store.StagingDirs.Delete(cid)
+			for _, eid := range c.ExecIDs {
+				s.Store.Execs.Delete(eid)
+			}
 		}
 	}
 
