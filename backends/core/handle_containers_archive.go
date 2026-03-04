@@ -119,6 +119,11 @@ func extractTar(r io.Reader, destDir string) error {
 
 		target := filepath.Join(destDir, filepath.Clean(hdr.Name))
 
+		// Prevent path traversal: ensure target stays within destDir
+		if !strings.HasPrefix(filepath.Clean(target)+string(os.PathSeparator), filepath.Clean(destDir)+string(os.PathSeparator)) {
+			continue
+		}
+
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			_ = os.MkdirAll(target, os.FileMode(hdr.Mode))

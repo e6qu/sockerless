@@ -74,6 +74,11 @@ func (s *BaseServer) handleContainerPrune(w http.ResponseWriter, r *http.Request
 		s.Store.LogBuffers.Delete(c.ID)
 		s.Store.WaitChs.Delete(c.ID)
 		s.Drivers.ProcessLifecycle.Cleanup(c.ID)
+		for _, ep := range c.NetworkSettings.Networks {
+			if ep != nil && ep.NetworkID != "" {
+				_ = s.Drivers.Network.Disconnect(r.Context(), ep.NetworkID, c.ID)
+			}
+		}
 		s.Store.StagingDirs.Delete(c.ID)
 		for _, eid := range c.ExecIDs {
 			s.Store.Execs.Delete(eid)

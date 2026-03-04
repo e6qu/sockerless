@@ -233,3 +233,16 @@ Follow-up audit focusing on core handler cleanup gaps, CloudRun/ACA Cmd mapping,
 - **BUG-114**: Docker network/volume/image list handlers now parse `filters` query param (was returning unfiltered results)
 
 All 286 core tests pass. 0 lint issues across 19 modules.
+
+### Bug Sprint 16 (BUG-115 → BUG-122) — 8 fixes
+
+- **BUG-115**: `extractTar` path traversal — added `strings.HasPrefix` check to prevent writing files outside destination directory via malicious tar archives
+- **BUG-116**: `handleContainerPrune` missing network disconnect — added `Network.Disconnect` loop matching `handleContainerRemove`
+- **BUG-117**: `handleContainerRestart` missing health check restart — added `StartHealthCheck(id)` after process re-spawn
+- **BUG-118**: All 6 cloud stop handlers — added `AgentRegistry.Remove(id)` and changed `StopContainer` → `ForceStopContainer`
+- **BUG-119**: All 3 container backend restart handlers — added `AgentRegistry.Remove(id)` and changed `StopContainer` → `ForceStopContainer`
+- **BUG-120**: Docker `handleSystemEvents` — parse `since`, `until`, `filters` query params (was passing empty `events.ListOptions{}`)
+- **BUG-121**: Docker `handleSystemDf` — added `SizeRw` and `SizeRootFs` to container mapping; added `SizeRootFs` field to `api.ContainerSummary`
+- **BUG-122**: All 6 cloud backends' remove and prune handlers — added `StagingDirs.Delete` and exec ID cleanup loop (12 handlers total)
+
+All 286 core tests pass. 0 lint issues across 19 modules.

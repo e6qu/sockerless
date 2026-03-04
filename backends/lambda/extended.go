@@ -50,6 +50,10 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 			s.Lambda.Delete(c.ID)
 			s.Store.WaitChs.Delete(c.ID)
 			s.Store.LogBuffers.Delete(c.ID)
+			s.Store.StagingDirs.Delete(c.ID)
+			for _, eid := range c.ExecIDs {
+				s.Store.Execs.Delete(eid)
+			}
 			deleted = append(deleted, c.ID)
 		}
 	}

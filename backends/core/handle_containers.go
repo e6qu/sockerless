@@ -427,6 +427,13 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 		s.Logger.Error().Err(err).Str("container", id).Msg("failed to restart container process")
 	}
 
+	// Re-start health check if configured
+	c, _ = s.Store.Containers.Get(id)
+	if c.Config.Healthcheck != nil && len(c.Config.Healthcheck.Test) > 0 &&
+		(len(c.Config.Healthcheck.Test) != 1 || !strings.EqualFold(c.Config.Healthcheck.Test[0], "NONE")) {
+		s.StartHealthCheck(id)
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
