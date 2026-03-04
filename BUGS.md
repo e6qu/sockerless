@@ -1,8 +1,8 @@
 # Known Bugs
 
-## Fixed (BUG-001 → BUG-294)
+## Fixed (BUG-001 → BUG-336)
 
-294 bugs fixed across 26 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
+311 bugs fixed across 27 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
@@ -27,6 +27,29 @@
 | 24 | BUG-252→269 | Final 18: BuildCache, FaaS image config, events, image load, LRO waits, API types |
 | 25 | BUG-270→294 | Core lifecycle, API serialization, cloud parity, Docker field mapping |
 | 26 | BUG-295→319 | WaitCh leaks, HTTP status codes, symlink traversal, cloud events, API types |
+| 27 | BUG-320→336 | WaitChs.Delete close gaps (all 8 backends), ACA restart guard, Docker commit ref, frontend logs query param |
+
+## Sprint 27 Detail (BUG-320 → BUG-336)
+
+| ID | Component | Description |
+|----|-----------|-------------|
+| BUG-320 | Core | `handleContainerRemove` WaitChs.Delete doesn't close channel |
+| BUG-321 | Core | `store.RevertToCreated` WaitChs.Delete doesn't close channel |
+| BUG-322 | ECS | `handleContainerRemove` WaitChs.Delete doesn't close channel |
+| BUG-323 | ECS | `handleContainerPrune` WaitChs.Delete doesn't close channel |
+| BUG-324 | CloudRun | `handleContainerRemove` WaitChs.Delete doesn't close channel |
+| BUG-325 | CloudRun | `handleContainerPrune` WaitChs.Delete doesn't close channel |
+| BUG-326 | ACA | `handleContainerRemove` WaitChs.Delete doesn't close channel |
+| BUG-327 | ACA | `handleContainerPrune` WaitChs.Delete doesn't close channel |
+| BUG-328 | Lambda | `handleContainerRemove` WaitChs.Delete doesn't close channel |
+| BUG-329 | Lambda | `handleContainerPrune` WaitChs.Delete doesn't close channel |
+| BUG-330 | GCF | `handleContainerRemove` WaitChs.Delete doesn't close channel |
+| BUG-331 | GCF | `handleContainerPrune` WaitChs.Delete doesn't close channel |
+| BUG-332 | AZF | `handleContainerRemove` WaitChs.Delete doesn't close channel |
+| BUG-333 | AZF | `handleContainerPrune` WaitChs.Delete doesn't close channel |
+| BUG-334 | ACA | `handleContainerRestart` MarkCleanedUp without empty guard + premature state delete |
+| BUG-335 | Docker | `handleContainerCommit` builds invalid ref `"repo:"` when tag empty |
+| BUG-336 | Frontend | `handleContainerLogs` missing `details` query parameter forwarding |
 
 ## Open Bugs
 
