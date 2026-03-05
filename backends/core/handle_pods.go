@@ -160,7 +160,7 @@ func (s *BaseServer) handlePodStart(w http.ResponseWriter, r *http.Request) {
 		// BUG-378: Spawn container process via driver chain
 		cmd := append([]string{c.Path}, c.Args...)
 		binds := s.resolveBindMounts(c.HostConfig.Binds, c.HostConfig.Mounts)
-		s.Drivers.ProcessLifecycle.Start(cid, cmd, c.Config.Env, binds)
+		_, _ = s.Drivers.ProcessLifecycle.Start(cid, cmd, c.Config.Env, binds)
 
 		// BUG-379: Start health check if configured
 		if c.Config.Healthcheck != nil && len(c.Config.Healthcheck.Test) > 0 &&
