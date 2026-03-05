@@ -30,6 +30,7 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 		}
 		s.Store.ForceStopContainer(id, 0)
 		if acaState.JobName != "" {
+			s.deleteJob(acaState.JobName)
 			s.Registry.MarkCleanedUp(acaState.JobName)
 		}
 		s.EmitEvent("container", "die", id, map[string]string{

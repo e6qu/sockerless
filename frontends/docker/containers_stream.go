@@ -141,8 +141,10 @@ func (s *Server) handleContainerTop(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleContainerStats(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	query := url.Values{}
-	if stream := r.URL.Query().Get("stream"); stream != "" {
-		query.Set("stream", stream)
+	for _, key := range []string{"stream", "one-shot"} {
+		if v := r.URL.Query().Get(key); v != "" {
+			query.Set(key, v)
+		}
 	}
 	resp, err := s.backend.getWithQuery(r.Context(), "/containers/"+id+"/stats", query)
 	if err != nil {
