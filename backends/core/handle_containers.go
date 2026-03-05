@@ -535,6 +535,9 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 	s.emitEvent("container", "start", id, map[string]string{
 		"name": strings.TrimPrefix(c.Name, "/"),
 	})
+	s.emitEvent("container", "restart", id, map[string]string{
+		"name": strings.TrimPrefix(c.Name, "/"),
+	})
 
 	// Re-start health check if configured
 	c, _ = s.Store.Containers.Get(id)

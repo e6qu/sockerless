@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/sockerless/api"
 )
@@ -244,7 +245,23 @@ func FormatStatus(state api.ContainerState) string {
 	case "created":
 		return "Created"
 	case "running":
-		return "Up Less than a second"
+		started, err := time.Parse(time.RFC3339Nano, state.StartedAt)
+		if err != nil {
+			return "Up Less than a second"
+		}
+		d := time.Since(started)
+		switch {
+		case d < time.Second:
+			return "Up Less than a second"
+		case d < time.Minute:
+			return fmt.Sprintf("Up %d seconds", int(d.Seconds()))
+		case d < time.Hour:
+			return fmt.Sprintf("Up %d minutes", int(d.Minutes()))
+		case d < 24*time.Hour:
+			return fmt.Sprintf("Up %d hours", int(d.Hours()))
+		default:
+			return fmt.Sprintf("Up %d days", int(d.Hours()/24))
+		}
 	case "exited":
 		if state.ExitCode == 0 {
 			return "Exited (0)"

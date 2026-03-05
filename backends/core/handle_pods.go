@@ -153,6 +153,8 @@ func (s *BaseServer) handlePodStart(w http.ResponseWriter, r *http.Request) {
 			c.State.Running = true
 			c.State.Pid = 42
 			c.State.StartedAt = now
+			c.State.FinishedAt = "0001-01-01T00:00:00Z"
+			c.State.ExitCode = 0
 		})
 		s.emitEvent("container", "start", cid, map[string]string{
 			"name": strings.TrimPrefix(c.Name, "/"),
@@ -216,6 +218,7 @@ func (s *BaseServer) handlePodKill(w http.ResponseWriter, r *http.Request) {
 		}
 		s.Drivers.ProcessLifecycle.Kill(cid)
 		s.StopHealthCheck(cid)
+		s.Drivers.ProcessLifecycle.Cleanup(cid)
 		s.Store.ForceStopContainer(cid, exitCode)
 		s.emitEvent("container", "kill", cid, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 		s.emitEvent("container", "die", cid, map[string]string{
@@ -285,6 +288,7 @@ func (s *BaseServer) handlePodRemove(w http.ResponseWriter, r *http.Request) {
 			for _, eid := range c.ExecIDs {
 				s.Store.Execs.Delete(eid)
 			}
+			s.emitEvent("container", "destroy", cid, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 		}
 	} else {
 		// Clean up all (non-running) containers in the pod

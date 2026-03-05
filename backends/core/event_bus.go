@@ -81,6 +81,7 @@ func (s *BaseServer) emitEvent(eventType, action, actorID string, attrs map[stri
 	s.EventBus.Publish(api.Event{
 		Type:   eventType,
 		Action: action,
+		Scope:  "local",
 		Actor: api.EventActor{
 			ID:         actorID,
 			Attributes: attrs,

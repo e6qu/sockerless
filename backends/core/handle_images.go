@@ -576,10 +576,18 @@ func (s *BaseServer) handleImagePrune(w http.ResponseWriter, r *http.Request) {
 		}
 
 		prunedIDs[img.ID] = true
+
+		// Clean up build context staging directory
+		if stagingDir, ok := s.Store.BuildContexts.LoadAndDelete(img.ID); ok {
+			os.RemoveAll(stagingDir.(string))
+		}
+
 		for _, tag := range img.RepoTags {
 			deleted = append(deleted, &api.ImageDeleteResponse{Untagged: tag})
+			s.emitEvent("image", "untag", img.ID, map[string]string{"name": tag})
 		}
 		deleted = append(deleted, &api.ImageDeleteResponse{Deleted: img.ID})
+		s.emitEvent("image", "delete", img.ID, map[string]string{"name": img.ID})
 		spaceReclaimed += uint64(img.Size)
 
 		// Remove from store (all aliases)

@@ -147,6 +147,11 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	s.EmitEvent("container", "create", id, map[string]string{
+		"name":  strings.TrimPrefix(name, "/"),
+		"image": config.Image,
+	})
+
 	core.WriteJSON(w, http.StatusCreated, api.ContainerCreateResponse{
 		ID:       id,
 		Warnings: []string{},
@@ -501,6 +506,7 @@ func (s *Server) handleContainerStop(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	s.StopHealthCheck(id)
 	s.AgentRegistry.Remove(id)
 	s.Store.ForceStopContainer(id, 0)
 	c, _ = s.Store.Containers.Get(id)
@@ -526,13 +532,11 @@ func (s *Server) handleContainerKill(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Disconnect reverse agent if connected (unblocks invoke goroutine)
+	s.StopHealthCheck(id)
 	s.AgentRegistry.Remove(id)
 
 	signal := r.URL.Query().Get("signal")
-	exitCode := 0
-	if signal == "SIGKILL" || signal == "9" || signal == "KILL" {
-		exitCode = 137
-	}
+	exitCode := signalToExitCode(signal)
 
 	// Stop the ECS task (best-effort)
 	ecsState, _ := s.ECS.Get(id)
@@ -587,6 +591,11 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 	s.AgentRegistry.Remove(id)
 
 	if c.State.Running {
+		s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+		s.EmitEvent("container", "die", id, map[string]string{
+			"exitCode": "0",
+			"name":     strings.TrimPrefix(c.Name, "/"),
+		})
 		ecsState, _ := s.ECS.Get(id)
 		if ecsState.TaskARN != "" {
 			cluster := s.config.Cluster
@@ -601,6 +610,8 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 		}
 		s.Store.ForceStopContainer(id, 0)
 	}
+
+	s.StopHealthCheck(id)
 
 	// Deregister task definition (best-effort)
 	ecsState, _ := s.ECS.Get(id)
@@ -618,6 +629,13 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 		s.Store.Pods.RemoveContainer(pod.ID, id)
 	}
 
+	// Clean up network associations
+	for _, ep := range c.NetworkSettings.Networks {
+		if ep != nil && ep.NetworkID != "" {
+			_ = s.Drivers.Network.Disconnect(r.Context(), ep.NetworkID, id)
+		}
+	}
+
 	s.Store.Containers.Delete(id)
 	s.Store.ContainerNames.Delete(c.Name)
 	s.ECS.Delete(id)
@@ -632,6 +650,26 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 
 	s.EmitEvent("container", "destroy", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// signalToExitCode maps a signal name or number to the corresponding
+// exit code (128 + signal number), matching Docker's behavior.
+func signalToExitCode(signal string) int {
+	signalMap := map[string]int{
+		"SIGHUP": 129, "HUP": 129, "1": 129,
+		"SIGINT": 130, "INT": 130, "2": 130,
+		"SIGQUIT": 131, "QUIT": 131, "3": 131,
+		"SIGABRT": 134, "ABRT": 134, "6": 134,
+		"SIGKILL": 137, "KILL": 137, "9": 137,
+		"SIGUSR1": 138, "USR1": 138, "10": 138,
+		"SIGUSR2": 140, "USR2": 140, "12": 140,
+		"SIGTERM": 143, "TERM": 143, "15": 143,
+	}
+	signal = strings.ToUpper(strings.TrimSpace(signal))
+	if code, ok := signalMap[signal]; ok {
+		return code
+	}
+	return 137 // default to SIGKILL
 }
 
 // waitForTaskRunning polls ECS until the task reaches RUNNING state.

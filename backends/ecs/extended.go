@@ -61,6 +61,9 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 	startReq, _ := http.NewRequestWithContext(r.Context(), "POST", startURL, nil)
 	startReq.SetPathValue("id", id)
 	s.handleContainerStart(w, startReq)
+
+	// Emit restart event after successful restart
+	s.EmitEvent("container", "restart", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 }
 
 func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
@@ -89,7 +92,14 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 			s.Registry.MarkCleanedUp(ecsState.TaskARN)
 		}
 
+		s.StopHealthCheck(c.ID)
 		s.AgentRegistry.Remove(c.ID)
+		// Clean up network associations
+		for _, ep := range c.NetworkSettings.Networks {
+			if ep != nil && ep.NetworkID != "" {
+				_ = s.Drivers.Network.Disconnect(r.Context(), ep.NetworkID, c.ID)
+			}
+		}
 		if pod, inPod := s.Store.Pods.GetPodForContainer(c.ID); inPod {
 			s.Store.Pods.RemoveContainer(pod.ID, c.ID)
 		}
