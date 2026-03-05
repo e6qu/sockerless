@@ -1,8 +1,8 @@
 # Known Bugs
 
-## Fixed (BUG-001 → BUG-501)
+## Fixed (BUG-001 → BUG-514)
 
-501 bugs fixed across 39 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
+514 bugs fixed across 40 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
@@ -30,6 +30,7 @@
 | 27 | BUG-320→336 | WaitChs.Delete close gaps (all 8 backends), ACA restart guard, Docker commit ref, frontend logs query param |
 | 38 | BUG-476→488 | Stop/restart timeout params, container/volume prune SpaceReclaimed (6+3 cloud backends), wait "removed" condition, image save config JSON |
 | 39 | BUG-489→501 | Container expose filter, image before/since filters, image load quiet, image push auth, resize h/w, top PID, image tag validation, volume dangling filter, exec TTY content-type |
+| 40 | BUG-502→514 | Frontend attach TTY content-type, exec empty Cmd, container top ps_args, stop signal, frontend query params, Docker backend missing image/archive routes, image search sort |
 | 28 | BUG-337→344 | ECS ClusterARN in remove/restart, ECS restart task def leak, CloudRun/ACA restart job leak, pod kill signal, image tag dedup, frontend stats one-shot |
 | 29 | BUG-345→358 | Cloud restart "stop" event + RestartCount, cloud remove/prune "destroy" event + pod cleanup, core pod stop/kill events, pod remove non-force cleanup |
 | 30 | BUG-359→377 | Cloud StopHealthCheck gaps, "create" event, signalToExitCode, force-remove events, Network.Disconnect, core prune events, pod lifecycle, FormatStatus uptime, Event.Scope, restart event |
@@ -40,6 +41,24 @@
 | 35 | BUG-437→449 | Container inspect paths, NetworkSettings fields, KernelVersion, exec CanRemove, frontend df type param, image GraphDriver/RootFS, volume UsageData |
 | 36 | BUG-450→462 | System df field gaps, container list SizeRw, commit/build GraphDriver, Container.Image sha256 ID |
 | 37 | BUG-463→475 | Image history/save, stats networks, container size fields, update PidsLimit/OomKillDisable, image push auth, LastTagTime, image search limit |
+
+## Sprint 40 Detail (BUG-502 → BUG-514)
+
+| ID | Component | Description |
+|----|-----------|-------------|
+| BUG-502 | Frontend | `handleContainerAttach` hardcodes multiplexed-stream Content-Type — now uses raw-stream for TTY containers |
+| BUG-503 | Core | `handleExecCreate` allows empty `Cmd` — now returns 400 "No exec command specified" |
+| BUG-504 | Core | `handleContainerTop` ignores `ps_args` query param — now reads it for API parity |
+| BUG-505 | Core | `handleContainerStop` ignores `signal` query param — now applies signal-based exit code |
+| BUG-506 | Frontend | `handleContainerCreate` doesn't forward `platform` query param to backend |
+| BUG-507 | Frontend | `handleContainerRemove` doesn't forward `link` query param to backend |
+| BUG-508 | Docker | Missing `handleImagePush` route — `POST /internal/v1/images/{name}/push` not registered |
+| BUG-509 | Docker | Missing `handleImageSave` routes — `GET /internal/v1/images/get` and `GET /internal/v1/images/{name}/get` not registered |
+| BUG-510 | Docker | Missing `handleImageSearch` route — `GET /internal/v1/images/search` not registered |
+| BUG-511 | Docker | Missing `handleImageBuild` route — `POST /internal/v1/images/build` not registered |
+| BUG-512 | Docker | Missing archive routes — `PUT/HEAD/GET /internal/v1/containers/{id}/archive` not registered |
+| BUG-513 | Core | `handleImageSearch` returns results in arbitrary iteration order — now sorted by relevance |
+| BUG-514 | Frontend | `handleContainerStart` doesn't forward `detachKeys` query param to backend |
 
 ## Sprint 37 Detail (BUG-463 → BUG-475)
 

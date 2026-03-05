@@ -21,6 +21,10 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 	if pod := r.URL.Query().Get("pod"); pod != "" {
 		query.Set("pod", pod)
 	}
+	// BUG-506: Forward platform query param
+	if platform := r.URL.Query().Get("platform"); platform != "" {
+		query.Set("platform", platform)
+	}
 
 	resp, err := s.backend.postWithQuery(r.Context(), "/containers", query, &req)
 	if err != nil {
@@ -78,7 +82,12 @@ func (s *Server) handleContainerInspect(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	resp, err := s.backend.post(r.Context(), "/containers/"+id+"/start", nil)
+	// BUG-514: Forward detachKeys query param
+	query := url.Values{}
+	if dk := r.URL.Query().Get("detachKeys"); dk != "" {
+		query.Set("detachKeys", dk)
+	}
+	resp, err := s.backend.postWithQuery(r.Context(), "/containers/"+id+"/start", query, nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -143,6 +152,10 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	if v := r.URL.Query().Get("v"); v != "" {
 		query.Set("v", v)
+	}
+	// BUG-507: Forward link query param
+	if link := r.URL.Query().Get("link"); link != "" {
+		query.Set("link", link)
 	}
 	resp, err := s.backend.deleteWithQuery(r.Context(), "/containers/"+id, query)
 	if err != nil {

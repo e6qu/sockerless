@@ -1,6 +1,7 @@
 package frontend
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
@@ -42,6 +43,20 @@ func (s *Server) handleContainerAttach(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// BUG-502: Query container to determine TTY setting for Content-Type
+	inspectResp, err := s.backend.get(r.Context(), "/containers/"+id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	var cInfo struct {
+		Config struct {
+			Tty bool `json:"Tty"`
+		} `json:"Config"`
+	}
+	json.NewDecoder(inspectResp.Body).Decode(&cInfo)
+	inspectResp.Body.Close()
+
 	backendConn, backendBuf, err := s.backend.dialUpgradeCtx(r.Context(), "POST", "/containers/"+id+"/attach?"+query.Encode(), nil)
 	if err != nil {
 		writeError(w, err)
@@ -62,9 +77,15 @@ func (s *Server) handleContainerAttach(w http.ResponseWriter, r *http.Request) {
 	}
 	defer clientConn.Close()
 
+	// BUG-502: Use raw-stream for TTY containers, multiplexed-stream otherwise
+	contentType := "application/vnd.docker.multiplexed-stream"
+	if cInfo.Config.Tty {
+		contentType = "application/vnd.docker.raw-stream"
+	}
+
 	// Write upgrade response to Docker client
 	clientBuf.WriteString("HTTP/1.1 101 UPGRADED\r\n")
-	clientBuf.WriteString("Content-Type: application/vnd.docker.multiplexed-stream\r\n")
+	clientBuf.WriteString("Content-Type: " + contentType + "\r\n")
 	clientBuf.WriteString("Connection: Upgrade\r\n")
 	clientBuf.WriteString("Upgrade: tcp\r\n")
 	clientBuf.WriteString("\r\n")

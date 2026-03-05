@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/sockerless/api"
 )
@@ -592,6 +594,203 @@ func (s *Server) handleExecResize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// BUG-508: handleImagePush pushes an image to a registry via Docker SDK.
+func (s *Server) handleImagePush(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	tag := r.URL.Query().Get("tag")
+	if tag == "" {
+		tag = "latest"
+	}
+	ref := name + ":" + tag
+
+	authStr := ""
+	if authB64 := r.URL.Query().Get("auth"); authB64 != "" {
+		authStr = authB64
+	}
+
+	resp, err := s.docker.ImagePush(r.Context(), ref, image.PushOptions{
+		RegistryAuth: authStr,
+	})
+	if err != nil {
+		writeError(w, mapDockerError(err))
+		return
+	}
+	defer resp.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	io.Copy(w, resp)
+}
+
+// BUG-509: handleImageSave exports multiple images as a tar archive.
+func (s *Server) handleImageSave(w http.ResponseWriter, r *http.Request) {
+	names := r.URL.Query()["names"]
+	resp, err := s.docker.ImageSave(r.Context(), names)
+	if err != nil {
+		writeError(w, mapDockerError(err))
+		return
+	}
+	defer resp.Close()
+
+	w.Header().Set("Content-Type", "application/x-tar")
+	w.WriteHeader(http.StatusOK)
+	io.Copy(w, resp)
+}
+
+// BUG-509: handleImageSaveByName exports a single image as a tar archive.
+func (s *Server) handleImageSaveByName(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	resp, err := s.docker.ImageSave(r.Context(), []string{name})
+	if err != nil {
+		writeError(w, mapDockerError(err))
+		return
+	}
+	defer resp.Close()
+
+	w.Header().Set("Content-Type", "application/x-tar")
+	w.WriteHeader(http.StatusOK)
+	io.Copy(w, resp)
+}
+
+// BUG-510: handleImageSearch searches Docker Hub for images.
+func (s *Server) handleImageSearch(w http.ResponseWriter, r *http.Request) {
+	term := r.URL.Query().Get("term")
+	limit := 0
+	if l := r.URL.Query().Get("limit"); l != "" {
+		limit, _ = strconv.Atoi(l)
+	}
+
+	results, err := s.docker.ImageSearch(r.Context(), term, registry.SearchOptions{
+		Limit: limit,
+	})
+	if err != nil {
+		writeError(w, mapDockerError(err))
+		return
+	}
+
+	mapped := make([]map[string]any, 0, len(results))
+	for _, r := range results {
+		mapped = append(mapped, map[string]any{
+			"name":         r.Name,
+			"description":  r.Description,
+			"star_count":   r.StarCount,
+			"is_official":  r.IsOfficial,
+			"is_automated": r.IsAutomated,
+		})
+	}
+	writeJSON(w, http.StatusOK, mapped)
+}
+
+// BUG-511: handleImageBuild builds an image from a Dockerfile.
+func (s *Server) handleImageBuild(w http.ResponseWriter, r *http.Request) {
+	opts := types.ImageBuildOptions{
+		Dockerfile: r.URL.Query().Get("dockerfile"),
+		NoCache:    r.URL.Query().Get("nocache") == "1" || r.URL.Query().Get("nocache") == "true",
+		Remove:     r.URL.Query().Get("rm") != "0" && r.URL.Query().Get("rm") != "false",
+		PullParent: r.URL.Query().Get("pull") == "1" || r.URL.Query().Get("pull") == "true",
+	}
+	if opts.Dockerfile == "" {
+		opts.Dockerfile = "Dockerfile"
+	}
+	if t := r.URL.Query().Get("t"); t != "" {
+		opts.Tags = []string{t}
+	}
+	if buildArgs := r.URL.Query().Get("buildargs"); buildArgs != "" {
+		var args map[string]*string
+		if json.Unmarshal([]byte(buildArgs), &args) == nil {
+			opts.BuildArgs = args
+		}
+	}
+	if labelsJSON := r.URL.Query().Get("labels"); labelsJSON != "" {
+		var labels map[string]string
+		if json.Unmarshal([]byte(labelsJSON), &labels) == nil {
+			opts.Labels = labels
+		}
+	}
+
+	// Forward auth config if present
+	if authConfigs := r.Header.Get("X-Registry-Config"); authConfigs != "" {
+		if data, err := base64.URLEncoding.DecodeString(authConfigs); err == nil {
+			var configs map[string]registry.AuthConfig
+			if json.Unmarshal(data, &configs) == nil {
+				opts.AuthConfigs = configs
+			}
+		}
+	}
+
+	resp, err := s.docker.ImageBuild(r.Context(), r.Body, opts)
+	if err != nil {
+		writeError(w, mapDockerError(err))
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	io.Copy(w, resp.Body)
+}
+
+// BUG-512: handlePutArchive uploads a tar archive to a container path.
+func (s *Server) handlePutArchive(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	path := r.URL.Query().Get("path")
+	noOverwrite := r.URL.Query().Get("noOverwriteDirNonDir") == "1" || r.URL.Query().Get("noOverwriteDirNonDir") == "true"
+
+	err := s.docker.CopyToContainer(r.Context(), id, path, r.Body, container.CopyToContainerOptions{
+		AllowOverwriteDirWithFile: !noOverwrite,
+	})
+	if err != nil {
+		writeError(w, mapDockerError(err))
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// BUG-512: handleHeadArchive returns file stat info for a container path.
+func (s *Server) handleHeadArchive(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	pathVal := r.URL.Query().Get("path")
+
+	stat, err := s.docker.ContainerStatPath(r.Context(), id, pathVal)
+	if err != nil {
+		writeError(w, mapDockerError(err))
+		return
+	}
+
+	statJSON, _ := json.Marshal(map[string]any{
+		"name":  stat.Name,
+		"size":  stat.Size,
+		"mode":  stat.Mode,
+		"mtime": stat.Mtime.Format(time.RFC3339Nano),
+	})
+	w.Header().Set("X-Docker-Container-Path-Stat", base64.StdEncoding.EncodeToString(statJSON))
+	w.WriteHeader(http.StatusOK)
+}
+
+// BUG-512: handleGetArchive downloads a tar archive from a container path.
+func (s *Server) handleGetArchive(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	pathVal := r.URL.Query().Get("path")
+
+	rc, stat, err := s.docker.CopyFromContainer(r.Context(), id, pathVal)
+	if err != nil {
+		writeError(w, mapDockerError(err))
+		return
+	}
+	defer rc.Close()
+
+	statJSON, _ := json.Marshal(map[string]any{
+		"name":  stat.Name,
+		"size":  stat.Size,
+		"mode":  stat.Mode,
+		"mtime": stat.Mtime.Format(time.RFC3339Nano),
+	})
+	w.Header().Set("X-Docker-Container-Path-Stat", base64.StdEncoding.EncodeToString(statJSON))
+	w.Header().Set("Content-Type", "application/x-tar")
+	w.WriteHeader(http.StatusOK)
+	io.Copy(w, rc)
 }
 
 // Prevent unused import errors

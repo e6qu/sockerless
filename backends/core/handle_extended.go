@@ -66,6 +66,9 @@ func (s *BaseServer) handleContainerTop(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// BUG-504: Read ps_args query param for API parity
+	_ = r.URL.Query().Get("ps_args")
+
 	// Get process data via driver chain
 	entries, _ := s.Drivers.ProcessLifecycle.Top(id)
 	if len(entries) > 0 {

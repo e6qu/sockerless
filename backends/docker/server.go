@@ -109,6 +109,20 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /internal/v1/commit", s.handleContainerCommit)
 	s.mux.HandleFunc("POST /internal/v1/containers/{id}/resize", s.handleContainerResize)
 	s.mux.HandleFunc("POST /internal/v1/exec/{id}/resize", s.handleExecResize)
+
+	// BUG-508: Image push
+	s.mux.HandleFunc("POST /internal/v1/images/{name}/push", s.handleImagePush)
+	// BUG-509: Image save
+	s.mux.HandleFunc("GET /internal/v1/images/get", s.handleImageSave)
+	s.mux.HandleFunc("GET /internal/v1/images/{name}/get", s.handleImageSaveByName)
+	// BUG-510: Image search
+	s.mux.HandleFunc("GET /internal/v1/images/search", s.handleImageSearch)
+	// BUG-511: Image build
+	s.mux.HandleFunc("POST /internal/v1/images/build", s.handleImageBuild)
+	// BUG-512: Container archive
+	s.mux.HandleFunc("PUT /internal/v1/containers/{id}/archive", s.handlePutArchive)
+	s.mux.HandleFunc("HEAD /internal/v1/containers/{id}/archive", s.handleHeadArchive)
+	s.mux.HandleFunc("GET /internal/v1/containers/{id}/archive", s.handleGetArchive)
 }
 
 // ListenAndServe starts the HTTP server.

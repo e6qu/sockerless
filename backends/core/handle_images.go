@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -844,6 +845,17 @@ func (s *BaseServer) handleImageSearch(w http.ResponseWriter, r *http.Request) {
 	if results == nil {
 		results = []map[string]any{}
 	}
+	// BUG-513: Sort results by relevance (exact match first, then alphabetical)
+	sort.Slice(results, func(i, j int) bool {
+		iName := results[i]["name"].(string)
+		jName := results[j]["name"].(string)
+		iExact := iName == term
+		jExact := jName == term
+		if iExact != jExact {
+			return iExact
+		}
+		return iName < jName
+	})
 	if limit > 0 && limit < len(results) {
 		results = results[:limit]
 	}
