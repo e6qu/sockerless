@@ -89,14 +89,6 @@ func (c *BackendClient) postRawWithQuery(ctx context.Context, path string, query
 	return c.httpClient.Do(req)
 }
 
-func (c *BackendClient) delete(ctx context.Context, path string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", c.url(path), nil)
-	if err != nil {
-		return nil, err
-	}
-	return c.httpClient.Do(req)
-}
-
 func (c *BackendClient) deleteWithQuery(ctx context.Context, path string, query url.Values) (*http.Response, error) {
 	u := c.url(path)
 	if len(query) > 0 {

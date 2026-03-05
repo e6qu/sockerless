@@ -1,7 +1,6 @@
 package frontend
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -22,6 +21,7 @@ func (s *Server) handleImageCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	platform := r.URL.Query().Get("platform")
 	fromImage := r.URL.Query().Get("fromImage")
 	tag := r.URL.Query().Get("tag")
 	if tag == "" {
@@ -40,6 +40,7 @@ func (s *Server) handleImageCreate(w http.ResponseWriter, r *http.Request) {
 	resp, err := s.backend.post(r.Context(), "/images/pull", &api.ImagePullRequest{
 		Reference: ref,
 		Auth:      auth,
+		Platform:  platform,
 	})
 	if err != nil {
 		writeError(w, err)
@@ -77,6 +78,9 @@ func (s *Server) handleImageCatchAll(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(path, "/push"):
 		name := strings.TrimSuffix(path, "/push")
 		s.handleImagePush(w, r, name)
+	case strings.HasSuffix(path, "/get"):
+		name := strings.TrimSuffix(path, "/get")
+		s.handleImageSaveByName(w, r, name)
 	default:
 		// DELETE /images/{name}
 		if r.Method == "DELETE" {
@@ -135,6 +139,12 @@ func (s *Server) handleImageList(w http.ResponseWriter, r *http.Request) {
 	}
 	if filters := r.URL.Query().Get("filters"); filters != "" {
 		query.Set("filters", filters)
+	}
+	if sharedSize := r.URL.Query().Get("shared-size"); sharedSize != "" {
+		query.Set("shared-size", sharedSize)
+	}
+	if digests := r.URL.Query().Get("digests"); digests != "" {
+		query.Set("digests", digests)
 	}
 	resp, err := s.backend.getWithQuery(r.Context(), "/images", query)
 	if err != nil {
@@ -213,16 +223,71 @@ func (s *Server) handleImageBuild(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleImagePush(w http.ResponseWriter, r *http.Request, name string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	enc := json.NewEncoder(w)
-	_ = enc.Encode(map[string]string{"status": "The push refers to repository [" + name + "]"})
-	_ = enc.Encode(map[string]string{"status": "Preparing", "id": "latest"})
-	_ = enc.Encode(map[string]string{"status": "Pushed", "id": "latest"})
-	_ = enc.Encode(map[string]string{"status": "latest: digest: sha256:0000000000000000000000000000000000000000000000000000000000000000"})
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
+	query := url.Values{}
+	if tag := r.URL.Query().Get("tag"); tag != "" {
+		query.Set("tag", tag)
 	}
+	resp, err := s.backend.postWithQuery(r.Context(), "/images/"+url.PathEscape(name)+"/push", query, nil)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	flushingCopy(w, resp.Body)
+}
+
+func (s *Server) handleImageSave(w http.ResponseWriter, r *http.Request) {
+	resp, err := s.backend.getWithQuery(r.Context(), "/images/get", r.URL.Query())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer resp.Body.Close()
+	for k, vs := range resp.Header {
+		for _, v := range vs {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	flushingCopy(w, resp.Body)
+}
+
+func (s *Server) handleImageSaveByName(w http.ResponseWriter, r *http.Request, name string) {
+	resp, err := s.backend.get(r.Context(), "/images/"+url.PathEscape(name)+"/get")
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer resp.Body.Close()
+	for k, vs := range resp.Header {
+		for _, v := range vs {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	flushingCopy(w, resp.Body)
+}
+
+func (s *Server) handleImageSearch(w http.ResponseWriter, r *http.Request) {
+	query := url.Values{}
+	if term := r.URL.Query().Get("term"); term != "" {
+		query.Set("term", term)
+	}
+	if limit := r.URL.Query().Get("limit"); limit != "" {
+		query.Set("limit", limit)
+	}
+	if filters := r.URL.Query().Get("filters"); filters != "" {
+		query.Set("filters", filters)
+	}
+	resp, err := s.backend.getWithQuery(r.Context(), "/images/search", query)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer resp.Body.Close()
+	proxyPassthrough(w, resp)
 }
 
 func (s *Server) handleContainerCommit(w http.ResponseWriter, r *http.Request) {

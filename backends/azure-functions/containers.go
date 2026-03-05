@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -473,12 +474,13 @@ func (s *Server) handleContainerKill(w http.ResponseWriter, r *http.Request) {
 		c.State.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	})
 
+	s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", exitCode), "name": strings.TrimPrefix(c.Name, "/")})
+
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
 	}
 
-	s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
-	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", exitCode), "name": strings.TrimPrefix(c.Name, "/")})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -566,6 +568,11 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Store.LogBuffers.Delete(id)
 	s.Store.StagingDirs.Delete(id)
+	if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(id); ok {
+		for _, d := range dirs.([]string) {
+			os.RemoveAll(d)
+		}
+	}
 	for _, eid := range c.ExecIDs {
 		s.Store.Execs.Delete(eid)
 	}

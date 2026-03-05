@@ -58,9 +58,9 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 | 81 | Admin: ProcessManager, cleanup scanner, ProviderInfo |
 | 82 | Admin Projects: orchestrated sim+backend+frontend bundles, port allocator, 4 UI pages |
 
-## Bug Fix Sprints (BUG-001 → BUG-336)
+## Bug Fix Sprints (BUG-001 → BUG-408)
 
-311 bugs fixed across 27 sprints. Per-sprint details in `_tasks/done/BUG-SPRINT-*.md`.
+382 bugs fixed across 32 sprints. Per-sprint details in `_tasks/done/BUG-SPRINT-*.md`.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
@@ -89,8 +89,14 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 | 28 | BUG-337→344 | ECS ClusterARN, restart task/job leaks, pod kill signal, image tag dedup, frontend stats one-shot |
 | 29 | BUG-345→358 | Cloud restart stop event + RestartCount, remove/prune destroy event + pod cleanup, core pod stop/kill events |
 | 30 | BUG-359→377 | Cloud StopHealthCheck gaps, create event, signalToExitCode, force-remove events, Network.Disconnect, core prune events, pod lifecycle, FormatStatus uptime, Event.Scope, restart event |
+| 31 | BUG-378→394 | Container & pod parity: pod ProcessLifecycle/HealthCheck, pod remove cleanup, pod wait condition, container filter gaps (exited/publish/volume/is-task/size) |
+| 32 | BUG-395→408 | Cloud kill event ordering, TmpfsDirs cleanup (remove+prune), frontend query param forwarding (size/signal/platform/digests/noOverwrite/force), pod list filters, image push/save/search |
 
 0 open bugs remain — see `BUGS.md`.
+
+## Sprint 32 Summary (BUG-395 → BUG-408)
+
+14 bugs fixed. Three categories: (1) Cloud backend correctness — all 6 cloud backends had `handleContainerKill` closing WaitChs before emitting "kill"+"die" events, so event watchers missed events (BUG-395); `handleContainerRemove` (BUG-396) and `handleContainerPrune` (BUG-397) were missing `TmpfsDirs.LoadAndDelete` + `os.RemoveAll` cleanup, leaking tmpfs temp directories. (2) Frontend query parameter forwarding — 7 endpoints were silently dropping parameters: `size` in container list (BUG-398), `signal` in container stop (BUG-402), `platform` in image pull (BUG-403), `shared-size`/`digests` in image list (BUG-404), `noOverwriteDirNonDir` in put archive (BUG-405), `force` in network remove (BUG-406). (3) New endpoints — `handleImagePush` was a hardcoded stub returning fake push output; now proxies to core backend which returns actual image data (BUG-399). Core pod list now supports `filters` query parameter with name/id/label/status matching (BUG-400), forwarded from frontend (BUG-401). Added `GET /images/get` for `docker save` (BUG-407) returning tar with manifest.json. Added `GET /images/search` (BUG-408) replacing the NotImplemented stub with local image store search.
 
 ## Sprint 27 Summary (BUG-320 → BUG-336)
 

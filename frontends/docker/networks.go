@@ -86,7 +86,11 @@ func (s *Server) handleNetworkDisconnect(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleNetworkRemove(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	resp, err := s.backend.delete(r.Context(), "/networks/"+id)
+	query := url.Values{}
+	if force := r.URL.Query().Get("force"); force != "" {
+		query.Set("force", force)
+	}
+	resp, err := s.backend.deleteWithQuery(r.Context(), "/networks/"+id, query)
 	if err != nil {
 		writeError(w, err)
 		return

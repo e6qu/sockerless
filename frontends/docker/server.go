@@ -77,7 +77,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /images/create", s.handleImageCreate)
 	s.mux.HandleFunc("GET /images/json", s.handleImageList)
 	s.mux.HandleFunc("POST /images/load", s.handleImageLoad)
-	s.mux.HandleFunc("GET /images/search", s.handleNotImplemented)
+	s.mux.HandleFunc("GET /images/search", s.handleImageSearch)
+	s.mux.HandleFunc("GET /images/get", s.handleImageSave)
 	s.mux.HandleFunc("POST /images/prune", s.handleImagePrune)
 	// Catch-all for /images/{name}/json, /images/{name}/tag, etc.
 	s.mux.HandleFunc("GET /images/", s.handleImageCatchAll)

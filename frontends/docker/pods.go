@@ -16,7 +16,11 @@ func (s *Server) handlePodCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePodList(w http.ResponseWriter, r *http.Request) {
-	resp, err := s.backend.get(r.Context(), "/libpod/pods/json")
+	query := url.Values{}
+	if filters := r.URL.Query().Get("filters"); filters != "" {
+		query.Set("filters", filters)
+	}
+	resp, err := s.backend.getWithQuery(r.Context(), "/libpod/pods/json", query)
 	if err != nil {
 		writeError(w, err)
 		return

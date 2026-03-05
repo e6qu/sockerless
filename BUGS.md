@@ -1,8 +1,8 @@
 # Known Bugs
 
-## Fixed (BUG-001 → BUG-394)
+## Fixed (BUG-001 → BUG-408)
 
-368 bugs fixed across 31 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
+382 bugs fixed across 32 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
@@ -54,6 +54,25 @@
 | BUG-392 | Core | `MatchContainerFilters` missing `volume` filter (mount filtering) |
 | BUG-393 | Core | `MatchContainerFilters` missing `is-task` filter |
 | BUG-394 | Core | `handleContainerList` missing `size` query parameter support |
+
+## Sprint 32 Detail (BUG-395 → BUG-408)
+
+| ID | Component | Description |
+|----|-----------|-------------|
+| BUG-395 | All 6 cloud | `handleContainerKill` closes WaitChs BEFORE emitting "kill"+"die" events — event watchers miss events |
+| BUG-396 | All 6 cloud | `handleContainerRemove` missing `TmpfsDirs.LoadAndDelete` + `os.RemoveAll` cleanup — tmpfs dirs leak |
+| BUG-397 | All 6 cloud | `handleContainerPrune` missing `TmpfsDirs.LoadAndDelete` + `os.RemoveAll` cleanup |
+| BUG-398 | Frontend | `handleContainerList` doesn't forward `size` query parameter to backend |
+| BUG-399 | Core + Frontend | `handleImagePush` is a stub — returns hardcoded fake push output instead of proxying to backend |
+| BUG-400 | Core | `handlePodList` doesn't support `filters` query parameter (name, id, label, status) |
+| BUG-401 | Frontend | `handlePodList` doesn't forward `filters` query parameter to backend |
+| BUG-402 | Frontend | `handleContainerStop` doesn't forward `signal` query parameter (Docker API v1.41+) |
+| BUG-403 | Frontend | `handleImageCreate` (pull) doesn't forward `platform` query parameter |
+| BUG-404 | Frontend | `handleImageList` doesn't forward `shared-size` and `digests` query parameters |
+| BUG-405 | Frontend | `handleContainerPutArchive` doesn't forward `noOverwriteDirNonDir` query parameter |
+| BUG-406 | Frontend | `handleNetworkRemove` doesn't forward `force` query parameter |
+| BUG-407 | Core + Frontend | No `GET /images/get` endpoint for `docker save` (image export to tar) |
+| BUG-408 | Core + Frontend | No `GET /images/search` endpoint — was returning NotImplemented |
 
 ## Sprint 30 Detail (BUG-359 → BUG-377)
 

@@ -214,6 +214,10 @@ func (s *BaseServer) registerRoutes(o RouteOverrides) {
 	s.Mux.HandleFunc("GET /internal/v1/images", s.handleImageList)
 	s.Mux.HandleFunc("DELETE /internal/v1/images/{name}", s.handleImageRemove)
 	s.Mux.HandleFunc("GET /internal/v1/images/{name}/history", s.handleImageHistory)
+	s.Mux.HandleFunc("POST /internal/v1/images/{name}/push", s.handleImagePush)
+	s.Mux.HandleFunc("GET /internal/v1/images/get", s.handleImageSave)
+	s.Mux.HandleFunc("GET /internal/v1/images/{name}/get", s.handleImageSave)
+	s.Mux.HandleFunc("GET /internal/v1/images/search", s.handleImageSearch)
 	s.Mux.HandleFunc("POST /internal/v1/images/prune", s.handleImagePrune)
 
 	s.Mux.HandleFunc("POST /internal/v1/commit", s.handleContainerCommit)

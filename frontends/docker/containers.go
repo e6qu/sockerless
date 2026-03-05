@@ -48,6 +48,9 @@ func (s *Server) handleContainerList(w http.ResponseWriter, r *http.Request) {
 	if limit := r.URL.Query().Get("limit"); limit != "" {
 		query.Set("limit", limit)
 	}
+	if size := r.URL.Query().Get("size"); size != "" {
+		query.Set("size", size)
+	}
 
 	resp, err := s.backend.getWithQuery(r.Context(), "/containers", query)
 	if err != nil {
@@ -85,6 +88,9 @@ func (s *Server) handleContainerStop(w http.ResponseWriter, r *http.Request) {
 	query := url.Values{}
 	if t := r.URL.Query().Get("t"); t != "" {
 		query.Set("t", t)
+	}
+	if signal := r.URL.Query().Get("signal"); signal != "" {
+		query.Set("signal", signal)
 	}
 	resp, err := s.backend.postWithQuery(r.Context(), "/containers/"+id+"/stop", query, nil)
 	if err != nil {

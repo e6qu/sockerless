@@ -627,6 +627,84 @@ func (s *BaseServer) handleAuth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *BaseServer) handleImagePush(w http.ResponseWriter, r *http.Request) {
+	ref := r.PathValue("name")
+	img, ok := s.Store.ResolveImage(ref)
+	if !ok {
+		WriteError(w, &api.NotFoundError{Resource: "image", ID: ref})
+		return
+	}
+	tag := r.URL.Query().Get("tag")
+	if tag == "" {
+		tag = "latest"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	enc := json.NewEncoder(w)
+	_ = enc.Encode(map[string]string{"status": "The push refers to repository [" + ref + "]"})
+	_ = enc.Encode(map[string]string{"status": "Preparing", "id": tag})
+	_ = enc.Encode(map[string]string{"status": "Pushed", "id": tag})
+	digest := strings.TrimPrefix(img.ID, "sha256:")
+	_ = enc.Encode(map[string]string{"status": tag + ": digest: sha256:" + digest})
+}
+
+func (s *BaseServer) handleImageSave(w http.ResponseWriter, r *http.Request) {
+	names := r.URL.Query()["names"]
+	if len(names) == 0 {
+		name := r.PathValue("name")
+		if name != "" {
+			names = []string{name}
+		}
+	}
+	w.Header().Set("Content-Type", "application/x-tar")
+	w.WriteHeader(http.StatusOK)
+	tw := tar.NewWriter(w)
+	defer func() { _ = tw.Close() }()
+	var manifests []map[string]any
+	for _, name := range names {
+		img, ok := s.Store.ResolveImage(name)
+		if !ok {
+			continue
+		}
+		manifests = append(manifests, map[string]any{
+			"Config":   img.ID + ".json",
+			"RepoTags": img.RepoTags,
+			"Layers":   []string{},
+		})
+	}
+	if manifests == nil {
+		manifests = []map[string]any{}
+	}
+	data, _ := json.Marshal(manifests)
+	_ = tw.WriteHeader(&tar.Header{Name: "manifest.json", Size: int64(len(data))})
+	_, _ = tw.Write(data)
+}
+
+func (s *BaseServer) handleImageSearch(w http.ResponseWriter, r *http.Request) {
+	term := r.URL.Query().Get("term")
+	var results []map[string]any
+	seen := make(map[string]bool)
+	for _, img := range s.Store.Images.List() {
+		if seen[img.ID] {
+			continue
+		}
+		seen[img.ID] = true
+		for _, tag := range img.RepoTags {
+			if strings.Contains(tag, term) {
+				results = append(results, map[string]any{
+					"name": tag, "description": "", "star_count": 0,
+					"is_official": false, "is_automated": false,
+				})
+				break
+			}
+		}
+	}
+	if results == nil {
+		results = []map[string]any{}
+	}
+	WriteJSON(w, http.StatusOK, results)
+}
+
 // decodeRegistryAuth decodes Docker's X-Registry-Auth header value.
 // The header is base64-encoded JSON: {"username":"...","password":"..."}.
 // Returns empty strings on any decoding failure.

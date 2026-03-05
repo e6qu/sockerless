@@ -85,9 +85,13 @@ func (s *BaseServer) handlePodCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *BaseServer) handlePodList(w http.ResponseWriter, r *http.Request) {
+	filters := ParseFilters(r.URL.Query().Get("filters"))
 	pods := s.Store.Pods.ListPods()
 	result := make([]PodListEntry, 0, len(pods))
 	for _, pod := range pods {
+		if !matchPodFilters(pod, filters) {
+			continue
+		}
 		containers := s.buildPodContainerInfos(pod)
 		result = append(result, PodListEntry{
 			ID:         pod.ID,
@@ -99,6 +103,51 @@ func (s *BaseServer) handlePodList(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	WriteJSON(w, http.StatusOK, result)
+}
+
+func matchPodFilters(pod *PodContext, filters map[string][]string) bool {
+	for key, values := range filters {
+		switch key {
+		case "name":
+			matched := false
+			for _, v := range values {
+				if strings.Contains(pod.Name, v) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+		case "id":
+			matched := false
+			for _, v := range values {
+				if strings.HasPrefix(pod.ID, v) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+		case "label":
+			if !MatchLabels(pod.Labels, values) {
+				return false
+			}
+		case "status":
+			matched := false
+			for _, v := range values {
+				if pod.Status == v {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (s *BaseServer) handlePodInspect(w http.ResponseWriter, r *http.Request) {
