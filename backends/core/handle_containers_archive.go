@@ -298,6 +298,12 @@ func (s *BaseServer) buildContainerFromConfig(id, name string, config api.Contai
 		args = config.Cmd[1:]
 	}
 
+	// BUG-462: Container.Image should be the sha256 image ID, not the reference name
+	imageField := config.Image
+	if img, ok := s.Store.ResolveImage(config.Image); ok {
+		imageField = img.ID
+	}
+
 	container := api.Container{
 		ID:      id,
 		Name:    name,
@@ -309,7 +315,7 @@ func (s *BaseServer) buildContainerFromConfig(id, name string, config api.Contai
 			FinishedAt: "0001-01-01T00:00:00Z",
 			StartedAt:  "0001-01-01T00:00:00Z",
 		},
-		Image:          config.Image,
+		Image:          imageField,
 		LogPath:        "/var/lib/sockerless/containers/" + id + "/" + id + "-json.log",
 		ResolvConfPath: "/var/lib/sockerless/containers/" + id + "/resolv.conf",
 		HostnamePath:   "/var/lib/sockerless/containers/" + id + "/hostname",

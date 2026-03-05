@@ -511,7 +511,15 @@ func (s *BaseServer) handleImageBuild(w http.ResponseWriter, r *http.Request) {
 		Architecture: "amd64",
 		Os:           "linux",
 		Config:       finalConfig,
-		RootFS:       api.RootFS{Type: "layers", Layers: []string{"sha256:" + GenerateID()}},
+		RootFS: api.RootFS{Type: "layers", Layers: []string{"sha256:" + GenerateID()}},
+		GraphDriver: api.GraphDriverData{ // BUG-455
+			Name: "overlay2",
+			Data: map[string]string{
+				"MergedDir": "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/merged",
+				"UpperDir":  "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/diff",
+				"WorkDir":   "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/work",
+			},
+		},
 	}
 	StoreImageWithAliases(s.Store, ref, img)
 

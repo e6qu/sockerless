@@ -1,8 +1,8 @@
 # Known Bugs
 
-## Fixed (BUG-001 → BUG-436)
+## Fixed (BUG-001 → BUG-462)
 
-410 bugs fixed across 34 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
+436 bugs fixed across 36 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
@@ -36,6 +36,25 @@
 | 33 | BUG-409→422 | Core resize endpoints, stats precpu/memlimit, default networks, event emissions, SpaceReclaimed, deterministic ImageID, paused status, health exec cleanup, paused count, logs stdout/stderr |
 | 34 | BUG-423→436 | Cloud logs parity (since/until/tail/stdout/stderr/details/follow), ImageSummary.Containers count, health check StartInterval |
 | 35 | BUG-437→449 | Container inspect paths, NetworkSettings fields, KernelVersion, exec CanRemove, frontend df type param, image GraphDriver/RootFS, volume UsageData |
+| 36 | BUG-450→462 | System df field gaps, container list SizeRw, commit/build GraphDriver, Container.Image sha256 ID |
+
+## Sprint 36 Detail (BUG-450 → BUG-462)
+
+| ID | Component | Description |
+|----|-----------|-------------|
+| BUG-450 | Core | `handleSystemDf` ImageSummary never sets `VirtualSize` — always 0 |
+| BUG-451 | Core | `handleSystemDf` ImageSummary never sets `Labels` — always nil |
+| BUG-452 | Core | `handleContainerList` never sets `SizeRw` when `size=true` — only `SizeRootFs` populated |
+| BUG-453 | Core | `handleContainerCommit` image `RootFS.Layers` empty — no synthetic layer |
+| BUG-454 | Core | `handleContainerCommit` image `GraphDriver` never set — missing Name and Data |
+| BUG-455 | Core | `handleImageBuild` image `GraphDriver` never set — has RootFS.Layers but no GraphDriver |
+| BUG-456 | Core | `handleSystemDf` ContainerSummary missing `ImageID` — always empty |
+| BUG-457 | Core | `handleSystemDf` ContainerSummary missing `Command` — always empty |
+| BUG-458 | Core | `handleSystemDf` ContainerSummary missing `Status` — no human-readable status string |
+| BUG-459 | Core | `handleSystemDf` ContainerSummary missing `Labels` and `Ports` |
+| BUG-460 | Core | `handleSystemDf` ContainerSummary missing `Mounts`, `NetworkSettings`, `HostConfig` |
+| BUG-461 | Core | `handleSystemDf` ContainerSummary missing `SizeRootFs` |
+| BUG-462 | Core | `buildContainerFromConfig` sets `Container.Image` to reference name instead of sha256 image ID |
 
 ## Sprint 35 Detail (BUG-437 → BUG-449)
 

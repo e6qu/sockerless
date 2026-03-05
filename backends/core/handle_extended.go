@@ -1,6 +1,7 @@
 package core
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -537,6 +538,8 @@ func (s *BaseServer) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 			RepoDigests: img.RepoDigests,
 			Created:     created.Unix(),
 			Size:        img.Size,
+			VirtualSize: img.VirtualSize,   // BUG-450
+			Labels:      img.Config.Labels, // BUG-451
 			Containers:  imgContainerCount[img.ID],
 		})
 	}
@@ -544,16 +547,50 @@ func (s *BaseServer) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 	var containers []*api.ContainerSummary
 	for _, c := range s.Store.Containers.List() {
 		created, _ := time.Parse(time.RFC3339Nano, c.Created)
+		command := c.Path
+		if len(c.Args) > 0 {
+			command += " " + strings.Join(c.Args, " ")
+		}
+		// BUG-456: Resolve image ID
+		imageID := ""
+		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
+			imageID = img.ID
+		} else {
+			h := sha256.Sum256([]byte(c.Config.Image))
+			imageID = fmt.Sprintf("sha256:%x", h)
+		}
+		// BUG-459: Labels
+		labels := c.Config.Labels
+		if labels == nil {
+			labels = make(map[string]string)
+		}
+		// BUG-460: Mounts
+		mounts := c.Mounts
+		if mounts == nil {
+			mounts = []api.MountPoint{}
+		}
 		cs := &api.ContainerSummary{
 			ID:      c.ID,
 			Names:   []string{c.Name},
 			Image:   c.Config.Image,
+			ImageID: imageID,                                                           // BUG-456
+			Command: command,                                                           // BUG-457
 			Created: created.Unix(),
 			State:   c.State.Status,
+			Status:  FormatStatus(c.State),                                             // BUG-458
+			Labels:  labels,                                                            // BUG-459
+			Ports:   buildPortList(c.HostConfig.PortBindings, c.Config.ExposedPorts),    // BUG-459
+			Mounts:  mounts,                                                            // BUG-460
+			NetworkSettings: &api.SummaryNetworkSettings{Networks: c.NetworkSettings.Networks}, // BUG-460
+			HostConfig:      &api.HostConfigSummary{NetworkMode: c.HostConfig.NetworkMode},     // BUG-460
 		}
 		// Calculate real container size from container rootDir
 		if rootPath, err := s.Drivers.Filesystem.RootPath(c.ID); err == nil && rootPath != "" {
 			cs.SizeRw = DirSize(rootPath)
+		}
+		// BUG-461: SizeRootFs from image
+		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
+			cs.SizeRootFs = img.Size
 		}
 		containers = append(containers, cs)
 	}
