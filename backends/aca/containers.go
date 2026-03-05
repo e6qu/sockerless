@@ -118,8 +118,24 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		agentToken = core.GenerateToken()
 	}
 
+	// BUG-386: Validate pod parameter before storing container
+	podRef := r.URL.Query().Get("pod")
+	if podRef != "" {
+		if _, ok := s.Store.Pods.GetPod(podRef); !ok {
+			core.WriteError(w, &api.NotFoundError{Resource: "pod", ID: podRef})
+			return
+		}
+	}
+
 	s.Store.Containers.Put(id, container)
 	s.Store.ContainerNames.Put(name, id)
+
+	// BUG-386: Associate container with pod
+	if podRef != "" {
+		pod, _ := s.Store.Pods.GetPod(podRef)
+		_ = s.Store.Pods.AddContainer(pod.ID, id)
+	}
+
 	s.ACA.Put(id, ACAState{
 		ResourceGroup: s.config.ResourceGroup,
 		AgentToken:    agentToken,

@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -103,6 +104,59 @@ func MatchContainerFilters(c api.Container, filters map[string][]string) bool {
 			}
 			if !matched {
 				return false
+			}
+		case "exited": // BUG-385
+			if c.State.Status != "exited" {
+				return false
+			}
+			matched := false
+			for _, v := range values {
+				code, err := strconv.Atoi(v)
+				if err == nil && c.State.ExitCode == code {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+		case "publish": // BUG-391
+			matched := false
+			for _, v := range values {
+				for port := range c.HostConfig.PortBindings {
+					if string(port) == v || strings.HasPrefix(string(port), v+"/") {
+						matched = true
+						break
+					}
+				}
+				if matched {
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+		case "volume": // BUG-392
+			matched := false
+			for _, v := range values {
+				for _, m := range c.Mounts {
+					if m.Name == v || m.Source == v || m.Destination == v {
+						matched = true
+						break
+					}
+				}
+				if matched {
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+		case "is-task": // BUG-393
+			for _, v := range values {
+				if v == "true" {
+					return false // No Swarm tasks in sockerless
+				}
 			}
 		}
 	}
