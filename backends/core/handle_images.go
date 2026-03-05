@@ -317,6 +317,15 @@ func (s *BaseServer) handleImageTag(w http.ResponseWriter, r *http.Request) {
 	}
 
 	newRef := repo + ":" + tag
+
+	// Check for duplicate tag
+	for _, existing := range img.RepoTags {
+		if existing == newRef {
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+	}
+
 	img.RepoTags = append(img.RepoTags, newRef)
 
 	// Update all existing aliases to reflect the new RepoTags list

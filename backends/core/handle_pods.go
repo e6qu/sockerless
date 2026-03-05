@@ -198,6 +198,12 @@ func (s *BaseServer) handlePodKill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	signal := r.URL.Query().Get("signal")
+	if signal == "" {
+		signal = "SIGKILL"
+	}
+	exitCode := signalToExitCode(signal)
+
 	for _, cid := range pod.ContainerIDs {
 		c, ok := s.Store.Containers.Get(cid)
 		if !ok || !c.State.Running {
@@ -205,7 +211,7 @@ func (s *BaseServer) handlePodKill(w http.ResponseWriter, r *http.Request) {
 		}
 		s.Drivers.ProcessLifecycle.Kill(cid)
 		s.StopHealthCheck(cid)
-		s.Store.ForceStopContainer(cid, 137)
+		s.Store.ForceStopContainer(cid, exitCode)
 	}
 	s.Store.Pods.SetStatus(pod.ID, "exited")
 	WriteJSON(w, http.StatusOK, map[string]any{

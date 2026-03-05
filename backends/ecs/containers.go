@@ -589,8 +589,12 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 	if c.State.Running {
 		ecsState, _ := s.ECS.Get(id)
 		if ecsState.TaskARN != "" {
+			cluster := s.config.Cluster
+			if ecsState.ClusterARN != "" {
+				cluster = ecsState.ClusterARN
+			}
 			_, _ = s.aws.ECS.StopTask(s.ctx(), &awsecs.StopTaskInput{
-				Cluster: aws.String(s.config.Cluster),
+				Cluster: aws.String(cluster),
 				Task:    aws.String(ecsState.TaskARN),
 				Reason:  aws.String("Container removed"),
 			})

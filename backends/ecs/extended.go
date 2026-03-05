@@ -28,12 +28,21 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 		s.AgentRegistry.Remove(id)
 		ecsState, _ := s.ECS.Get(id)
 		if ecsState.TaskARN != "" {
+			cluster := s.config.Cluster
+			if ecsState.ClusterARN != "" {
+				cluster = ecsState.ClusterARN
+			}
 			_, _ = s.aws.ECS.StopTask(s.ctx(), &awsecs.StopTaskInput{
-				Cluster: aws.String(s.config.Cluster),
+				Cluster: aws.String(cluster),
 				Task:    aws.String(ecsState.TaskARN),
 				Reason:  aws.String("Container restarted via API"),
 			})
 			s.Registry.MarkCleanedUp(ecsState.TaskARN)
+		}
+		if ecsState.TaskDefARN != "" {
+			_, _ = s.aws.ECS.DeregisterTaskDefinition(s.ctx(), &awsecs.DeregisterTaskDefinitionInput{
+				TaskDefinition: aws.String(ecsState.TaskDefARN),
+			})
 		}
 		s.Store.ForceStopContainer(id, 0)
 		s.EmitEvent("container", "die", id, map[string]string{
