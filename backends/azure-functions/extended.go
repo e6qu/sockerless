@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 
 	"github.com/sockerless/api"
@@ -97,6 +98,11 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 			}
 			s.Store.LogBuffers.Delete(c.ID)
 			s.Store.StagingDirs.Delete(c.ID)
+			if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(c.ID); ok {
+				for _, d := range dirs.([]string) {
+					os.RemoveAll(d)
+				}
+			}
 			for _, eid := range c.ExecIDs {
 				s.Store.Execs.Delete(eid)
 			}

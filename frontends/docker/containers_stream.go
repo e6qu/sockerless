@@ -168,6 +168,9 @@ func (s *Server) handleContainerPutArchive(w http.ResponseWriter, r *http.Reques
 	if p := r.URL.Query().Get("path"); p != "" {
 		query.Set("path", p)
 	}
+	if noOverwrite := r.URL.Query().Get("noOverwriteDirNonDir"); noOverwrite != "" {
+		query.Set("noOverwriteDirNonDir", noOverwrite)
+	}
 	resp, err := s.backend.putWithQuery(r.Context(), "/containers/"+id+"/archive", query, r.Body)
 	if err != nil {
 		writeError(w, err)

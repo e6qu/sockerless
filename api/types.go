@@ -416,6 +416,7 @@ type ImageMetadata struct {
 type ImagePullRequest struct {
 	Reference string `json:"Reference"`
 	Auth      string `json:"Auth,omitempty"`
+	Platform  string `json:"Platform,omitempty"`
 }
 
 // Network represents a network resource.
