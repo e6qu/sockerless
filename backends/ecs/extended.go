@@ -49,7 +49,12 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 			"exitCode": "0",
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
+		s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	}
+
+	s.Store.Containers.Update(id, func(c *api.Container) {
+		c.RestartCount++
+	})
 
 	// Re-dispatch to start handler
 	startURL := fmt.Sprintf("/internal/v1/containers/%s/start", id)
@@ -85,6 +90,9 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 		}
 
 		s.AgentRegistry.Remove(c.ID)
+		if pod, inPod := s.Store.Pods.GetPodForContainer(c.ID); inPod {
+			s.Store.Pods.RemoveContainer(pod.ID, c.ID)
+		}
 		s.Store.Containers.Delete(c.ID)
 		s.Store.ContainerNames.Delete(c.Name)
 		s.ECS.Delete(c.ID)
@@ -96,6 +104,9 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 		for _, eid := range c.ExecIDs {
 			s.Store.Execs.Delete(eid)
 		}
+		s.EmitEvent("container", "destroy", c.ID, map[string]string{
+			"name": strings.TrimPrefix(c.Name, "/"),
+		})
 		deleted = append(deleted, c.ID)
 	}
 	if deleted == nil {

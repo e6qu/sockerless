@@ -182,6 +182,11 @@ func (s *BaseServer) handlePodStop(w http.ResponseWriter, r *http.Request) {
 		s.Drivers.ProcessLifecycle.Stop(cid)
 		s.Drivers.ProcessLifecycle.Cleanup(cid)
 		s.Store.ForceStopContainer(cid, 0)
+		s.emitEvent("container", "die", cid, map[string]string{
+			"exitCode": "0",
+			"name":     strings.TrimPrefix(c.Name, "/"),
+		})
+		s.emitEvent("container", "stop", cid, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	}
 	s.Store.Pods.SetStatus(pod.ID, "stopped")
 	WriteJSON(w, http.StatusOK, map[string]any{
@@ -212,6 +217,11 @@ func (s *BaseServer) handlePodKill(w http.ResponseWriter, r *http.Request) {
 		s.Drivers.ProcessLifecycle.Kill(cid)
 		s.StopHealthCheck(cid)
 		s.Store.ForceStopContainer(cid, exitCode)
+		s.emitEvent("container", "kill", cid, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+		s.emitEvent("container", "die", cid, map[string]string{
+			"exitCode": fmt.Sprintf("%d", exitCode),
+			"name":     strings.TrimPrefix(c.Name, "/"),
+		})
 	}
 	s.Store.Pods.SetStatus(pod.ID, "exited")
 	WriteJSON(w, http.StatusOK, map[string]any{
@@ -259,6 +269,29 @@ func (s *BaseServer) handlePodRemove(w http.ResponseWriter, r *http.Request) {
 				if ep != nil && ep.NetworkID != "" {
 					_ = s.Drivers.Network.Disconnect(r.Context(), ep.NetworkID, cid)
 				}
+			}
+			s.Store.Containers.Delete(cid)
+			s.Store.ContainerNames.Delete(c.Name)
+			s.Store.LogBuffers.Delete(cid)
+			if ch, ok := s.Store.WaitChs.LoadAndDelete(cid); ok {
+				close(ch.(chan struct{}))
+			}
+			s.Store.StagingDirs.Delete(cid)
+			if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(cid); ok {
+				for _, d := range dirs.([]string) {
+					os.RemoveAll(d)
+				}
+			}
+			for _, eid := range c.ExecIDs {
+				s.Store.Execs.Delete(eid)
+			}
+		}
+	} else {
+		// Clean up all (non-running) containers in the pod
+		for _, cid := range pod.ContainerIDs {
+			c, ok := s.Store.Containers.Get(cid)
+			if !ok {
+				continue
 			}
 			s.Store.Containers.Delete(cid)
 			s.Store.ContainerNames.Delete(c.Name)

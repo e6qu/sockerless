@@ -29,6 +29,26 @@
 | 26 | BUG-295→319 | WaitCh leaks, HTTP status codes, symlink traversal, cloud events, API types |
 | 27 | BUG-320→336 | WaitChs.Delete close gaps (all 8 backends), ACA restart guard, Docker commit ref, frontend logs query param |
 | 28 | BUG-337→344 | ECS ClusterARN in remove/restart, ECS restart task def leak, CloudRun/ACA restart job leak, pod kill signal, image tag dedup, frontend stats one-shot |
+| 29 | BUG-345→358 | Cloud restart "stop" event + RestartCount, cloud remove/prune "destroy" event + pod cleanup, core pod stop/kill events, pod remove non-force cleanup |
+
+## Sprint 29 Detail (BUG-345 → BUG-358)
+
+| ID | Component | Description |
+|----|-----------|-------------|
+| BUG-345 | ECS | `handleContainerRestart` emits "die" but not "stop" event |
+| BUG-346 | Lambda | `handleContainerRestart` emits "die" but not "stop" event |
+| BUG-347 | CloudRun | `handleContainerRestart` emits "die" but not "stop" event |
+| BUG-348 | GCF | `handleContainerRestart` emits "die" but not "stop" event |
+| BUG-349 | ACA | `handleContainerRestart` emits "die" but not "stop" event |
+| BUG-350 | AZF | `handleContainerRestart` emits "die" but not "stop" event |
+| BUG-351 | All 6 cloud | `handleContainerRestart` doesn't increment `RestartCount` |
+| BUG-352 | All 6 cloud | `handleContainerRemove` missing "destroy" event |
+| BUG-353 | All 6 cloud | `handleContainerPrune` missing "destroy" event |
+| BUG-354 | Core | `handlePodStop` missing "die" and "stop" events |
+| BUG-355 | Core | `handlePodKill` missing "kill" and "die" events |
+| BUG-356 | All 6 cloud | `handleContainerRemove` missing pod cleanup (`Pods.RemoveContainer`) |
+| BUG-357 | All 6 cloud | `handleContainerPrune` missing pod cleanup (`Pods.RemoveContainer`) |
+| BUG-358 | Core | `handlePodRemove` with `force=false` doesn't clean up exited containers |
 
 ## Sprint 27 Detail (BUG-320 → BUG-336)
 
