@@ -1,6 +1,8 @@
 package core
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -53,7 +55,8 @@ func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request)
 		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
 			imageID = img.ID
 		} else {
-			imageID = "sha256:" + GenerateID()
+			h := sha256.Sum256([]byte(c.Config.Image))
+			imageID = fmt.Sprintf("sha256:%x", h)
 		}
 
 		labels := c.Config.Labels
@@ -163,8 +166,25 @@ func (s *BaseServer) handleContainerLogs(w http.ResponseWriter, r *http.Request)
 	// BUG-390: Read details query parameter
 	details := r.URL.Query().Get("details") == "1" || r.URL.Query().Get("details") == "true"
 
+	// BUG-422: Parse stdout/stderr params — default both to true when neither specified
+	stdoutParam := r.URL.Query().Get("stdout")
+	stderrParam := r.URL.Query().Get("stderr")
+	wantStdout := true
+	if stdoutParam == "0" || stdoutParam == "false" {
+		wantStdout = false
+	}
+	// If only stderr=true and stdout not explicitly requested, suppress stdout
+	if (stderrParam == "1" || stderrParam == "true") && stdoutParam == "" {
+		wantStdout = false
+	}
+
 	// Read from container process or synthetic log buffer via driver chain
 	logBytes := s.Drivers.Stream.LogBytes(id)
+
+	// All simulator output is stdout — if stdout suppressed, return empty
+	if !wantStdout {
+		logBytes = nil
+	}
 
 	// Split into lines and stamp each with the container's start time for filtering (BUG-276)
 	var lines []string

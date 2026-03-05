@@ -181,11 +181,8 @@ func (s *BaseServer) execHealthCheck(ctx context.Context, containerID string, cm
 	clientConn.Close()
 	<-done
 
-	// Update exec to non-running
-	s.Store.Execs.Update(execID, func(e *api.ExecInstance) {
-		e.Running = false
-		e.ExitCode = exitCode
-	})
+	// Clean up health check exec instance — no need to keep it around
+	s.Store.Execs.Delete(execID)
 
 	return exitCode, buf.String()
 }

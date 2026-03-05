@@ -13,6 +13,26 @@ import (
 	"github.com/sockerless/api"
 )
 
+func (s *BaseServer) handleContainerResize(w http.ResponseWriter, r *http.Request) {
+	ref := r.PathValue("id")
+	_, ok := s.Store.ResolveContainerID(ref)
+	if !ok {
+		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *BaseServer) handleExecResize(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	_, ok := s.Store.Execs.Get(id)
+	if !ok {
+		WriteError(w, &api.NotFoundError{Resource: "exec instance", ID: id})
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 func (s *BaseServer) handleContainerTop(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
 	id, ok := s.Store.ResolveContainerID(ref)
@@ -84,8 +104,12 @@ func (s *BaseServer) handleContainerPrune(w http.ResponseWriter, r *http.Request
 		}
 		return true
 	})
+	var spaceReclaimed uint64
 	deleted := make([]string, 0, len(pruned))
 	for _, c := range pruned {
+		if rootPath, err := s.Drivers.Filesystem.RootPath(c.ID); err == nil && rootPath != "" {
+			spaceReclaimed += uint64(DirSize(rootPath))
+		}
 		s.StopHealthCheck(c.ID)
 		s.Store.ContainerNames.Delete(c.Name)
 		s.Store.LogBuffers.Delete(c.ID)
@@ -117,7 +141,7 @@ func (s *BaseServer) handleContainerPrune(w http.ResponseWriter, r *http.Request
 	}
 	WriteJSON(w, http.StatusOK, api.ContainerPruneResponse{
 		ContainersDeleted: deleted,
-		SpaceReclaimed:    0,
+		SpaceReclaimed:    spaceReclaimed,
 	})
 }
 
@@ -132,9 +156,14 @@ func (s *BaseServer) handleContainerStats(w http.ResponseWriter, r *http.Request
 	c, _ := s.Store.Containers.Get(id)
 	stream := r.URL.Query().Get("stream") != "false"
 
+	memLimit := int64(1073741824) // 1 GiB default
+	if c.HostConfig.Memory > 0 {
+		memLimit = c.HostConfig.Memory
+	}
+
 	if !c.State.Running {
 		now := time.Now().UTC()
-		WriteJSON(w, http.StatusOK, s.buildStatsEntry(id, now, "0001-01-01T00:00:00Z"))
+		WriteJSON(w, http.StatusOK, s.buildStatsEntry(id, now, "0001-01-01T00:00:00Z", memLimit))
 		return
 	}
 
@@ -146,7 +175,7 @@ func (s *BaseServer) handleContainerStats(w http.ResponseWriter, r *http.Request
 
 	for {
 		now := time.Now().UTC()
-		entry := s.buildStatsEntry(id, now, preread)
+		entry := s.buildStatsEntry(id, now, preread, memLimit)
 		_ = enc.Encode(entry)
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
@@ -171,7 +200,7 @@ func (s *BaseServer) handleContainerStats(w http.ResponseWriter, r *http.Request
 }
 
 // buildStatsEntry constructs a Docker-compatible stats JSON object.
-func (s *BaseServer) buildStatsEntry(containerID string, now time.Time, preread string) map[string]any {
+func (s *BaseServer) buildStatsEntry(containerID string, now time.Time, preread string, memLimit int64) map[string]any {
 	var memUsage int64
 	var cpuNanos int64
 	var pids int
@@ -192,9 +221,16 @@ func (s *BaseServer) buildStatsEntry(containerID string, now time.Time, preread 
 			"online_cpus":      1,
 			"system_cpu_usage": now.UnixNano(),
 		},
+		"precpu_stats": map[string]any{
+			"cpu_usage": map[string]any{
+				"total_usage": int64(0),
+			},
+			"online_cpus":      1,
+			"system_cpu_usage": int64(0),
+		},
 		"memory_stats": map[string]any{
 			"usage": memUsage,
-			"limit": int64(1073741824), // 1 GiB
+			"limit": memLimit,
 		},
 		"pids_stats": map[string]any{
 			"current": pids,
@@ -463,6 +499,11 @@ func (s *BaseServer) handleContainerUpdate(w http.ResponseWriter, r *http.Reques
 		if req.BlkioWeight != 0 {
 			c.HostConfig.BlkioWeight = req.BlkioWeight
 		}
+	})
+
+	c, _ := s.Store.Containers.Get(id)
+	s.emitEvent("container", "update", id, map[string]string{
+		"name": strings.TrimPrefix(c.Name, "/"),
 	})
 
 	WriteJSON(w, http.StatusOK, api.ContainerUpdateResponse{Warnings: []string{}})

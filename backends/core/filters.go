@@ -316,6 +316,24 @@ func FormatStatus(state api.ContainerState) string {
 		default:
 			return fmt.Sprintf("Up %d days", int(d.Hours()/24))
 		}
+	case "paused":
+		started, err := time.Parse(time.RFC3339Nano, state.StartedAt)
+		if err != nil {
+			return "Up Less than a second (Paused)"
+		}
+		d := time.Since(started)
+		switch {
+		case d < time.Second:
+			return "Up Less than a second (Paused)"
+		case d < time.Minute:
+			return fmt.Sprintf("Up %d seconds (Paused)", int(d.Seconds()))
+		case d < time.Hour:
+			return fmt.Sprintf("Up %d minutes (Paused)", int(d.Minutes()))
+		case d < 24*time.Hour:
+			return fmt.Sprintf("Up %d hours (Paused)", int(d.Hours()))
+		default:
+			return fmt.Sprintf("Up %d days (Paused)", int(d.Hours()/24))
+		}
 	case "exited":
 		if state.ExitCode == 0 {
 			return "Exited (0)"

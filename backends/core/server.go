@@ -165,6 +165,8 @@ func (s *BaseServer) registerRoutes(o RouteOverrides) {
 	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/exec", s.handleExecCreate)
 	s.Mux.HandleFunc("GET /internal/v1/exec/{id}", s.handleExecInspect)
 	s.Mux.HandleFunc("POST /internal/v1/exec/{id}/start", or(o.ExecStart, s.handleExecStart))
+	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/resize", s.handleContainerResize)
+	s.Mux.HandleFunc("POST /internal/v1/exec/{id}/resize", s.handleExecResize)
 
 	// Images
 	s.Mux.HandleFunc("POST /internal/v1/images/pull", or(o.ImagePull, s.handleImagePull))
@@ -227,8 +229,9 @@ func (s *BaseServer) registerRoutes(o RouteOverrides) {
 	s.Mux.HandleFunc("GET /internal/v1/system/df", s.handleSystemDf)
 }
 
-// InitDefaultNetwork creates the default bridge network.
+// InitDefaultNetwork creates the default bridge, host, and none networks.
 func (s *BaseServer) InitDefaultNetwork() {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	s.Store.Networks.Put("bridge", api.Network{
 		Name:   "bridge",
 		ID:     "bridge",
@@ -243,7 +246,29 @@ func (s *BaseServer) InitDefaultNetwork() {
 		Containers: make(map[string]api.EndpointResource),
 		Options:    make(map[string]string),
 		Labels:     make(map[string]string),
-		Created:    time.Now().UTC().Format(time.RFC3339Nano),
+		Created:    now,
+	})
+	s.Store.Networks.Put("host", api.Network{
+		Name:       "host",
+		ID:         "host",
+		Driver:     "host",
+		Scope:      "local",
+		IPAM:       api.IPAM{Driver: "default"},
+		Containers: make(map[string]api.EndpointResource),
+		Options:    make(map[string]string),
+		Labels:     make(map[string]string),
+		Created:    now,
+	})
+	s.Store.Networks.Put("none", api.Network{
+		Name:       "none",
+		ID:         "none",
+		Driver:     "null",
+		Scope:      "local",
+		IPAM:       api.IPAM{Driver: "default"},
+		Containers: make(map[string]api.EndpointResource),
+		Options:    make(map[string]string),
+		Labels:     make(map[string]string),
+		Created:    now,
 	})
 }
 
@@ -407,9 +432,13 @@ func (s *BaseServer) ListenAndServe(addr string) error {
 // handleInfo returns backend system information.
 func (s *BaseServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 	running := 0
+	paused := 0
 	stopped := 0
 	for _, c := range s.Store.Containers.List() {
-		if c.State.Running {
+		if c.State.Paused {
+			paused++
+			running++ // Docker counts paused as subset of running
+		} else if c.State.Running {
 			running++
 		} else {
 			stopped++
@@ -421,6 +450,7 @@ func (s *BaseServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 		ServerVersion:     s.Desc.ServerVersion,
 		Containers:        s.Store.Containers.Len(),
 		ContainersRunning: running,
+		ContainersPaused:  paused,
 		ContainersStopped: stopped,
 		Images:            s.Store.Images.Len(),
 		Driver:            s.Desc.Driver,
