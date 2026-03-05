@@ -56,12 +56,17 @@ func (s *Server) handleExecInspect(w http.ResponseWriter, r *http.Request) {
 		CanRemove:   !resp.Running,
 	}
 
-	// The Docker SDK's ExecInspect struct omits ProcessConfig.
-	// Fetch raw JSON via the HTTP API to extract it.
+	// The Docker SDK's ExecInspect struct omits ProcessConfig and other fields.
+	// Fetch raw JSON via the HTTP API to extract them.
 	rawResp, rawErr := s.httpGet(r.Context(), "/exec/"+id+"/json")
 	if rawErr == nil {
 		defer rawResp.Body.Close()
 		var raw struct {
+			// BUG-562: Extract fields not exposed by the SDK
+			OpenStdin  bool   `json:"OpenStdin"`
+			OpenStdout bool   `json:"OpenStdout"`
+			OpenStderr bool   `json:"OpenStderr"`
+			DetachKeys string `json:"DetachKeys"`
 			ProcessConfig *struct {
 				Entrypoint string   `json:"entrypoint"`
 				Arguments  []string `json:"arguments"`
@@ -70,13 +75,19 @@ func (s *Server) handleExecInspect(w http.ResponseWriter, r *http.Request) {
 				Privileged *bool    `json:"privileged,omitempty"`
 			} `json:"ProcessConfig"`
 		}
-		if json.NewDecoder(rawResp.Body).Decode(&raw) == nil && raw.ProcessConfig != nil {
-			exec.ProcessConfig = api.ExecProcessConfig{
-				Entrypoint: raw.ProcessConfig.Entrypoint,
-				Arguments:  raw.ProcessConfig.Arguments,
-				Tty:        raw.ProcessConfig.Tty,
-				User:       raw.ProcessConfig.User,
-				Privileged: raw.ProcessConfig.Privileged,
+		if json.NewDecoder(rawResp.Body).Decode(&raw) == nil {
+			exec.OpenStdin = raw.OpenStdin
+			exec.OpenStdout = raw.OpenStdout
+			exec.OpenStderr = raw.OpenStderr
+			exec.DetachKeys = raw.DetachKeys
+			if raw.ProcessConfig != nil {
+				exec.ProcessConfig = api.ExecProcessConfig{
+					Entrypoint: raw.ProcessConfig.Entrypoint,
+					Arguments:  raw.ProcessConfig.Arguments,
+					Tty:        raw.ProcessConfig.Tty,
+					User:       raw.ProcessConfig.User,
+					Privileged: raw.ProcessConfig.Privileged,
+				}
 			}
 		}
 	}
@@ -138,8 +149,24 @@ func (s *Server) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	buf.WriteString("\r\n")
 	buf.Flush()
 
-	// Stdin: client → Docker exec
-	go func() { _, _ = io.Copy(resp.Conn, conn) }()
+	// BUG-574: Only copy stdin when exec was created with AttachStdin
+	execInfo, inspErr := s.docker.ContainerExecInspect(r.Context(), id)
+	if inspErr == nil && execInfo.Running {
+		// Check OpenStdin via raw API since SDK may not expose it
+		rawResp, rawErr := s.httpGet(r.Context(), "/exec/"+id+"/json")
+		if rawErr == nil {
+			var raw struct {
+				OpenStdin bool `json:"OpenStdin"`
+			}
+			if json.NewDecoder(rawResp.Body).Decode(&raw) == nil && raw.OpenStdin {
+				go func() { _, _ = io.Copy(resp.Conn, conn) }()
+			}
+			rawResp.Body.Close()
+		}
+	} else {
+		// Fallback: always copy stdin if we can't determine
+		go func() { _, _ = io.Copy(resp.Conn, conn) }()
+	}
 
 	io.Copy(conn, resp.Reader)
 }

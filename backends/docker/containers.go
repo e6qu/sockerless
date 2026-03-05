@@ -280,6 +280,7 @@ func (s *Server) handleContainerList(w http.ResponseWriter, r *http.Request) {
 			SizeRw:     c.SizeRw,
 			SizeRootFs: c.SizeRootFs,
 			Mounts:     mapMountsFromSummary(c.Mounts),
+			HostConfig: &api.HostConfigSummary{NetworkMode: string(c.HostConfig.NetworkMode)}, // BUG-558
 		}
 		for _, p := range c.Ports {
 			summary.Ports = append(summary.Ports, api.Port{
@@ -292,15 +293,28 @@ func (s *Server) handleContainerList(w http.ResponseWriter, r *http.Request) {
 		if c.NetworkSettings != nil && len(c.NetworkSettings.Networks) > 0 {
 			nets := make(map[string]*api.EndpointSettings, len(c.NetworkSettings.Networks))
 			for name, ep := range c.NetworkSettings.Networks {
-				nets[name] = &api.EndpointSettings{
-					NetworkID:   ep.NetworkID,
-					EndpointID:  ep.EndpointID,
-					Gateway:     ep.Gateway,
-					IPAddress:   ep.IPAddress,
-					IPPrefixLen: ep.IPPrefixLen,
-					MacAddress:  ep.MacAddress,
-					Aliases:     ep.Aliases,
+				// BUG-557: Include IPv6, IPAM, DriverOpts fields
+				es := &api.EndpointSettings{
+					NetworkID:           ep.NetworkID,
+					EndpointID:          ep.EndpointID,
+					Gateway:             ep.Gateway,
+					IPAddress:           ep.IPAddress,
+					IPPrefixLen:         ep.IPPrefixLen,
+					IPv6Gateway:         ep.IPv6Gateway,
+					GlobalIPv6Address:   ep.GlobalIPv6Address,
+					GlobalIPv6PrefixLen: ep.GlobalIPv6PrefixLen,
+					MacAddress:          ep.MacAddress,
+					Aliases:             ep.Aliases,
+					DriverOpts:          ep.DriverOpts,
 				}
+				if ep.IPAMConfig != nil {
+					es.IPAMConfig = &api.EndpointIPAMConfig{
+						IPv4Address:  ep.IPAMConfig.IPv4Address,
+						IPv6Address:  ep.IPAMConfig.IPv6Address,
+						LinkLocalIPs: ep.IPAMConfig.LinkLocalIPs,
+					}
+				}
+				nets[name] = es
 			}
 			summary.NetworkSettings = &api.SummaryNetworkSettings{Networks: nets}
 		}
@@ -398,7 +412,12 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rc.Close()
 
-	w.Header().Set("Content-Type", "application/vnd.docker.multiplexed-stream")
+	// BUG-554: Set Content-Type based on TTY mode
+	contentType := "application/vnd.docker.multiplexed-stream"
+	if info, inspErr := s.docker.ContainerInspect(r.Context(), id); inspErr == nil && info.Config != nil && info.Config.Tty {
+		contentType = "application/vnd.docker.raw-stream"
+	}
+	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(http.StatusOK)
 	io.Copy(w, rc)
 }
@@ -656,18 +675,48 @@ func mapContainerFromDocker(info types.ContainerJSON) api.Container {
 	}
 
 	c.NetworkSettings.Networks = make(map[string]*api.EndpointSettings)
+	c.NetworkSettings.Ports = make(map[string][]api.PortBinding) // BUG-565: empty map, not null
 	if info.NetworkSettings != nil {
+		// BUG-555: Map top-level NetworkSettings scalar fields
+		c.NetworkSettings.Bridge = info.NetworkSettings.Bridge
+		c.NetworkSettings.SandboxID = info.NetworkSettings.SandboxID
+		c.NetworkSettings.HairpinMode = info.NetworkSettings.HairpinMode
+		c.NetworkSettings.LinkLocalIPv6Address = info.NetworkSettings.LinkLocalIPv6Address
+		c.NetworkSettings.LinkLocalIPv6PrefixLen = info.NetworkSettings.LinkLocalIPv6PrefixLen
+		c.NetworkSettings.SandboxKey = info.NetworkSettings.SandboxKey
+		c.NetworkSettings.EndpointID = info.NetworkSettings.EndpointID
+		c.NetworkSettings.Gateway = info.NetworkSettings.Gateway
+		c.NetworkSettings.GlobalIPv6Address = info.NetworkSettings.GlobalIPv6Address
+		c.NetworkSettings.GlobalIPv6PrefixLen = info.NetworkSettings.GlobalIPv6PrefixLen
+		c.NetworkSettings.IPAddress = info.NetworkSettings.IPAddress
+		c.NetworkSettings.IPPrefixLen = info.NetworkSettings.IPPrefixLen
+		c.NetworkSettings.IPv6Gateway = info.NetworkSettings.IPv6Gateway
+		c.NetworkSettings.MacAddress = info.NetworkSettings.MacAddress
+
 		if info.NetworkSettings.Networks != nil {
 			for name, ep := range info.NetworkSettings.Networks {
-				c.NetworkSettings.Networks[name] = &api.EndpointSettings{
-					NetworkID:   ep.NetworkID,
-					EndpointID:  ep.EndpointID,
-					Gateway:     ep.Gateway,
-					IPAddress:   ep.IPAddress,
-					IPPrefixLen: ep.IPPrefixLen,
-					MacAddress:  ep.MacAddress,
-					Aliases:     ep.Aliases,
+				// BUG-556: Include IPv6, IPAM, DriverOpts fields
+				es := &api.EndpointSettings{
+					NetworkID:           ep.NetworkID,
+					EndpointID:          ep.EndpointID,
+					Gateway:             ep.Gateway,
+					IPAddress:           ep.IPAddress,
+					IPPrefixLen:         ep.IPPrefixLen,
+					IPv6Gateway:         ep.IPv6Gateway,
+					GlobalIPv6Address:   ep.GlobalIPv6Address,
+					GlobalIPv6PrefixLen: ep.GlobalIPv6PrefixLen,
+					MacAddress:          ep.MacAddress,
+					Aliases:             ep.Aliases,
+					DriverOpts:          ep.DriverOpts,
 				}
+				if ep.IPAMConfig != nil {
+					es.IPAMConfig = &api.EndpointIPAMConfig{
+						IPv4Address:  ep.IPAMConfig.IPv4Address,
+						IPv6Address:  ep.IPAMConfig.IPv6Address,
+						LinkLocalIPs: ep.IPAMConfig.LinkLocalIPs,
+					}
+				}
+				c.NetworkSettings.Networks[name] = es
 			}
 		}
 		if len(info.NetworkSettings.Ports) > 0 {

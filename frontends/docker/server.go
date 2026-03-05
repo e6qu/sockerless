@@ -38,6 +38,7 @@ func (s *Server) registerRoutes() {
 	// System
 	s.mux.HandleFunc("GET /_ping", s.handlePing)
 	s.mux.HandleFunc("HEAD /_ping", s.handlePing)
+	s.mux.HandleFunc("POST /_ping", s.handlePing) // BUG-572
 	s.mux.HandleFunc("GET /version", s.handleVersion)
 	s.mux.HandleFunc("GET /info", s.handleInfo)
 
@@ -118,9 +119,12 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /libpod/pods/{name}/kill", s.handlePodKill)
 	s.mux.HandleFunc("DELETE /libpod/pods/{name}", s.handlePodRemove)
 
-	// Unsupported endpoints (501)
+	// Build
 	s.mux.HandleFunc("POST /build", s.handleImageBuild)
+	s.mux.HandleFunc("POST /build/prune", s.handleBuildPrune) // BUG-573
 	s.mux.HandleFunc("POST /commit", s.handleContainerCommit)
+
+	// Unsupported endpoints (501)
 	s.mux.HandleFunc("POST /swarm/", s.handleNotImplemented)
 	s.mux.HandleFunc("GET /swarm", s.handleNotImplemented)
 	s.mux.HandleFunc("GET /nodes", s.handleNotImplemented)

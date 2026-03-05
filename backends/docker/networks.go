@@ -29,9 +29,10 @@ func (s *Server) handleNetworkCreate(w http.ResponseWriter, r *http.Request) {
 		ipamConfigs := make([]network.IPAMConfig, len(req.IPAM.Config))
 		for i, c := range req.IPAM.Config {
 			ipamConfigs[i] = network.IPAMConfig{
-				Subnet:  c.Subnet,
-				IPRange: c.IPRange,
-				Gateway: c.Gateway,
+				Subnet:     c.Subnet,
+				IPRange:    c.IPRange,
+				Gateway:    c.Gateway,
+				AuxAddress: c.AuxiliaryAddresses, // BUG-563
 			}
 		}
 		opts.IPAM = &network.IPAM{
@@ -121,9 +122,10 @@ func mapNetworkIPAMAndContainers(net *api.Network, ipam network.IPAM, containers
 		configs := make([]api.IPAMConfig, 0, len(ipam.Config))
 		for _, c := range ipam.Config {
 			configs = append(configs, api.IPAMConfig{
-				Subnet:  c.Subnet,
-				IPRange: c.IPRange,
-				Gateway: c.Gateway,
+				Subnet:             c.Subnet,
+				IPRange:            c.IPRange,
+				Gateway:            c.Gateway,
+				AuxiliaryAddresses: c.AuxAddress, // BUG-563
 			})
 		}
 		net.IPAM = api.IPAM{
