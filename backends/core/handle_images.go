@@ -260,11 +260,17 @@ func (s *BaseServer) handleImageLoad(w http.ResponseWriter, r *http.Request) {
 
 	s.emitEvent("image", "load", id, map[string]string{"name": displayTag})
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
-		"stream": fmt.Sprintf("Loaded image: %s\n", displayTag),
-	})
+	// BUG-493: Respect quiet param
+	quiet := r.URL.Query().Get("quiet") == "1" || r.URL.Query().Get("quiet") == "true"
+	if quiet {
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{
+			"stream": fmt.Sprintf("Loaded image: %s\n", displayTag),
+		})
+	}
 }
 
 // parseImageTar reads a docker save tar and extracts RepoTags from manifest.json
@@ -339,6 +345,13 @@ func (s *BaseServer) handleImageTag(w http.ResponseWriter, r *http.Request) {
 	}
 
 	repo := r.URL.Query().Get("repo")
+	// BUG-499: Validate that repo is not empty
+	if repo == "" {
+		WriteError(w, &api.InvalidParameterError{
+			Message: "repository name must have at least one component",
+		})
+		return
+	}
 	tag := r.URL.Query().Get("tag")
 	if tag == "" {
 		tag = "latest"
@@ -374,6 +387,8 @@ func (s *BaseServer) handleImageList(w http.ResponseWriter, r *http.Request) {
 	referenceFilters := filters["reference"]
 	danglingFilters := filters["dangling"]
 	labelFilters := filters["label"]
+	beforeFilters := filters["before"] // BUG-490
+	sinceFilters := filters["since"]   // BUG-491
 
 	// BUG-431: Build image→container count map
 	imgContainerCount := make(map[string]int64)
@@ -428,6 +443,42 @@ func (s *BaseServer) handleImageList(w http.ResponseWriter, r *http.Request) {
 		// BUG-279: apply label filter
 		if len(labelFilters) > 0 && !MatchLabels(img.Config.Labels, labelFilters) {
 			continue
+		}
+
+		// BUG-490: apply before filter
+		if len(beforeFilters) > 0 {
+			skip := false
+			for _, val := range beforeFilters {
+				if refImg, ok := s.Store.ResolveImage(val); ok {
+					refTime, _ := time.Parse(time.RFC3339Nano, refImg.Created)
+					imgTime, _ := time.Parse(time.RFC3339Nano, img.Created)
+					if !imgTime.Before(refTime) {
+						skip = true
+						break
+					}
+				}
+			}
+			if skip {
+				continue
+			}
+		}
+
+		// BUG-491: apply since filter
+		if len(sinceFilters) > 0 {
+			skip := false
+			for _, val := range sinceFilters {
+				if refImg, ok := s.Store.ResolveImage(val); ok {
+					refTime, _ := time.Parse(time.RFC3339Nano, refImg.Created)
+					imgTime, _ := time.Parse(time.RFC3339Nano, img.Created)
+					if !imgTime.After(refTime) {
+						skip = true
+						break
+					}
+				}
+			}
+			if skip {
+				continue
+			}
 		}
 
 		created, _ := time.Parse(time.RFC3339Nano, img.Created)
@@ -694,6 +745,17 @@ func (s *BaseServer) handleImagePush(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, &api.NotFoundError{Resource: "image", ID: ref})
 		return
 	}
+
+	// BUG-494: Accept auth query param (base64-encoded JSON credentials)
+	if authB64 := r.URL.Query().Get("auth"); authB64 != "" {
+		if data, err := base64.StdEncoding.DecodeString(authB64); err == nil {
+			var cred api.AuthRequest
+			if json.Unmarshal(data, &cred) == nil && cred.ServerAddress != "" {
+				s.Store.Creds.Put(cred.ServerAddress, cred)
+			}
+		}
+	}
+
 	tag := r.URL.Query().Get("tag")
 	if tag == "" {
 		tag = "latest"

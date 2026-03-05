@@ -152,6 +152,24 @@ func MatchContainerFilters(c api.Container, filters map[string][]string) bool {
 			if !matched {
 				return false
 			}
+		case "expose": // BUG-489
+			matched := false
+			for _, val := range values {
+				if _, ok := c.Config.ExposedPorts[val]; ok {
+					matched = true
+					break
+				}
+				// Try with /tcp suffix if no protocol specified
+				if !strings.Contains(val, "/") {
+					if _, ok := c.Config.ExposedPorts[val+"/tcp"]; ok {
+						matched = true
+						break
+					}
+				}
+			}
+			if !matched {
+				return false
+			}
 		case "is-task": // BUG-393
 			for _, v := range values {
 				if v == "true" {
