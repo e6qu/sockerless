@@ -16,20 +16,36 @@ import (
 
 func (s *BaseServer) handleContainerResize(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
-	_, ok := s.Store.ResolveContainerID(ref)
+	id, ok := s.Store.ResolveContainerID(ref)
 	if !ok {
 		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
 		return
+	}
+	// BUG-495: Accept h/w query params and store on container
+	h, _ := strconv.Atoi(r.URL.Query().Get("h"))
+	rw, _ := strconv.Atoi(r.URL.Query().Get("w"))
+	if h > 0 || rw > 0 {
+		s.Store.Containers.Update(id, func(c *api.Container) {
+			c.HostConfig.ConsoleSize = [2]uint{uint(h), uint(rw)}
+		})
 	}
 	w.WriteHeader(http.StatusOK)
 }
 
 func (s *BaseServer) handleExecResize(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	_, ok := s.Store.Execs.Get(id)
+	exec, ok := s.Store.Execs.Get(id)
 	if !ok {
 		WriteError(w, &api.NotFoundError{Resource: "exec instance", ID: id})
 		return
+	}
+	// BUG-496: Accept h/w query params and store on exec's container
+	h, _ := strconv.Atoi(r.URL.Query().Get("h"))
+	rw, _ := strconv.Atoi(r.URL.Query().Get("w"))
+	if h > 0 || rw > 0 {
+		s.Store.Containers.Update(exec.ContainerID, func(c *api.Container) {
+			c.HostConfig.ConsoleSize = [2]uint{uint(h), uint(rw)}
+		})
 	}
 	w.WriteHeader(http.StatusOK)
 }
@@ -80,10 +96,16 @@ func (s *BaseServer) handleContainerTop(w http.ResponseWriter, r *http.Request) 
 		cmd += " " + strings.Join(c.Args, " ")
 	}
 
+	// BUG-497: Use container's PID instead of hardcoded "1"
+	pid := fmt.Sprintf("%d", c.State.Pid)
+	if c.State.Pid == 0 {
+		pid = "1"
+	}
+
 	WriteJSON(w, http.StatusOK, api.ContainerTopResponse{
 		Titles: []string{"UID", "PID", "PPID", "C", "STIME", "TTY", "TIME", "CMD"},
 		Processes: [][]string{
-			{"root", "1", "0", "0", "00:00", "?", "00:00:00", cmd},
+			{"root", pid, "0", "0", "00:00", "?", "00:00:00", cmd},
 		},
 	})
 }

@@ -77,10 +77,37 @@ func (s *BaseServer) handleVolumeCreate(w http.ResponseWriter, r *http.Request) 
 func (s *BaseServer) handleVolumeList(w http.ResponseWriter, r *http.Request) {
 	filters := ParseFilters(r.URL.Query().Get("filters"))
 
+	// BUG-500: Build in-use volume names for dangling filter
+	var inUseNames map[string]bool
+	if _, hasDangling := filters["dangling"]; hasDangling {
+		inUseNames = make(map[string]bool)
+		for _, c := range s.Store.Containers.List() {
+			for _, m := range c.Mounts {
+				if m.Name != "" {
+					inUseNames[m.Name] = true
+				}
+			}
+			for _, bind := range c.HostConfig.Binds {
+				parts := strings.SplitN(bind, ":", 3)
+				if len(parts) >= 2 && !filepath.IsAbs(parts[0]) {
+					inUseNames[parts[0]] = true
+				}
+			}
+		}
+	}
+
 	var vols []*api.Volume
 	for _, v := range s.Store.Volumes.List() {
 		if !MatchVolumeFilters(v, filters) {
 			continue
+		}
+		// BUG-500: Apply dangling filter
+		if danglingVals, ok := filters["dangling"]; ok {
+			wantDangling := danglingVals[0] == "true" || danglingVals[0] == "1"
+			isDangling := !inUseNames[v.Name]
+			if wantDangling != isDangling {
+				continue
+			}
 		}
 		v := v
 		vols = append(vols, &v)

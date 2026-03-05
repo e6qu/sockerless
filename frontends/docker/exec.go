@@ -76,9 +76,15 @@ func (s *Server) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	}
 	defer clientConn.Close()
 
+	// BUG-501: Use raw-stream content type when TTY is enabled
+	contentType := "application/vnd.docker.multiplexed-stream"
+	if req.Tty {
+		contentType = "application/vnd.docker.raw-stream"
+	}
+
 	// Write upgrade response to Docker client
 	clientBuf.WriteString("HTTP/1.1 101 UPGRADED\r\n")
-	clientBuf.WriteString("Content-Type: application/vnd.docker.multiplexed-stream\r\n")
+	clientBuf.WriteString("Content-Type: " + contentType + "\r\n")
 	clientBuf.WriteString("Connection: Upgrade\r\n")
 	clientBuf.WriteString("Upgrade: tcp\r\n")
 	clientBuf.WriteString("\r\n")

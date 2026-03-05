@@ -1,6 +1,8 @@
 package frontend
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -17,6 +19,34 @@ func (s *Server) handleImageCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer resp.Body.Close()
+
+		// BUG-498: Forward repo/tag by tagging the loaded image
+		repo := r.URL.Query().Get("repo")
+		if repo != "" {
+			body, _ := io.ReadAll(resp.Body)
+			var result map[string]string
+			if json.Unmarshal(body, &result) == nil {
+				if stream, ok := result["stream"]; ok {
+					loaded := strings.TrimPrefix(stream, "Loaded image: ")
+					loaded = strings.TrimSpace(loaded)
+					if loaded != "" {
+						tag := r.URL.Query().Get("tag")
+						query := url.Values{}
+						query.Set("name", loaded)
+						query.Set("repo", repo)
+						if tag != "" {
+							query.Set("tag", tag)
+						}
+						s.backend.postWithQuery(r.Context(), "/images/tag", query, nil)
+					}
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write(body)
+			return
+		}
+
 		proxyPassthrough(w, resp)
 		return
 	}
@@ -104,7 +134,12 @@ func (s *Server) handleImageInspectByName(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleImageLoad(w http.ResponseWriter, r *http.Request) {
-	resp, err := s.backend.postRaw(r.Context(), "/images/load", "application/x-tar", r.Body)
+	// BUG-492: Forward quiet query param to backend
+	path := "/images/load"
+	if q := r.URL.Query().Get("quiet"); q != "" {
+		path += "?quiet=" + q
+	}
+	resp, err := s.backend.postRaw(r.Context(), path, "application/x-tar", r.Body)
 	if err != nil {
 		writeError(w, err)
 		return
