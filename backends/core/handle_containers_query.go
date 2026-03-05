@@ -170,7 +170,7 @@ func (s *BaseServer) handleContainerLogs(w http.ResponseWriter, r *http.Request)
 	stdoutParam := r.URL.Query().Get("stdout")
 	stderrParam := r.URL.Query().Get("stderr")
 	wantStdout := stdoutParam != "0" && stdoutParam != "false" &&
-		!((stderrParam == "1" || stderrParam == "true") && stdoutParam == "")
+		((stderrParam != "1" && stderrParam != "true") || stdoutParam != "")
 
 	// Read from container process or synthetic log buffer via driver chain
 	logBytes := s.Drivers.Stream.LogBytes(id)
