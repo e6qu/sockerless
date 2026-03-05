@@ -58,46 +58,24 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 | 81 | Admin: ProcessManager, cleanup scanner, ProviderInfo |
 | 82 | Admin Projects: orchestrated sim+backend+frontend bundles, port allocator, 4 UI pages |
 
-## Bug Fix Sprints (BUG-001 → BUG-475)
+## Bug Fix Sprints (BUG-001 → BUG-514)
 
-475 bugs fixed across 37 sprints. Per-sprint details in `_tasks/done/BUG-SPRINT-*.md`.
+514 bugs fixed across 40 sprints. Per-sprint details in `_tasks/done/BUG-SPRINT-*.md`.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
-| 1-6 | BUG-001→046 | Admin UI: races, concurrency, error states, XSS, HTTP status codes |
-| SimCmd | BUG-047→051 | FaaS simulator command protocol → `SOCKERLESS_CMD` env var |
-| 7 | BUG-052→062 | Core: tar corruption, error swallowing, cloud resource leaks |
-| 9 | BUG-063→068 | API types (`*bool`), cloud state revert, cloud resource cleanup |
-| 10 | BUG-069→074 | Image store aliases, FaaS kill/prune lifecycle, Docker Mounts |
-| 11 | BUG-075→082 | Lambda restart, Docker inspect/list field mapping (5 bugs) |
-| 12 | BUG-083→090 | Docker create mapping (21 fields), FaaS pause, core events |
-| 13 | BUG-091→098 | Docker NetworkingConfig, LogBuffers leak, 5 Docker field gaps |
-| 14 | BUG-099→106 | FaaS stop state, ECS restart, Docker params, volume prune |
-| 15 | BUG-107→114 | Pod cleanup, CloudRun/ACA Args, Docker auth/filters |
-| 16 | BUG-115→122 | Tar traversal, prune cleanup, cloud AgentRegistry, Docker events/df |
-| 17 | BUG-123→130 | Start revert, kill signals, exec ordering, image dedup, Docker df/auth |
-| 18 | BUG-131→138 | Core restart (health/events/stale), ImageID, image aliases, AgentRegistry leak, FaaS restart, Docker list params |
-| 19 | BUG-139→157 | Core lifecycle (stop/restart/start/exec), cloud AgentRegistry leaks, Docker exec detach, frontend attach |
-| 20 | BUG-158→176 | Core kill/stop events, cloud restart parity, AgentRegistry leak, API types |
-| 21 | BUG-177→201 | Resource leaks, cloud parity, Docker field mapping, lifecycle safety |
-| 22 | BUG-202→226 | Core lifecycle safety, Docker API parity, API type gaps, frontend conformance |
-| 23 | BUG-227→251 | Forward agent fix (CloudRun/ACA), Docker parity, lifecycle safety |
-| 24 | BUG-252→269 | Final 18: BuildCache, FaaS image config, events, image load, LRO waits, API types |
-| 25 | BUG-270→294 | Core lifecycle, API serialization, cloud parity, Docker field mapping |
-| 26 | BUG-295→319 | WaitCh leaks, HTTP status codes, symlink traversal, cloud events, API types |
-| 27 | BUG-320→336 | WaitChs.Delete close gaps (all 8 backends), ACA restart guard, Docker commit ref, frontend logs query param |
-| 28 | BUG-337→344 | ECS ClusterARN, restart task/job leaks, pod kill signal, image tag dedup, frontend stats one-shot |
-| 29 | BUG-345→358 | Cloud restart stop event + RestartCount, remove/prune destroy event + pod cleanup, core pod stop/kill events |
-| 30 | BUG-359→377 | Cloud StopHealthCheck gaps, create event, signalToExitCode, force-remove events, Network.Disconnect, core prune events, pod lifecycle, FormatStatus uptime, Event.Scope, restart event |
-| 31 | BUG-378→394 | Container & pod parity: pod ProcessLifecycle/HealthCheck, pod remove cleanup, pod wait condition, container filter gaps (exited/publish/volume/is-task/size) |
-| 32 | BUG-395→408 | Cloud kill event ordering, TmpfsDirs cleanup (remove+prune), frontend query param forwarding (size/signal/platform/digests/noOverwrite/force), pod list filters, image push/save/search |
-| 33 | BUG-409→422 | Core resize endpoints, stats precpu/memlimit, default networks, event emissions, SpaceReclaimed, deterministic ImageID, paused status, health exec cleanup, paused count, logs stdout/stderr |
-| 34 | BUG-423→436 | Cloud logs parity (since/until/tail/stdout/stderr/details/follow), ImageSummary.Containers count, health check StartInterval |
-| 35 | BUG-437→449 | Container inspect paths, NetworkSettings fields, KernelVersion, exec CanRemove, frontend df type param, image GraphDriver/RootFS, volume UsageData |
-| 36 | BUG-450→462 | System df field gaps, container list SizeRw, commit/build GraphDriver, Container.Image sha256 ID |
-| 37 | BUG-463→475 | Image history/save, stats networks, container size fields, update PidsLimit/OomKillDisable, image push auth, LastTagTime, image search limit |
+| 1-6 | 001→046 | Admin UI: races, concurrency, error states, XSS, HTTP status codes |
+| SimCmd | 047→051 | FaaS simulator command protocol → `SOCKERLESS_CMD` env var |
+| 7-26 | 052→319 | Core lifecycle, cloud parity, Docker field mapping, API types, resource leaks |
+| 27-32 | 320→408 | WaitCh close gaps, cloud events, pod lifecycle, TmpfsDirs cleanup, frontend params |
+| 33-37 | 409→475 | Resize, stats, default networks, cloud logs, container inspect, image metadata |
+| 38-40 | 476→514 | Stop/restart timeout, prune SpaceReclaimed, image save/build/search, Docker backend routes |
 
 0 open bugs remain — see `BUGS.md`.
+
+## Sprint 41 Summary (BUG-515 → BUG-527)
+
+Fixed 13 bugs: ENV merge by key instead of all-or-nothing (BUG-515), clear image Cmd when Entrypoint overridden (BUG-516), stats `id`/`name` fields (BUG-517), stats `precpu_stats` tracks previous reading (BUG-518), volume create 200 for existing (BUG-519), events `since`/`until` with history replay (BUG-520), ECS/CloudRun/ACA cloud error mapping (BUG-521/522/523), image save 404 on missing (BUG-524), `parseLabels` quote-aware tokenizer (BUG-525), `parseEnv` multi-value support (BUG-526), `NanoCpus` field in HostConfig (BUG-527).
 
 ## Sprint 33 Summary (BUG-409 → BUG-422)
 
@@ -158,7 +136,7 @@ Fixed 13 bugs: container `expose` filter (BUG-489), image `before`/`since` list 
 ## Project Stats
 
 - **80 phases** (1-67, 69-77, 79-82), 725 tasks completed
-- **40 bug sprints**, 514 bugs fixed (BUG-001→514), 0 open
+- **41 bug sprints**, 527 bugs fixed (BUG-001→527), 0 open
 - **18 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, CLI, admin, tests
 - **Core tests**: 302 PASS | **Frontend**: 7 | **UI (Vitest)**: 92 | **Admin**: 88 | **bleephub**: 304 | **gitlabhub**: 136 | **ProcessRunner**: 15
 - **Cloud SDK**: AWS 42, GCP 43, Azure 38 | **Cloud CLI**: AWS 26, GCP 21, Azure 19

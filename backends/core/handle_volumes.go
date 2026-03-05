@@ -23,11 +23,10 @@ func (s *BaseServer) handleVolumeCreate(w http.ResponseWriter, r *http.Request) 
 		name = GenerateID()[:12]
 	}
 
-	// Check duplicate
+	// Check duplicate — BUG-519: Docker returns 200 for existing, 201 for new
 	if _, ok := s.Store.Volumes.Get(name); ok {
-		// Docker returns the existing volume (idempotent)
 		v, _ := s.Store.Volumes.Get(name)
-		WriteJSON(w, http.StatusCreated, v)
+		WriteJSON(w, http.StatusOK, v)
 		return
 	}
 

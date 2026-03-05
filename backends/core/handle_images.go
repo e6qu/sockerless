@@ -779,6 +779,14 @@ func (s *BaseServer) handleImageSave(w http.ResponseWriter, r *http.Request) {
 			names = []string{name}
 		}
 	}
+	// BUG-524: Validate all images exist before starting tar stream
+	for _, name := range names {
+		if _, ok := s.Store.ResolveImage(name); !ok {
+			WriteError(w, &api.NotFoundError{Resource: "image", ID: name})
+			return
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/x-tar")
 	w.WriteHeader(http.StatusOK)
 	tw := tar.NewWriter(w)

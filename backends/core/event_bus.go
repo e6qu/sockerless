@@ -12,12 +12,15 @@ type EventBus struct {
 	mu          sync.Mutex
 	subscribers map[string]chan api.Event
 	closed      bool
+	history     []api.Event  // BUG-520: ring buffer for since/until replay
+	maxHistory  int
 }
 
 // NewEventBus creates a new EventBus.
 func NewEventBus() *EventBus {
 	return &EventBus{
 		subscribers: make(map[string]chan api.Event),
+		maxHistory:  1024,
 	}
 }
 
@@ -28,6 +31,11 @@ func (eb *EventBus) Publish(event api.Event) {
 	if eb.closed {
 		return
 	}
+	// BUG-520: Store event in history for since/until replay
+	if len(eb.history) >= eb.maxHistory {
+		eb.history = eb.history[1:]
+	}
+	eb.history = append(eb.history, event)
 	for _, ch := range eb.subscribers {
 		select {
 		case ch <- event:
@@ -35,6 +43,24 @@ func (eb *EventBus) Publish(event api.Event) {
 			// Drop event for slow subscribers to avoid blocking
 		}
 	}
+}
+
+// History returns events with Time >= since. If until > 0, only events with Time <= until.
+// BUG-520: Support replaying past events.
+func (eb *EventBus) History(since, until int64) []api.Event {
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+	var result []api.Event
+	for _, ev := range eb.history {
+		if ev.Time < since {
+			continue
+		}
+		if until > 0 && ev.Time > until {
+			continue
+		}
+		result = append(result, ev)
+	}
+	return result
 }
 
 // Subscribe creates a new subscription and returns an event channel.

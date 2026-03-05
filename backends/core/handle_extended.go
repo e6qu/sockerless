@@ -237,7 +237,29 @@ func (s *BaseServer) buildStatsEntry(containerID string, now time.Time, preread 
 		pids = stats.PIDs
 	}
 
+	systemNanos := now.UnixNano()
+
+	// BUG-518: Load previous CPU reading for precpu_stats
+	var prevCPU, prevSys int64
+	if prev, ok := s.Store.PrevCPUStats.Load(containerID); ok {
+		p := prev.(*prevCPUStats)
+		prevCPU = p.CPUNanos
+		prevSys = p.SystemCPUNanos
+	}
+	s.Store.PrevCPUStats.Store(containerID, &prevCPUStats{
+		CPUNanos:       cpuNanos,
+		SystemCPUNanos: systemNanos,
+	})
+
+	// BUG-517: Look up container name
+	var name string
+	if c, ok := s.Store.Containers.Get(containerID); ok {
+		name = c.Name
+	}
+
 	return map[string]any{
+		"id":   containerID, // BUG-517
+		"name": name,        // BUG-517
 		"read":    now.Format(time.RFC3339Nano),
 		"preread": preread,
 		"cpu_stats": map[string]any{
@@ -245,14 +267,14 @@ func (s *BaseServer) buildStatsEntry(containerID string, now time.Time, preread 
 				"total_usage": cpuNanos,
 			},
 			"online_cpus":      1,
-			"system_cpu_usage": now.UnixNano(),
+			"system_cpu_usage": systemNanos,
 		},
 		"precpu_stats": map[string]any{
 			"cpu_usage": map[string]any{
-				"total_usage": int64(0),
+				"total_usage": prevCPU, // BUG-518
 			},
 			"online_cpus":      1,
-			"system_cpu_usage": int64(0),
+			"system_cpu_usage": prevSys, // BUG-518
 		},
 		"memory_stats": map[string]any{
 			"usage": memUsage,
@@ -263,6 +285,12 @@ func (s *BaseServer) buildStatsEntry(containerID string, now time.Time, preread 
 		},
 		"networks": s.buildNetworkStats(containerID),
 	}
+}
+
+// prevCPUStats holds the previous CPU stats reading for a container.
+type prevCPUStats struct {
+	CPUNanos       int64
+	SystemCPUNanos int64
 }
 
 // buildNetworkStats returns per-network zero-value stats for a container.
@@ -434,6 +462,10 @@ func (s *BaseServer) handleSystemEvents(w http.ResponseWriter, r *http.Request) 
 	containerFilter := evFilters["container"]
 	labelFilter := evFilters["label"]
 
+	// BUG-520: Parse since/until query params (Unix timestamp or RFC3339)
+	sinceTS := parseEventTimestamp(r.URL.Query().Get("since"))
+	untilTS := parseEventTimestamp(r.URL.Query().Get("until"))
+
 	subID := GenerateID()[:16]
 	ch := s.EventBus.Subscribe(subID)
 	defer s.EventBus.Unsubscribe(subID)
@@ -445,41 +477,102 @@ func (s *BaseServer) handleSystemEvents(w http.ResponseWriter, r *http.Request) 
 	}
 
 	enc := json.NewEncoder(w)
+
+	matchEvent := func(event api.Event) bool {
+		if !matchEventFilter(typeFilter, event.Type) {
+			return false
+		}
+		if !matchEventFilter(actionFilter, event.Action) {
+			return false
+		}
+		if len(containerFilter) > 0 {
+			matched := false
+			for _, cf := range containerFilter {
+				if event.Actor.ID == cf || event.Actor.Attributes["name"] == cf {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+		}
+		if len(labelFilter) > 0 && !MatchLabels(event.Actor.Attributes, labelFilter) {
+			return false
+		}
+		return true
+	}
+
+	// BUG-520: Replay historical events if since is set
+	if sinceTS > 0 {
+		for _, event := range s.EventBus.History(sinceTS, untilTS) {
+			if matchEvent(event) {
+				_ = enc.Encode(event)
+			}
+		}
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// If until is in the past, stop immediately
+		if untilTS > 0 && untilTS <= time.Now().Unix() {
+			return
+		}
+	}
+
+	// Set up until timer if specified and in the future
+	var untilCh <-chan time.Time
+	if untilTS > 0 {
+		d := time.Until(time.Unix(untilTS, 0))
+		if d > 0 {
+			untilCh = time.After(d)
+		} else {
+			return
+		}
+	}
+
 	for {
 		select {
 		case event, ok := <-ch:
 			if !ok {
 				return
 			}
-			if !matchEventFilter(typeFilter, event.Type) {
-				continue
-			}
-			if !matchEventFilter(actionFilter, event.Action) {
-				continue
-			}
-			if len(containerFilter) > 0 {
-				matched := false
-				for _, cf := range containerFilter {
-					if event.Actor.ID == cf || event.Actor.Attributes["name"] == cf {
-						matched = true
-						break
-					}
+			if matchEvent(event) {
+				_ = enc.Encode(event)
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
 				}
-				if !matched {
-					continue
-				}
-			}
-			if len(labelFilter) > 0 && !MatchLabels(event.Actor.Attributes, labelFilter) {
-				continue
-			}
-			_ = enc.Encode(event)
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
 			}
 		case <-r.Context().Done():
 			return
+		case <-func() <-chan time.Time {
+			if untilCh != nil {
+				return untilCh
+			}
+			return nil
+		}():
+			return
 		}
 	}
+}
+
+// parseEventTimestamp parses a Docker event timestamp (Unix seconds or RFC3339).
+func parseEventTimestamp(s string) int64 {
+	if s == "" {
+		return 0
+	}
+	// Try integer (Unix seconds) first
+	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return n
+	}
+	// Try float (Unix seconds with nanos)
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return int64(f)
+	}
+	// Try RFC3339
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t.Unix()
+	}
+	return 0
 }
 
 // matchEventFilter returns true if no filter is set or value matches one of the filter values.
