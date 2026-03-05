@@ -735,6 +735,17 @@ func (s *BaseServer) handleImageSave(w http.ResponseWriter, r *http.Request) {
 			"RepoTags": img.RepoTags,
 			"Layers":   layers,
 		})
+
+		// BUG-488: Write image config JSON entry so docker load can parse it
+		configData, _ := json.Marshal(map[string]any{
+			"architecture": img.Architecture,
+			"os":           img.Os,
+			"created":      img.Created,
+			"config":       img.Config,
+			"rootfs":       img.RootFS,
+		})
+		_ = tw.WriteHeader(&tar.Header{Name: img.ID + ".json", Size: int64(len(configData))})
+		_, _ = tw.Write(configData)
 	}
 	if manifests == nil {
 		manifests = []map[string]any{}

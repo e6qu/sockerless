@@ -334,6 +334,13 @@ func (s *BaseServer) handleContainerStop(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// BUG-476: Accept timeout query param (seconds before SIGKILL)
+	timeout := 0
+	if t := r.URL.Query().Get("t"); t != "" {
+		timeout, _ = strconv.Atoi(t)
+	}
+	_ = timeout // accepted for API parity; synthetic containers stop instantly
+
 	s.StopHealthCheck(id)
 	s.Drivers.ProcessLifecycle.Stop(id)
 	s.Drivers.ProcessLifecycle.Cleanup(id)
@@ -463,6 +470,13 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// BUG-477: Accept timeout query param (seconds before SIGKILL)
+	timeout := 0
+	if t := r.URL.Query().Get("t"); t != "" {
+		timeout, _ = strconv.Atoi(t)
+	}
+	_ = timeout // accepted for API parity; synthetic containers stop instantly
+
 	c, _ := s.Store.Containers.Get(id)
 	if c.State.Running {
 		s.StopHealthCheck(id)
@@ -557,12 +571,21 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	c, _ := s.Store.Containers.Get(id)
-
 	// BUG-384: Read condition query parameter (not-running, next-exit, removed)
 	condition := r.URL.Query().Get("condition")
 	if condition == "" {
 		condition = "not-running"
+	}
+
+	// BUG-487: Handle "removed" condition — if container is already gone, return exit code 0
+	c, exists := s.Store.Containers.Get(id)
+	if !exists {
+		if condition == "removed" {
+			WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: 0})
+			return
+		}
+		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
+		return
 	}
 
 	// If already exited, return immediately (unless next-exit which waits for a new exit)
@@ -604,6 +627,15 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 	select {
 	case <-ch.(chan struct{}):
 		c, _ = s.Store.Containers.Get(id)
+		// BUG-487: For "removed" condition, poll briefly for actual container deletion
+		if condition == "removed" {
+			for i := 0; i < 50; i++ {
+				if _, exists := s.Store.Containers.Get(id); !exists {
+					break
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
 		WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{
 			StatusCode: c.State.ExitCode,
 		})

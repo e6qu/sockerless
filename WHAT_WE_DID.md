@@ -143,10 +143,14 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 
 13 bugs fixed across image endpoints, stats, container inspect, update request, and frontend forwarding. `handleImageHistory` now returns per-layer entries from `RootFS.Layers` instead of a single hardcoded entry (BUG-463). `handleImageSave` manifest uses actual `RootFS.Layers` instead of empty array (BUG-464). `buildStatsEntry` populates `networks` field from container `NetworkSettings` (BUG-465). API `Container` struct gets `SizeRw`/`SizeRootFs` pointer fields (BUG-466). Core `handleContainerInspect` respects `size` query parameter (BUG-467), forwarded by frontend (BUG-468). Frontend `handleVersion` uses `info.KernelVersion` instead of empty string (BUG-469). `ContainerUpdateRequest` gets `PidsLimit` (BUG-470) and `OomKillDisable` (BUG-471) fields. Frontend `handleImagePush` forwards `X-Registry-Auth` header as query param (BUG-472), core accepts it (BUG-473). Image `Metadata.LastTagTime` set on pull/load/build/commit/tag operations (BUG-474). `handleImageSearch` respects `limit` query parameter (BUG-475).
 
+## Sprint 38 Summary (BUG-476 → BUG-488)
+
+13 bugs fixed across core and all 6 cloud backends. Core `handleContainerStop` and `handleContainerRestart` now accept the `t` (timeout) query parameter for API parity (BUG-476/477). All 6 cloud backends (`handleContainerPrune`) now sum image sizes for `SpaceReclaimed` instead of hardcoding 0 (BUG-478→483). The 3 container-service backends (ECS, CloudRun, ACA) `handleVolumePrune` now sum volume directory sizes for `SpaceReclaimed` (BUG-484→486). Core `handleContainerWait` now handles `condition=removed` — returns exit code 0 if the container is already gone, and polls briefly for actual deletion after stop (BUG-487). Core `handleImageSave` now writes image config JSON entries (architecture, os, created, config, rootfs) alongside manifest.json so `docker load` can parse the full image metadata (BUG-488).
+
 ## Project Stats
 
 - **80 phases** (1-67, 69-77, 79-82), 725 tasks completed
-- **37 bug sprints**, 475 bugs fixed (BUG-001→475), 0 open
+- **38 bug sprints**, 488 bugs fixed (BUG-001→488), 0 open
 - **18 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, CLI, admin, tests
 - **Core tests**: 302 PASS | **Frontend**: 7 | **UI (Vitest)**: 92 | **Admin**: 88 | **bleephub**: 304 | **gitlabhub**: 136 | **ProcessRunner**: 15
 - **Cloud SDK**: AWS 42, GCP 43, Azure 38 | **Cloud CLI**: AWS 26, GCP 21, Azure 19
