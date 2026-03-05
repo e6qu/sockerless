@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types"
@@ -171,7 +172,7 @@ func (s *Server) handleNetworkConnect(w http.ResponseWriter, r *http.Request) {
 		writeError(w, mapDockerError(err))
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleVolumePrune removes unused volumes.
@@ -546,6 +547,11 @@ func (s *Server) handleContainerCommit(w http.ResponseWriter, r *http.Request) {
 	tag := r.URL.Query().Get("tag")
 	comment := r.URL.Query().Get("comment")
 	author := r.URL.Query().Get("author")
+	pause := r.URL.Query().Get("pause") != "false" && r.URL.Query().Get("pause") != "0"
+	var changes []string
+	if c := r.URL.Query().Get("changes"); c != "" {
+		changes = strings.Split(c, "\n")
+	}
 
 	resp, err := s.docker.ContainerCommit(r.Context(), containerID, container.CommitOptions{
 		Reference: func() string {
@@ -554,8 +560,10 @@ func (s *Server) handleContainerCommit(w http.ResponseWriter, r *http.Request) {
 			}
 			return repo
 		}(),
-		Comment:   comment,
-		Author:    author,
+		Comment: comment,
+		Author:  author,
+		Pause:   pause,
+		Changes: changes,
 	})
 	if err != nil {
 		writeError(w, mapDockerError(err))

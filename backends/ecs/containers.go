@@ -45,10 +45,8 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 
 	// Merge image config if available
 	if img, ok := s.Store.ResolveImage(config.Image); ok {
-		if len(config.Env) == 0 {
-			config.Env = img.Config.Env
-		}
-		if len(config.Cmd) == 0 {
+		config.Env = mergeEnvByKey(img.Config.Env, config.Env)
+		if len(config.Cmd) == 0 && len(config.Entrypoint) == 0 {
 			config.Cmd = img.Config.Cmd
 		}
 		if len(config.Entrypoint) == 0 {
@@ -154,7 +152,7 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 			s.Logger.Error().Err(err).Msg("failed to register task definition")
 			s.Store.Containers.Delete(id)
 			s.Store.ContainerNames.Delete(name)
-			core.WriteError(w, fmt.Errorf("failed to register task definition: %w", err))
+			core.WriteError(w, mapAWSError(err, "task-definition", id))
 			return
 		}
 		s.ECS.Put(id, ECSState{
@@ -235,7 +233,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		})
 		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
-		core.WriteError(w, err)
+		core.WriteError(w, mapAWSError(err, "task", id))
 		return
 	}
 
@@ -287,7 +285,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 				s.Registry.MarkCleanedUp(taskARN)
 				s.AgentRegistry.Remove(id)
 				s.Store.RevertToCreated(id)
-				core.WriteError(w, fmt.Errorf("task failed to start: %w", err))
+				core.WriteError(w, mapAWSError(err, "task", id))
 				return
 			}
 
@@ -395,7 +393,7 @@ func (s *Server) startMultiContainerTask(w http.ResponseWriter, triggerID string
 	taskDefARN, err := s.registerTaskDefinition(s.ctx(), inputs)
 	if err != nil {
 		s.Logger.Error().Err(err).Msg("failed to register multi-container task definition")
-		core.WriteError(w, fmt.Errorf("failed to register task definition: %w", err))
+		core.WriteError(w, mapAWSError(err, "task-definition", triggerID))
 		return
 	}
 
@@ -422,7 +420,7 @@ func (s *Server) startMultiContainerTask(w http.ResponseWriter, triggerID string
 		for _, pc := range podContainers {
 			s.Store.RevertToCreated(pc.ID)
 		}
-		core.WriteError(w, err)
+		core.WriteError(w, mapAWSError(err, "task", mainID))
 		return
 	}
 
@@ -466,7 +464,7 @@ func (s *Server) startMultiContainerTask(w http.ResponseWriter, triggerID string
 			for _, pc := range podContainers {
 				s.Store.RevertToCreated(pc.ID)
 			}
-			core.WriteError(w, fmt.Errorf("task failed to start: %w", err))
+			core.WriteError(w, mapAWSError(err, "task", mainID))
 			return
 		}
 
@@ -841,4 +839,34 @@ func (s *Server) pollTaskExit(containerID, taskARN string, exitCh chan struct{})
 			}
 		}
 	}
+}
+
+// mergeEnvByKey merges base env vars with override env vars by key.
+// Override values replace base values with the same key; order is preserved.
+func mergeEnvByKey(base, override []string) []string {
+	if len(override) == 0 {
+		return base
+	}
+	if len(base) == 0 {
+		return override
+	}
+	keys := make(map[string]string)
+	order := make([]string, 0, len(base)+len(override))
+	for _, e := range base {
+		k, _, _ := strings.Cut(e, "=")
+		keys[k] = e
+		order = append(order, k)
+	}
+	for _, e := range override {
+		k, _, _ := strings.Cut(e, "=")
+		if _, exists := keys[k]; !exists {
+			order = append(order, k)
+		}
+		keys[k] = e
+	}
+	result := make([]string, 0, len(order))
+	for _, k := range order {
+		result = append(result, keys[k])
+	}
+	return result
 }

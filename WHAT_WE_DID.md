@@ -125,6 +125,10 @@ Fixed 13 bugs: ENV merge by key instead of all-or-nothing (BUG-515), clear image
 
 13 bugs fixed across core and all 6 cloud backends. Core `handleContainerStop` and `handleContainerRestart` now accept the `t` (timeout) query parameter for API parity (BUG-476/477). All 6 cloud backends (`handleContainerPrune`) now sum image sizes for `SpaceReclaimed` instead of hardcoding 0 (BUG-478→483). The 3 container-service backends (ECS, CloudRun, ACA) `handleVolumePrune` now sum volume directory sizes for `SpaceReclaimed` (BUG-484→486). Core `handleContainerWait` now handles `condition=removed` — returns exit code 0 if the container is already gone, and polls briefly for actual deletion after stop (BUG-487). Core `handleImageSave` now writes image config JSON entries (architecture, os, created, config, rootfs) alongside manifest.json so `docker load` can parse the full image metadata (BUG-488).
 
+## Sprint 42 Summary (BUG-528 → BUG-540)
+
+Fixed 13 bugs across cloud backends, Docker backend, and core. All 3 cloud container backends (ECS, CloudRun, ACA) now use key-based ENV merge instead of all-or-nothing replacement (BUG-528), and clear inherited Cmd when Entrypoint is overridden (BUG-529). Added `mapAWSError`/`mapGCPError`/`mapAzureError` to ECS/CloudRun/ACA `errors.go` — raw cloud SDK errors are now mapped to proper Docker API error types (BUG-530/531/532). Docker backend `handleContainerCreate` now maps 26 additional HostConfig fields: DNS, memory/CPU resources, PidMode, IpcMode, UTSMode, VolumesFrom, GroupAdd, ReadonlyRootfs, OomKillDisable, PidsLimit, Sysctls, Runtime, Links, PublishAllPorts, CgroupnsMode, ConsoleSize (BUG-533). Same 26 fields added to `mapContainerFromDocker` inspect output (BUG-534). Docker `handleNetworkConnect` returns 204 instead of 200 (BUG-535). Core `handleContainerCommit` now accepts `changes` query param with Dockerfile instructions (CMD, ENTRYPOINT, ENV, WORKDIR, USER, LABEL, EXPOSE) and `pause` param (BUG-536/537). GCF `http.Post` replaced with 10-minute timeout client (BUG-538). Docker `handleContainerCommit` passes `changes` and `pause` to Docker SDK (BUG-539). Docker `handleImagePull` passes `Platform` field (BUG-540). Added `NanoCpus` to `api.HostConfig`. Created `FEATURE_MATRIX.md` — comprehensive Docker API compatibility matrix across all 9 backends.
+
 ## Sprint 40 Summary (BUG-502 → BUG-514)
 
 Fixed 13 bugs: frontend attach TTY content-type `raw-stream` (BUG-502), exec create empty `Cmd` validation (BUG-503), container top `ps_args` param (BUG-504), container stop `signal` param with exit code (BUG-505), frontend container create `platform` forwarding (BUG-506), frontend container remove `link` forwarding (BUG-507), Docker backend image push route (BUG-508), Docker backend image save routes (BUG-509), Docker backend image search route (BUG-510), Docker backend image build route (BUG-511), Docker backend archive routes (BUG-512), image search result sorting by relevance (BUG-513), frontend container start `detachKeys` forwarding (BUG-514).
@@ -136,7 +140,7 @@ Fixed 13 bugs: container `expose` filter (BUG-489), image `before`/`since` list 
 ## Project Stats
 
 - **80 phases** (1-67, 69-77, 79-82), 725 tasks completed
-- **41 bug sprints**, 527 bugs fixed (BUG-001→527), 0 open
+- **42 bug sprints**, 540 bugs fixed (BUG-001→540), 0 open
 - **18 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, CLI, admin, tests
 - **Core tests**: 302 PASS | **Frontend**: 7 | **UI (Vitest)**: 92 | **Admin**: 88 | **bleephub**: 304 | **gitlabhub**: 136 | **ProcessRunner**: 15
 - **Cloud SDK**: AWS 42, GCP 43, Azure 38 | **Cloud CLI**: AWS 26, GCP 21, Azure 19

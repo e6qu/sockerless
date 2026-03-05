@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/sockerless/api"
@@ -34,6 +35,7 @@ func (s *BaseServer) handleContainerCommit(w http.ResponseWriter, r *http.Reques
 	}
 	comment := r.URL.Query().Get("comment")
 	author := r.URL.Query().Get("author")
+	_ = r.URL.Query().Get("pause") // accepted but no-op for synthetic containers
 
 	// Start with the container's config
 	imgConfig := c.Config
@@ -62,6 +64,45 @@ func (s *BaseServer) handleContainerCommit(w http.ResponseWriter, r *http.Reques
 		}
 		if overrides.WorkingDir != "" {
 			imgConfig.WorkingDir = overrides.WorkingDir
+		}
+	}
+
+	// Apply changes query param (Dockerfile instructions)
+	if changesParam := r.URL.Query().Get("changes"); changesParam != "" {
+		for _, change := range strings.Split(changesParam, "\n") {
+			change = strings.TrimSpace(change)
+			if change == "" {
+				continue
+			}
+			parts := strings.SplitN(change, " ", 2)
+			if len(parts) < 2 {
+				continue
+			}
+			instruction, value := strings.ToUpper(parts[0]), parts[1]
+			switch instruction {
+			case "CMD":
+				imgConfig.Cmd = parseJSONOrShell(value)
+			case "ENTRYPOINT":
+				imgConfig.Entrypoint = parseJSONOrShell(value)
+			case "ENV":
+				k, v, _ := strings.Cut(value, "=")
+				imgConfig.Env = append(imgConfig.Env, k+"="+v)
+			case "WORKDIR":
+				imgConfig.WorkingDir = value
+			case "USER":
+				imgConfig.User = value
+			case "LABEL":
+				k, v, _ := strings.Cut(value, "=")
+				if imgConfig.Labels == nil {
+					imgConfig.Labels = map[string]string{}
+				}
+				imgConfig.Labels[k] = strings.Trim(v, "\"")
+			case "EXPOSE":
+				if imgConfig.ExposedPorts == nil {
+					imgConfig.ExposedPorts = map[string]struct{}{}
+				}
+				imgConfig.ExposedPorts[value+"/tcp"] = struct{}{}
+			}
 		}
 	}
 
@@ -109,4 +150,13 @@ func (s *BaseServer) handleContainerCommit(w http.ResponseWriter, r *http.Reques
 	})
 
 	WriteJSON(w, http.StatusCreated, api.ContainerCommitResponse{ID: imageID})
+}
+
+// parseJSONOrShell tries to parse value as a JSON array, falling back to shell form.
+func parseJSONOrShell(value string) []string {
+	var result []string
+	if err := json.Unmarshal([]byte(value), &result); err == nil {
+		return result
+	}
+	return []string{"/bin/sh", "-c", value}
 }

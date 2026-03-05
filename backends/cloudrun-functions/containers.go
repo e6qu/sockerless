@@ -15,6 +15,8 @@ import (
 	core "github.com/sockerless/backend-core"
 )
 
+var gcfHTTPClient = &http.Client{Timeout: 10 * time.Minute}
+
 func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 	var req api.ContainerCreateRequest
 	if err := core.ReadJSON(r, &req); err != nil {
@@ -308,7 +310,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		if len(cmd) > 0 && gcfState.FunctionURL != "" {
 			go func() {
 				exitCode := 0
-				resp, err := http.Post(gcfState.FunctionURL, "application/json", nil)
+				resp, err := gcfHTTPClient.Post(gcfState.FunctionURL, "application/json", nil)
 				if err != nil {
 					s.Logger.Error().Err(err).Str("function", gcfState.FunctionName).Msg("function invocation failed")
 					exitCode = 1
@@ -351,7 +353,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		exitCode := 0
 
 		if gcfState.FunctionURL != "" {
-			resp, err := http.Post(gcfState.FunctionURL, "application/json", nil)
+			resp, err := gcfHTTPClient.Post(gcfState.FunctionURL, "application/json", nil)
 			if err != nil {
 				s.Logger.Error().Err(err).Str("function", gcfState.FunctionName).Msg("function invocation failed")
 				exitCode = 1

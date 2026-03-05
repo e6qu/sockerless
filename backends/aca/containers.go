@@ -43,10 +43,8 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 
 	// Merge image config if available
 	if img, ok := s.Store.ResolveImage(config.Image); ok {
-		if len(config.Env) == 0 {
-			config.Env = img.Config.Env
-		}
-		if len(config.Cmd) == 0 {
+		config.Env = mergeEnvByKey(img.Config.Env, config.Env)
+		if len(config.Cmd) == 0 && len(config.Entrypoint) == 0 {
 			config.Cmd = img.Config.Cmd
 		}
 		if len(config.Entrypoint) == 0 {
@@ -216,7 +214,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to create ACA Job")
 		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
-		core.WriteError(w, fmt.Errorf("failed to create job: %w", err))
+		core.WriteError(w, mapAzureError(err, "job", id))
 		return
 	}
 
@@ -227,7 +225,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
-		core.WriteError(w, fmt.Errorf("job creation failed: %w", err))
+		core.WriteError(w, mapAzureError(err, "job", id))
 		return
 	}
 
@@ -248,7 +246,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		s.deleteJob(jobName)
 		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
-		core.WriteError(w, fmt.Errorf("failed to start job: %w", err))
+		core.WriteError(w, mapAzureError(err, "execution", id))
 		return
 	}
 
@@ -259,7 +257,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 		s.deleteJob(jobName)
 		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
-		core.WriteError(w, fmt.Errorf("start job failed: %w", err))
+		core.WriteError(w, mapAzureError(err, "execution", id))
 		return
 	}
 
@@ -310,7 +308,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 				s.AgentRegistry.Remove(id)
 				s.deleteJob(jobName)
 				s.Store.RevertToCreated(id)
-				core.WriteError(w, fmt.Errorf("execution failed to start: %w", err))
+				core.WriteError(w, mapAzureError(err, "execution", id))
 				return
 			}
 
@@ -402,7 +400,7 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 		for _, pc := range podContainers {
 			s.Store.RevertToCreated(pc.ID)
 		}
-		core.WriteError(w, fmt.Errorf("failed to create job: %w", err))
+		core.WriteError(w, mapAzureError(err, "job", mainID))
 		return
 	}
 
@@ -416,7 +414,7 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 			s.Store.RevertToCreated(pc.ID)
 		}
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
-		core.WriteError(w, fmt.Errorf("job creation failed: %w", err))
+		core.WriteError(w, mapAzureError(err, "job", mainID))
 		return
 	}
 
@@ -440,7 +438,7 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 		for _, pc := range podContainers {
 			s.Store.RevertToCreated(pc.ID)
 		}
-		core.WriteError(w, fmt.Errorf("failed to start job: %w", err))
+		core.WriteError(w, mapAzureError(err, "execution", mainID))
 		return
 	}
 
@@ -454,7 +452,7 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 		for _, pc := range podContainers {
 			s.Store.RevertToCreated(pc.ID)
 		}
-		core.WriteError(w, fmt.Errorf("start job failed: %w", err))
+		core.WriteError(w, mapAzureError(err, "execution", mainID))
 		return
 	}
 
@@ -503,7 +501,7 @@ func (s *Server) startMultiContainerJob(w http.ResponseWriter, triggerID string,
 			for _, pc := range podContainers {
 				s.Store.RevertToCreated(pc.ID)
 			}
-			core.WriteError(w, fmt.Errorf("execution failed to start: %w", err))
+			core.WriteError(w, mapAzureError(err, "execution", mainID))
 			return
 		}
 
@@ -888,4 +886,34 @@ func (s *Server) deleteJob(jobName string) {
 		return
 	}
 	_, _ = poller.PollUntilDone(s.ctx(), nil)
+}
+
+// mergeEnvByKey merges base env vars with override env vars by key.
+// Override values replace base values with the same key; order is preserved.
+func mergeEnvByKey(base, override []string) []string {
+	if len(override) == 0 {
+		return base
+	}
+	if len(base) == 0 {
+		return override
+	}
+	keys := make(map[string]string)
+	order := make([]string, 0, len(base)+len(override))
+	for _, e := range base {
+		k, _, _ := strings.Cut(e, "=")
+		keys[k] = e
+		order = append(order, k)
+	}
+	for _, e := range override {
+		k, _, _ := strings.Cut(e, "=")
+		if _, exists := keys[k]; !exists {
+			order = append(order, k)
+		}
+		keys[k] = e
+	}
+	result := make([]string, 0, len(order))
+	for _, k := range order {
+		result = append(result, keys[k])
+	}
+	return result
 }

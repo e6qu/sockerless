@@ -18,7 +18,7 @@ func (s *Server) handleImagePull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rc, err := s.docker.ImagePull(r.Context(), req.Reference, image.PullOptions{RegistryAuth: req.Auth})
+	rc, err := s.docker.ImagePull(r.Context(), req.Reference, image.PullOptions{RegistryAuth: req.Auth, Platform: req.Platform})
 	if err != nil {
 		writeError(w, mapDockerError(err))
 		return
