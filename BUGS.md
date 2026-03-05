@@ -1,8 +1,8 @@
 # Known Bugs
 
-## Fixed (BUG-001 → BUG-553)
+## Fixed (BUG-001 → BUG-583)
 
-553 bugs fixed across 43 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
+583 bugs fixed across 45 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
@@ -44,6 +44,48 @@
 | 41 | BUG-515→527 | ENV merge, Cmd/Entrypoint, stats name/id/precpu, volume 200, events since/until, cloud errors, image save 404, Dockerfile parser, NanoCpus |
 | 42 | BUG-528→540 | ECS/CloudRun/ACA ENV merge + Cmd/Entrypoint, staticcheck QF1008, errcheck lint |
 | 43 | BUG-541→553 | FaaS ENV merge + Cmd/Entrypoint, Docker image tag 200, Healthcheck StartInterval, ContainerConfig fields, Mount inspect, incrementing PIDs, deterministic image sizes |
+| 44 | BUG-554→574 | Docker inspect/list field mapping, cloud restart, KQL datetime, frontend routes |
+| 45 | BUG-575→583 | Docker image GraphDriver, system df EndpointSettings/HostConfig/Volume UsageData parity, volume UsageData, image push auth header+query, BuildCache zero-time, frontend commit multi-value changes |
+
+## Sprint 45 Detail (BUG-575 → BUG-583)
+
+| Bug | Component | Issue |
+|-----|-----------|-------|
+| BUG-575 | Docker | `handleImageInspect` never maps `info.GraphDriver` to `img.GraphDriver` |
+| BUG-576 | Docker | `handleSystemDf` EndpointSettings missing IPv6Gateway, GlobalIPv6Address, GlobalIPv6PrefixLen, DriverOpts, IPAMConfig |
+| BUG-577 | Docker | `handleSystemDf` ContainerSummary never sets HostConfig field |
+| BUG-578 | Docker | `handleSystemDf` Volume mapping missing UsageData |
+| BUG-579 | Docker | `handleVolumeCreate`/`handleVolumeList`/`handleVolumeInspect` never map `vol.UsageData` |
+| BUG-580 | Docker | FALSE POSITIVE — Docker SDK `MountPoint` has no Consistency field |
+| BUG-581 | Docker | `handleImagePush` reads auth from header only — now checks header first, falls back to query param |
+| BUG-582 | Docker | `handleSystemDf` BuildCache `LastUsedAt` formats zero time — now empty when unused |
+| BUG-583 | Frontend | `handleContainerCommit` uses `Get("changes")` — now forwards all `changes` params |
+
+## Sprint 44 Detail (BUG-554 → BUG-574)
+
+| ID | Component | Description |
+|----|-----------|-------------|
+| BUG-554 | Docker | `handleContainerLogs` hardcodes multiplexed-stream Content-Type — now checks TTY mode |
+| BUG-555 | Docker | `mapContainerFromDocker` missing top-level NetworkSettings scalars (Bridge, SandboxID, etc.) |
+| BUG-556 | Docker | Container inspect EndpointSettings missing IPv6Gateway, GlobalIPv6Address, IPAMConfig, DriverOpts |
+| BUG-557 | Docker | Container list EndpointSettings same missing fields as BUG-556 |
+| BUG-558 | Docker | Container list ContainerSummary never sets HostConfig field |
+| BUG-559 | Docker | `handleImagePush` reads auth from query param instead of X-Registry-Auth header |
+| BUG-560 | Docker | `handleContainerCommit` uses Get("changes") instead of Query()["changes"] for multi-value |
+| BUG-561 | Docker | Container/exec resize return 200 instead of 204 No Content |
+| BUG-562 | Docker | `handleExecInspect` missing OpenStdin, OpenStdout, OpenStderr, DetachKeys fields |
+| BUG-563 | Docker | Network create/inspect drop IPAM AuxiliaryAddresses |
+| BUG-564 | Docker | Image inspect healthcheck missing StartInterval field |
+| BUG-565 | Docker | NetworkSettings.Ports serializes as null instead of {} when empty |
+| BUG-566 | ECS | `handleContainerRestart` deregisters TaskDef but doesn't clear stale ARN in state |
+| BUG-567 | CloudRun | `handleContainerRestart` deletes job but doesn't clear JobName — causes double-delete |
+| BUG-568 | AZF+Core | KQL `datetime()` filter missing quotes around timestamp string (3 locations) |
+| BUG-569 | ACA | `waitForExecutionComplete` and `pollExecutionExit` skip all executions when executionName is empty |
+| BUG-570 | Frontend | `handleContainerList` doesn't forward before/since query params |
+| BUG-571 | Frontend | `handleContainerRestart` doesn't forward signal query param |
+| BUG-572 | Frontend | Missing `POST /_ping` route — Docker clients (e.g. buildx) use POST |
+| BUG-573 | Frontend | Missing `POST /build/prune` route for build cache pruning |
+| BUG-574 | Docker | `handleExecStart` always starts stdin copy goroutine even when AttachStdin=false |
 
 ## Sprint 43 Detail (BUG-541 → BUG-553)
 
@@ -122,3 +164,10 @@ Bugs investigated and confirmed as non-issues. Tracked here to avoid re-collecti
 | FP-007 | Core | Missing Ulimits/DeviceRequests/Devices in HostConfig | Lower priority — save for future sprint |
 | FP-008 | Core | FaaS stop doesn't cancel invocations | By design — FaaS invocations are fire-and-forget |
 | FP-009 | Core | FaaS resource leak on pod validation failure | Validation order is correct — rejection before cloud resource creation |
+| FP-010 | Docker | ContainerUpdate decodes into SDK type | Direct pass-through is correct — same JSON shape as api type |
+| FP-011 | Docker | ExecInspect ProcessConfig missing env/workingDir | Docker's exec ProcessConfig JSON doesn't include these fields |
+| FP-012 | Core | FaaS ENV merge still broken | Already fixed in Sprint 43 (BUG-541) — uses `core.MergeEnvByKey` now |
+| FP-013 | Core | FaaS Cmd/Entrypoint still broken | Already fixed in Sprint 43 (BUG-542) |
+| FP-014 | API | ConsoleSize `[2]uint` should be `*[2]uint` | Matches Docker SDK type; ExecStartRequest already uses pointer variant |
+| FP-015 | Core | Pause/Unpause 501 on cloud backends | Expected limitation — cloud services don't support pause semantics |
+| FP-016 | Core | Image load 501 on cloud backends | Expected limitation — cloud backends use registries |

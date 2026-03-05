@@ -802,7 +802,8 @@ func (s *Server) waitForExecutionComplete(jobName, executionName string, exitCh 
 					break
 				}
 				for _, exec := range page.Value {
-					if exec.Name == nil || *exec.Name != executionName {
+					// BUG-569: Guard against empty executionName
+					if executionName != "" && (exec.Name == nil || *exec.Name != executionName) {
 						continue
 					}
 					if exec.Status == nil {
@@ -838,7 +839,8 @@ func (s *Server) pollExecutionExit(containerID, jobName, executionName string, e
 					break
 				}
 				for _, exec := range page.Value {
-					if exec.Name == nil || *exec.Name != executionName {
+					// BUG-569: Guard against empty executionName
+					if executionName != "" && (exec.Name == nil || *exec.Name != executionName) {
 						continue
 					}
 					if exec.Status == nil {

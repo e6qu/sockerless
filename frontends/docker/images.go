@@ -330,10 +330,13 @@ func (s *Server) handleImageSearch(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleContainerCommit(w http.ResponseWriter, r *http.Request) {
 	query := url.Values{}
-	for _, key := range []string{"container", "repo", "tag", "comment", "author", "pause", "changes"} {
+	for _, key := range []string{"container", "repo", "tag", "comment", "author", "pause"} {
 		if v := r.URL.Query().Get(key); v != "" {
 			query.Set(key, v)
 		}
+	}
+	for _, c := range r.URL.Query()["changes"] {
+		query.Add("changes", c)
 	}
 	resp, err := s.backend.postRawWithQuery(r.Context(), "/commit", query, "application/json", r.Body)
 	if err != nil {
@@ -342,6 +345,14 @@ func (s *Server) handleContainerCommit(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 	proxyPassthrough(w, resp)
+}
+
+// BUG-573: handleBuildPrune returns a stub response for build cache pruning.
+func (s *Server) handleBuildPrune(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"CachesDeleted": nil,
+		"SpaceReclaimed": 0,
+	})
 }
 
 func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {

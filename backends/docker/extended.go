@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types"
@@ -377,6 +376,7 @@ func (s *Server) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 			SizeRw:     c.SizeRw,
 			SizeRootFs: c.SizeRootFs,
 			Mounts:     mapMountsFromDf(c.Mounts),
+			HostConfig: &api.HostConfigSummary{NetworkMode: string(c.HostConfig.NetworkMode)},
 		}
 		for _, p := range c.Ports {
 			cs.Ports = append(cs.Ports, api.Port{
@@ -390,12 +390,23 @@ func (s *Server) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 			nets := make(map[string]*api.EndpointSettings, len(c.NetworkSettings.Networks))
 			for name, ep := range c.NetworkSettings.Networks {
 				nets[name] = &api.EndpointSettings{
-					NetworkID:   ep.NetworkID,
-					EndpointID:  ep.EndpointID,
-					Gateway:     ep.Gateway,
-					IPAddress:   ep.IPAddress,
-					IPPrefixLen: ep.IPPrefixLen,
-					MacAddress:  ep.MacAddress,
+					NetworkID:           ep.NetworkID,
+					EndpointID:          ep.EndpointID,
+					Gateway:             ep.Gateway,
+					IPAddress:           ep.IPAddress,
+					IPPrefixLen:         ep.IPPrefixLen,
+					IPv6Gateway:         ep.IPv6Gateway,
+					GlobalIPv6Address:   ep.GlobalIPv6Address,
+					GlobalIPv6PrefixLen: ep.GlobalIPv6PrefixLen,
+					MacAddress:          ep.MacAddress,
+					DriverOpts:          ep.DriverOpts,
+				}
+				if ep.IPAMConfig != nil {
+					nets[name].IPAMConfig = &api.EndpointIPAMConfig{
+						IPv4Address:  ep.IPAMConfig.IPv4Address,
+						IPv6Address:  ep.IPAMConfig.IPv6Address,
+						LinkLocalIPs: ep.IPAMConfig.LinkLocalIPs,
+					}
 				}
 			}
 			cs.NetworkSettings = &api.SummaryNetworkSettings{Networks: nets}
@@ -428,7 +439,7 @@ func (s *Server) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 	var volumes []*api.Volume
 	if du.Volumes != nil {
 		for _, v := range du.Volumes {
-			volumes = append(volumes, &api.Volume{
+			vol := &api.Volume{
 				Name:       v.Name,
 				Driver:     v.Driver,
 				Mountpoint: v.Mountpoint,
@@ -437,7 +448,14 @@ func (s *Server) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 				Scope:      v.Scope,
 				Options:    v.Options,
 				Status:     v.Status,
-			})
+			}
+			if v.UsageData != nil {
+				vol.UsageData = &api.VolumeUsageData{
+					Size:     v.UsageData.Size,
+					RefCount: v.UsageData.RefCount,
+				}
+			}
+			volumes = append(volumes, vol)
 		}
 	}
 	if volumes == nil {
@@ -455,7 +473,12 @@ func (s *Server) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 			Shared:      bc.Shared,
 			Size:        bc.Size,
 			CreatedAt:   bc.CreatedAt.Format(time.RFC3339Nano),
-			LastUsedAt:  bc.LastUsedAt.Format(time.RFC3339Nano),
+			LastUsedAt: func() string {
+				if bc.LastUsedAt.IsZero() {
+					return ""
+				}
+				return bc.LastUsedAt.Format(time.RFC3339Nano)
+			}(),
 			UsageCount:  bc.UsageCount,
 		})
 	}
@@ -548,10 +571,8 @@ func (s *Server) handleContainerCommit(w http.ResponseWriter, r *http.Request) {
 	comment := r.URL.Query().Get("comment")
 	author := r.URL.Query().Get("author")
 	pause := r.URL.Query().Get("pause") != "false" && r.URL.Query().Get("pause") != "0"
-	var changes []string
-	if c := r.URL.Query().Get("changes"); c != "" {
-		changes = strings.Split(c, "\n")
-	}
+	// BUG-560: Use r.URL.Query()["changes"] to get all values (Docker sends multiple params)
+	changes := r.URL.Query()["changes"]
 
 	resp, err := s.docker.ContainerCommit(r.Context(), containerID, container.CommitOptions{
 		Reference: func() string {
@@ -585,7 +606,7 @@ func (s *Server) handleContainerResize(w http.ResponseWriter, r *http.Request) {
 		writeError(w, mapDockerError(err))
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent) // BUG-561
 }
 
 // handleExecResize resizes the TTY of an exec instance.
@@ -601,7 +622,7 @@ func (s *Server) handleExecResize(w http.ResponseWriter, r *http.Request) {
 		writeError(w, mapDockerError(err))
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent) // BUG-561
 }
 
 // BUG-508: handleImagePush pushes an image to a registry via Docker SDK.
@@ -613,9 +634,10 @@ func (s *Server) handleImagePush(w http.ResponseWriter, r *http.Request) {
 	}
 	ref := name + ":" + tag
 
-	authStr := ""
-	if authB64 := r.URL.Query().Get("auth"); authB64 != "" {
-		authStr = authB64
+	// BUG-559/581: Read auth from X-Registry-Auth header, fall back to query param
+	authStr := r.Header.Get("X-Registry-Auth")
+	if authStr == "" {
+		authStr = r.URL.Query().Get("auth")
 	}
 
 	resp, err := s.docker.ImagePush(r.Context(), ref, image.PushOptions{
