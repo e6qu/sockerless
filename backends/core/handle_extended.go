@@ -236,8 +236,28 @@ func (s *BaseServer) buildStatsEntry(containerID string, now time.Time, preread 
 		"pids_stats": map[string]any{
 			"current": pids,
 		},
-		"networks": map[string]any{},
+		"networks": s.buildNetworkStats(containerID),
 	}
+}
+
+// buildNetworkStats returns per-network zero-value stats for a container.
+func (s *BaseServer) buildNetworkStats(containerID string) map[string]any {
+	netStats := make(map[string]any)
+	if c, ok := s.Store.Containers.Get(containerID); ok {
+		for netName := range c.NetworkSettings.Networks {
+			netStats[netName] = map[string]any{
+				"rx_bytes":   0,
+				"rx_packets": 0,
+				"rx_errors":  0,
+				"rx_dropped": 0,
+				"tx_bytes":   0,
+				"tx_packets": 0,
+				"tx_errors":  0,
+				"tx_dropped": 0,
+			}
+		}
+	}
+	return netStats
 }
 
 func (s *BaseServer) handleContainerRename(w http.ResponseWriter, r *http.Request) {
@@ -499,6 +519,12 @@ func (s *BaseServer) handleContainerUpdate(w http.ResponseWriter, r *http.Reques
 		}
 		if req.BlkioWeight != 0 {
 			c.HostConfig.BlkioWeight = req.BlkioWeight
+		}
+		if req.PidsLimit != nil {
+			c.HostConfig.PidsLimit = req.PidsLimit
+		}
+		if req.OomKillDisable != nil {
+			c.HostConfig.OomKillDisable = req.OomKillDisable
 		}
 	})
 

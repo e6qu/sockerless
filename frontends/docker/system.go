@@ -38,7 +38,12 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		"GoVersion":     runtime.Version(),
 		"Os":            runtime.GOOS,
 		"Arch":          runtime.GOARCH,
-		"KernelVersion": "",
+		"KernelVersion": func() string {
+			if info != nil {
+				return info.KernelVersion
+			}
+			return ""
+		}(),
 		"BuildTime":     "2024-01-01T00:00:00.000000000+00:00",
 		"Platform": map[string]string{
 			"Name": "Sockerless",

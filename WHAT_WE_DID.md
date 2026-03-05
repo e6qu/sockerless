@@ -58,9 +58,9 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 | 81 | Admin: ProcessManager, cleanup scanner, ProviderInfo |
 | 82 | Admin Projects: orchestrated sim+backend+frontend bundles, port allocator, 4 UI pages |
 
-## Bug Fix Sprints (BUG-001 → BUG-408)
+## Bug Fix Sprints (BUG-001 → BUG-475)
 
-382 bugs fixed across 32 sprints. Per-sprint details in `_tasks/done/BUG-SPRINT-*.md`.
+475 bugs fixed across 37 sprints. Per-sprint details in `_tasks/done/BUG-SPRINT-*.md`.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
@@ -92,6 +92,10 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 | 31 | BUG-378→394 | Container & pod parity: pod ProcessLifecycle/HealthCheck, pod remove cleanup, pod wait condition, container filter gaps (exited/publish/volume/is-task/size) |
 | 32 | BUG-395→408 | Cloud kill event ordering, TmpfsDirs cleanup (remove+prune), frontend query param forwarding (size/signal/platform/digests/noOverwrite/force), pod list filters, image push/save/search |
 | 33 | BUG-409→422 | Core resize endpoints, stats precpu/memlimit, default networks, event emissions, SpaceReclaimed, deterministic ImageID, paused status, health exec cleanup, paused count, logs stdout/stderr |
+| 34 | BUG-423→436 | Cloud logs parity (since/until/tail/stdout/stderr/details/follow), ImageSummary.Containers count, health check StartInterval |
+| 35 | BUG-437→449 | Container inspect paths, NetworkSettings fields, KernelVersion, exec CanRemove, frontend df type param, image GraphDriver/RootFS, volume UsageData |
+| 36 | BUG-450→462 | System df field gaps, container list SizeRw, commit/build GraphDriver, Container.Image sha256 ID |
+| 37 | BUG-463→475 | Image history/save, stats networks, container size fields, update PidsLimit/OomKillDisable, image push auth, LastTagTime, image search limit |
 
 0 open bugs remain — see `BUGS.md`.
 
@@ -131,10 +135,18 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 
 13 bugs fixed across container inspect, NetworkSettings, system info, exec lifecycle, frontend proxy, image metadata, and volume usage. Container inspect now populates `LogPath`, `ResolvConfPath`, `HostnamePath`, `HostsPath` (BUG-437–440). `NetworkSettings.SandboxID` and `SandboxKey` set from container ID (BUG-441/442). `NetworkSettings.Bridge` set to `docker0` for bridge network containers (BUG-443). `handleInfo` now returns `KernelVersion: "5.15.0-sockerless"` (BUG-444). `ExecInstance.CanRemove` set to true after exec completes or errors (BUG-445). Frontend `handleSystemDf` forwards `type` query param to backend (BUG-446). `handleImageLoad` now sets `RootFS.Layers` with a synthetic layer hash (BUG-447). Both `handleImagePull` and `handleImageLoad` now populate `GraphDriver` with overlay2 metadata (BUG-448). `handleSystemDf` volumes now include `UsageData` with `RefCount` and `Size` (BUG-449).
 
+## Sprint 36 Summary (BUG-450 → BUG-462)
+
+13 bugs fixed in system df, commit/build, and container field gaps. System df ImageSummary now sets `VirtualSize` and `Labels` (BUG-450/451). Container list populates `SizeRw` from `DirSize` when `size=true` (BUG-452). Committed images get synthetic `RootFS.Layers` and `GraphDriver` overlay2 metadata (BUG-453/454). Built images get `GraphDriver` (BUG-455). System df ContainerSummary now includes `ImageID`, `Command`, `Status`, `Labels`, `Ports`, `Mounts`, `NetworkSettings`, `HostConfig`, and `SizeRootFs` (BUG-456–461). `buildContainerFromConfig` sets `Container.Image` to sha256 image ID instead of reference name (BUG-462).
+
+## Sprint 37 Summary (BUG-463 → BUG-475)
+
+13 bugs fixed across image endpoints, stats, container inspect, update request, and frontend forwarding. `handleImageHistory` now returns per-layer entries from `RootFS.Layers` instead of a single hardcoded entry (BUG-463). `handleImageSave` manifest uses actual `RootFS.Layers` instead of empty array (BUG-464). `buildStatsEntry` populates `networks` field from container `NetworkSettings` (BUG-465). API `Container` struct gets `SizeRw`/`SizeRootFs` pointer fields (BUG-466). Core `handleContainerInspect` respects `size` query parameter (BUG-467), forwarded by frontend (BUG-468). Frontend `handleVersion` uses `info.KernelVersion` instead of empty string (BUG-469). `ContainerUpdateRequest` gets `PidsLimit` (BUG-470) and `OomKillDisable` (BUG-471) fields. Frontend `handleImagePush` forwards `X-Registry-Auth` header as query param (BUG-472), core accepts it (BUG-473). Image `Metadata.LastTagTime` set on pull/load/build/commit/tag operations (BUG-474). `handleImageSearch` respects `limit` query parameter (BUG-475).
+
 ## Project Stats
 
 - **80 phases** (1-67, 69-77, 79-82), 725 tasks completed
-- **36 bug sprints**, 436 bugs fixed (BUG-001→462), 0 open
+- **37 bug sprints**, 475 bugs fixed (BUG-001→475), 0 open
 - **18 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, CLI, admin, tests
 - **Core tests**: 302 PASS | **Frontend**: 7 | **UI (Vitest)**: 92 | **Admin**: 88 | **bleephub**: 304 | **gitlabhub**: 136 | **ProcessRunner**: 15
 - **Cloud SDK**: AWS 42, GCP 43, Azure 38 | **Cloud CLI**: AWS 26, GCP 21, Azure 19

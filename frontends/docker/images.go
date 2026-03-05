@@ -227,6 +227,9 @@ func (s *Server) handleImagePush(w http.ResponseWriter, r *http.Request, name st
 	if tag := r.URL.Query().Get("tag"); tag != "" {
 		query.Set("tag", tag)
 	}
+	if auth := r.Header.Get("X-Registry-Auth"); auth != "" {
+		query.Set("auth", auth)
+	}
 	resp, err := s.backend.postWithQuery(r.Context(), "/images/"+url.PathEscape(name)+"/push", query, nil)
 	if err != nil {
 		writeError(w, err)

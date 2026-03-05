@@ -63,7 +63,11 @@ func (s *Server) handleContainerList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleContainerInspect(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	resp, err := s.backend.get(r.Context(), "/containers/"+id)
+	query := url.Values{}
+	if size := r.URL.Query().Get("size"); size != "" {
+		query.Set("size", size)
+	}
+	resp, err := s.backend.getWithQuery(r.Context(), "/containers/"+id, query)
 	if err != nil {
 		writeError(w, err)
 		return

@@ -21,6 +21,18 @@ func (s *BaseServer) handleContainerInspect(w http.ResponseWriter, r *http.Reque
 		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
 		return
 	}
+	// BUG-467: Populate size fields when size=true or size=1
+	includeSize := r.URL.Query().Get("size") == "1" || r.URL.Query().Get("size") == "true"
+	if includeSize {
+		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
+			size := img.Size
+			c.SizeRootFs = &size
+		}
+		if rootPath, err := s.Drivers.Filesystem.RootPath(c.ID); err == nil && rootPath != "" {
+			rw := DirSize(rootPath)
+			c.SizeRw = &rw
+		}
+	}
 	WriteJSON(w, http.StatusOK, c)
 }
 
