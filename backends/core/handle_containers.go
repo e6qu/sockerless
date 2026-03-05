@@ -22,9 +22,9 @@ func hasEnvKey(env []string, key string) bool {
 	return false
 }
 
-// mergeEnvByKey merges env vars by key — base provides defaults, override replaces by key.
+// MergeEnvByKey merges env vars by key — base provides defaults, override replaces by key.
 // BUG-515: Docker merges image and container env by key, not all-or-nothing.
-func mergeEnvByKey(base, override []string) []string {
+func MergeEnvByKey(base, override []string) []string {
 	if len(override) == 0 {
 		return base
 	}
@@ -87,7 +87,7 @@ func (s *BaseServer) handleContainerCreate(w http.ResponseWriter, r *http.Reques
 	// Merge image config if we have it
 	if img, ok := s.Store.ResolveImage(config.Image); ok {
 		// BUG-515: Merge ENV by key — image provides defaults, container overrides
-		config.Env = mergeEnvByKey(img.Config.Env, config.Env)
+		config.Env = MergeEnvByKey(img.Config.Env, config.Env)
 		// BUG-516: Docker clears image Cmd when Entrypoint is overridden in create
 		if len(config.Cmd) == 0 && len(config.Entrypoint) == 0 {
 			config.Cmd = img.Config.Cmd
@@ -281,10 +281,11 @@ func (s *BaseServer) handleContainerStart(w http.ResponseWriter, r *http.Request
 	s.Store.WaitChs.Store(id, exitCh)
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	pid := s.Store.NextPID() // BUG-549
 	s.Store.Containers.Update(id, func(c *api.Container) {
 		c.State.Status = "running"
 		c.State.Running = true
-		c.State.Pid = 42
+		c.State.Pid = pid
 		c.State.StartedAt = now
 		c.State.FinishedAt = "0001-01-01T00:00:00Z"
 		c.State.ExitCode = 0
@@ -534,10 +535,11 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 	s.Store.WaitChs.Store(id, exitCh)
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	pid := s.Store.NextPID() // BUG-549
 	s.Store.Containers.Update(id, func(c *api.Container) {
 		c.State.Status = "running"
 		c.State.Running = true
-		c.State.Pid = 42
+		c.State.Pid = pid
 		c.State.StartedAt = now
 		c.State.FinishedAt = "0001-01-01T00:00:00Z"
 		c.State.ExitCode = 0

@@ -44,10 +44,10 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 
 	// Merge image config if available
 	if img, ok := s.Store.ResolveImage(config.Image); ok {
-		if len(config.Env) == 0 {
-			config.Env = img.Config.Env
-		}
-		if len(config.Cmd) == 0 {
+		// BUG-541: Merge ENV by key — image provides defaults, container overrides
+		config.Env = core.MergeEnvByKey(img.Config.Env, config.Env)
+		// BUG-542: Docker clears image Cmd when Entrypoint is overridden in create
+		if len(config.Cmd) == 0 && len(config.Entrypoint) == 0 {
 			config.Cmd = img.Config.Cmd
 		}
 		if len(config.Entrypoint) == 0 {

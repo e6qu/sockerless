@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sockerless/api"
@@ -140,6 +141,7 @@ type Store struct {
 	IPAlloc        *IPAllocator
 	RenameMu       sync.Mutex
 	RestartHook    func(containerID string, exitCode int) bool
+	pidCounter     atomic.Int64 // BUG-549: incrementing PID counter
 }
 
 // NewStore creates a new store with all sub-stores initialized.
@@ -155,6 +157,12 @@ func NewStore() *Store {
 		Pods:           NewPodRegistry(),
 		IPAlloc:        NewIPAllocator(),
 	}
+}
+
+// NextPID returns the next incrementing PID for realistic container simulation.
+// BUG-549: Replaces hardcoded Pid=42 / Pid=43 values.
+func (st *Store) NextPID() int {
+	return int(st.pidCounter.Add(1))
 }
 
 // StopContainer transitions a container to the exited state and closes wait channels.

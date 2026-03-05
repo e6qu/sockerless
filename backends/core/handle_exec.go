@@ -140,9 +140,10 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Mark as running
+	execPid := s.Store.NextPID() // BUG-550
 	s.Store.Execs.Update(id, func(e *api.ExecInstance) {
 		e.Running = true
-		e.Pid = 43
+		e.Pid = execPid
 	})
 
 	// Hijack the connection

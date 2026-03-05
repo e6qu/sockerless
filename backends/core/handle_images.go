@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net/http"
 	"os"
@@ -128,6 +129,11 @@ func (s *BaseServer) handleImagePull(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// BUG-551: Deterministic size from image reference instead of hardcoded value
+	h := fnv.New32a()
+	h.Write([]byte(ref))
+	imgSize := int64(10_000_000 + h.Sum32()%90_000_000) // 10MB-100MB range
+
 	now := time.Now().UTC()
 	img := api.Image{
 		ID:       imageID,
@@ -136,8 +142,8 @@ func (s *BaseServer) handleImagePull(w http.ResponseWriter, r *http.Request) {
 			strings.Split(ref, ":")[0] + "@sha256:" + fmt.Sprintf("%x", hash)[:64],
 		},
 		Created:      now.Format(time.RFC3339Nano),
-		Size:         7654321,
-		VirtualSize:  7654321,
+		Size:         imgSize,
+		VirtualSize:  imgSize,
 		Architecture: "amd64",
 		Os:           "linux",
 		Config:       imgConfig,

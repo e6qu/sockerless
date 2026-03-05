@@ -53,6 +53,10 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		config.StopTimeout = cc.StopTimeout
 		config.Shell = cc.Shell
 		config.Volumes = cc.Volumes
+		config.ArgsEscaped = cc.ArgsEscaped       // BUG-546
+		config.NetworkDisabled = cc.NetworkDisabled // BUG-546
+		config.OnBuild = cc.OnBuild                // BUG-546
+		config.MacAddress = cc.MacAddress           // BUG-552
 		if len(cc.ExposedPorts) > 0 {
 			config.ExposedPorts = make(nat.PortSet, len(cc.ExposedPorts))
 			for p := range cc.ExposedPorts {
@@ -61,11 +65,12 @@ func (s *Server) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		if cc.Healthcheck != nil {
 			config.Healthcheck = &container.HealthConfig{
-				Test:        cc.Healthcheck.Test,
-				Interval:    time.Duration(cc.Healthcheck.Interval),
-				Timeout:     time.Duration(cc.Healthcheck.Timeout),
-				StartPeriod: time.Duration(cc.Healthcheck.StartPeriod),
-				Retries:     cc.Healthcheck.Retries,
+				Test:          cc.Healthcheck.Test,
+				Interval:      time.Duration(cc.Healthcheck.Interval),
+				Timeout:       time.Duration(cc.Healthcheck.Timeout),
+				StartPeriod:   time.Duration(cc.Healthcheck.StartPeriod),
+				StartInterval: time.Duration(cc.Healthcheck.StartInterval), // BUG-544
+				Retries:       cc.Healthcheck.Retries,
 			}
 		}
 	}
@@ -524,34 +529,39 @@ func mapContainerFromDocker(info types.ContainerJSON) api.Container {
 
 	if info.Config != nil {
 		c.Config = api.ContainerConfig{
-			Hostname:     info.Config.Hostname,
-			Domainname:   info.Config.Domainname,
-			User:         info.Config.User,
-			AttachStdin:  info.Config.AttachStdin,
-			AttachStdout: info.Config.AttachStdout,
-			AttachStderr: info.Config.AttachStderr,
-			ExposedPorts: mapExposedPorts(info.Config.ExposedPorts),
-			Tty:          info.Config.Tty,
-			OpenStdin:    info.Config.OpenStdin,
-			StdinOnce:    info.Config.StdinOnce,
-			Env:          info.Config.Env,
-			Cmd:          info.Config.Cmd,
-			Image:        info.Config.Image,
-			Volumes:      info.Config.Volumes,
-			WorkingDir:   info.Config.WorkingDir,
-			Entrypoint:   info.Config.Entrypoint,
-			Labels:       info.Config.Labels,
-			StopSignal:   info.Config.StopSignal,
-			StopTimeout:  info.Config.StopTimeout,
-			Shell:        info.Config.Shell,
+			Hostname:        info.Config.Hostname,
+			Domainname:      info.Config.Domainname,
+			User:            info.Config.User,
+			AttachStdin:     info.Config.AttachStdin,
+			AttachStdout:    info.Config.AttachStdout,
+			AttachStderr:    info.Config.AttachStderr,
+			ExposedPorts:    mapExposedPorts(info.Config.ExposedPorts),
+			Tty:             info.Config.Tty,
+			OpenStdin:       info.Config.OpenStdin,
+			StdinOnce:       info.Config.StdinOnce,
+			Env:             info.Config.Env,
+			Cmd:             info.Config.Cmd,
+			Image:           info.Config.Image,
+			Volumes:         info.Config.Volumes,
+			WorkingDir:      info.Config.WorkingDir,
+			Entrypoint:      info.Config.Entrypoint,
+			Labels:          info.Config.Labels,
+			StopSignal:      info.Config.StopSignal,
+			StopTimeout:     info.Config.StopTimeout,
+			Shell:           info.Config.Shell,
+			ArgsEscaped:     info.Config.ArgsEscaped,     // BUG-547
+			NetworkDisabled: info.Config.NetworkDisabled,  // BUG-547
+			OnBuild:         info.Config.OnBuild,          // BUG-547
+			MacAddress:      info.Config.MacAddress,       // BUG-553
 		}
 		if info.Config.Healthcheck != nil {
 			c.Config.Healthcheck = &api.HealthcheckConfig{
-				Test:        info.Config.Healthcheck.Test,
-				Interval:    int64(info.Config.Healthcheck.Interval),
-				Timeout:     int64(info.Config.Healthcheck.Timeout),
-				StartPeriod: int64(info.Config.Healthcheck.StartPeriod),
-				Retries:     info.Config.Healthcheck.Retries,
+				Test:          info.Config.Healthcheck.Test,
+				Interval:      int64(info.Config.Healthcheck.Interval),
+				Timeout:       int64(info.Config.Healthcheck.Timeout),
+				StartPeriod:   int64(info.Config.Healthcheck.StartPeriod),
+				StartInterval: int64(info.Config.Healthcheck.StartInterval), // BUG-545
+				Retries:       info.Config.Healthcheck.Retries,
 			}
 		}
 	}
@@ -620,6 +630,25 @@ func mapContainerFromDocker(info types.ContainerJSON) api.Container {
 			if m.BindOptions != nil {
 				am.BindOptions = &api.BindOptions{
 					Propagation: string(m.BindOptions.Propagation),
+				}
+			}
+			// BUG-548: Map VolumeOptions and TmpfsOptions (create path already maps these)
+			if m.VolumeOptions != nil {
+				am.VolumeOptions = &api.VolumeOptions{
+					NoCopy: m.VolumeOptions.NoCopy,
+					Labels: m.VolumeOptions.Labels,
+				}
+				if m.VolumeOptions.DriverConfig != nil {
+					am.VolumeOptions.DriverConfig = &api.VolumeDriverConfig{
+						Name:    m.VolumeOptions.DriverConfig.Name,
+						Options: m.VolumeOptions.DriverConfig.Options,
+					}
+				}
+			}
+			if m.TmpfsOptions != nil {
+				am.TmpfsOptions = &api.TmpfsOptions{
+					SizeBytes: m.TmpfsOptions.SizeBytes,
+					Mode:      uint32(m.TmpfsOptions.Mode),
 				}
 			}
 			c.HostConfig.Mounts = append(c.HostConfig.Mounts, am)

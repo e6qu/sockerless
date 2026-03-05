@@ -1,8 +1,8 @@
 # Known Bugs
 
-## Fixed (BUG-001 → BUG-527)
+## Fixed (BUG-001 → BUG-553)
 
-527 bugs fixed across 41 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
+553 bugs fixed across 43 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
@@ -42,6 +42,30 @@
 | 39 | BUG-489→501 | Container expose filter, image before/since filters, image load quiet, image push auth, resize h/w, top PID, image tag validation, volume dangling filter, exec TTY content-type |
 | 40 | BUG-502→514 | Frontend attach TTY content-type, exec empty Cmd, container top ps_args, stop signal, frontend query params, Docker backend missing image/archive routes, image search sort |
 | 41 | BUG-515→527 | ENV merge, Cmd/Entrypoint, stats name/id/precpu, volume 200, events since/until, cloud errors, image save 404, Dockerfile parser, NanoCpus |
+| 42 | BUG-528→540 | ECS/CloudRun/ACA ENV merge + Cmd/Entrypoint, staticcheck QF1008, errcheck lint |
+| 43 | BUG-541→553 | FaaS ENV merge + Cmd/Entrypoint, Docker image tag 200, Healthcheck StartInterval, ContainerConfig fields, Mount inspect, incrementing PIDs, deterministic image sizes |
+
+## Sprint 43 Detail (BUG-541 → BUG-553)
+
+| ID | Component | Description |
+|----|-----------|-------------|
+| BUG-541 | Lambda/GCF/AZF | `handleContainerCreate` ENV merge is all-or-nothing — now uses `MergeEnvByKey` (same fix as BUG-515/528) |
+| BUG-542 | Lambda/GCF/AZF | `handleContainerCreate` inherits image Cmd when Entrypoint overridden — now clears Cmd when only Entrypoint is overridden (same fix as BUG-516/529) |
+| BUG-543 | Docker | `handleImageTag` returns 201 Created — Docker API returns 200 OK for image tag |
+| BUG-544 | Docker | `handleContainerCreate` Healthcheck mapping missing `StartInterval` — now forwarded to Docker SDK |
+| BUG-545 | Docker | `mapContainerFromDocker` Healthcheck inspect mapping missing `StartInterval` — now mapped in reverse direction |
+| BUG-546 | Docker | `handleContainerCreate` ContainerConfig missing `ArgsEscaped`, `NetworkDisabled`, `OnBuild` — now forwarded |
+| BUG-547 | Docker | `mapContainerFromDocker` inspect Config missing `ArgsEscaped`, `NetworkDisabled`, `OnBuild` — now mapped |
+| BUG-548 | Docker | `mapContainerFromDocker` Mount inspect missing `VolumeOptions` and `TmpfsOptions` — now mapped (create already had them) |
+| BUG-549 | Core | `handleContainerStart`/`handleContainerRestart`/restart_policy/pods hardcode `Pid=42` — now uses `Store.NextPID()` incrementing counter |
+| BUG-550 | Core | `handleExecStart` hardcodes `Pid=43` — now uses `Store.NextPID()` |
+| BUG-551 | Core | `handleImagePull` hardcodes `Size: 7654321` — now uses deterministic FNV hash of image reference (10-100MB range) |
+| BUG-552 | Docker | `handleContainerCreate` missing `MacAddress` in ContainerConfig mapping — now forwarded |
+| BUG-553 | Docker | `mapContainerFromDocker` inspect Config missing `MacAddress` — now mapped |
+
+## Sprint 42 Detail (BUG-528 → BUG-540)
+
+See `_tasks/done/BUG-SPRINT-42.md` for details.
 
 ## Sprint 41 Detail (BUG-515 → BUG-527)
 

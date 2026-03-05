@@ -129,7 +129,7 @@ func (s *Server) handleImageTag(w http.ResponseWriter, r *http.Request) {
 		writeError(w, mapDockerError(err))
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(http.StatusOK) // BUG-543: Docker API returns 200 for image tag
 }
 
 func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {

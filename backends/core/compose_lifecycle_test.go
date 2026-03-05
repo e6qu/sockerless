@@ -67,10 +67,11 @@ func TestComposeCreateStartStopRemove(t *testing.T) {
 
 	// 3. Start containers
 	for _, ct := range containers {
+		pid := s.Store.NextPID() // BUG-549: use incrementing PID
 		s.Store.Containers.Update(ct.id, func(c *api.Container) {
 			c.State.Status = "running"
 			c.State.Running = true
-			c.State.Pid = 42
+			c.State.Pid = pid
 			c.State.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		})
 	}

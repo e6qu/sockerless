@@ -197,10 +197,11 @@ func (s *BaseServer) handlePodStart(w http.ResponseWriter, r *http.Request) {
 		}
 		exitCh := make(chan struct{})
 		s.Store.WaitChs.Store(cid, exitCh)
+		pid := s.Store.NextPID() // BUG-549
 		s.Store.Containers.Update(cid, func(c *api.Container) {
 			c.State.Status = "running"
 			c.State.Running = true
-			c.State.Pid = 42
+			c.State.Pid = pid
 			c.State.StartedAt = now
 			c.State.FinishedAt = "0001-01-01T00:00:00Z"
 			c.State.ExitCode = 0
