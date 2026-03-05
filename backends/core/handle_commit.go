@@ -85,7 +85,15 @@ func (s *BaseServer) handleContainerCommit(w http.ResponseWriter, r *http.Reques
 		Author:       author,
 		Comment:      comment,
 		Config:       imgConfig,
-		RootFS:       api.RootFS{Type: "layers"},
+		RootFS: api.RootFS{Type: "layers", Layers: []string{"sha256:" + GenerateID()}}, // BUG-453
+		GraphDriver: api.GraphDriverData{ // BUG-454
+			Name: "overlay2",
+			Data: map[string]string{
+				"MergedDir": "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/merged",
+				"UpperDir":  "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/diff",
+				"WorkDir":   "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/work",
+			},
+		},
 	}
 
 	if repo != "" {

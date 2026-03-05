@@ -91,6 +91,10 @@ func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request)
 			if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
 				summary.SizeRootFs = img.Size
 			}
+			// BUG-452: Populate SizeRw from container root dir
+			if rootPath, err := s.Drivers.Filesystem.RootPath(c.ID); err == nil && rootPath != "" {
+				summary.SizeRw = DirSize(rootPath)
+			}
 		}
 		result = append(result, summary)
 	}
