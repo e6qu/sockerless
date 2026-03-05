@@ -46,6 +46,12 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 				TaskDefinition: aws.String(ecsState.TaskDefARN),
 			})
 		}
+		// BUG-566: Clear stale state so handleContainerStart registers fresh resources
+		s.ECS.Update(id, func(state *ECSState) {
+			state.TaskDefARN = ""
+			state.TaskARN = ""
+			state.ClusterARN = ""
+		})
 		s.Store.ForceStopContainer(id, 0)
 		s.EmitEvent("container", "die", id, map[string]string{
 			"exitCode": "0",

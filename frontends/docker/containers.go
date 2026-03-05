@@ -55,6 +55,13 @@ func (s *Server) handleContainerList(w http.ResponseWriter, r *http.Request) {
 	if size := r.URL.Query().Get("size"); size != "" {
 		query.Set("size", size)
 	}
+	// BUG-570: Forward before/since query params
+	if before := r.URL.Query().Get("before"); before != "" {
+		query.Set("before", before)
+	}
+	if since := r.URL.Query().Get("since"); since != "" {
+		query.Set("since", since)
+	}
 
 	resp, err := s.backend.getWithQuery(r.Context(), "/containers", query)
 	if err != nil {
@@ -119,6 +126,10 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 	query := url.Values{}
 	if t := r.URL.Query().Get("t"); t != "" {
 		query.Set("t", t)
+	}
+	// BUG-571: Forward signal query param
+	if signal := r.URL.Query().Get("signal"); signal != "" {
+		query.Set("signal", signal)
 	}
 	resp, err := s.backend.postWithQuery(r.Context(), "/containers/"+id+"/restart", query, nil)
 	if err != nil {

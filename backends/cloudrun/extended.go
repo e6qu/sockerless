@@ -34,6 +34,11 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 			s.deleteJob(crState.JobName)
 			s.Registry.MarkCleanedUp(crState.JobName)
 		}
+		// BUG-567: Clear state so handleContainerStart doesn't try to delete the same job
+		s.CloudRun.Update(id, func(state *CloudRunState) {
+			state.JobName = ""
+			state.ExecutionName = ""
+		})
 		s.Store.ForceStopContainer(id, 0)
 		s.EmitEvent("container", "die", id, map[string]string{
 			"exitCode": "0",

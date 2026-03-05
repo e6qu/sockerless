@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types"
@@ -548,10 +547,8 @@ func (s *Server) handleContainerCommit(w http.ResponseWriter, r *http.Request) {
 	comment := r.URL.Query().Get("comment")
 	author := r.URL.Query().Get("author")
 	pause := r.URL.Query().Get("pause") != "false" && r.URL.Query().Get("pause") != "0"
-	var changes []string
-	if c := r.URL.Query().Get("changes"); c != "" {
-		changes = strings.Split(c, "\n")
-	}
+	// BUG-560: Use r.URL.Query()["changes"] to get all values (Docker sends multiple params)
+	changes := r.URL.Query()["changes"]
 
 	resp, err := s.docker.ContainerCommit(r.Context(), containerID, container.CommitOptions{
 		Reference: func() string {
@@ -585,7 +582,7 @@ func (s *Server) handleContainerResize(w http.ResponseWriter, r *http.Request) {
 		writeError(w, mapDockerError(err))
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent) // BUG-561
 }
 
 // handleExecResize resizes the TTY of an exec instance.
@@ -601,7 +598,7 @@ func (s *Server) handleExecResize(w http.ResponseWriter, r *http.Request) {
 		writeError(w, mapDockerError(err))
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent) // BUG-561
 }
 
 // BUG-508: handleImagePush pushes an image to a registry via Docker SDK.
@@ -613,10 +610,8 @@ func (s *Server) handleImagePush(w http.ResponseWriter, r *http.Request) {
 	}
 	ref := name + ":" + tag
 
-	authStr := ""
-	if authB64 := r.URL.Query().Get("auth"); authB64 != "" {
-		authStr = authB64
-	}
+	// BUG-559: Read auth from X-Registry-Auth header, not query param
+	authStr := r.Header.Get("X-Registry-Auth")
 
 	resp, err := s.docker.ImagePush(r.Context(), ref, image.PushOptions{
 		RegistryAuth: authStr,

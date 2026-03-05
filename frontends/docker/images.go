@@ -344,6 +344,14 @@ func (s *Server) handleContainerCommit(w http.ResponseWriter, r *http.Request) {
 	proxyPassthrough(w, resp)
 }
 
+// BUG-573: handleBuildPrune returns a stub response for build cache pruning.
+func (s *Server) handleBuildPrune(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"CachesDeleted": nil,
+		"SpaceReclaimed": 0,
+	})
+}
+
 func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 	var req api.AuthRequest
 	if err := readJSON(r, &req); err != nil {

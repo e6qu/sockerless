@@ -165,7 +165,7 @@ func (s *Server) fetchFollowLogs(w http.ResponseWriter, functionAppName string, 
 		functionAppName,
 	)
 	if !after.IsZero() {
-		query += fmt.Sprintf(` | where TimeGenerated > datetime(%s)`, after.UTC().Format(time.RFC3339Nano))
+		query += fmt.Sprintf(` | where TimeGenerated > datetime("%s")`, after.UTC().Format(time.RFC3339Nano)) // BUG-568
 	}
 	query += ` | order by TimeGenerated asc | project TimeGenerated, Message`
 

@@ -58,9 +58,9 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 | 81 | Admin: ProcessManager, cleanup scanner, ProviderInfo |
 | 82 | Admin Projects: orchestrated sim+backend+frontend bundles, port allocator, 4 UI pages |
 
-## Bug Fix Sprints (BUG-001 → BUG-514)
+## Bug Fix Sprints (BUG-001 → BUG-574)
 
-514 bugs fixed across 40 sprints. Per-sprint details in `_tasks/done/BUG-SPRINT-*.md`.
+574 bugs fixed across 44 sprints. Per-sprint details in `_tasks/done/BUG-SPRINT-*.md`.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
@@ -70,8 +70,16 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 | 27-32 | 320→408 | WaitCh close gaps, cloud events, pod lifecycle, TmpfsDirs cleanup, frontend params |
 | 33-37 | 409→475 | Resize, stats, default networks, cloud logs, container inspect, image metadata |
 | 38-40 | 476→514 | Stop/restart timeout, prune SpaceReclaimed, image save/build/search, Docker backend routes |
+| 41 | 515→527 | ENV merge, Cmd/Entrypoint, stats, volume 200, events since/until, cloud errors, Dockerfile parser |
+| 42 | 528→540 | Cloud/Docker/core bugs |
+| 43 | 541→553 | Container/stats/event, cloud error & Dockerfile parser bugs |
+| 44 | 554→574 | Docker inspect/list fields, cloud restart, KQL datetime, frontend routes |
 
 0 open bugs remain — see `BUGS.md`.
+
+## Sprint 44 Summary (BUG-554 → BUG-574)
+
+Fixed 21 bugs across Docker backend, cloud backends, and frontend. Docker: logs Content-Type for TTY (554), NetworkSettings top-level scalars (555), EndpointSettings IPv6/IPAM/DriverOpts in inspect+list (556/557), ContainerSummary HostConfig (558), image push auth header (559), commit multi-value changes (560), resize 204 status (561), exec inspect missing fields (562), IPAM AuxiliaryAddresses (563), image healthcheck StartInterval (564), Ports null→empty (565), exec start stdin guard (574). Cloud: ECS restart stale TaskDef (566), CloudRun restart double-delete (567), KQL datetime quotes (568, 3 locations), ACA execution name guard (569). Frontend: container list before/since (570), restart signal (571), POST /_ping (572), POST /build/prune (573).
 
 ## Sprint 41 Summary (BUG-515 → BUG-527)
 

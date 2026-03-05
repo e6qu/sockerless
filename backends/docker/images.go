@@ -78,11 +78,12 @@ func (s *Server) handleImageInspect(w http.ResponseWriter, r *http.Request) {
 		}
 		if info.Config.Healthcheck != nil {
 			img.Config.Healthcheck = &api.HealthcheckConfig{
-				Test:        info.Config.Healthcheck.Test,
-				Interval:    int64(info.Config.Healthcheck.Interval),
-				Timeout:     int64(info.Config.Healthcheck.Timeout),
-				StartPeriod: int64(info.Config.Healthcheck.StartPeriod),
-				Retries:     info.Config.Healthcheck.Retries,
+				Test:          info.Config.Healthcheck.Test,
+				Interval:      int64(info.Config.Healthcheck.Interval),
+				Timeout:       int64(info.Config.Healthcheck.Timeout),
+				StartPeriod:   int64(info.Config.Healthcheck.StartPeriod),
+				StartInterval: int64(info.Config.Healthcheck.StartInterval), // BUG-564
+				Retries:       info.Config.Healthcheck.Retries,
 			}
 		}
 	}
