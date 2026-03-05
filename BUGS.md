@@ -1,8 +1,8 @@
 # Known Bugs
 
-## Fixed (BUG-001 → BUG-344)
+## Fixed (BUG-001 → BUG-377)
 
-319 bugs fixed across 28 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
+351 bugs fixed across 30 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
@@ -30,6 +30,30 @@
 | 27 | BUG-320→336 | WaitChs.Delete close gaps (all 8 backends), ACA restart guard, Docker commit ref, frontend logs query param |
 | 28 | BUG-337→344 | ECS ClusterARN in remove/restart, ECS restart task def leak, CloudRun/ACA restart job leak, pod kill signal, image tag dedup, frontend stats one-shot |
 | 29 | BUG-345→358 | Cloud restart "stop" event + RestartCount, cloud remove/prune "destroy" event + pod cleanup, core pod stop/kill events, pod remove non-force cleanup |
+| 30 | BUG-359→377 | Cloud StopHealthCheck gaps, "create" event, signalToExitCode, force-remove events, Network.Disconnect, core prune events, pod lifecycle, FormatStatus uptime, Event.Scope, restart event |
+
+## Sprint 30 Detail (BUG-359 → BUG-377)
+
+| ID | Component | Description |
+|----|-----------|-------------|
+| BUG-359 | All 6 cloud | `handleContainerStop` missing `StopHealthCheck(id)` |
+| BUG-360 | All 6 cloud | `handleContainerKill` missing `StopHealthCheck(id)` |
+| BUG-361 | All 6 cloud | `handleContainerRemove` missing `StopHealthCheck(id)` |
+| BUG-362 | All 6 cloud | `handleContainerCreate` missing "create" event |
+| BUG-363 | All 6 cloud | `signalToExitCode` only handles SIGKILL — core maps 8 signals (24 aliases) |
+| BUG-364 | All 6 cloud | `handleContainerRemove` force path missing "kill"+"die" events |
+| BUG-365 | All 6 cloud | `handleContainerRemove` missing `Network.Disconnect` loop |
+| BUG-366 | All 6 cloud | `handleContainerPrune` missing `Network.Disconnect` loop + `StopHealthCheck` |
+| BUG-367 | Core | `handleImagePrune` missing `BuildContexts` cleanup |
+| BUG-368 | Core | `handleImagePrune` missing untag/delete events |
+| BUG-369 | Core | `handleVolumePrune` missing destroy events |
+| BUG-370 | Core | `handleNetworkPrune` missing destroy events |
+| BUG-371 | Core | `handlePodKill` missing `ProcessLifecycle.Cleanup(cid)` |
+| BUG-372 | Core | `handlePodRemove` force path missing "destroy" events per container |
+| BUG-373 | Core | `handlePodStart` doesn't reset `FinishedAt`/`ExitCode` |
+| BUG-374 | Core | `FormatStatus` hardcoded "Up Less than a second" — should compute actual uptime |
+| BUG-375 | Core | `Event.Scope` field never set to "local" — Docker always sets it |
+| BUG-376 | Core + All 6 cloud | `handleContainerRestart` missing "restart" event |
 
 ## Sprint 29 Detail (BUG-345 → BUG-358)
 

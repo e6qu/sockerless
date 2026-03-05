@@ -184,6 +184,9 @@ func (s *BaseServer) handleVolumePrune(w http.ResponseWriter, r *http.Request) {
 		if dir, ok := s.Store.VolumeDirs.LoadAndDelete(v.Name); ok {
 			os.RemoveAll(dir.(string))
 		}
+		s.emitEvent("volume", "destroy", v.Name, map[string]string{
+			"driver": v.Driver,
+		})
 		deleted = append(deleted, v.Name)
 	}
 	WriteJSON(w, http.StatusOK, api.VolumePruneResponse{

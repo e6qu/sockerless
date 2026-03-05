@@ -86,6 +86,9 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 | 25 | BUG-270→294 | Core lifecycle, API serialization, cloud parity, Docker field mapping |
 | 26 | BUG-295→319 | WaitCh leaks, HTTP status codes, symlink traversal, cloud events, API types |
 | 27 | BUG-320→336 | WaitChs.Delete close gaps (all 8 backends), ACA restart guard, Docker commit ref, frontend logs query param |
+| 28 | BUG-337→344 | ECS ClusterARN, restart task/job leaks, pod kill signal, image tag dedup, frontend stats one-shot |
+| 29 | BUG-345→358 | Cloud restart stop event + RestartCount, remove/prune destroy event + pod cleanup, core pod stop/kill events |
+| 30 | BUG-359→377 | Cloud StopHealthCheck gaps, create event, signalToExitCode, force-remove events, Network.Disconnect, core prune events, pod lifecycle, FormatStatus uptime, Event.Scope, restart event |
 
 0 open bugs remain — see `BUGS.md`.
 
@@ -101,10 +104,14 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 
 14 bugs fixed. All 6 cloud backend restart handlers emitted "die" but not "stop" event (BUG-345→350) and didn't increment `RestartCount` (BUG-351) — core does both. All 6 cloud backend `handleContainerRemove` missing "destroy" event (BUG-352) and pod cleanup via `Pods.RemoveContainer` (BUG-356). All 6 cloud backend `handleContainerPrune` missing "destroy" event (BUG-353) and pod cleanup (BUG-357). Core `handlePodStop` missing "die" and "stop" events per container (BUG-354). Core `handlePodKill` missing "kill" and "die" events per container (BUG-355). Core `handlePodRemove` with `force=false` didn't clean up exited containers — LogBuffers, WaitChs, StagingDirs, TmpfsDirs, and ExecIDs leaked (BUG-358).
 
+## Sprint 30 Summary (BUG-359 → BUG-377)
+
+18 bugs fixed. All 6 cloud backends were missing `StopHealthCheck(id)` in stop/kill/remove handlers (BUG-359→361), missing "create" event in `handleContainerCreate` (BUG-362), had a simplified `signalToExitCode` that only handled SIGKILL — now maps 8 signals with 24 aliases (BUG-363), missing "kill"+"die" events in force-remove path (BUG-364), and missing `Network.Disconnect` loop in remove/prune (BUG-365→366). Core `handleImagePrune` was missing `BuildContexts` cleanup and untag/delete events (BUG-367→368). Core `handleVolumePrune` and `handleNetworkPrune` were missing destroy events (BUG-369→370). Core `handlePodKill` was missing `ProcessLifecycle.Cleanup` (BUG-371). Core `handlePodRemove` force path was missing "destroy" events per container (BUG-372). Core `handlePodStart` didn't reset `FinishedAt`/`ExitCode` (BUG-373). `FormatStatus` was hardcoded — now computes actual uptime (BUG-374). `Event.Scope` was never set to "local" (BUG-375). `handleContainerRestart` was missing "restart" event in core and all 6 cloud backends (BUG-376).
+
 ## Project Stats
 
 - **80 phases** (1-67, 69-77, 79-82), 725 tasks completed
-- **29 bug sprints**, 333 bugs fixed (BUG-001→358), 0 open
+- **30 bug sprints**, 351 bugs fixed (BUG-001→377), 0 open
 - **18 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, CLI, admin, tests
 - **Core tests**: 302 PASS | **Frontend**: 7 | **UI (Vitest)**: 92 | **Admin**: 88 | **bleephub**: 304 | **gitlabhub**: 136 | **ProcessRunner**: 15
 - **Cloud SDK**: AWS 42, GCP 43, Azure 38 | **Cloud CLI**: AWS 26, GCP 21, Azure 19

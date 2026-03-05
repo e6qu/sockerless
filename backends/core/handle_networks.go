@@ -116,6 +116,9 @@ func (s *BaseServer) handleNetworkPrune(w http.ResponseWriter, r *http.Request) 
 		WriteError(w, &api.ServerError{Message: err.Error()})
 		return
 	}
+	for _, nid := range resp.NetworksDeleted {
+		s.emitEvent("network", "destroy", nid, map[string]string{"name": nid})
+	}
 	WriteJSON(w, http.StatusOK, resp)
 }
 
