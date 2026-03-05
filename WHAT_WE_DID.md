@@ -91,8 +91,13 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 | 30 | BUG-359→377 | Cloud StopHealthCheck gaps, create event, signalToExitCode, force-remove events, Network.Disconnect, core prune events, pod lifecycle, FormatStatus uptime, Event.Scope, restart event |
 | 31 | BUG-378→394 | Container & pod parity: pod ProcessLifecycle/HealthCheck, pod remove cleanup, pod wait condition, container filter gaps (exited/publish/volume/is-task/size) |
 | 32 | BUG-395→408 | Cloud kill event ordering, TmpfsDirs cleanup (remove+prune), frontend query param forwarding (size/signal/platform/digests/noOverwrite/force), pod list filters, image push/save/search |
+| 33 | BUG-409→422 | Core resize endpoints, stats precpu/memlimit, default networks, event emissions, SpaceReclaimed, deterministic ImageID, paused status, health exec cleanup, paused count, logs stdout/stderr |
 
 0 open bugs remain — see `BUGS.md`.
+
+## Sprint 33 Summary (BUG-409 → BUG-422)
+
+14 bugs fixed in core backend parity: added `POST /containers/{id}/resize` and `POST /exec/{id}/resize` no-op endpoints (BUG-409), added `precpu_stats` to stats response (BUG-410), stats memory limit uses container's `HostConfig.Memory` when set (BUG-411), `InitDefaultNetwork` now creates `host` and `none` networks alongside `bridge` (BUG-412), added commit/update/load event emissions (BUG-413/414/415), container and volume prune now calculate `SpaceReclaimed` from filesystem (BUG-416/417), deterministic `ImageID` for unknown images using sha256 of image name (BUG-418), `FormatStatus` for paused state returns "Up X (Paused)" (BUG-419), health check exec instances deleted after completion (BUG-420), `handleInfo` now counts `ContainersPaused` separately (BUG-421), `handleContainerLogs` respects `stdout`/`stderr` query params (BUG-422).
 
 ## Sprint 32 Summary (BUG-395 → BUG-408)
 

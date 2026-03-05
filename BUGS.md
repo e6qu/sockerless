@@ -1,8 +1,8 @@
 # Known Bugs
 
-## Fixed (BUG-001 → BUG-408)
+## Fixed (BUG-001 → BUG-422)
 
-382 bugs fixed across 32 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
+396 bugs fixed across 33 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
@@ -32,6 +32,8 @@
 | 29 | BUG-345→358 | Cloud restart "stop" event + RestartCount, cloud remove/prune "destroy" event + pod cleanup, core pod stop/kill events, pod remove non-force cleanup |
 | 30 | BUG-359→377 | Cloud StopHealthCheck gaps, "create" event, signalToExitCode, force-remove events, Network.Disconnect, core prune events, pod lifecycle, FormatStatus uptime, Event.Scope, restart event |
 | 31 | BUG-378→394 | Pod start process/health, pod remove non-force cleanup, container wait condition, container list filters (exited/publish/volume/is-task/size), cloud pod param, cloud restart event guard, frontend pod query params, logs details |
+| 32 | BUG-395→408 | Cloud kill event order, TmpfsDirs cleanup, image push/save/search stubs, pod list filters, frontend query param forwarding |
+| 33 | BUG-409→422 | Core resize endpoints, stats precpu/memlimit, default networks, event emissions, SpaceReclaimed, deterministic ImageID, paused status, health exec cleanup, paused count, logs stdout/stderr |
 
 ## Sprint 31 Detail (BUG-378 → BUG-394)
 
@@ -54,6 +56,25 @@
 | BUG-392 | Core | `MatchContainerFilters` missing `volume` filter (mount filtering) |
 | BUG-393 | Core | `MatchContainerFilters` missing `is-task` filter |
 | BUG-394 | Core | `handleContainerList` missing `size` query parameter support |
+
+## Sprint 33 Detail (BUG-409 → BUG-422)
+
+| ID | Component | Description |
+|----|-----------|-------------|
+| BUG-409 | Core | Missing `POST /containers/{id}/resize` and `POST /exec/{id}/resize` routes — frontend forwards these but core returns 404 |
+| BUG-410 | Core | `handleContainerStats` missing `precpu_stats` field — Docker clients need it to calculate CPU % |
+| BUG-411 | Core | `handleContainerStats` memory limit hardcoded to 1 GiB — should use container's `HostConfig.Memory` when set |
+| BUG-412 | Core | `InitDefaultNetwork` only creates `bridge` — missing `host` and `none` default networks |
+| BUG-413 | Core | `handleContainerCommit` missing `container` `commit` event emission |
+| BUG-414 | Core | `handleContainerUpdate` missing `container` `update` event emission |
+| BUG-415 | Core | `handleImageLoad` missing `image` `load` event emission |
+| BUG-416 | Core | `handleContainerPrune` SpaceReclaimed always 0 — should calculate from container rootDir |
+| BUG-417 | Core | `handleVolumePrune` SpaceReclaimed always 0 — should calculate from volume dir |
+| BUG-418 | Core | `handleContainerList` generates random ImageID each call for unknown images — not deterministic |
+| BUG-419 | Core | `FormatStatus` for paused state returns bare "paused" instead of "Up X seconds (Paused)" |
+| BUG-420 | Core | Health check exec instances leak in Store.Execs — never cleaned up |
+| BUG-421 | Core | `handleInfo` missing `ContainersPaused` count — paused containers miscounted as running |
+| BUG-422 | Core | `handleContainerLogs` ignores `stdout`/`stderr` query params — all output always returned as stdout |
 
 ## Sprint 32 Detail (BUG-395 → BUG-408)
 

@@ -179,9 +179,11 @@ func (s *BaseServer) handleVolumePrune(w http.ResponseWriter, r *http.Request) {
 		}
 		return true
 	})
+	var spaceReclaimed uint64
 	deleted := make([]string, 0, len(pruned))
 	for _, v := range pruned {
 		if dir, ok := s.Store.VolumeDirs.LoadAndDelete(v.Name); ok {
+			spaceReclaimed += uint64(DirSize(dir.(string)))
 			os.RemoveAll(dir.(string))
 		}
 		s.emitEvent("volume", "destroy", v.Name, map[string]string{
@@ -191,6 +193,6 @@ func (s *BaseServer) handleVolumePrune(w http.ResponseWriter, r *http.Request) {
 	}
 	WriteJSON(w, http.StatusOK, api.VolumePruneResponse{
 		VolumesDeleted: deleted,
-		SpaceReclaimed: 0,
+		SpaceReclaimed: spaceReclaimed,
 	})
 }

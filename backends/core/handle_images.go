@@ -232,6 +232,9 @@ func (s *BaseServer) handleImageLoad(w http.ResponseWriter, r *http.Request) {
 	s.Store.Images.Put(id, img)
 
 	displayTag := repoTags[0]
+
+	s.emitEvent("image", "load", id, map[string]string{"name": displayTag})
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{

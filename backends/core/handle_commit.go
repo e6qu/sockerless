@@ -94,5 +94,9 @@ func (s *BaseServer) handleContainerCommit(w http.ResponseWriter, r *http.Reques
 		s.Store.Images.Put(imageID, img)
 	}
 
+	s.emitEvent("container", "commit", c.ID, map[string]string{
+		"comment": comment, "imageID": imageID, "imageName": repo + ":" + tag,
+	})
+
 	WriteJSON(w, http.StatusCreated, api.ContainerCommitResponse{ID: imageID})
 }
