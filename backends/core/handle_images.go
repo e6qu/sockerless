@@ -659,7 +659,7 @@ func (s *BaseServer) handleImageSave(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-tar")
 	w.WriteHeader(http.StatusOK)
 	tw := tar.NewWriter(w)
-	defer tw.Close()
+	defer func() { _ = tw.Close() }()
 	var manifests []map[string]any
 	for _, name := range names {
 		img, ok := s.Store.ResolveImage(name)
