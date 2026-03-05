@@ -169,14 +169,8 @@ func (s *BaseServer) handleContainerLogs(w http.ResponseWriter, r *http.Request)
 	// BUG-422: Parse stdout/stderr params — default both to true when neither specified
 	stdoutParam := r.URL.Query().Get("stdout")
 	stderrParam := r.URL.Query().Get("stderr")
-	wantStdout := true
-	if stdoutParam == "0" || stdoutParam == "false" {
-		wantStdout = false
-	}
-	// If only stderr=true and stdout not explicitly requested, suppress stdout
-	if (stderrParam == "1" || stderrParam == "true") && stdoutParam == "" {
-		wantStdout = false
-	}
+	wantStdout := stdoutParam != "0" && stdoutParam != "false" &&
+		!((stderrParam == "1" || stderrParam == "true") && stdoutParam == "")
 
 	// Read from container process or synthetic log buffer via driver chain
 	logBytes := s.Drivers.Stream.LogBytes(id)
