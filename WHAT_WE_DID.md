@@ -147,6 +147,10 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 
 13 bugs fixed across core and all 6 cloud backends. Core `handleContainerStop` and `handleContainerRestart` now accept the `t` (timeout) query parameter for API parity (BUG-476/477). All 6 cloud backends (`handleContainerPrune`) now sum image sizes for `SpaceReclaimed` instead of hardcoding 0 (BUG-478→483). The 3 container-service backends (ECS, CloudRun, ACA) `handleVolumePrune` now sum volume directory sizes for `SpaceReclaimed` (BUG-484→486). Core `handleContainerWait` now handles `condition=removed` — returns exit code 0 if the container is already gone, and polls briefly for actual deletion after stop (BUG-487). Core `handleImageSave` now writes image config JSON entries (architecture, os, created, config, rootfs) alongside manifest.json so `docker load` can parse the full image metadata (BUG-488).
 
+## Sprint 40 Summary (BUG-502 → BUG-514)
+
+Fixed 13 bugs: frontend attach TTY content-type `raw-stream` (BUG-502), exec create empty `Cmd` validation (BUG-503), container top `ps_args` param (BUG-504), container stop `signal` param with exit code (BUG-505), frontend container create `platform` forwarding (BUG-506), frontend container remove `link` forwarding (BUG-507), Docker backend image push route (BUG-508), Docker backend image save routes (BUG-509), Docker backend image search route (BUG-510), Docker backend image build route (BUG-511), Docker backend archive routes (BUG-512), image search result sorting by relevance (BUG-513), frontend container start `detachKeys` forwarding (BUG-514).
+
 ## Sprint 39 Summary (BUG-489 → BUG-501)
 
 Fixed 13 bugs: container `expose` filter (BUG-489), image `before`/`since` list filters (BUG-490/491), frontend image load `quiet` param forwarding (BUG-492), core image load `quiet` suppression (BUG-493), image push `auth` query param (BUG-494), container resize `h`/`w` params (BUG-495), exec resize `h`/`w` params (BUG-496), container top synthetic PID from `c.State.Pid` (BUG-497), frontend image create `fromSrc` repo/tag forwarding (BUG-498), image tag empty repo validation (BUG-499), volume list `dangling` filter (BUG-500), exec start TTY content-type `raw-stream` (BUG-501).
@@ -154,7 +158,7 @@ Fixed 13 bugs: container `expose` filter (BUG-489), image `before`/`since` list 
 ## Project Stats
 
 - **80 phases** (1-67, 69-77, 79-82), 725 tasks completed
-- **38 bug sprints**, 488 bugs fixed (BUG-001→488), 0 open
+- **40 bug sprints**, 514 bugs fixed (BUG-001→514), 0 open
 - **18 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, CLI, admin, tests
 - **Core tests**: 302 PASS | **Frontend**: 7 | **UI (Vitest)**: 92 | **Admin**: 88 | **bleephub**: 304 | **gitlabhub**: 136 | **ProcessRunner**: 15
 - **Cloud SDK**: AWS 42, GCP 43, Azure 38 | **Cloud CLI**: AWS 26, GCP 21, Azure 19

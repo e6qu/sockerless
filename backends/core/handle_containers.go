@@ -341,12 +341,19 @@ func (s *BaseServer) handleContainerStop(w http.ResponseWriter, r *http.Request)
 	}
 	_ = timeout // accepted for API parity; synthetic containers stop instantly
 
+	// BUG-505: Accept signal query param (Docker API v1.42+)
+	signal := r.URL.Query().Get("signal")
+	exitCode := 0
+	if signal != "" {
+		exitCode = signalToExitCode(signal)
+	}
+
 	s.StopHealthCheck(id)
 	s.Drivers.ProcessLifecycle.Stop(id)
 	s.Drivers.ProcessLifecycle.Cleanup(id)
-	s.Store.ForceStopContainer(id, 0)
+	s.Store.ForceStopContainer(id, exitCode)
 	s.emitEvent("container", "die", id, map[string]string{
-		"exitCode": "0",
+		"exitCode": fmt.Sprintf("%d", exitCode),
 		"name":     strings.TrimPrefix(c.Name, "/"),
 	})
 	s.emitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
