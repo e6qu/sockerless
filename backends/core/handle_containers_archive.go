@@ -309,11 +309,17 @@ func (s *BaseServer) buildContainerFromConfig(id, name string, config api.Contai
 			FinishedAt: "0001-01-01T00:00:00Z",
 			StartedAt:  "0001-01-01T00:00:00Z",
 		},
-		Image:  config.Image,
-		Config: config,
-		HostConfig: hostConfig,
+		Image:          config.Image,
+		LogPath:        "/var/lib/sockerless/containers/" + id + "/" + id + "-json.log",
+		ResolvConfPath: "/var/lib/sockerless/containers/" + id + "/resolv.conf",
+		HostnamePath:   "/var/lib/sockerless/containers/" + id + "/hostname",
+		HostsPath:      "/var/lib/sockerless/containers/" + id + "/hosts",
+		Config:         config,
+		HostConfig:     hostConfig,
 		NetworkSettings: api.NetworkSettings{
-			Networks: make(map[string]*api.EndpointSettings),
+			SandboxID:  id,
+			SandboxKey: "/var/run/docker/netns/" + id[:12],
+			Networks:   make(map[string]*api.EndpointSettings),
 		},
 		Mounts:   buildMounts(hostConfig),
 		Platform: "linux",
@@ -327,6 +333,9 @@ func (s *BaseServer) buildContainerFromConfig(id, name string, config api.Contai
 	}
 	endpoint := s.buildEndpointForNetwork(netName, id, name, nil)
 	container.NetworkSettings.Networks[netName] = endpoint
+	if netName == "bridge" {
+		container.NetworkSettings.Bridge = "docker0"
+	}
 
 	// Process explicit NetworkingConfig (e.g. from service containers)
 	if networkingConfig != nil {

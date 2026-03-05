@@ -558,13 +558,28 @@ func (s *BaseServer) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 		containers = append(containers, cs)
 	}
 
+	// BUG-449: Build volume→container reference count map
+	volRefCount := make(map[string]int64)
+	for _, c := range s.Store.Containers.List() {
+		for _, m := range c.Mounts {
+			if m.Name != "" {
+				volRefCount[m.Name]++
+			}
+		}
+	}
+
 	var volumes []*api.Volume
 	for _, v := range s.Store.Volumes.List() {
 		vCopy := v
 		// Calculate real volume size from temp dir
+		size := int64(-1)
 		if dir, ok := s.Store.VolumeDirs.Load(v.Name); ok {
-			size := DirSize(dir.(string))
+			size = DirSize(dir.(string))
 			vCopy.Status = map[string]any{"Size": size}
+		}
+		vCopy.UsageData = &api.VolumeUsageData{
+			RefCount: volRefCount[v.Name],
+			Size:     size,
 		}
 		volumes = append(volumes, &vCopy)
 	}

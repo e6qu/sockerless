@@ -459,6 +459,7 @@ func (s *BaseServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 		Architecture:      s.Desc.Architecture,
 		NCPU:              s.Desc.NCPU,
 		MemTotal:          s.Desc.MemTotal,
+		KernelVersion:     "5.15.0-sockerless",
 	})
 }
 

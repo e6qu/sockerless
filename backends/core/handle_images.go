@@ -142,6 +142,14 @@ func (s *BaseServer) handleImagePull(w http.ResponseWriter, r *http.Request) {
 			Type:   "layers",
 			Layers: []string{"sha256:" + GenerateID()},
 		},
+		GraphDriver: api.GraphDriverData{
+			Name: "overlay2",
+			Data: map[string]string{
+				"MergedDir": "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/merged",
+				"UpperDir":  "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/diff",
+				"WorkDir":   "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/work",
+			},
+		},
 	}
 
 	StoreImageWithAliases(s.Store, ref, img)
@@ -193,6 +201,7 @@ func (s *BaseServer) handleImageLoad(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := "sha256:" + GenerateID()
+	layerID := GenerateID()
 	img := api.Image{
 		ID:           id,
 		RepoTags:     repoTags,
@@ -203,7 +212,18 @@ func (s *BaseServer) handleImageLoad(w http.ResponseWriter, r *http.Request) {
 		Config: api.ContainerConfig{
 			Labels: make(map[string]string),
 		},
-		RootFS: api.RootFS{Type: "layers"},
+		RootFS: api.RootFS{
+			Type:   "layers",
+			Layers: []string{"sha256:" + layerID},
+		},
+		GraphDriver: api.GraphDriverData{
+			Name: "overlay2",
+			Data: map[string]string{
+				"MergedDir": "/var/lib/sockerless/overlay2/" + id[7:19] + "/merged",
+				"UpperDir":  "/var/lib/sockerless/overlay2/" + id[7:19] + "/diff",
+				"WorkDir":   "/var/lib/sockerless/overlay2/" + id[7:19] + "/work",
+			},
+		},
 	}
 
 	// Merge parsed config
