@@ -83,10 +83,11 @@ func (s *BaseServer) handleRestartPolicy(containerID string, exitCode int) bool 
 	s.Store.WaitChs.Store(containerID, exitCh)
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	pid := s.Store.NextPID() // BUG-549
 	s.Store.Containers.Update(containerID, func(c *api.Container) {
 		c.State.Status = "running"
 		c.State.Running = true
-		c.State.Pid = 42
+		c.State.Pid = pid
 		c.State.StartedAt = now
 		c.State.FinishedAt = "0001-01-01T00:00:00Z"
 		c.State.ExitCode = 0
