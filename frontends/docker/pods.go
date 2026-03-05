@@ -60,7 +60,12 @@ func (s *Server) handlePodStart(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePodStop(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	resp, err := s.backend.post(r.Context(), "/libpod/pods/"+name+"/stop", nil)
+	// BUG-389: Forward timeout query parameter to backend
+	query := url.Values{}
+	if t := r.URL.Query().Get("t"); t != "" {
+		query.Set("t", t)
+	}
+	resp, err := s.backend.postWithQuery(r.Context(), "/libpod/pods/"+name+"/stop", query, nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -71,7 +76,12 @@ func (s *Server) handlePodStop(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePodKill(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	resp, err := s.backend.post(r.Context(), "/libpod/pods/"+name+"/kill", nil)
+	// BUG-388: Forward signal query parameter to backend
+	query := url.Values{}
+	if signal := r.URL.Query().Get("signal"); signal != "" {
+		query.Set("signal", signal)
+	}
+	resp, err := s.backend.postWithQuery(r.Context(), "/libpod/pods/"+name+"/kill", query, nil)
 	if err != nil {
 		writeError(w, err)
 		return

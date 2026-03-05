@@ -156,6 +156,18 @@ func (s *BaseServer) handlePodStart(w http.ResponseWriter, r *http.Request) {
 			c.State.FinishedAt = "0001-01-01T00:00:00Z"
 			c.State.ExitCode = 0
 		})
+
+		// BUG-378: Spawn container process via driver chain
+		cmd := append([]string{c.Path}, c.Args...)
+		binds := s.resolveBindMounts(c.HostConfig.Binds, c.HostConfig.Mounts)
+		_, _ = s.Drivers.ProcessLifecycle.Start(cid, cmd, c.Config.Env, binds)
+
+		// BUG-379: Start health check if configured
+		if c.Config.Healthcheck != nil && len(c.Config.Healthcheck.Test) > 0 &&
+			(len(c.Config.Healthcheck.Test) != 1 || !strings.EqualFold(c.Config.Healthcheck.Test[0], "NONE")) {
+			s.StartHealthCheck(cid)
+		}
+
 		s.emitEvent("container", "start", cid, map[string]string{
 			"name": strings.TrimPrefix(c.Name, "/"),
 		})
@@ -297,6 +309,16 @@ func (s *BaseServer) handlePodRemove(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				continue
 			}
+			// BUG-380: Stop health check for non-force path
+			s.StopHealthCheck(cid)
+			// BUG-381: Clean up process resources for non-force path
+			s.Drivers.ProcessLifecycle.Cleanup(cid)
+			// BUG-383: Disconnect networks for non-force path
+			for _, ep := range c.NetworkSettings.Networks {
+				if ep != nil && ep.NetworkID != "" {
+					_ = s.Drivers.Network.Disconnect(r.Context(), ep.NetworkID, cid)
+				}
+			}
 			s.Store.Containers.Delete(cid)
 			s.Store.ContainerNames.Delete(c.Name)
 			s.Store.LogBuffers.Delete(cid)
@@ -312,6 +334,8 @@ func (s *BaseServer) handlePodRemove(w http.ResponseWriter, r *http.Request) {
 			for _, eid := range c.ExecIDs {
 				s.Store.Execs.Delete(eid)
 			}
+			// BUG-382: Emit destroy event for non-force path
+			s.emitEvent("container", "destroy", cid, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 		}
 	}
 

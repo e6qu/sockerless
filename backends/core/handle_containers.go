@@ -559,8 +559,14 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 
 	c, _ := s.Store.Containers.Get(id)
 
-	// If already exited, return immediately
-	if c.State.Status == "exited" || c.State.Status == "dead" {
+	// BUG-384: Read condition query parameter (not-running, next-exit, removed)
+	condition := r.URL.Query().Get("condition")
+	if condition == "" {
+		condition = "not-running"
+	}
+
+	// If already exited, return immediately (unless next-exit which waits for a new exit)
+	if condition != "next-exit" && (c.State.Status == "exited" || c.State.Status == "dead") {
 		WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{
 			StatusCode: c.State.ExitCode,
 		})

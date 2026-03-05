@@ -24,6 +24,8 @@ func (s *BaseServer) handleContainerInspect(w http.ResponseWriter, r *http.Reque
 
 func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request) {
 	all := r.URL.Query().Get("all") == "1" || r.URL.Query().Get("all") == "true"
+	// BUG-394: Read size query parameter
+	includeSize := r.URL.Query().Get("size") == "1" || r.URL.Query().Get("size") == "true"
 	filters := ParseFilters(r.URL.Query().Get("filters"))
 	limit := 0
 	if l := r.URL.Query().Get("limit"); l != "" {
@@ -80,6 +82,12 @@ func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request)
 			NetworkSettings: &api.SummaryNetworkSettings{
 				Networks: c.NetworkSettings.Networks,
 			},
+		}
+		// BUG-394: Populate size fields when requested
+		if includeSize {
+			if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
+				summary.SizeRootFs = img.Size
+			}
 		}
 		result = append(result, summary)
 	}
@@ -152,6 +160,8 @@ func (s *BaseServer) handleContainerLogs(w http.ResponseWriter, r *http.Request)
 
 	timestamps := r.URL.Query().Get("timestamps") == "1" || r.URL.Query().Get("timestamps") == "true"
 	follow := r.URL.Query().Get("follow") == "1" || r.URL.Query().Get("follow") == "true"
+	// BUG-390: Read details query parameter
+	details := r.URL.Query().Get("details") == "1" || r.URL.Query().Get("details") == "true"
 
 	// Read from container process or synthetic log buffer via driver chain
 	logBytes := s.Drivers.Stream.LogBytes(id)
@@ -197,6 +207,18 @@ func (s *BaseServer) handleContainerLogs(w http.ResponseWriter, r *http.Request)
 			if idx := strings.IndexByte(line, ' '); idx >= 0 {
 				lines[i] = line[idx+1:]
 			}
+		}
+	}
+
+	// BUG-390: Prepend container labels when details=true
+	if details && len(c.Config.Labels) > 0 {
+		var labelParts []string
+		for k, v := range c.Config.Labels {
+			labelParts = append(labelParts, k+"="+v)
+		}
+		prefix := strings.Join(labelParts, ",") + " "
+		for i, line := range lines {
+			lines[i] = prefix + line
 		}
 	}
 

@@ -1,8 +1,8 @@
 # Known Bugs
 
-## Fixed (BUG-001 → BUG-377)
+## Fixed (BUG-001 → BUG-394)
 
-351 bugs fixed across 30 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
+368 bugs fixed across 31 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
@@ -31,6 +31,29 @@
 | 28 | BUG-337→344 | ECS ClusterARN in remove/restart, ECS restart task def leak, CloudRun/ACA restart job leak, pod kill signal, image tag dedup, frontend stats one-shot |
 | 29 | BUG-345→358 | Cloud restart "stop" event + RestartCount, cloud remove/prune "destroy" event + pod cleanup, core pod stop/kill events, pod remove non-force cleanup |
 | 30 | BUG-359→377 | Cloud StopHealthCheck gaps, "create" event, signalToExitCode, force-remove events, Network.Disconnect, core prune events, pod lifecycle, FormatStatus uptime, Event.Scope, restart event |
+| 31 | BUG-378→394 | Pod start process/health, pod remove non-force cleanup, container wait condition, container list filters (exited/publish/volume/is-task/size), cloud pod param, cloud restart event guard, frontend pod query params, logs details |
+
+## Sprint 31 Detail (BUG-378 → BUG-394)
+
+| ID | Component | Description |
+|----|-----------|-------------|
+| BUG-378 | Core | `handlePodStart` doesn't call `ProcessLifecycle.Start()` — containers marked running but no process spawned |
+| BUG-379 | Core | `handlePodStart` doesn't call `StartHealthCheck()` for containers with health checks |
+| BUG-380 | Core | `handlePodRemove` non-force path missing `StopHealthCheck(cid)` |
+| BUG-381 | Core | `handlePodRemove` non-force path missing `ProcessLifecycle.Cleanup(cid)` |
+| BUG-382 | Core | `handlePodRemove` non-force path missing "destroy" events per container |
+| BUG-383 | Core | `handlePodRemove` non-force path missing `Network.Disconnect` loop |
+| BUG-384 | Core | `handleContainerWait` ignores `condition` query parameter — always behaves as `not-running` |
+| BUG-385 | Core | `MatchContainerFilters` missing `exited` filter (exit code filtering) |
+| BUG-386 | All 6 cloud | `handleContainerCreate` missing `?pod=` query parameter validation + `Pods.AddContainer()` |
+| BUG-387 | All 6 cloud | `handleContainerRestart` emits "restart" event unconditionally — should only emit on success |
+| BUG-388 | Frontend | `handlePodKill` doesn't forward `signal` query parameter to backend |
+| BUG-389 | Frontend | `handlePodStop` doesn't forward `t` (timeout) query parameter to backend |
+| BUG-390 | Core | `handleContainerLogs` doesn't handle `details` query parameter |
+| BUG-391 | Core | `MatchContainerFilters` missing `publish` filter (port filtering) |
+| BUG-392 | Core | `MatchContainerFilters` missing `volume` filter (mount filtering) |
+| BUG-393 | Core | `MatchContainerFilters` missing `is-task` filter |
+| BUG-394 | Core | `handleContainerList` missing `size` query parameter support |
 
 ## Sprint 30 Detail (BUG-359 → BUG-377)
 

@@ -3,6 +3,7 @@ package lambda
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -36,14 +37,24 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 		c.RestartCount++
 	})
 
-	// Re-dispatch to start handler
+	// BUG-387: Use ResponseRecorder to capture start result, only emit restart on success
+	rec := httptest.NewRecorder()
 	startURL := fmt.Sprintf("/internal/v1/containers/%s/start", id)
 	startReq, _ := http.NewRequestWithContext(r.Context(), "POST", startURL, nil)
 	startReq.SetPathValue("id", id)
-	s.handleContainerStart(w, startReq)
+	s.handleContainerStart(rec, startReq)
 
-	// Emit restart event after successful restart
-	s.EmitEvent("container", "restart", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+	for k, vv := range rec.Header() {
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(rec.Code)
+	w.Write(rec.Body.Bytes())
+
+	if rec.Code == http.StatusNoContent || rec.Code == http.StatusOK {
+		s.EmitEvent("container", "restart", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+	}
 }
 
 func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
