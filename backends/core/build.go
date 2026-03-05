@@ -124,9 +124,9 @@ func parseDockerfile(content string, buildArgs map[string]string) (*parsedDocker
 			}
 
 		case "ENV":
-			key, value := parseEnv(rest)
-			if key != "" {
-				result.config.Env = append(result.config.Env, key+"="+value)
+			// BUG-526: Handle multi-value ENV k1=v1 k2=v2
+			for _, entry := range parseEnvMulti(rest) {
+				result.config.Env = append(result.config.Env, entry)
 			}
 
 		case "CMD":
@@ -214,6 +214,7 @@ func substituteArgs(s string, args map[string]string) string {
 }
 
 // parseEnv parses ENV key=value or ENV key value form.
+// BUG-526: Also handles multi-value form: ENV key1=val1 key2=val2.
 func parseEnv(rest string) (string, string) {
 	// Try key=value form first
 	if eqIdx := strings.Index(rest, "="); eqIdx >= 0 {
@@ -229,6 +230,31 @@ func parseEnv(rest string) (string, string) {
 		return parts[0], parts[1]
 	}
 	return parts[0], ""
+}
+
+// parseEnvMulti parses ENV instructions that may contain multiple key=value pairs.
+// BUG-526: ENV k1=v1 k2=v2 should produce two env entries.
+func parseEnvMulti(rest string) []string {
+	// If it contains "=", it might be multi-value form
+	if !strings.Contains(rest, "=") {
+		// Single legacy form: ENV key value
+		parts := strings.SplitN(rest, " ", 2)
+		if len(parts) == 2 {
+			return []string{parts[0] + "=" + parts[1]}
+		}
+		return []string{parts[0] + "="}
+	}
+	tokens := splitRespectingQuotes(rest)
+	var result []string
+	for _, token := range tokens {
+		if eqIdx := strings.Index(token, "="); eqIdx >= 0 {
+			key := token[:eqIdx]
+			value := token[eqIdx+1:]
+			value = strings.Trim(value, "\"'")
+			result = append(result, key+"="+value)
+		}
+	}
+	return result
 }
 
 // parseShellOrExec parses JSON array form ["a","b"] or shell form "a b c".
@@ -319,17 +345,51 @@ func parseDuration(s string) time.Duration {
 }
 
 // parseLabels parses LABEL key=value [key2=value2 ...] into the labels map.
+// BUG-525: Handle quoted values with spaces (e.g. LABEL foo="bar baz").
 func parseLabels(rest string, labels map[string]string) {
-	// Simple parser: split on spaces, but handle quoted values
-	fields := strings.Fields(rest)
-	for _, field := range fields {
-		if eqIdx := strings.Index(field, "="); eqIdx >= 0 {
-			key := field[:eqIdx]
-			value := field[eqIdx+1:]
+	tokens := splitRespectingQuotes(rest)
+	for _, token := range tokens {
+		if eqIdx := strings.Index(token, "="); eqIdx >= 0 {
+			key := token[:eqIdx]
+			value := token[eqIdx+1:]
 			value = strings.Trim(value, "\"'")
 			labels[key] = value
 		}
 	}
+}
+
+// splitRespectingQuotes splits a string on spaces while keeping quoted substrings together.
+// BUG-525/BUG-526: Used by parseLabels and parseEnvMulti.
+func splitRespectingQuotes(s string) []string {
+	var tokens []string
+	var current strings.Builder
+	inQuote := byte(0)
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		switch {
+		case inQuote != 0:
+			if ch == inQuote {
+				current.WriteByte(ch)
+				inQuote = 0
+			} else {
+				current.WriteByte(ch)
+			}
+		case ch == '"' || ch == '\'':
+			current.WriteByte(ch)
+			inQuote = ch
+		case ch == ' ' || ch == '\t':
+			if current.Len() > 0 {
+				tokens = append(tokens, current.String())
+				current.Reset()
+			}
+		default:
+			current.WriteByte(ch)
+		}
+	}
+	if current.Len() > 0 {
+		tokens = append(tokens, current.String())
+	}
+	return tokens
 }
 
 // prepareBuildContext processes COPY instructions and creates a staging directory

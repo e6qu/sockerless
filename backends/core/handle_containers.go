@@ -22,6 +22,36 @@ func hasEnvKey(env []string, key string) bool {
 	return false
 }
 
+// mergeEnvByKey merges env vars by key — base provides defaults, override replaces by key.
+// BUG-515: Docker merges image and container env by key, not all-or-nothing.
+func mergeEnvByKey(base, override []string) []string {
+	if len(override) == 0 {
+		return base
+	}
+	if len(base) == 0 {
+		return override
+	}
+	keys := make(map[string]string)
+	order := make([]string, 0, len(base)+len(override))
+	for _, e := range base {
+		k, _, _ := strings.Cut(e, "=")
+		keys[k] = e
+		order = append(order, k)
+	}
+	for _, e := range override {
+		k, _, _ := strings.Cut(e, "=")
+		if _, exists := keys[k]; !exists {
+			order = append(order, k)
+		}
+		keys[k] = e
+	}
+	result := make([]string, 0, len(order))
+	for _, k := range order {
+		result = append(result, keys[k])
+	}
+	return result
+}
+
 // --- Default overridable container handlers (memory-like behavior) ---
 
 func (s *BaseServer) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
@@ -56,10 +86,10 @@ func (s *BaseServer) handleContainerCreate(w http.ResponseWriter, r *http.Reques
 
 	// Merge image config if we have it
 	if img, ok := s.Store.ResolveImage(config.Image); ok {
-		if len(config.Env) == 0 {
-			config.Env = img.Config.Env
-		}
-		if len(config.Cmd) == 0 {
+		// BUG-515: Merge ENV by key — image provides defaults, container overrides
+		config.Env = mergeEnvByKey(img.Config.Env, config.Env)
+		// BUG-516: Docker clears image Cmd when Entrypoint is overridden in create
+		if len(config.Cmd) == 0 && len(config.Entrypoint) == 0 {
 			config.Cmd = img.Config.Cmd
 		}
 		if len(config.Entrypoint) == 0 {

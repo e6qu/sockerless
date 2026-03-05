@@ -136,6 +136,7 @@ type Store struct {
 	HealthChecks   sync.Map // containerID → context.CancelFunc
 	BuildContexts  sync.Map // imageID → string (temp dir with COPY files at destination paths)
 	TmpfsDirs      sync.Map // containerID → []string (tmpfs temp dir paths)
+	PrevCPUStats   sync.Map // containerID → *prevCPUStats (BUG-518)
 	IPAlloc        *IPAllocator
 	RenameMu       sync.Mutex
 	RestartHook    func(containerID string, exitCode int) bool

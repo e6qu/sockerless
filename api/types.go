@@ -102,6 +102,7 @@ type HostConfig struct {
 	CpuQuota          int64             `json:"CpuQuota,omitempty"`
 	CpuPeriod         int64             `json:"CpuPeriod,omitempty"`
 	CpusetCpus        string            `json:"CpusetCpus,omitempty"`
+	NanoCpus          int64             `json:"NanoCpus,omitempty"`
 	CpusetMems        string            `json:"CpusetMems,omitempty"`
 	BlkioWeight       uint16            `json:"BlkioWeight,omitempty"`
 	PidMode           string            `json:"PidMode,omitempty"`
