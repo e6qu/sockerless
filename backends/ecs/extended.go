@@ -85,6 +85,7 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 	untilFilters := filters["until"]
 
 	var deleted []string
+	var spaceReclaimed uint64
 	for _, c := range s.Store.Containers.List() {
 		if c.State.Status != "exited" && c.State.Status != "dead" {
 			continue
@@ -94,6 +95,10 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(untilFilters) > 0 && !core.MatchUntil(c.Created, untilFilters) {
 			continue
+		}
+		// BUG-478: Sum image sizes for SpaceReclaimed
+		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
+			spaceReclaimed += uint64(img.Size)
 		}
 		ecsState, _ := s.ECS.Get(c.ID)
 		if ecsState.TaskDefARN != "" {
@@ -142,7 +147,7 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 	}
 	core.WriteJSON(w, http.StatusOK, api.ContainerPruneResponse{
 		ContainersDeleted: deleted,
-		SpaceReclaimed:    0,
+		SpaceReclaimed:    spaceReclaimed,
 	})
 }
 
@@ -180,6 +185,7 @@ func (s *Server) handleVolumeRemove(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleVolumePrune(w http.ResponseWriter, r *http.Request) {
 	var deleted []string
+	var spaceReclaimed uint64
 	for _, v := range s.Store.Volumes.List() {
 		inUse := false
 		for _, c := range s.Store.Containers.List() {
@@ -194,6 +200,10 @@ func (s *Server) handleVolumePrune(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if !inUse {
+			// BUG-484: Sum volume dir sizes for SpaceReclaimed
+			if dir, ok := s.Store.VolumeDirs.Load(v.Name); ok {
+				spaceReclaimed += uint64(core.DirSize(dir.(string)))
+			}
 			s.Store.Volumes.Delete(v.Name)
 			s.VolumeState.Delete(v.Name)
 			deleted = append(deleted, v.Name)
@@ -204,6 +214,6 @@ func (s *Server) handleVolumePrune(w http.ResponseWriter, r *http.Request) {
 	}
 	core.WriteJSON(w, http.StatusOK, api.VolumePruneResponse{
 		VolumesDeleted: deleted,
-		SpaceReclaimed: 0,
+		SpaceReclaimed: spaceReclaimed,
 	})
 }

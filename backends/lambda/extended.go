@@ -63,6 +63,7 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 	labelFilters := filters["label"]
 	untilFilters := filters["until"]
 	var deleted []string
+	var spaceReclaimed uint64
 	for _, c := range s.Store.Containers.List() {
 		if c.State.Status == "exited" || c.State.Status == "dead" {
 			if len(labelFilters) > 0 && !core.MatchLabels(c.Config.Labels, labelFilters) {
@@ -70,6 +71,10 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 			}
 			if len(untilFilters) > 0 && !core.MatchUntil(c.Created, untilFilters) {
 				continue
+			}
+			// BUG-481: Sum image sizes for SpaceReclaimed
+			if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
+				spaceReclaimed += uint64(img.Size)
 			}
 			// Clean up Lambda cloud resources
 			lambdaState, _ := s.Lambda.Get(c.ID)
@@ -120,7 +125,7 @@ func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 	}
 	core.WriteJSON(w, http.StatusOK, api.ContainerPruneResponse{
 		ContainersDeleted: deleted,
-		SpaceReclaimed:    0,
+		SpaceReclaimed:    spaceReclaimed,
 	})
 }
 
