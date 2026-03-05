@@ -520,6 +520,14 @@ func (s *BaseServer) handleContainerChanges(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *BaseServer) handleSystemDf(w http.ResponseWriter, r *http.Request) {
+	// BUG-436: Build image→container count map
+	imgContainerCount := make(map[string]int64)
+	for _, c := range s.Store.Containers.List() {
+		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
+			imgContainerCount[img.ID]++
+		}
+	}
+
 	var images []*api.ImageSummary
 	for _, img := range s.Store.Images.List() {
 		created, _ := time.Parse(time.RFC3339Nano, img.Created)
@@ -529,6 +537,7 @@ func (s *BaseServer) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 			RepoDigests: img.RepoDigests,
 			Created:     created.Unix(),
 			Size:        img.Size,
+			Containers:  imgContainerCount[img.ID],
 		})
 	}
 

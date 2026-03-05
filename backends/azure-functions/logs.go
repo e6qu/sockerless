@@ -1,10 +1,8 @@
 package azf
 
 import (
-	"encoding/binary"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/monitor/azquery"
@@ -28,7 +26,7 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	timestamps := r.URL.Query().Get("timestamps") == "1" || r.URL.Query().Get("timestamps") == "true"
+	params := core.ParseCloudLogParams(r, c.Config.Labels)
 
 	azfState, _ := s.AZF.Get(id)
 	functionAppName := azfState.FunctionAppName
@@ -43,15 +41,16 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		defer f.Flush()
 	}
 
-	// Check LogBuffers first for buffered output
+	// BUG-426: Early return if stdout suppressed
+	if !params.ShouldWrite() {
+		return
+	}
+
+	// BUG-435: Filter LogBuffers output through params
 	if buf, ok := s.Store.LogBuffers.Load(id); ok {
 		data := buf.([]byte)
 		if len(data) > 0 {
-			header := make([]byte, 8)
-			header[0] = 1 // stdout
-			binary.BigEndian.PutUint32(header[4:], uint32(len(data)))
-			w.Write(header)
-			w.Write(data)
+			params.FilterBufferedOutput(w, data)
 		}
 	}
 
@@ -64,6 +63,9 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		`AppTraces | where AppRoleName == "%s"`,
 		functionAppName,
 	)
+	// BUG-423, BUG-424: Apply since/until to initial query
+	query += params.KQLSinceFilter()
+	query += params.KQLUntilFilter()
 	query += ` | order by TimeGenerated asc | project TimeGenerated, Message`
 
 	resp, err := s.azure.Logs.QueryWorkspace(s.ctx(), s.config.LogAnalyticsWorkspace, azquery.Body{
@@ -73,6 +75,12 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		s.Logger.Debug().Err(err).Msg("failed to query logs")
 		return
 	}
+
+	type logEntry struct {
+		line string
+		ts   time.Time
+	}
+	var entries []logEntry
 
 	for _, table := range resp.Tables {
 		// Find column indices
@@ -106,24 +114,112 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			s.writeLogEvent(w, line, timestamps, ts)
+			entries = append(entries, logEntry{line: line, ts: ts})
+		}
+	}
+
+	// BUG-425: Apply tail
+	if params.Tail >= 0 && params.Tail < len(entries) {
+		entries = entries[len(entries)-params.Tail:]
+	}
+
+	for _, e := range entries {
+		formatted := params.FormatLine(e.line, e.ts) // BUG-427: details + timestamps
+		core.WriteMuxLine(w, formatted)
+	}
+	core.FlushIfNeeded(w)
+
+	// BUG-430: Follow mode support
+	if !params.Follow {
+		return
+	}
+
+	// Track last timestamp for follow dedup
+	var lastTimestamp time.Time
+	if len(entries) > 0 {
+		lastTimestamp = entries[len(entries)-1].ts
+	}
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			c, _ := s.Store.Containers.Get(id)
+			if !c.State.Running && c.State.Status != "created" {
+				s.fetchFollowLogs(w, functionAppName, lastTimestamp, params, &lastTimestamp)
+				return
+			}
+			s.fetchFollowLogs(w, functionAppName, lastTimestamp, params, &lastTimestamp)
 		}
 	}
 }
 
-func (s *Server) writeLogEvent(w http.ResponseWriter, line string, addTimestamp bool, ts time.Time) {
-	if !strings.HasSuffix(line, "\n") {
-		line += "\n"
+// fetchFollowLogs queries Azure Monitor for entries after lastTS.
+func (s *Server) fetchFollowLogs(w http.ResponseWriter, functionAppName string, after time.Time, params core.CloudLogParams, lastTS *time.Time) {
+	query := fmt.Sprintf(
+		`AppTraces | where AppRoleName == "%s"`,
+		functionAppName,
+	)
+	if !after.IsZero() {
+		query += fmt.Sprintf(` | where TimeGenerated > datetime(%s)`, after.UTC().Format(time.RFC3339Nano))
+	}
+	query += ` | order by TimeGenerated asc | project TimeGenerated, Message`
+
+	resp, err := s.azure.Logs.QueryWorkspace(s.ctx(), s.config.LogAnalyticsWorkspace, azquery.Body{
+		Query: &query,
+	}, nil)
+	if err != nil {
+		s.Logger.Debug().Err(err).Msg("failed to query follow logs")
+		return
 	}
 
-	if addTimestamp {
-		line = ts.UTC().Format(time.RFC3339Nano) + " " + line
+	wrote := false
+	for _, table := range resp.Tables {
+		timeIdx := -1
+		msgIdx := -1
+		for i, col := range table.Columns {
+			if col.Name != nil {
+				switch *col.Name {
+				case "TimeGenerated":
+					timeIdx = i
+				case "Message":
+					msgIdx = i
+				}
+			}
+		}
+
+		for _, row := range table.Rows {
+			if msgIdx < 0 || msgIdx >= len(row) {
+				continue
+			}
+
+			line, ok := row[msgIdx].(string)
+			if !ok || line == "" {
+				continue
+			}
+
+			var ts time.Time
+			if timeIdx >= 0 && timeIdx < len(row) {
+				if tsStr, ok := row[timeIdx].(string); ok {
+					ts, _ = time.Parse(time.RFC3339Nano, tsStr)
+				}
+			}
+
+			formatted := params.FormatLine(line, ts)
+			core.WriteMuxLine(w, formatted)
+			wrote = true
+
+			if !ts.IsZero() && ts.After(*lastTS) {
+				*lastTS = ts
+			}
+		}
 	}
 
-	data := []byte(line)
-	header := make([]byte, 8)
-	header[0] = 1 // stdout
-	binary.BigEndian.PutUint32(header[4:], uint32(len(data)))
-	w.Write(header)
-	w.Write(data)
+	if wrote {
+		core.FlushIfNeeded(w)
+	}
 }
