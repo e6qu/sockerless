@@ -500,6 +500,10 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 		s.Registry.MarkCleanedUp(azfState.ResourceID)
 	}
 
+	if pod, inPod := s.Store.Pods.GetPodForContainer(id); inPod {
+		s.Store.Pods.RemoveContainer(pod.ID, id)
+	}
+
 	s.Store.Containers.Delete(id)
 	s.Store.ContainerNames.Delete(c.Name)
 	s.AZF.Delete(id)
@@ -512,6 +516,7 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) {
 		s.Store.Execs.Delete(eid)
 	}
 
+	s.EmitEvent("container", "destroy", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	w.WriteHeader(http.StatusNoContent)
 }
 
