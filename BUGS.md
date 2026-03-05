@@ -35,6 +35,25 @@
 | 32 | BUG-395→408 | Cloud kill event order, TmpfsDirs cleanup, image push/save/search stubs, pod list filters, frontend query param forwarding |
 | 33 | BUG-409→422 | Core resize endpoints, stats precpu/memlimit, default networks, event emissions, SpaceReclaimed, deterministic ImageID, paused status, health exec cleanup, paused count, logs stdout/stderr |
 | 34 | BUG-423→436 | Cloud logs parity (since/until/tail/stdout/stderr/details/follow), ImageSummary.Containers count, health check StartInterval |
+| 35 | BUG-437→449 | Container inspect paths, NetworkSettings fields, KernelVersion, exec CanRemove, frontend df type param, image GraphDriver/RootFS, volume UsageData |
+
+## Sprint 35 Detail (BUG-437 → BUG-449)
+
+| ID | Component | Description |
+|----|-----------|-------------|
+| BUG-437 | Core | `buildContainerFromConfig` never sets `LogPath` — always empty in inspect |
+| BUG-438 | Core | `buildContainerFromConfig` never sets `ResolvConfPath` — always empty |
+| BUG-439 | Core | `buildContainerFromConfig` never sets `HostnamePath` — always empty |
+| BUG-440 | Core | `buildContainerFromConfig` never sets `HostsPath` — always empty |
+| BUG-441 | Core | `NetworkSettings.SandboxID` never populated — always empty |
+| BUG-442 | Core | `NetworkSettings.SandboxKey` never populated — always empty |
+| BUG-443 | Core | `NetworkSettings.Bridge` never populated for bridge network containers |
+| BUG-444 | Core | `handleInfo` never sets `KernelVersion` — frontend forwards empty string |
+| BUG-445 | Core | `ExecInstance.CanRemove` never set to true after exec completes |
+| BUG-446 | Frontend | `handleSystemDf` doesn't forward `type` query parameter to backend |
+| BUG-447 | Core | `Image.RootFS.Layers` empty in `handleImageLoad` — pull sets synthetic layer but load doesn't |
+| BUG-448 | Core | `Image.GraphDriver` never populated — missing `Name` and `Data` in both pull and load |
+| BUG-449 | Core | `handleSystemDf` volume `UsageData` never set — missing RefCount and Size |
 
 ## Sprint 34 Detail (BUG-423 → BUG-436)
 

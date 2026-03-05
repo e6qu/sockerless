@@ -149,6 +149,7 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 		s.Store.Execs.Update(id, func(e *api.ExecInstance) {
 			e.Running = false
 			e.Pid = 0
+			e.CanRemove = true
 		})
 		return
 	}
@@ -184,6 +185,7 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 		e.Running = false
 		e.Pid = 0
 		e.ExitCode = exitCode
+		e.CanRemove = true
 	})
 
 	// For synthetic exec (no agent, no real process), schedule container

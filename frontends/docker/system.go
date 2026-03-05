@@ -185,7 +185,11 @@ func (s *Server) handleSystemEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSystemDf(w http.ResponseWriter, r *http.Request) {
-	resp, err := s.backend.get(r.Context(), "/system/df")
+	query := url.Values{}
+	if t := r.URL.Query().Get("type"); t != "" {
+		query.Set("type", t)
+	}
+	resp, err := s.backend.getWithQuery(r.Context(), "/system/df", query)
 	if err != nil {
 		writeError(w, err)
 		return
