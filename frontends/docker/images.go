@@ -37,7 +37,7 @@ func (s *Server) handleImageCreate(w http.ResponseWriter, r *http.Request) {
 						if tag != "" {
 							query.Set("tag", tag)
 						}
-						s.backend.postWithQuery(r.Context(), "/images/tag", query, nil)
+						_, _ = s.backend.postWithQuery(r.Context(), "/images/tag", query, nil)
 					}
 				}
 			}
