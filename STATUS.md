@@ -1,6 +1,6 @@
 # Sockerless — Current Status
 
-**Phase 82 complete. 725 tasks done across 80 phases. 574 bugs fixed (44 sprints). 0 open bugs.**
+**Phase 82 complete. 725 tasks done across 80 phases. 583 bugs fixed (45 sprints). 0 open bugs.**
 
 ## Test Results
 

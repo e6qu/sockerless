@@ -92,6 +92,7 @@ This document maps Docker Engine API endpoints to their implementation status ac
 | `docker save` | `GET /images/get` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker load` | `POST /images/load` | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | `docker search` | `GET /images/search` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `docker import` | `POST /images/create?fromSrc=` | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | `docker image prune` | `POST /images/prune` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ### Image Notes

@@ -159,3 +159,7 @@ Fixed 13 bugs: container `expose` filter (BUG-489), image `before`/`since` list 
 - **E2E**: 371 GitHub+GitLab workflows | **Sim-backend**: 75 | **Terraform**: 75 | **Upstream**: 252
 - **3 cloud simulators** validated against SDKs, CLIs, and Terraform
 - **8 backends** sharing a common driver architecture
+
+## Sprint 45 Summary (BUG-575 → BUG-583)
+
+Fixed 8 bugs across Docker backend and frontend (BUG-580 confirmed as false positive). Docker backend `handleImageInspect` now maps `GraphDriver` from Docker SDK (BUG-575). `handleSystemDf` ContainerSummary EndpointSettings now includes IPv6Gateway, GlobalIPv6Address, GlobalIPv6PrefixLen, DriverOpts, and IPAMConfig (BUG-576), plus HostConfig with NetworkMode (BUG-577). System DF and all 3 volume handlers (create/list/inspect) now map UsageData from Docker SDK (BUG-578/579). `handleImagePush` now checks `X-Registry-Auth` header first, falls back to query param `auth` (BUG-581). BuildCache `LastUsedAt` returns empty string instead of `"0001-01-01T00:00:00Z"` for unused entries (BUG-582). Frontend `handleContainerCommit` now forwards all `changes` query params instead of only the first (BUG-583). Updated FEATURE_MATRIX.md with `docker import` row.

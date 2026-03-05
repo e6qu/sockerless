@@ -1,8 +1,8 @@
 # Known Bugs
 
-## Fixed (BUG-001 → BUG-574)
+## Fixed (BUG-001 → BUG-583)
 
-574 bugs fixed across 44 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
+583 bugs fixed across 45 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
@@ -45,6 +45,21 @@
 | 42 | BUG-528→540 | ECS/CloudRun/ACA ENV merge + Cmd/Entrypoint, staticcheck QF1008, errcheck lint |
 | 43 | BUG-541→553 | FaaS ENV merge + Cmd/Entrypoint, Docker image tag 200, Healthcheck StartInterval, ContainerConfig fields, Mount inspect, incrementing PIDs, deterministic image sizes |
 | 44 | BUG-554→574 | Docker inspect/list field mapping, cloud restart, KQL datetime, frontend routes |
+| 45 | BUG-575→583 | Docker image GraphDriver, system df EndpointSettings/HostConfig/Volume UsageData parity, volume UsageData, image push auth header+query, BuildCache zero-time, frontend commit multi-value changes |
+
+## Sprint 45 Detail (BUG-575 → BUG-583)
+
+| Bug | Component | Issue |
+|-----|-----------|-------|
+| BUG-575 | Docker | `handleImageInspect` never maps `info.GraphDriver` to `img.GraphDriver` |
+| BUG-576 | Docker | `handleSystemDf` EndpointSettings missing IPv6Gateway, GlobalIPv6Address, GlobalIPv6PrefixLen, DriverOpts, IPAMConfig |
+| BUG-577 | Docker | `handleSystemDf` ContainerSummary never sets HostConfig field |
+| BUG-578 | Docker | `handleSystemDf` Volume mapping missing UsageData |
+| BUG-579 | Docker | `handleVolumeCreate`/`handleVolumeList`/`handleVolumeInspect` never map `vol.UsageData` |
+| BUG-580 | Docker | FALSE POSITIVE — Docker SDK `MountPoint` has no Consistency field |
+| BUG-581 | Docker | `handleImagePush` reads auth from header only — now checks header first, falls back to query param |
+| BUG-582 | Docker | `handleSystemDf` BuildCache `LastUsedAt` formats zero time — now empty when unused |
+| BUG-583 | Frontend | `handleContainerCommit` uses `Get("changes")` — now forwards all `changes` params |
 
 ## Sprint 44 Detail (BUG-554 → BUG-574)
 

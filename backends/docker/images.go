@@ -88,6 +88,13 @@ func (s *Server) handleImageInspect(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if info.GraphDriver.Name != "" {
+		img.GraphDriver = api.GraphDriverData{
+			Name: info.GraphDriver.Name,
+			Data: info.GraphDriver.Data,
+		}
+	}
+
 	if info.RootFS.Type != "" {
 		img.RootFS = api.RootFS{
 			Type:   info.RootFS.Type,

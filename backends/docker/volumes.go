@@ -26,7 +26,7 @@ func (s *Server) handleVolumeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, api.Volume{
+	result := api.Volume{
 		Name:       vol.Name,
 		Driver:     vol.Driver,
 		Mountpoint: vol.Mountpoint,
@@ -35,7 +35,14 @@ func (s *Server) handleVolumeCreate(w http.ResponseWriter, r *http.Request) {
 		Scope:      vol.Scope,
 		Options:    vol.Options,
 		Status:     vol.Status,
-	})
+	}
+	if vol.UsageData != nil {
+		result.UsageData = &api.VolumeUsageData{
+			Size:     vol.UsageData.Size,
+			RefCount: vol.UsageData.RefCount,
+		}
+	}
+	writeJSON(w, http.StatusCreated, result)
 }
 
 func (s *Server) handleVolumeList(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +58,7 @@ func (s *Server) handleVolumeList(w http.ResponseWriter, r *http.Request) {
 
 	result := make([]*api.Volume, 0)
 	for _, v := range vols.Volumes {
-		result = append(result, &api.Volume{
+		vol := &api.Volume{
 			Name:       v.Name,
 			Driver:     v.Driver,
 			Mountpoint: v.Mountpoint,
@@ -60,7 +67,14 @@ func (s *Server) handleVolumeList(w http.ResponseWriter, r *http.Request) {
 			Scope:      v.Scope,
 			Options:    v.Options,
 			Status:     v.Status,
-		})
+		}
+		if v.UsageData != nil {
+			vol.UsageData = &api.VolumeUsageData{
+				Size:     v.UsageData.Size,
+				RefCount: v.UsageData.RefCount,
+			}
+		}
+		result = append(result, vol)
 	}
 
 	writeJSON(w, http.StatusOK, api.VolumeListResponse{
@@ -77,7 +91,7 @@ func (s *Server) handleVolumeInspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, api.Volume{
+	inspectResult := api.Volume{
 		Name:       vol.Name,
 		Driver:     vol.Driver,
 		Mountpoint: vol.Mountpoint,
@@ -86,7 +100,14 @@ func (s *Server) handleVolumeInspect(w http.ResponseWriter, r *http.Request) {
 		Scope:      vol.Scope,
 		Options:    vol.Options,
 		Status:     vol.Status,
-	})
+	}
+	if vol.UsageData != nil {
+		inspectResult.UsageData = &api.VolumeUsageData{
+			Size:     vol.UsageData.Size,
+			RefCount: vol.UsageData.RefCount,
+		}
+	}
+	writeJSON(w, http.StatusOK, inspectResult)
 }
 
 func (s *Server) handleVolumeRemove(w http.ResponseWriter, r *http.Request) {
