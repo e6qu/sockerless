@@ -1,8 +1,8 @@
 # Known Bugs
 
-## Fixed (BUG-001 → BUG-462)
+## Fixed (BUG-001 → BUG-475)
 
-436 bugs fixed across 36 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
+475 bugs fixed across 37 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
@@ -37,6 +37,25 @@
 | 34 | BUG-423→436 | Cloud logs parity (since/until/tail/stdout/stderr/details/follow), ImageSummary.Containers count, health check StartInterval |
 | 35 | BUG-437→449 | Container inspect paths, NetworkSettings fields, KernelVersion, exec CanRemove, frontend df type param, image GraphDriver/RootFS, volume UsageData |
 | 36 | BUG-450→462 | System df field gaps, container list SizeRw, commit/build GraphDriver, Container.Image sha256 ID |
+| 37 | BUG-463→475 | Image history/save, stats networks, container size fields, update PidsLimit/OomKillDisable, image push auth, LastTagTime, image search limit |
+
+## Sprint 37 Detail (BUG-463 → BUG-475)
+
+| ID | Component | Description |
+|----|-----------|-------------|
+| BUG-463 | Core | `handleImageHistory` returns per-layer entries instead of single hardcoded entry |
+| BUG-464 | Core | `handleImageSave` manifest uses actual `RootFS.Layers` instead of empty array |
+| BUG-465 | Core | `buildStatsEntry` populates `networks` field from container `NetworkSettings` |
+| BUG-466 | API | Container struct gets `SizeRw`/`SizeRootFs` pointer fields |
+| BUG-467 | Core | `handleContainerInspect` respects `size` query parameter |
+| BUG-468 | Frontend | `handleContainerInspect` forwards `size` query param to backend |
+| BUG-469 | Frontend | `handleVersion` uses `info.KernelVersion` instead of empty string |
+| BUG-470 | API+Core | `ContainerUpdateRequest` gets `PidsLimit` field |
+| BUG-471 | API+Core | `ContainerUpdateRequest` gets `OomKillDisable` field |
+| BUG-472 | Frontend | `handleImagePush` forwards `X-Registry-Auth` header as query param |
+| BUG-473 | Core | `handleImagePush` accepts auth query param |
+| BUG-474 | Core | Image `Metadata.LastTagTime` set on pull/load/build/commit/tag operations |
+| BUG-475 | Core | `handleImageSearch` respects `limit` query parameter |
 
 ## Sprint 36 Detail (BUG-450 → BUG-462)
 

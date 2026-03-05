@@ -21,6 +21,8 @@ type Container struct {
 	HostnamePath    string           `json:"HostnamePath"`
 	HostsPath       string           `json:"HostsPath"`
 	ExecIDs         []string         `json:"ExecIDs"`
+	SizeRw          *int64           `json:"SizeRw,omitempty"`
+	SizeRootFs      *int64           `json:"SizeRootFs,omitempty"`
 	AgentAddress    string           `json:"AgentAddress,omitempty"`
 	AgentToken      string           `json:"AgentToken,omitempty"`
 }
@@ -683,6 +685,8 @@ type ContainerUpdateRequest struct {
 	CpusetCpus        string        `json:"CpusetCpus,omitempty"`
 	CpusetMems        string        `json:"CpusetMems,omitempty"`
 	BlkioWeight       uint16        `json:"BlkioWeight,omitempty"`
+	PidsLimit         *int64        `json:"PidsLimit,omitempty"`
+	OomKillDisable    *bool         `json:"OomKillDisable,omitempty"`
 }
 
 // ContainerUpdateResponse is the response from updating a container.

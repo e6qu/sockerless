@@ -503,10 +503,11 @@ func (s *BaseServer) handleImageBuild(w http.ResponseWriter, r *http.Request) {
 		ref += ":latest"
 	}
 
+	nowStr := time.Now().UTC().Format(time.RFC3339Nano)
 	img := api.Image{
 		ID:           imageID,
 		RepoTags:     []string{ref},
-		Created:      time.Now().UTC().Format(time.RFC3339Nano),
+		Created:      nowStr,
 		Size:         0,
 		Architecture: "amd64",
 		Os:           "linux",
@@ -520,6 +521,7 @@ func (s *BaseServer) handleImageBuild(w http.ResponseWriter, r *http.Request) {
 				"WorkDir":   "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/work",
 			},
 		},
+		Metadata: api.ImageMetadata{LastTagTime: nowStr},
 	}
 	StoreImageWithAliases(s.Store, ref, img)
 

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -126,13 +127,14 @@ func (s *BaseServer) handleImagePull(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	now := time.Now().UTC()
 	img := api.Image{
 		ID:       imageID,
 		RepoTags: []string{ref},
 		RepoDigests: []string{
 			strings.Split(ref, ":")[0] + "@sha256:" + fmt.Sprintf("%x", hash)[:64],
 		},
-		Created:      time.Now().UTC().Format(time.RFC3339Nano),
+		Created:      now.Format(time.RFC3339Nano),
 		Size:         7654321,
 		VirtualSize:  7654321,
 		Architecture: "amd64",
@@ -150,6 +152,7 @@ func (s *BaseServer) handleImagePull(w http.ResponseWriter, r *http.Request) {
 				"WorkDir":   "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/work",
 			},
 		},
+		Metadata: api.ImageMetadata{LastTagTime: now.Format(time.RFC3339Nano)},
 	}
 
 	StoreImageWithAliases(s.Store, ref, img)
@@ -202,10 +205,11 @@ func (s *BaseServer) handleImageLoad(w http.ResponseWriter, r *http.Request) {
 
 	id := "sha256:" + GenerateID()
 	layerID := GenerateID()
+	nowStr := time.Now().UTC().Format(time.RFC3339Nano)
 	img := api.Image{
 		ID:           id,
 		RepoTags:     repoTags,
-		Created:      time.Now().UTC().Format(time.RFC3339Nano),
+		Created:      nowStr,
 		Size:         0,
 		Architecture: "amd64",
 		Os:           "linux",
@@ -224,6 +228,7 @@ func (s *BaseServer) handleImageLoad(w http.ResponseWriter, r *http.Request) {
 				"WorkDir":   "/var/lib/sockerless/overlay2/" + id[7:19] + "/work",
 			},
 		},
+		Metadata: api.ImageMetadata{LastTagTime: nowStr},
 	}
 
 	// Merge parsed config
@@ -350,6 +355,7 @@ func (s *BaseServer) handleImageTag(w http.ResponseWriter, r *http.Request) {
 	}
 
 	img.RepoTags = append(img.RepoTags, newRef)
+	img.Metadata.LastTagTime = time.Now().UTC().Format(time.RFC3339Nano)
 
 	// Update all existing aliases to reflect the new RepoTags list
 	for _, existingTag := range img.RepoTags {
@@ -528,15 +534,38 @@ func (s *BaseServer) handleImageHistory(w http.ResponseWriter, r *http.Request) 
 	}
 
 	created, _ := time.Parse(time.RFC3339Nano, img.Created)
-	WriteJSON(w, http.StatusOK, []*api.ImageHistoryEntry{
-		{
-			ID:        img.ID,
-			Created:   created.Unix(),
-			CreatedBy: "/bin/sh -c #(nop) CMD [\"sh\"]",
-			Tags:      img.RepoTags,
-			Size:      img.Size,
-		},
-	})
+	var history []*api.ImageHistoryEntry
+
+	layers := img.RootFS.Layers
+	if len(layers) == 0 {
+		layers = []string{img.ID}
+	}
+
+	for i, layer := range layers {
+		entry := &api.ImageHistoryEntry{
+			ID:      layer,
+			Created: created.Unix() - int64(len(layers)-1-i),
+			Size:    0,
+			Comment: "",
+		}
+		if i == len(layers)-1 {
+			entry.ID = img.ID
+			entry.Created = created.Unix()
+			entry.CreatedBy = "/bin/sh -c #(nop)  CMD [\"sh\"]"
+			entry.Tags = img.RepoTags
+			entry.Size = img.Size
+			entry.Comment = img.Comment
+		} else {
+			layerShort := layer
+			if len(layerShort) > 19 {
+				layerShort = layerShort[7:19]
+			}
+			entry.CreatedBy = "/bin/sh -c #(nop)  ADD file:" + layerShort + " in / "
+			entry.Tags = []string{}
+		}
+		history = append(history, entry)
+	}
+	WriteJSON(w, http.StatusOK, history)
 }
 
 func (s *BaseServer) handleImagePrune(w http.ResponseWriter, r *http.Request) {
@@ -697,10 +726,14 @@ func (s *BaseServer) handleImageSave(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			continue
 		}
+		layers := img.RootFS.Layers
+		if layers == nil {
+			layers = []string{}
+		}
 		manifests = append(manifests, map[string]any{
 			"Config":   img.ID + ".json",
 			"RepoTags": img.RepoTags,
-			"Layers":   []string{},
+			"Layers":   layers,
 		})
 	}
 	if manifests == nil {
@@ -713,6 +746,11 @@ func (s *BaseServer) handleImageSave(w http.ResponseWriter, r *http.Request) {
 
 func (s *BaseServer) handleImageSearch(w http.ResponseWriter, r *http.Request) {
 	term := r.URL.Query().Get("term")
+	limitStr := r.URL.Query().Get("limit")
+	limit := 0
+	if limitStr != "" {
+		limit, _ = strconv.Atoi(limitStr)
+	}
 	var results []map[string]any
 	seen := make(map[string]bool)
 	for _, img := range s.Store.Images.List() {
@@ -732,6 +770,9 @@ func (s *BaseServer) handleImageSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	if results == nil {
 		results = []map[string]any{}
+	}
+	if limit > 0 && limit < len(results) {
+		results = results[:limit]
 	}
 	WriteJSON(w, http.StatusOK, results)
 }
