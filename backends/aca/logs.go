@@ -1,10 +1,8 @@
 package aca
 
 import (
-	"encoding/binary"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/monitor/azquery"
@@ -28,8 +26,7 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	follow := r.URL.Query().Get("follow") == "1" || r.URL.Query().Get("follow") == "true"
-	timestamps := r.URL.Query().Get("timestamps") == "1" || r.URL.Query().Get("timestamps") == "true"
+	params := core.ParseCloudLogParams(r, c.Config.Labels)
 
 	acaState, _ := s.ACA.Get(id)
 	jobName := acaState.JobName
@@ -44,18 +41,23 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		defer f.Flush()
 	}
 
-	// Track latest timestamp to avoid duplicate entries
-	var lastTimestamp time.Time
-
-	// Fetch initial logs
-	s.fetchAndWriteLogs(w, jobName, lastTimestamp, timestamps, &lastTimestamp)
-
-	if !follow {
+	// BUG-426: Early return if stdout suppressed
+	if !params.ShouldWrite() {
 		return
 	}
 
-	// Follow mode: poll for new events (2s interval for Azure Monitor)
-	ticker := time.NewTicker(2 * time.Second)
+	// Track latest timestamp to avoid duplicate entries
+	var lastTimestamp time.Time
+
+	// Fetch initial logs with since/until filtering
+	s.fetchAndWriteLogs(w, jobName, lastTimestamp, params, &lastTimestamp, true)
+
+	if !params.Follow {
+		return
+	}
+
+	// BUG-434: Follow mode poll interval 1s (was 2s, inconsistent with ECS/CloudRun)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -65,16 +67,19 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		case <-ticker.C:
 			c, _ := s.Store.Containers.Get(id)
 			if !c.State.Running && c.State.Status != "created" {
-				s.fetchAndWriteLogs(w, jobName, lastTimestamp, timestamps, &lastTimestamp)
+				// BUG-433: Follow queries don't use since/until
+				s.fetchAndWriteLogs(w, jobName, lastTimestamp, params, &lastTimestamp, false)
 				return
 			}
-			s.fetchAndWriteLogs(w, jobName, lastTimestamp, timestamps, &lastTimestamp)
+			// BUG-433: Follow queries don't use since/until
+			s.fetchAndWriteLogs(w, jobName, lastTimestamp, params, &lastTimestamp, false)
 		}
 	}
 }
 
 // fetchAndWriteLogs queries Azure Monitor Log Analytics and writes new entries.
-func (s *Server) fetchAndWriteLogs(w http.ResponseWriter, jobName string, after time.Time, addTimestamp bool, lastTS *time.Time) {
+// applyTimeFilters controls whether since/until are added (initial=true, follow=false).
+func (s *Server) fetchAndWriteLogs(w http.ResponseWriter, jobName string, after time.Time, params core.CloudLogParams, lastTS *time.Time, applyTimeFilters bool) {
 	if s.config.LogAnalyticsWorkspace == "" {
 		return
 	}
@@ -86,6 +91,11 @@ func (s *Server) fetchAndWriteLogs(w http.ResponseWriter, jobName string, after 
 	if !after.IsZero() {
 		query += fmt.Sprintf(` | where TimeGenerated > datetime("%s")`, after.UTC().Format(time.RFC3339Nano))
 	}
+	// BUG-423, BUG-424: Apply since/until only on initial fetch
+	if applyTimeFilters {
+		query += params.KQLSinceFilter()
+		query += params.KQLUntilFilter()
+	}
 	query += ` | order by TimeGenerated asc | project TimeGenerated, Log_s`
 
 	resp, err := s.azure.Logs.QueryWorkspace(s.ctx(), s.config.LogAnalyticsWorkspace, azquery.Body{
@@ -96,7 +106,12 @@ func (s *Server) fetchAndWriteLogs(w http.ResponseWriter, jobName string, after 
 		return
 	}
 
-	wrote := false
+	type logEntry struct {
+		line string
+		ts   time.Time
+	}
+	var entries []logEntry
+
 	for _, table := range resp.Tables {
 		timeIdx := -1
 		logIdx := -1
@@ -128,8 +143,7 @@ func (s *Server) fetchAndWriteLogs(w http.ResponseWriter, jobName string, after 
 				}
 			}
 
-			s.writeLogEvent(w, line, addTimestamp, ts)
-			wrote = true
+			entries = append(entries, logEntry{line: line, ts: ts})
 
 			if !ts.IsZero() && ts.After(*lastTS) {
 				*lastTS = ts
@@ -137,26 +151,19 @@ func (s *Server) fetchAndWriteLogs(w http.ResponseWriter, jobName string, after 
 		}
 	}
 
+	// BUG-425: Apply tail
+	if params.Tail >= 0 && params.Tail < len(entries) {
+		entries = entries[len(entries)-params.Tail:]
+	}
+
+	wrote := false
+	for _, e := range entries {
+		formatted := params.FormatLine(e.line, e.ts) // BUG-427: details + timestamps
+		core.WriteMuxLine(w, formatted)
+		wrote = true
+	}
+
 	if wrote {
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
+		core.FlushIfNeeded(w)
 	}
-}
-
-func (s *Server) writeLogEvent(w http.ResponseWriter, line string, addTimestamp bool, ts time.Time) {
-	if !strings.HasSuffix(line, "\n") {
-		line += "\n"
-	}
-
-	if addTimestamp {
-		line = ts.UTC().Format(time.RFC3339Nano) + " " + line
-	}
-
-	data := []byte(line)
-	header := make([]byte, 8)
-	header[0] = 1 // stdout
-	binary.BigEndian.PutUint32(header[4:], uint32(len(data)))
-	w.Write(header)
-	w.Write(data)
 }

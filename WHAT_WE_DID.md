@@ -123,10 +123,14 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 
 18 bugs fixed. All 6 cloud backends were missing `StopHealthCheck(id)` in stop/kill/remove handlers (BUG-359→361), missing "create" event in `handleContainerCreate` (BUG-362), had a simplified `signalToExitCode` that only handled SIGKILL — now maps 8 signals with 24 aliases (BUG-363), missing "kill"+"die" events in force-remove path (BUG-364), and missing `Network.Disconnect` loop in remove/prune (BUG-365→366). Core `handleImagePrune` was missing `BuildContexts` cleanup and untag/delete events (BUG-367→368). Core `handleVolumePrune` and `handleNetworkPrune` were missing destroy events (BUG-369→370). Core `handlePodKill` was missing `ProcessLifecycle.Cleanup` (BUG-371). Core `handlePodRemove` force path was missing "destroy" events per container (BUG-372). Core `handlePodStart` didn't reset `FinishedAt`/`ExitCode` (BUG-373). `FormatStatus` was hardcoded — now computes actual uptime (BUG-374). `Event.Scope` was never set to "local" (BUG-375). `handleContainerRestart` was missing "restart" event in core and all 6 cloud backends (BUG-376).
 
+## Sprint 34 Summary (BUG-423 → BUG-436)
+
+14 bugs fixed in cloud backend logs parity and two core issues. Created shared `CloudLogParams` helper in `backends/core/log_cloud.go` with `ParseCloudLogParams`, `FormatLine`, `ApplyTail`, `FilterBufferedOutput`, `WriteMuxLine`, and cloud-specific filter helpers (CloudWatch millis, Cloud Logging timestamp, KQL datetime). All 6 cloud backends now support `since`/`until` timestamp filtering (BUG-423/424), `stdout`/`stderr` suppression (BUG-426), and `details` label prepending (BUG-427). CloudRun, GCF, ACA, AZF now support `tail` via client-side slicing (BUG-425). Lambda, GCF, AZF gained follow-mode polling (BUG-428/429/430). ECS/CloudRun/ACA follow-mode queries no longer apply `since`/`until` (BUG-433). ACA follow polling changed from 2s to 1s for consistency (BUG-434). FaaS LogBuffers output now filtered through params (BUG-435). Core `ImageSummary.Containers` now counts containers per image in both `handleImageList` (BUG-431) and `handleSystemDf` (BUG-436). Health check loop now uses `StartInterval` during start period (BUG-432).
+
 ## Project Stats
 
 - **80 phases** (1-67, 69-77, 79-82), 725 tasks completed
-- **30 bug sprints**, 351 bugs fixed (BUG-001→377), 0 open
+- **34 bug sprints**, 410 bugs fixed (BUG-001→436), 0 open
 - **18 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, CLI, admin, tests
 - **Core tests**: 302 PASS | **Frontend**: 7 | **UI (Vitest)**: 92 | **Admin**: 88 | **bleephub**: 304 | **gitlabhub**: 136 | **ProcessRunner**: 15
 - **Cloud SDK**: AWS 42, GCP 43, Azure 38 | **Cloud CLI**: AWS 26, GCP 21, Azure 19

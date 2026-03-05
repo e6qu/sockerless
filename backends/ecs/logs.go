@@ -1,7 +1,6 @@
 package ecs
 
 import (
-	"encoding/binary"
 	"fmt"
 	"net/http"
 	"strings"
@@ -29,9 +28,7 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	follow := r.URL.Query().Get("follow") == "1" || r.URL.Query().Get("follow") == "true"
-	timestamps := r.URL.Query().Get("timestamps") == "1" || r.URL.Query().Get("timestamps") == "true"
-	tail := r.URL.Query().Get("tail")
+	params := core.ParseCloudLogParams(r, c.Config.Labels)
 
 	logStreamPrefix := id[:12]
 	logStreamName := fmt.Sprintf("%s/main/%s", logStreamPrefix, s.getTaskID(id))
@@ -43,44 +40,43 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		defer f.Flush()
 	}
 
-	// Determine limit
-	var limit *int32
-	if tail != "" && tail != "all" {
-		n := int32(100)
-		fmt.Sscanf(tail, "%d", &n)
-		limit = &n
+	// BUG-426: Early return if stdout suppressed (all cloud logs are stdout)
+	if !params.ShouldWrite() {
+		return
 	}
-
-	var nextToken *string
-	startFromHead := limit == nil
 
 	input := &cloudwatchlogs.GetLogEventsInput{
 		LogGroupName:  aws.String(s.config.LogGroup),
 		LogStreamName: aws.String(logStreamName),
-		StartFromHead: aws.Bool(startFromHead),
+		StartFromHead: aws.Bool(params.CloudLogTailInt32() == nil),
 	}
-	if limit != nil {
+	if limit := params.CloudLogTailInt32(); limit != nil {
 		input.Limit = limit
+	}
+	// BUG-423: Apply since as StartTime
+	if ms := params.SinceMillis(); ms != nil {
+		input.StartTime = ms
+	}
+	// BUG-424: Apply until as EndTime
+	if ms := params.UntilMillis(); ms != nil {
+		input.EndTime = ms
 	}
 
 	// Fetch initial logs
 	result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), input)
 	if err != nil {
-		// If log stream doesn't exist yet, return empty
 		s.Logger.Debug().Err(err).Str("stream", logStreamName).Msg("failed to get log events")
 		return
 	}
 
 	for _, event := range result.Events {
-		s.writeLogEvent(w, event.Message, event.Timestamp, timestamps)
+		s.writeLogEvent(w, event.Message, event.Timestamp, params)
 	}
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
-	}
+	core.FlushIfNeeded(w)
 
-	nextToken = result.NextForwardToken
+	nextToken := result.NextForwardToken
 
-	if !follow {
+	if !params.Follow {
 		return
 	}
 
@@ -96,67 +92,56 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 			// Check if container has stopped
 			c, _ := s.Store.Containers.Get(id)
 			if !c.State.Running && c.State.Status != "created" {
-				// Fetch any remaining logs
-				input := &cloudwatchlogs.GetLogEventsInput{
+				// Fetch any remaining logs — BUG-433: no since/until on follow queries
+				followInput := &cloudwatchlogs.GetLogEventsInput{
 					LogGroupName:  aws.String(s.config.LogGroup),
 					LogStreamName: aws.String(logStreamName),
 					StartFromHead: aws.Bool(true),
 					NextToken:     nextToken,
 				}
-				result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), input)
+				result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), followInput)
 				if err == nil {
 					for _, event := range result.Events {
-						s.writeLogEvent(w, event.Message, event.Timestamp, timestamps)
+						s.writeLogEvent(w, event.Message, event.Timestamp, params)
 					}
 				}
 				return
 			}
 
-			input := &cloudwatchlogs.GetLogEventsInput{
+			// BUG-433: Follow queries use NextToken only, no since/until
+			followInput := &cloudwatchlogs.GetLogEventsInput{
 				LogGroupName:  aws.String(s.config.LogGroup),
 				LogStreamName: aws.String(logStreamName),
 				StartFromHead: aws.Bool(true),
 				NextToken:     nextToken,
 			}
-			result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), input)
+			result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), followInput)
 			if err != nil {
 				continue
 			}
 
 			for _, event := range result.Events {
-				s.writeLogEvent(w, event.Message, event.Timestamp, timestamps)
+				s.writeLogEvent(w, event.Message, event.Timestamp, params)
 			}
 			if len(result.Events) > 0 {
-				if f, ok := w.(http.Flusher); ok {
-					f.Flush()
-				}
+				core.FlushIfNeeded(w)
 			}
 			nextToken = result.NextForwardToken
 		}
 	}
 }
 
-func (s *Server) writeLogEvent(w http.ResponseWriter, message *string, timestamp *int64, addTimestamp bool) {
+func (s *Server) writeLogEvent(w http.ResponseWriter, message *string, timestamp *int64, params core.CloudLogParams) {
 	if message == nil {
 		return
 	}
-	line := *message
-	if !strings.HasSuffix(line, "\n") {
-		line += "\n"
+	var ts time.Time
+	if timestamp != nil {
+		ts = time.UnixMilli(*timestamp)
 	}
-
-	if addTimestamp && timestamp != nil {
-		ts := time.UnixMilli(*timestamp).UTC().Format(time.RFC3339Nano)
-		line = ts + " " + line
-	}
-
-	data := []byte(line)
-	// Docker mux header: [stream_type, 0, 0, 0, size (4 bytes big-endian)]
-	header := make([]byte, 8)
-	header[0] = 1 // stdout
-	binary.BigEndian.PutUint32(header[4:], uint32(len(data)))
-	w.Write(header)
-	w.Write(data)
+	// BUG-427: FormatLine handles timestamps + details
+	line := params.FormatLine(*message, ts)
+	core.WriteMuxLine(w, line)
 }
 
 // getTaskID extracts the task ID from the stored ECS state.

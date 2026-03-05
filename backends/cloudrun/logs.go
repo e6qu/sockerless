@@ -2,7 +2,6 @@ package cloudrun
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"net/http"
 	"strings"
@@ -31,8 +30,7 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	follow := r.URL.Query().Get("follow") == "1" || r.URL.Query().Get("follow") == "true"
-	timestamps := r.URL.Query().Get("timestamps") == "1" || r.URL.Query().Get("timestamps") == "true"
+	params := core.ParseCloudLogParams(r, c.Config.Labels)
 
 	crState, _ := s.CloudRun.Get(id)
 	jobName := crState.JobName
@@ -50,8 +48,13 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		defer f.Flush()
 	}
 
-	// Build filter for Cloud Logging
-	filter := fmt.Sprintf(
+	// BUG-426: Early return if stdout suppressed
+	if !params.ShouldWrite() {
+		return
+	}
+
+	// Build base filter for Cloud Logging
+	baseFilter := fmt.Sprintf(
 		`resource.type="cloud_run_job" AND resource.labels.job_name="%s"`,
 		shortJobName,
 	)
@@ -59,10 +62,13 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 	// Track latest timestamp to avoid duplicate entries
 	var lastTimestamp time.Time
 
-	// Fetch initial logs
-	s.fetchAndWriteLogs(w, filter, lastTimestamp, timestamps, &lastTimestamp)
+	// Fetch initial logs with since/until filtering
+	initialFilter := baseFilter
+	initialFilter += params.CloudLoggingSinceFilter() // BUG-423
+	initialFilter += params.CloudLoggingUntilFilter() // BUG-424
+	s.fetchAndWriteLogs(w, initialFilter, lastTimestamp, params, &lastTimestamp)
 
-	if !follow {
+	if !params.Follow {
 		return
 	}
 
@@ -77,17 +83,18 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		case <-ticker.C:
 			c, _ := s.Store.Containers.Get(id)
 			if !c.State.Running && c.State.Status != "created" {
-				// Fetch any remaining logs
-				s.fetchAndWriteLogs(w, filter, lastTimestamp, timestamps, &lastTimestamp)
+				// BUG-433: Follow queries use lastTimestamp only, no since/until
+				s.fetchAndWriteLogs(w, baseFilter, lastTimestamp, params, &lastTimestamp)
 				return
 			}
-			s.fetchAndWriteLogs(w, filter, lastTimestamp, timestamps, &lastTimestamp)
+			// BUG-433: Follow queries use lastTimestamp only, no since/until
+			s.fetchAndWriteLogs(w, baseFilter, lastTimestamp, params, &lastTimestamp)
 		}
 	}
 }
 
 // fetchAndWriteLogs queries Cloud Logging and writes new entries.
-func (s *Server) fetchAndWriteLogs(w http.ResponseWriter, filter string, after time.Time, addTimestamp bool, lastTS *time.Time) {
+func (s *Server) fetchAndWriteLogs(w http.ResponseWriter, filter string, after time.Time, params core.CloudLogParams, lastTS *time.Time) {
 	logFilter := filter
 	if !after.IsZero() {
 		logFilter += fmt.Sprintf(` AND timestamp>"%s"`, after.UTC().Format(time.RFC3339Nano))
@@ -98,7 +105,13 @@ func (s *Server) fetchAndWriteLogs(w http.ResponseWriter, filter string, after t
 
 	it := s.gcp.LogAdmin.Entries(ctx, logadmin.Filter(logFilter))
 
-	wrote := false
+	// BUG-425: Collect entries first for tail support
+	type logEntry struct {
+		line string
+		ts   time.Time
+	}
+	var entries []logEntry
+
 	for {
 		entry, err := it.Next()
 		if err == iterator.Done {
@@ -114,18 +127,27 @@ func (s *Server) fetchAndWriteLogs(w http.ResponseWriter, filter string, after t
 			continue
 		}
 
-		s.writeLogEvent(w, line, addTimestamp, entry.Timestamp)
-		wrote = true
+		entries = append(entries, logEntry{line: line, ts: entry.Timestamp})
 
 		if entry.Timestamp.After(*lastTS) {
 			*lastTS = entry.Timestamp
 		}
 	}
 
+	// BUG-425: Apply tail
+	if params.Tail >= 0 && params.Tail < len(entries) {
+		entries = entries[len(entries)-params.Tail:]
+	}
+
+	wrote := false
+	for _, e := range entries {
+		formatted := params.FormatLine(e.line, e.ts) // BUG-427: details + timestamps
+		core.WriteMuxLine(w, formatted)
+		wrote = true
+	}
+
 	if wrote {
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
+		core.FlushIfNeeded(w)
 	}
 }
 
@@ -140,21 +162,4 @@ func extractLogLine(entry *logging.Entry) string {
 	default:
 		return fmt.Sprintf("%v", p)
 	}
-}
-
-func (s *Server) writeLogEvent(w http.ResponseWriter, line string, addTimestamp bool, ts time.Time) {
-	if !strings.HasSuffix(line, "\n") {
-		line += "\n"
-	}
-
-	if addTimestamp {
-		line = ts.UTC().Format(time.RFC3339Nano) + " " + line
-	}
-
-	data := []byte(line)
-	header := make([]byte, 8)
-	header[0] = 1 // stdout
-	binary.BigEndian.PutUint32(header[4:], uint32(len(data)))
-	w.Write(header)
-	w.Write(data)
 }

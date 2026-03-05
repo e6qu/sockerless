@@ -349,6 +349,14 @@ func (s *BaseServer) handleImageList(w http.ResponseWriter, r *http.Request) {
 	danglingFilters := filters["dangling"]
 	labelFilters := filters["label"]
 
+	// BUG-431: Build image→container count map
+	imgContainerCount := make(map[string]int64)
+	for _, c := range s.Store.Containers.List() {
+		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
+			imgContainerCount[img.ID]++
+		}
+	}
+
 	seen := make(map[string]bool)
 	var result []*api.ImageSummary
 	for _, img := range s.Store.Images.List() {
@@ -405,7 +413,7 @@ func (s *BaseServer) handleImageList(w http.ResponseWriter, r *http.Request) {
 			Size:        img.Size,
 			VirtualSize: img.VirtualSize,
 			Labels:      img.Config.Labels,
-			Containers:  0,
+			Containers:  imgContainerCount[img.ID],
 		})
 	}
 	if result == nil {

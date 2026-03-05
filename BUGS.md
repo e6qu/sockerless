@@ -1,8 +1,8 @@
 # Known Bugs
 
-## Fixed (BUG-001 → BUG-422)
+## Fixed (BUG-001 → BUG-436)
 
-396 bugs fixed across 33 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
+410 bugs fixed across 34 sprints. See `WHAT_WE_DID.md` for sprint summaries and `_tasks/done/BUG-SPRINT-*.md` for per-sprint details.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
@@ -34,6 +34,26 @@
 | 31 | BUG-378→394 | Pod start process/health, pod remove non-force cleanup, container wait condition, container list filters (exited/publish/volume/is-task/size), cloud pod param, cloud restart event guard, frontend pod query params, logs details |
 | 32 | BUG-395→408 | Cloud kill event order, TmpfsDirs cleanup, image push/save/search stubs, pod list filters, frontend query param forwarding |
 | 33 | BUG-409→422 | Core resize endpoints, stats precpu/memlimit, default networks, event emissions, SpaceReclaimed, deterministic ImageID, paused status, health exec cleanup, paused count, logs stdout/stderr |
+| 34 | BUG-423→436 | Cloud logs parity (since/until/tail/stdout/stderr/details/follow), ImageSummary.Containers count, health check StartInterval |
+
+## Sprint 34 Detail (BUG-423 → BUG-436)
+
+| ID | Component | Description |
+|----|-----------|-------------|
+| BUG-423 | All 6 cloud | `handleContainerLogs` ignores `since` query param — no timestamp-based start filtering |
+| BUG-424 | All 6 cloud | `handleContainerLogs` ignores `until` query param — no timestamp-based end filtering |
+| BUG-425 | CloudRun, GCF, ACA, AZF | `handleContainerLogs` ignores `tail` query param — returns all log entries |
+| BUG-426 | All 6 cloud | `handleContainerLogs` ignores `stdout`/`stderr` query params — always writes stdout |
+| BUG-427 | All 6 cloud | `handleContainerLogs` ignores `details` query param — doesn't prepend container labels |
+| BUG-428 | Lambda | `handleContainerLogs` ignores `follow` query param — never polls for new output |
+| BUG-429 | GCF | `handleContainerLogs` ignores `follow` query param — fetches once and exits |
+| BUG-430 | AZF | `handleContainerLogs` ignores `follow` query param — fetches once and exits |
+| BUG-431 | Core | `ImageSummary.Containers` always 0 in `handleImageList` |
+| BUG-432 | Core | Health check loop ignores `StartInterval` during start period |
+| BUG-433 | ECS, CloudRun, ACA | Follow-mode logs should not apply `since`/`until` to follow queries |
+| BUG-434 | ACA | Follow-mode polling interval 2s vs 1s for ECS/CloudRun — inconsistent |
+| BUG-435 | Lambda, GCF, AZF | `LogBuffers` output not subject to `tail`/`since`/`until` filtering |
+| BUG-436 | Core | `handleSystemDf` `ImageSummary.Containers` always 0 |
 
 ## Sprint 31 Detail (BUG-378 → BUG-394)
 

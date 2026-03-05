@@ -57,6 +57,11 @@ func (s *BaseServer) StartHealthCheck(containerID string) {
 	if hc.Retries > 0 {
 		retries = hc.Retries
 	}
+	// BUG-432: Parse StartInterval — used during start period instead of interval
+	startInterval := interval
+	if hc.StartInterval > 0 {
+		startInterval = time.Duration(hc.StartInterval)
+	}
 
 	// Initialize health state
 	s.Store.Containers.Update(containerID, func(c *api.Container) {
@@ -69,7 +74,7 @@ func (s *BaseServer) StartHealthCheck(containerID string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.Store.HealthChecks.Store(containerID, cancel)
 
-	go s.runHealthCheckLoop(ctx, containerID, cmd, interval, timeout, startPeriod, retries)
+	go s.runHealthCheckLoop(ctx, containerID, cmd, interval, timeout, startPeriod, startInterval, retries)
 }
 
 // StopHealthCheck cancels the health check goroutine for a container.
@@ -82,15 +87,32 @@ func (s *BaseServer) StopHealthCheck(containerID string) {
 // runHealthCheckLoop is the health check goroutine that periodically
 // executes the health check command and updates container state.
 func (s *BaseServer) runHealthCheckLoop(ctx context.Context, containerID string, cmd []string,
-	interval, timeout, startPeriod time.Duration, retries int) {
+	interval, timeout, startPeriod, startInterval time.Duration, retries int) {
 
-	// Wait for start period
+	// BUG-432: During start period, use startInterval between checks.
+	// After start period expires, switch to the normal interval.
 	if startPeriod > 0 {
-		select {
-		case <-time.After(startPeriod):
-		case <-ctx.Done():
-			return
+		deadline := time.After(startPeriod)
+		ticker := time.NewTicker(startInterval)
+		defer ticker.Stop()
+
+	startLoop:
+		for {
+			exitCode, output := s.execHealthCheck(ctx, containerID, cmd, timeout)
+			if ctx.Err() != nil {
+				return
+			}
+			s.recordHealthResult(containerID, exitCode, output, retries)
+
+			select {
+			case <-deadline:
+				break startLoop
+			case <-ticker.C:
+			case <-ctx.Done():
+				return
+			}
 		}
+		ticker.Stop()
 	}
 
 	ticker := time.NewTicker(interval)
@@ -102,42 +124,7 @@ func (s *BaseServer) runHealthCheckLoop(ctx context.Context, containerID string,
 		if ctx.Err() != nil {
 			return
 		}
-
-		now := time.Now().UTC().Format(time.RFC3339Nano)
-		s.Store.Containers.Update(containerID, func(c *api.Container) {
-			if c.State.Health == nil {
-				return
-			}
-
-			entry := api.HealthLog{
-				Start:    now,
-				End:      time.Now().UTC().Format(time.RFC3339Nano),
-				ExitCode: exitCode,
-				Output:   truncateOutput(output, 4096),
-			}
-
-			// Deep-copy HealthState to avoid racing with concurrent Get() callers
-			// that hold a reference to the old *HealthState pointer.
-			newHealth := *c.State.Health
-			newLog := make([]api.HealthLog, len(newHealth.Log))
-			copy(newLog, newHealth.Log)
-			newLog = append(newLog, entry)
-			if len(newLog) > maxHealthLogEntries {
-				newLog = newLog[len(newLog)-maxHealthLogEntries:]
-			}
-			newHealth.Log = newLog
-
-			if exitCode == 0 {
-				newHealth.Status = "healthy"
-				newHealth.FailingStreak = 0
-			} else {
-				newHealth.FailingStreak++
-				if newHealth.FailingStreak >= retries {
-					newHealth.Status = "unhealthy"
-				}
-			}
-			c.State.Health = &newHealth
-		})
+		s.recordHealthResult(containerID, exitCode, output, retries)
 
 		select {
 		case <-ticker.C:
@@ -145,6 +132,45 @@ func (s *BaseServer) runHealthCheckLoop(ctx context.Context, containerID string,
 			return
 		}
 	}
+}
+
+// recordHealthResult updates the container's health state with the result of a health check.
+func (s *BaseServer) recordHealthResult(containerID string, exitCode int, output string, retries int) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	s.Store.Containers.Update(containerID, func(c *api.Container) {
+		if c.State.Health == nil {
+			return
+		}
+
+		entry := api.HealthLog{
+			Start:    now,
+			End:      time.Now().UTC().Format(time.RFC3339Nano),
+			ExitCode: exitCode,
+			Output:   truncateOutput(output, 4096),
+		}
+
+		// Deep-copy HealthState to avoid racing with concurrent Get() callers
+		// that hold a reference to the old *HealthState pointer.
+		newHealth := *c.State.Health
+		newLog := make([]api.HealthLog, len(newHealth.Log))
+		copy(newLog, newHealth.Log)
+		newLog = append(newLog, entry)
+		if len(newLog) > maxHealthLogEntries {
+			newLog = newLog[len(newLog)-maxHealthLogEntries:]
+		}
+		newHealth.Log = newLog
+
+		if exitCode == 0 {
+			newHealth.Status = "healthy"
+			newHealth.FailingStreak = 0
+		} else {
+			newHealth.FailingStreak++
+			if newHealth.FailingStreak >= retries {
+				newHealth.Status = "unhealthy"
+			}
+		}
+		c.State.Health = &newHealth
+	})
 }
 
 // execHealthCheck runs a single health check command via the exec driver.

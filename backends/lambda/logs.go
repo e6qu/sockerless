@@ -1,10 +1,8 @@
 package lambda
 
 import (
-	"encoding/binary"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -29,8 +27,7 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	timestamps := r.URL.Query().Get("timestamps") == "1" || r.URL.Query().Get("timestamps") == "true"
-	tail := r.URL.Query().Get("tail")
+	params := core.ParseCloudLogParams(r, c.Config.Labels)
 
 	lambdaState, _ := s.Lambda.Get(id)
 	logStreamPrefix := lambdaState.FunctionName
@@ -42,38 +39,21 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		defer f.Flush()
 	}
 
-	// Check LogBuffers first for buffered output (e.g. from Lambda invocation)
+	// BUG-426: Early return if stdout suppressed
+	if !params.ShouldWrite() {
+		return
+	}
+
+	// BUG-435: Filter LogBuffers output through params
 	if buf, ok := s.Store.LogBuffers.Load(id); ok {
 		data := buf.([]byte)
 		if len(data) > 0 {
-			header := make([]byte, 8)
-			header[0] = 1 // stdout
-			binary.BigEndian.PutUint32(header[4:], uint32(len(data)))
-			w.Write(header)
-			w.Write(data)
+			params.FilterBufferedOutput(w, data)
 		}
 	}
 
-	// Determine limit
-	var limit *int32
-	if tail != "" && tail != "all" {
-		n := int32(100)
-		fmt.Sscanf(tail, "%d", &n)
-		limit = &n
-	}
-
-	startFromHead := limit == nil
-
 	// Query CloudWatch Logs using the function name as log group prefix
 	logGroupName := fmt.Sprintf("/aws/lambda/%s", logStreamPrefix)
-
-	input := &cloudwatchlogs.GetLogEventsInput{
-		LogGroupName:  aws.String(logGroupName),
-		StartFromHead: aws.Bool(startFromHead),
-	}
-	if limit != nil {
-		input.Limit = limit
-	}
 
 	// Try to find a log stream for this function
 	streamsResult, err := s.aws.CloudWatch.DescribeLogStreams(s.ctx(), &cloudwatchlogs.DescribeLogStreamsInput{
@@ -91,7 +71,24 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	input.LogStreamName = streamsResult.LogStreams[0].LogStreamName
+	logStreamName := streamsResult.LogStreams[0].LogStreamName
+
+	input := &cloudwatchlogs.GetLogEventsInput{
+		LogGroupName:  aws.String(logGroupName),
+		LogStreamName: logStreamName,
+		StartFromHead: aws.Bool(params.CloudLogTailInt32() == nil),
+	}
+	if limit := params.CloudLogTailInt32(); limit != nil {
+		input.Limit = limit
+	}
+	// BUG-423: Apply since as StartTime
+	if ms := params.SinceMillis(); ms != nil {
+		input.StartTime = ms
+	}
+	// BUG-424: Apply until as EndTime
+	if ms := params.UntilMillis(); ms != nil {
+		input.EndTime = ms
+	}
 
 	result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), input)
 	if err != nil {
@@ -100,28 +97,73 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, event := range result.Events {
-		s.writeLogEvent(w, event.Message, event.Timestamp, timestamps)
+		s.writeLogEvent(w, event.Message, event.Timestamp, params)
+	}
+	core.FlushIfNeeded(w)
+
+	// BUG-428: Follow mode support
+	if !params.Follow {
+		return
+	}
+
+	nextToken := result.NextForwardToken
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			c, _ := s.Store.Containers.Get(id)
+			if !c.State.Running && c.State.Status != "created" {
+				// Fetch any remaining logs
+				followInput := &cloudwatchlogs.GetLogEventsInput{
+					LogGroupName:  aws.String(logGroupName),
+					LogStreamName: logStreamName,
+					StartFromHead: aws.Bool(true),
+					NextToken:     nextToken,
+				}
+				result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), followInput)
+				if err == nil {
+					for _, event := range result.Events {
+						s.writeLogEvent(w, event.Message, event.Timestamp, params)
+					}
+				}
+				return
+			}
+
+			followInput := &cloudwatchlogs.GetLogEventsInput{
+				LogGroupName:  aws.String(logGroupName),
+				LogStreamName: logStreamName,
+				StartFromHead: aws.Bool(true),
+				NextToken:     nextToken,
+			}
+			result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), followInput)
+			if err != nil {
+				continue
+			}
+
+			for _, event := range result.Events {
+				s.writeLogEvent(w, event.Message, event.Timestamp, params)
+			}
+			if len(result.Events) > 0 {
+				core.FlushIfNeeded(w)
+			}
+			nextToken = result.NextForwardToken
+		}
 	}
 }
 
-func (s *Server) writeLogEvent(w http.ResponseWriter, message *string, timestamp *int64, addTimestamp bool) {
+func (s *Server) writeLogEvent(w http.ResponseWriter, message *string, timestamp *int64, params core.CloudLogParams) {
 	if message == nil {
 		return
 	}
-	line := *message
-	if !strings.HasSuffix(line, "\n") {
-		line += "\n"
+	var ts time.Time
+	if timestamp != nil {
+		ts = time.UnixMilli(*timestamp)
 	}
-
-	if addTimestamp && timestamp != nil {
-		ts := time.UnixMilli(*timestamp).UTC().Format(time.RFC3339Nano)
-		line = ts + " " + line
-	}
-
-	data := []byte(line)
-	header := make([]byte, 8)
-	header[0] = 1 // stdout
-	binary.BigEndian.PutUint32(header[4:], uint32(len(data)))
-	w.Write(header)
-	w.Write(data)
+	line := params.FormatLine(*message, ts)
+	core.WriteMuxLine(w, line)
 }
