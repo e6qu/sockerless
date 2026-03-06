@@ -20,6 +20,7 @@ func newUpdateTestServer() *BaseServer {
 		EventBus: NewEventBus(),
 	}
 	s.InitDrivers()
+	s.self = s
 	return s
 }
 

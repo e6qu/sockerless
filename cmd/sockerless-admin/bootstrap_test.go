@@ -139,22 +139,6 @@ func TestBackendArgs(t *testing.T) {
 	}
 }
 
-func TestFrontendArgs(t *testing.T) {
-	args := FrontendArgs(2375, 9100, 9200, "debug")
-	if len(args) != 8 {
-		t.Fatalf("expected 8 args, got %d: %v", len(args), args)
-	}
-	if args[1] != ":2375" {
-		t.Errorf("frontend port = %s, want :2375", args[1])
-	}
-	if args[3] != "http://localhost:9100" {
-		t.Errorf("backend = %s, want http://localhost:9100", args[3])
-	}
-	if args[5] != ":9200" {
-		t.Errorf("mgmt port = %s, want :9200", args[5])
-	}
-}
-
 func TestBootstrapSimulatorErrorBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

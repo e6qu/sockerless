@@ -50,8 +50,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run GitHub E2E (memory)
-        run: make e2e-github-memory
+      - name: Run GitHub E2E (ecs)
+        run: make e2e-github-ecs
         timeout-minutes: 20
 
   e2e-gitlab:
@@ -59,8 +59,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run GitLab E2E (memory)
-        run: make e2e-gitlab-memory
+      - name: Run GitLab E2E (ecs)
+        run: make e2e-gitlab-ecs
         timeout-minutes: 45
 
   terraform-tests:
@@ -84,8 +84,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - backend: memory
-            cmd: make smoke-test-gitlab
           - backend: ecs
             cmd: make smoke-test-gitlab-ecs
           - backend: cloudrun
@@ -105,6 +103,6 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - name: Run upstream act tests (memory)
-        run: make upstream-test-act-memory
+      - name: Run upstream act tests (ecs)
+        run: make upstream-test-act
         timeout-minutes: 30

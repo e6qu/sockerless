@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"sync"
-	"syscall"
 
 	"github.com/rs/zerolog"
 )
@@ -87,8 +86,6 @@ func NewMainProcess(logger zerolog.Logger, args []string, env []string) (*MainPr
 
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Env = append(os.Environ(), env...)
-	// Set process group so signals propagate
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

@@ -141,6 +141,7 @@ func TestHandlePutArchive_DriverError(t *testing.T) {
 		EventBus: NewEventBus(),
 	}
 	s.InitDrivers()
+	s.self = s
 
 	cID := "c1"
 	store.Containers.Put(cID, api.Container{ID: cID, Name: "/test"})
@@ -158,8 +159,8 @@ func TestHandlePutArchive_DriverError(t *testing.T) {
 	}
 }
 
-// BUG-053: handlePutArchive returns 200 when driver succeeds.
-func TestHandlePutArchive_Success(t *testing.T) {
+// BUG-053: handlePutArchive stages files when no agent connected (pre-start docker cp).
+func TestHandlePutArchive_NoAgent_StagesFiles(t *testing.T) {
 	store := NewStore()
 	s := &BaseServer{
 		Store:    store,
@@ -168,6 +169,7 @@ func TestHandlePutArchive_Success(t *testing.T) {
 		EventBus: NewEventBus(),
 	}
 	s.InitDrivers()
+	s.self = s
 
 	cID := "c1"
 	store.Containers.Put(cID, api.Container{ID: cID, Name: "/test"})
@@ -187,7 +189,12 @@ func TestHandlePutArchive_Success(t *testing.T) {
 	s.handlePutArchive(w, req)
 
 	if w.Code != http.StatusNoContent {
-		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body.String())
+		t.Fatalf("expected 204 (staged), got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify staging dir was created
+	if _, ok := store.StagingDirs.Load(cID); !ok {
+		t.Fatal("expected staging dir to be created")
 	}
 }
 
@@ -252,6 +259,7 @@ func TestBuild_InvalidBuildargs(t *testing.T) {
 		EventBus: NewEventBus(),
 	}
 	s.InitDrivers()
+	s.self = s
 
 	// Create a valid tar with a Dockerfile
 	var buf bytes.Buffer

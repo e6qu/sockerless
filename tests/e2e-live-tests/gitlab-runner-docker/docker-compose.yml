@@ -23,7 +23,7 @@ services:
     build:
       context: ../../..
       dockerfile: tests/e2e-live-tests/gitlab-runner-docker/${DOCKERFILE_BACKEND:-Dockerfile.backend}
-    command: ["--backend", "${BACKEND:-memory}", "--mode", "${MODE:-simulator}", "--backend-addr", "0.0.0.0:9100", "--frontend-addr", "0.0.0.0:2375"]
+    command: ["--backend", "${BACKEND:-memory}", "--mode", "${MODE:-simulator}", "--backend-addr", "0.0.0.0:2375"]
     environment:
       BACKEND: ${BACKEND:-memory}
       MODE: ${MODE:-simulator}

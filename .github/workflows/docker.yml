@@ -23,12 +23,6 @@ jobs:
           - image: sockerless-bleephub
             dockerfile: bleephub/Dockerfile.release
             context: .
-          - image: sockerless-frontend
-            dockerfile: frontends/docker/Dockerfile
-            context: .
-          - image: sockerless-backend-memory
-            dockerfile: backends/memory/Dockerfile
-            context: .
           - image: sockerless-simulator-aws
             dockerfile: simulators/aws/Dockerfile
             context: simulators/aws

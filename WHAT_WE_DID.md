@@ -2,7 +2,7 @@
 
 ## The Idea
 
-Sockerless presents an HTTP REST API identical to Docker's. CI runners (GitHub Actions via `act`, GitLab Runner, `gitlab-ci-local`) talk to it as if it were Docker, but instead of running containers locally, Sockerless farms work to cloud backends — ECS, Lambda, Cloud Run, Cloud Functions, Azure Container Apps, Azure Functions — or runs everything in-process via a WASM sandbox (the "memory" backend).
+Sockerless presents an HTTP REST API identical to Docker's. CI runners (GitHub Actions via `act`, GitLab Runner, `gitlab-ci-local`) talk to it as if it were Docker, but instead of running containers locally, Sockerless farms work to cloud backends — ECS, Lambda, Cloud Run, Cloud Functions, Azure Container Apps, Azure Functions — or passes through to a local Docker daemon.
 
 For development and testing, cloud simulators stand in for real AWS/GCP/Azure APIs, providing actual execution of tasks the same way a real cloud would. The simulators are validated against official cloud SDKs, CLIs, and Terraform providers.
 
@@ -15,16 +15,14 @@ CI Runner (act, gitlab-runner, gitlab-ci-local)
 Frontend (Docker REST API)
     │
     ▼
-Backend (ecs | lambda | cloudrun | gcf | aca | azf | memory | docker)
-    │                                                    │
-    ▼                                                    ▼
-Cloud Simulator (AWS | GCP | Azure)              WASM Sandbox
-    │                                           (wazero + mvdan.cc/sh
-    ▼                                            + go-busybox)
+Backend (ecs | lambda | cloudrun | gcf | aca | azf | docker)
+    │
+    ▼
+Cloud Simulator (AWS | GCP | Azure)
 Agent (inside container or reverse-connected)
 ```
 
-**8 backends** share a common core (`backends/core/`) with driver interfaces:
+**7 backends** share a common core (`backends/core/`) with driver interfaces:
 - **ExecDriver** — runs commands (WASM shell, forward agent, reverse agent, or synthetic echo)
 - **FilesystemDriver** — manages container filesystem (temp dirs, agent bridge, staging)
 - **StreamDriver** — attach/logs streaming (pipes, WebSocket relay, log buffer)
@@ -151,8 +149,8 @@ Fixed 13 bugs: container `expose` filter (BUG-489), image `before`/`since` list 
 
 ## Project Stats
 
-- **80 phases** (1-67, 69-77, 79-82), 725 tasks completed
-- **43 bug sprints**, 553 bugs fixed (BUG-001→553), 0 open
+- **84 phases** (1-67, 69-77, 79-86), 753 tasks completed
+- **45 bug sprints**, 583 bugs fixed (BUG-001→583), 0 open
 - **18 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, CLI, admin, tests
 - **Core tests**: 302 PASS | **Frontend**: 7 | **UI (Vitest)**: 92 | **Admin**: 88 | **bleephub**: 304 | **gitlabhub**: 136 | **ProcessRunner**: 15
 - **Cloud SDK**: AWS 42, GCP 43, Azure 38 | **Cloud CLI**: AWS 26, GCP 21, Azure 19
@@ -163,3 +161,198 @@ Fixed 13 bugs: container `expose` filter (BUG-489), image `before`/`since` list 
 ## Sprint 45 Summary (BUG-575 → BUG-583)
 
 Fixed 8 bugs across Docker backend and frontend (BUG-580 confirmed as false positive). Docker backend `handleImageInspect` now maps `GraphDriver` from Docker SDK (BUG-575). `handleSystemDf` ContainerSummary EndpointSettings now includes IPv6Gateway, GlobalIPv6Address, GlobalIPv6PrefixLen, DriverOpts, and IPAMConfig (BUG-576), plus HostConfig with NetworkMode (BUG-577). System DF and all 3 volume handlers (create/list/inspect) now map UsageData from Docker SDK (BUG-578/579). `handleImagePush` now checks `X-Registry-Auth` header first, falls back to query param `auth` (BUG-581). BuildCache `LastUsedAt` returns empty string instead of `"0001-01-01T00:00:00Z"` for unused entries (BUG-582). Frontend `handleContainerCommit` now forwards all `changes` query params instead of only the first (BUG-583). Updated FEATURE_MATRIX.md with `docker import` row.
+
+## Phase 83 — Type-Safe API Schema Infrastructure (in progress)
+
+### Phase A: Align api.* Field Names with Docker SDK — DONE
+- Renamed 7 fields in `api/types.go` to match Docker SDK naming:
+  - `CpuShares` → `CPUShares`, `CpuQuota` → `CPUQuota`, `CpuPeriod` → `CPUPeriod`
+  - `NanoCpus` → `NanoCPUs`, `Dns` → `DNS`, `DnsSearch` → `DNSSearch`, `DnsOptions` → `DNSOptions`
+- JSON tags preserved (wire compatibility maintained)
+- Updated all usage sites: `backends/docker/containers.go` (both create and inspect directions), `backends/core/handle_extended.go`
+- Also renamed in `ContainerUpdateRequest` struct
+- All 3 affected modules compile (`api`, `backends/core`, `backends/docker`)
+- Core tests: 302 PASS
+
+### Phase B1: Add goverter dependency — DONE
+- Added `github.com/jmattheis/goverter v1.9.4` to `backends/docker/go.mod`
+- Created `backends/docker/generate.go` with `//go:generate` directive
+
+### Phase B2: Define goverter converter interface — DONE
+- Created `backends/docker/converter.go` with goverter interface (17 methods)
+- 30+ extend functions for type alias conversions (NetworkMode→string, Duration→int64, nat.PortSet→map, etc.)
+- Generated `converter_gen.go` (275 lines) with field-by-field type-safe mapping
+- `converter_init.go` with `!goverter` build tag bootstraps the converter instance
+- `converter_manual.go` has composite converters for complex types (ContainerJSON, HostConfig, NetworkSettings, etc.)
+
+### Phase B3: Replace manual mapping with generated converter — DONE
+- Replaced all 51+ manual mapping sites with converter calls
+- **604 lines deleted, 39 inserted** across 5 handler files
+- Deleted: `mapContainerFromDocker`, `mapExposedPorts`, `mapPortBindings`, `mapMountsFromSummary`, `mapMountsFromDf`, `mapNetworkIPAMAndContainers`
+- All modules compile, core 302 tests pass, go vet clean
+
+### Phase C1: Implement api.Backend on Docker backend — DONE
+- Created `backends/docker/backend_impl.go` (~580 lines)
+- All 44 interface methods delegate to `s.docker.*` + goverter converters
+- Helper types: `hijackedRWC` (wraps Docker HijackedResponse as io.ReadWriteCloser), `nopRWC` (empty io.ReadWriteCloser)
+- Renamed `Info()` → `getInfo()` in `client.go` to avoid interface conflict
+- Added `Name` field to `api.ContainerCreateRequest`
+
+### Phase C2: Implement api.Backend on core BaseServer — DONE
+- Created `backends/core/backend_impl.go` (~2080 lines)
+- All 44 methods extracted from HTTP handlers into typed methods
+- Helper types: `pipeRWC` (io.ReadWriteCloser from pipes), `pipeConn` (net.Conn adapter for driver Attach/Exec)
+- Added `matchImageFilters()` for typed image filtering (reference, dangling, label, before, since)
+- 302 core tests pass
+
+### Phase C3: Change frontend to use api.Backend — DONE
+- `Server.backend` changed from `*BackendClient` to `api.Backend`
+- Added `Server.httpProxy *BackendClient` for operations not in interface (pods, build, archive, resize, push, save, search, commit, export, changes, update)
+- Rewrote 8 handler files: ~30 handlers use typed `s.backend.Method()` calls, ~20 use `s.httpProxy`
+- Created `BackendHTTPAdapter` implementing `api.Backend` via HTTP for backward compat (~720 lines)
+- Added `bufferedConn` type to prevent data loss from HTTP upgrade connections (exec/attach)
+- Added `parseFilters()` helper for Docker API JSON filter string parsing
+- 7 frontend tests pass
+
+### Phase C4: Update startup composition — DONE
+- `NewServer(logger, backend api.Backend, backendAddr string)` accepts any in-process backend
+- `cmd/main.go` uses `BackendHTTPAdapter` wrapping `BackendClient` for HTTP-based backends
+- In-process wiring ready for Phase 68 (Multi-Tenant Backend Pools)
+
+### Phase D1: Docker v1.44 spec subset — DONE
+- Created `api/docker-v1.44-subset.yaml` — 73 type definitions
+- Maps every `api.*` Go type to its Docker spec equivalent
+- Lists all field names, types, required status, Docker spec name
+- Supports `embeds` for embedded types and `extensions` for Sockerless-only fields
+
+### Phase D2: Field coverage validation test — DONE
+- Created `api/coverage_test.go` with `gopkg.in/yaml.v3`
+- Parses YAML spec, compares against Go struct fields via reflection
+- Bidirectional: fails if spec has field Go doesn't, or Go has field spec doesn't
+- 73 subtests (one per type), all PASS
+- Added `gopkg.in/yaml.v3 v3.0.1` to `api/go.mod`
+
+## Phase 84 — Self-Dispatch for Cloud Backends (6 tasks)
+
+Eliminated the dual code path problem where cloud backends had HTTP handlers with cloud-specific logic, but their inherited `api.Backend` methods bypassed that logic. Added a `self api.Backend` field to BaseServer for virtual dispatch — HTTP handlers call `s.self.Method()`, and cloud backends override the typed methods via Go embedding.
+
+### Phase A: Self-dispatch on BaseServer — DONE
+- Added `self api.Backend` field to BaseServer, `SetSelf(b)` method, `s.self = s` in constructor
+- Removed `RouteOverrides` struct and all override logic from `registerRoutes()`
+- Rewrote 16 HTTP handlers as thin wrappers delegating to `s.self.*`: ContainerCreate/Start/Stop/Kill/Remove/Restart/Logs/Attach, ContainerPrune/Pause/Unpause, ExecStart, ImagePull/Load, VolumeRemove/VolumePrune
+- Added `CloudLogParamsFromOpts()` to core for cloud backends using typed log options
+- Fixed 16 test files that create BaseServer directly (added `s.self = s`)
+
+### Phase B: AWS backends (ECS + Lambda) — DONE
+- Created `backends/ecs/backend_impl.go` with 14 typed method overrides
+- Created `backends/lambda/backend_impl.go` with 12 typed method overrides
+- Deleted old HTTP handler files (extended.go, images.go) and handler functions from containers.go/logs.go
+- Refactored `startMultiContainerTask` to return error instead of writing to ResponseWriter
+- Deferred ECS task definition registration from Create to Start (simplifies pod handling)
+
+### Phase C: GCP backends (CloudRun + GCF) — DONE
+- Created `backends/cloudrun/backend_impl.go` with 14 typed method overrides
+- Created `backends/cloudrun-functions/backend_impl.go` with 12 typed method overrides
+- Same cleanup pattern: deleted handler files, kept helpers
+
+### Phase D: Azure backends (ACA + AZF) — DONE
+- Created `backends/aca/backend_impl.go` with 14 typed method overrides
+- Created `backends/azure-functions/backend_impl.go` with 12 typed method overrides
+- Same cleanup pattern
+
+### Phase E: Streaming methods audit — DONE
+- Verified all streaming methods (ContainerLogs, ContainerAttach, ExecStart, ImagePull, ImageLoad) work correctly through self-dispatch
+- Cloud backends use `io.Pipe()` for streaming — goroutine writes to PipeWriter, typed method returns PipeReader
+- Core handler adds Docker mux framing on top of raw stream data
+
+### Phase F: Verification — DONE
+- All 11 modules build clean (core, memory, docker, ecs, lambda, cloudrun, gcf, aca, azf, frontend, api)
+- Core: 302 PASS, Frontend: 7 PASS, API: 73 subtests PASS
+
+---
+
+## Phase 85 — Complete api.Backend Coverage (8 tasks)
+
+**Goal:** Add all remaining typed methods to `api.Backend` (21 new methods), implement them on BaseServer and Docker backend, convert all frontend handlers to typed calls, and eliminate the `httpProxy` HTTP fallback entirely.
+
+### Phase A-C: Types + Interface (3 tasks) — DONE
+- Added 7 pod types to `api/types.go`: PodCreateRequest, PodCreateResponse, PodInspectResponse, PodContainerInfo, PodListEntry, PodActionResponse, PodListOptions
+- Added ContainerPathStat, ContainerArchiveResponse, ImageBuildOptions, ImageSearchResult, ContainerCommitRequest
+- Added 21 new methods to `api.Backend` interface: 8 pod + 8 container/exec + 5 image
+
+### Phase D: BaseServer pod methods — DONE
+- Created `backends/core/backend_impl_pods.go` with 8 pod method implementations
+- Rewrote `handle_pods.go` as thin HTTP wrappers calling `s.self.PodMethod()`
+- Moved pod type definitions from core to api package
+
+### Phase E: BaseServer container/exec/image methods — DONE
+- Created `backends/core/backend_impl_ext.go` with 13 method implementations
+- Converted 7 handler files to thin wrappers: handle_extended.go, handle_containers_archive.go, handle_containers_export.go, handle_images.go, build.go, handle_commit.go
+- Uses io.Pipe() pattern for streaming methods (ImageBuild, ImagePush, ImageSave, ContainerExport, ContainerGetArchive)
+
+### Phase F: Docker backend + BackendHTTPAdapter — DONE
+- Added 21 method implementations to `backends/docker/backend_impl.go` (Docker SDK delegation)
+- Added 21 method implementations to `frontends/docker/backend_adapter.go` (HTTP proxy adapter)
+- Pod methods return not-supported errors on Docker backend
+
+### Phase G: Frontend typed handlers — DONE
+- Converted all 22 httpProxy handlers to typed `s.backend.Method()` calls
+- Files updated: pods.go, containers_stream.go, containers.go, exec.go, images.go
+- Removed `httpProxy *BackendClient` field from frontend `Server` struct
+- Zero HTTP proxy fallback paths remaining in frontend
+
+### Phase H: Verification — DONE
+- Core: 302 PASS, Frontend: 7 PASS, API: PASS
+- All 8 backends compile clean
+- Added buildargs validation to build handler (test fix)
+
+## Phase 86 — In-Process Backend Wiring + Dead Code Cleanup (4 tasks)
+
+**Goal:** Eliminate the HTTP round-trip between frontend and backend by wiring the in-process `BaseServer` directly, and delete all dead adapter/client/helper code.
+
+### Phase A: Delete dead code — DONE
+- Removed `proxyPassthrough()` and `proxyErrorResponse()` from `frontends/docker/helpers.go` (-20 lines)
+- Removed `parseEnv()` from `backends/core/build.go` (-16 lines)
+
+### Phase B: Remove backendAddr + wire in-process — DONE
+- Removed unused `backendAddr string` parameter from `NewServer()` signature
+- Updated 3 test call sites in `server_test.go`
+- Replaced `BackendHTTPAdapter(BackendClient)` in `cmd/main.go` with direct `core.NewBaseServer()` wiring
+- Frontend now calls backend methods in-process (no HTTP round-trip)
+
+### Phase C: Delete BackendHTTPAdapter + BackendClient — DONE
+- Deleted `frontends/docker/backend_adapter.go` (~1100 lines)
+- Deleted `frontends/docker/backend_client.go` (~260 lines)
+
+### Phase D: Verification — DONE
+- Core: 302 PASS, Frontend: 7 PASS, API: PASS
+- All 9 backends compile clean
+- **Net: ~1400 lines deleted, 0 new files**
+
+## Phase 90 — Remove Memory Backend + Spec Verification (3 tasks)
+
+**Goal:** Remove the memory backend (thin wrapper around BaseServer with WASM sandbox), add spec-driven state machine tests, and document cloud operation mappings.
+
+### Task 1: Remove backends/memory/ — DONE
+- Deleted `backends/memory/` directory (~180 lines: server.go, adapter.go, cmd/main.go, Dockerfile, Makefile, ui_embed/noembed.go)
+- Deleted `ui/packages/backend-memory/` (SPA package)
+- Deleted 3 memory-specific Dockerfiles (e2e, upstream-act, upstream-gcl)
+- Deleted `smoke-tests/act/Dockerfile` (memory-specific, referenced deleted frontends/docker)
+- Removed from `go.work`, `.goreleaser.yml`, `.github/workflows/ci.yml`, `.github/workflows/docker.yml`
+- Cleaned Makefile: removed ~20 memory targets, updated defaults from memory→ecs, removed from MODULES_UI
+- Updated `smoke-tests/act/run.sh`: removed memory case, changed default to ecs
+- **Backend count: 8 → 7**
+
+### Task 2: Spec-driven state machine tests (P90-C) — DONE
+- Created `backends/core/spec_verify_test.go` (~280 lines)
+- `TestSpecStateTransitions`: parses `api/openapi.yaml` for `x-sockerless-state-transition`, tests 15 state transitions (8 operations × from-states)
+- `TestSpecStateTransition_ContainerCreate`: dedicated test for create (no from-state)
+- `TestSpecForceRemove`: tests force-remove from all 4 states
+- `TestSpecOperationCoverage`: verifies test↔spec bidirectional coverage
+- `TestSpecEventTypes`: validates all event types match Docker conventions
+- **5 new spec verification tests, all PASS**
+
+### Task 3: Cloud operation mappings (P90-D) — DONE
+- Added `x-sockerless-cloud-operations` to 4 lifecycle operations in `api/openapi.yaml`
+- Documents how ContainerCreate/Start/Stop/Remove map to each cloud provider's API
+- Added extension to header documentation

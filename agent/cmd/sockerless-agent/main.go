@@ -43,6 +43,9 @@ func main() {
 	}
 
 	if err != nil {
+		if exitErr, ok := err.(*agent.ExitCodeError); ok {
+			os.Exit(exitErr.Code)
+		}
 		logger.Fatal().Err(err).Msg("server failed")
 	}
 }

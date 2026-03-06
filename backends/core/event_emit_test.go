@@ -21,6 +21,7 @@ func newEmitTestServer() *BaseServer {
 		EventBus:      NewEventBus(),
 	}
 	s.InitDrivers()
+	s.self = s
 	store.RestartHook = s.handleRestartPolicy
 	return s
 }

@@ -14,6 +14,15 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// ExitCodeError is returned when the main process exits with a specific code.
+type ExitCodeError struct {
+	Code int
+}
+
+func (e *ExitCodeError) Error() string {
+	return fmt.Sprintf("exit code %d", e.Code)
+}
+
 // Config holds agent configuration.
 type Config struct {
 	Addr        string
@@ -57,8 +66,13 @@ func (s *Server) ListenAndServe() error {
 		s.mp = mp
 		s.logger.Info().Int("pid", mp.Pid()).Strs("args", s.config.Args).Msg("main process started")
 
-		// Reap zombies (PID 1 behavior)
-		go s.reapZombies()
+		// Reap zombies only when running as PID 1 (container init).
+		// On the host, orphan reaping is handled by the system init.
+		// Running reapZombies on the host causes a race with cmd.Wait()
+		// because Wait4(-1) can steal the main process exit status.
+		if os.Getpid() == 1 {
+			go s.reapZombies()
+		}
 
 		// Exit when main process exits (if not serving requests)
 		go func() {
@@ -168,7 +182,9 @@ func (s *Server) ReverseConnect(callbackURL string) error {
 		s.mp = mp
 		s.logger.Info().Int("pid", mp.Pid()).Strs("args", s.config.Args).Msg("main process started")
 
-		go s.reapZombies()
+		if os.Getpid() == 1 {
+			go s.reapZombies()
+		}
 	}
 
 	// Build WebSocket URL from callback URL
@@ -205,7 +221,11 @@ func (s *Server) ReverseConnect(callbackURL string) error {
 			if s.mp != nil {
 				select {
 				case <-s.mp.Done():
-					return fmt.Errorf("main process exited, stopping reverse connect")
+					code := 0
+					if c := s.mp.ExitCode(); c != nil {
+						code = *c
+					}
+					return &ExitCodeError{Code: code}
 				default:
 				}
 			}
@@ -227,8 +247,12 @@ func (s *Server) ReverseConnect(callbackURL string) error {
 		if s.mp != nil {
 			select {
 			case <-s.mp.Done():
-				s.logger.Info().Msg("main process exited, stopping reverse connect")
-				return nil
+				code := 0
+				if c := s.mp.ExitCode(); c != nil {
+					code = *c
+				}
+				s.logger.Info().Int("exitCode", code).Msg("main process exited, stopping reverse connect")
+				return &ExitCodeError{Code: code}
 			default:
 			}
 		}
@@ -243,6 +267,14 @@ func (s *Server) serveReverseConn(conn *websocket.Conn) error {
 
 	connMu := &sync.Mutex{}
 	router := NewRouter(s.registry, s.mp, s.logger)
+
+	// If main process exits, close the connection to unblock ReadMessage
+	if s.mp != nil {
+		go func() {
+			<-s.mp.Done()
+			_ = conn.Close()
+		}()
+	}
 
 	for {
 		_, data, err := conn.ReadMessage()

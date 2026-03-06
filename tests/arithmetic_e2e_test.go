@@ -137,16 +137,12 @@ func TestArithmeticExecInContainer(t *testing.T) {
 // TestArithmeticEvalBinary verifies the eval-arithmetic Go binary runs
 // through the Docker API. This uses a real compiled binary, not shell
 // arithmetic, proving that process execution is fully functional.
-// The memory backend (WASM sandbox) cannot run native binaries.
 func TestArithmeticEvalBinary(t *testing.T) {
 	if evalBinaryPath == "" {
 		t.Skip("eval binary not built")
 	}
 	for name, c := range availableRunnerClients(t) {
 		t.Run(name, func(t *testing.T) {
-			if name == "memory" {
-				t.Skip("WASM sandbox cannot execute native binaries")
-			}
 			ctx := context.Background()
 			testID := generateTestID(name, "eval-bin")
 

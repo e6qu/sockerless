@@ -36,7 +36,7 @@ func NewProjectManager(pm *ProcessManager, reg *Registry, storeDir string) *Proj
 	}
 }
 
-// Create creates a new project and registers its 3 processes.
+// Create creates a new project and registers its 2 processes.
 func (m *ProjectManager) Create(cfg ProjectConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -65,12 +65,6 @@ func (m *ProjectManager) Create(cfg ProjectConfig) error {
 	if cfg.BackendPort == 0 {
 		needed++
 	}
-	if cfg.FrontendPort == 0 {
-		needed++
-	}
-	if cfg.FrontendMgmtPort == 0 {
-		needed++
-	}
 
 	if needed > 0 {
 		ports, err := m.ports.Allocate(cfg.Name, needed)
@@ -84,20 +78,12 @@ func (m *ProjectManager) Create(cfg ProjectConfig) error {
 		}
 		if cfg.BackendPort == 0 {
 			cfg.BackendPort = ports[idx]
-			idx++
-		}
-		if cfg.FrontendPort == 0 {
-			cfg.FrontendPort = ports[idx]
-			idx++
-		}
-		if cfg.FrontendMgmtPort == 0 {
-			cfg.FrontendMgmtPort = ports[idx]
 		}
 	}
 
 	// Reserve explicit ports (non-zero ports not auto-allocated above)
 	var explicitPorts []int
-	for _, p := range []int{cfg.SimPort, cfg.BackendPort, cfg.FrontendPort, cfg.FrontendMgmtPort} {
+	for _, p := range []int{cfg.SimPort, cfg.BackendPort} {
 		if p > 0 {
 			explicitPorts = append(explicitPorts, p)
 		}
@@ -113,8 +99,8 @@ func (m *ProjectManager) Create(cfg ProjectConfig) error {
 		cfg.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 
-	// Register 3 processes
-	simName, backendName, frontendName := processNames(cfg.Name)
+	// Register 2 processes
+	simName, backendName := processNames(cfg.Name)
 
 	simEnvSlice := SimulatorEnv(cfg.Cloud, cfg.SimPort, cfg.LogLevel)
 	simEnvMap := sliceToEnvMap(simEnvSlice)
@@ -137,20 +123,11 @@ func (m *ProjectManager) Create(cfg ProjectConfig) error {
 		Type:   "backend",
 	})
 
-	m.pm.AddProcess(ProcessConfig{
-		Name:   frontendName,
-		Binary: "sockerless-frontend-docker",
-		Args:   FrontendArgs(cfg.FrontendPort, cfg.BackendPort, cfg.FrontendMgmtPort, cfg.LogLevel),
-		Addr:   fmt.Sprintf(":%d", cfg.FrontendPort),
-		Type:   "frontend",
-	})
-
 	stored := cfg
 
 	// Persist before in-memory registration so failures can be rolled back
 	if m.storeDir != "" {
 		if err := SaveProject(m.storeDir, &stored); err != nil {
-			_ = m.pm.RemoveProcess(frontendName)
 			_ = m.pm.RemoveProcess(backendName)
 			_ = m.pm.RemoveProcess(simName)
 			m.ports.Release(cfg.Name)
@@ -162,7 +139,7 @@ func (m *ProjectManager) Create(cfg ProjectConfig) error {
 	return nil
 }
 
-// Start performs orchestrated startup of a project's 3 processes.
+// Start performs orchestrated startup of a project's 2 processes.
 func (m *ProjectManager) Start(name string) error {
 	m.mu.Lock()
 	cfg, ok := m.projects[name]
@@ -174,12 +151,11 @@ func (m *ProjectManager) Start(name string) error {
 		m.mu.Unlock()
 		return err
 	}
-	simName, backendName, frontendName := processNames(name)
+	simName, backendName := processNames(name)
 	cloud := cfg.Cloud
 	backend := cfg.Backend
 	simPort := cfg.SimPort
 	backendPort := cfg.BackendPort
-	frontendMgmtPort := cfg.FrontendMgmtPort
 	m.mu.Unlock()
 	defer func() { m.mu.Lock(); m.unlockOp(name); m.mu.Unlock() }()
 
@@ -200,7 +176,7 @@ func (m *ProjectManager) Start(name string) error {
 		return fmt.Errorf("bootstrap: %w", err)
 	}
 
-	// 3. Start backend
+	// 3. Start backend (serves Docker API directly)
 	if err := m.pm.Start(backendName); err != nil {
 		_ = m.pm.Stop(simName)
 		return fmt.Errorf("start backend: %w", err)
@@ -211,21 +187,6 @@ func (m *ProjectManager) Start(name string) error {
 		_ = m.pm.Stop(backendName)
 		_ = m.pm.Stop(simName)
 		return fmt.Errorf("backend health check: %w", err)
-	}
-
-	// 4. Start frontend
-	if err := m.pm.Start(frontendName); err != nil {
-		_ = m.pm.Stop(backendName)
-		_ = m.pm.Stop(simName)
-		return fmt.Errorf("start frontend: %w", err)
-	}
-
-	mgmtAddr := fmt.Sprintf("http://localhost:%d", frontendMgmtPort)
-	if err := waitForHealth(m.client, mgmtAddr, "/healthz", 10*time.Second); err != nil {
-		_ = m.pm.Stop(frontendName)
-		_ = m.pm.Stop(backendName)
-		_ = m.pm.Stop(simName)
-		return fmt.Errorf("frontend health check: %w", err)
 	}
 
 	return nil
@@ -249,15 +210,12 @@ func (m *ProjectManager) Stop(name string) error {
 	return m.stopProcesses(name)
 }
 
-// stopProcesses stops a project's 3 processes in reverse order without acquiring the op lock.
+// stopProcesses stops a project's 2 processes in reverse order without acquiring the op lock.
 func (m *ProjectManager) stopProcesses(name string) error {
-	simName, backendName, frontendName := processNames(name)
+	simName, backendName := processNames(name)
 
-	// Stop in reverse order: frontend → backend → simulator
+	// Stop in reverse order: backend → simulator
 	var errs []error
-	if err := m.stopIfRunning(frontendName); err != nil {
-		errs = append(errs, err)
-	}
 	if err := m.stopIfRunning(backendName); err != nil {
 		errs = append(errs, err)
 	}
@@ -289,10 +247,9 @@ func (m *ProjectManager) Delete(name string) error {
 	// Stop if running (using stopProcesses directly to avoid re-acquiring op lock)
 	_ = m.stopProcesses(name)
 
-	simName, backendName, frontendName := processNames(name)
+	simName, backendName := processNames(name)
 
 	// Remove processes
-	_ = m.pm.RemoveProcess(frontendName)
 	_ = m.pm.RemoveProcess(backendName)
 	_ = m.pm.RemoveProcess(simName)
 
@@ -351,7 +308,7 @@ func (m *ProjectManager) Logs(name, component string, lines int) ([]string, erro
 	}
 	m.mu.Unlock()
 
-	simName, backendName, frontendName := processNames(name)
+	simName, backendName := processNames(name)
 
 	var procName string
 	switch component {
@@ -359,12 +316,10 @@ func (m *ProjectManager) Logs(name, component string, lines int) ([]string, erro
 		procName = simName
 	case "backend":
 		procName = backendName
-	case "frontend":
-		procName = frontendName
 	case "", "all":
 		// Aggregate all logs
 		var allLogs []string
-		for _, pn := range []string{simName, backendName, frontendName} {
+		for _, pn := range []string{simName, backendName} {
 			logs, err := m.pm.GetLogs(pn, lines)
 			if err == nil {
 				for _, line := range logs {
@@ -391,15 +346,13 @@ func (m *ProjectManager) Connection(name string) (ProjectConnection, error) {
 	c := *cfg
 	m.mu.Unlock()
 
-	dockerHost := fmt.Sprintf("tcp://localhost:%d", c.FrontendPort)
+	dockerHost := fmt.Sprintf("tcp://localhost:%d", c.BackendPort)
 	return ProjectConnection{
 		DockerHost:       dockerHost,
 		EnvExport:        fmt.Sprintf("export DOCKER_HOST=%s", dockerHost),
 		PodmanConnection: fmt.Sprintf("podman system connection add %s %s", c.Name, dockerHost),
 		SimulatorAddr:    fmt.Sprintf("http://localhost:%d", c.SimPort),
 		BackendAddr:      fmt.Sprintf("http://localhost:%d", c.BackendPort),
-		FrontendAddr:     fmt.Sprintf("http://localhost:%d", c.FrontendPort),
-		FrontendMgmtAddr: fmt.Sprintf("http://localhost:%d", c.FrontendMgmtPort),
 	}, nil
 }
 
@@ -426,12 +379,12 @@ func (m *ProjectManager) LoadProject(cfg *ProjectConfig) {
 	m.projects[cfg.Name] = &stored
 
 	// Reserve ports
-	if err := m.ports.Reserve(cfg.Name, []int{cfg.SimPort, cfg.BackendPort, cfg.FrontendPort, cfg.FrontendMgmtPort}); err != nil {
+	if err := m.ports.Reserve(cfg.Name, []int{cfg.SimPort, cfg.BackendPort}); err != nil {
 		log.Printf("warning: port conflict loading project %q: %v", cfg.Name, err)
 	}
 
 	// Register processes
-	simName, backendName, frontendName := processNames(cfg.Name)
+	simName, backendName := processNames(cfg.Name)
 
 	simEnvSlice := SimulatorEnv(cfg.Cloud, cfg.SimPort, cfg.LogLevel)
 	simEnvMap := sliceToEnvMap(simEnvSlice)
@@ -453,28 +406,19 @@ func (m *ProjectManager) LoadProject(cfg *ProjectConfig) {
 		Addr:   fmt.Sprintf(":%d", cfg.BackendPort),
 		Type:   "backend",
 	})
-
-	m.pm.AddProcess(ProcessConfig{
-		Name:   frontendName,
-		Binary: "sockerless-frontend-docker",
-		Args:   FrontendArgs(cfg.FrontendPort, cfg.BackendPort, cfg.FrontendMgmtPort, cfg.LogLevel),
-		Addr:   fmt.Sprintf(":%d", cfg.FrontendPort),
-		Type:   "frontend",
-	})
 }
 
 // buildStatus builds a ProjectStatus from a config by checking process states.
 func (m *ProjectManager) buildStatus(cfg ProjectConfig) ProjectStatus {
-	simName, backendName, frontendName := processNames(cfg.Name)
+	simName, backendName := processNames(cfg.Name)
 
 	simInfo, _ := m.pm.Get(simName)
 	backendInfo, _ := m.pm.Get(backendName)
-	frontendInfo, _ := m.pm.Get(frontendName)
 
 	status := "stopped"
 	running := 0
 	failed := 0
-	for _, s := range []string{simInfo.Status, backendInfo.Status, frontendInfo.Status} {
+	for _, s := range []string{simInfo.Status, backendInfo.Status} {
 		if s == "running" {
 			running++
 		}
@@ -483,7 +427,7 @@ func (m *ProjectManager) buildStatus(cfg ProjectConfig) ProjectStatus {
 		}
 	}
 
-	if running == 3 {
+	if running == 2 {
 		status = "running"
 	} else if running > 0 {
 		status = "partial"
@@ -492,7 +436,7 @@ func (m *ProjectManager) buildStatus(cfg ProjectConfig) ProjectStatus {
 	}
 
 	// Check if any is starting
-	for _, s := range []string{simInfo.Status, backendInfo.Status, frontendInfo.Status} {
+	for _, s := range []string{simInfo.Status, backendInfo.Status} {
 		if s == "starting" {
 			status = "starting"
 			break
@@ -500,7 +444,7 @@ func (m *ProjectManager) buildStatus(cfg ProjectConfig) ProjectStatus {
 	}
 
 	// Check if any is stopping
-	for _, s := range []string{simInfo.Status, backendInfo.Status, frontendInfo.Status} {
+	for _, s := range []string{simInfo.Status, backendInfo.Status} {
 		if s == "stopping" {
 			status = "stopping"
 			break
@@ -508,11 +452,10 @@ func (m *ProjectManager) buildStatus(cfg ProjectConfig) ProjectStatus {
 	}
 
 	return ProjectStatus{
-		ProjectConfig:  cfg,
-		Status:         status,
-		SimStatus:      simInfo.Status,
-		BackendStatus:  backendInfo.Status,
-		FrontendStatus: frontendInfo.Status,
+		ProjectConfig: cfg,
+		Status:        status,
+		SimStatus:     simInfo.Status,
+		BackendStatus: backendInfo.Status,
 	}
 }
 
@@ -572,13 +515,9 @@ func (m *ProjectManager) unlockOp(name string) {
 
 // componentLabel returns a short label for a process name.
 func componentLabel(procName, projectName string) string {
-	simName, backendName, _ := processNames(projectName)
-	switch procName {
-	case simName:
+	simName, _ := processNames(projectName)
+	if procName == simName {
 		return "sim"
-	case backendName:
-		return "backend"
-	default:
-		return "frontend"
 	}
+	return "backend"
 }

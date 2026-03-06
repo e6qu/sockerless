@@ -37,24 +37,21 @@ const (
 
 // ProjectConfig defines a project configuration.
 type ProjectConfig struct {
-	Name             string      `json:"name"`
-	Cloud            CloudType   `json:"cloud"`
-	Backend          BackendType `json:"backend"`
-	LogLevel         string      `json:"log_level"`
-	SimPort          int         `json:"sim_port"`
-	BackendPort      int         `json:"backend_port"`
-	FrontendPort     int         `json:"frontend_port"`
-	FrontendMgmtPort int         `json:"frontend_mgmt_port"`
-	CreatedAt        string      `json:"created_at"`
+	Name        string      `json:"name"`
+	Cloud       CloudType   `json:"cloud"`
+	Backend     BackendType `json:"backend"`
+	LogLevel    string      `json:"log_level"`
+	SimPort     int         `json:"sim_port"`
+	BackendPort int         `json:"backend_port"`
+	CreatedAt   string      `json:"created_at"`
 }
 
 // ProjectStatus combines config with runtime status.
 type ProjectStatus struct {
 	ProjectConfig
-	Status         string `json:"status"`
-	SimStatus      string `json:"sim_status"`
-	BackendStatus  string `json:"backend_status"`
-	FrontendStatus string `json:"frontend_status"`
+	Status        string `json:"status"`
+	SimStatus     string `json:"sim_status"`
+	BackendStatus string `json:"backend_status"`
 }
 
 // ProjectConnection holds Docker/Podman connection info.
@@ -64,8 +61,6 @@ type ProjectConnection struct {
 	PodmanConnection string `json:"podman_connection"`
 	SimulatorAddr    string `json:"simulator_addr"`
 	BackendAddr      string `json:"backend_addr"`
-	FrontendAddr     string `json:"frontend_addr"`
-	FrontendMgmtAddr string `json:"frontend_mgmt_addr"`
 }
 
 // ValidClouds returns all valid cloud types.
@@ -141,11 +136,10 @@ func BackendBinary(backend BackendType) string {
 	}
 }
 
-// processNames returns the 3 process names for a project.
-func processNames(name string) (sim, backend, frontend string) {
+// processNames returns the 2 process names for a project.
+func processNames(name string) (sim, backend string) {
 	return fmt.Sprintf("proj-%s-sim", name),
-		fmt.Sprintf("proj-%s-backend", name),
-		fmt.Sprintf("proj-%s-frontend", name)
+		fmt.Sprintf("proj-%s-backend", name)
 }
 
 // PortAllocator allocates ephemeral ports and tracks them per project.

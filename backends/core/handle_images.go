@@ -2,16 +2,13 @@ package core
 
 import (
 	"archive/tar"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"net/http"
 	"os"
 	"path"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -53,7 +50,7 @@ func StoreImageWithAliases(store *Store, ref string, img api.Image) {
 	}
 }
 
-// --- Default image pull (synthetic, memory-like) ---
+// --- Default image pull (delegates to s.self for virtual dispatch) ---
 
 func (s *BaseServer) handleImagePull(w http.ResponseWriter, r *http.Request) {
 	var req api.ImagePullRequest
@@ -62,128 +59,18 @@ func (s *BaseServer) handleImagePull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ref := req.Reference
-	if ref == "" {
-		WriteError(w, &api.InvalidParameterError{Message: "image reference is required"})
+	rc, err := s.self.ImagePull(req.Reference, req.Auth)
+	if err != nil {
+		WriteError(w, err)
 		return
 	}
+	defer rc.Close()
 
-	// Normalize: add :latest if no tag
-	if !strings.Contains(ref, ":") && !strings.Contains(ref, "@") {
-		ref = ref + ":latest"
-	}
-
-	// If the image already exists (e.g., from a build), don't overwrite it
-	if _, exists := s.Store.ResolveImage(ref); exists {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		enc := json.NewEncoder(w)
-		_ = enc.Encode(map[string]any{"status": fmt.Sprintf("Pulling from %s", strings.Split(ref, ":")[0])})
-		_ = enc.Encode(map[string]any{"status": fmt.Sprintf("Status: Image is up to date for %s", ref)})
-		return
-	}
-
-	// Generate a synthetic image ID
-	hash := sha256.Sum256([]byte(ref))
-	imageID := fmt.Sprintf("sha256:%x", hash)
-
-	// Start with synthetic config defaults
-	imgConfig := api.ContainerConfig{
-		Env:    []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
-		Cmd:    []string{"/bin/sh"},
-		Labels: make(map[string]string),
-	}
-
-	// Build auth credential chain: X-Registry-Auth header → Store.Creds → ~/.docker/config.json
-	basicAuth := ""
-	rc := parseImageRef(ref)
-	if user, pass := decodeRegistryAuth(req.Auth); user != "" {
-		basicAuth = base64.StdEncoding.EncodeToString([]byte(user + ":" + pass))
-	} else if cred, ok := s.Store.Creds.Get(rc.Registry); ok {
-		basicAuth = base64.StdEncoding.EncodeToString([]byte(cred.Username + ":" + cred.Password))
-	} else if cfg, err := LoadDockerConfig(DefaultDockerConfigPath()); err == nil {
-		if u, p, ok := cfg.GetRegistryAuth(rc.Registry); ok {
-			basicAuth = base64.StdEncoding.EncodeToString([]byte(u + ":" + p))
-		}
-	}
-
-	// Try to fetch real config from registry
-	if realConfig, _ := FetchImageConfig(ref, basicAuth); realConfig != nil {
-		if len(realConfig.Env) > 0 {
-			imgConfig.Env = realConfig.Env
-		}
-		if len(realConfig.Cmd) > 0 {
-			imgConfig.Cmd = realConfig.Cmd
-		}
-		if len(realConfig.Entrypoint) > 0 {
-			imgConfig.Entrypoint = realConfig.Entrypoint
-		}
-		if realConfig.WorkingDir != "" {
-			imgConfig.WorkingDir = realConfig.WorkingDir
-		}
-		if len(realConfig.Labels) > 0 {
-			imgConfig.Labels = realConfig.Labels
-		}
-		if len(realConfig.ExposedPorts) > 0 {
-			imgConfig.ExposedPorts = realConfig.ExposedPorts
-		}
-	}
-
-	// BUG-551: Deterministic size from image reference instead of hardcoded value
-	h := fnv.New32a()
-	h.Write([]byte(ref))
-	imgSize := int64(10_000_000 + h.Sum32()%90_000_000) // 10MB-100MB range
-
-	now := time.Now().UTC()
-	img := api.Image{
-		ID:       imageID,
-		RepoTags: []string{ref},
-		RepoDigests: []string{
-			strings.Split(ref, ":")[0] + "@sha256:" + fmt.Sprintf("%x", hash)[:64],
-		},
-		Created:      now.Format(time.RFC3339Nano),
-		Size:         imgSize,
-		VirtualSize:  imgSize,
-		Architecture: "amd64",
-		Os:           "linux",
-		Config:       imgConfig,
-		RootFS: api.RootFS{
-			Type:   "layers",
-			Layers: []string{"sha256:" + GenerateID()},
-		},
-		GraphDriver: api.GraphDriverData{
-			Name: "overlay2",
-			Data: map[string]string{
-				"MergedDir": "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/merged",
-				"UpperDir":  "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/diff",
-				"WorkDir":   "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/work",
-			},
-		},
-		Metadata: api.ImageMetadata{LastTagTime: now.Format(time.RFC3339Nano)},
-	}
-
-	StoreImageWithAliases(s.Store, ref, img)
-
-	// Stream synthetic pull progress
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	flusher, _ := w.(http.Flusher)
-
-	progress := []map[string]any{
-		{"status": fmt.Sprintf("Pulling from %s", strings.Split(ref, ":")[0])},
-		{"status": "Pulling fs layer", "id": "abc123"},
-		{"status": "Download complete", "id": "abc123"},
-		{"status": "Pull complete", "id": "abc123"},
-		{"status": fmt.Sprintf("Digest: sha256:%x", hash)},
-		{"status": fmt.Sprintf("Status: Downloaded newer image for %s", ref)},
-	}
-
-	enc := json.NewEncoder(w)
-	for _, p := range progress {
-		enc.Encode(p)
-		if flusher != nil {
-			flusher.Flush()
-		}
+	io.Copy(w, rc)
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
 	}
 }
 
@@ -202,70 +89,12 @@ func (s *BaseServer) handleImageInspect(w http.ResponseWriter, r *http.Request) 
 func (s *BaseServer) handleImageLoad(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
-	// Parse the tar to extract manifest.json and config for image metadata
-	repoTags, imgConfig := parseImageTar(r.Body)
-
-	// Fallback to "loaded:latest" if no manifest found
-	if len(repoTags) == 0 {
-		repoTags = []string{"loaded:latest"}
+	rc, err := s.self.ImageLoad(r.Body)
+	if err != nil {
+		WriteError(w, err)
+		return
 	}
-
-	id := "sha256:" + GenerateID()
-	layerID := GenerateID()
-	nowStr := time.Now().UTC().Format(time.RFC3339Nano)
-	img := api.Image{
-		ID:           id,
-		RepoTags:     repoTags,
-		Created:      nowStr,
-		Size:         0,
-		Architecture: "amd64",
-		Os:           "linux",
-		Config: api.ContainerConfig{
-			Labels: make(map[string]string),
-		},
-		RootFS: api.RootFS{
-			Type:   "layers",
-			Layers: []string{"sha256:" + layerID},
-		},
-		GraphDriver: api.GraphDriverData{
-			Name: "overlay2",
-			Data: map[string]string{
-				"MergedDir": "/var/lib/sockerless/overlay2/" + id[7:19] + "/merged",
-				"UpperDir":  "/var/lib/sockerless/overlay2/" + id[7:19] + "/diff",
-				"WorkDir":   "/var/lib/sockerless/overlay2/" + id[7:19] + "/work",
-			},
-		},
-		Metadata: api.ImageMetadata{LastTagTime: nowStr},
-	}
-
-	// Merge parsed config
-	if imgConfig != nil {
-		if len(imgConfig.Env) > 0 {
-			img.Config.Env = imgConfig.Env
-		}
-		if len(imgConfig.Cmd) > 0 {
-			img.Config.Cmd = imgConfig.Cmd
-		}
-		if len(imgConfig.Entrypoint) > 0 {
-			img.Config.Entrypoint = imgConfig.Entrypoint
-		}
-		if imgConfig.WorkingDir != "" {
-			img.Config.WorkingDir = imgConfig.WorkingDir
-		}
-		if len(imgConfig.Labels) > 0 {
-			img.Config.Labels = imgConfig.Labels
-		}
-	}
-
-	// Store under all tags
-	for _, tag := range repoTags {
-		StoreImageWithAliases(s.Store, tag, img)
-	}
-	s.Store.Images.Put(id, img)
-
-	displayTag := repoTags[0]
-
-	s.emitEvent("image", "load", id, map[string]string{"name": displayTag})
+	defer rc.Close()
 
 	// BUG-493: Respect quiet param
 	quiet := r.URL.Query().Get("quiet") == "1" || r.URL.Query().Get("quiet") == "true"
@@ -274,9 +103,7 @@ func (s *BaseServer) handleImageLoad(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{
-			"stream": fmt.Sprintf("Loaded image: %s\n", displayTag),
-		})
+		io.Copy(w, rc)
 	}
 }
 
@@ -747,11 +574,6 @@ func (s *BaseServer) handleAuth(w http.ResponseWriter, r *http.Request) {
 
 func (s *BaseServer) handleImagePush(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("name")
-	img, ok := s.Store.ResolveImage(ref)
-	if !ok {
-		WriteError(w, &api.NotFoundError{Resource: "image", ID: ref})
-		return
-	}
 
 	// BUG-494: Accept auth query param (base64-encoded JSON credentials)
 	if authB64 := r.URL.Query().Get("auth"); authB64 != "" {
@@ -764,17 +586,16 @@ func (s *BaseServer) handleImagePush(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tag := r.URL.Query().Get("tag")
-	if tag == "" {
-		tag = "latest"
+	rc, err := s.self.ImagePush(ref, tag, r.URL.Query().Get("auth"))
+	if err != nil {
+		WriteError(w, err)
+		return
 	}
+	defer rc.Close()
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	enc := json.NewEncoder(w)
-	_ = enc.Encode(map[string]string{"status": "The push refers to repository [" + ref + "]"})
-	_ = enc.Encode(map[string]string{"status": "Preparing", "id": tag})
-	_ = enc.Encode(map[string]string{"status": "Pushed", "id": tag})
-	digest := strings.TrimPrefix(img.ID, "sha256:")
-	_ = enc.Encode(map[string]string{"status": tag + ": digest: sha256:" + digest})
+	io.Copy(w, rc)
 }
 
 func (s *BaseServer) handleImageSave(w http.ResponseWriter, r *http.Request) {
@@ -785,93 +606,31 @@ func (s *BaseServer) handleImageSave(w http.ResponseWriter, r *http.Request) {
 			names = []string{name}
 		}
 	}
-	// BUG-524: Validate all images exist before starting tar stream
-	for _, name := range names {
-		if _, ok := s.Store.ResolveImage(name); !ok {
-			WriteError(w, &api.NotFoundError{Resource: "image", ID: name})
-			return
-		}
+
+	rc, err := s.self.ImageSave(names)
+	if err != nil {
+		WriteError(w, err)
+		return
 	}
+	defer rc.Close()
 
 	w.Header().Set("Content-Type", "application/x-tar")
 	w.WriteHeader(http.StatusOK)
-	tw := tar.NewWriter(w)
-	defer func() { _ = tw.Close() }()
-	var manifests []map[string]any
-	for _, name := range names {
-		img, ok := s.Store.ResolveImage(name)
-		if !ok {
-			continue
-		}
-		layers := img.RootFS.Layers
-		if layers == nil {
-			layers = []string{}
-		}
-		manifests = append(manifests, map[string]any{
-			"Config":   img.ID + ".json",
-			"RepoTags": img.RepoTags,
-			"Layers":   layers,
-		})
-
-		// BUG-488: Write image config JSON entry so docker load can parse it
-		configData, _ := json.Marshal(map[string]any{
-			"architecture": img.Architecture,
-			"os":           img.Os,
-			"created":      img.Created,
-			"config":       img.Config,
-			"rootfs":       img.RootFS,
-		})
-		_ = tw.WriteHeader(&tar.Header{Name: img.ID + ".json", Size: int64(len(configData))})
-		_, _ = tw.Write(configData)
-	}
-	if manifests == nil {
-		manifests = []map[string]any{}
-	}
-	data, _ := json.Marshal(manifests)
-	_ = tw.WriteHeader(&tar.Header{Name: "manifest.json", Size: int64(len(data))})
-	_, _ = tw.Write(data)
+	io.Copy(w, rc)
 }
 
 func (s *BaseServer) handleImageSearch(w http.ResponseWriter, r *http.Request) {
 	term := r.URL.Query().Get("term")
-	limitStr := r.URL.Query().Get("limit")
 	limit := 0
-	if limitStr != "" {
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
 		limit, _ = strconv.Atoi(limitStr)
 	}
-	var results []map[string]any
-	seen := make(map[string]bool)
-	for _, img := range s.Store.Images.List() {
-		if seen[img.ID] {
-			continue
-		}
-		seen[img.ID] = true
-		for _, tag := range img.RepoTags {
-			if strings.Contains(tag, term) {
-				results = append(results, map[string]any{
-					"name": tag, "description": "", "star_count": 0,
-					"is_official": false, "is_automated": false,
-				})
-				break
-			}
-		}
-	}
-	if results == nil {
-		results = []map[string]any{}
-	}
-	// BUG-513: Sort results by relevance (exact match first, then alphabetical)
-	sort.Slice(results, func(i, j int) bool {
-		iName := results[i]["name"].(string)
-		jName := results[j]["name"].(string)
-		iExact := iName == term
-		jExact := jName == term
-		if iExact != jExact {
-			return iExact
-		}
-		return iName < jName
-	})
-	if limit > 0 && limit < len(results) {
-		results = results[:limit]
+	filters := ParseFilters(r.URL.Query().Get("filters"))
+
+	results, err := s.self.ImageSearch(term, limit, filters)
+	if err != nil {
+		WriteError(w, err)
+		return
 	}
 	WriteJSON(w, http.StatusOK, results)
 }

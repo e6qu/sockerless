@@ -2,15 +2,14 @@
 set -euo pipefail
 
 # Act smoke test runner
-# Starts Sockerless (memory backend + docker frontend) and runs act against it.
+# Starts Sockerless (cloud backend + simulator) and runs act against it.
+# The backend serves the Docker API directly (in-process wiring).
 
-BACKEND_TYPE="${BACKEND:-memory}"
-BACKEND_ADDR="127.0.0.1:9100"
-FRONTEND_ADDR="127.0.0.1:2375"
+BACKEND_TYPE="${BACKEND:-ecs}"
+BACKEND_ADDR="127.0.0.1:2375"
 
 cleanup() {
     echo "=== Cleaning up ==="
-    [ -n "${FRONTEND_PID:-}" ] && kill "$FRONTEND_PID" 2>/dev/null || true
     [ -n "${BACKEND_PID:-}" ] && kill "$BACKEND_PID" 2>/dev/null || true
     [ -n "${SIM_PID:-}" ] && kill "$SIM_PID" 2>/dev/null || true
 }
@@ -72,39 +71,31 @@ case "$BACKEND_TYPE" in
         export SOCKERLESS_ACA_RESOURCE_GROUP="sim-rg"
         BACKEND_BIN="/usr/local/bin/sockerless-backend-aca"
         ;;
-    memory)
-        BACKEND_BIN="/usr/local/bin/sockerless-backend-memory"
-        ;;
     *)
         echo "ERROR: Unknown backend type: $BACKEND_TYPE"
         exit 1
         ;;
 esac
 
-# --- Start backend ---
+# --- Start backend (serves Docker API directly) ---
 export SOCKERLESS_POLL_INTERVAL="500ms"
 export SOCKERLESS_AGENT_TIMEOUT="2s"
+export SOCKERLESS_AUTO_AGENT_BIN="/usr/local/bin/sockerless-agent"
+export SOCKERLESS_CALLBACK_URL="http://$BACKEND_ADDR"
 echo "=== Starting $BACKEND_TYPE backend ==="
 "$BACKEND_BIN" --addr "$BACKEND_ADDR" --log-level debug &
 BACKEND_PID=$!
-wait_for_url "http://$BACKEND_ADDR/internal/v1/info"
-echo "$BACKEND_TYPE backend ready"
-
-# --- Start frontend ---
-echo "=== Starting Docker frontend ==="
-sockerless-frontend-docker --addr "$FRONTEND_ADDR" --backend "http://$BACKEND_ADDR" --log-level debug &
-FRONTEND_PID=$!
-wait_for_url "http://$FRONTEND_ADDR/_ping"
-echo "Docker frontend ready"
+wait_for_url "http://$BACKEND_ADDR/_ping"
+echo "$BACKEND_TYPE backend ready (serving Docker API)"
 
 # --- Run act ---
 echo "=== Running act (backend=$BACKEND_TYPE) ==="
-export DOCKER_HOST="tcp://$FRONTEND_ADDR"
+export DOCKER_HOST="tcp://$BACKEND_ADDR"
 
 act push \
     --workflows /test/workflows/ \
     -P ubuntu-latest=alpine:latest \
-    --container-daemon-socket "tcp://$FRONTEND_ADDR" \
+    --container-daemon-socket "tcp://$BACKEND_ADDR" \
     2>&1 | tee /tmp/act-output.log
 ACT_EXIT=${PIPESTATUS[0]}
 

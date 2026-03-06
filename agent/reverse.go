@@ -160,11 +160,11 @@ func (rc *ReverseAgentConn) bridge(conn net.Conn, sessionID string, ch chan Mess
 						if msg.Type == TypeStderr {
 							stream = 2
 						}
-						header := make([]byte, 8)
-						header[0] = stream
-						binary.BigEndian.PutUint32(header[4:], uint32(len(decoded)))
-						_, _ = conn.Write(header)
-						_, _ = conn.Write(decoded)
+						frame := make([]byte, 8+len(decoded))
+						frame[0] = stream
+						binary.BigEndian.PutUint32(frame[4:], uint32(len(decoded)))
+						copy(frame[8:], decoded)
+						_, _ = conn.Write(frame)
 					}
 				case TypeExit:
 					code := 0

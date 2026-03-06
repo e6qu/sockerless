@@ -22,15 +22,10 @@ services:
     build:
       context: ../..
       dockerfile: smoke-tests/gitlab/Dockerfile.backend
-    command: ["--addr", ":9100", "--log-level", "debug"]
-
-  sockerless-frontend:
-    build:
-      context: ../..
-      dockerfile: smoke-tests/gitlab/Dockerfile.frontend
-    command: ["--backend", "http://sockerless-backend:9100", "--addr", ":2375", "--log-level", "debug"]
-    depends_on:
-      - sockerless-backend
+    command: []
+    environment:
+      CLOUD: aws
+      BACKEND_ADDR: ":2375"
 
   orchestrator:
     build:
@@ -39,9 +34,9 @@ services:
     environment:
       GITLAB_URL: http://gitlab
       GITLAB_ROOT_PASSWORD: sockerless-test-pw
-      SOCKERLESS_HOST: tcp://sockerless-frontend:2375
+      SOCKERLESS_HOST: tcp://sockerless-backend:2375
       GITLAB_TIMEOUT: "600"
       PIPELINE_TIMEOUT: "300"
     depends_on:
       - gitlab
-      - sockerless-frontend
+      - sockerless-backend

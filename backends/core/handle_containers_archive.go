@@ -16,93 +16,55 @@ import (
 )
 
 // handlePutArchive accepts a tar archive and extracts it to the container filesystem.
-// Dispatches through the FilesystemDriver chain (WASM → agent → staging).
 func (s *BaseServer) handlePutArchive(w http.ResponseWriter, r *http.Request) {
-	ref := r.PathValue("id")
-	id, ok := s.Store.ResolveContainerID(ref)
-	if !ok {
-		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
-		return
-	}
-
 	path := r.URL.Query().Get("path")
-	if path == "" {
-		path = "/"
-	}
-
-	if err := s.Drivers.Filesystem.PutArchive(id, path, r.Body); err != nil {
-		s.Logger.Error().Err(err).Str("container", id).Msg("failed to extract archive")
-		WriteError(w, &api.ServerError{Message: "failed to extract archive: " + err.Error()})
+	noOverwrite := r.URL.Query().Get("noOverwriteDirNonDir") == "1" || r.URL.Query().Get("noOverwriteDirNonDir") == "true"
+	if err := s.self.ContainerPutArchive(r.PathValue("id"), path, noOverwrite, r.Body); err != nil {
+		WriteError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleHeadArchive returns a stat header for the requested path.
-// Dispatches through the FilesystemDriver chain.
 func (s *BaseServer) handleHeadArchive(w http.ResponseWriter, r *http.Request) {
-	ref := r.PathValue("id")
-	id, ok := s.Store.ResolveContainerID(ref)
-	if !ok {
-		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
-		return
-	}
 	path := r.URL.Query().Get("path")
-	if path == "" {
-		path = "/"
-	}
-
-	info, err := s.Drivers.Filesystem.StatPath(id, path)
+	stat, err := s.self.ContainerStatPath(r.PathValue("id"), path)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
-	stat := map[string]interface{}{
-		"name":  info.Name(),
-		"size":  info.Size(),
-		"mode":  info.Mode().Perm(),
-		"mtime": info.ModTime().UTC().Format(time.RFC3339),
-	}
-	statJSON, _ := json.Marshal(stat)
+	statJSON, _ := json.Marshal(map[string]interface{}{
+		"name":  stat.Name,
+		"size":  stat.Size,
+		"mode":  stat.Mode,
+		"mtime": stat.Mtime.Format(time.RFC3339),
+	})
 	w.Header().Set("X-Docker-Container-Path-Stat", base64.StdEncoding.EncodeToString(statJSON))
 	w.WriteHeader(http.StatusOK)
 }
 
 // handleGetArchive returns a tar archive of the requested path.
-// Dispatches through the FilesystemDriver chain.
 func (s *BaseServer) handleGetArchive(w http.ResponseWriter, r *http.Request) {
-	ref := r.PathValue("id")
-	id, ok := s.Store.ResolveContainerID(ref)
-	if !ok {
-		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
-		return
-	}
 	path := r.URL.Query().Get("path")
-	if path == "" {
-		path = "/"
-	}
-
-	// Stat first to check existence and get info for the header
-	info, err := s.Drivers.Filesystem.StatPath(id, path)
+	resp, err := s.self.ContainerGetArchive(r.PathValue("id"), path)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	defer resp.Reader.Close()
 
-	stat := map[string]interface{}{
-		"name":  info.Name(),
-		"size":  info.Size(),
-		"mode":  info.Mode().Perm(),
-		"mtime": info.ModTime().UTC().Format(time.RFC3339),
-	}
-	statJSON, _ := json.Marshal(stat)
+	statJSON, _ := json.Marshal(map[string]interface{}{
+		"name":  resp.Stat.Name,
+		"size":  resp.Stat.Size,
+		"mode":  resp.Stat.Mode,
+		"mtime": resp.Stat.Mtime.Format(time.RFC3339),
+	})
 	w.Header().Set("X-Docker-Container-Path-Stat", base64.StdEncoding.EncodeToString(statJSON))
 	w.Header().Set("Content-Type", "application/x-tar")
 	w.WriteHeader(http.StatusOK)
-	if _, err := s.Drivers.Filesystem.GetArchive(id, path, w); err != nil {
-		s.Logger.Error().Err(err).Str("container", id).Str("path", path).Msg("failed to write archive")
-	}
+	io.Copy(w, resp.Reader)
 }
 
 // extractTar extracts a tar archive into destDir.
@@ -126,9 +88,13 @@ func extractTar(r io.Reader, destDir string) error {
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			_ = os.MkdirAll(target, os.FileMode(hdr.Mode))
+			if err := os.MkdirAll(target, os.FileMode(hdr.Mode)); err != nil {
+				return fmt.Errorf("mkdir %s: %w", target, err)
+			}
 		case tar.TypeReg:
-			_ = os.MkdirAll(filepath.Dir(target), 0755)
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return fmt.Errorf("mkdir %s: %w", filepath.Dir(target), err)
+			}
 			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode))
 			if err != nil {
 				return err
@@ -158,56 +124,6 @@ func extractTar(r io.Reader, destDir string) error {
 			_ = os.Link(linkTarget, target)
 		}
 	}
-}
-
-// mergeStagingDir copies pre-start archive files into the container process root.
-func (s *BaseServer) mergeStagingDir(containerID string, rootPath string) {
-	sd, ok := s.Store.StagingDirs.Load(containerID)
-	if !ok {
-		return
-	}
-	stagingDir := sd.(string)
-	defer func() {
-		os.RemoveAll(stagingDir)
-		s.Store.StagingDirs.Delete(containerID)
-	}()
-	// Walk staging dir and copy into process root
-	_ = filepath.Walk(stagingDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || path == stagingDir {
-			return nil
-		}
-		rel, _ := filepath.Rel(stagingDir, path)
-		dest := filepath.Join(rootPath, rel)
-		if info.IsDir() {
-			if err := os.MkdirAll(dest, info.Mode()); err != nil {
-				s.Logger.Warn().Err(err).Str("dir", rel).Msg("staging merge: mkdir failed")
-			}
-			return nil
-		}
-		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-			s.Logger.Warn().Err(err).Str("file", rel).Msg("staging merge: mkdir parent failed")
-			return nil
-		}
-		src, err := os.Open(path)
-		if err != nil {
-			s.Logger.Warn().Err(err).Str("file", rel).Msg("staging merge: open source failed")
-			return nil
-		}
-		defer func() { _ = src.Close() }()
-		dst, err := os.Create(dest)
-		if err != nil {
-			s.Logger.Warn().Err(err).Str("file", rel).Msg("staging merge: create dest failed")
-			return nil
-		}
-		defer func() { _ = dst.Close() }()
-		if _, err := io.Copy(dst, src); err != nil {
-			s.Logger.Warn().Err(err).Str("file", rel).Msg("staging merge: copy failed")
-		}
-		if err := dst.Chmod(info.Mode()); err != nil {
-			s.Logger.Warn().Err(err).Str("file", rel).Msg("staging merge: chmod failed")
-		}
-		return nil
-	})
 }
 
 // createTar creates a tar archive from a path and writes it to w.
@@ -481,7 +397,7 @@ func buildMounts(hostConfig api.HostConfig) []api.MountPoint {
 }
 
 // resolveBindMounts converts Docker bind specs (e.g. "volName:/container/path")
-// and HostConfig.Mounts into a map of containerPath → hostPath for WASM volume symlinks.
+// and HostConfig.Mounts into a map of containerPath → hostPath.
 func (s *BaseServer) resolveBindMounts(binds []string, mounts []api.Mount) map[string]string {
 	if len(binds) == 0 && len(mounts) == 0 {
 		return nil

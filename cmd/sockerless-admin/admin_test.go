@@ -74,7 +74,6 @@ func TestHealthEndpoint(t *testing.T) {
 		want string
 	}{
 		{"backend", "/internal/v1/healthz"},
-		{"frontend", "/healthz"},
 		{"simulator", "/health"},
 		{"coordinator", "/health"},
 	}

@@ -2,14 +2,14 @@
 set -euo pipefail
 
 # Universal backend starter for E2E tests.
-# Starts simulator (if needed) + backend + frontend, writes PIDs for cleanup.
+# Starts simulator (if needed) + backend, writes PIDs for cleanup.
+# The backend serves the Docker API directly (no separate frontend).
 #
 # Usage: start-backend.sh --backend <name> [--mode simulator|live] [--backend-addr <host:port>] [--frontend-addr <host:port>]
 #
 # Exports:
-#   DOCKER_HOST        — tcp://<frontend_addr>
-#   FRONTEND_ADDR      — host:port of frontend
-#   BACKEND_ADDR       — host:port of backend
+#   DOCKER_HOST        — tcp://<listen_addr>
+#   BACKEND_ADDR       — host:port of backend (serves Docker API directly)
 #   PIDFILE            — path to PID file for cleanup
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -18,8 +18,7 @@ source "${SCRIPT_DIR}/lib.sh"
 # --- Parse args ---
 BACKEND=""
 MODE="simulator"
-BACKEND_ADDR="127.0.0.1:9100"
-FRONTEND_ADDR="127.0.0.1:2375"
+BACKEND_ADDR="127.0.0.1:2375"
 PIDFILE="/tmp/sockerless-e2e.pids"
 
 while [ $# -gt 0 ]; do
@@ -27,7 +26,7 @@ while [ $# -gt 0 ]; do
         --backend)      BACKEND="$2"; shift 2 ;;
         --mode)         MODE="$2"; shift 2 ;;
         --backend-addr) BACKEND_ADDR="$2"; shift 2 ;;
-        --frontend-addr) FRONTEND_ADDR="$2"; shift 2 ;;
+        --frontend-addr) BACKEND_ADDR="$2"; shift 2 ;;  # legacy alias, backend serves Docker API directly
         --pidfile)      PIDFILE="$2"; shift 2 ;;
         *) log_error "Unknown arg: $1"; exit 1 ;;
     esac
@@ -73,9 +72,16 @@ fi
 if uses_reverse_agent "$BACKEND" && [ "$MODE" = "simulator" ]; then
     export SOCKERLESS_CALLBACK_URL="$(get_callback_url "$BACKEND_ADDR")"
     log_info "Reverse agent callback URL: $SOCKERLESS_CALLBACK_URL"
+
+    # Auto-agent binary for backends to spawn agent processes
+    AGENT_BIN_PATH="$(resolve_binary sockerless-agent 2>/dev/null || true)"
+    if [ -n "$AGENT_BIN_PATH" ]; then
+        export SOCKERLESS_AUTO_AGENT_BIN="$AGENT_BIN_PATH"
+        log_info "Auto-agent binary: $SOCKERLESS_AUTO_AGENT_BIN"
+    fi
 fi
 
-# --- Start backend ---
+# --- Start backend (serves Docker API directly) ---
 BACKEND_BIN=$(get_backend_binary "$BACKEND")
 BACKEND_BIN_PATH=$(resolve_binary "$BACKEND_BIN")
 
@@ -83,22 +89,11 @@ log_info "Starting $BACKEND backend on $BACKEND_ADDR"
 "$BACKEND_BIN_PATH" --addr "$BACKEND_ADDR" --log-level debug &
 BACKEND_PID=$!
 write_pid "$PIDFILE" "$BACKEND_PID"
-wait_for_url "http://$BACKEND_ADDR/internal/v1/info"
+wait_for_url "http://$BACKEND_ADDR/_ping"
 log_info "$BACKEND backend ready (PID=$BACKEND_PID)"
 
-# --- Start frontend ---
-FRONTEND_BIN_PATH=$(resolve_binary "sockerless-frontend-docker")
-
-log_info "Starting Docker frontend on $FRONTEND_ADDR"
-"$FRONTEND_BIN_PATH" --addr "$FRONTEND_ADDR" --backend "http://$BACKEND_ADDR" --log-level debug &
-FRONTEND_PID=$!
-write_pid "$PIDFILE" "$FRONTEND_PID"
-wait_for_url "http://$FRONTEND_ADDR/_ping"
-log_info "Docker frontend ready (PID=$FRONTEND_PID)"
-
 # --- Export for callers ---
-export DOCKER_HOST="tcp://$FRONTEND_ADDR"
-export FRONTEND_ADDR
+export DOCKER_HOST="tcp://$BACKEND_ADDR"
 export BACKEND_ADDR
 export PIDFILE
 

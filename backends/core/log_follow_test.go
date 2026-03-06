@@ -5,63 +5,46 @@ import (
 	"time"
 )
 
-func TestSyntheticLogSubscribe_BufferedThenClose(t *testing.T) {
+func TestLogSubscribe_ClosesImmediately(t *testing.T) {
 	store := NewStore()
-	driver := &SyntheticStreamDriver{Store: store}
-
-	// Create a container with a wait channel
-	exitCh := make(chan struct{})
-	store.WaitChs.Store("c1", exitCh)
-	store.LogBuffers.Store("c1", []byte("hello\n"))
+	driver := &AgentStreamDriver{Store: store}
 
 	ch := driver.LogSubscribe("c1", "sub1")
 	if ch == nil {
 		t.Fatal("expected non-nil channel")
 	}
 
-	// Close the exit channel to simulate container exit
-	close(exitCh)
-
-	// Channel should close
+	// Channel should close immediately (no agent, no log subscription support)
 	select {
 	case _, ok := <-ch:
 		if ok {
-			// Might get a value; drain and wait for close
-			select {
-			case _, ok := <-ch:
-				if ok {
-					t.Fatal("expected channel to close")
-				}
-			case <-time.After(time.Second):
-				t.Fatal("channel did not close in time")
-			}
+			t.Fatal("expected channel to close immediately")
 		}
 	case <-time.After(time.Second):
 		t.Fatal("channel did not close in time")
 	}
 }
 
-func TestSyntheticLogSubscribe_EmptyLogs(t *testing.T) {
+func TestLogBytes_ReturnsNilWhenEmpty(t *testing.T) {
 	store := NewStore()
-	driver := &SyntheticStreamDriver{Store: store}
+	driver := &AgentStreamDriver{Store: store}
 
-	exitCh := make(chan struct{})
-	store.WaitChs.Store("c2", exitCh)
-
-	ch := driver.LogSubscribe("c2", "sub1")
-	if ch == nil {
-		t.Fatal("expected non-nil channel")
+	// No data in LogBuffers — returns nil
+	data := driver.LogBytes("c1")
+	if data != nil {
+		t.Fatalf("expected nil, got %v", data)
 	}
+}
 
-	close(exitCh)
+func TestLogBytes_ReturnsStoredData(t *testing.T) {
+	store := NewStore()
+	driver := &AgentStreamDriver{Store: store}
 
-	select {
-	case _, ok := <-ch:
-		if ok {
-			t.Fatal("expected channel to close immediately for empty logs")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("channel did not close in time")
+	// Data in LogBuffers — returns it (auto-agent captures output here)
+	store.LogBuffers.Store("c1", []byte("hello\n"))
+	data := driver.LogBytes("c1")
+	if string(data) != "hello\n" {
+		t.Fatalf("expected %q, got %q", "hello\n", string(data))
 	}
 }
 

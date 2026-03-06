@@ -1,6 +1,6 @@
 # Sockerless — Roadmap
 
-> Phases 1-67, 69-77, 79-82 complete (725 tasks). Phase 68 in progress. 540 bugs fixed (42 sprints), 0 open.
+> Phases 1-67, 69-77, 79-86, 90 complete (756 tasks). Phase 68 in progress. 583 bugs fixed (45 sprints), 0 open.
 >
 > **Production target:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners (GitHub Actions, GitLab CI) — backed by real cloud infrastructure (AWS, GCP, Azure).
 
@@ -28,6 +28,11 @@ See `WHAT_WE_DID.md` for details and `_tasks/done/` for per-task logs.
 | 69-72 | ARM64, simulator fidelity, SDK/CLI verification, full-stack E2E |
 | 73-77 | UI: 13 SPAs (Bun/Vite/React 19), bleephub + gitlabhub dashboards, LogViewer |
 | 79-82 | Admin: dashboard, docs, process management, project bundles |
+| 83 | Type-Safe API: field renames, goverter mappers, api.Backend impl, OpenAPI spec subset |
+| 84 | Self-dispatch: `self api.Backend` on BaseServer, typed method overrides on all 6 cloud backends |
+| 85 | Complete api.Backend: 21 new typed methods (pods, archive, resize, build, push, save, search, commit), httpProxy eliminated |
+| 86 | In-process backend wiring + dead code cleanup: ~1400 lines deleted, HTTP round-trip eliminated |
+| 90 | Remove memory backend, spec-driven state machine tests, cloud operation mappings |
 
 ---
 

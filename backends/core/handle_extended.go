@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -15,37 +14,21 @@ import (
 )
 
 func (s *BaseServer) handleContainerResize(w http.ResponseWriter, r *http.Request) {
-	ref := r.PathValue("id")
-	id, ok := s.Store.ResolveContainerID(ref)
-	if !ok {
-		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
-		return
-	}
-	// BUG-495: Accept h/w query params and store on container
 	h, _ := strconv.Atoi(r.URL.Query().Get("h"))
 	rw, _ := strconv.Atoi(r.URL.Query().Get("w"))
-	if h > 0 || rw > 0 {
-		s.Store.Containers.Update(id, func(c *api.Container) {
-			c.HostConfig.ConsoleSize = [2]uint{uint(h), uint(rw)}
-		})
+	if err := s.self.ContainerResize(r.PathValue("id"), h, rw); err != nil {
+		WriteError(w, err)
+		return
 	}
 	w.WriteHeader(http.StatusOK)
 }
 
 func (s *BaseServer) handleExecResize(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	exec, ok := s.Store.Execs.Get(id)
-	if !ok {
-		WriteError(w, &api.NotFoundError{Resource: "exec instance", ID: id})
-		return
-	}
-	// BUG-496: Accept h/w query params and store on exec's container
 	h, _ := strconv.Atoi(r.URL.Query().Get("h"))
 	rw, _ := strconv.Atoi(r.URL.Query().Get("w"))
-	if h > 0 || rw > 0 {
-		s.Store.Containers.Update(exec.ContainerID, func(c *api.Container) {
-			c.HostConfig.ConsoleSize = [2]uint{uint(h), uint(rw)}
-		})
+	if err := s.self.ExecResize(r.PathValue("id"), h, rw); err != nil {
+		WriteError(w, err)
+		return
 	}
 	w.WriteHeader(http.StatusOK)
 }
@@ -69,41 +52,13 @@ func (s *BaseServer) handleContainerTop(w http.ResponseWriter, r *http.Request) 
 	// BUG-504: Read ps_args query param for API parity
 	_ = r.URL.Query().Get("ps_args")
 
-	// Get process data via driver chain
-	entries, _ := s.Drivers.ProcessLifecycle.Top(id)
-	if len(entries) > 0 {
-		var processes [][]string
-		for _, e := range entries {
-			processes = append(processes, []string{
-				"root",
-				fmt.Sprintf("%d", e.PID),
-				"0",
-				"0",
-				"00:00",
-				"?",
-				"00:00:00",
-				e.Command,
-			})
-		}
-
-		WriteJSON(w, http.StatusOK, api.ContainerTopResponse{
-			Titles:    []string{"UID", "PID", "PPID", "C", "STIME", "TTY", "TIME", "CMD"},
-			Processes: processes,
-		})
-		return
-	}
-
-	// Synthetic process list fallback
 	cmd := c.Path
 	if len(c.Args) > 0 {
 		cmd += " " + strings.Join(c.Args, " ")
 	}
 
-	// BUG-497: Use container's PID instead of hardcoded "1"
-	pid := fmt.Sprintf("%d", c.State.Pid)
-	if c.State.Pid == 0 {
-		pid = "1"
-	}
+	// Docker convention: main process is always PID 1 inside a container.
+	pid := "1"
 
 	WriteJSON(w, http.StatusOK, api.ContainerTopResponse{
 		Titles: []string{"UID", "PID", "PPID", "C", "STIME", "TTY", "TIME", "CMD"},
@@ -115,60 +70,13 @@ func (s *BaseServer) handleContainerTop(w http.ResponseWriter, r *http.Request) 
 
 func (s *BaseServer) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
 	filters := ParseFilters(r.URL.Query().Get("filters"))
-	labelFilters := filters["label"]
-	untilFilters := filters["until"]
 
-	pruned := s.Store.Containers.PruneIf(func(_ string, c api.Container) bool {
-		if c.State.Status != "exited" && c.State.Status != "dead" {
-			return false
-		}
-		if len(labelFilters) > 0 && !MatchLabels(c.Config.Labels, labelFilters) {
-			return false
-		}
-		if len(untilFilters) > 0 && !MatchUntil(c.Created, untilFilters) {
-			return false
-		}
-		return true
-	})
-	var spaceReclaimed uint64
-	deleted := make([]string, 0, len(pruned))
-	for _, c := range pruned {
-		if rootPath, err := s.Drivers.Filesystem.RootPath(c.ID); err == nil && rootPath != "" {
-			spaceReclaimed += uint64(DirSize(rootPath))
-		}
-		s.StopHealthCheck(c.ID)
-		s.Store.ContainerNames.Delete(c.Name)
-		s.Store.LogBuffers.Delete(c.ID)
-		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
-			close(ch.(chan struct{}))
-		}
-		s.Drivers.ProcessLifecycle.Cleanup(c.ID)
-		for _, ep := range c.NetworkSettings.Networks {
-			if ep != nil && ep.NetworkID != "" {
-				_ = s.Drivers.Network.Disconnect(r.Context(), ep.NetworkID, c.ID)
-			}
-		}
-		if pod, inPod := s.Store.Pods.GetPodForContainer(c.ID); inPod {
-			s.Store.Pods.RemoveContainer(pod.ID, c.ID)
-		}
-		s.Store.StagingDirs.Delete(c.ID)
-		if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(c.ID); ok {
-			for _, d := range dirs.([]string) {
-				os.RemoveAll(d)
-			}
-		}
-		for _, eid := range c.ExecIDs {
-			s.Store.Execs.Delete(eid)
-		}
-		s.emitEvent("container", "destroy", c.ID, map[string]string{
-			"name": strings.TrimPrefix(c.Name, "/"),
-		})
-		deleted = append(deleted, c.ID)
+	resp, err := s.self.ContainerPrune(filters)
+	if err != nil {
+		WriteError(w, err)
+		return
 	}
-	WriteJSON(w, http.StatusOK, api.ContainerPruneResponse{
-		ContainersDeleted: deleted,
-		SpaceReclaimed:    spaceReclaimed,
-	})
+	WriteJSON(w, http.StatusOK, resp)
 }
 
 func (s *BaseServer) handleContainerStats(w http.ResponseWriter, r *http.Request) {
@@ -230,12 +138,6 @@ func (s *BaseServer) buildStatsEntry(containerID string, now time.Time, preread 
 	var memUsage int64
 	var cpuNanos int64
 	var pids int
-
-	if stats, err := s.Drivers.ProcessLifecycle.Stats(containerID); err == nil && stats != nil {
-		memUsage = stats.MemoryUsage
-		cpuNanos = stats.CPUNanos
-		pids = stats.PIDs
-	}
 
 	systemNanos := now.UnixNano()
 
@@ -373,85 +275,18 @@ func (s *BaseServer) handleContainerRename(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *BaseServer) handleContainerPause(w http.ResponseWriter, r *http.Request) {
-	ref := r.PathValue("id")
-	id, ok := s.Store.ResolveContainerID(ref)
-	if !ok {
-		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
+	if err := s.self.ContainerPause(r.PathValue("id")); err != nil {
+		WriteError(w, err)
 		return
 	}
-
-	// Atomic check-and-set inside Update to prevent TOCTOU race
-	var name string
-	var conflict error
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		if c.State.Paused {
-			conflict = &api.ConflictError{
-				Message: fmt.Sprintf("Container %s is already paused", ref),
-			}
-			return
-		}
-		if !c.State.Running {
-			conflict = &api.ConflictError{
-				Message: fmt.Sprintf("Container %s is not running", ref),
-			}
-			return
-		}
-		c.State.Paused = true
-		c.State.Status = "paused"
-		name = c.Name
-	})
-	if conflict != nil {
-		WriteError(w, conflict)
-		return
-	}
-
-	s.StopHealthCheck(id)
-
-	s.emitEvent("container", "pause", id, map[string]string{
-		"name": strings.TrimPrefix(name, "/"),
-	})
-
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *BaseServer) handleContainerUnpause(w http.ResponseWriter, r *http.Request) {
-	ref := r.PathValue("id")
-	id, ok := s.Store.ResolveContainerID(ref)
-	if !ok {
-		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
+	if err := s.self.ContainerUnpause(r.PathValue("id")); err != nil {
+		WriteError(w, err)
 		return
 	}
-
-	// Atomic check-and-set inside Update to prevent TOCTOU race
-	var name string
-	var hasHealthcheck bool
-	var conflict error
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		if !c.State.Paused {
-			conflict = &api.ConflictError{
-				Message: fmt.Sprintf("Container %s is not paused", ref),
-			}
-			return
-		}
-		c.State.Paused = false
-		c.State.Status = "running"
-		name = c.Name
-		hasHealthcheck = c.Config.Healthcheck != nil && len(c.Config.Healthcheck.Test) > 0 &&
-			(len(c.Config.Healthcheck.Test) != 1 || !strings.EqualFold(c.Config.Healthcheck.Test[0], "NONE"))
-	})
-	if conflict != nil {
-		WriteError(w, conflict)
-		return
-	}
-
-	if hasHealthcheck {
-		s.StartHealthCheck(id)
-	}
-
-	s.emitEvent("container", "unpause", id, map[string]string{
-		"name": strings.TrimPrefix(name, "/"),
-	})
-
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -589,16 +424,8 @@ func matchEventFilter(filter []string, value string) bool {
 }
 
 func (s *BaseServer) handleContainerUpdate(w http.ResponseWriter, r *http.Request) {
-	ref := r.PathValue("id")
-	id, ok := s.Store.ResolveContainerID(ref)
-	if !ok {
-		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
-		return
-	}
-
 	var req api.ContainerUpdateRequest
 	if err := ReadJSON(r, &req); err != nil {
-		// Empty body is fine — return success. Malformed JSON is 400.
 		if err == io.EOF || r.ContentLength == 0 {
 			WriteJSON(w, http.StatusOK, api.ContainerUpdateResponse{Warnings: []string{}})
 			return
@@ -607,61 +434,21 @@ func (s *BaseServer) handleContainerUpdate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		if req.RestartPolicy.Name != "" {
-			c.HostConfig.RestartPolicy = req.RestartPolicy
-		}
-		if req.Memory != 0 {
-			c.HostConfig.Memory = req.Memory
-		}
-		if req.MemorySwap != 0 {
-			c.HostConfig.MemorySwap = req.MemorySwap
-		}
-		if req.MemoryReservation != 0 {
-			c.HostConfig.MemoryReservation = req.MemoryReservation
-		}
-		if req.CpuShares != 0 {
-			c.HostConfig.CpuShares = req.CpuShares
-		}
-		if req.CpuQuota != 0 {
-			c.HostConfig.CpuQuota = req.CpuQuota
-		}
-		if req.CpuPeriod != 0 {
-			c.HostConfig.CpuPeriod = req.CpuPeriod
-		}
-		if req.CpusetCpus != "" {
-			c.HostConfig.CpusetCpus = req.CpusetCpus
-		}
-		if req.CpusetMems != "" {
-			c.HostConfig.CpusetMems = req.CpusetMems
-		}
-		if req.BlkioWeight != 0 {
-			c.HostConfig.BlkioWeight = req.BlkioWeight
-		}
-		if req.PidsLimit != nil {
-			c.HostConfig.PidsLimit = req.PidsLimit
-		}
-		if req.OomKillDisable != nil {
-			c.HostConfig.OomKillDisable = req.OomKillDisable
-		}
-	})
-
-	c, _ := s.Store.Containers.Get(id)
-	s.emitEvent("container", "update", id, map[string]string{
-		"name": strings.TrimPrefix(c.Name, "/"),
-	})
-
-	WriteJSON(w, http.StatusOK, api.ContainerUpdateResponse{Warnings: []string{}})
+	resp, err := s.self.ContainerUpdate(r.PathValue("id"), &req)
+	if err != nil {
+		WriteError(w, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, resp)
 }
 
 func (s *BaseServer) handleContainerChanges(w http.ResponseWriter, r *http.Request) {
-	ref := r.PathValue("id")
-	_, ok := s.Store.ResolveContainerID(ref)
-	if !ok {
-		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
+	result, err := s.self.ContainerChanges(r.PathValue("id"))
+	if err != nil {
+		WriteError(w, err)
 		return
 	}
-	WriteJSON(w, http.StatusOK, []api.ContainerChangeItem{})
+	WriteJSON(w, http.StatusOK, result)
 }
 
 func (s *BaseServer) handleSystemDf(w http.ResponseWriter, r *http.Request) {

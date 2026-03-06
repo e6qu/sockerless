@@ -19,6 +19,7 @@ func newMountsTestServer() *BaseServer {
 		Mux:      http.NewServeMux(),
 		EventBus: NewEventBus(),
 	}
+	s.self = s
 	s.InitDrivers()
 	return s
 }

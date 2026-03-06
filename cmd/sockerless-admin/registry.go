@@ -85,8 +85,6 @@ func healthEndpoint(typ string) string {
 	switch typ {
 	case "backend":
 		return "/internal/v1/healthz"
-	case "frontend":
-		return "/healthz"
 	case "simulator", "coordinator":
 		return "/health"
 	default:

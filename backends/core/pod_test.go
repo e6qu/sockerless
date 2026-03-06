@@ -168,7 +168,8 @@ func newPodTestServer() *BaseServer {
 		Registry:      NewResourceRegistry(""),
 	}
 	s.InitDrivers()
-	s.registerRoutes(RouteOverrides{})
+	s.self = s
+	s.registerRoutes()
 	s.InitDefaultNetwork()
 	return s
 }
@@ -176,7 +177,7 @@ func newPodTestServer() *BaseServer {
 func TestHandlePodCreate(t *testing.T) {
 	s := newPodTestServer()
 
-	body, _ := json.Marshal(PodCreateRequest{Name: "my-pod", Labels: map[string]string{"app": "test"}})
+	body, _ := json.Marshal(api.PodCreateRequest{Name: "my-pod", Labels: map[string]string{"app": "test"}})
 	req := httptest.NewRequest("POST", "/internal/v1/libpod/pods/create", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 	s.Mux.ServeHTTP(w, req)
@@ -185,7 +186,7 @@ func TestHandlePodCreate(t *testing.T) {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var resp PodCreateResponse
+	var resp api.PodCreateResponse
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	if resp.ID == "" {
 		t.Fatal("expected non-empty pod ID")
@@ -195,7 +196,7 @@ func TestHandlePodCreate(t *testing.T) {
 func TestHandlePodCreateDuplicate(t *testing.T) {
 	s := newPodTestServer()
 
-	body, _ := json.Marshal(PodCreateRequest{Name: "dup-pod"})
+	body, _ := json.Marshal(api.PodCreateRequest{Name: "dup-pod"})
 	req := httptest.NewRequest("POST", "/internal/v1/libpod/pods/create", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 	s.Mux.ServeHTTP(w, req)
@@ -227,7 +228,7 @@ func TestHandlePodList(t *testing.T) {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
-	var pods []PodListEntry
+	var pods []api.PodListEntry
 	json.Unmarshal(w.Body.Bytes(), &pods)
 	if len(pods) != 2 {
 		t.Fatalf("expected 2 pods, got %d", len(pods))
@@ -246,7 +247,7 @@ func TestHandlePodInspect(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var resp PodInspectResponse
+	var resp api.PodInspectResponse
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	if resp.ID != pod.ID {
 		t.Errorf("expected pod ID %s, got %s", pod.ID, resp.ID)

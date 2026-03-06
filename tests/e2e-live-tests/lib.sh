@@ -130,7 +130,6 @@ get_backend_env() {
 get_backend_binary() {
     local backend="$1"
     case "$backend" in
-        memory)   echo "sockerless-backend-memory" ;;
         ecs)      echo "sockerless-backend-ecs" ;;
         lambda)   echo "sockerless-backend-lambda" ;;
         cloudrun) echo "sockerless-backend-cloudrun" ;;

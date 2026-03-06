@@ -41,22 +41,8 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		Architecture:    "amd64",
 		NCPU:            2,
 		MemTotal:        4294967296,
-	}, core.RouteOverrides{
-		ContainerCreate:  s.handleContainerCreate,
-		ContainerStart:   s.handleContainerStart,
-		ContainerStop:    s.handleContainerStop,
-		ContainerKill:    s.handleContainerKill,
-		ContainerRemove:  s.handleContainerRemove,
-		ContainerLogs:    s.handleContainerLogs,
-		ContainerRestart: s.handleContainerRestart,
-		ContainerPrune:   s.handleContainerPrune,
-		ContainerPause:   s.handleContainerPause,
-		ContainerUnpause: s.handleContainerUnpause,
-		ImagePull:        s.handleImagePull,
-		ImageLoad:        s.handleImageLoad,
-		VolumeRemove:     s.handleVolumeRemove,
-		VolumePrune:      s.handleVolumePrune,
 	}, logger)
+	s.SetSelf(s)
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

@@ -115,16 +115,3 @@ func BackendArgs(port int, logLevel string) []string {
 	}
 	return args
 }
-
-// FrontendArgs returns command-line arguments for starting the Docker frontend.
-func FrontendArgs(frontendPort, backendPort, mgmtPort int, logLevel string) []string {
-	args := []string{
-		"-addr", fmt.Sprintf(":%d", frontendPort),
-		"-backend", fmt.Sprintf("http://localhost:%d", backendPort),
-		"-mgmt-addr", fmt.Sprintf(":%d", mgmtPort),
-	}
-	if logLevel != "" {
-		args = append(args, "-log-level", logLevel)
-	}
-	return args
-}

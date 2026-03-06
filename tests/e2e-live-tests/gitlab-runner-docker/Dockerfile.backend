@@ -17,14 +17,9 @@ RUN GOWORK=off go build -tags noui -o /out/simulator-azure .
 WORKDIR /src
 COPY api/ api/
 COPY agent/ agent/
-COPY sandbox/ sandbox/
 COPY backends/core/ backends/core/
 
-# --- Build all 7 backends ---
-COPY backends/memory/ backends/memory/
-RUN cd backends/memory && GOWORK=off go mod download && \
-    GOWORK=off go build -tags noui -o /out/sockerless-backend-memory ./cmd
-
+# --- Build all 6 backends ---
 COPY backends/ecs/ backends/ecs/
 RUN cd backends/ecs && GOWORK=off go mod download && \
     GOWORK=off go build -tags noui -o /out/sockerless-backend-ecs ./cmd/sockerless-backend-ecs
@@ -48,11 +43,6 @@ RUN cd backends/aca && GOWORK=off go mod download && \
 COPY backends/azure-functions/ backends/azure-functions/
 RUN cd backends/azure-functions && GOWORK=off go mod download && \
     GOWORK=off go build -tags noui -o /out/sockerless-backend-azf ./cmd/sockerless-backend-azf
-
-# --- Build frontend ---
-COPY frontends/docker/ frontends/docker/
-RUN cd frontends/docker && GOWORK=off go mod download && \
-    GOWORK=off go build -tags noui -o /out/sockerless-frontend-docker ./cmd
 
 # --- Build agent ---
 RUN cd agent && GOWORK=off go mod download && \

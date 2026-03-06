@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,10 +15,10 @@ import (
 )
 
 var (
-	dockerClient  *client.Client
-	frontendAddr  string
+	dockerClient   *client.Client
+	frontendAddr   string
 	evalBinaryPath string
-	ctx           = context.Background()
+	ctx            = context.Background()
 )
 
 func TestMain(m *testing.M) {
@@ -49,89 +50,132 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	// Build binaries
-	fmt.Println("Building backend...")
-	buildBackend := exec.Command("go", "build", "-tags", "noui", "-o", "sockerless-backend-memory", "./cmd/")
-	buildBackend.Dir = findModuleDir("backends/memory")
+	// Build AWS simulator (independent module, not in go.work)
+	simDir := findModuleDir("simulators/aws")
+	fmt.Println("Building AWS simulator...")
+	buildSim := exec.Command("go", "build", "-tags", "noui", "-o", "simulator-aws", ".")
+	buildSim.Dir = simDir
+	// Filter out GOOS/GOARCH from env
+	var filteredEnv []string
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "GOOS=") || strings.HasPrefix(e, "GOARCH=") {
+			continue
+		}
+		filteredEnv = append(filteredEnv, e)
+	}
+	buildSim.Env = append(filteredEnv, "GOWORK=off")
+	buildSim.Stdout = os.Stderr
+	buildSim.Stderr = os.Stderr
+	if err := buildSim.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build simulator: %v\n", err)
+		os.Exit(1)
+	}
+	simBin := simDir + "/simulator-aws"
+
+	// Build ECS backend
+	fmt.Println("Building ECS backend...")
+	backendDir := findModuleDir("backends/ecs")
+	buildBackend := exec.Command("go", "build", "-tags", "noui", "-o", "sockerless-backend-ecs", "./cmd/sockerless-backend-ecs")
+	buildBackend.Dir = backendDir
 	buildBackend.Stdout = os.Stderr
 	buildBackend.Stderr = os.Stderr
 	if err := buildBackend.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to build backend: %v\n", err)
 		os.Exit(1)
 	}
+	backendBin := backendDir + "/sockerless-backend-ecs"
 
-	fmt.Println("Building frontend...")
-	buildFrontend := exec.Command("go", "build", "-tags", "noui", "-o", "sockerless-docker-frontend", "./cmd/")
-	buildFrontend.Dir = findModuleDir("frontends/docker")
-	buildFrontend.Stdout = os.Stderr
-	buildFrontend.Stderr = os.Stderr
-	if err := buildFrontend.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build frontend: %v\n", err)
+	// Build agent binary (for auto-agent real exec support)
+	fmt.Println("Building agent...")
+	agentDir := findModuleDir("agent")
+	buildAgent := exec.Command("go", "build", "-o", "sockerless-agent", "./cmd/sockerless-agent")
+	buildAgent.Dir = agentDir
+	buildAgent.Stdout = os.Stderr
+	buildAgent.Stderr = os.Stderr
+	if err := buildAgent.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build agent: %v\n", err)
+		os.Exit(1)
+	}
+	agentBin := agentDir + "/sockerless-agent"
+
+	// Find free ports
+	simPort := findFreePort()
+	backendPort := findFreePort()
+
+	// Start AWS simulator
+	fmt.Printf("Starting AWS simulator on :%d...\n", simPort)
+	simCmd := exec.Command(simBin)
+	simCmd.Env = append(os.Environ(), fmt.Sprintf("SIM_LISTEN_ADDR=:%d", simPort))
+	simCmd.Stdout = os.Stderr
+	simCmd.Stderr = os.Stderr
+	if err := simCmd.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to start simulator: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Find free ports
-	backendPort := findFreePort()
-	frontendPort := findFreePort()
-	backendAddr := fmt.Sprintf(":%d", backendPort)
-	frontendAddr = fmt.Sprintf("localhost:%d", frontendPort)
+	simURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
+	if err := waitForReady(simURL+"/health", 10*time.Second); err != nil {
+		fmt.Fprintf(os.Stderr, "simulator not ready: %v\n", err)
+		simCmd.Process.Kill()
+		os.Exit(1)
+	}
+	fmt.Println("AWS simulator ready")
 
-	// Start backend
-	fmt.Printf("Starting backend on %s...\n", backendAddr)
-	backendBin := findModuleDir("backends/memory") + "/sockerless-backend-memory"
+	// Create ECS cluster in simulator
+	clusterBody := `{"clusterName":"sim-cluster"}`
+	req, _ := http.NewRequest("POST", simURL+"/", strings.NewReader(clusterBody))
+	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	req.Header.Set("X-Amz-Target", "AmazonEC2ContainerServiceV20141113.CreateCluster")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create ECS cluster: %v\n", err)
+		simCmd.Process.Kill()
+		os.Exit(1)
+	}
+	resp.Body.Close()
+	fmt.Println("ECS cluster created")
+
+	// Start ECS backend (serves Docker API directly via in-process wiring)
+	backendAddr := fmt.Sprintf(":%d", backendPort)
+	frontendAddr = fmt.Sprintf("localhost:%d", backendPort)
+	fmt.Printf("Starting ECS backend on %s...\n", backendAddr)
 	backendCmd := exec.Command(backendBin, "--addr", backendAddr, "--log-level", "debug")
+	callbackURL := fmt.Sprintf("http://127.0.0.1:%d", backendPort)
+	backendCmd.Env = append(os.Environ(),
+		"SOCKERLESS_ENDPOINT_URL="+simURL,
+		"SOCKERLESS_ECS_CLUSTER=sim-cluster",
+		"SOCKERLESS_ECS_SUBNETS=subnet-sim",
+		"SOCKERLESS_ECS_EXECUTION_ROLE_ARN=arn:aws:iam::000000000000:role/sim",
+		"SOCKERLESS_AUTO_AGENT_BIN="+agentBin,
+		"SOCKERLESS_CALLBACK_URL="+callbackURL,
+	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
 	if err := backendCmd.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start backend: %v\n", err)
+		simCmd.Process.Kill()
 		os.Exit(1)
 	}
 
-	// Wait for backend to be ready
+	// Wait for backend to be ready (serves both internal API and Docker API)
 	backendURL := fmt.Sprintf("http://localhost:%d/internal/v1/info", backendPort)
 	if err := waitForReady(backendURL, 10*time.Second); err != nil {
 		fmt.Fprintf(os.Stderr, "backend not ready: %v\n", err)
 		backendCmd.Process.Kill()
+		simCmd.Process.Kill()
 		os.Exit(1)
 	}
-	fmt.Println("Backend is ready")
+	fmt.Println("Backend is ready (serving Docker API)")
 
-	// Start frontend
-	fmt.Printf("Starting frontend on :%d...\n", frontendPort)
-	frontendBin := findModuleDir("frontends/docker") + "/sockerless-docker-frontend"
-	frontendCmd := exec.Command(frontendBin,
-		"--addr", fmt.Sprintf(":%d", frontendPort),
-		"--backend", fmt.Sprintf("http://localhost:%d", backendPort),
-		"--log-level", "debug",
-	)
-	frontendCmd.Stdout = os.Stderr
-	frontendCmd.Stderr = os.Stderr
-	if err := frontendCmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to start frontend: %v\n", err)
-		backendCmd.Process.Kill()
-		os.Exit(1)
-	}
-
-	// Wait for frontend to be ready
-	frontendURL := fmt.Sprintf("http://%s/_ping", frontendAddr)
-	if err := waitForReady(frontendURL, 10*time.Second); err != nil {
-		fmt.Fprintf(os.Stderr, "frontend not ready: %v\n", err)
-		frontendCmd.Process.Kill()
-		backendCmd.Process.Kill()
-		os.Exit(1)
-	}
-	fmt.Println("Frontend is ready")
-
-	// Create Docker SDK client
-	var err error
+	// Create Docker SDK client pointing directly at backend
 	dockerClient, err = client.NewClientWithOpts(
 		client.WithHost("tcp://"+frontendAddr),
 		client.WithAPIVersionNegotiation(),
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create docker client: %v\n", err)
-		frontendCmd.Process.Kill()
 		backendCmd.Process.Kill()
+		simCmd.Process.Kill()
 		os.Exit(1)
 	}
 
@@ -139,12 +183,11 @@ func TestMain(m *testing.M) {
 	var simProcesses []*simProcess
 	var simSocketPaths []string
 	if simVal := os.Getenv("SOCKERLESS_SIM"); simVal != "" {
-		frontendBin := findModuleDir("frontends/docker") + "/sockerless-docker-frontend"
-		procs, sockets, err := startSimBackends(simVal, frontendBin)
+		procs, sockets, err := startSimBackends(simVal)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to start sim backends: %v\n", err)
-			frontendCmd.Process.Kill()
 			backendCmd.Process.Kill()
+			simCmd.Process.Kill()
 			os.Exit(1)
 		}
 		simProcesses = procs
@@ -167,14 +210,15 @@ func TestMain(m *testing.M) {
 	}
 
 	// Cleanup
-	frontendCmd.Process.Kill()
 	backendCmd.Process.Kill()
-	frontendCmd.Wait()
+	simCmd.Process.Kill()
 	backendCmd.Wait()
+	simCmd.Wait()
 
 	// Clean up binaries
-	os.Remove(findModuleDir("backends/memory") + "/sockerless-backend-memory")
-	os.Remove(findModuleDir("frontends/docker") + "/sockerless-docker-frontend")
+	os.Remove(backendBin)
+	os.Remove(simBin)
+	os.Remove(agentBin)
 
 	os.Exit(code)
 }

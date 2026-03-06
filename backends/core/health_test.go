@@ -35,6 +35,7 @@ func newTestServer(execDriver ExecDriver) *BaseServer {
 		Desc:          BackendDescriptor{Driver: "test"},
 	}
 	s.InitDrivers()
+	s.self = s
 	// Override the exec driver with our test driver
 	s.Drivers.Exec = execDriver
 	return s

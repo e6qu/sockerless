@@ -164,15 +164,12 @@ func TestBackendBinary(t *testing.T) {
 }
 
 func TestProcessNames(t *testing.T) {
-	sim, backend, frontend := processNames("myapp")
+	sim, backend := processNames("myapp")
 	if sim != "proj-myapp-sim" {
 		t.Errorf("sim = %s, want proj-myapp-sim", sim)
 	}
 	if backend != "proj-myapp-backend" {
 		t.Errorf("backend = %s, want proj-myapp-backend", backend)
-	}
-	if frontend != "proj-myapp-frontend" {
-		t.Errorf("frontend = %s, want proj-myapp-frontend", frontend)
 	}
 }
 
@@ -251,13 +248,6 @@ func TestProjectManagerCreateGetListDelete(t *testing.T) {
 	if status.BackendPort == 0 {
 		t.Error("expected auto-assigned backend port")
 	}
-	if status.FrontendPort == 0 {
-		t.Error("expected auto-assigned frontend port")
-	}
-	if status.FrontendMgmtPort == 0 {
-		t.Error("expected auto-assigned frontend mgmt port")
-	}
-
 	// List
 	list := projMgr.List()
 	if len(list) != 1 {
@@ -345,7 +335,7 @@ func TestProjectManagerConnection(t *testing.T) {
 	}
 
 	status, _ := projMgr.Get("conn-test")
-	expectedHost := "tcp://localhost:" + itoa(status.FrontendPort)
+	expectedHost := "tcp://localhost:" + itoa(status.BackendPort)
 	if conn.DockerHost != expectedHost {
 		t.Errorf("DockerHost = %s, want %s", conn.DockerHost, expectedHost)
 	}
@@ -455,23 +445,20 @@ func TestCreateReserveFailureReleasePorts(t *testing.T) {
 
 	// Create first project that takes specific ports
 	_ = projMgr.Create(ProjectConfig{
-		Name:             "blocker",
-		Cloud:            CloudAWS,
-		Backend:          BackendECS,
-		SimPort:          9000,
-		BackendPort:      9001,
-		FrontendPort:     9002,
-		FrontendMgmtPort: 9003,
+		Name:        "blocker",
+		Cloud:       CloudAWS,
+		Backend:     BackendECS,
+		SimPort:     9000,
+		BackendPort: 9001,
 	})
 
 	// Create second project with auto-allocated ports but one explicit port that conflicts
 	err := projMgr.Create(ProjectConfig{
-		Name:         "leaker",
-		Cloud:        CloudGCP,
-		Backend:      BackendCloudRun,
-		SimPort:      9000, // conflicts with blocker
-		BackendPort:  0,    // auto-allocated
-		FrontendPort: 0,    // auto-allocated
+		Name:        "leaker",
+		Cloud:       CloudGCP,
+		Backend:     BackendCloudRun,
+		SimPort:     9000, // conflicts with blocker
+		BackendPort: 0,    // auto-allocated
 	})
 	if err == nil {
 		t.Fatal("expected port conflict error")

@@ -1,36 +1,12 @@
 package core
 
 import (
-	"encoding/binary"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/sockerless/api"
 )
-
-// muxWriter wraps an io.Writer to add Docker multiplexed stream headers.
-// When TTY is false, Docker clients expect each chunk to be prefixed with
-// an 8-byte header: [stream_type, 0, 0, 0, size_big_endian(4)].
-type muxWriter struct {
-	w          io.Writer
-	streamType byte // 1 = stdout, 2 = stderr
-}
-
-func (m *muxWriter) Write(p []byte) (int, error) {
-	if len(p) == 0 {
-		return 0, nil
-	}
-	var header [8]byte
-	header[0] = m.streamType
-	binary.BigEndian.PutUint32(header[4:], uint32(len(p)))
-	if _, err := m.w.Write(header[:]); err != nil {
-		return 0, err
-	}
-	return m.w.Write(p)
-}
 
 // --- Common exec handlers ---
 
@@ -44,15 +20,10 @@ func (s *BaseServer) handleExecCreate(w http.ResponseWriter, r *http.Request) {
 
 	c, _ := s.Store.Containers.Get(id)
 	if !c.State.Running {
-		// Allow exec on exited containers that use synthetic exec (no agent).
-		// FaaS backends stop containers immediately after invoke, but exec
-		// can still work via the synthetic fallback.
-		if c.AgentAddress != "" || c.State.Status == "" {
-			WriteError(w, &api.ConflictError{
-				Message: "Container " + ref + " is not running",
-			})
-			return
-		}
+		WriteError(w, &api.ConflictError{
+			Message: "Container " + ref + " is not running",
+		})
+		return
 	}
 
 	var req api.ExecCreateRequest
@@ -117,34 +88,21 @@ func (s *BaseServer) handleExecInspect(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, exec)
 }
 
-// --- Default exec start (dispatches through ExecDriver chain) ---
+// --- Default exec start (delegates to s.self for virtual dispatch) ---
 
 func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+
+	var req api.ExecStartRequest
+	_ = ReadJSON(r, &req)
+
+	// Determine TTY before starting (for HTTP upgrade framing)
 	exec, ok := s.Store.Execs.Get(id)
 	if !ok {
 		WriteError(w, &api.NotFoundError{Resource: "exec instance", ID: id})
 		return
 	}
-
-	var req api.ExecStartRequest
-	_ = ReadJSON(r, &req)
-
-	// Look up container BEFORE marking exec as running
-	c, ok := s.Store.Containers.Get(exec.ContainerID)
-	if !ok {
-		WriteError(w, &api.ConflictError{
-			Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID),
-		})
-		return
-	}
-
-	// Mark as running
-	execPid := s.Store.NextPID() // BUG-550
-	s.Store.Execs.Update(id, func(e *api.ExecInstance) {
-		e.Running = true
-		e.Pid = execPid
-	})
+	tty := exec.ProcessConfig.Tty || req.Tty
 
 	// Hijack the connection
 	hj, ok := w.(http.Hijacker)
@@ -155,16 +113,9 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 
 	conn, buf, err := hj.Hijack()
 	if err != nil {
-		s.Store.Execs.Update(id, func(e *api.ExecInstance) {
-			e.Running = false
-			e.Pid = 0
-			e.CanRemove = true
-		})
 		return
 	}
 	defer conn.Close()
-
-	tty := exec.ProcessConfig.Tty || req.Tty
 
 	contentType := "application/vnd.docker.multiplexed-stream"
 	if tty {
@@ -178,53 +129,24 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	buf.WriteString("\r\n")
 	buf.Flush()
 
-	// Build command and env
-	cmd := append([]string{exec.ProcessConfig.Entrypoint}, exec.ProcessConfig.Arguments...)
-	env := mergeEnv(c.Config.Env, exec.ProcessConfig.Env)
-	workDir := exec.ProcessConfig.WorkingDir
-	if workDir == "" {
-		workDir = c.Config.WorkingDir
-	}
-
-	// Dispatch through driver chain (agent → WASM → synthetic)
-	exitCode := s.Drivers.Exec.Exec(r.Context(), exec.ContainerID, id, cmd, env, workDir, tty, conn)
-
-	// Mark exec as finished
-	s.Store.Execs.Update(id, func(e *api.ExecInstance) {
-		e.Running = false
-		e.Pid = 0
-		e.ExitCode = exitCode
-		e.CanRemove = true
-	})
-
-	// For synthetic exec (no agent, no real process), schedule container
-	// auto-stop after a grace period. CI runners call Wait expecting the
-	// container to exit after exec work is done. Real process containers
-	// are driven by their main process exit, so they don't need this.
-	if c.AgentAddress == "" && s.Drivers.ProcessLifecycle.IsSynthetic(exec.ContainerID) {
-		go s.scheduleExecAutoStop(exec.ContainerID)
-	}
-}
-
-// scheduleExecAutoStop stops a synthetic container after a grace period,
-// provided all its exec instances have completed.
-func (s *BaseServer) scheduleExecAutoStop(containerID string) {
-	time.Sleep(500 * time.Millisecond)
-	c, ok := s.Store.Containers.Get(containerID)
-	if !ok || !c.State.Running {
+	rwc, err := s.self.ExecStart(id, req)
+	if err != nil {
+		// Already hijacked — write error inline
+		_, _ = conn.Write([]byte(err.Error()))
 		return
 	}
-	for _, eid := range c.ExecIDs {
-		e, ok := s.Store.Execs.Get(eid)
-		if ok && e.Running {
-			return
-		}
-	}
-	s.emitEvent("container", "die", containerID, map[string]string{
-		"exitCode": "0",
-		"name":     strings.TrimPrefix(c.Name, "/"),
-	})
-	s.Store.StopContainer(containerID, 0)
+	defer rwc.Close()
+
+	// Copy data between the exec stream and the hijacked connection
+	done := make(chan struct{})
+	go func() {
+		io.Copy(conn, rwc)
+		close(done)
+	}()
+	go func() {
+		io.Copy(rwc, conn)
+	}()
+	<-done
 }
 
 // mergeEnv merges base env vars with override env vars. Override values

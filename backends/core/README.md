@@ -8,24 +8,16 @@ Cloud backends embed `core.BaseServer` and override only the handlers that need 
 
 ## Driver architecture
 
-Core uses a chain-of-responsibility pattern with four driver interfaces:
+Core uses a driver set with three main driver interfaces plus a network driver:
 
 | Driver | Responsibility |
 |--------|---------------|
 | `ExecDriver` | Run commands in containers |
 | `FilesystemDriver` | Read/write files in container root (tar archives) |
 | `StreamDriver` | Bidirectional I/O for attach and logs |
-| `ProcessLifecycleDriver` | Start/stop/wait/signal processes |
+| `NetworkDriver` | Container network isolation (IP allocation, iptables) |
 
-Each driver has a `Fallback` field forming the chain:
-
-```
-Agent → WASM (Process) → Synthetic
-```
-
-- **Agent drivers** route to a forward or reverse `sockerless-agent` connection
-- **WASM drivers** execute via the in-process sandbox (memory backend)
-- **Synthetic drivers** provide no-op/echo fallbacks for operations without a real backend
+Agent drivers route operations to forward or reverse `sockerless-agent` connections. Operations return errors when no agent is connected — there are no synthetic fallbacks.
 
 ## Key types
 
@@ -34,38 +26,24 @@ Agent → WASM (Process) → Synthetic
 The HTTP server that all non-Docker backends embed:
 
 ```go
-s := core.NewBaseServer(store, descriptor, overrides, logger)
+s := core.NewBaseServer(store, descriptor, logger)
 ```
 
 - `store` — shared in-memory state
 - `descriptor` — static backend metadata (name, driver, OS, CPU, memory)
-- `overrides` — `RouteOverrides{}` map of handler functions to replace defaults
 - `logger` — zerolog instance
+
+Cloud backends override behavior via `SetSelf(s)` which enables virtual dispatch through the `api.Backend` interface.
 
 ### Store
 
 Generic thread-safe state with `StateStore[T]`:
 
 - `Containers`, `Images`, `Networks`, `Volumes`, `Execs`, `Creds`
-- `Processes` (sync.Map) — live `ContainerProcess` instances
 - `StagingDirs` (sync.Map) — pre-start archive staging for `docker cp` before `docker start`
 - `BuildContexts` (sync.Map) — COPY files from `docker build`
 - `WaitChs` (sync.Map) — container exit notification channels
 - `LogBuffers` (sync.Map) — buffered container output
-
-### ProcessFactory / ContainerProcess
-
-Interfaces that backends implement to provide real execution:
-
-```go
-type ProcessFactory interface {
-    NewProcess(cmd, env []string, binds map[string]string) (ContainerProcess, error)
-    IsShellCommand(cmd []string) bool
-    Close(ctx context.Context) error
-}
-```
-
-Set `s.ProcessFactory` and call `s.InitDrivers()` to wire up the WASM driver chain.
 
 ## API endpoints
 
@@ -87,10 +65,7 @@ core/
 ├── server.go                 BaseServer, route registration, InitDrivers
 ├── store.go                  StateStore[T], Store (all in-memory state)
 ├── drivers.go                Driver interfaces and DriverSet
-├── drivers_synthetic.go      No-op fallback drivers
-├── drivers_process.go        WASM sandbox drivers
-├── drivers_agent.go          Forward/reverse agent drivers
-├── process.go                ContainerProcess, ProcessFactory interfaces
+├── drivers_agent.go          Agent drivers with inline synthetic fallback
 ├── handle_containers.go      Create, start, stop, kill, remove
 ├── handle_containers_query.go  Inspect, list, logs, wait, attach, stats
 ├── handle_containers_archive.go  Put/head/get archive, tar helpers
@@ -111,7 +86,7 @@ core/
 
 ## Docker API mapping
 
-For a detailed breakdown of how each Docker REST API endpoint and CLI command is handled by the core default handlers — including the driver chain dispatch, what's overridable, and how it compares to vanilla Docker — see [docs/docker_api_mapping.md](docs/docker_api_mapping.md).
+For a detailed breakdown of how each Docker REST API endpoint and CLI command is handled by the core default handlers — including the driver dispatch, what's overridable, and how it compares to vanilla Docker — see [docs/docker_api_mapping.md](docs/docker_api_mapping.md).
 
 ## Environment variables
 

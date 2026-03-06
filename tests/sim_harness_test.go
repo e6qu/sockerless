@@ -1,9 +1,7 @@
 package tests
 
 import (
-	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -149,7 +147,7 @@ func buildSimulator(cloud string) (string, error) {
 
 	binaryName := "simulator-" + cloud
 	fmt.Printf("[sim] Building %s...\n", binaryName)
-	build := exec.Command("go", "build", "-o", binaryName, ".")
+	build := exec.Command("go", "build", "-tags", "noui", "-o", binaryName, ".")
 	build.Dir = simDir
 	// GOWORK=off because simulators are not in the workspace.
 	// Filter out GOOS/GOARCH from env to ensure we build for the host platform,
@@ -228,26 +226,6 @@ func startBackend(binaryPath string, info simBackendInfo, simURL string) (*simPr
 	return &simProcess{cmd: cmd, binaryPath: binaryPath}, port, nil
 }
 
-// startFrontendOnSocket starts a frontend process listening on a Unix socket.
-func startFrontendOnSocket(frontendBin string, backendPort int, socketPath string) (*simProcess, error) {
-	// Remove stale socket if it exists
-	os.Remove(socketPath)
-
-	fmt.Printf("[sim] Starting frontend on %s (backend=:%d)...\n", socketPath, backendPort)
-	cmd := exec.Command(frontendBin,
-		"--addr", socketPath,
-		"--backend", fmt.Sprintf("http://localhost:%d", backendPort),
-		"--log-level", "debug",
-	)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start frontend for socket %s: %w", socketPath, err)
-	}
-
-	return &simProcess{cmd: cmd}, nil
-}
-
 // setupSimulatorState creates initial resources in the simulator that backends expect.
 func setupSimulatorState(cloud string, simURL string, backendNames []string) error {
 	switch cloud {
@@ -284,34 +262,11 @@ func setupAWSSimulator(simURL string, backendNames []string) error {
 	return nil
 }
 
-// waitForUnixSocket waits for a Unix socket frontend to respond to /_ping.
-func waitForUnixSocket(socketPath string, timeout time.Duration) error {
-	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-				return net.Dial("unix", socketPath)
-			},
-		},
-		Timeout: 2 * time.Second,
-	}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		resp, err := client.Get("http://localhost/_ping")
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == 200 {
-				return nil
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return fmt.Errorf("timeout waiting for socket %s", socketPath)
-}
-
-// startSimBackends orchestrates building and starting simulators, cloud backends,
-// and frontends for all backends specified in the SOCKERLESS_SIM env var.
+// startSimBackends orchestrates building and starting simulators and cloud backends
+// for all backends specified in the SOCKERLESS_SIM env var.
+// Backends serve the Docker API directly (in-process wiring), so no separate frontend is needed.
 // Returns all processes for cleanup, socket paths for cleanup, and any error.
-func startSimBackends(simVal string, frontendBin string) ([]*simProcess, []string, error) {
+func startSimBackends(simVal string) ([]*simProcess, []string, error) {
 	backendNames := parseSimBackends(simVal)
 	if len(backendNames) == 0 {
 		return nil, nil, nil
@@ -402,27 +357,10 @@ func startSimBackends(simVal string, frontendBin string) ([]*simProcess, []strin
 			cleanup()
 			return nil, nil, fmt.Errorf("%s backend not ready: %w", name, err)
 		}
-		fmt.Printf("[sim] %s backend is ready on :%d\n", name, backendPort)
+		fmt.Printf("[sim] %s backend is ready on :%d (serving Docker API)\n", name, backendPort)
 
-		// Start frontend on Unix socket
-		socketPath := fmt.Sprintf("/tmp/sockerless-%s-test.sock", name)
-		frontendProc, err := startFrontendOnSocket(frontendBin, backendPort, socketPath)
-		if err != nil {
-			cleanup()
-			return nil, nil, err
-		}
-		allProcesses = append(allProcesses, frontendProc)
-		allSocketPaths = append(allSocketPaths, socketPath)
-
-		// Wait for frontend readiness on Unix socket
-		if err := waitForUnixSocket(socketPath, 10*time.Second); err != nil {
-			cleanup()
-			return nil, nil, fmt.Errorf("%s frontend not ready: %w", name, err)
-		}
-		fmt.Printf("[sim] %s frontend is ready on %s\n", name, socketPath)
-
-		// Set the socket env var so tests find it
-		os.Setenv(info.EnvVarSocket, socketPath)
+		// Backend serves Docker API directly — set env var to TCP address
+		os.Setenv(info.EnvVarSocket, fmt.Sprintf("tcp://localhost:%d", backendPort))
 	}
 
 	return allProcesses, allSocketPaths, nil
