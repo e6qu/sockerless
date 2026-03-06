@@ -41,8 +41,8 @@ func (d *AgentExecDriver) Exec(ctx context.Context, containerID string, execID s
 	if c.AgentAddress != "" {
 		agentConn, err := agent.Dial(c.AgentAddress, c.AgentToken)
 		if err != nil {
-			d.Logger.Error().Err(err).Str("agent", c.AgentAddress).Msg("failed to dial agent for exec")
-			return 1
+			d.Logger.Warn().Err(err).Str("agent", c.AgentAddress).Msg("failed to dial agent for exec, falling back to synthetic")
+			return d.Fallback.Exec(ctx, containerID, execID, cmd, env, workDir, tty, conn)
 		}
 		defer func() { _ = agentConn.Close() }()
 		return agentConn.BridgeExec(conn, execID, cmd, env, workDir, tty)
@@ -145,8 +145,8 @@ func (d *AgentStreamDriver) Attach(ctx context.Context, containerID string, tty 
 	if c.AgentAddress != "" {
 		agentConn, err := agent.Dial(c.AgentAddress, c.AgentToken)
 		if err != nil {
-			d.Logger.Error().Err(err).Str("agent", c.AgentAddress).Msg("failed to dial agent for attach")
-			return err
+			d.Logger.Warn().Err(err).Str("agent", c.AgentAddress).Msg("failed to dial agent for attach, falling back to synthetic")
+			return d.Fallback.Attach(ctx, containerID, tty, conn)
 		}
 		defer func() { _ = agentConn.Close() }()
 		agentConn.BridgeAttach(conn, containerID, tty)

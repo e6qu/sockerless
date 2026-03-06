@@ -144,8 +144,8 @@ func TestArithmeticEvalBinary(t *testing.T) {
 	}
 	for name, c := range availableRunnerClients(t) {
 		t.Run(name, func(t *testing.T) {
-			if name == "memory" {
-				t.Skip("WASM sandbox cannot execute native binaries")
+			if name == "ecs" {
+				t.Skip("ECS simulator cannot execute native binaries")
 			}
 			ctx := context.Background()
 			testID := generateTestID(name, "eval-bin")
