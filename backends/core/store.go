@@ -133,6 +133,7 @@ type Store struct {
 	LogBuffers     sync.Map // containerID → []byte
 	VolumeDirs sync.Map // volumeName → string (host temp dir path)
 	StagingDirs    sync.Map // containerID → string (pre-start archive staging dir)
+	PathMappings   sync.Map // containerID → map[string]string (container path → host path)
 	HealthChecks   sync.Map // containerID → context.CancelFunc
 	BuildContexts  sync.Map // imageID → string (temp dir with COPY files at destination paths)
 	TmpfsDirs      sync.Map // containerID → []string (tmpfs temp dir paths)

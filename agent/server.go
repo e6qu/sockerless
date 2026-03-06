@@ -66,8 +66,13 @@ func (s *Server) ListenAndServe() error {
 		s.mp = mp
 		s.logger.Info().Int("pid", mp.Pid()).Strs("args", s.config.Args).Msg("main process started")
 
-		// Reap zombies (PID 1 behavior)
-		go s.reapZombies()
+		// Reap zombies only when running as PID 1 (container init).
+		// On the host, orphan reaping is handled by the system init.
+		// Running reapZombies on the host causes a race with cmd.Wait()
+		// because Wait4(-1) can steal the main process exit status.
+		if os.Getpid() == 1 {
+			go s.reapZombies()
+		}
 
 		// Exit when main process exits (if not serving requests)
 		go func() {
@@ -177,7 +182,9 @@ func (s *Server) ReverseConnect(callbackURL string) error {
 		s.mp = mp
 		s.logger.Info().Int("pid", mp.Pid()).Strs("args", s.config.Args).Msg("main process started")
 
-		go s.reapZombies()
+		if os.Getpid() == 1 {
+			go s.reapZombies()
+		}
 	}
 
 	// Build WebSocket URL from callback URL

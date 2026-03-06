@@ -440,6 +440,7 @@ func (s *BaseServer) ContainerRemove(ref string, force bool) error {
 		close(ch.(chan struct{}))
 	}
 	s.Store.StagingDirs.Delete(id)
+	s.Store.PathMappings.Delete(id)
 	if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(id); ok {
 		for _, d := range dirs.([]string) {
 			os.RemoveAll(d)
@@ -704,10 +705,8 @@ func (s *BaseServer) ContainerTop(ref string, psArgs string) (*api.ContainerTopR
 	if len(c.Args) > 0 {
 		cmd += " " + strings.Join(c.Args, " ")
 	}
-	pid := fmt.Sprintf("%d", c.State.Pid)
-	if c.State.Pid == 0 {
-		pid = "1"
-	}
+	// Docker convention: main process is always PID 1 inside a container.
+	pid := "1"
 
 	return &api.ContainerTopResponse{
 		Titles: []string{"UID", "PID", "PPID", "C", "STIME", "TTY", "TIME", "CMD"},
@@ -757,6 +756,7 @@ func (s *BaseServer) ContainerPrune(filters map[string][]string) (*api.Container
 			s.Store.Pods.RemoveContainer(pod.ID, c.ID)
 		}
 		s.Store.StagingDirs.Delete(c.ID)
+		s.Store.PathMappings.Delete(c.ID)
 		if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(c.ID); ok {
 			for _, d := range dirs.([]string) {
 				os.RemoveAll(d)

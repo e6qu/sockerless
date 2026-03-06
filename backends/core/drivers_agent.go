@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/rs/zerolog"
 	"github.com/sockerless/agent"
@@ -32,6 +33,9 @@ func (d *AgentExecDriver) Exec(ctx context.Context, containerID string, execID s
 		d.Logger.Error().Str("container", containerID).Msg("container not found for exec")
 		return 1
 	}
+
+	// Translate absolute paths in exec args to host staging/volume dirs
+	cmd = translateContainerPaths(containerID, cmd, d.Store)
 
 	if c.AgentAddress == "reverse" {
 		revConn := d.AgentRegistry.Get(containerID)
@@ -64,58 +68,49 @@ type AgentFilesystemDriver struct {
 }
 
 func (d *AgentFilesystemDriver) PutArchive(containerID string, path string, tarStream io.Reader) error {
+	cleanPath := filepath.Clean(path)
+
+	// Try direct extraction first (works when path is writable, e.g. /tmp)
 	c, ok := d.Store.Containers.Get(containerID)
 	if ok && c.AgentAddress == "reverse" {
-		destDir := filepath.Clean(path)
-		return extractTar(tarStream, destDir)
+		if err := os.MkdirAll(cleanPath, 0755); err == nil {
+			return extractTar(tarStream, cleanPath)
+		}
+		// Fall through to staging dir if direct path is not writable
 	}
-	// No agent connected — stage files for later injection (e.g. docker cp before start)
+
+	// Stage files in a temp directory and record the path mapping
+	// so exec can translate container paths to host paths
 	stagingDir := d.getOrCreateStagingDir(containerID)
-	destDir := filepath.Join(stagingDir, filepath.Clean(path))
+	destDir := filepath.Join(stagingDir, cleanPath)
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return fmt.Errorf("staging mkdir: %w", err)
 	}
-	return extractTar(tarStream, destDir)
+	if err := extractTar(tarStream, destDir); err != nil {
+		return err
+	}
+	// Record mapping: container path → host staging path
+	addPathMapping(d.Store, containerID, cleanPath, destDir)
+	return nil
 }
 
 func (d *AgentFilesystemDriver) GetArchive(containerID string, path string, w io.Writer) (os.FileInfo, error) {
-	c, ok := d.Store.Containers.Get(containerID)
-	if ok && c.AgentAddress == "reverse" {
-		realPath := filepath.Clean(path)
-		info, err := os.Stat(realPath)
-		if err != nil {
-			return nil, err
-		}
-		if err := createTar(w, realPath, info.Name()); err != nil {
-			return info, err
-		}
-		return info, nil
+	// Resolve the path: try direct, then path mappings, then staging dir
+	realPath := resolveContainerPath(containerID, path, d.Store)
+
+	info, err := os.Stat(realPath)
+	if err != nil {
+		return nil, err
 	}
-	// Check staging dir
-	if sd, ok := d.Store.StagingDirs.Load(containerID); ok {
-		realPath := filepath.Join(sd.(string), filepath.Clean(path))
-		info, err := os.Stat(realPath)
-		if err != nil {
-			return nil, err
-		}
-		if err := createTar(w, realPath, info.Name()); err != nil {
-			return info, err
-		}
-		return info, nil
+	if err := createTar(w, realPath, info.Name()); err != nil {
+		return info, err
 	}
-	return nil, fmt.Errorf("get archive: %w: container %s", ErrNoAgent, containerID)
+	return info, nil
 }
 
 func (d *AgentFilesystemDriver) StatPath(containerID string, path string) (os.FileInfo, error) {
-	c, ok := d.Store.Containers.Get(containerID)
-	if ok && c.AgentAddress == "reverse" {
-		return os.Stat(filepath.Clean(path))
-	}
-	// Check staging dir
-	if sd, ok := d.Store.StagingDirs.Load(containerID); ok {
-		return os.Stat(filepath.Join(sd.(string), filepath.Clean(path)))
-	}
-	return nil, fmt.Errorf("stat path: %w: container %s", ErrNoAgent, containerID)
+	realPath := resolveContainerPath(containerID, path, d.Store)
+	return os.Stat(realPath)
 }
 
 func (d *AgentFilesystemDriver) RootPath(_ string) (string, error) {
@@ -190,6 +185,64 @@ func (d *AgentStreamDriver) Attach(ctx context.Context, containerID string, tty 
 	}
 
 	return fmt.Errorf("attach: %w: container %s", ErrNoAgent, containerID)
+}
+
+// --- Path mapping helpers ---
+
+// addPathMapping records a container-path → host-path mapping for a container.
+func addPathMapping(store *Store, containerID string, containerPath, hostPath string) {
+	v, _ := store.PathMappings.LoadOrStore(containerID, make(map[string]string))
+	m := v.(map[string]string)
+	m[containerPath] = hostPath
+	store.PathMappings.Store(containerID, m)
+}
+
+// translateContainerPaths rewrites absolute paths in exec command args using
+// known path mappings (from PutArchive staging and volume bind mounts).
+func translateContainerPaths(containerID string, cmd []string, store *Store) []string {
+	v, ok := store.PathMappings.Load(containerID)
+	if !ok {
+		return cmd
+	}
+	mappings := v.(map[string]string)
+	if len(mappings) == 0 {
+		return cmd
+	}
+
+	translated := make([]string, len(cmd))
+	for i, arg := range cmd {
+		translated[i] = arg
+		for containerPath, hostPath := range mappings {
+			translated[i] = strings.ReplaceAll(translated[i], containerPath, hostPath)
+		}
+	}
+	return translated
+}
+
+// resolveContainerPath resolves a container path to its host path, checking
+// path mappings and staging dirs.
+func resolveContainerPath(containerID string, path string, store *Store) string {
+	cleanPath := filepath.Clean(path)
+
+	// Check path mappings first
+	if v, ok := store.PathMappings.Load(containerID); ok {
+		for containerPath, hostPath := range v.(map[string]string) {
+			if strings.HasPrefix(cleanPath, containerPath) {
+				return hostPath + cleanPath[len(containerPath):]
+			}
+		}
+	}
+
+	// Check staging dir
+	if sd, ok := store.StagingDirs.Load(containerID); ok {
+		stagedPath := filepath.Join(sd.(string), cleanPath)
+		if _, err := os.Stat(stagedPath); err == nil {
+			return stagedPath
+		}
+	}
+
+	// Fall back to direct path
+	return cleanPath
 }
 
 // --- Helpers ---

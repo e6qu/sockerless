@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -41,6 +42,10 @@ func (s *BaseServer) SpawnAutoAgent(containerID string) error {
 	}
 	originalCmd := BuildOriginalCommand(c.Config.Entrypoint, c.Config.Cmd)
 
+	// Set up volume bind mount path mappings so commands can access
+	// volume data through translated paths.
+	s.setupVolumePathMappings(containerID, c)
+
 	// Build the agent command arguments — always use --keep-alive to run the command
 	agentArgs := []string{"--callback", callbackURL, "--keep-alive", "--log-level", "debug", "--"}
 	isExecOnly := len(originalCmd) == 0 ||
@@ -50,6 +55,8 @@ func (s *BaseServer) SpawnAutoAgent(containerID string) error {
 		// Exec-only container (e.g. CI runner, interactive shell) — use long-lived idle process
 		agentArgs = append(agentArgs, "sleep", "86400")
 	} else {
+		// Translate volume paths in the main command
+		originalCmd = translateContainerPaths(containerID, originalCmd, s.Store)
 		agentArgs = append(agentArgs, originalCmd...)
 	}
 
@@ -103,6 +110,30 @@ func (s *BaseServer) SpawnAutoAgent(containerID string) error {
 	}()
 
 	return nil
+}
+
+// setupVolumePathMappings creates path mappings for volume bind mounts.
+// For each bind like "vol-name:/cache", resolves the volume to its host temp dir
+// and records /cache → host-dir so commands can access the volume data.
+func (s *BaseServer) setupVolumePathMappings(containerID string, c api.Container) {
+	for _, bind := range c.HostConfig.Binds {
+		parts := strings.SplitN(bind, ":", 3)
+		if len(parts) < 2 {
+			continue
+		}
+		volName := parts[0]
+		containerPath := parts[1]
+
+		if volDir, ok := s.Store.VolumeDirs.Load(volName); ok {
+			addPathMapping(s.Store, containerID, containerPath, volDir.(string))
+			s.Logger.Debug().
+				Str("container", containerID).
+				Str("volume", volName).
+				Str("containerPath", containerPath).
+				Str("hostPath", volDir.(string)).
+				Msg("volume path mapping")
+		}
+	}
 }
 
 // StopAutoAgent kills and cleans up an auto-agent process for the container.

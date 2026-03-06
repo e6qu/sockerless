@@ -57,11 +57,8 @@ func (s *BaseServer) handleContainerTop(w http.ResponseWriter, r *http.Request) 
 		cmd += " " + strings.Join(c.Args, " ")
 	}
 
-	// BUG-497: Use container's PID instead of hardcoded "1"
-	pid := fmt.Sprintf("%d", c.State.Pid)
-	if c.State.Pid == 0 {
-		pid = "1"
-	}
+	// Docker convention: main process is always PID 1 inside a container.
+	pid := "1"
 
 	WriteJSON(w, http.StatusOK, api.ContainerTopResponse{
 		Titles: []string{"UID", "PID", "PPID", "C", "STIME", "TTY", "TIME", "CMD"},
