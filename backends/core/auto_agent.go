@@ -55,7 +55,7 @@ func (s *BaseServer) SpawnAutoAgent(containerID string) error {
 	// Wait for agent to connect
 	if err := s.AgentRegistry.WaitForAgent(containerID, 10*time.Second); err != nil {
 		cmd.Process.Kill()
-		cmd.Wait()
+		_ = cmd.Wait()
 		autoAgentProcs.Delete(containerID)
 		return fmt.Errorf("auto-agent connect timeout: %w", err)
 	}
@@ -68,7 +68,7 @@ func (s *BaseServer) SpawnAutoAgent(containerID string) error {
 
 	// Reap process on exit
 	go func() {
-		cmd.Wait()
+		_ = cmd.Wait()
 		autoAgentProcs.Delete(containerID)
 	}()
 
