@@ -607,14 +607,15 @@ func (s *BaseServer) ContainerAttach(ref string, opts api.ContainerAttachOptions
 	}
 
 	tty := c.Config.Tty
-	pr, pw := io.Pipe()
-	conn := &pipeConn{PipeReader: pr, PipeWriter: pw}
+	stdinPR, stdinPW := io.Pipe()
+	stdoutPR, stdoutPW := io.Pipe()
+	conn := &pipeConn{PipeReader: stdinPR, PipeWriter: stdoutPW}
 	go func() {
 		_ = s.Drivers.Stream.Attach(context.Background(), id, tty, conn)
-		_ = pw.Close()
+		_ = stdoutPW.Close()
 	}()
 
-	return &pipeRWC{reader: pr, writer: pw}, nil
+	return &pipeRWC{reader: stdoutPR, writer: stdinPW}, nil
 }
 
 // ContainerRestart restarts a container.
@@ -1013,8 +1014,10 @@ func (s *BaseServer) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWri
 		workDir = c.Config.WorkingDir
 	}
 
-	pr, pw := io.Pipe()
-	conn := &pipeConn{PipeReader: pr, PipeWriter: pw}
+	// Two pipes: stdin flows from caller to driver, stdout flows from driver to caller.
+	stdinPR, stdinPW := io.Pipe()   // caller writes stdin → driver reads
+	stdoutPR, stdoutPW := io.Pipe() // driver writes stdout → caller reads
+	conn := &pipeConn{PipeReader: stdinPR, PipeWriter: stdoutPW}
 	go func() {
 		exitCode := s.Drivers.Exec.Exec(context.Background(), exec.ContainerID, id, cmd, env, workDir, tty, conn)
 
@@ -1025,10 +1028,10 @@ func (s *BaseServer) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWri
 			e.CanRemove = true
 		})
 
-		_ = pw.Close()
+		_ = stdoutPW.Close()
 	}()
 
-	return &pipeRWC{reader: pr, writer: pw}, nil
+	return &pipeRWC{reader: stdoutPR, writer: stdinPW}, nil
 }
 
 // ExecInspect returns info about an exec instance.
