@@ -175,8 +175,8 @@ func TestReverseAgentCallback(t *testing.T) {
 	// We'll use a direct WebSocket test: connect to the backend's agent-connect
 	// endpoint for the SAME container ID and try to exec through it.
 	t.Run("ExecThroughReverseConnection", func(t *testing.T) {
-		// For E2E: verify that exec create/start still works (synthetic fallback)
-		// when AgentAddress is not set to "reverse"
+		// For E2E: verify that exec create/start works
+		// through the reverse agent connection
 		execID := reverseAPIExecCreate(t, backendAddr, containerID, []string{"echo", "hello"})
 		if execID == "" {
 			t.Fatal("failed to create exec")
