@@ -32,14 +32,27 @@ func (s *BaseServer) SpawnAutoAgent(containerID string) error {
 
 	s.AgentRegistry.Prepare(containerID)
 
-	// Spawn agent in callback mode with a long-lived idle process
-	cmd := exec.Command(agentBin,
+	// Build the agent command with the container's actual entrypoint/cmd
+	agentArgs := []string{
 		"--callback", callbackURL,
 		"--keep-alive",
 		"--log-level", "debug",
 		"--",
-		"sleep", "86400",
-	)
+	}
+
+	// Use container's actual command so the agent exits when the command finishes
+	c, ok := s.Store.Containers.Get(containerID)
+	if !ok {
+		return fmt.Errorf("container %s not found", containerID)
+	}
+	originalCmd := BuildOriginalCommand(c.Config.Entrypoint, c.Config.Cmd)
+	if len(originalCmd) == 0 {
+		// Exec-only container (e.g. CI runner) — use long-lived idle process
+		originalCmd = []string{"sleep", "86400"}
+	}
+	agentArgs = append(agentArgs, originalCmd...)
+
+	cmd := exec.Command(agentBin, agentArgs...)
 	cmd.Env = append(os.Environ(),
 		"SOCKERLESS_CONTAINER_ID="+containerID,
 	)
@@ -66,10 +79,16 @@ func (s *BaseServer) SpawnAutoAgent(containerID string) error {
 
 	s.Logger.Debug().Str("container", containerID).Msg("auto-agent connected")
 
-	// Reap process on exit
+	// When the agent process exits (main command finished), stop the container
 	go func() {
 		_ = cmd.Wait()
 		autoAgentProcs.Delete(containerID)
+		exitCode := 0
+		if cmd.ProcessState != nil {
+			exitCode = cmd.ProcessState.ExitCode()
+		}
+		s.Logger.Debug().Str("container", containerID).Int("exitCode", exitCode).Msg("auto-agent exited, stopping container")
+		s.Store.StopContainer(containerID, exitCode)
 	}()
 
 	return nil
