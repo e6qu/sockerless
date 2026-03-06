@@ -6,19 +6,17 @@ WORKDIR /src
 COPY bleephub/ bleephub/
 RUN cd bleephub && GOWORK=off go build -o /out/bleephub ./cmd
 
-# --- Build memory backend ---
+# --- Build ECS backend (for integration testing) ---
 COPY api/ api/
 COPY agent/ agent/
-COPY sandbox/ sandbox/
 COPY backends/core/ backends/core/
-COPY backends/memory/ backends/memory/
-RUN cd backends/memory && GOWORK=off go mod download && \
-    GOWORK=off go build -tags noui -o /out/sockerless-backend-memory ./cmd
+COPY backends/ecs/ backends/ecs/
+RUN cd backends/ecs && GOWORK=off go mod download && \
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-ecs ./cmd/sockerless-backend-ecs
 
-# --- Build Docker frontend ---
-COPY frontends/docker/ frontends/docker/
-RUN cd frontends/docker && GOWORK=off go mod download && \
-    GOWORK=off go build -tags noui -o /out/sockerless-frontend-docker ./cmd
+# --- Build AWS simulator ---
+COPY simulators/aws/ /sim-aws/
+RUN cd /sim-aws && GOWORK=off go build -tags noui -o /out/simulator-aws .
 
 # --- Runtime stage ---
 FROM ubuntu:22.04

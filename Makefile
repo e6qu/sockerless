@@ -1,7 +1,7 @@
 .PHONY: sim-test-ecs sim-test-lambda sim-test-cloudrun sim-test-gcf sim-test-aca sim-test-azf
 .PHONY: sim-test-aws sim-test-gcp sim-test-azure sim-test-all
 .PHONY: test test-unit test-e2e lint
-.PHONY: test-agent test-sandbox test-core test-bleephub test-gitlabhub
+.PHONY: test-agent test-core test-bleephub test-gitlabhub
 .PHONY: bleephub-test bleephub-gh-test gitlabhub-test
 .PHONY: smoke-test-act smoke-test-act-ecs smoke-test-act-cloudrun smoke-test-act-aca smoke-test-act-all
 .PHONY: smoke-test-gitlab smoke-test-gitlab-ecs smoke-test-gitlab-cloudrun smoke-test-gitlab-aca smoke-test-gitlab-all
@@ -23,10 +23,6 @@ test-agent:
 	@echo "=== test agent ==="
 	cd agent && go test -v -race -timeout 2m ./...
 
-test-sandbox:
-	@echo "=== test sandbox ==="
-	cd sandbox && go test -v -timeout 1m ./...
-
 test-core:
 	@echo "=== test backends/core ==="
 	cd backends/core && go test -v -timeout 2m ./...
@@ -45,14 +41,14 @@ test-e2e:
 	cd tests && go test -v -timeout 5m ./...
 
 # All unit tests (per-module)
-test-unit: test-agent test-sandbox test-core test-bleephub test-gitlabhub
+test-unit: test-agent test-core test-bleephub test-gitlabhub
 
 # All tests (unit + e2e)
 test: test-unit test-e2e
 
 # Lint all Go modules (golangci-lint required)
 # Modules without UI embed
-MODULES = api agent sandbox backends/core
+MODULES = api agent backends/core
 # Modules with UI embed (require --build-tags noui when dist/ is absent)
 MODULES_UI = backends/docker \
   backends/ecs backends/lambda backends/cloudrun \

@@ -9,7 +9,6 @@ RUN GOWORK=off go build -tags noui -o /out/simulator-gcp .
 WORKDIR /src
 COPY api/ api/
 COPY agent/ agent/
-COPY sandbox/ sandbox/
 COPY backends/core/ backends/core/
 
 # --- Build GCP backends (cloudrun + gcf) ---

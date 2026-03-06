@@ -9,7 +9,6 @@ RUN GOWORK=off go build -tags noui -o /simulator-gcp .
 WORKDIR /src
 COPY api/ api/
 COPY agent/ agent/
-COPY sandbox/ sandbox/
 COPY backends/core/ backends/core/
 COPY backends/cloudrun/ backends/cloudrun/
 RUN cd backends/cloudrun && GOWORK=off go mod download && GOWORK=off go build -tags noui -o /sockerless-backend-cloudrun ./cmd/sockerless-backend-cloudrun

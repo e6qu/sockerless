@@ -13,7 +13,6 @@ RUN GOWORK=off go build -tags noui -o /usr/local/bin/simulator-azure .
 WORKDIR /src
 COPY api/ api/
 COPY agent/ agent/
-COPY sandbox/ sandbox/
 COPY backends/core/ backends/core/
 COPY backends/aca/ backends/aca/
 

@@ -17,7 +17,6 @@ RUN GOWORK=off go build -tags noui -o /out/simulator-azure .
 WORKDIR /src
 COPY api/ api/
 COPY agent/ agent/
-COPY sandbox/ sandbox/
 COPY backends/core/ backends/core/
 
 # --- Build all 6 backends ---

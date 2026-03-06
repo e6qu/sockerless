@@ -9,7 +9,6 @@ RUN GOWORK=off go build -o /simulator-aws .
 WORKDIR /src
 COPY api/ api/
 COPY agent/ agent/
-COPY sandbox/ sandbox/
 COPY backends/core/ backends/core/
 COPY backends/ecs/ backends/ecs/
 RUN cd backends/ecs && GOWORK=off go mod download && GOWORK=off go build -tags noui -o /sockerless-backend-ecs ./cmd/sockerless-backend-ecs
