@@ -613,6 +613,7 @@ func (s *BaseServer) ContainerAttach(ref string, opts api.ContainerAttachOptions
 	go func() {
 		_ = s.Drivers.Stream.Attach(context.Background(), id, tty, conn)
 		_ = stdoutPW.Close()
+		_ = stdinPR.Close()
 	}()
 
 	return &pipeRWC{reader: stdoutPR, writer: stdinPW}, nil
@@ -1029,6 +1030,7 @@ func (s *BaseServer) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWri
 		})
 
 		_ = stdoutPW.Close()
+		_ = stdinPR.Close() // unblock bridge's stdin reader goroutine
 	}()
 
 	return &pipeRWC{reader: stdoutPR, writer: stdinPW}, nil

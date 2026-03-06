@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/sockerless/api"
@@ -53,6 +54,7 @@ func (s *BaseServer) SpawnAutoAgent(containerID string) error {
 	}
 
 	cmd := exec.Command(agentBin, agentArgs...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Env = append(os.Environ(),
 		"SOCKERLESS_CONTAINER_ID="+containerID,
 	)
@@ -70,7 +72,7 @@ func (s *BaseServer) SpawnAutoAgent(containerID string) error {
 
 	// Wait for agent to connect
 	if err := s.AgentRegistry.WaitForAgent(containerID, 10*time.Second); err != nil {
-		cmd.Process.Kill()
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		_ = cmd.Wait()
 		autoAgentProcs.Delete(containerID)
 		return fmt.Errorf("auto-agent connect timeout: %w", err)
@@ -104,10 +106,12 @@ func (s *BaseServer) SpawnAutoAgent(containerID string) error {
 }
 
 // StopAutoAgent kills and cleans up an auto-agent process for the container.
+// Kills the entire process group to ensure children (e.g. sleep 86400) are also terminated.
 func StopAutoAgent(containerID string) {
 	if v, ok := autoAgentProcs.LoadAndDelete(containerID); ok {
 		cmd := v.(*exec.Cmd)
-		_ = cmd.Process.Kill()
+		// Kill process group (negative PID) to terminate agent + children
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		_ = cmd.Wait()
 	}
 }
