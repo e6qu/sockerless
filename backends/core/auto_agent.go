@@ -32,25 +32,23 @@ func (s *BaseServer) SpawnAutoAgent(containerID string) error {
 
 	s.AgentRegistry.Prepare(containerID)
 
-	// Build the agent command with the container's actual entrypoint/cmd
-	agentArgs := []string{
-		"--callback", callbackURL,
-		"--keep-alive",
-		"--log-level", "debug",
-		"--",
-	}
-
 	// Use container's actual command so the agent exits when the command finishes
 	c, ok := s.Store.Containers.Get(containerID)
 	if !ok {
 		return fmt.Errorf("container %s not found", containerID)
 	}
 	originalCmd := BuildOriginalCommand(c.Config.Entrypoint, c.Config.Cmd)
-	if len(originalCmd) == 0 {
-		// Exec-only container (e.g. CI runner) — use long-lived idle process
-		originalCmd = []string{"sleep", "86400"}
+
+	// Build the agent command arguments
+	agentArgs := []string{"--callback", callbackURL, "--log-level", "debug"}
+	if len(originalCmd) == 0 || IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd) {
+		// Exec-only container (e.g. CI runner) — keep agent alive with idle process
+		agentArgs = append(agentArgs, "--keep-alive", "--", "sleep", "86400")
+	} else {
+		// Container has a real command — agent exits when command finishes
+		agentArgs = append(agentArgs, "--")
+		agentArgs = append(agentArgs, originalCmd...)
 	}
-	agentArgs = append(agentArgs, originalCmd...)
 
 	cmd := exec.Command(agentBin, agentArgs...)
 	cmd.Env = append(os.Environ(),
