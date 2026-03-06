@@ -569,12 +569,15 @@ func (s *BaseServer) ContainerLogs(ref string, opts api.ContainerLogsOptions) (i
 	if opts.Follow {
 		pr, pw := io.Pipe()
 		go func() {
-			pw.Write(buf.Bytes())
+			if _, err := pw.Write(buf.Bytes()); err != nil {
+				pw.CloseWithError(err)
+				return
+			}
 
 			subID := GenerateID()[:16]
 			ch := s.Drivers.Stream.LogSubscribe(id, subID)
 			if ch == nil {
-				pw.Close()
+				_ = pw.Close()
 				return
 			}
 			defer s.Drivers.Stream.LogUnsubscribe(id, subID)
@@ -586,7 +589,7 @@ func (s *BaseServer) ContainerLogs(ref string, opts api.ContainerLogsOptions) (i
 					}
 				}
 			}
-			pw.Close()
+			_ = pw.Close()
 		}()
 		return pr, nil
 	}
@@ -668,7 +671,7 @@ func (s *BaseServer) ContainerAttach(ref string, opts api.ContainerAttachOptions
 	conn := &pipeConn{PipeReader: pr, PipeWriter: pw}
 	go func() {
 		_ = s.Drivers.Stream.Attach(context.Background(), id, tty, conn)
-		pw.Close()
+		_ = pw.Close()
 	}()
 
 	return &pipeRWC{reader: pr, writer: pw}, nil
@@ -900,7 +903,7 @@ func (s *BaseServer) ContainerStats(ref string, stream bool) (io.ReadCloser, err
 
 			time.Sleep(1 * time.Second)
 			if cur, ok := s.Store.Containers.Get(id); !ok || !cur.State.Running {
-				pw.Close()
+				_ = pw.Close()
 				return
 			}
 		}
@@ -1115,7 +1118,7 @@ func (s *BaseServer) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWri
 			e.CanRemove = true
 		})
 
-		pw.Close()
+		_ = pw.Close()
 
 		if c.AgentAddress == "" && s.Drivers.ProcessLifecycle.IsSynthetic(exec.ContainerID) {
 			go s.scheduleExecAutoStop(exec.ContainerID)
@@ -1844,7 +1847,7 @@ func (s *BaseServer) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error)
 				}
 			}
 			if untilTS > 0 && untilTS <= time.Now().Unix() {
-				pw.Close()
+				_ = pw.Close()
 				return
 			}
 		}
@@ -1859,7 +1862,7 @@ func (s *BaseServer) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error)
 			if d > 0 {
 				untilCh = time.After(d)
 			} else {
-				pw.Close()
+				_ = pw.Close()
 				return
 			}
 		}
@@ -1868,7 +1871,7 @@ func (s *BaseServer) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error)
 			select {
 			case event, ok := <-ch:
 				if !ok {
-					pw.Close()
+					_ = pw.Close()
 					return
 				}
 				if matchEvent(event) {
@@ -1883,7 +1886,7 @@ func (s *BaseServer) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error)
 				}
 				return nil
 			}():
-				pw.Close()
+				_ = pw.Close()
 				return
 			}
 		}
@@ -2075,7 +2078,7 @@ type pipeRWC struct {
 func (p *pipeRWC) Read(b []byte) (int, error)  { return p.reader.Read(b) }
 func (p *pipeRWC) Write(b []byte) (int, error) { return p.writer.Write(b) }
 func (p *pipeRWC) Close() error {
-	p.writer.Close()
+	_ = p.writer.Close()
 	return p.reader.Close()
 }
 
@@ -2086,7 +2089,7 @@ type pipeConn struct {
 }
 
 func (p *pipeConn) Close() error {
-	p.PipeWriter.Close()
+	_ = p.PipeWriter.Close()
 	return p.PipeReader.Close()
 }
 func (p *pipeConn) LocalAddr() net.Addr                { return pipeAddr{} }

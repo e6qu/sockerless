@@ -31,8 +31,7 @@ case "$BACKEND" in
 esac
 
 SIM_PORT="${SIM_PORT:-$SIM_DEFAULT_PORT}"
-BACKEND_ADDR="127.0.0.1:9100"
-FRONTEND_ADDR="127.0.0.1:2375"
+BACKEND_ADDR="127.0.0.1:2375"
 
 # Paths
 SIM_DIR="$ROOT_DIR/simulators/$CLOUD"
@@ -46,13 +45,11 @@ mkdir -p "$BUILD_DIR"
 # --- Cleanup ---
 SIM_PID=""
 BACKEND_PID=""
-FRONTEND_PID=""
 
 cleanup() {
     local exit_code=$?
     echo ""
     echo "=== Cleaning up ==="
-    [ -n "${FRONTEND_PID:-}" ] && kill "$FRONTEND_PID" 2>/dev/null || true
     [ -n "${BACKEND_PID:-}" ] && kill "$BACKEND_PID" 2>/dev/null || true
 
     # Destroy terraform state (unless KEEP_STATE is set)
@@ -267,28 +264,18 @@ if [ "${SKIP_SMOKE_TEST:-}" != "1" ]; then
     echo "=== Starting $BACKEND backend on $BACKEND_ADDR ==="
     "$BUILD_DIR/$BACKEND_BIN_NAME" --addr "$BACKEND_ADDR" --log-level debug &
     BACKEND_PID=$!
-    wait_for_url "http://$BACKEND_ADDR/internal/v1/info"
+    wait_for_url "http://$BACKEND_ADDR/_ping"
     echo "$BACKEND backend ready (PID=$BACKEND_PID)"
 
-    # --- Step 7: Build and start frontend ---
-    echo "=== Building Docker frontend ==="
-    (cd "$ROOT_DIR" && go build -o "$BUILD_DIR/sockerless-frontend-docker" ./frontends/docker/cmd)
-
-    echo "=== Starting Docker frontend on $FRONTEND_ADDR ==="
-    "$BUILD_DIR/sockerless-frontend-docker" --addr "$FRONTEND_ADDR" --backend "http://$BACKEND_ADDR" --log-level debug &
-    FRONTEND_PID=$!
-    wait_for_url "http://$FRONTEND_ADDR/_ping"
-    echo "Docker frontend ready (PID=$FRONTEND_PID)"
-
-    # --- Step 8: Run act smoke test ---
+    # --- Step 7: Run act smoke test ---
     echo ""
     echo "=== Running act smoke test (backend=$BACKEND) ==="
-    export DOCKER_HOST="tcp://$FRONTEND_ADDR"
+    export DOCKER_HOST="tcp://$BACKEND_ADDR"
 
     act push \
         --workflows "$WORKFLOW_DIR/" \
         -P ubuntu-latest=alpine:latest \
-        --container-daemon-socket "tcp://$FRONTEND_ADDR" \
+        --container-daemon-socket "tcp://$BACKEND_ADDR" \
         2>&1 | tee /tmp/act-tf-int-output.log
     ACT_EXIT=${PIPESTATUS[0]}
 

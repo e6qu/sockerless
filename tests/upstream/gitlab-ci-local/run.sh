@@ -14,8 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # --- Defaults ---
 BACKEND="memory"
-BACKEND_ADDR="127.0.0.1:9100"
-FRONTEND_ADDR="127.0.0.1:2375"
+BACKEND_ADDR="127.0.0.1:2375"
 PIDFILE="/tmp/upstream-gcl.pids"
 RESULTS_FILE="/tmp/upstream-gcl-results.log"
 
@@ -45,37 +44,15 @@ cleanup() {
 trap cleanup EXIT
 
 # --- Start Sockerless ---
-if [ "$BACKEND" = "memory" ]; then
-    # Simple direct startup for memory backend
-    log "Starting Sockerless memory backend on $BACKEND_ADDR"
-    sockerless-backend-memory --addr "$BACKEND_ADDR" --log-level warn &
-    echo $! >> "$PIDFILE"
+# Use shared start-backend.sh for simulator backends (backend serves Docker API directly)
+log "Starting Sockerless $BACKEND backend via start-backend.sh"
+source "${SCRIPT_DIR}/start-backend.sh" \
+    --backend "$BACKEND" \
+    --backend-addr "$BACKEND_ADDR" \
+    --pidfile "$PIDFILE"
 
-    for i in $(seq 1 30); do
-        if curl -sf "http://$BACKEND_ADDR/internal/v1/info" >/dev/null 2>&1; then break; fi
-        sleep 1
-    done
-
-    log "Starting Docker frontend on $FRONTEND_ADDR"
-    sockerless-frontend-docker --addr "$FRONTEND_ADDR" --backend "http://$BACKEND_ADDR" --log-level warn &
-    echo $! >> "$PIDFILE"
-
-    for i in $(seq 1 30); do
-        if curl -sf "http://$FRONTEND_ADDR/_ping" >/dev/null 2>&1; then break; fi
-        sleep 1
-    done
-else
-    # Use shared start-backend.sh for simulator backends
-    log "Starting Sockerless $BACKEND backend via start-backend.sh"
-    source "${SCRIPT_DIR}/start-backend.sh" \
-        --backend "$BACKEND" \
-        --backend-addr "$BACKEND_ADDR" \
-        --frontend-addr "$FRONTEND_ADDR" \
-        --pidfile "$PIDFILE"
-fi
-
-log "Sockerless stack ready ($BACKEND): DOCKER_HOST=tcp://$FRONTEND_ADDR"
-export DOCKER_HOST="tcp://$FRONTEND_ADDR"
+log "Sockerless stack ready ($BACKEND): DOCKER_HOST=tcp://$BACKEND_ADDR"
+export DOCKER_HOST="tcp://$BACKEND_ADDR"
 
 # --- Git config for gitlab-ci-local ---
 git config --global user.name "test"

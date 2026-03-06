@@ -31,22 +31,78 @@ func TestReverseAgentCallback(t *testing.T) {
 	agentBin := agentDir + "/sockerless-agent-reverse-test"
 	defer os.Remove(agentBin)
 
-	// Build memory backend
-	memDir := findModuleDir("backends/memory")
-	buildMem := exec.Command("go", "build", "-tags", "noui", "-o", "sockerless-backend-reverse-test", "./cmd/")
-	buildMem.Dir = memDir
-	buildMem.Stdout = os.Stderr
-	buildMem.Stderr = os.Stderr
-	if err := buildMem.Run(); err != nil {
-		t.Fatalf("failed to build memory backend: %v", err)
+	// Build AWS simulator
+	simDir := findModuleDir("simulators/aws")
+	buildSim := exec.Command("go", "build", "-o", "simulator-aws-reverse-test", ".")
+	buildSim.Dir = simDir
+	var filteredEnv []string
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "GOOS=") || strings.HasPrefix(e, "GOARCH=") {
+			continue
+		}
+		filteredEnv = append(filteredEnv, e)
 	}
-	memBin := memDir + "/sockerless-backend-reverse-test"
-	defer os.Remove(memBin)
+	buildSim.Env = append(filteredEnv, "GOWORK=off")
+	buildSim.Stdout = os.Stderr
+	buildSim.Stderr = os.Stderr
+	if err := buildSim.Run(); err != nil {
+		t.Fatalf("failed to build simulator: %v", err)
+	}
+	simBin := simDir + "/simulator-aws-reverse-test"
+	defer os.Remove(simBin)
+
+	// Build ECS backend
+	ecsDir := findModuleDir("backends/ecs")
+	buildECS := exec.Command("go", "build", "-tags", "noui", "-o", "sockerless-backend-reverse-test", "./cmd/sockerless-backend-ecs")
+	buildECS.Dir = ecsDir
+	buildECS.Stdout = os.Stderr
+	buildECS.Stderr = os.Stderr
+	if err := buildECS.Run(); err != nil {
+		t.Fatalf("failed to build ECS backend: %v", err)
+	}
+	ecsBin := ecsDir + "/sockerless-backend-reverse-test"
+	defer os.Remove(ecsBin)
+
+	// Start simulator
+	simPort := findFreePort()
+	simCmd := exec.Command(simBin)
+	simCmd.Env = append(os.Environ(), fmt.Sprintf("SIM_LISTEN_ADDR=:%d", simPort))
+	simCmd.Stdout = os.Stderr
+	simCmd.Stderr = os.Stderr
+	if err := simCmd.Start(); err != nil {
+		t.Fatalf("failed to start simulator: %v", err)
+	}
+	defer func() {
+		simCmd.Process.Kill()
+		simCmd.Wait()
+	}()
+
+	simURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
+	if err := waitForReady(simURL+"/health", 10*time.Second); err != nil {
+		t.Fatalf("simulator not ready: %v", err)
+	}
+
+	// Create ECS cluster
+	clusterBody := `{"clusterName":"sim-cluster"}`
+	req, _ := http.NewRequest("POST", simURL+"/", strings.NewReader(clusterBody))
+	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	req.Header.Set("X-Amz-Target", "AmazonEC2ContainerServiceV20141113.CreateCluster")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("failed to create ECS cluster: %v", err)
+	}
+	resp.Body.Close()
 
 	// Start backend
 	backendPort := findFreePort()
 	backendAddr := fmt.Sprintf("localhost:%d", backendPort)
-	backendCmd := exec.Command(memBin, "--addr", fmt.Sprintf(":%d", backendPort), "--log-level", "debug")
+	backendCmd := exec.Command(ecsBin, "--addr", fmt.Sprintf(":%d", backendPort), "--log-level", "debug")
+	backendCmd.Env = append(os.Environ(),
+		"SOCKERLESS_ENDPOINT_URL="+simURL,
+		"SOCKERLESS_ECS_CLUSTER=sim-cluster",
+		"SOCKERLESS_ECS_SUBNETS=subnet-sim",
+		"SOCKERLESS_ECS_EXECUTION_ROLE_ARN=arn:aws:iam::000000000000:role/sim",
+	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
 	if err := backendCmd.Start(); err != nil {
@@ -119,20 +175,6 @@ func TestReverseAgentCallback(t *testing.T) {
 	// We'll use a direct WebSocket test: connect to the backend's agent-connect
 	// endpoint for the SAME container ID and try to exec through it.
 	t.Run("ExecThroughReverseConnection", func(t *testing.T) {
-		// The agent has already connected for our containerID.
-		// Now create a second WebSocket connection to simulate what the backend
-		// does when routing exec. In practice, the backend uses the registered
-		// ReverseAgentConn from AgentRegistry.
-
-		// Since we can't set AgentAddress="reverse" through the API,
-		// we verify the reverse connection works by connecting directly to the
-		// agent through its callback connection endpoint and sending exec messages.
-		// This is exactly what ReverseAgentConn.BridgeExec does internally.
-
-		// The direct verification is: the agent received our callback WebSocket,
-		// and we can send exec messages on it. But since the backend holds that
-		// connection, we test via the unit tests instead.
-
 		// For E2E: verify that exec create/start still works (synthetic fallback)
 		// when AgentAddress is not set to "reverse"
 		execID := reverseAPIExecCreate(t, backendAddr, containerID, []string{"echo", "hello"})

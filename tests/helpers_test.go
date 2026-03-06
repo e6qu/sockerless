@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,11 +16,11 @@ import (
 )
 
 // availableRunnerClients returns all runner-capable backends currently reachable.
-// Memory is always included. Cloud backends are included when socket env var is set.
+// ECS is always included (default backend). Cloud backends are included when env var is set.
 func availableRunnerClients(t *testing.T) map[string]*client.Client {
 	t.Helper()
 	clients := map[string]*client.Client{
-		"memory": dockerClient,
+		"ecs": dockerClient,
 	}
 	for name, envVar := range map[string]string{
 		"ecs":      "SOCKERLESS_ECS_SOCKET",
@@ -27,9 +28,14 @@ func availableRunnerClients(t *testing.T) map[string]*client.Client {
 		"aca":      "SOCKERLESS_ACA_SOCKET",
 		"docker":   "SOCKERLESS_DOCKER_SOCKET",
 	} {
-		if socket := os.Getenv(envVar); socket != "" {
+		if addr := os.Getenv(envVar); addr != "" {
+			// Support both unix:// and tcp:// addresses
+			host := addr
+			if !strings.HasPrefix(host, "unix://") && !strings.HasPrefix(host, "tcp://") {
+				host = "unix://" + host
+			}
 			c, err := client.NewClientWithOpts(
-				client.WithHost("unix://"+socket),
+				client.WithHost(host),
 				client.WithAPIVersionNegotiation(),
 			)
 			if err != nil {

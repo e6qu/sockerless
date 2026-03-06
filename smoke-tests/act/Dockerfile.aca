@@ -9,17 +9,15 @@ WORKDIR /sim
 COPY simulators/azure/ /sim/
 RUN GOWORK=off go build -tags noui -o /usr/local/bin/simulator-azure .
 
-# Copy source and build Sockerless binaries
+# Copy source and build Sockerless backend (serves Docker API directly)
 WORKDIR /src
 COPY api/ api/
 COPY agent/ agent/
 COPY sandbox/ sandbox/
 COPY backends/core/ backends/core/
 COPY backends/aca/ backends/aca/
-COPY frontends/docker/ frontends/docker/
 
 RUN cd backends/aca && GOWORK=off go mod download && GOWORK=off go build -tags noui -o /usr/local/bin/sockerless-backend-aca ./cmd/sockerless-backend-aca
-RUN cd frontends/docker && GOWORK=off go mod download && GOWORK=off go build -tags noui -o /usr/local/bin/sockerless-frontend-docker ./cmd
 
 # Copy test files
 COPY smoke-tests/act/workflows/ /test/workflows/

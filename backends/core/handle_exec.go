@@ -160,7 +160,7 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	rwc, err := s.self.ExecStart(id, req)
 	if err != nil {
 		// Already hijacked — write error inline
-		conn.Write([]byte(err.Error()))
+		_, _ = conn.Write([]byte(err.Error()))
 		return
 	}
 	defer rwc.Close()

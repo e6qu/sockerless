@@ -379,7 +379,7 @@ func (s *BaseServer) ImageBuild(opts api.ImageBuildOptions, context io.Reader) (
 		if tag != "" {
 			_ = enc.Encode(map[string]any{"stream": fmt.Sprintf("Successfully tagged %s\n", ref)})
 		}
-		pw.Close()
+		_ = pw.Close()
 	}()
 
 	return pr, nil
@@ -404,7 +404,7 @@ func (s *BaseServer) ImagePush(name string, tag string, auth string) (io.ReadClo
 		_ = enc.Encode(map[string]string{"status": "Pushed", "id": tag})
 		digest := strings.TrimPrefix(img.ID, "sha256:")
 		_ = enc.Encode(map[string]string{"status": tag + ": digest: sha256:" + digest})
-		pw.Close()
+		_ = pw.Close()
 	}()
 
 	return pr, nil
@@ -455,7 +455,7 @@ func (s *BaseServer) ImageSave(names []string) (io.ReadCloser, error) {
 		_ = tw.WriteHeader(&tar.Header{Name: "manifest.json", Size: int64(len(data))})
 		_, _ = tw.Write(data)
 		_ = tw.Close()
-		pw.Close()
+		_ = pw.Close()
 	}()
 
 	return pr, nil

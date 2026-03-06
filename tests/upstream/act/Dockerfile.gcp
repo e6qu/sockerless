@@ -21,11 +21,6 @@ COPY backends/cloudrun-functions/ backends/cloudrun-functions/
 RUN cd backends/cloudrun-functions && GOWORK=off go mod download && \
     GOWORK=off go build -tags noui -o /out/sockerless-backend-gcf ./cmd/sockerless-backend-gcf
 
-# --- Build frontend ---
-COPY frontends/docker/ frontends/docker/
-RUN cd frontends/docker && GOWORK=off go mod download && \
-    GOWORK=off go build -tags noui -o /out/sockerless-frontend-docker ./cmd
-
 # --- Build agent ---
 RUN cd agent && GOWORK=off go mod download && \
     GOWORK=off go build -o /out/sockerless-agent ./cmd/sockerless-agent

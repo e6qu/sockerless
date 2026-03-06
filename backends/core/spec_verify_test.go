@@ -35,20 +35,6 @@ type specEvent struct {
 	Action string `yaml:"action"`
 }
 
-// stateSetup describes how to set up a container in a given state.
-type stateSetup struct {
-	Status  string
-	Running bool
-	Paused  bool
-}
-
-var stateMap = map[string]stateSetup{
-	"created": {Status: "created", Running: false, Paused: false},
-	"running": {Status: "running", Running: true, Paused: false},
-	"paused":  {Status: "paused", Running: true, Paused: true},
-	"exited":  {Status: "exited", Running: false, Paused: false},
-}
-
 func newSpecTestServer() *BaseServer {
 	store := NewStore()
 	s := &BaseServer{

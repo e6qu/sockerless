@@ -61,8 +61,7 @@ log_info "Starting Sockerless with backend=$BACKEND mode=$MODE"
 
 # Source start-backend.sh in a subshell-like way to get exports
 # We need to eval it in the current shell to get env vars
-BACKEND_ADDR="127.0.0.1:9100"
-FRONTEND_ADDR="127.0.0.1:2375"
+BACKEND_ADDR="127.0.0.1:2375"
 PIDFILE="/tmp/sockerless-e2e.pids"
 
 cleanup() {
@@ -75,7 +74,7 @@ trap cleanup EXIT
 
 # Start the stack
 source "$START_BACKEND" --backend "$BACKEND" --mode "$MODE" \
-    --backend-addr "$BACKEND_ADDR" --frontend-addr "$FRONTEND_ADDR" --pidfile "$PIDFILE"
+    --backend-addr "$BACKEND_ADDR" --pidfile "$PIDFILE"
 
 # --- Select workflows ---
 if [ "$WORKFLOW" = "all" ]; then
@@ -114,7 +113,7 @@ for wf in $WORKFLOWS; do
     act push \
         --workflows "$WF_FILE" \
         -P ubuntu-latest=alpine:latest \
-        --container-daemon-socket "tcp://$FRONTEND_ADDR" \
+        --container-daemon-socket "tcp://$BACKEND_ADDR" \
         2>&1 | tee "$LOG_FILE"
     ACT_EXIT=${PIPESTATUS[0]}
     set -e

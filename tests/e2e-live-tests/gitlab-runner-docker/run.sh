@@ -48,10 +48,6 @@ log_info "Building Docker images..."
 # helper binaries (gitlab-runner-helper, gitlab-runner-build) that can't execute
 # in the WASM sandbox. The WASM sandbox is validated by GitHub act runner tests instead.
 case "$BACKEND" in
-    memory)
-        export DOCKERFILE_BACKEND="Dockerfile.backend-memory"
-        export SOCKERLESS_SYNTHETIC=1
-        ;;
     ecs|lambda)
         export DOCKERFILE_BACKEND="Dockerfile.backend-aws"
         ;;
