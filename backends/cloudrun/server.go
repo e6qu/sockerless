@@ -43,7 +43,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		NCPU:            1,
 		MemTotal:        536870912,
 	}, logger)
-	s.BaseServer.SetSelf(s)
+	s.SetSelf(s)
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

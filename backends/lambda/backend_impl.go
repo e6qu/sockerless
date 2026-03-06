@@ -530,7 +530,7 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 	pr, pw := io.Pipe()
 
 	go func() {
-		defer pw.Close()
+		defer func() { _ = pw.Close() }()
 
 		// BUG-435: Filter LogBuffers output through params (raw text, no mux framing)
 		if buf, ok := s.Store.LogBuffers.Load(id); ok {
@@ -622,33 +622,10 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 
-		for {
-			select {
-			case <-ticker.C:
-				c, _ := s.Store.Containers.Get(id)
-				if !c.State.Running && c.State.Status != "created" {
-					// Fetch any remaining logs
-					followInput := &cloudwatchlogs.GetLogEventsInput{
-						LogGroupName:  aws.String(logGroupName),
-						LogStreamName: logStreamName,
-						StartFromHead: aws.Bool(true),
-						NextToken:     nextToken,
-					}
-					result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), followInput)
-					if err == nil {
-						for _, event := range result.Events {
-							line := s.formatLogEventText(event.Message, event.Timestamp, params)
-							if line == "" {
-								continue
-							}
-							if _, err := pw.Write([]byte(line)); err != nil {
-								return
-							}
-						}
-					}
-					return
-				}
-
+		for range ticker.C {
+			c, _ := s.Store.Containers.Get(id)
+			if !c.State.Running && c.State.Status != "created" {
+				// Fetch any remaining logs
 				followInput := &cloudwatchlogs.GetLogEventsInput{
 					LogGroupName:  aws.String(logGroupName),
 					LogStreamName: logStreamName,
@@ -656,21 +633,41 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 					NextToken:     nextToken,
 				}
 				result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), followInput)
-				if err != nil {
+				if err == nil {
+					for _, event := range result.Events {
+						line := s.formatLogEventText(event.Message, event.Timestamp, params)
+						if line == "" {
+							continue
+						}
+						if _, err := pw.Write([]byte(line)); err != nil {
+							return
+						}
+					}
+				}
+				return
+			}
+
+			followInput := &cloudwatchlogs.GetLogEventsInput{
+				LogGroupName:  aws.String(logGroupName),
+				LogStreamName: logStreamName,
+				StartFromHead: aws.Bool(true),
+				NextToken:     nextToken,
+			}
+			result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), followInput)
+			if err != nil {
+				continue
+			}
+
+			for _, event := range result.Events {
+				line := s.formatLogEventText(event.Message, event.Timestamp, params)
+				if line == "" {
 					continue
 				}
-
-				for _, event := range result.Events {
-					line := s.formatLogEventText(event.Message, event.Timestamp, params)
-					if line == "" {
-						continue
-					}
-					if _, err := pw.Write([]byte(line)); err != nil {
-						return
-					}
+				if _, err := pw.Write([]byte(line)); err != nil {
+					return
 				}
-				nextToken = result.NextForwardToken
 			}
+			nextToken = result.NextForwardToken
 		}
 	}()
 
@@ -869,7 +866,7 @@ func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 	pr, pw := io.Pipe()
 
 	go func() {
-		defer pw.Close()
+		defer func() { _ = pw.Close() }()
 
 		progress := []map[string]string{
 			{"status": "Pulling from " + ref},

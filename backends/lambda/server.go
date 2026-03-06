@@ -38,7 +38,7 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		NCPU:            2,
 		MemTotal:        4294967296,
 	}, logger)
-	s.BaseServer.SetSelf(s)
+	s.SetSelf(s)
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

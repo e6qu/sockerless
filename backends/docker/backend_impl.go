@@ -684,7 +684,7 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 			select {
 			case event, ok := <-eventsCh:
 				if !ok {
-					pw.Close()
+					_ = pw.Close()
 					return
 				}
 				mapped := conv.ConvertEventMessage(event)
@@ -697,7 +697,7 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 					pw.CloseWithError(err)
 					return
 				}
-				pw.Close()
+				_ = pw.Close()
 				return
 			}
 		}

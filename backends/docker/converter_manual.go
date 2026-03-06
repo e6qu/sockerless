@@ -32,8 +32,8 @@ func ConvertContainerJSON(info types.ContainerJSON) api.Container {
 		}
 	}
 
-	if info.ContainerJSONBase.HostConfig != nil {
-		c.HostConfig = ConvertHostConfig(*info.ContainerJSONBase.HostConfig)
+	if info.HostConfig != nil {
+		c.HostConfig = ConvertHostConfig(*info.HostConfig)
 	}
 
 	c.NetworkSettings = ConvertNetworkSettings(info.NetworkSettings)

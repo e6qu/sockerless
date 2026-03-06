@@ -53,7 +53,7 @@ func TestMain(m *testing.M) {
 	// Build AWS simulator (independent module, not in go.work)
 	simDir := findModuleDir("simulators/aws")
 	fmt.Println("Building AWS simulator...")
-	buildSim := exec.Command("go", "build", "-o", "simulator-aws", ".")
+	buildSim := exec.Command("go", "build", "-tags", "noui", "-o", "simulator-aws", ".")
 	buildSim.Dir = simDir
 	// Filter out GOOS/GOARCH from env
 	var filteredEnv []string

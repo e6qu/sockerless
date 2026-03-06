@@ -560,7 +560,7 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 	pr, pw := io.Pipe()
 
 	go func() {
-		defer pw.Close()
+		defer func() { _ = pw.Close() }()
 
 		// BUG-435: Filter LogBuffers output through params (raw text, no mux framing)
 		if buf, ok := s.Store.LogBuffers.Load(id); ok {
@@ -678,16 +678,13 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 
-		for {
-			select {
-			case <-ticker.C:
-				c, _ := s.Store.Containers.Get(id)
-				if !c.State.Running && c.State.Status != "created" {
-					s.fetchFollowLogsPipe(pw, functionAppName, lastTimestamp, params, &lastTimestamp)
-					return
-				}
+		for range ticker.C {
+			c, _ := s.Store.Containers.Get(id)
+			if !c.State.Running && c.State.Status != "created" {
 				s.fetchFollowLogsPipe(pw, functionAppName, lastTimestamp, params, &lastTimestamp)
+				return
 			}
+			s.fetchFollowLogsPipe(pw, functionAppName, lastTimestamp, params, &lastTimestamp)
 		}
 	}()
 
@@ -933,7 +930,7 @@ func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 	pr, pw := io.Pipe()
 
 	go func() {
-		defer pw.Close()
+		defer func() { _ = pw.Close() }()
 
 		progress := []map[string]string{
 			{"status": "Pulling from " + ref},

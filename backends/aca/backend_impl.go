@@ -680,7 +680,7 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 	pr, pw := io.Pipe()
 
 	go func() {
-		defer pw.Close()
+		defer func() { _ = pw.Close() }()
 
 		// Track latest timestamp to avoid duplicate entries
 		var lastTimestamp time.Time
@@ -696,16 +696,13 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 
-		for {
-			select {
-			case <-ticker.C:
-				c, _ := s.Store.Containers.Get(id)
-				if !c.State.Running && c.State.Status != "created" {
-					s.fetchAndWriteLogsPipe(pw, jobName, lastTimestamp, params, &lastTimestamp, false)
-					return
-				}
+		for range ticker.C {
+			c, _ := s.Store.Containers.Get(id)
+			if !c.State.Running && c.State.Status != "created" {
 				s.fetchAndWriteLogsPipe(pw, jobName, lastTimestamp, params, &lastTimestamp, false)
+				return
 			}
+			s.fetchAndWriteLogsPipe(pw, jobName, lastTimestamp, params, &lastTimestamp, false)
 		}
 	}()
 
@@ -882,7 +879,7 @@ func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 	pr, pw := io.Pipe()
 
 	go func() {
-		defer pw.Close()
+		defer func() { _ = pw.Close() }()
 
 		progress := []map[string]string{
 			{"status": "Pulling from " + ref},

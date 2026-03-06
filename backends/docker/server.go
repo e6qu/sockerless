@@ -43,7 +43,7 @@ func NewServer(logger zerolog.Logger, dockerHost string) (*Server, error) {
 		NCPU:            4,
 		MemTotal:        8589934592,
 	}, logger)
-	s.BaseServer.SetSelf(s)
+	s.SetSelf(s)
 
 	dockerHostStr := cli.DaemonHost()
 	resources := map[string]string{}
@@ -61,9 +61,3 @@ func NewServer(logger zerolog.Logger, dockerHost string) (*Server, error) {
 	return s, nil
 }
 
-// Aliases for core helpers used throughout this backend.
-var (
-	writeJSON  = core.WriteJSON
-	writeError = core.WriteError
-	readJSON   = core.ReadJSON
-)

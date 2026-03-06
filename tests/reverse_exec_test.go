@@ -33,7 +33,7 @@ func TestReverseAgentCallback(t *testing.T) {
 
 	// Build AWS simulator
 	simDir := findModuleDir("simulators/aws")
-	buildSim := exec.Command("go", "build", "-o", "simulator-aws-reverse-test", ".")
+	buildSim := exec.Command("go", "build", "-tags", "noui", "-o", "simulator-aws-reverse-test", ".")
 	buildSim.Dir = simDir
 	var filteredEnv []string
 	for _, e := range os.Environ() {

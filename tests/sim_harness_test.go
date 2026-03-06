@@ -147,7 +147,7 @@ func buildSimulator(cloud string) (string, error) {
 
 	binaryName := "simulator-" + cloud
 	fmt.Printf("[sim] Building %s...\n", binaryName)
-	build := exec.Command("go", "build", "-o", binaryName, ".")
+	build := exec.Command("go", "build", "-tags", "noui", "-o", binaryName, ".")
 	build.Dir = simDir
 	// GOWORK=off because simulators are not in the workspace.
 	// Filter out GOOS/GOARCH from env to ensure we build for the host platform,

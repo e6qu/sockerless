@@ -42,7 +42,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		NCPU:            2,
 		MemTotal:        4294967296,
 	}, logger)
-	s.BaseServer.SetSelf(s)
+	s.SetSelf(s)
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

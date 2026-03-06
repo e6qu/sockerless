@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
+	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 )
@@ -605,7 +605,7 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 	pr, pw := io.Pipe()
 
 	go func() {
-		defer pw.Close()
+		defer func() { _ = pw.Close() }()
 
 		input := &cloudwatchlogs.GetLogEventsInput{
 			LogGroupName:  aws.String(s.config.LogGroup),
@@ -649,35 +649,11 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 
-		for {
-			select {
-			case <-ticker.C:
-				// Check if container has stopped
-				c, _ := s.Store.Containers.Get(id)
-				if !c.State.Running && c.State.Status != "created" {
-					// Fetch any remaining logs
-					followInput := &cloudwatchlogs.GetLogEventsInput{
-						LogGroupName:  aws.String(s.config.LogGroup),
-						LogStreamName: aws.String(logStreamName),
-						StartFromHead: aws.Bool(true),
-						NextToken:     nextToken,
-					}
-					result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), followInput)
-					if err == nil {
-						for _, event := range result.Events {
-							line := s.formatLogEvent(event.Message, event.Timestamp, params)
-							if line == "" {
-								continue
-							}
-							if _, err := pw.Write([]byte(line)); err != nil {
-								return
-							}
-						}
-					}
-					return
-				}
-
-				// Follow queries use NextToken only, no since/until
+		for range ticker.C {
+			// Check if container has stopped
+			c, _ := s.Store.Containers.Get(id)
+			if !c.State.Running && c.State.Status != "created" {
+				// Fetch any remaining logs
 				followInput := &cloudwatchlogs.GetLogEventsInput{
 					LogGroupName:  aws.String(s.config.LogGroup),
 					LogStreamName: aws.String(logStreamName),
@@ -685,21 +661,42 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 					NextToken:     nextToken,
 				}
 				result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), followInput)
-				if err != nil {
+				if err == nil {
+					for _, event := range result.Events {
+						line := s.formatLogEvent(event.Message, event.Timestamp, params)
+						if line == "" {
+							continue
+						}
+						if _, err := pw.Write([]byte(line)); err != nil {
+							return
+						}
+					}
+				}
+				return
+			}
+
+			// Follow queries use NextToken only, no since/until
+			followInput := &cloudwatchlogs.GetLogEventsInput{
+				LogGroupName:  aws.String(s.config.LogGroup),
+				LogStreamName: aws.String(logStreamName),
+				StartFromHead: aws.Bool(true),
+				NextToken:     nextToken,
+			}
+			result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), followInput)
+			if err != nil {
+				continue
+			}
+
+			for _, event := range result.Events {
+				line := s.formatLogEvent(event.Message, event.Timestamp, params)
+				if line == "" {
 					continue
 				}
-
-				for _, event := range result.Events {
-					line := s.formatLogEvent(event.Message, event.Timestamp, params)
-					if line == "" {
-						continue
-					}
-					if _, err := pw.Write([]byte(line)); err != nil {
-						return
-					}
+				if _, err := pw.Write([]byte(line)); err != nil {
+					return
 				}
-				nextToken = result.NextForwardToken
 			}
+			nextToken = result.NextForwardToken
 		}
 	}()
 
@@ -909,7 +906,7 @@ func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 	pr, pw := io.Pipe()
 
 	go func() {
-		defer pw.Close()
+		defer func() { _ = pw.Close() }()
 
 		progress := []map[string]string{
 			{"status": "Pulling from " + ref},
