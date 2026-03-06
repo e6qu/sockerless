@@ -141,6 +141,7 @@ func TestHandlePutArchive_DriverError(t *testing.T) {
 		EventBus: NewEventBus(),
 	}
 	s.InitDrivers()
+	s.self = s
 
 	cID := "c1"
 	store.Containers.Put(cID, api.Container{ID: cID, Name: "/test"})
@@ -168,6 +169,7 @@ func TestHandlePutArchive_Success(t *testing.T) {
 		EventBus: NewEventBus(),
 	}
 	s.InitDrivers()
+	s.self = s
 
 	cID := "c1"
 	store.Containers.Put(cID, api.Container{ID: cID, Name: "/test"})
@@ -252,6 +254,7 @@ func TestBuild_InvalidBuildargs(t *testing.T) {
 		EventBus: NewEventBus(),
 	}
 	s.InitDrivers()
+	s.self = s
 
 	// Create a valid tar with a Dockerfile
 	var buf bytes.Buffer

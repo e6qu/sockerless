@@ -134,91 +134,20 @@ func (s *BaseServer) handleVolumeRemove(w http.ResponseWriter, r *http.Request) 
 	name := r.PathValue("name")
 	force := r.URL.Query().Get("force") == "1" || r.URL.Query().Get("force") == "true"
 
-	if _, ok := s.Store.Volumes.Get(name); !ok {
-		WriteError(w, &api.NotFoundError{Resource: "volume", ID: name})
+	if err := s.self.VolumeRemove(name, force); err != nil {
+		WriteError(w, err)
 		return
 	}
-
-	// Check if volume is in use by any container
-	if !force {
-		for _, c := range s.Store.Containers.List() {
-			for _, m := range c.Mounts {
-				if m.Name == name {
-					cShort := c.ID
-					if len(cShort) > 12 {
-						cShort = cShort[:12]
-					}
-					WriteError(w, &api.ConflictError{
-						Message: fmt.Sprintf("volume is in use - [%s]", cShort),
-					})
-					return
-				}
-			}
-		}
-	}
-
-	vol, _ := s.Store.Volumes.Get(name)
-
-	s.Store.Volumes.Delete(name)
-	if dir, ok := s.Store.VolumeDirs.LoadAndDelete(name); ok {
-		os.RemoveAll(dir.(string))
-	}
-
-	s.emitEvent("volume", "destroy", name, map[string]string{
-		"driver": vol.Driver,
-	})
-
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *BaseServer) handleVolumePrune(w http.ResponseWriter, r *http.Request) {
 	filters := ParseFilters(r.URL.Query().Get("filters"))
-	labelFilters := filters["label"]
-	untilFilters := filters["until"]
 
-	// Collect in-use volume names from containers
-	inUseNames := make(map[string]bool)
-	for _, c := range s.Store.Containers.List() {
-		for _, m := range c.Mounts {
-			if m.Name != "" {
-				inUseNames[m.Name] = true
-			}
-		}
-		// Also check bind-style volume references
-		for _, bind := range c.HostConfig.Binds {
-			parts := strings.SplitN(bind, ":", 3)
-			if len(parts) >= 2 && !filepath.IsAbs(parts[0]) {
-				inUseNames[parts[0]] = true
-			}
-		}
+	resp, err := s.self.VolumePrune(filters)
+	if err != nil {
+		WriteError(w, err)
+		return
 	}
-
-	pruned := s.Store.Volumes.PruneIf(func(_ string, v api.Volume) bool {
-		if inUseNames[v.Name] {
-			return false
-		}
-		if len(labelFilters) > 0 && !MatchLabels(v.Labels, labelFilters) {
-			return false
-		}
-		if len(untilFilters) > 0 && !MatchUntil(v.CreatedAt, untilFilters) {
-			return false
-		}
-		return true
-	})
-	var spaceReclaimed uint64
-	deleted := make([]string, 0, len(pruned))
-	for _, v := range pruned {
-		if dir, ok := s.Store.VolumeDirs.LoadAndDelete(v.Name); ok {
-			spaceReclaimed += uint64(DirSize(dir.(string)))
-			os.RemoveAll(dir.(string))
-		}
-		s.emitEvent("volume", "destroy", v.Name, map[string]string{
-			"driver": v.Driver,
-		})
-		deleted = append(deleted, v.Name)
-	}
-	WriteJSON(w, http.StatusOK, api.VolumePruneResponse{
-		VolumesDeleted: deleted,
-		SpaceReclaimed: spaceReclaimed,
-	})
+	WriteJSON(w, http.StatusOK, resp)
 }

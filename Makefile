@@ -1,20 +1,20 @@
 .PHONY: sim-test-ecs sim-test-lambda sim-test-cloudrun sim-test-gcf sim-test-aca sim-test-azf
 .PHONY: sim-test-aws sim-test-gcp sim-test-azure sim-test-all
 .PHONY: test test-unit test-e2e lint
-.PHONY: test-agent test-sandbox test-core test-frontend test-bleephub test-gitlabhub
+.PHONY: test-agent test-sandbox test-core test-bleephub test-gitlabhub
 .PHONY: bleephub-test bleephub-gh-test gitlabhub-test
 .PHONY: smoke-test-act smoke-test-act-ecs smoke-test-act-cloudrun smoke-test-act-aca smoke-test-act-all
 .PHONY: smoke-test-gitlab smoke-test-gitlab-ecs smoke-test-gitlab-cloudrun smoke-test-gitlab-aca smoke-test-gitlab-all
 .PHONY: e2e-github-all e2e-gitlab-all e2e-all
-.PHONY: e2e-github-build-memory e2e-github-build-aws e2e-github-build-gcp e2e-github-build-azure
-.PHONY: e2e-github-memory e2e-github-ecs e2e-github-lambda
+.PHONY: e2e-github-build-aws e2e-github-build-gcp e2e-github-build-azure
+.PHONY: e2e-github-ecs e2e-github-lambda
 .PHONY: e2e-github-cloudrun e2e-github-gcf e2e-github-aca e2e-github-azf
-.PHONY: upstream-test-act-build-memory upstream-test-act-build-aws upstream-test-act-build-gcp upstream-test-act-build-azure
+.PHONY: upstream-test-act-build-aws upstream-test-act-build-gcp upstream-test-act-build-azure
 .PHONY: upstream-test-act upstream-test-act-individual upstream-test-act-ecs upstream-test-act-lambda upstream-test-act-all
 .PHONY: upstream-test-act-cloudrun upstream-test-act-gcf upstream-test-act-aca upstream-test-act-azf
 .PHONY: upstream-test-gitlab-ci-local
-.PHONY: upstream-test-gcl-build-memory upstream-test-gcl-build-aws upstream-test-gcl-build-gcp upstream-test-gcl-build-azure
-.PHONY: upstream-test-gcl-memory upstream-test-gcl-ecs upstream-test-gcl-lambda
+.PHONY: upstream-test-gcl-build-aws upstream-test-gcl-build-gcp upstream-test-gcl-build-azure
+.PHONY: upstream-test-gcl-ecs upstream-test-gcl-lambda
 .PHONY: upstream-test-gcl-cloudrun upstream-test-gcl-gcf upstream-test-gcl-aca upstream-test-gcl-azf
 .PHONY: upstream-test-gcl-all
 
@@ -31,10 +31,6 @@ test-core:
 	@echo "=== test backends/core ==="
 	cd backends/core && go test -v -timeout 2m ./...
 
-test-frontend:
-	@echo "=== test frontends/docker ==="
-	cd frontends/docker && go test -tags noui -v -timeout 1m ./...
-
 test-bleephub:
 	@echo "=== test bleephub ==="
 	cd bleephub && go test -tags noui -v -timeout 3m ./...
@@ -49,7 +45,7 @@ test-e2e:
 	cd tests && go test -v -timeout 5m ./...
 
 # All unit tests (per-module)
-test-unit: test-agent test-sandbox test-core test-frontend test-bleephub test-gitlabhub
+test-unit: test-agent test-sandbox test-core test-bleephub test-gitlabhub
 
 # All tests (unit + e2e)
 test: test-unit test-e2e
@@ -58,7 +54,7 @@ test: test-unit test-e2e
 # Modules without UI embed
 MODULES = api agent sandbox backends/core
 # Modules with UI embed (require --build-tags noui when dist/ is absent)
-MODULES_UI = frontends/docker backends/memory backends/docker \
+MODULES_UI = backends/docker \
   backends/ecs backends/lambda backends/cloudrun \
   backends/cloudrun-functions backends/aca backends/azure-functions \
   cmd/sockerless-admin bleephub gitlabhub
@@ -110,7 +106,7 @@ sim-test-all: sim-test-aws sim-test-gcp sim-test-azure
 
 # Smoke tests — act (GitHub Actions runner)
 smoke-test-act:
-	docker build -t sockerless-smoke-act -f smoke-tests/act/Dockerfile .
+	docker build -t sockerless-smoke-act -f smoke-tests/act/Dockerfile.ecs .
 	docker run --rm sockerless-smoke-act
 
 smoke-test-act-ecs:
@@ -129,7 +125,7 @@ smoke-test-act-all: smoke-test-act smoke-test-act-ecs smoke-test-act-cloudrun sm
 
 # Smoke tests — GitLab Runner
 smoke-test-gitlab:
-	cd smoke-tests/gitlab && docker compose down -v 2>/dev/null; BACKEND=memory docker compose up --build --abort-on-container-exit --exit-code-from orchestrator
+	cd smoke-tests/gitlab && docker compose down -v 2>/dev/null; BACKEND=ecs docker compose up --build --abort-on-container-exit --exit-code-from orchestrator
 
 smoke-test-gitlab-ecs:
 	cd smoke-tests/gitlab && docker compose -f docker-compose.yml -f docker-compose.ecs.yml down -v 2>/dev/null; BACKEND=ecs docker compose -f docker-compose.yml -f docker-compose.ecs.yml up --build --abort-on-container-exit --exit-code-from orchestrator
@@ -189,9 +185,6 @@ tf-int-test-all: tf-int-test-aws tf-int-test-gcp tf-int-test-azure
 # E2E live tests — GitHub Actions runner (via act), per-cloud images
 E2E_GITHUB_IMAGE = sockerless-e2e-github
 
-e2e-github-build-memory:
-	docker build -t $(E2E_GITHUB_IMAGE)-memory -f tests/e2e-live-tests/github-runner/Dockerfile.memory .
-
 e2e-github-build-aws:
 	docker build -t $(E2E_GITHUB_IMAGE)-aws -f tests/e2e-live-tests/github-runner/Dockerfile.aws .
 
@@ -200,9 +193,6 @@ e2e-github-build-gcp:
 
 e2e-github-build-azure:
 	docker build -t $(E2E_GITHUB_IMAGE)-azure -f tests/e2e-live-tests/github-runner/Dockerfile.azure .
-
-e2e-github-memory: e2e-github-build-memory
-	docker run --rm -e BACKEND=memory $(E2E_GITHUB_IMAGE)-memory --backend memory
 
 e2e-github-ecs: e2e-github-build-aws
 	docker run --rm -e BACKEND=ecs $(E2E_GITHUB_IMAGE)-aws --backend ecs
@@ -223,7 +213,7 @@ e2e-github-azf: e2e-github-build-azure
 	docker run --rm -e BACKEND=azf $(E2E_GITHUB_IMAGE)-azure --backend azf
 
 e2e-github-all:
-	@for b in memory ecs lambda cloudrun gcf aca azf; do \
+	@for b in ecs lambda cloudrun gcf aca azf; do \
 	    echo "=== E2E GitHub: $$b ===" && \
 	    $(MAKE) e2e-github-$$b || exit 1; \
 	done
@@ -233,7 +223,7 @@ e2e-gitlab-%:
 	cd tests/e2e-live-tests/gitlab-runner-docker && ./run.sh --backend $*
 
 e2e-gitlab-all:
-	@for b in memory ecs lambda cloudrun gcf aca azf; do \
+	@for b in ecs lambda cloudrun gcf aca azf; do \
 	    echo "=== E2E GitLab: $$b ===" && \
 	    $(MAKE) e2e-gitlab-$$b || exit 1; \
 	done
@@ -244,9 +234,6 @@ e2e-all: e2e-github-all e2e-gitlab-all
 # Upstream test suites — act, per-cloud images
 UPSTREAM_ACT_IMAGE = sockerless-upstream-act
 
-upstream-test-act-build-memory:
-	docker build -t $(UPSTREAM_ACT_IMAGE)-memory -f tests/upstream/act/Dockerfile.memory .
-
 upstream-test-act-build-aws:
 	docker build -t $(UPSTREAM_ACT_IMAGE)-aws -f tests/upstream/act/Dockerfile.aws .
 
@@ -256,11 +243,11 @@ upstream-test-act-build-gcp:
 upstream-test-act-build-azure:
 	docker build -t $(UPSTREAM_ACT_IMAGE)-azure -f tests/upstream/act/Dockerfile.azure .
 
-upstream-test-act: upstream-test-act-build-memory
-	docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-memory
+upstream-test-act: upstream-test-act-build-aws
+	docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-aws --backend ecs
 
-upstream-test-act-individual: upstream-test-act-build-memory
-	docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-memory --individual
+upstream-test-act-individual: upstream-test-act-build-aws
+	docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-aws --backend ecs --individual
 
 upstream-test-act-ecs: upstream-test-act-build-aws
 	docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-aws --backend ecs
@@ -281,16 +268,13 @@ upstream-test-act-azf: upstream-test-act-build-azure
 	docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-azure --backend azf
 
 upstream-test-act-all:
-	@for b in memory ecs lambda cloudrun gcf aca azf; do \
+	@for b in ecs lambda cloudrun gcf aca azf; do \
 	    echo "=== Upstream Act: $$b ===" && \
 	    $(MAKE) upstream-test-act-$$b || true; \
 	done
 
 # Upstream test suites — gitlab-ci-local, per-cloud images
 UPSTREAM_GCL_IMAGE = sockerless-upstream-gcl
-
-upstream-test-gcl-build-memory:
-	docker build -t $(UPSTREAM_GCL_IMAGE)-memory -f tests/upstream/gitlab-ci-local/Dockerfile.memory .
 
 upstream-test-gcl-build-aws:
 	docker build -t $(UPSTREAM_GCL_IMAGE)-aws -f tests/upstream/gitlab-ci-local/Dockerfile.aws .
@@ -301,11 +285,8 @@ upstream-test-gcl-build-gcp:
 upstream-test-gcl-build-azure:
 	docker build -t $(UPSTREAM_GCL_IMAGE)-azure -f tests/upstream/gitlab-ci-local/Dockerfile.azure .
 
-upstream-test-gitlab-ci-local: upstream-test-gcl-build-memory
-	docker run --rm -v "$(CURDIR)/tests/upstream/gitlab-ci-local/results:/results" $(UPSTREAM_GCL_IMAGE)-memory
-
-upstream-test-gcl-memory: upstream-test-gcl-build-memory
-	docker run --rm -v "$(CURDIR)/tests/upstream/gitlab-ci-local/results:/results" $(UPSTREAM_GCL_IMAGE)-memory
+upstream-test-gitlab-ci-local: upstream-test-gcl-build-aws
+	docker run --rm -v "$(CURDIR)/tests/upstream/gitlab-ci-local/results:/results" $(UPSTREAM_GCL_IMAGE)-aws --backend ecs
 
 upstream-test-gcl-ecs: upstream-test-gcl-build-aws
 	docker run --rm -v "$(CURDIR)/tests/upstream/gitlab-ci-local/results:/results" $(UPSTREAM_GCL_IMAGE)-aws --backend ecs
@@ -326,7 +307,7 @@ upstream-test-gcl-azf: upstream-test-gcl-build-azure
 	docker run --rm -v "$(CURDIR)/tests/upstream/gitlab-ci-local/results:/results" $(UPSTREAM_GCL_IMAGE)-azure --backend azf
 
 upstream-test-gcl-all:
-	@for b in memory ecs lambda cloudrun gcf aca azf; do \
+	@for b in ecs lambda cloudrun gcf aca azf; do \
 	    echo "=== Upstream GCL: $$b ===" && \
 	    $(MAKE) upstream-test-gcl-$$b || true; \
 	done
@@ -347,29 +328,26 @@ gitlabhub-test:
 
 # UI monorepo targets
 .PHONY: ui-install ui-build ui-dev ui-test ui-clean
-.PHONY: build-memory-with-ui build-memory-noui
 .PHONY: build-ecs-with-ui build-ecs-noui build-lambda-with-ui build-lambda-noui
 .PHONY: build-cloudrun-with-ui build-cloudrun-noui build-gcf-with-ui build-gcf-noui
 .PHONY: build-aca-with-ui build-aca-noui build-azf-with-ui build-azf-noui
 .PHONY: build-docker-backend-with-ui build-docker-backend-noui
-.PHONY: build-frontend-with-ui build-frontend-noui
 .PHONY: build-sim-aws-noui build-sim-gcp-noui build-sim-azure-noui
 .PHONY: build-sim-aws-with-ui build-sim-gcp-with-ui build-sim-azure-with-ui
 .PHONY: build-admin-with-ui build-admin-noui
 .PHONY: build-bleephub-with-ui build-bleephub-noui
 .PHONY: build-gitlabhub-with-ui build-gitlabhub-noui
 .PHONY: ui-e2e-admin ui-e2e-bleephub ui-e2e-gitlabhub
-.PHONY: ui-e2e-backend-memory ui-e2e-backend-ecs ui-e2e-backend-lambda ui-e2e-backend-cloudrun
+.PHONY: ui-e2e-backend-ecs ui-e2e-backend-lambda ui-e2e-backend-cloudrun
 .PHONY: ui-e2e-backend-gcf ui-e2e-backend-aca ui-e2e-backend-azf ui-e2e-backend-docker
 .PHONY: ui-e2e-sim-aws ui-e2e-sim-gcp ui-e2e-sim-azure
-.PHONY: ui-e2e-frontend ui-e2e-all
+.PHONY: ui-e2e-all
 
 ui-install:
 	cd ui && bun install
 
 ui-build: ui-install
 	cd ui && bunx turbo run build
-	rm -rf backends/memory/dist && cp -r ui/packages/backend-memory/dist backends/memory/dist
 	rm -rf backends/ecs/dist && cp -r ui/packages/backend-ecs/dist backends/ecs/dist
 	rm -rf backends/lambda/dist && cp -r ui/packages/backend-lambda/dist backends/lambda/dist
 	rm -rf backends/cloudrun/dist && cp -r ui/packages/backend-cloudrun/dist backends/cloudrun/dist
@@ -377,7 +355,6 @@ ui-build: ui-install
 	rm -rf backends/aca/dist && cp -r ui/packages/backend-aca/dist backends/aca/dist
 	rm -rf backends/azure-functions/dist && cp -r ui/packages/backend-azf/dist backends/azure-functions/dist
 	rm -rf backends/docker/dist && cp -r ui/packages/backend-docker/dist backends/docker/dist
-	rm -rf frontends/docker/dist && cp -r ui/packages/frontend-docker/dist frontends/docker/dist
 	rm -rf simulators/aws/dist && cp -r ui/packages/simulator-aws/dist simulators/aws/dist
 	rm -rf simulators/gcp/dist && cp -r ui/packages/simulator-gcp/dist simulators/gcp/dist
 	rm -rf simulators/azure/dist && cp -r ui/packages/simulator-azure/dist simulators/azure/dist
@@ -386,25 +363,19 @@ ui-build: ui-install
 	rm -rf gitlabhub/dist && cp -r ui/packages/gitlabhub/dist gitlabhub/dist
 
 ui-dev:
-	cd ui && bunx turbo run dev --filter=@sockerless/ui-backend-memory
+	cd ui && bunx turbo run dev --filter=@sockerless/ui-backend-docker
 
 ui-test:
 	cd ui && bunx turbo run test
 
 ui-clean:
 	rm -rf ui/node_modules ui/packages/*/node_modules ui/packages/*/dist ui/.turbo
-	rm -rf backends/memory/dist backends/ecs/dist backends/lambda/dist
+	rm -rf backends/ecs/dist backends/lambda/dist
 	rm -rf backends/cloudrun/dist backends/cloudrun-functions/dist
 	rm -rf backends/aca/dist backends/azure-functions/dist
-	rm -rf backends/docker/dist frontends/docker/dist
+	rm -rf backends/docker/dist
 	rm -rf simulators/aws/dist simulators/gcp/dist simulators/azure/dist
 	rm -rf cmd/sockerless-admin/dist bleephub/dist gitlabhub/dist
-
-build-memory-with-ui: ui-build
-	cd backends/memory && go build -o sockerless-backend-memory ./cmd
-
-build-memory-noui:
-	cd backends/memory && go build -tags noui -o /dev/null ./cmd
 
 build-ecs-with-ui: ui-build
 	cd backends/ecs && go build -o sockerless-backend-ecs ./cmd/sockerless-backend-ecs
@@ -447,12 +418,6 @@ build-docker-backend-with-ui: ui-build
 
 build-docker-backend-noui:
 	cd backends/docker && go build -tags noui -o /dev/null ./cmd
-
-build-frontend-with-ui: ui-build
-	cd frontends/docker && go build -o sockerless-docker-frontend ./cmd
-
-build-frontend-noui:
-	cd frontends/docker && go build -tags noui -o /dev/null ./cmd
 
 build-sim-aws-noui:
 	cd simulators/aws && GOWORK=off go build -tags noui -o /dev/null .
@@ -499,9 +464,6 @@ build-sim-gcp-with-ui: ui-build
 build-sim-azure-with-ui: ui-build
 	cd simulators/azure && GOWORK=off go build -o simulator-azure .
 
-ui-e2e-backend-memory: build-memory-with-ui
-	cd ui/packages/backend-memory && BACKEND_BIN="$(CURDIR)/backends/memory/sockerless-backend-memory" bunx playwright test
-
 ui-e2e-backend-ecs: build-ecs-with-ui
 	cd ui/packages/backend-ecs && SOCKERLESS_ENDPOINT_URL=http://localhost:1 BACKEND_BIN="$(CURDIR)/backends/ecs/sockerless-backend-ecs" bunx playwright test
 
@@ -532,7 +494,4 @@ ui-e2e-sim-gcp: build-sim-gcp-with-ui
 ui-e2e-sim-azure: build-sim-azure-with-ui
 	cd ui/packages/simulator-azure && SERVER_BIN="$(CURDIR)/simulators/azure/simulator-azure" bunx playwright test
 
-ui-e2e-frontend: build-frontend-with-ui
-	cd ui/packages/frontend-docker && SERVER_BIN="$(CURDIR)/frontends/docker/sockerless-docker-frontend" bunx playwright test
-
-ui-e2e-all: ui-e2e-admin ui-e2e-bleephub ui-e2e-gitlabhub ui-e2e-backend-memory ui-e2e-backend-ecs ui-e2e-backend-lambda ui-e2e-backend-cloudrun ui-e2e-backend-gcf ui-e2e-backend-aca ui-e2e-backend-azf ui-e2e-backend-docker ui-e2e-sim-aws ui-e2e-sim-gcp ui-e2e-sim-azure ui-e2e-frontend
+ui-e2e-all: ui-e2e-admin ui-e2e-bleephub ui-e2e-gitlabhub ui-e2e-backend-ecs ui-e2e-backend-lambda ui-e2e-backend-cloudrun ui-e2e-backend-gcf ui-e2e-backend-aca ui-e2e-backend-azf ui-e2e-backend-docker ui-e2e-sim-aws ui-e2e-sim-gcp ui-e2e-sim-azure

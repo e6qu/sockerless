@@ -18,6 +18,7 @@ func newVolTestServer() *BaseServer {
 		Mux:    http.NewServeMux(),
 	}
 	s.InitDrivers()
+	s.self = s
 	return s
 }
 

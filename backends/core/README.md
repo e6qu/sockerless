@@ -39,8 +39,9 @@ s := core.NewBaseServer(store, descriptor, overrides, logger)
 
 - `store` — shared in-memory state
 - `descriptor` — static backend metadata (name, driver, OS, CPU, memory)
-- `overrides` — `RouteOverrides{}` map of handler functions to replace defaults
 - `logger` — zerolog instance
+
+Cloud backends override behavior via `SetSelf(s)` which enables virtual dispatch through the `api.Backend` interface.
 
 ### Store
 

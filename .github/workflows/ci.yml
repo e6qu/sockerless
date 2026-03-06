@@ -30,8 +30,6 @@ jobs:
         include:
           - suite: core
             cmd: cd backends/core && go test -v -timeout 2m ./...
-          - suite: frontend
-            cmd: cd frontends/docker && go test -tags noui -v -timeout 1m ./...
           - suite: bleephub
             cmd: cd bleephub && go test -tags noui -v -timeout 3m ./...
           - suite: gitlabhub
@@ -103,10 +101,8 @@ jobs:
           build() { echo "=== $1 ===" && (cd "$1" && go build -o /dev/null "$2"); }
           noui() { echo "=== $1 (noui) ===" && (cd "$1" && go build -tags noui -o /dev/null "$2"); }
           noui bleephub ./cmd
-          noui frontends/docker ./cmd
           build cmd/sockerless .
           build agent ./cmd/sockerless-agent
-          noui backends/memory ./cmd
           noui backends/ecs ./cmd/sockerless-backend-ecs
           noui backends/lambda ./cmd/sockerless-backend-lambda
           noui backends/cloudrun ./cmd/sockerless-backend-cloudrun
@@ -130,10 +126,8 @@ jobs:
           build() { echo "=== $1 ===" && (cd "$1" && go build -o /dev/null "$2"); }
           noui() { echo "=== $1 (noui) ===" && (cd "$1" && go build -tags noui -o /dev/null "$2"); }
           noui bleephub ./cmd
-          noui frontends/docker ./cmd
           build cmd/sockerless .
           build agent ./cmd/sockerless-agent
-          noui backends/memory ./cmd
           noui backends/ecs ./cmd/sockerless-backend-ecs
           noui backends/lambda ./cmd/sockerless-backend-lambda
           noui backends/cloudrun ./cmd/sockerless-backend-cloudrun
@@ -153,8 +147,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - backend: memory
-            dockerfile: smoke-tests/act/Dockerfile
           - backend: ecs
             dockerfile: smoke-tests/act/Dockerfile.ecs
           - backend: cloudrun

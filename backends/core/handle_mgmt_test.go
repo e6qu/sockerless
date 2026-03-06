@@ -21,7 +21,7 @@ func newMgmtTestServer() *BaseServer {
 		Name:       "memory",
 		InstanceID: "test-instance-1",
 	}
-	return &BaseServer{
+	s := &BaseServer{
 		Store:     store,
 		Logger:    zerolog.Nop(),
 		Desc:      desc,
@@ -29,6 +29,8 @@ func newMgmtTestServer() *BaseServer {
 		Registry:  NewResourceRegistry(""),
 		StartedAt: time.Now().Add(-10 * time.Second),
 	}
+	s.self = s
+	return s
 }
 
 func TestHandleHealthz(t *testing.T) {

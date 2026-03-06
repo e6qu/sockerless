@@ -3,6 +3,7 @@ package core
 import (
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strconv"
@@ -161,180 +162,112 @@ func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request)
 
 func (s *BaseServer) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
-	id, ok := s.Store.ResolveContainerID(ref)
-	if !ok {
-		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
-		return
-	}
 
-	c, _ := s.Store.Containers.Get(id)
-
-	// Check if container has logs capability
-	if c.State.Status == "created" {
-		WriteError(w, &api.InvalidParameterError{
-			Message: "can not get logs from container which is dead or marked for removal",
-		})
-		return
-	}
-
-	timestamps := r.URL.Query().Get("timestamps") == "1" || r.URL.Query().Get("timestamps") == "true"
-	follow := r.URL.Query().Get("follow") == "1" || r.URL.Query().Get("follow") == "true"
-	// BUG-390: Read details query parameter
-	details := r.URL.Query().Get("details") == "1" || r.URL.Query().Get("details") == "true"
-
-	// BUG-422: Parse stdout/stderr params — default both to true when neither specified
+	// BUG-422: Parse stdout/stderr params
 	stdoutParam := r.URL.Query().Get("stdout")
 	stderrParam := r.URL.Query().Get("stderr")
 	wantStdout := stdoutParam != "0" && stdoutParam != "false" &&
 		((stderrParam != "1" && stderrParam != "true") || stdoutParam != "")
 
-	// Read from container process or synthetic log buffer via driver chain
-	logBytes := s.Drivers.Stream.LogBytes(id)
-
-	// All simulator output is stdout — if stdout suppressed, return empty
-	if !wantStdout {
-		logBytes = nil
+	opts := api.ContainerLogsOptions{
+		ShowStdout: wantStdout,
+		ShowStderr: stderrParam == "1" || stderrParam == "true",
+		Follow:     r.URL.Query().Get("follow") == "1" || r.URL.Query().Get("follow") == "true",
+		Timestamps: r.URL.Query().Get("timestamps") == "1" || r.URL.Query().Get("timestamps") == "true",
+		Tail:       r.URL.Query().Get("tail"),
+		Since:      r.URL.Query().Get("since"),
+		Until:      r.URL.Query().Get("until"),
 	}
 
-	// Split into lines and stamp each with the container's start time for filtering (BUG-276)
-	var lines []string
-	if len(logBytes) > 0 {
-		ts := c.State.StartedAt
-		if ts == "" || ts == "0001-01-01T00:00:00Z" {
-			ts = time.Now().UTC().Format(time.RFC3339Nano)
-		}
-		raw := strings.Split(strings.TrimRight(string(logBytes), "\n"), "\n")
-		for _, line := range raw {
-			if line == "" {
-				continue // BUG-277: skip phantom empty lines
-			}
-			lines = append(lines, ts+" "+line)
-		}
+	rc, err := s.self.ContainerLogs(ref, opts)
+	if err != nil {
+		WriteError(w, err)
+		return
 	}
+	defer rc.Close()
 
-	// Apply since/until filters
-	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
-		if since, err := ParseDockerTimestamp(sinceStr); err == nil {
-			lines = FilterLogSince(lines, since)
-		}
-	}
-	if untilStr := r.URL.Query().Get("until"); untilStr != "" {
-		if until, err := ParseDockerTimestamp(untilStr); err == nil {
-			lines = FilterLogUntil(lines, until)
-		}
-	}
+	// Determine framing from container TTY
+	c, _ := s.Store.ResolveContainer(ref)
+	tty := c.Config.Tty
 
-	// Apply tail filter
-	if tailStr := r.URL.Query().Get("tail"); tailStr != "" && tailStr != "all" {
-		if n, err := strconv.Atoi(tailStr); err == nil {
-			lines = FilterLogTail(lines, n)
-		}
-	}
-
-	// Strip timestamps if not requested
-	if !timestamps {
-		for i, line := range lines {
-			if idx := strings.IndexByte(line, ' '); idx >= 0 {
-				lines[i] = line[idx+1:]
-			}
-		}
-	}
-
-	// BUG-390: Prepend container labels when details=true
+	// BUG-390: Read details query parameter and prepend labels
+	details := r.URL.Query().Get("details") == "1" || r.URL.Query().Get("details") == "true"
+	var detailPrefix string
 	if details && len(c.Config.Labels) > 0 {
 		var labelParts []string
 		for k, v := range c.Config.Labels {
 			labelParts = append(labelParts, k+"="+v)
 		}
-		prefix := strings.Join(labelParts, ",") + " "
-		for i, line := range lines {
-			lines[i] = prefix + line
-		}
+		detailPrefix = strings.Join(labelParts, ",") + " "
 	}
 
-	// Reassemble into bytes
-	var filtered []byte
-	for _, line := range lines {
-		filtered = append(filtered, []byte(line+"\n")...)
-	}
-
-	// Write stream — raw for TTY containers, multiplexed otherwise
-	tty := c.Config.Tty
 	if tty {
 		w.Header().Set("Content-Type", "application/vnd.docker.raw-stream")
 	} else {
 		w.Header().Set("Content-Type", "application/vnd.docker.multiplexed-stream")
 	}
 	w.WriteHeader(http.StatusOK)
-	if len(filtered) > 0 {
-		if tty {
-			w.Write(filtered)
-		} else {
-			writeMuxChunk(w, 1, filtered)
-		}
-	}
 
-	// Follow: stream live output
-	if follow {
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
-
-		// BUG-278: parse until for follow mode
-		var followUntil time.Time
-		if untilStr := r.URL.Query().Get("until"); untilStr != "" {
-			if t, err := ParseDockerTimestamp(untilStr); err == nil {
-				followUntil = t
+	buf := make([]byte, 32*1024)
+	for {
+		n, readErr := rc.Read(buf)
+		if n > 0 {
+			data := buf[:n]
+			if detailPrefix != "" {
+				data = prependDetailsToLines(data, detailPrefix)
+			}
+			if tty {
+				w.Write(data)
+			} else {
+				writeMuxChunk(w, 1, data)
+			}
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
 			}
 		}
-
-		subID := GenerateID()[:16]
-		ch := s.Drivers.Stream.LogSubscribe(id, subID)
-		if ch != nil {
-			defer s.Drivers.Stream.LogUnsubscribe(id, subID)
-			for {
-				// BUG-278: stop following if until time has passed
-				if !followUntil.IsZero() && time.Now().After(followUntil) {
-					return
-				}
-				select {
-				case chunk, ok := <-ch:
-					if !ok {
-						return
-					}
-					if len(chunk) > 0 {
-						if tty {
-							w.Write(chunk)
-						} else {
-							writeMuxChunk(w, 1, chunk)
-						}
-						if f, ok := w.(http.Flusher); ok {
-							f.Flush()
-						}
-					}
-				case <-r.Context().Done():
-					return
-				}
-			}
+		if readErr != nil {
+			break
 		}
 	}
 }
 
+// prependDetailsToLines prepends a prefix to each line in data.
+func prependDetailsToLines(data []byte, prefix string) []byte {
+	s := string(data)
+	lines := strings.Split(s, "\n")
+	var result []string
+	for i, line := range lines {
+		if i == len(lines)-1 && line == "" {
+			result = append(result, "")
+			continue
+		}
+		result = append(result, prefix+line)
+	}
+	return []byte(strings.Join(result, "\n"))
+}
+
 // handleContainerAttach establishes a bidirectional stream to the container.
-// Dispatches through the StreamDriver chain (agent → WASM → synthetic).
 func (s *BaseServer) handleContainerAttach(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
-	id, ok := s.Store.ResolveContainerID(ref)
-	if !ok {
-		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
-		return
+
+	opts := api.ContainerAttachOptions{
+		Stream: r.URL.Query().Get("stream") != "false",
+		Stdin:  r.URL.Query().Get("stdin") == "1" || r.URL.Query().Get("stdin") == "true",
+		Stdout: r.URL.Query().Get("stdout") != "0" && r.URL.Query().Get("stdout") != "false",
+		Stderr: r.URL.Query().Get("stderr") == "1" || r.URL.Query().Get("stderr") == "true",
+		Logs:   r.URL.Query().Get("logs") == "1" || r.URL.Query().Get("logs") == "true",
 	}
 
-	c, ok := s.Store.Containers.Get(id)
-	if !ok {
-		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
+	rwc, err := s.self.ContainerAttach(ref, opts)
+	if err != nil {
+		WriteError(w, err)
 		return
 	}
+	defer rwc.Close()
+
+	// Determine framing from container TTY
+	c, _ := s.Store.ResolveContainer(ref)
+	tty := c.Config.Tty
 
 	// Hijack the connection for bidirectional streaming
 	hj, ok := w.(http.Hijacker)
@@ -343,20 +276,18 @@ func (s *BaseServer) handleContainerAttach(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	conn, buf, err := hj.Hijack()
-	if err != nil {
-		WriteError(w, &api.ServerError{Message: err.Error()})
+	conn, buf, herr := hj.Hijack()
+	if herr != nil {
+		WriteError(w, &api.ServerError{Message: herr.Error()})
 		return
 	}
 	defer conn.Close()
 
-	tty := c.Config.Tty
 	contentType := "application/vnd.docker.multiplexed-stream"
 	if tty {
 		contentType = "application/vnd.docker.raw-stream"
 	}
 
-	// Write upgrade response
 	buf.WriteString("HTTP/1.1 101 UPGRADED\r\n")
 	buf.WriteString("Content-Type: " + contentType + "\r\n")
 	buf.WriteString("Connection: Upgrade\r\n")
@@ -364,7 +295,16 @@ func (s *BaseServer) handleContainerAttach(w http.ResponseWriter, r *http.Reques
 	buf.WriteString("\r\n")
 	buf.Flush()
 
-	_ = s.Drivers.Stream.Attach(r.Context(), id, tty, conn)
+	// Copy data between the attached stream and the hijacked connection
+	done := make(chan struct{})
+	go func() {
+		io.Copy(conn, rwc)
+		close(done)
+	}()
+	go func() {
+		io.Copy(rwc, conn)
+	}()
+	<-done
 }
 
 // buildPortList converts PortBindings and ExposedPorts into a list of Port entries

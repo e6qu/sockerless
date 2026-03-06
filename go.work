@@ -11,11 +11,10 @@ use (
 	./backends/docker
 	./backends/ecs
 	./backends/lambda
-	./backends/memory
+
 	./bleephub
 	./cmd/sockerless
 	./cmd/sockerless-admin
-	./frontends/docker
 	./gitlabhub
 	./sandbox
 	./tests

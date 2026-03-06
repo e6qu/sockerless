@@ -2,7 +2,6 @@ package core
 
 import (
 	"encoding/binary"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -117,34 +116,21 @@ func (s *BaseServer) handleExecInspect(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, exec)
 }
 
-// --- Default exec start (dispatches through ExecDriver chain) ---
+// --- Default exec start (delegates to s.self for virtual dispatch) ---
 
 func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+
+	var req api.ExecStartRequest
+	_ = ReadJSON(r, &req)
+
+	// Determine TTY before starting (for HTTP upgrade framing)
 	exec, ok := s.Store.Execs.Get(id)
 	if !ok {
 		WriteError(w, &api.NotFoundError{Resource: "exec instance", ID: id})
 		return
 	}
-
-	var req api.ExecStartRequest
-	_ = ReadJSON(r, &req)
-
-	// Look up container BEFORE marking exec as running
-	c, ok := s.Store.Containers.Get(exec.ContainerID)
-	if !ok {
-		WriteError(w, &api.ConflictError{
-			Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID),
-		})
-		return
-	}
-
-	// Mark as running
-	execPid := s.Store.NextPID() // BUG-550
-	s.Store.Execs.Update(id, func(e *api.ExecInstance) {
-		e.Running = true
-		e.Pid = execPid
-	})
+	tty := exec.ProcessConfig.Tty || req.Tty
 
 	// Hijack the connection
 	hj, ok := w.(http.Hijacker)
@@ -155,16 +141,9 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 
 	conn, buf, err := hj.Hijack()
 	if err != nil {
-		s.Store.Execs.Update(id, func(e *api.ExecInstance) {
-			e.Running = false
-			e.Pid = 0
-			e.CanRemove = true
-		})
 		return
 	}
 	defer conn.Close()
-
-	tty := exec.ProcessConfig.Tty || req.Tty
 
 	contentType := "application/vnd.docker.multiplexed-stream"
 	if tty {
@@ -178,32 +157,24 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	buf.WriteString("\r\n")
 	buf.Flush()
 
-	// Build command and env
-	cmd := append([]string{exec.ProcessConfig.Entrypoint}, exec.ProcessConfig.Arguments...)
-	env := mergeEnv(c.Config.Env, exec.ProcessConfig.Env)
-	workDir := exec.ProcessConfig.WorkingDir
-	if workDir == "" {
-		workDir = c.Config.WorkingDir
+	rwc, err := s.self.ExecStart(id, req)
+	if err != nil {
+		// Already hijacked — write error inline
+		conn.Write([]byte(err.Error()))
+		return
 	}
+	defer rwc.Close()
 
-	// Dispatch through driver chain (agent → WASM → synthetic)
-	exitCode := s.Drivers.Exec.Exec(r.Context(), exec.ContainerID, id, cmd, env, workDir, tty, conn)
-
-	// Mark exec as finished
-	s.Store.Execs.Update(id, func(e *api.ExecInstance) {
-		e.Running = false
-		e.Pid = 0
-		e.ExitCode = exitCode
-		e.CanRemove = true
-	})
-
-	// For synthetic exec (no agent, no real process), schedule container
-	// auto-stop after a grace period. CI runners call Wait expecting the
-	// container to exit after exec work is done. Real process containers
-	// are driven by their main process exit, so they don't need this.
-	if c.AgentAddress == "" && s.Drivers.ProcessLifecycle.IsSynthetic(exec.ContainerID) {
-		go s.scheduleExecAutoStop(exec.ContainerID)
-	}
+	// Copy data between the exec stream and the hijacked connection
+	done := make(chan struct{})
+	go func() {
+		io.Copy(conn, rwc)
+		close(done)
+	}()
+	go func() {
+		io.Copy(rwc, conn)
+	}()
+	<-done
 }
 
 // scheduleExecAutoStop stops a synthetic container after a grace period,

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sockerless/api"
 )
 
 // CloudLogParams holds parsed Docker log query parameters for cloud backends.
@@ -20,6 +22,34 @@ type CloudLogParams struct {
 	WantStdout bool
 	Details    bool
 	Labels     map[string]string
+}
+
+// CloudLogParamsFromOpts creates CloudLogParams from typed ContainerLogsOptions.
+// Used by cloud backends implementing api.Backend methods directly.
+func CloudLogParamsFromOpts(opts api.ContainerLogsOptions, labels map[string]string) CloudLogParams {
+	p := CloudLogParams{
+		Follow:     opts.Follow,
+		Timestamps: opts.Timestamps,
+		Tail:       -1,
+		WantStdout: opts.ShowStdout,
+		Labels:     labels,
+	}
+	if opts.Tail != "" && opts.Tail != "all" {
+		if n, err := strconv.Atoi(opts.Tail); err == nil && n >= 0 {
+			p.Tail = n
+		}
+	}
+	if opts.Since != "" {
+		if t, err := ParseDockerTimestamp(opts.Since); err == nil {
+			p.Since = t
+		}
+	}
+	if opts.Until != "" {
+		if t, err := ParseDockerTimestamp(opts.Until); err == nil {
+			p.Until = t
+		}
+	}
+	return p
 }
 
 // ParseCloudLogParams parses Docker log query parameters from an HTTP request.

@@ -1,9 +1,9 @@
 package core
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -211,25 +211,6 @@ func substituteArgs(s string, args map[string]string) string {
 		s = strings.ReplaceAll(s, "$"+k, v)
 	}
 	return s
-}
-
-// parseEnv parses ENV key=value or ENV key value form.
-// BUG-526: Also handles multi-value form: ENV key1=val1 key2=val2.
-func parseEnv(rest string) (string, string) {
-	// Try key=value form first
-	if eqIdx := strings.Index(rest, "="); eqIdx >= 0 {
-		key := rest[:eqIdx]
-		value := rest[eqIdx+1:]
-		// Strip surrounding quotes
-		value = strings.Trim(value, "\"'")
-		return key, value
-	}
-	// Space-separated form: ENV key value with spaces
-	parts := strings.SplitN(rest, " ", 2)
-	if len(parts) == 2 {
-		return parts[0], parts[1]
-	}
-	return parts[0], ""
 }
 
 // parseEnvMulti parses ENV instructions that may contain multiple key=value pairs.
@@ -454,186 +435,41 @@ func prepareBuildContext(contextDir string, copies []copyInstruction) (string, e
 
 // handleImageBuild handles POST /internal/v1/images/build.
 func (s *BaseServer) handleImageBuild(w http.ResponseWriter, r *http.Request) {
-	tag := r.URL.Query().Get("t")
-	dockerfileName := r.URL.Query().Get("dockerfile")
-	if dockerfileName == "" {
-		dockerfileName = "Dockerfile"
+	opts := api.ImageBuildOptions{
+		Dockerfile: r.URL.Query().Get("dockerfile"),
+		NoCache:    r.URL.Query().Get("nocache") == "1" || r.URL.Query().Get("nocache") == "true",
+		Remove:     r.URL.Query().Get("rm") != "0" && r.URL.Query().Get("rm") != "false",
+		Quiet:      r.URL.Query().Get("q") == "1" || r.URL.Query().Get("q") == "true",
 	}
-
-	// Parse buildargs from query param (JSON string)
-	var buildArgs map[string]string
+	if t := r.URL.Query().Get("t"); t != "" {
+		opts.Tags = []string{t}
+	}
 	if ba := r.URL.Query().Get("buildargs"); ba != "" {
-		if err := json.Unmarshal([]byte(ba), &buildArgs); err != nil {
-			WriteError(w, &api.InvalidParameterError{Message: "invalid buildargs JSON: " + err.Error()})
+		var args map[string]*string
+		if err := json.Unmarshal([]byte(ba), &args); err != nil {
+			WriteError(w, &api.InvalidParameterError{Message: "invalid buildargs: " + err.Error()})
 			return
 		}
+		opts.BuildArgs = args
 	}
-
-	// Extract tar body to temp dir
-	contextDir, err := os.MkdirTemp("", "docker-build-")
-	if err != nil {
-		WriteError(w, &api.ServerError{Message: "failed to create temp dir: " + err.Error()})
-		return
-	}
-	defer os.RemoveAll(contextDir)
-
-	if err := extractTar(r.Body, contextDir); err != nil {
-		WriteError(w, &api.ServerError{Message: "failed to extract build context: " + err.Error()})
-		return
-	}
-
-	// Read the Dockerfile
-	dfContent, err := os.ReadFile(filepath.Join(contextDir, dockerfileName))
-	if err != nil {
-		WriteError(w, &api.ServerError{Message: "failed to read Dockerfile: " + err.Error()})
-		return
-	}
-
-	parsed, err := parseDockerfile(string(dfContent), buildArgs)
-	if err != nil {
-		WriteError(w, &api.ServerError{Message: "failed to parse Dockerfile: " + err.Error()})
-		return
-	}
-
-	// Resolve base image config
-	baseConfig := api.ContainerConfig{
-		Env: []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
-	}
-	if baseImg, ok := s.Store.ResolveImage(parsed.from); ok {
-		baseConfig = baseImg.Config
-	}
-
-	// Merge: base image config + parsed Dockerfile overrides
-	finalConfig := baseConfig
-	if len(parsed.config.Env) > 0 {
-		finalConfig.Env = append(finalConfig.Env, parsed.config.Env...)
-	}
-	if len(parsed.config.Cmd) > 0 {
-		finalConfig.Cmd = parsed.config.Cmd
-	}
-	if len(parsed.config.Entrypoint) > 0 {
-		finalConfig.Entrypoint = parsed.config.Entrypoint
-	}
-	if parsed.config.WorkingDir != "" {
-		finalConfig.WorkingDir = parsed.config.WorkingDir
-	}
-	if parsed.config.User != "" {
-		finalConfig.User = parsed.config.User
-	}
-	if finalConfig.Labels == nil {
-		finalConfig.Labels = make(map[string]string)
-	}
-	for k, v := range parsed.config.Labels {
-		finalConfig.Labels[k] = v
-	}
-	if finalConfig.ExposedPorts == nil {
-		finalConfig.ExposedPorts = make(map[string]struct{})
-	}
-	for k, v := range parsed.config.ExposedPorts {
-		finalConfig.ExposedPorts[k] = v
-	}
-	if parsed.config.Healthcheck != nil {
-		finalConfig.Healthcheck = parsed.config.Healthcheck
-	}
-	if len(parsed.config.Shell) > 0 {
-		finalConfig.Shell = parsed.config.Shell
-	}
-	if parsed.config.StopSignal != "" {
-		finalConfig.StopSignal = parsed.config.StopSignal
-	}
-	if len(parsed.config.Volumes) > 0 {
-		if finalConfig.Volumes == nil {
-			finalConfig.Volumes = make(map[string]struct{})
-		}
-		for k, v := range parsed.config.Volumes {
-			finalConfig.Volumes[k] = v
+	if labelsJSON := r.URL.Query().Get("labels"); labelsJSON != "" {
+		var labels map[string]string
+		if json.Unmarshal([]byte(labelsJSON), &labels) == nil {
+			opts.Labels = labels
 		}
 	}
 
-	// Generate image ID
-	hash := sha256.Sum256([]byte(tag + time.Now().String()))
-	imageID := fmt.Sprintf("sha256:%x", hash)
-	shortID := fmt.Sprintf("%x", hash)[:12]
-
-	ref := tag
-	if ref == "" {
-		ref = imageID
+	rc, err := s.self.ImageBuild(opts, r.Body)
+	if err != nil {
+		WriteError(w, err)
+		return
 	}
-	if !strings.Contains(ref, ":") {
-		ref += ":latest"
-	}
+	defer rc.Close()
 
-	nowStr := time.Now().UTC().Format(time.RFC3339Nano)
-	img := api.Image{
-		ID:           imageID,
-		RepoTags:     []string{ref},
-		Created:      nowStr,
-		Size:         0,
-		Architecture: "amd64",
-		Os:           "linux",
-		Config:       finalConfig,
-		RootFS: api.RootFS{Type: "layers", Layers: []string{"sha256:" + GenerateID()}},
-		GraphDriver: api.GraphDriverData{ // BUG-455
-			Name: "overlay2",
-			Data: map[string]string{
-				"MergedDir": "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/merged",
-				"UpperDir":  "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/diff",
-				"WorkDir":   "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/work",
-			},
-		},
-		Metadata: api.ImageMetadata{LastTagTime: nowStr},
-	}
-	StoreImageWithAliases(s.Store, ref, img)
-
-	// Process COPY instructions: stage files for container injection
-	if len(parsed.copies) > 0 {
-		stagingDir, err := prepareBuildContext(contextDir, parsed.copies)
-		if err == nil && stagingDir != "" {
-			s.Store.BuildContexts.Store(imageID, stagingDir)
-		}
-	}
-
-	// Stream Docker build-format JSON progress
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	enc := json.NewEncoder(w)
-	flusher, _ := w.(http.Flusher)
-
-	flush := func() {
-		if flusher != nil {
-			flusher.Flush()
-		}
-	}
-
-	// Reconstruct steps from Dockerfile for output
-	dfLines := strings.Split(strings.ReplaceAll(string(dfContent), "\\\n", " "), "\n")
-	step := 0
-	totalSteps := 0
-	for _, line := range dfLines {
-		line = strings.TrimSpace(line)
-		if line != "" && !strings.HasPrefix(line, "#") {
-			totalSteps++
-		}
-	}
-
-	for _, line := range dfLines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		step++
-		_ = enc.Encode(map[string]any{"stream": fmt.Sprintf("Step %d/%d : %s\n", step, totalSteps, line)})
-		flush()
-		_ = enc.Encode(map[string]any{"stream": fmt.Sprintf(" ---> %s\n", shortID)})
-		flush()
-	}
-
-	_ = enc.Encode(map[string]any{"aux": map[string]string{"ID": imageID}})
-	flush()
-	_ = enc.Encode(map[string]any{"stream": fmt.Sprintf("Successfully built %s\n", shortID)})
-	flush()
-	if tag != "" {
-		_ = enc.Encode(map[string]any{"stream": fmt.Sprintf("Successfully tagged %s\n", ref)})
-		flush()
+	io.Copy(w, rc)
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
 	}
 }

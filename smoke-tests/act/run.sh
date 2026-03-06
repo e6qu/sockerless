@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # Act smoke test runner
-# Starts Sockerless (memory backend + docker frontend) and runs act against it.
+# Starts Sockerless (cloud backend + simulator + docker frontend) and runs act against it.
 
-BACKEND_TYPE="${BACKEND:-memory}"
+BACKEND_TYPE="${BACKEND:-ecs}"
 BACKEND_ADDR="127.0.0.1:9100"
 FRONTEND_ADDR="127.0.0.1:2375"
 
@@ -71,9 +71,6 @@ case "$BACKEND_TYPE" in
         export SOCKERLESS_ACA_SUBSCRIPTION_ID="00000000-0000-0000-0000-000000000001"
         export SOCKERLESS_ACA_RESOURCE_GROUP="sim-rg"
         BACKEND_BIN="/usr/local/bin/sockerless-backend-aca"
-        ;;
-    memory)
-        BACKEND_BIN="/usr/local/bin/sockerless-backend-memory"
         ;;
     *)
         echo "ERROR: Unknown backend type: $BACKEND_TYPE"

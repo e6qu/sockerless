@@ -37,20 +37,8 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		Architecture:    "amd64",
 		NCPU:            2,
 		MemTotal:        4294967296,
-	}, core.RouteOverrides{
-		ContainerCreate:  s.handleContainerCreate,
-		ContainerStart:   s.handleContainerStart,
-		ContainerStop:    s.handleContainerStop,
-		ContainerKill:    s.handleContainerKill,
-		ContainerRestart: s.handleContainerRestart,
-		ContainerRemove:  s.handleContainerRemove,
-		ContainerLogs:    s.handleContainerLogs,
-		ContainerPrune:   s.handleContainerPrune,
-		ContainerPause:   s.handleContainerPause,
-		ContainerUnpause: s.handleContainerUnpause,
-		ImagePull:      s.handleImagePull,
-		ImageLoad:      s.handleImageLoad,
 	}, logger)
+	s.BaseServer.SetSelf(s)
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

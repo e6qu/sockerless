@@ -2,4 +2,6 @@
 
 package docker
 
-func registerUI(_ *Server) {}
+import core "github.com/sockerless/backend-core"
+
+func registerUI(_ *core.BaseServer) {}

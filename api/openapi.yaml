@@ -1,0 +1,3204 @@
+openapi: "3.0.3"
+info:
+  title: Sockerless Docker-Compatible API
+  description: |
+    Docker Engine API v1.44 subset implemented by Sockerless.
+    This spec is the single source of truth for Go types and Backend interface generation.
+  version: "1.44"
+  license:
+    name: Apache-2.0
+
+# Custom extensions used by the code generator:
+#   x-sockerless-go-method:       Backend interface method name
+#   x-sockerless-go-args:         Path/query param → method arg mapping
+#   x-sockerless-go-returns:      Return type override (e.g. io.ReadCloser)
+#   x-sockerless-streaming:       Response is a stream (true/false)
+#   x-sockerless-upgrade:         HTTP upgrade endpoint (attach, exec start)
+#   x-sockerless-state-transition: Container state machine edge
+#   x-sockerless-events:          Events emitted on success
+#   x-sockerless-preconditions:   Required state before operation
+#   x-sockerless-go-type:         Go type override for a schema field
+#   x-sockerless-go-embeds:       Embedded struct types
+#   x-sockerless-go-pointer:      Field should be a pointer type
+#   x-sockerless-json-tag:        JSON tag override (when Go name differs from JSON)
+#   x-sockerless-cloud-operations: Cloud API mapping per backend (documentation)
+#   x-sockerless-extensions:      Fields that are Sockerless-specific (not in Docker spec)
+
+paths:
+  # ── System ───────────────────────────────────────────────────────────
+
+  /info:
+    get:
+      operationId: SystemInfo
+      x-sockerless-go-method: Info
+      summary: Get system information
+      responses:
+        "200":
+          description: System info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackendInfo"
+
+  /events:
+    get:
+      operationId: SystemEvents
+      x-sockerless-go-method: SystemEvents
+      x-sockerless-streaming: true
+      summary: Monitor events
+      parameters:
+        - name: since
+          in: query
+          schema: { type: string }
+        - name: until
+          in: query
+          schema: { type: string }
+        - name: filters
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Event stream
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+
+  /system/df:
+    get:
+      operationId: SystemDf
+      x-sockerless-go-method: SystemDf
+      summary: Get data usage information
+      responses:
+        "200":
+          description: Disk usage
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiskUsageResponse"
+
+  # ── Containers ───────────────────────────────────────────────────────
+
+  /containers/create:
+    post:
+      operationId: ContainerCreate
+      x-sockerless-go-method: ContainerCreate
+      x-sockerless-state-transition:
+        from: []
+        to: created
+      x-sockerless-preconditions: []
+      x-sockerless-events:
+        - { type: container, action: create }
+      x-sockerless-cloud-operations:
+        ecs: RegisterTaskDefinition
+        lambda: CreateFunction
+        cloudrun: services.create
+        gcf: functions.create
+        aca: containerApps.createOrUpdate
+        azf: sites.createOrUpdate
+      summary: Create a container
+      parameters:
+        - name: name
+          in: query
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContainerCreateRequest"
+      responses:
+        "201":
+          description: Container created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerCreateResponse"
+
+  /containers/json:
+    get:
+      operationId: ContainerList
+      x-sockerless-go-method: ContainerList
+      summary: List containers
+      parameters:
+        - name: all
+          in: query
+          schema: { type: boolean }
+        - name: limit
+          in: query
+          schema: { type: integer }
+        - name: filters
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Container list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ContainerSummary"
+
+  /containers/{id}/json:
+    get:
+      operationId: ContainerInspect
+      x-sockerless-go-method: ContainerInspect
+      x-sockerless-go-args: [id]
+      summary: Inspect a container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Container details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Container"
+
+  /containers/{id}/start:
+    post:
+      operationId: ContainerStart
+      x-sockerless-go-method: ContainerStart
+      x-sockerless-go-args: [id]
+      x-sockerless-state-transition:
+        from: [created, exited]
+        to: running
+      x-sockerless-preconditions: [container-exists, state-in(created,exited)]
+      x-sockerless-events:
+        - { type: container, action: start }
+      x-sockerless-cloud-operations:
+        ecs: RunTask
+        lambda: Invoke (async)
+        cloudrun: services.replaceService (traffic 100%)
+        gcf: functions.patch (status ACTIVE)
+        aca: containerApps.start
+        azf: sites.start
+      summary: Start a container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Container started
+
+  /containers/{id}/stop:
+    post:
+      operationId: ContainerStop
+      x-sockerless-go-method: ContainerStop
+      x-sockerless-go-args: [id]
+      x-sockerless-state-transition:
+        from: [running, paused]
+        to: exited
+      x-sockerless-preconditions: [container-exists, state-in(running,paused)]
+      x-sockerless-events:
+        - { type: container, action: die }
+        - { type: container, action: stop }
+      x-sockerless-cloud-operations:
+        ecs: StopTask
+        lambda: (no-op, execution completes)
+        cloudrun: services.replaceService (traffic 0%)
+        gcf: functions.patch (status OFFLINE)
+        aca: containerApps.stop
+        azf: sites.stop
+      summary: Stop a container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: t
+          in: query
+          schema: { type: integer }
+      responses:
+        "204":
+          description: Container stopped
+
+  /containers/{id}/restart:
+    post:
+      operationId: ContainerRestart
+      x-sockerless-go-method: ContainerRestart
+      x-sockerless-go-args: [id]
+      x-sockerless-state-transition:
+        from: [running, paused, exited, created]
+        to: running
+      x-sockerless-preconditions: [container-exists]
+      x-sockerless-events:
+        - { type: container, action: die }
+        - { type: container, action: stop }
+        - { type: container, action: start }
+        - { type: container, action: restart }
+      summary: Restart a container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: t
+          in: query
+          schema: { type: integer }
+      responses:
+        "204":
+          description: Container restarted
+
+  /containers/{id}/kill:
+    post:
+      operationId: ContainerKill
+      x-sockerless-go-method: ContainerKill
+      x-sockerless-go-args: [id]
+      x-sockerless-state-transition:
+        from: [running, paused]
+        to: exited
+      x-sockerless-preconditions: [container-exists, state-in(running,paused)]
+      x-sockerless-events:
+        - { type: container, action: kill }
+        - { type: container, action: die }
+      summary: Kill a container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: signal
+          in: query
+          schema: { type: string }
+      responses:
+        "204":
+          description: Container killed
+
+  /containers/{id}:
+    delete:
+      operationId: ContainerRemove
+      x-sockerless-go-method: ContainerRemove
+      x-sockerless-go-args: [id]
+      x-sockerless-state-transition:
+        from: [created, exited]
+        to: removed
+        force-from: [created, exited, running, paused]
+      x-sockerless-preconditions: [container-exists, state-in(created,exited)]
+      x-sockerless-events:
+        - { type: container, action: destroy }
+      x-sockerless-cloud-operations:
+        ecs: DeregisterTaskDefinition + StopTask
+        lambda: DeleteFunction
+        cloudrun: services.delete
+        gcf: functions.delete
+        aca: containerApps.delete
+        azf: sites.delete
+      summary: Remove a container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: force
+          in: query
+          schema: { type: boolean }
+      responses:
+        "204":
+          description: Container removed
+
+  /containers/{id}/logs:
+    get:
+      operationId: ContainerLogs
+      x-sockerless-go-method: ContainerLogs
+      x-sockerless-go-args: [id]
+      x-sockerless-streaming: true
+      x-sockerless-go-returns: io.ReadCloser
+      summary: Get container logs
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: stdout
+          in: query
+          schema: { type: boolean }
+        - name: stderr
+          in: query
+          schema: { type: boolean }
+        - name: follow
+          in: query
+          schema: { type: boolean }
+        - name: timestamps
+          in: query
+          schema: { type: boolean }
+        - name: tail
+          in: query
+          schema: { type: string }
+        - name: since
+          in: query
+          schema: { type: string }
+        - name: until
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Log stream
+
+  /containers/{id}/wait:
+    post:
+      operationId: ContainerWait
+      x-sockerless-go-method: ContainerWait
+      x-sockerless-go-args: [id]
+      summary: Wait for a container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: condition
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Wait response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerWaitResponse"
+
+  /containers/{id}/attach:
+    post:
+      operationId: ContainerAttach
+      x-sockerless-go-method: ContainerAttach
+      x-sockerless-go-args: [id]
+      x-sockerless-upgrade: true
+      x-sockerless-go-returns: io.ReadWriteCloser
+      summary: Attach to a container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: stream
+          in: query
+          schema: { type: boolean }
+        - name: stdin
+          in: query
+          schema: { type: boolean }
+        - name: stdout
+          in: query
+          schema: { type: boolean }
+        - name: stderr
+          in: query
+          schema: { type: boolean }
+        - name: detachKeys
+          in: query
+          schema: { type: string }
+        - name: logs
+          in: query
+          schema: { type: boolean }
+      responses:
+        "101":
+          description: Upgraded to TCP
+
+  /containers/{id}/resize:
+    post:
+      operationId: ContainerResize
+      x-sockerless-go-method: ContainerResize
+      x-sockerless-go-args: [id]
+      summary: Resize a container TTY
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: h
+          in: query
+          schema: { type: integer }
+        - name: w
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Resized
+
+  /containers/{id}/top:
+    get:
+      operationId: ContainerTop
+      x-sockerless-go-method: ContainerTop
+      x-sockerless-go-args: [id]
+      summary: List processes in a container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: ps_args
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Process list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerTopResponse"
+
+  /containers/{id}/stats:
+    get:
+      operationId: ContainerStats
+      x-sockerless-go-method: ContainerStats
+      x-sockerless-go-args: [id]
+      x-sockerless-streaming: true
+      x-sockerless-go-returns: io.ReadCloser
+      summary: Get container stats
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: stream
+          in: query
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Stats stream
+
+  /containers/{id}/rename:
+    post:
+      operationId: ContainerRename
+      x-sockerless-go-method: ContainerRename
+      x-sockerless-go-args: [id]
+      x-sockerless-events:
+        - { type: container, action: rename }
+      summary: Rename a container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: name
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Renamed
+
+  /containers/{id}/pause:
+    post:
+      operationId: ContainerPause
+      x-sockerless-go-method: ContainerPause
+      x-sockerless-go-args: [id]
+      x-sockerless-state-transition:
+        from: [running]
+        to: paused
+      x-sockerless-preconditions: [container-exists, state-in(running)]
+      x-sockerless-events:
+        - { type: container, action: pause }
+      summary: Pause a container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Paused
+
+  /containers/{id}/unpause:
+    post:
+      operationId: ContainerUnpause
+      x-sockerless-go-method: ContainerUnpause
+      x-sockerless-go-args: [id]
+      x-sockerless-state-transition:
+        from: [paused]
+        to: running
+      x-sockerless-preconditions: [container-exists, state-in(paused)]
+      x-sockerless-events:
+        - { type: container, action: unpause }
+      summary: Unpause a container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Unpaused
+
+  /containers/prune:
+    post:
+      operationId: ContainerPrune
+      x-sockerless-go-method: ContainerPrune
+      x-sockerless-events:
+        - { type: container, action: destroy }
+      summary: Delete stopped containers
+      parameters:
+        - name: filters
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Prune response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerPruneResponse"
+
+  /containers/{id}/archive:
+    put:
+      operationId: ContainerPutArchive
+      x-sockerless-go-method: ContainerPutArchive
+      x-sockerless-go-args: [id]
+      summary: Extract an archive of files into a container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: path
+          in: query
+          required: true
+          schema: { type: string }
+        - name: noOverwriteDirNonDir
+          in: query
+          schema: { type: boolean }
+      requestBody:
+        content:
+          application/x-tar:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Archive extracted
+    head:
+      operationId: ContainerStatPath
+      x-sockerless-go-method: ContainerStatPath
+      x-sockerless-go-args: [id]
+      summary: Get info about files in a container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: path
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: File stat
+    get:
+      operationId: ContainerGetArchive
+      x-sockerless-go-method: ContainerGetArchive
+      x-sockerless-go-args: [id]
+      summary: Get an archive of a filesystem resource in a container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: path
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Archive stream
+
+  /containers/{id}/changes:
+    get:
+      operationId: ContainerChanges
+      x-sockerless-go-method: ContainerChanges
+      x-sockerless-go-args: [id]
+      summary: Get changes on a container filesystem
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Filesystem changes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ContainerChangeItem"
+
+  /containers/{id}/export:
+    get:
+      operationId: ContainerExport
+      x-sockerless-go-method: ContainerExport
+      x-sockerless-go-args: [id]
+      x-sockerless-streaming: true
+      x-sockerless-go-returns: io.ReadCloser
+      summary: Export a container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Tarball stream
+
+  /containers/{id}/update:
+    post:
+      operationId: ContainerUpdate
+      x-sockerless-go-method: ContainerUpdate
+      x-sockerless-go-args: [id]
+      x-sockerless-events:
+        - { type: container, action: update }
+      summary: Update a container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContainerUpdateRequest"
+      responses:
+        "200":
+          description: Update response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerUpdateResponse"
+
+  # ── Exec ─────────────────────────────────────────────────────────────
+
+  /containers/{id}/exec:
+    post:
+      operationId: ExecCreate
+      x-sockerless-go-method: ExecCreate
+      x-sockerless-go-args: [id]
+      summary: Create an exec instance
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecCreateRequest"
+      responses:
+        "201":
+          description: Exec created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecCreateResponse"
+
+  /exec/{id}/start:
+    post:
+      operationId: ExecStart
+      x-sockerless-go-method: ExecStart
+      x-sockerless-go-args: [id]
+      x-sockerless-upgrade: true
+      x-sockerless-go-returns: io.ReadWriteCloser
+      summary: Start an exec instance
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecStartRequest"
+      responses:
+        "200":
+          description: Exec output stream
+
+  /exec/{id}/json:
+    get:
+      operationId: ExecInspect
+      x-sockerless-go-method: ExecInspect
+      x-sockerless-go-args: [id]
+      summary: Inspect an exec instance
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Exec details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecInstance"
+
+  /exec/{id}/resize:
+    post:
+      operationId: ExecResize
+      x-sockerless-go-method: ExecResize
+      x-sockerless-go-args: [id]
+      summary: Resize an exec instance TTY
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: h
+          in: query
+          schema: { type: integer }
+        - name: w
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Resized
+
+  # ── Images ───────────────────────────────────────────────────────────
+
+  /images/create:
+    post:
+      operationId: ImagePull
+      x-sockerless-go-method: ImagePull
+      x-sockerless-streaming: true
+      x-sockerless-go-returns: io.ReadCloser
+      summary: Pull or import an image
+      parameters:
+        - name: fromImage
+          in: query
+          schema: { type: string }
+        - name: tag
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Pull progress stream
+
+  /images/json:
+    get:
+      operationId: ImageList
+      x-sockerless-go-method: ImageList
+      summary: List images
+      parameters:
+        - name: all
+          in: query
+          schema: { type: boolean }
+        - name: filters
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Image list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ImageSummary"
+
+  /images/{name}/json:
+    get:
+      operationId: ImageInspect
+      x-sockerless-go-method: ImageInspect
+      x-sockerless-go-args: [name]
+      summary: Inspect an image
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Image details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Image"
+
+  /images/load:
+    post:
+      operationId: ImageLoad
+      x-sockerless-go-method: ImageLoad
+      x-sockerless-streaming: true
+      x-sockerless-go-returns: io.ReadCloser
+      x-sockerless-events:
+        - { type: image, action: load }
+      summary: Load images from a tar archive
+      requestBody:
+        content:
+          application/x-tar:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Load progress stream
+
+  /images/{name}/tag:
+    post:
+      operationId: ImageTag
+      x-sockerless-go-method: ImageTag
+      x-sockerless-go-args: [name]
+      x-sockerless-events:
+        - { type: image, action: tag }
+      summary: Tag an image
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - name: repo
+          in: query
+          schema: { type: string }
+        - name: tag
+          in: query
+          schema: { type: string }
+      responses:
+        "201":
+          description: Tagged
+
+  /images/{name}:
+    delete:
+      operationId: ImageRemove
+      x-sockerless-go-method: ImageRemove
+      x-sockerless-go-args: [name]
+      x-sockerless-events:
+        - { type: image, action: untag }
+        - { type: image, action: delete }
+      summary: Remove an image
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - name: force
+          in: query
+          schema: { type: boolean }
+        - name: noprune
+          in: query
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Deleted image info
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ImageDeleteResponse"
+
+  /images/{name}/history:
+    get:
+      operationId: ImageHistory
+      x-sockerless-go-method: ImageHistory
+      x-sockerless-go-args: [name]
+      summary: Get the history of an image
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Image history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ImageHistoryEntry"
+
+  /images/prune:
+    post:
+      operationId: ImagePrune
+      x-sockerless-go-method: ImagePrune
+      x-sockerless-events:
+        - { type: image, action: untag }
+        - { type: image, action: delete }
+      summary: Delete unused images
+      parameters:
+        - name: filters
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Prune response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImagePruneResponse"
+
+  /build:
+    post:
+      operationId: ImageBuild
+      x-sockerless-go-method: ImageBuild
+      x-sockerless-streaming: true
+      x-sockerless-go-returns: io.ReadCloser
+      summary: Build an image
+      parameters:
+        - name: t
+          in: query
+          schema: { type: string }
+        - name: dockerfile
+          in: query
+          schema: { type: string }
+        - name: nocache
+          in: query
+          schema: { type: boolean }
+        - name: rm
+          in: query
+          schema: { type: boolean }
+        - name: forcerm
+          in: query
+          schema: { type: boolean }
+        - name: buildargs
+          in: query
+          schema: { type: string }
+        - name: labels
+          in: query
+          schema: { type: string }
+        - name: target
+          in: query
+          schema: { type: string }
+        - name: platform
+          in: query
+          schema: { type: string }
+        - name: q
+          in: query
+          schema: { type: boolean }
+        - name: networkmode
+          in: query
+          schema: { type: string }
+        - name: extrahosts
+          in: query
+          schema: { type: string }
+        - name: shmsize
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: pull
+          in: query
+          schema: { type: string }
+      requestBody:
+        content:
+          application/x-tar:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Build output stream
+
+  /images/{name}/push:
+    post:
+      operationId: ImagePush
+      x-sockerless-go-method: ImagePush
+      x-sockerless-go-args: [name]
+      x-sockerless-streaming: true
+      x-sockerless-go-returns: io.ReadCloser
+      summary: Push an image
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - name: tag
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Push progress stream
+
+  /images/get:
+    get:
+      operationId: ImageSave
+      x-sockerless-go-method: ImageSave
+      x-sockerless-streaming: true
+      x-sockerless-go-returns: io.ReadCloser
+      summary: Export images
+      parameters:
+        - name: names
+          in: query
+          schema:
+            type: array
+            items: { type: string }
+      responses:
+        "200":
+          description: Tarball stream
+
+  /images/search:
+    get:
+      operationId: ImageSearch
+      x-sockerless-go-method: ImageSearch
+      summary: Search images
+      parameters:
+        - name: term
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer }
+        - name: filters
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ImageSearchResult"
+
+  # ── Auth ─────────────────────────────────────────────────────────────
+
+  /auth:
+    post:
+      operationId: AuthLogin
+      x-sockerless-go-method: AuthLogin
+      summary: Check auth configuration
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthRequest"
+      responses:
+        "200":
+          description: Auth response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+
+  # ── Networks ─────────────────────────────────────────────────────────
+
+  /networks/create:
+    post:
+      operationId: NetworkCreate
+      x-sockerless-go-method: NetworkCreate
+      x-sockerless-events:
+        - { type: network, action: create }
+      summary: Create a network
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NetworkCreateRequest"
+      responses:
+        "201":
+          description: Network created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkCreateResponse"
+
+  /networks:
+    get:
+      operationId: NetworkList
+      x-sockerless-go-method: NetworkList
+      summary: List networks
+      parameters:
+        - name: filters
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Network list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Network"
+
+  /networks/{id}:
+    get:
+      operationId: NetworkInspect
+      x-sockerless-go-method: NetworkInspect
+      x-sockerless-go-args: [id]
+      summary: Inspect a network
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Network details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Network"
+    delete:
+      operationId: NetworkRemove
+      x-sockerless-go-method: NetworkRemove
+      x-sockerless-go-args: [id]
+      x-sockerless-events:
+        - { type: network, action: destroy }
+      summary: Remove a network
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Network removed
+
+  /networks/{id}/connect:
+    post:
+      operationId: NetworkConnect
+      x-sockerless-go-method: NetworkConnect
+      x-sockerless-go-args: [id]
+      x-sockerless-events:
+        - { type: network, action: connect }
+      summary: Connect a container to a network
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NetworkConnectRequest"
+      responses:
+        "200":
+          description: Connected
+
+  /networks/{id}/disconnect:
+    post:
+      operationId: NetworkDisconnect
+      x-sockerless-go-method: NetworkDisconnect
+      x-sockerless-go-args: [id]
+      x-sockerless-events:
+        - { type: network, action: disconnect }
+      summary: Disconnect a container from a network
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NetworkDisconnectRequest"
+      responses:
+        "200":
+          description: Disconnected
+
+  /networks/prune:
+    post:
+      operationId: NetworkPrune
+      x-sockerless-go-method: NetworkPrune
+      x-sockerless-events:
+        - { type: network, action: destroy }
+      summary: Delete unused networks
+      parameters:
+        - name: filters
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Prune response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkPruneResponse"
+
+  # ── Volumes ──────────────────────────────────────────────────────────
+
+  /volumes/create:
+    post:
+      operationId: VolumeCreate
+      x-sockerless-go-method: VolumeCreate
+      x-sockerless-events:
+        - { type: volume, action: create }
+      summary: Create a volume
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VolumeCreateRequest"
+      responses:
+        "201":
+          description: Volume created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Volume"
+
+  /volumes:
+    get:
+      operationId: VolumeList
+      x-sockerless-go-method: VolumeList
+      summary: List volumes
+      parameters:
+        - name: filters
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Volume list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VolumeListResponse"
+
+  /volumes/{name}:
+    get:
+      operationId: VolumeInspect
+      x-sockerless-go-method: VolumeInspect
+      x-sockerless-go-args: [name]
+      summary: Inspect a volume
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Volume details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Volume"
+    delete:
+      operationId: VolumeRemove
+      x-sockerless-go-method: VolumeRemove
+      x-sockerless-go-args: [name]
+      x-sockerless-events:
+        - { type: volume, action: destroy }
+      summary: Remove a volume
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - name: force
+          in: query
+          schema: { type: boolean }
+      responses:
+        "204":
+          description: Volume removed
+
+  /volumes/prune:
+    post:
+      operationId: VolumePrune
+      x-sockerless-go-method: VolumePrune
+      x-sockerless-events:
+        - { type: volume, action: destroy }
+      summary: Delete unused volumes
+      parameters:
+        - name: filters
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Prune response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VolumePruneResponse"
+
+  # ── Commit ───────────────────────────────────────────────────────────
+
+  /commit:
+    post:
+      operationId: ContainerCommit
+      x-sockerless-go-method: ContainerCommit
+      x-sockerless-events:
+        - { type: container, action: commit }
+      summary: Create a new image from a container
+      parameters:
+        - name: container
+          in: query
+          schema: { type: string }
+        - name: repo
+          in: query
+          schema: { type: string }
+        - name: tag
+          in: query
+          schema: { type: string }
+        - name: comment
+          in: query
+          schema: { type: string }
+        - name: author
+          in: query
+          schema: { type: string }
+        - name: pause
+          in: query
+          schema: { type: boolean }
+      responses:
+        "201":
+          description: Commit response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerCommitResponse"
+
+  # ── Pods (Sockerless Libpod extension) ───────────────────────────────
+
+  /libpod/pods/create:
+    post:
+      operationId: PodCreate
+      x-sockerless-go-method: PodCreate
+      summary: Create a pod
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PodCreateRequest"
+      responses:
+        "201":
+          description: Pod created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PodCreateResponse"
+
+  /libpod/pods/json:
+    get:
+      operationId: PodList
+      x-sockerless-go-method: PodList
+      summary: List pods
+      parameters:
+        - name: filters
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Pod list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PodListEntry"
+
+  /libpod/pods/{name}/json:
+    get:
+      operationId: PodInspect
+      x-sockerless-go-method: PodInspect
+      x-sockerless-go-args: [name]
+      summary: Inspect a pod
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Pod details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PodInspectResponse"
+
+  /libpod/pods/{name}/exists:
+    get:
+      operationId: PodExists
+      x-sockerless-go-method: PodExists
+      x-sockerless-go-args: [name]
+      summary: Check if a pod exists
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Pod exists
+        "404":
+          description: Pod not found
+
+  /libpod/pods/{name}/start:
+    post:
+      operationId: PodStart
+      x-sockerless-go-method: PodStart
+      x-sockerless-go-args: [name]
+      summary: Start a pod
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Pod action response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PodActionResponse"
+
+  /libpod/pods/{name}/stop:
+    post:
+      operationId: PodStop
+      x-sockerless-go-method: PodStop
+      x-sockerless-go-args: [name]
+      summary: Stop a pod
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - name: t
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Pod action response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PodActionResponse"
+
+  /libpod/pods/{name}/kill:
+    post:
+      operationId: PodKill
+      x-sockerless-go-method: PodKill
+      x-sockerless-go-args: [name]
+      summary: Kill a pod
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - name: signal
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Pod action response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PodActionResponse"
+
+  /libpod/pods/{name}:
+    delete:
+      operationId: PodRemove
+      x-sockerless-go-method: PodRemove
+      x-sockerless-go-args: [name]
+      summary: Remove a pod
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - name: force
+          in: query
+          schema: { type: boolean }
+      responses:
+        "204":
+          description: Pod removed
+
+# ════════════════════════════════════════════════════════════════════════
+# Components — Types
+# ════════════════════════════════════════════════════════════════════════
+
+components:
+  schemas:
+
+    # ── Container Inspect ────────────────────────────────────────────
+
+    Container:
+      type: object
+      x-sockerless-docker-name: ContainerJSON
+      x-sockerless-extensions: [AgentAddress, AgentToken]
+      properties:
+        Id:
+          type: string
+        Name:
+          type: string
+        Created:
+          type: string
+        Path:
+          type: string
+        Args:
+          type: array
+          items: { type: string }
+        State:
+          $ref: "#/components/schemas/ContainerState"
+        Image:
+          type: string
+        Config:
+          $ref: "#/components/schemas/ContainerConfig"
+        HostConfig:
+          $ref: "#/components/schemas/HostConfig"
+        NetworkSettings:
+          $ref: "#/components/schemas/NetworkSettings"
+        Mounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/MountPoint"
+        Platform:
+          type: string
+        Driver:
+          type: string
+        RestartCount:
+          type: integer
+        LogPath:
+          type: string
+        ResolvConfPath:
+          type: string
+        HostnamePath:
+          type: string
+        HostsPath:
+          type: string
+        ExecIDs:
+          type: array
+          items: { type: string }
+        SizeRw:
+          type: integer
+          format: int64
+          x-sockerless-go-pointer: true
+        SizeRootFs:
+          type: integer
+          format: int64
+          x-sockerless-go-pointer: true
+        AgentAddress:
+          type: string
+        AgentToken:
+          type: string
+
+    ContainerState:
+      type: object
+      x-sockerless-docker-name: ContainerState
+      properties:
+        Status:
+          type: string
+        Running:
+          type: boolean
+        Paused:
+          type: boolean
+        Restarting:
+          type: boolean
+        OOMKilled:
+          type: boolean
+        Dead:
+          type: boolean
+        Pid:
+          type: integer
+        ExitCode:
+          type: integer
+        Error:
+          type: string
+        StartedAt:
+          type: string
+        FinishedAt:
+          type: string
+        Health:
+          x-sockerless-go-pointer: true
+          $ref: "#/components/schemas/HealthState"
+
+    ContainerConfig:
+      type: object
+      x-sockerless-docker-name: ContainerConfig
+      properties:
+        Hostname:
+          type: string
+        Domainname:
+          type: string
+        User:
+          type: string
+        AttachStdin:
+          type: boolean
+        AttachStdout:
+          type: boolean
+        AttachStderr:
+          type: boolean
+        ExposedPorts:
+          type: object
+          additionalProperties:
+            type: object
+          x-sockerless-go-type: "map[string]struct{}"
+        Tty:
+          type: boolean
+        OpenStdin:
+          type: boolean
+        StdinOnce:
+          type: boolean
+        Env:
+          type: array
+          items: { type: string }
+        Cmd:
+          type: array
+          items: { type: string }
+        Image:
+          type: string
+        Volumes:
+          type: object
+          additionalProperties:
+            type: object
+          x-sockerless-go-type: "map[string]struct{}"
+        WorkingDir:
+          type: string
+        Entrypoint:
+          type: array
+          items: { type: string }
+        Labels:
+          type: object
+          additionalProperties: { type: string }
+        StopSignal:
+          type: string
+        StopTimeout:
+          type: integer
+          x-sockerless-go-pointer: true
+        Shell:
+          type: array
+          items: { type: string }
+        Healthcheck:
+          x-sockerless-go-pointer: true
+          $ref: "#/components/schemas/HealthcheckConfig"
+        ArgsEscaped:
+          type: boolean
+        NetworkDisabled:
+          type: boolean
+        MacAddress:
+          type: string
+        OnBuild:
+          type: array
+          items: { type: string }
+
+    HostConfig:
+      type: object
+      x-sockerless-docker-name: HostConfig
+      properties:
+        NetworkMode:
+          type: string
+        Binds:
+          type: array
+          items: { type: string }
+        AutoRemove:
+          type: boolean
+        PortBindings:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/PortBinding"
+        RestartPolicy:
+          $ref: "#/components/schemas/RestartPolicy"
+        Privileged:
+          type: boolean
+        CapAdd:
+          type: array
+          items: { type: string }
+        CapDrop:
+          type: array
+          items: { type: string }
+        Init:
+          type: boolean
+          x-sockerless-go-pointer: true
+        UsernsMode:
+          type: string
+        ShmSize:
+          type: integer
+          format: int64
+        Tmpfs:
+          type: object
+          additionalProperties: { type: string }
+        SecurityOpt:
+          type: array
+          items: { type: string }
+        LogConfig:
+          $ref: "#/components/schemas/LogConfig"
+        ExtraHosts:
+          type: array
+          items: { type: string }
+        Mounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Mount"
+        Isolation:
+          type: string
+        Dns:
+          type: array
+          items: { type: string }
+          x-sockerless-json-tag: Dns
+        DnsSearch:
+          type: array
+          items: { type: string }
+          x-sockerless-json-tag: DnsSearch
+        DnsOptions:
+          type: array
+          items: { type: string }
+          x-sockerless-json-tag: DnsOptions
+        Memory:
+          type: integer
+          format: int64
+        MemorySwap:
+          type: integer
+          format: int64
+        MemoryReservation:
+          type: integer
+          format: int64
+        CpuShares:
+          type: integer
+          format: int64
+          x-sockerless-json-tag: CpuShares
+        CpuQuota:
+          type: integer
+          format: int64
+          x-sockerless-json-tag: CpuQuota
+        CpuPeriod:
+          type: integer
+          format: int64
+          x-sockerless-json-tag: CpuPeriod
+        CpusetCpus:
+          type: string
+        NanoCpus:
+          type: integer
+          format: int64
+          x-sockerless-json-tag: NanoCpus
+        CpusetMems:
+          type: string
+        BlkioWeight:
+          type: integer
+          x-sockerless-go-type: uint16
+        PidMode:
+          type: string
+        IpcMode:
+          type: string
+        UTSMode:
+          type: string
+        VolumesFrom:
+          type: array
+          items: { type: string }
+        GroupAdd:
+          type: array
+          items: { type: string }
+        ReadonlyRootfs:
+          type: boolean
+        OomKillDisable:
+          type: boolean
+          x-sockerless-go-pointer: true
+        PidsLimit:
+          type: integer
+          format: int64
+          x-sockerless-go-pointer: true
+        Sysctls:
+          type: object
+          additionalProperties: { type: string }
+        Runtime:
+          type: string
+        Links:
+          type: array
+          items: { type: string }
+        PublishAllPorts:
+          type: boolean
+        CgroupnsMode:
+          type: string
+        ConsoleSize:
+          type: array
+          items: { type: integer }
+          x-sockerless-go-type: "[2]uint"
+
+    PortBinding:
+      type: object
+      x-sockerless-docker-name: PortBinding
+      properties:
+        HostIp:
+          type: string
+        HostPort:
+          type: string
+
+    RestartPolicy:
+      type: object
+      x-sockerless-docker-name: RestartPolicy
+      properties:
+        Name:
+          type: string
+        MaximumRetryCount:
+          type: integer
+
+    LogConfig:
+      type: object
+      x-sockerless-docker-name: LogConfig
+      properties:
+        Type:
+          type: string
+        Config:
+          type: object
+          additionalProperties: { type: string }
+
+    Mount:
+      type: object
+      x-sockerless-docker-name: Mount
+      properties:
+        Type:
+          type: string
+        Source:
+          type: string
+        Target:
+          type: string
+        ReadOnly:
+          type: boolean
+        Consistency:
+          type: string
+        BindOptions:
+          x-sockerless-go-pointer: true
+          $ref: "#/components/schemas/BindOptions"
+        VolumeOptions:
+          x-sockerless-go-pointer: true
+          $ref: "#/components/schemas/VolumeOptions"
+        TmpfsOptions:
+          x-sockerless-go-pointer: true
+          $ref: "#/components/schemas/TmpfsOptions"
+
+    BindOptions:
+      type: object
+      x-sockerless-docker-name: BindOptions
+      properties:
+        Propagation:
+          type: string
+
+    VolumeOptions:
+      type: object
+      x-sockerless-docker-name: VolumeOptions
+      properties:
+        NoCopy:
+          type: boolean
+        Labels:
+          type: object
+          additionalProperties: { type: string }
+        DriverConfig:
+          x-sockerless-go-pointer: true
+          $ref: "#/components/schemas/VolumeDriverConfig"
+
+    VolumeDriverConfig:
+      type: object
+      x-sockerless-docker-name: DriverConfig
+      properties:
+        Name:
+          type: string
+        Options:
+          type: object
+          additionalProperties: { type: string }
+
+    TmpfsOptions:
+      type: object
+      x-sockerless-docker-name: TmpfsOptions
+      properties:
+        SizeBytes:
+          type: integer
+          format: int64
+        Mode:
+          type: integer
+          x-sockerless-go-type: uint32
+
+    # ── Network Settings ─────────────────────────────────────────────
+
+    NetworkSettings:
+      type: object
+      x-sockerless-docker-name: NetworkSettings
+      properties:
+        Bridge:
+          type: string
+        SandboxID:
+          type: string
+        HairpinMode:
+          type: boolean
+        LinkLocalIPv6Address:
+          type: string
+        LinkLocalIPv6PrefixLen:
+          type: integer
+        SandboxKey:
+          type: string
+        Gateway:
+          type: string
+        IPAddress:
+          type: string
+        IPPrefixLen:
+          type: integer
+        MacAddress:
+          type: string
+        EndpointID:
+          type: string
+        GlobalIPv6Address:
+          type: string
+        GlobalIPv6PrefixLen:
+          type: integer
+        IPv6Gateway:
+          type: string
+        Networks:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/EndpointSettings"
+          x-sockerless-go-type: "map[string]*EndpointSettings"
+        Ports:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/PortBinding"
+
+    EndpointSettings:
+      type: object
+      x-sockerless-docker-name: EndpointSettings
+      properties:
+        IPAMConfig:
+          x-sockerless-go-pointer: true
+          $ref: "#/components/schemas/EndpointIPAMConfig"
+        NetworkID:
+          type: string
+        EndpointID:
+          type: string
+        Gateway:
+          type: string
+        IPAddress:
+          type: string
+        IPPrefixLen:
+          type: integer
+        IPv6Gateway:
+          type: string
+        GlobalIPv6Address:
+          type: string
+        GlobalIPv6PrefixLen:
+          type: integer
+        MacAddress:
+          type: string
+        Aliases:
+          type: array
+          items: { type: string }
+        Links:
+          type: array
+          items: { type: string }
+        DNSNames:
+          type: array
+          items: { type: string }
+        DriverOpts:
+          type: object
+          additionalProperties: { type: string }
+
+    EndpointIPAMConfig:
+      type: object
+      x-sockerless-docker-name: EndpointIPAMConfig
+      properties:
+        IPv4Address:
+          type: string
+        IPv6Address:
+          type: string
+        LinkLocalIPs:
+          type: array
+          items: { type: string }
+
+    MountPoint:
+      type: object
+      x-sockerless-docker-name: MountPoint
+      properties:
+        Type:
+          type: string
+        Name:
+          type: string
+        Source:
+          type: string
+        Destination:
+          type: string
+        Driver:
+          type: string
+        Mode:
+          type: string
+        RW:
+          type: boolean
+        Propagation:
+          type: string
+
+    # ── Container List ───────────────────────────────────────────────
+
+    ContainerSummary:
+      type: object
+      x-sockerless-docker-name: ContainerSummary
+      properties:
+        Id:
+          type: string
+        Names:
+          type: array
+          items: { type: string }
+        Image:
+          type: string
+        ImageID:
+          type: string
+        Command:
+          type: string
+        Created:
+          type: integer
+          format: int64
+        State:
+          type: string
+        Status:
+          type: string
+        Ports:
+          type: array
+          items:
+            $ref: "#/components/schemas/Port"
+        Labels:
+          type: object
+          additionalProperties: { type: string }
+        SizeRw:
+          type: integer
+          format: int64
+        SizeRootFs:
+          type: integer
+          format: int64
+        HostConfig:
+          x-sockerless-go-pointer: true
+          $ref: "#/components/schemas/HostConfigSummary"
+        NetworkSettings:
+          x-sockerless-go-pointer: true
+          $ref: "#/components/schemas/SummaryNetworkSettings"
+        Mounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/MountPoint"
+
+    Port:
+      type: object
+      x-sockerless-docker-name: Port
+      properties:
+        IP:
+          type: string
+        PrivatePort:
+          type: integer
+          x-sockerless-go-type: uint16
+        PublicPort:
+          type: integer
+          x-sockerless-go-type: uint16
+        Type:
+          type: string
+
+    HostConfigSummary:
+      type: object
+      x-sockerless-docker-name: ContainerSummary.HostConfig
+      properties:
+        NetworkMode:
+          type: string
+
+    SummaryNetworkSettings:
+      type: object
+      x-sockerless-docker-name: ContainerSummary.NetworkSettings
+      properties:
+        Networks:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/EndpointSettings"
+          x-sockerless-go-type: "map[string]*EndpointSettings"
+
+    # ── Container Create ─────────────────────────────────────────────
+
+    ContainerCreateRequest:
+      type: object
+      x-sockerless-docker-name: ContainerCreateRequest
+      x-sockerless-go-embeds: [ContainerConfig]
+      properties:
+        Name:
+          type: string
+        HostConfig:
+          x-sockerless-go-pointer: true
+          $ref: "#/components/schemas/HostConfig"
+        NetworkingConfig:
+          x-sockerless-go-pointer: true
+          $ref: "#/components/schemas/NetworkingConfig"
+
+    NetworkingConfig:
+      type: object
+      x-sockerless-docker-name: NetworkingConfig
+      properties:
+        EndpointsConfig:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/EndpointSettings"
+          x-sockerless-go-type: "map[string]*EndpointSettings"
+
+    ContainerCreateResponse:
+      type: object
+      x-sockerless-docker-name: ContainerCreateResponse
+      properties:
+        Id:
+          type: string
+        Warnings:
+          type: array
+          items: { type: string }
+
+    # ── Container Wait ───────────────────────────────────────────────
+
+    ContainerWaitResponse:
+      type: object
+      x-sockerless-docker-name: ContainerWaitOKBody
+      properties:
+        StatusCode:
+          type: integer
+        Error:
+          x-sockerless-go-pointer: true
+          $ref: "#/components/schemas/WaitError"
+
+    WaitError:
+      type: object
+      x-sockerless-docker-name: ContainerWaitOKBodyError
+      properties:
+        Message:
+          type: string
+
+    # ── Container Options ────────────────────────────────────────────
+
+    ContainerAttachOptions:
+      type: object
+      x-sockerless-docker-name: ContainerAttachOptions
+      properties:
+        Stream:
+          type: boolean
+        Stdin:
+          type: boolean
+        Stdout:
+          type: boolean
+        Stderr:
+          type: boolean
+        DetachKeys:
+          type: string
+        Logs:
+          type: boolean
+
+    ContainerLogsOptions:
+      type: object
+      x-sockerless-docker-name: ContainerLogsOptions
+      properties:
+        ShowStdout:
+          type: boolean
+        ShowStderr:
+          type: boolean
+        Follow:
+          type: boolean
+        Timestamps:
+          type: boolean
+        Tail:
+          type: string
+        Since:
+          type: string
+        Until:
+          type: string
+
+    ContainerListOptions:
+      type: object
+      x-sockerless-docker-name: ContainerListOptions
+      properties:
+        All:
+          type: boolean
+        Limit:
+          type: integer
+        Filters:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+
+    # ── Container Top ────────────────────────────────────────────────
+
+    ContainerTopResponse:
+      type: object
+      x-sockerless-docker-name: ContainerTopOKBody
+      properties:
+        Titles:
+          type: array
+          items: { type: string }
+        Processes:
+          type: array
+          items:
+            type: array
+            items: { type: string }
+          x-sockerless-go-type: "[][]string"
+
+    # ── Container Prune ──────────────────────────────────────────────
+
+    ContainerPruneResponse:
+      type: object
+      x-sockerless-docker-name: ContainersPruneReport
+      properties:
+        ContainersDeleted:
+          type: array
+          items: { type: string }
+        SpaceReclaimed:
+          type: integer
+          format: uint64
+          x-sockerless-go-type: uint64
+
+    # ── Container Update ─────────────────────────────────────────────
+
+    ContainerUpdateRequest:
+      type: object
+      x-sockerless-docker-name: UpdateConfig
+      properties:
+        RestartPolicy:
+          $ref: "#/components/schemas/RestartPolicy"
+        Memory:
+          type: integer
+          format: int64
+        MemorySwap:
+          type: integer
+          format: int64
+        MemoryReservation:
+          type: integer
+          format: int64
+        CpuShares:
+          type: integer
+          format: int64
+          x-sockerless-json-tag: CpuShares
+        CpuQuota:
+          type: integer
+          format: int64
+          x-sockerless-json-tag: CpuQuota
+        CpuPeriod:
+          type: integer
+          format: int64
+          x-sockerless-json-tag: CpuPeriod
+        CpusetCpus:
+          type: string
+        CpusetMems:
+          type: string
+        BlkioWeight:
+          type: integer
+          x-sockerless-go-type: uint16
+        PidsLimit:
+          type: integer
+          format: int64
+          x-sockerless-go-pointer: true
+        OomKillDisable:
+          type: boolean
+          x-sockerless-go-pointer: true
+
+    ContainerUpdateResponse:
+      type: object
+      x-sockerless-docker-name: ContainerUpdateOKBody
+      properties:
+        Warnings:
+          type: array
+          items: { type: string }
+
+    # ── Container Changes ────────────────────────────────────────────
+
+    ContainerChangeItem:
+      type: object
+      x-sockerless-docker-name: FilesystemChange
+      properties:
+        Path:
+          type: string
+        Kind:
+          type: integer
+
+    # ── Container Commit ─────────────────────────────────────────────
+
+    ContainerCommitResponse:
+      type: object
+      x-sockerless-docker-name: IdResponse
+      properties:
+        Id:
+          type: string
+
+    ContainerCommitRequest:
+      type: object
+      properties:
+        container:
+          type: string
+        repo:
+          type: string
+        tag:
+          type: string
+        comment:
+          type: string
+        author:
+          type: string
+        pause:
+          type: boolean
+        changes:
+          type: array
+          items: { type: string }
+        config:
+          x-sockerless-go-pointer: true
+          $ref: "#/components/schemas/ContainerConfig"
+
+    # ── Container Path Stat ──────────────────────────────────────────
+
+    ContainerPathStat:
+      type: object
+      properties:
+        name:
+          type: string
+        size:
+          type: integer
+          format: int64
+        mode:
+          type: integer
+          x-sockerless-go-type: os.FileMode
+        mtime:
+          type: string
+          format: date-time
+          x-sockerless-go-type: time.Time
+        linkTarget:
+          type: string
+
+    # ── Container Archive Response ───────────────────────────────────
+
+    ContainerArchiveResponse:
+      type: object
+      x-sockerless-codegen-skip: true
+      properties:
+        Stat:
+          $ref: "#/components/schemas/ContainerPathStat"
+
+    # ── Exec ─────────────────────────────────────────────────────────
+
+    ExecCreateRequest:
+      type: object
+      x-sockerless-docker-name: ExecConfig
+      properties:
+        AttachStdin:
+          type: boolean
+        AttachStdout:
+          type: boolean
+        AttachStderr:
+          type: boolean
+        Tty:
+          type: boolean
+        Cmd:
+          type: array
+          items: { type: string }
+        Env:
+          type: array
+          items: { type: string }
+        WorkingDir:
+          type: string
+        User:
+          type: string
+        Privileged:
+          type: boolean
+        DetachKeys:
+          type: string
+
+    ExecCreateResponse:
+      type: object
+      x-sockerless-docker-name: IdResponse
+      properties:
+        Id:
+          type: string
+
+    ExecStartRequest:
+      type: object
+      x-sockerless-docker-name: ExecStartConfig
+      properties:
+        Detach:
+          type: boolean
+        Tty:
+          type: boolean
+        ConsoleSize:
+          type: array
+          items: { type: integer }
+          x-sockerless-go-type: "*[2]uint"
+          x-sockerless-go-pointer: true
+
+    ExecInstance:
+      type: object
+      x-sockerless-docker-name: ExecInspectResponse
+      properties:
+        ID:
+          type: string
+        ContainerID:
+          type: string
+        Running:
+          type: boolean
+        ExitCode:
+          type: integer
+        Pid:
+          type: integer
+        OpenStdin:
+          type: boolean
+        OpenStdout:
+          type: boolean
+        OpenStderr:
+          type: boolean
+        ProcessConfig:
+          $ref: "#/components/schemas/ExecProcessConfig"
+        CanRemove:
+          type: boolean
+        DetachKeys:
+          type: string
+
+    ExecProcessConfig:
+      type: object
+      x-sockerless-docker-name: ProcessConfig
+      properties:
+        tty:
+          type: boolean
+        entrypoint:
+          type: string
+        arguments:
+          type: array
+          items: { type: string }
+        privileged:
+          type: boolean
+          x-sockerless-go-pointer: true
+        user:
+          type: string
+        env:
+          type: array
+          items: { type: string }
+        workingDir:
+          type: string
+
+    # ── Images ───────────────────────────────────────────────────────
+
+    Image:
+      type: object
+      x-sockerless-docker-name: ImageInspect
+      properties:
+        Id:
+          type: string
+        RepoTags:
+          type: array
+          items: { type: string }
+        RepoDigests:
+          type: array
+          items: { type: string }
+        Created:
+          type: string
+        Size:
+          type: integer
+          format: int64
+        VirtualSize:
+          type: integer
+          format: int64
+        Config:
+          $ref: "#/components/schemas/ContainerConfig"
+        Architecture:
+          type: string
+        Os:
+          type: string
+        Author:
+          type: string
+        Parent:
+          type: string
+        Comment:
+          type: string
+        DockerVersion:
+          type: string
+        GraphDriver:
+          $ref: "#/components/schemas/GraphDriverData"
+        RootFS:
+          $ref: "#/components/schemas/RootFS"
+        Metadata:
+          $ref: "#/components/schemas/ImageMetadata"
+
+    GraphDriverData:
+      type: object
+      x-sockerless-docker-name: GraphDriverData
+      properties:
+        Name:
+          type: string
+        Data:
+          type: object
+          additionalProperties: { type: string }
+
+    RootFS:
+      type: object
+      x-sockerless-docker-name: RootFS
+      properties:
+        Type:
+          type: string
+        Layers:
+          type: array
+          items: { type: string }
+
+    ImageMetadata:
+      type: object
+      x-sockerless-docker-name: ImageInspect.Metadata
+      properties:
+        LastTagTime:
+          type: string
+
+    ImageSummary:
+      type: object
+      x-sockerless-docker-name: ImageSummary
+      properties:
+        Id:
+          type: string
+        ParentId:
+          type: string
+        RepoTags:
+          type: array
+          items: { type: string }
+        RepoDigests:
+          type: array
+          items: { type: string }
+        Created:
+          type: integer
+          format: int64
+        Size:
+          type: integer
+          format: int64
+        SharedSize:
+          type: integer
+          format: int64
+        VirtualSize:
+          type: integer
+          format: int64
+        Labels:
+          type: object
+          additionalProperties: { type: string }
+        Containers:
+          type: integer
+          format: int64
+
+    ImageDeleteResponse:
+      type: object
+      x-sockerless-docker-name: ImageDeleteResponseItem
+      properties:
+        Untagged:
+          type: string
+        Deleted:
+          type: string
+
+    ImageHistoryEntry:
+      type: object
+      x-sockerless-docker-name: HistoryResponseItem
+      properties:
+        Id:
+          type: string
+        Created:
+          type: integer
+          format: int64
+        CreatedBy:
+          type: string
+        Tags:
+          type: array
+          items: { type: string }
+        Size:
+          type: integer
+          format: int64
+        Comment:
+          type: string
+
+    ImagePruneResponse:
+      type: object
+      x-sockerless-docker-name: ImagesPruneReport
+      properties:
+        ImagesDeleted:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImageDeleteResponse"
+          x-sockerless-go-type: "[]*ImageDeleteResponse"
+        SpaceReclaimed:
+          type: integer
+          format: uint64
+          x-sockerless-go-type: uint64
+
+    ImageListOptions:
+      type: object
+      x-sockerless-docker-name: ImageListOptions
+      properties:
+        All:
+          type: boolean
+        Filters:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+
+    ImagePullRequest:
+      type: object
+      properties:
+        Reference:
+          type: string
+        Auth:
+          type: string
+        Platform:
+          type: string
+
+    ImageBuildOptions:
+      type: object
+      properties:
+        tags:
+          type: array
+          items: { type: string }
+        dockerfile:
+          type: string
+        buildArgs:
+          type: object
+          additionalProperties:
+            type: string
+          x-sockerless-go-type: "map[string]*string"
+        noCache:
+          type: boolean
+        remove:
+          type: boolean
+        forceRemove:
+          type: boolean
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        target:
+          type: string
+        platform:
+          type: string
+        pull:
+          type: string
+        quiet:
+          type: boolean
+        networkMode:
+          type: string
+        extraHosts:
+          type: string
+        shmSize:
+          type: integer
+          format: int64
+
+    ImageSearchResult:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        star_count:
+          type: integer
+        is_official:
+          type: boolean
+        is_automated:
+          type: boolean
+
+    # ── Auth ─────────────────────────────────────────────────────────
+
+    AuthRequest:
+      type: object
+      x-sockerless-docker-name: AuthConfig
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+        email:
+          type: string
+        serveraddress:
+          type: string
+
+    AuthResponse:
+      type: object
+      x-sockerless-docker-name: SystemAuthResponse
+      properties:
+        Status:
+          type: string
+        IdentityToken:
+          type: string
+
+    # ── System ───────────────────────────────────────────────────────
+
+    BackendInfo:
+      type: object
+      x-sockerless-docker-name: SystemInfo
+      properties:
+        ID:
+          type: string
+        Name:
+          type: string
+        ServerVersion:
+          type: string
+        Containers:
+          type: integer
+        ContainersRunning:
+          type: integer
+        ContainersPaused:
+          type: integer
+        ContainersStopped:
+          type: integer
+        Images:
+          type: integer
+        Driver:
+          type: string
+        OperatingSystem:
+          type: string
+        OSType:
+          type: string
+        Architecture:
+          type: string
+        NCPU:
+          type: integer
+        MemTotal:
+          type: integer
+          format: int64
+        KernelVersion:
+          type: string
+
+    # ── Health ───────────────────────────────────────────────────────
+
+    HealthcheckConfig:
+      type: object
+      x-sockerless-docker-name: HealthConfig
+      properties:
+        Test:
+          type: array
+          items: { type: string }
+        Interval:
+          type: integer
+          format: int64
+        Timeout:
+          type: integer
+          format: int64
+        StartPeriod:
+          type: integer
+          format: int64
+        StartInterval:
+          type: integer
+          format: int64
+        Retries:
+          type: integer
+
+    HealthState:
+      type: object
+      x-sockerless-docker-name: Health
+      properties:
+        Status:
+          type: string
+        FailingStreak:
+          type: integer
+        Log:
+          type: array
+          items:
+            $ref: "#/components/schemas/HealthLog"
+
+    HealthLog:
+      type: object
+      x-sockerless-docker-name: HealthcheckResult
+      properties:
+        Start:
+          type: string
+        End:
+          type: string
+        ExitCode:
+          type: integer
+        Output:
+          type: string
+
+    # ── Networks ─────────────────────────────────────────────────────
+
+    Network:
+      type: object
+      x-sockerless-docker-name: NetworkResource
+      properties:
+        Name:
+          type: string
+        Id:
+          type: string
+        Created:
+          type: string
+        Scope:
+          type: string
+        Driver:
+          type: string
+        EnableIPv6:
+          type: boolean
+        IPAM:
+          $ref: "#/components/schemas/IPAM"
+        Internal:
+          type: boolean
+        Attachable:
+          type: boolean
+        Ingress:
+          type: boolean
+        Containers:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/EndpointResource"
+          x-sockerless-go-type: "map[string]EndpointResource"
+        Options:
+          type: object
+          additionalProperties: { type: string }
+        Labels:
+          type: object
+          additionalProperties: { type: string }
+
+    IPAM:
+      type: object
+      x-sockerless-docker-name: IPAM
+      properties:
+        Driver:
+          type: string
+        Config:
+          type: array
+          items:
+            $ref: "#/components/schemas/IPAMConfig"
+        Options:
+          type: object
+          additionalProperties: { type: string }
+
+    IPAMConfig:
+      type: object
+      x-sockerless-docker-name: IPAMConfig
+      properties:
+        Subnet:
+          type: string
+        IPRange:
+          type: string
+        Gateway:
+          type: string
+        AuxiliaryAddresses:
+          type: object
+          additionalProperties: { type: string }
+
+    EndpointResource:
+      type: object
+      x-sockerless-docker-name: EndpointResource
+      properties:
+        Name:
+          type: string
+        EndpointID:
+          type: string
+        MacAddress:
+          type: string
+        IPv4Address:
+          type: string
+        IPv6Address:
+          type: string
+
+    NetworkCreateRequest:
+      type: object
+      x-sockerless-docker-name: NetworkCreateRequest
+      properties:
+        Name:
+          type: string
+        CheckDuplicate:
+          type: boolean
+        Driver:
+          type: string
+        Internal:
+          type: boolean
+        Attachable:
+          type: boolean
+        Ingress:
+          type: boolean
+        EnableIPv6:
+          type: boolean
+        IPAM:
+          x-sockerless-go-pointer: true
+          $ref: "#/components/schemas/IPAM"
+        Options:
+          type: object
+          additionalProperties: { type: string }
+        Labels:
+          type: object
+          additionalProperties: { type: string }
+
+    NetworkCreateResponse:
+      type: object
+      x-sockerless-docker-name: NetworkCreateResponse
+      properties:
+        Id:
+          type: string
+        Warning:
+          type: string
+
+    NetworkConnectRequest:
+      type: object
+      x-sockerless-docker-name: NetworkConnectRequest
+      properties:
+        Container:
+          type: string
+        EndpointConfig:
+          x-sockerless-go-pointer: true
+          $ref: "#/components/schemas/EndpointSettings"
+
+    NetworkDisconnectRequest:
+      type: object
+      x-sockerless-docker-name: NetworkDisconnectRequest
+      properties:
+        Container:
+          type: string
+        Force:
+          type: boolean
+
+    NetworkPruneResponse:
+      type: object
+      x-sockerless-docker-name: NetworksPruneReport
+      properties:
+        NetworksDeleted:
+          type: array
+          items: { type: string }
+
+    # ── Volumes ──────────────────────────────────────────────────────
+
+    Volume:
+      type: object
+      x-sockerless-docker-name: Volume
+      properties:
+        Name:
+          type: string
+        Driver:
+          type: string
+        Mountpoint:
+          type: string
+        CreatedAt:
+          type: string
+        Status:
+          type: object
+          additionalProperties: {}
+          x-sockerless-go-type: "map[string]any"
+        Labels:
+          type: object
+          additionalProperties: { type: string }
+        Scope:
+          type: string
+        Options:
+          type: object
+          additionalProperties: { type: string }
+        UsageData:
+          x-sockerless-go-pointer: true
+          $ref: "#/components/schemas/VolumeUsageData"
+
+    VolumeUsageData:
+      type: object
+      x-sockerless-docker-name: VolumeUsageData
+      properties:
+        Size:
+          type: integer
+          format: int64
+        RefCount:
+          type: integer
+          format: int64
+
+    VolumeCreateRequest:
+      type: object
+      x-sockerless-docker-name: VolumeCreateOptions
+      properties:
+        Name:
+          type: string
+        Driver:
+          type: string
+        DriverOpts:
+          type: object
+          additionalProperties: { type: string }
+        Labels:
+          type: object
+          additionalProperties: { type: string }
+
+    VolumeListResponse:
+      type: object
+      x-sockerless-docker-name: VolumeListResponse
+      properties:
+        Volumes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Volume"
+          x-sockerless-go-type: "[]*Volume"
+        Warnings:
+          type: array
+          items: { type: string }
+
+    VolumePruneResponse:
+      type: object
+      x-sockerless-docker-name: VolumesPruneReport
+      properties:
+        VolumesDeleted:
+          type: array
+          items: { type: string }
+        SpaceReclaimed:
+          type: integer
+          format: uint64
+          x-sockerless-go-type: uint64
+
+    # ── Events ───────────────────────────────────────────────────────
+
+    EventsOptions:
+      type: object
+      x-sockerless-docker-name: EventsOptions
+      properties:
+        Since:
+          type: string
+        Until:
+          type: string
+        Filters:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+
+    Event:
+      type: object
+      x-sockerless-docker-name: EventMessage
+      properties:
+        Type:
+          type: string
+        Action:
+          type: string
+        Actor:
+          $ref: "#/components/schemas/EventActor"
+        scope:
+          type: string
+        time:
+          type: integer
+          format: int64
+        timeNano:
+          type: integer
+          format: int64
+
+    EventActor:
+      type: object
+      x-sockerless-docker-name: EventMessage.Actor
+      properties:
+        ID:
+          type: string
+        Attributes:
+          type: object
+          additionalProperties: { type: string }
+
+    # ── System Disk Usage ────────────────────────────────────────────
+
+    DiskUsageResponse:
+      type: object
+      x-sockerless-docker-name: SystemDataUsageResponse
+      properties:
+        LayersSize:
+          type: integer
+          format: int64
+        Images:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImageSummary"
+          x-sockerless-go-type: "[]*ImageSummary"
+        Containers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContainerSummary"
+          x-sockerless-go-type: "[]*ContainerSummary"
+        Volumes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Volume"
+          x-sockerless-go-type: "[]*Volume"
+        BuildCache:
+          type: array
+          items:
+            $ref: "#/components/schemas/BuildCache"
+          x-sockerless-go-type: "[]*BuildCache"
+
+    BuildCache:
+      type: object
+      x-sockerless-docker-name: BuildCache
+      properties:
+        ID:
+          type: string
+        Parent:
+          type: string
+        Type:
+          type: string
+        Description:
+          type: string
+        InUse:
+          type: boolean
+        Shared:
+          type: boolean
+        Size:
+          type: integer
+          format: int64
+        CreatedAt:
+          type: string
+        LastUsedAt:
+          type: string
+        UsageCount:
+          type: integer
+
+    # ── Pods (Sockerless Libpod extension) ───────────────────────────
+
+    PodCreateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        hostname:
+          type: string
+        share:
+          type: string
+        no_infra:
+          type: boolean
+
+    PodCreateResponse:
+      type: object
+      properties:
+        Id:
+          type: string
+
+    PodInspectResponse:
+      type: object
+      properties:
+        Id:
+          type: string
+        Name:
+          type: string
+        Created:
+          type: string
+        State:
+          type: string
+        Hostname:
+          type: string
+        Labels:
+          type: object
+          additionalProperties: { type: string }
+        NumContainers:
+          type: integer
+        Containers:
+          type: array
+          items:
+            $ref: "#/components/schemas/PodContainerInfo"
+        SharedNamespaces:
+          type: array
+          items: { type: string }
+
+    PodContainerInfo:
+      type: object
+      properties:
+        Id:
+          type: string
+        Name:
+          type: string
+        State:
+          type: string
+
+    PodListEntry:
+      type: object
+      properties:
+        Id:
+          type: string
+        Name:
+          type: string
+        Status:
+          type: string
+        Created:
+          type: string
+        Labels:
+          type: object
+          additionalProperties: { type: string }
+        Containers:
+          type: array
+          items:
+            $ref: "#/components/schemas/PodContainerInfo"
+
+    PodActionResponse:
+      type: object
+      properties:
+        Id:
+          type: string
+        Errs:
+          type: array
+          items: { type: string }
+
+    PodListOptions:
+      type: object
+      properties:
+        Filters:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }

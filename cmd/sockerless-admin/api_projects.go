@@ -31,14 +31,12 @@ func handleProjectList(projectMgr *ProjectManager) http.HandlerFunc {
 
 // CreateProjectRequest is the JSON body for creating a project.
 type CreateProjectRequest struct {
-	Name             string      `json:"name"`
-	Cloud            CloudType   `json:"cloud"`
-	Backend          BackendType `json:"backend"`
-	LogLevel         string      `json:"log_level"`
-	SimPort          int         `json:"sim_port"`
-	BackendPort      int         `json:"backend_port"`
-	FrontendPort     int         `json:"frontend_port"`
-	FrontendMgmtPort int         `json:"frontend_mgmt_port"`
+	Name        string      `json:"name"`
+	Cloud       CloudType   `json:"cloud"`
+	Backend     BackendType `json:"backend"`
+	LogLevel    string      `json:"log_level"`
+	SimPort     int         `json:"sim_port"`
+	BackendPort int         `json:"backend_port"`
 }
 
 // handleProjectCreate creates a new project.
@@ -51,14 +49,12 @@ func handleProjectCreate(projectMgr *ProjectManager) http.HandlerFunc {
 		}
 
 		cfg := ProjectConfig{
-			Name:             req.Name,
-			Cloud:            req.Cloud,
-			Backend:          req.Backend,
-			LogLevel:         req.LogLevel,
-			SimPort:          req.SimPort,
-			BackendPort:      req.BackendPort,
-			FrontendPort:     req.FrontendPort,
-			FrontendMgmtPort: req.FrontendMgmtPort,
+			Name:        req.Name,
+			Cloud:       req.Cloud,
+			Backend:     req.Backend,
+			LogLevel:    req.LogLevel,
+			SimPort:     req.SimPort,
+			BackendPort: req.BackendPort,
 		}
 
 		if err := projectMgr.Create(cfg); err != nil {

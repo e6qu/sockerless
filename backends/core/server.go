@@ -3,12 +3,14 @@ package core
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io/fs"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -28,28 +30,6 @@ type BackendDescriptor struct {
 	NCPU            int
 	MemTotal        int64
 	InstanceID      string
-}
-
-// RouteOverrides allows backends to provide custom handlers for operations
-// that differ between backends. If a field is nil, the default (memory-like)
-// implementation is used.
-type RouteOverrides struct {
-	ContainerCreate  http.HandlerFunc
-	ContainerStart   http.HandlerFunc
-	ContainerStop    http.HandlerFunc
-	ContainerKill    http.HandlerFunc
-	ContainerRemove  http.HandlerFunc
-	ContainerLogs    http.HandlerFunc
-	ContainerAttach  http.HandlerFunc
-	ContainerRestart http.HandlerFunc
-	ContainerPrune   http.HandlerFunc
-	ContainerPause   http.HandlerFunc
-	ContainerUnpause http.HandlerFunc
-	ExecStart        http.HandlerFunc
-	ImagePull        http.HandlerFunc
-	ImageLoad        http.HandlerFunc
-	VolumeRemove     http.HandlerFunc
-	VolumePrune      http.HandlerFunc
 }
 
 // ProviderInfo describes the cloud provider connection for a backend.
@@ -76,12 +56,16 @@ type BaseServer struct {
 	HealthChecker  HealthChecker
 	EventBus       *EventBus
 	ProviderInfo   *ProviderInfo
+	self           api.Backend // virtual dispatch target for overrideable methods
 }
 
+// SetSelf sets the virtual dispatch target for overrideable api.Backend methods.
+// Embedding types call this after construction to enable method overriding.
+func (s *BaseServer) SetSelf(b api.Backend) { s.self = b }
+
 // NewBaseServer creates a new base server with the given store, descriptor,
-// route overrides, and logger. It registers all routes and initializes the
-// default bridge network.
-func NewBaseServer(store *Store, desc BackendDescriptor, overrides RouteOverrides, logger zerolog.Logger) *BaseServer {
+// and logger. It registers all routes and initializes the default bridge network.
+func NewBaseServer(store *Store, desc BackendDescriptor, logger zerolog.Logger) *BaseServer {
 	if desc.InstanceID == "" {
 		desc.InstanceID = DefaultInstanceID()
 	}
@@ -106,21 +90,15 @@ func NewBaseServer(store *Store, desc BackendDescriptor, overrides RouteOverride
 		Metrics:       NewMetrics(),
 		EventBus:      NewEventBus(),
 	}
+	s.self = s
 	s.InitDrivers()
 	store.RestartHook = s.handleRestartPolicy
-	s.registerRoutes(overrides)
+	s.registerRoutes()
 	s.InitDefaultNetwork()
 	return s
 }
 
-func (s *BaseServer) registerRoutes(o RouteOverrides) {
-	or := func(override http.HandlerFunc, def http.HandlerFunc) http.HandlerFunc {
-		if override != nil {
-			return override
-		}
-		return def
-	}
-
+func (s *BaseServer) registerRoutes() {
 	// System
 	s.Mux.HandleFunc("GET /internal/v1/info", s.handleInfo)
 
@@ -149,29 +127,29 @@ func (s *BaseServer) registerRoutes(o RouteOverrides) {
 	s.Mux.HandleFunc("POST /internal/v1/libpod/pods/{name}/kill", s.handlePodKill)
 	s.Mux.HandleFunc("DELETE /internal/v1/libpod/pods/{name}", s.handlePodRemove)
 
-	// Containers
-	s.Mux.HandleFunc("POST /internal/v1/containers", or(o.ContainerCreate, s.handleContainerCreate))
+	// Containers — all handlers delegate to s.self for virtual dispatch
+	s.Mux.HandleFunc("POST /internal/v1/containers", s.handleContainerCreate)
 	s.Mux.HandleFunc("GET /internal/v1/containers", s.handleContainerList)
 	s.Mux.HandleFunc("GET /internal/v1/containers/{id}", s.handleContainerInspect)
-	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/start", or(o.ContainerStart, s.handleContainerStart))
-	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/stop", or(o.ContainerStop, s.handleContainerStop))
-	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/kill", or(o.ContainerKill, s.handleContainerKill))
-	s.Mux.HandleFunc("DELETE /internal/v1/containers/{id}", or(o.ContainerRemove, s.handleContainerRemove))
-	s.Mux.HandleFunc("GET /internal/v1/containers/{id}/logs", or(o.ContainerLogs, s.handleContainerLogs))
+	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/start", s.handleContainerStart)
+	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/stop", s.handleContainerStop)
+	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/kill", s.handleContainerKill)
+	s.Mux.HandleFunc("DELETE /internal/v1/containers/{id}", s.handleContainerRemove)
+	s.Mux.HandleFunc("GET /internal/v1/containers/{id}/logs", s.handleContainerLogs)
 	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/wait", s.handleContainerWait)
-	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/attach", or(o.ContainerAttach, s.handleContainerAttach))
+	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/attach", s.handleContainerAttach)
 
 	// Exec
 	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/exec", s.handleExecCreate)
 	s.Mux.HandleFunc("GET /internal/v1/exec/{id}", s.handleExecInspect)
-	s.Mux.HandleFunc("POST /internal/v1/exec/{id}/start", or(o.ExecStart, s.handleExecStart))
+	s.Mux.HandleFunc("POST /internal/v1/exec/{id}/start", s.handleExecStart)
 	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/resize", s.handleContainerResize)
 	s.Mux.HandleFunc("POST /internal/v1/exec/{id}/resize", s.handleExecResize)
 
 	// Images
-	s.Mux.HandleFunc("POST /internal/v1/images/pull", or(o.ImagePull, s.handleImagePull))
+	s.Mux.HandleFunc("POST /internal/v1/images/pull", s.handleImagePull)
 	s.Mux.HandleFunc("GET /internal/v1/images/inspect", s.handleImageInspect)
-	s.Mux.HandleFunc("POST /internal/v1/images/load", or(o.ImageLoad, s.handleImageLoad))
+	s.Mux.HandleFunc("POST /internal/v1/images/load", s.handleImageLoad)
 	s.Mux.HandleFunc("POST /internal/v1/images/tag", s.handleImageTag)
 	s.Mux.HandleFunc("POST /internal/v1/images/build", s.handleImageBuild)
 
@@ -190,8 +168,8 @@ func (s *BaseServer) registerRoutes(o RouteOverrides) {
 	s.Mux.HandleFunc("POST /internal/v1/volumes", s.handleVolumeCreate)
 	s.Mux.HandleFunc("GET /internal/v1/volumes", s.handleVolumeList)
 	s.Mux.HandleFunc("GET /internal/v1/volumes/{name}", s.handleVolumeInspect)
-	s.Mux.HandleFunc("DELETE /internal/v1/volumes/{name}", or(o.VolumeRemove, s.handleVolumeRemove))
-	s.Mux.HandleFunc("POST /internal/v1/volumes/prune", or(o.VolumePrune, s.handleVolumePrune))
+	s.Mux.HandleFunc("DELETE /internal/v1/volumes/{name}", s.handleVolumeRemove)
+	s.Mux.HandleFunc("POST /internal/v1/volumes/prune", s.handleVolumePrune)
 
 	// Container archive (copy files to/from container)
 	s.Mux.HandleFunc("PUT /internal/v1/containers/{id}/archive", s.handlePutArchive)
@@ -199,13 +177,13 @@ func (s *BaseServer) registerRoutes(o RouteOverrides) {
 	s.Mux.HandleFunc("GET /internal/v1/containers/{id}/archive", s.handleGetArchive)
 
 	// Extended container operations
-	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/restart", or(o.ContainerRestart, s.handleContainerRestart))
+	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/restart", s.handleContainerRestart)
 	s.Mux.HandleFunc("GET /internal/v1/containers/{id}/top", s.handleContainerTop)
-	s.Mux.HandleFunc("POST /internal/v1/containers/prune", or(o.ContainerPrune, s.handleContainerPrune))
+	s.Mux.HandleFunc("POST /internal/v1/containers/prune", s.handleContainerPrune)
 	s.Mux.HandleFunc("GET /internal/v1/containers/{id}/stats", s.handleContainerStats)
 	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/rename", s.handleContainerRename)
-	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/pause", or(o.ContainerPause, s.handleContainerPause))
-	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/unpause", or(o.ContainerUnpause, s.handleContainerUnpause))
+	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/pause", s.handleContainerPause)
+	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/unpause", s.handleContainerUnpause)
 	s.Mux.HandleFunc("POST /internal/v1/containers/{id}/update", s.handleContainerUpdate)
 	s.Mux.HandleFunc("GET /internal/v1/containers/{id}/changes", s.handleContainerChanges)
 	s.Mux.HandleFunc("GET /internal/v1/containers/{id}/export", s.handleContainerExport)
@@ -227,6 +205,9 @@ func (s *BaseServer) registerRoutes(o RouteOverrides) {
 	// System
 	s.Mux.HandleFunc("GET /internal/v1/events", s.handleSystemEvents)
 	s.Mux.HandleFunc("GET /internal/v1/system/df", s.handleSystemDf)
+
+	// Docker-compatible API routes (same mux, no /internal/v1/ prefix)
+	s.registerDockerAPIRoutes()
 }
 
 // InitDefaultNetwork creates the default bridge, host, and none networks.
@@ -414,7 +395,9 @@ func (sr *statusRecorder) Flush() {
 }
 
 // ListenAndServe starts the HTTP server.
-func (s *BaseServer) ListenAndServe(addr string) error {
+// If addr starts with /, it listens on a Unix socket (TLS is ignored).
+// If certFile and keyFile are both non-empty, the TCP listener uses TLS.
+func (s *BaseServer) ListenAndServe(addr, certFile, keyFile string) error {
 	// Crash-only startup: load persisted registry state
 	if err := s.Registry.Load(); err != nil {
 		s.Logger.Warn().Err(err).Msg("failed to load resource registry")
@@ -422,9 +405,31 @@ func (s *BaseServer) ListenAndServe(addr string) error {
 		s.Logger.Info().Int("active_resources", len(active)).Msg("loaded resource registry from disk")
 	}
 
+	wrapped := stripVersionPrefix(s.Mux)
+	handler := otelhttp.NewHandler(LoggingMiddleware(s.Logger, MetricsMiddleware(s.Metrics, wrapped)), "sockerless-backend")
+
+	if strings.HasPrefix(addr, "/") {
+		os.Remove(addr)
+		listener, err := net.Listen("unix", addr)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = listener.Close() }()
+		srv := &http.Server{Handler: handler}
+		return srv.Serve(listener)
+	}
+
 	srv := &http.Server{
 		Addr:    addr,
-		Handler: otelhttp.NewHandler(LoggingMiddleware(s.Logger, MetricsMiddleware(s.Metrics, s.Mux)), "sockerless-backend"),
+		Handler: handler,
+	}
+	if certFile != "" && keyFile != "" {
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return err
+		}
+		srv.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}}
+		return srv.ListenAndServeTLS("", "")
 	}
 	return srv.ListenAndServe()
 }
