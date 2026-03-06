@@ -921,9 +921,7 @@ sockerless/
 │
 ├── backends/
 │   ├── core/                          # Module: shared backend library
-│   │   └── go.mod                     #   Deps: api/, sandbox/, gorilla/websocket
-│   ├── memory/                        # Module: in-memory backend
-│   │   └── go.mod                     #   Deps: api/, core/, sandbox/
+│   │   └── go.mod                     #   Deps: api/, agent/, gorilla/websocket
 │   ├── docker/                        # Module: real Docker daemon backend
 │   │   └── go.mod                     #   Deps: api/, Docker client SDK
 │   ├── ecs/                           # Module: AWS ECS Fargate backend
@@ -942,9 +940,6 @@ sockerless/
 ├── agent/                             # Module: sockerless-agent binary
 │   └── go.mod                         #   Deps: gorilla/websocket only
 │                                      #   NO api/ import — fully standalone
-│
-├── sandbox/                           # Module: WASM sandbox (busybox + shell)
-│   └── go.mod                         #   Deps: wazero, mvdan.cc/sh
 │
 ├── simulators/
 │   ├── aws/                           # Module: AWS API simulator (Lambda, ECS, ECR, CloudWatch)
@@ -975,9 +970,8 @@ sockerless/
 |---|--------|------------|----------------------|
 | 1 | `api/` | *(library — no binary)* | None (stdlib only) |
 | 2 | `frontends/docker/` | `sockerless-docker-frontend` | `api/`, OpenAPI-generated types, `gorilla/websocket` |
-| 3 | `backends/core/` | *(library — no binary)* | `api/`, `sandbox/`, `agent/`, `gorilla/websocket` |
-| 4 | `backends/memory/` | `sockerless-backend-memory` | `api/`, `core/`, `sandbox/` |
-| 5 | `backends/docker/` | `sockerless-backend-docker` | `api/`, `github.com/docker/docker` client SDK |
+| 3 | `backends/core/` | *(library — no binary)* | `api/`, `agent/`, `gorilla/websocket` |
+| 4 | `backends/docker/` | `sockerless-backend-docker` | `api/`, `github.com/docker/docker` client SDK |
 | 6 | `backends/ecs/` | `sockerless-backend-ecs` | `api/`, `core/`, AWS SDK v2 |
 | 7 | `backends/lambda/` | `sockerless-backend-lambda` | `api/`, `core/`, AWS SDK v2 |
 | 8 | `backends/cloudrun/` | `sockerless-backend-cloudrun` | `api/`, `core/`, GCP SDK |
@@ -985,8 +979,7 @@ sockerless/
 | 10 | `backends/aca/` | `sockerless-backend-aca` | `api/`, `core/`, Azure SDK |
 | 11 | `backends/azure-functions/` | `sockerless-backend-azf` | `api/`, `core/`, Azure SDK |
 | 12 | `agent/` | `sockerless-agent` | `gorilla/websocket` only |
-| 13 | `sandbox/` | *(library — no binary)* | `wazero`, `mvdan.cc/sh`, `go-busybox` |
-| 14 | `simulators/aws/` | `sim-aws` | AWS SDK types (for request/response formats) |
+| 13 | `simulators/aws/` | `sim-aws` | AWS SDK types (for request/response formats) |
 | 15 | `simulators/gcp/` | `sim-gcp` | GCP protobuf types |
 | 16 | `simulators/azure/` | `sim-azure` | Azure SDK types |
 | 17 | `bleephub/` | `bleephub` | JWT, HTTP server |
@@ -1043,7 +1036,7 @@ Each backend is a **stateful** daemon that:
 
 FaaS backends (Lambda, Cloud Functions, Azure Functions) report `exec: false`, `attach: false`, `max_timeout_seconds: 900` (or similar). The frontend uses this to return `501` for unsupported operations.
 
-**Docker backend special case:** The Docker backend (`backends/docker/`) talks to a real Docker daemon. It does NOT need the agent — it uses Docker's native exec and attach APIs directly. This makes it the ideal reference backend for testing: run the same test suite against the memory backend, the Docker backend, and cloud backends to verify behavior consistency.
+**Docker backend special case:** The Docker backend (`backends/docker/`) talks to a real Docker daemon. It does NOT need the agent — it uses Docker's native exec and attach APIs directly. This makes it the ideal reference backend for testing: run the same test suite against the Docker backend and cloud backends to verify behavior consistency.
 
 ### 6.5 Agent
 
@@ -1068,36 +1061,30 @@ Forward agent is used when the backend can reach the container's network (VPC, V
 
 **When the agent is NOT needed:**
 - Docker backend: uses Docker's native exec/attach
-- Memory backend: direct WASM sandbox execution
-- Synthetic mode: no real exec (returns mock output)
+- No agent available: operations return errors
 
 **When the agent IS needed:**
 - All cloud backends (ECS, Cloud Run, ACA, Lambda, GCF, Azure Functions)
 
-### 6.6 Driver Architecture (Phase 30)
+### 6.6 Driver Architecture
 
-The backend uses a **driver chain** pattern (chain of responsibility) for dispatching exec, filesystem, streaming, and process lifecycle operations. Each driver interface has a `Fallback` field that forms a chain:
-
-```
-Agent Driver → WASM Process Driver → Synthetic Driver
-```
+The backend uses a **driver set** for dispatching exec, filesystem, streaming, and network operations. Agent drivers route operations to connected agents (forward or reverse).
 
 **4 Driver Interfaces:**
 
 | Interface | Methods | Purpose |
 |---|---|---|
 | `ExecDriver` | `Exec(containerID, execConfig) → (exitCode, error)` | Execute commands inside containers |
-| `FilesystemDriver` | `PutArchive`, `HeadArchive`, `GetArchive` | Container filesystem access (`docker cp`) |
-| `StreamDriver` | `Logs`, `Attach` | Log streaming and container attach |
-| `ProcessLifecycleDriver` | `Start`, `Stop`, `WaitCh` | Container process lifecycle |
+| `FilesystemDriver` | `PutArchive`, `GetArchive`, `StatPath`, `RootPath` | Container filesystem access (`docker cp`) |
+| `StreamDriver` | `LogBytes`, `Attach` | Log retrieval and container attach |
+| `NetworkDriver` | `Create`, `Connect`, `Disconnect`, `Remove`, `List`, `Prune` | Container network isolation |
 
-**`DriverSet`** on `BaseServer` holds the active driver chain. `InitDrivers()` constructs the chain based on available capabilities:
+**`DriverSet`** on `BaseServer` holds the active drivers. `InitDrivers()` sets up agent drivers for all backends:
 
-- **Cloud backends**: Agent → Synthetic (no WASM)
-- **Memory backend**: Agent → WASM Process → Synthetic (calls `InitDrivers()` again after setting `ProcessFactory`)
+- **Cloud backends**: Agent drivers route to forward or reverse agent connections
 - **Docker backend**: Does not use drivers (direct Docker SDK passthrough)
 
-The chain pattern allows graceful fallback — if a container doesn't have an agent connected, the WASM driver handles exec; if no WASM process exists, synthetic mode returns mock output.
+When no agent is connected, operations return errors. In simulator mode with `SOCKERLESS_AUTO_AGENT_BIN`, the backend auto-spawns a local agent subprocess that enables real command execution.
 
 ### 6.7 Dependency Flow
 
@@ -1458,8 +1445,6 @@ Also supports **reverse agent** via `SOCKERLESS_CALLBACK_URL`.
 FaaS backends use **reverse agent** exclusively: the agent inside the function dials back to the backend via `SOCKERLESS_CALLBACK_URL` (WebSocket). This enables exec and attach for the duration of the function invocation. Helper and cache containers auto-stop after 500ms.
 
 FaaS backends route container variants differently:
-- `services` → `services-wasm` (WASM sandbox)
-- `custom-image` → `custom-image-wasm` (WASM sandbox)
 - `container-action` → `container-action-faas` (reverse agent lifecycle)
 
 #### AWS Lambda
@@ -1524,52 +1509,23 @@ FaaS backends route container variants differently:
 
 The Docker backend is the **reference implementation** for testing. Running the test suite against the Docker backend validates that sockerless produces responses identical to a real Docker daemon.
 
-### 9.4 Memory Backend
+### 9.4 Backend Comparison Matrix
 
-In-memory backend with WASM sandbox for real command execution. Uses wazero
-v1.11.0 (pure Go WASM runtime) + go-busybox (41 BusyBox applets compiled to
-WASM via TinyGo) + mvdan.cc/sh v3.12.0 (shell interpreter). Per-container
-temp directories provide isolated virtual filesystems with Alpine-like rootfs.
-
-**Execution model:** mvdan.cc/sh parses shell syntax natively in Go and dispatches
-individual commands to WASM busybox applets via wazero. WASI Preview 1 has no
-fork/exec, so the Go host orchestrates all process spawning. The `sandbox/`
-module is standalone — the memory backend enables it via `ProcessFactory`.
-
-**Supported features:**
-- Real shell execution: pipes, `&&`/`||`, redirects, variable expansion, subshells
-- 21+ Go-implemented builtins (pwd, cd, mkdir, cp, mv, rm, cat, echo, env, etc.)
-- Volumes via symlinks in rootDir + DirMounts for WASM
-- `docker cp` (archive PUT/HEAD/GET) with pre-start staging directories
-- Interactive shell via attach
-- PATH-aware command resolution
-- Exec with working directory and environment variables
-- `tail -f /dev/null` keepalive (blocks on context, no inotify in WASI)
-
-**Limitations:** No real network access from WASM sandbox. No fork/exec (WASI P1).
-GitLab Runner E2E requires `SOCKERLESS_SYNTHETIC=1` because gitlab-runner uses
-helper binaries (`gitlab-runner-helper`, `gitlab-runner-build`) that can't run in
-WASM. GitHub `act` runner works without synthetic mode.
-
-**Capabilities:** All true (real WASM execution). `agent_required: false`
-
-### 9.5 Backend Comparison Matrix
-
-| Capability | Docker | Memory | ECS | Cloud Run | ACA | Lambda | CR Func | Az Func |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Long-running | Yes | Yes | Yes | Yes (24h) | Yes | No (15m) | No (60m) | No (10m) |
-| Exec | Yes | Yes (WASM) | Yes* | Yes* | Yes* | Yes** | Yes** | Yes** |
-| Attach | Yes | Yes (WASM) | Yes* | Yes* | Yes* | Yes** | Yes** | Yes** |
+| Capability | Docker | ECS | Cloud Run | ACA | Lambda | CR Func | Az Func |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Long-running | Yes | Yes | Yes (24h) | Yes | No (15m) | No (60m) | No (10m) |
+| Exec | Yes | Yes* | Yes* | Yes* | Yes** | Yes** | Yes** |
+| Attach | Yes | Yes* | Yes* | Yes* | Yes** | Yes** | Yes** |
 | Log stream | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Log follow | Yes | Yes | Yes | Yes | Yes | No | No | No |
-| Volumes | Yes | Yes (symlinks) | Yes | Partial | Yes | No | No | No |
-| Networks | Yes | Yes (in-memory) | Yes | Yes | Yes | No | No | No |
-| Health checks | Yes | Yes (exec) | Yes | Yes | Yes | No | No | No |
-| Docker build | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Archive (docker cp) | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Agent mode | N/A | N/A | Forward | Forward | Forward | Reverse | Reverse | Reverse |
-| Agent needed | No | No | Yes | Yes | Yes | Yes | Yes | Yes |
-| Startup latency | <1s | <1s | 10-45s | 5-30s | 10-60s | 1-5s | 1-5s | 1-5s |
+| Log follow | Yes | Yes | Yes | Yes | No | No | No |
+| Volumes | Yes | Yes | Partial | Yes | No | No | No |
+| Networks | Yes | Yes | Yes | Yes | No | No | No |
+| Health checks | Yes | Yes | Yes | Yes | No | No | No |
+| Docker build | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Archive (docker cp) | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Agent mode | N/A | Forward | Forward | Forward | Reverse | Reverse | Reverse |
+| Agent needed | No | Yes | Yes | Yes | Yes | Yes | Yes |
+| Startup latency | <1s | 10-45s | 5-30s | 10-60s | 1-5s | 1-5s | 1-5s |
 
 \* Via forward agent (backend connects to agent inside container)
 \*\* Via reverse agent (agent inside function dials back to backend)
@@ -2142,24 +2098,23 @@ For stdin (client → agent), the frontend reads raw bytes from the hijacked con
 
 ### 13.5 Backend Compatibility Matrix for CI Runners
 
-| Feature | Docker | Memory | ECS | Cloud Run | ACA | Lambda | CR Func | Az Func |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **GitLab Runner** | Yes | Yes† | Yes | Yes | Yes | **No** | **No** | **No** |
-| **GitHub Actions Runner** | Yes | Yes | Yes | Yes | Yes | **No** | **No** | **No** |
-| **GitHub `act` Runner** | Yes | Yes | Yes | Yes | Yes | Yes‡ | Yes‡ | Yes‡ |
-| **gitlab-ci-local** | Yes | Yes | Yes | Yes | Yes | Yes‡ | Yes‡ | Yes‡ |
-| Attach-before-start | Yes | Yes | Yes* | Yes* | Yes* | Yes** | Yes** | Yes** |
-| Exec with stdin | Yes | Yes (WASM) | Yes* | Yes* | Yes* | Yes** | Yes** | Yes** |
-| Volume sharing | Yes | Yes (symlinks) | Yes | Yes | Yes | No | No | No |
-| Health check polling | Yes | Yes (exec) | Yes* | Yes* | Yes* | No | No | No |
-| Container actions | Yes | Yes (WASM) | Yes* | Yes* | Yes* | Yes** | Yes** | Yes** |
-| Docker build | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Docker cp (archive) | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Startup latency | <1s | <1s | 10-45s | 5-30s | 10-60s | 1-5s | 1-5s | 1-5s |
+| Feature | Docker | ECS | Cloud Run | ACA | Lambda | CR Func | Az Func |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **GitLab Runner** | Yes | Yes | Yes | Yes | **No** | **No** | **No** |
+| **GitHub Actions Runner** | Yes | Yes | Yes | Yes | **No** | **No** | **No** |
+| **GitHub `act` Runner** | Yes | Yes | Yes | Yes | Yes‡ | Yes‡ | Yes‡ |
+| **gitlab-ci-local** | Yes | Yes | Yes | Yes | Yes‡ | Yes‡ | Yes‡ |
+| Attach-before-start | Yes | Yes* | Yes* | Yes* | Yes** | Yes** | Yes** |
+| Exec with stdin | Yes | Yes* | Yes* | Yes* | Yes** | Yes** | Yes** |
+| Volume sharing | Yes | Yes | Yes | Yes | No | No | No |
+| Health check polling | Yes | Yes* | Yes* | Yes* | No | No | No |
+| Container actions | Yes | Yes* | Yes* | Yes* | Yes** | Yes** | Yes** |
+| Docker build | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Docker cp (archive) | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Startup latency | <1s | 10-45s | 5-30s | 10-60s | 1-5s | 1-5s | 1-5s |
 
 \* Via forward agent
 \*\* Via reverse agent
-† GitLab Runner E2E requires `SOCKERLESS_SYNTHETIC=1` (helper binaries can't run in WASM)
 ‡ FaaS backends limited by function timeout
 
 **Recommendation:** For CI runner workloads, use container-based backends (ECS, Cloud Run, ACA). FaaS backends work with lightweight CI tools (`act`, `gitlab-ci-local`) but not with full CI runners.
@@ -2262,7 +2217,6 @@ Each backend binary reads its own environment variables. All backends share comm
 | `SOCKERLESS_CALLBACK_URL` | | Backend URL for reverse agent connections |
 | `SOCKERLESS_ENDPOINT_URL` | | Custom cloud endpoint (simulator mode) |
 | `SOCKERLESS_FETCH_IMAGE_CONFIG` | `false` | Fetch image config from registry on pull |
-| `SOCKERLESS_SYNTHETIC` | `false` | Use synthetic mode (no real exec) |
 
 Backend-specific variables use prefixes: `SOCKERLESS_ECS_*`, `SOCKERLESS_LAMBDA_*`, `SOCKERLESS_GCR_*`, `SOCKERLESS_GCF_*`, `SOCKERLESS_ACA_*`, `SOCKERLESS_AZF_*`, `AWS_REGION`.
 
@@ -2286,13 +2240,12 @@ The agent is configured entirely via environment variables (injected by the back
 
 ### Phase 1: Foundation (MVP)
 
-**Goal:** Frontend + memory backend + Docker backend pass the test suite. `docker run`, `docker ps`, `docker logs`, `docker exec` work end-to-end with the Docker backend.
+**Goal:** Frontend + Docker backend pass the test suite. `docker run`, `docker ps`, `docker logs`, `docker exec` work end-to-end with the Docker backend.
 
 | Component | Deliverable |
 |---|---|
 | `api/` module | Internal API types, capability model |
 | Frontend | Docker REST API server (OpenAPI-generated types), system + container + exec + image endpoints |
-| Memory backend | In-memory state, simulated containers |
 | Docker backend | Passthrough to real Docker daemon (reference implementation) |
 | Tests | Black-box REST test suite (system, containers, exec, images) |
 | Protocol | Multiplexed stream framing, connection hijacking |
@@ -2348,23 +2301,7 @@ for detailed phase history. Key milestones:
 - Phase 10–11: Real CI runner smoke tests + full terraform integration tests
 - Phase 13–14: E2E tests (12 workflows × 7 backends for both GitHub/GitLab runners)
 
-### Phase 15: Memory Backend WASM Sandbox
-
-**Goal:** Replace synthetic exec with real WASM command execution in the memory backend.
-
-| Component | Library | Purpose |
-|---|---|---|
-| WASM runtime | wazero v1.11.0 | Pure Go, WASI Preview 1, no CGo |
-| Commands | go-busybox | 41 BusyBox applets compiled to WASM |
-| Shell | mvdan.cc/sh v3.12.0 | Pipes, &&/||, redirects, variable expansion, REPL |
-| Filesystem | Host temp dirs | Per-container isolated rootfs via WithDirMount |
-
-Architecture: mvdan.cc/sh parses shell syntax natively in Go and dispatches
-individual commands to WASM busybox applets via wazero. WASI Preview 1 has no
-fork/exec, so the Go host orchestrates all process spawning. The `sandbox/`
-module is standalone — only the memory backend enables it via `ProcessFactory`.
-
-### Phases 16–24: Extended Endpoints, CI Runner Improvements
+### Phases 15–24: Extended Endpoints, CI Runner Improvements
 
 - Phase 19: FaaS reverse agent — Lambda, GCF, AZF backends with reverse WebSocket agent
 - Phase 22: GitHub `act` upstream compatibility (91/24 pass/fail on memory)
@@ -2373,19 +2310,16 @@ module is standalone — only the memory backend enables it via `ProcessFactory`
 
 ### Phase 30: Driver Architecture
 
-Introduced 4 driver interfaces with chain-of-responsibility pattern:
+Introduced driver interfaces for pluggable container operations:
 
-| Driver | Purpose | Chain |
-|---|---|---|
-| `ExecDriver` | Execute commands in containers | Agent → Process (WASM) → Synthetic |
-| `FilesystemDriver` | Archive PUT/HEAD/GET | Agent → Process → Synthetic |
-| `StreamDriver` | Logs, attach streaming | Agent → Process → Synthetic |
-| `ProcessLifecycleDriver` | Start/stop/wait | WASM Process → Synthetic |
+| Driver | Purpose |
+|---|---|
+| `ExecDriver` | Execute commands in containers |
+| `FilesystemDriver` | Archive PUT/HEAD/GET |
+| `StreamDriver` | Logs, attach streaming |
+| `NetworkDriver` | Container network isolation |
 
-Each driver has a `Fallback` field forming a chain. `DriverSet` on `BaseServer`
-is auto-constructed by `InitDrivers()`. This allows backends to mix execution
-strategies — e.g., a cloud backend uses Agent for running containers but falls
-back to Synthetic for containers without processes.
+Agent drivers route operations to forward or reverse agent connections. When no agent is connected, operations return errors. `DriverSet` on `BaseServer` is auto-constructed by `InitDrivers()`.
 
 ### Phases 31–33: Shell Builtins, Service Containers, Health Checks
 

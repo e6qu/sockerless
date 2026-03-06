@@ -64,7 +64,7 @@ Stops, re-creates exit channel, re-starts. Increments `RestartCount`.
 
 ### `POST /containers/{id}/wait` — Wait for Container Exit
 
-Blocks on `WaitChs` channel. Returns immediately if already exited. For synthetic containers with OpenStdin: spawns 2-second auto-stop if no execs remain.
+Blocks on `WaitChs` channel. Returns immediately if already exited. For containers with OpenStdin: spawns 2-second auto-stop if no execs remain.
 
 ## Container Query Endpoints (Not Overridable)
 

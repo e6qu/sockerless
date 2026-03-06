@@ -22,63 +22,63 @@
 
 ## 1. System Operations
 
-| REST API Call | CLI Command | Docker Native | Sockerless Internal | Memory | Docker Backend | All Cloud Backends |
-|---|---|---|---|---|---|---|
-| `GET /_ping` | `docker ping` (implicit) | Returns `OK` from dockerd | Frontend handles directly (no backend call) | N/A | N/A | N/A |
-| `HEAD /_ping` | *(implicit)* | Returns headers only | Frontend handles directly | N/A | N/A | N/A |
-| `GET /version` | `docker version` | Returns dockerd version info | `GET /internal/v1/version` | Returns hardcoded Sockerless version | Docker API `GET /version` | Returns Sockerless version with backend name |
-| `GET /info` | `docker info` | Returns system info (OS, runtimes, storage driver, etc.) | `GET /internal/v1/info` | Returns info with `OSType: "linux"`, container/image counts from local state | Docker API `GET /info` | Returns info from local state (no cloud API calls for resource counts) |
-| `POST /auth` | `docker login` | Validates credentials against registry | `POST /internal/v1/auth` | Stores credentials in memory | Docker API `POST /auth` | Stores credentials in local state for later pull operations |
-| `GET /events` | `docker events` | Streams real-time events | `GET /internal/v1/events` | Returns synthetic events from state changes | Docker API `GET /events` | Returns synthetic events from state changes |
-| `GET /system/df` | `docker system df` | Returns disk usage statistics | `GET /internal/v1/system/df` | Returns sizes based on WASM rootfs directories | Docker API `GET /system/df` | Returns estimated sizes from local state |
+| REST API Call | CLI Command | Docker Native | Sockerless Internal | Docker Backend | All Cloud Backends |
+|---|---|---|---|---|---|
+| `GET /_ping` | `docker ping` (implicit) | Returns `OK` from dockerd | Frontend handles directly (no backend call) | N/A | N/A |
+| `HEAD /_ping` | *(implicit)* | Returns headers only | Frontend handles directly | N/A | N/A |
+| `GET /version` | `docker version` | Returns dockerd version info | `GET /internal/v1/version` | Docker API `GET /version` | Returns Sockerless version with backend name |
+| `GET /info` | `docker info` | Returns system info (OS, runtimes, storage driver, etc.) | `GET /internal/v1/info` | Docker API `GET /info` | Returns info from local state (no cloud API calls for resource counts) |
+| `POST /auth` | `docker login` | Validates credentials against registry | `POST /internal/v1/auth` | Docker API `POST /auth` | Stores credentials in local state for later pull operations |
+| `GET /events` | `docker events` | Streams real-time events | `GET /internal/v1/events` | Docker API `GET /events` | Returns synthetic events from state changes |
+| `GET /system/df` | `docker system df` | Returns disk usage statistics | `GET /internal/v1/system/df` | Docker API `GET /system/df` | Returns estimated sizes from local state |
 
 ---
 
 ## 2. Image Operations
 
-| REST API Call | CLI Command | Docker Native | Sockerless Internal | Memory | Docker Backend | ECS | Lambda | Cloud Run | CR Functions | ACA | Azure Functions |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| `POST /images/create` (pull) | `docker pull nginx:latest` | Downloads layers from registry to local store; `X-Registry-Auth` header for private registries | `POST /internal/v1/images/pull` | Records image reference in state; no actual download. Optionally fetches image config from registry if `SOCKERLESS_FETCH_IMAGE_CONFIG=true` | Docker API `POST /images/create` (real pull) | Records ref in state; **ECS pulls at `RunTask` time** from ECR/Docker Hub | Records ref; **Lambda** pulls from **ECR** at `CreateFunction` time | Records ref; **Cloud Run** pulls at `CreateJob` time from **Artifact Registry**/GCR/Docker Hub | Records ref; **Cloud Run Functions** pulls at `CreateFunction` time from **Artifact Registry** | Records ref; **ACA** pulls at job creation time from **ACR**/Docker Hub | Records ref; **Azure Functions** pulls from **ACR** at Function App deploy |
-| `GET /images/{name}/json` | `docker inspect nginx:latest` | Returns image metadata from local store (config, layers, size) | `GET /internal/v1/images/{name}` | Returns stored metadata from local state | Docker API `GET /images/{name}/json` | Returns stored metadata from local state (no cloud API call) | Returns stored metadata from local state | Returns stored metadata from local state | Same | Returns stored metadata from local state | Same |
-| `POST /images/load` | `docker load -i image.tar` | Imports image from tar archive into local store | `POST /internal/v1/images/load` | Extracts metadata from tar; stores in local state; does NOT push to cloud registries | Docker API `POST /images/load` | Extracts metadata; stores in local state (creates synthetic image entry) | Same as ECS | Same | Same | Same | Same |
-| `POST /images/{name}/tag` | `docker tag nginx:latest myapp:v1` | Creates new tag reference in local store | `POST /internal/v1/images/{name}/tag` | Updates tag in local state | Docker API `POST /images/{name}/tag` | Updates tag in local state (no cloud API call) | Same | Same | Same | Same | Same |
-| `POST /build` | `docker build .` | Parses Dockerfile, executes RUN steps, creates image layers | `POST /internal/v1/images/build` | Parses Dockerfile (FROM, COPY, ADD, ENV, CMD, ENTRYPOINT, WORKDIR, ARG, LABEL, EXPOSE, USER). RUN is no-op. Creates image in state. COPY files staged in `BuildContexts` | Docker API `POST /build` (real build) | Same as Memory (Dockerfile parser in core) | Same | Same | Same | Same | Same |
-| `GET /images/json` | `docker images` | Lists all images from local store | `GET /internal/v1/images` | Returns from local state | Docker API `GET /images/json` | Returns from local state | Same | Same | Same | Same | Same |
-| `DELETE /images/{name}` | `docker rmi nginx` | Removes image from local store | `DELETE /internal/v1/images/{name}` | Removes from local state | Docker API `DELETE /images/{name}` | Removes from local state | Same | Same | Same | Same | Same |
+| REST API Call | CLI Command | Docker Native | Sockerless Internal | Docker Backend | ECS | Lambda | Cloud Run | CR Functions | ACA | Azure Functions |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `POST /images/create` (pull) | `docker pull nginx:latest` | Downloads layers from registry to local store; `X-Registry-Auth` header for private registries | `POST /internal/v1/images/pull` | Docker API `POST /images/create` (real pull) | Records ref in state; **ECS pulls at `RunTask` time** from ECR/Docker Hub | Records ref; **Lambda** pulls from **ECR** at `CreateFunction` time | Records ref; **Cloud Run** pulls at `CreateJob` time from **Artifact Registry**/GCR/Docker Hub | Records ref; **Cloud Run Functions** pulls at `CreateFunction` time from **Artifact Registry** | Records ref; **ACA** pulls at job creation time from **ACR**/Docker Hub | Records ref; **Azure Functions** pulls from **ACR** at Function App deploy |
+| `GET /images/{name}/json` | `docker inspect nginx:latest` | Returns image metadata from local store (config, layers, size) | `GET /internal/v1/images/{name}` | Docker API `GET /images/{name}/json` | Returns stored metadata from local state (no cloud API call) | Returns stored metadata from local state | Returns stored metadata from local state | Same | Returns stored metadata from local state | Same |
+| `POST /images/load` | `docker load -i image.tar` | Imports image from tar archive into local store | `POST /internal/v1/images/load` | Docker API `POST /images/load` | Extracts metadata; stores in local state (creates synthetic image entry) | Same as ECS | Same | Same | Same | Same |
+| `POST /images/{name}/tag` | `docker tag nginx:latest myapp:v1` | Creates new tag reference in local store | `POST /internal/v1/images/{name}/tag` | Docker API `POST /images/{name}/tag` | Updates tag in local state (no cloud API call) | Same | Same | Same | Same | Same |
+| `POST /build` | `docker build .` | Parses Dockerfile, executes RUN steps, creates image layers | `POST /internal/v1/images/build` | Docker API `POST /build` (real build) | Same as core (Dockerfile parser) | Same | Same | Same | Same | Same |
+| `GET /images/json` | `docker images` | Lists all images from local store | `GET /internal/v1/images` | Docker API `GET /images/json` | Returns from local state | Same | Same | Same | Same | Same |
+| `DELETE /images/{name}` | `docker rmi nginx` | Removes image from local store | `DELETE /internal/v1/images/{name}` | Docker API `DELETE /images/{name}` | Removes from local state | Same | Same | Same | Same | Same |
 
 ---
 
 ## 3. Container Lifecycle
 
-| REST API Call | CLI Command | Docker Native | Sockerless Internal | Memory | Docker Backend | ECS | Lambda | Cloud Run | CR Functions | ACA | Azure Functions |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| `POST /containers/create` | `docker create --name web nginx` | Creates container: allocates ID, stores config, creates filesystem layers, sets up networking config. Does NOT start. | `POST /internal/v1/containers` | Generates ID; stores config; creates WASM rootfs | Docker API `POST /containers/create` | Stores config; **`RegisterTaskDefinition`** | Stores config; **`CreateFunction`** (container image) | Stores config only (deferred job creation) | Stores config; **`CreateFunction`** (Docker runtime, synchronous 1-3 min) | Stores config only (deferred job creation) | Stores config; **Create App Service Plan + Function App** |
-| `POST /containers/{id}/start` | `docker start web` | Starts container process: mounts volumes, configures network, runs entrypoint | `POST /internal/v1/containers/{id}/start` | Starts WASM process; sets state to "running" | Docker API `POST /containers/{id}/start` | **`RunTask`** (Fargate); polls until RUNNING; extracts agent address from ENI IP | **`Invoke`** (async); agent dials back via reverse WebSocket | **`CreateJob`** + **`RunJob`**; polls until RUNNING; extracts agent address | HTTP POST invoke (async); agent dials back | **`BeginCreateOrUpdate`** (Job) + **`BeginStart`**; polls until RUNNING | Start Function App; agent dials back |
-| `GET /containers/{id}/json` | `docker inspect web` | Returns full container metadata: state, config, network settings, mounts, health status | `GET /internal/v1/containers/{id}` | Returns stored state | Docker API `GET /containers/{id}/json` | Returns from **local state** (no cloud API call) | Returns from **local state** | Returns from **local state** | Returns from **local state** | Returns from **local state** | Returns from **local state** |
-| `GET /containers/json` | `docker ps` / `docker ps -a` | Lists containers from local state, filtered by labels/status/id/name | `GET /internal/v1/containers` | Filters in-memory state | Docker API `GET /containers/json` | Filters **local state** (no `ListTasks` call) | Filters **local state** | Filters **local state** | Filters **local state** | Filters **local state** | Filters **local state** |
-| `POST /containers/{id}/stop` | `docker stop web` | Sends SIGTERM, waits timeout, then SIGKILL | `POST /internal/v1/containers/{id}/stop` | Stops WASM process; sets state to "exited" | Docker API `POST /containers/{id}/stop` | **`StopTask`** | Disconnects reverse agent | **Cancel Execution** | Disconnects reverse agent | **`BeginStopExecution`** | Stop Function App |
-| `POST /containers/{id}/kill` | `docker kill web` | Sends specified signal (default SIGKILL) immediately | `POST /internal/v1/containers/{id}/kill` | Stops WASM process; sets state to "exited" | Docker API `POST /containers/{id}/kill` | **`StopTask`** | Disconnects reverse agent | **Cancel Execution** | Disconnects reverse agent | **`BeginStopExecution`** | Disconnects reverse agent |
-| `POST /containers/{id}/wait` | `docker wait web` | Blocks until container exits; returns exit code | `WS /internal/v1/containers/{id}/wait` | Waits for WASM process exit | Docker API `POST /containers/{id}/wait` | Waits via local state + agent disconnect | Waits for agent disconnect | Waits via local state + agent disconnect | Waits for agent disconnect | Waits via local state + agent disconnect | Waits for agent disconnect |
-| `DELETE /containers/{id}` | `docker rm web` / `docker rm -f web` | Removes container: deletes filesystem, network endpoints, state. If force: kills first. | `DELETE /internal/v1/containers/{id}` | Removes from memory; cleans up WASM rootfs | Docker API `DELETE /containers/{id}` | **`StopTask`** (if force) + **`DeregisterTaskDefinition`** | **`DeleteFunction`** | **`DeleteJob`** | **`DeleteFunction`** | **`BeginDelete`** (Job) | **Delete Function App + App Service Plan** |
+| REST API Call | CLI Command | Docker Native | Sockerless Internal | Docker Backend | ECS | Lambda | Cloud Run | CR Functions | ACA | Azure Functions |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `POST /containers/create` | `docker create --name web nginx` | Creates container: allocates ID, stores config, creates filesystem layers, sets up networking config. Does NOT start. | `POST /internal/v1/containers` | Docker API `POST /containers/create` | Stores config; **`RegisterTaskDefinition`** | Stores config; **`CreateFunction`** (container image) | Stores config only (deferred job creation) | Stores config; **`CreateFunction`** (Docker runtime, synchronous 1-3 min) | Stores config only (deferred job creation) | Stores config; **Create App Service Plan + Function App** |
+| `POST /containers/{id}/start` | `docker start web` | Starts container process: mounts volumes, configures network, runs entrypoint | `POST /internal/v1/containers/{id}/start` | Docker API `POST /containers/{id}/start` | **`RunTask`** (Fargate); polls until RUNNING; extracts agent address from ENI IP | **`Invoke`** (async); agent dials back via reverse WebSocket | **`CreateJob`** + **`RunJob`**; polls until RUNNING; extracts agent address | HTTP POST invoke (async); agent dials back | **`BeginCreateOrUpdate`** (Job) + **`BeginStart`**; polls until RUNNING | Start Function App; agent dials back |
+| `GET /containers/{id}/json` | `docker inspect web` | Returns full container metadata: state, config, network settings, mounts, health status | `GET /internal/v1/containers/{id}` | Docker API `GET /containers/{id}/json` | Returns from **local state** (no cloud API call) | Returns from **local state** | Returns from **local state** | Returns from **local state** | Returns from **local state** | Returns from **local state** |
+| `GET /containers/json` | `docker ps` / `docker ps -a` | Lists containers from local state, filtered by labels/status/id/name | `GET /internal/v1/containers` | Docker API `GET /containers/json` | Filters **local state** (no `ListTasks` call) | Filters **local state** | Filters **local state** | Filters **local state** | Filters **local state** | Filters **local state** |
+| `POST /containers/{id}/stop` | `docker stop web` | Sends SIGTERM, waits timeout, then SIGKILL | `POST /internal/v1/containers/{id}/stop` | Docker API `POST /containers/{id}/stop` | **`StopTask`** | Disconnects reverse agent | **Cancel Execution** | Disconnects reverse agent | **`BeginStopExecution`** | Stop Function App |
+| `POST /containers/{id}/kill` | `docker kill web` | Sends specified signal (default SIGKILL) immediately | `POST /internal/v1/containers/{id}/kill` | Docker API `POST /containers/{id}/kill` | **`StopTask`** | Disconnects reverse agent | **Cancel Execution** | Disconnects reverse agent | **`BeginStopExecution`** | Disconnects reverse agent |
+| `POST /containers/{id}/wait` | `docker wait web` | Blocks until container exits; returns exit code | `WS /internal/v1/containers/{id}/wait` | Docker API `POST /containers/{id}/wait` | Waits via local state + agent disconnect | Waits for agent disconnect | Waits via local state + agent disconnect | Waits for agent disconnect | Waits via local state + agent disconnect | Waits for agent disconnect |
+| `DELETE /containers/{id}` | `docker rm web` / `docker rm -f web` | Removes container: deletes filesystem, network endpoints, state. If force: kills first. | `DELETE /internal/v1/containers/{id}` | Docker API `DELETE /containers/{id}` | **`StopTask`** (if force) + **`DeregisterTaskDefinition`** | **`DeleteFunction`** | **`DeleteJob`** | **`DeleteFunction`** | **`BeginDelete`** (Job) | **Delete Function App + App Service Plan** |
 
 ---
 
 ## 4. Container I/O
 
-| REST API Call | CLI Command | Docker Native | Sockerless Internal | Memory | Docker Backend | ECS | Lambda | Cloud Run | CR Functions | ACA | Azure Functions |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| `GET /containers/{id}/logs` | `docker logs web` | Reads from container's log driver (json-file, journald, etc.). Returns multiplexed stream (8-byte headers). | `GET /internal/v1/containers/{id}/logs` (one-shot) or `WS .../logs/stream` (follow) | Returns real WASM process output via StreamDriver chain | Docker API `GET /containers/{id}/logs` | **CloudWatch Logs**: `GetLogEvents` (one-shot) or `FilterLogEvents` with polling (follow) | **CloudWatch Logs**: `GetLogEvents` for function execution logs | **Cloud Logging**: `entries.list` via Log Admin API | **Cloud Logging**: `entries.list` via Log Admin API | **Azure Monitor**: Log Analytics `QueryWorkspace` | **Azure Monitor**: Log Analytics query |
-| `POST /containers/{id}/attach` | `docker attach web` | Hijacks HTTP connection; bidirectional multiplexed stream (stdin→container, container stdout/stderr→client with 8-byte headers) | Backend hijacks connection; dispatches through StreamDriver chain | Real WASM process attach via ProcessDriver; stdin forwarding supported | Docker API `POST /containers/{id}/attach` (native) | Frontend → **Agent WebSocket** at `{task ENI IP}:9111` (forward agent) | Frontend → **Reverse agent WebSocket** (agent dials back to backend) | Frontend → **Agent WebSocket** at Cloud Run ingress URL (forward agent) | Frontend → **Reverse agent WebSocket** | Frontend → **Agent WebSocket** at VNet IP:9111 (forward agent) | Frontend → **Reverse agent WebSocket** |
+| REST API Call | CLI Command | Docker Native | Sockerless Internal | Docker Backend | ECS | Lambda | Cloud Run | CR Functions | ACA | Azure Functions |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `GET /containers/{id}/logs` | `docker logs web` | Reads from container's log driver (json-file, journald, etc.). Returns multiplexed stream (8-byte headers). | `GET /internal/v1/containers/{id}/logs` (one-shot) or `WS .../logs/stream` (follow) | Docker API `GET /containers/{id}/logs` | **CloudWatch Logs**: `GetLogEvents` (one-shot) or `FilterLogEvents` with polling (follow) | **CloudWatch Logs**: `GetLogEvents` for function execution logs | **Cloud Logging**: `entries.list` via Log Admin API | **Cloud Logging**: `entries.list` via Log Admin API | **Azure Monitor**: Log Analytics `QueryWorkspace` | **Azure Monitor**: Log Analytics query |
+| `POST /containers/{id}/attach` | `docker attach web` | Hijacks HTTP connection; bidirectional multiplexed stream (stdin→container, container stdout/stderr→client with 8-byte headers) | Backend hijacks connection; dispatches through StreamDriver chain | Docker API `POST /containers/{id}/attach` (native) | Frontend → **Agent WebSocket** at `{task ENI IP}:9111` (forward agent) | Frontend → **Reverse agent WebSocket** (agent dials back to backend) | Frontend → **Agent WebSocket** at Cloud Run ingress URL (forward agent) | Frontend → **Reverse agent WebSocket** | Frontend → **Agent WebSocket** at VNet IP:9111 (forward agent) | Frontend → **Reverse agent WebSocket** |
 
 ---
 
 ## 5. Exec Operations
 
-| REST API Call | CLI Command | Docker Native | Sockerless Internal | Memory | Docker Backend | ECS | Lambda | Cloud Run | CR Functions | ACA | Azure Functions |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| `POST /containers/{id}/exec` | `docker exec web sh` (create phase) | Creates exec instance: stores cmd/env/workdir config, allocates exec ID | `POST /internal/v1/containers/{id}/exec` | Stores exec config, returns ID | Docker API `POST /containers/{id}/exec` | Stores exec config in backend state, returns exec ID | Stores exec config (reverse agent handles start) | Stores exec config | Stores exec config (reverse agent handles start) | Stores exec config | Stores exec config (reverse agent handles start) |
-| `POST /exec/{id}/start` | `docker exec web sh` (start phase) | Hijacks connection; forks process inside container's namespaces; streams stdin/stdout/stderr with multiplexed framing | Backend hijacks connection; dispatches through ExecDriver chain (Agent → WASM → Synthetic) | Real WASM execution via mvdan.cc/sh + wazero busybox | Docker API `POST /exec/{id}/start` (native hijack) | **Forward agent** at `{task IP}:9111` → agent exec → stream bridge | **Reverse agent** (agent already connected via callback) → exec → stream bridge | **Forward agent** at Cloud Run URL → exec → stream bridge | **Reverse agent** → exec → stream bridge | **Forward agent** at VNet IP → exec → stream bridge | **Reverse agent** → exec → stream bridge |
-| `GET /exec/{id}/json` | `docker inspect <exec-id>` | Returns exec instance state (running, exit code, pid) | `GET /internal/v1/exec/{id}` | Returns stored state | Docker API `GET /exec/{id}/json` | Returns exec state from local store | Same | Same | Same | Same | Same |
+| REST API Call | CLI Command | Docker Native | Sockerless Internal | Docker Backend | ECS | Lambda | Cloud Run | CR Functions | ACA | Azure Functions |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `POST /containers/{id}/exec` | `docker exec web sh` (create phase) | Creates exec instance: stores cmd/env/workdir config, allocates exec ID | `POST /internal/v1/containers/{id}/exec` | Docker API `POST /containers/{id}/exec` | Stores exec config in backend state, returns exec ID | Stores exec config (reverse agent handles start) | Stores exec config | Stores exec config (reverse agent handles start) | Stores exec config | Stores exec config (reverse agent handles start) |
+| `POST /exec/{id}/start` | `docker exec web sh` (start phase) | Hijacks connection; forks process inside container's namespaces; streams stdin/stdout/stderr with multiplexed framing | Backend hijacks connection; dispatches through ExecDriver (Agent) | Docker API `POST /exec/{id}/start` (native hijack) | **Forward agent** at `{task IP}:9111` → agent exec → stream bridge | **Reverse agent** (agent already connected via callback) → exec → stream bridge | **Forward agent** at Cloud Run URL → exec → stream bridge | **Reverse agent** → exec → stream bridge | **Forward agent** at VNet IP → exec → stream bridge | **Reverse agent** → exec → stream bridge |
+| `GET /exec/{id}/json` | `docker inspect <exec-id>` | Returns exec instance state (running, exit code, pid) | `GET /internal/v1/exec/{id}` | Docker API `GET /exec/{id}/json` | Returns exec state from local store | Same | Same | Same | Same | Same |
 
 ---
 
@@ -102,13 +102,13 @@
 
 > **Implementation note:** All backends handle volume operations **in-memory** via `backends/core/`. No cloud APIs are called for volume create/list/inspect/remove. Cloud storage (EFS, GCS, Azure Files) is provisioned at the infrastructure level (Terraform) and referenced in container configurations, not dynamically created by the backend.
 
-| REST API Call | CLI Command | Docker Native | Sockerless Internal | Memory | Docker Backend | All Cloud Backends |
-|---|---|---|---|---|---|---|
-| `POST /volumes/create` | `docker volume create cache` | Creates named volume on local filesystem | `POST /internal/v1/volumes` | Stores volume metadata; creates symlink directory for WASM | Docker API `POST /volumes/create` | Stores volume metadata in local state (no cloud API call) |
-| `GET /volumes` | `docker volume ls` | Lists all named volumes | `GET /internal/v1/volumes` | Returns from local state | Docker API `GET /volumes` | Returns from local state |
-| `GET /volumes/{name}` | `docker volume inspect cache` | Returns volume metadata | `GET /internal/v1/volumes/{name}` | Returns stored metadata | Docker API `GET /volumes/{name}` | Returns from local state |
-| `DELETE /volumes/{name}` | `docker volume rm cache` | Deletes volume | `DELETE /internal/v1/volumes/{name}` | Removes from local state; cleans up symlinks | Docker API `DELETE /volumes/{name}` | Removes from local state (no cloud API call) |
-| `POST /volumes/prune` | `docker volume prune` | Removes unused volumes | `POST /internal/v1/volumes/prune` | Removes volumes not mounted by any container | Docker API `POST /volumes/prune` | Removes unused volumes from local state |
+| REST API Call | CLI Command | Docker Native | Sockerless Internal | Docker Backend | All Cloud Backends |
+|---|---|---|---|---|---|
+| `POST /volumes/create` | `docker volume create cache` | Creates named volume on local filesystem | `POST /internal/v1/volumes` | Docker API `POST /volumes/create` | Stores volume metadata in local state (no cloud API call) |
+| `GET /volumes` | `docker volume ls` | Lists all named volumes | `GET /internal/v1/volumes` | Docker API `GET /volumes` | Returns from local state |
+| `GET /volumes/{name}` | `docker volume inspect cache` | Returns volume metadata | `GET /internal/v1/volumes/{name}` | Docker API `GET /volumes/{name}` | Returns from local state |
+| `DELETE /volumes/{name}` | `docker volume rm cache` | Deletes volume | `DELETE /internal/v1/volumes/{name}` | Docker API `DELETE /volumes/{name}` | Removes from local state (no cloud API call) |
+| `POST /volumes/prune` | `docker volume prune` | Removes unused volumes | `POST /internal/v1/volumes/prune` | Docker API `POST /volumes/prune` | Removes unused volumes from local state |
 
 ---
 
@@ -118,20 +118,20 @@
 
 Bind mounts (`-v /host/path:/container/path`) are specified in `POST /containers/create` under `HostConfig.Binds`. They are not separate API calls but are critical for CI runners.
 
-| Bind Mount Use | Docker Native | Memory (WASM) | Cloud Backends |
-|---|---|---|---|
-| `/builds` (shared between helper + build containers) | Same host directory mounted into multiple containers | Symlinks in rootDir + DirMounts for WASM; shared across containers | Volume mounts configured at infrastructure level (EFS/GCS/Azure Files) |
-| `/cache` (persistent across jobs) | Named volume or host directory | Same symlink mechanism | Same infrastructure-level mounts |
-| Docker socket (`/var/run/docker.sock`) | Direct host socket passthrough | Silently accepted; not functional | Silently accepted; not functional |
-| Host path bind mounts | Direct host path access | `resolveBindMounts` checks `filepath.IsAbs` for host paths | Mapped to cloud storage paths |
+| Bind Mount Use | Docker Native | Cloud Backends |
+|---|---|---|
+| `/builds` (shared between helper + build containers) | Same host directory mounted into multiple containers | Volume mounts configured at infrastructure level (EFS/GCS/Azure Files) |
+| `/cache` (persistent across jobs) | Named volume or host directory | Same infrastructure-level mounts |
+| Docker socket (`/var/run/docker.sock`) | Direct host socket passthrough | Silently accepted; not functional |
+| Host path bind mounts | Direct host path access | Mapped to cloud storage paths |
 
 ### 8.2 Archive Operations (`docker cp`)
 
-| REST API Call | CLI Command | Docker Native | Memory (WASM) | Cloud Backends |
-|---|---|---|---|---|
-| `PUT /containers/{id}/archive` | `docker cp local_path container:/path` | Extracts tar to container filesystem | Extracts to WASM rootfs via FilesystemDriver. Pre-start: extracts to staging directory (`StagingDirs`); merged into rootfs at start time | Via agent FilesystemDriver (forward/reverse agent writes to host filesystem) |
-| `HEAD /containers/{id}/archive` | *(used by `docker cp` internally)* | Returns file stat as base64 JSON header | Returns stat from WASM rootfs. Pre-start: checks staging dir; returns 404 for non-existent paths | Via agent FilesystemDriver |
-| `GET /containers/{id}/archive` | `docker cp container:/path local_path` | Returns tar of path from container | Returns tar from WASM rootfs via FilesystemDriver | Via agent FilesystemDriver |
+| REST API Call | CLI Command | Docker Native | Cloud Backends |
+|---|---|---|---|
+| `PUT /containers/{id}/archive` | `docker cp local_path container:/path` | Extracts tar to container filesystem | Via agent FilesystemDriver (forward/reverse agent writes to host filesystem) |
+| `HEAD /containers/{id}/archive` | *(used by `docker cp` internally)* | Returns file stat as base64 JSON header | Via agent FilesystemDriver |
+| `GET /containers/{id}/archive` | `docker cp container:/path local_path` | Returns tar of path from container | Via agent FilesystemDriver |
 
 ---
 
@@ -139,15 +139,15 @@ Bind mounts (`-v /host/path:/container/path`) are specified in `POST /containers
 
 Health checks are implemented in `backends/core/health.go` (~200 lines, 6 unit tests). They affect `GET /containers/{id}/json` responses and are used by CI runners and Docker Compose for readiness polling.
 
-| Aspect | Docker Native | Memory (WASM) | Cloud Backends (Agent) |
-|---|---|---|---|
-| Health check source | `HEALTHCHECK` in Dockerfile or compose `healthcheck:` | Same (parsed from container config) | Same |
-| Health check execution | dockerd runs command inside container periodically | `StartHealthCheck` goroutine runs exec via WASM on interval | `StartHealthCheck` goroutine runs exec via agent on interval |
-| Health check parsing | `parseHealthcheckCmd`: NONE → nil, CMD → args[1:], CMD-SHELL → `["sh", "-c", joined]` | Same | Same |
-| Status reported in | `State.Health.Status` (`starting` → `healthy` / `unhealthy`) | Same (stored in `HealthChecks sync.Map` per container) | Same |
-| Status tracking | `HealthChecks` map on Store holds `context.CancelFunc` per container | Same | Same |
-| Stop behavior | Cancels health check context | `StopContainer` cancels health check before state transition | Same |
-| Output capture | Via exec | `net.Pipe()` + `tty=true` for raw output capture | Same |
+| Aspect | Docker Native | Cloud Backends (Agent) |
+|---|---|---|
+| Health check source | `HEALTHCHECK` in Dockerfile or compose `healthcheck:` | Same |
+| Health check execution | dockerd runs command inside container periodically | `StartHealthCheck` goroutine runs exec via agent on interval |
+| Health check parsing | `parseHealthcheckCmd`: NONE → nil, CMD → args[1:], CMD-SHELL → `["sh", "-c", joined]` | Same |
+| Status reported in | `State.Health.Status` (`starting` → `healthy` / `unhealthy`) | Same |
+| Status tracking | `HealthChecks` map on Store holds `context.CancelFunc` per container | Same |
+| Stop behavior | Cancels health check context | Same |
+| Output capture | Via exec | Same |
 
 ---
 
@@ -179,20 +179,20 @@ These are not Docker REST API calls but show how the agent is used internally by
 
 ## 11. Capability Summary per Backend
 
-| Capability | Docker | Memory | ECS | Lambda | Cloud Run | CR Functions | ACA | Azure Functions |
-|---|---|---|---|---|---|---|---|---|
-| `POST /containers/create` | `dockerd` | In-memory + WASM rootfs | `RegisterTaskDefinition` | `CreateFunction` | In-memory (deferred) | `CreateFunction` | In-memory (deferred) | Create App + Plan |
-| `POST /containers/{id}/start` | `dockerd` | Start WASM process | `RunTask` | `Invoke` (async) | `CreateJob` + `RunJob` | HTTP POST invoke | `BeginCreateOrUpdate` + `BeginStart` | Start Function App |
-| `GET /containers/{id}/json` | `dockerd` | Local state | Local state | Local state | Local state | Local state | Local state | Local state |
-| `GET /containers/{id}/logs` | Log driver | WASM process output | **CloudWatch** | **CloudWatch** | **Cloud Logging** | **Cloud Logging** | **Azure Monitor** | **Azure Monitor** |
-| `POST /containers/{id}/attach` | Hijack | WASM process attach | **Forward agent** | **Reverse agent** | **Forward agent** | **Reverse agent** | **Forward agent** | **Reverse agent** |
-| `POST /exec/{id}/start` | Hijack | WASM exec (mvdan.cc/sh) | **Forward agent** | **Reverse agent** | **Forward agent** | **Reverse agent** | **Forward agent** | **Reverse agent** |
-| `POST /containers/{id}/stop` | `dockerd` | Stop WASM process | `StopTask` | Disconnect agent | Cancel Execution | Disconnect agent | `BeginStopExecution` | Stop Function App |
-| `DELETE /containers/{id}` | `dockerd` | State delete | `DeregisterTaskDef` | `DeleteFunction` | `DeleteJob` | `DeleteFunction` | `BeginDelete` (Job) | Delete App + Plan |
-| `POST /networks/create` | `libnetwork` | In-memory | In-memory | In-memory | In-memory | In-memory | In-memory | In-memory |
-| `POST /volumes/create` | Local FS | In-memory + symlinks | In-memory | In-memory | In-memory | In-memory | In-memory | In-memory |
-| `POST /build` | BuildKit | Dockerfile parser | Dockerfile parser | Dockerfile parser | Dockerfile parser | Dockerfile parser | Dockerfile parser | Dockerfile parser |
-| Archive (docker cp) | FS access | WASM rootfs | Agent FS | Agent FS | Agent FS | Agent FS | Agent FS | Agent FS |
+| Capability | Docker | ECS | Lambda | Cloud Run | CR Functions | ACA | Azure Functions |
+|---|---|---|---|---|---|---|---|
+| `POST /containers/create` | `dockerd` | `RegisterTaskDefinition` | `CreateFunction` | In-memory (deferred) | `CreateFunction` | In-memory (deferred) | Create App + Plan |
+| `POST /containers/{id}/start` | `dockerd` | `RunTask` | `Invoke` (async) | `CreateJob` + `RunJob` | HTTP POST invoke | `BeginCreateOrUpdate` + `BeginStart` | Start Function App |
+| `GET /containers/{id}/json` | `dockerd` | Local state | Local state | Local state | Local state | Local state | Local state |
+| `GET /containers/{id}/logs` | Log driver | **CloudWatch** | **CloudWatch** | **Cloud Logging** | **Cloud Logging** | **Azure Monitor** | **Azure Monitor** |
+| `POST /containers/{id}/attach` | Hijack | **Forward agent** | **Reverse agent** | **Forward agent** | **Reverse agent** | **Forward agent** | **Reverse agent** |
+| `POST /exec/{id}/start` | Hijack | **Forward agent** | **Reverse agent** | **Forward agent** | **Reverse agent** | **Forward agent** | **Reverse agent** |
+| `POST /containers/{id}/stop` | `dockerd` | `StopTask` | Disconnect agent | Cancel Execution | Disconnect agent | `BeginStopExecution` | Stop Function App |
+| `DELETE /containers/{id}` | `dockerd` | `DeregisterTaskDef` | `DeleteFunction` | `DeleteJob` | `DeleteFunction` | `BeginDelete` (Job) | Delete App + Plan |
+| `POST /networks/create` | `libnetwork` | In-memory | In-memory | In-memory | In-memory | In-memory | In-memory |
+| `POST /volumes/create` | Local FS | In-memory | In-memory | In-memory | In-memory | In-memory | In-memory |
+| `POST /build` | BuildKit | Dockerfile parser | Dockerfile parser | Dockerfile parser | Dockerfile parser | Dockerfile parser | Dockerfile parser |
+| Archive (docker cp) | FS access | Agent FS | Agent FS | Agent FS | Agent FS | Agent FS | Agent FS |
 
 ---
 
@@ -415,28 +415,26 @@ Both CI runners depend on image metadata from `GET /images/{name}/json` and `GET
 
 ## 15. CI Runner Backend Compatibility
 
-| Requirement | Docker | Memory | ECS | Cloud Run | ACA | Lambda | CR Func | Az Func |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **GitLab Runner Compatible** | **Yes** | Yes† | **Yes** | **Yes** | **Yes** | No | No | No |
-| **GitHub Actions Runner Compatible** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | No | No | No |
-| **GitHub `act` Compatible** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
-| **gitlab-ci-local Compatible** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
-| Attach-before-start (GitLab) | Native | WASM | Agent + buffer | Agent + buffer | Agent + buffer | Reverse agent | Reverse agent | Reverse agent |
-| Exec with stdin (GitHub) | Native | WASM exec | Forward agent | Forward agent | Forward agent | Reverse agent | Reverse agent | Reverse agent |
-| Volume sharing (GitLab) | Named volumes | Symlinks | Infra-level | Infra-level | Infra-level | — | — | — |
-| Service DNS aliases (both) | Embedded DNS | In-memory | In-memory | In-memory | In-memory | — | — | — |
-| Health check exec (GitHub) | dockerd | WASM exec | Agent | Agent | Agent | — | — | — |
-| Image `Config.Env` / PATH (GitHub) | Local store | Local state | Local state (opt: registry) | Local state (opt: registry) | Local state (opt: registry) | Local state | Local state | Local state |
-| `tail -f /dev/null` keep-alive (GitHub) | Native `tail` | WASM context block | Agent `--keep-alive` | Agent `--keep-alive` | Agent `--keep-alive` | Agent `--keep-alive` | Agent `--keep-alive` | Agent `--keep-alive` |
-| Docker socket mount (GitHub) | Host socket | Silently ignored | Silently ignored | Silently ignored | Silently ignored | Silently ignored | Silently ignored | Silently ignored |
-| Container actions (GitHub) | Native lifecycle | WASM | Agent wraps entrypoint | Agent wraps entrypoint | Agent wraps entrypoint | Reverse agent | Reverse agent | Reverse agent |
-| Network create (fatal, GitHub) | libnetwork | In-memory | In-memory | In-memory | In-memory | In-memory | In-memory | In-memory |
-| Docker build | BuildKit | Dockerfile parser | Dockerfile parser | Dockerfile parser | Dockerfile parser | Dockerfile parser | Dockerfile parser | Dockerfile parser |
-| Docker cp (archive) | FS access | WASM rootfs | Agent | Agent | Agent | Agent | Agent | Agent |
-| Startup latency | <1s | <1s | 10-45s | 5-30s | 10-60s | 1-5s | 1-5s | 1-5s |
-| Helper image load from tar (GitLab) | Local store | Local state | Local state | Local state | Local state | Local state | Local state | Local state |
-| Cleanup parallelism (GitLab, 5min timeout) | Native | In-memory | Parallel `StopTask` | Parallel `DeleteJob` | Parallel `BeginDelete` | Parallel `DeleteFunction` | Parallel `DeleteFunction` | Parallel Delete |
+| Requirement | Docker | ECS | Cloud Run | ACA | Lambda | CR Func | Az Func |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **GitLab Runner Compatible** | **Yes** | **Yes** | **Yes** | **Yes** | No | No | No |
+| **GitHub Actions Runner Compatible** | **Yes** | **Yes** | **Yes** | **Yes** | No | No | No |
+| **GitHub `act` Compatible** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
+| **gitlab-ci-local Compatible** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
+| Attach-before-start (GitLab) | Native | Agent + buffer | Agent + buffer | Agent + buffer | Reverse agent | Reverse agent | Reverse agent |
+| Exec with stdin (GitHub) | Native | Forward agent | Forward agent | Forward agent | Reverse agent | Reverse agent | Reverse agent |
+| Volume sharing (GitLab) | Named volumes | Infra-level | Infra-level | Infra-level | — | — | — |
+| Service DNS aliases (both) | Embedded DNS | In-memory | In-memory | In-memory | — | — | — |
+| Health check exec (GitHub) | dockerd | Agent | Agent | Agent | — | — | — |
+| Image `Config.Env` / PATH (GitHub) | Local store | Local state (opt: registry) | Local state (opt: registry) | Local state (opt: registry) | Local state | Local state | Local state |
+| `tail -f /dev/null` keep-alive (GitHub) | Native `tail` | Agent `--keep-alive` | Agent `--keep-alive` | Agent `--keep-alive` | Agent `--keep-alive` | Agent `--keep-alive` | Agent `--keep-alive` |
+| Docker socket mount (GitHub) | Host socket | Silently ignored | Silently ignored | Silently ignored | Silently ignored | Silently ignored | Silently ignored |
+| Container actions (GitHub) | Native lifecycle | Agent wraps entrypoint | Agent wraps entrypoint | Agent wraps entrypoint | Reverse agent | Reverse agent | Reverse agent |
+| Network create (fatal, GitHub) | libnetwork | In-memory | In-memory | In-memory | In-memory | In-memory | In-memory |
+| Docker build | BuildKit | Dockerfile parser | Dockerfile parser | Dockerfile parser | Dockerfile parser | Dockerfile parser | Dockerfile parser |
+| Docker cp (archive) | FS access | Agent | Agent | Agent | Agent | Agent | Agent |
+| Startup latency | <1s | 10-45s | 5-30s | 10-60s | 1-5s | 1-5s | 1-5s |
+| Helper image load from tar (GitLab) | Local store | Local state | Local state | Local state | Local state | Local state | Local state |
+| Cleanup parallelism (GitLab, 5min timeout) | Native | Parallel `StopTask` | Parallel `DeleteJob` | Parallel `BeginDelete` | Parallel `DeleteFunction` | Parallel `DeleteFunction` | Parallel Delete |
 
-† GitLab Runner E2E requires `SOCKERLESS_SYNTHETIC=1` because helper binaries (`gitlab-runner-helper`, `gitlab-runner-build`) can't run in WASM. GitHub `act` runner works without synthetic mode.
-
-FaaS backends (Lambda, Cloud Run Functions, Azure Functions) now support exec/attach via reverse agent but still cannot run full CI runners due to timeout limits and lack of persistent shared volumes. They work with lightweight CI tools (`act`, `gitlab-ci-local`).
+FaaS backends (Lambda, Cloud Run Functions, Azure Functions) support exec/attach via reverse agent but cannot run full CI runners due to timeout limits and lack of persistent shared volumes. They work with lightweight CI tools (`act`, `gitlab-ci-local`).

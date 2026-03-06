@@ -65,7 +65,7 @@ core/
 ├── server.go                 BaseServer, route registration, InitDrivers
 ├── store.go                  StateStore[T], Store (all in-memory state)
 ├── drivers.go                Driver interfaces and DriverSet
-├── drivers_agent.go          Agent drivers with inline synthetic fallback
+├── drivers_agent.go          Agent drivers (exec, filesystem, stream)
 ├── handle_containers.go      Create, start, stop, kill, remove
 ├── handle_containers_query.go  Inspect, list, logs, wait, attach, stats
 ├── handle_containers_archive.go  Put/head/get archive, tar helpers

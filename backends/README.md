@@ -8,12 +8,12 @@ All backends (except `docker`) are built on top of `core`, a shared library that
 
 - In-memory state management for containers, images, networks, volumes
 - HTTP route registration for 50+ Docker API endpoints
-- A driver chain (Agent -> WASM -> Synthetic) for pluggable execution
+- Agent drivers for exec, filesystem, and streaming operations
 - Reverse agent registry for FaaS callback connections
 - Dockerfile parsing and image build support
 - Container health checking
 
-Cloud backends override specific route handlers (create, start, stop, kill, remove, logs) to map container operations to cloud resources, while inheriting everything else from core.
+Cloud backends override specific `api.Backend` methods (create, start, stop, kill, remove, logs) via self-dispatch to map container operations to cloud resources, while inheriting everything else from core.
 
 ## Backends
 
@@ -27,7 +27,6 @@ Cloud backends override specific route handlers (create, start, stop, kill, remo
 | [aca](aca/) | `backend-aca` | Container Apps Jobs | Forward |
 | [azure-functions](azure-functions/) | `backend-azf` | Function Apps | Reverse |
 | [docker](docker/) | `backend-docker` | Docker Containers | _(native)_ |
-| [memory](memory/) | `backend-memory` | WASM Sandbox | _(in-process)_ |
 
 **Agent modes:**
 - **Forward** — Backend dials into the running container's agent after it starts
