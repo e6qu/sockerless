@@ -603,6 +603,11 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 // ContainerLogs streams container logs from CloudWatch.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
+	// Auto-agent containers have logs captured by the agent, not CloudWatch
+	if os.Getenv("SOCKERLESS_AUTO_AGENT_BIN") != "" {
+		return s.BaseServer.ContainerLogs(ref, opts)
+	}
+
 	id, ok := s.Store.ResolveContainerID(ref)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: ref}

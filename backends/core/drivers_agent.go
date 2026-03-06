@@ -148,7 +148,10 @@ type AgentStreamDriver struct {
 	Logger        zerolog.Logger
 }
 
-func (d *AgentStreamDriver) LogBytes(_ string) []byte {
+func (d *AgentStreamDriver) LogBytes(containerID string) []byte {
+	if v, ok := d.Store.LogBuffers.Load(containerID); ok {
+		return v.([]byte)
+	}
 	return nil
 }
 

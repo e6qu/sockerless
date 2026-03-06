@@ -205,7 +205,11 @@ func (s *Server) ReverseConnect(callbackURL string) error {
 			if s.mp != nil {
 				select {
 				case <-s.mp.Done():
-					return fmt.Errorf("main process exited, stopping reverse connect")
+					code := 0
+					if c := s.mp.ExitCode(); c != nil {
+						code = *c
+					}
+					os.Exit(code)
 				default:
 				}
 			}
@@ -227,8 +231,12 @@ func (s *Server) ReverseConnect(callbackURL string) error {
 		if s.mp != nil {
 			select {
 			case <-s.mp.Done():
-				s.logger.Info().Msg("main process exited, stopping reverse connect")
-				return nil
+				code := 0
+				if c := s.mp.ExitCode(); c != nil {
+					code = *c
+				}
+				s.logger.Info().Int("exitCode", code).Msg("main process exited, stopping reverse connect")
+				os.Exit(code)
 			default:
 			}
 		}

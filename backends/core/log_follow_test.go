@@ -25,15 +25,26 @@ func TestLogSubscribe_ClosesImmediately(t *testing.T) {
 	}
 }
 
-func TestLogBytes_ReturnsNil(t *testing.T) {
+func TestLogBytes_ReturnsNilWhenEmpty(t *testing.T) {
 	store := NewStore()
 	driver := &AgentStreamDriver{Store: store}
 
-	// Even with data in LogBuffers, driver returns nil (no agent)
-	store.LogBuffers.Store("c1", []byte("hello\n"))
+	// No data in LogBuffers — returns nil
 	data := driver.LogBytes("c1")
 	if data != nil {
 		t.Fatalf("expected nil, got %v", data)
+	}
+}
+
+func TestLogBytes_ReturnsStoredData(t *testing.T) {
+	store := NewStore()
+	driver := &AgentStreamDriver{Store: store}
+
+	// Data in LogBuffers — returns it (auto-agent captures output here)
+	store.LogBuffers.Store("c1", []byte("hello\n"))
+	data := driver.LogBytes("c1")
+	if string(data) != "hello\n" {
+		t.Fatalf("expected %q, got %q", "hello\n", string(data))
 	}
 }
 

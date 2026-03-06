@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -52,7 +53,10 @@ func (s *BaseServer) SpawnAutoAgent(containerID string) error {
 	cmd.Env = append(os.Environ(),
 		"SOCKERLESS_CONTAINER_ID="+containerID,
 	)
-	cmd.Stdout = os.Stderr
+
+	// Capture main process stdout for log retrieval; agent stderr goes to our stderr
+	var stdoutBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
@@ -75,10 +79,16 @@ func (s *BaseServer) SpawnAutoAgent(containerID string) error {
 
 	s.Logger.Debug().Str("container", containerID).Msg("auto-agent connected")
 
-	// When the agent process exits (main command finished), stop the container
+	// When the agent process exits (main command finished), store logs and stop the container
 	go func() {
 		_ = cmd.Wait()
 		autoAgentProcs.Delete(containerID)
+
+		// Store captured stdout as container logs
+		if stdoutBuf.Len() > 0 {
+			s.Store.LogBuffers.Store(containerID, stdoutBuf.Bytes())
+		}
+
 		exitCode := 0
 		if cmd.ProcessState != nil {
 			exitCode = cmd.ProcessState.ExitCode()
