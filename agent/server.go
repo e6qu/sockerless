@@ -244,6 +244,14 @@ func (s *Server) serveReverseConn(conn *websocket.Conn) error {
 	connMu := &sync.Mutex{}
 	router := NewRouter(s.registry, s.mp, s.logger)
 
+	// If main process exits, close the connection to unblock ReadMessage
+	if s.mp != nil {
+		go func() {
+			<-s.mp.Done()
+			_ = conn.Close()
+		}()
+	}
+
 	for {
 		_, data, err := conn.ReadMessage()
 		if err != nil {

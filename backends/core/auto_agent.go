@@ -39,14 +39,12 @@ func (s *BaseServer) SpawnAutoAgent(containerID string) error {
 	}
 	originalCmd := BuildOriginalCommand(c.Config.Entrypoint, c.Config.Cmd)
 
-	// Build the agent command arguments
-	agentArgs := []string{"--callback", callbackURL, "--log-level", "debug"}
+	// Build the agent command arguments — always use --keep-alive to run the command
+	agentArgs := []string{"--callback", callbackURL, "--keep-alive", "--log-level", "debug", "--"}
 	if len(originalCmd) == 0 || IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd) {
-		// Exec-only container (e.g. CI runner) — keep agent alive with idle process
-		agentArgs = append(agentArgs, "--keep-alive", "--", "sleep", "86400")
+		// Exec-only container (e.g. CI runner) — use long-lived idle process
+		agentArgs = append(agentArgs, "sleep", "86400")
 	} else {
-		// Container has a real command — agent exits when command finishes
-		agentArgs = append(agentArgs, "--")
 		agentArgs = append(agentArgs, originalCmd...)
 	}
 
