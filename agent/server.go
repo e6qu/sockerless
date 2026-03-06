@@ -14,6 +14,15 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// ExitCodeError is returned when the main process exits with a specific code.
+type ExitCodeError struct {
+	Code int
+}
+
+func (e *ExitCodeError) Error() string {
+	return fmt.Sprintf("exit code %d", e.Code)
+}
+
 // Config holds agent configuration.
 type Config struct {
 	Addr        string
@@ -209,7 +218,7 @@ func (s *Server) ReverseConnect(callbackURL string) error {
 					if c := s.mp.ExitCode(); c != nil {
 						code = *c
 					}
-					os.Exit(code)
+					return &ExitCodeError{Code: code}
 				default:
 				}
 			}
@@ -236,7 +245,7 @@ func (s *Server) ReverseConnect(callbackURL string) error {
 					code = *c
 				}
 				s.logger.Info().Int("exitCode", code).Msg("main process exited, stopping reverse connect")
-				os.Exit(code)
+				return &ExitCodeError{Code: code}
 			default:
 			}
 		}
