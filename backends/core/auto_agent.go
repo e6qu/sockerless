@@ -13,8 +13,14 @@ import (
 	"github.com/sockerless/api"
 )
 
+// autoAgentEntry tracks a spawned auto-agent process and its completion state.
+type autoAgentEntry struct {
+	cmd  *exec.Cmd
+	done chan struct{} // closed when cmd.Wait() returns
+}
+
 // autoAgentProcs tracks spawned auto-agent processes by container ID.
-var autoAgentProcs sync.Map // containerID → *exec.Cmd
+var autoAgentProcs sync.Map // containerID → *autoAgentEntry
 
 // SpawnAutoAgent spawns a local agent process for the container if
 // SOCKERLESS_AUTO_AGENT_BIN is set. The agent connects back to the
@@ -75,12 +81,14 @@ func (s *BaseServer) SpawnAutoAgent(containerID string) error {
 		return fmt.Errorf("auto-agent spawn failed: %w", err)
 	}
 
-	autoAgentProcs.Store(containerID, cmd)
+	entry := &autoAgentEntry{cmd: cmd, done: make(chan struct{})}
+	autoAgentProcs.Store(containerID, entry)
 
 	// Wait for agent to connect
 	if err := s.AgentRegistry.WaitForAgent(containerID, 10*time.Second); err != nil {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		_ = cmd.Wait()
+		close(entry.done)
 		autoAgentProcs.Delete(containerID)
 		return fmt.Errorf("auto-agent connect timeout: %w", err)
 	}
@@ -91,9 +99,11 @@ func (s *BaseServer) SpawnAutoAgent(containerID string) error {
 
 	s.Logger.Debug().Str("container", containerID).Msg("auto-agent connected")
 
-	// When the agent process exits (main command finished), store logs and stop the container
+	// When the agent process exits (main command finished), store logs and stop the container.
+	// Only this goroutine calls cmd.Wait() — StopAutoAgent waits on entry.done instead.
 	go func() {
 		_ = cmd.Wait()
+		close(entry.done)
 		autoAgentProcs.Delete(containerID)
 
 		// Store captured stdout as container logs
@@ -138,11 +148,14 @@ func (s *BaseServer) setupVolumePathMappings(containerID string, c api.Container
 
 // StopAutoAgent kills and cleans up an auto-agent process for the container.
 // Kills the entire process group to ensure children (e.g. sleep 86400) are also terminated.
+// Waits for the background goroutine's cmd.Wait() to complete via the done channel
+// to avoid calling cmd.Wait() twice (which hangs on Go's internal I/O errch drain).
 func StopAutoAgent(containerID string) {
 	if v, ok := autoAgentProcs.LoadAndDelete(containerID); ok {
-		cmd := v.(*exec.Cmd)
+		entry := v.(*autoAgentEntry)
 		// Kill process group (negative PID) to terminate agent + children
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		_ = cmd.Wait()
+		_ = syscall.Kill(-entry.cmd.Process.Pid, syscall.SIGKILL)
+		// Wait for the goroutine's cmd.Wait() to finish — do NOT call cmd.Wait() again
+		<-entry.done
 	}
 }
