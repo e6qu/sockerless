@@ -85,6 +85,19 @@ func TestMain(m *testing.M) {
 	}
 	backendBin := backendDir + "/sockerless-backend-ecs"
 
+	// Build agent binary (for auto-agent real exec support)
+	fmt.Println("Building agent...")
+	agentDir := findModuleDir("agent")
+	buildAgent := exec.Command("go", "build", "-o", "sockerless-agent", "./cmd/sockerless-agent")
+	buildAgent.Dir = agentDir
+	buildAgent.Stdout = os.Stderr
+	buildAgent.Stderr = os.Stderr
+	if err := buildAgent.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build agent: %v\n", err)
+		os.Exit(1)
+	}
+	agentBin := agentDir + "/sockerless-agent"
+
 	// Find free ports
 	simPort := findFreePort()
 	backendPort := findFreePort()
@@ -127,11 +140,14 @@ func TestMain(m *testing.M) {
 	frontendAddr = fmt.Sprintf("localhost:%d", backendPort)
 	fmt.Printf("Starting ECS backend on %s...\n", backendAddr)
 	backendCmd := exec.Command(backendBin, "--addr", backendAddr, "--log-level", "debug")
+	callbackURL := fmt.Sprintf("http://127.0.0.1:%d", backendPort)
 	backendCmd.Env = append(os.Environ(),
 		"SOCKERLESS_ENDPOINT_URL="+simURL,
 		"SOCKERLESS_ECS_CLUSTER=sim-cluster",
 		"SOCKERLESS_ECS_SUBNETS=subnet-sim",
 		"SOCKERLESS_ECS_EXECUTION_ROLE_ARN=arn:aws:iam::000000000000:role/sim",
+		"SOCKERLESS_AUTO_AGENT_BIN="+agentBin,
+		"SOCKERLESS_CALLBACK_URL="+callbackURL,
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
@@ -202,6 +218,7 @@ func TestMain(m *testing.M) {
 	// Clean up binaries
 	os.Remove(backendBin)
 	os.Remove(simBin)
+	os.Remove(agentBin)
 
 	os.Exit(code)
 }

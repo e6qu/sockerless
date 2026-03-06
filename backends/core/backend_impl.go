@@ -324,6 +324,11 @@ func (s *BaseServer) ContainerStart(ref string) error {
 		s.StartHealthCheck(id)
 	}
 
+	// Auto-spawn a local agent if configured (enables real exec for simulator backends)
+	if err := s.SpawnAutoAgent(id); err != nil {
+		s.Logger.Warn().Err(err).Str("container", id).Msg("auto-agent spawn failed")
+	}
+
 	return nil
 }
 
@@ -340,6 +345,7 @@ func (s *BaseServer) ContainerStop(ref string, timeout *int) error {
 	}
 
 	s.StopHealthCheck(id)
+	StopAutoAgent(id)
 	s.Store.ForceStopContainer(id, 0)
 	s.emitEvent("container", "die", id, map[string]string{
 		"exitCode": "0",
@@ -364,6 +370,7 @@ func (s *BaseServer) ContainerKill(ref string, signal string) error {
 	}
 
 	s.StopHealthCheck(id)
+	StopAutoAgent(id)
 
 	exitCode := signalToExitCode(signal)
 
@@ -413,6 +420,7 @@ func (s *BaseServer) ContainerRemove(ref string, force bool) error {
 	}
 
 	s.StopHealthCheck(id)
+	StopAutoAgent(id)
 
 	ctx := context.Background()
 	for _, ep := range c.NetworkSettings.Networks {
@@ -619,6 +627,7 @@ func (s *BaseServer) ContainerRestart(ref string, timeout *int) error {
 	c, _ := s.Store.Containers.Get(id)
 	if c.State.Running {
 		s.StopHealthCheck(id)
+		StopAutoAgent(id)
 		s.Store.ForceStopContainer(id, 0)
 		s.emitEvent("container", "die", id, map[string]string{
 			"exitCode": "0",
@@ -665,6 +674,11 @@ func (s *BaseServer) ContainerRestart(ref string, timeout *int) error {
 	if c.Config.Healthcheck != nil && len(c.Config.Healthcheck.Test) > 0 &&
 		(len(c.Config.Healthcheck.Test) != 1 || !strings.EqualFold(c.Config.Healthcheck.Test[0], "NONE")) {
 		s.StartHealthCheck(id)
+	}
+
+	// Re-spawn auto-agent after restart
+	if err := s.SpawnAutoAgent(id); err != nil {
+		s.Logger.Warn().Err(err).Str("container", id).Msg("auto-agent spawn failed on restart")
 	}
 
 	return nil

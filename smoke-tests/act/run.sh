@@ -80,6 +80,8 @@ esac
 # --- Start backend (serves Docker API directly) ---
 export SOCKERLESS_POLL_INTERVAL="500ms"
 export SOCKERLESS_AGENT_TIMEOUT="2s"
+export SOCKERLESS_AUTO_AGENT_BIN="/usr/local/bin/sockerless-agent"
+export SOCKERLESS_CALLBACK_URL="http://$BACKEND_ADDR"
 echo "=== Starting $BACKEND_TYPE backend ==="
 "$BACKEND_BIN" --addr "$BACKEND_ADDR" --log-level debug &
 BACKEND_PID=$!

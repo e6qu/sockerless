@@ -17,6 +17,7 @@ COPY backends/core/ backends/core/
 COPY backends/cloudrun/ backends/cloudrun/
 
 RUN cd backends/cloudrun && GOWORK=off go mod download && GOWORK=off go build -tags noui -o /usr/local/bin/sockerless-backend-cloudrun ./cmd/sockerless-backend-cloudrun
+RUN cd agent && GOWORK=off go mod download && GOWORK=off go build -o /usr/local/bin/sockerless-agent ./cmd/sockerless-agent
 
 # Copy test files
 COPY smoke-tests/act/workflows/ /test/workflows/

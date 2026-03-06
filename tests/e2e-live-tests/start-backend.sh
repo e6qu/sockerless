@@ -72,6 +72,13 @@ fi
 if uses_reverse_agent "$BACKEND" && [ "$MODE" = "simulator" ]; then
     export SOCKERLESS_CALLBACK_URL="$(get_callback_url "$BACKEND_ADDR")"
     log_info "Reverse agent callback URL: $SOCKERLESS_CALLBACK_URL"
+
+    # Auto-agent binary for backends to spawn agent processes
+    AGENT_BIN_PATH="$(resolve_binary sockerless-agent 2>/dev/null || true)"
+    if [ -n "$AGENT_BIN_PATH" ]; then
+        export SOCKERLESS_AUTO_AGENT_BIN="$AGENT_BIN_PATH"
+        log_info "Auto-agent binary: $SOCKERLESS_AUTO_AGENT_BIN"
+    fi
 fi
 
 # --- Start backend (serves Docker API directly) ---

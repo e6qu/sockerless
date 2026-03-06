@@ -234,8 +234,12 @@ func (s *Server) ContainerStart(ref string) error {
 		// Wait for reverse agent callback
 		agentTimeout := s.config.AgentTimeout
 		if err := s.AgentRegistry.WaitForAgent(id, agentTimeout); err != nil {
-			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
+			s.Logger.Warn().Err(err).Msg("agent callback timeout, trying auto-agent")
 			s.AgentRegistry.Remove(id)
+			// Fallback to auto-agent if configured
+			if autoErr := s.SpawnAutoAgent(id); autoErr != nil {
+				s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
+			}
 		} else {
 			s.Store.Containers.Update(id, func(c *api.Container) {
 				c.AgentAddress = "reverse"
@@ -276,11 +280,21 @@ func (s *Server) ContainerStart(ref string) error {
 					c.AgentAddress = agentAddr
 					c.AgentToken = ecsState.AgentToken
 				})
+			} else {
+				// Fallback to auto-agent if configured
+				if autoErr := s.SpawnAutoAgent(id); autoErr != nil {
+					s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
+				}
 			}
 
 			s.ECS.Update(id, func(state *ECSState) {
 				state.AgentAddress = agentAddr
 			})
+		} else {
+			// Short-lived container without forward agent — try auto-agent
+			if autoErr := s.SpawnAutoAgent(id); autoErr != nil {
+				s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
+			}
 		}
 
 		// Start background poller to detect task exit
@@ -434,6 +448,7 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 
 	s.StopHealthCheck(id)
 	s.AgentRegistry.Remove(id)
+	core.StopAutoAgent(id)
 	s.Store.ForceStopContainer(id, 0)
 	c, _ = s.Store.Containers.Get(id)
 	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", c.State.ExitCode), "name": strings.TrimPrefix(c.Name, "/")})
@@ -458,6 +473,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	// Disconnect reverse agent if connected (unblocks invoke goroutine)
 	s.StopHealthCheck(id)
 	s.AgentRegistry.Remove(id)
+	core.StopAutoAgent(id)
 
 	exitCode := signalToExitCode(signal)
 
@@ -510,6 +526,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	// Disconnect reverse agent if connected (unblocks invoke goroutine)
 	s.AgentRegistry.Remove(id)
+	core.StopAutoAgent(id)
 
 	if c.State.Running {
 		s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
