@@ -78,7 +78,6 @@ make tf-int-test-azure  # ACA + AZF
 
 ## Notes
 
-- **Memory**: In-memory backend with real WASM command execution (41 BusyBox applets + mvdan.cc/sh shell). Supports pipes, redirects, variable expansion, volumes, `docker cp`, and interactive shell. No network access from WASM sandbox.
 - **Docker**: Passthrough to a real Docker daemon. All capabilities delegated.
 - **ECS**: AWS Fargate tasks with agent sidecar for exec/attach. Core's enhanced exec handler dials the agent automatically.
 - **Cloud Run**: GCP Cloud Run Jobs with agent injection for exec/attach. Core's enhanced exec handler dials the agent automatically.

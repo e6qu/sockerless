@@ -50,7 +50,6 @@ The **frontend** is a stateless Docker API translator. The **backend** manages c
 | `gcf` | GCP | FaaS (Cloud Functions 2nd gen) | `backends/cloudrun-functions/` |
 | `aca` | Azure | Container (Container Apps Jobs) | `backends/aca/` |
 | `azf` | Azure | FaaS (Azure Functions) | `backends/azure-functions/` |
-| `memory` | — | In-memory + WASM sandbox | `backends/memory/` |
 | `docker` | — | Docker passthrough | `backends/docker/` |
 
 Container backends inject the agent as a sidecar. FaaS backends bake the agent into the function image and use reverse WebSocket connections.
@@ -61,10 +60,8 @@ Container backends inject the agent as a sidecar. FaaS backends bake the agent i
 api/                          Shared types and error definitions
 agent/                        WebSocket agent (exec/attach inside workloads)
 frontends/docker/             Docker REST API v1.44 frontend
-sandbox/                      WASM sandbox (wazero + busybox + mvdan.cc/sh)
 backends/
   core/                       Shared backend library (BaseServer, StateStore, handlers)
-  memory/                     In-memory backend (WASM sandbox for real command execution)
   docker/                     Docker daemon passthrough
   ecs/                        AWS ECS Fargate
   lambda/                     AWS Lambda
@@ -103,18 +100,16 @@ For terraform operations:
 ## Quick Start
 
 ```bash
-# Build frontend + memory backend
-go build -o sockerless-frontend-docker ./frontends/docker/cmd
-go build -o sockerless-backend-memory  ./backends/memory/cmd
+# Build the all-in-one binary (frontend + ECS backend)
+go build -o sockerless ./cmd/sockerless
 
-# Start backend and frontend
-./sockerless-backend-memory --addr :9100 &
-./sockerless-frontend-docker --addr :2375 --backend http://localhost:9100 &
+# Start with ECS backend against the AWS simulator
+sockerless serve --backend ecs --addr :2375
 
 # Use with Docker CLI
 export DOCKER_HOST=tcp://localhost:2375
 docker version
-docker run --rm alpine echo "hello from sockerless"   # real WASM execution
+docker run --rm alpine echo "hello from sockerless"
 docker ps -a
 ```
 
@@ -123,11 +118,8 @@ docker ps -a
 ### Running Tests
 
 ```bash
-# Unit/integration tests against the memory backend (~2s)
-make test
-
-# Sandbox unit tests (WASM execution, shell, volumes)
-cd sandbox && go test -v ./...
+# Core unit/integration tests
+cd backends/core && go test -v ./...
 
 # Simulator integration tests — all 6 cloud backends (~170s)
 # Builds simulators, starts them, runs backends against them
@@ -162,13 +154,11 @@ Validate that real, unmodified CI runners complete jobs through Sockerless:
 
 ```bash
 # GitHub Actions (act)
-make smoke-test-act              # Memory backend
 make smoke-test-act-ecs          # ECS via simulator
 make smoke-test-act-cloudrun     # Cloud Run via simulator
 make smoke-test-act-aca          # ACA via simulator
 
 # GitLab Runner
-make smoke-test-gitlab           # Memory backend
 make smoke-test-gitlab-ecs       # ECS via simulator
 ```
 
@@ -198,7 +188,7 @@ make apply-ecs-simulator  # Apply against local simulator
 ### Adding a New Backend
 
 1. Create `backends/<name>/` as a new Go module
-2. Import `backends/core` and implement a `RouteOverrides` struct — only override handlers that differ from the default memory-like behavior
+2. Import `backends/core`, embed `core.BaseServer`, and implement the `api.Backend` interface — only override methods that need cloud-specific logic
 3. Add a `cmd/sockerless-backend-<name>/main.go` entry point
 4. Add the module to `go.work`
 5. Add integration tests in `tests/`

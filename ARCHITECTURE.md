@@ -1,6 +1,6 @@
 # Sockerless Architecture
 
-Sockerless implements the Docker API without Docker. Any Docker client (CLI, SDK, CI runner) can connect to Sockerless and run containers backed by cloud services (AWS ECS, Lambda, GCP Cloud Run, Cloud Functions, Azure Container Apps, Azure Functions) or an in-process WASM sandbox.
+Sockerless implements the Docker API without Docker. Any Docker client (CLI, SDK, CI runner) can connect to Sockerless and run containers backed by cloud services (AWS ECS, Lambda, GCP Cloud Run, Cloud Functions, Azure Container Apps, Azure Functions).
 
 The production goal: **replace Docker Engine with Sockerless and run containers on real cloud infrastructure.** Any program that talks to Docker — `docker run`, `docker compose`, CI runners (GitHub Actions, GitLab CI), test frameworks (TestContainers), or custom Docker SDK clients — works unchanged. Set `DOCKER_HOST` to point at Sockerless, and every container operation becomes a cloud API call to ECS, Lambda, Cloud Run, or whichever backend is configured.
 
@@ -33,7 +33,6 @@ graph TB
         GCF["GCP Cloud Functions"]
         ACA["Azure Container Apps"]
         AZF["Azure Functions"]
-        WASM["WASM Sandbox"]
         DOCK["Docker Daemon"]
     end
 
@@ -42,7 +41,6 @@ graph TB
     GHR <-->|"Runner protocol<br/>(HTTP/JSON)"| BPH
     FE -->|"/internal/v1/*<br/>(HTTP/JSON)"| BE
     BE -->|"Cloud SDK"| ECS & LAM & CR & GCF & ACA & AZF
-    BE -->|"In-process"| WASM
     BE -->|"Docker SDK"| DOCK
     AG -.->|"WebSocket"| BE
 ```
@@ -84,7 +82,7 @@ For streaming operations (exec, attach, logs), the frontend hijacks the HTTP con
 
 ## Backends
 
-All eight backends embed a shared `core.BaseServer` that provides HTTP routing, in-memory state (`Store`), agent registry, and default handlers. Each backend overrides specific handlers via `RouteOverrides` to implement cloud-specific logic.
+All backends embed a shared `core.BaseServer` that provides HTTP routing, in-memory state (`Store`), agent registry, and default handlers. Each cloud backend overrides specific methods via the `api.Backend` interface (self-dispatch pattern) to implement cloud-specific logic.
 
 ```mermaid
 graph TB
@@ -92,28 +90,27 @@ graph TB
         MUX["HTTP Router"]
         STORE["StateStore<br/><i>containers, images,<br/>networks, volumes</i>"]
         REG["AgentRegistry<br/><i>reverse agent conns</i>"]
-        PF["ProcessFactory<br/><i>WASM execution</i>"]
+        DRV["DriverSet<br/><i>Exec, Filesystem,<br/>Stream, Network</i>"]
         DH["Default Handlers<br/><i>inspect, list, wait,<br/>exec create, ...</i>"]
     end
 
     subgraph "Backend-Specific"
-        OV["RouteOverrides<br/><i>create, start, stop,<br/>kill, remove, ...</i>"]
+        SELF["self api.Backend<br/><i>self-dispatch for<br/>create, start, stop, ...</i>"]
         CFG["Config<br/><i>cloud credentials,<br/>endpoint URL, ...</i>"]
         SDK2["Cloud SDK Clients"]
     end
 
-    OV -->|overrides| MUX
+    SELF -->|overrides| MUX
     DH -->|defaults| MUX
-    OV --> STORE
-    OV --> REG
-    OV --> SDK2
+    SELF --> STORE
+    SELF --> REG
+    SELF --> SDK2
 ```
 
 ### Backend Matrix
 
 | Backend | Cloud Service | Agent Mode | Execution |
 |---------|--------------|------------|-----------|
-| **memory** | — | — | WASM sandbox (wazero) |
 | **docker** | — | — | Docker daemon passthrough |
 | **ecs** | ECS/Fargate | Forward or Reverse | Real container |
 | **lambda** | Lambda | Reverse | Function invoke |
@@ -122,7 +119,7 @@ graph TB
 | **aca** | Container Apps Jobs | Forward or Reverse | Job execution |
 | **azf** | Azure Functions | Reverse | Function invoke |
 
-**Local backends** (memory, docker) need no agent — memory runs commands in a WASM sandbox, docker proxies to a real Docker daemon.
+**Docker backend** proxies to a real Docker daemon — no agent needed.
 
 **Container backends** (ECS, CloudRun, ACA) use **forward agent** in production (backend dials agent inside container) and **reverse agent** in simulator mode (agent dials back to backend).
 
@@ -144,9 +141,9 @@ stateDiagram-v2
     Exited --> [*]: docker rm
 
     state "Cloud Mapping" as cloud {
-        Created: ECS → RegisterTaskDef\nLambda → CreateFunction\nCloudRun → CreateJob\nMemory → allocate Process
-        Running: ECS → RunTask\nLambda → Invoke\nCloudRun → RunJob\nMemory → start WASM
-        Exited: ECS → StopTask\nLambda → function returns\nCloudRun → execution completes\nMemory → process exits
+        Created: ECS → RegisterTaskDef\nLambda → CreateFunction\nCloudRun → CreateJob
+        Running: ECS → RunTask\nLambda → Invoke\nCloudRun → RunJob
+        Exited: ECS → StopTask\nLambda → function returns\nCloudRun → execution completes
     }
 ```
 
@@ -158,7 +155,6 @@ Backend creates the container's cloud resource definition and stores metadata lo
 - **Lambda**: Creates a Lambda function with the container image
 - **CloudRun**: Prepares a Job spec (protobuf)
 - **ACA**: Prepares a Container Apps Job spec
-- **Memory**: Allocates a WASM `Process` with a virtual filesystem
 
 ### Container Start
 
@@ -166,11 +162,10 @@ Backend launches the cloud resource and establishes an agent connection:
 
 - **Container backends** (ECS/CloudRun/ACA): Call RunTask/RunJob/StartExecution, then wait for agent
 - **FaaS backends** (Lambda/GCF/AZF): Call Invoke, agent dials back via callback URL
-- **Memory**: Starts the main command in the WASM sandbox
 
 ### Container Exec
 
-Exec is how commands run inside a started container. The routing has a fallback hierarchy:
+Exec is how commands run inside a started container. The routing depends on the agent connection mode:
 
 ```mermaid
 flowchart TD
@@ -178,15 +173,12 @@ flowchart TD
     CHK1 -->|Yes| REV["Bridge exec over<br/>reverse WebSocket"]
     CHK1 -->|No| CHK2{"AgentAddress<br/>set (IP:port)?"}
     CHK2 -->|Yes| FWD["Dial forward agent<br/>at IP:9111"]
-    CHK2 -->|No| CHK3{"ProcessFactory<br/>available?"}
-    CHK3 -->|Yes| WASM2["Run in WASM<br/>sandbox"]
-    CHK3 -->|No| SYN["Synthetic fallback<br/>(echo command, exit 0)"]
+    CHK2 -->|No| ERR["Error: no agent<br/>connected"]
 ```
 
 1. **Reverse agent** — Agent has an active WebSocket to the backend. Exec is bridged over that connection.
 2. **Forward agent** — Backend dials the agent inside the container at `<IP>:9111`.
-3. **WASM process** — Memory backend runs the command in the sandbox.
-4. **Synthetic** — Last resort. Echoes the command text and returns exit 0. Used when no real execution is available.
+3. **No agent** — Error. An agent connection is required for exec.
 
 ---
 
@@ -444,46 +436,6 @@ gitlabhub also implements the Git smart HTTP protocol (via `go-git`) for `git cl
 
 ---
 
-## Memory Backend + WASM Sandbox
-
-The memory backend runs containers entirely in-process using a WebAssembly sandbox. No cloud resources, no Docker daemon, no containers — just WASM.
-
-```mermaid
-graph TB
-    subgraph "Memory Backend"
-        BS["BaseServer"]
-        PF2["ProcessFactory"]
-    end
-
-    subgraph "Sandbox (wazero)"
-        RT["Runtime<br/><i>compiled busybox.wasm</i>"]
-        P1["Process 1<br/><i>rootDir: /tmp/ctr-abc</i>"]
-        P2["Process 2<br/><i>rootDir: /tmp/ctr-def</i>"]
-        BB["busybox.wasm<br/><i>ls, cat, mkdir, echo,<br/>grep, sed, tar, ...</i>"]
-    end
-
-    BS --> PF2
-    PF2 --> RT
-    RT --> P1 & P2
-    P1 & P2 --> BB
-
-    subgraph "Per-Container Virtual FS"
-        FS1["/tmp/ctr-abc/<br/>├── bin/ → busybox<br/>├── etc/<br/>├── workspace/<br/>└── volumes/"]
-    end
-
-    P1 --> FS1
-```
-
-Each container gets:
-- A temp directory as its root filesystem, populated with an Alpine-like layout
-- Volume mounts mapped to host directories
-- A shell interpreter (`mvdan.cc/sh`) that executes commands using the compiled busybox WASM module
-- Isolated stdout/stderr capture for logs and attach
-
-The busybox WASM binary is built from `go-busybox` via TinyGo and embedded in the Go binary at compile time. It provides ~30 common Unix utilities (ls, cat, mkdir, cp, grep, sed, tar, etc.).
-
----
-
 ## Simulators
 
 Simulators (`simulators/{aws,gcp,azure}/`) are standalone HTTP servers that implement subsets of cloud APIs. They allow backends to run against local fake infrastructure for testing.
@@ -522,7 +474,7 @@ Key points:
 
 ## Module Structure
 
-The project is organized as a Go workspace with 18 modules:
+The project is organized as a Go workspace with multiple modules:
 
 ```
 sockerless/
@@ -531,7 +483,6 @@ sockerless/
 │   └── docker/                   # Docker REST API frontend
 ├── backends/
 │   ├── core/                     # Shared backend library
-│   ├── memory/                   # WASM sandbox backend
 │   ├── docker/                   # Docker daemon passthrough
 │   ├── ecs/                      # AWS ECS/Fargate
 │   ├── lambda/                   # AWS Lambda
@@ -540,7 +491,6 @@ sockerless/
 │   ├── aca/                      # Azure Container Apps Jobs
 │   └── azure-functions/          # Azure Functions
 ├── agent/                        # WebSocket agent binary
-├── sandbox/                      # WASM runtime (wazero + busybox)
 ├── bleephub/                     # GitHub Actions runner service API
 ├── gitlabhub/                    # GitLab CI runner coordinator
 ├── cmd/
@@ -555,7 +505,7 @@ sockerless/
 └── tests/                        # Integration + E2E tests
 ```
 
-Each backend, simulator, and the sandbox are separate Go modules connected via `go.work`. Simulators are **not** in the workspace (built with `GOWORK=off`) to avoid dependency conflicts with cloud SDKs. Major components embed React dashboards (Bun/Vite/React 19/Tailwind 4) served at `/ui/`.
+Each backend and simulator is a separate Go module connected via `go.work`. Simulators are **not** in the workspace (built with `GOWORK=off`) to avoid dependency conflicts with cloud SDKs. Major components embed React dashboards (Bun/Vite/React 19/Tailwind 4) served at `/ui/`.
 
 ---
 
@@ -564,8 +514,7 @@ Each backend, simulator, and the sandbox are separate Go modules connected via `
 ```mermaid
 graph TB
     subgraph "Unit / Integration"
-        UT["Sandbox unit tests<br/><i>cd sandbox && go test</i>"]
-        IT["Integration tests<br/><i>make test</i>"]
+        IT["Core tests<br/><i>cd backends/core && go test</i>"]
         ST["Sim-backend tests<br/><i>make sim-test-all</i>"]
     end
 
