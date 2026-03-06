@@ -1,34 +1,12 @@
 package core
 
 import (
-	"encoding/binary"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/sockerless/api"
 )
-
-// muxWriter wraps an io.Writer to add Docker multiplexed stream headers.
-// When TTY is false, Docker clients expect each chunk to be prefixed with
-// an 8-byte header: [stream_type, 0, 0, 0, size_big_endian(4)].
-type muxWriter struct {
-	w          io.Writer
-	streamType byte // 1 = stdout, 2 = stderr
-}
-
-func (m *muxWriter) Write(p []byte) (int, error) {
-	if len(p) == 0 {
-		return 0, nil
-	}
-	var header [8]byte
-	header[0] = m.streamType
-	binary.BigEndian.PutUint32(header[4:], uint32(len(p)))
-	if _, err := m.w.Write(header[:]); err != nil {
-		return 0, err
-	}
-	return m.w.Write(p)
-}
 
 // --- Common exec handlers ---
 

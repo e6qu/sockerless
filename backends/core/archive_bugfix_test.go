@@ -159,8 +159,8 @@ func TestHandlePutArchive_DriverError(t *testing.T) {
 	}
 }
 
-// BUG-053: handlePutArchive errors when no agent connected.
-func TestHandlePutArchive_NoAgent(t *testing.T) {
+// BUG-053: handlePutArchive stages files when no agent connected (pre-start docker cp).
+func TestHandlePutArchive_NoAgent_StagesFiles(t *testing.T) {
 	store := NewStore()
 	s := &BaseServer{
 		Store:    store,
@@ -188,8 +188,13 @@ func TestHandlePutArchive_NoAgent(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.handlePutArchive(w, req)
 
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 (no agent), got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 (staged), got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify staging dir was created
+	if _, ok := store.StagingDirs.Load(cID); !ok {
+		t.Fatal("expected staging dir to be created")
 	}
 }
 

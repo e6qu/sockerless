@@ -122,56 +122,6 @@ func extractTar(r io.Reader, destDir string) error {
 	}
 }
 
-// mergeStagingDir copies pre-start archive files into the container process root.
-func (s *BaseServer) mergeStagingDir(containerID string, rootPath string) {
-	sd, ok := s.Store.StagingDirs.Load(containerID)
-	if !ok {
-		return
-	}
-	stagingDir := sd.(string)
-	defer func() {
-		os.RemoveAll(stagingDir)
-		s.Store.StagingDirs.Delete(containerID)
-	}()
-	// Walk staging dir and copy into process root
-	_ = filepath.Walk(stagingDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || path == stagingDir {
-			return nil
-		}
-		rel, _ := filepath.Rel(stagingDir, path)
-		dest := filepath.Join(rootPath, rel)
-		if info.IsDir() {
-			if err := os.MkdirAll(dest, info.Mode()); err != nil {
-				s.Logger.Warn().Err(err).Str("dir", rel).Msg("staging merge: mkdir failed")
-			}
-			return nil
-		}
-		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-			s.Logger.Warn().Err(err).Str("file", rel).Msg("staging merge: mkdir parent failed")
-			return nil
-		}
-		src, err := os.Open(path)
-		if err != nil {
-			s.Logger.Warn().Err(err).Str("file", rel).Msg("staging merge: open source failed")
-			return nil
-		}
-		defer func() { _ = src.Close() }()
-		dst, err := os.Create(dest)
-		if err != nil {
-			s.Logger.Warn().Err(err).Str("file", rel).Msg("staging merge: create dest failed")
-			return nil
-		}
-		defer func() { _ = dst.Close() }()
-		if _, err := io.Copy(dst, src); err != nil {
-			s.Logger.Warn().Err(err).Str("file", rel).Msg("staging merge: copy failed")
-		}
-		if err := dst.Chmod(info.Mode()); err != nil {
-			s.Logger.Warn().Err(err).Str("file", rel).Msg("staging merge: chmod failed")
-		}
-		return nil
-	})
-}
-
 // createTar creates a tar archive from a path and writes it to w.
 func createTar(w io.Writer, srcPath string, baseName string) error {
 	tw := tar.NewWriter(w)
@@ -443,7 +393,7 @@ func buildMounts(hostConfig api.HostConfig) []api.MountPoint {
 }
 
 // resolveBindMounts converts Docker bind specs (e.g. "volName:/container/path")
-// and HostConfig.Mounts into a map of containerPath → hostPath for WASM volume symlinks.
+// and HostConfig.Mounts into a map of containerPath → hostPath.
 func (s *BaseServer) resolveBindMounts(binds []string, mounts []api.Mount) map[string]string {
 	if len(binds) == 0 && len(mounts) == 0 {
 		return nil

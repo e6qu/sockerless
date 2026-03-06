@@ -69,13 +69,31 @@ func (d *AgentFilesystemDriver) PutArchive(containerID string, path string, tarS
 		destDir := filepath.Clean(path)
 		return extractTar(tarStream, destDir)
 	}
-	return fmt.Errorf("put archive: %w: container %s", ErrNoAgent, containerID)
+	// No agent connected — stage files for later injection (e.g. docker cp before start)
+	stagingDir := d.getOrCreateStagingDir(containerID)
+	destDir := filepath.Join(stagingDir, filepath.Clean(path))
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return fmt.Errorf("staging mkdir: %w", err)
+	}
+	return extractTar(tarStream, destDir)
 }
 
 func (d *AgentFilesystemDriver) GetArchive(containerID string, path string, w io.Writer) (os.FileInfo, error) {
 	c, ok := d.Store.Containers.Get(containerID)
 	if ok && c.AgentAddress == "reverse" {
 		realPath := filepath.Clean(path)
+		info, err := os.Stat(realPath)
+		if err != nil {
+			return nil, err
+		}
+		if err := createTar(w, realPath, info.Name()); err != nil {
+			return info, err
+		}
+		return info, nil
+	}
+	// Check staging dir
+	if sd, ok := d.Store.StagingDirs.Load(containerID); ok {
+		realPath := filepath.Join(sd.(string), filepath.Clean(path))
 		info, err := os.Stat(realPath)
 		if err != nil {
 			return nil, err
@@ -93,11 +111,33 @@ func (d *AgentFilesystemDriver) StatPath(containerID string, path string) (os.Fi
 	if ok && c.AgentAddress == "reverse" {
 		return os.Stat(filepath.Clean(path))
 	}
+	// Check staging dir
+	if sd, ok := d.Store.StagingDirs.Load(containerID); ok {
+		return os.Stat(filepath.Join(sd.(string), filepath.Clean(path)))
+	}
 	return nil, fmt.Errorf("stat path: %w: container %s", ErrNoAgent, containerID)
 }
 
 func (d *AgentFilesystemDriver) RootPath(_ string) (string, error) {
 	return "", nil
+}
+
+// getOrCreateStagingDir returns or creates a temp directory for pre-start file staging.
+func (d *AgentFilesystemDriver) getOrCreateStagingDir(containerID string) string {
+	if sd, ok := d.Store.StagingDirs.Load(containerID); ok {
+		return sd.(string)
+	}
+	shortID := containerID
+	if len(shortID) > 12 {
+		shortID = shortID[:12]
+	}
+	dir, err := os.MkdirTemp("", "staging-"+shortID+"-")
+	if err != nil {
+		d.Logger.Error().Err(err).Msg("failed to create staging dir")
+		return os.TempDir()
+	}
+	d.Store.StagingDirs.Store(containerID, dir)
+	return dir
 }
 
 // AgentStreamDriver attaches via agent bridge (forward or reverse).
@@ -150,11 +190,6 @@ func (d *AgentStreamDriver) Attach(ctx context.Context, containerID string, tty 
 }
 
 // --- Helpers ---
-
-// joinCleanPath joins a base path with a cleaned relative path.
-func joinCleanPath(base, path string) string {
-	return filepath.Join(base, filepath.Clean(path))
-}
 
 // writeMuxChunk writes a Docker multiplexed stream chunk.
 func writeMuxChunk(w io.Writer, streamType byte, data []byte) {
