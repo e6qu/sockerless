@@ -90,9 +90,13 @@ func TestArithmeticNonZeroExit(t *testing.T) {
 }
 
 // TestArithmeticExecInContainer verifies exec can run real computation in a container.
+// Requires a real agent connected — skipped for simulator-only backends.
 func TestArithmeticExecInContainer(t *testing.T) {
 	for name, c := range availableRunnerClients(t) {
 		t.Run(name, func(t *testing.T) {
+			if name != "docker" {
+				t.Skipf("%s simulator cannot connect an agent for exec", name)
+			}
 			ctx := context.Background()
 			testID := generateTestID(name, "arith-exec-in")
 

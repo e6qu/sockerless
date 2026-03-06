@@ -1,7 +1,9 @@
 package core
 
 import (
+	"context"
 	"encoding/binary"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +12,31 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/sockerless/api"
 )
+
+// testStreamDriver provides log data for tests.
+type testStreamDriver struct {
+	store *Store
+}
+
+func (d *testStreamDriver) LogBytes(containerID string) []byte {
+	logData, _ := d.store.LogBuffers.Load(containerID)
+	if logData != nil {
+		return logData.([]byte)
+	}
+	return nil
+}
+
+func (d *testStreamDriver) LogSubscribe(containerID, _ string) chan []byte {
+	ch := make(chan []byte)
+	close(ch)
+	return ch
+}
+
+func (d *testStreamDriver) LogUnsubscribe(_, _ string) {}
+
+func (d *testStreamDriver) Attach(_ context.Context, _ string, _ bool, _ net.Conn) error {
+	return nil
+}
 
 func newLogStreamTestServer() *BaseServer {
 	store := NewStore()
@@ -20,6 +47,8 @@ func newLogStreamTestServer() *BaseServer {
 		EventBus: NewEventBus(),
 	}
 	s.InitDrivers()
+	// Override stream driver with test driver that reads from LogBuffers
+	s.Drivers.Stream = &testStreamDriver{store: store}
 	s.self = s
 	return s
 }

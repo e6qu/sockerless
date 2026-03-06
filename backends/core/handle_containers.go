@@ -179,10 +179,7 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Block until exit. Auto-stop is handled by:
-	// - handleContainerStart: 50ms for non-interactive (!Tty && !OpenStdin)
-	// - below: 2s for interactive containers with no execs (predefined/helper)
-	// - handleExecStart: 500ms after all synthetic execs complete (build)
+	// Block until exit.
 	ch, ok := s.Store.WaitChs.Load(id)
 	if !ok {
 		c, _ = s.Store.Containers.Get(id)
@@ -190,21 +187,6 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 			StatusCode: c.State.ExitCode,
 		})
 		return
-	}
-
-	// For synthetic (agentless) interactive containers, auto-stop after 2s
-	// if no execs have been created. This handles CI runner "predefined"
-	// containers whose helper process would exit quickly in real Docker.
-	// Build containers get execs within ms, so they won't be affected.
-	if c.AgentAddress == "" && (c.Config.Tty || c.Config.OpenStdin) {
-		go func() {
-			time.Sleep(2 * time.Second)
-			c2, ok := s.Store.Containers.Get(id)
-			if !ok || !c2.State.Running || len(c2.ExecIDs) > 0 {
-				return
-			}
-			s.Store.StopContainer(id, 0)
-		}()
 	}
 
 	select {

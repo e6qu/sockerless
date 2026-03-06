@@ -183,7 +183,7 @@ func (s *BaseServer) ContainerExport(id string) (io.ReadCloser, error) {
 
 	rootPath, err := s.Drivers.Filesystem.RootPath(resolvedID)
 	if err != nil || rootPath == "" {
-		// Synthetic container — return empty tar
+		// No root filesystem — return empty tar
 		var buf bytes.Buffer
 		tw := tar.NewWriter(&buf)
 		_ = tw.Close()

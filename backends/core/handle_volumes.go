@@ -55,13 +55,10 @@ func (s *BaseServer) handleVolumeCreate(w http.ResponseWriter, r *http.Request) 
 		Options:    options,
 	}
 
-	// For backends with real processes, create a host directory for volume data
-	if !s.Drivers.ProcessLifecycle.IsSynthetic("") {
-		dir, err := os.MkdirTemp("", "vol-"+name+"-*")
-		if err == nil {
-			s.Store.VolumeDirs.Store(name, dir)
-			vol.Mountpoint = dir
-		}
+	dir, err := os.MkdirTemp("", "vol-"+name+"-*")
+	if err == nil {
+		s.Store.VolumeDirs.Store(name, dir)
+		vol.Mountpoint = dir
 	}
 
 	s.Store.Volumes.Put(name, vol)

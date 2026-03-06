@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -11,13 +12,15 @@ import (
 	"github.com/sockerless/agent"
 )
 
+// ErrNoAgent is returned when an operation requires an agent but none is connected.
+var ErrNoAgent = fmt.Errorf("no agent connected")
+
 // AgentExecDriver runs commands via agent bridge (forward or reverse).
-// Falls back to the next driver when no agent is available.
+// Returns an error exit code when no agent is available.
 type AgentExecDriver struct {
 	Store         *Store
 	AgentRegistry *AgentRegistry
 	Logger        zerolog.Logger
-	Fallback      ExecDriver
 }
 
 func (d *AgentExecDriver) Exec(ctx context.Context, containerID string, execID string,
@@ -26,7 +29,8 @@ func (d *AgentExecDriver) Exec(ctx context.Context, containerID string, execID s
 
 	c, ok := d.Store.Containers.Get(containerID)
 	if !ok {
-		return d.Fallback.Exec(ctx, containerID, execID, cmd, env, workDir, tty, conn)
+		d.Logger.Error().Str("container", containerID).Msg("container not found for exec")
+		return 1
 	}
 
 	if c.AgentAddress == "reverse" {
@@ -41,42 +45,36 @@ func (d *AgentExecDriver) Exec(ctx context.Context, containerID string, execID s
 	if c.AgentAddress != "" {
 		agentConn, err := agent.Dial(c.AgentAddress, c.AgentToken)
 		if err != nil {
-			d.Logger.Warn().Err(err).Str("agent", c.AgentAddress).Msg("failed to dial agent for exec, falling back to synthetic")
-			return d.Fallback.Exec(ctx, containerID, execID, cmd, env, workDir, tty, conn)
+			d.Logger.Error().Err(err).Str("agent", c.AgentAddress).Msg("failed to dial agent for exec")
+			return 1
 		}
 		defer func() { _ = agentConn.Close() }()
 		return agentConn.BridgeExec(conn, execID, cmd, env, workDir, tty)
 	}
 
-	return d.Fallback.Exec(ctx, containerID, execID, cmd, env, workDir, tty, conn)
+	d.Logger.Error().Str("container", containerID).Msg("no agent connected for exec")
+	return 1
 }
 
 // AgentFilesystemDriver reads/writes files via host filesystem for reverse
-// agent containers. Falls back to the next driver otherwise.
+// agent containers. Returns errors when no agent is available.
 type AgentFilesystemDriver struct {
-	Store    *Store
-	Logger   zerolog.Logger
-	Fallback FilesystemDriver
+	Store  *Store
+	Logger zerolog.Logger
 }
 
 func (d *AgentFilesystemDriver) PutArchive(containerID string, path string, tarStream io.Reader) error {
 	c, ok := d.Store.Containers.Get(containerID)
-	if !ok {
-		return d.Fallback.PutArchive(containerID, path, tarStream)
-	}
-	if c.AgentAddress == "reverse" {
+	if ok && c.AgentAddress == "reverse" {
 		destDir := filepath.Clean(path)
 		return extractTar(tarStream, destDir)
 	}
-	return d.Fallback.PutArchive(containerID, path, tarStream)
+	return fmt.Errorf("put archive: %w: container %s", ErrNoAgent, containerID)
 }
 
 func (d *AgentFilesystemDriver) GetArchive(containerID string, path string, w io.Writer) (os.FileInfo, error) {
 	c, ok := d.Store.Containers.Get(containerID)
-	if !ok {
-		return d.Fallback.GetArchive(containerID, path, w)
-	}
-	if c.AgentAddress == "reverse" {
+	if ok && c.AgentAddress == "reverse" {
 		realPath := filepath.Clean(path)
 		info, err := os.Stat(realPath)
 		if err != nil {
@@ -87,49 +85,45 @@ func (d *AgentFilesystemDriver) GetArchive(containerID string, path string, w io
 		}
 		return info, nil
 	}
-	return d.Fallback.GetArchive(containerID, path, w)
+	return nil, fmt.Errorf("get archive: %w: container %s", ErrNoAgent, containerID)
 }
 
 func (d *AgentFilesystemDriver) StatPath(containerID string, path string) (os.FileInfo, error) {
 	c, ok := d.Store.Containers.Get(containerID)
-	if !ok {
-		return d.Fallback.StatPath(containerID, path)
-	}
-	if c.AgentAddress == "reverse" {
+	if ok && c.AgentAddress == "reverse" {
 		return os.Stat(filepath.Clean(path))
 	}
-	return d.Fallback.StatPath(containerID, path)
+	return nil, fmt.Errorf("stat path: %w: container %s", ErrNoAgent, containerID)
 }
 
-func (d *AgentFilesystemDriver) RootPath(containerID string) (string, error) {
-	return d.Fallback.RootPath(containerID)
+func (d *AgentFilesystemDriver) RootPath(_ string) (string, error) {
+	return "", nil
 }
 
 // AgentStreamDriver attaches via agent bridge (forward or reverse).
-// Falls back to the next driver when no agent is available.
+// Returns errors when no agent is available.
 type AgentStreamDriver struct {
 	Store         *Store
 	AgentRegistry *AgentRegistry
 	Logger        zerolog.Logger
-	Fallback      StreamDriver
 }
 
-func (d *AgentStreamDriver) LogBytes(containerID string) []byte {
-	return d.Fallback.LogBytes(containerID)
+func (d *AgentStreamDriver) LogBytes(_ string) []byte {
+	return nil
 }
 
-func (d *AgentStreamDriver) LogSubscribe(containerID, subID string) chan []byte {
-	return d.Fallback.LogSubscribe(containerID, subID)
+func (d *AgentStreamDriver) LogSubscribe(_ string, _ string) chan []byte {
+	ch := make(chan []byte)
+	close(ch)
+	return ch
 }
 
-func (d *AgentStreamDriver) LogUnsubscribe(containerID, subID string) {
-	d.Fallback.LogUnsubscribe(containerID, subID)
-}
+func (d *AgentStreamDriver) LogUnsubscribe(_, _ string) {}
 
 func (d *AgentStreamDriver) Attach(ctx context.Context, containerID string, tty bool, conn net.Conn) error {
 	c, ok := d.Store.Containers.Get(containerID)
 	if !ok {
-		return d.Fallback.Attach(ctx, containerID, tty, conn)
+		return fmt.Errorf("attach: %w: container %s", ErrNoAgent, containerID)
 	}
 
 	if c.AgentAddress == "reverse" {
@@ -145,13 +139,45 @@ func (d *AgentStreamDriver) Attach(ctx context.Context, containerID string, tty 
 	if c.AgentAddress != "" {
 		agentConn, err := agent.Dial(c.AgentAddress, c.AgentToken)
 		if err != nil {
-			d.Logger.Warn().Err(err).Str("agent", c.AgentAddress).Msg("failed to dial agent for attach, falling back to synthetic")
-			return d.Fallback.Attach(ctx, containerID, tty, conn)
+			return fmt.Errorf("attach: failed to dial agent %s: %w", c.AgentAddress, err)
 		}
 		defer func() { _ = agentConn.Close() }()
 		agentConn.BridgeAttach(conn, containerID, tty)
 		return nil
 	}
 
-	return d.Fallback.Attach(ctx, containerID, tty, conn)
+	return fmt.Errorf("attach: %w: container %s", ErrNoAgent, containerID)
+}
+
+// --- Helpers ---
+
+// joinCleanPath joins a base path with a cleaned relative path.
+func joinCleanPath(base, path string) string {
+	return filepath.Join(base, filepath.Clean(path))
+}
+
+// writeMuxChunk writes a Docker multiplexed stream chunk.
+func writeMuxChunk(w io.Writer, streamType byte, data []byte) {
+	size := len(data)
+	header := []byte{streamType, 0, 0, 0, byte(size >> 24), byte(size >> 16), byte(size >> 8), byte(size)}
+	_, _ = w.Write(header)
+	_, _ = w.Write(data)
+}
+
+// DirSize walks a directory and returns the total size of all files in bytes.
+func DirSize(path string) int64 {
+	var size int64
+	_ = filepath.WalkDir(path, func(_ string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !d.IsDir() {
+			info, err := d.Info()
+			if err == nil {
+				size += info.Size()
+			}
+		}
+		return nil
+	})
+	return size
 }

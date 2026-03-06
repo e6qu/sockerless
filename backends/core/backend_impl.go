@@ -294,8 +294,6 @@ func (s *BaseServer) ContainerStart(ref string) error {
 
 	c, _ = s.Store.Containers.Get(id)
 
-	cmd := append([]string{c.Path}, c.Args...)
-	binds := s.resolveBindMounts(c.HostConfig.Binds, c.HostConfig.Mounts)
 	tmpfs := resolveTmpfsMounts(c.HostConfig.Tmpfs)
 	if len(tmpfs) > 0 {
 		dirs := make([]string, 0, len(tmpfs))
@@ -304,17 +302,6 @@ func (s *BaseServer) ContainerStart(ref string) error {
 		}
 		s.Store.TmpfsDirs.Store(id, dirs)
 	}
-	for k, v := range tmpfs {
-		if binds == nil {
-			binds = make(map[string]string)
-		}
-		binds[k] = v
-	}
-	started, err := s.Drivers.ProcessLifecycle.Start(id, cmd, c.Config.Env, binds)
-	if err != nil {
-		return &api.ServerError{Message: "failed to start container process: " + err.Error()}
-	}
-
 	exitCh := make(chan struct{})
 	s.Store.WaitChs.Store(id, exitCh)
 
@@ -337,44 +324,6 @@ func (s *BaseServer) ContainerStart(ref string) error {
 		s.StartHealthCheck(id)
 	}
 
-	if started {
-		if rootPath, err := s.Drivers.Filesystem.RootPath(id); err == nil && rootPath != "" {
-			s.mergeStagingDir(id, rootPath)
-			extraHosts := c.HostConfig.ExtraHosts
-			peerHosts := ResolvePeerHosts(s.Store, id)
-			allHosts := append(extraHosts, peerHosts...)
-			if len(allHosts) > 0 || c.Config.Hostname != "" {
-				hostsContent := BuildHostsFile(c.Config.Hostname, allHosts)
-				etcDir := joinCleanPath(rootPath, "/etc")
-				_ = os.MkdirAll(etcDir, 0o755)
-				_ = os.WriteFile(joinCleanPath(rootPath, "/etc/hosts"), hostsContent, 0o644)
-			}
-		}
-		return nil
-	}
-
-	// Synthetic mode
-	logMsg := ""
-	if c.Path != "" {
-		logMsg = fmt.Sprintf("executing: %s %s\n", c.Path, strings.Join(c.Args, " "))
-	}
-	s.Store.LogBuffers.Store(id, []byte(logMsg))
-
-	delay := 50 * time.Millisecond
-	if c.Config.OpenStdin {
-		delay = 200 * time.Millisecond
-	}
-	go func() {
-		time.Sleep(delay)
-		if c, ok := s.Store.Containers.Get(id); ok && c.State.Running {
-			s.emitEvent("container", "die", id, map[string]string{
-				"exitCode": "0",
-				"name":     strings.TrimPrefix(c.Name, "/"),
-			})
-			s.Store.StopContainer(id, 0)
-		}
-	}()
-
 	return nil
 }
 
@@ -391,8 +340,6 @@ func (s *BaseServer) ContainerStop(ref string, timeout *int) error {
 	}
 
 	s.StopHealthCheck(id)
-	s.Drivers.ProcessLifecycle.Stop(id)
-	s.Drivers.ProcessLifecycle.Cleanup(id)
 	s.Store.ForceStopContainer(id, 0)
 	s.emitEvent("container", "die", id, map[string]string{
 		"exitCode": "0",
@@ -416,7 +363,6 @@ func (s *BaseServer) ContainerKill(ref string, signal string) error {
 		}
 	}
 
-	s.Drivers.ProcessLifecycle.Kill(id)
 	s.StopHealthCheck(id)
 
 	exitCode := signalToExitCode(signal)
@@ -429,7 +375,6 @@ func (s *BaseServer) ContainerKill(ref string, signal string) error {
 		c.State.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	})
 
-	s.Drivers.ProcessLifecycle.Cleanup(id)
 	s.emitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	s.emitEvent("container", "die", id, map[string]string{
 		"exitCode": fmt.Sprintf("%d", exitCode),
@@ -468,7 +413,6 @@ func (s *BaseServer) ContainerRemove(ref string, force bool) error {
 	}
 
 	s.StopHealthCheck(id)
-	s.Drivers.ProcessLifecycle.Cleanup(id)
 
 	ctx := context.Background()
 	for _, ep := range c.NetworkSettings.Networks {
@@ -629,18 +573,6 @@ func (s *BaseServer) ContainerWait(ref string, condition string) (*api.Container
 		return &api.ContainerWaitResponse{StatusCode: c.State.ExitCode}, nil
 	}
 
-	// Auto-stop synthetic interactive containers after 2s if no execs
-	if c.AgentAddress == "" && (c.Config.Tty || c.Config.OpenStdin) {
-		go func() {
-			time.Sleep(2 * time.Second)
-			c2, ok := s.Store.Containers.Get(id)
-			if !ok || !c2.State.Running || len(c2.ExecIDs) > 0 {
-				return
-			}
-			s.Store.StopContainer(id, 0)
-		}()
-	}
-
 	<-ch.(chan struct{})
 	c, _ = s.Store.Containers.Get(id)
 	if condition == "removed" {
@@ -687,7 +619,6 @@ func (s *BaseServer) ContainerRestart(ref string, timeout *int) error {
 	c, _ := s.Store.Containers.Get(id)
 	if c.State.Running {
 		s.StopHealthCheck(id)
-		s.Drivers.ProcessLifecycle.Stop(id)
 		s.Store.ForceStopContainer(id, 0)
 		s.emitEvent("container", "die", id, map[string]string{
 			"exitCode": "0",
@@ -695,8 +626,6 @@ func (s *BaseServer) ContainerRestart(ref string, timeout *int) error {
 		})
 		s.emitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	}
-
-	s.Drivers.ProcessLifecycle.Cleanup(id)
 
 	exitCh := make(chan struct{})
 	s.Store.WaitChs.Store(id, exitCh)
@@ -721,8 +650,6 @@ func (s *BaseServer) ContainerRestart(ref string, timeout *int) error {
 		}
 	}
 
-	cmd := append([]string{c.Path}, c.Args...)
-	binds := s.resolveBindMounts(c.HostConfig.Binds, c.HostConfig.Mounts)
 	tmpfs := resolveTmpfsMounts(c.HostConfig.Tmpfs)
 	if len(tmpfs) > 0 {
 		dirs := make([]string, 0, len(tmpfs))
@@ -731,22 +658,6 @@ func (s *BaseServer) ContainerRestart(ref string, timeout *int) error {
 		}
 		s.Store.TmpfsDirs.Store(id, dirs)
 	}
-	for k, v := range tmpfs {
-		if binds == nil {
-			binds = make(map[string]string)
-		}
-		binds[k] = v
-	}
-	_, err := s.Drivers.ProcessLifecycle.Start(id, cmd, c.Config.Env, binds)
-	if err != nil {
-		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			close(ch.(chan struct{}))
-		}
-		s.StopHealthCheck(id)
-		s.Store.RevertToCreated(id)
-		return &api.ServerError{Message: "failed to restart container process: " + err.Error()}
-	}
-
 	s.emitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	s.emitEvent("container", "restart", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 
@@ -771,23 +682,6 @@ func (s *BaseServer) ContainerTop(ref string, psArgs string) (*api.ContainerTopR
 		return nil, &api.ConflictError{
 			Message: fmt.Sprintf("Container %s is not running", ref),
 		}
-	}
-
-	entries, _ := s.Drivers.ProcessLifecycle.Top(id)
-	if len(entries) > 0 {
-		var processes [][]string
-		for _, e := range entries {
-			processes = append(processes, []string{
-				"root",
-				fmt.Sprintf("%d", e.PID),
-				"0", "0", "00:00", "?", "00:00:00",
-				e.Command,
-			})
-		}
-		return &api.ContainerTopResponse{
-			Titles:    []string{"UID", "PID", "PPID", "C", "STIME", "TTY", "TIME", "CMD"},
-			Processes: processes,
-		}, nil
 	}
 
 	cmd := c.Path
@@ -838,7 +732,6 @@ func (s *BaseServer) ContainerPrune(filters map[string][]string) (*api.Container
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
 			close(ch.(chan struct{}))
 		}
-		s.Drivers.ProcessLifecycle.Cleanup(c.ID)
 		for _, ep := range c.NetworkSettings.Networks {
 			if ep != nil && ep.NetworkID != "" {
 				_ = s.Drivers.Network.Disconnect(ctx, ep.NetworkID, c.ID)
@@ -1119,10 +1012,6 @@ func (s *BaseServer) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWri
 		})
 
 		_ = pw.Close()
-
-		if c.AgentAddress == "" && s.Drivers.ProcessLifecycle.IsSynthetic(exec.ContainerID) {
-			go s.scheduleExecAutoStop(exec.ContainerID)
-		}
 	}()
 
 	return &pipeRWC{reader: pr, writer: pw}, nil
@@ -1659,12 +1548,10 @@ func (s *BaseServer) VolumeCreate(req *api.VolumeCreateRequest) (*api.Volume, er
 		Options:    options,
 	}
 
-	if !s.Drivers.ProcessLifecycle.IsSynthetic("") {
-		dir, err := os.MkdirTemp("", "vol-"+name+"-*")
-		if err == nil {
-			s.Store.VolumeDirs.Store(name, dir)
-			vol.Mountpoint = dir
-		}
+	dir, err := os.MkdirTemp("", "vol-"+name+"-*")
+	if err == nil {
+		s.Store.VolumeDirs.Store(name, dir)
+		vol.Mountpoint = dir
 	}
 
 	s.Store.Volumes.Put(name, vol)

@@ -104,10 +104,6 @@ func (s *BaseServer) PodStart(name string) (*api.PodActionResponse, error) {
 			c.State.ExitCode = 0
 		})
 
-		cmd := append([]string{c.Path}, c.Args...)
-		binds := s.resolveBindMounts(c.HostConfig.Binds, c.HostConfig.Mounts)
-		_, _ = s.Drivers.ProcessLifecycle.Start(cid, cmd, c.Config.Env, binds)
-
 		if c.Config.Healthcheck != nil && len(c.Config.Healthcheck.Test) > 0 &&
 			(len(c.Config.Healthcheck.Test) != 1 || !strings.EqualFold(c.Config.Healthcheck.Test[0], "NONE")) {
 			s.StartHealthCheck(cid)
@@ -134,8 +130,6 @@ func (s *BaseServer) PodStop(name string, timeout *int) (*api.PodActionResponse,
 			continue
 		}
 		s.StopHealthCheck(cid)
-		s.Drivers.ProcessLifecycle.Stop(cid)
-		s.Drivers.ProcessLifecycle.Cleanup(cid)
 		s.Store.ForceStopContainer(cid, 0)
 		s.emitEvent("container", "die", cid, map[string]string{
 			"exitCode": "0",
@@ -164,9 +158,7 @@ func (s *BaseServer) PodKill(name string, signal string) (*api.PodActionResponse
 		if !ok || !c.State.Running {
 			continue
 		}
-		s.Drivers.ProcessLifecycle.Kill(cid)
 		s.StopHealthCheck(cid)
-		s.Drivers.ProcessLifecycle.Cleanup(cid)
 		s.Store.ForceStopContainer(cid, exitCode)
 		s.emitEvent("container", "kill", cid, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 		s.emitEvent("container", "die", cid, map[string]string{
@@ -215,7 +207,6 @@ func (s *BaseServer) removePodContainers(ctx context.Context, pod *PodContext, f
 			s.Store.ForceStopContainer(cid, 0)
 		}
 		s.StopHealthCheck(cid)
-		s.Drivers.ProcessLifecycle.Cleanup(cid)
 		for _, ep := range c.NetworkSettings.Networks {
 			if ep != nil && ep.NetworkID != "" {
 				_ = s.Drivers.Network.Disconnect(ctx, ep.NetworkID, cid)

@@ -52,31 +52,6 @@ func (s *BaseServer) handleContainerTop(w http.ResponseWriter, r *http.Request) 
 	// BUG-504: Read ps_args query param for API parity
 	_ = r.URL.Query().Get("ps_args")
 
-	// Get process data via driver chain
-	entries, _ := s.Drivers.ProcessLifecycle.Top(id)
-	if len(entries) > 0 {
-		var processes [][]string
-		for _, e := range entries {
-			processes = append(processes, []string{
-				"root",
-				fmt.Sprintf("%d", e.PID),
-				"0",
-				"0",
-				"00:00",
-				"?",
-				"00:00:00",
-				e.Command,
-			})
-		}
-
-		WriteJSON(w, http.StatusOK, api.ContainerTopResponse{
-			Titles:    []string{"UID", "PID", "PPID", "C", "STIME", "TTY", "TIME", "CMD"},
-			Processes: processes,
-		})
-		return
-	}
-
-	// Synthetic process list fallback
 	cmd := c.Path
 	if len(c.Args) > 0 {
 		cmd += " " + strings.Join(c.Args, " ")
@@ -166,12 +141,6 @@ func (s *BaseServer) buildStatsEntry(containerID string, now time.Time, preread 
 	var memUsage int64
 	var cpuNanos int64
 	var pids int
-
-	if stats, err := s.Drivers.ProcessLifecycle.Stats(containerID); err == nil && stats != nil {
-		memUsage = stats.MemoryUsage
-		cpuNanos = stats.CPUNanos
-		pids = stats.PIDs
-	}
 
 	systemNanos := now.UnixNano()
 

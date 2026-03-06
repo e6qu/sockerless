@@ -35,7 +35,7 @@ func TestContainerExport_NotFound(t *testing.T) {
 	}
 }
 
-func TestContainerExport_SyntheticEmpty(t *testing.T) {
+func TestContainerExport_Empty(t *testing.T) {
 	s := newExportTestServer()
 
 	cID := "c1"

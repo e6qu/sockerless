@@ -16,6 +16,5 @@ use (
 	./cmd/sockerless
 	./cmd/sockerless-admin
 	./gitlabhub
-	./sandbox
 	./tests
 )

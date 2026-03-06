@@ -47,9 +47,8 @@ type BaseServer struct {
 	Logger         zerolog.Logger
 	Desc           BackendDescriptor
 	Mux            *http.ServeMux
-	AgentRegistry  *AgentRegistry
-	ProcessFactory ProcessFactory
-	Drivers        DriverSet
+	AgentRegistry *AgentRegistry
+	Drivers       DriverSet
 	Registry       *ResourceRegistry
 	StartedAt      time.Time
 	Metrics        *Metrics
@@ -253,70 +252,13 @@ func (s *BaseServer) InitDefaultNetwork() {
 	})
 }
 
-// InitDrivers sets up the default driver chain for this server.
-// Backends that inject a ProcessFactory should call this after setting it.
-// The chain is: Agent → WASM (if ProcessFactory set) → Synthetic.
+// InitDrivers sets up the default driver set for this server.
+// Agent drivers handle all cases; operations error when no agent is connected.
 func (s *BaseServer) InitDrivers() {
-	syntheticExec := &SyntheticExecDriver{}
-	syntheticFS := &SyntheticFilesystemDriver{Store: s.Store}
-	syntheticStream := &SyntheticStreamDriver{Store: s.Store}
+	s.Drivers.Exec = &AgentExecDriver{Store: s.Store, AgentRegistry: s.AgentRegistry, Logger: s.Logger}
+	s.Drivers.Filesystem = &AgentFilesystemDriver{Store: s.Store, Logger: s.Logger}
+	s.Drivers.Stream = &AgentStreamDriver{Store: s.Store, AgentRegistry: s.AgentRegistry, Logger: s.Logger}
 
-	// Build exec chain
-	var execDriver ExecDriver = syntheticExec
-	if s.ProcessFactory != nil {
-		execDriver = &WASMExecDriver{
-			Store:          s.Store,
-			ProcessFactory: s.ProcessFactory,
-			Fallback:       syntheticExec,
-		}
-	}
-	s.Drivers.Exec = &AgentExecDriver{
-		Store:         s.Store,
-		AgentRegistry: s.AgentRegistry,
-		Logger:        s.Logger,
-		Fallback:      execDriver,
-	}
-
-	// Build filesystem chain
-	var fsDriver FilesystemDriver = syntheticFS
-	if s.ProcessFactory != nil {
-		fsDriver = &WASMFilesystemDriver{
-			Store:    s.Store,
-			Fallback: syntheticFS,
-		}
-	}
-	s.Drivers.Filesystem = &AgentFilesystemDriver{
-		Store:    s.Store,
-		Logger:   s.Logger,
-		Fallback: fsDriver,
-	}
-
-	// Build stream chain
-	var streamDriver StreamDriver = syntheticStream
-	if s.ProcessFactory != nil {
-		streamDriver = &WASMStreamDriver{
-			Store:    s.Store,
-			Fallback: syntheticStream,
-		}
-	}
-	s.Drivers.Stream = &AgentStreamDriver{
-		Store:         s.Store,
-		AgentRegistry: s.AgentRegistry,
-		Logger:        s.Logger,
-		Fallback:      streamDriver,
-	}
-
-	// Build process lifecycle
-	if s.ProcessFactory != nil {
-		s.Drivers.ProcessLifecycle = &WASMProcessLifecycleDriver{
-			Store:          s.Store,
-			ProcessFactory: s.ProcessFactory,
-		}
-	} else {
-		s.Drivers.ProcessLifecycle = &SyntheticProcessLifecycleDriver{}
-	}
-
-	// Build network driver
 	syntheticNet := &SyntheticNetworkDriver{Store: s.Store, IPAlloc: s.Store.IPAlloc}
 	if platformDriver := NewPlatformNetworkDriver(syntheticNet, s.Logger); platformDriver != nil {
 		s.Drivers.Network = platformDriver

@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/sockerless/api"
 )
@@ -43,15 +42,10 @@ func (s *BaseServer) handleExecCreate(w http.ResponseWriter, r *http.Request) {
 
 	c, _ := s.Store.Containers.Get(id)
 	if !c.State.Running {
-		// Allow exec on exited containers that use synthetic exec (no agent).
-		// FaaS backends stop containers immediately after invoke, but exec
-		// can still work via the synthetic fallback.
-		if c.AgentAddress != "" || c.State.Status == "" {
-			WriteError(w, &api.ConflictError{
-				Message: "Container " + ref + " is not running",
-			})
-			return
-		}
+		WriteError(w, &api.ConflictError{
+			Message: "Container " + ref + " is not running",
+		})
+		return
 	}
 
 	var req api.ExecCreateRequest
@@ -175,27 +169,6 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 		io.Copy(rwc, conn)
 	}()
 	<-done
-}
-
-// scheduleExecAutoStop stops a synthetic container after a grace period,
-// provided all its exec instances have completed.
-func (s *BaseServer) scheduleExecAutoStop(containerID string) {
-	time.Sleep(500 * time.Millisecond)
-	c, ok := s.Store.Containers.Get(containerID)
-	if !ok || !c.State.Running {
-		return
-	}
-	for _, eid := range c.ExecIDs {
-		e, ok := s.Store.Execs.Get(eid)
-		if ok && e.Running {
-			return
-		}
-	}
-	s.emitEvent("container", "die", containerID, map[string]string{
-		"exitCode": "0",
-		"name":     strings.TrimPrefix(c.Name, "/"),
-	})
-	s.Store.StopContainer(containerID, 0)
 }
 
 // mergeEnv merges base env vars with override env vars. Override values
