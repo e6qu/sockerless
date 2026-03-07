@@ -174,6 +174,54 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 	return s.BaseServer.ExecStart(id, opts)
 }
 
+// ContainerAttach attaches to a container's streams.
+// If an agent is connected, delegates to BaseServer (which uses the driver chain).
+// Otherwise returns NotImplementedError since ACA Jobs have no direct attach support.
+func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
+	cid, ok := s.Store.ResolveContainerID(id)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: id}
+	}
+	c, _ := s.Store.Containers.Get(cid)
+	if c.AgentAddress != "" {
+		return s.BaseServer.ContainerAttach(id, opts)
+	}
+	return nil, &api.NotImplementedError{
+		Message: "ACA backend does not support attach without a connected agent",
+	}
+}
+
+// ContainerExport is not supported by the ACA backend.
+// ACA Jobs do not provide filesystem access for container export.
+func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {
+	if _, ok := s.Store.ResolveContainerID(ref); !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: ref}
+	}
+	return nil, &api.NotImplementedError{Message: "container export is not supported by ACA backend: no container filesystem access"}
+}
+
+// ContainerCommit is not supported by the ACA backend.
+// ACA containers cannot be snapshotted into images.
+func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
+	if _, ok := s.Store.ResolveContainerID(req.Container); !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
+	}
+	return nil, &api.NotImplementedError{Message: "container commit is not supported by ACA backend: cannot snapshot ACA containers into images"}
+}
+
+// AuthLogin handles registry authentication.
+// For ACR registries (*.azurecr.io), logs a warning and delegates to BaseServer.
+// For all other registries, delegates to BaseServer directly.
+func (s *Server) AuthLogin(req *api.AuthRequest) (*api.AuthResponse, error) {
+	if strings.HasSuffix(req.ServerAddress, ".azurecr.io") {
+		s.Logger.Warn().
+			Str("registry", req.ServerAddress).
+			Msg("ACR login: credentials stored locally; use `az acr login` for production")
+		return s.BaseServer.AuthLogin(req)
+	}
+	return s.BaseServer.AuthLogin(req)
+}
+
 // Info returns system information enriched with ACA-specific metadata.
 func (s *Server) Info() (*api.BackendInfo, error) {
 	info, err := s.BaseServer.Info()

@@ -10,24 +10,8 @@ import (
 	"io"
 )
 
-func (s *Server) AuthLogin(req *api.AuthRequest) (*api.AuthResponse, error) {
-	return s.BaseServer.AuthLogin(req)
-}
-
-func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	return s.BaseServer.ContainerAttach(id, opts)
-}
-
 func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) {
 	return s.BaseServer.ContainerChanges(id)
-}
-
-func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
-	return s.BaseServer.ContainerCommit(req)
-}
-
-func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
-	return s.BaseServer.ContainerExport(id)
 }
 
 func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArchiveResponse, error) {

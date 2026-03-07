@@ -10,22 +10,10 @@ import (
 	"io"
 )
 
-func (s *Server) AuthLogin(req *api.AuthRequest) (*api.AuthResponse, error) {
-	return s.BaseServer.AuthLogin(req)
-}
-
-func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	return s.BaseServer.ContainerAttach(id, opts)
-}
-
 func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) {
 	return s.BaseServer.ContainerChanges(id)
 }
 
-
-func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArchiveResponse, error) {
-	return s.BaseServer.ContainerGetArchive(id, path)
-}
 
 func (s *Server) ContainerInspect(id string) (*api.Container, error) {
 	return s.BaseServer.ContainerInspect(id)
@@ -33,10 +21,6 @@ func (s *Server) ContainerInspect(id string) (*api.Container, error) {
 
 func (s *Server) ContainerList(opts api.ContainerListOptions) ([]*api.ContainerSummary, error) {
 	return s.BaseServer.ContainerList(opts)
-}
-
-func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDir bool, body io.Reader) error {
-	return s.BaseServer.ContainerPutArchive(id, path, noOverwriteDirNonDir, body)
 }
 
 func (s *Server) ContainerRename(id string, newName string) error {
@@ -47,20 +31,8 @@ func (s *Server) ContainerResize(id string, h int, w int) error {
 	return s.BaseServer.ContainerResize(id, h, w)
 }
 
-func (s *Server) ContainerStatPath(id string, path string) (*api.ContainerPathStat, error) {
-	return s.BaseServer.ContainerStatPath(id, path)
-}
-
 func (s *Server) ContainerStats(id string, stream bool) (io.ReadCloser, error) {
 	return s.BaseServer.ContainerStats(id, stream)
-}
-
-func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopResponse, error) {
-	return s.BaseServer.ContainerTop(id, psArgs)
-}
-
-func (s *Server) ContainerUpdate(id string, req *api.ContainerUpdateRequest) (*api.ContainerUpdateResponse, error) {
-	return s.BaseServer.ContainerUpdate(id, req)
 }
 
 func (s *Server) ContainerWait(id string, condition string) (*api.ContainerWaitResponse, error) {
@@ -98,10 +70,6 @@ func (s *Server) ImageList(opts api.ImageListOptions) ([]*api.ImageSummary, erro
 
 func (s *Server) ImagePrune(filters map[string][]string) (*api.ImagePruneResponse, error) {
 	return s.BaseServer.ImagePrune(filters)
-}
-
-func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
-	return s.BaseServer.ImagePush(name, tag, auth)
 }
 
 func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageDeleteResponse, error) {
