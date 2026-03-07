@@ -66,10 +66,6 @@ func (s *Server) ExecResize(id string, h int, w int) error {
 	return s.BaseServer.ExecResize(id, h, w)
 }
 
-func (s *Server) ImageBuild(opts api.ImageBuildOptions, context io.Reader) (io.ReadCloser, error) {
-	return s.BaseServer.ImageBuild(opts, context)
-}
-
 func (s *Server) ImageHistory(name string) ([]*api.ImageHistoryEntry, error) {
 	return s.BaseServer.ImageHistory(name)
 }

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -950,10 +949,36 @@ func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 		ref += ":latest"
 	}
 
-	// Attempt to fetch image config from registry
-	imgConfig, err := s.fetchImageConfig(ref, auth)
-	if err != nil {
-		s.Logger.Warn().Err(err).Str("ref", ref).Msg("failed to fetch image config from registry, using synthetic")
+	// Try to fetch real config from registry — use ADC auth for GCP registries
+	fetchAuth := ""
+	registry, _, _ := parseImageRef(ref)
+	if s.arAuth.IsCloudRegistry(registry) {
+		if arToken, err := s.arAuth.GetToken(registry); err == nil {
+			fetchAuth = arToken
+		} else {
+			s.Logger.Warn().Err(err).Str("registry", registry).Msg("failed to get AR token for image pull, trying unauthenticated")
+		}
+	}
+
+	imgConfig := api.ContainerConfig{
+		Image: ref,
+	}
+	if realConfig, _ := core.FetchImageConfig(ref, fetchAuth); realConfig != nil {
+		if len(realConfig.Env) > 0 {
+			imgConfig.Env = realConfig.Env
+		}
+		if len(realConfig.Cmd) > 0 {
+			imgConfig.Cmd = realConfig.Cmd
+		}
+		if len(realConfig.Entrypoint) > 0 {
+			imgConfig.Entrypoint = realConfig.Entrypoint
+		}
+		if realConfig.WorkingDir != "" {
+			imgConfig.WorkingDir = realConfig.WorkingDir
+		}
+		if len(realConfig.Labels) > 0 {
+			imgConfig.Labels = realConfig.Labels
+		}
 	}
 
 	hash := sha256.Sum256([]byte(ref))
@@ -969,14 +994,7 @@ func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 		Architecture: "amd64",
 		Os:           "linux",
 		RootFS:       api.RootFS{Type: "layers"},
-	}
-
-	if imgConfig != nil {
-		image.Config = *imgConfig
-	} else {
-		image.Config = api.ContainerConfig{
-			Image: ref,
-		}
+		Config:       imgConfig,
 	}
 
 	core.StoreImageWithAliases(s.Store, ref, image)
@@ -1321,19 +1339,14 @@ func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser,
 	registry, repo, _ := parseImageRef(name)
 
 	// For GCP registries, attempt real OCI push
-	if core.IsGCPRegistry(registry) {
-		arToken, err := s.getARToken()
+	if s.arAuth.IsCloudRegistry(registry) {
+		arToken, err := s.arAuth.GetToken(registry)
 		if err != nil {
 			s.Logger.Warn().Err(err).Str("registry", registry).Msg("failed to get AR token for push, falling back to synthetic")
 			return s.BaseServer.ImagePush(name, tag, auth)
 		}
 
-		result, err := core.OCIPush(core.OCIPushOptions{
-			Registry:   registry,
-			Repository: repo,
-			Tag:        tag,
-			AuthToken:  arToken,
-		})
+		result, err := s.arAuth.OnPush(registry, repo, tag, arToken)
 		if err != nil {
 			s.Logger.Warn().Err(err).Str("registry", registry).Str("repo", repo).Msg("OCI push failed, falling back to synthetic")
 			return s.BaseServer.ImagePush(name, tag, auth)
@@ -1374,21 +1387,15 @@ func (s *Server) ImageTag(source string, repo string, tag string) error {
 		ref = repo + ":" + tag
 	}
 	registry, repoPath, newTag := parseImageRef(ref)
-	if core.IsGCPRegistry(registry) {
+	if s.arAuth.IsCloudRegistry(registry) {
 		go func() {
-			arToken, err := s.getARToken()
+			arToken, err := s.arAuth.GetToken(registry)
 			if err != nil {
 				s.Logger.Warn().Err(err).Str("registry", registry).Msg("AR tag sync: failed to get token")
 				return
 			}
 
-			_, err = core.OCIPush(core.OCIPushOptions{
-				Registry:   registry,
-				Repository: repoPath,
-				Tag:        newTag,
-				AuthToken:  arToken,
-			})
-			if err != nil {
+			if err := s.arAuth.OnTag(registry, repoPath, newTag, arToken); err != nil {
 				s.Logger.Warn().Err(err).Str("ref", ref).Msg("AR tag sync: failed to push manifest with new tag")
 			} else {
 				s.Logger.Info().Str("ref", ref).Msg("AR tag sync: successfully synced new tag")
@@ -1404,7 +1411,7 @@ func (s *Server) ImageTag(source string, repo string, tag string) error {
 func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageDeleteResponse, error) {
 	// Check if image references a GCP registry before removing
 	registry, _, _ := parseImageRef(name)
-	isGCP := core.IsGCPRegistry(registry)
+	isGCP := s.arAuth.IsCloudRegistry(registry)
 
 	result, err := s.BaseServer.ImageRemove(name, force, prune)
 	if err != nil {
@@ -1414,37 +1421,17 @@ func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageD
 	// Best-effort AR delete
 	if isGCP {
 		go func() {
-			arToken, err := s.getARToken()
+			arToken, err := s.arAuth.GetToken(registry)
 			if err != nil {
 				s.Logger.Warn().Err(err).Str("registry", registry).Msg("AR remove sync: failed to get token")
 				return
 			}
 
 			_, repo, tag := parseImageRef(name)
-			deleteURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s", registry, repo, tag)
-			req, err := http.NewRequest(http.MethodDelete, deleteURL, nil)
-			if err != nil {
-				s.Logger.Warn().Err(err).Msg("AR remove sync: failed to create request")
-				return
-			}
-			if strings.HasPrefix(arToken, "Bearer ") || strings.HasPrefix(arToken, "Basic ") {
-				req.Header.Set("Authorization", arToken)
-			} else {
-				req.Header.Set("Authorization", "Bearer "+arToken)
-			}
-
-			client := &http.Client{Timeout: 30 * time.Second}
-			resp, err := client.Do(req)
-			if err != nil {
+			if err := s.arAuth.OnRemove(registry, repo, tag, arToken); err != nil {
 				s.Logger.Warn().Err(err).Str("ref", name).Msg("AR remove sync: request failed")
-				return
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNotFound {
-				s.Logger.Info().Str("ref", name).Msg("AR remove sync: completed")
 			} else {
-				s.Logger.Warn().Int("status", resp.StatusCode).Str("ref", name).Msg("AR remove sync: unexpected status")
+				s.Logger.Info().Str("ref", name).Msg("AR remove sync: completed")
 			}
 		}()
 	}

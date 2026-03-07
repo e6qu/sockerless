@@ -13,6 +13,7 @@ type Server struct {
 	*core.BaseServer
 	config    Config
 	gcp       *GCPClients
+	arAuth    *ARAuthProvider
 	ipCounter atomic.Int32
 
 	GCF *core.StateStore[GCFState]
@@ -25,6 +26,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		gcp:    gcpClients,
 		GCF:    core.NewStateStore[GCFState](),
 	}
+	s.arAuth = NewARAuthProvider(s.ctx)
 	s.ipCounter.Store(2)
 
 	s.BaseServer = core.NewBaseServer(core.NewStore(), core.BackendDescriptor{

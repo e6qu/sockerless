@@ -826,8 +826,8 @@ func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 	// Try to fetch real config from registry — use ADC auth for GCP registries
 	fetchAuth := ""
 	registry, _, _ := parseImageRef(ref)
-	if core.IsGCPRegistry(registry) {
-		if arToken, err := s.getARToken(); err == nil {
+	if s.arAuth.IsCloudRegistry(registry) {
+		if arToken, err := s.arAuth.GetToken(registry); err == nil {
 			fetchAuth = arToken
 		} else {
 			s.Logger.Warn().Err(err).Str("registry", registry).Msg("failed to get AR token for image pull, trying unauthenticated")
@@ -982,19 +982,14 @@ func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser,
 	registry, repo, _ := parseImageRef(name)
 
 	// For GCP registries, attempt real OCI push
-	if core.IsGCPRegistry(registry) {
-		arToken, err := s.getARToken()
+	if s.arAuth.IsCloudRegistry(registry) {
+		arToken, err := s.arAuth.GetToken(registry)
 		if err != nil {
 			s.Logger.Warn().Err(err).Str("registry", registry).Msg("failed to get AR token for push, falling back to synthetic")
 			return s.BaseServer.ImagePush(name, tag, auth)
 		}
 
-		result, err := core.OCIPush(core.OCIPushOptions{
-			Registry:   registry,
-			Repository: repo,
-			Tag:        tag,
-			AuthToken:  arToken,
-		})
+		result, err := s.arAuth.OnPush(registry, repo, tag, arToken)
 		if err != nil {
 			s.Logger.Warn().Err(err).Str("registry", registry).Str("repo", repo).Msg("OCI push failed, falling back to synthetic")
 			return s.BaseServer.ImagePush(name, tag, auth)

@@ -2,6 +2,8 @@
 
 This plan implements the global architecture from `backends/IMAGE_ARCHITECTURE.md` for the AWS cloud (ECS and Lambda backends). It creates an `ECRAuthProvider` shared by both backends, wires each backend to use `core.ImageManager`, and deletes all duplicated registry/image code.
 
+**Key constraint**: No simulator changes. The plan works against the existing ECR simulator APIs (`GetAuthorizationToken`, `CreateRepository`, `PutImage`, `BatchDeleteImage`) as-is.
+
 ---
 
 ## 1. ECRAuthProvider Definition
@@ -12,6 +14,7 @@ This plan implements the global architecture from `backends/IMAGE_ARCHITECTURE.m
 package ecs
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -20,19 +23,19 @@ import (
 	ecrtypes "github.com/aws/aws-sdk-go-v2/service/ecr/types"
 	"github.com/rs/zerolog"
 	"github.com/sockerless/api"
-	core "github.com/sockerless/backend-core"
 )
 
 // ECRAuthProvider implements core.AuthProvider for AWS ECR.
 type ECRAuthProvider struct {
 	ECR    *ecr.Client
-	Logger zerolog.Logger // note: IMAGE_ARCHITECTURE.md says *slog.Logger but project uses zerolog
+	Logger zerolog.Logger
 	Ctx    func() context.Context // returns context.Background(); avoids storing context
 }
 
 // GetToken returns a raw base64-encoded auth token from ECR GetAuthorizationToken.
-// The token is base64("user:password") — no "Basic " prefix. The ImageManager is
-// responsible for adding the appropriate scheme prefix when passing to FetchImageConfig.
+// The token is base64("user:password") -- NO "Basic " prefix. ImageManager passes
+// this to FetchImageConfig as basicAuth, which internally does "Basic " + basicAuth
+// in getRegistryToken.
 // Returns ("", nil) for non-ECR registries (fallthrough to anonymous/Docker Hub auth).
 func (p *ECRAuthProvider) GetToken(registry string) (string, error) {
 	if !p.IsCloudRegistry(registry) {
@@ -45,7 +48,7 @@ func (p *ECRAuthProvider) GetToken(registry string) (string, error) {
 	if len(result.AuthorizationData) == 0 {
 		return "", fmt.Errorf("ECR returned no authorization data")
 	}
-	// Token is base64-encoded "user:password" — return raw, no scheme prefix
+	// Token is base64-encoded "user:password" -- return raw, no scheme prefix
 	token := aws.ToString(result.AuthorizationData[0].AuthorizationToken)
 	return token, nil
 }
@@ -57,6 +60,7 @@ func (p *ECRAuthProvider) IsCloudRegistry(registry string) bool {
 
 // OnPush is called after a successful in-memory push. Creates the ECR repository
 // (ignoring AlreadyExists) and calls PutImage with a synthetic manifest.
+// Uses ECR SDK, NOT OCI Distribution API -- no simulator changes needed.
 func (p *ECRAuthProvider) OnPush(img api.Image, registry, repo, tag string) error {
 	_, err := p.ECR.CreateRepository(p.Ctx(), &ecr.CreateRepositoryInput{
 		RepositoryName: aws.String(repo),
@@ -87,6 +91,7 @@ func (p *ECRAuthProvider) OnTag(img api.Image, registry, repo, newTag string) er
 
 // OnRemove is called after a successful in-memory remove. Calls BatchDeleteImage
 // to remove the specified tags from the ECR repository.
+// Uses ECR SDK BatchDeleteImage -- already supported by the ECR simulator.
 func (p *ECRAuthProvider) OnRemove(registry, repo string, tags []string) error {
 	if len(tags) == 0 {
 		return nil
@@ -113,13 +118,13 @@ func isECRAlreadyExistsError(err error) bool {
 
 ### ECR SDK Calls Summary
 
-| Method | ECR SDK Call | Input | Error Handling |
-|--------|-------------|-------|---------------|
-| `GetToken` | `ecr.GetAuthorizationToken` | `{}` (no params) | Return error; caller falls back to anonymous. Returns raw base64 token (no scheme prefix). |
-| `IsCloudRegistry` | None (string match) | Registry hostname | N/A |
-| `OnPush` | `ecr.CreateRepository` then `ecr.PutImage` | Repo name; synthetic manifest + tag | Log + ignore (non-fatal) |
-| `OnTag` | Same as OnPush | Same as OnPush | Log + ignore (non-fatal) |
-| `OnRemove` | `ecr.BatchDeleteImage` | Repo name + `[]ImageIdentifier` with tags | Log + ignore (non-fatal) |
+| Method | ECR SDK Call | Notes |
+|--------|-------------|-------|
+| `GetToken` | `ecr.GetAuthorizationToken` | Returns raw base64 token. Simulator supports this. |
+| `IsCloudRegistry` | None (string match) | N/A |
+| `OnPush` | `ecr.CreateRepository` + `ecr.PutImage` | Both supported by simulator. Non-fatal. |
+| `OnTag` | Same as OnPush | Same as OnPush. |
+| `OnRemove` | `ecr.BatchDeleteImage` | Supported by simulator (`handleECRBatchDeleteImage`). Non-fatal. |
 
 ---
 
@@ -143,21 +148,54 @@ The 12 image methods on `api.Backend` are:
 
 Note: `AuthLogin` (the 13th image-adjacent method) is NOT part of `ImageManager`. Both ECS and Lambda already have `AuthLogin` implementations (ECS delegates to BaseServer, Lambda has a custom override that warns about ECR). These remain unchanged.
 
-The `ImageManager` calls `AuthProvider.GetToken()` in `Pull` to get ECR auth, calls `AuthProvider.OnPush()` after `Pull`/`Push`/`Tag`, and calls `AuthProvider.OnRemove()` after `Remove`. Methods 2, 5, 7, 8, 9, 11, 12 are pure in-memory operations that do not touch `AuthProvider` at all.
+The `ImageManager` calls `AuthProvider.GetToken()` in `Pull` to get ECR auth, calls `AuthProvider.OnPush()` after `Push`/`Tag`, and calls `AuthProvider.OnRemove()` after `Remove`. Methods 2, 5, 7, 8, 9, 11, 12 are pure in-memory operations that do not touch `AuthProvider` at all.
 
 ### Auth Threading: FetchImageConfig + ECR Token
 
-**Critical detail**: `core.FetchImageConfig(ref, basicAuth ...string)` passes `basicAuth[0]` to `getRegistryToken()`, which sets `req.Header.Set("Authorization", "Basic "+basicAuth)`. But `ECRAuthProvider.GetToken()` returns `"Basic " + token` (already prefixed). If `ImageManager.Pull()` passes the full `GetToken()` result to `FetchImageConfig`, the Authorization header would be set to `"Basic Basic <token>"` — double-prefixed.
+**How auth flows through the system today**:
 
-**Resolution**: `ImageManager.Pull()` must strip the `"Basic "` prefix before passing to `FetchImageConfig()`. Alternatively, `GetToken()` should return the raw base64 token without any scheme prefix, and `ImageManager` adds the appropriate prefix when calling `FetchImageConfig`. The cleanest approach is for `GetToken()` to return the raw token (no "Basic " / "Bearer " prefix) and let `ImageManager` or `FetchImageConfig` handle scheme prefixing.
+1. Core's `FetchImageConfig(ref string, basicAuth ...string)` calls `getRegistryToken(rc, basicAuth[0])`.
+2. `getRegistryToken` first tries an anonymous `GET /v2/.../manifests/tag`. If 401, it parses `Www-Authenticate`, builds a token URL, and sends `Authorization: Basic <basicAuth>` to the token endpoint.
+3. The token endpoint returns a Bearer token, which is used for all subsequent registry requests.
 
-However, this affects the `AuthProvider` interface contract across all clouds. The simplest fix specific to `FetchImageConfig` is: `ImageManager.Pull()` should call `core.FetchImageConfig(ref, strings.TrimPrefix(token, "Basic "))` when the token has a "Basic " prefix. The `ImageManager` implementation must handle this.
+**How ECR auth currently works in ECS**:
+- `getECRToken()` calls `ecr.GetAuthorizationToken`, which returns a base64-encoded `user:password`.
+- Returns `"Basic " + token` as a prefixed auth header.
+- `fetchImageConfig()` sets `req.Header.Set("Authorization", token)` for manifest/blob requests.
+- This bypasses the `Www-Authenticate` flow entirely -- auth is pre-baked.
 
-### ECS recordImageInECR: All Images vs Cloud-Only
+**How ECR auth currently works in Lambda**:
+- `getECRToken()` calls `ecr.GetAuthorizationToken`, returns `"Basic " + token`.
+- Passes the full `"Basic ..." + token` string to `core.FetchImageConfig(ref, auth)`.
+- `FetchImageConfig` passes `auth` to `getRegistryToken(rc, auth)`, which does
+  `req.Header.Set("Authorization", "Basic " + auth)` -- resulting in `"Basic Basic ..."` (double-prefixed!).
+- In practice this doesn't matter because Lambda only uses ECR against the simulator (which
+  doesn't expose OCI v2 endpoints), so `FetchImageConfig` fails gracefully and synthetic config
+  is used.
 
-**Critical detail**: The current ECS `ImagePull` calls `recordImageInECR()` for ALL pulled images (line 1086: `_ = registry // We record all pulled images for local persistence`), not just ECR-sourced ones. The `ImageManager` architecture calls `AuthProvider.OnPush()` only when `IsCloudRegistry()` returns true. This is a **behavioral change**: after migration, pulling `alpine:latest` will NOT be recorded in ECR.
+**Resolution for ImageManager**: `ECRAuthProvider.GetToken()` returns the **raw base64 token**
+without any scheme prefix. `ImageManager.Pull()` passes this raw token to `FetchImageConfig(ref, rawToken)`.
+Inside `getRegistryToken`, the token exchange request sends `"Basic " + rawToken` -- which is correct
+(base64-encoded `user:password` with `Basic` scheme). Against real ECR (production), this works.
+Against the simulator, `FetchImageConfig` fails because the ECR simulator has no OCI v2 endpoints,
+and `ImageManager.Pull()` falls back to synthetic config (same behavior as today).
 
-**Resolution**: This is arguably the correct behavior — recording Docker Hub images in ECR was unnecessary overhead. The plan accepts this behavioral change. If preserving the old behavior is required, `ECRAuthProvider.IsCloudRegistry()` could be made to return `true` for all registries, but that would be semantically wrong. The `ImageManager` should instead have a separate `OnPull` hook (or the `ImageManager.Pull()` implementation should always call `OnPush` after pull regardless of registry). **Decision**: Accept the behavioral change. Non-ECR images do not need ECR persistence.
+### ECR Simulator Limitation
+
+The ECR simulator only exposes JSON-RPC SDK endpoints (e.g., `GetAuthorizationToken`, `PutImage`). It does NOT expose OCI Distribution API v2 endpoints (`/v2/.../manifests/...`). This means:
+
+- `core.FetchImageConfig()` will always fail against simulated ECR images (no OCI v2 route to hit)
+- This is the same behavior as today -- both ECS and Lambda fall back to synthetic config for simulator ECR images
+- In production, real ECR exposes OCI v2 and `FetchImageConfig` works with the ECR auth token
+- **No simulator changes needed** -- the graceful fallback is the correct behavior for testing
+
+### ECS recordImageInECR: Behavioral Change
+
+**Current**: ECS `ImagePull` calls `recordImageInECR()` for ALL pulled images (line 1086: `_ = registry // We record all pulled images for local persistence`), not just ECR-sourced ones.
+
+**New**: `ImageManager` only calls `AuthProvider.OnPush()` when `IsCloudRegistry()` returns true for the image's registry. Pulling `alpine:latest` will NOT be recorded in ECR.
+
+**Decision**: Accept this behavioral change. Recording Docker Hub images in ECR was unnecessary overhead and arguably incorrect. Non-ECR images do not need ECR persistence.
 
 ---
 
@@ -167,7 +205,7 @@ However, this affects the `AuthProvider` interface contract across all clouds. T
 
 **File**: `backends/ecs/server.go`
 
-Add a `images *core.ImageManager` field to the `Server` struct:
+Add an `images *core.ImageManager` field to the `Server` struct:
 
 ```go
 type Server struct {
@@ -188,7 +226,7 @@ In `NewServer()`, after `s.BaseServer` is created (so `s.Store` and `s.Logger` a
 
 ```go
 s.images = &core.ImageManager{
-	Auth:   &ECRAuthProvider{
+	Auth: &ECRAuthProvider{
 		ECR:    awsClients.ECR,
 		Logger: logger,
 		Ctx:    s.ctx,
@@ -198,37 +236,53 @@ s.images = &core.ImageManager{
 }
 ```
 
+Note: `BuildFunc` is not set here because ECS delegates `ImageBuild` to `s.images.Build`,
+which should use BaseServer's synthetic Dockerfile parser. The `ImageManager` prerequisite
+task must ensure that `ImageManager.Build()` can work without a `BuildFunc` by either:
+- Having `ImageManager` hold a reference to `BaseServer` for build logic, OR
+- Extracting the Dockerfile parser into a standalone `core.SyntheticBuild()` function, OR
+- Having `BaseServer` set `BuildFunc` when it creates its own `ImageManager` in `InitDrivers()`,
+  and cloud backends inherit it through the shared `Store`.
+
+The simplest approach: `BaseServer.InitDrivers()` creates an `ImageManager` with `BuildFunc`
+pointing to the build logic. Cloud backends create their own `ImageManager` but set `BuildFunc`
+to the same standalone function (e.g., `core.SyntheticBuild`).
+
 ### 3.3 Replace 5 custom image methods with one-liner delegates
 
-All 5 custom image methods in `backend_impl.go` (lines 893-1122) become one-liner delegates:
+All custom image methods in `backend_impl.go` (lines ~891-1122) are deleted and replaced:
 
-**In `backend_impl.go`**, delete:
-- `ImagePull` (lines 893-958, 66 lines)
-- `ImagePush` (lines 963-1010, 48 lines)
-- `ImageTag` (lines 1013-1035, 23 lines)
-- `ImageRemove` (lines 1038-1078, 41 lines)
-- `recordImageInECR` (lines 1082-1107, 26 lines)
-- `isECRRegistry` (lines 1110-1112, 3 lines)
-- `isECRAlreadyExistsError` (lines 1114-1117, 4 lines)
-- `ImageLoad` (lines 1120-1122, 3 lines)
+**Delete from `backend_impl.go`**:
+- `ImagePull` (lines 891-958, ~67 lines) -- uses `s.fetchImageConfig` + `recordImageInECR`
+- `ImagePush` (lines 960-1010, ~51 lines) -- uses `parseImageRef` + `isECRRegistry` + ECR SDK
+- `ImageTag` (lines 1012-1035, ~24 lines) -- delegates to BaseServer + `recordImageInECR`
+- `ImageRemove` (lines 1037-1078, ~42 lines) -- collects ECR refs + BaseServer + `BatchDeleteImage`
+- `recordImageInECR` (lines 1080-1107, ~28 lines) -- helper for ECR recording
+- `isECRRegistry` (lines 1109-1112, ~4 lines) -- helper
+- `isECRAlreadyExistsError` (lines 1114-1117, ~4 lines) -- helper (moved to `image_auth.go`)
+- `ImageLoad` (lines 1119-1122, ~4 lines) -- NotImplementedError
 
-Total: ~214 lines deleted from `backend_impl.go`.
+Total: ~224 lines deleted from `backend_impl.go`.
 
-**Replace with** (in `backend_impl.go` or move to delegates file):
+**Replace with** (in `backend_impl.go`):
 
 ```go
 func (s *Server) ImagePull(ref, auth string) (io.ReadCloser, error) {
 	return s.images.Pull(ref, auth)
 }
+
 func (s *Server) ImagePush(name, tag, auth string) (io.ReadCloser, error) {
 	return s.images.Push(name, tag, auth)
 }
+
 func (s *Server) ImageTag(source, repo, tag string) error {
 	return s.images.Tag(source, repo, tag)
 }
+
 func (s *Server) ImageRemove(name string, force, prune bool) ([]*api.ImageDeleteResponse, error) {
 	return s.images.Remove(name, force, prune)
 }
+
 func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 	return nil, &api.NotImplementedError{Message: "image load is not supported by ECS backend"}
 }
@@ -238,7 +292,7 @@ func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 
 **File**: `backends/ecs/backend_delegates_gen.go`
 
-The following 7 methods already delegate to `BaseServer` and should be changed to delegate to `s.images`:
+The following 7 methods currently delegate to `s.BaseServer` and should be changed to delegate to `s.images`:
 
 | Method | Current delegate target | New delegate target |
 |--------|------------------------|---------------------|
@@ -250,36 +304,36 @@ The following 7 methods already delegate to `BaseServer` and should be changed t
 | `ImageSave` | `s.BaseServer.ImageSave` | `s.images.Save` |
 | `ImageSearch` | `s.BaseServer.ImageSearch` | `s.images.Search` |
 
-Note: Since `ImageManager` methods ultimately call the same `Store` methods that `BaseServer` does, this is functionally equivalent. The benefit is that all 12 image methods go through `ImageManager`, making the flow uniform.
-
-**Important**: `ImageManager.Build()` must have access to `BaseServer`'s synthetic Dockerfile parser logic (tar extraction, `FROM`/`ENTRYPOINT`/`CMD`/`ENV`/`LABEL` parsing). This means `ImageManager` either needs a reference to `BaseServer` or the Dockerfile parser must be extracted into a standalone function in `core/`. The core ImageManager prerequisite task must address this — `ImageManager` cannot be a pure `Store`-only struct if it needs to support `Build`.
+Since `ImageManager` methods ultimately call the same `Store` methods that `BaseServer` does, this is functionally equivalent. The benefit is that all 12 image methods go through `ImageManager`, making the flow uniform and enabling future enhancements (e.g., caching, metrics) in one place.
 
 ### 3.5 Delete registry.go
 
-**File**: `backends/ecs/registry.go` (196 lines) -- DELETE ENTIRELY.
+**File**: `backends/ecs/registry.go` (197 lines) -- DELETE ENTIRELY.
 
 Functions deleted:
 - `fetchImageConfig()` (lines 17-128, 112 lines) -- replaced by `core.FetchImageConfig()` called inside `ImageManager.Pull()`
 - `parseImageRef()` (lines 131-161, 31 lines) -- replaced by `core.parseImageRef()` (already exists, unexported; ImageManager uses it internally)
 - `getECRToken()` (lines 164-176, 13 lines) -- replaced by `ECRAuthProvider.GetToken()`
-- `getDockerHubToken()` (lines 179-195, 17 lines) -- handled inside core's `getRegistryToken()` via Www-Authenticate flow
+- `getDockerHubToken()` (lines 179-195, 17 lines) -- handled inside core's `getRegistryToken()` via `Www-Authenticate` flow
+
+### 3.6 Remove unused imports from backend_impl.go
+
+After deleting the image methods, the following imports in `backend_impl.go` may become unused:
+- `"crypto/sha256"` -- only used by `ImagePull` for `sha256.Sum256([]byte(ref))`
+- `ecrtypes "github.com/aws/aws-sdk-go-v2/service/ecr/types"` -- only used by `ImageRemove` for `ecrtypes.ImageIdentifier`
+- `"github.com/aws/aws-sdk-go-v2/service/ecr"` -- used by `ImagePush` for `ecr.CreateRepositoryInput` etc.
+
+Check whether other (non-image) methods still use these imports before removing.
 
 ---
 
 ## 4. Lambda Backend Wiring
 
-### 4.1 Lambda reuses ECRAuthProvider
+### 4.1 Lambda reuses ECRAuthProvider pattern
 
-The `ECRAuthProvider` type is defined in `package ecs`. Lambda cannot import it directly because `backends/lambda/` and `backends/ecs/` are separate Go modules that don't import each other.
+The `ECRAuthProvider` type is defined in `package ecs`. Lambda cannot import it directly because `backends/lambda/` and `backends/ecs/` are separate Go modules.
 
-**Two options**:
-
-**Option A (Recommended): Duplicate ECRAuthProvider in Lambda (~30 lines)**
-
-Create `backends/lambda/image_auth.go` with a minimal copy of `ECRAuthProvider`. This is acceptable because:
-- It's ~30 lines (just `GetToken` + `IsCloudRegistry`; Lambda doesn't need `OnPush`/`OnTag`/`OnRemove`)
-- Lambda's `OnPush`/`OnTag`/`OnRemove` can be no-ops (return nil) since Lambda doesn't do ECR recording
-- Avoids adding a new shared module or import cycle
+**Create `backends/lambda/image_auth.go`** (~30 lines) with a minimal variant:
 
 ```go
 package lambda
@@ -297,10 +351,11 @@ import (
 
 // ECRAuthProvider implements core.AuthProvider for AWS ECR (Lambda variant).
 // Lambda only needs GetToken for ImagePull auth. OnPush/OnTag/OnRemove are
-// no-ops because Lambda doesn't record images in ECR.
+// no-ops because Lambda doesn't record images in ECR -- it uses ECR images
+// by reference (ImageUri in CreateFunction).
 type ECRAuthProvider struct {
 	ECR    *ecr.Client
-	Logger zerolog.Logger // note: IMAGE_ARCHITECTURE.md says *slog.Logger but project uses zerolog
+	Logger zerolog.Logger
 	Ctx    func() context.Context
 }
 
@@ -315,7 +370,7 @@ func (p *ECRAuthProvider) GetToken(registry string) (string, error) {
 	if len(result.AuthorizationData) == 0 {
 		return "", fmt.Errorf("ECR returned no authorization data")
 	}
-	// Return raw base64 token, no scheme prefix (matches ECS variant)
+	// Return raw base64 token, no scheme prefix
 	token := aws.ToString(result.AuthorizationData[0].AuthorizationToken)
 	return token, nil
 }
@@ -324,14 +379,11 @@ func (p *ECRAuthProvider) IsCloudRegistry(registry string) bool {
 	return strings.HasSuffix(registry, ".amazonaws.com") && strings.Contains(registry, ".dkr.ecr.")
 }
 
+// OnPush/OnTag/OnRemove are no-ops for Lambda -- it doesn't record images in ECR.
 func (p *ECRAuthProvider) OnPush(img api.Image, registry, repo, tag string) error  { return nil }
 func (p *ECRAuthProvider) OnTag(img api.Image, registry, repo, newTag string) error { return nil }
 func (p *ECRAuthProvider) OnRemove(registry, repo string, tags []string) error      { return nil }
 ```
-
-**Option B: Extract to shared package**
-
-Create `backends/aws-common/` with `ECRAuthProvider`. Both ECS and Lambda import it. This adds a new Go module and more wiring. Not recommended unless a third AWS backend appears.
 
 ### 4.2 Add `images` field to Lambda Server
 
@@ -352,7 +404,7 @@ Initialize in `NewServer()`:
 
 ```go
 s.images = &core.ImageManager{
-	Auth:   &ECRAuthProvider{
+	Auth: &ECRAuthProvider{
 		ECR:    awsClients.ECR,
 		Logger: logger,
 		Ctx:    s.ctx,
@@ -364,15 +416,15 @@ s.images = &core.ImageManager{
 
 ### 4.3 Replace Lambda image methods
 
-**In `backend_impl.go`**, delete:
-- `ImagePull` (lines 815-895, 81 lines)
-- `ImageLoad` (lines 898-900, 3 lines)
-- `ImageBuild` (lines 903-908, 6 lines)
-- `ImagePush` (lines 981-985, 5 lines)
-- `getECRToken` (lines 988-1000, 13 lines)
-- `isECRImage` (lines 1003-1011, 9 lines)
+**Delete from `backend_impl.go`**:
+- `ImagePull` (lines 813-895, 83 lines) -- uses `core.FetchImageConfig` + `isECRImage` + `getECRToken`
+- `ImageLoad` (lines 897-900, 4 lines) -- `NotImplementedError`
+- `ImageBuild` (lines 902-908, 7 lines) -- `NotImplementedError`
+- `ImagePush` (lines 979-985, 7 lines) -- `NotImplementedError`
+- `getECRToken` (lines 987-1000, 14 lines) -- moved to `ECRAuthProvider.GetToken()`
+- `isECRImage` (lines 1002-1011, 10 lines) -- moved to `ECRAuthProvider.IsCloudRegistry()`
 
-Total: ~117 lines deleted from Lambda `backend_impl.go`.
+Total: ~125 lines deleted from Lambda `backend_impl.go`.
 
 **Replace with**:
 
@@ -414,32 +466,44 @@ Change the following 7 methods from `s.BaseServer.Image*` to `s.images.*`:
 | `ImageSave` | `s.images.Save` |
 | `ImageSearch` | `s.images.Search` |
 
+Also: `ImageTag` currently delegates to `s.BaseServer.ImageTag` -- change to `s.images.Tag`.
+
+### 4.5 Remove unused imports from Lambda backend_impl.go
+
+After deleting the image methods:
+- `"crypto/sha256"` -- only used by `ImagePull`
+- `"github.com/aws/aws-sdk-go-v2/service/ecr"` -- only used by `getECRToken`
+
+Check whether `AuthLogin` (which references `".amazonaws.com"` and `".dkr.ecr."`) still needs
+any of these imports. `AuthLogin` uses only `strings` and `s.BaseServer.AuthLogin`, so the ECR
+import can be removed.
+
 ---
 
 ## 5. What Gets Deleted
 
 | File | Lines | Reason |
 |------|-------|--------|
-| `backends/ecs/registry.go` | 196 | Entire file. Replaced by core's `FetchImageConfig()` + `ECRAuthProvider.GetToken()` |
-| `backends/ecs/IMAGE_MANAGEMENT_PLAN.md` | 333 | Replaced by this plan |
-| `backends/lambda/IMAGE_MANAGEMENT_PLAN.md` | 149 | Replaced by this plan |
-| ECS `backend_impl.go` image methods | ~214 | `ImagePull`, `ImagePush`, `ImageTag`, `ImageRemove`, `ImageLoad`, `recordImageInECR`, `isECRRegistry`, `isECRAlreadyExistsError` |
-| Lambda `backend_impl.go` image methods | ~117 | `ImagePull`, `ImageLoad`, `ImageBuild`, `ImagePush`, `getECRToken`, `isECRImage` |
-| **Total deleted** | **~1009** | |
+| `backends/ecs/registry.go` | 197 | Entire file. Replaced by core's `FetchImageConfig()` + `ECRAuthProvider.GetToken()` |
+| `backends/ecs/IMAGE_MANAGEMENT_PLAN.md` | ~333 | Replaced by this plan |
+| `backends/lambda/IMAGE_MANAGEMENT_PLAN.md` | ~149 | Replaced by this plan |
+| ECS `backend_impl.go` image methods | ~224 | `ImagePull`, `ImagePush`, `ImageTag`, `ImageRemove`, `ImageLoad`, `recordImageInECR`, `isECRRegistry`, `isECRAlreadyExistsError` |
+| Lambda `backend_impl.go` image methods | ~125 | `ImagePull`, `ImageLoad`, `ImageBuild`, `ImagePush`, `getECRToken`, `isECRImage` |
+| **Total deleted** | **~1028** | |
 
 ## 6. What Gets Created
 
 | File | Est. Lines | Contents |
 |------|-----------|----------|
 | `backends/ecs/image_auth.go` | ~80 | `ECRAuthProvider` struct with all 5 `AuthProvider` methods + `isECRAlreadyExistsError` helper |
-| `backends/lambda/image_auth.go` | ~40 | Lambda variant of `ECRAuthProvider` (GetToken + IsCloudRegistry; no-op OnPush/OnTag/OnRemove) |
+| `backends/lambda/image_auth.go` | ~35 | Lambda variant of `ECRAuthProvider` (GetToken + IsCloudRegistry; no-op OnPush/OnTag/OnRemove) |
 | ECS `backend_impl.go` replacements | ~20 | 5 one-liner image method delegates to `s.images.*` |
 | Lambda `backend_impl.go` replacements | ~16 | 4 methods (1 delegate + 3 NotImplementedError) |
 | ECS `server.go` changes | ~8 | `images` field + initialization in `NewServer()` |
 | Lambda `server.go` changes | ~8 | `images` field + initialization in `NewServer()` |
-| **Total created** | **~172** | |
+| **Total created** | **~167** | |
 
-**Net reduction**: ~837 lines.
+**Net reduction**: ~861 lines.
 
 ---
 
@@ -450,11 +514,18 @@ Execute in this exact order. Each step must compile and pass tests before procee
 ### Step 1: Core ImageManager (prerequisite)
 
 This is a separate task (applies to all clouds). Create `backends/core/image_manager.go` with:
-- `AuthProvider` interface (5 methods)
-- `ImageManager` struct (Auth, Store, Logger fields)
-- 12 image methods that refactor existing `BaseServer` logic
+1. `AuthProvider` interface (5 methods: `GetToken`, `IsCloudRegistry`, `OnPush`, `OnTag`, `OnRemove`)
+2. `ImageManager` struct (`Auth AuthProvider`, `Store *Store`, `Logger zerolog.Logger`, `BuildFunc`)
+3. 12 image methods that refactor existing `BaseServer` logic
+4. `BaseServer` creates its own `ImageManager{Auth: nil}` and delegates to it
 
-Verify: `BaseServer` still works (it creates `ImageManager{Auth: nil}` internally or continues using its own methods).
+Key implementation detail: `ImageManager.Pull()` must:
+- Parse registry from ref using `parseImageRef()`
+- If `Auth != nil`, call `Auth.GetToken(registry)` to get cloud auth token
+- Call `FetchImageConfig(ref, rawToken)` -- token is raw (no scheme prefix), `getRegistryToken` adds `"Basic "` if needed
+- If `FetchImageConfig` returns nil (graceful failure), use synthetic config
+- Store image in `Store`
+- If `Auth != nil && Auth.IsCloudRegistry(registry)`, call `Auth.OnPush(img, registry, repo, tag)` (non-fatal)
 
 ### Step 2: ECS ECRAuthProvider
 
@@ -468,7 +539,7 @@ Verify: `BaseServer` still works (it creates `ImageManager{Auth: nil}` internall
 3. Replace the 5 custom image methods in `backend_impl.go` with one-liner delegates.
 4. Update 7 image delegates in `backend_delegates_gen.go` to call `s.images.*`.
 5. Delete `backends/ecs/registry.go`.
-6. Remove now-unused imports from `backend_impl.go` (`crypto/sha256`, `ecrtypes` if no other usage remains).
+6. Remove now-unused imports from `backend_impl.go`.
 7. Verify: `cd backends/ecs && go build ./...` and `go vet ./...`.
 
 ### Step 4: Lambda ECRAuthProvider
@@ -481,14 +552,14 @@ Verify: `BaseServer` still works (it creates `ImageManager{Auth: nil}` internall
 1. Add `images *core.ImageManager` field to `Server` struct in `server.go`.
 2. Initialize `s.images` in `NewServer()`.
 3. Replace 6 custom image methods in `backend_impl.go` with 4 methods (1 delegate + 3 NotImplementedError).
-4. Update 7 image delegates in `backend_delegates_gen.go` to call `s.images.*`.
-5. Remove now-unused imports (`crypto/sha256`, `ecr` SDK if fully replaced).
+4. Update 8 image delegates in `backend_delegates_gen.go` to call `s.images.*`.
+5. Remove now-unused imports.
 6. Verify: `cd backends/lambda && go build ./...` and `go vet ./...`.
 
 ### Step 6: Delete old plan files
 
-1. Delete `backends/ecs/IMAGE_MANAGEMENT_PLAN.md`.
-2. Delete `backends/lambda/IMAGE_MANAGEMENT_PLAN.md`.
+1. Delete `backends/ecs/IMAGE_MANAGEMENT_PLAN.md` (if exists).
+2. Delete `backends/lambda/IMAGE_MANAGEMENT_PLAN.md` (if exists).
 
 ### Step 7: Run all tests
 
@@ -506,10 +577,10 @@ Verify: `BaseServer` still works (it creates `ImageManager{Auth: nil}` internall
 
 | Test Suite | Key Tests | Risk |
 |-----------|-----------|------|
-| `tests/system_test.go` | `TestImageBuild` (expects 200) | Low -- ECS delegates ImageBuild to `s.images.Build` which calls BaseServer's synthetic builder |
-| ECS integration (`sim-test-ecs`) | Uses `ImagePull("alpine:latest")` as prerequisite | Low -- `ImageManager.Pull` calls `core.FetchImageConfig` (same as current ECS `fetchImageConfig` but better) |
-| Lambda integration (`sim-test-lambda`) | Uses `ImagePull` for function images | Low -- `ImageManager.Pull` now gets ECR auth via `ECRAuthProvider.GetToken` (improvement over current code which only had it for ECR refs) |
-| Core tests (302) | All image-related tests | None -- `BaseServer` methods unchanged or refactored into `ImageManager` with `Auth: nil` |
+| `tests/system_test.go` | `TestImageBuild` (expects 200) | Low -- ECS delegates to `s.images.Build` which uses BaseServer's synthetic builder |
+| ECS integration | Uses `ImagePull("alpine:latest")` | Low -- `ImageManager.Pull` calls `core.FetchImageConfig` (same as current, but better: manifest list, caching) |
+| Lambda integration | Uses `ImagePull` for function images | Low -- ECR auth via `ECRAuthProvider.GetToken` (same flow) |
+| Core tests (302) | All image-related tests | None -- `BaseServer` methods refactored into `ImageManager` with `Auth: nil` |
 | sim-test-all (75) | All backends | Low -- only image method routing changes |
 
 ### Tests that might need updating
@@ -523,11 +594,6 @@ Verify: `BaseServer` still works (it creates `ImageManager{Auth: nil}` internall
    - `Remove` calls `OnRemove` for cloud registries
    - All `On*` errors are logged but not returned
 
-### What does NOT need tests
-
-- `ECRAuthProvider` methods are thin SDK wrappers -- tested via integration tests against the ECR simulator.
-- `isECRAlreadyExistsError` is a 1-line string check -- covered by existing integration tests.
-
 ---
 
 ## 9. Key Behavioral Differences from Current Code
@@ -536,11 +602,11 @@ Verify: `BaseServer` still works (it creates `ImageManager{Auth: nil}` internall
 
 **Current**: Uses `s.fetchImageConfig()` from `registry.go` (custom OCI client, no manifest list support, no caching). Falls back to synthetic config on failure. Then calls `s.recordImageInECR()` to persist ALL pulled images in ECR (including Docker Hub images).
 
-**New**: Uses `core.FetchImageConfig()` (superior: handles manifest lists, Www-Authenticate token exchange, in-memory caching). Falls back to synthetic config on failure. Then calls `ECRAuthProvider.OnPush()` to persist ONLY ECR-sourced images in ECR.
+**New**: Uses `core.FetchImageConfig()` (superior: handles manifest lists, `Www-Authenticate` token exchange, in-memory caching). Falls back to synthetic config on failure. Then calls `ECRAuthProvider.OnPush()` to persist ONLY ECR-sourced images in ECR (via `IsCloudRegistry` check).
 
 **Behavioral changes**:
 1. Better image config fetching (manifest list support, caching).
-2. **ECR recording narrowed**: Only ECR-sourced images are recorded in ECR (via `IsCloudRegistry` check). Previously ALL images were recorded. This is the correct behavior — recording Docker Hub images in ECR was unnecessary.
+2. **ECR recording narrowed**: Only ECR-sourced images are recorded in ECR. Previously ALL images were recorded. This is correct behavior -- recording Docker Hub images in ECR was unnecessary overhead.
 
 ### ECS ImagePush
 
@@ -550,20 +616,26 @@ Verify: `BaseServer` still works (it creates `ImageManager{Auth: nil}` internall
 
 **Behavioral change**: None. `OnPush` errors are logged (non-fatal), same as current.
 
-### Lambda ImagePull
+### ECS ImageRemove
 
-**Current**: Uses `core.FetchImageConfig(ref, auth)`. For ECR images, calls `s.getECRToken()` to get auth. Does NOT record in ECR.
+**Current**: Resolves image, collects ECR-tagged refs, delegates to `BaseServer.ImageRemove()`, then calls `BatchDeleteImage` for each ECR ref (best-effort).
 
-**New**: `ImageManager.Pull()` calls `ECRAuthProvider.GetToken()` for ECR images (same behavior), then `core.FetchImageConfig()`. `ECRAuthProvider.OnPush()` is a no-op for Lambda, so no ECR recording (same behavior).
+**New**: `ImageManager.Remove()` resolves image, collects ECR-tagged refs, removes from in-memory store, then calls `AuthProvider.OnRemove(registry, repo, tags)` for each ECR registry (best-effort). `OnRemove` uses `BatchDeleteImage` (same SDK call, already supported by simulator).
 
 **Behavioral change**: None.
+
+### Lambda ImagePull
+
+**Current**: Uses `core.FetchImageConfig(ref, auth)`. For ECR images, calls `s.getECRToken()` to get `"Basic " + token`. Does NOT record in ECR.
+
+**New**: `ImageManager.Pull()` calls `ECRAuthProvider.GetToken()` for ECR images (returns raw token), passes to `core.FetchImageConfig()`. `ECRAuthProvider.OnPush()` is a no-op for Lambda, so no ECR recording (same behavior).
+
+**Behavioral change**: Auth token is now passed without double `"Basic "` prefix. In practice this doesn't matter because the ECR simulator doesn't have OCI v2 endpoints, so `FetchImageConfig` fails gracefully regardless. In production, this is actually a bug fix.
 
 ### Lambda ImageBuild / ImagePush / ImageLoad
 
 **Current**: Returns `NotImplementedError`.
-
-**New**: Still returns `NotImplementedError` -- these are overridden on `Server`, not delegated to `ImageManager`.
-
+**New**: Same -- these methods are overridden on `Server`, not delegated to `ImageManager`.
 **Behavioral change**: None.
 
 ---
@@ -580,85 +652,36 @@ Verify: `BaseServer` still works (it creates `ImageManager{Auth: nil}` internall
 
 ## 11. Dependency on Core ImageManager
 
-This plan **cannot be executed** until `backends/core/image_manager.go` exists with the `AuthProvider` interface and `ImageManager` struct. That is a separate task defined in `backends/IMAGE_ARCHITECTURE.md` Section "Implementation Order", Step 1.
+This plan **cannot be executed** until `backends/core/image_manager.go` exists with the `AuthProvider` interface and `ImageManager` struct. That is a separate task defined in `backends/IMAGE_ARCHITECTURE.md`, Step 1.
 
-The core ImageManager task should:
-1. Define `AuthProvider` interface (5 methods as shown in IMAGE_ARCHITECTURE.md)
-2. Create `ImageManager` struct with `Auth AuthProvider`, `Store *Store`, `Logger zerolog.Logger`
-3. Move the 12 image method implementations from `BaseServer` into `ImageManager`
-4. Have `BaseServer` create its own `ImageManager{Auth: nil}` and delegate to it (or keep its methods and have `ImageManager` call `Store` methods directly)
-5. Ensure `core.FetchImageConfig()` is used for registry fetching (it already is for Lambda; ECS's custom `fetchImageConfig` is inferior and gets deleted)
+The core ImageManager task must:
+1. Define `AuthProvider` interface (5 methods)
+2. Create `ImageManager` struct with `Auth AuthProvider`, `Store *Store`, `Logger zerolog.Logger`, `BuildFunc`
+3. Refactor the 12 image method implementations from `BaseServer` into `ImageManager`
+4. Have `BaseServer` create its own `ImageManager{Auth: nil}` and delegate to it
+5. Use `core.FetchImageConfig()` for registry fetching inside `ImageManager.Pull()`
+6. Export `parseImageRef()` result fields (registry, repo, tag) so `AuthProvider` hooks receive them
 
 Once that exists, Steps 2-7 of this plan can be executed independently of the GCP and Azure plans.
 
 ---
 
-## Review Notes
+## 12. Method Coverage Matrix
 
-This section documents issues found during review and the changes made to fix them.
+All 12 image methods + AuthLogin accounted for both backends:
 
-### Issue 1: Auth Token Double-Prefix Bug (CRITICAL)
-
-**Problem**: `core.FetchImageConfig(ref, basicAuth ...string)` passes `basicAuth[0]` to `getRegistryToken()`, which sets `req.Header.Set("Authorization", "Basic "+basicAuth)`. The original plan had `GetToken()` returning `"Basic " + token`, which would result in `"Basic Basic <base64>"` — a malformed Authorization header that would fail all ECR registry requests.
-
-**Fix**: Changed `GetToken()` in both ECS and Lambda `ECRAuthProvider` to return the raw base64 token without any scheme prefix. `ImageManager.Pull()` passes this raw token to `FetchImageConfig()`, which adds the `"Basic "` prefix internally. This aligns with the `FetchImageConfig` API contract where `basicAuth` is a raw credential, not a prefixed header value.
-
-**Implication for AuthProvider interface**: The `GetToken()` contract must be clearly documented: return the raw credential value (base64 for Basic, JWT for Bearer), NOT the full `Authorization` header value. The core `ImageManager` implementation must handle scheme prefixing. This affects the GCP and Azure plans too (they use Bearer tokens).
-
-### Issue 2: ECR Recording Behavioral Change (MEDIUM)
-
-**Problem**: Current ECS `ImagePull` calls `recordImageInECR()` for ALL pulled images (including Docker Hub images like `alpine:latest`), not just ECR-sourced ones. The `ImageManager` architecture only calls `OnPush` when `IsCloudRegistry()` returns true, meaning non-ECR images will no longer be recorded in ECR after migration.
-
-**Fix**: Documented this as an accepted behavioral change in Section 9 ("Key Behavioral Differences"). Recording Docker Hub images in ECR was unnecessary overhead and arguably incorrect behavior. No code change needed — the narrower behavior is preferable.
-
-### Issue 3: AuthLogin Not Covered by ImageManager (MINOR)
-
-**Problem**: The global architecture (`IMAGE_ARCHITECTURE.md`) claims "14 image methods" but there are only 12 image methods on `api.Backend`. `AuthLogin` is image-adjacent but not an image method. The plan correctly lists 12 methods but should explicitly note that `AuthLogin` is out of scope.
-
-**Fix**: Added a note in Section 2 clarifying that `AuthLogin` is NOT part of `ImageManager` and remains handled by existing ECS/Lambda implementations (ECS delegates to BaseServer, Lambda has a custom override).
-
-### Issue 4: Logger Type Mismatch (MINOR)
-
-**Problem**: `IMAGE_ARCHITECTURE.md` specifies `Logger *slog.Logger` on `ImageManager`, but the entire project uses `zerolog.Logger` (as seen in `BaseServer`, ECS `Server`, Lambda `Server`). The plan code snippets correctly use `zerolog.Logger` but this inconsistency with the global architecture should be noted.
-
-**Fix**: Added inline comments on the `Logger` field noting the discrepancy with `IMAGE_ARCHITECTURE.md`. The global architecture doc should be updated to use `zerolog.Logger` when the core `ImageManager` is implemented.
-
-### Issue 5: ImageManager.Build() Needs Dockerfile Parser Access (MEDIUM)
-
-**Problem**: The plan says ECS delegates `ImageBuild` to `s.images.Build`, but `ImageManager` as described (with only `Auth`, `Store`, `Logger` fields) has no access to `BaseServer`'s synthetic Dockerfile parser. The `TestImageBuild` e2e test sends a tar with a Dockerfile and expects the image to have the parsed `ENTRYPOINT` — this requires the tar extraction and Dockerfile parsing logic that lives in `BaseServer.ImageBuild()`.
-
-**Fix**: Added a note in Section 3.4 that `ImageManager` must either hold a reference to `BaseServer` or the Dockerfile parser must be extracted into a standalone core function. This is a constraint on the core `ImageManager` prerequisite task.
-
-### Issue 6: Line Count Verification
-
-**Verified line counts against actual code**:
-- ECS `registry.go`: 197 lines (plan says 196) — close enough, includes trailing newline
-- ECS `backend_impl.go` image methods (lines 891-1122): ~232 lines (plan says ~214) — the plan's count is slightly low because it excludes blank lines and comments between methods
-- Lambda `backend_impl.go` image methods (lines 813-1011): ~199 lines but some are `AuthLogin` (not deleted) — plan says ~117 for the 6 items to delete, which is reasonable (81+3+6+5+13+9 = 117)
-- Net reduction estimate of ~837 lines is plausible
-
-### Issue 7: Completeness Check
-
-**All 12 image methods accounted for both backends**:
-
-| Method | ECS Source | ECS Plan | Lambda Source | Lambda Plan |
-|--------|-----------|----------|--------------|-------------|
-| ImagePull | backend_impl.go | s.images.Pull | backend_impl.go | s.images.Pull |
-| ImageInspect | delegates (BaseServer) | s.images.Inspect | delegates (BaseServer) | s.images.Inspect |
-| ImageLoad | backend_impl.go | NotImplementedError | backend_impl.go | NotImplementedError |
-| ImageTag | backend_impl.go | s.images.Tag | delegates (BaseServer) | s.images.Tag |
-| ImageList | delegates (BaseServer) | s.images.List | delegates (BaseServer) | s.images.List |
-| ImageRemove | backend_impl.go | s.images.Remove | delegates (BaseServer) | s.images.Remove |
-| ImageHistory | delegates (BaseServer) | s.images.History | delegates (BaseServer) | s.images.History |
-| ImagePrune | delegates (BaseServer) | s.images.Prune | delegates (BaseServer) | s.images.Prune |
-| ImageBuild | delegates (BaseServer) | s.images.Build | backend_impl.go | NotImplementedError |
-| ImagePush | backend_impl.go | s.images.Push | backend_impl.go | NotImplementedError |
-| ImageSave | delegates (BaseServer) | s.images.Save | delegates (BaseServer) | s.images.Save |
-| ImageSearch | delegates (BaseServer) | s.images.Search | delegates (BaseServer) | s.images.Search |
+| Method | ECS Source | ECS After | Lambda Source | Lambda After |
+|--------|-----------|-----------|--------------|--------------|
+| ImagePull | backend_impl.go (custom) | `s.images.Pull` | backend_impl.go (custom) | `s.images.Pull` |
+| ImageInspect | delegates (BaseServer) | `s.images.Inspect` | delegates (BaseServer) | `s.images.Inspect` |
+| ImageLoad | backend_impl.go (NotImpl) | NotImplementedError | backend_impl.go (NotImpl) | NotImplementedError |
+| ImageTag | backend_impl.go (custom) | `s.images.Tag` | delegates (BaseServer) | `s.images.Tag` |
+| ImageList | delegates (BaseServer) | `s.images.List` | delegates (BaseServer) | `s.images.List` |
+| ImageRemove | backend_impl.go (custom) | `s.images.Remove` | delegates (BaseServer) | `s.images.Remove` |
+| ImageHistory | delegates (BaseServer) | `s.images.History` | delegates (BaseServer) | `s.images.History` |
+| ImagePrune | delegates (BaseServer) | `s.images.Prune` | delegates (BaseServer) | `s.images.Prune` |
+| ImageBuild | delegates (BaseServer) | `s.images.Build` | backend_impl.go (NotImpl) | NotImplementedError |
+| ImagePush | backend_impl.go (custom) | `s.images.Push` | backend_impl.go (NotImpl) | NotImplementedError |
+| ImageSave | delegates (BaseServer) | `s.images.Save` | delegates (BaseServer) | `s.images.Save` |
+| ImageSearch | delegates (BaseServer) | `s.images.Search` | delegates (BaseServer) | `s.images.Search` |
 | AuthLogin | delegates (BaseServer) | unchanged | backend_impl.go (custom) | unchanged |
-
-### Issue 8: Migration Path Feasibility
-
-The step-by-step migration path is sound. Each step compiles independently. The critical dependency is Step 1 (core `ImageManager`), which is a separate task. Steps 2-7 can proceed in order once Step 1 is complete. The plan correctly identifies that ECS and Lambda can be migrated independently of GCP/Azure.
-
-One risk not mentioned: if `ImageManager` is wired into `BaseServer` (Step 1), and `BaseServer.ImagePull` etc. start going through `ImageManager{Auth: nil}`, then the self-dispatch pattern (`s.self.ImagePull`) may need updating. Currently `BaseServer` methods are called directly via embedding. After migration, `s.self.ImagePull()` on ECS would call `ECS.ImagePull()` which calls `s.images.Pull()`. This should work correctly with the existing self-dispatch pattern since ECS `Server` overrides `ImagePull` on its own type.

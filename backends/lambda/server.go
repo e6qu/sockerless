@@ -14,6 +14,7 @@ type Server struct {
 	*core.BaseServer
 	config    Config
 	aws       *AWSClients
+	ecrAuth   *ECRAuthProvider
 	Lambda    *core.StateStore[LambdaState]
 	ipCounter atomic.Int32
 }
@@ -38,6 +39,7 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		NCPU:            2,
 		MemTotal:        4294967296,
 	}, logger)
+	s.ecrAuth = NewECRAuthProvider(awsClients.ECR, logger, s.ctx)
 	s.SetSelf(s)
 
 	mode := "cloud"

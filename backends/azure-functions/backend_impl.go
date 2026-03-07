@@ -2,11 +2,9 @@ package azf
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"net/http"
 	"os"
@@ -875,47 +873,26 @@ func (s *Server) ContainerUnpause(ref string) error {
 }
 
 // ImagePull pulls an image reference and stores it locally.
+// Uses ACRAuthProvider for ACR registry authentication, core.FetchImageConfig with
+// cache for other registries. Populates full metadata (Size, RepoDigests, RootFS, GraphDriver).
 func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 	if ref == "" {
 		return nil, &api.InvalidParameterError{Message: "image reference is required"}
 	}
 
-	// Add :latest if no tag or digest
 	if !strings.Contains(ref, ":") && !strings.Contains(ref, "@") {
 		ref += ":latest"
 	}
 
-	// Generate image ID
-	hash := sha256.Sum256([]byte(ref))
-	hex := fmt.Sprintf("%x", hash)
-	imageID := "sha256:" + hex
-
-	imgConfig := api.ContainerConfig{
-		Image: ref,
+	// Use ACRAuthProvider for ACR registries, core.FetchImageConfig for others
+	imgConfig, err := s.acrAuth.fetchImageConfig(ref, auth)
+	if err != nil {
+		s.Logger.Warn().Err(err).Str("ref", ref).Msg("failed to fetch image config from registry, using synthetic")
 	}
 
-	// Try to fetch real config from registry
-	if realConfig, _ := core.FetchImageConfig(ref, ""); realConfig != nil {
-		if len(realConfig.Env) > 0 {
-			imgConfig.Env = realConfig.Env
-		}
-		if len(realConfig.Cmd) > 0 {
-			imgConfig.Cmd = realConfig.Cmd
-		}
-		if len(realConfig.Entrypoint) > 0 {
-			imgConfig.Entrypoint = realConfig.Entrypoint
-		}
-		if realConfig.WorkingDir != "" {
-			imgConfig.WorkingDir = realConfig.WorkingDir
-		}
-		if len(realConfig.Labels) > 0 {
-			imgConfig.Labels = realConfig.Labels
-		}
-	}
-
-	h := fnv.New32a()
-	h.Write([]byte(ref))
-	imgSize := int64(10_000_000 + h.Sum32()%90_000_000)
+	imageID := syntheticImageID(ref)
+	hex := strings.TrimPrefix(imageID, "sha256:")
+	imgSize := syntheticImageSize(ref)
 
 	now := time.Now().UTC()
 	image := api.Image{
@@ -942,7 +919,14 @@ func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 			},
 		},
 		Metadata: api.ImageMetadata{LastTagTime: now.Format(time.RFC3339Nano)},
-		Config:   imgConfig,
+	}
+
+	if imgConfig != nil {
+		image.Config = *imgConfig
+	} else {
+		image.Config = api.ContainerConfig{
+			Image: ref,
+		}
 	}
 
 	core.StoreImageWithAliases(s.Store, ref, image)

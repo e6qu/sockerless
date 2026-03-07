@@ -108,7 +108,7 @@ func OCIPush(opts OCIPushOptions) (*OCIPushResult, error) {
 	}
 	req.Header.Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
 	if opts.AuthToken != "" {
-		setOCIAuth(req, opts.AuthToken)
+		SetOCIAuth(req, opts.AuthToken)
 	}
 
 	resp, err := ociPushClient.Do(req)
@@ -140,7 +140,7 @@ func ociPing(baseURL, authToken string) error {
 		return err
 	}
 	if authToken != "" {
-		setOCIAuth(req, authToken)
+		SetOCIAuth(req, authToken)
 	}
 
 	resp, err := ociPushClient.Do(req)
@@ -166,7 +166,7 @@ func ociUploadBlob(baseURL, authToken, digest string, data []byte, contentType s
 		return fmt.Errorf("create initiate request: %w", err)
 	}
 	if authToken != "" {
-		setOCIAuth(req, authToken)
+		SetOCIAuth(req, authToken)
 	}
 
 	initResp, err := ociPushClient.Do(req)
@@ -206,7 +206,7 @@ func ociUploadBlob(baseURL, authToken, digest string, data []byte, contentType s
 	}
 	req.Header.Set("Content-Type", contentType)
 	if authToken != "" {
-		setOCIAuth(req, authToken)
+		SetOCIAuth(req, authToken)
 	}
 
 	completeResp, err := ociPushClient.Do(req)
@@ -223,9 +223,9 @@ func ociUploadBlob(baseURL, authToken, digest string, data []byte, contentType s
 	return nil
 }
 
-// setOCIAuth sets the Authorization header for OCI registry requests.
+// SetOCIAuth sets the Authorization header for OCI registry requests.
 // Handles both "Bearer <token>" and raw token formats.
-func setOCIAuth(req *http.Request, token string) {
+func SetOCIAuth(req *http.Request, token string) {
 	if strings.HasPrefix(token, "Bearer ") || strings.HasPrefix(token, "Basic ") {
 		req.Header.Set("Authorization", token)
 	} else {

@@ -2,6 +2,8 @@
 
 This plan implements the architecture described in `backends/IMAGE_ARCHITECTURE.md` for the GCP cloud (CloudRun and CloudRun Functions backends).
 
+**Key constraint**: NO simulator changes. The GCP simulator already supports OCI push (blob uploads + manifest PUT). It does NOT support OCI manifest DELETE -- `OnRemove` must handle this gracefully (log warning, skip) rather than requiring simulator changes.
+
 ---
 
 ## 1. ARAuthProvider
@@ -10,7 +12,7 @@ This plan implements the architecture described in `backends/IMAGE_ARCHITECTURE.
 
 **File:** `backends/cloudrun/image_auth.go` (~80 lines)
 
-This file lives in the `cloudrun` package. The GCF backend imports and reuses it (see Section 3).
+This file lives in the `cloudrun` package. The GCF backend has its own copy (see Section 4).
 
 ### 1.2 Struct Definition
 
@@ -18,6 +20,7 @@ This file lives in the `cloudrun` package. The GCF backend imports and reuses it
 package cloudrun
 
 import (
+    "context"
     "fmt"
     "net/http"
     "strings"
@@ -26,7 +29,6 @@ import (
     "github.com/sockerless/api"
     core "github.com/sockerless/backend-core"
     "golang.org/x/oauth2/google"
-    "context"
 )
 
 // ARAuthProvider implements core.AuthProvider for GCP Artifact Registry and GCR.
@@ -115,7 +117,9 @@ func (a *ARAuthProvider) OnTag(img api.Image, registry, repo, newTag string) err
 
 #### `OnRemove(registry, repo string, tags []string) error`
 
-DELETEs the manifest from AR/GCR via the OCI Distribution API. This replaces the inline goroutine logic in `cloudrun/backend_impl.go:1404-1453`.
+Attempts to DELETE the manifest from AR/GCR via the OCI Distribution API. **Graceful degradation**: If the registry returns 405 Method Not Allowed (as the current GCP simulator does), the error is logged but not propagated -- the `ImageManager` treats all `OnRemove` errors as non-fatal.
+
+The auth header logic is inlined (4 lines) rather than requiring `core.SetOCIAuth` to be exported.
 
 ```go
 func (a *ARAuthProvider) OnRemove(registry, repo string, tags []string) error {
@@ -130,13 +134,25 @@ func (a *ARAuthProvider) OnRemove(registry, repo string, tags []string) error {
         if err != nil {
             return fmt.Errorf("create delete request: %w", err)
         }
-        core.SetOCIAuth(req, token) // needs to be exported (see Section 5.1)
+        // Inline auth header logic (matches oci_push.go setOCIAuth pattern)
+        if strings.HasPrefix(token, "Bearer ") || strings.HasPrefix(token, "Basic ") {
+            req.Header.Set("Authorization", token)
+        } else {
+            req.Header.Set("Authorization", "Bearer "+token)
+        }
         resp, err := client.Do(req)
         if err != nil {
             return fmt.Errorf("delete manifest: %w", err)
         }
         resp.Body.Close()
-        if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
+        // Accept 200, 202 (success), 404 (already gone), 405 (not implemented by registry)
+        switch resp.StatusCode {
+        case http.StatusOK, http.StatusAccepted, http.StatusNotFound:
+            // success or already deleted
+        case http.StatusMethodNotAllowed:
+            // Registry does not support DELETE (e.g. simulator) -- not an error
+            return nil
+        default:
             return fmt.Errorf("delete manifest returned %d", resp.StatusCode)
         }
     }
@@ -162,7 +178,7 @@ type AuthProvider interface {
 type ImageManager struct {
     Auth   AuthProvider  // nil = no cloud integration
     Store  *Store
-    Logger *slog.Logger
+    Logger zerolog.Logger
 }
 ```
 
@@ -178,12 +194,12 @@ The `ImageManager` wraps the existing `BaseServer` image method logic and adds h
 | `Remove(name, force, prune)` | `BaseServer.ImageRemove` | `Auth.OnRemove()` (best-effort, goroutine) |
 | `History(name)` | `BaseServer.ImageHistory` | none |
 | `Prune(filters)` | `BaseServer.ImagePrune` | none |
-| `Build(opts, ctx)` | `BaseServer.ImageBuild` | none |
+| `Build(opts, ctx)` | `BaseServer.ImageBuild` (via BuildFunc) | none |
 | `Push(name, tag, auth)` | `BaseServer.ImagePush` | `Auth.OnPush()` (replaces synthetic for cloud registries) |
 | `Save(names)` | `BaseServer.ImageSave` | none |
 | `Search(term, limit, filters)` | `BaseServer.ImageSearch` | none |
 
-`AuthLogin` and `ContainerCommit` remain on the backend directly (not in ImageManager). These are not image-manager methods and are not counted in the 12 above.
+`AuthLogin` and `ContainerCommit` remain on the backend directly (not in ImageManager).
 
 ---
 
@@ -224,11 +240,11 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
     s.SetSelf(s)
 
     // Wire up image manager with GCP auth
-    s.images = core.NewImageManager(
-        &ARAuthProvider{Ctx: context.Background()},
-        s.Store,
-        logger,
-    )
+    s.images = &core.ImageManager{
+        Auth:   &ARAuthProvider{Ctx: context.Background()},
+        Store:  s.Store,
+        Logger: logger,
+    }
 
     // ... rest of existing NewServer ...
     return s
@@ -313,39 +329,13 @@ All non-image delegates remain unchanged (Container, Network, Pod, Volume, Syste
 
 ---
 
-## 4. GCF (Cloud Run Functions) Sharing
+## 4. GCF (Cloud Run Functions) Wiring
 
 ### 4.1 Sharing Approach
 
-GCF imports `ARAuthProvider` from the `cloudrun` package. Both backends are in the same Go module (`github.com/sockerless/backend-cloudrun` and `github.com/sockerless/backend-cloudrun-functions`), but they are separate modules.
+CloudRun and GCF are **separate Go modules** (`github.com/sockerless/backend-cloudrun` and `github.com/sockerless/backend-cloudrun-functions`). Cross-module imports would add coupling. The `ARAuthProvider` is ~80 lines with zero cloudrun-specific types and depends only on `golang.org/x/oauth2/google` (already imported by GCF) and `core.OCIPush` (already imported).
 
-**Option A (preferred): Shared `image_auth.go` package**
-
-Move `ARAuthProvider` to a shared package that both can import. Since both already import `github.com/sockerless/backend-core`, the cleanest approach is to keep `ARAuthProvider` in the cloudrun package and have GCF depend on the cloudrun module.
-
-However, adding a module dependency from GCF to CloudRun may be undesirable. Instead:
-
-**Option B: Duplicate ARAuthProvider in GCF (~80 lines)**
-
-Create `backends/cloudrun-functions/image_auth.go` as a copy. The struct is tiny (~80 lines) and has no dependencies on cloudrun-specific types. The only dependency is `golang.org/x/oauth2/google` (already imported by GCF) and `core.OCIPush` (already imported).
-
-**Option C (recommended): Extract to a shared GCP auth package**
-
-Create `backends/gcp/image_auth.go` in a new `github.com/sockerless/backend-gcp` module that both cloudrun and GCF import:
-
-```
-backends/gcp/
-    go.mod              # module github.com/sockerless/backend-gcp
-    image_auth.go       # ARAuthProvider struct (~80 lines)
-```
-
-Both `cloudrun/go.mod` and `cloudrun-functions/go.mod` add:
-```
-require github.com/sockerless/backend-gcp v0.0.0
-replace github.com/sockerless/backend-gcp => ../gcp
-```
-
-**Decision**: Use **Option B** (duplicate). The struct is ~80 lines with zero cloudrun-specific types. Duplication avoids a new module, a new go.work entry, and cross-module coupling. Both copies are identical and can be validated by a linter or test.
+**Decision**: Duplicate `ARAuthProvider` in GCF. The struct is small enough that duplication is preferable to a new shared module.
 
 ### 4.2 GCF Server Struct Change
 
@@ -370,20 +360,20 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
     s.BaseServer = core.NewBaseServer(...)
     s.SetSelf(s)
 
-    s.images = core.NewImageManager(
-        &ARAuthProvider{Ctx: context.Background()},
-        s.Store,
-        logger,
-    )
+    s.images = &core.ImageManager{
+        Auth:   &ARAuthProvider{Ctx: context.Background()},
+        Store:  s.Store,
+        Logger: logger,
+    }
 
     // ...
     return s
 }
 ```
 
-### 4.4 GCF FaaS Overrides
+### 4.4 GCF Image Method Delegation (12 methods)
 
-GCF overrides `ImageBuild` with `NotImplementedError` (FaaS backends cannot build images). This is handled by the GCF `Server` method taking precedence over the `ImageManager` delegate:
+GCF overrides `ImageBuild` with `NotImplementedError` (FaaS backends cannot build images). This method is NOT delegated to `s.images`:
 
 ```go
 // In backends/cloudrun-functions/backend_impl.go (KEEP existing)
@@ -394,23 +384,52 @@ func (s *Server) ImageBuild(opts api.ImageBuildOptions, buildContext io.Reader) 
 }
 ```
 
-All other image methods delegate to `s.images`:
+The remaining 11 image methods delegate to `s.images`:
 
 ```go
 func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
     return s.images.Pull(ref, auth)
 }
 
+func (s *Server) ImageInspect(name string) (*api.Image, error) {
+    return s.images.Inspect(name)
+}
+
 func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
     return s.images.Load(r)
+}
+
+func (s *Server) ImageTag(source string, repo string, tag string) error {
+    return s.images.Tag(source, repo, tag)
+}
+
+func (s *Server) ImageList(opts api.ImageListOptions) ([]*api.ImageSummary, error) {
+    return s.images.List(opts)
+}
+
+func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageDeleteResponse, error) {
+    return s.images.Remove(name, force, prune)
+}
+
+func (s *Server) ImageHistory(name string) ([]*api.ImageHistoryEntry, error) {
+    return s.images.History(name)
+}
+
+func (s *Server) ImagePrune(filters map[string][]string) (*api.ImagePruneResponse, error) {
+    return s.images.Prune(filters)
 }
 
 func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
     return s.images.Push(name, tag, auth)
 }
 
-// ImageTag, ImageList, ImageRemove, ImageHistory, ImagePrune, ImageSave, ImageSearch
-// all delegate to s.images.X()
+func (s *Server) ImageSave(names []string) (io.ReadCloser, error) {
+    return s.images.Save(names)
+}
+
+func (s *Server) ImageSearch(term string, limit int, filters map[string][]string) ([]*api.ImageSearchResult, error) {
+    return s.images.Search(term, limit, filters)
+}
 ```
 
 ### 4.5 GCF Delegates Migration
@@ -430,8 +449,6 @@ Change from `s.BaseServer.ImageX()` to `s.images.X()`.
 |------|-------|--------|
 | `backends/cloudrun/registry.go` | 185 | `fetchImageConfig()`, `parseImageRef()`, `getARToken()`, `getDockerHubToken()` all replaced by `core.ImageManager` + `ARAuthProvider` |
 | `backends/cloudrun-functions/registry.go` | 50 | `parseImageRef()`, `getARToken()` replaced by `ARAuthProvider` + `core.parseImageRef()` |
-| `backends/cloudrun/IMAGE_MANAGEMENT_PLAN.md` | 500 | Replaced by this file |
-| `backends/cloudrun-functions/IMAGE_MANAGEMENT_PLAN.md` | 148 | Replaced by this file |
 
 ### 5.2 Code Removed from Existing Files
 
@@ -464,8 +481,8 @@ Change from `s.BaseServer.ImageX()` to `s.images.X()`.
 These changes are made as part of the core `ImageManager` work (not GCP-specific), but are required:
 
 1. **`backends/core/image_manager.go`** (NEW): `AuthProvider` interface + `ImageManager` struct + 12 methods + constructor
-2. **`backends/core/registry.go`**: Must support pre-authenticated tokens (see Review Notes Issue 2). Currently `FetchImageConfig(ref, basicAuth)` always does Www-Authenticate token exchange; a cloud Bearer token cannot be passed through the existing `basicAuth` parameter without corruption. The core ImageManager must add a code path that accepts a ready-to-use auth token and passes it directly to `registryGet()`.
-3. **`backends/core/oci_push.go`**: Either export `setOCIAuth` as `SetOCIAuth` or inline the auth-header logic in `ARAuthProvider.OnRemove()` (see Review Notes Issue 6 — recommend inline).
+2. **`backends/core/registry.go`**: Must support pre-authenticated tokens (see Section 9, Issue 2). Currently `FetchImageConfig(ref, basicAuth)` passes `basicAuth` to `getRegistryToken()` which prepends `"Basic "`. A cloud Bearer token cannot be passed through the existing `basicAuth` parameter without corruption. The core ImageManager must add a code path that accepts a ready-to-use auth token and passes it directly to `registryGet()`.
+3. **`backends/core/oci_push.go`**: No export needed. `ARAuthProvider.OnRemove()` inlines the 4-line auth-header logic rather than requiring `SetOCIAuth`.
 4. **`backends/core/registry.go`**: The `parseImageRef` function is already package-private; `ImageManager` uses it internally. No export needed since `ImageManager.Pull()` calls it internally.
 
 ### 6.3 Contents Outline: `image_auth.go`
@@ -505,22 +522,16 @@ func (a *ARAuthProvider) OnRemove(registry, repo string, tags []string) error { 
 
 1. Create `backends/core/image_manager.go` with `AuthProvider` interface and `ImageManager` struct
 2. Move image method logic from `BaseServer` into `ImageManager` methods
-3. `BaseServer` creates a default `ImageManager{Auth: nil, Store: s.Store, Logger: s.Logger}` and its image methods delegate to it
-4. Export `setOCIAuth` as `SetOCIAuth` in `oci_push.go`
+3. Add `FetchImageConfigWithAuth(ref, authHeader string)` or equivalent to support pre-authenticated tokens
+4. `BaseServer` creates a default `ImageManager{Auth: nil, Store: s.Store, Logger: s.Logger}` and its image methods delegate to it
 5. Verify all existing tests pass (BaseServer behavior unchanged)
-
-### Step 1b: Add OCI Manifest DELETE to GCP Simulator (prerequisite)
-
-1. Add `case http.MethodDelete:` to `handleOCIManifest()` in `simulators/gcp/artifactregistry.go`
-2. Delete the manifest from the state store, return 202 Accepted
-3. This is required for `ARAuthProvider.OnRemove()` to work in integration tests
-4. ~10 lines of code
 
 ### Step 2: Create ARAuthProvider in CloudRun
 
 1. Create `backends/cloudrun/image_auth.go` with `ARAuthProvider`
-2. Unit test: verify `IsCloudRegistry` matches expected patterns
-3. Verify compilation
+2. `OnRemove` handles 405 gracefully (simulator does not support DELETE)
+3. Unit test: verify `IsCloudRegistry` matches expected patterns
+4. Verify compilation
 
 ### Step 3: Wire CloudRun ImageManager
 
@@ -559,12 +570,7 @@ func (a *ARAuthProvider) OnRemove(registry, repo string, tags []string) error { 
 2. Verify compilation
 3. Run GCF integration tests
 
-### Step 8: Delete Old Plans
-
-1. Delete `backends/cloudrun/IMAGE_MANAGEMENT_PLAN.md`
-2. Delete `backends/cloudrun-functions/IMAGE_MANAGEMENT_PLAN.md`
-
-### Step 9: Full Test Validation
+### Step 8: Full Test Validation
 
 1. Run `tests/` e2e tests (TestImageBuild, TestImagePull, TestImageInspect, TestImageTag)
 2. Run CloudRun SDK tests (`simulators/gcp/sdk-tests/`)
@@ -589,15 +595,15 @@ func (a *ARAuthProvider) OnRemove(registry, repo string, tags []string) error { 
 
 1. **CloudRun ImagePull**: Currently uses its own `fetchImageConfig()` (185-line registry.go). After migration, uses `core.FetchImageConfig()` (443-line registry.go) which is **superior** -- handles manifest lists, parses Www-Authenticate, has caching. Net improvement.
 
-2. **GCF ImagePull**: Currently uses `core.FetchImageConfig()` with ADC auth. After migration, `ImageManager.Pull()` calls `Auth.GetToken()` and passes it to `core.FetchImageConfig()`. Identical behavior but cleaner.
+2. **GCF ImagePull**: Currently uses `core.FetchImageConfig()` with ADC auth. After migration, `ImageManager.Pull()` calls `Auth.GetToken()` and passes it to `core.FetchImageConfigWithAuth()`. Identical behavior but cleaner.
 
 3. **CloudRun ImagePush/ImageTag/ImageRemove**: Currently have inline AR sync logic with goroutines. After migration, `ImageManager` calls `Auth.OnPush()`/`OnTag()`/`OnRemove()` in goroutines with error logging. Identical behavior.
 
 4. **GCF ImagePush**: Currently uses the same inline OCI push pattern. After migration, delegates to `ImageManager.Push()` which calls `Auth.OnPush()`. Identical behavior.
 
-5. **GCF ImageTag** (NEW behavior): Currently GCF delegates `ImageTag` to `BaseServer.ImageTag()` with NO AR sync. After migration, `ImageManager.Tag()` calls `Auth.OnTag()`, which syncs the new tag to AR. This is a new capability for GCF — consistent with CloudRun's existing behavior. Net improvement but should be noted as a behavioral change.
+5. **GCF ImageTag** (NEW behavior): Currently GCF delegates `ImageTag` to `BaseServer.ImageTag()` with NO AR sync. After migration, `ImageManager.Tag()` calls `Auth.OnTag()`, which syncs the new tag to AR. This is a **behavioral change** -- GCF will start syncing tags to AR, consistent with CloudRun's existing behavior. Net improvement but must be noted.
 
-6. **GCF ImageRemove** (NEW behavior): Currently GCF delegates `ImageRemove` to `BaseServer.ImageRemove()` with NO AR sync. After migration, `ImageManager.Remove()` calls `Auth.OnRemove()`, which deletes from AR. Same situation as ImageTag — new capability, consistent with CloudRun.
+6. **GCF ImageRemove** (NEW behavior): Currently GCF delegates `ImageRemove` to `BaseServer.ImageRemove()` with NO AR sync. After migration, `ImageManager.Remove()` calls `Auth.OnRemove()`. Same situation as ImageTag -- new capability, consistent with CloudRun. **Note**: Since the simulator returns 405 for DELETE, `OnRemove` will gracefully log and skip in simulator mode. In production against real AR, it will delete. This is correct behavior.
 
 ### 8.3 New Tests to Add (optional, during implementation)
 
@@ -606,11 +612,56 @@ func (a *ARAuthProvider) OnRemove(registry, repo string, tags []string) error { 
 
 ---
 
-## 9. Dependency Graph
+## 9. Design Notes (from verification)
+
+### Issue 1: `core.FetchImageConfig` Auth Threading -- Bearer Token Incompatibility
+
+`core.FetchImageConfig(ref, basicAuth)` passes `basicAuth` to `getRegistryToken()`, which does:
+
+```go
+req.Header.Set("Authorization", "Basic "+basicAuth)
+```
+
+If `ARAuthProvider.GetToken()` returns `"Bearer <token>"` and `ImageManager.Pull()` passes that to `FetchImageConfig(ref, "Bearer <token>")`, the result is `Authorization: Basic Bearer <token>` -- a malformed header.
+
+**Resolution**: The core `ImageManager` implementation must solve this by adding `FetchImageConfigWithAuth(ref, authHeader string)` that bypasses `getRegistryToken()` entirely and passes the auth header directly to `registryGet()`. This is a **core prerequisite** (Step 1), not GCP-specific.
+
+### Issue 2: OnRemove and Simulator DELETE Support
+
+The GCP simulator's `handleOCIManifest()` only handles `GET` and `PUT` -- the `default` case returns 405 Method Not Allowed. Rather than requiring simulator changes, `ARAuthProvider.OnRemove()` handles 405 gracefully:
+
+```go
+case http.StatusMethodNotAllowed:
+    // Registry does not support DELETE (e.g. simulator) -- not an error
+    return nil
+```
+
+Additionally, the `ImageManager` treats ALL `OnRemove` errors as non-fatal (logged, never returned to caller). This double layer of protection ensures `ImageRemove` always succeeds locally even if the registry DELETE fails.
+
+### Issue 3: Token Refresh / Expiry
+
+`ARAuthProvider.GetToken()` calls `google.FindDefaultCredentials` + `TokenSource.Token()` on every invocation. The `oauth2.TokenSource` from ADC handles refresh internally -- `Token()` returns a cached token until expiry, then auto-refreshes. No token refresh bug exists.
+
+**Optional optimization**: Cache the `TokenSource` on the struct:
+
+```go
+type ARAuthProvider struct {
+    ts oauth2.TokenSource  // initialized once
+}
+```
+
+This avoids re-reading the credentials file on each call. Not required for correctness.
+
+### Issue 4: Inlining `setOCIAuth` vs Exporting
+
+The plan inlines the 4-line auth header logic in `OnRemove()` rather than exporting `core.setOCIAuth` as `core.SetOCIAuth`. Rationale: the logic is trivial, used in only one place outside core, and inlining avoids polluting core's public API. The inlined pattern matches `cloudrun/backend_impl.go:1430-1434` exactly.
+
+---
+
+## 10. Dependency Graph
 
 ```
-Step 1 (core ImageManager)  ----+-- PREREQUISITE, blocks everything
-Step 1b (GCP sim DELETE)  ------+-- PREREQUISITE for OnRemove testing
+Step 1 (core ImageManager)  ---- PREREQUISITE, blocks everything
     |
     v
 Step 2 (ARAuthProvider in cloudrun)
@@ -625,122 +676,15 @@ Step 5 (ARAuthProvider copy in GCF)
 Step 6 (Wire GCF)  ------------> Step 7 (Delete gcf/registry.go)
     |
     v
-Step 8 (Delete old plans)
-    |
-    v
-Step 9 (Full test validation)
+Step 8 (Full test validation)
 ```
 
 Steps 2-4 (CloudRun) and Steps 5-7 (GCF) could be parallelized after Step 1, but sequential ordering is safer.
 
 ---
 
-## 10. Open Questions
+## 11. Open Questions
 
 1. **`core.IsGCPRegistry()` redundancy**: After `ARAuthProvider.IsCloudRegistry()` exists, `core.IsGCPRegistry()` in `oci_push.go:237-239` becomes redundant. Keep it for backward compat or remove? **Recommendation**: Keep it -- it's 3 lines and other packages may use it.
 
-2. **`core.SetOCIAuth()` export**: Currently `setOCIAuth` is unexported. `ARAuthProvider.OnRemove()` needs it. Alternative: inline the auth header logic (4 lines). **Recommendation**: Export it -- it's a clean utility function.
-
-3. **`ARAuthProvider.Ctx` vs parameter**: Should `GetToken` take a `context.Context` parameter instead of storing it? The `AuthProvider` interface in `IMAGE_ARCHITECTURE.md` does not include context. **Recommendation**: Keep `Ctx` on struct -- simpler interface, and the context is always `context.Background()` in practice.
-
----
-
-## Review Notes
-
-Added during review on 2026-03-07. Issues found and their resolutions:
-
-### Issue 1: Method Count — "14" Should Be "12"
-
-The plan repeatedly says "14 image methods" (Sections 2, 3.3 heading, 3.4) but `api.Backend` defines exactly **12** image methods: ImagePull, ImageInspect, ImageLoad, ImageTag, ImageList, ImageRemove, ImageHistory, ImagePrune, ImageBuild, ImagePush, ImageSave, ImageSearch. The architecture doc (`IMAGE_ARCHITECTURE.md` line 90) also says 14 but lists 12. The GCP plan's Section 3.3 code block correctly shows 12 one-liner delegates, so the code is right — only the prose count is wrong.
-
-**Fix**: All references to "14" image methods in this plan should read "12". The architecture doc has the same error but is out of scope for this plan.
-
-### Issue 2: `core.FetchImageConfig` Auth Threading — Bearer Token Incompatibility
-
-This is the most significant design gap. `core.FetchImageConfig(ref, basicAuth)` passes `basicAuth` to `getRegistryToken()`, which does:
-
-```go
-req.Header.Set("Authorization", "Basic "+basicAuth)
-```
-
-If `ARAuthProvider.GetToken()` returns `"Bearer <token>"` and `ImageManager.Pull()` passes that to `FetchImageConfig(ref, "Bearer <token>")`, the result is `Authorization: Basic Bearer <token>` — a malformed header.
-
-This affects ALL cloud plans (AWS returns `"Basic <b64>"`, GCP returns `"Bearer <token>"`). The core `ImageManager` implementation must solve this by one of:
-
-1. **Refactor `FetchImageConfig` to accept a pre-authenticated token** — add a new parameter or option that bypasses `getRegistryToken()` entirely when a cloud token is already available.
-2. **Add a `FetchImageConfigWithToken(ref, token string)` variant** — skips the Www-Authenticate dance, passes `token` directly to `registryGet()` as the bearer token for manifest/blob fetches.
-3. **Have `ImageManager.Pull()` call lower-level functions** — call `parseImageRef` + `getConfigDigest` + `getConfigBlob` directly with the cloud-provided token, bypassing `FetchImageConfig`'s auth layer.
-
-Option 2 is cleanest. This is a **core ImageManager prerequisite** (Step 1), not GCP-specific. The plan's Section 8.2 item 1 ("uses `core.FetchImageConfig()`") is correct in intent but must note this refactoring requirement.
-
-**Impact on this plan**: The `ARAuthProvider.GetToken()` return value is correct (`"Bearer " + token.AccessToken`). The fix is entirely in core's `ImageManager.Pull()` implementation. No changes needed to `ARAuthProvider`.
-
-### Issue 3: GCP Simulator Does Not Support OCI Manifest DELETE
-
-`ARAuthProvider.OnRemove()` sends `DELETE /v2/{name}/manifests/{tag}` to the registry. However, `simulators/gcp/artifactregistry.go`'s `handleOCIManifest()` (line 284) only handles `GET` and `PUT` — the `default` case returns 405 Method Not Allowed.
-
-**Fix required in simulator**: Add `case http.MethodDelete:` to `handleOCIManifest()` that removes the manifest from the state store and returns 202 Accepted. This is a small change (~10 lines) but must be done before `OnRemove` can be tested against the simulator.
-
-**Impact on this plan**: Add a note to Step 9 (Full Test Validation) that the simulator needs the DELETE handler added. Alternatively, add a new Step 3.5 or pre-step: "Add OCI manifest DELETE support to GCP simulator."
-
-### Issue 4: Cross-Cloud Consistency — ARAuthProvider vs ECRAuthProvider
-
-The interface implementations are consistent:
-
-| Method | ECRAuthProvider | ARAuthProvider |
-|--------|----------------|----------------|
-| `GetToken` | Returns `"Basic " + token` | Returns `"Bearer " + token` |
-| `IsCloudRegistry` | String match on `.amazonaws.com` + `.dkr.ecr.` | String match on `.gcr.io` + `-docker.pkg.dev` |
-| `OnPush` | ECR SDK (`CreateRepository` + `PutImage`) | `core.OCIPush` |
-| `OnTag` | Delegates to `OnPush` | `core.OCIPush` (same as OnPush) |
-| `OnRemove` | ECR SDK (`BatchDeleteImage`) | OCI HTTP DELETE |
-
-Both implement all 5 `AuthProvider` methods. The struct shapes differ appropriately (ECR needs SDK client; AR needs `context.Context`). The ECS plan stores context as `Ctx func() context.Context` while the GCP plan stores it as `Ctx context.Context` — this is fine since GCP ADC only needs a context for the initial credential lookup.
-
-One minor inconsistency: the ECS plan uses direct struct initialization (`&core.ImageManager{...}`) while this plan uses a constructor (`core.NewImageManager(...)`). The constructor doesn't exist yet; whichever pattern core adopts, both plans should align. **Recommendation**: Use direct struct init to match the ECS plan, or note that `NewImageManager` must be created.
-
-### Issue 5: Token Refresh / Expiry
-
-Neither the GCP nor AWS plans address token caching or refresh. `ARAuthProvider.GetToken()` calls `google.FindDefaultCredentials` + `TokenSource.Token()` on every invocation. For `Pull` this is fine (one call per pull), but `OnRemove` with many tags would call `GetToken()` once per the method (acceptable).
-
-However, the `oauth2.TokenSource` from ADC handles refresh internally — `Token()` returns a cached token until expiry, then auto-refreshes. So there is no token refresh bug here. The plan is correct as written.
-
-**One improvement**: The `ARAuthProvider` could cache the `TokenSource` instead of calling `FindDefaultCredentials` each time (which re-reads the credentials file). Consider storing `ts oauth2.TokenSource` on the struct, initialized once in the constructor:
-
-```go
-type ARAuthProvider struct {
-    ts oauth2.TokenSource
-}
-```
-
-This is an optimization, not a correctness issue.
-
-### Issue 6: `core.SetOCIAuth` Export
-
-The plan correctly identifies that `setOCIAuth` needs to be exported as `SetOCIAuth` (Section 5.1, 6.2, Open Question 2). This is used in `OnRemove` for the DELETE request auth header. The ECS plan does NOT need this export (it uses ECR SDK, not OCI HTTP). This is a GCP-specific core change.
-
-**Alternative** (as the plan notes): Inline the 4-line auth header logic in `OnRemove()` instead of exporting. Since the logic is trivial and only used in one place outside core, inlining may be cleaner than polluting core's public API. **Recommendation**: Inline it. The pattern is:
-
-```go
-if strings.HasPrefix(token, "Bearer ") || strings.HasPrefix(token, "Basic ") {
-    req.Header.Set("Authorization", token)
-} else {
-    req.Header.Set("Authorization", "Bearer "+token)
-}
-```
-
-This matches what the current `cloudrun/backend_impl.go:1430-1434` already does.
-
-### Issue 7: Missing GCF `ImageTag` Override Discussion
-
-GCF's `backend_delegates_gen.go` currently delegates `ImageTag` to `s.BaseServer.ImageTag()`. After migration, it would delegate to `s.images.Tag()`. But unlike CloudRun, GCF currently does NOT sync tags to AR (there is no `ImageTag` override in GCF's `backend_impl.go`). After migration, `ImageManager.Tag()` will call `Auth.OnTag()` — meaning GCF will START syncing tags to AR, which is a behavioral change.
-
-This is arguably an improvement (consistency with CloudRun), but it should be called out in Section 8.2 as a behavioral change, not listed as "None."
-
-### Summary of Required Fixes Before Implementation
-
-1. **Core prerequisite**: `FetchImageConfig` must support pre-authenticated tokens (Issue 2)
-2. **Simulator prerequisite**: Add OCI manifest DELETE to GCP simulator (Issue 3)
-3. **Prose fix**: Change "14" to "12" image methods throughout (Issue 1)
-4. **Documentation**: Note the GCF ImageTag behavioral change (Issue 7)
-5. **Decision**: Inline `setOCIAuth` logic vs export (Issue 6) — recommend inline
+2. **`ARAuthProvider.Ctx` vs parameter**: Should `GetToken` take a `context.Context` parameter instead of storing it? The `AuthProvider` interface in `IMAGE_ARCHITECTURE.md` does not include context. **Recommendation**: Keep `Ctx` on struct -- simpler interface, and the context is always `context.Background()` in practice.

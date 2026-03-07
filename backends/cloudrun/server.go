@@ -13,6 +13,7 @@ type Server struct {
 	*core.BaseServer
 	config    Config
 	gcp       *GCPClients
+	arAuth    *ARAuthProvider
 	ipCounter atomic.Int32
 
 	CloudRun     *core.StateStore[CloudRunState]
@@ -29,6 +30,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		NetworkState: core.NewStateStore[NetworkState](),
 		VolumeState:  core.NewStateStore[VolumeState](),
 	}
+	s.arAuth = NewARAuthProvider(s.ctx)
 
 	s.ipCounter.Store(2)
 

@@ -12,7 +12,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
-	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	awslambda "github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/sockerless/api"
@@ -823,8 +822,9 @@ func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 	}
 
 	// For ECR images, obtain auth token if not already provided
-	if auth == "" && isECRImage(ref) {
-		if token, err := s.getECRToken(); err == nil {
+	registry, _, _ := ParseImageRef(ref)
+	if auth == "" && s.ecrAuth.IsCloudRegistry(registry) {
+		if token, err := s.ecrAuth.GetToken(registry); err == nil {
 			auth = token
 		} else {
 			s.Logger.Warn().Err(err).Str("ref", ref).Msg("failed to get ECR auth token, proceeding without auth")
@@ -984,28 +984,3 @@ func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser,
 	}
 }
 
-// getECRToken gets an authorization token from ECR.
-func (s *Server) getECRToken() (string, error) {
-	result, err := s.aws.ECR.GetAuthorizationToken(s.ctx(), &ecr.GetAuthorizationTokenInput{})
-	if err != nil {
-		return "", err
-	}
-	if len(result.AuthorizationData) == 0 {
-		return "", fmt.Errorf("no authorization data returned")
-	}
-
-	// Token is base64-encoded "user:password"
-	token := aws.ToString(result.AuthorizationData[0].AuthorizationToken)
-	return "Basic " + token, nil
-}
-
-// isECRImage returns true if the image reference is from an ECR registry.
-func isECRImage(ref string) bool {
-	// ECR images match: *.dkr.ecr.*.amazonaws.com/repo:tag
-	parts := strings.SplitN(ref, "/", 2)
-	if len(parts) < 2 {
-		return false
-	}
-	registry := parts[0]
-	return strings.HasSuffix(registry, ".amazonaws.com") && strings.Contains(registry, ".dkr.ecr.")
-}

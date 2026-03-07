@@ -13,6 +13,7 @@ type Server struct {
 	*core.BaseServer
 	config    Config
 	azure     *AzureClients
+	acrAuth   *ACRAuthProvider
 	ipCounter atomic.Int32
 
 	ACA          *core.StateStore[ACAState]
@@ -25,6 +26,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	s := &Server{
 		config:       config,
 		azure:        azureClients,
+		acrAuth:      &ACRAuthProvider{Logger: logger},
 		ACA:          core.NewStateStore[ACAState](),
 		NetworkState: core.NewStateStore[NetworkState](),
 		VolumeState:  core.NewStateStore[VolumeState](),

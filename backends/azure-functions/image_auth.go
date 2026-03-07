@@ -1,51 +1,67 @@
-package cloudrun
+package azf
 
 import (
+	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/rs/zerolog"
 	"github.com/sockerless/api"
-	"golang.org/x/oauth2/google"
+	core "github.com/sockerless/backend-core"
 )
 
-// fetchImageConfig fetches the image config from a registry.
-func (s *Server) fetchImageConfig(ref, authHeader string) (*api.ContainerConfig, error) {
+// ACRAuthProvider handles authentication and OCI operations for Azure Container Registry.
+type ACRAuthProvider struct {
+	Logger zerolog.Logger
+}
+
+// GetToken returns a Bearer token for the given ACR registry using DefaultAzureCredential.
+func (a *ACRAuthProvider) GetToken(registry string) (string, error) {
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return "", err
+	}
+	scope := fmt.Sprintf("https://%s/.default", registry)
+	token, err := cred.GetToken(context.Background(), policy.TokenRequestOptions{Scopes: []string{scope}})
+	if err != nil {
+		return "", err
+	}
+	return "Bearer " + token.Token, nil
+}
+
+// IsCloudRegistry returns true if the registry is an Azure Container Registry.
+func (a *ACRAuthProvider) IsCloudRegistry(registry string) bool {
+	return strings.HasSuffix(registry, ".azurecr.io")
+}
+
+// fetchImageConfig fetches the image config from a registry, with ACR auth support.
+// For non-ACR registries, delegates to core.FetchImageConfig for caching.
+func (a *ACRAuthProvider) fetchImageConfig(ref, authHeader string) (*api.ContainerConfig, error) {
 	registry, repo, tag := parseImageRef(ref)
 
-	token := ""
-	if strings.HasSuffix(registry, ".gcr.io") || strings.HasSuffix(registry, "-docker.pkg.dev") {
-		// Artifact Registry / GCR — get token via Application Default Credentials
-		t, err := s.getARToken()
-		if err != nil {
-			return nil, fmt.Errorf("AR auth failed: %w", err)
-		}
-		token = t
-	} else if authHeader != "" {
-		token = authHeader
-	} else if registry == "registry-1.docker.io" || registry == "docker.io" {
-		registry = "registry-1.docker.io"
-		t, err := getDockerHubToken(repo)
-		if err != nil {
-			return nil, fmt.Errorf("docker hub auth failed: %w", err)
-		}
-		token = "Bearer " + t
+	// For non-ACR registries, use core's cached FetchImageConfig
+	if !a.IsCloudRegistry(registry) {
+		return core.FetchImageConfig(ref, authHeader)
 	}
 
-	// Fetch manifest
+	// ACR: authenticate and fetch directly
+	token, err := a.GetToken(registry)
+	if err != nil {
+		return nil, fmt.Errorf("ACR auth failed: %w", err)
+	}
+
 	manifestURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s", registry, repo, tag)
 	req, _ := http.NewRequest("GET", manifestURL, nil)
 	req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json")
-	if token != "" {
-		if strings.HasPrefix(token, "Basic ") || strings.HasPrefix(token, "Bearer ") {
-			req.Header.Set("Authorization", token)
-		} else {
-			req.Header.Set("Authorization", "Bearer "+token)
-		}
-	}
+	core.SetOCIAuth(req, token)
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
@@ -67,16 +83,9 @@ func (s *Server) fetchImageConfig(ref, authHeader string) (*api.ContainerConfig,
 		return nil, err
 	}
 
-	// Fetch config blob
 	configURL := fmt.Sprintf("https://%s/v2/%s/blobs/%s", registry, repo, manifest.Config.Digest)
 	req, _ = http.NewRequest("GET", configURL, nil)
-	if token != "" {
-		if strings.HasPrefix(token, "Basic ") || strings.HasPrefix(token, "Bearer ") {
-			req.Header.Set("Authorization", token)
-		} else {
-			req.Header.Set("Authorization", "Bearer "+token)
-		}
-	}
+	core.SetOCIAuth(req, token)
 
 	resp, err = client.Do(req)
 	if err != nil {
@@ -151,35 +160,15 @@ func parseImageRef(ref string) (registry, repo, tag string) {
 	return
 }
 
-// getARToken gets an access token via GCP Application Default Credentials.
-func (s *Server) getARToken() (string, error) {
-	creds, err := google.FindDefaultCredentials(s.ctx(), "https://www.googleapis.com/auth/cloud-platform")
-	if err != nil {
-		return "", err
-	}
-	token, err := creds.TokenSource.Token()
-	if err != nil {
-		return "", err
-	}
-	return "Bearer " + token.AccessToken, nil
+// syntheticImageSize returns a deterministic size from the ref hash.
+func syntheticImageSize(ref string) int64 {
+	h := fnv.New32a()
+	h.Write([]byte(ref))
+	return int64(10_000_000 + h.Sum32()%90_000_000)
 }
 
-// getDockerHubToken gets an anonymous token for Docker Hub.
-func getDockerHubToken(repo string) (string, error) {
-	url := fmt.Sprintf("https://auth.docker.io/token?service=registry.docker.io&scope=repository:%s:pull", repo)
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		Token string `json:"token"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
-	}
-	return result.Token, nil
+// syntheticImageID returns a deterministic image ID from the ref.
+func syntheticImageID(ref string) string {
+	hash := sha256.Sum256([]byte(ref))
+	return fmt.Sprintf("sha256:%x", hash)
 }
-

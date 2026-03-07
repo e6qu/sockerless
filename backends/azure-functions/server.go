@@ -13,6 +13,7 @@ type Server struct {
 	*core.BaseServer
 	config    Config
 	azure     *AzureClients
+	acrAuth   *ACRAuthProvider
 	ipCounter atomic.Int32
 
 	AZF *core.StateStore[AZFState]
@@ -21,9 +22,10 @@ type Server struct {
 // NewServer creates a new Azure Functions backend server.
 func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger) *Server {
 	s := &Server{
-		config: config,
-		azure:  azureClients,
-		AZF:    core.NewStateStore[AZFState](),
+		config:  config,
+		azure:   azureClients,
+		acrAuth: &ACRAuthProvider{Logger: logger},
+		AZF:     core.NewStateStore[AZFState](),
 	}
 	s.ipCounter.Store(2)
 
