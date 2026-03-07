@@ -1,6 +1,6 @@
 .PHONY: sim-test-ecs sim-test-lambda sim-test-cloudrun sim-test-gcf sim-test-aca sim-test-azf
 .PHONY: sim-test-aws sim-test-gcp sim-test-azure sim-test-all
-.PHONY: test test-unit test-e2e lint
+.PHONY: test test-unit test-e2e lint check-backend-coverage
 .PHONY: test-agent test-core test-bleephub test-gitlabhub
 .PHONY: bleephub-test bleephub-gh-test gitlabhub-test
 .PHONY: smoke-test-act smoke-test-act-ecs smoke-test-act-cloudrun smoke-test-act-aca smoke-test-act-all
@@ -70,6 +70,14 @@ lint:
 	    echo "=== lint $$mod ===" && \
 	    cd $(CURDIR)/$$mod && GOWORK=off golangci-lint run --build-tags noui ./... || exit 1; \
 	done
+
+# Check that all backends explicitly implement every api.Backend method
+# Use --enforce to fail on missing methods (enabled once all backends are complete)
+check-backend-coverage:
+	@cd tools/check-backend-coverage && GOWORK=off go run .
+
+check-backend-coverage-enforce:
+	@cd tools/check-backend-coverage && GOWORK=off go run . --enforce
 
 # Simulator integration tests — individual backends (per-module)
 sim-test-ecs:
