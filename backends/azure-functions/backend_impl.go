@@ -1014,6 +1014,69 @@ func (s *Server) ImageBuild(opts api.ImageBuildOptions, buildContext io.Reader) 
 	}
 }
 
+// ImageTag tags an image and optionally syncs the tag to ACR. Non-fatal on ACR errors.
+func (s *Server) ImageTag(source string, repo string, tag string) error {
+	// Delegate to BaseServer for in-memory tagging
+	if err := s.BaseServer.ImageTag(source, repo, tag); err != nil {
+		return err
+	}
+
+	// Optionally sync to ACR if the target is an ACR registry
+	fullRef := repo
+	if tag != "" {
+		fullRef = repo + ":" + tag
+	}
+	registry, ociRepo, ociTag := parseImageRef(fullRef)
+
+	if s.acrAuth.IsCloudRegistry(registry) {
+		img, ok := s.Store.ResolveImage(source)
+		if ok {
+			go func() {
+				if err := s.acrAuth.OnTag(&img, registry, ociRepo, ociTag); err != nil {
+					s.Logger.Warn().Err(err).Str("registry", registry).Msg("ACR tag sync failed")
+				}
+			}()
+		}
+	}
+
+	return nil
+}
+
+// ImageRemove removes an image and optionally deletes the manifest from ACR. Non-fatal on ACR errors.
+func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageDeleteResponse, error) {
+	// Resolve the image before removal to get metadata for ACR sync
+	img, hasImg := s.Store.ResolveImage(name)
+	var acrRegistry, acrRepo string
+	var acrTags []string
+	if hasImg {
+		for _, rt := range img.RepoTags {
+			reg, repo, tag := parseImageRef(rt)
+			if s.acrAuth.IsCloudRegistry(reg) {
+				acrRegistry = reg
+				acrRepo = repo
+				acrTags = append(acrTags, tag)
+			}
+		}
+	}
+
+	// Delegate to BaseServer for in-memory removal
+	resp, err := s.BaseServer.ImageRemove(name, force, prune)
+	if err != nil {
+		return resp, err
+	}
+
+	// Optionally delete manifests from ACR (non-fatal, best-effort)
+	if acrRegistry != "" && len(acrTags) > 0 {
+		go func() {
+			if err := s.acrAuth.OnRemove(acrRegistry, acrRepo, acrTags); err != nil {
+				s.Logger.Warn().Err(err).Str("registry", acrRegistry).Msg("ACR remove sync failed")
+			}
+		}()
+	}
+
+	return resp, nil
+}
+
 // ImagePush is not supported by the Azure Functions backend.
 // Images should be pushed directly to Azure Container Registry using the az CLI or SDK.
 func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {

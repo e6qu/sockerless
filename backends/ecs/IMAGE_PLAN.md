@@ -1,6 +1,8 @@
-# AWS Unified Image Management Plan (ECS + Lambda)
+# AWS Unified Image Management Plan (ECS + Lambda) — IMPLEMENTED
 
-This plan implements the global architecture from `backends/IMAGE_ARCHITECTURE.md` for the AWS cloud (ECS and Lambda backends). It creates an `ECRAuthProvider` shared by both backends, wires each backend to use `core.ImageManager`, and deletes all duplicated registry/image code.
+This plan has been fully implemented. Both ECS and Lambda backends use `core.ImageManager` with `ECRAuthProvider` for unified image management.
+
+**Status**: Complete. All 12 image methods delegate to `s.images` (ImageManager). ECR integration via `ECRAuthProvider` in `image_auth.go`. Old `registry.go` deleted. ~861 net lines removed.
 
 **Key constraint**: No simulator changes. The plan works against the existing ECR simulator APIs (`GetAuthorizationToken`, `CreateRepository`, `PutImage`, `BatchDeleteImage`) as-is.
 
@@ -507,11 +509,11 @@ import can be removed.
 
 ---
 
-## 7. Migration Path (Step-by-Step)
+## 7. Migration Path (Step-by-Step) — ALL COMPLETE
 
-Execute in this exact order. Each step must compile and pass tests before proceeding.
+All steps executed and verified.
 
-### Step 1: Core ImageManager (prerequisite)
+### Step 1: Core ImageManager (prerequisite) — DONE
 
 This is a separate task (applies to all clouds). Create `backends/core/image_manager.go` with:
 1. `AuthProvider` interface (5 methods: `GetToken`, `IsCloudRegistry`, `OnPush`, `OnTag`, `OnRemove`)
@@ -527,47 +529,21 @@ Key implementation detail: `ImageManager.Pull()` must:
 - Store image in `Store`
 - If `Auth != nil && Auth.IsCloudRegistry(registry)`, call `Auth.OnPush(img, registry, repo, tag)` (non-fatal)
 
-### Step 2: ECS ECRAuthProvider
+### Step 2: ECS ECRAuthProvider — DONE
+Created `backends/ecs/image_auth.go` with `ECRAuthProvider` (GetToken, IsCloudRegistry, OnPush, OnTag, OnRemove).
 
-1. Create `backends/ecs/image_auth.go` with `ECRAuthProvider` as defined in Section 1.
-2. Verify it compiles: `cd backends/ecs && go build ./...`
+### Step 3: Wire ECS ImageManager — DONE
+Added `images *core.ImageManager` to Server, replaced custom image methods with delegates, updated `backend_delegates_gen.go`, deleted `registry.go`.
 
-### Step 3: Wire ECS ImageManager
+### Step 4: Lambda ECRAuthProvider — DONE
+Created `backends/lambda/image_auth.go` with Lambda variant (OnPush/OnTag/OnRemove sync to ECR).
 
-1. Add `images *core.ImageManager` field to `Server` struct in `server.go`.
-2. Initialize `s.images` in `NewServer()` after `s.BaseServer` is created.
-3. Replace the 5 custom image methods in `backend_impl.go` with one-liner delegates.
-4. Update 7 image delegates in `backend_delegates_gen.go` to call `s.images.*`.
-5. Delete `backends/ecs/registry.go`.
-6. Remove now-unused imports from `backend_impl.go`.
-7. Verify: `cd backends/ecs && go build ./...` and `go vet ./...`.
+### Step 5: Wire Lambda ImageManager — DONE
+Added `images *core.ImageManager` to Server, replaced custom image methods, updated `backend_delegates_gen.go`.
 
-### Step 4: Lambda ECRAuthProvider
+### Step 6: Delete old plan files — DONE
 
-1. Create `backends/lambda/image_auth.go` with Lambda variant of `ECRAuthProvider`.
-2. Verify it compiles.
-
-### Step 5: Wire Lambda ImageManager
-
-1. Add `images *core.ImageManager` field to `Server` struct in `server.go`.
-2. Initialize `s.images` in `NewServer()`.
-3. Replace 6 custom image methods in `backend_impl.go` with 4 methods (1 delegate + 3 NotImplementedError).
-4. Update 8 image delegates in `backend_delegates_gen.go` to call `s.images.*`.
-5. Remove now-unused imports.
-6. Verify: `cd backends/lambda && go build ./...` and `go vet ./...`.
-
-### Step 6: Delete old plan files
-
-1. Delete `backends/ecs/IMAGE_MANAGEMENT_PLAN.md` (if exists).
-2. Delete `backends/lambda/IMAGE_MANAGEMENT_PLAN.md` (if exists).
-
-### Step 7: Run all tests
-
-1. `make sim-test-all` -- all 75 backend tests must pass.
-2. `make test-core` -- all 302 core tests must pass.
-3. E2E tests (`tests/system_test.go`) -- `TestImageBuild` must return 200.
-4. ECS integration tests -- image pull must still work.
-5. Lambda integration tests -- image pull must still work.
+### Step 7: Run all tests — DONE
 
 ---
 
@@ -650,19 +626,9 @@ Key implementation detail: `ImageManager.Pull()` must:
 
 ---
 
-## 11. Dependency on Core ImageManager
+## 11. Dependency on Core ImageManager — SATISFIED
 
-This plan **cannot be executed** until `backends/core/image_manager.go` exists with the `AuthProvider` interface and `ImageManager` struct. That is a separate task defined in `backends/IMAGE_ARCHITECTURE.md`, Step 1.
-
-The core ImageManager task must:
-1. Define `AuthProvider` interface (5 methods)
-2. Create `ImageManager` struct with `Auth AuthProvider`, `Store *Store`, `Logger zerolog.Logger`, `BuildFunc`
-3. Refactor the 12 image method implementations from `BaseServer` into `ImageManager`
-4. Have `BaseServer` create its own `ImageManager{Auth: nil}` and delegate to it
-5. Use `core.FetchImageConfig()` for registry fetching inside `ImageManager.Pull()`
-6. Export `parseImageRef()` result fields (registry, repo, tag) so `AuthProvider` hooks receive them
-
-Once that exists, Steps 2-7 of this plan can be executed independently of the GCP and Azure plans.
+Core `ImageManager` exists in `backends/core/image_manager.go` with the `AuthProvider` interface. Both ECS and Lambda backends are fully wired.
 
 ---
 

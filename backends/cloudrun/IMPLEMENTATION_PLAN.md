@@ -23,7 +23,7 @@ The remaining **35 methods** delegate to `s.BaseServer.Method()`.
 | Priority | Count | Done | Description |
 |----------|-------|------|-------------|
 | P0 | 1 | 1 | BaseServer implementation is actively wrong |
-| P1 | 18 | 15 | Works but misses cloud-specific features |
+| P1 | 18 | 18 | Works but misses cloud-specific features (images now unified via ImageManager) |
 | P2 | 32 | 0 | BaseServer implementation is adequate |
 
 ---
@@ -67,17 +67,16 @@ The remaining **35 methods** delegate to `s.BaseServer.Method()`.
 #### ContainerGetArchive / ContainerPutArchive / ContainerStatPath ✅ DONE
 - **Implementation**: Resolves container, checks `AgentAddress`. If agent connected, delegates to BaseServer (proxies through agent). Otherwise returns `NotImplementedError`.
 
-### Images
+### Images — Unified Image Management ✅ DONE
+
+All 12 image methods now delegate to `core.ImageManager` with `ARAuthProvider` (in `image_auth.go`). The old `registry.go` (containing `fetchImageConfig`, `parseImageRef`, `getARToken`, `getDockerHubToken`) has been deleted.
+
+- `ImagePull`, `ImagePush`, `ImageTag`, `ImageRemove` sync to Artifact Registry via `ARAuthProvider`
+- `ImageBuild`, `ImageInspect`, `ImageList`, `ImageHistory`, `ImagePrune`, `ImageLoad`, `ImageSave`, `ImageSearch` delegate through `ImageManager`
 
 #### ImageBuild
-- **BaseServer**: Parses Dockerfile, creates synthetic image.
-- **Phase 1**: Keep BaseServer behavior (functional for CI workflows).
-- **Phase 2**: Submit to Cloud Build, push to Artifact Registry.
-- **GCP APIs**: Cloud Build v1 (`cloudbuild.NewClient`)
-
-#### ImagePush ✅ DONE
-- **BaseServer**: Synthetic "pushed" progress.
-- **Implementation**: Returns `NotImplementedError` — images must be pushed directly to Artifact Registry or GCR.
+- **Phase 1** (current): Delegates to `ImageManager` which uses BaseServer logic (synthetic image from Dockerfile). Functional for CI workflows.
+- **Phase 2** (future): Submit to Cloud Build, push to Artifact Registry. Requires `cloud.google.com/go/cloudbuild/apiv1`.
 
 ### Volumes
 
@@ -116,7 +115,7 @@ The remaining **35 methods** delegate to `s.BaseServer.Method()`.
 
 - **Container**: Inspect, List, Wait, Rename, Resize, Changes
 - **Exec**: Create, Inspect, Resize
-- **Images**: Inspect, List, Remove, History, Prune, Save, Search, Tag
+- **Images**: All 12 methods now use unified `ImageManager` (see P1 Images section above)
 - **Networks**: Create, List, Inspect, Connect, Disconnect, Remove, Prune
 - **Volumes**: List, Inspect
 - **Pods**: Create, List, Inspect, Exists

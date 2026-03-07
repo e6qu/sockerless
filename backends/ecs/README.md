@@ -73,10 +73,8 @@ ecs/
 ├── taskdef.go           ECS task definition builder
 ├── eni.go               ENI IP extraction from task attachments
 ├── logs.go              CloudWatch Logs streaming
-├── images.go            Image pull/load handlers
-├── extended.go          Pause, unpause, volume prune
+├── image_auth.go        ECRAuthProvider (core.AuthProvider for ECR integration)
 ├── store.go             ECSState, NetworkState, VolumeState types
-├── registry.go          Container image registry support
 └── errors.go            AWS error mapping
 ```
 

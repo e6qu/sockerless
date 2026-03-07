@@ -894,9 +894,75 @@ func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 	return pr, nil
 }
 
-// ImageLoad is not supported by the Lambda backend.
+// ImageTag tags an image and syncs the new tag to ECR (non-fatal on failure).
+func (s *Server) ImageTag(source string, repo string, tag string) error {
+	// Delegate to BaseServer for in-memory tagging
+	if err := s.BaseServer.ImageTag(source, repo, tag); err != nil {
+		return err
+	}
+
+	// Build the full ref for ECR sync
+	ref := repo
+	if tag != "" {
+		ref = repo + ":" + tag
+	}
+
+	// Resolve image to get its ID for the manifest
+	img, ok := s.Store.ResolveImage(ref)
+	if !ok {
+		return nil // In-memory tag succeeded, ECR sync is best-effort
+	}
+
+	// Sync the new tag to ECR (non-fatal)
+	registry, ecrRepo, ecrTag := ParseImageRef(ref)
+	s.ecrAuth.OnTag(img.ID, registry, ecrRepo, ecrTag)
+
+	return nil
+}
+
+// ImageRemove removes an image and syncs the removal to ECR (non-fatal on failure).
+func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageDeleteResponse, error) {
+	// Resolve the image first to get tags for ECR cleanup
+	img, ok := s.Store.ResolveImage(name)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "image", ID: name}
+	}
+
+	// Collect ECR refs to remove before BaseServer deletes them
+	type ecrRef struct {
+		registry string
+		repo     string
+		tags     []string
+	}
+	ecrRefs := make(map[string]*ecrRef) // keyed by registry+repo
+	for _, repoTag := range img.RepoTags {
+		registry, repo, imgTag := ParseImageRef(repoTag)
+		if s.ecrAuth.IsCloudRegistry(registry) {
+			key := registry + "/" + repo
+			if _, exists := ecrRefs[key]; !exists {
+				ecrRefs[key] = &ecrRef{registry: registry, repo: repo}
+			}
+			ecrRefs[key].tags = append(ecrRefs[key].tags, imgTag)
+		}
+	}
+
+	// Delegate to BaseServer for in-memory removal
+	result, err := s.BaseServer.ImageRemove(name, force, prune)
+	if err != nil {
+		return result, err
+	}
+
+	// Remove from ECR (best-effort, non-fatal)
+	for _, ref := range ecrRefs {
+		s.ecrAuth.OnRemove(ref.registry, ref.repo, ref.tags)
+	}
+
+	return result, nil
+}
+
+// ImageLoad delegates to BaseServer for in-memory tar parsing.
 func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
-	return nil, &api.NotImplementedError{Message: "image load is not supported by Lambda backend"}
+	return s.BaseServer.ImageLoad(r)
 }
 
 // ImageBuild is not supported by the Lambda backend.

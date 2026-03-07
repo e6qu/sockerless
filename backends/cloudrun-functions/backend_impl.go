@@ -1017,6 +1017,71 @@ func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser,
 	return s.BaseServer.ImagePush(name, tag, auth)
 }
 
+// ImageTag tags a source image with a new repo and tag, then syncs to Artifact Registry.
+// AR sync is best-effort: failures are logged but do not fail the operation.
+func (s *Server) ImageTag(source string, repo string, tag string) error {
+	if err := s.BaseServer.ImageTag(source, repo, tag); err != nil {
+		return err
+	}
+
+	// Best-effort AR sync: re-put manifest with new tag
+	ref := repo
+	if tag != "" {
+		ref = repo + ":" + tag
+	}
+	registry, repoPath, newTag := parseImageRef(ref)
+	if s.arAuth.IsCloudRegistry(registry) {
+		go func() {
+			arToken, err := s.arAuth.GetToken(registry)
+			if err != nil {
+				s.Logger.Warn().Err(err).Str("registry", registry).Msg("AR tag sync: failed to get token")
+				return
+			}
+
+			if err := s.arAuth.OnTag(registry, repoPath, newTag, arToken); err != nil {
+				s.Logger.Warn().Err(err).Str("ref", ref).Msg("AR tag sync: failed to push manifest with new tag")
+			} else {
+				s.Logger.Info().Str("ref", ref).Msg("AR tag sync: successfully synced new tag")
+			}
+		}()
+	}
+
+	return nil
+}
+
+// ImageRemove removes an image in-memory and optionally deletes from Artifact Registry.
+// AR deletion is best-effort: failures are logged but do not fail the operation.
+func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageDeleteResponse, error) {
+	// Check if image references a GCP registry before removing
+	registry, _, _ := parseImageRef(name)
+	isGCP := s.arAuth.IsCloudRegistry(registry)
+
+	result, err := s.BaseServer.ImageRemove(name, force, prune)
+	if err != nil {
+		return result, err
+	}
+
+	// Best-effort AR delete
+	if isGCP {
+		go func() {
+			arToken, err := s.arAuth.GetToken(registry)
+			if err != nil {
+				s.Logger.Warn().Err(err).Str("registry", registry).Msg("AR remove sync: failed to get token")
+				return
+			}
+
+			_, repo, tag := parseImageRef(name)
+			if err := s.arAuth.OnRemove(registry, repo, tag, arToken); err != nil {
+				s.Logger.Warn().Err(err).Str("ref", name).Msg("AR remove sync: request failed")
+			} else {
+				s.Logger.Info().Str("ref", name).Msg("AR remove sync: completed")
+			}
+		}()
+	}
+
+	return result, nil
+}
+
 // Info returns system information enriched with GCP-specific metadata.
 func (s *Server) Info() (*api.BackendInfo, error) {
 	info, err := s.BaseServer.Info()

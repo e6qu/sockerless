@@ -1078,9 +1078,9 @@ func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageD
 	return result, nil
 }
 
-// ImageLoad is not supported by the ECS backend.
+// ImageLoad delegates to BaseServer for in-memory tar parsing.
 func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
-	return nil, &api.NotImplementedError{Message: "image load is not supported by ECS backend"}
+	return s.BaseServer.ImageLoad(r)
 }
 
 // VolumeRemove removes a volume by name.

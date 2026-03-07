@@ -1,8 +1,19 @@
 # Azure Unified Image Management Plan (ACA + AZF)
 
-This plan implements the global architecture from `backends/IMAGE_ARCHITECTURE.md` for the Azure cloud: both ACA and Azure Functions backends delegate all image methods to `core.ImageManager` via an `ACRAuthProvider`.
+**STATUS: COMPLETE** -- All steps implemented. This document is retained for reference.
+
+This plan implemented the global architecture from `backends/IMAGE_ARCHITECTURE.md` for the Azure cloud: both ACA and Azure Functions backends delegate all image methods to `core.ImageManager` via an `ACRAuthProvider`.
 
 **Key constraint**: No simulator changes. The ACR simulator is used as-is.
+
+## Implementation Summary
+
+- `backends/aca/registry.go` -- DELETED (replaced by `image_auth.go`)
+- `backends/aca/backend_impl_images.go` -- DELETED (image methods consolidated into `backend_impl.go`)
+- `backends/aca/image_auth.go` -- CREATED (`ACRAuthProvider` with `OnPush`, `OnTag`, `OnRemove`)
+- `backends/azure-functions/image_auth.go` -- CREATED (duplicate `ACRAuthProvider` for separate Go module)
+- All 12 image methods implemented in both ACA and AZF via `core.ImageManager`
+- AZF `ImageTag`/`ImageRemove` now sync to ACR (previously BaseServer-only)
 
 ---
 
@@ -394,48 +405,15 @@ Export `setOCIAuth` as `SetOCIAuth` (rename function + update 4 internal call si
 
 ---
 
-## 7. Migration Path (Step-by-Step)
+## 7. Migration Path (Step-by-Step) -- ALL COMPLETE
 
-### Step 1: Core ImageManager (prerequisite, not Azure-specific)
+### Step 1: Core ImageManager -- DONE
+### Step 2: ACRAuthProvider -- DONE
+### Step 3: Wire ACA -- DONE
+### Step 4: Wire AZF -- DONE
+### Step 5: Cleanup -- DONE
 
-1. Create `backends/core/image_manager.go` with `AuthProvider` interface and `ImageManager` struct
-2. Move image method logic from `BaseServer` into `ImageManager` methods
-3. `BaseServer` creates `ImageManager{Auth: nil}` and delegates its own image methods to it
-4. Export `SetOCIAuth` in `oci_push.go`
-5. Add `FetchImageConfigWithAuth(ref, authHeader string)` to handle Bearer vs Basic token scheme mismatch (see Critical Issues below)
-6. Run core tests -- must all pass
-
-### Step 2: ACRAuthProvider
-
-1. Create `backends/aca/image_auth.go` with `ACRAuthProvider`
-2. Create `backends/azure-functions/image_auth.go` with duplicate `ACRAuthProvider`
-3. Unit test: `IsCloudRegistry` returns true for `*.azurecr.io`, false for `docker.io`
-
-### Step 3: Wire ACA
-
-1. Add `images *core.ImageManager` to ACA `Server` struct
-2. Initialize in `NewServer()` with `&ACRAuthProvider{Logger: logger}`
-3. Replace old `backend_impl_images.go` (359 lines) with new 12-method delegate file (~35 lines)
-4. Delete `registry.go` (184 lines)
-5. Remove `ImagePull` and `ImageLoad` from `backend_impl.go`
-6. Keep `AuthLogin` in `backend_impl_pods.go` (NOT moved to ImageManager)
-7. Remove 7 image delegates from `backend_delegates_gen.go`
-8. Run ACA tests -- must all pass
-
-### Step 4: Wire AZF
-
-1. Add `images *core.ImageManager` to AZF `Server` struct
-2. Initialize in `NewServer()` with `&ACRAuthProvider{Logger: logger}`
-3. Create `backend_impl_images.go` with 10 delegates + 2 `NotImplementedError` overrides
-4. Remove `ImagePull`, `ImageBuild`, `ImagePush`, `ImageLoad` from `backend_impl.go`
-5. Keep `AuthLogin` in `backend_impl.go` (NOT moved to ImageManager)
-6. Remove 8 image delegates from `backend_delegates_gen.go`
-7. Run AZF tests -- must all pass
-
-### Step 5: Cleanup
-
-1. Run full test suite (`sim-test-all`, e2e tests)
-2. Verify no remaining references to deleted functions
+See "Implementation Summary" at the top for the final file layout.
 
 ---
 

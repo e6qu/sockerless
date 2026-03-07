@@ -4,11 +4,14 @@
 
 The ACA (Azure Container Apps) backend implements `api.Backend` (65 methods). Currently **25 methods** have cloud-native implementations:
 
-In `backend_impl.go` (14 methods):
+In `backend_impl.go` (24 methods):
 - `ContainerCreate`, `ContainerStart`, `ContainerStop`, `ContainerKill`, `ContainerRemove`
 - `ContainerLogs`, `ContainerRestart`, `ContainerPrune`, `ContainerPause`, `ContainerUnpause`
-- `ImagePull`, `ImageLoad`
+- `ImagePull`, `ImageInspect`, `ImageLoad`, `ImageTag`, `ImageList`, `ImageRemove`, `ImageHistory`, `ImagePrune`, `ImageBuild`, `ImagePush`, `ImageSave`, `ImageSearch`
 - `VolumeRemove`, `VolumePrune`
+
+In `image_auth.go`:
+- `ACRAuthProvider` (`IsCloudRegistry`, `GetToken`, `OnPush`, `OnTag`, `OnRemove`) -- implements `core.AuthProvider` for ACR
 
 In `backend_impl_pods.go` (11 methods):
 - `PodStart`, `PodStop`, `PodKill`, `PodRemove`
@@ -119,30 +122,16 @@ The remaining **40 methods** delegate to `s.BaseServer.Method()`.
 - **Implementation**: Returns `NotImplementedError` — ACA containers cannot be snapshotted into images. Validates container exists first.
 - **File**: `backend_impl_pods.go`
 
-### Image Operations
+### Image Operations — ALL DONE (Unified Image Management)
 
-#### ImageBuild (deferred)
-- **BaseServer**: Synthetic Dockerfile-parsed image.
-- **Implementation**: Optional — use ACR Build Tasks for real cloud builds. Currently delegates to BaseServer.
-- **Azure APIs**: `armcontainerregistry.RegistryClient.BeginScheduleRun()`
-- **Dependencies**: Requires ACR instance. Add `SOCKERLESS_ACA_ACR_NAME` config.
+All 12 image methods now delegate to `core.ImageManager` via `ACRAuthProvider` (in `image_auth.go`).
+Image method implementations are consolidated in `backend_impl.go`.
 
-#### ImagePush — DONE
-- **Implementation**: For ACR targets (`*.azurecr.io`), performs real OCI Distribution push (blob upload + manifest PUT). For other registries, delegates to BaseServer (synthetic progress). ACR push failures are non-fatal (logs warning, returns synthetic progress).
-- **File**: `backend_impl_images.go`
-- **Helpers**: `pushToACR`, `uploadBlob`, `setAuthHeader`
-
-#### ImageTag — DONE
-- **Implementation**: Delegates to BaseServer for in-memory tagging. For ACR targets, async goroutine syncs tag via manifest GET + PUT. Non-fatal on ACR errors.
-- **File**: `backend_impl_images.go`
-
-#### ImageRemove — DONE
-- **Implementation**: Delegates to BaseServer for in-memory removal. For images with ACR repo tags, async goroutine deletes manifest via HEAD (get digest) + DELETE. Non-fatal on ACR errors.
-- **File**: `backend_impl_images.go`
-
-#### ImageLoad — DONE
-- **Implementation**: Delegates to BaseServer to allow `docker save | docker load` round-trips (was previously NotImplementedError).
-- **File**: `backend_impl.go`
+- **ImagePull** — DONE. `core.ImageManager` with ACR auth via `ACRAuthProvider.GetToken()`.
+- **ImagePush** — DONE. `ACRAuthProvider.OnPush()` for ACR targets, BaseServer fallback for others.
+- **ImageTag** — DONE. `ACRAuthProvider.OnTag()` syncs tags to ACR.
+- **ImageRemove** — DONE. `ACRAuthProvider.OnRemove()` deletes manifests from ACR (graceful degradation).
+- **ImageBuild, ImageLoad, ImageInspect, ImageList, ImageHistory, ImagePrune, ImageSave, ImageSearch** — DONE. All delegate to `core.ImageManager`.
 
 ---
 
@@ -150,11 +139,12 @@ The remaining **40 methods** delegate to `s.BaseServer.Method()`.
 
 - **Container**: Inspect, List, Wait, Rename, Resize, Changes, GetArchive, PutArchive, StatPath
 - **Exec**: Inspect, Resize
-- **Images**: Inspect, List, Remove, History, Prune, Tag, Save, Search
 - **Networks**: Create, List, Inspect, Connect, Disconnect, Remove, Prune
 - **Volumes**: List, Inspect
 - **Pods**: Create, List, Inspect, Exists
 - **System**: Df, Events
+
+Note: All 12 image methods are now implemented via `core.ImageManager` (moved out of P2).
 
 ---
 
@@ -189,15 +179,16 @@ New Azure SDK client, integration with job spec builder.
 New Azure Monitor metrics client.
 **Effort**: Medium
 
-### Phase 5: Registry Operations — DONE
-**AuthLogin** — DONE (Round 2, ACR warning + BaseServer delegation)
-**ImagePush** — DONE (OCI push for ACR targets, BaseServer fallback)
-**ImageTag** — DONE (BaseServer + async ACR sync)
-**ImageRemove** — DONE (BaseServer + async ACR delete)
-**ImageLoad** — DONE (BaseServer delegation)
-**ImageBuild** — deferred (delegates to BaseServer)
+### Phase 5: Registry Operations — DONE (Unified Image Management)
+**AuthLogin** — DONE (ACR warning + BaseServer delegation)
+**ImagePush** — DONE (OCI push for ACR targets via `ACRAuthProvider.OnPush`, BaseServer fallback)
+**ImageTag** — DONE (ImageManager + `ACRAuthProvider.OnTag` for ACR sync)
+**ImageRemove** — DONE (ImageManager + `ACRAuthProvider.OnRemove` for ACR delete)
+**ImageLoad** — DONE (ImageManager delegation)
+**ImageBuild** — DONE (ImageManager delegation)
+All 12 image methods — DONE (delegated to `core.ImageManager` via `ACRAuthProvider` in `image_auth.go`)
 
-ACR integration for push/tag/remove implemented in `backend_impl_images.go`.
+All image methods consolidated in `backend_impl.go`. Old `backend_impl_images.go` and `registry.go` deleted.
 **Effort**: Complete
 
 ### Phase 6: Container Update
@@ -212,7 +203,8 @@ Propagate resource limits to ACA Jobs.
 |--------|-------|---------|
 | `azquery.MetricsClient` | 4 | `github.com/Azure/azure-sdk-for-go/sdk/monitor/azquery` |
 | `armStorage.FileSharesClient` | 3 | `github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage` |
-| `armcontainerregistry.RegistriesClient` | 5 | `github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerregistry/armcontainerregistry` |
+
+Note: `armcontainerregistry.RegistriesClient` (Phase 5) is no longer needed -- ACR integration now uses OCI Distribution API via `ACRAuthProvider` in `image_auth.go`.
 
 ### Recommended Order
 1 → 2 → 3 → 4 → 6 → 5

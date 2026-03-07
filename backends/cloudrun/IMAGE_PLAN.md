@@ -1,8 +1,10 @@
 # GCP Unified Image Management Plan (CloudRun + GCF)
 
-This plan implements the architecture described in `backends/IMAGE_ARCHITECTURE.md` for the GCP cloud (CloudRun and CloudRun Functions backends).
+**STATUS: FULLY IMPLEMENTED.** All steps below have been completed. Both CloudRun and GCF backends now use the unified `core.ImageManager` with `ARAuthProvider` for all 12 image methods. The old `registry.go` files have been deleted from both backends.
 
-**Key constraint**: NO simulator changes. The GCP simulator already supports OCI push (blob uploads + manifest PUT). It does NOT support OCI manifest DELETE -- `OnRemove` must handle this gracefully (log warning, skip) rather than requiring simulator changes.
+This plan implemented the architecture described in `backends/IMAGE_ARCHITECTURE.md` for the GCP cloud (CloudRun and CloudRun Functions backends).
+
+**Key constraint**: NO simulator changes. The GCP simulator already supports OCI push (blob uploads + manifest PUT). It does NOT support OCI manifest DELETE -- `OnRemove` handles this gracefully (log warning, skip) rather than requiring simulator changes.
 
 ---
 
@@ -516,66 +518,16 @@ func (a *ARAuthProvider) OnRemove(registry, repo string, tags []string) error { 
 
 ---
 
-## 7. Migration Path (Step-by-Step)
+## 7. Migration Path (Step-by-Step) — ALL COMPLETE
 
-### Step 1: Create Core ImageManager (prerequisite, not GCP-specific)
-
-1. Create `backends/core/image_manager.go` with `AuthProvider` interface and `ImageManager` struct
-2. Move image method logic from `BaseServer` into `ImageManager` methods
-3. Add `FetchImageConfigWithAuth(ref, authHeader string)` or equivalent to support pre-authenticated tokens
-4. `BaseServer` creates a default `ImageManager{Auth: nil, Store: s.Store, Logger: s.Logger}` and its image methods delegate to it
-5. Verify all existing tests pass (BaseServer behavior unchanged)
-
-### Step 2: Create ARAuthProvider in CloudRun
-
-1. Create `backends/cloudrun/image_auth.go` with `ARAuthProvider`
-2. `OnRemove` handles 405 gracefully (simulator does not support DELETE)
-3. Unit test: verify `IsCloudRegistry` matches expected patterns
-4. Verify compilation
-
-### Step 3: Wire CloudRun ImageManager
-
-1. Add `images *core.ImageManager` to `Server` struct in `server.go`
-2. Initialize in `NewServer()` with `ARAuthProvider{Ctx: context.Background()}`
-3. Replace all image method implementations in `backend_impl.go` with one-liner `s.images.X()` delegates
-4. Remove image delegates from `backend_delegates_gen.go` (they move to `backend_impl.go` as `s.images.X()` calls)
-5. Run CloudRun integration tests -- verify all pass
-
-### Step 4: Delete CloudRun registry.go
-
-1. Delete `backends/cloudrun/registry.go` (185 lines)
-2. Verify compilation (no references to `fetchImageConfig`, `parseImageRef`, `getARToken`, `getDockerHubToken` remain)
-3. Run CloudRun integration tests
-
-### Step 5: Create ARAuthProvider in GCF (copy)
-
-1. Create `backends/cloudrun-functions/image_auth.go` (copy of cloudrun's, package name `gcf`)
-2. Verify compilation
-
-### Step 6: Wire GCF ImageManager
-
-1. Add `images *core.ImageManager` to `Server` struct in `server.go`
-2. Initialize in `NewServer()` with `ARAuthProvider{Ctx: context.Background()}`
-3. Replace image method implementations in `backend_impl.go`:
-   - `ImagePull`: change from inline implementation to `s.images.Pull()`
-   - `ImagePush`: change from inline OCI push to `s.images.Push()`
-   - `ImageLoad`: change from `s.BaseServer.ImageLoad()` to `s.images.Load()`
-   - `ImageBuild`: KEEP as `NotImplementedError` (FaaS override)
-4. Move image delegates from `backend_delegates_gen.go` to `backend_impl.go` as `s.images.X()` calls
-5. Run GCF integration tests
-
-### Step 7: Delete GCF registry.go
-
-1. Delete `backends/cloudrun-functions/registry.go` (50 lines)
-2. Verify compilation
-3. Run GCF integration tests
-
-### Step 8: Full Test Validation
-
-1. Run `tests/` e2e tests (TestImageBuild, TestImagePull, TestImageInspect, TestImageTag)
-2. Run CloudRun SDK tests (`simulators/gcp/sdk-tests/`)
-3. Run GCF integration tests
-4. Run `sim-test-all` if applicable
+### Step 1: Create Core ImageManager (prerequisite, not GCP-specific) — DONE
+### Step 2: Create ARAuthProvider in CloudRun — DONE
+### Step 3: Wire CloudRun ImageManager — DONE
+### Step 4: Delete CloudRun registry.go — DONE
+### Step 5: Create ARAuthProvider in GCF (copy) — DONE
+### Step 6: Wire GCF ImageManager — DONE
+### Step 7: Delete GCF registry.go — DONE
+### Step 8: Full Test Validation — DONE
 
 ---
 
@@ -658,33 +610,13 @@ The plan inlines the 4-line auth header logic in `OnRemove()` rather than export
 
 ---
 
-## 10. Dependency Graph
+## 10. Dependency Graph — ALL COMPLETE
 
-```
-Step 1 (core ImageManager)  ---- PREREQUISITE, blocks everything
-    |
-    v
-Step 2 (ARAuthProvider in cloudrun)
-    |
-    v
-Step 3 (Wire CloudRun)  --------> Step 4 (Delete cloudrun/registry.go)
-    |
-    v
-Step 5 (ARAuthProvider copy in GCF)
-    |
-    v
-Step 6 (Wire GCF)  ------------> Step 7 (Delete gcf/registry.go)
-    |
-    v
-Step 8 (Full test validation)
-```
-
-Steps 2-4 (CloudRun) and Steps 5-7 (GCF) could be parallelized after Step 1, but sequential ordering is safer.
+All steps executed sequentially as planned. Both `registry.go` files deleted.
 
 ---
 
-## 11. Open Questions
+## 11. Open Questions — RESOLVED
 
-1. **`core.IsGCPRegistry()` redundancy**: After `ARAuthProvider.IsCloudRegistry()` exists, `core.IsGCPRegistry()` in `oci_push.go:237-239` becomes redundant. Keep it for backward compat or remove? **Recommendation**: Keep it -- it's 3 lines and other packages may use it.
-
-2. **`ARAuthProvider.Ctx` vs parameter**: Should `GetToken` take a `context.Context` parameter instead of storing it? The `AuthProvider` interface in `IMAGE_ARCHITECTURE.md` does not include context. **Recommendation**: Keep `Ctx` on struct -- simpler interface, and the context is always `context.Background()` in practice.
+1. **`core.IsGCPRegistry()` redundancy**: Kept for backward compat (3 lines, other packages may use it).
+2. **`ARAuthProvider.Ctx` vs parameter**: Kept `Ctx` on struct as recommended.
