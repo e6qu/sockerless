@@ -130,10 +130,6 @@ func (s *Server) ImageTag(source string, repo string, tag string) error {
 	return s.BaseServer.ImageTag(source, repo, tag)
 }
 
-func (s *Server) Info() (*api.BackendInfo, error) {
-	return s.BaseServer.Info()
-}
-
 func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error {
 	return s.BaseServer.NetworkConnect(id, req)
 }
@@ -184,10 +180,6 @@ func (s *Server) PodList(opts api.PodListOptions) ([]*api.PodListEntry, error) {
 
 func (s *Server) PodRemove(name string, force bool) error {
 	return s.BaseServer.PodRemove(name, force)
-}
-
-func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
-	return s.BaseServer.PodStart(name)
 }
 
 func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, error) {

@@ -2,13 +2,14 @@
 
 ## Overview
 
-The Cloud Run Functions backend implements `api.Backend` (65 methods). Currently **12 methods** have cloud-native implementations in `backend_impl.go`:
+The Cloud Run Functions backend implements `api.Backend` (65 methods). Currently **14 methods** have cloud-native implementations in `backend_impl.go`:
 
 - `ContainerCreate`, `ContainerStart`, `ContainerStop`, `ContainerKill`, `ContainerRemove`
 - `ContainerLogs`, `ContainerRestart`, `ContainerPrune`, `ContainerPause`, `ContainerUnpause`
 - `ImagePull`, `ImageLoad`
+- `PodStart` (P0 — DONE), `Info` (P1 — DONE)
 
-The remaining **53 methods** delegate to `s.BaseServer.Method()`.
+The remaining **51 methods** delegate to `s.BaseServer.Method()`.
 
 Cloud Run Functions is a FaaS platform. Many container/image operations have no direct equivalent.
 
@@ -22,38 +23,16 @@ Cloud Run Functions is a FaaS platform. Many container/image operations have no 
 
 ---
 
-## P0 — Critical (1 method)
+## P0 — Critical (1 method) — DONE
 
-### PodStart
-- **BaseServer behavior**: Sets container state to "running" and emits events but does NOT invoke the Cloud Run Function. The function's HTTP trigger is never called.
-- **Why wrong**: Containers appear "running" but no actual function execution occurs.
-- **Implementation**: Override to iterate pod containers and call `s.ContainerStart(cid)` for each, which triggers the GCF HTTP invocation.
-- **No new GCP APIs needed** — uses existing ContainerStart.
-
-```go
-func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
-    pod, ok := s.Store.Pods.GetPod(name)
-    if !ok {
-        return nil, &api.NotFoundError{Resource: "pod", ID: name}
-    }
-    var errs []string
-    for _, cid := range pod.ContainerIDs {
-        c, ok := s.Store.Containers.Get(cid)
-        if !ok || c.State.Running {
-            continue
-        }
-        if err := s.ContainerStart(cid); err != nil {
-            errs = append(errs, err.Error())
-        }
-    }
-    s.Store.Pods.SetStatus(pod.ID, "running")
-    return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
-}
-```
+### PodStart — DONE
+- **Status**: Implemented in `backend_impl.go` (lines 889-909).
+- **What it does**: Iterates pod containers, skips already-running or missing ones, calls `s.ContainerStart(cid)` for each (triggering GCF HTTP invocation), collects errors, sets pod status to "running".
+- **Edge cases handled**: pod not found (NotFoundError), already-running containers (skipped), container not in store (skipped), error collection (returned in response), nil slice normalized to `[]string{}`.
 
 ---
 
-## P1 — Important (4 methods)
+## P1 — Important (4 methods, 2 DONE)
 
 ### ContainerStats
 - **BaseServer**: Returns synthetic stats with zero values.
@@ -61,10 +40,10 @@ func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
 - **GCP APIs**: `monitoring.googleapis.com/v3` — `projects.timeSeries.list`
 - **Trade-off**: Cloud Monitoring provides ~60s granularity vs Docker's real-time. Defer unless stats accuracy is a user requirement.
 
-### Info
-- **BaseServer**: Returns generic info from `Desc` fields.
-- **Implementation**: Enrich with GCP project ID, region, function count via `functions.ListFunctions`.
-- **GCP APIs**: `functions.ListFunctions` (already available)
+### Info — DONE
+- **Status**: Implemented in `backend_impl.go` (lines 912-920).
+- **What it does**: Calls `s.BaseServer.Info()`, then enriches `Name` with GCP project and region metadata.
+- **Note**: Does not query `ListFunctions` for function count (simpler approach, avoids extra API call). Can be enhanced later if needed.
 
 ### ImageBuild
 - **BaseServer**: Parses Dockerfile, creates synthetic in-memory image.
@@ -106,11 +85,11 @@ Df, Events, AuthLogin — all adequate with in-memory implementations.
 
 ## Implementation Phases
 
-### Phase 1: P0 Fix
-1. **PodStart** — Override to call `s.ContainerStart()` per container. ~30 lines, 1 hour.
+### Phase 1: P0 Fix — DONE
+1. **PodStart** — Override to call `s.ContainerStart()` per container. ~20 lines. DONE.
 
-### Phase 2: Low-Hanging P1
-2. **Info** — Enrich with function count and project info. ~40 lines, 2 hours.
+### Phase 2: Low-Hanging P1 — DONE
+2. **Info** — Enrich with project/region metadata. ~9 lines. DONE.
 
 ### Phase 3: Optional Enhancements (defer)
 3. **ContainerStats** — Cloud Monitoring integration. ~120 lines + new dependency.
@@ -123,4 +102,4 @@ Df, Events, AuthLogin — all adequate with in-memory implementations.
 | Cloud Monitoring | `cloud.google.com/go/monitoring/apiv3` |
 
 ### Recommended Order
-1 → 2 → 3 (if needed)
+3 (if needed)

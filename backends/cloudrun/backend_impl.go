@@ -1015,6 +1015,177 @@ func (s *Server) VolumeRemove(name string, force bool) error {
 	return nil
 }
 
+// ExecStart checks for an agent connection before allowing exec.
+// Cloud Run Jobs do not support local exec — an agent must be connected.
+func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
+	exec, ok := s.Store.Execs.Get(id)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "exec instance", ID: id}
+	}
+
+	c, ok := s.Store.Containers.Get(exec.ContainerID)
+	if !ok {
+		return nil, &api.ConflictError{
+			Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID),
+		}
+	}
+
+	// If the container has an agent connected, delegate to BaseServer which
+	// will proxy through the agent's exec driver.
+	if c.AgentAddress != "" {
+		return s.BaseServer.ExecStart(id, opts)
+	}
+
+	return nil, &api.NotImplementedError{
+		Message: "exec requires an agent connection; Cloud Run Jobs do not support local exec",
+	}
+}
+
+// ContainerExport is not supported by Cloud Run backend.
+func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {
+	if _, ok := s.Store.ResolveContainerID(ref); !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: ref}
+	}
+	return nil, &api.NotImplementedError{Message: "container export is not supported by Cloud Run backend: no container filesystem access"}
+}
+
+// ContainerCommit is not supported by Cloud Run backend.
+func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
+	if _, ok := s.Store.ResolveContainerID(req.Container); !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
+	}
+	return nil, &api.NotImplementedError{Message: "container commit is not supported by Cloud Run backend: cannot create images from running Cloud Run containers"}
+}
+
+// PodStart starts all containers in a pod by calling ContainerStart for each.
+// This triggers the Cloud Run Job creation via the deferred-start mechanism.
+func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
+	pod, ok := s.Store.Pods.GetPod(name)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "pod", ID: name}
+	}
+
+	var errs []string
+	for _, cid := range pod.ContainerIDs {
+		c, ok := s.Store.Containers.Get(cid)
+		if !ok || c.State.Running {
+			continue
+		}
+		if err := s.ContainerStart(cid); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", cid, err))
+		}
+	}
+
+	s.Store.Pods.SetStatus(pod.ID, "running")
+	if errs == nil {
+		errs = []string{}
+	}
+	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+}
+
+// PodStop stops all containers in a pod by calling ContainerStop for each.
+// This cancels the Cloud Run executions.
+func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, error) {
+	pod, ok := s.Store.Pods.GetPod(name)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "pod", ID: name}
+	}
+
+	var errs []string
+	for _, cid := range pod.ContainerIDs {
+		c, ok := s.Store.Containers.Get(cid)
+		if !ok || !c.State.Running {
+			continue
+		}
+		if err := s.ContainerStop(cid, timeout); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", cid, err))
+		}
+	}
+
+	s.Store.Pods.SetStatus(pod.ID, "stopped")
+	if errs == nil {
+		errs = []string{}
+	}
+	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+}
+
+// PodKill sends a signal to all containers in a pod by calling ContainerKill for each.
+// This cancels the Cloud Run executions.
+func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, error) {
+	pod, ok := s.Store.Pods.GetPod(name)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "pod", ID: name}
+	}
+
+	if signal == "" {
+		signal = "SIGKILL"
+	}
+
+	var errs []string
+	for _, cid := range pod.ContainerIDs {
+		c, ok := s.Store.Containers.Get(cid)
+		if !ok || !c.State.Running {
+			continue
+		}
+		if err := s.ContainerKill(cid, signal); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", cid, err))
+		}
+	}
+
+	s.Store.Pods.SetStatus(pod.ID, "exited")
+	if errs == nil {
+		errs = []string{}
+	}
+	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+}
+
+// PodRemove removes a pod and its containers by calling ContainerRemove for each.
+// This deletes the Cloud Run Jobs.
+func (s *Server) PodRemove(name string, force bool) error {
+	pod, ok := s.Store.Pods.GetPod(name)
+	if !ok {
+		return &api.NotFoundError{Resource: "pod", ID: name}
+	}
+
+	// Without force, reject if any containers are running
+	if !force {
+		for _, cid := range pod.ContainerIDs {
+			c, ok := s.Store.Containers.Get(cid)
+			if ok && c.State.Running {
+				return &api.ConflictError{
+					Message: fmt.Sprintf("pod %s has running containers, cannot remove without force", name),
+				}
+			}
+		}
+	}
+
+	// Remove each container via the typed method (cleans up Cloud Run resources)
+	for _, cid := range pod.ContainerIDs {
+		if _, ok := s.Store.Containers.Get(cid); !ok {
+			continue
+		}
+		_ = s.ContainerRemove(cid, force)
+	}
+
+	s.Store.Pods.DeletePod(pod.ID)
+	return nil
+}
+
+// Info returns system information enriched with GCP project/region metadata.
+func (s *Server) Info() (*api.BackendInfo, error) {
+	info, err := s.BaseServer.Info()
+	if err != nil {
+		return nil, err
+	}
+
+	// Enrich with GCP-specific information
+	info.OperatingSystem = fmt.Sprintf("Google Cloud Run (%s/%s)", s.config.Project, s.config.Region)
+	info.Driver = "cloudrun-jobs"
+	info.KernelVersion = fmt.Sprintf("cloudrun/%s/%s", s.config.Project, s.config.Region)
+
+	return info, nil
+}
+
 // VolumePrune removes unused volumes.
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
 	var deleted []string

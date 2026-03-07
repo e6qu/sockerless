@@ -10,14 +10,6 @@ import (
 	"io"
 )
 
-func (s *Server) AuthLogin(req *api.AuthRequest) (*api.AuthResponse, error) {
-	return s.BaseServer.AuthLogin(req)
-}
-
-func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	return s.BaseServer.ContainerAttach(id, opts)
-}
-
 func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) {
 	return s.BaseServer.ContainerChanges(id)
 }
@@ -90,10 +82,6 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 	return s.BaseServer.ExecStart(id, opts)
 }
 
-func (s *Server) ImageBuild(opts api.ImageBuildOptions, context io.Reader) (io.ReadCloser, error) {
-	return s.BaseServer.ImageBuild(opts, context)
-}
-
 func (s *Server) ImageHistory(name string) ([]*api.ImageHistoryEntry, error) {
 	return s.BaseServer.ImageHistory(name)
 }
@@ -110,10 +98,6 @@ func (s *Server) ImagePrune(filters map[string][]string) (*api.ImagePruneRespons
 	return s.BaseServer.ImagePrune(filters)
 }
 
-func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
-	return s.BaseServer.ImagePush(name, tag, auth)
-}
-
 func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageDeleteResponse, error) {
 	return s.BaseServer.ImageRemove(name, force, prune)
 }
@@ -128,10 +112,6 @@ func (s *Server) ImageSearch(term string, limit int, filters map[string][]string
 
 func (s *Server) ImageTag(source string, repo string, tag string) error {
 	return s.BaseServer.ImageTag(source, repo, tag)
-}
-
-func (s *Server) Info() (*api.BackendInfo, error) {
-	return s.BaseServer.Info()
 }
 
 func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error {

@@ -887,3 +887,63 @@ func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 	return nil, &api.NotImplementedError{Message: "image load is not supported by Lambda backend"}
 }
+
+// ImageBuild is not supported by the Lambda backend.
+// Lambda requires pre-built images stored in ECR.
+func (s *Server) ImageBuild(opts api.ImageBuildOptions, buildContext io.Reader) (io.ReadCloser, error) {
+	return nil, &api.NotImplementedError{
+		Message: "Lambda backend does not support image build; push pre-built images to ECR and use the ECR image URI",
+	}
+}
+
+// AuthLogin validates login credentials.
+// For ECR registries, logs a warning that credentials should be obtained via
+// `aws ecr get-login-password`. For all other registries, delegates to BaseServer.
+func (s *Server) AuthLogin(req *api.AuthRequest) (*api.AuthResponse, error) {
+	if strings.HasSuffix(req.ServerAddress, ".amazonaws.com") &&
+		strings.Contains(req.ServerAddress, ".dkr.ecr.") {
+		// ECR registry — store credentials via BaseServer but warn that
+		// ECR auth tokens should be obtained via `aws ecr get-login-password`.
+		s.Logger.Warn().
+			Str("registry", req.ServerAddress).
+			Msg("ECR login: credentials stored locally; use `aws ecr get-login-password` for production")
+		return s.BaseServer.AuthLogin(req)
+	}
+	return s.BaseServer.AuthLogin(req)
+}
+
+// Info returns system information with Lambda-appropriate values.
+func (s *Server) Info() (*api.BackendInfo, error) {
+	info, err := s.BaseServer.Info()
+	if err != nil {
+		return nil, err
+	}
+	info.KernelVersion = "5.10.0-aws-lambda"
+	info.OperatingSystem = "AWS Lambda"
+	return info, nil
+}
+
+// ContainerAttach attaches to a container's streams.
+// Only supported when a reverse agent is connected; otherwise Lambda functions
+// are not interactive.
+func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
+	cid, ok := s.Store.ResolveContainerID(id)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: id}
+	}
+	c, _ := s.Store.Containers.Get(cid)
+	if c.AgentAddress != "" {
+		return s.BaseServer.ContainerAttach(id, opts)
+	}
+	return nil, &api.NotImplementedError{
+		Message: "Lambda backend does not support attach without a connected agent",
+	}
+}
+
+// ImagePush is not supported by the Lambda backend.
+// Images should be pushed directly to ECR using the AWS CLI or SDK.
+func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
+	return nil, &api.NotImplementedError{
+		Message: "Lambda backend does not support image push; push images directly to ECR",
+	}
+}

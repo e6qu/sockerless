@@ -882,3 +882,39 @@ func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 	return nil, &api.NotImplementedError{Message: "image load is not supported by Cloud Run Functions backend"}
 }
+
+// PodStart starts all containers in a pod by calling ContainerStart for each,
+// which triggers the GCF HTTP invocation. The BaseServer implementation only
+// sets container state to "running" without invoking the function.
+func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
+	pod, ok := s.Store.Pods.GetPod(name)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "pod", ID: name}
+	}
+	var errs []string
+	for _, cid := range pod.ContainerIDs {
+		c, ok := s.Store.Containers.Get(cid)
+		if !ok || c.State.Running {
+			continue
+		}
+		if err := s.ContainerStart(cid); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	if errs == nil {
+		errs = []string{}
+	}
+	s.Store.Pods.SetStatus(pod.ID, "running")
+	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+}
+
+// Info returns system information enriched with GCP-specific metadata.
+func (s *Server) Info() (*api.BackendInfo, error) {
+	info, err := s.BaseServer.Info()
+	if err != nil {
+		return nil, err
+	}
+	// Enrich with GCP project and region
+	info.Name = fmt.Sprintf("%s (project=%s, region=%s)", info.Name, s.config.Project, s.config.Region)
+	return info, nil
+}

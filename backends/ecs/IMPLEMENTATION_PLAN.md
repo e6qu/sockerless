@@ -2,33 +2,37 @@
 
 ## Overview
 
-The ECS backend implements `api.Backend` (65 methods). Currently **14 methods** have real cloud-native implementations in `backend_impl.go`:
+The ECS backend implements `api.Backend` (65 methods). Currently **20 methods** have real cloud-native implementations in `backend_impl.go`:
 
 - `ContainerCreate`, `ContainerStart`, `ContainerStop`, `ContainerKill`, `ContainerRemove`
 - `ContainerLogs`, `ContainerRestart`, `ContainerPrune`, `ContainerPause`, `ContainerUnpause`
 - `ImagePull`, `ImageLoad`
 - `VolumeRemove`, `VolumePrune`
+- `ExecStart` (**DONE** — agent check, delegates or returns NotImplementedError)
+- `PodStart` (**DONE** — calls ContainerStart per container)
+- `PodStop` (**DONE** — calls ContainerStop per container)
+- `PodKill` (**DONE** — calls ContainerKill per container)
+- `PodRemove` (**DONE** — calls ContainerRemove per container, checks running when !force, deletes pod)
+- `Info` (**DONE** — enriches with ecs:DescribeClusters data, non-fatal on AWS errors)
 
-The remaining **51 methods** in `backend_delegates_gen.go` delegate to `s.BaseServer.Method()`.
+The remaining **45 methods** in `backend_delegates_gen.go` delegate to `s.BaseServer.Method()`.
 
 ## Priority Summary
 
 | Priority | Count | Description |
 |----------|-------|-------------|
-| P0 | 1 | BaseServer implementation is actively wrong for ECS |
-| P1 | 19 | Works but misses cloud-specific features |
+| P0 | ~~1~~ 0 | BaseServer implementation is actively wrong for ECS |
+| P1 | ~~19~~ 14 | Works but misses cloud-specific features |
 | P2 | 31 | BaseServer implementation is adequate |
 
 ---
 
 ## P0 — Critical (1 method)
 
-### ExecStart
-- **BaseServer behavior**: Runs command via `s.Drivers.Exec.Exec()` using the process/synthetic driver. Executes locally, not inside the Fargate task.
-- **Why wrong**: For ECS containers without a connected agent, the command executes locally on the backend host, not inside the remote Fargate task.
-- **Real implementation**: Check `c.AgentAddress`. If set, delegate to BaseServer (agent driver handles it). If no agent, use `ecs:ExecuteCommand` API with SSM Session Manager for I/O streaming.
-- **AWS APIs**: `ecs:ExecuteCommand`, SSM Session Manager WebSocket
-- **Dependencies**: Requires `enableExecuteCommand: true` in task definition. Add to `registerTaskDefinition`.
+### ExecStart — DONE
+- **Implementation**: Checks agent connection. If agent connected, delegates to BaseServer. If no agent, returns `NotImplementedError` (ECS ExecuteCommand/SSM not yet supported).
+- ~~**BaseServer behavior**: Runs command via `s.Drivers.Exec.Exec()` using the process/synthetic driver. Executes locally, not inside the Fargate task.~~
+- **Future**: Add `ecs:ExecuteCommand` API with SSM Session Manager for I/O streaming when no agent is connected.
 
 ---
 
@@ -117,25 +121,22 @@ The remaining **51 methods** in `backend_delegates_gen.go` delegate to `s.BaseSe
 
 ### Pods
 
-#### PodStart
-- **BaseServer**: Marks containers as running in-memory only.
-- **Why incomplete**: Does not launch an ECS task.
-- **Implementation**: Collect pod containers, call `startMultiContainerTaskTyped` to create combined task definition and run task.
+#### PodStart — DONE
+- **Implementation**: Iterates pod containers, calls `s.ContainerStart(cid)` for each non-running container, collects errors, sets pod status to "running" on success.
 
-#### PodStop / PodKill
-- **BaseServer**: Force-stops in-memory only.
-- **Implementation**: Look up shared TaskARN, call `ecs:StopTask`, then update in-memory state.
+#### PodStop — DONE
+- **Implementation**: Iterates pod containers, calls `s.ContainerStop(cid, timeout)` for each running container, filters out NotModifiedError, sets pod status to "stopped".
 
-#### PodRemove
-- **BaseServer**: Removes from in-memory store only.
-- **Implementation**: Deregister task definitions, stop running tasks, mark cleaned up, then remove from store.
-- **AWS APIs**: `ecs:StopTask`, `ecs:DeregisterTaskDefinition`
+#### PodKill — DONE
+- **Implementation**: Iterates pod containers, calls `s.ContainerKill(cid, signal)` for each running container (defaults signal to SIGKILL), sets pod status to "exited".
+
+#### PodRemove — DONE
+- **Implementation**: Checks for running containers when `force=false` (returns ConflictError). Calls `s.ContainerRemove(cid, force)` for each container (handles ECS task stop, task def deregister, registry cleanup). Deletes pod at the end.
 
 ### System
 
-#### Info
-- **BaseServer**: Returns in-memory counts with static descriptor.
-- **Implementation**: Call `ecs:DescribeClusters` for `runningTasksCount` and cluster capacity. Merge with in-memory counts.
+#### Info — DONE
+- **Implementation**: Gets base info from BaseServer, enriches with `ecs:DescribeClusters` (running task count). AWS errors are non-fatal (logs warning, returns base info).
 
 ---
 
@@ -160,9 +161,9 @@ These methods work correctly with BaseServer delegation:
 Create `refreshTaskStatus()` helper. Override ContainerInspect, ContainerList, ContainerWait.
 **Effort**: Medium
 
-### Phase B: ECS Execute Command / Exec (2 methods)
-Add `EnableExecuteCommand` to config and task definition. Override ExecCreate (validation), ExecStart (ECS Execute Command fallback).
-**Effort**: High (SSM WebSocket client)
+### Phase B: ECS Execute Command / Exec (2 methods) — ExecStart DONE
+ExecStart implemented with agent check + NotImplementedError fallback. ExecCreate validation and full ECS ExecuteCommand/SSM integration remain future work.
+**Effort**: High (SSM WebSocket client) for full implementation
 
 ### Phase C: Network Isolation (6 methods)
 Override NetworkCreate/Remove/Prune/Connect/Disconnect/Inspect. Create Security Groups, wire into task launch.
@@ -172,12 +173,12 @@ Override NetworkCreate/Remove/Prune/Connect/Disconnect/Inspect. Create Security 
 Override VolumeCreate. Create EFS Access Points, wire into task definitions.
 **Effort**: Medium
 
-### Phase E: Pod Lifecycle (4 methods)
-Override PodStart/Stop/Kill/Remove. Use existing multi-container infrastructure.
+### Phase E: Pod Lifecycle (4 methods) — DONE
+PodStart/Stop/Kill/Remove all implemented. Each delegates to the corresponding Container method per pod member, with proper error collection, force checks, and pod status updates.
 **Effort**: Medium
 
-### Phase F: System Info and Stats (2 methods)
-Override Info (DescribeClusters), ContainerStats (Container Insights).
+### Phase F: System Info and Stats (2 methods) — Info DONE
+Info implemented (DescribeClusters enrichment, non-fatal on AWS errors). ContainerStats (Container Insights) remains future work.
 **Effort**: Low
 
 ### Phase G: Image Build (1 method)

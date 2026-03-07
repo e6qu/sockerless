@@ -2,21 +2,27 @@
 
 ## Overview
 
-The ACA (Azure Container Apps) backend implements `api.Backend` (65 methods). Currently **14 methods** have cloud-native implementations in `backend_impl.go`:
+The ACA (Azure Container Apps) backend implements `api.Backend` (65 methods). Currently **21 methods** have cloud-native implementations:
 
+In `backend_impl.go` (14 methods):
 - `ContainerCreate`, `ContainerStart`, `ContainerStop`, `ContainerKill`, `ContainerRemove`
 - `ContainerLogs`, `ContainerRestart`, `ContainerPrune`, `ContainerPause`, `ContainerUnpause`
 - `ImagePull`, `ImageLoad`
 - `VolumeRemove`, `VolumePrune`
 
-The remaining **51 methods** delegate to `s.BaseServer.Method()`.
+In `backend_impl_pods.go` (7 methods):
+- `PodStart`, `PodStop`, `PodKill`, `PodRemove`
+- `ExecCreate`, `ExecStart`
+- `Info`
+
+The remaining **44 methods** delegate to `s.BaseServer.Method()`.
 
 ## Priority Summary
 
 | Priority | Count | Description |
 |----------|-------|-------------|
 | P0 | 0 | No actively broken methods |
-| P1 | 13 | Works but misses cloud-specific features |
+| P1 | 13 (7 DONE, 6 remaining) | Works but misses cloud-specific features |
 | P2 | 38 | BaseServer implementation is adequate |
 
 ---
@@ -25,24 +31,28 @@ The remaining **51 methods** delegate to `s.BaseServer.Method()`.
 
 ### Pod Lifecycle (4 methods) — HIGH IMPACT
 
-#### PodStart
+#### PodStart — DONE
 - **BaseServer**: Marks containers running in-memory. Does NOT create ACA Jobs.
 - **Implementation**: Override to call `s.ContainerStart()` per container. Deferred-start mechanism triggers `startMultiContainerJobTyped` automatically.
 - **Azure APIs**: Via ContainerStart → `Jobs.BeginCreateOrUpdate` + `Jobs.BeginStart`
+- **File**: `backend_impl_pods.go`
 
-#### PodStop
+#### PodStop — DONE
 - **BaseServer**: In-memory state changes only. Does NOT stop ACA Job execution.
-- **Implementation**: Override to stop the ACA Job execution for the pod's main container via `s.stopExecution()`, then update all container states.
-- **Azure APIs**: `Jobs.BeginStopExecution()`
+- **Implementation**: Override to call `s.ContainerStop()` per container, which stops ACA Job executions.
+- **Azure APIs**: Via ContainerStop → `Jobs.BeginStopExecution()`
+- **File**: `backend_impl_pods.go`
 
-#### PodKill
+#### PodKill — DONE
 - **BaseServer**: In-memory state changes with signal exit code. Does NOT stop Azure resources.
-- **Implementation**: Same as PodStop but with signal-specific exit codes.
+- **Implementation**: Calls `s.ContainerKill()` per container with signal forwarding. Defaults to SIGKILL.
+- **File**: `backend_impl_pods.go`
 
-#### PodRemove
+#### PodRemove — DONE
 - **BaseServer**: In-memory removal. Leaves orphaned ACA Jobs.
-- **Implementation**: Delete ACA Job, clean up agent state, unregister from resource registry, then delegate to BaseServer for in-memory cleanup.
-- **Azure APIs**: `Jobs.BeginDelete()`
+- **Implementation**: Calls `s.ContainerRemove()` per container (which deletes ACA Jobs), then deletes pod. Checks running containers when force=false. Copies ContainerIDs before iteration to avoid mutation during loop.
+- **Azure APIs**: Via ContainerRemove → `Jobs.BeginDelete()`
+- **File**: `backend_impl_pods.go`
 
 ### Agent-Aware Operations (4 methods)
 
@@ -54,13 +64,15 @@ The remaining **51 methods** delegate to `s.BaseServer.Method()`.
 - **BaseServer**: Synthetic single-process listing.
 - **Implementation**: If agent connected, proxy `ps` through agent exec. Otherwise return synthetic response.
 
-#### ExecCreate
+#### ExecCreate — DONE
 - **BaseServer**: Creates exec in-memory.
-- **Enhancement**: Add agent-connectivity check. Reject exec if no agent is connected.
+- **Enhancement**: Resolves container, validates running state, checks `AgentAddress`. Returns `NotImplementedError` if no agent. Delegates to BaseServer for actual exec creation.
+- **File**: `backend_impl_pods.go`
 
-#### ExecStart
+#### ExecStart — DONE
 - **BaseServer**: Uses driver chain. Works with agent, falls back to synthetic.
-- **Enhancement**: Explicitly check for agent and return clear error if unavailable.
+- **Enhancement**: Resolves exec instance, validates container still exists, checks `AgentAddress`. Returns `NotImplementedError` if no agent. Delegates to BaseServer for driver-chain exec.
+- **File**: `backend_impl_pods.go`
 
 ### Cloud Enhancements
 
@@ -82,9 +94,10 @@ The remaining **51 methods** delegate to `s.BaseServer.Method()`.
 - **Azure APIs**: `armStorage.FileSharesClient.Create()`
 - **Dependencies**: Uses existing `Config.StorageAccount`.
 
-#### Info
+#### Info — DONE
 - **BaseServer**: Returns static descriptor fields.
-- **Implementation**: Enrich with ACA-specific metadata (environment name, subscription, region).
+- **Implementation**: Enriches Name field with `(aca:{resourceGroup}/{environment})` suffix.
+- **File**: `backend_impl_pods.go`
 
 #### AuthLogin
 - **BaseServer**: Always returns success.
@@ -118,11 +131,15 @@ The remaining **51 methods** delegate to `s.BaseServer.Method()`.
 
 ## Implementation Phases
 
-### Phase 1: Pod Lifecycle — HIGH IMPACT
+### Phase 1: Pod Lifecycle — DONE
 **PodStart, PodStop, PodKill, PodRemove**
 
-New file: `backend_impl_pods.go`. Uses existing Azure clients.
-**Effort**: Small (20–40 lines each)
+Implemented in `backend_impl_pods.go`. Uses existing Azure clients via `s.ContainerStart/Stop/Kill/Remove`.
+
+### Phase 1b: Exec + Info — DONE
+**ExecCreate, ExecStart, Info**
+
+Implemented in `backend_impl_pods.go`. Agent-connectivity checks + BaseServer delegation for exec, enriched Name for Info.
 
 ### Phase 2: Agent-Aware Exec/Attach
 **ExecCreate, ExecStart, ContainerAttach, ContainerTop**
