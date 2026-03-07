@@ -91,6 +91,8 @@ jobs:
         with:
           go-version: '1.25'
           cache: true
+      - name: Check backend api.Backend coverage
+        run: cd tools/check-backend-coverage && GOWORK=off go run . --enforce
       - name: Build all binaries (amd64)
         env:
           GOWORK: "off"
