@@ -2,8 +2,6 @@ package ecs
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -12,8 +10,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
-	"github.com/aws/aws-sdk-go-v2/service/ecr"
-	ecrtypes "github.com/aws/aws-sdk-go-v2/service/ecr/types"
 	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
@@ -888,237 +884,29 @@ func (s *Server) ContainerUnpause(ref string) error {
 	return &api.NotImplementedError{Message: "ECS backend does not support unpause"}
 }
 
-// ImagePull pulls an image reference and stores it locally.
-// After pulling, records the image in ECR for persistence (non-fatal on failure).
+// ImagePull pulls an image, using ECR cloud auth when available.
 func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
-	if ref == "" {
-		return nil, &api.InvalidParameterError{Message: "image reference is required"}
-	}
-
-	// Add :latest if no tag or digest
-	if !strings.Contains(ref, ":") && !strings.Contains(ref, "@") {
-		ref += ":latest"
-	}
-
-	// Attempt to fetch image config from registry
-	imgConfig, err := s.fetchImageConfig(ref, auth)
-	if err != nil {
-		s.Logger.Warn().Err(err).Str("ref", ref).Msg("failed to fetch image config from registry, using synthetic")
-	}
-
-	// Generate image ID
-	hash := sha256.Sum256([]byte(ref))
-	imageID := fmt.Sprintf("sha256:%x", hash)
-
-	image := api.Image{
-		ID:           imageID,
-		RepoTags:     []string{ref},
-		RepoDigests:  []string{},
-		Created:      time.Now().UTC().Format(time.RFC3339Nano),
-		Size:         0,
-		VirtualSize:  0,
-		Architecture: "amd64",
-		Os:           "linux",
-		RootFS:       api.RootFS{Type: "layers"},
-	}
-
-	// Merge config from registry if available
-	if imgConfig != nil {
-		image.Config = *imgConfig
-	} else {
-		image.Config = api.ContainerConfig{
-			Image: ref,
-		}
-	}
-
-	core.StoreImageWithAliases(s.Store, ref, image)
-
-	// Record image in ECR for persistence (best-effort, non-fatal)
-	s.recordImageInECR(ref, imageID)
-
-	// Stream progress via pipe
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer func() { _ = pw.Close() }()
-
-		progress := []map[string]string{
-			{"status": "Pulling from " + ref},
-			{"status": "Digest: " + imageID[:19]},
-			{"status": "Status: Downloaded newer image for " + ref},
-		}
-		for _, p := range progress {
-			if err := json.NewEncoder(pw).Encode(p); err != nil {
-				return
-			}
-		}
-	}()
-
-	return pr, nil
+	return s.images.Pull(ref, auth)
 }
 
-// ImagePush pushes an image to a registry.
-// For ECR targets (*.dkr.ecr.*.amazonaws.com), pushes via PutImage.
-// For non-ECR targets, delegates to BaseServer.
+// ImagePush pushes an image, syncing to ECR when applicable.
 func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
-	img, ok := s.Store.ResolveImage(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "image", ID: name}
-	}
-
-	if tag == "" {
-		tag = "latest"
-	}
-
-	// Check if target is an ECR registry
-	registry, repo, _ := parseImageRef(name)
-	if isECRRegistry(registry) {
-		// Push to ECR via PutImage
-		manifest := fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"digest":"%s"}}`, img.ID)
-
-		// Ensure repository exists (ignore AlreadyExists error)
-		_, err := s.aws.ECR.CreateRepository(s.ctx(), &ecr.CreateRepositoryInput{
-			RepositoryName: aws.String(repo),
-		})
-		if err != nil && !isECRAlreadyExistsError(err) {
-			s.Logger.Warn().Err(err).Str("repo", repo).Msg("ECR CreateRepository failed during push")
-		}
-
-		_, err = s.aws.ECR.PutImage(s.ctx(), &ecr.PutImageInput{
-			RepositoryName: aws.String(repo),
-			ImageManifest:  aws.String(manifest),
-			ImageTag:       aws.String(tag),
-		})
-		if err != nil {
-			s.Logger.Warn().Err(err).Str("repo", repo).Str("tag", tag).Msg("ECR PutImage failed during push")
-		}
-	}
-
-	// Return progress stream regardless of ECR result
-	pr, pw := io.Pipe()
-	go func() {
-		enc := json.NewEncoder(pw)
-		_ = enc.Encode(map[string]string{"status": "The push refers to repository [" + name + "]"})
-		_ = enc.Encode(map[string]string{"status": "Preparing", "id": tag})
-		_ = enc.Encode(map[string]string{"status": "Pushed", "id": tag})
-		digest := strings.TrimPrefix(img.ID, "sha256:")
-		_ = enc.Encode(map[string]string{"status": tag + ": digest: sha256:" + digest})
-		_ = pw.Close()
-	}()
-
-	return pr, nil
+	return s.images.Push(name, tag, auth)
 }
 
-// ImageTag tags an image and syncs the new tag to ECR (non-fatal on failure).
+// ImageTag tags an image and syncs the new tag to ECR.
 func (s *Server) ImageTag(source string, repo string, tag string) error {
-	// Delegate to BaseServer for in-memory tagging
-	if err := s.BaseServer.ImageTag(source, repo, tag); err != nil {
-		return err
-	}
-
-	// Build the full ref for ECR sync
-	ref := repo
-	if tag != "" {
-		ref = repo + ":" + tag
-	}
-
-	// Resolve image to get its ID for the manifest
-	img, ok := s.Store.ResolveImage(ref)
-	if !ok {
-		return nil // In-memory tag succeeded, ECR sync is best-effort
-	}
-
-	// Record the new tag in ECR (best-effort)
-	s.recordImageInECR(ref, img.ID)
-
-	return nil
+	return s.images.Tag(source, repo, tag)
 }
 
-// ImageRemove removes an image and syncs the removal to ECR (non-fatal on failure).
+// ImageRemove removes an image and syncs the removal to ECR.
 func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageDeleteResponse, error) {
-	// Resolve the image first to get tags for ECR cleanup
-	img, ok := s.Store.ResolveImage(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "image", ID: name}
-	}
-
-	// Collect ECR tags to remove before BaseServer deletes them
-	type ecrRef struct {
-		repo string
-		tag  string
-	}
-	var ecrRefs []ecrRef
-	for _, repoTag := range img.RepoTags {
-		registry, repo, imgTag := parseImageRef(repoTag)
-		if isECRRegistry(registry) {
-			ecrRefs = append(ecrRefs, ecrRef{repo: repo, tag: imgTag})
-		}
-	}
-
-	// Delegate to BaseServer for in-memory removal
-	result, err := s.BaseServer.ImageRemove(name, force, prune)
-	if err != nil {
-		return result, err
-	}
-
-	// Remove from ECR (best-effort, non-fatal)
-	for _, ref := range ecrRefs {
-		_, ecrErr := s.aws.ECR.BatchDeleteImage(s.ctx(), &ecr.BatchDeleteImageInput{
-			RepositoryName: aws.String(ref.repo),
-			ImageIds: []ecrtypes.ImageIdentifier{
-				{ImageTag: aws.String(ref.tag)},
-			},
-		})
-		if ecrErr != nil {
-			s.Logger.Warn().Err(ecrErr).Str("repo", ref.repo).Str("tag", ref.tag).Msg("ECR BatchDeleteImage failed during image remove")
-		}
-	}
-
-	return result, nil
+	return s.images.Remove(name, force, prune)
 }
 
-// recordImageInECR records an image reference in ECR via CreateRepository + PutImage.
-// All failures are non-fatal (logged as warnings).
-func (s *Server) recordImageInECR(ref string, imageID string) {
-	registry, repo, tag := parseImageRef(ref)
-
-	// Only record if it looks like an ECR image, or record all images for persistence
-	_ = registry // We record all pulled images for local persistence
-
-	// Ensure repository exists (ignore AlreadyExists error)
-	_, err := s.aws.ECR.CreateRepository(s.ctx(), &ecr.CreateRepositoryInput{
-		RepositoryName: aws.String(repo),
-	})
-	if err != nil && !isECRAlreadyExistsError(err) {
-		s.Logger.Warn().Err(err).Str("repo", repo).Msg("ECR CreateRepository failed, skipping image recording")
-		return
-	}
-
-	// Put image with synthetic manifest
-	manifest := fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"digest":"%s"}}`, imageID)
-	_, err = s.aws.ECR.PutImage(s.ctx(), &ecr.PutImageInput{
-		RepositoryName: aws.String(repo),
-		ImageManifest:  aws.String(manifest),
-		ImageTag:       aws.String(tag),
-	})
-	if err != nil {
-		s.Logger.Warn().Err(err).Str("repo", repo).Str("tag", tag).Msg("ECR PutImage failed during image recording")
-	}
-}
-
-// isECRRegistry returns true if the registry host matches the ECR pattern.
-func isECRRegistry(registry string) bool {
-	return strings.HasSuffix(registry, ".amazonaws.com") && strings.Contains(registry, ".dkr.ecr.")
-}
-
-// isECRAlreadyExistsError checks if an error is an ECR RepositoryAlreadyExistsException.
-func isECRAlreadyExistsError(err error) bool {
-	return strings.Contains(err.Error(), "RepositoryAlreadyExistsException")
-}
-
-// ImageLoad is not supported by the ECS backend.
+// ImageLoad loads an image from a tar archive.
 func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
-	return nil, &api.NotImplementedError{Message: "image load is not supported by ECS backend"}
+	return s.images.Load(r)
 }
 
 // VolumeRemove removes a volume by name.

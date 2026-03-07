@@ -2,11 +2,9 @@ package azf
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"net/http"
 	"os"
@@ -874,98 +872,9 @@ func (s *Server) ContainerUnpause(ref string) error {
 	return &api.NotImplementedError{Message: "Azure Functions backend does not support unpause"}
 }
 
-// ImagePull pulls an image reference and stores it locally.
+// ImagePull delegates to ImageManager for unified cloud image handling.
 func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
-	if ref == "" {
-		return nil, &api.InvalidParameterError{Message: "image reference is required"}
-	}
-
-	// Add :latest if no tag or digest
-	if !strings.Contains(ref, ":") && !strings.Contains(ref, "@") {
-		ref += ":latest"
-	}
-
-	// Generate image ID
-	hash := sha256.Sum256([]byte(ref))
-	hex := fmt.Sprintf("%x", hash)
-	imageID := "sha256:" + hex
-
-	imgConfig := api.ContainerConfig{
-		Image: ref,
-	}
-
-	// Try to fetch real config from registry
-	if realConfig, _ := core.FetchImageConfig(ref, ""); realConfig != nil {
-		if len(realConfig.Env) > 0 {
-			imgConfig.Env = realConfig.Env
-		}
-		if len(realConfig.Cmd) > 0 {
-			imgConfig.Cmd = realConfig.Cmd
-		}
-		if len(realConfig.Entrypoint) > 0 {
-			imgConfig.Entrypoint = realConfig.Entrypoint
-		}
-		if realConfig.WorkingDir != "" {
-			imgConfig.WorkingDir = realConfig.WorkingDir
-		}
-		if len(realConfig.Labels) > 0 {
-			imgConfig.Labels = realConfig.Labels
-		}
-	}
-
-	h := fnv.New32a()
-	h.Write([]byte(ref))
-	imgSize := int64(10_000_000 + h.Sum32()%90_000_000)
-
-	now := time.Now().UTC()
-	image := api.Image{
-		ID:       imageID,
-		RepoTags: []string{ref},
-		RepoDigests: []string{
-			strings.Split(ref, ":")[0] + "@sha256:" + hex[:64],
-		},
-		Created:      now.Format(time.RFC3339Nano),
-		Size:         imgSize,
-		VirtualSize:  imgSize,
-		Architecture: "amd64",
-		Os:           "linux",
-		RootFS: api.RootFS{
-			Type:   "layers",
-			Layers: []string{"sha256:" + core.GenerateID()},
-		},
-		GraphDriver: api.GraphDriverData{
-			Name: "overlay2",
-			Data: map[string]string{
-				"MergedDir": "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/merged",
-				"UpperDir":  "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/diff",
-				"WorkDir":   "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/work",
-			},
-		},
-		Metadata: api.ImageMetadata{LastTagTime: now.Format(time.RFC3339Nano)},
-		Config:   imgConfig,
-	}
-
-	core.StoreImageWithAliases(s.Store, ref, image)
-
-	// Stream progress via pipe
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer func() { _ = pw.Close() }()
-
-		progress := []map[string]string{
-			{"status": "Pulling from " + ref},
-			{"status": "Digest: " + imageID[:19]},
-			{"status": "Status: Downloaded newer image for " + ref},
-		}
-		for _, p := range progress {
-			if err := json.NewEncoder(pw).Encode(p); err != nil {
-				return
-			}
-		}
-	}()
-
-	return pr, nil
+	return s.images.Pull(ref, auth)
 }
 
 // Info returns system information enriched with Azure-specific metadata.
@@ -1022,25 +931,29 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	}
 }
 
-// ImageBuild is not supported by the Azure Functions backend.
-// Azure Functions require pre-built container images.
+// ImageBuild delegates to ImageManager for unified cloud image handling.
 func (s *Server) ImageBuild(opts api.ImageBuildOptions, buildContext io.Reader) (io.ReadCloser, error) {
-	return nil, &api.NotImplementedError{
-		Message: "Azure Functions backend does not support image build; push pre-built images to Azure Container Registry",
-	}
+	return s.images.Build(opts, buildContext)
 }
 
-// ImagePush is not supported by the Azure Functions backend.
-// Images should be pushed directly to Azure Container Registry using the az CLI or SDK.
+// ImageTag delegates to ImageManager for unified cloud image handling.
+func (s *Server) ImageTag(source string, repo string, tag string) error {
+	return s.images.Tag(source, repo, tag)
+}
+
+// ImageRemove delegates to ImageManager for unified cloud image handling.
+func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageDeleteResponse, error) {
+	return s.images.Remove(name, force, prune)
+}
+
+// ImagePush delegates to ImageManager for unified cloud image handling.
 func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
-	return nil, &api.NotImplementedError{
-		Message: "Azure Functions backend does not support image push; push images directly to Azure Container Registry",
-	}
+	return s.images.Push(name, tag, auth)
 }
 
-// ImageLoad delegates to BaseServer to allow docker save | docker load round-trips.
+// ImageLoad delegates to ImageManager for unified cloud image handling.
 func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
-	return s.BaseServer.ImageLoad(r)
+	return s.images.Load(r)
 }
 
 // AuthLogin handles registry authentication.

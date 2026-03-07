@@ -2,10 +2,7 @@ package aca
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"os"
 	"strings"
@@ -859,90 +856,34 @@ func (s *Server) ContainerUnpause(ref string) error {
 	return &api.NotImplementedError{Message: "container unpause is not supported by ACA backend"}
 }
 
-// ImagePull pulls an image reference and stores it locally.
+// ImagePull delegates to ImageManager for unified cloud image handling.
 func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
-	if ref == "" {
-		return nil, &api.InvalidParameterError{Message: "image reference is required"}
-	}
-
-	if !strings.Contains(ref, ":") && !strings.Contains(ref, "@") {
-		ref += ":latest"
-	}
-
-	imgConfig, err := s.fetchImageConfig(ref, auth)
-	if err != nil {
-		s.Logger.Warn().Err(err).Str("ref", ref).Msg("failed to fetch image config from registry, using synthetic")
-	}
-
-	hash := sha256.Sum256([]byte(ref))
-	hex := fmt.Sprintf("%x", hash)
-	imageID := "sha256:" + hex
-
-	h := fnv.New32a()
-	h.Write([]byte(ref))
-	imgSize := int64(10_000_000 + h.Sum32()%90_000_000)
-
-	now := time.Now().UTC()
-	image := api.Image{
-		ID:       imageID,
-		RepoTags: []string{ref},
-		RepoDigests: []string{
-			strings.Split(ref, ":")[0] + "@sha256:" + hex[:64],
-		},
-		Created:      now.Format(time.RFC3339Nano),
-		Size:         imgSize,
-		VirtualSize:  imgSize,
-		Architecture: "amd64",
-		Os:           "linux",
-		RootFS: api.RootFS{
-			Type:   "layers",
-			Layers: []string{"sha256:" + core.GenerateID()},
-		},
-		GraphDriver: api.GraphDriverData{
-			Name: "overlay2",
-			Data: map[string]string{
-				"MergedDir": "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/merged",
-				"UpperDir":  "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/diff",
-				"WorkDir":   "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/work",
-			},
-		},
-		Metadata: api.ImageMetadata{LastTagTime: now.Format(time.RFC3339Nano)},
-	}
-
-	if imgConfig != nil {
-		image.Config = *imgConfig
-	} else {
-		image.Config = api.ContainerConfig{
-			Image: ref,
-		}
-	}
-
-	core.StoreImageWithAliases(s.Store, ref, image)
-
-	// Stream progress via pipe
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer func() { _ = pw.Close() }()
-
-		progress := []map[string]string{
-			{"status": "Pulling from " + ref},
-			{"status": "Digest: " + imageID[:19]},
-			{"status": "Status: Downloaded newer image for " + ref},
-		}
-		for _, p := range progress {
-			if err := json.NewEncoder(pw).Encode(p); err != nil {
-				return
-			}
-		}
-	}()
-
-	return pr, nil
+	return s.images.Pull(ref, auth)
 }
 
-// ImageLoad delegates to BaseServer to allow docker save | docker load round-trips.
+// ImagePush delegates to ImageManager for unified cloud image handling.
+func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
+	return s.images.Push(name, tag, auth)
+}
+
+// ImageTag delegates to ImageManager for unified cloud image handling.
+func (s *Server) ImageTag(source string, repo string, tag string) error {
+	return s.images.Tag(source, repo, tag)
+}
+
+// ImageRemove delegates to ImageManager for unified cloud image handling.
+func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageDeleteResponse, error) {
+	return s.images.Remove(name, force, prune)
+}
+
+// ImageBuild delegates to ImageManager for unified cloud image handling.
+func (s *Server) ImageBuild(opts api.ImageBuildOptions, buildContext io.Reader) (io.ReadCloser, error) {
+	return s.images.Build(opts, buildContext)
+}
+
+// ImageLoad delegates to ImageManager for unified cloud image handling.
 func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
-	return s.BaseServer.ImageLoad(r)
+	return s.images.Load(r)
 }
 
 // VolumeRemove removes a volume and its state.

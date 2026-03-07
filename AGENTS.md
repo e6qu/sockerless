@@ -38,3 +38,13 @@ git pull origin main
 ```
 
 This is an acceptance criterion for every task — a PR is not ready until the branch is rebased on `origin/main` and local `main` is in sync.
+
+## No silent deferrals
+
+When given a task, implement it fully. Do not silently skip, defer, or stub out parts of the work. If something seems too hard, ambiguous, or out of scope, ask the user — do not decide on your own to drop it. Returning `NotImplementedError` or leaving a TODO without explicit user approval is not acceptable.
+
+Specifically:
+- If a method or feature is requested, implement it for all relevant backends/clouds, not just some
+- If you encounter a difficulty that tempts you to defer, ask a follow-up question instead
+- "Best effort" does not mean "skip if inconvenient" — it means handle errors gracefully while still performing the operation
+- Every cloud backend in a cloud family (container + FaaS) must have parity on cloud-specific operations unless the user explicitly says otherwise

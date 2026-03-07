@@ -7,13 +7,14 @@ The Lambda backend implements `api.Backend` (65 methods). Currently **19 methods
 - `ContainerCreate`, `ContainerStart`, `ContainerStop`, `ContainerKill`, `ContainerRemove`
 - `ContainerLogs`, `ContainerRestart`, `ContainerPrune`, `ContainerPause`, `ContainerUnpause`
 - `ContainerAttach`, `ContainerExport`, `ContainerCommit`
-- `ImagePull` (with ECR auth via `getECRToken()` for ECR images), `ImageLoad`, `ImageBuild`, `ImagePush`
+- `ImagePull` (via unified `ImageManager` with ECR auth via `ECRAuthProvider`), `ImageLoad`, `ImageBuild`, `ImagePush`
 - `AuthLogin`, `Info`
 
 The remaining **46 methods** delegate to `s.BaseServer.Method()`.
 
-### ECR Integration
-- `ImagePull`: Detects ECR image refs (`*.dkr.ecr.*.amazonaws.com`), obtains auth token via `ecr:GetAuthorizationToken` (non-fatal on failure)
+### ECR Integration (Unified Image Management)
+- All 12 image methods delegate to `s.images` (core `ImageManager` with `ECRAuthProvider`)
+- `ECRAuthProvider` in `image_auth.go`: `GetToken` for ECR auth, `OnPush`/`OnTag` sync to ECR, `OnRemove` cleans up ECR
 - `AWSClients`: Includes `ecr.Client` for ECR auth operations
 
 Lambda is a FaaS platform. Many container/image operations have no direct equivalent.
@@ -101,7 +102,7 @@ Lambda is a FaaS platform. Many container/image operations have no direct equiva
 
 - **Container**: Inspect, List, Wait, Top, Rename, Update, PutArchive, StatPath, GetArchive
 - **Exec**: Inspect, Resize
-- **Images**: Inspect, List, Remove, Prune, Tag
+- **Images**: Inspect, List, Remove, Prune, Tag (all via `s.images.*` unified ImageManager)
 - **Pods**: Create, List, Inspect, Exists, Start, Stop, Kill, Remove (single-container pods work via delegation; multi-container rejected at ContainerStart)
 - **System**: Df, Events
 

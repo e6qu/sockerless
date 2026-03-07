@@ -4,7 +4,10 @@ use (
 	./agent
 	./api
 	./backends/aca
+	./backends/aws-common
+	./backends/azure-common
 	./backends/azure-functions
+	./backends/gcp-common
 	./backends/cloudrun
 	./backends/cloudrun-functions
 	./backends/core

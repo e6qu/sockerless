@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
+	awscommon "github.com/sockerless/aws-common"
 	core "github.com/sockerless/backend-core"
 )
 
@@ -14,6 +15,7 @@ type Server struct {
 	*core.BaseServer
 	config    Config
 	aws       *AWSClients
+	images    *core.ImageManager
 	Lambda    *core.StateStore[LambdaState]
 	ipCounter atomic.Int32
 }
@@ -38,6 +40,11 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		NCPU:            2,
 		MemTotal:        4294967296,
 	}, logger)
+	s.images = &core.ImageManager{
+		Base:   s.BaseServer,
+		Auth:   awscommon.NewECRAuthProvider(awsClients.ECR, logger, s.ctx),
+		Logger: logger,
+	}
 	s.SetSelf(s)
 
 	mode := "cloud"

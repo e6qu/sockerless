@@ -10,11 +10,12 @@ The ECS backend implements `api.Backend` (65 methods). Currently **30 methods** 
 - `ContainerList` (**DONE** — batch-refreshes all containers with TaskARNs via ecs:DescribeTasks)
 - `ContainerExport` (**DONE** — returns NotImplementedError, no filesystem access on Fargate)
 - `ContainerCommit` (**DONE** — returns NotImplementedError, cannot snapshot Fargate containers)
-- `ImagePull` (**DONE** — pulls and records to ECR via CreateRepository + PutImage for persistence)
-- `ImagePush` (**DONE** — pushes to ECR for ECR targets via PutImage, returns progress stream for all)
-- `ImageTag` (**DONE** — delegates to BaseServer, then syncs new tag to ECR via recordImageInECR)
-- `ImageRemove` (**DONE** — collects ECR tags, delegates to BaseServer, then BatchDeleteImage for ECR cleanup)
-- `ImageLoad`, `ImageBuild`
+- `ImagePull` (**DONE** — delegates to `s.images.Pull`; ECR auth via `ECRAuthProvider.GetToken`)
+- `ImagePush` (**DONE** — delegates to `s.images.Push`; ECR sync via `ECRAuthProvider.OnPush`)
+- `ImageTag` (**DONE** — delegates to `s.images.Tag`; ECR sync via `ECRAuthProvider.OnTag`)
+- `ImageRemove` (**DONE** — delegates to `s.images.Remove`; ECR cleanup via `ECRAuthProvider.OnRemove`)
+- `ImageLoad` (**DONE** — delegates to BaseServer via `s.images.Load`)
+- `ImageBuild`
 - `VolumeRemove`, `VolumePrune`
 - `ExecStart` (**DONE** — agent check, delegates or returns NotImplementedError)
 - `ExecCreate` (**DONE** — validates agent connectivity before creating exec instance)
@@ -89,16 +90,16 @@ The remaining **35 methods** in `backend_delegates_gen.go` delegate to `s.BaseSe
 - **Future**: Submit to CodeBuild, push to ECR (`codebuild:StartBuild`, `ecr:CreateRepository`).
 
 #### ImagePush — DONE (full ECR integration)
-- **Implementation**: For ECR targets (`*.dkr.ecr.*.amazonaws.com`), pushes via `ecr:CreateRepository` + `ecr:PutImage`. Returns progress stream for all targets. ECR failures are non-fatal (logged as warnings).
-- **AWS APIs**: `ecr:CreateRepository`, `ecr:PutImage`
+- **Implementation**: Delegates to `s.images.Push` (unified ImageManager). ECR sync handled by `ECRAuthProvider.OnPush` for ECR targets. Returns progress stream for all targets. ECR failures are non-fatal.
+- **AWS APIs**: `ecr:CreateRepository`, `ecr:PutImage` (via `ECRAuthProvider`)
 
 #### ImageTag — DONE
-- **Implementation**: Delegates to BaseServer for in-memory tagging, then syncs the new tag to ECR via `recordImageInECR()` (best-effort, non-fatal).
-- **AWS APIs**: `ecr:CreateRepository`, `ecr:PutImage`
+- **Implementation**: Delegates to `s.images.Tag` (unified ImageManager). ECR sync handled by `ECRAuthProvider.OnTag` (best-effort, non-fatal).
+- **AWS APIs**: `ecr:CreateRepository`, `ecr:PutImage` (via `ECRAuthProvider`)
 
 #### ImageRemove — DONE
-- **Implementation**: Collects ECR tags before deletion, delegates to BaseServer for in-memory removal, then calls `ecr:BatchDeleteImage` for each ECR-tagged ref (best-effort, non-fatal).
-- **AWS APIs**: `ecr:BatchDeleteImage`
+- **Implementation**: Delegates to `s.images.Remove` (unified ImageManager). ECR cleanup handled by `ECRAuthProvider.OnRemove` (best-effort, non-fatal).
+- **AWS APIs**: `ecr:BatchDeleteImage` (via `ECRAuthProvider`)
 
 ### Networks
 
@@ -156,7 +157,7 @@ These methods work correctly with BaseServer delegation:
 - **Container**: Attach, Rename, Resize, Update, Changes, StatPath, GetArchive, PutArchive
 - **Container (now DONE with NotImplementedError)**: Export, Commit
 - **Exec**: Inspect, Resize
-- **Images**: Inspect, List, History, Prune, Save, Search
+- **Images**: Inspect, List, History, Prune, Save, Search (all via `s.images.*` unified ImageManager)
 - **Networks**: List
 - **Volumes**: List, Inspect
 - **Pods**: Create, List, Inspect, Exists
@@ -195,12 +196,12 @@ Info implemented (DescribeClusters enrichment, non-fatal on AWS errors). Contain
 ImageBuild, ContainerExport, ContainerCommit return `NotImplementedError` with descriptive messages. ImagePush now has full ECR integration (CreateRepository + PutImage for ECR targets).
 **Effort**: Low
 
-### Phase H: ECR Image Management (3 methods) — DONE
-ImagePull records all pulled images to ECR via `recordImageInECR()` (CreateRepository + PutImage). ImageTag syncs new tags to ECR after BaseServer delegation. ImageRemove calls BatchDeleteImage for ECR-tagged refs after BaseServer deletion. All ECR operations are best-effort/non-fatal. Also added `isECRRegistry()`, `isECRAlreadyExistsError()`, and `parseImageRef()` helpers.
+### Phase H: ECR Image Management (3 methods) — DONE (unified)
+All 12 image methods now delegate to `s.images` (core `ImageManager`). ECR integration via `ECRAuthProvider` in `image_auth.go` (implements `core.AuthProvider`): `GetToken` for ECR auth, `OnPush`/`OnTag` for ECR recording, `OnRemove` for ECR cleanup. Old `registry.go` (with `fetchImageConfig`, `parseImageRef`, `getECRToken`, `getDockerHubToken`, `recordImageInECR`, `isECRRegistry`) deleted — replaced by unified image management.
 **Effort**: Medium
 
 ### Recommended Order (remaining)
 A(ContainerWait) → D → C → F(ContainerStats)
 
 ### Completed Phases
-A(ContainerInspect, ContainerList) → B(ExecStart, ExecCreate) → E(Pod lifecycle) → F(Info) → G(ImageBuild, Export, Commit) → H(ImagePull ECR, ImagePush ECR, ImageTag ECR, ImageRemove ECR)
+A(ContainerInspect, ContainerList) → B(ExecStart, ExecCreate) → E(Pod lifecycle) → F(Info) → G(ImageBuild, Export, Commit) → H(Unified image management via ImageManager + ECRAuthProvider)

@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
+	azurecommon "github.com/sockerless/azure-common"
 	core "github.com/sockerless/backend-core"
 )
 
@@ -13,6 +14,7 @@ type Server struct {
 	*core.BaseServer
 	config    Config
 	azure     *AzureClients
+	images    *core.ImageManager
 	ipCounter atomic.Int32
 
 	ACA          *core.StateStore[ACAState]
@@ -42,6 +44,11 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		NCPU:            2,
 		MemTotal:        4294967296,
 	}, logger)
+	s.images = &core.ImageManager{
+		Base:   s.BaseServer,
+		Auth:   azurecommon.NewACRAuthProvider(logger),
+		Logger: logger,
+	}
 	s.SetSelf(s)
 
 	mode := "cloud"

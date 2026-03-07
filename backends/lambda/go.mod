@@ -12,6 +12,7 @@ require (
 	github.com/docker/docker v27.5.1+incompatible
 	github.com/rs/zerolog v1.34.0
 	github.com/sockerless/api v0.0.0
+	github.com/sockerless/aws-common v0.0.0
 	github.com/sockerless/backend-core v0.0.0
 )
 
@@ -76,5 +77,6 @@ require (
 replace (
 	github.com/sockerless/agent => ../../agent
 	github.com/sockerless/api => ../../api
+	github.com/sockerless/aws-common => ../aws-common
 	github.com/sockerless/backend-core => ../core
 )

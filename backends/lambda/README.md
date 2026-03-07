@@ -61,8 +61,7 @@ lambda/
 ├── aws.go               AWS SDK client initialization
 ├── containers.go        Create, start, stop, kill, remove handlers
 ├── logs.go              CloudWatch Logs streaming
-├── images.go            Image pull/load handlers
-├── extended.go          Container prune
+├── image_auth.go        ECRAuthProvider (core.AuthProvider for ECR integration)
 ├── store.go             LambdaState type
 └── errors.go            AWS error mapping
 ```

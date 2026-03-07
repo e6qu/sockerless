@@ -64,9 +64,9 @@ cloudrun/
 ├── jobspec.go           Cloud Run Job protobuf builder
 ├── logs.go              Cloud Logging streaming
 ├── images.go            Image pull handler
+├── image_auth.go        ARAuthProvider for Artifact Registry / GCR auth
 ├── extended.go          Pause, unpause, restart, volume prune
 ├── store.go             CloudRunState type
-├── registry.go          Container image registry support
 └── errors.go            GCP error mapping
 ```
 

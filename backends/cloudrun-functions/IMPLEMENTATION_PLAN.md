@@ -52,6 +52,9 @@ Cloud Run Functions is a FaaS platform. Many container/image operations have no 
 ### ImagePush — DONE
 - **Implementation**: Returns `NotImplementedError` directing users to push images directly to Artifact Registry.
 
+### Unified Image Management — DONE
+All 12 image methods now delegate to `core.ImageManager` with `ARAuthProvider` (in `image_auth.go`). The old `registry.go` (containing `parseImageRef`, `getARToken`) has been deleted. `ImageTag` and `ImageRemove` now sync to Artifact Registry (consistent with CloudRun behavior). `ImageBuild` remains `NotImplementedError` (FaaS override).
+
 ---
 
 ## P2 — Acceptable / N/A for FaaS (43 methods)
@@ -73,8 +76,8 @@ Inspect, List, Wait, Top, Rename, Resize, Update, Changes, PutArchive, StatPath,
 - `ContainerCommit` — Returns `NotImplementedError` (no local filesystem). Validates container param and existence.
 - `ContainerAttach` — Delegates to BaseServer when agent connected, returns `NotImplementedError` otherwise.
 
-### All Image Metadata Methods — P2
-Inspect, List, Remove, History, Prune, Save, Search, Tag — all in-memory operations.
+### All Image Metadata Methods — DONE (unified)
+Inspect, List, Remove, History, Prune, Save, Search, Tag — all now delegate through `core.ImageManager`. `ImageTag` and `ImageRemove` sync to Artifact Registry via `ARAuthProvider`.
 
 ### Pod Operations (except PodStart) — P2
 PodCreate, PodList, PodInspect, PodExists, PodStop, PodKill, PodRemove — BaseServer handles via self-dispatch. GCF rejects multi-container pods at ContainerStart.

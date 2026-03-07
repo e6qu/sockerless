@@ -2,16 +2,22 @@
 
 ## Overview
 
-The Azure Functions backend implements `api.Backend` (65 methods). Currently **23 methods** have cloud-native implementations:
+The Azure Functions backend implements `api.Backend` (65 methods). Currently **31 methods** have cloud-native implementations:
 
+In `backend_impl.go`:
 - `ContainerCreate`, `ContainerStart`, `ContainerStop`, `ContainerKill`, `ContainerRemove`
 - `ContainerLogs`, `ContainerRestart`, `ContainerPrune`, `ContainerPause`, `ContainerUnpause`
 - `ContainerExport`, `ContainerCommit`, `ContainerAttach`
-- `ImagePull`, `ImageLoad`, `ImageBuild`, `ImagePush`
-- `PodStart`, `PodStop`, `PodKill`, `PodRemove` (in `backend_impl_pods.go`)
-- `Info` (in `backend_impl.go`)
+- `ImagePull`, `ImageInspect`, `ImageLoad`, `ImageTag`, `ImageList`, `ImageRemove`, `ImageHistory`, `ImagePrune`, `ImageBuild`, `ImagePush`, `ImageSave`, `ImageSearch`
+- `Info`, `AuthLogin`
 
-The remaining **42 methods** delegate to `s.BaseServer.Method()`.
+In `backend_impl_pods.go`:
+- `PodStart`, `PodStop`, `PodKill`, `PodRemove`
+
+In `image_auth.go`:
+- `ACRAuthProvider` (`IsCloudRegistry`, `GetToken`, `OnPush`, `OnTag`, `OnRemove`) -- implements `core.AuthProvider` for ACR
+
+The remaining **34 methods** delegate to `s.BaseServer.Method()`.
 
 Azure Functions is a FaaS platform. Many container/image operations have no direct equivalent.
 
@@ -70,11 +76,13 @@ These must be overridden because BaseServer defaults bypass AZF-specific lifecyc
 
 ### ImagePush — DONE (NotImplementedError)
 - **Current**: Returns `NotImplementedError` directing users to push to ACR directly.
-- **Future enhancement**: Full ACR push when `s.config.Registry` is set. Low priority.
 
-### ImageLoad — DONE (BaseServer delegation)
-- **Current**: Delegates to BaseServer to allow `docker save | docker load` round-trips.
-- **Previously**: Returned `NotImplementedError`.
+### ImageTag / ImageRemove — DONE (Unified Image Management)
+- **Current**: Delegate to `core.ImageManager` via `ACRAuthProvider`. `ImageTag` syncs tags to ACR via `OnTag`. `ImageRemove` deletes manifests from ACR via `OnRemove` (graceful degradation).
+- **Previously**: Delegated to BaseServer only (no ACR sync).
+
+### All 12 Image Methods — DONE (Unified Image Management)
+All image methods now delegate to `core.ImageManager` via `ACRAuthProvider` in `image_auth.go`, except `ImageBuild` and `ImagePush` which return `NotImplementedError`. Implementations consolidated in `backend_impl.go`.
 
 ### AuthLogin — DONE (ACR detection)
 - **Current**: For ACR registries (`*.azurecr.io`), logs warning about using managed identity for production, then delegates to BaseServer. For other registries, delegates directly to BaseServer.
@@ -98,13 +106,11 @@ GetArchive, PutArchive, StatPath — filesystem driver with staging dirs.
 ### Exec (4)
 ExecCreate, ExecStart, ExecInspect, ExecResize — reverse agent dispatches correctly.
 
-### Images (6)
-ImageHistory, ImageInspect, ImageList, ImagePrune, ImageRemove, ImageSave, ImageSearch, ImageTag — all in-memory metadata.
-
-**Moved to backend_impl.go (DONE)**:
-- `ImageBuild` — Returns `NotImplementedError` directing users to Azure Container Registry.
-- `ImagePush` — Returns `NotImplementedError` directing users to Azure Container Registry.
-- `ImageLoad` — Delegates to BaseServer (allows `docker save | docker load` round-trips).
+### Images — ALL DONE (Unified Image Management)
+All 12 image methods now implemented in `backend_impl.go` via `core.ImageManager` + `ACRAuthProvider` (in `image_auth.go`).
+- `ImageBuild`, `ImagePush` — Return `NotImplementedError` (FaaS limitation).
+- `ImageTag`, `ImageRemove` — Sync to ACR via `ACRAuthProvider.OnTag`/`OnRemove`.
+- Remaining 8 — Delegate to `core.ImageManager`.
 
 ### Networks (7)
 All in-memory. Azure Functions networking is managed at Function App/VNet level.
@@ -143,9 +149,11 @@ Added to `backend_impl_pods.go`. Removed 4 delegate entries from `backend_delega
 ### Phase 4: Metrics (1 method)
 **ContainerStats** — Add `MetricsClient`, query `AppMetrics`.
 
-### Phase 5: ACR Integration (future)
-**ImagePush** — Full ACR push when registry configured (currently returns NotImplementedError).
-**AuthLogin** — ✅ DONE. ACR detection with managed identity warning + BaseServer delegation. Removed from delegates.
+### Phase 5: ACR Integration — DONE (Unified Image Management)
+**All 12 image methods** — DONE. Delegated to `core.ImageManager` via `ACRAuthProvider` in `image_auth.go`.
+**ImageTag/ImageRemove** — Now sync to ACR (previously BaseServer-only).
+**ImageBuild/ImagePush** — Return `NotImplementedError` (FaaS limitation).
+**AuthLogin** — DONE. ACR detection with managed identity warning + BaseServer delegation.
 
 ### New Azure SDK Clients Needed
 
@@ -153,7 +161,8 @@ Added to `backend_impl_pods.go`. Removed 4 delegate entries from `backend_delega
 |--------|-------|---------|
 | `armappservice.AppServicePlansClient` | 2 | Already imported |
 | `azquery.MetricsClient` | 3 | `github.com/Azure/azure-sdk-for-go/sdk/monitor/azquery` |
-| `azcontainerregistry.Client` | 4 | `github.com/Azure/azure-sdk-for-go/sdk/containers/azcontainerregistry` |
+
+Note: `azcontainerregistry.Client` (Phase 4) is no longer needed -- ACR integration now uses OCI Distribution API via `ACRAuthProvider` in `image_auth.go`.
 
 ### Risks
 - **PodStart**: Must handle multi-container pod rejection (existing in `ContainerStart`). Collect errors per container.

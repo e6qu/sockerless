@@ -62,18 +62,20 @@ The `terraform/modules/aca` module produces these outputs. Use `terragrunt outpu
 ```
 aca/
 ├── cmd/sockerless-backend-aca/
-│   └── main.go          CLI entrypoint
-├── server.go            Server type, route overrides
-├── config.go            Config struct, env parsing, validation
-├── azure.go             Azure SDK client initialization
-├── containers.go        Create, start, stop, kill, remove handlers
-├── jobspec.go           Container Apps Job spec builder
-├── logs.go              Azure Monitor Log Analytics streaming
-├── images.go            Image pull handler
-├── extended.go          Pause, unpause, restart, volume prune
-├── store.go             ACAState type
-├── registry.go          Container image registry support
-└── errors.go            Azure error mapping
+│   └── main.go              CLI entrypoint
+├── server.go                Server type, ImageManager wiring
+├── config.go                Config struct, env parsing, validation
+├── azure.go                 Azure SDK client initialization
+├── containers.go            Create, start, stop, kill, remove handlers
+├── jobspec.go               Container Apps Job spec builder
+├── logs.go                  Azure Monitor Log Analytics streaming
+├── backend_impl.go          Cloud-native method overrides (containers, images, volumes)
+├── backend_impl_pods.go     Pod lifecycle, exec, attach, auth, info
+├── backend_delegates_gen.go Generated BaseServer delegates
+├── image_auth.go            ACRAuthProvider (core.AuthProvider for ACR)
+├── store.go                 ACAState type
+├── recovery.go              Crash recovery
+└── errors.go                Azure error mapping
 ```
 
 ## Example deployment

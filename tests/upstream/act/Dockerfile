@@ -18,6 +18,9 @@ WORKDIR /src
 COPY api/ api/
 COPY agent/ agent/
 COPY backends/core/ backends/core/
+COPY backends/aws-common/ backends/aws-common/
+COPY backends/gcp-common/ backends/gcp-common/
+COPY backends/azure-common/ backends/azure-common/
 
 # --- Build all 6 backends ---
 COPY backends/ecs/ backends/ecs/

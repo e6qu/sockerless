@@ -62,6 +62,7 @@ cloudrun-functions/
 ├── containers.go        Create, start, stop, kill, remove handlers
 ├── logs.go              Cloud Logging streaming
 ├── images.go            Image pull/load handlers
+├── image_auth.go        ARAuthProvider for Artifact Registry / GCR auth
 ├── extended.go          Restart, prune
 ├── store.go             GCFState type
 └── errors.go            GCP error mapping

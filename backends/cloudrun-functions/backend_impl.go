@@ -2,7 +2,6 @@ package gcf
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -804,93 +803,14 @@ func (s *Server) ContainerUnpause(ref string) error {
 	return &api.NotImplementedError{Message: "Cloud Run Functions backend does not support unpause"}
 }
 
-// ImagePull pulls an image reference and stores it locally.
+// ImagePull delegates to ImageManager which handles cloud auth and config fetching.
 func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
-	if ref == "" {
-		return nil, &api.InvalidParameterError{Message: "image reference is required"}
-	}
-
-	// Add :latest if no tag or digest
-	if !strings.Contains(ref, ":") && !strings.Contains(ref, "@") {
-		ref += ":latest"
-	}
-
-	// Generate image ID
-	hash := sha256.Sum256([]byte(ref))
-	imageID := fmt.Sprintf("sha256:%x", hash)
-
-	imgConfig := api.ContainerConfig{
-		Image: ref,
-	}
-
-	// Try to fetch real config from registry — use ADC auth for GCP registries
-	fetchAuth := ""
-	registry, _, _ := parseImageRef(ref)
-	if core.IsGCPRegistry(registry) {
-		if arToken, err := s.getARToken(); err == nil {
-			fetchAuth = arToken
-		} else {
-			s.Logger.Warn().Err(err).Str("registry", registry).Msg("failed to get AR token for image pull, trying unauthenticated")
-		}
-	}
-	if realConfig, _ := core.FetchImageConfig(ref, fetchAuth); realConfig != nil {
-		if len(realConfig.Env) > 0 {
-			imgConfig.Env = realConfig.Env
-		}
-		if len(realConfig.Cmd) > 0 {
-			imgConfig.Cmd = realConfig.Cmd
-		}
-		if len(realConfig.Entrypoint) > 0 {
-			imgConfig.Entrypoint = realConfig.Entrypoint
-		}
-		if realConfig.WorkingDir != "" {
-			imgConfig.WorkingDir = realConfig.WorkingDir
-		}
-		if len(realConfig.Labels) > 0 {
-			imgConfig.Labels = realConfig.Labels
-		}
-	}
-
-	image := api.Image{
-		ID:           imageID,
-		RepoTags:     []string{ref},
-		RepoDigests:  []string{},
-		Created:      time.Now().UTC().Format(time.RFC3339Nano),
-		Size:         0,
-		VirtualSize:  0,
-		Architecture: "amd64",
-		Os:           "linux",
-		RootFS:       api.RootFS{Type: "layers"},
-		Config:       imgConfig,
-	}
-
-	core.StoreImageWithAliases(s.Store, ref, image)
-
-	// Stream progress via pipe
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer func() { _ = pw.Close() }()
-
-		progress := []map[string]string{
-			{"status": "Pulling from " + ref},
-			{"status": "Digest: " + imageID[:19]},
-			{"status": "Status: Downloaded newer image for " + ref},
-		}
-		for _, p := range progress {
-			if err := json.NewEncoder(pw).Encode(p); err != nil {
-				return
-			}
-		}
-	}()
-
-	return pr, nil
+	return s.images.Pull(ref, auth)
 }
 
-// ImageLoad delegates to BaseServer which handles tar parsing and stores in-memory.
-// This enables docker save | docker load round-trips.
+// ImageLoad delegates to ImageManager.
 func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
-	return s.BaseServer.ImageLoad(r)
+	return s.images.Load(r)
 }
 
 // PodStart starts all containers in a pod by calling ContainerStart for each,
@@ -958,68 +878,24 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	}
 }
 
-// ImageBuild is not supported by the Cloud Run Functions backend.
-// Cloud Run Functions require pre-built container images.
+// ImageBuild delegates to ImageManager.
 func (s *Server) ImageBuild(opts api.ImageBuildOptions, buildContext io.Reader) (io.ReadCloser, error) {
-	return nil, &api.NotImplementedError{
-		Message: "Cloud Run Functions backend does not support image build; push pre-built images to Artifact Registry",
-	}
+	return s.images.Build(opts, buildContext)
 }
 
-// ImagePush pushes an image to a registry. For GCP registries (AR/GCR), it performs
-// a real OCI push using ADC for auth. For other registries, it falls back to BaseServer's
-// synthetic push. All cloud operations are best-effort.
+// ImagePush delegates to ImageManager which handles cloud auth and OCI push.
 func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
-	img, ok := s.Store.ResolveImage(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "image", ID: name}
-	}
+	return s.images.Push(name, tag, auth)
+}
 
-	if tag == "" {
-		tag = "latest"
-	}
+// ImageTag delegates to ImageManager which handles cloud sync.
+func (s *Server) ImageTag(source string, repo string, tag string) error {
+	return s.images.Tag(source, repo, tag)
+}
 
-	registry, repo, _ := parseImageRef(name)
-
-	// For GCP registries, attempt real OCI push
-	if core.IsGCPRegistry(registry) {
-		arToken, err := s.getARToken()
-		if err != nil {
-			s.Logger.Warn().Err(err).Str("registry", registry).Msg("failed to get AR token for push, falling back to synthetic")
-			return s.BaseServer.ImagePush(name, tag, auth)
-		}
-
-		result, err := core.OCIPush(core.OCIPushOptions{
-			Registry:   registry,
-			Repository: repo,
-			Tag:        tag,
-			AuthToken:  arToken,
-		})
-		if err != nil {
-			s.Logger.Warn().Err(err).Str("registry", registry).Str("repo", repo).Msg("OCI push failed, falling back to synthetic")
-			return s.BaseServer.ImagePush(name, tag, auth)
-		}
-
-		// Stream progress via pipe
-		pr, pw := io.Pipe()
-		go func() {
-			defer func() { _ = pw.Close() }()
-			enc := json.NewEncoder(pw)
-			_ = enc.Encode(map[string]string{"status": "The push refers to repository [" + name + "]"})
-			_ = enc.Encode(map[string]string{"status": "Preparing", "id": tag})
-			_ = enc.Encode(map[string]string{"status": "Pushed", "id": tag})
-			digest := strings.TrimPrefix(img.ID, "sha256:")
-			if result.ManifestDigest != "" {
-				digest = strings.TrimPrefix(result.ManifestDigest, "sha256:")
-			}
-			_ = enc.Encode(map[string]string{"status": tag + ": digest: sha256:" + digest})
-		}()
-
-		return pr, nil
-	}
-
-	// Non-GCP registries: delegate to BaseServer synthetic push
-	return s.BaseServer.ImagePush(name, tag, auth)
+// ImageRemove delegates to ImageManager which handles cloud sync.
+func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageDeleteResponse, error) {
+	return s.images.Remove(name, force, prune)
 }
 
 // Info returns system information enriched with GCP-specific metadata.

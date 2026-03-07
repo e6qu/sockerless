@@ -2,8 +2,6 @@ package lambda
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -12,7 +10,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
-	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	awslambda "github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/sockerless/api"
@@ -810,101 +807,29 @@ func (s *Server) ContainerUnpause(ref string) error {
 	return &api.NotImplementedError{Message: "Lambda backend does not support unpause"}
 }
 
-// ImagePull pulls an image reference and stores it locally.
-// For ECR images, uses GetAuthorizationToken to obtain auth credentials.
+// ImagePull pulls an image, using ECR cloud auth when available.
 func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
-	if ref == "" {
-		return nil, &api.InvalidParameterError{Message: "image reference is required"}
-	}
-
-	// Add :latest if no tag or digest
-	if !strings.Contains(ref, ":") && !strings.Contains(ref, "@") {
-		ref += ":latest"
-	}
-
-	// For ECR images, obtain auth token if not already provided
-	if auth == "" && isECRImage(ref) {
-		if token, err := s.getECRToken(); err == nil {
-			auth = token
-		} else {
-			s.Logger.Warn().Err(err).Str("ref", ref).Msg("failed to get ECR auth token, proceeding without auth")
-		}
-	}
-
-	// Generate image ID
-	hash := sha256.Sum256([]byte(ref))
-	imageID := fmt.Sprintf("sha256:%x", hash)
-
-	imgConfig := api.ContainerConfig{
-		Image: ref,
-	}
-
-	// Try to fetch real config from registry
-	if realConfig, _ := core.FetchImageConfig(ref, auth); realConfig != nil {
-		if len(realConfig.Env) > 0 {
-			imgConfig.Env = realConfig.Env
-		}
-		if len(realConfig.Cmd) > 0 {
-			imgConfig.Cmd = realConfig.Cmd
-		}
-		if len(realConfig.Entrypoint) > 0 {
-			imgConfig.Entrypoint = realConfig.Entrypoint
-		}
-		if realConfig.WorkingDir != "" {
-			imgConfig.WorkingDir = realConfig.WorkingDir
-		}
-		if len(realConfig.Labels) > 0 {
-			imgConfig.Labels = realConfig.Labels
-		}
-	}
-
-	image := api.Image{
-		ID:           imageID,
-		RepoTags:     []string{ref},
-		RepoDigests:  []string{},
-		Created:      time.Now().UTC().Format(time.RFC3339Nano),
-		Size:         0,
-		VirtualSize:  0,
-		Architecture: "amd64",
-		Os:           "linux",
-		RootFS:       api.RootFS{Type: "layers"},
-		Config:       imgConfig,
-	}
-
-	core.StoreImageWithAliases(s.Store, ref, image)
-
-	// Stream progress via pipe
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer func() { _ = pw.Close() }()
-
-		progress := []map[string]string{
-			{"status": "Pulling from " + ref},
-			{"status": "Digest: " + imageID[:19]},
-			{"status": "Status: Downloaded newer image for " + ref},
-		}
-		for _, p := range progress {
-			if err := json.NewEncoder(pw).Encode(p); err != nil {
-				return
-			}
-		}
-	}()
-
-	return pr, nil
+	return s.images.Pull(ref, auth)
 }
 
-// ImageLoad is not supported by the Lambda backend.
+// ImageTag tags an image and syncs the new tag to ECR.
+func (s *Server) ImageTag(source string, repo string, tag string) error {
+	return s.images.Tag(source, repo, tag)
+}
+
+// ImageRemove removes an image and syncs the removal to ECR.
+func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageDeleteResponse, error) {
+	return s.images.Remove(name, force, prune)
+}
+
+// ImageLoad loads an image from a tar archive.
 func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
-	return nil, &api.NotImplementedError{Message: "image load is not supported by Lambda backend"}
+	return s.images.Load(r)
 }
 
-// ImageBuild is not supported by the Lambda backend.
-// Lambda requires pre-built images stored in ECR.
+// ImageBuild delegates to the shared ImageManager.
 func (s *Server) ImageBuild(opts api.ImageBuildOptions, buildContext io.Reader) (io.ReadCloser, error) {
-	return nil, &api.NotImplementedError{
-		Message: "Lambda backend does not support image build; push pre-built images to ECR and use the ECR image URI",
-	}
+	return s.images.Build(opts, buildContext)
 }
 
 // AuthLogin validates login credentials.
@@ -976,36 +901,8 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 	}
 }
 
-// ImagePush is not supported by the Lambda backend.
-// Images should be pushed directly to ECR using the AWS CLI or SDK.
+// ImagePush pushes an image, syncing to ECR when applicable.
 func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
-	return nil, &api.NotImplementedError{
-		Message: "Lambda backend does not support image push; push images directly to ECR",
-	}
+	return s.images.Push(name, tag, auth)
 }
 
-// getECRToken gets an authorization token from ECR.
-func (s *Server) getECRToken() (string, error) {
-	result, err := s.aws.ECR.GetAuthorizationToken(s.ctx(), &ecr.GetAuthorizationTokenInput{})
-	if err != nil {
-		return "", err
-	}
-	if len(result.AuthorizationData) == 0 {
-		return "", fmt.Errorf("no authorization data returned")
-	}
-
-	// Token is base64-encoded "user:password"
-	token := aws.ToString(result.AuthorizationData[0].AuthorizationToken)
-	return "Basic " + token, nil
-}
-
-// isECRImage returns true if the image reference is from an ECR registry.
-func isECRImage(ref string) bool {
-	// ECR images match: *.dkr.ecr.*.amazonaws.com/repo:tag
-	parts := strings.SplitN(ref, "/", 2)
-	if len(parts) < 2 {
-		return false
-	}
-	registry := parts[0]
-	return strings.HasSuffix(registry, ".amazonaws.com") && strings.Contains(registry, ".dkr.ecr.")
-}
