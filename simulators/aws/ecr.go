@@ -57,6 +57,7 @@ func registerECR(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerRegistry_V20150921.GetAuthorizationToken", handleECRGetAuthorizationToken)
 	r.Register("AmazonEC2ContainerRegistry_V20150921.BatchGetImage", handleECRBatchGetImage)
 	r.Register("AmazonEC2ContainerRegistry_V20150921.PutImage", handleECRPutImage)
+	r.Register("AmazonEC2ContainerRegistry_V20150921.BatchDeleteImage", handleECRBatchDeleteImage)
 	r.Register("AmazonEC2ContainerRegistry_V20150921.BatchCheckLayerAvailability", handleECRBatchCheckLayerAvailability)
 	r.Register("AmazonEC2ContainerRegistry_V20150921.PutLifecyclePolicy", handleECRPutLifecyclePolicy)
 	r.Register("AmazonEC2ContainerRegistry_V20150921.GetLifecyclePolicy", handleECRGetLifecyclePolicy)
@@ -275,6 +276,72 @@ func handleECRPutImage(w http.ResponseWriter, r *http.Request) {
 			},
 			"imageManifest": img.ImageManifest,
 		},
+	})
+}
+
+func handleECRBatchDeleteImage(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RepositoryName string `json:"repositoryName"`
+		ImageIds       []struct {
+			ImageTag    string `json:"imageTag"`
+			ImageDigest string `json:"imageDigest"`
+		} `json:"imageIds"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if _, ok := ecrRepositories.Get(req.RepositoryName); !ok {
+		sim.AWSErrorf(w, "RepositoryNotFoundException", http.StatusBadRequest,
+			"The repository with name '%s' does not exist", req.RepositoryName)
+		return
+	}
+
+	var deleted []map[string]any
+	var failures []map[string]any
+
+	for _, imageId := range req.ImageIds {
+		key := req.RepositoryName + ":" + imageId.ImageTag
+		if imageId.ImageDigest != "" {
+			key = req.RepositoryName + ":" + imageId.ImageDigest
+		}
+
+		if _, ok := ecrImages.Get(key); ok {
+			ecrImages.Delete(key)
+			imgId := map[string]string{}
+			if imageId.ImageTag != "" {
+				imgId["imageTag"] = imageId.ImageTag
+			}
+			if imageId.ImageDigest != "" {
+				imgId["imageDigest"] = imageId.ImageDigest
+			}
+			deleted = append(deleted, map[string]any{"imageId": imgId})
+		} else {
+			imgId := map[string]string{}
+			if imageId.ImageTag != "" {
+				imgId["imageTag"] = imageId.ImageTag
+			}
+			if imageId.ImageDigest != "" {
+				imgId["imageDigest"] = imageId.ImageDigest
+			}
+			failures = append(failures, map[string]any{
+				"imageId":       imgId,
+				"failureCode":   "ImageNotFound",
+				"failureReason": "Requested image not found",
+			})
+		}
+	}
+	if deleted == nil {
+		deleted = []map[string]any{}
+	}
+	if failures == nil {
+		failures = []map[string]any{}
+	}
+
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"imageIds": deleted,
+		"failures": failures,
 	})
 }
 

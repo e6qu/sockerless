@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net/http"
 	"os"
@@ -886,7 +887,8 @@ func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 
 	// Generate image ID
 	hash := sha256.Sum256([]byte(ref))
-	imageID := fmt.Sprintf("sha256:%x", hash)
+	hex := fmt.Sprintf("%x", hash)
+	imageID := "sha256:" + hex
 
 	imgConfig := api.ContainerConfig{
 		Image: ref,
@@ -911,17 +913,36 @@ func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 		}
 	}
 
+	h := fnv.New32a()
+	h.Write([]byte(ref))
+	imgSize := int64(10_000_000 + h.Sum32()%90_000_000)
+
+	now := time.Now().UTC()
 	image := api.Image{
-		ID:           imageID,
-		RepoTags:     []string{ref},
-		RepoDigests:  []string{},
-		Created:      time.Now().UTC().Format(time.RFC3339Nano),
-		Size:         0,
-		VirtualSize:  0,
+		ID:       imageID,
+		RepoTags: []string{ref},
+		RepoDigests: []string{
+			strings.Split(ref, ":")[0] + "@sha256:" + hex[:64],
+		},
+		Created:      now.Format(time.RFC3339Nano),
+		Size:         imgSize,
+		VirtualSize:  imgSize,
 		Architecture: "amd64",
 		Os:           "linux",
-		RootFS:       api.RootFS{Type: "layers"},
-		Config:       imgConfig,
+		RootFS: api.RootFS{
+			Type:   "layers",
+			Layers: []string{"sha256:" + core.GenerateID()},
+		},
+		GraphDriver: api.GraphDriverData{
+			Name: "overlay2",
+			Data: map[string]string{
+				"MergedDir": "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/merged",
+				"UpperDir":  "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/diff",
+				"WorkDir":   "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/work",
+			},
+		},
+		Metadata: api.ImageMetadata{LastTagTime: now.Format(time.RFC3339Nano)},
+		Config:   imgConfig,
 	}
 
 	core.StoreImageWithAliases(s.Store, ref, image)
@@ -1017,7 +1038,20 @@ func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser,
 	}
 }
 
-// ImageLoad is not supported by the Azure Functions backend.
+// ImageLoad delegates to BaseServer to allow docker save | docker load round-trips.
 func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
-	return nil, &api.NotImplementedError{Message: "image load is not supported by Azure Functions backend"}
+	return s.BaseServer.ImageLoad(r)
+}
+
+// AuthLogin handles registry authentication.
+// For ACR registries (*.azurecr.io), logs a warning about using managed identity.
+// For all other registries, delegates to BaseServer directly.
+func (s *Server) AuthLogin(req *api.AuthRequest) (*api.AuthResponse, error) {
+	if strings.HasSuffix(req.ServerAddress, ".azurecr.io") {
+		s.Logger.Warn().
+			Str("registry", req.ServerAddress).
+			Msg("ACR login: credentials stored locally; use managed identity for production Azure Functions")
+		return s.BaseServer.AuthLogin(req)
+	}
+	return s.BaseServer.AuthLogin(req)
 }

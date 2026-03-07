@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"os"
 	"strings"
@@ -874,18 +875,38 @@ func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 	}
 
 	hash := sha256.Sum256([]byte(ref))
-	imageID := fmt.Sprintf("sha256:%x", hash)
+	hex := fmt.Sprintf("%x", hash)
+	imageID := "sha256:" + hex
 
+	h := fnv.New32a()
+	h.Write([]byte(ref))
+	imgSize := int64(10_000_000 + h.Sum32()%90_000_000)
+
+	now := time.Now().UTC()
 	image := api.Image{
-		ID:           imageID,
-		RepoTags:     []string{ref},
-		RepoDigests:  []string{},
-		Created:      time.Now().UTC().Format(time.RFC3339Nano),
-		Size:         0,
-		VirtualSize:  0,
+		ID:       imageID,
+		RepoTags: []string{ref},
+		RepoDigests: []string{
+			strings.Split(ref, ":")[0] + "@sha256:" + hex[:64],
+		},
+		Created:      now.Format(time.RFC3339Nano),
+		Size:         imgSize,
+		VirtualSize:  imgSize,
 		Architecture: "amd64",
 		Os:           "linux",
-		RootFS:       api.RootFS{Type: "layers"},
+		RootFS: api.RootFS{
+			Type:   "layers",
+			Layers: []string{"sha256:" + core.GenerateID()},
+		},
+		GraphDriver: api.GraphDriverData{
+			Name: "overlay2",
+			Data: map[string]string{
+				"MergedDir": "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/merged",
+				"UpperDir":  "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/diff",
+				"WorkDir":   "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/work",
+			},
+		},
+		Metadata: api.ImageMetadata{LastTagTime: now.Format(time.RFC3339Nano)},
 	}
 
 	if imgConfig != nil {
@@ -919,9 +940,9 @@ func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 	return pr, nil
 }
 
-// ImageLoad is not supported by ACA backend.
+// ImageLoad delegates to BaseServer to allow docker save | docker load round-trips.
 func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
-	return nil, &api.NotImplementedError{Message: "image load is not supported by ACA backend"}
+	return s.BaseServer.ImageLoad(r)
 }
 
 // VolumeRemove removes a volume and its state.

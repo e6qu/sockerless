@@ -7,6 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.29.6
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.59
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.45.7
+	github.com/aws/aws-sdk-go-v2/service/ecr v1.38.5
 	github.com/aws/aws-sdk-go-v2/service/lambda v1.69.6
 	github.com/docker/docker v27.5.1+incompatible
 	github.com/rs/zerolog v1.34.0

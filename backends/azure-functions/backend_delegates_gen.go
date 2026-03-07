@@ -10,10 +10,6 @@ import (
 	"io"
 )
 
-func (s *Server) AuthLogin(req *api.AuthRequest) (*api.AuthResponse, error) {
-	return s.BaseServer.AuthLogin(req)
-}
-
 func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) {
 	return s.BaseServer.ContainerChanges(id)
 }

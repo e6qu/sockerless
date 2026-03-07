@@ -7,10 +7,14 @@ The Lambda backend implements `api.Backend` (65 methods). Currently **19 methods
 - `ContainerCreate`, `ContainerStart`, `ContainerStop`, `ContainerKill`, `ContainerRemove`
 - `ContainerLogs`, `ContainerRestart`, `ContainerPrune`, `ContainerPause`, `ContainerUnpause`
 - `ContainerAttach`, `ContainerExport`, `ContainerCommit`
-- `ImagePull`, `ImageLoad`, `ImageBuild`, `ImagePush`
+- `ImagePull` (with ECR auth via `getECRToken()` for ECR images), `ImageLoad`, `ImageBuild`, `ImagePush`
 - `AuthLogin`, `Info`
 
 The remaining **46 methods** delegate to `s.BaseServer.Method()`.
+
+### ECR Integration
+- `ImagePull`: Detects ECR image refs (`*.dkr.ecr.*.amazonaws.com`), obtains auth token via `ecr:GetAuthorizationToken` (non-fatal on failure)
+- `AWSClients`: Includes `ecr.Client` for ECR auth operations
 
 Lambda is a FaaS platform. Many container/image operations have no direct equivalent.
 
@@ -121,10 +125,10 @@ Lambda is a FaaS platform. Many container/image operations have no direct equiva
 
 ### New AWS SDK Clients Needed
 
-| Client | Phase | Package |
-|--------|-------|---------|
-| `ecr.Client` | 1 | `github.com/aws/aws-sdk-go-v2/service/ecr` |
-| `cloudwatch.Client` | 3 | `github.com/aws/aws-sdk-go-v2/service/cloudwatch` |
+| Client | Phase | Package | Status |
+|--------|-------|---------|--------|
+| `ecr.Client` | 1 | `github.com/aws/aws-sdk-go-v2/service/ecr` | **DONE** — added to `AWSClients` in `aws.go` |
+| `cloudwatch.Client` | 3 | `github.com/aws/aws-sdk-go-v2/service/cloudwatch` | Pending |
 
 ### Recommended Order
 1 → 2 → 3
