@@ -1184,15 +1184,6 @@ func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*ap
 	return s.BaseServer.ExecCreate(containerID, req)
 }
 
-// ImageBuild is not supported by the ECS backend (requires pre-built images in ECR).
-func (s *Server) ImageBuild(opts api.ImageBuildOptions, buildContext io.Reader) (io.ReadCloser, error) {
-	return nil, &api.NotImplementedError{Message: "ECS backend does not support image build; push pre-built images to ECR"}
-}
-
-// ImagePush is not supported by the ECS backend (needs direct ECR push).
-func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
-	return nil, &api.NotImplementedError{Message: "ECS backend does not support image push; use ECR directly"}
-}
 
 // ContainerExport is not supported by the ECS backend (no filesystem access on Fargate).
 func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {

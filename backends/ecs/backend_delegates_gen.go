@@ -66,6 +66,10 @@ func (s *Server) ExecResize(id string, h int, w int) error {
 	return s.BaseServer.ExecResize(id, h, w)
 }
 
+func (s *Server) ImageBuild(opts api.ImageBuildOptions, context io.Reader) (io.ReadCloser, error) {
+	return s.BaseServer.ImageBuild(opts, context)
+}
+
 func (s *Server) ImageHistory(name string) ([]*api.ImageHistoryEntry, error) {
 	return s.BaseServer.ImageHistory(name)
 }
@@ -80,6 +84,10 @@ func (s *Server) ImageList(opts api.ImageListOptions) ([]*api.ImageSummary, erro
 
 func (s *Server) ImagePrune(filters map[string][]string) (*api.ImagePruneResponse, error) {
 	return s.BaseServer.ImagePrune(filters)
+}
+
+func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
+	return s.BaseServer.ImagePush(name, tag, auth)
 }
 
 func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageDeleteResponse, error) {
