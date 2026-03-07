@@ -2,15 +2,16 @@
 
 ## Overview
 
-The Azure Functions backend implements `api.Backend` (65 methods). Currently **17 methods** have cloud-native implementations:
+The Azure Functions backend implements `api.Backend` (65 methods). Currently **23 methods** have cloud-native implementations:
 
 - `ContainerCreate`, `ContainerStart`, `ContainerStop`, `ContainerKill`, `ContainerRemove`
 - `ContainerLogs`, `ContainerRestart`, `ContainerPrune`, `ContainerPause`, `ContainerUnpause`
-- `ImagePull`, `ImageLoad`
+- `ContainerExport`, `ContainerCommit`, `ContainerAttach`
+- `ImagePull`, `ImageLoad`, `ImageBuild`, `ImagePush`
 - `PodStart`, `PodStop`, `PodKill`, `PodRemove` (in `backend_impl_pods.go`)
 - `Info` (in `backend_impl.go`)
 
-The remaining **48 methods** delegate to `s.BaseServer.Method()`.
+The remaining **42 methods** delegate to `s.BaseServer.Method()`.
 
 Azure Functions is a FaaS platform. Many container/image operations have no direct equivalent.
 
@@ -19,8 +20,8 @@ Azure Functions is a FaaS platform. Many container/image operations have no dire
 | Priority | Count | Description |
 |----------|-------|-------------|
 | P0 | 4 | ALL DONE — Pod lifecycle with AZF-specific cleanup |
-| P1 | 4 | 1 DONE (Info), 3 remaining (ContainerInspect, ContainerStats, ImagePush) |
-| P2 | 45 | Adequate or N/A for FaaS |
+| P1 | 4 | 2 DONE (Info, ImagePush), 2 remaining (ContainerInspect, ContainerStats) |
+| P2 | 39 | Adequate or N/A for FaaS |
 
 ---
 
@@ -67,15 +68,21 @@ These must be overridden because BaseServer defaults bypass AZF-specific lifecyc
 - **Azure APIs**: `azquery.MetricsClient`
 - **Dependencies**: Add `MetricsClient` to `AzureClients`.
 
-### ImagePush (future)
-- **Enhancement**: Push to ACR when `s.config.Registry` is set. Low priority.
+### ImagePush — DONE (NotImplementedError)
+- **Current**: Returns `NotImplementedError` directing users to push to ACR directly.
+- **Future enhancement**: Full ACR push when `s.config.Registry` is set. Low priority.
 
 ---
 
-## P2 — Acceptable / N/A for FaaS (45 methods)
+## P2 — Acceptable / N/A for FaaS (39 methods)
 
-### Container Operations (10)
-ContainerList, ContainerTop, ContainerWait, ContainerAttach, ContainerRename, ContainerResize, ContainerUpdate, ContainerChanges, ContainerCommit, ContainerExport — all in-memory or agent-backed.
+### Container Operations (7)
+ContainerList, ContainerTop, ContainerWait, ContainerRename, ContainerResize, ContainerUpdate, ContainerChanges — all in-memory or agent-backed.
+
+**Moved to backend_impl.go (DONE)**:
+- `ContainerExport` — Returns `NotImplementedError` (no local filesystem). Validates container exists.
+- `ContainerCommit` — Returns `NotImplementedError` (no local filesystem). Validates container param and existence.
+- `ContainerAttach` — Delegates to BaseServer when agent connected, returns `NotImplementedError` otherwise.
 
 ### Container Filesystem (3)
 GetArchive, PutArchive, StatPath — filesystem driver with staging dirs.
@@ -83,8 +90,13 @@ GetArchive, PutArchive, StatPath — filesystem driver with staging dirs.
 ### Exec (4)
 ExecCreate, ExecStart, ExecInspect, ExecResize — reverse agent dispatches correctly.
 
-### Images (9)
-ImageBuild, ImageHistory, ImageInspect, ImageList, ImagePrune, ImageRemove, ImageSave, ImageSearch, ImageTag — all in-memory metadata.
+### Images (6)
+ImageHistory, ImageInspect, ImageList, ImagePrune, ImageRemove, ImageSave, ImageSearch, ImageTag — all in-memory metadata.
+
+**Moved to backend_impl.go (DONE)**:
+- `ImageBuild` — Returns `NotImplementedError` directing users to Azure Container Registry.
+- `ImagePush` — Returns `NotImplementedError` directing users to Azure Container Registry.
+- `ImageLoad` — Returns `NotImplementedError`.
 
 ### Networks (7)
 All in-memory. Azure Functions networking is managed at Function App/VNet level.
@@ -112,11 +124,19 @@ Added to `backend_impl_pods.go`. Removed 4 delegate entries from `backend_delega
 **Info** — DONE. Enriches BaseServer info with Azure location/subscription/resource group. In `backend_impl.go`.
 **ContainerInspect** — Best-effort Function App existence check. Remaining.
 
-### Phase 3: Metrics (1 method)
+### Phase 3: FaaS NotImplemented Methods (6 methods) — DONE
+8. **ContainerExport** — ✅ DONE. Validates container exists, returns `NotImplementedError`.
+9. **ContainerCommit** — ✅ DONE. Validates container param and existence, returns `NotImplementedError`.
+10. **ContainerAttach** — ✅ DONE. Delegates to BaseServer when agent connected, returns `NotImplementedError` otherwise.
+11. **ImageBuild** — ✅ DONE. Returns `NotImplementedError` directing users to Azure Container Registry.
+12. **ImagePush** — ✅ DONE. Returns `NotImplementedError` directing users to Azure Container Registry.
+13. **ImageLoad** — ✅ DONE. Returns `NotImplementedError`.
+
+### Phase 4: Metrics (1 method)
 **ContainerStats** — Add `MetricsClient`, query `AppMetrics`.
 
-### Phase 4: ACR Integration (future)
-**ImagePush** — ACR push when registry configured.
+### Phase 5: ACR Integration (future)
+**ImagePush** — Full ACR push when registry configured (currently returns NotImplementedError).
 
 ### New Azure SDK Clients Needed
 

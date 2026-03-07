@@ -1131,6 +1131,87 @@ func (s *Server) Info() (*api.BackendInfo, error) {
 	return info, nil
 }
 
+// ContainerInspect returns container details, refreshing status from ECS first.
+func (s *Server) ContainerInspect(ref string) (*api.Container, error) {
+	id, ok := s.Store.ResolveContainerID(ref)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: ref}
+	}
+
+	// Refresh task status from ECS before returning
+	s.refreshTaskStatus(id)
+
+	return s.BaseServer.ContainerInspect(id)
+}
+
+// ContainerList lists containers, refreshing status from ECS for containers with tasks.
+func (s *Server) ContainerList(opts api.ContainerListOptions) ([]*api.ContainerSummary, error) {
+	// Batch-refresh all containers that have TaskARNs before filtering
+	var idsWithTasks []string
+	for _, c := range s.Store.Containers.List() {
+		if ecsState, ok := s.ECS.Get(c.ID); ok && ecsState.TaskARN != "" {
+			idsWithTasks = append(idsWithTasks, c.ID)
+		}
+	}
+	if len(idsWithTasks) > 0 {
+		s.refreshTaskStatusBatch(idsWithTasks)
+	}
+
+	return s.BaseServer.ContainerList(opts)
+}
+
+// ExecCreate creates an exec instance. Validates that an agent is connected
+// before creating — without an agent, exec cannot work on ECS Fargate.
+func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*api.ExecCreateResponse, error) {
+	id, ok := s.Store.ResolveContainerID(containerID)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: containerID}
+	}
+
+	c, _ := s.Store.Containers.Get(id)
+	if !c.State.Running {
+		return nil, &api.ConflictError{Message: "Container " + containerID + " is not running"}
+	}
+
+	// ECS-specific: check that an agent is available for exec
+	if c.AgentAddress == "" {
+		return nil, &api.NotImplementedError{
+			Message: fmt.Sprintf("exec requires an agent connection, but container %s has no agent attached (ECS backend)", strings.TrimPrefix(c.Name, "/")),
+		}
+	}
+
+	// Delegate to BaseServer for the actual exec creation
+	return s.BaseServer.ExecCreate(containerID, req)
+}
+
+// ImageBuild is not supported by the ECS backend (requires pre-built images in ECR).
+func (s *Server) ImageBuild(opts api.ImageBuildOptions, buildContext io.Reader) (io.ReadCloser, error) {
+	return nil, &api.NotImplementedError{Message: "ECS backend does not support image build; push pre-built images to ECR"}
+}
+
+// ImagePush is not supported by the ECS backend (needs direct ECR push).
+func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
+	return nil, &api.NotImplementedError{Message: "ECS backend does not support image push; use ECR directly"}
+}
+
+// ContainerExport is not supported by the ECS backend (no filesystem access on Fargate).
+func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {
+	_, ok := s.Store.ResolveContainerID(ref)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: ref}
+	}
+	return nil, &api.NotImplementedError{Message: "ECS backend does not support container export; Fargate tasks have no accessible filesystem"}
+}
+
+// ContainerCommit is not supported by the ECS backend (cannot snapshot Fargate containers).
+func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
+	_, ok := s.Store.ResolveContainerID(req.Container)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
+	}
+	return nil, &api.NotImplementedError{Message: "ECS backend does not support container commit; Fargate containers cannot be snapshotted"}
+}
+
 // VolumePrune removes all unused volumes.
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
 	var deleted []string

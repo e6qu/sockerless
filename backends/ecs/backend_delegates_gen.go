@@ -22,24 +22,8 @@ func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) 
 	return s.BaseServer.ContainerChanges(id)
 }
 
-func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
-	return s.BaseServer.ContainerCommit(req)
-}
-
-func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
-	return s.BaseServer.ContainerExport(id)
-}
-
 func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArchiveResponse, error) {
 	return s.BaseServer.ContainerGetArchive(id, path)
-}
-
-func (s *Server) ContainerInspect(id string) (*api.Container, error) {
-	return s.BaseServer.ContainerInspect(id)
-}
-
-func (s *Server) ContainerList(opts api.ContainerListOptions) ([]*api.ContainerSummary, error) {
-	return s.BaseServer.ContainerList(opts)
 }
 
 func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDir bool, body io.Reader) error {
@@ -74,20 +58,12 @@ func (s *Server) ContainerWait(id string, condition string) (*api.ContainerWaitR
 	return s.BaseServer.ContainerWait(id, condition)
 }
 
-func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*api.ExecCreateResponse, error) {
-	return s.BaseServer.ExecCreate(containerID, req)
-}
-
 func (s *Server) ExecInspect(id string) (*api.ExecInstance, error) {
 	return s.BaseServer.ExecInspect(id)
 }
 
 func (s *Server) ExecResize(id string, h int, w int) error {
 	return s.BaseServer.ExecResize(id, h, w)
-}
-
-func (s *Server) ImageBuild(opts api.ImageBuildOptions, context io.Reader) (io.ReadCloser, error) {
-	return s.BaseServer.ImageBuild(opts, context)
 }
 
 func (s *Server) ImageHistory(name string) ([]*api.ImageHistoryEntry, error) {
@@ -104,10 +80,6 @@ func (s *Server) ImageList(opts api.ImageListOptions) ([]*api.ImageSummary, erro
 
 func (s *Server) ImagePrune(filters map[string][]string) (*api.ImagePruneResponse, error) {
 	return s.BaseServer.ImagePrune(filters)
-}
-
-func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
-	return s.BaseServer.ImagePush(name, tag, auth)
 }
 
 func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageDeleteResponse, error) {

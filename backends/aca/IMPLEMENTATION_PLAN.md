@@ -2,7 +2,7 @@
 
 ## Overview
 
-The ACA (Azure Container Apps) backend implements `api.Backend` (65 methods). Currently **21 methods** have cloud-native implementations:
+The ACA (Azure Container Apps) backend implements `api.Backend` (65 methods). Currently **25 methods** have cloud-native implementations:
 
 In `backend_impl.go` (14 methods):
 - `ContainerCreate`, `ContainerStart`, `ContainerStop`, `ContainerKill`, `ContainerRemove`
@@ -10,20 +10,22 @@ In `backend_impl.go` (14 methods):
 - `ImagePull`, `ImageLoad`
 - `VolumeRemove`, `VolumePrune`
 
-In `backend_impl_pods.go` (7 methods):
+In `backend_impl_pods.go` (11 methods):
 - `PodStart`, `PodStop`, `PodKill`, `PodRemove`
 - `ExecCreate`, `ExecStart`
+- `ContainerAttach`, `ContainerExport`, `ContainerCommit`
+- `AuthLogin`
 - `Info`
 
-The remaining **44 methods** delegate to `s.BaseServer.Method()`.
+The remaining **40 methods** delegate to `s.BaseServer.Method()`.
 
 ## Priority Summary
 
 | Priority | Count | Description |
 |----------|-------|-------------|
 | P0 | 0 | No actively broken methods |
-| P1 | 13 (7 DONE, 6 remaining) | Works but misses cloud-specific features |
-| P2 | 38 | BaseServer implementation is adequate |
+| P1 | 13 (11 DONE, 2 remaining) | Works but misses cloud-specific features |
+| P2 | 36 | BaseServer implementation is adequate |
 
 ---
 
@@ -56,9 +58,10 @@ The remaining **44 methods** delegate to `s.BaseServer.Method()`.
 
 ### Agent-Aware Operations (4 methods)
 
-#### ContainerAttach
+#### ContainerAttach — DONE
 - **BaseServer**: Local pipe via synthetic stream driver.
-- **Implementation**: If agent connected, proxy through agent WebSocket. Otherwise return meaningful error.
+- **Implementation**: If agent connected, delegates to BaseServer (driver chain). Otherwise returns `NotImplementedError`.
+- **File**: `backend_impl_pods.go`
 
 #### ContainerTop
 - **BaseServer**: Synthetic single-process listing.
@@ -99,9 +102,22 @@ The remaining **44 methods** delegate to `s.BaseServer.Method()`.
 - **Implementation**: Enriches Name field with `(aca:{resourceGroup}/{environment})` suffix.
 - **File**: `backend_impl_pods.go`
 
-#### AuthLogin
+#### AuthLogin — DONE
 - **BaseServer**: Always returns success.
-- **Implementation**: For ACR registries (`*.azurecr.io`), validate via token exchange. Use existing `getACRToken()` pattern.
+- **Implementation**: For ACR registries (`*.azurecr.io`), logs warning about local-only credential storage, delegates to BaseServer. Non-ACR registries delegate directly.
+- **File**: `backend_impl_pods.go`
+
+### Not Implemented (explicit errors)
+
+#### ContainerExport — DONE
+- **BaseServer**: Delegates to driver chain.
+- **Implementation**: Returns `NotImplementedError` — ACA Jobs do not provide filesystem access for container export. Validates container exists first.
+- **File**: `backend_impl_pods.go`
+
+#### ContainerCommit — DONE
+- **BaseServer**: Delegates to driver chain.
+- **Implementation**: Returns `NotImplementedError` — ACA containers cannot be snapshotted into images. Validates container exists first.
+- **File**: `backend_impl_pods.go`
 
 ### Image Operations (deferred)
 
@@ -117,9 +133,9 @@ The remaining **44 methods** delegate to `s.BaseServer.Method()`.
 
 ---
 
-## P2 — Acceptable (38 methods)
+## P2 — Acceptable (36 methods)
 
-- **Container**: Inspect, List, Wait, Rename, Resize, Changes, Export, Commit, GetArchive, PutArchive, StatPath
+- **Container**: Inspect, List, Wait, Rename, Resize, Changes, GetArchive, PutArchive, StatPath
 - **Exec**: Inspect, Resize
 - **Images**: Inspect, List, Remove, History, Prune, Tag, Save, Search
 - **Networks**: Create, List, Inspect, Connect, Disconnect, Remove, Prune
@@ -141,10 +157,11 @@ Implemented in `backend_impl_pods.go`. Uses existing Azure clients via `s.Contai
 
 Implemented in `backend_impl_pods.go`. Agent-connectivity checks + BaseServer delegation for exec, enriched Name for Info.
 
-### Phase 2: Agent-Aware Exec/Attach
-**ExecCreate, ExecStart, ContainerAttach, ContainerTop**
+### Phase 2: Agent-Aware Exec/Attach — MOSTLY DONE
+**ExecCreate, ExecStart, ContainerAttach** — DONE (in Phase 1b and Round 2)
+**ContainerTop** — remaining
 
-Add agent-connectivity validation. Existing driver chain handles agent case.
+Only ContainerTop remains: proxy `ps` through agent exec if connected, otherwise return synthetic response.
 **Effort**: Small
 
 ### Phase 3: Azure Files Volumes
@@ -159,11 +176,12 @@ New Azure SDK client, integration with job spec builder.
 New Azure Monitor metrics client.
 **Effort**: Medium
 
-### Phase 5: Registry Operations
-**AuthLogin, ImageBuild, ImagePush**
+### Phase 5: Registry Operations — PARTIALLY DONE
+**AuthLogin** — DONE (Round 2, ACR warning + BaseServer delegation)
+**ImageBuild, ImagePush** — remaining
 
-ACR integration for auth and cloud builds.
-**Effort**: Large
+ACR integration for cloud builds.
+**Effort**: Medium (AuthLogin done, ImageBuild/Push remain)
 
 ### Phase 6: Container Update
 **ContainerUpdate**

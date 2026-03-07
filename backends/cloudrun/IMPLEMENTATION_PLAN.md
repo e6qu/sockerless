@@ -2,26 +2,28 @@
 
 ## Overview
 
-The CloudRun backend implements `api.Backend` (65 methods). Currently **24 methods** have cloud-native implementations in `backend_impl.go`:
+The CloudRun backend implements `api.Backend` (65 methods). Currently **32 methods** have cloud-native implementations in `backend_impl.go`:
 
 - `ContainerCreate`, `ContainerStart`, `ContainerStop`, `ContainerKill`, `ContainerRemove`
 - `ContainerLogs`, `ContainerRestart`, `ContainerPrune`, `ContainerPause`, `ContainerUnpause`
+- `ContainerAttach`, `ContainerTop`, `ContainerUpdate`
+- `ContainerGetArchive`, `ContainerPutArchive`, `ContainerStatPath`
 - `ContainerExport`, `ContainerCommit`
-- `ImagePull`, `ImageLoad`
+- `ImagePull`, `ImageLoad`, `ImagePush`
 - `VolumeRemove`, `VolumePrune`
 - `ExecStart`
 - `PodStart`, `PodStop`, `PodKill`, `PodRemove`
-- `Info`
+- `Info`, `AuthLogin`
 - `startMultiContainerJobTyped` (private helper)
 
-The remaining **43 methods** delegate to `s.BaseServer.Method()`.
+The remaining **35 methods** delegate to `s.BaseServer.Method()`.
 
 ## Priority Summary
 
 | Priority | Count | Done | Description |
 |----------|-------|------|-------------|
 | P0 | 1 | 1 | BaseServer implementation is actively wrong |
-| P1 | 18 | 7 | Works but misses cloud-specific features |
+| P1 | 18 | 15 | Works but misses cloud-specific features |
 | P2 | 32 | 0 | BaseServer implementation is adequate |
 
 ---
@@ -40,14 +42,14 @@ The remaining **43 methods** delegate to `s.BaseServer.Method()`.
 
 ### Container Lifecycle
 
-#### ContainerAttach
+#### ContainerAttach ✅ DONE
 - **BaseServer**: Creates pipe via synthetic stream driver.
 - **Why incomplete**: Cloud Run Jobs do not expose interactive I/O.
-- **Implementation**: Return `NotImplementedError` for containers without agents. If agent connected, proxy through agent WebSocket.
+- **Implementation**: Resolves container, checks `AgentAddress`. If agent connected, delegates to BaseServer (proxies through agent). Otherwise returns `NotImplementedError`.
 
-#### ContainerTop
+#### ContainerTop ✅ DONE
 - **BaseServer**: Synthetic single-process listing.
-- **Implementation**: If agent connected, proxy `ps` through agent. Otherwise return synthetic response.
+- **Implementation**: Resolves container, checks `AgentAddress`. If agent connected, delegates to BaseServer (proxies through agent). Otherwise delegates to BaseServer for synthetic response.
 
 #### ContainerStats
 - **BaseServer**: Synthetic stats with fake values.
@@ -55,15 +57,15 @@ The remaining **43 methods** delegate to `s.BaseServer.Method()`.
 - **GCP APIs**: Cloud Monitoring v3 (`monitoring.NewMetricClient`)
 - **Dependencies**: Add `cloud.google.com/go/monitoring` to go.mod, add client to `GCPClients`.
 
-#### ContainerUpdate
+#### ContainerUpdate ✅ DONE
 - **BaseServer**: Updates resource limits in-memory only.
-- **Implementation**: Update in-memory state. Log warning that changes take effect on restart. Modify `buildJobSpec` to read from updated HostConfig.
+- **Implementation**: Logs warning that changes are stored in-memory and take effect on restart. Delegates to BaseServer for in-memory update.
 
 #### ContainerExport / ContainerCommit ✅ DONE
 - **Implementation**: Return `NotImplementedError` — no container filesystem access. Validates container reference exists before returning error.
 
-#### ContainerGetArchive / ContainerPutArchive / ContainerStatPath
-- **Implementation**: If agent connected, proxy through agent. Otherwise return `NotImplementedError`.
+#### ContainerGetArchive / ContainerPutArchive / ContainerStatPath ✅ DONE
+- **Implementation**: Resolves container, checks `AgentAddress`. If agent connected, delegates to BaseServer (proxies through agent). Otherwise returns `NotImplementedError`.
 
 ### Images
 
@@ -73,9 +75,9 @@ The remaining **43 methods** delegate to `s.BaseServer.Method()`.
 - **Phase 2**: Submit to Cloud Build, push to Artifact Registry.
 - **GCP APIs**: Cloud Build v1 (`cloudbuild.NewClient`)
 
-#### ImagePush
+#### ImagePush ✅ DONE
 - **BaseServer**: Synthetic "pushed" progress.
-- **Implementation**: Keep synthetic for now. Real AR push if Cloud Build is implemented.
+- **Implementation**: Returns `NotImplementedError` — images must be pushed directly to Artifact Registry or GCR.
 
 ### Volumes
 
@@ -104,9 +106,9 @@ The remaining **43 methods** delegate to `s.BaseServer.Method()`.
 - **BaseServer**: Static descriptor fields.
 - **Implementation**: Enriches BaseServer.Info() with GCP project/region in OperatingSystem, Driver, and KernelVersion fields.
 
-#### AuthLogin
+#### AuthLogin ✅ DONE
 - **BaseServer**: Always returns success.
-- **Implementation**: For GCR/AR registries, validate credentials against registry. Store valid credentials for ImagePull.
+- **Implementation**: Detects GCR/Artifact Registry addresses (`.gcr.io`, `-docker.pkg.dev`, `.pkg.dev`), logs warning about `gcloud auth configure-docker` for production. Delegates to BaseServer for credential storage.
 
 ---
 
@@ -132,17 +134,18 @@ The remaining **43 methods** delegate to `s.BaseServer.Method()`.
 3. **PodStop/PodKill** — Calls `s.ContainerStop()`/`s.ContainerKill()` per container.
 4. **PodRemove** — Calls `s.ContainerRemove()` per container + delete pod.
 
-### Phase C: Agent-Proxied Operations (P1) — Partially Done
-5. ContainerAttach, GetArchive, PutArchive, StatPath, Top — proxy through agent or NotImplementedError.
+### Phase C: Agent-Proxied Operations (P1) ✅ DONE
+5. **ContainerAttach, GetArchive, PutArchive, StatPath, Top** ✅ — agent check, proxy through BaseServer or NotImplementedError.
 6. **ContainerExport, ContainerCommit** ✅ — return NotImplementedError.
 7. **Info** ✅ — GCP project/region enrichment.
+8. **ContainerUpdate** ✅ — warning log + BaseServer delegate.
+9. **ImagePush** ✅ — returns NotImplementedError.
+10. **AuthLogin** ✅ — GCR/AR detection + warning + BaseServer delegate.
 
 ### Phase D: Cloud-Native Enhancements (P1)
-8. **ContainerStats** — Cloud Monitoring metrics. Requires new GCP client.
-9. **ContainerUpdate** — Store limits, apply on restart.
-10. **VolumeCreate** — GCS-backed volumes.
-11. **AuthLogin** — Validate GCR/AR credentials.
-12. **ImageBuild/ImagePush** — Cloud Build integration (stretch goal).
+11. **ContainerStats** — Cloud Monitoring metrics. Requires new GCP client.
+12. **VolumeCreate** — GCS-backed volumes.
+13. **ImageBuild** — Cloud Build integration (stretch goal).
 
 ### New GCP Clients Needed
 

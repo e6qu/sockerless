@@ -14,14 +14,6 @@ func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) 
 	return s.BaseServer.ContainerChanges(id)
 }
 
-func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
-	return s.BaseServer.ContainerCommit(req)
-}
-
-func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
-	return s.BaseServer.ContainerExport(id)
-}
-
 func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArchiveResponse, error) {
 	return s.BaseServer.ContainerGetArchive(id, path)
 }

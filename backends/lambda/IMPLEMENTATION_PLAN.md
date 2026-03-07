@@ -2,15 +2,15 @@
 
 ## Overview
 
-The Lambda backend implements `api.Backend` (65 methods). Currently **17 methods** have cloud-native implementations in `backend_impl.go`:
+The Lambda backend implements `api.Backend` (65 methods). Currently **19 methods** have cloud-native implementations in `backend_impl.go`:
 
 - `ContainerCreate`, `ContainerStart`, `ContainerStop`, `ContainerKill`, `ContainerRemove`
 - `ContainerLogs`, `ContainerRestart`, `ContainerPrune`, `ContainerPause`, `ContainerUnpause`
-- `ContainerAttach`
+- `ContainerAttach`, `ContainerExport`, `ContainerCommit`
 - `ImagePull`, `ImageLoad`, `ImageBuild`, `ImagePush`
 - `AuthLogin`, `Info`
 
-The remaining **48 methods** delegate to `s.BaseServer.Method()`.
+The remaining **46 methods** delegate to `s.BaseServer.Method()`.
 
 Lambda is a FaaS platform. Many container/image operations have no direct equivalent.
 
@@ -18,9 +18,9 @@ Lambda is a FaaS platform. Many container/image operations have no direct equiva
 
 | Priority | Count | Description |
 |----------|-------|-------------|
-| P0 | 3 | BaseServer implementation is actively wrong |
-| P1 | 5 | Works but misses cloud-specific features |
-| P2 | 45 | Adequate or N/A for FaaS |
+| P0 | 3 | ALL DONE |
+| P1 | 5 | ALL DONE |
+| P2 | 43 | Adequate or N/A for FaaS (2 moved to impl: ContainerExport, ContainerCommit) |
 
 ---
 
@@ -83,8 +83,8 @@ Lambda is a FaaS platform. Many container/image operations have no direct equiva
 |--------|--------|
 | ContainerPause/Unpause | Already returns `NotImplementedError` |
 | ContainerChanges | No persistent filesystem |
-| ContainerExport | No filesystem to export |
-| ContainerCommit | Cannot create images from functions |
+| ContainerExport | No filesystem to export — returns `NotImplementedError` (DONE) |
+| ContainerCommit | Cannot create images from functions — returns `NotImplementedError` (DONE) |
 | ContainerResize | No TTY |
 | ImageLoad | Already returns `NotImplementedError` |
 | ImageSave | No local image storage |
@@ -113,6 +113,8 @@ Lambda is a FaaS platform. Many container/image operations have no direct equiva
 ### Phase 2: P1 Improvements (2 methods worth implementing) — DONE
 4. **ContainerAttach** — ✅ DONE. Delegates to BaseServer when agent connected, returns `NotImplementedError` otherwise.
 5. **ImagePush** — ✅ DONE. Returns `NotImplementedError` directing users to push to ECR directly.
+6. **ContainerExport** — ✅ DONE. Validates container exists, returns `NotImplementedError` (no local filesystem).
+7. **ContainerCommit** — ✅ DONE. Validates container param and container exists, returns `NotImplementedError` (no local filesystem).
 
 ### Phase 3: Optional Enhancement
 6. **ContainerStats** — CloudWatch metrics. Add `cloudwatch.Client`. ~80 lines. Defer unless needed.

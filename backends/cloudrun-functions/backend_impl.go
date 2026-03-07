@@ -908,6 +908,62 @@ func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
 	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
 }
 
+// ContainerExport is not supported by the Cloud Run Functions backend.
+// Cloud Run Functions have no local filesystem to export.
+func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
+	if _, ok := s.Store.ResolveContainerID(id); !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: id}
+	}
+	return nil, &api.NotImplementedError{
+		Message: "Cloud Run Functions backend does not support container export; functions have no local filesystem",
+	}
+}
+
+// ContainerCommit is not supported by the Cloud Run Functions backend.
+// Cloud Run Functions have no local filesystem to commit.
+func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
+	if req.Container == "" {
+		return nil, &api.InvalidParameterError{Message: "container query parameter is required"}
+	}
+	if _, ok := s.Store.ResolveContainerID(req.Container); !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
+	}
+	return nil, &api.NotImplementedError{
+		Message: "Cloud Run Functions backend does not support container commit; functions have no local filesystem",
+	}
+}
+
+// ContainerAttach is not supported by the Cloud Run Functions backend without a connected agent.
+func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
+	cid, ok := s.Store.ResolveContainerID(id)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: id}
+	}
+	c, _ := s.Store.Containers.Get(cid)
+	if c.AgentAddress != "" {
+		return s.BaseServer.ContainerAttach(id, opts)
+	}
+	return nil, &api.NotImplementedError{
+		Message: "Cloud Run Functions backend does not support attach without a connected agent",
+	}
+}
+
+// ImageBuild is not supported by the Cloud Run Functions backend.
+// Cloud Run Functions require pre-built container images.
+func (s *Server) ImageBuild(opts api.ImageBuildOptions, buildContext io.Reader) (io.ReadCloser, error) {
+	return nil, &api.NotImplementedError{
+		Message: "Cloud Run Functions backend does not support image build; push pre-built images to Artifact Registry",
+	}
+}
+
+// ImagePush is not supported by the Cloud Run Functions backend.
+// Images should be pushed directly to Artifact Registry using the gcloud CLI or SDK.
+func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
+	return nil, &api.NotImplementedError{
+		Message: "Cloud Run Functions backend does not support image push; push images directly to Artifact Registry",
+	}
+}
+
 // Info returns system information enriched with GCP-specific metadata.
 func (s *Server) Info() (*api.BackendInfo, error) {
 	info, err := s.BaseServer.Info()

@@ -2,28 +2,35 @@
 
 ## Overview
 
-The ECS backend implements `api.Backend` (65 methods). Currently **20 methods** have real cloud-native implementations in `backend_impl.go`:
+The ECS backend implements `api.Backend` (65 methods). Currently **27 methods** have real cloud-native implementations in `backend_impl.go`:
 
 - `ContainerCreate`, `ContainerStart`, `ContainerStop`, `ContainerKill`, `ContainerRemove`
 - `ContainerLogs`, `ContainerRestart`, `ContainerPrune`, `ContainerPause`, `ContainerUnpause`
+- `ContainerInspect` (**DONE** — refreshes task status via ecs:DescribeTasks before returning)
+- `ContainerList` (**DONE** — batch-refreshes all containers with TaskARNs via ecs:DescribeTasks)
+- `ContainerExport` (**DONE** — returns NotImplementedError, no filesystem access on Fargate)
+- `ContainerCommit` (**DONE** — returns NotImplementedError, cannot snapshot Fargate containers)
 - `ImagePull`, `ImageLoad`
+- `ImageBuild` (**DONE** — returns NotImplementedError, requires pre-built images in ECR)
+- `ImagePush` (**DONE** — returns NotImplementedError, use ECR directly)
 - `VolumeRemove`, `VolumePrune`
 - `ExecStart` (**DONE** — agent check, delegates or returns NotImplementedError)
+- `ExecCreate` (**DONE** — validates agent connectivity before creating exec instance)
 - `PodStart` (**DONE** — calls ContainerStart per container)
 - `PodStop` (**DONE** — calls ContainerStop per container)
 - `PodKill` (**DONE** — calls ContainerKill per container)
 - `PodRemove` (**DONE** — calls ContainerRemove per container, checks running when !force, deletes pod)
 - `Info` (**DONE** — enriches with ecs:DescribeClusters data, non-fatal on AWS errors)
 
-The remaining **45 methods** in `backend_delegates_gen.go` delegate to `s.BaseServer.Method()`.
+The remaining **38 methods** in `backend_delegates_gen.go` delegate to `s.BaseServer.Method()`.
 
 ## Priority Summary
 
 | Priority | Count | Description |
 |----------|-------|-------------|
 | P0 | ~~1~~ 0 | BaseServer implementation is actively wrong for ECS |
-| P1 | ~~19~~ 14 | Works but misses cloud-specific features |
-| P2 | 31 | BaseServer implementation is adequate |
+| P1 | ~~19~~ ~~14~~ 9 | Works but misses cloud-specific features |
+| P2 | ~~31~~ 29 | BaseServer implementation is adequate |
 
 ---
 
@@ -40,17 +47,14 @@ The remaining **45 methods** in `backend_delegates_gen.go` delegate to `s.BaseSe
 
 ### Container Lifecycle
 
-#### ContainerInspect
-- **BaseServer**: Returns container from in-memory store only.
-- **Why incomplete**: Does not reflect real ECS task status. A task could have stopped or changed IP without the backend knowing.
-- **Implementation**: Call `ecs:DescribeTasks` with stored TaskARN. Merge real task status, exit code, network interface IP into in-memory container. Fall back to in-memory if no TaskARN.
+#### ContainerInspect — DONE
+- **Implementation**: Calls `refreshTaskStatus(id)` which does `ecs:DescribeTasks` with stored TaskARN. `applyTaskStatus()` merges real task status (STOPPED → exited with exit code, RUNNING → IP backfill). Falls back to in-memory if no TaskARN or AWS error (non-fatal). Then delegates to `BaseServer.ContainerInspect()`.
 - **AWS APIs**: `ecs:DescribeTasks`
 
-#### ContainerList
-- **BaseServer**: Lists from in-memory store.
-- **Why incomplete**: Running containers whose tasks have stopped still show as running.
-- **Implementation**: Batch `ecs:DescribeTasks` (up to 100 per request) to refresh status before filtering. Factor refresh into shared `refreshTaskStatus()` helper.
-- **AWS APIs**: `ecs:DescribeTasks` (batched)
+#### ContainerList — DONE
+- **Implementation**: Collects all container IDs with TaskARNs, calls `refreshTaskStatusBatch(ids)` which batches `ecs:DescribeTasks` (100 ARNs per call). Each task result is applied via `applyTaskStatus()`. AWS errors are non-fatal (skipped per batch). Then delegates to `BaseServer.ContainerList()`.
+- **AWS APIs**: `ecs:DescribeTasks` (batched, up to 100 per call)
+- **Note**: In pod scenarios, multiple containers may share one TaskARN; currently only the first container per TaskARN is refreshed in the batch map. Non-critical since all pod containers share the same task lifecycle.
 
 #### ContainerWait
 - **BaseServer**: Blocks on in-memory channel.
@@ -73,23 +77,18 @@ The remaining **45 methods** in `backend_delegates_gen.go` delegate to `s.BaseSe
 
 ### Exec
 
-#### ExecCreate
-- **BaseServer**: Creates exec instance in-memory.
-- **Enhancement**: Add validation — if no agent AND ECS Execute Command not enabled, return error early.
+#### ExecCreate — DONE
+- **Implementation**: Resolves container, checks running state, validates agent connectivity (`c.AgentAddress != ""`). Returns `NotImplementedError` if no agent attached. Delegates to `BaseServer.ExecCreate()` when agent is available.
 
 ### Images
 
-#### ImageBuild
-- **BaseServer**: Builds synthetic image locally.
-- **Why incomplete**: Cannot build images on Fargate.
-- **Implementation (short-term)**: Return `NotImplementedError`.
-- **Implementation (future)**: Submit to CodeBuild, push to ECR.
-- **AWS APIs (future)**: `codebuild:StartBuild`, `ecr:CreateRepository`
+#### ImageBuild — DONE
+- **Implementation**: Returns `NotImplementedError` ("ECS backend does not support image build; push pre-built images to ECR").
+- **Future**: Submit to CodeBuild, push to ECR (`codebuild:StartBuild`, `ecr:CreateRepository`).
 
-#### ImagePush
-- **BaseServer**: Returns synthetic "pushed" progress.
-- **Why incomplete**: Does not push to ECR.
-- **Recommendation**: Keep as P2 unless ImageBuild is implemented.
+#### ImagePush — DONE
+- **Implementation**: Returns `NotImplementedError` ("ECS backend does not support image push; use ECR directly").
+- **Future**: Direct ECR push integration.
 
 ### Networks
 
@@ -144,7 +143,8 @@ The remaining **45 methods** in `backend_delegates_gen.go` delegate to `s.BaseSe
 
 These methods work correctly with BaseServer delegation:
 
-- **Container**: Attach, Rename, Resize, Update, Changes, Export, Commit, StatPath, GetArchive, PutArchive
+- **Container**: Attach, Rename, Resize, Update, Changes, StatPath, GetArchive, PutArchive
+- **Container (now DONE with NotImplementedError)**: Export, Commit
 - **Exec**: Inspect, Resize
 - **Images**: Inspect, List, Remove, History, Prune, Save, Search, Tag
 - **Networks**: List
@@ -157,12 +157,12 @@ These methods work correctly with BaseServer delegation:
 
 ## Implementation Phases
 
-### Phase A: Task Status Reconciliation (3 methods)
-Create `refreshTaskStatus()` helper. Override ContainerInspect, ContainerList, ContainerWait.
+### Phase A: Task Status Reconciliation (3 methods) — ContainerInspect + ContainerList DONE
+Created `refreshTaskStatus()`, `refreshTaskStatusBatch()`, and `applyTaskStatus()` helpers in `containers.go`. ContainerInspect and ContainerList override BaseServer with task status refresh. ContainerWait (ECS TasksStoppedWaiter fallback) remains future work.
 **Effort**: Medium
 
-### Phase B: ECS Execute Command / Exec (2 methods) — ExecStart DONE
-ExecStart implemented with agent check + NotImplementedError fallback. ExecCreate validation and full ECS ExecuteCommand/SSM integration remain future work.
+### Phase B: ECS Execute Command / Exec (2 methods) — ExecStart + ExecCreate DONE
+ExecStart implemented with agent check + NotImplementedError fallback. ExecCreate validates agent connectivity before creating exec instance. Full ECS ExecuteCommand/SSM integration remains future work.
 **Effort**: High (SSM WebSocket client) for full implementation
 
 ### Phase C: Network Isolation (6 methods)
@@ -181,9 +181,9 @@ PodStart/Stop/Kill/Remove all implemented. Each delegates to the corresponding C
 Info implemented (DescribeClusters enrichment, non-fatal on AWS errors). ContainerStats (Container Insights) remains future work.
 **Effort**: Low
 
-### Phase G: Image Build (1 method)
-Override ImageBuild → NotImplementedError. Future: CodeBuild integration.
+### Phase G: Image Build + Push + Export + Commit (4 methods) — DONE
+ImageBuild, ImagePush, ContainerExport, ContainerCommit all return `NotImplementedError` with descriptive messages. Future: CodeBuild/ECR integration for build+push.
 **Effort**: Low
 
-### Recommended Order
-A → E → D → C → F → B → G
+### Recommended Order (remaining)
+A(ContainerWait) → D → C → F(ContainerStats)

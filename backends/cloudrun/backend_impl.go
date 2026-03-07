@@ -1186,6 +1186,145 @@ func (s *Server) Info() (*api.BackendInfo, error) {
 	return info, nil
 }
 
+// ContainerAttach attaches to a container's IO streams.
+// Cloud Run Jobs do not support local attach — an agent must be connected.
+func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
+	cid, ok := s.Store.ResolveContainerID(id)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: id}
+	}
+
+	c, ok := s.Store.Containers.Get(cid)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: id}
+	}
+
+	if c.AgentAddress != "" {
+		return s.BaseServer.ContainerAttach(id, opts)
+	}
+
+	return nil, &api.NotImplementedError{
+		Message: "attach requires an agent connection; Cloud Run Jobs do not support local attach",
+	}
+}
+
+// ContainerTop lists processes running inside a container.
+// Cloud Run Jobs do not support local ps — delegates to BaseServer which returns a synthetic response.
+func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopResponse, error) {
+	cid, ok := s.Store.ResolveContainerID(id)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: id}
+	}
+
+	c, ok := s.Store.Containers.Get(cid)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: id}
+	}
+
+	if c.AgentAddress != "" {
+		return s.BaseServer.ContainerTop(id, psArgs)
+	}
+
+	// BaseServer returns a reasonable synthetic response for containers without agents.
+	return s.BaseServer.ContainerTop(id, psArgs)
+}
+
+// ContainerGetArchive gets an archive of a path in a container's filesystem.
+// Cloud Run Jobs do not support local filesystem access — an agent must be connected.
+func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArchiveResponse, error) {
+	cid, ok := s.Store.ResolveContainerID(id)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: id}
+	}
+
+	c, ok := s.Store.Containers.Get(cid)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: id}
+	}
+
+	if c.AgentAddress != "" {
+		return s.BaseServer.ContainerGetArchive(id, path)
+	}
+
+	return nil, &api.NotImplementedError{
+		Message: "archive get requires an agent connection; Cloud Run Jobs do not support local filesystem access",
+	}
+}
+
+// ContainerPutArchive extracts an archive to a path in a container's filesystem.
+// Cloud Run Jobs do not support local filesystem access — an agent must be connected.
+func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDir bool, body io.Reader) error {
+	cid, ok := s.Store.ResolveContainerID(id)
+	if !ok {
+		return &api.NotFoundError{Resource: "container", ID: id}
+	}
+
+	c, ok := s.Store.Containers.Get(cid)
+	if !ok {
+		return &api.NotFoundError{Resource: "container", ID: id}
+	}
+
+	if c.AgentAddress != "" {
+		return s.BaseServer.ContainerPutArchive(id, path, noOverwriteDirNonDir, body)
+	}
+
+	return &api.NotImplementedError{
+		Message: "archive put requires an agent connection; Cloud Run Jobs do not support local filesystem access",
+	}
+}
+
+// ContainerStatPath stats a path in a container's filesystem.
+// Cloud Run Jobs do not support local filesystem access — an agent must be connected.
+func (s *Server) ContainerStatPath(id string, path string) (*api.ContainerPathStat, error) {
+	cid, ok := s.Store.ResolveContainerID(id)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: id}
+	}
+
+	c, ok := s.Store.Containers.Get(cid)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: id}
+	}
+
+	if c.AgentAddress != "" {
+		return s.BaseServer.ContainerStatPath(id, path)
+	}
+
+	return nil, &api.NotImplementedError{
+		Message: "stat requires an agent connection; Cloud Run Jobs do not support local filesystem access",
+	}
+}
+
+// ContainerUpdate updates container resource constraints.
+// Cloud Run does not support live resource updates — changes are stored in-memory
+// and take effect on the next container restart.
+func (s *Server) ContainerUpdate(id string, req *api.ContainerUpdateRequest) (*api.ContainerUpdateResponse, error) {
+	s.Logger.Warn().Str("container", id).Msg("ContainerUpdate: resource changes are stored in-memory only and take effect on restart")
+	return s.BaseServer.ContainerUpdate(id, req)
+}
+
+// ImagePush is not supported by the Cloud Run backend.
+// Images must be pushed directly to Artifact Registry or GCR.
+func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
+	return nil, &api.NotImplementedError{
+		Message: "Cloud Run backend does not support image push; push images directly to Artifact Registry or GCR",
+	}
+}
+
+// AuthLogin handles Docker registry authentication.
+// For GCR/Artifact Registry addresses, logs a warning and delegates to BaseServer.
+func (s *Server) AuthLogin(req *api.AuthRequest) (*api.AuthResponse, error) {
+	addr := req.ServerAddress
+	if strings.HasSuffix(addr, ".gcr.io") ||
+		strings.HasSuffix(addr, "-docker.pkg.dev") ||
+		strings.Contains(addr, ".pkg.dev") {
+		s.Logger.Warn().
+			Str("registry", addr).
+			Msg("GCR/Artifact Registry login: credentials stored locally; use `gcloud auth configure-docker` for production")
+	}
+	return s.BaseServer.AuthLogin(req)
+}
+
 // VolumePrune removes unused volumes.
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
 	var deleted []string

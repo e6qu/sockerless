@@ -2,14 +2,15 @@
 
 ## Overview
 
-The Cloud Run Functions backend implements `api.Backend` (65 methods). Currently **14 methods** have cloud-native implementations in `backend_impl.go`:
+The Cloud Run Functions backend implements `api.Backend` (65 methods). Currently **19 methods** have cloud-native implementations in `backend_impl.go`:
 
 - `ContainerCreate`, `ContainerStart`, `ContainerStop`, `ContainerKill`, `ContainerRemove`
 - `ContainerLogs`, `ContainerRestart`, `ContainerPrune`, `ContainerPause`, `ContainerUnpause`
-- `ImagePull`, `ImageLoad`
+- `ContainerExport`, `ContainerCommit`, `ContainerAttach`
+- `ImagePull`, `ImageLoad`, `ImageBuild`, `ImagePush`
 - `PodStart` (P0 — DONE), `Info` (P1 — DONE)
 
-The remaining **51 methods** delegate to `s.BaseServer.Method()`.
+The remaining **46 methods** delegate to `s.BaseServer.Method()`.
 
 Cloud Run Functions is a FaaS platform. Many container/image operations have no direct equivalent.
 
@@ -18,8 +19,8 @@ Cloud Run Functions is a FaaS platform. Many container/image operations have no 
 | Priority | Count | Description |
 |----------|-------|-------------|
 | P0 | 1 | BaseServer implementation is actively wrong |
-| P1 | 4 | Works but misses cloud-specific features |
-| P2 | 48 | Adequate or N/A for FaaS |
+| P1 | 4 | ALL DONE |
+| P2 | 43 | Adequate or N/A for FaaS |
 
 ---
 
@@ -32,7 +33,7 @@ Cloud Run Functions is a FaaS platform. Many container/image operations have no 
 
 ---
 
-## P1 — Important (4 methods, 2 DONE)
+## P1 — Important (4 methods, 4 DONE)
 
 ### ContainerStats
 - **BaseServer**: Returns synthetic stats with zero values.
@@ -45,20 +46,15 @@ Cloud Run Functions is a FaaS platform. Many container/image operations have no 
 - **What it does**: Calls `s.BaseServer.Info()`, then enriches `Name` with GCP project and region metadata.
 - **Note**: Does not query `ListFunctions` for function count (simpler approach, avoids extra API call). Can be enhanced later if needed.
 
-### ImageBuild
-- **BaseServer**: Parses Dockerfile, creates synthetic in-memory image.
-- **Phase 1**: Keep BaseServer behavior (functional for CI workflows — image config is preserved).
-- **Phase 2**: Submit to Cloud Build, push to Artifact Registry.
-- **GCP APIs**: Cloud Build v1 (`cloudbuild.NewClient`)
-- **Recommendation**: Defer — current approach works for all CI/CD use cases.
+### ImageBuild — DONE
+- **Implementation**: Returns `NotImplementedError` directing users to push pre-built images to Artifact Registry.
 
-### ImagePush
-- **BaseServer**: Synthetic "pushed" progress.
-- **Implementation**: Defer — very high complexity for marginal benefit. GCF already pulls from public/private registries.
+### ImagePush — DONE
+- **Implementation**: Returns `NotImplementedError` directing users to push images directly to Artifact Registry.
 
 ---
 
-## P2 — Acceptable / N/A for FaaS (48 methods)
+## P2 — Acceptable / N/A for FaaS (43 methods)
 
 ### All Exec Methods (4) — P2
 All exec methods work correctly via the reverse agent pattern. `ContainerStart` sets up the agent connection, and the BaseServer's driver chain dispatches to the agent. No GCF-specific override needed.
@@ -70,7 +66,12 @@ Cloud Run Functions networking is managed by Google (VPC connectors, ingress). N
 No persistent storage concept. Docker volume semantics do not map meaningfully.
 
 ### Most Container Methods — P2
-Inspect, List, Wait, Attach, Top, Rename, Resize, Update, Changes, Export, PutArchive, StatPath, GetArchive, Commit — all work via in-memory store or agent-backed drivers.
+Inspect, List, Wait, Top, Rename, Resize, Update, Changes, PutArchive, StatPath, GetArchive — all work via in-memory store or agent-backed drivers.
+
+**Moved to backend_impl.go (DONE)**:
+- `ContainerExport` — Returns `NotImplementedError` (no local filesystem). Validates container exists.
+- `ContainerCommit` — Returns `NotImplementedError` (no local filesystem). Validates container param and existence.
+- `ContainerAttach` — Delegates to BaseServer when agent connected, returns `NotImplementedError` otherwise.
 
 ### All Image Metadata Methods — P2
 Inspect, List, Remove, History, Prune, Save, Search, Tag — all in-memory operations.
@@ -91,9 +92,15 @@ Df, Events, AuthLogin — all adequate with in-memory implementations.
 ### Phase 2: Low-Hanging P1 — DONE
 2. **Info** — Enrich with project/region metadata. ~9 lines. DONE.
 
-### Phase 3: Optional Enhancements (defer)
-3. **ContainerStats** — Cloud Monitoring integration. ~120 lines + new dependency.
-4. **ImageBuild/ImagePush** — Cloud Build + Artifact Registry. Significant complexity. Defer indefinitely.
+### Phase 3: FaaS NotImplemented Methods — DONE
+3. **ContainerExport** — ✅ DONE. Validates container exists, returns `NotImplementedError`.
+4. **ContainerCommit** — ✅ DONE. Validates container param and existence, returns `NotImplementedError`.
+5. **ContainerAttach** — ✅ DONE. Delegates to BaseServer when agent connected, returns `NotImplementedError` otherwise.
+6. **ImageBuild** — ✅ DONE. Returns `NotImplementedError` directing users to Artifact Registry.
+7. **ImagePush** — ✅ DONE. Returns `NotImplementedError` directing users to Artifact Registry.
+
+### Phase 4: Optional Enhancements (defer)
+8. **ContainerStats** — Cloud Monitoring integration. ~120 lines + new dependency.
 
 ### New GCP Clients Needed (Phase 3 only)
 

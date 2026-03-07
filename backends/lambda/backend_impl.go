@@ -940,6 +940,31 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	}
 }
 
+// ContainerExport is not supported by the Lambda backend.
+// Lambda functions have no local filesystem to export.
+func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
+	if _, ok := s.Store.ResolveContainerID(id); !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: id}
+	}
+	return nil, &api.NotImplementedError{
+		Message: "Lambda backend does not support container export; functions have no local filesystem",
+	}
+}
+
+// ContainerCommit is not supported by the Lambda backend.
+// Lambda functions have no local filesystem to commit.
+func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
+	if req.Container == "" {
+		return nil, &api.InvalidParameterError{Message: "container query parameter is required"}
+	}
+	if _, ok := s.Store.ResolveContainerID(req.Container); !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
+	}
+	return nil, &api.NotImplementedError{
+		Message: "Lambda backend does not support container commit; functions have no local filesystem",
+	}
+}
+
 // ImagePush is not supported by the Lambda backend.
 // Images should be pushed directly to ECR using the AWS CLI or SDK.
 func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
