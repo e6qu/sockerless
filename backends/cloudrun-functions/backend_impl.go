@@ -823,8 +823,17 @@ func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 		Image: ref,
 	}
 
-	// Try to fetch real config from registry
-	if realConfig, _ := core.FetchImageConfig(ref, ""); realConfig != nil {
+	// Try to fetch real config from registry — use ADC auth for GCP registries
+	fetchAuth := ""
+	registry, _, _ := parseImageRef(ref)
+	if core.IsGCPRegistry(registry) {
+		if arToken, err := s.getARToken(); err == nil {
+			fetchAuth = arToken
+		} else {
+			s.Logger.Warn().Err(err).Str("registry", registry).Msg("failed to get AR token for image pull, trying unauthenticated")
+		}
+	}
+	if realConfig, _ := core.FetchImageConfig(ref, fetchAuth); realConfig != nil {
 		if len(realConfig.Env) > 0 {
 			imgConfig.Env = realConfig.Env
 		}
@@ -878,9 +887,10 @@ func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 	return pr, nil
 }
 
-// ImageLoad is not supported by the Cloud Run Functions backend.
+// ImageLoad delegates to BaseServer which handles tar parsing and stores in-memory.
+// This enables docker save | docker load round-trips.
 func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
-	return nil, &api.NotImplementedError{Message: "image load is not supported by Cloud Run Functions backend"}
+	return s.BaseServer.ImageLoad(r)
 }
 
 // PodStart starts all containers in a pod by calling ContainerStart for each,
@@ -956,12 +966,60 @@ func (s *Server) ImageBuild(opts api.ImageBuildOptions, buildContext io.Reader) 
 	}
 }
 
-// ImagePush is not supported by the Cloud Run Functions backend.
-// Images should be pushed directly to Artifact Registry using the gcloud CLI or SDK.
+// ImagePush pushes an image to a registry. For GCP registries (AR/GCR), it performs
+// a real OCI push using ADC for auth. For other registries, it falls back to BaseServer's
+// synthetic push. All cloud operations are best-effort.
 func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
-	return nil, &api.NotImplementedError{
-		Message: "Cloud Run Functions backend does not support image push; push images directly to Artifact Registry",
+	img, ok := s.Store.ResolveImage(name)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "image", ID: name}
 	}
+
+	if tag == "" {
+		tag = "latest"
+	}
+
+	registry, repo, _ := parseImageRef(name)
+
+	// For GCP registries, attempt real OCI push
+	if core.IsGCPRegistry(registry) {
+		arToken, err := s.getARToken()
+		if err != nil {
+			s.Logger.Warn().Err(err).Str("registry", registry).Msg("failed to get AR token for push, falling back to synthetic")
+			return s.BaseServer.ImagePush(name, tag, auth)
+		}
+
+		result, err := core.OCIPush(core.OCIPushOptions{
+			Registry:   registry,
+			Repository: repo,
+			Tag:        tag,
+			AuthToken:  arToken,
+		})
+		if err != nil {
+			s.Logger.Warn().Err(err).Str("registry", registry).Str("repo", repo).Msg("OCI push failed, falling back to synthetic")
+			return s.BaseServer.ImagePush(name, tag, auth)
+		}
+
+		// Stream progress via pipe
+		pr, pw := io.Pipe()
+		go func() {
+			defer func() { _ = pw.Close() }()
+			enc := json.NewEncoder(pw)
+			_ = enc.Encode(map[string]string{"status": "The push refers to repository [" + name + "]"})
+			_ = enc.Encode(map[string]string{"status": "Preparing", "id": tag})
+			_ = enc.Encode(map[string]string{"status": "Pushed", "id": tag})
+			digest := strings.TrimPrefix(img.ID, "sha256:")
+			if result.ManifestDigest != "" {
+				digest = strings.TrimPrefix(result.ManifestDigest, "sha256:")
+			}
+			_ = enc.Encode(map[string]string{"status": tag + ": digest: sha256:" + digest})
+		}()
+
+		return pr, nil
+	}
+
+	// Non-GCP registries: delegate to BaseServer synthetic push
+	return s.BaseServer.ImagePush(name, tag, auth)
 }
 
 // Info returns system information enriched with GCP-specific metadata.

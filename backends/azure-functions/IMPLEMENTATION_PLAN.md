@@ -72,6 +72,14 @@ These must be overridden because BaseServer defaults bypass AZF-specific lifecyc
 - **Current**: Returns `NotImplementedError` directing users to push to ACR directly.
 - **Future enhancement**: Full ACR push when `s.config.Registry` is set. Low priority.
 
+### ImageLoad — DONE (BaseServer delegation)
+- **Current**: Delegates to BaseServer to allow `docker save | docker load` round-trips.
+- **Previously**: Returned `NotImplementedError`.
+
+### AuthLogin — DONE (ACR detection)
+- **Current**: For ACR registries (`*.azurecr.io`), logs warning about using managed identity for production, then delegates to BaseServer. For other registries, delegates directly to BaseServer.
+- **File**: `backend_impl.go`
+
 ---
 
 ## P2 — Acceptable / N/A for FaaS (39 methods)
@@ -96,7 +104,7 @@ ImageHistory, ImageInspect, ImageList, ImagePrune, ImageRemove, ImageSave, Image
 **Moved to backend_impl.go (DONE)**:
 - `ImageBuild` — Returns `NotImplementedError` directing users to Azure Container Registry.
 - `ImagePush` — Returns `NotImplementedError` directing users to Azure Container Registry.
-- `ImageLoad` — Returns `NotImplementedError`.
+- `ImageLoad` — Delegates to BaseServer (allows `docker save | docker load` round-trips).
 
 ### Networks (7)
 All in-memory. Azure Functions networking is managed at Function App/VNet level.
@@ -130,13 +138,14 @@ Added to `backend_impl_pods.go`. Removed 4 delegate entries from `backend_delega
 10. **ContainerAttach** — ✅ DONE. Delegates to BaseServer when agent connected, returns `NotImplementedError` otherwise.
 11. **ImageBuild** — ✅ DONE. Returns `NotImplementedError` directing users to Azure Container Registry.
 12. **ImagePush** — ✅ DONE. Returns `NotImplementedError` directing users to Azure Container Registry.
-13. **ImageLoad** — ✅ DONE. Returns `NotImplementedError`.
+13. **ImageLoad** — ✅ DONE. Delegates to BaseServer (was NotImplementedError).
 
 ### Phase 4: Metrics (1 method)
 **ContainerStats** — Add `MetricsClient`, query `AppMetrics`.
 
 ### Phase 5: ACR Integration (future)
 **ImagePush** — Full ACR push when registry configured (currently returns NotImplementedError).
+**AuthLogin** — ✅ DONE. ACR detection with managed identity warning + BaseServer delegation. Removed from delegates.
 
 ### New Azure SDK Clients Needed
 

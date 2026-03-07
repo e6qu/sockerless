@@ -119,17 +119,30 @@ The remaining **40 methods** delegate to `s.BaseServer.Method()`.
 - **Implementation**: Returns `NotImplementedError` — ACA containers cannot be snapshotted into images. Validates container exists first.
 - **File**: `backend_impl_pods.go`
 
-### Image Operations (deferred)
+### Image Operations
 
-#### ImageBuild
+#### ImageBuild (deferred)
 - **BaseServer**: Synthetic Dockerfile-parsed image.
-- **Implementation**: Optional — use ACR Build Tasks for real cloud builds.
+- **Implementation**: Optional — use ACR Build Tasks for real cloud builds. Currently delegates to BaseServer.
 - **Azure APIs**: `armcontainerregistry.RegistryClient.BeginScheduleRun()`
 - **Dependencies**: Requires ACR instance. Add `SOCKERLESS_ACA_ACR_NAME` config.
 
-#### ImagePush
-- **BaseServer**: Synthetic progress.
-- **Implementation**: Keep synthetic. If ACR build is implemented, built images are already in ACR.
+#### ImagePush — DONE
+- **Implementation**: For ACR targets (`*.azurecr.io`), performs real OCI Distribution push (blob upload + manifest PUT). For other registries, delegates to BaseServer (synthetic progress). ACR push failures are non-fatal (logs warning, returns synthetic progress).
+- **File**: `backend_impl_images.go`
+- **Helpers**: `pushToACR`, `uploadBlob`, `setAuthHeader`
+
+#### ImageTag — DONE
+- **Implementation**: Delegates to BaseServer for in-memory tagging. For ACR targets, async goroutine syncs tag via manifest GET + PUT. Non-fatal on ACR errors.
+- **File**: `backend_impl_images.go`
+
+#### ImageRemove — DONE
+- **Implementation**: Delegates to BaseServer for in-memory removal. For images with ACR repo tags, async goroutine deletes manifest via HEAD (get digest) + DELETE. Non-fatal on ACR errors.
+- **File**: `backend_impl_images.go`
+
+#### ImageLoad — DONE
+- **Implementation**: Delegates to BaseServer to allow `docker save | docker load` round-trips (was previously NotImplementedError).
+- **File**: `backend_impl.go`
 
 ---
 
@@ -176,12 +189,16 @@ New Azure SDK client, integration with job spec builder.
 New Azure Monitor metrics client.
 **Effort**: Medium
 
-### Phase 5: Registry Operations — PARTIALLY DONE
+### Phase 5: Registry Operations — DONE
 **AuthLogin** — DONE (Round 2, ACR warning + BaseServer delegation)
-**ImageBuild, ImagePush** — remaining
+**ImagePush** — DONE (OCI push for ACR targets, BaseServer fallback)
+**ImageTag** — DONE (BaseServer + async ACR sync)
+**ImageRemove** — DONE (BaseServer + async ACR delete)
+**ImageLoad** — DONE (BaseServer delegation)
+**ImageBuild** — deferred (delegates to BaseServer)
 
-ACR integration for cloud builds.
-**Effort**: Medium (AuthLogin done, ImageBuild/Push remain)
+ACR integration for push/tag/remove implemented in `backend_impl_images.go`.
+**Effort**: Complete
 
 ### Phase 6: Container Update
 **ContainerUpdate**

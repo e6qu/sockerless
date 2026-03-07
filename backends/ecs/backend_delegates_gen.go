@@ -86,24 +86,12 @@ func (s *Server) ImagePrune(filters map[string][]string) (*api.ImagePruneRespons
 	return s.BaseServer.ImagePrune(filters)
 }
 
-func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
-	return s.BaseServer.ImagePush(name, tag, auth)
-}
-
-func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageDeleteResponse, error) {
-	return s.BaseServer.ImageRemove(name, force, prune)
-}
-
 func (s *Server) ImageSave(names []string) (io.ReadCloser, error) {
 	return s.BaseServer.ImageSave(names)
 }
 
 func (s *Server) ImageSearch(term string, limit int, filters map[string][]string) ([]*api.ImageSearchResult, error) {
 	return s.BaseServer.ImageSearch(term, limit, filters)
-}
-
-func (s *Server) ImageTag(source string, repo string, tag string) error {
-	return s.BaseServer.ImageTag(source, repo, tag)
 }
 
 func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error {

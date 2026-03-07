@@ -7,6 +7,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
+	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 )
 
@@ -14,6 +15,7 @@ import (
 type AWSClients struct {
 	Lambda     *lambda.Client
 	CloudWatch *cloudwatchlogs.Client
+	ECR        *ecr.Client
 }
 
 // NewAWSClients initializes AWS SDK clients from config.
@@ -43,6 +45,7 @@ func newClientsFromConfig(cfg aws.Config) *AWSClients {
 	return &AWSClients{
 		Lambda:     lambda.NewFromConfig(cfg),
 		CloudWatch: cloudwatchlogs.NewFromConfig(cfg),
+		ECR:        ecr.NewFromConfig(cfg),
 	}
 }
 
@@ -50,5 +53,6 @@ func newClientsWithEndpoint(cfg aws.Config, endpoint string) *AWSClients {
 	return &AWSClients{
 		Lambda:     lambda.NewFromConfig(cfg, func(o *lambda.Options) { o.BaseEndpoint = aws.String(endpoint) }),
 		CloudWatch: cloudwatchlogs.NewFromConfig(cfg, func(o *cloudwatchlogs.Options) { o.BaseEndpoint = aws.String(endpoint) }),
+		ECR:        ecr.NewFromConfig(cfg, func(o *ecr.Options) { o.BaseEndpoint = aws.String(endpoint) }),
 	}
 }
