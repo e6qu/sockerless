@@ -947,6 +947,20 @@ func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 	return pr, nil
 }
 
+// Info returns system information enriched with Azure-specific metadata.
+func (s *Server) Info() (*api.BackendInfo, error) {
+	info, err := s.BaseServer.Info()
+	if err != nil {
+		return nil, err
+	}
+
+	// Enrich with Azure-specific context
+	info.OperatingSystem = fmt.Sprintf("Azure Functions (%s)", s.config.Location)
+	info.Name = fmt.Sprintf("sockerless-azf/%s/%s", s.config.SubscriptionID, s.config.ResourceGroup)
+
+	return info, nil
+}
+
 // ImageLoad is not supported by the Azure Functions backend.
 func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 	return nil, &api.NotImplementedError{Message: "image load is not supported by Azure Functions backend"}

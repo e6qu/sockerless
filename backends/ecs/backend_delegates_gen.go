@@ -86,10 +86,6 @@ func (s *Server) ExecResize(id string, h int, w int) error {
 	return s.BaseServer.ExecResize(id, h, w)
 }
 
-func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
-	return s.BaseServer.ExecStart(id, opts)
-}
-
 func (s *Server) ImageBuild(opts api.ImageBuildOptions, context io.Reader) (io.ReadCloser, error) {
 	return s.BaseServer.ImageBuild(opts, context)
 }
@@ -128,10 +124,6 @@ func (s *Server) ImageSearch(term string, limit int, filters map[string][]string
 
 func (s *Server) ImageTag(source string, repo string, tag string) error {
 	return s.BaseServer.ImageTag(source, repo, tag)
-}
-
-func (s *Server) Info() (*api.BackendInfo, error) {
-	return s.BaseServer.Info()
 }
 
 func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error {
@@ -174,24 +166,8 @@ func (s *Server) PodInspect(name string) (*api.PodInspectResponse, error) {
 	return s.BaseServer.PodInspect(name)
 }
 
-func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, error) {
-	return s.BaseServer.PodKill(name, signal)
-}
-
 func (s *Server) PodList(opts api.PodListOptions) ([]*api.PodListEntry, error) {
 	return s.BaseServer.PodList(opts)
-}
-
-func (s *Server) PodRemove(name string, force bool) error {
-	return s.BaseServer.PodRemove(name, force)
-}
-
-func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
-	return s.BaseServer.PodStart(name)
-}
-
-func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, error) {
-	return s.BaseServer.PodStop(name, timeout)
 }
 
 func (s *Server) SystemDf() (*api.DiskUsageResponse, error) {

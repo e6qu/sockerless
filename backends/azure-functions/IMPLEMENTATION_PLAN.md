@@ -2,13 +2,15 @@
 
 ## Overview
 
-The Azure Functions backend implements `api.Backend` (65 methods). Currently **12 methods** have cloud-native implementations in `backend_impl.go`:
+The Azure Functions backend implements `api.Backend` (65 methods). Currently **17 methods** have cloud-native implementations:
 
 - `ContainerCreate`, `ContainerStart`, `ContainerStop`, `ContainerKill`, `ContainerRemove`
 - `ContainerLogs`, `ContainerRestart`, `ContainerPrune`, `ContainerPause`, `ContainerUnpause`
 - `ImagePull`, `ImageLoad`
+- `PodStart`, `PodStop`, `PodKill`, `PodRemove` (in `backend_impl_pods.go`)
+- `Info` (in `backend_impl.go`)
 
-The remaining **53 methods** delegate to `s.BaseServer.Method()`.
+The remaining **48 methods** delegate to `s.BaseServer.Method()`.
 
 Azure Functions is a FaaS platform. Many container/image operations have no direct equivalent.
 
@@ -16,31 +18,35 @@ Azure Functions is a FaaS platform. Many container/image operations have no dire
 
 | Priority | Count | Description |
 |----------|-------|-------------|
-| P0 | 4 | BaseServer implementation is actively wrong for pod scenarios |
-| P1 | 4 | Works but misses cloud-specific features |
+| P0 | 4 | ALL DONE — Pod lifecycle with AZF-specific cleanup |
+| P1 | 4 | 1 DONE (Info), 3 remaining (ContainerInspect, ContainerStats, ImagePush) |
 | P2 | 45 | Adequate or N/A for FaaS |
 
 ---
 
-## P0 — Critical (4 methods)
+## P0 — Critical (4 methods) — ALL DONE
 
 These must be overridden because BaseServer defaults bypass AZF-specific lifecycle logic (Function App invocation, agent disconnect, cloud resource cleanup).
 
-### PodStart
+### PodStart — DONE
 - **BaseServer behavior**: Manually sets container state to "running" without calling `ContainerStart`. No Function App invocation occurs, no reverse agent callback, no `exitCh` creation.
 - **Implementation**: Override to iterate pod containers and call `s.ContainerStart(cid)` for each, which triggers the AZF HTTP invocation.
+- **Implemented in**: `backend_impl_pods.go`
 
-### PodStop
+### PodStop — DONE
 - **BaseServer behavior**: Does not call `s.AgentRegistry.Remove(cid)` when stopping pod containers. Reverse agent must be disconnected to unblock the Function App invocation goroutine.
 - **Implementation**: For each running container: `s.StopHealthCheck(cid)`, `s.AgentRegistry.Remove(cid)`, `s.Store.ForceStopContainer(cid, 0)`. Emit die + stop events.
+- **Implemented in**: `backend_impl_pods.go`
 
-### PodKill
+### PodKill — DONE
 - **BaseServer behavior**: Same agent disconnect issue as PodStop.
 - **Implementation**: Same as PodStop but with signal-to-exit-code mapping.
+- **Implemented in**: `backend_impl_pods.go`
 
-### PodRemove
+### PodRemove — DONE
 - **BaseServer behavior**: `removePodContainers` does NOT clean up Azure Function App resources (no `s.azure.WebApps.Delete()`, no `s.Registry.MarkCleanedUp()`). Leaves orphaned Function Apps.
 - **Implementation**: For each container: disconnect agent, delete Function App via `s.azure.WebApps.Delete()`, mark cleaned up, clean up all state (networks, store, AZF state, log buffers, staging dirs). Then delete pod.
+- **Implemented in**: `backend_impl_pods.go`
 
 ---
 
@@ -50,9 +56,10 @@ These must be overridden because BaseServer defaults bypass AZF-specific lifecyc
 - **BaseServer**: Returns from in-memory store.
 - **Enhancement**: Optionally verify Function App still exists via `s.azure.WebApps.Get()`. If externally deleted, update state to exited.
 
-### Info
+### Info — DONE
 - **BaseServer**: Returns generic info with hardcoded values.
-- **Implementation**: Query App Service Plan SKU and worker count via `armappservice.AppServicePlansClient.Get`. Map to NCPU/MemTotal. Add subscription ID, resource group, location.
+- **Implementation**: Enriches BaseServer info with Azure location in OperatingSystem and subscription/resource group in Name.
+- **Implemented in**: `backend_impl.go` (end of file)
 
 ### ContainerStats
 - **BaseServer**: Synthetic zero-value stats.
@@ -95,15 +102,15 @@ AuthLogin, SystemDf, SystemEvents — in-memory.
 
 ## Implementation Phases
 
-### Phase 1: P0 Pod Lifecycle (4 methods)
+### Phase 1: P0 Pod Lifecycle (4 methods) — DONE
 **PodStart, PodStop, PodKill, PodRemove**
 
-Add to `backend_impl.go`. Remove 4 delegate entries from `backend_delegates_gen.go`.
-~200 lines of new code.
+Added to `backend_impl_pods.go`. Removed 4 delegate entries from `backend_delegates_gen.go`.
+207 lines of new code.
 
-### Phase 2: P1 Enhancements (2 methods)
-**Info** — Add `AppServicePlansClient`. Single API call. Low effort.
-**ContainerInspect** — Best-effort Function App existence check.
+### Phase 2: P1 Enhancements (2 methods) — Info DONE
+**Info** — DONE. Enriches BaseServer info with Azure location/subscription/resource group. In `backend_impl.go`.
+**ContainerInspect** — Best-effort Function App existence check. Remaining.
 
 ### Phase 3: Metrics (1 method)
 **ContainerStats** — Add `MetricsClient`, query `AppMetrics`.

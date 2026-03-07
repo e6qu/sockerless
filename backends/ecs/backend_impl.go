@@ -965,6 +965,172 @@ func (s *Server) VolumeRemove(name string, force bool) error {
 	return nil
 }
 
+// ExecStart starts an exec instance. For ECS, if no agent is connected,
+// we cannot execute commands inside the remote Fargate task without the
+// ECS ExecuteCommand API (SSM), which is not yet implemented. In that case,
+// return a clear error. If an agent is connected, delegate to BaseServer
+// which routes through the agent driver.
+func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
+	exec, ok := s.Store.Execs.Get(id)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "exec instance", ID: id}
+	}
+
+	c, ok := s.Store.Containers.Get(exec.ContainerID)
+	if !ok {
+		return nil, &api.ConflictError{
+			Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID),
+		}
+	}
+
+	// If an agent is connected, delegate to BaseServer (agent driver handles it)
+	if c.AgentAddress != "" {
+		return s.BaseServer.ExecStart(id, opts)
+	}
+
+	// No agent connected — cannot exec into a remote Fargate task without
+	// ECS ExecuteCommand + SSM Session Manager (not yet implemented).
+	return nil, &api.NotImplementedError{
+		Message: "exec requires an agent connection for ECS containers; ECS ExecuteCommand (SSM) is not yet supported",
+	}
+}
+
+// PodStart starts all containers in a pod by calling ContainerStart for each.
+func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
+	pod, ok := s.Store.Pods.GetPod(name)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "pod", ID: name}
+	}
+
+	var errs []string
+	for _, cid := range pod.ContainerIDs {
+		c, ok := s.Store.Containers.Get(cid)
+		if !ok || c.State.Running {
+			continue
+		}
+		if err := s.ContainerStart(cid); err != nil {
+			errs = append(errs, fmt.Sprintf("container %s: %v", cid[:12], err))
+		}
+	}
+	if len(errs) == 0 {
+		s.Store.Pods.SetStatus(pod.ID, "running")
+		errs = []string{}
+	}
+	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+}
+
+// PodStop stops all containers in a pod by calling ContainerStop for each.
+func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, error) {
+	pod, ok := s.Store.Pods.GetPod(name)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "pod", ID: name}
+	}
+
+	var errs []string
+	for _, cid := range pod.ContainerIDs {
+		c, ok := s.Store.Containers.Get(cid)
+		if !ok || !c.State.Running {
+			continue
+		}
+		if err := s.ContainerStop(cid, timeout); err != nil {
+			// NotModifiedError is not a real error — container was already stopped
+			if _, ok := err.(*api.NotModifiedError); !ok {
+				errs = append(errs, fmt.Sprintf("container %s: %v", cid[:12], err))
+			}
+		}
+	}
+	s.Store.Pods.SetStatus(pod.ID, "stopped")
+	if errs == nil {
+		errs = []string{}
+	}
+	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+}
+
+// PodKill sends a signal to all containers in a pod by calling ContainerKill for each.
+func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, error) {
+	pod, ok := s.Store.Pods.GetPod(name)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "pod", ID: name}
+	}
+
+	if signal == "" {
+		signal = "SIGKILL"
+	}
+
+	var errs []string
+	for _, cid := range pod.ContainerIDs {
+		c, ok := s.Store.Containers.Get(cid)
+		if !ok || !c.State.Running {
+			continue
+		}
+		if err := s.ContainerKill(cid, signal); err != nil {
+			errs = append(errs, fmt.Sprintf("container %s: %v", cid[:12], err))
+		}
+	}
+	s.Store.Pods.SetStatus(pod.ID, "exited")
+	if errs == nil {
+		errs = []string{}
+	}
+	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+}
+
+// PodRemove removes a pod and all its containers by calling ContainerRemove for each.
+func (s *Server) PodRemove(name string, force bool) error {
+	pod, ok := s.Store.Pods.GetPod(name)
+	if !ok {
+		return &api.NotFoundError{Resource: "pod", ID: name}
+	}
+
+	// Without force, reject if any containers are running
+	if !force {
+		for _, cid := range pod.ContainerIDs {
+			c, ok := s.Store.Containers.Get(cid)
+			if ok && c.State.Running {
+				return &api.ConflictError{
+					Message: fmt.Sprintf("pod %s has running containers, cannot remove without force", name),
+				}
+			}
+		}
+	}
+
+	// Remove each container through our ContainerRemove (handles ECS cleanup)
+	for _, cid := range pod.ContainerIDs {
+		if _, ok := s.Store.Containers.Get(cid); !ok {
+			continue
+		}
+		_ = s.ContainerRemove(cid, force)
+	}
+
+	s.Store.Pods.DeletePod(pod.ID)
+	return nil
+}
+
+// Info returns system information, enriched with real ECS cluster stats.
+func (s *Server) Info() (*api.BackendInfo, error) {
+	// Get base info from BaseServer (in-memory container/image counts)
+	info, err := s.BaseServer.Info()
+	if err != nil {
+		return nil, err
+	}
+
+	// Enrich with real cluster data from ECS DescribeClusters
+	result, err := s.aws.ECS.DescribeClusters(s.ctx(), &awsecs.DescribeClustersInput{
+		Clusters: []string{s.config.Cluster},
+	})
+	if err != nil {
+		// Non-fatal: return base info if AWS call fails
+		s.Logger.Warn().Err(err).Msg("failed to describe ECS cluster for Info")
+		return info, nil
+	}
+
+	if len(result.Clusters) > 0 {
+		cluster := result.Clusters[0]
+		info.ContainersRunning = int(cluster.RunningTasksCount)
+	}
+
+	return info, nil
+}
+
 // VolumePrune removes all unused volumes.
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
 	var deleted []string

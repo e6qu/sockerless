@@ -2,13 +2,15 @@
 
 ## Overview
 
-The Lambda backend implements `api.Backend` (65 methods). Currently **12 methods** have cloud-native implementations in `backend_impl.go`:
+The Lambda backend implements `api.Backend` (65 methods). Currently **17 methods** have cloud-native implementations in `backend_impl.go`:
 
 - `ContainerCreate`, `ContainerStart`, `ContainerStop`, `ContainerKill`, `ContainerRemove`
 - `ContainerLogs`, `ContainerRestart`, `ContainerPrune`, `ContainerPause`, `ContainerUnpause`
-- `ImagePull`, `ImageLoad`
+- `ContainerAttach`
+- `ImagePull`, `ImageLoad`, `ImageBuild`, `ImagePush`
+- `AuthLogin`, `Info`
 
-The remaining **53 methods** delegate to `s.BaseServer.Method()`.
+The remaining **48 methods** delegate to `s.BaseServer.Method()`.
 
 Lambda is a FaaS platform. Many container/image operations have no direct equivalent.
 
@@ -103,14 +105,14 @@ Lambda is a FaaS platform. Many container/image operations have no direct equiva
 
 ## Implementation Phases
 
-### Phase 1: P0 Fixes (3 methods)
-1. **Info** — Fix KernelVersion, optionally enrich with `GetAccountSettings`. ~30 lines.
-2. **ImageBuild** — Return `NotImplementedError`. ~10 lines.
-3. **AuthLogin** — Validate ECR credentials. Add `ecr.Client` to `AWSClients`. ~50 lines.
+### Phase 1: P0 Fixes (3 methods) — DONE
+1. **Info** — ✅ DONE. Overrides KernelVersion to `5.10.0-aws-lambda`, OperatingSystem to `AWS Lambda`.
+2. **ImageBuild** — ✅ DONE. Returns `NotImplementedError` directing users to push pre-built images to ECR.
+3. **AuthLogin** — ✅ DONE. Detects ECR registries (`.dkr.ecr.*.amazonaws.com`), logs warning, delegates to BaseServer.
 
-### Phase 2: P1 Improvements (2 methods worth implementing)
-4. **ContainerAttach** — Return `NotImplementedError` when no agent. ~15 lines.
-5. **ImagePush** — Return `NotImplementedError`. ~10 lines.
+### Phase 2: P1 Improvements (2 methods worth implementing) — DONE
+4. **ContainerAttach** — ✅ DONE. Delegates to BaseServer when agent connected, returns `NotImplementedError` otherwise.
+5. **ImagePush** — ✅ DONE. Returns `NotImplementedError` directing users to push to ECR directly.
 
 ### Phase 3: Optional Enhancement
 6. **ContainerStats** — CloudWatch metrics. Add `cloudwatch.Client`. ~80 lines. Defer unless needed.

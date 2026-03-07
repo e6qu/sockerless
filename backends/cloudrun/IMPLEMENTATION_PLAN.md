@@ -2,32 +2,36 @@
 
 ## Overview
 
-The CloudRun backend implements `api.Backend` (65 methods). Currently **16 methods** have cloud-native implementations in `backend_impl.go`:
+The CloudRun backend implements `api.Backend` (65 methods). Currently **24 methods** have cloud-native implementations in `backend_impl.go`:
 
 - `ContainerCreate`, `ContainerStart`, `ContainerStop`, `ContainerKill`, `ContainerRemove`
 - `ContainerLogs`, `ContainerRestart`, `ContainerPrune`, `ContainerPause`, `ContainerUnpause`
+- `ContainerExport`, `ContainerCommit`
 - `ImagePull`, `ImageLoad`
 - `VolumeRemove`, `VolumePrune`
+- `ExecStart`
+- `PodStart`, `PodStop`, `PodKill`, `PodRemove`
+- `Info`
 - `startMultiContainerJobTyped` (private helper)
 
-The remaining **51 methods** delegate to `s.BaseServer.Method()`.
+The remaining **43 methods** delegate to `s.BaseServer.Method()`.
 
 ## Priority Summary
 
-| Priority | Count | Description |
-|----------|-------|-------------|
-| P0 | 1 | BaseServer implementation is actively wrong |
-| P1 | 18 | Works but misses cloud-specific features |
-| P2 | 32 | BaseServer implementation is adequate |
+| Priority | Count | Done | Description |
+|----------|-------|------|-------------|
+| P0 | 1 | 1 | BaseServer implementation is actively wrong |
+| P1 | 18 | 7 | Works but misses cloud-specific features |
+| P2 | 32 | 0 | BaseServer implementation is adequate |
 
 ---
 
 ## P0 — Critical (1 method)
 
-### ExecStart
+### ExecStart ✅ DONE
 - **BaseServer behavior**: Uses `s.Drivers.Exec.Exec()` which runs commands locally via synthetic/process driver, not inside the Cloud Run container.
 - **Why wrong**: For Cloud Run, exec must be proxied to the agent running inside the Cloud Run Job. Without an agent, exec cannot work.
-- **Implementation**: Check `c.AgentAddress`. If set, proxy through agent's WebSocket endpoint. If no agent, return error.
+- **Implementation**: Check `c.AgentAddress`. If set, delegate to `s.BaseServer.ExecStart()` which proxies through the agent's exec driver. If no agent, return `NotImplementedError`.
 - **Dependencies**: Agent proxy client code (already exists in core).
 
 ---
@@ -55,8 +59,8 @@ The remaining **51 methods** delegate to `s.BaseServer.Method()`.
 - **BaseServer**: Updates resource limits in-memory only.
 - **Implementation**: Update in-memory state. Log warning that changes take effect on restart. Modify `buildJobSpec` to read from updated HostConfig.
 
-#### ContainerExport / ContainerCommit
-- **Implementation**: Return `NotImplementedError` — no container filesystem access.
+#### ContainerExport / ContainerCommit ✅ DONE
+- **Implementation**: Return `NotImplementedError` — no container filesystem access. Validates container reference exists before returning error.
 
 #### ContainerGetArchive / ContainerPutArchive / ContainerStatPath
 - **Implementation**: If agent connected, proxy through agent. Otherwise return `NotImplementedError`.
@@ -82,23 +86,23 @@ The remaining **51 methods** delegate to `s.BaseServer.Method()`.
 
 ### Pods
 
-#### PodStart
+#### PodStart ✅ DONE
 - **BaseServer**: Marks containers running without creating Cloud Run Job.
-- **Implementation**: Override to call `s.ContainerStart(cid)` per container. Deferred-start mechanism triggers `startMultiContainerJobTyped` automatically.
+- **Implementation**: Calls `s.ContainerStart(cid)` per container (skips already-running). Deferred-start mechanism triggers `startMultiContainerJobTyped` automatically.
 
-#### PodStop / PodKill
+#### PodStop / PodKill ✅ DONE
 - **BaseServer**: In-memory state changes only.
-- **Implementation**: Override to call `s.ContainerStop()`/`s.ContainerKill()` per container (cancels Cloud Run executions).
+- **Implementation**: Calls `s.ContainerStop()`/`s.ContainerKill()` per container (cancels Cloud Run executions). PodKill defaults signal to SIGKILL.
 
-#### PodRemove
+#### PodRemove ✅ DONE
 - **BaseServer**: In-memory removal only.
-- **Implementation**: Override to call `s.ContainerRemove()` per container (deletes Cloud Run Jobs), then delete pod.
+- **Implementation**: Checks for running containers when force=false. Calls `s.ContainerRemove()` per container (deletes Cloud Run Jobs), then deletes pod.
 
 ### System
 
-#### Info
+#### Info ✅ DONE
 - **BaseServer**: Static descriptor fields.
-- **Implementation**: Call `Jobs.ListJobs` for active job count. Add project/region metadata.
+- **Implementation**: Enriches BaseServer.Info() with GCP project/region in OperatingSystem, Driver, and KernelVersion fields.
 
 #### AuthLogin
 - **BaseServer**: Always returns success.
@@ -120,23 +124,23 @@ The remaining **51 methods** delegate to `s.BaseServer.Method()`.
 
 ## Implementation Phases
 
-### Phase A: Critical Fix (P0)
-1. **ExecStart** — Agent proxy or error. No new dependencies.
+### Phase A: Critical Fix (P0) ✅ DONE
+1. **ExecStart** — Agent check, delegates or returns NotImplementedError.
 
-### Phase B: Pod Lifecycle (P1)
-2. **PodStart** — Call `s.ContainerStart()` per container.
-3. **PodStop/PodKill** — Call `s.ContainerStop()`/`s.ContainerKill()` per container.
-4. **PodRemove** — Call `s.ContainerRemove()` per container + delete pod.
+### Phase B: Pod Lifecycle (P1) ✅ DONE
+2. **PodStart** — Calls `s.ContainerStart()` per container.
+3. **PodStop/PodKill** — Calls `s.ContainerStop()`/`s.ContainerKill()` per container.
+4. **PodRemove** — Calls `s.ContainerRemove()` per container + delete pod.
 
-### Phase C: Agent-Proxied Operations (P1)
+### Phase C: Agent-Proxied Operations (P1) — Partially Done
 5. ContainerAttach, GetArchive, PutArchive, StatPath, Top — proxy through agent or NotImplementedError.
-6. ContainerExport, ContainerCommit — return NotImplementedError.
+6. **ContainerExport, ContainerCommit** ✅ — return NotImplementedError.
+7. **Info** ✅ — GCP project/region enrichment.
 
 ### Phase D: Cloud-Native Enhancements (P1)
-7. **ContainerStats** — Cloud Monitoring metrics. Requires new GCP client.
-8. **ContainerUpdate** — Store limits, apply on restart.
-9. **VolumeCreate** — GCS-backed volumes.
-10. **Info** — GCP project/region/job count.
+8. **ContainerStats** — Cloud Monitoring metrics. Requires new GCP client.
+9. **ContainerUpdate** — Store limits, apply on restart.
+10. **VolumeCreate** — GCS-backed volumes.
 11. **AuthLogin** — Validate GCR/AR credentials.
 12. **ImageBuild/ImagePush** — Cloud Build integration (stretch goal).
 
