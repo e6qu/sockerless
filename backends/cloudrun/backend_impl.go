@@ -2,8 +2,6 @@ package cloudrun
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -939,91 +937,14 @@ func (s *Server) ContainerUnpause(ref string) error {
 	return &api.NotImplementedError{Message: "container unpause is not supported by Cloud Run backend"}
 }
 
-// ImagePull pulls an image reference and stores it locally.
+// ImagePull delegates to ImageManager which handles cloud auth and config fetching.
 func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
-	if ref == "" {
-		return nil, &api.InvalidParameterError{Message: "image reference is required"}
-	}
-
-	if !strings.Contains(ref, ":") && !strings.Contains(ref, "@") {
-		ref += ":latest"
-	}
-
-	// Try to fetch real config from registry — use ADC auth for GCP registries
-	fetchAuth := ""
-	registry, _, _ := parseImageRef(ref)
-	if s.arAuth.IsCloudRegistry(registry) {
-		if arToken, err := s.arAuth.GetToken(registry); err == nil {
-			fetchAuth = arToken
-		} else {
-			s.Logger.Warn().Err(err).Str("registry", registry).Msg("failed to get AR token for image pull, trying unauthenticated")
-		}
-	}
-
-	imgConfig := api.ContainerConfig{
-		Image: ref,
-	}
-	if realConfig, _ := core.FetchImageConfig(ref, fetchAuth); realConfig != nil {
-		if len(realConfig.Env) > 0 {
-			imgConfig.Env = realConfig.Env
-		}
-		if len(realConfig.Cmd) > 0 {
-			imgConfig.Cmd = realConfig.Cmd
-		}
-		if len(realConfig.Entrypoint) > 0 {
-			imgConfig.Entrypoint = realConfig.Entrypoint
-		}
-		if realConfig.WorkingDir != "" {
-			imgConfig.WorkingDir = realConfig.WorkingDir
-		}
-		if len(realConfig.Labels) > 0 {
-			imgConfig.Labels = realConfig.Labels
-		}
-	}
-
-	hash := sha256.Sum256([]byte(ref))
-	imageID := fmt.Sprintf("sha256:%x", hash)
-
-	image := api.Image{
-		ID:           imageID,
-		RepoTags:     []string{ref},
-		RepoDigests:  []string{},
-		Created:      time.Now().UTC().Format(time.RFC3339Nano),
-		Size:         0,
-		VirtualSize:  0,
-		Architecture: "amd64",
-		Os:           "linux",
-		RootFS:       api.RootFS{Type: "layers"},
-		Config:       imgConfig,
-	}
-
-	core.StoreImageWithAliases(s.Store, ref, image)
-
-	// Stream progress via pipe
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer func() { _ = pw.Close() }()
-
-		progress := []map[string]string{
-			{"status": "Pulling from " + ref},
-			{"status": "Digest: " + imageID[:19]},
-			{"status": "Status: Downloaded newer image for " + ref},
-		}
-		for _, p := range progress {
-			if err := json.NewEncoder(pw).Encode(p); err != nil {
-				return
-			}
-		}
-	}()
-
-	return pr, nil
+	return s.images.Pull(ref, auth)
 }
 
-// ImageLoad delegates to BaseServer which handles tar parsing and stores in-memory.
-// This enables docker save | docker load round-trips.
+// ImageLoad delegates to ImageManager.
 func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
-	return s.BaseServer.ImageLoad(r)
+	return s.images.Load(r)
 }
 
 // VolumeRemove removes a volume and its state.
@@ -1323,120 +1244,19 @@ func (s *Server) ContainerUpdate(id string, req *api.ContainerUpdateRequest) (*a
 	return s.BaseServer.ContainerUpdate(id, req)
 }
 
-// ImagePush pushes an image to a registry. For GCP registries (AR/GCR), it performs
-// a real OCI push using ADC for auth. For other registries, it falls back to BaseServer's
-// synthetic push. All cloud operations are best-effort.
+// ImagePush delegates to ImageManager which handles cloud auth and OCI push.
 func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
-	img, ok := s.Store.ResolveImage(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "image", ID: name}
-	}
-
-	if tag == "" {
-		tag = "latest"
-	}
-
-	registry, repo, _ := parseImageRef(name)
-
-	// For GCP registries, attempt real OCI push
-	if s.arAuth.IsCloudRegistry(registry) {
-		arToken, err := s.arAuth.GetToken(registry)
-		if err != nil {
-			s.Logger.Warn().Err(err).Str("registry", registry).Msg("failed to get AR token for push, falling back to synthetic")
-			return s.BaseServer.ImagePush(name, tag, auth)
-		}
-
-		result, err := s.arAuth.OnPush(registry, repo, tag, arToken)
-		if err != nil {
-			s.Logger.Warn().Err(err).Str("registry", registry).Str("repo", repo).Msg("OCI push failed, falling back to synthetic")
-			return s.BaseServer.ImagePush(name, tag, auth)
-		}
-
-		// Stream progress via pipe
-		pr, pw := io.Pipe()
-		go func() {
-			defer func() { _ = pw.Close() }()
-			enc := json.NewEncoder(pw)
-			_ = enc.Encode(map[string]string{"status": "The push refers to repository [" + name + "]"})
-			_ = enc.Encode(map[string]string{"status": "Preparing", "id": tag})
-			_ = enc.Encode(map[string]string{"status": "Pushed", "id": tag})
-			digest := strings.TrimPrefix(img.ID, "sha256:")
-			if result.ManifestDigest != "" {
-				digest = strings.TrimPrefix(result.ManifestDigest, "sha256:")
-			}
-			_ = enc.Encode(map[string]string{"status": tag + ": digest: sha256:" + digest})
-		}()
-
-		return pr, nil
-	}
-
-	// Non-GCP registries: delegate to BaseServer synthetic push
-	return s.BaseServer.ImagePush(name, tag, auth)
+	return s.images.Push(name, tag, auth)
 }
 
-// ImageTag tags an image in-memory and optionally syncs to Artifact Registry.
-// AR sync is best-effort: failures are logged but do not fail the operation.
+// ImageTag delegates to ImageManager which handles cloud sync.
 func (s *Server) ImageTag(source string, repo string, tag string) error {
-	if err := s.BaseServer.ImageTag(source, repo, tag); err != nil {
-		return err
-	}
-
-	// Best-effort AR sync: re-put manifest with new tag
-	ref := repo
-	if tag != "" {
-		ref = repo + ":" + tag
-	}
-	registry, repoPath, newTag := parseImageRef(ref)
-	if s.arAuth.IsCloudRegistry(registry) {
-		go func() {
-			arToken, err := s.arAuth.GetToken(registry)
-			if err != nil {
-				s.Logger.Warn().Err(err).Str("registry", registry).Msg("AR tag sync: failed to get token")
-				return
-			}
-
-			if err := s.arAuth.OnTag(registry, repoPath, newTag, arToken); err != nil {
-				s.Logger.Warn().Err(err).Str("ref", ref).Msg("AR tag sync: failed to push manifest with new tag")
-			} else {
-				s.Logger.Info().Str("ref", ref).Msg("AR tag sync: successfully synced new tag")
-			}
-		}()
-	}
-
-	return nil
+	return s.images.Tag(source, repo, tag)
 }
 
-// ImageRemove removes an image in-memory and optionally deletes from Artifact Registry.
-// AR deletion is best-effort: failures are logged but do not fail the operation.
+// ImageRemove delegates to ImageManager which handles cloud sync.
 func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageDeleteResponse, error) {
-	// Check if image references a GCP registry before removing
-	registry, _, _ := parseImageRef(name)
-	isGCP := s.arAuth.IsCloudRegistry(registry)
-
-	result, err := s.BaseServer.ImageRemove(name, force, prune)
-	if err != nil {
-		return result, err
-	}
-
-	// Best-effort AR delete
-	if isGCP {
-		go func() {
-			arToken, err := s.arAuth.GetToken(registry)
-			if err != nil {
-				s.Logger.Warn().Err(err).Str("registry", registry).Msg("AR remove sync: failed to get token")
-				return
-			}
-
-			_, repo, tag := parseImageRef(name)
-			if err := s.arAuth.OnRemove(registry, repo, tag, arToken); err != nil {
-				s.Logger.Warn().Err(err).Str("ref", name).Msg("AR remove sync: request failed")
-			} else {
-				s.Logger.Info().Str("ref", name).Msg("AR remove sync: completed")
-			}
-		}()
-	}
-
-	return result, nil
+	return s.images.Remove(name, force, prune)
 }
 
 // AuthLogin handles Docker registry authentication.

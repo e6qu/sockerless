@@ -2,7 +2,6 @@ package aca
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -857,203 +856,34 @@ func (s *Server) ContainerUnpause(ref string) error {
 	return &api.NotImplementedError{Message: "container unpause is not supported by ACA backend"}
 }
 
-// ImagePull pulls an image reference and stores it locally.
-// Uses ACRAuthProvider for ACR registry authentication, core.FetchImageConfig with
-// cache for other registries. Populates full metadata (Size, RepoDigests, RootFS, GraphDriver).
+// ImagePull delegates to ImageManager for unified cloud image handling.
 func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
-	if ref == "" {
-		return nil, &api.InvalidParameterError{Message: "image reference is required"}
-	}
-
-	if !strings.Contains(ref, ":") && !strings.Contains(ref, "@") {
-		ref += ":latest"
-	}
-
-	// Use ACRAuthProvider for ACR registries, core.FetchImageConfig for others
-	imgConfig, err := s.acrAuth.fetchImageConfig(ref, auth)
-	if err != nil {
-		s.Logger.Warn().Err(err).Str("ref", ref).Msg("failed to fetch image config from registry, using synthetic")
-	}
-
-	imageID := syntheticImageID(ref)
-	hex := strings.TrimPrefix(imageID, "sha256:")
-	imgSize := syntheticImageSize(ref)
-
-	now := time.Now().UTC()
-	image := api.Image{
-		ID:       imageID,
-		RepoTags: []string{ref},
-		RepoDigests: []string{
-			strings.Split(ref, ":")[0] + "@sha256:" + hex[:64],
-		},
-		Created:      now.Format(time.RFC3339Nano),
-		Size:         imgSize,
-		VirtualSize:  imgSize,
-		Architecture: "amd64",
-		Os:           "linux",
-		RootFS: api.RootFS{
-			Type:   "layers",
-			Layers: []string{"sha256:" + core.GenerateID()},
-		},
-		GraphDriver: api.GraphDriverData{
-			Name: "overlay2",
-			Data: map[string]string{
-				"MergedDir": "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/merged",
-				"UpperDir":  "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/diff",
-				"WorkDir":   "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/work",
-			},
-		},
-		Metadata: api.ImageMetadata{LastTagTime: now.Format(time.RFC3339Nano)},
-	}
-
-	if imgConfig != nil {
-		image.Config = *imgConfig
-	} else {
-		image.Config = api.ContainerConfig{
-			Image: ref,
-		}
-	}
-
-	core.StoreImageWithAliases(s.Store, ref, image)
-
-	// Stream progress via pipe
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer func() { _ = pw.Close() }()
-
-		progress := []map[string]string{
-			{"status": "Pulling from " + ref},
-			{"status": "Digest: " + imageID[:19]},
-			{"status": "Status: Downloaded newer image for " + ref},
-		}
-		for _, p := range progress {
-			if err := json.NewEncoder(pw).Encode(p); err != nil {
-				return
-			}
-		}
-	}()
-
-	return pr, nil
+	return s.images.Pull(ref, auth)
 }
 
-// ImagePush pushes an image to a registry. For ACR targets (*.azurecr.io),
-// performs a real OCI push via core.OCIPush. For other targets,
-// delegates to BaseServer (synthetic).
+// ImagePush delegates to ImageManager for unified cloud image handling.
 func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
-	_, ok := s.Store.ResolveImage(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "image", ID: name}
-	}
-
-	if tag == "" {
-		tag = "latest"
-	}
-
-	// Determine registry from image name
-	registry, repo, _ := parseImageRef(name + ":" + tag)
-
-	// Only attempt real OCI push for ACR registries
-	if !s.acrAuth.IsCloudRegistry(registry) {
-		return s.BaseServer.ImagePush(name, tag, auth)
-	}
-
-	// Attempt real OCI push to ACR — non-fatal on failure
-	pr, pw := io.Pipe()
-	go func() {
-		enc := json.NewEncoder(pw)
-		_ = enc.Encode(map[string]string{"status": "The push refers to repository [" + name + "]"})
-
-		img, _ := s.Store.ResolveImage(name)
-		err := s.acrAuth.OnPush(&img, registry, repo, tag)
-		if err != nil {
-			s.Logger.Warn().Err(err).Str("registry", registry).Str("repo", repo).Msg("ACR push failed, returning synthetic progress")
-			_ = enc.Encode(map[string]string{"status": "Preparing", "id": tag})
-			_ = enc.Encode(map[string]string{"status": "Pushed", "id": tag})
-		} else {
-			_ = enc.Encode(map[string]string{"status": "Pushed", "id": tag})
-		}
-
-		digest := strings.TrimPrefix(img.ID, "sha256:")
-		_ = enc.Encode(map[string]string{"status": tag + ": digest: sha256:" + digest})
-		_ = pw.Close()
-	}()
-
-	return pr, nil
+	return s.images.Push(name, tag, auth)
 }
 
-// ImageTag tags an image and optionally syncs the tag to ACR. Non-fatal on ACR errors.
+// ImageTag delegates to ImageManager for unified cloud image handling.
 func (s *Server) ImageTag(source string, repo string, tag string) error {
-	// Delegate to BaseServer for in-memory tagging
-	if err := s.BaseServer.ImageTag(source, repo, tag); err != nil {
-		return err
-	}
-
-	// Optionally sync to ACR if the target is an ACR registry
-	fullRef := repo
-	if tag != "" {
-		fullRef = repo + ":" + tag
-	}
-	registry, ociRepo, ociTag := parseImageRef(fullRef)
-
-	if s.acrAuth.IsCloudRegistry(registry) {
-		img, ok := s.Store.ResolveImage(source)
-		if ok {
-			go func() {
-				if err := s.acrAuth.OnTag(&img, registry, ociRepo, ociTag); err != nil {
-					s.Logger.Warn().Err(err).Str("registry", registry).Msg("ACR tag sync failed")
-				}
-			}()
-		}
-	}
-
-	return nil
+	return s.images.Tag(source, repo, tag)
 }
 
-// ImageRemove removes an image and optionally deletes the manifest from ACR. Non-fatal on ACR errors.
+// ImageRemove delegates to ImageManager for unified cloud image handling.
 func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageDeleteResponse, error) {
-	// Resolve the image before removal to get metadata for ACR sync
-	img, hasImg := s.Store.ResolveImage(name)
-	var acrRegistry, acrRepo string
-	var acrTags []string
-	if hasImg {
-		for _, rt := range img.RepoTags {
-			reg, repo, tag := parseImageRef(rt)
-			if s.acrAuth.IsCloudRegistry(reg) {
-				acrRegistry = reg
-				acrRepo = repo
-				acrTags = append(acrTags, tag)
-			}
-		}
-	}
-
-	// Delegate to BaseServer for in-memory removal
-	resp, err := s.BaseServer.ImageRemove(name, force, prune)
-	if err != nil {
-		return resp, err
-	}
-
-	// Optionally delete manifests from ACR (non-fatal, best-effort)
-	if acrRegistry != "" && len(acrTags) > 0 {
-		go func() {
-			if err := s.acrAuth.OnRemove(acrRegistry, acrRepo, acrTags); err != nil {
-				s.Logger.Warn().Err(err).Str("registry", acrRegistry).Msg("ACR remove sync failed")
-			}
-		}()
-	}
-
-	return resp, nil
+	return s.images.Remove(name, force, prune)
 }
 
-// ImageBuild delegates to BaseServer for synthetic Dockerfile parsing.
-// MUST return 200 for e2e test compatibility.
+// ImageBuild delegates to ImageManager for unified cloud image handling.
 func (s *Server) ImageBuild(opts api.ImageBuildOptions, buildContext io.Reader) (io.ReadCloser, error) {
-	return s.BaseServer.ImageBuild(opts, buildContext)
+	return s.images.Build(opts, buildContext)
 }
 
-// ImageLoad delegates to BaseServer to allow docker save | docker load round-trips.
+// ImageLoad delegates to ImageManager for unified cloud image handling.
 func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
-	return s.BaseServer.ImageLoad(r)
+	return s.images.Load(r)
 }
 
 // VolumeRemove removes a volume and its state.

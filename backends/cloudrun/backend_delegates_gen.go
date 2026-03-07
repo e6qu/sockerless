@@ -53,31 +53,31 @@ func (s *Server) ExecResize(id string, h int, w int) error {
 
 
 func (s *Server) ImageBuild(opts api.ImageBuildOptions, context io.Reader) (io.ReadCloser, error) {
-	return s.BaseServer.ImageBuild(opts, context)
+	return s.images.Build(opts, context)
 }
 
 func (s *Server) ImageHistory(name string) ([]*api.ImageHistoryEntry, error) {
-	return s.BaseServer.ImageHistory(name)
+	return s.images.History(name)
 }
 
 func (s *Server) ImageInspect(name string) (*api.Image, error) {
-	return s.BaseServer.ImageInspect(name)
+	return s.images.Inspect(name)
 }
 
 func (s *Server) ImageList(opts api.ImageListOptions) ([]*api.ImageSummary, error) {
-	return s.BaseServer.ImageList(opts)
+	return s.images.List(opts)
 }
 
 func (s *Server) ImagePrune(filters map[string][]string) (*api.ImagePruneResponse, error) {
-	return s.BaseServer.ImagePrune(filters)
+	return s.images.Prune(filters)
 }
 
 func (s *Server) ImageSave(names []string) (io.ReadCloser, error) {
-	return s.BaseServer.ImageSave(names)
+	return s.images.Save(names)
 }
 
 func (s *Server) ImageSearch(term string, limit int, filters map[string][]string) ([]*api.ImageSearchResult, error) {
-	return s.BaseServer.ImageSearch(term, limit, filters)
+	return s.images.Search(term, limit, filters)
 }
 
 func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error {

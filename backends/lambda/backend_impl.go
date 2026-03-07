@@ -2,8 +2,6 @@ package lambda
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -809,168 +807,29 @@ func (s *Server) ContainerUnpause(ref string) error {
 	return &api.NotImplementedError{Message: "Lambda backend does not support unpause"}
 }
 
-// ImagePull pulls an image reference and stores it locally.
-// For ECR images, uses GetAuthorizationToken to obtain auth credentials.
+// ImagePull pulls an image, using ECR cloud auth when available.
 func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
-	if ref == "" {
-		return nil, &api.InvalidParameterError{Message: "image reference is required"}
-	}
-
-	// Add :latest if no tag or digest
-	if !strings.Contains(ref, ":") && !strings.Contains(ref, "@") {
-		ref += ":latest"
-	}
-
-	// For ECR images, obtain auth token if not already provided
-	registry, _, _ := ParseImageRef(ref)
-	if auth == "" && s.ecrAuth.IsCloudRegistry(registry) {
-		if token, err := s.ecrAuth.GetToken(registry); err == nil {
-			auth = token
-		} else {
-			s.Logger.Warn().Err(err).Str("ref", ref).Msg("failed to get ECR auth token, proceeding without auth")
-		}
-	}
-
-	// Generate image ID
-	hash := sha256.Sum256([]byte(ref))
-	imageID := fmt.Sprintf("sha256:%x", hash)
-
-	imgConfig := api.ContainerConfig{
-		Image: ref,
-	}
-
-	// Try to fetch real config from registry
-	if realConfig, _ := core.FetchImageConfig(ref, auth); realConfig != nil {
-		if len(realConfig.Env) > 0 {
-			imgConfig.Env = realConfig.Env
-		}
-		if len(realConfig.Cmd) > 0 {
-			imgConfig.Cmd = realConfig.Cmd
-		}
-		if len(realConfig.Entrypoint) > 0 {
-			imgConfig.Entrypoint = realConfig.Entrypoint
-		}
-		if realConfig.WorkingDir != "" {
-			imgConfig.WorkingDir = realConfig.WorkingDir
-		}
-		if len(realConfig.Labels) > 0 {
-			imgConfig.Labels = realConfig.Labels
-		}
-	}
-
-	image := api.Image{
-		ID:           imageID,
-		RepoTags:     []string{ref},
-		RepoDigests:  []string{},
-		Created:      time.Now().UTC().Format(time.RFC3339Nano),
-		Size:         0,
-		VirtualSize:  0,
-		Architecture: "amd64",
-		Os:           "linux",
-		RootFS:       api.RootFS{Type: "layers"},
-		Config:       imgConfig,
-	}
-
-	core.StoreImageWithAliases(s.Store, ref, image)
-
-	// Stream progress via pipe
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer func() { _ = pw.Close() }()
-
-		progress := []map[string]string{
-			{"status": "Pulling from " + ref},
-			{"status": "Digest: " + imageID[:19]},
-			{"status": "Status: Downloaded newer image for " + ref},
-		}
-		for _, p := range progress {
-			if err := json.NewEncoder(pw).Encode(p); err != nil {
-				return
-			}
-		}
-	}()
-
-	return pr, nil
+	return s.images.Pull(ref, auth)
 }
 
-// ImageTag tags an image and syncs the new tag to ECR (non-fatal on failure).
+// ImageTag tags an image and syncs the new tag to ECR.
 func (s *Server) ImageTag(source string, repo string, tag string) error {
-	// Delegate to BaseServer for in-memory tagging
-	if err := s.BaseServer.ImageTag(source, repo, tag); err != nil {
-		return err
-	}
-
-	// Build the full ref for ECR sync
-	ref := repo
-	if tag != "" {
-		ref = repo + ":" + tag
-	}
-
-	// Resolve image to get its ID for the manifest
-	img, ok := s.Store.ResolveImage(ref)
-	if !ok {
-		return nil // In-memory tag succeeded, ECR sync is best-effort
-	}
-
-	// Sync the new tag to ECR (non-fatal)
-	registry, ecrRepo, ecrTag := ParseImageRef(ref)
-	s.ecrAuth.OnTag(img.ID, registry, ecrRepo, ecrTag)
-
-	return nil
+	return s.images.Tag(source, repo, tag)
 }
 
-// ImageRemove removes an image and syncs the removal to ECR (non-fatal on failure).
+// ImageRemove removes an image and syncs the removal to ECR.
 func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageDeleteResponse, error) {
-	// Resolve the image first to get tags for ECR cleanup
-	img, ok := s.Store.ResolveImage(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "image", ID: name}
-	}
-
-	// Collect ECR refs to remove before BaseServer deletes them
-	type ecrRef struct {
-		registry string
-		repo     string
-		tags     []string
-	}
-	ecrRefs := make(map[string]*ecrRef) // keyed by registry+repo
-	for _, repoTag := range img.RepoTags {
-		registry, repo, imgTag := ParseImageRef(repoTag)
-		if s.ecrAuth.IsCloudRegistry(registry) {
-			key := registry + "/" + repo
-			if _, exists := ecrRefs[key]; !exists {
-				ecrRefs[key] = &ecrRef{registry: registry, repo: repo}
-			}
-			ecrRefs[key].tags = append(ecrRefs[key].tags, imgTag)
-		}
-	}
-
-	// Delegate to BaseServer for in-memory removal
-	result, err := s.BaseServer.ImageRemove(name, force, prune)
-	if err != nil {
-		return result, err
-	}
-
-	// Remove from ECR (best-effort, non-fatal)
-	for _, ref := range ecrRefs {
-		s.ecrAuth.OnRemove(ref.registry, ref.repo, ref.tags)
-	}
-
-	return result, nil
+	return s.images.Remove(name, force, prune)
 }
 
-// ImageLoad delegates to BaseServer for in-memory tar parsing.
+// ImageLoad loads an image from a tar archive.
 func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
-	return s.BaseServer.ImageLoad(r)
+	return s.images.Load(r)
 }
 
-// ImageBuild is not supported by the Lambda backend.
-// Lambda requires pre-built images stored in ECR.
+// ImageBuild delegates to the shared ImageManager.
 func (s *Server) ImageBuild(opts api.ImageBuildOptions, buildContext io.Reader) (io.ReadCloser, error) {
-	return nil, &api.NotImplementedError{
-		Message: "Lambda backend does not support image build; push pre-built images to ECR and use the ECR image URI",
-	}
+	return s.images.Build(opts, buildContext)
 }
 
 // AuthLogin validates login credentials.
@@ -1042,11 +901,8 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 	}
 }
 
-// ImagePush is not supported by the Lambda backend.
-// Images should be pushed directly to ECR using the AWS CLI or SDK.
+// ImagePush pushes an image, syncing to ECR when applicable.
 func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
-	return nil, &api.NotImplementedError{
-		Message: "Lambda backend does not support image push; push images directly to ECR",
-	}
+	return s.images.Push(name, tag, auth)
 }
 

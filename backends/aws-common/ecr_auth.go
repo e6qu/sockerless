@@ -1,4 +1,5 @@
-package lambda
+// Package awscommon provides shared AWS utilities for ECS and Lambda backends.
+package awscommon
 
 import (
 	"context"
@@ -9,9 +10,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	ecrtypes "github.com/aws/aws-sdk-go-v2/service/ecr/types"
 	"github.com/rs/zerolog"
+	core "github.com/sockerless/backend-core"
 )
 
-// ECRAuthProvider handles ECR authentication for the Lambda backend.
+// Compile-time check that ECRAuthProvider implements core.AuthProvider.
+var _ core.AuthProvider = (*ECRAuthProvider)(nil)
+
+// ECRAuthProvider handles ECR authentication and image lifecycle operations.
 type ECRAuthProvider struct {
 	ecr    *ecr.Client
 	logger zerolog.Logger
@@ -50,9 +55,9 @@ func (p *ECRAuthProvider) IsCloudRegistry(registry string) bool {
 
 // OnPush creates an ECR repository (if needed) and records the image via PutImage.
 // All failures are non-fatal (logged as warnings).
-func (p *ECRAuthProvider) OnPush(imageID, registry, repo, tag string) {
+func (p *ECRAuthProvider) OnPush(imageID, registry, repo, tag string) error {
 	if !p.IsCloudRegistry(registry) {
-		return
+		return nil
 	}
 
 	// Ensure repository exists (ignore AlreadyExists error)
@@ -61,6 +66,7 @@ func (p *ECRAuthProvider) OnPush(imageID, registry, repo, tag string) {
 	})
 	if err != nil && !isECRAlreadyExistsError(err) {
 		p.logger.Warn().Err(err).Str("repo", repo).Msg("ECR CreateRepository failed during push")
+		return err
 	}
 
 	manifest := fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"digest":"%s"}}`, imageID)
@@ -71,14 +77,17 @@ func (p *ECRAuthProvider) OnPush(imageID, registry, repo, tag string) {
 	})
 	if err != nil {
 		p.logger.Warn().Err(err).Str("repo", repo).Str("tag", tag).Msg("ECR PutImage failed during push")
+		return err
 	}
+
+	return nil
 }
 
 // OnTag records a new tag in ECR via PutImage.
 // All failures are non-fatal (logged as warnings).
-func (p *ECRAuthProvider) OnTag(imageID, registry, repo, newTag string) {
+func (p *ECRAuthProvider) OnTag(imageID, registry, repo, newTag string) error {
 	if !p.IsCloudRegistry(registry) {
-		return
+		return nil
 	}
 
 	// Ensure repository exists
@@ -87,7 +96,7 @@ func (p *ECRAuthProvider) OnTag(imageID, registry, repo, newTag string) {
 	})
 	if err != nil && !isECRAlreadyExistsError(err) {
 		p.logger.Warn().Err(err).Str("repo", repo).Msg("ECR CreateRepository failed during tag")
-		return
+		return err
 	}
 
 	manifest := fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"digest":"%s"}}`, imageID)
@@ -98,14 +107,17 @@ func (p *ECRAuthProvider) OnTag(imageID, registry, repo, newTag string) {
 	})
 	if err != nil {
 		p.logger.Warn().Err(err).Str("repo", repo).Str("tag", newTag).Msg("ECR PutImage failed during tag")
+		return err
 	}
+
+	return nil
 }
 
 // OnRemove removes image tags from ECR via BatchDeleteImage.
 // All failures are non-fatal (logged as warnings).
-func (p *ECRAuthProvider) OnRemove(registry, repo string, tags []string) {
+func (p *ECRAuthProvider) OnRemove(registry, repo string, tags []string) error {
 	if !p.IsCloudRegistry(registry) {
-		return
+		return nil
 	}
 
 	ids := make([]ecrtypes.ImageIdentifier, len(tags))
@@ -119,43 +131,13 @@ func (p *ECRAuthProvider) OnRemove(registry, repo string, tags []string) {
 	})
 	if err != nil {
 		p.logger.Warn().Err(err).Str("repo", repo).Msg("ECR BatchDeleteImage failed during remove")
+		return err
 	}
+
+	return nil
 }
 
 // isECRAlreadyExistsError checks if an error is an ECR RepositoryAlreadyExistsException.
 func isECRAlreadyExistsError(err error) bool {
 	return strings.Contains(err.Error(), "RepositoryAlreadyExistsException")
-}
-
-// ParseImageRef splits an image reference into registry, repository, and tag.
-func ParseImageRef(ref string) (registry, repo, tag string) {
-	// Split off tag/digest
-	tag = "latest"
-	if idx := strings.LastIndex(ref, ":"); idx != -1 {
-		// Make sure the colon is not in the registry part (contains /)
-		afterColon := ref[idx+1:]
-		if !strings.Contains(afterColon, "/") {
-			tag = afterColon
-			ref = ref[:idx]
-		}
-	}
-
-	// Split registry from repo
-	if strings.Contains(ref, ".") || strings.Contains(ref, ":") {
-		parts := strings.SplitN(ref, "/", 2)
-		if len(parts) == 2 {
-			registry = parts[0]
-			repo = parts[1]
-			return
-		}
-	}
-
-	// Docker Hub official images
-	registry = "registry-1.docker.io"
-	if !strings.Contains(ref, "/") {
-		repo = "library/" + ref
-	} else {
-		repo = ref
-	}
-	return
 }

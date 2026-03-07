@@ -6,6 +6,7 @@ import (
 
 	"github.com/rs/zerolog"
 	core "github.com/sockerless/backend-core"
+	gcpcommon "github.com/sockerless/gcp-common"
 )
 
 // Server is the Cloud Run backend server.
@@ -13,7 +14,7 @@ type Server struct {
 	*core.BaseServer
 	config    Config
 	gcp       *GCPClients
-	arAuth    *ARAuthProvider
+	images    *core.ImageManager
 	ipCounter atomic.Int32
 
 	CloudRun     *core.StateStore[CloudRunState]
@@ -30,8 +31,6 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		NetworkState: core.NewStateStore[NetworkState](),
 		VolumeState:  core.NewStateStore[VolumeState](),
 	}
-	s.arAuth = NewARAuthProvider(s.ctx)
-
 	s.ipCounter.Store(2)
 
 	s.BaseServer = core.NewBaseServer(core.NewStore(), core.BackendDescriptor{
@@ -45,6 +44,11 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		NCPU:            1,
 		MemTotal:        536870912,
 	}, logger)
+	s.images = &core.ImageManager{
+		Base:   s.BaseServer,
+		Auth:   gcpcommon.NewARAuthProvider(s.ctx, logger),
+		Logger: logger,
+	}
 	s.SetSelf(s)
 
 	mode := "cloud"
