@@ -10,6 +10,7 @@ RUN cd bleephub && GOWORK=off go build -o /out/bleephub ./cmd
 COPY api/ api/
 COPY agent/ agent/
 COPY backends/core/ backends/core/
+COPY backends/aws-common/ backends/aws-common/
 COPY backends/ecs/ backends/ecs/
 RUN cd backends/ecs && GOWORK=off go mod download && \
     GOWORK=off go build -tags noui -o /out/sockerless-backend-ecs ./cmd/sockerless-backend-ecs

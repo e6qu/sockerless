@@ -10,6 +10,7 @@ WORKDIR /src
 COPY api/ api/
 COPY agent/ agent/
 COPY backends/core/ backends/core/
+COPY backends/aws-common/ backends/aws-common/
 
 # --- Build AWS backends (ecs + lambda) ---
 COPY backends/ecs/ backends/ecs/
