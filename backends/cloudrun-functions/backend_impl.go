@@ -14,6 +14,7 @@ import (
 	functionspb "cloud.google.com/go/functions/apiv2/functionspb"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
+	gcpcommon "github.com/sockerless/gcp-common"
 	"google.golang.org/api/iterator"
 )
 
@@ -190,7 +191,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	op, err := s.gcp.Functions.CreateFunction(s.ctx(), createReq)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("function", funcName).Msg("failed to create Cloud Run Function")
-		return nil, mapGCPError(err, "function", funcName)
+		return nil, gcpcommon.MapGCPError(err, "function", funcName)
 	}
 
 	result, err := op.Wait(s.ctx())
@@ -202,7 +203,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 			_ = delOp.Wait(s.ctx())
 		}
 		s.Logger.Error().Err(err).Str("function", funcName).Msg("failed to wait for Cloud Run Function creation")
-		return nil, mapGCPError(err, "function", funcName)
+		return nil, gcpcommon.MapGCPError(err, "function", funcName)
 	}
 
 	// Get function URL from the result
@@ -414,7 +415,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	s.AgentRegistry.Remove(id)
 
 	// Parse signal and transition container to exited state
-	exitCode := signalToExitCode(signal)
+	exitCode := core.SignalToExitCode(signal)
 
 	s.Store.Containers.Update(id, func(c *api.Container) {
 		c.State.Status = "exited"

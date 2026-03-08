@@ -372,7 +372,7 @@ func (s *BaseServer) ContainerKill(ref string, signal string) error {
 	s.StopHealthCheck(id)
 	StopAutoAgent(id)
 
-	exitCode := signalToExitCode(signal)
+	exitCode := SignalToExitCode(signal)
 
 	s.Store.Containers.Update(id, func(c *api.Container) {
 		c.State.Status = "exited"

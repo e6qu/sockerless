@@ -12,6 +12,7 @@ import (
 	runpb "cloud.google.com/go/run/apiv2/runpb"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
+	gcpcommon "github.com/sockerless/gcp-common"
 )
 
 // Compile-time check that Server implements api.Backend.
@@ -41,7 +42,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 
 	// Merge image config if available
 	if img, ok := s.Store.ResolveImage(config.Image); ok {
-		config.Env = mergeEnvByKey(img.Config.Env, config.Env)
+		config.Env = core.MergeEnvByKey(img.Config.Env, config.Env)
 		if len(config.Cmd) == 0 && len(config.Entrypoint) == 0 {
 			config.Cmd = img.Config.Cmd
 		}
@@ -209,7 +210,7 @@ func (s *Server) ContainerStart(ref string) error {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to create Cloud Run Job")
 		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
-		return mapGCPError(err, "job", id)
+		return gcpcommon.MapGCPError(err, "job", id)
 	}
 
 	// Wait for job creation to complete
@@ -219,7 +220,7 @@ func (s *Server) ContainerStart(ref string) error {
 		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
-		return mapGCPError(err, "job", id)
+		return gcpcommon.MapGCPError(err, "job", id)
 	}
 
 	jobFullName := job.Name
@@ -243,7 +244,7 @@ func (s *Server) ContainerStart(ref string) error {
 		s.deleteJob(jobFullName)
 		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
-		return mapGCPError(err, "execution", id)
+		return gcpcommon.MapGCPError(err, "execution", id)
 	}
 
 	// Wait for RunJob LRO to return the execution
@@ -253,7 +254,7 @@ func (s *Server) ContainerStart(ref string) error {
 		s.deleteJob(jobFullName)
 		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
-		return mapGCPError(err, "execution", id)
+		return gcpcommon.MapGCPError(err, "execution", id)
 	}
 
 	executionName := execution.Name
@@ -305,7 +306,7 @@ func (s *Server) ContainerStart(ref string) error {
 				s.AgentRegistry.Remove(id)
 				s.deleteJob(jobFullName)
 				s.Store.RevertToCreated(id)
-				return mapGCPError(err, "execution", id)
+				return gcpcommon.MapGCPError(err, "execution", id)
 			}
 
 			if completedExitCode >= 0 {
@@ -411,7 +412,7 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 		for _, pc := range podContainers {
 			s.Store.RevertToCreated(pc.ID)
 		}
-		return mapGCPError(err, "job", mainID)
+		return gcpcommon.MapGCPError(err, "job", mainID)
 	}
 
 	job, err := createOp.Wait(s.ctx())
@@ -424,7 +425,7 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 			s.Store.RevertToCreated(pc.ID)
 		}
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
-		return mapGCPError(err, "job", mainID)
+		return gcpcommon.MapGCPError(err, "job", mainID)
 	}
 
 	jobFullName := job.Name
@@ -451,7 +452,7 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 		for _, pc := range podContainers {
 			s.Store.RevertToCreated(pc.ID)
 		}
-		return mapGCPError(err, "execution", mainID)
+		return gcpcommon.MapGCPError(err, "execution", mainID)
 	}
 
 	execution, err := runOp.Wait(s.ctx())
@@ -464,7 +465,7 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 		for _, pc := range podContainers {
 			s.Store.RevertToCreated(pc.ID)
 		}
-		return mapGCPError(err, "execution", mainID)
+		return gcpcommon.MapGCPError(err, "execution", mainID)
 	}
 
 	executionName := execution.Name
@@ -509,7 +510,7 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 			for _, pc := range podContainers {
 				s.Store.RevertToCreated(pc.ID)
 			}
-			return mapGCPError(err, "execution", mainID)
+			return gcpcommon.MapGCPError(err, "execution", mainID)
 		}
 
 		if completedExitCode >= 0 {
@@ -591,7 +592,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	s.AgentRegistry.Remove(id)
 	core.StopAutoAgent(id)
 
-	exitCode := signalToExitCode(signal)
+	exitCode := core.SignalToExitCode(signal)
 
 	// Cancel the Cloud Run execution
 	crState, _ := s.CloudRun.Get(id)

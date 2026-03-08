@@ -151,7 +151,7 @@ func (s *BaseServer) PodKill(name string, signal string) (*api.PodActionResponse
 	if signal == "" {
 		signal = "SIGKILL"
 	}
-	exitCode := signalToExitCode(signal)
+	exitCode := SignalToExitCode(signal)
 
 	for _, cid := range pod.ContainerIDs {
 		c, ok := s.Store.Containers.Get(cid)

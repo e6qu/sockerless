@@ -14,6 +14,7 @@ import (
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
+	awscommon "github.com/sockerless/aws-common"
 )
 
 // Compile-time check that Server implements api.Backend.
@@ -205,7 +206,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	result, err := s.aws.Lambda.CreateFunction(s.ctx(), createInput)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("function", funcName).Msg("failed to create Lambda function")
-		return nil, mapAWSError(err, "function", funcName)
+		return nil, awscommon.MapAWSError(err, "function", funcName)
 	}
 
 	functionARN := aws.ToString(result.FunctionArn)
@@ -408,7 +409,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	s.AgentRegistry.Remove(id)
 
 	// Parse signal and transition container to exited state
-	exitCode := signalToExitCode(signal)
+	exitCode := core.SignalToExitCode(signal)
 
 	s.Store.Containers.Update(id, func(c *api.Container) {
 		c.State.Status = "exited"

@@ -106,7 +106,7 @@ func (s *BaseServer) handleContainerStop(w http.ResponseWriter, r *http.Request)
 	// BUG-505: Adjust exit code for signal query param (Docker API v1.42+)
 	if signal := r.URL.Query().Get("signal"); signal != "" {
 		if id, ok := s.Store.ResolveContainerID(ref); ok {
-			exitCode := signalToExitCode(signal)
+			exitCode := SignalToExitCode(signal)
 			s.Store.Containers.Update(id, func(c *api.Container) {
 				c.State.ExitCode = exitCode
 			})
@@ -209,9 +209,9 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-// signalToExitCode maps a signal name or number to the corresponding
+// SignalToExitCode maps a signal name or number to the corresponding
 // exit code (128 + signal number), matching Docker's behavior.
-func signalToExitCode(signal string) int {
+func SignalToExitCode(signal string) int {
 	signalMap := map[string]int{
 		"SIGHUP": 129, "HUP": 129, "1": 129,
 		"SIGINT": 130, "INT": 130, "2": 130,

@@ -4,31 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v2"
 )
-
-// signalToExitCode maps a signal name or number to the corresponding
-// exit code (128 + signal number), matching Docker's behavior.
-func signalToExitCode(signal string) int {
-	signalMap := map[string]int{
-		"SIGHUP": 129, "HUP": 129, "1": 129,
-		"SIGINT": 130, "INT": 130, "2": 130,
-		"SIGQUIT": 131, "QUIT": 131, "3": 131,
-		"SIGABRT": 134, "ABRT": 134, "6": 134,
-		"SIGKILL": 137, "KILL": 137, "9": 137,
-		"SIGUSR1": 138, "USR1": 138, "10": 138,
-		"SIGUSR2": 140, "USR2": 140, "12": 140,
-		"SIGTERM": 143, "TERM": 143, "15": 143,
-	}
-	signal = strings.ToUpper(strings.TrimSpace(signal))
-	if code, ok := signalMap[signal]; ok {
-		return code
-	}
-	return 137 // default to SIGKILL
-}
 
 // waitForExecutionRunning polls until the execution reaches RUNNING state.
 // Returns (agentAddr, -1, nil) if the execution is running.
@@ -210,34 +189,4 @@ func (s *Server) deleteJob(jobName string) {
 		return
 	}
 	_, _ = poller.PollUntilDone(s.ctx(), nil)
-}
-
-// mergeEnvByKey merges base env vars with override env vars by key.
-// Override values replace base values with the same key; order is preserved.
-func mergeEnvByKey(base, override []string) []string {
-	if len(override) == 0 {
-		return base
-	}
-	if len(base) == 0 {
-		return override
-	}
-	keys := make(map[string]string)
-	order := make([]string, 0, len(base)+len(override))
-	for _, e := range base {
-		k, _, _ := strings.Cut(e, "=")
-		keys[k] = e
-		order = append(order, k)
-	}
-	for _, e := range override {
-		k, _, _ := strings.Cut(e, "=")
-		if _, exists := keys[k]; !exists {
-			order = append(order, k)
-		}
-		keys[k] = e
-	}
-	result := make([]string, 0, len(order))
-	for _, k := range order {
-		result = append(result, keys[k])
-	}
-	return result
 }

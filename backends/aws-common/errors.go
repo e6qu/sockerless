@@ -1,24 +1,25 @@
-package gcf
+package awscommon
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/sockerless/api"
 )
 
-// mapGCPError converts common GCP errors to api errors.
-func mapGCPError(err error, resource, id string) error {
+// MapAWSError converts common AWS SDK errors to api error types.
+func MapAWSError(err error, resource, id string) error {
 	if err == nil {
 		return nil
 	}
 	msg := err.Error()
 
 	switch {
-	case containsAny(msg, "not found", "NotFound", "404"):
+	case containsAny(msg, "not found", "does not exist", "ResourceNotFoundException"):
 		return &api.NotFoundError{Resource: resource, ID: id}
-	case containsAny(msg, "already exists", "AlreadyExists", "409"):
+	case containsAny(msg, "already exists", "ConflictException", "ResourceConflictException"):
 		return &api.ConflictError{Message: fmt.Sprintf("%s %s already exists", resource, id)}
-	case containsAny(msg, "InvalidArgument", "invalid", "400"):
+	case containsAny(msg, "InvalidParameterValueException", "ValidationException"):
 		return &api.InvalidParameterError{Message: msg}
 	default:
 		return fmt.Errorf("%s %s: %w", resource, id, err)
@@ -27,12 +28,8 @@ func mapGCPError(err error, resource, id string) error {
 
 func containsAny(s string, substrs ...string) bool {
 	for _, sub := range substrs {
-		if len(s) >= len(sub) {
-			for i := 0; i <= len(s)-len(sub); i++ {
-				if s[i:i+len(sub)] == sub {
-					return true
-				}
-			}
+		if strings.Contains(s, sub) {
+			return true
 		}
 	}
 	return false
