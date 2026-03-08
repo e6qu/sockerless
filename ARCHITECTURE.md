@@ -18,9 +18,9 @@ graph TB
         GLR["GitLab Runner"]
     end
 
-    subgraph Sockerless
-        FE["Frontend<br/><i>Docker REST API v1.44</i>"]
-        BE["Backend<br/><i>Internal API</i>"]
+    subgraph "Sockerless Backend (single binary)"
+        DOCKER_API["Docker REST API v1.44<br/><i>in-process, same mux</i>"]
+        CORE["Backend Core<br/><i>state, drivers, handlers</i>"]
         AG["Agent<br/><i>Exec/Attach bridge</i>"]
         BPH["bleephub<br/><i>Runner service API</i>"]
     end
@@ -35,52 +35,51 @@ graph TB
         DOCK["Docker Daemon"]
     end
 
-    CLI & COMPOSE & TC & SDK & ACT & GLR -->|"Docker API<br/>(HTTP/TCP)"| FE
-    GHR -->|"Docker API"| FE
+    CLI & COMPOSE & TC & SDK & ACT & GLR -->|"Docker API<br/>(HTTP/TCP)"| DOCKER_API
+    GHR -->|"Docker API"| DOCKER_API
     GHR <-->|"Runner protocol<br/>(HTTP/JSON)"| BPH
-    FE -->|"/internal/v1/*<br/>(HTTP/JSON)"| BE
-    BE -->|"Cloud SDK"| ECS & LAM & CR & GCF & ACA & AZF
-    BE -->|"Docker SDK"| DOCK
-    AG -.->|"WebSocket"| BE
+    DOCKER_API --- CORE
+    CORE -->|"Cloud SDK"| ECS & LAM & CR & GCF & ACA & AZF
+    CORE -->|"Docker SDK"| DOCK
+    AG -.->|"WebSocket"| CORE
 ```
 
-The system has four main components:
+Each backend is a **standalone binary** that serves both the Docker REST API (`:2375`) and internal management endpoints on the same HTTP mux — there is no separate frontend process. The Docker API routes are registered in-process via `core.BaseServer.registerDockerAPIRoutes()`, with a `stripVersionPrefix` middleware that removes the `/v1.XX/` prefix.
 
-- **Frontend** — Stateless HTTP server implementing Docker REST API v1.44. Translates Docker protocol to internal API calls.
-- **Backend** — Stateful server managing container lifecycle. Seven implementations share a common core.
-- **Agent** — Binary injected into cloud containers for exec/attach. Bridges commands between backend and the container's shell.
-- **bleephub** — GitHub Actions runner service API. Dispatches jobs to the official `actions/runner`, which executes them through the Docker frontend.
+The system has three main components:
+
+- **Backend** — Single-binary server implementing the Docker REST API v1.44 and managing container lifecycle. Seven implementations share a common core (`backends/core/`).
+- **Agent** — Binary injected into cloud containers for exec/attach. Bridges commands between the backend and the container's shell over WebSocket.
+- **bleephub** — GitHub Actions runner service API. Dispatches jobs to the official `actions/runner`, which executes them through the backend's Docker API.
 
 ---
 
-## Frontend
+## Docker API Layer
 
-The Docker frontend (`frontends/docker/`) exposes the Docker API surface: containers, images, networks, volumes, exec, system. It strips the `/v1.XX/` version prefix and proxies every request to a backend over HTTP.
+Each backend serves the full Docker API surface — containers, images, networks, volumes, exec, system — directly on its HTTP mux. A `stripVersionPrefix` middleware removes the `/v1.XX/` prefix so clients using any Docker API version work transparently. The same handlers serve both Docker-compatible routes (`/containers/create`) and internal routes (`/internal/v1/containers`).
 
 ```mermaid
 sequenceDiagram
     participant C as Docker Client
-    participant F as Frontend
-    participant B as Backend
+    participant S as Sockerless Backend
 
-    C->>F: POST /v1.44/containers/create
-    F->>B: POST /internal/v1/containers
-    B-->>F: 201 {Id: "abc123"}
-    F-->>C: 201 {Id: "abc123"}
+    C->>S: POST /v1.44/containers/create
+    Note over S: stripVersionPrefix middleware
+    S->>S: handleContainerCreate (in-process)
+    S-->>C: 201 {Id: "abc123"}
 
-    C->>F: POST /v1.44/containers/abc123/start
-    F->>B: POST /internal/v1/containers/abc123/start
-    B-->>F: 204
-    F-->>C: 204
+    C->>S: POST /v1.44/containers/abc123/start
+    S->>S: handleContainerStart (cloud SDK call)
+    S-->>C: 204
 ```
 
-For streaming operations (exec, attach, logs), the frontend hijacks the HTTP connection and bridges bidirectional I/O between the Docker client and backend.
+For streaming operations (exec, attach, logs), the backend hijacks the HTTP connection and bridges bidirectional I/O with the agent or cloud logging service.
 
 ---
 
 ## Backends
 
-All backends embed a shared `core.BaseServer` that provides HTTP routing, in-memory state (`Store`), agent registry, and default handlers. Each cloud backend overrides specific methods via the `api.Backend` interface (self-dispatch pattern) to implement cloud-specific logic.
+All backends embed a shared `core.BaseServer` that provides HTTP routing (both Docker API and internal management endpoints), in-memory state (`Store`), agent registry, and default handlers. Each cloud backend overrides specific methods via the `api.Backend` interface (self-dispatch pattern) to implement cloud-specific logic.
 
 ```mermaid
 graph TB
@@ -389,24 +388,24 @@ Sockerless is a drop-in replacement for Docker Engine. Anything that talks to th
 
 | Mode | `DOCKER_HOST` | How it works |
 |------|---------------|--------------|
-| Local TCP | `tcp://localhost:2375` | Client connects directly to frontend on same host |
-| Remote TCP | `tcp://remote-host:2375` | Client connects to frontend on a different machine |
+| Local TCP | `tcp://localhost:2375` | Client connects directly to backend on same host |
+| Remote TCP | `tcp://remote-host:2375` | Client connects to backend on a different machine |
 | SSH tunnel | `ssh://user@remote-host` | Docker CLI opens SSH tunnel to remote unix socket |
 
-For SSH mode, the Sockerless frontend must listen on a unix socket (e.g., `/var/run/docker.sock`). The Docker CLI's built-in SSH transport tunnels to the socket over SSH — no extra configuration needed.
+For SSH mode, the Sockerless backend must listen on a unix socket (e.g., `/var/run/docker.sock`). The Docker CLI's built-in SSH transport tunnels to the socket over SSH — no extra configuration needed.
 
 ### Docker CLI and Compose
 
 ```bash
-# Local — frontend on same machine
+# Local — backend on same machine
 export DOCKER_HOST=tcp://localhost:2375
 docker run --rm -p 8080:8080 my-app:latest
 
-# Remote — frontend on a cloud VM
+# Remote — backend on a cloud VM
 export DOCKER_HOST=tcp://sockerless.example.com:2375
 docker run --rm alpine echo "running on remote cloud"
 
-# SSH — tunnel to remote frontend's unix socket
+# SSH — tunnel to remote backend's unix socket
 export DOCKER_HOST=ssh://user@sockerless.example.com
 docker run --rm alpine echo "running via SSH tunnel"
 
@@ -424,7 +423,7 @@ Any library that uses the Docker HTTP REST API works without modification:
 - **Docker SDK** (Go `docker/docker`, Python `docker-py`, Java `docker-java`, etc.) — custom orchestration code
 - **Drone CI, Woodpecker CI, Buildkite** — any CI system that talks to Docker
 
-All of these just need `DOCKER_HOST` pointed at the Sockerless frontend. Containers run on whichever cloud backend is configured.
+All of these just need `DOCKER_HOST` pointed at the Sockerless backend. Containers run on whichever cloud backend is configured.
 
 ### CI Runners — GitHub Actions & GitLab CI
 
@@ -436,22 +435,20 @@ The production deployment model for CI is the same: a **self-hosted runner** reg
 sequenceDiagram
     participant GH as github.com
     participant R as actions/runner<br/>(self-hosted)
-    participant FE as Sockerless Frontend
-    participant BE as Sockerless Backend
+    participant S as Sockerless Backend
     participant CL as Cloud (ECS / Lambda / ...)
 
     Note over GH,R: Runner registered as self-hosted runner
     GH-->>R: Job dispatched (workflow trigger)
-    R->>FE: docker create (job image)
-    FE->>BE: POST /internal/v1/containers
-    BE->>CL: RunTask / CreateFunction / ...
-    R->>FE: docker start
-    R->>FE: docker exec (each step)
-    R->>FE: docker stop / rm
+    R->>S: docker create (job image)
+    S->>CL: RunTask / CreateFunction / ...
+    R->>S: docker start
+    R->>S: docker exec (each step)
+    R->>S: docker stop / rm
     R-->>GH: Job result + logs
 ```
 
-The runner is configured with `DOCKER_HOST` pointing at the Sockerless frontend. GitHub dispatches jobs to it like any self-hosted runner. No modifications to the runner binary, no custom actions — standard GitHub Actions workflows work unchanged.
+The runner is configured with `DOCKER_HOST` pointing at the Sockerless backend. GitHub dispatches jobs to it like any self-hosted runner. No modifications to the runner binary, no custom actions — standard GitHub Actions workflows work unchanged.
 
 ### GitLab CI (production)
 
@@ -459,22 +456,21 @@ The runner is configured with `DOCKER_HOST` pointing at the Sockerless frontend.
 sequenceDiagram
     participant GL as gitlab.com
     participant R as gitlab-runner<br/>(docker executor)
-    participant FE as Sockerless Frontend
-    participant BE as Sockerless Backend
+    participant S as Sockerless Backend
     participant CL as Cloud (ECS / CloudRun / ...)
 
     Note over GL,R: Runner registered with gitlab.com
     GL-->>R: Job dispatched (pipeline trigger)
-    R->>FE: docker create (job image)
-    R->>FE: docker create (helper image)
-    R->>FE: docker start
-    R->>FE: docker exec (script steps)
-    R->>FE: docker cp (artifacts)
-    R->>FE: docker stop / rm
+    R->>S: docker create (job image)
+    R->>S: docker create (helper image)
+    R->>S: docker start
+    R->>S: docker exec (script steps)
+    R->>S: docker cp (artifacts)
+    R->>S: docker stop / rm
     R-->>GL: Job result + artifacts
 ```
 
-GitLab Runner's docker executor talks directly to the Docker API. By setting `host` in the runner's `config.toml` to the Sockerless frontend address (`tcp://localhost:2375`), all container operations route through Sockerless. No runner modifications needed.
+GitLab Runner's docker executor talks directly to the Docker API. By setting `host` in the runner's `config.toml` to the Sockerless backend address (`tcp://localhost:2375`), all container operations route through Sockerless. No runner modifications needed.
 
 ### bleephub — Local GitHub API Simulator
 
@@ -485,8 +481,7 @@ sequenceDiagram
     participant J as Test Harness
     participant BPH as bleephub
     participant R as actions/runner
-    participant FE as Sockerless Frontend
-    participant BE as Sockerless Backend
+    participant S as Sockerless Backend
 
     Note over BPH,R: 1. Runner registers with bleephub
     R->>BPH: POST /api/v3/actions/runner-registration
@@ -501,9 +496,8 @@ sequenceDiagram
     J->>BPH: POST /api/v3/bleephub/submit
     BPH-->>R: Job message (via long-poll response)
 
-    Note over R,BE: 4. Runner executes via Docker API
-    R->>FE: docker create / start / exec
-    FE->>BE: /internal/v1/...
+    Note over R,S: 4. Runner executes via Docker API
+    R->>S: docker create / start / exec
 
     Note over BPH,R: 5. Runner reports completion
     R->>BPH: PATCH /_apis/v1/Timeline (step results)
@@ -569,10 +563,8 @@ The project is organized as a Go workspace with multiple modules:
 ```
 sockerless/
 ├── api/                          # Shared types (zero deps)
-├── frontends/
-│   └── docker/                   # Docker REST API frontend
 ├── backends/
-│   ├── core/                     # Shared backend library
+│   ├── core/                     # Shared library (Docker API + internal handlers)
 │   ├── docker/                   # Docker daemon passthrough
 │   ├── ecs/                      # AWS ECS/Fargate
 │   ├── lambda/                   # AWS Lambda
@@ -620,12 +612,12 @@ graph TB
 
     ST -->|"starts simulator<br/>+ backend"| SIM3["Simulator"]
     ST -->|"runs Docker SDK<br/>against backend"| BE3["Backend"]
-    GH -->|"act runs workflows<br/>against full stack"| STACK["Simulator + Backend + Frontend"]
+    GH -->|"act runs workflows<br/>against full stack"| STACK["Simulator + Backend"]
     GL -->|"gitlab-runner runs<br/>pipelines against stack"| STACK
-    BPH -->|"runner ↔ bleephub<br/>↔ Sockerless"| BSTACK["bleephub + Backend + Frontend"]
+    BPH -->|"runner ↔ bleephub<br/>↔ Sockerless"| BSTACK["bleephub + Backend"]
 ```
 
 - **Sim-backend tests**: Start a simulator + backend pair, run 59 Docker SDK test functions against them.
-- **E2E tests (act + GitLab)**: Start the full stack (simulator + backend + frontend), run real CI workflows (GitHub Actions via `act`, GitLab CI via `gitlab-runner`) that exercise container create/start/exec/stop/remove.
-- **E2E tests (official runner)**: Start bleephub + Sockerless, run the official `actions/runner` through the full job lifecycle (`make bleephub-test`, Docker-only).
+- **E2E tests (act + GitLab)**: Start the full stack (simulator + backend), run real CI workflows (GitHub Actions via `act`, GitLab CI via `gitlab-runner`) that exercise container create/start/exec/stop/remove.
+- **E2E tests (official runner)**: Start bleephub + Sockerless backend, run the official `actions/runner` through the full job lifecycle (`make bleephub-test`, Docker-only).
 - **Terraform integration tests**: Apply real Terraform modules against simulators to verify IaC compatibility.
