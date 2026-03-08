@@ -54,15 +54,32 @@ func serverStart(args []string) {
 		os.Exit(1)
 	}
 
-	data, err := os.ReadFile(filepath.Join(contextDir(name), "config.json"))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
 	var cfg contextConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+
+	// Try config.yaml first
+	if configFileExists() {
+		ucfg, err := loadConfigFile()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		if env, ok := ucfg.Environments[name]; ok {
+			cfg.Backend = env.Backend
+			cfg.Addr = env.Addr
+		} else {
+			fmt.Fprintf(os.Stderr, "error: context %q not found in config.yaml\n", name)
+			os.Exit(1)
+		}
+	} else {
+		data, err := os.ReadFile(filepath.Join(contextDir(name), "config.json"))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	runDir := serverRunDir(name)

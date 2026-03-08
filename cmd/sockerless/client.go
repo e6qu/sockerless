@@ -52,6 +52,18 @@ func activeAddr() string {
 	if name == "" {
 		return ""
 	}
+
+	// Try config.yaml first
+	if configFileExists() {
+		cfg, err := loadConfigFile()
+		if err == nil {
+			if env, ok := cfg.Environments[name]; ok && env.Addr != "" {
+				return env.Addr
+			}
+		}
+	}
+
+	// Fallback: old JSON context
 	data, err := os.ReadFile(filepath.Join(contextDir(name), "config.json"))
 	if err != nil {
 		return ""

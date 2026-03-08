@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	core "github.com/sockerless/backend-core"
 )
 
 // Config holds Lambda backend configuration.
@@ -36,6 +38,45 @@ func ConfigFromEnv() Config {
 		EndpointURL:      os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:     parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 	}
+}
+
+// ConfigFromEnvironment creates Config from a unified config environment.
+func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Config {
+	c := Config{
+		Region:     "us-east-1",
+		LogGroup:   "/sockerless/lambda",
+		MemorySize: 1024,
+		Timeout:    900,
+		PollInterval: 2 * time.Second,
+	}
+	if env.AWS != nil {
+		if env.AWS.Region != "" {
+			c.Region = env.AWS.Region
+		}
+		if l := env.AWS.Lambda; l != nil {
+			c.RoleARN = l.RoleARN
+			if l.LogGroup != "" {
+				c.LogGroup = l.LogGroup
+			}
+			if l.MemorySize > 0 {
+				c.MemorySize = l.MemorySize
+			}
+			if l.Timeout > 0 {
+				c.Timeout = l.Timeout
+			}
+			c.SubnetIDs = l.Subnets
+			c.SecurityGroupIDs = l.SecurityGroups
+		}
+	}
+	c.CallbackURL = env.Common.CallbackURL
+	c.EndpointURL = env.Common.EndpointURL
+	if env.Common.PollInterval != "" {
+		c.PollInterval = parseDuration(env.Common.PollInterval, c.PollInterval)
+	}
+	if sim != nil && sim.Port > 0 {
+		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
+	}
+	return c
 }
 
 // Validate checks required configuration.

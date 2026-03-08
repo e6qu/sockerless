@@ -2,11 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // adminConfig is the structure of admin.json.
@@ -71,8 +74,21 @@ func loadConfigFile(reg *Registry, path string) (*adminConfig, error) {
 	return &cfg, nil
 }
 
-// discoverFromContexts scans ~/.sockerless/contexts/ for component addresses.
+// discoverFromContexts scans config.yaml or ~/.sockerless/contexts/ for component addresses.
 func discoverFromContexts(reg *Registry) {
+	// Try config.yaml first
+	if discoverFromYAMLConfig(reg) {
+		// Also check for admin.json in the sockerless dir
+		adminPath := filepath.Join(sockerlessDir(), "admin.json")
+		if _, err := os.Stat(adminPath); err == nil {
+			if _, err := loadConfigFile(reg, adminPath); err != nil {
+				log.Printf("warning: failed to load %s: %v", adminPath, err)
+			}
+		}
+		return
+	}
+
+	// Fallback: old JSON contexts
 	contextsDir := filepath.Join(sockerlessDir(), "contexts")
 	entries, err := os.ReadDir(contextsDir)
 	if err != nil {
@@ -117,6 +133,12 @@ func discoverFromContexts(reg *Registry) {
 
 // listContexts returns all CLI contexts with their configs.
 func listContexts() []map[string]any {
+	// Try config.yaml first
+	if results := listContextsFromYAML(); results != nil {
+		return results
+	}
+
+	// Fallback: old JSON contexts
 	contextsDir := filepath.Join(sockerlessDir(), "contexts")
 	entries, err := os.ReadDir(contextsDir)
 	if err != nil {
@@ -163,4 +185,115 @@ func activeContextName() string {
 // decodeJSON decodes JSON from a reader into v.
 func decodeJSON(r io.Reader, v any) error {
 	return json.NewDecoder(r).Decode(v)
+}
+
+// --- Unified config.yaml support ---
+
+type yamlConfig struct {
+	Simulators   map[string]*yamlSimulator   `yaml:"simulators,omitempty"`
+	Environments map[string]*yamlEnvironment `yaml:"environments"`
+}
+
+type yamlSimulator struct {
+	Cloud    string `yaml:"cloud"`
+	Port     int    `yaml:"port,omitempty"`
+	GRPCPort int    `yaml:"grpc_port,omitempty"`
+	LogLevel string `yaml:"log_level,omitempty"`
+}
+
+type yamlEnvironment struct {
+	Backend   string     `yaml:"backend"`
+	Addr      string     `yaml:"addr,omitempty"`
+	LogLevel  string     `yaml:"log_level,omitempty"`
+	Simulator string     `yaml:"simulator,omitempty"`
+	Common    yamlCommon `yaml:"common,omitempty"`
+}
+
+type yamlCommon struct {
+	AgentImage   string `yaml:"agent_image,omitempty"`
+	AgentToken   string `yaml:"agent_token,omitempty"`
+	CallbackURL  string `yaml:"callback_url,omitempty"`
+	EndpointURL  string `yaml:"endpoint_url,omitempty"`
+	PollInterval string `yaml:"poll_interval,omitempty"`
+	AgentTimeout string `yaml:"agent_timeout,omitempty"`
+}
+
+func configFilePath() string {
+	if p := os.Getenv("SOCKERLESS_CONFIG"); p != "" {
+		return p
+	}
+	return filepath.Join(sockerlessDir(), "config.yaml")
+}
+
+func loadYAMLConfig() (*yamlConfig, error) {
+	data, err := os.ReadFile(configFilePath())
+	if err != nil {
+		return nil, err
+	}
+	var cfg yamlConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parse config.yaml: %w", err)
+	}
+	if cfg.Environments == nil {
+		cfg.Environments = make(map[string]*yamlEnvironment)
+	}
+	if cfg.Simulators == nil {
+		cfg.Simulators = make(map[string]*yamlSimulator)
+	}
+	return &cfg, nil
+}
+
+// discoverFromYAMLConfig reads config.yaml and registers environments as backend
+// components and simulators as simulator components.
+func discoverFromYAMLConfig(reg *Registry) bool {
+	cfg, err := loadYAMLConfig()
+	if err != nil {
+		return false
+	}
+
+	for name, sim := range cfg.Simulators {
+		if sim.Port > 0 {
+			reg.Add(Component{
+				Name: name,
+				Type: "simulator",
+				Addr: normalizeAddr(fmt.Sprintf(":%d", sim.Port)),
+			})
+		}
+	}
+
+	for name, env := range cfg.Environments {
+		if env.Addr != "" {
+			reg.Add(Component{
+				Name: name,
+				Type: "backend",
+				Addr: normalizeAddr(env.Addr),
+			})
+		}
+	}
+
+	return true
+}
+
+// listContextsFromYAML returns contexts from config.yaml.
+func listContextsFromYAML() []map[string]any {
+	cfg, err := loadYAMLConfig()
+	if err != nil {
+		return nil
+	}
+
+	activeCtx := activeContextName()
+	var contexts []map[string]any
+	for name, env := range cfg.Environments {
+		ctx := map[string]any{
+			"name":    name,
+			"active":  name == activeCtx,
+			"backend": env.Backend,
+			"addr":    env.Addr,
+		}
+		if env.Simulator != "" {
+			ctx["simulator"] = env.Simulator
+		}
+		contexts = append(contexts, ctx)
+	}
+	return contexts
 }

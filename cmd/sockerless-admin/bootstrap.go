@@ -115,3 +115,50 @@ func BackendArgs(port int, logLevel string) []string {
 	}
 	return args
 }
+
+// SimulatorEnvFromConfig returns environment variables for starting a simulator
+// from a yamlSimulator config.
+func SimulatorEnvFromConfig(sim *yamlSimulator) []string {
+	var env []string
+	if sim.Port > 0 {
+		env = append(env, fmt.Sprintf("SIM_LISTEN_ADDR=:%d", sim.Port))
+	}
+	if sim.LogLevel != "" {
+		env = append(env, "SIM_LOG_LEVEL="+sim.LogLevel)
+	}
+	if sim.GRPCPort > 0 {
+		env = append(env, fmt.Sprintf("SIM_GCP_GRPC_PORT=%d", sim.GRPCPort))
+	}
+	return env
+}
+
+// BackendEnvFromConfig returns environment variables for a backend from a
+// yamlEnvironment, using the simulator address when present.
+func BackendEnvFromConfig(env *yamlEnvironment, sim *yamlSimulator) []string {
+	var result []string
+
+	// Simulator endpoint
+	if sim != nil && sim.Port > 0 {
+		result = append(result, fmt.Sprintf("SOCKERLESS_ENDPOINT_URL=http://localhost:%d", sim.Port))
+	} else if env.Common.EndpointURL != "" {
+		result = append(result, "SOCKERLESS_ENDPOINT_URL="+env.Common.EndpointURL)
+	}
+
+	if env.Common.PollInterval != "" {
+		result = append(result, "SOCKERLESS_POLL_INTERVAL="+env.Common.PollInterval)
+	}
+	if env.Common.AgentImage != "" {
+		result = append(result, "SOCKERLESS_AGENT_IMAGE="+env.Common.AgentImage)
+	}
+	if env.Common.AgentToken != "" {
+		result = append(result, "SOCKERLESS_AGENT_TOKEN="+env.Common.AgentToken)
+	}
+	if env.Common.CallbackURL != "" {
+		result = append(result, "SOCKERLESS_CALLBACK_URL="+env.Common.CallbackURL)
+	}
+	if env.Common.AgentTimeout != "" {
+		result = append(result, "SOCKERLESS_AGENT_TIMEOUT="+env.Common.AgentTimeout)
+	}
+
+	return result
+}

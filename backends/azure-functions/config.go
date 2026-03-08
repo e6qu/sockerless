@@ -5,6 +5,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	core "github.com/sockerless/backend-core"
 )
 
 // Config holds Azure Functions backend configuration.
@@ -37,6 +39,40 @@ func ConfigFromEnv() Config {
 		EndpointURL:           os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:          parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 	}
+}
+
+// ConfigFromEnvironment creates Config from a unified config environment.
+func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Config {
+	c := Config{
+		Location:     "eastus",
+		Timeout:      600,
+		PollInterval: 2 * time.Second,
+	}
+	if env.Azure != nil {
+		c.SubscriptionID = env.Azure.SubscriptionID
+		if azf := env.Azure.AZF; azf != nil {
+			c.ResourceGroup = azf.ResourceGroup
+			if azf.Location != "" {
+				c.Location = azf.Location
+			}
+			c.StorageAccount = azf.StorageAccount
+			c.Registry = azf.Registry
+			c.AppServicePlan = azf.AppServicePlan
+			if azf.Timeout > 0 {
+				c.Timeout = azf.Timeout
+			}
+			c.LogAnalyticsWorkspace = azf.LogAnalyticsWorkspace
+		}
+	}
+	c.CallbackURL = env.Common.CallbackURL
+	c.EndpointURL = env.Common.EndpointURL
+	if env.Common.PollInterval != "" {
+		c.PollInterval = parseDuration(env.Common.PollInterval, c.PollInterval)
+	}
+	if sim != nil && sim.Port > 0 {
+		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
+	}
+	return c
 }
 
 // Validate checks required configuration.
