@@ -22,26 +22,47 @@ jobs:
       - name: Lint
         run: make lint
 
-  unit-tests:
+  test:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - suite: core
-            cmd: cd backends/core && go test -v -timeout 2m ./...
-          - suite: bleephub
-            cmd: cd bleephub && go test -tags noui -v -timeout 3m ./...
-          - suite: e2e
-            cmd: cd tests && go test -v -timeout 5m ./...
-          - suite: fast
-            cmd: |
-              cd agent && go test -v -race -timeout 2m ./...
-              cd ../cmd/sockerless-admin && go test -tags noui -v -timeout 2m ./...
-              cd ../../simulators/aws/shared && GOWORK=off go test -v -timeout 1m ./...
-              cd ../../../simulators/gcp/shared && GOWORK=off go test -v -timeout 1m ./...
-              cd ../../../simulators/azure/shared && GOWORK=off go test -v -timeout 1m ./...
-    name: test (${{ matrix.suite }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - name: Unit tests
+        run: |
+          set -e
+          run() { echo "=== $1 ===" && (cd "$1" && go test -tags noui -v -timeout 2m ./...); }
+          run_noflags() { echo "=== $1 ===" && (cd "$1" && go test -v -timeout 2m ./...); }
+          run_race() { echo "=== $1 ===" && (cd "$1" && go test -v -race -timeout 2m ./...); }
+          run_work() { echo "=== $1 ===" && (cd "$1" && GOWORK=off go test -v -timeout 1m ./...); }
+
+          # Core + API
+          run_noflags api
+          run backends/core
+          run_race agent
+
+          # Cloud backends
+          run backends/ecs
+          run backends/lambda
+          run backends/cloudrun
+          run backends/cloudrun-functions
+          run backends/aca
+          run backends/azure-functions
+
+          # Services
+          run bleephub
+          run cmd/sockerless-admin
+
+          # Simulator shared libraries
+          run_work simulators/aws/shared
+          run_work simulators/gcp/shared
+          run_work simulators/azure/shared
+
+  test-e2e:
+    runs-on: ubuntu-latest
+    name: test (e2e)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -49,23 +70,36 @@ jobs:
           go-version: '1.25'
           cache: true
       - name: Run tests
-        run: ${{ matrix.cmd }}
+        run: cd tests && go test -v -timeout 5m ./...
 
-  simulator-sdk-tests:
+  sim:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         cloud: [aws, gcp, azure]
-    name: sim-sdk (${{ matrix.cloud }})
+    name: sim (${{ matrix.cloud }})
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
           cache: true
+      - name: Install gcloud CLI
+        if: matrix.cloud == 'gcp'
+        run: |
+          curl -sSL https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz | tar -xz -C $HOME
+          echo "$HOME/google-cloud-sdk/bin" >> $GITHUB_PATH
+      - name: Install Azure CLI
+        if: matrix.cloud == 'azure'
+        run: curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
       - name: Run SDK tests
         run: cd simulators/${{ matrix.cloud }} && make sdk-test
+        timeout-minutes: 5
+        env:
+          GOWORK: "off"
+      - name: Run CLI tests
+        run: cd simulators/${{ matrix.cloud }} && make cli-test
         timeout-minutes: 5
         env:
           GOWORK: "off"
@@ -137,23 +171,22 @@ jobs:
           noui simulators/azure .
           noui cmd/sockerless-admin .
 
-  smoke-test-act:
+  smoke:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - backend: ecs
-            dockerfile: smoke-tests/act/Dockerfile.ecs
-          - backend: cloudrun
-            dockerfile: smoke-tests/act/Dockerfile.cloudrun
-          - backend: aca
-            dockerfile: smoke-tests/act/Dockerfile.aca
-    name: smoke-act (${{ matrix.backend }})
     steps:
       - uses: actions/checkout@v4
-      - name: Build and run smoke test
+      - name: Smoke test (ecs)
         run: |
-          docker build -t smoke-act-${{ matrix.backend }} -f ${{ matrix.dockerfile }} .
-          docker run --rm smoke-act-${{ matrix.backend }}
+          docker build -t smoke-act-ecs -f smoke-tests/act/Dockerfile.ecs .
+          docker run --rm smoke-act-ecs
+        timeout-minutes: 10
+      - name: Smoke test (cloudrun)
+        run: |
+          docker build -t smoke-act-cloudrun -f smoke-tests/act/Dockerfile.cloudrun .
+          docker run --rm smoke-act-cloudrun
+        timeout-minutes: 10
+      - name: Smoke test (aca)
+        run: |
+          docker build -t smoke-act-aca -f smoke-tests/act/Dockerfile.aca .
+          docker run --rm smoke-act-aca
         timeout-minutes: 10
