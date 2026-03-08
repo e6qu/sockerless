@@ -47,7 +47,7 @@ graph TB
 The system has five layers:
 
 - **Frontend** — Stateless HTTP server implementing Docker REST API v1.44. Translates Docker protocol to internal API calls.
-- **Backend** — Stateful server managing container lifecycle. Eight implementations share a common core.
+- **Backend** — Stateful server managing container lifecycle. Seven implementations share a common core.
 - **Agent** — Binary injected into cloud containers for exec/attach. Bridges commands between backend and the container's shell.
 - **bleephub** — GitHub Actions runner service API. Dispatches jobs to the official `actions/runner`, which executes them through the Docker frontend.
 

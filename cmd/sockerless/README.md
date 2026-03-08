@@ -18,7 +18,7 @@ go build -o sockerless .
 ### context — manage backend contexts
 
 ```sh
-sockerless context create myctx --backend memory
+sockerless context create myctx --backend ecs
 sockerless context create aws-dev --backend ecs --set AWS_REGION=us-east-1
 sockerless context list
 sockerless context show myctx
@@ -32,7 +32,7 @@ Flags for `context create`:
 
 | Flag | Description |
 |------|-------------|
-| `--backend` | Backend type (required): memory, ecs, lambda, cloudrun, gcf, aca, azf, docker |
+| `--backend` | Backend type (required): ecs, lambda, cloudrun, gcf, aca, azf, docker |
 | `--frontend-addr` | Frontend management API address |
 | `--backend-addr` | Backend API address |
 | `--set KEY=VALUE` | Set environment variable (repeatable) |

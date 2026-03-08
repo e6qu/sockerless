@@ -1,16 +1,8 @@
 # Unified Image Management Architecture
 
-## Problem (Resolved)
+## Overview
 
-Image management code was heavily duplicated across cloud backends: `registry.go` copied 3 times,
-`parseImageRef()` in 4 copies, OCI push scattered across backends. Each backend had its own
-ImagePull/Push/Tag/Remove with near-identical patterns.
-
-### Solution (Implemented)
-
-One **per-cloud image manager** shared by both backends in that cloud, built on top of core's OCI client.
-Three shared modules (`aws-common`, `gcp-common`, `azure-common`) each implement `core.AuthProvider`.
-~2000 lines of duplication eliminated.
+Image management is unified via `core.ImageManager` + `core.AuthProvider` interface. Three shared modules (`aws-common`, `gcp-common`, `azure-common`) each implement `AuthProvider`, shared by both backends in that cloud. ~2000 lines of prior duplication eliminated. For current backend structure, see [backends/README.md](README.md).
 
 ---
 

@@ -19,6 +19,8 @@ Core uses a driver set with three main driver interfaces plus a network driver:
 
 Agent drivers route operations to forward or reverse `sockerless-agent` connections. Operations return errors when no agent is connected — there are no synthetic fallbacks.
 
+See also: [ARCHITECTURE.md](../../ARCHITECTURE.md), [FEATURE_MATRIX.md](../../FEATURE_MATRIX.md)
+
 ## Key types
 
 ### BaseServer

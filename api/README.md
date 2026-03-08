@@ -16,6 +16,8 @@ All Sockerless components import this module for common types. It contains no lo
 | `LogDriver` | `drivers.go` | Log storage (write, read) |
 | `StatusCoder` | `errors.go` | Implemented by errors that carry an HTTP status code |
 
+See also: [backends/core/README.md](../backends/core/README.md), [FEATURE_MATRIX.md](../FEATURE_MATRIX.md)
+
 ## Error types
 
 All implement `error` and `StatusCoder`:

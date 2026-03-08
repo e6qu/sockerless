@@ -13,7 +13,7 @@ All backends (except `docker`) are built on top of `core`, a shared library that
 - Dockerfile parsing and image build support
 - Container health checking
 
-Cloud backends override specific `api.Backend` methods (create, start, stop, kill, remove, logs) via self-dispatch to map container operations to cloud resources, while inheriting everything else from core.
+Cloud backends override specific `api.Backend` methods (create, start, stop, kill, remove, logs) via self-dispatch to map container operations to cloud resources, while inheriting everything else from core. For the full system architecture, see [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 ## Backends
 

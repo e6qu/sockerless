@@ -38,7 +38,7 @@ Docker Client (CLI / SDK / CI Runner)
 └─────────────────────────────┘
 ```
 
-The **frontend** is a stateless Docker API translator. The **backend** manages cloud resources. The **agent** runs inside each workload as a sidecar and provides exec/attach over WebSocket.
+The **frontend** is a stateless Docker API translator. The **backend** manages cloud resources. The **agent** runs inside each workload as a sidecar and provides exec/attach over WebSocket. See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed diagrams and component descriptions.
 
 ## Backends
 

@@ -1,5 +1,7 @@
 # Docker API Compatibility Matrix
 
+> See also: [ARCHITECTURE.md](ARCHITECTURE.md), [COMPATIBILITY_MATRIX.md](COMPATIBILITY_MATRIX.md)
+
 This document maps Docker/Podman CLI commands to their REST API endpoints and the cloud-specific services each Sockerless backend uses to implement them.
 
 ## Backends

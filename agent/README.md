@@ -13,6 +13,8 @@ In both modes the agent supports:
 
 - Executing arbitrary commands (`exec`) with optional TTY allocation
 - Attaching to a long-running main process (`attach`) with output replay
+
+See [ARCHITECTURE.md](../ARCHITECTURE.md) for forward/reverse mode diagrams.
 - Streaming stdin/stdout/stderr over WebSocket with base64 encoding
 - Sending signals (SIGTERM, SIGKILL, SIGINT, etc.) and terminal resizes
 - Periodic health checks with configurable interval, timeout, and retries

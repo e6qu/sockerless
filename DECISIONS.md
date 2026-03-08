@@ -1,6 +1,6 @@
 # Sockerless — Technical Decisions
 
-Architectural and implementation decisions made across phases. Referenced from PLAN.md.
+Architectural and implementation decisions made across phases. Referenced from [PLAN.md](PLAN.md).
 
 ---
 
@@ -8,7 +8,7 @@ Architectural and implementation decisions made across phases. Referenced from P
 
 **Docker API as sole interface** — No Kubernetes, no Podman (except libpod pod extensions), no custom APIs. CI runners talk to Sockerless as if it were Docker. (Principle 4)
 
-**Driver interfaces** — 4 driver types: `ExecDriver`, `FilesystemDriver`, `StreamDriver`, `NetworkDriver`. Agent drivers handle connected containers; inline fallback for disconnected. `DriverSet` on `BaseServer` via `InitDrivers()`. (Phase 32, simplified in Phase 90)
+**Driver interfaces** — 4 driver types: `ExecDriver`, `FilesystemDriver`, `StreamDriver`, `NetworkDriver`. Agent drivers handle connected containers; inline fallback for disconnected. `DriverSet` on `BaseServer` via `InitDrivers()`. (Phase 32, simplified in Phase 90). See [FEATURE_MATRIX.md](FEATURE_MATRIX.md) for the per-backend driver table.
 
 **Backend model** — 7 backends sharing common `BaseServer` + `Store` from `backend-core`. Cloud backends use self-dispatch (`self api.Backend` field) for typed method overrides. 3 cloud simulators validated against SDKs, CLIs, and Terraform.
 

@@ -13,6 +13,8 @@ The test suite uses the official Docker SDK (`docker v27.5.1`) to send real Dock
 cd tests
 go test -v ./...
 
+# See STATUS.md and COMPATIBILITY_MATRIX.md for project-wide test results
+
 # From the repository root
 make test-e2e
 

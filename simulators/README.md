@@ -14,6 +14,8 @@ The goal is full behavioral fidelity: code that works against the simulators wor
 
 All simulators share a common framework (`shared/`) providing HTTP server setup, middleware (request ID, logging, auth passthrough), thread-safe state management, and provider-specific routing/error formatting.
 
+See [STATUS.md](../STATUS.md) for project-wide test results.
+
 ## Design philosophy
 
 Simulators are **real implementations**, not fakes. They don't approximate cloud behavior with synthetic timers or hardcoded responses — they reimplement the actual service semantics:

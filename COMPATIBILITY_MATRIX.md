@@ -14,6 +14,8 @@
 
 †Requires: agent binary in image, `SOCKERLESS_CALLBACK_URL` configured, backend reachable from FaaS network. Subject to function timeout limits.
 
+See [STATUS.md](STATUS.md) for overall test results.
+
 ## Simulator Integration Tests
 
 All cloud backends can be tested locally against simulators using `SOCKERLESS_ENDPOINT_URL`:

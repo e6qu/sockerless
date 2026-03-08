@@ -1,6 +1,6 @@
 # GitHub Actions Runner E2E Tests
 
-End-to-end tests for Sockerless using [act](https://github.com/nektos/act) as a local GitHub Actions runner. Jobs run through the Sockerless Docker frontend, which delegates container execution to the selected backend (memory, ECS, Lambda, Cloud Run, GCF, ACA, or Azure Functions).
+End-to-end tests for Sockerless using [act](https://github.com/nektos/act) as a local GitHub Actions runner. Jobs run through the Sockerless Docker frontend, which delegates container execution to the selected backend (ECS, Lambda, Cloud Run, GCF, ACA, Azure Functions, or Docker).
 
 ## Architecture
 
@@ -13,7 +13,7 @@ act (GitHub Actions runner)
 Sockerless Frontend (Docker API)
   │
   ▼
-Sockerless Backend (memory / ecs / lambda / cloudrun / gcf / aca / azf)
+Sockerless Backend (ecs / lambda / cloudrun / gcf / aca / azf / docker)
   │
   ▼
 Cloud Simulator (aws / gcp / azure)  ← simulator mode only
@@ -23,7 +23,6 @@ Cloud Simulator (aws / gcp / azure)  ← simulator mode only
 
 | Backend | Cloud | Simulator | Services | Artifacts |
 |---------|-------|-----------|:--------:|:---------:|
-| memory | — | — | — | — |
 | ecs | AWS | simulator-aws | Yes | Yes |
 | lambda | AWS | simulator-aws | SKIP | SKIP |
 | cloudrun | GCP | simulator-gcp | Yes | Yes |
@@ -38,7 +37,7 @@ FaaS backends (lambda, gcf, azf) skip tests that require service containers.
 Run all 12 workflows against the core backend:
 
 ```bash
-make e2e-github-memory
+make e2e-github-docker
 ```
 
 Run against a specific cloud backend:

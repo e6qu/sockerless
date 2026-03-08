@@ -94,3 +94,5 @@ Tested via the AWS simulator:
 make sim-test-aws    # simulator integration tests
 make docker-test     # Docker-based full test
 ```
+
+See also: [ARCHITECTURE.md](../../ARCHITECTURE.md), [FEATURE_MATRIX.md](../../FEATURE_MATRIX.md), [DECISIONS.md](../../DECISIONS.md)

@@ -30,7 +30,7 @@ Agent (inside container or reverse-connected)
 
 | Phase | What |
 |---|---|
-| 1-10 | Foundation: 3 simulators, 8 backends, agent, Docker REST API frontend |
+| 1-10 | Foundation: 3 simulators, 7 backends (8 originally; memory removed in Phase 90), agent, Docker REST API frontend |
 | 11-34 | E2E tests (371 workflows), driver interfaces, Docker build |
 | 35-52 | bleephub (GitHub API + runner), CLI, crash safety, pods, service containers |
 | 53-56 | Production Docker API: TLS, auth, logs, DNS, restart, events, filters |
@@ -78,6 +78,8 @@ Replaced all cloud common module stubs with real implementations on backend Serv
 All cloud network/service-discovery methods wired into `NetworkCreate`, `NetworkRemove`, `NetworkConnect`, `NetworkDisconnect`, `ContainerStart`, and `ContainerRemove` handlers. ~878 lines of logging boilerplate eliminated by `StreamCloudLogs`. ~12 dead stub files removed from common modules.
 
 ## Project Stats
+
+See [STATUS.md](STATUS.md) for current test counts.
 
 - **85 phases**, 756 tasks completed
 - **45 bug sprints**, 583 bugs fixed, 0 open

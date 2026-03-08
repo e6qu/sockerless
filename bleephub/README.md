@@ -12,6 +12,8 @@ The official runner does not use the public GitHub REST or GraphQL API. Instead,
 | Connection data | `/_apis/connectionData` | Service discovery via GUIDs |
 | Agent service | `/_apis/v1/Agent/`, `/_apis/v1/AgentPools` | Runner registration, agent pools, credentials |
 | Broker | `/_apis/v1/AgentSession/`, `/_apis/v1/Message/` | Session management, 30s message long-poll |
+
+See also: [ARCHITECTURE.md](../ARCHITECTURE.md), [docs/GITHUB_RUNNER.md](../docs/GITHUB_RUNNER.md)
 | Run service | `/_apis/v1/AgentRequest/`, `/_apis/v1/FinishJob/` | Job acquire/renew/complete |
 | Timeline + logs | `/_apis/v1/Timeline/`, `/_apis/v1/Logfiles/` | Step status tracking, log upload |
 | Job submission | `/api/v3/bleephub/submit` | Simplified JSON job input (not part of runner protocol) |
