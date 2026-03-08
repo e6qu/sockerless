@@ -165,6 +165,11 @@ func runCLI(t *testing.T, cmd *exec.Cmd) string {
 
 func parseJSON(t *testing.T, data string, target any) {
 	t.Helper()
+	// gcloud may prefix JSON with status text (e.g. "Created [URL].\n").
+	// Strip everything before the first JSON delimiter.
+	if i := strings.IndexAny(data, "[{"); i > 0 {
+		data = data[i:]
+	}
 	if err := json.Unmarshal([]byte(data), target); err != nil {
 		t.Fatalf("Failed to parse JSON: %v\nData: %s", err, data)
 	}
