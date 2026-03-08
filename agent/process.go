@@ -67,6 +67,7 @@ type MainProcess struct {
 	// Fan-out to attached sessions.
 	mu        sync.RWMutex
 	listeners map[string]chan OutputEvent
+	fanOutWg  sync.WaitGroup // tracks fanOut goroutines
 	exitCode  *int
 	done      chan struct{}
 	logger    zerolog.Logger
@@ -116,7 +117,9 @@ func NewMainProcess(logger zerolog.Logger, args []string, env []string) (*MainPr
 		return nil, err
 	}
 
-	// Fan-out stdout and stderr
+	// Fan-out stdout and stderr — tracked by WaitGroup so wait() can
+	// ensure all output is flushed before signaling done.
+	mp.fanOutWg.Add(2)
 	go mp.fanOut(stdout, "stdout", mp.stdoutBuf)
 	go mp.fanOut(stderr, "stderr", mp.stderrBuf)
 
@@ -127,6 +130,8 @@ func NewMainProcess(logger zerolog.Logger, args []string, env []string) (*MainPr
 }
 
 func (mp *MainProcess) fanOut(r io.Reader, stream string, buf *RingBuffer) {
+	defer mp.fanOutWg.Done()
+
 	var osStream io.Writer
 	if stream == "stdout" {
 		osStream = os.Stdout
@@ -161,6 +166,12 @@ func (mp *MainProcess) fanOut(r io.Reader, stream string, buf *RingBuffer) {
 
 func (mp *MainProcess) wait() {
 	err := mp.cmd.Wait()
+
+	// Wait for fanOut goroutines to drain remaining pipe data and write
+	// it to os.Stdout/os.Stderr before signaling done. Without this,
+	// the agent binary can exit before all output is flushed.
+	mp.fanOutWg.Wait()
+
 	code := 0
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
