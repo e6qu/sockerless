@@ -22,7 +22,7 @@ ROOT_PASSWORD="${GITLAB_ROOT_PASSWORD:-sockerless-test-pw}"
 PIPELINE_INPUT="${PIPELINE:-basic}"
 SOCKERLESS_HOST="${SOCKERLESS_HOST:-tcp://sockerless-backend:2375}"
 
-ALL_PIPELINES="basic multi-step env-vars exit-codes before-after multi-stage artifacts large-output parallel-jobs timeout services-wasm custom-image-wasm shell-features file-persistence env-inheritance complex-scripts variable-features job-artifacts large-script-output concurrent-lifecycle"
+ALL_PIPELINES="basic multi-step env-vars exit-codes before-after multi-stage artifacts large-output parallel-jobs timeout shell-features file-persistence env-inheritance complex-scripts variable-features job-artifacts large-script-output concurrent-lifecycle"
 
 # Resolve pipeline list
 if [ "$PIPELINE_INPUT" = "all" ]; then

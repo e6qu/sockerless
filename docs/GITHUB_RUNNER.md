@@ -35,7 +35,7 @@ FaaS backends (lambda, gcf, azf) skip tests that require service containers.
 
 ## Quick Start
 
-Run all 12 workflows against the memory backend:
+Run all 12 workflows against the core backend:
 
 ```bash
 make e2e-github-memory

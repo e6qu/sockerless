@@ -268,7 +268,7 @@ func TestSystemDfWithRunningContainer(t *testing.T) {
 		t.Fatalf("start failed: %v", err)
 	}
 
-	// Give WASM process time to start and create rootfs
+	// Give container time to start and create rootfs
 	time.Sleep(200 * time.Millisecond)
 
 	du, err := dockerClient.DiskUsage(ctx, types.DiskUsageOptions{})
@@ -279,8 +279,7 @@ func TestSystemDfWithRunningContainer(t *testing.T) {
 	// Find our container and check its size
 	for _, c := range du.Containers {
 		if c.ID == id {
-			// Running WASM container should have non-zero SizeRw
-			// (rootfs skeleton creates files)
+			// Running container should have non-zero SizeRw
 			if c.SizeRw > 0 {
 				t.Logf("container rootfs size: %d bytes", c.SizeRw)
 			}

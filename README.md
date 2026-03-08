@@ -70,7 +70,6 @@ backends/
   aca/                        Azure Container Apps Jobs
   azure-functions/            Azure Functions
 bleephub/                     GitHub Actions runner service API (official runner support)
-gitlabhub/                    GitLab CI runner coordinator (DAG + stage-based dispatch)
 cmd/sockerless/               CLI tool (context management, server control)
 cmd/sockerless-admin/         Admin dashboard server (aggregates all components)
 ui/                           React SPA monorepo (Bun, Vite, Tailwind, TanStack)

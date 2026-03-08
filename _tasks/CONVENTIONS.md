@@ -50,7 +50,7 @@ the developer should NOT need to read other documents to start working.>
 |--------|-----------|----------------|
 | `API` | Shared internal API types | `github.com/sockerless/api` |
 | `FE` | Docker REST API frontend | `github.com/sockerless/frontend` |
-| `MEM` | In-memory backend | `github.com/sockerless/backend-memory` |
+| `CORE` | Core backend library | `github.com/sockerless/backend-core` |
 | `DKR` | Docker daemon backend | `github.com/sockerless/backend-docker` |
 | `AG` | Container agent | `github.com/sockerless/agent` |
 | `ECS` | AWS ECS Fargate backend | `github.com/sockerless/backend-ecs` |
@@ -80,7 +80,7 @@ Every task must satisfy ALL of the following before it can be marked complete:
 ### Testing
 - [ ] All existing black-box REST tests continue to pass
 - [ ] New black-box REST tests written for new/changed behavior (in `tests/` module)
-- [ ] Tests run against memory backend by default
+- [ ] Tests run against core backend by default
 - [ ] Tests are deterministic (no flaky tests)
 
 ### Error Handling
@@ -148,7 +148,7 @@ Each test task must include:
 1. **Endpoints tested** with specific scenarios
 2. **Happy path and error path** coverage
 3. **Test independence** (each test cleans up after itself)
-4. **Backend compatibility** (tests must pass against memory backend; note any backend-specific tests)
+4. **Backend compatibility** (tests must pass against core backend; note any backend-specific tests)
 
 ---
 
@@ -188,7 +188,7 @@ Each test task must include:
 - **Black-box REST tests only** — all tests in the `tests/` module
 - Tests hit the HTTP endpoint (via Unix socket or TCP)
 - Test binary accepts a `--socket` or `--addr` flag to target any backend
-- Default: run against memory backend for speed
+- Default: run against core backend for speed
 - Use `testing.T` with subtests (`t.Run`)
 - Table-driven style for parameterized scenarios
 - Each test creates its own resources and cleans up (no shared state between tests)

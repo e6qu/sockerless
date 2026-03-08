@@ -261,7 +261,7 @@ func (s *BaseServer) ContainerStart(ref string) error {
 
 	if pod, inPod := s.Store.Pods.GetPodForContainer(id); inPod && len(pod.ContainerIDs) > 1 {
 		return &api.InvalidParameterError{
-			Message: "multi-container pods are not supported by the memory backend",
+			Message: "multi-container pods are not supported by this backend",
 		}
 	}
 
@@ -1045,7 +1045,7 @@ func (s *BaseServer) ExecInspect(id string) (*api.ExecInstance, error) {
 	return &exec, nil
 }
 
-// ImagePull pulls an image (synthetic for memory backend).
+// ImagePull pulls an image and stores it in the in-memory image store.
 func (s *BaseServer) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 	if ref == "" {
 		return nil, &api.InvalidParameterError{Message: "image reference is required"}

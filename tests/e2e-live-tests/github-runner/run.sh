@@ -90,7 +90,7 @@ SKIP=0
 RESULTS=""
 
 for wf in $WORKFLOWS; do
-    # Route to WASM-compatible variant for memory backend
+    # Route to backend-specific variant if available
     VARIANT=$(get_test_variant "$BACKEND" "$wf")
     WF_FILE="${WORKFLOW_DIR}/${VARIANT}.yml"
     LOG_FILE="${LOG_DIR}/github-${BACKEND}-${wf}-${TS}.log"

@@ -50,12 +50,12 @@ wait_for_url() {
     fail "Timeout waiting for $url"
 }
 
-# --- 1. Start Sockerless memory backend (quiet) ---
-log "Starting Sockerless memory backend on $BACKEND_ADDR"
+# --- 1. Start Sockerless backend (quiet) ---
+log "Starting Sockerless backend on $BACKEND_ADDR"
 sockerless-backend-memory --addr "$BACKEND_ADDR" --log-level warn &
 PIDS+=($!)
 wait_for_url "http://$BACKEND_ADDR/internal/v1/info"
-log "Memory backend ready"
+log "Backend ready"
 
 # --- 2. Start Docker frontend (quiet) ---
 log "Starting Docker frontend on $FRONTEND_ADDR"

@@ -170,7 +170,7 @@ func TestMarkStartedIdempotent(t *testing.T) {
 	}
 }
 
-func TestMemoryBackendRejectsMultiContainerPod(t *testing.T) {
+func TestBaseServerRejectsMultiContainerPod(t *testing.T) {
 	s := newPodTestServer()
 
 	// Create a pod with two containers

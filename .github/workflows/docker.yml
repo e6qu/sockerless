@@ -32,9 +32,6 @@ jobs:
           - image: sockerless-simulator-azure
             dockerfile: simulators/azure/Dockerfile
             context: simulators/azure
-          - image: sockerless-gitlabhub
-            dockerfile: gitlabhub/Dockerfile.release
-            context: .
     name: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@v4

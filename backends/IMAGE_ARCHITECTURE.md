@@ -1,35 +1,16 @@
 # Unified Image Management Architecture
 
-## Problem Statement
+## Problem (Resolved)
 
-Image management code is heavily duplicated across cloud backends:
+Image management code was heavily duplicated across cloud backends: `registry.go` copied 3 times,
+`parseImageRef()` in 4 copies, OCI push scattered across backends. Each backend had its own
+ImagePull/Push/Tag/Remove with near-identical patterns.
 
-### Current Duplication
+### Solution (Implemented)
 
-1. **`registry.go` copied 3 times** (ECS ~196, CloudRun ~185, ACA ~184 lines):
-   - `fetchImageConfig()` -- identical logic, only auth differs
-   - `parseImageRef()` -- identical in all 3 + GCF (4 copies total)
-   - `getDockerHubToken()` -- identical in all 3
-
-2. **Core's `registry.go` (443 lines) is superior but ignored**:
-   - Handles manifest lists (multi-arch images)
-   - Parses `Www-Authenticate` headers for token exchange
-   - Has in-memory caching
-   - Only used by Lambda and GCF via `core.FetchImageConfig()`
-
-3. **OCI push scattered**:
-   - Core has `oci_push.go` (239 lines) -- only GCP backends use it
-   - ACA has its own OCI push in `backend_impl_images.go` (~150 lines)
-   - ECS uses ECR SDK (PutImage) instead of OCI Distribution API
-
-4. **Image method implementations duplicated per-backend**:
-   - Each backend has its own ImagePull, ImagePush, ImageTag, ImageRemove
-   - FaaS backends (Lambda, GCF, AZF) have near-identical patterns
-   - Container backends (ECS, CloudRun, ACA) have near-identical patterns
-
-### What Should Exist
-
-One **per-cloud image manager** that both backends in that cloud share, built on top of core's OCI client.
+One **per-cloud image manager** shared by both backends in that cloud, built on top of core's OCI client.
+Three shared modules (`aws-common`, `gcp-common`, `azure-common`) each implement `core.AuthProvider`.
+~2000 lines of duplication eliminated.
 
 ---
 
@@ -222,42 +203,17 @@ This is handled by the FaaS backend keeping its own `ImageBuild` method that ret
 
 ---
 
-## Implementation Order
+## Implementation Status — ALL COMPLETE
 
-### Step 1: Core `image_manager.go` (BLOCKING -- all clouds depend on this)
-- Create `AuthProvider` interface and `ImageManager` struct
-- Add `FetchImageConfigWithAuth(ref, authHeader string)` -- passes auth header verbatim,
-  bypassing `getRegistryToken()` for cloud registries that provide their own token
-- Move image method logic from `backend_impl.go` / `backend_impl_ext.go` into `ImageManager`
-- `ImageManager.Pull()` uses `Auth.GetToken()` for cloud registries, falls back to core's
-  token exchange for Docker Hub
-- `ImageManager.Build()` delegates to `BuildFunc` (injected by caller)
-- `BaseServer.InitDrivers()` creates `ImageManager{Auth: nil, BuildFunc: s.imageBuild}`
-- `BaseServer` image methods delegate to `s.Images.Method()`
-- All existing core tests must pass
+All steps implemented in PR #100. Auth providers consolidated into 3 shared modules
+(`backends/aws-common/`, `backends/gcp-common/`, `backends/azure-common/`), each used by
+both backends in that cloud. All 6 cloud backends delegate image methods to `s.images.*`.
 
-### Step 2: Per-cloud (parallelizable after Step 1)
+## Design Constraints (preserved for reference)
 
-**AWS**: ECRAuthProvider in `ecs/image_auth.go` + `lambda/image_auth.go`.
-Wire both backends, delete `ecs/registry.go` and scattered methods.
-
-**GCP**: ARAuthProvider in `cloudrun/image_auth.go` + `cloudrun-functions/image_auth.go`.
-Wire both backends, delete `cloudrun/registry.go` and `cloudrun-functions/registry.go`.
-See `backends/cloudrun/IMAGE_PLAN.md` for the detailed GCP plan.
-
-**Azure**: ACRAuthProvider in `aca/image_auth.go` + `azure-functions/image_auth.go`.
-Wire both backends, delete `aca/registry.go` and `aca/backend_impl_images.go`.
-
-### Step 3: Cleanup
-Delete old plan files, update `IMPLEMENTATION_PLAN.md` files, verify coverage checker.
-
----
-
-## Constraints
-
-- **E2E tests**: `TestImageBuild` expects HTTP 200 -- `ImageManager.Build()` must use BaseServer's synthetic Dockerfile parser.
-- **No new Go modules**: AuthProviders live in existing backend packages, not new modules.
-- **core has no cloud SDK deps**: `AuthProvider` is an interface -- cloud SDKs only imported in backend packages.
+- **E2E tests**: `TestImageBuild` expects HTTP 200 — `ImageManager.Build()` delegates to BaseServer's synthetic Dockerfile parser.
+- **Shared cloud modules**: AuthProviders live in `*-common` modules, shared by both backends in each cloud.
+- **core has no cloud SDK deps**: `AuthProvider` is an interface — cloud SDKs only imported in `*-common` and backend packages.
 - **Non-fatal cloud ops**: All `OnPush`/`OnTag`/`OnRemove` failures are logged, never returned as errors.
 - **Backward compat**: `BaseServer.ImagePull()` etc. still work for the Docker backend and tests that create `BaseServer` directly.
-- **No simulator changes**: The architecture works against existing simulator APIs. `OnRemove` implementations handle missing DELETE support (405) gracefully. No changes to `simulators/` are required.
+- **No simulator changes**: `OnRemove` implementations handle missing DELETE support (405) gracefully.

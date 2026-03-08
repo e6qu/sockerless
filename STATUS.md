@@ -1,6 +1,6 @@
 # Sockerless — Current Status
 
-**Phase 90 complete. 756 tasks done across 85 phases. 583 bugs fixed (45 sprints). 0 open bugs.**
+**Phase 90 + unified image management complete. 756 tasks done across 85 phases. 583 bugs fixed (45 sprints). 0 open bugs.**
 
 ## Test Results
 
@@ -13,8 +13,6 @@
 | Admin Playwright E2E | 17 PASS |
 | SPAHandler tests | 5 PASS |
 | bleephub | 304 unit + 9 integration + 1 gh CLI |
-| gitlabhub | 136 unit + 17 integration |
-| Sandbox | 46 PASS |
 | Shared ProcessRunner | 15 PASS |
 
 ### E2E & Integration

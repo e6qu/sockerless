@@ -32,8 +32,6 @@ jobs:
             cmd: cd backends/core && go test -v -timeout 2m ./...
           - suite: bleephub
             cmd: cd bleephub && go test -tags noui -v -timeout 3m ./...
-          - suite: gitlabhub
-            cmd: cd gitlabhub && go test -tags noui -v -timeout 3m ./...
           - suite: e2e
             cmd: cd tests && go test -v -timeout 5m ./...
           - suite: fast
@@ -110,7 +108,6 @@ jobs:
           noui backends/aca ./cmd/sockerless-backend-aca
           noui backends/azure-functions ./cmd/sockerless-backend-azf
           noui backends/docker ./cmd
-          noui gitlabhub ./cmd
           noui simulators/aws .
           noui simulators/gcp .
           noui simulators/azure .
@@ -135,7 +132,6 @@ jobs:
           noui backends/aca ./cmd/sockerless-backend-aca
           noui backends/azure-functions ./cmd/sockerless-backend-azf
           noui backends/docker ./cmd
-          noui gitlabhub ./cmd
           noui simulators/aws .
           noui simulators/gcp .
           noui simulators/azure .

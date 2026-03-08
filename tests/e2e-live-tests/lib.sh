@@ -210,8 +210,8 @@ write_pid() {
 # --- Test variant routing ---
 
 # Returns the variant name for a test on a given backend.
-# Memory backend uses WASM-compatible variants for tests that require
-# network services or non-busybox binaries.
+# Some backends use alternative test variants for tests that require
+# specific capabilities.
 get_test_variant() {
     local backend="$1" test_name="$2"
     if [ "$backend" = "memory" ]; then

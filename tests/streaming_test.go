@@ -78,7 +78,7 @@ func TestContainerAttach(t *testing.T) {
 
 	output := stdout.String() + stderr.String()
 	if output == "" {
-		// With memory backend, attach may return data before start completes
+		// Attach may return data before start completes
 		// Read from the connection directly
 		buf := make([]byte, 4096)
 		n, _ := resp.Reader.Read(buf)
