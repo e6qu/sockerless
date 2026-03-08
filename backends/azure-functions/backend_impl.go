@@ -15,6 +15,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v4"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
+	azurecommon "github.com/sockerless/azure-common"
 )
 
 // Compile-time check that Server implements api.Backend.
@@ -207,7 +208,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	poller, err := s.azure.WebApps.BeginCreateOrUpdate(s.ctx(), s.config.ResourceGroup, funcAppName, site, nil)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("functionApp", funcAppName).Msg("failed to create Function App")
-		return nil, mapAzureError(err, "function app", funcAppName)
+		return nil, azurecommon.MapAzureError(err, "function app", funcAppName)
 	}
 
 	result, err := poller.PollUntilDone(s.ctx(), nil)
@@ -215,7 +216,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		// Best-effort: delete potentially-created Function App
 		_, _ = s.azure.WebApps.Delete(s.ctx(), s.config.ResourceGroup, funcAppName, nil)
 		s.Logger.Error().Err(err).Str("functionApp", funcAppName).Msg("Function App creation failed")
-		return nil, mapAzureError(err, "function app", funcAppName)
+		return nil, azurecommon.MapAzureError(err, "function app", funcAppName)
 	}
 
 	resourceID := ""
@@ -435,7 +436,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	s.AgentRegistry.Remove(id)
 
 	// Parse signal and transition container to exited state
-	exitCode := signalToExitCode(signal)
+	exitCode := core.SignalToExitCode(signal)
 
 	s.Store.Containers.Update(id, func(c *api.Container) {
 		c.State.Status = "exited"

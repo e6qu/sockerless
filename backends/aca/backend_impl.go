@@ -10,6 +10,7 @@ import (
 
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
+	azurecommon "github.com/sockerless/azure-common"
 )
 
 // Compile-time check that Server implements api.Backend.
@@ -39,7 +40,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 
 	// Merge image config if available
 	if img, ok := s.Store.ResolveImage(config.Image); ok {
-		config.Env = mergeEnvByKey(img.Config.Env, config.Env)
+		config.Env = core.MergeEnvByKey(img.Config.Env, config.Env)
 		if len(config.Cmd) == 0 && len(config.Entrypoint) == 0 {
 			config.Cmd = img.Config.Cmd
 		}
@@ -198,7 +199,7 @@ func (s *Server) ContainerStart(ref string) error {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to create ACA Job")
 		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
-		return mapAzureError(err, "job", id)
+		return azurecommon.MapAzureError(err, "job", id)
 	}
 
 	// Wait for job creation to complete
@@ -208,7 +209,7 @@ func (s *Server) ContainerStart(ref string) error {
 		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
-		return mapAzureError(err, "job", id)
+		return azurecommon.MapAzureError(err, "job", id)
 	}
 
 	s.Registry.Register(core.ResourceEntry{
@@ -228,7 +229,7 @@ func (s *Server) ContainerStart(ref string) error {
 		s.deleteJob(jobName)
 		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
-		return mapAzureError(err, "execution", id)
+		return azurecommon.MapAzureError(err, "execution", id)
 	}
 
 	// Wait for start to return execution info
@@ -238,7 +239,7 @@ func (s *Server) ContainerStart(ref string) error {
 		s.deleteJob(jobName)
 		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
-		return mapAzureError(err, "execution", id)
+		return azurecommon.MapAzureError(err, "execution", id)
 	}
 
 	executionName := ""
@@ -292,7 +293,7 @@ func (s *Server) ContainerStart(ref string) error {
 				s.AgentRegistry.Remove(id)
 				s.deleteJob(jobName)
 				s.Store.RevertToCreated(id)
-				return mapAzureError(err, "execution", id)
+				return azurecommon.MapAzureError(err, "execution", id)
 			}
 
 			if completedExitCode >= 0 {
@@ -393,7 +394,7 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 		for _, pc := range podContainers {
 			s.Store.RevertToCreated(pc.ID)
 		}
-		return mapAzureError(err, "job", mainID)
+		return azurecommon.MapAzureError(err, "job", mainID)
 	}
 
 	_, err = createPoller.PollUntilDone(s.ctx(), nil)
@@ -406,7 +407,7 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 			s.Store.RevertToCreated(pc.ID)
 		}
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
-		return mapAzureError(err, "job", mainID)
+		return azurecommon.MapAzureError(err, "job", mainID)
 	}
 
 	s.Registry.Register(core.ResourceEntry{
@@ -429,7 +430,7 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 		for _, pc := range podContainers {
 			s.Store.RevertToCreated(pc.ID)
 		}
-		return mapAzureError(err, "execution", mainID)
+		return azurecommon.MapAzureError(err, "execution", mainID)
 	}
 
 	startResp, err := startPoller.PollUntilDone(s.ctx(), nil)
@@ -442,7 +443,7 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 		for _, pc := range podContainers {
 			s.Store.RevertToCreated(pc.ID)
 		}
-		return mapAzureError(err, "execution", mainID)
+		return azurecommon.MapAzureError(err, "execution", mainID)
 	}
 
 	executionName := ""
@@ -490,7 +491,7 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 			for _, pc := range podContainers {
 				s.Store.RevertToCreated(pc.ID)
 			}
-			return mapAzureError(err, "execution", mainID)
+			return azurecommon.MapAzureError(err, "execution", mainID)
 		}
 
 		if completedExitCode >= 0 {
@@ -572,7 +573,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	s.AgentRegistry.Remove(id)
 	core.StopAutoAgent(id)
 
-	exitCode := signalToExitCode(signal)
+	exitCode := core.SignalToExitCode(signal)
 
 	// Stop the ACA Job execution
 	acaState, _ := s.ACA.Get(id)

@@ -13,6 +13,7 @@ import (
 	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
+	awscommon "github.com/sockerless/aws-common"
 )
 
 // Compile-time check that Server implements api.Backend.
@@ -42,7 +43,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 
 	// Merge image config if available
 	if img, ok := s.Store.ResolveImage(config.Image); ok {
-		config.Env = mergeEnvByKey(img.Config.Env, config.Env)
+		config.Env = core.MergeEnvByKey(img.Config.Env, config.Env)
 		if len(config.Cmd) == 0 && len(config.Entrypoint) == 0 {
 			config.Cmd = img.Config.Cmd
 		}
@@ -162,7 +163,7 @@ func (s *Server) ContainerStart(ref string) error {
 		})
 		if err != nil {
 			s.Logger.Error().Err(err).Msg("failed to register task definition")
-			return mapAWSError(err, "task-definition", id)
+			return awscommon.MapAWSError(err, "task-definition", id)
 		}
 		s.ECS.Update(id, func(state *ECSState) {
 			state.TaskDefARN = taskDefARN
@@ -213,7 +214,7 @@ func (s *Server) ContainerStart(ref string) error {
 		})
 		s.AgentRegistry.Remove(id)
 		s.Store.RevertToCreated(id)
-		return mapAWSError(err, "task", id)
+		return awscommon.MapAWSError(err, "task", id)
 	}
 
 	s.ECS.Update(id, func(state *ECSState) {
@@ -268,7 +269,7 @@ func (s *Server) ContainerStart(ref string) error {
 				s.Registry.MarkCleanedUp(taskARN)
 				s.AgentRegistry.Remove(id)
 				s.Store.RevertToCreated(id)
-				return mapAWSError(err, "task", id)
+				return awscommon.MapAWSError(err, "task", id)
 			}
 
 			// Wait for agent health
@@ -328,7 +329,7 @@ func (s *Server) startMultiContainerTaskTyped(triggerID string, podContainers []
 	taskDefARN, err := s.registerTaskDefinition(s.ctx(), inputs)
 	if err != nil {
 		s.Logger.Error().Err(err).Msg("failed to register multi-container task definition")
-		return mapAWSError(err, "task-definition", triggerID)
+		return awscommon.MapAWSError(err, "task-definition", triggerID)
 	}
 
 	// Use the main (first) container for the task
@@ -354,7 +355,7 @@ func (s *Server) startMultiContainerTaskTyped(triggerID string, podContainers []
 		for _, pc := range podContainers {
 			s.Store.RevertToCreated(pc.ID)
 		}
-		return mapAWSError(err, "task", mainID)
+		return awscommon.MapAWSError(err, "task", mainID)
 	}
 
 	// Store cloud state on ALL pod containers (so stop/remove works for any)
@@ -397,7 +398,7 @@ func (s *Server) startMultiContainerTaskTyped(triggerID string, podContainers []
 			for _, pc := range podContainers {
 				s.Store.RevertToCreated(pc.ID)
 			}
-			return mapAWSError(err, "task", mainID)
+			return awscommon.MapAWSError(err, "task", mainID)
 		}
 
 		agentURL := fmt.Sprintf("http://%s/health", agentAddr)
@@ -479,7 +480,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	s.AgentRegistry.Remove(id)
 	core.StopAutoAgent(id)
 
-	exitCode := signalToExitCode(signal)
+	exitCode := core.SignalToExitCode(signal)
 
 	// Stop the ECS task (best-effort)
 	ecsState, _ := s.ECS.Get(id)

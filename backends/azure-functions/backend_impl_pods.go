@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	core "github.com/sockerless/backend-core"
 	"github.com/sockerless/api"
 )
 
@@ -81,7 +82,7 @@ func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, er
 	if signal == "" {
 		signal = "SIGKILL"
 	}
-	exitCode := signalToExitCode(signal)
+	exitCode := core.SignalToExitCode(signal)
 
 	for _, cid := range pod.ContainerIDs {
 		c, ok := s.Store.Containers.Get(cid)

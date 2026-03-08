@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/rs/zerolog v1.34.0
+	github.com/sockerless/api v0.0.0
 	github.com/sockerless/backend-core v0.0.0
 	golang.org/x/oauth2 v0.34.0
 )
@@ -22,7 +23,6 @@ require (
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/sockerless/agent v0.0.0 // indirect
-	github.com/sockerless/api v0.0.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.65.0 // indirect
 	go.opentelemetry.io/otel v1.40.0 // indirect

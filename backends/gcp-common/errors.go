@@ -1,24 +1,25 @@
-package azf
+package gcpcommon
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/sockerless/api"
 )
 
-// mapAzureError converts common Azure errors to api errors.
-func mapAzureError(err error, resource, id string) error {
+// MapGCPError converts common GCP SDK errors to api error types.
+func MapGCPError(err error, resource, id string) error {
 	if err == nil {
 		return nil
 	}
 	msg := err.Error()
 
 	switch {
-	case containsAny(msg, "not found", "NotFound", "ResourceNotFound"):
+	case containsAny(msg, "not found", "NotFound", "404"):
 		return &api.NotFoundError{Resource: resource, ID: id}
-	case containsAny(msg, "already exists", "Conflict"):
+	case containsAny(msg, "already exists", "AlreadyExists", "409"):
 		return &api.ConflictError{Message: fmt.Sprintf("%s %s already exists", resource, id)}
-	case containsAny(msg, "InvalidParameter", "BadRequest"):
+	case containsAny(msg, "InvalidArgument", "invalid", "400"):
 		return &api.InvalidParameterError{Message: msg}
 	default:
 		return fmt.Errorf("%s %s: %w", resource, id, err)
@@ -27,12 +28,8 @@ func mapAzureError(err error, resource, id string) error {
 
 func containsAny(s string, substrs ...string) bool {
 	for _, sub := range substrs {
-		if len(s) >= len(sub) {
-			for i := 0; i <= len(s)-len(sub); i++ {
-				if s[i:i+len(sub)] == sub {
-					return true
-				}
-			}
+		if strings.Contains(s, sub) {
+			return true
 		}
 	}
 	return false
