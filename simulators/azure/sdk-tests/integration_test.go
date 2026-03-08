@@ -34,7 +34,8 @@ func TestIntegration_ACAJobLifecycle(t *testing.T) {
 
 	// 4. Verify Running state immediately
 	exec := acaGetExecution(t, rg, jobName, execName)
-	assert.Equal(t, "Running", exec["status"])
+	execProps := exec["properties"].(map[string]any)
+	assert.Equal(t, "Running", execProps["status"])
 
 	// 5. Query ContainerAppConsoleLogs_CL for start entry
 	kql := `ContainerAppConsoleLogs_CL | where ContainerGroupName_s == "` + jobName + `"`
@@ -55,8 +56,9 @@ func TestIntegration_ACAJobLifecycle(t *testing.T) {
 
 	// 7. Verify Stopped state
 	exec = acaGetExecution(t, rg, jobName, execName)
-	assert.Equal(t, "Stopped", exec["status"])
-	assert.NotEmpty(t, exec["endTime"])
+	execProps = exec["properties"].(map[string]any)
+	assert.Equal(t, "Stopped", execProps["status"])
+	assert.NotEmpty(t, execProps["endTime"])
 
 	// 8. Delete job
 	delReq, _ := http.NewRequestWithContext(ctx, "DELETE",

@@ -3,10 +3,14 @@ package main
 import (
 	"crypto/rand"
 	"fmt"
+	"io"
 	"net/http"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -125,6 +129,7 @@ type ECSTask struct {
 	LastStatus        string             `json:"lastStatus"`
 	DesiredStatus     string             `json:"desiredStatus"`
 	Containers        []ECSTaskContainer `json:"containers"`
+	CreatedAt         *float64           `json:"createdAt,omitempty"`
 	StartedAt         *int64             `json:"startedAt,omitempty"`
 	StoppedAt         *int64             `json:"stoppedAt,omitempty"`
 	StopCode          string             `json:"stopCode,omitempty"`
@@ -135,6 +140,7 @@ type ECSTask struct {
 	Cpu               string             `json:"cpu,omitempty"`
 	Memory            string             `json:"memory,omitempty"`
 	Group             string             `json:"group,omitempty"`
+	EnableExecuteCommand bool            `json:"enableExecuteCommand,omitempty"`
 }
 
 // State stores
@@ -174,6 +180,7 @@ func registerECS(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerServiceV20141113.ListTasks", handleECSListTasks)
 	r.Register("AmazonEC2ContainerServiceV20141113.DeleteCluster", handleECSDeleteCluster)
 	r.Register("AmazonEC2ContainerServiceV20141113.ListTagsForResource", handleECSListTagsForResource)
+	r.Register("AmazonEC2ContainerServiceV20141113.ExecuteCommand", handleECSExecuteCommand(srv))
 }
 
 func handleECSCreateCluster(w http.ResponseWriter, r *http.Request) {
@@ -386,13 +393,14 @@ func handleECSDescribeTaskDefinition(w http.ResponseWriter, r *http.Request) {
 
 func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Cluster        string   `json:"cluster"`
-		TaskDefinition string   `json:"taskDefinition"`
-		Count          int      `json:"count"`
-		LaunchType     string   `json:"launchType"`
-		Group          string   `json:"group"`
-		Tags           []ECSTag `json:"tags,omitempty"`
-		PropagateTags  string   `json:"propagateTags,omitempty"`
+		Cluster              string   `json:"cluster"`
+		TaskDefinition       string   `json:"taskDefinition"`
+		Count                int      `json:"count"`
+		LaunchType           string   `json:"launchType"`
+		Group                string   `json:"group"`
+		Tags                 []ECSTag `json:"tags,omitempty"`
+		PropagateTags        string   `json:"propagateTags,omitempty"`
+		EnableExecuteCommand bool     `json:"enableExecuteCommand,omitempty"`
 		NetworkConfiguration *struct {
 			AwsvpcConfiguration *struct {
 				Subnets        []string `json:"subnets"`
@@ -463,13 +471,14 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 
 		eniID := generateUUID()
 		fakeIP := fmt.Sprintf("10.0.%d.%d", (i+1)%256, (i+100)%256)
+		createdAt := float64(time.Now().Unix())
 
 		var containers []ECSTaskContainer
 		for _, cd := range td.ContainerDefinitions {
 			containers = append(containers, ECSTaskContainer{
 				ContainerArn: fmt.Sprintf("arn:aws:ecs:us-east-1:123456789012:container/%s", generateUUID()),
 				Name:         cd.Name,
-				LastStatus:   "PENDING",
+				LastStatus:   "PROVISIONING",
 				NetworkInterfaces: []ECSNetworkInterface{
 					{
 						AttachmentId:       eniID,
@@ -490,14 +499,16 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 			TaskArn:           taskArn,
 			TaskDefinitionArn: td.TaskDefinitionArn,
 			ClusterArn:        cluster.ClusterArn,
-			LastStatus:        "PENDING",
+			LastStatus:        "PROVISIONING",
 			DesiredStatus:     "RUNNING",
 			Containers:        containers,
+			CreatedAt:         &createdAt,
 			Tags:              taskTags,
 			LaunchType:        req.LaunchType,
 			Cpu:               td.Cpu,
 			Memory:            td.Memory,
 			Group:             req.Group,
+			EnableExecuteCommand: req.EnableExecuteCommand,
 			Attachments: []ECSAttachment{
 				{
 					Id:     eniID,
@@ -514,9 +525,19 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		ecsTasks.Put(taskID, task)
 		tasks = append(tasks, task)
 
-		// Simulate async transition to RUNNING, then execute process if command provided
+		// Simulate async transition: PROVISIONING → PENDING → RUNNING
 		go func(id string, td ECSTaskDefinition) {
-			time.Sleep(500 * time.Millisecond)
+			// PROVISIONING → PENDING
+			time.Sleep(100 * time.Millisecond)
+			ecsTasks.Update(id, func(t *ECSTask) {
+				t.LastStatus = "PENDING"
+				for j := range t.Containers {
+					t.Containers[j].LastStatus = "PENDING"
+				}
+			})
+
+			// PENDING → RUNNING
+			time.Sleep(400 * time.Millisecond)
 			now := time.Now().Unix()
 			ecsTasks.Update(id, func(t *ECSTask) {
 				t.LastStatus = "RUNNING"
@@ -852,6 +873,196 @@ func handleECSListTagsForResource(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"tags": tags,
 	})
+}
+
+// ecsExecSessions tracks active ECS exec sessions for WebSocket handlers.
+var ecsExecSessions sync.Map // map[sessionID]ecsExecSession
+
+type ecsExecSession struct {
+	taskID  string
+	command string
+}
+
+var wsUpgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+// handleECSExecuteCommand returns a handler that implements ECS ExecuteCommand.
+// It creates a session and registers a WebSocket handler for command execution.
+func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Cluster     string `json:"cluster"`
+			Task        string `json:"task"`
+			Command     string `json:"command"`
+			Interactive bool   `json:"interactive"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.Task == "" {
+			sim.AWSError(w, "InvalidParameterException", "task is required", http.StatusBadRequest)
+			return
+		}
+		if req.Command == "" {
+			sim.AWSError(w, "InvalidParameterException", "command is required", http.StatusBadRequest)
+			return
+		}
+
+		// Extract task ID from ARN
+		taskID := req.Task
+		if strings.HasPrefix(taskID, "arn:") {
+			parts := strings.Split(taskID, "/")
+			if len(parts) > 0 {
+				taskID = parts[len(parts)-1]
+			}
+		}
+
+		// Verify task exists and is RUNNING
+		task, ok := ecsTasks.Get(taskID)
+		if !ok {
+			sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
+				"Task not found: %s", req.Task)
+			return
+		}
+		if task.LastStatus != "RUNNING" {
+			sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
+				"Execute command is not supported on task in %s status", task.LastStatus)
+			return
+		}
+
+		sessionID := generateUUID()
+
+		// Store the session
+		ecsExecSessions.Store(sessionID, ecsExecSession{
+			taskID:  taskID,
+			command: req.Command,
+		})
+
+		// Determine host from the incoming request
+		host := r.Host
+		if host == "" {
+			host = "localhost:4566"
+		}
+		streamURL := fmt.Sprintf("ws://%s/ecs-exec/%s", host, sessionID)
+
+		// Register the WebSocket endpoint for this session (one-shot)
+		srv.HandleFunc(fmt.Sprintf("GET /ecs-exec/%s", sessionID), handleECSExecWebSocket(sessionID))
+
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"session": map[string]any{
+				"sessionId":  sessionID,
+				"streamUrl":  streamURL,
+				"tokenValue": "token-" + sessionID[:8],
+			},
+		})
+	}
+}
+
+// handleECSExecWebSocket returns a handler for an ECS exec WebSocket session.
+// It upgrades the connection and bridges stdin/stdout/stderr of the command.
+func handleECSExecWebSocket(sessionID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sessVal, ok := ecsExecSessions.LoadAndDelete(sessionID)
+		if !ok {
+			http.Error(w, "session not found or already used", http.StatusNotFound)
+			return
+		}
+		sess := sessVal.(ecsExecSession)
+
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		// Parse command — use shell if it's a single string
+		var cmd *exec.Cmd
+		if strings.Contains(sess.command, " ") {
+			cmd = exec.Command("sh", "-c", sess.command)
+		} else {
+			cmd = exec.Command(sess.command)
+		}
+
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			conn.WriteMessage(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseInternalServerErr, err.Error()))
+			return
+		}
+
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			conn.WriteMessage(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseInternalServerErr, err.Error()))
+			return
+		}
+
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			conn.WriteMessage(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseInternalServerErr, err.Error()))
+			return
+		}
+
+		if err := cmd.Start(); err != nil {
+			conn.WriteMessage(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseInternalServerErr, err.Error()))
+			return
+		}
+
+		// Bridge stdout → WebSocket
+		done := make(chan struct{}, 2)
+		writeMu := sync.Mutex{}
+
+		sendWS := func(data []byte) {
+			writeMu.Lock()
+			defer writeMu.Unlock()
+			conn.WriteMessage(websocket.BinaryMessage, data)
+		}
+
+		pipeToWS := func(reader io.Reader) {
+			defer func() { done <- struct{}{} }()
+			buf := make([]byte, 4096)
+			for {
+				n, err := reader.Read(buf)
+				if n > 0 {
+					sendWS(buf[:n])
+				}
+				if err != nil {
+					return
+				}
+			}
+		}
+
+		go pipeToWS(stdout)
+		go pipeToWS(stderr)
+
+		// Bridge WebSocket → stdin
+		go func() {
+			defer stdin.Close()
+			for {
+				_, msg, err := conn.ReadMessage()
+				if err != nil {
+					return
+				}
+				if _, err := stdin.Write(msg); err != nil {
+					return
+				}
+			}
+		}()
+
+		// Wait for stdout and stderr to drain
+		<-done
+		<-done
+
+		// Wait for process to finish
+		_ = cmd.Wait()
+
+		conn.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+	}
 }
 
 // extractTDKey extracts "family:revision" from a task definition ARN.

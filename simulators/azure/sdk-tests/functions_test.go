@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -222,4 +224,120 @@ func TestAzureFunctions_DefaultHostNameReachability(t *testing.T) {
 	defer invokeResp.Body.Close()
 
 	assert.Equal(t, http.StatusOK, invokeResp.StatusCode)
+}
+
+// --- SDK-level tests using armappservice ---
+
+func TestSDK_Functions_CreateAndGet(t *testing.T) {
+	rg := "sdk-func-create-rg"
+	ensureRG(t, rg)
+
+	cred := &fakeCredential{}
+	client, err := armappservice.NewWebAppsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+
+	poller, err := client.BeginCreateOrUpdate(ctx, rg, "sdk-func-app", armappservice.Site{
+		Location: to.Ptr("eastus"),
+		Kind:     to.Ptr("functionapp"),
+		Properties: &armappservice.SiteProperties{
+			ServerFarmID: to.Ptr("/subscriptions/" + subscriptionID + "/resourceGroups/" + rg + "/providers/Microsoft.Web/serverFarms/test-plan"),
+			HTTPSOnly:    to.Ptr(true),
+		},
+	}, nil)
+	require.NoError(t, err)
+
+	site, err := poller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "sdk-func-app", *site.Name)
+	assert.Equal(t, "eastus", *site.Location)
+
+	// GET the same site
+	getResp, err := client.Get(ctx, rg, "sdk-func-app", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "sdk-func-app", *getResp.Name)
+	assert.Equal(t, "Running", *getResp.Properties.State)
+}
+
+func TestSDK_Functions_ListByResourceGroup(t *testing.T) {
+	rg := "sdk-func-list-rg"
+	ensureRG(t, rg)
+
+	cred := &fakeCredential{}
+	client, err := armappservice.NewWebAppsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+
+	// Create two function apps
+	for _, name := range []string{"sdk-list-func-a", "sdk-list-func-b"} {
+		p, err := client.BeginCreateOrUpdate(ctx, rg, name, armappservice.Site{
+			Location: to.Ptr("eastus"),
+			Kind:     to.Ptr("functionapp"),
+			Properties: &armappservice.SiteProperties{
+				ServerFarmID: to.Ptr("/subscriptions/" + subscriptionID + "/resourceGroups/" + rg + "/providers/Microsoft.Web/serverFarms/plan"),
+			},
+		}, nil)
+		require.NoError(t, err)
+		_, err = p.PollUntilDone(ctx, nil)
+		require.NoError(t, err)
+	}
+
+	// List sites by resource group
+	pager := client.NewListByResourceGroupPager(rg, nil)
+	var sites []*armappservice.Site
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		sites = append(sites, page.Value...)
+	}
+
+	names := make(map[string]bool)
+	for _, s := range sites {
+		names[*s.Name] = true
+	}
+	assert.True(t, names["sdk-list-func-a"], "func A should be in list")
+	assert.True(t, names["sdk-list-func-b"], "func B should be in list")
+}
+
+func TestSDK_Functions_Delete(t *testing.T) {
+	rg := "sdk-func-del-rg"
+	ensureRG(t, rg)
+
+	cred := &fakeCredential{}
+	client, err := armappservice.NewWebAppsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+
+	// Create site
+	p, err := client.BeginCreateOrUpdate(ctx, rg, "sdk-del-func", armappservice.Site{
+		Location: to.Ptr("eastus"),
+		Kind:     to.Ptr("functionapp"),
+		Properties: &armappservice.SiteProperties{
+			ServerFarmID: to.Ptr("/subscriptions/" + subscriptionID + "/resourceGroups/" + rg + "/providers/Microsoft.Web/serverFarms/plan"),
+		},
+	}, nil)
+	require.NoError(t, err)
+	_, err = p.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+
+	// Delete site
+	_, err = client.Delete(ctx, rg, "sdk-del-func", nil)
+	require.NoError(t, err)
+
+	// GET should 404
+	_, err = client.Get(ctx, rg, "sdk-del-func", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ResourceNotFound")
+}
+
+// --- Error path tests ---
+
+func TestSDK_Functions_GetNonExistentSite(t *testing.T) {
+	rg := "sdk-func-err-rg"
+	ensureRG(t, rg)
+
+	cred := &fakeCredential{}
+	client, err := armappservice.NewWebAppsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+
+	_, err = client.Get(ctx, rg, "nonexistent-site", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ResourceNotFound")
 }

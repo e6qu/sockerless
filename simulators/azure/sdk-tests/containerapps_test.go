@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -221,8 +223,9 @@ func TestContainerApps_ExecutionRunningState(t *testing.T) {
 
 	// Immediately check — should be Running
 	exec := acaGetExecution(t, "status-rg", "running-job", execName)
-	assert.Equal(t, "Running", exec["status"])
-	assert.NotEmpty(t, exec["startTime"])
+	props := exec["properties"].(map[string]any)
+	assert.Equal(t, "Running", props["status"])
+	assert.NotEmpty(t, props["startTime"])
 }
 
 func TestContainerApps_ExecutionSucceededState(t *testing.T) {
@@ -233,8 +236,9 @@ func TestContainerApps_ExecutionSucceededState(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	exec := acaGetExecution(t, "status-rg", "succeed-job", execName)
-	assert.Equal(t, "Succeeded", exec["status"])
-	assert.NotEmpty(t, exec["endTime"])
+	props := exec["properties"].(map[string]any)
+	assert.Equal(t, "Succeeded", props["status"])
+	assert.NotEmpty(t, props["endTime"])
 }
 
 func TestContainerApps_ExecutionStoppedState(t *testing.T) {
@@ -253,8 +257,9 @@ func TestContainerApps_ExecutionStoppedState(t *testing.T) {
 	require.Equal(t, http.StatusOK, stopResp.StatusCode)
 
 	exec := acaGetExecution(t, "status-rg", "stop-job", execName)
-	assert.Equal(t, "Stopped", exec["status"])
-	assert.NotEmpty(t, exec["endTime"])
+	props := exec["properties"].(map[string]any)
+	assert.Equal(t, "Stopped", props["status"])
+	assert.NotEmpty(t, props["endTime"])
 }
 
 // acaCreateJobWithCommand creates a Container Apps Job with a command.
@@ -309,8 +314,9 @@ func TestContainerApps_ExecutionRunsCommand(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	exec := acaGetExecution(t, "exec-rg", "exec-cmd-job", execName)
-	assert.Equal(t, "Succeeded", exec["status"])
-	assert.NotEmpty(t, exec["endTime"])
+	props := exec["properties"].(map[string]any)
+	assert.Equal(t, "Succeeded", props["status"])
+	assert.NotEmpty(t, props["endTime"])
 }
 
 func TestContainerApps_ExecutionFailedStatus(t *testing.T) {
@@ -321,8 +327,9 @@ func TestContainerApps_ExecutionFailedStatus(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	exec := acaGetExecution(t, "exec-rg", "exec-fail-job", execName)
-	assert.Equal(t, "Failed", exec["status"])
-	assert.NotEmpty(t, exec["endTime"])
+	props := exec["properties"].(map[string]any)
+	assert.Equal(t, "Failed", props["status"])
+	assert.NotEmpty(t, props["endTime"])
 }
 
 func TestContainerApps_ExecutionLogsRealOutput(t *testing.T) {
@@ -372,4 +379,264 @@ func TestContainerApps_GetJob(t *testing.T) {
 	data, _ := io.ReadAll(resp.Body)
 	json.Unmarshal(data, &result)
 	assert.Equal(t, "test-job", result["name"])
+}
+
+// --- SDK-level tests using armappcontainers ---
+
+// ensureRG creates a resource group via raw HTTP (needed before SDK calls).
+func ensureRG(t *testing.T, rg string) {
+	t.Helper()
+	rgBody := `{"location":"eastus"}`
+	rgReq, _ := http.NewRequestWithContext(ctx, "PUT",
+		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"?api-version=2023-07-01",
+		strings.NewReader(rgBody))
+	rgReq.Header.Set("Content-Type", "application/json")
+	rgReq.Header.Set("Authorization", "Bearer fake-token")
+	rgResp, err := http.DefaultClient.Do(rgReq)
+	require.NoError(t, err)
+	rgResp.Body.Close()
+}
+
+func TestSDK_ContainerApps_CreateAndGetJob(t *testing.T) {
+	rg := "sdk-aca-create-rg"
+	ensureRG(t, rg)
+
+	cred := &fakeCredential{}
+	client, err := armappcontainers.NewJobsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+
+	poller, err := client.BeginCreateOrUpdate(ctx, rg, "sdk-test-job", armappcontainers.Job{
+		Location: to.Ptr("eastus"),
+		Properties: &armappcontainers.JobProperties{
+			Configuration: &armappcontainers.JobConfiguration{
+				TriggerType:    to.Ptr(armappcontainers.TriggerTypeManual),
+				ReplicaTimeout: to.Ptr[int32](5),
+			},
+			Template: &armappcontainers.JobTemplate{
+				Containers: []*armappcontainers.Container{
+					{
+						Name:  to.Ptr("worker"),
+						Image: to.Ptr("mcr.microsoft.com/test:latest"),
+					},
+				},
+			},
+		},
+	}, nil)
+	require.NoError(t, err)
+
+	job, err := poller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "sdk-test-job", *job.Name)
+	assert.Equal(t, "Succeeded", string(*job.Properties.ProvisioningState))
+	assert.Equal(t, "eastus", *job.Location)
+
+	// GET the same job
+	getResp, err := client.Get(ctx, rg, "sdk-test-job", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "sdk-test-job", *getResp.Name)
+}
+
+func TestSDK_ContainerApps_StartAndListExecutions(t *testing.T) {
+	rg := "sdk-aca-exec-rg"
+	ensureRG(t, rg)
+
+	cred := &fakeCredential{}
+	jobsClient, err := armappcontainers.NewJobsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+
+	// Create job with short timeout
+	poller, err := jobsClient.BeginCreateOrUpdate(ctx, rg, "sdk-exec-job", armappcontainers.Job{
+		Location: to.Ptr("eastus"),
+		Properties: &armappcontainers.JobProperties{
+			Configuration: &armappcontainers.JobConfiguration{
+				TriggerType:    to.Ptr(armappcontainers.TriggerTypeManual),
+				ReplicaTimeout: to.Ptr[int32](2),
+			},
+			Template: &armappcontainers.JobTemplate{
+				Containers: []*armappcontainers.Container{
+					{
+						Name:    to.Ptr("worker"),
+						Image:   to.Ptr("mcr.microsoft.com/test:latest"),
+						Command: []*string{to.Ptr("echo"), to.Ptr("sdk-hello")},
+					},
+				},
+			},
+		},
+	}, nil)
+	require.NoError(t, err)
+	_, err = poller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+
+	// Start execution
+	startPoller, err := jobsClient.BeginStart(ctx, rg, "sdk-exec-job", nil)
+	require.NoError(t, err)
+
+	execResp, err := startPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, execResp.Name)
+	execName := *execResp.Name
+	assert.NotEmpty(t, execName)
+
+	// Wait for execution to finish
+	time.Sleep(3 * time.Second)
+
+	// List executions
+	execClient, err := armappcontainers.NewJobsExecutionsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+
+	pager := execClient.NewListPager(rg, "sdk-exec-job", nil)
+	var executions []*armappcontainers.JobExecution
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		executions = append(executions, page.Value...)
+	}
+
+	require.GreaterOrEqual(t, len(executions), 1)
+	found := false
+	for _, e := range executions {
+		if *e.Name == execName {
+			found = true
+			require.NotNil(t, e.Properties)
+			assert.Equal(t, "Succeeded", string(*e.Properties.Status))
+		}
+	}
+	assert.True(t, found, "expected to find execution %s in list", execName)
+}
+
+func TestSDK_ContainerApps_ListByResourceGroup(t *testing.T) {
+	rg := "sdk-aca-list-rg"
+	ensureRG(t, rg)
+
+	cred := &fakeCredential{}
+	client, err := armappcontainers.NewJobsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+
+	// Create two jobs
+	for _, name := range []string{"sdk-list-job-a", "sdk-list-job-b"} {
+		p, err := client.BeginCreateOrUpdate(ctx, rg, name, armappcontainers.Job{
+			Location: to.Ptr("eastus"),
+			Properties: &armappcontainers.JobProperties{
+				Configuration: &armappcontainers.JobConfiguration{
+					TriggerType:    to.Ptr(armappcontainers.TriggerTypeManual),
+					ReplicaTimeout: to.Ptr[int32](1),
+				},
+				Template: &armappcontainers.JobTemplate{
+					Containers: []*armappcontainers.Container{
+						{Name: to.Ptr("w"), Image: to.Ptr("test:latest")},
+					},
+				},
+			},
+		}, nil)
+		require.NoError(t, err)
+		_, err = p.PollUntilDone(ctx, nil)
+		require.NoError(t, err)
+	}
+
+	// List jobs
+	pager := client.NewListByResourceGroupPager(rg, nil)
+	var jobs []*armappcontainers.Job
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		jobs = append(jobs, page.Value...)
+	}
+
+	names := make(map[string]bool)
+	for _, j := range jobs {
+		names[*j.Name] = true
+	}
+	assert.True(t, names["sdk-list-job-a"], "job A should be in list")
+	assert.True(t, names["sdk-list-job-b"], "job B should be in list")
+}
+
+func TestSDK_ContainerApps_DeleteJob(t *testing.T) {
+	rg := "sdk-aca-del-rg"
+	ensureRG(t, rg)
+
+	cred := &fakeCredential{}
+	client, err := armappcontainers.NewJobsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+
+	// Create job
+	p, err := client.BeginCreateOrUpdate(ctx, rg, "sdk-del-job", armappcontainers.Job{
+		Location: to.Ptr("eastus"),
+		Properties: &armappcontainers.JobProperties{
+			Configuration: &armappcontainers.JobConfiguration{
+				TriggerType:    to.Ptr(armappcontainers.TriggerTypeManual),
+				ReplicaTimeout: to.Ptr[int32](1),
+			},
+			Template: &armappcontainers.JobTemplate{
+				Containers: []*armappcontainers.Container{
+					{Name: to.Ptr("w"), Image: to.Ptr("test:latest")},
+				},
+			},
+		},
+	}, nil)
+	require.NoError(t, err)
+	_, err = p.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+
+	// Delete job
+	delPoller, err := client.BeginDelete(ctx, rg, "sdk-del-job", nil)
+	require.NoError(t, err)
+	_, err = delPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+
+	// GET should 404
+	_, err = client.Get(ctx, rg, "sdk-del-job", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ResourceNotFound")
+}
+
+// --- Error path tests ---
+
+func TestSDK_ContainerApps_GetNonExistentJob(t *testing.T) {
+	rg := "sdk-aca-err-rg"
+	ensureRG(t, rg)
+
+	cred := &fakeCredential{}
+	client, err := armappcontainers.NewJobsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+
+	_, err = client.Get(ctx, rg, "does-not-exist", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ResourceNotFound")
+}
+
+func TestSDK_ContainerApps_StartNonExistentJob(t *testing.T) {
+	rg := "sdk-aca-err-rg"
+	ensureRG(t, rg)
+
+	cred := &fakeCredential{}
+	client, err := armappcontainers.NewJobsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+
+	_, err = client.BeginStart(ctx, rg, "does-not-exist", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ResourceNotFound")
+}
+
+func TestContainerApps_StopNonExistentExecution(t *testing.T) {
+	rg := "sdk-aca-err-rg"
+	ensureRG(t, rg)
+
+	// Create a job first so the stop fails on the execution, not the job
+	acaCreateJob(t, rg, "stop-err-job")
+
+	req, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.App/jobs/stop-err-job/executions/nonexistent/stop?api-version=2024-03-01",
+		strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer fake-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+
+	var errResp map[string]any
+	data, _ := io.ReadAll(resp.Body)
+	require.NoError(t, json.Unmarshal(data, &errResp))
+	errObj := errResp["error"].(map[string]any)
+	assert.Equal(t, "ResourceNotFound", errObj["code"])
 }

@@ -159,6 +159,21 @@ func registerAzureFunctions(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, site)
 	})
 
+	// GET - List function apps by resource group
+	srv.HandleFunc("GET "+armBase+"/sites", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		prefix := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Web/sites/", sub, rg)
+
+		filtered := sites.Filter(func(s Site) bool {
+			return strings.HasPrefix(s.ID, prefix)
+		})
+
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"value": filtered,
+		})
+	})
+
 	// DELETE - Delete function app
 	srv.HandleFunc("DELETE "+armBase+"/sites/{siteName}", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")
