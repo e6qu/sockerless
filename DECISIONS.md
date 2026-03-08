@@ -66,7 +66,7 @@ Architectural and implementation decisions made across phases. Referenced from [
 
 ## bleephub (GitHub API Simulator)
 
-**Azure DevOps internal API** — Official `actions/runner` uses an Azure DevOps-derived protocol. 5 service groups: auth/tokens, agent registration, broker (sessions + long-poll), run service, timeline + logs. (Phase 35)
+**bleephub** — Minimal open-source implementation of GitHub's server-side runner infrastructure (since GitHub is not open-source). 5 service groups: auth/tokens, agent registration, broker (sessions + long-poll), run service, timeline + logs. (Phase 35)
 
 **GraphQL engine** — `graphql-go/graphql` v0.8.1. Globally unique type names (prefixed per connection type). Enum types for `gh` CLI compatibility. (Phases 36-41)
 

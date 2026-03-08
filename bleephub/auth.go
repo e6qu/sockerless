@@ -63,7 +63,7 @@ func (s *Server) handleRunnerRegistration(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// serviceDefinition matches the Azure DevOps ServiceDefinition format
+// serviceDefinition matches the internal ServiceDefinition format
 // that the runner SDK expects in ConnectionData.
 type serviceDefinition struct {
 	ServiceType       string        `json:"serviceType"`

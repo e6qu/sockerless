@@ -949,7 +949,7 @@ sockerless/
 │   ├── gcp/                           # Module: GCP API simulator (Cloud Run, GCF, Artifact Registry, Logging)
 │   └── azure/                         # Module: Azure API simulator (ACA, AZF, ACR, Monitor)
 │
-├── bleephub/                          # Module: GitHub Actions server (Azure DevOps-derived API)
+├── bleephub/                          # Module: GitHub Actions server-side implementation
 │   └── go.mod                         #   Implements the internal API that actions/runner expects
 │
 ├── tests/                             # Module: black-box API tests
