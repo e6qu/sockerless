@@ -44,7 +44,7 @@ graph TB
     AG -.->|"WebSocket"| BE
 ```
 
-The system has five layers:
+The system has four main components:
 
 - **Frontend** — Stateless HTTP server implementing Docker REST API v1.44. Translates Docker protocol to internal API calls.
 - **Backend** — Stateful server managing container lifecycle. Seven implementations share a common core.
@@ -127,7 +127,7 @@ graph TB
 
 ## Container Lifecycle
 
-A container's lifecycle maps to cloud operations differently per backend, but the Docker API surface is identical.
+Every backend presents the same Docker API states — Created, Running, Exited — but the underlying cloud operations differ. The generic state machine is:
 
 ```mermaid
 stateDiagram-v2
@@ -137,33 +137,182 @@ stateDiagram-v2
     Running --> Exited: docker stop / kill
     Running --> Exited: process exits
     Exited --> [*]: docker rm
+```
 
-    state "Cloud Mapping" as cloud {
-        Created: ECS → RegisterTaskDef\nLambda → CreateFunction\nCloudRun → CreateJob
-        Running: ECS → RunTask\nLambda → Invoke\nCloudRun → RunJob
-        Exited: ECS → StopTask\nLambda → function returns\nCloudRun → execution completes
+### Per-Backend Lifecycle
+
+#### Docker (passthrough)
+
+All operations proxy to the local Docker daemon via the Docker SDK.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Created: ContainerCreate()
+    Created --> Running: ContainerStart()
+    Running --> Running: ContainerExecCreate()\n+ ContainerExecAttach()
+    Running --> Exited: ContainerStop()\n/ ContainerKill()
+    Exited --> [*]: ContainerRemove()
+```
+
+#### ECS (AWS Fargate)
+
+Task definition registration is **deferred** from Create to Start for pod association. Cloud-native exec via ECS ExecuteCommand (SSM Session Manager) when no agent is connected.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Created: Local state only\n(task def deferred)
+    Created --> Running: RegisterTaskDefinition()\n→ RunTask()\n→ wait for agent
+    Running --> Running: Agent exec or\nECS ExecuteCommand (SSM)
+    Running --> Exited: StopTask()
+    Exited --> [*]: DeregisterTaskDefinition()
+
+    state "Networking" as net {
+        CreateSecurityGroup: NetworkCreate → VPC Security Group
+        CloudMap: Service discovery → Cloud Map\nRegister/Deregister Instance
     }
 ```
 
-### Container Create
+| Operation | Cloud API Calls |
+|-----------|----------------|
+| Create | Local store (deferred) |
+| Start | `ECS.RegisterTaskDefinition`, `ECS.RunTask`, `CloudMap.RegisterInstance` |
+| Exec | Agent WebSocket or `ECS.ExecuteCommand` (SSM) |
+| Stop/Kill | `ECS.StopTask` |
+| Remove | `ECS.DeregisterTaskDefinition`, `CloudMap.DeregisterInstance` |
+| Logs | `CloudWatch.GetLogEvents` |
+| Network | VPC Security Groups (create/delete/self-referencing ingress) |
+| Service Discovery | AWS Cloud Map (private DNS namespace, service registration) |
 
-Backend creates the container's cloud resource definition and stores metadata locally:
+#### Lambda (AWS FaaS)
 
-- **ECS**: Registers a task definition with the agent binary in the entrypoint
-- **Lambda**: Creates a Lambda function with the container image
-- **CloudRun**: Prepares a Job spec (protobuf)
-- **ACA**: Prepares a Container Apps Job spec
+Functions are created eagerly at Create time. Invoke is asynchronous — the agent dials back via callback URL (reverse mode only).
 
-### Container Start
+```mermaid
+stateDiagram-v2
+    [*] --> Created: Lambda.CreateFunction()\n(PackageType=Image)
+    Created --> Running: Lambda.Invoke()\n→ agent callback
+    Running --> Running: Reverse agent exec
+    Running --> Exited: Agent disconnects\n/ function returns
+    Exited --> [*]: Lambda.DeleteFunction()
+```
 
-Backend launches the cloud resource and establishes an agent connection:
+| Operation | Cloud API Calls |
+|-----------|----------------|
+| Create | `Lambda.CreateFunction` (image-based) |
+| Start | `Lambda.Invoke` (async), agent dials back via `SOCKERLESS_CALLBACK_URL` |
+| Exec | Reverse agent WebSocket only |
+| Stop/Kill | State transition (agent disconnect) |
+| Remove | `Lambda.DeleteFunction` |
+| Logs | `CloudWatch.GetLogEvents` (`/aws/lambda/{functionName}`) |
 
-- **Container backends** (ECS/CloudRun/ACA): Call RunTask/RunJob/StartExecution, then wait for agent
-- **FaaS backends** (Lambda/GCF/AZF): Call Invoke, agent dials back via callback URL
+#### Cloud Run Jobs (GCP)
 
-### Container Exec
+Job creation is **deferred** from Create to Start. Cloud DNS handles service discovery.
 
-Exec is how commands run inside a started container. The routing depends on the agent connection mode:
+```mermaid
+stateDiagram-v2
+    [*] --> Created: Local state only\n(job deferred)
+    Created --> Running: Jobs.CreateJob()\n→ Jobs.RunJob()\n→ wait for agent
+    Running --> Running: Agent exec
+    Running --> Exited: Jobs.CancelExecution()
+    Exited --> [*]: Jobs.DeleteJob()
+
+    state "Networking" as net {
+        CloudDNS: Service discovery → Cloud DNS\nA records per container
+    }
+```
+
+| Operation | Cloud API Calls |
+|-----------|----------------|
+| Create | Local store (deferred) |
+| Start | `Jobs.CreateJob`, `Jobs.RunJob`, `CloudDNS.CreateResourceRecord` |
+| Exec | Agent WebSocket |
+| Stop/Kill | `Jobs.CancelExecution` |
+| Remove | `Jobs.DeleteJob`, `CloudDNS.DeleteResourceRecord` |
+| Logs | `Cloud Logging` (resource.type=cloud_run_job) |
+| Network | Cloud DNS managed zones (create/delete/record cleanup) |
+| Service Discovery | Cloud DNS A records (register/deregister/resolve by FQDN) |
+
+#### Cloud Run Functions (GCP FaaS)
+
+Functions are created eagerly. Invoked via HTTP POST. Reverse agent only.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Created: Functions.CreateFunction()
+    Created --> Running: HTTP POST to function URL\n→ agent callback
+    Running --> Running: Reverse agent exec
+    Running --> Exited: Agent disconnects\n/ function returns
+    Exited --> [*]: Functions.DeleteFunction()
+```
+
+| Operation | Cloud API Calls |
+|-----------|----------------|
+| Create | `Functions.CreateFunction` (2nd gen, Docker runtime) |
+| Start | HTTP POST to `ServiceConfig.Uri`, agent dials back |
+| Exec | Reverse agent WebSocket only |
+| Stop/Kill | State transition (agent disconnect) |
+| Remove | `Functions.DeleteFunction` |
+| Logs | `Cloud Logging` (resource.type=cloud_run_revision) |
+
+#### ACA Jobs (Azure Container Apps)
+
+Job creation is **deferred** from Create to Start. Cloud-native exec via the Container Apps exec WebSocket API when no agent is connected.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Created: Local state only\n(job deferred)
+    Created --> Running: Jobs.BeginCreateOrUpdate()\n→ Jobs.BeginStart()\n→ wait for agent
+    Running --> Running: Agent exec or\nACA exec API (WebSocket)
+    Running --> Exited: Jobs.BeginStop()
+    Exited --> [*]: Jobs.Delete()
+
+    state "Networking" as net {
+        NSG: NetworkCreate → NSG rules
+        DNS: Service discovery → in-process DNS\n(hostname→IP per network)
+    }
+```
+
+| Operation | Cloud API Calls |
+|-----------|----------------|
+| Create | Local store (deferred) |
+| Start | `Jobs.BeginCreateOrUpdate`, `Jobs.BeginStart` |
+| Exec | Agent WebSocket or ACA exec API (WebSocket) |
+| Stop/Kill | `Jobs.BeginStop` |
+| Remove | `Jobs.Delete` |
+| Logs | Azure Monitor / Log Analytics (AppTraces) |
+| Network | NSG name/rule tracking |
+| Service Discovery | In-process DNS registry (hostname→IP per network) |
+
+#### Azure Functions (FaaS)
+
+Function Apps are created eagerly. Invoked via HTTP POST. Reverse agent only.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Created: WebApps.BeginCreateOrUpdate()\n(LinuxFxVersion=DOCKER|image)
+    Created --> Running: HTTP POST to function URL\n→ agent callback
+    Running --> Running: Reverse agent exec
+    Running --> Exited: Agent disconnects\n/ function returns
+    Exited --> [*]: WebApps.Delete()
+```
+
+| Operation | Cloud API Calls |
+|-----------|----------------|
+| Create | `WebApps.BeginCreateOrUpdate` (Function App site) |
+| Start | HTTP POST to `DefaultHostName`, agent dials back |
+| Exec | Reverse agent WebSocket only |
+| Stop/Kill | State transition (agent disconnect) |
+| Remove | `WebApps.Delete` |
+| Logs | Azure Monitor / Log Analytics (AppTraces) |
+
+### Key Patterns
+
+- **Deferred creation**: Container backends (ECS, CloudRun, ACA) defer cloud resource creation from `docker create` to `docker start` for pod scheduling. FaaS backends (Lambda, GCF, AZF) create eagerly.
+- **Cloud-native exec**: ECS uses `ExecuteCommand` (SSM Session Manager WebSocket), ACA uses its exec API (WebSocket). Both fall back to agent exec when an agent is connected.
+- **Cloud-native networking**: ECS uses VPC Security Groups + Cloud Map, CloudRun uses Cloud DNS, ACA uses NSG + in-process DNS. FaaS and Docker backends use in-memory networking.
+
+### Exec Routing
 
 ```mermaid
 flowchart TD
@@ -171,12 +320,15 @@ flowchart TD
     CHK1 -->|Yes| REV["Bridge exec over<br/>reverse WebSocket"]
     CHK1 -->|No| CHK2{"AgentAddress<br/>set (IP:port)?"}
     CHK2 -->|Yes| FWD["Dial forward agent<br/>at IP:9111"]
-    CHK2 -->|No| ERR["Error: no agent<br/>connected"]
+    CHK2 -->|No| CHK3{"Cloud exec<br/>supported?"}
+    CHK3 -->|Yes| CLOUD["ECS ExecuteCommand (SSM)\nor ACA exec API (WebSocket)"]
+    CHK3 -->|No| ERR["Error: no agent<br/>connected"]
 ```
 
 1. **Reverse agent** — Agent has an active WebSocket to the backend. Exec is bridged over that connection.
 2. **Forward agent** — Backend dials the agent inside the container at `<IP>:9111`.
-3. **No agent** — Error. An agent connection is required for exec.
+3. **Cloud-native exec** — ECS uses SSM Session Manager, ACA uses its exec WebSocket API.
+4. **No agent** — Error. An agent connection is required for exec.
 
 ---
 
@@ -340,7 +492,7 @@ GitLab Runner's docker executor talks directly to the Docker API. By setting `ho
 
 ### bleephub — Local GitHub API Simulator
 
-For **local testing** without github.com, `bleephub/` (`bleephub/`) implements the internal Azure DevOps-derived runner service API that the official `actions/runner` speaks. This lets us run the real runner binary in a fully offline test harness.
+For **local testing** without github.com, `bleephub/` implements the internal Azure DevOps-derived runner service API that the official `actions/runner` speaks. This lets us run the real runner binary in a fully offline test harness.
 
 ```mermaid
 sequenceDiagram
@@ -418,9 +570,9 @@ Key points:
 
 | Simulator | APIs Implemented |
 |-----------|-----------------|
-| **AWS** | ECS (clusters, task defs, tasks), Lambda (functions, invoke), ECR (auth, manifests), CloudWatch Logs |
-| **GCP** | Cloud Run Services, Cloud Run Jobs, Cloud Functions, Artifact Registry, Cloud Logging |
-| **Azure** | Container Apps Environments/Jobs, Functions, App Service Plans, ACR, Storage (blob), Resource Groups |
+| **AWS** | ECS (clusters, task defs, tasks), Lambda (functions, invoke), ECR (auth, manifests), CloudWatch Logs, EC2 (security groups), Cloud Map (service discovery), S3, IAM, STS |
+| **GCP** | Cloud Run Jobs, Cloud Functions, Artifact Registry, Cloud Logging, Cloud DNS, Compute, IAM, VPC Access, Service Usage |
+| **Azure** | Container Apps Environments/Jobs, Functions, App Service Plans, ACR, Storage (blob), Monitor, Private DNS, Network (NSG), Managed Identity, Resource Groups |
 
 ---
 
