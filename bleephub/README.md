@@ -105,7 +105,7 @@ curl http://localhost/api/v3/bleephub/jobs/<jobId>
 
 ## Integration test
 
-The integration test runs everything in Docker: bleephub + Sockerless backend + Docker frontend + official runner binary (v2.321.0).
+The integration test runs everything in Docker: bleephub + Sockerless backend + official runner binary (v2.321.0).
 
 ```bash
 # From the repository root:

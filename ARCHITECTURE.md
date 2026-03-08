@@ -50,7 +50,7 @@ The system has three main components:
 
 - **Backend** — Single-binary server implementing the Docker REST API v1.44 and managing container lifecycle. Seven implementations share a common core (`backends/core/`).
 - **Agent** — Binary injected into cloud containers for exec/attach. Bridges commands between the backend and the container's shell over WebSocket.
-- **bleephub** — GitHub Actions runner service API. Dispatches jobs to the official `actions/runner`, which executes them through the backend's Docker API.
+- **bleephub** — Local GitHub Actions runner service. Implements enough of GitHub's internal runner protocol for the official `actions/runner` to register, receive jobs, and execute them through the backend's Docker API.
 
 ---
 
@@ -468,7 +468,7 @@ GitLab Runner's docker executor talks directly to the Docker API. By setting `ho
 
 ### bleephub — Local GitHub API Simulator
 
-For **local testing** without github.com, `bleephub/` implements the internal Azure DevOps-derived runner service API that the official `actions/runner` speaks. This lets us run the real runner binary in a fully offline test harness.
+For **local testing** without github.com, `bleephub/` implements enough of the GitHub Actions runner service API for the official `actions/runner` binary to register, receive jobs, execute them, and report results. This lets us run the real runner in a fully offline test harness.
 
 ```mermaid
 sequenceDiagram
