@@ -86,6 +86,16 @@ Architectural and implementation decisions made across phases. Referenced from [
 
 ---
 
+## Unified Configuration File
+
+**config.yaml as optional unified config** — A single `~/.sockerless/config.yaml` replaces per-context JSON files with a structured YAML format. Environments map to named backend configs; simulators are first-class entries referenced by environments. The CLI reads config.yaml and exports values as env vars before starting backends, so backend binaries remain env-var-only consumers. Legacy JSON contexts (`contexts/*/config.json`) still work — config.yaml takes precedence when present.
+
+**Rationale:** JSON context files require `--set KEY=VALUE` for every env var, making complex configs verbose and error-prone. YAML provides structure (nested cloud-specific sections), cross-referencing (simulator names), and a single-file overview of all environments. The `config migrate` command provides a zero-effort upgrade path.
+
+**Alternatives considered:** (1) TOML — less common in the Go ecosystem, no advantage over YAML for nested config. (2) Extending JSON contexts with structured fields — would require migrating all existing contexts and doesn't solve the single-file overview problem. (3) HCL — too Terraform-specific, adds a heavy dependency.
+
+---
+
 ## Known Limitations
 
 1. **FaaS transient failures** — ~1 per sequential E2E run on FaaS backends due to reverse agent cleanup timing.

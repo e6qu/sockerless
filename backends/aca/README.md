@@ -42,6 +42,8 @@ go build -o sockerless-backend-aca ./cmd/sockerless-backend-aca
 | `SOCKERLESS_CALLBACK_URL` | | Backend URL for reverse agent mode |
 | `SOCKERLESS_ENDPOINT_URL` | | Custom Azure endpoint (simulator mode) |
 
+These settings can also be configured via `~/.sockerless/config.yaml`. See the [CLI documentation](../../cmd/sockerless/README.md) for the YAML format.
+
 ### Terraform outputs
 
 The `terraform/modules/aca` module produces these outputs. Use `terragrunt output` from `terraform/environments/aca/live` to extract them.

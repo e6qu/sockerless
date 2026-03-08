@@ -92,11 +92,32 @@ For terraform operations:
 ## Quick Start
 
 ```bash
-# Build the ECS backend
+# Build the CLI and ECS backend
 go build -o sockerless ./cmd/sockerless
+go build -o sockerless-backend-ecs ./backends/ecs/cmd/sockerless-backend-ecs
 
-# Start with ECS backend against the AWS simulator
-sockerless serve --backend ecs --addr :2375
+# Option 1: config.yaml (preferred)
+cat > ~/.sockerless/config.yaml <<EOF
+environments:
+  ecs-dev:
+    backend: ecs
+    aws:
+      region: us-east-1
+      ecs:
+        cluster: sockerless
+        subnets: [subnet-abc123]
+        execution_role_arn: arn:aws:iam::123456789012:role/ecsExec
+EOF
+sockerless context use ecs-dev
+sockerless server start
+
+# Option 2: context commands
+sockerless context create ecs-dev --backend ecs \
+  --set AWS_REGION=us-east-1 \
+  --set SOCKERLESS_ECS_CLUSTER=sockerless \
+  --set SOCKERLESS_ECS_SUBNETS=subnet-abc123 \
+  --set SOCKERLESS_ECS_EXECUTION_ROLE_ARN=arn:aws:iam::123456789012:role/ecsExec
+sockerless server start
 
 # Use with Docker CLI
 export DOCKER_HOST=tcp://localhost:2375
@@ -104,6 +125,8 @@ docker version
 docker run --rm alpine echo "hello from sockerless"
 docker ps -a
 ```
+
+See [`cmd/sockerless/README.md`](cmd/sockerless/README.md) for the full `config.yaml` format and all CLI commands.
 
 ## Development
 

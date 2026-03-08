@@ -52,6 +52,15 @@ All backends accept:
 | `-addr` | `:9100` | Listen address |
 | `-log-level` | `info` | Log level: debug, info, warn, error |
 
+## Configuration
+
+Backends support two configuration methods:
+
+1. **`config.yaml`** (preferred) — A unified YAML file at `~/.sockerless/config.yaml` with named environments and simulator definitions. See the [CLI documentation](../cmd/sockerless/README.md) for the format.
+2. **Environment variables** — Traditional per-backend env vars (documented in each backend's README).
+
+**Load order:** config.yaml → context env vars (legacy) → process environment variables → defaults. The YAML config is loaded by the CLI and exported as environment variables before starting the backend binary, so backends themselves only read env vars.
+
 ## Common environment variables
 
 | Variable | Description |

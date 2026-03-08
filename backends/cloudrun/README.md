@@ -40,6 +40,8 @@ go build -o sockerless-backend-cloudrun ./cmd/sockerless-backend-cloudrun
 | `SOCKERLESS_CALLBACK_URL` | | Backend URL for reverse agent mode |
 | `SOCKERLESS_ENDPOINT_URL` | | Custom GCP endpoint (simulator mode) |
 
+These settings can also be configured via `~/.sockerless/config.yaml`. See the [CLI documentation](../../cmd/sockerless/README.md) for the YAML format.
+
 ### Terraform outputs
 
 The `terraform/modules/cloudrun` module produces these outputs. Use `terragrunt output` from `terraform/environments/cloudrun/live` to extract them.

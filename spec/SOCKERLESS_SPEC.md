@@ -2196,9 +2196,13 @@ These are stored in state and returned in inspect responses for client compatibi
 
 ### 15.1 Format
 
-All components use **command-line flags** with **environment variable** overrides. No YAML configuration files. Each backend binary has its own set of environment variables prefixed with its cloud provider abbreviation.
+All components use **command-line flags** with **environment variable** overrides. Each backend binary has its own set of environment variables prefixed with its cloud provider abbreviation.
 
-Priority order: CLI flags > Environment variables > Defaults
+An optional unified configuration file (`~/.sockerless/config.yaml`) provides a structured alternative to environment variables. It defines named environments (backend configurations) and simulator definitions. The CLI reads config.yaml and exports the values as environment variables before starting backend binaries.
+
+Priority order: CLI flags > config.yaml environment values > context env vars (legacy JSON) > process environment variables > Defaults
+
+See [`cmd/sockerless/README.md`](../cmd/sockerless/README.md) for the full config.yaml format.
 
 ### 15.2 Frontend Configuration
 

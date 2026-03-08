@@ -45,6 +45,8 @@ All configuration is via environment variables:
 | `SOCKERLESS_CALLBACK_URL` | | Backend URL for reverse agent mode |
 | `SOCKERLESS_ENDPOINT_URL` | | Custom AWS endpoint (simulator mode) |
 
+These settings can also be configured via `~/.sockerless/config.yaml`. See the [CLI documentation](../../cmd/sockerless/README.md) for the YAML format.
+
 ### Terraform outputs
 
 The `terraform/modules/ecs` module produces these outputs. Use `terragrunt output` from `terraform/environments/ecs/live` to extract them.
