@@ -106,10 +106,10 @@ func (s *BaseServer) SpawnAutoAgent(containerID string) error {
 		close(entry.done)
 		autoAgentProcs.Delete(containerID)
 
-		// Store captured stdout as container logs
-		if stdoutBuf.Len() > 0 {
-			s.Store.LogBuffers.Store(containerID, stdoutBuf.Bytes())
-		}
+		// Store captured stdout as container logs.
+		// Always store even if empty — avoids a race where the wait channel
+		// is closed before a concurrent log reader sees the data.
+		s.Store.LogBuffers.Store(containerID, stdoutBuf.Bytes())
 
 		exitCode := 0
 		if cmd.ProcessState != nil {

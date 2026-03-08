@@ -1,12 +1,13 @@
 package tests
 
 import (
+	"bytes"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
-	"io"
-	"bytes"
 )
 
 func TestContainerLogs(t *testing.T) {
@@ -28,23 +29,9 @@ func TestContainerLogs(t *testing.T) {
 		t.Fatalf("wait failed: %v", err)
 	}
 
-	rc, err := dockerClient.ContainerLogs(ctx, id, container.LogsOptions{
-		ShowStdout: true,
-		ShowStderr: true,
-	})
-	if err != nil {
-		t.Fatalf("logs failed: %v", err)
-	}
-	defer rc.Close()
-
-	var stdout, stderr bytes.Buffer
-	_, err = stdcopy.StdCopy(&stdout, &stderr, rc)
-	if err != nil {
-		t.Fatalf("stdcopy failed: %v", err)
-	}
-
-	if stdout.Len() == 0 && stderr.Len() == 0 {
-		t.Error("expected some log output")
+	logs := readLogs(t, dockerClient, id)
+	if !strings.Contains(logs, "hello world") {
+		t.Errorf("expected logs to contain %q, got %q", "hello world", logs)
 	}
 }
 

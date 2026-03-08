@@ -13,6 +13,7 @@ func TestDNS_CreateAndDescribeZone(t *testing.T) {
 		"--dns-name=cli-test.example.com.",
 		"--description=CLI test zone",
 		"--visibility=private",
+		"--networks=",
 		"--format=json",
 	))
 
@@ -41,6 +42,7 @@ func TestDNS_CreateAndListRecordSets(t *testing.T) {
 		"--dns-name=records.example.com.",
 		"--description=Record test zone",
 		"--visibility=private",
+		"--networks=",
 	))
 
 	// Create a record set via direct HTTP since gcloud record-sets create
@@ -82,6 +84,7 @@ func TestDNS_DeleteZone(t *testing.T) {
 		"--dns-name=delete.example.com.",
 		"--description=Delete test zone",
 		"--visibility=private",
+		"--networks=",
 	))
 
 	runCLI(t, gcloudCLI("dns", "managed-zones", "delete", "delete-test-zone"))
