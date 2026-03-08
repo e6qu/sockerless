@@ -50,6 +50,16 @@ Agent (inside container or reverse-connected)
 
 Consolidated all image management into per-cloud shared modules: `core.ImageManager` + `core.AuthProvider` interface, 3 shared cloud modules (ECR, Artifact Registry, ACR). ~2000 lines of duplication eliminated.
 
+## Cloud Commons Consolidation
+
+Moved duplicated infrastructure into shared per-cloud modules (`aws-common`, `gcp-common`, `azure-common`):
+- **Error mappers**: `MapAWSError`/`MapGCPError`/`MapAzureError` + `containsAny` helper
+- **SignalToExitCode**: Exported from core, replaced 6 local copies
+- **MergeEnvByKey**: Replaced 3 local `mergeEnvByKey` copies with `core.MergeEnvByKey`
+- **StreamCloudLogs**: Core helper with `CloudLogFetchFunc` pattern for cloud log streaming (pipe, follow-mode, tail, Docker mux framing)
+- **StorageDriver interface**: `CreateVolume`/`DeleteVolume`/`MountSpec` with `NoOpStorageDriver` default + per-cloud stubs (EBS/EFS, GCS FUSE/PD, Azure Files/Disk)
+- **ServiceDiscoveryDriver interface**: `Register`/`Deregister`/`Resolve` with `NoOpServiceDiscoveryDriver` default + per-cloud stubs (Cloud Map, Cloud DNS, Azure DNS)
+
 ## Project Stats
 
 - **85 phases**, 756 tasks completed
