@@ -693,122 +693,72 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 // ContainerLogs streams container logs from Cloud Logging.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
-	id, ok := s.Store.ResolveContainerID(ref)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: ref}
-	}
-
-	c, _ := s.Store.Containers.Get(id)
-	if c.State.Status == "created" {
-		return nil, &api.InvalidParameterError{
-			Message: "can not get logs from container which is dead or marked for removal",
+	// Resolve cloud resource name for the log filter.
+	var shortJobName string
+	if id, ok := s.Store.ResolveContainerID(ref); ok {
+		crState, _ := s.CloudRun.Get(id)
+		jobName := crState.JobName
+		if jobName == "" {
+			jobName = buildJobName(id)
 		}
+		parts := strings.Split(jobName, "/")
+		shortJobName = parts[len(parts)-1]
 	}
 
-	params := core.CloudLogParamsFromOpts(opts, c.Config.Labels)
+	baseFilter := fmt.Sprintf(
+		`resource.type="cloud_run_job" AND resource.labels.job_name="%s"`,
+		shortJobName,
+	)
 
-	crState, _ := s.CloudRun.Get(id)
-	jobName := crState.JobName
-	if jobName == "" {
-		jobName = buildJobName(id)
-	}
-	// Extract just the job name from the full resource path
-	parts := strings.Split(jobName, "/")
-	shortJobName := parts[len(parts)-1]
+	fetch := s.cloudLoggingFetch(baseFilter)
 
-	// Early return if stdout suppressed
-	if !params.ShouldWrite() {
-		return io.NopCloser(strings.NewReader("")), nil
-	}
-
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer func() { _ = pw.Close() }()
-
-		// Build base filter for Cloud Logging
-		baseFilter := fmt.Sprintf(
-			`resource.type="cloud_run_job" AND resource.labels.job_name="%s"`,
-			shortJobName,
-		)
-
-		// Track latest timestamp to avoid duplicate entries
-		var lastTimestamp time.Time
-
-		// Fetch initial logs with since/until filtering
-		initialFilter := baseFilter
-		initialFilter += params.CloudLoggingSinceFilter()
-		initialFilter += params.CloudLoggingUntilFilter()
-		s.fetchAndWriteLogsPipe(pw, initialFilter, lastTimestamp, params, &lastTimestamp)
-
-		if !params.Follow {
-			return
-		}
-
-		// Follow mode: poll for new events (1s interval for Cloud Logging)
-		ticker := time.NewTicker(1 * time.Second)
-		defer ticker.Stop()
-
-		for range ticker.C {
-			c, _ := s.Store.Containers.Get(id)
-			if !c.State.Running && c.State.Status != "created" {
-				s.fetchAndWriteLogsPipe(pw, baseFilter, lastTimestamp, params, &lastTimestamp)
-				return
-			}
-			s.fetchAndWriteLogsPipe(pw, baseFilter, lastTimestamp, params, &lastTimestamp)
-		}
-	}()
-
-	return pr, nil
+	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{
+		CheckAutoAgent: true,
+	})
 }
 
-// fetchAndWriteLogsPipe queries Cloud Logging and writes new entries to a PipeWriter.
-// Writes raw text lines (no mux framing — core handler adds it).
-func (s *Server) fetchAndWriteLogsPipe(pw *io.PipeWriter, filter string, after time.Time, params core.CloudLogParams, lastTS *time.Time) {
-	logFilter := filter
-	if !after.IsZero() {
-		logFilter += fmt.Sprintf(` AND timestamp>"%s"`, after.UTC().Format(time.RFC3339Nano))
-	}
+// cloudLoggingFetch returns a CloudLogFetchFunc that queries Cloud Logging.
+// cursor is a *time.Time tracking the latest seen timestamp for dedup.
+func (s *Server) cloudLoggingFetch(baseFilter string) core.CloudLogFetchFunc {
+	return func(ctx context.Context, params core.CloudLogParams, cursor any) ([]core.CloudLogEntry, any, error) {
+		logFilter := baseFilter
 
-	ctx, cancel := context.WithTimeout(s.ctx(), s.config.LogTimeout)
-	defer cancel()
-
-	it := s.gcp.LogAdmin.Entries(ctx, logadmin.Filter(logFilter))
-
-	type logEntry struct {
-		line string
-		ts   time.Time
-	}
-	var entries []logEntry
-
-	for {
-		entry, err := it.Next()
-		if err != nil {
-			break
+		var lastTS time.Time
+		if cursor != nil {
+			lastTS = cursor.(time.Time)
 		}
 
-		line := extractLogLine(entry)
-		if line == "" {
-			continue
+		if !lastTS.IsZero() {
+			// Follow mode: only entries after last seen.
+			logFilter += fmt.Sprintf(` AND timestamp>"%s"`, lastTS.UTC().Format(time.RFC3339Nano))
+		} else {
+			// Initial fetch: apply since/until.
+			logFilter += params.CloudLoggingSinceFilter()
+			logFilter += params.CloudLoggingUntilFilter()
 		}
 
-		entries = append(entries, logEntry{line: line, ts: entry.Timestamp})
+		fetchCtx, cancel := context.WithTimeout(s.ctx(), s.config.LogTimeout)
+		defer cancel()
 
-		if entry.Timestamp.After(*lastTS) {
-			*lastTS = entry.Timestamp
+		it := s.gcp.LogAdmin.Entries(fetchCtx, logadmin.Filter(logFilter))
+
+		var entries []core.CloudLogEntry
+		for {
+			entry, err := it.Next()
+			if err != nil {
+				break
+			}
+			line := extractLogLine(entry)
+			if line == "" {
+				continue
+			}
+			entries = append(entries, core.CloudLogEntry{Timestamp: entry.Timestamp, Message: line})
+			if entry.Timestamp.After(lastTS) {
+				lastTS = entry.Timestamp
+			}
 		}
-	}
 
-	// Apply tail
-	if params.Tail >= 0 && params.Tail < len(entries) {
-		entries = entries[len(entries)-params.Tail:]
-	}
-
-	for _, e := range entries {
-		formatted := params.FormatLine(e.line, e.ts)
-		if _, err := pw.Write([]byte(formatted)); err != nil {
-			return
-		}
+		return entries, lastTS, nil
 	}
 }
 

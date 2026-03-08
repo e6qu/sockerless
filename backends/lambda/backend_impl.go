@@ -504,186 +504,73 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 // ContainerLogs streams container logs from CloudWatch.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
-	id, ok := s.Store.ResolveContainerID(ref)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: ref}
-	}
+	// Resolve state upfront so the closure can capture it.
+	var logGroupName, logStreamName *string
+	if id, ok := s.Store.ResolveContainerID(ref); ok {
+		lambdaState, _ := s.Lambda.Get(id)
+		group := fmt.Sprintf("/aws/lambda/%s", lambdaState.FunctionName)
+		logGroupName = &group
 
-	c, _ := s.Store.Containers.Get(id)
-	if c.State.Status == "created" {
-		return nil, &api.InvalidParameterError{
-			Message: "can not get logs from container which is dead or marked for removal",
-		}
-	}
-
-	params := core.CloudLogParamsFromOpts(opts, c.Config.Labels)
-
-	lambdaState, _ := s.Lambda.Get(id)
-	logStreamPrefix := lambdaState.FunctionName
-
-	// Early return if stdout suppressed
-	if !params.ShouldWrite() {
-		return io.NopCloser(strings.NewReader("")), nil
-	}
-
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer func() { _ = pw.Close() }()
-
-		// BUG-435: Filter LogBuffers output through params (raw text, no mux framing)
-		if buf, ok := s.Store.LogBuffers.Load(id); ok {
-			data := buf.([]byte)
-			if len(data) > 0 {
-				raw := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-				now := time.Now().UTC()
-				var filtered []string
-				for _, line := range raw {
-					if line == "" {
-						continue
-					}
-					if !params.FilterByTime(now) {
-						continue
-					}
-					filtered = append(filtered, line)
-				}
-				filtered = params.ApplyTail(filtered)
-				for _, line := range filtered {
-					formatted := params.FormatLine(line, now)
-					if _, err := pw.Write([]byte(formatted)); err != nil {
-						return
-					}
-				}
-			}
-		}
-
-		// Query CloudWatch Logs using the function name as log group prefix
-		logGroupName := fmt.Sprintf("/aws/lambda/%s", logStreamPrefix)
-
-		// Try to find a log stream for this function
+		// Find the most recent log stream.
 		streamsResult, err := s.aws.CloudWatch.DescribeLogStreams(s.ctx(), &cloudwatchlogs.DescribeLogStreamsInput{
-			LogGroupName: aws.String(logGroupName),
+			LogGroupName: aws.String(group),
 			OrderBy:      "LastEventTime",
 			Descending:   aws.Bool(true),
 			Limit:        aws.Int32(1),
 		})
-		if err != nil {
-			s.Logger.Debug().Err(err).Str("logGroup", logGroupName).Msg("failed to describe log streams")
-			return
+		if err == nil && len(streamsResult.LogStreams) > 0 {
+			logStreamName = streamsResult.LogStreams[0].LogStreamName
 		}
+	}
 
-		if len(streamsResult.LogStreams) == 0 {
-			return
+	fetch := func(ctx context.Context, params core.CloudLogParams, cursor any) ([]core.CloudLogEntry, any, error) {
+		if logGroupName == nil || logStreamName == nil {
+			return nil, nil, nil
 		}
-
-		logStreamName := streamsResult.LogStreams[0].LogStreamName
 
 		input := &cloudwatchlogs.GetLogEventsInput{
-			LogGroupName:  aws.String(logGroupName),
+			LogGroupName:  logGroupName,
 			LogStreamName: logStreamName,
-			StartFromHead: aws.Bool(params.CloudLogTailInt32() == nil),
+			StartFromHead: aws.Bool(true),
 		}
-		if limit := params.CloudLogTailInt32(); limit != nil {
-			input.Limit = limit
-		}
-		// BUG-423: Apply since as StartTime
-		if ms := params.SinceMillis(); ms != nil {
-			input.StartTime = ms
-		}
-		// BUG-424: Apply until as EndTime
-		if ms := params.UntilMillis(); ms != nil {
-			input.EndTime = ms
+
+		if cursor != nil {
+			input.NextToken = cursor.(*string)
+		} else {
+			input.StartFromHead = aws.Bool(params.CloudLogTailInt32() == nil)
+			if limit := params.CloudLogTailInt32(); limit != nil {
+				input.Limit = limit
+			}
+			if ms := params.SinceMillis(); ms != nil {
+				input.StartTime = ms
+			}
+			if ms := params.UntilMillis(); ms != nil {
+				input.EndTime = ms
+			}
 		}
 
 		result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), input)
 		if err != nil {
-			s.Logger.Debug().Err(err).Msg("failed to get log events")
-			return
+			return nil, cursor, err
 		}
 
+		var entries []core.CloudLogEntry
 		for _, event := range result.Events {
-			line := s.formatLogEventText(event.Message, event.Timestamp, params)
-			if line == "" {
+			if event.Message == nil {
 				continue
 			}
-			if _, err := pw.Write([]byte(line)); err != nil {
-				return
+			var ts time.Time
+			if event.Timestamp != nil {
+				ts = time.UnixMilli(*event.Timestamp)
 			}
+			entries = append(entries, core.CloudLogEntry{Timestamp: ts, Message: *event.Message})
 		}
-
-		// BUG-428: Follow mode support
-		if !params.Follow {
-			return
-		}
-
-		nextToken := result.NextForwardToken
-
-		ticker := time.NewTicker(1 * time.Second)
-		defer ticker.Stop()
-
-		for range ticker.C {
-			c, _ := s.Store.Containers.Get(id)
-			if !c.State.Running && c.State.Status != "created" {
-				// Fetch any remaining logs
-				followInput := &cloudwatchlogs.GetLogEventsInput{
-					LogGroupName:  aws.String(logGroupName),
-					LogStreamName: logStreamName,
-					StartFromHead: aws.Bool(true),
-					NextToken:     nextToken,
-				}
-				result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), followInput)
-				if err == nil {
-					for _, event := range result.Events {
-						line := s.formatLogEventText(event.Message, event.Timestamp, params)
-						if line == "" {
-							continue
-						}
-						if _, err := pw.Write([]byte(line)); err != nil {
-							return
-						}
-					}
-				}
-				return
-			}
-
-			followInput := &cloudwatchlogs.GetLogEventsInput{
-				LogGroupName:  aws.String(logGroupName),
-				LogStreamName: logStreamName,
-				StartFromHead: aws.Bool(true),
-				NextToken:     nextToken,
-			}
-			result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), followInput)
-			if err != nil {
-				continue
-			}
-
-			for _, event := range result.Events {
-				line := s.formatLogEventText(event.Message, event.Timestamp, params)
-				if line == "" {
-					continue
-				}
-				if _, err := pw.Write([]byte(line)); err != nil {
-					return
-				}
-			}
-			nextToken = result.NextForwardToken
-		}
-	}()
-
-	return pr, nil
-}
-
-// formatLogEventText formats a single CloudWatch log event as raw text.
-// Returns empty string if message is nil.
-func (s *Server) formatLogEventText(message *string, timestamp *int64, params core.CloudLogParams) string {
-	if message == nil {
-		return ""
+		return entries, result.NextForwardToken, nil
 	}
-	var ts time.Time
-	if timestamp != nil {
-		ts = time.UnixMilli(*timestamp)
-	}
-	return params.FormatLine(*message, ts)
+
+	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{
+		CheckLogBuffers: true,
+	})
 }
 
 // ContainerRestart stops and then starts a container.

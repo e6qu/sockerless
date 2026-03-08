@@ -602,145 +602,57 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 // ContainerLogs streams container logs from CloudWatch.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
-	// Auto-agent containers have logs captured by the agent, not CloudWatch
-	if os.Getenv("SOCKERLESS_AUTO_AGENT_BIN") != "" {
-		return s.BaseServer.ContainerLogs(ref, opts)
+	logStreamName := ""
+	if id, ok := s.Store.ResolveContainerID(ref); ok {
+		logStreamName = fmt.Sprintf("%s/main/%s", id[:12], s.getTaskID(id))
 	}
 
-	id, ok := s.Store.ResolveContainerID(ref)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: ref}
-	}
-
-	c, _ := s.Store.Containers.Get(id)
-	if c.State.Status == "created" {
-		return nil, &api.InvalidParameterError{
-			Message: "can not get logs from container which is dead or marked for removal",
-		}
-	}
-
-	params := core.CloudLogParamsFromOpts(opts, c.Config.Labels)
-
-	logStreamPrefix := id[:12]
-	logStreamName := fmt.Sprintf("%s/main/%s", logStreamPrefix, s.getTaskID(id))
-
-	// Early return if stdout suppressed (all cloud logs are stdout)
-	if !params.ShouldWrite() {
-		return io.NopCloser(strings.NewReader("")), nil
-	}
-
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer func() { _ = pw.Close() }()
-
+	fetch := func(ctx context.Context, params core.CloudLogParams, cursor any) ([]core.CloudLogEntry, any, error) {
 		input := &cloudwatchlogs.GetLogEventsInput{
 			LogGroupName:  aws.String(s.config.LogGroup),
 			LogStreamName: aws.String(logStreamName),
-			StartFromHead: aws.Bool(params.CloudLogTailInt32() == nil),
-		}
-		if limit := params.CloudLogTailInt32(); limit != nil {
-			input.Limit = limit
-		}
-		if ms := params.SinceMillis(); ms != nil {
-			input.StartTime = ms
-		}
-		if ms := params.UntilMillis(); ms != nil {
-			input.EndTime = ms
+			StartFromHead: aws.Bool(true),
 		}
 
-		// Fetch initial logs
+		if cursor != nil {
+			// Follow mode: use NextToken
+			input.NextToken = cursor.(*string)
+		} else {
+			// Initial fetch: apply filters
+			input.StartFromHead = aws.Bool(params.CloudLogTailInt32() == nil)
+			if limit := params.CloudLogTailInt32(); limit != nil {
+				input.Limit = limit
+			}
+			if ms := params.SinceMillis(); ms != nil {
+				input.StartTime = ms
+			}
+			if ms := params.UntilMillis(); ms != nil {
+				input.EndTime = ms
+			}
+		}
+
 		result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), input)
 		if err != nil {
-			s.Logger.Debug().Err(err).Str("stream", logStreamName).Msg("failed to get log events")
-			return
+			return nil, cursor, err
 		}
 
+		var entries []core.CloudLogEntry
 		for _, event := range result.Events {
-			line := s.formatLogEvent(event.Message, event.Timestamp, params)
-			if line == "" {
+			if event.Message == nil {
 				continue
 			}
-			if _, err := pw.Write([]byte(line)); err != nil {
-				return
+			var ts time.Time
+			if event.Timestamp != nil {
+				ts = time.UnixMilli(*event.Timestamp)
 			}
+			entries = append(entries, core.CloudLogEntry{Timestamp: ts, Message: *event.Message})
 		}
-
-		nextToken := result.NextForwardToken
-
-		if !params.Follow {
-			return
-		}
-
-		// Follow mode: poll for new events
-		ticker := time.NewTicker(1 * time.Second)
-		defer ticker.Stop()
-
-		for range ticker.C {
-			// Check if container has stopped
-			c, _ := s.Store.Containers.Get(id)
-			if !c.State.Running && c.State.Status != "created" {
-				// Fetch any remaining logs
-				followInput := &cloudwatchlogs.GetLogEventsInput{
-					LogGroupName:  aws.String(s.config.LogGroup),
-					LogStreamName: aws.String(logStreamName),
-					StartFromHead: aws.Bool(true),
-					NextToken:     nextToken,
-				}
-				result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), followInput)
-				if err == nil {
-					for _, event := range result.Events {
-						line := s.formatLogEvent(event.Message, event.Timestamp, params)
-						if line == "" {
-							continue
-						}
-						if _, err := pw.Write([]byte(line)); err != nil {
-							return
-						}
-					}
-				}
-				return
-			}
-
-			// Follow queries use NextToken only, no since/until
-			followInput := &cloudwatchlogs.GetLogEventsInput{
-				LogGroupName:  aws.String(s.config.LogGroup),
-				LogStreamName: aws.String(logStreamName),
-				StartFromHead: aws.Bool(true),
-				NextToken:     nextToken,
-			}
-			result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), followInput)
-			if err != nil {
-				continue
-			}
-
-			for _, event := range result.Events {
-				line := s.formatLogEvent(event.Message, event.Timestamp, params)
-				if line == "" {
-					continue
-				}
-				if _, err := pw.Write([]byte(line)); err != nil {
-					return
-				}
-			}
-			nextToken = result.NextForwardToken
-		}
-	}()
-
-	return pr, nil
-}
-
-// formatLogEvent formats a single CloudWatch log event as a raw text line.
-// Returns empty string if message is nil.
-func (s *Server) formatLogEvent(message *string, timestamp *int64, params core.CloudLogParams) string {
-	if message == nil {
-		return ""
+		return entries, result.NextForwardToken, nil
 	}
-	var ts time.Time
-	if timestamp != nil {
-		ts = time.UnixMilli(*timestamp)
-	}
-	return params.FormatLine(*message, ts)
+
+	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{
+		CheckAutoAgent: true,
+	})
 }
 
 // ContainerRestart stops and then starts a container.
