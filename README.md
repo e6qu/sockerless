@@ -202,7 +202,7 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 | [`spec/SOCKERLESS_SPEC.md`](spec/SOCKERLESS_SPEC.md) | Full specification (API surface, architecture, protocols) |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | System architecture, component diagrams, test architecture |
 | [`terraform/README.md`](terraform/README.md) | Terraform modules, state backends, and CI/CD deployment |
-| [`COMPATIBILITY_MATRIX.md`](COMPATIBILITY_MATRIX.md) | Backend feature matrix, simulator/runner/terraform test results |
+| [`FEATURE_MATRIX.md`](FEATURE_MATRIX.md) | Docker API compatibility, cloud service mappings, test results |
 | [`backends/*/README.md`](backends/) | Per-backend configuration and terraform output mapping |
 | [`docs/GITHUB_RUNNER.md`](docs/GITHUB_RUNNER.md) | GitHub Actions E2E test guide (act + official runner) |
 | [`docs/GITLAB_RUNNER_DOCKER.md`](docs/GITLAB_RUNNER_DOCKER.md) | GitLab Runner docker executor E2E test guide |
