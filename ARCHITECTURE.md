@@ -147,11 +147,11 @@ All operations proxy to the local Docker daemon via the Docker SDK.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Created: ContainerCreate()
-    Created --> Running: ContainerStart()
-    Running --> Running: ContainerExecCreate()\n+ ContainerExecAttach()
-    Running --> Exited: ContainerStop()\n/ ContainerKill()
-    Exited --> [*]: ContainerRemove()
+    [*] --> Created: ContainerCreate
+    Created --> Running: ContainerStart
+    Running --> Running: ContainerExec
+    Running --> Exited: ContainerStop / Kill
+    Exited --> [*]: ContainerRemove
 ```
 
 #### ECS (AWS Fargate)
@@ -160,16 +160,11 @@ Task definition registration is **deferred** from Create to Start for pod associ
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Created: Local state only\n(task def deferred)
-    Created --> Running: RegisterTaskDefinition()\n→ RunTask()\n→ wait for agent
-    Running --> Running: Agent exec or\nECS ExecuteCommand (SSM)
-    Running --> Exited: StopTask()
-    Exited --> [*]: DeregisterTaskDefinition()
-
-    state "Networking" as net {
-        CreateSecurityGroup: NetworkCreate → VPC Security Group
-        CloudMap: Service discovery → Cloud Map\nRegister/Deregister Instance
-    }
+    [*] --> Created: local state (deferred)
+    Created --> Running: RegisterTaskDef, RunTask
+    Running --> Running: Agent or ECS ExecuteCommand
+    Running --> Exited: StopTask
+    Exited --> [*]: DeregisterTaskDef
 ```
 
 | Operation | Cloud API Calls |
@@ -189,11 +184,11 @@ Functions are created eagerly at Create time. Invoke is asynchronous — the age
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Created: Lambda.CreateFunction()\n(PackageType=Image)
-    Created --> Running: Lambda.Invoke()\n→ agent callback
-    Running --> Running: Reverse agent exec
-    Running --> Exited: Agent disconnects\n/ function returns
-    Exited --> [*]: Lambda.DeleteFunction()
+    [*] --> Created: CreateFunction (image)
+    Created --> Running: Invoke, agent callback
+    Running --> Running: reverse agent exec
+    Running --> Exited: agent disconnects
+    Exited --> [*]: DeleteFunction
 ```
 
 | Operation | Cloud API Calls |
@@ -211,15 +206,11 @@ Job creation is **deferred** from Create to Start. Cloud DNS handles service dis
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Created: Local state only\n(job deferred)
-    Created --> Running: Jobs.CreateJob()\n→ Jobs.RunJob()\n→ wait for agent
-    Running --> Running: Agent exec
-    Running --> Exited: Jobs.CancelExecution()
-    Exited --> [*]: Jobs.DeleteJob()
-
-    state "Networking" as net {
-        CloudDNS: Service discovery → Cloud DNS\nA records per container
-    }
+    [*] --> Created: local state (deferred)
+    Created --> Running: CreateJob, RunJob
+    Running --> Running: agent exec
+    Running --> Exited: CancelExecution
+    Exited --> [*]: DeleteJob
 ```
 
 | Operation | Cloud API Calls |
@@ -239,11 +230,11 @@ Functions are created eagerly. Invoked via HTTP POST. Reverse agent only.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Created: Functions.CreateFunction()
-    Created --> Running: HTTP POST to function URL\n→ agent callback
-    Running --> Running: Reverse agent exec
-    Running --> Exited: Agent disconnects\n/ function returns
-    Exited --> [*]: Functions.DeleteFunction()
+    [*] --> Created: CreateFunction
+    Created --> Running: HTTP POST, agent callback
+    Running --> Running: reverse agent exec
+    Running --> Exited: agent disconnects
+    Exited --> [*]: DeleteFunction
 ```
 
 | Operation | Cloud API Calls |
@@ -261,16 +252,11 @@ Job creation is **deferred** from Create to Start. Cloud-native exec via the Con
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Created: Local state only\n(job deferred)
-    Created --> Running: Jobs.BeginCreateOrUpdate()\n→ Jobs.BeginStart()\n→ wait for agent
-    Running --> Running: Agent exec or\nACA exec API (WebSocket)
-    Running --> Exited: Jobs.BeginStop()
-    Exited --> [*]: Jobs.Delete()
-
-    state "Networking" as net {
-        NSG: NetworkCreate → NSG rules
-        DNS: Service discovery → in-process DNS\n(hostname→IP per network)
-    }
+    [*] --> Created: local state (deferred)
+    Created --> Running: BeginCreateOrUpdate, BeginStart
+    Running --> Running: Agent or ACA exec API
+    Running --> Exited: BeginStop
+    Exited --> [*]: Delete
 ```
 
 | Operation | Cloud API Calls |
@@ -290,11 +276,11 @@ Function Apps are created eagerly. Invoked via HTTP POST. Reverse agent only.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Created: WebApps.BeginCreateOrUpdate()\n(LinuxFxVersion=DOCKER|image)
-    Created --> Running: HTTP POST to function URL\n→ agent callback
-    Running --> Running: Reverse agent exec
-    Running --> Exited: Agent disconnects\n/ function returns
-    Exited --> [*]: WebApps.Delete()
+    [*] --> Created: BeginCreateOrUpdate
+    Created --> Running: HTTP POST, agent callback
+    Running --> Running: reverse agent exec
+    Running --> Exited: agent disconnects
+    Exited --> [*]: Delete
 ```
 
 | Operation | Cloud API Calls |
