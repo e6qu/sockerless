@@ -192,6 +192,17 @@ az rest --method GET \
 | Log Analytics | `Microsoft.OperationalInsights` | Workspaces, queries |
 | Application Insights | `Microsoft.Insights` | Components |
 
+## Automated bash tests
+
+A self-contained bash test script exercises Resource Groups, Container Apps, Functions, Storage, Monitor, and App Service Plans via `az rest` in both JSON and table output modes:
+
+```sh
+cd simulators/azure/bash-tests
+./test_azure_cli.sh
+```
+
+The script builds the simulator, starts it on a random port, runs 42 tests, and prints a pass/fail summary.
+
 ## Notes
 
 - Authentication is not validated. The OAuth2 token endpoint returns an unsigned JWT.
