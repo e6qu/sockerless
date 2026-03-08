@@ -74,7 +74,7 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 
 	pr, pw := io.Pipe()
 	go func() {
-		defer pw.Close()
+		defer pw.Close() //nolint:errcheck
 		ctx := context.Background()
 
 		entries, cursor, err := fetch(ctx, params, nil)
@@ -100,26 +100,23 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 
-		for {
-			select {
-			case <-ticker.C:
-				// Check if container has stopped.
-				if cc, ccOK := s.Store.Containers.Get(id); ccOK && !cc.State.Running {
-					// Final fetch before exit.
-					entries, _, _ = fetch(ctx, params, cursor)
-					for _, e := range entries {
-						writeMuxFrame(pw, params.FormatLine(e.Message, e.Timestamp))
-					}
-					return
-				}
-
-				entries, cursor, err = fetch(ctx, params, cursor)
-				if err != nil {
-					continue
-				}
+		for range ticker.C {
+			// Check if container has stopped.
+			if cc, ccOK := s.Store.Containers.Get(id); ccOK && !cc.State.Running {
+				// Final fetch before exit.
+				entries, _, _ = fetch(ctx, params, cursor)
 				for _, e := range entries {
 					writeMuxFrame(pw, params.FormatLine(e.Message, e.Timestamp))
 				}
+				return
+			}
+
+			entries, cursor, err = fetch(ctx, params, cursor)
+			if err != nil {
+				continue
+			}
+			for _, e := range entries {
+				writeMuxFrame(pw, params.FormatLine(e.Message, e.Timestamp))
 			}
 		}
 	}()
@@ -132,7 +129,7 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 func streamBufferedLogs(params CloudLogParams, buf []byte) io.ReadCloser {
 	pr, pw := io.Pipe()
 	go func() {
-		defer pw.Close()
+		defer pw.Close() //nolint:errcheck
 
 		raw := strings.Split(strings.TrimRight(string(buf), "\n"), "\n")
 		now := time.Now().UTC()
