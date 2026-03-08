@@ -37,8 +37,18 @@ func TestMain(m *testing.M) {
 	simPort = ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
 
+	ln2, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		log.Fatalf("Failed to find free gRPC port: %v", err)
+	}
+	grpcPort := ln2.Addr().(*net.TCPAddr).Port
+	ln2.Close()
+
 	simCmd = exec.Command(binaryPath)
-	simCmd.Env = append(os.Environ(), fmt.Sprintf("SIM_LISTEN_ADDR=:%d", simPort))
+	simCmd.Env = append(os.Environ(),
+		fmt.Sprintf("SIM_LISTEN_ADDR=:%d", simPort),
+		fmt.Sprintf("SIM_GCP_GRPC_PORT=%d", grpcPort),
+	)
 	simCmd.Stdout = os.Stdout
 	simCmd.Stderr = os.Stderr
 	if err := simCmd.Start(); err != nil {
