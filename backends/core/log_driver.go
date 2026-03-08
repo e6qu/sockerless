@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"encoding/binary"
 	"io"
 	"os"
 	"strings"
@@ -35,6 +34,7 @@ type StreamCloudLogsOptions struct {
 // StreamCloudLogs implements the common ContainerLogs pattern for cloud backends.
 // It handles container resolution, state checking, LogBuffers fallback,
 // io.Pipe creation, formatting, tail filtering, and follow-mode polling.
+// Writes raw text to the pipe — the HTTP handler adds Docker mux framing.
 func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOptions, fetch CloudLogFetchFunc, sopts StreamCloudLogsOptions) (io.ReadCloser, error) {
 	id, ok := s.Store.ResolveContainerID(containerID)
 	if !ok {
@@ -88,8 +88,7 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 		}
 
 		for _, e := range entries {
-			line := params.FormatLine(e.Message, e.Timestamp)
-			writeMuxFrame(pw, line)
+			writeLogLine(pw, params.FormatLine(e.Message, e.Timestamp))
 		}
 
 		if !params.Follow {
@@ -106,7 +105,7 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 				// Final fetch before exit.
 				entries, _, _ = fetch(ctx, params, cursor)
 				for _, e := range entries {
-					writeMuxFrame(pw, params.FormatLine(e.Message, e.Timestamp))
+					writeLogLine(pw, params.FormatLine(e.Message, e.Timestamp))
 				}
 				return
 			}
@@ -116,7 +115,7 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 				continue
 			}
 			for _, e := range entries {
-				writeMuxFrame(pw, params.FormatLine(e.Message, e.Timestamp))
+				writeLogLine(pw, params.FormatLine(e.Message, e.Timestamp))
 			}
 		}
 	}()
@@ -125,7 +124,7 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 }
 
 // streamBufferedLogs creates a pipe reader that writes LogBuffers data
-// filtered through CloudLogParams.
+// filtered through CloudLogParams. Writes raw text (no mux framing).
 func streamBufferedLogs(params CloudLogParams, buf []byte) io.ReadCloser {
 	pr, pw := io.Pipe()
 	go func() {
@@ -148,18 +147,13 @@ func streamBufferedLogs(params CloudLogParams, buf []byte) io.ReadCloser {
 		filtered = params.ApplyTail(filtered)
 
 		for _, line := range filtered {
-			writeMuxFrame(pw, params.FormatLine(line, now))
+			writeLogLine(pw, params.FormatLine(line, now))
 		}
 	}()
 	return pr
 }
 
-// writeMuxFrame writes a Docker multiplexed stream frame (stdout=1) to w.
-func writeMuxFrame(w io.Writer, line string) {
-	data := []byte(line)
-	header := make([]byte, 8)
-	header[0] = 1 // stdout
-	binary.BigEndian.PutUint32(header[4:], uint32(len(data)))
-	w.Write(header) //nolint:errcheck
-	w.Write(data)   //nolint:errcheck
+// writeLogLine writes a formatted log line as raw text to w.
+func writeLogLine(w io.Writer, line string) {
+	_, _ = io.WriteString(w, line)
 }

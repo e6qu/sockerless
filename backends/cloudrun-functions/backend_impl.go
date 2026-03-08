@@ -15,7 +15,6 @@ import (
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 	gcpcommon "github.com/sockerless/gcp-common"
-	"google.golang.org/api/iterator"
 )
 
 // Compile-time check that Server implements api.Backend.
@@ -511,173 +510,64 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 // ContainerLogs streams container logs from Cloud Logging.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
-	id, ok := s.Store.ResolveContainerID(ref)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: ref}
+	var funcName string
+	if id, ok := s.Store.ResolveContainerID(ref); ok {
+		gcfState, _ := s.GCF.Get(id)
+		funcName = gcfState.FunctionName
 	}
 
-	c, _ := s.Store.Containers.Get(id)
-	if c.State.Status == "created" {
-		return nil, &api.InvalidParameterError{
-			Message: "can not get logs from container which is dead or marked for removal",
-		}
-	}
+	baseFilter := fmt.Sprintf(
+		`resource.type="cloud_run_revision" AND resource.labels.service_name="%s"`,
+		funcName,
+	)
 
-	params := core.CloudLogParamsFromOpts(opts, c.Config.Labels)
+	fetch := s.cloudLoggingFetch(baseFilter)
 
-	gcfState, _ := s.GCF.Get(id)
-	funcName := gcfState.FunctionName
+	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{
+		CheckLogBuffers: true,
+	})
+}
 
-	// Early return if stdout suppressed
-	if !params.ShouldWrite() {
-		return io.NopCloser(strings.NewReader("")), nil
-	}
+// cloudLoggingFetch returns a CloudLogFetchFunc that queries Cloud Logging.
+// cursor is a time.Time tracking the latest seen timestamp for dedup.
+func (s *Server) cloudLoggingFetch(baseFilter string) core.CloudLogFetchFunc {
+	return func(ctx context.Context, params core.CloudLogParams, cursor any) ([]core.CloudLogEntry, any, error) {
+		logFilter := baseFilter
 
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer func() { _ = pw.Close() }()
-
-		// BUG-435: Filter LogBuffers output through params (raw text, no mux framing)
-		if buf, ok := s.Store.LogBuffers.Load(id); ok {
-			data := buf.([]byte)
-			if len(data) > 0 {
-				raw := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-				now := time.Now().UTC()
-				var filtered []string
-				for _, line := range raw {
-					if line == "" {
-						continue
-					}
-					if !params.FilterByTime(now) {
-						continue
-					}
-					filtered = append(filtered, line)
-				}
-				filtered = params.ApplyTail(filtered)
-				for _, line := range filtered {
-					formatted := params.FormatLine(line, now)
-					if _, err := pw.Write([]byte(formatted)); err != nil {
-						return
-					}
-				}
-			}
+		var lastTS time.Time
+		if cursor != nil {
+			lastTS = cursor.(time.Time)
 		}
 
-		// Build filter for Cloud Logging — Cloud Run Functions 2nd gen run as Cloud Run services
-		baseFilter := fmt.Sprintf(
-			`resource.type="cloud_run_revision" AND resource.labels.service_name="%s"`,
-			funcName,
-		)
+		if !lastTS.IsZero() {
+			logFilter += fmt.Sprintf(` AND timestamp>"%s"`, lastTS.UTC().Format(time.RFC3339Nano))
+		} else {
+			logFilter += params.CloudLoggingSinceFilter()
+			logFilter += params.CloudLoggingUntilFilter()
+		}
 
-		// BUG-423, BUG-424: Apply since/until to initial query
-		initialFilter := baseFilter
-		initialFilter += params.CloudLoggingSinceFilter()
-		initialFilter += params.CloudLoggingUntilFilter()
-
-		ctx, cancel := context.WithTimeout(s.ctx(), s.config.LogTimeout)
+		fetchCtx, cancel := context.WithTimeout(s.ctx(), s.config.LogTimeout)
 		defer cancel()
 
-		it := s.gcp.LogAdmin.Entries(ctx, logadmin.Filter(initialFilter))
+		it := s.gcp.LogAdmin.Entries(fetchCtx, logadmin.Filter(logFilter))
 
-		// BUG-425: Collect entries for tail support
-		type logEntry struct {
-			line string
-			ts   time.Time
-		}
-		var entries []logEntry
-		var lastTimestamp time.Time
-
+		var entries []core.CloudLogEntry
 		for {
 			entry, err := it.Next()
-			if err == iterator.Done {
-				break
-			}
 			if err != nil {
-				s.Logger.Debug().Err(err).Msg("failed to read log entry")
 				break
 			}
-
 			line := extractLogLine(entry)
 			if line == "" {
 				continue
 			}
-
-			entries = append(entries, logEntry{line: line, ts: entry.Timestamp})
-
-			if entry.Timestamp.After(lastTimestamp) {
-				lastTimestamp = entry.Timestamp
+			entries = append(entries, core.CloudLogEntry{Timestamp: entry.Timestamp, Message: line})
+			if entry.Timestamp.After(lastTS) {
+				lastTS = entry.Timestamp
 			}
 		}
 
-		// BUG-425: Apply tail
-		if params.Tail >= 0 && params.Tail < len(entries) {
-			entries = entries[len(entries)-params.Tail:]
-		}
-
-		for _, e := range entries {
-			formatted := params.FormatLine(e.line, e.ts) // BUG-427: details + timestamps
-			if _, err := pw.Write([]byte(formatted)); err != nil {
-				return
-			}
-		}
-
-		// BUG-429: Follow mode support
-		if !params.Follow {
-			return
-		}
-
-		ticker := time.NewTicker(1 * time.Second)
-		defer ticker.Stop()
-
-		for range ticker.C {
-			c, _ := s.Store.Containers.Get(id)
-			if !c.State.Running && c.State.Status != "created" {
-				s.fetchFollowLogsPipe(pw, baseFilter, lastTimestamp, params, &lastTimestamp)
-				return
-			}
-			s.fetchFollowLogsPipe(pw, baseFilter, lastTimestamp, params, &lastTimestamp)
-		}
-	}()
-
-	return pr, nil
-}
-
-// fetchFollowLogsPipe queries Cloud Logging for entries after lastTS, writing raw text to a pipe writer.
-func (s *Server) fetchFollowLogsPipe(pw *io.PipeWriter, baseFilter string, after time.Time, params core.CloudLogParams, lastTS *time.Time) {
-	logFilter := baseFilter
-	if !after.IsZero() {
-		logFilter += fmt.Sprintf(` AND timestamp>"%s"`, after.UTC().Format(time.RFC3339Nano))
-	}
-
-	ctx, cancel := context.WithTimeout(s.ctx(), s.config.LogTimeout)
-	defer cancel()
-
-	it := s.gcp.LogAdmin.Entries(ctx, logadmin.Filter(logFilter))
-
-	for {
-		entry, err := it.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			s.Logger.Debug().Err(err).Msg("failed to read log entry")
-			break
-		}
-
-		line := extractLogLine(entry)
-		if line == "" {
-			continue
-		}
-
-		formatted := params.FormatLine(line, entry.Timestamp)
-		if _, err := pw.Write([]byte(formatted)); err != nil {
-			return
-		}
-
-		if entry.Timestamp.After(*lastTS) {
-			*lastTS = entry.Timestamp
-		}
+		return entries, lastTS, nil
 	}
 }
 

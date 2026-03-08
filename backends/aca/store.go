@@ -9,9 +9,10 @@ type ACAState struct {
 	AgentToken    string // Bearer token for agent auth
 }
 
-// NetworkState tracks virtual network state.
+// NetworkState tracks cloud networking state for a Docker network.
 type NetworkState struct {
-	// Virtual — no real VNet changes
+	NSGName      string   // Network Security Group name
+	NSGRuleNames []string // NSG rule names for this network
 }
 
 // VolumeState tracks volume state.

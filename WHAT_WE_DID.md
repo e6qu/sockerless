@@ -57,8 +57,25 @@ Moved duplicated infrastructure into shared per-cloud modules (`aws-common`, `gc
 - **SignalToExitCode**: Exported from core, replaced 6 local copies
 - **MergeEnvByKey**: Replaced 3 local `mergeEnvByKey` copies with `core.MergeEnvByKey`
 - **StreamCloudLogs**: Core helper with `CloudLogFetchFunc` pattern for cloud log streaming (pipe, follow-mode, tail, Docker mux framing)
-- **StorageDriver interface**: `CreateVolume`/`DeleteVolume`/`MountSpec` with `NoOpStorageDriver` default + per-cloud stubs (EBS/EFS, GCS FUSE/PD, Azure Files/Disk)
-- **ServiceDiscoveryDriver interface**: `Register`/`Deregister`/`Resolve` with `NoOpServiceDiscoveryDriver` default + per-cloud stubs (Cloud Map, Cloud DNS, Azure DNS)
+- **StorageDriver interface**: `CreateVolume`/`DeleteVolume`/`MountSpec` with `NoOpStorageDriver` default
+- **ServiceDiscoveryDriver interface**: `Register`/`Deregister`/`Resolve` with `NoOpServiceDiscoveryDriver` default
+- **CloudExecDriver interface**: `Exec`/`Attach`/`Supported` with `NoOpCloudExecDriver` default
+- **CloudNetworkDriver interface**: `EnsureNetwork`/`DeleteNetwork`/`AttachContainer`/`DetachContainer` with `NoOpCloudNetworkDriver` default
+
+### Cloud-Native Driver Implementations
+
+Replaced all cloud common module stubs with real implementations on backend Server structs:
+
+- **ECS Exec**: `ExecuteCommand` API + SSM Session Manager WebSocket bridge (`wsBridge` adapter)
+- **ECS Networking**: VPC Security Groups (create/delete/self-referencing ingress), per-container SG association
+- **ECS Service Discovery**: AWS Cloud Map — private DNS namespace, service registration/deregistration/discovery
+- **CloudRun Networking**: Cloud DNS managed zones (create/delete/record cleanup)
+- **CloudRun Service Discovery**: Cloud DNS A records (register/deregister/resolve by FQDN)
+- **ACA Exec**: Container Apps exec API via WebSocket (`wsBridge` adapter)
+- **ACA Networking**: NSG name/rule tracking (state management for Azure Network SDK integration)
+- **ACA Service Discovery**: In-process DNS registry (hostname→IP per network, with container cleanup)
+
+All cloud network/service-discovery methods wired into `NetworkCreate`, `NetworkRemove`, `NetworkConnect`, `NetworkDisconnect`, `ContainerStart`, and `ContainerRemove` handlers. ~878 lines of logging boilerplate eliminated by `StreamCloudLogs`. ~12 dead stub files removed from common modules.
 
 ## Project Stats
 

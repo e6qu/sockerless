@@ -20,6 +20,7 @@ type Server struct {
 	ACA          *core.StateStore[ACAState]
 	NetworkState *core.StateStore[NetworkState]
 	VolumeState  *core.StateStore[VolumeState]
+	svcRegistry  *serviceRegistry
 }
 
 // NewServer creates a new ACA backend server.
@@ -30,6 +31,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		ACA:          core.NewStateStore[ACAState](),
 		NetworkState: core.NewStateStore[NetworkState](),
 		VolumeState:  core.NewStateStore[VolumeState](),
+		svcRegistry:  newServiceRegistry(),
 	}
 	s.ipCounter.Store(2)
 

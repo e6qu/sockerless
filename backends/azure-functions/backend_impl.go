@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/monitor/azquery"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v4"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
@@ -532,225 +531,24 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 // ContainerLogs streams container logs from Azure Monitor.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
-	id, ok := s.Store.ResolveContainerID(ref)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: ref}
-	}
-
-	c, _ := s.Store.Containers.Get(id)
-	if c.State.Status == "created" {
-		return nil, &api.InvalidParameterError{
-			Message: "can not get logs from container which is dead or marked for removal",
+	var functionAppName string
+	if id, ok := s.Store.ResolveContainerID(ref); ok {
+		azfState, _ := s.AZF.Get(id)
+		functionAppName = azfState.FunctionAppName
+		if functionAppName == "" {
+			functionAppName = "skls-" + id[:12]
 		}
 	}
 
-	params := core.CloudLogParamsFromOpts(opts, c.Config.Labels)
-
-	azfState, _ := s.AZF.Get(id)
-	functionAppName := azfState.FunctionAppName
-	if functionAppName == "" {
-		functionAppName = "skls-" + id[:12]
-	}
-
-	// Early return if stdout suppressed
-	if !params.ShouldWrite() {
-		return io.NopCloser(strings.NewReader("")), nil
-	}
-
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer func() { _ = pw.Close() }()
-
-		// BUG-435: Filter LogBuffers output through params (raw text, no mux framing)
-		if buf, ok := s.Store.LogBuffers.Load(id); ok {
-			data := buf.([]byte)
-			if len(data) > 0 {
-				raw := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-				now := time.Now().UTC()
-				var filtered []string
-				for _, line := range raw {
-					if line == "" {
-						continue
-					}
-					if !params.FilterByTime(now) {
-						continue
-					}
-					filtered = append(filtered, line)
-				}
-				filtered = params.ApplyTail(filtered)
-				for _, line := range filtered {
-					formatted := params.FormatLine(line, now)
-					if _, err := pw.Write([]byte(formatted)); err != nil {
-						return
-					}
-				}
-			}
-		}
-
-		if s.config.LogAnalyticsWorkspace == "" {
-			return
-		}
-
-		// Build KQL query for Azure Monitor -- query AppTraces for the function app
-		query := fmt.Sprintf(
-			`AppTraces | where AppRoleName == "%s"`,
-			functionAppName,
-		)
-		// BUG-423, BUG-424: Apply since/until to initial query
-		query += params.KQLSinceFilter()
-		query += params.KQLUntilFilter()
-		query += ` | order by TimeGenerated asc | project TimeGenerated, Message`
-
-		resp, err := s.azure.Logs.QueryWorkspace(s.ctx(), s.config.LogAnalyticsWorkspace, azquery.Body{
-			Query: &query,
-		}, nil)
-		if err != nil {
-			s.Logger.Debug().Err(err).Msg("failed to query logs")
-			return
-		}
-
-		type logEntry struct {
-			line string
-			ts   time.Time
-		}
-		var entries []logEntry
-
-		for _, table := range resp.Tables {
-			// Find column indices
-			timeIdx := -1
-			msgIdx := -1
-			for i, col := range table.Columns {
-				if col.Name != nil {
-					switch *col.Name {
-					case "TimeGenerated":
-						timeIdx = i
-					case "Message":
-						msgIdx = i
-					}
-				}
-			}
-
-			for _, row := range table.Rows {
-				if msgIdx < 0 || msgIdx >= len(row) {
-					continue
-				}
-
-				line, ok := row[msgIdx].(string)
-				if !ok || line == "" {
-					continue
-				}
-
-				var ts time.Time
-				if timeIdx >= 0 && timeIdx < len(row) {
-					if tsStr, ok := row[timeIdx].(string); ok {
-						ts, _ = time.Parse(time.RFC3339Nano, tsStr)
-					}
-				}
-
-				entries = append(entries, logEntry{line: line, ts: ts})
-			}
-		}
-
-		// BUG-425: Apply tail
-		if params.Tail >= 0 && params.Tail < len(entries) {
-			entries = entries[len(entries)-params.Tail:]
-		}
-
-		for _, e := range entries {
-			formatted := params.FormatLine(e.line, e.ts)
-			if _, err := pw.Write([]byte(formatted)); err != nil {
-				return
-			}
-		}
-
-		// BUG-430: Follow mode support
-		if !params.Follow {
-			return
-		}
-
-		// Track last timestamp for follow dedup
-		var lastTimestamp time.Time
-		if len(entries) > 0 {
-			lastTimestamp = entries[len(entries)-1].ts
-		}
-
-		ticker := time.NewTicker(1 * time.Second)
-		defer ticker.Stop()
-
-		for range ticker.C {
-			c, _ := s.Store.Containers.Get(id)
-			if !c.State.Running && c.State.Status != "created" {
-				s.fetchFollowLogsPipe(pw, functionAppName, lastTimestamp, params, &lastTimestamp)
-				return
-			}
-			s.fetchFollowLogsPipe(pw, functionAppName, lastTimestamp, params, &lastTimestamp)
-		}
-	}()
-
-	return pr, nil
-}
-
-// fetchFollowLogsPipe queries Azure Monitor for entries after lastTS and writes to a pipe.
-func (s *Server) fetchFollowLogsPipe(pw *io.PipeWriter, functionAppName string, after time.Time, params core.CloudLogParams, lastTS *time.Time) {
-	query := fmt.Sprintf(
-		`AppTraces | where AppRoleName == "%s"`,
-		functionAppName,
+	fetch := s.azureLogsFetch(
+		`AppTraces`,
+		fmt.Sprintf(`AppRoleName == "%s"`, functionAppName),
+		"Message",
 	)
-	if !after.IsZero() {
-		query += fmt.Sprintf(` | where TimeGenerated > datetime(%s)`, after.UTC().Format(time.RFC3339Nano))
-	}
-	query += ` | order by TimeGenerated asc | project TimeGenerated, Message`
 
-	resp, err := s.azure.Logs.QueryWorkspace(s.ctx(), s.config.LogAnalyticsWorkspace, azquery.Body{
-		Query: &query,
-	}, nil)
-	if err != nil {
-		s.Logger.Debug().Err(err).Msg("failed to query follow logs")
-		return
-	}
-
-	for _, table := range resp.Tables {
-		timeIdx := -1
-		msgIdx := -1
-		for i, col := range table.Columns {
-			if col.Name != nil {
-				switch *col.Name {
-				case "TimeGenerated":
-					timeIdx = i
-				case "Message":
-					msgIdx = i
-				}
-			}
-		}
-
-		for _, row := range table.Rows {
-			if msgIdx < 0 || msgIdx >= len(row) {
-				continue
-			}
-
-			line, ok := row[msgIdx].(string)
-			if !ok || line == "" {
-				continue
-			}
-
-			var ts time.Time
-			if timeIdx >= 0 && timeIdx < len(row) {
-				if tsStr, ok := row[timeIdx].(string); ok {
-					ts, _ = time.Parse(time.RFC3339Nano, tsStr)
-				}
-			}
-
-			formatted := params.FormatLine(line, ts)
-			if _, err := pw.Write([]byte(formatted)); err != nil {
-				return
-			}
-
-			if !ts.IsZero() && ts.After(*lastTS) {
-				*lastTS = ts
-			}
-		}
-	}
+	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{
+		CheckLogBuffers: true,
+	})
 }
 
 // ContainerRestart stops and then starts a container.

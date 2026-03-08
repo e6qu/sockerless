@@ -644,6 +644,13 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		s.Store.Pods.RemoveContainer(pod.ID, id)
 	}
 
+	// Deregister from service discovery
+	for _, ep := range c.NetworkSettings.Networks {
+		if ep != nil && ep.NetworkID != "" {
+			s.cloudServiceDeregister(id, ep.NetworkID)
+		}
+	}
+
 	// Clean up network associations
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID != "" {
@@ -674,61 +681,24 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 // ContainerLogs streams container logs from Azure Monitor Log Analytics.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
-	id, ok := s.Store.ResolveContainerID(ref)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: ref}
-	}
-
-	c, _ := s.Store.Containers.Get(id)
-	if c.State.Status == "created" {
-		return nil, &api.InvalidParameterError{
-			Message: "can not get logs from container which is dead or marked for removal",
+	var jobName string
+	if id, ok := s.Store.ResolveContainerID(ref); ok {
+		acaState, _ := s.ACA.Get(id)
+		jobName = acaState.JobName
+		if jobName == "" {
+			jobName = buildJobName(id)
 		}
 	}
 
-	params := core.CloudLogParamsFromOpts(opts, c.Config.Labels)
+	fetch := s.azureLogsFetch(
+		`ContainerAppConsoleLogs_CL`,
+		fmt.Sprintf(`ContainerGroupName_s == "%s"`, jobName),
+		"Log_s",
+	)
 
-	acaState, _ := s.ACA.Get(id)
-	jobName := acaState.JobName
-	if jobName == "" {
-		jobName = buildJobName(id)
-	}
-
-	// Early return if stdout suppressed
-	if !params.ShouldWrite() {
-		return io.NopCloser(strings.NewReader("")), nil
-	}
-
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer func() { _ = pw.Close() }()
-
-		// Track latest timestamp to avoid duplicate entries
-		var lastTimestamp time.Time
-
-		// Fetch initial logs with since/until filtering
-		s.fetchAndWriteLogsPipe(pw, jobName, lastTimestamp, params, &lastTimestamp, true)
-
-		if !params.Follow {
-			return
-		}
-
-		// Follow mode: poll for new events (1s interval)
-		ticker := time.NewTicker(1 * time.Second)
-		defer ticker.Stop()
-
-		for range ticker.C {
-			c, _ := s.Store.Containers.Get(id)
-			if !c.State.Running && c.State.Status != "created" {
-				s.fetchAndWriteLogsPipe(pw, jobName, lastTimestamp, params, &lastTimestamp, false)
-				return
-			}
-			s.fetchAndWriteLogsPipe(pw, jobName, lastTimestamp, params, &lastTimestamp, false)
-		}
-	}()
-
-	return pr, nil
+	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{
+		CheckAutoAgent: true,
+	})
 }
 
 // ContainerRestart stops and then starts a container.

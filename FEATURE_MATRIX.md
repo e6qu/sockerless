@@ -1,33 +1,34 @@
 # Docker API Compatibility Matrix
 
-This document maps Docker Engine API endpoints to their implementation status across all Sockerless backends. The frontend (`frontends/docker`) translates standard Docker REST API calls (e.g., `POST /containers/create`) into internal backend API calls (`POST /internal/v1/containers`).
+This document maps Docker/Podman CLI commands to their REST API endpoints and the cloud-specific services each Sockerless backend uses to implement them.
 
 ## Backends
 
-| Short Name | Package | Description |
-|------------|---------|-------------|
-| **Core** | `backends/core` | In-memory simulator (shared by all BaseServer backends) |
-| **Docker** | `backends/docker` | Real Docker Engine passthrough |
-| **ECS** | `backends/ecs` | AWS ECS Fargate |
-| **CloudRun** | `backends/cloudrun` | Google Cloud Run Jobs |
-| **ACA** | `backends/aca` | Azure Container Apps Jobs |
-| **Lambda** | `backends/lambda` | AWS Lambda (FaaS) |
-| **GCF** | `backends/cloudrun-functions` | Google Cloud Run Functions (FaaS) |
-| **AZF** | `backends/azure-functions` | Azure Functions (FaaS) |
+| Short Name | Package | Cloud Provider | Container Service |
+|------------|---------|----------------|-------------------|
+| **Core** | `backends/core` | Local | In-memory driver chain (agent/process/synthetic) |
+| **Docker** | `backends/docker` | Local | Real Docker Engine passthrough |
+| **ECS** | `backends/ecs` | AWS | ECS Fargate tasks |
+| **CloudRun** | `backends/cloudrun` | GCP | Cloud Run Jobs |
+| **ACA** | `backends/aca` | Azure | Container Apps Jobs |
+| **Lambda** | `backends/lambda` | AWS | Lambda functions (FaaS) |
+| **GCF** | `backends/cloudrun-functions` | GCP | Cloud Run Functions 2nd gen (FaaS) |
+| **AZF** | `backends/azure-functions` | Azure | Azure Functions (FaaS) |
 
 ## Status Legend
 
 | Symbol | Meaning |
 |--------|---------|
 | ✅ | Fully implemented |
-| ⚠️ | Partial implementation (see notes) |
-| ❌ | Returns `NotImplementedError` or not registered |
-| ➖ | Not applicable for this backend type |
+| ⚠️ | Partial (see notes) |
+| ❌ | Not implemented / not applicable |
 
-## Containers
+---
 
-| Command | API Route | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF|
-|---------|-----------|------|--------|-----|----------|-----|--------|-----|-----|
+## Container Lifecycle
+
+| CLI Command | REST API | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF |
+|-------------|----------|------|--------|-----|----------|-----|--------|-----|-----|
 | `docker create` | `POST /containers/create` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker start` | `POST /containers/{id}/start` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker stop` | `POST /containers/{id}/stop` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -36,50 +37,101 @@ This document maps Docker Engine API endpoints to their implementation status ac
 | `docker rm` | `DELETE /containers/{id}` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker ps` | `GET /containers/json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker inspect` | `GET /containers/{id}/json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `docker logs` | `GET /containers/{id}/logs` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ |
 | `docker wait` | `POST /containers/{id}/wait` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `docker attach` | `POST /containers/{id}/attach` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `docker rename` | `POST /containers/{id}/rename` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker top` | `GET /containers/{id}/top` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker stats` | `GET /containers/{id}/stats` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `docker rename` | `POST /containers/{id}/rename` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `docker pause` | `POST /containers/{id}/pause` | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| `docker unpause` | `POST /containers/{id}/unpause` | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| `docker container prune` | `POST /containers/prune` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker update` | `POST /containers/{id}/update` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker diff` | `GET /containers/{id}/changes` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker export` | `GET /containers/{id}/export` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker resize` | `POST /containers/{id}/resize` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `docker pause` | `POST /containers/{id}/pause` | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| `docker unpause` | `POST /containers/{id}/unpause` | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| `docker container prune` | `POST /containers/prune` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-### Container Logs Notes
+### Cloud Service Mapping — Container Lifecycle
 
-- **FaaS backends (Lambda, GCF, AZF)**: Log follow mode (`docker logs -f`) is not supported. Only single-snapshot fetch is available. Logs are retrieved from the respective cloud logging service (CloudWatch, Cloud Logging, Azure Monitor).
+| Operation | ECS (AWS) | CloudRun (GCP) | ACA (Azure) | Lambda (AWS) | GCF (GCP) | AZF (Azure) |
+|-----------|-----------|----------------|-------------|--------------|-----------|-------------|
+| create | Register TaskDef | Store config | Store config | Store config | Store config | Store config |
+| start | `ecs:RunTask` | `run.jobs.executions.run` | `containerApps.jobs.start` | `lambda:Invoke` | `functions.callFunction` | `HTTP POST function` |
+| stop | `ecs:StopTask` | `run.jobs.executions.cancel` | `containerApps.jobs.stopExecution` | N/A (stateless) | N/A | N/A |
+| kill | `ecs:StopTask` (force) | `run.jobs.executions.cancel` | `containerApps.jobs.stopExecution` | N/A | N/A | N/A |
+| remove | `ecs:DeregisterTaskDef` | `run.jobs.delete` | `containerApps.jobs.delete` | `lambda:DeleteFunction` | `functions.delete` | `webApps.Delete` |
+
+---
+
+## Logs
+
+| CLI Command | REST API | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF |
+|-------------|----------|------|--------|-----|----------|-----|--------|-----|-----|
+| `docker logs` | `GET /containers/{id}/logs` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| `docker logs -f` | (follow mode) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `docker logs --tail N` | (tail filter) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `docker logs --since/--until` | (time filter) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+All cloud backends use `core.StreamCloudLogs` with a `CloudLogFetchFunc` closure. FaaS backends check in-memory `LogBuffers` first (captured invocation output), then fall back to cloud logging.
+
+### Cloud Service Mapping — Logs
+
+| Backend | Logging Service | Query Method | Follow Mode |
+|---------|----------------|--------------|-------------|
+| Core | In-memory log buffers | Direct byte read | Log subscriber channel |
+| Docker | Docker Engine | Docker SDK `ContainerLogs` | Native follow |
+| ECS | CloudWatch Logs | `GetLogEvents` + NextToken cursor | 1s poll with NextToken |
+| Lambda | CloudWatch Logs | `DescribeLogStreams` + `GetLogEvents` | 1s poll with NextToken |
+| CloudRun | Cloud Logging | `logadmin.Entries()` with filter | 1s poll with timestamp cursor |
+| GCF | Cloud Logging | `logadmin.Entries()` with filter | 1s poll with timestamp cursor |
+| ACA | Azure Monitor | KQL `ContainerAppConsoleLogs_CL` | 1s poll with timestamp cursor |
+| AZF | Azure Monitor | KQL `AppTraces` | 1s poll with timestamp cursor |
+
+---
+
+## Exec and Attach
+
+| CLI Command | REST API | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF |
+|-------------|----------|------|--------|-----|----------|-----|--------|-----|-----|
+| `docker exec` (create) | `POST /containers/{id}/exec` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `docker exec` (start) | `POST /exec/{id}/start` | ✅ | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ | ✅ |
+| `docker exec` (inspect) | `GET /exec/{id}/json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `docker exec` (resize) | `POST /exec/{id}/resize` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `docker attach` | `POST /containers/{id}/attach` | ✅ | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ | ✅ |
+
+Exec/attach has two paths per cloud backend:
+1. **Agent path**: If an agent is connected to the container, exec proxies through the agent driver chain (works for all backends).
+2. **Cloud-native path**: If no agent is connected, uses the cloud provider's native exec API (where available).
+
+### Cloud Service Mapping — Exec/Attach
+
+| Backend | Agent Path | Cloud-Native Path | Cloud API |
+|---------|------------|-------------------|-----------|
+| Core | AgentExecDriver (forward/reverse agent) | N/A | Local process |
+| Docker | N/A | Docker SDK | `ContainerExecCreate` + `ContainerExecAttach` |
+| ECS | Agent driver chain | ECS ExecuteCommand | `ecs:ExecuteCommand` → SSM WebSocket session |
+| CloudRun | Agent driver chain | Not supported | Cloud Run Jobs have no exec API |
+| ACA | Agent driver chain | Container Apps exec | REST `POST .../exec` → WebSocket session |
+| Lambda | Reverse agent | N/A | FaaS — no persistent process |
+| GCF | Reverse agent | N/A | FaaS — no persistent process |
+| AZF | Reverse agent | N/A | FaaS — no persistent process |
+
+---
 
 ## Container Archive (Copy Files)
 
-| Command | API Route | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF|
-|---------|-----------|------|--------|-----|----------|-----|--------|-----|-----|
-| `docker cp` (to container) | `PUT /containers/{id}/archive` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| CLI Command | REST API | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF |
+|-------------|----------|------|--------|-----|----------|-----|--------|-----|-----|
+| `docker cp` (to) | `PUT /containers/{id}/archive` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker cp` (stat) | `HEAD /containers/{id}/archive` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `docker cp` (from container) | `GET /containers/{id}/archive` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `docker cp` (from) | `GET /containers/{id}/archive` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-## Exec
+All backends use the `FilesystemDriver` (agent-based staging directories for cloud backends).
 
-| Command | API Route | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF|
-|---------|-----------|------|--------|-----|----------|-----|--------|-----|-----|
-| `docker exec` (create) | `POST /containers/{id}/exec` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `docker exec` (start) | `POST /exec/{id}/start` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `docker exec` (inspect) | `GET /exec/{id}/json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `docker exec` (resize) | `POST /exec/{id}/resize` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-
-### Exec Notes
-
-- **Cloud backends (ECS, CloudRun, ACA)**: Exec uses the agent driver chain. If an agent is connected to the container, exec runs on the real container. Otherwise, operations return errors.
-- **FaaS backends (Lambda, GCF, AZF)**: Exec uses the reverse agent (agent inside the function dials back to the backend).
+---
 
 ## Images
 
-| Command | API Route | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF|
-|---------|-----------|------|--------|-----|----------|-----|--------|-----|-----|
+| CLI Command | REST API | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF |
+|-------------|----------|------|--------|-----|----------|-----|--------|-----|-----|
 | `docker pull` | `POST /images/create` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker images` | `GET /images/json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker inspect` (image) | `GET /images/{name}/json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -93,29 +145,25 @@ This document maps Docker Engine API endpoints to their implementation status ac
 | `docker import` | `POST /images/create?fromSrc=` | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | `docker image prune` | `POST /images/prune` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-### Image Notes
+### Cloud Service Mapping — Images
 
-- **Cloud and FaaS backends**: `docker pull` registers the image reference in the in-memory store rather than downloading layers. The cloud platform pulls the image at container start time.
-- **Image load** (`docker load`): Returns `NotImplementedError` on all cloud/FaaS backends. These backends use registry-based images only.
+| Backend | Registry | Auth | Push Target |
+|---------|----------|------|-------------|
+| Core | In-memory store | N/A | In-memory |
+| Docker | Docker Hub / any | Docker SDK | Docker SDK `ImagePush` |
+| ECS | ECR | `ecr:GetAuthorizationToken` | ECR repository |
+| Lambda | ECR | `ecr:GetAuthorizationToken` | ECR repository |
+| CloudRun | Artifact Registry | `gcloud auth` token | Artifact Registry |
+| GCF | Artifact Registry | `gcloud auth` token | Artifact Registry |
+| ACA | ACR | `acr.ListCredentials` | Azure Container Registry |
+| AZF | ACR | `acr.ListCredentials` | Azure Container Registry |
 
-## Build
-
-| Command | API Route | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF|
-|---------|-----------|------|--------|-----|----------|-----|--------|-----|-----|
-| `docker build` | `POST /build` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `docker builder prune` | `POST /build/prune` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `docker commit` | `POST /commit` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-
-### Build Notes
-
-- **Core**: Build processes the Dockerfile and creates an image record in the store.
-- **Docker**: Proxies to the real Docker Engine build API.
-- **Cloud/FaaS backends**: Build is handled by the inherited core implementation (in-memory Dockerfile processing). The resulting image is stored locally; the actual cloud build would need to be pushed to a registry.
+---
 
 ## Networks
 
-| Command | API Route | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF|
-|---------|-----------|------|--------|-----|----------|-----|--------|-----|-----|
+| CLI Command | REST API | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF |
+|-------------|----------|------|--------|-----|----------|-----|--------|-----|-----|
 | `docker network create` | `POST /networks/create` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker network ls` | `GET /networks` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker network inspect` | `GET /networks/{id}` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -124,31 +172,85 @@ This document maps Docker Engine API endpoints to their implementation status ac
 | `docker network rm` | `DELETE /networks/{id}` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker network prune` | `POST /networks/prune` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-### Network Notes
+### Cloud Service Mapping — Networks
 
-- **ECS/CloudRun/ACA**: Networks are tracked in both the core store and a cloud-specific `NetworkState` store. The actual cloud networking (VPC, subnets) is configured at backend setup time.
-- **FaaS backends (Lambda, GCF, AZF)**: Networks are in-memory only (core defaults). Docker networking concepts do not map to FaaS execution.
-- **Core**: Network driver with IP allocation (IPAM). On Linux, optional platform network driver provides real network namespace isolation.
+| Backend | Network Isolation | Service Used | What Happens |
+|---------|-------------------|--------------|--------------|
+| Core | SyntheticNetworkDriver (IPAM) | In-memory IP allocation | Assigns IPs, tracks memberships |
+| Core (Linux) | LinuxNetworkDriver | Network namespaces + veth pairs | Real L2 isolation |
+| Docker | Docker Engine | Docker SDK `NetworkCreate/Connect` | Real Docker networking |
+| ECS | VPC Security Groups | `ec2:CreateSecurityGroup`, `ec2:AuthorizeSecurityGroupIngress` | Per-network SG, self-referencing ingress rule |
+| CloudRun | Cloud DNS private zones | `dns.managedZones.create`, `dns.rrsets.create` | DNS-based name resolution per network |
+| ACA | Environment networking | Container Apps Environment shared VNet | Internal DNS + NSG rule tracking |
+| Lambda | N/A | In-memory only | FaaS — no network isolation |
+| GCF | N/A | In-memory only | FaaS — no network isolation |
+| AZF | N/A | In-memory only | FaaS — no network isolation |
 
-## Volumes
+---
 
-| Command | API Route | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF|
-|---------|-----------|------|--------|-----|----------|-----|--------|-----|-----|
+## Service Discovery
+
+When containers connect to a Docker network, service discovery enables them to resolve each other by hostname. Each cloud maps this to its native DNS/discovery service.
+
+| Backend | Service | Registration | Resolution |
+|---------|---------|-------------|------------|
+| Core | In-memory | SyntheticNetworkDriver tracks endpoints | Direct IP lookup |
+| Docker | Docker DNS | Docker Engine internal DNS | Container name resolution |
+| ECS | AWS Cloud Map | `servicediscovery:RegisterInstance` | `servicediscovery:DiscoverInstances` |
+| CloudRun | Cloud DNS | `dns.rrsets.create` (A record) | `dns.rrsets.list` lookup |
+| ACA | Azure Private DNS | Environment internal DNS + registry | Hostname-to-IP mapping |
+| Lambda | N/A | Not applicable | FaaS — no service discovery |
+| GCF | N/A | Not applicable | FaaS — no service discovery |
+| AZF | N/A | Not applicable | FaaS — no service discovery |
+
+---
+
+## Storage / Volumes
+
+| CLI Command | REST API | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF |
+|-------------|----------|------|--------|-----|----------|-----|--------|-----|-----|
 | `docker volume create` | `POST /volumes/create` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker volume ls` | `GET /volumes` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker volume inspect` | `GET /volumes/{name}` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker volume rm` | `DELETE /volumes/{name}` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker volume prune` | `POST /volumes/prune` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-### Volume Notes
+### Cloud Service Mapping — Storage
 
-- **ECS/CloudRun/ACA**: Volume remove and prune are overridden to also clean up cloud-specific `VolumeState`.
-- **FaaS backends (Lambda, GCF, AZF)**: Volumes are in-memory only (core defaults). Bind mounts and persistent volumes are not supported by FaaS execution models.
+| Backend | Volume Type | Cloud Service | Mount Type |
+|---------|------------|---------------|------------|
+| Core | Local tmpdir | `os.MkdirTemp` | Bind mount |
+| Docker | Docker volumes | Docker SDK `VolumeCreate` | Docker volume |
+| ECS | EFS | `efs:CreateFileSystem`, `efs:CreateAccessPoint` | EFS volume in task def |
+| ECS | EBS | `ec2:CreateVolume` | EBS volume attachment |
+| CloudRun | GCS FUSE | `storage.BucketHandle` | GCS FUSE mount |
+| CloudRun | Persistent Disk | Compute Engine PD | Block storage |
+| ACA | Azure Files | `storage.FileShares` | Azure Files mount |
+| ACA | Azure Disk | Managed Disk | Block storage |
+| Lambda | N/A | Ephemeral /tmp only | No persistent volumes |
+| GCF | N/A | Ephemeral /tmp only | No persistent volumes |
+| AZF | N/A | Ephemeral /tmp only | No persistent volumes |
+
+---
+
+## Build
+
+| CLI Command | REST API | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF |
+|-------------|----------|------|--------|-----|----------|-----|--------|-----|-----|
+| `docker build` | `POST /build` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `docker builder prune` | `POST /build/prune` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `docker commit` | `POST /commit` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+- Core: In-memory Dockerfile processing, creates image record in store
+- Docker: Proxies to Docker Engine build API
+- Cloud/FaaS: Uses inherited core build (in-memory), result stored locally
+
+---
 
 ## System
 
-| Command | API Route | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF|
-|---------|-----------|------|--------|-----|----------|-----|--------|-----|-----|
+| CLI Command | REST API | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF |
+|-------------|----------|------|--------|-----|----------|-----|--------|-----|-----|
 | `docker info` | `GET /info` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker version` | `GET /version` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker ping` | `GET/HEAD/POST /_ping` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -156,62 +258,70 @@ This document maps Docker Engine API endpoints to their implementation status ac
 | `docker system df` | `GET /system/df` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker login` | `POST /auth` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-### System Notes
+---
 
-- `GET /version` and `GET /_ping` are handled by the frontend, not proxied to backends.
-- `GET /info` is proxied to the backend's `/internal/v1/info` endpoint.
-- `GET /events` uses the core `EventBus` for all backends. Cloud backends emit events for container lifecycle transitions.
+## Pod API (Podman-compatible)
+
+| CLI Command | REST API | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF |
+|-------------|----------|------|--------|-----|----------|-----|--------|-----|-----|
+| `podman pod create` | `POST /libpod/pods/create` | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
+| `podman pod list` | `GET /libpod/pods/json` | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `podman pod inspect` | `GET /libpod/pods/{name}/json` | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `podman pod start` | `POST /libpod/pods/{name}/start` | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `podman pod stop` | `POST /libpod/pods/{name}/stop` | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `podman pod kill` | `POST /libpod/pods/{name}/kill` | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `podman pod rm` | `DELETE /libpod/pods/{name}` | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+### Cloud Service Mapping — Pods
+
+| Backend | Multi-Container Pod | How It Works |
+|---------|-------------------|--------------|
+| ECS | ✅ | Multiple containers in one ECS task definition |
+| CloudRun | ✅ | Multiple containers in one Cloud Run Job |
+| ACA | ✅ | Multiple containers in one Container Apps Job |
+| Lambda/GCF/AZF | ❌ | FaaS backends reject multi-container pods |
+
+---
 
 ## Unsupported Docker API Endpoints
 
-The following Docker API categories return `501 Not Implemented` from the frontend:
+| Category | Endpoints | Reason |
+|----------|-----------|--------|
+| Swarm | `POST /swarm/*`, `GET /swarm` | Sockerless uses cloud orchestration, not Swarm |
+| Nodes | `GET /nodes` | No node concept in serverless |
+| Services | `GET /services` | Use pods or cloud-native services |
+| Tasks | `GET /tasks` | Swarm tasks not applicable |
+| Secrets | `GET /secrets` | Use cloud secrets managers |
+| Configs | `GET /configs` | Use cloud configuration services |
+| Plugins | `GET /plugins` | Driver interfaces replace plugins |
+| Session | `POST /session` | BuildKit sessions not implemented |
+| Distribution | `GET /distribution/*` | Use cloud registry APIs |
 
-| Category | Endpoints |
-|----------|-----------|
-| Swarm | `POST /swarm/*`, `GET /swarm` |
-| Nodes | `GET /nodes` |
-| Services | `GET /services` |
-| Tasks | `GET /tasks` |
-| Secrets | `GET /secrets` |
-| Configs | `GET /configs` |
-| Plugins | `GET /plugins` |
-| Session | `POST /session` |
-| Distribution | `GET /distribution/*` |
+---
 
-## Sockerless Extensions (Non-Docker API)
+## Driver Architecture
 
-These endpoints are Sockerless-specific and not part of the standard Docker API.
+Sockerless uses a driver-based architecture where each Docker API operation dispatches through pluggable interfaces. Cloud backends override the default drivers with cloud-native implementations.
 
-### Pod API (Libpod-compatible)
+| Driver | Interface | Core Default | Purpose |
+|--------|-----------|-------------|---------|
+| ExecDriver | `core.ExecDriver` | AgentExecDriver | Run commands in containers |
+| StreamDriver | `core.StreamDriver` | AgentStreamDriver | Attach/logs streaming |
+| FilesystemDriver | `core.FilesystemDriver` | AgentFilesystemDriver | Archive ops (docker cp) |
+| NetworkDriver | `api.NetworkDriver` | SyntheticNetworkDriver | Docker network operations |
+| CloudExecDriver | `core.CloudExecDriver` | NoOpCloudExecDriver | Cloud-native exec (no agent) |
+| CloudNetworkDriver | `core.CloudNetworkDriver` | NoOpCloudNetworkDriver | Cloud VPC/SG/firewall mgmt |
+| ServiceDiscoveryDriver | `core.ServiceDiscoveryDriver` | NoOpServiceDiscoveryDriver | DNS-based service resolution |
+| StorageDriver | `core.StorageDriver` | NoOpStorageDriver | Cloud-native volume mounts |
+| LogDriver | `api.LogDriver` | StreamCloudLogs + CloudLogFetchFunc | Cloud log streaming |
 
-| Operation | API Route | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF|
-|-----------|-----------|------|--------|-----|----------|-----|--------|-----|-----|
-| Pod create | `POST /libpod/pods/create` | ✅ | ➖ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Pod list | `GET /libpod/pods/json` | ✅ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Pod inspect | `GET /libpod/pods/{name}/json` | ✅ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Pod exists | `GET /libpod/pods/{name}/exists` | ✅ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Pod start | `POST /libpod/pods/{name}/start` | ✅ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Pod stop | `POST /libpod/pods/{name}/stop` | ✅ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Pod kill | `POST /libpod/pods/{name}/kill` | ✅ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Pod remove | `DELETE /libpod/pods/{name}` | ✅ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+### Per-Cloud Driver Implementations
 
-### Pod Notes
-
-- **Docker backend**: Does not implement the pod API (uses real Docker which has no pod concept).
-- **FaaS backends**: Pod create rejects multi-container pods with `NotImplementedError`. Single-container "pods" work normally.
-
-### Management API
-
-| Operation | API Route | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF|
-|-----------|-----------|------|--------|-----|----------|-----|--------|-----|-----|
-| Health check | `GET /internal/v1/healthz` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Backend status | `GET /internal/v1/status` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Container summary | `GET /internal/v1/containers/summary` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Metrics | `GET /internal/v1/metrics` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Cloud check | `GET /internal/v1/check` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Provider info | `GET /internal/v1/provider` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Config reload | `POST /internal/v1/reload` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Resource list | `GET /internal/v1/resources` | ✅ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Orphaned resources | `GET /internal/v1/resources/orphaned` | ✅ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Resource cleanup | `POST /internal/v1/resources/cleanup` | ✅ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Agent connect | `GET /internal/v1/agent/connect` | ✅ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Driver | AWS (ECS) | GCP (CloudRun) | Azure (ACA) |
+|--------|-----------|----------------|-------------|
+| CloudExec | ECS ExecuteCommand + SSM | Not supported (Jobs) | Container Apps exec API |
+| CloudNetwork | EC2 Security Groups | Cloud DNS managed zones | Environment networking + NSGs |
+| ServiceDiscovery | Cloud Map | Cloud DNS A records | Private DNS + internal registry |
+| Storage | EFS + EBS | GCS FUSE + Persistent Disk | Azure Files + Azure Disk |
+| Logging | CloudWatch Logs | Cloud Logging (logadmin) | Azure Monitor (KQL) |
+| ImageRegistry | ECR | Artifact Registry | ACR |
