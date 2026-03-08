@@ -7,42 +7,24 @@ import (
 )
 
 func cmdMetrics() {
-	frontendAddr, backendAddr := activeAddrs()
-	if frontendAddr == "" && backendAddr == "" {
-		fmt.Fprintln(os.Stderr, "error: no server addresses configured in active context")
+	addr := activeAddr()
+	if addr == "" {
+		fmt.Fprintln(os.Stderr, "error: no server address configured in active context")
 		os.Exit(1)
 	}
 
-	if frontendAddr != "" {
-		data, err := mgmtGet(frontendAddr, "/metrics")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Frontend metrics unavailable: %v\n", err)
-		} else {
-			var m map[string]any
-			if err := json.Unmarshal(data, &m); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: could not parse frontend metrics: %v\n", err)
-			} else {
-				fmt.Println("=== Frontend Metrics ===")
-				printMetricsMap(m)
-				fmt.Println()
-			}
-		}
+	data, err := mgmtGet(addr, "/internal/v1/metrics")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Metrics unavailable: %v\n", err)
+		os.Exit(1)
 	}
 
-	if backendAddr != "" {
-		data, err := mgmtGet(backendAddr, "/internal/v1/metrics")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Backend metrics unavailable: %v\n", err)
-		} else {
-			var m map[string]any
-			if err := json.Unmarshal(data, &m); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: could not parse backend metrics: %v\n", err)
-			} else {
-				fmt.Println("=== Backend Metrics ===")
-				printMetricsMap(m)
-			}
-		}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not parse metrics: %v\n", err)
+		os.Exit(1)
 	}
+	printMetricsMap(m)
 }
 
 func printMetricsMap(m map[string]any) {

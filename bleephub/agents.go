@@ -44,7 +44,7 @@ func (s *Server) handleListPools(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
-	// Parse as generic JSON since the runner sends fields not in our Agent struct
+	// Parse as generic JSON (runner sends extra fields not in our Agent struct)
 	var raw map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		s.logger.Error().Err(err).Msg("failed to parse agent registration")
@@ -52,7 +52,6 @@ func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build agent from raw data
 	var agent Agent
 	if name, ok := raw["name"].(string); ok {
 		agent.Name = name
@@ -63,7 +62,6 @@ func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 	if desc, ok := raw["osDescription"].(string); ok {
 		agent.OSDescription = desc
 	}
-	// Parse labels
 	if labelsRaw, ok := raw["labels"].([]interface{}); ok {
 		for _, l := range labelsRaw {
 			if lm, ok := l.(map[string]interface{}); ok {
@@ -99,7 +97,6 @@ func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 	agent.Status = "online"
 	agent.CreatedOn = time.Now()
 
-	// Set authorization URL and client ID for OAuth token exchange
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
@@ -118,7 +115,6 @@ func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
-	// Filter by agentName query param if present
 	nameFilter := r.URL.Query().Get("agentName")
 
 	s.store.mu.RLock()
@@ -175,7 +171,6 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "agent not found", http.StatusNotFound)
 		return
 	}
-	// Preserve ID and authorization, update other fields
 	update.ID = agent.ID
 	if update.Authorization == nil {
 		update.Authorization = agent.Authorization

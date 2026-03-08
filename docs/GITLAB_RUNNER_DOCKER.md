@@ -18,7 +18,7 @@ GitLab Runner (docker executor)
 Sockerless Frontend (Docker API)
   │
   ▼
-Sockerless Backend (memory / ecs / lambda / cloudrun / gcf / aca / azf)
+Sockerless Backend (ecs / lambda / cloudrun / gcf / aca / azf / docker)
   │
   ▼
 Cloud Simulator (aws / gcp / azure)  ← simulator mode only
@@ -30,7 +30,6 @@ All services run as Docker Compose containers. The backend container runs the si
 
 | Backend | Cloud | Simulator | Services | Artifacts |
 |---------|-------|-----------|:--------:|:---------:|
-| memory | — | — | — | — |
 | ecs | AWS | simulator-aws | Yes | Yes |
 | lambda | AWS | simulator-aws | SKIP | SKIP |
 | cloudrun | GCP | simulator-gcp | Yes | Yes |
@@ -45,7 +44,7 @@ FaaS backends (lambda, gcf, azf) skip tests that require service containers or v
 Run all 12 pipelines against the core backend:
 
 ```bash
-make e2e-gitlab-memory
+make e2e-gitlab-docker
 ```
 
 Run against a specific cloud backend:

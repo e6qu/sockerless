@@ -26,8 +26,15 @@ func main() {
 		Level(level).
 		With().Timestamp().Str("component", "backend-ecs").Logger()
 
-	core.LoadContextEnv(logger)
-	config := backend.ConfigFromEnv()
+	var config backend.Config
+	if cfg, env, _, err := core.ActiveEnvironmentWithConfig(); err == nil {
+		sim, _ := cfg.ResolveSimulator(env)
+		config = backend.ConfigFromEnvironment(env, sim)
+		logger.Info().Msg("loaded config from config.yaml")
+	} else {
+		core.LoadContextEnv(logger)
+		config = backend.ConfigFromEnv()
+	}
 	if err := config.Validate(); err != nil {
 		logger.Fatal().Err(err).Msg("invalid configuration")
 	}

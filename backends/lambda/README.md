@@ -40,6 +40,8 @@ go build -o sockerless-backend-lambda ./cmd/sockerless-backend-lambda
 | `SOCKERLESS_CALLBACK_URL` | | Backend URL for reverse agent connections |
 | `SOCKERLESS_ENDPOINT_URL` | | Custom AWS endpoint (simulator mode) |
 
+These settings can also be configured via `~/.sockerless/config.yaml`. See the [CLI documentation](../../cmd/sockerless/README.md) for the YAML format.
+
 ### Terraform outputs
 
 The `terraform/modules/lambda` module produces these outputs. Use `terragrunt output` from `terraform/environments/lambda/live` to extract them.
@@ -80,3 +82,5 @@ For a detailed breakdown of how each Docker REST API endpoint and CLI command ma
 make sim-test-aws    # simulator integration tests
 make docker-test     # Docker-based full test
 ```
+
+See also: [ARCHITECTURE.md](../../ARCHITECTURE.md), [FEATURE_MATRIX.md](../../FEATURE_MATRIX.md), [DECISIONS.md](../../DECISIONS.md)

@@ -5,3 +5,7 @@
 
 ## Phase 78 — UI Polish
 10 tasks pending. Dark mode, design tokens, error handling UX, container detail modal, auto-refresh, performance audit, accessibility, E2E smoke, documentation.
+
+---
+
+See also: [PLAN.md](PLAN.md), [STATUS.md](STATUS.md)

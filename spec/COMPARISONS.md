@@ -2,11 +2,11 @@
 
 > **Date:** February 2026
 >
-> **Status:** Updated to reflect actual implementation (Phase 35)
+> **Status:** Updated to reflect actual implementation (Phase 35). For current per-backend coverage, see [FEATURE_MATRIX.md](../FEATURE_MATRIX.md).
 >
 > **Purpose:** Per-operation comparison of what Docker does natively vs. what each Sockerless backend uses to achieve the same result.
 >
-> **Note:** Cloud backends use **in-memory state** for container inspect/list, network, and volume operations. They call cloud APIs only for container lifecycle operations (create, start, stop, remove) and logs. Networking and volume management are handled at the infrastructure level (Terraform), not dynamically by the backend at runtime.
+> **Note:** Cloud backends use **in-memory state** for container inspect/list and volume operations. They call cloud APIs for container lifecycle operations (create, start, stop, remove), logs, and — as of Phase 103 — cloud-native networking and service discovery. ECS uses VPC Security Groups + Cloud Map, CloudRun uses Cloud DNS, and ACA uses NSG + in-process DNS. ECS and ACA also have cloud-native exec drivers. See [FEATURE_MATRIX.md](../FEATURE_MATRIX.md) for current per-backend coverage.
 
 ---
 
@@ -179,6 +179,8 @@ These are not Docker REST API calls but show how the agent is used internally by
 
 ## 11. Capability Summary per Backend
 
+> **Note:** This table reflects Phase 35. For current cloud service mappings (including cloud-native networking, exec, and service discovery added in Phase 103), see [FEATURE_MATRIX.md](../FEATURE_MATRIX.md).
+
 | Capability | Docker | ECS | Lambda | Cloud Run | CR Functions | ACA | Azure Functions |
 |---|---|---|---|---|---|---|---|
 | `POST /containers/create` | `dockerd` | `RegisterTaskDefinition` | `CreateFunction` | In-memory (deferred) | `CreateFunction` | In-memory (deferred) | Create App + Plan |
@@ -189,7 +191,7 @@ These are not Docker REST API calls but show how the agent is used internally by
 | `POST /exec/{id}/start` | Hijack | **Forward agent** | **Reverse agent** | **Forward agent** | **Reverse agent** | **Forward agent** | **Reverse agent** |
 | `POST /containers/{id}/stop` | `dockerd` | `StopTask` | Disconnect agent | Cancel Execution | Disconnect agent | `BeginStopExecution` | Stop Function App |
 | `DELETE /containers/{id}` | `dockerd` | `DeregisterTaskDef` | `DeleteFunction` | `DeleteJob` | `DeleteFunction` | `BeginDelete` (Job) | Delete App + Plan |
-| `POST /networks/create` | `libnetwork` | In-memory | In-memory | In-memory | In-memory | In-memory | In-memory |
+| `POST /networks/create` | `libnetwork` | **VPC Security Groups** | In-memory | **Cloud DNS zone** | In-memory | **NSG rules** | In-memory |
 | `POST /volumes/create` | Local FS | In-memory | In-memory | In-memory | In-memory | In-memory | In-memory |
 | `POST /build` | BuildKit | Dockerfile parser | Dockerfile parser | Dockerfile parser | Dockerfile parser | Dockerfile parser | Dockerfile parser |
 | Archive (docker cp) | FS access | Agent FS | Agent FS | Agent FS | Agent FS | Agent FS | Agent FS |

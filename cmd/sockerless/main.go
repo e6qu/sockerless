@@ -47,6 +47,15 @@ func main() {
 		cmdMetrics()
 	case "resources":
 		cmdResources(os.Args[2:])
+	case "simulator", "sim":
+		cmdSimulator(os.Args[2:])
+	case "config":
+		if len(os.Args) >= 3 && os.Args[2] == "migrate" {
+			configMigrate(os.Args[3:])
+		} else {
+			fmt.Fprintln(os.Stderr, "Usage: sockerless config migrate [--write]")
+			os.Exit(1)
+		}
 	case "check":
 		cmdCheck()
 	case "version":
@@ -62,6 +71,8 @@ func usage() {
 
 Commands:
   context   Manage backend contexts
+  simulator Manage cloud simulators
+  config    Config file management (migrate)
   server    Start/stop/restart servers
   status    Show server status
   ps        List containers

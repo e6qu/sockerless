@@ -1,6 +1,6 @@
 # bleephub
 
-bleephub is a minimal reimplementation of the internal service API that the official GitHub Actions runner (`actions/runner`) communicates with. It is not a GitHub server — it implements only the runner-to-server wire protocol, which is derived from Azure DevOps (Azure Pipelines).
+bleephub is a minimal open-source implementation of the GitHub Actions server-side infrastructure that the official runner (`actions/runner`) communicates with. Since GitHub's server side is not open-source, bleephub reimplements enough of the internal runner-to-server protocol for the runner to register, receive jobs, execute them, and report results.
 
 The official runner does not use the public GitHub REST or GraphQL API. Instead, it talks to five internal services over HTTP, using GHES-style path prefixes. bleephub implements enough of these services for the runner to register, receive a container workflow, execute it through [Sockerless](../)'s Docker API, and report completion.
 
@@ -12,6 +12,8 @@ The official runner does not use the public GitHub REST or GraphQL API. Instead,
 | Connection data | `/_apis/connectionData` | Service discovery via GUIDs |
 | Agent service | `/_apis/v1/Agent/`, `/_apis/v1/AgentPools` | Runner registration, agent pools, credentials |
 | Broker | `/_apis/v1/AgentSession/`, `/_apis/v1/Message/` | Session management, 30s message long-poll |
+
+See also: [ARCHITECTURE.md](../ARCHITECTURE.md), [docs/GITHUB_RUNNER.md](../docs/GITHUB_RUNNER.md)
 | Run service | `/_apis/v1/AgentRequest/`, `/_apis/v1/FinishJob/` | Job acquire/renew/complete |
 | Timeline + logs | `/_apis/v1/Timeline/`, `/_apis/v1/Logfiles/` | Step status tracking, log upload |
 | Job submission | `/api/v3/bleephub/submit` | Simplified JSON job input (not part of runner protocol) |
@@ -55,7 +57,7 @@ The official runner does not use the public GitHub REST or GraphQL API. Instead,
 2. bleephub returns registration data, agent pool, credentials
 3. Runner starts `run.sh`, creates a session, long-polls `/_apis/v1/Message/` for jobs
 4. A job is submitted via `POST /api/v3/bleephub/submit` (simplified JSON)
-5. bleephub converts it to the Azure DevOps PipelineAgentJobRequest format and delivers it
+5. bleephub converts it to the internal job request format and delivers it
 6. Runner acquires the job, creates a Docker container through `DOCKER_HOST` (pointing at Sockerless)
 7. Runner execs each `run:` step inside the container via `docker exec`
 8. Runner reports step status via timeline records and uploads logs
@@ -63,7 +65,7 @@ The official runner does not use the public GitHub REST or GraphQL API. Instead,
 
 ## The job message format
 
-The hardest part of bleephub is the job message builder (`jobs.go`). The runner expects Azure DevOps-format JSON with:
+The hardest part of bleephub is the job message builder (`jobs.go`). The runner expects a specific internal JSON format with:
 
 - **TemplateTokens**: A type system for values. Strings are `{"type": 0, "lit": "value"}`, mappings are `{"type": 2, "map": [{"Key": <token>, "Value": <token>}]}`. A JSON object without a `type` field is deserialized as an empty string, causing silent validation failures.
 
@@ -103,7 +105,7 @@ curl http://localhost/api/v3/bleephub/jobs/<jobId>
 
 ## Integration test
 
-The integration test runs everything in Docker: bleephub + Sockerless backend + Docker frontend + official runner binary (v2.321.0).
+The integration test runs everything in Docker: bleephub + Sockerless backend + official runner binary (v2.321.0).
 
 ```bash
 # From the repository root:

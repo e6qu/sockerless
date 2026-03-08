@@ -363,7 +363,7 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "task not found", http.StatusNotFound)
 }
 
-// buildJobMessage builds the AgentJobRequestMessage in the Azure DevOps format
+// buildJobMessage builds the AgentJobRequestMessage in the internal format
 // that the official GitHub Actions runner expects.
 // Format matches ChristopherHX/runner.server's PipelineContextData + TemplateToken serialization.
 func buildJobMessage(serverURL, jobID, planID, timelineID string, requestID int64, req *SubmitRequest) map[string]interface{} {

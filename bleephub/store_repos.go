@@ -9,7 +9,6 @@ import (
 	"github.com/go-git/go-git/v5/storage/memory"
 )
 
-// Repo represents a GitHub repository.
 type Repo struct {
 	ID              int       `json:"id"`
 	NodeID          string    `json:"node_id"`
@@ -32,7 +31,6 @@ type Repo struct {
 	PushedAt            time.Time `json:"pushed_at"`
 }
 
-// CreateRepo creates a new repository with an initialized bare git storage.
 func (st *Store) CreateRepo(owner *User, name, description string, private bool) *Repo {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -70,24 +68,19 @@ func (st *Store) CreateRepo(owner *User, name, description string, private bool)
 	st.Repos[repo.ID] = repo
 	st.ReposByName[fullName] = repo
 
-	// Initialize bare go-git in-memory storage
 	storer := memory.NewStorage()
 	st.GitStorages[fullName] = storer
-
-	// Init bare repo
 	_, _ = git.Init(storer, nil)
 
 	return repo
 }
 
-// GetRepo returns a repository by owner login and name.
 func (st *Store) GetRepo(owner, name string) *Repo {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 	return st.ReposByName[owner+"/"+name]
 }
 
-// UpdateRepo applies a mutation function to a repository.
 func (st *Store) UpdateRepo(owner, name string, fn func(*Repo)) bool {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -101,7 +94,6 @@ func (st *Store) UpdateRepo(owner, name string, fn func(*Repo)) bool {
 	return true
 }
 
-// DeleteRepo removes a repository and its git storage.
 func (st *Store) DeleteRepo(owner, name string) bool {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -118,7 +110,6 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 	return true
 }
 
-// ListReposByOwner returns all repositories owned by the given login.
 func (st *Store) ListReposByOwner(login string) []*Repo {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
@@ -133,7 +124,6 @@ func (st *Store) ListReposByOwner(login string) []*Repo {
 	return repos
 }
 
-// GetGitStorage returns the go-git memory storage for a repository.
 func (st *Store) GetGitStorage(owner, name string) *memory.Storage {
 	st.mu.RLock()
 	defer st.mu.RUnlock()

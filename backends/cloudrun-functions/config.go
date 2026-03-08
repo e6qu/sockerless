@@ -5,6 +5,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	core "github.com/sockerless/backend-core"
 )
 
 // Config holds Cloud Run Functions backend configuration.
@@ -35,6 +37,48 @@ func ConfigFromEnv() Config {
 		PollInterval:   parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 		LogTimeout:     parseDuration(os.Getenv("SOCKERLESS_LOG_TIMEOUT"), 30*time.Second),
 	}
+}
+
+// ConfigFromEnvironment creates Config from a unified config environment.
+func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Config {
+	c := Config{
+		Region:       "us-central1",
+		Timeout:      3600,
+		Memory:       "1Gi",
+		CPU:          "1",
+		PollInterval: 2 * time.Second,
+		LogTimeout:   30 * time.Second,
+	}
+	if env.GCP != nil {
+		c.Project = env.GCP.Project
+		if gcf := env.GCP.GCF; gcf != nil {
+			if gcf.Region != "" {
+				c.Region = gcf.Region
+			}
+			c.ServiceAccount = gcf.ServiceAccount
+			if gcf.Timeout > 0 {
+				c.Timeout = gcf.Timeout
+			}
+			if gcf.Memory != "" {
+				c.Memory = gcf.Memory
+			}
+			if gcf.CPU != "" {
+				c.CPU = gcf.CPU
+			}
+			if gcf.LogTimeout != "" {
+				c.LogTimeout = parseDuration(gcf.LogTimeout, c.LogTimeout)
+			}
+		}
+	}
+	c.CallbackURL = env.Common.CallbackURL
+	c.EndpointURL = env.Common.EndpointURL
+	if env.Common.PollInterval != "" {
+		c.PollInterval = parseDuration(env.Common.PollInterval, c.PollInterval)
+	}
+	if sim != nil && sim.Port > 0 {
+		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
+	}
+	return c
 }
 
 // Validate checks required configuration.

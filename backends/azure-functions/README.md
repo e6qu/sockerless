@@ -40,6 +40,8 @@ go build -o sockerless-backend-azf ./cmd/sockerless-backend-azf
 | `SOCKERLESS_CALLBACK_URL` | | Backend URL for reverse agent connections |
 | `SOCKERLESS_ENDPOINT_URL` | | Custom Azure endpoint (simulator mode) |
 
+These settings can also be configured via `~/.sockerless/config.yaml`. See the [CLI documentation](../../cmd/sockerless/README.md) for the YAML format.
+
 ### Terraform outputs
 
 The `terraform/modules/azf` module produces these outputs. Use `terragrunt output` from `terraform/environments/azf/live` to extract them.
@@ -88,3 +90,5 @@ For a detailed breakdown of how each Docker REST API endpoint and CLI command ma
 make sim-test-azure  # simulator integration tests
 make docker-test     # Docker-based full test
 ```
+
+See also: [ARCHITECTURE.md](../../ARCHITECTURE.md), [FEATURE_MATRIX.md](../../FEATURE_MATRIX.md), [DECISIONS.md](../../DECISIONS.md)

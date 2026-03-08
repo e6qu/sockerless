@@ -30,14 +30,14 @@ Agent (inside container or reverse-connected)
 
 | Phase | What |
 |---|---|
-| 1-10 | Foundation: 3 simulators, 8 backends, agent, Docker REST API frontend |
+| 1-10 | Foundation: 3 simulators, 7 backends (8 originally; memory removed in Phase 90), agent, Docker REST API frontend |
 | 11-34 | E2E tests (371 workflows), driver interfaces, Docker build |
 | 35-52 | bleephub (GitHub API + runner), CLI, crash safety, pods, service containers |
 | 53-56 | Production Docker API: TLS, auth, logs, DNS, restart, events, filters |
 | 57-61 | CI runners: GitHub Actions multi-job/matrix/secrets + GitLab CI DAG/expressions |
 | 62-67 | API hardening, Compose E2E, webhooks, GitHub Apps, OTel, network isolation |
 | 69-72 | ARM64, simulator fidelity, SDK/CLI verification, full-stack E2E |
-| 73-77 | UI: Bun/Vite/React 19 monorepo, 13 SPAs, LogViewer |
+| 73-77 | UI: Bun/Vite/React 19 monorepo, 14 SPAs, LogViewer |
 | 79-82 | Admin: dashboard, docs, process management, project bundles |
 | 83-86 | Type-safe API: goverter mappers, api.Backend, self-dispatch, in-process wiring |
 | 90 | Remove memory backend, spec-driven state machine tests |
@@ -78,6 +78,8 @@ Replaced all cloud common module stubs with real implementations on backend Serv
 All cloud network/service-discovery methods wired into `NetworkCreate`, `NetworkRemove`, `NetworkConnect`, `NetworkDisconnect`, `ContainerStart`, and `ContainerRemove` handlers. ~878 lines of logging boilerplate eliminated by `StreamCloudLogs`. ~12 dead stub files removed from common modules.
 
 ## Project Stats
+
+See [STATUS.md](STATUS.md) for current test counts.
 
 - **85 phases**, 756 tasks completed
 - **45 bug sprints**, 583 bugs fixed, 0 open

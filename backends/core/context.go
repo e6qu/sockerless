@@ -42,10 +42,9 @@ func LoadContextEnv(logger zerolog.Logger) {
 }
 
 type contextConfig struct {
-	Backend      string            `json:"backend"`
-	FrontendAddr string            `json:"frontend_addr,omitempty"`
-	BackendAddr  string            `json:"backend_addr,omitempty"`
-	Env          map[string]string `json:"env"`
+	Backend string            `json:"backend"`
+	Addr    string            `json:"addr,omitempty"`
+	Env     map[string]string `json:"env"`
 }
 
 func activeContextName() string {

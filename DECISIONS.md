@@ -1,6 +1,6 @@
 # Sockerless — Technical Decisions
 
-Architectural and implementation decisions made across phases. Referenced from PLAN.md.
+Architectural and implementation decisions made across phases. Referenced from [PLAN.md](PLAN.md).
 
 ---
 
@@ -8,7 +8,7 @@ Architectural and implementation decisions made across phases. Referenced from P
 
 **Docker API as sole interface** — No Kubernetes, no Podman (except libpod pod extensions), no custom APIs. CI runners talk to Sockerless as if it were Docker. (Principle 4)
 
-**Driver interfaces** — 4 driver types: `ExecDriver`, `FilesystemDriver`, `StreamDriver`, `NetworkDriver`. Agent drivers handle connected containers; inline fallback for disconnected. `DriverSet` on `BaseServer` via `InitDrivers()`. (Phase 32, simplified in Phase 90)
+**Driver interfaces** — 4 driver types: `ExecDriver`, `FilesystemDriver`, `StreamDriver`, `NetworkDriver`. Agent drivers handle connected containers; inline fallback for disconnected. `DriverSet` on `BaseServer` via `InitDrivers()`. (Phase 32, simplified in Phase 90). See [FEATURE_MATRIX.md](FEATURE_MATRIX.md) for the per-backend driver table.
 
 **Backend model** — 7 backends sharing common `BaseServer` + `Store` from `backend-core`. Cloud backends use self-dispatch (`self api.Backend` field) for typed method overrides. 3 cloud simulators validated against SDKs, CLIs, and Terraform.
 
@@ -66,7 +66,7 @@ Architectural and implementation decisions made across phases. Referenced from P
 
 ## bleephub (GitHub API Simulator)
 
-**Azure DevOps internal API** — Official `actions/runner` uses an Azure DevOps-derived protocol. 5 service groups: auth/tokens, agent registration, broker (sessions + long-poll), run service, timeline + logs. (Phase 35)
+**bleephub** — Minimal open-source implementation of GitHub's server-side runner infrastructure (since GitHub is not open-source). 5 service groups: auth/tokens, agent registration, broker (sessions + long-poll), run service, timeline + logs. (Phase 35)
 
 **GraphQL engine** — `graphql-go/graphql` v0.8.1. Globally unique type names (prefixed per connection type). Enum types for `gh` CLI compatibility. (Phases 36-41)
 
@@ -83,6 +83,16 @@ Architectural and implementation decisions made across phases. Referenced from P
 **Self-contained** — Each simulator (AWS, GCP, Azure) implements enough cloud API for its backends. Validated against official SDKs, CLIs, and Terraform providers. TLS via `SIM_TLS_CERT`/`SIM_TLS_KEY`. (Phase 43)
 
 **Azure TLS** — azurestack provider hardcodes `https://`. Terraform tests generate self-signed TLS certs. Docker-only on Linux (macOS Go uses Security.framework, ignores `SSL_CERT_FILE`). (Memory note)
+
+---
+
+## Unified Configuration File
+
+**config.yaml as optional unified config** — A single `~/.sockerless/config.yaml` replaces per-context JSON files with a structured YAML format. Environments map to named backend configs; simulators are first-class entries referenced by environments. The CLI reads config.yaml and exports values as env vars before starting backends, so backend binaries remain env-var-only consumers. Legacy JSON contexts (`contexts/*/config.json`) still work — config.yaml takes precedence when present.
+
+**Rationale:** JSON context files require `--set KEY=VALUE` for every env var, making complex configs verbose and error-prone. YAML provides structure (nested cloud-specific sections), cross-referencing (simulator names), and a single-file overview of all environments. The `config migrate` command provides a zero-effort upgrade path.
+
+**Alternatives considered:** (1) TOML — less common in the Go ecosystem, no advantage over YAML for nested config. (2) Extending JSON contexts with structured fields — would require migrating all existing contexts and doesn't solve the single-file overview problem. (3) HCL — too Terraform-specific, adds a heavy dependency.
 
 ---
 

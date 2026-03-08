@@ -18,9 +18,9 @@ graph TB
         GLR["GitLab Runner"]
     end
 
-    subgraph Sockerless
-        FE["Frontend<br/><i>Docker REST API v1.44</i>"]
-        BE["Backend<br/><i>Internal API</i>"]
+    subgraph "Sockerless Backend (single binary)"
+        DOCKER_API["Docker REST API v1.44<br/><i>in-process, same mux</i>"]
+        CORE["Backend Core<br/><i>state, drivers, handlers</i>"]
         AG["Agent<br/><i>Exec/Attach bridge</i>"]
         BPH["bleephub<br/><i>Runner service API</i>"]
     end
@@ -35,52 +35,51 @@ graph TB
         DOCK["Docker Daemon"]
     end
 
-    CLI & COMPOSE & TC & SDK & ACT & GLR -->|"Docker API<br/>(HTTP/TCP)"| FE
-    GHR -->|"Docker API"| FE
+    CLI & COMPOSE & TC & SDK & ACT & GLR -->|"Docker API<br/>(HTTP/TCP)"| DOCKER_API
+    GHR -->|"Docker API"| DOCKER_API
     GHR <-->|"Runner protocol<br/>(HTTP/JSON)"| BPH
-    FE -->|"/internal/v1/*<br/>(HTTP/JSON)"| BE
-    BE -->|"Cloud SDK"| ECS & LAM & CR & GCF & ACA & AZF
-    BE -->|"Docker SDK"| DOCK
-    AG -.->|"WebSocket"| BE
+    DOCKER_API --- CORE
+    CORE -->|"Cloud SDK"| ECS & LAM & CR & GCF & ACA & AZF
+    CORE -->|"Docker SDK"| DOCK
+    AG -.->|"WebSocket"| CORE
 ```
 
-The system has five layers:
+Each backend is a **standalone binary** that serves both the Docker REST API (`:2375`) and internal management endpoints on the same HTTP mux — there is no separate frontend process. The Docker API routes are registered in-process via `core.BaseServer.registerDockerAPIRoutes()`, with a `stripVersionPrefix` middleware that removes the `/v1.XX/` prefix.
 
-- **Frontend** — Stateless HTTP server implementing Docker REST API v1.44. Translates Docker protocol to internal API calls.
-- **Backend** — Stateful server managing container lifecycle. Eight implementations share a common core.
-- **Agent** — Binary injected into cloud containers for exec/attach. Bridges commands between backend and the container's shell.
-- **bleephub** — GitHub Actions runner service API. Dispatches jobs to the official `actions/runner`, which executes them through the Docker frontend.
+The system has three main components:
+
+- **Backend** — Single-binary server implementing the Docker REST API v1.44 and managing container lifecycle. Seven implementations share a common core (`backends/core/`).
+- **Agent** — Binary injected into cloud containers for exec/attach. Bridges commands between the backend and the container's shell over WebSocket.
+- **bleephub** — Local GitHub Actions runner service. Implements enough of GitHub's internal runner protocol for the official `actions/runner` to register, receive jobs, and execute them through the backend's Docker API.
 
 ---
 
-## Frontend
+## Docker API Layer
 
-The Docker frontend (`frontends/docker/`) exposes the Docker API surface: containers, images, networks, volumes, exec, system. It strips the `/v1.XX/` version prefix and proxies every request to a backend over HTTP.
+Each backend serves the full Docker API surface — containers, images, networks, volumes, exec, system — directly on its HTTP mux. A `stripVersionPrefix` middleware removes the `/v1.XX/` prefix so clients using any Docker API version work transparently. The same handlers serve both Docker-compatible routes (`/containers/create`) and internal routes (`/internal/v1/containers`).
 
 ```mermaid
 sequenceDiagram
     participant C as Docker Client
-    participant F as Frontend
-    participant B as Backend
+    participant S as Sockerless Backend
 
-    C->>F: POST /v1.44/containers/create
-    F->>B: POST /internal/v1/containers
-    B-->>F: 201 {Id: "abc123"}
-    F-->>C: 201 {Id: "abc123"}
+    C->>S: POST /v1.44/containers/create
+    Note over S: stripVersionPrefix middleware
+    S->>S: handleContainerCreate (in-process)
+    S-->>C: 201 {Id: "abc123"}
 
-    C->>F: POST /v1.44/containers/abc123/start
-    F->>B: POST /internal/v1/containers/abc123/start
-    B-->>F: 204
-    F-->>C: 204
+    C->>S: POST /v1.44/containers/abc123/start
+    S->>S: handleContainerStart (cloud SDK call)
+    S-->>C: 204
 ```
 
-For streaming operations (exec, attach, logs), the frontend hijacks the HTTP connection and bridges bidirectional I/O between the Docker client and backend.
+For streaming operations (exec, attach, logs), the backend hijacks the HTTP connection and bridges bidirectional I/O with the agent or cloud logging service.
 
 ---
 
 ## Backends
 
-All backends embed a shared `core.BaseServer` that provides HTTP routing, in-memory state (`Store`), agent registry, and default handlers. Each cloud backend overrides specific methods via the `api.Backend` interface (self-dispatch pattern) to implement cloud-specific logic.
+All backends embed a shared `core.BaseServer` that provides HTTP routing (both Docker API and internal management endpoints), in-memory state (`Store`), agent registry, and default handlers. Each cloud backend overrides specific methods via the `api.Backend` interface (self-dispatch pattern) to implement cloud-specific logic.
 
 ```mermaid
 graph TB
@@ -127,43 +126,172 @@ graph TB
 
 ## Container Lifecycle
 
-A container's lifecycle maps to cloud operations differently per backend, but the Docker API surface is identical.
+Every backend presents the same Docker API states — Created, Running, Exited — but the underlying cloud operations differ. The generic state machine is:
 
 ```mermaid
 stateDiagram-v2
     [*] --> Created: docker create
     Created --> Running: docker start
-    Running --> Running: docker exec
     Running --> Exited: docker stop / kill
     Running --> Exited: process exits
     Exited --> [*]: docker rm
-
-    state "Cloud Mapping" as cloud {
-        Created: ECS → RegisterTaskDef\nLambda → CreateFunction\nCloudRun → CreateJob
-        Running: ECS → RunTask\nLambda → Invoke\nCloudRun → RunJob
-        Exited: ECS → StopTask\nLambda → function returns\nCloudRun → execution completes
-    }
 ```
 
-### Container Create
+While running, `docker exec` executes commands inside the container (see [Exec Routing](#exec-routing) below).
 
-Backend creates the container's cloud resource definition and stores metadata locally:
+### Per-Backend Lifecycle
 
-- **ECS**: Registers a task definition with the agent binary in the entrypoint
-- **Lambda**: Creates a Lambda function with the container image
-- **CloudRun**: Prepares a Job spec (protobuf)
-- **ACA**: Prepares a Container Apps Job spec
+#### Docker (passthrough)
 
-### Container Start
+All operations proxy to the local Docker daemon via the Docker SDK.
 
-Backend launches the cloud resource and establishes an agent connection:
+```mermaid
+stateDiagram-v2
+    [*] --> Created: ContainerCreate
+    Created --> Running: ContainerStart
+    Running --> Exited: ContainerStop / Kill
+    Exited --> [*]: ContainerRemove
+```
 
-- **Container backends** (ECS/CloudRun/ACA): Call RunTask/RunJob/StartExecution, then wait for agent
-- **FaaS backends** (Lambda/GCF/AZF): Call Invoke, agent dials back via callback URL
+#### ECS (AWS Fargate)
 
-### Container Exec
+Task definition registration is **deferred** from Create to Start for pod association. Cloud-native exec via ECS ExecuteCommand (SSM Session Manager) when no agent is connected.
 
-Exec is how commands run inside a started container. The routing depends on the agent connection mode:
+```mermaid
+stateDiagram-v2
+    [*] --> Created: local state (deferred)
+    Created --> Running: RegisterTaskDef, RunTask
+    Running --> Exited: StopTask
+    Exited --> [*]: DeregisterTaskDef
+```
+
+| Operation | Cloud API Calls |
+|-----------|----------------|
+| Create | Local store (deferred) |
+| Start | `ECS.RegisterTaskDefinition`, `ECS.RunTask`, `CloudMap.RegisterInstance` |
+| Exec | Agent WebSocket or `ECS.ExecuteCommand` (SSM) |
+| Stop/Kill | `ECS.StopTask` |
+| Remove | `ECS.DeregisterTaskDefinition`, `CloudMap.DeregisterInstance` |
+| Logs | `CloudWatch.GetLogEvents` |
+| Network | VPC Security Groups (create/delete/self-referencing ingress) |
+| Service Discovery | AWS Cloud Map (private DNS namespace, service registration) |
+
+#### Lambda (AWS FaaS)
+
+Functions are created eagerly at Create time. Invoke is asynchronous — the agent dials back via callback URL (reverse mode only).
+
+```mermaid
+stateDiagram-v2
+    [*] --> Created: CreateFunction (image)
+    Created --> Running: Invoke, agent callback
+    Running --> Exited: agent disconnects
+    Exited --> [*]: DeleteFunction
+```
+
+| Operation | Cloud API Calls |
+|-----------|----------------|
+| Create | `Lambda.CreateFunction` (image-based) |
+| Start | `Lambda.Invoke` (async), agent dials back via `SOCKERLESS_CALLBACK_URL` |
+| Exec | Reverse agent WebSocket only |
+| Stop/Kill | State transition (agent disconnect) |
+| Remove | `Lambda.DeleteFunction` |
+| Logs | `CloudWatch.GetLogEvents` (`/aws/lambda/{functionName}`) |
+
+#### Cloud Run Jobs (GCP)
+
+Job creation is **deferred** from Create to Start. Cloud DNS handles service discovery.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Created: local state (deferred)
+    Created --> Running: CreateJob, RunJob
+    Running --> Exited: CancelExecution
+    Exited --> [*]: DeleteJob
+```
+
+| Operation | Cloud API Calls |
+|-----------|----------------|
+| Create | Local store (deferred) |
+| Start | `Jobs.CreateJob`, `Jobs.RunJob`, `CloudDNS.CreateResourceRecord` |
+| Exec | Agent WebSocket |
+| Stop/Kill | `Jobs.CancelExecution` |
+| Remove | `Jobs.DeleteJob`, `CloudDNS.DeleteResourceRecord` |
+| Logs | `Cloud Logging` (resource.type=cloud_run_job) |
+| Network | Cloud DNS managed zones (create/delete/record cleanup) |
+| Service Discovery | Cloud DNS A records (register/deregister/resolve by FQDN) |
+
+#### Cloud Run Functions (GCP FaaS)
+
+Functions are created eagerly. Invoked via HTTP POST. Reverse agent only.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Created: CreateFunction
+    Created --> Running: HTTP POST, agent callback
+    Running --> Exited: agent disconnects
+    Exited --> [*]: DeleteFunction
+```
+
+| Operation | Cloud API Calls |
+|-----------|----------------|
+| Create | `Functions.CreateFunction` (2nd gen, Docker runtime) |
+| Start | HTTP POST to `ServiceConfig.Uri`, agent dials back |
+| Exec | Reverse agent WebSocket only |
+| Stop/Kill | State transition (agent disconnect) |
+| Remove | `Functions.DeleteFunction` |
+| Logs | `Cloud Logging` (resource.type=cloud_run_revision) |
+
+#### ACA Jobs (Azure Container Apps)
+
+Job creation is **deferred** from Create to Start. Cloud-native exec via the Container Apps exec WebSocket API when no agent is connected.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Created: local state (deferred)
+    Created --> Running: BeginCreateOrUpdate, BeginStart
+    Running --> Exited: BeginStop
+    Exited --> [*]: Delete
+```
+
+| Operation | Cloud API Calls |
+|-----------|----------------|
+| Create | Local store (deferred) |
+| Start | `Jobs.BeginCreateOrUpdate`, `Jobs.BeginStart` |
+| Exec | Agent WebSocket or ACA exec API (WebSocket) |
+| Stop/Kill | `Jobs.BeginStop` |
+| Remove | `Jobs.Delete` |
+| Logs | Azure Monitor / Log Analytics (AppTraces) |
+| Network | NSG name/rule tracking |
+| Service Discovery | In-process DNS registry (hostname→IP per network) |
+
+#### Azure Functions (FaaS)
+
+Function Apps are created eagerly. Invoked via HTTP POST. Reverse agent only.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Created: BeginCreateOrUpdate
+    Created --> Running: HTTP POST, agent callback
+    Running --> Exited: agent disconnects
+    Exited --> [*]: Delete
+```
+
+| Operation | Cloud API Calls |
+|-----------|----------------|
+| Create | `WebApps.BeginCreateOrUpdate` (Function App site) |
+| Start | HTTP POST to `DefaultHostName`, agent dials back |
+| Exec | Reverse agent WebSocket only |
+| Stop/Kill | State transition (agent disconnect) |
+| Remove | `WebApps.Delete` |
+| Logs | Azure Monitor / Log Analytics (AppTraces) |
+
+### Key Patterns
+
+- **Deferred creation**: Container backends (ECS, CloudRun, ACA) defer cloud resource creation from `docker create` to `docker start` for pod scheduling. FaaS backends (Lambda, GCF, AZF) create eagerly.
+- **Cloud-native exec**: ECS uses `ExecuteCommand` (SSM Session Manager WebSocket), ACA uses its exec API (WebSocket). Both fall back to agent exec when an agent is connected.
+- **Cloud-native networking**: ECS uses VPC Security Groups + Cloud Map, CloudRun uses Cloud DNS, ACA uses NSG + in-process DNS. FaaS and Docker backends use in-memory networking.
+
+### Exec Routing
 
 ```mermaid
 flowchart TD
@@ -171,12 +299,15 @@ flowchart TD
     CHK1 -->|Yes| REV["Bridge exec over<br/>reverse WebSocket"]
     CHK1 -->|No| CHK2{"AgentAddress<br/>set (IP:port)?"}
     CHK2 -->|Yes| FWD["Dial forward agent<br/>at IP:9111"]
-    CHK2 -->|No| ERR["Error: no agent<br/>connected"]
+    CHK2 -->|No| CHK3{"Cloud exec<br/>supported?"}
+    CHK3 -->|Yes| CLOUD["ECS ExecuteCommand (SSM)\nor ACA exec API (WebSocket)"]
+    CHK3 -->|No| ERR["Error: no agent<br/>connected"]
 ```
 
 1. **Reverse agent** — Agent has an active WebSocket to the backend. Exec is bridged over that connection.
 2. **Forward agent** — Backend dials the agent inside the container at `<IP>:9111`.
-3. **No agent** — Error. An agent connection is required for exec.
+3. **Cloud-native exec** — ECS uses SSM Session Manager, ACA uses its exec WebSocket API.
+4. **No agent** — Error. An agent connection is required for exec.
 
 ---
 
@@ -251,24 +382,24 @@ Sockerless is a drop-in replacement for Docker Engine. Anything that talks to th
 
 | Mode | `DOCKER_HOST` | How it works |
 |------|---------------|--------------|
-| Local TCP | `tcp://localhost:2375` | Client connects directly to frontend on same host |
-| Remote TCP | `tcp://remote-host:2375` | Client connects to frontend on a different machine |
+| Local TCP | `tcp://localhost:2375` | Client connects directly to backend on same host |
+| Remote TCP | `tcp://remote-host:2375` | Client connects to backend on a different machine |
 | SSH tunnel | `ssh://user@remote-host` | Docker CLI opens SSH tunnel to remote unix socket |
 
-For SSH mode, the Sockerless frontend must listen on a unix socket (e.g., `/var/run/docker.sock`). The Docker CLI's built-in SSH transport tunnels to the socket over SSH — no extra configuration needed.
+For SSH mode, the Sockerless backend must listen on a unix socket (e.g., `/var/run/docker.sock`). The Docker CLI's built-in SSH transport tunnels to the socket over SSH — no extra configuration needed.
 
 ### Docker CLI and Compose
 
 ```bash
-# Local — frontend on same machine
+# Local — backend on same machine
 export DOCKER_HOST=tcp://localhost:2375
 docker run --rm -p 8080:8080 my-app:latest
 
-# Remote — frontend on a cloud VM
+# Remote — backend on a cloud VM
 export DOCKER_HOST=tcp://sockerless.example.com:2375
 docker run --rm alpine echo "running on remote cloud"
 
-# SSH — tunnel to remote frontend's unix socket
+# SSH — tunnel to remote backend's unix socket
 export DOCKER_HOST=ssh://user@sockerless.example.com
 docker run --rm alpine echo "running via SSH tunnel"
 
@@ -286,7 +417,7 @@ Any library that uses the Docker HTTP REST API works without modification:
 - **Docker SDK** (Go `docker/docker`, Python `docker-py`, Java `docker-java`, etc.) — custom orchestration code
 - **Drone CI, Woodpecker CI, Buildkite** — any CI system that talks to Docker
 
-All of these just need `DOCKER_HOST` pointed at the Sockerless frontend. Containers run on whichever cloud backend is configured.
+All of these just need `DOCKER_HOST` pointed at the Sockerless backend. Containers run on whichever cloud backend is configured.
 
 ### CI Runners — GitHub Actions & GitLab CI
 
@@ -298,22 +429,20 @@ The production deployment model for CI is the same: a **self-hosted runner** reg
 sequenceDiagram
     participant GH as github.com
     participant R as actions/runner<br/>(self-hosted)
-    participant FE as Sockerless Frontend
-    participant BE as Sockerless Backend
+    participant S as Sockerless Backend
     participant CL as Cloud (ECS / Lambda / ...)
 
     Note over GH,R: Runner registered as self-hosted runner
     GH-->>R: Job dispatched (workflow trigger)
-    R->>FE: docker create (job image)
-    FE->>BE: POST /internal/v1/containers
-    BE->>CL: RunTask / CreateFunction / ...
-    R->>FE: docker start
-    R->>FE: docker exec (each step)
-    R->>FE: docker stop / rm
+    R->>S: docker create (job image)
+    S->>CL: RunTask / CreateFunction / ...
+    R->>S: docker start
+    R->>S: docker exec (each step)
+    R->>S: docker stop / rm
     R-->>GH: Job result + logs
 ```
 
-The runner is configured with `DOCKER_HOST` pointing at the Sockerless frontend. GitHub dispatches jobs to it like any self-hosted runner. No modifications to the runner binary, no custom actions — standard GitHub Actions workflows work unchanged.
+The runner is configured with `DOCKER_HOST` pointing at the Sockerless backend. GitHub dispatches jobs to it like any self-hosted runner. No modifications to the runner binary, no custom actions — standard GitHub Actions workflows work unchanged.
 
 ### GitLab CI (production)
 
@@ -321,34 +450,32 @@ The runner is configured with `DOCKER_HOST` pointing at the Sockerless frontend.
 sequenceDiagram
     participant GL as gitlab.com
     participant R as gitlab-runner<br/>(docker executor)
-    participant FE as Sockerless Frontend
-    participant BE as Sockerless Backend
+    participant S as Sockerless Backend
     participant CL as Cloud (ECS / CloudRun / ...)
 
     Note over GL,R: Runner registered with gitlab.com
     GL-->>R: Job dispatched (pipeline trigger)
-    R->>FE: docker create (job image)
-    R->>FE: docker create (helper image)
-    R->>FE: docker start
-    R->>FE: docker exec (script steps)
-    R->>FE: docker cp (artifacts)
-    R->>FE: docker stop / rm
+    R->>S: docker create (job image)
+    R->>S: docker create (helper image)
+    R->>S: docker start
+    R->>S: docker exec (script steps)
+    R->>S: docker cp (artifacts)
+    R->>S: docker stop / rm
     R-->>GL: Job result + artifacts
 ```
 
-GitLab Runner's docker executor talks directly to the Docker API. By setting `host` in the runner's `config.toml` to the Sockerless frontend address (`tcp://localhost:2375`), all container operations route through Sockerless. No runner modifications needed.
+GitLab Runner's docker executor talks directly to the Docker API. By setting `host` in the runner's `config.toml` to the Sockerless backend address (`tcp://localhost:2375`), all container operations route through Sockerless. No runner modifications needed.
 
 ### bleephub — Local GitHub API Simulator
 
-For **local testing** without github.com, `bleephub/` (`bleephub/`) implements the internal Azure DevOps-derived runner service API that the official `actions/runner` speaks. This lets us run the real runner binary in a fully offline test harness.
+For **local testing** without github.com, `bleephub/` implements enough of the GitHub Actions runner service API for the official `actions/runner` binary to register, receive jobs, execute them, and report results. This lets us run the real runner in a fully offline test harness.
 
 ```mermaid
 sequenceDiagram
     participant J as Test Harness
     participant BPH as bleephub
     participant R as actions/runner
-    participant FE as Sockerless Frontend
-    participant BE as Sockerless Backend
+    participant S as Sockerless Backend
 
     Note over BPH,R: 1. Runner registers with bleephub
     R->>BPH: POST /api/v3/actions/runner-registration
@@ -363,9 +490,8 @@ sequenceDiagram
     J->>BPH: POST /api/v3/bleephub/submit
     BPH-->>R: Job message (via long-poll response)
 
-    Note over R,BE: 4. Runner executes via Docker API
-    R->>FE: docker create / start / exec
-    FE->>BE: /internal/v1/...
+    Note over R,S: 4. Runner executes via Docker API
+    R->>S: docker create / start / exec
 
     Note over BPH,R: 5. Runner reports completion
     R->>BPH: PATCH /_apis/v1/Timeline (step results)
@@ -418,9 +544,9 @@ Key points:
 
 | Simulator | APIs Implemented |
 |-----------|-----------------|
-| **AWS** | ECS (clusters, task defs, tasks), Lambda (functions, invoke), ECR (auth, manifests), CloudWatch Logs |
-| **GCP** | Cloud Run Services, Cloud Run Jobs, Cloud Functions, Artifact Registry, Cloud Logging |
-| **Azure** | Container Apps Environments/Jobs, Functions, App Service Plans, ACR, Storage (blob), Resource Groups |
+| **AWS** | ECS (clusters, task defs, tasks), Lambda (functions, invoke), ECR (auth, manifests), CloudWatch Logs, EC2 (security groups), Cloud Map (service discovery), S3, IAM, STS |
+| **GCP** | Cloud Run Jobs, Cloud Functions, Artifact Registry, Cloud Logging, Cloud DNS, Compute, IAM, VPC Access, Service Usage |
+| **Azure** | Container Apps Environments/Jobs, Functions, App Service Plans, ACR, Storage (blob), Monitor, Private DNS, Network (NSG), Managed Identity, Resource Groups |
 
 ---
 
@@ -431,10 +557,8 @@ The project is organized as a Go workspace with multiple modules:
 ```
 sockerless/
 ├── api/                          # Shared types (zero deps)
-├── frontends/
-│   └── docker/                   # Docker REST API frontend
 ├── backends/
-│   ├── core/                     # Shared backend library
+│   ├── core/                     # Shared library (Docker API + internal handlers)
 │   ├── docker/                   # Docker daemon passthrough
 │   ├── ecs/                      # AWS ECS/Fargate
 │   ├── lambda/                   # AWS Lambda
@@ -447,7 +571,7 @@ sockerless/
 ├── cmd/
 │   ├── sockerless/               # CLI tool (context management)
 │   └── sockerless-admin/         # Admin dashboard server
-├── ui/                           # React SPA monorepo (13 packages)
+├── ui/                           # React SPA monorepo (14 packages)
 ├── simulators/
 │   ├── aws/                      # AWS API simulator
 │   ├── gcp/                      # GCP API simulator
@@ -482,12 +606,12 @@ graph TB
 
     ST -->|"starts simulator<br/>+ backend"| SIM3["Simulator"]
     ST -->|"runs Docker SDK<br/>against backend"| BE3["Backend"]
-    GH -->|"act runs workflows<br/>against full stack"| STACK["Simulator + Backend + Frontend"]
+    GH -->|"act runs workflows<br/>against full stack"| STACK["Simulator + Backend"]
     GL -->|"gitlab-runner runs<br/>pipelines against stack"| STACK
-    BPH -->|"runner ↔ bleephub<br/>↔ Sockerless"| BSTACK["bleephub + Backend + Frontend"]
+    BPH -->|"runner ↔ bleephub<br/>↔ Sockerless"| BSTACK["bleephub + Backend"]
 ```
 
 - **Sim-backend tests**: Start a simulator + backend pair, run 59 Docker SDK test functions against them.
-- **E2E tests (act + GitLab)**: Start the full stack (simulator + backend + frontend), run real CI workflows (GitHub Actions via `act`, GitLab CI via `gitlab-runner`) that exercise container create/start/exec/stop/remove.
-- **E2E tests (official runner)**: Start bleephub + Sockerless, run the official `actions/runner` through the full job lifecycle (`make bleephub-test`, Docker-only).
+- **E2E tests (act + GitLab)**: Start the full stack (simulator + backend), run real CI workflows (GitHub Actions via `act`, GitLab CI via `gitlab-runner`) that exercise container create/start/exec/stop/remove.
+- **E2E tests (official runner)**: Start bleephub + Sockerless backend, run the official `actions/runner` through the full job lifecycle (`make bleephub-test`, Docker-only).
 - **Terraform integration tests**: Apply real Terraform modules against simulators to verify IaC compatibility.

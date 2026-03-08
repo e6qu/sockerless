@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	core "github.com/sockerless/backend-core"
 )
 
 // Config holds Cloud Run backend configuration.
@@ -36,6 +38,49 @@ func ConfigFromEnv() Config {
 		AgentTimeout: parseDuration(os.Getenv("SOCKERLESS_AGENT_TIMEOUT"), 30*time.Second),
 		LogTimeout:   parseDuration(os.Getenv("SOCKERLESS_LOG_TIMEOUT"), 30*time.Second),
 	}
+}
+
+// ConfigFromEnvironment creates Config from a unified config environment.
+func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Config {
+	c := Config{
+		Region:       "us-central1",
+		LogID:        "sockerless",
+		AgentImage:   "sockerless/agent:latest",
+		PollInterval: 2 * time.Second,
+		AgentTimeout: 30 * time.Second,
+		LogTimeout:   30 * time.Second,
+	}
+	if env.GCP != nil {
+		c.Project = env.GCP.Project
+		if cr := env.GCP.CloudRun; cr != nil {
+			if cr.Region != "" {
+				c.Region = cr.Region
+			}
+			c.VPCConnector = cr.VPCConnector
+			if cr.LogID != "" {
+				c.LogID = cr.LogID
+			}
+			if cr.LogTimeout != "" {
+				c.LogTimeout = parseDuration(cr.LogTimeout, c.LogTimeout)
+			}
+		}
+	}
+	if env.Common.AgentImage != "" {
+		c.AgentImage = env.Common.AgentImage
+	}
+	c.AgentToken = env.Common.AgentToken
+	c.CallbackURL = env.Common.CallbackURL
+	c.EndpointURL = env.Common.EndpointURL
+	if env.Common.PollInterval != "" {
+		c.PollInterval = parseDuration(env.Common.PollInterval, c.PollInterval)
+	}
+	if env.Common.AgentTimeout != "" {
+		c.AgentTimeout = parseDuration(env.Common.AgentTimeout, c.AgentTimeout)
+	}
+	if sim != nil && sim.Port > 0 {
+		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
+	}
+	return c
 }
 
 // Validate checks required configuration.

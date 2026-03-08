@@ -23,7 +23,6 @@ func (s *Server) registerBrokerRoutes() {
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
-	// Parse as raw JSON to avoid type mismatches (e.g., createdOn format)
 	var raw map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		s.logger.Error().Err(err).Msg("failed to parse session request")
@@ -33,7 +32,6 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	ownerName, _ := raw["ownerName"].(string)
 
-	// Extract agent info for session tracking
 	var agent *Agent
 	if agentRaw, ok := raw["agent"].(map[string]interface{}); ok {
 		agent = &Agent{
@@ -63,17 +61,14 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	s.store.Sessions[sessionID] = session
 	s.store.mu.Unlock()
 
-	// Update session count metric
 	if s.metrics != nil {
 		s.metrics.SetActiveSessions(int64(s.sessionCount()))
 	}
 
-	// Drain any pending messages to the new session
 	s.drainPendingMessages()
 
 	s.logger.Info().Str("sessionId", sessionID).Msg("session created")
 
-	// Return session WITHOUT encryption key — the runner will use plaintext messages
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"sessionId":     sessionID,
 		"ownerName":     ownerName,
@@ -101,8 +96,7 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleGetMessage long-polls for a job message for the runner.
-// Returns 200 with a message if one is available, or 200 with empty body after timeout.
+// handleGetMessage long-polls for a job message (30s timeout).
 func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.URL.Query().Get("sessionId")
 
@@ -127,7 +121,6 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		s.logger.Info().Int64("messageId", msg.MessageID).Msg("delivering message to runner")
 		writeJSON(w, http.StatusOK, msg)
 	case <-ctx.Done():
-		// Timeout — no message available, return empty 200
 		w.WriteHeader(http.StatusOK)
 	}
 }
@@ -138,8 +131,7 @@ func (s *Server) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// sendMessageToAgent sends a TaskAgentMessage to the next available session
-// using round-robin distribution for fair load balancing.
+// sendMessageToAgent sends a message to the next available session (round-robin).
 func (s *Server) sendMessageToAgent(msg *TaskAgentMessage) bool {
 	s.store.mu.Lock()
 	defer s.store.mu.Unlock()
@@ -148,14 +140,12 @@ func (s *Server) sendMessageToAgent(msg *TaskAgentMessage) bool {
 		return false
 	}
 
-	// Sort session IDs for deterministic ordering
 	ids := make([]string, 0, len(s.store.Sessions))
 	for id := range s.store.Sessions {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
 
-	// Round-robin from lastSessionIdx
 	n := len(ids)
 	for i := 0; i < n; i++ {
 		idx := (s.lastSessionIdx + i) % n
@@ -169,20 +159,17 @@ func (s *Server) sendMessageToAgent(msg *TaskAgentMessage) bool {
 				Msg("message queued for runner")
 			return true
 		default:
-			// Channel full, try next session
 		}
 	}
 	return false
 }
 
-// requeuePendingMessage stores a message for later delivery when no session is available.
 func (s *Server) requeuePendingMessage(msg *TaskAgentMessage) {
 	s.store.mu.Lock()
 	s.store.PendingMessages = append(s.store.PendingMessages, msg)
 	s.store.mu.Unlock()
 }
 
-// drainPendingMessages sends any queued messages to available sessions.
 func (s *Server) drainPendingMessages() {
 	s.store.mu.Lock()
 	pending := s.store.PendingMessages
@@ -203,7 +190,6 @@ func (s *Server) drainPendingMessages() {
 	}
 }
 
-// nextMessageID returns the next message ID.
 func (s *Server) nextMessageID() int64 {
 	s.store.mu.Lock()
 	id := s.store.NextMsg
@@ -212,7 +198,6 @@ func (s *Server) nextMessageID() int64 {
 	return id
 }
 
-// nextRequestID returns the next request ID.
 func (s *Server) nextRequestID() int64 {
 	s.store.mu.Lock()
 	id := s.store.NextReqID
@@ -221,7 +206,6 @@ func (s *Server) nextRequestID() int64 {
 	return id
 }
 
-// nextLogID returns the next log container ID.
 func (s *Server) nextLogID() int {
 	s.store.mu.Lock()
 	id := s.store.NextLog
@@ -230,7 +214,6 @@ func (s *Server) nextLogID() int {
 	return id
 }
 
-// lookupJobByRequestID finds a job by its request ID.
 func (s *Server) lookupJobByRequestID(reqID int64) *Job {
 	s.store.mu.RLock()
 	defer s.store.mu.RUnlock()
@@ -242,14 +225,12 @@ func (s *Server) lookupJobByRequestID(reqID int64) *Job {
 	return nil
 }
 
-// sessionCount returns the current number of active sessions.
 func (s *Server) sessionCount() int {
 	s.store.mu.RLock()
 	defer s.store.mu.RUnlock()
 	return len(s.store.Sessions)
 }
 
-// lookupJobByPlanID finds a job by its plan ID.
 func (s *Server) lookupJobByPlanID(planID string) *Job {
 	s.store.mu.RLock()
 	defer s.store.mu.RUnlock()

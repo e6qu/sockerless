@@ -6,6 +6,9 @@
 >
 > **Status:** Updated specification — reflects actual implementation as of Phase 35
 >
+> **⚠ This spec was written at Phase 35. The project is now at Phase 90+.**
+> For current status, see [STATUS.md](../STATUS.md), [FEATURE_MATRIX.md](../FEATURE_MATRIX.md), and [ARCHITECTURE.md](../ARCHITECTURE.md).
+>
 > **Mission:** A Docker-compatible REST API daemon that executes containers on cloud serverless backends (AWS ECS, Google Cloud Run, Azure Container Apps, and others) instead of a local Docker Engine.
 
 ---
@@ -946,7 +949,7 @@ sockerless/
 │   ├── gcp/                           # Module: GCP API simulator (Cloud Run, GCF, Artifact Registry, Logging)
 │   └── azure/                         # Module: Azure API simulator (ACA, AZF, ACR, Monitor)
 │
-├── bleephub/                          # Module: GitHub Actions server (Azure DevOps-derived API)
+├── bleephub/                          # Module: GitHub Actions server-side implementation
 │   └── go.mod                         #   Implements the internal API that actions/runner expects
 │
 ├── tests/                             # Module: black-box API tests
@@ -2193,9 +2196,13 @@ These are stored in state and returned in inspect responses for client compatibi
 
 ### 15.1 Format
 
-All components use **command-line flags** with **environment variable** overrides. No YAML configuration files. Each backend binary has its own set of environment variables prefixed with its cloud provider abbreviation.
+All components use **command-line flags** with **environment variable** overrides. Each backend binary has its own set of environment variables prefixed with its cloud provider abbreviation.
 
-Priority order: CLI flags > Environment variables > Defaults
+An optional unified configuration file (`~/.sockerless/config.yaml`) provides a structured alternative to environment variables. It defines named environments (backend configurations) and simulator definitions. The CLI reads config.yaml and exports the values as environment variables before starting backend binaries.
+
+Priority order: CLI flags > config.yaml environment values > context env vars (legacy JSON) > process environment variables > Defaults
+
+See [`cmd/sockerless/README.md`](../cmd/sockerless/README.md) for the full config.yaml format.
 
 ### 15.2 Frontend Configuration
 
@@ -2291,122 +2298,26 @@ The agent is configured entirely via environment variables (injected by the back
 | Events | `GET /events` streaming endpoint |
 | Documentation | User guide, backend setup guides, configuration reference |
 
-### Phases 5–14: Core Extraction, Agent Bridge, Integration Testing
+### Phases 5–35: Summary
 
-Phases 5–14 completed without architectural changes to the spec. See `STATUS.md`
-for detailed phase history. Key milestones:
-- Phase 5: Extracted shared `backends/core/` library (~70% code reduction per backend)
-- Phase 7: FaaS agent injection via reverse WebSocket connections
-- Phase 8–9: All 6 cloud backends tested against local simulators (98 PASS)
-- Phase 10–11: Real CI runner smoke tests + full terraform integration tests
-- Phase 13–14: E2E tests (12 workflows × 7 backends for both GitHub/GitLab runners)
+Phases 5–35 expanded the project from the initial 4-phase MVP to a fully tested, multi-backend system. Key milestones include core library extraction (Phase 5), FaaS reverse agent (Phase 7/19), driver architecture (Phase 30), Docker build (Phase 34), and bleephub — a GitHub Actions runner service API (Phase 35). For full phase-by-phase details, see [PLAN.md](../PLAN.md) and [WHAT_WE_DID.md](../WHAT_WE_DID.md).
 
-### Phases 15–24: Extended Endpoints, CI Runner Improvements
+### Test Coverage (Phase 35 — see [STATUS.md](../STATUS.md) for current counts)
 
-- Phase 19: FaaS reverse agent — Lambda, GCF, AZF backends with reverse WebSocket agent
-- Phase 22: GitHub `act` upstream compatibility (91/24 pass/fail on memory)
-- Phase 25: Pre-start archive staging (`docker cp` before `docker start` for gitlab-ci-local)
-- Phase 26–27: Attach-before-start, stdin forwarding, PATH-aware command resolution
-
-### Phase 30: Driver Architecture
-
-Introduced driver interfaces for pluggable container operations:
-
-| Driver | Purpose |
-|---|---|
-| `ExecDriver` | Execute commands in containers |
-| `FilesystemDriver` | Archive PUT/HEAD/GET |
-| `StreamDriver` | Logs, attach streaming |
-| `NetworkDriver` | Container network isolation |
-
-Agent drivers route operations to forward or reverse agent connections. When no agent is connected, operations return errors. `DriverSet` on `BaseServer` is auto-constructed by `InitDrivers()`.
-
-### Phases 31–33: Shell Builtins, Service Containers, Health Checks
-
-- Phase 31: 21+ Go-implemented builtins, pwd fix, PATH resolution — upstream act: 91/24
-- Phase 33: Service container support with health checks (`backends/core/health.go`)
-
-### Phase 34: Docker Build Endpoint
-
-`POST /build` with Dockerfile parser supporting FROM, COPY, ADD, ENV, CMD,
-ENTRYPOINT, WORKDIR, ARG, LABEL, EXPOSE, USER. RUN instructions are no-op
-(echoed in build output, not executed). Multi-stage builds supported. Build
-context files staged via `BuildContexts` map.
-
-### Phase 35: bleephub (GitHub Actions Server)
-
-`bleephub/` Go module implements the Azure DevOps-derived internal API that
-the official `actions/runner` binary expects. This enables end-to-end testing
-of GitHub Actions workflows against Sockerless without a real GitHub instance.
-
-Components: auth/tokens, agent registration, broker (sessions + long-poll),
-run service, timeline + logs. Job messages use PipelineContextData + TemplateToken
-format. Runner runs on port 80 (strips non-standard ports from URLs).
-
-### Current Test Coverage
-
-| Test Type | Count | Status |
+| Test Type | Count (at Phase 35) | Status |
 |---|---|---|
 | Simulator-backend integration | 129 | All pass |
-| Sandbox unit tests | 46 | All pass |
-| E2E GitHub (act) | 154 (22 workflows × 7 backends) | All pass |
-| E2E GitLab (gitlab-ci-local) | 175 (25 pipelines × 7 backends) | All pass |
-| Upstream act (memory) | 91 PASS / 24 FAIL | Expected |
-| Upstream gitlab-ci-local | 175 | All pass |
+| E2E GitHub (act) | 154 (22 × 7) | All pass |
+| E2E GitLab (gitlab-ci-local) | 175 (25 × 7) | All pass |
 | bleephub integration | 1 | Pass |
 
 ---
 
 ## Appendices
 
-### A. Docker CLI Command to API Mapping (Sockerless Scope)
+### A. Docker CLI Command to API Mapping
 
-| Docker CLI Command | REST API Endpoint | Supported |
-|---|---|---|
-| `docker run` | `POST /containers/create` + `POST /containers/{id}/start` + `POST /containers/{id}/attach` + `POST /containers/{id}/wait` | Yes |
-| `docker create` | `POST /containers/create` | Yes |
-| `docker start` | `POST /containers/{id}/start` | Yes |
-| `docker stop` | `POST /containers/{id}/stop` | Yes |
-| `docker kill` | `POST /containers/{id}/kill` | Yes |
-| `docker rm` | `DELETE /containers/{id}` | Yes |
-| `docker ps` | `GET /containers/json` | Yes |
-| `docker inspect` | `GET /containers/{id}/json` | Yes |
-| `docker logs` | `GET /containers/{id}/logs` | Yes |
-| `docker exec` | `POST /containers/{id}/exec` + `POST /exec/{id}/start` | Yes |
-| `docker attach` | `POST /containers/{id}/attach` | Yes |
-| `docker wait` | `POST /containers/{id}/wait` | Yes |
-| `docker pull` | `POST /images/create` | Yes |
-| `docker login` | `POST /auth` | Yes |
-| `docker network create` | `POST /networks/create` | Yes |
-| `docker network rm` | `DELETE /networks/{id}` | Yes |
-| `docker network ls` | `GET /networks` | Yes |
-| `docker network inspect` | `GET /networks/{id}` | Yes |
-| `docker volume create` | `POST /volumes/create` | Yes |
-| `docker volume rm` | `DELETE /volumes/{name}` | Yes |
-| `docker volume ls` | `GET /volumes` | Yes |
-| `docker volume inspect` | `GET /volumes/{name}` | Yes |
-| `docker compose up` | (pull + create networks + create volumes + create containers + start) | Yes |
-| `docker compose down` | (stop + remove containers + remove networks) | Yes |
-| `docker compose ps` | `GET /containers/json` with compose label filter | Yes |
-| `docker compose logs` | `GET /containers/{id}/logs` for each service | Yes |
-| `docker build` | `POST /build` | Yes (Phase 34) |
-| `docker push` | `POST /images/{name}/push` | **No** |
-| `docker images` | `GET /images/json` | Yes |
-| `docker rmi` | `DELETE /images/{name}` | Yes |
-| `docker cp` | `PUT/GET /containers/{id}/archive` | Yes (Phase 25) |
-| `docker stats` | `GET /containers/{id}/stats` | Yes |
-| `docker top` | `GET /containers/{id}/top` | Yes |
-| `docker restart` | `POST /containers/{id}/restart` | Yes |
-| `docker rename` | `POST /containers/{id}/rename` | Yes |
-| `docker pause` | `POST /containers/{id}/pause` | Yes |
-| `docker unpause` | `POST /containers/{id}/unpause` | Yes |
-| `docker system df` | `GET /system/df` | Yes |
-| `docker system events` | `GET /events` | Yes |
-| `docker system prune` | (various prune endpoints) | Yes |
-| `docker image prune` | `POST /images/prune` | Yes |
-| `docker container prune` | `POST /containers/prune` | Yes |
-| `docker volume prune` | `POST /volumes/prune` | Yes |
-| `docker network prune` | `POST /networks/prune` | Yes |
+For the full per-backend command mapping with cloud service details, see [FEATURE_MATRIX.md](../FEATURE_MATRIX.md). All Docker CLI commands listed in the original spec (containers, images, networks, volumes, exec, compose, system) are now supported.
 
 ### B. References
 

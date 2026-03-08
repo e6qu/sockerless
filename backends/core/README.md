@@ -19,6 +19,8 @@ Core uses a driver set with three main driver interfaces plus a network driver:
 
 Agent drivers route operations to forward or reverse `sockerless-agent` connections. Operations return errors when no agent is connected — there are no synthetic fallbacks.
 
+See also: [ARCHITECTURE.md](../../ARCHITECTURE.md), [FEATURE_MATRIX.md](../../FEATURE_MATRIX.md)
+
 ## Key types
 
 ### BaseServer
@@ -58,6 +60,34 @@ Core registers handlers for:
 - **System** — info, events, disk usage
 - **Agent** — WebSocket endpoint for reverse agent connections
 
+## Configuration
+
+Core provides a unified configuration system via `config.yaml` that backends can use to load structured settings instead of (or in addition to) environment variables.
+
+### Types
+
+| Type | Description |
+|------|-------------|
+| `UnifiedConfig` | Top-level config with `Simulators` and `Environments` maps |
+| `Environment` | Named backend configuration (backend type, cloud-specific settings, common settings) |
+| `SimulatorConfig` | Named simulator definition (cloud type, ports, log level) |
+| `AWSConfig`, `GCPConfig`, `AzureConfig` | Cloud-specific nested config sections |
+| `CommonConfig` | Shared fields (agent image, callback URL, endpoint URL, etc.) |
+
+### Functions
+
+| Function | Description |
+|----------|-------------|
+| `LoadConfigFile(path)` | Parse a `config.yaml` file into `*UnifiedConfig` |
+| `DefaultConfigPath()` | Returns `$SOCKERLESS_CONFIG` or `~/.sockerless/config.yaml` |
+| `ActiveEnvironment()` | Load config and return the active environment (from `~/.sockerless/active` or `$SOCKERLESS_CONTEXT`) |
+| `ActiveEnvironmentWithConfig()` | Like `ActiveEnvironment` but also returns the full `*UnifiedConfig` |
+| `(*UnifiedConfig).ResolveSimulator(env)` | Return the `SimulatorConfig` referenced by an environment, or nil |
+| `(*UnifiedConfig).Validate()` | Check that all simulator references are valid and backend types match |
+| `(*UnifiedConfig).Save(path)` | Write config atomically with file locking |
+
+See the [CLI documentation](../../cmd/sockerless/README.md) for the `config.yaml` format and examples.
+
 ## Project structure
 
 ```
@@ -81,7 +111,9 @@ core/
 ├── registry.go               Docker v2 registry client (opt-in)
 ├── resolve.go                Container/network/image resolution
 ├── filters.go                Filter matching for list endpoints
-└── helpers.go                JSON/error/ID utilities
+├── helpers.go                JSON/error/ID utilities
+├── configfile.go             Unified config.yaml types and I/O
+└── configfile_test.go        Config file tests
 ```
 
 ## Docker API mapping

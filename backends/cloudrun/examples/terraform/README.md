@@ -75,19 +75,17 @@ export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:9100
 ## Step 4: Build and Run the Backend
 
 ```bash
-cd backends/cloudrun
-go build -o sockerless-backend-cloudrun ./cmd/sockerless-backend-cloudrun
-./sockerless-backend-cloudrun -addr :9100
+# Build the backend binary (serves the Docker API directly)
+go build -tags noui -o sockerless-backend-cloudrun ./backends/cloudrun
+
+# Run the backend
+./sockerless-backend-cloudrun
 ```
 
 ## Step 5: Configure Docker to Use Sockerless
 
 ```bash
-cd frontends/docker
-go build -o sockerless-frontend-docker .
-./sockerless-frontend-docker -backend http://localhost:9100 -addr unix:///tmp/sockerless.sock
-
-export DOCKER_HOST=unix:///tmp/sockerless.sock
+export DOCKER_HOST=tcp://localhost:2375
 ```
 
 ## Step 6: Use Docker Commands
@@ -184,7 +182,7 @@ gcloud run jobs delete sockerless-<id> --region=$(terraform output -raw region) 
 ```
 ┌──────────────┐     ┌──────────────────┐     ┌─────────────────────────┐
 │  docker CLI  │────▶│ Sockerless       │────▶│ Google Cloud Run Jobs   │
-│              │     │ Frontend + Backend│     │                         │
+│              │     │ Backend           │     │                         │
 │ pull, create,│     │ (localhost:9100)  │     │ Jobs.CreateJob          │
 │ start, exec, │     │                  │     │ Jobs.RunJob             │
 │ logs, stop   │     │                  │     │ Executions.GetExecution │

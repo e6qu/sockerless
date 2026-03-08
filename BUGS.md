@@ -1,6 +1,6 @@
 # Known Bugs
 
-583 bugs fixed across 45 sprints (BUG-001 through BUG-583). 0 open bugs.
+583 bugs fixed across 45 sprints (BUG-001 through BUG-583). 0 open bugs. See [STATUS.md](STATUS.md) for overall project status.
 
 Per-sprint details in `_tasks/done/BUG-SPRINT-*.md`.
 

@@ -19,14 +19,8 @@ Docker Client (CLI / SDK / CI Runner)
         │
         ▼
 ┌─────────────────────────────┐
-│  Frontend                   │  Docker REST API v1.44
-│  sockerless-frontend-docker │  Listens on :2375 or unix socket
-└──────────┬──────────────────┘
-           │
-           ▼
-┌─────────────────────────────┐
-│  Backend                    │  Cloud-specific (pick one)
-│  sockerless-backend-{name}  │  Listens on :9100
+│  Sockerless Backend         │  Docker REST API v1.44
+│  sockerless-backend-{name}  │  Listens on :2375 or unix socket
 └──────────┬──────────────────┘
            │
            ▼
@@ -38,7 +32,7 @@ Docker Client (CLI / SDK / CI Runner)
 └─────────────────────────────┘
 ```
 
-The **frontend** is a stateless Docker API translator. The **backend** manages cloud resources. The **agent** runs inside each workload as a sidecar and provides exec/attach over WebSocket.
+Each backend is a single binary that serves the Docker REST API v1.44 and manages cloud resources. The **agent** runs inside each workload as a sidecar and provides exec/attach over WebSocket. See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed diagrams and component descriptions.
 
 ## Backends
 
@@ -59,9 +53,8 @@ Container backends inject the agent as a sidecar. FaaS backends bake the agent i
 ```
 api/                          Shared types and error definitions
 agent/                        WebSocket agent (exec/attach inside workloads)
-frontends/docker/             Docker REST API v1.44 frontend
 backends/
-  core/                       Shared backend library (BaseServer, StateStore, handlers)
+  core/                       Shared backend library (BaseServer, Docker API, StateStore)
   docker/                     Docker daemon passthrough
   ecs/                        AWS ECS Fargate
   lambda/                     AWS Lambda
@@ -85,7 +78,7 @@ smoke-tests/                  Real CI runner validation (act + gitlab-runner)
 spec/                         Specification documents
 ```
 
-Each backend, the agent, the frontend, and the test suite are separate Go modules connected via `go.work`. Major components embed React dashboards at `/ui/`.
+Each backend, the agent, and the test suite are separate Go modules connected via `go.work`. Major components embed React dashboards at `/ui/`.
 
 ## Prerequisites
 
@@ -99,11 +92,32 @@ For terraform operations:
 ## Quick Start
 
 ```bash
-# Build the all-in-one binary (frontend + ECS backend)
+# Build the CLI and ECS backend
 go build -o sockerless ./cmd/sockerless
+go build -o sockerless-backend-ecs ./backends/ecs/cmd/sockerless-backend-ecs
 
-# Start with ECS backend against the AWS simulator
-sockerless serve --backend ecs --addr :2375
+# Option 1: config.yaml (preferred)
+cat > ~/.sockerless/config.yaml <<EOF
+environments:
+  ecs-dev:
+    backend: ecs
+    aws:
+      region: us-east-1
+      ecs:
+        cluster: sockerless
+        subnets: [subnet-abc123]
+        execution_role_arn: arn:aws:iam::123456789012:role/ecsExec
+EOF
+sockerless context use ecs-dev
+sockerless server start
+
+# Option 2: context commands
+sockerless context create ecs-dev --backend ecs \
+  --set AWS_REGION=us-east-1 \
+  --set SOCKERLESS_ECS_CLUSTER=sockerless \
+  --set SOCKERLESS_ECS_SUBNETS=subnet-abc123 \
+  --set SOCKERLESS_ECS_EXECUTION_ROLE_ARN=arn:aws:iam::123456789012:role/ecsExec
+sockerless server start
 
 # Use with Docker CLI
 export DOCKER_HOST=tcp://localhost:2375
@@ -111,6 +125,8 @@ docker version
 docker run --rm alpine echo "hello from sockerless"
 docker ps -a
 ```
+
+See [`cmd/sockerless/README.md`](cmd/sockerless/README.md) for the full `config.yaml` format and all CLI commands.
 
 ## Development
 
@@ -188,7 +204,7 @@ make apply-ecs-simulator  # Apply against local simulator
 
 1. Create `backends/<name>/` as a new Go module
 2. Import `backends/core`, embed `core.BaseServer`, and implement the `api.Backend` interface — only override methods that need cloud-specific logic
-3. Add a `cmd/sockerless-backend-<name>/main.go` entry point
+3. Add an entry point `main.go` that creates and starts the server
 4. Add the module to `go.work`
 5. Add integration tests in `tests/`
 6. Add a simulator in `simulators/` if targeting a new cloud
@@ -209,7 +225,7 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 | [`spec/SOCKERLESS_SPEC.md`](spec/SOCKERLESS_SPEC.md) | Full specification (API surface, architecture, protocols) |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | System architecture, component diagrams, test architecture |
 | [`terraform/README.md`](terraform/README.md) | Terraform modules, state backends, and CI/CD deployment |
-| [`COMPATIBILITY_MATRIX.md`](COMPATIBILITY_MATRIX.md) | Backend feature matrix, simulator/runner/terraform test results |
+| [`FEATURE_MATRIX.md`](FEATURE_MATRIX.md) | Docker API compatibility, cloud service mappings, test results |
 | [`backends/*/README.md`](backends/) | Per-backend configuration and terraform output mapping |
 | [`docs/GITHUB_RUNNER.md`](docs/GITHUB_RUNNER.md) | GitHub Actions E2E test guide (act + official runner) |
 | [`docs/GITLAB_RUNNER_DOCKER.md`](docs/GITLAB_RUNNER_DOCKER.md) | GitLab Runner docker executor E2E test guide |
