@@ -37,7 +37,7 @@ Agent (inside container or reverse-connected)
 | 57-61 | CI runners: GitHub Actions multi-job/matrix/secrets + GitLab CI DAG/expressions |
 | 62-67 | API hardening, Compose E2E, webhooks, GitHub Apps, OTel, network isolation |
 | 69-72 | ARM64, simulator fidelity, SDK/CLI verification, full-stack E2E |
-| 73-77 | UI: Bun/Vite/React 19 monorepo, 13 SPAs, LogViewer |
+| 73-77 | UI: Bun/Vite/React 19 monorepo, 14 SPAs, LogViewer |
 | 79-82 | Admin: dashboard, docs, process management, project bundles |
 | 83-86 | Type-safe API: goverter mappers, api.Backend, self-dispatch, in-process wiring |
 | 90 | Remove memory backend, spec-driven state machine tests |

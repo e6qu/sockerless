@@ -11,10 +11,9 @@ import (
 )
 
 type contextConfig struct {
-	Backend      string            `json:"backend"`
-	FrontendAddr string            `json:"frontend_addr,omitempty"`
-	BackendAddr  string            `json:"backend_addr,omitempty"`
-	Env          map[string]string `json:"env"`
+	Backend string            `json:"backend"`
+	Addr    string            `json:"addr,omitempty"`
+	Env     map[string]string `json:"env"`
 }
 
 // multiFlag collects repeated --set KEY=VALUE flags.
@@ -29,14 +28,13 @@ func (f *multiFlag) Set(v string) error {
 func contextCreate(args []string) {
 	fs := flag.NewFlagSet("context create", flag.ExitOnError)
 	backend := fs.String("backend", "", "backend type (required)")
-	frontendAddr := fs.String("frontend-addr", "", "frontend management API address (e.g. http://localhost:9080)")
-	backendAddr := fs.String("backend-addr", "", "backend API address (e.g. http://localhost:9100)")
+	addr := fs.String("addr", "", "server address (e.g. http://localhost:2375)")
 	var sets multiFlag
 	fs.Var(&sets, "set", "set env var as KEY=VALUE (repeatable)")
 	fs.Parse(args)
 
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: sockerless context create <name> --backend <type> [--frontend-addr ADDR] [--backend-addr ADDR] [--set KEY=VALUE ...]")
+		fmt.Fprintln(os.Stderr, "Usage: sockerless context create <name> --backend <type> [--addr ADDR] [--set KEY=VALUE ...]")
 		os.Exit(1)
 	}
 	name := fs.Arg(0)
@@ -57,10 +55,9 @@ func contextCreate(args []string) {
 	}
 
 	cfg := contextConfig{
-		Backend:      *backend,
-		FrontendAddr: *frontendAddr,
-		BackendAddr:  *backendAddr,
-		Env:          env,
+		Backend: *backend,
+		Addr:    *addr,
+		Env:     env,
 	}
 
 	dir := contextDir(name)
@@ -158,11 +155,8 @@ func contextShow(args []string) {
 
 	fmt.Printf("Context: %s\n", name)
 	fmt.Printf("Backend: %s\n", cfg.Backend)
-	if cfg.FrontendAddr != "" {
-		fmt.Printf("Frontend: %s\n", cfg.FrontendAddr)
-	}
-	if cfg.BackendAddr != "" {
-		fmt.Printf("Backend Addr: %s\n", cfg.BackendAddr)
+	if cfg.Addr != "" {
+		fmt.Printf("Address: %s\n", cfg.Addr)
 	}
 	if len(cfg.Env) > 0 {
 		fmt.Println("Environment:")
@@ -249,39 +243,21 @@ func contextCurrent() {
 }
 
 func contextReload() {
-	frontendAddr, backendAddr := activeAddrs()
-	if frontendAddr == "" && backendAddr == "" {
-		fmt.Fprintln(os.Stderr, "error: no server addresses configured in active context")
+	addr := activeAddr()
+	if addr == "" {
+		fmt.Fprintln(os.Stderr, "error: no server address configured in active context")
 		os.Exit(1)
 	}
 
-	reloaded := 0
-	if backendAddr != "" {
-		data, err := mgmtPost(backendAddr, "/internal/v1/reload")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Backend reload failed: %v\n", err)
-		} else {
-			var resp map[string]any
-			if err := json.Unmarshal(data, &resp); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: could not parse reload response: %v\n", err)
-			}
-			changed, _ := resp["changed"].(float64)
-			fmt.Printf("Backend reloaded (%d vars changed)\n", int(changed))
-			reloaded++
-		}
-	}
-
-	if frontendAddr != "" {
-		_, err := mgmtPost(frontendAddr, "/reload")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Frontend reload failed: %v\n", err)
-		} else {
-			fmt.Println("Frontend reloaded")
-			reloaded++
-		}
-	}
-
-	if reloaded == 0 {
+	data, err := mgmtPost(addr, "/internal/v1/reload")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Reload failed: %v\n", err)
 		os.Exit(1)
 	}
+	var resp map[string]any
+	if err := json.Unmarshal(data, &resp); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not parse reload response: %v\n", err)
+	}
+	changed, _ := resp["changed"].(float64)
+	fmt.Printf("Reloaded (%d vars changed)\n", int(changed))
 }

@@ -4,7 +4,7 @@ CLI tool for managing Sockerless contexts and server lifecycle. Zero external de
 
 ## Overview
 
-The CLI manages named contexts (backend configurations), starts and stops frontend/backend server processes, and provides commands for inspecting running services. Configuration is stored in `~/.sockerless/` (override with `SOCKERLESS_HOME`).
+The CLI manages named contexts (backend configurations), starts and stops backend servers, and provides commands for inspecting running services. Configuration is stored in `~/.sockerless/` (override with `SOCKERLESS_HOME`).
 
 ## Building
 
@@ -33,8 +33,7 @@ Flags for `context create`:
 | Flag | Description |
 |------|-------------|
 | `--backend` | Backend type (required): ecs, lambda, cloudrun, gcf, aca, azf, docker |
-| `--frontend-addr` | Frontend management API address |
-| `--backend-addr` | Backend API address |
+| `--addr` | Server address (e.g. http://localhost:2375) |
 | `--set KEY=VALUE` | Set environment variable (repeatable) |
 
 ### server — start/stop/restart
@@ -50,10 +49,7 @@ Flags for `server start`:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--backend-bin` | `sockerless-backend-{type}` | Path to backend binary |
-| `--frontend-bin` | `sockerless-frontend-docker` | Path to frontend binary |
-| `--backend-addr` | `:9100` | Backend listen address |
-| `--frontend-addr` | `:2375` | Frontend Docker API listen address |
-| `--mgmt-addr` | `:9080` | Frontend management API listen address |
+| `--addr` | `:2375` | Listen address (Docker API + management) |
 
 ### status — show server health
 
@@ -61,7 +57,7 @@ Flags for `server start`:
 sockerless status
 ```
 
-Checks frontend and backend health endpoints, reports uptime, backend type, and container count.
+Checks the backend health endpoint, reports uptime, backend type, and container count.
 
 ### ps — list containers
 
@@ -77,7 +73,7 @@ Displays a table with ID, NAME, IMAGE, STATE, and POD columns.
 sockerless metrics
 ```
 
-Fetches and pretty-prints metrics from both frontend and backend.
+Fetches and pretty-prints metrics from the backend.
 
 ### resources — manage cloud resources
 
@@ -115,11 +111,10 @@ sockerless version
 ├── active                         Active context name
 ├── contexts/
 │   └── {name}/
-│       └── config.json            Backend type, addresses, env vars
+│       └── config.json            Backend type, address, env vars
 └── run/
     └── {name}/
-        ├── backend.pid            Backend process ID
-        └── frontend.pid           Frontend process ID
+        └── backend.pid            Server process ID
 ```
 
 ## Project structure

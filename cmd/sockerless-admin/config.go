@@ -31,10 +31,9 @@ type ProcessConfig struct {
 
 // contextConfig mirrors the CLI context config structure.
 type contextConfig struct {
-	Backend      string            `json:"backend"`
-	FrontendAddr string            `json:"frontend_addr,omitempty"`
-	BackendAddr  string            `json:"backend_addr,omitempty"`
-	Env          map[string]string `json:"env"`
+	Backend string            `json:"backend"`
+	Addr    string            `json:"addr,omitempty"`
+	Env     map[string]string `json:"env"`
 }
 
 // sockerlessDir returns the sockerless configuration directory.
@@ -94,7 +93,7 @@ func discoverFromContexts(reg *Registry) {
 			continue
 		}
 
-		if cfg.BackendAddr != "" {
+		if cfg.Addr != "" {
 			compName := cfg.Backend
 			if compName == "" {
 				compName = name
@@ -102,14 +101,7 @@ func discoverFromContexts(reg *Registry) {
 			reg.Add(Component{
 				Name: compName,
 				Type: "backend",
-				Addr: normalizeAddr(cfg.BackendAddr),
-			})
-		}
-		if cfg.FrontendAddr != "" {
-			reg.Add(Component{
-				Name: "frontend",
-				Type: "frontend",
-				Addr: normalizeAddr(cfg.FrontendAddr),
+				Addr: normalizeAddr(cfg.Addr),
 			})
 		}
 	}
@@ -148,8 +140,7 @@ func listContexts() []map[string]any {
 			var cfg contextConfig
 			if json.Unmarshal(data, &cfg) == nil {
 				ctx["backend"] = cfg.Backend
-				ctx["frontend_addr"] = cfg.FrontendAddr
-				ctx["backend_addr"] = cfg.BackendAddr
+				ctx["addr"] = cfg.Addr
 			}
 		}
 		contexts = append(contexts, ctx)

@@ -34,13 +34,13 @@ Subcommands:
 }
 
 func resourcesList() {
-	_, backendAddr := activeAddrs()
-	if backendAddr == "" {
-		fmt.Fprintln(os.Stderr, "error: no backend_addr configured in active context")
+	addr := activeAddr()
+	if addr == "" {
+		fmt.Fprintln(os.Stderr, "error: no server address configured in active context")
 		os.Exit(1)
 	}
 
-	data, err := mgmtGet(backendAddr, "/internal/v1/resources?active=true")
+	data, err := mgmtGet(addr, "/internal/v1/resources?active=true")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -74,13 +74,13 @@ func resourcesList() {
 }
 
 func resourcesOrphaned() {
-	_, backendAddr := activeAddrs()
-	if backendAddr == "" {
-		fmt.Fprintln(os.Stderr, "error: no backend_addr configured in active context")
+	addr := activeAddr()
+	if addr == "" {
+		fmt.Fprintln(os.Stderr, "error: no server address configured in active context")
 		os.Exit(1)
 	}
 
-	data, err := mgmtGet(backendAddr, "/internal/v1/resources/orphaned")
+	data, err := mgmtGet(addr, "/internal/v1/resources/orphaned")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -106,13 +106,13 @@ func resourcesOrphaned() {
 }
 
 func resourcesCleanup() {
-	_, backendAddr := activeAddrs()
-	if backendAddr == "" {
-		fmt.Fprintln(os.Stderr, "error: no backend_addr configured in active context")
+	addr := activeAddr()
+	if addr == "" {
+		fmt.Fprintln(os.Stderr, "error: no server address configured in active context")
 		os.Exit(1)
 	}
 
-	data, err := mgmtPost(backendAddr, "/internal/v1/resources/cleanup")
+	data, err := mgmtPost(addr, "/internal/v1/resources/cleanup")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

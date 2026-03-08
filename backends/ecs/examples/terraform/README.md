@@ -63,28 +63,21 @@ export SOCKERLESS_ECS_LOG_GROUP=$(terraform output -raw log_group_name)
 ## Step 3: Build and Run the Backend
 
 ```bash
-# Build the backend binary
-cd backends/ecs
-go build -o sockerless-backend-ecs ./cmd/sockerless-backend-ecs
+# Build the backend binary (serves the Docker API directly)
+go build -tags noui -o sockerless-backend-ecs ./backends/ecs
 
-# Run the backend (listens on port 9100 by default)
-./sockerless-backend-ecs -addr :9100
+# Run the backend (listens on port 2375 by default)
+./sockerless-backend-ecs
 ```
 
 The backend is now running locally and will create ECS Fargate tasks in your AWS account when Docker commands are issued.
 
 ## Step 4: Configure Docker to Use Sockerless
 
-Point the Docker CLI at the Sockerless frontend:
+Point the Docker CLI at the Sockerless backend:
 
 ```bash
-# Build and run the frontend (translates Docker API → Sockerless internal API)
-cd frontends/docker
-go build -o sockerless-frontend-docker .
-./sockerless-frontend-docker -backend http://localhost:9100 -addr unix:///tmp/sockerless.sock
-
-# Use docker with the custom socket
-export DOCKER_HOST=unix:///tmp/sockerless.sock
+export DOCKER_HOST=tcp://localhost:2375
 ```
 
 Now every `docker` command goes through Sockerless to ECS Fargate.
@@ -198,7 +191,7 @@ aws ecs stop-task --cluster sockerless-example --task <task-arn>
 ```
 ┌──────────────┐     ┌──────────────────┐     ┌────────────────────────┐
 │  docker CLI  │────▶│ Sockerless       │────▶│ AWS ECS Fargate        │
-│              │     │ Frontend + Backend│     │                        │
+│              │     │ Backend           │     │                        │
 │ pull, create,│     │ (localhost:9100)  │     │ RegisterTaskDefinition │
 │ start, exec, │     │                  │     │ RunTask                │
 │ logs, stop   │     │                  │     │ StopTask               │

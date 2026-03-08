@@ -571,7 +571,7 @@ sockerless/
 ├── cmd/
 │   ├── sockerless/               # CLI tool (context management)
 │   └── sockerless-admin/         # Admin dashboard server
-├── ui/                           # React SPA monorepo (13 packages)
+├── ui/                           # React SPA monorepo (14 packages)
 ├── simulators/
 │   ├── aws/                      # AWS API simulator
 │   ├── gcp/                      # GCP API simulator

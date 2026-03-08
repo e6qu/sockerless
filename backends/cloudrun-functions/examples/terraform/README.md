@@ -57,19 +57,17 @@ export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:9100
 ## Step 4: Build and Run the Backend
 
 ```bash
-cd backends/cloudrun-functions
-go build -o sockerless-backend-gcf ./cmd/sockerless-backend-gcf
-./sockerless-backend-gcf -addr :9100
+# Build the backend binary (serves the Docker API directly)
+go build -tags noui -o sockerless-backend-gcf ./backends/cloudrun-functions
+
+# Run the backend
+./sockerless-backend-gcf
 ```
 
 ## Step 5: Configure Docker to Use Sockerless
 
 ```bash
-cd frontends/docker
-go build -o sockerless-frontend-docker .
-./sockerless-frontend-docker -backend http://localhost:9100 -addr unix:///tmp/sockerless.sock
-
-export DOCKER_HOST=unix:///tmp/sockerless.sock
+export DOCKER_HOST=tcp://localhost:2375
 ```
 
 ## Step 6: Use Docker Commands
@@ -152,7 +150,7 @@ gcloud functions delete skls-<id> --region=$(terraform output -raw region) --qui
 ```
 ┌──────────────┐     ┌──────────────────┐     ┌────────────────────────┐
 │  docker CLI  │────▶│ Sockerless       │────▶│ Cloud Run Functions    │
-│              │     │ Frontend + Backend│     │                        │
+│              │     │ Backend           │     │                        │
 │ pull, create,│     │ (localhost:9100)  │     │ Functions.Create       │
 │ start, exec, │     │                  │◀────│ HTTP POST invoke       │
 │ logs, rm     │     │ ◀── agent calls  │     │ Functions.Delete       │

@@ -46,19 +46,19 @@ func mgmtPost(addr, path string) ([]byte, error) {
 	return body, nil
 }
 
-// activeAddrs reads frontend_addr and backend_addr from the active context.
-func activeAddrs() (frontendAddr, backendAddr string) {
+// activeAddr reads the server address from the active context.
+func activeAddr() string {
 	name := activeContextName()
 	if name == "" {
-		return "", ""
+		return ""
 	}
 	data, err := os.ReadFile(filepath.Join(contextDir(name), "config.json"))
 	if err != nil {
-		return "", ""
+		return ""
 	}
 	var cfg contextConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return "", ""
+		return ""
 	}
-	return cfg.FrontendAddr, cfg.BackendAddr
+	return cfg.Addr
 }

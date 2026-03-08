@@ -11,7 +11,7 @@ import (
 )
 
 func TestPing(t *testing.T) {
-	resp, err := http.Get("http://" + frontendAddr + "/_ping")
+	resp, err := http.Get("http://" + serverAddr + "/_ping")
 	if err != nil {
 		t.Fatalf("ping failed: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestPing(t *testing.T) {
 }
 
 func TestPingHead(t *testing.T) {
-	resp, err := http.Head("http://" + frontendAddr + "/_ping")
+	resp, err := http.Head("http://" + serverAddr + "/_ping")
 	if err != nil {
 		t.Fatalf("ping HEAD failed: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestInfo(t *testing.T) {
 }
 
 func TestVersionedPing(t *testing.T) {
-	resp, err := http.Get("http://" + frontendAddr + "/v1.44/_ping")
+	resp, err := http.Get("http://" + serverAddr + "/v1.44/_ping")
 	if err != nil {
 		t.Fatalf("versioned ping failed: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestImageBuild(t *testing.T) {
 	_ = tw.Close()
 
 	resp, err := http.Post(
-		"http://"+frontendAddr+"/v1.44/build?t=test-build:latest&dockerfile=Dockerfile",
+		"http://"+serverAddr+"/v1.44/build?t=test-build:latest&dockerfile=Dockerfile",
 		"application/x-tar",
 		&buf,
 	)

@@ -7,13 +7,13 @@ import (
 )
 
 func cmdPs() {
-	_, backendAddr := activeAddrs()
-	if backendAddr == "" {
-		fmt.Fprintln(os.Stderr, "error: no backend_addr configured in active context")
+	addr := activeAddr()
+	if addr == "" {
+		fmt.Fprintln(os.Stderr, "error: no server address configured in active context")
 		os.Exit(1)
 	}
 
-	data, err := mgmtGet(backendAddr, "/internal/v1/containers/summary")
+	data, err := mgmtGet(addr, "/internal/v1/containers/summary")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

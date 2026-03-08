@@ -16,7 +16,7 @@ import (
 
 var (
 	dockerClient   *client.Client
-	frontendAddr   string
+	serverAddr   string
 	evalBinaryPath string
 	ctx            = context.Background()
 )
@@ -137,7 +137,7 @@ func TestMain(m *testing.M) {
 
 	// Start ECS backend (serves Docker API directly via in-process wiring)
 	backendAddr := fmt.Sprintf(":%d", backendPort)
-	frontendAddr = fmt.Sprintf("localhost:%d", backendPort)
+	serverAddr = fmt.Sprintf("localhost:%d", backendPort)
 	fmt.Printf("Starting ECS backend on %s...\n", backendAddr)
 	backendCmd := exec.Command(backendBin, "--addr", backendAddr, "--log-level", "debug")
 	callbackURL := fmt.Sprintf("http://127.0.0.1:%d", backendPort)
@@ -169,7 +169,7 @@ func TestMain(m *testing.M) {
 
 	// Create Docker SDK client pointing directly at backend
 	dockerClient, err = client.NewClientWithOpts(
-		client.WithHost("tcp://"+frontendAddr),
+		client.WithHost("tcp://"+serverAddr),
 		client.WithAPIVersionNegotiation(),
 	)
 	if err != nil {

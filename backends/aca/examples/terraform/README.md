@@ -79,19 +79,17 @@ export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:9100
 ## Step 4: Build and Run the Backend
 
 ```bash
-cd backends/aca
-go build -o sockerless-backend-aca ./cmd/sockerless-backend-aca
-./sockerless-backend-aca -addr :9100
+# Build the backend binary (serves the Docker API directly)
+go build -tags noui -o sockerless-backend-aca ./backends/aca
+
+# Run the backend
+./sockerless-backend-aca
 ```
 
 ## Step 5: Configure Docker to Use Sockerless
 
 ```bash
-cd frontends/docker
-go build -o sockerless-frontend-docker .
-./sockerless-frontend-docker -backend http://localhost:9100 -addr unix:///tmp/sockerless.sock
-
-export DOCKER_HOST=unix:///tmp/sockerless.sock
+export DOCKER_HOST=tcp://localhost:2375
 ```
 
 ## Step 6: Use Docker Commands
@@ -192,7 +190,7 @@ This takes approximately 5-10 minutes.
 ```
 ┌──────────────┐     ┌──────────────────┐     ┌──────────────────────────┐
 │  docker CLI  │────▶│ Sockerless       │────▶│ Azure Container Apps     │
-│              │     │ Frontend + Backend│     │                          │
+│              │     │ Backend           │     │                          │
 │ pull, create,│     │ (localhost:9100)  │     │ Jobs.BeginCreateOrUpdate │
 │ start, exec, │     │                  │     │ Jobs.BeginStart          │
 │ logs, stop   │     │                  │     │ Jobs.BeginStopExecution  │

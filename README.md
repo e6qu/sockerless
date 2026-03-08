@@ -19,14 +19,8 @@ Docker Client (CLI / SDK / CI Runner)
         │
         ▼
 ┌─────────────────────────────┐
-│  Frontend                   │  Docker REST API v1.44
-│  sockerless-frontend-docker │  Listens on :2375 or unix socket
-└──────────┬──────────────────┘
-           │
-           ▼
-┌─────────────────────────────┐
-│  Backend                    │  Cloud-specific (pick one)
-│  sockerless-backend-{name}  │  Listens on :9100
+│  Sockerless Backend         │  Docker REST API v1.44
+│  sockerless-backend-{name}  │  Listens on :2375 or unix socket
 └──────────┬──────────────────┘
            │
            ▼
@@ -38,7 +32,7 @@ Docker Client (CLI / SDK / CI Runner)
 └─────────────────────────────┘
 ```
 
-The **frontend** is a stateless Docker API translator. The **backend** manages cloud resources. The **agent** runs inside each workload as a sidecar and provides exec/attach over WebSocket. See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed diagrams and component descriptions.
+Each backend is a single binary that serves the Docker REST API v1.44 and manages cloud resources. The **agent** runs inside each workload as a sidecar and provides exec/attach over WebSocket. See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed diagrams and component descriptions.
 
 ## Backends
 
@@ -59,9 +53,8 @@ Container backends inject the agent as a sidecar. FaaS backends bake the agent i
 ```
 api/                          Shared types and error definitions
 agent/                        WebSocket agent (exec/attach inside workloads)
-frontends/docker/             Docker REST API v1.44 frontend
 backends/
-  core/                       Shared backend library (BaseServer, StateStore, handlers)
+  core/                       Shared backend library (BaseServer, Docker API, StateStore)
   docker/                     Docker daemon passthrough
   ecs/                        AWS ECS Fargate
   lambda/                     AWS Lambda
@@ -85,7 +78,7 @@ smoke-tests/                  Real CI runner validation (act + gitlab-runner)
 spec/                         Specification documents
 ```
 
-Each backend, the agent, the frontend, and the test suite are separate Go modules connected via `go.work`. Major components embed React dashboards at `/ui/`.
+Each backend, the agent, and the test suite are separate Go modules connected via `go.work`. Major components embed React dashboards at `/ui/`.
 
 ## Prerequisites
 
@@ -99,7 +92,7 @@ For terraform operations:
 ## Quick Start
 
 ```bash
-# Build the all-in-one binary (frontend + ECS backend)
+# Build the ECS backend
 go build -o sockerless ./cmd/sockerless
 
 # Start with ECS backend against the AWS simulator
@@ -188,7 +181,7 @@ make apply-ecs-simulator  # Apply against local simulator
 
 1. Create `backends/<name>/` as a new Go module
 2. Import `backends/core`, embed `core.BaseServer`, and implement the `api.Backend` interface — only override methods that need cloud-specific logic
-3. Add a `cmd/sockerless-backend-<name>/main.go` entry point
+3. Add an entry point `main.go` that creates and starts the server
 4. Add the module to `go.work`
 5. Add integration tests in `tests/`
 6. Add a simulator in `simulators/` if targeting a new cloud

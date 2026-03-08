@@ -39,7 +39,6 @@ func main() {
 	flag.Var(&backends, "backend", "backend component as name=addr (repeatable)")
 	flag.Var(&simulators, "simulator", "simulator component as name=addr (repeatable)")
 	bleephubAddr := flag.String("bleephub", "", "bleephub coordinator address")
-	frontendAddr := flag.String("frontend", "", "Docker frontend management address")
 	showVersion := flag.Bool("version", false, "print version and exit")
 
 	flag.Parse()
@@ -83,9 +82,6 @@ func main() {
 	}
 	if *bleephubAddr != "" {
 		reg.Add(Component{Name: "bleephub", Type: "coordinator", Addr: normalizeAddr(*bleephubAddr)})
-	}
-	if *frontendAddr != "" {
-		reg.Add(Component{Name: "frontend", Type: "frontend", Addr: normalizeAddr(*frontendAddr)})
 	}
 
 	// Start background health polling
