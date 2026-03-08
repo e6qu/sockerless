@@ -24,7 +24,14 @@
 
 ## Architecture
 
-7 backends (docker, ecs, lambda, cloudrun, gcf, aca, azf) sharing a common core with driver interfaces (Exec, Filesystem, Stream, Network). 3 cloud simulators validated against SDKs, CLIs, and Terraform.
+7 backends (docker, ecs, lambda, cloudrun, gcf, aca, azf) sharing a common core with driver interfaces (Exec, Filesystem, Stream, Network, Logging, Service Discovery). Cloud backends have real cloud-native implementations:
+
+- **Logging**: All 6 cloud backends use `core.StreamCloudLogs` with backend-specific `CloudLogFetchFunc` closures (CloudWatch, Cloud Logging, Azure Monitor KQL)
+- **Exec/Attach**: ECS uses ExecuteCommand + SSM WebSocket, ACA uses Container Apps exec API WebSocket, Cloud Run requires agent sidecar
+- **Networking**: ECS creates VPC Security Groups, CloudRun creates Cloud DNS managed zones, ACA tracks NSG state
+- **Service Discovery**: ECS uses AWS Cloud Map (register/deregister/discover), CloudRun uses Cloud DNS A records, ACA uses in-process DNS registry
+
+3 cloud simulators validated against SDKs, CLIs, and Terraform.
 
 ## Known Limitations
 

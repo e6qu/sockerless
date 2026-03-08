@@ -222,6 +222,17 @@ func (s *Server) ContainerStart(ref string) error {
 		state.ClusterARN = clusterARN
 	})
 
+	// Register in Cloud Map for service discovery
+	c, _ = s.Store.Containers.Get(id)
+	hostname := strings.TrimPrefix(c.Name, "/")
+	for _, ep := range c.NetworkSettings.Networks {
+		if ep != nil && ep.NetworkID != "" && ep.IPAddress != "" {
+			if err := s.cloudServiceRegister(id, hostname, ep.IPAddress, ep.NetworkID); err != nil {
+				s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to register in Cloud Map")
+			}
+		}
+	}
+
 	if s.config.CallbackURL != "" {
 		// Reverse agent mode: wait for agent callback instead of polling task IP
 		go func() {
@@ -572,6 +583,15 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		s.Store.Pods.RemoveContainer(pod.ID, id)
 	}
 
+	// Deregister from Cloud Map
+	for _, ep := range c.NetworkSettings.Networks {
+		if ep != nil && ep.NetworkID != "" {
+			if err := s.cloudServiceDeregister(id, ep.NetworkID); err != nil {
+				s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to deregister from Cloud Map")
+			}
+		}
+	}
+
 	// Clean up network associations
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID != "" {
@@ -854,11 +874,9 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 		return s.BaseServer.ExecStart(id, opts)
 	}
 
-	// No agent connected — cannot exec into a remote Fargate task without
-	// ECS ExecuteCommand + SSM Session Manager (not yet implemented).
-	return nil, &api.NotImplementedError{
-		Message: "exec requires an agent connection for ECS containers; ECS ExecuteCommand (SSM) is not yet supported",
-	}
+	// No agent connected — use ECS ExecuteCommand API (SSM Session Manager)
+	// to exec into the remote Fargate task.
+	return s.cloudExecStart(&exec, &c)
 }
 
 // PodStart starts all containers in a pod by calling ContainerStart for each.
@@ -1039,10 +1057,11 @@ func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*ap
 		return nil, &api.ConflictError{Message: "Container " + containerID + " is not running"}
 	}
 
-	// ECS-specific: check that an agent is available for exec
-	if c.AgentAddress == "" {
+	// ECS-specific: check that an agent or ECS task is available for exec.
+	ecsState, _ := s.ECS.Get(id)
+	if c.AgentAddress == "" && ecsState.TaskARN == "" {
 		return nil, &api.NotImplementedError{
-			Message: fmt.Sprintf("exec requires an agent connection, but container %s has no agent attached (ECS backend)", strings.TrimPrefix(c.Name, "/")),
+			Message: fmt.Sprintf("exec requires an agent connection or running ECS task, but container %s has neither (ECS backend)", strings.TrimPrefix(c.Name, "/")),
 		}
 	}
 

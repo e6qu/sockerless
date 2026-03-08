@@ -644,6 +644,13 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		s.Store.Pods.RemoveContainer(pod.ID, id)
 	}
 
+	// Deregister from service discovery
+	for _, ep := range c.NetworkSettings.Networks {
+		if ep != nil && ep.NetworkID != "" {
+			s.cloudServiceDeregister(id, ep.NetworkID)
+		}
+	}
+
 	// Clean up network associations
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID != "" {

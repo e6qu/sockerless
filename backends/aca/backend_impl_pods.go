@@ -123,9 +123,9 @@ func (s *Server) PodRemove(name string, force bool) error {
 	return nil
 }
 
-// ExecCreate creates an exec instance, adding an agent-connectivity check for ACA.
-// If the container has no agent connected, exec cannot run against the remote
-// ACA Job, so we return an error early.
+// ExecCreate creates an exec instance. Now supports both agent-based exec
+// and cloud-based exec via the ACA management API, so the agent check is
+// no longer a hard requirement.
 func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*api.ExecCreateResponse, error) {
 	id, ok := s.Store.ResolveContainerID(containerID)
 	if !ok {
@@ -137,19 +137,14 @@ func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*ap
 		return nil, &api.ConflictError{Message: "Container " + containerID + " is not running"}
 	}
 
-	// ACA-specific: check that an agent is available for exec
-	if c.AgentAddress == "" {
-		return nil, &api.NotImplementedError{
-			Message: fmt.Sprintf("exec requires an agent connection, but container %s has no agent attached (ACA backend)", strings.TrimPrefix(c.Name, "/")),
-		}
-	}
-
-	// Delegate to BaseServer for the actual exec creation
+	// Delegate to BaseServer for the actual exec creation.
+	// ExecStart will route to agent or cloud exec as appropriate.
 	return s.BaseServer.ExecCreate(containerID, req)
 }
 
-// ExecStart starts an exec instance with an agent-connectivity check.
-// If the container has no agent, returns NotImplementedError.
+// ExecStart starts an exec instance. If an agent is connected, delegates
+// to BaseServer (agent driver). Otherwise, falls back to cloudExecStart
+// which uses the ACA management API WebSocket exec endpoint.
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
 	exec, ok := s.Store.Execs.Get(id)
 	if !ok {
@@ -163,20 +158,19 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 		}
 	}
 
-	// ACA-specific: check that an agent is available
-	if c.AgentAddress == "" {
-		return nil, &api.NotImplementedError{
-			Message: fmt.Sprintf("exec requires an agent connection, but container %s has no agent attached (ACA backend)", strings.TrimPrefix(c.Name, "/")),
-		}
+	// If an agent is connected, delegate to BaseServer (agent driver handles it)
+	if c.AgentAddress != "" {
+		return s.BaseServer.ExecStart(id, opts)
 	}
 
-	// Delegate to BaseServer which handles agent-based exec via the driver chain
-	return s.BaseServer.ExecStart(id, opts)
+	// No agent — fall back to cloud exec via ACA management API
+	return s.cloudExecStart(&exec, &c)
 }
 
 // ContainerAttach attaches to a container's streams.
 // If an agent is connected, delegates to BaseServer (which uses the driver chain).
-// Otherwise returns NotImplementedError since ACA Jobs have no direct attach support.
+// Otherwise, falls back to cloud exec via the ACA management API, creating a
+// shell session that serves as an attach-like experience.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
 	cid, ok := s.Store.ResolveContainerID(id)
 	if !ok {
@@ -186,9 +180,17 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	if c.AgentAddress != "" {
 		return s.BaseServer.ContainerAttach(id, opts)
 	}
-	return nil, &api.NotImplementedError{
-		Message: "ACA backend does not support attach without a connected agent",
+
+	// No agent — fall back to cloud exec, creating a shell session as attach.
+	// Build a synthetic exec instance for the container's entrypoint.
+	exec := &api.ExecInstance{
+		ContainerID: cid,
+		ProcessConfig: api.ExecProcessConfig{
+			Entrypoint: "/bin/sh",
+			Tty:        opts.Stream,
+		},
 	}
+	return s.cloudExecStart(exec, &c)
 }
 
 // ContainerExport is not supported by the ACA backend.

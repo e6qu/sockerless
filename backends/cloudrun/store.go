@@ -8,9 +8,11 @@ type CloudRunState struct {
 	AgentToken    string // Bearer token for agent auth
 }
 
-// NetworkState tracks virtual network state.
+// NetworkState tracks cloud networking state for a Docker network.
 type NetworkState struct {
-	// Virtual — no real Cloud DNS zones
+	ManagedZoneName  string // Cloud DNS managed zone name
+	DNSName          string // DNS zone name (e.g., "network-name.internal.")
+	FirewallRuleName string // VPC firewall rule name (placeholder — no compute client)
 }
 
 // VolumeState tracks volume state.

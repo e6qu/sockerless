@@ -91,34 +91,6 @@ func (s *Server) ImageSearch(term string, limit int, filters map[string][]string
 }
 
 
-func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error {
-	return s.BaseServer.NetworkConnect(id, req)
-}
-
-func (s *Server) NetworkCreate(req *api.NetworkCreateRequest) (*api.NetworkCreateResponse, error) {
-	return s.BaseServer.NetworkCreate(req)
-}
-
-func (s *Server) NetworkDisconnect(id string, req *api.NetworkDisconnectRequest) error {
-	return s.BaseServer.NetworkDisconnect(id, req)
-}
-
-func (s *Server) NetworkInspect(id string) (*api.Network, error) {
-	return s.BaseServer.NetworkInspect(id)
-}
-
-func (s *Server) NetworkList(filters map[string][]string) ([]*api.Network, error) {
-	return s.BaseServer.NetworkList(filters)
-}
-
-func (s *Server) NetworkPrune(filters map[string][]string) (*api.NetworkPruneResponse, error) {
-	return s.BaseServer.NetworkPrune(filters)
-}
-
-func (s *Server) NetworkRemove(id string) error {
-	return s.BaseServer.NetworkRemove(id)
-}
-
 func (s *Server) PodCreate(req *api.PodCreateRequest) (*api.PodCreateResponse, error) {
 	return s.BaseServer.PodCreate(req)
 }

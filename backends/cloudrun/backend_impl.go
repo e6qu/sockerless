@@ -663,6 +663,16 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		s.Store.Pods.RemoveContainer(pod.ID, id)
 	}
 
+	// Deregister from Cloud DNS
+	hostname := strings.TrimPrefix(c.Name, "/")
+	for _, ep := range c.NetworkSettings.Networks {
+		if ep != nil && ep.NetworkID != "" {
+			if err := s.cloudServiceDeregister(id, hostname, ep.NetworkID); err != nil {
+				s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to deregister from Cloud DNS")
+			}
+		}
+	}
+
 	// Clean up network associations
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID != "" {
@@ -908,7 +918,9 @@ func (s *Server) VolumeRemove(name string, force bool) error {
 }
 
 // ExecStart checks for an agent connection before allowing exec.
-// Cloud Run Jobs do not support local exec — an agent must be connected.
+// Cloud Run Jobs do not support native exec — there is no Cloud Run API for
+// executing commands inside a running job container. An agent sidecar must be
+// connected to proxy exec requests into the container.
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
 	exec, ok := s.Store.Execs.Get(id)
 	if !ok {
