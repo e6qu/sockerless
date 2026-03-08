@@ -31,7 +31,6 @@ func (s *Server) handleCreateTimeline(w http.ResponseWriter, r *http.Request) {
 	timelineID := r.PathValue("timelineId")
 	s.logger.Debug().Str("timelineId", timelineID).Msg("create/update timeline")
 
-	// Read and discard body
 	body, _ := io.ReadAll(r.Body)
 	if len(body) > 0 {
 		var data interface{}
@@ -49,11 +48,8 @@ func (s *Server) handleUpdateRecords(w http.ResponseWriter, r *http.Request) {
 
 	var records []map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&records); err != nil {
-		// Try as wrapper object
-		var wrapper map[string]interface{}
 		r.Body.Close()
 		writeJSON(w, http.StatusOK, map[string]interface{}{"count": 0, "value": []interface{}{}})
-		_ = wrapper
 		return
 	}
 
@@ -142,6 +138,6 @@ func (s *Server) handleTimelineAttachment(w http.ResponseWriter, r *http.Request
 	name := r.PathValue("name")
 	s.logger.Debug().Str("type", attachType).Str("name", name).Msg("timeline attachment")
 
-	io.ReadAll(r.Body) // consume body
+	io.ReadAll(r.Body)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok"})
 }

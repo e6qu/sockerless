@@ -6,7 +6,6 @@ import (
 	"time"
 )
 
-// Metrics collects bleephub-specific operational metrics.
 type Metrics struct {
 	mu                  sync.Mutex
 	WorkflowSubmissions int64            `json:"workflow_submissions"`
@@ -18,7 +17,6 @@ type Metrics struct {
 	StartedAt           time.Time        `json:"-"`
 }
 
-// NewMetrics creates a new metrics collector.
 func NewMetrics() *Metrics {
 	return &Metrics{
 		JobCompletions: make(map[string]int64),
@@ -26,7 +24,6 @@ func NewMetrics() *Metrics {
 	}
 }
 
-// RecordWorkflowSubmit increments the workflow submission counter.
 func (m *Metrics) RecordWorkflowSubmit() {
 	m.mu.Lock()
 	m.WorkflowSubmissions++
@@ -34,7 +31,6 @@ func (m *Metrics) RecordWorkflowSubmit() {
 	m.mu.Unlock()
 }
 
-// RecordWorkflowComplete decrements active workflows.
 func (m *Metrics) RecordWorkflowComplete() {
 	m.mu.Lock()
 	if m.ActiveWorkflows > 0 {
@@ -43,14 +39,12 @@ func (m *Metrics) RecordWorkflowComplete() {
 	m.mu.Unlock()
 }
 
-// RecordJobDispatch increments the job dispatch counter.
 func (m *Metrics) RecordJobDispatch() {
 	m.mu.Lock()
 	m.JobDispatches++
 	m.mu.Unlock()
 }
 
-// RecordJobCompletion records a job completion with its result and duration.
 func (m *Metrics) RecordJobCompletion(result string, duration time.Duration) {
 	m.mu.Lock()
 	m.JobCompletions[result]++
@@ -62,14 +56,12 @@ func (m *Metrics) RecordJobCompletion(result string, duration time.Duration) {
 	m.mu.Unlock()
 }
 
-// SetActiveSessions sets the active session gauge.
 func (m *Metrics) SetActiveSessions(n int64) {
 	m.mu.Lock()
 	m.ActiveSessions = n
 	m.mu.Unlock()
 }
 
-// MetricsSnapshot is a point-in-time metrics report.
 type MetricsSnapshot struct {
 	WorkflowSubmissions int64            `json:"workflow_submissions"`
 	JobDispatches       int64            `json:"job_dispatches"`
@@ -81,7 +73,6 @@ type MetricsSnapshot struct {
 	HeapAllocMB         float64          `json:"heap_alloc_mb"`
 }
 
-// Snapshot returns a point-in-time copy of all metrics.
 func (m *Metrics) Snapshot() MetricsSnapshot {
 	m.mu.Lock()
 	defer m.mu.Unlock()

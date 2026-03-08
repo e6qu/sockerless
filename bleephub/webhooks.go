@@ -20,15 +20,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// computeHMACSignature computes the HMAC-SHA256 signature for a webhook payload.
 func computeHMACSignature(secret string, payload []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(payload)
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
-// emitWebhookEvent dispatches an event to all matching webhooks for a repo.
-// Non-blocking: launches a goroutine per matching webhook.
+// emitWebhookEvent dispatches an event to matching webhooks (non-blocking).
 func (s *Server) emitWebhookEvent(repoKey, eventType, action string, payload interface{}) {
 	hooks := s.store.ListHooks(repoKey)
 
@@ -50,7 +48,6 @@ func (s *Server) emitWebhookEvent(repoKey, eventType, action string, payload int
 	}
 }
 
-// hookMatchesEvent checks if a webhook is subscribed to the given event type.
 func hookMatchesEvent(hook *Webhook, eventType string) bool {
 	for _, e := range hook.Events {
 		if e == eventType || e == "*" {
@@ -60,7 +57,7 @@ func hookMatchesEvent(hook *Webhook, eventType string) bool {
 	return false
 }
 
-// deliverWebhook sends an HTTP POST with headers and retries (3 attempts, exponential backoff).
+// deliverWebhook sends an HTTP POST with retries (3 attempts, exponential backoff).
 func (s *Server) deliverWebhook(hook *Webhook, event, action string, payloadBytes []byte) {
 	guid := uuid.New().String()
 	backoffs := []time.Duration{0, 1 * time.Second, 5 * time.Second}
@@ -79,7 +76,7 @@ func (s *Server) deliverWebhook(hook *Webhook, event, action string, payloadByte
 	}
 }
 
-// doDeliverAttempt performs a single HTTP POST to the webhook URL and records the result.
+// doDeliverAttempt performs a single webhook delivery attempt.
 func (s *Server) doDeliverAttempt(hook *Webhook, event, action, guid string, payloadBytes []byte, redelivery bool) *WebhookDelivery {
 	start := time.Now()
 
@@ -151,8 +148,7 @@ func (s *Server) doDeliverAttempt(hook *Webhook, event, action, guid string, pay
 	return delivery
 }
 
-// triggerWorkflowsForEvent checks for matching workflow files in git storage
-// and triggers them when a push or pull_request event fires.
+// triggerWorkflowsForEvent triggers matching workflows from git storage on push/PR events.
 func (s *Server) triggerWorkflowsForEvent(repoKey, eventType, ref string) {
 	parts := splitRepoKeyParts(repoKey)
 	if parts[0] == "" {
@@ -208,7 +204,6 @@ func (s *Server) triggerWorkflowsForEvent(repoKey, eventType, ref string) {
 	}
 }
 
-// splitRepoKeyParts splits "owner/repo" into [owner, repo].
 func splitRepoKeyParts(repoKey string) [2]string {
 	for i, c := range repoKey {
 		if c == '/' {
@@ -218,9 +213,7 @@ func splitRepoKeyParts(repoKey string) [2]string {
 	return [2]string{repoKey, ""}
 }
 
-// listWorkflowFiles reads .github/workflows/*.yml from git storage.
 func listWorkflowFiles(stor *memory.Storage) map[string][]byte {
-	// Find HEAD
 	headRef, err := stor.Reference(plumbing.HEAD)
 	if err != nil {
 		return nil
@@ -247,7 +240,6 @@ func listWorkflowFiles(stor *memory.Storage) map[string][]byte {
 		return nil
 	}
 
-	// Navigate to .github/workflows/
 	ghEntry, err := tree.FindEntry(".github")
 	if err != nil {
 		return nil
@@ -291,7 +283,6 @@ func listWorkflowFiles(stor *memory.Storage) map[string][]byte {
 	return result
 }
 
-// workflowMatchesEvent checks if a workflow YAML has an "on" trigger matching the event.
 func workflowMatchesEvent(yamlContent []byte, eventType string) bool {
 	var raw struct {
 		On interface{} `yaml:"on"`

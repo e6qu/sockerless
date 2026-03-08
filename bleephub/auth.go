@@ -29,7 +29,6 @@ func (s *Server) registerAuthRoutes() {
 func (s *Server) handleRunnerRegistration(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info().Msg("runner registration request")
 
-	// Parse request body — runner sends the original --url value
 	var req struct {
 		URL         string `json:"url"`
 		RunnerEvent string `json:"runner_event"`
@@ -39,7 +38,6 @@ func (s *Server) handleRunnerRegistration(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Build server URL from request host
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
@@ -101,9 +99,7 @@ func newServiceDef(name, guid, path string) serviceDefinition {
 	}
 }
 
-// handleConnectionData returns service location data.
-// The runner uses this to discover API endpoint paths via GUIDs.
-// Format matches ChristopherHX/runner.server exactly.
+// handleConnectionData returns service location data (GUIDs → API paths).
 func (s *Server) handleConnectionData(w http.ResponseWriter, r *http.Request) {
 	s.logger.Debug().Msg("connection data request")
 
@@ -124,7 +120,6 @@ func (s *Server) handleConnectionData(w http.ResponseWriter, r *http.Request) {
 		newServiceDef("Tasks", "60aac929-f0cd-4bc8-9ce4-6b30e8f1b1bd", "/_apis/v1/tasks/{taskId}/{versionString}"),
 	}
 
-	// Minimal ConnectionData — match runner.server format (no authenticatedUser/authorizedUser)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"instanceId": uuid.New().String(),
 		"locationServiceData": map[string]interface{}{
@@ -133,8 +128,7 @@ func (s *Server) handleConnectionData(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleOAuthToken accepts a JWT assertion and returns an access token.
-// The runner exchanges its RSA-signed JWT for an OAuth bearer token.
+// handleOAuthToken exchanges a JWT assertion for an OAuth bearer token.
 func (s *Server) handleOAuthToken(w http.ResponseWriter, r *http.Request) {
 	s.logger.Debug().Msg("oauth token exchange")
 
@@ -146,8 +140,7 @@ func (s *Server) handleOAuthToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// makeJWT creates a minimal unsigned JWT that the runner can parse.
-// The runner's JsonWebToken deserializer needs a valid 3-part JWT structure.
+// makeJWT creates a minimal unsigned JWT (alg:none) the runner can parse.
 func makeJWT(sub, aud string) string {
 	header := base64url([]byte(`{"alg":"none","typ":"JWT"}`))
 

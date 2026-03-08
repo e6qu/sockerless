@@ -16,28 +16,24 @@ type ActionCache struct {
 	entries map[string]*ActionCacheEntry
 }
 
-// ActionCacheEntry holds a cached action tarball.
 type ActionCacheEntry struct {
 	Data        []byte
 	ResolvedSha string
 	FetchedAt   time.Time
 }
 
-// NewActionCache creates an empty action cache.
 func NewActionCache() *ActionCache {
 	return &ActionCache{
 		entries: make(map[string]*ActionCacheEntry),
 	}
 }
 
-// Get returns a cached entry by key ("owner/repo@ref").
 func (ac *ActionCache) Get(key string) *ActionCacheEntry {
 	ac.mu.RLock()
 	defer ac.mu.RUnlock()
 	return ac.entries[key]
 }
 
-// Put stores an entry in the cache.
 func (ac *ActionCache) Put(key string, entry *ActionCacheEntry) {
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
@@ -49,9 +45,7 @@ func (s *Server) registerActionRoutes() {
 	s.mux.HandleFunc("GET /_apis/v1/actions/tarball/{owner}/{repo}/{ref...}", s.handleActionTarball)
 }
 
-// handleActionDownloadInfo handles the runner's request for action download URLs.
-// It parses the ActionReferenceList body and returns ActionDownloadInfoCollection
-// with tarball URLs pointing back to bleephub's proxy.
+// handleActionDownloadInfo returns tarball URLs for requested actions.
 func (s *Server) handleActionDownloadInfo(w http.ResponseWriter, r *http.Request) {
 	scheme := "http"
 	if r.TLS != nil {
@@ -67,7 +61,6 @@ func (s *Server) handleActionDownloadInfo(w http.ResponseWriter, r *http.Request
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		s.logger.Debug().Err(err).Msg("action download info: no body or empty")
-		// Return empty on parse failure (runner may send empty body for run: steps)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"actions": map[string]interface{}{},
 		})
@@ -85,7 +78,6 @@ func (s *Server) handleActionDownloadInfo(w http.ResponseWriter, r *http.Request
 	for _, a := range body.Actions {
 		key := a.NameWithOwner + "@" + a.Ref
 
-		// Check cache for resolved SHA
 		resolvedSha := "0000000000000000000000000000000000000000"
 		if entry := s.actionCache.Get(key); entry != nil {
 			resolvedSha = entry.ResolvedSha
@@ -115,8 +107,7 @@ func (s *Server) handleActionDownloadInfo(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// handleActionTarball serves a cached action tarball, or fetches from GitHub
-// and caches it on first request.
+// handleActionTarball serves a cached action tarball, fetching from GitHub on first request.
 func (s *Server) handleActionTarball(w http.ResponseWriter, r *http.Request) {
 	owner := r.PathValue("owner")
 	repo := r.PathValue("repo")
@@ -130,7 +121,6 @@ func (s *Server) handleActionTarball(w http.ResponseWriter, r *http.Request) {
 	nameWithOwner := owner + "/" + repo
 	key := nameWithOwner + "@" + ref
 
-	// Check cache
 	if entry := s.actionCache.Get(key); entry != nil {
 		s.logger.Debug().Str("key", key).Msg("serving cached action tarball")
 		w.Header().Set("Content-Type", "application/gzip")
@@ -140,7 +130,6 @@ func (s *Server) handleActionTarball(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch from GitHub
 	s.logger.Info().Str("key", key).Msg("fetching action tarball from GitHub")
 	entry, err := fetchActionTarball(nameWithOwner, ref)
 	if err != nil {
@@ -149,7 +138,6 @@ func (s *Server) handleActionTarball(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cache it
 	s.actionCache.Put(key, entry)
 
 	w.Header().Set("Content-Type", "application/gzip")
@@ -158,7 +146,6 @@ func (s *Server) handleActionTarball(w http.ResponseWriter, r *http.Request) {
 	w.Write(entry.Data)
 }
 
-// fetchActionTarball downloads an action tarball from GitHub's public API.
 func fetchActionTarball(nameWithOwner, ref string) (*ActionCacheEntry, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/tarball/%s", nameWithOwner, ref)
 
@@ -194,7 +181,6 @@ func fetchActionTarball(nameWithOwner, ref string) (*ActionCacheEntry, error) {
 		return nil, fmt.Errorf("read body: %w", err)
 	}
 
-	// Try to extract SHA from redirect URL or response headers
 	resolvedSha := "0000000000000000000000000000000000000000"
 	if etag := resp.Header.Get("ETag"); etag != "" {
 		etag = strings.Trim(etag, "\"")
