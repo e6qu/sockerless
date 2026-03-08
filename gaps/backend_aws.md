@@ -55,7 +55,7 @@ Comparing the backends against:
 ### 5. Networks, Volumes, System
 
 All handled by core defaults. No ECS-specific overrides. Fully functional
-within the core's synthetic/WASM model.
+within the core's in-memory model.
 
 ### 6. Docker API Operations Not Possible on ECS
 

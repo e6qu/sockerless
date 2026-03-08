@@ -23,26 +23,26 @@ Agent (inside container or reverse-connected)
 ```
 
 **7 backends** share a common core (`backends/core/`) with driver interfaces:
-- **ExecDriver** — runs commands (WASM shell, forward agent, reverse agent, or synthetic echo)
-- **FilesystemDriver** — manages container filesystem (temp dirs, agent bridge, staging)
+- **ExecDriver** — runs commands inside containers via forward or reverse agent connections
+- **FilesystemDriver** — manages container filesystem (staging dirs, agent bridge, archive ops)
 - **StreamDriver** — attach/logs streaming (pipes, WebSocket relay, log buffer)
-- **ProcessLifecycleDriver** — start/stop/kill/cleanup
+- **NetworkDriver** — IP allocation, network create/connect/disconnect (synthetic + Linux netns)
 
-Each driver chains: Agent → Process → Synthetic, so every handler call falls through to the right implementation.
+Handlers dispatch through drivers. Cloud backends delegate image management to per-cloud shared modules (`aws-common`, `gcp-common`, `azure-common`).
 
 **3 simulators** (`simulators/{aws,gcp,azure}/`) implement enough cloud API surface for the backends to work. Each is tested against the real SDK, CLI, and Terraform provider for that cloud.
 
-## Completed Phases (1-82)
+## Completed Phases (1-90)
 
 | Phase | What |
 |---|---|
 | 1-10 | Foundation: 3 simulators, 8 backends, agent, Docker REST API frontend |
-| 11-34 | WASM sandbox, E2E tests (217 GitHub + 154 GitLab), driver interfaces, Docker build |
+| 11-34 | E2E tests (217 GitHub + 154 GitLab), driver interfaces, Docker build |
 | 35-42 | bleephub: GitHub API + runner + multi-job engine (190 unit tests) |
 | 43-52 | CLI, crash safety, pods, service containers, upstream expansion |
 | 53-56 | Production Docker API: TLS, auth, logs, DNS, restart, events, filters, export, commit |
 | 57-59 | Production GitHub Actions: multi-job, matrix, secrets, expressions, concurrency |
-| 60-61 | Production GitLab CI: gitlabhub coordinator, DAG engine, expressions, extends, include |
+| 60-61 | Production GitLab CI: coordinator, DAG engine, expressions, extends, include |
 | 62-63 | Docker API hardening + Compose E2E: HEALTHCHECK, volumes, mounts, prune, directives |
 | 64-65 | bleephub: Webhooks (HMAC-SHA256) + GitHub Apps (JWT, installation tokens) |
 | 66 | OTel tracing: OTLP HTTP, otelhttp middleware, context propagation |
@@ -50,15 +50,20 @@ Each driver chains: Agent → Process → Synthetic, so every handler call falls
 | 69 | ARM64/Multi-Arch: goreleaser 15 builds, docker.yml 7 images |
 | 70-72 | Simulator Fidelity + SDK/CLI Verification + Full-Stack E2E (real process execution) |
 | 73-75 | UI: Bun/Vite/React 19 monorepo, 10 backend SPAs, 3 simulator SPAs, SPAHandler |
-| 76-77 | bleephub + gitlabhub dashboards with management endpoints and LogViewer |
+| 76-77 | bleephub dashboard with management endpoints and LogViewer |
 | 79 | Admin Dashboard: standalone server + SPA, health polling, context discovery |
 | 80 | Documentation review + tutorial verification |
 | 81 | Admin: ProcessManager, cleanup scanner, ProviderInfo |
 | 82 | Admin Projects: orchestrated sim+backend+frontend bundles, port allocator, 4 UI pages |
+| 83 | Type-Safe API: goverter mappers, api.Backend interface, OpenAPI spec subset |
+| 84 | Self-dispatch: `self api.Backend` on BaseServer, typed method overrides on all 6 cloud backends |
+| 85 | Complete api.Backend: 21 new typed methods, httpProxy eliminated |
+| 86 | In-process backend wiring + dead code cleanup (~1400 lines deleted) |
+| 90 | Remove memory backend, spec-driven state machine tests, cloud operation mappings |
 
-## Bug Fix Sprints (BUG-001 → BUG-574)
+## Bug Fix Sprints (BUG-001 → BUG-583)
 
-574 bugs fixed across 44 sprints. Per-sprint details in `_tasks/done/BUG-SPRINT-*.md`.
+583 bugs fixed across 45 sprints. Per-sprint details in `_tasks/done/BUG-SPRINT-*.md`.
 
 | Sprint | Bugs | Focus |
 |--------|------|-------|
@@ -151,8 +156,8 @@ Fixed 13 bugs: container `expose` filter (BUG-489), image `before`/`since` list 
 
 - **84 phases** (1-67, 69-77, 79-86), 753 tasks completed
 - **45 bug sprints**, 583 bugs fixed (BUG-001→583), 0 open
-- **18 Go modules** across backends, simulators, sandbox, agent, API, frontend, bleephub, gitlabhub, CLI, admin, tests
-- **Core tests**: 302 PASS | **Frontend**: 7 | **UI (Vitest)**: 92 | **Admin**: 88 | **bleephub**: 304 | **gitlabhub**: 136 | **ProcessRunner**: 15
+- **16 Go modules** across backends, simulators, agent, API, frontend, bleephub, CLI, admin, tests
+- **Core tests**: 302 PASS | **Frontend**: 7 | **UI (Vitest)**: 92 | **Admin**: 88 | **bleephub**: 304 | **ProcessRunner**: 15
 - **Cloud SDK**: AWS 42, GCP 43, Azure 38 | **Cloud CLI**: AWS 26, GCP 21, Azure 19
 - **E2E**: 371 GitHub+GitLab workflows | **Sim-backend**: 75 | **Terraform**: 75 | **Upstream**: 252
 - **3 cloud simulators** validated against SDKs, CLIs, and Terraform
@@ -356,3 +361,14 @@ Eliminated the dual code path problem where cloud backends had HTTP handlers wit
 - Added `x-sockerless-cloud-operations` to 4 lifecycle operations in `api/openapi.yaml`
 - Documents how ContainerCreate/Start/Stop/Remove map to each cloud provider's API
 - Added extension to header documentation
+
+## Unified Image Management (PR #100)
+
+Consolidated all image management into per-cloud shared modules:
+
+- **`core.ImageManager`** + **`core.AuthProvider`** interface in `backends/core/image_manager.go`
+- **3 shared cloud modules**: `backends/aws-common/` (ECR), `backends/gcp-common/` (Artifact Registry), `backends/azure-common/` (ACR)
+- All 6 cloud backends delegate 12 image methods to `s.images.*` one-liners
+- Deleted ~2000 lines of duplicated code: 4 `registry.go` files, `aca/backend_impl_images.go`, 6 per-backend `image_auth.go` files
+- `core.ParseImageRef()` exported for use by AuthProvider implementations
+- `core.SetOCIAuth()` exported for cloud auth header injection

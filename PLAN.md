@@ -8,9 +8,9 @@
 
 1. **Docker API fidelity** — The frontend must match Docker's REST API exactly. CI runners should not need patching.
 2. **Real execution** — Simulators and backends must actually run commands and produce real output. Synthetic/echo mode is a last resort.
-3. **External validation** — Correctness is proven by running unmodified external test suites (`act`, `gitlab-runner`, `gitlab-ci-local`, upstream act, `actions/runner`, `gh` CLI, gitlabhub gitlab-runner).
+3. **External validation** — Correctness is proven by running unmodified external test suites (`act`, `gitlab-runner`, `gitlab-ci-local`, upstream act, `actions/runner`, `gh` CLI).
 4. **No new frontend abstractions** — The Docker REST API is the only interface. No Kubernetes, no Podman, no custom APIs.
-5. **Driver-first handlers** — All handler code must operate through driver interfaces, never through direct `Store.Processes` access or `ProcessFactory` checks.
+5. **Driver-first handlers** — All handler code must operate through driver interfaces (`ExecDriver`, `FilesystemDriver`, `StreamDriver`, `NetworkDriver`).
 6. **LLM-editable files** — Keep source files under 400 lines.
 7. **GitHub API fidelity** — bleephub must match the real GitHub API closely enough that unmodified `gh` CLI commands work against it.
 8. **State persistence** — Every task must end with a state save: update `PLAN.md`, `STATUS.md`, `WHAT_WE_DID.md`, `MEMORY.md`, and `_tasks/done/`.
@@ -23,16 +23,17 @@ See `WHAT_WE_DID.md` for details and `_tasks/done/` for per-task logs.
 
 | Phase | Summary |
 |---|---|
-| 1-56 | Foundation: 3 simulators, 8 backends, agent, frontend, WASM sandbox, bleephub, CLI, pods, Docker API |
+| 1-56 | Foundation: 3 simulators, 8 backends, agent, frontend, bleephub, CLI, pods, Docker API |
 | 57-67 | CI runners (GitHub Actions + GitLab CI), API hardening, webhooks, GitHub Apps, OTel, network isolation |
 | 69-72 | ARM64, simulator fidelity, SDK/CLI verification, full-stack E2E |
-| 73-77 | UI: 13 SPAs (Bun/Vite/React 19), bleephub + gitlabhub dashboards, LogViewer |
+| 73-77 | UI: SPAs (Bun/Vite/React 19), bleephub dashboard, LogViewer |
 | 79-82 | Admin: dashboard, docs, process management, project bundles |
 | 83 | Type-Safe API: field renames, goverter mappers, api.Backend impl, OpenAPI spec subset |
 | 84 | Self-dispatch: `self api.Backend` on BaseServer, typed method overrides on all 6 cloud backends |
 | 85 | Complete api.Backend: 21 new typed methods (pods, archive, resize, build, push, save, search, commit), httpProxy eliminated |
 | 86 | In-process backend wiring + dead code cleanup: ~1400 lines deleted, HTTP round-trip eliminated |
 | 90 | Remove memory backend, spec-driven state machine tests, cloud operation mappings |
+| — | Unified image management: per-cloud shared modules (`aws-common`, `gcp-common`, `azure-common`), `core.ImageManager` + `AuthProvider` |
 
 ---
 
@@ -75,7 +76,7 @@ See `WHAT_WE_DID.md` for details and `_tasks/done/` for per-task logs.
 | P78-005 | | **Auto-refresh controls** — Global toggle, configurable interval, Page Visibility API pause |
 | P78-006 | | **Performance audit** — Bundle size < 200KB gzipped per SPA, code splitting, build time < 30s |
 | P78-007 | | **Accessibility** — Keyboard nav, ARIA labels, color contrast (light + dark) |
-| P78-008 | | **E2E smoke test** — Go test: start memory backend, fetch `/ui/`, verify React root + API coexistence |
+| P78-008 | | **E2E smoke test** — Go test: start backend, fetch `/ui/`, verify React root + API coexistence |
 | P78-009 | | **Documentation** — `ui/README.md`: dev setup, architecture, component catalog. Update root README |
 | P78-010 | | **Final state save** |
 
@@ -83,7 +84,6 @@ See `WHAT_WE_DID.md` for details and `_tasks/done/` for per-task logs.
 
 ## Future Ideas (Not Scheduled)
 
-- **WASI Preview 2** — component model with async I/O; would enable real subprocesses in WASM sandbox
 - **GraphQL subscriptions** — real-time event streaming for live PR/issue updates
 - **Full GitHub App permissions** — per-installation permission scoping (read/write per resource type)
 - **Webhook delivery UI** — web dashboard for inspecting webhook deliveries

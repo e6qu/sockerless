@@ -8,11 +8,11 @@ Architectural and implementation decisions made across phases. Referenced from P
 
 **Docker API as sole interface** — No Kubernetes, no Podman (except libpod pod extensions), no custom APIs. CI runners talk to Sockerless as if it were Docker. (Principle 4)
 
-**Driver chain** — `Agent Driver → Process Driver → Synthetic Driver`. 8 interface methods across 4 driver types. Handlers call only through driver interfaces — zero `ProcessFactory`/`Store.Processes` references. `DriverSet` on `BaseServer` via `InitDrivers()`. (Phase 32)
+**Driver interfaces** — 4 driver types: `ExecDriver`, `FilesystemDriver`, `StreamDriver`, `NetworkDriver`. Agent drivers handle connected containers; inline fallback for disconnected. `DriverSet` on `BaseServer` via `InitDrivers()`. (Phase 32, simplified in Phase 90)
 
-**Backend model** — 8 backends sharing common `BaseServer` + `Store` from `backend-core`. Cloud backends override handlers via `RouteOverrides`. 3 cloud simulators validated against SDKs, CLIs, and Terraform.
+**Backend model** — 7 backends sharing common `BaseServer` + `Store` from `backend-core`. Cloud backends use self-dispatch (`self api.Backend` field) for typed method overrides. 3 cloud simulators validated against SDKs, CLIs, and Terraform.
 
-**WASM sandbox** — wazero + mvdan.cc/sh + go-busybox. WASI Preview 1 (no fork/exec). 21 Go-implemented builtins. `tail -f /dev/null` detected and blocked on context. (Phases 31-32)
+**Unified image management** — `core.ImageManager` + `core.AuthProvider` interface. Per-cloud shared modules (`aws-common`, `gcp-common`, `azure-common`) implement auth; all 6 cloud backends delegate 12 image methods to `s.images.*`. (Post-Phase 90)
 
 **File size limit** — Source files under 400 lines. Split by responsibility. (Principle 6)
 
@@ -34,7 +34,7 @@ Architectural and implementation decisions made across phases. Referenced from P
 
 **Cloud state on all pod containers** — Task ARN / job name / execution stored on ALL containers in the pod, so stop/remove works from any container. (Phase 46)
 
-**FaaS + memory rejection** — Lambda/GCF/AZF and core memory backend return 400 for multi-container pods (single-function invocation, WASM can't share namespaces). (Phase 46)
+**FaaS rejection** — Lambda/GCF/AZF return 400 for multi-container pods (single-function invocation). (Phase 46)
 
 ---
 
@@ -88,8 +88,6 @@ Architectural and implementation decisions made across phases. Referenced from P
 
 ## Known Limitations
 
-1. **GitLab + memory = synthetic** — gitlab-runner helper binaries can't run in WASM. Memory backend uses `SOCKERLESS_SYNTHETIC=1`.
-2. **WASM sandbox scope** — No bash, node, python, git, apt-get. Only busybox applets + Go builtins + POSIX shell.
-3. **FaaS transient failures** — ~1 per sequential E2E run on FaaS backends due to reverse agent cleanup timing.
-4. **Upstream act individual mode** — Memory and azf backends require `--individual` flag.
-5. **Azure terraform tests** — Docker-only (Linux). macOS Go ignores `SSL_CERT_FILE`.
+1. **FaaS transient failures** — ~1 per sequential E2E run on FaaS backends due to reverse agent cleanup timing.
+2. **Upstream act individual mode** — azf backend requires `--individual` flag.
+3. **Azure terraform tests** — Docker-only (Linux). macOS Go ignores `SSL_CERT_FILE`.

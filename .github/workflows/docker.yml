@@ -4,8 +4,6 @@ on:
   push:
     branches: [main]
     tags: ['v*']
-  pull_request:
-    branches: [main]
 
 env:
   REGISTRY: ghcr.io
@@ -32,9 +30,6 @@ jobs:
           - image: sockerless-simulator-azure
             dockerfile: simulators/azure/Dockerfile
             context: simulators/azure
-          - image: sockerless-gitlabhub
-            dockerfile: gitlabhub/Dockerfile.release
-            context: .
     name: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@v4

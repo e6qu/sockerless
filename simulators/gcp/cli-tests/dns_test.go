@@ -9,13 +9,17 @@ import (
 )
 
 func TestDNS_CreateAndDescribeZone(t *testing.T) {
-	out := runCLI(t, gcloudCLI("dns", "managed-zones", "create", "cli-test-zone",
+	runCLI(t, gcloudCLI("dns", "managed-zones", "create", "cli-test-zone",
 		"--dns-name=cli-test.example.com.",
 		"--description=CLI test zone",
 		"--visibility=private",
-		"--format=json",
+		"--networks=",
 	))
 
+	// Describe (returns a single JSON object)
+	out := runCLI(t, gcloudCLI("dns", "managed-zones", "describe", "cli-test-zone",
+		"--format=json",
+	))
 	var zone struct {
 		Name    string `json:"name"`
 		DnsName string `json:"dnsName"`
@@ -23,13 +27,6 @@ func TestDNS_CreateAndDescribeZone(t *testing.T) {
 	parseJSON(t, out, &zone)
 	assert.Equal(t, "cli-test-zone", zone.Name)
 	assert.Equal(t, "cli-test.example.com.", zone.DnsName)
-
-	// Describe
-	out = runCLI(t, gcloudCLI("dns", "managed-zones", "describe", "cli-test-zone",
-		"--format=json",
-	))
-	parseJSON(t, out, &zone)
-	assert.Equal(t, "cli-test-zone", zone.Name)
 
 	// Cleanup
 	runCLI(t, gcloudCLI("dns", "managed-zones", "delete", "cli-test-zone"))
@@ -41,6 +38,7 @@ func TestDNS_CreateAndListRecordSets(t *testing.T) {
 		"--dns-name=records.example.com.",
 		"--description=Record test zone",
 		"--visibility=private",
+		"--networks=",
 	))
 
 	// Create a record set via direct HTTP since gcloud record-sets create
@@ -82,6 +80,7 @@ func TestDNS_DeleteZone(t *testing.T) {
 		"--dns-name=delete.example.com.",
 		"--description=Delete test zone",
 		"--visibility=private",
+		"--networks=",
 	))
 
 	runCLI(t, gcloudCLI("dns", "managed-zones", "delete", "delete-test-zone"))

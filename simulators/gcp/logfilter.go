@@ -60,8 +60,9 @@ func parseClause(s string) filterClause {
 		value := unquote(strings.TrimSpace(s[idx+1:]))
 		return filterClause{field: field, op: opEq, value: value}
 	}
-	// Fallback: treat entire string as an equality match on textPayload
-	return filterClause{field: "textPayload", op: opEq, value: s}
+	// Fallback: bare string without operator — do a substring search
+	// across textPayload, logName, and severity (like GCP's simple filter).
+	return filterClause{field: "*", op: opEq, value: s}
 }
 
 // unquote removes surrounding double quotes from a string.
@@ -129,6 +130,16 @@ func matchesFilter(entry LogEntry, filter string) bool {
 		return true // empty filter matches all
 	}
 	for _, c := range clauses {
+		// Wildcard field: bare filter string — substring match across all text fields
+		if c.field == "*" {
+			found := strings.Contains(entry.TextPayload, c.value) ||
+				strings.Contains(entry.LogName, c.value) ||
+				strings.Contains(entry.Severity, c.value)
+			if !found {
+				return false
+			}
+			continue
+		}
 		val, ok := resolveField(entry, c.field)
 		if !ok {
 			return false

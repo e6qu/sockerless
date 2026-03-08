@@ -40,7 +40,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# Auto-detect run mode: individual for memory (WASM hangs), monolithic for cloud
+# Auto-detect run mode: individual for azf, monolithic for other backends
 if [ -z "$RUN_MODE" ]; then
     if [ "$BACKEND" = "memory" ]; then
         RUN_MODE="individual"

@@ -44,9 +44,7 @@ LOG_FILE="${LOG_DIR}/gitlab-${BACKEND}-${TS}.log"
 # --- Build images ---
 log_info "Building Docker images..."
 # Use per-cloud Dockerfiles to avoid building all backends.
-# Memory backend needs SOCKERLESS_SYNTHETIC=1 because gitlab-runner requires
-# helper binaries (gitlab-runner-helper, gitlab-runner-build) that can't execute
-# in the WASM sandbox. The WASM sandbox is validated by GitHub act runner tests instead.
+# Use per-cloud Dockerfiles to include the correct cloud SDK dependencies.
 case "$BACKEND" in
     ecs|lambda)
         export DOCKERFILE_BACKEND="Dockerfile.backend-aws"

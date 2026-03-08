@@ -39,7 +39,6 @@ func main() {
 	flag.Var(&backends, "backend", "backend component as name=addr (repeatable)")
 	flag.Var(&simulators, "simulator", "simulator component as name=addr (repeatable)")
 	bleephubAddr := flag.String("bleephub", "", "bleephub coordinator address")
-	gitlabhubAddr := flag.String("gitlabhub", "", "gitlabhub coordinator address")
 	frontendAddr := flag.String("frontend", "", "Docker frontend management address")
 	showVersion := flag.Bool("version", false, "print version and exit")
 
@@ -84,9 +83,6 @@ func main() {
 	}
 	if *bleephubAddr != "" {
 		reg.Add(Component{Name: "bleephub", Type: "coordinator", Addr: normalizeAddr(*bleephubAddr)})
-	}
-	if *gitlabhubAddr != "" {
-		reg.Add(Component{Name: "gitlabhub", Type: "coordinator", Addr: normalizeAddr(*gitlabhubAddr)})
 	}
 	if *frontendAddr != "" {
 		reg.Add(Component{Name: "frontend", Type: "frontend", Addr: normalizeAddr(*frontendAddr)})

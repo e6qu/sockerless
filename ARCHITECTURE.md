@@ -23,7 +23,6 @@ graph TB
         BE["Backend<br/><i>Internal API</i>"]
         AG["Agent<br/><i>Exec/Attach bridge</i>"]
         BPH["bleephub<br/><i>Runner service API</i>"]
-        GLH["gitlabhub<br/><i>Runner coordinator</i>"]
     end
 
     subgraph "Cloud / Local"
@@ -51,7 +50,6 @@ The system has five layers:
 - **Backend** — Stateful server managing container lifecycle. Eight implementations share a common core.
 - **Agent** — Binary injected into cloud containers for exec/attach. Bridges commands between backend and the container's shell.
 - **bleephub** — GitHub Actions runner service API. Dispatches jobs to the official `actions/runner`, which executes them through the Docker frontend.
-- **gitlabhub** — GitLab CI runner coordinator. Parses `.gitlab-ci.yml` pipelines and dispatches jobs to `gitlab-runner` via the Runner API.
 
 ---
 
@@ -388,52 +386,6 @@ bleephub also implements enough of the GitHub REST/GraphQL API and Git smart HTT
 
 **Current scope:** Full GitHub Actions workflow execution — multi-job workflows with `needs:` dependencies, matrix strategies (`strategy.matrix`), secrets injection, expression evaluation (`${{ }}` syntax), concurrency groups with cancel-in-progress, persistent artifacts, and `uses:` actions (docker container actions). Both `run:` (script) and `uses: docker://` steps are supported. Output passing between steps and jobs works via `$GITHUB_OUTPUT`.
 
-### gitlabhub — GitLab CI Runner Coordinator
-
-`gitlabhub/` implements the GitLab Runner API, allowing `gitlab-runner` to register, receive jobs, and report results. It parses `.gitlab-ci.yml` pipelines and dispatches jobs using stage-ordered and DAG-based scheduling.
-
-```mermaid
-sequenceDiagram
-    participant T as Test / API
-    participant GLH as gitlabhub
-    participant R as gitlab-runner
-    participant FE as Sockerless Frontend
-    participant BE as Sockerless Backend
-
-    Note over GLH,R: 1. Runner registers
-    R->>GLH: POST /api/v4/runners
-
-    Note over GLH,R: 2. Runner long-polls for jobs
-    R->>GLH: POST /api/v4/jobs/request (30s poll)
-
-    Note over T,GLH: 3. Pipeline submitted
-    T->>GLH: POST /api/v3/gitlabhub/pipeline
-    GLH-->>R: Job payload (via long-poll)
-
-    Note over R,BE: 4. Runner executes via Docker API
-    R->>FE: docker create / start / exec
-    FE->>BE: /internal/v1/...
-
-    Note over GLH,R: 5. Runner reports completion
-    R->>GLH: PATCH /api/v4/jobs/{id}/trace (logs)
-    R->>GLH: PUT /api/v4/jobs/{id} (success/failed)
-```
-
-| Feature | Status |
-|---------|--------|
-| **Stage ordering** | Default build → test → deploy, custom stages |
-| **DAG (`needs:`)** | Direct dependency override of stage order |
-| **Matrix (`parallel:`)** | Cartesian product job expansion |
-| **Rules (`if:`)** | Expression evaluator with `$VAR`, `==`, `!=`, `=~`, `&&`, `\|\|` |
-| **Extends** | `.template` deep-merge inheritance |
-| **Include** | `include: local:` from in-memory git repo |
-| **Retry** | Failed jobs re-dispatched |
-| **Resource groups** | Exclusive execution locks |
-| **Artifacts** | Zip upload/download, dotenv reports, inter-job passing |
-| **DinD** | Auto-injects `DOCKER_HOST` for `docker:dind` services |
-
-gitlabhub also implements the Git smart HTTP protocol (via `go-git`) for `git clone` within pipelines.
-
 ---
 
 ## Simulators
@@ -492,7 +444,6 @@ sockerless/
 │   └── azure-functions/          # Azure Functions
 ├── agent/                        # WebSocket agent binary
 ├── bleephub/                     # GitHub Actions runner service API
-├── gitlabhub/                    # GitLab CI runner coordinator
 ├── cmd/
 │   ├── sockerless/               # CLI tool (context management)
 │   └── sockerless-admin/         # Admin dashboard server

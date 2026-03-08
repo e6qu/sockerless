@@ -4,7 +4,6 @@
 
 | Backend   | Exec | Attach | Networks | Volumes | Agent | Runner-Compatible | Runner Tests |
 |-----------|:----:|:------:|:--------:|:-------:|:-----:|:-----------------:|:------------:|
-| Memory    | Y    | Y      | Y        | Y       | N     | YES               | memory (always) |
 | Docker    | Y    | Y      | Y        | Y       | N     | YES               | N/A (passthrough) |
 | ECS       | Y    | Y      | Y        | Y       | Y     | YES               | via `SOCKERLESS_ECS_SOCKET` |
 | Cloud Run | Y    | Y      | Y        | Y       | Y     | YES               | via `SOCKERLESS_CLOUDRUN_SOCKET` |
@@ -42,18 +41,16 @@ Unmodified runner binaries tested against Sockerless + simulators via Docker-bas
 
 | Runner | Backend | Status |
 |--------|---------|:------:|
-| `act` (GitHub Actions) | Memory | PASS |
 | `act` (GitHub Actions) | ECS (sim) | PASS |
 | `act` (GitHub Actions) | Cloud Run (sim) | PASS |
 | `act` (GitHub Actions) | ACA (sim) | PASS |
-| `gitlab-runner` (docker executor) | Memory | PASS |
 | `gitlab-runner` (docker executor) | ECS (sim) | PASS |
 | `gitlab-runner` (docker executor) | Cloud Run (sim) | PASS |
 | `gitlab-runner` (docker executor) | ACA (sim) | PASS |
 
 ```bash
-make smoke-test-act-all        # act against memory + all 3 simulator backends
-make smoke-test-gitlab-all     # gitlab-runner against memory + all 3 simulator backends
+make smoke-test-act-all        # act against all 3 simulator backends
+make smoke-test-gitlab-all     # gitlab-runner against all 3 simulator backends
 ```
 
 ## Full Terraform Integration Tests

@@ -42,7 +42,7 @@ FaaS backends (lambda, gcf, azf) skip tests that require service containers or v
 
 ## Quick Start
 
-Run all 12 pipelines against the memory backend:
+Run all 12 pipelines against the core backend:
 
 ```bash
 make e2e-gitlab-memory

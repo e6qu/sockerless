@@ -2,7 +2,7 @@
 
 **Tool:** [gitlab-ci-local](https://github.com/firecow/gitlab-ci-local) v4.57.0
 **Runner:** Bun 1.1.45 (package manager) + Node.js 22 (runtime)
-**Backend:** Memory (WASM sandbox)
+**Backend:** Core (all cloud backends via simulator)
 **Date:** 2026-02-20
 
 ## Summary
@@ -46,14 +46,12 @@ This exercises the Docker CLI → Docker API path (vs act which uses the Docker 
 
 ## Key Fix: Pre-Start Archive Staging
 
-All tests initially failed because gitlab-ci-local calls `docker cp` BEFORE `docker start`.
-In the memory backend, the WASM sandbox filesystem only exists after container start.
-
-**Fix:** Added staging directory support in `backends/core/handle_containers.go`:
-- `PUT /containers/{id}/archive` extracts to a staging temp dir when no process exists
+gitlab-ci-local calls `docker cp` BEFORE `docker start`. The core backend handles this via
+staging directory support in `backends/core/handle_containers.go`:
+- `PUT /containers/{id}/archive` extracts to a staging temp dir before container start
 - `HEAD /containers/{id}/archive` stats the staging dir for pre-start path queries
 - `GET /containers/{id}/archive` reads from the staging dir
-- On `docker start`, staging dir contents are merged into the process root
+- On `docker start`, staging dir contents are merged into the container filesystem
 
 ## Docker API Endpoints Exercised
 

@@ -14,7 +14,7 @@ import (
 )
 
 // TestArithmeticExecution verifies real computation through the Docker API
-// using shell arithmetic (works on all backends including WASM sandbox).
+// using shell arithmetic (works on all backends).
 func TestArithmeticExecution(t *testing.T) {
 	for name, c := range availableRunnerClients(t) {
 		t.Run(name, func(t *testing.T) {

@@ -4,12 +4,12 @@ End-to-end integration tests that exercise the full Sockerless stack — fronten
 
 ## Overview
 
-The test suite uses the official Docker SDK (`docker v27.5.1`) to send real Docker API requests through a Sockerless frontend to a backend. By default it tests the memory backend; with environment variables, it can also test against cloud simulator backends (ECS, Lambda, CloudRun, Cloud Functions, ACA, Azure Functions).
+The test suite uses the official Docker SDK (`docker v27.5.1`) to send real Docker API requests through a Sockerless frontend to a backend. By default it tests the core backend; with environment variables, it can also test against cloud simulator backends (ECS, Lambda, CloudRun, Cloud Functions, ACA, Azure Functions).
 
 ## Running
 
 ```sh
-# Memory backend only (default)
+# Core backend only (default)
 cd tests
 go test -v ./...
 
@@ -24,7 +24,7 @@ SOCKERLESS_SOCKET=/var/run/docker.sock go test -v ./...
 
 `TestMain` handles the full lifecycle:
 
-1. Builds the memory backend and Docker frontend binaries
+1. Builds the backend and Docker frontend binaries
 2. Starts both on dynamically allocated free ports
 3. Waits for health checks (`/internal/v1/info` and `/_ping`)
 4. Creates a Docker SDK client pointing at the frontend

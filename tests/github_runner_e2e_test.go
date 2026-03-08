@@ -264,7 +264,7 @@ func TestGitHubRunnerMultiStep(t *testing.T) {
 			}
 
 			// Step 1: Echo with custom env
-			// Real backends expand env vars; memory backend echoes the command
+			// Backends expand env vars via agent exec
 			out1 := execStep(
 				[]string{"sh", "-c", "echo $STEP_NAME"},
 				[]string{"STEP_NAME=checkout"},
