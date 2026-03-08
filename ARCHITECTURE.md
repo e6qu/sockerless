@@ -132,11 +132,12 @@ Every backend presents the same Docker API states — Created, Running, Exited �
 stateDiagram-v2
     [*] --> Created: docker create
     Created --> Running: docker start
-    Running --> Running: docker exec
     Running --> Exited: docker stop / kill
     Running --> Exited: process exits
     Exited --> [*]: docker rm
 ```
+
+While running, `docker exec` executes commands inside the container (see [Exec Routing](#exec-routing) below).
 
 ### Per-Backend Lifecycle
 
@@ -148,7 +149,6 @@ All operations proxy to the local Docker daemon via the Docker SDK.
 stateDiagram-v2
     [*] --> Created: ContainerCreate
     Created --> Running: ContainerStart
-    Running --> Running: ContainerExec
     Running --> Exited: ContainerStop / Kill
     Exited --> [*]: ContainerRemove
 ```
@@ -161,7 +161,6 @@ Task definition registration is **deferred** from Create to Start for pod associ
 stateDiagram-v2
     [*] --> Created: local state (deferred)
     Created --> Running: RegisterTaskDef, RunTask
-    Running --> Running: Agent or ECS ExecuteCommand
     Running --> Exited: StopTask
     Exited --> [*]: DeregisterTaskDef
 ```
@@ -185,7 +184,6 @@ Functions are created eagerly at Create time. Invoke is asynchronous — the age
 stateDiagram-v2
     [*] --> Created: CreateFunction (image)
     Created --> Running: Invoke, agent callback
-    Running --> Running: reverse agent exec
     Running --> Exited: agent disconnects
     Exited --> [*]: DeleteFunction
 ```
@@ -207,7 +205,6 @@ Job creation is **deferred** from Create to Start. Cloud DNS handles service dis
 stateDiagram-v2
     [*] --> Created: local state (deferred)
     Created --> Running: CreateJob, RunJob
-    Running --> Running: agent exec
     Running --> Exited: CancelExecution
     Exited --> [*]: DeleteJob
 ```
@@ -231,7 +228,6 @@ Functions are created eagerly. Invoked via HTTP POST. Reverse agent only.
 stateDiagram-v2
     [*] --> Created: CreateFunction
     Created --> Running: HTTP POST, agent callback
-    Running --> Running: reverse agent exec
     Running --> Exited: agent disconnects
     Exited --> [*]: DeleteFunction
 ```
@@ -253,7 +249,6 @@ Job creation is **deferred** from Create to Start. Cloud-native exec via the Con
 stateDiagram-v2
     [*] --> Created: local state (deferred)
     Created --> Running: BeginCreateOrUpdate, BeginStart
-    Running --> Running: Agent or ACA exec API
     Running --> Exited: BeginStop
     Exited --> [*]: Delete
 ```
@@ -277,7 +272,6 @@ Function Apps are created eagerly. Invoked via HTTP POST. Reverse agent only.
 stateDiagram-v2
     [*] --> Created: BeginCreateOrUpdate
     Created --> Running: HTTP POST, agent callback
-    Running --> Running: reverse agent exec
     Running --> Exited: agent disconnects
     Exited --> [*]: Delete
 ```
