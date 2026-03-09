@@ -1019,7 +1019,7 @@ func handleECSExecWebSocket(sessionID string) http.HandlerFunc {
 		sendWS := func(data []byte) {
 			writeMu.Lock()
 			defer writeMu.Unlock()
-			conn.WriteMessage(websocket.BinaryMessage, data)
+			_ = conn.WriteMessage(websocket.BinaryMessage, data)
 		}
 
 		pipeToWS := func(reader io.Reader) {
@@ -1060,7 +1060,7 @@ func handleECSExecWebSocket(sessionID string) http.HandlerFunc {
 		// Wait for process to finish
 		_ = cmd.Wait()
 
-		conn.WriteMessage(websocket.CloseMessage,
+		_ = conn.WriteMessage(websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 	}
 }
