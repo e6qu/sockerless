@@ -155,10 +155,20 @@ func newLRO(project, location string, resource any, typeName string) Operation {
 	} else {
 		responseMap = map[string]any{"@type": typeName}
 	}
+
+	// Derive target from the resource's name field if available
+	var target string
+	if responseMap != nil {
+		if n, ok := responseMap["name"].(string); ok {
+			target = n
+		}
+	}
+
 	return Operation{
 		Name: fmt.Sprintf("projects/%s/locations/%s/operations/%s", project, location, opID),
 		Metadata: map[string]any{
-			"@type": typeName,
+			"createTime": nowTimestamp(),
+			"target":     target,
 		},
 		Done:     true,
 		Response: responseMap,
@@ -401,12 +411,14 @@ func registerCloudRunJobs(srv *sim.Server) {
 					e.FailedCount = tc
 				}
 				state := "CONDITION_SUCCEEDED"
+				reason := ""
 				if !succeeded {
 					state = "CONDITION_FAILED"
+					reason = "NonZeroExitCode"
 				}
 				e.Conditions = []Condition{
-					{Type: "Ready", State: state, LastTransitionTime: completionTime},
-					{Type: "Completed", State: state, LastTransitionTime: completionTime},
+					{Type: "Ready", State: state, LastTransitionTime: completionTime, Reason: reason},
+					{Type: "Completed", State: state, LastTransitionTime: completionTime, Reason: reason},
 				}
 				e.Reconciling = false
 			})

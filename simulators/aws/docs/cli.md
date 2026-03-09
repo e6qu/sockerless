@@ -237,6 +237,17 @@ aws ec2 describe-vpcs --output json
 | EC2 | `aws ec2` | Yes (via SDK tests) |
 | STS | `aws sts` | Yes |
 
+## Automated bash tests
+
+A self-contained bash test script exercises all services above in both `--output text` and `--output json` modes:
+
+```sh
+cd simulators/aws/bash-tests
+./test_aws_cli.sh
+```
+
+The script builds the simulator, starts it on a random port, runs 61 tests, and prints a pass/fail summary.
+
 ## Notes
 
 - Authentication is accepted but not validated. Any access key and secret will work.

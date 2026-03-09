@@ -98,6 +98,7 @@ func registerCloudMap(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("Route53AutoNaming_v20170314.GetOperation", handleCMGetOperation)
 	r.Register("Route53AutoNaming_v20170314.ListNamespaces", handleCMListNamespaces)
 	r.Register("Route53AutoNaming_v20170314.ListServices", handleCMListServices)
+	r.Register("Route53AutoNaming_v20170314.DeleteService", handleCMDeleteService)
 	r.Register("Route53AutoNaming_v20170314.ListTagsForResource", handleCMListTagsForResource)
 	r.Register("Route53AutoNaming_v20170314.TagResource", handleCMTagResource)
 }
@@ -391,13 +392,87 @@ func handleCMListNamespaces(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCMListServices(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Filters []struct {
+			Name      string   `json:"Name"`
+			Values    []string `json:"Values"`
+			Condition string   `json:"Condition"`
+		} `json:"Filters"`
+	}
+	_ = sim.ReadJSON(r, &req)
+
 	services := cmServices.List()
+
+	// Apply filters if provided
+	if len(req.Filters) > 0 {
+		var filtered []CMService
+		for _, svc := range services {
+			match := true
+			for _, f := range req.Filters {
+				switch f.Name {
+				case "NAMESPACE_ID":
+					if len(f.Values) > 0 {
+						found := false
+						for _, v := range f.Values {
+							if svc.NamespaceId == v {
+								found = true
+								break
+							}
+						}
+						if f.Condition == "EQ" || f.Condition == "" {
+							if !found {
+								match = false
+							}
+						}
+					}
+				}
+			}
+			if match {
+				filtered = append(filtered, svc)
+			}
+		}
+		services = filtered
+	}
+
 	if services == nil {
 		services = []CMService{}
 	}
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"Services": services,
+	})
+}
+
+func handleCMDeleteService(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Id string `json:"Id"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidInput", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Id == "" {
+		sim.AWSError(w, "InvalidInput", "Id is required", http.StatusBadRequest)
+		return
+	}
+
+	svc, ok := cmServices.Get(req.Id)
+	if !ok {
+		sim.AWSErrorf(w, "ServiceNotFound", http.StatusNotFound,
+			"Service '%s' not found", req.Id)
+		return
+	}
+
+	// Delete all instances belonging to this service
+	for _, inst := range cmInstances.List() {
+		key := cmInstanceKey(req.Id, inst.Id)
+		cmInstances.Delete(key)
+	}
+
+	cmServices.Delete(req.Id)
+
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"Service": svc,
 	})
 }
 

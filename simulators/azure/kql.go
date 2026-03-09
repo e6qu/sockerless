@@ -7,11 +7,12 @@ import (
 	"time"
 )
 
-// kqlQuery represents a parsed KQL query with table, filters, and limit.
+// kqlQuery represents a parsed KQL query with table, filters, limit, and projection.
 type kqlQuery struct {
 	Table   string
 	Filters []kqlFilter
 	Limit   int
+	Project []string // column names from | project clause
 }
 
 // kqlFilter represents a single where-clause filter.
@@ -46,8 +47,16 @@ func parseKQL(query string) kqlQuery {
 			fmt.Sscanf(strings.TrimPrefix(part, "take "), "%d", &q.Limit)
 		} else if strings.HasPrefix(part, "limit ") {
 			fmt.Sscanf(strings.TrimPrefix(part, "limit "), "%d", &q.Limit)
+		} else if strings.HasPrefix(part, "project ") {
+			cols := strings.TrimPrefix(part, "project ")
+			for _, col := range strings.Split(cols, ",") {
+				col = strings.TrimSpace(col)
+				if col != "" {
+					q.Project = append(q.Project, col)
+				}
+			}
 		}
-		// Ignore order by, project, and other clauses — they don't affect filtering
+		// Ignore order by and other clauses — they don't affect filtering
 	}
 
 	return q

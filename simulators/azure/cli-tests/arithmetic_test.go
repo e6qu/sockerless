@@ -53,10 +53,12 @@ func TestContainerApps_CLI_ArithmeticEval(t *testing.T) {
 	out = runCLI(t, azRest("GET", execURL, ""))
 
 	var execResult struct {
-		Status string `json:"status"`
+		Properties struct {
+			Status string `json:"status"`
+		} `json:"properties"`
 	}
 	parseJSON(t, out, &execResult)
-	assert.Equal(t, "Succeeded", execResult.Status)
+	assert.Equal(t, "Succeeded", execResult.Properties.Status)
 
 	// Query Log Analytics for the output
 	queryURL := baseURL + "/v1/workspaces/default/query"
@@ -110,11 +112,13 @@ func TestContainerApps_CLI_ArithmeticInvalid(t *testing.T) {
 	out = runCLI(t, azRest("GET", execURL, ""))
 
 	var execResult struct {
-		Status string `json:"status"`
+		Properties struct {
+			Status string `json:"status"`
+		} `json:"properties"`
 	}
 	parseJSON(t, out, &execResult)
-	assert.True(t, strings.Contains(execResult.Status, "Failed"),
-		"expected status to be Failed, got: %s", execResult.Status)
+	assert.True(t, strings.Contains(execResult.Properties.Status, "Failed"),
+		"expected status to be Failed, got: %s", execResult.Properties.Status)
 
 	// Cleanup
 	runCLI(t, azRest("DELETE", jobURL, ""))

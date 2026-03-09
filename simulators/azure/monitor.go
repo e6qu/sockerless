@@ -4,10 +4,15 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
 )
+
+// logMu protects the read-modify-write cycle on monitorLogs entries.
+// StateStore is individually thread-safe, but Get+append+Put is not atomic.
+var logMu sync.Mutex
 
 // Workspace represents an Azure Log Analytics Workspace.
 type Workspace struct {
@@ -81,6 +86,16 @@ type LogEntry struct {
 // Package-level so other handlers (e.g., Container Apps) can inject log entries.
 var monitorLogs = sim.NewStateStore[[]monitorLogRow]()
 
+// appendLogRow safely appends a log row to the given store key,
+// protecting the read-modify-write cycle with logMu.
+func appendLogRow(storeKey string, row monitorLogRow) {
+	logMu.Lock()
+	defer logMu.Unlock()
+	existing, _ := monitorLogs.Get(storeKey)
+	existing = append(existing, row)
+	monitorLogs.Put(storeKey, existing)
+}
+
 // injectContainerAppLog writes a log entry to the ContainerAppConsoleLogs_CL table.
 func injectContainerAppLog(jobName, message string) {
 	row := monitorLogRow{
@@ -89,10 +104,7 @@ func injectContainerAppLog(jobName, message string) {
 		"Log_s":                message,
 		"Stream_s":             "stdout",
 	}
-	storeKey := "default:ContainerAppConsoleLogs_CL"
-	existing, _ := monitorLogs.Get(storeKey)
-	existing = append(existing, row)
-	monitorLogs.Put(storeKey, existing)
+	appendLogRow("default:ContainerAppConsoleLogs_CL", row)
 }
 
 // injectAppTrace writes a log entry to the AppTraces table.
@@ -102,10 +114,7 @@ func injectAppTrace(appRoleName, message string) {
 		"AppRoleName":   appRoleName,
 		"Message":       message,
 	}
-	storeKey := "default:AppTraces"
-	existing, _ := monitorLogs.Get(storeKey)
-	existing = append(existing, row)
-	monitorLogs.Put(storeKey, existing)
+	appendLogRow("default:AppTraces", row)
 }
 
 func registerAzureMonitor(srv *sim.Server) {
@@ -283,7 +292,7 @@ func registerAzureMonitor(srv *sim.Server) {
 			entries, _ = monitorLogs.Get("default:" + parsed.Table)
 		}
 
-		var rows [][]any
+		rows := make([][]any, 0)
 		for _, row := range entries {
 			if !row.matchesFilters(parsed.Filters) {
 				continue
@@ -294,12 +303,41 @@ func registerAzureMonitor(srv *sim.Server) {
 			}
 		}
 
+		// Apply project clause — filter columns and rows to projected subset
+		resultColumns := columns
+		resultRows := rows
+		if len(parsed.Project) > 0 {
+			// Build index mapping from projected column names to original indices
+			colIndex := make(map[string]int, len(columns))
+			for i, col := range columns {
+				colIndex[col.Name] = i
+			}
+			var projCols []Column
+			var projIndices []int
+			for _, name := range parsed.Project {
+				if idx, ok := colIndex[name]; ok {
+					projCols = append(projCols, columns[idx])
+					projIndices = append(projIndices, idx)
+				}
+			}
+			projRows := make([][]any, len(rows))
+			for i, row := range rows {
+				pr := make([]any, len(projIndices))
+				for j, idx := range projIndices {
+					pr[j] = row[idx]
+				}
+				projRows[i] = pr
+			}
+			resultColumns = projCols
+			resultRows = projRows
+		}
+
 		resp := QueryResponse{
 			Tables: []Table{
 				{
 					Name:    "PrimaryResult",
-					Columns: columns,
-					Rows:    rows,
+					Columns: resultColumns,
+					Rows:    resultRows,
 				},
 			},
 		}
@@ -338,10 +376,7 @@ func registerAzureMonitor(srv *sim.Server) {
 				row["AppRoleName"] = e.AppRoleName
 			}
 
-			storeKey := "default:" + tableName
-			existing, _ := monitorLogs.Get(storeKey)
-			existing = append(existing, row)
-			monitorLogs.Put(storeKey, existing)
+			appendLogRow("default:"+tableName, row)
 		}
 
 		w.WriteHeader(http.StatusNoContent)

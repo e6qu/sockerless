@@ -2,7 +2,10 @@ module github.com/sockerless/simulator-aws
 
 go 1.25.0
 
-require github.com/sockerless/simulator v0.0.0
+require (
+	github.com/gorilla/websocket v1.5.3
+	github.com/sockerless/simulator v0.0.0
+)
 
 require (
 	github.com/mattn/go-colorable v0.1.13 // indirect

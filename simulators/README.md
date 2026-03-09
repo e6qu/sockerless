@@ -58,17 +58,19 @@ This starts all three simulators on their default ports with health checks.
 
 ## Testing
 
-Each simulator has three test suites in separate Go modules:
+Each simulator has four test suites:
 
-- **sdk-tests/** — Uses the official cloud SDK to exercise API endpoints
-- **cli-tests/** — Uses the cloud CLI (aws/gcloud/az) to exercise endpoints
+- **sdk-tests/** — Uses the official cloud SDK (Go) to exercise API endpoints
+- **cli-tests/** — Uses the cloud CLI (aws/gcloud/az) via Go test harness
 - **terraform-tests/** — Runs `terraform init/apply/destroy` against the simulator
+- **bash-tests/** — Standalone bash scripts testing the cloud CLI in both text and JSON output modes
 
 ```sh
 # Run all test types for a single cloud
-cd simulators/aws/sdk-tests && go test -v ./...
-cd simulators/aws/cli-tests && go test -v ./...
-cd simulators/aws/terraform-tests && go test -v ./...
+cd simulators/aws/sdk-tests && GOWORK=off go test -v ./...
+cd simulators/aws/cli-tests && GOWORK=off go test -v ./...
+cd simulators/aws/terraform-tests && GOWORK=off go test -v ./...
+cd simulators/aws/bash-tests && ./test_aws_cli.sh
 ```
 
 Or use the top-level Makefile:
@@ -80,11 +82,11 @@ make sim-test-all        # Simulator-backend integration tests
 
 ## Test counts
 
-| Cloud | SDK tests | CLI tests | Terraform tests |
-|-------|-----------|-----------|-----------------|
-| AWS | 42 | 26 | ~30s apply/destroy |
-| GCP | 43 | 21 | ~5s apply/destroy |
-| Azure | 38 | 19 | ~1s apply/destroy |
+| Cloud | SDK tests | CLI tests | Bash tests | Terraform tests |
+|-------|-----------|-----------|------------|-----------------|
+| AWS | 46 | 26 | 61 | ~30s apply/destroy |
+| GCP | 36 | 21 | 33 | ~5s apply/destroy |
+| Azure | 48 | 19 | 42 | ~1s apply/destroy |
 
 ## Shared framework
 
@@ -107,6 +109,49 @@ Each simulator has usage guides for the official cloud tools:
 | GCP | [gcloud CLI](gcp/docs/cli.md) | [hashicorp/google](gcp/docs/terraform.md) | [google-cloud-*](gcp/docs/python-sdk.md) |
 | Azure | [az CLI](azure/docs/cli.md) | [hashicorp/azurestack](azure/docs/terraform.md) | [azure-mgmt-*](azure/docs/python-sdk.md) |
 
-## Process execution
+## Architecture
 
-The ECS, Cloud Run Jobs, and Container Apps simulators execute real processes from container command/entrypoint specs. Process output is streamed to the corresponding cloud-native log sink (CloudWatch, Cloud Logging, Log Analytics). Functions simulators (Lambda, Cloud Functions, Azure Functions) return synchronous responses without spawning processes.
+### State management
+
+All simulators store resource state in generic `StateStore[T]` instances — thread-safe, in-memory maps with CRUD and filter operations. Each service (ECS, Cloud Run, Container Apps, etc.) maintains its own set of stores. State resets on simulator restart; there is no persistent storage.
+
+Example store hierarchy for AWS:
+- `clusters: StateStore[ECSCluster]`
+- `taskDefs: StateStore[ECSTaskDefinition]`
+- `tasks: StateStore[ECSTask]`
+- `logGroups: StateStore[LogGroup]`
+
+### Process execution
+
+The container-oriented services (ECS, Cloud Run Jobs, Container Apps) execute real OS processes from the container `command`/`entrypoint` fields via the shared `sim.StartProcess()` helper. Process stdout/stderr is captured in real time and injected into the cloud-native log sink:
+
+| Service | Log sink | API for retrieval |
+|---------|----------|-------------------|
+| ECS | CloudWatch Logs (awslogs) | `GetLogEvents` / `FilterLogEvents` |
+| Cloud Run Jobs | Cloud Logging | `entries.list` (REST) / `ListLogEntries` (gRPC) |
+| Container Apps | Log Analytics | KQL via `QueryWorkspace` |
+| Lambda | CloudWatch Logs | `GetLogEvents` |
+| Cloud Functions | Cloud Logging | `entries.list` / `ListLogEntries` |
+| Azure Functions | Log Analytics (AppTraces) | KQL via `QueryWorkspace` |
+
+FaaS simulators (Lambda, Cloud Functions, Azure Functions) also execute real processes when `SimCommand` is set, returning the result synchronously.
+
+### ECS ExecuteCommand
+
+The ECS simulator supports `ExecuteCommand` with WebSocket-based session bridging. When `ExecuteCommand` is called on a running task, the simulator:
+1. Spawns a new process with the given command
+2. Registers a WebSocket handler at `/ecs-exec/{sessionId}`
+3. Returns a session with the WebSocket URL
+4. Bridges stdin/stdout/stderr over the WebSocket connection
+
+### Request routing
+
+Each cloud uses its native protocol conventions:
+
+| Cloud | Protocol | Routing |
+|-------|----------|---------|
+| AWS (ECS, ECR, CloudWatch, Cloud Map) | JSON | `X-Amz-Target` header dispatch |
+| AWS (EC2, IAM, STS) | Query | `Action` form parameter dispatch |
+| AWS (Lambda, S3, EFS) | REST | Path-based mux |
+| GCP (all services) | REST + gRPC | Path-based mux (HTTP), proto service (gRPC on port+1) |
+| Azure (all services) | ARM REST | Path-based mux with `api-version` validation |

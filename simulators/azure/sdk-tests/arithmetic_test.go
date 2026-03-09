@@ -104,7 +104,8 @@ func TestContainerApps_JobArithmetic(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	exec := acaGetExecution(t, rg, jobName, execName)
-	assert.Equal(t, "Succeeded", exec["status"])
+	execProps := exec["properties"].(map[string]any)
+	assert.Equal(t, "Succeeded", execProps["status"])
 
 	kql := `ContainerAppConsoleLogs_CL | where ContainerGroupName_s == "arith-aca-job"`
 	result := queryWorkspace(t, "default", kql)
@@ -136,7 +137,8 @@ func TestContainerApps_JobArithmeticInvalid(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	exec := acaGetExecution(t, rg, jobName, execName)
-	assert.Equal(t, "Failed", exec["status"])
+	execProps := exec["properties"].(map[string]any)
+	assert.Equal(t, "Failed", execProps["status"])
 }
 
 func TestContainerApps_JobArithmeticLogs(t *testing.T) {

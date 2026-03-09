@@ -1,7 +1,9 @@
 package gcp_sdk_test
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/logging/logadmin"
 	"google.golang.org/api/iterator"
@@ -120,4 +122,59 @@ func TestLogging_FilterByTimestamp(t *testing.T) {
 	}
 
 	assert.GreaterOrEqual(t, count, 2, "should return entries with timestamps >= 2020")
+}
+
+func TestLogging_FilterByTimestampStrictGT(t *testing.T) {
+	// This test verifies the strict greater-than (>) timestamp filter used
+	// by backends in follow mode: timestamp>"<cutoff>".
+	client := logadminClient(t)
+	writeClient, err := newLoggingWriteClient(t)
+	require.NoError(t, err)
+
+	// Use a dedicated log name to isolate from other tests
+	logName := "ts-strict-gt-test"
+	logger := writeClient.Logger(logName)
+
+	// Write first entry
+	err = logger.LogSync(ctx, writeEntry("entry-before"))
+	require.NoError(t, err)
+
+	// Small delay to ensure distinct timestamps
+	time.Sleep(50 * time.Millisecond)
+
+	// Record the cutoff timestamp in RFC3339Nano (between entries)
+	cutoff := time.Now().UTC().Format(time.RFC3339Nano)
+
+	// Small delay again
+	time.Sleep(50 * time.Millisecond)
+
+	// Write second and third entries (after cutoff)
+	err = logger.LogSync(ctx, writeEntry("entry-after-1"))
+	require.NoError(t, err)
+	err = logger.LogSync(ctx, writeEntry("entry-after-2"))
+	require.NoError(t, err)
+
+	err = writeClient.Close()
+	require.NoError(t, err)
+
+	// Query with strict greater-than filter on the log name + timestamp
+	filter := fmt.Sprintf(`logName="projects/test-project/logs/%s" AND timestamp>"%s"`, logName, cutoff)
+	it := client.Entries(ctx, logadmin.Filter(filter))
+
+	var messages []string
+	for {
+		entry, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		require.NoError(t, err)
+		if s, ok := entry.Payload.(string); ok {
+			messages = append(messages, s)
+		}
+	}
+
+	// Only entries written after the cutoff should be returned
+	require.Len(t, messages, 2, "strict > filter should exclude the first entry")
+	assert.Equal(t, "entry-after-1", messages[0])
+	assert.Equal(t, "entry-after-2", messages[1])
 }

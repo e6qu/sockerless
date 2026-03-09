@@ -127,11 +127,16 @@ type JobVolume struct {
 }
 
 // JobExecution represents a running or completed execution of a Container Apps Job.
-// Uses flat format matching the Azure SDK's expected JSON structure.
+// Uses nested properties format matching the Azure ARM SDK's expected JSON structure.
 type JobExecution struct {
-	ID        string       `json:"id"`
-	Name      string       `json:"name"`
-	Type      string       `json:"type,omitempty"`
+	ID         string                  `json:"id"`
+	Name       string                  `json:"name"`
+	Type       string                  `json:"type,omitempty"`
+	Properties *JobExecutionProperties `json:"properties,omitempty"`
+}
+
+// JobExecutionProperties holds the runtime properties of a job execution.
+type JobExecutionProperties struct {
 	Status    string       `json:"status"`
 	StartTime string       `json:"startTime"`
 	EndTime   string       `json:"endTime,omitempty"`
@@ -286,12 +291,14 @@ func registerContainerApps(srv *sim.Server) {
 		}
 
 		exec := JobExecution{
-			ID:        execID,
-			Name:      execName,
-			Type:      "Microsoft.App/jobs/executions",
-			Status:    "Running",
-			StartTime: time.Now().UTC().Format(time.RFC3339),
-			Template:  template,
+			ID:   execID,
+			Name: execName,
+			Type: "Microsoft.App/jobs/executions",
+			Properties: &JobExecutionProperties{
+				Status:    "Running",
+				StartTime: time.Now().UTC().Format(time.RFC3339),
+				Template:  template,
+			},
 		}
 
 		executions.Put(execID, exec)
@@ -345,16 +352,16 @@ func registerContainerApps(srv *sim.Server) {
 
 			completed := false
 			executions.Update(id, func(e *JobExecution) {
-				if e.Status != "Running" {
+				if e.Properties == nil || e.Properties.Status != "Running" {
 					return
 				}
 				completed = true
 				if succeeded {
-					e.Status = "Succeeded"
+					e.Properties.Status = "Succeeded"
 				} else {
-					e.Status = "Failed"
+					e.Properties.Status = "Failed"
 				}
-				e.EndTime = time.Now().UTC().Format(time.RFC3339)
+				e.Properties.EndTime = time.Now().UTC().Format(time.RFC3339)
 			})
 			if completed {
 				injectContainerAppLog(jobShortName, "Execution completed successfully")
@@ -437,8 +444,11 @@ func registerContainerApps(srv *sim.Server) {
 		}
 
 		ok := executions.Update(execID, func(e *JobExecution) {
-			e.Status = "Stopped"
-			e.EndTime = time.Now().UTC().Format(time.RFC3339)
+			if e.Properties == nil {
+				e.Properties = &JobExecutionProperties{}
+			}
+			e.Properties.Status = "Stopped"
+			e.Properties.EndTime = time.Now().UTC().Format(time.RFC3339)
 		})
 		if ok {
 			injectContainerAppLog(jobName, "Execution stopped")

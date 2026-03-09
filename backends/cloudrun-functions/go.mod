@@ -11,6 +11,7 @@ require (
 	github.com/sockerless/backend-core v0.0.0
 	github.com/sockerless/gcp-common v0.0.0
 	google.golang.org/api v0.218.0
+	google.golang.org/grpc v1.78.0
 )
 
 require (
@@ -68,7 +69,6 @@ require (
 	google.golang.org/genproto v0.0.0-20250122153221-138b5a5a4fd4 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260128011058-8636f8732409 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260128011058-8636f8732409 // indirect
-	google.golang.org/grpc v1.78.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gotest.tools/v3 v3.5.2 // indirect

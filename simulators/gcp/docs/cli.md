@@ -152,6 +152,17 @@ curl -X POST http://localhost:4567/compute/v1/projects/my-project/global/network
 | Compute | — | — | Use direct HTTP |
 | IAM | — | — | Use direct HTTP |
 
+## Automated bash tests
+
+A self-contained bash test script exercises Cloud DNS, Service Usage, Cloud Logging, Cloud Run Jobs, and GCS in both text and JSON output modes:
+
+```sh
+cd simulators/gcp/bash-tests
+./test_gcp_cli.sh
+```
+
+The script builds the simulator, starts it on a random port, runs 33 tests, and prints a pass/fail summary.
+
 ## Notes
 
 - Authentication is accepted but not validated. Any Bearer token will work.
