@@ -975,7 +975,7 @@ func handleECSExecWebSocket(sessionID string) http.HandlerFunc {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer conn.Close() //nolint:errcheck
 
 		// Parse command — use shell if it's a single string
 		var cmd *exec.Cmd
@@ -987,27 +987,27 @@ func handleECSExecWebSocket(sessionID string) http.HandlerFunc {
 
 		stdin, err := cmd.StdinPipe()
 		if err != nil {
-			conn.WriteMessage(websocket.CloseMessage,
+			_ = conn.WriteMessage(websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.CloseInternalServerErr, err.Error()))
 			return
 		}
 
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
-			conn.WriteMessage(websocket.CloseMessage,
+			_ = conn.WriteMessage(websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.CloseInternalServerErr, err.Error()))
 			return
 		}
 
 		stderr, err := cmd.StderrPipe()
 		if err != nil {
-			conn.WriteMessage(websocket.CloseMessage,
+			_ = conn.WriteMessage(websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.CloseInternalServerErr, err.Error()))
 			return
 		}
 
 		if err := cmd.Start(); err != nil {
-			conn.WriteMessage(websocket.CloseMessage,
+			_ = conn.WriteMessage(websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.CloseInternalServerErr, err.Error()))
 			return
 		}

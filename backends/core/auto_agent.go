@@ -109,13 +109,14 @@ func (s *BaseServer) SpawnAutoAgent(containerID string) error {
 		// Store captured stdout as container logs.
 		// Always store even if empty — avoids a race where the wait channel
 		// is closed before a concurrent log reader sees the data.
-		s.Store.LogBuffers.Store(containerID, stdoutBuf.Bytes())
+		logData := stdoutBuf.Bytes()
+		s.Store.LogBuffers.Store(containerID, logData)
 
 		exitCode := 0
 		if cmd.ProcessState != nil {
 			exitCode = cmd.ProcessState.ExitCode()
 		}
-		s.Logger.Debug().Str("container", containerID).Int("exitCode", exitCode).Msg("auto-agent exited, stopping container")
+		s.Logger.Debug().Str("container", containerID).Int("exitCode", exitCode).Int("logBytes", len(logData)).Msg("auto-agent exited, stopping container")
 		s.Store.StopContainer(containerID, exitCode)
 	}()
 
