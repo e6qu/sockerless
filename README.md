@@ -1,5 +1,13 @@
 # Sockerless
 
+[![CI](https://github.com/e6qu/sockerless/actions/workflows/ci.yml/badge.svg)](https://github.com/e6qu/sockerless/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![Docker API](https://img.shields.io/badge/Docker_API-v1.44-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/engine/api/v1.44/)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+[![AWS](https://img.shields.io/badge/AWS-ECS_|_Lambda-FF9900?logo=amazonwebservices&logoColor=white)](#backends)
+[![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
+[![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
+
 A Docker-compatible REST API daemon that executes containers on cloud serverless backends instead of a local Docker Engine. Standard Docker clients (`docker run`, Docker SDK, CI runners) connect to Sockerless exactly as they would to a real Docker daemon — but containers run on AWS ECS, Google Cloud Run, Azure Container Apps, and more.
 
 ## Why
