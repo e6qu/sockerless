@@ -1,5 +1,18 @@
 # Sockerless
 
+[![CI](https://github.com/e6qu/sockerless/actions/workflows/ci.yml/badge.svg)](https://github.com/e6qu/sockerless/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![Docker API](https://img.shields.io/badge/Docker_API-v1.44-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/engine/api/v1.44/)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+[![AWS](https://img.shields.io/badge/AWS-ECS_|_Lambda-FF9900?logo=amazonwebservices&logoColor=white)](#backends)
+[![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
+[![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
+
+[![Code](https://img.shields.io/badge/Code-71k_lines-brightgreen)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-40k_lines-brightgreen)](#module-sizes)
+[![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
+[![Modules](https://img.shields.io/badge/Go_Modules-20+-informational)](#module-sizes)
+
 A Docker-compatible REST API daemon that executes containers on cloud serverless backends instead of a local Docker Engine. Standard Docker clients (`docker run`, Docker SDK, CI runners) connect to Sockerless exactly as they would to a real Docker daemon — but containers run on AWS ECS, Google Cloud Run, Azure Container Apps, and more.
 
 ## Why
@@ -79,6 +92,32 @@ spec/                         Specification documents
 ```
 
 Each backend, the agent, and the test suite are separate Go modules connected via `go.work`. Major components embed React dashboards at `/ui/`.
+
+### Module Sizes
+
+![core](https://img.shields.io/badge/core-13.5k-blue)
+![bleephub](https://img.shields.io/badge/bleephub-14.6k-blue)
+![sim/aws](https://img.shields.io/badge/sim%2Faws-6.8k-blue)
+![sim/azure](https://img.shields.io/badge/sim%2Fazure-5.5k-blue)
+![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-4.3k-blue)
+![admin](https://img.shields.io/badge/admin-3.3k-blue)
+![ecs](https://img.shields.io/badge/ecs-3.0k-9cf)
+![cloudrun](https://img.shields.io/badge/cloudrun-2.6k-9cf)
+![aca](https://img.shields.io/badge/aca-2.6k-9cf)
+![docker](https://img.shields.io/badge/docker-2.4k-9cf)
+![agent](https://img.shields.io/badge/agent-1.9k-9cf)
+![api](https://img.shields.io/badge/api-1.9k-9cf)
+![azf](https://img.shields.io/badge/azf-1.7k-lightgrey)
+![cli](https://img.shields.io/badge/cli-1.7k-lightgrey)
+![gcf](https://img.shields.io/badge/gcf-1.5k-lightgrey)
+![lambda](https://img.shields.io/badge/lambda-1.4k-lightgrey)
+
+### Coverage
+
+![core](https://img.shields.io/badge/core-40%25-yellow)
+![agent](https://img.shields.io/badge/agent-36%25-yellow)
+
+> Cloud backends are tested via simulator integration tests and e2e smoke tests rather than unit tests.
 
 ## Prerequisites
 
