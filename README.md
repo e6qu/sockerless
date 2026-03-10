@@ -8,7 +8,8 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Code](https://img.shields.io/badge/Code-71k_lines-brightgreen)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-71k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![TypeScript](https://img.shields.io/badge/TypeScript-7.4k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
 [![Tests](https://img.shields.io/badge/Tests-40k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-20+-informational)](#module-sizes)
@@ -95,22 +96,34 @@ Each backend, the agent, and the test suite are separate Go modules connected vi
 
 ### Module Sizes
 
-![core](https://img.shields.io/badge/core-13.5k-blue)
-![bleephub](https://img.shields.io/badge/bleephub-14.6k-blue)
-![sim/aws](https://img.shields.io/badge/sim%2Faws-6.8k-blue)
-![sim/azure](https://img.shields.io/badge/sim%2Fazure-5.5k-blue)
-![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-4.3k-blue)
-![admin](https://img.shields.io/badge/admin-3.3k-blue)
-![ecs](https://img.shields.io/badge/ecs-3.0k-9cf)
-![cloudrun](https://img.shields.io/badge/cloudrun-2.6k-9cf)
-![aca](https://img.shields.io/badge/aca-2.6k-9cf)
-![docker](https://img.shields.io/badge/docker-2.4k-9cf)
-![agent](https://img.shields.io/badge/agent-1.9k-9cf)
-![api](https://img.shields.io/badge/api-1.9k-9cf)
-![azf](https://img.shields.io/badge/azf-1.7k-lightgrey)
-![cli](https://img.shields.io/badge/cli-1.7k-lightgrey)
-![gcf](https://img.shields.io/badge/gcf-1.5k-lightgrey)
-![lambda](https://img.shields.io/badge/lambda-1.4k-lightgrey)
+**Go**
+
+![core](https://img.shields.io/badge/core-13.5k-00ADD8)
+![bleephub](https://img.shields.io/badge/bleephub-14.6k-00ADD8)
+![sim/aws](https://img.shields.io/badge/sim%2Faws-6.8k-00ADD8)
+![sim/azure](https://img.shields.io/badge/sim%2Fazure-5.5k-00ADD8)
+![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-4.3k-00ADD8)
+![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)
+![ecs](https://img.shields.io/badge/ecs-3.0k-5BC0DE)
+![cloudrun](https://img.shields.io/badge/cloudrun-2.6k-5BC0DE)
+![aca](https://img.shields.io/badge/aca-2.6k-5BC0DE)
+![docker](https://img.shields.io/badge/docker-2.4k-5BC0DE)
+![agent](https://img.shields.io/badge/agent-1.9k-5BC0DE)
+![api](https://img.shields.io/badge/api-1.9k-5BC0DE)
+![azf](https://img.shields.io/badge/azf-1.7k-A0D8EF)
+![cli](https://img.shields.io/badge/cli-1.7k-A0D8EF)
+![gcf](https://img.shields.io/badge/gcf-1.5k-A0D8EF)
+![lambda](https://img.shields.io/badge/lambda-1.4k-A0D8EF)
+
+**TypeScript**
+
+![ui/admin](https://img.shields.io/badge/ui%2Fadmin-2.9k-3178C6)
+![ui/core](https://img.shields.io/badge/ui%2Fcore-1.6k-3178C6)
+![ui/bleephub](https://img.shields.io/badge/ui%2Fbleephub-1.2k-3178C6)
+![ui/sim-aws](https://img.shields.io/badge/ui%2Fsim--aws-391-6295D2)
+![ui/sim-gcp](https://img.shields.io/badge/ui%2Fsim--gcp-372-6295D2)
+![ui/sim-azure](https://img.shields.io/badge/ui%2Fsim--azure-366-6295D2)
+![ui/frontend-docker](https://img.shields.io/badge/ui%2Ffrontend--docker-230-6295D2)
 
 ### Coverage
 
