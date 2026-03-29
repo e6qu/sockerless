@@ -172,6 +172,9 @@ func (s *Server) ContainerStart(ref string) error {
 	}
 
 	// markRunning transitions the container to running state and emits the start event.
+	// For deferred/pod paths, also creates the exitCh. For the single-container
+	// path, the exitCh is pre-created before runECSTask to avoid race conditions
+	// with short-lived auto-agent containers.
 	markRunning := func() chan struct{} {
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		s.Store.Containers.Update(id, func(c *api.Container) {
@@ -182,8 +185,14 @@ func (s *Server) ContainerStart(ref string) error {
 			c.State.FinishedAt = "0001-01-01T00:00:00Z"
 			c.State.ExitCode = 0
 		})
-		exitCh := make(chan struct{})
-		s.Store.WaitChs.Store(id, exitCh)
+		// Use existing exitCh if already created, otherwise create new one
+		var exitCh chan struct{}
+		if ch, ok := s.Store.WaitChs.Load(id); ok {
+			exitCh = ch.(chan struct{})
+		} else {
+			exitCh = make(chan struct{})
+			s.Store.WaitChs.Store(id, exitCh)
+		}
 		c, _ = s.Store.Containers.Get(id)
 		s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 		return exitCh
@@ -202,6 +211,11 @@ func (s *Server) ContainerStart(ref string) error {
 		return s.startMultiContainerTaskTyped(id, podContainers, exitCh)
 	}
 
+	// Pre-create exit channel so ContainerWait works even if the process
+	// exits during runECSTask (e.g. short-lived auto-agent containers).
+	exitCh := make(chan struct{})
+	s.Store.WaitChs.Store(id, exitCh)
+
 	// Pre-create done channel so invoke goroutine can wait for agent disconnect
 	if s.config.CallbackURL != "" {
 		s.AgentRegistry.Prepare(id)
@@ -217,10 +231,11 @@ func (s *Server) ContainerStart(ref string) error {
 			TaskDefinition: aws.String(taskDefARN),
 		})
 		s.AgentRegistry.Remove(id)
+		s.Store.WaitChs.Delete(id)
 		return awscommon.MapAWSError(err, "task", id)
 	}
 
-	exitCh := markRunning()
+	markRunning()
 
 	s.ECS.Update(id, func(state *ECSState) {
 		state.TaskARN = taskARN

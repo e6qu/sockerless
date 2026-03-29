@@ -744,11 +744,9 @@ func (s *BaseServer) execForOutput(containerID string, cmd []string) string {
 	pr, pw := io.Pipe()
 	conn := &pipeConn{PipeReader: pr, PipeWriter: pw}
 
-	done := make(chan struct{})
 	go func() {
 		s.Drivers.Exec.Exec(context.Background(), containerID, execID, cmd, nil, "", false, conn)
-		pw.Close()
-		close(done)
+		_ = pw.Close()
 	}()
 
 	// Read with timeout
@@ -761,7 +759,7 @@ func (s *BaseServer) execForOutput(containerID string, cmd []string) string {
 	select {
 	case <-readDone:
 	case <-time.After(5 * time.Second):
-		pw.Close()
+		_ = pw.Close()
 	}
 
 	return buf.String()

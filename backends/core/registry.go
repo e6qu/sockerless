@@ -189,12 +189,7 @@ func fetchMetadataFromRegistry(rc registryConfig, basicAuth string) (*ImageMetad
 	// Build history items
 	var history []ImageHistoryItem
 	for _, h := range ociCfg.History {
-		history = append(history, ImageHistoryItem{
-			CreatedBy:  h.CreatedBy,
-			Created:    h.Created,
-			EmptyLayer: h.EmptyLayer,
-			Comment:    h.Comment,
-		})
+		history = append(history, ImageHistoryItem(h))
 	}
 
 	// Calculate total size from manifest layers
@@ -219,14 +214,6 @@ func fetchMetadataFromRegistry(rc registryConfig, basicAuth string) (*ImageMetad
 	}, nil
 }
 
-// fetchConfigFromRegistry is a backward-compatible wrapper.
-func fetchConfigFromRegistry(rc registryConfig, basicAuth string) (*api.ContainerConfig, error) {
-	meta, err := fetchMetadataFromRegistry(rc, basicAuth)
-	if err != nil {
-		return nil, err
-	}
-	return meta.Config, nil
-}
 
 // tokenResponse is the response from a Docker registry auth endpoint.
 type tokenResponse struct {

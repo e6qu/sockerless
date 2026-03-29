@@ -107,21 +107,11 @@ func (s *BaseServer) handleImageLoad(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// parseImageTar reads a docker save tar and extracts RepoTags from manifest.json
-// and Env/Cmd/Entrypoint/WorkingDir/Labels from the image config JSON.
 // imageLoadResult holds parsed data from a docker save tar archive.
 type imageLoadResult struct {
 	RepoTags []string
 	Config   *api.ContainerConfig
 	Layers   map[string][]byte // layer path → content (e.g. "abc123/layer.tar" → bytes)
-}
-
-func parseImageTar(body io.Reader) (repoTags []string, config *api.ContainerConfig) {
-	result := parseImageTarFull(body)
-	if result == nil {
-		return nil, nil
-	}
-	return result.RepoTags, result.Config
 }
 
 // parseImageTarFull parses a docker save tar and preserves layer content.
