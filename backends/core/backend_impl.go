@@ -51,7 +51,7 @@ func (s *BaseServer) Info() (*api.BackendInfo, error) {
 		Architecture:      s.Desc.Architecture,
 		NCPU:              s.Desc.NCPU,
 		MemTotal:          s.Desc.MemTotal,
-		KernelVersion:     "5.15.0-sockerless",
+		KernelVersion:     s.kernelVersion(),
 	}, nil
 }
 
@@ -688,6 +688,7 @@ func (s *BaseServer) ContainerRestart(ref string, timeout *int) error {
 }
 
 // ContainerTop returns the running processes inside a container.
+// Executes `ps` via the agent when connected, falls back to synthetic.
 func (s *BaseServer) ContainerTop(ref string, psArgs string) (*api.ContainerTopResponse, error) {
 	id, ok := s.Store.ResolveContainerID(ref)
 	if !ok {
@@ -701,19 +702,108 @@ func (s *BaseServer) ContainerTop(ref string, psArgs string) (*api.ContainerTopR
 		}
 	}
 
+	// Try to get real process list via agent exec
+	if c.AgentAddress != "" {
+		psCmd := "ps aux"
+		if psArgs != "" {
+			psCmd = "ps " + psArgs
+		}
+		if resp := s.execForOutput(id, []string{"/bin/sh", "-c", psCmd}); resp != "" {
+			if titles, procs := parsePS(resp); len(procs) > 0 {
+				return &api.ContainerTopResponse{Titles: titles, Processes: procs}, nil
+			}
+		}
+	}
+
+	// Synthetic fallback
 	cmd := c.Path
 	if len(c.Args) > 0 {
 		cmd += " " + strings.Join(c.Args, " ")
 	}
-	// Docker convention: main process is always PID 1 inside a container.
-	pid := "1"
-
 	return &api.ContainerTopResponse{
 		Titles: []string{"UID", "PID", "PPID", "C", "STIME", "TTY", "TIME", "CMD"},
 		Processes: [][]string{
-			{"root", pid, "0", "0", "00:00", "?", "00:00:00", cmd},
+			{"root", "1", "0", "0", "00:00", "?", "00:00:00", cmd},
 		},
 	}, nil
+}
+
+// execForOutput runs a command inside a container and captures stdout.
+// Returns empty string on any error (non-fatal, used for best-effort data).
+func (s *BaseServer) execForOutput(containerID string, cmd []string) string {
+	execID := GenerateID()
+	s.Store.Execs.Put(execID, api.ExecInstance{
+		ID:          execID,
+		ContainerID: containerID,
+		Running:     true,
+		OpenStdout:  true,
+	})
+	defer s.Store.Execs.Delete(execID)
+
+	var buf bytes.Buffer
+	pr, pw := io.Pipe()
+	conn := &pipeConn{PipeReader: pr, PipeWriter: pw}
+
+	done := make(chan struct{})
+	go func() {
+		s.Drivers.Exec.Exec(context.Background(), containerID, execID, cmd, nil, "", false, conn)
+		pw.Close()
+		close(done)
+	}()
+
+	// Read with timeout
+	readDone := make(chan struct{})
+	go func() {
+		io.Copy(&buf, pr)
+		close(readDone)
+	}()
+
+	select {
+	case <-readDone:
+	case <-time.After(5 * time.Second):
+		pw.Close()
+	}
+
+	return buf.String()
+}
+
+// parsePS parses the output of `ps` into titles and process rows.
+func parsePS(output string) ([]string, [][]string) {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) < 2 {
+		return nil, nil
+	}
+
+	// Parse header to determine column positions
+	header := lines[0]
+	titles := strings.Fields(header)
+	if len(titles) == 0 {
+		return nil, nil
+	}
+
+	var processes [][]string
+	for _, line := range lines[1:] {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Split into at most len(titles) fields — last field may contain spaces (CMD)
+		fields := strings.Fields(line)
+		if len(fields) < len(titles) {
+			continue
+		}
+		if len(fields) > len(titles) {
+			// Join excess fields into the last column (CMD)
+			row := make([]string, len(titles))
+			copy(row, fields[:len(titles)-1])
+			row[len(titles)-1] = strings.Join(fields[len(titles)-1:], " ")
+			processes = append(processes, row)
+		} else {
+			processes = append(processes, fields)
+		}
+	}
+
+	return titles, processes
 }
 
 // ContainerPrune removes stopped containers.
@@ -1046,7 +1136,15 @@ func (s *BaseServer) ExecInspect(id string) (*api.ExecInstance, error) {
 }
 
 // ImagePull pulls an image and stores it in the in-memory image store.
+// Uses synthetic metadata. Prefer ImagePullWithMetadata when registry data is available.
 func (s *BaseServer) ImagePull(ref string, auth string) (io.ReadCloser, error) {
+	return s.ImagePullWithMetadata(ref, auth, nil)
+}
+
+// ImagePullWithMetadata pulls an image, using real registry metadata when available.
+// When meta is nil, falls back to synthetic data for backward compatibility.
+// Uses real sizes, digests, and layers from registry.
+func (s *BaseServer) ImagePullWithMetadata(ref string, auth string, meta *ImageMetadataResult) (io.ReadCloser, error) {
 	if ref == "" {
 		return nil, &api.InvalidParameterError{Message: "image reference is required"}
 	}
@@ -1056,6 +1154,13 @@ func (s *BaseServer) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 	}
 
 	if _, exists := s.Store.ResolveImage(ref); exists {
+		// Image already exists — re-merge metadata if available
+		if meta != nil {
+			if img, ok := s.Store.ResolveImage(ref); ok {
+				mergeImageConfig(&img.Config, meta.Config)
+				StoreImageWithAliases(s.Store, ref, img)
+			}
+		}
 		var buf bytes.Buffer
 		enc := json.NewEncoder(&buf)
 		_ = enc.Encode(map[string]any{"status": fmt.Sprintf("Pulling from %s", strings.Split(ref, ":")[0])})
@@ -1063,42 +1168,83 @@ func (s *BaseServer) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 		return io.NopCloser(&buf), nil
 	}
 
-	hash := sha256.Sum256([]byte(ref))
-	imageID := fmt.Sprintf("sha256:%x", hash)
-
-	imgConfig := api.ContainerConfig{
-		Env:    []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
-		Cmd:    []string{"/bin/sh"},
-		Labels: make(map[string]string),
-	}
-
-	h := fnv.New32a()
-	h.Write([]byte(ref))
-	imgSize := int64(10_000_000 + h.Sum32()%90_000_000)
+	// Determine image ID, size, digests, layers from real metadata or synthetic fallback
+	var imageID string
+	var imgSize int64
+	var repoDigests []string
+	var layers []string
+	var arch, osName string
+	var imgConfig api.ContainerConfig
+	var created string
 
 	now := time.Now().UTC()
+
+	if meta != nil {
+		// Use real config digest as image ID
+		imageID = meta.ConfigDigest
+		// Use real total size from manifest layers
+		imgSize = meta.TotalSize
+		// Use real manifest digest for RepoDigests
+		repoDigests = []string{strings.Split(ref, ":")[0] + "@" + meta.ManifestDigest}
+		// Use real diff_ids from config blob
+		layers = meta.LayerDigests
+		arch = meta.Architecture
+		osName = meta.OS
+		imgConfig = *meta.Config
+		if meta.Created != "" {
+			created = meta.Created
+		} else {
+			created = now.Format(time.RFC3339Nano)
+		}
+
+		// Store real history
+		if len(meta.History) > 0 {
+			s.Store.ImageHistory.Store(imageID, meta.History)
+		}
+	} else {
+		// Synthetic fallback
+		hash := sha256.Sum256([]byte(ref))
+		imageID = fmt.Sprintf("sha256:%x", hash)
+		h := fnv.New32a()
+		h.Write([]byte(ref))
+		imgSize = int64(10_000_000 + h.Sum32()%90_000_000)
+		repoDigests = []string{strings.Split(ref, ":")[0] + "@sha256:" + fmt.Sprintf("%x", hash)[:64]}
+		layers = []string{"sha256:" + GenerateID()}
+		arch = "amd64"
+		osName = "linux"
+		imgConfig = api.ContainerConfig{
+			Env:    []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
+			Cmd:    []string{"/bin/sh"},
+			Labels: make(map[string]string),
+		}
+		created = now.Format(time.RFC3339Nano)
+	}
+
+	idShort := imageID
+	if len(idShort) > 19 {
+		idShort = idShort[7:19]
+	}
+
 	img := api.Image{
-		ID:       imageID,
-		RepoTags: []string{ref},
-		RepoDigests: []string{
-			strings.Split(ref, ":")[0] + "@sha256:" + fmt.Sprintf("%x", hash)[:64],
-		},
-		Created:      now.Format(time.RFC3339Nano),
+		ID:           imageID,
+		RepoTags:     []string{ref},
+		RepoDigests:  repoDigests,
+		Created:      created,
 		Size:         imgSize,
 		VirtualSize:  imgSize,
-		Architecture: "amd64",
-		Os:           "linux",
+		Architecture: arch,
+		Os:           osName,
 		Config:       imgConfig,
 		RootFS: api.RootFS{
 			Type:   "layers",
-			Layers: []string{"sha256:" + GenerateID()},
+			Layers: layers,
 		},
 		GraphDriver: api.GraphDriverData{
 			Name: "overlay2",
 			Data: map[string]string{
-				"MergedDir": "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/merged",
-				"UpperDir":  "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/diff",
-				"WorkDir":   "/var/lib/sockerless/overlay2/" + imageID[7:19] + "/work",
+				"MergedDir": "/var/lib/sockerless/overlay2/" + idShort + "/merged",
+				"UpperDir":  "/var/lib/sockerless/overlay2/" + idShort + "/diff",
+				"WorkDir":   "/var/lib/sockerless/overlay2/" + idShort + "/work",
 			},
 		},
 		Metadata: api.ImageMetadata{LastTagTime: now.Format(time.RFC3339Nano)},
@@ -1106,19 +1252,26 @@ func (s *BaseServer) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 
 	StoreImageWithAliases(s.Store, ref, img)
 
+	// Use real layer digests for progress when available
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
-	progress := []map[string]any{
-		{"status": fmt.Sprintf("Pulling from %s", strings.Split(ref, ":")[0])},
-		{"status": "Pulling fs layer", "id": "abc123"},
-		{"status": "Download complete", "id": "abc123"},
-		{"status": "Pull complete", "id": "abc123"},
-		{"status": fmt.Sprintf("Digest: sha256:%x", hash)},
-		{"status": fmt.Sprintf("Status: Downloaded newer image for %s", ref)},
+	_ = enc.Encode(map[string]any{"status": fmt.Sprintf("Pulling from %s", strings.Split(ref, ":")[0])})
+	for _, layer := range layers {
+		layerShort := layer
+		if len(layer) > 18 {
+			layerShort = layer[7:19]
+		}
+		_ = enc.Encode(map[string]any{"status": "Pulling fs layer", "id": layerShort})
+		_ = enc.Encode(map[string]any{"status": "Download complete", "id": layerShort})
+		_ = enc.Encode(map[string]any{"status": "Pull complete", "id": layerShort})
 	}
-	for _, p := range progress {
-		enc.Encode(p)
+	if meta != nil {
+		_ = enc.Encode(map[string]any{"status": fmt.Sprintf("Digest: %s", meta.ManifestDigest)})
+	} else {
+		hash := sha256.Sum256([]byte(ref))
+		_ = enc.Encode(map[string]any{"status": fmt.Sprintf("Digest: sha256:%x", hash)})
 	}
+	_ = enc.Encode(map[string]any{"status": fmt.Sprintf("Status: Downloaded newer image for %s", ref)})
 
 	return io.NopCloser(&buf), nil
 }
@@ -1133,21 +1286,47 @@ func (s *BaseServer) ImageInspect(name string) (*api.Image, error) {
 }
 
 // ImageLoad loads an image from a tar archive.
+// Preserves layer tarballs in LayerContent store for subsequent push.
 func (s *BaseServer) ImageLoad(r io.Reader) (io.ReadCloser, error) {
-	repoTags, imgConfig := parseImageTar(r)
+	result := parseImageTarFull(r)
+
+	var repoTags []string
+	var imgConfig *api.ContainerConfig
+	if result != nil {
+		repoTags = result.RepoTags
+		imgConfig = result.Config
+	}
 
 	if len(repoTags) == 0 {
 		repoTags = []string{"loaded:latest"}
 	}
 
 	id := "sha256:" + GenerateID()
-	layerID := GenerateID()
 	nowStr := time.Now().UTC().Format(time.RFC3339Nano)
+
+	// Compute real layer digests and sizes from preserved content.
+	var layers []string
+	var totalSize int64
+	if result != nil && len(result.Layers) > 0 {
+		for layerPath, content := range result.Layers {
+			digest := fmt.Sprintf("sha256:%x", sha256.Sum256(content))
+			layers = append(layers, digest)
+			totalSize += int64(len(content))
+			// Store layer content for subsequent OCI push
+			s.Store.LayerContent.Store(digest, content)
+			_ = layerPath
+		}
+	}
+	if len(layers) == 0 {
+		layers = []string{"sha256:" + GenerateID()}
+	}
+
 	img := api.Image{
 		ID:           id,
 		RepoTags:     repoTags,
 		Created:      nowStr,
-		Size:         0,
+		Size:         totalSize,
+		VirtualSize:  totalSize,
 		Architecture: "amd64",
 		Os:           "linux",
 		Config: api.ContainerConfig{
@@ -1155,7 +1334,7 @@ func (s *BaseServer) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 		},
 		RootFS: api.RootFS{
 			Type:   "layers",
-			Layers: []string{"sha256:" + layerID},
+			Layers: layers,
 		},
 		GraphDriver: api.GraphDriverData{
 			Name: "overlay2",
@@ -1169,21 +1348,7 @@ func (s *BaseServer) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 	}
 
 	if imgConfig != nil {
-		if len(imgConfig.Env) > 0 {
-			img.Config.Env = imgConfig.Env
-		}
-		if len(imgConfig.Cmd) > 0 {
-			img.Config.Cmd = imgConfig.Cmd
-		}
-		if len(imgConfig.Entrypoint) > 0 {
-			img.Config.Entrypoint = imgConfig.Entrypoint
-		}
-		if imgConfig.WorkingDir != "" {
-			img.Config.WorkingDir = imgConfig.WorkingDir
-		}
-		if len(imgConfig.Labels) > 0 {
-			img.Config.Labels = imgConfig.Labels
-		}
+		mergeImageConfig(&img.Config, imgConfig)
 	}
 
 	for _, tag := range repoTags {
@@ -1320,16 +1485,53 @@ func (s *BaseServer) ImageRemove(name string, force bool, prune bool) ([]*api.Im
 }
 
 // ImageHistory returns the history of an image.
+// Uses real build history from the registry config when available.
 func (s *BaseServer) ImageHistory(name string) ([]*api.ImageHistoryEntry, error) {
 	img, ok := s.Store.ResolveImage(name)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "image", ID: name}
 	}
 
+	// Check for real history data
+	if histData, ok := s.Store.ImageHistory.Load(img.ID); ok {
+		items := histData.([]ImageHistoryItem)
+		var result []*api.ImageHistoryEntry
+		layerIdx := len(img.RootFS.Layers) - 1
+		for i := len(items) - 1; i >= 0; i-- {
+			h := items[i]
+			entry := &api.ImageHistoryEntry{
+				CreatedBy: h.CreatedBy,
+				Comment:   h.Comment,
+			}
+			if h.Created != "" {
+				if t, err := time.Parse(time.RFC3339Nano, h.Created); err == nil {
+					entry.Created = t.Unix()
+				} else if t, err := time.Parse(time.RFC3339, h.Created); err == nil {
+					entry.Created = t.Unix()
+				}
+			}
+			if h.EmptyLayer {
+				entry.ID = "<missing>"
+				entry.Size = 0
+			} else if layerIdx >= 0 {
+				entry.ID = img.RootFS.Layers[layerIdx]
+				if layerIdx < len(img.RootFS.Layers) {
+					entry.Size = img.Size / int64(len(img.RootFS.Layers))
+				}
+				layerIdx--
+			}
+			if i == len(items)-1 {
+				entry.Tags = img.RepoTags
+			}
+			result = append(result, entry)
+		}
+		return result, nil
+	}
+
+	// Synthetic fallback
 	var result []*api.ImageHistoryEntry
 	created, _ := time.Parse(time.RFC3339Nano, img.Created)
 
-	// Synthetic parent layers
 	for i, layer := range img.RootFS.Layers {
 		entry := &api.ImageHistoryEntry{
 			ID:        layer,
@@ -1340,7 +1542,6 @@ func (s *BaseServer) ImageHistory(name string) ([]*api.ImageHistoryEntry, error)
 		result = append(result, entry)
 	}
 
-	// Final layer
 	cmd := ""
 	if len(img.Config.Cmd) > 0 {
 		cmd = fmt.Sprintf("/bin/sh -c #(nop)  CMD [%q]", strings.Join(img.Config.Cmd, " "))

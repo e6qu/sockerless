@@ -171,31 +171,34 @@ func (s *Server) ContainerStart(ref string) error {
 		ecsState.TaskDefARN = taskDefARN
 	}
 
-	// Update container state to running
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		c.State.Status = "running"
-		c.State.Running = true
-		c.State.Pid = 1
-		c.State.StartedAt = now
-		c.State.FinishedAt = "0001-01-01T00:00:00Z"
-		c.State.ExitCode = 0
-	})
-
-	exitCh := make(chan struct{})
-	s.Store.WaitChs.Store(id, exitCh)
-
-	c, _ = s.Store.Containers.Get(id)
-	s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+	// markRunning transitions the container to running state and emits the start event.
+	markRunning := func() chan struct{} {
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		s.Store.Containers.Update(id, func(c *api.Container) {
+			c.State.Status = "running"
+			c.State.Running = true
+			c.State.Pid = 1
+			c.State.StartedAt = now
+			c.State.FinishedAt = "0001-01-01T00:00:00Z"
+			c.State.ExitCode = 0
+		})
+		exitCh := make(chan struct{})
+		s.Store.WaitChs.Store(id, exitCh)
+		c, _ = s.Store.Containers.Get(id)
+		s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+		return exitCh
+	}
 
 	// Deferred start: if container is in a multi-container pod, wait for all siblings
 	shouldDefer, podContainers := s.PodDeferredStart(id)
 	if shouldDefer {
+		markRunning()
 		return nil
 	}
 
 	if len(podContainers) > 1 {
 		// Multi-container pod: register combined task definition and run a single task
+		exitCh := markRunning()
 		return s.startMultiContainerTaskTyped(id, podContainers, exitCh)
 	}
 
@@ -204,7 +207,8 @@ func (s *Server) ContainerStart(ref string) error {
 		s.AgentRegistry.Prepare(id)
 	}
 
-	// Run ECS task
+	// Run ECS task before marking container as running, so docker ps
+	// doesn't show a false-positive running state if RunTask fails.
 	taskDefARN := ecsState.TaskDefARN
 	taskARN, clusterARN, err := s.runECSTask(id, taskDefARN, &c)
 	if err != nil {
@@ -213,9 +217,10 @@ func (s *Server) ContainerStart(ref string) error {
 			TaskDefinition: aws.String(taskDefARN),
 		})
 		s.AgentRegistry.Remove(id)
-		s.Store.RevertToCreated(id)
 		return awscommon.MapAWSError(err, "task", id)
 	}
+
+	exitCh := markRunning()
 
 	s.ECS.Update(id, func(state *ECSState) {
 		state.TaskARN = taskARN
@@ -622,10 +627,19 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 // ContainerLogs streams container logs from CloudWatch.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
-	logStreamName := ""
-	if id, ok := s.Store.ResolveContainerID(ref); ok {
-		logStreamName = fmt.Sprintf("%s/main/%s", id[:12], s.getTaskID(id))
+	id, ok := s.Store.ResolveContainerID(ref)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
+
+	// Guard against containers that were never started (no ECS task).
+	taskID := s.getTaskID(id)
+	if taskID == "unknown" {
+		// No task launched yet — delegate to base (returns empty or auto-agent logs).
+		return s.BaseServer.ContainerLogs(ref, opts)
+	}
+
+	logStreamName := fmt.Sprintf("%s/main/%s", id[:12], taskID)
 
 	fetch := func(ctx context.Context, params core.CloudLogParams, cursor any) ([]core.CloudLogEntry, any, error) {
 		input := &cloudwatchlogs.GetLogEventsInput{
@@ -706,6 +720,13 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 				TaskDefinition: aws.String(ecsState.TaskDefARN),
 			})
 		}
+		// Clear stale ECS state so ContainerStart registers a fresh task definition.
+		s.ECS.Update(id, func(state *ECSState) {
+			state.TaskARN = ""
+			state.TaskDefARN = ""
+			state.ClusterARN = ""
+			state.AgentAddress = ""
+		})
 		s.Store.ForceStopContainer(id, 0)
 		s.EmitEvent("container", "die", id, map[string]string{
 			"exitCode": "0",

@@ -40,8 +40,9 @@ func TestContainerExport_Empty(t *testing.T) {
 
 	cID := "c1"
 	s.Store.Containers.Put(cID, api.Container{
-		ID:   cID,
-		Name: "/test",
+		ID:           cID,
+		Name:         "/test",
+		AgentAddress: "127.0.0.1:9111",
 		State: api.ContainerState{
 			Status:  "running",
 			Running: true,

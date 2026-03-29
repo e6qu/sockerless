@@ -28,6 +28,12 @@ func (s *Server) runECSTask(containerID, taskDefARN string, c *api.Container) (t
 		CreatedAt:   time.Now(),
 	}
 
+	// Merge per-container security groups from network associations.
+	securityGroups := append([]string{}, s.config.SecurityGroups...)
+	if ecsState, ok := s.ECS.Get(containerID); ok && len(ecsState.SecurityGroupIDs) > 0 {
+		securityGroups = append(securityGroups, ecsState.SecurityGroupIDs...)
+	}
+
 	runResult, err := s.aws.ECS.RunTask(s.ctx(), &awsecs.RunTaskInput{
 		Cluster:        aws.String(s.config.Cluster),
 		TaskDefinition: aws.String(taskDefARN),
@@ -37,7 +43,7 @@ func (s *Server) runECSTask(containerID, taskDefARN string, c *api.Container) (t
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
 				Subnets:        s.config.Subnets,
-				SecurityGroups: s.config.SecurityGroups,
+				SecurityGroups: securityGroups,
 				AssignPublicIp: assignPublicIP,
 			},
 		},
@@ -313,13 +319,15 @@ func (s *Server) applyTaskStatus(containerID string, task ecstypes.Task) {
 			}
 		}
 	case "RUNNING":
-		// Update IP if we don't have it yet
+		// Always overwrite synthetic IP with real ENI IP and derive MAC.
 		ip := extractENIIP(task)
 		if ip != "" {
+			mac := deriveMACFromIP(ip)
 			s.Store.Containers.Update(containerID, func(c *api.Container) {
 				for _, ep := range c.NetworkSettings.Networks {
-					if ep != nil && ep.IPAddress == "" {
+					if ep != nil {
 						ep.IPAddress = ip
+						ep.MacAddress = mac
 					}
 				}
 			})

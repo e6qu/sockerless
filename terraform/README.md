@@ -65,7 +65,7 @@ The full matrix of environments:
 
 Each cloud provider uses its native remote state backend for `live` environments:
 
-- **AWS (ecs, lambda):** S3 bucket with DynamoDB table for state locking.
+- **AWS (ecs, lambda):** S3 bucket (no DynamoDB; use `use_lockfile` with Terraform >= 1.10 for native S3 locking).
 - **GCP (cloudrun, gcf):** GCS bucket with built-in locking.
 - **Azure (aca, azf):** Azure Blob Storage container with lease-based locking.
 
@@ -165,24 +165,22 @@ Remote state backends must be created once before the first `terragrunt init`. T
 
 ### AWS (ECS, Lambda)
 
-Create an S3 bucket and DynamoDB table:
+Create an S3 bucket for state storage:
 
 ```bash
+# For us-east-1 (no LocationConstraint needed)
 aws s3api create-bucket \
-    --bucket sockerless-terraform-state \
+    --bucket sockerless-tf-state \
     --region us-east-1
 
-aws s3api put-bucket-versioning \
-    --bucket sockerless-terraform-state \
-    --versioning-configuration Status=Enabled
-
-aws dynamodb create-table \
-    --table-name sockerless-terraform-locks \
-    --attribute-definitions AttributeName=LockID,AttributeType=S \
-    --key-schema AttributeName=LockID,KeyType=HASH \
-    --billing-mode PAY_PER_REQUEST \
-    --region us-east-1
+# For other regions (e.g., eu-west-1)
+aws s3api create-bucket \
+    --bucket sockerless-tf-state \
+    --region eu-west-1 \
+    --create-bucket-configuration LocationConstraint=eu-west-1
 ```
+
+No DynamoDB table needed — use `use_lockfile = true` in the S3 backend config (requires Terraform >= 1.10) for native S3 locking, or omit locking for single-user setups.
 
 ### GCP (Cloud Run, GCF)
 
@@ -224,8 +222,7 @@ Remove state backends manually when no longer needed:
 
 ```bash
 # AWS
-aws s3 rb s3://sockerless-terraform-state --force
-aws dynamodb delete-table --table-name sockerless-terraform-locks --region us-east-1
+aws s3 rb s3://sockerless-tf-state --force
 
 # GCP
 gcloud storage rm -r gs://sockerless-terraform-state

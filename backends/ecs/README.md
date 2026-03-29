@@ -90,11 +90,43 @@ For a detailed breakdown of how each Docker REST API endpoint and CLI command ma
 
 ## Testing
 
-Tested via the AWS simulator:
+### Simulator tests
 
 ```sh
 make sim-test-aws    # simulator integration tests
 make docker-test     # Docker-based full test
 ```
+
+### Live AWS testing
+
+Tested against real AWS ECS Fargate (eu-west-1) via `terraform/environments/ecs/live/`. See [PLAN_ECS_MANUAL_TESTING.md](../../PLAN_ECS_MANUAL_TESTING.md) for the full test plan and results. 11 of 12 test phases pass (exec skipped — requires agent sidecar).
+
+```sh
+# Provision infrastructure
+cd terraform/environments/ecs/live
+terragrunt apply
+
+# Build and run the backend
+cd backends/ecs
+go build -o sockerless-backend-ecs ./cmd/sockerless-backend-ecs
+source <(terragrunt output -json | jq -r 'to_entries | map("export \(.key | ascii_upcase)=\(.value.value)") | .[]')
+./sockerless-backend-ecs -addr :9100
+
+# Use with Docker CLI
+export DOCKER_HOST=tcp://localhost:9100
+docker pull nginx:alpine
+docker run -d --name test nginx:alpine
+docker logs test
+docker rm -f test
+
+# Tear down
+cd terraform/environments/ecs/live
+terragrunt destroy
+```
+
+## Known issues
+
+- **CloudWatch log latency**: `docker run` for short-lived containers may show no inline output. Use `docker logs <id>` after a few seconds.
+- **Orphaned in-memory state**: Containers from prior server sessions appear as "running" on restart. Restart the backend to clear.
 
 See also: [ARCHITECTURE.md](../../ARCHITECTURE.md), [FEATURE_MATRIX.md](../../FEATURE_MATRIX.md), [DECISIONS.md](../../DECISIONS.md)

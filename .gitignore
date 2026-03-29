@@ -114,3 +114,5 @@ ui/packages/bleephub/playwright-report/
 # Misc
 *.log
 tmp/
+
+aws.sh

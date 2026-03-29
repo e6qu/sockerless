@@ -15,6 +15,23 @@ The simulators run locally on a single machine today. The architecture is design
 
 **Related docs:** [ARCHITECTURE.md](ARCHITECTURE.md), [agent/README.md](agent/README.md), [backends/README.md](backends/README.md)
 
+## All synthetic behavior is a bug
+
+Any fake, synthetic, hardcoded, or placeholder behavior in backends is a **bug**, not a feature or acceptable shortcut. No exceptions. Examples:
+
+- Synthetic image metadata (fake Cmd, fake sizes, fake layer hashes) — bug. Fetch the real config from the registry.
+- Synthetic IP addresses (172.17.0.x) that don't correspond to real ENI IPs — bug. Use the actual task IP.
+- Synthetic container stats (fake CPU/memory numbers) — bug. Get real metrics from CloudWatch or the agent.
+- Synthetic process lists from `docker top` — bug. Query the real container via the agent.
+- Synthetic events stream (empty) — bug. Emit real events from actual state transitions.
+- Synthetic disk usage numbers — bug. Calculate from real image/container/volume data.
+- In-memory-only volumes when EFS is configured — bug. Wire up EFS.
+- In-memory-only networks when VPC is available — bug. Create real security groups (done for ECS in BUG-584).
+- Hardcoded CPU/memory (256/512) instead of honoring container resource requests — bug.
+- Placeholder progress bars during image pull — bug. Report real progress or omit.
+
+If the real implementation is not feasible today, file a bug and track it. Do not silently fall back to synthetic behavior. When you encounter synthetic behavior in the codebase, treat it as a bug to fix, not as intended behavior to preserve.
+
 ## Always fix CI failures and test failures
 
 If CI fails or tests fail, fix the issue — even if the failure is "pre-existing" and not caused by the current change. We do not tolerate broken CI on any branch. If adding a module to lint or expanding test coverage reveals old issues, fix them in the same PR.

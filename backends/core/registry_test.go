@@ -107,20 +107,23 @@ func TestFetchImageConfigDisabled(t *testing.T) {
 
 func TestFetchImageConfigCaching(t *testing.T) {
 	// Clear cache
-	imageConfigCache.Lock()
-	imageConfigCache.m = make(map[string]*api.ContainerConfig)
-	imageConfigCache.Unlock()
+	imageMetadataCache.Lock()
+	imageMetadataCache.m = make(map[string]*ImageMetadataResult)
+	imageMetadataCache.Unlock()
 
 	os.Unsetenv("SOCKERLESS_SKIP_IMAGE_CONFIG")
 
-	// Pre-populate cache
+	// Pre-populate cache with metadata
 	testCfg := &api.ContainerConfig{
 		Cmd:        []string{"cached-cmd"},
 		WorkingDir: "/cached",
 	}
-	imageConfigCache.Lock()
-	imageConfigCache.m["cached-image:latest"] = testCfg
-	imageConfigCache.Unlock()
+	imageMetadataCache.Lock()
+	imageMetadataCache.m["cached-image:latest"] = &ImageMetadataResult{
+		Config:       testCfg,
+		ConfigDigest: "sha256:cachedcfg",
+	}
+	imageMetadataCache.Unlock()
 
 	// Should return cached value without any network call
 	cfg, err := FetchImageConfig("cached-image:latest")
@@ -138,9 +141,9 @@ func TestFetchImageConfigCaching(t *testing.T) {
 	}
 
 	// Clean up cache
-	imageConfigCache.Lock()
-	imageConfigCache.m = make(map[string]*api.ContainerConfig)
-	imageConfigCache.Unlock()
+	imageMetadataCache.Lock()
+	imageMetadataCache.m = make(map[string]*ImageMetadataResult)
+	imageMetadataCache.Unlock()
 }
 
 // TestMockRegistryEndToEnd tests the full registry v2 API flow using an
@@ -403,9 +406,9 @@ func TestMockRegistryManifestList(t *testing.T) {
 // nil config (not an error), allowing the caller to use synthetic config.
 func TestFetchImageConfigGracefulFallback(t *testing.T) {
 	// Clear cache
-	imageConfigCache.Lock()
-	imageConfigCache.m = make(map[string]*api.ContainerConfig)
-	imageConfigCache.Unlock()
+	imageMetadataCache.Lock()
+	imageMetadataCache.m = make(map[string]*ImageMetadataResult)
+	imageMetadataCache.Unlock()
 
 	os.Unsetenv("SOCKERLESS_SKIP_IMAGE_CONFIG")
 
@@ -419,7 +422,7 @@ func TestFetchImageConfigGracefulFallback(t *testing.T) {
 	}
 
 	// Clean up cache
-	imageConfigCache.Lock()
-	imageConfigCache.m = make(map[string]*api.ContainerConfig)
-	imageConfigCache.Unlock()
+	imageMetadataCache.Lock()
+	imageMetadataCache.m = make(map[string]*ImageMetadataResult)
+	imageMetadataCache.Unlock()
 }

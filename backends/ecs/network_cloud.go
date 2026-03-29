@@ -92,8 +92,7 @@ func (s *Server) cloudNetworkDelete(networkID string) error {
 }
 
 // cloudNetworkConnect associates a network's security group with a container.
-// The security group ID is stored in the container's ECS state so it can be
-// included when the task is launched.
+// Appends to SecurityGroupIDs (supports multiple networks).
 func (s *Server) cloudNetworkConnect(networkID, containerID string) error {
 	ns, ok := s.NetworkState.Get(networkID)
 	if !ok || ns.SecurityGroupID == "" {
@@ -101,7 +100,13 @@ func (s *Server) cloudNetworkConnect(networkID, containerID string) error {
 	}
 
 	s.ECS.Update(containerID, func(state *ECSState) {
-		state.SecurityGroupID = ns.SecurityGroupID
+		// Dedup: don't add the same SG twice
+		for _, sg := range state.SecurityGroupIDs {
+			if sg == ns.SecurityGroupID {
+				return
+			}
+		}
+		state.SecurityGroupIDs = append(state.SecurityGroupIDs, ns.SecurityGroupID)
 	})
 
 	s.Logger.Debug().
@@ -114,9 +119,21 @@ func (s *Server) cloudNetworkConnect(networkID, containerID string) error {
 
 // cloudNetworkDisconnect removes a network security group association
 // from a container's ECS state.
+// Removes specific SG from SecurityGroupIDs slice.
 func (s *Server) cloudNetworkDisconnect(networkID, containerID string) error {
+	ns, _ := s.NetworkState.Get(networkID)
+
 	s.ECS.Update(containerID, func(state *ECSState) {
-		state.SecurityGroupID = ""
+		if ns.SecurityGroupID == "" {
+			return
+		}
+		filtered := state.SecurityGroupIDs[:0]
+		for _, sg := range state.SecurityGroupIDs {
+			if sg != ns.SecurityGroupID {
+				filtered = append(filtered, sg)
+			}
+		}
+		state.SecurityGroupIDs = filtered
 	})
 
 	s.Logger.Debug().

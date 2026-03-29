@@ -138,6 +138,8 @@ type Store struct {
 	BuildContexts  sync.Map // imageID → string (temp dir with COPY files at destination paths)
 	TmpfsDirs      sync.Map // containerID → []string (tmpfs temp dir paths)
 	PrevCPUStats   sync.Map // containerID → *prevCPUStats (BUG-518)
+	ImageHistory   sync.Map // imageID → []ImageHistoryItem (real build history)
+	LayerContent   sync.Map // layerDigest → []byte (preserved layer tarballs from docker load)
 	IPAlloc        *IPAllocator
 	RenameMu       sync.Mutex
 	RestartHook    func(containerID string, exitCode int) bool

@@ -94,9 +94,9 @@ Handled by core via the driver chain. Dispatches through:
 
 | Aspect | Vanilla Docker | ECS Backend |
 |--------|---------------|-------------|
-| What happens | Downloads image layers from registry | Creates synthetic image in local store (no actual download) |
-| Registry auth | Uses stored credentials | Optional config fetch via `SOCKERLESS_FETCH_IMAGE_CONFIG=true` |
-| Image config | Full manifest + layers | Synthetic: hash of reference as ID, optional real config (Env, Cmd, Entrypoint, WorkingDir) |
+| What happens | Downloads image layers from registry | Creates synthetic image in local store (no actual download). Real image config (Cmd, Entrypoint, Env, WorkingDir) is fetched from the registry via Docker v2 API |
+| Registry auth | Uses stored credentials | Anonymous auth for public images; ECR auth for private ECR images |
+| Image config | Full manifest + layers | Synthetic ID (hash of reference), real config fetched from registry (Cmd, Entrypoint, Env, WorkingDir, Labels, ExposedPorts) |
 | Progress | Real download progress | Simulated progress events |
 | Storage | Layers stored on disk | Metadata only in memory |
 
@@ -123,14 +123,15 @@ Handled by core via the driver chain. Dispatches through:
 
 ### `POST /networks/create`, `GET /networks`, etc.
 
-Handled entirely by core. Networks are tracked in memory with synthetic IP allocation. ECS tasks always use `awsvpc` networking — Docker network configuration does not map to real AWS VPC resources.
+Networks are tracked in memory with synthetic IP allocation. Docker network create also creates a VPC security group, and connecting a container to a network associates that security group with the container's ECS task.
 
 | Aspect | Vanilla Docker | ECS Backend |
 |--------|---------------|-------------|
-| Network creation | Creates real Docker network | In-memory tracking only |
-| IP allocation | IPAM assigns real IPs | Synthetic IPs (172.17.0.x) |
-| DNS resolution | Docker DNS between containers | Not available (containers are separate Fargate tasks) |
-| Inter-container networking | Via shared Docker network | Must use VPC networking (subnets, security groups) |
+| Network creation | Creates real Docker network | In-memory tracking + VPC security group (`skls-{name}`) with self-referencing ingress |
+| IP allocation | IPAM assigns real IPs | Synthetic IPs (172.17.0.x); real ENI IP available after task starts |
+| Network connect | Joins container to network | Associates network's security group with the container's ECS task |
+| DNS resolution | Docker DNS between containers | Cloud Map private DNS namespace (when configured) |
+| Inter-container networking | Via shared Docker network | Via shared VPC security group (containers in same network can communicate) |
 
 ## Volumes
 
@@ -141,8 +142,8 @@ Handled by core with ECS overrides for remove/prune.
 | Aspect | Vanilla Docker | ECS Backend |
 |--------|---------------|-------------|
 | Volume creation | Creates real Docker volume | In-memory tracking only |
-| Bind mounts | Maps host → container paths | Converted to ECS Volume + MountPoint in task definition |
-| Persistent storage | Volumes persist across containers | No persistent storage (VolumeState has EFS fields but they're unused) |
+| Bind mounts | Maps host → container paths | Converted to ECS Volume + MountPoint in task definition. When `SOCKERLESS_AGENT_EFS_ID` is set, bind mounts use EFS with per-container subdirectories |
+| Persistent storage | Volumes persist across containers | EFS-backed when `SOCKERLESS_AGENT_EFS_ID` is configured; otherwise ephemeral scratch volumes |
 | Volume prune | Removes unused real volumes | Removes from in-memory store |
 
 ## Archive (Copy)
@@ -202,8 +203,7 @@ Handled by core. Returns synthetic data.
 |---------|--------|
 | Container pause/unpause | ECS Fargate has no pause capability |
 | Image load from tar | ECS uses registry images only |
-| Real Docker networks | Tasks use VPC networking, not Docker networks |
-| Real Docker volumes (persistent) | EFS integration not yet implemented |
+| Real Docker networks | Docker networks create VPC security groups for isolation, but no Docker-style L2 networking |
 | Stderr separation in logs | CloudWatch streams all output as stdout |
 | Resource customization | CPU/memory hardcoded (256 mCPU / 512 MB) |
 | Multiple processes per container | One task = one container definition |

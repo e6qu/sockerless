@@ -6,6 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
@@ -18,6 +19,7 @@ import (
 type AWSClients struct {
 	ECS              *ecs.Client
 	CloudWatch       *cloudwatchlogs.Client
+	CloudWatchMetrics *cloudwatch.Client // Container Insights metrics
 	EFS              *efs.Client
 	ServiceDiscovery *servicediscovery.Client
 	ECR              *ecr.Client
@@ -49,22 +51,24 @@ func NewAWSClients(ctx context.Context, region string, endpointURL string) (*AWS
 
 func newClientsFromConfig(cfg aws.Config) *AWSClients {
 	return &AWSClients{
-		ECS:              ecs.NewFromConfig(cfg),
-		CloudWatch:       cloudwatchlogs.NewFromConfig(cfg),
-		EFS:              efs.NewFromConfig(cfg),
-		ServiceDiscovery: servicediscovery.NewFromConfig(cfg),
-		ECR:              ecr.NewFromConfig(cfg),
-		EC2:              ec2.NewFromConfig(cfg),
+		ECS:               ecs.NewFromConfig(cfg),
+		CloudWatch:        cloudwatchlogs.NewFromConfig(cfg),
+		CloudWatchMetrics: cloudwatch.NewFromConfig(cfg),
+		EFS:               efs.NewFromConfig(cfg),
+		ServiceDiscovery:  servicediscovery.NewFromConfig(cfg),
+		ECR:               ecr.NewFromConfig(cfg),
+		EC2:               ec2.NewFromConfig(cfg),
 	}
 }
 
 func newClientsWithEndpoint(cfg aws.Config, endpoint string) *AWSClients {
 	return &AWSClients{
-		ECS:              ecs.NewFromConfig(cfg, func(o *ecs.Options) { o.BaseEndpoint = aws.String(endpoint) }),
-		CloudWatch:       cloudwatchlogs.NewFromConfig(cfg, func(o *cloudwatchlogs.Options) { o.BaseEndpoint = aws.String(endpoint) }),
-		EFS:              efs.NewFromConfig(cfg, func(o *efs.Options) { o.BaseEndpoint = aws.String(endpoint) }),
-		ServiceDiscovery: servicediscovery.NewFromConfig(cfg, func(o *servicediscovery.Options) { o.BaseEndpoint = aws.String(endpoint) }),
-		ECR:              ecr.NewFromConfig(cfg, func(o *ecr.Options) { o.BaseEndpoint = aws.String(endpoint) }),
-		EC2:              ec2.NewFromConfig(cfg, func(o *ec2.Options) { o.BaseEndpoint = aws.String(endpoint) }),
+		ECS:               ecs.NewFromConfig(cfg, func(o *ecs.Options) { o.BaseEndpoint = aws.String(endpoint) }),
+		CloudWatch:        cloudwatchlogs.NewFromConfig(cfg, func(o *cloudwatchlogs.Options) { o.BaseEndpoint = aws.String(endpoint) }),
+		CloudWatchMetrics: cloudwatch.NewFromConfig(cfg, func(o *cloudwatch.Options) { o.BaseEndpoint = aws.String(endpoint) }),
+		EFS:               efs.NewFromConfig(cfg, func(o *efs.Options) { o.BaseEndpoint = aws.String(endpoint) }),
+		ServiceDiscovery:  servicediscovery.NewFromConfig(cfg, func(o *servicediscovery.Options) { o.BaseEndpoint = aws.String(endpoint) }),
+		ECR:               ecr.NewFromConfig(cfg, func(o *ecr.Options) { o.BaseEndpoint = aws.String(endpoint) }),
+		EC2:               ec2.NewFromConfig(cfg, func(o *ec2.Options) { o.BaseEndpoint = aws.String(endpoint) }),
 	}
 }
