@@ -1167,11 +1167,11 @@ func hasFargate(compatibilities []string) bool {
 func validateFargateResources(cpuStr, memStr string) error {
 	cpu, err := strconv.Atoi(cpuStr)
 	if err != nil {
-		return fmt.Errorf("Invalid cpu value: %s", cpuStr)
+		return fmt.Errorf("invalid cpu value: %s", cpuStr)
 	}
 	mem, err := strconv.Atoi(memStr)
 	if err != nil {
-		return fmt.Errorf("Invalid memory value: %s", memStr)
+		return fmt.Errorf("invalid memory value: %s", memStr)
 	}
 
 	for _, combo := range fargateCombos {
@@ -1179,9 +1179,9 @@ func validateFargateResources(cpuStr, memStr string) error {
 			if mem >= combo.memMin && mem <= combo.memMax && (mem-combo.memMin)%combo.memInc == 0 {
 				return nil
 			}
-			return fmt.Errorf("Invalid memory value %d for cpu %d. Valid range: %d-%d in %d increments",
+			return fmt.Errorf("invalid memory value %d for cpu %d, valid range: %d-%d in %d increments",
 				mem, cpu, combo.memMin, combo.memMax, combo.memInc)
 		}
 	}
-	return fmt.Errorf("Invalid cpu value %d. Valid values: 256, 512, 1024, 2048, 4096, 8192, 16384", cpu)
+	return fmt.Errorf("invalid cpu value %d, valid values: 256, 512, 1024, 2048, 4096, 8192, 16384", cpu)
 }
