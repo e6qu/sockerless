@@ -10,7 +10,7 @@ import (
 	"github.com/sockerless/api"
 )
 
-var versionPrefix = regexp.MustCompile(`^/v\d+\.\d+/`)
+var versionPrefix = regexp.MustCompile(`^/v\d+\.\d+(\.\d+)?/`)
 
 // stripVersionPrefix is middleware that removes /v1.XX/ prefix from request paths.
 func stripVersionPrefix(next http.Handler) http.Handler {
@@ -50,6 +50,9 @@ func (s *BaseServer) registerDockerAPIRoutes() {
 	// System
 	s.Mux.HandleFunc("GET /_ping", s.handleDockerPing)
 	s.Mux.HandleFunc("HEAD /_ping", s.handleDockerPing)
+	s.Mux.HandleFunc("GET /libpod/_ping", s.handleDockerPing)
+	s.Mux.HandleFunc("HEAD /libpod/_ping", s.handleDockerPing)
+	s.Mux.HandleFunc("GET /libpod/version", s.handleDockerVersion)
 	s.Mux.HandleFunc("GET /version", s.handleDockerVersion)
 	s.Mux.HandleFunc("GET /info", s.handleDockerInfo)
 

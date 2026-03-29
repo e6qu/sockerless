@@ -17,8 +17,10 @@ func (s *Server) cloudNetworkCreate(name, networkID string) error {
 	// Look up VPC ID from the first configured subnet.
 	vpcID, err := s.resolveVPCID()
 	if err != nil {
+		s.Logger.Error().Err(err).Msg("failed to resolve VPC ID for network security group")
 		return fmt.Errorf("failed to resolve VPC ID: %w", err)
 	}
+	s.Logger.Info().Str("vpc", vpcID).Str("network", name).Msg("creating security group for Docker network")
 
 	// Create the security group.
 	createOut, err := s.aws.EC2.CreateSecurityGroup(s.ctx(), &ec2.CreateSecurityGroupInput{
@@ -40,9 +42,10 @@ func (s *Server) cloudNetworkCreate(name, networkID string) error {
 	}
 
 	sgID := aws.ToString(createOut.GroupId)
-	s.Logger.Debug().
+	s.Logger.Info().
 		Str("network", name).
 		Str("sg", sgID).
+		Str("vpc", vpcID).
 		Msg("created security group for network")
 
 	// Add self-referencing ingress rule: allow all traffic from the same SG.
@@ -92,8 +95,7 @@ func (s *Server) cloudNetworkDelete(networkID string) error {
 }
 
 // cloudNetworkConnect associates a network's security group with a container.
-// The security group ID is stored in the container's ECS state so it can be
-// included when the task is launched.
+// Appends to SecurityGroupIDs (supports multiple networks).
 func (s *Server) cloudNetworkConnect(networkID, containerID string) error {
 	ns, ok := s.NetworkState.Get(networkID)
 	if !ok || ns.SecurityGroupID == "" {
@@ -101,7 +103,13 @@ func (s *Server) cloudNetworkConnect(networkID, containerID string) error {
 	}
 
 	s.ECS.Update(containerID, func(state *ECSState) {
-		state.SecurityGroupID = ns.SecurityGroupID
+		// Dedup: don't add the same SG twice
+		for _, sg := range state.SecurityGroupIDs {
+			if sg == ns.SecurityGroupID {
+				return
+			}
+		}
+		state.SecurityGroupIDs = append(state.SecurityGroupIDs, ns.SecurityGroupID)
 	})
 
 	s.Logger.Debug().
@@ -114,9 +122,21 @@ func (s *Server) cloudNetworkConnect(networkID, containerID string) error {
 
 // cloudNetworkDisconnect removes a network security group association
 // from a container's ECS state.
+// Removes specific SG from SecurityGroupIDs slice.
 func (s *Server) cloudNetworkDisconnect(networkID, containerID string) error {
+	ns, _ := s.NetworkState.Get(networkID)
+
 	s.ECS.Update(containerID, func(state *ECSState) {
-		state.SecurityGroupID = ""
+		if ns.SecurityGroupID == "" {
+			return
+		}
+		filtered := state.SecurityGroupIDs[:0]
+		for _, sg := range state.SecurityGroupIDs {
+			if sg != ns.SecurityGroupID {
+				filtered = append(filtered, sg)
+			}
+		}
+		state.SecurityGroupIDs = filtered
 	})
 
 	s.Logger.Debug().

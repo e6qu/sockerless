@@ -229,6 +229,14 @@ The NAT Gateway is the largest fixed cost. For development, consider destroying 
 
 **Agent health check times out:** Ensure the task security group allows inbound on port 9111. Check the task is in a subnet with internet access (via NAT Gateway).
 
-**Logs are empty:** CloudWatch Logs may take a few seconds to appear. The log stream format is `{containerID[:12]}/main/{taskID}`.
+**Logs are empty:** CloudWatch Logs has ingestion latency (typically 2-10 seconds). `docker run` for short-lived containers may show no inline output. Use `docker logs <id>` after a few seconds to retrieve logs.
 
 **Container image not found:** ECS pulls images at runtime. Ensure the image is accessible from the Fargate task (public images or ECR).
+
+**nginx / long-running images exit immediately:** This was caused by BUG-591 (fixed). The image's real Cmd/Entrypoint must be fetched from the registry. Ensure the backend can reach Docker Hub or your private registry. If using a proxy or restrictive network, set `SOCKERLESS_SKIP_IMAGE_CONFIG=true` and specify Cmd/Entrypoint explicitly in `docker create`.
+
+**Orphaned containers from prior sessions:** The backend stores container state in memory. Restarting the backend clears all state. Orphaned ECS tasks can be found via `aws ecs list-tasks --cluster <name>` and stopped manually.
+
+## Tested on Real AWS
+
+This example has been validated against real AWS ECS Fargate (eu-west-1, 2026-03-29). See [`PLAN_ECS_MANUAL_TESTING.md`](../../../../PLAN_ECS_MANUAL_TESTING.md) for the full test plan and results.

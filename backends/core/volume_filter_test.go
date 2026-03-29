@@ -74,7 +74,7 @@ func TestContainerChanges_Empty(t *testing.T) {
 	s := newVolTestServer()
 
 	cID := "c1"
-	s.Store.Containers.Put(cID, api.Container{ID: cID, Name: "/test"})
+	s.Store.Containers.Put(cID, api.Container{ID: cID, Name: "/test", AgentAddress: "127.0.0.1:9111"})
 	s.Store.ContainerNames.Put("/test", cID)
 
 	req := httptest.NewRequest("GET", "/internal/v1/containers/c1/changes", nil)

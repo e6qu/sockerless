@@ -23,6 +23,7 @@ type containerInput struct {
 
 // buildContainerDef builds a single ECS container definition.
 // IsMain containers get agent injection and port 9111; sidecars use their original entrypoint.
+// Bind mounts use EFS when AgentEFSID is configured.
 func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinition, []ecstypes.Volume) {
 	config := ci.Container.Config
 
@@ -105,7 +106,9 @@ func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinit
 		}
 	}
 
-	// Build volumes and mount points for bind mounts
+	// Build volumes and mount points for bind mounts.
+	// Use EFS when AgentEFSID is configured so bind mounts are not
+	// silently mapped to empty scratch volumes on Fargate.
 	var volumes []ecstypes.Volume
 	var mountPoints []ecstypes.MountPoint
 	for i, bind := range ci.Container.HostConfig.Binds {
@@ -114,9 +117,17 @@ func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinit
 			continue
 		}
 		volName := fmt.Sprintf("%s-bind-%d", defName, i)
-		volumes = append(volumes, ecstypes.Volume{
+		vol := ecstypes.Volume{
 			Name: aws.String(volName),
-		})
+		}
+		if s.config.AgentEFSID != "" {
+			vol.EfsVolumeConfiguration = &ecstypes.EFSVolumeConfiguration{
+				FileSystemId: aws.String(s.config.AgentEFSID),
+				RootDirectory: aws.String(fmt.Sprintf("/sockerless/binds/%s/%s",
+					ci.ID[:12], strings.TrimPrefix(parts[0], "/"))),
+			}
+		}
+		volumes = append(volumes, vol)
 		readOnly := false
 		if len(parts) == 3 && parts[2] == "ro" {
 			readOnly = true
@@ -154,12 +165,15 @@ func (s *Server) registerTaskDefinition(ctx context.Context, containers []contai
 		CreatedAt:   time.Now(),
 	}
 
+	// Map Docker resource constraints to valid Fargate CPU/memory.
+	cpu, mem := fargateResources(containers)
+
 	input := &awsecs.RegisterTaskDefinitionInput{
 		Family:                  aws.String(family),
 		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityFargate},
 		NetworkMode:             ecstypes.NetworkModeAwsvpc,
-		Cpu:                     aws.String("256"),
-		Memory:                  aws.String("512"),
+		Cpu:                     aws.String(cpu),
+		Memory:                  aws.String(mem),
 		ContainerDefinitions:    allDefs,
 		Volumes:                 allVolumes,
 		Tags:                    mapToECSTags(tags.AsMap()),
@@ -178,6 +192,87 @@ func (s *Server) registerTaskDefinition(ctx context.Context, containers []contai
 	}
 
 	return aws.ToString(result.TaskDefinition.TaskDefinitionArn), nil
+}
+
+// fargateResource is a valid Fargate CPU/memory combination.
+type fargateResource struct {
+	cpu        int64   // in CPU units (256 = 0.25 vCPU)
+	memOptions []int64 // explicit valid memory values in MB (for lower tiers)
+	memMin     int64   // only used when memOptions is nil (range-based tiers)
+	memMax     int64
+	memInc     int64
+}
+
+// fargateCombos lists all valid Fargate CPU/memory combinations.
+// Lower tiers (256, 512) use explicit options because the valid values
+// are not evenly spaced from the minimum. Higher tiers use range-based
+// increments which correctly produce valid values.
+var fargateCombos = []fargateResource{
+	{256, []int64{512, 1024, 2048}, 0, 0, 0},
+	{512, []int64{1024, 2048, 3072, 4096}, 0, 0, 0},
+	{1024, nil, 2048, 8192, 1024},
+	{2048, nil, 4096, 16384, 1024},
+	{4096, nil, 8192, 30720, 1024},
+	{8192, nil, 16384, 61440, 4096},
+	{16384, nil, 32768, 122880, 8192},
+}
+
+// fargateResources maps Docker HostConfig resource constraints to the smallest
+// valid Fargate CPU/memory combination that satisfies the request.
+func fargateResources(containers []containerInput) (cpu, memory string) {
+	var totalMemMB, totalCPU int64
+	for _, ci := range containers {
+		hc := ci.Container.HostConfig
+		if hc.Memory > 0 {
+			totalMemMB += hc.Memory / (1024 * 1024)
+		}
+		if hc.MemoryReservation > 0 && hc.Memory == 0 {
+			totalMemMB += hc.MemoryReservation / (1024 * 1024)
+		}
+		if hc.NanoCPUs > 0 {
+			totalCPU += hc.NanoCPUs * 1024 / 1e9
+		} else if hc.CPUShares > 0 {
+			totalCPU += hc.CPUShares
+		}
+	}
+
+	for _, combo := range fargateCombos {
+		if combo.cpu < totalCPU {
+			continue
+		}
+
+		if totalMemMB <= 0 {
+			// No memory specified: use minimum for this CPU tier
+			if len(combo.memOptions) > 0 {
+				return fmt.Sprintf("%d", combo.cpu), fmt.Sprintf("%d", combo.memOptions[0])
+			}
+			return fmt.Sprintf("%d", combo.cpu), fmt.Sprintf("%d", combo.memMin)
+		}
+
+		// Explicit memory options (lower tiers)
+		if len(combo.memOptions) > 0 {
+			for _, opt := range combo.memOptions {
+				if opt >= totalMemMB {
+					return fmt.Sprintf("%d", combo.cpu), fmt.Sprintf("%d", opt)
+				}
+			}
+			continue // requested memory exceeds this CPU tier's max
+		}
+
+		// Range-based (higher tiers)
+		if totalMemMB <= combo.memMax {
+			mem := combo.memMin
+			for mem < totalMemMB {
+				mem += combo.memInc
+			}
+			if mem > combo.memMax {
+				mem = combo.memMax
+			}
+			return fmt.Sprintf("%d", combo.cpu), fmt.Sprintf("%d", mem)
+		}
+	}
+
+	return "256", "512"
 }
 
 // sanitizeContainerName converts a container name to a valid ECS container definition name.

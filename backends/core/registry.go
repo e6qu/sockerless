@@ -1,9 +1,11 @@
 package core
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,27 +23,52 @@ type registryConfig struct {
 	Tag        string // e.g. "latest"
 }
 
-// imageConfigCache is an in-memory cache for fetched image configs.
-var imageConfigCache = struct {
-	sync.RWMutex
-	m map[string]*api.ContainerConfig
-}{m: make(map[string]*api.ContainerConfig)}
+// ImageMetadataResult holds all metadata fetched from a Docker v2 / OCI registry.
+// This replaces the old FetchImageConfig which only returned ContainerConfig.
+type ImageMetadataResult struct {
+	Config         *api.ContainerConfig // Cmd, Entrypoint, Env, WorkingDir, Labels, etc.
+	ConfigDigest   string               // Real config blob digest (e.g. "sha256:abc...")
+	ManifestDigest string               // Manifest digest (e.g. "sha256:def...")
+	LayerDigests   []string             // diff_ids from config blob rootfs
+	LayerSizes     []int64              // Layer sizes from manifest (parallel to LayerDigests)
+	TotalSize      int64                // Sum of all layer sizes + config size
+	History        []ImageHistoryItem   // Build history from config blob
+	Architecture   string               // e.g. "amd64"
+	OS             string               // e.g. "linux"
+	Author         string
+	Created        string // RFC3339
+}
 
-// FetchImageConfig fetches the real image config from a Docker v2 registry.
+// ImageHistoryItem represents a single build step from the image config.
+type ImageHistoryItem struct {
+	CreatedBy  string
+	Created    string // RFC3339
+	EmptyLayer bool
+	Comment    string
+}
+
+// imageMetadataCache is an in-memory cache for fetched image metadata.
+var imageMetadataCache = struct {
+	sync.RWMutex
+	m map[string]*ImageMetadataResult
+}{m: make(map[string]*ImageMetadataResult)}
+
+// FetchImageMetadata fetches rich image metadata from a Docker v2 registry.
 // Returns nil, nil if fetching is skipped (SOCKERLESS_SKIP_IMAGE_CONFIG=true)
-// or the image reference can't be resolved (graceful fallback to synthetic config).
-func FetchImageConfig(ref string, basicAuth ...string) (*api.ContainerConfig, error) {
+// or the image reference can't be resolved (graceful fallback to synthetic).
+// Logs a warning on fetch failure instead of silently returning nil.
+func FetchImageMetadata(ref string, basicAuth ...string) (*ImageMetadataResult, error) {
 	if os.Getenv("SOCKERLESS_SKIP_IMAGE_CONFIG") == "true" {
 		return nil, nil
 	}
 
 	// Check cache
-	imageConfigCache.RLock()
-	if cfg, ok := imageConfigCache.m[ref]; ok {
-		imageConfigCache.RUnlock()
-		return cfg, nil
+	imageMetadataCache.RLock()
+	if meta, ok := imageMetadataCache.m[ref]; ok {
+		imageMetadataCache.RUnlock()
+		return meta, nil
 	}
-	imageConfigCache.RUnlock()
+	imageMetadataCache.RUnlock()
 
 	rc := parseImageRef(ref)
 
@@ -50,18 +77,29 @@ func FetchImageConfig(ref string, basicAuth ...string) (*api.ContainerConfig, er
 		auth = basicAuth[0]
 	}
 
-	cfg, err := fetchConfigFromRegistry(rc, auth)
+	meta, err := fetchMetadataFromRegistry(rc, auth)
 	if err != nil {
-		// Graceful fallback: return nil so caller uses synthetic config
+		// Log warning instead of silent fallback.
+		log.Printf("[WARN] FetchImageMetadata(%q): %v (falling back to synthetic)", ref, err)
 		return nil, nil
 	}
 
 	// Cache the result
-	imageConfigCache.Lock()
-	imageConfigCache.m[ref] = cfg
-	imageConfigCache.Unlock()
+	imageMetadataCache.Lock()
+	imageMetadataCache.m[ref] = meta
+	imageMetadataCache.Unlock()
 
-	return cfg, nil
+	return meta, nil
+}
+
+// FetchImageConfig fetches the real image config from a Docker v2 registry.
+// Wrapper around FetchImageMetadata for backward compatibility.
+func FetchImageConfig(ref string, basicAuth ...string) (*api.ContainerConfig, error) {
+	meta, err := FetchImageMetadata(ref, basicAuth...)
+	if meta != nil {
+		return meta.Config, err
+	}
+	return nil, err
 }
 
 // parseImageRef parses a Docker image reference into registry, repository, tag.
@@ -115,28 +153,67 @@ var registryClient = &http.Client{
 	Timeout: 15 * time.Second,
 }
 
-// fetchConfigFromRegistry fetches the container config from a v2 registry.
-func fetchConfigFromRegistry(rc registryConfig, basicAuth string) (*api.ContainerConfig, error) {
+// fetchMetadataFromRegistry fetches rich image metadata from a v2 registry.
+func fetchMetadataFromRegistry(rc registryConfig, basicAuth string) (*ImageMetadataResult, error) {
 	// Step 1: Get auth token
 	token, err := getRegistryToken(rc, basicAuth)
 	if err != nil {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
 
-	// Step 2: Get manifest (try manifest list first, then single manifest)
-	configDigest, err := getConfigDigest(rc, token)
+	// Step 2: Get manifest info (config digest, layer digests/sizes, manifest digest)
+	minfo, err := getManifestInfo(rc, token)
 	if err != nil {
 		return nil, fmt.Errorf("manifest: %w", err)
 	}
 
-	// Step 3: Get config blob
-	cfg, err := getConfigBlob(rc, token, configDigest)
+	// Step 3: Get config blob (full OCI config with rootfs, history, etc.)
+	ociCfg, err := getFullConfigBlob(rc, token, minfo.configDigest)
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 
-	return cfg, nil
+	cfg := &api.ContainerConfig{
+		Env:          ociCfg.Config.Env,
+		Cmd:          ociCfg.Config.Cmd,
+		Entrypoint:   ociCfg.Config.Entrypoint,
+		WorkingDir:   ociCfg.Config.WorkingDir,
+		User:         ociCfg.Config.User,
+		Labels:       ociCfg.Config.Labels,
+		ExposedPorts: ociCfg.Config.ExposedPorts,
+	}
+	if cfg.Labels == nil {
+		cfg.Labels = make(map[string]string)
+	}
+
+	// Build history items
+	var history []ImageHistoryItem
+	for _, h := range ociCfg.History {
+		history = append(history, ImageHistoryItem(h))
+	}
+
+	// Calculate total size from manifest layers
+	var totalSize int64
+	for _, ls := range minfo.layerSizes {
+		totalSize += ls
+	}
+	totalSize += minfo.configSize
+
+	return &ImageMetadataResult{
+		Config:         cfg,
+		ConfigDigest:   minfo.configDigest,
+		ManifestDigest: minfo.manifestDigest,
+		LayerDigests:   ociCfg.RootFS.DiffIDs,
+		LayerSizes:     minfo.layerSizes,
+		TotalSize:      totalSize,
+		History:        history,
+		Architecture:   ociCfg.Architecture,
+		OS:             ociCfg.OS,
+		Author:         ociCfg.Author,
+		Created:        ociCfg.Created,
+	}, nil
 }
+
 
 // tokenResponse is the response from a Docker registry auth endpoint.
 type tokenResponse struct {
@@ -288,20 +365,32 @@ type manifestPlatform struct {
 
 // singleManifest represents a Docker v2 or OCI image manifest.
 type singleManifest struct {
-	MediaType string         `json:"mediaType"`
-	Config    manifestConfig `json:"config"`
+	MediaType string          `json:"mediaType"`
+	Config    manifestConfig  `json:"config"`
+	Layers    []manifestLayer `json:"layers"`
 }
 
 type manifestConfig struct {
 	MediaType string `json:"mediaType"`
 	Digest    string `json:"digest"`
+	Size      int64  `json:"size"`
+}
+
+type manifestLayer struct {
+	MediaType string `json:"mediaType"`
+	Digest    string `json:"digest"`
+	Size      int64  `json:"size"`
 }
 
 // ociImageConfig represents the OCI/Docker image config blob.
 type ociImageConfig struct {
-	Architecture string              `json:"architecture"`
-	OS           string              `json:"os"`
-	Config       ociContainerConfig  `json:"config"`
+	Architecture string             `json:"architecture"`
+	OS           string             `json:"os"`
+	Author       string             `json:"author"`
+	Created      string             `json:"created"`
+	Config       ociContainerConfig `json:"config"`
+	RootFS       ociRootFS          `json:"rootfs"`
+	History      []ociHistoryItem   `json:"history"`
 }
 
 type ociContainerConfig struct {
@@ -309,12 +398,34 @@ type ociContainerConfig struct {
 	Cmd          []string            `json:"Cmd"`
 	Entrypoint   []string            `json:"Entrypoint"`
 	WorkingDir   string              `json:"WorkingDir"`
+	User         string              `json:"User"`
 	Labels       map[string]string   `json:"Labels"`
 	ExposedPorts map[string]struct{} `json:"ExposedPorts"`
 }
 
-// getConfigDigest resolves the image manifest to get the config blob digest.
-func getConfigDigest(rc registryConfig, token string) (string, error) {
+type ociRootFS struct {
+	Type    string   `json:"type"`
+	DiffIDs []string `json:"diff_ids"`
+}
+
+type ociHistoryItem struct {
+	CreatedBy  string `json:"created_by"`
+	Created    string `json:"created"`
+	EmptyLayer bool   `json:"empty_layer"`
+	Comment    string `json:"comment"`
+}
+
+// manifestInfo holds the parsed manifest data.
+type manifestInfo struct {
+	configDigest   string
+	configSize     int64
+	manifestDigest string
+	layerSizes     []int64
+}
+
+// getManifestInfo resolves the image manifest to get config digest, layer info,
+// and manifest digest.
+func getManifestInfo(rc registryConfig, token string) (*manifestInfo, error) {
 	manifestURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s",
 		rc.Registry, rc.Repository, rc.Tag)
 
@@ -326,14 +437,14 @@ func getConfigDigest(rc registryConfig, token string) (string, error) {
 		"application/vnd.docker.distribution.manifest.v2+json",
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	// Check if this is a manifest list
 	if strings.Contains(mediaType, "manifest.list") || strings.Contains(mediaType, "image.index") {
 		var ml manifestList
 		if err := json.Unmarshal(body, &ml); err != nil {
-			return "", fmt.Errorf("decode manifest list: %w", err)
+			return nil, fmt.Errorf("decode manifest list: %w", err)
 		}
 
 		// Find amd64/linux manifest
@@ -349,7 +460,7 @@ func getConfigDigest(rc registryConfig, token string) (string, error) {
 			digest = ml.Manifests[0].Digest
 		}
 		if digest == "" {
-			return "", fmt.Errorf("no suitable manifest in manifest list")
+			return nil, fmt.Errorf("no suitable manifest in manifest list")
 		}
 
 		// Fetch the platform-specific manifest
@@ -360,25 +471,40 @@ func getConfigDigest(rc registryConfig, token string) (string, error) {
 			"application/vnd.docker.distribution.manifest.v2+json",
 		})
 		if err != nil {
-			return "", fmt.Errorf("fetch platform manifest: %w", err)
+			return nil, fmt.Errorf("fetch platform manifest: %w", err)
 		}
 	}
+
+	// Compute manifest digest from the body
+	manifestHash := sha256.Sum256(body)
+	manifestDigest := fmt.Sprintf("sha256:%x", manifestHash)
 
 	// Parse single manifest
 	var sm singleManifest
 	if err := json.Unmarshal(body, &sm); err != nil {
-		return "", fmt.Errorf("decode manifest: %w", err)
+		return nil, fmt.Errorf("decode manifest: %w", err)
 	}
 
 	if sm.Config.Digest == "" {
-		return "", fmt.Errorf("no config digest in manifest")
+		return nil, fmt.Errorf("no config digest in manifest")
 	}
 
-	return sm.Config.Digest, nil
+	// Extract layer sizes from manifest
+	layerSizes := make([]int64, len(sm.Layers))
+	for i, l := range sm.Layers {
+		layerSizes[i] = l.Size
+	}
+
+	return &manifestInfo{
+		configDigest:   sm.Config.Digest,
+		configSize:     sm.Config.Size,
+		manifestDigest: manifestDigest,
+		layerSizes:     layerSizes,
+	}, nil
 }
 
-// getConfigBlob fetches and parses the image config blob.
-func getConfigBlob(rc registryConfig, token, digest string) (*api.ContainerConfig, error) {
+// getFullConfigBlob fetches and parses the full OCI image config blob.
+func getFullConfigBlob(rc registryConfig, token, digest string) (*ociImageConfig, error) {
 	blobURL := fmt.Sprintf("https://%s/v2/%s/blobs/%s",
 		rc.Registry, rc.Repository, digest)
 
@@ -392,20 +518,7 @@ func getConfigBlob(rc registryConfig, token, digest string) (*api.ContainerConfi
 		return nil, fmt.Errorf("decode config: %w", err)
 	}
 
-	cfg := &api.ContainerConfig{
-		Env:          ociCfg.Config.Env,
-		Cmd:          ociCfg.Config.Cmd,
-		Entrypoint:   ociCfg.Config.Entrypoint,
-		WorkingDir:   ociCfg.Config.WorkingDir,
-		Labels:       ociCfg.Config.Labels,
-		ExposedPorts: ociCfg.Config.ExposedPorts,
-	}
-
-	if cfg.Labels == nil {
-		cfg.Labels = make(map[string]string)
-	}
-
-	return cfg, nil
+	return &ociCfg, nil
 }
 
 // registryGet performs an authenticated GET request to a registry endpoint.

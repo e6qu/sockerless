@@ -57,25 +57,19 @@ func (m *ImageManager) Pull(ref string, auth string) (io.ReadCloser, error) {
 		}
 	}
 
-	// Try to fetch real config from registry
-	var imgConfig *api.ContainerConfig
-	if realConfig, err := FetchImageConfig(ref, auth); err == nil && realConfig != nil {
-		imgConfig = realConfig
+	// Fetch real metadata from registry (anonymous auth for public images).
+	// Do not pass Docker client auth (X-Registry-Auth) — it's
+	// base64-encoded JSON that breaks Docker Hub's token endpoint.
+	var meta *ImageMetadataResult
+	if realMeta, err := FetchImageMetadata(ref); err == nil && realMeta != nil {
+		meta = realMeta
 	}
 
-	// Delegate to BaseServer for the actual pull (creates in-memory image + progress stream)
-	result, err := m.Base.ImagePull(ref, auth)
+	// Delegate to BaseServer for the actual pull (creates in-memory image + progress stream).
+	// Pass metadata so ImagePull can use real data instead of synthetics.
+	result, err := m.Base.ImagePullWithMetadata(ref, auth, meta)
 	if err != nil {
 		return nil, err
-	}
-
-	// If we got a real config, update the stored image
-	if imgConfig != nil {
-		if img, ok := m.Base.Store.ResolveImage(ref); ok {
-			m.Base.Store.Images.Update(img.ID, func(stored *api.Image) {
-				mergeImageConfig(&stored.Config, imgConfig)
-			})
-		}
 	}
 
 	// Sync to cloud registry (non-fatal)

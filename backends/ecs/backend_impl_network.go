@@ -11,7 +11,7 @@ func (s *Server) NetworkCreate(req *api.NetworkCreateRequest) (*api.NetworkCreat
 
 	// Create VPC security group for network isolation
 	if err := s.cloudNetworkCreate(req.Name, resp.ID); err != nil {
-		s.Logger.Warn().Err(err).Str("network", req.Name).Msg("failed to create cloud network resources")
+		s.Logger.Error().Err(err).Str("network", req.Name).Msg("failed to create cloud network resources")
 	}
 
 	// Create Cloud Map namespace for DNS-based service discovery

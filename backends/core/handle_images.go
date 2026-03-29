@@ -107,12 +107,20 @@ func (s *BaseServer) handleImageLoad(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// parseImageTar reads a docker save tar and extracts RepoTags from manifest.json
-// and Env/Cmd/Entrypoint/WorkingDir/Labels from the image config JSON.
-func parseImageTar(body io.Reader) (repoTags []string, config *api.ContainerConfig) {
+// imageLoadResult holds parsed data from a docker save tar archive.
+type imageLoadResult struct {
+	RepoTags []string
+	Config   *api.ContainerConfig
+	Layers   map[string][]byte // layer path → content (e.g. "abc123/layer.tar" → bytes)
+}
+
+// parseImageTarFull parses a docker save tar and preserves layer content.
+// Layer tarballs are kept for subsequent push operations.
+func parseImageTarFull(body io.Reader) *imageLoadResult {
 	tr := tar.NewReader(body)
 	var manifestData []byte
 	configFiles := make(map[string][]byte)
+	layerFiles := make(map[string][]byte)
 
 	for {
 		hdr, err := tr.Next()
@@ -126,24 +134,32 @@ func parseImageTar(body io.Reader) (repoTags []string, config *api.ContainerConf
 		case strings.HasSuffix(hdr.Name, ".json") && hdr.Name != "manifest.json" && !strings.Contains(hdr.Name, "/"):
 			data, _ := io.ReadAll(tr)
 			configFiles[hdr.Name] = data
+		case strings.HasSuffix(hdr.Name, "/layer.tar"):
+			// Preserve layer content
+			data, _ := io.ReadAll(tr)
+			layerFiles[hdr.Name] = data
 		default:
 			io.Copy(io.Discard, tr)
 		}
 	}
 
 	if manifestData == nil {
-		return nil, nil
+		return nil
 	}
 
 	var manifest []struct {
 		Config   string   `json:"Config"`
 		RepoTags []string `json:"RepoTags"`
+		Layers   []string `json:"Layers"`
 	}
 	if json.Unmarshal(manifestData, &manifest) != nil || len(manifest) == 0 {
-		return nil, nil
+		return nil
 	}
 
-	repoTags = manifest[0].RepoTags
+	result := &imageLoadResult{
+		RepoTags: manifest[0].RepoTags,
+		Layers:   layerFiles,
+	}
 
 	// Parse config file for container config
 	if configData, ok := configFiles[manifest[0].Config]; ok {
@@ -157,7 +173,7 @@ func parseImageTar(body io.Reader) (repoTags []string, config *api.ContainerConf
 			} `json:"config"`
 		}
 		if json.Unmarshal(configData, &imgJSON) == nil {
-			config = &api.ContainerConfig{
+			result.Config = &api.ContainerConfig{
 				Env:        imgJSON.Config.Env,
 				Cmd:        imgJSON.Config.Cmd,
 				Entrypoint: imgJSON.Config.Entrypoint,
@@ -167,7 +183,7 @@ func parseImageTar(body io.Reader) (repoTags []string, config *api.ContainerConf
 		}
 	}
 
-	return repoTags, config
+	return result
 }
 
 func (s *BaseServer) handleImageTag(w http.ResponseWriter, r *http.Request) {

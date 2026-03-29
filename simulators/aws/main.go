@@ -62,6 +62,9 @@ func main() {
 		queryRouter.ServeHTTP(w, r)
 	})
 
+	// Smithy RPCv2 CBOR services (path-based routing)
+	registerCloudWatchMetrics(srv)
+
 	// REST-based services register directly on the server mux
 	registerEFS(srv)
 	registerLambda(srv)

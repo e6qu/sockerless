@@ -27,6 +27,7 @@ type BackendDescriptor struct {
 	OperatingSystem string
 	OSType          string
 	Architecture    string
+	KernelVersion   string // per-backend kernel version
 	NCPU            int
 	MemTotal        int64
 	InstanceID      string
@@ -55,12 +56,22 @@ type BaseServer struct {
 	HealthChecker  HealthChecker
 	EventBus       *EventBus
 	ProviderInfo   *ProviderInfo
-	self           api.Backend // virtual dispatch target for overrideable methods
+	StatsProvider  StatsProvider // real container metrics (nil = zeros)
+	self           api.Backend   // virtual dispatch target for overrideable methods
 }
 
 // SetSelf sets the virtual dispatch target for overrideable api.Backend methods.
 // Embedding types call this after construction to enable method overriding.
 func (s *BaseServer) SetSelf(b api.Backend) { s.self = b }
+
+// kernelVersion returns the kernel version string for system info.
+// Uses per-backend value from descriptor, falls back to host kernel.
+func (s *BaseServer) kernelVersion() string {
+	if s.Desc.KernelVersion != "" {
+		return s.Desc.KernelVersion
+	}
+	return hostKernelVersion()
+}
 
 // NewBaseServer creates a new base server with the given store, descriptor,
 // and logger. It registers all routes and initializes the default bridge network.
@@ -207,6 +218,9 @@ func (s *BaseServer) registerRoutes() {
 
 	// Docker-compatible API routes (same mux, no /internal/v1/ prefix)
 	s.registerDockerAPIRoutes()
+
+	// Podman Libpod API routes (container/image/volume/network ops via /libpod/ prefix)
+	s.registerLibpodRoutes()
 }
 
 // InitDefaultNetwork creates the default bridge, host, and none networks.
@@ -406,7 +420,7 @@ func (s *BaseServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 		Architecture:      s.Desc.Architecture,
 		NCPU:              s.Desc.NCPU,
 		MemTotal:          s.Desc.MemTotal,
-		KernelVersion:     "5.15.0-sockerless",
+		KernelVersion:     s.kernelVersion(),
 	})
 }
 

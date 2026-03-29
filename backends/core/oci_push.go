@@ -17,13 +17,19 @@ type OCIPushOptions struct {
 	Repository string // e.g. "myproject/myrepo/myimage"
 	Tag        string // e.g. "latest"
 	AuthToken  string // Bearer token or empty
+	// LayerContent provides real layer data (keyed by digest).
+	// When nil or empty, falls back to synthetic empty layer.
+	LayerContent func(digest string) ([]byte, bool)
+	// Image layers to push (diff_ids from the image's RootFS.Layers).
+	ImageLayers []string
 }
 
 // OCIPushResult contains the result of an OCI push.
 type OCIPushResult struct {
 	ManifestDigest string
 	ConfigDigest   string
-	LayerDigest    string
+	LayerDigest    string   // First layer digest (backward compat)
+	LayerDigests   []string // All layer digests
 }
 
 // ociPushClient is an HTTP client with timeouts for OCI push requests.
@@ -63,17 +69,46 @@ func OCIPush(opts OCIPushOptions) (*OCIPushResult, error) {
 		return nil, fmt.Errorf("upload config blob: %w", err)
 	}
 
-	// 4. Create and upload synthetic layer blob (empty gzip)
-	// Minimal valid gzip: 1f 8b 08 00 ... (20 bytes)
-	layerData := []byte{0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff,
-		0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-	layerDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(layerData))
+	// 4. Upload layer blobs — use real content from LayerContent when available.
+	type layerEntry struct {
+		digest string
+		size   int
+	}
+	var layerEntries []layerEntry
 
-	if err := ociUploadBlob(baseURL, opts.AuthToken, layerDigest, layerData, "application/vnd.docker.image.rootfs.diff.tar.gzip"); err != nil {
-		return nil, fmt.Errorf("upload layer blob: %w", err)
+	if len(opts.ImageLayers) > 0 && opts.LayerContent != nil {
+		for _, diffID := range opts.ImageLayers {
+			if content, ok := opts.LayerContent(diffID); ok {
+				digest := fmt.Sprintf("sha256:%x", sha256.Sum256(content))
+				if err := ociUploadBlob(baseURL, opts.AuthToken, digest, content, "application/vnd.docker.image.rootfs.diff.tar.gzip"); err != nil {
+					return nil, fmt.Errorf("upload layer blob: %w", err)
+				}
+				layerEntries = append(layerEntries, layerEntry{digest: digest, size: len(content)})
+			}
+		}
+	}
+
+	// Fallback: synthetic empty layer if no real layers uploaded
+	if len(layerEntries) == 0 {
+		layerData := []byte{0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff,
+			0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+		digest := fmt.Sprintf("sha256:%x", sha256.Sum256(layerData))
+		if err := ociUploadBlob(baseURL, opts.AuthToken, digest, layerData, "application/vnd.docker.image.rootfs.diff.tar.gzip"); err != nil {
+			return nil, fmt.Errorf("upload layer blob: %w", err)
+		}
+		layerEntries = append(layerEntries, layerEntry{digest: digest, size: len(layerData)})
 	}
 
 	// 5. Create and PUT manifest
+	manifestLayers := make([]map[string]any, len(layerEntries))
+	for i, le := range layerEntries {
+		manifestLayers[i] = map[string]any{
+			"mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+			"size":      le.size,
+			"digest":    le.digest,
+		}
+	}
+
 	manifest, err := json.Marshal(map[string]any{
 		"schemaVersion": 2,
 		"mediaType":     "application/vnd.docker.distribution.manifest.v2+json",
@@ -82,13 +117,7 @@ func OCIPush(opts OCIPushOptions) (*OCIPushResult, error) {
 			"size":      len(configJSON),
 			"digest":    configDigest,
 		},
-		"layers": []map[string]any{
-			{
-				"mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
-				"size":      len(layerData),
-				"digest":    layerDigest,
-			},
-		},
+		"layers": manifestLayers,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal manifest: %w", err)
@@ -122,10 +151,20 @@ func OCIPush(opts OCIPushOptions) (*OCIPushResult, error) {
 		return nil, fmt.Errorf("put manifest returned %d: %s", resp.StatusCode, string(body))
 	}
 
+	var allDigests []string
+	firstDigest := ""
+	for _, le := range layerEntries {
+		allDigests = append(allDigests, le.digest)
+		if firstDigest == "" {
+			firstDigest = le.digest
+		}
+	}
+
 	return &OCIPushResult{
 		ManifestDigest: manifestDigest,
 		ConfigDigest:   configDigest,
-		LayerDigest:    layerDigest,
+		LayerDigest:    firstDigest,
+		LayerDigests:   allDigests,
 	}, nil
 }
 

@@ -134,10 +134,20 @@ func (s *BaseServer) handleContainerStats(w http.ResponseWriter, r *http.Request
 }
 
 // buildStatsEntry constructs a Docker-compatible stats JSON object.
+// Uses StatsProvider for real metrics when available.
 func (s *BaseServer) buildStatsEntry(containerID string, now time.Time, preread string, memLimit int64) map[string]any {
 	var memUsage int64
 	var cpuNanos int64
 	var pids int
+
+	// Fetch real metrics from cloud provider if available.
+	if s.StatsProvider != nil {
+		if m, err := s.StatsProvider.ContainerMetrics(containerID); err == nil && m != nil {
+			cpuNanos = m.CPUNanos
+			memUsage = m.MemBytes
+			pids = m.PIDs
+		}
+	}
 
 	systemNanos := now.UnixNano()
 

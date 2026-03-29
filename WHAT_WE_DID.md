@@ -42,9 +42,18 @@ Agent (inside container or reverse-connected)
 | 83-86 | Type-safe API: goverter mappers, api.Backend, self-dispatch, in-process wiring |
 | 90 | Remove memory backend, spec-driven state machine tests |
 
+## ECS Live Testing (2026-03-29)
+
+First real-cloud validation of Sockerless against AWS ECS Fargate in `eu-west-1`:
+
+- Provisioned 34 AWS resources via `terraform/environments/ecs/live/` (VPC, ECS cluster, EFS, ECR, IAM roles, Cloud Map, security groups)
+- Ran 11 test phases: system endpoints, image pull, container lifecycle, `docker run`, env vars, networking, volumes, logs, prune, AWS verification, error cases
+- Found and fixed 8 bugs (BUG-584 through BUG-591) plus 3 DX/recovery issues (BUG-592 through BUG-594)
+- Key fix: `FetchImageConfig` was broken for all cloud backends — Docker client auth forwarded to registry token endpoint, and image config aliases not updated after merge. Images like nginx exited immediately due to synthetic `/bin/sh` CMD
+
 ## Bug Fix Sprints
 
-583 bugs fixed across 45 sprints (BUG-001 through BUG-583). 0 open bugs. Per-sprint details in `_tasks/done/BUG-SPRINT-*.md`.
+594 bugs fixed across 45 sprints + live testing (BUG-001 through BUG-594). 0 open bugs. Per-sprint details in `_tasks/done/BUG-SPRINT-*.md`.
 
 ## Unified Image Management
 
@@ -82,7 +91,7 @@ All cloud network/service-discovery methods wired into `NetworkCreate`, `Network
 See [STATUS.md](STATUS.md) for current test counts.
 
 - **85 phases**, 756 tasks completed
-- **45 bug sprints**, 583 bugs fixed, 0 open
+- **45 bug sprints + live testing**, 594 bugs fixed, 0 open
 - **16 Go modules** across backends, simulators, agent, API, frontend, bleephub, CLI, admin, tests
 - **7 backends** sharing a common driver architecture
 - **3 cloud simulators** validated against SDKs, CLIs, and Terraform

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -123,24 +124,36 @@ type ECSAttachment struct {
 }
 
 type ECSTask struct {
-	TaskArn           string             `json:"taskArn"`
-	TaskDefinitionArn string             `json:"taskDefinitionArn"`
-	ClusterArn        string             `json:"clusterArn"`
-	LastStatus        string             `json:"lastStatus"`
-	DesiredStatus     string             `json:"desiredStatus"`
-	Containers        []ECSTaskContainer `json:"containers"`
-	CreatedAt         *float64           `json:"createdAt,omitempty"`
-	StartedAt         *int64             `json:"startedAt,omitempty"`
-	StoppedAt         *int64             `json:"stoppedAt,omitempty"`
-	StopCode          string             `json:"stopCode,omitempty"`
-	StoppedReason     string             `json:"stoppedReason,omitempty"`
-	Attachments       []ECSAttachment    `json:"attachments,omitempty"`
-	Tags              []ECSTag           `json:"tags,omitempty"`
-	LaunchType        string             `json:"launchType,omitempty"`
-	Cpu               string             `json:"cpu,omitempty"`
-	Memory            string             `json:"memory,omitempty"`
-	Group             string             `json:"group,omitempty"`
-	EnableExecuteCommand bool            `json:"enableExecuteCommand,omitempty"`
+	TaskArn              string                `json:"taskArn"`
+	TaskDefinitionArn    string                `json:"taskDefinitionArn"`
+	ClusterArn           string                `json:"clusterArn"`
+	LastStatus           string                `json:"lastStatus"`
+	DesiredStatus        string                `json:"desiredStatus"`
+	Connectivity         string                `json:"connectivity,omitempty"`
+	Containers           []ECSTaskContainer    `json:"containers"`
+	CreatedAt            *float64              `json:"createdAt,omitempty"`
+	StartedAt            *int64                `json:"startedAt,omitempty"`
+	StoppedAt            *int64                `json:"stoppedAt,omitempty"`
+	StopCode             string                `json:"stopCode,omitempty"`
+	StoppedReason        string                `json:"stoppedReason,omitempty"`
+	Attachments          []ECSAttachment       `json:"attachments,omitempty"`
+	Tags                 []ECSTag              `json:"tags,omitempty"`
+	LaunchType           string                `json:"launchType,omitempty"`
+	Cpu                  string                `json:"cpu,omitempty"`
+	Memory               string                `json:"memory,omitempty"`
+	Group                string                `json:"group,omitempty"`
+	EnableExecuteCommand bool                  `json:"enableExecuteCommand,omitempty"`
+	NetworkConfiguration *ECSTaskNetworkConfig `json:"networkConfiguration,omitempty"`
+}
+
+type ECSTaskNetworkConfig struct {
+	AwsvpcConfiguration *ECSTaskVpcConfig `json:"awsvpcConfiguration,omitempty"`
+}
+
+type ECSTaskVpcConfig struct {
+	Subnets        []string `json:"subnets"`
+	SecurityGroups []string `json:"securityGroups"`
+	AssignPublicIp string   `json:"assignPublicIp"`
 }
 
 // State stores
@@ -278,6 +291,14 @@ func handleECSRegisterTaskDefinition(w http.ResponseWriter, r *http.Request) {
 	if len(req.ContainerDefinitions) == 0 {
 		sim.AWSError(w, "InvalidParameterException", "At least one container definition is required", http.StatusBadRequest)
 		return
+	}
+
+	// Validate Fargate CPU/memory combinations
+	if hasFargate(req.RequiresCompatibilities) && req.Cpu != "" && req.Memory != "" {
+		if err := validateFargateResources(req.Cpu, req.Memory); err != nil {
+			sim.AWSError(w, "ClientException", err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	// Auto-increment revision
@@ -464,6 +485,17 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate security groups exist
+	if req.NetworkConfiguration != nil && req.NetworkConfiguration.AwsvpcConfiguration != nil {
+		for _, sgID := range req.NetworkConfiguration.AwsvpcConfiguration.SecurityGroups {
+			if _, sgOK := ec2SecurityGroups.Get(sgID); !sgOK {
+				sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
+					"The security group '%s' does not exist", sgID)
+				return
+			}
+		}
+	}
+
 	var tasks []ECSTask
 	for i := 0; i < req.Count; i++ {
 		taskID := generateUUID()
@@ -496,18 +528,18 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		taskTags = append(taskTags, req.Tags...)
 
 		task := ECSTask{
-			TaskArn:           taskArn,
-			TaskDefinitionArn: td.TaskDefinitionArn,
-			ClusterArn:        cluster.ClusterArn,
-			LastStatus:        "PROVISIONING",
-			DesiredStatus:     "RUNNING",
-			Containers:        containers,
-			CreatedAt:         &createdAt,
-			Tags:              taskTags,
-			LaunchType:        req.LaunchType,
-			Cpu:               td.Cpu,
-			Memory:            td.Memory,
-			Group:             req.Group,
+			TaskArn:              taskArn,
+			TaskDefinitionArn:    td.TaskDefinitionArn,
+			ClusterArn:           cluster.ClusterArn,
+			LastStatus:           "PROVISIONING",
+			DesiredStatus:        "RUNNING",
+			Containers:           containers,
+			CreatedAt:            &createdAt,
+			Tags:                 taskTags,
+			LaunchType:           req.LaunchType,
+			Cpu:                  td.Cpu,
+			Memory:               td.Memory,
+			Group:                req.Group,
 			EnableExecuteCommand: req.EnableExecuteCommand,
 			Attachments: []ECSAttachment{
 				{
@@ -520,6 +552,18 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			},
+		}
+
+		// Store VPC network configuration from request
+		if req.NetworkConfiguration != nil && req.NetworkConfiguration.AwsvpcConfiguration != nil {
+			vpc := req.NetworkConfiguration.AwsvpcConfiguration
+			task.NetworkConfiguration = &ECSTaskNetworkConfig{
+				AwsvpcConfiguration: &ECSTaskVpcConfig{
+					Subnets:        vpc.Subnets,
+					SecurityGroups: vpc.SecurityGroups,
+					AssignPublicIp: vpc.AssignPublicIp,
+				},
+			}
 		}
 
 		ecsTasks.Put(taskID, task)
@@ -541,6 +585,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 			now := time.Now().Unix()
 			ecsTasks.Update(id, func(t *ECSTask) {
 				t.LastStatus = "RUNNING"
+				t.Connectivity = "CONNECTED"
 				t.StartedAt = &now
 				for j := range t.Containers {
 					t.Containers[j].LastStatus = "RUNNING"
@@ -1090,4 +1135,64 @@ func (s *cwLogSink) WriteLog(line sim.LogLine) {
 			IngestionTime: nowMs,
 		})
 	})
+}
+
+// Fargate CPU/memory validation. Valid combinations per AWS docs.
+// Lower tiers (256, 512) have explicit valid values; higher tiers use ranges.
+type fargateCombo struct {
+	cpu        int
+	memOptions []int // explicit valid values (nil = use range)
+	memMin     int
+	memMax     int
+	memInc     int
+}
+
+var fargateCombos = []fargateCombo{
+	{256, []int{512, 1024, 2048}, 0, 0, 0},
+	{512, []int{1024, 2048, 3072, 4096}, 0, 0, 0},
+	{1024, nil, 2048, 8192, 1024},
+	{2048, nil, 4096, 16384, 1024},
+	{4096, nil, 8192, 30720, 1024},
+	{8192, nil, 16384, 61440, 4096},
+	{16384, nil, 32768, 122880, 8192},
+}
+
+func hasFargate(compatibilities []string) bool {
+	for _, c := range compatibilities {
+		if strings.EqualFold(c, "FARGATE") {
+			return true
+		}
+	}
+	return false
+}
+
+func validateFargateResources(cpuStr, memStr string) error {
+	cpu, err := strconv.Atoi(cpuStr)
+	if err != nil {
+		return fmt.Errorf("invalid cpu value: %s", cpuStr)
+	}
+	mem, err := strconv.Atoi(memStr)
+	if err != nil {
+		return fmt.Errorf("invalid memory value: %s", memStr)
+	}
+
+	for _, combo := range fargateCombos {
+		if combo.cpu != cpu {
+			continue
+		}
+		if len(combo.memOptions) > 0 {
+			for _, opt := range combo.memOptions {
+				if opt == mem {
+					return nil
+				}
+			}
+			return fmt.Errorf("invalid memory value %d for cpu %d, valid values: %v", mem, cpu, combo.memOptions)
+		}
+		if mem >= combo.memMin && mem <= combo.memMax && (mem-combo.memMin)%combo.memInc == 0 {
+			return nil
+		}
+		return fmt.Errorf("invalid memory value %d for cpu %d, valid range: %d-%d in %d increments",
+			mem, cpu, combo.memMin, combo.memMax, combo.memInc)
+	}
+	return fmt.Errorf("invalid cpu value %d, valid values: 256, 512, 1024, 2048, 4096, 8192, 16384", cpu)
 }
