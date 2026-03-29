@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -280,6 +281,14 @@ func handleECSRegisterTaskDefinition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate Fargate CPU/memory combinations
+	if hasFargate(req.RequiresCompatibilities) && req.Cpu != "" && req.Memory != "" {
+		if err := validateFargateResources(req.Cpu, req.Memory); err != nil {
+			sim.AWSError(w, "ClientException", err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
 	// Auto-increment revision
 	ecsRevisionMu.Lock()
 	ecsRevisions[req.Family]++
@@ -462,6 +471,17 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		sim.AWSErrorf(w, "ClientException", http.StatusBadRequest,
 			"Unable to describe task definition: %s", req.TaskDefinition)
 		return
+	}
+
+	// Validate security groups exist
+	if req.NetworkConfiguration != nil && req.NetworkConfiguration.AwsvpcConfiguration != nil {
+		for _, sgID := range req.NetworkConfiguration.AwsvpcConfiguration.SecurityGroups {
+			if _, sgOK := ec2SecurityGroups.Get(sgID); !sgOK {
+				sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
+					"The security group '%s' does not exist", sgID)
+				return
+			}
+		}
 	}
 
 	var tasks []ECSTask
@@ -1090,4 +1110,53 @@ func (s *cwLogSink) WriteLog(line sim.LogLine) {
 			IngestionTime: nowMs,
 		})
 	})
+}
+
+// Fargate CPU/memory validation. Valid combinations per AWS docs.
+type fargateCombo struct {
+	cpu    int
+	memMin int
+	memMax int
+	memInc int
+}
+
+var fargateCombos = []fargateCombo{
+	{256, 512, 2048, 1024},
+	{512, 1024, 4096, 1024},
+	{1024, 2048, 8192, 1024},
+	{2048, 4096, 16384, 1024},
+	{4096, 8192, 30720, 1024},
+	{8192, 16384, 61440, 4096},
+	{16384, 32768, 122880, 8192},
+}
+
+func hasFargate(compatibilities []string) bool {
+	for _, c := range compatibilities {
+		if strings.EqualFold(c, "FARGATE") {
+			return true
+		}
+	}
+	return false
+}
+
+func validateFargateResources(cpuStr, memStr string) error {
+	cpu, err := strconv.Atoi(cpuStr)
+	if err != nil {
+		return fmt.Errorf("Invalid cpu value: %s", cpuStr)
+	}
+	mem, err := strconv.Atoi(memStr)
+	if err != nil {
+		return fmt.Errorf("Invalid memory value: %s", memStr)
+	}
+
+	for _, combo := range fargateCombos {
+		if combo.cpu == cpu {
+			if mem >= combo.memMin && mem <= combo.memMax && (mem-combo.memMin)%combo.memInc == 0 {
+				return nil
+			}
+			return fmt.Errorf("Invalid memory value %d for cpu %d. Valid range: %d-%d in %d increments",
+				mem, cpu, combo.memMin, combo.memMax, combo.memInc)
+		}
+	}
+	return fmt.Errorf("Invalid cpu value %d. Valid values: 256, 512, 1024, 2048, 4096, 8192, 16384", cpu)
 }
