@@ -1,6 +1,67 @@
 # Known Bugs
 
-612 bugs fixed across 45 sprints + ECS live testing (BUG-001 through BUG-612). 0 open bugs. See [STATUS.md](STATUS.md) for overall project status.
+612 bugs fixed across 45 sprints + ECS live testing (BUG-001 through BUG-612). 6 open bugs. See [STATUS.md](STATUS.md) for overall project status.
+
+## Open Bugs (found during ECS live testing round 2, 2026-03-30)
+
+### BUG-613: Real ENI IP never written to container NetworkSettings
+
+**File:** `backends/ecs/containers.go` (pollTaskExit), `backends/ecs/backend_impl.go` (ContainerStart)
+**Severity:** Medium
+
+`waitForTaskRunning` extracts the real ENI IP but only stores it in `ECSState.AgentAddress` (as `ip:9111`). The container's `NetworkSettings.Networks[].IPAddress` stays at the synthetic 172.17.0.x. The `applyTaskStatus(RUNNING)` handler does overwrite the IP, but `pollTaskExit` only calls `applyTaskStatus` on STOPPED, never on RUNNING. Fix: after `waitForTaskRunning` returns in ContainerStart, update the container's IPAddress with the ENI IP.
+
+### BUG-614: Container stats return zeros on real AWS
+
+**File:** `backends/ecs/stats.go`
+**Severity:** Medium
+
+`docker stats --no-stream` returns 0% CPU and 0B memory on real AWS. The `ecsStatsProvider` calls CloudWatch `GetMetricData` for `ECS/ContainerInsights`, but Container Insights may not have data for short-lived tasks or may require the cluster to have Container Insights explicitly enabled. The fallback when CloudWatch returns no data should use allocated resources instead of zeros.
+
+### BUG-615: fargateResources produces invalid memory values
+
+**File:** `backends/ecs/taskdef.go` (fargateResources)
+**Severity:** High
+
+For 256 CPU with 1GB memory request, `fargateResources` produces `256 CPU, 1536 memory` which is not a valid Fargate combo. The rounding logic increments from `memMin` (512) by `memInc` (1024) giving 512 → 1536 → 2048, but 1536 is invalid. Valid values for 256 CPU are 512, 1024, 2048 only. The increment logic should produce `memMin + N*memInc` where N=0,1,2,..., giving 512, 1536, 2560 — but only 512 and 2048 are valid. Fix: the valid memory values for each CPU tier are `memMin, memMin+memInc, memMin+2*memInc, ...` which for 256 CPU gives 512, 1536, 2560 — but real AWS only accepts specific values. The `memInc` field is wrong; real Fargate accepts multiples of 128 MB above the minimum, not memInc=1024.
+
+### BUG-616: `docker run -m` with byte value not correctly parsed for Fargate
+
+**File:** `backends/ecs/taskdef.go` (fargateResources)
+**Severity:** Medium
+
+`docker run -m 1073741824` sets `HostConfig.Memory` to 1073741824 bytes. The code divides by `1024*1024` to get MB (=1024 MB). But the Fargate mapping should map 1024 MB to `512 CPU, 1024 memory` (the smallest tier that fits). Instead it selected `256 CPU, 1536 memory` because the loop found 256 CPU first and tried to fit 1024 MB into the 512-2048 range, producing an invalid intermediate value.
+
+### BUG-617: docker network create does not create VPC security group on real AWS
+
+**File:** `backends/ecs/network_cloud.go` (cloudNetworkCreate)
+**Severity:** High
+
+`docker network create testnet` succeeds (returns network ID) but no VPC security group `skls-testnet` is created in AWS. No error or warning appears in logs. The `cloudNetworkCreate` function calls `ec2.CreateSecurityGroup` but the SG doesn't appear in `aws ec2 describe-security-groups`. This breaks Docker network-based isolation on real ECS.
+
+### BUG-618: Podman CLI requires full Libpod API — only pod routes exist
+
+**File:** `backends/core/handle_docker_api.go` (route registration)
+**Severity:** High
+
+Podman CLI always uses the Libpod API (`/libpod/*`) for all operations, not the Docker compat API. The backend only implements Libpod routes for pods (`/libpod/pods/*`) and ping. Missing: `/libpod/containers/*`, `/libpod/images/*`, `/libpod/info`, `/libpod/version` with podman-compatible response formats.
+
+Partial fixes applied:
+- Added `/libpod/_ping` route (ping now works)
+- Fixed version prefix regex to handle 3-part versions like `v5.0.0/` (was only matching `v1.44/`)
+- Added `/libpod/info` route (but response format causes podman crash — needs libpod-specific JSON)
+
+Full fix requires either: (a) implement libpod container/image/system API endpoints, or (b) route `/libpod/containers/*` and `/libpod/images/*` to Docker compat handlers with response format adaptation.
+
+**File:** `backends/ecs/network_cloud.go` (cloudNetworkCreate)
+**Severity:** High
+
+`docker network create testnet` succeeds (returns network ID) but no VPC security group `skls-testnet` is created in AWS. No error or warning appears in logs. The `cloudNetworkCreate` function calls `ec2.CreateSecurityGroup` but the SG doesn't appear in `aws ec2 describe-security-groups`. Either the EC2 call silently fails, the VPC resolution returns wrong data, or the error is swallowed. This breaks Docker network-based isolation on real ECS since containers never get per-network security groups.
+
+**File:** `backends/ecs/taskdef.go` (fargateResources)
+**Severity:** Medium
+
+`docker run -m 1073741824` sets `HostConfig.Memory` to 1073741824 bytes. The code divides by `1024*1024` to get MB (=1024 MB). But the Fargate mapping should map 1024 MB to `512 CPU, 1024 memory` (the smallest tier that fits). Instead it selected `256 CPU, 1536 memory` because the loop found 256 CPU first and tried to fit 1024 MB into the 512-2048 range, producing an invalid intermediate value.
 
 ## Fixed Bugs (synthetic behavior elimination, 2026-03-29)
 
