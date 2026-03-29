@@ -124,24 +124,36 @@ type ECSAttachment struct {
 }
 
 type ECSTask struct {
-	TaskArn           string             `json:"taskArn"`
-	TaskDefinitionArn string             `json:"taskDefinitionArn"`
-	ClusterArn        string             `json:"clusterArn"`
-	LastStatus        string             `json:"lastStatus"`
-	DesiredStatus     string             `json:"desiredStatus"`
-	Containers        []ECSTaskContainer `json:"containers"`
-	CreatedAt         *float64           `json:"createdAt,omitempty"`
-	StartedAt         *int64             `json:"startedAt,omitempty"`
-	StoppedAt         *int64             `json:"stoppedAt,omitempty"`
-	StopCode          string             `json:"stopCode,omitempty"`
-	StoppedReason     string             `json:"stoppedReason,omitempty"`
-	Attachments       []ECSAttachment    `json:"attachments,omitempty"`
-	Tags              []ECSTag           `json:"tags,omitempty"`
-	LaunchType        string             `json:"launchType,omitempty"`
-	Cpu               string             `json:"cpu,omitempty"`
-	Memory            string             `json:"memory,omitempty"`
-	Group             string             `json:"group,omitempty"`
-	EnableExecuteCommand bool            `json:"enableExecuteCommand,omitempty"`
+	TaskArn              string                `json:"taskArn"`
+	TaskDefinitionArn    string                `json:"taskDefinitionArn"`
+	ClusterArn           string                `json:"clusterArn"`
+	LastStatus           string                `json:"lastStatus"`
+	DesiredStatus        string                `json:"desiredStatus"`
+	Connectivity         string                `json:"connectivity,omitempty"`
+	Containers           []ECSTaskContainer    `json:"containers"`
+	CreatedAt            *float64              `json:"createdAt,omitempty"`
+	StartedAt            *int64                `json:"startedAt,omitempty"`
+	StoppedAt            *int64                `json:"stoppedAt,omitempty"`
+	StopCode             string                `json:"stopCode,omitempty"`
+	StoppedReason        string                `json:"stoppedReason,omitempty"`
+	Attachments          []ECSAttachment       `json:"attachments,omitempty"`
+	Tags                 []ECSTag              `json:"tags,omitempty"`
+	LaunchType           string                `json:"launchType,omitempty"`
+	Cpu                  string                `json:"cpu,omitempty"`
+	Memory               string                `json:"memory,omitempty"`
+	Group                string                `json:"group,omitempty"`
+	EnableExecuteCommand bool                  `json:"enableExecuteCommand,omitempty"`
+	NetworkConfiguration *ECSTaskNetworkConfig `json:"networkConfiguration,omitempty"`
+}
+
+type ECSTaskNetworkConfig struct {
+	AwsvpcConfiguration *ECSTaskVpcConfig `json:"awsvpcConfiguration,omitempty"`
+}
+
+type ECSTaskVpcConfig struct {
+	Subnets        []string `json:"subnets"`
+	SecurityGroups []string `json:"securityGroups"`
+	AssignPublicIp string   `json:"assignPublicIp"`
 }
 
 // State stores
@@ -516,18 +528,18 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		taskTags = append(taskTags, req.Tags...)
 
 		task := ECSTask{
-			TaskArn:           taskArn,
-			TaskDefinitionArn: td.TaskDefinitionArn,
-			ClusterArn:        cluster.ClusterArn,
-			LastStatus:        "PROVISIONING",
-			DesiredStatus:     "RUNNING",
-			Containers:        containers,
-			CreatedAt:         &createdAt,
-			Tags:              taskTags,
-			LaunchType:        req.LaunchType,
-			Cpu:               td.Cpu,
-			Memory:            td.Memory,
-			Group:             req.Group,
+			TaskArn:              taskArn,
+			TaskDefinitionArn:    td.TaskDefinitionArn,
+			ClusterArn:           cluster.ClusterArn,
+			LastStatus:           "PROVISIONING",
+			DesiredStatus:        "RUNNING",
+			Containers:           containers,
+			CreatedAt:            &createdAt,
+			Tags:                 taskTags,
+			LaunchType:           req.LaunchType,
+			Cpu:                  td.Cpu,
+			Memory:               td.Memory,
+			Group:                req.Group,
 			EnableExecuteCommand: req.EnableExecuteCommand,
 			Attachments: []ECSAttachment{
 				{
@@ -540,6 +552,18 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			},
+		}
+
+		// Store VPC network configuration from request
+		if req.NetworkConfiguration != nil && req.NetworkConfiguration.AwsvpcConfiguration != nil {
+			vpc := req.NetworkConfiguration.AwsvpcConfiguration
+			task.NetworkConfiguration = &ECSTaskNetworkConfig{
+				AwsvpcConfiguration: &ECSTaskVpcConfig{
+					Subnets:        vpc.Subnets,
+					SecurityGroups: vpc.SecurityGroups,
+					AssignPublicIp: vpc.AssignPublicIp,
+				},
+			}
 		}
 
 		ecsTasks.Put(taskID, task)
@@ -561,6 +585,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 			now := time.Now().Unix()
 			ecsTasks.Update(id, func(t *ECSTask) {
 				t.LastStatus = "RUNNING"
+				t.Connectivity = "CONNECTED"
 				t.StartedAt = &now
 				for j := range t.Containers {
 					t.Containers[j].LastStatus = "RUNNING"
