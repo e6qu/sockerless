@@ -1138,21 +1138,23 @@ func (s *cwLogSink) WriteLog(line sim.LogLine) {
 }
 
 // Fargate CPU/memory validation. Valid combinations per AWS docs.
+// Lower tiers (256, 512) have explicit valid values; higher tiers use ranges.
 type fargateCombo struct {
-	cpu    int
-	memMin int
-	memMax int
-	memInc int
+	cpu        int
+	memOptions []int // explicit valid values (nil = use range)
+	memMin     int
+	memMax     int
+	memInc     int
 }
 
 var fargateCombos = []fargateCombo{
-	{256, 512, 2048, 1024},
-	{512, 1024, 4096, 1024},
-	{1024, 2048, 8192, 1024},
-	{2048, 4096, 16384, 1024},
-	{4096, 8192, 30720, 1024},
-	{8192, 16384, 61440, 4096},
-	{16384, 32768, 122880, 8192},
+	{256, []int{512, 1024, 2048}, 0, 0, 0},
+	{512, []int{1024, 2048, 3072, 4096}, 0, 0, 0},
+	{1024, nil, 2048, 8192, 1024},
+	{2048, nil, 4096, 16384, 1024},
+	{4096, nil, 8192, 30720, 1024},
+	{8192, nil, 16384, 61440, 4096},
+	{16384, nil, 32768, 122880, 8192},
 }
 
 func hasFargate(compatibilities []string) bool {
@@ -1175,13 +1177,22 @@ func validateFargateResources(cpuStr, memStr string) error {
 	}
 
 	for _, combo := range fargateCombos {
-		if combo.cpu == cpu {
-			if mem >= combo.memMin && mem <= combo.memMax && (mem-combo.memMin)%combo.memInc == 0 {
-				return nil
-			}
-			return fmt.Errorf("invalid memory value %d for cpu %d, valid range: %d-%d in %d increments",
-				mem, cpu, combo.memMin, combo.memMax, combo.memInc)
+		if combo.cpu != cpu {
+			continue
 		}
+		if len(combo.memOptions) > 0 {
+			for _, opt := range combo.memOptions {
+				if opt == mem {
+					return nil
+				}
+			}
+			return fmt.Errorf("invalid memory value %d for cpu %d, valid values: %v", mem, cpu, combo.memOptions)
+		}
+		if mem >= combo.memMin && mem <= combo.memMax && (mem-combo.memMin)%combo.memInc == 0 {
+			return nil
+		}
+		return fmt.Errorf("invalid memory value %d for cpu %d, valid range: %d-%d in %d increments",
+			mem, cpu, combo.memMin, combo.memMax, combo.memInc)
 	}
 	return fmt.Errorf("invalid cpu value %d, valid values: 256, 512, 1024, 2048, 4096, 8192, 16384", cpu)
 }

@@ -17,8 +17,10 @@ func (s *Server) cloudNetworkCreate(name, networkID string) error {
 	// Look up VPC ID from the first configured subnet.
 	vpcID, err := s.resolveVPCID()
 	if err != nil {
+		s.Logger.Error().Err(err).Msg("failed to resolve VPC ID for network security group")
 		return fmt.Errorf("failed to resolve VPC ID: %w", err)
 	}
+	s.Logger.Info().Str("vpc", vpcID).Str("network", name).Msg("creating security group for Docker network")
 
 	// Create the security group.
 	createOut, err := s.aws.EC2.CreateSecurityGroup(s.ctx(), &ec2.CreateSecurityGroupInput{
@@ -40,9 +42,10 @@ func (s *Server) cloudNetworkCreate(name, networkID string) error {
 	}
 
 	sgID := aws.ToString(createOut.GroupId)
-	s.Logger.Debug().
+	s.Logger.Info().
 		Str("network", name).
 		Str("sg", sgID).
+		Str("vpc", vpcID).
 		Msg("created security group for network")
 
 	// Add self-referencing ingress rule: allow all traffic from the same SG.

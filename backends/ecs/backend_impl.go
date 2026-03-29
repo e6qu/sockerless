@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -301,6 +302,19 @@ func (s *Server) ContainerStart(ref string) error {
 				s.AgentRegistry.Remove(id)
 				s.Store.RevertToCreated(id)
 				return awscommon.MapAWSError(err, "task", id)
+			}
+
+			// Update container NetworkSettings with real ENI IP
+			if host, _, splitErr := net.SplitHostPort(agentAddr); splitErr == nil {
+				mac := deriveMACFromIP(host)
+				s.Store.Containers.Update(id, func(c *api.Container) {
+					for _, ep := range c.NetworkSettings.Networks {
+						if ep != nil {
+							ep.IPAddress = host
+							ep.MacAddress = mac
+						}
+					}
+				})
 			}
 
 			// Wait for agent health

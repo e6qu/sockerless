@@ -1,8 +1,8 @@
 # Known Bugs
 
-612 bugs fixed across 45 sprints + ECS live testing (BUG-001 through BUG-612). 6 open bugs. See [STATUS.md](STATUS.md) for overall project status.
+618 bugs fixed across 45 sprints + ECS live testing (BUG-001 through BUG-618). 0 open bugs. See [STATUS.md](STATUS.md) for overall project status.
 
-## Open Bugs (found during ECS live testing round 2, 2026-03-30)
+## Fixed Bugs (ECS live testing round 2, 2026-03-30)
 
 ### BUG-613: Real ENI IP never written to container NetworkSettings
 

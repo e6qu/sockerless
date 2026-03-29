@@ -52,7 +52,6 @@ func (s *BaseServer) registerDockerAPIRoutes() {
 	s.Mux.HandleFunc("HEAD /_ping", s.handleDockerPing)
 	s.Mux.HandleFunc("GET /libpod/_ping", s.handleDockerPing)
 	s.Mux.HandleFunc("HEAD /libpod/_ping", s.handleDockerPing)
-	s.Mux.HandleFunc("GET /libpod/info", s.handleDockerInfo)
 	s.Mux.HandleFunc("GET /libpod/version", s.handleDockerVersion)
 	s.Mux.HandleFunc("GET /version", s.handleDockerVersion)
 	s.Mux.HandleFunc("GET /info", s.handleDockerInfo)

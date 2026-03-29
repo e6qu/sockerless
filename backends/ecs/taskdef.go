@@ -196,26 +196,29 @@ func (s *Server) registerTaskDefinition(ctx context.Context, containers []contai
 
 // fargateResource is a valid Fargate CPU/memory combination.
 type fargateResource struct {
-	cpu    int64 // in CPU units (256 = 0.25 vCPU)
-	memMin int64 // minimum memory in MB
-	memMax int64 // maximum memory in MB
-	memInc int64 // memory increment in MB
+	cpu        int64   // in CPU units (256 = 0.25 vCPU)
+	memOptions []int64 // explicit valid memory values in MB (for lower tiers)
+	memMin     int64   // only used when memOptions is nil (range-based tiers)
+	memMax     int64
+	memInc     int64
 }
 
 // fargateCombos lists all valid Fargate CPU/memory combinations.
+// Lower tiers (256, 512) use explicit options because the valid values
+// are not evenly spaced from the minimum. Higher tiers use range-based
+// increments which correctly produce valid values.
 var fargateCombos = []fargateResource{
-	{256, 512, 2048, 1024},
-	{512, 1024, 4096, 1024},
-	{1024, 2048, 8192, 1024},
-	{2048, 4096, 16384, 1024},
-	{4096, 8192, 30720, 1024},
-	{8192, 16384, 61440, 4096},
-	{16384, 32768, 122880, 8192},
+	{256, []int64{512, 1024, 2048}, 0, 0, 0},
+	{512, []int64{1024, 2048, 3072, 4096}, 0, 0, 0},
+	{1024, nil, 2048, 8192, 1024},
+	{2048, nil, 4096, 16384, 1024},
+	{4096, nil, 8192, 30720, 1024},
+	{8192, nil, 16384, 61440, 4096},
+	{16384, nil, 32768, 122880, 8192},
 }
 
 // fargateResources maps Docker HostConfig resource constraints to the smallest
 // valid Fargate CPU/memory combination that satisfies the request.
-// Replaces hardcoded 256/512.
 func fargateResources(containers []containerInput) (cpu, memory string) {
 	var totalMemMB, totalCPU int64
 	for _, ci := range containers {
@@ -227,24 +230,37 @@ func fargateResources(containers []containerInput) (cpu, memory string) {
 			totalMemMB += hc.MemoryReservation / (1024 * 1024)
 		}
 		if hc.NanoCPUs > 0 {
-			// NanoCPUs to Fargate CPU units: 1e9 NanoCPUs = 1024 CPU units
 			totalCPU += hc.NanoCPUs * 1024 / 1e9
 		} else if hc.CPUShares > 0 {
 			totalCPU += hc.CPUShares
 		}
 	}
 
-	// Find smallest valid combo
 	for _, combo := range fargateCombos {
 		if combo.cpu < totalCPU {
 			continue
 		}
+
 		if totalMemMB <= 0 {
 			// No memory specified: use minimum for this CPU tier
+			if len(combo.memOptions) > 0 {
+				return fmt.Sprintf("%d", combo.cpu), fmt.Sprintf("%d", combo.memOptions[0])
+			}
 			return fmt.Sprintf("%d", combo.cpu), fmt.Sprintf("%d", combo.memMin)
 		}
+
+		// Explicit memory options (lower tiers)
+		if len(combo.memOptions) > 0 {
+			for _, opt := range combo.memOptions {
+				if opt >= totalMemMB {
+					return fmt.Sprintf("%d", combo.cpu), fmt.Sprintf("%d", opt)
+				}
+			}
+			continue // requested memory exceeds this CPU tier's max
+		}
+
+		// Range-based (higher tiers)
 		if totalMemMB <= combo.memMax {
-			// Round up to nearest valid increment
 			mem := combo.memMin
 			for mem < totalMemMB {
 				mem += combo.memInc
@@ -256,7 +272,6 @@ func fargateResources(containers []containerInput) (cpu, memory string) {
 		}
 	}
 
-	// Default: minimum Fargate resources
 	return "256", "512"
 }
 

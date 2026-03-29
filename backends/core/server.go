@@ -218,6 +218,9 @@ func (s *BaseServer) registerRoutes() {
 
 	// Docker-compatible API routes (same mux, no /internal/v1/ prefix)
 	s.registerDockerAPIRoutes()
+
+	// Podman Libpod API routes (container/image/volume/network ops via /libpod/ prefix)
+	s.registerLibpodRoutes()
 }
 
 // InitDefaultNetwork creates the default bridge, host, and none networks.

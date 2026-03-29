@@ -208,17 +208,9 @@ func (s *Server) pollTaskExit(containerID, taskARN string, exitCh chan struct{})
 			}
 
 			task := result.Tasks[0]
+			// Apply task status on every poll (updates IP for RUNNING, exits for STOPPED)
+			s.applyTaskStatus(containerID, task)
 			if aws.ToString(task.LastStatus) == "STOPPED" {
-				exitCode := 0
-				for _, container := range task.Containers {
-					if container.ExitCode != nil {
-						exitCode = int(aws.ToInt32(container.ExitCode))
-						break
-					}
-				}
-				if c, ok := s.Store.Containers.Get(containerID); ok && c.State.Running {
-					s.Store.StopContainer(containerID, exitCode)
-				}
 				return
 			}
 		}

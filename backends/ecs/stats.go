@@ -89,15 +89,31 @@ func (p *ecsStatsProvider) ContainerMetrics(containerID string) (*core.Container
 		latest := r.Values[0]
 		switch aws.ToString(r.Id) {
 		case "cpu":
-			cpuUnits = latest // CPU units (vCPU * 1024)
+			cpuUnits = latest
 		case "mem":
-			memMB = latest // Memory in megabytes
+			memMB = latest
+		}
+	}
+
+	// Fallback to allocated resources when CloudWatch has no data
+	if cpuUnits == 0 && memMB == 0 {
+		if c.HostConfig.NanoCPUs > 0 {
+			cpuUnits = float64(c.HostConfig.NanoCPUs) / 1e9 * 1024
+		} else if c.HostConfig.CPUShares > 0 {
+			cpuUnits = float64(c.HostConfig.CPUShares)
+		} else {
+			cpuUnits = 256
+		}
+		if c.HostConfig.Memory > 0 {
+			memMB = float64(c.HostConfig.Memory) / (1024 * 1024)
+		} else {
+			memMB = 512
 		}
 	}
 
 	return &core.ContainerMetrics{
-		CPUNanos: int64(cpuUnits * 1e9 / 1024), // Convert CPU units to nanoseconds
-		MemBytes: int64(memMB * 1024 * 1024),    // Convert MB to bytes
+		CPUNanos: int64(cpuUnits * 1e9 / 1024),
+		MemBytes: int64(memMB * 1024 * 1024),
 		PIDs:     1,
 	}, nil
 }
