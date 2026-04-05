@@ -32,6 +32,13 @@ repos:
         types: [go]
         require_serial: true
 
+      - id: cloud-backend-isolation
+        name: Cloud backend isolation check
+        entry: bash scripts/check-cloud-backend-isolation.sh
+        language: system
+        types: [go]
+        pass_filenames: false
+
       - id: go-test-core
         name: Go test (core)
         entry: bash -c 'cd backends/core && go test ./... -count=1 -timeout 120s'

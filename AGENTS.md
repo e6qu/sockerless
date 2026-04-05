@@ -67,6 +67,33 @@ Bad: `// BUG-625: Podman's libpod API sends "reference" instead of "fromImage"`
 
 Bug tracking belongs in `BUGS.md`, `STATUS.md`, and task files. Code comments describe intent and behavior.
 
+## Cloud backends must be stateless
+
+Cloud backends (ECS, Lambda, Cloud Run, Cloud Run Functions, ACA, Azure Functions) maintain **zero local state** for containers, pods, networks, or volumes. The cloud provider is the single source of truth.
+
+- No `Store.Containers` writes. No `Store.ContainerNames` as authority. No `Store.WaitChs` as primary mechanism.
+- `docker ps` queries the cloud API. `docker inspect` queries the cloud API. `docker wait` polls the cloud API.
+- Container metadata lives in cloud resource tags, not in local maps.
+- The only acceptable local state is `PendingCreates` — a transient map for containers between `docker create` and `docker start`, before any cloud resource exists.
+- If you restart the backend process, `docker ps` must return all running containers from the cloud. No recovery needed. No registry file needed.
+
+No exceptions. No fallbacks. No "keep Store as backup." If making an operation stateless is hard, ask the user for help — do not silently add local state as a shortcut.
+
+## Cloud backends must not use core engine methods directly
+
+Cloud backends (all except Docker passthrough) must **never call `BaseServer` container lifecycle methods** (`BaseServer.ContainerStart`, `BaseServer.ContainerStop`, `Store.StopContainer`, `Store.ForceStopContainer`, `Store.RevertToCreated`, etc.). These methods operate on local in-memory state, which violates the stateless requirement.
+
+Instead, cloud backends must:
+- Call their cloud provider's API directly (ECS `RunTask`/`StopTask`, Lambda `Invoke`/`DeleteFunction`, etc.)
+- Let the cloud API be the action and the source of truth
+- Use `CloudStateProvider` to query current state when needed
+
+The only exception: the Docker passthrough backend, which delegates everything to the local Docker daemon via the Docker SDK.
+
+**Enforcement**: A CI lint check (`scripts/check-cloud-backend-isolation.sh`) verifies that no cloud backend imports or calls `BaseServer` container lifecycle methods. This runs as part of pre-commit and CI.
+
+**Why**: Calling core engine methods creates hidden local state, breaks the stateless invariant, causes divergence between what the backend thinks and what the cloud knows, and makes backend restart lose track of containers.
+
 ## No silent deferrals
 
 When given a task, implement it fully. Do not silently skip, defer, or stub out parts of the work. If something seems too hard, ambiguous, or out of scope, ask the user — do not decide on your own to drop it. Returning `NotImplementedError` or leaving a TODO without explicit user approval is not acceptable.

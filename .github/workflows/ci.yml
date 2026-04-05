@@ -38,6 +38,9 @@ jobs:
           run_race() { echo "=== $1 ===" && (cd "$1" && go test -v -race -timeout 2m ./...); }
           run_work() { echo "=== $1 ===" && (cd "$1" && GOWORK=off go test -v -timeout 1m ./...); }
 
+          # Architecture checks
+          bash scripts/check-cloud-backend-isolation.sh
+
           # Core + API
           run_noflags api
           run backends/core
