@@ -158,9 +158,9 @@ type ECSTaskVpcConfig struct {
 
 // State stores
 var (
-	ecsClusters        *sim.StateStore[ECSCluster]
-	ecsTaskDefinitions *sim.StateStore[ECSTaskDefinition]
-	ecsTasks           *sim.StateStore[ECSTask]
+	ecsClusters        sim.Store[ECSCluster]
+	ecsTaskDefinitions sim.Store[ECSTaskDefinition]
+	ecsTasks           sim.Store[ECSTask]
 	ecsRevisionMu      sync.Mutex
 	ecsRevisions       map[string]int // family -> latest revision
 	ecsProcessHandles  sync.Map       // map[taskID]*sim.ProcessHandle
@@ -177,9 +177,9 @@ func ecsArn(resourceType, id string) string {
 }
 
 func registerECS(r *sim.AWSRouter, srv *sim.Server) {
-	ecsClusters = sim.NewStateStore[ECSCluster]()
-	ecsTaskDefinitions = sim.NewStateStore[ECSTaskDefinition]()
-	ecsTasks = sim.NewStateStore[ECSTask]()
+	ecsClusters = sim.MakeStore[ECSCluster](srv.DB(), "ecs_clusters")
+	ecsTaskDefinitions = sim.MakeStore[ECSTaskDefinition](srv.DB(), "ecs_task_definitions")
+	ecsTasks = sim.MakeStore[ECSTask](srv.DB(), "ecs_tasks")
 	ecsRevisions = make(map[string]int)
 
 	r.Register("AmazonEC2ContainerServiceV20141113.CreateCluster", handleECSCreateCluster)

@@ -47,10 +47,10 @@ type ServiceConfig struct {
 }
 
 // Package-level store for dashboard access.
-var gcfFunctions *sim.StateStore[Function]
+var gcfFunctions sim.Store[Function]
 
 func registerCloudFunctions(srv *sim.Server) {
-	functions := sim.NewStateStore[Function]()
+	functions := sim.MakeStore[Function](srv.DB(), "gcf_functions")
 	gcfFunctions = functions
 
 	// Create function

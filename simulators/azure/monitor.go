@@ -84,7 +84,7 @@ type LogEntry struct {
 
 // monitorLogs stores rows keyed by "workspaceID:tableName".
 // Package-level so other handlers (e.g., Container Apps) can inject log entries.
-var monitorLogs = sim.NewStateStore[[]monitorLogRow]()
+var monitorLogs sim.Store[[]monitorLogRow]
 
 // appendLogRow safely appends a log row to the given store key,
 // protecting the read-modify-write cycle with logMu.
@@ -118,7 +118,8 @@ func injectAppTrace(appRoleName, message string) {
 }
 
 func registerAzureMonitor(srv *sim.Server) {
-	workspaces := sim.NewStateStore[Workspace]()
+	monitorLogs = sim.MakeStore[[]monitorLogRow](srv.DB(), "monitor_logs")
+	workspaces := sim.MakeStore[Workspace](srv.DB(), "monitor_workspaces")
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.OperationalInsights"
 

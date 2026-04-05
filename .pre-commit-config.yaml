@@ -26,10 +26,11 @@ repos:
         types: [go]
 
       - id: golangci-lint
-        name: Go lint (changed modules)
+        name: Go lint
         entry: bash scripts/lint-changed.sh
         language: system
         types: [go]
+        require_serial: true
 
       - id: go-test-core
         name: Go test (core)

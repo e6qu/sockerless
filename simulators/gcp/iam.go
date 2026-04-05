@@ -32,12 +32,12 @@ type IAMBinding struct {
 // gcpResourcePolicies is the shared IAM policy store for GCP resources
 // (artifact registry, storage buckets, etc.). It's package-level so that
 // resource-specific handlers can process :getIamPolicy / :setIamPolicy requests.
-var gcpResourcePolicies *sim.StateStore[IAMPolicy]
+var gcpResourcePolicies sim.Store[IAMPolicy]
 
 func registerIAM(srv *sim.Server) {
-	serviceAccounts := sim.NewStateStore[GCPServiceAccount]()
-	projectPolicies := sim.NewStateStore[IAMPolicy]()
-	gcpResourcePolicies = sim.NewStateStore[IAMPolicy]()
+	serviceAccounts := sim.MakeStore[GCPServiceAccount](srv.DB(), "iam_service_accounts")
+	projectPolicies := sim.MakeStore[IAMPolicy](srv.DB(), "iam_project_policies")
+	gcpResourcePolicies = sim.MakeStore[IAMPolicy](srv.DB(), "iam_resource_policies")
 	resourcePolicies := gcpResourcePolicies
 
 	// CRM GetProject (v1) — used by google_project_service to verify project exists
@@ -240,7 +240,7 @@ func registerIAM(srv *sim.Server) {
 }
 
 // handleResourceIAM processes :getIamPolicy and :setIamPolicy for a named resource.
-func handleResourceIAM(w http.ResponseWriter, r *http.Request, store *sim.StateStore[IAMPolicy], resource, action string) {
+func handleResourceIAM(w http.ResponseWriter, r *http.Request, store sim.Store[IAMPolicy], resource, action string) {
 	switch action {
 	case "getIamPolicy":
 		policy, ok := store.Get(resource)

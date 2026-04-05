@@ -51,17 +51,17 @@ type OCIUpload struct {
 }
 
 // Package-level store for dashboard access.
-var arRepos *sim.StateStore[Repository]
+var arRepos sim.Store[Repository]
 
 func registerArtifactRegistry(srv *sim.Server) {
-	repos := sim.NewStateStore[Repository]()
+	repos := sim.MakeStore[Repository](srv.DB(), "ar_repos")
 	arRepos = repos
-	dockerImages := sim.NewStateStore[DockerImage]()
+	dockerImages := sim.MakeStore[DockerImage](srv.DB(), "ar_docker_images")
 
 	// OCI Distribution stores
-	manifests := sim.NewStateStore[OCIManifest]()
-	blobs := sim.NewStateStore[OCIBlob]()
-	uploads := sim.NewStateStore[OCIUpload]()
+	manifests := sim.MakeStore[OCIManifest](srv.DB(), "ar_manifests")
+	blobs := sim.MakeStore[OCIBlob](srv.DB(), "ar_blobs")
+	uploads := sim.MakeStore[OCIUpload](srv.DB(), "ar_uploads")
 
 	// Create repository
 	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/repositories", func(w http.ResponseWriter, r *http.Request) {
@@ -227,7 +227,7 @@ func registerArtifactRegistry(srv *sim.Server) {
 // buildOCIHandler returns an http.Handler that routes OCI Distribution API requests.
 // It manually parses the path to extract the image name (which can span multiple segments)
 // and the operation type (manifests, blobs, uploads).
-func buildOCIHandler(manifests *sim.StateStore[OCIManifest], blobs *sim.StateStore[OCIBlob], uploads *sim.StateStore[OCIUpload], dockerImages *sim.StateStore[DockerImage]) http.Handler {
+func buildOCIHandler(manifests sim.Store[OCIManifest], blobs sim.Store[OCIBlob], uploads sim.Store[OCIUpload], dockerImages sim.Store[DockerImage]) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 
@@ -281,7 +281,7 @@ func buildOCIHandler(manifests *sim.StateStore[OCIManifest], blobs *sim.StateSto
 	})
 }
 
-func handleOCIManifest(w http.ResponseWriter, r *http.Request, manifests *sim.StateStore[OCIManifest], dockerImages *sim.StateStore[DockerImage], imageName, reference string) {
+func handleOCIManifest(w http.ResponseWriter, r *http.Request, manifests sim.Store[OCIManifest], dockerImages sim.Store[DockerImage], imageName, reference string) {
 	key := imageName + "/manifests/" + reference
 
 	switch r.Method {
@@ -330,7 +330,7 @@ func handleOCIManifest(w http.ResponseWriter, r *http.Request, manifests *sim.St
 	}
 }
 
-func handleOCIBlob(w http.ResponseWriter, r *http.Request, blobs *sim.StateStore[OCIBlob], imageName, digest string) {
+func handleOCIBlob(w http.ResponseWriter, r *http.Request, blobs sim.Store[OCIBlob], imageName, digest string) {
 	key := imageName + "/blobs/" + digest
 
 	switch r.Method {
@@ -367,7 +367,7 @@ func handleOCIBlob(w http.ResponseWriter, r *http.Request, blobs *sim.StateStore
 	}
 }
 
-func handleOCIBlobUpload(w http.ResponseWriter, r *http.Request, blobs *sim.StateStore[OCIBlob], uploads *sim.StateStore[OCIUpload], imageName, uploadPart string) {
+func handleOCIBlobUpload(w http.ResponseWriter, r *http.Request, blobs sim.Store[OCIBlob], uploads sim.Store[OCIUpload], imageName, uploadPart string) {
 	switch r.Method {
 	case http.MethodPost:
 		// Initiate blob upload: POST /v2/{name}/blobs/uploads/
@@ -424,7 +424,7 @@ func handleOCIBlobUpload(w http.ResponseWriter, r *http.Request, blobs *sim.Stat
 
 // registerDockerImageFromManifest registers a docker image in the Artifact Registry
 // docker images store when a manifest is pushed.
-func registerDockerImageFromManifest(dockerImages *sim.StateStore[DockerImage], imageName, reference, contentType string, data []byte) {
+func registerDockerImageFromManifest(dockerImages sim.Store[DockerImage], imageName, reference, contentType string, data []byte) {
 	// Try to parse the manifest to extract media type
 	var manifest struct {
 		MediaType string `json:"mediaType"`

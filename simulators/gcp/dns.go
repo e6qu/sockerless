@@ -31,8 +31,8 @@ type ResourceRecordSet struct {
 }
 
 func registerCloudDNS(srv *sim.Server) {
-	zones := sim.NewStateStore[ManagedZone]()
-	recordSets := sim.NewStateStore[ResourceRecordSet]()
+	zones := sim.MakeStore[ManagedZone](srv.DB(), "dns_zones")
+	recordSets := sim.MakeStore[ResourceRecordSet](srv.DB(), "dns_record_sets")
 
 	// Create managed zone
 	srv.HandleFunc("POST /dns/v1/projects/{project}/managedZones", func(w http.ResponseWriter, r *http.Request) {

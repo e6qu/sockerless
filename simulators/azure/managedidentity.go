@@ -24,7 +24,7 @@ type IdentityProperties struct {
 }
 
 func registerManagedIdentity(srv *sim.Server) {
-	identities := sim.NewStateStore[UserAssignedIdentity]()
+	identities := sim.MakeStore[UserAssignedIdentity](srv.DB(), "managed_identities")
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.ManagedIdentity"
 

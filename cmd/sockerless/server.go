@@ -46,7 +46,7 @@ func serverStart(args []string) {
 	fs := flag.NewFlagSet("server start", flag.ExitOnError)
 	backendBin := fs.String("backend-bin", "", "path to backend binary (default: sockerless-backend-{type})")
 	addr := fs.String("addr", ":2375", "listen address (Docker API + management)")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	name := activeContextName()
 	if name == "" {

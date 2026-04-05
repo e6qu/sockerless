@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Lint only Go modules that contain changed files.
-# Called by pre-commit with changed file paths as arguments.
+# Lint Go modules that contain changed files.
 
 set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
 
+# Collect unique module directories
 modules=()
 for f in "$@"; do
   dir=$(dirname "$f")
@@ -18,7 +19,17 @@ done
 # Deduplicate
 sorted=$(printf '%s\n' "${modules[@]}" | sort -u)
 
+failed=0
 for mod in $sorted; do
+  # Skip modules needing UI build artifacts
+  if grep -qr 'all:dist' "$mod"/*.go 2>/dev/null && [ ! -d "$mod/dist" ]; then
+    echo "lint: $mod (skipped — dist/ not built)"
+    continue
+  fi
   echo "lint: $mod"
-  (cd "$mod" && golangci-lint run --timeout 2m ./...) || exit 1
+  if ! (cd "$mod" && GOWORK=off golangci-lint run --timeout 2m ./...); then
+    failed=1
+  fi
 done
+
+exit $failed

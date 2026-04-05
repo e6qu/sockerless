@@ -65,16 +65,16 @@ type FileShareProperties struct {
 }
 
 // Package-level store for dashboard access.
-var azStorageAccounts *sim.StateStore[StorageAccount]
+var azStorageAccounts sim.Store[StorageAccount]
 
 func registerAzureFiles(srv *sim.Server) {
-	storageAccounts := sim.NewStateStore[StorageAccount]()
+	storageAccounts := sim.MakeStore[StorageAccount](srv.DB(), "storage_accounts")
 	azStorageAccounts = storageAccounts
-	fileShares := sim.NewStateStore[FileShare]()
-	fileData := sim.NewStateStore[[]byte]()
+	fileShares := sim.MakeStore[FileShare](srv.DB(), "file_shares")
+	fileData := sim.MakeStore[[]byte](srv.DB(), "file_data")
 	// dataPlaneShares tracks shares created via either ARM or data-plane APIs
 	// so that the data-plane middleware can return 404 for non-existent shares.
-	dataPlaneShares := sim.NewStateStore[bool]()
+	dataPlaneShares := sim.MakeStore[bool](srv.DB(), "file_data_plane_shares")
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Storage"
 
@@ -412,7 +412,7 @@ func registerAzureFiles(srv *sim.Server) {
 // handleStorageDataPlane returns mock XML responses for Azure Storage data plane
 // requests. The azurerm provider reads service properties after creating storage
 // accounts (static website for blob, share retention for file, CORS for queue).
-func handleStorageDataPlane(w http.ResponseWriter, r *http.Request, serviceType, accountName string, shares *sim.StateStore[bool]) {
+func handleStorageDataPlane(w http.ResponseWriter, r *http.Request, serviceType, accountName string, shares sim.Store[bool]) {
 	restype := r.URL.Query().Get("restype")
 	comp := r.URL.Query().Get("comp")
 

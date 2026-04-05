@@ -133,12 +133,6 @@ func armURL(provider, resourcePath, apiVersion string) string {
 		baseURL, subscriptionID, resourceGroup, provider, resourcePath, apiVersion)
 }
 
-// subURL constructs a subscription-scoped URL
-func subURL(provider, resourcePath, apiVersion string) string {
-	return fmt.Sprintf("%s/subscriptions/%s/providers/%s/%s?api-version=%s",
-		baseURL, subscriptionID, provider, resourcePath, apiVersion)
-}
-
 func runCLI(t *testing.T, cmd *exec.Cmd) string {
 	t.Helper()
 	out, err := cmd.CombinedOutput()

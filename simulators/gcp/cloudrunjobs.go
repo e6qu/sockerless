@@ -179,11 +179,11 @@ func newLRO(project, location string, resource any, typeName string) Operation {
 var crjProcessHandles sync.Map // map[execName]*sim.ProcessHandle
 
 // Package-level stores for dashboard access.
-var crjJobs *sim.StateStore[Job]
+var crjJobs sim.Store[Job]
 
 func registerCloudRunJobs(srv *sim.Server) {
-	jobs := sim.NewStateStore[Job]()
-	executions := sim.NewStateStore[Execution]()
+	jobs := sim.MakeStore[Job](srv.DB(), "crj_jobs")
+	executions := sim.MakeStore[Execution](srv.DB(), "crj_executions")
 	crjJobs = jobs
 
 	// Create job

@@ -24,6 +24,14 @@ type Config struct {
 
 	// Provider identifies the cloud provider (aws, gcp, azure).
 	Provider string
+
+	// DataDir is the directory for persistent storage (SQLite database, PID files).
+	// Set via SIM_DATA_DIR. Empty uses a temp directory.
+	DataDir string
+
+	// Persist enables SQLite-backed state persistence.
+	// Set via SIM_PERSIST=true. Default false (in-memory only).
+	Persist bool
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -39,6 +47,8 @@ func ConfigFromEnv(provider string) Config {
 		TLSKey:     os.Getenv("SIM_TLS_KEY"),
 		LogLevel:   envOrDefault("SIM_LOG_LEVEL", "info"),
 		Provider:   provider,
+		DataDir:    os.Getenv("SIM_DATA_DIR"),
+		Persist:    os.Getenv("SIM_PERSIST") == "true" || os.Getenv("SIM_PERSIST") == "1",
 	}
 }
 

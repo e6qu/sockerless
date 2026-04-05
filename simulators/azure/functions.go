@@ -75,12 +75,12 @@ type FunctionEnvelopeProperties struct {
 }
 
 // Package-level store for dashboard access.
-var azfSites *sim.StateStore[Site]
+var azfSites sim.Store[Site]
 
 func registerAzureFunctions(srv *sim.Server) {
-	sites := sim.NewStateStore[Site]()
+	sites := sim.MakeStore[Site](srv.DB(), "azf_sites")
 	azfSites = sites
-	functionConfigs := sim.NewStateStore[FunctionEnvelope]()
+	functionConfigs := sim.MakeStore[FunctionEnvelope](srv.DB(), "azf_function_configs")
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Web"
 

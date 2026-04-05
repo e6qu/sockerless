@@ -69,7 +69,7 @@ func simulatorAdd(args []string) {
 	port := fs.Int("port", 0, "listen port (0 = auto)")
 	grpcPort := fs.Int("grpc-port", 0, "gRPC port (GCP only)")
 	logLevel := fs.String("log-level", "", "log level")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	if fs.NArg() < 1 {
 		fmt.Fprintln(os.Stderr, "Usage: sockerless simulator add <name> --cloud <type> [--port PORT] [--grpc-port PORT] [--log-level LEVEL]")

@@ -41,9 +41,9 @@ type CWLogEvent struct {
 
 // State stores
 var (
-	cwLogGroups  *sim.StateStore[CWLogGroup]
-	cwLogStreams *sim.StateStore[CWLogStream]
-	cwLogEvents  *sim.StateStore[[]CWLogEvent]
+	cwLogGroups  sim.Store[CWLogGroup]
+	cwLogStreams sim.Store[CWLogStream]
+	cwLogEvents  sim.Store[[]CWLogEvent]
 	cwSeqMu      sync.Mutex
 	cwSeqCounter int64
 )
@@ -61,9 +61,9 @@ func cwEventsKey(group, stream string) string {
 }
 
 func registerCloudWatchLogs(r *sim.AWSRouter, srv *sim.Server) {
-	cwLogGroups = sim.NewStateStore[CWLogGroup]()
-	cwLogStreams = sim.NewStateStore[CWLogStream]()
-	cwLogEvents = sim.NewStateStore[[]CWLogEvent]()
+	cwLogGroups = sim.MakeStore[CWLogGroup](srv.DB(), "cw_log_groups")
+	cwLogStreams = sim.MakeStore[CWLogStream](srv.DB(), "cw_log_streams")
+	cwLogEvents = sim.MakeStore[[]CWLogEvent](srv.DB(), "cw_log_events")
 	cwSeqCounter = 1
 
 	r.Register("Logs_20140328.CreateLogGroup", handleCWCreateLogGroup)

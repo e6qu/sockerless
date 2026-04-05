@@ -62,7 +62,7 @@ type VnetConfiguration struct {
 }
 
 func registerContainerAppEnvironment(srv *sim.Server) {
-	environments := sim.NewStateStore[ContainerAppEnvironment]()
+	environments := sim.MakeStore[ContainerAppEnvironment](srv.DB(), "aca_environments")
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.App"
 

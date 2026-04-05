@@ -104,9 +104,9 @@ type SecurityRuleProperties struct {
 }
 
 func registerNetwork(srv *sim.Server) {
-	vnets := sim.NewStateStore[VirtualNetwork]()
-	subnets := sim.NewStateStore[Subnet]()
-	nsgs := sim.NewStateStore[NetworkSecurityGroup]()
+	vnets := sim.MakeStore[VirtualNetwork](srv.DB(), "network_vnets")
+	subnets := sim.MakeStore[Subnet](srv.DB(), "network_subnets")
+	nsgs := sim.MakeStore[NetworkSecurityGroup](srv.DB(), "network_nsgs")
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network"
 

@@ -43,7 +43,11 @@ type ProcessResult struct {
 type ProcessHandle struct {
 	cancel context.CancelFunc
 	done   <-chan ProcessResult
+	pid    int // OS process ID (0 if failed to start)
 }
+
+// Pid returns the OS process ID.
+func (h *ProcessHandle) Pid() int { return h.pid }
 
 // Wait blocks until the process completes.
 func (h *ProcessHandle) Wait() ProcessResult { return <-h.done }
@@ -60,6 +64,25 @@ func (NoopSink) WriteLog(LogLine) {}
 type FuncSink func(LogLine)
 
 func (f FuncSink) WriteLog(line LogLine) { f(line) }
+
+// StartTrackedProcess launches a process and tracks its PID for recovery.
+// The tracker may be nil (no persistence), in which case this is equivalent to StartProcess.
+func StartTrackedProcess(id string, cfg ProcessConfig, sink LogSink, tracker *ProcessTracker) *ProcessHandle {
+	h := StartProcess(cfg, sink)
+	if tracker != nil && h.pid > 0 {
+		tracker.Track(id, h.pid)
+		// Untrack when process completes
+		origDone := h.done
+		wrappedDone := make(chan ProcessResult, 1)
+		go func() {
+			result := <-origDone
+			tracker.Untrack(id)
+			wrappedDone <- result
+		}()
+		h.done = wrappedDone
+	}
+	return h
+}
 
 // StartProcess launches a command and streams output to the sink.
 // Returns a handle for waiting/cancellation. Non-blocking.
@@ -144,5 +167,5 @@ func StartProcess(cfg ProcessConfig, sink LogSink) *ProcessHandle {
 		}
 	}()
 
-	return &ProcessHandle{cancel: cancel, done: resultCh}
+	return &ProcessHandle{cancel: cancel, done: resultCh, pid: cmd.Process.Pid}
 }
