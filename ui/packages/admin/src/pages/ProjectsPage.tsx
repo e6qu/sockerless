@@ -29,7 +29,12 @@ function statusLabel(status: string): string {
 export function ProjectsPage() {
   const queryClient = useQueryClient();
 
-  const { data: projects, isLoading, isError, error } = useQuery({
+  const {
+    data: projects,
+    isLoading,
+    isError,
+    error,
+  } = useQuery({
     queryKey: ["projects"],
     queryFn: () => api.projects(),
     refetchInterval: 3000,
@@ -46,7 +51,12 @@ export function ProjectsPage() {
   });
 
   if (isLoading) return <Spinner />;
-  if (isError) return <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">Error: {error?.message ?? "Failed to load"}</div>;
+  if (isError)
+    return (
+      <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">
+        Error: {error?.message ?? "Failed to load"}
+      </div>
+    );
   if (!projects) return <Spinner />;
 
   return (
@@ -62,14 +72,18 @@ export function ProjectsPage() {
       </div>
 
       {[start.error, stop.error].filter(Boolean).map((e, i) => (
-        <div key={i} className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">
+        <div
+          key={i}
+          className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400"
+        >
           {(e as Error)?.message}
         </div>
       ))}
 
       {projects.length === 0 ? (
         <p className="text-sm text-gray-500 dark:text-gray-400">
-          No projects configured. Create a project to get started with a simulator + backend + frontend environment.
+          No projects configured. Create a project to get started with a
+          simulator + backend + frontend environment.
         </p>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -90,15 +104,21 @@ export function ProjectsPage() {
 
               <div className="mb-3 space-y-1 text-sm text-gray-500 dark:text-gray-400">
                 <div>
-                  <span className="font-medium text-gray-700 dark:text-gray-300">Cloud:</span>{" "}
+                  <span className="font-medium text-gray-700 dark:text-gray-300">
+                    Cloud:
+                  </span>{" "}
                   {cloudLabels[proj.cloud] || proj.cloud}
                 </div>
                 <div>
-                  <span className="font-medium text-gray-700 dark:text-gray-300">Backend:</span>{" "}
+                  <span className="font-medium text-gray-700 dark:text-gray-300">
+                    Backend:
+                  </span>{" "}
                   {proj.backend}
                 </div>
                 <div>
-                  <span className="font-medium text-gray-700 dark:text-gray-300">Ports:</span>{" "}
+                  <span className="font-medium text-gray-700 dark:text-gray-300">
+                    Ports:
+                  </span>{" "}
                   {proj.frontend_port} / {proj.backend_port} / {proj.sim_port}
                 </div>
               </div>
@@ -106,7 +126,10 @@ export function ProjectsPage() {
               <div className="flex gap-2">
                 {proj.status === "running" || proj.status === "partial" ? (
                   <button
-                    onClick={(e) => { e.preventDefault(); stop.mutate(proj.name); }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      stop.mutate(proj.name);
+                    }}
                     disabled={stop.isPending && stop.variables === proj.name}
                     className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
                   >
@@ -114,8 +137,15 @@ export function ProjectsPage() {
                   </button>
                 ) : (
                   <button
-                    onClick={(e) => { e.preventDefault(); start.mutate(proj.name); }}
-                    disabled={(start.isPending && start.variables === proj.name) || proj.status === "starting" || proj.status === "stopping"}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      start.mutate(proj.name);
+                    }}
+                    disabled={
+                      (start.isPending && start.variables === proj.name) ||
+                      proj.status === "starting" ||
+                      proj.status === "stopping"
+                    }
                     className="rounded-md bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
                   >
                     Start

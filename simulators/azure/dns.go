@@ -10,24 +10,24 @@ import (
 
 // PrivateDnsZone represents an Azure Private DNS Zone.
 type PrivateDnsZone struct {
-	ID         string                `json:"id"`
-	Name       string                `json:"name"`
-	Type       string                `json:"type"`
-	Location   string                `json:"location"`
-	Etag       string                `json:"etag,omitempty"`
-	Tags       map[string]string     `json:"tags,omitempty"`
-	Properties DnsZoneProperties     `json:"properties"`
+	ID         string            `json:"id"`
+	Name       string            `json:"name"`
+	Type       string            `json:"type"`
+	Location   string            `json:"location"`
+	Etag       string            `json:"etag,omitempty"`
+	Tags       map[string]string `json:"tags,omitempty"`
+	Properties DnsZoneProperties `json:"properties"`
 }
 
 // DnsZoneProperties holds the properties of a Private DNS Zone.
 type DnsZoneProperties struct {
-	MaxNumberOfRecordSets                     int    `json:"maxNumberOfRecordSets"`
-	NumberOfRecordSets                        int    `json:"numberOfRecordSets"`
-	MaxNumberOfVirtualNetworkLinks            int    `json:"maxNumberOfVirtualNetworkLinks"`
-	NumberOfVirtualNetworkLinks               int    `json:"numberOfVirtualNetworkLinks"`
-	MaxNumberOfVirtualNetworkLinksWithReg      int    `json:"maxNumberOfVirtualNetworkLinksWithRegistration"`
-	NumberOfVirtualNetworkLinksWithReg         int    `json:"numberOfVirtualNetworkLinksWithRegistration"`
-	ProvisioningState                         string `json:"provisioningState"`
+	MaxNumberOfRecordSets                 int    `json:"maxNumberOfRecordSets"`
+	NumberOfRecordSets                    int    `json:"numberOfRecordSets"`
+	MaxNumberOfVirtualNetworkLinks        int    `json:"maxNumberOfVirtualNetworkLinks"`
+	NumberOfVirtualNetworkLinks           int    `json:"numberOfVirtualNetworkLinks"`
+	MaxNumberOfVirtualNetworkLinksWithReg int    `json:"maxNumberOfVirtualNetworkLinksWithRegistration"`
+	NumberOfVirtualNetworkLinksWithReg    int    `json:"numberOfVirtualNetworkLinksWithRegistration"`
+	ProvisioningState                     string `json:"provisioningState"`
 }
 
 // RecordSet represents a DNS record set.
@@ -41,11 +41,11 @@ type RecordSet struct {
 
 // RecordSetProperties holds the properties of a DNS record set.
 type RecordSetProperties struct {
-	TTL             int        `json:"ttl,omitempty"`
-	Fqdn            string     `json:"fqdn,omitempty"`
-	IsAutoRegistered bool      `json:"isAutoRegistered"`
-	ARecords        []ARecord  `json:"aRecords,omitempty"`
-	Metadata        map[string]string `json:"metadata,omitempty"`
+	TTL              int               `json:"ttl,omitempty"`
+	Fqdn             string            `json:"fqdn,omitempty"`
+	IsAutoRegistered bool              `json:"isAutoRegistered"`
+	ARecords         []ARecord         `json:"aRecords,omitempty"`
+	Metadata         map[string]string `json:"metadata,omitempty"`
 }
 
 // ARecord represents an A record.
@@ -110,13 +110,13 @@ func registerPrivateDNS(srv *sim.Server) {
 			Etag:     generateUUID(),
 			Tags:     req.Tags,
 			Properties: DnsZoneProperties{
-				MaxNumberOfRecordSets:                25000,
-				NumberOfRecordSets:                   0,
+				MaxNumberOfRecordSets:                 25000,
+				NumberOfRecordSets:                    0,
 				MaxNumberOfVirtualNetworkLinks:        1000,
 				NumberOfVirtualNetworkLinks:           0,
 				MaxNumberOfVirtualNetworkLinksWithReg: 100,
 				NumberOfVirtualNetworkLinksWithReg:    0,
-				ProvisioningState:                    "Succeeded",
+				ProvisioningState:                     "Succeeded",
 			},
 		}
 
@@ -360,10 +360,10 @@ func registerPrivateDNS(srv *sim.Server) {
 			Location: "global",
 			Tags:     req.Tags,
 			Properties: VNetLinkProperties{
-				VirtualNetwork:        req.Properties.VirtualNetwork,
-				RegistrationEnabled:   req.Properties.RegistrationEnabled,
+				VirtualNetwork:          req.Properties.VirtualNetwork,
+				RegistrationEnabled:     req.Properties.RegistrationEnabled,
 				VirtualNetworkLinkState: "Completed",
-				ProvisioningState:     "Succeeded",
+				ProvisioningState:       "Succeeded",
 			},
 		}
 		vnetLinks.Put(resourceID, link)

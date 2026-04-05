@@ -19,25 +19,25 @@ var lambdaProcessHandles sync.Map // map[requestID]*sim.ProcessHandle
 // Lambda types
 
 type LambdaFunction struct {
-	FunctionName string                 `json:"FunctionName"`
-	FunctionArn  string                 `json:"FunctionArn"`
-	Runtime      string                 `json:"Runtime,omitempty"`
-	Role         string                 `json:"Role"`
-	Handler      string                 `json:"Handler,omitempty"`
-	Code         *LambdaFunctionCode    `json:"Code,omitempty"`
-	CodeSize     int64                  `json:"CodeSize"`
-	Description  string                 `json:"Description,omitempty"`
-	MemorySize   int                    `json:"MemorySize"`
-	Timeout      int                    `json:"Timeout"`
-	Environment  *LambdaEnvironment     `json:"Environment,omitempty"`
-	Tags         map[string]string      `json:"Tags,omitempty"`
-	State        string                 `json:"State"`
-	LastModified string                 `json:"LastModified"`
-	RevisionId   string                 `json:"RevisionId"`
-	Version      string                 `json:"Version"`
-	PackageType  string                 `json:"PackageType,omitempty"`
-	Architectures []string              `json:"Architectures,omitempty"`
-	ImageConfig  *LambdaImageConfig     `json:"ImageConfig,omitempty"`
+	FunctionName  string              `json:"FunctionName"`
+	FunctionArn   string              `json:"FunctionArn"`
+	Runtime       string              `json:"Runtime,omitempty"`
+	Role          string              `json:"Role"`
+	Handler       string              `json:"Handler,omitempty"`
+	Code          *LambdaFunctionCode `json:"Code,omitempty"`
+	CodeSize      int64               `json:"CodeSize"`
+	Description   string              `json:"Description,omitempty"`
+	MemorySize    int                 `json:"MemorySize"`
+	Timeout       int                 `json:"Timeout"`
+	Environment   *LambdaEnvironment  `json:"Environment,omitempty"`
+	Tags          map[string]string   `json:"Tags,omitempty"`
+	State         string              `json:"State"`
+	LastModified  string              `json:"LastModified"`
+	RevisionId    string              `json:"RevisionId"`
+	Version       string              `json:"Version"`
+	PackageType   string              `json:"PackageType,omitempty"`
+	Architectures []string            `json:"Architectures,omitempty"`
+	ImageConfig   *LambdaImageConfig  `json:"ImageConfig,omitempty"`
 }
 
 type LambdaFunctionCode struct {

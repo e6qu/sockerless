@@ -21,7 +21,7 @@ type LogEntry struct {
 	Resource    *MonitoredResource `json:"resource,omitempty"`
 	Timestamp   string             `json:"timestamp,omitempty"`
 	Severity    string             `json:"severity,omitempty"`
-	TextPayload string            `json:"textPayload,omitempty"`
+	TextPayload string             `json:"textPayload,omitempty"`
 	JsonPayload map[string]any     `json:"jsonPayload,omitempty"`
 	InsertID    string             `json:"insertId,omitempty"`
 	Labels      map[string]string  `json:"labels,omitempty"`

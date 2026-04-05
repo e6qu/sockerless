@@ -9,12 +9,12 @@ import (
 
 // AppInsightsComponent represents an Azure Application Insights component.
 type AppInsightsComponent struct {
-	ID         string                       `json:"id"`
-	Name       string                       `json:"name"`
-	Type       string                       `json:"type"`
-	Location   string                       `json:"location"`
-	Kind       string                       `json:"kind,omitempty"`
-	Tags       map[string]string            `json:"tags,omitempty"`
+	ID         string                         `json:"id"`
+	Name       string                         `json:"name"`
+	Type       string                         `json:"type"`
+	Location   string                         `json:"location"`
+	Kind       string                         `json:"kind,omitempty"`
+	Tags       map[string]string              `json:"tags,omitempty"`
 	Properties AppInsightsComponentProperties `json:"properties"`
 }
 
@@ -120,12 +120,12 @@ func registerApplicationInsights(srv *sim.Server) {
 	// GET/PUT - Billing features (azurerm provider reads then updates after creating a component)
 	billingResponse := map[string]any{
 		"DataVolumeCap": map[string]any{
-			"Cap":                            100,
-			"ResetTime":                      0,
-			"StopSendNotificationWhenHitCap": false,
+			"Cap":                                  100,
+			"ResetTime":                            0,
+			"StopSendNotificationWhenHitCap":       false,
 			"StopSendNotificationWhenHitThreshold": false,
-			"WarningThreshold":               90,
-			"MaxHistoryCap":                  500,
+			"WarningThreshold":                     90,
+			"MaxHistoryCap":                        500,
 		},
 		"CurrentBillingFeatures": []string{"Basic"},
 	}

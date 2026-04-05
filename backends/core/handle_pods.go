@@ -134,10 +134,23 @@ func (s *BaseServer) handlePodKill(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *BaseServer) handlePodRemove(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
 	force := r.URL.Query().Get("force") == "true" || r.URL.Query().Get("force") == "1"
-	if err := s.self.PodRemove(r.PathValue("name"), force); err != nil {
+
+	// Resolve pod ID before removal for the response
+	pod, _ := s.self.PodInspect(name)
+	if err := s.self.PodRemove(name, force); err != nil {
 		WriteError(w, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	// Podman expects PodRmReport JSON, not 204 No Content
+	podID := name
+	if pod != nil {
+		podID = pod.ID
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"Id":          podID,
+		"Err":         nil,
+		"RemovedCtrs": map[string]any{},
+	})
 }

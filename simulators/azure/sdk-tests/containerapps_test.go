@@ -34,7 +34,7 @@ func TestContainerApps_CreateJob(t *testing.T) {
 		"location": "eastus",
 		"properties": map[string]any{
 			"configuration": map[string]any{
-				"triggerType":  "Manual",
+				"triggerType":    "Manual",
 				"replicaTimeout": 1,
 			},
 			"template": map[string]any{

@@ -117,7 +117,7 @@ func TestLambda_InvokeFunction(t *testing.T) {
 	))
 
 	var invokeResult struct {
-		StatusCode     int    `json:"StatusCode"`
+		StatusCode      int    `json:"StatusCode"`
 		ExecutedVersion string `json:"ExecutedVersion"`
 	}
 	parseJSON(t, out, &invokeResult)

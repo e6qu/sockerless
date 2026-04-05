@@ -16,7 +16,7 @@ import (
 
 var (
 	dockerClient   *client.Client
-	serverAddr   string
+	serverAddr     string
 	evalBinaryPath string
 	ctx            = context.Background()
 )

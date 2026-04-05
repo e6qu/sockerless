@@ -22,7 +22,7 @@ func (s *BaseServer) handleContainerInspect(w http.ResponseWriter, r *http.Reque
 		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
 		return
 	}
-	// BUG-467: Populate size fields when size=true or size=1
+	// Populate size fields when size=true or size=1
 	includeSize := r.URL.Query().Get("size") == "1" || r.URL.Query().Get("size") == "true"
 	if includeSize {
 		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
@@ -39,7 +39,7 @@ func (s *BaseServer) handleContainerInspect(w http.ResponseWriter, r *http.Reque
 
 func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request) {
 	all := r.URL.Query().Get("all") == "1" || r.URL.Query().Get("all") == "true"
-	// BUG-394: Read size query parameter
+	// Read size query parameter
 	includeSize := r.URL.Query().Get("size") == "1" || r.URL.Query().Get("size") == "true"
 	filters := ParseFilters(r.URL.Query().Get("filters"))
 	limit := 0
@@ -94,17 +94,17 @@ func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request)
 			HostConfig: &api.HostConfigSummary{
 				NetworkMode: c.HostConfig.NetworkMode,
 			},
-			Mounts:  mounts,
+			Mounts: mounts,
 			NetworkSettings: &api.SummaryNetworkSettings{
 				Networks: c.NetworkSettings.Networks,
 			},
 		}
-		// BUG-394: Populate size fields when requested
+		// Populate size fields when requested
 		if includeSize {
 			if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
 				summary.SizeRootFs = img.Size
 			}
-			// BUG-452: Populate SizeRw from container root dir
+			// Populate SizeRw from container root dir
 			if rootPath, err := s.Drivers.Filesystem.RootPath(c.ID); err == nil && rootPath != "" {
 				summary.SizeRw = DirSize(rootPath)
 			}
@@ -163,7 +163,7 @@ func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request)
 func (s *BaseServer) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
 
-	// BUG-422: Parse stdout/stderr params
+	// Parse stdout/stderr params
 	stdoutParam := r.URL.Query().Get("stdout")
 	stderrParam := r.URL.Query().Get("stderr")
 	wantStdout := stdoutParam != "0" && stdoutParam != "false" &&
@@ -190,7 +190,7 @@ func (s *BaseServer) handleContainerLogs(w http.ResponseWriter, r *http.Request)
 	c, _ := s.Store.ResolveContainer(ref)
 	tty := c.Config.Tty
 
-	// BUG-390: Read details query parameter and prepend labels
+	// Read details query parameter and prepend labels
 	details := r.URL.Query().Get("details") == "1" || r.URL.Query().Get("details") == "true"
 	var detailPrefix string
 	if details && len(c.Config.Labels) > 0 {

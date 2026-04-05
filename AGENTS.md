@@ -26,7 +26,7 @@ Any fake, synthetic, hardcoded, or placeholder behavior in backends is a **bug**
 - Synthetic events stream (empty) — bug. Emit real events from actual state transitions.
 - Synthetic disk usage numbers — bug. Calculate from real image/container/volume data.
 - In-memory-only volumes when EFS is configured — bug. Wire up EFS.
-- In-memory-only networks when VPC is available — bug. Create real security groups (done for ECS in BUG-584).
+- In-memory-only networks when VPC is available — bug. Create real security groups.
 - Hardcoded CPU/memory (256/512) instead of honoring container resource requests — bug.
 - Placeholder progress bars during image pull — bug. Report real progress or omit.
 
@@ -57,6 +57,15 @@ git pull origin main
 ```
 
 This is an acceptance criterion for every task — a PR is not ready until the branch is rebased on `origin/main` and local `main` is in sync.
+
+## No bug IDs in code comments
+
+Do not reference bug IDs (e.g., `BUG-123`) in source code comments. Once a bug is fixed, the fix speaks for itself — the comment should describe *what* the code does, not *which bug prompted it*. If a bug is still open and the code is a workaround or partial fix, that belongs in `BUGS.md`, not in a code comment.
+
+Good: `// Podman's libpod API sends "reference" instead of "fromImage"`
+Bad: `// BUG-625: Podman's libpod API sends "reference" instead of "fromImage"`
+
+Bug tracking belongs in `BUGS.md`, `STATUS.md`, and task files. Code comments describe intent and behavior.
 
 ## No silent deferrals
 

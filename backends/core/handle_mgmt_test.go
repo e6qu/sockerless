@@ -238,7 +238,7 @@ func TestHandleMgmtProviderPopulated(t *testing.T) {
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:4566",
 		Resources: map[string]string{
-			"cluster":  "test-cluster",
+			"cluster":   "test-cluster",
 			"log_group": "/sockerless/ecs",
 		},
 	}

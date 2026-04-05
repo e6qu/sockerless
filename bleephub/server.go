@@ -17,15 +17,15 @@ import (
 // Server is the bleephub HTTP server implementing the GitHub Actions
 // runner service API (GHES-style endpoints).
 type Server struct {
-	addr                 string
-	mux                  *http.ServeMux
-	logger               zerolog.Logger
-	store                *Store
-	graphqlSchema        graphql.Schema
-	actionCache          *ActionCache
-	artifactStore        *ArtifactStore
-	metrics              *Metrics
-	lastSessionIdx       int // round-robin index for session distribution
+	addr                   string
+	mux                    *http.ServeMux
+	logger                 zerolog.Logger
+	store                  *Store
+	graphqlSchema          graphql.Schema
+	actionCache            *ActionCache
+	artifactStore          *ArtifactStore
+	metrics                *Metrics
+	lastSessionIdx         int // round-robin index for session distribution
 	maxConcurrentWorkflows int
 }
 
@@ -163,10 +163,10 @@ func (s *Server) handleInternalStatus(w http.ResponseWriter, r *http.Request) {
 	s.store.mu.RUnlock()
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"active_workflows":   activeWfs,
-		"jobs_by_status":     jobsByStatus,
-		"connected_runners":  sessions,
-		"uptime_seconds":     int(time.Since(s.metrics.StartedAt).Seconds()),
+		"active_workflows":  activeWfs,
+		"jobs_by_status":    jobsByStatus,
+		"connected_runners": sessions,
+		"uptime_seconds":    int(time.Since(s.metrics.StartedAt).Seconds()),
 	})
 }
 

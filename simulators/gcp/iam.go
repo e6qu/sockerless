@@ -44,10 +44,10 @@ func registerIAM(srv *sim.Server) {
 	srv.HandleFunc("GET /v1/projects/{project}", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"projectNumber": "123456789012",
-			"projectId":     project,
+			"projectNumber":  "123456789012",
+			"projectId":      project,
 			"lifecycleState": "ACTIVE",
-			"name":          project,
+			"name":           project,
 		})
 	})
 
@@ -208,7 +208,7 @@ func registerIAM(srv *sim.Server) {
 	srv.HandleFunc("GET /storage/v1/b/{bucket}/iam", func(w http.ResponseWriter, r *http.Request) {
 		bucket := sim.PathParam(r, "bucket")
 
-		policy, ok := resourcePolicies.Get("bucket/"+bucket)
+		policy, ok := resourcePolicies.Get("bucket/" + bucket)
 		if !ok {
 			policy = IAMPolicy{
 				Bindings: []IAMBinding{},

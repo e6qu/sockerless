@@ -33,8 +33,26 @@ function renderPage() {
 }
 
 const processData = [
-  { name: "sim-aws", binary: "simulator-aws", status: "running", pid: 1234, addr: ":4566", started_at: "2025-01-01T00:00:00Z", exit_code: 0, type: "simulator" },
-  { name: "ecs", binary: "sockerless-backend-ecs", status: "stopped", pid: 0, addr: ":9100", started_at: "", exit_code: 0, type: "backend" },
+  {
+    name: "sim-aws",
+    binary: "simulator-aws",
+    status: "running",
+    pid: 1234,
+    addr: ":4566",
+    started_at: "2025-01-01T00:00:00Z",
+    exit_code: 0,
+    type: "simulator",
+  },
+  {
+    name: "ecs",
+    binary: "sockerless-backend-ecs",
+    status: "stopped",
+    pid: 0,
+    addr: ":9100",
+    started_at: "",
+    exit_code: 0,
+    type: "backend",
+  },
 ];
 
 describe("ProcessesPage", () => {

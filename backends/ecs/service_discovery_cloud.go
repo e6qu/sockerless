@@ -144,7 +144,7 @@ func (s *Server) cloudServiceRegister(containerID, hostname, ip, networkID strin
 			InstanceId: aws.String(containerID[:12]),
 			Attributes: map[string]string{
 				"AWS_INSTANCE_IPV4": ip,
-				"HOSTNAME":         hostname,
+				"HOSTNAME":          hostname,
 			},
 		},
 	)

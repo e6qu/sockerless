@@ -292,10 +292,25 @@ func (s *Server) applyTaskStatus(containerID string, task ecstypes.Task) {
 	switch status {
 	case "STOPPED":
 		exitCode := 0
+		hasExitCode := false
+		var stateError string
 		for _, container := range task.Containers {
 			if container.ExitCode != nil {
 				exitCode = int(aws.ToInt32(container.ExitCode))
+				hasExitCode = true
 				break
+			}
+			// Container-level failure reason (e.g. CannotPullContainerError)
+			if container.Reason != nil && *container.Reason != "" {
+				stateError = *container.Reason
+			}
+		}
+		// Only override exit code for actual failures, not routine task stops
+		if !hasExitCode && stateError == "" {
+			reason := aws.ToString(task.StoppedReason)
+			if reason != "" && reason != "Essential container in task exited" {
+				stateError = reason
+				exitCode = 1
 			}
 		}
 		if c, ok := s.Store.Containers.Get(containerID); ok && c.State.Running {
@@ -304,6 +319,7 @@ func (s *Server) applyTaskStatus(containerID string, task ecstypes.Task) {
 				c.State.Running = false
 				c.State.Pid = 0
 				c.State.ExitCode = exitCode
+				c.State.Error = stateError
 				c.State.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 			})
 			if ch, ok := s.Store.WaitChs.LoadAndDelete(containerID); ok {
@@ -311,7 +327,7 @@ func (s *Server) applyTaskStatus(containerID string, task ecstypes.Task) {
 			}
 		}
 	case "RUNNING":
-		// Always overwrite synthetic IP with real ENI IP and derive MAC.
+		// Overwrite synthetic values with real ENI IP; clear fake gateway.
 		ip := extractENIIP(task)
 		if ip != "" {
 			mac := deriveMACFromIP(ip)
@@ -320,6 +336,7 @@ func (s *Server) applyTaskStatus(containerID string, task ecstypes.Task) {
 					if ep != nil {
 						ep.IPAddress = ip
 						ep.MacAddress = mac
+						ep.Gateway = "" // Fargate tasks have no Docker-style gateway
 					}
 				}
 			})

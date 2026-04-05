@@ -519,4 +519,3 @@ func newGHRequest(method, url, token string) (*http.Request, error) {
 func doGHRequest(req *http.Request) (*http.Response, error) {
 	return http.DefaultClient.Do(req)
 }
-

@@ -20,10 +20,10 @@ func handleDashboardSummary(w http.ResponseWriter, _ *http.Request) {
 		"provider": "azure",
 		"services": map[string]int{
 			"container_app_jobs": acaJobs.Len(),
-			"function_sites":    azfSites.Len(),
-			"acr_registries":    acrRegistries.Len(),
-			"storage_accounts":  azStorageAccounts.Len(),
-			"monitor_logs":      monitorLogs.Len(),
+			"function_sites":     azfSites.Len(),
+			"acr_registries":     acrRegistries.Len(),
+			"storage_accounts":   azStorageAccounts.Len(),
+			"monitor_logs":       monitorLogs.Len(),
 		},
 	})
 }

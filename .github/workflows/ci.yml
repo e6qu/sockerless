@@ -43,6 +43,11 @@ jobs:
           run backends/core
           run_race agent
 
+          # Cloud common modules
+          run backends/aws-common
+          run backends/gcp-common
+          run backends/azure-common
+
           # Cloud backends
           run backends/ecs
           run backends/lambda

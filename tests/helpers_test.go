@@ -1,7 +1,6 @@
 package tests
 
 import (
-	"context"
 	"os"
 	"strings"
 	"testing"
@@ -12,7 +11,6 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 // availableRunnerClients returns all runner-capable backends currently reachable.
@@ -122,11 +120,4 @@ func createVolume(t *testing.T, name string) string {
 func removeVolume(t *testing.T, name string) {
 	t.Helper()
 	dockerClient.VolumeRemove(ctx, name, true)
-}
-
-// used to satisfy the platform parameter in ContainerCreate
-var defaultPlatform *ocispec.Platform
-
-func withContext() context.Context {
-	return ctx
 }

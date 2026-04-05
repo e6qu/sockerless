@@ -32,7 +32,7 @@ func (s *BaseServer) handleExecCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// BUG-503: Validate that Cmd is not empty
+	// Validate that Cmd is not empty
 	if len(req.Cmd) == 0 {
 		WriteError(w, &api.InvalidParameterError{
 			Message: "No exec command specified",

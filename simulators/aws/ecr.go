@@ -28,15 +28,15 @@ type ECRImageDetail struct {
 }
 
 type ECRLifecyclePolicy struct {
-	RegistryId     string `json:"registryId"`
-	RepositoryName string `json:"repositoryName"`
+	RegistryId          string `json:"registryId"`
+	RepositoryName      string `json:"repositoryName"`
 	LifecyclePolicyText string `json:"lifecyclePolicyText"`
 }
 
 // State stores
 var (
-	ecrRepositories     *sim.StateStore[ECRRepository]
-	ecrImages           *sim.StateStore[ECRImageDetail]
+	ecrRepositories      *sim.StateStore[ECRRepository]
+	ecrImages            *sim.StateStore[ECRImageDetail]
 	ecrLifecyclePolicies *sim.StateStore[ECRLifecyclePolicy]
 )
 
@@ -347,7 +347,7 @@ func handleECRBatchDeleteImage(w http.ResponseWriter, r *http.Request) {
 
 func handleECRBatchCheckLayerAvailability(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		RepositoryName string `json:"repositoryName"`
+		RepositoryName string   `json:"repositoryName"`
 		LayerDigests   []string `json:"layerDigests"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
@@ -358,7 +358,7 @@ func handleECRBatchCheckLayerAvailability(w http.ResponseWriter, r *http.Request
 	var layers []map[string]any
 	for _, digest := range req.LayerDigests {
 		layers = append(layers, map[string]any{
-			"layerDigest":   digest,
+			"layerDigest":       digest,
 			"layerAvailability": "AVAILABLE",
 		})
 	}

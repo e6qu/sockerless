@@ -11,7 +11,7 @@ import (
 // Metrics collects request-level metrics.
 type Metrics struct {
 	mu         sync.Mutex
-	counts     map[string]int64          // "METHOD path" → count
+	counts     map[string]int64           // "METHOD path" → count
 	latencies  map[string][]time.Duration // "METHOD path" → sorted latencies (ring buffer)
 	maxSamples int
 }

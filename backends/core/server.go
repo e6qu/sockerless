@@ -37,27 +37,27 @@ type BackendDescriptor struct {
 type ProviderInfo struct {
 	Provider  string            `json:"provider"`  // aws, gcp, azure, memory, docker
 	Mode      string            `json:"mode"`      // cloud, simulator, local
-	Region    string            `json:"region"`     // us-east-1, us-central1, eastus
+	Region    string            `json:"region"`    // us-east-1, us-central1, eastus
 	Endpoint  string            `json:"endpoint"`  // custom endpoint if simulator
 	Resources map[string]string `json:"resources"` // backend-specific: cluster, project, etc.
 }
 
 // BaseServer is the common HTTP server used by all non-Docker backends.
 type BaseServer struct {
-	Store          *Store
-	Logger         zerolog.Logger
-	Desc           BackendDescriptor
-	Mux            *http.ServeMux
+	Store         *Store
+	Logger        zerolog.Logger
+	Desc          BackendDescriptor
+	Mux           *http.ServeMux
 	AgentRegistry *AgentRegistry
 	Drivers       DriverSet
-	Registry       *ResourceRegistry
-	StartedAt      time.Time
-	Metrics        *Metrics
-	HealthChecker  HealthChecker
-	EventBus       *EventBus
-	ProviderInfo   *ProviderInfo
-	StatsProvider  StatsProvider // real container metrics (nil = zeros)
-	self           api.Backend   // virtual dispatch target for overrideable methods
+	Registry      *ResourceRegistry
+	StartedAt     time.Time
+	Metrics       *Metrics
+	HealthChecker HealthChecker
+	EventBus      *EventBus
+	ProviderInfo  *ProviderInfo
+	StatsProvider StatsProvider // real container metrics (nil = zeros)
+	self          api.Backend   // virtual dispatch target for overrideable methods
 }
 
 // SetSelf sets the virtual dispatch target for overrideable api.Backend methods.
@@ -224,11 +224,13 @@ func (s *BaseServer) registerRoutes() {
 }
 
 // InitDefaultNetwork creates the default bridge, host, and none networks.
+// IDs must be full-length hex strings for Podman compatibility.
 func (s *BaseServer) InitDefaultNetwork() {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	s.Store.Networks.Put("bridge", api.Network{
+	bridgeID := "b0000000000000000000000000000000000000000000000000000000bridge00"
+	s.Store.Networks.Put(bridgeID, api.Network{
 		Name:   "bridge",
-		ID:     "bridge",
+		ID:     bridgeID,
 		Driver: "bridge",
 		Scope:  "local",
 		IPAM: api.IPAM{
@@ -242,9 +244,10 @@ func (s *BaseServer) InitDefaultNetwork() {
 		Labels:     make(map[string]string),
 		Created:    now,
 	})
-	s.Store.Networks.Put("host", api.Network{
+	hostID := "f00000000000000000000000000000000000000000000000000000000host0000"
+	s.Store.Networks.Put(hostID, api.Network{
 		Name:       "host",
-		ID:         "host",
+		ID:         hostID,
 		Driver:     "host",
 		Scope:      "local",
 		IPAM:       api.IPAM{Driver: "default"},
@@ -253,9 +256,10 @@ func (s *BaseServer) InitDefaultNetwork() {
 		Labels:     make(map[string]string),
 		Created:    now,
 	})
-	s.Store.Networks.Put("none", api.Network{
+	noneID := "a00000000000000000000000000000000000000000000000000000000none0000"
+	s.Store.Networks.Put(noneID, api.Network{
 		Name:       "none",
-		ID:         "none",
+		ID:         noneID,
 		Driver:     "null",
 		Scope:      "local",
 		IPAM:       api.IPAM{Driver: "default"},

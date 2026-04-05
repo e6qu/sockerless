@@ -103,7 +103,7 @@ func (s *Server) waitForExecutionComplete(jobName, executionName string, exitCh 
 					break
 				}
 				for _, exec := range page.Value {
-					// BUG-569: Guard against empty executionName
+					// Guard against empty executionName
 					if executionName != "" && (exec.Name == nil || *exec.Name != executionName) {
 						continue
 					}
@@ -140,7 +140,7 @@ func (s *Server) pollExecutionExit(containerID, jobName, executionName string, e
 					break
 				}
 				for _, exec := range page.Value {
-					// BUG-569: Guard against empty executionName
+					// Guard against empty executionName
 					if executionName != "" && (exec.Name == nil || *exec.Name != executionName) {
 						continue
 					}

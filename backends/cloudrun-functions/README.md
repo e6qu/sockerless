@@ -1,88 +1,60 @@
-# backend-gcf
+# Cloud Run Functions Backend
 
-Google Cloud Run Functions (2nd gen) backend. Maps Docker container operations to Cloud Functions with Docker runtime.
+Runs Docker containers as Google Cloud Run Functions (2nd gen), with Cloud Logging for log streaming.
 
-## Resource mapping
+## Config (config.yaml)
 
-| Docker concept | Cloud Functions resource |
-|---------------|------------------------|
-| Container create | `CreateFunction` (Docker runtime) |
-| Container start | HTTP POST invoke (async) |
-| Container stop | No-op (runs to completion) |
-| Container kill | Disconnects reverse agent |
-| Container remove | `DeleteFunction` |
-| Container logs | Cloud Logging via Log Admin API |
+```yaml
+environments:
+  my-gcf:
+    backend: gcf
+    addr: ":9100"
+    log_level: info
+    gcp:
+      project: my-gcp-project-123
+      gcf:
+        region: us-central1
+        service_account: sockerless@my-gcp-project-123.iam.gserviceaccount.com
+        timeout: 3600
+        memory: 1Gi
+        cpu: "1"
+        log_timeout: 30s
+    common:
+      callback_url: https://backend.example.com
+      poll_interval: 2s
+      agent_timeout: 30s
+```
 
-## Agent mode
+## Environment Variables
 
-Uses **reverse agent** exclusively. Cloud Functions cannot accept inbound connections, so the agent inside the function dials back to the backend via `SOCKERLESS_CALLBACK_URL`.
+| Variable | Default | Required | Description |
+|---|---|---|---|
+| `SOCKERLESS_GCF_PROJECT` | | **yes** | GCP project ID |
+| `SOCKERLESS_GCF_REGION` | `us-central1` | no | Functions region |
+| `SOCKERLESS_GCF_SERVICE_ACCOUNT` | | no | Service account email for functions |
+| `SOCKERLESS_GCF_TIMEOUT` | `3600` | no | Function timeout in seconds (max 3600) |
+| `SOCKERLESS_GCF_MEMORY` | `1Gi` | no | Function memory allocation |
+| `SOCKERLESS_GCF_CPU` | `1` | no | Function CPU allocation |
+| `SOCKERLESS_CALLBACK_URL` | | no | Backend URL for reverse agent callbacks |
+| `SOCKERLESS_ENDPOINT_URL` | | no | Custom endpoint (for simulators) |
+| `SOCKERLESS_POLL_INTERVAL` | `2s` | no | Cloud API poll interval |
+| `SOCKERLESS_LOG_TIMEOUT` | `30s` | no | Cloud Logging query timeout |
+| `SOCKERLESS_AGENT_TIMEOUT` | `30s` | no | Agent callback timeout |
 
-Helper and cache containers auto-stop after 500ms.
-
-## Building
+## Quick Start
 
 ```sh
-cd backends/cloudrun-functions
-go build -o sockerless-backend-gcf ./cmd/sockerless-backend-gcf
+go build -o sockerless-backend-gcf ./backends/cloudrun-functions/cmd/sockerless-backend-gcf
+./sockerless-backend-gcf -addr :9100 -log-level info
 ```
 
-## Configuration
+Flags: `-addr` (default `:9100`), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SOCKERLESS_GCF_PROJECT` | _(required)_ | GCP project ID |
-| `SOCKERLESS_GCF_REGION` | `us-central1` | GCP region |
-| `SOCKERLESS_GCF_SERVICE_ACCOUNT` | | Service account for functions |
-| `SOCKERLESS_GCF_TIMEOUT` | `3600` | Function timeout (seconds) |
-| `SOCKERLESS_GCF_MEMORY` | `1Gi` | Function memory limit |
-| `SOCKERLESS_GCF_CPU` | `1` | Function CPU allocation |
-| `SOCKERLESS_CALLBACK_URL` | | Backend URL for reverse agent connections |
-| `SOCKERLESS_ENDPOINT_URL` | | Custom GCP endpoint (simulator mode) |
+## Cloud Notes
 
-These settings can also be configured via `~/.sockerless/config.yaml`. See the [CLI documentation](../../cmd/sockerless/README.md) for the YAML format.
-
-### Terraform outputs
-
-The `terraform/modules/gcf` module produces these outputs. Use `terragrunt output` from `terraform/environments/gcf/live` to extract them.
-
-| Terraform Output | Environment Variable |
-|---|---|
-| `project_id` | `SOCKERLESS_GCF_PROJECT` |
-| `region` | `SOCKERLESS_GCF_REGION` |
-| `service_account_email` | `SOCKERLESS_GCF_SERVICE_ACCOUNT` |
-| `artifact_registry_repository_url` | _(used for image push)_ |
-
-## Project structure
-
-```
-cloudrun-functions/
-├── cmd/sockerless-backend-gcf/
-│   └── main.go          CLI entrypoint
-├── server.go            Server type, route overrides
-├── config.go            Config struct, env parsing, validation
-├── gcp.go               GCP SDK client initialization
-├── containers.go        Create, start, stop, kill, remove handlers
-├── logs.go              Cloud Logging streaming
-├── images.go            Image pull/load handlers
-├── image_auth.go        ARAuthProvider for Artifact Registry / GCR auth
-├── extended.go          Restart, prune
-├── store.go             GCFState type
-└── errors.go            GCP error mapping
-```
-
-## Example deployment
-
-See [examples/terraform/](examples/terraform/) for a complete Terraform example that provisions the GCP infrastructure (Cloud Functions APIs, Artifact Registry, service account) and walks through running Docker commands against Cloud Run Functions.
-
-## Docker API mapping
-
-For a detailed breakdown of how each Docker REST API endpoint and CLI command maps to Google Cloud Functions operations — including what's supported, what's not, and how it compares to vanilla Docker — see [docs/docker_api_mapping.md](docs/docker_api_mapping.md).
-
-## Testing
-
-```sh
-make sim-test-gcp    # simulator integration tests
-make docker-test     # Docker-based full test
-```
-
-See also: [ARCHITECTURE.md](../../ARCHITECTURE.md), [FEATURE_MATRIX.md](../../FEATURE_MATRIX.md), [DECISIONS.md](../../DECISIONS.md)
+- Requires Cloud Functions API, Cloud Build API, and Cloud Logging API enabled.
+- Application Default Credentials or a service account key must be available.
+- Uses reverse agent exclusively -- Cloud Functions cannot accept inbound connections.
+- The service account needs `cloudfunctions.developer` and `logging.viewer` roles.
+- Function timeout max is 3600 seconds (60 minutes) for 2nd gen functions.
+- See `specs/CONFIG.md` for the full unified config specification.

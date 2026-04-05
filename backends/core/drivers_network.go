@@ -119,7 +119,7 @@ func (d *SyntheticNetworkDriver) Connect(_ context.Context, networkID, container
 		return fmt.Errorf("network %s not found", networkID)
 	}
 
-	// Release old IP if container is already connected to this network (BUG-207)
+	// Release old IP if container is already connected to this network
 	c, _ := d.Store.Containers.Get(containerID)
 	if ep, exists := c.NetworkSettings.Networks[net.Name]; exists && ep != nil {
 		d.IPAlloc.ReleaseIP(net.ID, ep.IPAddress)

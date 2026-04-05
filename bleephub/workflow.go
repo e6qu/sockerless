@@ -23,18 +23,18 @@ type WorkflowDef struct {
 
 // JobDef represents a single job definition within a workflow.
 type JobDef struct {
-	Name            string                   `yaml:"name"`
-	RunsOn          interface{}              `yaml:"runs-on"`
-	Container       interface{}              `yaml:"container"` // string or object
-	Services        map[string]*ServiceDef   // parsed from string or ServiceDef object
-	Needs           []string                 // parsed from string or list
-	Env             map[string]string        `yaml:"env"`
-	Outputs         map[string]string        `yaml:"outputs"`
-	Strategy        *StrategyDef             `yaml:"strategy"`
-	Steps           []StepDef                `yaml:"steps"`
-	If              string                   `yaml:"if"`
-	ContinueOnError bool                     `yaml:"continue-on-error"`
-	TimeoutMinutes  int                      `yaml:"timeout-minutes"`
+	Name            string                 `yaml:"name"`
+	RunsOn          interface{}            `yaml:"runs-on"`
+	Container       interface{}            `yaml:"container"` // string or object
+	Services        map[string]*ServiceDef // parsed from string or ServiceDef object
+	Needs           []string               // parsed from string or list
+	Env             map[string]string      `yaml:"env"`
+	Outputs         map[string]string      `yaml:"outputs"`
+	Strategy        *StrategyDef           `yaml:"strategy"`
+	Steps           []StepDef              `yaml:"steps"`
+	If              string                 `yaml:"if"`
+	ContinueOnError bool                   `yaml:"continue-on-error"`
+	TimeoutMinutes  int                    `yaml:"timeout-minutes"`
 }
 
 // StrategyDef represents a job's strategy configuration.
@@ -46,9 +46,9 @@ type StrategyDef struct {
 
 // MatrixDef represents a matrix strategy configuration.
 type MatrixDef struct {
-	Values  map[string][]interface{}   // non-reserved keys
-	Include []map[string]interface{}   // include entries
-	Exclude []map[string]interface{}   // exclude entries
+	Values  map[string][]interface{} // non-reserved keys
+	Include []map[string]interface{} // include entries
+	Exclude []map[string]interface{} // exclude entries
 }
 
 // StepDef represents a single step in a job.
@@ -98,7 +98,7 @@ type rawJobDef struct {
 	RunsOn          interface{}            `yaml:"runs-on"`
 	Container       interface{}            `yaml:"container"`
 	Services        map[string]interface{} `yaml:"services"` // string or ServiceDef object
-	Needs           interface{}            `yaml:"needs"`     // string or []string
+	Needs           interface{}            `yaml:"needs"`    // string or []string
 	Env             map[string]string      `yaml:"env"`
 	Outputs         map[string]string      `yaml:"outputs"`
 	Strategy        *rawStrategyDef        `yaml:"strategy"`

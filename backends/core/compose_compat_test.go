@@ -217,11 +217,11 @@ func TestContainerInspectNetworkSettings(t *testing.T) {
 	s := newComposeTestServer()
 
 	c := api.Container{
-		ID:      "c1",
-		Name:    "/nettest",
-		Created: time.Now().UTC().Format(time.RFC3339Nano),
-		Config:  api.ContainerConfig{Labels: make(map[string]string)},
-		State:   api.ContainerState{Status: "running", Running: true},
+		ID:         "c1",
+		Name:       "/nettest",
+		Created:    time.Now().UTC().Format(time.RFC3339Nano),
+		Config:     api.ContainerConfig{Labels: make(map[string]string)},
+		State:      api.ContainerState{Status: "running", Running: true},
 		HostConfig: api.HostConfig{},
 		NetworkSettings: api.NetworkSettings{
 			Networks: map[string]*api.EndpointSettings{

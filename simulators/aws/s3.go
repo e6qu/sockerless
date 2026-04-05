@@ -33,10 +33,10 @@ type S3Object struct {
 // XML response types for S3
 
 type s3ListAllMyBucketsResult struct {
-	XMLName xml.Name   `xml:"ListAllMyBucketsResult"`
-	Xmlns   string     `xml:"xmlns,attr"`
-	Owner   s3Owner    `xml:"Owner"`
-	Buckets s3Buckets  `xml:"Buckets"`
+	XMLName xml.Name  `xml:"ListAllMyBucketsResult"`
+	Xmlns   string    `xml:"xmlns,attr"`
+	Owner   s3Owner   `xml:"Owner"`
+	Buckets s3Buckets `xml:"Buckets"`
 }
 
 type s3Owner struct {
@@ -138,7 +138,7 @@ func handleS3CreateBucket(w http.ResponseWriter, r *http.Request) {
 	}
 	s3Buckets_.Put(bucket, b)
 
-	w.Header().Set("Location", "/" + bucket)
+	w.Header().Set("Location", "/"+bucket)
 	w.WriteHeader(http.StatusOK)
 }
 

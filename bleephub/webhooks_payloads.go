@@ -4,17 +4,17 @@ import "time"
 
 func buildPushPayload(repo *Repo, sender *User, ref, before, after string) map[string]interface{} {
 	return map[string]interface{}{
-		"ref":        ref,
-		"before":     before,
-		"after":      after,
-		"created":    before == "0000000000000000000000000000000000000000",
-		"deleted":    after == "0000000000000000000000000000000000000000",
-		"forced":     false,
-		"compare":    "",
-		"commits":    []interface{}{},
+		"ref":         ref,
+		"before":      before,
+		"after":       after,
+		"created":     before == "0000000000000000000000000000000000000000",
+		"deleted":     after == "0000000000000000000000000000000000000000",
+		"forced":      false,
+		"compare":     "",
+		"commits":     []interface{}{},
 		"head_commit": nil,
-		"repository": repoPayload(repo),
-		"sender":     senderPayload(sender),
+		"repository":  repoPayload(repo),
+		"sender":      senderPayload(sender),
 	}
 }
 

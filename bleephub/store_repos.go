@@ -10,18 +10,18 @@ import (
 )
 
 type Repo struct {
-	ID              int       `json:"id"`
-	NodeID          string    `json:"node_id"`
-	Name            string    `json:"name"`
-	FullName        string    `json:"full_name"`
-	Description     string    `json:"description"`
-	DefaultBranch   string    `json:"default_branch"`
-	Visibility      string    `json:"visibility"`
-	Language        string    `json:"language"`
-	Owner           *User     `json:"-"`
-	Private         bool      `json:"private"`
-	Fork            bool      `json:"fork"`
-	Archived        bool      `json:"archived"`
+	ID                  int       `json:"id"`
+	NodeID              string    `json:"node_id"`
+	Name                string    `json:"name"`
+	FullName            string    `json:"full_name"`
+	Description         string    `json:"description"`
+	DefaultBranch       string    `json:"default_branch"`
+	Visibility          string    `json:"visibility"`
+	Language            string    `json:"language"`
+	Owner               *User     `json:"-"`
+	Private             bool      `json:"private"`
+	Fork                bool      `json:"fork"`
+	Archived            bool      `json:"archived"`
 	StargazersCount     int       `json:"stargazers_count"`
 	Topics              []string  `json:"topics"`
 	NextIssueNumber     int       `json:"-"`

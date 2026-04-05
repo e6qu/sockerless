@@ -60,4 +60,3 @@ func NewServer(logger zerolog.Logger, dockerHost string) (*Server, error) {
 
 	return s, nil
 }
-

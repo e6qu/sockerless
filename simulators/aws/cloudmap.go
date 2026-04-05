@@ -11,13 +11,13 @@ import (
 // Cloud Map types
 
 type CMNamespace struct {
-	Id          string              `json:"Id"`
-	Arn         string              `json:"Arn"`
-	Name        string              `json:"Name"`
-	Type        string              `json:"Type"`
-	Description string              `json:"Description,omitempty"`
+	Id          string                 `json:"Id"`
+	Arn         string                 `json:"Arn"`
+	Name        string                 `json:"Name"`
+	Type        string                 `json:"Type"`
+	Description string                 `json:"Description,omitempty"`
 	Properties  *CMNamespaceProperties `json:"Properties,omitempty"`
-	CreateDate  int64               `json:"CreateDate"`
+	CreateDate  int64                  `json:"CreateDate"`
 }
 
 type CMNamespaceProperties struct {
@@ -32,20 +32,20 @@ type CMDnsProperties struct {
 }
 
 type CMService struct {
-	Id           string         `json:"Id"`
-	Arn          string         `json:"Arn"`
-	Name         string         `json:"Name"`
-	NamespaceId  string         `json:"NamespaceId"`
-	Description  string         `json:"Description,omitempty"`
-	DnsConfig    *CMDnsConfig   `json:"DnsConfig,omitempty"`
-	CreateDate   int64          `json:"CreateDate"`
-	InstanceCount int           `json:"InstanceCount"`
+	Id            string       `json:"Id"`
+	Arn           string       `json:"Arn"`
+	Name          string       `json:"Name"`
+	NamespaceId   string       `json:"NamespaceId"`
+	Description   string       `json:"Description,omitempty"`
+	DnsConfig     *CMDnsConfig `json:"DnsConfig,omitempty"`
+	CreateDate    int64        `json:"CreateDate"`
+	InstanceCount int          `json:"InstanceCount"`
 }
 
 type CMDnsConfig struct {
-	NamespaceId  string          `json:"NamespaceId,omitempty"`
-	RoutingPolicy string         `json:"RoutingPolicy,omitempty"`
-	DnsRecords   []CMDnsRecord   `json:"DnsRecords,omitempty"`
+	NamespaceId   string        `json:"NamespaceId,omitempty"`
+	RoutingPolicy string        `json:"RoutingPolicy,omitempty"`
+	DnsRecords    []CMDnsRecord `json:"DnsRecords,omitempty"`
 }
 
 type CMDnsRecord struct {
@@ -66,10 +66,10 @@ type CMOperation struct {
 
 // State stores
 var (
-	cmNamespaces  *sim.StateStore[CMNamespace]
-	cmServices    *sim.StateStore[CMService]
-	cmInstances   *sim.StateStore[CMInstance]
-	cmOperations  *sim.StateStore[CMOperation]
+	cmNamespaces *sim.StateStore[CMNamespace]
+	cmServices   *sim.StateStore[CMService]
+	cmInstances  *sim.StateStore[CMInstance]
+	cmOperations *sim.StateStore[CMOperation]
 )
 
 func cmArn(resourceType, id string) string {
@@ -569,7 +569,7 @@ func handleCMDiscoverInstances(w http.ResponseWriter, r *http.Request) {
 		key := cmInstanceKey(targetSvc.Id, inst.Id)
 		if _, ok := cmInstances.Get(key); ok {
 			httpInstances = append(httpInstances, map[string]any{
-				"InstanceId": inst.Id,
+				"InstanceId":    inst.Id,
 				"NamespaceName": req.NamespaceName,
 				"ServiceName":   req.ServiceName,
 				"HealthStatus":  "HEALTHY",

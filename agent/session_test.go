@@ -15,11 +15,11 @@ type mockSession struct {
 }
 
 func (m *mockSession) ID() string                     { return m.id }
-func (m *mockSession) WriteStdin(data []byte) error    { return nil }
-func (m *mockSession) CloseStdin() error               { return nil }
-func (m *mockSession) Signal(sig string) error          { return nil }
-func (m *mockSession) Resize(width, height int) error   { return nil }
-func (m *mockSession) Close()                           { m.closed = true }
+func (m *mockSession) WriteStdin(data []byte) error   { return nil }
+func (m *mockSession) CloseStdin() error              { return nil }
+func (m *mockSession) Signal(sig string) error        { return nil }
+func (m *mockSession) Resize(width, height int) error { return nil }
+func (m *mockSession) Close()                         { m.closed = true }
 
 func TestSessionRegistryRegisterGet(t *testing.T) {
 	r := NewSessionRegistry()

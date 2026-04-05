@@ -12,7 +12,7 @@ type EventBus struct {
 	mu          sync.Mutex
 	subscribers map[string]chan api.Event
 	closed      bool
-	history     []api.Event  // BUG-520: ring buffer for since/until replay
+	history     []api.Event // ring buffer for since/until replay
 	maxHistory  int
 }
 
@@ -31,7 +31,7 @@ func (eb *EventBus) Publish(event api.Event) {
 	if eb.closed {
 		return
 	}
-	// BUG-520: Store event in history for since/until replay
+	// Store event in history for since/until replay
 	if len(eb.history) >= eb.maxHistory {
 		eb.history = eb.history[1:]
 	}
@@ -46,7 +46,7 @@ func (eb *EventBus) Publish(event api.Event) {
 }
 
 // History returns events with Time >= since. If until > 0, only events with Time <= until.
-// BUG-520: Support replaying past events.
+// Support replaying past events.
 func (eb *EventBus) History(since, until int64) []api.Event {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()

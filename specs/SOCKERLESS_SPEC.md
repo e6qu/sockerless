@@ -1,15 +1,29 @@
 # Sockerless Specification
 
-> **Version:** 0.2.0
+> **Version:** 0.3.0
 >
-> **Date:** February 2026
+> **Date:** April 2026
 >
-> **Status:** Updated specification — reflects actual implementation as of Phase 35
->
-> **⚠ This spec was written at Phase 35. The project is now at Phase 90+.**
-> For current status, see [STATUS.md](../STATUS.md), [FEATURE_MATRIX.md](../FEATURE_MATRIX.md), and [ARCHITECTURE.md](../ARCHITECTURE.md).
+> **Status:** Core specification. Written at Phase 35, updated at Phase 85+. For implementation details, see the companion specs below.
 >
 > **Mission:** A Docker-compatible REST API daemon that executes containers on cloud serverless backends (AWS ECS, Google Cloud Run, Azure Container Apps, and others) instead of a local Docker Engine.
+
+## Companion Specifications
+
+| Spec | Description |
+|------|-------------|
+| [CONFIG.md](CONFIG.md) | Unified config file, per-backend env vars, validation |
+| [BACKENDS.md](BACKENDS.md) | All 7 backends, server structs, method override matrix |
+| [DRIVERS.md](DRIVERS.md) | Exec, Filesystem, Stream, Network driver interfaces |
+| [API_SURFACE.md](API_SURFACE.md) | All 65 api.Backend methods by category |
+| [IMAGE_MANAGEMENT.md](IMAGE_MANAGEMENT.md) | ImageManager, AuthProvider, per-cloud registry sync |
+| [IMAGE_BUILD.md](IMAGE_BUILD.md) | docker build/buildx → cloud build services (CodeBuild, Cloud Build, ACR Tasks) |
+| [IMAGE_REGISTRY.md](IMAGE_REGISTRY.md) | OCI Distribution v2 protocol, per-cloud registry features, auth caching |
+| [IMAGE_SCANNING.md](IMAGE_SCANNING.md) | Vulnerability scanning, image signing, supply chain security |
+| [DOCKER_REST_API.md](DOCKER_REST_API.md) | Docker API compatibility analysis |
+| [COMPARISONS.md](COMPARISONS.md) | Comparison with alternatives |
+
+For project status see [STATUS.md](../STATUS.md). For open bugs see [BUGS.md](../BUGS.md).
 
 ---
 

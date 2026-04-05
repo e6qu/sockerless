@@ -1,28 +1,68 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import { AdminApiClient, type CloudType, type BackendType, type CreateProjectRequest } from "../api.js";
+import {
+  AdminApiClient,
+  type CloudType,
+  type BackendType,
+  type CreateProjectRequest,
+} from "../api.js";
 
 const api = new AdminApiClient();
 
 const clouds: { value: CloudType; label: string; description: string }[] = [
   { value: "aws", label: "AWS", description: "ECS / Lambda + AWS Simulator" },
-  { value: "gcp", label: "GCP", description: "Cloud Run / GCF + GCP Simulator" },
-  { value: "azure", label: "Azure", description: "ACA / AZF + Azure Simulator" },
+  {
+    value: "gcp",
+    label: "GCP",
+    description: "Cloud Run / GCF + GCP Simulator",
+  },
+  {
+    value: "azure",
+    label: "Azure",
+    description: "ACA / AZF + Azure Simulator",
+  },
 ];
 
-const backendsByCloud: Record<CloudType, { value: BackendType; label: string; description: string }[]> = {
+const backendsByCloud: Record<
+  CloudType,
+  { value: BackendType; label: string; description: string }[]
+> = {
   aws: [
-    { value: "ecs", label: "ECS", description: "Container-based (Elastic Container Service)" },
-    { value: "lambda", label: "Lambda", description: "Function-based (AWS Lambda)" },
+    {
+      value: "ecs",
+      label: "ECS",
+      description: "Container-based (Elastic Container Service)",
+    },
+    {
+      value: "lambda",
+      label: "Lambda",
+      description: "Function-based (AWS Lambda)",
+    },
   ],
   gcp: [
-    { value: "cloudrun", label: "Cloud Run", description: "Container-based (Cloud Run)" },
-    { value: "gcf", label: "GCF", description: "Function-based (Google Cloud Functions)" },
+    {
+      value: "cloudrun",
+      label: "Cloud Run",
+      description: "Container-based (Cloud Run)",
+    },
+    {
+      value: "gcf",
+      label: "GCF",
+      description: "Function-based (Google Cloud Functions)",
+    },
   ],
   azure: [
-    { value: "aca", label: "ACA", description: "Container-based (Azure Container Apps)" },
-    { value: "azf", label: "AZF", description: "Function-based (Azure Functions)" },
+    {
+      value: "aca",
+      label: "ACA",
+      description: "Container-based (Azure Container Apps)",
+    },
+    {
+      value: "azf",
+      label: "AZF",
+      description: "Function-based (Azure Functions)",
+    },
   ],
 };
 
@@ -65,9 +105,10 @@ export function ProjectCreatePage() {
     setStep("config");
   };
 
-  const nameError = name.length > 0 && !validNameRE.test(name)
-    ? "Must start with a-z/0-9 and contain only lowercase, digits, hyphens, or underscores"
-    : "";
+  const nameError =
+    name.length > 0 && !validNameRE.test(name)
+      ? "Must start with a-z/0-9 and contain only lowercase, digits, hyphens, or underscores"
+      : "";
 
   const handleSubmit = (e?: { preventDefault(): void }) => {
     e?.preventDefault();
@@ -91,15 +132,33 @@ export function ProjectCreatePage() {
 
       {/* Step indicator */}
       <div className="flex gap-2 text-sm">
-        <span className={step === "cloud" ? "font-bold text-blue-600 dark:text-blue-400" : "text-gray-500 dark:text-gray-400"}>
+        <span
+          className={
+            step === "cloud"
+              ? "font-bold text-blue-600 dark:text-blue-400"
+              : "text-gray-500 dark:text-gray-400"
+          }
+        >
           1. Cloud
         </span>
         <span className="text-gray-400">/</span>
-        <span className={step === "backend" ? "font-bold text-blue-600 dark:text-blue-400" : "text-gray-500 dark:text-gray-400"}>
+        <span
+          className={
+            step === "backend"
+              ? "font-bold text-blue-600 dark:text-blue-400"
+              : "text-gray-500 dark:text-gray-400"
+          }
+        >
           2. Backend
         </span>
         <span className="text-gray-400">/</span>
-        <span className={step === "config" ? "font-bold text-blue-600 dark:text-blue-400" : "text-gray-500 dark:text-gray-400"}>
+        <span
+          className={
+            step === "config"
+              ? "font-bold text-blue-600 dark:text-blue-400"
+              : "text-gray-500 dark:text-gray-400"
+          }
+        >
           3. Configure
         </span>
       </div>
@@ -118,7 +177,9 @@ export function ProjectCreatePage() {
               }`}
             >
               <div className="text-lg font-semibold">{c.label}</div>
-              <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">{c.description}</div>
+              <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {c.description}
+              </div>
             </button>
           ))}
         </div>
@@ -145,7 +206,9 @@ export function ProjectCreatePage() {
                 }`}
               >
                 <div className="text-lg font-semibold">{b.label}</div>
-                <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">{b.description}</div>
+                <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  {b.description}
+                </div>
               </button>
             ))}
           </div>
@@ -176,7 +239,9 @@ export function ProjectCreatePage() {
                 className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
               />
               {nameError && (
-                <p className="mt-1 text-xs text-red-600 dark:text-red-400">{nameError}</p>
+                <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                  {nameError}
+                </p>
               )}
             </div>
 
@@ -204,7 +269,10 @@ export function ProjectCreatePage() {
                 onChange={(e) => setAutoAssign(e.target.checked)}
                 className="rounded border-gray-300"
               />
-              <label htmlFor="auto-assign" className="text-sm text-gray-700 dark:text-gray-300">
+              <label
+                htmlFor="auto-assign"
+                className="text-sm text-gray-700 dark:text-gray-300"
+              >
                 Auto-assign all ports
               </label>
             </div>
@@ -251,7 +319,9 @@ export function ProjectCreatePage() {
                   <input
                     type="number"
                     value={frontendMgmtPort}
-                    onChange={(e) => setFrontendMgmtPort(Number(e.target.value))}
+                    onChange={(e) =>
+                      setFrontendMgmtPort(Number(e.target.value))
+                    }
                     className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
                   />
                 </div>
@@ -260,7 +330,9 @@ export function ProjectCreatePage() {
 
             {create.isError && (
               <p className="text-sm text-red-600 dark:text-red-400">
-                {create.error instanceof Error ? create.error.message : "Failed to create project"}
+                {create.error instanceof Error
+                  ? create.error.message
+                  : "Failed to create project"}
               </p>
             )}
 

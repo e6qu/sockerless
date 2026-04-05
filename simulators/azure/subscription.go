@@ -51,9 +51,9 @@ func registerSubscription(srv *sim.Server) {
 		for _, ns := range resourceProviderNamespaces {
 			providers = append(providers, map[string]any{
 				"id":                fmt.Sprintf("/subscriptions/%s/providers/%s", sub, ns),
-				"namespace":        ns,
+				"namespace":         ns,
 				"registrationState": "Registered",
-				"resourceTypes":    []any{},
+				"resourceTypes":     []any{},
 			})
 		}
 

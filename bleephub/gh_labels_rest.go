@@ -384,16 +384,16 @@ func milestoneToJSON(ms *Milestone, baseURL, repoFullName string) map[string]int
 	}
 
 	return map[string]interface{}{
-		"id":           ms.ID,
-		"node_id":      ms.NodeID,
-		"url":          baseURL + "/api/v3/repos/" + repoFullName + "/milestones/" + strconv.Itoa(ms.Number),
-		"html_url":     baseURL + "/" + repoFullName + "/milestone/" + strconv.Itoa(ms.Number),
-		"number":       ms.Number,
-		"title":        ms.Title,
-		"description":  ms.Description,
-		"state":        ms.State,
-		"due_on":       dueOn,
-		"created_at":   ms.CreatedAt.Format(time.RFC3339),
-		"updated_at":   ms.UpdatedAt.Format(time.RFC3339),
+		"id":          ms.ID,
+		"node_id":     ms.NodeID,
+		"url":         baseURL + "/api/v3/repos/" + repoFullName + "/milestones/" + strconv.Itoa(ms.Number),
+		"html_url":    baseURL + "/" + repoFullName + "/milestone/" + strconv.Itoa(ms.Number),
+		"number":      ms.Number,
+		"title":       ms.Title,
+		"description": ms.Description,
+		"state":       ms.State,
+		"due_on":      dueOn,
+		"created_at":  ms.CreatedAt.Format(time.RFC3339),
+		"updated_at":  ms.UpdatedAt.Format(time.RFC3339),
 	}
 }

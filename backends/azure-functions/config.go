@@ -19,9 +19,12 @@ type Config struct {
 	AppServicePlan        string
 	Timeout               int
 	LogAnalyticsWorkspace string
+	BuildStorageAccount   string        // Storage account for ACR build context
+	BuildContainer        string        // Blob container for ACR build context
 	CallbackURL           string        // Backend URL for reverse agent connections
 	EndpointURL           string        // Custom endpoint URL
 	PollInterval          time.Duration // Cloud API poll interval (default 2s)
+	AgentTimeout          time.Duration // Timeout waiting for agent callback (default 30s)
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -35,9 +38,12 @@ func ConfigFromEnv() Config {
 		AppServicePlan:        os.Getenv("SOCKERLESS_AZF_APP_SERVICE_PLAN"),
 		Timeout:               envOrDefaultInt("SOCKERLESS_AZF_TIMEOUT", 600),
 		LogAnalyticsWorkspace: os.Getenv("SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE"),
+		BuildStorageAccount:   os.Getenv("SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT"),
+		BuildContainer:        os.Getenv("SOCKERLESS_AZURE_BUILD_CONTAINER"),
 		CallbackURL:           os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		EndpointURL:           os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:          parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
+		AgentTimeout:          parseDuration(os.Getenv("SOCKERLESS_AGENT_TIMEOUT"), 30*time.Second),
 	}
 }
 
@@ -47,9 +53,12 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 		Location:     "eastus",
 		Timeout:      600,
 		PollInterval: 2 * time.Second,
+		AgentTimeout: 30 * time.Second,
 	}
 	if env.Azure != nil {
 		c.SubscriptionID = env.Azure.SubscriptionID
+		c.BuildStorageAccount = env.Azure.BuildStorageAccount
+		c.BuildContainer = env.Azure.BuildContainer
 		if azf := env.Azure.AZF; azf != nil {
 			c.ResourceGroup = azf.ResourceGroup
 			if azf.Location != "" {
@@ -68,6 +77,9 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 	c.EndpointURL = env.Common.EndpointURL
 	if env.Common.PollInterval != "" {
 		c.PollInterval = parseDuration(env.Common.PollInterval, c.PollInterval)
+	}
+	if env.Common.AgentTimeout != "" {
+		c.AgentTimeout = parseDuration(env.Common.AgentTimeout, c.AgentTimeout)
 	}
 	if sim != nil && sim.Port > 0 {
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)

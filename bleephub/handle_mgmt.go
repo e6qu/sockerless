@@ -15,15 +15,15 @@ func (s *Server) registerMgmtRoutes() {
 
 // workflowView is the JSON representation of a workflow for the management API.
 type workflowView struct {
-	ID               string                      `json:"id"`
-	Name             string                      `json:"name"`
-	RunID            int                         `json:"runId"`
-	Status           string                      `json:"status"`
-	Result           string                      `json:"result"`
-	CreatedAt        string                      `json:"createdAt"`
-	EventName        string                      `json:"eventName,omitempty"`
-	RepoFullName     string                      `json:"repoFullName,omitempty"`
-	Jobs             map[string]*WorkflowJob     `json:"jobs"`
+	ID           string                  `json:"id"`
+	Name         string                  `json:"name"`
+	RunID        int                     `json:"runId"`
+	Status       string                  `json:"status"`
+	Result       string                  `json:"result"`
+	CreatedAt    string                  `json:"createdAt"`
+	EventName    string                  `json:"eventName,omitempty"`
+	RepoFullName string                  `json:"repoFullName,omitempty"`
+	Jobs         map[string]*WorkflowJob `json:"jobs"`
 }
 
 func workflowToView(wf *Workflow) workflowView {

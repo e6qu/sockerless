@@ -96,7 +96,7 @@ func (s *BaseServer) handleImageLoad(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rc.Close()
 
-	// BUG-493: Respect quiet param
+	// Respect quiet param
 	quiet := r.URL.Query().Get("quiet") == "1" || r.URL.Query().Get("quiet") == "true"
 	if quiet {
 		w.WriteHeader(http.StatusOK)
@@ -195,7 +195,7 @@ func (s *BaseServer) handleImageTag(w http.ResponseWriter, r *http.Request) {
 	}
 
 	repo := r.URL.Query().Get("repo")
-	// BUG-499: Validate that repo is not empty
+	// Validate that repo is not empty
 	if repo == "" {
 		WriteError(w, &api.InvalidParameterError{
 			Message: "repository name must have at least one component",
@@ -237,10 +237,10 @@ func (s *BaseServer) handleImageList(w http.ResponseWriter, r *http.Request) {
 	referenceFilters := filters["reference"]
 	danglingFilters := filters["dangling"]
 	labelFilters := filters["label"]
-	beforeFilters := filters["before"] // BUG-490
-	sinceFilters := filters["since"]   // BUG-491
+	beforeFilters := filters["before"]
+	sinceFilters := filters["since"]
 
-	// BUG-431: Build image→container count map
+	// Build image→container count map
 	imgContainerCount := make(map[string]int64)
 	for _, c := range s.Store.Containers.List() {
 		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
@@ -256,7 +256,7 @@ func (s *BaseServer) handleImageList(w http.ResponseWriter, r *http.Request) {
 		}
 		seen[img.ID] = true
 
-		// BUG-279: apply reference filter
+		// Apply reference filter
 		if len(referenceFilters) > 0 {
 			matched := false
 			for _, ref := range referenceFilters {
@@ -275,7 +275,7 @@ func (s *BaseServer) handleImageList(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// BUG-279: apply dangling filter
+		// Apply dangling filter
 		if len(danglingFilters) > 0 {
 			isDangling := true
 			for _, tag := range img.RepoTags {
@@ -290,12 +290,12 @@ func (s *BaseServer) handleImageList(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// BUG-279: apply label filter
+		// Apply label filter
 		if len(labelFilters) > 0 && !MatchLabels(img.Config.Labels, labelFilters) {
 			continue
 		}
 
-		// BUG-490: apply before filter
+		// Apply before filter
 		if len(beforeFilters) > 0 {
 			skip := false
 			for _, val := range beforeFilters {
@@ -313,7 +313,7 @@ func (s *BaseServer) handleImageList(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// BUG-491: apply since filter
+		// Apply since filter
 		if len(sinceFilters) > 0 {
 			skip := false
 			for _, val := range sinceFilters {
@@ -591,7 +591,7 @@ func (s *BaseServer) handleAuth(w http.ResponseWriter, r *http.Request) {
 func (s *BaseServer) handleImagePush(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("name")
 
-	// BUG-494: Accept auth query param (base64-encoded JSON credentials)
+	// Accept auth query param (base64-encoded JSON credentials)
 	if authB64 := r.URL.Query().Get("auth"); authB64 != "" {
 		if data, err := base64.StdEncoding.DecodeString(authB64); err == nil {
 			var cred api.AuthRequest

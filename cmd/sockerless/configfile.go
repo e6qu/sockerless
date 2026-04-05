@@ -42,13 +42,13 @@ type commonConfig struct {
 }
 
 type awsConfig struct {
-	Region string          `yaml:"region,omitempty"`
-	ECS    *ecsEnvConfig   `yaml:"ecs,omitempty"`
+	Region string           `yaml:"region,omitempty"`
+	ECS    *ecsEnvConfig    `yaml:"ecs,omitempty"`
 	Lambda *lambdaEnvConfig `yaml:"lambda,omitempty"`
 }
 
 type gcpConfig struct {
-	Project  string            `yaml:"project,omitempty"`
+	Project  string             `yaml:"project,omitempty"`
 	CloudRun *cloudRunEnvConfig `yaml:"cloudrun,omitempty"`
 	GCF      *gcfEnvConfig      `yaml:"gcf,omitempty"`
 }

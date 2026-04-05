@@ -86,3 +86,23 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+# Optional: use an existing VPC instead of creating one.
+# When vpc_id is set, the module skips VPC/subnet/NAT creation and uses the provided values.
+variable "existing_vpc_id" {
+  description = "ID of an existing VPC to use. If set, subnet_ids and security_group_id must also be set."
+  type        = string
+  default     = ""
+}
+
+variable "existing_subnet_ids" {
+  description = "List of existing private subnet IDs to use when existing_vpc_id is set."
+  type        = list(string)
+  default     = []
+}
+
+variable "existing_security_group_id" {
+  description = "Existing security group ID for ECS tasks when existing_vpc_id is set."
+  type        = string
+  default     = ""
+}

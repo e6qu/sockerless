@@ -88,19 +88,19 @@ type SecurityRule struct {
 }
 
 type SecurityRuleProperties struct {
-	Protocol                 string   `json:"protocol"`
-	SourcePortRange          string   `json:"sourcePortRange,omitempty"`
-	DestinationPortRange     string   `json:"destinationPortRange,omitempty"`
-	SourceAddressPrefix      string   `json:"sourceAddressPrefix,omitempty"`
-	DestinationAddressPrefix string   `json:"destinationAddressPrefix,omitempty"`
-	SourcePortRanges         []string `json:"sourcePortRanges,omitempty"`
-	DestinationPortRanges    []string `json:"destinationPortRanges,omitempty"`
-	SourceAddressPrefixes    []string `json:"sourceAddressPrefixes,omitempty"`
+	Protocol                   string   `json:"protocol"`
+	SourcePortRange            string   `json:"sourcePortRange,omitempty"`
+	DestinationPortRange       string   `json:"destinationPortRange,omitempty"`
+	SourceAddressPrefix        string   `json:"sourceAddressPrefix,omitempty"`
+	DestinationAddressPrefix   string   `json:"destinationAddressPrefix,omitempty"`
+	SourcePortRanges           []string `json:"sourcePortRanges,omitempty"`
+	DestinationPortRanges      []string `json:"destinationPortRanges,omitempty"`
+	SourceAddressPrefixes      []string `json:"sourceAddressPrefixes,omitempty"`
 	DestinationAddressPrefixes []string `json:"destinationAddressPrefixes,omitempty"`
-	Access                   string   `json:"access"`
-	Priority                 int      `json:"priority"`
-	Direction                string   `json:"direction"`
-	ProvisioningState        string   `json:"provisioningState,omitempty"`
+	Access                     string   `json:"access"`
+	Priority                   int      `json:"priority"`
+	Direction                  string   `json:"direction"`
+	ProvisioningState          string   `json:"provisioningState,omitempty"`
 }
 
 func registerNetwork(srv *sim.Server) {

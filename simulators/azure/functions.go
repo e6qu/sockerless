@@ -55,23 +55,23 @@ type NameValuePair struct {
 
 // FunctionEnvelope represents a function within a function app.
 type FunctionEnvelope struct {
-	ID         string                    `json:"id"`
-	Name       string                    `json:"name"`
-	Type       string                    `json:"type"`
+	ID         string                     `json:"id"`
+	Name       string                     `json:"name"`
+	Type       string                     `json:"type"`
 	Properties FunctionEnvelopeProperties `json:"properties"`
 }
 
 // FunctionEnvelopeProperties holds the properties of a function.
 type FunctionEnvelopeProperties struct {
-	Name           string         `json:"name"`
-	FunctionAppID  string         `json:"function_app_id,omitempty"`
-	ScriptHref     string         `json:"script_href,omitempty"`
-	ConfigHref     string         `json:"config_href,omitempty"`
-	Href           string         `json:"href,omitempty"`
-	Config         map[string]any `json:"config,omitempty"`
-	InvokeURLTemplate string      `json:"invoke_url_template,omitempty"`
-	Language       string         `json:"language,omitempty"`
-	IsDisabled     bool           `json:"isDisabled"`
+	Name              string         `json:"name"`
+	FunctionAppID     string         `json:"function_app_id,omitempty"`
+	ScriptHref        string         `json:"script_href,omitempty"`
+	ConfigHref        string         `json:"config_href,omitempty"`
+	Href              string         `json:"href,omitempty"`
+	Config            map[string]any `json:"config,omitempty"`
+	InvokeURLTemplate string         `json:"invoke_url_template,omitempty"`
+	Language          string         `json:"language,omitempty"`
+	IsDisabled        bool           `json:"isDisabled"`
 }
 
 // Package-level store for dashboard access.
@@ -363,4 +363,3 @@ type funcLogSink struct {
 func (s *funcLogSink) WriteLog(line sim.LogLine) {
 	injectAppTrace(s.appName, line.Text)
 }
-

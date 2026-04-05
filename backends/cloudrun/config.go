@@ -16,6 +16,7 @@ type Config struct {
 	LogID        string
 	AgentImage   string
 	AgentToken   string
+	BuildBucket  string        // GCS bucket for Cloud Build context upload
 	CallbackURL  string        // Backend URL for reverse agent connections
 	EndpointURL  string        // Custom endpoint URL
 	PollInterval time.Duration // Cloud API poll interval (default 2s)
@@ -32,6 +33,7 @@ func ConfigFromEnv() Config {
 		LogID:        envOrDefault("SOCKERLESS_GCR_LOG_ID", "sockerless"),
 		AgentImage:   envOrDefault("SOCKERLESS_GCR_AGENT_IMAGE", "sockerless/agent:latest"),
 		AgentToken:   os.Getenv("SOCKERLESS_GCR_AGENT_TOKEN"),
+		BuildBucket:  os.Getenv("SOCKERLESS_GCP_BUILD_BUCKET"),
 		CallbackURL:  os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		EndpointURL:  os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval: parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
@@ -52,6 +54,7 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 	}
 	if env.GCP != nil {
 		c.Project = env.GCP.Project
+		c.BuildBucket = env.GCP.BuildBucket
 		if cr := env.GCP.CloudRun; cr != nil {
 			if cr.Region != "" {
 				c.Region = cr.Region

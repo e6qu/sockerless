@@ -1,0 +1,78 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        args: [-x, -s, bash]
+        files: ^scripts/
+
+  - repo: local
+    hooks:
+      # Pre-commit: format + test
+      - id: gofmt
+        name: Go format
+        entry: gofmt -l -w
+        language: system
+        types: [go]
+
+      - id: golangci-lint
+        name: Go lint (changed modules)
+        entry: bash scripts/lint-changed.sh
+        language: system
+        types: [go]
+
+      - id: go-test-core
+        name: Go test (core)
+        entry: bash -c 'cd backends/core && go test ./... -count=1 -timeout 120s'
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: go-test-api
+        name: Go test (api — generated files + field coverage)
+        entry: bash -c 'cd api && go test ./... -count=1 -timeout 30s'
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: ui-test-admin
+        name: UI test (admin)
+        entry: bash -c 'cd ui/packages/admin && npx vitest run 2>&1'
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # Commit-msg: strip AI attribution
+      - id: strip-ai-attribution
+        name: Strip AI attribution from commit messages
+        entry: bash scripts/strip-ai-attribution.sh
+        language: system
+        stages: [commit-msg]
+        always_run: true
+
+      # Pre-push: check rebase + update badges
+      - id: check-rebased
+        name: Check branch is rebased on origin/main
+        entry: bash scripts/check-rebased.sh
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: update-readme-badges
+        name: Update README badges
+        entry: bash scripts/update-readme-badges.sh
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]

@@ -131,19 +131,19 @@ type Store struct {
 	Pods           *PodRegistry
 	WaitChs        sync.Map // containerID → chan struct{}
 	LogBuffers     sync.Map // containerID → []byte
-	VolumeDirs sync.Map // volumeName → string (host temp dir path)
+	VolumeDirs     sync.Map // volumeName → string (host temp dir path)
 	StagingDirs    sync.Map // containerID → string (pre-start archive staging dir)
 	PathMappings   sync.Map // containerID → map[string]string (container path → host path)
 	HealthChecks   sync.Map // containerID → context.CancelFunc
 	BuildContexts  sync.Map // imageID → string (temp dir with COPY files at destination paths)
 	TmpfsDirs      sync.Map // containerID → []string (tmpfs temp dir paths)
-	PrevCPUStats   sync.Map // containerID → *prevCPUStats (BUG-518)
+	PrevCPUStats   sync.Map // containerID → *prevCPUStats
 	ImageHistory   sync.Map // imageID → []ImageHistoryItem (real build history)
 	LayerContent   sync.Map // layerDigest → []byte (preserved layer tarballs from docker load)
 	IPAlloc        *IPAllocator
 	RenameMu       sync.Mutex
 	RestartHook    func(containerID string, exitCode int) bool
-	pidCounter     atomic.Int64 // BUG-549: incrementing PID counter
+	pidCounter     atomic.Int64 // incrementing PID counter
 }
 
 // NewStore creates a new store with all sub-stores initialized.
@@ -162,7 +162,7 @@ func NewStore() *Store {
 }
 
 // NextPID returns the next incrementing PID for realistic container simulation.
-// BUG-549: Replaces hardcoded Pid=42 / Pid=43 values.
+// Replaces hardcoded Pid=42 / Pid=43 values.
 func (st *Store) NextPID() int {
 	return int(st.pidCounter.Add(1))
 }

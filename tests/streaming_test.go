@@ -70,7 +70,7 @@ func TestContainerAttach(t *testing.T) {
 		buf := make([]byte, 4096)
 		n, _ := resp.Reader.Read(buf)
 		if n > 0 {
-			output = string(buf[:n])
+			_ = string(buf[:n])
 		}
 	}
 

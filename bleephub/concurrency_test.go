@@ -180,7 +180,7 @@ func TestConcurrencyQueueWhenNotCancel(t *testing.T) {
 
 	// Complete first workflow
 	for _, j := range workflow1.Jobs {
-		s.onJobCompleted(context.Background(),j.JobID, "Succeeded")
+		s.onJobCompleted(context.Background(), j.JobID, "Succeeded")
 	}
 
 	// Second workflow should now be running

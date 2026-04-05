@@ -226,17 +226,17 @@ func (s *Server) handleCreateInstallationMgmt(w http.ResponseWriter, r *http.Req
 
 func appToJSON(app *App, includePEM bool) map[string]interface{} {
 	result := map[string]interface{}{
-		"id":            app.ID,
-		"node_id":       app.NodeID,
-		"slug":          app.Slug,
-		"name":          app.Name,
-		"client_id":     app.ClientID,
-		"description":   app.Description,
-		"external_url":  app.ExternalURL,
-		"permissions":   app.Permissions,
-		"events":        app.Events,
-		"created_at":    app.CreatedAt.UTC().Format(time.RFC3339),
-		"updated_at":    app.UpdatedAt.UTC().Format(time.RFC3339),
+		"id":           app.ID,
+		"node_id":      app.NodeID,
+		"slug":         app.Slug,
+		"name":         app.Name,
+		"client_id":    app.ClientID,
+		"description":  app.Description,
+		"external_url": app.ExternalURL,
+		"permissions":  app.Permissions,
+		"events":       app.Events,
+		"created_at":   app.CreatedAt.UTC().Format(time.RFC3339),
+		"updated_at":   app.UpdatedAt.UTC().Format(time.RFC3339),
 		"owner": map[string]interface{}{
 			"login": "admin",
 			"id":    app.OwnerID,
@@ -251,8 +251,8 @@ func appToJSON(app *App, includePEM bool) map[string]interface{} {
 
 func installationToJSON(inst *Installation) map[string]interface{} {
 	return map[string]interface{}{
-		"id":     inst.ID,
-		"app_id": inst.AppID,
+		"id":                   inst.ID,
+		"app_id":               inst.AppID,
 		"app_slug":             inst.AppSlug,
 		"target_type":          inst.TargetType,
 		"target_id":            inst.TargetID,

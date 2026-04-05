@@ -7,7 +7,7 @@ import (
 
 func TestResolveTmpfsMounts_CreatesTempDirs(t *testing.T) {
 	tmpfs := map[string]string{
-		"/tmp":    "rw,noexec",
+		"/tmp":     "rw,noexec",
 		"/var/tmp": "",
 	}
 	result := resolveTmpfsMounts(tmpfs)

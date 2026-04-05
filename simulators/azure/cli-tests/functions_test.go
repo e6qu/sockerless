@@ -35,9 +35,9 @@ func TestFunctionApp_CreateAndShow(t *testing.T) {
 	out := runCLI(t, azRest("PUT", url, body))
 
 	var site struct {
-		Name     string `json:"name"`
-		Location string `json:"location"`
-		Kind     string `json:"kind"`
+		Name       string `json:"name"`
+		Location   string `json:"location"`
+		Kind       string `json:"kind"`
 		Properties struct {
 			State             string `json:"state"`
 			ProvisioningState string `json:"provisioningState"`

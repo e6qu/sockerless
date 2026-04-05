@@ -94,7 +94,6 @@ func (s *Server) ImageSearch(term string, limit int, filters map[string][]string
 	return s.images.Search(term, limit, filters)
 }
 
-
 func (s *Server) PodCreate(req *api.PodCreateRequest) (*api.PodCreateResponse, error) {
 	return s.BaseServer.PodCreate(req)
 }

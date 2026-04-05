@@ -50,6 +50,12 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		Auth:   awscommon.NewECRAuthProvider(awsClients.ECR, logger, s.ctx),
 		Logger: logger,
 	}
+	if svc := awscommon.NewCodeBuildService(
+		awsClients.CodeBuild, awsClients.S3,
+		config.CodeBuildProject, config.BuildBucket, "", config.Region, logger,
+	); svc != nil {
+		s.images.BuildService = svc
+	}
 	s.SetSelf(s)
 	s.StatsProvider = &ecsStatsProvider{server: s}
 

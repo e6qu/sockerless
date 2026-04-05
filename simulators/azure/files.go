@@ -29,9 +29,9 @@ type StorageSku struct {
 
 // StorageAccountProperties holds the properties of a storage account.
 type StorageAccountProperties struct {
-	ProvisioningState string                    `json:"provisioningState"`
-	PrimaryEndpoints  *StoragePrimaryEndpoints  `json:"primaryEndpoints,omitempty"`
-	CreationTime      string                    `json:"creationTime,omitempty"`
+	ProvisioningState string                   `json:"provisioningState"`
+	PrimaryEndpoints  *StoragePrimaryEndpoints `json:"primaryEndpoints,omitempty"`
+	CreationTime      string                   `json:"creationTime,omitempty"`
 }
 
 // StoragePrimaryEndpoints holds the primary endpoints for a storage account.
@@ -55,13 +55,13 @@ type FileShare struct {
 
 // FileShareProperties holds the properties of a file share.
 type FileShareProperties struct {
-	ShareQuota       int    `json:"shareQuota,omitempty"`
-	AccessTier       string `json:"accessTier,omitempty"`
-	EnabledProtocols string `json:"enabledProtocols,omitempty"`
+	ShareQuota        int    `json:"shareQuota,omitempty"`
+	AccessTier        string `json:"accessTier,omitempty"`
+	EnabledProtocols  string `json:"enabledProtocols,omitempty"`
 	ProvisioningState string `json:"provisioningState,omitempty"`
-	LastModifiedTime string `json:"lastModifiedTime,omitempty"`
-	LeaseStatus      string `json:"leaseStatus,omitempty"`
-	LeaseState       string `json:"leaseState,omitempty"`
+	LastModifiedTime  string `json:"lastModifiedTime,omitempty"`
+	LeaseStatus       string `json:"leaseStatus,omitempty"`
+	LeaseState        string `json:"leaseState,omitempty"`
 }
 
 // Package-level store for dashboard access.

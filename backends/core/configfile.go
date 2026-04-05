@@ -47,23 +47,28 @@ type CommonConfig struct {
 
 // AWSConfig holds AWS-specific configuration.
 type AWSConfig struct {
-	Region string           `yaml:"region,omitempty"`
-	ECS    *ECSEnvConfig    `yaml:"ecs,omitempty"`
-	Lambda *LambdaEnvConfig `yaml:"lambda,omitempty"`
+	Region           string           `yaml:"region,omitempty"`
+	CodeBuildProject string           `yaml:"codebuild_project,omitempty"`
+	BuildBucket      string           `yaml:"build_bucket,omitempty"`
+	ECS              *ECSEnvConfig    `yaml:"ecs,omitempty"`
+	Lambda           *LambdaEnvConfig `yaml:"lambda,omitempty"`
 }
 
 // GCPConfig holds GCP-specific configuration.
 type GCPConfig struct {
-	Project  string             `yaml:"project,omitempty"`
-	CloudRun *CloudRunEnvConfig `yaml:"cloudrun,omitempty"`
-	GCF      *GCFEnvConfig      `yaml:"gcf,omitempty"`
+	Project     string             `yaml:"project,omitempty"`
+	BuildBucket string             `yaml:"build_bucket,omitempty"`
+	CloudRun    *CloudRunEnvConfig `yaml:"cloudrun,omitempty"`
+	GCF         *GCFEnvConfig      `yaml:"gcf,omitempty"`
 }
 
 // AzureConfig holds Azure-specific configuration.
 type AzureConfig struct {
-	SubscriptionID string        `yaml:"subscription_id,omitempty"`
-	ACA            *ACAEnvConfig `yaml:"aca,omitempty"`
-	AZF            *AZFEnvConfig `yaml:"azf,omitempty"`
+	SubscriptionID      string        `yaml:"subscription_id,omitempty"`
+	BuildStorageAccount string        `yaml:"build_storage_account,omitempty"`
+	BuildContainer      string        `yaml:"build_container,omitempty"`
+	ACA                 *ACAEnvConfig `yaml:"aca,omitempty"`
+	AZF                 *AZFEnvConfig `yaml:"azf,omitempty"`
 }
 
 // ECSEnvConfig holds ECS-specific settings.
@@ -113,6 +118,7 @@ type ACAEnvConfig struct {
 	Location              string `yaml:"location,omitempty"`
 	LogAnalyticsWorkspace string `yaml:"log_analytics_workspace,omitempty"`
 	StorageAccount        string `yaml:"storage_account,omitempty"`
+	ACRName               string `yaml:"acr_name,omitempty"`
 }
 
 // AZFEnvConfig holds Azure Functions-specific settings.

@@ -23,7 +23,7 @@ func (s *BaseServer) handleVolumeCreate(w http.ResponseWriter, r *http.Request) 
 		name = GenerateID()[:12]
 	}
 
-	// Check duplicate — BUG-519: Docker returns 200 for existing, 201 for new
+	// Check duplicate — Docker returns 200 for existing, 201 for new
 	if _, ok := s.Store.Volumes.Get(name); ok {
 		v, _ := s.Store.Volumes.Get(name)
 		WriteJSON(w, http.StatusOK, v)
@@ -73,7 +73,7 @@ func (s *BaseServer) handleVolumeCreate(w http.ResponseWriter, r *http.Request) 
 func (s *BaseServer) handleVolumeList(w http.ResponseWriter, r *http.Request) {
 	filters := ParseFilters(r.URL.Query().Get("filters"))
 
-	// BUG-500: Build in-use volume names for dangling filter
+	// Build in-use volume names for dangling filter
 	var inUseNames map[string]bool
 	if _, hasDangling := filters["dangling"]; hasDangling {
 		inUseNames = make(map[string]bool)
@@ -97,7 +97,7 @@ func (s *BaseServer) handleVolumeList(w http.ResponseWriter, r *http.Request) {
 		if !MatchVolumeFilters(v, filters) {
 			continue
 		}
-		// BUG-500: Apply dangling filter
+		// Apply dangling filter
 		if danglingVals, ok := filters["dangling"]; ok {
 			wantDangling := danglingVals[0] == "true" || danglingVals[0] == "1"
 			isDangling := !inUseNames[v.Name]

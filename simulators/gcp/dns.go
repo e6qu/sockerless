@@ -14,12 +14,12 @@ import (
 
 // ManagedZone represents a Cloud DNS managed zone.
 type ManagedZone struct {
-	Name                    string                   `json:"name"`
-	DNSName                 string                   `json:"dnsName"`
-	Description             string                   `json:"description,omitempty"`
-	ID                      string                   `json:"id,omitempty"`
-	Visibility              string                   `json:"visibility,omitempty"`
-	PrivateVisibilityConfig map[string]any           `json:"privateVisibilityConfig,omitempty"`
+	Name                    string         `json:"name"`
+	DNSName                 string         `json:"dnsName"`
+	Description             string         `json:"description,omitempty"`
+	ID                      string         `json:"id,omitempty"`
+	Visibility              string         `json:"visibility,omitempty"`
+	PrivateVisibilityConfig map[string]any `json:"privateVisibilityConfig,omitempty"`
 }
 
 // ResourceRecordSet represents a DNS record set.

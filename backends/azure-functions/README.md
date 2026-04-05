@@ -1,94 +1,62 @@
-# backend-azf
+# Azure Functions Backend
 
-Azure Functions backend. Maps Docker container operations to Function Apps with custom container images.
+Runs Docker containers as Azure Function Apps with custom container images, with Log Analytics for log streaming.
 
-## Resource mapping
+## Config (config.yaml)
 
-| Docker concept | Azure resource |
-|---------------|---------------|
-| Container create | Create App Service Plan + Function App |
-| Container start | Start Function App |
-| Container stop/kill | Stop Function App |
-| Container remove | Delete Function App + App Service Plan |
-| Container logs | Azure Monitor Log Analytics query |
+```yaml
+environments:
+  my-azf:
+    backend: azf
+    addr: ":9100"
+    log_level: info
+    azure:
+      subscription_id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+      azf:
+        resource_group: sockerless-rg
+        location: eastus
+        storage_account: sockerlessstorage
+        registry: sockerless.azurecr.io
+        app_service_plan: sockerless-plan
+        timeout: 600
+        log_analytics_workspace: /subscriptions/.../workspaces/sockerless-logs
+    common:
+      callback_url: https://backend.example.com
+      poll_interval: 2s
+      agent_timeout: 30s
+```
 
-## Agent mode
+## Environment Variables
 
-Uses **reverse agent** exclusively. Azure Functions cannot accept arbitrary inbound connections, so the agent inside the function dials back to the backend via `SOCKERLESS_CALLBACK_URL`.
+| Variable | Default | Required | Description |
+|---|---|---|---|
+| `SOCKERLESS_AZF_SUBSCRIPTION_ID` | | **yes** | Azure subscription ID |
+| `SOCKERLESS_AZF_RESOURCE_GROUP` | | **yes** | Azure resource group name |
+| `SOCKERLESS_AZF_LOCATION` | `eastus` | no | Azure region |
+| `SOCKERLESS_AZF_STORAGE_ACCOUNT` | | **yes** | Storage account for function state |
+| `SOCKERLESS_AZF_REGISTRY` | | no | ACR registry hostname |
+| `SOCKERLESS_AZF_APP_SERVICE_PLAN` | | no | App Service plan name |
+| `SOCKERLESS_AZF_TIMEOUT` | `600` | no | Function timeout in seconds |
+| `SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE` | | no | Log Analytics workspace resource ID |
+| `SOCKERLESS_CALLBACK_URL` | | no | Backend URL for reverse agent callbacks |
+| `SOCKERLESS_ENDPOINT_URL` | | no | Custom endpoint (for simulators) |
+| `SOCKERLESS_POLL_INTERVAL` | `2s` | no | Cloud API poll interval |
+| `SOCKERLESS_AGENT_TIMEOUT` | `30s` | no | Agent callback timeout |
 
-Helper and cache containers auto-stop after 500ms.
-
-## Building
+## Quick Start
 
 ```sh
-cd backends/azure-functions
-go build -o sockerless-backend-azf ./cmd/sockerless-backend-azf
+go build -o sockerless-backend-azf ./backends/azure-functions/cmd/sockerless-backend-azf
+./sockerless-backend-azf -addr :9100 -log-level info
 ```
 
-## Configuration
+Flags: `-addr` (default `:9100`), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SOCKERLESS_AZF_SUBSCRIPTION_ID` | _(required)_ | Azure subscription ID |
-| `SOCKERLESS_AZF_RESOURCE_GROUP` | _(required)_ | Azure resource group |
-| `SOCKERLESS_AZF_LOCATION` | `eastus` | Azure region |
-| `SOCKERLESS_AZF_STORAGE_ACCOUNT` | _(required)_ | Storage account for the function |
-| `SOCKERLESS_AZF_REGISTRY` | | Container registry URL |
-| `SOCKERLESS_AZF_APP_SERVICE_PLAN` | | App Service Plan name |
-| `SOCKERLESS_AZF_TIMEOUT` | `600` | Function timeout (seconds) |
-| `SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE` | | Log Analytics workspace ID |
-| `SOCKERLESS_CALLBACK_URL` | | Backend URL for reverse agent connections |
-| `SOCKERLESS_ENDPOINT_URL` | | Custom Azure endpoint (simulator mode) |
+## Cloud Notes
 
-These settings can also be configured via `~/.sockerless/config.yaml`. See the [CLI documentation](../../cmd/sockerless/README.md) for the YAML format.
-
-### Terraform outputs
-
-The `terraform/modules/azf` module produces these outputs. Use `terragrunt output` from `terraform/environments/azf/live` to extract them.
-
-| Terraform Output | Environment Variable |
-|---|---|
-| `resource_group_name` | `SOCKERLESS_AZF_RESOURCE_GROUP` |
-| `location` | `SOCKERLESS_AZF_LOCATION` |
-| `storage_account_name` | `SOCKERLESS_AZF_STORAGE_ACCOUNT` |
-| `acr_login_server` | `SOCKERLESS_AZF_REGISTRY` |
-| `app_service_plan_id` | `SOCKERLESS_AZF_APP_SERVICE_PLAN` |
-| `log_analytics_workspace_id` | `SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE` |
-
-`SOCKERLESS_AZF_SUBSCRIPTION_ID` is not a terraform output — use `az account show --query id -o tsv`.
-
-## Project structure
-
-```
-azure-functions/
-├── cmd/sockerless-backend-azf/
-│   └── main.go              CLI entrypoint
-├── server.go                Server type, ImageManager wiring
-├── config.go                Config struct, env parsing, validation
-├── azure.go                 Azure SDK client initialization
-├── containers.go            Create, start, stop, kill, remove handlers
-├── backend_impl.go          Cloud-native method overrides (containers, images, info, auth)
-├── backend_impl_pods.go     Pod lifecycle
-├── backend_delegates_gen.go Generated BaseServer delegates
-├── image_auth.go            ACRAuthProvider (core.AuthProvider for ACR)
-├── store.go                 AZFState type
-├── recovery.go              Crash recovery
-└── errors.go                Azure error mapping
-```
-
-## Example deployment
-
-See [examples/terraform/](examples/terraform/) for a complete Terraform example that provisions the Azure infrastructure (Resource Group, App Service Plan, Storage Account, Log Analytics, ACR) and walks through running Docker commands against Azure Functions.
-
-## Docker API mapping
-
-For a detailed breakdown of how each Docker REST API endpoint and CLI command maps to Azure Functions operations — including what's supported, what's not, and how it compares to vanilla Docker — see [docs/docker_api_mapping.md](docs/docker_api_mapping.md).
-
-## Testing
-
-```sh
-make sim-test-azure  # simulator integration tests
-make docker-test     # Docker-based full test
-```
-
-See also: [ARCHITECTURE.md](../../ARCHITECTURE.md), [FEATURE_MATRIX.md](../../FEATURE_MATRIX.md), [DECISIONS.md](../../DECISIONS.md)
+- Requires a resource group, storage account, and optionally an App Service plan.
+- Authentication uses Azure Default Credentials (`az login`, managed identity, or env vars).
+- Uses reverse agent exclusively -- Azure Functions cannot accept inbound connections.
+- ACR registry must grant the function app `AcrPull` role for private images.
+- Timeout max is 600s on Consumption plan, higher on Premium/Dedicated plans.
+- See `specs/CONFIG.md` for the full unified config specification.

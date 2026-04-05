@@ -36,7 +36,7 @@ func TestContinueOnErrorDepStillRuns(t *testing.T) {
 	workflow.Env = map[string]string{"__serverURL": "http://localhost", "__defaultImage": "alpine:latest"}
 
 	// Build fails, but has continue-on-error
-	s.onJobCompleted(context.Background(),workflow.Jobs["build"].JobID, "Failed")
+	s.onJobCompleted(context.Background(), workflow.Jobs["build"].JobID, "Failed")
 
 	// Test should still dispatch (not be skipped)
 	if workflow.Jobs["test"].Status != "queued" {
@@ -120,7 +120,7 @@ func TestMaxParallelLimitsDispatch(t *testing.T) {
 	s.store.Workflows[workflow.ID] = workflow
 	s.store.mu.Unlock()
 
-	s.dispatchReadyJobs(context.Background(),workflow, "http://localhost", "alpine:latest")
+	s.dispatchReadyJobs(context.Background(), workflow, "http://localhost", "alpine:latest")
 
 	// Only 2 should be dispatched
 	dispatched := 0
@@ -165,7 +165,7 @@ func TestMaxParallelZeroMeansUnlimited(t *testing.T) {
 	s.store.Workflows[workflow.ID] = workflow
 	s.store.mu.Unlock()
 
-	s.dispatchReadyJobs(context.Background(),workflow, "http://localhost", "alpine:latest")
+	s.dispatchReadyJobs(context.Background(), workflow, "http://localhost", "alpine:latest")
 
 	// All 4 should dispatch
 	dispatched := 0
@@ -398,7 +398,7 @@ func TestThreeStagePipeline(t *testing.T) {
 	}
 
 	// Complete build → test dispatches
-	s.onJobCompleted(context.Background(),workflow.Jobs["build"].JobID, "Succeeded")
+	s.onJobCompleted(context.Background(), workflow.Jobs["build"].JobID, "Succeeded")
 	if workflow.Jobs["test"].Status != "queued" {
 		t.Errorf("test after build = %q, want queued", workflow.Jobs["test"].Status)
 	}
@@ -407,13 +407,13 @@ func TestThreeStagePipeline(t *testing.T) {
 	}
 
 	// Complete test → deploy dispatches
-	s.onJobCompleted(context.Background(),workflow.Jobs["test"].JobID, "Succeeded")
+	s.onJobCompleted(context.Background(), workflow.Jobs["test"].JobID, "Succeeded")
 	if workflow.Jobs["deploy"].Status != "queued" {
 		t.Errorf("deploy after test = %q, want queued", workflow.Jobs["deploy"].Status)
 	}
 
 	// Complete deploy → workflow complete
-	s.onJobCompleted(context.Background(),workflow.Jobs["deploy"].JobID, "Succeeded")
+	s.onJobCompleted(context.Background(), workflow.Jobs["deploy"].JobID, "Succeeded")
 	if workflow.Status != "completed" || workflow.Result != "success" {
 		t.Errorf("workflow = %s/%s, want completed/success", workflow.Status, workflow.Result)
 	}
@@ -495,7 +495,7 @@ func TestOutputPropagationEndToEnd(t *testing.T) {
 	for k, v := range resolved {
 		buildJob.Outputs[k] = v
 	}
-	s.onJobCompleted(context.Background(),buildJob.JobID, "Succeeded")
+	s.onJobCompleted(context.Background(), buildJob.JobID, "Succeeded")
 
 	// Verify outputs were stored
 	if buildJob.Outputs["version"] != "1.0" {
@@ -549,7 +549,7 @@ func TestDiamondDependencyWithOutputs(t *testing.T) {
 
 	// Set root outputs and complete
 	workflow.Jobs["root"].Outputs["tag"] = "v1.0"
-	s.onJobCompleted(context.Background(),workflow.Jobs["root"].JobID, "Succeeded")
+	s.onJobCompleted(context.Background(), workflow.Jobs["root"].JobID, "Succeeded")
 
 	// Both left and right should dispatch
 	if workflow.Jobs["left"].Status != "queued" {
@@ -561,15 +561,15 @@ func TestDiamondDependencyWithOutputs(t *testing.T) {
 
 	// Complete left and right
 	workflow.Jobs["left"].Outputs["l_result"] = "ok"
-	s.onJobCompleted(context.Background(),workflow.Jobs["left"].JobID, "Succeeded")
-	s.onJobCompleted(context.Background(),workflow.Jobs["right"].JobID, "Succeeded")
+	s.onJobCompleted(context.Background(), workflow.Jobs["left"].JobID, "Succeeded")
+	s.onJobCompleted(context.Background(), workflow.Jobs["right"].JobID, "Succeeded")
 
 	// Merge should dispatch
 	if workflow.Jobs["merge"].Status != "queued" {
 		t.Errorf("merge = %q, want queued", workflow.Jobs["merge"].Status)
 	}
 
-	s.onJobCompleted(context.Background(),workflow.Jobs["merge"].JobID, "Succeeded")
+	s.onJobCompleted(context.Background(), workflow.Jobs["merge"].JobID, "Succeeded")
 	if workflow.Status != "completed" || workflow.Result != "success" {
 		t.Errorf("workflow = %s/%s, want completed/success", workflow.Status, workflow.Result)
 	}
@@ -594,7 +594,7 @@ func TestRootFailureCascadesSkipAll(t *testing.T) {
 	workflow.Env = map[string]string{"__serverURL": "http://localhost", "__defaultImage": "alpine:latest"}
 
 	// Root fails
-	s.onJobCompleted(context.Background(),workflow.Jobs["root"].JobID, "Failed")
+	s.onJobCompleted(context.Background(), workflow.Jobs["root"].JobID, "Failed")
 
 	// Mid should be skipped
 	if workflow.Jobs["mid"].Status != "skipped" {
@@ -651,7 +651,7 @@ func TestFailFastCancelsSiblings(t *testing.T) {
 	s.store.mu.Unlock()
 
 	// First job fails → siblings should be cancelled
-	s.onJobCompleted(context.Background(),"j0", "Failed")
+	s.onJobCompleted(context.Background(), "j0", "Failed")
 
 	cancelled := 0
 	for _, j := range workflow.Jobs {
@@ -698,7 +698,7 @@ func TestFailFastFalseNoCancel(t *testing.T) {
 	s.store.Workflows[workflow.ID] = workflow
 	s.store.mu.Unlock()
 
-	s.onJobCompleted(context.Background(),"j0", "Failed")
+	s.onJobCompleted(context.Background(), "j0", "Failed")
 
 	// Siblings should NOT be cancelled
 	cancelled := 0
@@ -747,7 +747,7 @@ func TestFailFastDefaultTrue(t *testing.T) {
 	s.store.Workflows[workflow.ID] = workflow
 	s.store.mu.Unlock()
 
-	s.onJobCompleted(context.Background(),"j0", "Failed")
+	s.onJobCompleted(context.Background(), "j0", "Failed")
 
 	cancelled := 0
 	for _, j := range workflow.Jobs {
@@ -796,7 +796,7 @@ func TestFailFastOnlySameGroup(t *testing.T) {
 	s.store.Workflows[workflow.ID] = workflow
 	s.store.mu.Unlock()
 
-	s.onJobCompleted(context.Background(),"jt0", "Failed")
+	s.onJobCompleted(context.Background(), "jt0", "Failed")
 
 	if workflow.Jobs["test_1"].Result != "cancelled" {
 		t.Errorf("test_1 result = %q, want cancelled", workflow.Jobs["test_1"].Result)
@@ -831,7 +831,7 @@ func TestJobIfSkipsOnFalse(t *testing.T) {
 	workflow.Env = map[string]string{"__serverURL": "http://localhost", "__defaultImage": "alpine:latest"}
 	workflow.Ref = "refs/heads/main" // Not production
 
-	s.onJobCompleted(context.Background(),workflow.Jobs["build"].JobID, "Succeeded")
+	s.onJobCompleted(context.Background(), workflow.Jobs["build"].JobID, "Succeeded")
 
 	if workflow.Jobs["deploy"].Status != "skipped" {
 		t.Errorf("deploy status = %q, want skipped (if: false)", workflow.Jobs["deploy"].Status)
@@ -854,7 +854,7 @@ func TestJobIfAlwaysRunsAfterFailure(t *testing.T) {
 	}
 	workflow.Env = map[string]string{"__serverURL": "http://localhost", "__defaultImage": "alpine:latest"}
 
-	s.onJobCompleted(context.Background(),workflow.Jobs["build"].JobID, "Failed")
+	s.onJobCompleted(context.Background(), workflow.Jobs["build"].JobID, "Failed")
 
 	if workflow.Jobs["cleanup"].Status != "queued" {
 		t.Errorf("cleanup status = %q, want queued (always() should run after failure)", workflow.Jobs["cleanup"].Status)
@@ -877,7 +877,7 @@ func TestJobIfFailureRunsAfterFailure(t *testing.T) {
 	}
 	workflow.Env = map[string]string{"__serverURL": "http://localhost", "__defaultImage": "alpine:latest"}
 
-	s.onJobCompleted(context.Background(),workflow.Jobs["build"].JobID, "Failed")
+	s.onJobCompleted(context.Background(), workflow.Jobs["build"].JobID, "Failed")
 
 	if workflow.Jobs["notify"].Status != "queued" {
 		t.Errorf("notify status = %q, want queued (failure() should run after failure)", workflow.Jobs["notify"].Status)

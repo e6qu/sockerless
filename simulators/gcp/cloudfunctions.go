@@ -16,15 +16,15 @@ import (
 
 // Function represents a Cloud Functions v2 function.
 type Function struct {
-	Name        string            `json:"name"`
-	Description string            `json:"description,omitempty"`
-	BuildConfig *BuildConfig      `json:"buildConfig,omitempty"`
-	ServiceConfig *ServiceConfig  `json:"serviceConfig,omitempty"`
-	State       string            `json:"state"`
-	CreateTime  string            `json:"createTime"`
-	UpdateTime  string            `json:"updateTime"`
-	Labels      map[string]string `json:"labels,omitempty"`
-	Environment string            `json:"environment,omitempty"`
+	Name          string            `json:"name"`
+	Description   string            `json:"description,omitempty"`
+	BuildConfig   *BuildConfig      `json:"buildConfig,omitempty"`
+	ServiceConfig *ServiceConfig    `json:"serviceConfig,omitempty"`
+	State         string            `json:"state"`
+	CreateTime    string            `json:"createTime"`
+	UpdateTime    string            `json:"updateTime"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	Environment   string            `json:"environment,omitempty"`
 }
 
 // BuildConfig holds the build configuration for a function.
@@ -277,4 +277,3 @@ func injectCloudFunctionLog(project, functionName, text string) {
 		Labels: map[string]string{"service_name": functionName},
 	}, nil, []LogEntry{{TextPayload: text}})
 }
-

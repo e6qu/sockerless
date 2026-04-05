@@ -67,7 +67,7 @@ func TestComposeCreateStartStopRemove(t *testing.T) {
 
 	// 3. Start containers
 	for _, ct := range containers {
-		pid := s.Store.NextPID() // BUG-549: use incrementing PID
+		pid := s.Store.NextPID()
 		s.Store.Containers.Update(ct.id, func(c *api.Container) {
 			c.State.Status = "running"
 			c.State.Running = true
@@ -168,7 +168,7 @@ func TestComposeVolumePersistenceAcrossRestarts(t *testing.T) {
 			{
 				Type:        "volume",
 				Name:        "myapp_data",
-				Source:       "/var/lib/docker/volumes/myapp_data/_data",
+				Source:      "/var/lib/docker/volumes/myapp_data/_data",
 				Destination: "/var/lib/postgresql/data",
 				RW:          true,
 			},
@@ -214,7 +214,7 @@ func TestComposeVolumePersistenceAcrossRestarts(t *testing.T) {
 			{
 				Type:        "volume",
 				Name:        "myapp_data",
-				Source:       "/var/lib/docker/volumes/myapp_data/_data",
+				Source:      "/var/lib/docker/volumes/myapp_data/_data",
 				Destination: "/var/lib/postgresql/data",
 				RW:          true,
 			},

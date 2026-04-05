@@ -17,16 +17,16 @@ type ContainerAppEnvironment struct {
 }
 
 type EnvProperties struct {
-	ProvisioningState          string                      `json:"provisioningState"`
-	DefaultDomain              string                      `json:"defaultDomain"`
-	StaticIp                   string                      `json:"staticIp"`
-	AppLogsConfiguration       *AppLogsConfiguration       `json:"appLogsConfiguration,omitempty"`
-	VnetConfiguration          *VnetConfiguration          `json:"vnetConfiguration,omitempty"`
-	InfrastructureSubnetId     string                      `json:"infrastructureSubnetId,omitempty"`
-	ZoneRedundant              bool                        `json:"zoneRedundant"`
-	WorkloadProfiles           []WorkloadProfile           `json:"workloadProfiles,omitempty"`
-	CustomDomainConfiguration  *CustomDomainConfiguration  `json:"customDomainConfiguration,omitempty"`
-	PeerAuthentication         *PeerAuthentication         `json:"peerAuthentication,omitempty"`
+	ProvisioningState         string                     `json:"provisioningState"`
+	DefaultDomain             string                     `json:"defaultDomain"`
+	StaticIp                  string                     `json:"staticIp"`
+	AppLogsConfiguration      *AppLogsConfiguration      `json:"appLogsConfiguration,omitempty"`
+	VnetConfiguration         *VnetConfiguration         `json:"vnetConfiguration,omitempty"`
+	InfrastructureSubnetId    string                     `json:"infrastructureSubnetId,omitempty"`
+	ZoneRedundant             bool                       `json:"zoneRedundant"`
+	WorkloadProfiles          []WorkloadProfile          `json:"workloadProfiles,omitempty"`
+	CustomDomainConfiguration *CustomDomainConfiguration `json:"customDomainConfiguration,omitempty"`
+	PeerAuthentication        *PeerAuthentication        `json:"peerAuthentication,omitempty"`
 }
 
 type CustomDomainConfiguration struct {

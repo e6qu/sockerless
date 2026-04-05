@@ -111,11 +111,11 @@ func TestContainerRemoveCleansNetworks(t *testing.T) {
 
 	// Create a container on the network
 	c := api.Container{
-		ID:      "c1",
-		Name:    "/test",
-		Created: time.Now().UTC().Format(time.RFC3339Nano),
-		Config:  api.ContainerConfig{Labels: make(map[string]string)},
-		State:   api.ContainerState{Status: "exited"},
+		ID:         "c1",
+		Name:       "/test",
+		Created:    time.Now().UTC().Format(time.RFC3339Nano),
+		Config:     api.ContainerConfig{Labels: make(map[string]string)},
+		State:      api.ContainerState{Status: "exited"},
 		HostConfig: api.HostConfig{},
 		NetworkSettings: api.NetworkSettings{
 			Networks: map[string]*api.EndpointSettings{
@@ -158,9 +158,9 @@ func TestContainerRemoveCleansMultipleNetworks(t *testing.T) {
 
 	c := api.Container{
 		ID: "c1", Name: "/test",
-		Created: time.Now().UTC().Format(time.RFC3339Nano),
-		Config:  api.ContainerConfig{Labels: make(map[string]string)},
-		State:   api.ContainerState{Status: "exited"},
+		Created:    time.Now().UTC().Format(time.RFC3339Nano),
+		Config:     api.ContainerConfig{Labels: make(map[string]string)},
+		State:      api.ContainerState{Status: "exited"},
 		HostConfig: api.HostConfig{},
 		NetworkSettings: api.NetworkSettings{
 			Networks: map[string]*api.EndpointSettings{

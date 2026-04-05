@@ -214,7 +214,7 @@ func (s *BaseServer) buildContainerFromConfig(id, name string, config api.Contai
 		args = config.Cmd[1:]
 	}
 
-	// BUG-462: Container.Image should be the sha256 image ID, not the reference name
+	// Container.Image should be the sha256 image ID, not the reference name
 	imageField := config.Image
 	if img, ok := s.Store.ResolveImage(config.Image); ok {
 		imageField = img.ID

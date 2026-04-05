@@ -14,12 +14,12 @@ import (
 // CloudWatch Metrics types
 
 type CWMetricDatum struct {
-	Namespace  string          `json:"namespace" cbor:"Namespace"`
-	MetricName string          `json:"metricName" cbor:"MetricName"`
-	Dimensions []CWDimension   `json:"dimensions,omitempty" cbor:"Dimensions,omitempty"`
-	Value      float64         `json:"value" cbor:"Value"`
-	Timestamp  float64         `json:"timestamp" cbor:"Timestamp"`
-	Unit       string          `json:"unit,omitempty" cbor:"Unit,omitempty"`
+	Namespace  string        `json:"namespace" cbor:"Namespace"`
+	MetricName string        `json:"metricName" cbor:"MetricName"`
+	Dimensions []CWDimension `json:"dimensions,omitempty" cbor:"Dimensions,omitempty"`
+	Value      float64       `json:"value" cbor:"Value"`
+	Timestamp  float64       `json:"timestamp" cbor:"Timestamp"`
+	Unit       string        `json:"unit,omitempty" cbor:"Unit,omitempty"`
 }
 
 type CWDimension struct {
@@ -40,9 +40,9 @@ func registerCloudWatchMetrics(srv *sim.Server) {
 
 // GetMetricData request/response types (CBOR)
 type getMetricDataRequest struct {
-	StartTime         float64             `cbor:"StartTime"`
-	EndTime           float64             `cbor:"EndTime"`
-	MetricDataQueries []metricDataQuery   `cbor:"MetricDataQueries"`
+	StartTime         float64           `cbor:"StartTime"`
+	EndTime           float64           `cbor:"EndTime"`
+	MetricDataQueries []metricDataQuery `cbor:"MetricDataQueries"`
 }
 
 type metricDataQuery struct {

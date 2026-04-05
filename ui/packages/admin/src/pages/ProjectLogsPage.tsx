@@ -17,7 +17,12 @@ export function ProjectLogsPage() {
   const { name } = useParams<{ name: string }>();
   const [component, setComponent] = useState("");
 
-  const { data: logs, isLoading, isError, error } = useQuery({
+  const {
+    data: logs,
+    isLoading,
+    isError,
+    error,
+  } = useQuery({
     queryKey: ["project-logs", name, component],
     queryFn: () => api.projectLogs(name!, component || undefined, 200),
     enabled: !!name,

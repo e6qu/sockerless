@@ -45,74 +45,74 @@ type DeviceCode struct {
 
 // Store holds all in-memory state for bleephub.
 type Store struct {
-	Agents       map[int]*Agent
-	Sessions     map[string]*Session
-	Jobs         map[string]*Job
-	Users        map[int]*User
-	UsersByLogin map[string]*User
-	Tokens       map[string]*Token
-	DeviceCodes  map[string]*DeviceCode
-	Repos        map[int]*Repo
-	ReposByName  map[string]*Repo            // "owner/name" → repo
-	GitStorages  map[string]*memory.Storage   // "owner/name" → go-git memory storage
-	Orgs         map[int]*Org                // id → org
-	OrgsByLogin  map[string]*Org             // login → org
-	Teams        map[int]*Team               // id → team
-	TeamsBySlug  map[string]*Team            // "org/slug" → team
-	Memberships  map[string]*Membership      // "org/user" → membership
-	Issues       map[int]*Issue              // id → issue
-	Labels       map[int]*IssueLabel         // id → label
-	Milestones   map[int]*Milestone          // id → milestone
-	Comments     map[int]*Comment            // id → comment
-	PullRequests map[int]*PullRequest       // id → PR
-	PRReviews    map[int]*PullRequestReview // id → review
-	Workflows       map[string]*Workflow       // id → workflow
-	PendingMessages []*TaskAgentMessage        // messages awaiting delivery
-	RepoSecrets     map[string]map[string]*Secret // "owner/repo" → name → secret
-	Hooks           map[string][]*Webhook            // "owner/repo" → hooks
-	HookDeliveries  map[int][]*WebhookDelivery       // hookID → deliveries
-	Apps              map[int]*App                    // id → app
-	AppsBySlug        map[string]*App                 // slug → app
-	Installations     map[int]*Installation           // id → installation
-	InstallationTokens map[string]*InstallationToken  // token value → token
-	ManifestCodes     map[string]int                  // code → appID (one-time-use)
-	LogLines          map[string][]string             // jobID → captured console log lines
-	NextAgent       int
-	NextMsg      int64
-	NextLog      int
-	NextReqID    int64
-	NextUser     int
-	NextRepo     int
-	NextOrg      int
-	NextTeam     int
-	NextIssue    int
-	NextLabel    int
-	NextMilestone int
-	NextComment  int
-	NextPR       int
-	NextPRReview   int
-	NextRunID      int
-	NextHookID     int
-	NextDeliveryID int
+	Agents             map[int]*Agent
+	Sessions           map[string]*Session
+	Jobs               map[string]*Job
+	Users              map[int]*User
+	UsersByLogin       map[string]*User
+	Tokens             map[string]*Token
+	DeviceCodes        map[string]*DeviceCode
+	Repos              map[int]*Repo
+	ReposByName        map[string]*Repo              // "owner/name" → repo
+	GitStorages        map[string]*memory.Storage    // "owner/name" → go-git memory storage
+	Orgs               map[int]*Org                  // id → org
+	OrgsByLogin        map[string]*Org               // login → org
+	Teams              map[int]*Team                 // id → team
+	TeamsBySlug        map[string]*Team              // "org/slug" → team
+	Memberships        map[string]*Membership        // "org/user" → membership
+	Issues             map[int]*Issue                // id → issue
+	Labels             map[int]*IssueLabel           // id → label
+	Milestones         map[int]*Milestone            // id → milestone
+	Comments           map[int]*Comment              // id → comment
+	PullRequests       map[int]*PullRequest          // id → PR
+	PRReviews          map[int]*PullRequestReview    // id → review
+	Workflows          map[string]*Workflow          // id → workflow
+	PendingMessages    []*TaskAgentMessage           // messages awaiting delivery
+	RepoSecrets        map[string]map[string]*Secret // "owner/repo" → name → secret
+	Hooks              map[string][]*Webhook         // "owner/repo" → hooks
+	HookDeliveries     map[int][]*WebhookDelivery    // hookID → deliveries
+	Apps               map[int]*App                  // id → app
+	AppsBySlug         map[string]*App               // slug → app
+	Installations      map[int]*Installation         // id → installation
+	InstallationTokens map[string]*InstallationToken // token value → token
+	ManifestCodes      map[string]int                // code → appID (one-time-use)
+	LogLines           map[string][]string           // jobID → captured console log lines
+	NextAgent          int
+	NextMsg            int64
+	NextLog            int
+	NextReqID          int64
+	NextUser           int
+	NextRepo           int
+	NextOrg            int
+	NextTeam           int
+	NextIssue          int
+	NextLabel          int
+	NextMilestone      int
+	NextComment        int
+	NextPR             int
+	NextPRReview       int
+	NextRunID          int
+	NextHookID         int
+	NextDeliveryID     int
 	NextAppID          int
 	NextInstallationID int
-	mu             sync.RWMutex
+	mu                 sync.RWMutex
 }
 
 // Agent represents a registered runner agent.
 type Agent struct {
-	ID              int                    `json:"id"`
-	Name            string                 `json:"name"`
-	Version         string                 `json:"version"`
-	Enabled         bool                   `json:"enabled"`
-	Status          string                 `json:"status"`
-	OSDescription   string                 `json:"osDescription"`
-	Labels          []Label                `json:"labels"`
-	Authorization   *AgentAuthorization    `json:"authorization,omitempty"`
-	Ephemeral       bool                   `json:"ephemeral,omitempty"`
-	MaxParallelism  int                    `json:"maxParallelism,omitempty"`
-	ProvisionState  string                 `json:"provisioningState,omitempty"`
-	CreatedOn       time.Time              `json:"createdOn"`
+	ID             int                 `json:"id"`
+	Name           string              `json:"name"`
+	Version        string              `json:"version"`
+	Enabled        bool                `json:"enabled"`
+	Status         string              `json:"status"`
+	OSDescription  string              `json:"osDescription"`
+	Labels         []Label             `json:"labels"`
+	Authorization  *AgentAuthorization `json:"authorization,omitempty"`
+	Ephemeral      bool                `json:"ephemeral,omitempty"`
+	MaxParallelism int                 `json:"maxParallelism,omitempty"`
+	ProvisionState string              `json:"provisioningState,omitempty"`
+	CreatedOn      time.Time           `json:"createdOn"`
 }
 
 // Label is an agent label.
@@ -137,9 +137,9 @@ type AgentPublicKey struct {
 
 // Session represents a runner's active session.
 type Session struct {
-	SessionID string `json:"sessionId"`
-	OwnerName string `json:"ownerName"`
-	Agent     *Agent `json:"agent"`
+	SessionID string                 `json:"sessionId"`
+	OwnerName string                 `json:"ownerName"`
+	Agent     *Agent                 `json:"agent"`
 	MsgCh     chan *TaskAgentMessage `json:"-"`
 }
 
@@ -167,29 +167,29 @@ type Job struct {
 // NewStore creates an initialized store.
 func NewStore() *Store {
 	return &Store{
-		Agents:       make(map[int]*Agent),
-		Sessions:     make(map[string]*Session),
-		Jobs:         make(map[string]*Job),
-		Users:        make(map[int]*User),
-		UsersByLogin: make(map[string]*User),
-		Tokens:       make(map[string]*Token),
-		DeviceCodes:  make(map[string]*DeviceCode),
-		Repos:        make(map[int]*Repo),
-		ReposByName:  make(map[string]*Repo),
-		GitStorages:  make(map[string]*memory.Storage),
-		Orgs:         make(map[int]*Org),
-		OrgsByLogin:  make(map[string]*Org),
-		Teams:        make(map[int]*Team),
-		TeamsBySlug:  make(map[string]*Team),
-		Memberships:  make(map[string]*Membership),
-		Issues:       make(map[int]*Issue),
-		Labels:       make(map[int]*IssueLabel),
-		Milestones:   make(map[int]*Milestone),
-		Comments:     make(map[int]*Comment),
-		PullRequests: make(map[int]*PullRequest),
-		PRReviews:    make(map[int]*PullRequestReview),
-		Workflows:    make(map[string]*Workflow),
-		RepoSecrets:    make(map[string]map[string]*Secret),
+		Agents:             make(map[int]*Agent),
+		Sessions:           make(map[string]*Session),
+		Jobs:               make(map[string]*Job),
+		Users:              make(map[int]*User),
+		UsersByLogin:       make(map[string]*User),
+		Tokens:             make(map[string]*Token),
+		DeviceCodes:        make(map[string]*DeviceCode),
+		Repos:              make(map[int]*Repo),
+		ReposByName:        make(map[string]*Repo),
+		GitStorages:        make(map[string]*memory.Storage),
+		Orgs:               make(map[int]*Org),
+		OrgsByLogin:        make(map[string]*Org),
+		Teams:              make(map[int]*Team),
+		TeamsBySlug:        make(map[string]*Team),
+		Memberships:        make(map[string]*Membership),
+		Issues:             make(map[int]*Issue),
+		Labels:             make(map[int]*IssueLabel),
+		Milestones:         make(map[int]*Milestone),
+		Comments:           make(map[int]*Comment),
+		PullRequests:       make(map[int]*PullRequest),
+		PRReviews:          make(map[int]*PullRequestReview),
+		Workflows:          make(map[string]*Workflow),
+		RepoSecrets:        make(map[string]map[string]*Secret),
 		Hooks:              make(map[string][]*Webhook),
 		HookDeliveries:     make(map[int][]*WebhookDelivery),
 		Apps:               make(map[int]*App),
@@ -198,21 +198,21 @@ func NewStore() *Store {
 		InstallationTokens: make(map[string]*InstallationToken),
 		ManifestCodes:      make(map[string]int),
 		LogLines:           make(map[string][]string),
-		NextAgent:      1,
-		NextMsg:      1,
-		NextLog:      1,
-		NextReqID:    1,
-		NextUser:     1,
-		NextRepo:     1,
-		NextOrg:      1,
-		NextTeam:     1,
-		NextIssue:    1,
-		NextLabel:    1,
-		NextMilestone: 1,
-		NextComment:  1,
-		NextPR:       1,
-		NextPRReview:   1,
-		NextRunID:      1,
+		NextAgent:          1,
+		NextMsg:            1,
+		NextLog:            1,
+		NextReqID:          1,
+		NextUser:           1,
+		NextRepo:           1,
+		NextOrg:            1,
+		NextTeam:           1,
+		NextIssue:          1,
+		NextLabel:          1,
+		NextMilestone:      1,
+		NextComment:        1,
+		NextPR:             1,
+		NextPRReview:       1,
+		NextRunID:          1,
 		NextHookID:         1,
 		NextDeliveryID:     1,
 		NextAppID:          1,

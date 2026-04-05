@@ -51,6 +51,12 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		Auth:   azurecommon.NewACRAuthProvider(logger),
 		Logger: logger,
 	}
+	if svc, err := azurecommon.NewACRBuildService(
+		azureClients.Cred, config.SubscriptionID, config.ResourceGroup,
+		config.ACRName, config.BuildStorageAccount, config.BuildContainer, logger,
+	); err == nil && svc != nil {
+		s.images.BuildService = svc
+	}
 	s.SetSelf(s)
 
 	mode := "cloud"

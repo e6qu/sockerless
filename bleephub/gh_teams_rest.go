@@ -191,19 +191,19 @@ func (s *Server) handleDeleteTeam(w http.ResponseWriter, r *http.Request) {
 // teamToJSON converts a Team to a JSON-compatible map with snake_case keys.
 func teamToJSON(team *Team, org *Org, baseURL string) map[string]interface{} {
 	return map[string]interface{}{
-		"id":              team.ID,
-		"node_id":         team.NodeID,
-		"url":             baseURL + "/api/v3/orgs/" + org.Login + "/teams/" + team.Slug,
-		"html_url":        baseURL + "/orgs/" + org.Login + "/teams/" + team.Slug,
-		"name":            team.Name,
-		"slug":            team.Slug,
-		"description":     team.Description,
-		"privacy":         team.Privacy,
-		"permission":      team.Permission,
-		"members_url":     baseURL + "/api/v3/orgs/" + org.Login + "/teams/" + team.Slug + "/members{/member}",
+		"id":               team.ID,
+		"node_id":          team.NodeID,
+		"url":              baseURL + "/api/v3/orgs/" + org.Login + "/teams/" + team.Slug,
+		"html_url":         baseURL + "/orgs/" + org.Login + "/teams/" + team.Slug,
+		"name":             team.Name,
+		"slug":             team.Slug,
+		"description":      team.Description,
+		"privacy":          team.Privacy,
+		"permission":       team.Permission,
+		"members_url":      baseURL + "/api/v3/orgs/" + org.Login + "/teams/" + team.Slug + "/members{/member}",
 		"repositories_url": baseURL + "/api/v3/orgs/" + org.Login + "/teams/" + team.Slug + "/repos",
-		"organization":    orgToJSON(org, baseURL),
-		"created_at":      team.CreatedAt.Format(time.RFC3339),
-		"updated_at":      team.UpdatedAt.Format(time.RFC3339),
+		"organization":     orgToJSON(org, baseURL),
+		"created_at":       team.CreatedAt.Format(time.RFC3339),
+		"updated_at":       team.UpdatedAt.Format(time.RFC3339),
 	}
 }

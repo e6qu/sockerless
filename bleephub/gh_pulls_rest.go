@@ -533,14 +533,14 @@ func reviewToJSON(review *PullRequestReview, st *Store, baseURL, repoFullName st
 	st.mu.RUnlock()
 
 	return map[string]interface{}{
-		"id":                   review.ID,
-		"node_id":              review.NodeID,
-		"user":                 authorJSON,
-		"body":                 review.Body,
-		"state":                review.State,
-		"html_url":             baseURL + "/" + repoFullName + "/pull/" + strconv.Itoa(prNumber) + "#pullrequestreview-" + strconv.Itoa(review.ID),
-		"pull_request_url":     baseURL + "/api/v3/repos/" + repoFullName + "/pulls/" + strconv.Itoa(prNumber),
-		"author_association":   "OWNER",
-		"submitted_at":         review.CreatedAt.Format(time.RFC3339),
+		"id":                 review.ID,
+		"node_id":            review.NodeID,
+		"user":               authorJSON,
+		"body":               review.Body,
+		"state":              review.State,
+		"html_url":           baseURL + "/" + repoFullName + "/pull/" + strconv.Itoa(prNumber) + "#pullrequestreview-" + strconv.Itoa(review.ID),
+		"pull_request_url":   baseURL + "/api/v3/repos/" + repoFullName + "/pulls/" + strconv.Itoa(prNumber),
+		"author_association": "OWNER",
+		"submitted_at":       review.CreatedAt.Format(time.RFC3339),
 	}
 }

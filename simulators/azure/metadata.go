@@ -37,7 +37,7 @@ func registerMetadata(srv *sim.Server) {
 					"https://management.core.windows.net/",
 					"https://management.azure.com/",
 				},
-				"tenant":          "common",
+				"tenant":           "common",
 				"identityProvider": "AAD",
 			},
 			// No trailing slashes — go-azure-sdk prepends this to paths like
@@ -51,7 +51,7 @@ func registerMetadata(srv *sim.Server) {
 			"batch":                    baseURL,
 			"suffixes": map[string]any{
 				"keyVaultDns":       "localhost",
-				"storage":          host,
+				"storage":           host,
 				"acrLoginServer":    "localhost",
 				"sqlServerHostname": "localhost",
 			},

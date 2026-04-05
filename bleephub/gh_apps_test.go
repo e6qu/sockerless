@@ -477,7 +477,7 @@ func TestListAppInstallationsHTTP(t *testing.T) {
 func TestCreateInstallationTokenHTTP(t *testing.T) {
 	// Create app + installation
 	resp := ghPost(t, "/api/v3/bleephub/apps", defaultToken, map[string]interface{}{
-		"name": "Token HTTP App",
+		"name":        "Token HTTP App",
 		"permissions": map[string]string{"contents": "write"},
 	})
 	appData := decodeJSON(t, resp)

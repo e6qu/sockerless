@@ -474,9 +474,9 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 	repoType.AddFieldConfig("labels", &graphql.Field{
 		Type: labelConnectionType,
 		Args: graphql.FieldConfigArgument{
-			"first":   &graphql.ArgumentConfig{Type: graphql.Int},
-			"after":   &graphql.ArgumentConfig{Type: graphql.String},
-			"query":   &graphql.ArgumentConfig{Type: graphql.String},
+			"first": &graphql.ArgumentConfig{Type: graphql.Int},
+			"after": &graphql.ArgumentConfig{Type: graphql.String},
+			"query": &graphql.ArgumentConfig{Type: graphql.String},
 			"orderBy": &graphql.ArgumentConfig{Type: graphql.NewInputObject(graphql.InputObjectConfig{
 				Name: "LabelOrder",
 				Fields: graphql.InputObjectConfigFieldMap{
@@ -1068,13 +1068,13 @@ func commentToGQLLocked(c *Comment, st *Store) map[string]interface{} {
 		author = userToGraphQL(u)
 	}
 	return map[string]interface{}{
-		"nodeID":              c.NodeID,
-		"body":                c.Body,
-		"url":                 "",
-		"createdAt":           c.CreatedAt.Format(time.RFC3339),
-		"updatedAt":           c.UpdatedAt.Format(time.RFC3339),
-		"author":              author,
-		"authorAssociation":   "OWNER",
+		"nodeID":            c.NodeID,
+		"body":              c.Body,
+		"url":               "",
+		"createdAt":         c.CreatedAt.Format(time.RFC3339),
+		"updatedAt":         c.UpdatedAt.Format(time.RFC3339),
+		"author":            author,
+		"authorAssociation": "OWNER",
 	}
 }
 

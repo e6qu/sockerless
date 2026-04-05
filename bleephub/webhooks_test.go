@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
+	memfs "github.com/go-git/go-billy/v5/memfs"
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/go-git/go-git/v5/storage/memory"
-	memfs "github.com/go-git/go-billy/v5/memfs"
 )
 
 func createWebhookTestRepo(t *testing.T, name string) {

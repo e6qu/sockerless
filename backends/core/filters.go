@@ -105,7 +105,7 @@ func MatchContainerFilters(c api.Container, filters map[string][]string) bool {
 			if !matched {
 				return false
 			}
-		case "exited": // BUG-385
+		case "exited":
 			if c.State.Status != "exited" {
 				return false
 			}
@@ -120,7 +120,7 @@ func MatchContainerFilters(c api.Container, filters map[string][]string) bool {
 			if !matched {
 				return false
 			}
-		case "publish": // BUG-391
+		case "publish":
 			matched := false
 			for _, v := range values {
 				for port := range c.HostConfig.PortBindings {
@@ -136,7 +136,7 @@ func MatchContainerFilters(c api.Container, filters map[string][]string) bool {
 			if !matched {
 				return false
 			}
-		case "volume": // BUG-392
+		case "volume":
 			matched := false
 			for _, v := range values {
 				for _, m := range c.Mounts {
@@ -152,7 +152,7 @@ func MatchContainerFilters(c api.Container, filters map[string][]string) bool {
 			if !matched {
 				return false
 			}
-		case "expose": // BUG-489
+		case "expose":
 			matched := false
 			for _, val := range values {
 				if _, ok := c.Config.ExposedPorts[val]; ok {
@@ -170,7 +170,7 @@ func MatchContainerFilters(c api.Container, filters map[string][]string) bool {
 			if !matched {
 				return false
 			}
-		case "is-task": // BUG-393
+		case "is-task":
 			for _, v := range values {
 				if v == "true" {
 					return false // No Swarm tasks in sockerless
