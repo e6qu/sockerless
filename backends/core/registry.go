@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -58,6 +57,10 @@ var imageMetadataCache = struct {
 // or the image reference can't be resolved (graceful fallback to synthetic).
 // Logs a warning on fetch failure instead of silently returning nil.
 func FetchImageMetadata(ref string, basicAuth ...string) (*ImageMetadataResult, error) {
+	// Guard against empty reference (causes 401 from registry)
+	if ref == "" {
+		return nil, nil
+	}
 	if os.Getenv("SOCKERLESS_SKIP_IMAGE_CONFIG") == "true" {
 		return nil, nil
 	}
@@ -80,7 +83,7 @@ func FetchImageMetadata(ref string, basicAuth ...string) (*ImageMetadataResult, 
 	meta, err := fetchMetadataFromRegistry(rc, auth)
 	if err != nil {
 		// Log warning instead of silent fallback.
-		log.Printf("[WARN] FetchImageMetadata(%q): %v (falling back to synthetic)", ref, err)
+		fmt.Fprintf(os.Stderr, "[WARN] FetchImageMetadata(%q): %v (falling back to synthetic)\n", ref, err)
 		return nil, nil
 	}
 
@@ -213,7 +216,6 @@ func fetchMetadataFromRegistry(rc registryConfig, basicAuth string) (*ImageMetad
 		Created:        ociCfg.Created,
 	}, nil
 }
-
 
 // tokenResponse is the response from a Docker registry auth endpoint.
 type tokenResponse struct {

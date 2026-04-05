@@ -13,8 +13,8 @@ import (
 	awslambda "github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/sockerless/api"
-	core "github.com/sockerless/backend-core"
 	awscommon "github.com/sockerless/aws-common"
+	core "github.com/sockerless/backend-core"
 )
 
 // Compile-time check that Server implements api.Backend.
@@ -44,9 +44,9 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 
 	// Merge image config if available
 	if img, ok := s.Store.ResolveImage(config.Image); ok {
-		// BUG-541: Merge ENV by key — image provides defaults, container overrides
+		// Merge ENV by key — image provides defaults, container overrides
 		config.Env = core.MergeEnvByKey(img.Config.Env, config.Env)
-		// BUG-542: Docker clears image Cmd when Entrypoint is overridden in create
+		// Docker clears image Cmd when Entrypoint is overridden in create
 		if len(config.Cmd) == 0 && len(config.Entrypoint) == 0 {
 			config.Cmd = img.Config.Cmd
 		}
@@ -101,18 +101,32 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		Driver:   "lambda",
 	}
 
-	// Set up default network
+	// Set up default network — resolve via store for correct ID and Containers map
 	netName := hostConfig.NetworkMode
 	if netName == "default" {
 		netName = "bridge"
 	}
+	networkID := netName
+	if net, ok := s.Store.ResolveNetwork(netName); ok {
+		networkID = net.ID
+		// Register container in the network's Containers map
+		s.Store.Networks.Update(net.ID, func(n *api.Network) {
+			if n.Containers == nil {
+				n.Containers = make(map[string]api.EndpointResource)
+			}
+			n.Containers[id] = api.EndpointResource{
+				Name:       strings.TrimPrefix(name, "/"),
+				EndpointID: core.GenerateID()[:16],
+			}
+		})
+	}
 	container.NetworkSettings.Networks[netName] = &api.EndpointSettings{
-		NetworkID:   netName,
+		NetworkID:   networkID,
 		EndpointID:  core.GenerateID()[:16],
-		Gateway:     "172.17.0.1",
-		IPAddress:   fmt.Sprintf("172.17.0.%d", int(s.ipCounter.Add(1))),
+		Gateway:     "",
+		IPAddress:   "0.0.0.0",
 		IPPrefixLen: 16,
-		MacAddress:  "02:42:ac:11:00:02",
+		MacAddress:  "",
 	}
 
 	// Build function name from container name
@@ -135,13 +149,19 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		CreatedAt:   time.Now(),
 	}
 
+	// Resolve image to ECR URI (Lambda only supports ECR images)
+	imageURI, err := s.resolveImageURI(s.ctx(), config.Image)
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", config.Image, err)}
+	}
+
 	// Create Lambda function
 	createInput := &awslambda.CreateFunctionInput{
 		FunctionName: aws.String(funcName),
 		Role:         aws.String(s.config.RoleARN),
 		PackageType:  lambdatypes.PackageTypeImage,
 		Code: &lambdatypes.FunctionCode{
-			ImageUri: aws.String(config.Image),
+			ImageUri: aws.String(imageURI),
 		},
 		MemorySize: aws.Int32(int32(s.config.MemorySize)),
 		Timeout:    aws.Int32(int32(s.config.Timeout)),
@@ -267,7 +287,7 @@ func (s *Server) ContainerStart(ref string) error {
 	s.Store.Containers.Update(id, func(c *api.Container) {
 		c.State.Status = "running"
 		c.State.Running = true
-		c.State.Pid = 1
+		c.State.Pid = 0
 		c.State.StartedAt = now
 		c.State.FinishedAt = "0001-01-01T00:00:00Z"
 		c.State.ExitCode = 0
@@ -290,12 +310,15 @@ func (s *Server) ContainerStart(ref string) error {
 				result, err := s.aws.Lambda.Invoke(s.ctx(), &awslambda.InvokeInput{
 					FunctionName: aws.String(lambdaState.FunctionName),
 				})
+				var stateError string
 				if err != nil {
 					s.Logger.Error().Err(err).Str("function", lambdaState.FunctionName).Msg("Lambda invocation failed")
 					exitCode = 1
+					stateError = err.Error()
 				} else {
 					if result.FunctionError != nil {
 						exitCode = 1
+						stateError = aws.ToString(result.FunctionError)
 					}
 					// Store response payload in log buffer for container logs
 					if len(result.Payload) > 0 && string(result.Payload) != "{}" {
@@ -305,6 +328,11 @@ func (s *Server) ContainerStart(ref string) error {
 					}
 				}
 				if c, ok := s.Store.Containers.Get(id); ok && c.State.Running {
+					if stateError != "" {
+						s.Store.Containers.Update(id, func(c *api.Container) {
+							c.State.Error = stateError
+						})
+					}
 					s.Store.StopContainer(id, exitCode)
 				}
 			}()
@@ -354,7 +382,7 @@ func (s *Server) ContainerStart(ref string) error {
 
 	// Wait for reverse agent callback if configured
 	if s.config.CallbackURL != "" {
-		if err := s.AgentRegistry.WaitForAgent(id, 30*time.Second); err != nil {
+		if err := s.AgentRegistry.WaitForAgent(id, s.config.AgentTimeout); err != nil {
 			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
 			s.AgentRegistry.Remove(id)
 		} else {
@@ -621,7 +649,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 		if len(untilFilters) > 0 && !core.MatchUntil(c.Created, untilFilters) {
 			continue
 		}
-		// BUG-481: Sum image sizes for SpaceReclaimed
+		// Sum image sizes for SpaceReclaimed
 		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
 			spaceReclaimed += uint64(img.Size)
 		}
@@ -793,4 +821,3 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
 	return s.images.Push(name, tag, auth)
 }
-

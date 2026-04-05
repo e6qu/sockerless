@@ -42,9 +42,9 @@ type WorkspaceSku struct {
 // The azurerm provider (go-azure-sdk) dereferences this struct — it must not be nil.
 type WorkspaceFeatures struct {
 	EnableLogAccessUsingOnlyResourcePermissions *bool `json:"enableLogAccessUsingOnlyResourcePermissions,omitempty"`
-	DisableLocalAuth                           *bool `json:"disableLocalAuth,omitempty"`
-	EnableDataExport                           *bool `json:"enableDataExport,omitempty"`
-	ImmediatePurgeDataOn30Days                 *bool `json:"immediatePurgeDataOn30Days,omitempty"`
+	DisableLocalAuth                            *bool `json:"disableLocalAuth,omitempty"`
+	EnableDataExport                            *bool `json:"enableDataExport,omitempty"`
+	ImmediatePurgeDataOn30Days                  *bool `json:"immediatePurgeDataOn30Days,omitempty"`
 }
 
 // QueryRequest holds a KQL query request body.
@@ -157,9 +157,9 @@ func registerAzureMonitor(srv *sim.Server) {
 				Sku:               &WorkspaceSku{Name: "PerGB2018"},
 				Features: &WorkspaceFeatures{
 					EnableLogAccessUsingOnlyResourcePermissions: &boolTrue,
-					DisableLocalAuth:                           &boolFalse,
-					EnableDataExport:                           &boolFalse,
-					ImmediatePurgeDataOn30Days:                 &boolFalse,
+					DisableLocalAuth:           &boolFalse,
+					EnableDataExport:           &boolFalse,
+					ImmediatePurgeDataOn30Days: &boolFalse,
 				},
 			},
 		}
@@ -382,7 +382,6 @@ func registerAzureMonitor(srv *sim.Server) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 }
-
 
 // generateUUID generates a random UUID string.
 func generateUUID() string {

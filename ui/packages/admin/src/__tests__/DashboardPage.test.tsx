@@ -39,10 +39,34 @@ const overviewData = {
   total_containers: 12,
   backends: 2,
   components: [
-    { name: "memory", type: "backend", addr: "http://localhost:9100", health: "up", uptime: 3600 },
-    { name: "ecs", type: "backend", addr: "http://localhost:9102", health: "up", uptime: 1800 },
-    { name: "sim-aws", type: "simulator", addr: "http://localhost:4566", health: "up", uptime: 600 },
-    { name: "bleephub", type: "coordinator", addr: "http://localhost:5555", health: "down", uptime: 0 },
+    {
+      name: "memory",
+      type: "backend",
+      addr: "http://localhost:9100",
+      health: "up",
+      uptime: 3600,
+    },
+    {
+      name: "ecs",
+      type: "backend",
+      addr: "http://localhost:9102",
+      health: "up",
+      uptime: 1800,
+    },
+    {
+      name: "sim-aws",
+      type: "simulator",
+      addr: "http://localhost:4566",
+      health: "up",
+      uptime: 600,
+    },
+    {
+      name: "bleephub",
+      type: "coordinator",
+      addr: "http://localhost:5555",
+      health: "down",
+      uptime: 0,
+    },
   ],
 };
 

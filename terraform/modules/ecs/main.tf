@@ -27,6 +27,12 @@
 locals {
   name_prefix = "${var.project_name}-${var.environment}"
 
+  # When existing VPC is provided, use it; otherwise use the created VPC
+  use_existing_vpc = var.existing_vpc_id != ""
+  vpc_id           = local.use_existing_vpc ? var.existing_vpc_id : aws_vpc.main[0].id
+  subnet_ids       = local.use_existing_vpc ? var.existing_subnet_ids : aws_subnet.private[*].id
+  task_sg_id       = local.use_existing_vpc ? var.existing_security_group_id : aws_security_group.task[0].id
+
   common_tags = merge(var.tags, {
     project     = var.project_name
     environment = var.environment
@@ -48,6 +54,8 @@ data "aws_partition" "current" {}
 # =============================================================================
 
 resource "aws_vpc" "main" {
+  count = local.use_existing_vpc ? 0 : 1
+
   cidr_block           = var.vpc_cidr
   enable_dns_support   = true
   enable_dns_hostnames = true
@@ -62,7 +70,9 @@ resource "aws_vpc" "main" {
 # =============================================================================
 
 resource "aws_internet_gateway" "main" {
-  vpc_id = aws_vpc.main.id
+  count = local.use_existing_vpc ? 0 : 1
+
+  vpc_id = aws_vpc.main[0].id
 
   tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-igw"
@@ -74,9 +84,9 @@ resource "aws_internet_gateway" "main" {
 # =============================================================================
 
 resource "aws_subnet" "public" {
-  count = length(var.availability_zones)
+  count = local.use_existing_vpc ? 0 : length(var.availability_zones)
 
-  vpc_id                  = aws_vpc.main.id
+  vpc_id                  = aws_vpc.main[0].id
   cidr_block              = cidrsubnet(var.vpc_cidr, 8, count.index)
   availability_zone       = var.availability_zones[count.index]
   map_public_ip_on_launch = true
@@ -92,9 +102,9 @@ resource "aws_subnet" "public" {
 # =============================================================================
 
 resource "aws_subnet" "private" {
-  count = length(var.availability_zones)
+  count = local.use_existing_vpc ? 0 : length(var.availability_zones)
 
-  vpc_id            = aws_vpc.main.id
+  vpc_id            = aws_vpc.main[0].id
   cidr_block        = cidrsubnet(var.vpc_cidr, 8, count.index + length(var.availability_zones))
   availability_zone = var.availability_zones[count.index]
 
@@ -109,7 +119,7 @@ resource "aws_subnet" "private" {
 # =============================================================================
 
 resource "aws_eip" "nat" {
-  count = var.nat_gateway_count
+  count = local.use_existing_vpc ? 0 : var.nat_gateway_count
 
   domain = "vpc"
 
@@ -119,7 +129,7 @@ resource "aws_eip" "nat" {
 }
 
 resource "aws_nat_gateway" "main" {
-  count = var.nat_gateway_count
+  count = local.use_existing_vpc ? 0 : var.nat_gateway_count
 
   allocation_id = aws_eip.nat[count.index].id
   subnet_id     = aws_subnet.public[count.index].id
@@ -137,11 +147,13 @@ resource "aws_nat_gateway" "main" {
 
 # Public route table — routes to Internet Gateway
 resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.main.id
+  count = local.use_existing_vpc ? 0 : 1
+
+  vpc_id = aws_vpc.main[0].id
 
   route {
     cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.main.id
+    gateway_id = aws_internet_gateway.main[0].id
   }
 
   tags = merge(local.common_tags, {
@@ -150,17 +162,17 @@ resource "aws_route_table" "public" {
 }
 
 resource "aws_route_table_association" "public" {
-  count = length(var.availability_zones)
+  count = local.use_existing_vpc ? 0 : length(var.availability_zones)
 
   subnet_id      = aws_subnet.public[count.index].id
-  route_table_id = aws_route_table.public.id
+  route_table_id = aws_route_table.public[0].id
 }
 
 # Private route tables — route to NAT Gateway(s)
 resource "aws_route_table" "private" {
-  count = length(var.availability_zones)
+  count = local.use_existing_vpc ? 0 : length(var.availability_zones)
 
-  vpc_id = aws_vpc.main.id
+  vpc_id = aws_vpc.main[0].id
 
   route {
     cidr_block     = "0.0.0.0/0"
@@ -173,7 +185,7 @@ resource "aws_route_table" "private" {
 }
 
 resource "aws_route_table_association" "private" {
-  count = length(var.availability_zones)
+  count = local.use_existing_vpc ? 0 : length(var.availability_zones)
 
   subnet_id      = aws_subnet.private[count.index].id
   route_table_id = aws_route_table.private[count.index].id
@@ -215,10 +227,10 @@ resource "aws_efs_file_system" "main" {
 }
 
 resource "aws_efs_mount_target" "main" {
-  count = length(var.availability_zones)
+  count = length(local.subnet_ids)
 
   file_system_id  = aws_efs_file_system.main.id
-  subnet_id       = aws_subnet.private[count.index].id
+  subnet_id       = local.subnet_ids[count.index]
   security_groups = [aws_security_group.efs.id]
 }
 
@@ -229,7 +241,7 @@ resource "aws_efs_mount_target" "main" {
 resource "aws_security_group" "efs" {
   name        = "${local.name_prefix}-efs-sg"
   description = "Security group for EFS mount targets - allows NFS from task security group"
-  vpc_id      = aws_vpc.main.id
+  vpc_id      = local.vpc_id
 
   tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-efs-sg"
@@ -242,7 +254,7 @@ resource "aws_security_group_rule" "efs_inbound_nfs" {
   from_port                = 2049
   to_port                  = 2049
   protocol                 = "tcp"
-  source_security_group_id = aws_security_group.task.id
+  source_security_group_id = local.task_sg_id
   security_group_id        = aws_security_group.efs.id
 }
 
@@ -266,7 +278,7 @@ resource "aws_cloudwatch_log_group" "main" {
 resource "aws_service_discovery_private_dns_namespace" "main" {
   name        = "${local.name_prefix}.local"
   description = "Private DNS namespace for ${local.name_prefix} service discovery"
-  vpc         = aws_vpc.main.id
+  vpc         = local.vpc_id
 
   tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-namespace"
@@ -422,9 +434,11 @@ resource "aws_iam_role_policy" "task" {
 # =============================================================================
 
 resource "aws_security_group" "task" {
+  count = local.use_existing_vpc ? 0 : 1
+
   name        = "${local.name_prefix}-task-sg"
   description = "Security group for ECS Fargate tasks"
-  vpc_id      = aws_vpc.main.id
+  vpc_id      = aws_vpc.main[0].id
 
   tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-task-sg"
@@ -433,33 +447,39 @@ resource "aws_security_group" "task" {
 
 # Self-referencing rule: all traffic between tasks in this security group
 resource "aws_security_group_rule" "task_self_ingress" {
+  count = local.use_existing_vpc ? 0 : 1
+
   description              = "Allow all traffic from tasks in the same security group"
   type                     = "ingress"
   from_port                = 0
   to_port                  = 65535
   protocol                 = "tcp"
   self                     = true
-  security_group_id        = aws_security_group.task.id
+  security_group_id        = aws_security_group.task[0].id
 }
 
 # Agent port: inbound TCP 9111 from self (for agent connectivity)
 resource "aws_security_group_rule" "task_agent_ingress" {
+  count = local.use_existing_vpc ? 0 : 1
+
   description       = "Allow agent connectivity on port 9111 from within the security group"
   type              = "ingress"
   from_port         = 9111
   to_port           = 9111
   protocol          = "tcp"
   self              = true
-  security_group_id = aws_security_group.task.id
+  security_group_id = aws_security_group.task[0].id
 }
 
 # All outbound traffic
 resource "aws_security_group_rule" "task_all_egress" {
+  count = local.use_existing_vpc ? 0 : 1
+
   description       = "Allow all outbound traffic"
   type              = "egress"
   from_port         = 0
   to_port           = 0
   protocol          = "-1"
   cidr_blocks       = ["0.0.0.0/0"]
-  security_group_id = aws_security_group.task.id
+  security_group_id = aws_security_group.task[0].id
 }

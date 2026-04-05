@@ -1,7 +1,11 @@
 package core
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"io"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/sockerless/api"
@@ -32,16 +36,46 @@ type AuthProvider interface {
 	OnRemove(registry, repo string, tags []string) error
 }
 
+// CloudBuildService builds Docker images on cloud infrastructure.
+// Implemented per-cloud in shared modules (aws-common, gcp-common, azure-common).
+type CloudBuildService interface {
+	// Build uploads context, executes the Dockerfile on cloud infra, and pushes the result.
+	Build(ctx context.Context, opts CloudBuildOptions) (*CloudBuildResult, error)
+
+	// Available returns true if the build service is configured and ready.
+	Available() bool
+}
+
+// CloudBuildOptions configures a cloud build.
+type CloudBuildOptions struct {
+	Dockerfile string            // Path within context (default "Dockerfile")
+	ContextTar io.Reader         // Build context tar stream
+	Tags       []string          // Target image tags
+	BuildArgs  map[string]string // --build-arg values
+	Target     string            // Multi-stage --target
+	NoCache    bool              // --no-cache
+	Platform   string            // --platform (e.g. "linux/amd64")
+	Labels     map[string]string // --label values
+	CacheFrom  []string          // --cache-from refs
+	CacheTo    []string          // --cache-to refs
+	Secrets    map[string]string // --secret id=key (inline values or cloud secret ARNs)
+}
+
+// CloudBuildResult is returned after a successful cloud build.
+type CloudBuildResult struct {
+	ImageRef  string        // Full registry/repo:tag
+	ImageID   string        // sha256:... config digest
+	Duration  time.Duration // Build wall time
+	LogStream string        // URL or ARN for build logs
+}
+
 // ImageManager handles all 12 image methods, delegating base logic to BaseServer
 // and adding cloud-specific auth and sync via an AuthProvider.
-//
-// Cloud backends create an ImageManager with their cloud's AuthProvider and delegate
-// all image methods to it. This ensures per-cloud unified behavior regardless of
-// which backend (container vs FaaS) is used.
 type ImageManager struct {
-	Base   *BaseServer    // base implementation for in-memory operations
-	Auth   AuthProvider   // cloud-specific auth and sync (nil = no cloud integration)
-	Logger zerolog.Logger
+	Base         *BaseServer       // base implementation for in-memory operations
+	Auth         AuthProvider      // cloud-specific auth and sync (nil = no cloud integration)
+	BuildService CloudBuildService // cloud build delegation (nil = local Dockerfile parse only)
+	Logger       zerolog.Logger
 }
 
 // Pull pulls an image, using cloud auth if available.
@@ -126,12 +160,22 @@ func (m *ImageManager) Push(name string, tag string, auth string) (io.ReadCloser
 		tag = "latest"
 	}
 
-	// Sync to cloud registry (non-fatal)
+	// Sync to cloud registry
 	if m.Auth != nil {
 		registry, repo, _ := ParseImageRef(name)
 		if m.Auth.IsCloudRegistry(registry) {
 			if err := m.Auth.OnPush(img.ID, registry, repo, tag); err != nil {
 				m.Logger.Warn().Err(err).Str("name", name).Str("tag", tag).Msg("cloud push failed")
+				// Propagate cloud push failure to client
+				pr, pw := io.Pipe()
+				go func() {
+					enc := json.NewEncoder(pw)
+					_ = enc.Encode(map[string]string{"status": "The push refers to repository [" + name + "]"})
+					_ = enc.Encode(map[string]string{"status": "Preparing", "id": tag})
+					_ = enc.Encode(map[string]any{"errorDetail": map[string]string{"message": err.Error()}, "error": err.Error()})
+					_ = pw.Close()
+				}()
+				return pr, nil
 			}
 		}
 	}
@@ -210,8 +254,74 @@ func (m *ImageManager) Remove(name string, force bool, prune bool) ([]*api.Image
 }
 
 // Build delegates to BaseServer's synthetic Dockerfile parser.
-func (m *ImageManager) Build(opts api.ImageBuildOptions, ctx io.Reader) (io.ReadCloser, error) {
-	return m.Base.ImageBuild(opts, ctx)
+func (m *ImageManager) Build(opts api.ImageBuildOptions, ctxReader io.Reader) (io.ReadCloser, error) {
+	if m.BuildService != nil && m.BuildService.Available() {
+		// Buffer context so we can pass to cloud build service
+		var contextBuf bytes.Buffer
+		if _, err := io.Copy(&contextBuf, ctxReader); err != nil {
+			return nil, err
+		}
+
+		// Convert build args
+		buildArgs := make(map[string]string)
+		for k, v := range opts.BuildArgs {
+			if v != nil {
+				buildArgs[k] = *v
+			}
+		}
+
+		cloudOpts := CloudBuildOptions{
+			Dockerfile: opts.Dockerfile,
+			ContextTar: &contextBuf,
+			Tags:       opts.Tags,
+			BuildArgs:  buildArgs,
+			Target:     opts.Target,
+			NoCache:    opts.NoCache,
+			Platform:   opts.Platform,
+			Labels:     opts.Labels,
+			CacheFrom:  opts.CacheFrom,
+			CacheTo:    opts.CacheTo,
+			Secrets:    opts.Secrets,
+		}
+
+		result, err := m.BuildService.Build(context.Background(), cloudOpts)
+		if err != nil {
+			m.Logger.Error().Err(err).Msg("cloud build failed")
+			// Return error in stream format
+			pr, pw := io.Pipe()
+			go func() {
+				enc := json.NewEncoder(pw)
+				_ = enc.Encode(map[string]any{"errorDetail": map[string]string{"message": err.Error()}, "error": err.Error()})
+				_ = pw.Close()
+			}()
+			return pr, nil
+		}
+
+		// Fetch the built image metadata from the cloud registry
+		if result.ImageRef != "" {
+			if meta, err := FetchImageMetadata(result.ImageRef); err == nil && meta != nil {
+				m.Base.ImagePullWithMetadata(result.ImageRef, "", meta)
+			}
+		}
+
+		// Return success stream
+		pr, pw := io.Pipe()
+		go func() {
+			enc := json.NewEncoder(pw)
+			for _, tag := range opts.Tags {
+				_ = enc.Encode(map[string]string{"stream": "Successfully tagged " + tag + "\n"})
+			}
+			if result.ImageID != "" {
+				_ = enc.Encode(map[string]string{"stream": "Successfully built " + result.ImageID[:12] + "\n"})
+			}
+			_ = enc.Encode(map[string]string{"stream": "Cloud build completed in " + result.Duration.Round(time.Second).String() + "\n"})
+			_ = pw.Close()
+		}()
+		return pr, nil
+	}
+
+	// Fallback: local Dockerfile parsing only (no RUN execution)
+	return m.Base.ImageBuild(opts, ctxReader)
 }
 
 // Inspect delegates to BaseServer.

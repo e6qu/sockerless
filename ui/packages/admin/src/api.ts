@@ -78,6 +78,20 @@ export interface ProviderInfo {
   resources?: Record<string, string>;
 }
 
+export interface ComponentStatus {
+  name: string;
+  type: string;
+  health: string;
+  address: string;
+  uptime: number;
+  containers: number;
+  [key: string]: unknown;
+}
+
+export interface ComponentMetrics {
+  [key: string]: unknown;
+}
+
 export type CloudType = "aws" | "gcp" | "azure";
 export type BackendType = "ecs" | "lambda" | "cloudrun" | "gcf" | "aca" | "azf";
 
@@ -183,19 +197,19 @@ export class AdminApiClient {
     return this.request("/api/v1/overview");
   }
 
-  componentHealth(name: string): Promise<unknown> {
-    return this.request(`/api/v1/components/${encodeURIComponent(name)}/health`);
+  componentStatus(name: string): Promise<ComponentStatus> {
+    return this.request(
+      `/api/v1/components/${encodeURIComponent(name)}/status`,
+    );
   }
 
-  componentStatus(name: string): Promise<unknown> {
-    return this.request(`/api/v1/components/${encodeURIComponent(name)}/status`);
+  componentMetrics(name: string): Promise<ComponentMetrics> {
+    return this.request(
+      `/api/v1/components/${encodeURIComponent(name)}/metrics`,
+    );
   }
 
-  componentMetrics(name: string): Promise<unknown> {
-    return this.request(`/api/v1/components/${encodeURIComponent(name)}/metrics`);
-  }
-
-  componentReload(name: string): Promise<unknown> {
+  componentReload(name: string): Promise<ComponentStatus> {
     return this.post(`/api/v1/components/${encodeURIComponent(name)}/reload`);
   }
 
@@ -227,7 +241,9 @@ export class AdminApiClient {
 
   processLogs(name: string, lines?: number): Promise<string[]> {
     const qs = lines ? `?lines=${lines}` : "";
-    return this.request(`/api/v1/processes/${encodeURIComponent(name)}/logs${qs}`);
+    return this.request(
+      `/api/v1/processes/${encodeURIComponent(name)}/logs${qs}`,
+    );
   }
 
   // Cleanup
@@ -249,7 +265,9 @@ export class AdminApiClient {
 
   // Provider info
   componentProvider(name: string): Promise<ProviderInfo> {
-    return this.request(`/api/v1/components/${encodeURIComponent(name)}/provider`);
+    return this.request(
+      `/api/v1/components/${encodeURIComponent(name)}/provider`,
+    );
   }
 
   // Projects
@@ -277,15 +295,23 @@ export class AdminApiClient {
     return this.del(`/api/v1/projects/${encodeURIComponent(name)}`);
   }
 
-  projectLogs(name: string, component?: string, lines?: number): Promise<string[]> {
+  projectLogs(
+    name: string,
+    component?: string,
+    lines?: number,
+  ): Promise<string[]> {
     const params = new URLSearchParams();
     if (component) params.set("component", component);
     if (lines) params.set("lines", String(lines));
     const qs = params.toString() ? `?${params.toString()}` : "";
-    return this.request(`/api/v1/projects/${encodeURIComponent(name)}/logs${qs}`);
+    return this.request(
+      `/api/v1/projects/${encodeURIComponent(name)}/logs${qs}`,
+    );
   }
 
   projectConnection(name: string): Promise<ProjectConnection> {
-    return this.request(`/api/v1/projects/${encodeURIComponent(name)}/connection`);
+    return this.request(
+      `/api/v1/projects/${encodeURIComponent(name)}/connection`,
+    );
   }
 }

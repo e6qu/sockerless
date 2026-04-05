@@ -20,7 +20,7 @@ type PullRequest struct {
 	AuthorID     int
 	AssigneeIDs  []int
 	LabelIDs     []int
-	MilestoneID  int // 0 = none
+	MilestoneID  int    // 0 = none
 	Mergeable    string // "MERGEABLE", "CONFLICTING", "UNKNOWN"
 	Additions    int
 	Deletions    int
@@ -68,23 +68,23 @@ func (st *Store) CreatePullRequest(repoID, authorID int, title, body, headRefNam
 
 	now := time.Now()
 	pr := &PullRequest{
-		ID:           st.NextPR,
-		NodeID:       fmt.Sprintf("PR_kgDO%08d", st.NextPR),
-		Number:       repo.NextIssueNumber, // shared counter
-		RepoID:       repoID,
-		Title:        title,
-		Body:         body,
-		State:        "OPEN",
-		IsDraft:      isDraft,
-		HeadRefName:  headRefName,
-		BaseRefName:  baseRefName,
-		AuthorID:     authorID,
-		AssigneeIDs:  assigneeIDs,
-		LabelIDs:     labelIDs,
-		MilestoneID:  milestoneID,
-		Mergeable:    "MERGEABLE",
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:          st.NextPR,
+		NodeID:      fmt.Sprintf("PR_kgDO%08d", st.NextPR),
+		Number:      repo.NextIssueNumber, // shared counter
+		RepoID:      repoID,
+		Title:       title,
+		Body:        body,
+		State:       "OPEN",
+		IsDraft:     isDraft,
+		HeadRefName: headRefName,
+		BaseRefName: baseRefName,
+		AuthorID:    authorID,
+		AssigneeIDs: assigneeIDs,
+		LabelIDs:    labelIDs,
+		MilestoneID: milestoneID,
+		Mergeable:   "MERGEABLE",
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	repo.NextIssueNumber++
 	st.NextPR++

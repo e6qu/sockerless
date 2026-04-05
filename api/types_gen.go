@@ -503,20 +503,34 @@ type Image struct {
 
 // ImageBuildOptions is a generated type.
 type ImageBuildOptions struct {
-	BuildArgs   map[string]*string `json:"buildArgs,omitempty"`
-	Dockerfile  string             `json:"dockerfile"`
-	ExtraHosts  string             `json:"extraHosts,omitempty"`
-	ForceRemove bool               `json:"forceRemove"`
-	Labels      map[string]string  `json:"labels,omitempty"`
-	NetworkMode string             `json:"networkMode,omitempty"`
-	NoCache     bool               `json:"noCache"`
-	Platform    string             `json:"platform,omitempty"`
-	Pull        string             `json:"pull,omitempty"`
-	Quiet       bool               `json:"quiet"`
-	Remove      bool               `json:"remove"`
-	ShmSize     int64              `json:"shmSize,omitempty"`
-	Tags        []string           `json:"tags,omitempty"`
-	Target      string             `json:"target,omitempty"`
+	BuildArgs    map[string]*string `json:"buildArgs,omitempty"`
+	CacheFrom    []string           `json:"cacheFrom,omitempty"`
+	CacheTo      []string           `json:"cacheTo,omitempty"`
+	CgroupParent string             `json:"cgroupParent,omitempty"`
+	CPUPeriod    int64              `json:"cpuPeriod,omitempty"`
+	CPUQuota     int64              `json:"cpuQuota,omitempty"`
+	CPUSetCPUs   string             `json:"cpuSetCpus,omitempty"`
+	CPUShares    int64              `json:"cpuShares,omitempty"`
+	Dockerfile   string             `json:"dockerfile"`
+	ExtraHosts   string             `json:"extraHosts,omitempty"`
+	ForceRemove  bool               `json:"forceRemove"`
+	Labels       map[string]string  `json:"labels,omitempty"`
+	Memory       int64              `json:"memory,omitempty"`
+	MemorySwap   int64              `json:"memswap,omitempty"`
+	NetworkMode  string             `json:"networkMode,omitempty"`
+	NoCache      bool               `json:"noCache"`
+	Outputs      string             `json:"outputs,omitempty"`
+	Platform     string             `json:"platform,omitempty"`
+	Pull         string             `json:"pull,omitempty"`
+	Quiet        bool               `json:"quiet"`
+	Remote       string             `json:"remote,omitempty"`
+	Remove       bool               `json:"remove"`
+	Secrets      map[string]string  `json:"secrets,omitempty"`
+	ShmSize      int64              `json:"shmSize,omitempty"`
+	Squash       bool               `json:"squash,omitempty"`
+	Tags         []string           `json:"tags,omitempty"`
+	Target       string             `json:"target,omitempty"`
+	Version      string             `json:"version,omitempty"`
 }
 
 // ImageDeleteResponse is a generated type.

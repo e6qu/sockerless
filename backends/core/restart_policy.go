@@ -67,10 +67,10 @@ func (s *BaseServer) handleRestartPolicy(containerID string, exitCode int) bool 
 	delay := RestartDelay(c.RestartCount)
 	time.Sleep(delay)
 
-	// Stop old health check before cleanup (BUG-147)
+	// Stop old health check before cleanup
 	s.StopHealthCheck(containerID)
 
-	// Close old wait channel before creating new one (BUG-149)
+	// Close old wait channel before creating new one
 	if old, ok := s.Store.WaitChs.LoadAndDelete(containerID); ok {
 		close(old.(chan struct{}))
 	}
@@ -80,7 +80,7 @@ func (s *BaseServer) handleRestartPolicy(containerID string, exitCode int) bool 
 	s.Store.WaitChs.Store(containerID, exitCh)
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	pid := s.Store.NextPID() // BUG-549
+	pid := s.Store.NextPID()
 	s.Store.Containers.Update(containerID, func(c *api.Container) {
 		c.State.Status = "running"
 		c.State.Running = true
@@ -90,10 +90,10 @@ func (s *BaseServer) handleRestartPolicy(containerID string, exitCode int) bool 
 		c.State.ExitCode = 0
 	})
 
-	// Re-fetch fresh container after state update (BUG-148)
+	// Re-fetch fresh container after state update
 	c, _ = s.Store.Containers.Get(containerID)
 
-	// Re-start health check if configured (BUG-147)
+	// Re-start health check if configured
 	if c.Config.Healthcheck != nil && len(c.Config.Healthcheck.Test) > 0 &&
 		(len(c.Config.Healthcheck.Test) != 1 || !strings.EqualFold(c.Config.Healthcheck.Test[0], "NONE")) {
 		s.StartHealthCheck(containerID)

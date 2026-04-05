@@ -21,7 +21,7 @@ func hasEnvKey(env []string, key string) bool {
 }
 
 // MergeEnvByKey merges env vars by key — base provides defaults, override replaces by key.
-// BUG-515: Docker merges image and container env by key, not all-or-nothing.
+// Docker merges image and container env by key, not all-or-nothing.
 func MergeEnvByKey(base, override []string) []string {
 	if len(override) == 0 {
 		return base
@@ -103,7 +103,7 @@ func (s *BaseServer) handleContainerStop(w http.ResponseWriter, r *http.Request)
 		WriteError(w, err)
 		return
 	}
-	// BUG-505: Adjust exit code for signal query param (Docker API v1.42+)
+	// Adjust exit code for signal query param (Docker API v1.42+)
 	if signal := r.URL.Query().Get("signal"); signal != "" {
 		if id, ok := s.Store.ResolveContainerID(ref); ok {
 			exitCode := SignalToExitCode(signal)
@@ -154,13 +154,13 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// BUG-384: Read condition query parameter (not-running, next-exit, removed)
+	// Read condition query parameter (not-running, next-exit, removed)
 	condition := r.URL.Query().Get("condition")
 	if condition == "" {
 		condition = "not-running"
 	}
 
-	// BUG-487: Handle "removed" condition — if container is already gone, return exit code 0
+	// Handle "removed" condition — if container is already gone, return exit code 0
 	c, exists := s.Store.Containers.Get(id)
 	if !exists {
 		if condition == "removed" {
@@ -192,7 +192,7 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 	select {
 	case <-ch.(chan struct{}):
 		c, _ = s.Store.Containers.Get(id)
-		// BUG-487: For "removed" condition, poll briefly for actual container deletion
+		// For "removed" condition, poll briefly for actual container deletion
 		if condition == "removed" {
 			for i := 0; i < 50; i++ {
 				if _, exists := s.Store.Containers.Get(id); !exists {
@@ -230,4 +230,3 @@ func SignalToExitCode(signal string) int {
 	}
 	return 137 // default to SIGKILL
 }
-

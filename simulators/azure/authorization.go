@@ -51,15 +51,15 @@ func parseRoleAssignmentPath(path string) (scope, raName string, ok bool) {
 // builtinRoleDefinitions maps role names to UUIDs for the azurerm provider.
 // When role_definition_name is used, the provider looks up the role definition ID.
 var builtinRoleDefinitions = map[string]string{
-	"Contributor":                              "b24988ac-6180-42a0-ab88-20f7382dd24c",
-	"Reader":                                   "acdd72a7-3385-48ef-bd42-f606fba81ae7",
-	"Owner":                                    "8e3af657-a8ff-443c-a75c-2fe8c4bcb635",
-	"AcrPull":                                  "7f951dda-4ed3-4680-a7ca-43fe172d538d",
-	"AcrPush":                                  "8311e382-0749-4cb8-b61a-304f252e45ec",
-	"Storage Blob Data Contributor":            "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
-	"Storage File Data SMB Share Contributor":  "0c867c2a-1d8c-454a-a3db-ab2ea1bdc8bb",
-	"Monitoring Reader":                        "43d0d8ad-25c7-4714-9337-8ba259a9fe05",
-	"Log Analytics Contributor":                "92aaf0da-9dab-42b6-94a3-d43ce8d16293",
+	"Contributor":                   "b24988ac-6180-42a0-ab88-20f7382dd24c",
+	"Reader":                        "acdd72a7-3385-48ef-bd42-f606fba81ae7",
+	"Owner":                         "8e3af657-a8ff-443c-a75c-2fe8c4bcb635",
+	"AcrPull":                       "7f951dda-4ed3-4680-a7ca-43fe172d538d",
+	"AcrPush":                       "8311e382-0749-4cb8-b61a-304f252e45ec",
+	"Storage Blob Data Contributor": "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+	"Storage File Data SMB Share Contributor": "0c867c2a-1d8c-454a-a3db-ab2ea1bdc8bb",
+	"Monitoring Reader":                       "43d0d8ad-25c7-4714-9337-8ba259a9fe05",
+	"Log Analytics Contributor":               "92aaf0da-9dab-42b6-94a3-d43ce8d16293",
 }
 
 // extractSubscriptionFromPath extracts the subscription ID from an ARM path.

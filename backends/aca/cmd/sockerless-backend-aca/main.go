@@ -6,8 +6,8 @@ import (
 	"os"
 
 	"github.com/rs/zerolog"
-	core "github.com/sockerless/backend-core"
 	backend "github.com/sockerless/backend-aca"
+	core "github.com/sockerless/backend-core"
 )
 
 func main() {

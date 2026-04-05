@@ -1,68 +1,43 @@
-# backend-docker
+# Docker Backend
 
-Local Docker passthrough backend. Proxies all container operations directly to a Docker daemon via the Docker SDK.
+Passes all Docker API calls through to a local Docker daemon (Docker Desktop, Colima, etc.).
 
-## Overview
+## Config (config.yaml)
 
-Unlike the cloud backends, this backend does not use `core.BaseServer` or the driver architecture. It implements all route handlers directly using the Docker Go SDK (`github.com/docker/docker/client`), acting as a thin translation layer between the Sockerless internal API and the Docker API.
+```yaml
+environments:
+  local:
+    backend: docker
+    addr: ":9100"
+    log_level: info
+```
 
-No agent is involved — exec, attach, and logs go straight to Docker.
+The Docker backend has no cloud-specific configuration. It connects to the local Docker socket.
 
-## Building
+## Environment Variables
+
+| Variable | Default | Required | Description |
+|---|---|---|---|
+| `DOCKER_HOST` | auto-detect | no | Docker daemon socket (e.g. `unix:///var/run/docker.sock`) |
+| `DOCKER_TLS_VERIFY` | | no | Enable TLS verification for Docker daemon |
+| `DOCKER_CERT_PATH` | | no | Path to TLS certificates for Docker daemon |
+
+All standard Docker client environment variables are respected.
+
+## Quick Start
 
 ```sh
-cd backends/docker
-go build -o sockerless-backend-docker ./cmd/main.go
+go build -o sockerless-backend-docker ./backends/docker/cmd
+./sockerless-backend-docker -addr :9100 -log-level info
 ```
 
-## Usage
+Flags: `-addr` (default `:9100`), `-docker-host` (default auto-detect), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).
 
-```sh
-# Use default Docker socket
-sockerless-backend-docker
+## Notes
 
-# Specify Docker host
-sockerless-backend-docker -docker-host tcp://localhost:2375
-```
-
-## Flags
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-addr` | `:9100` | Listen address |
-| `-docker-host` | _(auto-detect)_ | Docker daemon socket or TCP address |
-| `-log-level` | `info` | Log level: debug, info, warn, error |
-
-## Supported operations
-
-The full Docker API surface is implemented:
-
-- **Containers** — create, list, inspect, start, stop, kill, remove, restart, rename, pause, unpause, top, stats, wait, attach, logs, prune
-- **Exec** — create, inspect, start
-- **Images** — pull, inspect, load, tag, list, remove, history, prune
-- **Networks** — create, list, inspect, connect, disconnect, remove, prune
-- **Volumes** — create, list, inspect, remove, prune
-- **System** — events, disk usage
-- **Auth** — registry authentication
-
-## Docker API mapping
-
-For a detailed breakdown of how each Docker REST API endpoint and CLI command maps to Docker SDK calls — including what's implemented, what's not, and minor differences from vanilla Docker — see [docs/docker_api_mapping.md](docs/docker_api_mapping.md).
-
-## Project structure
-
-```
-docker/
-├── cmd/
-│   └── main.go          CLI entrypoint
-├── server.go            Server type, route registration
-├── client.go            Docker SDK client initialization
-├── containers.go        Container lifecycle + attach/wait/logs
-├── exec.go              Exec create, inspect, start
-├── images.go            Image pull, inspect, load, tag
-├── networks.go          Network CRUD + connect/disconnect
-├── volumes.go           Volume CRUD
-└── extended.go          Restart, top, stats, rename, pause, events, df
-```
-
-See also: [ARCHITECTURE.md](../../ARCHITECTURE.md), [FEATURE_MATRIX.md](../../FEATURE_MATRIX.md), [DECISIONS.md](../../DECISIONS.md)
+- Requires a running Docker daemon accessible via the socket.
+- This backend is a thin passthrough -- all operations are delegated directly to Docker.
+- No agent sidecar is involved; exec, attach, and logs go straight to the Docker daemon.
+- The `-docker-host` flag overrides the `DOCKER_HOST` environment variable.
+- Useful for local development and testing without any cloud infrastructure.
+- See `specs/CONFIG.md` for the full unified config specification.

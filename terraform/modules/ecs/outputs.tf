@@ -13,17 +13,17 @@ output "region" {
 
 output "vpc_id" {
   description = "ID of the VPC"
-  value       = aws_vpc.main.id
+  value       = local.vpc_id
 }
 
 output "private_subnet_ids" {
   description = "List of private subnet IDs where Fargate tasks run"
-  value       = aws_subnet.private[*].id
+  value       = local.subnet_ids
 }
 
 output "public_subnet_ids" {
   description = "List of public subnet IDs (NAT Gateway placement)"
-  value       = aws_subnet.public[*].id
+  value       = local.use_existing_vpc ? [] : aws_subnet.public[*].id
 }
 
 # =============================================================================
@@ -97,7 +97,7 @@ output "task_role_arn" {
 
 output "task_security_group_id" {
   description = "ID of the task security group for Fargate tasks"
-  value       = aws_security_group.task.id
+  value       = local.task_sg_id
 }
 
 output "efs_security_group_id" {

@@ -174,7 +174,7 @@ func TestCloudMap_RegisterAndDiscoverInstances(t *testing.T) {
 		InstanceId: aws.String("inst-001"),
 		Attributes: map[string]string{
 			"AWS_INSTANCE_IPV4": "10.0.0.1",
-			"HOSTNAME":         "web-1",
+			"HOSTNAME":          "web-1",
 		},
 	})
 	require.NoError(t, err)
@@ -184,7 +184,7 @@ func TestCloudMap_RegisterAndDiscoverInstances(t *testing.T) {
 		InstanceId: aws.String("inst-002"),
 		Attributes: map[string]string{
 			"AWS_INSTANCE_IPV4": "10.0.0.2",
-			"HOSTNAME":         "web-2",
+			"HOSTNAME":          "web-2",
 		},
 	})
 	require.NoError(t, err)

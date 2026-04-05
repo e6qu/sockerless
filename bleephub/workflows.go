@@ -37,8 +37,8 @@ type Workflow struct {
 
 // WorkflowJob represents a single job within a workflow.
 type WorkflowJob struct {
-	Key             string                 `json:"key"`     // YAML key
-	JobID           string                 `json:"jobId"`   // UUID, used as Job.ID
+	Key             string                 `json:"key"`   // YAML key
+	JobID           string                 `json:"jobId"` // UUID, used as Job.ID
 	DisplayName     string                 `json:"displayName"`
 	Needs           []string               `json:"needs,omitempty"`
 	Status          string                 `json:"status"` // "pending", "queued", "running", "completed", "skipped"

@@ -20,7 +20,7 @@ type ProcessConfig struct {
 
 // LogLine is a single line of captured output.
 type LogLine struct {
-	Stream    string    // "stdout" or "stderr"
+	Stream    string // "stdout" or "stderr"
 	Text      string
 	Timestamp time.Time
 }

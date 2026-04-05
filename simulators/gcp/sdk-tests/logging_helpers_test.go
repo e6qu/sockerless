@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"cloud.google.com/go/logging"
-	mrpb "google.golang.org/genproto/googleapis/api/monitoredres"
 	"google.golang.org/api/option"
+	mrpb "google.golang.org/genproto/googleapis/api/monitoredres"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

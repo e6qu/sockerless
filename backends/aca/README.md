@@ -1,98 +1,62 @@
-# backend-aca
+# Azure Container Apps Backend
 
-Azure Container Apps backend. Maps Docker container operations to Container Apps Jobs and Executions.
+Runs Docker containers as Azure Container Apps Jobs and Executions, with Log Analytics for log streaming.
 
-## Resource mapping
+## Config (config.yaml)
 
-| Docker concept | Azure resource |
-|---------------|---------------|
-| Container create | _(registers in store)_ |
-| Container start | Create Container App Job + Start Execution |
-| Container stop/kill | Stop Execution |
-| Container remove | Delete Job |
-| Container logs | Azure Monitor Log Analytics query |
+```yaml
+environments:
+  my-aca:
+    backend: aca
+    addr: ":9100"
+    log_level: info
+    azure:
+      subscription_id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+      aca:
+        resource_group: sockerless-rg
+        environment: sockerless
+        location: eastus
+        log_analytics_workspace: /subscriptions/.../workspaces/sockerless-logs
+        storage_account: sockerlessstorage
+    common:
+      agent_image: sockerless/agent:latest
+      agent_token: my-secret-token
+      callback_url: https://backend.example.com
+      poll_interval: 2s
+      agent_timeout: 30s
+```
 
-Jobs are created at start time to support clean restarts.
+## Environment Variables
 
-## Agent mode
+| Variable | Default | Required | Description |
+|---|---|---|---|
+| `SOCKERLESS_ACA_SUBSCRIPTION_ID` | | **yes** | Azure subscription ID |
+| `SOCKERLESS_ACA_RESOURCE_GROUP` | | **yes** | Azure resource group name |
+| `SOCKERLESS_ACA_ENVIRONMENT` | `sockerless` | no | Container Apps environment name |
+| `SOCKERLESS_ACA_LOCATION` | `eastus` | no | Azure region |
+| `SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE` | | no | Log Analytics workspace resource ID |
+| `SOCKERLESS_ACA_STORAGE_ACCOUNT` | | no | Storage account for volumes |
+| `SOCKERLESS_ACA_AGENT_IMAGE` | `sockerless/agent:latest` | no | Sidecar agent container image |
+| `SOCKERLESS_ACA_AGENT_TOKEN` | | no | Agent authentication token |
+| `SOCKERLESS_CALLBACK_URL` | | no | Backend URL for reverse agent mode |
+| `SOCKERLESS_ENDPOINT_URL` | | no | Custom endpoint (for simulators) |
+| `SOCKERLESS_POLL_INTERVAL` | `2s` | no | Cloud API poll interval |
+| `SOCKERLESS_AGENT_TIMEOUT` | `30s` | no | Agent health-check timeout |
 
-Uses **forward agent** by default: after starting a job execution, the backend polls for RUNNING state, extracts the agent address, and dials in.
-
-Also supports **reverse agent** via `SOCKERLESS_CALLBACK_URL`.
-
-## Building
+## Quick Start
 
 ```sh
-cd backends/aca
-go build -o sockerless-backend-aca ./cmd/sockerless-backend-aca
+go build -o sockerless-backend-aca ./backends/aca/cmd/sockerless-backend-aca
+./sockerless-backend-aca -addr :9100 -log-level info
 ```
 
-## Configuration
+Flags: `-addr` (default `:9100`), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SOCKERLESS_ACA_SUBSCRIPTION_ID` | _(required)_ | Azure subscription ID |
-| `SOCKERLESS_ACA_RESOURCE_GROUP` | _(required)_ | Azure resource group |
-| `SOCKERLESS_ACA_ENVIRONMENT` | `sockerless` | Container Apps Environment name |
-| `SOCKERLESS_ACA_LOCATION` | `eastus` | Azure region |
-| `SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE` | | Log Analytics workspace ID |
-| `SOCKERLESS_ACA_STORAGE_ACCOUNT` | | Storage account for volumes |
-| `SOCKERLESS_ACA_AGENT_IMAGE` | `sockerless/agent:latest` | Sidecar agent image |
-| `SOCKERLESS_ACA_AGENT_TOKEN` | | Default agent authentication token |
-| `SOCKERLESS_CALLBACK_URL` | | Backend URL for reverse agent mode |
-| `SOCKERLESS_ENDPOINT_URL` | | Custom Azure endpoint (simulator mode) |
+## Cloud Notes
 
-These settings can also be configured via `~/.sockerless/config.yaml`. See the [CLI documentation](../../cmd/sockerless/README.md) for the YAML format.
-
-### Terraform outputs
-
-The `terraform/modules/aca` module produces these outputs. Use `terragrunt output` from `terraform/environments/aca/live` to extract them.
-
-| Terraform Output | Environment Variable |
-|---|---|
-| `resource_group_name` | `SOCKERLESS_ACA_RESOURCE_GROUP` |
-| `managed_environment_name` | `SOCKERLESS_ACA_ENVIRONMENT` |
-| `location` | `SOCKERLESS_ACA_LOCATION` |
-| `log_analytics_workspace_name` | `SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE` |
-| `storage_account_name` | `SOCKERLESS_ACA_STORAGE_ACCOUNT` |
-| `acr_login_server` | `SOCKERLESS_ACA_AGENT_IMAGE` (after building and pushing) |
-
-`SOCKERLESS_ACA_SUBSCRIPTION_ID` is not a terraform output — use `az account show --query id -o tsv`.
-
-## Project structure
-
-```
-aca/
-├── cmd/sockerless-backend-aca/
-│   └── main.go              CLI entrypoint
-├── server.go                Server type, ImageManager wiring
-├── config.go                Config struct, env parsing, validation
-├── azure.go                 Azure SDK client initialization
-├── containers.go            Create, start, stop, kill, remove handlers
-├── jobspec.go               Container Apps Job spec builder
-├── logs.go                  Azure Monitor Log Analytics streaming
-├── backend_impl.go          Cloud-native method overrides (containers, images, volumes)
-├── backend_impl_pods.go     Pod lifecycle, exec, attach, auth, info
-├── backend_delegates_gen.go Generated BaseServer delegates
-├── image_auth.go            ACRAuthProvider (core.AuthProvider for ACR)
-├── store.go                 ACAState type
-├── recovery.go              Crash recovery
-└── errors.go                Azure error mapping
-```
-
-## Example deployment
-
-See [examples/terraform/](examples/terraform/) for a complete Terraform example that provisions the Azure infrastructure (Resource Group, Container Apps Environment, VNet, Log Analytics, ACR, Storage) and walks through running Docker commands against Container Apps Jobs.
-
-## Docker API mapping
-
-For a detailed breakdown of how each Docker REST API endpoint and CLI command maps to Azure Container Apps operations — including what's supported, what's not, and how it compares to vanilla Docker — see [docs/docker_api_mapping.md](docs/docker_api_mapping.md).
-
-## Testing
-
-```sh
-make sim-test-azure  # simulator integration tests
-make docker-test     # Docker-based full test
-```
-
-See also: [ARCHITECTURE.md](../../ARCHITECTURE.md), [FEATURE_MATRIX.md](../../FEATURE_MATRIX.md), [DECISIONS.md](../../DECISIONS.md)
+- Requires a Container Apps environment and resource group to be pre-created.
+- Authentication uses Azure Default Credentials (`az login`, managed identity, or env vars).
+- Container images must be accessible from ACR or a public registry.
+- Supports forward agent (polls execution for IP) and reverse agent (`callback_url`).
+- Log Analytics workspace is needed for `docker logs` support.
+- See `specs/CONFIG.md` for the full unified config specification.

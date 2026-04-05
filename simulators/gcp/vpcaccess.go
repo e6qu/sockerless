@@ -8,10 +8,10 @@ import (
 )
 
 type VPCAccessConnector struct {
-	Name          string `json:"name"`
-	Network       string `json:"network"`
-	IpCidrRange   string `json:"ipCidrRange"`
-	Subnet        *struct {
+	Name        string `json:"name"`
+	Network     string `json:"network"`
+	IpCidrRange string `json:"ipCidrRange"`
+	Subnet      *struct {
 		Name      string `json:"name,omitempty"`
 		ProjectId string `json:"projectId,omitempty"`
 	} `json:"subnet,omitempty"`

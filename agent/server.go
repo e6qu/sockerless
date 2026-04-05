@@ -28,7 +28,7 @@ type Config struct {
 	Addr        string
 	Token       string
 	KeepAlive   bool
-	CallbackURL string // reverse connect URL (FaaS mode)
+	CallbackURL string   // reverse connect URL (FaaS mode)
 	Args        []string // main process args (after --)
 	Env         []string // extra environment variables
 }
@@ -38,8 +38,8 @@ type Server struct {
 	config   Config
 	logger   zerolog.Logger
 	registry *SessionRegistry
-	mp       *MainProcess    // non-nil in keep-alive mode
-	hc       *HealthChecker  // non-nil if health check configured
+	mp       *MainProcess   // non-nil in keep-alive mode
+	hc       *HealthChecker // non-nil if health check configured
 	upgrader websocket.Upgrader
 }
 
@@ -291,4 +291,3 @@ func (s *Server) serveReverseConn(conn *websocket.Conn) error {
 		router.Handle(&msg, conn, connMu)
 	}
 }
-

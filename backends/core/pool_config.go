@@ -12,7 +12,7 @@ type PoolConfig struct {
 	Name           string `json:"name"`
 	BackendType    string `json:"backend_type"`
 	MaxConcurrency int    `json:"max_concurrency"` // 0 = unlimited
-	QueueSize      int    `json:"queue_size"`       // 0 = no queue, reject at capacity
+	QueueSize      int    `json:"queue_size"`      // 0 = no queue, reject at capacity
 }
 
 // PoolsConfig defines the set of backend pools and which is the default.

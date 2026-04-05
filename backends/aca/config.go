@@ -18,6 +18,9 @@ type Config struct {
 	StorageAccount        string
 	AgentImage            string
 	AgentToken            string
+	ACRName               string        // Azure Container Registry name for builds
+	BuildStorageAccount   string        // Storage account for ACR build context
+	BuildContainer        string        // Blob container for ACR build context
 	CallbackURL           string        // Backend URL for reverse agent connections
 	EndpointURL           string        // Custom endpoint URL
 	PollInterval          time.Duration // Cloud API poll interval (default 2s)
@@ -35,6 +38,9 @@ func ConfigFromEnv() Config {
 		StorageAccount:        os.Getenv("SOCKERLESS_ACA_STORAGE_ACCOUNT"),
 		AgentImage:            envOrDefault("SOCKERLESS_ACA_AGENT_IMAGE", "sockerless/agent:latest"),
 		AgentToken:            os.Getenv("SOCKERLESS_ACA_AGENT_TOKEN"),
+		ACRName:               os.Getenv("SOCKERLESS_AZURE_ACR_NAME"),
+		BuildStorageAccount:   os.Getenv("SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT"),
+		BuildContainer:        os.Getenv("SOCKERLESS_AZURE_BUILD_CONTAINER"),
 		CallbackURL:           os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		EndpointURL:           os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:          parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
@@ -53,6 +59,8 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 	}
 	if env.Azure != nil {
 		c.SubscriptionID = env.Azure.SubscriptionID
+		c.BuildStorageAccount = env.Azure.BuildStorageAccount
+		c.BuildContainer = env.Azure.BuildContainer
 		if aca := env.Azure.ACA; aca != nil {
 			c.ResourceGroup = aca.ResourceGroup
 			if aca.Environment != "" {
@@ -63,6 +71,7 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 			}
 			c.LogAnalyticsWorkspace = aca.LogAnalyticsWorkspace
 			c.StorageAccount = aca.StorageAccount
+			c.ACRName = aca.ACRName
 		}
 	}
 	if env.Common.AgentImage != "" {

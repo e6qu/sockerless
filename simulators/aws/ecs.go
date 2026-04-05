@@ -19,28 +19,28 @@ import (
 // ECS types
 
 type ECSCluster struct {
-	ClusterArn        string `json:"clusterArn"`
-	ClusterName       string `json:"clusterName"`
-	Status            string `json:"status"`
-	RunningTasksCount int    `json:"runningTasksCount"`
-	PendingTasksCount int    `json:"pendingTasksCount"`
-	ActiveServicesCount int  `json:"activeServicesCount"`
-	RegisteredContainerInstancesCount int `json:"registeredContainerInstancesCount"`
+	ClusterArn                        string `json:"clusterArn"`
+	ClusterName                       string `json:"clusterName"`
+	Status                            string `json:"status"`
+	RunningTasksCount                 int    `json:"runningTasksCount"`
+	PendingTasksCount                 int    `json:"pendingTasksCount"`
+	ActiveServicesCount               int    `json:"activeServicesCount"`
+	RegisteredContainerInstancesCount int    `json:"registeredContainerInstancesCount"`
 }
 
 type ECSContainerDefinition struct {
-	Name             string                    `json:"name"`
-	Image            string                    `json:"image"`
-	Cpu              int                       `json:"cpu,omitempty"`
-	Memory           int                       `json:"memory,omitempty"`
-	MemoryReservation int                      `json:"memoryReservation,omitempty"`
-	Essential        *bool                     `json:"essential,omitempty"`
-	Environment      []ECSKeyValuePair         `json:"environment,omitempty"`
-	MountPoints      []ECSMountPoint           `json:"mountPoints,omitempty"`
-	PortMappings     []ECSPortMapping          `json:"portMappings,omitempty"`
-	LogConfiguration *ECSLogConfiguration      `json:"logConfiguration,omitempty"`
-	EntryPoint       []string                  `json:"entryPoint,omitempty"`
-	Command          []string                  `json:"command,omitempty"`
+	Name              string               `json:"name"`
+	Image             string               `json:"image"`
+	Cpu               int                  `json:"cpu,omitempty"`
+	Memory            int                  `json:"memory,omitempty"`
+	MemoryReservation int                  `json:"memoryReservation,omitempty"`
+	Essential         *bool                `json:"essential,omitempty"`
+	Environment       []ECSKeyValuePair    `json:"environment,omitempty"`
+	MountPoints       []ECSMountPoint      `json:"mountPoints,omitempty"`
+	PortMappings      []ECSPortMapping     `json:"portMappings,omitempty"`
+	LogConfiguration  *ECSLogConfiguration `json:"logConfiguration,omitempty"`
+	EntryPoint        []string             `json:"entryPoint,omitempty"`
+	Command           []string             `json:"command,omitempty"`
 }
 
 type ECSKeyValuePair struct {
@@ -66,15 +66,15 @@ type ECSLogConfiguration struct {
 }
 
 type ECSVolume struct {
-	Name                    string                   `json:"name"`
-	EfsVolumeConfiguration *ECSEfsVolumeConfig       `json:"efsVolumeConfiguration,omitempty"`
+	Name                   string              `json:"name"`
+	EfsVolumeConfiguration *ECSEfsVolumeConfig `json:"efsVolumeConfiguration,omitempty"`
 }
 
 type ECSEfsVolumeConfig struct {
-	FileSystemId          string                       `json:"fileSystemId"`
-	RootDirectory         string                       `json:"rootDirectory,omitempty"`
-	TransitEncryption     string                       `json:"transitEncryption,omitempty"`
-	AuthorizationConfig   *ECSEfsAuthorizationConfig   `json:"authorizationConfig,omitempty"`
+	FileSystemId        string                     `json:"fileSystemId"`
+	RootDirectory       string                     `json:"rootDirectory,omitempty"`
+	TransitEncryption   string                     `json:"transitEncryption,omitempty"`
+	AuthorizationConfig *ECSEfsAuthorizationConfig `json:"authorizationConfig,omitempty"`
 }
 
 type ECSEfsAuthorizationConfig struct {
@@ -88,19 +88,19 @@ type ECSTag struct {
 }
 
 type ECSTaskDefinition struct {
-	TaskDefinitionArn    string                   `json:"taskDefinitionArn"`
-	Family               string                   `json:"family"`
-	Revision             int                      `json:"revision"`
-	ContainerDefinitions []ECSContainerDefinition `json:"containerDefinitions"`
-	Cpu                  string                   `json:"cpu,omitempty"`
-	Memory               string                   `json:"memory,omitempty"`
-	NetworkMode          string                   `json:"networkMode,omitempty"`
-	RequiresCompatibilities []string              `json:"requiresCompatibilities,omitempty"`
-	ExecutionRoleArn     string                   `json:"executionRoleArn,omitempty"`
-	TaskRoleArn          string                   `json:"taskRoleArn,omitempty"`
-	Volumes              []ECSVolume              `json:"volumes,omitempty"`
-	Tags                 []ECSTag                 `json:"tags,omitempty"`
-	Status               string                   `json:"status"`
+	TaskDefinitionArn       string                   `json:"taskDefinitionArn"`
+	Family                  string                   `json:"family"`
+	Revision                int                      `json:"revision"`
+	ContainerDefinitions    []ECSContainerDefinition `json:"containerDefinitions"`
+	Cpu                     string                   `json:"cpu,omitempty"`
+	Memory                  string                   `json:"memory,omitempty"`
+	NetworkMode             string                   `json:"networkMode,omitempty"`
+	RequiresCompatibilities []string                 `json:"requiresCompatibilities,omitempty"`
+	ExecutionRoleArn        string                   `json:"executionRoleArn,omitempty"`
+	TaskRoleArn             string                   `json:"taskRoleArn,omitempty"`
+	Volumes                 []ECSVolume              `json:"volumes,omitempty"`
+	Tags                    []ECSTag                 `json:"tags,omitempty"`
+	Status                  string                   `json:"status"`
 }
 
 type ECSTaskContainer struct {
@@ -117,10 +117,10 @@ type ECSNetworkInterface struct {
 }
 
 type ECSAttachment struct {
-	Id      string              `json:"id"`
-	Type    string              `json:"type"`
-	Status  string              `json:"status"`
-	Details []ECSKeyValuePair   `json:"details,omitempty"`
+	Id      string            `json:"id"`
+	Type    string            `json:"type"`
+	Status  string            `json:"status"`
+	Details []ECSKeyValuePair `json:"details,omitempty"`
 }
 
 type ECSTask struct {

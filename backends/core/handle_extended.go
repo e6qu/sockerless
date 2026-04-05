@@ -35,37 +35,14 @@ func (s *BaseServer) handleExecResize(w http.ResponseWriter, r *http.Request) {
 
 func (s *BaseServer) handleContainerTop(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
-	id, ok := s.Store.ResolveContainerID(ref)
-	if !ok {
-		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
+	psArgs := r.URL.Query().Get("ps_args")
+
+	resp, err := s.self.ContainerTop(ref, psArgs)
+	if err != nil {
+		WriteError(w, err)
 		return
 	}
-
-	c, _ := s.Store.Containers.Get(id)
-	if !c.State.Running {
-		WriteError(w, &api.ConflictError{
-			Message: fmt.Sprintf("Container %s is not running", ref),
-		})
-		return
-	}
-
-	// BUG-504: Read ps_args query param for API parity
-	_ = r.URL.Query().Get("ps_args")
-
-	cmd := c.Path
-	if len(c.Args) > 0 {
-		cmd += " " + strings.Join(c.Args, " ")
-	}
-
-	// Docker convention: main process is always PID 1 inside a container.
-	pid := "1"
-
-	WriteJSON(w, http.StatusOK, api.ContainerTopResponse{
-		Titles: []string{"UID", "PID", "PPID", "C", "STIME", "TTY", "TIME", "CMD"},
-		Processes: [][]string{
-			{"root", pid, "0", "0", "00:00", "?", "00:00:00", cmd},
-		},
-	})
+	WriteJSON(w, http.StatusOK, resp)
 }
 
 func (s *BaseServer) handleContainerPrune(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +102,7 @@ func (s *BaseServer) handleContainerStats(w http.ResponseWriter, r *http.Request
 		case <-r.Context().Done():
 			return
 		case <-time.After(1 * time.Second):
-			// Stop streaming if container is no longer running (BUG-209)
+			// Stop streaming if container is no longer running
 			if cur, ok := s.Store.Containers.Get(id); !ok || !cur.State.Running {
 				return
 			}
@@ -151,7 +128,7 @@ func (s *BaseServer) buildStatsEntry(containerID string, now time.Time, preread 
 
 	systemNanos := now.UnixNano()
 
-	// BUG-518: Load previous CPU reading for precpu_stats
+	// Load previous CPU reading for precpu_stats
 	var prevCPU, prevSys int64
 	if prev, ok := s.Store.PrevCPUStats.Load(containerID); ok {
 		p := prev.(*prevCPUStats)
@@ -163,15 +140,15 @@ func (s *BaseServer) buildStatsEntry(containerID string, now time.Time, preread 
 		SystemCPUNanos: systemNanos,
 	})
 
-	// BUG-517: Look up container name
+	// Look up container name
 	var name string
 	if c, ok := s.Store.Containers.Get(containerID); ok {
 		name = c.Name
 	}
 
 	return map[string]any{
-		"id":   containerID, // BUG-517
-		"name": name,        // BUG-517
+		"id":      containerID,
+		"name":    name,
 		"read":    now.Format(time.RFC3339Nano),
 		"preread": preread,
 		"cpu_stats": map[string]any{
@@ -183,10 +160,10 @@ func (s *BaseServer) buildStatsEntry(containerID string, now time.Time, preread 
 		},
 		"precpu_stats": map[string]any{
 			"cpu_usage": map[string]any{
-				"total_usage": prevCPU, // BUG-518
+				"total_usage": prevCPU,
 			},
 			"online_cpus":      1,
-			"system_cpu_usage": prevSys, // BUG-518
+			"system_cpu_usage": prevSys,
 		},
 		"memory_stats": map[string]any{
 			"usage": memUsage,
@@ -263,7 +240,7 @@ func (s *BaseServer) handleContainerRename(w http.ResponseWriter, r *http.Reques
 		c.Name = newName
 	})
 
-	// Update name in each network's Containers map (BUG-210)
+	// Update name in each network's Containers map
 	c, _ = s.Store.Containers.Get(id)
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID != "" {
@@ -307,7 +284,7 @@ func (s *BaseServer) handleSystemEvents(w http.ResponseWriter, r *http.Request) 
 	containerFilter := evFilters["container"]
 	labelFilter := evFilters["label"]
 
-	// BUG-520: Parse since/until query params (Unix timestamp or RFC3339)
+	// Parse since/until query params (Unix timestamp or RFC3339)
 	sinceTS := parseEventTimestamp(r.URL.Query().Get("since"))
 	untilTS := parseEventTimestamp(r.URL.Query().Get("until"))
 
@@ -348,7 +325,7 @@ func (s *BaseServer) handleSystemEvents(w http.ResponseWriter, r *http.Request) 
 		return true
 	}
 
-	// BUG-520: Replay historical events if since is set
+	// Replay historical events if since is set
 	if sinceTS > 0 {
 		for _, event := range s.EventBus.History(sinceTS, untilTS) {
 			if matchEvent(event) {
@@ -462,7 +439,7 @@ func (s *BaseServer) handleContainerChanges(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *BaseServer) handleSystemDf(w http.ResponseWriter, r *http.Request) {
-	// BUG-436: Build image→container count map
+	// Build image→container count map
 	imgContainerCount := make(map[string]int64)
 	for _, c := range s.Store.Containers.List() {
 		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
@@ -473,14 +450,19 @@ func (s *BaseServer) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 	var images []*api.ImageSummary
 	for _, img := range s.Store.Images.List() {
 		created, _ := time.Parse(time.RFC3339Nano, img.Created)
+		size := img.Size
+		if size <= 0 {
+			size = img.VirtualSize // fallback
+		}
 		images = append(images, &api.ImageSummary{
 			ID:          img.ID,
 			RepoTags:    img.RepoTags,
 			RepoDigests: img.RepoDigests,
 			Created:     created.Unix(),
-			Size:        img.Size,
-			VirtualSize: img.VirtualSize,   // BUG-450
-			Labels:      img.Config.Labels, // BUG-451
+			Size:        size,
+			VirtualSize: img.VirtualSize,
+			SharedSize:  0,
+			Labels:      img.Config.Labels,
 			Containers:  imgContainerCount[img.ID],
 		})
 	}
@@ -492,7 +474,7 @@ func (s *BaseServer) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 		if len(c.Args) > 0 {
 			command += " " + strings.Join(c.Args, " ")
 		}
-		// BUG-456: Resolve image ID
+		// Resolve image ID
 		imageID := ""
 		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
 			imageID = img.ID
@@ -500,43 +482,43 @@ func (s *BaseServer) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 			h := sha256.Sum256([]byte(c.Config.Image))
 			imageID = fmt.Sprintf("sha256:%x", h)
 		}
-		// BUG-459: Labels
+		// Labels
 		labels := c.Config.Labels
 		if labels == nil {
 			labels = make(map[string]string)
 		}
-		// BUG-460: Mounts
+		// Mounts
 		mounts := c.Mounts
 		if mounts == nil {
 			mounts = []api.MountPoint{}
 		}
 		cs := &api.ContainerSummary{
-			ID:      c.ID,
-			Names:   []string{c.Name},
-			Image:   c.Config.Image,
-			ImageID: imageID,                                                           // BUG-456
-			Command: command,                                                           // BUG-457
-			Created: created.Unix(),
-			State:   c.State.Status,
-			Status:  FormatStatus(c.State),                                             // BUG-458
-			Labels:  labels,                                                            // BUG-459
-			Ports:   buildPortList(c.HostConfig.PortBindings, c.Config.ExposedPorts),    // BUG-459
-			Mounts:  mounts,                                                            // BUG-460
-			NetworkSettings: &api.SummaryNetworkSettings{Networks: c.NetworkSettings.Networks}, // BUG-460
-			HostConfig:      &api.HostConfigSummary{NetworkMode: c.HostConfig.NetworkMode},     // BUG-460
+			ID:              c.ID,
+			Names:           []string{c.Name},
+			Image:           c.Config.Image,
+			ImageID:         imageID,
+			Command:         command,
+			Created:         created.Unix(),
+			State:           c.State.Status,
+			Status:          FormatStatus(c.State),
+			Labels:          labels,
+			Ports:           buildPortList(c.HostConfig.PortBindings, c.Config.ExposedPorts),
+			Mounts:          mounts,
+			NetworkSettings: &api.SummaryNetworkSettings{Networks: c.NetworkSettings.Networks},
+			HostConfig:      &api.HostConfigSummary{NetworkMode: c.HostConfig.NetworkMode},
 		}
 		// Calculate real container size from container rootDir
 		if rootPath, err := s.Drivers.Filesystem.RootPath(c.ID); err == nil && rootPath != "" {
 			cs.SizeRw = DirSize(rootPath)
 		}
-		// BUG-461: SizeRootFs from image
+		// SizeRootFs from image
 		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
 			cs.SizeRootFs = img.Size
 		}
 		containers = append(containers, cs)
 	}
 
-	// BUG-449: Build volume→container reference count map
+	// Build volume→container reference count map
 	volRefCount := make(map[string]int64)
 	for _, c := range s.Store.Containers.List() {
 		for _, m := range c.Mounts {
@@ -562,7 +544,7 @@ func (s *BaseServer) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 		volumes = append(volumes, &vCopy)
 	}
 
-	// Deduplicate images by ID (BUG-211)
+	// Deduplicate images by ID
 	seen := make(map[string]bool, len(images))
 	dedupImages := make([]*api.ImageSummary, 0, len(images))
 	for _, img := range images {

@@ -260,7 +260,7 @@ func (p CloudLogParams) KQLSinceFilter() string {
 	if p.Since.IsZero() {
 		return ""
 	}
-	return fmt.Sprintf(` | where TimeGenerated >= datetime("%s")`, p.Since.UTC().Format(time.RFC3339Nano)) // BUG-568
+	return fmt.Sprintf(` | where TimeGenerated >= datetime("%s")`, p.Since.UTC().Format(time.RFC3339Nano))
 }
 
 // KQLUntilFilter returns a KQL where clause for the until parameter,
@@ -269,6 +269,5 @@ func (p CloudLogParams) KQLUntilFilter() string {
 	if p.Until.IsZero() {
 		return ""
 	}
-	return fmt.Sprintf(` | where TimeGenerated < datetime("%s")`, p.Until.UTC().Format(time.RFC3339Nano)) // BUG-568
+	return fmt.Sprintf(` | where TimeGenerated < datetime("%s")`, p.Until.UTC().Format(time.RFC3339Nano))
 }
-

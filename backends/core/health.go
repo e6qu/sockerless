@@ -57,7 +57,7 @@ func (s *BaseServer) StartHealthCheck(containerID string) {
 	if hc.Retries > 0 {
 		retries = hc.Retries
 	}
-	// BUG-432: Parse StartInterval — used during start period instead of interval
+	// Parse StartInterval — used during start period instead of interval
 	startInterval := interval
 	if hc.StartInterval > 0 {
 		startInterval = time.Duration(hc.StartInterval)
@@ -89,7 +89,7 @@ func (s *BaseServer) StopHealthCheck(containerID string) {
 func (s *BaseServer) runHealthCheckLoop(ctx context.Context, containerID string, cmd []string,
 	interval, timeout, startPeriod, startInterval time.Duration, retries int) {
 
-	// BUG-432: During start period, use startInterval between checks.
+	// During start period, use startInterval between checks.
 	// After start period expires, switch to the normal interval.
 	if startPeriod > 0 {
 		deadline := time.After(startPeriod)

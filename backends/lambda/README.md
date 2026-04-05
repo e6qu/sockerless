@@ -1,86 +1,59 @@
-# backend-lambda
+# Lambda Backend
 
-AWS Lambda backend. Maps Docker container operations to Lambda functions using container images.
+Runs Docker containers as AWS Lambda functions using container images, with CloudWatch Logs for log streaming.
 
-## Resource mapping
+## Config (config.yaml)
 
-| Docker concept | Lambda resource |
-|---------------|----------------|
-| Container create | `CreateFunction` (container image) |
-| Container start | `Invoke` (async) |
-| Container stop | No-op (runs to completion) |
-| Container kill | Disconnects reverse agent |
-| Container remove | `DeleteFunction` |
-| Container logs | CloudWatch Logs `GetLogEvents` |
+```yaml
+environments:
+  my-lambda:
+    backend: lambda
+    addr: ":9100"
+    log_level: info
+    aws:
+      region: us-east-1
+      lambda:
+        role_arn: arn:aws:iam::123456789012:role/sockerless-lambda
+        log_group: /sockerless/lambda
+        memory_size: 1024
+        timeout: 900
+        subnets: [subnet-0a1b2c3d]
+        security_groups: [sg-012abc34]
+    common:
+      callback_url: https://backend.example.com
+      poll_interval: 2s
+      agent_timeout: 30s
+```
 
-## Agent mode
+## Environment Variables
 
-Uses **reverse agent** exclusively. Lambda functions cannot accept inbound connections, so the agent inside the function dials back to the backend via `SOCKERLESS_CALLBACK_URL`.
+| Variable | Default | Required | Description |
+|---|---|---|---|
+| `AWS_REGION` | `us-east-1` | no | AWS region |
+| `SOCKERLESS_LAMBDA_ROLE_ARN` | | **yes** | IAM execution role ARN for Lambda functions |
+| `SOCKERLESS_LAMBDA_LOG_GROUP` | `/sockerless/lambda` | no | CloudWatch log group |
+| `SOCKERLESS_LAMBDA_MEMORY_SIZE` | `1024` | no | Function memory in MB |
+| `SOCKERLESS_LAMBDA_TIMEOUT` | `900` | no | Function timeout in seconds (max 900) |
+| `SOCKERLESS_LAMBDA_SUBNETS` | | no | Comma-separated subnet IDs for VPC mode |
+| `SOCKERLESS_LAMBDA_SECURITY_GROUPS` | | no | Comma-separated security group IDs |
+| `SOCKERLESS_CALLBACK_URL` | | no | Backend URL for reverse agent callbacks |
+| `SOCKERLESS_ENDPOINT_URL` | | no | Custom AWS endpoint (for simulators) |
+| `SOCKERLESS_POLL_INTERVAL` | `2s` | no | Cloud API poll interval |
+| `SOCKERLESS_AGENT_TIMEOUT` | `30s` | no | Agent health-check timeout |
 
-Helper and cache containers (those not running `tail -f /dev/null`) auto-stop after 500ms.
-
-## Building
+## Quick Start
 
 ```sh
-cd backends/lambda
-go build -o sockerless-backend-lambda ./cmd/sockerless-backend-lambda
+go build -o sockerless-backend-lambda ./backends/lambda/cmd/sockerless-backend-lambda
+./sockerless-backend-lambda -addr :9100 -log-level info
 ```
 
-## Configuration
+Flags: `-addr` (default `:9100`), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AWS_REGION` | `us-east-1` | AWS region |
-| `SOCKERLESS_LAMBDA_ROLE_ARN` | _(required)_ | IAM execution role for functions |
-| `SOCKERLESS_LAMBDA_LOG_GROUP` | `/sockerless/lambda` | CloudWatch log group |
-| `SOCKERLESS_LAMBDA_MEMORY_SIZE` | `1024` | Function memory (MB) |
-| `SOCKERLESS_LAMBDA_TIMEOUT` | `900` | Function timeout (seconds) |
-| `SOCKERLESS_LAMBDA_SUBNETS` | | Comma-separated subnet IDs (VPC mode) |
-| `SOCKERLESS_LAMBDA_SECURITY_GROUPS` | | Comma-separated security group IDs |
-| `SOCKERLESS_CALLBACK_URL` | | Backend URL for reverse agent connections |
-| `SOCKERLESS_ENDPOINT_URL` | | Custom AWS endpoint (simulator mode) |
+## Cloud Notes
 
-These settings can also be configured via `~/.sockerless/config.yaml`. See the [CLI documentation](../../cmd/sockerless/README.md) for the YAML format.
-
-### Terraform outputs
-
-The `terraform/modules/lambda` module produces these outputs. Use `terragrunt output` from `terraform/environments/lambda/live` to extract them.
-
-| Terraform Output | Environment Variable |
-|---|---|
-| `execution_role_arn` | `SOCKERLESS_LAMBDA_ROLE_ARN` |
-| `log_group_name` | `SOCKERLESS_LAMBDA_LOG_GROUP` |
-| `ecr_repository_url` | _(used for image push)_ |
-
-## Project structure
-
-```
-lambda/
-├── cmd/sockerless-backend-lambda/
-│   └── main.go          CLI entrypoint
-├── server.go            Server type, route overrides
-├── config.go            Config struct, env parsing, validation
-├── aws.go               AWS SDK client initialization
-├── containers.go        Create, start, stop, kill, remove handlers
-├── logs.go              CloudWatch Logs streaming
-├── image_auth.go        ECRAuthProvider (core.AuthProvider for ECR integration)
-├── store.go             LambdaState type
-└── errors.go            AWS error mapping
-```
-
-## Example deployment
-
-See [examples/terraform/](examples/terraform/) for a complete Terraform example that provisions the AWS infrastructure (IAM roles, CloudWatch, ECR) and walks through running Docker commands against Lambda.
-
-## Docker API mapping
-
-For a detailed breakdown of how each Docker REST API endpoint and CLI command maps to AWS Lambda operations — including what's supported, what's not, and how it compares to vanilla Docker — see [docs/docker_api_mapping.md](docs/docker_api_mapping.md).
-
-## Testing
-
-```sh
-make sim-test-aws    # simulator integration tests
-make docker-test     # Docker-based full test
-```
-
-See also: [ARCHITECTURE.md](../../ARCHITECTURE.md), [FEATURE_MATRIX.md](../../FEATURE_MATRIX.md), [DECISIONS.md](../../DECISIONS.md)
+- The execution role needs `lambda:*`, `logs:*`, and ECR pull permissions at minimum.
+- Uses reverse agent exclusively -- Lambda cannot accept inbound connections.
+- VPC subnets/security groups are only needed if functions must reach private resources.
+- Lambda timeout max is 900 seconds (15 minutes). Container images must be in ECR.
+- See `specs/CONFIG.md` for the full unified config specification.

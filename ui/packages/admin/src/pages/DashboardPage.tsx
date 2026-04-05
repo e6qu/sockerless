@@ -1,5 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { MetricsCard, StatusBadge, Spinner } from "@sockerless/ui-core/components";
+import {
+  MetricsCard,
+  StatusBadge,
+  Spinner,
+} from "@sockerless/ui-core/components";
 import { AdminApiClient } from "../api.js";
 
 const api = new AdminApiClient();
@@ -11,7 +15,12 @@ export function DashboardPage() {
   });
 
   if (isLoading) return <Spinner />;
-  if (isError) return <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">Error: {error?.message ?? "Failed to load"}</div>;
+  if (isError)
+    return (
+      <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">
+        Error: {error?.message ?? "Failed to load"}
+      </div>
+    );
   if (!data) return <Spinner />;
 
   return (
@@ -27,7 +36,9 @@ export function DashboardPage() {
 
       <h3 className="text-lg font-medium">Component Health</h3>
       {data.components.length === 0 ? (
-        <p className="text-sm text-gray-500 dark:text-gray-400">No components found.</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          No components found.
+        </p>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {data.components.map((c) => (
@@ -38,10 +49,18 @@ export function DashboardPage() {
               <div>
                 <p className="font-medium">{c.name}</p>
                 <p className="text-xs text-gray-500 dark:text-gray-400">
-                {c.type} &middot; {c.addr}
-              </p>
+                  {c.type} &middot; {c.addr}
+                </p>
               </div>
-              <StatusBadge status={c.health === "up" ? "ok" : c.health === "unknown" ? "warning" : "error"} />
+              <StatusBadge
+                status={
+                  c.health === "up"
+                    ? "ok"
+                    : c.health === "unknown"
+                      ? "warning"
+                      : "error"
+                }
+              />
             </div>
           ))}
         </div>

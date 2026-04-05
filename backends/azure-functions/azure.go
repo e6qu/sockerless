@@ -23,6 +23,7 @@ func (f *fakeCredential) GetToken(_ context.Context, _ policy.TokenRequestOption
 type AzureClients struct {
 	WebApps *armappservice.WebAppsClient
 	Logs    *azquery.LogsClient
+	Cred    azcore.TokenCredential
 }
 
 // NewAzureClients initializes Azure SDK clients.
@@ -68,6 +69,7 @@ func newAzureClientsWithEndpoint(subscriptionID string, endpointURL string) (*Az
 	return &AzureClients{
 		WebApps: webAppsClient,
 		Logs:    logsClient,
+		Cred:    cred,
 	}, nil
 }
 
@@ -90,5 +92,6 @@ func newAzureClientsDefault(subscriptionID string) (*AzureClients, error) {
 	return &AzureClients{
 		WebApps: webAppsClient,
 		Logs:    logsClient,
+		Cred:    cred,
 	}, nil
 }

@@ -44,10 +44,12 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		NCPU:            1,
 		MemTotal:        536870912,
 	}, logger)
+	buildSvc, _ := gcpcommon.NewGCPBuildService(context.Background(), config.Project, config.BuildBucket, "", logger)
 	s.images = &core.ImageManager{
-		Base:   s.BaseServer,
-		Auth:   gcpcommon.NewARAuthProvider(s.ctx, logger),
-		Logger: logger,
+		Base:         s.BaseServer,
+		Auth:         gcpcommon.NewARAuthProvider(s.ctx, logger),
+		BuildService: buildSvc,
+		Logger:       logger,
 	}
 	s.SetSelf(s)
 

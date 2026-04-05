@@ -95,14 +95,14 @@ type EC2RouteTableAssociation struct {
 }
 
 type EC2SecurityGroup struct {
-	GroupId              string
-	GroupName            string
-	Description          string
-	VpcId                string
-	Tags                 []EC2Tag
-	OwnerId              string
-	IpPermissions        []EC2IpPermission
-	IpPermissionsEgress  []EC2IpPermission
+	GroupId             string
+	GroupName           string
+	Description         string
+	VpcId               string
+	Tags                []EC2Tag
+	OwnerId             string
+	IpPermissions       []EC2IpPermission
+	IpPermissionsEgress []EC2IpPermission
 }
 
 type EC2IpPermission struct {
@@ -127,12 +127,12 @@ type EC2SecurityGroupRule struct {
 	RuleId      string
 	GroupId     string
 	GroupOwner  string
-	IsEgress   bool
-	IpProtocol string
-	FromPort   int
-	ToPort     int
-	CidrIpv4   string
-	RefGroupId string
+	IsEgress    bool
+	IpProtocol  string
+	FromPort    int
+	ToPort      int
+	CidrIpv4    string
+	RefGroupId  string
 	Description string
 }
 
@@ -143,12 +143,12 @@ type EC2Tag struct {
 
 // State stores
 var (
-	ec2Vpcs             *sim.StateStore[EC2Vpc]
-	ec2Subnets          *sim.StateStore[EC2Subnet]
-	ec2InternetGateways *sim.StateStore[EC2InternetGateway]
-	ec2NatGateways      *sim.StateStore[EC2NatGateway]
-	ec2ElasticIPs       *sim.StateStore[EC2ElasticIP]
-	ec2RouteTables      *sim.StateStore[EC2RouteTable]
+	ec2Vpcs               *sim.StateStore[EC2Vpc]
+	ec2Subnets            *sim.StateStore[EC2Subnet]
+	ec2InternetGateways   *sim.StateStore[EC2InternetGateway]
+	ec2NatGateways        *sim.StateStore[EC2NatGateway]
+	ec2ElasticIPs         *sim.StateStore[EC2ElasticIP]
+	ec2RouteTables        *sim.StateStore[EC2RouteTable]
 	ec2SecurityGroups     *sim.StateStore[EC2SecurityGroup]
 	ec2SecurityGroupRules *sim.StateStore[EC2SecurityGroupRule]
 )

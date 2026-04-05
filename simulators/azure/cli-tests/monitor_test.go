@@ -19,8 +19,8 @@ func TestMonitorWorkspace_CreateAndShow(t *testing.T) {
 		`{"location":"eastus","properties":{"retentionInDays":30}}`))
 
 	var ws struct {
-		Name     string `json:"name"`
-		Location string `json:"location"`
+		Name       string `json:"name"`
+		Location   string `json:"location"`
 		Properties struct {
 			ProvisioningState string `json:"provisioningState"`
 			WorkspaceId       string `json:"customerId"`

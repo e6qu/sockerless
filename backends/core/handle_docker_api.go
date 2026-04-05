@@ -135,6 +135,7 @@ func (s *BaseServer) registerDockerAPIRoutes() {
 
 	// Build + commit
 	s.Mux.HandleFunc("POST /build", s.handleImageBuild)
+	s.Mux.HandleFunc("POST /build/prune", s.handleBuildPrune)
 	s.Mux.HandleFunc("POST /commit", s.handleContainerCommit)
 
 	// Unsupported endpoints (501)
@@ -154,6 +155,7 @@ func (s *BaseServer) registerDockerAPIRoutes() {
 
 func (s *BaseServer) handleDockerPing(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("API-Version", "1.44")
+	w.Header().Set("Libpod-API-Version", "5.0.0")
 	w.Header().Set("Builder-Version", "2")
 	w.Header().Set("Docker-Experimental", "false")
 	w.Header().Set("Pragma", "no-cache")
@@ -165,6 +167,15 @@ func (s *BaseServer) handleDockerPing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Write([]byte("OK"))
+}
+
+// handleBuildPrune handles POST /build/prune — returns empty build cache info.
+// Required by docker system prune which calls /build/prune after container/image/network prune.
+func (s *BaseServer) handleBuildPrune(w http.ResponseWriter, r *http.Request) {
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"CachesDeleted":  []string{},
+		"SpaceReclaimed": 0,
+	})
 }
 
 func (s *BaseServer) handleDockerVersion(w http.ResponseWriter, r *http.Request) {
@@ -225,30 +236,30 @@ func (s *BaseServer) handleDockerInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJSON(w, http.StatusOK, map[string]any{
-		"ID":                info.ID,
-		"Name":              info.Name,
-		"ServerVersion":     info.ServerVersion,
-		"Containers":        info.Containers,
-		"ContainersRunning": info.ContainersRunning,
-		"ContainersPaused":  info.ContainersPaused,
-		"ContainersStopped": info.ContainersStopped,
-		"Images":            info.Images,
-		"Driver":            info.Driver,
-		"OperatingSystem":   info.OperatingSystem,
-		"OSType":            info.OSType,
-		"Architecture":      info.Architecture,
-		"NCPU":              info.NCPU,
-		"MemTotal":          info.MemTotal,
-		"KernelVersion":     info.KernelVersion,
-		"DockerRootDir":     "/var/lib/sockerless",
-		"HttpProxy":         "",
-		"HttpsProxy":        "",
-		"NoProxy":           "",
-		"Labels":            []string{},
-		"ExperimentalBuild": false,
+		"ID":                 info.ID,
+		"Name":               info.Name,
+		"ServerVersion":      info.ServerVersion,
+		"Containers":         info.Containers,
+		"ContainersRunning":  info.ContainersRunning,
+		"ContainersPaused":   info.ContainersPaused,
+		"ContainersStopped":  info.ContainersStopped,
+		"Images":             info.Images,
+		"Driver":             info.Driver,
+		"OperatingSystem":    info.OperatingSystem,
+		"OSType":             info.OSType,
+		"Architecture":       info.Architecture,
+		"NCPU":               info.NCPU,
+		"MemTotal":           info.MemTotal,
+		"KernelVersion":      info.KernelVersion,
+		"DockerRootDir":      "/var/lib/sockerless",
+		"HttpProxy":          "",
+		"HttpsProxy":         "",
+		"NoProxy":            "",
+		"Labels":             []string{},
+		"ExperimentalBuild":  false,
 		"LiveRestoreEnabled": false,
-		"SecurityOptions":   []string{},
-		"Warnings":          []string{},
+		"SecurityOptions":    []string{},
+		"Warnings":           []string{},
 		"RegistryConfig": map[string]any{
 			"InsecureRegistryCIDRs": []string{},
 			"IndexConfigs":          map[string]any{},
@@ -280,7 +291,7 @@ func (s *BaseServer) handleDockerImageCreate(w http.ResponseWriter, r *http.Requ
 		}
 		defer rc.Close()
 
-		// BUG-498: Forward repo/tag by tagging the loaded image
+		// Forward repo/tag by tagging the loaded image
 		repo := r.URL.Query().Get("repo")
 		if repo != "" {
 			body, _ := io.ReadAll(rc)
@@ -305,6 +316,10 @@ func (s *BaseServer) handleDockerImageCreate(w http.ResponseWriter, r *http.Requ
 	}
 
 	fromImage := r.URL.Query().Get("fromImage")
+	// Podman's libpod API sends "reference" instead of "fromImage"
+	if fromImage == "" {
+		fromImage = r.URL.Query().Get("reference")
+	}
 	tag := r.URL.Query().Get("tag")
 	if tag == "" {
 		tag = "latest"
@@ -313,7 +328,7 @@ func (s *BaseServer) handleDockerImageCreate(w http.ResponseWriter, r *http.Requ
 	ref := fromImage
 	if tag != "" && tag != "latest" {
 		ref = fromImage + ":" + tag
-	} else if ref != "" && tag == "latest" {
+	} else if ref != "" && !strings.Contains(ref, ":") && tag == "latest" {
 		ref = fromImage + ":latest"
 	}
 

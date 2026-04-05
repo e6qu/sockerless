@@ -13,8 +13,8 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v4"
 	"github.com/sockerless/api"
-	core "github.com/sockerless/backend-core"
 	azurecommon "github.com/sockerless/azure-common"
+	core "github.com/sockerless/backend-core"
 )
 
 // Compile-time check that Server implements api.Backend.
@@ -44,9 +44,9 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 
 	// Merge image config if available
 	if img, ok := s.Store.ResolveImage(config.Image); ok {
-		// BUG-541: Merge ENV by key — image provides defaults, container overrides
+		// Merge ENV by key — image provides defaults, container overrides
 		config.Env = core.MergeEnvByKey(img.Config.Env, config.Env)
-		// BUG-542: Docker clears image Cmd when Entrypoint is overridden in create
+		// Docker clears image Cmd when Entrypoint is overridden in create
 		if len(config.Cmd) == 0 && len(config.Entrypoint) == 0 {
 			config.Cmd = img.Config.Cmd
 		}
@@ -60,6 +60,9 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	if config.Labels == nil {
 		config.Labels = make(map[string]string)
 	}
+
+	// Resolve Docker Hub images to ACR or normalize for Azure Functions
+	config.Image = azurecommon.ResolveAzureImageURI(config.Image, s.config.Registry)
 
 	hostConfig := api.HostConfig{NetworkMode: "default"}
 	if req.HostConfig != nil {
@@ -101,18 +104,32 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		Driver:   "azure-functions",
 	}
 
-	// Set up default network
+	// Set up default network — resolve via store for correct ID and Containers map
 	netName := hostConfig.NetworkMode
 	if netName == "default" {
 		netName = "bridge"
 	}
+	networkID := netName
+	if net, ok := s.Store.ResolveNetwork(netName); ok {
+		networkID = net.ID
+		// Register container in the network's Containers map
+		s.Store.Networks.Update(net.ID, func(n *api.Network) {
+			if n.Containers == nil {
+				n.Containers = make(map[string]api.EndpointResource)
+			}
+			n.Containers[id] = api.EndpointResource{
+				Name:       strings.TrimPrefix(name, "/"),
+				EndpointID: core.GenerateID()[:16],
+			}
+		})
+	}
 	container.NetworkSettings.Networks[netName] = &api.EndpointSettings{
-		NetworkID:   netName,
+		NetworkID:   networkID,
 		EndpointID:  core.GenerateID()[:16],
-		Gateway:     "172.17.0.1",
-		IPAddress:   fmt.Sprintf("172.17.0.%d", int(s.ipCounter.Add(1))),
+		Gateway:     "",
+		IPAddress:   "0.0.0.0",
 		IPPrefixLen: 16,
-		MacAddress:  "02:42:ac:11:00:02",
+		MacAddress:  "",
 	}
 
 	// Function App names must be globally unique -- use skls- prefix + truncated container ID
@@ -289,7 +306,7 @@ func (s *Server) ContainerStart(ref string) error {
 	s.Store.Containers.Update(id, func(c *api.Container) {
 		c.State.Status = "running"
 		c.State.Running = true
-		c.State.Pid = 1
+		c.State.Pid = 0
 		c.State.StartedAt = now
 		c.State.FinishedAt = "0001-01-01T00:00:00Z"
 		c.State.ExitCode = 0
@@ -380,7 +397,7 @@ func (s *Server) ContainerStart(ref string) error {
 
 	// Wait for reverse agent callback if configured
 	if s.config.CallbackURL != "" {
-		if err := s.AgentRegistry.WaitForAgent(id, 30*time.Second); err != nil {
+		if err := s.AgentRegistry.WaitForAgent(id, s.config.AgentTimeout); err != nil {
 			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
 			s.AgentRegistry.Remove(id)
 		} else {
@@ -599,7 +616,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 		if len(untilFilters) > 0 && !core.MatchUntil(c.Created, untilFilters) {
 			continue
 		}
-		// BUG-483: Sum image sizes for SpaceReclaimed
+		// Sum image sizes for SpaceReclaimed
 		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
 			spaceReclaimed += uint64(img.Size)
 		}

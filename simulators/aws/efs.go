@@ -12,16 +12,16 @@ import (
 // EFS types
 
 type EFSFileSystem struct {
-	FileSystemId     string `json:"FileSystemId"`
-	FileSystemArn    string `json:"FileSystemArn"`
-	CreationTime     int64  `json:"CreationTime"`
-	LifeCycleState   string `json:"LifeCycleState"`
-	Name             string `json:"Name,omitempty"`
-	OwnerId          string `json:"OwnerId"`
-	PerformanceMode  string `json:"PerformanceMode"`
-	ThroughputMode   string `json:"ThroughputMode"`
-	NumberOfMountTargets int `json:"NumberOfMountTargets"`
-	SizeInBytes      struct {
+	FileSystemId         string `json:"FileSystemId"`
+	FileSystemArn        string `json:"FileSystemArn"`
+	CreationTime         int64  `json:"CreationTime"`
+	LifeCycleState       string `json:"LifeCycleState"`
+	Name                 string `json:"Name,omitempty"`
+	OwnerId              string `json:"OwnerId"`
+	PerformanceMode      string `json:"PerformanceMode"`
+	ThroughputMode       string `json:"ThroughputMode"`
+	NumberOfMountTargets int    `json:"NumberOfMountTargets"`
+	SizeInBytes          struct {
 		Value int64 `json:"Value"`
 	} `json:"SizeInBytes"`
 	Tags []EFSTag `json:"Tags,omitempty"`
@@ -46,20 +46,20 @@ type EFSMountTarget struct {
 }
 
 type EFSAccessPoint struct {
-	AccessPointId    string            `json:"AccessPointId"`
-	AccessPointArn   string            `json:"AccessPointArn"`
-	FileSystemId     string            `json:"FileSystemId"`
-	LifeCycleState   string            `json:"LifeCycleState"`
-	Name             string            `json:"Name,omitempty"`
-	OwnerId          string            `json:"OwnerId"`
-	RootDirectory    *EFSRootDirectory `json:"RootDirectory,omitempty"`
-	PosixUser        *EFSPosixUser     `json:"PosixUser,omitempty"`
-	Tags             []EFSTag          `json:"Tags,omitempty"`
+	AccessPointId  string            `json:"AccessPointId"`
+	AccessPointArn string            `json:"AccessPointArn"`
+	FileSystemId   string            `json:"FileSystemId"`
+	LifeCycleState string            `json:"LifeCycleState"`
+	Name           string            `json:"Name,omitempty"`
+	OwnerId        string            `json:"OwnerId"`
+	RootDirectory  *EFSRootDirectory `json:"RootDirectory,omitempty"`
+	PosixUser      *EFSPosixUser     `json:"PosixUser,omitempty"`
+	Tags           []EFSTag          `json:"Tags,omitempty"`
 }
 
 type EFSRootDirectory struct {
-	Path         string              `json:"Path,omitempty"`
-	CreationInfo *EFSCreationInfo    `json:"CreationInfo,omitempty"`
+	Path         string           `json:"Path,omitempty"`
+	CreationInfo *EFSCreationInfo `json:"CreationInfo,omitempty"`
 }
 
 type EFSCreationInfo struct {
@@ -69,15 +69,15 @@ type EFSCreationInfo struct {
 }
 
 type EFSPosixUser struct {
-	Gid            int64   `json:"Gid"`
-	Uid            int64   `json:"Uid"`
-	SecondaryGids  []int64 `json:"SecondaryGids,omitempty"`
+	Gid           int64   `json:"Gid"`
+	Uid           int64   `json:"Uid"`
+	SecondaryGids []int64 `json:"SecondaryGids,omitempty"`
 }
 
 type EFSLifecyclePolicy struct {
-	TransitionToIA                    string `json:"TransitionToIA,omitempty"`
-	TransitionToPrimaryStorageClass   string `json:"TransitionToPrimaryStorageClass,omitempty"`
-	TransitionToArchive               string `json:"TransitionToArchive,omitempty"`
+	TransitionToIA                  string `json:"TransitionToIA,omitempty"`
+	TransitionToPrimaryStorageClass string `json:"TransitionToPrimaryStorageClass,omitempty"`
+	TransitionToArchive             string `json:"TransitionToArchive,omitempty"`
 }
 
 // State stores

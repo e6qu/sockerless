@@ -1,90 +1,60 @@
-# backend-cloudrun
+# Cloud Run Backend
 
-Google Cloud Run backend. Maps Docker container operations to Cloud Run Jobs and Executions.
+Runs Docker containers as Google Cloud Run Jobs and Executions, with Cloud Logging for log streaming.
 
-## Resource mapping
+## Config (config.yaml)
 
-| Docker concept | Cloud Run resource |
-|---------------|-------------------|
-| Container create | _(registers in store)_ |
-| Container start | `CreateJob` + `RunJob` (creates Execution) |
-| Container stop/kill | Cancel Execution |
-| Container remove | `DeleteJob` |
-| Container logs | Cloud Logging via Log Admin API |
+```yaml
+environments:
+  my-cloudrun:
+    backend: cloudrun
+    addr: ":9100"
+    log_level: info
+    gcp:
+      project: my-gcp-project-123
+      cloudrun:
+        region: us-central1
+        vpc_connector: projects/my-gcp-project-123/locations/us-central1/connectors/my-vpc
+        log_id: sockerless
+        log_timeout: 30s
+    common:
+      agent_image: sockerless/agent:latest
+      agent_token: my-secret-token
+      callback_url: https://backend.example.com
+      poll_interval: 2s
+      agent_timeout: 30s
+```
 
-Jobs are created at start time (not create time) to support restarts cleanly — the old job is deleted before creating a new one.
+## Environment Variables
 
-## Agent mode
+| Variable | Default | Required | Description |
+|---|---|---|---|
+| `SOCKERLESS_GCR_PROJECT` | | **yes** | GCP project ID |
+| `SOCKERLESS_GCR_REGION` | `us-central1` | no | Cloud Run region |
+| `SOCKERLESS_GCR_VPC_CONNECTOR` | | no | Serverless VPC Access connector |
+| `SOCKERLESS_GCR_LOG_ID` | `sockerless` | no | Cloud Logging log ID |
+| `SOCKERLESS_GCR_AGENT_IMAGE` | `sockerless/agent:latest` | no | Sidecar agent container image |
+| `SOCKERLESS_GCR_AGENT_TOKEN` | | no | Agent authentication token |
+| `SOCKERLESS_CALLBACK_URL` | | no | Backend URL for reverse agent mode |
+| `SOCKERLESS_ENDPOINT_URL` | | no | Custom endpoint (for simulators) |
+| `SOCKERLESS_POLL_INTERVAL` | `2s` | no | Cloud API poll interval |
+| `SOCKERLESS_AGENT_TIMEOUT` | `30s` | no | Agent health-check timeout |
+| `SOCKERLESS_LOG_TIMEOUT` | `30s` | no | Cloud Logging query timeout |
 
-Uses **forward agent** by default: after starting a job execution, the backend polls for the execution to reach RUNNING state, extracts the agent address, and dials in.
-
-Also supports **reverse agent** via `SOCKERLESS_CALLBACK_URL`.
-
-## Building
+## Quick Start
 
 ```sh
-cd backends/cloudrun
-go build -o sockerless-backend-cloudrun ./cmd/sockerless-backend-cloudrun
+go build -o sockerless-backend-cloudrun ./backends/cloudrun/cmd/sockerless-backend-cloudrun
+./sockerless-backend-cloudrun -addr :9100 -log-level info
 ```
 
-## Configuration
+Flags: `-addr` (default `:9100`), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SOCKERLESS_GCR_PROJECT` | _(required)_ | GCP project ID |
-| `SOCKERLESS_GCR_REGION` | `us-central1` | GCP region |
-| `SOCKERLESS_GCR_VPC_CONNECTOR` | | VPC connector for network access |
-| `SOCKERLESS_GCR_LOG_ID` | `sockerless` | Cloud Logging log ID |
-| `SOCKERLESS_GCR_AGENT_IMAGE` | `sockerless/agent:latest` | Sidecar agent image |
-| `SOCKERLESS_GCR_AGENT_TOKEN` | | Default agent authentication token |
-| `SOCKERLESS_CALLBACK_URL` | | Backend URL for reverse agent mode |
-| `SOCKERLESS_ENDPOINT_URL` | | Custom GCP endpoint (simulator mode) |
+## Cloud Notes
 
-These settings can also be configured via `~/.sockerless/config.yaml`. See the [CLI documentation](../../cmd/sockerless/README.md) for the YAML format.
-
-### Terraform outputs
-
-The `terraform/modules/cloudrun` module produces these outputs. Use `terragrunt output` from `terraform/environments/cloudrun/live` to extract them.
-
-| Terraform Output | Environment Variable |
-|---|---|
-| `project_id` | `SOCKERLESS_GCR_PROJECT` |
-| `region` | `SOCKERLESS_GCR_REGION` |
-| `vpc_connector_name` | `SOCKERLESS_GCR_VPC_CONNECTOR` |
-| `artifact_registry_repository_url` | `SOCKERLESS_GCR_AGENT_IMAGE` (after building and pushing) |
-
-## Project structure
-
-```
-cloudrun/
-├── cmd/sockerless-backend-cloudrun/
-│   └── main.go          CLI entrypoint
-├── server.go            Server type, route overrides
-├── config.go            Config struct, env parsing, validation
-├── gcp.go               GCP SDK client initialization
-├── containers.go        Create, start, stop, kill, remove handlers
-├── jobspec.go           Cloud Run Job protobuf builder
-├── logs.go              Cloud Logging streaming
-├── images.go            Image pull handler
-├── image_auth.go        ARAuthProvider for Artifact Registry / GCR auth
-├── extended.go          Pause, unpause, restart, volume prune
-├── store.go             CloudRunState type
-└── errors.go            GCP error mapping
-```
-
-## Example deployment
-
-See [examples/terraform/](examples/terraform/) for a complete Terraform example that provisions the GCP infrastructure (VPC, Cloud Run APIs, Artifact Registry, service account) and walks through running Docker commands against Cloud Run Jobs.
-
-## Docker API mapping
-
-For a detailed breakdown of how each Docker REST API endpoint and CLI command maps to Google Cloud Run Jobs operations — including what's supported, what's not, and how it compares to vanilla Docker — see [docs/docker_api_mapping.md](docs/docker_api_mapping.md).
-
-## Testing
-
-```sh
-make sim-test-gcp    # simulator integration tests
-make docker-test     # Docker-based full test
-```
-
-See also: [ARCHITECTURE.md](../../ARCHITECTURE.md), [FEATURE_MATRIX.md](../../FEATURE_MATRIX.md), [DECISIONS.md](../../DECISIONS.md)
+- Requires Cloud Run API and Cloud Logging API enabled in the GCP project.
+- Application Default Credentials or a service account key must be available.
+- Container images must be in Artifact Registry or GCR within the same project.
+- Supports forward agent (polls execution for IP) and reverse agent (`callback_url`).
+- VPC connector is only needed if services must reach private VPC resources.
+- See `specs/CONFIG.md` for the full unified config specification.

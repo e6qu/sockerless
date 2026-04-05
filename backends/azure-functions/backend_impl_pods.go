@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	core "github.com/sockerless/backend-core"
 	"github.com/sockerless/api"
+	core "github.com/sockerless/backend-core"
 )
 
 // PodStart starts all containers in a pod by calling ContainerStart for each,

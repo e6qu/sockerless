@@ -82,13 +82,7 @@ func TestContainerChanges_Empty(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.handleContainerChanges(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-
-	var changes []api.ContainerChangeItem
-	json.Unmarshal(w.Body.Bytes(), &changes)
-	if len(changes) != 0 {
-		t.Fatalf("expected 0 changes, got %d", len(changes))
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501, got %d", w.Code)
 	}
 }

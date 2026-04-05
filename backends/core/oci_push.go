@@ -88,15 +88,8 @@ func OCIPush(opts OCIPushOptions) (*OCIPushResult, error) {
 		}
 	}
 
-	// Fallback: synthetic empty layer if no real layers uploaded
 	if len(layerEntries) == 0 {
-		layerData := []byte{0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff,
-			0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-		digest := fmt.Sprintf("sha256:%x", sha256.Sum256(layerData))
-		if err := ociUploadBlob(baseURL, opts.AuthToken, digest, layerData, "application/vnd.docker.image.rootfs.diff.tar.gzip"); err != nil {
-			return nil, fmt.Errorf("upload layer blob: %w", err)
-		}
-		layerEntries = append(layerEntries, layerEntry{digest: digest, size: len(layerData)})
+		return nil, fmt.Errorf("push failed: image has no layer data available")
 	}
 
 	// 5. Create and PUT manifest

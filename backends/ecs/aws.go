@@ -8,22 +8,26 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
+	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/efs"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/servicediscovery"
 )
 
 // AWSClients holds all AWS SDK clients.
 type AWSClients struct {
-	ECS              *ecs.Client
-	CloudWatch       *cloudwatchlogs.Client
+	ECS               *ecs.Client
+	CloudWatch        *cloudwatchlogs.Client
 	CloudWatchMetrics *cloudwatch.Client // Container Insights metrics
-	EFS              *efs.Client
-	ServiceDiscovery *servicediscovery.Client
-	ECR              *ecr.Client
-	EC2              *ec2.Client
+	EFS               *efs.Client
+	ServiceDiscovery  *servicediscovery.Client
+	ECR               *ecr.Client
+	EC2               *ec2.Client
+	CodeBuild         *codebuild.Client
+	S3                *s3.Client
 }
 
 // NewAWSClients initializes AWS SDK clients from config.
@@ -58,6 +62,8 @@ func newClientsFromConfig(cfg aws.Config) *AWSClients {
 		ServiceDiscovery:  servicediscovery.NewFromConfig(cfg),
 		ECR:               ecr.NewFromConfig(cfg),
 		EC2:               ec2.NewFromConfig(cfg),
+		CodeBuild:         codebuild.NewFromConfig(cfg),
+		S3:                s3.NewFromConfig(cfg),
 	}
 }
 
@@ -70,5 +76,7 @@ func newClientsWithEndpoint(cfg aws.Config, endpoint string) *AWSClients {
 		ServiceDiscovery:  servicediscovery.NewFromConfig(cfg, func(o *servicediscovery.Options) { o.BaseEndpoint = aws.String(endpoint) }),
 		ECR:               ecr.NewFromConfig(cfg, func(o *ecr.Options) { o.BaseEndpoint = aws.String(endpoint) }),
 		EC2:               ec2.NewFromConfig(cfg, func(o *ec2.Options) { o.BaseEndpoint = aws.String(endpoint) }),
+		CodeBuild:         codebuild.NewFromConfig(cfg, func(o *codebuild.Options) { o.BaseEndpoint = aws.String(endpoint) }),
+		S3:                s3.NewFromConfig(cfg, func(o *s3.Options) { o.BaseEndpoint = aws.String(endpoint) }),
 	}
 }

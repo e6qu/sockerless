@@ -243,11 +243,11 @@ jobs:
 
 func TestParseActionRef(t *testing.T) {
 	tests := []struct {
-		uses            string
-		wantNWO         string
-		wantPath        string
-		wantRef         string
-		wantLocal       bool
+		uses      string
+		wantNWO   string
+		wantPath  string
+		wantRef   string
+		wantLocal bool
 	}{
 		{"actions/checkout@v4", "actions/checkout", "", "v4", false},
 		{"actions/setup-go@v5", "actions/setup-go", "", "v5", false},

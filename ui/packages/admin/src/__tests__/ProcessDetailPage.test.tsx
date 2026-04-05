@@ -35,7 +35,16 @@ function renderPage() {
 }
 
 const processData = [
-  { name: "sim-aws", binary: "simulator-aws", status: "running", pid: 1234, addr: ":4566", started_at: "2025-01-01T00:00:00Z", exit_code: 0, type: "simulator" },
+  {
+    name: "sim-aws",
+    binary: "simulator-aws",
+    status: "running",
+    pid: 1234,
+    addr: ":4566",
+    started_at: "2025-01-01T00:00:00Z",
+    exit_code: 0,
+    type: "simulator",
+  },
 ];
 
 const logData = ["Starting simulator...", "Listening on :4566"];

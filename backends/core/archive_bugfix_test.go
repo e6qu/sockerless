@@ -15,7 +15,7 @@ import (
 	"github.com/sockerless/api"
 )
 
-// BUG-052: extractTar must propagate io.Copy errors.
+// extractTar must propagate io.Copy errors.
 func TestExtractTar_CopyError(t *testing.T) {
 	// Create a tar with a file header claiming 1000 bytes but only 10 bytes of data.
 	var buf bytes.Buffer
@@ -35,7 +35,7 @@ func TestExtractTar_CopyError(t *testing.T) {
 	}
 }
 
-// BUG-052: extractTar succeeds with valid tar.
+// extractTar succeeds with valid tar.
 func TestExtractTar_Success(t *testing.T) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
@@ -62,7 +62,7 @@ func TestExtractTar_Success(t *testing.T) {
 	}
 }
 
-// BUG-055: createTar returns error for nonexistent source.
+// createTar returns error for nonexistent source.
 func TestCreateTar_ErrorPath(t *testing.T) {
 	var buf bytes.Buffer
 	err := createTar(&buf, "/nonexistent/path/that/does/not/exist", "test")
@@ -71,7 +71,7 @@ func TestCreateTar_ErrorPath(t *testing.T) {
 	}
 }
 
-// BUG-055: createTar succeeds for valid source.
+// createTar succeeds for valid source.
 func TestCreateTar_Success(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("aaa"), 0644)
@@ -105,7 +105,7 @@ func TestCreateTar_Success(t *testing.T) {
 	}
 }
 
-// BUG-055: createTar for a single file.
+// createTar for a single file.
 func TestCreateTar_SingleFile(t *testing.T) {
 	dir := t.TempDir()
 	fpath := filepath.Join(dir, "single.txt")
@@ -131,7 +131,7 @@ func TestCreateTar_SingleFile(t *testing.T) {
 	}
 }
 
-// BUG-053: handlePutArchive returns 500 when driver fails.
+// handlePutArchive returns 500 when driver fails.
 func TestHandlePutArchive_DriverError(t *testing.T) {
 	store := NewStore()
 	s := &BaseServer{
@@ -159,7 +159,7 @@ func TestHandlePutArchive_DriverError(t *testing.T) {
 	}
 }
 
-// BUG-053: handlePutArchive stages files when no agent connected (pre-start docker cp).
+// handlePutArchive stages files when no agent connected (pre-start docker cp).
 func TestHandlePutArchive_NoAgent_StagesFiles(t *testing.T) {
 	store := NewStore()
 	s := &BaseServer{
@@ -198,7 +198,7 @@ func TestHandlePutArchive_NoAgent_StagesFiles(t *testing.T) {
 	}
 }
 
-// BUG-059: handleContainerCommit returns 400 on malformed JSON body.
+// handleContainerCommit returns 400 on malformed JSON body.
 func TestCommit_MalformedBody(t *testing.T) {
 	s := newCommitTestServer()
 
@@ -224,7 +224,7 @@ func TestCommit_MalformedBody(t *testing.T) {
 	}
 }
 
-// BUG-059: handleContainerCommit succeeds with empty body.
+// handleContainerCommit succeeds with empty body.
 func TestCommit_EmptyBody(t *testing.T) {
 	s := newCommitTestServer()
 
@@ -249,7 +249,7 @@ func TestCommit_EmptyBody(t *testing.T) {
 	}
 }
 
-// BUG-060: handleImageBuild returns 400 on invalid buildargs JSON.
+// handleImageBuild returns 400 on invalid buildargs JSON.
 func TestBuild_InvalidBuildargs(t *testing.T) {
 	store := NewStore()
 	s := &BaseServer{

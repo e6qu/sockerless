@@ -1,11 +1,14 @@
-# Sockerless — Next Steps
+# Next Steps
 
-## Phase 68 — Multi-Tenant Backend Pools
-9 tasks remaining (P68-002 through P68-010). Pool registry, request router, concurrency limiter, lifecycle, metrics, scheduling, resource limits, tests.
+## ECS Live Testing Round 5
 
-## Phase 78 — UI Polish
-10 tasks pending. Dark mode, design tokens, error handling UX, container detail modal, auto-refresh, performance audit, accessibility, E2E smoke, documentation.
+Re-test all tracks with AgentTimeout config fix applied to Lambda/GCF/AZF.
 
----
+## Open Bugs — 14 ([BUGS.md](BUGS.md))
 
-See also: [PLAN.md](PLAN.md), [STATUS.md](STATUS.md)
+3 High (ECR push, Podman pull format, fake ImagePush), 7 Medium, 4 Low.
+
+## Pending Phases
+
+- **Phase 68** — Multi-Tenant Backend Pools (9 tasks)
+- **Phase 78** — UI Polish (10 tasks)

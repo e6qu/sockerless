@@ -47,8 +47,12 @@ describe("ProjectCreatePage", () => {
 
   it("shows cloud descriptions", () => {
     renderPage();
-    expect(screen.getByText("ECS / Lambda + AWS Simulator")).toBeInTheDocument();
-    expect(screen.getByText("Cloud Run / GCF + GCP Simulator")).toBeInTheDocument();
+    expect(
+      screen.getByText("ECS / Lambda + AWS Simulator"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Cloud Run / GCF + GCP Simulator"),
+    ).toBeInTheDocument();
     expect(screen.getByText("ACA / AZF + Azure Simulator")).toBeInTheDocument();
   });
 });

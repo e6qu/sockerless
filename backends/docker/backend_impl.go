@@ -767,8 +767,8 @@ type hijackedRWC struct {
 }
 
 func (h *hijackedRWC) Read(p []byte) (int, error)  { return h.resp.Reader.Read(p) }
-func (h *hijackedRWC) Write(p []byte) (int, error)  { return h.resp.Conn.Write(p) }
-func (h *hijackedRWC) Close() error                  { h.resp.Close(); return nil }
+func (h *hijackedRWC) Write(p []byte) (int, error) { return h.resp.Conn.Write(p) }
+func (h *hijackedRWC) Close() error                { h.resp.Close(); return nil }
 
 // nopRWC is a no-op ReadWriteCloser for detached exec.
 type nopRWC struct{}
@@ -838,7 +838,7 @@ func mapHostConfigToDocker(hc *api.HostConfig) *container.HostConfig {
 		Runtime:         hc.Runtime,
 		Links:           hc.Links,
 		PublishAllPorts: hc.PublishAllPorts,
-		CgroupnsMode:   container.CgroupnsMode(hc.CgroupnsMode),
+		CgroupnsMode:    container.CgroupnsMode(hc.CgroupnsMode),
 		ConsoleSize:     hc.ConsoleSize,
 	}
 	if len(hc.PortBindings) > 0 {

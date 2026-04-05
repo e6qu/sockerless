@@ -9,13 +9,13 @@ import (
 )
 
 type AppServicePlan struct {
-	ID         string                  `json:"id"`
-	Name       string                  `json:"name"`
-	Type       string                  `json:"type"`
-	Location   string                  `json:"location"`
-	Tags       map[string]string       `json:"tags,omitempty"`
-	Kind       string                  `json:"kind"`
-	Sku        AppServicePlanSku       `json:"sku"`
+	ID         string                   `json:"id"`
+	Name       string                   `json:"name"`
+	Type       string                   `json:"type"`
+	Location   string                   `json:"location"`
+	Tags       map[string]string        `json:"tags,omitempty"`
+	Kind       string                   `json:"kind"`
+	Sku        AppServicePlanSku        `json:"sku"`
 	Properties AppServicePlanProperties `json:"properties"`
 }
 

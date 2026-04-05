@@ -95,25 +95,10 @@ func (p *ecsStatsProvider) ContainerMetrics(containerID string) (*core.Container
 		}
 	}
 
-	// Fallback to allocated resources when CloudWatch has no data
-	if cpuUnits == 0 && memMB == 0 {
-		if c.HostConfig.NanoCPUs > 0 {
-			cpuUnits = float64(c.HostConfig.NanoCPUs) / 1e9 * 1024
-		} else if c.HostConfig.CPUShares > 0 {
-			cpuUnits = float64(c.HostConfig.CPUShares)
-		} else {
-			cpuUnits = 256
-		}
-		if c.HostConfig.Memory > 0 {
-			memMB = float64(c.HostConfig.Memory) / (1024 * 1024)
-		} else {
-			memMB = 512
-		}
-	}
-
+	// Return real CloudWatch metrics or zeros; don't fake usage from allocation
 	return &core.ContainerMetrics{
 		CPUNanos: int64(cpuUnits * 1e9 / 1024),
 		MemBytes: int64(memMB * 1024 * 1024),
-		PIDs:     1,
+		PIDs:     0,
 	}, nil
 }

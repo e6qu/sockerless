@@ -53,7 +53,7 @@ func (p *ECRAuthProvider) IsCloudRegistry(registry string) bool {
 	return strings.HasSuffix(registry, ".amazonaws.com") && strings.Contains(registry, ".dkr.ecr.")
 }
 
-// OnPush creates an ECR repository (if needed) and records the image via PutImage.
+// OnPush creates an ECR repository (if needed) and pushes the image via OCI registry v2 API.
 // All failures are non-fatal (logged as warnings).
 func (p *ECRAuthProvider) OnPush(imageID, registry, repo, tag string) error {
 	if !p.IsCloudRegistry(registry) {
@@ -69,21 +69,28 @@ func (p *ECRAuthProvider) OnPush(imageID, registry, repo, tag string) error {
 		return err
 	}
 
-	manifest := fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"digest":"%s"}}`, imageID)
-	_, err = p.ecr.PutImage(p.ctx(), &ecr.PutImageInput{
-		RepositoryName: aws.String(repo),
-		ImageManifest:  aws.String(manifest),
-		ImageTag:       aws.String(tag),
+	// Get auth token for OCI registry push
+	authToken, err := p.GetToken(registry)
+	if err != nil {
+		return fmt.Errorf("ECR auth failed: %w", err)
+	}
+
+	// Push via OCI registry v2 API (same protocol as GCR/ACR)
+	_, err = core.OCIPush(core.OCIPushOptions{
+		Registry:   registry,
+		Repository: repo,
+		Tag:        tag,
+		AuthToken:  authToken,
 	})
 	if err != nil {
-		p.logger.Warn().Err(err).Str("repo", repo).Str("tag", tag).Msg("ECR PutImage failed during push")
+		p.logger.Warn().Err(err).Str("repo", repo).Str("tag", tag).Msg("ECR OCI push failed")
 		return err
 	}
 
 	return nil
 }
 
-// OnTag records a new tag in ECR via PutImage.
+// OnTag pushes the image with a new tag via OCI registry v2 API.
 // All failures are non-fatal (logged as warnings).
 func (p *ECRAuthProvider) OnTag(imageID, registry, repo, newTag string) error {
 	if !p.IsCloudRegistry(registry) {
@@ -99,14 +106,19 @@ func (p *ECRAuthProvider) OnTag(imageID, registry, repo, newTag string) error {
 		return err
 	}
 
-	manifest := fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"digest":"%s"}}`, imageID)
-	_, err = p.ecr.PutImage(p.ctx(), &ecr.PutImageInput{
-		RepositoryName: aws.String(repo),
-		ImageManifest:  aws.String(manifest),
-		ImageTag:       aws.String(newTag),
+	authToken, err := p.GetToken(registry)
+	if err != nil {
+		return fmt.Errorf("ECR auth failed: %w", err)
+	}
+
+	_, err = core.OCIPush(core.OCIPushOptions{
+		Registry:   registry,
+		Repository: repo,
+		Tag:        newTag,
+		AuthToken:  authToken,
 	})
 	if err != nil {
-		p.logger.Warn().Err(err).Str("repo", repo).Str("tag", newTag).Msg("ECR PutImage failed during tag")
+		p.logger.Warn().Err(err).Str("repo", repo).Str("tag", newTag).Msg("ECR OCI tag failed")
 		return err
 	}
 

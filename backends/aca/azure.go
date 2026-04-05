@@ -24,6 +24,7 @@ type AzureClients struct {
 	Jobs       *armappcontainers.JobsClient
 	Executions *armappcontainers.JobsExecutionsClient
 	Logs       *azquery.LogsClient
+	Cred       azcore.TokenCredential
 }
 
 // NewAzureClients initializes Azure SDK clients.
@@ -75,6 +76,7 @@ func newAzureClientsWithEndpoint(subscriptionID string, endpointURL string) (*Az
 		Jobs:       jobsClient,
 		Executions: executionsClient,
 		Logs:       logsClient,
+		Cred:       cred,
 	}, nil
 }
 
@@ -103,5 +105,6 @@ func newAzureClientsDefault(subscriptionID string) (*AzureClients, error) {
 		Jobs:       jobsClient,
 		Executions: executionsClient,
 		Logs:       logsClient,
+		Cred:       cred,
 	}, nil
 }

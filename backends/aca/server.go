@@ -46,10 +46,15 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		NCPU:            2,
 		MemTotal:        4294967296,
 	}, logger)
+	buildSvc, _ := azurecommon.NewACRBuildService(
+		azureClients.Cred, config.SubscriptionID, config.ResourceGroup,
+		config.ACRName, config.BuildStorageAccount, config.BuildContainer, logger,
+	)
 	s.images = &core.ImageManager{
-		Base:   s.BaseServer,
-		Auth:   azurecommon.NewACRAuthProvider(logger),
-		Logger: logger,
+		Base:         s.BaseServer,
+		Auth:         azurecommon.NewACRAuthProvider(logger),
+		BuildService: buildSvc,
+		Logger:       logger,
 	}
 	s.SetSelf(s)
 

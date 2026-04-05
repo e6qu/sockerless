@@ -8,11 +8,11 @@ import (
 )
 
 type UserAssignedIdentity struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Type       string            `json:"type"`
-	Location   string            `json:"location"`
-	Tags       map[string]string `json:"tags,omitempty"`
+	ID         string             `json:"id"`
+	Name       string             `json:"name"`
+	Type       string             `json:"type"`
+	Location   string             `json:"location"`
+	Tags       map[string]string  `json:"tags,omitempty"`
 	Properties IdentityProperties `json:"properties"`
 }
 

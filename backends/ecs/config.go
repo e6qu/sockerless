@@ -11,21 +11,23 @@ import (
 
 // Config holds ECS backend configuration.
 type Config struct {
-	Region          string
-	Cluster         string
-	Subnets         []string
-	SecurityGroups  []string
-	TaskRoleARN     string
+	Region           string
+	Cluster          string
+	Subnets          []string
+	SecurityGroups   []string
+	TaskRoleARN      string
 	ExecutionRoleARN string
-	LogGroup        string
-	AgentImage      string   // Image containing the agent binary
-	AgentEFSID      string   // EFS filesystem ID for agent binary
-	AgentToken      string   // Default agent token
-	AssignPublicIP  bool
-	CallbackURL     string        // Backend URL for reverse agent connections
-	EndpointURL     string        // Custom endpoint URL
-	PollInterval    time.Duration // Cloud API poll interval (default 2s)
-	AgentTimeout    time.Duration // Agent health check timeout (default 30s)
+	LogGroup         string
+	AgentImage       string // Image containing the agent binary
+	AgentEFSID       string // EFS filesystem ID for agent binary
+	AgentToken       string // Default agent token
+	AssignPublicIP   bool
+	CodeBuildProject string        // AWS CodeBuild project for docker build
+	BuildBucket      string        // S3 bucket for build context upload
+	CallbackURL      string        // Backend URL for reverse agent connections
+	EndpointURL      string        // Custom endpoint URL
+	PollInterval     time.Duration // Cloud API poll interval (default 2s)
+	AgentTimeout     time.Duration // Agent health check timeout (default 30s)
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -42,6 +44,8 @@ func ConfigFromEnv() Config {
 		AgentEFSID:       os.Getenv("SOCKERLESS_AGENT_EFS_ID"),
 		AgentToken:       envOrDefault("SOCKERLESS_AGENT_TOKEN", ""),
 		AssignPublicIP:   os.Getenv("SOCKERLESS_ECS_PUBLIC_IP") == "true",
+		CodeBuildProject: os.Getenv("SOCKERLESS_AWS_CODEBUILD_PROJECT"),
+		BuildBucket:      os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET"),
 		CallbackURL:      os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		EndpointURL:      os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:     parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
@@ -64,6 +68,8 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 		if env.AWS.Region != "" {
 			c.Region = env.AWS.Region
 		}
+		c.CodeBuildProject = env.AWS.CodeBuildProject
+		c.BuildBucket = env.AWS.BuildBucket
 		if ecs := env.AWS.ECS; ecs != nil {
 			if ecs.Cluster != "" {
 				c.Cluster = ecs.Cluster

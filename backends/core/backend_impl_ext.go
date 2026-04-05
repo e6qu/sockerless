@@ -180,8 +180,7 @@ func (s *BaseServer) ContainerChanges(id string) ([]api.ContainerChangeItem, err
 		}
 	}
 
-	// TODO: Query agent for real filesystem changes
-	return []api.ContainerChangeItem{}, nil
+	return nil, &api.NotImplementedError{Message: "container diff via agent not yet implemented"}
 }
 
 // ContainerExport exports a container's filesystem as a tar stream.
@@ -213,6 +212,15 @@ func (s *BaseServer) ContainerExport(id string) (io.ReadCloser, error) {
 		pw.CloseWithError(err)
 	}()
 	return pr, nil
+}
+
+// buildRootFS returns the RootFS from the base image if available.
+// Falls back to a single layer if the base image has no layers.
+func (s *BaseServer) buildRootFS(baseRef string) api.RootFS {
+	if baseImg, ok := s.Store.ResolveImage(baseRef); ok && len(baseImg.RootFS.Layers) > 0 {
+		return api.RootFS{Type: "layers", Layers: baseImg.RootFS.Layers}
+	}
+	return api.RootFS{Type: "layers", Layers: []string{"sha256:" + GenerateID()}}
 }
 
 // ImageBuild builds an image from a Dockerfile and build context.
@@ -345,7 +353,7 @@ func (s *BaseServer) ImageBuild(opts api.ImageBuildOptions, context io.Reader) (
 		Architecture: "amd64",
 		Os:           "linux",
 		Config:       finalConfig,
-		RootFS:   api.RootFS{Type: "layers", Layers: []string{"sha256:" + GenerateID()}},
+		RootFS:       s.buildRootFS(parsed.from),
 		GraphDriver: api.GraphDriverData{
 			Name: "overlay2",
 			Data: map[string]string{
@@ -402,7 +410,7 @@ func (s *BaseServer) ImageBuild(opts api.ImageBuildOptions, context io.Reader) (
 	return pr, nil
 }
 
-// ImagePush simulates pushing an image to a registry.
+// ImagePush pushes an image to a registry via OCI protocol, or reports an error.
 func (s *BaseServer) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
 	img, ok := s.Store.ResolveImage(name)
 	if !ok {
@@ -413,14 +421,46 @@ func (s *BaseServer) ImagePush(name string, tag string, auth string) (io.ReadClo
 		tag = "latest"
 	}
 
+	registry, repo, _ := ParseImageRef(name)
+
 	pr, pw := io.Pipe()
 	go func() {
 		enc := json.NewEncoder(pw)
 		_ = enc.Encode(map[string]string{"status": "The push refers to repository [" + name + "]"})
 		_ = enc.Encode(map[string]string{"status": "Preparing", "id": tag})
-		_ = enc.Encode(map[string]string{"status": "Pushed", "id": tag})
-		digest := strings.TrimPrefix(img.ID, "sha256:")
-		_ = enc.Encode(map[string]string{"status": tag + ": digest: sha256:" + digest})
+
+		// Attempt real OCI push for non-Docker-Hub registries
+		if registry != "" && registry != "docker.io" && registry != "registry-1.docker.io" {
+			opts := OCIPushOptions{
+				Registry:    registry,
+				Repository:  repo,
+				Tag:         tag,
+				AuthToken:   auth,
+				ImageLayers: img.RootFS.Layers,
+				LayerContent: func(digest string) ([]byte, bool) {
+					if v, ok := s.Store.LayerContent.Load(digest); ok {
+						return v.([]byte), true
+					}
+					return nil, false
+				},
+			}
+			result, err := OCIPush(opts)
+			if err != nil {
+				_ = enc.Encode(map[string]any{"errorDetail": map[string]string{"message": err.Error()}, "error": err.Error()})
+				_ = pw.Close()
+				return
+			}
+			_ = enc.Encode(map[string]string{"status": "Pushed", "id": tag})
+			_ = enc.Encode(map[string]string{"status": tag + ": digest: " + result.ManifestDigest})
+			_ = pw.Close()
+			return
+		}
+
+		// Docker Hub push not supported — report error
+		_ = enc.Encode(map[string]any{
+			"errorDetail": map[string]string{"message": "push to " + registry + " requires authentication and real blob upload"},
+			"error":       "push to " + registry + " not supported without cloud registry configuration",
+		})
 		_ = pw.Close()
 	}()
 
@@ -606,7 +646,7 @@ func (s *BaseServer) ContainerCommit(req *api.ContainerCommitRequest) (*api.Cont
 		Author:       req.Author,
 		Comment:      req.Comment,
 		Config:       imgConfig,
-		RootFS:   api.RootFS{Type: "layers", Layers: []string{"sha256:" + GenerateID()}},
+		RootFS:       api.RootFS{Type: "layers", Layers: []string{"sha256:" + GenerateID()}},
 		GraphDriver: api.GraphDriverData{
 			Name: "overlay2",
 			Data: map[string]string{

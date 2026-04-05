@@ -13,8 +13,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/sockerless/api"
-	core "github.com/sockerless/backend-core"
 	awscommon "github.com/sockerless/aws-common"
+	core "github.com/sockerless/backend-core"
 )
 
 // Compile-time check that Server implements api.Backend.
@@ -99,18 +99,32 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		Driver:   "ecs-fargate",
 	}
 
-	// Set up default network
+	// Set up default network — resolve via store for correct ID and Containers map
 	netName := hostConfig.NetworkMode
 	if netName == "default" {
 		netName = "bridge"
 	}
+	networkID := netName
+	if net, ok := s.Store.ResolveNetwork(netName); ok {
+		networkID = net.ID
+		// Register container in the network's Containers map
+		s.Store.Networks.Update(net.ID, func(n *api.Network) {
+			if n.Containers == nil {
+				n.Containers = make(map[string]api.EndpointResource)
+			}
+			n.Containers[id] = api.EndpointResource{
+				Name:       strings.TrimPrefix(name, "/"),
+				EndpointID: core.GenerateID()[:16],
+			}
+		})
+	}
 	container.NetworkSettings.Networks[netName] = &api.EndpointSettings{
-		NetworkID:   netName,
+		NetworkID:   networkID,
 		EndpointID:  core.GenerateID()[:16],
-		Gateway:     "172.17.0.1",
-		IPAddress:   fmt.Sprintf("172.17.0.%d", int(s.ipCounter.Add(1))),
+		Gateway:     "",
+		IPAddress:   "0.0.0.0",
 		IPPrefixLen: 16,
-		MacAddress:  "02:42:ac:11:00:02",
+		MacAddress:  "",
 	}
 
 	agentToken := s.config.AgentToken
@@ -181,7 +195,7 @@ func (s *Server) ContainerStart(ref string) error {
 		s.Store.Containers.Update(id, func(c *api.Container) {
 			c.State.Status = "running"
 			c.State.Running = true
-			c.State.Pid = 1
+			c.State.Pid = 0 // Fargate doesn't expose host PID
 			c.State.StartedAt = now
 			c.State.FinishedAt = "0001-01-01T00:00:00Z"
 			c.State.ExitCode = 0
@@ -243,11 +257,15 @@ func (s *Server) ContainerStart(ref string) error {
 		state.ClusterARN = clusterARN
 	})
 
-	// Register in Cloud Map for service discovery
+	// Register in Cloud Map for service discovery (skip pre-defined networks)
 	c, _ = s.Store.Containers.Get(id)
 	hostname := strings.TrimPrefix(c.Name, "/")
-	for _, ep := range c.NetworkSettings.Networks {
+	for netName, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID != "" && ep.IPAddress != "" {
+			// Skip Cloud Map for pre-defined networks (bridge, host, none)
+			if netName == "bridge" || netName == "host" || netName == "none" {
+				continue
+			}
 			if err := s.cloudServiceRegister(id, hostname, ep.IPAddress, ep.NetworkID); err != nil {
 				s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to register in Cloud Map")
 			}
@@ -312,6 +330,7 @@ func (s *Server) ContainerStart(ref string) error {
 						if ep != nil {
 							ep.IPAddress = host
 							ep.MacAddress = mac
+							ep.Gateway = ""
 						}
 					}
 				})
@@ -794,7 +813,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 		if len(untilFilters) > 0 && !core.MatchUntil(c.Created, untilFilters) {
 			continue
 		}
-		// BUG-478: Sum image sizes for SpaceReclaimed
+		// Sum image sizes for SpaceReclaimed
 		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
 			spaceReclaimed += uint64(img.Size)
 		}
@@ -1119,7 +1138,6 @@ func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*ap
 	return s.BaseServer.ExecCreate(containerID, req)
 }
 
-
 // ContainerExport is not supported by the ECS backend (no filesystem access on Fargate).
 func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {
 	_, ok := s.Store.ResolveContainerID(ref)
@@ -1156,7 +1174,7 @@ func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneRespo
 			}
 		}
 		if !inUse {
-			// BUG-484: Sum volume dir sizes for SpaceReclaimed
+			// Sum volume dir sizes for SpaceReclaimed
 			if dir, ok := s.Store.VolumeDirs.Load(v.Name); ok {
 				spaceReclaimed += uint64(core.DirSize(dir.(string)))
 			}

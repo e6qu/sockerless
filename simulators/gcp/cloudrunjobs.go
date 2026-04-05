@@ -16,19 +16,19 @@ import (
 
 // Job represents a Cloud Run Job resource.
 type Job struct {
-	Name               string             `json:"name"`
-	UID                string             `json:"uid"`
-	Generation         int64              `json:"generation,string"`
-	Labels             map[string]string  `json:"labels,omitempty"`
-	Annotations        map[string]string  `json:"annotations,omitempty"`
-	CreateTime         string             `json:"createTime"`
-	UpdateTime         string             `json:"updateTime"`
-	LaunchStage        string             `json:"launchStage,omitempty"`
-	Template           *ExecutionTemplate `json:"template"`
-	TerminalCondition  *Condition         `json:"terminalCondition,omitempty"`
-	Conditions         []Condition        `json:"conditions,omitempty"`
-	ExecutionCount     int32              `json:"executionCount"`
-	Reconciling        bool               `json:"reconciling"`
+	Name              string             `json:"name"`
+	UID               string             `json:"uid"`
+	Generation        int64              `json:"generation,string"`
+	Labels            map[string]string  `json:"labels,omitempty"`
+	Annotations       map[string]string  `json:"annotations,omitempty"`
+	CreateTime        string             `json:"createTime"`
+	UpdateTime        string             `json:"updateTime"`
+	LaunchStage       string             `json:"launchStage,omitempty"`
+	Template          *ExecutionTemplate `json:"template"`
+	TerminalCondition *Condition         `json:"terminalCondition,omitempty"`
+	Conditions        []Condition        `json:"conditions,omitempty"`
+	ExecutionCount    int32              `json:"executionCount"`
+	Reconciling       bool               `json:"reconciling"`
 }
 
 // ExecutionTemplate holds the template for creating executions.
@@ -51,14 +51,14 @@ type TaskTemplate struct {
 
 // Container represents a container within a task.
 type Container struct {
-	Name         string               `json:"name,omitempty"`
-	Image        string               `json:"image"`
-	Command      []string             `json:"command,omitempty"`
-	Args         []string             `json:"args,omitempty"`
-	Env          []EnvVar             `json:"env,omitempty"`
+	Name         string                `json:"name,omitempty"`
+	Image        string                `json:"image"`
+	Command      []string              `json:"command,omitempty"`
+	Args         []string              `json:"args,omitempty"`
+	Env          []EnvVar              `json:"env,omitempty"`
 	Resources    *ResourceRequirements `json:"resources,omitempty"`
-	Ports        []ContainerPort      `json:"ports,omitempty"`
-	VolumeMounts []VolumeMount        `json:"volumeMounts,omitempty"`
+	Ports        []ContainerPort       `json:"ports,omitempty"`
+	VolumeMounts []VolumeMount         `json:"volumeMounts,omitempty"`
 }
 
 // EnvVar represents an environment variable.
@@ -91,21 +91,21 @@ type VolumeMount struct {
 
 // Execution represents a Cloud Run Job execution.
 type Execution struct {
-	Name           string             `json:"name"`
-	UID            string             `json:"uid"`
-	Generation     int64              `json:"generation,string"`
-	Labels         map[string]string  `json:"labels,omitempty"`
-	CreateTime     string             `json:"createTime"`
-	StartTime      string             `json:"startTime,omitempty"`
-	CompletionTime string             `json:"completionTime,omitempty"`
-	RunningCount   int32              `json:"runningCount"`
-	SucceededCount int32              `json:"succeededCount"`
-	FailedCount    int32              `json:"failedCount"`
+	Name           string            `json:"name"`
+	UID            string            `json:"uid"`
+	Generation     int64             `json:"generation,string"`
+	Labels         map[string]string `json:"labels,omitempty"`
+	CreateTime     string            `json:"createTime"`
+	StartTime      string            `json:"startTime,omitempty"`
+	CompletionTime string            `json:"completionTime,omitempty"`
+	RunningCount   int32             `json:"runningCount"`
+	SucceededCount int32             `json:"succeededCount"`
+	FailedCount    int32             `json:"failedCount"`
 	CancelledCount int32             `json:"cancelledCount"`
-	Conditions     []Condition        `json:"conditions,omitempty"`
-	TaskCount      int32              `json:"taskCount"`
-	Template       *TaskTemplate      `json:"template,omitempty"`
-	Reconciling    bool               `json:"reconciling"`
+	Conditions     []Condition       `json:"conditions,omitempty"`
+	TaskCount      int32             `json:"taskCount"`
+	Template       *TaskTemplate     `json:"template,omitempty"`
+	Reconciling    bool              `json:"reconciling"`
 }
 
 // Condition represents a status condition on a resource.
@@ -119,10 +119,10 @@ type Condition struct {
 
 // Operation represents a long-running operation.
 type Operation struct {
-	Name     string         `json:"name"`
-	Metadata map[string]any `json:"metadata,omitempty"`
-	Done     bool           `json:"done"`
-	Response any            `json:"response,omitempty"`
+	Name     string          `json:"name"`
+	Metadata map[string]any  `json:"metadata,omitempty"`
+	Done     bool            `json:"done"`
+	Response any             `json:"response,omitempty"`
 	Error    *OperationError `json:"error,omitempty"`
 }
 

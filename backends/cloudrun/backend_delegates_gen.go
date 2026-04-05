@@ -14,7 +14,6 @@ func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) 
 	return s.BaseServer.ContainerChanges(id)
 }
 
-
 func (s *Server) ContainerInspect(id string) (*api.Container, error) {
 	return s.BaseServer.ContainerInspect(id)
 }
@@ -51,7 +50,6 @@ func (s *Server) ExecResize(id string, h int, w int) error {
 	return s.BaseServer.ExecResize(id, h, w)
 }
 
-
 func (s *Server) ImageBuild(opts api.ImageBuildOptions, context io.Reader) (io.ReadCloser, error) {
 	return s.images.Build(opts, context)
 }
@@ -80,7 +78,6 @@ func (s *Server) ImageSearch(term string, limit int, filters map[string][]string
 	return s.images.Search(term, limit, filters)
 }
 
-
 func (s *Server) PodCreate(req *api.PodCreateRequest) (*api.PodCreateResponse, error) {
 	return s.BaseServer.PodCreate(req)
 }
@@ -93,11 +90,9 @@ func (s *Server) PodInspect(name string) (*api.PodInspectResponse, error) {
 	return s.BaseServer.PodInspect(name)
 }
 
-
 func (s *Server) PodList(opts api.PodListOptions) ([]*api.PodListEntry, error) {
 	return s.BaseServer.PodList(opts)
 }
-
 
 func (s *Server) SystemDf() (*api.DiskUsageResponse, error) {
 	return s.BaseServer.SystemDf()

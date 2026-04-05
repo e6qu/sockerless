@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, cleanup, screen, waitFor, fireEvent } from "@testing-library/react";
+import {
+  render,
+  cleanup,
+  screen,
+  waitFor,
+  fireEvent,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router";
 import { CleanupPage } from "../pages/CleanupPage.js";
@@ -34,9 +40,27 @@ function renderPage() {
 
 const scanResult = {
   items: [
-    { category: "process", name: "stale.pid", description: "PID 12345 dead", size: 0, age: "2h" },
-    { category: "tmp", name: "sockerless-abc", description: "Temp directory (1.5 MB)", size: 1572864, age: "3h" },
-    { category: "container", name: "test-container", description: "Container abc on ecs (state: exited)", size: 0, age: "" },
+    {
+      category: "process",
+      name: "stale.pid",
+      description: "PID 12345 dead",
+      size: 0,
+      age: "2h",
+    },
+    {
+      category: "tmp",
+      name: "sockerless-abc",
+      description: "Temp directory (1.5 MB)",
+      size: 1572864,
+      age: "3h",
+    },
+    {
+      category: "container",
+      name: "test-container",
+      description: "Container abc on ecs (state: exited)",
+      size: 0,
+      age: "",
+    },
   ],
   scanned_at: "2025-01-01T00:00:00Z",
 };
@@ -70,7 +94,9 @@ describe("CleanupPage", () => {
   });
 
   it("shows empty state when no items found", async () => {
-    mockFetch.mockResolvedValue(jsonResponse({ items: [], scanned_at: "2025-01-01T00:00:00Z" }));
+    mockFetch.mockResolvedValue(
+      jsonResponse({ items: [], scanned_at: "2025-01-01T00:00:00Z" }),
+    );
     renderPage();
     fireEvent.click(screen.getByText("Scan"));
     await waitFor(() => {

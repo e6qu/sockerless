@@ -32,19 +32,19 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 					return r["nodeID"], nil
 				},
 			},
-			"databaseId":   &graphql.Field{Type: graphql.Int},
-			"name":         &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"nameWithOwner": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"description":  &graphql.Field{Type: graphql.String},
-			"url":          &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"sshUrl":       &graphql.Field{Type: graphql.String},
-			"isPrivate":    &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
-			"isFork":       &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
-			"isArchived":   &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
-			"visibility":   &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"createdAt":    &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"updatedAt":    &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"pushedAt":     &graphql.Field{Type: graphql.String},
+			"databaseId":     &graphql.Field{Type: graphql.Int},
+			"name":           &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"nameWithOwner":  &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"description":    &graphql.Field{Type: graphql.String},
+			"url":            &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"sshUrl":         &graphql.Field{Type: graphql.String},
+			"isPrivate":      &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"isFork":         &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"isArchived":     &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"visibility":     &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"createdAt":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"updatedAt":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"pushedAt":       &graphql.Field{Type: graphql.String},
 			"stargazerCount": &graphql.Field{Type: graphql.Int},
 			"owner": &graphql.Field{
 				Type: userType,
@@ -75,8 +75,8 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 		Fields: graphql.Fields{
 			"hasNextPage":     &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
 			"hasPreviousPage": &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
-			"startCursor":    &graphql.Field{Type: graphql.String},
-			"endCursor":      &graphql.Field{Type: graphql.String},
+			"startCursor":     &graphql.Field{Type: graphql.String},
+			"endCursor":       &graphql.Field{Type: graphql.String},
 		},
 	})
 
@@ -107,7 +107,7 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			"privacy":           &graphql.ArgumentConfig{Type: graphql.String},
 			"isFork":            &graphql.ArgumentConfig{Type: graphql.Boolean},
 			"ownerAffiliations": &graphql.ArgumentConfig{Type: graphql.NewList(graphql.String)},
-			"orderBy":           &graphql.ArgumentConfig{Type: graphql.NewInputObject(graphql.InputObjectConfig{
+			"orderBy": &graphql.ArgumentConfig{Type: graphql.NewInputObject(graphql.InputObjectConfig{
 				Name: "RepositoryOrder",
 				Fields: graphql.InputObjectConfigFieldMap{
 					"field":     &graphql.InputObjectFieldConfig{Type: graphql.String},

@@ -715,17 +715,7 @@ func (s *BaseServer) ContainerTop(ref string, psArgs string) (*api.ContainerTopR
 		}
 	}
 
-	// Synthetic fallback
-	cmd := c.Path
-	if len(c.Args) > 0 {
-		cmd += " " + strings.Join(c.Args, " ")
-	}
-	return &api.ContainerTopResponse{
-		Titles: []string{"UID", "PID", "PPID", "C", "STIME", "TTY", "TIME", "CMD"},
-		Processes: [][]string{
-			{"root", "1", "0", "0", "00:00", "?", "00:00:00", cmd},
-		},
-	}, nil
+	return nil, &api.NotImplementedError{Message: "container top requires an agent connection (no agent connected to this container)"}
 }
 
 // execForOutput runs a command inside a container and captures stdout.
@@ -1200,6 +1190,7 @@ func (s *BaseServer) ImagePullWithMetadata(ref string, auth string, meta *ImageM
 			s.Store.ImageHistory.Store(imageID, meta.History)
 		}
 	} else {
+		s.Logger.Warn().Str("ref", ref).Msg("using synthetic image metadata (registry fetch failed)")
 		// Synthetic fallback
 		hash := sha256.Sum256([]byte(ref))
 		imageID = fmt.Sprintf("sha256:%x", hash)
@@ -1297,6 +1288,13 @@ func (s *BaseServer) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 
 	if len(repoTags) == 0 {
 		repoTags = []string{"loaded:latest"}
+	}
+
+	// Deduplicate: remove existing image with same tags
+	for _, tag := range repoTags {
+		if existing, ok := s.Store.ResolveImage(tag); ok {
+			s.Store.Images.Delete(existing.ID)
+		}
 	}
 
 	id := "sha256:" + GenerateID()
@@ -2052,17 +2050,17 @@ func (s *BaseServer) SystemDf() (*api.DiskUsageResponse, error) {
 			mounts = []api.MountPoint{}
 		}
 		cs := &api.ContainerSummary{
-			ID:      c.ID,
-			Names:   []string{c.Name},
-			Image:   c.Config.Image,
-			ImageID: imageID,
-			Command: command,
-			Created: created.Unix(),
-			State:   c.State.Status,
-			Status:  FormatStatus(c.State),
-			Labels:  labels,
-			Ports:   buildPortList(c.HostConfig.PortBindings, c.Config.ExposedPorts),
-			Mounts:  mounts,
+			ID:              c.ID,
+			Names:           []string{c.Name},
+			Image:           c.Config.Image,
+			ImageID:         imageID,
+			Command:         command,
+			Created:         created.Unix(),
+			State:           c.State.Status,
+			Status:          FormatStatus(c.State),
+			Labels:          labels,
+			Ports:           buildPortList(c.HostConfig.PortBindings, c.Config.ExposedPorts),
+			Mounts:          mounts,
 			NetworkSettings: &api.SummaryNetworkSettings{Networks: c.NetworkSettings.Networks},
 			HostConfig:      &api.HostConfigSummary{NetworkMode: c.HostConfig.NetworkMode},
 		}

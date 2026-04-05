@@ -16,10 +16,10 @@ import (
 // ReverseAgentConn multiplexes concurrent exec sessions over the same connection
 // using session IDs to route messages.
 type ReverseAgentConn struct {
-	ws       *websocket.Conn
-	mu       sync.Mutex           // protects writes
-	sessions sync.Map             // map[string]chan Message
-	done     chan struct{}
+	ws        *websocket.Conn
+	mu        sync.Mutex // protects writes
+	sessions  sync.Map   // map[string]chan Message
+	done      chan struct{}
 	closeOnce sync.Once
 }
 

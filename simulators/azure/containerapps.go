@@ -35,14 +35,14 @@ type JobProperties struct {
 
 // JobConfiguration holds the configuration of a Container Apps Job.
 type JobConfiguration struct {
-	ReplicaTimeout    int               `json:"replicaTimeout,omitempty"`
-	ReplicaRetryLimit int               `json:"replicaRetryLimit,omitempty"`
-	TriggerType       string            `json:"triggerType,omitempty"`
-	Secrets           []JobSecret       `json:"secrets,omitempty"`
-	Registries        []JobRegistry     `json:"registries,omitempty"`
-	ManualTrigger     *ManualTrigger    `json:"manualTriggerConfig,omitempty"`
-	ScheduleTrigger   *ScheduleTrigger  `json:"scheduleTriggerConfig,omitempty"`
-	EventTrigger      *EventTrigger     `json:"eventTriggerConfig,omitempty"`
+	ReplicaTimeout    int              `json:"replicaTimeout,omitempty"`
+	ReplicaRetryLimit int              `json:"replicaRetryLimit,omitempty"`
+	TriggerType       string           `json:"triggerType,omitempty"`
+	Secrets           []JobSecret      `json:"secrets,omitempty"`
+	Registries        []JobRegistry    `json:"registries,omitempty"`
+	ManualTrigger     *ManualTrigger   `json:"manualTriggerConfig,omitempty"`
+	ScheduleTrigger   *ScheduleTrigger `json:"scheduleTriggerConfig,omitempty"`
+	EventTrigger      *EventTrigger    `json:"eventTriggerConfig,omitempty"`
 }
 
 // ManualTrigger holds manual trigger configuration.
@@ -89,13 +89,13 @@ type JobTemplate struct {
 
 // JobContainer holds a container definition for a Container Apps Job.
 type JobContainer struct {
-	Name         string               `json:"name"`
-	Image        string               `json:"image"`
-	Command      []string             `json:"command,omitempty"`
-	Args         []string             `json:"args,omitempty"`
-	Env          []EnvVar             `json:"env,omitempty"`
+	Name         string                `json:"name"`
+	Image        string                `json:"image"`
+	Command      []string              `json:"command,omitempty"`
+	Args         []string              `json:"args,omitempty"`
+	Env          []EnvVar              `json:"env,omitempty"`
 	Resources    *ResourceRequirements `json:"resources,omitempty"`
-	VolumeMounts []VolumeMount        `json:"volumeMounts,omitempty"`
+	VolumeMounts []VolumeMount         `json:"volumeMounts,omitempty"`
 }
 
 // EnvVar holds an environment variable.

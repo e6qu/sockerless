@@ -8,11 +8,11 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-71k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-73.2k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7.4k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-40k_lines-brightgreen)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-40.6k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
-[![Modules](https://img.shields.io/badge/Go_Modules-20+-informational)](#module-sizes)
+[![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
 A Docker-compatible REST API daemon that executes containers on cloud serverless backends instead of a local Docker Engine. Standard Docker clients (`docker run`, Docker SDK, CI runners) connect to Sockerless exactly as they would to a real Docker daemon — but containers run on AWS ECS, Google Cloud Run, Azure Container Apps, and more.
 
@@ -89,7 +89,7 @@ terraform/
   environments/               Terragrunt environments (live + simulator per backend)
 tests/                        Integration tests (Docker SDK, 59 test functions)
 smoke-tests/                  Real CI runner validation (act + gitlab-runner)
-spec/                         Specification documents
+specs/                        Specification documents
 ```
 
 Each backend, the agent, and the test suite are separate Go modules connected via `go.work`. Major components embed React dashboards at `/ui/`.
@@ -98,28 +98,28 @@ Each backend, the agent, and the test suite are separate Go modules connected vi
 
 **Go**
 
-![core](https://img.shields.io/badge/core-13.5k-00ADD8)
-![bleephub](https://img.shields.io/badge/bleephub-14.6k-00ADD8)
-![sim/aws](https://img.shields.io/badge/sim%2Faws-6.8k-00ADD8)
+![core](https://img.shields.io/badge/core-14.3k-00ADD8)
+![bleephub](https://img.shields.io/badge/bleephub-14.5k-00ADD8)
+![sim/aws](https://img.shields.io/badge/sim%2Faws-7.1k-00ADD8)
 ![sim/azure](https://img.shields.io/badge/sim%2Fazure-5.5k-00ADD8)
 ![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-4.3k-00ADD8)
 ![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)
-![ecs](https://img.shields.io/badge/ecs-3.0k-5BC0DE)
+![ecs](https://img.shields.io/badge/ecs-3.3k-5BC0DE)
 ![cloudrun](https://img.shields.io/badge/cloudrun-2.6k-5BC0DE)
 ![aca](https://img.shields.io/badge/aca-2.6k-5BC0DE)
-![docker](https://img.shields.io/badge/docker-2.4k-5BC0DE)
-![agent](https://img.shields.io/badge/agent-1.9k-5BC0DE)
-![api](https://img.shields.io/badge/api-1.9k-5BC0DE)
+![docker](https://img.shields.io/badge/docker-2.3k-5BC0DE)
+![agent](https://img.shields.io/badge/agent-1.8k-5BC0DE)
+![api](https://img.shields.io/badge/api-1.8k-5BC0DE)
 ![azf](https://img.shields.io/badge/azf-1.7k-A0D8EF)
-![cli](https://img.shields.io/badge/cli-1.7k-A0D8EF)
-![gcf](https://img.shields.io/badge/gcf-1.5k-A0D8EF)
-![lambda](https://img.shields.io/badge/lambda-1.4k-A0D8EF)
+![cli](https://img.shields.io/badge/cli-1.6k-A0D8EF)
+![gcf](https://img.shields.io/badge/gcf-1.4k-A0D8EF)
+![lambda](https://img.shields.io/badge/lambda-1.5k-A0D8EF)
 
 **TypeScript**
 
-![ui/admin](https://img.shields.io/badge/ui%2Fadmin-2.9k-3178C6)
-![ui/core](https://img.shields.io/badge/ui%2Fcore-1.6k-3178C6)
-![ui/bleephub](https://img.shields.io/badge/ui%2Fbleephub-1.2k-3178C6)
+![ui/admin](https://img.shields.io/badge/ui%2Fadmin-2.8k-3178C6)
+![ui/core](https://img.shields.io/badge/ui%2Fcore-1.5k-3178C6)
+![ui/bleephub](https://img.shields.io/badge/ui%2Fbleephub-1.1k-3178C6)
 ![ui/sim-aws](https://img.shields.io/badge/ui%2Fsim--aws-391-6295D2)
 ![ui/sim-gcp](https://img.shields.io/badge/ui%2Fsim--gcp-372-6295D2)
 ![ui/sim-azure](https://img.shields.io/badge/ui%2Fsim--azure-366-6295D2)
@@ -275,7 +275,7 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 
 | Document | Description |
 |----------|-------------|
-| [`spec/SOCKERLESS_SPEC.md`](spec/SOCKERLESS_SPEC.md) | Full specification (API surface, architecture, protocols) |
+| [`specs/`](specs/) | Specifications: [main spec](specs/SOCKERLESS_SPEC.md), [config](specs/CONFIG.md), [backends](specs/BACKENDS.md), [drivers](specs/DRIVERS.md), [API](specs/API_SURFACE.md), [images](specs/IMAGE_MANAGEMENT.md) |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | System architecture, component diagrams, test architecture |
 | [`terraform/README.md`](terraform/README.md) | Terraform modules, state backends, and CI/CD deployment |
 | [`FEATURE_MATRIX.md`](FEATURE_MATRIX.md) | Docker API compatibility, cloud service mappings, test results |

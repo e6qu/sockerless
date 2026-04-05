@@ -124,7 +124,7 @@ func parseDockerfile(content string, buildArgs map[string]string) (*parsedDocker
 			}
 
 		case "ENV":
-			// BUG-526: Handle multi-value ENV k1=v1 k2=v2
+			// Handle multi-value ENV k1=v1 k2=v2
 			for _, entry := range parseEnvMulti(rest) {
 				result.config.Env = append(result.config.Env, entry)
 			}
@@ -214,7 +214,7 @@ func substituteArgs(s string, args map[string]string) string {
 }
 
 // parseEnvMulti parses ENV instructions that may contain multiple key=value pairs.
-// BUG-526: ENV k1=v1 k2=v2 should produce two env entries.
+// ENV k1=v1 k2=v2 should produce two env entries.
 func parseEnvMulti(rest string) []string {
 	// If it contains "=", it might be multi-value form
 	if !strings.Contains(rest, "=") {
@@ -326,7 +326,7 @@ func parseDuration(s string) time.Duration {
 }
 
 // parseLabels parses LABEL key=value [key2=value2 ...] into the labels map.
-// BUG-525: Handle quoted values with spaces (e.g. LABEL foo="bar baz").
+// Handle quoted values with spaces (e.g. LABEL foo="bar baz").
 func parseLabels(rest string, labels map[string]string) {
 	tokens := splitRespectingQuotes(rest)
 	for _, token := range tokens {
@@ -340,7 +340,7 @@ func parseLabels(rest string, labels map[string]string) {
 }
 
 // splitRespectingQuotes splits a string on spaces while keeping quoted substrings together.
-// BUG-525/BUG-526: Used by parseLabels and parseEnvMulti.
+// Used by parseLabels and parseEnvMulti.
 func splitRespectingQuotes(s string) []string {
 	var tokens []string
 	var current strings.Builder
@@ -435,16 +435,46 @@ func prepareBuildContext(contextDir string, copies []copyInstruction) (string, e
 
 // handleImageBuild handles POST /internal/v1/images/build.
 func (s *BaseServer) handleImageBuild(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
 	opts := api.ImageBuildOptions{
-		Dockerfile: r.URL.Query().Get("dockerfile"),
-		NoCache:    r.URL.Query().Get("nocache") == "1" || r.URL.Query().Get("nocache") == "true",
-		Remove:     r.URL.Query().Get("rm") != "0" && r.URL.Query().Get("rm") != "false",
-		Quiet:      r.URL.Query().Get("q") == "1" || r.URL.Query().Get("q") == "true",
+		Dockerfile:   q.Get("dockerfile"),
+		NoCache:      q.Get("nocache") == "1" || q.Get("nocache") == "true",
+		Remove:       q.Get("rm") != "0" && q.Get("rm") != "false",
+		Quiet:        q.Get("q") == "1" || q.Get("q") == "true",
+		Target:       q.Get("target"),
+		Platform:     q.Get("platform"),
+		NetworkMode:  q.Get("networkmode"),
+		ExtraHosts:   q.Get("extrahosts"),
+		Squash:       q.Get("squash") == "1" || q.Get("squash") == "true",
+		Pull:         q.Get("pull"),
+		Remote:       q.Get("remote"),
+		CgroupParent: q.Get("cgroupparent"),
+		CPUSetCPUs:   q.Get("cpusetcpus"),
+		Outputs:      q.Get("outputs"),
+		Version:      q.Get("version"),
 	}
-	if t := r.URL.Query().Get("t"); t != "" {
+	if t := q.Get("t"); t != "" {
 		opts.Tags = []string{t}
 	}
-	if ba := r.URL.Query().Get("buildargs"); ba != "" {
+	if v := q.Get("shmsize"); v != "" {
+		fmt.Sscanf(v, "%d", &opts.ShmSize)
+	}
+	if v := q.Get("memory"); v != "" {
+		fmt.Sscanf(v, "%d", &opts.Memory)
+	}
+	if v := q.Get("memswap"); v != "" {
+		fmt.Sscanf(v, "%d", &opts.MemorySwap)
+	}
+	if v := q.Get("cpushares"); v != "" {
+		fmt.Sscanf(v, "%d", &opts.CPUShares)
+	}
+	if v := q.Get("cpuperiod"); v != "" {
+		fmt.Sscanf(v, "%d", &opts.CPUPeriod)
+	}
+	if v := q.Get("cpuquota"); v != "" {
+		fmt.Sscanf(v, "%d", &opts.CPUQuota)
+	}
+	if ba := q.Get("buildargs"); ba != "" {
 		var args map[string]*string
 		if err := json.Unmarshal([]byte(ba), &args); err != nil {
 			WriteError(w, &api.InvalidParameterError{Message: "invalid buildargs: " + err.Error()})
@@ -452,11 +482,20 @@ func (s *BaseServer) handleImageBuild(w http.ResponseWriter, r *http.Request) {
 		}
 		opts.BuildArgs = args
 	}
-	if labelsJSON := r.URL.Query().Get("labels"); labelsJSON != "" {
+	if v := q.Get("labels"); v != "" {
 		var labels map[string]string
-		if json.Unmarshal([]byte(labelsJSON), &labels) == nil {
+		if json.Unmarshal([]byte(v), &labels) == nil {
 			opts.Labels = labels
 		}
+	}
+	if v := q.Get("cachefrom"); v != "" {
+		var cacheFrom []string
+		if json.Unmarshal([]byte(v), &cacheFrom) == nil {
+			opts.CacheFrom = cacheFrom
+		}
+	}
+	if v := q.Get("cacheto"); v != "" {
+		opts.CacheTo = []string{v}
 	}
 
 	rc, err := s.self.ImageBuild(opts, r.Body)

@@ -50,15 +50,25 @@ export function App() {
   return (
     <ErrorBoundary>
       <BrowserRouter>
-        <AppShell title="Sockerless Admin" navItems={navItems} renderLink={renderNavLink}>
+        <AppShell
+          title="Sockerless Admin"
+          navItems={navItems}
+          renderLink={renderNavLink}
+        >
           <Routes>
             <Route path="/ui/" element={<DashboardPage />} />
             <Route path="/ui/components" element={<ComponentsPage />} />
-            <Route path="/ui/components/:name" element={<ComponentDetailPage />} />
+            <Route
+              path="/ui/components/:name"
+              element={<ComponentDetailPage />}
+            />
             <Route path="/ui/projects" element={<ProjectsPage />} />
             <Route path="/ui/projects/new" element={<ProjectCreatePage />} />
             <Route path="/ui/projects/:name" element={<ProjectDetailPage />} />
-            <Route path="/ui/projects/:name/logs" element={<ProjectLogsPage />} />
+            <Route
+              path="/ui/projects/:name/logs"
+              element={<ProjectLogsPage />}
+            />
             <Route path="/ui/processes" element={<ProcessesPage />} />
             <Route path="/ui/processes/:name" element={<ProcessDetailPage />} />
             <Route path="/ui/containers" element={<ContainersPage />} />
@@ -66,7 +76,14 @@ export function App() {
             <Route path="/ui/cleanup" element={<CleanupPage />} />
             <Route path="/ui/metrics" element={<MetricsPage />} />
             <Route path="/ui/contexts" element={<ContextsPage />} />
-            <Route path="*" element={<div className="p-4 text-sm text-gray-500 dark:text-gray-400">Page not found</div>} />
+            <Route
+              path="*"
+              element={
+                <div className="p-4 text-sm text-gray-500 dark:text-gray-400">
+                  Page not found
+                </div>
+              }
+            />
           </Routes>
         </AppShell>
       </BrowserRouter>

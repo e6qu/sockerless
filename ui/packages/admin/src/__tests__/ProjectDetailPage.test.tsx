@@ -38,7 +38,8 @@ const projectData = {
 const connectionData = {
   docker_host: "tcp://localhost:2375",
   env_export: "export DOCKER_HOST=tcp://localhost:2375",
-  podman_connection: "podman system connection add test-aws tcp://localhost:2375",
+  podman_connection:
+    "podman system connection add test-aws tcp://localhost:2375",
   simulator_addr: "http://localhost:4566",
   backend_addr: "http://localhost:9100",
   frontend_addr: "http://localhost:2375",
@@ -62,7 +63,9 @@ function renderPage() {
 
 describe("ProjectDetailPage", () => {
   it("renders project name and status", async () => {
-    mockFetch.mockImplementation(() => Promise.resolve(jsonResponse(projectData)));
+    mockFetch.mockImplementation(() =>
+      Promise.resolve(jsonResponse(projectData)),
+    );
     renderPage();
     await waitFor(() => {
       expect(screen.getByText("test-aws")).toBeInTheDocument();
@@ -70,7 +73,9 @@ describe("ProjectDetailPage", () => {
   });
 
   it("renders component cards", async () => {
-    mockFetch.mockImplementation(() => Promise.resolve(jsonResponse(projectData)));
+    mockFetch.mockImplementation(() =>
+      Promise.resolve(jsonResponse(projectData)),
+    );
     renderPage();
     await waitFor(() => {
       expect(screen.getByText("Simulator")).toBeInTheDocument();
@@ -94,7 +99,9 @@ describe("ProjectDetailPage", () => {
   });
 
   it("renders View Logs link", async () => {
-    mockFetch.mockImplementation(() => Promise.resolve(jsonResponse(projectData)));
+    mockFetch.mockImplementation(() =>
+      Promise.resolve(jsonResponse(projectData)),
+    );
     renderPage();
     await waitFor(() => {
       expect(screen.getByText("View Logs")).toBeInTheDocument();
@@ -102,7 +109,9 @@ describe("ProjectDetailPage", () => {
   });
 
   it("renders Delete button", async () => {
-    mockFetch.mockImplementation(() => Promise.resolve(jsonResponse(projectData)));
+    mockFetch.mockImplementation(() =>
+      Promise.resolve(jsonResponse(projectData)),
+    );
     renderPage();
     await waitFor(() => {
       expect(screen.getByText("Delete")).toBeInTheDocument();
