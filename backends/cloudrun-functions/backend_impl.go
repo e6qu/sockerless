@@ -229,7 +229,6 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	}
 
 	s.PendingCreates.Put(id, container)
-	s.Store.ContainerNames.Put(name, id)
 
 	s.GCF.Put(id, GCFState{
 		FunctionName: funcName,
@@ -509,7 +508,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	s.PendingCreates.Delete(id)
-	s.Store.ContainerNames.Delete(c.Name)
 	s.GCF.Delete(id)
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
@@ -671,7 +669,6 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 			s.Store.Pods.RemoveContainer(pod.ID, c.ID)
 		}
 		s.PendingCreates.Delete(c.ID)
-		s.Store.ContainerNames.Delete(c.Name)
 		s.GCF.Delete(c.ID)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
 			close(ch.(chan struct{}))

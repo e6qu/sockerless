@@ -177,7 +177,6 @@ func (s *Server) PodRemove(name string, force bool) error {
 		}
 
 		s.PendingCreates.Delete(cid)
-		s.Store.ContainerNames.Delete(c.Name)
 		s.AZF.Delete(cid)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(cid); ok {
 			close(ch.(chan struct{}))

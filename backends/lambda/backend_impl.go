@@ -29,7 +29,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		name = "/" + name
 	}
 
-	if _, exists := s.Store.ContainerNames.Get(name); exists {
+	if avail, _ := s.CloudState.CheckNameAvailable(context.Background(), name); !avail {
 		return nil, &api.ConflictError{
 			Message: fmt.Sprintf("Conflict. The container name \"%s\" is already in use", strings.TrimPrefix(name, "/")),
 		}
@@ -232,7 +232,6 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	functionARN := aws.ToString(result.FunctionArn)
 
 	s.PendingCreates.Put(id, container)
-	s.Store.ContainerNames.Put(name, id)
 
 	s.Lambda.Put(id, LambdaState{
 		FunctionName: funcName,
@@ -495,7 +494,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	s.PendingCreates.Delete(id)
-	s.Store.ContainerNames.Delete(c.Name)
 	s.Lambda.Delete(id)
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
@@ -667,7 +665,6 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 			s.Store.Pods.RemoveContainer(pod.ID, c.ID)
 		}
 		s.PendingCreates.Delete(c.ID)
-		s.Store.ContainerNames.Delete(c.Name)
 		s.Lambda.Delete(c.ID)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
 			close(ch.(chan struct{}))

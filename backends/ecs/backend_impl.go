@@ -28,17 +28,10 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		name = "/" + name
 	}
 
-	// Check name conflicts in PendingCreates, ContainerNames, and CloudState
-	if _, exists := s.Store.ContainerNames.Get(name); exists {
+	// Check name conflicts via cloud state
+	if avail, _ := s.CloudState.CheckNameAvailable(context.Background(), name); !avail {
 		return nil, &api.ConflictError{
 			Message: fmt.Sprintf("Conflict. The container name \"%s\" is already in use", strings.TrimPrefix(name, "/")),
-		}
-	}
-	if s.CloudState != nil {
-		if avail, err := s.CloudState.CheckNameAvailable(context.Background(), name); err == nil && !avail {
-			return nil, &api.ConflictError{
-				Message: fmt.Sprintf("Conflict. The container name \"%s\" is already in use", strings.TrimPrefix(name, "/")),
-			}
 		}
 	}
 
@@ -140,7 +133,6 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	}
 
 	s.PendingCreates.Put(id, container)
-	s.Store.ContainerNames.Put(name, id)
 
 	// Store ECS state without task definition — defer registration to ContainerStart.
 	s.ECS.Put(id, ECSState{
@@ -645,7 +637,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	// Clean up PendingCreates (container may have been created but never started)
 	s.PendingCreates.Delete(id)
-	s.Store.ContainerNames.Delete(c.Name)
 	s.ECS.Delete(id)
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
@@ -837,7 +828,6 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 		if pod, inPod := s.Store.Pods.GetPodForContainer(c.ID); inPod {
 			s.Store.Pods.RemoveContainer(pod.ID, c.ID)
 		}
-		s.Store.ContainerNames.Delete(c.Name)
 		s.ECS.Delete(c.ID)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
 			close(ch.(chan struct{}))
