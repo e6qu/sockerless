@@ -299,8 +299,8 @@ func (m *ImageManager) Build(opts api.ImageBuildOptions, ctxReader io.Reader) (i
 
 		// Fetch the built image metadata from the cloud registry
 		if result.ImageRef != "" {
-			if meta, err := FetchImageMetadata(result.ImageRef); err == nil && meta != nil {
-				m.Base.ImagePullWithMetadata(result.ImageRef, "", meta)
+			if meta, fetchErr := FetchImageMetadata(result.ImageRef); fetchErr == nil && meta != nil {
+				_, _ = m.Base.ImagePullWithMetadata(result.ImageRef, "", meta)
 			}
 		}
 

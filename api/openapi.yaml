@@ -2653,6 +2653,42 @@ components:
         shmSize:
           type: integer
           format: int64
+        cacheFrom:
+          type: array
+          items: { type: string }
+        cacheTo:
+          type: array
+          items: { type: string }
+        memory:
+          type: integer
+          format: int64
+        memswap:
+          type: integer
+          format: int64
+        cpuShares:
+          type: integer
+          format: int64
+        cpuPeriod:
+          type: integer
+          format: int64
+        cpuQuota:
+          type: integer
+          format: int64
+        cpuSetCpus:
+          type: string
+        cgroupParent:
+          type: string
+        squash:
+          type: boolean
+        remote:
+          type: string
+        outputs:
+          type: string
+        version:
+          type: string
+        secrets:
+          type: object
+          additionalProperties: { type: string }
 
     ImageSearchResult:
       type: object

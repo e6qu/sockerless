@@ -32,6 +32,20 @@ repos:
         pass_filenames: false
         always_run: true
 
+      - id: go-test-api
+        name: Go test (api — generated files + field coverage)
+        entry: bash -c 'cd api && go test ./... -count=1 -timeout 30s'
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: ui-test-admin
+        name: UI test (admin)
+        entry: bash -c 'cd ui/packages/admin && npx vitest run 2>&1'
+        language: system
+        pass_filenames: false
+        always_run: true
+
       # Commit-msg: strip AI attribution
       - id: strip-ai-attribution
         name: Strip AI attribution from commit messages

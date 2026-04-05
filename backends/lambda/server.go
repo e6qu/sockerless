@@ -40,15 +40,16 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		NCPU:            2,
 		MemTotal:        4294967296,
 	}, logger)
-	buildSvc := awscommon.NewCodeBuildService(
+	s.images = &core.ImageManager{
+		Base:   s.BaseServer,
+		Auth:   awscommon.NewECRAuthProvider(awsClients.ECR, logger, s.ctx),
+		Logger: logger,
+	}
+	if svc := awscommon.NewCodeBuildService(
 		awsClients.CodeBuild, awsClients.S3,
 		config.CodeBuildProject, config.BuildBucket, "", config.Region, logger,
-	)
-	s.images = &core.ImageManager{
-		Base:         s.BaseServer,
-		Auth:         awscommon.NewECRAuthProvider(awsClients.ECR, logger, s.ctx),
-		BuildService: buildSvc,
-		Logger:       logger,
+	); svc != nil {
+		s.images.BuildService = svc
 	}
 	s.SetSelf(s)
 
