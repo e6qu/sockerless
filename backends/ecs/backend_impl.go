@@ -162,7 +162,12 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 func (s *Server) ContainerStart(ref string) error {
 	// When auto-agent is configured, skip cloud task launch entirely.
 	// BaseServer.ContainerStart marks running and spawns a local agent.
+	// Move container from PendingCreates to Store.Containers for BaseServer compatibility.
 	if os.Getenv("SOCKERLESS_AUTO_AGENT_BIN") != "" {
+		if pc, found := s.PendingCreates.Get(ref); found {
+			s.Store.Containers.Put(pc.ID, pc)
+			s.PendingCreates.Delete(ref)
+		}
 		return s.BaseServer.ContainerStart(ref)
 	}
 
