@@ -1,6 +1,7 @@
 package aca
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -18,16 +19,23 @@ func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
 
 	var errs []string
 	for _, cid := range pod.ContainerIDs {
-		c, ok := s.Store.Containers.Get(cid)
-		if !ok || c.State.Running {
-			continue
+		// Check PendingCreates (containers between create and start)
+		if c, ok := s.PendingCreates.Get(cid); ok {
+			if c.State.Running {
+				continue
+			}
+		} else {
+			// Check CloudState for already-running containers
+			if c, ok := s.ResolveContainerAuto(context.Background(), cid); ok && c.State.Running {
+				continue
+			}
 		}
 		if err := s.ContainerStart(cid); err != nil {
 			errs = append(errs, fmt.Sprintf("container %s: %v", cid[:12], err))
 		}
 	}
-	s.Store.Pods.SetStatus(pod.ID, "running")
-	if errs == nil {
+	if len(errs) == 0 {
+		s.Store.Pods.SetStatus(pod.ID, "running")
 		errs = []string{}
 	}
 	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
@@ -43,7 +51,7 @@ func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, err
 
 	var errs []string
 	for _, cid := range pod.ContainerIDs {
-		c, ok := s.Store.Containers.Get(cid)
+		c, ok := s.ResolveContainerAuto(context.Background(), cid)
 		if !ok || !c.State.Running {
 			continue
 		}
@@ -71,7 +79,7 @@ func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, er
 
 	var errs []string
 	for _, cid := range pod.ContainerIDs {
-		c, ok := s.Store.Containers.Get(cid)
+		c, ok := s.ResolveContainerAuto(context.Background(), cid)
 		if !ok || !c.State.Running {
 			continue
 		}
@@ -97,8 +105,7 @@ func (s *Server) PodRemove(name string, force bool) error {
 	// Without force, reject if any containers are running
 	if !force {
 		for _, cid := range pod.ContainerIDs {
-			c, ok := s.Store.Containers.Get(cid)
-			if ok && c.State.Running {
+			if c, ok := s.ResolveContainerAuto(context.Background(), cid); ok && c.State.Running {
 				return &api.ConflictError{
 					Message: fmt.Sprintf("pod %s has running containers, cannot remove without force", name),
 				}
@@ -111,7 +118,7 @@ func (s *Server) PodRemove(name string, force bool) error {
 	cids := make([]string, len(pod.ContainerIDs))
 	copy(cids, pod.ContainerIDs)
 	for _, cid := range cids {
-		if _, ok := s.Store.Containers.Get(cid); !ok {
+		if _, ok := s.ResolveContainerAuto(context.Background(), cid); !ok {
 			continue
 		}
 		if err := s.ContainerRemove(cid, force); err != nil {
@@ -127,12 +134,11 @@ func (s *Server) PodRemove(name string, force bool) error {
 // and cloud-based exec via the ACA management API, so the agent check is
 // no longer a hard requirement.
 func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*api.ExecCreateResponse, error) {
-	id, ok := s.Store.ResolveContainerID(containerID)
+	c, ok := s.ResolveContainerAuto(context.Background(), containerID)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: containerID}
 	}
 
-	c, _ := s.Store.Containers.Get(id)
 	if !c.State.Running {
 		return nil, &api.ConflictError{Message: "Container " + containerID + " is not running"}
 	}
@@ -151,15 +157,16 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 		return nil, &api.NotFoundError{Resource: "exec instance", ID: id}
 	}
 
-	c, ok := s.Store.Containers.Get(exec.ContainerID)
+	c, ok := s.ResolveContainerAuto(context.Background(), exec.ContainerID)
 	if !ok {
 		return nil, &api.ConflictError{
 			Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID),
 		}
 	}
 
-	// If an agent is connected, delegate to BaseServer (agent driver handles it)
-	if c.AgentAddress != "" {
+	// If an agent is connected (check ACA state), delegate to BaseServer
+	acaState, _ := s.ACA.Get(c.ID)
+	if acaState.AgentAddress != "" {
 		return s.BaseServer.ExecStart(id, opts)
 	}
 
@@ -172,12 +179,13 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 // Otherwise, falls back to cloud exec via the ACA management API, creating a
 // shell session that serves as an attach-like experience.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	cid, ok := s.Store.ResolveContainerID(id)
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	c, _ := s.Store.Containers.Get(cid)
-	if c.AgentAddress != "" {
+	cid := c.ID
+	acaState, _ := s.ACA.Get(cid)
+	if acaState.AgentAddress != "" {
 		return s.BaseServer.ContainerAttach(id, opts)
 	}
 
@@ -196,7 +204,7 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 // ContainerExport is not supported by the ACA backend.
 // ACA Jobs do not provide filesystem access for container export.
 func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {
-	if _, ok := s.Store.ResolveContainerID(ref); !ok {
+	if _, ok := s.ResolveContainerIDAuto(context.Background(), ref); !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
 	return nil, &api.NotImplementedError{Message: "container export is not supported by ACA backend: no container filesystem access"}
@@ -205,7 +213,7 @@ func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {
 // ContainerCommit is not supported by the ACA backend.
 // ACA containers cannot be snapshotted into images.
 func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
-	if _, ok := s.Store.ResolveContainerID(req.Container); !ok {
+	if _, ok := s.ResolveContainerIDAuto(context.Background(), req.Container); !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
 	}
 	return nil, &api.NotImplementedError{Message: "container commit is not supported by ACA backend: cannot snapshot ACA containers into images"}

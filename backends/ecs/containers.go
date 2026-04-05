@@ -225,129 +225,19 @@ func (s *Server) pollTaskExit(containerID, taskARN string, exitCh chan struct{})
 	}
 }
 
-// refreshTaskStatus calls ecs:DescribeTasks for a single container's TaskARN
-// and merges the real task status (running/stopped, exit code, IP) into the
-// in-memory container. Returns nil if no TaskARN is stored or the DescribeTasks
-// call fails (non-fatal — the in-memory state is unchanged).
-func (s *Server) refreshTaskStatus(containerID string) {
-	ecsState, ok := s.ECS.Get(containerID)
-	if !ok || ecsState.TaskARN == "" {
-		return
-	}
-
-	result, err := s.aws.ECS.DescribeTasks(s.ctx(), &awsecs.DescribeTasksInput{
-		Cluster: aws.String(s.config.Cluster),
-		Tasks:   []string{ecsState.TaskARN},
-	})
-	if err != nil || len(result.Tasks) == 0 {
-		return
-	}
-
-	s.applyTaskStatus(containerID, result.Tasks[0])
-}
-
-// refreshTaskStatusBatch calls ecs:DescribeTasks for multiple containers at once
-// (up to 100 per AWS API call) and merges real task status into each container.
-func (s *Server) refreshTaskStatusBatch(ids []string) {
-	// Build a map from taskARN → containerID and collect unique task ARNs.
-	taskToContainer := make(map[string]string, len(ids))
-	var taskARNs []string
-	for _, id := range ids {
-		ecsState, ok := s.ECS.Get(id)
-		if !ok || ecsState.TaskARN == "" {
-			continue
-		}
-		if _, exists := taskToContainer[ecsState.TaskARN]; !exists {
-			taskARNs = append(taskARNs, ecsState.TaskARN)
-			taskToContainer[ecsState.TaskARN] = id
-		}
-	}
-
-	if len(taskARNs) == 0 {
-		return
-	}
-
-	// DescribeTasks supports up to 100 ARNs per call.
-	const batchSize = 100
-	for i := 0; i < len(taskARNs); i += batchSize {
-		end := i + batchSize
-		if end > len(taskARNs) {
-			end = len(taskARNs)
-		}
-		batch := taskARNs[i:end]
-
-		result, err := s.aws.ECS.DescribeTasks(s.ctx(), &awsecs.DescribeTasksInput{
-			Cluster: aws.String(s.config.Cluster),
-			Tasks:   batch,
-		})
-		if err != nil {
-			continue
-		}
-
-		for _, task := range result.Tasks {
-			taskARN := aws.ToString(task.TaskArn)
-			if cid, ok := taskToContainer[taskARN]; ok {
-				s.applyTaskStatus(cid, task)
-			}
-		}
-	}
-}
-
-// applyTaskStatus merges the ECS task description into the in-memory container state.
+// applyTaskStatus processes ECS task status changes.
+// Cloud is the source of truth for container state — no local Store.Containers writes.
+// Only closes wait channels when the task stops (needed for ContainerWait).
 func (s *Server) applyTaskStatus(containerID string, task ecstypes.Task) {
 	status := aws.ToString(task.LastStatus)
 
 	switch status {
 	case "STOPPED":
-		exitCode := 0
-		hasExitCode := false
-		var stateError string
-		for _, container := range task.Containers {
-			if container.ExitCode != nil {
-				exitCode = int(aws.ToInt32(container.ExitCode))
-				hasExitCode = true
-				break
-			}
-			// Container-level failure reason (e.g. CannotPullContainerError)
-			if container.Reason != nil && *container.Reason != "" {
-				stateError = *container.Reason
-			}
-		}
-		// Only override exit code for actual failures, not routine task stops
-		if !hasExitCode && stateError == "" {
-			reason := aws.ToString(task.StoppedReason)
-			if reason != "" && reason != "Essential container in task exited" {
-				stateError = reason
-				exitCode = 1
-			}
-		}
-		if c, ok := s.Store.Containers.Get(containerID); ok && c.State.Running {
-			s.Store.Containers.Update(containerID, func(c *api.Container) {
-				c.State.Status = "exited"
-				c.State.Running = false
-				c.State.Pid = 0
-				c.State.ExitCode = exitCode
-				c.State.Error = stateError
-				c.State.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
-			})
-			if ch, ok := s.Store.WaitChs.LoadAndDelete(containerID); ok {
-				close(ch.(chan struct{}))
-			}
+		// Close wait channel so ContainerWait unblocks
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(containerID); ok {
+			close(ch.(chan struct{}))
 		}
 	case "RUNNING":
-		// Overwrite synthetic values with real ENI IP; clear fake gateway.
-		ip := extractENIIP(task)
-		if ip != "" {
-			mac := deriveMACFromIP(ip)
-			s.Store.Containers.Update(containerID, func(c *api.Container) {
-				for _, ep := range c.NetworkSettings.Networks {
-					if ep != nil {
-						ep.IPAddress = ip
-						ep.MacAddress = mac
-						ep.Gateway = "" // Fargate tasks have no Docker-style gateway
-					}
-				}
-			})
-		}
+		// No-op: cloud is the source of truth for IP/MAC.
 	}
 }

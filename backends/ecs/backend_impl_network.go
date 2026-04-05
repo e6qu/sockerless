@@ -1,6 +1,10 @@
 package ecs
 
-import "github.com/sockerless/api"
+import (
+	"context"
+
+	"github.com/sockerless/api"
+)
 
 // NetworkCreate creates a Docker network with cloud backing (VPC security group + Cloud Map namespace).
 func (s *Server) NetworkCreate(req *api.NetworkCreateRequest) (*api.NetworkCreateResponse, error) {
@@ -52,7 +56,7 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 	if !ok {
 		return nil // base succeeded, cloud is best-effort
 	}
-	containerID, ok := s.Store.ResolveContainerID(req.Container)
+	containerID, ok := s.ResolveContainerIDAuto(context.Background(), req.Container)
 	if !ok {
 		return nil
 	}
@@ -68,7 +72,7 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 func (s *Server) NetworkDisconnect(id string, req *api.NetworkDisconnectRequest) error {
 	net, ok := s.Store.ResolveNetwork(id)
 	if ok {
-		containerID, _ := s.Store.ResolveContainerID(req.Container)
+		containerID, _ := s.ResolveContainerIDAuto(context.Background(), req.Container)
 		if containerID != "" {
 			if err := s.cloudNetworkDisconnect(net.ID, containerID); err != nil {
 				s.Logger.Warn().Err(err).Msg("failed to remove cloud security group association")

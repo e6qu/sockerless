@@ -123,12 +123,9 @@ func (s *Server) pollExecutionExit(containerID, executionName string, exitCh cha
 			}
 
 			if exec.CompletionTime != nil {
-				exitCode := 0
-				if exec.FailedCount > 0 {
-					exitCode = 1
-				}
-				if c, ok := s.Store.Containers.Get(containerID); ok && c.State.Running {
-					s.Store.StopContainer(containerID, exitCode)
+				// Close wait channel so ContainerWait unblocks
+				if ch, ok := s.Store.WaitChs.LoadAndDelete(containerID); ok {
+					close(ch.(chan struct{}))
 				}
 				return
 			}

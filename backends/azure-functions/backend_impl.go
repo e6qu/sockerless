@@ -259,7 +259,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		functionURL = fmt.Sprintf("%s://%s/api/function", scheme, *result.Properties.DefaultHostName)
 	}
 
-	s.Store.Containers.Put(id, container)
+	s.PendingCreates.Put(id, container)
 	s.Store.ContainerNames.Put(name, id)
 
 	s.AZF.Put(id, AZFState{
@@ -282,12 +282,23 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 
 // ContainerStart starts a Function App invocation for the container.
 func (s *Server) ContainerStart(ref string) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	// Resolve from PendingCreates (containers between create and start)
+	c, ok := s.PendingCreates.Get(ref)
+	if !ok {
+		// Try name/short-ID match in PendingCreates
+		for _, pc := range s.PendingCreates.List() {
+			if pc.Name == ref || pc.Name == "/"+ref || (len(ref) >= 3 && strings.HasPrefix(pc.ID, ref)) {
+				c = pc
+				ok = true
+				break
+			}
+		}
+	}
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if c.State.Running {
 		return &api.NotModifiedError{}
 	}
@@ -301,21 +312,12 @@ func (s *Server) ContainerStart(ref string) error {
 
 	azfState, _ := s.AZF.Get(id)
 
-	// Update container state to running
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		c.State.Status = "running"
-		c.State.Running = true
-		c.State.Pid = 0
-		c.State.StartedAt = now
-		c.State.FinishedAt = "0001-01-01T00:00:00Z"
-		c.State.ExitCode = 0
-	})
+	// Remove from PendingCreates now that we're starting.
+	s.PendingCreates.Delete(id)
 
 	exitCh := make(chan struct{})
 	s.Store.WaitChs.Store(id, exitCh)
 
-	c, _ = s.Store.Containers.Get(id)
 	s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 
 	// Non-tail-dev-null containers: invoke the function with the container's command
@@ -334,24 +336,24 @@ func (s *Server) ContainerStart(ref string) error {
 					body, _ := io.ReadAll(resp.Body)
 					resp.Body.Close()
 					if len(body) > 0 && string(body) != "{}" {
-						if c, ok := s.Store.Containers.Get(id); ok && c.State.Running {
-							s.Store.LogBuffers.Store(id, body)
-						}
+						s.Store.LogBuffers.Store(id, body)
 					}
 					if resp.StatusCode >= 400 {
 						exitCode = 1
 					}
 				}
-				if c, ok := s.Store.Containers.Get(id); ok && c.State.Running {
-					s.Store.StopContainer(id, exitCode)
+				_ = exitCode
+				// Close wait channel so ContainerWait unblocks
+				if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+					close(ch.(chan struct{}))
 				}
 			}()
 		} else {
 			// No command or no function URL: auto-stop after brief delay
 			go func() {
 				time.Sleep(500 * time.Millisecond)
-				if c, ok := s.Store.Containers.Get(id); ok && c.State.Running {
-					s.Store.StopContainer(id, 0)
+				if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+					close(ch.(chan struct{}))
 				}
 			}()
 		}
@@ -390,8 +392,10 @@ func (s *Server) ContainerStart(ref string) error {
 			_ = s.AgentRegistry.WaitForDisconnect(id, 30*time.Minute)
 		}
 
-		if _, ok := s.Store.Containers.Get(id); ok {
-			s.Store.StopContainer(id, exitCode)
+		_ = exitCode
+		// Close wait channel so ContainerWait unblocks
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
 		}
 	}()
 
@@ -401,9 +405,8 @@ func (s *Server) ContainerStart(ref string) error {
 			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
 			s.AgentRegistry.Remove(id)
 		} else {
-			s.Store.Containers.Update(id, func(c *api.Container) {
-				c.AgentAddress = "reverse"
-				c.AgentToken = azfState.AgentToken
+			s.AZF.Update(id, func(state *AZFState) {
+				state.AgentAddress = "reverse"
 			})
 		}
 	}
@@ -413,12 +416,12 @@ func (s *Server) ContainerStart(ref string) error {
 
 // ContainerStop stops a running Azure Functions container.
 func (s *Server) ContainerStop(ref string, timeout *int) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if !c.State.Running {
 		return &api.NotModifiedError{}
 	}
@@ -426,21 +429,23 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 	// Azure Functions run to completion — stop transitions state
 	s.StopHealthCheck(id)
 	s.AgentRegistry.Remove(id)
-	s.Store.ForceStopContainer(id, 0)
-	c, _ = s.Store.Containers.Get(id)
-	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", c.State.ExitCode), "name": strings.TrimPrefix(c.Name, "/")})
+	// Close wait channel so ContainerWait unblocks
+	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+		close(ch.(chan struct{}))
+	}
+	s.EmitEvent("container", "die", id, map[string]string{"exitCode": "0", "name": strings.TrimPrefix(c.Name, "/")})
 	s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	return nil
 }
 
 // ContainerKill kills a container with the given signal.
 func (s *Server) ContainerKill(ref string, signal string) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if !c.State.Running {
 		return &api.ConflictError{
 			Message: fmt.Sprintf("Container %s is not running", ref),
@@ -451,16 +456,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	s.StopHealthCheck(id)
 	s.AgentRegistry.Remove(id)
 
-	// Parse signal and transition container to exited state
 	exitCode := core.SignalToExitCode(signal)
-
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		c.State.Status = "exited"
-		c.State.Running = false
-		c.State.Pid = 0
-		c.State.ExitCode = exitCode
-		c.State.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	})
 
 	s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", exitCode), "name": strings.TrimPrefix(c.Name, "/")})
@@ -474,12 +470,18 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 
 // ContainerRemove removes a container and its associated Azure Functions resources.
 func (s *Server) ContainerRemove(ref string, force bool) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
+	if !ok {
+		// Also check PendingCreates (container created but never started)
+		if pc, pcOK := s.PendingCreates.Get(ref); pcOK {
+			c = pc
+			ok = true
+		}
+	}
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-
-	c, _ := s.Store.Containers.Get(id)
+	id := c.ID
 
 	if c.State.Running && !force {
 		return &api.ConflictError{
@@ -496,7 +498,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			"exitCode": "0",
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
-		s.Store.ForceStopContainer(id, 0)
 	}
 
 	s.StopHealthCheck(id)
@@ -525,7 +526,8 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		}
 	}
 
-	s.Store.Containers.Delete(id)
+	// Clean up PendingCreates (container may have been created but never started)
+	s.PendingCreates.Delete(id)
 	s.Store.ContainerNames.Delete(c.Name)
 	s.AZF.Delete(id)
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
@@ -549,7 +551,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 // ContainerLogs streams container logs from Azure Monitor.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
 	var functionAppName string
-	if id, ok := s.Store.ResolveContainerID(ref); ok {
+	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
 		azfState, _ := s.AZF.Get(id)
 		functionAppName = azfState.FunctionAppName
 		if functionAppName == "" {
@@ -570,16 +572,19 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 
 // ContainerRestart stops and then starts a container.
 func (s *Server) ContainerRestart(ref string, timeout *int) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if c.State.Running {
 		s.StopHealthCheck(id)
 		s.AgentRegistry.Remove(id)
-		s.Store.ForceStopContainer(id, 0)
+		// Close wait channel so ContainerWait unblocks
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
+		}
 		s.EmitEvent("container", "die", id, map[string]string{
 			"exitCode": "0",
 			"name":     strings.TrimPrefix(c.Name, "/"),
@@ -587,9 +592,8 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 		s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	}
 
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		c.RestartCount++
-	})
+	// Re-add to PendingCreates so ContainerStart can find and launch it.
+	s.PendingCreates.Put(id, c)
 
 	// Start the container directly via typed method
 	if err := s.ContainerStart(id); err != nil {
@@ -606,7 +610,8 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 	untilFilters := filters["until"]
 	var deleted []string
 	var spaceReclaimed uint64
-	for _, c := range s.Store.Containers.List() {
+	allContainers, _ := s.CloudState.ListContainers(context.Background(), true, nil)
+	for _, c := range allContainers {
 		if c.State.Status != "exited" && c.State.Status != "dead" {
 			continue
 		}
@@ -640,7 +645,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 		if pod, inPod := s.Store.Pods.GetPodForContainer(c.ID); inPod {
 			s.Store.Pods.RemoveContainer(pod.ID, c.ID)
 		}
-		s.Store.Containers.Delete(c.ID)
+		s.PendingCreates.Delete(c.ID)
 		s.Store.ContainerNames.Delete(c.Name)
 		s.AZF.Delete(c.ID)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
@@ -672,7 +677,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 
 // ContainerPause is not supported by the Azure Functions backend.
 func (s *Server) ContainerPause(ref string) error {
-	_, ok := s.Store.ResolveContainerID(ref)
+	_, ok := s.ResolveContainerIDAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
@@ -681,7 +686,7 @@ func (s *Server) ContainerPause(ref string) error {
 
 // ContainerUnpause is not supported by the Azure Functions backend.
 func (s *Server) ContainerUnpause(ref string) error {
-	_, ok := s.Store.ResolveContainerID(ref)
+	_, ok := s.ResolveContainerIDAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
@@ -710,7 +715,7 @@ func (s *Server) Info() (*api.BackendInfo, error) {
 // ContainerExport is not supported by the Azure Functions backend.
 // Azure Functions have no local filesystem to export.
 func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
-	if _, ok := s.Store.ResolveContainerID(id); !ok {
+	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
 	return nil, &api.NotImplementedError{
@@ -724,7 +729,7 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 	if req.Container == "" {
 		return nil, &api.InvalidParameterError{Message: "container query parameter is required"}
 	}
-	if _, ok := s.Store.ResolveContainerID(req.Container); !ok {
+	if _, ok := s.ResolveContainerIDAuto(context.Background(), req.Container); !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
 	}
 	return nil, &api.NotImplementedError{
@@ -734,12 +739,12 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 
 // ContainerAttach is not supported by the Azure Functions backend without a connected agent.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	cid, ok := s.Store.ResolveContainerID(id)
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	c, _ := s.Store.Containers.Get(cid)
-	if c.AgentAddress != "" {
+	azfState, _ := s.AZF.Get(c.ID)
+	if azfState.AgentAddress != "" {
 		return s.BaseServer.ContainerAttach(id, opts)
 	}
 	return nil, &api.NotImplementedError{

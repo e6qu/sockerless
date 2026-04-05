@@ -148,20 +148,13 @@ func (s *Server) pollExecutionExit(containerID, jobName, executionName string, e
 						continue
 					}
 					switch *exec.Status {
-					case armappcontainers.JobExecutionRunningStateSucceeded:
-						if c, ok := s.Store.Containers.Get(containerID); ok && c.State.Running {
-							s.Store.StopContainer(containerID, 0)
-						}
-						return
-					case armappcontainers.JobExecutionRunningStateFailed,
-						armappcontainers.JobExecutionRunningStateDegraded:
-						if c, ok := s.Store.Containers.Get(containerID); ok && c.State.Running {
-							s.Store.StopContainer(containerID, 1)
-						}
-						return
-					case armappcontainers.JobExecutionRunningStateStopped:
-						if c, ok := s.Store.Containers.Get(containerID); ok && c.State.Running {
-							s.Store.StopContainer(containerID, 137)
+					case armappcontainers.JobExecutionRunningStateSucceeded,
+						armappcontainers.JobExecutionRunningStateFailed,
+						armappcontainers.JobExecutionRunningStateDegraded,
+						armappcontainers.JobExecutionRunningStateStopped:
+						// Close wait channel so ContainerWait unblocks
+						if ch, ok := s.Store.WaitChs.LoadAndDelete(containerID); ok {
+							close(ch.(chan struct{}))
 						}
 						return
 					}

@@ -53,6 +53,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		s.images.BuildService = svc
 	}
 	s.SetSelf(s)
+	s.CloudState = &cloudRunCloudState{server: s}
 
 	mode := "cloud"
 	if config.EndpointURL != "" {
