@@ -145,8 +145,11 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	tags := core.TagSet{
 		ContainerID: id,
 		Backend:     "lambda",
+		Cluster:     s.config.Region,
 		InstanceID:  s.Desc.InstanceID,
 		CreatedAt:   time.Now(),
+		Name:        name,
+		Labels:      config.Labels,
 	}
 
 	// Resolve image to ECR URI (Lambda only supports ECR images)
@@ -165,7 +168,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		},
 		MemorySize: aws.Int32(int32(s.config.MemorySize)),
 		Timeout:    aws.Int32(int32(s.config.Timeout)),
-		Tags:       tags.AsMap(),
+		Tags:       func() map[string]string { m := tags.AsMap(); m["sockerless-image"] = config.Image; return m }(),
 	}
 
 	if len(envVars) > 0 {
