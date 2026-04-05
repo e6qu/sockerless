@@ -12,10 +12,11 @@ import (
 func newExportTestServer() *BaseServer {
 	store := NewStore()
 	s := &BaseServer{
-		Store:    store,
-		Logger:   zerolog.Nop(),
-		Mux:      http.NewServeMux(),
-		EventBus: NewEventBus(),
+		Store:          store,
+		Logger:         zerolog.Nop(),
+		Mux:            http.NewServeMux(),
+		EventBus:       NewEventBus(),
+		PendingCreates: NewStateStore[api.Container](),
 	}
 	s.InitDrivers()
 	s.self = s

@@ -22,12 +22,13 @@ func newMgmtTestServer() *BaseServer {
 		InstanceID: "test-instance-1",
 	}
 	s := &BaseServer{
-		Store:     store,
-		Logger:    zerolog.Nop(),
-		Desc:      desc,
-		Mux:       http.NewServeMux(),
-		Registry:  NewResourceRegistry(""),
-		StartedAt: time.Now().Add(-10 * time.Second),
+		Store:          store,
+		Logger:         zerolog.Nop(),
+		Desc:           desc,
+		Mux:            http.NewServeMux(),
+		Registry:       NewResourceRegistry(""),
+		StartedAt:      time.Now().Add(-10 * time.Second),
+		PendingCreates: NewStateStore[api.Container](),
 	}
 	s.self = s
 	return s

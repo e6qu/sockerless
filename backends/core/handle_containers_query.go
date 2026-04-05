@@ -17,7 +17,7 @@ import (
 
 func (s *BaseServer) handleContainerInspect(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
-	c, ok := s.Store.ResolveContainer(ref)
+	c, ok := s.ResolveContainerAuto(r.Context(), ref)
 	if !ok {
 		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
 		return
@@ -47,8 +47,33 @@ func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request)
 		limit, _ = strconv.Atoi(l)
 	}
 
+	// Use cloud state provider when available
+	var containers []api.Container
+	if s.CloudState != nil {
+		cloudContainers, err := s.CloudState.ListContainers(r.Context(), all, filters)
+		if err == nil {
+			containers = cloudContainers
+		}
+	}
+	// Also include pending creates (not yet in cloud)
+	for _, pc := range s.PendingCreates.List() {
+		if all || pc.State.Running {
+			containers = append(containers, pc)
+		}
+	}
+	// Fall back to Store when CloudState is nil or returned nothing
+	if s.CloudState == nil {
+		containers = s.Store.Containers.List()
+	}
+
 	var result []*api.ContainerSummary
-	for _, c := range s.Store.Containers.List() {
+	for _, c := range containers {
+		if s.CloudState == nil && !all && !c.State.Running {
+			continue
+		}
+		if s.CloudState == nil && !MatchContainerFilters(c, filters) {
+			continue
+		}
 		if !all && !c.State.Running {
 			continue
 		}
@@ -119,7 +144,7 @@ func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request)
 
 	// Apply before/since post-filters (need Store access to resolve references)
 	if beforeRef := filters["before"]; len(beforeRef) > 0 {
-		if bc, ok := s.Store.ResolveContainer(beforeRef[0]); ok {
+		if bc, ok := s.ResolveContainerAuto(r.Context(), beforeRef[0]); ok {
 			beforeTime, err := time.Parse(time.RFC3339Nano, bc.Created)
 			if err != nil {
 				beforeTime, _ = time.Parse(time.RFC3339, bc.Created)
@@ -134,7 +159,7 @@ func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if sinceRef := filters["since"]; len(sinceRef) > 0 {
-		if sc, ok := s.Store.ResolveContainer(sinceRef[0]); ok {
+		if sc, ok := s.ResolveContainerAuto(r.Context(), sinceRef[0]); ok {
 			sinceTime, err := time.Parse(time.RFC3339Nano, sc.Created)
 			if err != nil {
 				sinceTime, _ = time.Parse(time.RFC3339, sc.Created)

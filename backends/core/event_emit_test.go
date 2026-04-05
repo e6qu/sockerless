@@ -14,11 +14,12 @@ import (
 func newEmitTestServer() *BaseServer {
 	store := NewStore()
 	s := &BaseServer{
-		Store:         store,
-		Logger:        zerolog.Nop(),
-		Mux:           http.NewServeMux(),
-		AgentRegistry: NewAgentRegistry(),
-		EventBus:      NewEventBus(),
+		Store:          store,
+		Logger:         zerolog.Nop(),
+		Mux:            http.NewServeMux(),
+		AgentRegistry:  NewAgentRegistry(),
+		EventBus:       NewEventBus(),
+		PendingCreates: NewStateStore[api.Container](),
 	}
 	s.InitDrivers()
 	s.self = s

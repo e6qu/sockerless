@@ -7,22 +7,26 @@ import (
 	"github.com/sockerless/api"
 )
 
-// ResolveContainerAuto resolves a container reference using the cloud provider
-// when available, falling back to the local Store.
-// Also checks PendingCreates for containers between create and start.
+// ResolveContainerAuto resolves a container by ID, name, or short ID prefix.
+// Uses CloudStateProvider when set, otherwise falls back to Store.
+// Checks PendingCreates for containers between docker create and docker start.
 func (s *BaseServer) ResolveContainerAuto(ctx context.Context, ref string) (api.Container, bool) {
 	// Check pending creates first (containers not yet in cloud)
-	if c, ok := s.PendingCreates.Get(ref); ok {
-		return c, true
-	}
-	// Check by name in pending
-	for _, c := range s.PendingCreates.List() {
-		if c.Name == ref || c.Name == "/"+ref {
+	if s.PendingCreates != nil {
+		if c, ok := s.PendingCreates.Get(ref); ok {
 			return c, true
+		}
+		for _, c := range s.PendingCreates.List() {
+			if c.Name == ref || c.Name == "/"+ref {
+				return c, true
+			}
+			if len(ref) >= 3 && strings.HasPrefix(c.ID, ref) {
+				return c, true
+			}
 		}
 	}
 
-	// Try cloud provider
+	// Query cloud provider
 	if s.CloudState != nil {
 		c, ok, err := s.CloudState.GetContainer(ctx, ref)
 		if err == nil && ok {
@@ -30,11 +34,11 @@ func (s *BaseServer) ResolveContainerAuto(ctx context.Context, ref string) (api.
 		}
 	}
 
-	// Fall back to local Store
+	// Legacy Store path (for Docker passthrough backend and tests without CloudState)
 	return s.Store.ResolveContainer(ref)
 }
 
-// ResolveContainerIDAuto resolves a reference to a container ID using cloud or local Store.
+// ResolveContainerIDAuto resolves a reference to a container ID.
 func (s *BaseServer) ResolveContainerIDAuto(ctx context.Context, ref string) (string, bool) {
 	c, ok := s.ResolveContainerAuto(ctx, ref)
 	if ok {

@@ -148,19 +148,41 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 
 func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
+
+	// Cloud-based wait: poll until stopped
+	if s.CloudState != nil {
+		id, ok := s.ResolveContainerIDAuto(r.Context(), ref)
+		if !ok {
+			WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
+			return
+		}
+		// Check if already exited
+		c, found, _ := s.CloudState.GetContainer(r.Context(), id)
+		if found && (c.State.Status == "exited" || c.State.Status == "dead") {
+			WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: c.State.ExitCode})
+			return
+		}
+		exitCode, err := s.CloudState.WaitForExit(r.Context(), id)
+		if err != nil {
+			WriteError(w, &api.ServerError{Message: err.Error()})
+			return
+		}
+		WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: exitCode})
+		return
+	}
+
+	// Legacy Store-based wait
 	id, ok := s.Store.ResolveContainerID(ref)
 	if !ok {
 		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
 		return
 	}
 
-	// Read condition query parameter (not-running, next-exit, removed)
 	condition := r.URL.Query().Get("condition")
 	if condition == "" {
 		condition = "not-running"
 	}
 
-	// Handle "removed" condition — if container is already gone, return exit code 0
 	c, exists := s.Store.Containers.Get(id)
 	if !exists {
 		if condition == "removed" {
@@ -171,7 +193,6 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// If already exited, return immediately (unless next-exit which waits for a new exit)
 	if condition != "next-exit" && (c.State.Status == "exited" || c.State.Status == "dead") {
 		WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{
 			StatusCode: c.State.ExitCode,
@@ -179,7 +200,6 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Block until exit.
 	ch, ok := s.Store.WaitChs.Load(id)
 	if !ok {
 		c, _ = s.Store.Containers.Get(id)
