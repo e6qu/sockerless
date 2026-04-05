@@ -44,20 +44,22 @@ type ProviderInfo struct {
 
 // BaseServer is the common HTTP server used by all non-Docker backends.
 type BaseServer struct {
-	Store         *Store
-	Logger        zerolog.Logger
-	Desc          BackendDescriptor
-	Mux           *http.ServeMux
-	AgentRegistry *AgentRegistry
-	Drivers       DriverSet
-	Registry      *ResourceRegistry
-	StartedAt     time.Time
-	Metrics       *Metrics
-	HealthChecker HealthChecker
-	EventBus      *EventBus
-	ProviderInfo  *ProviderInfo
-	StatsProvider StatsProvider // real container metrics (nil = zeros)
-	self          api.Backend   // virtual dispatch target for overrideable methods
+	Store          *Store
+	Logger         zerolog.Logger
+	Desc           BackendDescriptor
+	Mux            *http.ServeMux
+	AgentRegistry  *AgentRegistry
+	Drivers        DriverSet
+	Registry       *ResourceRegistry
+	StartedAt      time.Time
+	Metrics        *Metrics
+	HealthChecker  HealthChecker
+	EventBus       *EventBus
+	ProviderInfo   *ProviderInfo
+	StatsProvider  StatsProvider              // real container metrics (nil = zeros)
+	CloudState     CloudStateProvider         // cloud-as-truth queries (nil = use local Store)
+	PendingCreates *StateStore[api.Container] // containers between create and start (not yet in cloud)
+	self           api.Backend                // virtual dispatch target for overrideable methods
 }
 
 // SetSelf sets the virtual dispatch target for overrideable api.Backend methods.
@@ -90,15 +92,16 @@ func NewBaseServer(store *Store, desc BackendDescriptor, logger zerolog.Logger) 
 	}
 
 	s := &BaseServer{
-		Store:         store,
-		Logger:        logger,
-		Desc:          desc,
-		Mux:           http.NewServeMux(),
-		AgentRegistry: NewAgentRegistry(),
-		Registry:      NewResourceRegistry(registryPath, logger),
-		StartedAt:     time.Now(),
-		Metrics:       NewMetrics(),
-		EventBus:      NewEventBus(),
+		Store:          store,
+		Logger:         logger,
+		Desc:           desc,
+		Mux:            http.NewServeMux(),
+		AgentRegistry:  NewAgentRegistry(),
+		Registry:       NewResourceRegistry(registryPath, logger),
+		StartedAt:      time.Now(),
+		Metrics:        NewMetrics(),
+		EventBus:       NewEventBus(),
+		PendingCreates: NewStateStore[api.Container](),
 	}
 	s.self = s
 	s.InitDrivers()

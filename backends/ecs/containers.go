@@ -24,8 +24,16 @@ func (s *Server) runECSTask(containerID, taskDefARN string, c *api.Container) (t
 	tags := core.TagSet{
 		ContainerID: containerID,
 		Backend:     "ecs",
+		Cluster:     s.config.Cluster,
 		InstanceID:  s.Desc.InstanceID,
 		CreatedAt:   time.Now(),
+		Name:        c.Name,
+		Network:     c.HostConfig.NetworkMode,
+		Labels:      c.Config.Labels,
+	}
+	// Set pod tag if container is in a pod
+	if pod, _ := s.Store.Pods.GetPodForContainer(containerID); pod != nil {
+		tags.Pod = pod.Name
 	}
 
 	// Merge per-container security groups from network associations.

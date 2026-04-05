@@ -58,6 +58,11 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	}
 	s.SetSelf(s)
 	s.StatsProvider = &ecsStatsProvider{server: s}
+	s.CloudState = &ecsCloudState{
+		ecs:     awsClients.ECS,
+		cluster: config.Cluster,
+		config:  config,
+	}
 
 	mode := "cloud"
 	if config.EndpointURL != "" {
