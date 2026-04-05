@@ -297,52 +297,28 @@ func (s *Server) ContainerStart(ref string) error {
 			})
 		}
 	} else {
-		// Forward agent mode: poll for task RUNNING and health check
-		isLongRunning := core.IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd)
-
-		if isLongRunning {
-			// Long-running container: wait for RUNNING and check agent health
+		// Forward agent mode: async wait for RUNNING + agent health.
+		// Return immediately so docker start/run -d is fast.
+		go func() {
 			agentAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
 			if err != nil {
 				s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
-				// Stop the ECS task that was already launched
-				_, _ = s.aws.ECS.StopTask(s.ctx(), &awsecs.StopTaskInput{
-					Cluster: aws.String(clusterARN),
-					Task:    aws.String(taskARN),
-					Reason:  aws.String("Task failed to reach RUNNING state"),
-				})
-				s.Registry.MarkCleanedUp(taskARN)
-				s.AgentRegistry.Remove(id)
-				// Re-add to PendingCreates so the container can be retried
-				s.PendingCreates.Put(id, c)
-				s.Store.WaitChs.Delete(id)
-				return awscommon.MapAWSError(err, "task", id)
+				if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+					close(ch.(chan struct{}))
+				}
+				return
 			}
 
-			// Wait for agent health
+			// Check agent health (non-blocking for the caller)
 			agentURL := fmt.Sprintf("http://%s/health", agentAddr)
-			agentHealthy := true
 			if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
 				s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
-				agentHealthy = false
-			}
-
-			if !agentHealthy {
-				// Fallback to auto-agent if configured
-				if autoErr := s.SpawnAutoAgent(id); autoErr != nil {
-					s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
-				}
 			}
 
 			s.ECS.Update(id, func(state *ECSState) {
 				state.AgentAddress = agentAddr
 			})
-		} else {
-			// Short-lived container without forward agent — try auto-agent
-			if autoErr := s.SpawnAutoAgent(id); autoErr != nil {
-				s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
-			}
-		}
+		}()
 
 		// Start background poller to detect task exit
 		go s.pollTaskExit(id, taskARN, exitCh)
