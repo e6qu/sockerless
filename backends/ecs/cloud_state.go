@@ -96,22 +96,36 @@ func (p *ecsCloudState) WaitForExit(ctx context.Context, containerID string) (in
 }
 
 // queryTasks fetches all sockerless-managed tasks from ECS and reconstructs containers.
+// Queries both RUNNING and STOPPED tasks (ECS keeps stopped tasks for ~1 hour).
 func (p *ecsCloudState) queryTasks(ctx context.Context) ([]api.Container, error) {
-	// List all tasks in the cluster
-	listResult, err := p.ecs.ListTasks(ctx, &awsecs.ListTasksInput{
-		Cluster: aws.String(p.cluster),
+	var allTaskArns []string
+
+	// List running tasks
+	runningResult, err := p.ecs.ListTasks(ctx, &awsecs.ListTasksInput{
+		Cluster:       aws.String(p.cluster),
+		DesiredStatus: ecstypes.DesiredStatusRunning,
 	})
-	if err != nil {
-		return nil, err
+	if err == nil {
+		allTaskArns = append(allTaskArns, runningResult.TaskArns...)
 	}
-	if len(listResult.TaskArns) == 0 {
+
+	// List stopped tasks (kept by ECS for ~1 hour after exit)
+	stoppedResult, err := p.ecs.ListTasks(ctx, &awsecs.ListTasksInput{
+		Cluster:       aws.String(p.cluster),
+		DesiredStatus: ecstypes.DesiredStatusStopped,
+	})
+	if err == nil {
+		allTaskArns = append(allTaskArns, stoppedResult.TaskArns...)
+	}
+
+	if len(allTaskArns) == 0 {
 		return nil, nil
 	}
 
-	// Describe tasks with tags included
+	// Describe tasks with tags included (batch up to 100)
 	descResult, err := p.ecs.DescribeTasks(ctx, &awsecs.DescribeTasksInput{
 		Cluster: aws.String(p.cluster),
-		Tasks:   listResult.TaskArns,
+		Tasks:   allTaskArns,
 		Include: []ecstypes.TaskField{ecstypes.TaskFieldTags},
 	})
 	if err != nil {
