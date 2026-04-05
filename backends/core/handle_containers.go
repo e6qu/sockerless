@@ -149,19 +149,43 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
 
-	// Cloud-based wait: poll until stopped
+	// Try local wait channel first (auto-agent mode runs containers locally)
 	if s.CloudState != nil {
 		id, ok := s.ResolveContainerIDAuto(r.Context(), ref)
 		if !ok {
 			WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
 			return
 		}
-		// Check if already exited
+
+		// Check if already exited (cloud or local)
 		c, found, _ := s.CloudState.GetContainer(r.Context(), id)
+		if !found {
+			if lc, lok := s.Store.Containers.Get(id); lok {
+				c = lc
+				found = true
+			}
+		}
 		if found && (c.State.Status == "exited" || c.State.Status == "dead") {
 			WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: c.State.ExitCode})
 			return
 		}
+
+		// If there's a local wait channel (auto-agent), use it
+		if ch, hasChannel := s.Store.WaitChs.Load(id); hasChannel {
+			select {
+			case <-ch.(chan struct{}):
+				if lc, lok := s.Store.Containers.Get(id); lok {
+					WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: lc.State.ExitCode})
+				} else {
+					WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: 0})
+				}
+			case <-r.Context().Done():
+				WriteError(w, &api.ServerError{Message: r.Context().Err().Error()})
+			}
+			return
+		}
+
+		// Cloud-based wait: poll until stopped
 		exitCode, err := s.CloudState.WaitForExit(r.Context(), id)
 		if err != nil {
 			WriteError(w, &api.ServerError{Message: err.Error()})
