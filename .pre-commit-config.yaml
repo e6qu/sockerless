@@ -25,6 +25,12 @@ repos:
         language: system
         types: [go]
 
+      - id: golangci-lint
+        name: Go lint (changed modules)
+        entry: bash scripts/lint-changed.sh
+        language: system
+        types: [go]
+
       - id: go-test-core
         name: Go test (core)
         entry: bash -c 'cd backends/core && go test ./... -count=1 -timeout 120s'

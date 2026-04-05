@@ -32,8 +32,8 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 
 	// Determine the pull-through cache prefix based on upstream registry
 	var cachePrefix, upstreamURL string
-	switch {
-	case registry == "" || registry == "docker.io" || registry == "registry-1.docker.io":
+	switch registry {
+	case "", "docker.io", "registry-1.docker.io":
 		cachePrefix = "docker-hub"
 		upstreamURL = "registry-1.docker.io"
 		// Docker Hub library images: "alpine" → "library/alpine"
