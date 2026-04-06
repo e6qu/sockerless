@@ -885,18 +885,21 @@ func (s *BaseServer) ContainerStats(ref string, stream bool) (io.ReadCloser, err
 			preread = now.Format(time.RFC3339Nano)
 
 			time.Sleep(1 * time.Second)
+			// Check if container has stopped
 			if ch, ok := s.Store.WaitChs.Load(id); ok {
 				select {
 				case <-ch.(chan struct{}):
 					_ = pw.Close()
 					return
 				default:
-					// Still running
+					// Still running — continue streaming
 				}
-			} else {
+			} else if cur, ok := s.ResolveContainerAuto(context.Background(), id); ok && !cur.State.Running {
+				// No WaitCh but CloudState confirms stopped
 				_ = pw.Close()
 				return
 			}
+			// If neither WaitCh nor CloudState says stopped, keep streaming
 		}
 	}()
 	return pr, nil

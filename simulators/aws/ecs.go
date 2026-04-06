@@ -214,12 +214,20 @@ func registerECS(r *sim.AWSRouter, srv *sim.Server) {
 			return
 		}
 
-		v, ok := ecsProcessHandles.Load(taskID)
-		if !ok {
+		// Poll for the container handle — it may not be stored yet if the
+		// Docker container is still starting (async after RUNNING state).
+		var handle *sim.ContainerHandle
+		for i := 0; i < 20; i++ {
+			if v, ok := ecsProcessHandles.Load(taskID); ok {
+				handle = v.(*sim.ContainerHandle)
+				break
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+		if handle == nil {
 			http.Error(w, "no running container for task "+taskID, http.StatusNotFound)
 			return
 		}
-		handle := v.(*sim.ContainerHandle)
 
 		cli := sim.DockerClient()
 		if cli == nil {
