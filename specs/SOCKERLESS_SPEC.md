@@ -20,6 +20,10 @@
 | [IMAGE_BUILD.md](IMAGE_BUILD.md) | docker build/buildx → cloud build services (CodeBuild, Cloud Build, ACR Tasks) |
 | [IMAGE_REGISTRY.md](IMAGE_REGISTRY.md) | OCI Distribution v2 protocol, per-cloud registry features, auth caching |
 | [IMAGE_SCANNING.md](IMAGE_SCANNING.md) | Vulnerability scanning, image signing, supply chain security |
+| [BACKEND_STATE.md](BACKEND_STATE.md) | Stateless backends, cloud tags as source of truth, resource tagging conventions |
+| [FAAS_PODS.md](FAAS_PODS.md) | Pod support on FaaS: Lambda Extensions, Cloud Run sidecars, ACA multi-container |
+| [SIMULATOR_PERSISTENCE.md](SIMULATOR_PERSISTENCE.md) | SQLite state persistence, Store interface, process tracking |
+| [SIMULATOR_RECOVERY.md](SIMULATOR_RECOVERY.md) | Recovery on restart, PID re-attachment, backend re-sync, tagging conventions |
 | [DOCKER_REST_API.md](DOCKER_REST_API.md) | Docker API compatibility analysis |
 | [COMPARISONS.md](COMPARISONS.md) | Comparison with alternatives |
 

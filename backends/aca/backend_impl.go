@@ -25,7 +25,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		name = "/" + name
 	}
 
-	if _, exists := s.Store.ContainerNames.Get(name); exists {
+	if avail, _ := s.CloudState.CheckNameAvailable(context.Background(), name); !avail {
 		return nil, &api.ConflictError{
 			Message: fmt.Sprintf("Conflict. The container name \"%s\" is already in use", strings.TrimPrefix(name, "/")),
 		}
@@ -132,8 +132,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	}
 
 	// Pod association is handled by the core HTTP handler layer (query param).
-	s.Store.Containers.Put(id, container)
-	s.Store.ContainerNames.Put(name, id)
+	s.PendingCreates.Put(id, container)
 
 	s.ACA.Put(id, ACAState{
 		ResourceGroup: s.config.ResourceGroup,
@@ -153,40 +152,44 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 
 // ContainerStart starts an ACA Job for the container.
 func (s *Server) ContainerStart(ref string) error {
-	// When auto-agent is configured, skip cloud task launch entirely.
-	// BaseServer.ContainerStart marks running and spawns a local agent.
-	if os.Getenv("SOCKERLESS_AUTO_AGENT_BIN") != "" {
-		return s.BaseServer.ContainerStart(ref)
+	// Resolve from PendingCreates (containers between create and start)
+	c, ok := s.PendingCreates.Get(ref)
+	if !ok {
+		// Try name/short-ID match in PendingCreates
+		for _, pc := range s.PendingCreates.List() {
+			if pc.Name == ref || pc.Name == "/"+ref || (len(ref) >= 3 && strings.HasPrefix(pc.ID, ref)) {
+				c = pc
+				ok = true
+				break
+			}
+		}
 	}
-
-	id, ok := s.Store.ResolveContainerID(ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if c.State.Running {
 		return &api.NotModifiedError{}
 	}
 
 	acaState, _ := s.ACA.Get(id)
 
-	// Update container state to running
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		c.State.Status = "running"
-		c.State.Running = true
-		c.State.Pid = 0
-		c.State.StartedAt = now
-		c.State.FinishedAt = "0001-01-01T00:00:00Z"
-		c.State.ExitCode = 0
-	})
+	// markRunning emits the start event and sets up the wait channel.
+	// Container state is no longer written to Store.Containers — the cloud is the truth.
+	markRunning := func() chan struct{} {
+		var exitCh chan struct{}
+		if ch, ok := s.Store.WaitChs.Load(id); ok {
+			exitCh = ch.(chan struct{})
+		} else {
+			exitCh = make(chan struct{})
+			s.Store.WaitChs.Store(id, exitCh)
+		}
+		s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+		return exitCh
+	}
 
-	exitCh := make(chan struct{})
-	s.Store.WaitChs.Store(id, exitCh)
-
-	c, _ = s.Store.Containers.Get(id)
-	s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+	exitCh := markRunning()
 
 	// Deferred start: if container is in a multi-container pod, wait for all siblings
 	shouldDefer, podContainers := s.PodDeferredStart(id)
@@ -215,7 +218,7 @@ func (s *Server) ContainerStart(ref string) error {
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to create ACA Job")
 		s.AgentRegistry.Remove(id)
-		s.Store.RevertToCreated(id)
+		s.Store.WaitChs.Delete(id)
 		return azurecommon.MapAzureError(err, "job", id)
 	}
 
@@ -224,7 +227,7 @@ func (s *Server) ContainerStart(ref string) error {
 	if err != nil {
 		s.deleteJob(jobName)
 		s.AgentRegistry.Remove(id)
-		s.Store.RevertToCreated(id)
+		s.Store.WaitChs.Delete(id)
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
 		return azurecommon.MapAzureError(err, "job", id)
 	}
@@ -245,7 +248,7 @@ func (s *Server) ContainerStart(ref string) error {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to start ACA Job")
 		s.deleteJob(jobName)
 		s.AgentRegistry.Remove(id)
-		s.Store.RevertToCreated(id)
+		s.Store.WaitChs.Delete(id)
 		return azurecommon.MapAzureError(err, "execution", id)
 	}
 
@@ -255,9 +258,12 @@ func (s *Server) ContainerStart(ref string) error {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("start job failed")
 		s.deleteJob(jobName)
 		s.AgentRegistry.Remove(id)
-		s.Store.RevertToCreated(id)
+		s.Store.WaitChs.Delete(id)
 		return azurecommon.MapAzureError(err, "execution", id)
 	}
+
+	// Remove from PendingCreates now that the job is launched in the cloud.
+	s.PendingCreates.Delete(id)
 
 	executionName := ""
 	if startResp.Name != nil {
@@ -278,8 +284,9 @@ func (s *Server) ContainerStart(ref string) error {
 			// Wait for reverse agent to disconnect before stopping
 			_ = s.AgentRegistry.WaitForDisconnect(id, 30*time.Minute)
 
-			if _, ok := s.Store.Containers.Get(id); ok {
-				s.Store.StopContainer(id, 0)
+			// Close wait channel so ContainerWait unblocks
+			if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+				close(ch.(chan struct{}))
 			}
 		}()
 
@@ -293,9 +300,8 @@ func (s *Server) ContainerStart(ref string) error {
 				s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
 			}
 		} else {
-			s.Store.Containers.Update(id, func(c *api.Container) {
-				c.AgentAddress = "reverse"
-				c.AgentToken = acaState.AgentToken
+			s.ACA.Update(id, func(state *ACAState) {
+				state.AgentAddress = "reverse"
 			})
 		}
 	} else {
@@ -309,15 +315,17 @@ func (s *Server) ContainerStart(ref string) error {
 				s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
 				s.AgentRegistry.Remove(id)
 				s.deleteJob(jobName)
-				s.Store.RevertToCreated(id)
+				// Re-add to PendingCreates so the container can be retried
+				s.PendingCreates.Put(id, c)
+				s.Store.WaitChs.Delete(id)
 				return azurecommon.MapAzureError(err, "execution", id)
 			}
 
 			if completedExitCode >= 0 {
 				// Execution completed before agent could be reached.
 				go func() {
-					if _, ok := s.Store.Containers.Get(id); ok {
-						s.Store.StopContainer(id, completedExitCode)
+					if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+						close(ch.(chan struct{}))
 					}
 				}()
 			} else if agentAddr == "reverse" {
@@ -327,14 +335,10 @@ func (s *Server) ContainerStart(ref string) error {
 					s.Logger.Warn().Err(err).Msg("agent callback timeout")
 					s.AgentRegistry.Remove(id)
 				} else {
-					s.Store.Containers.Update(id, func(c *api.Container) {
-						c.AgentAddress = "reverse"
-						c.AgentToken = acaState.AgentToken
+					s.ACA.Update(id, func(state *ACAState) {
+						state.AgentAddress = "reverse"
 					})
 				}
-				s.ACA.Update(id, func(state *ACAState) {
-					state.AgentAddress = "reverse"
-				})
 			} else {
 				// Wait for agent health
 				agentURL := fmt.Sprintf("http://%s/health", agentAddr)
@@ -344,12 +348,7 @@ func (s *Server) ContainerStart(ref string) error {
 					agentHealthy = false
 				}
 
-				if agentHealthy {
-					s.Store.Containers.Update(id, func(c *api.Container) {
-						c.AgentAddress = agentAddr
-						c.AgentToken = acaState.AgentToken
-					})
-				} else {
+				if !agentHealthy {
 					// Fallback to auto-agent if configured
 					if autoErr := s.SpawnAutoAgent(id); autoErr != nil {
 						s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
@@ -391,7 +390,6 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 	}
 
 	mainID := podContainers[0].ID
-	mainState, _ := s.ACA.Get(mainID)
 
 	// Pre-create done channel for reverse agent on main container
 	if s.config.CallbackURL != "" {
@@ -408,9 +406,6 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 		if s.config.CallbackURL != "" {
 			s.AgentRegistry.Remove(mainID)
 		}
-		for _, pc := range podContainers {
-			s.Store.RevertToCreated(pc.ID)
-		}
 		return azurecommon.MapAzureError(err, "job", mainID)
 	}
 
@@ -419,9 +414,6 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 		s.deleteJob(jobName)
 		if s.config.CallbackURL != "" {
 			s.AgentRegistry.Remove(mainID)
-		}
-		for _, pc := range podContainers {
-			s.Store.RevertToCreated(pc.ID)
 		}
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
 		return azurecommon.MapAzureError(err, "job", mainID)
@@ -444,9 +436,6 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 		if s.config.CallbackURL != "" {
 			s.AgentRegistry.Remove(mainID)
 		}
-		for _, pc := range podContainers {
-			s.Store.RevertToCreated(pc.ID)
-		}
 		return azurecommon.MapAzureError(err, "execution", mainID)
 	}
 
@@ -457,10 +446,12 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 		if s.config.CallbackURL != "" {
 			s.AgentRegistry.Remove(mainID)
 		}
-		for _, pc := range podContainers {
-			s.Store.RevertToCreated(pc.ID)
-		}
 		return azurecommon.MapAzureError(err, "execution", mainID)
+	}
+
+	// Remove all pod containers from PendingCreates now that the job is launched.
+	for _, pc := range podContainers {
+		s.PendingCreates.Delete(pc.ID)
 	}
 
 	executionName := ""
@@ -481,8 +472,8 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 		go func() {
 			s.waitForExecutionComplete(jobName, executionName, exitCh)
 			_ = s.AgentRegistry.WaitForDisconnect(mainID, 30*time.Minute)
-			if _, ok := s.Store.Containers.Get(mainID); ok {
-				s.Store.StopContainer(mainID, 0)
+			if ch, ok := s.Store.WaitChs.LoadAndDelete(mainID); ok {
+				close(ch.(chan struct{}))
 			}
 		}()
 
@@ -491,9 +482,8 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
 			s.AgentRegistry.Remove(mainID)
 		} else {
-			s.Store.Containers.Update(mainID, func(c *api.Container) {
-				c.AgentAddress = "reverse"
-				c.AgentToken = mainState.AgentToken
+			s.ACA.Update(mainID, func(state *ACAState) {
+				state.AgentAddress = "reverse"
 			})
 		}
 	} else {
@@ -505,16 +495,17 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 			if s.config.CallbackURL != "" {
 				s.AgentRegistry.Remove(mainID)
 			}
+			// Re-add pod containers to PendingCreates so they can be retried
 			for _, pc := range podContainers {
-				s.Store.RevertToCreated(pc.ID)
+				s.PendingCreates.Put(pc.ID, pc)
 			}
 			return azurecommon.MapAzureError(err, "execution", mainID)
 		}
 
 		if completedExitCode >= 0 {
 			go func() {
-				if _, ok := s.Store.Containers.Get(mainID); ok {
-					s.Store.StopContainer(mainID, completedExitCode)
+				if ch, ok := s.Store.WaitChs.LoadAndDelete(mainID); ok {
+					close(ch.(chan struct{}))
 				}
 			}()
 		} else {
@@ -525,11 +516,11 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 				agentHealthy = false
 			}
 
-			if agentHealthy {
-				s.Store.Containers.Update(mainID, func(c *api.Container) {
-					c.AgentAddress = agentAddr
-					c.AgentToken = mainState.AgentToken
-				})
+			if !agentHealthy {
+				// Fallback to auto-agent if configured
+				if autoErr := s.SpawnAutoAgent(mainID); autoErr != nil {
+					s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
+				}
 			}
 
 			s.ACA.Update(mainID, func(state *ACAState) {
@@ -545,12 +536,12 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 
 // ContainerStop stops a running ACA container.
 func (s *Server) ContainerStop(ref string, timeout *int) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if !c.State.Running {
 		return &api.NotModifiedError{}
 	}
@@ -564,21 +555,23 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 	s.StopHealthCheck(id)
 	s.AgentRegistry.Remove(id)
 	core.StopAutoAgent(id)
-	s.Store.ForceStopContainer(id, 0)
-	c, _ = s.Store.Containers.Get(id)
-	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", c.State.ExitCode), "name": strings.TrimPrefix(c.Name, "/")})
+	// Close wait channel so ContainerWait unblocks
+	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+		close(ch.(chan struct{}))
+	}
+	s.EmitEvent("container", "die", id, map[string]string{"exitCode": "0", "name": strings.TrimPrefix(c.Name, "/")})
 	s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	return nil
 }
 
 // ContainerKill kills a container with the given signal.
 func (s *Server) ContainerKill(ref string, signal string) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if !c.State.Running {
 		return &api.ConflictError{
 			Message: fmt.Sprintf("Container %s is not running", ref),
@@ -598,14 +591,6 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 		s.stopExecution(acaState.JobName, acaState.ExecutionName)
 	}
 
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		c.State.Status = "exited"
-		c.State.Running = false
-		c.State.Pid = 0
-		c.State.ExitCode = exitCode
-		c.State.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	})
-
 	s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", exitCode), "name": strings.TrimPrefix(c.Name, "/")})
 
@@ -618,12 +603,18 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 
 // ContainerRemove removes a container.
 func (s *Server) ContainerRemove(ref string, force bool) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
+	if !ok {
+		// Also check PendingCreates (container created but never started)
+		if pc, pcOK := s.PendingCreates.Get(ref); pcOK {
+			c = pc
+			ok = true
+		}
+	}
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-
-	c, _ := s.Store.Containers.Get(id)
+	id := c.ID
 
 	if c.State.Running && !force {
 		return &api.ConflictError{
@@ -645,7 +636,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		if acaState.JobName != "" && acaState.ExecutionName != "" {
 			s.stopExecution(acaState.JobName, acaState.ExecutionName)
 		}
-		s.Store.ForceStopContainer(id, 0)
 	}
 
 	s.StopHealthCheck(id)
@@ -675,8 +665,8 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		}
 	}
 
-	s.Store.Containers.Delete(id)
-	s.Store.ContainerNames.Delete(c.Name)
+	// Clean up PendingCreates (container may have been created but never started)
+	s.PendingCreates.Delete(id)
 	s.ACA.Delete(id)
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
@@ -699,7 +689,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 // ContainerLogs streams container logs from Azure Monitor Log Analytics.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
 	var jobName string
-	if id, ok := s.Store.ResolveContainerID(ref); ok {
+	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
 		acaState, _ := s.ACA.Get(id)
 		jobName = acaState.JobName
 		if jobName == "" {
@@ -720,12 +710,11 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 
 // ContainerRestart stops and then starts a container.
 func (s *Server) ContainerRestart(ref string, timeout *int) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-
-	c, _ := s.Store.Containers.Get(id)
+	id := c.ID
 
 	// Stop if running
 	if c.State.Running {
@@ -735,10 +724,19 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 		if acaState.JobName != "" && acaState.ExecutionName != "" {
 			s.stopExecution(acaState.JobName, acaState.ExecutionName)
 		}
-		s.Store.ForceStopContainer(id, 0)
 		if acaState.JobName != "" {
 			s.deleteJob(acaState.JobName)
 			s.Registry.MarkCleanedUp(acaState.JobName)
+		}
+		// Clear stale ACA state so ContainerStart creates a fresh job.
+		s.ACA.Update(id, func(state *ACAState) {
+			state.JobName = ""
+			state.ExecutionName = ""
+			state.AgentAddress = ""
+		})
+		// Close wait channel so ContainerWait unblocks
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
 		}
 		s.EmitEvent("container", "die", id, map[string]string{
 			"exitCode": "0",
@@ -747,9 +745,8 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 		s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	}
 
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		c.RestartCount++
-	})
+	// Re-add to PendingCreates so ContainerStart can find and launch it.
+	s.PendingCreates.Put(id, c)
 
 	// Start the container directly via typed method
 	if err := s.ContainerStart(id); err != nil {
@@ -767,7 +764,9 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 
 	var deleted []string
 	var spaceReclaimed uint64
-	for _, c := range s.Store.Containers.List() {
+	// Query all containers from CloudState (PendingCreates + Store.Containers)
+	allContainers, _ := s.CloudState.ListContainers(context.Background(), true, nil)
+	for _, c := range allContainers {
 		if c.State.Status != "exited" && c.State.Status != "dead" {
 			continue
 		}
@@ -798,8 +797,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 		if pod, inPod := s.Store.Pods.GetPodForContainer(c.ID); inPod {
 			s.Store.Pods.RemoveContainer(pod.ID, c.ID)
 		}
-		s.Store.Containers.Delete(c.ID)
-		s.Store.ContainerNames.Delete(c.Name)
+		s.PendingCreates.Delete(c.ID)
 		s.ACA.Delete(c.ID)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
 			close(ch.(chan struct{}))
@@ -830,7 +828,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 
 // ContainerPause is not supported by ACA backend.
 func (s *Server) ContainerPause(ref string) error {
-	if _, ok := s.Store.ResolveContainerID(ref); !ok {
+	if _, ok := s.ResolveContainerIDAuto(context.Background(), ref); !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
 	return &api.NotImplementedError{Message: "container pause is not supported by ACA backend"}
@@ -838,7 +836,7 @@ func (s *Server) ContainerPause(ref string) error {
 
 // ContainerUnpause is not supported by ACA backend.
 func (s *Server) ContainerUnpause(ref string) error {
-	if _, ok := s.Store.ResolveContainerID(ref); !ok {
+	if _, ok := s.ResolveContainerIDAuto(context.Background(), ref); !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
 	return &api.NotImplementedError{Message: "container unpause is not supported by ACA backend"}
@@ -887,9 +885,10 @@ func (s *Server) VolumeRemove(name string, force bool) error {
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
 	var deleted []string
 	var spaceReclaimed uint64
+	allContainersForVol, _ := s.CloudState.ListContainers(context.Background(), true, nil)
 	for _, v := range s.Store.Volumes.List() {
 		inUse := false
-		for _, c := range s.Store.Containers.List() {
+		for _, c := range allContainersForVol {
 			for _, m := range c.Mounts {
 				if m.Name == v.Name {
 					inUse = true

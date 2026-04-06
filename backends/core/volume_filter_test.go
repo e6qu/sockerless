@@ -13,9 +13,10 @@ import (
 func newVolTestServer() *BaseServer {
 	store := NewStore()
 	s := &BaseServer{
-		Store:  store,
-		Logger: zerolog.Nop(),
-		Mux:    http.NewServeMux(),
+		Store:          store,
+		Logger:         zerolog.Nop(),
+		Mux:            http.NewServeMux(),
+		PendingCreates: NewStateStore[api.Container](),
 	}
 	s.InitDrivers()
 	s.self = s

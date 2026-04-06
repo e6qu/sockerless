@@ -48,8 +48,8 @@ func main() {
 
 	// Register AWS Query Protocol services (Action form parameter routing)
 	queryRouter := sim.NewAWSQueryRouter()
-	registerEC2(queryRouter)
-	registerIAM(queryRouter)
+	registerEC2(queryRouter, srv)
+	registerIAM(queryRouter, srv)
 	registerSTS(queryRouter)
 
 	// POST / handler: check X-Amz-Target first (JSON protocol),

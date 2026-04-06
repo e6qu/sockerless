@@ -65,6 +65,60 @@ func (s *Server) ScanOrphanedResources(ctx context.Context, instanceID string) (
 	return orphans, nil
 }
 
+// SyncResources queries ECS for the current status of all tracked tasks
+// and updates the registry (mark stopped tasks, remove deleted ones).
+func (s *Server) SyncResources(ctx context.Context, registry *core.ResourceRegistry) error {
+	active := registry.ListActive()
+	if len(active) == 0 {
+		return nil
+	}
+
+	// Collect task ARNs to check
+	var arns []string
+	for _, entry := range active {
+		if entry.ResourceType == "task" {
+			arns = append(arns, entry.ResourceID)
+		}
+	}
+	if len(arns) == 0 {
+		return nil
+	}
+
+	// DescribeTasks supports up to 100 ARNs per call
+	for i := 0; i < len(arns); i += 100 {
+		end := i + 100
+		if end > len(arns) {
+			end = len(arns)
+		}
+		batch := arns[i:end]
+
+		result, err := s.aws.ECS.DescribeTasks(ctx, &awsecs.DescribeTasksInput{
+			Cluster: aws.String(s.config.Cluster),
+			Tasks:   batch,
+		})
+		if err != nil {
+			s.Logger.Warn().Err(err).Msg("resync: DescribeTasks failed")
+			continue
+		}
+
+		// Build set of found tasks
+		found := make(map[string]string) // arn → lastStatus
+		for _, task := range result.Tasks {
+			found[aws.ToString(task.TaskArn)] = aws.ToString(task.LastStatus)
+		}
+
+		// Mark tasks that are stopped or gone
+		for _, arn := range batch {
+			status, exists := found[arn]
+			if !exists || status == "STOPPED" || status == "DEPROVISIONING" {
+				registry.MarkCleanedUp(arn)
+			}
+		}
+	}
+
+	return nil
+}
+
 // CleanupResource stops an ECS task.
 func (s *Server) CleanupResource(ctx context.Context, entry core.ResourceEntry) error {
 	_, err := s.aws.ECS.StopTask(ctx, &awsecs.StopTaskInput{

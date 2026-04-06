@@ -41,10 +41,11 @@ func (d *testStreamDriver) Attach(_ context.Context, _ string, _ bool, _ net.Con
 func newLogStreamTestServer() *BaseServer {
 	store := NewStore()
 	s := &BaseServer{
-		Store:    store,
-		Logger:   zerolog.Nop(),
-		Mux:      http.NewServeMux(),
-		EventBus: NewEventBus(),
+		Store:          store,
+		Logger:         zerolog.Nop(),
+		Mux:            http.NewServeMux(),
+		EventBus:       NewEventBus(),
+		PendingCreates: NewStateStore[api.Container](),
 	}
 	s.InitDrivers()
 	// Override stream driver with test driver that reads from LogBuffers

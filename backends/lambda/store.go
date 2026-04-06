@@ -6,4 +6,5 @@ type LambdaState struct {
 	FunctionARN   string
 	LogStreamName string
 	AgentToken    string
+	AgentAddress  string
 }

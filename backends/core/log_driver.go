@@ -36,15 +36,12 @@ type StreamCloudLogsOptions struct {
 // io.Pipe creation, formatting, tail filtering, and follow-mode polling.
 // Writes raw text to the pipe — the HTTP handler adds Docker mux framing.
 func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOptions, fetch CloudLogFetchFunc, sopts StreamCloudLogsOptions) (io.ReadCloser, error) {
-	id, ok := s.Store.ResolveContainerID(containerID)
+	// Resolve container via CloudState-aware path (stateless backends have no Store.Containers)
+	c, ok := s.ResolveContainerAuto(context.Background(), containerID)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: containerID}
 	}
-
-	c, containerOK := s.Store.Containers.Get(id)
-	if !containerOK {
-		return nil, &api.NotFoundError{Resource: "container", ID: containerID}
-	}
+	id := c.ID
 
 	// Container-service backends delegate to core for auto-agent containers.
 	if sopts.CheckAutoAgent && os.Getenv("SOCKERLESS_AUTO_AGENT_BIN") != "" {
@@ -100,8 +97,8 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 		defer ticker.Stop()
 
 		for range ticker.C {
-			// Check if container has stopped.
-			if cc, ccOK := s.Store.Containers.Get(id); ccOK && !cc.State.Running {
+			// Check if container has stopped via CloudState-aware path.
+			if cc, ccOK := s.ResolveContainerAuto(ctx, id); ccOK && !cc.State.Running {
 				// Final fetch before exit.
 				entries, _, _ = fetch(ctx, params, cursor)
 				for _, e := range entries {

@@ -51,6 +51,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	); err == nil && svc != nil {
 		s.images.BuildService = svc
 	}
+	s.CloudState = &azfCloudState{server: s}
 	s.SetSelf(s)
 
 	mode := "cloud"

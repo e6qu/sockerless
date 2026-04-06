@@ -71,8 +71,8 @@ type s3ObjectInfo struct {
 
 // State stores
 var (
-	s3Buckets_ *sim.StateStore[S3Bucket]
-	s3Objects  *sim.StateStore[S3Object]
+	s3Buckets_ sim.Store[S3Bucket]
+	s3Objects  sim.Store[S3Object]
 )
 
 func s3ObjectKey(bucket, key string) string {
@@ -80,8 +80,8 @@ func s3ObjectKey(bucket, key string) string {
 }
 
 func registerS3(srv *sim.Server) {
-	s3Buckets_ = sim.NewStateStore[S3Bucket]()
-	s3Objects = sim.NewStateStore[S3Object]()
+	s3Buckets_ = sim.MakeStore[S3Bucket](srv.DB(), "s3_buckets")
+	s3Objects = sim.MakeStore[S3Object](srv.DB(), "s3_objects")
 
 	mux := srv.Mux()
 

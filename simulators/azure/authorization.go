@@ -95,7 +95,7 @@ func parseRoleNameFilter(filter string) string {
 }
 
 func registerAuthorization(srv *sim.Server) {
-	roleAssignments := sim.NewStateStore[RoleAssignment]()
+	roleAssignments := sim.MakeStore[RoleAssignment](srv.DB(), "role_assignments")
 
 	// Middleware to handle authorization requests at ANY scope level.
 	// Go 1.22 mux doesn't support variable-length wildcards in the middle of

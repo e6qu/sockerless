@@ -27,7 +27,7 @@ type AppInsightsComponentProperties struct {
 }
 
 func registerApplicationInsights(srv *sim.Server) {
-	components := sim.NewStateStore[AppInsightsComponent]()
+	components := sim.MakeStore[AppInsightsComponent](srv.DB(), "insights_components")
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Insights"
 

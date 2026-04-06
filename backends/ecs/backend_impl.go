@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"strings"
 	"time"
@@ -29,7 +28,8 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		name = "/" + name
 	}
 
-	if _, exists := s.Store.ContainerNames.Get(name); exists {
+	// Check name conflicts via cloud state
+	if avail, _ := s.CloudState.CheckNameAvailable(context.Background(), name); !avail {
 		return nil, &api.ConflictError{
 			Message: fmt.Sprintf("Conflict. The container name \"%s\" is already in use", strings.TrimPrefix(name, "/")),
 		}
@@ -132,8 +132,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		agentToken = core.GenerateToken()
 	}
 
-	s.Store.Containers.Put(id, container)
-	s.Store.ContainerNames.Put(name, id)
+	s.PendingCreates.Put(id, container)
 
 	// Store ECS state without task definition — defer registration to ContainerStart.
 	s.ECS.Put(id, ECSState{
@@ -152,19 +151,25 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 }
 
 // ContainerStart starts an ECS task for the container.
+// All execution goes through the ECS cloud API — no local execution.
 func (s *Server) ContainerStart(ref string) error {
-	// When auto-agent is configured, skip cloud task launch entirely.
-	// BaseServer.ContainerStart marks running and spawns a local agent.
-	if os.Getenv("SOCKERLESS_AUTO_AGENT_BIN") != "" {
-		return s.BaseServer.ContainerStart(ref)
+	// Resolve from PendingCreates (containers between create and start)
+	c, ok := s.PendingCreates.Get(ref)
+	if !ok {
+		// Try name/short-ID match in PendingCreates
+		for _, pc := range s.PendingCreates.List() {
+			if pc.Name == ref || pc.Name == "/"+ref || (len(ref) >= 3 && strings.HasPrefix(pc.ID, ref)) {
+				c = pc
+				ok = true
+				break
+			}
+		}
 	}
-
-	id, ok := s.Store.ResolveContainerID(ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if c.State.Running {
 		return &api.NotModifiedError{}
 	}
@@ -186,20 +191,9 @@ func (s *Server) ContainerStart(ref string) error {
 		ecsState.TaskDefARN = taskDefARN
 	}
 
-	// markRunning transitions the container to running state and emits the start event.
-	// For deferred/pod paths, also creates the exitCh. For the single-container
-	// path, the exitCh is pre-created before runECSTask to avoid race conditions
-	// with short-lived auto-agent containers.
+	// markRunning emits the start event and sets up the wait channel.
+	// Container state is no longer written to Store.Containers — the cloud is the truth.
 	markRunning := func() chan struct{} {
-		now := time.Now().UTC().Format(time.RFC3339Nano)
-		s.Store.Containers.Update(id, func(c *api.Container) {
-			c.State.Status = "running"
-			c.State.Running = true
-			c.State.Pid = 0 // Fargate doesn't expose host PID
-			c.State.StartedAt = now
-			c.State.FinishedAt = "0001-01-01T00:00:00Z"
-			c.State.ExitCode = 0
-		})
 		// Use existing exitCh if already created, otherwise create new one
 		var exitCh chan struct{}
 		if ch, ok := s.Store.WaitChs.Load(id); ok {
@@ -208,7 +202,6 @@ func (s *Server) ContainerStart(ref string) error {
 			exitCh = make(chan struct{})
 			s.Store.WaitChs.Store(id, exitCh)
 		}
-		c, _ = s.Store.Containers.Get(id)
 		s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 		return exitCh
 	}
@@ -252,13 +245,15 @@ func (s *Server) ContainerStart(ref string) error {
 
 	markRunning()
 
+	// Remove from PendingCreates now that the task is launched in the cloud.
+	s.PendingCreates.Delete(id)
+
 	s.ECS.Update(id, func(state *ECSState) {
 		state.TaskARN = taskARN
 		state.ClusterARN = clusterARN
 	})
 
 	// Register in Cloud Map for service discovery (skip pre-defined networks)
-	c, _ = s.Store.Containers.Get(id)
 	hostname := strings.TrimPrefix(c.Name, "/")
 	for netName, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID != "" && ep.IPAddress != "" {
@@ -281,8 +276,9 @@ func (s *Server) ContainerStart(ref string) error {
 			// Wait for reverse agent to disconnect before stopping
 			_ = s.AgentRegistry.WaitForDisconnect(id, 30*time.Minute)
 
-			if _, ok := s.Store.Containers.Get(id); ok {
-				s.Store.StopContainer(id, 0)
+			// Close wait channel so ContainerWait unblocks
+			if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+				close(ch.(chan struct{}))
 			}
 		}()
 
@@ -296,75 +292,33 @@ func (s *Server) ContainerStart(ref string) error {
 				s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
 			}
 		} else {
-			s.Store.Containers.Update(id, func(c *api.Container) {
-				c.AgentAddress = "reverse"
-				c.AgentToken = ecsState.AgentToken
+			s.ECS.Update(id, func(state *ECSState) {
+				state.AgentAddress = "reverse"
 			})
 		}
 	} else {
-		// Forward agent mode: poll for task RUNNING and health check
-		isLongRunning := core.IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd)
-
-		if isLongRunning {
-			// Long-running container: wait for RUNNING and check agent health
+		// Forward agent mode: async wait for RUNNING + agent health.
+		// Return immediately so docker start/run -d is fast.
+		go func() {
 			agentAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
 			if err != nil {
 				s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
-				// Stop the ECS task that was already launched
-				_, _ = s.aws.ECS.StopTask(s.ctx(), &awsecs.StopTaskInput{
-					Cluster: aws.String(clusterARN),
-					Task:    aws.String(taskARN),
-					Reason:  aws.String("Task failed to reach RUNNING state"),
-				})
-				s.Registry.MarkCleanedUp(taskARN)
-				s.AgentRegistry.Remove(id)
-				s.Store.RevertToCreated(id)
-				return awscommon.MapAWSError(err, "task", id)
+				if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+					close(ch.(chan struct{}))
+				}
+				return
 			}
 
-			// Update container NetworkSettings with real ENI IP
-			if host, _, splitErr := net.SplitHostPort(agentAddr); splitErr == nil {
-				mac := deriveMACFromIP(host)
-				s.Store.Containers.Update(id, func(c *api.Container) {
-					for _, ep := range c.NetworkSettings.Networks {
-						if ep != nil {
-							ep.IPAddress = host
-							ep.MacAddress = mac
-							ep.Gateway = ""
-						}
-					}
-				})
-			}
-
-			// Wait for agent health
+			// Check agent health (non-blocking for the caller)
 			agentURL := fmt.Sprintf("http://%s/health", agentAddr)
-			agentHealthy := true
 			if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
 				s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
-				agentHealthy = false
-			}
-
-			if agentHealthy {
-				s.Store.Containers.Update(id, func(c *api.Container) {
-					c.AgentAddress = agentAddr
-					c.AgentToken = ecsState.AgentToken
-				})
-			} else {
-				// Fallback to auto-agent if configured
-				if autoErr := s.SpawnAutoAgent(id); autoErr != nil {
-					s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
-				}
 			}
 
 			s.ECS.Update(id, func(state *ECSState) {
 				state.AgentAddress = agentAddr
 			})
-		} else {
-			// Short-lived container without forward agent — try auto-agent
-			if autoErr := s.SpawnAutoAgent(id); autoErr != nil {
-				s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
-			}
-		}
+		}()
 
 		// Start background poller to detect task exit
 		go s.pollTaskExit(id, taskARN, exitCh)
@@ -399,7 +353,6 @@ func (s *Server) startMultiContainerTaskTyped(triggerID string, podContainers []
 	// Use the main (first) container for the task
 	mainContainer := &podContainers[0]
 	mainID := mainContainer.ID
-	mainState, _ := s.ECS.Get(mainID)
 
 	// Pre-create done channel for reverse agent on main container
 	if s.config.CallbackURL != "" {
@@ -416,10 +369,16 @@ func (s *Server) startMultiContainerTaskTyped(triggerID string, podContainers []
 		if s.config.CallbackURL != "" {
 			s.AgentRegistry.Remove(mainID)
 		}
+		// Re-add pod containers to PendingCreates so they can be retried
 		for _, pc := range podContainers {
-			s.Store.RevertToCreated(pc.ID)
+			s.PendingCreates.Put(pc.ID, pc)
 		}
 		return awscommon.MapAWSError(err, "task", mainID)
+	}
+
+	// Remove all pod containers from PendingCreates now that the task is launched.
+	for _, pc := range podContainers {
+		s.PendingCreates.Delete(pc.ID)
 	}
 
 	// Store cloud state on ALL pod containers (so stop/remove works for any)
@@ -436,8 +395,9 @@ func (s *Server) startMultiContainerTaskTyped(triggerID string, podContainers []
 		go func() {
 			s.waitForTaskStopped(taskARN, exitCh)
 			_ = s.AgentRegistry.WaitForDisconnect(mainID, 30*time.Minute)
-			if _, ok := s.Store.Containers.Get(mainID); ok {
-				s.Store.StopContainer(mainID, 0)
+			// Close wait channel so ContainerWait unblocks
+			if ch, ok := s.Store.WaitChs.LoadAndDelete(mainID); ok {
+				close(ch.(chan struct{}))
 			}
 		}()
 
@@ -446,9 +406,8 @@ func (s *Server) startMultiContainerTaskTyped(triggerID string, podContainers []
 			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
 			s.AgentRegistry.Remove(mainID)
 		} else {
-			s.Store.Containers.Update(mainID, func(c *api.Container) {
-				c.AgentAddress = "reverse"
-				c.AgentToken = mainState.AgentToken
+			s.ECS.Update(mainID, func(state *ECSState) {
+				state.AgentAddress = "reverse"
 			})
 		}
 	} else {
@@ -459,8 +418,9 @@ func (s *Server) startMultiContainerTaskTyped(triggerID string, podContainers []
 			if s.config.CallbackURL != "" {
 				s.AgentRegistry.Remove(mainID)
 			}
+			// Re-add pod containers to PendingCreates so they can be retried
 			for _, pc := range podContainers {
-				s.Store.RevertToCreated(pc.ID)
+				s.PendingCreates.Put(pc.ID, pc)
 			}
 			return awscommon.MapAWSError(err, "task", mainID)
 		}
@@ -472,11 +432,11 @@ func (s *Server) startMultiContainerTaskTyped(triggerID string, podContainers []
 			agentHealthy = false
 		}
 
-		if agentHealthy {
-			s.Store.Containers.Update(mainID, func(c *api.Container) {
-				c.AgentAddress = agentAddr
-				c.AgentToken = mainState.AgentToken
-			})
+		if !agentHealthy {
+			// Fallback to auto-agent if configured
+			if autoErr := s.SpawnAutoAgent(mainID); autoErr != nil {
+				s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
+			}
 		}
 
 		s.ECS.Update(mainID, func(state *ECSState) {
@@ -491,12 +451,12 @@ func (s *Server) startMultiContainerTaskTyped(triggerID string, podContainers []
 
 // ContainerStop stops a running container by stopping its ECS task.
 func (s *Server) ContainerStop(ref string, timeout *int) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if !c.State.Running {
 		return &api.NotModifiedError{}
 	}
@@ -518,21 +478,23 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 	s.StopHealthCheck(id)
 	s.AgentRegistry.Remove(id)
 	core.StopAutoAgent(id)
-	s.Store.ForceStopContainer(id, 0)
-	c, _ = s.Store.Containers.Get(id)
-	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", c.State.ExitCode), "name": strings.TrimPrefix(c.Name, "/")})
+	// Close wait channel so ContainerWait unblocks
+	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+		close(ch.(chan struct{}))
+	}
+	s.EmitEvent("container", "die", id, map[string]string{"exitCode": "0", "name": strings.TrimPrefix(c.Name, "/")})
 	s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	return nil
 }
 
 // ContainerKill kills a container with the given signal.
 func (s *Server) ContainerKill(ref string, signal string) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if !c.State.Running {
 		return &api.ConflictError{
 			Message: fmt.Sprintf("Container %s is not running", ref),
@@ -560,14 +522,6 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 		})
 	}
 
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		c.State.Status = "exited"
-		c.State.Running = false
-		c.State.Pid = 0
-		c.State.ExitCode = exitCode
-		c.State.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	})
-
 	s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", exitCode), "name": strings.TrimPrefix(c.Name, "/")})
 
@@ -580,12 +534,18 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 
 // ContainerRemove removes a container and its associated ECS resources.
 func (s *Server) ContainerRemove(ref string, force bool) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
+	if !ok {
+		// Also check PendingCreates (container created but never started)
+		if pc, pcOK := s.PendingCreates.Get(ref); pcOK {
+			c = pc
+			ok = true
+		}
+	}
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-
-	c, _ := s.Store.Containers.Get(id)
+	id := c.ID
 
 	if c.State.Running && !force {
 		return &api.ConflictError{
@@ -615,7 +575,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 				Reason:  aws.String("Container removed"),
 			})
 		}
-		s.Store.ForceStopContainer(id, 0)
 	}
 
 	s.StopHealthCheck(id)
@@ -652,8 +611,8 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		}
 	}
 
-	s.Store.Containers.Delete(id)
-	s.Store.ContainerNames.Delete(c.Name)
+	// Clean up PendingCreates (container may have been created but never started)
+	s.PendingCreates.Delete(id)
 	s.ECS.Delete(id)
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
@@ -675,7 +634,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 // ContainerLogs streams container logs from CloudWatch.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
-	id, ok := s.Store.ResolveContainerID(ref)
+	id, ok := s.ResolveContainerIDAuto(context.Background(), ref)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
@@ -683,8 +642,9 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 	// Guard against containers that were never started (no ECS task).
 	taskID := s.getTaskID(id)
 	if taskID == "unknown" {
-		// No task launched yet — delegate to base (returns empty or auto-agent logs).
-		return s.BaseServer.ContainerLogs(ref, opts)
+		return nil, &api.InvalidParameterError{
+			Message: "logs not available: ECS task not found for container " + id[:12],
+		}
 	}
 
 	logStreamName := fmt.Sprintf("%s/main/%s", id[:12], taskID)
@@ -739,12 +699,11 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 
 // ContainerRestart stops and then starts a container.
 func (s *Server) ContainerRestart(ref string, timeout *int) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-
-	c, _ := s.Store.Containers.Get(id)
+	id := c.ID
 
 	// Stop if running
 	if c.State.Running {
@@ -775,7 +734,10 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 			state.ClusterARN = ""
 			state.AgentAddress = ""
 		})
-		s.Store.ForceStopContainer(id, 0)
+		// Close wait channel so ContainerWait unblocks
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
+		}
 		s.EmitEvent("container", "die", id, map[string]string{
 			"exitCode": "0",
 			"name":     strings.TrimPrefix(c.Name, "/"),
@@ -783,9 +745,8 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 		s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	}
 
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		c.RestartCount++
-	})
+	// Re-add to PendingCreates so ContainerStart can find and launch it.
+	s.PendingCreates.Put(id, c)
 
 	// Start the container directly via typed method
 	if err := s.ContainerStart(id); err != nil {
@@ -801,9 +762,15 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 	labelFilters := filters["label"]
 	untilFilters := filters["until"]
 
+	// Query CloudState for all containers (including stopped)
+	containers, err := s.CloudState.ListContainers(context.Background(), true, nil)
+	if err != nil {
+		return nil, err
+	}
+
 	var deleted []string
 	var spaceReclaimed uint64
-	for _, c := range s.Store.Containers.List() {
+	for _, c := range containers {
 		if c.State.Status != "exited" && c.State.Status != "dead" {
 			continue
 		}
@@ -838,8 +805,6 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 		if pod, inPod := s.Store.Pods.GetPodForContainer(c.ID); inPod {
 			s.Store.Pods.RemoveContainer(pod.ID, c.ID)
 		}
-		s.Store.Containers.Delete(c.ID)
-		s.Store.ContainerNames.Delete(c.Name)
 		s.ECS.Delete(c.ID)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
 			close(ch.(chan struct{}))
@@ -870,7 +835,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 
 // ContainerPause is not supported by the ECS backend.
 func (s *Server) ContainerPause(ref string) error {
-	_, ok := s.Store.ResolveContainerID(ref)
+	_, ok := s.ResolveContainerIDAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
@@ -879,7 +844,7 @@ func (s *Server) ContainerPause(ref string) error {
 
 // ContainerUnpause is not supported by the ECS backend.
 func (s *Server) ContainerUnpause(ref string) error {
-	_, ok := s.Store.ResolveContainerID(ref)
+	_, ok := s.ResolveContainerIDAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
@@ -931,15 +896,16 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 		return nil, &api.NotFoundError{Resource: "exec instance", ID: id}
 	}
 
-	c, ok := s.Store.Containers.Get(exec.ContainerID)
+	c, ok := s.ResolveContainerAuto(context.Background(), exec.ContainerID)
 	if !ok {
 		return nil, &api.ConflictError{
 			Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID),
 		}
 	}
 
-	// If an agent is connected, delegate to BaseServer (agent driver handles it)
-	if c.AgentAddress != "" {
+	// If an agent is connected (check ECS state), delegate to BaseServer
+	ecsState, _ := s.ECS.Get(c.ID)
+	if ecsState.AgentAddress != "" {
 		return s.BaseServer.ExecStart(id, opts)
 	}
 
@@ -957,9 +923,16 @@ func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
 
 	var errs []string
 	for _, cid := range pod.ContainerIDs {
-		c, ok := s.Store.Containers.Get(cid)
-		if !ok || c.State.Running {
-			continue
+		// Check PendingCreates (containers between create and start)
+		if c, ok := s.PendingCreates.Get(cid); ok {
+			if c.State.Running {
+				continue
+			}
+		} else {
+			// Check CloudState for already-running containers
+			if c, ok := s.ResolveContainerAuto(context.Background(), cid); ok && c.State.Running {
+				continue
+			}
 		}
 		if err := s.ContainerStart(cid); err != nil {
 			errs = append(errs, fmt.Sprintf("container %s: %v", cid[:12], err))
@@ -981,7 +954,7 @@ func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, err
 
 	var errs []string
 	for _, cid := range pod.ContainerIDs {
-		c, ok := s.Store.Containers.Get(cid)
+		c, ok := s.ResolveContainerAuto(context.Background(), cid)
 		if !ok || !c.State.Running {
 			continue
 		}
@@ -1012,7 +985,7 @@ func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, er
 
 	var errs []string
 	for _, cid := range pod.ContainerIDs {
-		c, ok := s.Store.Containers.Get(cid)
+		c, ok := s.ResolveContainerAuto(context.Background(), cid)
 		if !ok || !c.State.Running {
 			continue
 		}
@@ -1037,7 +1010,7 @@ func (s *Server) PodRemove(name string, force bool) error {
 	// Without force, reject if any containers are running
 	if !force {
 		for _, cid := range pod.ContainerIDs {
-			c, ok := s.Store.Containers.Get(cid)
+			c, ok := s.ResolveContainerAuto(context.Background(), cid)
 			if ok && c.State.Running {
 				return &api.ConflictError{
 					Message: fmt.Sprintf("pod %s has running containers, cannot remove without force", name),
@@ -1048,7 +1021,7 @@ func (s *Server) PodRemove(name string, force bool) error {
 
 	// Remove each container through our ContainerRemove (handles ECS cleanup)
 	for _, cid := range pod.ContainerIDs {
-		if _, ok := s.Store.Containers.Get(cid); !ok {
+		if _, ok := s.ResolveContainerAuto(context.Background(), cid); !ok {
 			continue
 		}
 		_ = s.ContainerRemove(cid, force)
@@ -1084,51 +1057,43 @@ func (s *Server) Info() (*api.BackendInfo, error) {
 	return info, nil
 }
 
-// ContainerInspect returns container details, refreshing status from ECS first.
+// ContainerInspect returns container details from CloudState.
 func (s *Server) ContainerInspect(ref string) (*api.Container, error) {
-	id, ok := s.Store.ResolveContainerID(ref)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: ref}
+	// Check PendingCreates first (container created but not yet started)
+	if c, ok := s.PendingCreates.Get(ref); ok {
+		return &c, nil
 	}
-
-	// Refresh task status from ECS before returning
-	s.refreshTaskStatus(id)
-
-	return s.BaseServer.ContainerInspect(id)
-}
-
-// ContainerList lists containers, refreshing status from ECS for containers with tasks.
-func (s *Server) ContainerList(opts api.ContainerListOptions) ([]*api.ContainerSummary, error) {
-	// Batch-refresh all containers that have TaskARNs before filtering
-	var idsWithTasks []string
-	for _, c := range s.Store.Containers.List() {
-		if ecsState, ok := s.ECS.Get(c.ID); ok && ecsState.TaskARN != "" {
-			idsWithTasks = append(idsWithTasks, c.ID)
+	for _, c := range s.PendingCreates.List() {
+		if c.Name == ref || c.Name == "/"+ref || (len(ref) >= 3 && strings.HasPrefix(c.ID, ref)) {
+			return &c, nil
 		}
 	}
-	if len(idsWithTasks) > 0 {
-		s.refreshTaskStatusBatch(idsWithTasks)
-	}
 
+	// Delegate to CloudState via BaseServer (which uses ResolveContainerAuto)
+	return s.BaseServer.ContainerInspect(ref)
+}
+
+// ContainerList lists containers from CloudState, plus PendingCreates.
+func (s *Server) ContainerList(opts api.ContainerListOptions) ([]*api.ContainerSummary, error) {
+	// Delegate to BaseServer which uses CloudState when set
 	return s.BaseServer.ContainerList(opts)
 }
 
 // ExecCreate creates an exec instance. Validates that an agent is connected
 // before creating — without an agent, exec cannot work on ECS Fargate.
 func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*api.ExecCreateResponse, error) {
-	id, ok := s.Store.ResolveContainerID(containerID)
+	c, ok := s.ResolveContainerAuto(context.Background(), containerID)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: containerID}
 	}
 
-	c, _ := s.Store.Containers.Get(id)
 	if !c.State.Running {
 		return nil, &api.ConflictError{Message: "Container " + containerID + " is not running"}
 	}
 
 	// ECS-specific: check that an agent or ECS task is available for exec.
-	ecsState, _ := s.ECS.Get(id)
-	if c.AgentAddress == "" && ecsState.TaskARN == "" {
+	ecsState, _ := s.ECS.Get(c.ID)
+	if ecsState.AgentAddress == "" && ecsState.TaskARN == "" {
 		return nil, &api.NotImplementedError{
 			Message: fmt.Sprintf("exec requires an agent connection or running ECS task, but container %s has neither (ECS backend)", strings.TrimPrefix(c.Name, "/")),
 		}
@@ -1140,7 +1105,7 @@ func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*ap
 
 // ContainerExport is not supported by the ECS backend (no filesystem access on Fargate).
 func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {
-	_, ok := s.Store.ResolveContainerID(ref)
+	_, ok := s.ResolveContainerIDAuto(context.Background(), ref)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
@@ -1149,7 +1114,7 @@ func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {
 
 // ContainerCommit is not supported by the ECS backend (cannot snapshot Fargate containers).
 func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
-	_, ok := s.Store.ResolveContainerID(req.Container)
+	_, ok := s.ResolveContainerIDAuto(context.Background(), req.Container)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
 	}
@@ -1158,11 +1123,14 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 
 // VolumePrune removes all unused volumes.
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
+	// Query CloudState for all containers to check volume usage
+	allContainers, _ := s.CloudState.ListContainers(context.Background(), true, nil)
+
 	var deleted []string
 	var spaceReclaimed uint64
 	for _, v := range s.Store.Volumes.List() {
 		inUse := false
-		for _, c := range s.Store.Containers.List() {
+		for _, c := range allContainers {
 			for _, m := range c.Mounts {
 				if m.Name == v.Name {
 					inUse = true

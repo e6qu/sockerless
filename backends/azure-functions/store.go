@@ -6,4 +6,5 @@ type AZFState struct {
 	ResourceID      string
 	FunctionURL     string
 	AgentToken      string
+	AgentAddress    string
 }

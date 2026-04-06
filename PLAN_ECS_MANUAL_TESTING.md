@@ -254,6 +254,24 @@ services:
 
 ---
 
+## Track I: Stateless Backend Verification
+
+Verifies that the backend has zero local state — all container info comes from the cloud.
+
+| # | Test | Steps | Expected |
+|---|------|-------|----------|
+| I1 | Create+start | `docker run -d --name persist1 nginx:alpine` | Running on Fargate |
+| I2 | Verify running | `docker ps` | Shows persist1 |
+| I3 | **Kill backend** | `pkill sockerless-backend-ecs` | Backend exits |
+| I4 | **Restart backend** | Start backend again with same config | Backend starts fresh |
+| I5 | **Verify state survived** | `docker ps` | Shows persist1 still running (from cloud) |
+| I6 | **Inspect after restart** | `docker inspect persist1` | Full container details from ECS |
+| I7 | **Stop after restart** | `docker stop persist1` | StopTask works (task ARN from cloud) |
+| I8 | **Verify stopped** | `docker ps -a` | Shows persist1 Exited |
+| I9 | Clean | `docker rm persist1` | Cleaned |
+
+---
+
 ## Track D: Lambda-specific
 
 | # | Test | Command | Expected |

@@ -105,7 +105,7 @@ func (s *BaseServer) handleContainerStop(w http.ResponseWriter, r *http.Request)
 	}
 	// Adjust exit code for signal query param (Docker API v1.42+)
 	if signal := r.URL.Query().Get("signal"); signal != "" {
-		if id, ok := s.Store.ResolveContainerID(ref); ok {
+		if id, ok := s.ResolveContainerIDAuto(r.Context(), ref); ok {
 			exitCode := SignalToExitCode(signal)
 			s.Store.Containers.Update(id, func(c *api.Container) {
 				c.State.ExitCode = exitCode
@@ -148,19 +148,64 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 
 func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
-	id, ok := s.Store.ResolveContainerID(ref)
+
+	// Try local wait channel first (auto-agent mode runs containers locally)
+	if s.CloudState != nil {
+		id, ok := s.ResolveContainerIDAuto(r.Context(), ref)
+		if !ok {
+			WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
+			return
+		}
+
+		// Check if already exited (cloud or local)
+		c, found, _ := s.CloudState.GetContainer(r.Context(), id)
+		if !found {
+			if lc, lok := s.Store.Containers.Get(id); lok {
+				c = lc
+				found = true
+			}
+		}
+		if found && (c.State.Status == "exited" || c.State.Status == "dead") {
+			WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: c.State.ExitCode})
+			return
+		}
+
+		// If there's a local wait channel (auto-agent), use it
+		if ch, hasChannel := s.Store.WaitChs.Load(id); hasChannel {
+			select {
+			case <-ch.(chan struct{}):
+				if lc, lok := s.Store.Containers.Get(id); lok {
+					WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: lc.State.ExitCode})
+				} else {
+					WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: 0})
+				}
+			case <-r.Context().Done():
+				WriteError(w, &api.ServerError{Message: r.Context().Err().Error()})
+			}
+			return
+		}
+
+		// Cloud-based wait: poll until stopped
+		exitCode, err := s.CloudState.WaitForExit(r.Context(), id)
+		if err != nil {
+			WriteError(w, &api.ServerError{Message: err.Error()})
+			return
+		}
+		WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: exitCode})
+		return
+	}
+
+	id, ok := s.ResolveContainerIDAuto(r.Context(), ref)
 	if !ok {
 		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
 		return
 	}
 
-	// Read condition query parameter (not-running, next-exit, removed)
 	condition := r.URL.Query().Get("condition")
 	if condition == "" {
 		condition = "not-running"
 	}
 
-	// Handle "removed" condition — if container is already gone, return exit code 0
 	c, exists := s.Store.Containers.Get(id)
 	if !exists {
 		if condition == "removed" {
@@ -171,7 +216,6 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// If already exited, return immediately (unless next-exit which waits for a new exit)
 	if condition != "next-exit" && (c.State.Status == "exited" || c.State.Status == "dead") {
 		WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{
 			StatusCode: c.State.ExitCode,
@@ -179,7 +223,6 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Block until exit.
 	ch, ok := s.Store.WaitChs.Load(id)
 	if !ok {
 		c, _ = s.Store.Containers.Get(id)

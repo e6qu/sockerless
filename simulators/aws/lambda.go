@@ -59,14 +59,14 @@ type LambdaImageConfig struct {
 }
 
 // State store
-var lambdaFunctions *sim.StateStore[LambdaFunction]
+var lambdaFunctions sim.Store[LambdaFunction]
 
 func lambdaArn(name string) string {
 	return fmt.Sprintf("arn:aws:lambda:us-east-1:123456789012:function:%s", name)
 }
 
 func registerLambda(srv *sim.Server) {
-	lambdaFunctions = sim.NewStateStore[LambdaFunction]()
+	lambdaFunctions = sim.MakeStore[LambdaFunction](srv.DB(), "lambda_functions")
 
 	mux := srv.Mux()
 

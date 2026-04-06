@@ -46,8 +46,10 @@ func main() {
 	srv.WrapHandler(AzureAuthMiddleware)
 
 	// Register Azure service routes
-	registerContainerApps(srv)
+	// Monitor must be registered first to initialize monitorLogs store
+	// used by Container Apps and Functions log injection.
 	registerAzureMonitor(srv)
+	registerContainerApps(srv)
 	registerAzureFiles(srv)
 	registerACR(srv)
 	registerPrivateDNS(srv)

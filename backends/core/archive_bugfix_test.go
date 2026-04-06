@@ -135,10 +135,11 @@ func TestCreateTar_SingleFile(t *testing.T) {
 func TestHandlePutArchive_DriverError(t *testing.T) {
 	store := NewStore()
 	s := &BaseServer{
-		Store:    store,
-		Logger:   zerolog.Nop(),
-		Mux:      http.NewServeMux(),
-		EventBus: NewEventBus(),
+		Store:          store,
+		Logger:         zerolog.Nop(),
+		Mux:            http.NewServeMux(),
+		EventBus:       NewEventBus(),
+		PendingCreates: NewStateStore[api.Container](),
 	}
 	s.InitDrivers()
 	s.self = s
@@ -163,10 +164,11 @@ func TestHandlePutArchive_DriverError(t *testing.T) {
 func TestHandlePutArchive_NoAgent_StagesFiles(t *testing.T) {
 	store := NewStore()
 	s := &BaseServer{
-		Store:    store,
-		Logger:   zerolog.Nop(),
-		Mux:      http.NewServeMux(),
-		EventBus: NewEventBus(),
+		Store:          store,
+		Logger:         zerolog.Nop(),
+		Mux:            http.NewServeMux(),
+		EventBus:       NewEventBus(),
+		PendingCreates: NewStateStore[api.Container](),
 	}
 	s.InitDrivers()
 	s.self = s
@@ -253,10 +255,11 @@ func TestCommit_EmptyBody(t *testing.T) {
 func TestBuild_InvalidBuildargs(t *testing.T) {
 	store := NewStore()
 	s := &BaseServer{
-		Store:    store,
-		Logger:   zerolog.Nop(),
-		Mux:      http.NewServeMux(),
-		EventBus: NewEventBus(),
+		Store:          store,
+		Logger:         zerolog.Nop(),
+		Mux:            http.NewServeMux(),
+		EventBus:       NewEventBus(),
+		PendingCreates: NewStateStore[api.Container](),
 	}
 	s.InitDrivers()
 	s.self = s

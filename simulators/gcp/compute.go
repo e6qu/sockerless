@@ -56,8 +56,8 @@ type ComputeSubnetwork struct {
 }
 
 func registerCompute(srv *sim.Server) {
-	networks := sim.NewStateStore[ComputeNetwork]()
-	subnetworks := sim.NewStateStore[ComputeSubnetwork]()
+	networks := sim.MakeStore[ComputeNetwork](srv.DB(), "compute_networks")
+	subnetworks := sim.MakeStore[ComputeSubnetwork](srv.DB(), "compute_subnetworks")
 
 	// Create network
 	srv.HandleFunc("POST /compute/v1/projects/{project}/global/networks", func(w http.ResponseWriter, r *http.Request) {

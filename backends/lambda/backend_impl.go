@@ -29,7 +29,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		name = "/" + name
 	}
 
-	if _, exists := s.Store.ContainerNames.Get(name); exists {
+	if avail, _ := s.CloudState.CheckNameAvailable(context.Background(), name); !avail {
 		return nil, &api.ConflictError{
 			Message: fmt.Sprintf("Conflict. The container name \"%s\" is already in use", strings.TrimPrefix(name, "/")),
 		}
@@ -145,8 +145,11 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	tags := core.TagSet{
 		ContainerID: id,
 		Backend:     "lambda",
+		Cluster:     s.config.Region,
 		InstanceID:  s.Desc.InstanceID,
 		CreatedAt:   time.Now(),
+		Name:        name,
+		Labels:      config.Labels,
 	}
 
 	// Resolve image to ECR URI (Lambda only supports ECR images)
@@ -165,7 +168,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		},
 		MemorySize: aws.Int32(int32(s.config.MemorySize)),
 		Timeout:    aws.Int32(int32(s.config.Timeout)),
-		Tags:       tags.AsMap(),
+		Tags:       func() map[string]string { m := tags.AsMap(); m["sockerless-image"] = config.Image; return m }(),
 	}
 
 	if len(envVars) > 0 {
@@ -231,8 +234,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 
 	functionARN := aws.ToString(result.FunctionArn)
 
-	s.Store.Containers.Put(id, container)
-	s.Store.ContainerNames.Put(name, id)
+	s.PendingCreates.Put(id, container)
 
 	s.Lambda.Put(id, LambdaState{
 		FunctionName: funcName,
@@ -263,12 +265,23 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 
 // ContainerStart starts a Lambda function invocation for the container.
 func (s *Server) ContainerStart(ref string) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	// Resolve from PendingCreates (containers between create and start)
+	c, ok := s.PendingCreates.Get(ref)
+	if !ok {
+		// Try name/short-ID match in PendingCreates
+		for _, pc := range s.PendingCreates.List() {
+			if pc.Name == ref || pc.Name == "/"+ref || (len(ref) >= 3 && strings.HasPrefix(pc.ID, ref)) {
+				c = pc
+				ok = true
+				break
+			}
+		}
+	}
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if c.State.Running {
 		return &api.NotModifiedError{}
 	}
@@ -282,22 +295,13 @@ func (s *Server) ContainerStart(ref string) error {
 
 	lambdaState, _ := s.Lambda.Get(id)
 
-	// Update container state to running
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		c.State.Status = "running"
-		c.State.Running = true
-		c.State.Pid = 0
-		c.State.StartedAt = now
-		c.State.FinishedAt = "0001-01-01T00:00:00Z"
-		c.State.ExitCode = 0
-	})
-
 	exitCh := make(chan struct{})
 	s.Store.WaitChs.Store(id, exitCh)
 
-	c, _ = s.Store.Containers.Get(id)
 	s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+
+	// Remove from PendingCreates now that the function is being invoked.
+	s.PendingCreates.Delete(id)
 
 	// Non-tail-dev-null containers: invoke the function with the container's command
 	// to get real execution, then stop with the real exit code.
@@ -306,42 +310,30 @@ func (s *Server) ContainerStart(ref string) error {
 		if len(cmd) > 0 {
 			// Invoke the function (already has ImageConfig.Command from create)
 			go func() {
-				exitCode := 0
 				result, err := s.aws.Lambda.Invoke(s.ctx(), &awslambda.InvokeInput{
 					FunctionName: aws.String(lambdaState.FunctionName),
 				})
-				var stateError string
 				if err != nil {
 					s.Logger.Error().Err(err).Str("function", lambdaState.FunctionName).Msg("Lambda invocation failed")
-					exitCode = 1
-					stateError = err.Error()
 				} else {
 					if result.FunctionError != nil {
-						exitCode = 1
-						stateError = aws.ToString(result.FunctionError)
+						s.Logger.Warn().Str("error", aws.ToString(result.FunctionError)).Msg("Lambda function returned error")
 					}
 					// Store response payload in log buffer for container logs
 					if len(result.Payload) > 0 && string(result.Payload) != "{}" {
-						if c, ok := s.Store.Containers.Get(id); ok && c.State.Running {
-							s.Store.LogBuffers.Store(id, result.Payload)
-						}
+						s.Store.LogBuffers.Store(id, result.Payload)
 					}
 				}
-				if c, ok := s.Store.Containers.Get(id); ok && c.State.Running {
-					if stateError != "" {
-						s.Store.Containers.Update(id, func(c *api.Container) {
-							c.State.Error = stateError
-						})
-					}
-					s.Store.StopContainer(id, exitCode)
+				if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+					close(ch.(chan struct{}))
 				}
 			}()
 		} else {
 			// No command: auto-stop after brief delay
 			go func() {
 				time.Sleep(500 * time.Millisecond)
-				if c, ok := s.Store.Containers.Get(id); ok && c.State.Running {
-					s.Store.StopContainer(id, 0)
+				if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+					close(ch.(chan struct{}))
 				}
 			}()
 		}
@@ -359,13 +351,10 @@ func (s *Server) ContainerStart(ref string) error {
 			FunctionName: aws.String(lambdaState.FunctionName),
 		})
 
-		exitCode := 0
 		if err != nil {
 			s.Logger.Error().Err(err).Str("function", lambdaState.FunctionName).Msg("Lambda invocation failed")
-			exitCode = 1
 		} else if result.FunctionError != nil {
 			s.Logger.Warn().Str("error", aws.ToString(result.FunctionError)).Msg("Lambda function returned error")
-			exitCode = 1
 		}
 
 		// Wait for reverse agent to disconnect before stopping.
@@ -375,8 +364,8 @@ func (s *Server) ContainerStart(ref string) error {
 			_ = s.AgentRegistry.WaitForDisconnect(id, 30*time.Minute)
 		}
 
-		if _, ok := s.Store.Containers.Get(id); ok {
-			s.Store.StopContainer(id, exitCode)
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
 		}
 	}()
 
@@ -386,9 +375,8 @@ func (s *Server) ContainerStart(ref string) error {
 			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
 			s.AgentRegistry.Remove(id)
 		} else {
-			s.Store.Containers.Update(id, func(c *api.Container) {
-				c.AgentAddress = "reverse"
-				c.AgentToken = lambdaState.AgentToken
+			s.Lambda.Update(id, func(state *LambdaState) {
+				state.AgentAddress = "reverse"
 			})
 		}
 	}
@@ -398,12 +386,12 @@ func (s *Server) ContainerStart(ref string) error {
 
 // ContainerStop stops a running Lambda container.
 func (s *Server) ContainerStop(ref string, timeout *int) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if !c.State.Running {
 		return &api.NotModifiedError{}
 	}
@@ -411,21 +399,23 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 	// Lambda functions run to completion — stop transitions state
 	s.StopHealthCheck(id)
 	s.AgentRegistry.Remove(id)
-	s.Store.ForceStopContainer(id, 0)
-	c, _ = s.Store.Containers.Get(id)
-	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", c.State.ExitCode), "name": strings.TrimPrefix(c.Name, "/")})
+	// Close wait channel so ContainerWait unblocks
+	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+		close(ch.(chan struct{}))
+	}
+	s.EmitEvent("container", "die", id, map[string]string{"exitCode": "0", "name": strings.TrimPrefix(c.Name, "/")})
 	s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	return nil
 }
 
 // ContainerKill kills a container with the given signal.
 func (s *Server) ContainerKill(ref string, signal string) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if !c.State.Running {
 		return &api.ConflictError{
 			Message: fmt.Sprintf("Container %s is not running", ref),
@@ -436,16 +426,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	s.StopHealthCheck(id)
 	s.AgentRegistry.Remove(id)
 
-	// Parse signal and transition container to exited state
 	exitCode := core.SignalToExitCode(signal)
-
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		c.State.Status = "exited"
-		c.State.Running = false
-		c.State.Pid = 0
-		c.State.ExitCode = exitCode
-		c.State.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	})
 
 	s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", exitCode), "name": strings.TrimPrefix(c.Name, "/")})
@@ -459,12 +440,18 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 
 // ContainerRemove removes a container and its associated Lambda resources.
 func (s *Server) ContainerRemove(ref string, force bool) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
+	if !ok {
+		// Also check PendingCreates (container created but never started)
+		if pc, pcOK := s.PendingCreates.Get(ref); pcOK {
+			c = pc
+			ok = true
+		}
+	}
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-
-	c, _ := s.Store.Containers.Get(id)
+	id := c.ID
 
 	if c.State.Running && !force {
 		return &api.ConflictError{
@@ -481,10 +468,10 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			"exitCode": "0",
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
-		s.Store.ForceStopContainer(id, 0)
 	}
 
 	s.StopHealthCheck(id)
+	s.AgentRegistry.Remove(id)
 
 	// Delete Lambda function (best-effort)
 	lambdaState, _ := s.Lambda.Get(id)
@@ -509,8 +496,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		}
 	}
 
-	s.Store.Containers.Delete(id)
-	s.Store.ContainerNames.Delete(c.Name)
+	s.PendingCreates.Delete(id)
 	s.Lambda.Delete(id)
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
@@ -534,7 +520,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
 	// Resolve state upfront so the closure can capture it.
 	var logGroupName, logStreamName *string
-	if id, ok := s.Store.ResolveContainerID(ref); ok {
+	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
 		lambdaState, _ := s.Lambda.Get(id)
 		group := fmt.Sprintf("/aws/lambda/%s", lambdaState.FunctionName)
 		logGroupName = &group
@@ -603,16 +589,18 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 
 // ContainerRestart stops and then starts a container.
 func (s *Server) ContainerRestart(ref string, timeout *int) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if c.State.Running {
 		s.StopHealthCheck(id)
 		s.AgentRegistry.Remove(id)
-		s.Store.ForceStopContainer(id, 0)
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
+		}
 		s.EmitEvent("container", "die", id, map[string]string{
 			"exitCode": "0",
 			"name":     strings.TrimPrefix(c.Name, "/"),
@@ -620,9 +608,13 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 		s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	}
 
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		c.RestartCount++
-	})
+	// Re-add to PendingCreates so ContainerStart can find it
+	c.State.Status = "created"
+	c.State.Running = false
+	c.State.Pid = 0
+	c.State.StartedAt = "0001-01-01T00:00:00Z"
+	c.RestartCount++
+	s.PendingCreates.Put(id, c)
 
 	// Start the container directly via typed method
 	if err := s.ContainerStart(id); err != nil {
@@ -634,22 +626,23 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 }
 
 // ContainerPrune removes all stopped containers.
+// In the stateless model, only PendingCreates (never-started) containers are local.
+// Lambda functions that have already run are cleaned up via ContainerRemove.
 func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPruneResponse, error) {
 	labelFilters := filters["label"]
 	untilFilters := filters["until"]
 	var deleted []string
 	var spaceReclaimed uint64
-	for _, c := range s.Store.Containers.List() {
-		if c.State.Status != "exited" && c.State.Status != "dead" {
-			continue
-		}
+
+	// Check PendingCreates for containers that were created but never started
+	for _, c := range s.PendingCreates.List() {
+		// PendingCreates containers are in "created" state — treat as pruneable
 		if len(labelFilters) > 0 && !core.MatchLabels(c.Config.Labels, labelFilters) {
 			continue
 		}
 		if len(untilFilters) > 0 && !core.MatchUntil(c.Created, untilFilters) {
 			continue
 		}
-		// Sum image sizes for SpaceReclaimed
 		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
 			spaceReclaimed += uint64(img.Size)
 		}
@@ -666,7 +659,6 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 
 		s.StopHealthCheck(c.ID)
 		s.AgentRegistry.Remove(c.ID)
-		// Clean up network associations
 		for _, ep := range c.NetworkSettings.Networks {
 			if ep != nil && ep.NetworkID != "" {
 				_ = s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, c.ID)
@@ -675,8 +667,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 		if pod, inPod := s.Store.Pods.GetPodForContainer(c.ID); inPod {
 			s.Store.Pods.RemoveContainer(pod.ID, c.ID)
 		}
-		s.Store.Containers.Delete(c.ID)
-		s.Store.ContainerNames.Delete(c.Name)
+		s.PendingCreates.Delete(c.ID)
 		s.Lambda.Delete(c.ID)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
 			close(ch.(chan struct{}))
@@ -707,8 +698,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 
 // ContainerPause is not supported by the Lambda backend.
 func (s *Server) ContainerPause(ref string) error {
-	_, ok := s.Store.ResolveContainerID(ref)
-	if !ok {
+	if _, ok := s.ResolveContainerIDAuto(context.Background(), ref); !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
 	return &api.NotImplementedError{Message: "Lambda backend does not support pause"}
@@ -716,8 +706,7 @@ func (s *Server) ContainerPause(ref string) error {
 
 // ContainerUnpause is not supported by the Lambda backend.
 func (s *Server) ContainerUnpause(ref string) error {
-	_, ok := s.Store.ResolveContainerID(ref)
-	if !ok {
+	if _, ok := s.ResolveContainerIDAuto(context.Background(), ref); !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
 	return &api.NotImplementedError{Message: "Lambda backend does not support unpause"}
@@ -779,11 +768,10 @@ func (s *Server) Info() (*api.BackendInfo, error) {
 // Only supported when a reverse agent is connected; otherwise Lambda functions
 // are not interactive.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	cid, ok := s.Store.ResolveContainerID(id)
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	c, _ := s.Store.Containers.Get(cid)
 	if c.AgentAddress != "" {
 		return s.BaseServer.ContainerAttach(id, opts)
 	}
@@ -795,7 +783,7 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 // ContainerExport is not supported by the Lambda backend.
 // Lambda functions have no local filesystem to export.
 func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
-	if _, ok := s.Store.ResolveContainerID(id); !ok {
+	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
 	return nil, &api.NotImplementedError{
@@ -809,7 +797,7 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 	if req.Container == "" {
 		return nil, &api.InvalidParameterError{Message: "container query parameter is required"}
 	}
-	if _, ok := s.Store.ResolveContainerID(req.Container); !ok {
+	if _, ok := s.ResolveContainerIDAuto(context.Background(), req.Container); !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
 	}
 	return nil, &api.NotImplementedError{

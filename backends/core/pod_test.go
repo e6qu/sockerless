@@ -160,12 +160,13 @@ func newPodTestServer() *BaseServer {
 	store := NewStore()
 	logger := zerolog.Nop()
 	s := &BaseServer{
-		Store:         store,
-		Logger:        logger,
-		Mux:           http.NewServeMux(),
-		AgentRegistry: NewAgentRegistry(),
-		Desc:          BackendDescriptor{Driver: "test"},
-		Registry:      NewResourceRegistry(""),
+		Store:          store,
+		Logger:         logger,
+		Mux:            http.NewServeMux(),
+		AgentRegistry:  NewAgentRegistry(),
+		Desc:           BackendDescriptor{Driver: "test"},
+		Registry:       NewResourceRegistry(""),
+		PendingCreates: NewStateStore[api.Container](),
 	}
 	s.InitDrivers()
 	s.self = s

@@ -9,23 +9,27 @@ func TestTagSetAsMap(t *testing.T) {
 	ts := TagSet{
 		ContainerID: "abcdef123456789",
 		Backend:     "ecs",
+		Cluster:     "my-cluster",
 		InstanceID:  "host-1",
 		CreatedAt:   time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC),
+		Name:        "/my-nginx",
+		Network:     "testnet",
 	}
 	m := ts.AsMap()
 
-	expected := map[string]string{
+	// Check required keys
+	checks := map[string]string{
 		"sockerless-managed":      "true",
-		"sockerless-container-id": "abcdef123456",
+		"sockerless-container-id": "abcdef123456789", // full ID, not truncated
 		"sockerless-backend":      "ecs",
+		"sockerless-cluster":      "my-cluster",
 		"sockerless-instance":     "host-1",
 		"sockerless-created-at":   "2025-01-15T10:30:00Z",
+		"sockerless-name":         "/my-nginx",
+		"sockerless-network":      "testnet",
 	}
 
-	if len(m) != len(expected) {
-		t.Fatalf("expected %d keys, got %d", len(expected), len(m))
-	}
-	for k, v := range expected {
+	for k, v := range checks {
 		if m[k] != v {
 			t.Errorf("key %q: expected %q, got %q", k, v, m[k])
 		}
@@ -111,7 +115,7 @@ func TestDefaultInstanceID(t *testing.T) {
 	}
 }
 
-func TestTruncateContainerID(t *testing.T) {
+func TestFullContainerID(t *testing.T) {
 	ts := TagSet{
 		ContainerID: "abcdef1234567890extra",
 		Backend:     "ecs",
@@ -119,7 +123,8 @@ func TestTruncateContainerID(t *testing.T) {
 		CreatedAt:   time.Now(),
 	}
 	m := ts.AsMap()
-	if m["sockerless-container-id"] != "abcdef123456" {
-		t.Errorf("expected container ID truncated to 12 chars, got %q", m["sockerless-container-id"])
+	// Full container ID stored in tags (not truncated — needed for stateless lookup)
+	if m["sockerless-container-id"] != "abcdef1234567890extra" {
+		t.Errorf("expected full container ID, got %q", m["sockerless-container-id"])
 	}
 }

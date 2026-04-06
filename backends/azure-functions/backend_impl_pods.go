@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
@@ -23,7 +22,7 @@ func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
 
 	var errs []string
 	for _, cid := range pod.ContainerIDs {
-		c, ok := s.Store.Containers.Get(cid)
+		c, ok := s.ResolveContainerAuto(context.Background(), cid)
 		if !ok || c.State.Running {
 			continue
 		}
@@ -49,16 +48,18 @@ func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, err
 	}
 
 	for _, cid := range pod.ContainerIDs {
-		c, ok := s.Store.Containers.Get(cid)
+		c, ok := s.ResolveContainerAuto(context.Background(), cid)
 		if !ok || !c.State.Running {
 			continue
 		}
 		s.StopHealthCheck(cid)
 		s.AgentRegistry.Remove(cid)
-		s.Store.ForceStopContainer(cid, 0)
-		c, _ = s.Store.Containers.Get(cid)
+		// Close wait channel so ContainerWait unblocks
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(cid); ok {
+			close(ch.(chan struct{}))
+		}
 		s.EmitEvent("container", "die", cid, map[string]string{
-			"exitCode": fmt.Sprintf("%d", c.State.ExitCode),
+			"exitCode": "0",
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
 		s.EmitEvent("container", "stop", cid, map[string]string{
@@ -85,20 +86,12 @@ func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, er
 	exitCode := core.SignalToExitCode(signal)
 
 	for _, cid := range pod.ContainerIDs {
-		c, ok := s.Store.Containers.Get(cid)
+		c, ok := s.ResolveContainerAuto(context.Background(), cid)
 		if !ok || !c.State.Running {
 			continue
 		}
 		s.StopHealthCheck(cid)
 		s.AgentRegistry.Remove(cid)
-
-		s.Store.Containers.Update(cid, func(c *api.Container) {
-			c.State.Status = "exited"
-			c.State.Running = false
-			c.State.Pid = 0
-			c.State.ExitCode = exitCode
-			c.State.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
-		})
 
 		s.EmitEvent("container", "kill", cid, map[string]string{
 			"name": strings.TrimPrefix(c.Name, "/"),
@@ -126,10 +119,12 @@ func (s *Server) PodRemove(name string, force bool) error {
 		return &api.NotFoundError{Resource: "pod", ID: name}
 	}
 
+	ctx := context.Background()
+
 	// Without force, reject if any containers are running
 	if !force {
 		for _, cid := range pod.ContainerIDs {
-			c, ok := s.Store.Containers.Get(cid)
+			c, ok := s.ResolveContainerAuto(ctx, cid)
 			if ok && c.State.Running {
 				return &api.ConflictError{
 					Message: fmt.Sprintf("pod %s has running containers, cannot remove without force", name),
@@ -138,10 +133,8 @@ func (s *Server) PodRemove(name string, force bool) error {
 		}
 	}
 
-	ctx := context.Background()
-
 	for _, cid := range pod.ContainerIDs {
-		c, ok := s.Store.Containers.Get(cid)
+		c, ok := s.ResolveContainerAuto(ctx, cid)
 		if !ok {
 			continue
 		}
@@ -157,7 +150,9 @@ func (s *Server) PodRemove(name string, force bool) error {
 				"exitCode": "0",
 				"name":     strings.TrimPrefix(c.Name, "/"),
 			})
-			s.Store.ForceStopContainer(cid, 0)
+			if ch, ok := s.Store.WaitChs.LoadAndDelete(cid); ok {
+				close(ch.(chan struct{}))
+			}
 		}
 
 		s.StopHealthCheck(cid)
@@ -181,8 +176,7 @@ func (s *Server) PodRemove(name string, force bool) error {
 			}
 		}
 
-		s.Store.Containers.Delete(cid)
-		s.Store.ContainerNames.Delete(c.Name)
+		s.PendingCreates.Delete(cid)
 		s.AZF.Delete(cid)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(cid); ok {
 			close(ch.(chan struct{}))

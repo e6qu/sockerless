@@ -82,10 +82,10 @@ type EFSLifecyclePolicy struct {
 
 // State stores
 var (
-	efsFileSystems       *sim.StateStore[EFSFileSystem]
-	efsMountTargets      *sim.StateStore[EFSMountTarget]
-	efsAccessPoints      *sim.StateStore[EFSAccessPoint]
-	efsLifecyclePolicies *sim.StateStore[[]EFSLifecyclePolicy]
+	efsFileSystems       sim.Store[EFSFileSystem]
+	efsMountTargets      sim.Store[EFSMountTarget]
+	efsAccessPoints      sim.Store[EFSAccessPoint]
+	efsLifecyclePolicies sim.Store[[]EFSLifecyclePolicy]
 )
 
 func efsArn(resourceType, id string) string {
@@ -93,10 +93,10 @@ func efsArn(resourceType, id string) string {
 }
 
 func registerEFS(srv *sim.Server) {
-	efsFileSystems = sim.NewStateStore[EFSFileSystem]()
-	efsMountTargets = sim.NewStateStore[EFSMountTarget]()
-	efsAccessPoints = sim.NewStateStore[EFSAccessPoint]()
-	efsLifecyclePolicies = sim.NewStateStore[[]EFSLifecyclePolicy]()
+	efsFileSystems = sim.MakeStore[EFSFileSystem](srv.DB(), "efs_file_systems")
+	efsMountTargets = sim.MakeStore[EFSMountTarget](srv.DB(), "efs_mount_targets")
+	efsAccessPoints = sim.MakeStore[EFSAccessPoint](srv.DB(), "efs_access_points")
+	efsLifecyclePolicies = sim.MakeStore[[]EFSLifecyclePolicy](srv.DB(), "efs_lifecycle_policies")
 
 	mux := srv.Mux()
 

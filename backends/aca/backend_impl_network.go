@@ -1,6 +1,7 @@
 package aca
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -43,7 +44,7 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 	if !ok {
 		return nil
 	}
-	containerID, ok := s.Store.ResolveContainerID(req.Container)
+	containerID, ok := s.ResolveContainerIDAuto(context.Background(), req.Container)
 	if !ok {
 		return nil
 	}
@@ -53,7 +54,7 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 	s.cloudNetworkAddRule(net.ID, ruleName)
 
 	// Register container in service discovery
-	c, _ := s.Store.Containers.Get(containerID)
+	c, _ := s.ResolveContainerAuto(context.Background(), containerID)
 	hostname := strings.TrimPrefix(c.Name, "/")
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID == net.ID && ep.IPAddress != "" {
@@ -70,7 +71,7 @@ func (s *Server) NetworkDisconnect(id string, req *api.NetworkDisconnectRequest)
 	// Deregister from service discovery before disconnecting
 	net, ok := s.Store.ResolveNetwork(id)
 	if ok {
-		containerID, _ := s.Store.ResolveContainerID(req.Container)
+		containerID, _ := s.ResolveContainerIDAuto(context.Background(), req.Container)
 		if containerID != "" {
 			s.cloudServiceDeregister(containerID, net.ID)
 		}

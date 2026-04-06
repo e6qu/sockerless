@@ -33,15 +33,15 @@ type IAMAttachedPolicy struct {
 }
 
 var (
-	iamRoles            *sim.StateStore[IAMRole]
-	iamRolePolicies     *sim.StateStore[IAMRolePolicy]
-	iamAttachedPolicies *sim.StateStore[IAMAttachedPolicy]
+	iamRoles            sim.Store[IAMRole]
+	iamRolePolicies     sim.Store[IAMRolePolicy]
+	iamAttachedPolicies sim.Store[IAMAttachedPolicy]
 )
 
-func registerIAM(r *sim.AWSQueryRouter) {
-	iamRoles = sim.NewStateStore[IAMRole]()
-	iamRolePolicies = sim.NewStateStore[IAMRolePolicy]()
-	iamAttachedPolicies = sim.NewStateStore[IAMAttachedPolicy]()
+func registerIAM(r *sim.AWSQueryRouter, srv *sim.Server) {
+	iamRoles = sim.MakeStore[IAMRole](srv.DB(), "iam_roles")
+	iamRolePolicies = sim.MakeStore[IAMRolePolicy](srv.DB(), "iam_role_policies")
+	iamAttachedPolicies = sim.MakeStore[IAMAttachedPolicy](srv.DB(), "iam_attached_policies")
 
 	r.Register("CreateRole", handleIAMCreateRole)
 	r.Register("GetRole", handleIAMGetRole)

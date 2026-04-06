@@ -143,27 +143,27 @@ type EC2Tag struct {
 
 // State stores
 var (
-	ec2Vpcs               *sim.StateStore[EC2Vpc]
-	ec2Subnets            *sim.StateStore[EC2Subnet]
-	ec2InternetGateways   *sim.StateStore[EC2InternetGateway]
-	ec2NatGateways        *sim.StateStore[EC2NatGateway]
-	ec2ElasticIPs         *sim.StateStore[EC2ElasticIP]
-	ec2RouteTables        *sim.StateStore[EC2RouteTable]
-	ec2SecurityGroups     *sim.StateStore[EC2SecurityGroup]
-	ec2SecurityGroupRules *sim.StateStore[EC2SecurityGroupRule]
+	ec2Vpcs               sim.Store[EC2Vpc]
+	ec2Subnets            sim.Store[EC2Subnet]
+	ec2InternetGateways   sim.Store[EC2InternetGateway]
+	ec2NatGateways        sim.Store[EC2NatGateway]
+	ec2ElasticIPs         sim.Store[EC2ElasticIP]
+	ec2RouteTables        sim.Store[EC2RouteTable]
+	ec2SecurityGroups     sim.Store[EC2SecurityGroup]
+	ec2SecurityGroupRules sim.Store[EC2SecurityGroupRule]
 )
 
 const ec2Owner = "123456789012"
 
-func registerEC2(r *sim.AWSQueryRouter) {
-	ec2Vpcs = sim.NewStateStore[EC2Vpc]()
-	ec2Subnets = sim.NewStateStore[EC2Subnet]()
-	ec2InternetGateways = sim.NewStateStore[EC2InternetGateway]()
-	ec2NatGateways = sim.NewStateStore[EC2NatGateway]()
-	ec2ElasticIPs = sim.NewStateStore[EC2ElasticIP]()
-	ec2RouteTables = sim.NewStateStore[EC2RouteTable]()
-	ec2SecurityGroups = sim.NewStateStore[EC2SecurityGroup]()
-	ec2SecurityGroupRules = sim.NewStateStore[EC2SecurityGroupRule]()
+func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
+	ec2Vpcs = sim.MakeStore[EC2Vpc](srv.DB(), "ec2_vpcs")
+	ec2Subnets = sim.MakeStore[EC2Subnet](srv.DB(), "ec2_subnets")
+	ec2InternetGateways = sim.MakeStore[EC2InternetGateway](srv.DB(), "ec2_internet_gateways")
+	ec2NatGateways = sim.MakeStore[EC2NatGateway](srv.DB(), "ec2_nat_gateways")
+	ec2ElasticIPs = sim.MakeStore[EC2ElasticIP](srv.DB(), "ec2_elastic_ips")
+	ec2RouteTables = sim.MakeStore[EC2RouteTable](srv.DB(), "ec2_route_tables")
+	ec2SecurityGroups = sim.MakeStore[EC2SecurityGroup](srv.DB(), "ec2_security_groups")
+	ec2SecurityGroupRules = sim.MakeStore[EC2SecurityGroupRule](srv.DB(), "ec2_security_group_rules")
 
 	// VPC
 	r.Register("CreateVpc", handleCreateVpc)

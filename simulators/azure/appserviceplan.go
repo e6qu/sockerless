@@ -37,7 +37,7 @@ type AppServicePlanProperties struct {
 }
 
 func registerAppServicePlan(srv *sim.Server) {
-	plans := sim.NewStateStore[AppServicePlan]()
+	plans := sim.MakeStore[AppServicePlan](srv.DB(), "app_service_plans")
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Web"
 

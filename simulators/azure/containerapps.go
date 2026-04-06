@@ -144,11 +144,11 @@ type JobExecutionProperties struct {
 }
 
 // Package-level stores for dashboard access.
-var acaJobs *sim.StateStore[ContainerAppJob]
+var acaJobs sim.Store[ContainerAppJob]
 
 func registerContainerApps(srv *sim.Server) {
-	jobs := sim.NewStateStore[ContainerAppJob]()
-	executions := sim.NewStateStore[JobExecution]()
+	jobs := sim.MakeStore[ContainerAppJob](srv.DB(), "aca_jobs")
+	executions := sim.MakeStore[JobExecution](srv.DB(), "aca_executions")
 	acaJobs = jobs
 
 	const basePath = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.App"

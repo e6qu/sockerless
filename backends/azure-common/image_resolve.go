@@ -33,8 +33,8 @@ func ResolveAzureImageURI(ref, acrName string) string {
 	registry, repo, tag := parseDockerRef(ref)
 
 	// Only handle Docker Hub images
-	switch {
-	case registry == "" || registry == "docker.io" || registry == "registry-1.docker.io":
+	switch registry {
+	case "", "docker.io", "registry-1.docker.io":
 		// Docker Hub library images: "alpine" → "library/alpine"
 		if !strings.Contains(repo, "/") {
 			repo = "library/" + repo
