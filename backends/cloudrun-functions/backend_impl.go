@@ -148,25 +148,11 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	parent := fmt.Sprintf("projects/%s/locations/%s", s.config.Project, s.config.Region)
 	fullFunctionName := fmt.Sprintf("%s/functions/%s", parent, funcName)
 
-	// Generate agent token and build callback entrypoint if configured
-	agentToken := ""
-	if s.config.CallbackURL != "" {
-		agentToken = core.GenerateToken()
-		callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, id, agentToken)
-		agentEntrypoint := core.BuildAgentCallbackEntrypoint(config, callbackURL)
-		config.Entrypoint = agentEntrypoint
-		config.Cmd = nil
-
-		envVars["SOCKERLESS_CONTAINER_ID"] = id
-		envVars["SOCKERLESS_AGENT_TOKEN"] = agentToken
-		envVars["SOCKERLESS_AGENT_CALLBACK_URL"] = callbackURL
-	} else {
-		// Pass command via environment variable (cloud-native) for short-lived containers
-		cmd := core.BuildOriginalCommand(config.Entrypoint, config.Cmd)
-		if len(cmd) > 0 {
-			cmdJSON, _ := json.Marshal(cmd)
-			envVars["SOCKERLESS_CMD"] = base64.StdEncoding.EncodeToString(cmdJSON)
-		}
+	// Pass command via environment variable (cloud-native) for short-lived containers
+	cmd := core.BuildOriginalCommand(config.Entrypoint, config.Cmd)
+	if len(cmd) > 0 {
+		cmdJSON, _ := json.Marshal(cmd)
+		envVars["SOCKERLESS_CMD"] = base64.StdEncoding.EncodeToString(cmdJSON)
 	}
 
 	// Pass the container image so the simulator can run it directly
@@ -237,7 +223,6 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		FunctionName: funcName,
 		FunctionURL:  functionURL,
 		LogResource:  funcName,
-		AgentToken:   agentToken,
 	})
 
 	s.Registry.Register(core.ResourceEntry{
@@ -301,96 +286,31 @@ func (s *Server) ContainerStart(ref string) error {
 
 	s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 
-	// Non-tail-dev-null containers: invoke the function with the container's command
-	// to get real execution, then stop with the real exit code.
-	if !core.IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd) {
-		cmd := core.BuildOriginalCommand(c.Config.Entrypoint, c.Config.Cmd)
-		if len(cmd) > 0 && gcfState.FunctionURL != "" {
-			go func() {
-				exitCode := 0
-				resp, err := gcfHTTPClient.Post(gcfState.FunctionURL, "application/json", nil)
-				if err != nil {
-					s.Logger.Error().Err(err).Str("function", gcfState.FunctionName).Msg("function invocation failed")
-					exitCode = 1
-				} else {
-					body, _ := io.ReadAll(resp.Body)
-					resp.Body.Close()
-					if len(body) > 0 && string(body) != "{}" {
-						s.Store.LogBuffers.Store(id, body)
-					}
-					if resp.StatusCode >= 400 {
-						exitCode = 1
-					}
-				}
-				_ = exitCode
-				// Close wait channel so ContainerWait unblocks
-				if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-					close(ch.(chan struct{}))
-				}
-			}()
-		} else {
-			// No command or no function URL: auto-stop after brief delay
-			go func() {
-				time.Sleep(500 * time.Millisecond)
-				if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-					close(ch.(chan struct{}))
-				}
-			}()
-		}
-		return nil
-	}
-
-	// Pre-create done channel so invoke goroutine can wait for agent disconnect
-	if s.config.CallbackURL != "" {
-		s.AgentRegistry.Prepare(id)
-	}
-
 	// Invoke function via HTTP trigger asynchronously
 	go func() {
-		exitCode := 0
-
 		if gcfState.FunctionURL != "" {
 			resp, err := gcfHTTPClient.Post(gcfState.FunctionURL, "application/json", nil)
 			if err != nil {
 				s.Logger.Error().Err(err).Str("function", gcfState.FunctionName).Msg("function invocation failed")
-				exitCode = 1
 			} else {
+				body, _ := io.ReadAll(resp.Body)
 				resp.Body.Close()
+				if len(body) > 0 && string(body) != "{}" {
+					s.Store.LogBuffers.Store(id, body)
+				}
 				if resp.StatusCode >= 400 {
 					s.Logger.Warn().Int("status", resp.StatusCode).Str("function", gcfState.FunctionName).Msg("function returned error status")
-					exitCode = 1
 				}
 			}
 		} else {
 			s.Logger.Error().Str("function", gcfState.FunctionName).Msg("no function URL available for invocation")
-			exitCode = 1
 		}
 
-		// Wait for reverse agent to disconnect before stopping.
-		// In production, agent exits when function returns (near-instant wait).
-		// In simulator mode, agent stays connected until runner finishes execs.
-		if s.config.CallbackURL != "" {
-			_ = s.AgentRegistry.WaitForDisconnect(id, 30*time.Minute)
-		}
-
-		_ = exitCode
 		// Close wait channel so ContainerWait unblocks
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
 		}
 	}()
-
-	// Wait for reverse agent callback if configured
-	if s.config.CallbackURL != "" {
-		if err := s.AgentRegistry.WaitForAgent(id, s.config.AgentTimeout); err != nil {
-			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
-			s.AgentRegistry.Remove(id)
-		} else {
-			s.GCF.Update(id, func(state *GCFState) {
-				state.AgentToken = gcfState.AgentToken
-			})
-		}
-	}
 
 	return nil
 }
@@ -409,7 +329,6 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 
 	// Cloud Run Functions run to completion — stop transitions state
 	s.StopHealthCheck(id)
-	s.AgentRegistry.Remove(id)
 	// Close wait channel so ContainerWait unblocks
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
@@ -433,9 +352,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 		}
 	}
 
-	// Disconnect reverse agent if connected (unblocks invoke goroutine)
 	s.StopHealthCheck(id)
-	s.AgentRegistry.Remove(id)
 
 	exitCode := core.SignalToExitCode(signal)
 
@@ -469,9 +386,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			Message: fmt.Sprintf("You cannot remove a running container %s. Stop the container before attempting removal or force remove", id[:12]),
 		}
 	}
-
-	// Disconnect reverse agent if connected (unblocks invoke goroutine)
-	s.AgentRegistry.Remove(id)
 
 	if c.State.Running {
 		s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
@@ -603,7 +517,6 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 
 	if c.State.Running {
 		s.StopHealthCheck(id)
-		s.AgentRegistry.Remove(id)
 		// Close wait channel so ContainerWait unblocks
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
@@ -661,7 +574,6 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 		}
 
 		s.StopHealthCheck(c.ID)
-		s.AgentRegistry.Remove(c.ID)
 		// Clean up network associations
 		for _, ep := range c.NetworkSettings.Networks {
 			if ep != nil && ep.NetworkID != "" {
@@ -778,18 +690,13 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 	}
 }
 
-// ContainerAttach is not supported by the Cloud Run Functions backend without a connected agent.
+// ContainerAttach is not supported by the Cloud Run Functions backend.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	c, ok := s.ResolveContainerAuto(context.Background(), id)
-	if !ok {
+	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	gcfState, _ := s.GCF.Get(c.ID)
-	if gcfState.AgentToken != "" {
-		return s.BaseServer.ContainerAttach(id, opts)
-	}
 	return nil, &api.NotImplementedError{
-		Message: "Cloud Run Functions backend does not support attach without a connected agent",
+		Message: "Cloud Run Functions backend does not support attach",
 	}
 }
 

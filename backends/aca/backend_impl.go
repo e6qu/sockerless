@@ -126,17 +126,11 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		MacAddress:  "",
 	}
 
-	agentToken := s.config.AgentToken
-	if agentToken == "" {
-		agentToken = core.GenerateToken()
-	}
-
 	// Pod association is handled by the core HTTP handler layer (query param).
 	s.PendingCreates.Put(id, container)
 
 	s.ACA.Put(id, ACAState{
 		ResourceGroup: s.config.ResourceGroup,
-		AgentToken:    agentToken,
 	})
 
 	s.EmitEvent("container", "create", id, map[string]string{
@@ -173,8 +167,6 @@ func (s *Server) ContainerStart(ref string) error {
 		return &api.NotModifiedError{}
 	}
 
-	acaState, _ := s.ACA.Get(id)
-
 	// markRunning emits the start event and sets up the wait channel.
 	// Container state is no longer written to Store.Containers — the cloud is the truth.
 	markRunning := func() chan struct{} {
@@ -202,22 +194,17 @@ func (s *Server) ContainerStart(ref string) error {
 		return s.startMultiContainerJobTyped(id, podContainers, exitCh)
 	}
 
-	// Pre-create done channel so invoke goroutine can wait for agent disconnect
-	if s.config.CallbackURL != "" {
-		s.AgentRegistry.Prepare(id)
-	}
-
 	// Build ACA Job spec
 	jobName := buildJobName(id)
 	jobSpec := s.buildJobSpec([]containerInput{
-		{ID: id, Container: &c, AgentToken: acaState.AgentToken, IsMain: true},
+		{ID: id, Container: &c, IsMain: true},
 	})
 
 	// Create the ACA Job
 	createPoller, err := s.azure.Jobs.BeginCreateOrUpdate(s.ctx(), s.config.ResourceGroup, jobName, jobSpec, nil)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to create ACA Job")
-		s.AgentRegistry.Remove(id)
+
 		s.Store.WaitChs.Delete(id)
 		return azurecommon.MapAzureError(err, "job", id)
 	}
@@ -226,7 +213,7 @@ func (s *Server) ContainerStart(ref string) error {
 	_, err = createPoller.PollUntilDone(s.ctx(), nil)
 	if err != nil {
 		s.deleteJob(jobName)
-		s.AgentRegistry.Remove(id)
+
 		s.Store.WaitChs.Delete(id)
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
 		return azurecommon.MapAzureError(err, "job", id)
@@ -247,7 +234,7 @@ func (s *Server) ContainerStart(ref string) error {
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to start ACA Job")
 		s.deleteJob(jobName)
-		s.AgentRegistry.Remove(id)
+
 		s.Store.WaitChs.Delete(id)
 		return azurecommon.MapAzureError(err, "execution", id)
 	}
@@ -257,7 +244,7 @@ func (s *Server) ContainerStart(ref string) error {
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("start job failed")
 		s.deleteJob(jobName)
-		s.AgentRegistry.Remove(id)
+
 		s.Store.WaitChs.Delete(id)
 		return azurecommon.MapAzureError(err, "execution", id)
 	}
@@ -275,85 +262,8 @@ func (s *Server) ContainerStart(ref string) error {
 		state.ExecutionName = executionName
 	})
 
-	if s.config.CallbackURL != "" {
-		// Reverse agent mode: wait for agent callback instead of polling execution IP
-		go func() {
-			// Wait for execution to complete
-			s.waitForExecutionComplete(jobName, executionName, exitCh)
-
-			// Wait for reverse agent to disconnect before stopping
-			_ = s.AgentRegistry.WaitForDisconnect(id, 30*time.Minute)
-
-			// Close wait channel so ContainerWait unblocks
-			if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-				close(ch.(chan struct{}))
-			}
-		}()
-
-		// Wait for reverse agent callback
-		agentTimeout := s.config.AgentTimeout
-		if err := s.AgentRegistry.WaitForAgent(id, agentTimeout); err != nil {
-			s.Logger.Warn().Err(err).Msg("agent callback timeout")
-			s.AgentRegistry.Remove(id)
-		} else {
-			s.ACA.Update(id, func(state *ACAState) {
-				state.AgentAddress = "reverse"
-			})
-		}
-	} else {
-		// Forward agent mode: poll for execution RUNNING and health check
-		isLongRunning := core.IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd)
-
-		if isLongRunning {
-			// Long-running container: wait for RUNNING and check agent health
-			agentAddr, completedExitCode, err := s.waitForExecutionRunning(s.ctx(), jobName, executionName)
-			if err != nil {
-				s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
-				s.AgentRegistry.Remove(id)
-				s.deleteJob(jobName)
-				// Re-add to PendingCreates so the container can be retried
-				s.PendingCreates.Put(id, c)
-				s.Store.WaitChs.Delete(id)
-				return azurecommon.MapAzureError(err, "execution", id)
-			}
-
-			if completedExitCode >= 0 {
-				// Execution completed before agent could be reached.
-				go func() {
-					if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-						close(ch.(chan struct{}))
-					}
-				}()
-			} else if agentAddr == "reverse" {
-				// Use reverse agent callback
-				s.AgentRegistry.Prepare(id)
-				if err := s.AgentRegistry.WaitForAgent(id, s.config.AgentTimeout); err != nil {
-					s.Logger.Warn().Err(err).Msg("agent callback timeout")
-					s.AgentRegistry.Remove(id)
-				} else {
-					s.ACA.Update(id, func(state *ACAState) {
-						state.AgentAddress = "reverse"
-					})
-				}
-			} else {
-				// Wait for agent health
-				agentURL := fmt.Sprintf("http://%s/health", agentAddr)
-				if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
-					s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
-				}
-
-				s.ACA.Update(id, func(state *ACAState) {
-					state.AgentAddress = agentAddr
-				})
-			}
-		} else {
-			// Short-lived container without forward agent — no agent available
-			s.Logger.Warn().Str("id", id).Msg("short-lived container started without agent")
-		}
-
-		// Start background poller to detect execution exit
-		go s.pollExecutionExit(id, jobName, executionName, exitCh)
-	}
+	// Start background poller to detect execution exit
+	go s.pollExecutionExit(id, jobName, executionName, exitCh)
 
 	return nil
 }
@@ -361,25 +271,18 @@ func (s *Server) ContainerStart(ref string) error {
 // startMultiContainerJobTyped creates and runs an ACA Job with all pod containers.
 // Called when the last container in a pod is started.
 func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []api.Container, exitCh chan struct{}) error {
-	// Build containerInput slice: first container is main (gets agent)
+	// Build containerInput slice
 	var inputs []containerInput
 	for i, pc := range podContainers {
-		state, _ := s.ACA.Get(pc.ID)
 		pcCopy := pc
 		inputs = append(inputs, containerInput{
-			ID:         pc.ID,
-			Container:  &pcCopy,
-			AgentToken: state.AgentToken,
-			IsMain:     i == 0,
+			ID:        pc.ID,
+			Container: &pcCopy,
+			IsMain:    i == 0,
 		})
 	}
 
 	mainID := podContainers[0].ID
-
-	// Pre-create done channel for reverse agent on main container
-	if s.config.CallbackURL != "" {
-		s.AgentRegistry.Prepare(mainID)
-	}
 
 	// Build and create the combined job
 	jobName := buildJobName(mainID)
@@ -388,18 +291,14 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 	createPoller, err := s.azure.Jobs.BeginCreateOrUpdate(s.ctx(), s.config.ResourceGroup, jobName, jobSpec, nil)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to create multi-container ACA Job")
-		if s.config.CallbackURL != "" {
-			s.AgentRegistry.Remove(mainID)
-		}
+
 		return azurecommon.MapAzureError(err, "job", mainID)
 	}
 
 	_, err = createPoller.PollUntilDone(s.ctx(), nil)
 	if err != nil {
 		s.deleteJob(jobName)
-		if s.config.CallbackURL != "" {
-			s.AgentRegistry.Remove(mainID)
-		}
+
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
 		return azurecommon.MapAzureError(err, "job", mainID)
 	}
@@ -418,9 +317,7 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to start ACA Job")
 		s.deleteJob(jobName)
-		if s.config.CallbackURL != "" {
-			s.AgentRegistry.Remove(mainID)
-		}
+
 		return azurecommon.MapAzureError(err, "execution", mainID)
 	}
 
@@ -428,9 +325,7 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("start job failed")
 		s.deleteJob(jobName)
-		if s.config.CallbackURL != "" {
-			s.AgentRegistry.Remove(mainID)
-		}
+
 		return azurecommon.MapAzureError(err, "execution", mainID)
 	}
 
@@ -452,60 +347,8 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 		})
 	}
 
-	if s.config.CallbackURL != "" {
-		// Reverse agent mode
-		go func() {
-			s.waitForExecutionComplete(jobName, executionName, exitCh)
-			_ = s.AgentRegistry.WaitForDisconnect(mainID, 30*time.Minute)
-			if ch, ok := s.Store.WaitChs.LoadAndDelete(mainID); ok {
-				close(ch.(chan struct{}))
-			}
-		}()
-
-		agentTimeout := s.config.AgentTimeout
-		if err := s.AgentRegistry.WaitForAgent(mainID, agentTimeout); err != nil {
-			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
-			s.AgentRegistry.Remove(mainID)
-		} else {
-			s.ACA.Update(mainID, func(state *ACAState) {
-				state.AgentAddress = "reverse"
-			})
-		}
-	} else {
-		// Forward agent mode
-		agentAddr, completedExitCode, err := s.waitForExecutionRunning(s.ctx(), jobName, executionName)
-		if err != nil {
-			s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
-			s.deleteJob(jobName)
-			if s.config.CallbackURL != "" {
-				s.AgentRegistry.Remove(mainID)
-			}
-			// Re-add pod containers to PendingCreates so they can be retried
-			for _, pc := range podContainers {
-				s.PendingCreates.Put(pc.ID, pc)
-			}
-			return azurecommon.MapAzureError(err, "execution", mainID)
-		}
-
-		if completedExitCode >= 0 {
-			go func() {
-				if ch, ok := s.Store.WaitChs.LoadAndDelete(mainID); ok {
-					close(ch.(chan struct{}))
-				}
-			}()
-		} else {
-			agentURL := fmt.Sprintf("http://%s/health", agentAddr)
-			if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
-				s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
-			}
-
-			s.ACA.Update(mainID, func(state *ACAState) {
-				state.AgentAddress = agentAddr
-			})
-
-			go s.pollExecutionExit(mainID, jobName, executionName, exitCh)
-		}
-	}
+	// Start background poller to detect execution exit
+	go s.pollExecutionExit(mainID, jobName, executionName, exitCh)
 
 	return nil
 }
@@ -529,7 +372,7 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 	}
 
 	s.StopHealthCheck(id)
-	s.AgentRegistry.Remove(id)
+
 	// Close wait channel so ContainerWait unblocks
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
@@ -553,9 +396,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 		}
 	}
 
-	// Disconnect reverse agent if connected (unblocks invoke goroutine)
 	s.StopHealthCheck(id)
-	s.AgentRegistry.Remove(id)
 
 	exitCode := core.SignalToExitCode(signal)
 
@@ -595,9 +436,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			Message: fmt.Sprintf("You cannot remove a running container %s. Stop the container before attempting removal or force remove", id[:12]),
 		}
 	}
-
-	// Disconnect reverse agent if connected (unblocks invoke goroutine)
-	s.AgentRegistry.Remove(id)
 
 	if c.State.Running {
 		s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
@@ -690,7 +528,7 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 	// Stop if running
 	if c.State.Running {
 		s.StopHealthCheck(id)
-		s.AgentRegistry.Remove(id)
+
 		acaState, _ := s.ACA.Get(id)
 		if acaState.JobName != "" && acaState.ExecutionName != "" {
 			s.stopExecution(acaState.JobName, acaState.ExecutionName)
@@ -703,7 +541,6 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 		s.ACA.Update(id, func(state *ACAState) {
 			state.JobName = ""
 			state.ExecutionName = ""
-			state.AgentAddress = ""
 		})
 		// Close wait channel so ContainerWait unblocks
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
@@ -758,7 +595,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 			s.Registry.MarkCleanedUp(acaState.JobName)
 		}
 		s.StopHealthCheck(c.ID)
-		s.AgentRegistry.Remove(c.ID)
+
 		// Clean up network associations
 		for _, ep := range c.NetworkSettings.Networks {
 			if ep != nil && ep.NetworkID != "" {

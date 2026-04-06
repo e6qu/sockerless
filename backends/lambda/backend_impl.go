@@ -185,45 +185,19 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		}
 	}
 
-	// Generate agent token and build callback entrypoint if configured
-	agentToken := ""
-	if s.config.CallbackURL != "" {
-		agentToken = core.GenerateToken()
-		callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, id, agentToken)
-		agentEntrypoint := core.BuildAgentCallbackEntrypoint(config, callbackURL)
-
-		// Add agent env vars
-		envVars["SOCKERLESS_CONTAINER_ID"] = id
-		envVars["SOCKERLESS_AGENT_TOKEN"] = agentToken
-		envVars["SOCKERLESS_AGENT_CALLBACK_URL"] = callbackURL
-		if createInput.Environment == nil {
-			createInput.Environment = &lambdatypes.Environment{Variables: envVars}
-		} else {
-			createInput.Environment.Variables = envVars
+	// Set image config overrides if cmd/entrypoint specified
+	if len(config.Cmd) > 0 || len(config.Entrypoint) > 0 || config.WorkingDir != "" {
+		imgConfig := &lambdatypes.ImageConfig{}
+		if len(config.Entrypoint) > 0 {
+			imgConfig.EntryPoint = config.Entrypoint
 		}
-
-		// Override entrypoint with agent wrapper
-		createInput.ImageConfig = &lambdatypes.ImageConfig{
-			EntryPoint: agentEntrypoint,
+		if len(config.Cmd) > 0 {
+			imgConfig.Command = config.Cmd
 		}
 		if config.WorkingDir != "" {
-			createInput.ImageConfig.WorkingDirectory = aws.String(config.WorkingDir)
+			imgConfig.WorkingDirectory = aws.String(config.WorkingDir)
 		}
-	} else {
-		// Set image config overrides if cmd/entrypoint specified
-		if len(config.Cmd) > 0 || len(config.Entrypoint) > 0 || config.WorkingDir != "" {
-			imgConfig := &lambdatypes.ImageConfig{}
-			if len(config.Entrypoint) > 0 {
-				imgConfig.EntryPoint = config.Entrypoint
-			}
-			if len(config.Cmd) > 0 {
-				imgConfig.Command = config.Cmd
-			}
-			if config.WorkingDir != "" {
-				imgConfig.WorkingDirectory = aws.String(config.WorkingDir)
-			}
-			createInput.ImageConfig = imgConfig
-		}
+		createInput.ImageConfig = imgConfig
 	}
 
 	result, err := s.aws.Lambda.CreateFunction(s.ctx(), createInput)
@@ -239,7 +213,6 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	s.Lambda.Put(id, LambdaState{
 		FunctionName: funcName,
 		FunctionARN:  functionARN,
-		AgentToken:   agentToken,
 	})
 
 	s.Registry.Register(core.ResourceEntry{
@@ -303,48 +276,6 @@ func (s *Server) ContainerStart(ref string) error {
 	// Remove from PendingCreates now that the function is being invoked.
 	s.PendingCreates.Delete(id)
 
-	// Non-tail-dev-null containers: invoke the function with the container's command
-	// to get real execution, then stop with the real exit code.
-	if !core.IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd) {
-		cmd := core.BuildOriginalCommand(c.Config.Entrypoint, c.Config.Cmd)
-		if len(cmd) > 0 {
-			// Invoke the function (already has ImageConfig.Command from create)
-			go func() {
-				result, err := s.aws.Lambda.Invoke(s.ctx(), &awslambda.InvokeInput{
-					FunctionName: aws.String(lambdaState.FunctionName),
-				})
-				if err != nil {
-					s.Logger.Error().Err(err).Str("function", lambdaState.FunctionName).Msg("Lambda invocation failed")
-				} else {
-					if result.FunctionError != nil {
-						s.Logger.Warn().Str("error", aws.ToString(result.FunctionError)).Msg("Lambda function returned error")
-					}
-					// Store response payload in log buffer for container logs
-					if len(result.Payload) > 0 && string(result.Payload) != "{}" {
-						s.Store.LogBuffers.Store(id, result.Payload)
-					}
-				}
-				if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-					close(ch.(chan struct{}))
-				}
-			}()
-		} else {
-			// No command: auto-stop after brief delay
-			go func() {
-				time.Sleep(500 * time.Millisecond)
-				if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-					close(ch.(chan struct{}))
-				}
-			}()
-		}
-		return nil
-	}
-
-	// Pre-create done channel so invoke goroutine can wait for agent disconnect
-	if s.config.CallbackURL != "" {
-		s.AgentRegistry.Prepare(id)
-	}
-
 	// Invoke Lambda function asynchronously
 	go func() {
 		result, err := s.aws.Lambda.Invoke(s.ctx(), &awslambda.InvokeInput{
@@ -353,33 +284,20 @@ func (s *Server) ContainerStart(ref string) error {
 
 		if err != nil {
 			s.Logger.Error().Err(err).Str("function", lambdaState.FunctionName).Msg("Lambda invocation failed")
-		} else if result.FunctionError != nil {
-			s.Logger.Warn().Str("error", aws.ToString(result.FunctionError)).Msg("Lambda function returned error")
-		}
-
-		// Wait for reverse agent to disconnect before stopping.
-		// In production, agent exits when function returns (near-instant wait).
-		// In simulator mode, agent stays connected until runner finishes execs.
-		if s.config.CallbackURL != "" {
-			_ = s.AgentRegistry.WaitForDisconnect(id, 30*time.Minute)
+		} else {
+			if result.FunctionError != nil {
+				s.Logger.Warn().Str("error", aws.ToString(result.FunctionError)).Msg("Lambda function returned error")
+			}
+			// Store response payload in log buffer for container logs
+			if len(result.Payload) > 0 && string(result.Payload) != "{}" {
+				s.Store.LogBuffers.Store(id, result.Payload)
+			}
 		}
 
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
 		}
 	}()
-
-	// Wait for reverse agent callback if configured
-	if s.config.CallbackURL != "" {
-		if err := s.AgentRegistry.WaitForAgent(id, s.config.AgentTimeout); err != nil {
-			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
-			s.AgentRegistry.Remove(id)
-		} else {
-			s.Lambda.Update(id, func(state *LambdaState) {
-				state.AgentAddress = "reverse"
-			})
-		}
-	}
 
 	return nil
 }
@@ -398,7 +316,7 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 
 	// Lambda functions run to completion — stop transitions state
 	s.StopHealthCheck(id)
-	s.AgentRegistry.Remove(id)
+
 	// Close wait channel so ContainerWait unblocks
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
@@ -422,9 +340,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 		}
 	}
 
-	// Disconnect reverse agent if connected (unblocks invoke goroutine)
 	s.StopHealthCheck(id)
-	s.AgentRegistry.Remove(id)
 
 	exitCode := core.SignalToExitCode(signal)
 
@@ -459,9 +375,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		}
 	}
 
-	// Disconnect reverse agent if connected (unblocks invoke goroutine)
-	s.AgentRegistry.Remove(id)
-
 	if c.State.Running {
 		s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 		s.EmitEvent("container", "die", id, map[string]string{
@@ -471,7 +384,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	s.StopHealthCheck(id)
-	s.AgentRegistry.Remove(id)
 
 	// Delete Lambda function (best-effort)
 	lambdaState, _ := s.Lambda.Get(id)
@@ -597,7 +509,7 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 
 	if c.State.Running {
 		s.StopHealthCheck(id)
-		s.AgentRegistry.Remove(id)
+
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
 		}
@@ -658,7 +570,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 		}
 
 		s.StopHealthCheck(c.ID)
-		s.AgentRegistry.Remove(c.ID)
+
 		for _, ep := range c.NetworkSettings.Networks {
 			if ep != nil && ep.NetworkID != "" {
 				_ = s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, c.ID)
@@ -768,15 +680,11 @@ func (s *Server) Info() (*api.BackendInfo, error) {
 // Only supported when a reverse agent is connected; otherwise Lambda functions
 // are not interactive.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	c, ok := s.ResolveContainerAuto(context.Background(), id)
-	if !ok {
+	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	if c.AgentAddress != "" {
-		return s.BaseServer.ContainerAttach(id, opts)
-	}
 	return nil, &api.NotImplementedError{
-		Message: "Lambda backend does not support attach without a connected agent",
+		Message: "Lambda backend does not support attach",
 	}
 }
 

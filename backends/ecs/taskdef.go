@@ -15,14 +15,12 @@ import (
 
 // containerInput groups the data needed to build one ECS container definition.
 type containerInput struct {
-	ID         string
-	Container  *api.Container
-	AgentToken string
-	IsMain     bool // true = inject agent entrypoint + port 9111
+	ID        string
+	Container *api.Container
+	IsMain    bool // true = primary container in a pod
 }
 
 // buildContainerDef builds a single ECS container definition.
-// IsMain containers get agent injection and port 9111; sidecars use their original entrypoint.
 // Bind mounts use EFS when AgentEFSID is configured.
 func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinition, []ecstypes.Volume) {
 	config := ci.Container.Config
@@ -40,29 +38,11 @@ func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinit
 	}
 
 	var entrypoint, command []string
-	if ci.IsMain {
-		if core.IsTailDevNull(config.Entrypoint, config.Cmd) && s.config.CallbackURL != "" {
-			// CI job container with reverse agent: inject callback entrypoint
-			callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, ci.ID, ci.AgentToken)
-			entrypoint = core.BuildAgentCallbackEntrypoint(config, callbackURL)
-			envVars = append(envVars,
-				ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_CONTAINER_ID"), Value: aws.String(ci.ID)},
-				ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_AGENT_TOKEN"), Value: aws.String(ci.AgentToken)},
-				ecstypes.KeyValuePair{Name: aws.String("SOCKERLESS_AGENT_CALLBACK_URL"), Value: aws.String(callbackURL)},
-			)
-		} else {
-			// Pass through original command (short-lived or forward agent mode)
-			entrypoint = config.Entrypoint
-			command = config.Cmd
-		}
-	} else {
-		// Sidecar: use original entrypoint/command, no agent
-		if len(config.Entrypoint) > 0 {
-			entrypoint = config.Entrypoint
-		}
-		if len(config.Cmd) > 0 {
-			command = config.Cmd
-		}
+	if len(config.Entrypoint) > 0 {
+		entrypoint = config.Entrypoint
+	}
+	if len(config.Cmd) > 0 {
+		command = config.Cmd
 	}
 
 	// Container name: "main" for the primary, sanitized name for sidecars
@@ -101,16 +81,6 @@ func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinit
 
 	if config.User != "" {
 		containerDef.User = aws.String(config.User)
-	}
-
-	// Port mapping for agent (main container only, forward mode with CI job)
-	if ci.IsMain && core.IsTailDevNull(config.Entrypoint, config.Cmd) && s.config.CallbackURL == "" {
-		containerDef.PortMappings = []ecstypes.PortMapping{
-			{
-				ContainerPort: aws.Int32(9111),
-				Protocol:      ecstypes.TransportProtocolTcp,
-			},
-		}
 	}
 
 	// Build volumes and mount points for bind mounts.

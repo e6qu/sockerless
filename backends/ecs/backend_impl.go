@@ -134,17 +134,10 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		MacAddress:  "",
 	}
 
-	agentToken := s.config.AgentToken
-	if agentToken == "" {
-		agentToken = core.GenerateToken()
-	}
-
 	s.PendingCreates.Put(id, container)
 
 	// Store ECS state without task definition — defer registration to ContainerStart.
-	s.ECS.Put(id, ECSState{
-		AgentToken: agentToken,
-	})
+	s.ECS.Put(id, ECSState{})
 
 	s.EmitEvent("container", "create", id, map[string]string{
 		"name":  strings.TrimPrefix(name, "/"),
@@ -186,7 +179,7 @@ func (s *Server) ContainerStart(ref string) error {
 	// Deferred task definition registration: if not yet registered, do it now
 	if ecsState.TaskDefARN == "" {
 		taskDefARN, err := s.registerTaskDefinition(s.ctx(), []containerInput{
-			{ID: id, Container: &c, AgentToken: ecsState.AgentToken, IsMain: true},
+			{ID: id, Container: &c, IsMain: true},
 		})
 		if err != nil {
 			s.Logger.Error().Err(err).Msg("failed to register task definition")
@@ -226,15 +219,10 @@ func (s *Server) ContainerStart(ref string) error {
 		return s.startMultiContainerTaskTyped(id, podContainers, exitCh)
 	}
 
-	// Pre-create exit channel so ContainerWait works even if the process
-	// exits during runECSTask (e.g. short-lived auto-agent containers).
+	// Pre-create exit channel so ContainerWait works even if the task
+	// exits quickly.
 	exitCh := make(chan struct{})
 	s.Store.WaitChs.Store(id, exitCh)
-
-	// Pre-create done channel so invoke goroutine can wait for agent disconnect
-	if s.config.CallbackURL != "" {
-		s.AgentRegistry.Prepare(id)
-	}
 
 	// Run ECS task before marking container as running, so docker ps
 	// doesn't show a false-positive running state if RunTask fails.
@@ -245,7 +233,6 @@ func (s *Server) ContainerStart(ref string) error {
 		_, _ = s.aws.ECS.DeregisterTaskDefinition(s.ctx(), &awsecs.DeregisterTaskDefinitionInput{
 			TaskDefinition: aws.String(taskDefARN),
 		})
-		s.AgentRegistry.Remove(id)
 		s.Store.WaitChs.Delete(id)
 		return awscommon.MapAWSError(err, "task", id)
 	}
@@ -274,56 +261,18 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 	}
 
-	if s.config.CallbackURL != "" {
-		// Reverse agent mode: wait for agent callback instead of polling task IP
-		go func() {
-			// Wait for task to complete
-			s.waitForTaskStopped(taskARN, exitCh)
-
-			// Wait for reverse agent to disconnect before stopping
-			_ = s.AgentRegistry.WaitForDisconnect(id, 30*time.Minute)
-
-			// Close wait channel so ContainerWait unblocks
-			if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-				close(ch.(chan struct{}))
-			}
-		}()
-
-		// Wait for reverse agent callback
-		agentTimeout := s.config.AgentTimeout
-		if err := s.AgentRegistry.WaitForAgent(id, agentTimeout); err != nil {
-			s.Logger.Warn().Err(err).Msg("agent callback timeout")
-			s.AgentRegistry.Remove(id)
-		} else {
-			s.ECS.Update(id, func(state *ECSState) {
-				state.AgentAddress = "reverse"
-			})
+	// Wait for task to reach RUNNING, then start background poller for exit.
+	_, err = s.waitForTaskRunning(s.ctx(), taskARN)
+	if err != nil {
+		s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
 		}
-	} else {
-		// Forward agent mode: wait for RUNNING, then check agent health async.
-		agentAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
-		if err != nil {
-			s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
-			if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-				close(ch.(chan struct{}))
-			}
-			return err
-		}
-
-		// Agent health check is async — don't block start on agent availability
-		go func() {
-			agentURL := fmt.Sprintf("http://%s/health", agentAddr)
-			if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
-				s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
-			}
-			s.ECS.Update(id, func(state *ECSState) {
-				state.AgentAddress = agentAddr
-			})
-		}()
-
-		// Start background poller to detect task exit
-		go s.pollTaskExit(id, taskARN, exitCh)
+		return err
 	}
+
+	// Start background poller to detect task exit
+	go s.pollTaskExit(id, taskARN, exitCh)
 
 	return nil
 }
@@ -331,16 +280,14 @@ func (s *Server) ContainerStart(ref string) error {
 // startMultiContainerTaskTyped registers a combined task definition for all pod containers
 // and runs a single ECS task. Returns error instead of writing to http.ResponseWriter.
 func (s *Server) startMultiContainerTaskTyped(triggerID string, podContainers []api.Container, exitCh chan struct{}) error {
-	// Build containerInput slice: first container is main (gets agent)
+	// Build containerInput slice
 	var inputs []containerInput
 	for i, pc := range podContainers {
-		state, _ := s.ECS.Get(pc.ID)
 		pcCopy := pc
 		inputs = append(inputs, containerInput{
-			ID:         pc.ID,
-			Container:  &pcCopy,
-			AgentToken: state.AgentToken,
-			IsMain:     i == 0,
+			ID:        pc.ID,
+			Container: &pcCopy,
+			IsMain:    i == 0,
 		})
 	}
 
@@ -355,11 +302,6 @@ func (s *Server) startMultiContainerTaskTyped(triggerID string, podContainers []
 	mainContainer := &podContainers[0]
 	mainID := mainContainer.ID
 
-	// Pre-create done channel for reverse agent on main container
-	if s.config.CallbackURL != "" {
-		s.AgentRegistry.Prepare(mainID)
-	}
-
 	// Run the combined task
 	taskARN, clusterARN, err := s.runECSTask(mainID, taskDefARN, mainContainer)
 	if err != nil {
@@ -367,9 +309,6 @@ func (s *Server) startMultiContainerTaskTyped(triggerID string, podContainers []
 		_, _ = s.aws.ECS.DeregisterTaskDefinition(s.ctx(), &awsecs.DeregisterTaskDefinitionInput{
 			TaskDefinition: aws.String(taskDefARN),
 		})
-		if s.config.CallbackURL != "" {
-			s.AgentRegistry.Remove(mainID)
-		}
 		// Re-add pod containers to PendingCreates so they can be retried
 		for _, pc := range podContainers {
 			s.PendingCreates.Put(pc.ID, pc)
@@ -391,52 +330,18 @@ func (s *Server) startMultiContainerTaskTyped(triggerID string, podContainers []
 		})
 	}
 
-	if s.config.CallbackURL != "" {
-		// Reverse agent mode
-		go func() {
-			s.waitForTaskStopped(taskARN, exitCh)
-			_ = s.AgentRegistry.WaitForDisconnect(mainID, 30*time.Minute)
-			// Close wait channel so ContainerWait unblocks
-			if ch, ok := s.Store.WaitChs.LoadAndDelete(mainID); ok {
-				close(ch.(chan struct{}))
-			}
-		}()
-
-		agentTimeout := s.config.AgentTimeout
-		if err := s.AgentRegistry.WaitForAgent(mainID, agentTimeout); err != nil {
-			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
-			s.AgentRegistry.Remove(mainID)
-		} else {
-			s.ECS.Update(mainID, func(state *ECSState) {
-				state.AgentAddress = "reverse"
-			})
+	// Wait for task to reach RUNNING state
+	_, err = s.waitForTaskRunning(s.ctx(), taskARN)
+	if err != nil {
+		s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
+		// Re-add pod containers to PendingCreates so they can be retried
+		for _, pc := range podContainers {
+			s.PendingCreates.Put(pc.ID, pc)
 		}
-	} else {
-		// Forward agent mode
-		agentAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
-		if err != nil {
-			s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
-			if s.config.CallbackURL != "" {
-				s.AgentRegistry.Remove(mainID)
-			}
-			// Re-add pod containers to PendingCreates so they can be retried
-			for _, pc := range podContainers {
-				s.PendingCreates.Put(pc.ID, pc)
-			}
-			return awscommon.MapAWSError(err, "task", mainID)
-		}
-
-		agentURL := fmt.Sprintf("http://%s/health", agentAddr)
-		if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
-			s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
-		}
-
-		s.ECS.Update(mainID, func(state *ECSState) {
-			state.AgentAddress = agentAddr
-		})
-
-		go s.pollTaskExit(mainID, taskARN, exitCh)
+		return awscommon.MapAWSError(err, "task", mainID)
 	}
+
+	go s.pollTaskExit(mainID, taskARN, exitCh)
 
 	return nil
 }
@@ -468,7 +373,6 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 	}
 
 	s.StopHealthCheck(id)
-	s.AgentRegistry.Remove(id)
 	// Close wait channel so ContainerWait unblocks
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
@@ -492,9 +396,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 		}
 	}
 
-	// Disconnect reverse agent if connected (unblocks invoke goroutine)
 	s.StopHealthCheck(id)
-	s.AgentRegistry.Remove(id)
 
 	exitCode := core.SignalToExitCode(signal)
 
@@ -542,9 +444,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			Message: fmt.Sprintf("You cannot remove a running container %s. Stop the container before attempting removal or force remove", id[:12]),
 		}
 	}
-
-	// Disconnect reverse agent if connected (unblocks invoke goroutine)
-	s.AgentRegistry.Remove(id)
 
 	if c.State.Running {
 		s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
@@ -681,9 +580,7 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 		return entries, result.NextForwardToken, nil
 	}
 
-	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{
-		CheckAutoAgent: false,
-	})
+	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{})
 }
 
 // ContainerRestart stops and then starts a container.
@@ -697,7 +594,6 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 	// Stop if running
 	if c.State.Running {
 		s.StopHealthCheck(id)
-		s.AgentRegistry.Remove(id)
 		ecsState, _ := s.ECS.Get(id)
 		if ecsState.TaskARN != "" {
 			cluster := s.config.Cluster
@@ -721,7 +617,6 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 			state.TaskARN = ""
 			state.TaskDefARN = ""
 			state.ClusterARN = ""
-			state.AgentAddress = ""
 		})
 		// Close wait channel so ContainerWait unblocks
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
@@ -784,7 +679,6 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 		}
 
 		s.StopHealthCheck(c.ID)
-		s.AgentRegistry.Remove(c.ID)
 		// Clean up network associations
 		for _, ep := range c.NetworkSettings.Networks {
 			if ep != nil && ep.NetworkID != "" {
@@ -877,8 +771,7 @@ func (s *Server) VolumeRemove(name string, force bool) error {
 // ExecStart starts an exec instance. For ECS, if no agent is connected,
 // we cannot execute commands inside the remote Fargate task without the
 // ECS ExecuteCommand API (SSM), which is not yet implemented. In that case,
-// return a clear error. If an agent is connected, delegate to BaseServer
-// which routes through the agent driver.
+// return a clear error.
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
 	exec, ok := s.Store.Execs.Get(id)
 	if !ok {
@@ -892,14 +785,7 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 		}
 	}
 
-	// If an agent is connected (check ECS state), delegate to BaseServer
-	ecsState, _ := s.ECS.Get(c.ID)
-	if ecsState.AgentAddress != "" {
-		return s.BaseServer.ExecStart(id, opts)
-	}
-
-	// No agent connected — use ECS ExecuteCommand API (SSM Session Manager)
-	// to exec into the remote Fargate task.
+	// Use ECS ExecuteCommand API (SSM Session Manager) to exec into the remote Fargate task.
 	tty := exec.ProcessConfig.Tty || opts.Tty
 	return s.cloudExecStart(&exec, &c, tty)
 }
@@ -1069,8 +955,8 @@ func (s *Server) ContainerList(opts api.ContainerListOptions) ([]*api.ContainerS
 	return s.BaseServer.ContainerList(opts)
 }
 
-// ExecCreate creates an exec instance. Validates that an agent is connected
-// before creating — without an agent, exec cannot work on ECS Fargate.
+// ExecCreate creates an exec instance. Validates that an ECS task is running
+// before creating — without a task, exec cannot work on ECS Fargate.
 func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*api.ExecCreateResponse, error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), containerID)
 	if !ok {
@@ -1081,11 +967,11 @@ func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*ap
 		return nil, &api.ConflictError{Message: "Container " + containerID + " is not running"}
 	}
 
-	// ECS-specific: check that an agent or ECS task is available for exec.
+	// ECS-specific: check that an ECS task is available for exec.
 	ecsState, _ := s.ECS.Get(c.ID)
-	if ecsState.AgentAddress == "" && ecsState.TaskARN == "" {
+	if ecsState.TaskARN == "" {
 		return nil, &api.NotImplementedError{
-			Message: fmt.Sprintf("exec requires an agent connection or running ECS task, but container %s has neither (ECS backend)", strings.TrimPrefix(c.Name, "/")),
+			Message: fmt.Sprintf("exec requires a running ECS task, but container %s has none (ECS backend)", strings.TrimPrefix(c.Name, "/")),
 		}
 	}
 

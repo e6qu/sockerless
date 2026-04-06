@@ -41,7 +41,6 @@ func newSpecTestServer() *BaseServer {
 		Store:          store,
 		Logger:         zerolog.Nop(),
 		Mux:            http.NewServeMux(),
-		AgentRegistry:  NewAgentRegistry(),
 		EventBus:       NewEventBus(),
 		PendingCreates: NewStateStore[api.Container](),
 	}

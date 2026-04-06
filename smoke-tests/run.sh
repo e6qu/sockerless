@@ -81,7 +81,6 @@ esac
 
 # --- Start backend ---
 export SOCKERLESS_POLL_INTERVAL="500ms"
-export SOCKERLESS_AGENT_TIMEOUT="2s"
 echo "=== Starting $BACKEND_TYPE backend ==="
 "$BACKEND_BIN" --addr "$BACKEND_ADDR" --log-level debug 2>/tmp/backend.log &
 BACKEND_PID=$!

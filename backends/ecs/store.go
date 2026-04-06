@@ -5,8 +5,6 @@ type ECSState struct {
 	TaskARN          string   // ECS task ARN
 	TaskDefARN       string   // Task definition ARN
 	ClusterARN       string   // Cluster ARN
-	AgentAddress     string   // "ip:port" of the agent inside the task
-	AgentToken       string   // Bearer token for agent auth
 	SecurityGroupIDs []string // Security groups from network associations (multiple networks)
 	ServiceID        string   // Cloud Map service ID for service discovery
 }

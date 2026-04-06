@@ -130,7 +130,6 @@ func TestMain(m *testing.M) {
 	backendCmd.Env = append(os.Environ(),
 		"SOCKERLESS_ENDPOINT_URL="+simURL,
 		"SOCKERLESS_POLL_INTERVAL=500ms",
-		"SOCKERLESS_AGENT_TIMEOUT=2s",
 		"SOCKERLESS_LOG_TIMEOUT=2s",
 		"SOCKERLESS_GCR_PROJECT=sim-project",
 	)

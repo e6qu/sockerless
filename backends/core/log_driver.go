@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -23,9 +22,6 @@ type CloudLogFetchFunc func(ctx context.Context, params CloudLogParams, cursor a
 
 // StreamCloudLogsOptions configures StreamCloudLogs behavior per backend type.
 type StreamCloudLogsOptions struct {
-	// CheckAutoAgent causes StreamCloudLogs to delegate to BaseServer.ContainerLogs
-	// if SOCKERLESS_AUTO_AGENT_BIN is set. Set true for container-service backends.
-	CheckAutoAgent bool
 	// CheckLogBuffers causes StreamCloudLogs to use in-memory LogBuffers if available.
 	// Set true for FaaS backends where invocation output is captured in memory.
 	CheckLogBuffers bool
@@ -42,11 +38,6 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 		return nil, &api.NotFoundError{Resource: "container", ID: containerID}
 	}
 	id := c.ID
-
-	// Container-service backends delegate to core for auto-agent containers.
-	if sopts.CheckAutoAgent && os.Getenv("SOCKERLESS_AUTO_AGENT_BIN") != "" {
-		return s.ContainerLogs(containerID, opts)
-	}
 
 	if c.State.Status == "created" {
 		return nil, &api.InvalidParameterError{

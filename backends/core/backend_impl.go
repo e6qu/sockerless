@@ -342,11 +342,6 @@ func (s *BaseServer) ContainerStart(ref string) error {
 		s.StartHealthCheck(id)
 	}
 
-	// Auto-spawn a local agent if configured (enables real exec for simulator backends)
-	if err := s.SpawnAutoAgent(id); err != nil {
-		s.Logger.Warn().Err(err).Str("container", id).Msg("auto-agent spawn failed")
-	}
-
 	return nil
 }
 
@@ -363,7 +358,6 @@ func (s *BaseServer) ContainerStop(ref string, timeout *int) error {
 	}
 
 	s.StopHealthCheck(id)
-	StopAutoAgent(id)
 	s.Store.ForceStopContainer(id, 0)
 	s.emitEvent("container", "die", id, map[string]string{
 		"exitCode": "0",
@@ -388,7 +382,6 @@ func (s *BaseServer) ContainerKill(ref string, signal string) error {
 	}
 
 	s.StopHealthCheck(id)
-	StopAutoAgent(id)
 
 	exitCode := SignalToExitCode(signal)
 
@@ -437,7 +430,6 @@ func (s *BaseServer) ContainerRemove(ref string, force bool) error {
 	}
 
 	s.StopHealthCheck(id)
-	StopAutoAgent(id)
 
 	ctx := context.Background()
 	for _, ep := range c.NetworkSettings.Networks {
@@ -644,7 +636,6 @@ func (s *BaseServer) ContainerRestart(ref string, timeout *int) error {
 	id := c.ID
 	if c.State.Running {
 		s.StopHealthCheck(id)
-		StopAutoAgent(id)
 		s.Store.ForceStopContainer(id, 0)
 		s.emitEvent("container", "die", id, map[string]string{
 			"exitCode": "0",
@@ -693,16 +684,10 @@ func (s *BaseServer) ContainerRestart(ref string, timeout *int) error {
 		s.StartHealthCheck(id)
 	}
 
-	// Re-spawn auto-agent after restart
-	if err := s.SpawnAutoAgent(id); err != nil {
-		s.Logger.Warn().Err(err).Str("container", id).Msg("auto-agent spawn failed on restart")
-	}
-
 	return nil
 }
 
 // ContainerTop returns the running processes inside a container.
-// Executes `ps` via the agent when connected.
 func (s *BaseServer) ContainerTop(ref string, psArgs string) (*api.ContainerTopResponse, error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
@@ -716,20 +701,18 @@ func (s *BaseServer) ContainerTop(ref string, psArgs string) (*api.ContainerTopR
 		}
 	}
 
-	// Try to get real process list via agent exec
-	if c.AgentAddress != "" {
-		psCmd := "ps aux"
-		if psArgs != "" {
-			psCmd = "ps " + psArgs
-		}
-		if resp := s.execForOutput(id, []string{"/bin/sh", "-c", psCmd}); resp != "" {
-			if titles, procs := parsePS(resp); len(procs) > 0 {
-				return &api.ContainerTopResponse{Titles: titles, Processes: procs}, nil
-			}
+	// Try to get real process list via exec driver
+	psCmd := "ps aux"
+	if psArgs != "" {
+		psCmd = "ps " + psArgs
+	}
+	if resp := s.execForOutput(id, []string{"/bin/sh", "-c", psCmd}); resp != "" {
+		if titles, procs := parsePS(resp); len(procs) > 0 {
+			return &api.ContainerTopResponse{Titles: titles, Processes: procs}, nil
 		}
 	}
 
-	return nil, &api.NotImplementedError{Message: "container top requires an agent connection (no agent connected to this container)"}
+	return nil, &api.NotImplementedError{Message: "container top is not supported by this backend"}
 }
 
 // execForOutput runs a command inside a container and captures stdout.
@@ -902,7 +885,15 @@ func (s *BaseServer) ContainerStats(ref string, stream bool) (io.ReadCloser, err
 			preread = now.Format(time.RFC3339Nano)
 
 			time.Sleep(1 * time.Second)
-			if cur, ok := s.ResolveContainerAuto(context.Background(), id); !ok || !cur.State.Running {
+			if ch, ok := s.Store.WaitChs.Load(id); ok {
+				select {
+				case <-ch.(chan struct{}):
+					_ = pw.Close()
+					return
+				default:
+					// Still running
+				}
+			} else {
 				_ = pw.Close()
 				return
 			}
@@ -1036,9 +1027,7 @@ func (s *BaseServer) ExecCreate(ref string, req *api.ExecCreateRequest) (*api.Ex
 	id := c.ID
 
 	if !c.State.Running {
-		if c.AgentAddress != "" || c.State.Status == "" {
-			return nil, &api.ConflictError{Message: "Container " + ref + " is not running"}
-		}
+		return nil, &api.ConflictError{Message: "Container " + ref + " is not running"}
 	}
 
 	if len(req.Cmd) == 0 {

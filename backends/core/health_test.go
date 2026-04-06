@@ -31,7 +31,6 @@ func newTestServer(execDriver ExecDriver) *BaseServer {
 	s := &BaseServer{
 		Store:          store,
 		Logger:         logger,
-		AgentRegistry:  NewAgentRegistry(),
 		Desc:           BackendDescriptor{Driver: "test"},
 		PendingCreates: NewStateStore[api.Container](),
 	}

@@ -128,17 +128,10 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		MacAddress:  "",
 	}
 
-	agentToken := s.config.AgentToken
-	if agentToken == "" {
-		agentToken = core.GenerateToken()
-	}
-
 	// Pod association is handled by the core HTTP handler layer (query param).
 	s.PendingCreates.Put(id, container)
 
-	s.CloudRun.Put(id, CloudRunState{
-		AgentToken: agentToken,
-	})
+	s.CloudRun.Put(id, CloudRunState{})
 
 	s.EmitEvent("container", "create", id, map[string]string{
 		"name":  strings.TrimPrefix(name, "/"),
@@ -192,11 +185,6 @@ func (s *Server) ContainerStart(ref string) error {
 		return s.startMultiContainerJobTyped(id, podContainers, exitCh)
 	}
 
-	// Pre-create done channel so invoke goroutine can wait for agent disconnect
-	if s.config.CallbackURL != "" {
-		s.AgentRegistry.Prepare(id)
-	}
-
 	// Clean up any existing Cloud Run Job from a previous start
 	if crState.JobName != "" {
 		s.deleteJob(crState.JobName)
@@ -206,7 +194,7 @@ func (s *Server) ContainerStart(ref string) error {
 	// Build Cloud Run Job spec
 	jobName := buildJobName(id)
 	jobSpec := s.buildJobSpec([]containerInput{
-		{ID: id, Container: &c, AgentToken: crState.AgentToken, IsMain: true},
+		{ID: id, Container: &c, IsMain: true},
 	})
 
 	// Create the Cloud Run Job
@@ -217,7 +205,6 @@ func (s *Server) ContainerStart(ref string) error {
 	})
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to create Cloud Run Job")
-		s.AgentRegistry.Remove(id)
 		s.Store.WaitChs.Delete(id)
 		return gcpcommon.MapGCPError(err, "job", id)
 	}
@@ -226,7 +213,6 @@ func (s *Server) ContainerStart(ref string) error {
 	job, err := createOp.Wait(s.ctx())
 	if err != nil {
 		s.deleteJob(fmt.Sprintf("%s/jobs/%s", s.buildJobParent(), jobName))
-		s.AgentRegistry.Remove(id)
 		s.Store.WaitChs.Delete(id)
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
 		return gcpcommon.MapGCPError(err, "job", id)
@@ -251,7 +237,6 @@ func (s *Server) ContainerStart(ref string) error {
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("failed to run job")
 		s.deleteJob(jobFullName)
-		s.AgentRegistry.Remove(id)
 		s.Store.WaitChs.Delete(id)
 		return gcpcommon.MapGCPError(err, "execution", id)
 	}
@@ -261,7 +246,6 @@ func (s *Server) ContainerStart(ref string) error {
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("run job failed")
 		s.deleteJob(jobFullName)
-		s.AgentRegistry.Remove(id)
 		s.Store.WaitChs.Delete(id)
 		return gcpcommon.MapGCPError(err, "execution", id)
 	}
@@ -276,84 +260,8 @@ func (s *Server) ContainerStart(ref string) error {
 		state.ExecutionName = executionName
 	})
 
-	if s.config.CallbackURL != "" {
-		// Reverse agent mode: wait for agent callback instead of polling execution IP
-		go func() {
-			// Wait for execution to complete
-			s.waitForExecutionComplete(executionName, exitCh)
-
-			// Wait for reverse agent to disconnect before stopping
-			_ = s.AgentRegistry.WaitForDisconnect(id, 30*time.Minute)
-
-			if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-				close(ch.(chan struct{}))
-			}
-		}()
-
-		// Wait for reverse agent callback
-		agentTimeout := s.config.AgentTimeout
-		if err := s.AgentRegistry.WaitForAgent(id, agentTimeout); err != nil {
-			s.Logger.Warn().Err(err).Msg("agent callback timeout")
-			s.AgentRegistry.Remove(id)
-		} else {
-			s.CloudRun.Update(id, func(state *CloudRunState) {
-				state.AgentAddress = "reverse"
-			})
-		}
-	} else {
-		// Forward agent mode: poll for execution RUNNING and health check
-		isLongRunning := core.IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd)
-		skipPoller := false
-
-		if isLongRunning {
-			// Long-running container: wait for RUNNING and check agent health
-			agentAddr, completedExitCode, err := s.waitForExecutionRunning(s.ctx(), executionName)
-			if err != nil {
-				s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
-				s.AgentRegistry.Remove(id)
-				s.deleteJob(jobFullName)
-				s.Store.WaitChs.Delete(id)
-				return gcpcommon.MapGCPError(err, "execution", id)
-			}
-
-			if completedExitCode >= 0 {
-				skipPoller = true
-				go func() {
-					if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-						close(ch.(chan struct{}))
-					}
-				}()
-			} else if agentAddr == "reverse" {
-				// Use reverse agent callback
-				s.AgentRegistry.Prepare(id)
-				if err := s.AgentRegistry.WaitForAgent(id, s.config.AgentTimeout); err != nil {
-					s.Logger.Warn().Err(err).Msg("agent callback timeout")
-					s.AgentRegistry.Remove(id)
-				} else {
-					s.CloudRun.Update(id, func(state *CloudRunState) {
-						state.AgentAddress = "reverse"
-					})
-				}
-			} else {
-				// Wait for agent health
-				agentURL := fmt.Sprintf("http://%s/health", agentAddr)
-				if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
-					s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
-				}
-
-				s.CloudRun.Update(id, func(state *CloudRunState) {
-					state.AgentAddress = agentAddr
-				})
-			}
-		} else {
-			// Short-lived container without forward agent
-			s.Logger.Warn().Str("id", id).Msg("short-lived container has no forward agent")
-		}
-
-		if !skipPoller {
-			go s.pollExecutionExit(id, executionName, exitCh)
-		}
-	}
+	// Start background poller to detect execution exit
+	go s.pollExecutionExit(id, executionName, exitCh)
 
 	return nil
 }
@@ -361,26 +269,18 @@ func (s *Server) ContainerStart(ref string) error {
 // startMultiContainerJobTyped creates and runs a Cloud Run Job with all pod containers.
 // Called when the last container in a pod is started.
 func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []api.Container, exitCh chan struct{}) error {
-	// Build containerInput slice: first container is main (gets agent)
+	// Build containerInput slice
 	var inputs []containerInput
 	for i, pc := range podContainers {
-		state, _ := s.CloudRun.Get(pc.ID)
 		pcCopy := pc
 		inputs = append(inputs, containerInput{
-			ID:         pc.ID,
-			Container:  &pcCopy,
-			AgentToken: state.AgentToken,
-			IsMain:     i == 0,
+			ID:        pc.ID,
+			Container: &pcCopy,
+			IsMain:    i == 0,
 		})
 	}
 
 	mainID := podContainers[0].ID
-	_, _ = s.CloudRun.Get(mainID)
-
-	// Pre-create done channel for reverse agent on main container
-	if s.config.CallbackURL != "" {
-		s.AgentRegistry.Prepare(mainID)
-	}
 
 	// Build and create the combined job
 	jobName := buildJobName(mainID)
@@ -393,9 +293,6 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 	})
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to create multi-container Cloud Run Job")
-		if s.config.CallbackURL != "" {
-			s.AgentRegistry.Remove(mainID)
-		}
 		for _, pc := range podContainers {
 			s.Store.WaitChs.Delete(pc.ID)
 		}
@@ -405,9 +302,6 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 	job, err := createOp.Wait(s.ctx())
 	if err != nil {
 		s.deleteJob(fmt.Sprintf("%s/jobs/%s", s.buildJobParent(), jobName))
-		if s.config.CallbackURL != "" {
-			s.AgentRegistry.Remove(mainID)
-		}
 		for _, pc := range podContainers {
 			s.Store.WaitChs.Delete(pc.ID)
 		}
@@ -433,9 +327,6 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("failed to run job")
 		s.deleteJob(jobFullName)
-		if s.config.CallbackURL != "" {
-			s.AgentRegistry.Remove(mainID)
-		}
 		for _, pc := range podContainers {
 			s.Store.WaitChs.Delete(pc.ID)
 		}
@@ -446,9 +337,6 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("run job failed")
 		s.deleteJob(jobFullName)
-		if s.config.CallbackURL != "" {
-			s.AgentRegistry.Remove(mainID)
-		}
 		for _, pc := range podContainers {
 			s.Store.WaitChs.Delete(pc.ID)
 		}
@@ -470,63 +358,8 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 		})
 	}
 
-	if s.config.CallbackURL != "" {
-		// Reverse agent mode
-		go func() {
-			s.waitForExecutionComplete(executionName, exitCh)
-			_ = s.AgentRegistry.WaitForDisconnect(mainID, 30*time.Minute)
-			if ch, ok := s.Store.WaitChs.LoadAndDelete(mainID); ok {
-				close(ch.(chan struct{}))
-			}
-		}()
-
-		agentTimeout := s.config.AgentTimeout
-		if err := s.AgentRegistry.WaitForAgent(mainID, agentTimeout); err != nil {
-			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
-			s.AgentRegistry.Remove(mainID)
-		} else {
-			s.CloudRun.Update(mainID, func(state *CloudRunState) {
-				state.AgentAddress = "reverse"
-			})
-		}
-	} else {
-		// Forward agent mode
-		agentAddr, completedExitCode, err := s.waitForExecutionRunning(s.ctx(), executionName)
-		if err != nil {
-			s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
-			s.deleteJob(jobFullName)
-			if s.config.CallbackURL != "" {
-				s.AgentRegistry.Remove(mainID)
-			}
-			// Re-add pod containers to PendingCreates so they can be retried
-			for _, pc := range podContainers {
-				s.PendingCreates.Put(pc.ID, pc)
-			}
-			for _, pc := range podContainers {
-				s.Store.WaitChs.Delete(pc.ID)
-			}
-			return gcpcommon.MapGCPError(err, "execution", mainID)
-		}
-
-		if completedExitCode >= 0 {
-			go func() {
-				if ch, ok := s.Store.WaitChs.LoadAndDelete(mainID); ok {
-					close(ch.(chan struct{}))
-				}
-			}()
-		} else {
-			agentURL := fmt.Sprintf("http://%s/health", agentAddr)
-			if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
-				s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
-			}
-
-			s.CloudRun.Update(mainID, func(state *CloudRunState) {
-				state.AgentAddress = agentAddr
-			})
-
-			go s.pollExecutionExit(mainID, executionName, exitCh)
-		}
-	}
+	// Start background poller to detect execution exit
+	go s.pollExecutionExit(mainID, executionName, exitCh)
 
 	return nil
 }
@@ -550,7 +383,7 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 	}
 
 	s.StopHealthCheck(id)
-	s.AgentRegistry.Remove(id)
+
 	// Close wait channel so ContainerWait unblocks
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
@@ -576,7 +409,6 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 
 	// Disconnect reverse agent if connected (unblocks invoke goroutine)
 	s.StopHealthCheck(id)
-	s.AgentRegistry.Remove(id)
 
 	exitCode := core.SignalToExitCode(signal)
 
@@ -618,7 +450,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	// Disconnect reverse agent if connected (unblocks invoke goroutine)
-	s.AgentRegistry.Remove(id)
 
 	if c.State.Running {
 		s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
@@ -633,7 +464,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	s.StopHealthCheck(id)
-	s.AgentRegistry.Remove(id)
 
 	// Delete Cloud Run Job (best-effort)
 	crState, _ := s.CloudRun.Get(id)
@@ -704,9 +534,7 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 
 	fetch := s.cloudLoggingFetch(baseFilter)
 
-	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{
-		CheckAutoAgent: false,
-	})
+	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{})
 }
 
 // cloudLoggingFetch returns a CloudLogFetchFunc that queries Cloud Logging.
@@ -765,7 +593,7 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 	// Stop if running
 	if c.State.Running {
 		s.StopHealthCheck(id)
-		s.AgentRegistry.Remove(id)
+
 		crState, _ := s.CloudRun.Get(id)
 		if crState.ExecutionName != "" {
 			s.cancelExecution(crState.ExecutionName)
@@ -828,7 +656,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 			s.Registry.MarkCleanedUp(crState.JobName)
 		}
 		s.StopHealthCheck(c.ID)
-		s.AgentRegistry.Remove(c.ID)
+
 		for _, ep := range c.NetworkSettings.Networks {
 			if ep != nil && ep.NetworkID != "" {
 				_ = s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, c.ID)
@@ -901,31 +729,23 @@ func (s *Server) VolumeRemove(name string, force bool) error {
 	return nil
 }
 
-// ExecStart checks for an agent connection before allowing exec.
+// ExecStart is not supported by the Cloud Run backend.
 // Cloud Run Jobs do not support native exec — there is no Cloud Run API for
-// executing commands inside a running job container. An agent sidecar must be
-// connected to proxy exec requests into the container.
+// executing commands inside a running job container.
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
 	exec, ok := s.Store.Execs.Get(id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "exec instance", ID: id}
 	}
 
-	c, ok := s.ResolveContainerAuto(context.Background(), exec.ContainerID)
-	if !ok {
+	if _, ok := s.ResolveContainerAuto(context.Background(), exec.ContainerID); !ok {
 		return nil, &api.ConflictError{
 			Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID),
 		}
 	}
 
-	// If the container has an agent connected, delegate to BaseServer which
-	// will proxy through the agent's exec driver.
-	if c.AgentAddress != "" {
-		return s.BaseServer.ExecStart(id, opts)
-	}
-
 	return nil, &api.NotImplementedError{
-		Message: "exec requires an agent connection; Cloud Run Jobs do not support local exec",
+		Message: "exec is not supported by Cloud Run backend; Cloud Run Jobs do not support native exec",
 	}
 }
 
@@ -1074,25 +894,18 @@ func (s *Server) Info() (*api.BackendInfo, error) {
 	return info, nil
 }
 
-// ContainerAttach attaches to a container's IO streams.
-// Cloud Run Jobs do not support local attach — an agent must be connected.
+// ContainerAttach is not supported by the Cloud Run backend.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	c, ok := s.ResolveContainerAuto(context.Background(), id)
-	if !ok {
+	if _, ok := s.ResolveContainerAuto(context.Background(), id); !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
 
-	if c.AgentAddress != "" {
-		return s.BaseServer.ContainerAttach(id, opts)
-	}
-
 	return nil, &api.NotImplementedError{
-		Message: "attach requires an agent connection; Cloud Run Jobs do not support local attach",
+		Message: "attach is not supported by Cloud Run backend",
 	}
 }
 
-// ContainerTop lists processes running inside a container.
-// Cloud Run Jobs do not support local ps — requires an agent connection.
+// ContainerTop is not supported by the Cloud Run backend.
 func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopResponse, error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
@@ -1103,61 +916,39 @@ func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopRespon
 		return nil, &api.ConflictError{Message: fmt.Sprintf("Container %s is not running", id)}
 	}
 
-	if c.AgentAddress != "" {
-		return s.BaseServer.ContainerTop(id, psArgs)
-	}
-
-	return nil, &api.NotImplementedError{Message: "container top requires an agent connection; Cloud Run Jobs do not support local process listing"}
+	return nil, &api.NotImplementedError{Message: "container top is not supported by Cloud Run backend"}
 }
 
-// ContainerGetArchive gets an archive of a path in a container's filesystem.
-// Cloud Run Jobs do not support local filesystem access — an agent must be connected.
+// ContainerGetArchive is not supported by the Cloud Run backend.
 func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArchiveResponse, error) {
-	c, ok := s.ResolveContainerAuto(context.Background(), id)
-	if !ok {
+	if _, ok := s.ResolveContainerAuto(context.Background(), id); !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
 
-	if c.AgentAddress != "" {
-		return s.BaseServer.ContainerGetArchive(id, path)
-	}
-
 	return nil, &api.NotImplementedError{
-		Message: "archive get requires an agent connection; Cloud Run Jobs do not support local filesystem access",
+		Message: "archive get is not supported by Cloud Run backend; no container filesystem access",
 	}
 }
 
-// ContainerPutArchive extracts an archive to a path in a container's filesystem.
-// Cloud Run Jobs do not support local filesystem access — an agent must be connected.
+// ContainerPutArchive is not supported by the Cloud Run backend.
 func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDir bool, body io.Reader) error {
-	c, ok := s.ResolveContainerAuto(context.Background(), id)
-	if !ok {
+	if _, ok := s.ResolveContainerAuto(context.Background(), id); !ok {
 		return &api.NotFoundError{Resource: "container", ID: id}
 	}
 
-	if c.AgentAddress != "" {
-		return s.BaseServer.ContainerPutArchive(id, path, noOverwriteDirNonDir, body)
-	}
-
 	return &api.NotImplementedError{
-		Message: "archive put requires an agent connection; Cloud Run Jobs do not support local filesystem access",
+		Message: "archive put is not supported by Cloud Run backend; no container filesystem access",
 	}
 }
 
-// ContainerStatPath stats a path in a container's filesystem.
-// Cloud Run Jobs do not support local filesystem access — an agent must be connected.
+// ContainerStatPath is not supported by the Cloud Run backend.
 func (s *Server) ContainerStatPath(id string, path string) (*api.ContainerPathStat, error) {
-	c, ok := s.ResolveContainerAuto(context.Background(), id)
-	if !ok {
+	if _, ok := s.ResolveContainerAuto(context.Background(), id); !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
 
-	if c.AgentAddress != "" {
-		return s.BaseServer.ContainerStatPath(id, path)
-	}
-
 	return nil, &api.NotImplementedError{
-		Message: "stat requires an agent connection; Cloud Run Jobs do not support local filesystem access",
+		Message: "stat is not supported by Cloud Run backend; no container filesystem access",
 	}
 }
 

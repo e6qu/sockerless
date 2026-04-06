@@ -3,9 +3,7 @@ module github.com/sockerless/backend-core
 go 1.25.0
 
 require (
-	github.com/gorilla/websocket v1.5.3
 	github.com/rs/zerolog v1.34.0
-	github.com/sockerless/agent v0.0.0
 	github.com/sockerless/api v0.0.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.65.0
 	go.opentelemetry.io/otel v1.40.0
@@ -18,7 +16,6 @@ require (
 require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/creack/pty v1.1.24 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
@@ -41,7 +38,4 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 )
 
-replace (
-	github.com/sockerless/agent => ../../agent
-	github.com/sockerless/api => ../../api
-)
+replace github.com/sockerless/api => ../../api

@@ -21,10 +21,8 @@ type Config struct {
 	SecurityGroupIDs []string
 	CodeBuildProject string        // AWS CodeBuild project for docker build
 	BuildBucket      string        // S3 bucket for build context upload
-	CallbackURL      string        // Backend URL for reverse agent connections
 	EndpointURL      string        // Custom endpoint URL
 	PollInterval     time.Duration // Cloud API poll interval (default 2s)
-	AgentTimeout     time.Duration // Agent health check timeout (default 30s)
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -39,10 +37,8 @@ func ConfigFromEnv() Config {
 		SecurityGroupIDs: splitCSV(os.Getenv("SOCKERLESS_LAMBDA_SECURITY_GROUPS")),
 		CodeBuildProject: os.Getenv("SOCKERLESS_AWS_CODEBUILD_PROJECT"),
 		BuildBucket:      os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET"),
-		CallbackURL:      os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		EndpointURL:      os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:     parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
-		AgentTimeout:     parseDuration(os.Getenv("SOCKERLESS_AGENT_TIMEOUT"), 30*time.Second),
 	}
 }
 
@@ -54,7 +50,6 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 		MemorySize:   1024,
 		Timeout:      900,
 		PollInterval: 2 * time.Second,
-		AgentTimeout: 30 * time.Second,
 	}
 	if env.AWS != nil {
 		if env.AWS.Region != "" {
@@ -77,13 +72,9 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 			c.SecurityGroupIDs = l.SecurityGroups
 		}
 	}
-	c.CallbackURL = env.Common.CallbackURL
 	c.EndpointURL = env.Common.EndpointURL
 	if env.Common.PollInterval != "" {
 		c.PollInterval = parseDuration(env.Common.PollInterval, c.PollInterval)
-	}
-	if env.Common.AgentTimeout != "" {
-		c.AgentTimeout = parseDuration(env.Common.AgentTimeout, c.AgentTimeout)
 	}
 	if sim != nil && sim.Port > 0 {
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)

@@ -12,7 +12,6 @@ RUN GOWORK=off go build -tags noui -o /usr/local/bin/simulator-gcp .
 # Copy source and build backend
 WORKDIR /src
 COPY api/ api/
-COPY agent/ agent/
 COPY backends/core/ backends/core/
 COPY backends/gcp-common/ backends/gcp-common/
 COPY backends/cloudrun/ backends/cloudrun/

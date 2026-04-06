@@ -3,7 +3,6 @@ package ecs
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -86,7 +85,7 @@ func (s *Server) runECSTask(containerID, taskDefARN string, c *api.Container) (t
 }
 
 // waitForTaskRunning polls ECS until the task reaches RUNNING state.
-// Returns the agent address (ip:9111).
+// Returns the task IP address (ip:9111).
 func (s *Server) waitForTaskRunning(ctx context.Context, taskARN string) (string, error) {
 	timeout := time.After(5 * time.Minute)
 	ticker := time.NewTicker(s.config.PollInterval)
@@ -123,61 +122,6 @@ func (s *Server) waitForTaskRunning(ctx context.Context, taskARN string) (string
 			case "STOPPED":
 				reason := aws.ToString(task.StoppedReason)
 				return "", fmt.Errorf("task stopped: %s", reason)
-			}
-		}
-	}
-}
-
-// waitForAgentHealth polls the agent's /health endpoint.
-func (s *Server) waitForAgentHealth(ctx context.Context, healthURL string) error {
-	timeout := time.After(s.config.AgentTimeout)
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	client := &http.Client{Timeout: 2 * time.Second}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-timeout:
-			return fmt.Errorf("timeout waiting for agent health")
-		case <-ticker.C:
-			resp, err := client.Get(healthURL)
-			if err != nil {
-				continue
-			}
-			resp.Body.Close()
-			if resp.StatusCode == 200 {
-				return nil
-			}
-		}
-	}
-}
-
-// waitForTaskStopped blocks until the ECS task reaches STOPPED state or exitCh is closed.
-// Used in reverse agent mode where the goroutine needs to wait for the cloud task to finish.
-func (s *Server) waitForTaskStopped(taskARN string, exitCh chan struct{}) {
-	ticker := time.NewTicker(s.config.PollInterval * 2)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-exitCh:
-			return
-		case <-ticker.C:
-			result, err := s.aws.ECS.DescribeTasks(s.ctx(), &awsecs.DescribeTasksInput{
-				Cluster: aws.String(s.config.Cluster),
-				Tasks:   []string{taskARN},
-			})
-			if err != nil {
-				continue
-			}
-			if len(result.Tasks) == 0 {
-				continue
-			}
-			if aws.ToString(result.Tasks[0].LastStatus) == "STOPPED" {
-				return
 			}
 		}
 	}

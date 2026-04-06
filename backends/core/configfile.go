@@ -37,12 +37,8 @@ type Environment struct {
 
 // CommonConfig holds fields shared across all backends.
 type CommonConfig struct {
-	AgentImage   string `yaml:"agent_image,omitempty"`
-	AgentToken   string `yaml:"agent_token,omitempty"`
-	CallbackURL  string `yaml:"callback_url,omitempty"`
 	EndpointURL  string `yaml:"endpoint_url,omitempty"`
 	PollInterval string `yaml:"poll_interval,omitempty"`
-	AgentTimeout string `yaml:"agent_timeout,omitempty"`
 }
 
 // AWSConfig holds AWS-specific configuration.

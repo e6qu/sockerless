@@ -11,9 +11,7 @@ import (
 )
 
 // PodStart starts all containers in a pod by calling ContainerStart for each,
-// which triggers the Azure Function App HTTP invocation and reverse agent setup.
-// The BaseServer implementation only sets state to "running" without invoking
-// Function Apps.
+// which triggers the Azure Function App HTTP invocation.
 func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
 	pod, ok := s.Store.Pods.GetPod(name)
 	if !ok {
@@ -38,9 +36,7 @@ func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
 	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
 }
 
-// PodStop stops all running containers in a pod, disconnecting reverse agents
-// to unblock Function App invocation goroutines. The BaseServer implementation
-// does not call AgentRegistry.Remove, leaving agents connected.
+// PodStop stops all running containers in a pod.
 func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, error) {
 	pod, ok := s.Store.Pods.GetPod(name)
 	if !ok {
@@ -53,7 +49,6 @@ func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, err
 			continue
 		}
 		s.StopHealthCheck(cid)
-		s.AgentRegistry.Remove(cid)
 		// Close wait channel so ContainerWait unblocks
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(cid); ok {
 			close(ch.(chan struct{}))
@@ -71,9 +66,7 @@ func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, err
 	return &api.PodActionResponse{ID: pod.ID, Errs: []string{}}, nil
 }
 
-// PodKill sends a signal to all running containers in a pod, disconnecting
-// reverse agents. The BaseServer implementation does not call
-// AgentRegistry.Remove, leaving agents connected.
+// PodKill sends a signal to all running containers in a pod.
 func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, error) {
 	pod, ok := s.Store.Pods.GetPod(name)
 	if !ok {
@@ -91,7 +84,6 @@ func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, er
 			continue
 		}
 		s.StopHealthCheck(cid)
-		s.AgentRegistry.Remove(cid)
 
 		s.EmitEvent("container", "kill", cid, map[string]string{
 			"name": strings.TrimPrefix(c.Name, "/"),
@@ -111,8 +103,7 @@ func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, er
 }
 
 // PodRemove removes a pod and all its containers, cleaning up Azure Function
-// App resources. The BaseServer implementation does not delete Function Apps
-// or clean up AZF state, leaving orphaned cloud resources.
+// App resources.
 func (s *Server) PodRemove(name string, force bool) error {
 	pod, ok := s.Store.Pods.GetPod(name)
 	if !ok {
@@ -138,9 +129,6 @@ func (s *Server) PodRemove(name string, force bool) error {
 		if !ok {
 			continue
 		}
-
-		// Disconnect reverse agent
-		s.AgentRegistry.Remove(cid)
 
 		if force && c.State.Running {
 			s.EmitEvent("container", "kill", cid, map[string]string{

@@ -48,7 +48,6 @@ type BaseServer struct {
 	Logger         zerolog.Logger
 	Desc           BackendDescriptor
 	Mux            *http.ServeMux
-	AgentRegistry  *AgentRegistry
 	Drivers        DriverSet
 	Registry       *ResourceRegistry
 	StartedAt      time.Time
@@ -96,7 +95,6 @@ func NewBaseServer(store *Store, desc BackendDescriptor, logger zerolog.Logger) 
 		Logger:         logger,
 		Desc:           desc,
 		Mux:            http.NewServeMux(),
-		AgentRegistry:  NewAgentRegistry(),
 		Registry:       NewResourceRegistry(registryPath, logger),
 		StartedAt:      time.Now(),
 		Metrics:        NewMetrics(),
@@ -128,8 +126,6 @@ func (s *BaseServer) registerRoutes() {
 	s.Mux.HandleFunc("GET /internal/v1/resources", s.handleResourceList)
 	s.Mux.HandleFunc("GET /internal/v1/resources/orphaned", s.handleResourceOrphaned)
 	s.Mux.HandleFunc("POST /internal/v1/resources/cleanup", s.handleResourceCleanup)
-	s.Mux.HandleFunc("GET /internal/v1/agent/connect", s.handleAgentConnect)
-
 	// Podman Libpod pod API
 	s.Mux.HandleFunc("POST /internal/v1/libpod/pods/create", s.handlePodCreate)
 	s.Mux.HandleFunc("GET /internal/v1/libpod/pods/json", s.handlePodList)
@@ -274,11 +270,11 @@ func (s *BaseServer) InitDefaultNetwork() {
 }
 
 // InitDrivers sets up the default driver set for this server.
-// Agent drivers handle all cases; operations error when no agent is connected.
+// Uses local filesystem and process drivers. Cloud backends override these.
 func (s *BaseServer) InitDrivers() {
-	s.Drivers.Exec = &AgentExecDriver{Store: s.Store, AgentRegistry: s.AgentRegistry, Logger: s.Logger}
-	s.Drivers.Filesystem = &AgentFilesystemDriver{Store: s.Store, Logger: s.Logger}
-	s.Drivers.Stream = &AgentStreamDriver{Store: s.Store, AgentRegistry: s.AgentRegistry, Logger: s.Logger}
+	s.Drivers.Exec = &LocalExecDriver{Store: s.Store, Logger: s.Logger}
+	s.Drivers.Filesystem = &LocalFilesystemDriver{Store: s.Store, Logger: s.Logger}
+	s.Drivers.Stream = &LocalStreamDriver{Store: s.Store, Logger: s.Logger}
 
 	syntheticNet := &SyntheticNetworkDriver{Store: s.Store, IPAlloc: s.Store.IPAlloc}
 	if platformDriver := NewPlatformNetworkDriver(syntheticNet, s.Logger); platformDriver != nil {

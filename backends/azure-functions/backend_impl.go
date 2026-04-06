@@ -164,30 +164,14 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		})
 	}
 
-	// Generate agent token and build callback entrypoint if configured
-	agentToken := ""
-	var startupCommand string
-	if s.config.CallbackURL != "" {
-		agentToken = core.GenerateToken()
-		callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, id, agentToken)
-		agentEntrypoint := core.BuildAgentCallbackEntrypoint(config, callbackURL)
-		startupCommand = strings.Join(agentEntrypoint, " ")
-
-		appSettings = append(appSettings,
-			&armappservice.NameValuePair{Name: ptr("SOCKERLESS_CONTAINER_ID"), Value: ptr(id)},
-			&armappservice.NameValuePair{Name: ptr("SOCKERLESS_AGENT_TOKEN"), Value: ptr(agentToken)},
-			&armappservice.NameValuePair{Name: ptr("SOCKERLESS_AGENT_CALLBACK_URL"), Value: ptr(callbackURL)},
-		)
-	} else {
-		// Pass command via app setting (cloud-native) for short-lived containers
-		cmd := core.BuildOriginalCommand(config.Entrypoint, config.Cmd)
-		if len(cmd) > 0 {
-			cmdJSON, _ := json.Marshal(cmd)
-			appSettings = append(appSettings, &armappservice.NameValuePair{
-				Name:  ptr("SOCKERLESS_CMD"),
-				Value: ptr(base64.StdEncoding.EncodeToString(cmdJSON)),
-			})
-		}
+	// Pass command via app setting (cloud-native) for short-lived containers
+	cmd := core.BuildOriginalCommand(config.Entrypoint, config.Cmd)
+	if len(cmd) > 0 {
+		cmdJSON, _ := json.Marshal(cmd)
+		appSettings = append(appSettings, &armappservice.NameValuePair{
+			Name:  ptr("SOCKERLESS_CMD"),
+			Value: ptr(base64.StdEncoding.EncodeToString(cmdJSON)),
+		})
 	}
 
 	// Build the Function App Site resource
@@ -195,10 +179,6 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		LinuxFxVersion: ptr("DOCKER|" + config.Image),
 		AppSettings:    appSettings,
 	}
-	if startupCommand != "" {
-		siteConfig.AppCommandLine = ptr(startupCommand)
-	}
-
 	// Build resource tags
 	tags := core.TagSet{
 		ContainerID: id,
@@ -265,7 +245,6 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		FunctionAppName: funcAppName,
 		ResourceID:      resourceID,
 		FunctionURL:     functionURL,
-		AgentToken:      agentToken,
 	})
 
 	s.EmitEvent("container", "create", id, map[string]string{
@@ -319,96 +298,32 @@ func (s *Server) ContainerStart(ref string) error {
 
 	s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 
-	// Non-tail-dev-null containers: invoke the function with the container's command
-	// to get real execution, then stop with the real exit code.
-	if !core.IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd) {
-		cmd := core.BuildOriginalCommand(c.Config.Entrypoint, c.Config.Cmd)
-		if len(cmd) > 0 && azfState.FunctionURL != "" {
-			go func() {
-				exitCode := 0
-				client := &http.Client{Timeout: time.Duration(s.config.Timeout) * time.Second}
-				resp, err := client.Post(azfState.FunctionURL, "application/json", nil)
-				if err != nil {
-					s.Logger.Error().Err(err).Str("functionApp", azfState.FunctionAppName).Msg("function invocation failed")
-					exitCode = 1
-				} else {
-					body, _ := io.ReadAll(resp.Body)
-					resp.Body.Close()
-					if len(body) > 0 && string(body) != "{}" {
-						s.Store.LogBuffers.Store(id, body)
-					}
-					if resp.StatusCode >= 400 {
-						exitCode = 1
-					}
-				}
-				_ = exitCode
-				// Close wait channel so ContainerWait unblocks
-				if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-					close(ch.(chan struct{}))
-				}
-			}()
-		} else {
-			// No command or no function URL: auto-stop after brief delay
-			go func() {
-				time.Sleep(500 * time.Millisecond)
-				if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-					close(ch.(chan struct{}))
-				}
-			}()
-		}
-		return nil
-	}
-
-	// Pre-create done channel so invoke goroutine can wait for agent disconnect
-	if s.config.CallbackURL != "" {
-		s.AgentRegistry.Prepare(id)
-	}
-
-	// Trigger the Function App via HTTP POST in a goroutine
+	// Invoke the Function App via HTTP POST asynchronously
 	go func() {
-		exitCode := 0
-
 		if azfState.FunctionURL != "" {
 			client := &http.Client{Timeout: time.Duration(s.config.Timeout) * time.Second}
-			resp, err := client.Post(azfState.FunctionURL, "application/json", strings.NewReader("{}"))
+			resp, err := client.Post(azfState.FunctionURL, "application/json", nil)
 			if err != nil {
 				s.Logger.Error().Err(err).Str("functionApp", azfState.FunctionAppName).Msg("Function App invocation failed")
-				exitCode = 1
 			} else {
+				body, _ := io.ReadAll(resp.Body)
 				resp.Body.Close()
+				if len(body) > 0 && string(body) != "{}" {
+					s.Store.LogBuffers.Store(id, body)
+				}
 				if resp.StatusCode >= 400 {
 					s.Logger.Warn().Int("status", resp.StatusCode).Str("functionApp", azfState.FunctionAppName).Msg("Function App returned error")
-					exitCode = 1
 				}
 			}
 		} else {
 			s.Logger.Warn().Str("functionApp", azfState.FunctionAppName).Msg("no function URL available, cannot invoke")
-			exitCode = 1
 		}
 
-		// Wait for reverse agent to disconnect before stopping.
-		if s.config.CallbackURL != "" {
-			_ = s.AgentRegistry.WaitForDisconnect(id, 30*time.Minute)
-		}
-
-		_ = exitCode
 		// Close wait channel so ContainerWait unblocks
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
 		}
 	}()
-
-	// Wait for reverse agent callback if configured
-	if s.config.CallbackURL != "" {
-		if err := s.AgentRegistry.WaitForAgent(id, s.config.AgentTimeout); err != nil {
-			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
-			s.AgentRegistry.Remove(id)
-		} else {
-			s.AZF.Update(id, func(state *AZFState) {
-				state.AgentAddress = "reverse"
-			})
-		}
-	}
 
 	return nil
 }
@@ -427,7 +342,6 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 
 	// Azure Functions run to completion — stop transitions state
 	s.StopHealthCheck(id)
-	s.AgentRegistry.Remove(id)
 	// Close wait channel so ContainerWait unblocks
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
@@ -451,9 +365,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 		}
 	}
 
-	// Disconnect reverse agent if connected (unblocks invoke goroutine)
 	s.StopHealthCheck(id)
-	s.AgentRegistry.Remove(id)
 
 	exitCode := core.SignalToExitCode(signal)
 
@@ -487,9 +399,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			Message: fmt.Sprintf("You cannot remove a running container %s. Stop the container before attempting removal or force remove", id[:12]),
 		}
 	}
-
-	// Disconnect reverse agent if connected (unblocks invoke goroutine)
-	s.AgentRegistry.Remove(id)
 
 	if c.State.Running {
 		s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
@@ -578,7 +487,6 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 
 	if c.State.Running {
 		s.StopHealthCheck(id)
-		s.AgentRegistry.Remove(id)
 		// Close wait channel so ContainerWait unblocks
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
@@ -633,7 +541,6 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 		}
 
 		s.StopHealthCheck(c.ID)
-		s.AgentRegistry.Remove(c.ID)
 		// Clean up network associations
 		for _, ep := range c.NetworkSettings.Networks {
 			if ep != nil && ep.NetworkID != "" {
@@ -734,18 +641,13 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 	}
 }
 
-// ContainerAttach is not supported by the Azure Functions backend without a connected agent.
+// ContainerAttach is not supported by the Azure Functions backend.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	c, ok := s.ResolveContainerAuto(context.Background(), id)
-	if !ok {
+	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	azfState, _ := s.AZF.Get(c.ID)
-	if azfState.AgentAddress != "" {
-		return s.BaseServer.ContainerAttach(id, opts)
-	}
 	return nil, &api.NotImplementedError{
-		Message: "Azure Functions backend does not support attach without a connected agent",
+		Message: "Azure Functions backend does not support attach",
 	}
 }
 

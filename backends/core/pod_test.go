@@ -163,7 +163,6 @@ func newPodTestServer() *BaseServer {
 		Store:          store,
 		Logger:         logger,
 		Mux:            http.NewServeMux(),
-		AgentRegistry:  NewAgentRegistry(),
 		Desc:           BackendDescriptor{Driver: "test"},
 		Registry:       NewResourceRegistry(""),
 		PendingCreates: NewStateStore[api.Container](),

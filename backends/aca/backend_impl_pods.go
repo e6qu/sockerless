@@ -164,13 +164,7 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 		}
 	}
 
-	// If an agent is connected (check ACA state), delegate to BaseServer
-	acaState, _ := s.ACA.Get(c.ID)
-	if acaState.AgentAddress != "" {
-		return s.BaseServer.ExecStart(id, opts)
-	}
-
-	// No agent — fall back to cloud exec via ACA management API
+	// Use cloud exec via ACA management API
 	return s.cloudExecStart(&exec, &c)
 }
 
@@ -184,12 +178,8 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
 	cid := c.ID
-	acaState, _ := s.ACA.Get(cid)
-	if acaState.AgentAddress != "" {
-		return s.BaseServer.ContainerAttach(id, opts)
-	}
 
-	// No agent — fall back to cloud exec, creating a shell session as attach.
+	// Fall back to cloud exec, creating a shell session as attach.
 	// Build a synthetic exec instance for the container's entrypoint.
 	exec := &api.ExecInstance{
 		ContainerID: cid,

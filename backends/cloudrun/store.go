@@ -4,8 +4,6 @@ package cloudrun
 type CloudRunState struct {
 	JobName       string // Cloud Run Job name
 	ExecutionName string // Execution name
-	AgentAddress  string // "ip:port" of the agent
-	AgentToken    string // Bearer token for agent auth
 }
 
 // NetworkState tracks cloud networking state for a Docker network.

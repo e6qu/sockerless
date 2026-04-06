@@ -31,12 +31,18 @@ func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container, tty bo
 
 	// Build the full command string from the exec process config.
 	// ECS ExecuteCommand takes a single command string.
+	var envPrefix string
+	for _, e := range exec.ProcessConfig.Env {
+		// Shell-escape the value by wrapping in single-quoted export
+		envPrefix += fmt.Sprintf("export %s; ", e)
+	}
+
 	parts := []string{}
 	if exec.ProcessConfig.Entrypoint != "" {
 		parts = append(parts, exec.ProcessConfig.Entrypoint)
 	}
 	parts = append(parts, exec.ProcessConfig.Arguments...)
-	cmd := strings.Join(parts, " ")
+	cmd := envPrefix + strings.Join(parts, " ")
 
 	result, err := s.aws.ECS.ExecuteCommand(s.ctx(), &awsecs.ExecuteCommandInput{
 		Cluster:     aws.String(cluster),

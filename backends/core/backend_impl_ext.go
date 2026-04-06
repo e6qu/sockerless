@@ -167,25 +167,16 @@ func (s *BaseServer) ContainerUpdate(id string, req *api.ContainerUpdateRequest)
 }
 
 // ContainerChanges returns filesystem changes in a container.
-// Returns error when no agent is connected instead of empty list.
 func (s *BaseServer) ContainerChanges(id string) ([]api.ContainerChangeItem, error) {
-	resolvedID, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	_, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
 
-	c, _ := s.Store.Containers.Get(resolvedID)
-	if c.AgentAddress == "" {
-		return nil, &api.NotImplementedError{
-			Message: "container diff requires an agent connection (no agent connected to this container)",
-		}
-	}
-
-	return nil, &api.NotImplementedError{Message: "container diff via agent not yet implemented"}
+	return nil, &api.NotImplementedError{Message: "container diff is not supported by this backend"}
 }
 
 // ContainerExport exports a container's filesystem as a tar stream.
-// Returns error when no agent/filesystem driver instead of empty tar.
 func (s *BaseServer) ContainerExport(id string) (io.ReadCloser, error) {
 	resolvedID, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -194,13 +185,7 @@ func (s *BaseServer) ContainerExport(id string) (io.ReadCloser, error) {
 
 	rootPath, err := s.Drivers.Filesystem.RootPath(resolvedID)
 	if err != nil || rootPath == "" {
-		c, _ := s.Store.Containers.Get(resolvedID)
-		if c.AgentAddress == "" {
-			return nil, &api.NotImplementedError{
-				Message: "container export requires an agent connection (no agent connected to this container)",
-			}
-		}
-		// Agent connected but no filesystem path — return empty tar
+		// No filesystem path — return empty tar
 		var buf bytes.Buffer
 		tw := tar.NewWriter(&buf)
 		_ = tw.Close()

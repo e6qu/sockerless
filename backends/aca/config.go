@@ -16,15 +16,11 @@ type Config struct {
 	Location              string
 	LogAnalyticsWorkspace string
 	StorageAccount        string
-	AgentImage            string
-	AgentToken            string
 	ACRName               string        // Azure Container Registry name for builds
 	BuildStorageAccount   string        // Storage account for ACR build context
 	BuildContainer        string        // Blob container for ACR build context
-	CallbackURL           string        // Backend URL for reverse agent connections
 	EndpointURL           string        // Custom endpoint URL
 	PollInterval          time.Duration // Cloud API poll interval (default 2s)
-	AgentTimeout          time.Duration // Agent health check timeout (default 30s)
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -36,15 +32,11 @@ func ConfigFromEnv() Config {
 		Location:              envOrDefault("SOCKERLESS_ACA_LOCATION", "eastus"),
 		LogAnalyticsWorkspace: os.Getenv("SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE"),
 		StorageAccount:        os.Getenv("SOCKERLESS_ACA_STORAGE_ACCOUNT"),
-		AgentImage:            envOrDefault("SOCKERLESS_ACA_AGENT_IMAGE", "sockerless/agent:latest"),
-		AgentToken:            os.Getenv("SOCKERLESS_ACA_AGENT_TOKEN"),
 		ACRName:               os.Getenv("SOCKERLESS_AZURE_ACR_NAME"),
 		BuildStorageAccount:   os.Getenv("SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT"),
 		BuildContainer:        os.Getenv("SOCKERLESS_AZURE_BUILD_CONTAINER"),
-		CallbackURL:           os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		EndpointURL:           os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:          parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
-		AgentTimeout:          parseDuration(os.Getenv("SOCKERLESS_AGENT_TIMEOUT"), 30*time.Second),
 	}
 }
 
@@ -53,9 +45,7 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 	c := Config{
 		Environment:  "sockerless",
 		Location:     "eastus",
-		AgentImage:   "sockerless/agent:latest",
 		PollInterval: 2 * time.Second,
-		AgentTimeout: 30 * time.Second,
 	}
 	if env.Azure != nil {
 		c.SubscriptionID = env.Azure.SubscriptionID
@@ -74,17 +64,9 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 			c.ACRName = aca.ACRName
 		}
 	}
-	if env.Common.AgentImage != "" {
-		c.AgentImage = env.Common.AgentImage
-	}
-	c.AgentToken = env.Common.AgentToken
-	c.CallbackURL = env.Common.CallbackURL
 	c.EndpointURL = env.Common.EndpointURL
 	if env.Common.PollInterval != "" {
 		c.PollInterval = parseDuration(env.Common.PollInterval, c.PollInterval)
-	}
-	if env.Common.AgentTimeout != "" {
-		c.AgentTimeout = parseDuration(env.Common.AgentTimeout, c.AgentTimeout)
 	}
 	if sim != nil && sim.Port > 0 {
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
