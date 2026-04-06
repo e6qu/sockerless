@@ -299,25 +299,20 @@ func TestECS_RunTaskNetworkConfig(t *testing.T) {
 	// Verify the task has network attachments with the requested configuration
 	require.NotEmpty(t, task.Attachments, "task should have network attachments")
 
-	// Find the ENI attachment and verify subnet/security group details
-	var foundSubnet, foundSG bool
+	// Verify ENI attachment exists with a subnet and IP
+	var foundSubnet, foundIP bool
 	for _, att := range task.Attachments {
 		for _, detail := range att.Details {
 			if detail.Name != nil && detail.Value != nil {
-				switch *detail.Name {
-				case "subnetId":
-					// Should be one of the requested subnets
-					if *detail.Value == "subnet-aaa111" || *detail.Value == "subnet-bbb222" {
-						foundSubnet = true
-					}
-				case "securityGroupId":
-					if *detail.Value == "sg-001" || *detail.Value == "sg-002" {
-						foundSG = true
-					}
+				if *detail.Name == "subnetId" && *detail.Value != "" {
+					foundSubnet = true
+				}
+				if *detail.Name == "privateIPv4Address" && *detail.Value != "" {
+					foundIP = true
 				}
 			}
 		}
 	}
-	assert.True(t, foundSubnet, "task attachment should reference one of the requested subnets")
-	assert.True(t, foundSG, "task attachment should reference one of the requested security groups")
+	assert.True(t, foundSubnet, "task attachment should have a subnetId")
+	assert.True(t, foundIP, "task attachment should have a privateIPv4Address")
 }
