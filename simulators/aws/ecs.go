@@ -581,7 +581,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				}
 			})
 
-			// PENDING → start container → RUNNING
+			// PENDING → RUNNING
 			time.Sleep(400 * time.Millisecond)
 
 			// Extract image, entrypoint, command, and env from first container definition
@@ -600,6 +600,20 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+
+			// Mark task as RUNNING before starting containers
+			now := time.Now().Unix()
+			ecsTasks.Update(id, func(t *ECSTask) {
+				t.LastStatus = "RUNNING"
+				t.Connectivity = "CONNECTED"
+				t.StartedAt = &now
+				for j := range t.Containers {
+					t.Containers[j].LastStatus = "RUNNING"
+				}
+				for j := range t.Attachments {
+					t.Attachments[j].Status = "ATTACHED"
+				}
+			})
 
 			// Inject CloudWatch logs for containers with awslogs log driver
 			for _, cd := range td.ContainerDefinitions {
@@ -677,24 +691,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 						continue
 					}
 					ecsProcessHandles.Store(id, handle)
-				}
 
-				// Mark task as RUNNING now that the container is started
-				now := time.Now().Unix()
-				ecsTasks.Update(id, func(t *ECSTask) {
-					t.LastStatus = "RUNNING"
-					t.Connectivity = "CONNECTED"
-					t.StartedAt = &now
-					for j := range t.Containers {
-						t.Containers[j].LastStatus = "RUNNING"
-					}
-					for j := range t.Attachments {
-						t.Attachments[j].Status = "ATTACHED"
-					}
-				})
-
-				if v, ok := ecsProcessHandles.Load(id); ok {
-					handle := v.(*sim.ContainerHandle)
 					go func(taskID string, handle *sim.ContainerHandle) {
 						result := handle.Wait()
 						ecsProcessHandles.Delete(taskID)
@@ -1011,11 +1008,16 @@ func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
 		sessionID := generateUUID()
 
 		// Store the session
-		// Look up the Docker container ID for this task
+		// Look up the Docker container ID for this task (may need to wait briefly
+		// for the container to start — it starts async after RUNNING transition)
 		var dockerContainerID string
-		if v, ok := ecsProcessHandles.Load(taskID); ok {
-			handle := v.(*sim.ContainerHandle)
-			dockerContainerID = handle.ContainerID
+		for i := 0; i < 20; i++ {
+			if v, ok := ecsProcessHandles.Load(taskID); ok {
+				handle := v.(*sim.ContainerHandle)
+				dockerContainerID = handle.ContainerID
+				break
+			}
+			time.Sleep(250 * time.Millisecond)
 		}
 
 		ecsExecSessions.Store(sessionID, ecsExecSession{
