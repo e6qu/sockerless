@@ -282,7 +282,8 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 func waitAndCaptureLogs(ctx context.Context, cli *client.Client, containerID string, cfg ContainerConfig, sink LogSink) ProcessResult {
 	startedAt := time.Now()
 
-	// Attach to logs
+	// Attach to logs — must complete before we return the result
+	var logDone chan struct{}
 	logReader, err := cli.ContainerLogs(ctx, containerID, container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
@@ -290,8 +291,11 @@ func waitAndCaptureLogs(ctx context.Context, cli *client.Client, containerID str
 		Timestamps: false,
 	})
 	if err == nil {
-		// Stream logs to sink in background
-		go streamDockerLogs(logReader, sink)
+		logDone = make(chan struct{})
+		go func() {
+			streamDockerLogs(logReader, sink)
+			close(logDone)
+		}()
 	}
 
 	// Enforce timeout via a separate goroutine
@@ -310,11 +314,12 @@ func waitAndCaptureLogs(ctx context.Context, cli *client.Client, containerID str
 	}
 
 	// Wait for container to exit
+	var result ProcessResult
 	statusCh, errCh := cli.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
 	select {
 	case err := <-errCh:
 		if err != nil {
-			return ProcessResult{
+			result = ProcessResult{
 				ExitCode:  -1,
 				StartedAt: startedAt,
 				StoppedAt: time.Now(),
@@ -322,25 +327,35 @@ func waitAndCaptureLogs(ctx context.Context, cli *client.Client, containerID str
 			}
 		}
 	case status := <-statusCh:
-		return ProcessResult{
+		result = ProcessResult{
 			ExitCode:  int(status.StatusCode),
 			StartedAt: startedAt,
 			StoppedAt: time.Now(),
 		}
 	case <-ctx.Done():
-		// Cancelled — stop container
 		timeout := 5
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer stopCancel()
 		_ = cli.ContainerStop(stopCtx, containerID, container.StopOptions{Timeout: &timeout})
-		return ProcessResult{
+		result = ProcessResult{
 			ExitCode:  137,
 			StartedAt: startedAt,
 			StoppedAt: time.Now(),
 		}
 	}
 
-	return ProcessResult{ExitCode: -1, StartedAt: startedAt, StoppedAt: time.Now()}
+	// Wait for log drain to complete before returning — ensures all container
+	// output reaches the LogSink (and thus Cloud Logging) before the execution
+	// is marked as completed.
+	if logDone != nil {
+		select {
+		case <-logDone:
+		case <-time.After(5 * time.Second):
+			// Safety timeout — don't hang forever if log reader is stuck
+		}
+	}
+
+	return result
 }
 
 // streamDockerLogs demuxes Docker log output and sends lines to the sink.
@@ -376,6 +391,40 @@ func streamDockerLogs(reader io.ReadCloser, sink LogSink) {
 	go scanStream(stderrPR, "stderr")
 
 	wg.Wait()
+}
+
+// ResolveLocalImage maps cloud registry URIs back to Docker Hub images for local execution.
+// Cloud backends resolve "alpine:latest" to cloud-specific registries:
+//   - GCP AR: "us-central1-docker.pkg.dev/project/docker-hub/library/alpine:latest"
+//   - AWS ECR: "123456789.dkr.ecr.eu-west-1.amazonaws.com/alpine:latest"
+//   - Azure ACR: "myacr.azurecr.io/library/alpine:latest"
+//
+// The simulator runs containers locally where only Docker Hub images exist,
+// so these URIs must be resolved back to their original form.
+func ResolveLocalImage(image string) string {
+	// GCP Artifact Registry pull-through cache
+	if strings.Contains(image, "-docker.pkg.dev/") && strings.Contains(image, "/docker-hub/") {
+		idx := strings.Index(image, "/docker-hub/")
+		dockerPath := image[idx+len("/docker-hub/"):]
+		dockerPath = strings.TrimPrefix(dockerPath, "library/")
+		return dockerPath
+	}
+	// AWS ECR pull-through cache
+	if strings.Contains(image, ".dkr.ecr.") && strings.Contains(image, ".amazonaws.com/") {
+		idx := strings.Index(image, ".amazonaws.com/")
+		dockerPath := image[idx+len(".amazonaws.com/"):]
+		dockerPath = strings.TrimPrefix(dockerPath, "library/")
+		dockerPath = strings.TrimPrefix(dockerPath, "docker-hub/")
+		return dockerPath
+	}
+	// Azure ACR
+	if strings.Contains(image, ".azurecr.io/") {
+		idx := strings.Index(image, ".azurecr.io/")
+		dockerPath := image[idx+len(".azurecr.io/"):]
+		dockerPath = strings.TrimPrefix(dockerPath, "library/")
+		return dockerPath
+	}
+	return image
 }
 
 // RuntimeInfo returns the container runtime name and version for display.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -401,8 +402,9 @@ func registerCloudRunJobs(srv *sim.Server) {
 						execShort = last
 					}
 				}
+				localImage := sim.ResolveLocalImage(image)
 				handle, err := sim.StartContainerSync(sim.ContainerConfig{
-					Image:   image,
+					Image:   localImage,
 					Command: entrypoint,
 					Args:    args,
 					Env:     cmdEnv,
@@ -411,6 +413,7 @@ func registerCloudRunJobs(srv *sim.Server) {
 					Labels:  map[string]string{"sockerless-sim-execution": id},
 				}, sink)
 				if err != nil {
+					fmt.Fprintf(os.Stderr, "ERROR: failed to start container for execution: image=%s err=%v\n", image, err)
 					succeeded = false
 				} else {
 					crjProcessHandles.Store(id, handle)

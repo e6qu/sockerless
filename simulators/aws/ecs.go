@@ -663,7 +663,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				if imageURI != "" {
 					sink := &cwLogSink{logGroup: logGroup, logStream: logStreamName}
 					handle, err := sim.StartContainerSync(sim.ContainerConfig{
-						Image:   imageURI,
+						Image:   sim.ResolveLocalImage(imageURI),
 						Command: entrypoint,
 						Args:    args,
 						Env:     cmdEnv,
