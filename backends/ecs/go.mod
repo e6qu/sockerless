@@ -83,7 +83,6 @@ require (
 )
 
 replace (
-	github.com/sockerless/agent => ../../agent
 	github.com/sockerless/api => ../../api
 	github.com/sockerless/aws-common => ../aws-common
 	github.com/sockerless/backend-core => ../core
