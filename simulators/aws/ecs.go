@@ -195,6 +195,12 @@ func registerECS(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerServiceV20141113.DeleteCluster", handleECSDeleteCluster)
 	r.Register("AmazonEC2ContainerServiceV20141113.ListTagsForResource", handleECSListTagsForResource)
 	r.Register("AmazonEC2ContainerServiceV20141113.ExecuteCommand", handleECSExecuteCommand(srv))
+
+	// Static WebSocket route for ECS exec sessions (session ID is a path param)
+	srv.HandleFunc("GET /ecs-exec/{sessionId}", func(w http.ResponseWriter, r *http.Request) {
+		sessionID := r.PathValue("sessionId")
+		handleECSExecWebSocket(sessionID)(w, r)
+	})
 }
 
 func handleECSCreateCluster(w http.ResponseWriter, r *http.Request) {
@@ -1033,8 +1039,7 @@ func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
 		}
 		streamURL := fmt.Sprintf("ws://%s/ecs-exec/%s", host, sessionID)
 
-		// Register the WebSocket endpoint for this session (one-shot)
-		srv.HandleFunc(fmt.Sprintf("GET /ecs-exec/%s", sessionID), handleECSExecWebSocket(sessionID))
+		// WebSocket endpoint is registered statically as /ecs-exec/{sessionId}
 
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
 			"session": map[string]any{
