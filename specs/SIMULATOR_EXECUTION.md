@@ -90,16 +90,14 @@ The client connects to the default Docker socket (`/var/run/docker.sock` or `DOC
 #### Azure Functions (`simulators/azure/functions.go`)
 - Same as Lambda/GCF: start, invoke, capture output, remove
 
-### Fallback: Process Mode
+### No Fallback
 
-When Docker is not available (no daemon, no socket), fall back to `StartProcess` with a clear warning. This allows development on machines without Docker, but the primary mode is containers.
-
-Detection: attempt `docker info` at startup. If it fails, log a warning and use process mode.
+Docker or Podman must be available. If the container runtime is not reachable at simulator startup, the simulator exits with a fatal error. There is no process-mode fallback.
 
 ```go
 func init() {
     if !dockerAvailable() {
-        log.Warn().Msg("Docker not available — simulators will use process execution (exec/archive will not work)")
+        log.Fatal().Msg("Docker/Podman not available — simulators require a container runtime")
     }
 }
 ```
