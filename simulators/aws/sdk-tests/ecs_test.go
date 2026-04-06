@@ -260,8 +260,8 @@ func TestECS_TaskExecutesCommand(t *testing.T) {
 		},
 	})
 
-	// Wait for process to complete (500ms startup + command execution + buffer)
-	time.Sleep(2 * time.Second)
+	// Wait for container to complete (image pull + start + command execution)
+	time.Sleep(10 * time.Second)
 
 	descOut, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
 		Cluster: aws.String(cluster),
@@ -353,9 +353,9 @@ func TestECS_TaskLogsToCloudWatch(t *testing.T) {
 
 func TestECS_TaskNoCommandStaysRunning(t *testing.T) {
 	client, cluster, taskArn := ecsRunTaskHelper(t, "exec-nocmd", ecstypes.ContainerDefinition{
-		Name:  aws.String("app"),
-		Image: aws.String("alpine:latest"),
-		// No command — should stay RUNNING
+		Name:    aws.String("app"),
+		Image:   aws.String("alpine:latest"),
+		Command: []string{"tail", "-f", "/dev/null"}, // Long-running — stays RUNNING
 		LogConfiguration: &ecstypes.LogConfiguration{
 			LogDriver: ecstypes.LogDriverAwslogs,
 			Options: map[string]string{

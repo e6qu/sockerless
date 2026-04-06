@@ -23,8 +23,8 @@ func TestECS_CLI_ArithmeticEval(t *testing.T) {
 		"--memory", "512",
 		"--container-definitions", fmt.Sprintf(`[{
 			"name": "app",
-			"image": "alpine:latest",
-			"command": [%q, "(3 + 4) * 2"],
+			"image": %q,
+			"command": ["(3 + 4) * 2"],
 			"logConfiguration": {
 				"logDriver": "awslogs",
 				"options": {
@@ -32,7 +32,7 @@ func TestECS_CLI_ArithmeticEval(t *testing.T) {
 					"awslogs-stream-prefix": "ecs"
 				}
 			}
-		}]`, evalBinaryPath),
+		}]`, evalImageName),
 		"--output", "json",
 	))
 
@@ -124,8 +124,8 @@ func TestECS_CLI_ArithmeticInvalid(t *testing.T) {
 		"--memory", "512",
 		"--container-definitions", fmt.Sprintf(`[{
 			"name": "app",
-			"image": "alpine:latest",
-			"command": [%q, "3 +"],
+			"image": %q,
+			"command": ["3 +"],
 			"logConfiguration": {
 				"logDriver": "awslogs",
 				"options": {
@@ -133,7 +133,7 @@ func TestECS_CLI_ArithmeticInvalid(t *testing.T) {
 					"awslogs-stream-prefix": "ecs"
 				}
 			}
-		}]`, evalBinaryPath),
+		}]`, evalImageName),
 		"--output", "json",
 	))
 

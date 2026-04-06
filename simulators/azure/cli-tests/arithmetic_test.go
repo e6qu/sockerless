@@ -1,7 +1,6 @@
 package azure_cli_test
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -13,7 +12,6 @@ import (
 
 func TestContainerApps_CLI_ArithmeticEval(t *testing.T) {
 	jobName := "cli-arith-aca-job"
-	cmd, _ := json.Marshal([]string{evalBinaryPath, "(3 + 4) * 2"})
 	jobURL := acaURL("jobs/" + jobName)
 	jobBody := fmt.Sprintf(`{
 		"location": "eastus",
@@ -27,12 +25,12 @@ func TestContainerApps_CLI_ArithmeticEval(t *testing.T) {
 			"template": {
 				"containers": [{
 					"name": "app",
-					"image": "alpine:latest",
-					"command": %s
+					"image": %q,
+					"args": ["(3 + 4) * 2"]
 				}]
 			}
 		}
-	}`, string(cmd))
+	}`, evalImageName)
 	runCLI(t, azRest("PUT", jobURL, jobBody))
 
 	// Start execution
@@ -72,7 +70,6 @@ func TestContainerApps_CLI_ArithmeticEval(t *testing.T) {
 
 func TestContainerApps_CLI_ArithmeticInvalid(t *testing.T) {
 	jobName := "cli-arith-aca-fail"
-	cmd, _ := json.Marshal([]string{evalBinaryPath, "3 +"})
 	jobURL := acaURL("jobs/" + jobName)
 	jobBody := fmt.Sprintf(`{
 		"location": "eastus",
@@ -86,12 +83,12 @@ func TestContainerApps_CLI_ArithmeticInvalid(t *testing.T) {
 			"template": {
 				"containers": [{
 					"name": "app",
-					"image": "alpine:latest",
-					"command": %s
+					"image": %q,
+					"args": ["3 +"]
 				}]
 			}
 		}
-	}`, string(cmd))
+	}`, evalImageName)
 	runCLI(t, azRest("PUT", jobURL, jobBody))
 
 	// Start execution

@@ -1,7 +1,6 @@
 package gcp_cli_test
 
 import (
-	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -12,21 +11,20 @@ import (
 
 func TestCloudRun_CLI_ArithmeticEval(t *testing.T) {
 	jobID := "cli-arith-crj"
-	cmd, _ := json.Marshal([]string{evalBinaryPath, "(3 + 4) * 2"})
 	createBody := fmt.Sprintf(`{
 		"template": {
 			"taskCount": 1,
 			"template": {
 				"containers": [{
 					"name": "app",
-					"image": "alpine:latest",
-					"command": %s
+					"image": %q,
+					"args": ["(3 + 4) * 2"]
 				}],
 				"maxRetries": 0,
 				"timeout": "10s"
 			}
 		}
-	}`, string(cmd))
+	}`, evalImageName)
 	httpDoJSON(t, "POST", jobsBaseURL()+"?jobId="+jobID, createBody)
 
 	// Run the job
@@ -66,21 +64,20 @@ func TestCloudRun_CLI_ArithmeticEval(t *testing.T) {
 
 func TestCloudRun_CLI_ArithmeticInvalid(t *testing.T) {
 	jobID := "cli-arith-crj-fail"
-	cmd, _ := json.Marshal([]string{evalBinaryPath, "3 +"})
 	createBody := fmt.Sprintf(`{
 		"template": {
 			"taskCount": 1,
 			"template": {
 				"containers": [{
 					"name": "app",
-					"image": "alpine:latest",
-					"command": %s
+					"image": %q,
+					"args": ["3 +"]
 				}],
 				"maxRetries": 0,
 				"timeout": "10s"
 			}
 		}
-	}`, string(cmd))
+	}`, evalImageName)
 	httpDoJSON(t, "POST", jobsBaseURL()+"?jobId="+jobID, createBody)
 
 	// Run the job
