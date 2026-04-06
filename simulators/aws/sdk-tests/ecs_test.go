@@ -51,7 +51,7 @@ func TestECS_RegisterTaskDefinition(t *testing.T) {
 		ContainerDefinitions: []ecstypes.ContainerDefinition{
 			{
 				Name:  aws.String("app"),
-				Image: aws.String("nginx:latest"),
+				Image: aws.String("alpine:latest"),
 			},
 		},
 	})

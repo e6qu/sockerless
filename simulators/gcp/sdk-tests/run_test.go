@@ -23,7 +23,7 @@ func TestCloudRun_CreateJob(t *testing.T) {
 		"template": map[string]any{
 			"template": map[string]any{
 				"containers": []map[string]any{
-					{"image": "gcr.io/test/worker:latest"},
+					{"image": "alpine:latest"},
 				},
 			},
 		},
@@ -56,7 +56,7 @@ func TestCloudRun_GetJob(t *testing.T) {
 		"template": map[string]any{
 			"template": map[string]any{
 				"containers": []map[string]any{
-					{"image": "gcr.io/test/app:latest"},
+					{"image": "alpine:latest"},
 				},
 			},
 		},
@@ -99,7 +99,7 @@ func TestCloudRun_DeleteJob(t *testing.T) {
 		"template": map[string]any{
 			"template": map[string]any{
 				"containers": []map[string]any{
-					{"image": "gcr.io/test/temp:latest"},
+					{"image": "alpine:latest"},
 				},
 			},
 		},
@@ -129,7 +129,7 @@ func TestCloudRun_RunJobInjectsLogEntries(t *testing.T) {
 			"template": map[string]any{
 				"timeout": "1s",
 				"containers": []map[string]any{
-					{"image": "gcr.io/test/logtest:latest"},
+					{"image": "alpine:latest"},
 				},
 			},
 		},
@@ -193,7 +193,7 @@ func createAndRunJob(t *testing.T, jobID string) string {
 			"template": map[string]any{
 				"timeout": "1s",
 				"containers": []map[string]any{
-					{"image": "gcr.io/test/status:latest"},
+					{"image": "alpine:latest"},
 				},
 			},
 		},
@@ -284,7 +284,7 @@ func TestCloudRun_ExecutionCancelledState(t *testing.T) {
 
 // createAndRunJobWithCommand creates a job with a command and runs it.
 func createAndRunJobWithCommand(t *testing.T, jobID string, cmd []string, timeout string) string {
-	return createAndRunJobWithImageAndCommand(t, jobID, "gcr.io/test/worker:latest", cmd, timeout)
+	return createAndRunJobWithImageAndCommand(t, jobID, "alpine:latest", cmd, timeout)
 }
 
 // createAndRunJobWithImageAndCommand creates a job with a specific image and command and runs it.
