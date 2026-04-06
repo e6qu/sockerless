@@ -180,7 +180,14 @@ func (p *gcfCloudState) queryFunctions(ctx context.Context) ([]api.Container, er
 
 // functionToContainer reconstructs an api.Container from a Cloud Function and its labels.
 func functionToContainer(fn *functionspb.Function, labels map[string]string) api.Container {
-	containerID := labels["sockerless_container_id"]
+	// Full container ID from env vars (labels truncate at 63 chars, IDs are 64)
+	containerID := ""
+	if fn.ServiceConfig != nil {
+		containerID = fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_CONTAINER_ID"]
+	}
+	if containerID == "" {
+		containerID = labels["sockerless_container_id"]
+	}
 	name := labels["sockerless_name"]
 	if name == "" && containerID != "" {
 		name = "/" + containerID[:12]

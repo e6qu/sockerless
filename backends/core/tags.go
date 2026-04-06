@@ -113,6 +113,21 @@ func (ts TagSet) AsGCPLabels() map[string]string {
 	return result
 }
 
+// AsGCPAnnotations returns tags that exceed GCP label limits as annotations.
+// GCP labels max 63 chars per value; annotations allow 32768 chars.
+// Use this alongside AsGCPLabels() to store the full container ID.
+func (ts TagSet) AsGCPAnnotations() map[string]string {
+	m := ts.AsMap()
+	result := make(map[string]string)
+	for k, v := range m {
+		if len(v) > 63 {
+			gcpKey := strings.ReplaceAll(k, "-", "_")
+			result[gcpKey] = v
+		}
+	}
+	return result
+}
+
 // AsAzurePtrMap returns tags as map[string]*string (Azure SDK convention).
 func (ts TagSet) AsAzurePtrMap() map[string]*string {
 	m := ts.AsMap()

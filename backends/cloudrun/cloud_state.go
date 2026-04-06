@@ -30,7 +30,8 @@ func (p *cloudRunCloudState) GetContainer(ctx context.Context, ref string) (api.
 		if c.Name == ref || c.Name == "/"+ref || strings.TrimPrefix(c.Name, "/") == ref {
 			return c, true, nil
 		}
-		if len(ref) >= 3 && strings.HasPrefix(c.ID, ref) {
+		// Prefix match (either direction — handles GCP label truncation)
+		if len(ref) >= 3 && (strings.HasPrefix(c.ID, ref) || strings.HasPrefix(ref, c.ID)) {
 			return c, true, nil
 		}
 	}
@@ -152,7 +153,11 @@ func (p *cloudRunCloudState) queryJobs(ctx context.Context) ([]api.Container, er
 func (p *cloudRunCloudState) jobToContainer(ctx context.Context, job *runpb.Job) (api.Container, error) {
 	labels := job.Labels
 
-	containerID := labels["sockerless_container_id"]
+	// Full container ID from annotations (labels truncate at 63 chars, IDs are 64)
+	containerID := job.Annotations["sockerless_container_id"]
+	if containerID == "" {
+		containerID = labels["sockerless_container_id"]
+	}
 	name := labels["sockerless_name"]
 	if name == "" && containerID != "" {
 		if len(containerID) >= 12 {

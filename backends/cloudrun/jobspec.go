@@ -135,7 +135,8 @@ func (s *Server) buildJobSpec(containers []containerInput) *runpb.Job {
 	}
 
 	return &runpb.Job{
-		Labels: tags.AsGCPLabels(),
+		Labels:      tags.AsGCPLabels(),
+		Annotations: tags.AsGCPAnnotations(),
 		Template: &runpb.ExecutionTemplate{
 			TaskCount:   1,
 			Parallelism: 1,
