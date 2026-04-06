@@ -83,7 +83,7 @@ esac
 export SOCKERLESS_POLL_INTERVAL="500ms"
 export SOCKERLESS_AGENT_TIMEOUT="2s"
 echo "=== Starting $BACKEND_TYPE backend ==="
-"$BACKEND_BIN" --addr "$BACKEND_ADDR" --log-level warn 2>/tmp/backend.log &
+"$BACKEND_BIN" --addr "$BACKEND_ADDR" --log-level debug 2>/tmp/backend.log &
 BACKEND_PID=$!
 wait_for_url "http://$BACKEND_ADDR/_ping"
 echo "$BACKEND_TYPE backend ready"
@@ -170,6 +170,12 @@ run_test "docker rm (long)" $D rm smoke-long
 echo ""
 echo "=== Results: $PASSED passed, $FAILED failed ==="
 if [ "$FAILED" -gt 0 ]; then
+    echo ""
+    echo "=== Simulator log (last 20 lines) ==="
+    tail -20 /tmp/sim.log 2>/dev/null || true
+    echo ""
+    echo "=== Backend log (last 20 lines) ==="
+    tail -20 /tmp/backend.log 2>/dev/null || true
     exit 1
 fi
 echo "=== SMOKE TEST PASSED (backend=$BACKEND_TYPE) ==="
