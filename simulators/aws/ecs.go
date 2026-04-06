@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	dockercontainer "github.com/docker/docker/api/types/container"
 	"github.com/gorilla/websocket"
 
 	sim "github.com/sockerless/simulator"
@@ -948,8 +949,9 @@ func handleECSListTagsForResource(w http.ResponseWriter, r *http.Request) {
 var ecsExecSessions sync.Map // map[sessionID]ecsExecSession
 
 type ecsExecSession struct {
-	taskID  string
-	command string
+	taskID            string
+	command           string
+	dockerContainerID string
 }
 
 var wsUpgrader = websocket.Upgrader{
@@ -1004,9 +1006,17 @@ func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
 		sessionID := generateUUID()
 
 		// Store the session
+		// Look up the Docker container ID for this task
+		var dockerContainerID string
+		if v, ok := ecsProcessHandles.Load(taskID); ok {
+			handle := v.(*sim.ContainerHandle)
+			dockerContainerID = handle.ContainerID
+		}
+
 		ecsExecSessions.Store(sessionID, ecsExecSession{
-			taskID:  taskID,
-			command: req.Command,
+			taskID:            taskID,
+			command:           req.Command,
+			dockerContainerID: dockerContainerID,
 		})
 
 		// Determine host from the incoming request
@@ -1046,7 +1056,58 @@ func handleECSExecWebSocket(sessionID string) http.HandlerFunc {
 		}
 		defer conn.Close() //nolint:errcheck
 
-		// Parse command — use shell if it's a single string
+		// Execute command inside the real Docker container
+		if sess.dockerContainerID != "" {
+			cli := sim.DockerClient()
+			if cli != nil {
+				execCfg := dockercontainer.ExecOptions{
+					Cmd:          []string{"sh", "-c", sess.command},
+					AttachStdout: true,
+					AttachStderr: true,
+					AttachStdin:  true,
+				}
+				execResp, err := cli.ContainerExecCreate(r.Context(), sess.dockerContainerID, execCfg)
+				if err != nil {
+					_ = conn.WriteMessage(websocket.CloseMessage,
+						websocket.FormatCloseMessage(websocket.CloseInternalServerErr, err.Error()))
+					return
+				}
+				attach, err := cli.ContainerExecAttach(r.Context(), execResp.ID, dockercontainer.ExecAttachOptions{})
+				if err != nil {
+					_ = conn.WriteMessage(websocket.CloseMessage,
+						websocket.FormatCloseMessage(websocket.CloseInternalServerErr, err.Error()))
+					return
+				}
+				defer attach.Close()
+
+				// Bridge: WebSocket ↔ Docker exec
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					buf := make([]byte, 4096)
+					for {
+						n, err := attach.Reader.Read(buf)
+						if n > 0 {
+							_ = conn.WriteMessage(websocket.BinaryMessage, buf[:n])
+						}
+						if err != nil {
+							return
+						}
+					}
+				}()
+				for {
+					_, msg, err := conn.ReadMessage()
+					if err != nil {
+						break
+					}
+					_, _ = attach.Conn.Write(msg)
+				}
+				<-done
+				return
+			}
+		}
+
+		// Fallback: local process (only if no Docker container — should not happen)
 		var cmd *exec.Cmd
 		if strings.Contains(sess.command, " ") {
 			cmd = exec.Command("sh", "-c", sess.command)
