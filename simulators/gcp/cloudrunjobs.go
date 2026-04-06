@@ -183,8 +183,8 @@ func newLRO(project, location string, resource any, typeName string) Operation {
 	}
 }
 
-// Process handle tracker for Cloud Run Jobs real execution
-var crjProcessHandles sync.Map // map[execName]*sim.ProcessHandle
+// Container handle tracker for Cloud Run Jobs real execution
+var crjProcessHandles sync.Map // map[execName]*sim.ContainerHandle
 
 // Package-level stores for dashboard access.
 var crjJobs sim.Store[Job]
@@ -371,13 +371,15 @@ func registerCloudRunJobs(srv *sim.Server) {
 				}
 			}
 
-			// Build command from first container
-			var fullCmd []string
+			// Build container config from first container in template
+			var image string
+			var entrypoint, args []string
 			var cmdEnv map[string]string
 			if taskTmpl != nil && len(taskTmpl.Containers) > 0 {
 				c := taskTmpl.Containers[0]
-				fullCmd = append(fullCmd, c.Command...)
-				fullCmd = append(fullCmd, c.Args...)
+				image = c.Image
+				entrypoint = c.Command
+				args = c.Args
 				if len(c.Env) > 0 {
 					cmdEnv = make(map[string]string, len(c.Env))
 					for _, ev := range c.Env {
@@ -387,21 +389,35 @@ func registerCloudRunJobs(srv *sim.Server) {
 			}
 
 			succeeded := true
-			if len(fullCmd) > 0 {
-				// Real process execution
+			if image != "" {
+				// Real container execution
 				sink := &crjLogSink{project: proj, jobName: job}
-				handle := sim.StartProcess(sim.ProcessConfig{
-					Command: fullCmd,
+				execShort := id
+				if parts := strings.Split(id, "/"); len(parts) > 0 {
+					last := parts[len(parts)-1]
+					if len(last) > 12 {
+						execShort = last[:12]
+					} else {
+						execShort = last
+					}
+				}
+				handle, err := sim.StartContainerSync(sim.ContainerConfig{
+					Image:   image,
+					Command: entrypoint,
+					Args:    args,
 					Env:     cmdEnv,
 					Timeout: timeout,
+					Name:    fmt.Sprintf("sockerless-sim-gcp-job-%s", execShort),
+					Labels:  map[string]string{"sockerless-sim-execution": id},
 				}, sink)
-				crjProcessHandles.Store(id, handle)
-				result := handle.Wait()
-				crjProcessHandles.Delete(id)
-				succeeded = result.ExitCode == 0
-			} else {
-				// No command — sleep for timeout (preserves current behavior)
-				time.Sleep(timeout)
+				if err != nil {
+					succeeded = false
+				} else {
+					crjProcessHandles.Store(id, handle)
+					result := handle.Wait()
+					crjProcessHandles.Delete(id)
+					succeeded = result.ExitCode == 0
+				}
 			}
 
 			completed := false
@@ -498,9 +514,11 @@ func registerCloudRunJobs(srv *sim.Server) {
 		execID, _, _ := strings.Cut(execAction, ":")
 		name := fmt.Sprintf("projects/%s/locations/%s/jobs/%s/executions/%s", project, location, jobID, execID)
 
-		// Cancel running process if any
+		// Cancel running container if any
 		if v, ok := crjProcessHandles.LoadAndDelete(name); ok {
-			v.(*sim.ProcessHandle).Cancel()
+			handle := v.(*sim.ContainerHandle)
+			sim.StopContainer(handle.ContainerID)
+			handle.Cancel()
 		}
 
 		ok := executions.Update(name, func(e *Execution) {

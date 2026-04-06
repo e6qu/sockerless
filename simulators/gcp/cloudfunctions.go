@@ -197,23 +197,33 @@ func registerCloudFunctions(srv *sim.Server) {
 	})
 }
 
-// invokeCloudFunctionProcess executes a Cloud Function's SimCommand via sim.StartProcess
-// and returns the stdout output as the response body plus the process exit code.
+// invokeCloudFunctionProcess executes a Cloud Function via sim.StartContainerSync
+// and returns the stdout output as the response body plus the container exit code.
 func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byte, int) {
+	// Determine container image
+	var image string
+	if fn.ServiceConfig != nil {
+		image = fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_IMG"]
+	}
+	if image == "" && fn.BuildConfig != nil {
+		image = fn.BuildConfig.DockerRepository
+	}
+
+	// Determine command/args from SOCKERLESS_CMD or SimCommand
 	var cmd []string
 	if fn.ServiceConfig != nil {
-		// Cloud-native: read SOCKERLESS_CMD from function's environment variables
 		if cmdB64, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_CMD"]; ok {
 			if decoded, err := base64.StdEncoding.DecodeString(cmdB64); err == nil {
 				json.Unmarshal(decoded, &cmd)
 			}
 		}
-		// Fallback: SimCommand field (backward compat for SDK tests)
 		if len(cmd) == 0 {
 			cmd = fn.ServiceConfig.SimCommand
 		}
 	}
-	if len(cmd) == 0 {
+
+	// If no image and no command, nothing to run
+	if image == "" && len(cmd) == 0 {
 		return []byte("{}"), 0
 	}
 
@@ -223,7 +233,7 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 	}
 
 	timeout := 60 * time.Second // GCP default
-	if fn.ServiceConfig.TimeoutSeconds > 0 {
+	if fn.ServiceConfig != nil && fn.ServiceConfig.TimeoutSeconds > 0 {
 		timeout = time.Duration(fn.ServiceConfig.TimeoutSeconds) * time.Second
 	}
 
@@ -237,6 +247,44 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 		}
 	})
 
+	if image != "" {
+		// Container-based execution
+		var entrypoint, args []string
+		if len(cmd) > 0 {
+			entrypoint = cmd[:1]
+			if len(cmd) > 1 {
+				args = cmd[1:]
+			}
+		}
+		handle, err := sim.StartContainerSync(sim.ContainerConfig{
+			Image:   image,
+			Command: entrypoint,
+			Args:    args,
+			Env:     cmdEnv,
+			Timeout: timeout,
+			Name:    fmt.Sprintf("sockerless-sim-gcf-%s", functionID),
+			Labels:  map[string]string{"sockerless-sim-function": functionID},
+		}, collectSink)
+		if err != nil {
+			injectCloudFunctionLog(project, functionID,
+				fmt.Sprintf("Function execution error: container start failed: %v", err))
+			return []byte(fmt.Sprintf(`{"error":"%v"}`, err)), 1
+		}
+		result := handle.Wait()
+
+		if result.ExitCode != 0 {
+			injectCloudFunctionLog(project, functionID,
+				fmt.Sprintf("Function execution error: container exited with code %d", result.ExitCode))
+		}
+
+		output := strings.TrimRight(stdout.String(), "\n")
+		if output == "" {
+			return []byte("{}"), result.ExitCode
+		}
+		return []byte(output), result.ExitCode
+	}
+
+	// Fallback: process-based execution (no image available)
 	handle := sim.StartProcess(sim.ProcessConfig{
 		Command: cmd,
 		Env:     cmdEnv,

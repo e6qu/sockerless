@@ -163,7 +163,7 @@ var (
 	ecsTasks           sim.Store[ECSTask]
 	ecsRevisionMu      sync.Mutex
 	ecsRevisions       map[string]int // family -> latest revision
-	ecsProcessHandles  sync.Map       // map[taskID]*sim.ProcessHandle
+	ecsProcessHandles  sync.Map       // map[taskID]*sim.ContainerHandle
 )
 
 func generateUUID() string {
@@ -595,13 +595,15 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				}
 			})
 
-			// Build combined command from first container definition
-			var fullCmd []string
+			// Extract image, entrypoint, command, and env from first container definition
+			var imageURI string
+			var entrypoint, args []string
 			var cmdEnv map[string]string
 			if len(td.ContainerDefinitions) > 0 {
 				cd := td.ContainerDefinitions[0]
-				fullCmd = append(fullCmd, cd.EntryPoint...)
-				fullCmd = append(fullCmd, cd.Command...)
+				imageURI = cd.Image
+				entrypoint = cd.EntryPoint
+				args = cd.Command
 				if len(cd.Environment) > 0 {
 					cmdEnv = make(map[string]string, len(cd.Environment))
 					for _, ev := range cd.Environment {
@@ -645,28 +647,49 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				})
 
 				// Insert initial log event
-				cmdOutput := strings.Join(fullCmd, " ")
-				if cmdOutput == "" {
-					cmdOutput = "container started"
+				cmdDesc := strings.Join(append(entrypoint, args...), " ")
+				if cmdDesc == "" {
+					cmdDesc = "container started"
 				}
 				cwLogEvents.Put(key, []CWLogEvent{
 					{
 						Timestamp:     nowMs,
-						Message:       cmdOutput,
+						Message:       cmdDesc,
 						IngestionTime: nowMs,
 					},
 				})
 
-				// If command is non-empty, stream real output to this log stream
-				if len(fullCmd) > 0 {
+				// If image is available, run a real container and stream output to this log stream
+				if imageURI != "" {
 					sink := &cwLogSink{logGroup: logGroup, logStream: logStreamName}
-					handle := sim.StartProcess(sim.ProcessConfig{
-						Command: fullCmd,
+					handle, err := sim.StartContainerSync(sim.ContainerConfig{
+						Image:   imageURI,
+						Command: entrypoint,
+						Args:    args,
 						Env:     cmdEnv,
+						Name:    fmt.Sprintf("sockerless-sim-aws-task-%s", id[:12]),
+						Labels:  map[string]string{"sockerless-sim-task": id},
 					}, sink)
+					if err != nil {
+						// Mark task as STOPPED with failure
+						stoppedAt := time.Now().Unix()
+						ecsTasks.Update(id, func(t *ECSTask) {
+							t.LastStatus = "STOPPED"
+							t.DesiredStatus = "STOPPED"
+							t.StoppedAt = &stoppedAt
+							t.StopCode = "EssentialContainerExited"
+							t.StoppedReason = fmt.Sprintf("Container start failed: %v", err)
+							exitCode := -1
+							for j := range t.Containers {
+								t.Containers[j].LastStatus = "STOPPED"
+								t.Containers[j].ExitCode = &exitCode
+							}
+						})
+						continue
+					}
 					ecsProcessHandles.Store(id, handle)
 
-					go func(taskID string, handle *sim.ProcessHandle) {
+					go func(taskID string, handle *sim.ContainerHandle) {
 						result := handle.Wait()
 						ecsProcessHandles.Delete(taskID)
 						stoppedAt := time.Now().Unix()
@@ -761,9 +784,10 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Cancel running process if any
+	// Stop running container if any
 	if v, ok := ecsProcessHandles.LoadAndDelete(taskID); ok {
-		v.(*sim.ProcessHandle).Cancel()
+		handle := v.(*sim.ContainerHandle)
+		sim.StopContainer(handle.ContainerID)
 	}
 
 	now := time.Now().Unix()

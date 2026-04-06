@@ -169,6 +169,9 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		}
 	}
 
+	// Pass the container image so the simulator can run it directly
+	envVars["SOCKERLESS_IMG"] = config.Image
+
 	// Build service config
 	serviceConfig := &functionspb.ServiceConfig{
 		AvailableMemory:      s.config.Memory,

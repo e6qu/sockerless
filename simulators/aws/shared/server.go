@@ -62,6 +62,16 @@ func NewServer(cfg Config) *Server {
 	handler = LoggingMiddleware(logger, cfg.Provider)(handler)
 	handler = RequestIDMiddleware(cfg.Provider)(handler)
 
+	// Initialize container runtime (Docker/Podman) — required for execution
+	runtime := os.Getenv("SIM_RUNTIME")
+	if runtime == "" {
+		runtime = "docker"
+	}
+	if runtime != "process" {
+		InitDocker()
+		logger.Info().Str("runtime", RuntimeInfo()).Msg("container runtime initialized")
+	}
+
 	srv := &Server{
 		config:  cfg,
 		logger:  logger,
@@ -136,6 +146,7 @@ func (s *Server) ListenAndServe() error {
 		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 		sig := <-sigCh
 		s.logger.Info().Str("signal", sig.String()).Msg("shutting down")
+		CleanupContainers()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

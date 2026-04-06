@@ -12,8 +12,8 @@ import (
 	sim "github.com/sockerless/simulator"
 )
 
-// Process handle tracker for Container Apps Jobs real execution
-var acaProcessHandles sync.Map // map[execID]*sim.ProcessHandle
+// Container handle tracker for Container Apps Jobs real execution
+var acaProcessHandles sync.Map // map[execID]*sim.ContainerHandle
 
 // ContainerAppJob represents an Azure Container Apps Job resource.
 type ContainerAppJob struct {
@@ -399,13 +399,16 @@ func registerContainerApps(srv *sim.Server) {
 				timeout = time.Duration(replicaTimeout) * time.Second
 			}
 
-			// Build command from first container
-			var fullCmd []string
+			// Build container config from first container in template
+			var containerImage string
+			var containerCmd []string
+			var containerArgs []string
 			var cmdEnv map[string]string
 			if tmpl != nil && len(tmpl.Containers) > 0 {
 				c := tmpl.Containers[0]
-				fullCmd = append(fullCmd, c.Command...)
-				fullCmd = append(fullCmd, c.Args...)
+				containerImage = c.Image
+				containerCmd = c.Command
+				containerArgs = c.Args
 				if len(c.Env) > 0 {
 					cmdEnv = make(map[string]string, len(c.Env))
 					for _, ev := range c.Env {
@@ -415,21 +418,41 @@ func registerContainerApps(srv *sim.Server) {
 			}
 
 			succeeded := true
-			if len(fullCmd) > 0 {
-				// Real process execution
+			if containerImage != "" {
+				// Container execution
+				shortExecID := id
+				if idx := strings.LastIndex(id, "/"); idx >= 0 {
+					shortExecID = id[idx+1:]
+				}
+				if len(shortExecID) > 12 {
+					shortExecID = shortExecID[:12]
+				}
+				containerName := fmt.Sprintf("sockerless-sim-azure-execution-%s", shortExecID)
+
 				sink := &acaLogSink{jobName: jobShortName}
-				handle := sim.StartProcess(sim.ProcessConfig{
-					Command: fullCmd,
+				handle, err := sim.StartContainerSync(sim.ContainerConfig{
+					Image:   containerImage,
+					Command: containerCmd,
+					Args:    containerArgs,
 					Env:     cmdEnv,
 					Timeout: timeout,
+					Name:    containerName,
+					Labels: map[string]string{
+						"sockerless-sim-type": "aca-job-execution",
+						"sockerless-exec-id":  id,
+					},
 				}, sink)
-				acaProcessHandles.Store(id, handle)
-				result := handle.Wait()
-				acaProcessHandles.Delete(id)
-				succeeded = result.ExitCode == 0
+				if err != nil {
+					succeeded = false
+				} else {
+					acaProcessHandles.Store(id, handle)
+					result := handle.Wait()
+					acaProcessHandles.Delete(id)
+					succeeded = result.ExitCode == 0
+				}
 			} else {
-				// No command — sleep for timeout (preserves current behavior)
-				time.Sleep(timeout)
+				// No image — no-op (template has no containers)
+				succeeded = true
 			}
 
 			completed := false
@@ -520,9 +543,11 @@ func registerContainerApps(srv *sim.Server) {
 		execID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/jobs/%s/executions/%s",
 			sub, rg, jobName, execName)
 
-		// Cancel running process if any
+		// Cancel running container if any
 		if v, ok := acaProcessHandles.LoadAndDelete(execID); ok {
-			v.(*sim.ProcessHandle).Cancel()
+			handle := v.(*sim.ContainerHandle)
+			sim.StopContainer(handle.ContainerID)
+			handle.Cancel()
 		}
 
 		ok := executions.Update(execID, func(e *JobExecution) {
