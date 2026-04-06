@@ -71,6 +71,7 @@ case "$BACKEND_TYPE" in
         export SOCKERLESS_ENDPOINT_URL="http://127.0.0.1:4568"
         export SOCKERLESS_ACA_SUBSCRIPTION_ID="00000000-0000-0000-0000-000000000001"
         export SOCKERLESS_ACA_RESOURCE_GROUP="sim-rg"
+        export SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE="default"
         BACKEND_BIN="/usr/local/bin/sockerless-backend-aca"
         ;;
     *)

@@ -337,14 +337,11 @@ func invokeAzureFunctionProcess(site *Site) ([]byte, int) {
 		}
 	}
 
-	// Split cmd into entrypoint (Command) and args (Args)
-	var containerCmd []string
+	// Pass cmd as Args (Docker CMD) so the image's ENTRYPOINT is preserved.
+	// If the image has no entrypoint, Docker uses the first arg as the command.
 	var containerArgs []string
 	if len(cmd) > 0 {
-		containerCmd = cmd[:1]
-		if len(cmd) > 1 {
-			containerArgs = cmd[1:]
-		}
+		containerArgs = cmd
 	}
 
 	timeout := 230 * time.Second // Azure Functions default timeout
@@ -361,8 +358,7 @@ func invokeAzureFunctionProcess(site *Site) ([]byte, int) {
 	containerName := fmt.Sprintf("sockerless-sim-azure-func-%s-%d", site.Name, time.Now().UnixNano())
 
 	handle, err := sim.StartContainerSync(sim.ContainerConfig{
-		Image:   containerImage,
-		Command: containerCmd,
+		Image:   sim.ResolveLocalImage(containerImage),
 		Args:    containerArgs,
 		Env:     cmdEnv,
 		Timeout: timeout,

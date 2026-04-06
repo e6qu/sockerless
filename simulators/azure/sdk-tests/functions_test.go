@@ -26,6 +26,11 @@ func azureDeleteSite(rg, name string) {
 
 // azureCreateSite creates a resource group and function app, optionally with SimCommand.
 func azureCreateSite(t *testing.T, rg, name string, simCommand []string) {
+	azureCreateSiteWithImage(t, rg, name, simCommand, "")
+}
+
+// azureCreateSiteWithImage creates a function app with a Docker image and optional SimCommand.
+func azureCreateSiteWithImage(t *testing.T, rg, name string, simCommand []string, image string) {
 	t.Helper()
 	rgBody := `{"location":"eastus"}`
 	rgReq, _ := http.NewRequestWithContext(ctx, "PUT",
@@ -40,8 +45,15 @@ func azureCreateSite(t *testing.T, rg, name string, simCommand []string) {
 	props := map[string]any{
 		"serverFarmId": "/subscriptions/" + subscriptionID + "/resourceGroups/" + rg + "/providers/Microsoft.Web/serverFarms/test-plan",
 	}
+	siteConfig := map[string]any{}
 	if len(simCommand) > 0 {
-		props["siteConfig"] = map[string]any{"simCommand": simCommand}
+		siteConfig["simCommand"] = simCommand
+	}
+	if image != "" {
+		siteConfig["linuxFxVersion"] = "DOCKER|" + image
+	}
+	if len(siteConfig) > 0 {
+		props["siteConfig"] = siteConfig
 	}
 	site := map[string]any{
 		"location":   "eastus",
