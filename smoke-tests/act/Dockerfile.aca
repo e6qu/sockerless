@@ -12,6 +12,7 @@ RUN GOWORK=off go build -tags noui -o /usr/local/bin/simulator-azure .
 # Copy source and build Sockerless backend (serves Docker API directly)
 WORKDIR /src
 COPY api/ api/
+COPY agent/ agent/
 COPY backends/core/ backends/core/
 COPY backends/azure-common/ backends/azure-common/
 COPY backends/aca/ backends/aca/
