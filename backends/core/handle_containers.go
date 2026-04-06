@@ -170,11 +170,14 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		// If there's a local wait channel (auto-agent), use it
+		// If there's a local wait channel, use it then query CloudState for exit code
 		if ch, hasChannel := s.Store.WaitChs.Load(id); hasChannel {
 			select {
 			case <-ch.(chan struct{}):
-				if lc, lok := s.Store.Containers.Get(id); lok {
+				// Query CloudState for the actual exit code (Store may be empty in stateless mode)
+				if cc, found, _ := s.CloudState.GetContainer(r.Context(), id); found {
+					WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: cc.State.ExitCode})
+				} else if lc, lok := s.Store.Containers.Get(id); lok {
 					WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: lc.State.ExitCode})
 				} else {
 					WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: 0})
