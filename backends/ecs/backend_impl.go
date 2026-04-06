@@ -893,7 +893,8 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 
 	// No agent connected — use ECS ExecuteCommand API (SSM Session Manager)
 	// to exec into the remote Fargate task.
-	return s.cloudExecStart(&exec, &c)
+	tty := exec.ProcessConfig.Tty || opts.Tty
+	return s.cloudExecStart(&exec, &c, tty)
 }
 
 // PodStart starts all containers in a pod by calling ContainerStart for each.

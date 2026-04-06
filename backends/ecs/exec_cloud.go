@@ -1,6 +1,7 @@
 package ecs
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net"
@@ -17,7 +18,7 @@ import (
 // cloudExecStart executes a command inside an ECS task using the
 // ExecuteCommand API (backed by SSM Session Manager). It returns an
 // io.ReadWriteCloser that bridges the SSM WebSocket session.
-func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container) (io.ReadWriteCloser, error) {
+func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container, tty bool) (io.ReadWriteCloser, error) {
 	ecsState, ok := s.ECS.Get(c.ID)
 	if !ok || ecsState.TaskARN == "" {
 		return nil, fmt.Errorf("no ECS task associated with container %s", c.ID[:12])
@@ -73,8 +74,41 @@ func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container) (io.Re
 		return nil
 	})
 
-	return newWSBridge(conn), nil
+	bridge := newWSBridge(conn)
+
+	// For non-TTY exec, wrap the read side with Docker multiplexed stream headers.
+	// Docker/Podman clients expect 8-byte headers: [streamType, 0, 0, 0, size(4 BE)]
+	if !tty {
+		return &muxBridge{rwc: bridge}, nil
+	}
+	return bridge, nil
 }
+
+// muxBridge wraps an io.ReadWriteCloser and adds Docker multiplexed stream
+// headers (stdout = 0x01) to each read. Writes pass through unchanged (stdin).
+type muxBridge struct {
+	rwc io.ReadWriteCloser
+	buf bytes.Buffer
+}
+
+func (m *muxBridge) Read(p []byte) (int, error) {
+	if m.buf.Len() > 0 {
+		return m.buf.Read(p)
+	}
+	raw := make([]byte, 4096)
+	n, err := m.rwc.Read(raw)
+	if n > 0 {
+		// Docker mux header: [0x01=stdout, 0, 0, 0, size as big-endian uint32]
+		header := [8]byte{0x01, 0, 0, 0, byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)}
+		m.buf.Write(header[:])
+		m.buf.Write(raw[:n])
+		return m.buf.Read(p)
+	}
+	return 0, err
+}
+
+func (m *muxBridge) Write(p []byte) (int, error) { return m.rwc.Write(p) }
+func (m *muxBridge) Close() error                { return m.rwc.Close() }
 
 // wsBridge adapts a gorilla/websocket.Conn to io.ReadWriteCloser.
 type wsBridge struct {

@@ -1,7 +1,12 @@
 package aca
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
@@ -24,7 +29,37 @@ type AzureClients struct {
 	Jobs       *armappcontainers.JobsClient
 	Executions *armappcontainers.JobsExecutionsClient
 	Logs       *azquery.LogsClient
+	LogsHTTP   *httpLogsClient // Used when endpoint is HTTP (SDK rejects non-TLS bearer tokens)
 	Cred       azcore.TokenCredential
+}
+
+// httpLogsClient makes direct HTTP calls to Log Analytics when the Azure SDK's
+// BearerTokenPolicy rejects non-TLS endpoints. This is needed because azquery
+// v1.2.0 doesn't propagate InsecureAllowCredentialWithHTTP to its auth policy.
+type httpLogsClient struct {
+	endpoint string
+}
+
+func (c *httpLogsClient) QueryWorkspace(ctx context.Context, workspaceID string, body azquery.Body, _ *azquery.LogsClientQueryWorkspaceOptions) (azquery.LogsClientQueryWorkspaceResponse, error) {
+	reqBody, _ := json.Marshal(body)
+	url := fmt.Sprintf("%s/workspaces/%s/query", c.endpoint, workspaceID)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
+	if err != nil {
+		return azquery.LogsClientQueryWorkspaceResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return azquery.LogsClientQueryWorkspaceResponse{}, err
+	}
+	defer resp.Body.Close()
+
+	var result azquery.LogsClientQueryWorkspaceResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result.Results); err != nil {
+		return azquery.LogsClientQueryWorkspaceResponse{}, err
+	}
+	return result, nil
 }
 
 // NewAzureClients initializes Azure SDK clients.
@@ -72,12 +107,21 @@ func newAzureClientsWithEndpoint(subscriptionID string, endpointURL string) (*Az
 		return nil, err
 	}
 
-	return &AzureClients{
+	clients := &AzureClients{
 		Jobs:       jobsClient,
 		Executions: executionsClient,
 		Logs:       logsClient,
 		Cred:       cred,
-	}, nil
+	}
+
+	// azquery v1.2.0 doesn't propagate InsecureAllowCredentialWithHTTP to its
+	// BearerTokenPolicy, causing QueryWorkspace to fail over HTTP endpoints.
+	// Use a direct HTTP client for non-TLS endpoints.
+	if strings.HasPrefix(endpointURL, "http://") {
+		clients.LogsHTTP = &httpLogsClient{endpoint: endpointURL}
+	}
+
+	return clients, nil
 }
 
 func newAzureClientsDefault(subscriptionID string) (*AzureClients, error) {

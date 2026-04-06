@@ -262,7 +262,8 @@ func registerAzureMonitor(srv *sim.Server) {
 	})
 
 	// POST - Execute KQL query (Log Analytics data-plane)
-	srv.HandleFunc("POST /v1/workspaces/{workspaceId}/query", func(w http.ResponseWriter, r *http.Request) {
+	// Handle both /v1/workspaces/ (CLI, tests) and /workspaces/ (Azure SDK)
+	queryHandler := func(w http.ResponseWriter, r *http.Request) {
 		workspaceID := sim.PathParam(r, "workspaceId")
 
 		var req QueryRequest
@@ -344,7 +345,9 @@ func registerAzureMonitor(srv *sim.Server) {
 		}
 
 		sim.WriteJSON(w, http.StatusOK, resp)
-	})
+	}
+	srv.HandleFunc("POST /v1/workspaces/{workspaceId}/query", queryHandler)
+	srv.HandleFunc("POST /workspaces/{workspaceId}/query", queryHandler)
 
 	// POST - Log ingestion endpoint (simplified)
 	srv.HandleFunc("POST /dataCollectionRules/{dcrId}/streams/{streamName}", func(w http.ResponseWriter, r *http.Request) {
