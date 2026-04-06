@@ -283,9 +283,9 @@ func acaCreateJobWithImageAndCommand(t *testing.T, rg, jobName, image string, cm
 	rgResp.Body.Close()
 
 	container := map[string]any{
-		"name":    "worker",
-		"image":   image,
-		"command": cmd,
+		"name":  "worker",
+		"image": image,
+		"args":  cmd,
 	}
 	job := map[string]any{
 		"location": "eastus",

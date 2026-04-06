@@ -292,8 +292,8 @@ func createAndRunJobWithImageAndCommand(t *testing.T, jobID string, image string
 	t.Helper()
 	containers := []map[string]any{
 		{
-			"image":   image,
-			"command": cmd,
+			"image": image,
+			"args":  cmd,
 		},
 	}
 	job := map[string]any{
