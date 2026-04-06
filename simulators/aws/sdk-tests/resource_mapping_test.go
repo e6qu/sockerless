@@ -255,7 +255,6 @@ func TestECS_RunTaskNetworkConfig(t *testing.T) {
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
 				Subnets:        subnets,
 				SecurityGroups: securityGroups,
-				AssignPublicIp: ecstypes.AssignPublicIpEnabled,
 			},
 		},
 	})
