@@ -1122,19 +1122,22 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 }
 
 // ContainerTop lists processes running inside a container.
-// Cloud Run Jobs do not support local ps — delegates to BaseServer which returns a synthetic response.
+// Cloud Run Jobs do not support local ps — requires an agent connection.
 func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopResponse, error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
 
+	if !c.State.Running {
+		return nil, &api.ConflictError{Message: fmt.Sprintf("Container %s is not running", id)}
+	}
+
 	if c.AgentAddress != "" {
 		return s.BaseServer.ContainerTop(id, psArgs)
 	}
 
-	// BaseServer returns a reasonable synthetic response for containers without agents.
-	return s.BaseServer.ContainerTop(id, psArgs)
+	return nil, &api.NotImplementedError{Message: "container top requires an agent connection; Cloud Run Jobs do not support local process listing"}
 }
 
 // ContainerGetArchive gets an archive of a path in a container's filesystem.
@@ -1189,11 +1192,14 @@ func (s *Server) ContainerStatPath(id string, path string) (*api.ContainerPathSt
 }
 
 // ContainerUpdate updates container resource constraints.
-// Cloud Run does not support live resource updates — changes are stored in-memory
-// and take effect on the next container restart.
+// Cloud Run does not support live resource updates.
 func (s *Server) ContainerUpdate(id string, req *api.ContainerUpdateRequest) (*api.ContainerUpdateResponse, error) {
-	s.Logger.Warn().Str("container", id).Msg("ContainerUpdate: resource changes are stored in-memory only and take effect on restart")
-	return s.BaseServer.ContainerUpdate(id, req)
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: id}
+	}
+	s.Logger.Warn().Str("container", c.ID[:12]).Msg("ContainerUpdate: Cloud Run does not support live resource updates")
+	return s.BaseServer.ContainerUpdate(c.ID, req)
 }
 
 // ImagePush delegates to ImageManager which handles cloud auth and OCI push.

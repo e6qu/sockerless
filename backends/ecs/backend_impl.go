@@ -642,8 +642,9 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 	// Guard against containers that were never started (no ECS task).
 	taskID := s.getTaskID(id)
 	if taskID == "unknown" {
-		// No task launched yet — delegate to base (returns empty or auto-agent logs).
-		return s.BaseServer.ContainerLogs(ref, opts)
+		return nil, &api.InvalidParameterError{
+			Message: "logs not available: ECS task not found for container " + id[:12],
+		}
 	}
 
 	logStreamName := fmt.Sprintf("%s/main/%s", id[:12], taskID)

@@ -212,7 +212,7 @@ func (s *BaseServer) handleContainerLogs(w http.ResponseWriter, r *http.Request)
 	defer rc.Close()
 
 	// Determine framing from container TTY
-	c, _ := s.Store.ResolveContainer(ref)
+	c, _ := s.ResolveContainerAuto(r.Context(), ref)
 	tty := c.Config.Tty
 
 	// Read details query parameter and prepend labels
@@ -291,7 +291,7 @@ func (s *BaseServer) handleContainerAttach(w http.ResponseWriter, r *http.Reques
 	defer rwc.Close()
 
 	// Determine framing from container TTY
-	c, _ := s.Store.ResolveContainer(ref)
+	c, _ := s.ResolveContainerAuto(r.Context(), ref)
 	tty := c.Config.Tty
 
 	// Hijack the connection for bidirectional streaming

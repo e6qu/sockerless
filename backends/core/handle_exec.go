@@ -12,13 +12,12 @@ import (
 
 func (s *BaseServer) handleExecCreate(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(r.Context(), ref)
 	if !ok {
 		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
 		return
 	}
-
-	c, _ := s.Store.Containers.Get(id)
+	id := c.ID
 	if !c.State.Running {
 		WriteError(w, &api.ConflictError{
 			Message: "Container " + ref + " is not running",

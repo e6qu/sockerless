@@ -27,10 +27,11 @@ func (s *Server) getTaskID(containerID string) string {
 }
 
 // findTaskARNByContainerID queries ECS for a task tagged with the given container ID.
+// Uses DescribeTasks(include=TAGS) which works for both running and stopped tasks
+// (unlike ListTagsForResource which fails on stopped tasks).
 func (s *Server) findTaskARNByContainerID(containerID string) string {
 	ctx := context.Background()
 
-	// Check both running and stopped tasks
 	for _, status := range []ecstypes.DesiredStatus{ecstypes.DesiredStatusRunning, ecstypes.DesiredStatusStopped} {
 		listResult, err := s.aws.ECS.ListTasks(ctx, &awsecs.ListTasksInput{
 			Cluster:       aws.String(s.config.Cluster),
@@ -40,6 +41,7 @@ func (s *Server) findTaskARNByContainerID(containerID string) string {
 			continue
 		}
 
+		// DescribeTasks with TAGS include works for stopped tasks too
 		descResult, err := s.aws.ECS.DescribeTasks(ctx, &awsecs.DescribeTasksInput{
 			Cluster: aws.String(s.config.Cluster),
 			Tasks:   listResult.TaskArns,

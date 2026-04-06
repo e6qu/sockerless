@@ -105,7 +105,7 @@ func (s *BaseServer) handleContainerStop(w http.ResponseWriter, r *http.Request)
 	}
 	// Adjust exit code for signal query param (Docker API v1.42+)
 	if signal := r.URL.Query().Get("signal"); signal != "" {
-		if id, ok := s.Store.ResolveContainerID(ref); ok {
+		if id, ok := s.ResolveContainerIDAuto(r.Context(), ref); ok {
 			exitCode := SignalToExitCode(signal)
 			s.Store.Containers.Update(id, func(c *api.Container) {
 				c.State.ExitCode = exitCode
@@ -195,8 +195,7 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Legacy Store-based wait
-	id, ok := s.Store.ResolveContainerID(ref)
+	id, ok := s.ResolveContainerIDAuto(r.Context(), ref)
 	if !ok {
 		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
 		return

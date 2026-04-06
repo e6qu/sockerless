@@ -58,13 +58,12 @@ func (s *BaseServer) handleContainerPrune(w http.ResponseWriter, r *http.Request
 
 func (s *BaseServer) handleContainerStats(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(r.Context(), ref)
 	if !ok {
 		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
 		return
 	}
-
-	c, _ := s.Store.Containers.Get(id)
+	id := c.ID
 	stream := r.URL.Query().Get("stream") != "false"
 
 	memLimit := int64(1073741824) // 1 GiB default
@@ -204,7 +203,7 @@ func (s *BaseServer) buildNetworkStats(containerID string) map[string]any {
 
 func (s *BaseServer) handleContainerRename(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
-	id, ok := s.Store.ResolveContainerID(ref)
+	id, ok := s.ResolveContainerIDAuto(r.Context(), ref)
 	if !ok {
 		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
 		return

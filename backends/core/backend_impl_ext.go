@@ -3,6 +3,7 @@ package core
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -17,7 +18,7 @@ import (
 
 // ContainerResize resizes the TTY of a container.
 func (s *BaseServer) ContainerResize(id string, h, w int) error {
-	resolvedID, ok := s.Store.ResolveContainerID(id)
+	resolvedID, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: id}
 	}
@@ -45,7 +46,7 @@ func (s *BaseServer) ExecResize(id string, h, w int) error {
 
 // ContainerPutArchive extracts a tar archive to the container filesystem.
 func (s *BaseServer) ContainerPutArchive(id string, path string, noOverwriteDirNonDir bool, body io.Reader) error {
-	resolvedID, ok := s.Store.ResolveContainerID(id)
+	resolvedID, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: id}
 	}
@@ -61,7 +62,7 @@ func (s *BaseServer) ContainerPutArchive(id string, path string, noOverwriteDirN
 
 // ContainerStatPath returns stat info for a path in a container.
 func (s *BaseServer) ContainerStatPath(id string, path string) (*api.ContainerPathStat, error) {
-	resolvedID, ok := s.Store.ResolveContainerID(id)
+	resolvedID, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
@@ -82,7 +83,7 @@ func (s *BaseServer) ContainerStatPath(id string, path string) (*api.ContainerPa
 
 // ContainerGetArchive returns a tar archive of the requested container path.
 func (s *BaseServer) ContainerGetArchive(id string, path string) (*api.ContainerArchiveResponse, error) {
-	resolvedID, ok := s.Store.ResolveContainerID(id)
+	resolvedID, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
@@ -113,7 +114,7 @@ func (s *BaseServer) ContainerGetArchive(id string, path string) (*api.Container
 
 // ContainerUpdate updates resource limits on a container.
 func (s *BaseServer) ContainerUpdate(id string, req *api.ContainerUpdateRequest) (*api.ContainerUpdateResponse, error) {
-	resolvedID, ok := s.Store.ResolveContainerID(id)
+	resolvedID, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
@@ -168,7 +169,7 @@ func (s *BaseServer) ContainerUpdate(id string, req *api.ContainerUpdateRequest)
 // ContainerChanges returns filesystem changes in a container.
 // Returns error when no agent is connected instead of empty list.
 func (s *BaseServer) ContainerChanges(id string) ([]api.ContainerChangeItem, error) {
-	resolvedID, ok := s.Store.ResolveContainerID(id)
+	resolvedID, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
@@ -186,7 +187,7 @@ func (s *BaseServer) ContainerChanges(id string) ([]api.ContainerChangeItem, err
 // ContainerExport exports a container's filesystem as a tar stream.
 // Returns error when no agent/filesystem driver instead of empty tar.
 func (s *BaseServer) ContainerExport(id string) (io.ReadCloser, error) {
-	resolvedID, ok := s.Store.ResolveContainerID(id)
+	resolvedID, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
@@ -559,7 +560,7 @@ func (s *BaseServer) ContainerCommit(req *api.ContainerCommitRequest) (*api.Cont
 		return nil, &api.InvalidParameterError{Message: "container query parameter is required"}
 	}
 
-	c, ok := s.Store.ResolveContainer(req.Container)
+	c, ok := s.ResolveContainerAuto(context.Background(), req.Container)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
 	}
