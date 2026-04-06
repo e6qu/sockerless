@@ -30,6 +30,7 @@ func (s *Server) runECSTask(containerID, taskDefARN string, c *api.Container) (t
 		Name:        c.Name,
 		Network:     c.HostConfig.NetworkMode,
 		Labels:      c.Config.Labels,
+		Tty:         c.Config.Tty,
 	}
 	// Set pod tag if container is in a pod
 	if pod, _ := s.Store.Pods.GetPodForContainer(containerID); pod != nil {

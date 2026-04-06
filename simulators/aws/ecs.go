@@ -43,6 +43,8 @@ type ECSContainerDefinition struct {
 	LogConfiguration  *ECSLogConfiguration `json:"logConfiguration,omitempty"`
 	EntryPoint        []string             `json:"entryPoint,omitempty"`
 	Command           []string             `json:"command,omitempty"`
+	PseudoTerminal    bool                 `json:"pseudoTerminal,omitempty"`
+	Interactive       bool                 `json:"interactive,omitempty"`
 }
 
 type ECSKeyValuePair struct {
@@ -201,6 +203,38 @@ func registerECS(r *sim.AWSRouter, srv *sim.Server) {
 	srv.HandleFunc("GET /ecs-exec/{sessionId}", func(w http.ResponseWriter, r *http.Request) {
 		sessionID := r.PathValue("sessionId")
 		handleECSExecWebSocket(sessionID)(w, r)
+	})
+
+	// Archive upload endpoint: forward tar archive to the Docker container backing an ECS task
+	srv.HandleFunc("PUT /sockerless/tasks/{taskId}/archive", func(w http.ResponseWriter, r *http.Request) {
+		taskID := r.PathValue("taskId")
+		path := r.URL.Query().Get("path")
+		if path == "" {
+			http.Error(w, "missing path query parameter", http.StatusBadRequest)
+			return
+		}
+
+		v, ok := ecsProcessHandles.Load(taskID)
+		if !ok {
+			http.Error(w, "no running container for task "+taskID, http.StatusNotFound)
+			return
+		}
+		handle := v.(*sim.ContainerHandle)
+
+		cli := sim.DockerClient()
+		if cli == nil {
+			http.Error(w, "docker client not available", http.StatusInternalServerError)
+			return
+		}
+
+		err := cli.CopyToContainer(r.Context(), handle.ContainerID, path, r.Body, dockercontainer.CopyToContainerOptions{
+			AllowOverwriteDirWithFile: true,
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
 	})
 }
 
@@ -578,7 +612,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		tasks = append(tasks, task)
 
 		// Simulate async transition: PROVISIONING → PENDING → RUNNING
-		go func(id string, td ECSTaskDefinition) {
+		go func(id string, td ECSTaskDefinition, taskTags []ECSTag) {
 			// PROVISIONING → PENDING
 			time.Sleep(100 * time.Millisecond)
 			ecsTasks.Update(id, func(t *ECSTask) {
@@ -671,14 +705,24 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 
 				// If image is available, run a real container and stream output to this log stream
 				if imageURI != "" {
+					// Check task tags for TTY propagation
+					wantTTY := false
+					for _, tag := range taskTags {
+						if tag.Key == "sockerless-tty" && tag.Value == "true" {
+							wantTTY = true
+							break
+						}
+					}
 					sink := &cwLogSink{logGroup: logGroup, logStream: logStreamName}
 					handle, err := sim.StartContainerSync(sim.ContainerConfig{
-						Image:   sim.ResolveLocalImage(imageURI),
-						Command: entrypoint,
-						Args:    args,
-						Env:     cmdEnv,
-						Name:    fmt.Sprintf("sockerless-sim-aws-task-%s", id[:12]),
-						Labels:  map[string]string{"sockerless-sim-task": id},
+						Image:     sim.ResolveLocalImage(imageURI),
+						Command:   entrypoint,
+						Args:      args,
+						Env:       cmdEnv,
+						Name:      fmt.Sprintf("sockerless-sim-aws-task-%s", id[:12]),
+						Labels:    map[string]string{"sockerless-sim-task": id},
+						Tty:       wantTTY,
+						OpenStdin: wantTTY,
 					}, sink)
 					if err != nil {
 						// Mark task as STOPPED with failure
@@ -722,7 +766,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-		}(taskID, td)
+		}(taskID, td, taskTags)
 	}
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{

@@ -88,6 +88,13 @@ func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinit
 		},
 	}
 
+	if config.Tty {
+		containerDef.PseudoTerminal = aws.Bool(true)
+	}
+	if config.OpenStdin {
+		containerDef.Interactive = aws.Bool(true)
+	}
+
 	if config.WorkingDir != "" {
 		containerDef.WorkingDirectory = aws.String(config.WorkingDir)
 	}

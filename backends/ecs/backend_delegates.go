@@ -2,7 +2,10 @@ package ecs
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 
 	"github.com/sockerless/api"
 )
@@ -31,10 +34,39 @@ func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArch
 }
 
 func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDir bool, body io.Reader) error {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	resolvedID, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return s.BaseServer.ContainerPutArchive(id, path, noOverwriteDirNonDir, body)
+
+	// If the container has a running ECS task, forward the archive to the simulator
+	// so it reaches the actual Docker container.
+	if ecsState, ok := s.ECS.Get(resolvedID); ok && ecsState.TaskARN != "" && s.config.EndpointURL != "" {
+		taskID := extractTaskIDFromARN(ecsState.TaskARN)
+		archiveURL := fmt.Sprintf("%s/sockerless/tasks/%s/archive?path=%s",
+			s.config.EndpointURL, taskID, url.QueryEscape(path))
+
+		req, err := http.NewRequest("PUT", archiveURL, body)
+		if err != nil {
+			return fmt.Errorf("failed to create archive request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/x-tar")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("failed to forward archive to simulator: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			respBody, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("simulator archive upload failed (%d): %s", resp.StatusCode, string(respBody))
+		}
+		return nil
+	}
+
+	// Fall back to local filesystem extraction (for pending/created containers)
+	return s.BaseServer.ContainerPutArchive(resolvedID, path, noOverwriteDirNonDir, body)
 }
 
 func (s *Server) ContainerRename(id string, newName string) error {

@@ -142,7 +142,7 @@ func (s *BaseServer) handleAgentConnect(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Validate token against the container's stored agent token
-	c, ok := s.Store.Containers.Get(containerID)
+	c, ok := s.ResolveContainerAuto(r.Context(), containerID)
 	if !ok {
 		WriteError(w, &api.NotFoundError{Resource: "container", ID: containerID})
 		return

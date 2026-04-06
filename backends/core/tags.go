@@ -23,6 +23,7 @@ type TagSet struct {
 	Network string            // Docker network name (empty = bridge)
 	Pod     string            // Pod name (empty = no pod)
 	Labels  map[string]string // Docker labels
+	Tty     bool              // Allocate a pseudo-TTY
 }
 
 // AsMap returns tags as map[string]string for AWS.
@@ -51,6 +52,9 @@ func (ts TagSet) AsMap() map[string]string {
 	}
 	if ts.Pod != "" {
 		m["sockerless-pod"] = ts.Pod
+	}
+	if ts.Tty {
+		m["sockerless-tty"] = "true"
 	}
 
 	// Docker labels as JSON (split across multiple tags if >256 chars)

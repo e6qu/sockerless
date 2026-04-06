@@ -2015,8 +2015,11 @@ func (s *BaseServer) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error)
 
 // SystemDf returns disk usage information.
 func (s *BaseServer) SystemDf() (*api.DiskUsageResponse, error) {
+	// Collect all containers: Store + CloudState + PendingCreates, deduplicated
+	allContainers := s.collectAllContainers(context.Background())
+
 	imgContainerCount := make(map[string]int64)
-	for _, c := range s.Store.Containers.List() {
+	for _, c := range allContainers {
 		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
 			imgContainerCount[img.ID]++
 		}
@@ -2043,7 +2046,7 @@ func (s *BaseServer) SystemDf() (*api.DiskUsageResponse, error) {
 	}
 
 	var containers []*api.ContainerSummary
-	for _, c := range s.Store.Containers.List() {
+	for _, c := range allContainers {
 		created, _ := time.Parse(time.RFC3339Nano, c.Created)
 		command := c.Path
 		if len(c.Args) > 0 {
@@ -2089,7 +2092,7 @@ func (s *BaseServer) SystemDf() (*api.DiskUsageResponse, error) {
 	}
 
 	volRefCount := make(map[string]int64)
-	for _, c := range s.Store.Containers.List() {
+	for _, c := range allContainers {
 		for _, m := range c.Mounts {
 			if m.Name != "" {
 				volRefCount[m.Name]++

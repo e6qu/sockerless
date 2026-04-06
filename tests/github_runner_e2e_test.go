@@ -258,9 +258,11 @@ func TestGitHubRunnerMultiStep(t *testing.T) {
 				if err != nil {
 					t.Fatalf("exec start failed: %v", err)
 				}
-				out, _ := io.ReadAll(hijacked.Reader)
+				var stdout bytes.Buffer
+				stdcopy.StdCopy(&stdout, io.Discard, hijacked.Reader)
 				hijacked.Close()
-				return string(out)
+				output := stdout.Bytes()
+				return string(output)
 			}
 
 			// Step 1: Echo with custom env

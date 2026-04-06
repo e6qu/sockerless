@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -437,10 +438,53 @@ func (s *BaseServer) handleContainerChanges(w http.ResponseWriter, r *http.Reque
 	WriteJSON(w, http.StatusOK, result)
 }
 
+// collectAllContainers returns containers from Store, CloudState, and PendingCreates,
+// deduplicated by container ID. This ensures cloud backends that keep containers
+// only in cloud state (not in Store.Containers) are included in system df output.
+func (s *BaseServer) collectAllContainers(ctx context.Context) []api.Container {
+	seen := make(map[string]bool)
+	var result []api.Container
+
+	// 1. Local store containers
+	for _, c := range s.Store.Containers.List() {
+		if !seen[c.ID] {
+			seen[c.ID] = true
+			result = append(result, c)
+		}
+	}
+
+	// 2. Cloud state containers (cloud backends keep truth in the cloud)
+	if s.CloudState != nil {
+		if cloudContainers, err := s.CloudState.ListContainers(ctx, true, nil); err == nil {
+			for _, c := range cloudContainers {
+				if !seen[c.ID] {
+					seen[c.ID] = true
+					result = append(result, c)
+				}
+			}
+		}
+	}
+
+	// 3. Pending creates (containers between create and start, not yet in cloud)
+	if s.PendingCreates != nil {
+		for _, c := range s.PendingCreates.List() {
+			if !seen[c.ID] {
+				seen[c.ID] = true
+				result = append(result, c)
+			}
+		}
+	}
+
+	return result
+}
+
 func (s *BaseServer) handleSystemDf(w http.ResponseWriter, r *http.Request) {
+	// Collect all containers: Store + CloudState + PendingCreates, deduplicated by ID
+	allContainers := s.collectAllContainers(r.Context())
+
 	// Build image→container count map
 	imgContainerCount := make(map[string]int64)
-	for _, c := range s.Store.Containers.List() {
+	for _, c := range allContainers {
 		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
 			imgContainerCount[img.ID]++
 		}
@@ -467,7 +511,7 @@ func (s *BaseServer) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var containers []*api.ContainerSummary
-	for _, c := range s.Store.Containers.List() {
+	for _, c := range allContainers {
 		created, _ := time.Parse(time.RFC3339Nano, c.Created)
 		command := c.Path
 		if len(c.Args) > 0 {
@@ -519,7 +563,7 @@ func (s *BaseServer) handleSystemDf(w http.ResponseWriter, r *http.Request) {
 
 	// Build volume→container reference count map
 	volRefCount := make(map[string]int64)
-	for _, c := range s.Store.Containers.List() {
+	for _, c := range allContainers {
 		for _, m := range c.Mounts {
 			if m.Name != "" {
 				volRefCount[m.Name]++

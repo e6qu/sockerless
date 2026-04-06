@@ -35,6 +35,13 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		}
 	}
 
+	// Also check PendingCreates for name conflicts (containers created but not yet started)
+	for _, pc := range s.PendingCreates.List() {
+		if pc.Name == name || pc.Name == "/"+name {
+			return nil, &api.ConflictError{Message: fmt.Sprintf("Conflict. The container name \"%s\" is already in use", strings.TrimPrefix(name, "/"))}
+		}
+	}
+
 	id := core.GenerateID()
 
 	config := api.ContainerConfig{}

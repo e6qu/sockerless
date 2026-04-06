@@ -19,14 +19,16 @@ import (
 
 // ContainerConfig describes a container to run.
 type ContainerConfig struct {
-	Image   string            // container image (e.g., "alpine:latest")
-	Command []string          // entrypoint override (empty = use image default)
-	Args    []string          // command/args (empty = use image default)
-	Env     map[string]string // environment variables
-	Timeout time.Duration     // max execution time (0 = no limit)
-	Labels  map[string]string // container labels for tracking
-	Network string            // Docker network to join (optional)
-	Name    string            // container name (optional, auto-generated if empty)
+	Image     string            // container image (e.g., "alpine:latest")
+	Command   []string          // entrypoint override (empty = use image default)
+	Args      []string          // command/args (empty = use image default)
+	Env       map[string]string // environment variables
+	Timeout   time.Duration     // max execution time (0 = no limit)
+	Labels    map[string]string // container labels for tracking
+	Network   string            // Docker network to join (optional)
+	Name      string            // container name (optional, auto-generated if empty)
+	Tty       bool              // allocate a pseudo-TTY
+	OpenStdin bool              // keep stdin open
 }
 
 // ContainerHandle manages a running container.
@@ -241,9 +243,12 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 	}
 
 	containerCfg := &container.Config{
-		Image:  cfg.Image,
-		Env:    env,
-		Labels: labels,
+		Image:       cfg.Image,
+		Env:         env,
+		Labels:      labels,
+		Tty:         cfg.Tty,
+		OpenStdin:   cfg.OpenStdin,
+		AttachStdin: cfg.OpenStdin,
 	}
 
 	// Set entrypoint and command separately
