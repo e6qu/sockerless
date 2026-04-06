@@ -581,20 +581,8 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				}
 			})
 
-			// PENDING → RUNNING
+			// PENDING → start container → RUNNING
 			time.Sleep(400 * time.Millisecond)
-			now := time.Now().Unix()
-			ecsTasks.Update(id, func(t *ECSTask) {
-				t.LastStatus = "RUNNING"
-				t.Connectivity = "CONNECTED"
-				t.StartedAt = &now
-				for j := range t.Containers {
-					t.Containers[j].LastStatus = "RUNNING"
-				}
-				for j := range t.Attachments {
-					t.Attachments[j].Status = "ATTACHED"
-				}
-			})
 
 			// Extract image, entrypoint, command, and env from first container definition
 			var imageURI string
@@ -689,7 +677,24 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 						continue
 					}
 					ecsProcessHandles.Store(id, handle)
+				}
 
+				// Mark task as RUNNING now that the container is started
+				now := time.Now().Unix()
+				ecsTasks.Update(id, func(t *ECSTask) {
+					t.LastStatus = "RUNNING"
+					t.Connectivity = "CONNECTED"
+					t.StartedAt = &now
+					for j := range t.Containers {
+						t.Containers[j].LastStatus = "RUNNING"
+					}
+					for j := range t.Attachments {
+						t.Attachments[j].Status = "ATTACHED"
+					}
+				})
+
+				if v, ok := ecsProcessHandles.Load(id); ok {
+					handle := v.(*sim.ContainerHandle)
 					go func(taskID string, handle *sim.ContainerHandle) {
 						result := handle.Wait()
 						ecsProcessHandles.Delete(taskID)
