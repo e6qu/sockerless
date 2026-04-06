@@ -375,7 +375,7 @@ func invokeLambdaProcess(fn LambdaFunction) ([]byte, int) {
 	})
 
 	handle, err := sim.StartContainerSync(sim.ContainerConfig{
-		Image:   imageURI,
+		Image:   sim.ResolveLocalImage(imageURI),
 		Command: entrypoint,
 		Args:    args,
 		Env:     cmdEnv,

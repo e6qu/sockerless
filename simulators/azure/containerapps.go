@@ -431,7 +431,7 @@ func registerContainerApps(srv *sim.Server) {
 
 				sink := &acaLogSink{jobName: jobShortName}
 				handle, err := sim.StartContainerSync(sim.ContainerConfig{
-					Image:   containerImage,
+					Image:   sim.ResolveLocalImage(containerImage),
 					Command: containerCmd,
 					Args:    containerArgs,
 					Env:     cmdEnv,
