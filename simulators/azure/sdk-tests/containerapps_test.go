@@ -264,6 +264,11 @@ func TestContainerApps_ExecutionStoppedState(t *testing.T) {
 
 // acaCreateJobWithCommand creates a Container Apps Job with a command.
 func acaCreateJobWithCommand(t *testing.T, rg, jobName string, cmd []string) {
+	acaCreateJobWithImageAndCommand(t, rg, jobName, "mcr.microsoft.com/test:latest", cmd)
+}
+
+// acaCreateJobWithImageAndCommand creates a Container Apps Job with a specific image and command.
+func acaCreateJobWithImageAndCommand(t *testing.T, rg, jobName, image string, cmd []string) {
 	t.Helper()
 
 	// Ensure resource group exists
@@ -279,7 +284,7 @@ func acaCreateJobWithCommand(t *testing.T, rg, jobName string, cmd []string) {
 
 	container := map[string]any{
 		"name":    "worker",
-		"image":   "mcr.microsoft.com/test:latest",
+		"image":   image,
 		"command": cmd,
 	}
 	job := map[string]any{

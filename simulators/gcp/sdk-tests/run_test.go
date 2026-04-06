@@ -284,10 +284,15 @@ func TestCloudRun_ExecutionCancelledState(t *testing.T) {
 
 // createAndRunJobWithCommand creates a job with a command and runs it.
 func createAndRunJobWithCommand(t *testing.T, jobID string, cmd []string, timeout string) string {
+	return createAndRunJobWithImageAndCommand(t, jobID, "gcr.io/test/worker:latest", cmd, timeout)
+}
+
+// createAndRunJobWithImageAndCommand creates a job with a specific image and command and runs it.
+func createAndRunJobWithImageAndCommand(t *testing.T, jobID string, image string, cmd []string, timeout string) string {
 	t.Helper()
 	containers := []map[string]any{
 		{
-			"image":   "gcr.io/test/worker:latest",
+			"image":   image,
 			"command": cmd,
 		},
 	}

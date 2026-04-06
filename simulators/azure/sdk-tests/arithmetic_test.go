@@ -98,7 +98,7 @@ func TestAzureFunctions_InvokeArithmeticLogs(t *testing.T) {
 
 func TestContainerApps_JobArithmetic(t *testing.T) {
 	rg, jobName := "arith-aca-rg", "arith-aca-job"
-	acaCreateJobWithCommand(t, rg, jobName, []string{evalBinaryPath, "(10 + 5) * 2"})
+	acaCreateJobWithImageAndCommand(t, rg, jobName, evalImageName, []string{"(10 + 5) * 2"})
 	execName := acaStartExecution(t, rg, jobName)
 
 	time.Sleep(2 * time.Second)
@@ -131,7 +131,7 @@ func TestContainerApps_JobArithmetic(t *testing.T) {
 
 func TestContainerApps_JobArithmeticInvalid(t *testing.T) {
 	rg, jobName := "arith-aca-rg", "arith-aca-fail-job"
-	acaCreateJobWithCommand(t, rg, jobName, []string{evalBinaryPath, "3 +"})
+	acaCreateJobWithImageAndCommand(t, rg, jobName, evalImageName, []string{"3 +"})
 	execName := acaStartExecution(t, rg, jobName)
 
 	time.Sleep(2 * time.Second)
@@ -143,7 +143,7 @@ func TestContainerApps_JobArithmeticInvalid(t *testing.T) {
 
 func TestContainerApps_JobArithmeticLogs(t *testing.T) {
 	rg, jobName := "arith-aca-rg", "arith-aca-log-job"
-	acaCreateJobWithCommand(t, rg, jobName, []string{evalBinaryPath, "10 / 3"})
+	acaCreateJobWithImageAndCommand(t, rg, jobName, evalImageName, []string{"10 / 3"})
 	_ = acaStartExecution(t, rg, jobName)
 
 	time.Sleep(2 * time.Second)
