@@ -29,6 +29,7 @@ type ContainerConfig struct {
 	Name      string            // container name (optional, auto-generated if empty)
 	Tty       bool              // allocate a pseudo-TTY
 	OpenStdin bool              // keep stdin open
+	Binds     []string          // bind mounts (e.g., "vol:/path")
 }
 
 // ContainerHandle manages a running container.
@@ -259,7 +260,9 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 		containerCfg.Cmd = cfg.Args
 	}
 
-	hostCfg := &container.HostConfig{}
+	hostCfg := &container.HostConfig{
+		Binds: cfg.Binds,
+	}
 
 	var networkCfg *network.NetworkingConfig
 	if cfg.Network != "" {

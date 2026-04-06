@@ -729,6 +729,24 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 							break
 						}
 					}
+					// Build bind mounts from task definition volumes + container mount points
+					var binds []string
+					volMap := make(map[string]string) // volume name → source/name
+					for _, v := range td.Volumes {
+						volMap[v.Name] = v.Name // Use volume name as Docker volume name
+					}
+					if len(td.ContainerDefinitions) > 0 {
+						for _, mp := range td.ContainerDefinitions[0].MountPoints {
+							if src, ok := volMap[mp.SourceVolume]; ok {
+								bind := src + ":" + mp.ContainerPath
+								if mp.ReadOnly {
+									bind += ":ro"
+								}
+								binds = append(binds, bind)
+							}
+						}
+					}
+
 					sink := &cwLogSink{logGroup: logGroup, logStream: logStreamName}
 					handle, err := sim.StartContainerSync(sim.ContainerConfig{
 						Image:     sim.ResolveLocalImage(imageURI),
@@ -739,6 +757,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 						Labels:    map[string]string{"sockerless-sim-task": id},
 						Tty:       wantTTY,
 						OpenStdin: wantTTY,
+						Binds:     binds,
 					}, sink)
 					if err != nil {
 						// Mark task as STOPPED with failure

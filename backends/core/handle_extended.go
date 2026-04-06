@@ -103,7 +103,13 @@ func (s *BaseServer) handleContainerStats(w http.ResponseWriter, r *http.Request
 			return
 		case <-time.After(1 * time.Second):
 			// Stop streaming if container is no longer running
-			if cur, ok := s.Store.Containers.Get(id); !ok || !cur.State.Running {
+			if ch, ok := s.Store.WaitChs.Load(id); ok {
+				select {
+				case <-ch.(chan struct{}):
+					return
+				default:
+				}
+			} else if cur, ok := s.ResolveContainerAuto(r.Context(), id); ok && !cur.State.Running {
 				return
 			}
 		}
