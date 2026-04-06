@@ -41,7 +41,7 @@ fail() {
 case "$BACKEND_TYPE" in
     ecs)
         echo "=== Starting AWS simulator ==="
-        SIM_LISTEN_ADDR=":4566" /usr/local/bin/simulator-aws &
+        SIM_LISTEN_ADDR=":4566" /usr/local/bin/simulator-aws 2>/tmp/sim.log &
         SIM_PID=$!
         wait_for_url "http://127.0.0.1:4566/health"
         curl -s -X POST http://127.0.0.1:4566/ \
@@ -56,7 +56,7 @@ case "$BACKEND_TYPE" in
         ;;
     cloudrun)
         echo "=== Starting GCP simulator ==="
-        SIM_LISTEN_ADDR=":4567" /usr/local/bin/simulator-gcp &
+        SIM_LISTEN_ADDR=":4567" /usr/local/bin/simulator-gcp 2>/tmp/sim.log &
         SIM_PID=$!
         wait_for_url "http://127.0.0.1:4567/health"
         export SOCKERLESS_ENDPOINT_URL="http://127.0.0.1:4567"
@@ -65,7 +65,7 @@ case "$BACKEND_TYPE" in
         ;;
     aca)
         echo "=== Starting Azure simulator ==="
-        SIM_LISTEN_ADDR=":4568" /usr/local/bin/simulator-azure &
+        SIM_LISTEN_ADDR=":4568" /usr/local/bin/simulator-azure 2>/tmp/sim.log &
         SIM_PID=$!
         wait_for_url "http://127.0.0.1:4568/health"
         export SOCKERLESS_ENDPOINT_URL="http://127.0.0.1:4568"
@@ -82,7 +82,7 @@ esac
 export SOCKERLESS_POLL_INTERVAL="500ms"
 export SOCKERLESS_AGENT_TIMEOUT="2s"
 echo "=== Starting $BACKEND_TYPE backend ==="
-"$BACKEND_BIN" --addr "$BACKEND_ADDR" --log-level debug &
+"$BACKEND_BIN" --addr "$BACKEND_ADDR" --log-level warn 2>/tmp/backend.log &
 BACKEND_PID=$!
 wait_for_url "http://$BACKEND_ADDR/_ping"
 echo "$BACKEND_TYPE backend ready"
