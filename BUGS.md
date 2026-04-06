@@ -1,6 +1,6 @@
 # Known Bugs
 
-691 total. 686 fixed. 5 open.
+691 total. 691 fixed. 0 open.
 
 | ID | Sev | Summary | Status |
 |----|-----|---------|--------|
@@ -29,8 +29,8 @@
 | 684 | High | GCP simulator missing LatestCreatedExecution on Job — CloudState can't determine execution state. Fix: add ExecutionReference, set on RunJob, update CompletionTime on finish. | fixed |
 | 685 | High | Azure simulator missing SystemData on ContainerAppJob — CloudState can't read creation time. Fix: add SystemData struct, populate on job creation. | fixed |
 | 686 | High | Simulators use os/exec for workloads instead of real containers — exec, archive, and filesystem operations impossible. Fix: migrate to Docker SDK container execution. | fixed |
-| 687 | High | `docker logs` returns empty for CloudRun containers — simulator writes to Cloud Logging but backend log query doesn't find entries. Cloud Logging integration between GCP simulator and CloudRun backend is broken. | open |
-| 688 | High | `docker ps` shows running CloudRun container as not running — CloudState execution state mapping reports wrong status. Simulator execution has RunningCount > 0 but CloudState doesn't see it. | open |
-| 689 | Med | `docker logs` for short-lived containers may miss output — container exits before log sink flushes all lines to Cloud Logging store. Need to ensure log drain completes before marking execution as finished. | open |
-| 690 | Med | Smoke test `docker stop` returns 304 (Not Modified) for running CloudRun containers — CloudState reports container as already stopped when it's running, so stop is a no-op. Same root cause as BUG-688. | open |
-| 691 | Med | Smoke test long-running container shows empty `docker ps` — `docker ps` (without -a) filters out non-running containers, and CloudState reports running container as not running. Same root cause as BUG-688. | open |
+| 687 | High | `docker logs` returns empty for CloudRun containers — simulator writes to Cloud Logging but backend log query doesn't find entries. Root cause: simulator tried to pull cloud registry URI (AR) locally. Fix: ResolveLocalImage maps AR/ECR/ACR URIs back to Docker Hub. | fixed |
+| 688 | High | `docker ps` shows running CloudRun container as not running — GCP simulator missing GET /executions/{id} endpoint, CloudState couldn't fetch execution state. Fix: add GET execution endpoint. | fixed |
+| 689 | Med | `docker logs` for short-lived containers may miss output — container exits before log sink flushes. Fix: wait for log drain channel before returning ProcessResult from waitAndCaptureLogs. | fixed |
+| 690 | Med | Smoke test `docker stop` returns 304 for running containers — same root cause as BUG-688 (execution state not fetched). Fixed by GET execution endpoint. | fixed |
+| 691 | Med | Smoke test long-running container shows empty `docker ps` — same root cause as BUG-688. Fixed by GET execution endpoint. | fixed |
