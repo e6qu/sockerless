@@ -1103,6 +1103,9 @@ func handleECSExecWebSocket(sessionID string) http.HandlerFunc {
 							_ = conn.WriteMessage(websocket.BinaryMessage, buf[:n])
 						}
 						if err != nil {
+							// Exec finished — send close to unblock the read loop
+							_ = conn.WriteMessage(websocket.CloseMessage,
+								websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 							return
 						}
 					}
