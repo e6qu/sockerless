@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	ec2sdk "github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/stretchr/testify/assert"
@@ -243,8 +244,29 @@ func TestECS_RunTaskNetworkConfig(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// Create VPC and security groups via EC2 API first
+	ec2C := ec2Client()
+	vpcOut, err := ec2C.CreateVpc(ctx, &ec2sdk.CreateVpcInput{
+		CidrBlock: aws.String("10.0.0.0/16"),
+	})
+	require.NoError(t, err)
+	vpcID := *vpcOut.Vpc.VpcId
+
+	sg1Out, err := ec2C.CreateSecurityGroup(ctx, &ec2sdk.CreateSecurityGroupInput{
+		GroupName:   aws.String("sg-netcfg-1"),
+		Description: aws.String("test sg 1"),
+		VpcId:       aws.String(vpcID),
+	})
+	require.NoError(t, err)
+	sg2Out, err := ec2C.CreateSecurityGroup(ctx, &ec2sdk.CreateSecurityGroupInput{
+		GroupName:   aws.String("sg-netcfg-2"),
+		Description: aws.String("test sg 2"),
+		VpcId:       aws.String(vpcID),
+	})
+	require.NoError(t, err)
+
 	subnets := []string{"subnet-aaa111", "subnet-bbb222"}
-	securityGroups := []string{"sg-001", "sg-002"}
+	securityGroups := []string{*sg1Out.GroupId, *sg2Out.GroupId}
 
 	runOut, err := client.RunTask(ctx, &ecs.RunTaskInput{
 		Cluster:        aws.String(clusterName),
