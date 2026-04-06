@@ -43,11 +43,21 @@ func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container, tty bo
 	entrypoint := exec.ProcessConfig.Entrypoint
 	args := exec.ProcessConfig.Arguments
 
+	// Add working directory change if specified
+	workDir := exec.ProcessConfig.WorkingDir
+	if workDir == "" {
+		workDir = c.Config.WorkingDir
+	}
+	var cdPrefix string
+	if workDir != "" {
+		cdPrefix = fmt.Sprintf("cd %s && ", workDir)
+	}
+
 	var cmd string
 	if (entrypoint == "sh" || entrypoint == "/bin/sh" || entrypoint == "bash" || entrypoint == "/bin/bash") && len(args) >= 2 && args[0] == "-c" {
 		// sh -c "script" — extract the script and prepend env vars directly
 		// The simulator will wrap the final command in sh -c, so we just send the script
-		cmd = envPrefix + strings.Join(args[1:], " ")
+		cmd = cdPrefix + envPrefix + strings.Join(args[1:], " ")
 	} else {
 		// Regular command — join all parts
 		parts := []string{}
@@ -55,7 +65,7 @@ func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container, tty bo
 			parts = append(parts, entrypoint)
 		}
 		parts = append(parts, args...)
-		cmd = envPrefix + strings.Join(parts, " ")
+		cmd = cdPrefix + envPrefix + strings.Join(parts, " ")
 	}
 
 	result, err := s.aws.ECS.ExecuteCommand(s.ctx(), &awsecs.ExecuteCommandInput{

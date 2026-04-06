@@ -235,6 +235,14 @@ func registerECS(r *sim.AWSRouter, srv *sim.Server) {
 			return
 		}
 
+		// Create target directory if it doesn't exist
+		mkdirExec, mkdirErr := cli.ContainerExecCreate(r.Context(), handle.ContainerID, dockercontainer.ExecOptions{
+			Cmd: []string{"mkdir", "-p", path},
+		})
+		if mkdirErr == nil {
+			_ = cli.ContainerExecStart(r.Context(), mkdirExec.ID, dockercontainer.ExecStartOptions{})
+		}
+
 		err := cli.CopyToContainer(r.Context(), handle.ContainerID, path, r.Body, dockercontainer.CopyToContainerOptions{
 			AllowOverwriteDirWithFile: true,
 		})
