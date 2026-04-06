@@ -62,6 +62,13 @@ func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container) (io.Re
 		return nil, fmt.Errorf("failed to connect to exec session WebSocket: %w", err)
 	}
 
+	// Set a close handler so that when the server closes the connection,
+	// the next Read() call returns promptly.
+	conn.SetCloseHandler(func(code int, text string) error {
+		_ = conn.SetReadDeadline(time.Now())
+		return nil
+	})
+
 	return newWSBridge(conn), nil
 }
 
