@@ -185,16 +185,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Smoke test (ecs)
         run: |
-          docker build -t smoke-act-ecs -f smoke-tests/act/Dockerfile.ecs .
-          docker run --rm smoke-act-ecs
+          docker build -t smoke-ecs -f smoke-tests/Dockerfile.ecs .
+          docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock smoke-ecs
         timeout-minutes: 10
       - name: Smoke test (cloudrun)
         run: |
-          docker build -t smoke-act-cloudrun -f smoke-tests/act/Dockerfile.cloudrun .
-          docker run --rm smoke-act-cloudrun
+          docker build -t smoke-cloudrun -f smoke-tests/Dockerfile.cloudrun .
+          docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock smoke-cloudrun
         timeout-minutes: 10
       - name: Smoke test (aca)
         run: |
-          docker build -t smoke-act-aca -f smoke-tests/act/Dockerfile.aca .
-          docker run --rm smoke-act-aca
+          docker build -t smoke-aca -f smoke-tests/Dockerfile.aca .
+          docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock smoke-aca
         timeout-minutes: 10
