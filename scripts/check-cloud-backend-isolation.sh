@@ -54,6 +54,9 @@ forbidden_patterns=(
   'Store\.ContainerNames\.Delete'
   # Direct Store resolution (must use ResolveContainerAuto instead)
   'Store\.ResolveContainerID'
+  # Auto-agent (local process spawning — stateless violation)
+  'SpawnAutoAgent'
+  'StopAutoAgent'
   'Store\.ResolveContainer[^A]'
 )
 

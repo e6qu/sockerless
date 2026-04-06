@@ -285,12 +285,8 @@ func (s *Server) ContainerStart(ref string) error {
 		// Wait for reverse agent callback
 		agentTimeout := s.config.AgentTimeout
 		if err := s.AgentRegistry.WaitForAgent(id, agentTimeout); err != nil {
-			s.Logger.Warn().Err(err).Msg("agent callback timeout, trying auto-agent")
+			s.Logger.Warn().Err(err).Msg("agent callback timeout")
 			s.AgentRegistry.Remove(id)
-			// Fallback to auto-agent if configured
-			if autoErr := s.SpawnAutoAgent(id); autoErr != nil {
-				s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
-			}
 		} else {
 			s.ECS.Update(id, func(state *ECSState) {
 				state.AgentAddress = "reverse"
@@ -426,17 +422,8 @@ func (s *Server) startMultiContainerTaskTyped(triggerID string, podContainers []
 		}
 
 		agentURL := fmt.Sprintf("http://%s/health", agentAddr)
-		agentHealthy := true
 		if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
 			s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
-			agentHealthy = false
-		}
-
-		if !agentHealthy {
-			// Fallback to auto-agent if configured
-			if autoErr := s.SpawnAutoAgent(mainID); autoErr != nil {
-				s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
-			}
 		}
 
 		s.ECS.Update(mainID, func(state *ECSState) {
@@ -477,7 +464,6 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 
 	s.StopHealthCheck(id)
 	s.AgentRegistry.Remove(id)
-	core.StopAutoAgent(id)
 	// Close wait channel so ContainerWait unblocks
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
@@ -504,7 +490,6 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	// Disconnect reverse agent if connected (unblocks invoke goroutine)
 	s.StopHealthCheck(id)
 	s.AgentRegistry.Remove(id)
-	core.StopAutoAgent(id)
 
 	exitCode := core.SignalToExitCode(signal)
 
@@ -555,7 +540,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	// Disconnect reverse agent if connected (unblocks invoke goroutine)
 	s.AgentRegistry.Remove(id)
-	core.StopAutoAgent(id)
 
 	if c.State.Running {
 		s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
@@ -693,7 +677,7 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 	}
 
 	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{
-		CheckAutoAgent: true,
+		CheckAutoAgent: false,
 	})
 }
 

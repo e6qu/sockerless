@@ -293,12 +293,8 @@ func (s *Server) ContainerStart(ref string) error {
 		// Wait for reverse agent callback
 		agentTimeout := s.config.AgentTimeout
 		if err := s.AgentRegistry.WaitForAgent(id, agentTimeout); err != nil {
-			s.Logger.Warn().Err(err).Msg("agent callback timeout, trying auto-agent")
+			s.Logger.Warn().Err(err).Msg("agent callback timeout")
 			s.AgentRegistry.Remove(id)
-			// Fallback to auto-agent if configured
-			if autoErr := s.SpawnAutoAgent(id); autoErr != nil {
-				s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
-			}
 		} else {
 			s.CloudRun.Update(id, func(state *CloudRunState) {
 				state.AgentAddress = "reverse"
@@ -341,17 +337,8 @@ func (s *Server) ContainerStart(ref string) error {
 			} else {
 				// Wait for agent health
 				agentURL := fmt.Sprintf("http://%s/health", agentAddr)
-				agentHealthy := true
 				if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
 					s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
-					agentHealthy = false
-				}
-
-				if !agentHealthy {
-					// Fallback to auto-agent if configured
-					if autoErr := s.SpawnAutoAgent(id); autoErr != nil {
-						s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
-					}
 				}
 
 				s.CloudRun.Update(id, func(state *CloudRunState) {
@@ -359,10 +346,8 @@ func (s *Server) ContainerStart(ref string) error {
 				})
 			}
 		} else {
-			// Short-lived container without forward agent — try auto-agent
-			if autoErr := s.SpawnAutoAgent(id); autoErr != nil {
-				s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
-			}
+			// Short-lived container without forward agent
+			s.Logger.Warn().Str("id", id).Msg("short-lived container has no forward agent")
 		}
 
 		if !skipPoller {
@@ -531,17 +516,8 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 			}()
 		} else {
 			agentURL := fmt.Sprintf("http://%s/health", agentAddr)
-			agentHealthy := true
 			if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
 				s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
-				agentHealthy = false
-			}
-
-			if !agentHealthy {
-				// Fallback to auto-agent if configured
-				if autoErr := s.SpawnAutoAgent(mainID); autoErr != nil {
-					s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
-				}
 			}
 
 			s.CloudRun.Update(mainID, func(state *CloudRunState) {
@@ -575,7 +551,6 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 
 	s.StopHealthCheck(id)
 	s.AgentRegistry.Remove(id)
-	core.StopAutoAgent(id)
 	// Close wait channel so ContainerWait unblocks
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
@@ -602,7 +577,6 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	// Disconnect reverse agent if connected (unblocks invoke goroutine)
 	s.StopHealthCheck(id)
 	s.AgentRegistry.Remove(id)
-	core.StopAutoAgent(id)
 
 	exitCode := core.SignalToExitCode(signal)
 
@@ -645,7 +619,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	// Disconnect reverse agent if connected (unblocks invoke goroutine)
 	s.AgentRegistry.Remove(id)
-	core.StopAutoAgent(id)
 
 	if c.State.Running {
 		s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
@@ -661,7 +634,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	s.StopHealthCheck(id)
 	s.AgentRegistry.Remove(id)
-	core.StopAutoAgent(id)
 
 	// Delete Cloud Run Job (best-effort)
 	crState, _ := s.CloudRun.Get(id)
@@ -733,7 +705,7 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 	fetch := s.cloudLoggingFetch(baseFilter)
 
 	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{
-		CheckAutoAgent: true,
+		CheckAutoAgent: false,
 	})
 }
 
@@ -794,7 +766,6 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 	if c.State.Running {
 		s.StopHealthCheck(id)
 		s.AgentRegistry.Remove(id)
-		core.StopAutoAgent(id)
 		crState, _ := s.CloudRun.Get(id)
 		if crState.ExecutionName != "" {
 			s.cancelExecution(crState.ExecutionName)
@@ -858,7 +829,6 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 		}
 		s.StopHealthCheck(c.ID)
 		s.AgentRegistry.Remove(c.ID)
-		core.StopAutoAgent(c.ID)
 		for _, ep := range c.NetworkSettings.Networks {
 			if ep != nil && ep.NetworkID != "" {
 				_ = s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, c.ID)
