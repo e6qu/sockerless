@@ -198,3 +198,18 @@ jobs:
           docker build -t smoke-aca -f smoke-tests/Dockerfile.aca .
           docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock smoke-aca
         timeout-minutes: 10
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - uses: hashicorp/setup-terraform@v3
+      - name: Run terraform tests
+        run: |
+          cd terraform/modules/ecs/test
+          GOWORK=off go test -v -timeout 10m ./...
+        timeout-minutes: 10
