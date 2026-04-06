@@ -1092,32 +1092,20 @@ func handleECSExecWebSocket(sessionID string) http.HandlerFunc {
 				}
 				defer attach.Close()
 
-				// Bridge: WebSocket ↔ Docker exec
-				done := make(chan struct{})
-				go func() {
-					defer close(done)
-					buf := make([]byte, 4096)
-					for {
-						n, err := attach.Reader.Read(buf)
-						if n > 0 {
-							_ = conn.WriteMessage(websocket.BinaryMessage, buf[:n])
-						}
-						if err != nil {
-							// Exec finished — send close to unblock the read loop
-							_ = conn.WriteMessage(websocket.CloseMessage,
-								websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-							return
+				// Bridge: Docker exec → WebSocket (read exec output, send to client)
+				buf := make([]byte, 4096)
+				for {
+					n, err := attach.Reader.Read(buf)
+					if n > 0 {
+						if writeErr := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); writeErr != nil {
+							break
 						}
 					}
-				}()
-				for {
-					_, msg, err := conn.ReadMessage()
 					if err != nil {
 						break
 					}
-					_, _ = attach.Conn.Write(msg)
 				}
-				<-done
+				// Exec finished — close connection to unblock client
 				return
 			}
 		}
