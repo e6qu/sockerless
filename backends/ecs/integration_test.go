@@ -24,8 +24,8 @@ var evalBinaryPath string
 
 func TestMain(m *testing.M) {
 	if os.Getenv("SOCKERLESS_INTEGRATION") != "1" {
-		fmt.Println("skipping integration tests (SOCKERLESS_INTEGRATION != 1)")
-		os.Exit(0)
+		// Run unit tests only; integration tests check integrationEnabled().
+		os.Exit(m.Run())
 	}
 
 	repoRoot := findModuleDir(".")
@@ -222,7 +222,15 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+func skipIfNoIntegration(t *testing.T) {
+	t.Helper()
+	if os.Getenv("SOCKERLESS_INTEGRATION") != "1" {
+		t.Skip("skipping integration test (SOCKERLESS_INTEGRATION != 1)")
+	}
+}
+
 func TestECSContainerLifecycle(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	// Pull image
@@ -278,6 +286,7 @@ func TestECSContainerLifecycle(t *testing.T) {
 }
 
 func TestECSContainerLogs(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	pullRC, _ := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
@@ -329,6 +338,7 @@ func TestECSContainerLogs(t *testing.T) {
 }
 
 func TestECSContainerExec(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	pullRC, _ := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
@@ -383,6 +393,7 @@ func TestECSContainerExec(t *testing.T) {
 }
 
 func TestECSContainerList(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	pullRC, _ := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
@@ -433,6 +444,7 @@ func TestECSContainerList(t *testing.T) {
 }
 
 func TestECSNetworkOperations(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	// Create network
@@ -472,6 +484,7 @@ func TestECSNetworkOperations(t *testing.T) {
 }
 
 func TestECSVolumeOperations(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	// Create volume

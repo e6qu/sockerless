@@ -50,6 +50,7 @@ func pullImage(t *testing.T) {
 }
 
 func TestECSArithmeticSuccess(t *testing.T) {
+	skipIfNoIntegration(t)
 	pullImage(t)
 	ctx := context.Background()
 
@@ -85,6 +86,7 @@ func TestECSArithmeticSuccess(t *testing.T) {
 }
 
 func TestECSArithmeticParentheses(t *testing.T) {
+	skipIfNoIntegration(t)
 	pullImage(t)
 	ctx := context.Background()
 
@@ -120,6 +122,7 @@ func TestECSArithmeticParentheses(t *testing.T) {
 }
 
 func TestECSArithmeticInvalid(t *testing.T) {
+	skipIfNoIntegration(t)
 	pullImage(t)
 	ctx := context.Background()
 
@@ -155,6 +158,7 @@ func TestECSArithmeticInvalid(t *testing.T) {
 }
 
 func TestECSArithmeticDivision(t *testing.T) {
+	skipIfNoIntegration(t)
 	pullImage(t)
 	ctx := context.Background()
 
@@ -190,6 +194,7 @@ func TestECSArithmeticDivision(t *testing.T) {
 }
 
 func TestECSArithmeticWithLabels(t *testing.T) {
+	skipIfNoIntegration(t)
 	pullImage(t)
 	ctx := context.Background()
 
@@ -245,6 +250,7 @@ func TestECSArithmeticWithLabels(t *testing.T) {
 }
 
 func TestECSArithmeticEnvVar(t *testing.T) {
+	skipIfNoIntegration(t)
 	pullImage(t)
 	ctx := context.Background()
 
