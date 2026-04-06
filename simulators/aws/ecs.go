@@ -12,6 +12,7 @@ import (
 	"time"
 
 	dockercontainer "github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/gorilla/websocket"
 
 	sim "github.com/sockerless/simulator"
@@ -962,6 +963,18 @@ type ecsExecSession struct {
 	dockerContainerID string
 }
 
+// wsMessageWriter wraps a WebSocket conn as an io.Writer, sending each Write as a binary message.
+type wsMessageWriter struct {
+	conn *websocket.Conn
+}
+
+func (w *wsMessageWriter) Write(p []byte) (int, error) {
+	if err := w.conn.WriteMessage(websocket.BinaryMessage, p); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
 var wsUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
@@ -1072,11 +1085,21 @@ func handleECSExecWebSocket(sessionID string) http.HandlerFunc {
 		if sess.dockerContainerID != "" {
 			cli := sim.DockerClient()
 			if cli != nil {
+				// Parse exec command: if it starts with "sh -c" or similar shell
+				// invocation, pass it through to Docker exec as-is.
+				// Otherwise wrap in sh -c for shell interpretation.
+				var execCmd []string
+				if strings.HasPrefix(sess.command, "sh -c ") || strings.HasPrefix(sess.command, "/bin/sh -c ") {
+					// Already a shell command — split into [sh, -c, rest]
+					idx := strings.Index(sess.command, "-c ") + 3
+					execCmd = []string{"sh", "-c", sess.command[idx:]}
+				} else {
+					execCmd = []string{"sh", "-c", sess.command}
+				}
 				execCfg := dockercontainer.ExecOptions{
-					Cmd:          []string{"sh", "-c", sess.command},
+					Cmd:          execCmd,
 					AttachStdout: true,
 					AttachStderr: true,
-					AttachStdin:  true,
 				}
 				execResp, err := cli.ContainerExecCreate(r.Context(), sess.dockerContainerID, execCfg)
 				if err != nil {
@@ -1092,20 +1115,15 @@ func handleECSExecWebSocket(sessionID string) http.HandlerFunc {
 				}
 				defer attach.Close()
 
-				// Bridge: Docker exec → WebSocket (read exec output, send to client)
-				buf := make([]byte, 4096)
-				for {
-					n, err := attach.Reader.Read(buf)
-					if n > 0 {
-						if writeErr := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); writeErr != nil {
-							break
-						}
-					}
-					if err != nil {
-						break
-					}
-				}
-				// Exec finished — close connection to unblock client
+				// Bridge: Docker exec → WebSocket
+				// Docker non-TTY exec uses multiplexed stream. Demux with stdcopy.
+				wsWriter := &wsMessageWriter{conn: conn}
+				_, _ = stdcopy.StdCopy(wsWriter, wsWriter, attach.Reader)
+				_ = conn.WriteControl(
+					websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+					time.Now().Add(5*time.Second),
+				)
 				return
 			}
 		}

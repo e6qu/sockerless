@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,11 +28,14 @@ func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container) (io.Re
 		cluster = ecsState.ClusterARN
 	}
 
-	// Build the command string from the exec process config.
-	cmd := exec.ProcessConfig.Entrypoint
-	if cmd == "" && len(exec.ProcessConfig.Arguments) > 0 {
-		cmd = exec.ProcessConfig.Arguments[0]
+	// Build the full command string from the exec process config.
+	// ECS ExecuteCommand takes a single command string.
+	parts := []string{}
+	if exec.ProcessConfig.Entrypoint != "" {
+		parts = append(parts, exec.ProcessConfig.Entrypoint)
 	}
+	parts = append(parts, exec.ProcessConfig.Arguments...)
+	cmd := strings.Join(parts, " ")
 
 	result, err := s.aws.ECS.ExecuteCommand(s.ctx(), &awsecs.ExecuteCommandInput{
 		Cluster:     aws.String(cluster),
