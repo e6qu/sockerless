@@ -18,6 +18,7 @@ var (
 	dockerClient   *client.Client
 	serverAddr     string
 	evalBinaryPath string
+	evalImageName  string
 	ctx            = context.Background()
 )
 
@@ -42,11 +43,21 @@ func TestMain(m *testing.M) {
 	fmt.Println("Building eval-arithmetic...")
 	evalBuild := exec.Command("go", "build", "-o", "eval-arithmetic", ".")
 	evalBuild.Dir = evalDir
-	evalBuild.Env = append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off")
+	evalBuild.Env = append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux")
 	evalBuild.Stdout = os.Stderr
 	evalBuild.Stderr = os.Stderr
 	if err := evalBuild.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Build Docker image containing the eval binary
+	evalImageName = "sockerless-eval-arithmetic:test"
+	dockerfile := "FROM alpine:latest\nCOPY eval-arithmetic /usr/local/bin/eval-arithmetic\nENTRYPOINT [\"/usr/local/bin/eval-arithmetic\"]\n"
+	dockerBuild := exec.Command("docker", "build", "-t", evalImageName, "-f", "-", evalDir)
+	dockerBuild.Stdin = strings.NewReader(dockerfile)
+	if out, err := dockerBuild.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic Docker image: %v\n%s", err, out)
 		os.Exit(1)
 	}
 

@@ -138,8 +138,8 @@ func TestArithmeticExecInContainer(t *testing.T) {
 // through the Docker API. This uses a real compiled binary, not shell
 // arithmetic, proving that process execution is fully functional.
 func TestArithmeticEvalBinary(t *testing.T) {
-	if evalBinaryPath == "" {
-		t.Skip("eval binary not built")
+	if evalImageName == "" {
+		t.Skip("eval image not built")
 	}
 	for name, c := range availableRunnerClients(t) {
 		t.Run(name, func(t *testing.T) {
@@ -147,8 +147,8 @@ func TestArithmeticEvalBinary(t *testing.T) {
 			testID := generateTestID(name, "eval-bin")
 
 			resp, err := c.ContainerCreate(ctx, &container.Config{
-				Image: "alpine:latest",
-				Cmd:   []string{evalBinaryPath, "(3 + 4) * 2"},
+				Image: evalImageName,
+				Cmd:   []string{"(3 + 4) * 2"},
 			}, nil, nil, nil, "eval-bin-"+testID)
 			if err != nil {
 				t.Fatalf("create failed: %v", err)

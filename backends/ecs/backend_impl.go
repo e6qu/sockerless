@@ -293,24 +293,22 @@ func (s *Server) ContainerStart(ref string) error {
 			})
 		}
 	} else {
-		// Forward agent mode: async wait for RUNNING + agent health.
-		// Return immediately so docker start/run -d is fast.
-		go func() {
-			agentAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
-			if err != nil {
-				s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
-				if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-					close(ch.(chan struct{}))
-				}
-				return
+		// Forward agent mode: wait for RUNNING, then check agent health async.
+		agentAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
+		if err != nil {
+			s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
+			if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+				close(ch.(chan struct{}))
 			}
+			return err
+		}
 
-			// Check agent health (non-blocking for the caller)
+		// Agent health check is async — don't block start on agent availability
+		go func() {
 			agentURL := fmt.Sprintf("http://%s/health", agentAddr)
 			if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
 				s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
 			}
-
 			s.ECS.Update(id, func(state *ECSState) {
 				state.AgentAddress = agentAddr
 			})
