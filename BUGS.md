@@ -1,6 +1,6 @@
 # Known Bugs
 
-680 total. 680 fixed. 0 open.
+691 total. 686 fixed. 5 open.
 
 | ID | Sev | Summary | Status |
 |----|-----|---------|--------|
@@ -23,3 +23,14 @@
 | 678 | Med | CloudRun ContainerUpdate delegates to BaseServer without resolving container first. Fix: add ResolveContainerAuto check. | fixed |
 | 679 | Med | StreamCloudLogs follow-mode checks Store.Containers.Get for running status — fails in stateless mode. Fix: use ResolveContainerAuto. | fixed |
 | 680 | Med | Handler files (handle_containers_query, handle_containers, handle_extended, handle_exec, handle_libpod) use Store.ResolveContainerID/ResolveContainer directly. Fix: use ResolveContainerAuto/ResolveContainerIDAuto. | fixed |
+| 681 | High | CloudRun/ACA/GCF/AZF CloudState implementations were stubs reading Store.Containers instead of querying cloud APIs. Fix: implement real cloud API queries (ListJobs, ListFunctions, etc.). | fixed |
+| 682 | High | GCP label value limit (63 chars) truncates 64-char container IDs — CloudState can't match containers. Fix: store full ID in GCP annotations; read from env var for GCF. | fixed |
+| 683 | High | Auto-agent (SpawnAutoAgent/StopAutoAgent) used in ECS, CloudRun, ACA backends — stateless violation (spawns local processes, reads Store.Containers). Fix: remove from all cloud backends. | fixed |
+| 684 | High | GCP simulator missing LatestCreatedExecution on Job — CloudState can't determine execution state. Fix: add ExecutionReference, set on RunJob, update CompletionTime on finish. | fixed |
+| 685 | High | Azure simulator missing SystemData on ContainerAppJob — CloudState can't read creation time. Fix: add SystemData struct, populate on job creation. | fixed |
+| 686 | High | Simulators use os/exec for workloads instead of real containers — exec, archive, and filesystem operations impossible. Fix: migrate to Docker SDK container execution. | fixed |
+| 687 | High | `docker logs` returns empty for CloudRun containers — simulator writes to Cloud Logging but backend log query doesn't find entries. Cloud Logging integration between GCP simulator and CloudRun backend is broken. | open |
+| 688 | High | `docker ps` shows running CloudRun container as not running — CloudState execution state mapping reports wrong status. Simulator execution has RunningCount > 0 but CloudState doesn't see it. | open |
+| 689 | Med | `docker logs` for short-lived containers may miss output — container exits before log sink flushes all lines to Cloud Logging store. Need to ensure log drain completes before marking execution as finished. | open |
+| 690 | Med | Smoke test `docker stop` returns 304 (Not Modified) for running CloudRun containers — CloudState reports container as already stopped when it's running, so stop is a no-op. Same root cause as BUG-688. | open |
+| 691 | Med | Smoke test long-running container shows empty `docker ps` — `docker ps` (without -a) filters out non-running containers, and CloudState reports running container as not running. Same root cause as BUG-688. | open |
