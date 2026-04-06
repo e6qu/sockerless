@@ -107,11 +107,20 @@ func (s *Server) buildJobSpec(containers []containerInput) armappcontainers.Job 
 
 	triggerType := armappcontainers.TriggerTypeManual
 
+	mainContainer := containers[0].Container
+	networkName := "bridge"
+	if mainContainer.HostConfig.NetworkMode != "" && mainContainer.HostConfig.NetworkMode != "default" {
+		networkName = mainContainer.HostConfig.NetworkMode
+	}
+
 	tags := core.TagSet{
 		ContainerID: containers[0].ID,
 		Backend:     "aca",
 		InstanceID:  s.Desc.InstanceID,
 		CreatedAt:   time.Now(),
+		Name:        mainContainer.Name,
+		Network:     networkName,
+		Labels:      mainContainer.Config.Labels,
 	}
 
 	return armappcontainers.Job{

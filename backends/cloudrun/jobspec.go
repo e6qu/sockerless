@@ -130,6 +130,8 @@ func (s *Server) buildJobSpec(containers []containerInput) *runpb.Job {
 		Backend:     "cloudrun",
 		InstanceID:  s.Desc.InstanceID,
 		CreatedAt:   time.Now(),
+		Name:        containers[0].Container.Name,
+		Network:     containers[0].Container.HostConfig.NetworkMode,
 	}
 
 	return &runpb.Job{

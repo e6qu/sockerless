@@ -5,14 +5,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v2"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 )
 
 // acaCloudState implements core.CloudStateProvider for Azure Container Apps.
-// Container state is derived from PendingCreates (pre-start) and the
-// ACA state store (post-start). The real cloud queries happen in
-// the simulator; this provider merges local bookkeeping state.
+// All container state is derived from ACA Jobs tagged with sockerless-managed=true.
+// PendingCreates are merged for containers between create and start (not yet in cloud).
 type acaCloudState struct {
 	server *Server
 }
@@ -40,7 +40,7 @@ func (p *acaCloudState) GetContainer(ctx context.Context, ref string) (api.Conta
 func (p *acaCloudState) ListContainers(ctx context.Context, all bool, filters map[string][]string) ([]api.Container, error) {
 	var result []api.Container
 
-	// Include PendingCreates (containers between create and start)
+	// Include PendingCreates (containers between create and start, not yet in cloud)
 	for _, c := range p.server.PendingCreates.List() {
 		if !all && !c.State.Running {
 			continue
@@ -51,8 +51,24 @@ func (p *acaCloudState) ListContainers(ctx context.Context, all bool, filters ma
 		result = append(result, c)
 	}
 
-	// Include containers tracked in Store.Containers (post-start, actively running)
-	for _, c := range p.server.Store.Containers.List() {
+	// Track pending IDs so we don't duplicate them from the cloud query
+	pendingIDs := make(map[string]bool)
+	for _, c := range result {
+		pendingIDs[c.ID] = true
+	}
+
+	// Query Azure Container Apps Jobs API for sockerless-managed resources
+	cloudContainers, err := p.queryJobs(ctx)
+	if err != nil {
+		// Log but don't fail — return what we have from PendingCreates
+		p.server.Logger.Debug().Err(err).Msg("failed to query ACA jobs for cloud state")
+		return result, nil
+	}
+
+	for _, c := range cloudContainers {
+		if pendingIDs[c.ID] {
+			continue
+		}
 		if !all && !c.State.Running {
 			continue
 		}
@@ -98,4 +114,276 @@ func (p *acaCloudState) WaitForExit(ctx context.Context, containerID string) (in
 			}
 		}
 	}
+}
+
+// queryJobs fetches all sockerless-managed ACA Jobs from the resource group and
+// reconstructs api.Container from the job metadata, tags, and execution status.
+func (p *acaCloudState) queryJobs(ctx context.Context) ([]api.Container, error) {
+	var containers []api.Container
+
+	pager := p.server.azure.Jobs.NewListByResourceGroupPager(p.server.config.ResourceGroup, nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, job := range page.Value {
+			if job.Tags == nil {
+				continue
+			}
+
+			tags := azureTagsToMap(job.Tags)
+
+			// Only include sockerless-managed jobs
+			if tags["sockerless-managed"] != "true" {
+				continue
+			}
+
+			c := p.jobToContainer(ctx, job, tags)
+			containers = append(containers, c)
+		}
+	}
+
+	return containers, nil
+}
+
+// jobToContainer reconstructs an api.Container from an ACA Job and its tags.
+func (p *acaCloudState) jobToContainer(ctx context.Context, job *armappcontainers.Job, tags map[string]string) api.Container {
+	containerID := tags["sockerless-container-id"]
+	name := tags["sockerless-name"]
+	if name == "" && containerID != "" {
+		name = "/" + containerID[:12]
+	}
+
+	// Derive image, command, entrypoint, env from job template
+	image := ""
+	var cmd []string
+	var entrypoint []string
+	var env []string
+	if job.Properties != nil && job.Properties.Template != nil {
+		for _, tc := range job.Properties.Template.Containers {
+			if tc.Name != nil && *tc.Name == "main" || len(job.Properties.Template.Containers) == 1 {
+				if tc.Image != nil {
+					image = *tc.Image
+				}
+				for _, a := range tc.Command {
+					if a != nil {
+						entrypoint = append(entrypoint, *a)
+					}
+				}
+				for _, a := range tc.Args {
+					if a != nil {
+						cmd = append(cmd, *a)
+					}
+				}
+				for _, ev := range tc.Env {
+					if ev.Name != nil && ev.Value != nil {
+						env = append(env, *ev.Name+"="+*ev.Value)
+					}
+				}
+				break
+			}
+		}
+	}
+
+	// Determine container state from the latest execution
+	state := p.resolveJobState(ctx, job, tags)
+
+	// Parse creation time from tag
+	created := tags["sockerless-created-at"]
+	if created == "" && job.SystemData != nil && job.SystemData.CreatedAt != nil {
+		created = job.SystemData.CreatedAt.Format(time.RFC3339Nano)
+	}
+
+	// Parse Docker labels from tags
+	labels := core.ParseLabelsFromTags(tags)
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+
+	networkName := tags["sockerless-network"]
+	if networkName == "" {
+		networkName = "bridge"
+	}
+
+	path := ""
+	var args []string
+	if len(entrypoint) > 0 {
+		path = entrypoint[0]
+		args = append(entrypoint[1:], cmd...)
+	} else if len(cmd) > 0 {
+		path = cmd[0]
+		args = cmd[1:]
+	}
+
+	return api.Container{
+		ID:      containerID,
+		Name:    name,
+		Created: created,
+		Image:   image,
+		Path:    path,
+		Args:    args,
+		State:   state,
+		Config: api.ContainerConfig{
+			Image:      image,
+			Cmd:        cmd,
+			Entrypoint: entrypoint,
+			Env:        env,
+			Labels:     labels,
+		},
+		HostConfig: api.HostConfig{
+			NetworkMode: networkName,
+		},
+		NetworkSettings: api.NetworkSettings{
+			Networks: map[string]*api.EndpointSettings{
+				networkName: {
+					NetworkID: networkName,
+					IPAddress: "",
+				},
+			},
+		},
+		Platform: "linux",
+		Driver:   "aca-jobs",
+	}
+}
+
+// resolveJobState determines Docker container state by querying the latest execution
+// for the ACA Job.
+func (p *acaCloudState) resolveJobState(ctx context.Context, job *armappcontainers.Job, tags map[string]string) api.ContainerState {
+	// Check provisioning state first
+	if job.Properties != nil && job.Properties.ProvisioningState != nil {
+		switch *job.Properties.ProvisioningState {
+		case armappcontainers.JobProvisioningStateInProgress:
+			return api.ContainerState{
+				Status: "created",
+			}
+		case armappcontainers.JobProvisioningStateFailed, armappcontainers.JobProvisioningStateCanceled:
+			return api.ContainerState{
+				Status:   "exited",
+				ExitCode: 1,
+				Error:    "job provisioning " + string(*job.Properties.ProvisioningState),
+			}
+		case armappcontainers.JobProvisioningStateDeleting:
+			return api.ContainerState{
+				Status: "removing",
+			}
+		}
+	}
+
+	// Query executions for the job to get running state
+	if job.Name == nil {
+		return api.ContainerState{Status: "created"}
+	}
+
+	jobName := *job.Name
+	pager := p.server.azure.Executions.NewListPager(p.server.config.ResourceGroup, jobName, nil)
+
+	// Find the latest execution
+	var latest *armappcontainers.JobExecution
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			p.server.Logger.Debug().Err(err).Str("job", jobName).Msg("failed to list executions")
+			break
+		}
+		for _, exec := range page.Value {
+			if latest == nil {
+				latest = exec
+			} else if exec.StartTime != nil && latest.StartTime != nil && exec.StartTime.After(*latest.StartTime) {
+				latest = exec
+			}
+		}
+	}
+
+	if latest == nil {
+		// Job exists but no execution — it was created but not yet started
+		return api.ContainerState{Status: "created"}
+	}
+
+	return mapExecutionStatus(latest)
+}
+
+// mapExecutionStatus converts an ACA Job execution to Docker container state.
+func mapExecutionStatus(exec *armappcontainers.JobExecution) api.ContainerState {
+	if exec.Status == nil {
+		return api.ContainerState{Status: "created"}
+	}
+
+	switch *exec.Status {
+	case armappcontainers.JobExecutionRunningStateRunning,
+		armappcontainers.JobExecutionRunningStateProcessing:
+		startedAt := ""
+		if exec.StartTime != nil {
+			startedAt = exec.StartTime.Format(time.RFC3339Nano)
+		}
+		return api.ContainerState{
+			Status:    "running",
+			Running:   true,
+			StartedAt: startedAt,
+		}
+
+	case armappcontainers.JobExecutionRunningStateSucceeded:
+		startedAt := ""
+		if exec.StartTime != nil {
+			startedAt = exec.StartTime.Format(time.RFC3339Nano)
+		}
+		finishedAt := ""
+		if exec.EndTime != nil {
+			finishedAt = exec.EndTime.Format(time.RFC3339Nano)
+		}
+		return api.ContainerState{
+			Status:     "exited",
+			ExitCode:   0,
+			StartedAt:  startedAt,
+			FinishedAt: finishedAt,
+		}
+
+	case armappcontainers.JobExecutionRunningStateFailed,
+		armappcontainers.JobExecutionRunningStateDegraded:
+		startedAt := ""
+		if exec.StartTime != nil {
+			startedAt = exec.StartTime.Format(time.RFC3339Nano)
+		}
+		finishedAt := ""
+		if exec.EndTime != nil {
+			finishedAt = exec.EndTime.Format(time.RFC3339Nano)
+		}
+		return api.ContainerState{
+			Status:     "exited",
+			ExitCode:   1,
+			Error:      string(*exec.Status),
+			StartedAt:  startedAt,
+			FinishedAt: finishedAt,
+		}
+
+	case armappcontainers.JobExecutionRunningStateStopped:
+		startedAt := ""
+		if exec.StartTime != nil {
+			startedAt = exec.StartTime.Format(time.RFC3339Nano)
+		}
+		finishedAt := ""
+		if exec.EndTime != nil {
+			finishedAt = exec.EndTime.Format(time.RFC3339Nano)
+		}
+		return api.ContainerState{
+			Status:     "exited",
+			ExitCode:   137,
+			StartedAt:  startedAt,
+			FinishedAt: finishedAt,
+		}
+
+	default:
+		return api.ContainerState{Status: "unknown"}
+	}
+}
+
+// azureTagsToMap converts Azure SDK tag map to a plain map.
+func azureTagsToMap(tags map[string]*string) map[string]string {
+	m := make(map[string]string, len(tags))
+	for k, v := range tags {
+		if v != nil {
+			m[k] = *v
+		}
+	}
+	return m
 }
