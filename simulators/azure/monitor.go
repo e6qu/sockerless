@@ -84,7 +84,7 @@ type LogEntry struct {
 
 // monitorLogs stores rows keyed by "workspaceID:tableName".
 // Package-level so other handlers (e.g., Container Apps) can inject log entries.
-var monitorLogs = sim.NewStateStore[[]monitorLogRow]()
+var monitorLogs sim.Store[[]monitorLogRow]
 
 // appendLogRow safely appends a log row to the given store key,
 // protecting the read-modify-write cycle with logMu.
@@ -118,7 +118,8 @@ func injectAppTrace(appRoleName, message string) {
 }
 
 func registerAzureMonitor(srv *sim.Server) {
-	workspaces := sim.NewStateStore[Workspace]()
+	monitorLogs = sim.MakeStore[[]monitorLogRow](srv.DB(), "monitor_logs")
+	workspaces := sim.MakeStore[Workspace](srv.DB(), "monitor_workspaces")
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.OperationalInsights"
 
@@ -261,7 +262,8 @@ func registerAzureMonitor(srv *sim.Server) {
 	})
 
 	// POST - Execute KQL query (Log Analytics data-plane)
-	srv.HandleFunc("POST /v1/workspaces/{workspaceId}/query", func(w http.ResponseWriter, r *http.Request) {
+	// Handle both /v1/workspaces/ (CLI, tests) and /workspaces/ (Azure SDK)
+	queryHandler := func(w http.ResponseWriter, r *http.Request) {
 		workspaceID := sim.PathParam(r, "workspaceId")
 
 		var req QueryRequest
@@ -343,7 +345,9 @@ func registerAzureMonitor(srv *sim.Server) {
 		}
 
 		sim.WriteJSON(w, http.StatusOK, resp)
-	})
+	}
+	srv.HandleFunc("POST /v1/workspaces/{workspaceId}/query", queryHandler)
+	srv.HandleFunc("POST /workspaces/{workspaceId}/query", queryHandler)
 
 	// POST - Log ingestion endpoint (simplified)
 	srv.HandleFunc("POST /dataCollectionRules/{dcrId}/streams/{streamName}", func(w http.ResponseWriter, r *http.Request) {

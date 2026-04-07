@@ -13,8 +13,8 @@ import (
 	sim "github.com/sockerless/simulator"
 )
 
-// lambdaProcessHandles tracks running Lambda processes for cancellation.
-var lambdaProcessHandles sync.Map // map[requestID]*sim.ProcessHandle
+// lambdaProcessHandles tracks running Lambda containers for cancellation.
+var lambdaProcessHandles sync.Map // map[requestID]*sim.ContainerHandle
 
 // Lambda types
 
@@ -59,14 +59,14 @@ type LambdaImageConfig struct {
 }
 
 // State store
-var lambdaFunctions *sim.StateStore[LambdaFunction]
+var lambdaFunctions sim.Store[LambdaFunction]
 
 func lambdaArn(name string) string {
 	return fmt.Sprintf("arn:aws:lambda:us-east-1:123456789012:function:%s", name)
 }
 
 func registerLambda(srv *sim.Server) {
-	lambdaFunctions = sim.NewStateStore[LambdaFunction]()
+	lambdaFunctions = sim.MakeStore[LambdaFunction](srv.DB(), "lambda_functions")
 
 	mux := srv.Mux()
 
@@ -279,9 +279,9 @@ func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 	case "dryrun":
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		// RequestResponse — execute real process if image function has a command
+		// RequestResponse — execute real container if image function has an image URI
 		responseBody := []byte("{}")
-		if fn.PackageType == "Image" && fn.ImageConfig != nil && len(fn.ImageConfig.Command) > 0 {
+		if fn.PackageType == "Image" && fn.Code != nil && fn.Code.ImageUri != "" {
 			var exitCode int
 			responseBody, exitCode = invokeLambdaProcess(fn)
 			if exitCode != 0 {
@@ -296,17 +296,23 @@ func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// invokeLambdaProcess executes a Lambda function's image command via sim.StartProcess
-// and returns the combined output as the response body plus the process exit code.
+// invokeLambdaProcess executes a Lambda function's image via sim.StartContainerSync
+// and returns the combined output as the response body plus the container exit code.
 func invokeLambdaProcess(fn LambdaFunction) ([]byte, int) {
-	// Build command from EntryPoint + Command (mirrors real Lambda container image support)
-	var fullCmd []string
-	if fn.ImageConfig != nil {
-		fullCmd = append(fullCmd, fn.ImageConfig.EntryPoint...)
-		fullCmd = append(fullCmd, fn.ImageConfig.Command...)
+	// Extract image URI from function code
+	imageURI := ""
+	if fn.Code != nil {
+		imageURI = fn.Code.ImageUri
 	}
-	if len(fullCmd) == 0 {
+	if imageURI == "" {
 		return []byte("{}"), 0
+	}
+
+	// Extract entrypoint and command from ImageConfig
+	var entrypoint, args []string
+	if fn.ImageConfig != nil {
+		entrypoint = fn.ImageConfig.EntryPoint
+		args = fn.ImageConfig.Command
 	}
 
 	// Extract environment variables
@@ -352,7 +358,7 @@ func invokeLambdaProcess(fn LambdaFunction) ([]byte, int) {
 		{Timestamp: nowMs, Message: fmt.Sprintf("START RequestId: %s Version: $LATEST", requestID), IngestionTime: nowMs},
 	})
 
-	// Execute the command
+	// Execute the container
 	timeout := time.Duration(fn.Timeout) * time.Second
 	if timeout == 0 {
 		timeout = 3 * time.Second
@@ -368,11 +374,26 @@ func invokeLambdaProcess(fn LambdaFunction) ([]byte, int) {
 		}
 	})
 
-	handle := sim.StartProcess(sim.ProcessConfig{
-		Command: fullCmd,
+	handle, err := sim.StartContainerSync(sim.ContainerConfig{
+		Image:   sim.ResolveLocalImage(imageURI),
+		Command: entrypoint,
+		Args:    args,
 		Env:     cmdEnv,
 		Timeout: timeout,
+		Name:    fmt.Sprintf("sockerless-sim-aws-lambda-%s", requestID[:12]),
+		Labels:  map[string]string{"sockerless-sim-lambda": requestID},
 	}, collectSink)
+	if err != nil {
+		// Log the error and return failure
+		endMs := time.Now().UnixMilli()
+		cwLogEvents.Update(key, func(events *[]CWLogEvent) {
+			*events = append(*events,
+				CWLogEvent{Timestamp: endMs, Message: fmt.Sprintf("ERROR RequestId: %s Container start failed: %v", requestID, err), IngestionTime: endMs},
+				CWLogEvent{Timestamp: endMs + 1, Message: fmt.Sprintf("END RequestId: %s", requestID), IngestionTime: endMs + 1},
+			)
+		})
+		return []byte(fmt.Sprintf(`{"errorMessage":"Container start failed: %v","errorType":"Runtime.ExitError"}`, err)), 1
+	}
 	lambdaProcessHandles.Store(requestID, handle)
 	result := handle.Wait()
 	lambdaProcessHandles.Delete(requestID)
@@ -392,7 +413,7 @@ func invokeLambdaProcess(fn LambdaFunction) ([]byte, int) {
 		cwLogEvents.Update(key, func(events *[]CWLogEvent) {
 			*events = append(*events, CWLogEvent{
 				Timestamp:     endMs + 2,
-				Message:       fmt.Sprintf("ERROR RequestId: %s Process exited with code %d", requestID, result.ExitCode),
+				Message:       fmt.Sprintf("ERROR RequestId: %s Container exited with code %d", requestID, result.ExitCode),
 				IngestionTime: endMs + 2,
 			})
 		})

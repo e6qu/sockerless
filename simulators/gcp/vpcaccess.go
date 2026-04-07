@@ -24,7 +24,7 @@ type VPCAccessConnector struct {
 }
 
 func registerVPCAccess(srv *sim.Server) {
-	connectors := sim.NewStateStore[VPCAccessConnector]()
+	connectors := sim.MakeStore[VPCAccessConnector](srv.DB(), "vpc_connectors")
 
 	// Create connector
 	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/connectors", func(w http.ResponseWriter, r *http.Request) {

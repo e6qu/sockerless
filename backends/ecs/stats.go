@@ -23,7 +23,7 @@ func (p *ecsStatsProvider) ContainerMetrics(containerID string) (*core.Container
 		return nil, nil
 	}
 
-	c, ok := p.server.Store.Containers.Get(containerID)
+	c, ok := p.server.ResolveContainerAuto(context.Background(), containerID)
 	if !ok || !c.State.Running {
 		return nil, nil
 	}

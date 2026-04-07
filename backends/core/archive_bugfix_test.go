@@ -135,10 +135,11 @@ func TestCreateTar_SingleFile(t *testing.T) {
 func TestHandlePutArchive_DriverError(t *testing.T) {
 	store := NewStore()
 	s := &BaseServer{
-		Store:    store,
-		Logger:   zerolog.Nop(),
-		Mux:      http.NewServeMux(),
-		EventBus: NewEventBus(),
+		Store:          store,
+		Logger:         zerolog.Nop(),
+		Mux:            http.NewServeMux(),
+		EventBus:       NewEventBus(),
+		PendingCreates: NewStateStore[api.Container](),
 	}
 	s.InitDrivers()
 	s.self = s
@@ -163,10 +164,11 @@ func TestHandlePutArchive_DriverError(t *testing.T) {
 func TestHandlePutArchive_NoAgent_StagesFiles(t *testing.T) {
 	store := NewStore()
 	s := &BaseServer{
-		Store:    store,
-		Logger:   zerolog.Nop(),
-		Mux:      http.NewServeMux(),
-		EventBus: NewEventBus(),
+		Store:          store,
+		Logger:         zerolog.Nop(),
+		Mux:            http.NewServeMux(),
+		EventBus:       NewEventBus(),
+		PendingCreates: NewStateStore[api.Container](),
 	}
 	s.InitDrivers()
 	s.self = s
@@ -183,7 +185,8 @@ func TestHandlePutArchive_NoAgent_StagesFiles(t *testing.T) {
 	tw.Write(content)
 	tw.Close()
 
-	req := httptest.NewRequest("PUT", "/internal/v1/containers/c1/archive?path=/tmp", &buf)
+	// Use a path that cannot be created directly so staging is triggered
+	req := httptest.NewRequest("PUT", "/internal/v1/containers/c1/archive?path=/nonexistent-root-path/app", &buf)
 	req.SetPathValue("id", "c1")
 	w := httptest.NewRecorder()
 	s.handlePutArchive(w, req)
@@ -253,10 +256,11 @@ func TestCommit_EmptyBody(t *testing.T) {
 func TestBuild_InvalidBuildargs(t *testing.T) {
 	store := NewStore()
 	s := &BaseServer{
-		Store:    store,
-		Logger:   zerolog.Nop(),
-		Mux:      http.NewServeMux(),
-		EventBus: NewEventBus(),
+		Store:          store,
+		Logger:         zerolog.Nop(),
+		Mux:            http.NewServeMux(),
+		EventBus:       NewEventBus(),
+		PendingCreates: NewStateStore[api.Container](),
 	}
 	s.InitDrivers()
 	s.self = s

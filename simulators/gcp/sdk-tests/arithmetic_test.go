@@ -129,7 +129,7 @@ func TestCloudFunctions_InvokeArithmeticLogs(t *testing.T) {
 // --- Cloud Run Jobs container tests ---
 
 func TestCloudRun_JobArithmetic(t *testing.T) {
-	execName := createAndRunJobWithCommand(t, "arith-crj", []string{evalBinaryPath, "(10 + 5) * 2"}, "10s")
+	execName := createAndRunJobWithImageAndCommand(t, "arith-crj", evalImageName, []string{"(10 + 5) * 2"}, "10s")
 
 	time.Sleep(2 * time.Second)
 
@@ -155,7 +155,7 @@ func TestCloudRun_JobArithmetic(t *testing.T) {
 }
 
 func TestCloudRun_JobArithmeticInvalid(t *testing.T) {
-	execName := createAndRunJobWithCommand(t, "arith-crj-fail", []string{evalBinaryPath, "3 +"}, "10s")
+	execName := createAndRunJobWithImageAndCommand(t, "arith-crj-fail", evalImageName, []string{"3 +"}, "10s")
 
 	time.Sleep(2 * time.Second)
 
@@ -165,7 +165,7 @@ func TestCloudRun_JobArithmeticInvalid(t *testing.T) {
 }
 
 func TestCloudRun_JobArithmeticLogs(t *testing.T) {
-	_ = createAndRunJobWithCommand(t, "arith-crj-logs", []string{evalBinaryPath, "10 / 3"}, "10s")
+	_ = createAndRunJobWithImageAndCommand(t, "arith-crj-logs", evalImageName, []string{"10 / 3"}, "10s")
 
 	time.Sleep(2 * time.Second)
 

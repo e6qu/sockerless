@@ -13,7 +13,7 @@ import (
 
 func TestAzureFunctions_InvokeArithmetic(t *testing.T) {
 	rg, name := "arith-func-rg", "arith-basic-app"
-	azureCreateSite(t, rg, name, []string{evalBinaryPath, "3 + 4 * 2"})
+	azureCreateSiteWithImage(t, rg, name, []string{"3 + 4 * 2"}, evalImageName)
 	defer azureDeleteSite(rg, name)
 
 	body := azureInvokeFunction(t)
@@ -22,7 +22,7 @@ func TestAzureFunctions_InvokeArithmetic(t *testing.T) {
 
 func TestAzureFunctions_InvokeArithmeticParentheses(t *testing.T) {
 	rg, name := "arith-paren-rg", "arith-paren-app"
-	azureCreateSite(t, rg, name, []string{evalBinaryPath, "(3 + 4) * 2"})
+	azureCreateSiteWithImage(t, rg, name, []string{"(3 + 4) * 2"}, evalImageName)
 	defer azureDeleteSite(rg, name)
 
 	body := azureInvokeFunction(t)
@@ -31,7 +31,7 @@ func TestAzureFunctions_InvokeArithmeticParentheses(t *testing.T) {
 
 func TestAzureFunctions_InvokeArithmeticInvalid(t *testing.T) {
 	rg, name := "arith-inv-rg", "arith-invalid-app"
-	azureCreateSite(t, rg, name, []string{evalBinaryPath, "3 +"})
+	azureCreateSiteWithImage(t, rg, name, []string{"3 +"}, evalImageName)
 	defer azureDeleteSite(rg, name)
 
 	azureInvokeFunctionExpectError(t)
@@ -63,7 +63,7 @@ func TestAzureFunctions_InvokeArithmeticInvalid(t *testing.T) {
 
 func TestAzureFunctions_InvokeArithmeticLogs(t *testing.T) {
 	rg, name := "arith-log-rg", "arith-logs-app"
-	azureCreateSite(t, rg, name, []string{evalBinaryPath, "((2+3)*4-1)/3"})
+	azureCreateSiteWithImage(t, rg, name, []string{"((2+3)*4-1)/3"}, evalImageName)
 	defer azureDeleteSite(rg, name)
 
 	body := azureInvokeFunction(t)
@@ -98,7 +98,7 @@ func TestAzureFunctions_InvokeArithmeticLogs(t *testing.T) {
 
 func TestContainerApps_JobArithmetic(t *testing.T) {
 	rg, jobName := "arith-aca-rg", "arith-aca-job"
-	acaCreateJobWithCommand(t, rg, jobName, []string{evalBinaryPath, "(10 + 5) * 2"})
+	acaCreateJobWithImageAndCommand(t, rg, jobName, evalImageName, []string{"(10 + 5) * 2"})
 	execName := acaStartExecution(t, rg, jobName)
 
 	time.Sleep(2 * time.Second)
@@ -131,7 +131,7 @@ func TestContainerApps_JobArithmetic(t *testing.T) {
 
 func TestContainerApps_JobArithmeticInvalid(t *testing.T) {
 	rg, jobName := "arith-aca-rg", "arith-aca-fail-job"
-	acaCreateJobWithCommand(t, rg, jobName, []string{evalBinaryPath, "3 +"})
+	acaCreateJobWithImageAndCommand(t, rg, jobName, evalImageName, []string{"3 +"})
 	execName := acaStartExecution(t, rg, jobName)
 
 	time.Sleep(2 * time.Second)
@@ -143,7 +143,7 @@ func TestContainerApps_JobArithmeticInvalid(t *testing.T) {
 
 func TestContainerApps_JobArithmeticLogs(t *testing.T) {
 	rg, jobName := "arith-aca-rg", "arith-aca-log-job"
-	acaCreateJobWithCommand(t, rg, jobName, []string{evalBinaryPath, "10 / 3"})
+	acaCreateJobWithImageAndCommand(t, rg, jobName, evalImageName, []string{"10 / 3"})
 	_ = acaStartExecution(t, rg, jobName)
 
 	time.Sleep(2 * time.Second)

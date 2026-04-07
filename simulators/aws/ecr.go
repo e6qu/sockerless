@@ -35,9 +35,9 @@ type ECRLifecyclePolicy struct {
 
 // State stores
 var (
-	ecrRepositories      *sim.StateStore[ECRRepository]
-	ecrImages            *sim.StateStore[ECRImageDetail]
-	ecrLifecyclePolicies *sim.StateStore[ECRLifecyclePolicy]
+	ecrRepositories      sim.Store[ECRRepository]
+	ecrImages            sim.Store[ECRImageDetail]
+	ecrLifecyclePolicies sim.Store[ECRLifecyclePolicy]
 )
 
 const ecrRegistryId = "123456789012"
@@ -47,9 +47,9 @@ func ecrArn(resourceType, name string) string {
 }
 
 func registerECR(r *sim.AWSRouter, srv *sim.Server) {
-	ecrRepositories = sim.NewStateStore[ECRRepository]()
-	ecrImages = sim.NewStateStore[ECRImageDetail]()
-	ecrLifecyclePolicies = sim.NewStateStore[ECRLifecyclePolicy]()
+	ecrRepositories = sim.MakeStore[ECRRepository](srv.DB(), "ecr_repositories")
+	ecrImages = sim.MakeStore[ECRImageDetail](srv.DB(), "ecr_images")
+	ecrLifecyclePolicies = sim.MakeStore[ECRLifecyclePolicy](srv.DB(), "ecr_lifecycle_policies")
 
 	r.Register("AmazonEC2ContainerRegistry_V20150921.CreateRepository", handleECRCreateRepository)
 	r.Register("AmazonEC2ContainerRegistry_V20150921.DescribeRepositories", handleECRDescribeRepositories)

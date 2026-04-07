@@ -19,6 +19,7 @@ var (
 	simCmd         *exec.Cmd
 	binaryPath     string
 	evalBinaryPath string
+	evalImageName  string
 	tmpDir         string
 
 	subscriptionID = "00000000-0000-0000-0000-000000000001"
@@ -47,9 +48,18 @@ func TestMain(m *testing.M) {
 	evalBinaryPath = filepath.Join(evalDir, "eval-arithmetic")
 	evalBuild := exec.Command("go", "build", "-o", evalBinaryPath, ".")
 	evalBuild.Dir = evalDir
-	evalBuild.Env = append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off")
+	evalBuild.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOWORK=off")
 	if out, err := evalBuild.CombinedOutput(); err != nil {
 		log.Fatalf("Failed to build eval-arithmetic: %v\n%s", err, out)
+	}
+
+	// Build Docker image for eval-arithmetic
+	evalImageName = "sockerless-eval-arithmetic:test"
+	dockerfile := fmt.Sprintf("FROM alpine:latest\nCOPY %s /usr/local/bin/eval-arithmetic\nENTRYPOINT [\"/usr/local/bin/eval-arithmetic\"]\n", "eval-arithmetic")
+	dockerBuild := exec.Command("docker", "build", "-t", evalImageName, "-f", "-", evalDir)
+	dockerBuild.Stdin = strings.NewReader(dockerfile)
+	if out, err := dockerBuild.CombinedOutput(); err != nil {
+		log.Fatalf("Failed to build eval-arithmetic Docker image: %v\n%s", err, out)
 	}
 
 	// Find free port
@@ -131,12 +141,6 @@ func azRest(method, url, body string) *exec.Cmd {
 func armURL(provider, resourcePath, apiVersion string) string {
 	return fmt.Sprintf("%s/subscriptions/%s/resourceGroups/%s/providers/%s/%s?api-version=%s",
 		baseURL, subscriptionID, resourceGroup, provider, resourcePath, apiVersion)
-}
-
-// subURL constructs a subscription-scoped URL
-func subURL(provider, resourcePath, apiVersion string) string {
-	return fmt.Sprintf("%s/subscriptions/%s/providers/%s/%s?api-version=%s",
-		baseURL, subscriptionID, provider, resourcePath, apiVersion)
 }
 
 func runCLI(t *testing.T, cmd *exec.Cmd) string {

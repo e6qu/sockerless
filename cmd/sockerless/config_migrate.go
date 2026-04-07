@@ -14,7 +14,7 @@ import (
 func configMigrate(args []string) {
 	fs := flag.NewFlagSet("config migrate", flag.ExitOnError)
 	write := fs.Bool("write", false, "write config.yaml (default: print to stdout)")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	contextsDir := filepath.Join(sockerlessDir(), "contexts")
 	entries, err := os.ReadDir(contextsDir)

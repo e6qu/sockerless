@@ -13,10 +13,9 @@ import (
 
 // containerInput groups the data needed to build one Cloud Run container spec.
 type containerInput struct {
-	ID         string
-	Container  *api.Container
-	AgentToken string
-	IsMain     bool // true = inject agent entrypoint + port 9111
+	ID        string
+	Container *api.Container
+	IsMain    bool // true = primary container in a pod
 }
 
 // buildJobName generates a Cloud Run Job name from a container ID.
@@ -30,7 +29,6 @@ func (s *Server) buildJobParent() string {
 }
 
 // buildContainerSpec builds a single Cloud Run container spec.
-// IsMain containers get agent injection and port 9111; sidecars use their original entrypoint.
 func (s *Server) buildContainerSpec(ci containerInput) *runpb.Container {
 	config := ci.Container.Config
 
@@ -46,27 +44,8 @@ func (s *Server) buildContainerSpec(ci containerInput) *runpb.Container {
 		}
 	}
 
-	var entrypoint, command []string
-	if ci.IsMain {
-		if core.IsTailDevNull(config.Entrypoint, config.Cmd) && s.config.CallbackURL != "" {
-			// CI job container with reverse agent: inject callback entrypoint
-			callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, ci.ID, ci.AgentToken)
-			entrypoint = core.BuildAgentCallbackEntrypoint(config, callbackURL)
-			envVars = append(envVars,
-				&runpb.EnvVar{Name: "SOCKERLESS_CONTAINER_ID", Values: &runpb.EnvVar_Value{Value: ci.ID}},
-				&runpb.EnvVar{Name: "SOCKERLESS_AGENT_TOKEN", Values: &runpb.EnvVar_Value{Value: ci.AgentToken}},
-				&runpb.EnvVar{Name: "SOCKERLESS_AGENT_CALLBACK_URL", Values: &runpb.EnvVar_Value{Value: callbackURL}},
-			)
-		} else {
-			// Pass through original entrypoint and command separately
-			entrypoint = config.Entrypoint
-			command = config.Cmd
-		}
-	} else {
-		// Sidecar: use original entrypoint and command, no agent
-		entrypoint = config.Entrypoint
-		command = config.Cmd
-	}
+	entrypoint := config.Entrypoint
+	command := config.Cmd
 
 	// Container name
 	defName := "main"
@@ -88,13 +67,6 @@ func (s *Server) buildContainerSpec(ci containerInput) *runpb.Container {
 				"memory": memory,
 			},
 		},
-	}
-
-	// Port mapping for agent (main container only, forward mode with CI job)
-	if ci.IsMain && core.IsTailDevNull(config.Entrypoint, config.Cmd) && s.config.CallbackURL == "" {
-		containerSpec.Ports = []*runpb.ContainerPort{
-			{ContainerPort: 9111},
-		}
 	}
 
 	if config.WorkingDir != "" {
@@ -130,10 +102,13 @@ func (s *Server) buildJobSpec(containers []containerInput) *runpb.Job {
 		Backend:     "cloudrun",
 		InstanceID:  s.Desc.InstanceID,
 		CreatedAt:   time.Now(),
+		Name:        containers[0].Container.Name,
+		Network:     containers[0].Container.HostConfig.NetworkMode,
 	}
 
 	return &runpb.Job{
-		Labels: tags.AsGCPLabels(),
+		Labels:      tags.AsGCPLabels(),
+		Annotations: tags.AsGCPAnnotations(),
 		Template: &runpb.ExecutionTemplate{
 			TaskCount:   1,
 			Parallelism: 1,

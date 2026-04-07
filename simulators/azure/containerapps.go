@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -11,8 +12,8 @@ import (
 	sim "github.com/sockerless/simulator"
 )
 
-// Process handle tracker for Container Apps Jobs real execution
-var acaProcessHandles sync.Map // map[execID]*sim.ProcessHandle
+// Container handle tracker for Container Apps Jobs real execution
+var acaProcessHandles sync.Map // map[execID]*sim.ContainerHandle
 
 // ContainerAppJob represents an Azure Container Apps Job resource.
 type ContainerAppJob struct {
@@ -22,6 +23,12 @@ type ContainerAppJob struct {
 	Location   string            `json:"location"`
 	Tags       map[string]string `json:"tags,omitempty"`
 	Properties JobProperties     `json:"properties"`
+	SystemData *SystemData       `json:"systemData,omitempty"`
+}
+
+// SystemData holds Azure Resource Manager metadata.
+type SystemData struct {
+	CreatedAt string `json:"createdAt,omitempty"`
 }
 
 // JobProperties holds the properties of a Container Apps Job.
@@ -127,28 +134,102 @@ type JobVolume struct {
 }
 
 // JobExecution represents a running or completed execution of a Container Apps Job.
-// Uses nested properties format matching the Azure ARM SDK's expected JSON structure.
+// The Azure ARM SDK v2 expects flat fields (status, startTime, endTime) while v3
+// expects them nested under "properties". We include both via a custom MarshalJSON
+// so the simulator works with either SDK version.
 type JobExecution struct {
-	ID         string                  `json:"id"`
-	Name       string                  `json:"name"`
-	Type       string                  `json:"type,omitempty"`
-	Properties *JobExecutionProperties `json:"properties,omitempty"`
+	ID        string       `json:"-"`
+	Name      string       `json:"-"`
+	Type      string       `json:"-"`
+	Status    string       `json:"-"`
+	StartTime string       `json:"-"`
+	EndTime   string       `json:"-"`
+	Template  *JobTemplate `json:"-"`
 }
 
-// JobExecutionProperties holds the runtime properties of a job execution.
-type JobExecutionProperties struct {
-	Status    string       `json:"status"`
-	StartTime string       `json:"startTime"`
-	EndTime   string       `json:"endTime,omitempty"`
-	Template  *JobTemplate `json:"template,omitempty"`
+// MarshalJSON produces JSON with status/startTime/endTime at both the top level
+// (for SDK v2) and nested under "properties" (for SDK v3).
+func (e JobExecution) MarshalJSON() ([]byte, error) {
+	type props struct {
+		Status    string       `json:"status"`
+		StartTime string       `json:"startTime"`
+		EndTime   string       `json:"endTime,omitempty"`
+		Template  *JobTemplate `json:"template,omitempty"`
+	}
+	type alias struct {
+		ID         string       `json:"id"`
+		Name       string       `json:"name"`
+		Type       string       `json:"type,omitempty"`
+		Status     string       `json:"status"`
+		StartTime  string       `json:"startTime"`
+		EndTime    string       `json:"endTime,omitempty"`
+		Template   *JobTemplate `json:"template,omitempty"`
+		Properties *props       `json:"properties,omitempty"`
+	}
+	return json.Marshal(alias{
+		ID:        e.ID,
+		Name:      e.Name,
+		Type:      e.Type,
+		Status:    e.Status,
+		StartTime: e.StartTime,
+		EndTime:   e.EndTime,
+		Template:  e.Template,
+		Properties: &props{
+			Status:    e.Status,
+			StartTime: e.StartTime,
+			EndTime:   e.EndTime,
+			Template:  e.Template,
+		},
+	})
+}
+
+// UnmarshalJSON reads from flat or nested format.
+func (e *JobExecution) UnmarshalJSON(data []byte) error {
+	type props struct {
+		Status    string       `json:"status"`
+		StartTime string       `json:"startTime"`
+		EndTime   string       `json:"endTime,omitempty"`
+		Template  *JobTemplate `json:"template,omitempty"`
+	}
+	type alias struct {
+		ID         string       `json:"id"`
+		Name       string       `json:"name"`
+		Type       string       `json:"type,omitempty"`
+		Status     string       `json:"status"`
+		StartTime  string       `json:"startTime"`
+		EndTime    string       `json:"endTime,omitempty"`
+		Template   *JobTemplate `json:"template,omitempty"`
+		Properties *props       `json:"properties,omitempty"`
+	}
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	e.ID = a.ID
+	e.Name = a.Name
+	e.Type = a.Type
+	e.Status = a.Status
+	e.StartTime = a.StartTime
+	e.EndTime = a.EndTime
+	e.Template = a.Template
+	// If flat fields are empty, try properties
+	if e.Status == "" && a.Properties != nil {
+		e.Status = a.Properties.Status
+		e.StartTime = a.Properties.StartTime
+		e.EndTime = a.Properties.EndTime
+		if e.Template == nil {
+			e.Template = a.Properties.Template
+		}
+	}
+	return nil
 }
 
 // Package-level stores for dashboard access.
-var acaJobs *sim.StateStore[ContainerAppJob]
+var acaJobs sim.Store[ContainerAppJob]
 
 func registerContainerApps(srv *sim.Server) {
-	jobs := sim.NewStateStore[ContainerAppJob]()
-	executions := sim.NewStateStore[JobExecution]()
+	jobs := sim.MakeStore[ContainerAppJob](srv.DB(), "aca_jobs")
+	executions := sim.MakeStore[JobExecution](srv.DB(), "aca_executions")
 	acaJobs = jobs
 
 	const basePath = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.App"
@@ -186,6 +267,9 @@ func registerContainerApps(srv *sim.Server) {
 				WorkloadProfileName: req.Properties.WorkloadProfileName,
 				Configuration:       req.Properties.Configuration,
 				Template:            req.Properties.Template,
+			},
+			SystemData: &SystemData{
+				CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
 			},
 		}
 
@@ -291,14 +375,12 @@ func registerContainerApps(srv *sim.Server) {
 		}
 
 		exec := JobExecution{
-			ID:   execID,
-			Name: execName,
-			Type: "Microsoft.App/jobs/executions",
-			Properties: &JobExecutionProperties{
-				Status:    "Running",
-				StartTime: time.Now().UTC().Format(time.RFC3339),
-				Template:  template,
-			},
+			ID:        execID,
+			Name:      execName,
+			Type:      "Microsoft.App/jobs/executions",
+			Status:    "Running",
+			StartTime: time.Now().UTC().Format(time.RFC3339),
+			Template:  template,
 		}
 
 		executions.Put(execID, exec)
@@ -317,13 +399,16 @@ func registerContainerApps(srv *sim.Server) {
 				timeout = time.Duration(replicaTimeout) * time.Second
 			}
 
-			// Build command from first container
-			var fullCmd []string
+			// Build container config from first container in template
+			var containerImage string
+			var containerCmd []string
+			var containerArgs []string
 			var cmdEnv map[string]string
 			if tmpl != nil && len(tmpl.Containers) > 0 {
 				c := tmpl.Containers[0]
-				fullCmd = append(fullCmd, c.Command...)
-				fullCmd = append(fullCmd, c.Args...)
+				containerImage = c.Image
+				containerCmd = c.Command
+				containerArgs = c.Args
 				if len(c.Env) > 0 {
 					cmdEnv = make(map[string]string, len(c.Env))
 					for _, ev := range c.Env {
@@ -333,35 +418,55 @@ func registerContainerApps(srv *sim.Server) {
 			}
 
 			succeeded := true
-			if len(fullCmd) > 0 {
-				// Real process execution
+			if containerImage != "" {
+				// Container execution
+				shortExecID := id
+				if idx := strings.LastIndex(id, "/"); idx >= 0 {
+					shortExecID = id[idx+1:]
+				}
+				if len(shortExecID) > 12 {
+					shortExecID = shortExecID[:12]
+				}
+				containerName := fmt.Sprintf("sockerless-sim-azure-execution-%s", shortExecID)
+
 				sink := &acaLogSink{jobName: jobShortName}
-				handle := sim.StartProcess(sim.ProcessConfig{
-					Command: fullCmd,
+				handle, err := sim.StartContainerSync(sim.ContainerConfig{
+					Image:   sim.ResolveLocalImage(containerImage),
+					Command: containerCmd,
+					Args:    containerArgs,
 					Env:     cmdEnv,
 					Timeout: timeout,
+					Name:    containerName,
+					Labels: map[string]string{
+						"sockerless-sim-type": "aca-job-execution",
+						"sockerless-exec-id":  id,
+					},
 				}, sink)
-				acaProcessHandles.Store(id, handle)
-				result := handle.Wait()
-				acaProcessHandles.Delete(id)
-				succeeded = result.ExitCode == 0
+				if err != nil {
+					succeeded = false
+				} else {
+					acaProcessHandles.Store(id, handle)
+					result := handle.Wait()
+					acaProcessHandles.Delete(id)
+					succeeded = result.ExitCode == 0
+				}
 			} else {
-				// No command — sleep for timeout (preserves current behavior)
-				time.Sleep(timeout)
+				// No image — no-op (template has no containers)
+				succeeded = true
 			}
 
 			completed := false
 			executions.Update(id, func(e *JobExecution) {
-				if e.Properties == nil || e.Properties.Status != "Running" {
+				if e.Status != "Running" {
 					return
 				}
 				completed = true
 				if succeeded {
-					e.Properties.Status = "Succeeded"
+					e.Status = "Succeeded"
 				} else {
-					e.Properties.Status = "Failed"
+					e.Status = "Failed"
 				}
-				e.Properties.EndTime = time.Now().UTC().Format(time.RFC3339)
+				e.EndTime = time.Now().UTC().Format(time.RFC3339)
 			})
 			if completed {
 				injectContainerAppLog(jobShortName, "Execution completed successfully")
@@ -438,17 +543,16 @@ func registerContainerApps(srv *sim.Server) {
 		execID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/jobs/%s/executions/%s",
 			sub, rg, jobName, execName)
 
-		// Cancel running process if any
+		// Cancel running container if any
 		if v, ok := acaProcessHandles.LoadAndDelete(execID); ok {
-			v.(*sim.ProcessHandle).Cancel()
+			handle := v.(*sim.ContainerHandle)
+			sim.StopContainer(handle.ContainerID)
+			handle.Cancel()
 		}
 
 		ok := executions.Update(execID, func(e *JobExecution) {
-			if e.Properties == nil {
-				e.Properties = &JobExecutionProperties{}
-			}
-			e.Properties.Status = "Stopped"
-			e.Properties.EndTime = time.Now().UTC().Format(time.RFC3339)
+			e.Status = "Stopped"
+			e.EndTime = time.Now().UTC().Format(time.RFC3339)
 		})
 		if ok {
 			injectContainerAppLog(jobName, "Execution stopped")

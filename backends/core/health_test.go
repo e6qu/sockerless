@@ -29,10 +29,10 @@ func newTestServer(execDriver ExecDriver) *BaseServer {
 	store := NewStore()
 	logger := zerolog.Nop()
 	s := &BaseServer{
-		Store:         store,
-		Logger:        logger,
-		AgentRegistry: NewAgentRegistry(),
-		Desc:          BackendDescriptor{Driver: "test"},
+		Store:          store,
+		Logger:         logger,
+		Desc:           BackendDescriptor{Driver: "test"},
+		PendingCreates: NewStateStore[api.Container](),
 	}
 	s.InitDrivers()
 	s.self = s

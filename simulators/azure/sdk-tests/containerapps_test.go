@@ -41,7 +41,7 @@ func TestContainerApps_CreateJob(t *testing.T) {
 				"containers": []map[string]any{
 					{
 						"name":  "worker",
-						"image": "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest",
+						"image": "alpine:latest",
 					},
 				},
 			},
@@ -88,7 +88,7 @@ func TestContainerApps_StartJobInjectsLogs(t *testing.T) {
 			},
 			"template": map[string]any{
 				"containers": []map[string]any{
-					{"name": "worker", "image": "mcr.microsoft.com/test:latest"},
+					{"name": "worker", "image": "alpine:latest"},
 				},
 			},
 		},
@@ -163,7 +163,7 @@ func acaCreateJob(t *testing.T, rg, jobName string) {
 			},
 			"template": map[string]any{
 				"containers": []map[string]any{
-					{"name": "worker", "image": "mcr.microsoft.com/test:latest"},
+					{"name": "worker", "image": "alpine:latest"},
 				},
 			},
 		},
@@ -264,6 +264,11 @@ func TestContainerApps_ExecutionStoppedState(t *testing.T) {
 
 // acaCreateJobWithCommand creates a Container Apps Job with a command.
 func acaCreateJobWithCommand(t *testing.T, rg, jobName string, cmd []string) {
+	acaCreateJobWithImageAndCommand(t, rg, jobName, "alpine:latest", cmd)
+}
+
+// acaCreateJobWithImageAndCommand creates a Container Apps Job with a specific image and command.
+func acaCreateJobWithImageAndCommand(t *testing.T, rg, jobName, image string, cmd []string) {
 	t.Helper()
 
 	// Ensure resource group exists
@@ -278,9 +283,9 @@ func acaCreateJobWithCommand(t *testing.T, rg, jobName string, cmd []string) {
 	rgResp.Body.Close()
 
 	container := map[string]any{
-		"name":    "worker",
-		"image":   "mcr.microsoft.com/test:latest",
-		"command": cmd,
+		"name":  "worker",
+		"image": image,
+		"args":  cmd,
 	}
 	job := map[string]any{
 		"location": "eastus",
@@ -416,7 +421,7 @@ func TestSDK_ContainerApps_CreateAndGetJob(t *testing.T) {
 				Containers: []*armappcontainers.Container{
 					{
 						Name:  to.Ptr("worker"),
-						Image: to.Ptr("mcr.microsoft.com/test:latest"),
+						Image: to.Ptr("alpine:latest"),
 					},
 				},
 			},
@@ -456,7 +461,7 @@ func TestSDK_ContainerApps_StartAndListExecutions(t *testing.T) {
 				Containers: []*armappcontainers.Container{
 					{
 						Name:    to.Ptr("worker"),
-						Image:   to.Ptr("mcr.microsoft.com/test:latest"),
+						Image:   to.Ptr("alpine:latest"),
 						Command: []*string{to.Ptr("echo"), to.Ptr("sdk-hello")},
 					},
 				},
@@ -523,7 +528,7 @@ func TestSDK_ContainerApps_ListByResourceGroup(t *testing.T) {
 				},
 				Template: &armappcontainers.JobTemplate{
 					Containers: []*armappcontainers.Container{
-						{Name: to.Ptr("w"), Image: to.Ptr("test:latest")},
+						{Name: to.Ptr("w"), Image: to.Ptr("alpine:latest")},
 					},
 				},
 			},
@@ -568,7 +573,7 @@ func TestSDK_ContainerApps_DeleteJob(t *testing.T) {
 			},
 			Template: &armappcontainers.JobTemplate{
 				Containers: []*armappcontainers.Container{
-					{Name: to.Ptr("w"), Image: to.Ptr("test:latest")},
+					{Name: to.Ptr("w"), Image: to.Ptr("alpine:latest")},
 				},
 			},
 		},

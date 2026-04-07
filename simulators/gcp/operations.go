@@ -8,7 +8,7 @@ import (
 )
 
 func registerOperations(srv *sim.Server) {
-	operations := sim.NewStateStore[Operation]()
+	operations := sim.MakeStore[Operation](srv.DB(), "operations")
 
 	// Get operation - v1 prefix
 	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/operations/{operation}", func(w http.ResponseWriter, r *http.Request) {

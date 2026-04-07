@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -16,19 +17,27 @@ import (
 
 // Job represents a Cloud Run Job resource.
 type Job struct {
-	Name              string             `json:"name"`
-	UID               string             `json:"uid"`
-	Generation        int64              `json:"generation,string"`
-	Labels            map[string]string  `json:"labels,omitempty"`
-	Annotations       map[string]string  `json:"annotations,omitempty"`
-	CreateTime        string             `json:"createTime"`
-	UpdateTime        string             `json:"updateTime"`
-	LaunchStage       string             `json:"launchStage,omitempty"`
-	Template          *ExecutionTemplate `json:"template"`
-	TerminalCondition *Condition         `json:"terminalCondition,omitempty"`
-	Conditions        []Condition        `json:"conditions,omitempty"`
-	ExecutionCount    int32              `json:"executionCount"`
-	Reconciling       bool               `json:"reconciling"`
+	Name                   string              `json:"name"`
+	UID                    string              `json:"uid"`
+	Generation             int64               `json:"generation,string"`
+	Labels                 map[string]string   `json:"labels,omitempty"`
+	Annotations            map[string]string   `json:"annotations,omitempty"`
+	CreateTime             string              `json:"createTime"`
+	UpdateTime             string              `json:"updateTime"`
+	LaunchStage            string              `json:"launchStage,omitempty"`
+	Template               *ExecutionTemplate  `json:"template"`
+	TerminalCondition      *Condition          `json:"terminalCondition,omitempty"`
+	Conditions             []Condition         `json:"conditions,omitempty"`
+	LatestCreatedExecution *ExecutionReference `json:"latestCreatedExecution,omitempty"`
+	ExecutionCount         int32               `json:"executionCount"`
+	Reconciling            bool                `json:"reconciling"`
+}
+
+// ExecutionReference holds a reference to the latest execution of a job.
+type ExecutionReference struct {
+	Name           string `json:"name"`
+	CreateTime     string `json:"createTime"`
+	CompletionTime string `json:"completionTime,omitempty"`
 }
 
 // ExecutionTemplate holds the template for creating executions.
@@ -175,15 +184,15 @@ func newLRO(project, location string, resource any, typeName string) Operation {
 	}
 }
 
-// Process handle tracker for Cloud Run Jobs real execution
-var crjProcessHandles sync.Map // map[execName]*sim.ProcessHandle
+// Container handle tracker for Cloud Run Jobs real execution
+var crjProcessHandles sync.Map // map[execName]*sim.ContainerHandle
 
 // Package-level stores for dashboard access.
-var crjJobs *sim.StateStore[Job]
+var crjJobs sim.Store[Job]
 
 func registerCloudRunJobs(srv *sim.Server) {
-	jobs := sim.NewStateStore[Job]()
-	executions := sim.NewStateStore[Execution]()
+	jobs := sim.MakeStore[Job](srv.DB(), "crj_jobs")
+	executions := sim.MakeStore[Execution](srv.DB(), "crj_executions")
 	crjJobs = jobs
 
 	// Create job
@@ -363,13 +372,15 @@ func registerCloudRunJobs(srv *sim.Server) {
 				}
 			}
 
-			// Build command from first container
-			var fullCmd []string
+			// Build container config from first container in template
+			var image string
+			var entrypoint, args []string
 			var cmdEnv map[string]string
 			if taskTmpl != nil && len(taskTmpl.Containers) > 0 {
 				c := taskTmpl.Containers[0]
-				fullCmd = append(fullCmd, c.Command...)
-				fullCmd = append(fullCmd, c.Args...)
+				image = c.Image
+				entrypoint = c.Command
+				args = c.Args
 				if len(c.Env) > 0 {
 					cmdEnv = make(map[string]string, len(c.Env))
 					for _, ev := range c.Env {
@@ -379,21 +390,37 @@ func registerCloudRunJobs(srv *sim.Server) {
 			}
 
 			succeeded := true
-			if len(fullCmd) > 0 {
-				// Real process execution
+			if image != "" {
+				// Real container execution
 				sink := &crjLogSink{project: proj, jobName: job}
-				handle := sim.StartProcess(sim.ProcessConfig{
-					Command: fullCmd,
+				execShort := id
+				if parts := strings.Split(id, "/"); len(parts) > 0 {
+					last := parts[len(parts)-1]
+					if len(last) > 12 {
+						execShort = last[:12]
+					} else {
+						execShort = last
+					}
+				}
+				localImage := sim.ResolveLocalImage(image)
+				handle, err := sim.StartContainerSync(sim.ContainerConfig{
+					Image:   localImage,
+					Command: entrypoint,
+					Args:    args,
 					Env:     cmdEnv,
 					Timeout: timeout,
+					Name:    fmt.Sprintf("sockerless-sim-gcp-job-%s", execShort),
+					Labels:  map[string]string{"sockerless-sim-execution": id},
 				}, sink)
-				crjProcessHandles.Store(id, handle)
-				result := handle.Wait()
-				crjProcessHandles.Delete(id)
-				succeeded = result.ExitCode == 0
-			} else {
-				// No command — sleep for timeout (preserves current behavior)
-				time.Sleep(timeout)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "ERROR: failed to start container for execution: image=%s err=%v\n", image, err)
+					succeeded = false
+				} else {
+					crjProcessHandles.Store(id, handle)
+					result := handle.Wait()
+					crjProcessHandles.Delete(id)
+					succeeded = result.ExitCode == 0
+				}
 			}
 
 			completed := false
@@ -423,14 +450,26 @@ func registerCloudRunJobs(srv *sim.Server) {
 				e.Reconciling = false
 			})
 			if completed {
+				// Update the job's latestCreatedExecution with completion time
+				if jobKey, _, ok := strings.Cut(id, "/executions/"); ok {
+					jobs.Update(jobKey, func(j *Job) {
+						if j.LatestCreatedExecution != nil && j.LatestCreatedExecution.Name == id {
+							j.LatestCreatedExecution.CompletionTime = nowTimestamp()
+						}
+					})
+				}
 				injectCloudRunJobLog(proj, job, "Execution completed successfully")
 			}
 		}(execName, taskCount, project, jobID, tmpl)
 
-		// Increment execution count on the job
+		// Update job with execution count and latest execution reference
 		jobs.Update(name, func(j *Job) {
 			j.ExecutionCount++
 			j.UpdateTime = now
+			j.LatestCreatedExecution = &ExecutionReference{
+				Name:       execName,
+				CreateTime: now,
+			}
 		})
 
 		lro := newLRO(project, location, exec, "type.googleapis.com/google.cloud.run.v2.Execution")
@@ -478,9 +517,11 @@ func registerCloudRunJobs(srv *sim.Server) {
 		execID, _, _ := strings.Cut(execAction, ":")
 		name := fmt.Sprintf("projects/%s/locations/%s/jobs/%s/executions/%s", project, location, jobID, execID)
 
-		// Cancel running process if any
+		// Cancel running container if any
 		if v, ok := crjProcessHandles.LoadAndDelete(name); ok {
-			v.(*sim.ProcessHandle).Cancel()
+			handle := v.(*sim.ContainerHandle)
+			sim.StopContainer(handle.ContainerID)
+			handle.Cancel()
 		}
 
 		ok := executions.Update(name, func(e *Execution) {
@@ -495,6 +536,13 @@ func registerCloudRunJobs(srv *sim.Server) {
 			e.Reconciling = false
 		})
 		if ok {
+			// Update the job's latestCreatedExecution with completion time
+			jobName := fmt.Sprintf("projects/%s/locations/%s/jobs/%s", project, location, jobID)
+			jobs.Update(jobName, func(j *Job) {
+				if j.LatestCreatedExecution != nil && j.LatestCreatedExecution.Name == name {
+					j.LatestCreatedExecution.CompletionTime = nowTimestamp()
+				}
+			})
 			injectCloudRunJobLog(project, jobID, "Execution cancelled")
 		}
 		if !ok {

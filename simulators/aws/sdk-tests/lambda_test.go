@@ -100,7 +100,7 @@ func TestLambda_InvokeExecutesCommand(t *testing.T) {
 		FunctionName: aws.String(fnName),
 		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
 		PackageType:  lambdatypes.PackageTypeImage,
-		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String("test:latest")},
+		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String("alpine:latest")},
 		ImageConfig: &lambdatypes.ImageConfig{
 			Command: []string{"echo", "hello"},
 		},
@@ -128,7 +128,7 @@ func TestLambda_InvokeNonZeroExit(t *testing.T) {
 		FunctionName: aws.String(fnName),
 		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
 		PackageType:  lambdatypes.PackageTypeImage,
-		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String("test:latest")},
+		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String("alpine:latest")},
 		ImageConfig: &lambdatypes.ImageConfig{
 			Command: []string{"sh", "-c", "exit 1"},
 		},
@@ -177,7 +177,7 @@ func TestLambda_InvokeLogsToCloudWatch(t *testing.T) {
 		FunctionName: aws.String(fnName),
 		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
 		PackageType:  lambdatypes.PackageTypeImage,
-		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String("test:latest")},
+		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String("alpine:latest")},
 		ImageConfig: &lambdatypes.ImageConfig{
 			Command: []string{"echo", "real-lambda-output"},
 		},

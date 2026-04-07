@@ -75,12 +75,12 @@ type FunctionEnvelopeProperties struct {
 }
 
 // Package-level store for dashboard access.
-var azfSites *sim.StateStore[Site]
+var azfSites sim.Store[Site]
 
 func registerAzureFunctions(srv *sim.Server) {
-	sites := sim.NewStateStore[Site]()
+	sites := sim.MakeStore[Site](srv.DB(), "azf_sites")
 	azfSites = sites
-	functionConfigs := sim.NewStateStore[FunctionEnvelope]()
+	functionConfigs := sim.MakeStore[FunctionEnvelope](srv.DB(), "azf_function_configs")
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Web"
 
@@ -292,7 +292,7 @@ func registerAzureFunctions(srv *sim.Server) {
 	})
 }
 
-// invokeAzureFunctionProcess executes a function app's SimCommand via sim.StartProcess
+// invokeAzureFunctionProcess executes a function app's container via sim.StartContainerSync
 // and returns the stdout output as the response body plus the process exit code.
 func invokeAzureFunctionProcess(site *Site) ([]byte, int) {
 	var cmd []string
@@ -315,6 +315,19 @@ func invokeAzureFunctionProcess(site *Site) ([]byte, int) {
 		return []byte("{}"), 0
 	}
 
+	// Derive container image from LinuxFxVersion (e.g., "DOCKER|myimage:latest")
+	var containerImage string
+	if site.Properties.SiteConfig != nil && site.Properties.SiteConfig.LinuxFxVersion != "" {
+		parts := strings.SplitN(site.Properties.SiteConfig.LinuxFxVersion, "|", 2)
+		if len(parts) == 2 {
+			containerImage = parts[1]
+		}
+	}
+	if containerImage == "" {
+		// No container image configured — cannot run
+		return []byte("{}"), 0
+	}
+
 	// Extract environment from app settings
 	var cmdEnv map[string]string
 	if site.Properties.SiteConfig != nil && len(site.Properties.SiteConfig.AppSettings) > 0 {
@@ -322,6 +335,13 @@ func invokeAzureFunctionProcess(site *Site) ([]byte, int) {
 		for _, s := range site.Properties.SiteConfig.AppSettings {
 			cmdEnv[s.Name] = s.Value
 		}
+	}
+
+	// Pass cmd as Args (Docker CMD) so the image's ENTRYPOINT is preserved.
+	// If the image has no entrypoint, Docker uses the first arg as the command.
+	var containerArgs []string
+	if len(cmd) > 0 {
+		containerArgs = cmd
 	}
 
 	timeout := 230 * time.Second // Azure Functions default timeout
@@ -335,11 +355,24 @@ func invokeAzureFunctionProcess(site *Site) ([]byte, int) {
 		}
 	})
 
-	handle := sim.StartProcess(sim.ProcessConfig{
-		Command: cmd,
+	containerName := fmt.Sprintf("sockerless-sim-azure-func-%s-%d", site.Name, time.Now().UnixNano())
+
+	handle, err := sim.StartContainerSync(sim.ContainerConfig{
+		Image:   sim.ResolveLocalImage(containerImage),
+		Args:    containerArgs,
 		Env:     cmdEnv,
 		Timeout: timeout,
+		Name:    containerName,
+		Labels: map[string]string{
+			"sockerless-sim-type": "azure-function-invocation",
+			"sockerless-site":     site.Name,
+		},
 	}, collectSink)
+	if err != nil {
+		injectAppTrace(site.Name,
+			fmt.Sprintf("Function execution error: container start failed: %v", err))
+		return []byte("{}"), -1
+	}
 	result := handle.Wait()
 
 	if result.ExitCode != 0 {

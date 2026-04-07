@@ -5,5 +5,4 @@ type LambdaState struct {
 	FunctionName  string
 	FunctionARN   string
 	LogStreamName string
-	AgentToken    string
 }

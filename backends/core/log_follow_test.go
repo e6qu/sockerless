@@ -7,7 +7,7 @@ import (
 
 func TestLogSubscribe_ClosesImmediately(t *testing.T) {
 	store := NewStore()
-	driver := &AgentStreamDriver{Store: store}
+	driver := &LocalStreamDriver{Store: store}
 
 	ch := driver.LogSubscribe("c1", "sub1")
 	if ch == nil {
@@ -27,7 +27,7 @@ func TestLogSubscribe_ClosesImmediately(t *testing.T) {
 
 func TestLogBytes_ReturnsNilWhenEmpty(t *testing.T) {
 	store := NewStore()
-	driver := &AgentStreamDriver{Store: store}
+	driver := &LocalStreamDriver{Store: store}
 
 	// No data in LogBuffers — returns nil
 	data := driver.LogBytes("c1")
@@ -38,7 +38,7 @@ func TestLogBytes_ReturnsNilWhenEmpty(t *testing.T) {
 
 func TestLogBytes_ReturnsStoredData(t *testing.T) {
 	store := NewStore()
-	driver := &AgentStreamDriver{Store: store}
+	driver := &LocalStreamDriver{Store: store}
 
 	// Data in LogBuffers — returns it (auto-agent captures output here)
 	store.LogBuffers.Store("c1", []byte("hello\n"))

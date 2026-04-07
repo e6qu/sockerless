@@ -36,12 +36,12 @@ type GCSObject struct {
 }
 
 // Package-level store for dashboard access.
-var gcsBuckets *sim.StateStore[Bucket]
+var gcsBuckets sim.Store[Bucket]
 
 func registerGCS(srv *sim.Server) {
-	buckets := sim.NewStateStore[Bucket]()
+	buckets := sim.MakeStore[Bucket](srv.DB(), "gcs_buckets")
 	gcsBuckets = buckets
-	objects := sim.NewStateStore[GCSObject]()
+	objects := sim.MakeStore[GCSObject](srv.DB(), "gcs_objects")
 
 	// Create bucket
 	srv.HandleFunc("POST /storage/v1/b", func(w http.ResponseWriter, r *http.Request) {

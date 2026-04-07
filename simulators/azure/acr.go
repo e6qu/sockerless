@@ -57,17 +57,17 @@ type BlobUpload struct {
 }
 
 // Package-level store for dashboard access.
-var acrRegistries *sim.StateStore[Registry]
+var acrRegistries sim.Store[Registry]
 
 func registerACR(srv *sim.Server) {
-	registries := sim.NewStateStore[Registry]()
+	registries := sim.MakeStore[Registry](srv.DB(), "acr_registries")
 	acrRegistries = registries
 	// manifests stores manifests keyed by "repo:reference" (tag or digest)
-	manifests := sim.NewStateStore[OCIManifest]()
+	manifests := sim.MakeStore[OCIManifest](srv.DB(), "acr_manifests")
 	// blobs stores blobs keyed by "repo@digest"
-	blobs := sim.NewStateStore[BlobData]()
+	blobs := sim.MakeStore[BlobData](srv.DB(), "acr_blobs")
 	// uploads stores in-progress uploads keyed by uuid
-	uploads := sim.NewStateStore[BlobUpload]()
+	uploads := sim.MakeStore[BlobUpload](srv.DB(), "acr_uploads")
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.ContainerRegistry"
 

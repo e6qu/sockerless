@@ -1,9 +1,11 @@
 package ecs
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,7 +18,7 @@ import (
 // cloudExecStart executes a command inside an ECS task using the
 // ExecuteCommand API (backed by SSM Session Manager). It returns an
 // io.ReadWriteCloser that bridges the SSM WebSocket session.
-func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container) (io.ReadWriteCloser, error) {
+func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container, tty bool) (io.ReadWriteCloser, error) {
 	ecsState, ok := s.ECS.Get(c.ID)
 	if !ok || ecsState.TaskARN == "" {
 		return nil, fmt.Errorf("no ECS task associated with container %s", c.ID[:12])
@@ -27,10 +29,43 @@ func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container) (io.Re
 		cluster = ecsState.ClusterARN
 	}
 
-	// Build the command string from the exec process config.
-	cmd := exec.ProcessConfig.Entrypoint
-	if cmd == "" && len(exec.ProcessConfig.Arguments) > 0 {
-		cmd = exec.ProcessConfig.Arguments[0]
+	// Build the full command string from the exec process config.
+	// ECS ExecuteCommand takes a single command string that the simulator
+	// wraps in sh -c. We must produce a valid shell command.
+	var envPrefix string
+	for _, e := range exec.ProcessConfig.Env {
+		envPrefix += fmt.Sprintf("export %s; ", e)
+	}
+
+	// Reconstruct the command preserving sh -c script quoting.
+	// Input: Entrypoint="sh", Arguments=["-c", "echo $VAR"]
+	// Must produce: "export VAR=val; echo $VAR" (unwrap sh -c since simulator wraps again)
+	entrypoint := exec.ProcessConfig.Entrypoint
+	args := exec.ProcessConfig.Arguments
+
+	// Add working directory change if specified
+	workDir := exec.ProcessConfig.WorkingDir
+	if workDir == "" {
+		workDir = c.Config.WorkingDir
+	}
+	var cdPrefix string
+	if workDir != "" {
+		cdPrefix = fmt.Sprintf("cd %s && ", workDir)
+	}
+
+	var cmd string
+	if (entrypoint == "sh" || entrypoint == "/bin/sh" || entrypoint == "bash" || entrypoint == "/bin/bash") && len(args) >= 2 && args[0] == "-c" {
+		// sh -c "script" — extract the script and prepend env vars directly
+		// The simulator will wrap the final command in sh -c, so we just send the script
+		cmd = cdPrefix + envPrefix + strings.Join(args[1:], " ")
+	} else {
+		// Regular command — join all parts
+		parts := []string{}
+		if entrypoint != "" {
+			parts = append(parts, entrypoint)
+		}
+		parts = append(parts, args...)
+		cmd = cdPrefix + envPrefix + strings.Join(parts, " ")
 	}
 
 	result, err := s.aws.ECS.ExecuteCommand(s.ctx(), &awsecs.ExecuteCommandInput{
@@ -62,8 +97,48 @@ func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container) (io.Re
 		return nil, fmt.Errorf("failed to connect to exec session WebSocket: %w", err)
 	}
 
-	return newWSBridge(conn), nil
+	// Set a close handler so that when the server closes the connection,
+	// the next Read() call returns promptly.
+	conn.SetCloseHandler(func(code int, text string) error {
+		_ = conn.SetReadDeadline(time.Now())
+		return nil
+	})
+
+	bridge := newWSBridge(conn)
+
+	// For non-TTY exec, wrap the read side with Docker multiplexed stream headers.
+	// Docker/Podman clients expect 8-byte headers: [streamType, 0, 0, 0, size(4 BE)]
+	if !tty {
+		return &muxBridge{rwc: bridge}, nil
+	}
+	return bridge, nil
 }
+
+// muxBridge wraps an io.ReadWriteCloser and adds Docker multiplexed stream
+// headers (stdout = 0x01) to each read. Writes pass through unchanged (stdin).
+type muxBridge struct {
+	rwc io.ReadWriteCloser
+	buf bytes.Buffer
+}
+
+func (m *muxBridge) Read(p []byte) (int, error) {
+	if m.buf.Len() > 0 {
+		return m.buf.Read(p)
+	}
+	raw := make([]byte, 4096)
+	n, err := m.rwc.Read(raw)
+	if n > 0 {
+		// Docker mux header: [0x01=stdout, 0, 0, 0, size as big-endian uint32]
+		header := [8]byte{0x01, 0, 0, 0, byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)}
+		m.buf.Write(header[:])
+		m.buf.Write(raw[:n])
+		return m.buf.Read(p)
+	}
+	return 0, err
+}
+
+func (m *muxBridge) Write(p []byte) (int, error) { return m.rwc.Write(p) }
+func (m *muxBridge) Close() error                { return m.rwc.Close() }
 
 // wsBridge adapts a gorilla/websocket.Conn to io.ReadWriteCloser.
 type wsBridge struct {

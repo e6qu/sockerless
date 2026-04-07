@@ -5,8 +5,6 @@ type ACAState struct {
 	JobName       string // ACA Job name
 	ExecutionName string // Execution name
 	ResourceGroup string // Resource group
-	AgentAddress  string // "ip:port" of the agent
-	AgentToken    string // Bearer token for agent auth
 }
 
 // NetworkState tracks cloud networking state for a Docker network.

@@ -34,7 +34,7 @@ type MonitoredResource struct {
 }
 
 // Package-level state store shared between HTTP and gRPC handlers.
-var logEntries = sim.NewStateStore[[]LogEntry]()
+var logEntries sim.Store[[]LogEntry]
 
 // listLogEntries is the shared implementation for listing log entries,
 // used by both the REST handler and the gRPC server.
@@ -145,6 +145,8 @@ type WriteLogEntriesRESTRequest struct {
 }
 
 func registerCloudLogging(srv *sim.Server) {
+	logEntries = sim.MakeStore[[]LogEntry](srv.DB(), "logging_entries")
+
 	// List log entries (REST)
 	srv.HandleFunc("POST /v2/entries:list", func(w http.ResponseWriter, r *http.Request) {
 		var req ListLogEntriesRESTRequest

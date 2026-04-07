@@ -28,10 +28,10 @@ type CWDimension struct {
 }
 
 // State store for metrics
-var cwMetrics *sim.StateStore[[]CWMetricDatum]
+var cwMetrics sim.Store[[]CWMetricDatum]
 
 func registerCloudWatchMetrics(srv *sim.Server) {
-	cwMetrics = sim.NewStateStore[[]CWMetricDatum]()
+	cwMetrics = sim.MakeStore[[]CWMetricDatum](srv.DB(), "cw_metrics")
 
 	// Smithy RPCv2 CBOR uses URL path routing
 	srv.HandleFunc("POST /service/GraniteServiceVersion20100801/operation/GetMetricData", handleCWGetMetricData)

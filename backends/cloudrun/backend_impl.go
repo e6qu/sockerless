@@ -27,7 +27,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		name = "/" + name
 	}
 
-	if _, exists := s.Store.ContainerNames.Get(name); exists {
+	if avail, _ := s.CloudState.CheckNameAvailable(context.Background(), name); !avail {
 		return nil, &api.ConflictError{
 			Message: fmt.Sprintf("Conflict. The container name \"%s\" is already in use", strings.TrimPrefix(name, "/")),
 		}
@@ -128,18 +128,10 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		MacAddress:  "",
 	}
 
-	agentToken := s.config.AgentToken
-	if agentToken == "" {
-		agentToken = core.GenerateToken()
-	}
-
 	// Pod association is handled by the core HTTP handler layer (query param).
-	s.Store.Containers.Put(id, container)
-	s.Store.ContainerNames.Put(name, id)
+	s.PendingCreates.Put(id, container)
 
-	s.CloudRun.Put(id, CloudRunState{
-		AgentToken: agentToken,
-	})
+	s.CloudRun.Put(id, CloudRunState{})
 
 	s.EmitEvent("container", "create", id, map[string]string{
 		"name":  strings.TrimPrefix(name, "/"),
@@ -154,39 +146,32 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 
 // ContainerStart starts a Cloud Run Job for the container.
 func (s *Server) ContainerStart(ref string) error {
-	// When auto-agent is configured, skip cloud task launch entirely.
-	// BaseServer.ContainerStart marks running and spawns a local agent.
-	if os.Getenv("SOCKERLESS_AUTO_AGENT_BIN") != "" {
-		return s.BaseServer.ContainerStart(ref)
+	// Resolve from PendingCreates (containers between create and start)
+	c, ok := s.PendingCreates.Get(ref)
+	if !ok {
+		// Try name/short-ID match in PendingCreates
+		for _, pc := range s.PendingCreates.List() {
+			if pc.Name == ref || pc.Name == "/"+ref || (len(ref) >= 3 && strings.HasPrefix(pc.ID, ref)) {
+				c = pc
+				ok = true
+				break
+			}
+		}
 	}
-
-	id, ok := s.Store.ResolveContainerID(ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if c.State.Running {
 		return &api.NotModifiedError{}
 	}
 
 	crState, _ := s.CloudRun.Get(id)
 
-	// Update container state to running
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		c.State.Status = "running"
-		c.State.Running = true
-		c.State.Pid = 0
-		c.State.StartedAt = now
-		c.State.FinishedAt = "0001-01-01T00:00:00Z"
-		c.State.ExitCode = 0
-	})
-
 	exitCh := make(chan struct{})
 	s.Store.WaitChs.Store(id, exitCh)
 
-	c, _ = s.Store.Containers.Get(id)
 	s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 
 	// Deferred start: if container is in a multi-container pod, wait for all siblings
@@ -200,11 +185,6 @@ func (s *Server) ContainerStart(ref string) error {
 		return s.startMultiContainerJobTyped(id, podContainers, exitCh)
 	}
 
-	// Pre-create done channel so invoke goroutine can wait for agent disconnect
-	if s.config.CallbackURL != "" {
-		s.AgentRegistry.Prepare(id)
-	}
-
 	// Clean up any existing Cloud Run Job from a previous start
 	if crState.JobName != "" {
 		s.deleteJob(crState.JobName)
@@ -214,7 +194,7 @@ func (s *Server) ContainerStart(ref string) error {
 	// Build Cloud Run Job spec
 	jobName := buildJobName(id)
 	jobSpec := s.buildJobSpec([]containerInput{
-		{ID: id, Container: &c, AgentToken: crState.AgentToken, IsMain: true},
+		{ID: id, Container: &c, IsMain: true},
 	})
 
 	// Create the Cloud Run Job
@@ -225,8 +205,7 @@ func (s *Server) ContainerStart(ref string) error {
 	})
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to create Cloud Run Job")
-		s.AgentRegistry.Remove(id)
-		s.Store.RevertToCreated(id)
+		s.Store.WaitChs.Delete(id)
 		return gcpcommon.MapGCPError(err, "job", id)
 	}
 
@@ -234,8 +213,7 @@ func (s *Server) ContainerStart(ref string) error {
 	job, err := createOp.Wait(s.ctx())
 	if err != nil {
 		s.deleteJob(fmt.Sprintf("%s/jobs/%s", s.buildJobParent(), jobName))
-		s.AgentRegistry.Remove(id)
-		s.Store.RevertToCreated(id)
+		s.Store.WaitChs.Delete(id)
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
 		return gcpcommon.MapGCPError(err, "job", id)
 	}
@@ -259,8 +237,7 @@ func (s *Server) ContainerStart(ref string) error {
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("failed to run job")
 		s.deleteJob(jobFullName)
-		s.AgentRegistry.Remove(id)
-		s.Store.RevertToCreated(id)
+		s.Store.WaitChs.Delete(id)
 		return gcpcommon.MapGCPError(err, "execution", id)
 	}
 
@@ -269,121 +246,22 @@ func (s *Server) ContainerStart(ref string) error {
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("run job failed")
 		s.deleteJob(jobFullName)
-		s.AgentRegistry.Remove(id)
-		s.Store.RevertToCreated(id)
+		s.Store.WaitChs.Delete(id)
 		return gcpcommon.MapGCPError(err, "execution", id)
 	}
 
 	executionName := execution.Name
+
+	// Remove from PendingCreates now that the job is launched in the cloud.
+	s.PendingCreates.Delete(id)
 
 	s.CloudRun.Update(id, func(state *CloudRunState) {
 		state.JobName = jobFullName
 		state.ExecutionName = executionName
 	})
 
-	if s.config.CallbackURL != "" {
-		// Reverse agent mode: wait for agent callback instead of polling execution IP
-		go func() {
-			// Wait for execution to complete
-			s.waitForExecutionComplete(executionName, exitCh)
-
-			// Wait for reverse agent to disconnect before stopping
-			_ = s.AgentRegistry.WaitForDisconnect(id, 30*time.Minute)
-
-			if _, ok := s.Store.Containers.Get(id); ok {
-				s.Store.StopContainer(id, 0)
-			}
-		}()
-
-		// Wait for reverse agent callback
-		agentTimeout := s.config.AgentTimeout
-		if err := s.AgentRegistry.WaitForAgent(id, agentTimeout); err != nil {
-			s.Logger.Warn().Err(err).Msg("agent callback timeout, trying auto-agent")
-			s.AgentRegistry.Remove(id)
-			// Fallback to auto-agent if configured
-			if autoErr := s.SpawnAutoAgent(id); autoErr != nil {
-				s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
-			}
-		} else {
-			s.Store.Containers.Update(id, func(c *api.Container) {
-				c.AgentAddress = "reverse"
-				c.AgentToken = crState.AgentToken
-			})
-		}
-	} else {
-		// Forward agent mode: poll for execution RUNNING and health check
-		isLongRunning := core.IsTailDevNull(c.Config.Entrypoint, c.Config.Cmd)
-		skipPoller := false
-
-		if isLongRunning {
-			// Long-running container: wait for RUNNING and check agent health
-			agentAddr, completedExitCode, err := s.waitForExecutionRunning(s.ctx(), executionName)
-			if err != nil {
-				s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
-				s.AgentRegistry.Remove(id)
-				s.deleteJob(jobFullName)
-				s.Store.RevertToCreated(id)
-				return gcpcommon.MapGCPError(err, "execution", id)
-			}
-
-			if completedExitCode >= 0 {
-				skipPoller = true
-				go func() {
-					if _, ok := s.Store.Containers.Get(id); ok {
-						s.Store.StopContainer(id, completedExitCode)
-					}
-				}()
-			} else if agentAddr == "reverse" {
-				// Use reverse agent callback
-				s.AgentRegistry.Prepare(id)
-				if err := s.AgentRegistry.WaitForAgent(id, s.config.AgentTimeout); err != nil {
-					s.Logger.Warn().Err(err).Msg("agent callback timeout")
-					s.AgentRegistry.Remove(id)
-				} else {
-					s.Store.Containers.Update(id, func(c *api.Container) {
-						c.AgentAddress = "reverse"
-						c.AgentToken = crState.AgentToken
-					})
-				}
-				s.CloudRun.Update(id, func(state *CloudRunState) {
-					state.AgentAddress = "reverse"
-				})
-			} else {
-				// Wait for agent health
-				agentURL := fmt.Sprintf("http://%s/health", agentAddr)
-				agentHealthy := true
-				if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
-					s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
-					agentHealthy = false
-				}
-
-				if agentHealthy {
-					s.Store.Containers.Update(id, func(c *api.Container) {
-						c.AgentAddress = agentAddr
-						c.AgentToken = crState.AgentToken
-					})
-				} else {
-					// Fallback to auto-agent if configured
-					if autoErr := s.SpawnAutoAgent(id); autoErr != nil {
-						s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
-					}
-				}
-
-				s.CloudRun.Update(id, func(state *CloudRunState) {
-					state.AgentAddress = agentAddr
-				})
-			}
-		} else {
-			// Short-lived container without forward agent — try auto-agent
-			if autoErr := s.SpawnAutoAgent(id); autoErr != nil {
-				s.Logger.Warn().Err(autoErr).Msg("auto-agent fallback failed")
-			}
-		}
-
-		if !skipPoller {
-			go s.pollExecutionExit(id, executionName, exitCh)
-		}
-	}
+	// Start background poller to detect execution exit
+	go s.pollExecutionExit(id, executionName, exitCh)
 
 	return nil
 }
@@ -391,26 +269,18 @@ func (s *Server) ContainerStart(ref string) error {
 // startMultiContainerJobTyped creates and runs a Cloud Run Job with all pod containers.
 // Called when the last container in a pod is started.
 func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []api.Container, exitCh chan struct{}) error {
-	// Build containerInput slice: first container is main (gets agent)
+	// Build containerInput slice
 	var inputs []containerInput
 	for i, pc := range podContainers {
-		state, _ := s.CloudRun.Get(pc.ID)
 		pcCopy := pc
 		inputs = append(inputs, containerInput{
-			ID:         pc.ID,
-			Container:  &pcCopy,
-			AgentToken: state.AgentToken,
-			IsMain:     i == 0,
+			ID:        pc.ID,
+			Container: &pcCopy,
+			IsMain:    i == 0,
 		})
 	}
 
 	mainID := podContainers[0].ID
-	mainState, _ := s.CloudRun.Get(mainID)
-
-	// Pre-create done channel for reverse agent on main container
-	if s.config.CallbackURL != "" {
-		s.AgentRegistry.Prepare(mainID)
-	}
 
 	// Build and create the combined job
 	jobName := buildJobName(mainID)
@@ -423,11 +293,8 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 	})
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("failed to create multi-container Cloud Run Job")
-		if s.config.CallbackURL != "" {
-			s.AgentRegistry.Remove(mainID)
-		}
 		for _, pc := range podContainers {
-			s.Store.RevertToCreated(pc.ID)
+			s.Store.WaitChs.Delete(pc.ID)
 		}
 		return gcpcommon.MapGCPError(err, "job", mainID)
 	}
@@ -435,11 +302,8 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 	job, err := createOp.Wait(s.ctx())
 	if err != nil {
 		s.deleteJob(fmt.Sprintf("%s/jobs/%s", s.buildJobParent(), jobName))
-		if s.config.CallbackURL != "" {
-			s.AgentRegistry.Remove(mainID)
-		}
 		for _, pc := range podContainers {
-			s.Store.RevertToCreated(pc.ID)
+			s.Store.WaitChs.Delete(pc.ID)
 		}
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
 		return gcpcommon.MapGCPError(err, "job", mainID)
@@ -463,11 +327,8 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("failed to run job")
 		s.deleteJob(jobFullName)
-		if s.config.CallbackURL != "" {
-			s.AgentRegistry.Remove(mainID)
-		}
 		for _, pc := range podContainers {
-			s.Store.RevertToCreated(pc.ID)
+			s.Store.WaitChs.Delete(pc.ID)
 		}
 		return gcpcommon.MapGCPError(err, "execution", mainID)
 	}
@@ -476,16 +337,18 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 	if err != nil {
 		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("run job failed")
 		s.deleteJob(jobFullName)
-		if s.config.CallbackURL != "" {
-			s.AgentRegistry.Remove(mainID)
-		}
 		for _, pc := range podContainers {
-			s.Store.RevertToCreated(pc.ID)
+			s.Store.WaitChs.Delete(pc.ID)
 		}
 		return gcpcommon.MapGCPError(err, "execution", mainID)
 	}
 
 	executionName := execution.Name
+
+	// Remove all pod containers from PendingCreates now that the job is launched.
+	for _, pc := range podContainers {
+		s.PendingCreates.Delete(pc.ID)
+	}
 
 	// Store cloud state on ALL pod containers
 	for _, pc := range podContainers {
@@ -495,81 +358,20 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 		})
 	}
 
-	if s.config.CallbackURL != "" {
-		// Reverse agent mode
-		go func() {
-			s.waitForExecutionComplete(executionName, exitCh)
-			_ = s.AgentRegistry.WaitForDisconnect(mainID, 30*time.Minute)
-			if _, ok := s.Store.Containers.Get(mainID); ok {
-				s.Store.StopContainer(mainID, 0)
-			}
-		}()
-
-		agentTimeout := s.config.AgentTimeout
-		if err := s.AgentRegistry.WaitForAgent(mainID, agentTimeout); err != nil {
-			s.Logger.Warn().Err(err).Msg("agent callback timeout, exec will use synthetic fallback")
-			s.AgentRegistry.Remove(mainID)
-		} else {
-			s.Store.Containers.Update(mainID, func(c *api.Container) {
-				c.AgentAddress = "reverse"
-				c.AgentToken = mainState.AgentToken
-			})
-		}
-	} else {
-		// Forward agent mode
-		agentAddr, completedExitCode, err := s.waitForExecutionRunning(s.ctx(), executionName)
-		if err != nil {
-			s.Logger.Error().Err(err).Str("execution", executionName).Msg("execution failed to reach RUNNING state")
-			s.deleteJob(jobFullName)
-			if s.config.CallbackURL != "" {
-				s.AgentRegistry.Remove(mainID)
-			}
-			for _, pc := range podContainers {
-				s.Store.RevertToCreated(pc.ID)
-			}
-			return gcpcommon.MapGCPError(err, "execution", mainID)
-		}
-
-		if completedExitCode >= 0 {
-			go func() {
-				if _, ok := s.Store.Containers.Get(mainID); ok {
-					s.Store.StopContainer(mainID, completedExitCode)
-				}
-			}()
-		} else {
-			agentURL := fmt.Sprintf("http://%s/health", agentAddr)
-			agentHealthy := true
-			if err := s.waitForAgentHealth(s.ctx(), agentURL); err != nil {
-				s.Logger.Warn().Err(err).Str("agent", agentAddr).Msg("agent health check failed")
-				agentHealthy = false
-			}
-
-			if agentHealthy {
-				s.Store.Containers.Update(mainID, func(c *api.Container) {
-					c.AgentAddress = agentAddr
-					c.AgentToken = mainState.AgentToken
-				})
-			}
-
-			s.CloudRun.Update(mainID, func(state *CloudRunState) {
-				state.AgentAddress = agentAddr
-			})
-
-			go s.pollExecutionExit(mainID, executionName, exitCh)
-		}
-	}
+	// Start background poller to detect execution exit
+	go s.pollExecutionExit(mainID, executionName, exitCh)
 
 	return nil
 }
 
 // ContainerStop stops a running Cloud Run container.
 func (s *Server) ContainerStop(ref string, timeout *int) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if !c.State.Running {
 		return &api.NotModifiedError{}
 	}
@@ -581,23 +383,24 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 	}
 
 	s.StopHealthCheck(id)
-	s.AgentRegistry.Remove(id)
-	core.StopAutoAgent(id)
-	s.Store.ForceStopContainer(id, 0)
-	c, _ = s.Store.Containers.Get(id)
-	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", c.State.ExitCode), "name": strings.TrimPrefix(c.Name, "/")})
+
+	// Close wait channel so ContainerWait unblocks
+	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+		close(ch.(chan struct{}))
+	}
+	s.EmitEvent("container", "die", id, map[string]string{"exitCode": "0", "name": strings.TrimPrefix(c.Name, "/")})
 	s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	return nil
 }
 
 // ContainerKill kills a container with the given signal.
 func (s *Server) ContainerKill(ref string, signal string) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if !c.State.Running {
 		return &api.ConflictError{
 			Message: fmt.Sprintf("Container %s is not running", ref),
@@ -606,8 +409,6 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 
 	// Disconnect reverse agent if connected (unblocks invoke goroutine)
 	s.StopHealthCheck(id)
-	s.AgentRegistry.Remove(id)
-	core.StopAutoAgent(id)
 
 	exitCode := core.SignalToExitCode(signal)
 
@@ -616,14 +417,6 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	if crState.ExecutionName != "" {
 		s.cancelExecution(crState.ExecutionName)
 	}
-
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		c.State.Status = "exited"
-		c.State.Running = false
-		c.State.Pid = 0
-		c.State.ExitCode = exitCode
-		c.State.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	})
 
 	s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", exitCode), "name": strings.TrimPrefix(c.Name, "/")})
@@ -637,12 +430,18 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 
 // ContainerRemove removes a container.
 func (s *Server) ContainerRemove(ref string, force bool) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
+	if !ok {
+		// Also check PendingCreates (container created but never started)
+		if pc, pcOK := s.PendingCreates.Get(ref); pcOK {
+			c = pc
+			ok = true
+		}
+	}
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-
-	c, _ := s.Store.Containers.Get(id)
+	id := c.ID
 
 	if c.State.Running && !force {
 		return &api.ConflictError{
@@ -651,8 +450,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	// Disconnect reverse agent if connected (unblocks invoke goroutine)
-	s.AgentRegistry.Remove(id)
-	core.StopAutoAgent(id)
 
 	if c.State.Running {
 		s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
@@ -664,7 +461,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		if crState.ExecutionName != "" {
 			s.cancelExecution(crState.ExecutionName)
 		}
-		s.Store.ForceStopContainer(id, 0)
 	}
 
 	s.StopHealthCheck(id)
@@ -697,8 +493,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		}
 	}
 
-	s.Store.Containers.Delete(id)
-	s.Store.ContainerNames.Delete(c.Name)
+	s.PendingCreates.Delete(id)
 	s.CloudRun.Delete(id)
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
@@ -722,7 +517,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
 	// Resolve cloud resource name for the log filter.
 	var shortJobName string
-	if id, ok := s.Store.ResolveContainerID(ref); ok {
+	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
 		crState, _ := s.CloudRun.Get(id)
 		jobName := crState.JobName
 		if jobName == "" {
@@ -739,9 +534,7 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 
 	fetch := s.cloudLoggingFetch(baseFilter)
 
-	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{
-		CheckAutoAgent: true,
-	})
+	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{})
 }
 
 // cloudLoggingFetch returns a CloudLogFetchFunc that queries Cloud Logging.
@@ -791,17 +584,16 @@ func (s *Server) cloudLoggingFetch(baseFilter string) core.CloudLogFetchFunc {
 
 // ContainerRestart stops and then starts a container.
 func (s *Server) ContainerRestart(ref string, timeout *int) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-
-	c, _ := s.Store.Containers.Get(id)
+	id := c.ID
 
 	// Stop if running
 	if c.State.Running {
 		s.StopHealthCheck(id)
-		s.AgentRegistry.Remove(id)
+
 		crState, _ := s.CloudRun.Get(id)
 		if crState.ExecutionName != "" {
 			s.cancelExecution(crState.ExecutionName)
@@ -810,7 +602,9 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 			s.deleteJob(crState.JobName)
 			s.Registry.MarkCleanedUp(crState.JobName)
 		}
-		s.Store.ForceStopContainer(id, 0)
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
+		}
 		s.EmitEvent("container", "die", id, map[string]string{
 			"exitCode": "0",
 			"name":     strings.TrimPrefix(c.Name, "/"),
@@ -818,9 +612,13 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 		s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	}
 
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		c.RestartCount++
-	})
+	// Re-add to PendingCreates so ContainerStart can find it
+	c.State.Status = "created"
+	c.State.Running = false
+	c.State.Pid = 0
+	c.State.StartedAt = "0001-01-01T00:00:00Z"
+	c.RestartCount++
+	s.PendingCreates.Put(id, c)
 
 	// Start the container directly via typed method
 	if err := s.ContainerStart(id); err != nil {
@@ -832,23 +630,22 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 }
 
 // ContainerPrune removes all stopped containers.
+// In the stateless model, only PendingCreates (never-started) containers are local.
 func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPruneResponse, error) {
 	labelFilters := filters["label"]
 	untilFilters := filters["until"]
 
 	var deleted []string
 	var spaceReclaimed uint64
-	for _, c := range s.Store.Containers.List() {
-		if c.State.Status != "exited" && c.State.Status != "dead" {
-			continue
-		}
+
+	// Check PendingCreates for containers that were created but never started
+	for _, c := range s.PendingCreates.List() {
 		if len(labelFilters) > 0 && !core.MatchLabels(c.Config.Labels, labelFilters) {
 			continue
 		}
 		if len(untilFilters) > 0 && !core.MatchUntil(c.Created, untilFilters) {
 			continue
 		}
-		// Sum image sizes for SpaceReclaimed
 		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
 			spaceReclaimed += uint64(img.Size)
 		}
@@ -859,8 +656,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 			s.Registry.MarkCleanedUp(crState.JobName)
 		}
 		s.StopHealthCheck(c.ID)
-		s.AgentRegistry.Remove(c.ID)
-		// Clean up network associations
+
 		for _, ep := range c.NetworkSettings.Networks {
 			if ep != nil && ep.NetworkID != "" {
 				_ = s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, c.ID)
@@ -869,8 +665,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 		if pod, inPod := s.Store.Pods.GetPodForContainer(c.ID); inPod {
 			s.Store.Pods.RemoveContainer(pod.ID, c.ID)
 		}
-		s.Store.Containers.Delete(c.ID)
-		s.Store.ContainerNames.Delete(c.Name)
+		s.PendingCreates.Delete(c.ID)
 		s.CloudRun.Delete(c.ID)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
 			close(ch.(chan struct{}))
@@ -901,7 +696,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 
 // ContainerPause is not supported by Cloud Run backend.
 func (s *Server) ContainerPause(ref string) error {
-	if _, ok := s.Store.ResolveContainerID(ref); !ok {
+	if _, ok := s.ResolveContainerIDAuto(context.Background(), ref); !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
 	return &api.NotImplementedError{Message: "container pause is not supported by Cloud Run backend"}
@@ -909,7 +704,7 @@ func (s *Server) ContainerPause(ref string) error {
 
 // ContainerUnpause is not supported by Cloud Run backend.
 func (s *Server) ContainerUnpause(ref string) error {
-	if _, ok := s.Store.ResolveContainerID(ref); !ok {
+	if _, ok := s.ResolveContainerIDAuto(context.Background(), ref); !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
 	return &api.NotImplementedError{Message: "container unpause is not supported by Cloud Run backend"}
@@ -934,37 +729,29 @@ func (s *Server) VolumeRemove(name string, force bool) error {
 	return nil
 }
 
-// ExecStart checks for an agent connection before allowing exec.
+// ExecStart is not supported by the Cloud Run backend.
 // Cloud Run Jobs do not support native exec — there is no Cloud Run API for
-// executing commands inside a running job container. An agent sidecar must be
-// connected to proxy exec requests into the container.
+// executing commands inside a running job container.
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
 	exec, ok := s.Store.Execs.Get(id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "exec instance", ID: id}
 	}
 
-	c, ok := s.Store.Containers.Get(exec.ContainerID)
-	if !ok {
+	if _, ok := s.ResolveContainerAuto(context.Background(), exec.ContainerID); !ok {
 		return nil, &api.ConflictError{
 			Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID),
 		}
 	}
 
-	// If the container has an agent connected, delegate to BaseServer which
-	// will proxy through the agent's exec driver.
-	if c.AgentAddress != "" {
-		return s.BaseServer.ExecStart(id, opts)
-	}
-
 	return nil, &api.NotImplementedError{
-		Message: "exec requires an agent connection; Cloud Run Jobs do not support local exec",
+		Message: "exec is not supported by Cloud Run backend; Cloud Run Jobs do not support native exec",
 	}
 }
 
 // ContainerExport is not supported by Cloud Run backend.
 func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {
-	if _, ok := s.Store.ResolveContainerID(ref); !ok {
+	if _, ok := s.ResolveContainerIDAuto(context.Background(), ref); !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
 	return nil, &api.NotImplementedError{Message: "container export is not supported by Cloud Run backend: no container filesystem access"}
@@ -972,7 +759,7 @@ func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {
 
 // ContainerCommit is not supported by Cloud Run backend.
 func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
-	if _, ok := s.Store.ResolveContainerID(req.Container); !ok {
+	if _, ok := s.ResolveContainerIDAuto(context.Background(), req.Container); !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
 	}
 	return nil, &api.NotImplementedError{Message: "container commit is not supported by Cloud Run backend: cannot create images from running Cloud Run containers"}
@@ -988,7 +775,7 @@ func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
 
 	var errs []string
 	for _, cid := range pod.ContainerIDs {
-		c, ok := s.Store.Containers.Get(cid)
+		c, ok := s.ResolveContainerAuto(context.Background(), cid)
 		if !ok || c.State.Running {
 			continue
 		}
@@ -1014,7 +801,7 @@ func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, err
 
 	var errs []string
 	for _, cid := range pod.ContainerIDs {
-		c, ok := s.Store.Containers.Get(cid)
+		c, ok := s.ResolveContainerAuto(context.Background(), cid)
 		if !ok || !c.State.Running {
 			continue
 		}
@@ -1044,7 +831,7 @@ func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, er
 
 	var errs []string
 	for _, cid := range pod.ContainerIDs {
-		c, ok := s.Store.Containers.Get(cid)
+		c, ok := s.ResolveContainerAuto(context.Background(), cid)
 		if !ok || !c.State.Running {
 			continue
 		}
@@ -1071,7 +858,7 @@ func (s *Server) PodRemove(name string, force bool) error {
 	// Without force, reject if any containers are running
 	if !force {
 		for _, cid := range pod.ContainerIDs {
-			c, ok := s.Store.Containers.Get(cid)
+			c, ok := s.ResolveContainerAuto(context.Background(), cid)
 			if ok && c.State.Running {
 				return &api.ConflictError{
 					Message: fmt.Sprintf("pod %s has running containers, cannot remove without force", name),
@@ -1082,7 +869,7 @@ func (s *Server) PodRemove(name string, force bool) error {
 
 	// Remove each container via the typed method (cleans up Cloud Run resources)
 	for _, cid := range pod.ContainerIDs {
-		if _, ok := s.Store.Containers.Get(cid); !ok {
+		if _, ok := s.ResolveContainerAuto(context.Background(), cid); !ok {
 			continue
 		}
 		_ = s.ContainerRemove(cid, force)
@@ -1107,121 +894,73 @@ func (s *Server) Info() (*api.BackendInfo, error) {
 	return info, nil
 }
 
-// ContainerAttach attaches to a container's IO streams.
-// Cloud Run Jobs do not support local attach — an agent must be connected.
+// ContainerAttach is not supported by the Cloud Run backend.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	cid, ok := s.Store.ResolveContainerID(id)
-	if !ok {
+	if _, ok := s.ResolveContainerAuto(context.Background(), id); !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
-	}
-
-	c, ok := s.Store.Containers.Get(cid)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: id}
-	}
-
-	if c.AgentAddress != "" {
-		return s.BaseServer.ContainerAttach(id, opts)
 	}
 
 	return nil, &api.NotImplementedError{
-		Message: "attach requires an agent connection; Cloud Run Jobs do not support local attach",
+		Message: "attach is not supported by Cloud Run backend",
 	}
 }
 
-// ContainerTop lists processes running inside a container.
-// Cloud Run Jobs do not support local ps — delegates to BaseServer which returns a synthetic response.
+// ContainerTop is not supported by the Cloud Run backend.
 func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopResponse, error) {
-	cid, ok := s.Store.ResolveContainerID(id)
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
 
-	c, ok := s.Store.Containers.Get(cid)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: id}
+	if !c.State.Running {
+		return nil, &api.ConflictError{Message: fmt.Sprintf("Container %s is not running", id)}
 	}
 
-	if c.AgentAddress != "" {
-		return s.BaseServer.ContainerTop(id, psArgs)
-	}
-
-	// BaseServer returns a reasonable synthetic response for containers without agents.
-	return s.BaseServer.ContainerTop(id, psArgs)
+	return nil, &api.NotImplementedError{Message: "container top is not supported by Cloud Run backend"}
 }
 
-// ContainerGetArchive gets an archive of a path in a container's filesystem.
-// Cloud Run Jobs do not support local filesystem access — an agent must be connected.
+// ContainerGetArchive is not supported by the Cloud Run backend.
 func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArchiveResponse, error) {
-	cid, ok := s.Store.ResolveContainerID(id)
-	if !ok {
+	if _, ok := s.ResolveContainerAuto(context.Background(), id); !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
-	}
-
-	c, ok := s.Store.Containers.Get(cid)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: id}
-	}
-
-	if c.AgentAddress != "" {
-		return s.BaseServer.ContainerGetArchive(id, path)
 	}
 
 	return nil, &api.NotImplementedError{
-		Message: "archive get requires an agent connection; Cloud Run Jobs do not support local filesystem access",
+		Message: "archive get is not supported by Cloud Run backend; no container filesystem access",
 	}
 }
 
-// ContainerPutArchive extracts an archive to a path in a container's filesystem.
-// Cloud Run Jobs do not support local filesystem access — an agent must be connected.
+// ContainerPutArchive is not supported by the Cloud Run backend.
 func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDir bool, body io.Reader) error {
-	cid, ok := s.Store.ResolveContainerID(id)
-	if !ok {
+	if _, ok := s.ResolveContainerAuto(context.Background(), id); !ok {
 		return &api.NotFoundError{Resource: "container", ID: id}
-	}
-
-	c, ok := s.Store.Containers.Get(cid)
-	if !ok {
-		return &api.NotFoundError{Resource: "container", ID: id}
-	}
-
-	if c.AgentAddress != "" {
-		return s.BaseServer.ContainerPutArchive(id, path, noOverwriteDirNonDir, body)
 	}
 
 	return &api.NotImplementedError{
-		Message: "archive put requires an agent connection; Cloud Run Jobs do not support local filesystem access",
+		Message: "archive put is not supported by Cloud Run backend; no container filesystem access",
 	}
 }
 
-// ContainerStatPath stats a path in a container's filesystem.
-// Cloud Run Jobs do not support local filesystem access — an agent must be connected.
+// ContainerStatPath is not supported by the Cloud Run backend.
 func (s *Server) ContainerStatPath(id string, path string) (*api.ContainerPathStat, error) {
-	cid, ok := s.Store.ResolveContainerID(id)
-	if !ok {
+	if _, ok := s.ResolveContainerAuto(context.Background(), id); !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
-	}
-
-	c, ok := s.Store.Containers.Get(cid)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: id}
-	}
-
-	if c.AgentAddress != "" {
-		return s.BaseServer.ContainerStatPath(id, path)
 	}
 
 	return nil, &api.NotImplementedError{
-		Message: "stat requires an agent connection; Cloud Run Jobs do not support local filesystem access",
+		Message: "stat is not supported by Cloud Run backend; no container filesystem access",
 	}
 }
 
 // ContainerUpdate updates container resource constraints.
-// Cloud Run does not support live resource updates — changes are stored in-memory
-// and take effect on the next container restart.
+// Cloud Run does not support live resource updates.
 func (s *Server) ContainerUpdate(id string, req *api.ContainerUpdateRequest) (*api.ContainerUpdateResponse, error) {
-	s.Logger.Warn().Str("container", id).Msg("ContainerUpdate: resource changes are stored in-memory only and take effect on restart")
-	return s.BaseServer.ContainerUpdate(id, req)
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: id}
+	}
+	s.Logger.Warn().Str("container", c.ID[:12]).Msg("ContainerUpdate: Cloud Run does not support live resource updates")
+	return s.BaseServer.ContainerUpdate(c.ID, req)
 }
 
 // ImagePush delegates to ImageManager which handles cloud auth and OCI push.
@@ -1259,7 +998,7 @@ func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneRespo
 	var spaceReclaimed uint64
 	for _, v := range s.Store.Volumes.List() {
 		inUse := false
-		for _, c := range s.Store.Containers.List() {
+		for _, c := range s.PendingCreates.List() {
 			for _, m := range c.Mounts {
 				if m.Name == v.Name {
 					inUse = true

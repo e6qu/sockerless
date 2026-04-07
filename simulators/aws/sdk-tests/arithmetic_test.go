@@ -25,9 +25,9 @@ func TestLambda_InvokeArithmetic(t *testing.T) {
 		FunctionName: aws.String(fnName),
 		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
 		PackageType:  lambdatypes.PackageTypeImage,
-		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String("test:latest")},
+		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String(evalImageName)},
 		ImageConfig: &lambdatypes.ImageConfig{
-			Command: []string{evalBinaryPath, "3 + 4 * 2"},
+			Command: []string{"3 + 4 * 2"},
 		},
 	})
 	require.NoError(t, err)
@@ -46,9 +46,9 @@ func TestLambda_InvokeArithmeticParentheses(t *testing.T) {
 		FunctionName: aws.String(fnName),
 		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
 		PackageType:  lambdatypes.PackageTypeImage,
-		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String("test:latest")},
+		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String(evalImageName)},
 		ImageConfig: &lambdatypes.ImageConfig{
-			Command: []string{evalBinaryPath, "(3 + 4) * 2"},
+			Command: []string{"(3 + 4) * 2"},
 		},
 	})
 	require.NoError(t, err)
@@ -68,9 +68,9 @@ func TestLambda_InvokeArithmeticInvalid(t *testing.T) {
 		FunctionName: aws.String(fnName),
 		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
 		PackageType:  lambdatypes.PackageTypeImage,
-		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String("test:latest")},
+		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String(evalImageName)},
 		ImageConfig: &lambdatypes.ImageConfig{
-			Command: []string{evalBinaryPath, "3 +"},
+			Command: []string{"3 +"},
 		},
 	})
 	require.NoError(t, err)
@@ -106,9 +106,9 @@ func TestLambda_InvokeArithmeticLogs(t *testing.T) {
 		FunctionName: aws.String(fnName),
 		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
 		PackageType:  lambdatypes.PackageTypeImage,
-		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String("test:latest")},
+		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String(evalImageName)},
 		ImageConfig: &lambdatypes.ImageConfig{
-			Command: []string{evalBinaryPath, "((2+3)*4-1)/3"},
+			Command: []string{"((2+3)*4-1)/3"},
 		},
 	})
 	require.NoError(t, err)
@@ -141,8 +141,8 @@ func TestLambda_InvokeArithmeticLogs(t *testing.T) {
 func TestECS_TaskArithmetic(t *testing.T) {
 	client, cluster, taskArn := ecsRunTaskHelper(t, "arith-ecs", ecstypes.ContainerDefinition{
 		Name:    aws.String("app"),
-		Image:   aws.String("alpine:latest"),
-		Command: []string{evalBinaryPath, "(10 + 5) * 2"},
+		Image:   aws.String(evalImageName),
+		Command: []string{"(10 + 5) * 2"},
 		LogConfiguration: &ecstypes.LogConfiguration{
 			LogDriver: ecstypes.LogDriverAwslogs,
 			Options: map[string]string{
@@ -183,8 +183,8 @@ func TestECS_TaskArithmetic(t *testing.T) {
 func TestECS_TaskArithmeticInvalid(t *testing.T) {
 	client, cluster, taskArn := ecsRunTaskHelper(t, "arith-ecs-fail", ecstypes.ContainerDefinition{
 		Name:    aws.String("app"),
-		Image:   aws.String("alpine:latest"),
-		Command: []string{evalBinaryPath, "3 +"},
+		Image:   aws.String(evalImageName),
+		Command: []string{"3 +"},
 		LogConfiguration: &ecstypes.LogConfiguration{
 			LogDriver: ecstypes.LogDriverAwslogs,
 			Options: map[string]string{
@@ -213,8 +213,8 @@ func TestECS_TaskArithmeticInvalid(t *testing.T) {
 func TestECS_TaskArithmeticLogs(t *testing.T) {
 	_, _, _ = ecsRunTaskHelper(t, "arith-ecs-logs", ecstypes.ContainerDefinition{
 		Name:    aws.String("app"),
-		Image:   aws.String("alpine:latest"),
-		Command: []string{evalBinaryPath, "10 / 3"},
+		Image:   aws.String(evalImageName),
+		Command: []string{"10 / 3"},
 		LogConfiguration: &ecstypes.LogConfiguration{
 			LogDriver: ecstypes.LogDriverAwslogs,
 			Options: map[string]string{

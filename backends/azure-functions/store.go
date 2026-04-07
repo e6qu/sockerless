@@ -5,5 +5,4 @@ type AZFState struct {
 	FunctionAppName string
 	ResourceID      string
 	FunctionURL     string
-	AgentToken      string
 }

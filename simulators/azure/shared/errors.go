@@ -84,7 +84,7 @@ type S3ErrorResponse struct {
 func S3ErrorXML(w http.ResponseWriter, code string, message string, resource string, requestID string, statusCode int) {
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(statusCode)
-	xml.NewEncoder(w).Encode(S3ErrorResponse{
+	_ = xml.NewEncoder(w).Encode(S3ErrorResponse{
 		Code:      code,
 		Message:   message,
 		Resource:  resource,
@@ -116,5 +116,5 @@ func WriteJSON(w http.ResponseWriter, statusCode int, v any) {
 func WriteXML(w http.ResponseWriter, statusCode int, v any) {
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(statusCode)
-	xml.NewEncoder(w).Encode(v)
+	_ = xml.NewEncoder(w).Encode(v)
 }

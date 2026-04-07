@@ -32,7 +32,7 @@ func contextCreate(args []string) {
 	simulator := fs.String("simulator", "", "simulator name (from config.yaml simulators)")
 	var sets multiFlag
 	fs.Var(&sets, "set", "set env var as KEY=VALUE (repeatable)")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	if fs.NArg() < 1 {
 		fmt.Fprintln(os.Stderr, "Usage: sockerless context create <name> --backend <type> [--addr ADDR] [--simulator SIM] [--set KEY=VALUE ...]")

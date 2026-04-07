@@ -114,7 +114,7 @@ func (s *BaseServer) ContainerCreate(req *api.ContainerCreateRequest) (*api.Cont
 	// Implicit pod grouping for container: network mode
 	if strings.HasPrefix(hostConfig.NetworkMode, "container:") {
 		refID := strings.TrimPrefix(hostConfig.NetworkMode, "container:")
-		refID, _ = s.Store.ResolveContainerID(refID)
+		refID, _ = s.ResolveContainerIDAuto(context.Background(), refID)
 		if _, inPod := s.Store.Pods.GetPodForContainer(id); !inPod {
 			if pod, exists := s.Store.Pods.GetPodForContainer(refID); exists {
 				_ = s.Store.Pods.AddContainer(pod.ID, id)
@@ -171,7 +171,7 @@ func (s *BaseServer) ContainerCreate(req *api.ContainerCreateRequest) (*api.Cont
 
 // ContainerInspect returns container details.
 func (s *BaseServer) ContainerInspect(ref string) (*api.Container, error) {
-	c, ok := s.Store.ResolveContainer(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
@@ -180,12 +180,31 @@ func (s *BaseServer) ContainerInspect(ref string) (*api.Container, error) {
 
 // ContainerList lists containers matching options.
 func (s *BaseServer) ContainerList(opts api.ContainerListOptions) ([]*api.ContainerSummary, error) {
+	// Collect containers from CloudState or Store
+	var containers []api.Container
+	if s.CloudState != nil {
+		cloudContainers, err := s.CloudState.ListContainers(context.Background(), opts.All, opts.Filters)
+		if err == nil {
+			containers = cloudContainers
+		}
+		// Include pending creates (not yet in cloud)
+		if s.PendingCreates != nil {
+			for _, pc := range s.PendingCreates.List() {
+				if opts.All || pc.State.Running {
+					containers = append(containers, pc)
+				}
+			}
+		}
+	} else {
+		containers = s.Store.Containers.List()
+	}
+
 	var result []*api.ContainerSummary
-	for _, c := range s.Store.Containers.List() {
+	for _, c := range containers {
 		if !opts.All && !c.State.Running {
 			continue
 		}
-		if len(opts.Filters) > 0 && !MatchContainerFilters(c, opts.Filters) {
+		if s.CloudState == nil && len(opts.Filters) > 0 && !MatchContainerFilters(c, opts.Filters) {
 			continue
 		}
 
@@ -249,12 +268,11 @@ func (s *BaseServer) ContainerList(opts api.ContainerListOptions) ([]*api.Contai
 
 // ContainerStart starts a container.
 func (s *BaseServer) ContainerStart(ref string) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-
-	c, _ := s.Store.Containers.Get(id)
+	id := c.ID
 	if c.State.Running {
 		return &api.NotModifiedError{}
 	}
@@ -324,28 +342,22 @@ func (s *BaseServer) ContainerStart(ref string) error {
 		s.StartHealthCheck(id)
 	}
 
-	// Auto-spawn a local agent if configured (enables real exec for simulator backends)
-	if err := s.SpawnAutoAgent(id); err != nil {
-		s.Logger.Warn().Err(err).Str("container", id).Msg("auto-agent spawn failed")
-	}
-
 	return nil
 }
 
 // ContainerStop stops a running container.
 func (s *BaseServer) ContainerStop(ref string, timeout *int) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if !c.State.Running {
 		return &api.NotModifiedError{}
 	}
 
 	s.StopHealthCheck(id)
-	StopAutoAgent(id)
 	s.Store.ForceStopContainer(id, 0)
 	s.emitEvent("container", "die", id, map[string]string{
 		"exitCode": "0",
@@ -357,12 +369,12 @@ func (s *BaseServer) ContainerStop(ref string, timeout *int) error {
 
 // ContainerKill sends a signal to a container.
 func (s *BaseServer) ContainerKill(ref string, signal string) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if !c.State.Running {
 		return &api.ConflictError{
 			Message: fmt.Sprintf("Container %s is not running", ref),
@@ -370,7 +382,6 @@ func (s *BaseServer) ContainerKill(ref string, signal string) error {
 	}
 
 	s.StopHealthCheck(id)
-	StopAutoAgent(id)
 
 	exitCode := SignalToExitCode(signal)
 
@@ -397,12 +408,11 @@ func (s *BaseServer) ContainerKill(ref string, signal string) error {
 
 // ContainerRemove removes a container.
 func (s *BaseServer) ContainerRemove(ref string, force bool) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-
-	c, _ := s.Store.Containers.Get(id)
+	id := c.ID
 
 	if c.State.Running && !force {
 		return &api.ConflictError{
@@ -420,7 +430,6 @@ func (s *BaseServer) ContainerRemove(ref string, force bool) error {
 	}
 
 	s.StopHealthCheck(id)
-	StopAutoAgent(id)
 
 	ctx := context.Background()
 	for _, ep := range c.NetworkSettings.Networks {
@@ -456,12 +465,11 @@ func (s *BaseServer) ContainerRemove(ref string, force bool) error {
 
 // ContainerLogs returns container logs as a stream.
 func (s *BaseServer) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
-
-	c, _ := s.Store.Containers.Get(id)
+	id := c.ID
 	if c.State.Status == "created" {
 		return nil, &api.InvalidParameterError{
 			Message: "can not get logs from container which is dead or marked for removal",
@@ -552,41 +560,44 @@ func (s *BaseServer) ContainerLogs(ref string, opts api.ContainerLogsOptions) (i
 
 // ContainerWait blocks until a container stops and returns its exit code.
 func (s *BaseServer) ContainerWait(ref string, condition string) (*api.ContainerWaitResponse, error) {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		if condition == "removed" {
 			return &api.ContainerWaitResponse{StatusCode: 0}, nil
 		}
 		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
 	if condition == "" {
 		condition = "not-running"
-	}
-
-	c, exists := s.Store.Containers.Get(id)
-	if !exists {
-		if condition == "removed" {
-			return &api.ContainerWaitResponse{StatusCode: 0}, nil
-		}
-		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
 
 	if condition != "next-exit" && (c.State.Status == "exited" || c.State.Status == "dead") {
 		return &api.ContainerWaitResponse{StatusCode: c.State.ExitCode}, nil
 	}
 
+	// CloudState path: poll for exit via CloudState.WaitForExit
+	if s.CloudState != nil {
+		exitCode, err := s.CloudState.WaitForExit(context.Background(), id)
+		if err != nil {
+			return nil, err
+		}
+		return &api.ContainerWaitResponse{StatusCode: exitCode}, nil
+	}
+
+	// Store path (Docker passthrough): wait on channel
 	ch, ok := s.Store.WaitChs.Load(id)
 	if !ok {
-		c, _ = s.Store.Containers.Get(id)
+		c, _ = s.ResolveContainerAuto(context.Background(), id)
 		return &api.ContainerWaitResponse{StatusCode: c.State.ExitCode}, nil
 	}
 
 	<-ch.(chan struct{})
-	c, _ = s.Store.Containers.Get(id)
+	c, _ = s.ResolveContainerAuto(context.Background(), id)
 	if condition == "removed" {
 		for i := 0; i < 50; i++ {
-			if _, exists := s.Store.Containers.Get(id); !exists {
+			if _, found := s.ResolveContainerAuto(context.Background(), id); !found {
 				break
 			}
 			time.Sleep(100 * time.Millisecond)
@@ -597,15 +608,11 @@ func (s *BaseServer) ContainerWait(ref string, condition string) (*api.Container
 
 // ContainerAttach establishes a bidirectional stream to the container.
 func (s *BaseServer) ContainerAttach(ref string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
-
-	c, ok := s.Store.Containers.Get(id)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: ref}
-	}
+	id := c.ID
 
 	tty := c.Config.Tty
 	stdinPR, stdinPW := io.Pipe()
@@ -622,15 +629,13 @@ func (s *BaseServer) ContainerAttach(ref string, opts api.ContainerAttachOptions
 
 // ContainerRestart restarts a container.
 func (s *BaseServer) ContainerRestart(ref string, timeout *int) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-
-	c, _ := s.Store.Containers.Get(id)
+	id := c.ID
 	if c.State.Running {
 		s.StopHealthCheck(id)
-		StopAutoAgent(id)
 		s.Store.ForceStopContainer(id, 0)
 		s.emitEvent("container", "die", id, map[string]string{
 			"exitCode": "0",
@@ -679,43 +684,35 @@ func (s *BaseServer) ContainerRestart(ref string, timeout *int) error {
 		s.StartHealthCheck(id)
 	}
 
-	// Re-spawn auto-agent after restart
-	if err := s.SpawnAutoAgent(id); err != nil {
-		s.Logger.Warn().Err(err).Str("container", id).Msg("auto-agent spawn failed on restart")
-	}
-
 	return nil
 }
 
 // ContainerTop returns the running processes inside a container.
-// Executes `ps` via the agent when connected, falls back to synthetic.
 func (s *BaseServer) ContainerTop(ref string, psArgs string) (*api.ContainerTopResponse, error) {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if !c.State.Running {
 		return nil, &api.ConflictError{
 			Message: fmt.Sprintf("Container %s is not running", ref),
 		}
 	}
 
-	// Try to get real process list via agent exec
-	if c.AgentAddress != "" {
-		psCmd := "ps aux"
-		if psArgs != "" {
-			psCmd = "ps " + psArgs
-		}
-		if resp := s.execForOutput(id, []string{"/bin/sh", "-c", psCmd}); resp != "" {
-			if titles, procs := parsePS(resp); len(procs) > 0 {
-				return &api.ContainerTopResponse{Titles: titles, Processes: procs}, nil
-			}
+	// Try to get real process list via exec driver
+	psCmd := "ps aux"
+	if psArgs != "" {
+		psCmd = "ps " + psArgs
+	}
+	if resp := s.execForOutput(id, []string{"/bin/sh", "-c", psCmd}); resp != "" {
+		if titles, procs := parsePS(resp); len(procs) > 0 {
+			return &api.ContainerTopResponse{Titles: titles, Processes: procs}, nil
 		}
 	}
 
-	return nil, &api.NotImplementedError{Message: "container top requires an agent connection (no agent connected to this container)"}
+	return nil, &api.NotImplementedError{Message: "container top is not supported by this backend"}
 }
 
 // execForOutput runs a command inside a container and captures stdout.
@@ -857,12 +854,11 @@ func (s *BaseServer) ContainerPrune(filters map[string][]string) (*api.Container
 
 // ContainerStats returns resource usage stats for a container.
 func (s *BaseServer) ContainerStats(ref string, stream bool) (io.ReadCloser, error) {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
-
-	c, _ := s.Store.Containers.Get(id)
+	id := c.ID
 	memLimit := int64(1073741824)
 	if c.HostConfig.Memory > 0 {
 		memLimit = c.HostConfig.Memory
@@ -889,10 +885,21 @@ func (s *BaseServer) ContainerStats(ref string, stream bool) (io.ReadCloser, err
 			preread = now.Format(time.RFC3339Nano)
 
 			time.Sleep(1 * time.Second)
-			if cur, ok := s.Store.Containers.Get(id); !ok || !cur.State.Running {
+			// Check if container has stopped
+			if ch, ok := s.Store.WaitChs.Load(id); ok {
+				select {
+				case <-ch.(chan struct{}):
+					_ = pw.Close()
+					return
+				default:
+					// Still running — continue streaming
+				}
+			} else if cur, ok := s.ResolveContainerAuto(context.Background(), id); ok && !cur.State.Running {
+				// No WaitCh but CloudState confirms stopped
 				_ = pw.Close()
 				return
 			}
+			// If neither WaitCh nor CloudState says stopped, keep streaming
 		}
 	}()
 	return pr, nil
@@ -900,10 +907,11 @@ func (s *BaseServer) ContainerStats(ref string, stream bool) (io.ReadCloser, err
 
 // ContainerRename renames a container.
 func (s *BaseServer) ContainerRename(ref string, newName string) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
 	if newName == "" {
 		return &api.InvalidParameterError{Message: "name is required"}
@@ -915,7 +923,6 @@ func (s *BaseServer) ContainerRename(ref string, newName string) error {
 	s.Store.RenameMu.Lock()
 	defer s.Store.RenameMu.Unlock()
 
-	c, _ := s.Store.Containers.Get(id)
 	oldName := c.Name
 
 	if _, exists := s.Store.ContainerNames.Get(newName); exists {
@@ -951,10 +958,11 @@ func (s *BaseServer) ContainerRename(ref string, newName string) error {
 
 // ContainerPause pauses a container.
 func (s *BaseServer) ContainerPause(ref string) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	rc, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := rc.ID
 
 	var name string
 	var conflict error
@@ -982,10 +990,11 @@ func (s *BaseServer) ContainerPause(ref string) error {
 
 // ContainerUnpause unpauses a container.
 func (s *BaseServer) ContainerUnpause(ref string) error {
-	id, ok := s.Store.ResolveContainerID(ref)
+	rc, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := rc.ID
 
 	var name string
 	var hasHealthcheck bool
@@ -1014,16 +1023,14 @@ func (s *BaseServer) ContainerUnpause(ref string) error {
 
 // ExecCreate creates an exec instance in a container.
 func (s *BaseServer) ExecCreate(ref string, req *api.ExecCreateRequest) (*api.ExecCreateResponse, error) {
-	id, ok := s.Store.ResolveContainerID(ref)
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
+	id := c.ID
 
-	c, _ := s.Store.Containers.Get(id)
 	if !c.State.Running {
-		if c.AgentAddress != "" || c.State.Status == "" {
-			return nil, &api.ConflictError{Message: "Container " + ref + " is not running"}
-		}
+		return nil, &api.ConflictError{Message: "Container " + ref + " is not running"}
 	}
 
 	if len(req.Cmd) == 0 {
@@ -1659,7 +1666,7 @@ func (s *BaseServer) NetworkConnect(ref string, req *api.NetworkConnectRequest) 
 		return &api.NotFoundError{Resource: "network", ID: ref}
 	}
 
-	containerID, ok := s.Store.ResolveContainerID(req.Container)
+	containerID, ok := s.ResolveContainerIDAuto(context.Background(), req.Container)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: req.Container}
 	}
@@ -1685,7 +1692,7 @@ func (s *BaseServer) NetworkDisconnect(ref string, req *api.NetworkDisconnectReq
 		return &api.NotFoundError{Resource: "network", ID: ref}
 	}
 
-	containerID, found := s.Store.ResolveContainerID(req.Container)
+	containerID, found := s.ResolveContainerIDAuto(context.Background(), req.Container)
 	if !found {
 		if req.Force {
 			return nil
@@ -2000,8 +2007,11 @@ func (s *BaseServer) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error)
 
 // SystemDf returns disk usage information.
 func (s *BaseServer) SystemDf() (*api.DiskUsageResponse, error) {
+	// Collect all containers: Store + CloudState + PendingCreates, deduplicated
+	allContainers := s.collectAllContainers(context.Background())
+
 	imgContainerCount := make(map[string]int64)
-	for _, c := range s.Store.Containers.List() {
+	for _, c := range allContainers {
 		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
 			imgContainerCount[img.ID]++
 		}
@@ -2028,7 +2038,7 @@ func (s *BaseServer) SystemDf() (*api.DiskUsageResponse, error) {
 	}
 
 	var containers []*api.ContainerSummary
-	for _, c := range s.Store.Containers.List() {
+	for _, c := range allContainers {
 		created, _ := time.Parse(time.RFC3339Nano, c.Created)
 		command := c.Path
 		if len(c.Args) > 0 {
@@ -2074,7 +2084,7 @@ func (s *BaseServer) SystemDf() (*api.DiskUsageResponse, error) {
 	}
 
 	volRefCount := make(map[string]int64)
-	for _, c := range s.Store.Containers.List() {
+	for _, c := range allContainers {
 		for _, m := range c.Mounts {
 			if m.Name != "" {
 				volRefCount[m.Name]++

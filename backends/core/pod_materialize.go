@@ -23,9 +23,16 @@ func (s *BaseServer) PodDeferredStart(containerID string) (shouldDefer bool, pod
 		return true, nil
 	}
 
-	// Collect all container objects for materialization
+	// Collect all container objects for materialization.
+	// Check PendingCreates first (cloud backends), then Store (Docker passthrough).
 	containers := make([]api.Container, 0, len(allIDs))
 	for _, cid := range allIDs {
+		if s.PendingCreates != nil {
+			if c, ok := s.PendingCreates.Get(cid); ok {
+				containers = append(containers, c)
+				continue
+			}
+		}
 		if c, ok := s.Store.Containers.Get(cid); ok {
 			containers = append(containers, c)
 		}

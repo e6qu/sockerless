@@ -19,7 +19,7 @@ type ServiceUsageState struct {
 }
 
 func registerServiceUsage(srv *sim.Server) {
-	services := sim.NewStateStore[ServiceUsageState]()
+	services := sim.MakeStore[ServiceUsageState](srv.DB(), "service_usage")
 
 	// Enable/disable service
 	srv.HandleFunc("POST /v1/projects/{project}/services/{serviceAction}", func(w http.ResponseWriter, r *http.Request) {

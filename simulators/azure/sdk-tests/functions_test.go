@@ -26,6 +26,11 @@ func azureDeleteSite(rg, name string) {
 
 // azureCreateSite creates a resource group and function app, optionally with SimCommand.
 func azureCreateSite(t *testing.T, rg, name string, simCommand []string) {
+	azureCreateSiteWithImage(t, rg, name, simCommand, "")
+}
+
+// azureCreateSiteWithImage creates a function app with a Docker image and optional SimCommand.
+func azureCreateSiteWithImage(t *testing.T, rg, name string, simCommand []string, image string) {
 	t.Helper()
 	rgBody := `{"location":"eastus"}`
 	rgReq, _ := http.NewRequestWithContext(ctx, "PUT",
@@ -40,8 +45,15 @@ func azureCreateSite(t *testing.T, rg, name string, simCommand []string) {
 	props := map[string]any{
 		"serverFarmId": "/subscriptions/" + subscriptionID + "/resourceGroups/" + rg + "/providers/Microsoft.Web/serverFarms/test-plan",
 	}
+	siteConfig := map[string]any{}
 	if len(simCommand) > 0 {
-		props["siteConfig"] = map[string]any{"simCommand": simCommand}
+		siteConfig["simCommand"] = simCommand
+	}
+	if image != "" {
+		siteConfig["linuxFxVersion"] = "DOCKER|" + image
+	}
+	if len(siteConfig) > 0 {
+		props["siteConfig"] = siteConfig
 	}
 	site := map[string]any{
 		"location":   "eastus",
@@ -123,7 +135,7 @@ func TestAzureFunctions_InvokeInjectsLogEntries(t *testing.T) {
 
 func TestAzureFunctions_InvokeExecutesCommand(t *testing.T) {
 	rg, name := "func-exec-rg", "exec-func-app"
-	azureCreateSite(t, rg, name, []string{"echo", "hello-from-azure"})
+	azureCreateSiteWithImage(t, rg, name, []string{"echo", "hello-from-azure"}, "alpine:latest")
 	defer azureDeleteSite(rg, name)
 
 	respBody := azureInvokeFunction(t)
@@ -132,7 +144,7 @@ func TestAzureFunctions_InvokeExecutesCommand(t *testing.T) {
 
 func TestAzureFunctions_InvokeNonZeroExit(t *testing.T) {
 	rg, name := "func-fail-rg", "fail-func-app"
-	azureCreateSite(t, rg, name, []string{"sh", "-c", "exit 1"})
+	azureCreateSiteWithImage(t, rg, name, []string{"sh", "-c", "exit 1"}, "alpine:latest")
 	defer azureDeleteSite(rg, name)
 
 	azureInvokeFunctionExpectError(t)
@@ -164,7 +176,7 @@ func TestAzureFunctions_InvokeNonZeroExit(t *testing.T) {
 
 func TestAzureFunctions_InvokeLogsRealOutput(t *testing.T) {
 	rg, name := "func-out-rg", "out-func-app"
-	azureCreateSite(t, rg, name, []string{"echo", "real-azure-output"})
+	azureCreateSiteWithImage(t, rg, name, []string{"echo", "real-azure-output"}, "alpine:latest")
 	defer azureDeleteSite(rg, name)
 
 	azureInvokeFunction(t)

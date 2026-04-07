@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -23,9 +22,6 @@ type CloudLogFetchFunc func(ctx context.Context, params CloudLogParams, cursor a
 
 // StreamCloudLogsOptions configures StreamCloudLogs behavior per backend type.
 type StreamCloudLogsOptions struct {
-	// CheckAutoAgent causes StreamCloudLogs to delegate to BaseServer.ContainerLogs
-	// if SOCKERLESS_AUTO_AGENT_BIN is set. Set true for container-service backends.
-	CheckAutoAgent bool
 	// CheckLogBuffers causes StreamCloudLogs to use in-memory LogBuffers if available.
 	// Set true for FaaS backends where invocation output is captured in memory.
 	CheckLogBuffers bool
@@ -36,20 +32,12 @@ type StreamCloudLogsOptions struct {
 // io.Pipe creation, formatting, tail filtering, and follow-mode polling.
 // Writes raw text to the pipe — the HTTP handler adds Docker mux framing.
 func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOptions, fetch CloudLogFetchFunc, sopts StreamCloudLogsOptions) (io.ReadCloser, error) {
-	id, ok := s.Store.ResolveContainerID(containerID)
+	// Resolve container via CloudState-aware path (stateless backends have no Store.Containers)
+	c, ok := s.ResolveContainerAuto(context.Background(), containerID)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: containerID}
 	}
-
-	c, containerOK := s.Store.Containers.Get(id)
-	if !containerOK {
-		return nil, &api.NotFoundError{Resource: "container", ID: containerID}
-	}
-
-	// Container-service backends delegate to core for auto-agent containers.
-	if sopts.CheckAutoAgent && os.Getenv("SOCKERLESS_AUTO_AGENT_BIN") != "" {
-		return s.ContainerLogs(containerID, opts)
-	}
+	id := c.ID
 
 	if c.State.Status == "created" {
 		return nil, &api.InvalidParameterError{
@@ -100,8 +88,8 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 		defer ticker.Stop()
 
 		for range ticker.C {
-			// Check if container has stopped.
-			if cc, ccOK := s.Store.Containers.Get(id); ccOK && !cc.State.Running {
+			// Check if container has stopped via CloudState-aware path.
+			if cc, ccOK := s.ResolveContainerAuto(ctx, id); ccOK && !cc.State.Running {
 				// Final fetch before exit.
 				entries, _, _ = fetch(ctx, params, cursor)
 				for _, e := range entries {

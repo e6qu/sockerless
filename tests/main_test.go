@@ -18,6 +18,7 @@ var (
 	dockerClient   *client.Client
 	serverAddr     string
 	evalBinaryPath string
+	evalImageName  string
 	ctx            = context.Background()
 )
 
@@ -42,11 +43,21 @@ func TestMain(m *testing.M) {
 	fmt.Println("Building eval-arithmetic...")
 	evalBuild := exec.Command("go", "build", "-o", "eval-arithmetic", ".")
 	evalBuild.Dir = evalDir
-	evalBuild.Env = append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off")
+	evalBuild.Env = append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux")
 	evalBuild.Stdout = os.Stderr
 	evalBuild.Stderr = os.Stderr
 	if err := evalBuild.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Build Docker image containing the eval binary
+	evalImageName = "sockerless-eval-arithmetic:test"
+	dockerfile := "FROM alpine:latest\nCOPY eval-arithmetic /usr/local/bin/eval-arithmetic\nENTRYPOINT [\"/usr/local/bin/eval-arithmetic\"]\n"
+	dockerBuild := exec.Command("docker", "build", "-t", evalImageName, "-f", "-", evalDir)
+	dockerBuild.Stdin = strings.NewReader(dockerfile)
+	if out, err := dockerBuild.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic Docker image: %v\n%s", err, out)
 		os.Exit(1)
 	}
 
@@ -84,19 +95,6 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	backendBin := backendDir + "/sockerless-backend-ecs"
-
-	// Build agent binary (for auto-agent real exec support)
-	fmt.Println("Building agent...")
-	agentDir := findModuleDir("agent")
-	buildAgent := exec.Command("go", "build", "-o", "sockerless-agent", "./cmd/sockerless-agent")
-	buildAgent.Dir = agentDir
-	buildAgent.Stdout = os.Stderr
-	buildAgent.Stderr = os.Stderr
-	if err := buildAgent.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build agent: %v\n", err)
-		os.Exit(1)
-	}
-	agentBin := agentDir + "/sockerless-agent"
 
 	// Find free ports
 	simPort := findFreePort()
@@ -140,14 +138,13 @@ func TestMain(m *testing.M) {
 	serverAddr = fmt.Sprintf("localhost:%d", backendPort)
 	fmt.Printf("Starting ECS backend on %s...\n", backendAddr)
 	backendCmd := exec.Command(backendBin, "--addr", backendAddr, "--log-level", "debug")
-	callbackURL := fmt.Sprintf("http://127.0.0.1:%d", backendPort)
 	backendCmd.Env = append(os.Environ(),
 		"SOCKERLESS_ENDPOINT_URL="+simURL,
 		"SOCKERLESS_ECS_CLUSTER=sim-cluster",
 		"SOCKERLESS_ECS_SUBNETS=subnet-sim",
 		"SOCKERLESS_ECS_EXECUTION_ROLE_ARN=arn:aws:iam::000000000000:role/sim",
-		"SOCKERLESS_AUTO_AGENT_BIN="+agentBin,
-		"SOCKERLESS_CALLBACK_URL="+callbackURL,
+		"SOCKERLESS_AGENT_TIMEOUT=2s",
+		"SOCKERLESS_POLL_INTERVAL=500ms",
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
@@ -218,7 +215,6 @@ func TestMain(m *testing.M) {
 	// Clean up binaries
 	os.Remove(backendBin)
 	os.Remove(simBin)
-	os.Remove(agentBin)
 
 	os.Exit(code)
 }

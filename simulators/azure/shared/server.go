@@ -2,6 +2,7 @@ package simulator
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -27,6 +28,8 @@ type Server struct {
 	logger  zerolog.Logger
 	mux     *http.ServeMux
 	handler http.Handler
+	db      *sql.DB         // nil when persistence disabled
+	tracker *ProcessTracker // nil when persistence disabled
 }
 
 // NewServer creates a new simulator server with the given configuration.
@@ -62,12 +65,49 @@ func NewServer(cfg Config) *Server {
 	handler = LoggingMiddleware(logger, cfg.Provider)(handler)
 	handler = RequestIDMiddleware(cfg.Provider)(handler)
 
-	return &Server{
+	// Initialize container runtime (Docker/Podman) — required for execution
+	runtime := os.Getenv("SIM_RUNTIME")
+	if runtime == "" {
+		runtime = "docker"
+	}
+	if runtime != "process" {
+		InitDocker()
+		logger.Info().Str("runtime", RuntimeInfo()).Msg("container runtime initialized")
+	}
+
+	srv := &Server{
 		config:  cfg,
 		logger:  logger,
 		mux:     mux,
 		handler: handler,
 	}
+
+	if cfg.Persist {
+		dataDir := cfg.DataDir
+		if dataDir == "" {
+			dataDir = fmt.Sprintf("/tmp/sockerless-sim-%s", cfg.Provider)
+		}
+		db, err := OpenDB(dataDir)
+		if err != nil {
+			logger.Error().Err(err).Msg("failed to open SQLite database, falling back to in-memory")
+		} else {
+			srv.db = db
+			srv.tracker = NewProcessTracker(dataDir)
+			logger.Info().Str("path", dataDir+"/simulator.db").Msg("SQLite persistence enabled")
+		}
+	}
+
+	return srv
+}
+
+// DB returns the SQLite database connection, or nil if persistence is disabled.
+func (s *Server) DB() *sql.DB {
+	return s.db
+}
+
+// Tracker returns the process tracker, or nil if persistence is disabled.
+func (s *Server) Tracker() *ProcessTracker {
+	return s.tracker
 }
 
 // WrapHandler wraps the server's handler with an additional middleware.
@@ -114,6 +154,7 @@ func (s *Server) ListenAndServe() error {
 		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 		sig := <-sigCh
 		s.logger.Info().Str("signal", sig.String()).Msg("shutting down")
+		CleanupContainers()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

@@ -40,8 +40,9 @@ func TestIntegration_ECSFullLifecycle(t *testing.T) {
 		Memory:                  aws.String("512"),
 		ContainerDefinitions: []ecstypes.ContainerDefinition{
 			{
-				Name:  aws.String("app"),
-				Image: aws.String("alpine:latest"),
+				Name:    aws.String("app"),
+				Image:   aws.String("alpine:latest"),
+				Command: []string{"tail", "-f", "/dev/null"},
 				LogConfiguration: &ecstypes.LogConfiguration{
 					LogDriver: "awslogs",
 					Options: map[string]string{
@@ -72,8 +73,8 @@ func TestIntegration_ECSFullLifecycle(t *testing.T) {
 	require.Len(t, runOut.Tasks, 1)
 	taskArn := *runOut.Tasks[0].TaskArn
 
-	// Wait for RUNNING
-	time.Sleep(800 * time.Millisecond)
+	// Wait for container to start (image pull + create + start)
+	time.Sleep(10 * time.Second)
 
 	descOut, err := ecsC.DescribeTasks(ctx, &ecs.DescribeTasksInput{
 		Cluster: aws.String(clusterName),

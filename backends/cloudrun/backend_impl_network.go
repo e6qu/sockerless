@@ -1,6 +1,7 @@
 package cloudrun
 
 import (
+	"context"
 	"strings"
 
 	"github.com/sockerless/api"
@@ -47,11 +48,11 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 	if !ok {
 		return nil
 	}
-	containerID, ok := s.Store.ResolveContainerID(req.Container)
+	containerID, ok := s.ResolveContainerIDAuto(context.Background(), req.Container)
 	if !ok {
 		return nil
 	}
-	c, _ := s.Store.Containers.Get(containerID)
+	c, _ := s.ResolveContainerAuto(context.Background(), containerID)
 	hostname := strings.TrimPrefix(c.Name, "/")
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID == net.ID && ep.IPAddress != "" {
@@ -70,9 +71,9 @@ func (s *Server) NetworkDisconnect(id string, req *api.NetworkDisconnectRequest)
 	// Deregister from Cloud DNS before disconnecting
 	net, ok := s.Store.ResolveNetwork(id)
 	if ok {
-		containerID, _ := s.Store.ResolveContainerID(req.Container)
+		containerID, _ := s.ResolveContainerIDAuto(context.Background(), req.Container)
 		if containerID != "" {
-			c, _ := s.Store.Containers.Get(containerID)
+			c, _ := s.ResolveContainerAuto(context.Background(), containerID)
 			hostname := strings.TrimPrefix(c.Name, "/")
 			if err := s.cloudServiceDeregister(containerID, hostname, net.ID); err != nil {
 				s.Logger.Warn().Err(err).Msg("failed to deregister from Cloud DNS")

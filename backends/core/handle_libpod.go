@@ -74,7 +74,7 @@ func (s *BaseServer) handleLibpodContainerRemove(w http.ResponseWriter, r *http.
 	ref := r.PathValue("id")
 	force := r.URL.Query().Get("force") == "true" || r.URL.Query().Get("force") == "1"
 
-	id, ok := s.Store.ResolveContainerID(ref)
+	id, ok := s.ResolveContainerIDAuto(r.Context(), ref)
 	if !ok {
 		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
 		return

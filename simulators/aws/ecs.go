@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	dockercontainer "github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/gorilla/websocket"
 
 	sim "github.com/sockerless/simulator"
@@ -41,6 +43,8 @@ type ECSContainerDefinition struct {
 	LogConfiguration  *ECSLogConfiguration `json:"logConfiguration,omitempty"`
 	EntryPoint        []string             `json:"entryPoint,omitempty"`
 	Command           []string             `json:"command,omitempty"`
+	PseudoTerminal    bool                 `json:"pseudoTerminal,omitempty"`
+	Interactive       bool                 `json:"interactive,omitempty"`
 }
 
 type ECSKeyValuePair struct {
@@ -158,12 +162,12 @@ type ECSTaskVpcConfig struct {
 
 // State stores
 var (
-	ecsClusters        *sim.StateStore[ECSCluster]
-	ecsTaskDefinitions *sim.StateStore[ECSTaskDefinition]
-	ecsTasks           *sim.StateStore[ECSTask]
+	ecsClusters        sim.Store[ECSCluster]
+	ecsTaskDefinitions sim.Store[ECSTaskDefinition]
+	ecsTasks           sim.Store[ECSTask]
 	ecsRevisionMu      sync.Mutex
 	ecsRevisions       map[string]int // family -> latest revision
-	ecsProcessHandles  sync.Map       // map[taskID]*sim.ProcessHandle
+	ecsProcessHandles  sync.Map       // map[taskID]*sim.ContainerHandle
 )
 
 func generateUUID() string {
@@ -177,9 +181,9 @@ func ecsArn(resourceType, id string) string {
 }
 
 func registerECS(r *sim.AWSRouter, srv *sim.Server) {
-	ecsClusters = sim.NewStateStore[ECSCluster]()
-	ecsTaskDefinitions = sim.NewStateStore[ECSTaskDefinition]()
-	ecsTasks = sim.NewStateStore[ECSTask]()
+	ecsClusters = sim.MakeStore[ECSCluster](srv.DB(), "ecs_clusters")
+	ecsTaskDefinitions = sim.MakeStore[ECSTaskDefinition](srv.DB(), "ecs_task_definitions")
+	ecsTasks = sim.MakeStore[ECSTask](srv.DB(), "ecs_tasks")
 	ecsRevisions = make(map[string]int)
 
 	r.Register("AmazonEC2ContainerServiceV20141113.CreateCluster", handleECSCreateCluster)
@@ -194,6 +198,60 @@ func registerECS(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerServiceV20141113.DeleteCluster", handleECSDeleteCluster)
 	r.Register("AmazonEC2ContainerServiceV20141113.ListTagsForResource", handleECSListTagsForResource)
 	r.Register("AmazonEC2ContainerServiceV20141113.ExecuteCommand", handleECSExecuteCommand(srv))
+
+	// Static WebSocket route for ECS exec sessions (session ID is a path param)
+	srv.HandleFunc("GET /ecs-exec/{sessionId}", func(w http.ResponseWriter, r *http.Request) {
+		sessionID := r.PathValue("sessionId")
+		handleECSExecWebSocket(sessionID)(w, r)
+	})
+
+	// Archive upload endpoint: forward tar archive to the Docker container backing an ECS task
+	srv.HandleFunc("PUT /sockerless/tasks/{taskId}/archive", func(w http.ResponseWriter, r *http.Request) {
+		taskID := r.PathValue("taskId")
+		path := r.URL.Query().Get("path")
+		if path == "" {
+			http.Error(w, "missing path query parameter", http.StatusBadRequest)
+			return
+		}
+
+		// Poll for the container handle — it may not be stored yet if the
+		// Docker container is still starting (async after RUNNING state).
+		var handle *sim.ContainerHandle
+		for i := 0; i < 20; i++ {
+			if v, ok := ecsProcessHandles.Load(taskID); ok {
+				handle = v.(*sim.ContainerHandle)
+				break
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+		if handle == nil {
+			http.Error(w, "no running container for task "+taskID, http.StatusNotFound)
+			return
+		}
+
+		cli := sim.DockerClient()
+		if cli == nil {
+			http.Error(w, "docker client not available", http.StatusInternalServerError)
+			return
+		}
+
+		// Create target directory if it doesn't exist
+		mkdirExec, mkdirErr := cli.ContainerExecCreate(r.Context(), handle.ContainerID, dockercontainer.ExecOptions{
+			Cmd: []string{"mkdir", "-p", path},
+		})
+		if mkdirErr == nil {
+			_ = cli.ContainerExecStart(r.Context(), mkdirExec.ID, dockercontainer.ExecStartOptions{})
+		}
+
+		err := cli.CopyToContainer(r.Context(), handle.ContainerID, path, r.Body, dockercontainer.CopyToContainerOptions{
+			AllowOverwriteDirWithFile: true,
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
 }
 
 func handleECSCreateCluster(w http.ResponseWriter, r *http.Request) {
@@ -570,7 +628,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		tasks = append(tasks, task)
 
 		// Simulate async transition: PROVISIONING → PENDING → RUNNING
-		go func(id string, td ECSTaskDefinition) {
+		go func(id string, td ECSTaskDefinition, taskTags []ECSTag) {
 			// PROVISIONING → PENDING
 			time.Sleep(100 * time.Millisecond)
 			ecsTasks.Update(id, func(t *ECSTask) {
@@ -582,6 +640,25 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 
 			// PENDING → RUNNING
 			time.Sleep(400 * time.Millisecond)
+
+			// Extract image, entrypoint, command, and env from first container definition
+			var imageURI string
+			var entrypoint, args []string
+			var cmdEnv map[string]string
+			if len(td.ContainerDefinitions) > 0 {
+				cd := td.ContainerDefinitions[0]
+				imageURI = cd.Image
+				entrypoint = cd.EntryPoint
+				args = cd.Command
+				if len(cd.Environment) > 0 {
+					cmdEnv = make(map[string]string, len(cd.Environment))
+					for _, ev := range cd.Environment {
+						cmdEnv[ev.Name] = ev.Value
+					}
+				}
+			}
+
+			// Mark task as RUNNING before starting containers
 			now := time.Now().Unix()
 			ecsTasks.Update(id, func(t *ECSTask) {
 				t.LastStatus = "RUNNING"
@@ -594,21 +671,6 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 					t.Attachments[j].Status = "ATTACHED"
 				}
 			})
-
-			// Build combined command from first container definition
-			var fullCmd []string
-			var cmdEnv map[string]string
-			if len(td.ContainerDefinitions) > 0 {
-				cd := td.ContainerDefinitions[0]
-				fullCmd = append(fullCmd, cd.EntryPoint...)
-				fullCmd = append(fullCmd, cd.Command...)
-				if len(cd.Environment) > 0 {
-					cmdEnv = make(map[string]string, len(cd.Environment))
-					for _, ev := range cd.Environment {
-						cmdEnv[ev.Name] = ev.Value
-					}
-				}
-			}
 
 			// Inject CloudWatch logs for containers with awslogs log driver
 			for _, cd := range td.ContainerDefinitions {
@@ -645,28 +707,78 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				})
 
 				// Insert initial log event
-				cmdOutput := strings.Join(fullCmd, " ")
-				if cmdOutput == "" {
-					cmdOutput = "container started"
+				cmdDesc := strings.Join(append(entrypoint, args...), " ")
+				if cmdDesc == "" {
+					cmdDesc = "container started"
 				}
 				cwLogEvents.Put(key, []CWLogEvent{
 					{
 						Timestamp:     nowMs,
-						Message:       cmdOutput,
+						Message:       cmdDesc,
 						IngestionTime: nowMs,
 					},
 				})
 
-				// If command is non-empty, stream real output to this log stream
-				if len(fullCmd) > 0 {
+				// If image is available, run a real container and stream output to this log stream
+				if imageURI != "" {
+					// Check task tags for TTY propagation
+					wantTTY := false
+					for _, tag := range taskTags {
+						if tag.Key == "sockerless-tty" && tag.Value == "true" {
+							wantTTY = true
+							break
+						}
+					}
+					// Build bind mounts from task definition volumes + container mount points
+					var binds []string
+					volMap := make(map[string]string) // volume name → source/name
+					for _, v := range td.Volumes {
+						volMap[v.Name] = v.Name // Use volume name as Docker volume name
+					}
+					if len(td.ContainerDefinitions) > 0 {
+						for _, mp := range td.ContainerDefinitions[0].MountPoints {
+							if src, ok := volMap[mp.SourceVolume]; ok {
+								bind := src + ":" + mp.ContainerPath
+								if mp.ReadOnly {
+									bind += ":ro"
+								}
+								binds = append(binds, bind)
+							}
+						}
+					}
+
 					sink := &cwLogSink{logGroup: logGroup, logStream: logStreamName}
-					handle := sim.StartProcess(sim.ProcessConfig{
-						Command: fullCmd,
-						Env:     cmdEnv,
+					handle, err := sim.StartContainerSync(sim.ContainerConfig{
+						Image:     sim.ResolveLocalImage(imageURI),
+						Command:   entrypoint,
+						Args:      args,
+						Env:       cmdEnv,
+						Name:      fmt.Sprintf("sockerless-sim-aws-task-%s", id[:12]),
+						Labels:    map[string]string{"sockerless-sim-task": id},
+						Tty:       wantTTY,
+						OpenStdin: wantTTY,
+						Binds:     binds,
 					}, sink)
+					if err != nil {
+						// Mark task as STOPPED with failure
+						stoppedAt := time.Now().Unix()
+						ecsTasks.Update(id, func(t *ECSTask) {
+							t.LastStatus = "STOPPED"
+							t.DesiredStatus = "STOPPED"
+							t.StoppedAt = &stoppedAt
+							t.StopCode = "EssentialContainerExited"
+							t.StoppedReason = fmt.Sprintf("Container start failed: %v", err)
+							exitCode := -1
+							for j := range t.Containers {
+								t.Containers[j].LastStatus = "STOPPED"
+								t.Containers[j].ExitCode = &exitCode
+							}
+						})
+						continue
+					}
 					ecsProcessHandles.Store(id, handle)
 
-					go func(taskID string, handle *sim.ProcessHandle) {
+					go func(taskID string, handle *sim.ContainerHandle) {
 						result := handle.Wait()
 						ecsProcessHandles.Delete(taskID)
 						stoppedAt := time.Now().Unix()
@@ -689,7 +801,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-		}(taskID, td)
+		}(taskID, td, taskTags)
 	}
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
@@ -761,9 +873,10 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Cancel running process if any
+	// Stop running container if any
 	if v, ok := ecsProcessHandles.LoadAndDelete(taskID); ok {
-		v.(*sim.ProcessHandle).Cancel()
+		handle := v.(*sim.ContainerHandle)
+		sim.StopContainer(handle.ContainerID)
 	}
 
 	now := time.Now().Unix()
@@ -924,8 +1037,21 @@ func handleECSListTagsForResource(w http.ResponseWriter, r *http.Request) {
 var ecsExecSessions sync.Map // map[sessionID]ecsExecSession
 
 type ecsExecSession struct {
-	taskID  string
-	command string
+	taskID            string
+	command           string
+	dockerContainerID string
+}
+
+// wsMessageWriter wraps a WebSocket conn as an io.Writer, sending each Write as a binary message.
+type wsMessageWriter struct {
+	conn *websocket.Conn
+}
+
+func (w *wsMessageWriter) Write(p []byte) (int, error) {
+	if err := w.conn.WriteMessage(websocket.BinaryMessage, p); err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }
 
 var wsUpgrader = websocket.Upgrader{
@@ -980,9 +1106,22 @@ func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
 		sessionID := generateUUID()
 
 		// Store the session
+		// Look up the Docker container ID for this task (may need to wait briefly
+		// for the container to start — it starts async after RUNNING transition)
+		var dockerContainerID string
+		for i := 0; i < 20; i++ {
+			if v, ok := ecsProcessHandles.Load(taskID); ok {
+				handle := v.(*sim.ContainerHandle)
+				dockerContainerID = handle.ContainerID
+				break
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+
 		ecsExecSessions.Store(sessionID, ecsExecSession{
-			taskID:  taskID,
-			command: req.Command,
+			taskID:            taskID,
+			command:           req.Command,
+			dockerContainerID: dockerContainerID,
 		})
 
 		// Determine host from the incoming request
@@ -992,8 +1131,7 @@ func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
 		}
 		streamURL := fmt.Sprintf("ws://%s/ecs-exec/%s", host, sessionID)
 
-		// Register the WebSocket endpoint for this session (one-shot)
-		srv.HandleFunc(fmt.Sprintf("GET /ecs-exec/%s", sessionID), handleECSExecWebSocket(sessionID))
+		// WebSocket endpoint is registered statically as /ecs-exec/{sessionId}
 
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
 			"session": map[string]any{
@@ -1022,7 +1160,54 @@ func handleECSExecWebSocket(sessionID string) http.HandlerFunc {
 		}
 		defer conn.Close() //nolint:errcheck
 
-		// Parse command — use shell if it's a single string
+		// Execute command inside the real Docker container
+		if sess.dockerContainerID != "" {
+			cli := sim.DockerClient()
+			if cli != nil {
+				// Parse exec command: if it starts with "sh -c" or similar shell
+				// invocation, pass it through to Docker exec as-is.
+				// Otherwise wrap in sh -c for shell interpretation.
+				var execCmd []string
+				if strings.HasPrefix(sess.command, "sh -c ") || strings.HasPrefix(sess.command, "/bin/sh -c ") {
+					// Already a shell command — split into [sh, -c, rest]
+					idx := strings.Index(sess.command, "-c ") + 3
+					execCmd = []string{"sh", "-c", sess.command[idx:]}
+				} else {
+					execCmd = []string{"sh", "-c", sess.command}
+				}
+				execCfg := dockercontainer.ExecOptions{
+					Cmd:          execCmd,
+					AttachStdout: true,
+					AttachStderr: true,
+				}
+				execResp, err := cli.ContainerExecCreate(r.Context(), sess.dockerContainerID, execCfg)
+				if err != nil {
+					_ = conn.WriteMessage(websocket.CloseMessage,
+						websocket.FormatCloseMessage(websocket.CloseInternalServerErr, err.Error()))
+					return
+				}
+				attach, err := cli.ContainerExecAttach(r.Context(), execResp.ID, dockercontainer.ExecAttachOptions{})
+				if err != nil {
+					_ = conn.WriteMessage(websocket.CloseMessage,
+						websocket.FormatCloseMessage(websocket.CloseInternalServerErr, err.Error()))
+					return
+				}
+				defer attach.Close()
+
+				// Bridge: Docker exec → WebSocket
+				// Docker non-TTY exec uses multiplexed stream. Demux with stdcopy.
+				wsWriter := &wsMessageWriter{conn: conn}
+				_, _ = stdcopy.StdCopy(wsWriter, wsWriter, attach.Reader)
+				_ = conn.WriteControl(
+					websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+					time.Now().Add(5*time.Second),
+				)
+				return
+			}
+		}
+
+		// Fallback: local process (only if no Docker container — should not happen)
 		var cmd *exec.Cmd
 		if strings.Contains(sess.command, " ") {
 			cmd = exec.Command("sh", "-c", sess.command)

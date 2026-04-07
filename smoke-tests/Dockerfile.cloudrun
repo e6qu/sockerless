@@ -1,0 +1,26 @@
+FROM golang:1.25
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/* \
+    && ARCH=$(uname -m) \
+    && curl -fsSL "https://download.docker.com/linux/static/stable/${ARCH}/docker-27.5.1.tgz" | tar xz -C /usr/local/bin --strip-components=1 docker/docker
+
+# Build simulator (independent module, not in go.work)
+WORKDIR /sim
+COPY simulators/gcp/ /sim/
+RUN GOWORK=off go build -tags noui -o /usr/local/bin/simulator-gcp .
+
+# Copy source and build backend
+WORKDIR /src
+COPY api/ api/
+COPY backends/core/ backends/core/
+COPY backends/gcp-common/ backends/gcp-common/
+COPY backends/cloudrun/ backends/cloudrun/
+
+RUN cd backends/cloudrun && GOWORK=off go mod download && GOWORK=off go build -tags noui -o /usr/local/bin/sockerless-backend-cloudrun ./cmd/sockerless-backend-cloudrun
+
+COPY smoke-tests/run.sh /test/run.sh
+RUN chmod +x /test/run.sh
+
+ENV BACKEND=cloudrun
+WORKDIR /test
+ENTRYPOINT ["/test/run.sh"]

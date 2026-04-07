@@ -22,7 +22,7 @@ func TestIntegration_CloudRunJobLifecycle(t *testing.T) {
 		"template": map[string]any{
 			"template": map[string]any{
 				"containers": []map[string]any{
-					{"image": "gcr.io/test/integ:latest"},
+					{"image": "alpine:latest"},
 				},
 			},
 		},

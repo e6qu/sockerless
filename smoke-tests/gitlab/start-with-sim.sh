@@ -22,9 +22,6 @@ wait_for_url() {
 }
 
 export SOCKERLESS_POLL_INTERVAL="500ms"
-export SOCKERLESS_AGENT_TIMEOUT="2s"
-export SOCKERLESS_AUTO_AGENT_BIN="/usr/local/bin/sockerless-agent"
-export SOCKERLESS_CALLBACK_URL="http://127.0.0.1${BACKEND_ADDR}"
 
 case "$CLOUD" in
     aws)

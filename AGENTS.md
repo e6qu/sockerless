@@ -1,5 +1,25 @@
 # Agent Guidelines
 
+## No stubs. No fakes. No mocks. No synthetic behavior. Ever.
+
+This is the single most important rule. Every piece of code in this project — backends, simulators, tests, CI — must do real work or not exist. There is no middle ground.
+
+**Stubs and fakes are bugs.** Not shortcuts. Not placeholders. Not "good enough for now." They are defects that hide real problems, create false confidence, and accumulate into architectural rot. If you are tempted to stub something out, stop and ask the user instead.
+
+This applies to:
+- **Backends**: Every Docker API method must perform real cloud operations or return `NotImplementedError` with user approval. No synthetic responses, no hardcoded values, no in-memory stand-ins for cloud state.
+- **Simulators**: Every API endpoint must behave like the real cloud service. If the real API returns labels, the simulator returns labels. If the real API tracks execution state, the simulator tracks execution state.
+- **Tests**: Tests run against real simulators or real backends. No mock objects, no fake HTTP responses, no simulated cloud behavior.
+- **CI**: Smoke tests exercise real API flows end-to-end. If a test can't work without a feature, implement the feature — don't mock around it.
+
+If you find yourself writing any of the following, you are writing a bug:
+- `return nil, nil` or `return &SomeStruct{}` as a "temporary" response
+- Reading from `Store.Containers` in a cloud backend (the cloud is the source of truth)
+- Hardcoded values where cloud metadata should be queried
+- `// TODO: implement` without filing a bug and telling the user
+- A function that "works" by ignoring its inputs and returning a canned response
+- Fallbacks that silently degrade to local/in-memory behavior
+
 ## Simulators are real implementations
 
 The cloud simulators (`simulators/aws/`, `simulators/gcp/`, `simulators/azure/`) are **local reimplementations** of cloud provider services, not mocks, stubs, or fakes. They execute real logic:
@@ -8,6 +28,7 @@ The cloud simulators (`simulators/aws/`, `simulators/gcp/`, `simulators/azure/`)
 - Execution behavior is driven by the same cloud-native configuration that the real services honor — `replicaTimeout` for Azure ACA, task template `timeout` for GCP Cloud Run, `StopTask` for AWS ECS.
 - There are no synthetic timers, hardcoded delays, or fake completion signals. If a cloud service doesn't have a native timeout mechanism (e.g., ECS tasks), neither does the simulator.
 - Log entries are written to the same tables and log groups as the real services, queryable through the same APIs (KQL, Cloud Logging filters, CloudWatch).
+- Every field the real API returns, the simulator returns. If a backend's CloudState expects `latestCreatedExecution` on a Cloud Run Job, the simulator must populate it.
 
 When modifying simulators, always ask: "How does the real cloud service behave?" and implement that. Do not add simulator-specific environment variables, synthetic shortcuts, or approximate behaviors. Use the cloud's own configuration knobs.
 
@@ -66,6 +87,51 @@ Good: `// Podman's libpod API sends "reference" instead of "fromImage"`
 Bad: `// BUG-625: Podman's libpod API sends "reference" instead of "fromImage"`
 
 Bug tracking belongs in `BUGS.md`, `STATUS.md`, and task files. Code comments describe intent and behavior.
+
+## Cloud backends must be stateless
+
+Cloud backends (ECS, Lambda, Cloud Run, Cloud Run Functions, ACA, Azure Functions) maintain **zero local state** for containers, pods, networks, or volumes. The cloud provider is the single source of truth.
+
+- No `Store.Containers` writes. No `Store.ContainerNames` as authority. No `Store.WaitChs` as primary mechanism.
+- `docker ps` queries the cloud API. `docker inspect` queries the cloud API. `docker wait` polls the cloud API.
+- Container metadata lives in cloud resource tags, not in local maps.
+- The only acceptable local state is `PendingCreates` — a transient map for containers between `docker create` and `docker start`, before any cloud resource exists.
+- If you restart the backend process, `docker ps` must return all running containers from the cloud. No recovery needed. No registry file needed.
+
+No exceptions. No fallbacks. No "keep Store as backup." If making an operation stateless is hard, ask the user for help — do not silently add local state as a shortcut.
+
+## Cloud backends must not use core engine methods directly
+
+Cloud backends (all except Docker passthrough) must **never call `BaseServer` container lifecycle methods** (`BaseServer.ContainerStart`, `BaseServer.ContainerStop`, `Store.StopContainer`, `Store.ForceStopContainer`, `Store.RevertToCreated`, etc.). These methods operate on local in-memory state, which violates the stateless requirement.
+
+Instead, cloud backends must:
+- Call their cloud provider's API directly (ECS `RunTask`/`StopTask`, Lambda `Invoke`/`DeleteFunction`, etc.)
+- Let the cloud API be the action and the source of truth
+- Use `CloudStateProvider` to query current state when needed
+- Implement every `api.Backend` method explicitly — no generated delegates
+
+The only exception: the Docker passthrough backend, which delegates everything to the local Docker daemon via the Docker SDK.
+
+**Enforcement**:
+- **Compiler**: `var _ api.Backend = (*Server)(nil)` in every backend — missing methods cause build failure.
+- **CI lint**: `scripts/check-cloud-backend-isolation.sh` verifies no cloud backend uses `Store.ResolveContainerID`, `Store.Containers`, `BaseServer` lifecycle methods, `SpawnAutoAgent`, or `StopAutoAgent`. Runs in pre-commit and CI.
+- **No generated delegates**: `backend_delegates_gen.go` files are forbidden. Every method must be explicitly implemented in `backend_delegates.go` with proper container resolution via `ResolveContainerAuto`.
+
+**Why**: Calling core engine methods creates hidden local state, breaks the stateless invariant, causes divergence between what the backend thinks and what the cloud knows, and makes backend restart lose track of containers.
+
+## Auto-agent is for Docker passthrough only
+
+`SpawnAutoAgent` and `StopAutoAgent` exist in `core/auto_agent.go` for the Docker passthrough backend. Cloud backends must **never** use auto-agent. It spawns local processes and reads `Store.Containers` — both stateless violations.
+
+Cloud backends that need exec, archive, or attach must use a cloud-deployed agent (forward or reverse mode). If no agent is connected, return `NotImplementedError` — do not fall back to auto-agent.
+
+## No fallbacks. No degraded modes. No "graceful" alternatives.
+
+If a dependency is required, it is required. If Docker is needed, Docker must be present — do not silently fall back to a weaker execution mode. If a cloud API is the source of truth, do not fall back to local state when the API is slow or unavailable.
+
+Fallbacks create two code paths. Two code paths means two sets of bugs, two behaviors to test, two mental models. The "fallback" path is always the one that rots first because it's exercised least.
+
+If you think a fallback is needed, **ask the user**. Never add one silently. The answer will usually be: make the dependency explicit and fail clearly when it's missing.
 
 ## No silent deferrals
 

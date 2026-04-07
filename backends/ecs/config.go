@@ -18,16 +18,12 @@ type Config struct {
 	TaskRoleARN      string
 	ExecutionRoleARN string
 	LogGroup         string
-	AgentImage       string // Image containing the agent binary
-	AgentEFSID       string // EFS filesystem ID for agent binary
-	AgentToken       string // Default agent token
+	AgentEFSID       string // EFS filesystem ID for bind mount volumes
 	AssignPublicIP   bool
 	CodeBuildProject string        // AWS CodeBuild project for docker build
 	BuildBucket      string        // S3 bucket for build context upload
-	CallbackURL      string        // Backend URL for reverse agent connections
 	EndpointURL      string        // Custom endpoint URL
 	PollInterval     time.Duration // Cloud API poll interval (default 2s)
-	AgentTimeout     time.Duration // Agent health check timeout (default 30s)
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -40,16 +36,12 @@ func ConfigFromEnv() Config {
 		TaskRoleARN:      os.Getenv("SOCKERLESS_ECS_TASK_ROLE_ARN"),
 		ExecutionRoleARN: os.Getenv("SOCKERLESS_ECS_EXECUTION_ROLE_ARN"),
 		LogGroup:         envOrDefault("SOCKERLESS_ECS_LOG_GROUP", "/sockerless"),
-		AgentImage:       envOrDefault("SOCKERLESS_AGENT_IMAGE", "sockerless/agent:latest"),
 		AgentEFSID:       os.Getenv("SOCKERLESS_AGENT_EFS_ID"),
-		AgentToken:       envOrDefault("SOCKERLESS_AGENT_TOKEN", ""),
 		AssignPublicIP:   os.Getenv("SOCKERLESS_ECS_PUBLIC_IP") == "true",
 		CodeBuildProject: os.Getenv("SOCKERLESS_AWS_CODEBUILD_PROJECT"),
 		BuildBucket:      os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET"),
-		CallbackURL:      os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		EndpointURL:      os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:     parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
-		AgentTimeout:     parseDuration(os.Getenv("SOCKERLESS_AGENT_TIMEOUT"), 30*time.Second),
 	}
 }
 
@@ -60,9 +52,7 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 		Region:       "us-east-1",
 		Cluster:      "sockerless",
 		LogGroup:     "/sockerless",
-		AgentImage:   "sockerless/agent:latest",
 		PollInterval: 2 * time.Second,
-		AgentTimeout: 30 * time.Second,
 	}
 	if env.AWS != nil {
 		if env.AWS.Region != "" {
@@ -85,17 +75,9 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 			c.AgentEFSID = ecs.AgentEFSID
 		}
 	}
-	if env.Common.AgentImage != "" {
-		c.AgentImage = env.Common.AgentImage
-	}
-	c.AgentToken = env.Common.AgentToken
-	c.CallbackURL = env.Common.CallbackURL
 	c.EndpointURL = env.Common.EndpointURL
 	if env.Common.PollInterval != "" {
 		c.PollInterval = parseDuration(env.Common.PollInterval, c.PollInterval)
-	}
-	if env.Common.AgentTimeout != "" {
-		c.AgentTimeout = parseDuration(env.Common.AgentTimeout, c.AgentTimeout)
 	}
 	if sim != nil && sim.Port > 0 {
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)

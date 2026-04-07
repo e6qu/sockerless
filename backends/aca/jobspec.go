@@ -12,10 +12,9 @@ import (
 
 // containerInput groups the data needed to build one ACA container spec.
 type containerInput struct {
-	ID         string
-	Container  *api.Container
-	AgentToken string
-	IsMain     bool // true = inject agent entrypoint
+	ID        string
+	Container *api.Container
+	IsMain    bool // true = primary container in a pod
 }
 
 // buildJobName generates an ACA Job name from a container ID.
@@ -24,7 +23,6 @@ func buildJobName(containerID string) string {
 }
 
 // buildContainerSpec builds a single ACA container spec.
-// IsMain containers get agent injection; sidecars use their original entrypoint.
 func (s *Server) buildContainerSpec(ci containerInput) *armappcontainers.Container {
 	config := ci.Container.Config
 
@@ -40,27 +38,8 @@ func (s *Server) buildContainerSpec(ci containerInput) *armappcontainers.Contain
 		}
 	}
 
-	var entrypoint, cmdArgs []string
-	if ci.IsMain {
-		if core.IsTailDevNull(config.Entrypoint, config.Cmd) && s.config.CallbackURL != "" {
-			// CI job container with reverse agent: inject callback entrypoint
-			callbackURL := fmt.Sprintf("%s/internal/v1/agent/connect?id=%s&token=%s", s.config.CallbackURL, ci.ID, ci.AgentToken)
-			entrypoint = core.BuildAgentCallbackEntrypoint(config, callbackURL)
-			envVars = append(envVars,
-				&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_CONTAINER_ID"), Value: ptr(ci.ID)},
-				&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_AGENT_TOKEN"), Value: ptr(ci.AgentToken)},
-				&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_AGENT_CALLBACK_URL"), Value: ptr(callbackURL)},
-			)
-		} else {
-			// Pass through original entrypoint and command separately
-			entrypoint = config.Entrypoint
-			cmdArgs = config.Cmd
-		}
-	} else {
-		// Sidecar: use original entrypoint and command, no agent
-		entrypoint = config.Entrypoint
-		cmdArgs = config.Cmd
-	}
+	entrypoint := config.Entrypoint
+	cmdArgs := config.Cmd
 
 	// Convert entrypoint and command to []*string
 	var command []*string
@@ -107,11 +86,20 @@ func (s *Server) buildJobSpec(containers []containerInput) armappcontainers.Job 
 
 	triggerType := armappcontainers.TriggerTypeManual
 
+	mainContainer := containers[0].Container
+	networkName := "bridge"
+	if mainContainer.HostConfig.NetworkMode != "" && mainContainer.HostConfig.NetworkMode != "default" {
+		networkName = mainContainer.HostConfig.NetworkMode
+	}
+
 	tags := core.TagSet{
 		ContainerID: containers[0].ID,
 		Backend:     "aca",
 		InstanceID:  s.Desc.InstanceID,
 		CreatedAt:   time.Now(),
+		Name:        mainContainer.Name,
+		Network:     networkName,
+		Labels:      mainContainer.Config.Labels,
 	}
 
 	return armappcontainers.Job{

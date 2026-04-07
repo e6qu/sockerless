@@ -58,6 +58,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		s.images.BuildService = svc
 	}
 	s.SetSelf(s)
+	s.CloudState = &acaCloudState{server: s}
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

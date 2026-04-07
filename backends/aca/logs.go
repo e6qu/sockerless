@@ -31,9 +31,17 @@ func (s *Server) azureLogsFetch(table, whereClause, messageColumn string) core.C
 		}
 		query += fmt.Sprintf(` | order by TimeGenerated asc | project TimeGenerated, %s`, messageColumn)
 
-		resp, err := s.azure.Logs.QueryWorkspace(s.ctx(), s.config.LogAnalyticsWorkspace, azquery.Body{
-			Query: &query,
-		}, nil)
+		var resp azquery.LogsClientQueryWorkspaceResponse
+		var err error
+		if s.azure.LogsHTTP != nil {
+			resp, err = s.azure.LogsHTTP.QueryWorkspace(s.ctx(), s.config.LogAnalyticsWorkspace, azquery.Body{
+				Query: &query,
+			}, nil)
+		} else {
+			resp, err = s.azure.Logs.QueryWorkspace(s.ctx(), s.config.LogAnalyticsWorkspace, azquery.Body{
+				Query: &query,
+			}, nil)
+		}
 		if err != nil {
 			return nil, lastTS, err
 		}

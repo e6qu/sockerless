@@ -44,20 +44,21 @@ type ProviderInfo struct {
 
 // BaseServer is the common HTTP server used by all non-Docker backends.
 type BaseServer struct {
-	Store         *Store
-	Logger        zerolog.Logger
-	Desc          BackendDescriptor
-	Mux           *http.ServeMux
-	AgentRegistry *AgentRegistry
-	Drivers       DriverSet
-	Registry      *ResourceRegistry
-	StartedAt     time.Time
-	Metrics       *Metrics
-	HealthChecker HealthChecker
-	EventBus      *EventBus
-	ProviderInfo  *ProviderInfo
-	StatsProvider StatsProvider // real container metrics (nil = zeros)
-	self          api.Backend   // virtual dispatch target for overrideable methods
+	Store          *Store
+	Logger         zerolog.Logger
+	Desc           BackendDescriptor
+	Mux            *http.ServeMux
+	Drivers        DriverSet
+	Registry       *ResourceRegistry
+	StartedAt      time.Time
+	Metrics        *Metrics
+	HealthChecker  HealthChecker
+	EventBus       *EventBus
+	ProviderInfo   *ProviderInfo
+	StatsProvider  StatsProvider              // real container metrics (nil = zeros)
+	CloudState     CloudStateProvider         // cloud-as-truth queries (nil = use local Store)
+	PendingCreates *StateStore[api.Container] // containers between create and start (not yet in cloud)
+	self           api.Backend                // virtual dispatch target for overrideable methods
 }
 
 // SetSelf sets the virtual dispatch target for overrideable api.Backend methods.
@@ -90,15 +91,15 @@ func NewBaseServer(store *Store, desc BackendDescriptor, logger zerolog.Logger) 
 	}
 
 	s := &BaseServer{
-		Store:         store,
-		Logger:        logger,
-		Desc:          desc,
-		Mux:           http.NewServeMux(),
-		AgentRegistry: NewAgentRegistry(),
-		Registry:      NewResourceRegistry(registryPath, logger),
-		StartedAt:     time.Now(),
-		Metrics:       NewMetrics(),
-		EventBus:      NewEventBus(),
+		Store:          store,
+		Logger:         logger,
+		Desc:           desc,
+		Mux:            http.NewServeMux(),
+		Registry:       NewResourceRegistry(registryPath, logger),
+		StartedAt:      time.Now(),
+		Metrics:        NewMetrics(),
+		EventBus:       NewEventBus(),
+		PendingCreates: NewStateStore[api.Container](),
 	}
 	s.self = s
 	s.InitDrivers()
@@ -125,8 +126,6 @@ func (s *BaseServer) registerRoutes() {
 	s.Mux.HandleFunc("GET /internal/v1/resources", s.handleResourceList)
 	s.Mux.HandleFunc("GET /internal/v1/resources/orphaned", s.handleResourceOrphaned)
 	s.Mux.HandleFunc("POST /internal/v1/resources/cleanup", s.handleResourceCleanup)
-	s.Mux.HandleFunc("GET /internal/v1/agent/connect", s.handleAgentConnect)
-
 	// Podman Libpod pod API
 	s.Mux.HandleFunc("POST /internal/v1/libpod/pods/create", s.handlePodCreate)
 	s.Mux.HandleFunc("GET /internal/v1/libpod/pods/json", s.handlePodList)
@@ -271,11 +270,11 @@ func (s *BaseServer) InitDefaultNetwork() {
 }
 
 // InitDrivers sets up the default driver set for this server.
-// Agent drivers handle all cases; operations error when no agent is connected.
+// Uses local filesystem and process drivers. Cloud backends override these.
 func (s *BaseServer) InitDrivers() {
-	s.Drivers.Exec = &AgentExecDriver{Store: s.Store, AgentRegistry: s.AgentRegistry, Logger: s.Logger}
-	s.Drivers.Filesystem = &AgentFilesystemDriver{Store: s.Store, Logger: s.Logger}
-	s.Drivers.Stream = &AgentStreamDriver{Store: s.Store, AgentRegistry: s.AgentRegistry, Logger: s.Logger}
+	s.Drivers.Exec = &LocalExecDriver{Store: s.Store, Logger: s.Logger}
+	s.Drivers.Filesystem = &LocalFilesystemDriver{Store: s.Store, Logger: s.Logger}
+	s.Drivers.Stream = &LocalStreamDriver{Store: s.Store, Logger: s.Logger}
 
 	syntheticNet := &SyntheticNetworkDriver{Store: s.Store, IPAlloc: s.Store.IPAlloc}
 	if platformDriver := NewPlatformNetworkDriver(syntheticNet, s.Logger); platformDriver != nil {

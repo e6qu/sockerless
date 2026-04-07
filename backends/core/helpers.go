@@ -85,3 +85,11 @@ func GenerateToken() string {
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
+
+// BuildOriginalCommand combines entrypoint and cmd into a single command slice.
+func BuildOriginalCommand(entrypoint, cmd []string) []string {
+	var result []string
+	result = append(result, entrypoint...)
+	result = append(result, cmd...)
+	return result
+}

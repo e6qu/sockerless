@@ -17,6 +17,13 @@ type CloudScanner interface {
 	CleanupResource(ctx context.Context, entry ResourceEntry) error
 }
 
+// Resyncer is an optional interface backends can implement for periodic re-sync.
+type Resyncer interface {
+	// SyncResources queries the cloud for current status of all tracked resources
+	// and updates the registry accordingly (mark stopped resources, remove deleted ones).
+	SyncResources(ctx context.Context, registry *ResourceRegistry) error
+}
+
 // RecoverOnStartup loads the registry from disk, scans cloud for tagged
 // resources not in the registry, and registers them as orphans.
 func RecoverOnStartup(ctx context.Context, registry *ResourceRegistry, scanner CloudScanner, instanceID string) error {
@@ -44,6 +51,27 @@ func RecoverOnStartup(ctx context.Context, registry *ResourceRegistry, scanner C
 	}
 
 	return registry.Save()
+}
+
+// StartPeriodicResync launches a background goroutine that periodically
+// syncs the registry with the cloud provider. Stops when ctx is cancelled.
+// Does nothing if interval is 0 or syncer is nil.
+func StartPeriodicResync(ctx context.Context, interval time.Duration, registry *ResourceRegistry, syncer Resyncer) {
+	if interval <= 0 || syncer == nil {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_ = syncer.SyncResources(ctx, registry)
+			}
+		}
+	}()
 }
 
 // ReconstructContainerState rebuilds in-memory Store container entries

@@ -5,5 +5,4 @@ type GCFState struct {
 	FunctionName string
 	FunctionURL  string
 	LogResource  string
-	AgentToken   string
 }

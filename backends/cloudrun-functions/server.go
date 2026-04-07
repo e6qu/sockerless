@@ -48,6 +48,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	if svc, err := gcpcommon.NewGCPBuildService(context.Background(), config.Project, config.BuildBucket, "", logger); err == nil && svc != nil {
 		s.images.BuildService = svc
 	}
+	s.CloudState = &gcfCloudState{server: s}
 	s.SetSelf(s)
 
 	mode := "cloud"

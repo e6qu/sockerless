@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
 // TestGitLabRunnerDockerExecutorFlow simulates a complete GitLab Runner docker-executor job.
@@ -121,8 +123,9 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 				}
 				defer hijacked.Close()
 
-				output, _ := io.ReadAll(hijacked.Reader)
-				return string(output)
+				var stdout bytes.Buffer
+				stdcopy.StdCopy(&stdout, io.Discard, hijacked.Reader)
+				return stdout.String()
 			}
 
 			// Simulate: git clone

@@ -66,10 +66,10 @@ type CMOperation struct {
 
 // State stores
 var (
-	cmNamespaces *sim.StateStore[CMNamespace]
-	cmServices   *sim.StateStore[CMService]
-	cmInstances  *sim.StateStore[CMInstance]
-	cmOperations *sim.StateStore[CMOperation]
+	cmNamespaces sim.Store[CMNamespace]
+	cmServices   sim.Store[CMService]
+	cmInstances  sim.Store[CMInstance]
+	cmOperations sim.Store[CMOperation]
 )
 
 func cmArn(resourceType, id string) string {
@@ -81,10 +81,10 @@ func cmInstanceKey(serviceId, instanceId string) string {
 }
 
 func registerCloudMap(r *sim.AWSRouter, srv *sim.Server) {
-	cmNamespaces = sim.NewStateStore[CMNamespace]()
-	cmServices = sim.NewStateStore[CMService]()
-	cmInstances = sim.NewStateStore[CMInstance]()
-	cmOperations = sim.NewStateStore[CMOperation]()
+	cmNamespaces = sim.MakeStore[CMNamespace](srv.DB(), "cloudmap_namespaces")
+	cmServices = sim.MakeStore[CMService](srv.DB(), "cloudmap_services")
+	cmInstances = sim.MakeStore[CMInstance](srv.DB(), "cloudmap_instances")
+	cmOperations = sim.MakeStore[CMOperation](srv.DB(), "cloudmap_operations")
 
 	r.Register("Route53AutoNaming_v20170314.CreatePrivateDnsNamespace", handleCMCreatePrivateDnsNamespace)
 	r.Register("Route53AutoNaming_v20170314.GetNamespace", handleCMGetNamespace)

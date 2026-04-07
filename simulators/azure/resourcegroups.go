@@ -19,7 +19,7 @@ type ResourceGroup struct {
 }
 
 func registerResourceGroups(srv *sim.Server) {
-	resourceGroups := sim.NewStateStore[ResourceGroup]()
+	resourceGroups := sim.MakeStore[ResourceGroup](srv.DB(), "resource_groups")
 
 	// PUT - Create or update resource group
 	srv.HandleFunc("PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}", func(w http.ResponseWriter, r *http.Request) {
