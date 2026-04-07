@@ -40,7 +40,7 @@ func TestLogBytes_ReturnsStoredData(t *testing.T) {
 	store := NewStore()
 	driver := &LocalStreamDriver{Store: store}
 
-	// Data in LogBuffers — returns it (auto-agent captures output here)
+	// Data in LogBuffers — returns it
 	store.LogBuffers.Store("c1", []byte("hello\n"))
 	data := driver.LogBytes("c1")
 	if string(data) != "hello\n" {

@@ -149,7 +149,7 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
 
-	// Try local wait channel first (auto-agent mode runs containers locally)
+	// Try local wait channel first (simulator mode runs containers locally)
 	if s.CloudState != nil {
 		id, ok := s.ResolveContainerIDAuto(r.Context(), ref)
 		if !ok {
