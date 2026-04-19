@@ -1,6 +1,6 @@
 # Known Bugs
 
-707 total. 702 fixed. 5 open (P86 bug-fix sprint, 2026-04-19/20; Phase-86 simulator parity audit).
+707 total. 702 fixed. 5 open (P86 bug-fix sprint, 2026-04-19/20; Phase-86 simulator parity audit). Open: BUG-702, 703, 704, 706, 707. BUG-701 is now fully fixed across AWS/GCP/Azure.
 
 | ID | Sev | Summary | Status |
 |----|-----|---------|--------|
