@@ -328,7 +328,7 @@ func TestLambdaContainerList(t *testing.T) {
 	}
 }
 
-func TestLambdaContainerStopNoOp(t *testing.T) {
+func TestLambdaContainerStopUnblocksWait(t *testing.T) {
 	ctx := context.Background()
 
 	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
@@ -353,10 +353,22 @@ func TestLambdaContainerStopNoOp(t *testing.T) {
 
 	dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
 
-	// Stop should succeed as no-op
-	timeout := 5
-	if err := dockerClient.ContainerStop(ctx, resp.ID, container.StopOptions{Timeout: &timeout}); err != nil {
-		t.Fatalf("container stop failed (should be no-op): %v", err)
+	// Stop clamps the function timeout (no-op against in-flight) and closes
+	// the local wait channel. A subsequent ContainerWait must return within
+	// a few seconds, not after the sleep-30 completes.
+	stopTimeout := 5
+	if err := dockerClient.ContainerStop(ctx, resp.ID, container.StopOptions{Timeout: &stopTimeout}); err != nil {
+		t.Fatalf("container stop failed: %v", err)
+	}
+
+	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case <-waitCh:
+		// expected — wait channel closed by stop
+	case err := <-errCh:
+		t.Fatalf("wait returned error: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("docker wait did not unblock within 5s of stop; wait channel not closed")
 	}
 }
 
