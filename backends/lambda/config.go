@@ -23,6 +23,7 @@ type Config struct {
 	BuildBucket      string        // S3 bucket for build context upload
 	EndpointURL      string        // Custom endpoint URL
 	PollInterval     time.Duration // Cloud API poll interval (default 2s)
+	CallbackURL      string        // Reverse-agent callback URL injected into Lambda functions; must be reachable from Lambda (public or VPC endpoint). Empty => exec unsupported in live mode (see P86-005)
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -39,6 +40,7 @@ func ConfigFromEnv() Config {
 		BuildBucket:      os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET"),
 		EndpointURL:      os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:     parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
+		CallbackURL:      os.Getenv("SOCKERLESS_CALLBACK_URL"),
 	}
 }
 

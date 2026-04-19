@@ -22,10 +22,18 @@ import (
 var dockerClient *client.Client
 var evalBinaryPath string
 
+func skipIfNoIntegration(t *testing.T) {
+	t.Helper()
+	if os.Getenv("SOCKERLESS_INTEGRATION") != "1" {
+		t.Skip("skipping integration test (SOCKERLESS_INTEGRATION != 1)")
+	}
+}
+
 func TestMain(m *testing.M) {
 	if os.Getenv("SOCKERLESS_INTEGRATION") != "1" {
-		fmt.Println("skipping integration tests (SOCKERLESS_INTEGRATION != 1)")
-		os.Exit(0)
+		// Run unit tests only; integration tests gate themselves via
+		// skipIfNoIntegration.
+		os.Exit(m.Run())
 	}
 
 	repoRoot := findModuleDir(".")
@@ -188,6 +196,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestLambdaContainerLifecycle(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	// Pull image
@@ -247,6 +256,7 @@ func TestLambdaContainerLifecycle(t *testing.T) {
 }
 
 func TestLambdaContainerLogs(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
@@ -302,6 +312,7 @@ func TestLambdaContainerLogs(t *testing.T) {
 // the bug where logStreamName was resolved once up-front; if empty at
 // that moment the follow loop would return empty forever.
 func TestLambdaContainerLogsFollowLazyStream(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
@@ -362,6 +373,7 @@ func TestLambdaContainerLogsFollowLazyStream(t *testing.T) {
 }
 
 func TestLambdaContainerList(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	testID := generateTestID()
@@ -394,6 +406,7 @@ func TestLambdaContainerList(t *testing.T) {
 }
 
 func TestLambdaContainerStopUnblocksWait(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
@@ -438,6 +451,7 @@ func TestLambdaContainerStopUnblocksWait(t *testing.T) {
 }
 
 func TestLambdaContainerExec(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
@@ -481,6 +495,7 @@ func TestLambdaContainerExec(t *testing.T) {
 }
 
 func TestLambdaNetworkOperations(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	testID := generateTestID()
@@ -507,6 +522,7 @@ func TestLambdaNetworkOperations(t *testing.T) {
 }
 
 func TestLambdaVolumeOperations(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	testID := generateTestID()

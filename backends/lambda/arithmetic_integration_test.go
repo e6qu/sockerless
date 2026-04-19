@@ -50,6 +50,7 @@ func pullImage(t *testing.T) {
 }
 
 func TestLambdaArithmeticSuccess(t *testing.T) {
+	skipIfNoIntegration(t)
 	pullImage(t)
 	ctx := context.Background()
 
@@ -85,6 +86,7 @@ func TestLambdaArithmeticSuccess(t *testing.T) {
 }
 
 func TestLambdaArithmeticParentheses(t *testing.T) {
+	skipIfNoIntegration(t)
 	pullImage(t)
 	ctx := context.Background()
 
@@ -120,6 +122,7 @@ func TestLambdaArithmeticParentheses(t *testing.T) {
 }
 
 func TestLambdaArithmeticInvalid(t *testing.T) {
+	skipIfNoIntegration(t)
 	pullImage(t)
 	ctx := context.Background()
 
@@ -155,6 +158,7 @@ func TestLambdaArithmeticInvalid(t *testing.T) {
 }
 
 func TestLambdaArithmeticDivision(t *testing.T) {
+	skipIfNoIntegration(t)
 	pullImage(t)
 	ctx := context.Background()
 
@@ -190,6 +194,7 @@ func TestLambdaArithmeticDivision(t *testing.T) {
 }
 
 func TestLambdaArithmeticWithLabels(t *testing.T) {
+	skipIfNoIntegration(t)
 	pullImage(t)
 	ctx := context.Background()
 
@@ -245,6 +250,7 @@ func TestLambdaArithmeticWithLabels(t *testing.T) {
 }
 
 func TestLambdaArithmeticEnvVar(t *testing.T) {
+	skipIfNoIntegration(t)
 	pullImage(t)
 	ctx := context.Background()
 
