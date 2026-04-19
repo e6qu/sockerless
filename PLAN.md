@@ -61,16 +61,26 @@ Work partitioned into **no-AWS-credentials** (can be done now, verified in simul
 | P86-007 | done | Docs: `docs/ECS_LIVE_SETUP.md`, `docs/GITHUB_RUNNER_SAAS.md`, `docs/GITLAB_RUNNER_SAAS.md` added; pointers from the existing `GITHUB_RUNNER.md` and `GITLAB_RUNNER_DOCKER.md` to the SaaS versions |
 | P86-008 | done | Unit tests for `searchDomainsForContainer` (4), `RenderOverlayDockerfile` (3); integration test `TestLambdaContainerStopUnblocksWait`, `TestLambdaContainerLogsFollowLazyStream`. Lambda test-main now runs unit tests when integration off |
 
-### Needs-AWS track (manual session 1 run 2026-04-19)
+### Bug-fix track (no AWS; unblocks AWS track)
 
 | Task | Status | Description |
 |---|---|---|
-| P86-009 | partial | Provisioned live ECS via `terraform/modules/ecs` (34 resources); infrastructure-layer OK. Backend started and answered `docker ps`. Runner-level validation blocked — see BUG-692, BUG-693. Full teardown verified zero residue |
-| P86-010 | blocked-on-bugs | `actions/runner` × real github.com — not run (depends on docker CLI path, blocked by BUG-692) |
-| P86-011 | blocked-on-bugs | `gitlab-runner` × real gitlab.com — same |
-| P86-012 | not-run | Lambda live Docker CLI baseline deferred until BUG-692/693 fixed |
-| P86-013 | not-run | Lambda runner profile decision deferred until baseline runs |
-| P86-014 | partial | Session 1 state saved to `_tasks/P86-AWS-manual-runbook.md`; BUGS 692/693 logged. Next session prerequisites: fix BUG-692, BUG-693 (no AWS needed) |
+| P86-015 | | Fix BUG-693: port `backends/lambda/image_resolve.go` resolver to ECS. `backends/ecs/image_resolve.go` + call from `ContainerCreate` before storing image on container. Unit test + `taskdef` test asserting ECR URI in rendered def |
+| P86-016 | | Fix BUG-692: `backends/core/handle_containers_query.go:handleContainerAttach` returns immediately because cloud backends' `ContainerAttach` gives an EOF pipe (no local Docker to attach to). Diagnose precisely via simulator repro, then either (a) block the pipe on container exit, (b) stream `ContainerLogs` through the attach stream, or (c) hold the hijacked conn open until the container transitions to STOPPED |
+| P86-017 | | Simulator E2E coverage: a regression test that drives `docker run --rm alpine echo x` against ECS backend in simulator mode and asserts success. This would have caught BUG-692 in CI; make sure it's now part of the default test matrix |
+
+### Needs-AWS track (manual session 2, blocked until P86-015/016/017 land)
+
+| Task | Status | Description |
+|---|---|---|
+| P86-009 | partial | Session 1 2026-04-19: Terraform up, 34 resources, zero-residue teardown verified. Session 2 re-provisions after bug fixes |
+| P86-010 | blocked-on-bugs | Runbook 1 — ECS smoke + services DNS |
+| P86-011 | blocked-on-bugs | Runbook 4 — `actions/runner` × real github.com; 3 shapes (shell, `container:`, `services:`). Requires user-provided PAT + test repo |
+| P86-012 | blocked-on-bugs | Runbook 5 — `gitlab-runner` × real gitlab.com; same matrix. Requires runner token + test project |
+| P86-013 | blocked-on-bugs | Runbook 2 — Lambda live Docker CLI baseline. Writes `docs/PLAN_LAMBDA_MANUAL_TESTING.md` Round-1 |
+| P86-018 | blocked-on-bugs | Runbook 3a — implement Lambda Runtime-API loop (bootstrap), overlay-image builder, reverse-agent callback registry. Unit-tested without AWS |
+| P86-019 | blocked-on-bugs | Runbook 3b — live validation of Lambda `docker exec` via agent-as-handler. Requires ngrok (or equivalent public callback URL) |
+| P86-014 | partial | Final state save after session 2 closes. Residue audit, capability matrix live-column, STATUS/WHAT_WE_DID/MEMORY updates |
 
 ---
 
