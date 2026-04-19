@@ -61,13 +61,21 @@ Work partitioned into **no-AWS-credentials** (can be done now, verified in simul
 | P86-007 | done | Docs: `docs/ECS_LIVE_SETUP.md`, `docs/GITHUB_RUNNER_SAAS.md`, `docs/GITLAB_RUNNER_SAAS.md` added; pointers from the existing `GITHUB_RUNNER.md` and `GITLAB_RUNNER_DOCKER.md` to the SaaS versions |
 | P86-008 | done | Unit tests for `searchDomainsForContainer` (4), `RenderOverlayDockerfile` (3); integration test `TestLambdaContainerStopUnblocksWait`, `TestLambdaContainerLogsFollowLazyStream`. Lambda test-main now runs unit tests when integration off |
 
-### Bug-fix track (no AWS; unblocks AWS track)
+### Bug-fix track (no AWS; unblocks AWS track) — **HARD GATE: zero open bugs before Phase C**
+
+Per user directive ("fix all bugs before redoing manual tests") and scope expansion ("missing / fake / synthetic simulator functionality counts as a bug"), Phase C does not start until every bug below is closed AND the simulator-mode runbook replay (P86-020) passes cleanly for each step.
 
 | Task | Status | Description |
 |---|---|---|
-| P86-015 | | Fix BUG-693: port `backends/lambda/image_resolve.go` resolver to ECS. `backends/ecs/image_resolve.go` + call from `ContainerCreate` before storing image on container. Unit test + `taskdef` test asserting ECR URI in rendered def |
-| P86-016 | | Fix BUG-692: `backends/core/handle_containers_query.go:handleContainerAttach` returns immediately because cloud backends' `ContainerAttach` gives an EOF pipe (no local Docker to attach to). Diagnose precisely via simulator repro, then either (a) block the pipe on container exit, (b) stream `ContainerLogs` through the attach stream, or (c) hold the hijacked conn open until the container transitions to STOPPED |
-| P86-017 | | Simulator E2E coverage: a regression test that drives `docker run --rm alpine echo x` against ECS backend in simulator mode and asserts success. This would have caught BUG-692 in CI; make sure it's now part of the default test matrix |
+| P86-015 | done | Fix BUG-693: ported Lambda resolver to `backends/ecs/image_resolve.go`, wired into ContainerCreate. 9 unit tests. |
+| P86-016 | done | Fix BUG-692: new `backends/ecs/attach.go` streams CloudWatch via `StreamCloudLogs` + `muxBridge`. 3 unit tests. |
+| P86-017 | done | Smoke-test coverage: `docker run --rm alpine echo` added to `smoke-tests/run.sh` ECS track; would have caught BUG-692 in CI. |
+| P86-020a | done | Fixed BUG-694 (StreamCloudLogs follow-loop exit on `!Running`) + BUG-695 (rejects `created` state unconditionally). New `AllowCreated` option. |
+| P86-020b | | Fix BUG-696: simulator needs ECR `CreatePullThroughCacheRule` + `DescribePullThroughCacheRules`. Required for parity so the image-resolve path is exercised end-to-end in sim mode, not just degraded to raw ref |
+| P86-020c | | Fix BUG-697: backend image store doesn't persist `docker pull` across restarts. Investigate `backends/ecs/` store init, add persistence or documentation of expected behavior. |
+| P86-020d | | **Fix BUG-698 (critical)**: docker CLI hangs between `/containers/create` and `/start`. Direct curl path works end-to-end; the bug is docker-CLI-specific. Diagnose via `strace` / `docker --debug` / intercepting proxy. Likely candidates: (a) create-response body has a missing or mismatched field docker CLI expects; (b) API negotiation at `/version` returns something that trips a docker-CLI assertion; (c) backend auto-pull path differs from docker daemon and CLI waits for a side signal. This is the single highest-impact blocker — without it the runner validation path is dead. |
+| P86-020e | | Additional bugs surfaced during continued simulator replay. Log each to BUGS.md, fix, add regression test. Continue iterating until the full Runbook 1 + Runbook 2 command sequence passes in simulator mode without any hang, timeout, or silent degradation. |
+| P86-020f | | Close the simulator-parity gap: enumerate every AWS / GCP / Azure API that github-runner and gitlab-runner would touch through sockerless (ECR auth, Cloud Map DNS resolution, ECS ExecuteCommand, CloudWatch Logs, Lambda Runtime API, KMS, etc.) and ensure the simulator implements each real enough to serve functional tests. Gaps discovered during P86-020a..e become P86-020f sub-items. |
 
 ### Needs-AWS track (manual session 2, blocked until P86-015/016/017 land)
 

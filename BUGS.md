@@ -1,10 +1,12 @@
 # Known Bugs
 
-696 total. 693 fixed. 3 open (P86 bug-fix sprint, 2026-04-19).
+698 total. 693 fixed. 5 open (P86 bug-fix sprint, 2026-04-19).
 
 | ID | Sev | Summary | Status |
 |----|-----|---------|--------|
-| 696 | Med | AWS simulator missing ECR pull-through-cache APIs (`CreatePullThroughCacheRule`, `DescribePullThroughCacheRules`) — returns `UnknownOperationException`. ECS backend degrades to raw image ref on simulator, which hides the live-mode behavior. Simulator parity gap. | open |
+| 698 | Critical | Docker CLI (`docker run` / `docker run -d`) hangs against ECS backend between POST /containers/create and POST /start — `/start` is never sent. Backend responds correctly to all direct curl calls (create → start → attach → wait → delete all work end-to-end). docker CLI prints the container ID from create's response body, then blocks indefinitely. Suspected cause: something in sockerless's create-response body, /version, or /_ping response surface that docker CLI's auto-pull / negotiation logic dislikes. Root cause not yet isolated. Blocks all docker-CLI-driven runner validation. | open |
+| 697 | Med | sockerless image store doesn't persist `docker pull` state across backend restarts — after restart the pulled image is gone, so `docker run <img>` can't find it in the store. Test-harness gap: session 1 saw the image pre-pulled from a prior run, masking this. | open |
+| 696 | Med | AWS simulator missing ECR pull-through-cache APIs (`CreatePullThroughCacheRule`, `DescribePullThroughCacheRules`) — returns `UnknownOperationException`. ECS backend degrades to raw image ref on simulator, which hides the live-mode behavior. Simulator parity gap per user directive: simulators must fully support every cloud action that runners drive through sockerless. | open |
 | 695 | High | `StreamCloudLogs` rejects containers in `created` state unconditionally — breaks `docker run` create→attach→start flow where attach opens before start. Fixed with new `AllowCreated` option in `StreamCloudLogsOptions`; ECS `ContainerAttach` passes it. | fixed |
 | 694 | High | `StreamCloudLogs` follow loop exits as soon as `!c.State.Running`, but `created` state is also non-running — attach before start exits the stream on first tick. Fixed by switching exit condition to `isTerminalState(status)` which fires only on `exited`/`dead`/`removing`. | fixed |
 | 693 | High | ECS task definition registered with unqualified image ref (e.g. `alpine`) — Fargate cannot pull, task stays PENDING forever. `backends/ecs/taskdef.go:buildContainerDef` used `config.Image` raw; fixed in P86-015 by porting Lambda's `resolveImageURI` to ECS. | fixed |
