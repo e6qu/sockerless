@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**85 phases (756 tasks). 661 bugs fixed, 0 open. Cloud build services for all 6 backends. Phase 86 no-AWS track complete.**
+**85 phases (756 tasks). 661 bugs fixed, 2 open (BUG-692 docker CLI hang, BUG-693 ECS task-def raw image ref — both surfaced in P86 AWS manual session 1). Cloud build services for all 6 backends. Phase 86 no-AWS track complete; AWS track partial.**
 
 ## Test Counts
 

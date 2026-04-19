@@ -1,9 +1,11 @@
 # Known Bugs
 
-691 total. 691 fixed. 0 open.
+693 total. 691 fixed. 2 open (P86 AWS manual session 1, 2026-04-19).
 
 | ID | Sev | Summary | Status |
 |----|-----|---------|--------|
+| 693 | High | ECS task definition registered with unqualified image ref (e.g. `alpine`) — Fargate cannot pull, task stays PENDING forever. `backends/ecs/taskdef.go:buildContainerDef` uses `config.Image` raw; should resolve via ECR pull-through URI like `backends/lambda/image_resolve.go:resolveImageURI`. | open |
+| 692 | Critical | `docker run` hangs after POST /containers/create against live ECS backend — no POST /start from docker CLI. Backend attach returns 200 in 0.14ms instead of holding a hijacked connection. Blocks Phase-86 AWS-track runner validation. Likely regression from stateless refactor. | open |
 | 662 | High | Auto-agent delegates to BaseServer.ContainerStart which reads Store. | fixed |
 | 663 | High | docker wait hangs in auto-agent mode. Fix: check local WaitChs first. | fixed |
 | 664 | High | CloudState only queried RUNNING tasks. Fix: query RUNNING + STOPPED. | fixed |

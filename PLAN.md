@@ -61,16 +61,16 @@ Work partitioned into **no-AWS-credentials** (can be done now, verified in simul
 | P86-007 | done | Docs: `docs/ECS_LIVE_SETUP.md`, `docs/GITHUB_RUNNER_SAAS.md`, `docs/GITLAB_RUNNER_SAAS.md` added; pointers from the existing `GITHUB_RUNNER.md` and `GITLAB_RUNNER_DOCKER.md` to the SaaS versions |
 | P86-008 | done | Unit tests for `searchDomainsForContainer` (4), `RenderOverlayDockerfile` (3); integration test `TestLambdaContainerStopUnblocksWait`, `TestLambdaContainerLogsFollowLazyStream`. Lambda test-main now runs unit tests when integration off |
 
-### Needs-AWS track (blocked on credentials)
+### Needs-AWS track (manual session 1 run 2026-04-19)
 
 | Task | Status | Description |
 |---|---|---|
-| P86-009 | | Provision reference AWS environment (VPC, IAM, ECR, CloudWatch, optional EFS); sanity-check live ECS Docker CLI regression still passes |
-| P86-010 | | `actions/runner` × real github.com × live ECS — three job shapes: plain shell, `container:`, `services:` |
-| P86-011 | | `gitlab-runner` × real gitlab.com × live ECS — same matrix |
-| P86-012 | | Lambda live Docker CLI baseline (Round 1 equivalent to ECS Round 1) |
-| P86-013 | | Lambda live runner profile: viability decision (restricted profile or drop from runner scope); land outcome in docs |
-| P86-014 | | Save final state |
+| P86-009 | partial | Provisioned live ECS via `terraform/modules/ecs` (34 resources); infrastructure-layer OK. Backend started and answered `docker ps`. Runner-level validation blocked — see BUG-692, BUG-693. Full teardown verified zero residue |
+| P86-010 | blocked-on-bugs | `actions/runner` × real github.com — not run (depends on docker CLI path, blocked by BUG-692) |
+| P86-011 | blocked-on-bugs | `gitlab-runner` × real gitlab.com — same |
+| P86-012 | not-run | Lambda live Docker CLI baseline deferred until BUG-692/693 fixed |
+| P86-013 | not-run | Lambda runner profile decision deferred until baseline runs |
+| P86-014 | partial | Session 1 state saved to `_tasks/P86-AWS-manual-runbook.md`; BUGS 692/693 logged. Next session prerequisites: fix BUG-692, BUG-693 (no AWS needed) |
 
 ---
 
