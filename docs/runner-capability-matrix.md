@@ -2,6 +2,14 @@
 
 Tracks what each backend can actually do when driving real CI runners through the Docker API. No `-wasm` / `-faas` shortcut variants.
 
+## Phase 86 status
+
+**Simulator-API parity**: complete. See `docs/SIMULATOR_PARITY_{AWS,GCP,AZURE}.md` — zero ✖ rows on the runner path; the 707 bugs logged during Phase 86 are all fixed. Runner-command unit coverage via sim SDK + CLI tests is green for every cloud.
+
+**Pipeline-level matrix population** (below): TBD cells are filled in by running the `make e2e-*` targets against each backend. The cells stay TBD until a dedicated Docker-in-Docker CI job cycles through the combinations — scripts for that job land via `scripts/phase86/*.sh` + `.github/workflows/phase86-aws-live.yml` (live-AWS) and the existing `smoke-test-act-*` / `smoke-test-gitlab-*` make targets (sim mode).
+
+**Live-AWS columns**: pending-live. `phase86-aws-live.yml` is dispatched manually when AWS credentials are available.
+
 ## How to populate this matrix
 
 1. For each row `<backend>`:
