@@ -63,7 +63,11 @@ Work partitioned into **no-AWS-credentials** (can be done now, verified in simul
 
 ### Bug-fix track (no AWS; unblocks AWS track) — **HARD GATE: zero open bugs before Phase C**
 
-Per user directive ("fix all bugs before redoing manual tests") and scope expansion ("missing / fake / synthetic simulator functionality counts as a bug"), Phase C does not start until every bug below is closed AND the simulator-mode runbook replay (P86-020) passes cleanly for each step.
+Per user directives:
+1. "Fix all bugs before redoing manual tests." Phase C is hard-gated on zero open bugs.
+2. "Missing / fake / synthetic simulator functionality counts as a bug." Record each as a BUGS.md entry and fix it.
+3. **"No workarounds or fakes, implement the full functionality needed in the simulators"** (2026-04-19). The simulator must behave as the real cloud API does for every call path the runners drive. No `if simulator mode then skip` fallbacks, no `return synthetic` shortcuts. Cross-container DNS, ECR pull-through cache, Lambda Runtime API, SSM Session Manager streaming, Cloud Map instance-IP resolution — all must be fully implemented in the simulator.
+4. "Simulators must be tested against the cloud SDKs and CLIs and terraform providers." Each new/fixed simulator API ships with `sdk-tests`, `cli-tests`, and `terraform-tests` entries.
 
 | Task | Status | Description |
 |---|---|---|
