@@ -55,7 +55,7 @@ Work partitioned into **no-AWS-credentials** (can be done now, verified in simul
 | P86-001 | done | Dropped `-wasm` / `-faas` variant-routing. `get_test_variant` and `should_skip_for_faas` removed from `tests/e2e-live-tests/lib.sh`; orchestrators use test names directly |
 | P86-002 | done | Pruned `services` / `custom-image` from `ALL_WORKFLOWS` / `ALL_PIPELINES` (files removed in daeff00). Renamed `container-action-faas.yml` → `container-action.yml`. `docs/runner-capability-matrix.md` added as TBD template |
 | P86-003 | done | Per-hostname Cloud Map services + `DnsSearchDomains` on task def. Old shared `containers` service removed. Unit tests + `docs/ECS_SERVICES_DESIGN.md`. Full DNS end-to-end verification belongs to the live-AWS track |
-| P86-004 | in-progress | Lambda `ContainerStop` / `ContainerKill` clamp function timeout via `UpdateFunctionConfiguration(Timeout=1)` + disconnect reverse agent (stub pending P86-005) + close wait channel. `docker logs -f` follow mode pending |
+| P86-004 | done | Lambda `ContainerStop` / `ContainerKill` clamp function timeout + disconnect reverse-agent stub + close wait channel. `docker logs -f` now lazy-resolves the CloudWatch log stream so follow-mode returns output even when opened before the Lambda has been invoked |
 | P86-005 | | Lambda live-mode exec design: reverse-agent as Lambda handler, callback URL plumbing (requires code + config changes, no live creds needed to implement) |
 | P86-006 | | Add `--runner official` switch to E2E harnesses to target unmodified `actions/runner` and `gitlab-runner` binaries (vs `act` / self-hosted GitLab CE) |
 | P86-007 | | Docs: `docs/ECS_LIVE_SETUP.md`, `docs/GITHUB_RUNNER_SAAS.md`, `docs/GITLAB_RUNNER_SAAS.md` — provisioning, TLS/auth, runner registration |

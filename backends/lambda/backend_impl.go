@@ -478,35 +478,58 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	return nil
 }
 
-// ContainerLogs streams container logs from CloudWatch.
+// ContainerLogs streams container logs from CloudWatch. The log stream
+// is resolved lazily on each fetch: Lambda creates the stream when the
+// function is invoked for the first time, so if ContainerLogs is called
+// before the invocation has produced output the stream lookup would
+// return empty. In follow mode the fetch closure keeps checking until
+// the stream appears.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
-	// Resolve state upfront so the closure can capture it.
-	var logGroupName, logStreamName *string
+	var logGroupName *string
 	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
 		lambdaState, _ := s.Lambda.Get(id)
-		group := fmt.Sprintf("/aws/lambda/%s", lambdaState.FunctionName)
-		logGroupName = &group
+		if lambdaState.FunctionName != "" {
+			group := fmt.Sprintf("/aws/lambda/%s", lambdaState.FunctionName)
+			logGroupName = &group
+		}
+	}
 
-		// Find the most recent log stream.
-		streamsResult, err := s.aws.CloudWatch.DescribeLogStreams(s.ctx(), &cloudwatchlogs.DescribeLogStreamsInput{
-			LogGroupName: aws.String(group),
+	// resolveStream looks up the most recent log stream in the group;
+	// returns nil if the stream doesn't exist yet.
+	resolveStream := func() *string {
+		if logGroupName == nil {
+			return nil
+		}
+		out, err := s.aws.CloudWatch.DescribeLogStreams(s.ctx(), &cloudwatchlogs.DescribeLogStreamsInput{
+			LogGroupName: logGroupName,
 			OrderBy:      "LastEventTime",
 			Descending:   aws.Bool(true),
 			Limit:        aws.Int32(1),
 		})
-		if err == nil && len(streamsResult.LogStreams) > 0 {
-			logStreamName = streamsResult.LogStreams[0].LogStreamName
+		if err != nil || len(out.LogStreams) == 0 {
+			return nil
 		}
+		return out.LogStreams[0].LogStreamName
 	}
 
+	// Cache the resolved stream once it appears so we don't pay
+	// DescribeLogStreams on every poll tick in follow mode.
+	var cachedStream *string
+
 	fetch := func(ctx context.Context, params core.CloudLogParams, cursor any) ([]core.CloudLogEntry, any, error) {
-		if logGroupName == nil || logStreamName == nil {
+		if logGroupName == nil {
 			return nil, nil, nil
+		}
+		if cachedStream == nil {
+			cachedStream = resolveStream()
+			if cachedStream == nil {
+				return nil, cursor, nil
+			}
 		}
 
 		input := &cloudwatchlogs.GetLogEventsInput{
 			LogGroupName:  logGroupName,
-			LogStreamName: logStreamName,
+			LogStreamName: cachedStream,
 			StartFromHead: aws.Bool(true),
 		}
 
