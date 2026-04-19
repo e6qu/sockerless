@@ -18,7 +18,10 @@ import (
 
 // StoreImageWithAliases stores an image under all common lookup keys:
 // imageID, full reference, name without tag, and short aliases for
-// docker.io/library/ and docker.io/ prefixed names.
+// docker.io/library/ and docker.io/ prefixed names. After populating
+// the in-memory map, persists the store to disk if
+// store.ImageStatePath is set so `docker pull` state survives backend
+// restart (BUG-697).
 func StoreImageWithAliases(store *Store, ref string, img api.Image) {
 	store.Images.Put(img.ID, img)
 	store.Images.Put(ref, img)
@@ -47,6 +50,12 @@ func StoreImageWithAliases(store *Store, ref string, img api.Image) {
 		}
 		store.Images.Put(short+":"+tag, img)
 		store.Images.Put(short, img)
+	}
+
+	// Best-effort persistence. Errors are logged elsewhere (via the
+	// Store's logger if set) but don't block the pull path.
+	if store.ImageStatePath != "" {
+		_ = store.PersistImages(store.ImageStatePath)
 	}
 }
 

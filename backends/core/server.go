@@ -90,6 +90,20 @@ func NewBaseServer(store *Store, desc BackendDescriptor, logger zerolog.Logger) 
 		registryPath = filepath.Join(dataDir, "sockerless-registry.json")
 	}
 
+	// Persist `docker pull` state (Store.Images) across backend
+	// restarts (BUG-697). Default path respects SOCKERLESS_STATE_DIR
+	// or falls back to $HOME/.sockerless/state/images.json. Every
+	// backend that passes through NewBaseServer inherits the
+	// behaviour automatically.
+	if store != nil && store.ImageStatePath == "" {
+		store.ImageStatePath = DefaultImageStatePath()
+		if store.ImageStatePath != "" {
+			if err := store.RestoreImages(store.ImageStatePath); err != nil {
+				logger.Warn().Err(err).Str("path", store.ImageStatePath).Msg("image store restore failed, continuing with empty store")
+			}
+		}
+	}
+
 	s := &BaseServer{
 		Store:          store,
 		Logger:         logger,
