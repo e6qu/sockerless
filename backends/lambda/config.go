@@ -24,23 +24,34 @@ type Config struct {
 	EndpointURL      string        // Custom endpoint URL
 	PollInterval     time.Duration // Cloud API poll interval (default 2s)
 	CallbackURL      string        // Reverse-agent callback URL injected into Lambda functions; must be reachable from Lambda (public or VPC endpoint). Empty => exec unsupported in live mode (see P86-005)
+
+	// Overlay image build (Phase 86 D.2). Used when CallbackURL is set,
+	// to layer the agent + bootstrap binaries on top of the user's
+	// requested image so `docker exec` can reach a running invocation.
+	// Paths are resolved against the running backend's binary
+	// environment (typically a container image that bundles the
+	// binaries alongside the backend).
+	AgentBinaryPath     string // path to sockerless-agent; defaults to SOCKERLESS_AGENT_BINARY or /opt/sockerless/sockerless-agent
+	BootstrapBinaryPath string // path to sockerless-lambda-bootstrap; defaults to SOCKERLESS_LAMBDA_BOOTSTRAP or /opt/sockerless/sockerless-lambda-bootstrap
 }
 
 // ConfigFromEnv loads configuration from environment variables.
 func ConfigFromEnv() Config {
 	return Config{
-		Region:           envOrDefault("AWS_REGION", "us-east-1"),
-		RoleARN:          os.Getenv("SOCKERLESS_LAMBDA_ROLE_ARN"),
-		LogGroup:         envOrDefault("SOCKERLESS_LAMBDA_LOG_GROUP", "/sockerless/lambda"),
-		MemorySize:       envOrDefaultInt("SOCKERLESS_LAMBDA_MEMORY_SIZE", 1024),
-		Timeout:          envOrDefaultInt("SOCKERLESS_LAMBDA_TIMEOUT", 900),
-		SubnetIDs:        splitCSV(os.Getenv("SOCKERLESS_LAMBDA_SUBNETS")),
-		SecurityGroupIDs: splitCSV(os.Getenv("SOCKERLESS_LAMBDA_SECURITY_GROUPS")),
-		CodeBuildProject: os.Getenv("SOCKERLESS_AWS_CODEBUILD_PROJECT"),
-		BuildBucket:      os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET"),
-		EndpointURL:      os.Getenv("SOCKERLESS_ENDPOINT_URL"),
-		PollInterval:     parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
-		CallbackURL:      os.Getenv("SOCKERLESS_CALLBACK_URL"),
+		Region:              envOrDefault("AWS_REGION", "us-east-1"),
+		RoleARN:             os.Getenv("SOCKERLESS_LAMBDA_ROLE_ARN"),
+		LogGroup:            envOrDefault("SOCKERLESS_LAMBDA_LOG_GROUP", "/sockerless/lambda"),
+		MemorySize:          envOrDefaultInt("SOCKERLESS_LAMBDA_MEMORY_SIZE", 1024),
+		Timeout:             envOrDefaultInt("SOCKERLESS_LAMBDA_TIMEOUT", 900),
+		SubnetIDs:           splitCSV(os.Getenv("SOCKERLESS_LAMBDA_SUBNETS")),
+		SecurityGroupIDs:    splitCSV(os.Getenv("SOCKERLESS_LAMBDA_SECURITY_GROUPS")),
+		CodeBuildProject:    os.Getenv("SOCKERLESS_AWS_CODEBUILD_PROJECT"),
+		BuildBucket:         os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET"),
+		EndpointURL:         os.Getenv("SOCKERLESS_ENDPOINT_URL"),
+		PollInterval:        parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
+		CallbackURL:         os.Getenv("SOCKERLESS_CALLBACK_URL"),
+		AgentBinaryPath:     envOrDefault("SOCKERLESS_AGENT_BINARY", "/opt/sockerless/sockerless-agent"),
+		BootstrapBinaryPath: envOrDefault("SOCKERLESS_LAMBDA_BOOTSTRAP", "/opt/sockerless/sockerless-lambda-bootstrap"),
 	}
 }
 

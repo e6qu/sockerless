@@ -158,6 +158,29 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		return nil, &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", config.Image, err)}
 	}
 
+	// Phase-86 D.2: build + push the overlay image when reverse-agent
+	// mode is active so `docker exec` / `docker attach` can reach the
+	// running invocation. Replaces imageURI with the pushed overlay.
+	if s.config.CallbackURL != "" {
+		spec := OverlayImageSpec{
+			BaseImageRef:        imageURI,
+			AgentBinaryPath:     s.config.AgentBinaryPath,
+			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+			UserEntrypoint:      config.Entrypoint,
+			UserCmd:             config.Cmd,
+		}
+		destRef := fmt.Sprintf("%s-overlay-%s", strings.TrimSuffix(imageURI, ":latest"), id[:12])
+		overlay, err := BuildAndPushOverlayImage(s.ctx(), spec, destRef)
+		if err != nil {
+			s.Logger.Warn().Err(err).Str("image", imageURI).
+				Msg("overlay build failed; falling back to base image (docker exec will not work)")
+		} else {
+			imageURI = overlay.ImageURI
+			envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
+			envVars["SOCKERLESS_CONTAINER_ID"] = id
+		}
+	}
+
 	// Create Lambda function
 	createInput := &awslambda.CreateFunctionInput{
 		FunctionName: aws.String(funcName),

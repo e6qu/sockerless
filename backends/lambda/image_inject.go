@@ -1,7 +1,14 @@
 package lambda
 
 import (
+	"archive/tar"
+	"bytes"
+	"context"
 	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -76,4 +83,147 @@ func joinForEnv(parts []string) string {
 		return ""
 	}
 	return strings.Join(parts, ":")
+}
+
+// OverlayBuildResult is what BuildAndPushOverlayImage returns — the
+// pushed ECR URI of the overlay image, ready to reference as the
+// Lambda function's `Code.ImageUri`.
+type OverlayBuildResult struct {
+	ImageURI string
+}
+
+// BuildAndPushOverlayImage materializes the overlay Dockerfile + a
+// build context containing the agent and bootstrap binaries, then
+// invokes `docker build` + `docker push` against the destination
+// registry (real ECR live; sim-ECR in tests).
+//
+// The destRef must be a fully-qualified registry reference — e.g.
+// `<account>.dkr.ecr.<region>.amazonaws.com/<repo>:skls-<id>`. The
+// caller is responsible for choosing a tag that avoids cache
+// collisions (the container ID is a good default).
+//
+// The returned ImageURI is the digest-or-tag form that Lambda should
+// pull. Callers wire this into `CreateFunctionInput.Code.ImageUri`.
+func BuildAndPushOverlayImage(ctx context.Context, spec OverlayImageSpec, destRef string) (*OverlayBuildResult, error) {
+	if destRef == "" {
+		return nil, fmt.Errorf("BuildAndPushOverlayImage: destRef is required")
+	}
+	dockerfile, err := RenderOverlayDockerfile(spec)
+	if err != nil {
+		return nil, fmt.Errorf("render Dockerfile: %w", err)
+	}
+
+	buildDir, err := os.MkdirTemp("", "sockerless-overlay-")
+	if err != nil {
+		return nil, fmt.Errorf("mktemp: %w", err)
+	}
+	defer os.RemoveAll(buildDir)
+
+	// Stage the Dockerfile + binaries into the build context.
+	dockerfilePath := filepath.Join(buildDir, "Dockerfile")
+	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0o644); err != nil {
+		return nil, fmt.Errorf("write Dockerfile: %w", err)
+	}
+	if err := copyFile(spec.AgentBinaryPath, filepath.Join(buildDir, spec.AgentBinaryPath)); err != nil {
+		return nil, fmt.Errorf("stage agent binary: %w", err)
+	}
+	if err := copyFile(spec.BootstrapBinaryPath, filepath.Join(buildDir, spec.BootstrapBinaryPath)); err != nil {
+		return nil, fmt.Errorf("stage bootstrap binary: %w", err)
+	}
+
+	// docker build -t <destRef> <buildDir>
+	buildCmd := exec.CommandContext(ctx, "docker", "build", "-t", destRef, buildDir)
+	buildCmd.Stdout = os.Stderr
+	buildCmd.Stderr = os.Stderr
+	if err := buildCmd.Run(); err != nil {
+		return nil, fmt.Errorf("docker build %s: %w", destRef, err)
+	}
+
+	// docker push <destRef>
+	pushCmd := exec.CommandContext(ctx, "docker", "push", destRef)
+	pushCmd.Stdout = os.Stderr
+	pushCmd.Stderr = os.Stderr
+	if err := pushCmd.Run(); err != nil {
+		return nil, fmt.Errorf("docker push %s: %w", destRef, err)
+	}
+
+	return &OverlayBuildResult{ImageURI: destRef}, nil
+}
+
+// TarOverlayContext packages a Dockerfile + binaries into a tarball
+// suitable for `docker ImageBuild` or an equivalent SDK call. Used by
+// tests to assert the context contents without calling out to the
+// docker CLI.
+func TarOverlayContext(spec OverlayImageSpec) ([]byte, error) {
+	dockerfile, err := RenderOverlayDockerfile(spec)
+	if err != nil {
+		return nil, err
+	}
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := writeTarEntry(tw, "Dockerfile", []byte(dockerfile), 0o644); err != nil {
+		return nil, err
+	}
+	if err := writeTarFile(tw, spec.AgentBinaryPath, spec.AgentBinaryPath); err != nil {
+		return nil, err
+	}
+	if err := writeTarFile(tw, spec.BootstrapBinaryPath, spec.BootstrapBinaryPath); err != nil {
+		return nil, err
+	}
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func copyFile(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
+}
+
+func writeTarEntry(tw *tar.Writer, name string, data []byte, mode int64) error {
+	if err := tw.WriteHeader(&tar.Header{
+		Name: name,
+		Mode: mode,
+		Size: int64(len(data)),
+	}); err != nil {
+		return err
+	}
+	_, err := tw.Write(data)
+	return err
+}
+
+func writeTarFile(tw *tar.Writer, src, name string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", src, err)
+	}
+	f, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := tw.WriteHeader(&tar.Header{
+		Name: name,
+		Mode: 0o755,
+		Size: info.Size(),
+	}); err != nil {
+		return err
+	}
+	_, err = io.Copy(tw, f)
+	return err
 }

@@ -1,6 +1,12 @@
 package lambda
 
 import (
+	"archive/tar"
+	"bytes"
+	"context"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -78,4 +84,74 @@ func TestRenderOverlayDockerfile_UserEntrypointAndCmd(t *testing.T) {
 	if !strings.Contains(df, "ENV SOCKERLESS_USER_CMD=echo:hello") {
 		t.Errorf("cmd env var missing or malformed:\n%s", df)
 	}
+}
+
+// TestTarOverlayContext_HasDockerfileAndBinaries verifies the Phase-86
+// D.2 build-context tarball contains the rendered Dockerfile plus both
+// staged binaries at the paths the Dockerfile COPYs from.
+func TestTarOverlayContext_HasDockerfileAndBinaries(t *testing.T) {
+	dir := t.TempDir()
+	agentPath := filepath.Join(dir, "bin", "sockerless-agent")
+	bootPath := filepath.Join(dir, "bin", "sockerless-lambda-bootstrap")
+	if err := os.MkdirAll(filepath.Dir(agentPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(agentPath, []byte("agent-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bootPath, []byte("bootstrap-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := TarOverlayContext(OverlayImageSpec{
+		BaseImageRef:        "alpine:latest",
+		AgentBinaryPath:     agentPath,
+		BootstrapBinaryPath: bootPath,
+	})
+	if err != nil {
+		t.Fatalf("TarOverlayContext: %v", err)
+	}
+
+	tr := tar.NewReader(bytes.NewReader(data))
+	seen := map[string]string{}
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("tar read: %v", err)
+		}
+		buf, _ := io.ReadAll(tr)
+		seen[hdr.Name] = string(buf)
+	}
+
+	if df, ok := seen["Dockerfile"]; !ok {
+		t.Fatal("Dockerfile missing from tar")
+	} else if !strings.Contains(df, "FROM alpine:latest") {
+		t.Errorf("Dockerfile content wrong: %s", df)
+	}
+	if _, ok := seen[agentPath]; !ok {
+		t.Errorf("agent binary missing at %q (entries: %v)", agentPath, keys(seen))
+	}
+	if _, ok := seen[bootPath]; !ok {
+		t.Errorf("bootstrap binary missing at %q (entries: %v)", bootPath, keys(seen))
+	}
+}
+
+// TestBuildAndPushOverlayImage_MissingDest verifies the input
+// validation before any external tool runs.
+func TestBuildAndPushOverlayImage_MissingDest(t *testing.T) {
+	_, err := BuildAndPushOverlayImage(context.TODO(), OverlayImageSpec{BaseImageRef: "alpine"}, "")
+	if err == nil || !strings.Contains(err.Error(), "destRef is required") {
+		t.Errorf("want destRef-required error, got %v", err)
+	}
+}
+
+func keys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
