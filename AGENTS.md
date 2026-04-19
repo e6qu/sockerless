@@ -34,6 +34,32 @@ When modifying simulators, always ask: "How does the real cloud service behave?"
 
 The simulators run locally on a single machine today. The architecture is designed to eventually distribute execution across multiple machines, with the same API surface.
 
+### Simulator architecture — cloud-slice principle
+
+Three principles govern every simulator change. They are load-bearing; a PR that violates any of them is a bug.
+
+1. **The simulator is a cloud slice.** `simulators/aws/` implements the subset of AWS's real public API surface that sockerless depends on, at cloud-API fidelity. It is *not* an emulation of a single product — there is no "Lambda simulator" or "ECS simulator" in isolation. If sockerless uses Lambda + ECS + ECR + CloudWatch + Cloud Map + EC2 + STS + IAM + S3 from AWS, the AWS simulator implements slices of all of them. Same for GCP and Azure.
+
+2. **One simulator binary per cloud.** All AWS service slices live in `simulators/aws/` (single Go module, one `simulator-aws` binary, one shared `sim.Server` mux). Adding a new service slice = a new `registerX(srv)` call + handler file in the existing per-cloud binary. Never a new binary per product.
+
+3. **Cloud-API fidelity.** Match the real cloud's error shapes, response headers, async operation semantics, path templates, and HTTP status codes exactly. When the cloud's contract doesn't cover something, neither does the simulator — don't invent simulator-specific env vars, synthetic shortcuts, or approximate behaviors. "How does the real cloud service behave?" is the authoritative question; the simulator answers it by implementing the same API the cloud does.
+
+**How to add a new slice:**
+1. Read the cloud's public API reference for the service (e.g. `docs.aws.amazon.com/lambda/…`).
+2. Create `simulators/<cloud>/<service>.go` with handlers matching the cloud's endpoints, error codes, and response shapes.
+3. In `simulators/<cloud>/main.go` or equivalent, call `register<Service>(srv)` so the new slice mounts on the shared mux.
+4. Add SDK + CLI + Terraform tests per the testing contract below — the pre-commit hook enforces this.
+
+**What "cloud-API fidelity" rules out:**
+- Stdout-as-response shortcuts (see BUG-705 for the Lambda version).
+- In-memory TODO placeholders that claim "we'll call the SDK later" (see BUG-702, BUG-703 for the Azure ACA versions).
+- Embedding AWS's `aws-lambda-rie` or similar third-party local emulators inside test images — that bypasses our cloud slice; the simulator IS the cloud from the container's perspective.
+- Synthetic disambiguation (custom headers, custom env vars) that real cloud bootstraps wouldn't produce.
+
+**What it does allow:**
+- Ephemeral sidecar listeners (e.g. per-Lambda-invocation listener on a free port) as long as the container-facing contract matches the cloud.
+- Docker user-defined networks as the implementation mechanism behind Cloud Map / Cloud DNS / Private DNS — Docker's embedded DNS is just how the simulator realizes the cloud's DNS contract locally.
+
 ### Simulator fidelity — testing contract
 
 Every simulator endpoint must be exercisable via all three real-world client surfaces, in the same commit that registers the endpoint:

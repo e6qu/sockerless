@@ -4,6 +4,14 @@ Local reimplementations of cloud provider APIs. Each simulator implements the su
 
 The goal is full behavioral fidelity: code that works against the simulators works against the real cloud, and vice versa. Simulators run locally first, with the architecture designed to eventually distribute across multiple machines.
 
+## Three governing principles
+
+1. **The simulator is a cloud slice.** `simulators/aws/` implements whatever slice of AWS sockerless depends on — Lambda + ECS + ECR + CloudWatch + Cloud Map + EC2 + STS + IAM + S3 + EFS — at cloud-API fidelity. Not a per-product simulator; a cloud slice.
+2. **One binary per cloud.** Adding a new service slice means a new `registerX(srv)` + handler file inside `simulators/aws/`, `simulators/gcp/`, or `simulators/azure/`. Never a new binary per product.
+3. **Cloud-API fidelity.** Match the real cloud's error shapes, response headers, async operation semantics, path templates, and HTTP status codes exactly. When the cloud's contract doesn't cover something, neither does the simulator.
+
+Full statement and rationale in [AGENTS.md → Simulator architecture — cloud-slice principle](../AGENTS.md#simulator-architecture--cloud-slice-principle). Enforced per-commit by the `simulator-testing-contract` pre-commit hook.
+
 ## Overview
 
 | Simulator | Default Port | Services |
