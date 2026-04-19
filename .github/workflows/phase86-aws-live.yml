@@ -1,0 +1,165 @@
+name: Phase 86 AWS live
+
+# Workflow-dispatch only — triggered manually when live-AWS validation
+# is needed. Teardown always runs so a failed earlier job still
+# releases scratch AWS resources. See scripts/phase86/README.md for the
+# runbook the jobs correspond to.
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: AWS region (e.g. eu-west-1)
+        required: true
+        default: eu-west-1
+      runbooks:
+        description: Comma-separated runbook numbers to run (e.g. "0,1,2,6" or "all")
+        required: true
+        default: "all"
+      github_pat:
+        description: GitHub PAT for runbook 4 (optional — skip if absent)
+        required: false
+      gitlab_runner_token:
+        description: GitLab runner token for runbook 5 (optional)
+        required: false
+      ngrok_authtoken:
+        description: ngrok authtoken for runbook 3 callback URL (optional)
+        required: false
+
+concurrency:
+  group: phase86-aws-live
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  infra-up:
+    runs-on: ubuntu-latest
+    if: contains(fromJSON(format('["all","{0}"]', inputs.runbooks)), 'all') || contains(inputs.runbooks, '0')
+    env:
+      AWS_REGION: ${{ inputs.region }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.PHASE86_AWS_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+      - uses: hashicorp/setup-terraform@v3
+      - run: bash scripts/phase86/0-infra-up.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ecs-outputs
+          path: /tmp/ecs-out.json
+
+  ecs-smoke:
+    needs: infra-up
+    runs-on: ubuntu-latest
+    if: contains(fromJSON(format('["all","{0}"]', inputs.runbooks)), 'all') || contains(inputs.runbooks, '1')
+    env:
+      AWS_REGION: ${{ inputs.region }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.PHASE86_AWS_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+      - uses: actions/download-artifact@v4
+        with: { name: ecs-outputs, path: /tmp }
+      - run: (cd backends/ecs && go build -o ../../sockerless-backend-ecs ./cmd/sockerless-backend-ecs)
+      - run: bash scripts/phase86/1-ecs-smoke.sh
+
+  lambda-baseline:
+    needs: infra-up
+    runs-on: ubuntu-latest
+    if: contains(fromJSON(format('["all","{0}"]', inputs.runbooks)), 'all') || contains(inputs.runbooks, '2')
+    env:
+      AWS_REGION: ${{ inputs.region }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.PHASE86_AWS_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+      - uses: actions/download-artifact@v4
+        with: { name: ecs-outputs, path: /tmp }
+      - run: (cd backends/lambda && go build -o ../../sockerless-backend-lambda ./cmd/sockerless-backend-lambda)
+      - run: bash scripts/phase86/2-lambda-baseline.sh
+
+  lambda-runtime-api:
+    needs: [infra-up, lambda-baseline]
+    runs-on: ubuntu-latest
+    if: |
+      contains(fromJSON(format('["all","{0}"]', inputs.runbooks)), 'all') ||
+      contains(inputs.runbooks, '3')
+    env:
+      AWS_REGION: ${{ inputs.region }}
+      NGROK_AUTHTOKEN: ${{ inputs.ngrok_authtoken }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          if [ -z "$NGROK_AUTHTOKEN" ]; then
+            echo "::warning::ngrok authtoken absent; skipping runbook 3"
+            exit 0
+          fi
+          bash scripts/phase86/3-lambda-runtime-api.sh
+
+  github-runner:
+    needs: infra-up
+    runs-on: ubuntu-latest
+    if: |
+      contains(fromJSON(format('["all","{0}"]', inputs.runbooks)), 'all') ||
+      contains(inputs.runbooks, '4')
+    env:
+      AWS_REGION: ${{ inputs.region }}
+      GITHUB_PAT: ${{ inputs.github_pat }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          if [ -z "$GITHUB_PAT" ]; then
+            echo "::warning::github_pat absent; skipping runbook 4"
+            exit 0
+          fi
+          bash scripts/phase86/4-github-runner.sh
+
+  gitlab-runner:
+    needs: infra-up
+    runs-on: ubuntu-latest
+    if: |
+      contains(fromJSON(format('["all","{0}"]', inputs.runbooks)), 'all') ||
+      contains(inputs.runbooks, '5')
+    env:
+      AWS_REGION: ${{ inputs.region }}
+      GITLAB_RUNNER_TOKEN: ${{ inputs.gitlab_runner_token }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          if [ -z "$GITLAB_RUNNER_TOKEN" ]; then
+            echo "::warning::gitlab_runner_token absent; skipping runbook 5"
+            exit 0
+          fi
+          bash scripts/phase86/5-gitlab-runner.sh
+
+  teardown:
+    needs: [ecs-smoke, lambda-baseline, lambda-runtime-api, github-runner, gitlab-runner]
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ inputs.region }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.PHASE86_AWS_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+      - uses: hashicorp/setup-terraform@v3
+      - run: bash scripts/phase86/6-teardown.sh
