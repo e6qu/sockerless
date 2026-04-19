@@ -19,16 +19,18 @@ func (s *Server) NetworkCreate(req *api.NetworkCreateRequest) (*api.NetworkCreat
 		return nil, err
 	}
 
-	s.cloudNetworkCreate(req.Name, resp.ID)
-	// BUG-703: `cloudNetworkCreate` tracks NSG state in memory only;
-	// it doesn't yet call the Azure NSG SDK. Surface that to the
-	// client so the limitation isn't silent.
-	warn := "Azure NSG (BUG-703): tracked locally only; cross-network isolation is not enforced until the NSG SDK integration lands"
-	if resp.Warning != "" {
-		resp.Warning = resp.Warning + "; " + warn
-	} else {
-		resp.Warning = warn
+	var warnings []string
+	if err := s.cloudNetworkCreate(req.Name, resp.ID); err != nil {
+		s.Logger.Warn().Err(err).Str("network", req.Name).Msg("failed to create Private DNS zone")
+		warnings = append(warnings, "Azure Private DNS zone (cross-container DNS): "+err.Error())
 	}
+	// BUG-703: NSG rule creation is still a TODO — surface the
+	// limitation so clients know cross-network isolation isn't enforced.
+	warnings = append(warnings, "Azure NSG (BUG-703): tracked locally only; cross-network isolation is not enforced until the NSG SDK integration lands")
+	if resp.Warning != "" {
+		warnings = append([]string{resp.Warning}, warnings...)
+	}
+	resp.Warning = strings.Join(warnings, "; ")
 
 	return resp, nil
 }
@@ -40,8 +42,8 @@ func (s *Server) NetworkRemove(id string) error {
 		return &api.NotFoundError{Resource: "network", ID: id}
 	}
 
-	// Clean up cloud network state
-	s.cloudNetworkDelete(n.ID)
+	// Clean up cloud network state (Private DNS zone + NSG tracking)
+	_ = s.cloudNetworkDelete(n.ID)
 
 	return s.BaseServer.NetworkRemove(id)
 }
@@ -70,7 +72,9 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 	hostname := strings.TrimPrefix(c.Name, "/")
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID == net.ID && ep.IPAddress != "" {
-			s.cloudServiceRegister(containerID, hostname, ep.IPAddress, net.ID)
+			if err := s.cloudServiceRegister(containerID, hostname, ep.IPAddress, net.ID); err != nil {
+				s.Logger.Warn().Err(err).Msg("failed to register service in Private DNS")
+			}
 			break
 		}
 	}
@@ -85,7 +89,12 @@ func (s *Server) NetworkDisconnect(id string, req *api.NetworkDisconnectRequest)
 	if ok {
 		containerID, _ := s.ResolveContainerIDAuto(context.Background(), req.Container)
 		if containerID != "" {
-			s.cloudServiceDeregister(containerID, net.ID)
+			c, cOk := s.ResolveContainerAuto(context.Background(), containerID)
+			hostname := ""
+			if cOk {
+				hostname = strings.TrimPrefix(c.Name, "/")
+			}
+			_ = s.cloudServiceDeregister(containerID, hostname, net.ID)
 		}
 	}
 	return s.BaseServer.NetworkDisconnect(id, req)

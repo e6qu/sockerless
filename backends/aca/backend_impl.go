@@ -462,10 +462,11 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		s.Store.Pods.RemoveContainer(pod.ID, id)
 	}
 
-	// Deregister from service discovery
+	// Deregister from service discovery (Private DNS A record)
+	hostname := strings.TrimPrefix(c.Name, "/")
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID != "" {
-			s.cloudServiceDeregister(id, ep.NetworkID)
+			_ = s.cloudServiceDeregister(id, hostname, ep.NetworkID)
 		}
 	}
 

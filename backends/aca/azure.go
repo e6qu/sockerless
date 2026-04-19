@@ -16,6 +16,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/monitor/azquery"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v2"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns"
 )
 
 type fakeCredential struct{}
@@ -26,11 +27,13 @@ func (f *fakeCredential) GetToken(_ context.Context, _ policy.TokenRequestOption
 
 // AzureClients holds all Azure SDK clients.
 type AzureClients struct {
-	Jobs       *armappcontainers.JobsClient
-	Executions *armappcontainers.JobsExecutionsClient
-	Logs       *azquery.LogsClient
-	LogsHTTP   *httpLogsClient // Used when endpoint is HTTP (SDK rejects non-TLS bearer tokens)
-	Cred       azcore.TokenCredential
+	Jobs              *armappcontainers.JobsClient
+	Executions        *armappcontainers.JobsExecutionsClient
+	Logs              *azquery.LogsClient
+	LogsHTTP          *httpLogsClient // Used when endpoint is HTTP (SDK rejects non-TLS bearer tokens)
+	PrivateDNSZones   *armprivatedns.PrivateZonesClient
+	PrivateDNSRecords *armprivatedns.RecordSetsClient
+	Cred              azcore.TokenCredential
 }
 
 // httpLogsClient makes direct HTTP calls to Log Analytics when the Azure SDK's
@@ -107,11 +110,22 @@ func newAzureClientsWithEndpoint(subscriptionID string, endpointURL string) (*Az
 		return nil, err
 	}
 
+	privateZonesClient, err := armprivatedns.NewPrivateZonesClient(subscriptionID, cred, opts)
+	if err != nil {
+		return nil, err
+	}
+	recordSetsClient, err := armprivatedns.NewRecordSetsClient(subscriptionID, cred, opts)
+	if err != nil {
+		return nil, err
+	}
+
 	clients := &AzureClients{
-		Jobs:       jobsClient,
-		Executions: executionsClient,
-		Logs:       logsClient,
-		Cred:       cred,
+		Jobs:              jobsClient,
+		Executions:        executionsClient,
+		Logs:              logsClient,
+		PrivateDNSZones:   privateZonesClient,
+		PrivateDNSRecords: recordSetsClient,
+		Cred:              cred,
 	}
 
 	// azquery v1.2.0 doesn't propagate InsecureAllowCredentialWithHTTP to its
@@ -145,10 +159,21 @@ func newAzureClientsDefault(subscriptionID string) (*AzureClients, error) {
 		return nil, err
 	}
 
+	privateZonesClient, err := armprivatedns.NewPrivateZonesClient(subscriptionID, cred, nil)
+	if err != nil {
+		return nil, err
+	}
+	recordSetsClient, err := armprivatedns.NewRecordSetsClient(subscriptionID, cred, nil)
+	if err != nil {
+		return nil, err
+	}
+
 	return &AzureClients{
-		Jobs:       jobsClient,
-		Executions: executionsClient,
-		Logs:       logsClient,
-		Cred:       cred,
+		Jobs:              jobsClient,
+		Executions:        executionsClient,
+		Logs:              logsClient,
+		PrivateDNSZones:   privateZonesClient,
+		PrivateDNSRecords: recordSetsClient,
+		Cred:              cred,
 	}, nil
 }
