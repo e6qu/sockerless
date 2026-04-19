@@ -50,6 +50,8 @@ func main() {
 	registerArtifactRegistry(srv)
 	registerCloudFunctions(srv)
 	registerOperations(srv)
+	registerSecretManager(srv)
+	registerCloudBuild(srv)
 
 	// Infrastructure services
 	registerServiceUsage(srv)
