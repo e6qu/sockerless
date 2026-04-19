@@ -18,12 +18,14 @@ import (
 )
 
 var (
-	baseURL        string
-	simCmd         *exec.Cmd
-	binaryPath     string
-	evalBinaryPath string
-	evalImageName  string // Docker image containing eval-arithmetic binary
-	ctx            = context.Background()
+	baseURL                 string
+	simCmd                  *exec.Cmd
+	binaryPath              string
+	evalBinaryPath          string
+	evalImageName           string // Docker image containing eval-arithmetic binary
+	lambdaHandlerBinaryPath string
+	lambdaHandlerImageName  string // Docker image for Lambda Runtime API test handler
+	ctx                     = context.Background()
 )
 
 func sdkConfig() aws.Config {
@@ -61,6 +63,25 @@ func TestMain(m *testing.M) {
 	dockerBuild.Stdin = strings.NewReader(dockerfile)
 	if out, err := dockerBuild.CombinedOutput(); err != nil {
 		log.Fatalf("Failed to build eval-arithmetic Docker image: %v\n%s", err, out)
+	}
+
+	// Build lambda-runtime-handler binary (static, for embedding in the
+	// Lambda test handler Docker image) + Docker image. Used by the
+	// Runtime API Invoke tests added with BUG-705's fix.
+	lambdaHandlerDir, _ := filepath.Abs("../../testdata/lambda-runtime-handler")
+	lambdaHandlerBinaryPath = filepath.Join(lambdaHandlerDir, "lambda-runtime-handler")
+	lhBuild := exec.Command("go", "build", "-o", lambdaHandlerBinaryPath, ".")
+	lhBuild.Dir = lambdaHandlerDir
+	lhBuild.Env = append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux")
+	if out, err := lhBuild.CombinedOutput(); err != nil {
+		log.Fatalf("Failed to build lambda-runtime-handler: %v\n%s", err, out)
+	}
+	lambdaHandlerImageName = "sockerless-lambda-runtime-handler:test"
+	lhDockerfile := "FROM alpine:latest\nCOPY lambda-runtime-handler /usr/local/bin/lambda-runtime-handler\nENTRYPOINT [\"/usr/local/bin/lambda-runtime-handler\"]\n"
+	lhDockerBuild := exec.Command("docker", "build", "-t", lambdaHandlerImageName, "-f", "-", lambdaHandlerDir)
+	lhDockerBuild.Stdin = strings.NewReader(lhDockerfile)
+	if out, err := lhDockerBuild.CombinedOutput(); err != nil {
+		log.Fatalf("Failed to build lambda-runtime-handler Docker image: %v\n%s", err, out)
 	}
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

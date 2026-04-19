@@ -15,12 +15,14 @@ import (
 )
 
 var (
-	baseURL        string
-	simCmd         *exec.Cmd
-	binaryPath     string
-	evalBinaryPath string
-	evalImageName  string
-	tmpDir         string
+	baseURL                 string
+	simCmd                  *exec.Cmd
+	binaryPath              string
+	evalBinaryPath          string
+	evalImageName           string
+	lambdaHandlerBinaryPath string
+	lambdaHandlerImageName  string
+	tmpDir                  string
 )
 
 func TestMain(m *testing.M) {
@@ -57,6 +59,24 @@ func TestMain(m *testing.M) {
 	dockerBuild.Stdin = strings.NewReader(dockerfile)
 	if out, err := dockerBuild.CombinedOutput(); err != nil {
 		log.Fatalf("Failed to build eval-arithmetic Docker image: %v\n%s", err, out)
+	}
+
+	// Build lambda-runtime-handler binary + Docker image for BUG-705's
+	// Runtime API Invoke tests.
+	lambdaHandlerDir, _ := filepath.Abs("../../testdata/lambda-runtime-handler")
+	lambdaHandlerBinaryPath = filepath.Join(lambdaHandlerDir, "lambda-runtime-handler")
+	lhBuild := exec.Command("go", "build", "-o", lambdaHandlerBinaryPath, ".")
+	lhBuild.Dir = lambdaHandlerDir
+	lhBuild.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOWORK=off")
+	if out, err := lhBuild.CombinedOutput(); err != nil {
+		log.Fatalf("Failed to build lambda-runtime-handler: %v\n%s", err, out)
+	}
+	lambdaHandlerImageName = "sockerless-lambda-runtime-handler:test"
+	lhDockerfile := "FROM alpine:latest\nCOPY lambda-runtime-handler /usr/local/bin/lambda-runtime-handler\nENTRYPOINT [\"/usr/local/bin/lambda-runtime-handler\"]\n"
+	lhDockerBuild := exec.Command("docker", "build", "-t", lambdaHandlerImageName, "-f", "-", lambdaHandlerDir)
+	lhDockerBuild.Stdin = strings.NewReader(lhDockerfile)
+	if out, err := lhDockerBuild.CombinedOutput(); err != nil {
+		log.Fatalf("Failed to build lambda-runtime-handler Docker image: %v\n%s", err, out)
 	}
 
 	// Find free port
