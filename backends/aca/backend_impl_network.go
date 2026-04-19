@@ -8,11 +8,11 @@ import (
 	"github.com/sockerless/api"
 )
 
-// NetworkCreate creates a Docker network with NSG tracking. While the
-// Azure NSG SDK integration is pending (BUG-703), the response
-// Warning surfaces the local-only state so callers know cross-
-// container isolation isn't enforced yet. Parallels BUG-700 fix in
-// the ECS and Cloud Run backends.
+// NetworkCreate creates a Docker network and its Azure cloud
+// resources — a per-network NSG + Private DNS zone (BUG-702/703).
+// Cloud-side failures surface as response Warnings (BUG-700) so
+// callers know what degraded, matching the ECS and Cloud Run
+// backends.
 func (s *Server) NetworkCreate(req *api.NetworkCreateRequest) (*api.NetworkCreateResponse, error) {
 	resp, err := s.BaseServer.NetworkCreate(req)
 	if err != nil {

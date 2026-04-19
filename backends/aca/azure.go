@@ -16,6 +16,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/monitor/azquery"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v2"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerregistry/armcontainerregistry"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v7"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns"
 )
@@ -36,7 +37,12 @@ type AzureClients struct {
 	PrivateDNSRecords *armprivatedns.RecordSetsClient
 	NSG               *armnetwork.SecurityGroupsClient
 	NSGRules          *armnetwork.SecurityRulesClient
-	Cred              azcore.TokenCredential
+	// BUG-706: Azure Container Registry + its cache-rule sub-resource.
+	// Used by the image resolver to rewrite Docker Hub refs through the
+	// configured ACR pull-through cache, parallel to AWS ECR + GCP AR.
+	Registries    *armcontainerregistry.RegistriesClient
+	ACRCacheRules *armcontainerregistry.CacheRulesClient
+	Cred          azcore.TokenCredential
 }
 
 // httpLogsClient makes direct HTTP calls to Log Analytics when the Azure SDK's
@@ -125,6 +131,10 @@ func newAzureClientsWithEndpoint(subscriptionID string, endpointURL string) (*Az
 	if err != nil {
 		return nil, err
 	}
+	acrFactory, err := armcontainerregistry.NewClientFactory(subscriptionID, cred, opts)
+	if err != nil {
+		return nil, err
+	}
 
 	clients := &AzureClients{
 		Jobs:              jobsClient,
@@ -134,6 +144,8 @@ func newAzureClientsWithEndpoint(subscriptionID string, endpointURL string) (*Az
 		PrivateDNSRecords: recordSetsClient,
 		NSG:               nsgFactory.NewSecurityGroupsClient(),
 		NSGRules:          nsgFactory.NewSecurityRulesClient(),
+		Registries:        acrFactory.NewRegistriesClient(),
+		ACRCacheRules:     acrFactory.NewCacheRulesClient(),
 		Cred:              cred,
 	}
 
@@ -180,6 +192,10 @@ func newAzureClientsDefault(subscriptionID string) (*AzureClients, error) {
 	if err != nil {
 		return nil, err
 	}
+	acrFactory, err := armcontainerregistry.NewClientFactory(subscriptionID, cred, nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return &AzureClients{
 		Jobs:              jobsClient,
@@ -189,6 +205,8 @@ func newAzureClientsDefault(subscriptionID string) (*AzureClients, error) {
 		PrivateDNSRecords: recordSetsClient,
 		NSG:               nsgFactory.NewSecurityGroupsClient(),
 		NSGRules:          nsgFactory.NewSecurityRulesClient(),
+		Registries:        acrFactory.NewRegistriesClient(),
+		ACRCacheRules:     acrFactory.NewCacheRulesClient(),
 		Cred:              cred,
 	}, nil
 }

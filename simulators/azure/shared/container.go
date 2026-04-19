@@ -441,10 +441,14 @@ func ResolveLocalImage(image string) string {
 		dockerPath = strings.TrimPrefix(dockerPath, "docker-hub/")
 		return dockerPath
 	}
-	// Azure ACR
+	// Azure ACR (BUG-706 parallel to AWS ECR): strip both `docker-hub/`
+	// and `library/` prefixes so refs minted by the cache-rule-aware
+	// resolver round-trip to plain Docker Hub refs the local daemon
+	// can pull.
 	if strings.Contains(image, ".azurecr.io/") {
 		idx := strings.Index(image, ".azurecr.io/")
 		dockerPath := image[idx+len(".azurecr.io/"):]
+		dockerPath = strings.TrimPrefix(dockerPath, "docker-hub/")
 		dockerPath = strings.TrimPrefix(dockerPath, "library/")
 		return dockerPath
 	}
