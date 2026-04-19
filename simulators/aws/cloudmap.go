@@ -18,6 +18,12 @@ type CMNamespace struct {
 	Description string                 `json:"Description,omitempty"`
 	Properties  *CMNamespaceProperties `json:"Properties,omitempty"`
 	CreateDate  int64                  `json:"CreateDate"`
+	// DockerNetworkName is the name of the real Docker user-defined
+	// network backing this namespace. Containers registered in services
+	// under this namespace are connected to this network with the
+	// service name as a DNS alias, so cross-container DNS resolution
+	// works via Docker's embedded resolver (BUG-701 fix).
+	DockerNetworkName string `json:"DockerNetworkName,omitempty"`
 }
 
 type CMNamespaceProperties struct {
@@ -121,6 +127,18 @@ func handleCMCreatePrivateDnsNamespace(w http.ResponseWriter, r *http.Request) {
 	nsId := "ns-" + generateUUID()[:16]
 	operationId := generateUUID()
 
+	// Back the namespace with a real Docker network so containers
+	// registered in services under it can reach each other by name via
+	// Docker's embedded DNS (BUG-701 fix). Failures degrade the DNS
+	// feature but don't break namespace creation.
+	dockerNetName := "sim-" + nsId
+	if _, err := sim.EnsureDockerNetwork(dockerNetName); err != nil {
+		// Fall back to no network: CRUD still works but cross-task DNS
+		// is not available for this namespace. This keeps the simulator
+		// usable when Docker isn't available (e.g. in narrow CRUD tests).
+		dockerNetName = ""
+	}
+
 	ns := CMNamespace{
 		Id:          nsId,
 		Arn:         cmArn("namespace", nsId),
@@ -132,7 +150,8 @@ func handleCMCreatePrivateDnsNamespace(w http.ResponseWriter, r *http.Request) {
 				HostedZoneId: "Z" + generateUUID()[:12],
 			},
 		},
-		CreateDate: time.Now().Unix(),
+		CreateDate:        time.Now().Unix(),
+		DockerNetworkName: dockerNetName,
 	}
 	cmNamespaces.Put(nsId, ns)
 
@@ -185,10 +204,17 @@ func handleCMDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !cmNamespaces.Delete(req.Id) {
+	ns, ok := cmNamespaces.Get(req.Id)
+	if !ok {
 		sim.AWSErrorf(w, "NamespaceNotFound", http.StatusNotFound,
 			"Namespace '%s' not found", req.Id)
 		return
+	}
+	cmNamespaces.Delete(req.Id)
+
+	// Drop the backing Docker network after the namespace is gone.
+	if ns.DockerNetworkName != "" {
+		_ = sim.RemoveDockerNetwork(ns.DockerNetworkName)
 	}
 
 	operationId := generateUUID()
@@ -283,7 +309,8 @@ func handleCMRegisterInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, ok := cmServices.Get(req.ServiceId); !ok {
+	svc, ok := cmServices.Get(req.ServiceId)
+	if !ok {
 		sim.AWSErrorf(w, "ServiceNotFound", http.StatusNotFound,
 			"Service '%s' not found", req.ServiceId)
 		return
@@ -301,10 +328,54 @@ func handleCMRegisterInstance(w http.ResponseWriter, r *http.Request) {
 		svc.InstanceCount++
 	})
 
+	// BUG-701: connect the real Docker container for this task to the
+	// namespace's Docker network with the service name as DNS alias,
+	// so other containers on the same namespace resolve it by name.
+	if ns, nsOk := cmNamespaces.Get(svc.NamespaceId); nsOk && ns.DockerNetworkName != "" {
+		if containerName := resolveTaskContainerForInstance(req.InstanceId); containerName != "" {
+			_ = sim.ConnectContainerToNetwork(containerName, ns.DockerNetworkName, []string{svc.Name})
+		}
+	}
+
 	operationId := generateUUID()
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"OperationId": operationId,
 	})
+}
+
+// resolveTaskContainerForInstance maps a Cloud Map instance ID back to
+// the simulator's Docker container name for the corresponding ECS task.
+// Sockerless's ECS backend uses `containerID[:12]` as the instance ID
+// and tags each RunTask with `sockerless-container-id: <full id>`; we
+// match that tag and return `sockerless-sim-aws-task-<taskID[:12]>`.
+// Returns "" if no matching task is found (e.g. CRUD-only tests that
+// register synthetic instance IDs with no backing task).
+func resolveTaskContainerForInstance(instanceId string) string {
+	for _, task := range ecsTasks.List() {
+		for _, tag := range task.Tags {
+			if tag.Key == "sockerless-container-id" && len(tag.Value) >= len(instanceId) && tag.Value[:len(instanceId)] == instanceId {
+				// Derive task UUID from ARN ("arn:…/task/<cluster>/<taskId>").
+				taskId := task.TaskArn
+				if i := lastSlash(taskId); i >= 0 {
+					taskId = taskId[i+1:]
+				}
+				if len(taskId) < 12 {
+					return ""
+				}
+				return "sockerless-sim-aws-task-" + taskId[:12]
+			}
+		}
+	}
+	return ""
+}
+
+func lastSlash(s string) int {
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i] == '/' {
+			return i
+		}
+	}
+	return -1
 }
 
 func handleCMDeregisterInstance(w http.ResponseWriter, r *http.Request) {
@@ -334,6 +405,16 @@ func handleCMDeregisterInstance(w http.ResponseWriter, r *http.Request) {
 			svc.InstanceCount--
 		}
 	})
+
+	// Best-effort disconnect from the Docker network (BUG-701).
+	// Container shutdown will auto-clean so this is just tidier state.
+	if svc, ok := cmServices.Get(req.ServiceId); ok {
+		if ns, nsOk := cmNamespaces.Get(svc.NamespaceId); nsOk && ns.DockerNetworkName != "" {
+			if containerName := resolveTaskContainerForInstance(req.InstanceId); containerName != "" {
+				_ = sim.DisconnectContainerFromNetwork(containerName, ns.DockerNetworkName)
+			}
+		}
+	}
 
 	operationId := generateUUID()
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
