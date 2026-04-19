@@ -14,7 +14,19 @@ type ContainerAppEnvironment struct {
 	Location   string            `json:"location"`
 	Tags       map[string]string `json:"tags,omitempty"`
 	Properties EnvProperties     `json:"properties"`
+	// DockerNetworkName is the real Docker user-defined network that
+	// backs this environment. Jobs launched in this environment are
+	// connected to the network with the job short name as DNS alias,
+	// so cross-job DNS works via Docker's embedded resolver. Empty
+	// until the env's PUT handler creates the network. (BUG-701 on
+	// Azure fix.)
+	DockerNetworkName string `json:"dockerNetworkName,omitempty"`
 }
+
+// acaEnvironments is the package-level store for Container Apps
+// environments. Exposed so containerapps.go can resolve a job's
+// environment + backing Docker network when launching executions.
+var acaEnvironments sim.Store[ContainerAppEnvironment]
 
 type EnvProperties struct {
 	ProvisioningState         string                     `json:"provisioningState"`
@@ -62,7 +74,8 @@ type VnetConfiguration struct {
 }
 
 func registerContainerAppEnvironment(srv *sim.Server) {
-	environments := sim.MakeStore[ContainerAppEnvironment](srv.DB(), "aca_environments")
+	acaEnvironments = sim.MakeStore[ContainerAppEnvironment](srv.DB(), "aca_environments")
+	environments := acaEnvironments
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.App"
 
@@ -80,6 +93,17 @@ func registerContainerAppEnvironment(srv *sim.Server) {
 
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/managedEnvironments/%s",
 			sub, rg, envName)
+
+		// BUG-701 on Azure: back every environment with a real Docker
+		// user-defined network. Jobs created in this environment are
+		// connected to the network at execution-start time with the
+		// job short name as DNS alias, so cross-job DNS resolves via
+		// Docker's embedded resolver. Matches ACA's managed-VNet model
+		// where environment = shared networking domain.
+		dockerNetName := "sim-env-" + envName
+		if _, err := sim.EnsureDockerNetwork(dockerNetName); err != nil {
+			dockerNetName = ""
+		}
 
 		env := ContainerAppEnvironment{
 			ID:       resourceID,
@@ -103,6 +127,7 @@ func registerContainerAppEnvironment(srv *sim.Server) {
 					Mtls: &Mtls{Enabled: false},
 				},
 			},
+			DockerNetworkName: dockerNetName,
 		}
 		environments.Put(resourceID, env)
 
@@ -134,6 +159,12 @@ func registerContainerAppEnvironment(srv *sim.Server) {
 		envName := sim.PathParam(r, "envName")
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/managedEnvironments/%s",
 			sub, rg, envName)
+
+		// BUG-701: drop the backing Docker network when the env is
+		// removed.
+		if env, ok := environments.Get(resourceID); ok && env.DockerNetworkName != "" {
+			_ = sim.RemoveDockerNetwork(env.DockerNetworkName)
+		}
 
 		environments.Delete(resourceID)
 		w.WriteHeader(http.StatusAccepted)

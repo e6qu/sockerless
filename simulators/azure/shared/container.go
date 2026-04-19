@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
@@ -19,17 +20,19 @@ import (
 
 // ContainerConfig describes a container to run.
 type ContainerConfig struct {
-	Image     string            // container image (e.g., "alpine:latest")
-	Command   []string          // entrypoint override (empty = use image default)
-	Args      []string          // command/args (empty = use image default)
-	Env       map[string]string // environment variables
-	Timeout   time.Duration     // max execution time (0 = no limit)
-	Labels    map[string]string // container labels for tracking
-	Network   string            // Docker network to join (optional)
-	Name      string            // container name (optional, auto-generated if empty)
-	Tty       bool              // allocate a pseudo-TTY
-	OpenStdin bool              // keep stdin open
-	Binds     []string          // bind mounts (e.g., "vol:/path")
+	Image          string            // container image (e.g., "alpine:latest")
+	Command        []string          // entrypoint override (empty = use image default)
+	Args           []string          // command/args (empty = use image default)
+	Env            map[string]string // environment variables
+	Timeout        time.Duration     // max execution time (0 = no limit)
+	Labels         map[string]string // container labels for tracking
+	Network        string            // Docker network to join (optional)
+	NetworkAliases []string          // DNS aliases on Network (resolved by Docker embedded DNS)
+	Name           string            // container name (optional, auto-generated if empty)
+	Tty            bool              // allocate a pseudo-TTY
+	OpenStdin      bool              // keep stdin open
+	Binds          []string          // bind mounts (e.g., "vol:/path")
+	ExtraHosts     []string          // --add-host entries (e.g., "host.docker.internal:host-gateway")
 }
 
 // ContainerHandle manages a running container.
@@ -86,6 +89,9 @@ func DockerClient() *client.Client {
 var managedContainers sync.Map // containerID -> true
 
 // CleanupContainers stops and removes all simulator-managed containers.
+// Also prunes any Docker networks labeled `sockerless-sim=true` that
+// aren't in use (typically the namespace-backed networks from BUG-701's
+// fix that weren't explicitly removed by a DeleteNamespace call).
 // Called on simulator shutdown.
 func CleanupContainers() {
 	if dockerClient == nil {
@@ -101,6 +107,15 @@ func CleanupContainers() {
 		_ = dockerClient.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
 		return true
 	})
+
+	nets, err := dockerClient.NetworkList(ctx, network.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("label", "sockerless-sim=true")),
+	})
+	if err == nil {
+		for _, n := range nets {
+			_ = dockerClient.NetworkRemove(ctx, n.ID)
+		}
+	}
 }
 
 // StartContainer pulls the image (if needed), creates and starts a container.
@@ -261,14 +276,15 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 	}
 
 	hostCfg := &container.HostConfig{
-		Binds: cfg.Binds,
+		Binds:      cfg.Binds,
+		ExtraHosts: cfg.ExtraHosts,
 	}
 
 	var networkCfg *network.NetworkingConfig
 	if cfg.Network != "" {
 		networkCfg = &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
-				cfg.Network: {},
+				cfg.Network: {Aliases: cfg.NetworkAliases},
 			},
 		}
 	}
@@ -433,6 +449,75 @@ func ResolveLocalImage(image string) string {
 		return dockerPath
 	}
 	return image
+}
+
+// EnsureDockerNetwork creates a user-defined Docker network with the
+// given name if it doesn't exist. Returns the network ID (existing or
+// newly created). Used by the Cloud Map simulator to back each private
+// DNS namespace with a real Docker network so cross-container DNS works
+// via Docker's embedded DNS resolver.
+func EnsureDockerNetwork(name string) (string, error) {
+	cli := DockerClient()
+	if cli == nil {
+		return "", fmt.Errorf("docker client not initialized")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// Idempotent: return existing network if present.
+	if existing, err := cli.NetworkInspect(ctx, name, network.InspectOptions{}); err == nil {
+		return existing.ID, nil
+	}
+	resp, err := cli.NetworkCreate(ctx, name, network.CreateOptions{
+		Driver: "bridge",
+		Labels: map[string]string{"sockerless-sim": "true"},
+	})
+	if err != nil {
+		return "", fmt.Errorf("network create %s: %w", name, err)
+	}
+	return resp.ID, nil
+}
+
+// RemoveDockerNetwork removes a simulator-managed Docker network if
+// it exists. Errors are returned so callers can log them; idempotent
+// for a missing network.
+func RemoveDockerNetwork(name string) error {
+	cli := DockerClient()
+	if cli == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := cli.NetworkInspect(ctx, name, network.InspectOptions{}); err != nil {
+		return nil // already gone
+	}
+	return cli.NetworkRemove(ctx, name)
+}
+
+// ConnectContainerToNetwork connects a running container to a Docker
+// network with the given DNS aliases. Idempotent: if the container is
+// already on the network, the call updates aliases and returns nil.
+func ConnectContainerToNetwork(containerName, networkName string, aliases []string) error {
+	cli := DockerClient()
+	if cli == nil {
+		return fmt.Errorf("docker client not initialized")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return cli.NetworkConnect(ctx, networkName, containerName, &network.EndpointSettings{
+		Aliases: aliases,
+	})
+}
+
+// DisconnectContainerFromNetwork removes a running container from a
+// Docker network. Idempotent for already-disconnected containers.
+func DisconnectContainerFromNetwork(containerName, networkName string) error {
+	cli := DockerClient()
+	if cli == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return cli.NetworkDisconnect(ctx, networkName, containerName, true)
 }
 
 // RuntimeInfo returns the container runtime name and version for display.
