@@ -155,6 +155,33 @@ var (
 
 const ec2Owner = "123456789012"
 
+// ensureSimDefaults creates `vpc-sim` and `subnet-sim` entries if they
+// don't already exist. Called on simulator startup. Idempotent.
+func ensureSimDefaults() {
+	if _, ok := ec2Vpcs.Get("vpc-sim"); !ok {
+		ec2Vpcs.Put("vpc-sim", EC2Vpc{
+			VpcId:              "vpc-sim",
+			CidrBlock:          "10.0.0.0/16",
+			State:              "available",
+			OwnerId:            ec2Owner,
+			IsDefault:          true,
+			EnableDnsSupport:   true,
+			EnableDnsHostnames: true,
+		})
+	}
+	if _, ok := ec2Subnets.Get("subnet-sim"); !ok {
+		ec2Subnets.Put("subnet-sim", EC2Subnet{
+			SubnetId:            "subnet-sim",
+			VpcId:               "vpc-sim",
+			CidrBlock:           "10.0.1.0/24",
+			AvailabilityZone:    "us-east-1a",
+			State:               "available",
+			OwnerId:             ec2Owner,
+			MapPublicIpOnLaunch: false,
+		})
+	}
+}
+
 func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	ec2Vpcs = sim.MakeStore[EC2Vpc](srv.DB(), "ec2_vpcs")
 	ec2Subnets = sim.MakeStore[EC2Subnet](srv.DB(), "ec2_subnets")
@@ -214,6 +241,15 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("AuthorizeSecurityGroupEgress", handleAuthorizeSecurityGroupEgress)
 	r.Register("RevokeSecurityGroupIngress", handleRevokeSecurityGroupIngress)
 	r.Register("RevokeSecurityGroupEgress", handleRevokeSecurityGroupEgress)
+
+	// Pre-register a default `vpc-sim` + `subnet-sim` so harnesses that
+	// hardcode those IDs (smoke-tests/run.sh, backend config examples)
+	// can call DescribeSubnets / DescribeVpcs without first provisioning.
+	// Real AWS would never have these exact IDs; they're a simulator
+	// convention. Backends resolve subnet → VPC on network create, so
+	// without this pre-registration Cloud Map namespace setup fails
+	// silently (see BUG-699 + BUG-700).
+	ensureSimDefaults()
 
 	// Network Interfaces (used during destroy to check ENIs before deleting SGs/subnets)
 	r.Register("DescribeNetworkInterfaces", handleDescribeNetworkInterfaces)
