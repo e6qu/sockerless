@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**85 phases (756 tasks). 661 bugs fixed, 2 open (BUG-692 docker CLI hang, BUG-693 ECS task-def raw image ref — both surfaced in P86 AWS manual session 1). Cloud build services for all 6 backends. Phase 86 no-AWS track complete; AWS track partial.**
+**86 phases (757 tasks). 707 bugs fixed, 0 open. Cloud build services for all 6 backends. Phase 86 simulator parity complete across AWS + GCP + Azure; live-AWS session gated on creds (scripted via `.github/workflows/phase86-aws-live.yml`).**
 
 ## Test Counts
 
@@ -19,6 +19,21 @@
 
 6 rounds against real AWS ECS Fargate (`eu-west-1`). Round 6: Docker CLI all pass, Podman pull+pods pass (container ops blocked by response format), Advanced 3/4. See [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md).
 
-## Phase 86 — Complete Runner Support (no-AWS track)
+## Phase 86 — Complete Runner Support (simulator parity + Phase D)
 
-Done: P86-001…007. Covers honest E2E matrix (no more silent `-wasm` variant fallback), per-hostname Cloud Map services + DNS search domains on ECS, best-effort Lambda `ContainerStop`/`Kill` with reverse-agent disconnect stub, lazy CloudWatch stream resolution for `docker logs -f`, agent-as-handler skeleton + overlay-image renderer for Lambda live exec, SaaS setup docs (`ECS_LIVE_SETUP.md`, `GITHUB_RUNNER_SAAS.md`, `GITLAB_RUNNER_SAAS.md`). Needs-AWS track (P86-008…013) is blocked on credentials + github.com / gitlab.com tokens. See `docs/runner-capability-matrix.md`.
+Done across AWS + GCP + Azure. Full simulator parity audited in `docs/SIMULATOR_PARITY_{AWS,GCP,AZURE}.md` (zero ✖ rows on runner path). All BUGS.md entries closed.
+
+Highlights this phase:
+- **A.5 testing contract** — pre-commit hook blocks sim-endpoint additions without matching SDK + CLI + terraform tests.
+- **BUG-696 ECR pull-through cache** — AWS ECR cache-rule CRUD + image URI rewriting.
+- **BUG-697 Store.Images persistence** — `docker pull` survives backend restart across all six cloud backends.
+- **BUG-700 cloud-side network-create Warning** — ECS + Cloud Run + ACA.
+- **BUG-701 cross-task DNS** — AWS Cloud Map / GCP Cloud DNS / Azure ACA environments all back themselves with real Docker networks.
+- **BUG-702 Azure Private DNS SDK wire** — backend calls real `armprivatedns`.
+- **BUG-703 Azure NSG SDK wire + simulator securityRules sub-resource**.
+- **BUG-704 GCP Cloud Build slice + BUG-707 Secret Manager integration**.
+- **BUG-705 AWS Lambda Runtime API slice** — `simulators/aws/lambda_runtime.go` implements the full cloud contract.
+- **BUG-706 Azure ACR Cache Rules** — simulator cache-rule CRUD + backend pull-through resolver.
+- **Phase D Lambda agent-as-handler** — bootstrap polling loop (`agent/cmd/sockerless-lambda-bootstrap`), overlay image build in `ContainerCreate`, reverse-agent WebSocket server on `/v1/lambda/reverse`.
+
+Live-AWS session (Phase E) is scripted in `scripts/phase86/*.sh` and dispatched by `.github/workflows/phase86-aws-live.yml`; awaits AWS credentials. Runner-capability matrix live columns stay pending-live until that session runs.
