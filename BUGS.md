@@ -1,11 +1,14 @@
 # Known Bugs
 
-693 total. 691 fixed. 2 open (P86 AWS manual session 1, 2026-04-19).
+696 total. 693 fixed. 3 open (P86 bug-fix sprint, 2026-04-19).
 
 | ID | Sev | Summary | Status |
 |----|-----|---------|--------|
-| 693 | High | ECS task definition registered with unqualified image ref (e.g. `alpine`) — Fargate cannot pull, task stays PENDING forever. `backends/ecs/taskdef.go:buildContainerDef` uses `config.Image` raw; should resolve via ECR pull-through URI like `backends/lambda/image_resolve.go:resolveImageURI`. | open |
-| 692 | Critical | `docker run` hangs after POST /containers/create against live ECS backend — no POST /start from docker CLI. Backend attach returns 200 in 0.14ms instead of holding a hijacked connection. Blocks Phase-86 AWS-track runner validation. Likely regression from stateless refactor. | open |
+| 696 | Med | AWS simulator missing ECR pull-through-cache APIs (`CreatePullThroughCacheRule`, `DescribePullThroughCacheRules`) — returns `UnknownOperationException`. ECS backend degrades to raw image ref on simulator, which hides the live-mode behavior. Simulator parity gap. | open |
+| 695 | High | `StreamCloudLogs` rejects containers in `created` state unconditionally — breaks `docker run` create→attach→start flow where attach opens before start. Fixed with new `AllowCreated` option in `StreamCloudLogsOptions`; ECS `ContainerAttach` passes it. | fixed |
+| 694 | High | `StreamCloudLogs` follow loop exits as soon as `!c.State.Running`, but `created` state is also non-running — attach before start exits the stream on first tick. Fixed by switching exit condition to `isTerminalState(status)` which fires only on `exited`/`dead`/`removing`. | fixed |
+| 693 | High | ECS task definition registered with unqualified image ref (e.g. `alpine`) — Fargate cannot pull, task stays PENDING forever. `backends/ecs/taskdef.go:buildContainerDef` used `config.Image` raw; fixed in P86-015 by porting Lambda's `resolveImageURI` to ECS. | fixed |
+| 692 | Critical | `docker run` hangs after POST /containers/create against live ECS backend. Root cause: `ContainerAttach` delegated to `BaseServer.ContainerAttach` which returned an EOF pipe because `LocalStreamDriver` had no local driver. Fixed in P86-016 by implementing ECS-specific attach that streams CloudWatch logs. | fixed |
 | 662 | High | Auto-agent delegates to BaseServer.ContainerStart which reads Store. | fixed |
 | 663 | High | docker wait hangs in auto-agent mode. Fix: check local WaitChs first. | fixed |
 | 664 | High | CloudState only queried RUNNING tasks. Fix: query RUNNING + STOPPED. | fixed |

@@ -25,6 +25,14 @@ type StreamCloudLogsOptions struct {
 	// CheckLogBuffers causes StreamCloudLogs to use in-memory LogBuffers if available.
 	// Set true for FaaS backends where invocation output is captured in memory.
 	CheckLogBuffers bool
+
+	// AllowCreated tolerates containers in the "created" state (not yet
+	// started) instead of rejecting the call. Used by ContainerAttach
+	// on the create→attach→start docker flow: the attach stream must
+	// open before start, so the container is still "created" when we
+	// set up polling. The follow loop then waits for it to transition
+	// to running and begin emitting logs.
+	AllowCreated bool
 }
 
 // StreamCloudLogs implements the common ContainerLogs pattern for cloud backends.
@@ -39,7 +47,7 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 	}
 	id := c.ID
 
-	if c.State.Status == "created" {
+	if c.State.Status == "created" && !sopts.AllowCreated {
 		return nil, &api.InvalidParameterError{
 			Message: "can not get logs from container which is dead or marked for removal",
 		}
@@ -88,8 +96,13 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 		defer ticker.Stop()
 
 		for range ticker.C {
-			// Check if container has stopped via CloudState-aware path.
-			if cc, ccOK := s.ResolveContainerAuto(ctx, id); ccOK && !cc.State.Running {
+			// Stop following only when the container has reached a
+			// terminal state. Pre-start (status "created") must keep
+			// polling because attach-before-start is a valid docker
+			// flow (used by `docker run` without `-d`). Treating
+			// `!Running` as the exit trigger would drop the stream
+			// before the container ever emits its first line.
+			if cc, ccOK := s.ResolveContainerAuto(ctx, id); ccOK && isTerminalState(cc.State.Status) {
 				// Final fetch before exit.
 				entries, _, _ = fetch(ctx, params, cursor)
 				for _, e := range entries {
@@ -144,4 +157,18 @@ func streamBufferedLogs(params CloudLogParams, buf []byte) io.ReadCloser {
 // writeLogLine writes a formatted log line as raw text to w.
 func writeLogLine(w io.Writer, line string) {
 	_, _ = io.WriteString(w, line)
+}
+
+// isTerminalState reports whether a container's State.Status indicates
+// the container will not produce further logs. Pre-start ("created")
+// and transient states like "running" / "restarting" / "paused" are
+// non-terminal. Used by StreamCloudLogs follow mode to decide when to
+// close the stream.
+func isTerminalState(status string) bool {
+	switch status {
+	case "exited", "dead", "removing":
+		return true
+	default:
+		return false
+	}
 }

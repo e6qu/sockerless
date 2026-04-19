@@ -46,7 +46,10 @@ func (s *Server) ContainerAttach(ref string, opts api.ContainerAttachOptions) (i
 		Follow:     opts.Stream,
 	}
 
-	logReader, err := core.StreamCloudLogs(s.BaseServer, ref, logOpts, fetch, core.StreamCloudLogsOptions{})
+	// Attach tolerates the pre-start "created" state so the docker
+	// run flow (create → attach → start) works; the follow loop waits
+	// for the container to transition to running before emitting logs.
+	logReader, err := core.StreamCloudLogs(s.BaseServer, ref, logOpts, fetch, core.StreamCloudLogsOptions{AllowCreated: true})
 	if err != nil {
 		return nil, err
 	}
