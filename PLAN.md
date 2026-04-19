@@ -42,6 +42,38 @@ Dark mode, design tokens, error handling UX, container detail modal, auto-refres
 
 ---
 
+## Phase 86 — Complete Runner Support (ECS + Lambda × github.com + gitlab.com SaaS)
+
+Close the gap between "Docker API passes E2E in simulator mode" and "official `actions/runner` + `gitlab-runner` binaries run real CI jobs on real AWS against real github.com / gitlab.com." No `-wasm` / synthetic shortcuts: services, custom images, and docker build must work for real. Lambda 15-min cap accepted.
+
+Work partitioned into **no-AWS-credentials** (can be done now, verified in simulator) and **needs-AWS** (verified against live accounts).
+
+### No-AWS track
+
+| Task | Status | Description |
+|---|---|---|
+| P86-001 | done | Dropped `-wasm` / `-faas` variant-routing. `get_test_variant` and `should_skip_for_faas` removed from `tests/e2e-live-tests/lib.sh`; orchestrators use test names directly |
+| P86-002 | done | Pruned `services` / `custom-image` from `ALL_WORKFLOWS` / `ALL_PIPELINES` (files removed in daeff00). Renamed `container-action-faas.yml` → `container-action.yml`. `docs/runner-capability-matrix.md` added as TBD template |
+| P86-003 | | Services orchestration on live-mode ECS backend: multi-task creation + Cloud Map service discovery (`backends/ecs/taskdef.go` → new `services.go`), verified in simulator first |
+| P86-004 | | Lambda `ContainerStop` actually signals (not 204-noop), and `docker logs -f` follow mode (`backends/lambda/backend_impl.go`) |
+| P86-005 | | Lambda live-mode exec design: reverse-agent as Lambda handler, callback URL plumbing (requires code + config changes, no live creds needed to implement) |
+| P86-006 | | Add `--runner official` switch to E2E harnesses to target unmodified `actions/runner` and `gitlab-runner` binaries (vs `act` / self-hosted GitLab CE) |
+| P86-007 | | Docs: `docs/ECS_LIVE_SETUP.md`, `docs/GITHUB_RUNNER_SAAS.md`, `docs/GITLAB_RUNNER_SAAS.md` — provisioning, TLS/auth, runner registration |
+| P86-008 | | Unit + integration tests for P86-003/004/005 |
+
+### Needs-AWS track (blocked on credentials)
+
+| Task | Status | Description |
+|---|---|---|
+| P86-009 | | Provision reference AWS environment (VPC, IAM, ECR, CloudWatch, optional EFS); sanity-check live ECS Docker CLI regression still passes |
+| P86-010 | | `actions/runner` × real github.com × live ECS — three job shapes: plain shell, `container:`, `services:` |
+| P86-011 | | `gitlab-runner` × real gitlab.com × live ECS — same matrix |
+| P86-012 | | Lambda live Docker CLI baseline (Round 1 equivalent to ECS Round 1) |
+| P86-013 | | Lambda live runner profile: viability decision (restricted profile or drop from runner scope); land outcome in docs |
+| P86-014 | | Save final state |
+
+---
+
 ## Future Ideas
 
 - GraphQL subscriptions for real-time event streaming

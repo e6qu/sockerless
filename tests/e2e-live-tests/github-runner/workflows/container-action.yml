@@ -1,4 +1,4 @@
-name: container-action-faas
+name: container-action
 on: push
 jobs:
   test:
