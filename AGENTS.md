@@ -34,6 +34,18 @@ When modifying simulators, always ask: "How does the real cloud service behave?"
 
 The simulators run locally on a single machine today. The architecture is designed to eventually distribute execution across multiple machines, with the same API surface.
 
+### Simulator fidelity — testing contract
+
+Every simulator endpoint must be exercisable via all three real-world client surfaces, in the same commit that registers the endpoint:
+
+1. **SDK** — the official cloud SDK for Go (`aws-sdk-go-v2/*`, `cloud.google.com/go/*`, `github.com/Azure/azure-sdk-for-go/*`). Tests live in `simulators/<cloud>/sdk-tests/`.
+2. **CLI** — the vendor CLI (`aws`, `gcloud`, `az`) shelled out via `runCLI`. Tests in `simulators/<cloud>/cli-tests/`.
+3. **Terraform** — the official provider resource that wraps the endpoint. Tests in `simulators/<cloud>/terraform-tests/` (extend `main.tf` and rely on the existing apply/destroy harness).
+
+The pre-commit hook `scripts/check-simulator-tests.sh` blocks any commit that adds a `r.Register("OpName", …)` line without touching at least one file in the three test dirs that references the operation. Endpoints that genuinely aren't exposed via SDK/CLI/terraform (e.g. Lambda Runtime API routes that the function *container* polls, not an SDK) go on `simulators/<cloud>/tests-exempt.txt` — one operation per line.
+
+There is no "just land it and add tests later." If you edit a simulator, the tests ship with it.
+
 **Related docs:** [ARCHITECTURE.md](ARCHITECTURE.md), [agent/README.md](agent/README.md), [backends/README.md](backends/README.md)
 
 ## All synthetic behavior is a bug
