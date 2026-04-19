@@ -5,6 +5,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
+	ecrtypes "github.com/aws/aws-sdk-go-v2/service/ecr/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -47,6 +48,99 @@ func TestECR_GetAuthorizationToken(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, out.AuthorizationData)
 	assert.NotEmpty(t, *out.AuthorizationData[0].AuthorizationToken)
+}
+
+// TestECR_PullThroughCacheCreate verifies the simulator accepts a
+// pull-through-cache rule via the official ECR SDK, which is the path
+// sockerless's image resolver and terraform's
+// aws_ecr_pull_through_cache_rule both take.
+func TestECR_PullThroughCacheCreate(t *testing.T) {
+	client := ecrClient()
+	out, err := client.CreatePullThroughCacheRule(ctx, &ecr.CreatePullThroughCacheRuleInput{
+		EcrRepositoryPrefix: aws.String("docker-hub"),
+		UpstreamRegistryUrl: aws.String("registry-1.docker.io"),
+		UpstreamRegistry:    ecrtypes.UpstreamRegistryDockerHub,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "docker-hub", aws.ToString(out.EcrRepositoryPrefix))
+	assert.Equal(t, "registry-1.docker.io", aws.ToString(out.UpstreamRegistryUrl))
+}
+
+// TestECR_PullThroughCacheCreateAlreadyExists verifies the simulator
+// returns the same error shape AWS does when a prefix is reused.
+func TestECR_PullThroughCacheCreateAlreadyExists(t *testing.T) {
+	client := ecrClient()
+	_, err := client.CreatePullThroughCacheRule(ctx, &ecr.CreatePullThroughCacheRuleInput{
+		EcrRepositoryPrefix: aws.String("already-exists"),
+		UpstreamRegistryUrl: aws.String("registry-1.docker.io"),
+		UpstreamRegistry:    ecrtypes.UpstreamRegistryDockerHub,
+	})
+	require.NoError(t, err)
+
+	_, err = client.CreatePullThroughCacheRule(ctx, &ecr.CreatePullThroughCacheRuleInput{
+		EcrRepositoryPrefix: aws.String("already-exists"),
+		UpstreamRegistryUrl: aws.String("registry-1.docker.io"),
+		UpstreamRegistry:    ecrtypes.UpstreamRegistryDockerHub,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PullThroughCacheRuleAlreadyExists")
+}
+
+// TestECR_PullThroughCacheDescribe verifies list-all and filtered list
+// paths both round-trip.
+func TestECR_PullThroughCacheDescribe(t *testing.T) {
+	client := ecrClient()
+	_, err := client.CreatePullThroughCacheRule(ctx, &ecr.CreatePullThroughCacheRuleInput{
+		EcrRepositoryPrefix: aws.String("describe-prefix-a"),
+		UpstreamRegistryUrl: aws.String("registry-1.docker.io"),
+		UpstreamRegistry:    ecrtypes.UpstreamRegistryDockerHub,
+	})
+	require.NoError(t, err)
+
+	// Filtered
+	filtered, err := client.DescribePullThroughCacheRules(ctx, &ecr.DescribePullThroughCacheRulesInput{
+		EcrRepositoryPrefixes: []string{"describe-prefix-a"},
+	})
+	require.NoError(t, err)
+	require.Len(t, filtered.PullThroughCacheRules, 1)
+	assert.Equal(t, "describe-prefix-a", aws.ToString(filtered.PullThroughCacheRules[0].EcrRepositoryPrefix))
+
+	// All (at least our entry must appear)
+	all, err := client.DescribePullThroughCacheRules(ctx, &ecr.DescribePullThroughCacheRulesInput{})
+	require.NoError(t, err)
+	var found bool
+	for _, r := range all.PullThroughCacheRules {
+		if aws.ToString(r.EcrRepositoryPrefix) == "describe-prefix-a" {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "listed rules should include describe-prefix-a")
+}
+
+// TestECR_PullThroughCacheDelete verifies delete removes the rule and
+// that re-deleting produces the not-found error shape.
+func TestECR_PullThroughCacheDelete(t *testing.T) {
+	client := ecrClient()
+	_, err := client.CreatePullThroughCacheRule(ctx, &ecr.CreatePullThroughCacheRuleInput{
+		EcrRepositoryPrefix: aws.String("delete-prefix"),
+		UpstreamRegistryUrl: aws.String("registry-1.docker.io"),
+		UpstreamRegistry:    ecrtypes.UpstreamRegistryDockerHub,
+	})
+	require.NoError(t, err)
+
+	out, err := client.DeletePullThroughCacheRule(ctx, &ecr.DeletePullThroughCacheRuleInput{
+		EcrRepositoryPrefix: aws.String("delete-prefix"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "delete-prefix", aws.ToString(out.EcrRepositoryPrefix))
+
+	// Second delete should fail with not-found.
+	_, err = client.DeletePullThroughCacheRule(ctx, &ecr.DeletePullThroughCacheRuleInput{
+		EcrRepositoryPrefix: aws.String("delete-prefix"),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PullThroughCacheRuleNotFound")
 }
 
 func TestECR_LifecyclePolicy(t *testing.T) {

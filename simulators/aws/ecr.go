@@ -205,65 +205,12 @@ func handleECRDeletePullThroughCacheRule(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// ECRResolvePullThroughURI looks at an image URI; if it matches a
-// registered pull-through-cache rule, returns the upstream URI to
-// pull from instead. Returns the original on no-match. Used by
-// `ResolveLocalImage` in the shared simulator library so runtime
-// container launches honor the cache transparently.
-func ECRResolvePullThroughURI(uri string) string {
-	// URIs look like `<account>.dkr.ecr.<region>.amazonaws.com/<prefix>/<repo>:<tag>`
-	// Split on first slash after the `.amazonaws.com/` prefix.
-	idx := findECRPath(uri)
-	if idx < 0 {
-		return uri
-	}
-	path := uri[idx:]
-	slash := -1
-	for i, c := range path {
-		if c == '/' {
-			slash = i
-			break
-		}
-	}
-	if slash <= 0 {
-		return uri
-	}
-	prefix := path[:slash]
-	rule, ok := ecrPullThroughCacheRules.Get(prefix)
-	if !ok {
-		return uri
-	}
-	// Rewrite to upstream: <upstream>/<rest-of-path>
-	upstream := rule.UpstreamRegistryUrl
-	if upstream == "registry-1.docker.io" || upstream == "docker.io" {
-		upstream = "docker.io"
-	}
-	return upstream + path[slash:]
-}
-
-// findECRPath returns the index where the "/<prefix>/…" path portion
-// begins for ECR-style URIs, or -1 if the URI isn't ECR-shaped.
-func findECRPath(uri string) int {
-	marker := ".amazonaws.com/"
-	i := indexOf(uri, marker)
-	if i < 0 {
-		return -1
-	}
-	return i + len(marker)
-}
-
-func indexOf(s, sep string) int {
-	n := len(sep)
-	if n == 0 || len(s) < n {
-		return -1
-	}
-	for i := 0; i+n <= len(s); i++ {
-		if s[i:i+n] == sep {
-			return i
-		}
-	}
-	return -1
-}
+// Pull-through-cache URI → local docker ref resolution is handled by
+// `sim.ResolveLocalImage` in simulators/aws/shared/container.go, which
+// already strips `docker-hub/` + `library/` prefixes from ECR URIs
+// before the simulator pulls. The handlers above are what sockerless's
+// image-resolver + terraform's aws_ecr_pull_through_cache_rule need;
+// the launch-time URI mapping lives in the shared helper.
 
 func handleECRCreateRepository(w http.ResponseWriter, r *http.Request) {
 	var req struct {
