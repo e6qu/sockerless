@@ -1,10 +1,10 @@
 # Known Bugs
 
-698 total. 693 fixed. 5 open (P86 bug-fix sprint, 2026-04-19).
+698 total. 696 fixed. 2 open (P86 bug-fix sprint, 2026-04-19).
 
 | ID | Sev | Summary | Status |
 |----|-----|---------|--------|
-| 698 | Critical | Docker CLI (`docker run` / `docker run -d`) hangs against ECS backend between POST /containers/create and POST /start — `/start` is never sent. Backend responds correctly to all direct curl calls (create → start → attach → wait → delete all work end-to-end). docker CLI prints the container ID from create's response body, then blocks indefinitely. Suspected cause: something in sockerless's create-response body, /version, or /_ping response surface that docker CLI's auto-pull / negotiation logic dislikes. Root cause not yet isolated. Blocks all docker-CLI-driven runner validation. | open |
+| 698 | Critical | Docker CLI's `docker run -d` flow sends POST /wait?condition=next-exit *before* POST /start, and blocks on reading the wait response's status line. Sockerless's wait handler called `CloudState.WaitForExit` (or the Store-based wait) *before* writing any response, so Go's http server never sent headers, so docker CLI's `cli.post` never returned, so /start was never sent. Fixed by adding an early `flushWaitHeaders` call that commits the 200 + Content-Type before the handler blocks on the exit event; the response body (exit code JSON) is written after the exit lands. Verified: `docker run -d` and `docker run --rm` both succeed end-to-end against the simulator. | fixed |
 | 697 | Med | sockerless image store doesn't persist `docker pull` state across backend restarts — after restart the pulled image is gone, so `docker run <img>` can't find it in the store. Test-harness gap: session 1 saw the image pre-pulled from a prior run, masking this. | open |
 | 696 | Med | AWS simulator missing ECR pull-through-cache APIs (`CreatePullThroughCacheRule`, `DescribePullThroughCacheRules`) — returns `UnknownOperationException`. ECS backend degrades to raw image ref on simulator, which hides the live-mode behavior. Simulator parity gap per user directive: simulators must fully support every cloud action that runners drive through sockerless. | open |
 | 695 | High | `StreamCloudLogs` rejects containers in `created` state unconditionally — breaks `docker run` create→attach→start flow where attach opens before start. Fixed with new `AllowCreated` option in `StreamCloudLogsOptions`; ECS `ContainerAttach` passes it. | fixed |
