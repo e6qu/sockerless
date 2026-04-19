@@ -1,9 +1,11 @@
 # Known Bugs
 
-698 total. 696 fixed. 2 open (P86 bug-fix sprint, 2026-04-19).
+700 total. 696 fixed. 4 open (P86 bug-fix sprint, 2026-04-19).
 
 | ID | Sev | Summary | Status |
 |----|-----|---------|--------|
+| 700 | Med | Backend's `cloudNamespaceCreate` fails silently when the underlying subnet resolution fails, so `docker network create` returns success but Cloud Map namespace isn't set up. Subsequent containers fail to register, cross-container DNS doesn't work, and the failure is only visible in backend logs. Should either fail the network create or at minimum surface the warning to the client via a response `Warning` field. | open |
+| 699 | Med | AWS simulator's EC2 API doesn't pre-register `subnet-sim` (the conventional placeholder subnet used by `SOCKERLESS_ECS_SUBNETS=subnet-sim` in the smoke-test harness). Sockerless's `cloudNetworkCreate` + `cloudNamespaceCreate` call `DescribeSubnets` → returns empty → VPC-ID resolution fails → Cloud Map namespace never gets made. Simulator parity gap. | open |
 | 698 | Critical | Docker CLI's `docker run -d` flow sends POST /wait?condition=next-exit *before* POST /start, and blocks on reading the wait response's status line. Sockerless's wait handler called `CloudState.WaitForExit` (or the Store-based wait) *before* writing any response, so Go's http server never sent headers, so docker CLI's `cli.post` never returned, so /start was never sent. Fixed by adding an early `flushWaitHeaders` call that commits the 200 + Content-Type before the handler blocks on the exit event; the response body (exit code JSON) is written after the exit lands. Verified: `docker run -d` and `docker run --rm` both succeed end-to-end against the simulator. | fixed |
 | 697 | Med | sockerless image store doesn't persist `docker pull` state across backend restarts — after restart the pulled image is gone, so `docker run <img>` can't find it in the store. Test-harness gap: session 1 saw the image pre-pulled from a prior run, masking this. | open |
 | 696 | Med | AWS simulator missing ECR pull-through-cache APIs (`CreatePullThroughCacheRule`, `DescribePullThroughCacheRules`) — returns `UnknownOperationException`. ECS backend degrades to raw image ref on simulator, which hides the live-mode behavior. Simulator parity gap per user directive: simulators must fully support every cloud action that runners drive through sockerless. | open |
