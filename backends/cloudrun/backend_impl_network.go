@@ -8,15 +8,23 @@ import (
 )
 
 // NetworkCreate creates a Docker network with Cloud DNS backing.
+// Cloud DNS zone creation failures surface via the response's Warning
+// field so callers see that cross-container DNS may not work on this
+// network. Parallels BUG-700 fix in the ECS backend.
 func (s *Server) NetworkCreate(req *api.NetworkCreateRequest) (*api.NetworkCreateResponse, error) {
 	resp, err := s.BaseServer.NetworkCreate(req)
 	if err != nil {
 		return nil, err
 	}
 
-	// Create Cloud DNS managed zone for service discovery
 	if err := s.cloudNetworkCreate(req.Name, resp.ID); err != nil {
 		s.Logger.Warn().Err(err).Str("network", req.Name).Msg("failed to create Cloud DNS zone")
+		msg := "Cloud DNS zone (cross-container DNS): " + err.Error()
+		if resp.Warning != "" {
+			resp.Warning = resp.Warning + "; " + msg
+		} else {
+			resp.Warning = msg
+		}
 	}
 
 	return resp, nil

@@ -8,15 +8,27 @@ import (
 	"github.com/sockerless/api"
 )
 
-// NetworkCreate creates a Docker network with NSG tracking.
+// NetworkCreate creates a Docker network with NSG tracking. While the
+// Azure NSG SDK integration is pending (BUG-703), the response
+// Warning surfaces the local-only state so callers know cross-
+// container isolation isn't enforced yet. Parallels BUG-700 fix in
+// the ECS and Cloud Run backends.
 func (s *Server) NetworkCreate(req *api.NetworkCreateRequest) (*api.NetworkCreateResponse, error) {
 	resp, err := s.BaseServer.NetworkCreate(req)
 	if err != nil {
 		return nil, err
 	}
 
-	// Set up cloud network state (NSG tracking)
 	s.cloudNetworkCreate(req.Name, resp.ID)
+	// BUG-703: `cloudNetworkCreate` tracks NSG state in memory only;
+	// it doesn't yet call the Azure NSG SDK. Surface that to the
+	// client so the limitation isn't silent.
+	warn := "Azure NSG (BUG-703): tracked locally only; cross-network isolation is not enforced until the NSG SDK integration lands"
+	if resp.Warning != "" {
+		resp.Warning = resp.Warning + "; " + warn
+	} else {
+		resp.Warning = warn
+	}
 
 	return resp, nil
 }
