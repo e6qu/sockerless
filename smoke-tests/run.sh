@@ -165,6 +165,26 @@ run_test_output "docker ps -a (after stop)" "Exited" $D ps -a
 # Remove
 run_test "docker rm (long)" $D rm smoke-long
 
+# --- docker run --rm (exercises create + attach + start + wait + rm) ---
+# Regression test for BUG-692: attach-after-create must not hang.
+# Docker CLI sends create + attach (hijack) + start + wait + rm;
+# the hijacked attach stream must receive container stdout bytes.
+echo -n "  docker run --rm (attach path)... "
+if output=$(timeout 60 $D run --rm alpine:latest echo "hello from attach" 2>&1); then
+    if echo "$output" | grep -q "hello from attach"; then
+        echo "OK"
+        PASSED=$((PASSED + 1))
+    else
+        echo "FAIL (output missing expected bytes)"
+        echo "    $output" | head -5
+        FAILED=$((FAILED + 1))
+    fi
+else
+    echo "FAIL (timed out or errored)"
+    echo "    $output" | head -5
+    FAILED=$((FAILED + 1))
+fi
+
 # Summary
 echo ""
 echo "=== Results: $PASSED passed, $FAILED failed ==="
