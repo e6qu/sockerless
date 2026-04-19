@@ -83,6 +83,11 @@ func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinit
 		containerDef.User = aws.String(config.User)
 	}
 
+	// DNS search domains: one per Cloud Map namespace associated with a
+	// network the container is connected to. Lets bare short names like
+	// "postgres" resolve to "postgres.skls-<net>.local" inside the task.
+	containerDef.DnsSearchDomains = s.searchDomainsForContainer(ci.Container)
+
 	// Build volumes and mount points for bind mounts.
 	// Use EFS when AgentEFSID is configured so bind mounts are not
 	// silently mapped to empty scratch volumes on Fargate.

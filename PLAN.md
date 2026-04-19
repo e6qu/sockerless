@@ -54,7 +54,7 @@ Work partitioned into **no-AWS-credentials** (can be done now, verified in simul
 |---|---|---|
 | P86-001 | done | Dropped `-wasm` / `-faas` variant-routing. `get_test_variant` and `should_skip_for_faas` removed from `tests/e2e-live-tests/lib.sh`; orchestrators use test names directly |
 | P86-002 | done | Pruned `services` / `custom-image` from `ALL_WORKFLOWS` / `ALL_PIPELINES` (files removed in daeff00). Renamed `container-action-faas.yml` → `container-action.yml`. `docs/runner-capability-matrix.md` added as TBD template |
-| P86-003 | | Services orchestration on live-mode ECS backend: multi-task creation + Cloud Map service discovery (`backends/ecs/taskdef.go` → new `services.go`), verified in simulator first |
+| P86-003 | done | Per-hostname Cloud Map services + `DnsSearchDomains` on task def. Old shared `containers` service removed. Unit tests + `docs/ECS_SERVICES_DESIGN.md`. Full DNS end-to-end verification belongs to the live-AWS track |
 | P86-004 | | Lambda `ContainerStop` actually signals (not 204-noop), and `docker logs -f` follow mode (`backends/lambda/backend_impl.go`) |
 | P86-005 | | Lambda live-mode exec design: reverse-agent as Lambda handler, callback URL plumbing (requires code + config changes, no live creds needed to implement) |
 | P86-006 | | Add `--runner official` switch to E2E harnesses to target unmodified `actions/runner` and `gitlab-runner` binaries (vs `act` / self-hosted GitLab CE) |
