@@ -21,16 +21,15 @@ func (s *Server) NetworkCreate(req *api.NetworkCreateRequest) (*api.NetworkCreat
 
 	var warnings []string
 	if err := s.cloudNetworkCreate(req.Name, resp.ID); err != nil {
-		s.Logger.Warn().Err(err).Str("network", req.Name).Msg("failed to create Private DNS zone")
-		warnings = append(warnings, "Azure Private DNS zone (cross-container DNS): "+err.Error())
+		s.Logger.Warn().Err(err).Str("network", req.Name).Msg("failed to create cloud network resources")
+		warnings = append(warnings, "Azure cloud network resources: "+err.Error())
 	}
-	// BUG-703: NSG rule creation is still a TODO — surface the
-	// limitation so clients know cross-network isolation isn't enforced.
-	warnings = append(warnings, "Azure NSG (BUG-703): tracked locally only; cross-network isolation is not enforced until the NSG SDK integration lands")
-	if resp.Warning != "" {
-		warnings = append([]string{resp.Warning}, warnings...)
+	if len(warnings) > 0 {
+		if resp.Warning != "" {
+			warnings = append([]string{resp.Warning}, warnings...)
+		}
+		resp.Warning = strings.Join(warnings, "; ")
 	}
-	resp.Warning = strings.Join(warnings, "; ")
 
 	return resp, nil
 }
@@ -65,7 +64,9 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 
 	// Track NSG rule for this container-network association
 	ruleName := fmt.Sprintf("allow-%s-%s", containerID[:12], net.Name)
-	s.cloudNetworkAddRule(net.ID, ruleName)
+	if err := s.cloudNetworkAddRule(net.ID, ruleName); err != nil {
+		s.Logger.Warn().Err(err).Str("rule", ruleName).Msg("failed to create NSG rule")
+	}
 
 	// Register container in service discovery
 	c, _ := s.ResolveContainerAuto(context.Background(), containerID)
