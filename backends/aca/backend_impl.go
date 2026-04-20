@@ -202,8 +202,18 @@ func (s *Server) ContainerStart(ref string) error {
 	}
 
 	if len(podContainers) > 1 {
-		// Multi-container pod: build combined job and run
+		// Multi-container pod: build combined resource and run.
+		if s.config.UseApp {
+			return s.startMultiContainerAppTyped(id, podContainers, exitCh)
+		}
 		return s.startMultiContainerJobTyped(id, podContainers, exitCh)
+	}
+
+	// Phase 88 — Apps path. Separate function so the Jobs branch
+	// below can be deleted when Jobs support is sunset.
+	if s.config.UseApp {
+		acaState, _ := s.resolveAppACAState(s.ctx(), id)
+		return s.startSingleContainerApp(id, c, acaState, exitCh)
 	}
 
 	// Build ACA Job spec
@@ -377,9 +387,20 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 		return &api.NotModifiedError{}
 	}
 
-	// Phase 89 / BUG-725: cloud-fallback lookup so stop works post-restart.
-	if acaState, ok := s.resolveACAState(s.ctx(), id); ok && acaState.JobName != "" && acaState.ExecutionName != "" {
-		s.stopExecution(acaState.JobName, acaState.ExecutionName)
+	// Phase 88 — for Apps, the ContainerApp IS the running instance;
+	// there's no in-flight Execution to stop. Delete the App to stop
+	// the container; next Start re-creates it.
+	if s.config.UseApp {
+		if appState, ok := s.resolveAppACAState(s.ctx(), id); ok && appState.AppName != "" {
+			s.deleteApp(appState.AppName)
+			s.Registry.MarkCleanedUp(appState.AppName)
+			s.ACA.Update(id, func(st *ACAState) { st.AppName = "" })
+		}
+	} else {
+		// Phase 89 / BUG-725: cloud-fallback lookup so stop works post-restart.
+		if acaState, ok := s.resolveACAState(s.ctx(), id); ok && acaState.JobName != "" && acaState.ExecutionName != "" {
+			s.stopExecution(acaState.JobName, acaState.ExecutionName)
+		}
 	}
 
 	s.StopHealthCheck(id)
@@ -411,9 +432,18 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 
 	exitCode := core.SignalToExitCode(signal)
 
-	// Phase 89 / BUG-725: cloud-fallback lookup so kill works post-restart.
-	if acaState, ok := s.resolveACAState(s.ctx(), id); ok && acaState.JobName != "" && acaState.ExecutionName != "" {
-		s.stopExecution(acaState.JobName, acaState.ExecutionName)
+	// Phase 88 — same as Stop: Apps delete, Jobs cancel execution.
+	if s.config.UseApp {
+		if appState, ok := s.resolveAppACAState(s.ctx(), id); ok && appState.AppName != "" {
+			s.deleteApp(appState.AppName)
+			s.Registry.MarkCleanedUp(appState.AppName)
+			s.ACA.Update(id, func(st *ACAState) { st.AppName = "" })
+		}
+	} else {
+		// Phase 89 / BUG-725: cloud-fallback lookup so kill works post-restart.
+		if acaState, ok := s.resolveACAState(s.ctx(), id); ok && acaState.JobName != "" && acaState.ExecutionName != "" {
+			s.stopExecution(acaState.JobName, acaState.ExecutionName)
+		}
 	}
 
 	s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
@@ -453,19 +483,30 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			"exitCode": "0",
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
-		acaState, _ := s.resolveACAState(s.ctx(), id)
-		if acaState.JobName != "" && acaState.ExecutionName != "" {
-			s.stopExecution(acaState.JobName, acaState.ExecutionName)
+		if !s.config.UseApp {
+			acaState, _ := s.resolveACAState(s.ctx(), id)
+			if acaState.JobName != "" && acaState.ExecutionName != "" {
+				s.stopExecution(acaState.JobName, acaState.ExecutionName)
+			}
 		}
 	}
 
 	s.StopHealthCheck(id)
 
-	// Delete ACA Job (best-effort)
-	acaState, _ := s.resolveACAState(s.ctx(), id)
-	if acaState.JobName != "" {
-		s.deleteJob(acaState.JobName)
-		s.Registry.MarkCleanedUp(acaState.JobName)
+	// Phase 88 — delete the backing cloud resource. Jobs and Apps are
+	// distinct ARM resource types so cached state is unambiguous.
+	if s.config.UseApp {
+		appState, _ := s.resolveAppACAState(s.ctx(), id)
+		if appState.AppName != "" {
+			s.deleteApp(appState.AppName)
+			s.Registry.MarkCleanedUp(appState.AppName)
+		}
+	} else {
+		acaState, _ := s.resolveACAState(s.ctx(), id)
+		if acaState.JobName != "" {
+			s.deleteJob(acaState.JobName)
+			s.Registry.MarkCleanedUp(acaState.JobName)
+		}
 	}
 
 	if pod, inPod := s.Store.Pods.GetPodForContainer(id); inPod {
