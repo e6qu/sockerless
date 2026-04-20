@@ -60,7 +60,9 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	s.StatsProvider = &ecsStatsProvider{server: s}
 	s.CloudState = &ecsCloudState{
 		ecs:     awsClients.ECS,
+		ecr:     awsClients.ECR,
 		cluster: config.Cluster,
+		region:  config.Region,
 		config:  config,
 	}
 

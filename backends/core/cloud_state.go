@@ -27,3 +27,30 @@ type CloudStateProvider interface {
 	// Returns the exit code. Respects context cancellation.
 	WaitForExit(ctx context.Context, containerID string) (int, error)
 }
+
+// CloudImageLister is an optional CloudStateProvider extension for
+// backends that can derive `docker images` from their configured cloud
+// container registry (ECR, Artifact Registry, ACR, etc.). When a
+// provider implements this, BaseServer.ImageList augments the
+// in-memory cache with live cloud-registry data so `docker images`
+// after a restart reflects what's actually in the registry rather
+// than what was pulled this process lifetime (Phase 89 / BUG-723).
+type CloudImageLister interface {
+	// ListImages returns all images available in the configured cloud
+	// registry. The returned summaries should carry the fully-qualified
+	// registry URL in RepoTags so that clients can docker-pull them
+	// back without further resolution.
+	ListImages(ctx context.Context) ([]*api.ImageSummary, error)
+}
+
+// CloudPodLister is an optional CloudStateProvider extension for
+// backends that can derive pods from cloud actuals (multi-container
+// task / app grouped by the sockerless-pod tag). When a provider
+// implements this, BaseServer.PodList queries the cloud rather than
+// the in-memory Store.Pods registry (Phase 89 / BUG-724).
+type CloudPodLister interface {
+	// ListPods returns all pods (multi-container groups) the backend
+	// knows about in its configured environment, projected into the
+	// same shape BaseServer.PodList emits.
+	ListPods(ctx context.Context) ([]*api.PodListEntry, error)
+}

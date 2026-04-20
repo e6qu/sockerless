@@ -32,23 +32,43 @@ func (s *BaseServer) PodCreate(req *api.PodCreateRequest) (*api.PodCreateRespons
 	return &api.PodCreateResponse{ID: pod.ID}, nil
 }
 
-// PodList returns all pods matching the given filters.
+// PodList returns all pods matching the given filters. Phase 89 /
+// BUG-724: when the backend implements CloudPodLister, merge pods
+// derived from cloud actuals (multi-container task/app grouped by the
+// sockerless-pod tag) with the in-memory registry so that
+// `docker pod ps` after a restart still reflects the cloud truth.
 func (s *BaseServer) PodList(opts api.PodListOptions) ([]*api.PodListEntry, error) {
 	pods := s.Store.Pods.ListPods()
+	seen := make(map[string]bool)
 	result := make([]*api.PodListEntry, 0, len(pods))
 	for _, pod := range pods {
 		if !matchPodFilters(pod, opts.Filters) {
 			continue
 		}
 		containers := s.buildPodContainerInfos(pod)
-		result = append(result, &api.PodListEntry{
+		entry := &api.PodListEntry{
 			ID:         pod.ID,
 			Name:       pod.Name,
 			Status:     pod.Status,
 			Created:    pod.Created,
 			Labels:     pod.Labels,
 			Containers: containers,
-		})
+		}
+		seen[entry.ID] = true
+		result = append(result, entry)
+	}
+	if lister, ok := s.CloudState.(CloudPodLister); ok {
+		cloudPods, err := lister.ListPods(context.Background())
+		if err != nil {
+			s.Logger.Debug().Err(err).Msg("cloud pod listing failed, returning cache-only result")
+		}
+		for _, p := range cloudPods {
+			if p == nil || seen[p.ID] {
+				continue
+			}
+			seen[p.ID] = true
+			result = append(result, p)
+		}
 	}
 	return result, nil
 }

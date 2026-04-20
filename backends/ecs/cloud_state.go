@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/aws/aws-sdk-go-v2/service/servicediscovery"
@@ -20,7 +21,9 @@ import (
 // All container state is derived from ECS tasks tagged with sockerless-managed=true.
 type ecsCloudState struct {
 	ecs     *awsecs.Client
+	ecr     *ecr.Client
 	cluster string
+	region  string
 	config  Config
 }
 
@@ -220,6 +223,75 @@ func (s *Server) resolveNetworkState(ctx context.Context, networkID string) (Net
 		}
 	})
 	return state, true
+}
+
+// ListImages queries ECR for every image under every repository the
+// backend's account has access to, projecting to api.ImageSummary so
+// `docker images` returns the live cloud registry contents. Phase 89
+// / BUG-723 step 2.
+func (p *ecsCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, error) {
+	if p.ecr == nil {
+		return nil, nil
+	}
+	var result []*api.ImageSummary
+	var nextToken *string
+	for {
+		reposOut, err := p.ecr.DescribeRepositories(ctx, &ecr.DescribeRepositoriesInput{
+			NextToken: nextToken,
+		})
+		if err != nil {
+			return result, err
+		}
+		for _, repo := range reposOut.Repositories {
+			repoName := aws.ToString(repo.RepositoryName)
+			repoURI := aws.ToString(repo.RepositoryUri)
+			var imgToken *string
+			for {
+				imgsOut, imErr := p.ecr.DescribeImages(ctx, &ecr.DescribeImagesInput{
+					RepositoryName: aws.String(repoName),
+					NextToken:      imgToken,
+				})
+				if imErr != nil {
+					// Skip repos we can't read (permissions, empty, etc.)
+					break
+				}
+				for _, img := range imgsOut.ImageDetails {
+					tags := img.ImageTags
+					var repoTags []string
+					for _, t := range tags {
+						repoTags = append(repoTags, repoURI+":"+t)
+					}
+					digest := aws.ToString(img.ImageDigest)
+					repoDigests := []string{repoURI + "@" + digest}
+					size := int64(0)
+					if img.ImageSizeInBytes != nil {
+						size = *img.ImageSizeInBytes
+					}
+					pushedAt := int64(0)
+					if img.ImagePushedAt != nil {
+						pushedAt = img.ImagePushedAt.Unix()
+					}
+					result = append(result, &api.ImageSummary{
+						ID:          digest,
+						RepoTags:    repoTags,
+						RepoDigests: repoDigests,
+						Created:     pushedAt,
+						Size:        size,
+						VirtualSize: size,
+					})
+				}
+				if imgsOut.NextToken == nil {
+					break
+				}
+				imgToken = imgsOut.NextToken
+			}
+		}
+		if reposOut.NextToken == nil {
+			break
+		}
+		nextToken = reposOut.NextToken
+	}
+	return result, nil
 }
 
 // resolveTaskState returns ECSState for the given container ID, deriving

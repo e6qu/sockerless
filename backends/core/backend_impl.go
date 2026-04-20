@@ -1409,7 +1409,10 @@ func (s *BaseServer) ImageTag(source string, repo string, tag string) error {
 	return nil
 }
 
-// ImageList lists images.
+// ImageList lists images. Phase 89 / BUG-723 step 2: when the backend
+// implements CloudImageLister, merge entries from the cloud registry
+// (ECR, Artifact Registry, ACR) with the in-memory cache so the
+// listing is accurate after a backend restart with an empty cache.
 func (s *BaseServer) ImageList(opts api.ImageListOptions) ([]*api.ImageSummary, error) {
 	imgContainerCount := make(map[string]int64)
 	for _, c := range s.Store.Containers.List() {
@@ -1441,6 +1444,23 @@ func (s *BaseServer) ImageList(opts api.ImageListOptions) ([]*api.ImageSummary, 
 			Labels:      img.Config.Labels,
 			Containers:  imgContainerCount[img.ID],
 		})
+	}
+
+	// Merge entries from the cloud registry when the backend supports it.
+	// Deduplicated by ID so we don't double-count anything already in the
+	// in-memory cache.
+	if lister, ok := s.CloudState.(CloudImageLister); ok {
+		cloudImages, err := lister.ListImages(context.Background())
+		if err != nil {
+			s.Logger.Debug().Err(err).Msg("cloud image listing failed, returning cache-only result")
+		}
+		for _, img := range cloudImages {
+			if img == nil || seen[img.ID] {
+				continue
+			}
+			seen[img.ID] = true
+			result = append(result, img)
+		}
 	}
 
 	if result == nil {
