@@ -66,7 +66,7 @@ Closes BUG-723/724/725/726. The current backends keep in-memory state (NetworkSt
 
 Concrete deliverables:
 
-1. **Cloud-resource mapping doc** (`docs/CLOUD_RESOURCE_MAPPING.md`): formal mapping per cloud:
+1. **Cloud-resource mapping doc** (`specs/CLOUD_RESOURCE_MAPPING.md`): formal mapping per cloud:
    - ECS task → docker container; ECS task with multi-container task-def → podman pod
    - Sockerless-tagged security group + Cloud Map namespace → docker network
    - ECR repository → docker image (queried via DescribeImages)

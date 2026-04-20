@@ -35,7 +35,7 @@ Tested live (eu-west-1, account 729079515331) and verified PASS:
 Closes BUG-723/724/725/726. The user's directive: "backends should be stateless; state derived from cloud's actuals; ECS tasks → containers/pods, sockerless-tagged SG + Cloud Map ns → docker network".
 
 Concrete deliverables:
-1. `docs/CLOUD_RESOURCE_MAPPING.md` — formal mapping per cloud (ECS task → container/pod, GCP Cloud Run Service → container, etc.)
+1. `specs/CLOUD_RESOURCE_MAPPING.md` — formal mapping per cloud (ECS task → container/pod, GCP Cloud Run Service → container, etc.)
 2. State derivation refactor in each backend — replace in-memory state stores with on-demand cloud queries (caches allowed but invalidatable, never source of truth)
 3. Remove `Store.Images` disk persistence — query the cloud registry instead
 4. Backend recovery must work after restart with no on-disk or in-memory state

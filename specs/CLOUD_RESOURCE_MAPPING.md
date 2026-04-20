@@ -2,7 +2,14 @@
 
 Authoritative mapping between Docker / Podman concepts and the cloud resources that back them in each Sockerless backend. The corollary: **state derives from cloud actuals**. After a backend restart, every list / inspect / stop / exec call must reproduce the same answer by querying the cloud APIs of its configured environment — no in-memory map, on-disk JSON, S3 object, or DynamoDB row may be consulted as the source of truth.
 
-This document is the source of truth for Phase 89 (stateless-backend audit, BUG-723..726). Per-backend `docker_api_mapping.md` files describe the call-by-call translation; this file describes the durable mapping.
+This document is the source of truth for Phase 89 (stateless-backend audit, BUG-723..726).
+
+> **Companion specs:**
+> - [BACKEND_STATE.md](BACKEND_STATE.md) — the stateless principle, identity model, tagging conventions
+> - [SIMULATOR_RECOVERY.md](SIMULATOR_RECOVERY.md) — recovery on restart, PID re-attachment, simulator-side tag handling
+> - [BACKENDS.md](BACKENDS.md) — per-backend implementation overview
+>
+> Per-backend `docker_api_mapping.md` files (under `backends/<name>/docs/`) describe the call-by-call translation; this file describes the durable resource mapping.
 
 ---
 

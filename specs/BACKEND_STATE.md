@@ -2,6 +2,8 @@
 
 How backends track containers, pods, networks, and volumes using cloud-native tags/labels as the single source of truth.
 
+> **See also:** [CLOUD_RESOURCE_MAPPING.md](CLOUD_RESOURCE_MAPPING.md) — per-cloud authoritative mapping table (ECS task → docker container/pod, sockerless-tagged SG + Cloud Map namespace → docker network, etc.), state-derivation rules per backend, recovery contract enforced by Phase 89.
+
 ## Principle: Stateless Backends
 
 Backends maintain **no local container state**. Every Docker API call (`docker ps`, `docker inspect`, etc.) queries the cloud/simulator for resources tagged with Sockerless metadata. The cloud is the source of truth.

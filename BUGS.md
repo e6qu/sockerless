@@ -1,6 +1,6 @@
 # Known Bugs
 
-726 total. 720 fixed + 3 partially fixed (723/725/726 — Phase 89 in progress). 3 open: BUG-715 (Phase 87 cloudrun rewrite), BUG-716 (Phase 88 aca rewrite), BUG-724 (Phase 89 PodList from cloud). Phase 89 first checkpoint: `docs/CLOUD_RESOURCE_MAPPING.md` lands as the per-cloud mapping reference; `Store.Images` disk persistence removed; ECS + Lambda gain `resolve*State` cache+cloud-fallback helpers; ECS network creation tags Cloud Map namespaces with `sockerless:network-id` for derived recovery. Cloudrun + aca state derivation + PodList + per-backend cloud-derived `docker images` still TBD.
+726 total. 720 fixed + 3 partially fixed (723/725/726 — Phase 89 in progress). 3 open: BUG-715 (Phase 87 cloudrun rewrite), BUG-716 (Phase 88 aca rewrite), BUG-724 (Phase 89 PodList from cloud). Phase 89 first checkpoint: `specs/CLOUD_RESOURCE_MAPPING.md` lands as the per-cloud mapping reference; `Store.Images` disk persistence removed; ECS + Lambda gain `resolve*State` cache+cloud-fallback helpers; ECS network creation tags Cloud Map namespaces with `sockerless:network-id` for derived recovery. Cloudrun + aca state derivation + PodList + per-backend cloud-derived `docker images` still TBD.
 
 Cross-cloud sweep notes (per user directive: "when you find a bug in a piece of code make sure to search in similar locations or other backends, clouds etc."):
 - BUG-708 ECS-only — Azure uses ACR cache rules with managed-identity auth (different mechanism); GCP uses Artifact Registry pull-through.
