@@ -1,6 +1,6 @@
 # Sockerless — Roadmap
 
-> 85 phases complete (756 tasks). 583 bugs fixed, 0 open.
+> 86 phases complete (757 tasks). 707 bugs fixed, 0 open.
 >
 > **Goal:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners — backed by real cloud infrastructure (AWS, GCP, Azure).
 
@@ -44,6 +44,8 @@ Dark mode, design tokens, error handling UX, container detail modal, auto-refres
 
 ## Phase 86 — Complete Runner Support (ECS + Lambda × github.com + gitlab.com SaaS)
 
+**Status: simulator-parity track complete (PR #112). Live-AWS replay scripted (`.github/workflows/phase86-aws-live.yml`), awaiting credentials.**
+
 Close the gap between "Docker API passes E2E in simulator mode" and "official `actions/runner` + `gitlab-runner` binaries run real CI jobs on real AWS against real github.com / gitlab.com." No `-wasm` / synthetic shortcuts: services, custom images, and docker build must work for real. Lambda 15-min cap accepted.
 
 Work partitioned into **no-AWS-credentials** (can be done now, verified in simulator) and **needs-AWS** (verified against live accounts).
@@ -77,25 +79,27 @@ Per user directives:
 | P86-020a | done | Fixed BUG-694 (StreamCloudLogs follow-loop exit on `!Running`) + BUG-695 (rejects `created` state unconditionally). New `AllowCreated` option. |
 | P86-020d | done | Fix BUG-698 (critical): docker CLI's `docker run -d` sent POST /wait before /start, blocked on reading wait's response status line. Sockerless's wait handler blocked in `CloudState.WaitForExit` before writing anything. Fixed: `flushWaitHeaders()` commits 200 + Content-Type immediately, body written after exit lands. Diagnosed via new `tools/http-trace/` proxy. |
 | P86-020g | done | Fix BUG-699: simulator pre-registers `vpc-sim` + `subnet-sim` on startup so `cloudNetworkCreate` can resolve VPC ID from the conventional placeholder subnet. |
-| P86-020b | | **Fix BUG-696 (full implementation, no fakes)**: simulator implements the real ECR pull-through-cache flow — `CreatePullThroughCacheRule`, `DescribePullThroughCacheRules`, `DeletePullThroughCacheRule` handlers backed by an in-memory rule store; pull requests against the cached prefix transparently resolve to the upstream registry. Ships with `simulators/aws/sdk-tests/ecr_test.go` extensions, new `simulators/aws/cli-tests/ecr_test.go`, and a `simulators/aws/terraform-tests/ecr_pull_through_test.tf`. |
-| P86-020c | | Fix BUG-697: `Store.Images` persists to JSON at `$SOCKERLESS_STATE_DIR/images.json` on every mutation; restored on backend startup. Cloud backends (ECS, Lambda, CloudRun, ACA, CloudRun Functions, Azure Functions) all call `RestoreImages` in their `NewServer`. Unit + integration tests in `backends/core/store_test.go`. |
-| P86-020h | | Fix BUG-700: `handleNetworkCreate` surfaces Cloud Map namespace creation failures as a response `Warning` (and preserves the network-ID so the client can decide). Backend fails closed when required cloud resources can't be provisioned; simulator parity bugs bubble up to the caller. |
-| P86-020i | | **Fix BUG-701 (full implementation, no fakes)**: simulator creates a real Docker user-defined network per sockerless-network, launches per-task containers onto it so Docker's embedded DNS resolves cross-container hostnames naturally. Cross-container DNS works without any Cloud Map shortcut in simulator mode. New integration test exercises two containers on the same network + `docker exec client getent hosts server`. |
-| P86-020e | | Continue simulator-mode runbook replay after the above land. Every new bug gets its own `P86-020N` row. Exit when the full Runbook 1 + Runbook 2 sequence passes with zero hangs, timeouts, or backend warnings. |
-| P86-020f | | Simulator-parity audit: produce `docs/SIMULATOR_PARITY.md` enumerating every AWS API that github/gitlab runners drive through sockerless and assert each is fully implemented. Any gap → new `BUG-N` + `P86-020…` task + SDK/CLI/terraform tests. |
-| P86-020t | | **SDK/CLI/terraform tests for every simulator change**. Rolling requirement: no simulator commit merges without matching tests in `simulators/aws/sdk-tests/`, `simulators/aws/cli-tests/`, and (where applicable) `simulators/aws/terraform-tests/`. Pre-commit check enforcing this hook lands as part of this task. |
+| P86-020b | done | BUG-696: simulator ECR pull-through cache (SDK + CLI + terraform tests). |
+| P86-020c | done | BUG-697: `Store.Images` persists across backend restart for all 6 cloud backends. |
+| P86-020h | done | BUG-700: `handleNetworkCreate` surfaces cloud-side failures as response `Warning`. |
+| P86-020i | done | BUG-701: simulator networks back themselves with real Docker user-defined networks — AWS Cloud Map, GCP Cloud DNS, Azure ACA environments. |
+| P86-020e | done | A.6 simulator-mode runbook replay — full sim SDK/CLI suites green for AWS + GCP + Azure. |
+| P86-020f | done | Simulator-parity audit: `docs/SIMULATOR_PARITY_{AWS,GCP,AZURE}.md`, zero ✖ rows on runner path. |
+| P86-020t | done | Pre-commit testing-contract hook (`scripts/check-simulator-tests.sh`) + tests-exempt.txt. |
+| P86-020z | done | BUG-702 Azure Private DNS, BUG-703 Azure NSG, BUG-704 + BUG-707 GCP Cloud Build + Secret Manager, BUG-705 AWS Lambda Runtime API, BUG-706 Azure ACR Cache Rules — all closed with SDK + CLI + terraform tests. |
+| P86-020D | done | Phase D — Lambda agent-as-handler. D.1 bootstrap Runtime-API loop + reverse-agent via `agent.Router`; D.2 overlay wire-up in `ContainerCreate`; D.3 reverse-agent WS server + registry; D.4 real end-to-end test `TestLambdaAgentE2E_ReverseAgent` (1.5s, uses real docker + sim + bootstrap). |
 
 ### Needs-AWS track (manual session 2, blocked until every P86-020* above is `done`)
 
 | Task | Status | Description |
 |---|---|---|
 | P86-009 | partial | Session 1 2026-04-19: Terraform up, 34 resources, zero-residue teardown verified. Session 2 re-provisions after bug fixes |
-| P86-010 | blocked-on-bugs | Runbook 1 — ECS smoke + services DNS |
-| P86-011 | blocked-on-bugs | Runbook 4 — `actions/runner` × real github.com; 3 shapes (shell, `container:`, `services:`). Requires user-provided PAT + test repo |
-| P86-012 | blocked-on-bugs | Runbook 5 — `gitlab-runner` × real gitlab.com; same matrix. Requires runner token + test project |
-| P86-013 | blocked-on-bugs | Runbook 2 — Lambda live Docker CLI baseline. Writes `docs/PLAN_LAMBDA_MANUAL_TESTING.md` Round-1 |
-| P86-018 | blocked-on-bugs | Runbook 3a — implement Lambda Runtime-API loop (bootstrap), overlay-image builder, reverse-agent callback registry. Unit-tested without AWS |
-| P86-019 | blocked-on-bugs | Runbook 3b — live validation of Lambda `docker exec` via agent-as-handler. Requires ngrok (or equivalent public callback URL) |
+| P86-010 | pending-live | Runbook 1 — ECS smoke + services DNS |
+| P86-011 | pending-live | Runbook 4 — `actions/runner` × real github.com; 3 shapes (shell, `container:`, `services:`). Requires user-provided PAT + test repo |
+| P86-012 | pending-live | Runbook 5 — `gitlab-runner` × real gitlab.com; same matrix. Requires runner token + test project |
+| P86-013 | pending-live | Runbook 2 — Lambda live Docker CLI baseline. Writes `docs/PLAN_LAMBDA_MANUAL_TESTING.md` Round-1 |
+| P86-018 | pending-live | Runbook 3a — implement Lambda Runtime-API loop (bootstrap), overlay-image builder, reverse-agent callback registry. Unit-tested without AWS |
+| P86-019 | pending-live | Runbook 3b — live validation of Lambda `docker exec` via agent-as-handler. Requires ngrok (or equivalent public callback URL) |
 | P86-014 | partial | Final state save after session 2 closes. Residue audit, capability matrix live-column, STATUS/WHAT_WE_DID/MEMORY updates |
 
 ---
