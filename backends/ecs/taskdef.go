@@ -51,9 +51,23 @@ func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinit
 		defName = sanitizeContainerName(ci.Container.Name)
 	}
 
+	// Resolve the user-supplied image reference to an ECR URI so
+	// Fargate can pull it. Already-ECR URIs pass through; failures
+	// fall back to the raw ref and Fargate surfaces the pull error.
+	// Unit tests may run without aws clients wired — skip resolution
+	// and pass the ref through verbatim in that case.
+	image := config.Image
+	if s.aws != nil && s.aws.ECR != nil {
+		if resolved, err := s.resolveImageURI(context.Background(), image); err == nil {
+			image = resolved
+		} else {
+			s.Logger.Warn().Err(err).Str("image", config.Image).Msg("image URI resolution failed; Fargate may not be able to pull")
+		}
+	}
+
 	containerDef := ecstypes.ContainerDefinition{
 		Name:        aws.String(defName),
-		Image:       aws.String(config.Image),
+		Image:       aws.String(image),
 		Essential:   aws.Bool(ci.IsMain),
 		EntryPoint:  entrypoint,
 		Command:     command,

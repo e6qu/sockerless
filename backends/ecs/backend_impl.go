@@ -65,15 +65,11 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		config.Labels = make(map[string]string)
 	}
 
-	// Resolve short image references (alpine, node:20, ghcr.io/…) into
-	// an ECR pull-through cache URI so Fargate can actually pull them.
-	// Already-ECR URIs pass through unchanged. Failure degrades to the
-	// raw reference and Fargate surfaces the pull error visibly.
-	if resolved, err := s.resolveImageURI(context.Background(), config.Image); err == nil {
-		config.Image = resolved
-	} else {
-		s.Logger.Warn().Err(err).Str("image", config.Image).Msg("image URI resolution failed; Fargate may not be able to pull")
-	}
+	// Short image references (alpine, node:20, ghcr.io/…) must be
+	// resolved to an ECR pull-through cache URI for Fargate to pull
+	// them. The resolution lives in taskdef building rather than
+	// here, so `docker inspect` reflects the user-supplied image ref
+	// while the task definition still gets the pullable URI.
 
 	hostConfig := api.HostConfig{NetworkMode: "default"}
 	if req.HostConfig != nil {

@@ -50,12 +50,16 @@ type runtimeAPISidecar struct {
 	addr     string // "host.docker.internal:<port>" — what the container sees
 }
 
-// startRuntimeAPISidecar binds a free port on 127.0.0.1, mounts the
-// Runtime API routes, and starts serving in a background goroutine.
-// Returns the sidecar so the caller can pass its address into the
-// container and shut the sidecar down after the invocation completes.
+// startRuntimeAPISidecar binds a free port on all interfaces, mounts
+// the Runtime API routes, and starts serving in a background
+// goroutine. Must bind to 0.0.0.0 (not 127.0.0.1) because the
+// function container reaches back via the docker bridge gateway on
+// Linux (172.17.0.1 / host.docker.internal), which is a different
+// interface than loopback. Returns the sidecar so the caller can pass
+// its address into the container and shut the sidecar down after the
+// invocation completes.
 func startRuntimeAPISidecar(inv *lambdaInvocation) (*runtimeAPISidecar, error) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
 		return nil, fmt.Errorf("runtime API listen: %w", err)
 	}
