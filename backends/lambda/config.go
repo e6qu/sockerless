@@ -23,7 +23,7 @@ type Config struct {
 	BuildBucket      string        // S3 bucket for build context upload
 	EndpointURL      string        // Custom endpoint URL
 	PollInterval     time.Duration // Cloud API poll interval (default 2s)
-	CallbackURL      string        // Reverse-agent callback URL injected into Lambda functions; must be reachable from Lambda (public or VPC endpoint). Empty => exec unsupported in live mode (see P86-005)
+	CallbackURL      string        // Reverse-agent callback URL injected into Lambda functions; must be reachable from Lambda (public or VPC endpoint). Empty => exec unsupported; see Phase 86 D.1-D.4.
 
 	// Overlay image build (Phase 86 D.2). Used when CallbackURL is set,
 	// to layer the agent + bootstrap binaries on top of the user's
