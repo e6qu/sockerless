@@ -52,10 +52,21 @@ func (p *cloudRunCloudState) ListContainers(ctx context.Context, all bool, filte
 		result = append(result, c)
 	}
 
-	// Query Cloud Run Jobs API for all sockerless-managed jobs
+	// Query Cloud Run Jobs API for all sockerless-managed jobs. When
+	// Config.UseService is true (Phase 87), also include Services —
+	// this lets mixed deployments surface both tracks during the
+	// migration window. Jobs and Services live in distinct GCP
+	// resource namespaces, so there's no double-counting.
 	cloudContainers, err := p.queryJobs(ctx)
 	if err != nil {
 		return result, err
+	}
+	if p.server.config.UseService {
+		services, sErr := p.queryServices(ctx)
+		if sErr != nil {
+			return result, sErr
+		}
+		cloudContainers = append(cloudContainers, services...)
 	}
 
 	// Deduplicate: skip cloud containers that are already in PendingCreates
