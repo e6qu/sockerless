@@ -6,9 +6,11 @@ Docker-compatible REST API that runs containers on cloud backends (ECS, Lambda, 
 
 ## Phase 86 — Simulator parity + Lambda agent-as-handler
 
-Closes the Phase 86 plan: every cloud-API slice sockerless depends on is now a first-class cloud-slice in its per-cloud simulator, validated with SDK + CLI + terraform tests (or an explicit exemption). Lambda's agent-as-handler pattern for `docker exec` / `attach` is fully wired up: bootstrap loop + overlay image build + reverse-agent WebSocket server. Live-AWS replay is scripted and awaiting credentials.
+Closes the Phase 86 plan: every cloud-API slice sockerless depends on is now a first-class cloud-slice in its per-cloud simulator, validated with SDK + CLI + terraform tests (or an explicit exemption). Lambda's agent-as-handler pattern for `docker exec` / `attach` is fully wired up: bootstrap loop + overlay image build + reverse-agent WebSocket server.
 
-Branch: `phase86-complete-runner-support`. Single PR at closeout.
+Branch: `phase86-complete-runner-support` → PR #112 (merged 2026-04-20 as commit `7f054e0`).
+
+Phase C — live-AWS session 2 — is in progress on `post-phase86-continuation` off `origin/main`. Session 1's two blocker bugs (BUG-692 docker-run hang, BUG-P86-A2 raw ECS image ref) are fixed; session 2 reruns the full runbook (0-infra-up → 6-teardown) + the e2e runner matrix. Plan at `~/.claude/plans/purring-sprouting-dusk.md`.
 
 ### Simulator parity (AWS + GCP + Azure)
 

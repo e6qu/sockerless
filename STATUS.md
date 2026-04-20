@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**86 phases (757 tasks). 707 bugs fixed, 0 open. Cloud build services for all 6 backends. Phase 86 simulator parity complete across AWS + GCP + Azure; live-AWS session gated on creds (scripted via `.github/workflows/phase86-aws-live.yml`).**
+**86 phases (757 tasks). 707 bugs fixed, 0 open. Cloud build services for all 6 backends. Phase 86 simulator parity complete across AWS + GCP + Azure (PR #112 merged). Phase C live-AWS session 2 in progress on branch `post-phase86-continuation` — plan at `~/.claude/plans/purring-sprouting-dusk.md`.**
 
 ## Test Counts
 

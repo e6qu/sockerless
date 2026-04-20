@@ -44,7 +44,7 @@ Dark mode, design tokens, error handling UX, container detail modal, auto-refres
 
 ## Phase 86 — Complete Runner Support (ECS + Lambda × github.com + gitlab.com SaaS)
 
-**Status: simulator-parity track complete (PR #112). Live-AWS replay scripted (`.github/workflows/phase86-aws-live.yml`), awaiting credentials.**
+**Status: simulator-parity track complete (PR #112 merged 2026-04-20). Phase C live-AWS session 2 is the final remaining item — plan at `~/.claude/plans/purring-sprouting-dusk.md`, branch `post-phase86-continuation`. Session 1 (2026-04-19) surfaced two runner bugs (BUG-692 docker run hang, BUG-P86-A2 raw ECS image ref); both fixed in PR #112. Session 2 re-runs the full runbook against a clean AWS account (729079515331, eu-west-1 + us-east-1) plus the e2e runner-capability matrix. Cost + time: ~$0.15 / ~90min (narrow) or ~$0.50 / ~3h (full matrix).**
 
 Close the gap between "Docker API passes E2E in simulator mode" and "official `actions/runner` + `gitlab-runner` binaries run real CI jobs on real AWS against real github.com / gitlab.com." No `-wasm` / synthetic shortcuts: services, custom images, and docker build must work for real. Lambda 15-min cap accepted.
 
