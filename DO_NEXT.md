@@ -6,6 +6,8 @@
 **Plan:** `~/.claude/plans/purring-sprouting-dusk.md` (approved).
 **AWS account:** `729079515331` (root), eu-west-1 + us-east-1 — **clean slate** confirmed (no residue from Session 1).
 
+**Bug-logging rule:** Every failure surfaced during Phase C — runbook errors, terragrunt errors, e2e failures, teardown residue, anything unexpected — lands in `BUGS.md` with a BUG-NNN number before (or alongside) the fix. Root cause + reproduction + fix commit. No paper-overs.
+
 ### Staged execution
 
 | Phase | What | Cost | Time |
