@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**86 phases (757 tasks). 726 bugs tracked: 721 fixed + 2 partially fixed + 3 open. Phase 86 Phase C CLOSED 2026-04-20. Phase 89 substantial progress: `specs/CLOUD_RESOURCE_MAPPING.md` for all 7 backends; `Store.Images` disk persistence removed; all 4 cloud backends gained `resolve*State` helpers (ECS/Lambda/Cloud Run/ACA); **`docker images` is now cloud-derived across all 6 cloud backends** (ECR for ECS/Lambda; GCP Artifact Registry for Cloud Run/GCF; ACR for ACA/AZF — the last four via shared `core.OCIListImages` OCI-distribution helper); ECS implements `ListPods` by grouping tasks via `sockerless-pod` tag. Branch `post-phase86-continuation`.**
+**86 phases (757 tasks). 726 bugs tracked: 722 fixed + 2 partially fixed + 3 open. Phase 86 Phase C CLOSED 2026-04-20. Phase 89 major progress: `specs/CLOUD_RESOURCE_MAPPING.md` for all 7 backends; `Store.Images` disk persistence removed; all 4 cloud backends have `resolve*State` helpers (ECS/Lambda/Cloud Run/ACA); `docker images` is cloud-derived across all 6 cloud backends (BUG-723 fixed); ECS `ListPods` groups tasks via `sockerless-pod` tag; `resolveNetworkState` lands for ECS+Cloud Run+ACA (BUG-726 fixed). Remaining: `ListPods` for cloudrun+aca (Phase 87/88), per-backend restart-resilience integration tests. Branch `post-phase86-continuation`.**
 
 ## Test Counts
 

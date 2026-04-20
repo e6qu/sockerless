@@ -139,6 +139,42 @@ func (p *cloudRunCloudState) ListImages(ctx context.Context) ([]*api.ImageSummar
 	})
 }
 
+// resolveNetworkState returns NetworkState for the given docker
+// network ID, deriving from cloud actuals when the in-memory cache is
+// empty. Phase 89 / BUG-726 cross-cloud sibling. Looks up the Cloud
+// DNS managed zone whose sanitized name matches the network.
+// (Zones are created per-network in `cloudNetworkCreate`.)
+func (s *Server) resolveNetworkState(ctx context.Context, networkID string) (NetworkState, bool) {
+	if state, ok := s.NetworkState.Get(networkID); ok && state.ManagedZoneName != "" {
+		return state, true
+	}
+	if s.gcp == nil || s.gcp.DNS == nil || s.config.Project == "" {
+		return NetworkState{}, false
+	}
+	net, ok := s.Store.ResolveNetwork(networkID)
+	if !ok {
+		return NetworkState{}, false
+	}
+	zoneName := sanitizeZoneName(net.Name)
+	zone, err := s.gcp.DNS.ManagedZones.Get(s.config.Project, zoneName).Context(ctx).Do()
+	if err != nil || zone == nil {
+		return NetworkState{}, false
+	}
+	state := NetworkState{
+		ManagedZoneName: zone.Name,
+		DNSName:         zone.DnsName,
+	}
+	s.NetworkState.Update(networkID, func(ns *NetworkState) {
+		if ns.ManagedZoneName == "" {
+			ns.ManagedZoneName = zone.Name
+		}
+		if ns.DNSName == "" {
+			ns.DNSName = zone.DnsName
+		}
+	})
+	return state, true
+}
+
 // resolveJobName returns the Cloud Run Job name for a given container
 // ID, or "" if no matching sockerless-managed job is found. Phase 89 /
 // BUG-725 cross-cloud sibling: state derived from cloud actuals (Cloud

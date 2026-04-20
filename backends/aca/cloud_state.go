@@ -139,6 +139,50 @@ func (p *acaCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, er
 	})
 }
 
+// resolveNetworkState returns NetworkState for the given docker
+// network ID, deriving from cloud actuals when the in-memory cache is
+// empty. Phase 89 / BUG-726 cross-cloud sibling. Both the Private DNS
+// zone name (`skls-<net>.local`) and the NSG name
+// (`nsg-<env>-<net>`) are deterministic from the network name, so a
+// simple existence probe against each reconstitutes state.
+func (s *Server) resolveNetworkState(ctx context.Context, networkID string) (NetworkState, bool) {
+	if state, ok := s.NetworkState.Get(networkID); ok && state.DNSZoneName != "" {
+		return state, true
+	}
+	if s.azure == nil || s.config.ResourceGroup == "" {
+		return NetworkState{}, false
+	}
+	net, ok := s.Store.ResolveNetwork(networkID)
+	if !ok {
+		return NetworkState{}, false
+	}
+	zoneName := "skls-" + net.Name + ".local"
+	nsgName := "nsg-" + s.config.Environment + "-" + net.Name
+	state := NetworkState{}
+	if s.azure.PrivateDNSZones != nil {
+		if _, err := s.azure.PrivateDNSZones.Get(ctx, s.config.ResourceGroup, zoneName, nil); err == nil {
+			state.DNSZoneName = zoneName
+		}
+	}
+	if s.azure.NSG != nil {
+		if _, err := s.azure.NSG.Get(ctx, s.config.ResourceGroup, nsgName, nil); err == nil {
+			state.NSGName = nsgName
+		}
+	}
+	if state.DNSZoneName == "" && state.NSGName == "" {
+		return NetworkState{}, false
+	}
+	s.NetworkState.Update(networkID, func(ns *NetworkState) {
+		if ns.DNSZoneName == "" {
+			ns.DNSZoneName = state.DNSZoneName
+		}
+		if ns.NSGName == "" {
+			ns.NSGName = state.NSGName
+		}
+	})
+	return state, true
+}
+
 // resolveJobName returns the ACA Job name for a given container ID, or
 // "" if no matching sockerless-managed job is found. Phase 89 / BUG-725
 // cross-cloud sibling: state derived from cloud actuals (ACA Job tags).

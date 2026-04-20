@@ -28,7 +28,8 @@ func (s *Server) cloudServiceRegister(containerID, hostname, ip, networkID strin
 			Msg("skipping Private DNS register: no real per-execution IP yet (BUG-716)")
 		return nil
 	}
-	state, ok := s.NetworkState.Get(networkID)
+	// Phase 89 / BUG-726: cloud-fallback lookup for DNS zone state.
+	state, ok := s.resolveNetworkState(s.ctx(), networkID)
 	if !ok || state.DNSZoneName == "" {
 		s.Logger.Debug().
 			Str("container", containerID).
