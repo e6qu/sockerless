@@ -148,6 +148,40 @@ func (p *ecsCloudState) queryTasks(ctx context.Context) ([]api.Container, error)
 	return containers, nil
 }
 
+// resolveTaskARN returns the ECS task ARN for a given container ID, or
+// "" if no matching sockerless-managed task is found. Used to recover
+// from in-memory state loss after backend restart (BUG-722).
+func (p *ecsCloudState) resolveTaskARN(ctx context.Context, containerID string) (string, string, error) {
+	var allArns []string
+	for _, status := range []ecstypes.DesiredStatus{ecstypes.DesiredStatusRunning, ecstypes.DesiredStatusStopped} {
+		out, err := p.ecs.ListTasks(ctx, &awsecs.ListTasksInput{
+			Cluster:       aws.String(p.cluster),
+			DesiredStatus: status,
+		})
+		if err == nil {
+			allArns = append(allArns, out.TaskArns...)
+		}
+	}
+	if len(allArns) == 0 {
+		return "", "", nil
+	}
+	desc, err := p.ecs.DescribeTasks(ctx, &awsecs.DescribeTasksInput{
+		Cluster: aws.String(p.cluster),
+		Tasks:   allArns,
+		Include: []ecstypes.TaskField{ecstypes.TaskFieldTags},
+	})
+	if err != nil {
+		return "", "", err
+	}
+	for _, task := range desc.Tasks {
+		tags := tagsToMap(task.Tags)
+		if tags["sockerless-container-id"] == containerID {
+			return aws.ToString(task.TaskArn), aws.ToString(task.ClusterArn), nil
+		}
+	}
+	return "", "", nil
+}
+
 // taskToContainer reconstructs an api.Container from an ECS task and its tags.
 func taskToContainer(task ecstypes.Task, tags map[string]string) api.Container {
 	containerID := tags["sockerless-container-id"]

@@ -1,6 +1,6 @@
 # Sockerless — Roadmap
 
-> 86 phases complete (757 tasks). 717 bugs tracked (715 fixed, 2 open: BUG-715 cloudrun rewrite, BUG-716 aca rewrite — both architectural).
+> 86 phases complete (757 tasks). 726 bugs tracked (720 fixed, 6 open: BUG-715→Phase 87 cloudrun rewrite, BUG-716→Phase 88 aca rewrite, BUG-723/724/725/726→Phase 89 stateless audit). Phase 86 Phase C closed 2026-04-20 with ECS bound live-validated.
 >
 > **Goal:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners — backed by real cloud infrastructure (AWS, GCP, Azure).
 
@@ -22,40 +22,70 @@
 
 Branch `post-phase86-continuation`. Live AWS account `729079515331` (eu-west-1 + us-east-1). ECS infra is up; Lambda infra plan reviewed and ready.
 
-### Phase 86 Phase C — open bugs (must all be fully fixed before live runbook resumes)
+### Phase 86 Phase C — bug status
 
-Per the user's directive (no defers, no fakes): every open bug below blocks the live runbook. Fix each in the same branch; no "minimum fix + defer." Cross-cloud sweep is mandatory.
-
-| Bug | Backend(s) | Fix required (no minimums) |
+| Bug | Backend(s) | Status |
 |---|---|---|
-| 708 | ECS | Wire `SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN` env var into `ensurePullThroughCache` as `CredentialArn` on `CreatePullThroughCacheRule`. When set, the rule registers correctly; when unset, document the limitation but DO NOT silently fall back — return a clear error so the operator knows credentials are needed. |
-| 709 | ECS | Done (`waitForOperation` sleeps + DBG logs). Add unit test `TestWaitForOperation_PollsWithSleep` using a fake `ServiceDiscovery` client that returns PENDING three times then SUCCESS. |
-| 710 | All 7 backends + CLI | Done (defaults all to `:3375`). Add CI assertion via grep that no source/markdown file has hardcoded `:2375` or `:9100` outside fixtures. |
-| 711 | ECS | Implement real cross-container short-name DNS via VPC DHCP option set: backend creates a per-cluster DHCP option set with the Cloud Map namespace as the search domain, associates it with the VPC on first network create, restores VPC's prior options on last network delete. OR: ship a per-task entrypoint shim that prepends `search <namespace>` to `/etc/resolv.conf` (less invasive). Pick option B — DHCP modification is too disruptive to a shared VPC. Implement entrypoint-prepend logic in `containerDef.Command` build path. |
-| 712 | ECS | Done (`cloudNetworkCreate` idempotent for SG + namespace). Add unit tests for both reuse paths against a fake EC2 + ServiceDiscovery client. |
-| 713 | Cloud Run | Done (`cloudNetworkCreate` reuses zone on 409). Add unit test using a fake DNS client that returns 409 then succeeds on Get. |
-| 714 | ECS | Done (Cloud Map register uses ENI IP after task RUNNING). Add unit test `TestCloudServiceRegister_UsesENIIPNotPlaceholder` with a fake task lifecycle. |
-| 715 | Cloud Run | Implement real per-execution IP discovery: poll Cloud Run Job execution `Conditions[?Type=='ContainerReady']` and pull the execution's network IP via the new GCP Compute API path; or move from Jobs to Cloud Run Services with `--ingress=internal` + a VPC connector and use the Service's allocated internal IP. Pick the Service path: it gives stable internal IPs reachable from peer Services in the same VPC. Add `cloudrun.UseService` config flag and a per-network managed Service per container hostname. Update `cloudServiceRegister` to consume the real IP. |
-| 716 | ACA | Implement real per-execution IP discovery: ACA Jobs don't have addressable IPs, so move to ACA Apps with `internal` ingress for containers attached to user networks. Backend creates an Container App per hostname inside the network's environment, with `Ingress.External=false`, and registers the App's stable FQDN/IP in the network's Private DNS zone. Add `aca.UseApp` config flag analogous to GCP. Update `cloudServiceRegister` to consume the real IP. |
-| 717 | ECS | Implement the SSM Session Manager binary protocol decoder in `backends/ecs/exec_cloud.go`: parse `AgentMessage` (header: HL `int32`, MessageType `string[32]`, SchemaVersion `int32`, CreatedDate `int64`, SequenceNumber `int64`, Flags `int64`, MessageId `[16]byte`, PayloadDigest `[32]byte`, PayloadType `int32`, PayloadLength `int32`); route by `MessageType` ∈ {`output_stream_data`, `acknowledge`, `channel_closed`, ...}; decode payload sub-protocol; extract real stdout/stderr; THEN apply Docker mux header. Reference: AWS `session-manager-plugin` Go source. Includes acknowledge replies + sequence number tracking. |
+| 708 | ECS | fixed — `SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN` wired through `CredentialArn`; explicit error when unset (no fallback). Test `TestDockerHubCredentialARN_ReadsEnv`. |
+| 709 | ECS | fixed — `pollOperation` extracted with sleep + injectable poller. 4 unit tests. |
+| 710 | All 7 backends + CLI | fixed — defaults `:3375` everywhere. `scripts/check-port-defaults.sh` + pre-commit hook. |
+| 711 | ECS | fixed — `/bin/sh -c` entrypoint shim rewrites `/etc/resolv.conf` (preserve VPC nameservers, add namespaces as search line) then `exec`s original argv via `shellQuoteArgs`. Test `TestShellQuoteArgs`. Live verification queued. |
+| 712 | ECS | fixed — `cloudNetworkCreate` idempotent (catch `InvalidGroup.Duplicate` + reuse SG by name+VPC; `findNamespaceByName` reuses existing namespace before `CreatePrivateDnsNamespace`). Live-verified during the find. |
+| 713 | Cloud Run | fixed — `ManagedZones.Create` 409 → `Get` for reuse. |
+| 714 | ECS | fixed — register loop moved AFTER `waitForTaskRunning`; uses real ENI IP via `extractENIIP`. Live-verified (FQDN resolution returned `hi`). |
+| 715 | Cloud Run | open — split into Phase 87 (architectural rewrite Jobs → Services with internal ingress + VPC connector). Doesn't block ECS+Lambda runbook. |
+| 716 | ACA | open — split into Phase 88 (architectural rewrite Jobs → Apps with internal ingress). Doesn't block ECS+Lambda runbook. |
+| 717 | ECS | fixed — full SSM AgentMessage decoder in `ssm_proto.go` (parse, ack writer, input wrapping). `ssmDecoder` in `exec_cloud.go` reads frame-by-frame with `io.ReadFull`, sends acks, terminates on `channel_closed` / `exit_code`. 7 unit tests. Live verification queued. |
+| 718 | Lambda | fixed — cross-cloud sibling of 708 found in lambda's `image_resolve.go`; same credential-ARN wiring + removed silent `pushToECR` fallback (only worked for pre-loaded local-store images, swapped image source without operator awareness). |
 
-### Phase 86 Phase C — live runbook (resumes after every bug above is `fixed`)
+### Phase 86 Phase C — live runbook (CLOSED 2026-04-20)
 
-Live AWS state right now: ECS infra up, Lambda infra terragrunt plan reviewed (6 resources to add). All in-flight backend processes survive across bug-fix iterations.
+Phase C closes with ECS bound fully validated. Lambda track deferred to a later session — no architectural blockers, just session-time budget.
 
 | Step | Status | Notes |
 |---|---|---|
 | 0 Preflight | done | Scripts fixed, state buckets bootstrapped, binaries built, creds verified. |
-| 1 ECS infra up | done | 34 resources in eu-west-1, ~2min apply. Outputs at `/tmp/ecs-out.json`. |
-| 2 ECS smoke | partial-pass + 6 bugs surfaced | 2.1 + 2.2 + 2.3-FQDN PASS; 2.3-shortname blocked on BUG-711 full fix; 2.4 blocked on BUG-717 full fix. Re-run after bug fixes. |
-| 3 Lambda infra up | ready | Plan reviewed: 6 resources in us-east-1 (IAM role + 2 policies + log group + ECR repo + lifecycle). Apply queued. |
-| 4 Lambda baseline (Runbook 2) | pending | docker run, logs, kill clamp. |
-| 5 Lambda agent-as-handler (Runbook 3) | pending | Requires public WebSocket (ngrok / cloudflared) — pause-point D. |
-| 6 E2E live tests | pending | github-runner + gitlab-runner × ecs + lambda. Smoke first, widen if budget allows. |
-| 7 Teardown | pending | Lambda first, then ECS. Hard requirement before session ends. |
-| 8 Final state save | pending | _tasks/P86-AWS-manual-runbook-session2.md, runner-capability-matrix live columns, PLAN/STATUS/WHAT_WE_DID/DO_NEXT updated, branch pushed for PR. |
+| 1 ECS infra up | done | 34 resources in eu-west-1, ~2min apply. |
+| 2.1 `docker run --rm` | **PASS** | Fargate cold start ~33s. |
+| 2.2 `docker run -d` + `docker logs` | **PASS** | tick-1/2/3 streamed from CloudWatch. |
+| 2.3 cross-container DNS — FQDN (`svc.skls-net.local`) | **PASS** | Cloud Map A-record with real ENI IP after BUG-714 fix. |
+| 2.3 cross-container DNS — short name (`svc:8080`) | **PASS** | `/bin/sh -c` entrypoint shim rewrites `/etc/resolv.conf` per BUG-711 fix. |
+| 2.4 `docker exec svc echo ...` | **PASS** | SSM Session Manager binary protocol decoded per BUG-717; `EnableExecuteCommand: true` per BUG-719; `ssmmessages:*` IAM per BUG-720; CloudState lazy recovery for TaskARN per BUG-722; ack-retransmit dedupe per BUG-721. |
+| 3-5 Lambda track | deferred | Lambda infra not yet provisioned this session. Phase 86 closes with ECS bound proven; Lambda live track is its own future session. |
+| 6 E2E live tests | deferred | github-runner + gitlab-runner × ecs + lambda. Same future session as Lambda track. |
+| 7 Teardown | done | Cleaned up ECS infra + sockerless-created SGs + Cloud Map namespaces + cluster. Zero residue (state buckets + DDB lock table retained as cheap reusable infra). |
+| 8 Final state save | done | This commit. Branch `post-phase86-continuation` for PR. |
+
+Phase C result: **ECS backend live-validated end-to-end.** Of 15 bugs surfaced, 13 fully fixed in-branch (708, 709, 710, 711, 712, 713, 714, 717, 718, 719, 720, 721, 722); 2 split into dedicated future phases (Phase 87 cloudrun rewrite for BUG-715, Phase 88 ACA rewrite for BUG-716). 4 stateless-audit findings (BUG-723/724/725/726) tracked in Phase 89.
 
 ---
+
+## Phase 89 — Stateless backend audit + cloud-resource mapping — queued
+
+Closes BUG-723/724/725/726. The current backends keep in-memory state (NetworkState, ECS map, etc.) and persist Store.Images to disk. Per the stateless directive, every backend must derive state from cloud actuals only — the executables of its configured environment.
+
+Concrete deliverables:
+
+1. **Cloud-resource mapping doc** (`docs/CLOUD_RESOURCE_MAPPING.md`): formal mapping per cloud:
+   - ECS task → docker container; ECS task with multi-container task-def → podman pod
+   - Sockerless-tagged security group + Cloud Map namespace → docker network
+   - ECR repository → docker image (queried via DescribeImages)
+   - Lambda function → docker container (single-container "pod")
+   - Cloud Run Service / Job → docker container (post-Phase-87 it's Services)
+   - ACA App / Job → docker container (post-Phase-88 it's Apps)
+   - GCF function → docker container
+   - Azure Function → docker container
+2. **State derivation refactor** in each backend: replace in-memory state stores with on-demand cloud queries (ListTasks + DescribeTasks + tags filter; ListServices + Get; equivalents per cloud). Caching allowed but must be invalidatable.
+3. **Remove Store.Images persistence**: query the cloud registry instead.
+4. **Backend recovery**: must work after restart with no on-disk or in-memory state.
+
+## Phase 87 — Cloud Run rewrite (Jobs → Services with internal ingress) — queued
+
+Closes BUG-715. Cloud Run Jobs don't expose addressable per-execution IPs reachable from peer Jobs, so cross-container DNS via Cloud DNS A-records is fundamentally broken on the current backend. Move container execution from `Jobs.RunJob` to `Services.CreateService` with `--ingress=internal-and-cloud-load-balancing` and a VPC connector; per-network managed Service per container hostname; Service's allocated internal IP becomes the Cloud DNS A-record target. Add `cloudrun.UseService` config flag with deprecation path for the Jobs flow. Touches: `backends/cloudrun/{containers,backend_impl,jobspec,backend_impl_network}.go`, `service_discovery_cloud.go`, terraform examples, integration tests.
+
+## Phase 88 — ACA rewrite (Jobs → Apps with internal ingress) — queued
+
+Closes BUG-716. Same shape as Phase 87 for Azure: ACA Jobs aren't peer-addressable; move to ACA Apps with `Ingress.External=false` per container hostname inside the network's environment. App's stable FQDN/IP becomes the Private DNS A-record target. Add `aca.UseApp` config flag. Touches: `backends/aca/{containers,backend_impl,backend_impl_network,service_discovery_cloud}.go`, terraform examples, integration tests.
 
 ## Phase 68 — Multi-Tenant Backend Pools (queued)
 

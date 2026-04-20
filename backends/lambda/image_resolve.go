@@ -3,12 +3,24 @@ package lambda
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	ecrtypes "github.com/aws/aws-sdk-go-v2/service/ecr/types"
 )
+
+// dockerHubCredentialARN returns the Secrets Manager ARN holding docker-hub
+// credentials for ECR pull-through cache, or "" if not configured.
+//
+//	Secret JSON shape: {"username":"...","accessToken":"..."}
+//
+// BUG-718 (sibling of ECS BUG-708): AWS rejects pull-through cache rules
+// for docker-hub upstream without a CredentialArn.
+func dockerHubCredentialARN() string {
+	return os.Getenv("SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN")
+}
 
 // resolveImageURI converts a Docker image reference to an ECR URI that Lambda can use.
 //
@@ -46,11 +58,14 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 		upstreamURL = "https://" + registry
 	}
 
-	// Ensure the pull-through cache rule exists
+	// BUG-718: no silent fallback. If pull-through cache setup fails
+	// (most commonly: missing docker-hub CredentialArn — see BUG-708),
+	// surface the real error. The historical pushToECR auto-fallback was
+	// removed because it silently swapped the image source without the
+	// operator's knowledge — and only worked when the image happened to
+	// be pre-loaded in the local store.
 	if err := s.ensurePullThroughCache(ctx, cachePrefix, upstreamURL); err != nil {
-		s.Logger.Warn().Err(err).Str("prefix", cachePrefix).Msg("pull-through cache setup failed, falling back to auto-push")
-		// Fall back to pushing the image to ECR
-		return s.pushToECR(ctx, ref, repo, tag)
+		return ref, fmt.Errorf("ECR pull-through cache setup for %q: %w", cachePrefix, err)
 	}
 
 	// Get account ID from role ARN
@@ -65,24 +80,33 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 	return ecrURI, nil
 }
 
-// ensurePullThroughCache creates an ECR pull-through cache rule if it doesn't exist.
+// ensurePullThroughCache creates an ECR pull-through cache rule if it
+// doesn't exist. For docker-hub upstream (BUG-718), AWS now requires a
+// Secrets Manager CredentialArn — read from
+// SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN. Returns explicit error when
+// the credential is needed but not configured.
 func (s *Server) ensurePullThroughCache(ctx context.Context, prefix, upstreamURL string) error {
-	// Check if rule already exists
 	rules, err := s.aws.ECR.DescribePullThroughCacheRules(ctx, &ecr.DescribePullThroughCacheRulesInput{
 		EcrRepositoryPrefixes: []string{prefix},
 	})
 	if err == nil && len(rules.PullThroughCacheRules) > 0 {
-		return nil // already exists
+		return nil
 	}
 
-	// Create the rule
-	_, err = s.aws.ECR.CreatePullThroughCacheRule(ctx, &ecr.CreatePullThroughCacheRuleInput{
+	in := &ecr.CreatePullThroughCacheRuleInput{
 		EcrRepositoryPrefix: aws.String(prefix),
 		UpstreamRegistryUrl: aws.String(upstreamURL),
 		UpstreamRegistry:    ecrtypes.UpstreamRegistryDockerHub,
-	})
-	if err != nil {
-		// Ignore AlreadyExists — another process may have created it
+	}
+	if upstreamURL == "registry-1.docker.io" {
+		credARN := dockerHubCredentialARN()
+		if credARN == "" {
+			return fmt.Errorf("docker-hub pull-through cache requires SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN (Secrets Manager ARN with {username, accessToken} JSON) — AWS rejects unauthenticated docker-hub upstream rules")
+		}
+		in.CredentialArn = aws.String(credARN)
+	}
+
+	if _, err := s.aws.ECR.CreatePullThroughCacheRule(ctx, in); err != nil {
 		if strings.Contains(err.Error(), "PullThroughCacheRuleAlreadyExists") {
 			return nil
 		}
@@ -90,31 +114,6 @@ func (s *Server) ensurePullThroughCache(ctx context.Context, prefix, upstreamURL
 	}
 	s.Logger.Info().Str("prefix", prefix).Str("upstream", upstreamURL).Msg("created ECR pull-through cache rule")
 	return nil
-}
-
-// pushToECR pushes the image to private ECR as a fallback when pull-through cache is unavailable.
-func (s *Server) pushToECR(ctx context.Context, ref, repo, tag string) (string, error) {
-	accountID := extractAccountID(s.config.RoleARN)
-	if accountID == "" {
-		return "", fmt.Errorf("cannot determine AWS account ID")
-	}
-
-	ecrRepo := fmt.Sprintf("sockerless/%s", strings.ReplaceAll(repo, "/", "-"))
-	ecrURI := fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com/%s:%s", accountID, s.config.Region, ecrRepo, tag)
-
-	// Use the ImageManager's auth provider to push
-	if s.images != nil && s.images.Auth != nil {
-		registry := fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com", accountID, s.config.Region)
-		if img, ok := s.Store.ResolveImage(ref); ok {
-			if err := s.images.Auth.OnPush(img.ID, registry, ecrRepo, tag); err != nil {
-				return "", fmt.Errorf("push to ECR failed: %w", err)
-			}
-			s.Logger.Info().Str("original", ref).Str("ecr", ecrURI).Msg("pushed image to ECR")
-			return ecrURI, nil
-		}
-	}
-
-	return "", fmt.Errorf("image %q not found in local store — pull it first", ref)
 }
 
 // parseDockerRef splits "nginx:alpine" into ("", "nginx", "alpine").

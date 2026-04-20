@@ -136,8 +136,8 @@ func buildSSMAck(received *ssmFrame) ([]byte, error) {
 
 	binary.BigEndian.PutUint32(out[36:40], 1) // schema version
 	binary.BigEndian.PutUint64(out[40:48], uint64(time.Now().UnixMilli()))
-	binary.BigEndian.PutUint64(out[48:56], 0)              // sequence (always 0 for ack)
-	binary.BigEndian.PutUint64(out[56:64], ssmFlagsSynFin) // flags
+	binary.BigEndian.PutUint64(out[48:56], 0) // sequence (always 0 for ack)
+	binary.BigEndian.PutUint64(out[56:64], 0) // flags (0 — agent rejects SYN|FIN on inbound acks)
 
 	id := uuid.New()
 	idBytes, _ := id.MarshalBinary()
