@@ -57,12 +57,23 @@ func (p *acaCloudState) ListContainers(ctx context.Context, all bool, filters ma
 		pendingIDs[c.ID] = true
 	}
 
-	// Query Azure Container Apps Jobs API for sockerless-managed resources
+	// Query Azure Container Apps Jobs API for sockerless-managed resources.
+	// Phase 88: when Config.UseApp is true, also merge ContainerApps so
+	// mixed deployments surface both tracks during migration. Jobs and
+	// Apps live in distinct ARM resource types so no double-counting.
 	cloudContainers, err := p.queryJobs(ctx)
 	if err != nil {
 		// Log but don't fail — return what we have from PendingCreates
 		p.server.Logger.Debug().Err(err).Msg("failed to query ACA jobs for cloud state")
 		return result, nil
+	}
+	if p.server.config.UseApp {
+		apps, aErr := p.queryApps(ctx)
+		if aErr != nil {
+			p.server.Logger.Debug().Err(aErr).Msg("failed to query ACA apps for cloud state")
+		} else {
+			cloudContainers = append(cloudContainers, apps...)
+		}
 	}
 
 	for _, c := range cloudContainers {

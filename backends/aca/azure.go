@@ -31,6 +31,7 @@ func (f *fakeCredential) GetToken(_ context.Context, _ policy.TokenRequestOption
 type AzureClients struct {
 	Jobs              *armappcontainers.JobsClient
 	Executions        *armappcontainers.JobsExecutionsClient
+	ContainerApps     *armappcontainers.ContainerAppsClient // Phase 88: used when Config.UseApp is true
 	Logs              *azquery.LogsClient
 	LogsHTTP          *httpLogsClient // Used when endpoint is HTTP (SDK rejects non-TLS bearer tokens)
 	PrivateDNSZones   *armprivatedns.PrivateZonesClient
@@ -112,6 +113,11 @@ func newAzureClientsWithEndpoint(subscriptionID string, endpointURL string) (*Az
 		return nil, err
 	}
 
+	containerAppsClient, err := armappcontainers.NewContainerAppsClient(subscriptionID, cred, opts)
+	if err != nil {
+		return nil, err
+	}
+
 	logsClient, err := azquery.NewLogsClient(cred, &azquery.LogsClientOptions{
 		ClientOptions: opts.ClientOptions,
 	})
@@ -139,6 +145,7 @@ func newAzureClientsWithEndpoint(subscriptionID string, endpointURL string) (*Az
 	clients := &AzureClients{
 		Jobs:              jobsClient,
 		Executions:        executionsClient,
+		ContainerApps:     containerAppsClient,
 		Logs:              logsClient,
 		PrivateDNSZones:   privateZonesClient,
 		PrivateDNSRecords: recordSetsClient,
@@ -175,6 +182,11 @@ func newAzureClientsDefault(subscriptionID string) (*AzureClients, error) {
 		return nil, err
 	}
 
+	containerAppsClient, err := armappcontainers.NewContainerAppsClient(subscriptionID, cred, nil)
+	if err != nil {
+		return nil, err
+	}
+
 	logsClient, err := azquery.NewLogsClient(cred, nil)
 	if err != nil {
 		return nil, err
@@ -200,6 +212,7 @@ func newAzureClientsDefault(subscriptionID string) (*AzureClients, error) {
 	return &AzureClients{
 		Jobs:              jobsClient,
 		Executions:        executionsClient,
+		ContainerApps:     containerAppsClient,
 		Logs:              logsClient,
 		PrivateDNSZones:   privateZonesClient,
 		PrivateDNSRecords: recordSetsClient,
