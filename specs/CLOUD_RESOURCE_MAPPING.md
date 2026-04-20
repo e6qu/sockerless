@@ -75,57 +75,109 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 
 | Docker concept | Cloud resource | Identifier(s) | Tag(s) for discovery |
 |---|---|---|---|
-| Container | Cloud Run **Service** (post-Phase 87) or **Job execution** (current) | service name / job execution id | label `sockerless-managed=true`, `sockerless-container-id=<id>`, `sockerless-name=<name>` |
-| Pod | Cloud Run Service with multi-container revision (sidecars) — Phase 87 deliverable | revision ref + sidecar container names | + `sockerless-pod=<name>` |
+| Container | **Current:** Cloud Run **Job** + execution (`run.googleapis.com/v2`). **Post-Phase 87:** Cloud Run **Service** with internal ingress + VPC connector. | job name `sockerless-<containerID[:12]>` + execution id | label `sockerless-managed=true`, `sockerless-container-id=<id>`, `sockerless-name=<name>` |
+| Pod | **Current:** not supported (1 Job = 1 container). **Post-Phase 87:** Cloud Run Service with multi-container revision (sidecars). | revision ref + sidecar container names | + label `sockerless-pod=<name>` |
 | Image | Artifact Registry / GCR | `<region>-docker.pkg.dev/<project>/<repo>/<image>:<tag>` | (registry-managed) |
-| Network | Cloud DNS private managed zone backing per-network DNS (post-Phase 87 also needs VPC connector + internal-ingress Service IP) | zone name (sanitized from network name) | label `sockerless:network=<name>` |
-| Volume | Cloud Storage Fuse mount (per-revision config) | bucket/prefix | — |
-| Exec instance | Not natively supported by Cloud Run Services / Jobs. Must go through the agent overlay (same pattern as Lambda) — Phase 87 deliverable. | — | — |
+| Network | Cloud DNS private managed zone (1 zone per docker network, sanitized from name). **Post-Phase 87** also needs VPC connector + internal-ingress Service IP for cross-container routing to actually work (currently the A-records point at placeholder `0.0.0.0` per BUG-715). | managed-zone name | label `sockerless:network=<name>`, `sockerless:network-id=<id>` (Phase 89 follow-up) |
+| Volume | Cloud Storage Fuse mount (per-revision config) — currently bookkeeping only on the Jobs path. | bucket/prefix | — |
+| Exec instance | **Not supported natively** by Cloud Run Services / Jobs. Must go through the agent overlay (same pattern as Lambda) — Phase 87 deliverable. | — | — |
 
 **State derivation:**
 
-- `docker ps -a` → `Services.List` (or `Jobs.List` + `Executions.List` for legacy), filter by label `sockerless-managed=true`, project to `api.Container`.
+- `docker ps -a` → **Current:** `Jobs.ListJobs` + `Executions.ListExecutions` per job, filter by label `sockerless-managed=true`. **Post-Phase 87:** `Services.ListServices`.
+- `docker stop` → **Current:** `Jobs.CancelExecution` on the active execution. **Post-Phase 87:** `Services.DeleteService` (or revision rollback).
 - `docker network ls` → `ManagedZones.List` filter by label `sockerless:network=*`.
-- `docker images` → Artifact Registry `Images.List`.
+- `docker images` → Artifact Registry `Images.List` filtered by repo path.
+- `docker logs` → Cloud Logging `LogAdmin.Entries(filter='resource.type="cloud_run_revision" labels.execution_name="<exec>"')`.
+
+**Currently-violating in-memory state (BUG-725 cross-cloud sibling):**
+
+- `s.CloudRun *StateStore[CloudRunState]` (JobName, ExecutionName, etc. per container) — must become a cache.
+- `s.NetworkState *StateStore[NetworkState]` (ManagedZoneName per docker network) — must become a cache; lookups fall back to `ManagedZones.Get(<sanitized>)`.
 
 ### Azure Container Apps (backend `aca`)
 
 | Docker concept | Cloud resource | Identifier(s) | Tag(s) for discovery |
 |---|---|---|---|
-| Container | ACA **App** with internal ingress (post-Phase 88) or **Job execution** (current) | app name / job execution id | tag `sockerless-managed=true`, `sockerless-container-id=<id>`, `sockerless-name=<name>` |
-| Pod | ACA App with multi-container template (sidecars) — Phase 88 deliverable | app name + sidecar container names | + `sockerless-pod=<name>` |
+| Container | **Current:** ACA **Job** + execution (`armcontainerapps.JobsClient`). **Post-Phase 88:** ACA **App** with internal ingress (`armcontainerapps.ContainerAppsClient`). | job name `sockerless-<containerID[:12]>` + execution id | tag `sockerless-managed=true`, `sockerless-container-id=<id>`, `sockerless-name=<name>` |
+| Pod | **Current:** not supported. **Post-Phase 88:** ACA App with multi-container template (sidecars). | app name + sidecar container names | + tag `sockerless-pod=<name>` |
 | Image | ACR | `<acrName>.azurecr.io/<repo>:<tag>` | (registry-managed) |
-| Network | Azure Private DNS Zone backing per-network DNS (per-network NSG already exists) | zone name + NSG id | tag `sockerless:network=<name>` |
-| Volume | Azure Files share via ACA volumes | mount config | — |
-| Exec instance | ACA exec console (different proto from SSM). Phase 88 deliverable. | — | — |
+| Network | Azure Private DNS Zone (per-network) + per-network NSG. Cross-container DNS via A-records currently broken on Jobs (BUG-716 — placeholder IPs); fixed when Phase 88 moves to Apps with internal ingress. | zone name + NSG id | tag `sockerless:network=<name>`, `sockerless:network-id=<id>` (Phase 89 follow-up) |
+| Volume | Azure Files share via ACA volumes (per-Job/App config) | mount config | — |
+| Exec instance | ACA exec console (`Jobs.NewListSecretsPager` is the data-plane analog) — different proto from SSM. Phase 88 deliverable. | — | — |
 
 **State derivation:**
 
-- `docker ps -a` → `ContainerApps.ListByResourceGroup` (or `Jobs.List` for legacy), filter by tag `sockerless-managed=true`.
-- `docker network ls` → `PrivateZones.ListByResourceGroup` filter by tag `sockerless:network=*`.
-- `docker images` → ACR `RegistryClient.NewListImportImagesPager`.
+- `docker ps -a` → **Current:** `JobsClient.NewListByResourceGroupPager(rg)` + `JobsExecutionsClient.NewListPager(rg, jobName)` for active executions, filter by tag `sockerless-managed=true`. **Post-Phase 88:** `ContainerAppsClient.NewListByResourceGroupPager(rg)`.
+- `docker stop` → **Current:** `JobsExecutionsClient.BeginStop(rg, jobName, execName)`. **Post-Phase 88:** `ContainerAppsClient.BeginStop(rg, appName)`.
+- `docker network ls` → `PrivateZonesClient.NewListByResourceGroupPager(rg)` filter by tag `sockerless:network=*`.
+- `docker images` → ACR `RegistryClient.NewListImportImagesPager` for the configured ACR.
+- `docker logs` → Log Analytics workspace queries on `ContainerAppConsoleLogs_CL` filtered by container app + execution name.
+
+**Currently-violating in-memory state (BUG-725 / BUG-726 cross-cloud sibling):**
+
+- `s.ACA *StateStore[ACAState]` (JobName, AppName, ExecutionName per container) — must become a cache.
+- `s.NetworkState *StateStore[NetworkState]` (DNSZoneName, NSGName per docker network) — must become a cache; lookups fall back to `PrivateZonesClient.Get` + tag-filter SG list.
 
 ### GCP Cloud Run Functions (backend `cloudrun-functions` / `gcf`)
 
 | Docker concept | Cloud resource | Identifier(s) | Tag(s) for discovery |
 |---|---|---|---|
-| Container | Cloud Function (gen 2) | function name | label `sockerless-managed=true`, `sockerless-container-id=<id>` |
-| Pod | Not supported (one function = one container) | — | — |
-| Image | Artifact Registry | (same as Cloud Run) | — |
-| Network | Not supported natively (Cloud Functions have egress VPC config but no peer discovery) | — | — |
+| Container | Cloud Function (gen 2) — backed by `cloudfunctions.v2.FunctionService` | function name `sockerless-<containerID[:12]>`, function name + revision | label `sockerless-managed=true`, `sockerless-container-id=<id>`, `sockerless-name=<name>` |
+| Pod | **Not supported.** Cloud Functions are 1-to-1 with a container; there is no first-class group abstraction. Multi-container pods would require a coordinator (e.g. Workflows + Pub/Sub) and are out of scope. | — | — |
+| Image | Artifact Registry (the function's deployed container image) | `<region>-docker.pkg.dev/<project>/<repo>/<image>:<tag>` | (registry-managed) |
+| Network | **Not supported natively.** Cloud Functions can connect to a VPC for egress via a connector, but they don't expose addressable inbound IPs to peer functions. Cross-container DNS via a docker-network abstraction is not implementable on Cloud Functions; backend treats `docker network create` / `connect` as a no-op for cloud purposes (returns success but the network is bookkeeping only). | (no cloud anchor) | — |
+| Volume | **Not supported.** Cloud Functions have read-only filesystems plus `/tmp`. Bind mounts and named volumes are rejected at create time. | — | — |
+| Exec instance | **Not supported natively.** Like Lambda, exec must go through the agent overlay (function bootstrap dials back to sockerless via reverse-WebSocket). Implementation parallels `sockerless-lambda-bootstrap`; pending. | — | — |
+
+**State derivation:**
+
+- `docker ps -a` → `Functions.ListFunctions(parent="projects/<project>/locations/<region>")`, filter by label `sockerless-managed=true`, project to `api.Container`. Recovery already implemented in `backends/cloudrun-functions/recovery.go`.
+- `docker stop` → `Functions.DeleteFunction(name)` (Cloud Functions have no in-place stop; deletion is the analog).
+- `docker images` → Artifact Registry `Images.List` filtered by repo path.
+- `docker logs` → Cloud Logging `LogAdmin.Entries(filter='resource.type="cloud_function" labels.function_name="<name>"')`.
+
+**Currently-violating in-memory state (BUG-725 cross-cloud sibling):**
+
+- `s.GCF *StateStore[GCFState]` (FunctionName per container) — must become a cache; lookups fall back to Cloud Functions API + label filter.
 
 ### Azure Functions (backend `azure-functions` / `azf`)
 
 | Docker concept | Cloud resource | Identifier(s) | Tag(s) for discovery |
 |---|---|---|---|
-| Container | Function App | function-app name | tag `sockerless-managed=true`, `sockerless-container-id=<id>` |
-| Pod | Not supported | — | — |
-| Image | ACR | (same as ACA) | — |
-| Network | Not supported natively (VNet integration is for outbound only) | — | — |
+| Container | Function App (Linux container deployment) — `armappservice.WebAppsClient` | function app name `sockerless-<containerID[:12]>` | tag `sockerless-managed=true`, `sockerless-container-id=<id>`, `sockerless-name=<name>` |
+| Pod | Multi-container Function App is **not supported** (Function Apps are 1-container). Pod deletion path does delete the underlying app, but pods are local-bookkeeping only. | — | — |
+| Image | ACR | `<acrName>.azurecr.io/<repo>:<tag>` | (registry-managed) |
+| Network | **Not supported natively.** Function Apps support VNet integration for outbound traffic but not addressable inbound IPs for peer apps. `docker network create` / `connect` is bookkeeping-only. | — | — |
+| Volume | **Not supported** for arbitrary bind mounts. App settings + Azure Files share via App Service mounts can be configured but aren't auto-translated from `--volume`. | — | — |
+| Exec instance | **Not supported natively.** Kudu console + SSH are the App Service equivalents but use a different protocol from SSM. Agent overlay would be needed; pending. | — | — |
+
+**State derivation:**
+
+- `docker ps -a` → `WebApps.NewListByResourceGroupPager(resourceGroup)`, filter by tag `sockerless-managed=true`, project to `api.Container`.
+- `docker stop` → `WebApps.Stop(name)` (function app stays defined but doesn't run).
+- `docker rm` → `WebApps.Delete(name)`.
+- `docker images` → ACR `RegistryClient.NewListImportImagesPager` for the configured ACR.
+- `docker logs` → App Service container logs via `WebApps.GetContainerLogsZip` or `LogAnalytics` queries on the workspace linked to the App.
+
+**Currently-violating in-memory state (BUG-725 cross-cloud sibling):**
+
+- `s.AZF *StateStore[AZFState]` (FunctionAppName per container) — must become a cache; lookups fall back to `WebApps.NewListByResourceGroupPager` + tag filter.
 
 ### Local Docker (backend `docker`)
 
-The `docker` backend delegates to a local Docker daemon, which is itself the source of truth — no extra mapping needed. State is the running daemon.
+| Docker concept | Cloud resource | Identifier(s) | Tag(s) for discovery |
+|---|---|---|---|
+| Container | Docker container on the local daemon | container ID, name | (Docker labels — `sockerless-managed=true` for filtering when a single daemon hosts both sockerless and non-sockerless containers) |
+| Pod | **Podman pod** when the local daemon is podman; not natively supported by docker. Implemented via the local pod registry that delegates to `podman pod` commands. | pod ID | — |
+| Image | Local image cache | image ID, ref | — |
+| Network | Docker user-defined network | network ID, name | label `sockerless-managed=true` |
+| Volume | Docker named volume | volume name | label `sockerless-managed=true` |
+| Exec instance | Docker exec (native) | exec ID | (transient) |
+
+**State derivation:**
+
+- The local Docker / Podman daemon IS the source of truth. The backend forwards every docker API call to the daemon; no additional state-of-truth mapping is required. Sockerless still tags resources it creates so that `docker ps --filter label=sockerless-managed=true` cleanly partitions sockerless-owned objects from anything else on the same daemon.
 
 ---
 
