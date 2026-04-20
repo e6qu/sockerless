@@ -207,41 +207,4 @@ write_pid() {
     echo "$pid" >> "$pidfile"
 }
 
-# --- Test variant routing ---
-
-# Returns the variant name for a test on a given backend.
-# Some backends use alternative test variants for tests that require
-# specific capabilities.
-get_test_variant() {
-    local backend="$1" test_name="$2"
-    if [ "$backend" = "memory" ]; then
-        case "$test_name" in
-            services)          echo "services-wasm" ;;
-            services-http)     echo "services-wasm" ;;
-            custom-image)      echo "custom-image-wasm" ;;
-            container-action)  echo "container-action-faas" ;;
-            *)                 echo "$test_name" ;;
-        esac
-    elif uses_reverse_agent "$backend"; then
-        # Reverse agent backends (FaaS + container) run agent on host, not in
-        # a real container. Route tests that need container-specific tools to
-        # compatible variants.
-        case "$test_name" in
-            services)          echo "services-wasm" ;;
-            services-http)     echo "services-wasm" ;;
-            custom-image)      echo "custom-image-wasm" ;;
-            container-action)  echo "container-action-faas" ;;
-            *)                 echo "$test_name" ;;
-        esac
-    else
-        echo "$test_name"
-    fi
-}
-
-# Legacy skip function — now always returns 1 (don't skip).
-# Memory backend uses variant routing instead.
-should_skip_for_faas() {
-    return 1
-}
-
 ALL_BACKENDS="memory ecs lambda cloudrun gcf aca azf"

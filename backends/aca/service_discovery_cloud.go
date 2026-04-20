@@ -2,130 +2,130 @@ package aca
 
 import (
 	"fmt"
-	"sync"
+	"strings"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns"
 )
 
 // Ensure resolve methods are available for DNS lookup integration.
 var _ = (*Server).cloudServiceResolve
 
-// serviceRegistry is an in-process DNS registry that maps hostnames to IPs
-// per network. ACA environments provide built-in internal DNS for container
-// discovery within the environment. This registry simulates what Azure
-// Private DNS zones would provide in a production deployment.
-type serviceRegistry struct {
-	mu sync.RWMutex
-	// networks maps networkID -> hostname -> []IP
-	networks map[string]map[string][]string
-	// containers maps containerID -> []networkID for cleanup
-	containers map[string][]string
-}
-
-func newServiceRegistry() *serviceRegistry {
-	return &serviceRegistry{
-		networks:   make(map[string]map[string][]string),
-		containers: make(map[string][]string),
-	}
-}
-
-// cloudServiceRegister registers a container's hostname and IP in the
-// service discovery registry for a given network. In a production
-// deployment, this would create an Azure Private DNS zone record.
-func (s *Server) cloudServiceRegister(containerID, hostname, ip, networkID string) {
-	s.svcRegistry.mu.Lock()
-	defer s.svcRegistry.mu.Unlock()
-
-	if s.svcRegistry.networks[networkID] == nil {
-		s.svcRegistry.networks[networkID] = make(map[string][]string)
+// cloudServiceRegister creates a Private DNS A-record for the
+// container's hostname inside the network's zone. Uses the real Azure
+// Private DNS SDK. The zone is created per-network in
+// `cloudNetworkCreate`; the record maps hostname -> container IP.
+func (s *Server) cloudServiceRegister(containerID, hostname, ip, networkID string) error {
+	state, ok := s.NetworkState.Get(networkID)
+	if !ok || state.DNSZoneName == "" {
+		s.Logger.Debug().
+			Str("container", containerID).
+			Str("network", networkID).
+			Msg("no Private DNS zone for network, skipping service registration")
+		return nil
 	}
 
-	// Avoid duplicate registrations.
-	ips := s.svcRegistry.networks[networkID][hostname]
-	for _, existing := range ips {
-		if existing == ip {
-			return
-		}
+	rs := armprivatedns.RecordSet{
+		Properties: &armprivatedns.RecordSetProperties{
+			TTL: to.Ptr(int64(60)),
+			ARecords: []*armprivatedns.ARecord{
+				{IPv4Address: to.Ptr(ip)},
+			},
+		},
 	}
-	s.svcRegistry.networks[networkID][hostname] = append(ips, ip)
 
-	// Track container -> network association for cleanup.
-	s.svcRegistry.containers[containerID] = append(
-		s.svcRegistry.containers[containerID], networkID,
+	_, err := s.azure.PrivateDNSRecords.CreateOrUpdate(
+		s.ctx(),
+		s.config.ResourceGroup,
+		state.DNSZoneName,
+		armprivatedns.RecordTypeA,
+		hostname,
+		rs,
+		nil,
 	)
+	if err != nil {
+		s.Logger.Error().Err(err).
+			Str("hostname", hostname).
+			Str("ip", ip).
+			Str("zone", state.DNSZoneName).
+			Msg("failed to create Private DNS A record")
+		return fmt.Errorf("DNS register failed for %s -> %s: %w", hostname, ip, err)
+	}
 
-	s.Logger.Debug().
-		Str("container", containerID[:12]).
+	s.Logger.Info().
 		Str("hostname", hostname).
 		Str("ip", ip).
-		Str("network", networkID).
-		Msg("registered service in cloud DNS registry")
-
-	// TODO: When an Azure Private DNS client is available, create a DNS record:
-	//   s.azure.DNS.CreateOrUpdateRecordSet(s.ctx(), s.config.ResourceGroup,
-	//       zoneName, hostname, dns.A, recordSet, ...)
-}
-
-// cloudServiceDeregister removes a container's registrations from all
-// networks it belongs to. Called during container removal.
-func (s *Server) cloudServiceDeregister(containerID, networkID string) {
-	s.svcRegistry.mu.Lock()
-	defer s.svcRegistry.mu.Unlock()
-
-	networks := s.svcRegistry.containers[containerID]
-	if networkID != "" {
-		// Remove from specific network only.
-		networks = []string{networkID}
-	}
-
-	for _, nid := range networks {
-		net := s.svcRegistry.networks[nid]
-		if net == nil {
-			continue
-		}
-		// Remove all entries for this container's hostname.
-		// We look up the container name as the registration key.
-		for host, ips := range net {
-			if len(ips) == 0 {
-				delete(net, host)
-			}
-		}
-	}
-
-	if networkID == "" {
-		delete(s.svcRegistry.containers, containerID)
-	}
-
-	s.Logger.Debug().
+		Str("zone", state.DNSZoneName).
 		Str("container", containerID[:12]).
-		Str("network", networkID).
-		Msg("deregistered service from cloud DNS registry")
-
-	// TODO: When an Azure Private DNS client is available, delete the DNS record:
-	//   s.azure.DNS.DeleteRecordSet(s.ctx(), s.config.ResourceGroup,
-	//       zoneName, hostname, dns.A, ...)
+		Msg("registered DNS A record for service discovery")
+	return nil
 }
 
-// cloudServiceResolve looks up IPs for a service name within a network.
-// Returns the list of IPs registered under that hostname.
+// cloudServiceDeregister removes the A record for the container's
+// hostname from the network's Private DNS zone.
+func (s *Server) cloudServiceDeregister(containerID, hostname, networkID string) error {
+	state, ok := s.NetworkState.Get(networkID)
+	if !ok || state.DNSZoneName == "" {
+		return nil
+	}
+
+	_, err := s.azure.PrivateDNSRecords.Delete(
+		s.ctx(),
+		s.config.ResourceGroup,
+		state.DNSZoneName,
+		armprivatedns.RecordTypeA,
+		hostname,
+		nil,
+	)
+	if err != nil && !isNotFound(err) {
+		s.Logger.Warn().Err(err).
+			Str("hostname", hostname).
+			Str("zone", state.DNSZoneName).
+			Msg("failed to delete Private DNS A record")
+		return err
+	}
+	s.Logger.Debug().
+		Str("hostname", hostname).
+		Str("zone", state.DNSZoneName).
+		Str("container", containerID[:12]).
+		Msg("deregistered DNS A record")
+	return nil
+}
+
+// cloudServiceResolve looks up the IPs for a service name in the
+// network's Private DNS zone. Returns the record's A-record IPv4
+// addresses.
 func (s *Server) cloudServiceResolve(serviceName, networkID string) ([]string, error) {
-	s.svcRegistry.mu.RLock()
-	defer s.svcRegistry.mu.RUnlock()
-
-	net := s.svcRegistry.networks[networkID]
-	if net == nil {
-		return nil, fmt.Errorf("network %s not found in service registry", networkID)
+	state, ok := s.NetworkState.Get(networkID)
+	if !ok || state.DNSZoneName == "" {
+		return nil, fmt.Errorf("network %s has no Private DNS zone", networkID)
 	}
 
-	ips := net[serviceName]
-	if len(ips) == 0 {
-		return nil, fmt.Errorf("service %s not found in network %s", serviceName, networkID)
+	resp, err := s.azure.PrivateDNSRecords.Get(
+		s.ctx(),
+		s.config.ResourceGroup,
+		state.DNSZoneName,
+		armprivatedns.RecordTypeA,
+		serviceName,
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover %s in zone %s: %w", serviceName, state.DNSZoneName, err)
 	}
+	if resp.Properties == nil {
+		return nil, nil
+	}
+	ips := make([]string, 0, len(resp.Properties.ARecords))
+	for _, a := range resp.Properties.ARecords {
+		if a != nil && a.IPv4Address != nil {
+			ips = append(ips, *a.IPv4Address)
+		}
+	}
+	return ips, nil
+}
 
-	// Return a copy to avoid data races.
-	result := make([]string, len(ips))
-	copy(result, ips)
-	return result, nil
-
-	// TODO: When an Azure Private DNS client is available, query the DNS zone:
-	//   resp, err := s.azure.DNS.GetRecordSet(s.ctx(), s.config.ResourceGroup,
-	//       zoneName, serviceName, dns.A, ...)
+// isNotFound reports whether the error is a 404 from the Private DNS
+// API (so deregister of a non-existent record is idempotent).
+func isNotFound(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "ResourceNotFound")
 }

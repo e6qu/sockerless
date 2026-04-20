@@ -165,6 +165,30 @@ run_test_output "docker ps -a (after stop)" "Exited" $D ps -a
 # Remove
 run_test "docker rm (long)" $D rm smoke-long
 
+# --- docker run --rm (exercises create + attach + start + wait + rm) ---
+# `docker run --rm` sends create + attach (hijack) + start + wait + rm;
+# the hijacked attach stream must receive container stdout bytes.
+# Only backends that implement Attach can honour this flow — Cloud Run
+# and Azure Container Apps have no container-level attach primitive
+# (they're serverless HTTP/job backends) so the step is skipped there.
+if [ "$BACKEND_TYPE" = "ecs" ]; then
+    echo -n "  docker run --rm (attach path)... "
+    if output=$(timeout 60 $D run --rm alpine:latest echo "hello from attach" 2>&1); then
+        if echo "$output" | grep -q "hello from attach"; then
+            echo "OK"
+            PASSED=$((PASSED + 1))
+        else
+            echo "FAIL (output missing expected bytes)"
+            echo "    $output" | head -5
+            FAILED=$((FAILED + 1))
+        fi
+    else
+        echo "FAIL (timed out or errored)"
+        echo "    $output" | head -5
+        FAILED=$((FAILED + 1))
+    fi
+fi
+
 # Summary
 echo ""
 echo "=== Results: $PASSED passed, $FAILED failed ==="

@@ -90,39 +90,77 @@ func TestLambda_InvokeCreatesLogStream(t *testing.T) {
 	})
 }
 
-func TestLambda_InvokeExecutesCommand(t *testing.T) {
+// TestLambda_InvokeRoundTrip exercises the Runtime API invoke path:
+// the simulator implements the real AWS Lambda Runtime API slice.
+// The handler image polls /next, echoes the payload back via
+// /response. Round-trip proves the Runtime API slice is wired
+// end-to-end (simulator-side per-invocation sidecar + container env +
+// host.docker.internal + host gateway + /response propagation back
+// to the SDK caller).
+func TestLambda_InvokeRoundTrip(t *testing.T) {
 	lc := lambdaClient()
 
-	fnName := "exec-test-fn"
+	fnName := "roundtrip-fn"
 
-	// Create an Image-type Lambda function with a command
 	_, err := lc.CreateFunction(ctx, &lambda.CreateFunctionInput{
 		FunctionName: aws.String(fnName),
 		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
 		PackageType:  lambdatypes.PackageTypeImage,
-		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String("alpine:latest")},
-		ImageConfig: &lambdatypes.ImageConfig{
-			Command: []string{"echo", "hello"},
-		},
+		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String(lambdaHandlerImageName)},
 	})
 	require.NoError(t, err)
 	defer lc.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(fnName)})
 
-	// Invoke the function
+	payload := []byte(`{"ping":1,"msg":"hello"}`)
 	invokeOut, err := lc.Invoke(ctx, &lambda.InvokeInput{
 		FunctionName: aws.String(fnName),
+		Payload:      payload,
 	})
 	require.NoError(t, err)
-
-	// Response body should contain "hello"
-	assert.Contains(t, string(invokeOut.Payload), "hello")
+	assert.Nil(t, invokeOut.FunctionError, "unexpected function error: %v", aws.ToString(invokeOut.FunctionError))
+	assert.JSONEq(t, string(payload), string(invokeOut.Payload),
+		"handler should echo payload back via /response")
 }
 
-func TestLambda_InvokeNonZeroExit(t *testing.T) {
+// TestLambda_InvokeHandlerError exercises the /error branch of the
+// Runtime API: payload with "cause":"error" triggers a POST to
+// /invocation/{id}/error; caller sees X-Amz-Function-Error: Unhandled.
+func TestLambda_InvokeHandlerError(t *testing.T) {
+	lc := lambdaClient()
+
+	fnName := "error-fn"
+
+	_, err := lc.CreateFunction(ctx, &lambda.CreateFunctionInput{
+		FunctionName: aws.String(fnName),
+		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
+		PackageType:  lambdatypes.PackageTypeImage,
+		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String(lambdaHandlerImageName)},
+	})
+	require.NoError(t, err)
+	defer lc.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(fnName)})
+
+	invokeOut, err := lc.Invoke(ctx, &lambda.InvokeInput{
+		FunctionName: aws.String(fnName),
+		Payload:      []byte(`{"cause":"error"}`),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, invokeOut.FunctionError, "expected FunctionError set to 'Unhandled'")
+	assert.Equal(t, "Unhandled", aws.ToString(invokeOut.FunctionError))
+	assert.Contains(t, string(invokeOut.Payload), "errorMessage",
+		"response body should be a Lambda error JSON")
+	assert.Contains(t, string(invokeOut.Payload), "test error from handler")
+}
+
+// TestLambda_InvokeContainerCrash covers the case where the container
+// exits before posting /response or /error (what real Lambda reports
+// as "Runtime exited without providing a reason"). Alpine `sh -c "exit 1"`
+// never talks the Runtime API; the simulator detects container exit
+// without response and surfaces a proper Lambda error.
+func TestLambda_InvokeContainerCrash(t *testing.T) {
 	lc := lambdaClient()
 	cw := cwLogsClient()
 
-	fnName := "exec-fail-fn"
+	fnName := "crash-fn"
 
 	_, err := lc.CreateFunction(ctx, &lambda.CreateFunctionInput{
 		FunctionName: aws.String(fnName),
@@ -136,80 +174,73 @@ func TestLambda_InvokeNonZeroExit(t *testing.T) {
 	require.NoError(t, err)
 	defer lc.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(fnName)})
 
-	// Invoke the function
-	_, err = lc.Invoke(ctx, &lambda.InvokeInput{
+	invokeOut, err := lc.Invoke(ctx, &lambda.InvokeInput{
 		FunctionName: aws.String(fnName),
 	})
 	require.NoError(t, err)
+	require.NotNil(t, invokeOut.FunctionError)
+	assert.Equal(t, "Unhandled", aws.ToString(invokeOut.FunctionError))
+	assert.Contains(t, string(invokeOut.Payload), "Runtime exited")
 
-	// Verify CloudWatch logs contain error
+	// CloudWatch stream should have START/END/REPORT + an ERROR line.
 	logGroupName := "/aws/lambda/" + fnName
 	events, err := cw.FilterLogEvents(ctx, &cloudwatchlogs.FilterLogEventsInput{
 		LogGroupName: aws.String(logGroupName),
 	})
 	require.NoError(t, err)
-	require.NotEmpty(t, events.Events, "expected log events for failed invocation")
-
+	require.NotEmpty(t, events.Events)
 	var messages []string
 	for _, e := range events.Events {
 		messages = append(messages, *e.Message)
 	}
-	// Should have ERROR entry about exit code
-	found := false
+	foundError := false
 	for _, m := range messages {
-		if strings.Contains(m, "ERROR") && strings.Contains(m, "exit") {
-			found = true
+		if strings.Contains(m, "ERROR") {
+			foundError = true
 		}
 	}
-	assert.True(t, found, "expected ERROR log entry about non-zero exit, got: %v", messages)
-
-	// Cleanup
+	assert.True(t, foundError, "expected ERROR log entry for crashed container, got: %v", messages)
 	cw.DeleteLogGroup(ctx, &cloudwatchlogs.DeleteLogGroupInput{LogGroupName: aws.String(logGroupName)})
 }
 
-func TestLambda_InvokeLogsToCloudWatch(t *testing.T) {
+// TestLambda_RuntimeAPILogsToCloudWatch verifies the simulator still
+// injects START/END/REPORT log lines + captures the handler's stderr
+// under the Runtime API path. The handler writes a log line to
+// stderr describing the invocation; it should appear in the
+// function's CloudWatch log stream.
+func TestLambda_RuntimeAPILogsToCloudWatch(t *testing.T) {
 	lc := lambdaClient()
 	cw := cwLogsClient()
 
-	fnName := "exec-logs-fn"
+	fnName := "logs-fn"
 
 	_, err := lc.CreateFunction(ctx, &lambda.CreateFunctionInput{
 		FunctionName: aws.String(fnName),
 		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
 		PackageType:  lambdatypes.PackageTypeImage,
-		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String("alpine:latest")},
-		ImageConfig: &lambdatypes.ImageConfig{
-			Command: []string{"echo", "real-lambda-output"},
-		},
+		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String(lambdaHandlerImageName)},
 	})
 	require.NoError(t, err)
 	defer lc.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(fnName)})
 
-	// Invoke the function
 	_, err = lc.Invoke(ctx, &lambda.InvokeInput{
 		FunctionName: aws.String(fnName),
+		Payload:      []byte(`{"ping":1}`),
 	})
 	require.NoError(t, err)
 
-	// Verify CloudWatch logs contain the real output
 	logGroupName := "/aws/lambda/" + fnName
 	events, err := cw.FilterLogEvents(ctx, &cloudwatchlogs.FilterLogEventsInput{
 		LogGroupName: aws.String(logGroupName),
 	})
 	require.NoError(t, err)
-	require.NotEmpty(t, events.Events, "expected log events")
+	require.NotEmpty(t, events.Events)
 
 	var messages []string
 	for _, e := range events.Events {
 		messages = append(messages, *e.Message)
 	}
-
-	// Should have START, real output, END, REPORT
-	assert.Contains(t, messages, "real-lambda-output", "process stdout should appear in CloudWatch logs")
-
-	hasStart := false
-	hasEnd := false
-	hasReport := false
+	hasStart, hasEnd, hasReport, hasHandlerLog := false, false, false, false
 	for _, m := range messages {
 		if strings.Contains(m, "START RequestId:") {
 			hasStart = true
@@ -220,12 +251,15 @@ func TestLambda_InvokeLogsToCloudWatch(t *testing.T) {
 		if strings.Contains(m, "REPORT RequestId:") {
 			hasReport = true
 		}
+		if strings.Contains(m, "lambda-runtime-handler: polling") {
+			hasHandlerLog = true
+		}
 	}
 	assert.True(t, hasStart, "should have START log entry")
 	assert.True(t, hasEnd, "should have END log entry")
 	assert.True(t, hasReport, "should have REPORT log entry")
+	assert.True(t, hasHandlerLog, "should capture handler's stderr in CloudWatch: %v", messages)
 
-	// Cleanup
 	cw.DeleteLogGroup(ctx, &cloudwatchlogs.DeleteLogGroupInput{LogGroupName: aws.String(logGroupName)})
 }
 

@@ -62,15 +62,10 @@ esac
 (cd "$SCRIPT_DIR" && docker compose down -v --remove-orphans 2>/dev/null) || true
 docker rm -f gitlab-runner-docker-sockerless-backend-1 gitlab-runner-docker-gitlab-1 gitlab-runner-docker-orchestrator-1 2>/dev/null || true
 
-# --- Route pipelines through variant mapping ---
+# --- Resolve pipeline list ---
 if [ "$PIPELINE" = "all" ]; then
-    ALL_PIPELINES="basic multi-step env-vars exit-codes before-after multi-stage artifacts services large-output parallel-jobs custom-image timeout complex-scripts variable-features job-artifacts large-script-output concurrent-lifecycle services-http dag-dependencies rules-conditional multi-image-jobs allow-failure-exit-code"
-    FILTERED=""
-    for pl in $ALL_PIPELINES; do
-        VARIANT=$(get_test_variant "$BACKEND" "$pl")
-        FILTERED="${FILTERED:+$FILTERED,}$VARIANT"
-    done
-    PIPELINE_ARG="$FILTERED"
+    ALL_PIPELINES="basic multi-step env-vars exit-codes before-after multi-stage artifacts large-output parallel-jobs timeout complex-scripts variable-features job-artifacts large-script-output concurrent-lifecycle services-http dag-dependencies rules-conditional multi-image-jobs allow-failure-exit-code container-action"
+    PIPELINE_ARG="$(echo "$ALL_PIPELINES" | tr ' ' ',')"
 else
     PIPELINE_ARG="$PIPELINE"
 fi

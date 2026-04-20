@@ -11,6 +11,7 @@ type ACAState struct {
 type NetworkState struct {
 	NSGName      string   // Network Security Group name
 	NSGRuleNames []string // NSG rule names for this network
+	DNSZoneName  string   // Azure Private DNS zone backing this network
 }
 
 // VolumeState tracks volume state.

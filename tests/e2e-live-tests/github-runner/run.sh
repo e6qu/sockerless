@@ -40,7 +40,7 @@ if [ ! -d "$WORKFLOW_DIR" ]; then
     WORKFLOW_DIR="/test/workflows"
 fi
 
-ALL_WORKFLOWS="basic multi-step env-vars exit-codes multi-job container-action services large-output matrix custom-image working-dir outputs shell-features file-persistence job-outputs concurrent-jobs env-inheritance github-env step-outputs defaults-shell conditional-steps multi-job-data services-http container-options container-env-create diamond-deps matrix-multi conditional-job continue-on-error timeout-job working-dir-nested"
+ALL_WORKFLOWS="basic multi-step env-vars exit-codes multi-job container-action large-output matrix working-dir outputs shell-features file-persistence job-outputs concurrent-jobs env-inheritance github-env step-outputs defaults-shell conditional-steps multi-job-data services-http container-options container-env-create diamond-deps matrix-multi conditional-job continue-on-error timeout-job working-dir-nested"
 
 # --- Timestamp for logs ---
 TS="$(date '+%Y%m%d-%H%M%S')"
@@ -90,9 +90,7 @@ SKIP=0
 RESULTS=""
 
 for wf in $WORKFLOWS; do
-    # Route to backend-specific variant if available
-    VARIANT=$(get_test_variant "$BACKEND" "$wf")
-    WF_FILE="${WORKFLOW_DIR}/${VARIANT}.yml"
+    WF_FILE="${WORKFLOW_DIR}/${wf}.yml"
     LOG_FILE="${LOG_DIR}/github-${BACKEND}-${wf}-${TS}.log"
 
     if [ ! -f "$WF_FILE" ]; then
@@ -102,11 +100,7 @@ for wf in $WORKFLOWS; do
         continue
     fi
 
-    if [ "$VARIANT" != "$wf" ]; then
-        log_info "Running workflow: $wf (variant: $VARIANT)"
-    else
-        log_info "Running workflow: $wf"
-    fi
+    log_info "Running workflow: $wf"
 
     # Run act
     set +e

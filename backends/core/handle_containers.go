@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -170,20 +171,30 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
+		// Flush 200 OK headers to the client BEFORE any blocking path.
+		// Docker CLI's docker-run-d flow sends POST /wait?condition=next-exit
+		// *before* POST /start and blocks on reading the response
+		// status line. Without this early flush, cli.post() never
+		// returns, /start is never sent, and the container never runs.
+		// The body is written after the exit event lands.
+		flushWaitHeaders(w)
+
 		// If there's a local wait channel, use it then query CloudState for exit code
 		if ch, hasChannel := s.Store.WaitChs.Load(id); hasChannel {
 			select {
 			case <-ch.(chan struct{}):
 				// Query CloudState for the actual exit code (Store may be empty in stateless mode)
 				if cc, found, _ := s.CloudState.GetContainer(r.Context(), id); found {
-					WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: cc.State.ExitCode})
+					writeWaitBody(w, cc.State.ExitCode)
 				} else if lc, lok := s.Store.Containers.Get(id); lok {
-					WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: lc.State.ExitCode})
+					writeWaitBody(w, lc.State.ExitCode)
 				} else {
-					WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: 0})
+					writeWaitBody(w, 0)
 				}
 			case <-r.Context().Done():
-				WriteError(w, &api.ServerError{Message: r.Context().Err().Error()})
+				// Headers already sent; best we can do is send an
+				// empty body and let the client's body read error.
+				writeWaitBody(w, -1)
 			}
 			return
 		}
@@ -191,10 +202,10 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 		// Cloud-based wait: poll until stopped
 		exitCode, err := s.CloudState.WaitForExit(r.Context(), id)
 		if err != nil {
-			WriteError(w, &api.ServerError{Message: err.Error()})
+			writeWaitBody(w, -1)
 			return
 		}
-		WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: exitCode})
+		writeWaitBody(w, exitCode)
 		return
 	}
 
@@ -226,12 +237,13 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Flush headers before blocking — see note above.
+	flushWaitHeaders(w)
+
 	ch, ok := s.Store.WaitChs.Load(id)
 	if !ok {
 		c, _ = s.Store.Containers.Get(id)
-		WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{
-			StatusCode: c.State.ExitCode,
-		})
+		writeWaitBody(w, c.State.ExitCode)
 		return
 	}
 
@@ -247,11 +259,32 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 				time.Sleep(100 * time.Millisecond)
 			}
 		}
-		WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{
-			StatusCode: c.State.ExitCode,
-		})
+		writeWaitBody(w, c.State.ExitCode)
 	case <-r.Context().Done():
-		return
+		writeWaitBody(w, -1)
+	}
+}
+
+// flushWaitHeaders sends 200 OK + JSON content-type headers to the
+// client before the wait handler blocks on the container-exit event.
+// docker CLI's ContainerWait sends the request via cli.post() and
+// blocks on reading the response status line; without this early
+// flush, /start never gets sent in the docker-run-d flow.
+func flushWaitHeaders(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// writeWaitBody writes the ContainerWaitResponse JSON body. Called
+// after flushWaitHeaders + exit event. Uses raw Encoder since headers
+// are already committed.
+func writeWaitBody(w http.ResponseWriter, exitCode int) {
+	_ = json.NewEncoder(w).Encode(api.ContainerWaitResponse{StatusCode: exitCode})
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
 	}
 }
 

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/sockerless/api"
 	awscommon "github.com/sockerless/aws-common"
@@ -65,6 +64,12 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	if config.Labels == nil {
 		config.Labels = make(map[string]string)
 	}
+
+	// Short image references (alpine, node:20, ghcr.io/…) must be
+	// resolved to an ECR pull-through cache URI for Fargate to pull
+	// them. The resolution lives in taskdef building rather than
+	// here, so `docker inspect` reflects the user-supplied image ref
+	// while the task definition still gets the pullable URI.
 
 	hostConfig := api.HostConfig{NetworkMode: "default"}
 	if req.HostConfig != nil {
@@ -520,67 +525,23 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	return nil
 }
 
-// ContainerLogs streams container logs from CloudWatch.
+// ContainerLogs streams container logs from CloudWatch. Fetch closure
+// is shared with ContainerAttach via buildCloudWatchFetcher; the only
+// difference is that logs rejects calls on never-started containers
+// (attach tolerates them and waits for the task to appear).
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
 	id, ok := s.ResolveContainerIDAuto(context.Background(), ref)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
 
-	// Guard against containers that were never started (no ECS task).
-	taskID := s.getTaskID(id)
-	if taskID == "unknown" {
+	if taskID := s.getTaskID(id); taskID == "unknown" {
 		return nil, &api.InvalidParameterError{
 			Message: "logs not available: ECS task not found for container " + id[:12],
 		}
 	}
 
-	logStreamName := fmt.Sprintf("%s/main/%s", id[:12], taskID)
-
-	fetch := func(ctx context.Context, params core.CloudLogParams, cursor any) ([]core.CloudLogEntry, any, error) {
-		input := &cloudwatchlogs.GetLogEventsInput{
-			LogGroupName:  aws.String(s.config.LogGroup),
-			LogStreamName: aws.String(logStreamName),
-			StartFromHead: aws.Bool(true),
-		}
-
-		if cursor != nil {
-			// Follow mode: use NextToken
-			input.NextToken = cursor.(*string)
-		} else {
-			// Initial fetch: apply filters
-			input.StartFromHead = aws.Bool(params.CloudLogTailInt32() == nil)
-			if limit := params.CloudLogTailInt32(); limit != nil {
-				input.Limit = limit
-			}
-			if ms := params.SinceMillis(); ms != nil {
-				input.StartTime = ms
-			}
-			if ms := params.UntilMillis(); ms != nil {
-				input.EndTime = ms
-			}
-		}
-
-		result, err := s.aws.CloudWatch.GetLogEvents(s.ctx(), input)
-		if err != nil {
-			return nil, cursor, err
-		}
-
-		var entries []core.CloudLogEntry
-		for _, event := range result.Events {
-			if event.Message == nil {
-				continue
-			}
-			var ts time.Time
-			if event.Timestamp != nil {
-				ts = time.UnixMilli(*event.Timestamp)
-			}
-			entries = append(entries, core.CloudLogEntry{Timestamp: ts, Message: *event.Message})
-		}
-		return entries, result.NextForwardToken, nil
-	}
-
-	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{})
+	return core.StreamCloudLogs(s.BaseServer, ref, opts, s.buildCloudWatchFetcher(id), core.StreamCloudLogsOptions{})
 }
 
 // ContainerRestart stops and then starts a container.

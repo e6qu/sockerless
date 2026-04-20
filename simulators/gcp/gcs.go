@@ -35,13 +35,20 @@ type GCSObject struct {
 	data        []byte // unexported: raw object data
 }
 
-// Package-level store for dashboard access.
-var gcsBuckets sim.Store[Bucket]
+// Package-level stores. gcsBuckets is for dashboard access; gcsObjects
+// is exposed so other slices (e.g. cloudbuild.go) can read uploaded
+// build context tarballs without depending on the gcs.go handler
+// closure.
+var (
+	gcsBuckets sim.Store[Bucket]
+	gcsObjects sim.Store[GCSObject]
+)
 
 func registerGCS(srv *sim.Server) {
 	buckets := sim.MakeStore[Bucket](srv.DB(), "gcs_buckets")
 	gcsBuckets = buckets
-	objects := sim.MakeStore[GCSObject](srv.DB(), "gcs_objects")
+	gcsObjects = sim.MakeStore[GCSObject](srv.DB(), "gcs_objects")
+	objects := gcsObjects
 
 	// Create bucket
 	srv.HandleFunc("POST /storage/v1/b", func(w http.ResponseWriter, r *http.Request) {

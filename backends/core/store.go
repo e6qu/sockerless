@@ -2,6 +2,10 @@ package core
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -121,6 +125,13 @@ func (s *StateStore[T]) Keys() []string {
 
 // Store holds all in-memory state shared by all backends.
 type Store struct {
+	// ImageStatePath, if non-empty, is the on-disk JSON file where
+	// `Images` is persisted after every mutation via PersistImages
+	// and restored on startup via RestoreImages. Populated from
+	// $SOCKERLESS_STATE_DIR by NewBaseServer. Enables `docker pull`
+	// state to survive backend restart.
+	ImageStatePath string
+
 	Containers     *StateStore[api.Container]
 	ContainerNames *StateStore[string] // name → container ID
 	Images         *StateStore[api.Image]
@@ -159,6 +170,106 @@ func NewStore() *Store {
 		Pods:           NewPodRegistry(),
 		IPAlloc:        NewIPAllocator(),
 	}
+}
+
+// imagesSnapshot is the on-disk shape for Store.Images persistence.
+// Keyed by every alias StoreImageWithAliases emits — the restore
+// repopulates the exact map.
+type imagesSnapshot struct {
+	Version int                  `json:"version"`
+	Items   map[string]api.Image `json:"items"`
+}
+
+const imagesSnapshotVersion = 1
+
+// PersistImages serializes `Images` to the given JSON file via atomic
+// temp-file + rename. Safe to call on every image mutation. Nil path
+// is a no-op. Returns any error so the caller can log — failures
+// should not abort the operation that triggered them.
+func (s *Store) PersistImages(path string) error {
+	if path == "" {
+		return nil
+	}
+	s.Images.mu.RLock()
+	snap := imagesSnapshot{
+		Version: imagesSnapshotVersion,
+		Items:   make(map[string]api.Image, len(s.Images.items)),
+	}
+	for k, v := range s.Images.items {
+		snap.Items[k] = v
+	}
+	s.Images.mu.RUnlock()
+
+	data, err := json.Marshal(&snap)
+	if err != nil {
+		return fmt.Errorf("marshal images snapshot: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir state dir: %w", err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".images-*.json.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp: %w", err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("write temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("close temp: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("rename temp: %w", err)
+	}
+	return nil
+}
+
+// RestoreImages reads the JSON file at `path` (written by
+// PersistImages) and loads every entry into `Images`. A missing file
+// is not an error — a fresh environment starts with an empty store.
+func (s *Store) RestoreImages(path string) error {
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read images snapshot: %w", err)
+	}
+	var snap imagesSnapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return fmt.Errorf("unmarshal images snapshot: %w", err)
+	}
+	if snap.Version != imagesSnapshotVersion {
+		return fmt.Errorf("images snapshot: unknown version %d", snap.Version)
+	}
+	s.Images.mu.Lock()
+	for k, v := range snap.Items {
+		s.Images.items[k] = v
+	}
+	s.Images.mu.Unlock()
+	return nil
+}
+
+// DefaultImageStatePath returns `$SOCKERLESS_STATE_DIR/images.json`,
+// or `$HOME/.sockerless/state/images.json` when the env var is unset.
+// Empty-string return means no persistence (e.g. no $HOME available).
+func DefaultImageStatePath() string {
+	if dir := os.Getenv("SOCKERLESS_STATE_DIR"); dir != "" {
+		return filepath.Join(dir, "images.json")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".sockerless", "state", "images.json")
 }
 
 // NextPID returns the next incrementing PID for realistic container simulation.

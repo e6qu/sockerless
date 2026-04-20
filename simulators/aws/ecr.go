@@ -33,11 +33,27 @@ type ECRLifecyclePolicy struct {
 	LifecyclePolicyText string `json:"lifecyclePolicyText"`
 }
 
+// ECRPullThroughCacheRule models an ECR pull-through cache rule. The
+// simulator stores these so callers (sockerless ECS backend, aws CLI,
+// terraform) can register, list, and delete them just like real ECR.
+// The rule is consulted when a container image URI's registry path
+// starts with `<account>.dkr.ecr.<region>.amazonaws.com/<prefix>/…`
+// and `<prefix>` matches a registered `EcrRepositoryPrefix`.
+type ECRPullThroughCacheRule struct {
+	EcrRepositoryPrefix string `json:"ecrRepositoryPrefix"`
+	UpstreamRegistryUrl string `json:"upstreamRegistryUrl"`
+	UpstreamRegistry    string `json:"upstreamRegistry,omitempty"`
+	RegistryId          string `json:"registryId"`
+	CreatedAt           int64  `json:"createdAt"`
+	UpdatedAt           int64  `json:"updatedAt,omitempty"`
+}
+
 // State stores
 var (
-	ecrRepositories      sim.Store[ECRRepository]
-	ecrImages            sim.Store[ECRImageDetail]
-	ecrLifecyclePolicies sim.Store[ECRLifecyclePolicy]
+	ecrRepositories          sim.Store[ECRRepository]
+	ecrImages                sim.Store[ECRImageDetail]
+	ecrLifecyclePolicies     sim.Store[ECRLifecyclePolicy]
+	ecrPullThroughCacheRules sim.Store[ECRPullThroughCacheRule]
 )
 
 const ecrRegistryId = "123456789012"
@@ -50,6 +66,7 @@ func registerECR(r *sim.AWSRouter, srv *sim.Server) {
 	ecrRepositories = sim.MakeStore[ECRRepository](srv.DB(), "ecr_repositories")
 	ecrImages = sim.MakeStore[ECRImageDetail](srv.DB(), "ecr_images")
 	ecrLifecyclePolicies = sim.MakeStore[ECRLifecyclePolicy](srv.DB(), "ecr_lifecycle_policies")
+	ecrPullThroughCacheRules = sim.MakeStore[ECRPullThroughCacheRule](srv.DB(), "ecr_pull_through_cache_rules")
 
 	r.Register("AmazonEC2ContainerRegistry_V20150921.CreateRepository", handleECRCreateRepository)
 	r.Register("AmazonEC2ContainerRegistry_V20150921.DescribeRepositories", handleECRDescribeRepositories)
@@ -64,7 +81,136 @@ func registerECR(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerRegistry_V20150921.DeleteLifecyclePolicy", handleECRDeleteLifecyclePolicy)
 	r.Register("AmazonEC2ContainerRegistry_V20150921.ListTagsForResource", handleECRListTagsForResource)
 	r.Register("AmazonEC2ContainerRegistry_V20150921.TagResource", handleECRTagResource)
+
+	// Pull-through cache rules. Used by sockerless image resolvers
+	// and by terraform's aws_ecr_pull_through_cache_rule resource.
+	// Backend caller builds URIs like
+	// `<account>.dkr.ecr.<region>.amazonaws.com/<prefix>/<repo>:<tag>`
+	// which the simulator's ResolveLocalImage recognizes as a cache
+	// hit and rewrites to the upstream registry on first pull.
+	r.Register("AmazonEC2ContainerRegistry_V20150921.CreatePullThroughCacheRule", handleECRCreatePullThroughCacheRule)
+	r.Register("AmazonEC2ContainerRegistry_V20150921.DescribePullThroughCacheRules", handleECRDescribePullThroughCacheRules)
+	r.Register("AmazonEC2ContainerRegistry_V20150921.DeletePullThroughCacheRule", handleECRDeletePullThroughCacheRule)
 }
+
+// handleECRCreatePullThroughCacheRule registers a pull-through cache
+// rule. Returns PullThroughCacheRuleAlreadyExistsException if the
+// prefix is already in use — matches real AWS behaviour so sockerless
+// and terraform's `aws_ecr_pull_through_cache_rule` see the same errors.
+func handleECRCreatePullThroughCacheRule(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		EcrRepositoryPrefix string `json:"ecrRepositoryPrefix"`
+		UpstreamRegistryUrl string `json:"upstreamRegistryUrl"`
+		UpstreamRegistry    string `json:"upstreamRegistry"`
+		RegistryId          string `json:"registryId"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.EcrRepositoryPrefix == "" || req.UpstreamRegistryUrl == "" {
+		sim.AWSError(w, "InvalidParameterException", "ecrRepositoryPrefix and upstreamRegistryUrl are required", http.StatusBadRequest)
+		return
+	}
+	if _, exists := ecrPullThroughCacheRules.Get(req.EcrRepositoryPrefix); exists {
+		sim.AWSError(w, "PullThroughCacheRuleAlreadyExistsException",
+			"A pull-through cache rule with the given prefix already exists",
+			http.StatusBadRequest)
+		return
+	}
+	now := time.Now().Unix()
+	regID := req.RegistryId
+	if regID == "" {
+		regID = ecrRegistryId
+	}
+	rule := ECRPullThroughCacheRule{
+		EcrRepositoryPrefix: req.EcrRepositoryPrefix,
+		UpstreamRegistryUrl: req.UpstreamRegistryUrl,
+		UpstreamRegistry:    req.UpstreamRegistry,
+		RegistryId:          regID,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+	}
+	ecrPullThroughCacheRules.Put(req.EcrRepositoryPrefix, rule)
+
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"ecrRepositoryPrefix": rule.EcrRepositoryPrefix,
+		"upstreamRegistryUrl": rule.UpstreamRegistryUrl,
+		"upstreamRegistry":    rule.UpstreamRegistry,
+		"registryId":          rule.RegistryId,
+		"createdAt":           rule.CreatedAt,
+	})
+}
+
+// handleECRDescribePullThroughCacheRules returns rules matching the
+// requested prefixes, or all rules when the request is empty. Matches
+// the real API's pagination-less response shape for the test-sized
+// rule sets the simulator supports.
+func handleECRDescribePullThroughCacheRules(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		EcrRepositoryPrefixes []string `json:"ecrRepositoryPrefixes"`
+	}
+	_ = sim.ReadJSON(r, &req)
+
+	var rules []ECRPullThroughCacheRule
+	if len(req.EcrRepositoryPrefixes) == 0 {
+		rules = ecrPullThroughCacheRules.List()
+	} else {
+		for _, p := range req.EcrRepositoryPrefixes {
+			if rule, ok := ecrPullThroughCacheRules.Get(p); ok {
+				rules = append(rules, rule)
+			}
+		}
+	}
+	if rules == nil {
+		rules = []ECRPullThroughCacheRule{}
+	}
+
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"pullThroughCacheRules": rules,
+	})
+}
+
+// handleECRDeletePullThroughCacheRule removes a rule. Returns
+// PullThroughCacheRuleNotFoundException when the prefix isn't
+// registered — matches real AWS.
+func handleECRDeletePullThroughCacheRule(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		EcrRepositoryPrefix string `json:"ecrRepositoryPrefix"`
+		RegistryId          string `json:"registryId"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.EcrRepositoryPrefix == "" {
+		sim.AWSError(w, "InvalidParameterException", "ecrRepositoryPrefix is required", http.StatusBadRequest)
+		return
+	}
+	rule, ok := ecrPullThroughCacheRules.Get(req.EcrRepositoryPrefix)
+	if !ok {
+		sim.AWSError(w, "PullThroughCacheRuleNotFoundException",
+			"The pull-through cache rule does not exist",
+			http.StatusNotFound)
+		return
+	}
+	ecrPullThroughCacheRules.Delete(req.EcrRepositoryPrefix)
+
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"ecrRepositoryPrefix": rule.EcrRepositoryPrefix,
+		"upstreamRegistryUrl": rule.UpstreamRegistryUrl,
+		"upstreamRegistry":    rule.UpstreamRegistry,
+		"registryId":          rule.RegistryId,
+		"createdAt":           rule.CreatedAt,
+	})
+}
+
+// Pull-through-cache URI → local docker ref resolution is handled by
+// `sim.ResolveLocalImage` in simulators/aws/shared/container.go, which
+// already strips `docker-hub/` + `library/` prefixes from ECR URIs
+// before the simulator pulls. The handlers above are what sockerless's
+// image-resolver + terraform's aws_ecr_pull_through_cache_rule need;
+// the launch-time URI mapping lives in the shared helper.
 
 func handleECRCreateRepository(w http.ResponseWriter, r *http.Request) {
 	var req struct {

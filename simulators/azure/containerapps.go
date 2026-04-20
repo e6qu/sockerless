@@ -393,7 +393,7 @@ func registerContainerApps(srv *sim.Server) {
 		if job.Properties.Configuration != nil {
 			replicaTimeout = job.Properties.Configuration.ReplicaTimeout
 		}
-		go func(id, jobShortName string, replicaTimeout int, tmpl *JobTemplate) {
+		go func(id, jobShortName, envID string, replicaTimeout int, tmpl *JobTemplate) {
 			timeout := 1800 * time.Second // Azure default
 			if replicaTimeout > 0 {
 				timeout = time.Duration(replicaTimeout) * time.Second
@@ -429,6 +429,19 @@ func registerContainerApps(srv *sim.Server) {
 				}
 				containerName := fmt.Sprintf("sockerless-sim-azure-execution-%s", shortExecID)
 
+				// Resolve the env's Docker network and connect the
+				// container with the job short name as DNS alias.
+				// Other jobs in the same env resolve each other via
+				// Docker's embedded DNS.
+				var netName string
+				var netAliases []string
+				if envID != "" {
+					if env, ok := acaEnvironments.Get(envID); ok && env.DockerNetworkName != "" {
+						netName = env.DockerNetworkName
+						netAliases = []string{jobShortName}
+					}
+				}
+
 				sink := &acaLogSink{jobName: jobShortName}
 				handle, err := sim.StartContainerSync(sim.ContainerConfig{
 					Image:   sim.ResolveLocalImage(containerImage),
@@ -441,6 +454,8 @@ func registerContainerApps(srv *sim.Server) {
 						"sockerless-sim-type": "aca-job-execution",
 						"sockerless-exec-id":  id,
 					},
+					Network:        netName,
+					NetworkAliases: netAliases,
 				}, sink)
 				if err != nil {
 					succeeded = false
@@ -471,7 +486,7 @@ func registerContainerApps(srv *sim.Server) {
 			if completed {
 				injectContainerAppLog(jobShortName, "Execution completed successfully")
 			}
-		}(execID, name, replicaTimeout, template)
+		}(execID, name, job.Properties.EnvironmentID, replicaTimeout, template)
 
 		// Return 202 with Location header for LRO polling.
 		// The Azure SDK's BeginStart uses FinalStateViaLocation,

@@ -12,12 +12,9 @@ import (
 
 // --- Container methods requiring resolution ---
 
-func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: id}
-	}
-	return s.BaseServer.ContainerAttach(id, opts)
-}
+// ContainerAttach is implemented in attach.go — overrides the BaseServer
+// delegation so cloud backend streams CloudWatch logs instead of
+// returning an immediately-EOF pipe.
 
 func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) {
 	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {

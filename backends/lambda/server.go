@@ -13,19 +13,21 @@ import (
 // Server is the Lambda backend server.
 type Server struct {
 	*core.BaseServer
-	config    Config
-	aws       *AWSClients
-	images    *core.ImageManager
-	Lambda    *core.StateStore[LambdaState]
-	ipCounter atomic.Int32
+	config        Config
+	aws           *AWSClients
+	images        *core.ImageManager
+	Lambda        *core.StateStore[LambdaState]
+	reverseAgents *reverseAgentRegistry // reverse-agent session registry
+	ipCounter     atomic.Int32
 }
 
 // NewServer creates a new Lambda backend server.
 func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Server {
 	s := &Server{
-		config: config,
-		aws:    awsClients,
-		Lambda: core.NewStateStore[LambdaState](),
+		config:        config,
+		aws:           awsClients,
+		Lambda:        core.NewStateStore[LambdaState](),
+		reverseAgents: newReverseAgentRegistry(),
 	}
 	s.ipCounter.Store(2)
 
@@ -71,6 +73,14 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	}
 
 	registerUI(s.BaseServer)
+	s.registerReverseAgentRoutes(logger)
+
+	// Route `docker exec` + `docker attach` through the reverse-agent
+	// when a session is connected. The BaseServer's default
+	// LocalExecDriver/LocalStreamDriver error out since Lambda has no
+	// local container namespace; the reverse-agent pattern fills the gap.
+	s.Drivers.Exec = &lambdaExecDriver{registry: s.reverseAgents, logger: logger}
+	s.Drivers.Stream = &lambdaStreamDriver{registry: s.reverseAgents, logger: logger}
 
 	return s
 }

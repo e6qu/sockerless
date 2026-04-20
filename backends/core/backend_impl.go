@@ -1079,7 +1079,11 @@ func (s *BaseServer) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWri
 		return nil, &api.NotFoundError{Resource: "exec instance", ID: id}
 	}
 
-	c, ok := s.Store.Containers.Get(exec.ContainerID)
+	// Resolve via ResolveContainerAuto so stateless cloud backends
+	// (ECS, Lambda, Cloud Run) that keep container state in the cloud
+	// rather than Store.Containers can still run exec. Falls back to
+	// Store for the local backends.
+	c, ok := s.ResolveContainerAuto(context.Background(), exec.ContainerID)
 	if !ok {
 		return nil, &api.ConflictError{
 			Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID),

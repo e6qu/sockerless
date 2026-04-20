@@ -1,0 +1,165 @@
+name: AWS live
+
+# Workflow-dispatch only — triggered manually when live-AWS validation
+# is needed. Teardown always runs so a failed earlier job still
+# releases scratch AWS resources. See smoke-tests/aws-live/README.md
+# for the scripts each job runs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: AWS region (e.g. eu-west-1)
+        required: true
+        default: eu-west-1
+      scripts:
+        description: Comma-separated script numbers to run (e.g. "0,1,2,6" or "all")
+        required: true
+        default: "all"
+      github_pat:
+        description: GitHub PAT for 4-github-runner.sh (optional — skip if absent)
+        required: false
+      gitlab_runner_token:
+        description: GitLab runner token for 5-gitlab-runner.sh (optional)
+        required: false
+      ngrok_authtoken:
+        description: ngrok authtoken for 3-lambda-runtime-api.sh callback URL (optional)
+        required: false
+
+concurrency:
+  group: aws-live
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  infra-up:
+    runs-on: ubuntu-latest
+    if: contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') || contains(inputs.scripts, '0')
+    env:
+      AWS_REGION: ${{ inputs.region }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+      - uses: hashicorp/setup-terraform@v4
+      - run: bash smoke-tests/aws-live/0-infra-up.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ecs-outputs
+          path: /tmp/ecs-out.json
+
+  ecs-smoke:
+    needs: infra-up
+    runs-on: ubuntu-latest
+    if: contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') || contains(inputs.scripts, '1')
+    env:
+      AWS_REGION: ${{ inputs.region }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+      - uses: actions/download-artifact@v8
+        with: { name: ecs-outputs, path: /tmp }
+      - run: (cd backends/ecs && go build -o ../../sockerless-backend-ecs ./cmd/sockerless-backend-ecs)
+      - run: bash smoke-tests/aws-live/1-ecs-smoke.sh
+
+  lambda-baseline:
+    needs: infra-up
+    runs-on: ubuntu-latest
+    if: contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') || contains(inputs.scripts, '2')
+    env:
+      AWS_REGION: ${{ inputs.region }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+      - uses: actions/download-artifact@v8
+        with: { name: ecs-outputs, path: /tmp }
+      - run: (cd backends/lambda && go build -o ../../sockerless-backend-lambda ./cmd/sockerless-backend-lambda)
+      - run: bash smoke-tests/aws-live/2-lambda-baseline.sh
+
+  lambda-runtime-api:
+    needs: [infra-up, lambda-baseline]
+    runs-on: ubuntu-latest
+    if: |
+      contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') ||
+      contains(inputs.scripts, '3')
+    env:
+      AWS_REGION: ${{ inputs.region }}
+      NGROK_AUTHTOKEN: ${{ inputs.ngrok_authtoken }}
+    steps:
+      - uses: actions/checkout@v6
+      - run: |
+          if [ -z "$NGROK_AUTHTOKEN" ]; then
+            echo "::warning::ngrok authtoken absent; skipping 3-lambda-runtime-api.sh"
+            exit 0
+          fi
+          bash smoke-tests/aws-live/3-lambda-runtime-api.sh
+
+  github-runner:
+    needs: infra-up
+    runs-on: ubuntu-latest
+    if: |
+      contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') ||
+      contains(inputs.scripts, '4')
+    env:
+      AWS_REGION: ${{ inputs.region }}
+      GITHUB_PAT: ${{ inputs.github_pat }}
+    steps:
+      - uses: actions/checkout@v6
+      - run: |
+          if [ -z "$GITHUB_PAT" ]; then
+            echo "::warning::github_pat absent; skipping 4-github-runner.sh"
+            exit 0
+          fi
+          bash smoke-tests/aws-live/4-github-runner.sh
+
+  gitlab-runner:
+    needs: infra-up
+    runs-on: ubuntu-latest
+    if: |
+      contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') ||
+      contains(inputs.scripts, '5')
+    env:
+      AWS_REGION: ${{ inputs.region }}
+      GITLAB_RUNNER_TOKEN: ${{ inputs.gitlab_runner_token }}
+    steps:
+      - uses: actions/checkout@v6
+      - run: |
+          if [ -z "$GITLAB_RUNNER_TOKEN" ]; then
+            echo "::warning::gitlab_runner_token absent; skipping 5-gitlab-runner.sh"
+            exit 0
+          fi
+          bash smoke-tests/aws-live/5-gitlab-runner.sh
+
+  teardown:
+    needs: [ecs-smoke, lambda-baseline, lambda-runtime-api, github-runner, gitlab-runner]
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ inputs.region }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+      - uses: hashicorp/setup-terraform@v4
+      - run: bash smoke-tests/aws-live/6-teardown.sh

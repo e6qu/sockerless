@@ -1,10 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -250,6 +250,13 @@ func handleLambdaUpdateFunctionConfiguration(w http.ResponseWriter, r *http.Requ
 	sim.WriteJSON(w, http.StatusOK, fn)
 }
 
+// handleLambdaInvoke implements the AWS Lambda Invoke API. For Image
+// package-type functions, it routes through the Runtime API slice
+// (see lambda_runtime.go): the simulator stands up a
+// per-invocation Runtime API listener, launches the container with
+// AWS_LAMBDA_RUNTIME_API pointing at it, and returns whatever the
+// handler posts back to /response (or /error → X-Amz-Function-Error:
+// Unhandled). Matches real Lambda; no synthetic stdout capture.
 func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 	name := sim.PathParam(r, "name")
 	if name == "" {
@@ -279,151 +286,18 @@ func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 	case "dryrun":
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		// RequestResponse — execute real container if image function has an image URI
-		responseBody := []byte("{}")
-		if fn.PackageType == "Image" && fn.Code != nil && fn.Code.ImageUri != "" {
-			var exitCode int
-			responseBody, exitCode = invokeLambdaProcess(fn)
-			if exitCode != 0 {
-				w.Header().Set("X-Amz-Function-Error", "Unhandled")
-			}
-		} else {
-			injectLambdaLogs(fn.FunctionName)
+		// RequestResponse — Image-package functions go through the
+		// Runtime API slice; Zip-package functions stay on the
+		// control-plane synthetic path (no container launched).
+		payload, _ := io.ReadAll(r.Body)
+		responseBody, unhandled, _ := invokeLambdaViaRuntimeAPI(fn, payload)
+		if unhandled {
+			w.Header().Set("X-Amz-Function-Error", "Unhandled")
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write(responseBody)
+		_, _ = w.Write(responseBody)
 	}
-}
-
-// invokeLambdaProcess executes a Lambda function's image via sim.StartContainerSync
-// and returns the combined output as the response body plus the container exit code.
-func invokeLambdaProcess(fn LambdaFunction) ([]byte, int) {
-	// Extract image URI from function code
-	imageURI := ""
-	if fn.Code != nil {
-		imageURI = fn.Code.ImageUri
-	}
-	if imageURI == "" {
-		return []byte("{}"), 0
-	}
-
-	// Extract entrypoint and command from ImageConfig
-	var entrypoint, args []string
-	if fn.ImageConfig != nil {
-		entrypoint = fn.ImageConfig.EntryPoint
-		args = fn.ImageConfig.Command
-	}
-
-	// Extract environment variables
-	var cmdEnv map[string]string
-	if fn.Environment != nil && len(fn.Environment.Variables) > 0 {
-		cmdEnv = fn.Environment.Variables
-	}
-
-	// Set up CloudWatch log group and stream
-	logGroup := fmt.Sprintf("/aws/lambda/%s", fn.FunctionName)
-	now := time.Now()
-	nowMs := now.UnixMilli()
-
-	if _, exists := cwLogGroups.Get(logGroup); !exists {
-		cwLogGroups.Put(logGroup, CWLogGroup{
-			LogGroupName: logGroup,
-			Arn:          cwLogGroupArn(logGroup),
-			CreationTime: nowMs,
-		})
-	}
-
-	hexBytes := make([]byte, 8)
-	if _, err := rand.Read(hexBytes); err != nil {
-		hexBytes = []byte{0, 0, 0, 0, 0, 0, 0, 0}
-	}
-	hexSuffix := hex.EncodeToString(hexBytes)
-	logStreamName := fmt.Sprintf("%s/[$LATEST]%s", now.Format("2006/01/02"), hexSuffix)
-
-	key := cwEventsKey(logGroup, logStreamName)
-	cwLogStreams.Put(key, CWLogStream{
-		LogStreamName:       logStreamName,
-		LogGroupName:        logGroup,
-		CreationTime:        nowMs,
-		FirstEventTimestamp: nowMs,
-		LastEventTimestamp:  nowMs,
-		Arn:                 cwLogStreamArn(logGroup, logStreamName),
-		UploadSequenceToken: "1",
-	})
-
-	// Inject START log entry
-	requestID := generateUUID()
-	cwLogEvents.Put(key, []CWLogEvent{
-		{Timestamp: nowMs, Message: fmt.Sprintf("START RequestId: %s Version: $LATEST", requestID), IngestionTime: nowMs},
-	})
-
-	// Execute the container
-	timeout := time.Duration(fn.Timeout) * time.Second
-	if timeout == 0 {
-		timeout = 3 * time.Second
-	}
-
-	sink := &lambdaLogSink{logGroup: logGroup, logStream: logStreamName}
-	var stdout bytes.Buffer
-	collectSink := sim.FuncSink(func(line sim.LogLine) {
-		sink.WriteLog(line)
-		if line.Stream == "stdout" {
-			stdout.WriteString(line.Text)
-			stdout.WriteByte('\n')
-		}
-	})
-
-	handle, err := sim.StartContainerSync(sim.ContainerConfig{
-		Image:   sim.ResolveLocalImage(imageURI),
-		Command: entrypoint,
-		Args:    args,
-		Env:     cmdEnv,
-		Timeout: timeout,
-		Name:    fmt.Sprintf("sockerless-sim-aws-lambda-%s", requestID[:12]),
-		Labels:  map[string]string{"sockerless-sim-lambda": requestID},
-	}, collectSink)
-	if err != nil {
-		// Log the error and return failure
-		endMs := time.Now().UnixMilli()
-		cwLogEvents.Update(key, func(events *[]CWLogEvent) {
-			*events = append(*events,
-				CWLogEvent{Timestamp: endMs, Message: fmt.Sprintf("ERROR RequestId: %s Container start failed: %v", requestID, err), IngestionTime: endMs},
-				CWLogEvent{Timestamp: endMs + 1, Message: fmt.Sprintf("END RequestId: %s", requestID), IngestionTime: endMs + 1},
-			)
-		})
-		return []byte(fmt.Sprintf(`{"errorMessage":"Container start failed: %v","errorType":"Runtime.ExitError"}`, err)), 1
-	}
-	lambdaProcessHandles.Store(requestID, handle)
-	result := handle.Wait()
-	lambdaProcessHandles.Delete(requestID)
-
-	// Inject END and REPORT log entries
-	endMs := time.Now().UnixMilli()
-	duration := float64(result.StoppedAt.Sub(result.StartedAt).Microseconds()) / 1000.0
-	cwLogEvents.Update(key, func(events *[]CWLogEvent) {
-		*events = append(*events,
-			CWLogEvent{Timestamp: endMs, Message: fmt.Sprintf("END RequestId: %s", requestID), IngestionTime: endMs},
-			CWLogEvent{Timestamp: endMs + 1, Message: fmt.Sprintf("REPORT RequestId: %s\tDuration: %.2f ms\tBilled Duration: %d ms\tMemory Size: %d MB\tMax Memory Used: %d MB",
-				requestID, duration, int64(duration)+1, fn.MemorySize, fn.MemorySize/2), IngestionTime: endMs + 1},
-		)
-	})
-
-	if result.ExitCode != 0 {
-		cwLogEvents.Update(key, func(events *[]CWLogEvent) {
-			*events = append(*events, CWLogEvent{
-				Timestamp:     endMs + 2,
-				Message:       fmt.Sprintf("ERROR RequestId: %s Container exited with code %d", requestID, result.ExitCode),
-				IngestionTime: endMs + 2,
-			})
-		})
-	}
-
-	output := strings.TrimRight(stdout.String(), "\n")
-	if output == "" {
-		return []byte("{}"), result.ExitCode
-	}
-	return []byte(output), result.ExitCode
 }
 
 func handleLambdaListFunctions(w http.ResponseWriter, r *http.Request) {

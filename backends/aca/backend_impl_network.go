@@ -8,15 +8,27 @@ import (
 	"github.com/sockerless/api"
 )
 
-// NetworkCreate creates a Docker network with NSG tracking.
+// NetworkCreate creates a Docker network and its Azure cloud
+// resources — a per-network NSG + Private DNS zone.
+// Cloud-side failures surface as response Warnings so callers know
+// what degraded, matching the ECS and Cloud Run backends.
 func (s *Server) NetworkCreate(req *api.NetworkCreateRequest) (*api.NetworkCreateResponse, error) {
 	resp, err := s.BaseServer.NetworkCreate(req)
 	if err != nil {
 		return nil, err
 	}
 
-	// Set up cloud network state (NSG tracking)
-	s.cloudNetworkCreate(req.Name, resp.ID)
+	var warnings []string
+	if err := s.cloudNetworkCreate(req.Name, resp.ID); err != nil {
+		s.Logger.Warn().Err(err).Str("network", req.Name).Msg("failed to create cloud network resources")
+		warnings = append(warnings, "Azure cloud network resources: "+err.Error())
+	}
+	if len(warnings) > 0 {
+		if resp.Warning != "" {
+			warnings = append([]string{resp.Warning}, warnings...)
+		}
+		resp.Warning = strings.Join(warnings, "; ")
+	}
 
 	return resp, nil
 }
@@ -28,8 +40,8 @@ func (s *Server) NetworkRemove(id string) error {
 		return &api.NotFoundError{Resource: "network", ID: id}
 	}
 
-	// Clean up cloud network state
-	s.cloudNetworkDelete(n.ID)
+	// Clean up cloud network state (Private DNS zone + NSG tracking)
+	_ = s.cloudNetworkDelete(n.ID)
 
 	return s.BaseServer.NetworkRemove(id)
 }
@@ -51,14 +63,18 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 
 	// Track NSG rule for this container-network association
 	ruleName := fmt.Sprintf("allow-%s-%s", containerID[:12], net.Name)
-	s.cloudNetworkAddRule(net.ID, ruleName)
+	if err := s.cloudNetworkAddRule(net.ID, ruleName); err != nil {
+		s.Logger.Warn().Err(err).Str("rule", ruleName).Msg("failed to create NSG rule")
+	}
 
 	// Register container in service discovery
 	c, _ := s.ResolveContainerAuto(context.Background(), containerID)
 	hostname := strings.TrimPrefix(c.Name, "/")
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID == net.ID && ep.IPAddress != "" {
-			s.cloudServiceRegister(containerID, hostname, ep.IPAddress, net.ID)
+			if err := s.cloudServiceRegister(containerID, hostname, ep.IPAddress, net.ID); err != nil {
+				s.Logger.Warn().Err(err).Msg("failed to register service in Private DNS")
+			}
 			break
 		}
 	}
@@ -73,7 +89,12 @@ func (s *Server) NetworkDisconnect(id string, req *api.NetworkDisconnectRequest)
 	if ok {
 		containerID, _ := s.ResolveContainerIDAuto(context.Background(), req.Container)
 		if containerID != "" {
-			s.cloudServiceDeregister(containerID, net.ID)
+			c, cOk := s.ResolveContainerAuto(context.Background(), containerID)
+			hostname := ""
+			if cOk {
+				hostname = strings.TrimPrefix(c.Name, "/")
+			}
+			_ = s.cloudServiceDeregister(containerID, hostname, net.ID)
 		}
 	}
 	return s.BaseServer.NetworkDisconnect(id, req)

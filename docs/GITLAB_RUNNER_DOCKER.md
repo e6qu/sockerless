@@ -2,6 +2,8 @@
 
 End-to-end tests for Sockerless using GitLab Runner's docker executor. A self-contained GitLab CE instance runs in Docker Compose alongside Sockerless. The orchestrator creates a project, pushes a CI pipeline, registers a runner, and monitors execution.
 
+> **Looking for real gitlab.com + `gitlab-runner`?** See [`GITLAB_RUNNER_SAAS.md`](./GITLAB_RUNNER_SAAS.md) for the SaaS flow. This doc covers the self-hosted-GitLab-CE + docker-compose harness.
+
 ## Architecture
 
 ```

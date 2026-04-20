@@ -56,6 +56,30 @@ type BlobUpload struct {
 	Data []byte `json:"data"`
 }
 
+// ACRCacheRule models an Azure Container Registry cache rule
+// (pull-through cache) as returned by the `cacheRules` sub-resource.
+// Sockerless and terraform callers register one rule per registered
+// upstream (e.g., `docker-hub` → `docker.io/library/*`) so Docker
+// Hub references can be rewritten to
+// `<acrName>.azurecr.io/<targetRepository>:<tag>` at container launch.
+type ACRCacheRule struct {
+	ID         string                 `json:"id,omitempty"`
+	Name       string                 `json:"name"`
+	Type       string                 `json:"type,omitempty"`
+	Properties ACRCacheRuleProperties `json:"properties"`
+}
+
+// ACRCacheRuleProperties mirrors armcontainerregistry.CacheRuleProperties.
+// SourceRepository is the upstream ref (e.g. `docker.io/library/alpine`);
+// TargetRepository is the local ACR path (e.g. `docker-hub/library/alpine`).
+type ACRCacheRuleProperties struct {
+	CredentialSetResourceID string `json:"credentialSetResourceId,omitempty"`
+	SourceRepository        string `json:"sourceRepository,omitempty"`
+	TargetRepository        string `json:"targetRepository,omitempty"`
+	CreationDate            string `json:"creationDate,omitempty"`
+	ProvisioningState       string `json:"provisioningState,omitempty"`
+}
+
 // Package-level store for dashboard access.
 var acrRegistries sim.Store[Registry]
 
@@ -68,6 +92,8 @@ func registerACR(srv *sim.Server) {
 	blobs := sim.MakeStore[BlobData](srv.DB(), "acr_blobs")
 	// uploads stores in-progress uploads keyed by uuid
 	uploads := sim.MakeStore[BlobUpload](srv.DB(), "acr_uploads")
+	// cacheRules stores pull-through cache rules keyed by ARM resource ID.
+	cacheRules := sim.MakeStore[ACRCacheRule](srv.DB(), "acr_cache_rules")
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.ContainerRegistry"
 
@@ -171,6 +197,115 @@ func registerACR(srv *sim.Server) {
 			w.WriteHeader(http.StatusNoContent)
 		}
 	})
+
+	// --- Cache Rules (pull-through cache) ---
+	//
+	// Matches armcontainerregistry.CacheRulesClient endpoints. Reference:
+	// /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerRegistry
+	//   /registries/{registry}/cacheRules[/{rule}]
+	// BeginCreate accepts 200/201 (we return 200 sync with final body).
+	// BeginDelete accepts 202/204 (we return 204 sync).
+	// Parallels the AWS ECR pull-through + GCP Artifact Registry slices.
+
+	// PUT cache rule (Create or Update — LRO collapsed to sync 200).
+	srv.HandleFunc("PUT "+armBase+"/registries/{registryName}/cacheRules/{cacheRuleName}",
+		func(w http.ResponseWriter, r *http.Request) {
+			sub := sim.PathParam(r, "subscriptionId")
+			rg := sim.PathParam(r, "resourceGroupName")
+			regName := sim.PathParam(r, "registryName")
+			ruleName := sim.PathParam(r, "cacheRuleName")
+
+			regID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.ContainerRegistry/registries/%s",
+				sub, rg, regName)
+			if _, ok := registries.Get(regID); !ok {
+				sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+					"Registry '%s' under resource group '%s' was not found.", regName, rg)
+				return
+			}
+
+			var req ACRCacheRule
+			if err := sim.ReadJSON(r, &req); err != nil {
+				sim.AzureError(w, "InvalidRequestContent",
+					"Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			if req.Properties.SourceRepository == "" || req.Properties.TargetRepository == "" {
+				sim.AzureError(w, "InvalidRequestContent",
+					"properties.sourceRepository and properties.targetRepository are required",
+					http.StatusBadRequest)
+				return
+			}
+
+			ruleID := fmt.Sprintf("%s/cacheRules/%s", regID, ruleName)
+			rule := ACRCacheRule{
+				ID:   ruleID,
+				Name: ruleName,
+				Type: "Microsoft.ContainerRegistry/registries/cacheRules",
+				Properties: ACRCacheRuleProperties{
+					CredentialSetResourceID: req.Properties.CredentialSetResourceID,
+					SourceRepository:        req.Properties.SourceRepository,
+					TargetRepository:        req.Properties.TargetRepository,
+					CreationDate:            req.Properties.CreationDate,
+					ProvisioningState:       "Succeeded",
+				},
+			}
+			cacheRules.Put(ruleID, rule)
+
+			sim.WriteJSON(w, http.StatusOK, rule)
+		})
+
+	// GET cache rule.
+	srv.HandleFunc("GET "+armBase+"/registries/{registryName}/cacheRules/{cacheRuleName}",
+		func(w http.ResponseWriter, r *http.Request) {
+			sub := sim.PathParam(r, "subscriptionId")
+			rg := sim.PathParam(r, "resourceGroupName")
+			regName := sim.PathParam(r, "registryName")
+			ruleName := sim.PathParam(r, "cacheRuleName")
+
+			ruleID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.ContainerRegistry/registries/%s/cacheRules/%s",
+				sub, rg, regName, ruleName)
+			rule, ok := cacheRules.Get(ruleID)
+			if !ok {
+				sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+					"Cache rule '%s' under registry '%s' was not found.", ruleName, regName)
+				return
+			}
+			sim.WriteJSON(w, http.StatusOK, rule)
+		})
+
+	// LIST cache rules under a registry.
+	srv.HandleFunc("GET "+armBase+"/registries/{registryName}/cacheRules",
+		func(w http.ResponseWriter, r *http.Request) {
+			sub := sim.PathParam(r, "subscriptionId")
+			rg := sim.PathParam(r, "resourceGroupName")
+			regName := sim.PathParam(r, "registryName")
+
+			regPrefix := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.ContainerRegistry/registries/%s/cacheRules/",
+				sub, rg, regName)
+			matched := cacheRules.Filter(func(cr ACRCacheRule) bool {
+				return strings.HasPrefix(cr.ID, regPrefix)
+			})
+			if matched == nil {
+				matched = []ACRCacheRule{}
+			}
+			sim.WriteJSON(w, http.StatusOK, map[string]any{
+				"value": matched,
+			})
+		})
+
+	// DELETE cache rule.
+	srv.HandleFunc("DELETE "+armBase+"/registries/{registryName}/cacheRules/{cacheRuleName}",
+		func(w http.ResponseWriter, r *http.Request) {
+			sub := sim.PathParam(r, "subscriptionId")
+			rg := sim.PathParam(r, "resourceGroupName")
+			regName := sim.PathParam(r, "registryName")
+			ruleName := sim.PathParam(r, "cacheRuleName")
+
+			ruleID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.ContainerRegistry/registries/%s/cacheRules/%s",
+				sub, rg, regName, ruleName)
+			cacheRules.Delete(ruleID)
+			w.WriteHeader(http.StatusNoContent)
+		})
 
 	// --- OCI Distribution API ---
 

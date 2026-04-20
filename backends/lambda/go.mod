@@ -12,7 +12,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/lambda v1.69.6
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.98.0
 	github.com/docker/docker v27.5.1+incompatible
+	github.com/gorilla/websocket v1.5.3
 	github.com/rs/zerolog v1.34.0
+	github.com/sockerless/agent v0.0.0
 	github.com/sockerless/api v0.0.0
 	github.com/sockerless/aws-common v0.0.0
 	github.com/sockerless/backend-core v0.0.0
@@ -37,6 +39,7 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
+	github.com/creack/pty v1.1.24 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/go-connections v0.6.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
@@ -78,6 +81,7 @@ require (
 )
 
 replace (
+	github.com/sockerless/agent => ../../agent
 	github.com/sockerless/api => ../../api
 	github.com/sockerless/aws-common => ../aws-common
 	github.com/sockerless/backend-core => ../core

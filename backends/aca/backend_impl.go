@@ -55,8 +55,20 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		config.Labels = make(map[string]string)
 	}
 
-	// Normalize Docker Hub image references for Azure Container Apps
-	config.Image = azurecommon.ResolveAzureImageURI(config.Image, "")
+	// Resolve the image through the ACR pull-through cache if one is
+	// configured. Falls through to the plain docker ref when
+	// no registry or rule matches; ACA pulls Docker Hub refs directly.
+	if resolved, err := azurecommon.ResolveAzureImageURIWithCache(
+		s.ctx(),
+		s.azure.ACRCacheRules,
+		s.config.ResourceGroup,
+		s.config.ACRName,
+		config.Image,
+	); err != nil {
+		s.Logger.Warn().Err(err).Str("image", config.Image).Msg("ACR cache-rule lookup failed; using ref as-is")
+	} else {
+		config.Image = resolved
+	}
 
 	hostConfig := api.HostConfig{NetworkMode: "default"}
 	if req.HostConfig != nil {
@@ -462,10 +474,11 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		s.Store.Pods.RemoveContainer(pod.ID, id)
 	}
 
-	// Deregister from service discovery
+	// Deregister from service discovery (Private DNS A record)
+	hostname := strings.TrimPrefix(c.Name, "/")
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID != "" {
-			s.cloudServiceDeregister(id, ep.NetworkID)
+			_ = s.cloudServiceDeregister(id, hostname, ep.NetworkID)
 		}
 	}
 

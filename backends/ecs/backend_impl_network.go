@@ -6,24 +6,53 @@ import (
 	"github.com/sockerless/api"
 )
 
-// NetworkCreate creates a Docker network with cloud backing (VPC security group + Cloud Map namespace).
+// NetworkCreate creates a Docker network with cloud backing (VPC
+// security group + Cloud Map namespace). Cloud-side failures surface
+// via the response's Warning field rather than being swallowed so
+// callers (docker CLI, test harnesses) can see that cross-container
+// DNS or network isolation may not work for this network.
 func (s *Server) NetworkCreate(req *api.NetworkCreateRequest) (*api.NetworkCreateResponse, error) {
 	resp, err := s.BaseServer.NetworkCreate(req)
 	if err != nil {
 		return nil, err
 	}
 
-	// Create VPC security group for network isolation
+	var warnings []string
+
 	if err := s.cloudNetworkCreate(req.Name, resp.ID); err != nil {
 		s.Logger.Error().Err(err).Str("network", req.Name).Msg("failed to create cloud network resources")
+		warnings = append(warnings, "VPC security group: "+err.Error())
 	}
 
-	// Create Cloud Map namespace for DNS-based service discovery
 	if err := s.cloudNamespaceCreate(req.Name, resp.ID); err != nil {
 		s.Logger.Warn().Err(err).Str("network", req.Name).Msg("failed to create Cloud Map namespace")
+		warnings = append(warnings, "Cloud Map namespace (cross-container DNS): "+err.Error())
+	}
+
+	if len(warnings) > 0 {
+		resp.Warning = joinWarnings(resp.Warning, warnings...)
 	}
 
 	return resp, nil
+}
+
+// joinWarnings combines an existing warning string (possibly set by
+// the BaseServer) with additional cloud-side messages, separated by
+// "; ". Matches how docker clients display the Warning field.
+func joinWarnings(existing string, extras ...string) string {
+	parts := make([]string, 0, len(extras)+1)
+	if existing != "" {
+		parts = append(parts, existing)
+	}
+	parts = append(parts, extras...)
+	out := ""
+	for i, p := range parts {
+		if i > 0 {
+			out += "; "
+		}
+		out += p
+	}
+	return out
 }
 
 // NetworkRemove removes a Docker network and its cloud resources.

@@ -125,10 +125,28 @@ func (s *GCPBuildService) Build(ctx context.Context, opts core.CloudBuildOptions
 		},
 	}
 
-	// Add secret environment variables
-	var secretEnvs []string
-	for k := range opts.Secrets {
-		secretEnvs = append(secretEnvs, k)
+	// Wire secret env vars through to Cloud Build via
+	// availableSecrets.secretManager + per-step secretEnv. `opts.Secrets`
+	// maps env-var-name → Secret Manager resource reference
+	// (`projects/P/secrets/S/versions/V`). Each entry becomes an
+	// AvailableSecrets.SecretManager binding, and each step gets the
+	// env name listed in its SecretEnv so Cloud Build's runtime exposes
+	// the resolved payload to the step process.
+	var availableSecrets *cloudbuildpb.Secrets
+	if len(opts.Secrets) > 0 {
+		secretEnvs := make([]string, 0, len(opts.Secrets))
+		sm := make([]*cloudbuildpb.SecretManagerSecret, 0, len(opts.Secrets))
+		for envName, versionRef := range opts.Secrets {
+			secretEnvs = append(secretEnvs, envName)
+			sm = append(sm, &cloudbuildpb.SecretManagerSecret{
+				VersionName: versionRef,
+				Env:         envName,
+			})
+		}
+		availableSecrets = &cloudbuildpb.Secrets{SecretManager: sm}
+		for _, step := range steps {
+			step.SecretEnv = append(step.SecretEnv, secretEnvs...)
+		}
 	}
 
 	build := &cloudbuildpb.Build{
@@ -140,11 +158,10 @@ func (s *GCPBuildService) Build(ctx context.Context, opts core.CloudBuildOptions
 				},
 			},
 		},
-		Steps:  steps,
-		Images: []string{imageRef},
+		Steps:            steps,
+		Images:           []string{imageRef},
+		AvailableSecrets: availableSecrets,
 	}
-
-	_ = secretEnvs // TODO: wire secretEnvs into build steps when Secret Manager integration is ready
 
 	// Submit build
 	op, err := s.cloudbuild.CreateBuild(ctx, &cloudbuildpb.CreateBuildRequest{

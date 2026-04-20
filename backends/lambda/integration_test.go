@@ -22,10 +22,28 @@ import (
 var dockerClient *client.Client
 var evalBinaryPath string
 
+// State shared with the agent-e2e test. Populated by TestMain when
+// SOCKERLESS_INTEGRATION=1, consumed by the e2e test that drives
+// the Lambda-backend → simulator → reverse-agent round-trip.
+var (
+	agentBootstrapBinaryPath string
+	agentTestImageName       string
+	lambdaBackendPort        int
+	lambdaBackendWSURL       string
+)
+
+func skipIfNoIntegration(t *testing.T) {
+	t.Helper()
+	if os.Getenv("SOCKERLESS_INTEGRATION") != "1" {
+		t.Skip("skipping integration test (SOCKERLESS_INTEGRATION != 1)")
+	}
+}
+
 func TestMain(m *testing.M) {
 	if os.Getenv("SOCKERLESS_INTEGRATION") != "1" {
-		fmt.Println("skipping integration tests (SOCKERLESS_INTEGRATION != 1)")
-		os.Exit(0)
+		// Run unit tests only; integration tests gate themselves via
+		// skipIfNoIntegration.
+		os.Exit(m.Run())
 	}
 
 	repoRoot := findModuleDir(".")
@@ -103,15 +121,54 @@ func TestMain(m *testing.M) {
 	}
 	cleanups = append(cleanups, func() { os.Remove(backendBinary) })
 
+	// Build the real sockerless-lambda-bootstrap for linux and bake
+	// it into a throw-away test image that the simulator's Lambda
+	// Runtime API slice will invoke as a handler. The backend is
+	// started with PrebuiltOverlayImage pointed at this image so it
+	// doesn't need to run `docker push` against an insecure registry.
+	bootstrapDir := repoRoot + "/agent/cmd/sockerless-lambda-bootstrap"
+	agentBootstrapBinaryPath = bootstrapDir + "/sockerless-lambda-bootstrap"
+	fmt.Println("[sim] Building sockerless-lambda-bootstrap for linux...")
+	bsBuild := exec.Command("go", "build", "-o", "sockerless-lambda-bootstrap", ".")
+	bsBuild.Dir = bootstrapDir
+	bsBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=amd64")
+	bsBuild.Stdout = os.Stderr
+	bsBuild.Stderr = os.Stderr
+	if err := bsBuild.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build sockerless-lambda-bootstrap: %v\n", err)
+		cleanup()
+		os.Exit(1)
+	}
+	cleanups = append(cleanups, func() { os.Remove(agentBootstrapBinaryPath) })
+
+	agentTestImageName = "sockerless-lambda-agent-test:v1"
+	fmt.Printf("[sim] Building %s...\n", agentTestImageName)
+	agentDockerfile := "FROM alpine:latest\n" +
+		"COPY sockerless-lambda-bootstrap /usr/local/bin/sockerless-lambda-bootstrap\n" +
+		"ENTRYPOINT [\"/usr/local/bin/sockerless-lambda-bootstrap\"]\n"
+	agentBuild := exec.Command("docker", "build", "-t", agentTestImageName, "-f", "-", bootstrapDir)
+	agentBuild.Stdin = strings.NewReader(agentDockerfile)
+	if out, err := agentBuild.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build agent test image: %v\n%s", err, out)
+		cleanup()
+		os.Exit(1)
+	}
+
 	// Start backend
 	backendPort := findFreePort()
 	backendAddr := fmt.Sprintf(":%d", backendPort)
-	fmt.Printf("[sim] Starting sockerless-backend-lambda on %s...\n", backendAddr)
+	lambdaBackendPort = backendPort
+	// Callback URL the container inside Docker will dial back to —
+	// host.docker.internal resolves to the host where the backend lives.
+	lambdaBackendWSURL = fmt.Sprintf("ws://host.docker.internal:%d/v1/lambda/reverse", backendPort)
+	fmt.Printf("[sim] Starting sockerless-backend-lambda on %s (callback=%s)...\n", backendAddr, lambdaBackendWSURL)
 	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
 	backendCmd.Env = append(os.Environ(),
 		"SOCKERLESS_ENDPOINT_URL="+simURL,
 		"SOCKERLESS_POLL_INTERVAL=500ms",
 		"SOCKERLESS_LAMBDA_ROLE_ARN=arn:aws:iam::000000000000:role/sim",
+		"SOCKERLESS_CALLBACK_URL="+lambdaBackendWSURL,
+		"SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE="+agentTestImageName,
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
@@ -130,50 +187,12 @@ func TestMain(m *testing.M) {
 	}
 	fmt.Printf("[sim] backend is ready on %s\n", backendAddr)
 
-	// Build frontend
-	frontendDir := repoRoot + "/frontends/docker"
-	frontendBinary := frontendDir + "/sockerless-docker-frontend"
-	fmt.Println("[sim] Building sockerless-docker-frontend...")
-	buildFrontend := exec.Command("go", "build", "-o", "sockerless-docker-frontend", "./cmd/")
-	buildFrontend.Dir = frontendDir
-	buildFrontend.Stdout = os.Stderr
-	buildFrontend.Stderr = os.Stderr
-	if err := buildFrontend.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build frontend: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	cleanups = append(cleanups, func() { os.Remove(frontendBinary) })
-
-	// Start frontend on Unix socket
-	socketPath := fmt.Sprintf("/tmp/sockerless-lambda-inttest-%d.sock", os.Getpid())
-	os.Remove(socketPath)
-	fmt.Printf("[sim] Starting frontend on %s...\n", socketPath)
-	frontendCmd := exec.Command(frontendBinary,
-		"--addr", socketPath,
-		"--backend", fmt.Sprintf("http://localhost:%d", backendPort),
-		"--log-level", "debug",
-	)
-	frontendCmd.Stdout = os.Stderr
-	frontendCmd.Stderr = os.Stderr
-	if err := frontendCmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to start frontend: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	cleanups = append(cleanups, func() { frontendCmd.Process.Kill(); frontendCmd.Wait(); os.Remove(socketPath) })
-
-	if err := waitForUnixSocket(socketPath, 10*time.Second); err != nil {
-		fmt.Fprintf(os.Stderr, "frontend not ready: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	fmt.Printf("[sim] frontend is ready on %s\n", socketPath)
-
-	// Create Docker client
+	// The Lambda backend serves the Docker API directly (no separate
+	// frontend binary — in-process wiring per post-P67 architecture).
+	// Point the docker SDK at the backend's TCP address.
 	var err error
 	dockerClient, err = client.NewClientWithOpts(
-		client.WithHost("unix://"+socketPath),
+		client.WithHost(fmt.Sprintf("tcp://localhost:%d", backendPort)),
 		client.WithAPIVersionNegotiation(),
 	)
 	if err != nil {
@@ -188,6 +207,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestLambdaContainerLifecycle(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	// Pull image
@@ -247,6 +267,7 @@ func TestLambdaContainerLifecycle(t *testing.T) {
 }
 
 func TestLambdaContainerLogs(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
@@ -296,7 +317,74 @@ func TestLambdaContainerLogs(t *testing.T) {
 	}
 }
 
+// TestLambdaContainerLogsFollowLazyStream verifies that calling
+// ContainerLogs with Follow=true BEFORE the log stream exists still
+// produces output once the invocation completes. Regression test for
+// the bug where logStreamName was resolved once up-front; if empty at
+// that moment the follow loop would return empty forever.
+func TestLambdaContainerLogsFollowLazyStream(t *testing.T) {
+	skipIfNoIntegration(t)
+	ctx := context.Background()
+
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	if err != nil {
+		t.Fatalf("image pull failed: %v", err)
+	}
+	io.Copy(io.Discard, rc)
+	rc.Close()
+
+	testID := generateTestID()
+	resp, err := dockerClient.ContainerCreate(ctx,
+		&container.Config{
+			Image: "alpine:latest",
+			Cmd:   []string{"sh", "-c", "for i in 1 2 3; do echo follow-line-$i; sleep 0.2; done"},
+		},
+		nil, nil, nil, "lambda_follow_"+testID,
+	)
+	if err != nil {
+		t.Fatalf("container create failed: %v", err)
+	}
+	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
+	// Start and immediately open follow logs — the stream may not exist yet.
+	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		t.Fatalf("container start failed: %v", err)
+	}
+
+	logReader, err := dockerClient.ContainerLogs(ctx, resp.ID, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     true,
+	})
+	if err != nil {
+		t.Fatalf("container logs (follow) failed: %v", err)
+	}
+	defer logReader.Close()
+
+	// Read with a deadline so a stuck follow loop fails the test.
+	done := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(logReader)
+		done <- b
+	}()
+
+	var logData []byte
+	select {
+	case logData = <-done:
+	case <-time.After(60 * time.Second):
+		t.Fatal("follow-mode log read did not terminate within 60s after container exited")
+	}
+
+	t.Logf("follow logs: %q", string(logData))
+	for _, want := range []string{"follow-line-1", "follow-line-2", "follow-line-3"} {
+		if !strings.Contains(string(logData), want) {
+			t.Errorf("missing %q in follow-mode log output", want)
+		}
+	}
+}
+
 func TestLambdaContainerList(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	testID := generateTestID()
@@ -328,7 +416,8 @@ func TestLambdaContainerList(t *testing.T) {
 	}
 }
 
-func TestLambdaContainerStopNoOp(t *testing.T) {
+func TestLambdaContainerStopUnblocksWait(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
@@ -353,14 +442,27 @@ func TestLambdaContainerStopNoOp(t *testing.T) {
 
 	dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
 
-	// Stop should succeed as no-op
-	timeout := 5
-	if err := dockerClient.ContainerStop(ctx, resp.ID, container.StopOptions{Timeout: &timeout}); err != nil {
-		t.Fatalf("container stop failed (should be no-op): %v", err)
+	// Stop clamps the function timeout (no-op against in-flight) and closes
+	// the local wait channel. A subsequent ContainerWait must return within
+	// a few seconds, not after the sleep-30 completes.
+	stopTimeout := 5
+	if err := dockerClient.ContainerStop(ctx, resp.ID, container.StopOptions{Timeout: &stopTimeout}); err != nil {
+		t.Fatalf("container stop failed: %v", err)
+	}
+
+	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case <-waitCh:
+		// expected — wait channel closed by stop
+	case err := <-errCh:
+		t.Fatalf("wait returned error: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("docker wait did not unblock within 5s of stop; wait channel not closed")
 	}
 }
 
 func TestLambdaContainerExec(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
@@ -404,6 +506,7 @@ func TestLambdaContainerExec(t *testing.T) {
 }
 
 func TestLambdaNetworkOperations(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	testID := generateTestID()
@@ -430,6 +533,7 @@ func TestLambdaNetworkOperations(t *testing.T) {
 }
 
 func TestLambdaVolumeOperations(t *testing.T) {
+	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	testID := generateTestID()
@@ -494,29 +598,6 @@ func waitForReady(url string, timeout time.Duration) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("timeout waiting for %s", url)
-}
-
-func waitForUnixSocket(socketPath string, timeout time.Duration) error {
-	c := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-				return net.Dial("unix", socketPath)
-			},
-		},
-		Timeout: 2 * time.Second,
-	}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		resp, err := c.Get("http://localhost/_ping")
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == 200 {
-				return nil
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return fmt.Errorf("timeout waiting for socket %s", socketPath)
 }
 
 func generateTestID(parts ...string) string {

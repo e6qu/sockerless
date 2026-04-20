@@ -158,6 +158,49 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		return nil, &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", config.Image, err)}
 	}
 
+	// Put the reverse-agent overlay image into play when CallbackURL
+	// is set so `docker exec` / `docker attach` can reach a running
+	// invocation. Two paths:
+	//  - PrebuiltOverlayImage configured: operator ships their own
+	//    agent-baked image; use it directly.
+	//  - Otherwise: build + push an overlay on top of the user's image
+	//    via BuildAndPushOverlayImage. Failure falls back to the base
+	//    image with a warning (exec will not work in that case).
+	if s.config.CallbackURL != "" {
+		if s.config.PrebuiltOverlayImage != "" {
+			imageURI = s.config.PrebuiltOverlayImage
+			envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
+			envVars["SOCKERLESS_CONTAINER_ID"] = id
+			// Pass the user entrypoint+cmd as env vars — the pre-baked
+			// overlay image does not embed them (unlike the
+			// RenderOverlayDockerfile path which writes ENV lines).
+			if len(config.Entrypoint) > 0 {
+				envVars["SOCKERLESS_USER_ENTRYPOINT"] = strings.Join(config.Entrypoint, ":")
+			}
+			if len(config.Cmd) > 0 {
+				envVars["SOCKERLESS_USER_CMD"] = strings.Join(config.Cmd, ":")
+			}
+		} else {
+			spec := OverlayImageSpec{
+				BaseImageRef:        imageURI,
+				AgentBinaryPath:     s.config.AgentBinaryPath,
+				BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+				UserEntrypoint:      config.Entrypoint,
+				UserCmd:             config.Cmd,
+			}
+			destRef := fmt.Sprintf("%s-overlay-%s", strings.TrimSuffix(imageURI, ":latest"), id[:12])
+			overlay, err := BuildAndPushOverlayImage(s.ctx(), spec, destRef)
+			if err != nil {
+				s.Logger.Warn().Err(err).Str("image", imageURI).
+					Msg("overlay build failed; falling back to base image (docker exec will not work)")
+			} else {
+				imageURI = overlay.ImageURI
+				envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
+				envVars["SOCKERLESS_CONTAINER_ID"] = id
+			}
+		}
+	}
+
 	// Create Lambda function
 	createInput := &awslambda.CreateFunctionInput{
 		FunctionName: aws.String(funcName),
@@ -302,7 +345,23 @@ func (s *Server) ContainerStart(ref string) error {
 	return nil
 }
 
-// ContainerStop stops a running Lambda container.
+// ContainerStop stops a running Lambda container. AWS Lambda exposes no
+// "cancel invoke" API and UpdateFunctionConfiguration only applies to
+// future invocations — an in-flight invoke cannot be aborted from the
+// control plane. Stop therefore does three things, in order:
+//
+//  1. Clamps the function timeout to the minimum (1s) so any subsequent
+//     invocations of this container are short-lived. Best-effort — a
+//     failure here is logged but non-fatal (the invocation may already
+//     be finishing and the function may already be gone).
+//  2. Requests the reverse agent (if connected) to exit, which causes
+//     the agent-as-handler Lambda invocation to return immediately.
+//     This is the only path that actually cuts short an in-flight
+//     invocation. Containers without the bundled agent will keep
+//     running until natural completion or the 15-min AWS hard cap.
+//  3. Closes the local wait channel so `docker wait` unblocks.
+//
+// Exit code 137 matches Docker's convention for force-stopped containers.
 func (s *Server) ContainerStop(ref string, timeout *int) error {
 	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
@@ -314,19 +373,37 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 		return &api.NotModifiedError{}
 	}
 
-	// Lambda functions run to completion — stop transitions state
 	s.StopHealthCheck(id)
 
-	// Close wait channel so ContainerWait unblocks
+	lambdaState, _ := s.Lambda.Get(id)
+	if lambdaState.FunctionName != "" {
+		_, err := s.aws.Lambda.UpdateFunctionConfiguration(s.ctx(),
+			&awslambda.UpdateFunctionConfigurationInput{
+				FunctionName: aws.String(lambdaState.FunctionName),
+				Timeout:      aws.Int32(1),
+			},
+		)
+		if err != nil {
+			s.Logger.Debug().Err(err).Str("function", lambdaState.FunctionName).
+				Msg("UpdateFunctionConfiguration(Timeout=1) failed during stop")
+		}
+	}
+
+	s.disconnectReverseAgent(id)
+
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
 	}
-	s.EmitEvent("container", "die", id, map[string]string{"exitCode": "0", "name": strings.TrimPrefix(c.Name, "/")})
+	s.EmitEvent("container", "die", id, map[string]string{"exitCode": "137", "name": strings.TrimPrefix(c.Name, "/")})
 	s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	return nil
 }
 
-// ContainerKill kills a container with the given signal.
+// ContainerKill kills a container with the given signal. Lambda delivers
+// no POSIX signals to invocations; termination follows the same path as
+// ContainerStop (clamp future timeout, disconnect reverse agent, close
+// wait channel). The supplied signal is reflected only in the reported
+// exit code via SignalToExitCode.
 func (s *Server) ContainerKill(ref string, signal string) error {
 	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
@@ -343,6 +420,22 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	s.StopHealthCheck(id)
 
 	exitCode := core.SignalToExitCode(signal)
+
+	lambdaState, _ := s.Lambda.Get(id)
+	if lambdaState.FunctionName != "" {
+		_, err := s.aws.Lambda.UpdateFunctionConfiguration(s.ctx(),
+			&awslambda.UpdateFunctionConfigurationInput{
+				FunctionName: aws.String(lambdaState.FunctionName),
+				Timeout:      aws.Int32(1),
+			},
+		)
+		if err != nil {
+			s.Logger.Debug().Err(err).Str("function", lambdaState.FunctionName).
+				Msg("UpdateFunctionConfiguration(Timeout=1) failed during kill")
+		}
+	}
+
+	s.disconnectReverseAgent(id)
 
 	s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", exitCode), "name": strings.TrimPrefix(c.Name, "/")})
@@ -428,35 +521,58 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	return nil
 }
 
-// ContainerLogs streams container logs from CloudWatch.
+// ContainerLogs streams container logs from CloudWatch. The log stream
+// is resolved lazily on each fetch: Lambda creates the stream when the
+// function is invoked for the first time, so if ContainerLogs is called
+// before the invocation has produced output the stream lookup would
+// return empty. In follow mode the fetch closure keeps checking until
+// the stream appears.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
-	// Resolve state upfront so the closure can capture it.
-	var logGroupName, logStreamName *string
+	var logGroupName *string
 	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
 		lambdaState, _ := s.Lambda.Get(id)
-		group := fmt.Sprintf("/aws/lambda/%s", lambdaState.FunctionName)
-		logGroupName = &group
+		if lambdaState.FunctionName != "" {
+			group := fmt.Sprintf("/aws/lambda/%s", lambdaState.FunctionName)
+			logGroupName = &group
+		}
+	}
 
-		// Find the most recent log stream.
-		streamsResult, err := s.aws.CloudWatch.DescribeLogStreams(s.ctx(), &cloudwatchlogs.DescribeLogStreamsInput{
-			LogGroupName: aws.String(group),
+	// resolveStream looks up the most recent log stream in the group;
+	// returns nil if the stream doesn't exist yet.
+	resolveStream := func() *string {
+		if logGroupName == nil {
+			return nil
+		}
+		out, err := s.aws.CloudWatch.DescribeLogStreams(s.ctx(), &cloudwatchlogs.DescribeLogStreamsInput{
+			LogGroupName: logGroupName,
 			OrderBy:      "LastEventTime",
 			Descending:   aws.Bool(true),
 			Limit:        aws.Int32(1),
 		})
-		if err == nil && len(streamsResult.LogStreams) > 0 {
-			logStreamName = streamsResult.LogStreams[0].LogStreamName
+		if err != nil || len(out.LogStreams) == 0 {
+			return nil
 		}
+		return out.LogStreams[0].LogStreamName
 	}
 
+	// Cache the resolved stream once it appears so we don't pay
+	// DescribeLogStreams on every poll tick in follow mode.
+	var cachedStream *string
+
 	fetch := func(ctx context.Context, params core.CloudLogParams, cursor any) ([]core.CloudLogEntry, any, error) {
-		if logGroupName == nil || logStreamName == nil {
+		if logGroupName == nil {
 			return nil, nil, nil
+		}
+		if cachedStream == nil {
+			cachedStream = resolveStream()
+			if cachedStream == nil {
+				return nil, cursor, nil
+			}
 		}
 
 		input := &cloudwatchlogs.GetLogEventsInput{
 			LogGroupName:  logGroupName,
-			LogStreamName: logStreamName,
+			LogStreamName: cachedStream,
 			StartFromHead: aws.Bool(true),
 		}
 

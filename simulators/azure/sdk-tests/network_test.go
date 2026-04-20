@@ -89,3 +89,77 @@ func TestNetwork_CreateNSG(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test-nsg", *resp.Name)
 }
+
+// TestNetwork_NSGSecurityRulesCRUD covers the `securityRules` sub-
+// resource endpoints. Creates an NSG, then creates/gets/lists/deletes
+// a security rule via the per-rule client, and confirms the rule is
+// reflected in the parent NSG's properties.
+func TestNetwork_NSGSecurityRulesCRUD(t *testing.T) {
+	rgClient, err := armresources.NewResourceGroupsClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	_, err = rgClient.CreateOrUpdate(ctx, "nsg-rules-rg", armresources.ResourceGroup{
+		Location: ptrStr("eastus"),
+	}, nil)
+	require.NoError(t, err)
+
+	nsgClient, err := armnetwork.NewSecurityGroupsClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	poller, err := nsgClient.BeginCreateOrUpdate(ctx, "nsg-rules-rg", "rules-nsg", armnetwork.SecurityGroup{
+		Location: ptrStr("eastus"),
+	}, nil)
+	require.NoError(t, err)
+	_, err = poller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+
+	rulesClient, err := armnetwork.NewSecurityRulesClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+
+	// Create rule
+	rulePoller, err := rulesClient.BeginCreateOrUpdate(ctx, "nsg-rules-rg", "rules-nsg", "allow-http",
+		armnetwork.SecurityRule{
+			Properties: &armnetwork.SecurityRulePropertiesFormat{
+				Protocol:                 ptrProto(armnetwork.SecurityRuleProtocolTCP),
+				SourcePortRange:          ptrStr("*"),
+				DestinationPortRange:     ptrStr("80"),
+				SourceAddressPrefix:      ptrStr("*"),
+				DestinationAddressPrefix: ptrStr("*"),
+				Access:                   ptrAccess(armnetwork.SecurityRuleAccessAllow),
+				Priority:                 ptrInt32(100),
+				Direction:                ptrDir(armnetwork.SecurityRuleDirectionInbound),
+			},
+		}, nil)
+	require.NoError(t, err)
+	ruleResp, err := rulePoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "allow-http", *ruleResp.Name)
+	require.NotNil(t, ruleResp.Properties)
+	assert.Equal(t, int32(100), *ruleResp.Properties.Priority)
+
+	// Get rule
+	getResp, err := rulesClient.Get(ctx, "nsg-rules-rg", "rules-nsg", "allow-http", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "allow-http", *getResp.Name)
+
+	// Parent NSG Get should now include the rule in its Properties.
+	nsgResp, err := nsgClient.Get(ctx, "nsg-rules-rg", "rules-nsg", nil)
+	require.NoError(t, err)
+	require.NotNil(t, nsgResp.Properties)
+	require.Len(t, nsgResp.Properties.SecurityRules, 1)
+	assert.Equal(t, "allow-http", *nsgResp.Properties.SecurityRules[0].Name)
+
+	// Delete rule
+	delPoller, err := rulesClient.BeginDelete(ctx, "nsg-rules-rg", "rules-nsg", "allow-http", nil)
+	require.NoError(t, err)
+	_, err = delPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+
+	// Parent NSG should no longer have the rule.
+	nsgResp, err = nsgClient.Get(ctx, "nsg-rules-rg", "rules-nsg", nil)
+	require.NoError(t, err)
+	assert.Empty(t, nsgResp.Properties.SecurityRules)
+}
+
+func ptrProto(p armnetwork.SecurityRuleProtocol) *armnetwork.SecurityRuleProtocol { return &p }
+func ptrAccess(a armnetwork.SecurityRuleAccess) *armnetwork.SecurityRuleAccess    { return &a }
+func ptrDir(d armnetwork.SecurityRuleDirection) *armnetwork.SecurityRuleDirection { return &d }
+func ptrInt32(v int32) *int32                                                     { return &v }

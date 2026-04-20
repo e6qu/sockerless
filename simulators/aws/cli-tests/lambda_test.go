@@ -216,6 +216,84 @@ func TestLambda_CLI_InvokeAndCheckLogs(t *testing.T) {
 	runCLI(t, awsCLI("lambda", "delete-function", "--function-name", fnName))
 }
 
+// TestLambda_InvokeRuntimeAPI_CLI exercises the Runtime API invoke
+// path through the aws CLI: creates an Image-package function whose
+// image speaks the real Lambda Runtime API, invokes with a payload,
+// and verifies the payload round-trips via /next + /response.
+func TestLambda_InvokeRuntimeAPI_CLI(t *testing.T) {
+	fnName := "cli-runtime-api-fn"
+
+	runCLI(t, awsCLI("lambda", "create-function",
+		"--function-name", fnName,
+		"--package-type", "Image",
+		"--role", "arn:aws:iam::123456789012:role/test-role",
+		"--code", "ImageUri="+lambdaHandlerImageName,
+	))
+	defer runCLI(t, awsCLI("lambda", "delete-function", "--function-name", fnName))
+
+	payloadFile := filepath.Join(tmpDir, "cli-invoke-payload.json")
+	require.NoError(t, os.WriteFile(payloadFile, []byte(`{"msg":"cli-roundtrip"}`), 0644))
+	outFile := filepath.Join(tmpDir, "cli-invoke-output.json")
+
+	out := runCLI(t, awsCLI("lambda", "invoke",
+		"--function-name", fnName,
+		"--payload", "fileb://"+payloadFile,
+		"--cli-binary-format", "raw-in-base64-out",
+		outFile,
+		"--output", "json",
+	))
+	var invokeResult struct {
+		StatusCode    int    `json:"StatusCode"`
+		FunctionError string `json:"FunctionError,omitempty"`
+	}
+	parseJSON(t, out, &invokeResult)
+	assert.Equal(t, 200, invokeResult.StatusCode)
+	assert.Empty(t, invokeResult.FunctionError, "unexpected function error")
+
+	body, err := os.ReadFile(outFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "cli-roundtrip",
+		"handler should echo payload back via Runtime API /response")
+}
+
+// TestLambda_InvokeRuntimeAPIError_CLI exercises the /error path via
+// the aws CLI. Payload with "cause":"error" triggers the handler to
+// POST /invocation/{id}/error; caller sees FunctionError=Unhandled.
+func TestLambda_InvokeRuntimeAPIError_CLI(t *testing.T) {
+	fnName := "cli-runtime-api-error-fn"
+
+	runCLI(t, awsCLI("lambda", "create-function",
+		"--function-name", fnName,
+		"--package-type", "Image",
+		"--role", "arn:aws:iam::123456789012:role/test-role",
+		"--code", "ImageUri="+lambdaHandlerImageName,
+	))
+	defer runCLI(t, awsCLI("lambda", "delete-function", "--function-name", fnName))
+
+	payloadFile := filepath.Join(tmpDir, "cli-invoke-error-payload.json")
+	require.NoError(t, os.WriteFile(payloadFile, []byte(`{"cause":"error"}`), 0644))
+	outFile := filepath.Join(tmpDir, "cli-invoke-error-output.json")
+
+	out := runCLI(t, awsCLI("lambda", "invoke",
+		"--function-name", fnName,
+		"--payload", "fileb://"+payloadFile,
+		"--cli-binary-format", "raw-in-base64-out",
+		outFile,
+		"--output", "json",
+	))
+	var invokeResult struct {
+		StatusCode    int    `json:"StatusCode"`
+		FunctionError string `json:"FunctionError,omitempty"`
+	}
+	parseJSON(t, out, &invokeResult)
+	assert.Equal(t, 200, invokeResult.StatusCode)
+	assert.Equal(t, "Unhandled", invokeResult.FunctionError)
+
+	body, err := os.ReadFile(outFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "test error from handler")
+}
+
 func TestLambda_DeleteFunction(t *testing.T) {
 	zipPath := createDummyZip(t)
 
