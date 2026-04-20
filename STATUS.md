@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**86 phases (757 tasks). 726 bugs tracked: 724 fixed + 1 partially fixed + 1 open (BUG-716, Phase 88). Phase 86 Phase C CLOSED 2026-04-20. Phase 87 CLOSED in code 2026-04-21 (Cloud Run Services path behind `SOCKERLESS_GCR_USE_SERVICE=1` + `SOCKERLESS_GCR_VPC_CONNECTOR`; BUG-715 fixed via CNAME-to-`Service.Uri` discovery; live-GCP validation pending). Phase 89 near-complete: `specs/CLOUD_RESOURCE_MAPPING.md` for all 7 backends; `Store.Images` disk persistence removed; all 4 cloud backends have `resolve*State` helpers with every cloud-state-dependent callsite migrated (BUG-725 fixed); `docker images` is cloud-derived across all 6 cloud backends (BUG-723 fixed); ECS `ListPods` groups tasks via `sockerless-pod` tag; `resolveNetworkState` lands for ECS+Cloud Run+ACA (BUG-726 fixed). Remaining: `ListPods` for cloudrun+aca (cloudrun now unblocked post-87; aca still blocked on Phase 88), per-backend restart-resilience integration tests. Branch `post-phase86-continuation`.**
+**86 phases (757 tasks). 726 bugs tracked: 725 fixed + 1 partially fixed (BUG-724). Phase 86 Phase C CLOSED 2026-04-20. Phase 87 (BUG-715, Cloud Run Services) and Phase 88 (BUG-716, ACA Apps) both CLOSED in code 2026-04-21; live-cloud validation pending. Phase 89 near-complete: `specs/CLOUD_RESOURCE_MAPPING.md` for all 7 backends; `Store.Images` disk persistence removed; all 4 cloud backends have `resolve*State` helpers with every cloud-state-dependent callsite migrated (BUG-725 fixed); `docker images` cloud-derived across all 6 cloud backends (BUG-723 fixed); ECS `ListPods` groups tasks via `sockerless-pod` tag; `resolveNetworkState` lands for ECS+Cloud Run+ACA (BUG-726 fixed). Remaining: `ListPods` for cloudrun+aca (both now unblocked post-87/88), per-backend restart-resilience integration tests. Branch `post-phase86-continuation`.**
 
 ## Phase 87 — Cloud Run Services (2026-04-21)
 
@@ -13,6 +13,17 @@ Closed BUG-715 in code. Five slices in `post-phase86-continuation`:
 - **87-05** `config.go` + `backend_impl.go` + `backend_impl_network.go` + `service_discovery_cloud.go` — Validate gate opened (UseService requires VPCConnector). Logs filter → `cloud_run_revision` + `service_name`. `cloudServiceRegisterCNAME` / `cloudServiceDeregisterCNAME` write CNAMEs from `<hostname>.<network>.internal.` to `Service.Uri` host.
 
 13 unit tests across the slices; `go test` + `golangci-lint` green for the cloudrun module.
+
+## Phase 88 — ACA Apps (2026-04-21)
+
+Closed BUG-716 in code. Same 5-slice shape as Phase 87:
+
+- **88-01** `appspec.go` — ContainerApp proto builder. Internal ingress (`External=false`), Single active revisions, MinReplicas=MaxReplicas=1.
+- **88-02** `cloud_state_apps.go` + `store.go` + `azure.go` — `AppName` field, `ContainerApps` client, resolveAppName / resolveAppACAState / queryApps / appToContainer / appContainerState (ProvisioningState → running/exited/created). `ListContainers` merges Apps when UseApp.
+- **88-03/04** `start_app.go` + `backend_impl.go` — ContainerStart single/multi branches. `startSingleContainerApp` + `startMultiContainerAppTyped` use BeginCreateOrUpdate + PollUntilDone. Stop/Kill/Remove delete the ContainerApp (no cancel-exec equivalent).
+- **88-05** `config.go` + `backend_impl.go` + `backend_impl_network.go` + `service_discovery_cloud.go` — Validate gate opened (UseApp requires Environment). Logs filter → `ContainerAppName_s` in `ContainerAppConsoleLogs_CL`. `cloudServiceRegisterCNAME` / `DeregisterCNAME` write Private DNS CNAMEs to `ContainerApp.LatestRevisionFqdn`.
+
+8 unit tests across the slices; `go test` + `golangci-lint` green for the aca module.
 
 ## Test Counts
 

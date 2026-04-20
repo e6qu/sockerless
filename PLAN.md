@@ -1,6 +1,6 @@
 # Sockerless — Roadmap
 
-> 86 phases complete (757 tasks). 726 bugs tracked (721 fixed-in-code + 2 open across Phase 88/89-partial). Phase 86 Phase C closed 2026-04-20 with ECS live-validated. Phase 89 near-complete (state derivation + OCI image listing + resolve\*State helpers across all cloud backends). Phase 87 (Cloud Run Services) landed 2026-04-21 in code behind `SOCKERLESS_GCR_USE_SERVICE`; live-GCP validation pending.
+> 86 phases complete (757 tasks). 726 bugs tracked (725 fixed-in-code + 1 partially fixed — BUG-724 Phase 89 non-ECS pods). Phase 86 Phase C closed 2026-04-20 with ECS live-validated. Phase 87 (Cloud Run Services) and Phase 88 (ACA Apps) landed 2026-04-21 in code behind UseService/UseApp flags; live-cloud validation pending. Phase 89 near-complete (state derivation + OCI image listing + resolve\*State helpers across all cloud backends).
 >
 > **Goal:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners — backed by real cloud infrastructure (AWS, GCP, Azure).
 
@@ -34,7 +34,7 @@ Branch `post-phase86-continuation`. Live AWS account `729079515331` (eu-west-1 +
 | 713 | Cloud Run | fixed — `ManagedZones.Create` 409 → `Get` for reuse. |
 | 714 | ECS | fixed — register loop moved AFTER `waitForTaskRunning`; uses real ENI IP via `extractENIIP`. Live-verified (FQDN resolution returned `hi`). |
 | 715 | Cloud Run | fixed-in-code 2026-04-21 (Phase 87). Services path behind `SOCKERLESS_GCR_USE_SERVICE=1` + `SOCKERLESS_GCR_VPC_CONNECTOR` writes CNAMEs to `Service.Uri`; Jobs path retained as default. Live-GCP validation pending. |
-| 716 | ACA | open — split into Phase 88 (architectural rewrite Jobs → Apps with internal ingress). Doesn't block ECS+Lambda runbook. |
+| 716 | ACA | fixed-in-code 2026-04-21 (Phase 88). Apps path behind `SOCKERLESS_ACA_USE_APP=1` + `SOCKERLESS_ACA_ENVIRONMENT` writes Private DNS CNAMEs to `ContainerApp.LatestRevisionFqdn`; Jobs path retained as default. Live-Azure validation pending. |
 | 717 | ECS | fixed — full SSM AgentMessage decoder in `ssm_proto.go` (parse, ack writer, input wrapping). `ssmDecoder` in `exec_cloud.go` reads frame-by-frame with `io.ReadFull`, sends acks, terminates on `channel_closed` / `exit_code`. 7 unit tests. Live verification queued. |
 | 718 | Lambda | fixed — cross-cloud sibling of 708 found in lambda's `image_resolve.go`; same credential-ARN wiring + removed silent `pushToECR` fallback (only worked for pre-loaded local-store images, swapped image source without operator awareness). |
 
@@ -95,9 +95,18 @@ Unit tests added: service spec shape, service URI parsing, ServiceState cache, s
 
 Remaining for full closure: live-GCP smoke runbook; integration-test path that spins up a simulator with Services support if we decide to add it to `simulators/gcp/`.
 
-## Phase 88 — ACA rewrite (Jobs → Apps with internal ingress) — queued
+## Phase 88 — ACA rewrite (Jobs → Apps with internal ingress) — done (code), pending live validation
 
-Closes BUG-716. Same shape as Phase 87 for Azure: ACA Jobs aren't peer-addressable; move to ACA Apps with `Ingress.External=false` per container hostname inside the network's environment. App's stable FQDN/IP becomes the Private DNS A-record target. Add `aca.UseApp` config flag. Touches: `backends/aca/{containers,backend_impl,backend_impl_network,service_discovery_cloud}.go`, terraform examples, integration tests.
+Closes BUG-716 at the code level. The ACA backend now has two parallel execution paths selected by `SOCKERLESS_ACA_USE_APP`; Jobs (default) untouched, Apps gated on `SOCKERLESS_ACA_ENVIRONMENT` also being set.
+
+| Slice | File(s) | Summary |
+|---|---|---|
+| 88-01 | `backends/aca/appspec.go` | `buildAppName` / `buildAppSpec` emit `armappcontainers.ContainerApp` with `Ingress.External=false`, `ActiveRevisionsMode=Single`, `Scale.{Min,Max}Replicas=1`. |
+| 88-02 | `backends/aca/cloud_state_apps.go`, `store.go`, `azure.go` | `ACAState.AppName`, `AzureClients.ContainerApps`, `resolveAppName`/`resolveAppACAState`, `queryApps`/`appToContainer`, `appContainerState` (ProvisioningState → running/exited/created). `ListContainers` also merges Apps when UseApp. |
+| 88-03/04 | `backends/aca/start_app.go`, `backend_impl.go` | ContainerStart single/multi-container branches. `startSingleContainerApp` + `startMultiContainerAppTyped` use BeginCreateOrUpdate + PollUntilDone. `deleteApp` helper. Stop/Kill/Remove delete the ContainerApp on the UseApp path. |
+| 88-05 | `backends/aca/{config,backend_impl,backend_impl_network,service_discovery_cloud}.go` | Validate gate opened (UseApp requires Environment). Logs filter switches to `ContainerAppName_s` in the same `ContainerAppConsoleLogs_CL` table. `cloudServiceRegisterCNAME` / `DeregisterCNAME` write Private DNS CNAMEs pointing at `ContainerApp.LatestRevisionFqdn`. |
+
+Unit tests added: app spec shape, AppACAState cache, appToContainer mapping, running/failed/in-progress state transitions, Validate gate with/without Environment. Live-Azure validation pending.
 
 ## Phase 68 — Multi-Tenant Backend Pools (queued)
 

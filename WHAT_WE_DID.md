@@ -2,7 +2,7 @@
 
 Docker-compatible REST API that runs containers on cloud backends (ECS, Lambda, Cloud Run, GCF, ACA, AZF) or local Docker. 7 backends, 3 cloud simulators, validated against SDKs/CLIs/Terraform.
 
-86 phases, 757 tasks, 726 bugs tracked (724 fixed + 1 partially fixed + 1 open — BUG-716 Phase 88). Phase 87 closed in code 2026-04-21 (Cloud Run Services behind `SOCKERLESS_GCR_USE_SERVICE=1` + `SOCKERLESS_GCR_VPC_CONNECTOR`). See [STATUS.md](STATUS.md), [BUGS.md](BUGS.md), [specs/](specs/), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
+86 phases, 757 tasks, 726 bugs tracked (725 fixed + 1 partially fixed — BUG-724). Phase 87 (Cloud Run Services) and Phase 88 (ACA Apps) both closed in code 2026-04-21 behind `SOCKERLESS_GCR_USE_SERVICE` / `SOCKERLESS_ACA_USE_APP` flags. See [STATUS.md](STATUS.md), [BUGS.md](BUGS.md), [specs/](specs/), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
 
 ## Phase 87 — Cloud Run Services (2026-04-21)
 
@@ -12,6 +12,15 @@ Closes BUG-715 in code. The cloudrun backend now has two parallel execution path
 - **Jobs path**: unchanged default; keeps `Jobs.RunJob` + A-record skip-on-0.0.0.0 workaround.
 
 `Config.Validate()` rejects `UseService=true` without a VPC connector (no silent fallback). Five commits on `post-phase86-continuation`: servicespec / cloud_state_services / start_service / Stop-Kill-Remove branch / gate-open + CNAME discovery. 13 unit tests. Live-GCP validation pending.
+
+## Phase 88 — ACA Apps (2026-04-21)
+
+Closes BUG-716 in code. The aca backend now has two parallel execution paths selected by `SOCKERLESS_ACA_USE_APP`:
+
+- **Apps path**: `ContainerAppsClient.BeginCreateOrUpdate` with `Ingress.External=false` + managed environment + min/max replicas=1. Peers reach each other via Private DNS CNAME records pointing at `ContainerApp.LatestRevisionFqdn` (resolvable inside the environment's VNet). Logs filter switches to `ContainerAppName_s` in the same `ContainerAppConsoleLogs_CL` table.
+- **Jobs path**: unchanged default; keeps `Jobs.BeginStart` + A-record skip-on-0.0.0.0 workaround.
+
+`Config.Validate()` rejects `UseApp=true` without an existing Environment (no silent fallback). Five commits on `post-phase86-continuation`: appspec / cloud_state_apps / start_app / Stop-Kill-Remove branch / gate-open + CNAME discovery. 8 unit tests. Live-Azure validation pending.
 
 ## Phase 86 — Simulator parity + Lambda agent-as-handler
 
