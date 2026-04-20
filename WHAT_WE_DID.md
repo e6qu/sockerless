@@ -32,7 +32,7 @@ See `docs/SIMULATOR_PARITY_{AWS,GCP,AZURE}.md` for the complete slice matrix. Ze
 - **D.1** `agent/cmd/sockerless-lambda-bootstrap/main.go` — real Runtime-API polling loop. Parses `Lambda-Runtime-*` headers, spawns user entrypoint + CMD with invocation payload on stdin, posts `/response` (or `/error` envelope). Reverse-agent WebSocket dialed once at init with 20s heartbeat.
 - **D.2** `backends/lambda/image_inject.go` — `BuildAndPushOverlayImage` renders the overlay Dockerfile, stages agent + bootstrap binaries, runs `docker build` + `docker push` to the destination ECR URI. `ContainerCreate` calls it when `CallbackURL` is set.
 - **D.3** `backends/lambda/reverse_agent_server.go` — WebSocket upgrade at `/v1/lambda/reverse?session_id=...` mounted on the BaseServer mux. `reverseAgentRegistry` handles register/resolve/drop with reconnect-same-session-id resume semantics.
-- **D.4** Route-mount proof via `TestReverseAgentServer_RouteMountedOnBaseMux`. Full Lambda-invocation round-trip lives in the live-AWS session.
+- **D.4** `lambdaExecDriver` + `lambdaStreamDriver` route `docker exec` / `docker attach` through the reverse-agent session. Real end-to-end test at `backends/lambda/agent_e2e_integration_test.go` (gated on `SOCKERLESS_INTEGRATION=1`): builds the real bootstrap + bakes into a test image; runs real docker + AWS simulator + Lambda backend; `docker run` → Lambda invoke → sim spawns handler → bootstrap dials back via `host.docker.internal` → `docker exec` resolves via `lambdaExecDriver` → bootstrap spawns subprocess → stdout returns. Passes in ~1.5s. Post-stop path verified too.
 
 ### CI codification
 
