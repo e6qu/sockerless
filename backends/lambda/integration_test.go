@@ -22,6 +22,16 @@ import (
 var dockerClient *client.Client
 var evalBinaryPath string
 
+// Phase-86 D.4 — state shared with the agent-e2e test. Populated by
+// TestMain when SOCKERLESS_INTEGRATION=1, consumed by the new e2e test
+// that drives the Lambda-backend → simulator → reverse-agent round-trip.
+var (
+	agentBootstrapBinaryPath string
+	agentTestImageName       string
+	lambdaBackendPort        int
+	lambdaBackendWSURL       string
+)
+
 func skipIfNoIntegration(t *testing.T) {
 	t.Helper()
 	if os.Getenv("SOCKERLESS_INTEGRATION") != "1" {
@@ -111,15 +121,54 @@ func TestMain(m *testing.M) {
 	}
 	cleanups = append(cleanups, func() { os.Remove(backendBinary) })
 
+	// Phase-86 D.4: build the real sockerless-lambda-bootstrap for linux
+	// and bake it into a throw-away test image that the simulator's
+	// Lambda Runtime API slice will invoke as a handler. The backend
+	// is started with PrebuiltOverlayImage pointed at this image so
+	// it doesn't need to run `docker push` against an insecure registry.
+	bootstrapDir := repoRoot + "/agent/cmd/sockerless-lambda-bootstrap"
+	agentBootstrapBinaryPath = bootstrapDir + "/sockerless-lambda-bootstrap"
+	fmt.Println("[sim] Building sockerless-lambda-bootstrap for linux...")
+	bsBuild := exec.Command("go", "build", "-o", "sockerless-lambda-bootstrap", ".")
+	bsBuild.Dir = bootstrapDir
+	bsBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=amd64")
+	bsBuild.Stdout = os.Stderr
+	bsBuild.Stderr = os.Stderr
+	if err := bsBuild.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build sockerless-lambda-bootstrap: %v\n", err)
+		cleanup()
+		os.Exit(1)
+	}
+	cleanups = append(cleanups, func() { os.Remove(agentBootstrapBinaryPath) })
+
+	agentTestImageName = "sockerless-lambda-agent-test:v1"
+	fmt.Printf("[sim] Building %s...\n", agentTestImageName)
+	agentDockerfile := "FROM alpine:latest\n" +
+		"COPY sockerless-lambda-bootstrap /usr/local/bin/sockerless-lambda-bootstrap\n" +
+		"ENTRYPOINT [\"/usr/local/bin/sockerless-lambda-bootstrap\"]\n"
+	agentBuild := exec.Command("docker", "build", "-t", agentTestImageName, "-f", "-", bootstrapDir)
+	agentBuild.Stdin = strings.NewReader(agentDockerfile)
+	if out, err := agentBuild.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build agent test image: %v\n%s", err, out)
+		cleanup()
+		os.Exit(1)
+	}
+
 	// Start backend
 	backendPort := findFreePort()
 	backendAddr := fmt.Sprintf(":%d", backendPort)
-	fmt.Printf("[sim] Starting sockerless-backend-lambda on %s...\n", backendAddr)
+	lambdaBackendPort = backendPort
+	// Callback URL the container inside Docker will dial back to —
+	// host.docker.internal resolves to the host where the backend lives.
+	lambdaBackendWSURL = fmt.Sprintf("ws://host.docker.internal:%d/v1/lambda/reverse", backendPort)
+	fmt.Printf("[sim] Starting sockerless-backend-lambda on %s (callback=%s)...\n", backendAddr, lambdaBackendWSURL)
 	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
 	backendCmd.Env = append(os.Environ(),
 		"SOCKERLESS_ENDPOINT_URL="+simURL,
 		"SOCKERLESS_POLL_INTERVAL=500ms",
 		"SOCKERLESS_LAMBDA_ROLE_ARN=arn:aws:iam::000000000000:role/sim",
+		"SOCKERLESS_CALLBACK_URL="+lambdaBackendWSURL,
+		"SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE="+agentTestImageName,
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
@@ -138,50 +187,12 @@ func TestMain(m *testing.M) {
 	}
 	fmt.Printf("[sim] backend is ready on %s\n", backendAddr)
 
-	// Build frontend
-	frontendDir := repoRoot + "/frontends/docker"
-	frontendBinary := frontendDir + "/sockerless-docker-frontend"
-	fmt.Println("[sim] Building sockerless-docker-frontend...")
-	buildFrontend := exec.Command("go", "build", "-o", "sockerless-docker-frontend", "./cmd/")
-	buildFrontend.Dir = frontendDir
-	buildFrontend.Stdout = os.Stderr
-	buildFrontend.Stderr = os.Stderr
-	if err := buildFrontend.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build frontend: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	cleanups = append(cleanups, func() { os.Remove(frontendBinary) })
-
-	// Start frontend on Unix socket
-	socketPath := fmt.Sprintf("/tmp/sockerless-lambda-inttest-%d.sock", os.Getpid())
-	os.Remove(socketPath)
-	fmt.Printf("[sim] Starting frontend on %s...\n", socketPath)
-	frontendCmd := exec.Command(frontendBinary,
-		"--addr", socketPath,
-		"--backend", fmt.Sprintf("http://localhost:%d", backendPort),
-		"--log-level", "debug",
-	)
-	frontendCmd.Stdout = os.Stderr
-	frontendCmd.Stderr = os.Stderr
-	if err := frontendCmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to start frontend: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	cleanups = append(cleanups, func() { frontendCmd.Process.Kill(); frontendCmd.Wait(); os.Remove(socketPath) })
-
-	if err := waitForUnixSocket(socketPath, 10*time.Second); err != nil {
-		fmt.Fprintf(os.Stderr, "frontend not ready: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	fmt.Printf("[sim] frontend is ready on %s\n", socketPath)
-
-	// Create Docker client
+	// The Lambda backend serves the Docker API directly (no separate
+	// frontend binary — in-process wiring per post-P67 architecture).
+	// Point the docker SDK at the backend's TCP address.
 	var err error
 	dockerClient, err = client.NewClientWithOpts(
-		client.WithHost("unix://"+socketPath),
+		client.WithHost(fmt.Sprintf("tcp://localhost:%d", backendPort)),
 		client.WithAPIVersionNegotiation(),
 	)
 	if err != nil {
@@ -587,29 +598,6 @@ func waitForReady(url string, timeout time.Duration) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("timeout waiting for %s", url)
-}
-
-func waitForUnixSocket(socketPath string, timeout time.Duration) error {
-	c := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-				return net.Dial("unix", socketPath)
-			},
-		},
-		Timeout: 2 * time.Second,
-	}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		resp, err := c.Get("http://localhost/_ping")
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == 200 {
-				return nil
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return fmt.Errorf("timeout waiting for socket %s", socketPath)
 }
 
 func generateTestID(parts ...string) string {

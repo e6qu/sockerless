@@ -158,26 +158,46 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		return nil, &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", config.Image, err)}
 	}
 
-	// Phase-86 D.2: build + push the overlay image when reverse-agent
-	// mode is active so `docker exec` / `docker attach` can reach the
-	// running invocation. Replaces imageURI with the pushed overlay.
+	// Phase-86 D.2: put the reverse-agent overlay image into play when
+	// CallbackURL is set so `docker exec` / `docker attach` can reach
+	// a running invocation. Two paths:
+	//  - PrebuiltOverlayImage configured: operator ships their own
+	//    agent-baked image; use it directly.
+	//  - Otherwise: build + push an overlay on top of the user's image
+	//    via BuildAndPushOverlayImage. Failure falls back to the base
+	//    image with a warning (exec will not work in that case).
 	if s.config.CallbackURL != "" {
-		spec := OverlayImageSpec{
-			BaseImageRef:        imageURI,
-			AgentBinaryPath:     s.config.AgentBinaryPath,
-			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
-			UserEntrypoint:      config.Entrypoint,
-			UserCmd:             config.Cmd,
-		}
-		destRef := fmt.Sprintf("%s-overlay-%s", strings.TrimSuffix(imageURI, ":latest"), id[:12])
-		overlay, err := BuildAndPushOverlayImage(s.ctx(), spec, destRef)
-		if err != nil {
-			s.Logger.Warn().Err(err).Str("image", imageURI).
-				Msg("overlay build failed; falling back to base image (docker exec will not work)")
-		} else {
-			imageURI = overlay.ImageURI
+		if s.config.PrebuiltOverlayImage != "" {
+			imageURI = s.config.PrebuiltOverlayImage
 			envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
 			envVars["SOCKERLESS_CONTAINER_ID"] = id
+			// Pass the user entrypoint+cmd as env vars — the pre-baked
+			// overlay image does not embed them (unlike the
+			// RenderOverlayDockerfile path which writes ENV lines).
+			if len(config.Entrypoint) > 0 {
+				envVars["SOCKERLESS_USER_ENTRYPOINT"] = strings.Join(config.Entrypoint, ":")
+			}
+			if len(config.Cmd) > 0 {
+				envVars["SOCKERLESS_USER_CMD"] = strings.Join(config.Cmd, ":")
+			}
+		} else {
+			spec := OverlayImageSpec{
+				BaseImageRef:        imageURI,
+				AgentBinaryPath:     s.config.AgentBinaryPath,
+				BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+				UserEntrypoint:      config.Entrypoint,
+				UserCmd:             config.Cmd,
+			}
+			destRef := fmt.Sprintf("%s-overlay-%s", strings.TrimSuffix(imageURI, ":latest"), id[:12])
+			overlay, err := BuildAndPushOverlayImage(s.ctx(), spec, destRef)
+			if err != nil {
+				s.Logger.Warn().Err(err).Str("image", imageURI).
+					Msg("overlay build failed; falling back to base image (docker exec will not work)")
+			} else {
+				imageURI = overlay.ImageURI
+				envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
+				envVars["SOCKERLESS_CONTAINER_ID"] = id
+			}
 		}
 	}
 

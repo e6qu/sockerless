@@ -32,10 +32,12 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/rs/zerolog"
 
 	"github.com/sockerless/agent"
 )
@@ -68,20 +70,20 @@ func main() {
 	containerID := os.Getenv(envContainerID)
 
 	// Start the reverse-agent in the background if a callback URL is
-	// configured. If the dial fails at init, post a /runtime/init/error
-	// and exit non-zero so Lambda can recover.
-	var rc *agent.ReverseAgentConn
+	// configured. This uses the same router + session registry as the
+	// standalone sockerless-agent, so TypeExec messages from the
+	// Lambda backend spawn subprocesses inside this container and
+	// stream stdout/stderr/exit back over the WebSocket.
 	if callbackURL != "" && containerID != "" {
-		var err error
-		rc, err = dialReverseAgent(callbackURL, containerID)
+		conn, err := dialReverseAgent(callbackURL, containerID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "bootstrap: reverse-agent dial failed: %v\n", err)
 			postInitError(base, err.Error())
 			os.Exit(1)
 		}
-		go serveReverseAgent(rc)
-		go sendHeartbeats(rc)
-		defer func() { _ = rc.Close() }()
+		go serveReverseAgent(conn)
+		go sendHeartbeats(conn)
+		defer func() { _ = conn.Close() }()
 	}
 
 	// Runtime-API polling loop.
@@ -205,8 +207,9 @@ func postInitError(base, msg string) {
 }
 
 // dialReverseAgent opens the long-lived WebSocket to the sockerless
-// Lambda backend and returns the wrapped ReverseAgentConn.
-func dialReverseAgent(callbackURL, containerID string) (*agent.ReverseAgentConn, error) {
+// Lambda backend. Returns a raw *websocket.Conn — the caller feeds it
+// into the agent.Router via serveReverseAgent.
+func dialReverseAgent(callbackURL, containerID string) (*websocket.Conn, error) {
 	u, err := url.Parse(callbackURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse callback URL: %w", err)
@@ -218,29 +221,46 @@ func dialReverseAgent(callbackURL, containerID string) (*agent.ReverseAgentConn,
 	if err != nil {
 		return nil, fmt.Errorf("dial %s: %w", u.String(), err)
 	}
-	return agent.NewReverseAgentConn(ws), nil
+	return ws, nil
 }
 
-// serveReverseAgent handles exec / attach frames arriving over the
-// reverse-agent connection. The Message routing is already done by the
-// ReverseAgentConn read-loop — we pick up session-scoped requests via
-// the registered sessions map. Since a session registers as it arrives,
-// we mainly need to make sure the conn lives until the process exits.
-func serveReverseAgent(rc *agent.ReverseAgentConn) {
-	<-rc.Done()
+// serveReverseAgent reads messages from the WebSocket and dispatches
+// them to an agent.Router. This is the "server side" of the
+// reverse-agent protocol — inbound TypeExec / TypeAttach messages
+// spawn subprocesses in this container and stream stdout back over
+// the WS.
+func serveReverseAgent(conn *websocket.Conn) {
+	logger := zerolog.New(os.Stderr).With().Str("component", "bootstrap-reverse-agent").Logger()
+	registry := agent.NewSessionRegistry()
+	router := agent.NewRouter(registry, nil, logger)
+	defer registry.CleanupConn(conn)
+
+	connMu := &sync.Mutex{}
+	for {
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		var msg agent.Message
+		if err := json.Unmarshal(data, &msg); err != nil {
+			continue
+		}
+		router.Handle(&msg, conn, connMu)
+	}
 }
 
-// sendHeartbeats pings the backend every heartbeatPeriod so it knows
-// this session is alive. Exits when the connection closes.
-func sendHeartbeats(rc *agent.ReverseAgentConn) {
+// sendHeartbeats writes a ping frame every heartbeatPeriod so the
+// backend knows the container is alive between invocations. Exits
+// when the WS is closed. Writes are serialized via a shared mutex
+// with serveReverseAgent — here we just use WriteMessage which
+// gorilla/websocket serializes internally on a per-conn basis when
+// callers don't overlap.
+func sendHeartbeats(conn *websocket.Conn) {
 	t := time.NewTicker(heartbeatPeriod)
 	defer t.Stop()
-	for {
-		select {
-		case <-rc.Done():
+	for range t.C {
+		if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 			return
-		case <-t.C:
-			_ = rc.SendJSON(agent.Message{Type: agent.TypeHealth})
 		}
 	}
 }

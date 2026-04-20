@@ -33,25 +33,35 @@ type Config struct {
 	// binaries alongside the backend).
 	AgentBinaryPath     string // path to sockerless-agent; defaults to SOCKERLESS_AGENT_BINARY or /opt/sockerless/sockerless-agent
 	BootstrapBinaryPath string // path to sockerless-lambda-bootstrap; defaults to SOCKERLESS_LAMBDA_BOOTSTRAP or /opt/sockerless/sockerless-lambda-bootstrap
+
+	// PrebuiltOverlayImage, when non-empty, bypasses the
+	// BuildAndPushOverlayImage call and uses this image URI directly.
+	// Used by operators who pre-bake their own overlay images (e.g.
+	// cached in ECR at deploy time, or built through a CI pipeline
+	// rather than at container-create time). Also used by the Phase-86
+	// D.4 end-to-end test to exercise the reverse-agent path without
+	// requiring insecure-registry config on the docker daemon.
+	PrebuiltOverlayImage string
 }
 
 // ConfigFromEnv loads configuration from environment variables.
 func ConfigFromEnv() Config {
 	return Config{
-		Region:              envOrDefault("AWS_REGION", "us-east-1"),
-		RoleARN:             os.Getenv("SOCKERLESS_LAMBDA_ROLE_ARN"),
-		LogGroup:            envOrDefault("SOCKERLESS_LAMBDA_LOG_GROUP", "/sockerless/lambda"),
-		MemorySize:          envOrDefaultInt("SOCKERLESS_LAMBDA_MEMORY_SIZE", 1024),
-		Timeout:             envOrDefaultInt("SOCKERLESS_LAMBDA_TIMEOUT", 900),
-		SubnetIDs:           splitCSV(os.Getenv("SOCKERLESS_LAMBDA_SUBNETS")),
-		SecurityGroupIDs:    splitCSV(os.Getenv("SOCKERLESS_LAMBDA_SECURITY_GROUPS")),
-		CodeBuildProject:    os.Getenv("SOCKERLESS_AWS_CODEBUILD_PROJECT"),
-		BuildBucket:         os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET"),
-		EndpointURL:         os.Getenv("SOCKERLESS_ENDPOINT_URL"),
-		PollInterval:        parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
-		CallbackURL:         os.Getenv("SOCKERLESS_CALLBACK_URL"),
-		AgentBinaryPath:     envOrDefault("SOCKERLESS_AGENT_BINARY", "/opt/sockerless/sockerless-agent"),
-		BootstrapBinaryPath: envOrDefault("SOCKERLESS_LAMBDA_BOOTSTRAP", "/opt/sockerless/sockerless-lambda-bootstrap"),
+		Region:               envOrDefault("AWS_REGION", "us-east-1"),
+		RoleARN:              os.Getenv("SOCKERLESS_LAMBDA_ROLE_ARN"),
+		LogGroup:             envOrDefault("SOCKERLESS_LAMBDA_LOG_GROUP", "/sockerless/lambda"),
+		MemorySize:           envOrDefaultInt("SOCKERLESS_LAMBDA_MEMORY_SIZE", 1024),
+		Timeout:              envOrDefaultInt("SOCKERLESS_LAMBDA_TIMEOUT", 900),
+		SubnetIDs:            splitCSV(os.Getenv("SOCKERLESS_LAMBDA_SUBNETS")),
+		SecurityGroupIDs:     splitCSV(os.Getenv("SOCKERLESS_LAMBDA_SECURITY_GROUPS")),
+		CodeBuildProject:     os.Getenv("SOCKERLESS_AWS_CODEBUILD_PROJECT"),
+		BuildBucket:          os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET"),
+		EndpointURL:          os.Getenv("SOCKERLESS_ENDPOINT_URL"),
+		PollInterval:         parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
+		CallbackURL:          os.Getenv("SOCKERLESS_CALLBACK_URL"),
+		AgentBinaryPath:      envOrDefault("SOCKERLESS_AGENT_BINARY", "/opt/sockerless/sockerless-agent"),
+		BootstrapBinaryPath:  envOrDefault("SOCKERLESS_LAMBDA_BOOTSTRAP", "/opt/sockerless/sockerless-lambda-bootstrap"),
+		PrebuiltOverlayImage: os.Getenv("SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE"),
 	}
 }
 
