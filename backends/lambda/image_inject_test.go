@@ -86,8 +86,8 @@ func TestRenderOverlayDockerfile_UserEntrypointAndCmd(t *testing.T) {
 	}
 }
 
-// TestTarOverlayContext_HasDockerfileAndBinaries verifies the Phase-86
-// D.2 build-context tarball contains the rendered Dockerfile plus both
+// TestTarOverlayContext_HasDockerfileAndBinaries verifies the
+// build-context tarball contains the rendered Dockerfile plus both
 // staged binaries at the paths the Dockerfile COPYs from.
 func TestTarOverlayContext_HasDockerfileAndBinaries(t *testing.T) {
 	dir := t.TempDir()

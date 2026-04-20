@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 86 Runbook 3 — Lambda Runtime-API + agent-as-handler.
+# Lambda Runtime-API + agent-as-handler — overlay build, docker exec.
 # Requires SOCKERLESS_CALLBACK_URL pointing at a publicly-reachable
 # endpoint that mounts /v1/lambda/reverse (see ngrok / cloudflared).
 set -euo pipefail
@@ -19,7 +19,7 @@ BACKEND_BIN="${BACKEND_BIN:-./sockerless-backend-lambda}"
 cleanup() { kill "${BACKEND_PID:-0}" 2>/dev/null || true; }
 trap cleanup EXIT
 
-echo "=== Phase 86 Runbook 3: Lambda backend + agent-as-handler ==="
+echo "=== Lambda backend + agent-as-handler ==="
 "$BACKEND_BIN" --addr 127.0.0.1:2376 --log-level debug 2>/tmp/lambda-backend.log &
 BACKEND_PID=$!
 sleep 2
@@ -46,4 +46,4 @@ else
 fi
 docker rm "$CID"
 
-echo "=== Runbook 3 complete ==="
+echo "=== complete ==="

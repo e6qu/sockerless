@@ -158,9 +158,9 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		return nil, &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", config.Image, err)}
 	}
 
-	// Phase-86 D.2: put the reverse-agent overlay image into play when
-	// CallbackURL is set so `docker exec` / `docker attach` can reach
-	// a running invocation. Two paths:
+	// Put the reverse-agent overlay image into play when CallbackURL
+	// is set so `docker exec` / `docker attach` can reach a running
+	// invocation. Two paths:
 	//  - PrebuiltOverlayImage configured: operator ships their own
 	//    agent-baked image; use it directly.
 	//  - Otherwise: build + push an overlay on top of the user's image

@@ -37,7 +37,7 @@ type AzureClients struct {
 	PrivateDNSRecords *armprivatedns.RecordSetsClient
 	NSG               *armnetwork.SecurityGroupsClient
 	NSGRules          *armnetwork.SecurityRulesClient
-	// BUG-706: Azure Container Registry + its cache-rule sub-resource.
+	// Azure Container Registry + its cache-rule sub-resource.
 	// Used by the image resolver to rewrite Docker Hub refs through the
 	// configured ACR pull-through cache, parallel to AWS ECR + GCP AR.
 	Registries    *armcontainerregistry.RegistriesClient

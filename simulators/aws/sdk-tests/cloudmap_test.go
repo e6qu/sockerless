@@ -237,7 +237,7 @@ func TestCloudMap_RegisterAndDiscoverInstances(t *testing.T) {
 	_, _ = client.DeleteNamespace(ctx, &servicediscovery.DeleteNamespaceInput{Id: aws.String(nsID)})
 }
 
-// TestECS_CrossTaskDNS exercises BUG-701's fix: the Cloud Map simulator
+// TestECS_CrossTaskDNS exercises cross-task DNS: the Cloud Map simulator
 // creates a real Docker network backing each private DNS namespace and
 // connects each registered instance's ECS task container to it with the
 // service name as alias. Two tasks on the same namespace must resolve

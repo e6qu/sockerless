@@ -16,7 +16,7 @@ import (
 // through the gcloud CLI. Private zone + two Cloud Run Jobs + A records
 // pointing at the jobs' Docker IPs — one job resolves the other by
 // short hostname via Docker's embedded DNS on the zone's backing
-// network. BUG-701 coverage on GCP, CLI surface.
+// network.
 func TestDNS_CrossJobResolution_CLI(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker CLI required for cross-job DNS test")

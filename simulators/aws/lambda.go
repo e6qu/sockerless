@@ -252,7 +252,7 @@ func handleLambdaUpdateFunctionConfiguration(w http.ResponseWriter, r *http.Requ
 
 // handleLambdaInvoke implements the AWS Lambda Invoke API. For Image
 // package-type functions, it routes through the Runtime API slice
-// (see lambda_runtime.go + BUG-705 fix): the simulator stands up a
+// (see lambda_runtime.go): the simulator stands up a
 // per-invocation Runtime API listener, launches the container with
 // AWS_LAMBDA_RUNTIME_API pointing at it, and returns whatever the
 // handler posts back to /response (or /error → X-Amz-Function-Error:

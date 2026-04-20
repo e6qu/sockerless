@@ -248,7 +248,7 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	// Real AWS would never have these exact IDs; they're a simulator
 	// convention. Backends resolve subnet → VPC on network create, so
 	// without this pre-registration Cloud Map namespace setup fails
-	// silently (see BUG-699 + BUG-700).
+	// silently.
 	ensureSimDefaults()
 
 	// Network Interfaces (used during destroy to check ENIs before deleting SGs/subnets)

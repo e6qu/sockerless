@@ -56,7 +56,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	}
 
 	// Resolve the image through the ACR pull-through cache if one is
-	// configured (BUG-706). Falls through to the plain docker ref when
+	// configured. Falls through to the plain docker ref when
 	// no registry or rule matches; ACA pulls Docker Hub refs directly.
 	if resolved, err := azurecommon.ResolveAzureImageURIWithCache(
 		s.ctx(),

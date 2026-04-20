@@ -18,8 +18,7 @@ type ContainerAppEnvironment struct {
 	// backs this environment. Jobs launched in this environment are
 	// connected to the network with the job short name as DNS alias,
 	// so cross-job DNS works via Docker's embedded resolver. Empty
-	// until the env's PUT handler creates the network. (BUG-701 on
-	// Azure fix.)
+	// until the env's PUT handler creates the network.
 	DockerNetworkName string `json:"dockerNetworkName,omitempty"`
 }
 
@@ -94,12 +93,12 @@ func registerContainerAppEnvironment(srv *sim.Server) {
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/managedEnvironments/%s",
 			sub, rg, envName)
 
-		// BUG-701 on Azure: back every environment with a real Docker
-		// user-defined network. Jobs created in this environment are
-		// connected to the network at execution-start time with the
-		// job short name as DNS alias, so cross-job DNS resolves via
-		// Docker's embedded resolver. Matches ACA's managed-VNet model
-		// where environment = shared networking domain.
+		// Back every environment with a real Docker user-defined
+		// network. Jobs created in this environment are connected to
+		// the network at execution-start time with the job short name
+		// as DNS alias, so cross-job DNS resolves via Docker's
+		// embedded resolver. Matches ACA's managed-VNet model where
+		// environment = shared networking domain.
 		dockerNetName := "sim-env-" + envName
 		if _, err := sim.EnsureDockerNetwork(dockerNetName); err != nil {
 			dockerNetName = ""
@@ -160,8 +159,7 @@ func registerContainerAppEnvironment(srv *sim.Server) {
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/managedEnvironments/%s",
 			sub, rg, envName)
 
-		// BUG-701: drop the backing Docker network when the env is
-		// removed.
+		// Drop the backing Docker network when the env is removed.
 		if env, ok := environments.Get(resourceID); ok && env.DockerNetworkName != "" {
 			_ = sim.RemoveDockerNetwork(env.DockerNetworkName)
 		}

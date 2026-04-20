@@ -226,8 +226,7 @@ func runtimeAPIExtraHosts() []string {
 	return []string{"host.docker.internal:host-gateway"}
 }
 
-// invokeLambdaViaRuntimeAPI replaces the old synchronous stdout-capture
-// path (BUG-705). Launches the function container with
+// invokeLambdaViaRuntimeAPI launches the function container with
 // AWS_LAMBDA_RUNTIME_API pointing at a per-invocation sidecar, feeds
 // the payload via /next, and returns whatever the handler posts back
 // to /response (or /error → X-Amz-Function-Error: Unhandled).

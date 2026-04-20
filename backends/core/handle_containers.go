@@ -175,8 +175,8 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 		// Docker CLI's docker-run-d flow sends POST /wait?condition=next-exit
 		// *before* POST /start and blocks on reading the response
 		// status line. Without this early flush, cli.post() never
-		// returns, /start is never sent, and the container never runs
-		// — BUG-698. The body is written after the exit event lands.
+		// returns, /start is never sent, and the container never runs.
+		// The body is written after the exit event lands.
 		flushWaitHeaders(w)
 
 		// If there's a local wait channel, use it then query CloudState for exit code
@@ -237,7 +237,7 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Flush headers before blocking — see BUG-698 note above.
+	// Flush headers before blocking — see note above.
 	flushWaitHeaders(w)
 
 	ch, ok := s.Store.WaitChs.Load(id)
@@ -269,7 +269,7 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 // client before the wait handler blocks on the container-exit event.
 // docker CLI's ContainerWait sends the request via cli.post() and
 // blocks on reading the response status line; without this early
-// flush, /start never gets sent in the docker-run-d flow (BUG-698).
+// flush, /start never gets sent in the docker-run-d flow.
 func flushWaitHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

@@ -9,16 +9,16 @@ import (
 )
 
 // errNoReverseAgent surfaces when a container has no live reverse-agent
-// session. Phase 86 D.3: the Lambda bootstrap dials on invoke start;
-// if it hasn't connected yet (cold start) or the container was killed,
-// exec/attach fails with this error rather than hanging.
+// session. The Lambda bootstrap dials on invoke start; if it hasn't
+// connected yet (cold start) or the container was killed, exec/attach
+// fails with this error rather than hanging.
 var errNoReverseAgent = errors.New("no reverse-agent session registered for container")
 
 // lambdaExecDriver routes `docker exec` through the reverse-agent
-// WebSocket that the Lambda bootstrap dialed at init time (Phase 86
-// D.3 / D.4). When no session is registered for the container — the
-// bootstrap may not have dialed yet, or the container was killed —
-// the driver returns exit code 126 so the caller sees a clear failure.
+// WebSocket that the Lambda bootstrap dialed at init time. When no
+// session is registered for the container — the bootstrap may not
+// have dialed yet, or the container was killed — the driver returns
+// exit code 126 so the caller sees a clear failure.
 type lambdaExecDriver struct {
 	registry *reverseAgentRegistry
 	logger   zerolog.Logger

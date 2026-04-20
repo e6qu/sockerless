@@ -90,12 +90,13 @@ func TestLambda_InvokeCreatesLogStream(t *testing.T) {
 	})
 }
 
-// TestLambda_InvokeRoundTrip exercises BUG-705's fix: the simulator
-// implements the real AWS Lambda Runtime API slice. The handler image
-// polls /next, echoes the payload back via /response. Round-trip
-// proves the Runtime API slice is wired end-to-end (simulator-side
-// per-invocation sidecar + container env + host.docker.internal + host
-// gateway + /response propagation back to the SDK caller).
+// TestLambda_InvokeRoundTrip exercises the Runtime API invoke path:
+// the simulator implements the real AWS Lambda Runtime API slice.
+// The handler image polls /next, echoes the payload back via
+// /response. Round-trip proves the Runtime API slice is wired
+// end-to-end (simulator-side per-invocation sidecar + container env +
+// host.docker.internal + host gateway + /response propagation back
+// to the SDK caller).
 func TestLambda_InvokeRoundTrip(t *testing.T) {
 	lc := lambdaClient()
 
@@ -204,9 +205,9 @@ func TestLambda_InvokeContainerCrash(t *testing.T) {
 
 // TestLambda_RuntimeAPILogsToCloudWatch verifies the simulator still
 // injects START/END/REPORT log lines + captures the handler's stderr
-// under the new Runtime API path (BUG-705 fix). The handler writes a
-// log line to stderr describing the invocation; it should appear in
-// the function's CloudWatch log stream.
+// under the Runtime API path. The handler writes a log line to
+// stderr describing the invocation; it should appear in the
+// function's CloudWatch log stream.
 func TestLambda_RuntimeAPILogsToCloudWatch(t *testing.T) {
 	lc := lambdaClient()
 	cw := cwLogsClient()

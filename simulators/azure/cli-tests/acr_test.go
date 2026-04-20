@@ -43,7 +43,7 @@ func TestACR_CreateAndShow(t *testing.T) {
 	runCLI(t, azRest("DELETE", url, ""))
 }
 
-// TestACR_CacheRuleCRUD drives the `cacheRules` sub-resource (BUG-706)
+// TestACR_CacheRuleCRUD drives the `cacheRules` sub-resource
 // through the `az rest` CLI. `az acr cache` commands are higher-level
 // but route through the same ARM endpoints, so exercising via az rest
 // covers both paths.

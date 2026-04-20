@@ -82,9 +82,9 @@ func registerECR(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerRegistry_V20150921.ListTagsForResource", handleECRListTagsForResource)
 	r.Register("AmazonEC2ContainerRegistry_V20150921.TagResource", handleECRTagResource)
 
-	// Pull-through cache rules (BUG-696). Used by sockerless image
-	// resolvers and by terraform's aws_ecr_pull_through_cache_rule
-	// resource. Backend caller builds URIs like
+	// Pull-through cache rules. Used by sockerless image resolvers
+	// and by terraform's aws_ecr_pull_through_cache_rule resource.
+	// Backend caller builds URIs like
 	// `<account>.dkr.ecr.<region>.amazonaws.com/<prefix>/<repo>:<tag>`
 	// which the simulator's ResolveLocalImage recognizes as a cache
 	// hit and rewrites to the upstream registry on first pull.

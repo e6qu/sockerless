@@ -17,7 +17,7 @@ type Server struct {
 	aws           *AWSClients
 	images        *core.ImageManager
 	Lambda        *core.StateStore[LambdaState]
-	reverseAgents *reverseAgentRegistry // Phase-86 D.3: reverse-agent session registry
+	reverseAgents *reverseAgentRegistry // reverse-agent session registry
 	ipCounter     atomic.Int32
 }
 
@@ -75,11 +75,10 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	registerUI(s.BaseServer)
 	s.registerReverseAgentRoutes(logger)
 
-	// Phase 86 D.4: route `docker exec` + `docker attach` through the
-	// reverse-agent when a session is connected. The BaseServer's
-	// default LocalExecDriver/LocalStreamDriver error out since Lambda
-	// has no local container namespace; the reverse-agent pattern
-	// fills the gap.
+	// Route `docker exec` + `docker attach` through the reverse-agent
+	// when a session is connected. The BaseServer's default
+	// LocalExecDriver/LocalStreamDriver error out since Lambda has no
+	// local container namespace; the reverse-agent pattern fills the gap.
 	s.Drivers.Exec = &lambdaExecDriver{registry: s.reverseAgents, logger: logger}
 	s.Drivers.Stream = &lambdaStreamDriver{registry: s.reverseAgents, logger: logger}
 

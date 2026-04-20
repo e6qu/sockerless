@@ -216,10 +216,10 @@ func TestLambda_CLI_InvokeAndCheckLogs(t *testing.T) {
 	runCLI(t, awsCLI("lambda", "delete-function", "--function-name", fnName))
 }
 
-// TestLambda_InvokeRuntimeAPI_CLI exercises BUG-705's fix through the
-// aws CLI: creates an Image-package function whose image speaks the
-// real Lambda Runtime API, invokes with a payload, and verifies the
-// payload round-trips via /next + /response.
+// TestLambda_InvokeRuntimeAPI_CLI exercises the Runtime API invoke
+// path through the aws CLI: creates an Image-package function whose
+// image speaks the real Lambda Runtime API, invokes with a payload,
+// and verifies the payload round-trips via /next + /response.
 func TestLambda_InvokeRuntimeAPI_CLI(t *testing.T) {
 	fnName := "cli-runtime-api-fn"
 

@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Phase 86 Runbook 0 — bring up the live-AWS scratch environment.
-# terragrunt apply; cache outputs to /tmp/ecs-out.json so downstream
-# runbooks can source env vars.
+# Bring up the live-AWS scratch environment and cache terragrunt outputs
+# to /tmp/ecs-out.json so downstream scripts can source env vars.
 set -euo pipefail
 
 : "${AWS_REGION:=eu-west-1}"
 TG_DIR="${TG_DIR:-deploy/live/ecs}"
 
-echo "=== Phase 86 Runbook 0: terragrunt apply in $TG_DIR ==="
+echo "=== terragrunt apply in $TG_DIR ==="
 cd "$TG_DIR"
 terragrunt init -reconfigure
 terragrunt apply -auto-approve

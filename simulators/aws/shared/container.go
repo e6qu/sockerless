@@ -89,8 +89,8 @@ var managedContainers sync.Map // containerID -> true
 
 // CleanupContainers stops and removes all simulator-managed containers.
 // Also prunes any Docker networks labeled `sockerless-sim=true` that
-// aren't in use (typically the namespace-backed networks from BUG-701's
-// fix that weren't explicitly removed by a DeleteNamespace call).
+// aren't in use (typically namespace-backed networks that weren't
+// explicitly removed by a DeleteNamespace call).
 // Called on simulator shutdown.
 func CleanupContainers() {
 	if dockerClient == nil {

@@ -1,9 +1,8 @@
 // http-trace is a throwaway diagnostic tool that logs every HTTP
-// request and response flowing through it. Used by the Phase 86
-// bug-fix sprint (A.1) to diagnose BUG-698: docker CLI hangs between
-// POST /containers/create and POST /start against the sockerless ECS
-// backend. Running docker CLI against this proxy captures the exact
-// wire sequence for inspection.
+// request and response flowing through it. Running docker CLI
+// against this proxy captures the exact wire sequence for inspection
+// (useful for diagnosing hangs between POST /containers/create and
+// POST /start).
 //
 // Usage:
 //

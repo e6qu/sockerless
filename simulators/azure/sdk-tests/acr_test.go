@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestACR_CacheRuleCRUD covers the `cacheRules` sub-resource added for
-// BUG-706. Create + Get + List + Delete round-trip via
+// TestACR_CacheRuleCRUD covers the `cacheRules` sub-resource.
+// Create + Get + List + Delete round-trip via
 // `armcontainerregistry.CacheRulesClient` against the simulator.
 func TestACR_CacheRuleCRUD(t *testing.T) {
 	const (

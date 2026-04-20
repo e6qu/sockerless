@@ -15,10 +15,10 @@ import (
 )
 
 // TestContainerApps_CrossJobDNS_CLI mirrors the SDK cross-job DNS
-// test (BUG-701 on Azure) through direct REST (az CLI doesn't reliably
-// respect `arm_endpoint` overrides for ACA-specific commands against
-// our simulator). Validates that the env's Docker network + job
-// name alias path works regardless of invocation surface.
+// test through direct REST (az CLI doesn't reliably respect
+// `arm_endpoint` overrides for ACA-specific commands against our
+// simulator). Validates that the env's Docker network + job name
+// alias path works regardless of invocation surface.
 func TestContainerApps_CrossJobDNS_CLI(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker CLI required for cross-job DNS test")

@@ -117,3 +117,4 @@ ui/packages/bleephub/playwright-report/
 tmp/
 
 aws.sh
+.claude/

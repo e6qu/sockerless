@@ -24,7 +24,7 @@ type ManagedZone struct {
 	// this private zone. Containers referenced by A records inside the
 	// zone are connected to this network with the record's short name
 	// as DNS alias, so cross-container DNS resolves via Docker's
-	// embedded DNS (BUG-701 fix for GCP). Empty for public zones.
+	// embedded DNS. Empty for public zones.
 	DockerNetworkName string `json:"dockerNetworkName,omitempty"`
 }
 
@@ -75,7 +75,7 @@ func registerCloudDNS(srv *sim.Server) {
 			zone.Visibility = "public"
 		}
 
-		// BUG-701: back every private zone with a real Docker network.
+		// Back every private zone with a real Docker network.
 		// Containers registered in the zone via A records (sockerless's
 		// service-register step) get connected to this network with
 		// their record short-name as DNS alias, so cross-container DNS
@@ -147,7 +147,7 @@ func registerCloudDNS(srv *sim.Server) {
 			recordSets.Delete(rsKey)
 		}
 
-		// BUG-701: drop the Docker network backing the private zone.
+		// Drop the Docker network backing the private zone.
 		if zone.DockerNetworkName != "" {
 			_ = sim.RemoveDockerNetwork(zone.DockerNetworkName)
 		}
@@ -217,10 +217,10 @@ func registerCloudDNS(srv *sim.Server) {
 
 		recordSets.Put(key, rs)
 
-		// BUG-701: for A records on a private zone, connect the
-		// container identified by Rrdatas[0] (its bridge-network IP)
-		// to the zone's Docker network, with the record's short name
-		// as DNS alias. Cross-container DNS resolves via Docker's
+		// For A records on a private zone, connect the container
+		// identified by Rrdatas[0] (its bridge-network IP) to the
+		// zone's Docker network, with the record's short name as
+		// DNS alias. Cross-container DNS resolves via Docker's
 		// embedded resolver from that point on.
 		if zone.DockerNetworkName != "" && rs.Type == "A" && len(rs.Rrdatas) > 0 {
 			if containerName := sim.FindContainerByIP(rs.Rrdatas[0]); containerName != "" {
@@ -247,8 +247,8 @@ func registerCloudDNS(srv *sim.Server) {
 			return
 		}
 
-		// BUG-701: disconnect the container that was connected when
-		// the record was created. Best-effort — container shutdown
+		// Disconnect the container that was connected when the
+		// record was created. Best-effort — container shutdown
 		// already cleans up Docker-side network memberships.
 		if rsOk && rs.Type == "A" && len(rs.Rrdatas) > 0 {
 			if zone, ok := zones.Get(zoneKey); ok && zone.DockerNetworkName != "" {

@@ -21,7 +21,7 @@ import (
 // docker.io/library/ and docker.io/ prefixed names. After populating
 // the in-memory map, persists the store to disk if
 // store.ImageStatePath is set so `docker pull` state survives backend
-// restart (BUG-697).
+// restart.
 func StoreImageWithAliases(store *Store, ref string, img api.Image) {
 	store.Images.Put(img.ID, img)
 	store.Images.Put(ref, img)

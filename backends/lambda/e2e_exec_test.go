@@ -20,8 +20,8 @@ import (
 	core "github.com/sockerless/backend-core"
 )
 
-// TestLambdaExec_EndToEnd_OverReverseAgent is the D.4 end-to-end proof
-// for Phase 86: a fake "bootstrap" dials the backend's
+// TestLambdaExec_EndToEnd_OverReverseAgent is the end-to-end proof
+// for docker exec routing: a fake "bootstrap" dials the backend's
 // /v1/lambda/reverse endpoint, the backend's lambdaExecDriver routes
 // an exec through the reverse-agent session, and the fake bootstrap
 // echoes back the command's canned stdout + exit code. The test runs

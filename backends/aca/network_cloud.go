@@ -9,16 +9,16 @@ import (
 )
 
 // cloudNetworkCreate sets up cloud networking state for a Docker
-// network: a per-network Azure Private DNS zone for service discovery
-// (BUG-702 fix), a per-network Azure NSG for cross-container isolation
-// (BUG-703 fix), and state tracking tying the two together.
+// network: a per-network Azure Private DNS zone for service discovery,
+// a per-network Azure NSG for cross-container isolation, and state
+// tracking tying the two together.
 // The zone name is `skls-<name>.local`, matching the convention used
 // by the ECS + Cloud Run backends for parity.
 func (s *Server) cloudNetworkCreate(name, networkID string) error {
 	zoneName := fmt.Sprintf("skls-%s.local", name)
 	nsgName := fmt.Sprintf("nsg-%s-%s", s.config.Environment, name)
 
-	// Private DNS zone (BUG-702).
+	// Private DNS zone.
 	zonePoller, err := s.azure.PrivateDNSZones.BeginCreateOrUpdate(
 		s.ctx(),
 		s.config.ResourceGroup,
@@ -33,7 +33,7 @@ func (s *Server) cloudNetworkCreate(name, networkID string) error {
 		return fmt.Errorf("wait Private DNS zone %s: %w", zoneName, err)
 	}
 
-	// NSG (BUG-703). Create an empty NSG; rules are added via
+	// NSG. Create an empty NSG; rules are added via
 	// cloudNetworkAddRule when containers connect.
 	nsgPoller, err := s.azure.NSG.BeginCreateOrUpdate(
 		s.ctx(),
@@ -73,7 +73,7 @@ func (s *Server) cloudNetworkDelete(networkID string) error {
 		return nil
 	}
 
-	// Tear down NSG (BUG-703) — deleting the NSG cascades its rules.
+	// Tear down NSG — deleting the NSG cascades its rules.
 	if state.NSGName != "" {
 		nsgPoller, err := s.azure.NSG.BeginDelete(
 			s.ctx(),
@@ -92,7 +92,7 @@ func (s *Server) cloudNetworkDelete(networkID string) error {
 		}
 	}
 
-	// Tear down DNS zone (BUG-702).
+	// Tear down DNS zone.
 	if state.DNSZoneName != "" {
 		zonePoller, err := s.azure.PrivateDNSZones.BeginDelete(
 			s.ctx(),
@@ -123,7 +123,7 @@ func (s *Server) cloudNetworkDelete(networkID string) error {
 }
 
 // cloudNetworkAddRule creates an NSG allow rule for a container joining
-// the network, via the real `armnetwork.SecurityRulesClient` (BUG-703).
+// the network, via the real `armnetwork.SecurityRulesClient`.
 // Rule priority is derived from the number of existing rules + 100
 // (Azure requires priorities between 100-4096).
 func (s *Server) cloudNetworkAddRule(networkID, ruleName string) error {

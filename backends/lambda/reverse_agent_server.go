@@ -13,7 +13,7 @@ import (
 // reverseAgentRegistry tracks live reverse-agent WebSocket sessions —
 // one per running Lambda container that has a reverse agent connected.
 // Keyed by sockerless container ID (which the bootstrap sends as
-// `session_id` on upgrade). Phase-86 D.3.
+// `session_id` on upgrade).
 type reverseAgentRegistry struct {
 	mu       sync.RWMutex
 	sessions map[string]*agent.ReverseAgentConn
@@ -92,7 +92,7 @@ func (s *Server) resolveReverseAgent(containerID string) (*agent.ReverseAgentCon
 	return s.reverseAgents.resolve(containerID)
 }
 
-// registerReverseAgentRoutes mounts the Phase-86 D.3 WebSocket endpoint
+// registerReverseAgentRoutes mounts the reverse-agent WebSocket endpoint
 // on the base server mux. Called from NewServer.
 func (s *Server) registerReverseAgentRoutes(_ zerolog.Logger) {
 	s.Mux.HandleFunc("/v1/lambda/reverse", s.handleReverseAgentWS)

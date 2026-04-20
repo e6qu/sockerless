@@ -16,7 +16,7 @@ import (
 	core "github.com/sockerless/backend-core"
 )
 
-// TestReverseAgentServer_RegisterResolveDrop verifies the Phase-86 D.3
+// TestReverseAgentServer_RegisterResolveDrop verifies the
 // session-registry lifecycle: a WS client dials, the server registers
 // it under the session_id, resolve() finds it, Close drops it.
 func TestReverseAgentServer_RegisterResolveDrop(t *testing.T) {
@@ -60,12 +60,10 @@ func TestReverseAgentServer_RegisterResolveDrop(t *testing.T) {
 	}
 }
 
-// TestReverseAgentServer_RouteMountedOnBaseMux (D.4 slice) verifies
-// that the Phase-86 reverse-agent route is mounted on the same mux
-// the BaseServer serves, so a real Lambda backend process answers
-// /v1/lambda/reverse. The full `docker exec → reverse WS → bootstrap
-// → user process` round-trip is validated in the live-AWS session
-// (Phase E, skipped).
+// TestReverseAgentServer_RouteMountedOnBaseMux verifies that the
+// reverse-agent route is mounted on the same mux the BaseServer
+// serves, so a real Lambda backend process answers
+// /v1/lambda/reverse.
 func TestReverseAgentServer_RouteMountedOnBaseMux(t *testing.T) {
 	logger := zerolog.New(io.Discard)
 	base := &core.BaseServer{Logger: logger, Mux: http.NewServeMux()}

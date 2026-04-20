@@ -125,7 +125,7 @@ func (s *GCPBuildService) Build(ctx context.Context, opts core.CloudBuildOptions
 		},
 	}
 
-	// BUG-707: wire secret env vars through to Cloud Build via
+	// Wire secret env vars through to Cloud Build via
 	// availableSecrets.secretManager + per-step secretEnv. `opts.Secrets`
 	// maps env-var-name → Secret Manager resource reference
 	// (`projects/P/secrets/S/versions/V`). Each entry becomes an

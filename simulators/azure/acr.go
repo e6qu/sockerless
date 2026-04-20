@@ -58,9 +58,9 @@ type BlobUpload struct {
 
 // ACRCacheRule models an Azure Container Registry cache rule
 // (pull-through cache) as returned by the `cacheRules` sub-resource.
-// BUG-706. Sockerless and terraform callers register one rule per
-// registered upstream (e.g., `docker-hub` → `docker.io/library/*`)
-// so Docker Hub references can be rewritten to
+// Sockerless and terraform callers register one rule per registered
+// upstream (e.g., `docker-hub` → `docker.io/library/*`) so Docker
+// Hub references can be rewritten to
 // `<acrName>.azurecr.io/<targetRepository>:<tag>` at container launch.
 type ACRCacheRule struct {
 	ID         string                 `json:"id,omitempty"`
@@ -198,7 +198,7 @@ func registerACR(srv *sim.Server) {
 		}
 	})
 
-	// --- Cache Rules (pull-through cache, BUG-706) ---
+	// --- Cache Rules (pull-through cache) ---
 	//
 	// Matches armcontainerregistry.CacheRulesClient endpoints. Reference:
 	// /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerRegistry

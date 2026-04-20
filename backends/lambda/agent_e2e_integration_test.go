@@ -13,12 +13,12 @@ import (
 	"github.com/docker/docker/api/types/container"
 )
 
-// TestLambdaAgentE2E_ReverseAgent is the Phase-86 D.4 end-to-end
-// proof: drive the Lambda backend → AWS simulator → real
-// sockerless-lambda-bootstrap container → reverse-agent WebSocket →
-// `docker exec` round-trip. Fully offline against the simulator; no
-// docker build/push to insecure registries (the backend is configured
-// with PrebuiltOverlayImage so ContainerCreate uses the test image
+// TestLambdaAgentE2E_ReverseAgent is the end-to-end proof: drive the
+// Lambda backend → AWS simulator → real sockerless-lambda-bootstrap
+// container → reverse-agent WebSocket → `docker exec` round-trip.
+// Fully offline against the simulator; no docker build/push to
+// insecure registries (the backend is configured with
+// PrebuiltOverlayImage so ContainerCreate uses the test image
 // directly).
 //
 // Gated on SOCKERLESS_INTEGRATION=1 since it requires a real docker

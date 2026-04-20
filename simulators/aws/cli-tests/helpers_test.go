@@ -61,7 +61,7 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Failed to build eval-arithmetic Docker image: %v\n%s", err, out)
 	}
 
-	// Build lambda-runtime-handler binary + Docker image for BUG-705's
+	// Build lambda-runtime-handler binary + Docker image for
 	// Runtime API Invoke tests.
 	lambdaHandlerDir, _ := filepath.Abs("../../testdata/lambda-runtime-handler")
 	lambdaHandlerBinaryPath = filepath.Join(lambdaHandlerDir, "lambda-runtime-handler")

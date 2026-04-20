@@ -7,9 +7,8 @@ import (
 
 // TestJoinWarnings covers the warning-string helper used by NetworkCreate
 // to combine the BaseServer's warning with cloud-side failure messages.
-// Behaviour asserted by BUG-700's fix: multiple errors get merged into
-// a single semicolon-separated string matching Docker's Warning field
-// convention.
+// Multiple errors get merged into a single semicolon-separated string
+// matching Docker's Warning field convention.
 func TestJoinWarnings(t *testing.T) {
 	cases := []struct {
 		name     string

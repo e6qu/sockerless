@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestContainerApps_CrossJobDNS exercises BUG-701's fix for Azure:
+// TestContainerApps_CrossJobDNS exercises cross-job DNS on Azure:
 // ACA environments back themselves with a real Docker user-defined
 // network; jobs in the same environment are connected to that network
 // at execution-start time with the job short name as DNS alias. Two

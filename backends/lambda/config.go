@@ -23,14 +23,14 @@ type Config struct {
 	BuildBucket      string        // S3 bucket for build context upload
 	EndpointURL      string        // Custom endpoint URL
 	PollInterval     time.Duration // Cloud API poll interval (default 2s)
-	CallbackURL      string        // Reverse-agent callback URL injected into Lambda functions; must be reachable from Lambda (public or VPC endpoint). Empty => exec unsupported; see Phase 86 D.1-D.4.
+	CallbackURL      string        // Reverse-agent callback URL injected into Lambda functions; must be reachable from Lambda (public or VPC endpoint). Empty => exec unsupported.
 
-	// Overlay image build (Phase 86 D.2). Used when CallbackURL is set,
-	// to layer the agent + bootstrap binaries on top of the user's
-	// requested image so `docker exec` can reach a running invocation.
-	// Paths are resolved against the running backend's binary
-	// environment (typically a container image that bundles the
-	// binaries alongside the backend).
+	// Overlay image build. Used when CallbackURL is set, to layer the
+	// agent + bootstrap binaries on top of the user's requested image
+	// so `docker exec` can reach a running invocation. Paths are
+	// resolved against the running backend's binary environment
+	// (typically a container image that bundles the binaries alongside
+	// the backend).
 	AgentBinaryPath     string // path to sockerless-agent; defaults to SOCKERLESS_AGENT_BINARY or /opt/sockerless/sockerless-agent
 	BootstrapBinaryPath string // path to sockerless-lambda-bootstrap; defaults to SOCKERLESS_LAMBDA_BOOTSTRAP or /opt/sockerless/sockerless-lambda-bootstrap
 
@@ -38,8 +38,8 @@ type Config struct {
 	// BuildAndPushOverlayImage call and uses this image URI directly.
 	// Used by operators who pre-bake their own overlay images (e.g.
 	// cached in ECR at deploy time, or built through a CI pipeline
-	// rather than at container-create time). Also used by the Phase-86
-	// D.4 end-to-end test to exercise the reverse-agent path without
+	// rather than at container-create time). Also used by the
+	// end-to-end test to exercise the reverse-agent path without
 	// requiring insecure-registry config on the docker daemon.
 	PrebuiltOverlayImage string
 }

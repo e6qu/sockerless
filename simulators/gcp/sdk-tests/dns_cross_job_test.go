@@ -16,7 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
-// TestDNS_CrossJobResolution exercises BUG-701's fix for GCP: private
+// TestDNS_CrossJobResolution exercises cross-job DNS on GCP: private
 // Cloud DNS zones back a real Docker user-defined network; A records
 // added to the zone connect the referenced container to that network
 // with the record's short name as DNS alias. Two Cloud Run Jobs on the

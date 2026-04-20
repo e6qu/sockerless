@@ -11,7 +11,7 @@ import (
 )
 
 // Secret Manager v1 slice. Sockerless's GCP Cloud Build integration
-// (BUG-707) references secret versions via `availableSecrets.secretManager
+// references secret versions via `availableSecrets.secretManager
 // [].versionName`; the simulator must return the secret payload so
 // Cloud Build can expand them into env vars before executing the build
 // step. Real API: https://cloud.google.com/secret-manager/docs/reference/rest
@@ -167,7 +167,7 @@ func registerSecretManager(srv *sim.Server) {
 // accessSecretPayload resolves a secret-version reference to its raw
 // payload. Handles both explicit versions (e.g. "3") and the special
 // "latest" alias. Exported for cloudbuild.go's build-step secretEnv
-// expansion (BUG-707).
+// expansion.
 func accessSecretPayload(project, secretID, version string) ([]byte, error) {
 	secretName := fmt.Sprintf("projects/%s/secrets/%s", project, secretID)
 	if version == "latest" {

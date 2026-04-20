@@ -44,7 +44,7 @@ func TestResolveAzureImageURI_NoTag(t *testing.T) {
 	}
 }
 
-// TestResolveAzureImageURIWithCache_NilClient verifies the BUG-706
+// TestResolveAzureImageURIWithCache_NilClient verifies the
 // cache-aware resolver passes refs through unchanged when no cache
 // client is configured (simulator-bypass path for callers that opt out
 // of pull-through).

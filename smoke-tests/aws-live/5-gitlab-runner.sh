@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 86 Runbook 5 — gitlab.com GitLab runner via sockerless ECS.
+# gitlab.com GitLab runner via sockerless ECS.
 # Requires GITLAB_RUNNER_TOKEN from a project's runner registration page.
 set -euo pipefail
 
@@ -7,5 +7,5 @@ set -euo pipefail
 : "${GITLAB_URL:=https://gitlab.com/}"
 : "${AWS_REGION:=eu-west-1}"
 
-echo "=== Phase 86 Runbook 5: GitLab runner (skips gracefully if token absent) ==="
+echo "=== GitLab runner (skips gracefully if token absent) ==="
 echo "GITLAB_RUNNER_TOKEN present; would register runner at $GITLAB_URL."

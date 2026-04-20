@@ -9,8 +9,8 @@ import (
 )
 
 // TestCLI_ECR_CreatePullThroughCache drives the official AWS CLI
-// against the simulator. Together with the SDK test, it exercises the
-// two real-world client paths for BUG-696's fix.
+// against the simulator. Together with the SDK test, it exercises
+// both real-world client paths for the pull-through cache rule API.
 func TestCLI_ECR_CreatePullThroughCache(t *testing.T) {
 	out := runCLI(t, awsCLI(
 		"ecr", "create-pull-through-cache-rule",

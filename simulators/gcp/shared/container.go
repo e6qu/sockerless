@@ -89,8 +89,8 @@ var managedContainers sync.Map // containerID -> true
 
 // CleanupContainers stops and removes all simulator-managed containers.
 // Also prunes any Docker networks labeled `sockerless-sim=true` that
-// aren't in use (typically the namespace-backed networks from BUG-701's
-// fix that weren't explicitly removed by a DeleteNamespace call).
+// aren't in use (typically namespace-backed networks that weren't
+// explicitly removed by a DeleteNamespace call).
 // Called on simulator shutdown.
 func CleanupContainers() {
 	if dockerClient == nil {
@@ -521,11 +521,11 @@ func DisconnectContainerFromNetwork(containerName, networkName string) error {
 
 // FindContainerByIP inspects all simulator-managed Docker containers
 // and returns the name of the one whose bridge/default-network IP
-// matches `ip`. Used by the Cloud DNS slice (BUG-701 on GCP): when an
-// A record is added to a private zone, the simulator finds the
-// container whose IP matches the record's Rrdatas[0] and connects it
-// to the zone's Docker network with the record name as DNS alias.
-// Returns "" if no managed container has the given IP.
+// matches `ip`. Used by the Cloud DNS slice: when an A record is
+// added to a private zone, the simulator finds the container whose
+// IP matches the record's Rrdatas[0] and connects it to the zone's
+// Docker network with the record name as DNS alias. Returns "" if
+// no managed container has the given IP.
 func FindContainerByIP(ip string) string {
 	if dockerClient == nil || ip == "" {
 		return ""

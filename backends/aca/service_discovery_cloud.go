@@ -13,8 +13,7 @@ var _ = (*Server).cloudServiceResolve
 
 // cloudServiceRegister creates a Private DNS A-record for the
 // container's hostname inside the network's zone. Uses the real Azure
-// Private DNS SDK (BUG-702 fix — replaces three in-memory TODO stubs
-// with live SDK calls). The zone is created per-network in
+// Private DNS SDK. The zone is created per-network in
 // `cloudNetworkCreate`; the record maps hostname -> container IP.
 func (s *Server) cloudServiceRegister(containerID, hostname, ip, networkID string) error {
 	state, ok := s.NetworkState.Get(networkID)

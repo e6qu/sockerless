@@ -18,12 +18,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCloudBuild_DockerBuildAndPush exercises BUG-704's fix: the GCP
-// simulator implements the Cloud Build slice (CreateBuild + LRO), the
-// handler extracts the uploaded GCS source tarball, runs `docker build`
-// against it, and returns a done=true LRO with status=SUCCESS. Uses
-// direct REST against the simulator rather than the gRPC cloudbuild
-// Go client (which doesn't easily accept endpoint overrides).
+// TestCloudBuild_DockerBuildAndPush exercises the Cloud Build slice:
+// the GCP simulator implements CreateBuild + LRO, the handler extracts
+// the uploaded GCS source tarball, runs `docker build` against it,
+// and returns a done=true LRO with status=SUCCESS. Uses direct REST
+// against the simulator rather than the gRPC cloudbuild Go client
+// (which doesn't easily accept endpoint overrides).
 func TestCloudBuild_DockerBuildAndPush(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker CLI required for Cloud Build test")
@@ -68,10 +68,11 @@ func TestCloudBuild_DockerBuildAndPush(t *testing.T) {
 	assert.Equal(t, "SUCCESS", op.Response["status"])
 }
 
-// TestCloudBuild_SecretEnvExpansion exercises BUG-707: Secret Manager
-// references in the build's AvailableSecrets are resolved to env vars
-// available to each build step's secretEnv. The Dockerfile uses an
-// ARG, but the step's env passes the resolved secret through as a
+// TestCloudBuild_SecretEnvExpansion exercises secret expansion:
+// Secret Manager references in the build's AvailableSecrets are
+// resolved to env vars available to each build step's secretEnv.
+// The Dockerfile uses an ARG, but the step's env passes the
+// resolved secret through as a
 // regular env var; docker build tolerates unused env vars.
 func TestCloudBuild_SecretEnvExpansion(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {

@@ -8,8 +8,8 @@ import (
 	"github.com/sockerless/api"
 )
 
-// TestStore_PersistAndRestoreImages covers BUG-697 — `docker pull`
-// state must survive backend restart. Tests the minimum guarantee:
+// TestStore_PersistAndRestoreImages verifies `docker pull` state
+// survives backend restart. Tests the minimum guarantee:
 // serialize all image entries, restore from the same file into a
 // fresh Store, every key returns the same image.
 func TestStore_PersistAndRestoreImages(t *testing.T) {

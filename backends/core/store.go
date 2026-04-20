@@ -129,7 +129,7 @@ type Store struct {
 	// `Images` is persisted after every mutation via PersistImages
 	// and restored on startup via RestoreImages. Populated from
 	// $SOCKERLESS_STATE_DIR by NewBaseServer. Enables `docker pull`
-	// state to survive backend restart (fixes BUG-697).
+	// state to survive backend restart.
 	ImageStatePath string
 
 	Containers     *StateStore[api.Container]

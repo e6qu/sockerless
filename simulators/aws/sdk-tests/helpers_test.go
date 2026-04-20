@@ -67,7 +67,7 @@ func TestMain(m *testing.M) {
 
 	// Build lambda-runtime-handler binary (static, for embedding in the
 	// Lambda test handler Docker image) + Docker image. Used by the
-	// Runtime API Invoke tests added with BUG-705's fix.
+	// Runtime API Invoke tests.
 	lambdaHandlerDir, _ := filepath.Abs("../../testdata/lambda-runtime-handler")
 	lambdaHandlerBinaryPath = filepath.Join(lambdaHandlerDir, "lambda-runtime-handler")
 	lhBuild := exec.Command("go", "build", "-o", lambdaHandlerBinaryPath, ".")

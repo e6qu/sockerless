@@ -90,8 +90,8 @@ var managedContainers sync.Map // containerID -> true
 
 // CleanupContainers stops and removes all simulator-managed containers.
 // Also prunes any Docker networks labeled `sockerless-sim=true` that
-// aren't in use (typically the namespace-backed networks from BUG-701's
-// fix that weren't explicitly removed by a DeleteNamespace call).
+// aren't in use (typically namespace-backed networks that weren't
+// explicitly removed by a DeleteNamespace call).
 // Called on simulator shutdown.
 func CleanupContainers() {
 	if dockerClient == nil {
@@ -441,8 +441,8 @@ func ResolveLocalImage(image string) string {
 		dockerPath = strings.TrimPrefix(dockerPath, "docker-hub/")
 		return dockerPath
 	}
-	// Azure ACR (BUG-706 parallel to AWS ECR): strip both `docker-hub/`
-	// and `library/` prefixes so refs minted by the cache-rule-aware
+	// Azure ACR (parallel to AWS ECR): strip both `docker-hub/` and
+	// `library/` prefixes so refs minted by the cache-rule-aware
 	// resolver round-trip to plain Docker Hub refs the local daemon
 	// can pull.
 	if strings.Contains(image, ".azurecr.io/") {

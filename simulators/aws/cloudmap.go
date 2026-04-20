@@ -22,7 +22,7 @@ type CMNamespace struct {
 	// network backing this namespace. Containers registered in services
 	// under this namespace are connected to this network with the
 	// service name as a DNS alias, so cross-container DNS resolution
-	// works via Docker's embedded resolver (BUG-701 fix).
+	// works via Docker's embedded resolver.
 	DockerNetworkName string `json:"DockerNetworkName,omitempty"`
 }
 
@@ -129,8 +129,8 @@ func handleCMCreatePrivateDnsNamespace(w http.ResponseWriter, r *http.Request) {
 
 	// Back the namespace with a real Docker network so containers
 	// registered in services under it can reach each other by name via
-	// Docker's embedded DNS (BUG-701 fix). Failures degrade the DNS
-	// feature but don't break namespace creation.
+	// Docker's embedded DNS. Failures degrade the DNS feature but
+	// don't break namespace creation.
 	dockerNetName := "sim-" + nsId
 	if _, err := sim.EnsureDockerNetwork(dockerNetName); err != nil {
 		// Fall back to no network: CRUD still works but cross-task DNS
@@ -328,7 +328,7 @@ func handleCMRegisterInstance(w http.ResponseWriter, r *http.Request) {
 		svc.InstanceCount++
 	})
 
-	// BUG-701: connect the real Docker container for this task to the
+	// Connect the real Docker container for this task to the
 	// namespace's Docker network with the service name as DNS alias,
 	// so other containers on the same namespace resolve it by name.
 	if ns, nsOk := cmNamespaces.Get(svc.NamespaceId); nsOk && ns.DockerNetworkName != "" {
@@ -406,7 +406,7 @@ func handleCMDeregisterInstance(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 
-	// Best-effort disconnect from the Docker network (BUG-701).
+	// Best-effort disconnect from the Docker network.
 	// Container shutdown will auto-clean so this is just tidier state.
 	if svc, ok := cmServices.Get(req.ServiceId); ok {
 		if ns, nsOk := cmNamespaces.Get(svc.NamespaceId); nsOk && ns.DockerNetworkName != "" {

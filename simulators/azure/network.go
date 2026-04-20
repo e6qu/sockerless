@@ -344,10 +344,10 @@ func registerNetwork(srv *sim.Server) {
 
 	// --- NSG Security Rules (sub-resource) ---
 	//
-	// BUG-703 extension: the existing NSG handlers above let callers
-	// embed SecurityRules in the NSG body, but armnetwork.SecurityRulesClient
-	// CRUDs each rule via its sub-resource path. Expose those so the
-	// backend can use the per-rule client.
+	// The NSG handlers above let callers embed SecurityRules in the
+	// NSG body, but armnetwork.SecurityRulesClient CRUDs each rule
+	// via its sub-resource path. Expose those so the backend can use
+	// the per-rule client.
 
 	// PUT rule
 	srv.HandleFunc("PUT "+armBase+"/networkSecurityGroups/{nsgName}/securityRules/{ruleName}",

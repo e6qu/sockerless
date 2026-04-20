@@ -429,10 +429,10 @@ func registerContainerApps(srv *sim.Server) {
 				}
 				containerName := fmt.Sprintf("sockerless-sim-azure-execution-%s", shortExecID)
 
-				// BUG-701 on Azure: resolve the env's Docker network
-				// and connect the container with the job short name
-				// as DNS alias. Other jobs in the same env resolve
-				// each other via Docker's embedded DNS.
+				// Resolve the env's Docker network and connect the
+				// container with the job short name as DNS alias.
+				// Other jobs in the same env resolve each other via
+				// Docker's embedded DNS.
 				var netName string
 				var netAliases []string
 				if envID != "" {

@@ -91,9 +91,9 @@ func TestNetwork_CreateNSG(t *testing.T) {
 }
 
 // TestNetwork_NSGSecurityRulesCRUD covers the `securityRules` sub-
-// resource endpoints added for BUG-703's fix. Creates an NSG, then
-// creates/gets/lists/deletes a security rule via the per-rule client,
-// and confirms the rule is reflected in the parent NSG's properties.
+// resource endpoints. Creates an NSG, then creates/gets/lists/deletes
+// a security rule via the per-rule client, and confirms the rule is
+// reflected in the parent NSG's properties.
 func TestNetwork_NSGSecurityRulesCRUD(t *testing.T) {
 	rgClient, err := armresources.NewResourceGroupsClient(subscriptionID, &fakeCredential{}, clientOpts())
 	require.NoError(t, err)

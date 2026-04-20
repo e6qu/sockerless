@@ -5,7 +5,7 @@
 // sockerless uses to proxy "docker exec" / "docker attach" into the
 // running invocation.
 //
-// Architecture (Phase 86 D.1):
+// Architecture:
 //  1. A long-lived reverse-agent connects back to sockerless's Lambda
 //     backend over WebSocket (SOCKERLESS_CALLBACK_URL). The backend
 //     forwards docker exec / attach frames here; this process handles

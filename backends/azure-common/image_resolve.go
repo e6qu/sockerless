@@ -60,7 +60,7 @@ func ResolveAzureImageURI(ref, acrName string) string {
 
 // ResolveAzureImageURIWithCache rewrites a Docker image reference through
 // an Azure Container Registry pull-through cache when a matching cache
-// rule exists (BUG-706). This parallels AWS ECR pull-through + GCP
+// rule exists. This parallels AWS ECR pull-through + GCP
 // Artifact Registry.
 //
 // Lookup flow:

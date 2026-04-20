@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 86 Runbook 2 — Lambda baseline against live AWS.
+# Lambda baseline against live AWS — docker run, logs, invoke.
 # docker run against the Lambda backend: create, invoke, logs, rm.
 set -euo pipefail
 
@@ -21,7 +21,7 @@ BACKEND_BIN="${BACKEND_BIN:-./sockerless-backend-lambda}"
 cleanup() { kill "${BACKEND_PID:-0}" 2>/dev/null || true; }
 trap cleanup EXIT
 
-echo "=== Phase 86 Runbook 2: starting Lambda backend on :2376 ==="
+echo "=== starting Lambda backend on :2376 ==="
 "$BACKEND_BIN" --addr 127.0.0.1:2376 --log-level debug 2>/tmp/lambda-backend.log &
 BACKEND_PID=$!
 sleep 2
@@ -37,4 +37,4 @@ sleep 5
 docker logs "$CID" | grep lambda-baseline
 docker rm -f "$CID"
 
-echo "=== Runbook 2 complete ==="
+echo "=== complete ==="

@@ -19,7 +19,7 @@ import (
 // Cloud Build v1 slice. Sockerless's GCP backends (`backends/cloudrun/`
 // and `backends/cloudrun-functions/`) submit docker builds via Cloud
 // Build whenever sockerless handles `docker build`. Without this slice
-// the GCP simulator can't cover the image-build path. BUG-704 fix.
+// the GCP simulator can't cover the image-build path.
 //
 // Real API: https://cloud.google.com/build/docs/api/reference/rest
 
@@ -199,7 +199,7 @@ func registerCloudBuild(srv *sim.Server) {
 // returns the final build record with status + finishTime populated.
 // Matches the real Cloud Build behavior: downloads source from GCS,
 // extracts it, executes each step (currently only gcr.io/cloud-builders/docker),
-// expands secretEnv via AvailableSecrets → Secret Manager (BUG-707).
+// expands secretEnv via AvailableSecrets → Secret Manager.
 func executeBuild(ctx context.Context, b Build) Build {
 	b.StartTime = time.Now().UTC().Format(time.RFC3339)
 	b.Status = "WORKING"
@@ -234,7 +234,7 @@ func executeBuild(ctx context.Context, b Build) Build {
 		return fail(fmt.Sprintf("extract source: %v", err))
 	}
 
-	// Resolve Secret Manager references for secretEnv expansion (BUG-707).
+	// Resolve Secret Manager references for secretEnv expansion.
 	secretValues := map[string]string{}
 	if b.AvailableSecrets != nil {
 		for _, sm := range b.AvailableSecrets.SecretManager {
@@ -246,9 +246,8 @@ func executeBuild(ctx context.Context, b Build) Build {
 		}
 	}
 
-	// Execute each build step. For Phase 86 scope, only
-	// gcr.io/cloud-builders/docker is supported — it's the only
-	// builder sockerless uses.
+	// Execute each build step. Only gcr.io/cloud-builders/docker is
+	// supported — it's the only builder sockerless uses.
 	for i, step := range b.Steps {
 		if step == nil {
 			continue

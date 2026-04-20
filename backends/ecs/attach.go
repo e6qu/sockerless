@@ -20,8 +20,8 @@ import (
 //
 // This overrides the default delegation in backend_delegates.go because
 // BaseServer.ContainerAttach returns an immediately-EOF pipe for
-// stateless cloud backends, which caused docker CLI to hang after
-// POST /containers/{id}/attach (BUG-692).
+// stateless cloud backends, which causes docker CLI to hang after
+// POST /containers/{id}/attach.
 func (s *Server) ContainerAttach(ref string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {

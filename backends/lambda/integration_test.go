@@ -22,9 +22,9 @@ import (
 var dockerClient *client.Client
 var evalBinaryPath string
 
-// Phase-86 D.4 — state shared with the agent-e2e test. Populated by
-// TestMain when SOCKERLESS_INTEGRATION=1, consumed by the new e2e test
-// that drives the Lambda-backend → simulator → reverse-agent round-trip.
+// State shared with the agent-e2e test. Populated by TestMain when
+// SOCKERLESS_INTEGRATION=1, consumed by the e2e test that drives
+// the Lambda-backend → simulator → reverse-agent round-trip.
 var (
 	agentBootstrapBinaryPath string
 	agentTestImageName       string
@@ -121,11 +121,11 @@ func TestMain(m *testing.M) {
 	}
 	cleanups = append(cleanups, func() { os.Remove(backendBinary) })
 
-	// Phase-86 D.4: build the real sockerless-lambda-bootstrap for linux
-	// and bake it into a throw-away test image that the simulator's
-	// Lambda Runtime API slice will invoke as a handler. The backend
-	// is started with PrebuiltOverlayImage pointed at this image so
-	// it doesn't need to run `docker push` against an insecure registry.
+	// Build the real sockerless-lambda-bootstrap for linux and bake
+	// it into a throw-away test image that the simulator's Lambda
+	// Runtime API slice will invoke as a handler. The backend is
+	// started with PrebuiltOverlayImage pointed at this image so it
+	// doesn't need to run `docker push` against an insecure registry.
 	bootstrapDir := repoRoot + "/agent/cmd/sockerless-lambda-bootstrap"
 	agentBootstrapBinaryPath = bootstrapDir + "/sockerless-lambda-bootstrap"
 	fmt.Println("[sim] Building sockerless-lambda-bootstrap for linux...")

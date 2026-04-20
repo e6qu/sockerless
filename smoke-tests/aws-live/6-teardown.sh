@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Phase 86 Runbook 6 — terragrunt destroy + zero-residue audit.
-# Always runs under `if: always()` so a broken earlier runbook still
+# terragrunt destroy + zero-residue audit.
+# Always runs under `if: always()` so a broken earlier script still
 # releases scratch AWS resources.
 set -euo pipefail
 
 : "${AWS_REGION:=eu-west-1}"
 TG_DIR="${TG_DIR:-deploy/live/ecs}"
 
-echo "=== Phase 86 Runbook 6: terragrunt destroy in $TG_DIR ==="
+echo "=== terragrunt destroy in $TG_DIR ==="
 cd "$TG_DIR"
 terragrunt destroy -auto-approve || true
 
@@ -40,4 +40,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "=== Runbook 6 complete (no residue) ==="
+echo "=== teardown complete (no residue) ==="

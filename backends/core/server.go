@@ -91,10 +91,9 @@ func NewBaseServer(store *Store, desc BackendDescriptor, logger zerolog.Logger) 
 	}
 
 	// Persist `docker pull` state (Store.Images) across backend
-	// restarts (BUG-697). Default path respects SOCKERLESS_STATE_DIR
-	// or falls back to $HOME/.sockerless/state/images.json. Every
-	// backend that passes through NewBaseServer inherits the
-	// behaviour automatically.
+	// restarts. Default path respects SOCKERLESS_STATE_DIR or falls
+	// back to $HOME/.sockerless/state/images.json. Every backend that
+	// passes through NewBaseServer inherits the behaviour automatically.
 	if store != nil && store.ImageStatePath == "" {
 		store.ImageStatePath = DefaultImageStatePath()
 		if store.ImageStatePath != "" {

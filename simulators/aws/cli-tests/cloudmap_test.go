@@ -170,7 +170,7 @@ func TestCloudMap_RegisterAndListInstances(t *testing.T) {
 	runCLI(t, awsCLI("servicediscovery", "delete-namespace", "--id", nsId))
 }
 
-// TestCloudMap_CrossTaskDNS_CLI exercises BUG-701's fix end-to-end
+// TestCloudMap_CrossTaskDNS_CLI exercises cross-task DNS end-to-end
 // through the aws CLI — creating a namespace backs a real Docker
 // network, running two ECS tasks + registering them in per-hostname
 // services connects both containers to that network with DNS aliases,

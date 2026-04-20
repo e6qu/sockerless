@@ -10,9 +10,7 @@ import (
 // security group + Cloud Map namespace). Cloud-side failures surface
 // via the response's Warning field rather than being swallowed so
 // callers (docker CLI, test harnesses) can see that cross-container
-// DNS or network isolation may not work for this network. Fixes
-// BUG-700 — prior behaviour silently returned HTTP 201 with an empty
-// warning even when the Cloud Map namespace failed to create.
+// DNS or network isolation may not work for this network.
 func (s *Server) NetworkCreate(req *api.NetworkCreateRequest) (*api.NetworkCreateResponse, error) {
 	resp, err := s.BaseServer.NetworkCreate(req)
 	if err != nil {
