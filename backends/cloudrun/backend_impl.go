@@ -376,9 +376,8 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 		return &api.NotModifiedError{}
 	}
 
-	// Cancel the Cloud Run execution
-	crState, _ := s.CloudRun.Get(id)
-	if crState.ExecutionName != "" {
+	// Phase 89 / BUG-725: cloud-fallback lookup so stop works post-restart.
+	if crState, ok := s.resolveCloudRunState(s.ctx(), id); ok && crState.ExecutionName != "" {
 		s.cancelExecution(crState.ExecutionName)
 	}
 
@@ -412,9 +411,8 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 
 	exitCode := core.SignalToExitCode(signal)
 
-	// Cancel the Cloud Run execution
-	crState, _ := s.CloudRun.Get(id)
-	if crState.ExecutionName != "" {
+	// Phase 89 / BUG-725: cloud-fallback lookup so kill works post-restart.
+	if crState, ok := s.resolveCloudRunState(s.ctx(), id); ok && crState.ExecutionName != "" {
 		s.cancelExecution(crState.ExecutionName)
 	}
 

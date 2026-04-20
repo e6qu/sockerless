@@ -116,6 +116,89 @@ func (p *acaCloudState) WaitForExit(ctx context.Context, containerID string) (in
 	}
 }
 
+// resolveJobName returns the ACA Job name for a given container ID, or
+// "" if no matching sockerless-managed job is found. Phase 89 / BUG-725
+// cross-cloud sibling: state derived from cloud actuals (ACA Job tags).
+func (p *acaCloudState) resolveJobName(ctx context.Context, containerID string) (string, error) {
+	pager := p.server.azure.Jobs.NewListByResourceGroupPager(p.server.config.ResourceGroup, nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return "", err
+		}
+		for _, job := range page.Value {
+			if job.Tags == nil {
+				continue
+			}
+			tags := azureTagsToMap(job.Tags)
+			if tags["sockerless-managed"] != "true" {
+				continue
+			}
+			if tags["sockerless-container-id"] == containerID {
+				if job.Name != nil {
+					return *job.Name, nil
+				}
+			}
+		}
+	}
+	return "", nil
+}
+
+// resolveActiveExecution returns the name of the latest non-terminal
+// execution for an ACA Job, or "" if none. Used when the cache doesn't
+// carry an ExecutionName (post-restart).
+func (p *acaCloudState) resolveActiveExecution(ctx context.Context, jobName string) (string, error) {
+	pager := p.server.azure.Executions.NewListPager(p.server.config.ResourceGroup, jobName, nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return "", err
+		}
+		for _, exec := range page.Value {
+			if exec.Status == nil {
+				continue
+			}
+			status := *exec.Status
+			if status == armappcontainers.JobExecutionRunningStateRunning || status == armappcontainers.JobExecutionRunningStateProcessing {
+				if exec.Name != nil {
+					return *exec.Name, nil
+				}
+			}
+		}
+	}
+	return "", nil
+}
+
+// resolveACAState returns ACAState for the given container ID, deriving
+// from cloud actuals when the in-memory cache is empty. Phase 89 /
+// BUG-725 cross-cloud sibling.
+func (s *Server) resolveACAState(ctx context.Context, containerID string) (ACAState, bool) {
+	if state, ok := s.ACA.Get(containerID); ok && state.JobName != "" {
+		return state, true
+	}
+	csp, ok := s.CloudState.(*acaCloudState)
+	if !ok {
+		return ACAState{}, false
+	}
+	name, err := csp.resolveJobName(ctx, containerID)
+	if err != nil || name == "" {
+		return ACAState{}, false
+	}
+	state := ACAState{JobName: name}
+	if exec, execErr := csp.resolveActiveExecution(ctx, name); execErr == nil && exec != "" {
+		state.ExecutionName = exec
+	}
+	s.ACA.Update(containerID, func(st *ACAState) {
+		if st.JobName == "" {
+			st.JobName = name
+		}
+		if st.ExecutionName == "" && state.ExecutionName != "" {
+			st.ExecutionName = state.ExecutionName
+		}
+	})
+	return state, true
+}
+
 // queryJobs fetches all sockerless-managed ACA Jobs from the resource group and
 // reconstructs api.Container from the job metadata, tags, and execution status.
 func (p *acaCloudState) queryJobs(ctx context.Context) ([]api.Container, error) {

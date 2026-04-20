@@ -115,6 +115,92 @@ func (p *cloudRunCloudState) WaitForExit(ctx context.Context, containerID string
 	}
 }
 
+// resolveJobName returns the Cloud Run Job name for a given container
+// ID, or "" if no matching sockerless-managed job is found. Phase 89 /
+// BUG-725 cross-cloud sibling: state derived from cloud actuals (Cloud
+// Run Job labels), not from the in-memory cache.
+func (p *cloudRunCloudState) resolveJobName(ctx context.Context, containerID string) (string, error) {
+	it := p.server.gcp.Jobs.ListJobs(ctx, &runpb.ListJobsRequest{
+		Parent: p.server.buildJobParent(),
+	})
+	for {
+		job, err := it.Next()
+		if err == iterator.Done {
+			return "", nil
+		}
+		if err != nil {
+			return "", err
+		}
+		if job.Labels["sockerless_managed"] != "true" {
+			continue
+		}
+		// Full ID lives in annotations (labels truncate at 63 chars); fall
+		// back to the label for older jobs.
+		jobContainerID := job.Annotations["sockerless_container_id"]
+		if jobContainerID == "" {
+			jobContainerID = job.Labels["sockerless_container_id"]
+		}
+		if jobContainerID == containerID {
+			return job.Name, nil
+		}
+	}
+}
+
+// resolveActiveExecution returns the name of the latest non-terminal
+// execution for a Cloud Run Job, or "" if none. Used when the cache
+// doesn't carry an ExecutionName (post-restart) and the caller still
+// needs to cancel a running execution.
+func (p *cloudRunCloudState) resolveActiveExecution(ctx context.Context, jobName string) (string, error) {
+	it := p.server.gcp.Executions.ListExecutions(ctx, &runpb.ListExecutionsRequest{
+		Parent: jobName,
+	})
+	for {
+		exec, err := it.Next()
+		if err == iterator.Done {
+			return "", nil
+		}
+		if err != nil {
+			return "", err
+		}
+		// CompletionTime is set when the execution is no longer running.
+		if exec.CompletionTime == nil {
+			return exec.Name, nil
+		}
+	}
+}
+
+// resolveCloudRunState returns CloudRunState for the given container
+// ID, deriving from cloud actuals when the in-memory cache is empty.
+// Phase 89 / BUG-725 cross-cloud sibling.
+func (s *Server) resolveCloudRunState(ctx context.Context, containerID string) (CloudRunState, bool) {
+	if state, ok := s.CloudRun.Get(containerID); ok && state.JobName != "" {
+		return state, true
+	}
+	csp, ok := s.CloudState.(*cloudRunCloudState)
+	if !ok {
+		return CloudRunState{}, false
+	}
+	name, err := csp.resolveJobName(ctx, containerID)
+	if err != nil || name == "" {
+		return CloudRunState{}, false
+	}
+	state := CloudRunState{JobName: name}
+	// Best-effort: fetch the active execution so Stop/Kill have a
+	// target. If the job isn't running, ExecutionName stays empty.
+	if exec, execErr := csp.resolveActiveExecution(ctx, name); execErr == nil && exec != "" {
+		state.ExecutionName = exec
+	}
+	s.CloudRun.Update(containerID, func(st *CloudRunState) {
+		if st.JobName == "" {
+			st.JobName = name
+		}
+		if st.ExecutionName == "" && state.ExecutionName != "" {
+			st.ExecutionName = state.ExecutionName
+		}
+	})
+	return state, true
+}
+
 // queryJobs fetches all sockerless-managed Cloud Run Jobs and reconstructs containers.
 func (p *cloudRunCloudState) queryJobs(ctx context.Context) ([]api.Container, error) {
 	var containers []api.Container

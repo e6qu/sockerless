@@ -377,9 +377,8 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 		return &api.NotModifiedError{}
 	}
 
-	// Stop the ACA Job execution
-	acaState, _ := s.ACA.Get(id)
-	if acaState.JobName != "" && acaState.ExecutionName != "" {
+	// Phase 89 / BUG-725: cloud-fallback lookup so stop works post-restart.
+	if acaState, ok := s.resolveACAState(s.ctx(), id); ok && acaState.JobName != "" && acaState.ExecutionName != "" {
 		s.stopExecution(acaState.JobName, acaState.ExecutionName)
 	}
 
@@ -412,9 +411,8 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 
 	exitCode := core.SignalToExitCode(signal)
 
-	// Stop the ACA Job execution
-	acaState, _ := s.ACA.Get(id)
-	if acaState.JobName != "" && acaState.ExecutionName != "" {
+	// Phase 89 / BUG-725: cloud-fallback lookup so kill works post-restart.
+	if acaState, ok := s.resolveACAState(s.ctx(), id); ok && acaState.JobName != "" && acaState.ExecutionName != "" {
 		s.stopExecution(acaState.JobName, acaState.ExecutionName)
 	}
 
