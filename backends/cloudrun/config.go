@@ -85,8 +85,8 @@ func (c Config) Validate() error {
 	if c.Project == "" {
 		return fmt.Errorf("SOCKERLESS_GCR_PROJECT is required")
 	}
-	if c.UseService {
-		return fmt.Errorf("SOCKERLESS_GCR_USE_SERVICE=1 requested but the Services code path is not yet implemented (Phase 87). Unset the flag or wait for Phase 87 to land")
+	if c.UseService && c.VPCConnector == "" {
+		return fmt.Errorf("SOCKERLESS_GCR_USE_SERVICE=1 requires SOCKERLESS_GCR_VPC_CONNECTOR — Services need a VPC connector for peer-reachable internal DNS (BUG-715)")
 	}
 	return nil
 }

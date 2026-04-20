@@ -517,13 +517,18 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		s.Store.Pods.RemoveContainer(pod.ID, id)
 	}
 
-	// Deregister from Cloud DNS
+	// Deregister from Cloud DNS (CNAME for Services, A for Jobs)
 	hostname := strings.TrimPrefix(c.Name, "/")
 	for _, ep := range c.NetworkSettings.Networks {
-		if ep != nil && ep.NetworkID != "" {
-			if err := s.cloudServiceDeregister(id, hostname, ep.NetworkID); err != nil {
-				s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to deregister from Cloud DNS")
+		if ep == nil || ep.NetworkID == "" {
+			continue
+		}
+		if s.config.UseService {
+			if err := s.cloudServiceDeregisterCNAME(s.ctx(), id, hostname, ep.NetworkID); err != nil {
+				s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to deregister CNAME from Cloud DNS")
 			}
+		} else if err := s.cloudServiceDeregister(id, hostname, ep.NetworkID); err != nil {
+			s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to deregister from Cloud DNS")
 		}
 	}
 
@@ -554,27 +559,47 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	return nil
 }
 
-// ContainerLogs streams container logs from Cloud Logging.
+// ContainerLogs streams container logs from Cloud Logging. Filter
+// shape depends on Config.UseService: Jobs emit under resource.type=
+// "cloud_run_job" with a job_name label; Services emit under
+// "cloud_run_revision" with a service_name label.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
-	// Resolve cloud resource name for the log filter.
-	var shortJobName string
-	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
-		crState, _ := s.resolveCloudRunState(s.ctx(), id)
-		jobName := crState.JobName
-		if jobName == "" {
-			jobName = buildJobName(id)
+	id, _ := s.ResolveContainerIDAuto(context.Background(), ref)
+
+	var baseFilter string
+	if s.config.UseService {
+		var shortSvcName string
+		if id != "" {
+			svcState, _ := s.resolveServiceCloudRunState(s.ctx(), id)
+			name := svcState.ServiceName
+			if name == "" {
+				name = buildServiceName(id)
+			}
+			parts := strings.Split(name, "/")
+			shortSvcName = parts[len(parts)-1]
 		}
-		parts := strings.Split(jobName, "/")
-		shortJobName = parts[len(parts)-1]
+		baseFilter = fmt.Sprintf(
+			`resource.type="cloud_run_revision" AND resource.labels.service_name="%s"`,
+			shortSvcName,
+		)
+	} else {
+		var shortJobName string
+		if id != "" {
+			crState, _ := s.resolveCloudRunState(s.ctx(), id)
+			jobName := crState.JobName
+			if jobName == "" {
+				jobName = buildJobName(id)
+			}
+			parts := strings.Split(jobName, "/")
+			shortJobName = parts[len(parts)-1]
+		}
+		baseFilter = fmt.Sprintf(
+			`resource.type="cloud_run_job" AND resource.labels.job_name="%s"`,
+			shortJobName,
+		)
 	}
 
-	baseFilter := fmt.Sprintf(
-		`resource.type="cloud_run_job" AND resource.labels.job_name="%s"`,
-		shortJobName,
-	)
-
 	fetch := s.cloudLoggingFetch(baseFilter)
-
 	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{})
 }
 

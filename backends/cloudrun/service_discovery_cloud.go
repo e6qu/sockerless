@@ -1,8 +1,12 @@
 package cloudrun
 
 import (
+	"context"
 	"fmt"
+	"net/url"
+	"strings"
 
+	runpb "cloud.google.com/go/run/apiv2/runpb"
 	"google.golang.org/api/dns/v1"
 )
 
@@ -17,8 +21,8 @@ var _ = (*Server).cloudServiceResolve
 // reachable from other Jobs in the same VPC the way Fargate ENIs are. The
 // caller passes `ep.IPAddress` which is seeded as the placeholder "0.0.0.0".
 // Skip registration in that case rather than write a useless A-record.
-// Proper architectural fix is deferred (likely needs Cloud Run Services or
-// VPC connector + reserved internal IPs).
+// Under UseService, callers use cloudServiceRegisterCNAME instead — Services
+// have stable per-revision URLs that work with VPC connector egress.
 func (s *Server) cloudServiceRegister(containerID, hostname, ip, networkID string) error {
 	if ip == "" || ip == "0.0.0.0" {
 		s.Logger.Info().Str("container", containerID).Str("hostname", hostname).Str("network", networkID).
@@ -96,6 +100,106 @@ func (s *Server) cloudServiceDeregister(containerID, hostname, networkID string)
 		Msg("deregistered DNS A record")
 
 	return nil
+}
+
+// cloudServiceRegisterCNAME creates a CNAME record in the network's Cloud
+// DNS managed zone, pointing the container's hostname at its Cloud Run
+// Service URL. Used by the UseService path because Services have stable
+// URLs (reachable over the VPC connector) instead of per-instance IPs.
+//
+// The target is derived from the Service.Uri field — we strip the
+// scheme and any trailing slash so the record stores the DNS-resolvable
+// hostname. The record is terminated with a "." so Cloud DNS treats it
+// as a fully-qualified name.
+func (s *Server) cloudServiceRegisterCNAME(ctx context.Context, containerID, hostname, serviceName, networkID string) error {
+	if s.gcp == nil || s.gcp.Services == nil || serviceName == "" {
+		return nil
+	}
+	svc, err := s.gcp.Services.GetService(ctx, &runpb.GetServiceRequest{Name: serviceName})
+	if err != nil {
+		return fmt.Errorf("get service for DNS target: %w", err)
+	}
+	target := serviceURIHost(svc.Uri)
+	if target == "" {
+		s.Logger.Info().Str("container", containerID).Str("hostname", hostname).
+			Msg("Service.Uri empty (not ready yet?); skipping Cloud DNS CNAME")
+		return nil
+	}
+
+	state, ok := s.resolveNetworkState(ctx, networkID)
+	if !ok || state.ManagedZoneName == "" {
+		return nil
+	}
+
+	fqdn := hostname + "." + state.DNSName
+	rrset := &dns.ResourceRecordSet{
+		Name:    fqdn,
+		Type:    "CNAME",
+		Ttl:     60,
+		Rrdatas: []string{target + "."},
+	}
+
+	created, err := s.gcp.DNS.ResourceRecordSets.Create(
+		s.config.Project, state.ManagedZoneName, rrset,
+	).Context(ctx).Do()
+	if err != nil {
+		s.Logger.Error().Err(err).
+			Str("hostname", hostname).
+			Str("fqdn", fqdn).
+			Str("target", target).
+			Str("zone", state.ManagedZoneName).
+			Msg("failed to create DNS CNAME record")
+		return fmt.Errorf("DNS CNAME register failed for %s → %s: %w", hostname, target, err)
+	}
+
+	s.Logger.Info().
+		Str("fqdn", created.Name).
+		Str("target", target).
+		Str("zone", state.ManagedZoneName).
+		Str("container", containerID).
+		Msg("registered DNS CNAME record for service discovery")
+	return nil
+}
+
+// cloudServiceDeregisterCNAME removes the CNAME the UseService path writes.
+// Separate from cloudServiceDeregister because Cloud DNS wants the exact
+// record type when deleting.
+func (s *Server) cloudServiceDeregisterCNAME(ctx context.Context, containerID, hostname, networkID string) error {
+	state, ok := s.NetworkState.Get(networkID)
+	if !ok || state.ManagedZoneName == "" {
+		return nil
+	}
+	fqdn := hostname + "." + state.DNSName
+	_, err := s.gcp.DNS.ResourceRecordSets.Delete(
+		s.config.Project, state.ManagedZoneName, fqdn, "CNAME",
+	).Context(ctx).Do()
+	if err != nil {
+		s.Logger.Warn().Err(err).
+			Str("hostname", hostname).
+			Str("fqdn", fqdn).
+			Str("zone", state.ManagedZoneName).
+			Str("container", containerID).
+			Msg("failed to delete DNS CNAME record")
+		return fmt.Errorf("DNS CNAME deregister failed for %s: %w", hostname, err)
+	}
+	return nil
+}
+
+// serviceURIHost extracts the hostname from a Cloud Run Service.Uri
+// (e.g. "https://sockerless-svc-abc-xxx.a.run.app" → "sockerless-svc-abc-xxx.a.run.app").
+// Returns "" if uri is empty or unparseable.
+func serviceURIHost(uri string) string {
+	if uri == "" {
+		return ""
+	}
+	if !strings.Contains(uri, "://") {
+		return strings.TrimSuffix(uri, "/")
+	}
+	u, err := url.Parse(uri)
+	if err != nil {
+		return ""
+	}
+	return u.Host
 }
 
 // cloudServiceResolve looks up A records for a service name in the network's

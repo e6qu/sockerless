@@ -2,17 +2,23 @@ package cloudrun
 
 import "testing"
 
-// TestConfig_Validate_UseServiceGate — Phase 87 foundation.
-// `UseService=true` is rejected until the Services code path lands,
-// so the flag can't silently fall back to Jobs.
-func TestConfig_Validate_UseServiceGate(t *testing.T) {
+// TestConfig_Validate_UseServiceRequiresVPCConnector — Phase 87.
+// UseService=true needs a VPC connector: the whole point of the
+// Services path is peer-reachable internal DNS over the connector.
+// Without one, the CNAME records we write would target a URL that
+// isn't reachable from sibling Services.
+func TestConfig_Validate_UseServiceRequiresVPCConnector(t *testing.T) {
 	c := Config{Project: "p", UseService: true}
-	err := c.Validate()
-	if err == nil {
-		t.Fatal("expected Validate to reject UseService=true until Phase 87")
+	if err := c.Validate(); err == nil {
+		t.Fatal("expected Validate to reject UseService=true without VPCConnector")
 	}
-	// Default (Jobs path) should continue to validate.
+	c.VPCConnector = "projects/p/locations/us-central1/connectors/c1"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("UseService + VPCConnector should validate, got: %v", err)
+	}
+	// Default (Jobs path) should continue to validate without a connector.
 	c.UseService = false
+	c.VPCConnector = ""
 	if err := c.Validate(); err != nil {
 		t.Fatalf("default Jobs path should validate, got: %v", err)
 	}
