@@ -12,7 +12,19 @@ var _ = (*Server).cloudServiceResolve
 // cloudServiceRegister creates an A record in the network's Cloud DNS managed
 // zone, mapping hostname to the container's IP address. This enables
 // DNS-based service discovery between containers in the same Docker network.
+//
+// BUG-715: Cloud Run Job executions don't have addressable per-execution IPs
+// reachable from other Jobs in the same VPC the way Fargate ENIs are. The
+// caller passes `ep.IPAddress` which is seeded as the placeholder "0.0.0.0".
+// Skip registration in that case rather than write a useless A-record.
+// Proper architectural fix is deferred (likely needs Cloud Run Services or
+// VPC connector + reserved internal IPs).
 func (s *Server) cloudServiceRegister(containerID, hostname, ip, networkID string) error {
+	if ip == "" || ip == "0.0.0.0" {
+		s.Logger.Info().Str("container", containerID).Str("hostname", hostname).Str("network", networkID).
+			Msg("skipping Cloud DNS register: no real per-execution IP yet (BUG-715)")
+		return nil
+	}
 	state, ok := s.NetworkState.Get(networkID)
 	if !ok || state.ManagedZoneName == "" {
 		s.Logger.Debug().

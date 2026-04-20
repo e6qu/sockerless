@@ -73,7 +73,7 @@ export SOCKERLESS_ACA_STORAGE_ACCOUNT=$(terraform output -raw storage_account_na
 For reverse agent mode (optional):
 
 ```bash
-export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:9100
+export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:3375
 ```
 
 ## Step 4: Build and Run the Backend
@@ -89,7 +89,7 @@ go build -tags noui -o sockerless-backend-aca ./backends/aca
 ## Step 5: Configure Docker to Use Sockerless
 
 ```bash
-export DOCKER_HOST=tcp://localhost:2375
+export DOCKER_HOST=tcp://localhost:3375
 ```
 
 ## Step 6: Use Docker Commands
@@ -191,7 +191,7 @@ This takes approximately 5-10 minutes.
 ┌──────────────┐     ┌──────────────────┐     ┌──────────────────────────┐
 │  docker CLI  │────▶│ Sockerless       │────▶│ Azure Container Apps     │
 │              │     │ Backend           │     │                          │
-│ pull, create,│     │ (localhost:9100)  │     │ Jobs.BeginCreateOrUpdate │
+│ pull, create,│     │ (localhost:3375)  │     │ Jobs.BeginCreateOrUpdate │
 │ start, exec, │     │                  │     │ Jobs.BeginStart          │
 │ logs, stop   │     │                  │     │ Jobs.BeginStopExecution  │
 └──────────────┘     └──────────────────┘     │ Jobs.BeginDelete         │

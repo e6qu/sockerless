@@ -1,6 +1,6 @@
 # Sockerless — Roadmap
 
-> 86 phases complete (757 tasks). 707 bugs fixed, 0 open.
+> 86 phases complete (757 tasks). 717 bugs tracked (715 fixed, 2 open: BUG-715 cloudrun rewrite, BUG-716 aca rewrite — both architectural).
 >
 > **Goal:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners — backed by real cloud infrastructure (AWS, GCP, Azure).
 
@@ -14,93 +14,71 @@
 6. **LLM-editable files** — source files under 400 lines
 7. **GitHub API fidelity** — bleephub works with unmodified `gh` CLI
 8. **State persistence** — every task ends with state save
+9. **No fakes / no fallbacks / no defers** — every functional gap is a real bug; every bug gets a real fix in the same session it surfaces; cross-cloud sweep on every find
 
 ---
 
-## Phase 68 — Multi-Tenant Backend Pools (In Progress)
+## Phase 86 — Complete Runner Support (in progress, Phase C session 2)
 
-Named pools of backends with scheduling and resource limits.
+Branch `post-phase86-continuation`. Live AWS account `729079515331` (eu-west-1 + us-east-1). ECS infra is up; Lambda infra plan reviewed and ready.
+
+### Phase 86 Phase C — open bugs (must all be fully fixed before live runbook resumes)
+
+Per the user's directive (no defers, no fakes): every open bug below blocks the live runbook. Fix each in the same branch; no "minimum fix + defer." Cross-cloud sweep is mandatory.
+
+| Bug | Backend(s) | Fix required (no minimums) |
+|---|---|---|
+| 708 | ECS | Wire `SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN` env var into `ensurePullThroughCache` as `CredentialArn` on `CreatePullThroughCacheRule`. When set, the rule registers correctly; when unset, document the limitation but DO NOT silently fall back — return a clear error so the operator knows credentials are needed. |
+| 709 | ECS | Done (`waitForOperation` sleeps + DBG logs). Add unit test `TestWaitForOperation_PollsWithSleep` using a fake `ServiceDiscovery` client that returns PENDING three times then SUCCESS. |
+| 710 | All 7 backends + CLI | Done (defaults all to `:3375`). Add CI assertion via grep that no source/markdown file has hardcoded `:2375` or `:9100` outside fixtures. |
+| 711 | ECS | Implement real cross-container short-name DNS via VPC DHCP option set: backend creates a per-cluster DHCP option set with the Cloud Map namespace as the search domain, associates it with the VPC on first network create, restores VPC's prior options on last network delete. OR: ship a per-task entrypoint shim that prepends `search <namespace>` to `/etc/resolv.conf` (less invasive). Pick option B — DHCP modification is too disruptive to a shared VPC. Implement entrypoint-prepend logic in `containerDef.Command` build path. |
+| 712 | ECS | Done (`cloudNetworkCreate` idempotent for SG + namespace). Add unit tests for both reuse paths against a fake EC2 + ServiceDiscovery client. |
+| 713 | Cloud Run | Done (`cloudNetworkCreate` reuses zone on 409). Add unit test using a fake DNS client that returns 409 then succeeds on Get. |
+| 714 | ECS | Done (Cloud Map register uses ENI IP after task RUNNING). Add unit test `TestCloudServiceRegister_UsesENIIPNotPlaceholder` with a fake task lifecycle. |
+| 715 | Cloud Run | Implement real per-execution IP discovery: poll Cloud Run Job execution `Conditions[?Type=='ContainerReady']` and pull the execution's network IP via the new GCP Compute API path; or move from Jobs to Cloud Run Services with `--ingress=internal` + a VPC connector and use the Service's allocated internal IP. Pick the Service path: it gives stable internal IPs reachable from peer Services in the same VPC. Add `cloudrun.UseService` config flag and a per-network managed Service per container hostname. Update `cloudServiceRegister` to consume the real IP. |
+| 716 | ACA | Implement real per-execution IP discovery: ACA Jobs don't have addressable IPs, so move to ACA Apps with `internal` ingress for containers attached to user networks. Backend creates an Container App per hostname inside the network's environment, with `Ingress.External=false`, and registers the App's stable FQDN/IP in the network's Private DNS zone. Add `aca.UseApp` config flag analogous to GCP. Update `cloudServiceRegister` to consume the real IP. |
+| 717 | ECS | Implement the SSM Session Manager binary protocol decoder in `backends/ecs/exec_cloud.go`: parse `AgentMessage` (header: HL `int32`, MessageType `string[32]`, SchemaVersion `int32`, CreatedDate `int64`, SequenceNumber `int64`, Flags `int64`, MessageId `[16]byte`, PayloadDigest `[32]byte`, PayloadType `int32`, PayloadLength `int32`); route by `MessageType` ∈ {`output_stream_data`, `acknowledge`, `channel_closed`, ...}; decode payload sub-protocol; extract real stdout/stderr; THEN apply Docker mux header. Reference: AWS `session-manager-plugin` Go source. Includes acknowledge replies + sequence number tracking. |
+
+### Phase 86 Phase C — live runbook (resumes after every bug above is `fixed`)
+
+Live AWS state right now: ECS infra up, Lambda infra terragrunt plan reviewed (6 resources to add). All in-flight backend processes survive across bug-fix iterations.
+
+| Step | Status | Notes |
+|---|---|---|
+| 0 Preflight | done | Scripts fixed, state buckets bootstrapped, binaries built, creds verified. |
+| 1 ECS infra up | done | 34 resources in eu-west-1, ~2min apply. Outputs at `/tmp/ecs-out.json`. |
+| 2 ECS smoke | partial-pass + 6 bugs surfaced | 2.1 + 2.2 + 2.3-FQDN PASS; 2.3-shortname blocked on BUG-711 full fix; 2.4 blocked on BUG-717 full fix. Re-run after bug fixes. |
+| 3 Lambda infra up | ready | Plan reviewed: 6 resources in us-east-1 (IAM role + 2 policies + log group + ECR repo + lifecycle). Apply queued. |
+| 4 Lambda baseline (Runbook 2) | pending | docker run, logs, kill clamp. |
+| 5 Lambda agent-as-handler (Runbook 3) | pending | Requires public WebSocket (ngrok / cloudflared) — pause-point D. |
+| 6 E2E live tests | pending | github-runner + gitlab-runner × ecs + lambda. Smoke first, widen if budget allows. |
+| 7 Teardown | pending | Lambda first, then ECS. Hard requirement before session ends. |
+| 8 Final state save | pending | _tasks/P86-AWS-manual-runbook-session2.md, runner-capability-matrix live columns, PLAN/STATUS/WHAT_WE_DID/DO_NEXT updated, branch pushed for PR. |
+
+---
+
+## Phase 68 — Multi-Tenant Backend Pools (queued)
+
+Named pools of backends with scheduling and resource limits. Resumes after Phase 86 closes.
 
 | Task | Status | Description |
 |---|---|---|
 | P68-001 | done | Pool configuration (JSON config) |
-| P68-002 | | Pool registry (in-memory, each with own BaseServer + Store) |
-| P68-003 | | Request router (route by label or default pool) |
-| P68-004 | | Concurrency limiter (per-pool semaphore, 429 on overflow) |
-| P68-005 | | Pool lifecycle (create/destroy at runtime via management API) |
-| P68-006 | | Pool metrics (per-pool stats on `/internal/metrics`) |
-| P68-007 | | Round-robin scheduling (multi-backend pools) |
-| P68-008 | | Resource limits (max containers, max memory per pool) |
-| P68-009 | | Unit + integration tests |
-| P68-010 | | Save final state |
+| P68-002 | pending | Pool registry (in-memory, each with own BaseServer + Store) |
+| P68-003 | pending | Request router (route by label or default pool) |
+| P68-004 | pending | Concurrency limiter (per-pool semaphore, 429 on overflow) |
+| P68-005 | pending | Pool lifecycle (create/destroy at runtime via management API) |
+| P68-006 | pending | Pool metrics (per-pool stats on `/internal/metrics`) |
+| P68-007 | pending | Round-robin scheduling (multi-backend pools) |
+| P68-008 | pending | Resource limits (max containers, max memory per pool) |
+| P68-009 | pending | Unit + integration tests |
+| P68-010 | pending | Save final state |
 
 ---
 
-## Phase 78 — UI Polish
+## Phase 78 — UI Polish (queued)
 
 Dark mode, design tokens, error handling UX, container detail modal, auto-refresh, performance audit, accessibility, E2E smoke, documentation.
-
----
-
-## Phase 86 — Complete Runner Support (ECS + Lambda × github.com + gitlab.com SaaS)
-
-**Status: simulator-parity track complete (PR #112 merged 2026-04-20). Phase C live-AWS session 2 is the final remaining item — plan at `~/.claude/plans/purring-sprouting-dusk.md`, branch `post-phase86-continuation`. Session 1 (2026-04-19) surfaced two runner bugs (BUG-692 docker run hang, BUG-P86-A2 raw ECS image ref); both fixed in PR #112. Session 2 re-runs the full runbook against a clean AWS account (729079515331, eu-west-1 + us-east-1) plus the e2e runner-capability matrix. Cost + time: ~$0.15 / ~90min (narrow) or ~$0.50 / ~3h (full matrix).**
-
-Close the gap between "Docker API passes E2E in simulator mode" and "official `actions/runner` + `gitlab-runner` binaries run real CI jobs on real AWS against real github.com / gitlab.com." No `-wasm` / synthetic shortcuts: services, custom images, and docker build must work for real. Lambda 15-min cap accepted.
-
-Work partitioned into **no-AWS-credentials** (can be done now, verified in simulator) and **needs-AWS** (verified against live accounts).
-
-### No-AWS track
-
-| Task | Status | Description |
-|---|---|---|
-| P86-001 | done | Dropped `-wasm` / `-faas` variant-routing. `get_test_variant` and `should_skip_for_faas` removed from `tests/e2e-live-tests/lib.sh`; orchestrators use test names directly |
-| P86-002 | done | Pruned `services` / `custom-image` from `ALL_WORKFLOWS` / `ALL_PIPELINES` (files removed in daeff00). Renamed `container-action-faas.yml` → `container-action.yml`. `docs/runner-capability-matrix.md` added as TBD template |
-| P86-003 | done | Per-hostname Cloud Map services + `DnsSearchDomains` on task def. Old shared `containers` service removed. Unit tests + `docs/ECS_SERVICES_DESIGN.md`. Full DNS end-to-end verification belongs to the live-AWS track |
-| P86-004 | done | Lambda `ContainerStop` / `ContainerKill` clamp function timeout + disconnect reverse-agent stub + close wait channel. `docker logs -f` now lazy-resolves the CloudWatch log stream so follow-mode returns output even when opened before the Lambda has been invoked |
-| P86-005 | done (skeleton) | Design doc `docs/LAMBDA_EXEC_DESIGN.md`; `sockerless-lambda-bootstrap` binary skeleton; `backends/lambda/image_inject.go` + 3 unit tests; `LambdaConfig.CallbackURL` env-wired. Full Runtime API loop deferred to AWS track |
-| P86-006 | | Add `--runner official` switch to E2E harnesses to target unmodified `actions/runner` and `gitlab-runner` binaries (vs `act` / self-hosted GitLab CE) |
-| P86-007 | done | Docs: `docs/ECS_LIVE_SETUP.md`, `docs/GITHUB_RUNNER_SAAS.md`, `docs/GITLAB_RUNNER_SAAS.md` added; pointers from the existing `GITHUB_RUNNER.md` and `GITLAB_RUNNER_DOCKER.md` to the SaaS versions |
-| P86-008 | done | Unit tests for `searchDomainsForContainer` (4), `RenderOverlayDockerfile` (3); integration test `TestLambdaContainerStopUnblocksWait`, `TestLambdaContainerLogsFollowLazyStream`. Lambda test-main now runs unit tests when integration off |
-
-### Bug-fix track (no AWS; unblocks AWS track) — **HARD GATE: zero open bugs before Phase C**
-
-Per user directives:
-1. "Fix all bugs before redoing manual tests." Phase C is hard-gated on zero open bugs.
-2. "Missing / fake / synthetic simulator functionality counts as a bug." Record each as a BUGS.md entry and fix it.
-3. **"No workarounds or fakes, implement the full functionality needed in the simulators"** (2026-04-19). The simulator must behave as the real cloud API does for every call path the runners drive. No `if simulator mode then skip` fallbacks, no `return synthetic` shortcuts. Cross-container DNS, ECR pull-through cache, Lambda Runtime API, SSM Session Manager streaming, Cloud Map instance-IP resolution — all must be fully implemented in the simulator.
-4. "Simulators must be tested against the cloud SDKs and CLIs and terraform providers." Each new/fixed simulator API ships with `sdk-tests`, `cli-tests`, and `terraform-tests` entries.
-
-| Task | Status | Description |
-|---|---|---|
-| P86-015 | done | Fix BUG-693: ported Lambda resolver to `backends/ecs/image_resolve.go`, wired into ContainerCreate. 9 unit tests. |
-| P86-016 | done | Fix BUG-692: new `backends/ecs/attach.go` streams CloudWatch via `StreamCloudLogs` + `muxBridge`. 3 unit tests. |
-| P86-017 | done | Smoke-test coverage: `docker run --rm alpine echo` added to `smoke-tests/run.sh` ECS track; would have caught BUG-692 in CI. |
-| P86-020a | done | Fixed BUG-694 (StreamCloudLogs follow-loop exit on `!Running`) + BUG-695 (rejects `created` state unconditionally). New `AllowCreated` option. |
-| P86-020d | done | Fix BUG-698 (critical): docker CLI's `docker run -d` sent POST /wait before /start, blocked on reading wait's response status line. Sockerless's wait handler blocked in `CloudState.WaitForExit` before writing anything. Fixed: `flushWaitHeaders()` commits 200 + Content-Type immediately, body written after exit lands. Diagnosed via new `tools/http-trace/` proxy. |
-| P86-020g | done | Fix BUG-699: simulator pre-registers `vpc-sim` + `subnet-sim` on startup so `cloudNetworkCreate` can resolve VPC ID from the conventional placeholder subnet. |
-| P86-020b | done | BUG-696: simulator ECR pull-through cache (SDK + CLI + terraform tests). |
-| P86-020c | done | BUG-697: `Store.Images` persists across backend restart for all 6 cloud backends. |
-| P86-020h | done | BUG-700: `handleNetworkCreate` surfaces cloud-side failures as response `Warning`. |
-| P86-020i | done | BUG-701: simulator networks back themselves with real Docker user-defined networks — AWS Cloud Map, GCP Cloud DNS, Azure ACA environments. |
-| P86-020e | done | A.6 simulator-mode runbook replay — full sim SDK/CLI suites green for AWS + GCP + Azure. |
-| P86-020f | done | Simulator-parity audit: `docs/SIMULATOR_PARITY_{AWS,GCP,AZURE}.md`, zero ✖ rows on runner path. |
-| P86-020t | done | Pre-commit testing-contract hook (`scripts/check-simulator-tests.sh`) + tests-exempt.txt. |
-| P86-020z | done | BUG-702 Azure Private DNS, BUG-703 Azure NSG, BUG-704 + BUG-707 GCP Cloud Build + Secret Manager, BUG-705 AWS Lambda Runtime API, BUG-706 Azure ACR Cache Rules — all closed with SDK + CLI + terraform tests. |
-| P86-020D | done | Phase D — Lambda agent-as-handler. D.1 bootstrap Runtime-API loop + reverse-agent via `agent.Router`; D.2 overlay wire-up in `ContainerCreate`; D.3 reverse-agent WS server + registry; D.4 real end-to-end test `TestLambdaAgentE2E_ReverseAgent` (1.5s, uses real docker + sim + bootstrap). |
-
-### Needs-AWS track (manual session 2, blocked until every P86-020* above is `done`)
-
-| Task | Status | Description |
-|---|---|---|
-| P86-009 | partial | Session 1 2026-04-19: Terraform up, 34 resources, zero-residue teardown verified. Session 2 re-provisions after bug fixes |
-| P86-010 | pending-live | Runbook 1 — ECS smoke + services DNS |
-| P86-011 | pending-live | Runbook 4 — `actions/runner` × real github.com; 3 shapes (shell, `container:`, `services:`). Requires user-provided PAT + test repo |
-| P86-012 | pending-live | Runbook 5 — `gitlab-runner` × real gitlab.com; same matrix. Requires runner token + test project |
-| P86-013 | pending-live | Runbook 2 — Lambda live Docker CLI baseline. Writes `docs/PLAN_LAMBDA_MANUAL_TESTING.md` Round-1 |
-| P86-018 | pending-live | Runbook 3a — implement Lambda Runtime-API loop (bootstrap), overlay-image builder, reverse-agent callback registry. Unit-tested without AWS |
-| P86-019 | pending-live | Runbook 3b — live validation of Lambda `docker exec` via agent-as-handler. Requires ngrok (or equivalent public callback URL) |
-| P86-014 | partial | Final state save after session 2 closes. Residue audit, capability matrix live-column, STATUS/WHAT_WE_DID/MEMORY updates |
 
 ---
 

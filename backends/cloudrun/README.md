@@ -8,7 +8,7 @@ Runs Docker containers as Google Cloud Run Jobs and Executions, with Cloud Loggi
 environments:
   my-cloudrun:
     backend: cloudrun
-    addr: ":9100"
+    addr: ":3375"
     log_level: info
     gcp:
       project: my-gcp-project-123
@@ -45,10 +45,10 @@ environments:
 
 ```sh
 go build -o sockerless-backend-cloudrun ./backends/cloudrun/cmd/sockerless-backend-cloudrun
-./sockerless-backend-cloudrun -addr :9100 -log-level info
+./sockerless-backend-cloudrun -addr :3375 -log-level info
 ```
 
-Flags: `-addr` (default `:9100`), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).
+Flags: `-addr` (default `:3375`), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).
 
 ## Cloud Notes
 

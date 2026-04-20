@@ -5,7 +5,7 @@ set -euo pipefail
 # Used by docker-compose cloud backend overrides.
 
 CLOUD="${CLOUD:-}"
-BACKEND_ADDR="${BACKEND_ADDR:-:9100}"
+BACKEND_ADDR="${BACKEND_ADDR:-:3375}"
 
 wait_for_url() {
     local url="$1" max_wait="${2:-30}"

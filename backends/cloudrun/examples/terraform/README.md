@@ -69,7 +69,7 @@ export SOCKERLESS_GCR_LOG_ID=sockerless
 For reverse agent mode (optional):
 
 ```bash
-export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:9100
+export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:3375
 ```
 
 ## Step 4: Build and Run the Backend
@@ -85,7 +85,7 @@ go build -tags noui -o sockerless-backend-cloudrun ./backends/cloudrun
 ## Step 5: Configure Docker to Use Sockerless
 
 ```bash
-export DOCKER_HOST=tcp://localhost:2375
+export DOCKER_HOST=tcp://localhost:3375
 ```
 
 ## Step 6: Use Docker Commands
@@ -183,7 +183,7 @@ gcloud run jobs delete sockerless-<id> --region=$(terraform output -raw region) 
 ┌──────────────┐     ┌──────────────────┐     ┌─────────────────────────┐
 │  docker CLI  │────▶│ Sockerless       │────▶│ Google Cloud Run Jobs   │
 │              │     │ Backend           │     │                         │
-│ pull, create,│     │ (localhost:9100)  │     │ Jobs.CreateJob          │
+│ pull, create,│     │ (localhost:3375)  │     │ Jobs.CreateJob          │
 │ start, exec, │     │                  │     │ Jobs.RunJob             │
 │ logs, stop   │     │                  │     │ Executions.GetExecution │
 └──────────────┘     └──────────────────┘     │ Executions.Cancel       │

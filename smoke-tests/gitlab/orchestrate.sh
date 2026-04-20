@@ -119,7 +119,7 @@ echo "Runner registered with token: ${RUNNER_TOKEN:0:8}..."
 
 # --- Write runner config ---
 echo "=== Configuring runner ==="
-SOCKERLESS_HOST="${SOCKERLESS_HOST:-tcp://sockerless-frontend:2375}"
+SOCKERLESS_HOST="${SOCKERLESS_HOST:-tcp://sockerless-frontend:3375}"
 cat > /etc/gitlab-runner/config.toml <<EOF
 concurrent = 1
 check_interval = 3

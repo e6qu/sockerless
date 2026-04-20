@@ -28,7 +28,7 @@ func (f *multiFlag) Set(v string) error {
 func contextCreate(args []string) {
 	fs := flag.NewFlagSet("context create", flag.ExitOnError)
 	backend := fs.String("backend", "", "backend type (required)")
-	addr := fs.String("addr", "", "server address (e.g. :2375)")
+	addr := fs.String("addr", "", "server address (e.g. :3375)")
 	simulator := fs.String("simulator", "", "simulator name (from config.yaml simulators)")
 	var sets multiFlag
 	fs.Var(&sets, "set", "set env var as KEY=VALUE (repeatable)")

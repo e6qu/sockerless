@@ -2,6 +2,7 @@ package ecs
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -106,19 +107,29 @@ func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container, tty bo
 
 	bridge := newWSBridge(conn)
 
-	// For non-TTY exec, wrap the read side with Docker multiplexed stream headers.
-	// Docker/Podman clients expect 8-byte headers: [streamType, 0, 0, 0, size(4 BE)]
+	// SSM Session Manager wraps the application stream in a binary
+	// AgentMessage protocol (see ssm_proto.go + BUG-717). Decode SSM frames,
+	// send acks back through the WebSocket, and surface the inner
+	// stdout/stderr to the Docker client. For non-TTY exec we additionally
+	// wrap the extracted bytes in Docker's 8-byte multiplexed stream
+	// headers since `docker exec` expects that framing.
+	dec := newSSMDecoder(bridge)
 	if !tty {
-		return &muxBridge{rwc: bridge}, nil
+		return &muxBridge{rwc: dec}, nil
 	}
-	return bridge, nil
+	return dec, nil
 }
 
 // muxBridge wraps an io.ReadWriteCloser and adds Docker multiplexed stream
-// headers (stdout = 0x01) to each read. Writes pass through unchanged (stdin).
+// headers to each read. The stream id (1=stdout, 2=stderr) is taken from
+// the underlying reader if it implements `lastStream()`; otherwise stdout.
 type muxBridge struct {
 	rwc io.ReadWriteCloser
 	buf bytes.Buffer
+}
+
+type streamTagger interface {
+	lastStream() byte
 }
 
 func (m *muxBridge) Read(p []byte) (int, error) {
@@ -128,8 +139,13 @@ func (m *muxBridge) Read(p []byte) (int, error) {
 	raw := make([]byte, 4096)
 	n, err := m.rwc.Read(raw)
 	if n > 0 {
-		// Docker mux header: [0x01=stdout, 0, 0, 0, size as big-endian uint32]
-		header := [8]byte{0x01, 0, 0, 0, byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)}
+		stream := byte(0x01)
+		if t, ok := m.rwc.(streamTagger); ok {
+			if s := t.lastStream(); s != 0 {
+				stream = s
+			}
+		}
+		header := [8]byte{stream, 0, 0, 0, byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)}
 		m.buf.Write(header[:])
 		m.buf.Write(raw[:n])
 		return m.buf.Read(p)
@@ -139,6 +155,86 @@ func (m *muxBridge) Read(p []byte) (int, error) {
 
 func (m *muxBridge) Write(p []byte) (int, error) { return m.rwc.Write(p) }
 func (m *muxBridge) Close() error                { return m.rwc.Close() }
+
+// ssmDecoder reads SSM AgentMessage frames from an underlying WebSocket
+// bridge, replies with acknowledgements, and presents the decoded
+// stdout/stderr text as a plain io.Reader. Writes (stdin) are wrapped in
+// `input_stream_data` frames and sent through the WebSocket.
+type ssmDecoder struct {
+	wire     io.ReadWriteCloser
+	pending  bytes.Buffer // decoded text not yet returned to caller
+	lastTag  byte         // 0x01 stdout / 0x02 stderr from last frame
+	closeErr error
+}
+
+func newSSMDecoder(wire io.ReadWriteCloser) *ssmDecoder {
+	return &ssmDecoder{wire: wire}
+}
+
+func (d *ssmDecoder) lastStream() byte { return d.lastTag }
+
+func (d *ssmDecoder) Read(p []byte) (int, error) {
+	for d.pending.Len() == 0 {
+		if d.closeErr != nil {
+			return 0, d.closeErr
+		}
+		// Read exactly one SSM frame: fixed header first, then payload.
+		hdr := make([]byte, ssmFixedHeaderLen)
+		if _, err := io.ReadFull(d.wire, hdr); err != nil {
+			d.closeErr = err
+			continue
+		}
+		payloadLen := binary.BigEndian.Uint32(hdr[116:120])
+		var raw []byte
+		if payloadLen > 0 {
+			body := make([]byte, payloadLen)
+			if _, err := io.ReadFull(d.wire, body); err != nil {
+				d.closeErr = err
+				continue
+			}
+			raw = append(hdr, body...)
+		} else {
+			raw = hdr
+		}
+		f, perr := parseSSMFrame(raw)
+		if perr != nil {
+			d.closeErr = perr
+			continue
+		}
+		switch f.MessageType {
+		case ssmMTOutputStreamData:
+			if streamID, ok := ssmTextStreamID(f); ok {
+				d.lastTag = streamID
+				d.pending.Write(f.Payload)
+			}
+			if f.PayloadType == ssmPayloadExitCode {
+				d.closeErr = io.EOF
+			}
+			if ack, aerr := buildSSMAck(f); aerr == nil {
+				_, _ = d.wire.Write(ack)
+			}
+		case ssmMTChannelClosed:
+			d.closeErr = io.EOF
+		case ssmMTAcknowledge, ssmMTStartPublication, ssmMTPausePublication:
+			// flow-control / handshake — nothing to surface
+		}
+	}
+	return d.pending.Read(p)
+}
+
+func (d *ssmDecoder) Write(p []byte) (int, error) {
+	// stdin wrapping: input_stream_data with PayloadType=1 (raw bytes).
+	out, err := buildSSMInput(p)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := d.wire.Write(out); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+func (d *ssmDecoder) Close() error { return d.wire.Close() }
 
 // wsBridge adapts a gorilla/websocket.Conn to io.ReadWriteCloser.
 type wsBridge struct {

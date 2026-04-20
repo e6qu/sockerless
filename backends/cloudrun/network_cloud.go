@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"google.golang.org/api/dns/v1"
+	"google.golang.org/api/googleapi"
 )
 
 // cloudNetworkCreate creates a Cloud DNS private managed zone for the given
@@ -25,6 +26,20 @@ func (s *Server) cloudNetworkCreate(name, networkID string) error {
 
 	created, err := s.gcp.DNS.ManagedZones.Create(s.config.Project, zone).Context(s.ctx()).Do()
 	if err != nil {
+		// Reuse existing zone on conflict (BUG-713 — idempotent retry).
+		if gerr, ok := err.(*googleapi.Error); ok && gerr.Code == 409 {
+			existing, getErr := s.gcp.DNS.ManagedZones.Get(s.config.Project, zoneName).Context(s.ctx()).Do()
+			if getErr != nil {
+				return fmt.Errorf("cloud DNS zone %s exists but Get returned: %w", zoneName, getErr)
+			}
+			s.Logger.Info().Str("zone", existing.Name).Str("network", name).Msg("reusing existing Cloud DNS managed zone")
+			s.NetworkState.Put(networkID, NetworkState{
+				ManagedZoneName:  existing.Name,
+				DNSName:          existing.DnsName,
+				FirewallRuleName: "",
+			})
+			return nil
+		}
 		s.Logger.Error().Err(err).
 			Str("zone", zoneName).
 			Str("network", name).

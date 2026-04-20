@@ -8,7 +8,7 @@ Runs Docker containers as AWS ECS Fargate tasks, with CloudWatch Logs for log st
 environments:
   my-ecs:
     backend: ecs
-    addr: ":9100"
+    addr: ":3375"
     log_level: info
     simulator: aws-sim          # optional, for local dev
     aws:
@@ -54,10 +54,10 @@ environments:
 
 ```sh
 go build -o sockerless-backend-ecs ./backends/ecs/cmd/sockerless-backend-ecs
-./sockerless-backend-ecs -addr :9100 -log-level info
+./sockerless-backend-ecs -addr :3375 -log-level info
 ```
 
-Flags: `-addr` (default `:9100`), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).
+Flags: `-addr` (default `:3375`), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).
 
 ## Cloud Notes
 

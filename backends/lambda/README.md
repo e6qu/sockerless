@@ -8,7 +8,7 @@ Runs Docker containers as AWS Lambda functions using container images, with Clou
 environments:
   my-lambda:
     backend: lambda
-    addr: ":9100"
+    addr: ":3375"
     log_level: info
     aws:
       region: us-east-1
@@ -45,10 +45,10 @@ environments:
 
 ```sh
 go build -o sockerless-backend-lambda ./backends/lambda/cmd/sockerless-backend-lambda
-./sockerless-backend-lambda -addr :9100 -log-level info
+./sockerless-backend-lambda -addr :3375 -log-level info
 ```
 
-Flags: `-addr` (default `:9100`), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).
+Flags: `-addr` (default `:3375`), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).
 
 ## Cloud Notes
 

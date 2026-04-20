@@ -23,7 +23,10 @@ simulators/testdata/lambda-runtime-handler/lambda-runtime-handler
 # Backend/agent built binaries (match only actual binary files, not cmd/ source dirs)
 backends/*/sockerless-backend-*
 agent/sockerless-agent
+agent/cmd/sockerless-lambda-bootstrap/sockerless-lambda-bootstrap
 frontends/docker/sockerless-docker-frontend
+/sockerless-backend-ecs
+/sockerless-backend-lambda
 
 # CLI binary
 cmd/sockerless/cli

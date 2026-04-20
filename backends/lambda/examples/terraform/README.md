@@ -54,7 +54,7 @@ export AWS_REGION=$(terraform output -raw region 2>/dev/null || echo "us-east-1"
 export SOCKERLESS_LAMBDA_ROLE_ARN=$(terraform output -raw execution_role_arn)
 export SOCKERLESS_LAMBDA_MEMORY_SIZE=1024
 export SOCKERLESS_LAMBDA_TIMEOUT=900
-export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:9100
+export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:3375
 ```
 
 **Important:** `SOCKERLESS_CALLBACK_URL` is required. Lambda uses reverse agent mode exclusively — the function cannot accept inbound connections. Replace `<YOUR_BACKEND_HOST>` with your machine's IP/hostname that is reachable from the Lambda VPC (or use a public endpoint).
@@ -72,7 +72,7 @@ go build -tags noui -o sockerless-backend-lambda ./backends/lambda
 ## Step 5: Configure Docker to Use Sockerless
 
 ```bash
-export DOCKER_HOST=tcp://localhost:2375
+export DOCKER_HOST=tcp://localhost:3375
 ```
 
 ## Step 6: Use Docker Commands
@@ -160,7 +160,7 @@ aws lambda delete-function --function-name skls-<id>
 ┌──────────────┐     ┌──────────────────┐     ┌────────────────────────┐
 │  docker CLI  │────▶│ Sockerless       │────▶│ AWS Lambda             │
 │              │     │ Backend           │     │                        │
-│ pull, create,│     │ (localhost:9100)  │     │ CreateFunction         │
+│ pull, create,│     │ (localhost:3375)  │     │ CreateFunction         │
 │ start, exec, │     │                  │◀────│ Invoke (async)         │
 │ logs, rm     │     │ ◀── agent calls  │     │ DeleteFunction         │
 └──────────────┘     │     back here    │     │ GetLogEvents           │

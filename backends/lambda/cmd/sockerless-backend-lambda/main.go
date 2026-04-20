@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", ":9100", "listen address")
+	addr := flag.String("addr", ":3375", "listen address")
 	tlsCert := flag.String("tls-cert", "", "TLS certificate file")
 	tlsKey := flag.String("tls-key", "", "TLS key file")
 	logLevel := flag.String("log-level", "info", "log level (debug, info, warn, error)")

@@ -252,28 +252,34 @@ func (s *Server) ContainerStart(ref string) error {
 		state.ClusterARN = clusterARN
 	})
 
-	// Register in Cloud Map for service discovery (skip pre-defined networks)
-	hostname := strings.TrimPrefix(c.Name, "/")
-	for netName, ep := range c.NetworkSettings.Networks {
-		if ep != nil && ep.NetworkID != "" && ep.IPAddress != "" {
-			// Skip Cloud Map for pre-defined networks (bridge, host, none)
-			if netName == "bridge" || netName == "host" || netName == "none" {
-				continue
-			}
-			if err := s.cloudServiceRegister(id, hostname, ep.IPAddress, ep.NetworkID); err != nil {
-				s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to register in Cloud Map")
-			}
-		}
-	}
-
-	// Wait for task to reach RUNNING, then start background poller for exit.
-	_, err = s.waitForTaskRunning(s.ctx(), taskARN)
+	// Wait for task to reach RUNNING — only then is the ENI's private IP
+	// known. Cloud Map registration must use that real IP, not the local
+	// placeholder `0.0.0.0` carried in c.NetworkSettings.Networks (BUG-714).
+	taskAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
 		}
 		return err
+	}
+	taskIP := taskAddr
+	if i := strings.LastIndex(taskAddr, ":"); i > 0 {
+		taskIP = taskAddr[:i]
+	}
+
+	// Register in Cloud Map for service discovery (skip pre-defined networks)
+	hostname := strings.TrimPrefix(c.Name, "/")
+	for netName, ep := range c.NetworkSettings.Networks {
+		if ep == nil || ep.NetworkID == "" {
+			continue
+		}
+		if netName == "bridge" || netName == "host" || netName == "none" {
+			continue
+		}
+		if err := s.cloudServiceRegister(id, hostname, taskIP, ep.NetworkID); err != nil {
+			s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to register in Cloud Map")
+		}
 	}
 
 	// Start background poller to detect task exit

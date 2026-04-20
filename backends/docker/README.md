@@ -8,7 +8,7 @@ Passes all Docker API calls through to a local Docker daemon (Docker Desktop, Co
 environments:
   local:
     backend: docker
-    addr: ":9100"
+    addr: ":3375"
     log_level: info
 ```
 
@@ -28,10 +28,10 @@ All standard Docker client environment variables are respected.
 
 ```sh
 go build -o sockerless-backend-docker ./backends/docker/cmd
-./sockerless-backend-docker -addr :9100 -log-level info
+./sockerless-backend-docker -addr :3375 -log-level info
 ```
 
-Flags: `-addr` (default `:9100`), `-docker-host` (default auto-detect), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).
+Flags: `-addr` (default `:3375`), `-docker-host` (default auto-detect), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).
 
 ## Notes
 

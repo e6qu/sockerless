@@ -15,7 +15,19 @@ var _ = (*Server).cloudServiceResolve
 // container's hostname inside the network's zone. Uses the real Azure
 // Private DNS SDK. The zone is created per-network in
 // `cloudNetworkCreate`; the record maps hostname -> container IP.
+//
+// BUG-716: ACA Job executions don't have addressable per-execution IPs
+// reachable from other Jobs the way Fargate ENIs are. The caller passes
+// `ep.IPAddress` which is seeded as the placeholder "0.0.0.0". Skip
+// registration in that case rather than write a useless A-record. Proper
+// architectural fix is deferred (likely needs ACA Apps with ingress, not
+// Jobs).
 func (s *Server) cloudServiceRegister(containerID, hostname, ip, networkID string) error {
+	if ip == "" || ip == "0.0.0.0" {
+		s.Logger.Info().Str("container", containerID).Str("hostname", hostname).Str("network", networkID).
+			Msg("skipping Private DNS register: no real per-execution IP yet (BUG-716)")
+		return nil
+	}
 	state, ok := s.NetworkState.Get(networkID)
 	if !ok || state.DNSZoneName == "" {
 		s.Logger.Debug().

@@ -25,7 +25,7 @@ services:
     command: []
     environment:
       CLOUD: aws
-      BACKEND_ADDR: ":2375"
+      BACKEND_ADDR: ":3375"
 
   orchestrator:
     build:
@@ -34,7 +34,7 @@ services:
     environment:
       GITLAB_URL: http://gitlab
       GITLAB_ROOT_PASSWORD: sockerless-test-pw
-      SOCKERLESS_HOST: tcp://sockerless-backend:2375
+      SOCKERLESS_HOST: tcp://sockerless-backend:3375
       GITLAB_TIMEOUT: "600"
       PIPELINE_TIMEOUT: "300"
     depends_on:

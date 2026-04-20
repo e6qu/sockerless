@@ -44,21 +44,21 @@ export SOCKERLESS_ECS_TASK_ROLE_ARN=arn:aws:iam::123456789012:role/sockerless-li
 export SOCKERLESS_ECS_LOG_GROUP=/sockerless/ecs/live
 # Leave SOCKERLESS_ENDPOINT_URL unset — live mode talks to real AWS.
 
-sockerless-backend-ecs --addr 0.0.0.0:9100
+sockerless-backend-ecs --addr 0.0.0.0:3375
 ```
 
 Then run the Docker frontend, which exposes the Docker REST API and delegates to the backend:
 
 ```bash
 sockerless-docker-frontend \
-  --addr 0.0.0.0:2375 \
-  --backend http://127.0.0.1:9100
+  --addr 0.0.0.0:3375 \
+  --backend http://127.0.0.1:3375
 ```
 
 Test end-to-end:
 
 ```bash
-export DOCKER_HOST=tcp://<host>:2375
+export DOCKER_HOST=tcp://<host>:3375
 docker run --rm alpine echo hello-from-fargate
 ```
 
@@ -66,7 +66,7 @@ This should register a task definition, run a Fargate task in your VPC, stream l
 
 ## Exposing the Docker endpoint securely
 
-A plain TCP `:2375` socket is fine for same-host or same-VPC use. For external CI runners, front it with TLS. Options:
+A plain TCP `:3375` socket is fine for same-host or same-VPC use. For external CI runners, front it with TLS. Options:
 
 | Option | When | Trade-off |
 |---|---|---|
@@ -75,7 +75,7 @@ A plain TCP `:2375` socket is fine for same-host or same-VPC use. For external C
 | Cloudflare Tunnel / ngrok + token auth | Quick external reach | Third-party dependency. |
 | VPN (Tailscale, WireGuard) to the VPC | Mixed internal + external | Runner joins VPN; no public endpoint. |
 
-sockerless does not ship TLS termination; use a reverse proxy or front service. Do **not** expose `tcp://…:2375` on a public IP without auth — the Docker REST API has no built-in authentication.
+sockerless does not ship TLS termination; use a reverse proxy or front service. Do **not** expose `tcp://…:3375` on a public IP without auth — the Docker REST API has no built-in authentication.
 
 ## Docker Hub rate limits
 
@@ -87,10 +87,10 @@ Run the live-mode Docker CLI smoke test suite:
 
 ```bash
 cd tests/e2e-live-tests
-./start-backend.sh --backend ecs --mode live --backend-addr 0.0.0.0:2375 --pidfile /tmp/skls.pids
+./start-backend.sh --backend ecs --mode live --backend-addr 0.0.0.0:3375 --pidfile /tmp/skls.pids
 # in another terminal:
-DOCKER_HOST=tcp://127.0.0.1:2375 docker run --rm alpine uname -a
-DOCKER_HOST=tcp://127.0.0.1:2375 docker ps -a
+DOCKER_HOST=tcp://127.0.0.1:3375 docker run --rm alpine uname -a
+DOCKER_HOST=tcp://127.0.0.1:3375 docker ps -a
 ```
 
 `PLAN_ECS_MANUAL_TESTING.md` has the full Round-1 through Round-6 smoke matrix for what's been validated live.

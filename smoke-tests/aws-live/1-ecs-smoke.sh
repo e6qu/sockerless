@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ECS basic smoke against live AWS — docker run, logs, cross-container DNS.
-# Backend binds to 127.0.0.1:2375; DOCKER_HOST points clients at it.
+# Backend binds to 127.0.0.1:3375; DOCKER_HOST points clients at it.
 set -euo pipefail
 
 : "${AWS_REGION:=eu-west-1}"
@@ -26,12 +26,12 @@ BACKEND_BIN="${BACKEND_BIN:-./sockerless-backend-ecs}"
 cleanup() { kill "${BACKEND_PID:-0}" 2>/dev/null || true; }
 trap cleanup EXIT
 
-echo "=== starting ECS backend on :2375 ==="
-"$BACKEND_BIN" --addr 127.0.0.1:2375 --log-level debug 2>/tmp/backend.log &
+echo "=== starting ECS backend on :3375 ==="
+"$BACKEND_BIN" --addr 127.0.0.1:3375 --log-level debug 2>/tmp/backend.log &
 BACKEND_PID=$!
 sleep 2
 
-export DOCKER_HOST="tcp://127.0.0.1:2375"
+export DOCKER_HOST="tcp://127.0.0.1:3375"
 
 echo "--- 1.1 docker run --rm alpine echo ---"
 docker run --rm alpine:latest echo "hello-from-live-fargate"

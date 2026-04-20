@@ -1,47 +1,60 @@
-# Next Steps
+# Do Next
 
-## Current session — Phase C live-AWS session 2 (in progress)
+Snapshot pointer for the next session. Updated after every task per user directive.
 
-**Branch:** `post-phase86-continuation` off `origin/main` at commit `7f054e0`.
-**Plan:** `~/.claude/plans/purring-sprouting-dusk.md` (approved).
-**AWS account:** `729079515331` (root), eu-west-1 + us-east-1 — **clean slate** confirmed (no residue from Session 1).
+## Right now (in-flight)
 
-**Bug-logging rule:** Every failure surfaced during Phase C — runbook errors, terragrunt errors, e2e failures, teardown residue, anything unexpected — lands in `BUGS.md` with a BUG-NNN number before (or alongside) the fix. Root cause + reproduction + fix commit. No paper-overs.
+**Phase 86 Phase C — live-AWS session 2** on branch `post-phase86-continuation`. Plan: `~/.claude/plans/purring-sprouting-dusk.md`. AWS account 729079515331 (eu-west-1 + us-east-1).
 
-### Staged execution
+Progress vs. plan:
 
-| Phase | What | Cost | Time |
-|---|---|---|---|
-| 0 | Preflight — fix TG_DIR in smoke scripts, bootstrap terraform state buckets + DynamoDB lock table, build backend + bootstrap binaries | $0 | 10min |
-| 1 | ECS infra up (Runbook 0) — `terragrunt apply` in `terraform/environments/ecs/live/` | ~$0.01 + $0.05/hr | 7min |
-| 2 | ECS smoke (Runbook 1) — docker run, logs, cross-container DNS, exec via SSM | — | 5min |
-| 3 | Lambda infra up — `terragrunt apply` in `terraform/environments/lambda/live/` | ~$0 | 3min |
-| 4 | Lambda baseline (Runbook 2) — docker run + logs + kill | ~$0.001 | 5min |
-| 5 | **CONDITIONAL** — Lambda agent-as-handler (Runbook 3) needs a public callback URL (ngrok / cloudflared). Skip if unavailable. | ~$0.001 | 10min |
-| 6 | E2E live tests — `tests/e2e-live-tests/github-runner/run.sh --mode live` + gitlab counterpart × ecs + lambda backends | ~$0.03 (smoke) to ~$0.08 (full matrix) | 30min to 2h |
-| 7 | Teardown (Runbook 6) — `terragrunt destroy` both envs, residue audit, retain state buckets | — | 3min |
-| 8 | Doc updates — write `_tasks/P86-AWS-manual-runbook-session2.md`, fill `docs/runner-capability-matrix.md` live columns, update PLAN/STATUS/WHAT_WE_DID/DO_NEXT, commit | $0 | 15min |
+| Phase | Status | Notes |
+|---|---|---|
+| 0 Preflight | done | Scripts fixed, state buckets bootstrapped (`sockerless-tf-state` eu-west-1, `sockerless-terraform-state` + `sockerless-terraform-locks` us-east-1), binaries built, creds verified. |
+| 1 ECS infra up | done | terragrunt apply 34/34 in eu-west-1 (~2min). Outputs at `/tmp/ecs-out.json`. |
+| 2 ECS smoke | partial-pass | 2.1 PASS (~33s cold), 2.2 PASS, 2.3 PASS via FQDN (short-name FAIL by design — BUG-711), 2.4 FAIL (BUG-717 SSM proto). 10 bugs filed + 5 fully fixed + 4 minimum-fixed + 1 deferred. |
+| 3 Lambda infra up | pending | After ECS smoke completes. |
+| 4 Lambda baseline | pending |  |
+| 5 Lambda agent (CONDITIONAL) | pending | Decision point on tunnel strategy. |
+| 6 E2E live tests | pending | Narrow smoke first, widen if time. |
+| 7 Teardown | pending | Lambda first then ECS. Hard requirement before session ends. |
+| 8 Doc updates + commit | pending | Final state save. |
 
-### Pause-points (user confirmation required)
+## Open bugs (all from this session, fixes landed on branch)
 
-- **A** after Phase 0 (scripts + state + binaries look right) before first `terragrunt apply`.
-- **B** after Phase 1 (infra up, outputs sane).
-- **C** after Phase 2 (per-command PASS/FAIL; any FAIL → bug fix before continuing).
-- **D** before Phase 5 (tunnel strategy).
-- **E** before Phase 6 (e2e breadth — smoke subset vs. full matrix).
-- **F** after Phase 7 if any residue found.
-- **G** before `/clear` after Phase 8.
+| ID | Sev | Status |
+|---|---|---|
+| 708 | Low | open — workaround in place (per-prefix skip-cache memo + INF demote); proper credential plumbing for ECR pull-through cache deferred |
+| 709 | High | fix landed on branch (waitForOperation polling now sleeps); cross-cloud sweep done (ECS-only — Azure SDK PollUntilDone sleeps, GCP SDK handles polling); needs unit test |
+| 710 | Med | fix landed on branch (defaults all moved to :3375); cross-cloud sweep done (all 7 backends + CLI + READMEs + examples + http-trace); needs CI to confirm |
+| 711 | High | minimum fix landed (DnsSearchDomains stripped); cross-cloud sweep done (ECS-only — other backends use FQDN-style DNS without explicit search domains); long-term mechanism for short-name DNS resolution still TBD |
+| 712 | High | fix landed on branch (cloudNetworkCreate idempotent for ECS); cross-cloud sweep found BUG-713 in cloudrun |
+| 713 | High | fix landed on branch (cloudrun cloudNetworkCreate now reuses existing zone on 409); cross-cloud sweep done (Azure naturally idempotent via PUT, Lambda/GCF/AZF have no cloud-side network create); needs unit test |
+| 714 | High | fix landed on branch (ECS now registers in Cloud Map with the ENI IP after task RUNNING, not the in-memory placeholder); cross-cloud sweep found BUG-715 + BUG-716 |
+| 715 | High | minimum fix landed in cloudrun (skip DNS register on placeholder IP); proper fix deferred — Cloud Run Jobs lack addressable per-execution IPs |
+| 716 | High | minimum fix landed in aca (skip DNS register on placeholder IP); proper fix deferred — ACA Jobs lack addressable per-execution IPs |
+| 717 | High | open — SSM Session Manager binary protocol not decoded; docker exec output garbled. Substantial implementation; deferred. ECS-only per cross-cloud sweep. |
 
-### Session budget
+## Live AWS state right now
+
+- `sockerless-backend-ecs` running locally on `:3375` (PID 94554, started 2026-04-20 14:36).
+- Sockerless infra up in eu-west-1: VPC `vpc-0991a9275f0aa033f`, ECS cluster `sockerless-live`, ECR `sockerless-live`, NAT gateway running (~$0.05/hr).
+- No orphan Cloud Map namespaces, security groups, or running tasks (verified post-cleanup).
+- Lambda infra in us-east-1 — not yet provisioned.
+
+## After Phase C closes
+
+Candidates for the next session (order TBD by user):
+
+- **Phase 68** Multi-Tenant Backend Pools (P68-002 → 010). Pool registry, request router, concurrency limiter, pool lifecycle, metrics, RR scheduling, resource limits, tests, state save.
+- **Phase 78** UI Polish — dark mode, design tokens, error UX, container detail modal, auto-refresh, perf audit, a11y, E2E smoke, docs.
+- **BUG-708 proper fix** — wire `SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN` into `CreatePullThroughCacheRule` so docker-hub auth works.
+- **BUG-711 proper fix** — pick a mechanism for short-name cross-container DNS that survives awsvpc's restrictions (DHCP options vs. resolv.conf injection vs. Service Connect).
+- **Tests for in-flight Phase-C fixes** — unit tests for waitForOperation sleep, idempotent cloudNetworkCreate, port-default sweep.
+
+## Session budget snapshot (from plan)
 
 | Scope | Time | Cost |
 |---|---|---|
 | Narrow (Phases 0-4 + 6 smoke + 7) | ~1h 30min | ~$0.15 |
 | Full matrix (+ 5, + 6 full) | ~3h | ~$0.50 |
-
-## After Phase C
-
-Once Phase C closes out, Phase 86 is fully done. Candidates for the next session:
-
-- **Phase 68** — Multi-Tenant Backend Pools. P68-001 done; P68-002→010 pending (pool registry, request router, concurrency limiter, lifecycle API, metrics, round-robin, resource limits, tests).
-- **Phase 78** — UI Polish: dark mode, design tokens, error UX, container detail modal, auto-refresh, performance audit, accessibility, E2E smoke, documentation.

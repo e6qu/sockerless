@@ -53,9 +53,9 @@ LAMBDA_ROLE=$(terragrunt output -json 2>/dev/null | python3 -c "import json,sys;
 cd backends/ecs && go build -o sockerless-backend-ecs ./cmd/sockerless-backend-ecs
 cd backends/lambda && go build -o sockerless-backend-lambda ./cmd/sockerless-backend-lambda
 
-# Start ECS backend on :9100
+# Start ECS backend on :3375
 source aws.sh && source /tmp/ecs-env.sh
-./sockerless-backend-ecs -addr :9100
+./sockerless-backend-ecs -addr :3375
 
 # Start Lambda backend on :9200 (shares VPC from ECS)
 export SOCKERLESS_LAMBDA_ROLE_ARN=$LAMBDA_ROLE
@@ -64,11 +64,11 @@ export SOCKERLESS_LAMBDA_SECURITY_GROUPS=$SOCKERLESS_ECS_SECURITY_GROUPS
 ./sockerless-backend-lambda -addr :9200
 
 # Docker CLI
-export DOCKER_HOST=tcp://localhost:9100  # ECS
+export DOCKER_HOST=tcp://localhost:3375  # ECS
 # or: export DOCKER_HOST=tcp://localhost:9200  # Lambda
 
 # Podman CLI
-podman system connection add sockerless-ecs tcp://localhost:9100
+podman system connection add sockerless-ecs tcp://localhost:3375
 podman system connection add sockerless-lambda tcp://localhost:9200
 ```
 
@@ -224,7 +224,7 @@ services:
 
 | # | Test | Command | Expected |
 |---|------|---------|----------|
-| G1 | Compose up | `DOCKER_HOST=tcp://localhost:9100 docker compose up -d` | Both services created and started |
+| G1 | Compose up | `DOCKER_HOST=tcp://localhost:3375 docker compose up -d` | Both services created and started |
 | G2 | Compose ps | `docker compose ps` | web: running, worker: running |
 | G3 | Compose logs | `docker compose logs web` | nginx access logs |
 | G4 | Compose exec | `docker compose exec worker echo hello` | "hello" (requires agent) |

@@ -34,7 +34,7 @@ Docker Client (CLI / SDK / CI Runner)
         ▼
 ┌─────────────────────────────┐
 │  Sockerless Backend         │  Docker REST API v1.44
-│  sockerless-backend-{name}  │  Listens on :2375 or unix socket
+│  sockerless-backend-{name}  │  Listens on :3375 or unix socket
 └──────────┬──────────────────┘
            │
            ▼
@@ -172,7 +172,7 @@ sockerless context create ecs-dev --backend ecs \
 sockerless server start
 
 # Use with Docker CLI
-export DOCKER_HOST=tcp://localhost:2375
+export DOCKER_HOST=tcp://localhost:3375
 docker version
 docker run --rm alpine echo "hello from sockerless"
 docker ps -a

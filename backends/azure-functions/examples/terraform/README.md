@@ -63,7 +63,7 @@ export SOCKERLESS_AZF_RESOURCE_GROUP=$(terraform output -raw resource_group_name
 export SOCKERLESS_AZF_LOCATION=eastus
 export SOCKERLESS_AZF_STORAGE_ACCOUNT=$(terraform output -raw storage_account_name)
 export SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE=$(terraform output -raw log_analytics_workspace_id)
-export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:9100
+export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:3375
 ```
 
 **Important:** `SOCKERLESS_CALLBACK_URL` is required. Azure Functions uses reverse agent mode exclusively — functions cannot accept arbitrary inbound connections. Replace `<YOUR_BACKEND_HOST>` with a publicly reachable address.
@@ -81,7 +81,7 @@ go build -tags noui -o sockerless-backend-azf ./backends/azure-functions
 ## Step 5: Configure Docker to Use Sockerless
 
 ```bash
-export DOCKER_HOST=tcp://localhost:2375
+export DOCKER_HOST=tcp://localhost:3375
 ```
 
 ## Step 6: Use Docker Commands
@@ -176,7 +176,7 @@ terraform destroy
 ┌──────────────┐     ┌──────────────────┐     ┌────────────────────────┐
 │  docker CLI  │────▶│ Sockerless       │────▶│ Azure Functions        │
 │              │     │ Backend           │     │                        │
-│ pull, create,│     │ (localhost:9100)  │     │ WebApps.CreateOrUpdate │
+│ pull, create,│     │ (localhost:3375)  │     │ WebApps.CreateOrUpdate │
 │ start, exec, │     │                  │◀────│ HTTP POST invoke       │
 │ logs, rm     │     │ ◀── agent calls  │     │ WebApps.Delete         │
 └──────────────┘     │     back here    │     │ Logs.QueryWorkspace    │

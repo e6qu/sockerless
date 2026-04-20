@@ -3,12 +3,21 @@ package ecs
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	ecrtypes "github.com/aws/aws-sdk-go-v2/service/ecr/types"
 )
+
+// dockerHubCredentialARN returns the Secrets Manager ARN holding docker-hub
+// credentials for ECR pull-through cache, or "" if not configured.
+//
+//	Secret JSON shape: {"username":"...","accessToken":"..."}
+func dockerHubCredentialARN() string {
+	return os.Getenv("SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN")
+}
 
 // resolveImageURI converts a Docker image reference to an ECR URI that
 // Fargate can pull. Short references like `alpine` or `node:20` are
@@ -22,10 +31,9 @@ import (
 //   - "ghcr.io/owner/repo:v1" → "<account>.dkr.ecr.<region>.amazonaws.com/ghcr-io/owner/repo:v1"
 //   - "<account>.dkr.ecr.<region>.amazonaws.com/repo:tag" → used as-is
 //
-// If the pull-through cache rule can't be created (e.g. the execution
-// role lacks ecr:CreatePullThroughCacheRule), the raw reference is
-// returned so Fargate reports a clear pull failure rather than an
-// opaque PENDING state.
+// Returns an error (not a silent fallback) if pull-through cache
+// setup fails, so the operator sees the real failure (e.g. missing
+// docker-hub credential ARN — see BUG-708).
 func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error) {
 	if strings.Contains(ref, ".dkr.ecr.") && strings.Contains(ref, ".amazonaws.com") {
 		return ref, nil
@@ -59,9 +67,7 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 	}
 
 	if err := s.ensurePullThroughCache(ctx, cachePrefix, upstreamURL, upstreamKind); err != nil {
-		s.Logger.Warn().Err(err).Str("prefix", cachePrefix).Str("ref", ref).
-			Msg("pull-through cache setup failed, using raw image ref (Fargate pull will likely fail)")
-		return ref, nil
+		return ref, fmt.Errorf("ECR pull-through cache setup for %q: %w", cachePrefix, err)
 	}
 
 	ecrURI := fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com/%s/%s:%s", accountID, s.config.Region, cachePrefix, repo, tag)
@@ -71,7 +77,11 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 
 // ensurePullThroughCache creates an ECR pull-through cache rule if
 // one doesn't already exist for the given prefix + upstream pair.
-// Idempotent on repeated calls.
+// Idempotent on repeated calls. For docker-hub upstream (BUG-708),
+// AWS now requires a Secrets Manager `CredentialArn` containing the
+// upstream registry credentials — read from
+// `SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN`. Returns an explicit
+// error when the credential is needed but not configured.
 func (s *Server) ensurePullThroughCache(ctx context.Context, prefix, upstreamURL string, upstreamKind ecrtypes.UpstreamRegistry) error {
 	rules, err := s.aws.ECR.DescribePullThroughCacheRules(ctx, &ecr.DescribePullThroughCacheRulesInput{
 		EcrRepositoryPrefixes: []string{prefix},
@@ -80,12 +90,20 @@ func (s *Server) ensurePullThroughCache(ctx context.Context, prefix, upstreamURL
 		return nil
 	}
 
-	_, err = s.aws.ECR.CreatePullThroughCacheRule(ctx, &ecr.CreatePullThroughCacheRuleInput{
+	in := &ecr.CreatePullThroughCacheRuleInput{
 		EcrRepositoryPrefix: aws.String(prefix),
 		UpstreamRegistryUrl: aws.String(upstreamURL),
 		UpstreamRegistry:    upstreamKind,
-	})
-	if err != nil {
+	}
+	if upstreamKind == ecrtypes.UpstreamRegistryDockerHub && upstreamURL == "registry-1.docker.io" {
+		credARN := dockerHubCredentialARN()
+		if credARN == "" {
+			return fmt.Errorf("docker-hub pull-through cache requires SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN (Secrets Manager ARN with {username, accessToken} JSON) — AWS rejects unauthenticated docker-hub upstream rules")
+		}
+		in.CredentialArn = aws.String(credARN)
+	}
+
+	if _, err := s.aws.ECR.CreatePullThroughCacheRule(ctx, in); err != nil {
 		if strings.Contains(err.Error(), "PullThroughCacheRuleAlreadyExists") {
 			return nil
 		}

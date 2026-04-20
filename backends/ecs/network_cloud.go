@@ -2,6 +2,7 @@ package ecs
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -22,7 +23,9 @@ func (s *Server) cloudNetworkCreate(name, networkID string) error {
 	}
 	s.Logger.Info().Str("vpc", vpcID).Str("network", name).Msg("creating security group for Docker network")
 
-	// Create the security group.
+	// Create the security group, or reuse an existing one with the same
+	// name in the same VPC (idempotent retry support — BUG-712).
+	var sgID string
 	createOut, err := s.aws.EC2.CreateSecurityGroup(s.ctx(), &ec2.CreateSecurityGroupInput{
 		GroupName:   aws.String(groupName),
 		Description: aws.String(fmt.Sprintf("Sockerless network: %s", name)),
@@ -38,17 +41,32 @@ func (s *Server) cloudNetworkCreate(name, networkID string) error {
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create security group %s: %w", groupName, err)
+		if !strings.Contains(err.Error(), "InvalidGroup.Duplicate") {
+			return fmt.Errorf("failed to create security group %s: %w", groupName, err)
+		}
+		// Reuse the existing SG by name+VPC.
+		descOut, descErr := s.aws.EC2.DescribeSecurityGroups(s.ctx(), &ec2.DescribeSecurityGroupsInput{
+			Filters: []ec2types.Filter{
+				{Name: aws.String("group-name"), Values: []string{groupName}},
+				{Name: aws.String("vpc-id"), Values: []string{vpcID}},
+			},
+		})
+		if descErr != nil || len(descOut.SecurityGroups) == 0 {
+			return fmt.Errorf("security group %s exists but DescribeSecurityGroups returned nothing: %w", groupName, descErr)
+		}
+		sgID = aws.ToString(descOut.SecurityGroups[0].GroupId)
+		s.Logger.Info().Str("network", name).Str("sg", sgID).Msg("reusing existing security group for network")
+	} else {
+		sgID = aws.ToString(createOut.GroupId)
+		s.Logger.Info().
+			Str("network", name).
+			Str("sg", sgID).
+			Str("vpc", vpcID).
+			Msg("created security group for network")
 	}
 
-	sgID := aws.ToString(createOut.GroupId)
-	s.Logger.Info().
-		Str("network", name).
-		Str("sg", sgID).
-		Str("vpc", vpcID).
-		Msg("created security group for network")
-
 	// Add self-referencing ingress rule: allow all traffic from the same SG.
+	// Idempotent — InvalidPermission.Duplicate when re-applying.
 	_, err = s.aws.EC2.AuthorizeSecurityGroupIngress(s.ctx(), &ec2.AuthorizeSecurityGroupIngressInput{
 		GroupId: aws.String(sgID),
 		IpPermissions: []ec2types.IpPermission{
@@ -60,7 +78,7 @@ func (s *Server) cloudNetworkCreate(name, networkID string) error {
 			},
 		},
 	})
-	if err != nil {
+	if err != nil && !strings.Contains(err.Error(), "InvalidPermission.Duplicate") {
 		s.Logger.Warn().Err(err).Str("sg", sgID).Msg("failed to add self-referencing ingress rule")
 	}
 

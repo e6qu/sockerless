@@ -39,3 +39,17 @@ func TestExtractAccountID(t *testing.T) {
 		}
 	}
 }
+
+// BUG-708: dockerHubCredentialARN reads from SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN.
+// When unset, ensurePullThroughCache must reject docker-hub upstream with an
+// explicit error (no silent fallback).
+func TestDockerHubCredentialARN_ReadsEnv(t *testing.T) {
+	t.Setenv("SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN", "")
+	if got := dockerHubCredentialARN(); got != "" {
+		t.Fatalf("expected empty, got %q", got)
+	}
+	t.Setenv("SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN", "arn:aws:secretsmanager:eu-west-1:123:secret/skls-dh-XYZ")
+	if got := dockerHubCredentialARN(); got != "arn:aws:secretsmanager:eu-west-1:123:secret/skls-dh-XYZ" {
+		t.Fatalf("expected ARN, got %q", got)
+	}
+}

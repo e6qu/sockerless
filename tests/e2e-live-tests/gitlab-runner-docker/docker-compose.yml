@@ -23,7 +23,7 @@ services:
     build:
       context: ../../..
       dockerfile: tests/e2e-live-tests/gitlab-runner-docker/${DOCKERFILE_BACKEND:-Dockerfile.backend}
-    command: ["--backend", "${BACKEND:-memory}", "--mode", "${MODE:-simulator}", "--backend-addr", "0.0.0.0:2375"]
+    command: ["--backend", "${BACKEND:-memory}", "--mode", "${MODE:-simulator}", "--backend-addr", "0.0.0.0:3375"]
     environment:
       BACKEND: ${BACKEND:-memory}
       MODE: ${MODE:-simulator}
@@ -36,7 +36,7 @@ services:
     environment:
       GITLAB_URL: http://gitlab
       GITLAB_ROOT_PASSWORD: sockerless-test-pw
-      SOCKERLESS_HOST: tcp://sockerless-backend:2375
+      SOCKERLESS_HOST: tcp://sockerless-backend:3375
       GITLAB_TIMEOUT: "600"
       PIPELINE_TIMEOUT: "600"
       PIPELINE: ${PIPELINE:-basic}

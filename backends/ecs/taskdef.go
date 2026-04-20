@@ -97,10 +97,29 @@ func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinit
 		containerDef.User = aws.String(config.User)
 	}
 
-	// DNS search domains: one per Cloud Map namespace associated with a
-	// network the container is connected to. Lets bare short names like
-	// "postgres" resolve to "postgres.skls-<net>.local" inside the task.
-	containerDef.DnsSearchDomains = s.searchDomainsForContainer(ci.Container)
+	// BUG-711 fix: ECS rejects ContainerDefinition.DnsSearchDomains for
+	// awsvpc mode. Wrap the user's command in a /bin/sh shim that rewrites
+	// /etc/resolv.conf to add the per-network Cloud Map namespaces as DNS
+	// search domains, preserving VPC DNS nameservers, then exec's the
+	// original argv. Only applied when the container is on at least one
+	// user-defined network and has an explicit entrypoint or command (so we
+	// have something to exec — image-default CMD without explicit override
+	// is left alone since we can't reconstruct argv without the image
+	// manifest, and Fargate would have to re-pull just to read it).
+	if domains := s.searchDomainsForContainer(ci.Container); len(domains) > 0 {
+		origArgv := append([]string{}, entrypoint...)
+		origArgv = append(origArgv, command...)
+		if len(origArgv) > 0 {
+			searchLine := "search " + strings.Join(domains, " ")
+			script := fmt.Sprintf(
+				"{ awk '/^nameserver /' /etc/resolv.conf; printf '%s\\n'; } > /tmp/.skls-resolv && cat /tmp/.skls-resolv > /etc/resolv.conf 2>/dev/null; exec %s",
+				searchLine,
+				shellQuoteArgs(origArgv),
+			)
+			containerDef.EntryPoint = []string{"/bin/sh", "-c"}
+			containerDef.Command = []string{script}
+		}
+	}
 
 	// Build volumes and mount points for bind mounts.
 	// Use EFS when AgentEFSID is configured so bind mounts are not
@@ -273,6 +292,17 @@ func fargateResources(containers []containerInput) (cpu, memory string) {
 
 // sanitizeContainerName converts a container name to a valid ECS container definition name.
 // Strips leading "/" and replaces non-alphanumeric characters with "-".
+// shellQuoteArgs joins argv with single-quoted POSIX shell escaping so the
+// caller can use `exec $(shellQuoteArgs(argv))` from inside an `sh -c` script
+// without arg-splitting hazards.
+func shellQuoteArgs(argv []string) string {
+	parts := make([]string, len(argv))
+	for i, a := range argv {
+		parts[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+	}
+	return strings.Join(parts, " ")
+}
+
 func sanitizeContainerName(name string) string {
 	name = strings.TrimPrefix(name, "/")
 	if name == "" {

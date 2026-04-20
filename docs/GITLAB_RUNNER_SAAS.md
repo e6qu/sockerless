@@ -13,7 +13,7 @@ gitlab.com (cloud)
 gitlab-runner binary (any Linux host)
   │
   │   docker executor:
-  │     runners.docker.host = tcp://sockerless:2375
+  │     runners.docker.host = tcp://sockerless:3375
   │
   ▼
 sockerless Docker API
@@ -52,7 +52,7 @@ sudo gitlab-runner register --non-interactive \
   --tag-list sockerless,ecs \
   --executor docker \
   --docker-image alpine:latest \
-  --docker-host tcp://<sockerless-host>:2375 \
+  --docker-host tcp://<sockerless-host>:3375 \
   --docker-tls-verify false \
   --docker-pull-policy always \
   --run-untagged
@@ -75,7 +75,7 @@ check_interval = 3
   executor = "docker"
 
   [runners.docker]
-    host = "tcp://<sockerless-host>:2375"
+    host = "tcp://<sockerless-host>:3375"
     image = "alpine:latest"
     tls_verify = false
     disable_cache = true
@@ -148,7 +148,7 @@ sudo gitlab-runner run --working-directory /home/gitlab-runner --config /etc/git
 
 ## Troubleshooting
 
-- **"error during connect: Get http://.../v1.44/containers/json"** — runner can't reach sockerless. `curl -sf http://<sockerless-host>:2375/_ping` from the runner host.
+- **"error during connect: Get http://.../v1.44/containers/json"** — runner can't reach sockerless. `curl -sf http://<sockerless-host>:3375/_ping` from the runner host.
 - **Helper container fails to resolve `files.gitlab.com`** — the Fargate subnet needs outbound internet for the helper to upload artifacts. Check the NAT gateway in the Terraform.
 - **Services unreachable (`psql -h db` fails)** — verify Cloud Map namespace exists for the sockerless network and the task's security group allows task-to-task traffic. See `docs/ECS_SERVICES_DESIGN.md`.
 - **Stuck at `Running with gitlab-runner 18.x.x`** — means the runner can't pull the helper image. sockerless may be refusing the ECR pull; check the sockerless logs for `pull-through cache` errors.

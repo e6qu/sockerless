@@ -49,7 +49,7 @@ All backends accept:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-addr` | `:9100` | Listen address |
+| `-addr` | `:3375` | Listen address |
 | `-log-level` | `info` | Log level: debug, info, warn, error |
 
 ## Configuration

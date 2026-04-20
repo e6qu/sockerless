@@ -2,7 +2,7 @@
 
 Docker-compatible REST API that runs containers on cloud backends (ECS, Lambda, Cloud Run, GCF, ACA, AZF) or local Docker. 7 backends, 3 cloud simulators, validated against SDKs/CLIs/Terraform.
 
-86 phases, 757 tasks, 707 bugs tracked (all fixed). See [STATUS.md](STATUS.md), [BUGS.md](BUGS.md), [specs/](specs/).
+86 phases, 757 tasks, 717 bugs tracked (715 fixed, 2 open from Phase C session 2 — both pending architectural rewrite). See [STATUS.md](STATUS.md), [BUGS.md](BUGS.md), [specs/](specs/).
 
 ## Phase 86 — Simulator parity + Lambda agent-as-handler
 
@@ -11,6 +11,28 @@ Closes the Phase 86 plan: every cloud-API slice sockerless depends on is now a f
 Branch: `phase86-complete-runner-support` → PR #112 (merged 2026-04-20 as commit `7f054e0`).
 
 Phase C — live-AWS session 2 — is in progress on `post-phase86-continuation` off `origin/main`. Session 1's two blocker bugs (BUG-692 docker-run hang, BUG-P86-A2 raw ECS image ref) are fixed; session 2 reruns the full runbook (0-infra-up → 6-teardown) + the e2e runner matrix. Plan at `~/.claude/plans/purring-sprouting-dusk.md`.
+
+### Live-AWS session 2 — bugs found + fixed in-flight (2026-04-20)
+
+Session 2 (cluster `sockerless-live`, account 729079515331, eu-west-1) ran Phase 1 ECS infra-up green (34 resources via terragrunt apply, ~2min) then surfaced five product bugs while attempting Phase 2 smoke. Each was filed in BUGS.md and fixed before retrying the relevant smoke step:
+
+- **BUG-708** ECR pull-through cache for docker-hub now requires a Secrets Manager credential ARN; backend was logging WRN per-create + falling back to direct upstream pull (which actually works for public images). Fixed: per-prefix "skip cache" memo + WRN→INF demotion noting the env var to enable proper auth. Full credential plumbing deferred.
+- **BUG-709** `waitForOperation` polled Cloud Map's `GetOperation` 60× back-to-back with no sleep — burned 60 API calls in <10s while real Cloud Map needs 30-60s. Fixed: `time.Sleep(2*time.Second)` between polls (60 × 2s = 120s headroom) + DBG log per pending tick.
+- **BUG-710** Sockerless CLI default `--addr` was `:2375`, colliding with Docker daemon's well-known port (and Podman's). Fixed: change all defaults — CLI server start, all 7 backend `cmd/*/main.go`, READMEs, example terraform outputs, `tools/http-trace` — to `:3375`. Test fixtures left at their existing arbitrary values.
+- **BUG-711** P86-003 set `ContainerDefinition.DnsSearchDomains` so awsvpc tasks could resolve bare short names against their network's Cloud Map namespace. ECS `RegisterTaskDefinition` rejects this for awsvpc unconditionally. Minimum fix: drop the field; cross-container DNS now FQDN-only (`svc.skls-<net>.local`). Long-term mechanism (DHCP options vs. resolv.conf injection vs. Service Connect) deferred.
+- **BUG-712** `cloudNetworkCreate` non-idempotent: retry after partial failure / leftover state crashed at `CreateSecurityGroup` (`InvalidGroup.Duplicate`) and `CreatePrivateDnsNamespace` (`ConflictingDomainExists`). Fixed: catch `InvalidGroup.Duplicate` and look up existing SG by name+VPC; tolerate `InvalidPermission.Duplicate` on self-ingress; new `findNamespaceByName` helper called before `CreatePrivateDnsNamespace` to reuse existing namespace.
+- **BUG-713** Cross-cloud sweep of BUG-712 found the same idempotency gap in `backends/cloudrun/network_cloud.go::cloudNetworkCreate` — GCP `ManagedZones.Create` returns 409 on retry, leaving the network unusable. Fixed: catch `googleapi.Error{Code: 409}` and fall back to `ManagedZones.Get` to reuse the existing zone. Azure ACA verified naturally idempotent (PUT semantics via `BeginCreateOrUpdate`); Lambda + GCF + AZF verified to have no cloud-side network creation.
+- **BUG-714** ECS Cloud Map registered each container with `ep.IPAddress` from the local container state — that field is seeded as the placeholder `"0.0.0.0"` and never updated with the real Fargate ENI IP. Effect: Cloud Map A-records resolved to `0.0.0.0`, breaking cross-container DNS even by FQDN. Fixed in `backends/ecs/backend_impl.go::startSingleContainerTask`: move the registration loop AFTER `waitForTaskRunning(...)` returns the task's `ip:9111` address (already extracted by `eni.go::extractENIIP`); strip the port and pass that real IP into `cloudServiceRegister`.
+- **BUG-715, BUG-716** Cross-cloud sweep of BUG-714 found the same placeholder-IP-into-DNS pattern in `backends/cloudrun/service_discovery_cloud.go::cloudServiceRegister` and `backends/aca/service_discovery_cloud.go::cloudServiceRegister`. Both backends' `NetworkConnect` paths blindly pass `ep.IPAddress` (`"0.0.0.0"`) into the DNS register. Minimum honest fix in both: early-return with INF log when ip ∈ {"", "0.0.0.0"} so the cloud SDKs aren't called with useless A-record values. Proper architectural fix is deferred — Cloud Run Jobs and ACA Jobs don't have addressable per-execution IPs reachable from other Jobs the way Fargate ENIs are; cross-container DNS for those backends would likely need different cloud primitives (Cloud Run Services with internal ingress + VPC connector for GCP; ACA Apps with ingress for Azure).
+- **BUG-717** `docker exec <ecs-container>` against the live ECS backend returns `unrecognized stream: 69` and no usable output. Root cause: `cloudExecStart` in `backends/ecs/exec_cloud.go` opens an SSM Session Manager WebSocket and pipes the raw bytes through `wsBridge → muxBridge` — but SSM bytes aren't raw stdout, they're SSM Session Manager binary frames. Docker CLI mistakes embedded SSM framing bytes (e.g. 0x45 'E' from a string field) as bogus mux stream IDs. Proper fix requires implementing the SSM Session Manager binary protocol decoder (parse message header, route by payload type, extract real stdout/stderr) before applying Docker mux headers. Cross-cloud sweep: ECS-only — Cloud Run/GCF have no exec; ACA exec uses different proto; Lambda exec goes through the agent overlay. Filed; deferred to a follow-up phase as it's substantial implementation.
+
+### Phase 2 ECS smoke results (2026-04-20 session 2)
+
+- 2.1 `docker run --rm alpine echo` → **PASS** (~33s end-to-end, Fargate cold start)
+- 2.2 `docker run -d` + `docker logs` → **PASS** (tick-1/2/3 streamed from CloudWatch)
+- 2.3 cross-container DNS via FQDN (`curl http://svc3.skls-skls3.local:8080`) → **PASS** after 4 fixes (709 + 711-min + 712 + 714)
+- 2.3 short-name (`curl http://svc3:8080`) → **FAIL** by design — BUG-711 minimum fix dropped DnsSearchDomains, FQDN-only resolution until proper mechanism chosen
+- 2.4 `docker exec` → **FAIL** with garbled output — BUG-717 (SSM binary protocol not decoded)
 
 ### Simulator parity (AWS + GCP + Azure)
 
