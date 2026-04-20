@@ -574,7 +574,8 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 	// Stop if running
 	if c.State.Running {
 		s.StopHealthCheck(id)
-		ecsState, _ := s.ECS.Get(id)
+		// Phase 89 / BUG-725: cloud-fallback lookup so restart works post-restart.
+		ecsState, _ := s.resolveTaskState(s.ctx(), id)
 		if ecsState.TaskARN != "" {
 			cluster := s.config.Cluster
 			if ecsState.ClusterARN != "" {
@@ -948,8 +949,8 @@ func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*ap
 	}
 
 	// ECS-specific: check that an ECS task is available for exec.
-	ecsState, _ := s.ECS.Get(c.ID)
-	if ecsState.TaskARN == "" {
+	// Phase 89 / BUG-725: cloud-fallback lookup so ExecCreate works post-restart.
+	if ecsState, ok := s.resolveTaskState(s.ctx(), c.ID); !ok || ecsState.TaskARN == "" {
 		return nil, &api.NotImplementedError{
 			Message: fmt.Sprintf("exec requires a running ECS task, but container %s has none (ECS backend)", strings.TrimPrefix(c.Name, "/")),
 		}

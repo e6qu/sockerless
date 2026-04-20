@@ -309,7 +309,7 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 	}
 
-	lambdaState, _ := s.Lambda.Get(id)
+	lambdaState, _ := s.resolveLambdaState(s.ctx(), id)
 
 	exitCh := make(chan struct{})
 	s.Store.WaitChs.Store(id, exitCh)
@@ -480,7 +480,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	s.StopHealthCheck(id)
 
 	// Delete Lambda function (best-effort)
-	lambdaState, _ := s.Lambda.Get(id)
+	lambdaState, _ := s.resolveLambdaState(s.ctx(), id)
 	if lambdaState.FunctionName != "" {
 		_, _ = s.aws.Lambda.DeleteFunction(s.ctx(), &awslambda.DeleteFunctionInput{
 			FunctionName: aws.String(lambdaState.FunctionName),
@@ -531,7 +531,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
 	var logGroupName *string
 	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
-		lambdaState, _ := s.Lambda.Get(id)
+		lambdaState, _ := s.resolveLambdaState(s.ctx(), id)
 		if lambdaState.FunctionName != "" {
 			group := fmt.Sprintf("/aws/lambda/%s", lambdaState.FunctionName)
 			logGroupName = &group
@@ -676,7 +676,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 			spaceReclaimed += uint64(img.Size)
 		}
 		// Clean up Lambda cloud resources
-		lambdaState, _ := s.Lambda.Get(c.ID)
+		lambdaState, _ := s.resolveLambdaState(s.ctx(), c.ID)
 		if lambdaState.FunctionName != "" {
 			_, _ = s.aws.Lambda.DeleteFunction(s.ctx(), &awslambda.DeleteFunctionInput{
 				FunctionName: aws.String(lambdaState.FunctionName),

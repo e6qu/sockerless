@@ -167,7 +167,7 @@ func (s *Server) ContainerStart(ref string) error {
 		return &api.NotModifiedError{}
 	}
 
-	crState, _ := s.CloudRun.Get(id)
+	crState, _ := s.resolveCloudRunState(s.ctx(), id)
 
 	exitCh := make(chan struct{})
 	s.Store.WaitChs.Store(id, exitCh)
@@ -455,7 +455,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			"exitCode": "0",
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
-		crState, _ := s.CloudRun.Get(id)
+		crState, _ := s.resolveCloudRunState(s.ctx(), id)
 		if crState.ExecutionName != "" {
 			s.cancelExecution(crState.ExecutionName)
 		}
@@ -464,7 +464,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	s.StopHealthCheck(id)
 
 	// Delete Cloud Run Job (best-effort)
-	crState, _ := s.CloudRun.Get(id)
+	crState, _ := s.resolveCloudRunState(s.ctx(), id)
 	if crState.JobName != "" {
 		s.deleteJob(crState.JobName)
 		s.Registry.MarkCleanedUp(crState.JobName)
@@ -516,7 +516,7 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 	// Resolve cloud resource name for the log filter.
 	var shortJobName string
 	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
-		crState, _ := s.CloudRun.Get(id)
+		crState, _ := s.resolveCloudRunState(s.ctx(), id)
 		jobName := crState.JobName
 		if jobName == "" {
 			jobName = buildJobName(id)
@@ -592,7 +592,7 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 	if c.State.Running {
 		s.StopHealthCheck(id)
 
-		crState, _ := s.CloudRun.Get(id)
+		crState, _ := s.resolveCloudRunState(s.ctx(), id)
 		if crState.ExecutionName != "" {
 			s.cancelExecution(crState.ExecutionName)
 		}
@@ -648,7 +648,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 			spaceReclaimed += uint64(img.Size)
 		}
 		// Clean up Cloud Run resources
-		crState, _ := s.CloudRun.Get(c.ID)
+		crState, _ := s.resolveCloudRunState(s.ctx(), c.ID)
 		if crState.JobName != "" {
 			s.deleteJob(crState.JobName)
 			s.Registry.MarkCleanedUp(crState.JobName)

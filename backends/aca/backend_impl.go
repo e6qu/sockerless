@@ -453,7 +453,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			"exitCode": "0",
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
-		acaState, _ := s.ACA.Get(id)
+		acaState, _ := s.resolveACAState(s.ctx(), id)
 		if acaState.JobName != "" && acaState.ExecutionName != "" {
 			s.stopExecution(acaState.JobName, acaState.ExecutionName)
 		}
@@ -462,7 +462,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	s.StopHealthCheck(id)
 
 	// Delete ACA Job (best-effort)
-	acaState, _ := s.ACA.Get(id)
+	acaState, _ := s.resolveACAState(s.ctx(), id)
 	if acaState.JobName != "" {
 		s.deleteJob(acaState.JobName)
 		s.Registry.MarkCleanedUp(acaState.JobName)
@@ -512,7 +512,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
 	var jobName string
 	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
-		acaState, _ := s.ACA.Get(id)
+		acaState, _ := s.resolveACAState(s.ctx(), id)
 		jobName = acaState.JobName
 		if jobName == "" {
 			jobName = buildJobName(id)
@@ -540,7 +540,7 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 	if c.State.Running {
 		s.StopHealthCheck(id)
 
-		acaState, _ := s.ACA.Get(id)
+		acaState, _ := s.resolveACAState(s.ctx(), id)
 		if acaState.JobName != "" && acaState.ExecutionName != "" {
 			s.stopExecution(acaState.JobName, acaState.ExecutionName)
 		}
@@ -600,7 +600,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 			spaceReclaimed += uint64(img.Size)
 		}
 		// Clean up ACA resources
-		acaState, _ := s.ACA.Get(c.ID)
+		acaState, _ := s.resolveACAState(s.ctx(), c.ID)
 		if acaState.JobName != "" {
 			s.deleteJob(acaState.JobName)
 			s.Registry.MarkCleanedUp(acaState.JobName)

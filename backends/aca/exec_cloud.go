@@ -15,7 +15,7 @@ import (
 // Azure Container Apps exec API. The API returns a WebSocket URL for the
 // interactive session, which we bridge as an io.ReadWriteCloser.
 func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container) (io.ReadWriteCloser, error) {
-	acaState, ok := s.ACA.Get(c.ID)
+	acaState, ok := s.resolveACAState(s.ctx(), c.ID)
 	if !ok || acaState.JobName == "" {
 		return nil, fmt.Errorf("no ACA job associated with container %s", c.ID[:12])
 	}
