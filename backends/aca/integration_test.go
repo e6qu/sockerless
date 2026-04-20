@@ -24,8 +24,8 @@ var evalBinaryPath string
 
 func TestMain(m *testing.M) {
 	if os.Getenv("SOCKERLESS_INTEGRATION") != "1" {
-		fmt.Println("skipping integration tests (SOCKERLESS_INTEGRATION != 1)")
-		os.Exit(0)
+		// Run unit tests only; integration tests are gated separately.
+		os.Exit(m.Run())
 	}
 
 	repoRoot := findModuleDir(".")
