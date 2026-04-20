@@ -1,6 +1,6 @@
 # Sockerless — Roadmap
 
-> 86 phases complete (757 tasks). 726 bugs tracked (720 fixed + 3 Phase-89-in-progress + 3 open across Phase 87/88/89). Phase 86 Phase C closed 2026-04-20 with ECS bound live-validated. Phase 89 first checkpoint landed.
+> 86 phases complete (757 tasks). 726 bugs tracked (721 fixed-in-code + 2 open across Phase 88/89-partial). Phase 86 Phase C closed 2026-04-20 with ECS live-validated. Phase 89 near-complete (state derivation + OCI image listing + resolve\*State helpers across all cloud backends). Phase 87 (Cloud Run Services) landed 2026-04-21 in code behind `SOCKERLESS_GCR_USE_SERVICE`; live-GCP validation pending.
 >
 > **Goal:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners — backed by real cloud infrastructure (AWS, GCP, Azure).
 
@@ -33,7 +33,7 @@ Branch `post-phase86-continuation`. Live AWS account `729079515331` (eu-west-1 +
 | 712 | ECS | fixed — `cloudNetworkCreate` idempotent (catch `InvalidGroup.Duplicate` + reuse SG by name+VPC; `findNamespaceByName` reuses existing namespace before `CreatePrivateDnsNamespace`). Live-verified during the find. |
 | 713 | Cloud Run | fixed — `ManagedZones.Create` 409 → `Get` for reuse. |
 | 714 | ECS | fixed — register loop moved AFTER `waitForTaskRunning`; uses real ENI IP via `extractENIIP`. Live-verified (FQDN resolution returned `hi`). |
-| 715 | Cloud Run | open — split into Phase 87 (architectural rewrite Jobs → Services with internal ingress + VPC connector). Doesn't block ECS+Lambda runbook. |
+| 715 | Cloud Run | fixed-in-code 2026-04-21 (Phase 87). Services path behind `SOCKERLESS_GCR_USE_SERVICE=1` + `SOCKERLESS_GCR_VPC_CONNECTOR` writes CNAMEs to `Service.Uri`; Jobs path retained as default. Live-GCP validation pending. |
 | 716 | ACA | open — split into Phase 88 (architectural rewrite Jobs → Apps with internal ingress). Doesn't block ECS+Lambda runbook. |
 | 717 | ECS | fixed — full SSM AgentMessage decoder in `ssm_proto.go` (parse, ack writer, input wrapping). `ssmDecoder` in `exec_cloud.go` reads frame-by-frame with `io.ReadFull`, sends acks, terminates on `channel_closed` / `exit_code`. 7 unit tests. Live verification queued. |
 | 718 | Lambda | fixed — cross-cloud sibling of 708 found in lambda's `image_resolve.go`; same credential-ARN wiring + removed silent `pushToECR` fallback (only worked for pre-loaded local-store images, swapped image source without operator awareness). |
@@ -79,9 +79,21 @@ Concrete deliverables:
 3. **Remove Store.Images persistence**: query the cloud registry instead.
 4. **Backend recovery**: must work after restart with no on-disk or in-memory state.
 
-## Phase 87 — Cloud Run rewrite (Jobs → Services with internal ingress) — queued
+## Phase 87 — Cloud Run rewrite (Jobs → Services with internal ingress) — done (code), pending live validation
 
-Closes BUG-715. Cloud Run Jobs don't expose addressable per-execution IPs reachable from peer Jobs, so cross-container DNS via Cloud DNS A-records is fundamentally broken on the current backend. Move container execution from `Jobs.RunJob` to `Services.CreateService` with `--ingress=internal-and-cloud-load-balancing` and a VPC connector; per-network managed Service per container hostname; Service's allocated internal IP becomes the Cloud DNS A-record target. Add `cloudrun.UseService` config flag with deprecation path for the Jobs flow. Touches: `backends/cloudrun/{containers,backend_impl,jobspec,backend_impl_network}.go`, `service_discovery_cloud.go`, terraform examples, integration tests.
+Closes BUG-715 at the code level. The Cloud Run backend now has two parallel execution paths selected by `SOCKERLESS_GCR_USE_SERVICE`; Jobs (default) untouched, Services gated on `SOCKERLESS_GCR_VPC_CONNECTOR` also being set.
+
+| Slice | File(s) | Summary |
+|---|---|---|
+| 87-01 | `backends/cloudrun/servicespec.go` | `buildServiceName` / `buildServiceSpec` emit `*runpb.Service` with internal ingress + VPC connector egress, MinInstanceCount=MaxInstanceCount=1. |
+| 87-02 | `backends/cloudrun/cloud_state_services.go`, `store.go`, `gcp.go` | `CloudRunState.ServiceName`, `GCPClients.Services`, `resolveServiceName`/`resolveServiceCloudRunState`, `queryServices`/`serviceToContainer`, `serviceContainerState` (TerminalCondition → running/exited/created). `ListContainers` now also merges Services when UseService. |
+| 87-03 | `backends/cloudrun/start_service.go`, `backend_impl.go` | ContainerStart single/multi-container branches. `startSingleContainerService` + `startMultiContainerServiceTyped` use CreateService + LRO wait. `deleteService` helper. |
+| 87-04 | `backends/cloudrun/backend_impl.go` | Stop/Kill/Remove delete the Service (no Cancel equivalent for Services). Cache-cleared so next Start re-creates. |
+| 87-05 | `backends/cloudrun/{config,backend_impl,backend_impl_network,service_discovery_cloud}.go` | Validate gate opened (requires VPCConnector). Logs filter switches to `cloud_run_revision` + `service_name`. `cloudServiceRegisterCNAME`/`DeregisterCNAME` write CNAMEs to `Service.Uri` host (no per-instance IP needed; peers reach via VPC connector). |
+
+Unit tests added: service spec shape, service URI parsing, ServiceState cache, serviceToContainer mapping, running/failed/pending state transitions, Validate gate with/without VPC connector. Live validation deferred until GCP credentials + VPC connector are set up in a dedicated runbook (Phase 87 live track, parallel to Phase 86 Phase C for ECS).
+
+Remaining for full closure: live-GCP smoke runbook; integration-test path that spins up a simulator with Services support if we decide to add it to `simulators/gcp/`.
 
 ## Phase 88 — ACA rewrite (Jobs → Apps with internal ingress) — queued
 

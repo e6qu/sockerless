@@ -1,6 +1,18 @@
 # Sockerless — Status
 
-**86 phases (757 tasks). 726 bugs tracked: 723 fixed + 1 partially fixed + 3 open. Phase 86 Phase C CLOSED 2026-04-20. Phase 89 near-complete: `specs/CLOUD_RESOURCE_MAPPING.md` for all 7 backends; `Store.Images` disk persistence removed; all 4 cloud backends have `resolve*State` helpers with every cloud-state-dependent callsite migrated (BUG-725 fixed); `docker images` is cloud-derived across all 6 cloud backends (BUG-723 fixed); ECS `ListPods` groups tasks via `sockerless-pod` tag; `resolveNetworkState` lands for ECS+Cloud Run+ACA (BUG-726 fixed). Remaining: `ListPods` for cloudrun+aca (blocked on Phase 87/88), per-backend restart-resilience integration tests. Branch `post-phase86-continuation`.**
+**86 phases (757 tasks). 726 bugs tracked: 724 fixed + 1 partially fixed + 1 open (BUG-716, Phase 88). Phase 86 Phase C CLOSED 2026-04-20. Phase 87 CLOSED in code 2026-04-21 (Cloud Run Services path behind `SOCKERLESS_GCR_USE_SERVICE=1` + `SOCKERLESS_GCR_VPC_CONNECTOR`; BUG-715 fixed via CNAME-to-`Service.Uri` discovery; live-GCP validation pending). Phase 89 near-complete: `specs/CLOUD_RESOURCE_MAPPING.md` for all 7 backends; `Store.Images` disk persistence removed; all 4 cloud backends have `resolve*State` helpers with every cloud-state-dependent callsite migrated (BUG-725 fixed); `docker images` is cloud-derived across all 6 cloud backends (BUG-723 fixed); ECS `ListPods` groups tasks via `sockerless-pod` tag; `resolveNetworkState` lands for ECS+Cloud Run+ACA (BUG-726 fixed). Remaining: `ListPods` for cloudrun+aca (cloudrun now unblocked post-87; aca still blocked on Phase 88), per-backend restart-resilience integration tests. Branch `post-phase86-continuation`.**
+
+## Phase 87 — Cloud Run Services (2026-04-21)
+
+Closed BUG-715 in code. Five slices in `post-phase86-continuation`:
+
+- **87-01** `servicespec.go` — Service proto builder. Internal ingress, VPC connector ALL_TRAFFIC, Min=Max=1.
+- **87-02** `cloud_state_services.go` + `store.go` + `gcp.go` — `ServiceName` field, `Services` client, resolveServiceName / resolveServiceCloudRunState / queryServices / serviceToContainer / serviceContainerState (TerminalCondition → running/exited/created). `ListContainers` merges Services when UseService.
+- **87-03** `start_service.go` + `backend_impl.go` — ContainerStart branch: startSingleContainerService + startMultiContainerServiceTyped; `deleteService` helper.
+- **87-04** `backend_impl.go` — Stop/Kill/Remove delete Service (no cancel equivalent); cache cleared on stop.
+- **87-05** `config.go` + `backend_impl.go` + `backend_impl_network.go` + `service_discovery_cloud.go` — Validate gate opened (UseService requires VPCConnector). Logs filter → `cloud_run_revision` + `service_name`. `cloudServiceRegisterCNAME` / `cloudServiceDeregisterCNAME` write CNAMEs from `<hostname>.<network>.internal.` to `Service.Uri` host.
+
+13 unit tests across the slices; `go test` + `golangci-lint` green for the cloudrun module.
 
 ## Test Counts
 
