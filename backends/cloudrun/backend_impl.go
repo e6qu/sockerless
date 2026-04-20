@@ -181,8 +181,17 @@ func (s *Server) ContainerStart(ref string) error {
 	}
 
 	if len(podContainers) > 1 {
-		// Multi-container pod: build combined job and run
+		// Multi-container pod: build combined resource and run
+		if s.config.UseService {
+			return s.startMultiContainerServiceTyped(id, podContainers, exitCh)
+		}
 		return s.startMultiContainerJobTyped(id, podContainers, exitCh)
+	}
+
+	// Phase 87 — Services path. Separate function so the Jobs branch
+	// below can be deleted when Jobs support is sunset.
+	if s.config.UseService {
+		return s.startSingleContainerService(id, c, crState, exitCh)
 	}
 
 	// Clean up any existing Cloud Run Job from a previous start
