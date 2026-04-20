@@ -90,18 +90,11 @@ func NewBaseServer(store *Store, desc BackendDescriptor, logger zerolog.Logger) 
 		registryPath = filepath.Join(dataDir, "sockerless-registry.json")
 	}
 
-	// Persist `docker pull` state (Store.Images) across backend
-	// restarts. Default path respects SOCKERLESS_STATE_DIR or falls
-	// back to $HOME/.sockerless/state/images.json. Every backend that
-	// passes through NewBaseServer inherits the behaviour automatically.
-	if store != nil && store.ImageStatePath == "" {
-		store.ImageStatePath = DefaultImageStatePath()
-		if store.ImageStatePath != "" {
-			if err := store.RestoreImages(store.ImageStatePath); err != nil {
-				logger.Warn().Err(err).Str("path", store.ImageStatePath).Msg("image store restore failed, continuing with empty store")
-			}
-		}
-	}
+	// Phase 89 / BUG-723: no on-disk image state. Store.Images is
+	// purely an in-process cache; the cloud registry that each backend
+	// points at (ECR, Artifact Registry, ACR) is the source of truth.
+	// Backends are responsible for implementing `docker images` /
+	// `docker inspect <image>` against their cloud registry directly.
 
 	s := &BaseServer{
 		Store:          store,

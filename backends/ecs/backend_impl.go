@@ -369,9 +369,9 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 		return &api.NotModifiedError{}
 	}
 
-	// Stop the ECS task (best-effort)
-	ecsState, _ := s.ECS.Get(id)
-	if ecsState.TaskARN != "" {
+	// Stop the ECS task. resolveTaskState falls back to the cloud when
+	// in-memory cache is empty (post-restart) — Phase 89 / BUG-725.
+	if ecsState, ok := s.resolveTaskState(s.ctx(), id); ok {
 		cluster := s.config.Cluster
 		if ecsState.ClusterARN != "" {
 			cluster = ecsState.ClusterARN
@@ -411,9 +411,8 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 
 	exitCode := core.SignalToExitCode(signal)
 
-	// Stop the ECS task (best-effort)
-	ecsState, _ := s.ECS.Get(id)
-	if ecsState.TaskARN != "" {
+	// Phase 89 / BUG-725: cloud-fallback lookup so kill works post-restart.
+	if ecsState, ok := s.resolveTaskState(s.ctx(), id); ok {
 		cluster := s.config.Cluster
 		if ecsState.ClusterARN != "" {
 			cluster = ecsState.ClusterARN
@@ -462,8 +461,8 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			"exitCode": "0",
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
-		ecsState, _ := s.ECS.Get(id)
-		if ecsState.TaskARN != "" {
+		// Phase 89 / BUG-725: cloud-fallback lookup so remove works post-restart.
+		if ecsState, ok := s.resolveTaskState(s.ctx(), id); ok {
 			cluster := s.config.Cluster
 			if ecsState.ClusterARN != "" {
 				cluster = ecsState.ClusterARN
@@ -478,8 +477,22 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	s.StopHealthCheck(id)
 
-	// Deregister task definition (best-effort)
+	// Deregister task definition. Read from cache when available; on
+	// cache miss (post-restart) derive TaskDefinitionArn from the running
+	// task via DescribeTasks (Phase 89 / BUG-725).
 	ecsState, _ := s.ECS.Get(id)
+	if ecsState.TaskDefARN == "" {
+		if recovered, ok := s.resolveTaskState(s.ctx(), id); ok {
+			descOut, dErr := s.aws.ECS.DescribeTasks(s.ctx(), &awsecs.DescribeTasksInput{
+				Cluster: aws.String(recovered.ClusterARN),
+				Tasks:   []string{recovered.TaskARN},
+			})
+			if dErr == nil && len(descOut.Tasks) > 0 {
+				ecsState.TaskDefARN = aws.ToString(descOut.Tasks[0].TaskDefinitionArn)
+				ecsState.TaskARN = recovered.TaskARN
+			}
+		}
+	}
 	if ecsState.TaskDefARN != "" {
 		_, _ = s.aws.ECS.DeregisterTaskDefinition(s.ctx(), &awsecs.DeregisterTaskDefinitionInput{
 			TaskDefinition: aws.String(ecsState.TaskDefARN),

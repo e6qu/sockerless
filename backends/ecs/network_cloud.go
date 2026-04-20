@@ -114,8 +114,9 @@ func (s *Server) cloudNetworkDelete(networkID string) error {
 
 // cloudNetworkConnect associates a network's security group with a container.
 // Appends to SecurityGroupIDs (supports multiple networks).
+// Phase 89 / BUG-726: cloud-fallback lookup so connect works post-restart.
 func (s *Server) cloudNetworkConnect(networkID, containerID string) error {
-	ns, ok := s.NetworkState.Get(networkID)
+	ns, ok := s.resolveNetworkState(s.ctx(), networkID)
 	if !ok || ns.SecurityGroupID == "" {
 		return fmt.Errorf("network %s has no associated security group", networkID)
 	}

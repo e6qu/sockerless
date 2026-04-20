@@ -41,6 +41,13 @@ func (s *Server) cloudNamespaceCreate(name, networkID string) error {
 			Name:        aws.String(nsName),
 			Vpc:         aws.String(vpcID),
 			Description: aws.String(fmt.Sprintf("Sockerless network: %s", name)),
+			Tags: []sdtypes.Tag{
+				// Phase 89: tag with network-id so resolveNetworkState
+				// can recover NamespaceID from cloud after restart.
+				{Key: aws.String("sockerless:network-id"), Value: aws.String(networkID)},
+				{Key: aws.String("sockerless:network"), Value: aws.String(name)},
+				{Key: aws.String("sockerless-managed"), Value: aws.String("true")},
+			},
 		},
 	)
 	if err != nil {

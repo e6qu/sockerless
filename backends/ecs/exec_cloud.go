@@ -2,7 +2,6 @@ package ecs
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -28,29 +27,13 @@ func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container, tty bo
 	if dbg {
 		fmt.Fprintf(os.Stderr, "[exec] cloudExecStart container=%s tty=%v\n", c.ID[:12], tty)
 	}
-	ecsState, ok := s.ECS.Get(c.ID)
-	if !ok || ecsState.TaskARN == "" {
-		// In-memory state lost (e.g. backend restart). Recover the
-		// task ARN from CloudState by container-tag lookup (BUG-722).
-		if csp, ok := s.CloudState.(interface {
-			resolveTaskARN(context.Context, string) (string, string, error)
-		}); ok {
-			arn, clusterARN, err := csp.resolveTaskARN(s.ctx(), c.ID)
-			if err == nil && arn != "" {
-				ecsState.TaskARN = arn
-				ecsState.ClusterARN = clusterARN
-				s.ECS.Update(c.ID, func(state *ECSState) {
-					state.TaskARN = arn
-					state.ClusterARN = clusterARN
-				})
-				if dbg {
-					fmt.Fprintf(os.Stderr, "[exec] recovered TaskARN=%s from CloudState\n", arn)
-				}
-			}
-		}
-		if ecsState.TaskARN == "" {
-			return nil, fmt.Errorf("no ECS task associated with container %s", c.ID[:12])
-		}
+	// Phase 89 / BUG-725: cloud-fallback lookup so exec works post-restart.
+	ecsState, ok := s.resolveTaskState(s.ctx(), c.ID)
+	if !ok {
+		return nil, fmt.Errorf("no ECS task associated with container %s", c.ID[:12])
+	}
+	if dbg {
+		fmt.Fprintf(os.Stderr, "[exec] task=%s cluster=%s\n", ecsState.TaskARN, ecsState.ClusterARN)
 	}
 
 	cluster := s.config.Cluster

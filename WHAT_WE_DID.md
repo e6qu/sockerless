@@ -2,7 +2,7 @@
 
 Docker-compatible REST API that runs containers on cloud backends (ECS, Lambda, Cloud Run, GCF, ACA, AZF) or local Docker. 7 backends, 3 cloud simulators, validated against SDKs/CLIs/Terraform.
 
-86 phases, 757 tasks, 726 bugs tracked (720 fixed, 6 open from Phase C session 2 — Phase 87 cloudrun, Phase 88 aca, Phase 89 stateless audit). See [STATUS.md](STATUS.md), [BUGS.md](BUGS.md), [specs/](specs/).
+86 phases, 757 tasks, 726 bugs tracked (720 fixed + 3 Phase-89-in-progress + 3 open). See [STATUS.md](STATUS.md), [BUGS.md](BUGS.md), [specs/](specs/), [docs/CLOUD_RESOURCE_MAPPING.md](docs/CLOUD_RESOURCE_MAPPING.md).
 
 ## Phase 86 — Simulator parity + Lambda agent-as-handler
 
@@ -73,3 +73,21 @@ See `docs/SIMULATOR_PARITY_{AWS,GCP,AZURE}.md` for the complete slice matrix. Ze
 ### Live-AWS (Phase E)
 
 Awaiting AWS credentials. The `runner-capability-matrix.md` live columns stay pending-live until the workflow is dispatched successfully.
+
+## Phase 89 — Stateless backend audit + cloud-resource mapping (in progress)
+
+Per the user's stateless-backend directive ("backends should be stateless; state derived from cloud actuals; ECS tasks → containers/pods, sockerless-tagged SG + Cloud Map namespace → docker network"). First checkpoint landed in this branch:
+
+- **`docs/CLOUD_RESOURCE_MAPPING.md`** — canonical cross-backend mapping (docker container/pod/network/image/exec → cloud resource per backend), state-derivation rules, recovery contract, list of currently-violating in-memory state.
+- **BUG-723 step 1** — Removed `Store.Images` disk persistence: `Store.PersistImages` / `Store.RestoreImages` / `Store.ImageStatePath` / `DefaultImageStatePath` deleted; `NewBaseServer` no longer auto-restores from `~/.sockerless/state/images.json`; `StoreImageWithAliases` no longer auto-persists. `Store.Images` is now a pure in-process cache. Per-backend cloud-derived `docker images` is the next step.
+- **BUG-725 ECS** — New `Server.resolveTaskState(ctx, containerID)` in `backends/ecs/cloud_state.go` wraps cache + cloud-derived fallback (calls `resolveTaskARN`, writes through to cache). Refactored callsites: `ContainerStop`, `ContainerKill`, `ContainerRemove` (with `DescribeTasks` to recover `TaskDefinitionArn` for deregister too), `cloudExecStart`. After restart, `docker stop`/`kill`/`rm`/`exec` work without rehydrating in-memory state first.
+- **BUG-725 Lambda** — Mirror: `Server.resolveLambdaState(ctx, containerID)` + `lambdaCloudState.resolveFunctionARN(ctx, containerID)`. Refactored `ContainerStop`, `ContainerKill`.
+- **BUG-726 ECS** — New `Server.resolveNetworkState(ctx, networkID)` derives `SecurityGroupID` via `DescribeSecurityGroups Filters=[tag:sockerless:network-id=<id>]` and `NamespaceID` via `ListNamespaces` filter by `tag:sockerless:network-id=<id>`. `cloudNamespaceCreate` now tags the namespace at create time (`sockerless:network-id`, `sockerless:network`, `sockerless-managed`).
+
+Still TBD:
+
+- BUG-723 step 2: per-backend cloud-derived `docker images` (currently the in-memory cache repopulates lazily on each `docker pull`).
+- BUG-724: `PodList` from cloud actuals (multi-container task / app grouped by `sockerless-pod` tag) — currently still uses `Store.Pods` local registry.
+- BUG-725 cloudrun + aca: same `resolve*State` pattern needed.
+- BUG-726 cloudrun + aca: same `resolveNetworkState` pattern needed.
+- Restart-resilience integration tests per backend.

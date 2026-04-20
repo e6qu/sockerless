@@ -6,8 +6,12 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	"github.com/aws/aws-sdk-go-v2/service/servicediscovery"
+	sdtypes "github.com/aws/aws-sdk-go-v2/service/servicediscovery/types"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 )
@@ -146,6 +150,101 @@ func (p *ecsCloudState) queryTasks(ctx context.Context) ([]api.Container, error)
 	}
 
 	return containers, nil
+}
+
+// resolveNetworkState returns NetworkState for the given docker network
+// ID, deriving from cloud actuals when the in-memory cache is empty.
+// Per Phase 89 (BUG-725, BUG-726) the cache is an optimization; the
+// security group + Cloud Map namespace tagged with
+// `sockerless:network-id=<id>` are the source of truth.
+func (s *Server) resolveNetworkState(ctx context.Context, networkID string) (NetworkState, bool) {
+	if state, ok := s.NetworkState.Get(networkID); ok && (state.SecurityGroupID != "" || state.NamespaceID != "") {
+		return state, true
+	}
+	state := NetworkState{}
+	// SG by tag.
+	sgOut, err := s.aws.EC2.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+		Filters: []ec2types.Filter{
+			{Name: aws.String("tag:sockerless:network-id"), Values: []string{networkID}},
+		},
+	})
+	if err == nil && len(sgOut.SecurityGroups) > 0 {
+		state.SecurityGroupID = aws.ToString(sgOut.SecurityGroups[0].GroupId)
+	}
+	// Cloud Map namespace by tag (added at create time per Phase 89).
+	nsOut, nsErr := s.aws.ServiceDiscovery.ListTagsForResource(ctx, &servicediscovery.ListTagsForResourceInput{
+		ResourceARN: nil,
+	})
+	_ = nsOut
+	_ = nsErr
+	// ListTagsForResource on namespaces requires an ARN, which we don't
+	// have. Instead enumerate namespaces and inspect their tags. Use a
+	// limited list — sockerless networks are O(10), not O(thousands).
+	listOut, listErr := s.aws.ServiceDiscovery.ListNamespaces(ctx, &servicediscovery.ListNamespacesInput{
+		Filters: []sdtypes.NamespaceFilter{
+			{
+				Name:      sdtypes.NamespaceFilterNameType,
+				Values:    []string{string(sdtypes.NamespaceTypeDnsPrivate)},
+				Condition: sdtypes.FilterConditionEq,
+			},
+		},
+	})
+	if listErr == nil {
+		for _, ns := range listOut.Namespaces {
+			tagsOut, tErr := s.aws.ServiceDiscovery.ListTagsForResource(ctx, &servicediscovery.ListTagsForResourceInput{
+				ResourceARN: ns.Arn,
+			})
+			if tErr != nil {
+				continue
+			}
+			for _, t := range tagsOut.Tags {
+				if aws.ToString(t.Key) == "sockerless:network-id" && aws.ToString(t.Value) == networkID {
+					state.NamespaceID = aws.ToString(ns.Id)
+					break
+				}
+			}
+			if state.NamespaceID != "" {
+				break
+			}
+		}
+	}
+	if state.SecurityGroupID == "" && state.NamespaceID == "" {
+		return NetworkState{}, false
+	}
+	s.NetworkState.Update(networkID, func(ns *NetworkState) {
+		if ns.SecurityGroupID == "" {
+			ns.SecurityGroupID = state.SecurityGroupID
+		}
+		if ns.NamespaceID == "" {
+			ns.NamespaceID = state.NamespaceID
+		}
+	})
+	return state, true
+}
+
+// resolveTaskState returns ECSState for the given container ID, deriving
+// it from cloud actuals when the in-memory cache is empty. Per Phase 89
+// (BUG-725, BUG-722) the cache is an optimization; ECS tasks tagged with
+// `sockerless-container-id=<id>` are the source of truth. Returns false
+// only when no matching sockerless-managed task exists at all.
+func (s *Server) resolveTaskState(ctx context.Context, containerID string) (ECSState, bool) {
+	if state, ok := s.ECS.Get(containerID); ok && state.TaskARN != "" {
+		return state, true
+	}
+	csp, ok := s.CloudState.(*ecsCloudState)
+	if !ok {
+		return ECSState{}, false
+	}
+	arn, clusterARN, err := csp.resolveTaskARN(ctx, containerID)
+	if err != nil || arn == "" {
+		return ECSState{}, false
+	}
+	state := ECSState{TaskARN: arn, ClusterARN: clusterARN}
+	s.ECS.Update(containerID, func(st *ECSState) {
+		st.TaskARN = arn
+		st.ClusterARN = clusterARN
+	})
+	return state, true
 }
 
 // resolveTaskARN returns the ECS task ARN for a given container ID, or

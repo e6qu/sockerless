@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**86 phases (757 tasks). 726 bugs tracked: 720 fixed, 6 open. Phase 86 Phase C CLOSED 2026-04-20: ECS backend live-validated end-to-end (smoke 2.1-2.4 PASS). 13 bugs fully fixed this session (708, 709, 710, 711, 712, 713, 714, 717, 718, 719, 720, 721, 722). Open bugs split into dedicated future phases: BUG-715 → Phase 87 (cloudrun Jobs→Services), BUG-716 → Phase 88 (aca Jobs→Apps), BUG-723/724/725/726 → Phase 89 (stateless backend audit + cloud-resource mapping). Cloud infra torn down, zero residue. Branch `post-phase86-continuation` ready for PR.**
+**86 phases (757 tasks). 726 bugs tracked: 720 fixed + 3 partially fixed (Phase 89 in progress) + 3 open (Phase 87/88/89 follow-up). Phase 86 Phase C CLOSED 2026-04-20. Phase 89 first checkpoint landed: `docs/CLOUD_RESOURCE_MAPPING.md` (canonical mapping per cloud), Store.Images disk persistence removed, ECS + Lambda `resolve*State` cache+cloud-fallback helpers, ECS Cloud Map namespace tagged with `sockerless:network-id` for derived recovery. Branch `post-phase86-continuation`.**
 
 ## Test Counts
 

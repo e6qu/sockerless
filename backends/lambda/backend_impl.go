@@ -375,8 +375,8 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 
 	s.StopHealthCheck(id)
 
-	lambdaState, _ := s.Lambda.Get(id)
-	if lambdaState.FunctionName != "" {
+	// Phase 89 / BUG-725: cloud-fallback lookup so stop works post-restart.
+	if lambdaState, ok := s.resolveLambdaState(s.ctx(), id); ok && lambdaState.FunctionName != "" {
 		_, err := s.aws.Lambda.UpdateFunctionConfiguration(s.ctx(),
 			&awslambda.UpdateFunctionConfigurationInput{
 				FunctionName: aws.String(lambdaState.FunctionName),
@@ -421,7 +421,8 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 
 	exitCode := core.SignalToExitCode(signal)
 
-	lambdaState, _ := s.Lambda.Get(id)
+	// Phase 89 / BUG-725: cloud-fallback lookup so kill works post-restart.
+	lambdaState, _ := s.resolveLambdaState(s.ctx(), id)
 	if lambdaState.FunctionName != "" {
 		_, err := s.aws.Lambda.UpdateFunctionConfiguration(s.ctx(),
 			&awslambda.UpdateFunctionConfigurationInput{

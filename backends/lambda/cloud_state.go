@@ -85,6 +85,68 @@ func (p *lambdaCloudState) WaitForExit(ctx context.Context, containerID string) 
 	}
 }
 
+// resolveFunctionARN returns the Lambda function ARN for a given
+// container ID, or "" if no matching sockerless-managed function is
+// found. Phase 89 / BUG-725 / BUG-722 cross-cloud sibling: state is
+// derived from cloud actuals (Lambda function tags), not from the
+// in-memory cache.
+func (p *lambdaCloudState) resolveFunctionARN(ctx context.Context, containerID string) (string, string, error) {
+	var marker *string
+	for {
+		result, err := p.server.aws.Lambda.ListFunctions(ctx, &awslambda.ListFunctionsInput{
+			Marker: marker,
+		})
+		if err != nil {
+			return "", "", err
+		}
+		for _, fn := range result.Functions {
+			tagsResult, err := p.server.aws.Lambda.ListTags(ctx, &awslambda.ListTagsInput{
+				Resource: fn.FunctionArn,
+			})
+			if err != nil {
+				continue
+			}
+			if tagsResult.Tags["sockerless-managed"] != "true" {
+				continue
+			}
+			if tagsResult.Tags["sockerless-container-id"] == containerID {
+				return aws.ToString(fn.FunctionArn), aws.ToString(fn.FunctionName), nil
+			}
+		}
+		if result.NextMarker == nil {
+			return "", "", nil
+		}
+		marker = result.NextMarker
+	}
+}
+
+// resolveLambdaState returns LambdaState for the given container ID,
+// deriving from cloud actuals when the in-memory cache is empty. Phase
+// 89 / BUG-725 cross-cloud sibling.
+func (s *Server) resolveLambdaState(ctx context.Context, containerID string) (LambdaState, bool) {
+	if state, ok := s.Lambda.Get(containerID); ok && state.FunctionARN != "" {
+		return state, true
+	}
+	csp, ok := s.CloudState.(*lambdaCloudState)
+	if !ok {
+		return LambdaState{}, false
+	}
+	arn, name, err := csp.resolveFunctionARN(ctx, containerID)
+	if err != nil || arn == "" {
+		return LambdaState{}, false
+	}
+	state := LambdaState{FunctionARN: arn, FunctionName: name}
+	s.Lambda.Update(containerID, func(st *LambdaState) {
+		if st.FunctionARN == "" {
+			st.FunctionARN = arn
+		}
+		if st.FunctionName == "" {
+			st.FunctionName = name
+		}
+	})
+	return state, true
+}
+
 // queryFunctions lists all sockerless-managed Lambda functions.
 func (p *lambdaCloudState) queryFunctions(ctx context.Context) ([]api.Container, error) {
 	var containers []api.Container

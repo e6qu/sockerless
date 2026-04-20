@@ -2,6 +2,16 @@
 
 Snapshot pointer for the next session. Updated after every task per user directive.
 
+## Phase 89 — Stateless backend audit (in progress, this branch)
+
+First checkpoint landed. Remaining in-branch work:
+
+- BUG-723 step 2: per-backend cloud-derived `docker images` (ECR `DescribeImages`, Artifact Registry `Images.List`, ACR `RegistryClient.NewListImportImagesPager`).
+- BUG-724: `PodList` from cloud actuals — group containers by `sockerless-pod` tag.
+- BUG-725: extend `resolve*State` pattern to cloudrun + aca backends.
+- BUG-726: extend `resolveNetworkState` pattern to cloudrun + aca backends.
+- Per-backend restart-resilience integration tests.
+
 ## Phase 86 Phase C — CLOSED 2026-04-20
 
 ECS backend live-validated end-to-end. AWS infra torn down, zero residue. Branch `post-phase86-continuation` ready for PR (commit `fc8d25d` is the in-progress checkpoint; need to land BUG-717/719/720/721/722 + Phase 89 doc updates as a follow-up commit before PR).

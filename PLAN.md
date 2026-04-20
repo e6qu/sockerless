@@ -1,6 +1,6 @@
 # Sockerless — Roadmap
 
-> 86 phases complete (757 tasks). 726 bugs tracked (720 fixed, 6 open: BUG-715→Phase 87 cloudrun rewrite, BUG-716→Phase 88 aca rewrite, BUG-723/724/725/726→Phase 89 stateless audit). Phase 86 Phase C closed 2026-04-20 with ECS bound live-validated.
+> 86 phases complete (757 tasks). 726 bugs tracked (720 fixed + 3 Phase-89-in-progress + 3 open across Phase 87/88/89). Phase 86 Phase C closed 2026-04-20 with ECS bound live-validated. Phase 89 first checkpoint landed.
 >
 > **Goal:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners — backed by real cloud infrastructure (AWS, GCP, Azure).
 
