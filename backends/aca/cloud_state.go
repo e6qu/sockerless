@@ -116,6 +116,29 @@ func (p *acaCloudState) WaitForExit(ctx context.Context, containerID string) (in
 	}
 }
 
+// ListImages queries Azure Container Registry via the OCI distribution
+// catalog + tags endpoints for every image in the configured ACR.
+// Phase 89 / BUG-723 step 2 cross-cloud sibling. Registry host comes
+// from `<ACRName>.azurecr.io`; bearer token comes from the
+// ACRAuthProvider owned by the ImageManager.
+func (p *acaCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, error) {
+	if p.server.config.ACRName == "" {
+		return nil, nil
+	}
+	if p.server.images == nil || p.server.images.Auth == nil {
+		return nil, nil
+	}
+	registry := p.server.config.ACRName + ".azurecr.io"
+	token, err := p.server.images.Auth.GetToken(registry)
+	if err != nil {
+		return nil, err
+	}
+	return core.OCIListImages(ctx, core.OCIListOptions{
+		Registry:  registry,
+		AuthToken: token,
+	})
+}
+
 // resolveJobName returns the ACA Job name for a given container ID, or
 // "" if no matching sockerless-managed job is found. Phase 89 / BUG-725
 // cross-cloud sibling: state derived from cloud actuals (ACA Job tags).

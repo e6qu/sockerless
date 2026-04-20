@@ -16,6 +16,28 @@ type azfCloudState struct {
 	server *Server
 }
 
+// ListImages queries Azure Container Registry via the OCI distribution
+// catalog + tags endpoints. Phase 89 / BUG-723 step 2 cross-cloud
+// sibling. `config.Registry` is the ACR hostname
+// (e.g. `myregistry.azurecr.io`).
+func (p *azfCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, error) {
+	if p.server.config.Registry == "" {
+		return nil, nil
+	}
+	if p.server.images == nil || p.server.images.Auth == nil {
+		return nil, nil
+	}
+	registry := p.server.config.Registry
+	token, err := p.server.images.Auth.GetToken(registry)
+	if err != nil {
+		return nil, err
+	}
+	return core.OCIListImages(ctx, core.OCIListOptions{
+		Registry:  registry,
+		AuthToken: token,
+	})
+}
+
 func (p *azfCloudState) GetContainer(ctx context.Context, ref string) (api.Container, bool, error) {
 	containers, err := p.queryFunctionApps(ctx)
 	if err != nil {

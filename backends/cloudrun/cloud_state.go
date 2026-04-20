@@ -115,6 +115,30 @@ func (p *cloudRunCloudState) WaitForExit(ctx context.Context, containerID string
 	}
 }
 
+// ListImages queries GCP Artifact Registry via the OCI distribution
+// catalog + tags endpoints for every image under the backend's
+// configured registry. Phase 89 / BUG-723 step 2 cross-cloud sibling.
+// Registry host is derived from project+region: `<region>-docker.pkg.dev`.
+// Bearer token comes from the ARAuthProvider that the ImageManager
+// already owns.
+func (p *cloudRunCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, error) {
+	if p.server.config.Region == "" || p.server.config.Project == "" {
+		return nil, nil
+	}
+	if p.server.images == nil || p.server.images.Auth == nil {
+		return nil, nil
+	}
+	registry := p.server.config.Region + "-docker.pkg.dev"
+	token, err := p.server.images.Auth.GetToken(registry)
+	if err != nil {
+		return nil, err
+	}
+	return core.OCIListImages(ctx, core.OCIListOptions{
+		Registry:  registry,
+		AuthToken: token,
+	})
+}
+
 // resolveJobName returns the Cloud Run Job name for a given container
 // ID, or "" if no matching sockerless-managed job is found. Phase 89 /
 // BUG-725 cross-cloud sibling: state derived from cloud actuals (Cloud
