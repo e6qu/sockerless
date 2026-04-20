@@ -385,9 +385,21 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 		return &api.NotModifiedError{}
 	}
 
-	// Phase 89 / BUG-725: cloud-fallback lookup so stop works post-restart.
-	if crState, ok := s.resolveCloudRunState(s.ctx(), id); ok && crState.ExecutionName != "" {
-		s.cancelExecution(crState.ExecutionName)
+	// Phase 87 — for Services, the Service resource IS the running
+	// instance; there's no in-flight Execution to cancel. Delete the
+	// Service to stop the container. Restart re-creates via
+	// CreateService in the next ContainerStart.
+	if s.config.UseService {
+		if svcState, ok := s.resolveServiceCloudRunState(s.ctx(), id); ok && svcState.ServiceName != "" {
+			s.deleteService(svcState.ServiceName)
+			s.Registry.MarkCleanedUp(svcState.ServiceName)
+			s.CloudRun.Update(id, func(st *CloudRunState) { st.ServiceName = "" })
+		}
+	} else {
+		// Phase 89 / BUG-725: cloud-fallback lookup so stop works post-restart.
+		if crState, ok := s.resolveCloudRunState(s.ctx(), id); ok && crState.ExecutionName != "" {
+			s.cancelExecution(crState.ExecutionName)
+		}
 	}
 
 	s.StopHealthCheck(id)
@@ -420,9 +432,19 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 
 	exitCode := core.SignalToExitCode(signal)
 
-	// Phase 89 / BUG-725: cloud-fallback lookup so kill works post-restart.
-	if crState, ok := s.resolveCloudRunState(s.ctx(), id); ok && crState.ExecutionName != "" {
-		s.cancelExecution(crState.ExecutionName)
+	// Phase 87 — same story as Stop: for Services we delete the
+	// resource; for Jobs we cancel the execution.
+	if s.config.UseService {
+		if svcState, ok := s.resolveServiceCloudRunState(s.ctx(), id); ok && svcState.ServiceName != "" {
+			s.deleteService(svcState.ServiceName)
+			s.Registry.MarkCleanedUp(svcState.ServiceName)
+			s.CloudRun.Update(id, func(st *CloudRunState) { st.ServiceName = "" })
+		}
+	} else {
+		// Phase 89 / BUG-725: cloud-fallback lookup so kill works post-restart.
+		if crState, ok := s.resolveCloudRunState(s.ctx(), id); ok && crState.ExecutionName != "" {
+			s.cancelExecution(crState.ExecutionName)
+		}
 	}
 
 	s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
@@ -464,19 +486,31 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			"exitCode": "0",
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
-		crState, _ := s.resolveCloudRunState(s.ctx(), id)
-		if crState.ExecutionName != "" {
-			s.cancelExecution(crState.ExecutionName)
+		if !s.config.UseService {
+			crState, _ := s.resolveCloudRunState(s.ctx(), id)
+			if crState.ExecutionName != "" {
+				s.cancelExecution(crState.ExecutionName)
+			}
 		}
 	}
 
 	s.StopHealthCheck(id)
 
-	// Delete Cloud Run Job (best-effort)
-	crState, _ := s.resolveCloudRunState(s.ctx(), id)
-	if crState.JobName != "" {
-		s.deleteJob(crState.JobName)
-		s.Registry.MarkCleanedUp(crState.JobName)
+	// Phase 87 — delete the backing cloud resource. Jobs and Services
+	// live in distinct GCP resource namespaces so cached state is
+	// unambiguous.
+	if s.config.UseService {
+		svcState, _ := s.resolveServiceCloudRunState(s.ctx(), id)
+		if svcState.ServiceName != "" {
+			s.deleteService(svcState.ServiceName)
+			s.Registry.MarkCleanedUp(svcState.ServiceName)
+		}
+	} else {
+		crState, _ := s.resolveCloudRunState(s.ctx(), id)
+		if crState.JobName != "" {
+			s.deleteJob(crState.JobName)
+			s.Registry.MarkCleanedUp(crState.JobName)
+		}
 	}
 
 	if pod, inPod := s.Store.Pods.GetPodForContainer(id); inPod {
