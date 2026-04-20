@@ -93,8 +93,8 @@ func (c Config) Validate() error {
 	if c.ResourceGroup == "" {
 		return fmt.Errorf("SOCKERLESS_ACA_RESOURCE_GROUP is required")
 	}
-	if c.UseApp {
-		return fmt.Errorf("SOCKERLESS_ACA_USE_APP=1 requested but the Apps code path is not yet implemented (Phase 88). Unset the flag or wait for Phase 88 to land")
+	if c.UseApp && c.Environment == "" {
+		return fmt.Errorf("SOCKERLESS_ACA_USE_APP=1 requires SOCKERLESS_ACA_ENVIRONMENT — Apps need an existing managed environment with VNet integration for peer-reachable internal FQDNs (BUG-716)")
 	}
 	return nil
 }

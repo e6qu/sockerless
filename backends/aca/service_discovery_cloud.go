@@ -1,6 +1,7 @@
 package aca
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -135,6 +136,95 @@ func (s *Server) cloudServiceResolve(serviceName, networkID string) ([]string, e
 		}
 	}
 	return ips, nil
+}
+
+// cloudServiceRegisterCNAME creates a Private DNS CNAME record mapping
+// the container's hostname to the ContainerApp's LatestRevisionFqdn.
+// Phase 88 parallel to cloudrun's cloudServiceRegisterCNAME: Apps have
+// stable internal FQDNs (reachable from other apps in the same
+// managed environment), so peers resolve by hostname → CNAME → FQDN.
+func (s *Server) cloudServiceRegisterCNAME(ctx context.Context, containerID, hostname, appName, networkID string) error {
+	if s.azure == nil || s.azure.ContainerApps == nil || appName == "" {
+		return nil
+	}
+	appResp, err := s.azure.ContainerApps.Get(ctx, s.config.ResourceGroup, appName, nil)
+	if err != nil {
+		return fmt.Errorf("get containerapp for DNS target: %w", err)
+	}
+	target := ""
+	if appResp.Properties != nil && appResp.Properties.LatestRevisionFqdn != nil {
+		target = *appResp.Properties.LatestRevisionFqdn
+	}
+	if target == "" {
+		s.Logger.Info().Str("container", containerID).Str("hostname", hostname).
+			Msg("ContainerApp.LatestRevisionFqdn empty (not ready?); skipping Private DNS CNAME")
+		return nil
+	}
+
+	state, ok := s.resolveNetworkState(ctx, networkID)
+	if !ok || state.DNSZoneName == "" {
+		return nil
+	}
+
+	rs := armprivatedns.RecordSet{
+		Properties: &armprivatedns.RecordSetProperties{
+			TTL:         to.Ptr(int64(60)),
+			CnameRecord: &armprivatedns.CnameRecord{Cname: to.Ptr(target)},
+		},
+	}
+
+	_, err = s.azure.PrivateDNSRecords.CreateOrUpdate(
+		ctx,
+		s.config.ResourceGroup,
+		state.DNSZoneName,
+		armprivatedns.RecordTypeCNAME,
+		hostname,
+		rs,
+		nil,
+	)
+	if err != nil {
+		s.Logger.Error().Err(err).
+			Str("hostname", hostname).
+			Str("target", target).
+			Str("zone", state.DNSZoneName).
+			Msg("failed to create Private DNS CNAME record")
+		return fmt.Errorf("DNS CNAME register failed for %s → %s: %w", hostname, target, err)
+	}
+
+	s.Logger.Info().
+		Str("hostname", hostname).
+		Str("target", target).
+		Str("zone", state.DNSZoneName).
+		Str("container", containerID[:12]).
+		Msg("registered DNS CNAME record for service discovery")
+	return nil
+}
+
+// cloudServiceDeregisterCNAME removes the CNAME the UseApp path writes.
+// Separate from cloudServiceDeregister because Private DNS wants the
+// exact record type on delete.
+func (s *Server) cloudServiceDeregisterCNAME(ctx context.Context, containerID, hostname, networkID string) error {
+	state, ok := s.NetworkState.Get(networkID)
+	if !ok || state.DNSZoneName == "" {
+		return nil
+	}
+	_, err := s.azure.PrivateDNSRecords.Delete(
+		ctx,
+		s.config.ResourceGroup,
+		state.DNSZoneName,
+		armprivatedns.RecordTypeCNAME,
+		hostname,
+		nil,
+	)
+	if err != nil && !isNotFound(err) {
+		s.Logger.Warn().Err(err).
+			Str("hostname", hostname).
+			Str("zone", state.DNSZoneName).
+			Str("container", containerID[:12]).
+			Msg("failed to delete Private DNS CNAME record")
+		return err
+	}
+	return nil
 }
 
 // isNotFound reports whether the error is a 404 from the Private DNS

@@ -2,16 +2,22 @@ package aca
 
 import "testing"
 
-// TestConfig_Validate_UseAppGate — Phase 88 foundation.
-// `UseApp=true` is rejected until the Apps code path lands so the
-// flag can't silently fall back to Jobs.
-func TestConfig_Validate_UseAppGate(t *testing.T) {
+// TestConfig_Validate_UseAppRequiresEnvironment — Phase 88.
+// UseApp=true needs a managed environment: the whole point of the
+// Apps path is peer-reachable internal FQDNs inside an environment
+// with VNet integration. Without one we have nothing to bind to.
+func TestConfig_Validate_UseAppRequiresEnvironment(t *testing.T) {
 	c := Config{SubscriptionID: "s", ResourceGroup: "rg", UseApp: true}
-	err := c.Validate()
-	if err == nil {
-		t.Fatal("expected Validate to reject UseApp=true until Phase 88")
+	if err := c.Validate(); err == nil {
+		t.Fatal("expected Validate to reject UseApp=true without Environment")
 	}
+	c.Environment = "my-env"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("UseApp + Environment should validate, got: %v", err)
+	}
+	// Default (Jobs path) should continue to validate without an env.
 	c.UseApp = false
+	c.Environment = ""
 	if err := c.Validate(); err != nil {
 		t.Fatalf("default Jobs path should validate, got: %v", err)
 	}

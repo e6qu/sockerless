@@ -513,10 +513,15 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		s.Store.Pods.RemoveContainer(pod.ID, id)
 	}
 
-	// Deregister from service discovery (Private DNS A record)
+	// Deregister from service discovery (CNAME for Apps, A for Jobs).
 	hostname := strings.TrimPrefix(c.Name, "/")
 	for _, ep := range c.NetworkSettings.Networks {
-		if ep != nil && ep.NetworkID != "" {
+		if ep == nil || ep.NetworkID == "" {
+			continue
+		}
+		if s.config.UseApp {
+			_ = s.cloudServiceDeregisterCNAME(s.ctx(), id, hostname, ep.NetworkID)
+		} else {
 			_ = s.cloudServiceDeregister(id, hostname, ep.NetworkID)
 		}
 	}
@@ -550,22 +555,35 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 }
 
 // ContainerLogs streams container logs from Azure Monitor Log Analytics.
+// Filter depends on Config.UseApp: Jobs log under ContainerGroupName_s;
+// Apps log under ContainerAppName_s in the same table.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
-	var jobName string
-	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
-		acaState, _ := s.resolveACAState(s.ctx(), id)
-		jobName = acaState.JobName
-		if jobName == "" {
-			jobName = buildJobName(id)
+	id, _ := s.ResolveContainerIDAuto(context.Background(), ref)
+
+	var whereClause string
+	if s.config.UseApp {
+		var appName string
+		if id != "" {
+			appState, _ := s.resolveAppACAState(s.ctx(), id)
+			appName = appState.AppName
+			if appName == "" {
+				appName = buildAppName(id)
+			}
 		}
+		whereClause = fmt.Sprintf(`ContainerAppName_s == "%s"`, appName)
+	} else {
+		var jobName string
+		if id != "" {
+			acaState, _ := s.resolveACAState(s.ctx(), id)
+			jobName = acaState.JobName
+			if jobName == "" {
+				jobName = buildJobName(id)
+			}
+		}
+		whereClause = fmt.Sprintf(`ContainerGroupName_s == "%s"`, jobName)
 	}
 
-	fetch := s.azureLogsFetch(
-		`ContainerAppConsoleLogs_CL`,
-		fmt.Sprintf(`ContainerGroupName_s == "%s"`, jobName),
-		"Log_s",
-	)
-
+	fetch := s.azureLogsFetch(`ContainerAppConsoleLogs_CL`, whereClause, "Log_s")
 	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{})
 }
 
