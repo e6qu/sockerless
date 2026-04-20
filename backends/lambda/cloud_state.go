@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	awslambda "github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
@@ -83,6 +84,70 @@ func (p *lambdaCloudState) WaitForExit(ctx context.Context, containerID string) 
 			}
 		}
 	}
+}
+
+// ListImages queries ECR for every image sockerless can use. Phase
+// 89 / BUG-723 step 2 cross-cloud sibling.
+func (p *lambdaCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, error) {
+	if p.server.aws.ECR == nil {
+		return nil, nil
+	}
+	var result []*api.ImageSummary
+	var nextToken *string
+	for {
+		reposOut, err := p.server.aws.ECR.DescribeRepositories(ctx, &ecr.DescribeRepositoriesInput{
+			NextToken: nextToken,
+		})
+		if err != nil {
+			return result, err
+		}
+		for _, repo := range reposOut.Repositories {
+			repoName := aws.ToString(repo.RepositoryName)
+			repoURI := aws.ToString(repo.RepositoryUri)
+			var imgToken *string
+			for {
+				imgsOut, imErr := p.server.aws.ECR.DescribeImages(ctx, &ecr.DescribeImagesInput{
+					RepositoryName: aws.String(repoName),
+					NextToken:      imgToken,
+				})
+				if imErr != nil {
+					break
+				}
+				for _, img := range imgsOut.ImageDetails {
+					var repoTags []string
+					for _, t := range img.ImageTags {
+						repoTags = append(repoTags, repoURI+":"+t)
+					}
+					digest := aws.ToString(img.ImageDigest)
+					size := int64(0)
+					if img.ImageSizeInBytes != nil {
+						size = *img.ImageSizeInBytes
+					}
+					pushedAt := int64(0)
+					if img.ImagePushedAt != nil {
+						pushedAt = img.ImagePushedAt.Unix()
+					}
+					result = append(result, &api.ImageSummary{
+						ID:          digest,
+						RepoTags:    repoTags,
+						RepoDigests: []string{repoURI + "@" + digest},
+						Created:     pushedAt,
+						Size:        size,
+						VirtualSize: size,
+					})
+				}
+				if imgsOut.NextToken == nil {
+					break
+				}
+				imgToken = imgsOut.NextToken
+			}
+		}
+		if reposOut.NextToken == nil {
+			break
+		}
+		nextToken = reposOut.NextToken
+	}
+	return result, nil
 }
 
 // resolveFunctionARN returns the Lambda function ARN for a given

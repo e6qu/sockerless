@@ -225,6 +225,94 @@ func (s *Server) resolveNetworkState(ctx context.Context, networkID string) (Net
 	return state, true
 }
 
+// ListPods groups sockerless-managed tasks by `sockerless-pod` tag
+// and returns one PodListEntry per unique pod name. Phase 89 /
+// BUG-724 cross-cloud sibling. Single-container tasks (no pod tag)
+// are excluded; those show up as standalone containers in
+// docker ps but not in docker pod ps.
+func (p *ecsCloudState) ListPods(ctx context.Context) ([]*api.PodListEntry, error) {
+	containers, err := p.queryTasks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Re-query raw tasks to read `sockerless-pod` tag — queryTasks
+	// drops the tag map after projecting to api.Container.
+	var allArns []string
+	for _, status := range []ecstypes.DesiredStatus{ecstypes.DesiredStatusRunning, ecstypes.DesiredStatusStopped} {
+		out, lerr := p.ecs.ListTasks(ctx, &awsecs.ListTasksInput{
+			Cluster:       aws.String(p.cluster),
+			DesiredStatus: status,
+		})
+		if lerr == nil {
+			allArns = append(allArns, out.TaskArns...)
+		}
+	}
+	if len(allArns) == 0 {
+		return nil, nil
+	}
+	desc, err := p.ecs.DescribeTasks(ctx, &awsecs.DescribeTasksInput{
+		Cluster: aws.String(p.cluster),
+		Tasks:   allArns,
+		Include: []ecstypes.TaskField{ecstypes.TaskFieldTags},
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Group container IDs by pod name.
+	containerByID := make(map[string]api.Container, len(containers))
+	for _, c := range containers {
+		containerByID[c.ID] = c
+	}
+	groups := make(map[string][]api.PodContainerInfo)
+	created := make(map[string]string)
+	status := make(map[string]string)
+	for _, task := range desc.Tasks {
+		tags := tagsToMap(task.Tags)
+		if tags["sockerless-managed"] != "true" {
+			continue
+		}
+		podName := tags["sockerless-pod"]
+		if podName == "" {
+			continue
+		}
+		cid := tags["sockerless-container-id"]
+		if cid == "" {
+			continue
+		}
+		cont, ok := containerByID[cid]
+		if !ok {
+			continue
+		}
+		groups[podName] = append(groups[podName], api.PodContainerInfo{
+			ID:    cont.ID,
+			Name:  strings.TrimPrefix(cont.Name, "/"),
+			State: cont.State.Status,
+		})
+		if task.CreatedAt != nil {
+			ts := task.CreatedAt.Format(time.RFC3339Nano)
+			if created[podName] == "" || ts < created[podName] {
+				created[podName] = ts
+			}
+		}
+		if cont.State.Running {
+			status[podName] = "Running"
+		} else if status[podName] == "" {
+			status[podName] = cont.State.Status
+		}
+	}
+	var out []*api.PodListEntry
+	for name, cs := range groups {
+		out = append(out, &api.PodListEntry{
+			ID:         "pod-" + name,
+			Name:       name,
+			Status:     status[name],
+			Created:    created[name],
+			Containers: cs,
+		})
+	}
+	return out, nil
+}
+
 // ListImages queries ECR for every image under every repository the
 // backend's account has access to, projecting to api.ImageSummary so
 // `docker images` returns the live cloud registry contents. Phase 89
