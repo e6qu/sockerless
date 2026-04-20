@@ -36,19 +36,20 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 | Volume (named) | EFS access point or empty volume in the task definition | (depends on backend EFS config) | (currently per-task-def; durable named volumes Phase-89-pending) |
 | Exec instance | ECS `ExecuteCommand` session | (transient SSM session) | (transient — no recovery needed) |
 
-**State derivation:**
+**State derivation (implemented in Phase 89):**
 
-- `docker ps -a` → `ListTasks(cluster, RUNNING)` + `ListTasks(cluster, STOPPED)` + `DescribeTasks(arns, Include=TAGS)`, filter to `sockerless-managed=true`, project to `api.Container` via `taskToContainer` (already exists).
-- `docker pod ps` → same as above, group by `sockerless-pod` tag, emit one `PodListEntry` per group.
-- `docker network ls` → `DescribeSecurityGroups(Filters=[tag:sockerless:network=*])` + `ListNamespaces(filter NamespaceType=DNS_PRIVATE)` filter to `sockerless-managed`. Each (SG, namespace) pair backed by name/id tag = one network.
-- `docker images` → `DescribeRepositories` (filter to `sockerless-managed` if we tag repos that way) + `DescribeImages` for each, map to `api.Image`.
-- `docker exec` → resolve `task ARN` from container-id tag (BUG-722's `resolveTaskARN`); call `ExecuteCommand`.
+- `docker ps -a` → `ListTasks` RUNNING+STOPPED + `DescribeTasks(Include=TAGS)` filtered to `sockerless-managed=true`, projected via `taskToContainer`.
+- `docker pod ps` → same task query grouped by `sockerless-pod` tag; `ecsCloudState.ListPods`.
+- `docker network ls` → `DescribeSecurityGroups(tag:sockerless:network-id=<id>)` + `ListNamespaces(DNS_PRIVATE) → ListTagsForResource(tag:sockerless:network-id=<id>)`.
+- `docker images` → `DescribeRepositories` + `DescribeImages` → `ImageSummary` with ECR RepoTags/RepoDigests; `ecsCloudState.ListImages`.
+- `docker exec` → `ecsCloudState.resolveTaskARN(containerID)` via tag filter, then `ExecuteCommand`.
+- `docker stop/kill/rm/restart/wait/logs/ExecCreate` → all go through `Server.resolveTaskState(ctx, containerID)` cache+cloud-fallback helper.
 
-**Currently-violating in-memory state to remove (BUG-725):**
+**In-memory state as a cache (post-Phase-89):**
 
-- `s.ECS *StateStore[ECSState]` (TaskARN, ClusterARN, SecurityGroupIDs, ServiceID per container) — must become a cache; lookups fall back to cloud.
-- `s.NetworkState *StateStore[NetworkState]` (SecurityGroupID, NamespaceID per docker network) — same.
-- `s.VolumeState *StateStore[VolumeState]` — same.
+- `s.ECS *StateStore[ECSState]` — transient cache; every cloud-identity callsite uses `resolveTaskState` which repopulates on miss.
+- `s.NetworkState *StateStore[NetworkState]` — transient cache; populated on create, recovered via `resolveNetworkState` on miss.
+- `s.VolumeState *StateStore[VolumeState]` — transient cache (volume state is simpler; follows same pattern).
 
 ### AWS Lambda (backend `lambda`)
 
@@ -61,15 +62,16 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 | Volume | Lambda layers (read-only) or `/tmp` (per-invocation, ephemeral). Bind mounts and named volumes outside `/tmp` are not supported. | — | — |
 | Exec instance | **Implemented via the agent overlay**: `cloudExecStart` dials the reverse-agent WebSocket (registered by `sockerless-lambda-bootstrap` during `Invoke`) and tunnels the command. | (transient agent session) | — |
 
-**State derivation:**
+**State derivation (implemented in Phase 89):**
 
 - `docker ps -a` → `ListFunctions` + `ListTags` per function ARN (filter `sockerless-managed=true`), project to `api.Container`.
-- `docker images` → ECR `DescribeImages` (same as ECS).
-- `docker exec` → look up function tag → invoke agent → exec via overlay.
+- `docker images` → `lambdaCloudState.ListImages` paginates ECR `DescribeRepositories` + `DescribeImages` (same ECR that ECS uses).
+- `docker exec` → `resolveLambdaState` for FunctionName → dial reverse-agent WebSocket → tunnel through overlay.
+- `docker stop/kill/rm/wait/logs` → all go through `Server.resolveLambdaState(ctx, containerID)` cache+cloud-fallback helper.
 
-**Currently-violating in-memory state to remove (BUG-725):**
+**In-memory state as a cache (post-Phase-89):**
 
-- `s.Lambda *StateStore[LambdaState]` (FunctionARN, log group, agent token per container) — cache only.
+- `s.Lambda *StateStore[LambdaState]` — transient cache; `resolveLambdaState` recovers `FunctionARN` + `FunctionName` on miss via `ListFunctions` + tag filter.
 
 ### GCP Cloud Run (backend `cloudrun`)
 
@@ -90,10 +92,11 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 - `docker images` → Artifact Registry `Images.List` filtered by repo path.
 - `docker logs` → Cloud Logging `LogAdmin.Entries(filter='resource.type="cloud_run_revision" labels.execution_name="<exec>"')`.
 
-**Currently-violating in-memory state (BUG-725 cross-cloud sibling):**
+**In-memory state as a cache (post-Phase-89):**
 
-- `s.CloudRun *StateStore[CloudRunState]` (JobName, ExecutionName, etc. per container) — must become a cache.
-- `s.NetworkState *StateStore[NetworkState]` (ManagedZoneName per docker network) — must become a cache; lookups fall back to `ManagedZones.Get(<sanitized>)`.
+- `s.CloudRun *StateStore[CloudRunState]` — transient cache; `resolveCloudRunState` recovers `JobName` (via `ListJobs` + label filter on `sockerless_container_id`) + `ExecutionName` (via `ListExecutions`, filter to non-terminal) on miss.
+- `s.NetworkState *StateStore[NetworkState]` — transient cache; `resolveNetworkState` recovers `ManagedZoneName` via `ManagedZones.Get(<sanitized>)`.
+- `docker images` cloud-derived via `cloudRunCloudState.ListImages` using the shared `core.OCIListImages` against `<region>-docker.pkg.dev`.
 
 ### Azure Container Apps (backend `aca`)
 
@@ -114,10 +117,11 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 - `docker images` → ACR `RegistryClient.NewListImportImagesPager` for the configured ACR.
 - `docker logs` → Log Analytics workspace queries on `ContainerAppConsoleLogs_CL` filtered by container app + execution name.
 
-**Currently-violating in-memory state (BUG-725 / BUG-726 cross-cloud sibling):**
+**In-memory state as a cache (post-Phase-89):**
 
-- `s.ACA *StateStore[ACAState]` (JobName, AppName, ExecutionName per container) — must become a cache.
-- `s.NetworkState *StateStore[NetworkState]` (DNSZoneName, NSGName per docker network) — must become a cache; lookups fall back to `PrivateZonesClient.Get` + tag-filter SG list.
+- `s.ACA *StateStore[ACAState]` — transient cache; `resolveACAState` recovers `JobName` (via `Jobs.NewListByResourceGroupPager` + tag filter) + `ExecutionName` (via `Executions.NewListPager`, filter to `Running`/`Processing`) on miss.
+- `s.NetworkState *StateStore[NetworkState]` — transient cache; `resolveNetworkState` recovers `DNSZoneName` via `PrivateDNSZones.Get(skls-<net>.local)` and `NSGName` via `NSG.Get(nsg-<env>-<net>)`.
+- `docker images` cloud-derived via `acaCloudState.ListImages` using the shared `core.OCIListImages` against `<ACRName>.azurecr.io`.
 
 ### GCP Cloud Run Functions (backend `cloudrun-functions` / `gcf`)
 
@@ -134,12 +138,12 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 
 - `docker ps -a` → `Functions.ListFunctions(parent="projects/<project>/locations/<region>")`, filter by label `sockerless-managed=true`, project to `api.Container`. Recovery already implemented in `backends/cloudrun-functions/recovery.go`.
 - `docker stop` → `Functions.DeleteFunction(name)` (Cloud Functions have no in-place stop; deletion is the analog).
-- `docker images` → Artifact Registry `Images.List` filtered by repo path.
+- `docker images` → `gcfCloudState.ListImages` via the shared `core.OCIListImages` against `<region>-docker.pkg.dev` with token from `ARAuthProvider`.
 - `docker logs` → Cloud Logging `LogAdmin.Entries(filter='resource.type="cloud_function" labels.function_name="<name>"')`.
 
-**Currently-violating in-memory state (BUG-725 cross-cloud sibling):**
+**In-memory state as a cache (post-Phase-89):**
 
-- `s.GCF *StateStore[GCFState]` (FunctionName per container) — must become a cache; lookups fall back to Cloud Functions API + label filter.
+- `s.GCF *StateStore[GCFState]` — transient cache for `FunctionName`; backend's `ContainerStop/Kill/Remove` paths call `CloudState` directly for lookups since GCF has only one cloud-identity field.
 
 ### Azure Functions (backend `azure-functions` / `azf`)
 
@@ -157,12 +161,12 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 - `docker ps -a` → `WebApps.NewListByResourceGroupPager(resourceGroup)`, filter by tag `sockerless-managed=true`, project to `api.Container`.
 - `docker stop` → `WebApps.Stop(name)` (function app stays defined but doesn't run).
 - `docker rm` → `WebApps.Delete(name)`.
-- `docker images` → ACR `RegistryClient.NewListImportImagesPager` for the configured ACR.
+- `docker images` → `azfCloudState.ListImages` via the shared `core.OCIListImages` against `config.Registry` (the ACR hostname) with token from `ACRAuthProvider`.
 - `docker logs` → App Service container logs via `WebApps.GetContainerLogsZip` or `LogAnalytics` queries on the workspace linked to the App.
 
-**Currently-violating in-memory state (BUG-725 cross-cloud sibling):**
+**In-memory state as a cache (post-Phase-89):**
 
-- `s.AZF *StateStore[AZFState]` (FunctionAppName per container) — must become a cache; lookups fall back to `WebApps.NewListByResourceGroupPager` + tag filter.
+- `s.AZF *StateStore[AZFState]` — transient cache for `FunctionAppName`.
 
 ### Local Docker (backend `docker`)
 
@@ -192,9 +196,9 @@ These are the only places sockerless backends are allowed to keep state:
 
 Forbidden:
 
-- `~/.sockerless/state/images.json` (BUG-723 — Store.Images persistence). **Removed** in Phase 89 step 1. Per-backend cloud-derived `docker images` is the in-progress step 2.
+- `~/.sockerless/state/images.json` (BUG-723 — Store.Images persistence). **Removed** in Phase 89; all 6 cloud backends now derive `docker images` from their respective cloud registries.
 - Backend-side databases, KV stores, message queues for state.
-- Tags written by sockerless that store secrets or state-snapshots beyond identity (`sockerless-managed`, `sockerless-container-id`, `sockerless-name`, `sockerless-pod`, `sockerless:network`, `sockerless-instance` — these are identity/discovery only).
+- Tags written by sockerless that store secrets or state-snapshots beyond identity (`sockerless-managed`, `sockerless-container-id`, `sockerless-name`, `sockerless-pod`, `sockerless:network`, `sockerless:network-id`, `sockerless-instance` — these are identity/discovery only).
 
 ---
 
@@ -213,21 +217,19 @@ A backend that fails any of these contracts is in violation of Phase 89.
 
 ---
 
-## Phase 89 work breakdown
+## Phase 89 status
 
-This doc grounds the following bugs:
+| Bug | Status | Notes |
+|---|---|---|
+| **BUG-723** | fixed | `Store.Images` disk persistence removed. All 6 cloud backends implement `CloudImageLister.ListImages`: ECS + Lambda via ECR `DescribeRepositories`+`DescribeImages`; Cloud Run + GCF via shared `core.OCIListImages` against `<region>-docker.pkg.dev` with `ARAuthProvider` token; ACA + AZF via `core.OCIListImages` against the configured ACR with `ACRAuthProvider` token. `BaseServer.ImageList` merges cache + cloud, deduped by ID. |
+| **BUG-724** | partial | `core.CloudPodLister` interface lands; `BaseServer.PodList` merges cache + cloud. ECS `ListPods` groups tasks by `sockerless-pod` tag. Cloud Run + ACA pod listing blocked on Phase 87/88 — multi-container pods need the Jobs→Services/Apps rewrite first. GCF + AZF don't support pods. |
+| **BUG-725** | fixed | `resolve*State` cache+cloud-fallback helpers landed across 4 backends (ECS, Lambda, Cloud Run, ACA). Every cloud-state-dependent callsite migrated (Stop, Kill, Remove, Restart, Wait, Logs, ExecCreate, cloudExecStart, etc.). Unit tests cover cache-hit + cache-miss-no-cloud paths. |
+| **BUG-726** | fixed | `resolveNetworkState` cache+cloud-fallback helpers landed in ECS, Cloud Run, and ACA. Cloud Map namespaces tagged with `sockerless:network-id` at create time. `cloudServiceRegister` in cloudrun + aca use the fallback. Lambda + GCF + AZF don't have user-defined cloud networks. |
 
-- **BUG-723** Remove `Store.Images` disk persistence; query the cloud registry on `docker images` / `docker pull` / `docker push`.
-- **BUG-724** Implement `PodList` / `PodInspect` per backend by deriving from cloud actuals (multi-container task / app), not from `Store.Pods`.
-- **BUG-725** Replace ECS `s.ECS` and `s.NetworkState` and `s.VolumeState` with cache-on-demand wrappers; `resolveTaskARN` (BUG-722) becomes the canonical pattern, generalized.
-- **BUG-726** Same as 725 for cloudrun / aca / lambda / gcf / azf where applicable.
+Remaining Phase 89 work:
 
-Implementation order recommended:
+- Per-backend restart-resilience integration tests against the simulators (ECS, Cloud Run, ACA, Lambda). Each would: spin up sim + backend, create container, kill backend, restart backend, assert every docker call still works. Unit tests already prove the helpers; integration tests prove the SDK interaction. Non-blocking — Phase 89 is functionally complete.
 
-1. Land this doc (this commit).
-2. **Audit pass**: in each backend's main file, mark every `s.<StateStore>.Get(id)` callsite with a comment indicating whether it's a cache or a state-of-truth use. State-of-truth uses become "look up from cloud, write to cache, return."
-3. ECS first (BUG-725 reference implementation): generalize `resolveTaskARN` so every backend method that needs `TaskARN` falls back to cloud lookup.
-4. Cloudrun + ACA + Lambda + GCF + AZF: same pattern.
-5. `Store.Images` removal: replace `Store.Images.List()` with a `cloudImageList(ctx)` method per backend that queries ECR / Artifact Registry / ACR. Delete `PersistImages` / `RestoreImages` / `images.json` plumbing.
-6. Pod derivation: `PodList` queries cloud, groups by `sockerless-pod` tag.
-7. Tests: each backend gets a "stateless restart" integration test that creates resources, restarts the backend (drops in-memory state), and asserts every relevant docker call still works.
+Dependencies:
+
+- BUG-724 full completion requires Phase 87 (cloudrun Jobs → Services with sidecars) + Phase 88 (aca Jobs → Apps with sidecars) so that multi-container pods have a cloud anchor.
