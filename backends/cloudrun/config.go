@@ -20,12 +20,11 @@ type Config struct {
 	LogTimeout   time.Duration // Cloud Logging query timeout (default 30s)
 
 	// UseService switches container execution from Cloud Run Jobs to
-	// Cloud Run Services with internal ingress. Required for Phase 87:
-	// Jobs don't have addressable per-execution IPs (BUG-715), so
+	// Cloud Run Services with internal ingress. Required for:
+	// Jobs don't have addressable per-execution IPs, so
 	// cross-container DNS via Cloud DNS A-records is fundamentally
 	// broken. Services + a VPC connector give peer-reachable internal
 	// IPs that can back the DNS records.
-	//
 	// Default false (Jobs path) until the Services path is implemented.
 	// Set via `SOCKERLESS_GCR_USE_SERVICE=1`.
 	UseService bool
@@ -86,7 +85,7 @@ func (c Config) Validate() error {
 		return fmt.Errorf("SOCKERLESS_GCR_PROJECT is required")
 	}
 	if c.UseService && c.VPCConnector == "" {
-		return fmt.Errorf("SOCKERLESS_GCR_USE_SERVICE=1 requires SOCKERLESS_GCR_VPC_CONNECTOR — Services need a VPC connector for peer-reachable internal DNS (BUG-715)")
+		return fmt.Errorf("SOCKERLESS_GCR_USE_SERVICE=1 requires SOCKERLESS_GCR_VPC_CONNECTOR — Services need a VPC connector for peer-reachable internal DNS")
 	}
 	return nil
 }

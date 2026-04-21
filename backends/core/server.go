@@ -90,7 +90,7 @@ func NewBaseServer(store *Store, desc BackendDescriptor, logger zerolog.Logger) 
 		registryPath = filepath.Join(dataDir, "sockerless-registry.json")
 	}
 
-	// Phase 89 / BUG-723: no on-disk image state. Store.Images is
+	// no on-disk image state. Store.Images is
 	// purely an in-process cache; the cloud registry that each backend
 	// points at (ECR, Artifact Registry, ACR) is the source of truth.
 	// Backends are responsible for implementing `docker images` /

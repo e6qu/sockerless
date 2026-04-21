@@ -31,8 +31,7 @@ var ociListClient = &http.Client{Timeout: 60 * time.Second}
 // result into `api.ImageSummary` with fully-qualified RepoTags. Used by
 // backends that expose their cloud container registry through the OCI
 // distribution v2 protocol (GCP Artifact Registry + Azure Container
-// Registry + anything else in the family). Phase 89 / BUG-723.
-//
+// Registry + anything else in the family)./.
 // Failures per-repo are swallowed (tag list returns empty); a failing
 // catalog request surfaces as an error.
 func OCIListImages(ctx context.Context, opts OCIListOptions) ([]*api.ImageSummary, error) {

@@ -119,8 +119,8 @@ func (s *StateStore[T]) Keys() []string {
 	return keys
 }
 
-// Store holds all in-memory state shared by all backends. Per Phase 89
-// (BUG-723) the Images store is purely an in-process cache; no on-disk
+// Store holds all in-memory state shared by all backends. Per
+// the Images store is purely an in-process cache; no on-disk
 // persistence. `docker images` / `docker inspect <image>` are served
 // from the cache when populated by recent `docker pull` calls; backends
 // that want a complete view derive directly from the cloud registry.

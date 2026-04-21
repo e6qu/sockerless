@@ -13,8 +13,7 @@ import (
 
 // dockerHubCredentialARN returns the Secrets Manager ARN holding docker-hub
 // credentials for ECR pull-through cache, or "" if not configured.
-//
-//	Secret JSON shape: {"username":"...","accessToken":"..."}
+// Secret JSON shape: {"username":"...","accessToken":"..."}
 func dockerHubCredentialARN() string {
 	return os.Getenv("SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN")
 }
@@ -24,16 +23,14 @@ func dockerHubCredentialARN() string {
 // rewritten to the account's ECR pull-through cache, which fetches from
 // Docker Hub (or another upstream) on first request. Already-ECR URIs
 // are returned unchanged.
-//
 // Examples:
-//   - "alpine:latest" → "<account>.dkr.ecr.<region>.amazonaws.com/docker-hub/library/alpine:latest"
-//   - "node:20"       → "<account>.dkr.ecr.<region>.amazonaws.com/docker-hub/library/node:20"
-//   - "ghcr.io/owner/repo:v1" → "<account>.dkr.ecr.<region>.amazonaws.com/ghcr-io/owner/repo:v1"
-//   - "<account>.dkr.ecr.<region>.amazonaws.com/repo:tag" → used as-is
-//
+// - "alpine:latest" → "<account>.dkr.ecr.<region>.amazonaws.com/docker-hub/library/alpine:latest"
+// - "node:20" → "<account>.dkr.ecr.<region>.amazonaws.com/docker-hub/library/node:20"
+// - "ghcr.io/owner/repo:v1" → "<account>.dkr.ecr.<region>.amazonaws.com/ghcr-io/owner/repo:v1"
+// - "<account>.dkr.ecr.<region>.amazonaws.com/repo:tag" → used as-is
 // Returns an error (not a silent fallback) if pull-through cache
 // setup fails, so the operator sees the real failure (e.g. missing
-// docker-hub credential ARN — see BUG-708).
+// docker-hub credential ARN — see.
 func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error) {
 	if strings.Contains(ref, ".dkr.ecr.") && strings.Contains(ref, ".amazonaws.com") {
 		return ref, nil
@@ -77,7 +74,7 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 
 // ensurePullThroughCache creates an ECR pull-through cache rule if
 // one doesn't already exist for the given prefix + upstream pair.
-// Idempotent on repeated calls. For docker-hub upstream (BUG-708),
+// Idempotent on repeated calls. For docker-hub upstream,
 // AWS now requires a Secrets Manager `CredentialArn` containing the
 // upstream registry credentials — read from
 // `SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN`. Returns an explicit

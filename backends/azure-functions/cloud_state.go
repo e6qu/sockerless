@@ -17,7 +17,7 @@ type azfCloudState struct {
 }
 
 // ListImages queries Azure Container Registry via the OCI distribution
-// catalog + tags endpoints. Phase 89 / BUG-723 step 2 cross-cloud
+// catalog + tags endpoints./step 2 cross-cloud
 // sibling. `config.Registry` is the ACR hostname
 // (e.g. `myregistry.azurecr.io`).
 func (p *azfCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, error) {

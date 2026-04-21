@@ -13,26 +13,22 @@ import (
 
 // dockerHubCredentialARN returns the Secrets Manager ARN holding docker-hub
 // credentials for ECR pull-through cache, or "" if not configured.
-//
-//	Secret JSON shape: {"username":"...","accessToken":"..."}
-//
-// BUG-718 (sibling of ECS BUG-708): AWS rejects pull-through cache rules
+// Secret JSON shape: {"username":"...","accessToken":"..."}
+// (sibling of ECS: AWS rejects pull-through cache rules
 // for docker-hub upstream without a CredentialArn.
 func dockerHubCredentialARN() string {
 	return os.Getenv("SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN")
 }
 
 // resolveImageURI converts a Docker image reference to an ECR URI that Lambda can use.
-//
 // Lambda only supports private ECR image URIs. For non-ECR images (e.g., Docker Hub),
 // this method ensures an ECR pull-through cache rule exists and rewrites the reference
 // to the cache URI. ECR automatically pulls from Docker Hub on first access.
-//
 // Examples:
-//   - "alpine:latest" → "<account>.dkr.ecr.<region>.amazonaws.com/docker-hub/library/alpine:latest"
-//   - "nginx:alpine"  → "<account>.dkr.ecr.<region>.amazonaws.com/docker-hub/library/nginx:alpine"
-//   - "myorg/app:v1"  → "<account>.dkr.ecr.<region>.amazonaws.com/docker-hub/myorg/app:v1"
-//   - "<account>.dkr.ecr.<region>.amazonaws.com/repo:tag" → used as-is
+// - "alpine:latest" → "<account>.dkr.ecr.<region>.amazonaws.com/docker-hub/library/alpine:latest"
+// - "nginx:alpine" → "<account>.dkr.ecr.<region>.amazonaws.com/docker-hub/library/nginx:alpine"
+// - "myorg/app:v1" → "<account>.dkr.ecr.<region>.amazonaws.com/docker-hub/myorg/app:v1"
+// - "<account>.dkr.ecr.<region>.amazonaws.com/repo:tag" → used as-is
 func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error) {
 	// Already an ECR URI — use as-is
 	if strings.Contains(ref, ".dkr.ecr.") && strings.Contains(ref, ".amazonaws.com") {
@@ -58,8 +54,8 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 		upstreamURL = "https://" + registry
 	}
 
-	// BUG-718: no silent fallback. If pull-through cache setup fails
-	// (most commonly: missing docker-hub CredentialArn — see BUG-708),
+	// no silent fallback. If pull-through cache setup fails
+	// (most commonly: missing docker-hub CredentialArn — see,
 	// surface the real error. The historical pushToECR auto-fallback was
 	// removed because it silently swapped the image source without the
 	// operator's knowledge — and only worked when the image happened to
@@ -81,7 +77,7 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 }
 
 // ensurePullThroughCache creates an ECR pull-through cache rule if it
-// doesn't exist. For docker-hub upstream (BUG-718), AWS now requires a
+// doesn't exist. For docker-hub upstream, AWS now requires a
 // Secrets Manager CredentialArn — read from
 // SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN. Returns explicit error when
 // the credential is needed but not configured.
@@ -120,7 +116,7 @@ func (s *Server) ensurePullThroughCache(ctx context.Context, prefix, upstreamURL
 func parseDockerRef(ref string) (registry, repo, tag string) {
 	tag = "latest"
 
-	// Check for explicit registry (contains . or :port before /)
+	// Check for explicit registry (contains. or:port before /)
 	if i := strings.IndexByte(ref, '/'); i > 0 {
 		prefix := ref[:i]
 		if strings.ContainsAny(prefix, ".:") {

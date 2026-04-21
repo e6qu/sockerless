@@ -26,7 +26,7 @@ func (s *Server) cloudNetworkCreate(name, networkID string) error {
 
 	created, err := s.gcp.DNS.ManagedZones.Create(s.config.Project, zone).Context(s.ctx()).Do()
 	if err != nil {
-		// Reuse existing zone on conflict (BUG-713 — idempotent retry).
+		// Reuse existing zone on conflict— idempotent retry).
 		if gerr, ok := err.(*googleapi.Error); ok && gerr.Code == 409 {
 			existing, getErr := s.gcp.DNS.ManagedZones.Get(s.config.Project, zoneName).Context(s.ctx()).Do()
 			if getErr != nil {

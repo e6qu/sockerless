@@ -63,7 +63,7 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 	c, _ := s.ResolveContainerAuto(context.Background(), containerID)
 	hostname := strings.TrimPrefix(c.Name, "/")
 
-	// Phase 87 — Services path: register a CNAME pointing at the
+	// — Services path: register a CNAME pointing at the
 	// Service URL. A-records don't apply because Cloud Run Services
 	// have no per-instance IP; peers reach each other via the Service
 	// URL over the VPC connector.

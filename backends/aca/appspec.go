@@ -8,10 +8,10 @@ import (
 	core "github.com/sockerless/backend-core"
 )
 
-// Phase 88 — Apps spec builder. Parallel to jobspec.go. When
+// — Apps spec builder. Parallel to jobspec.go. When
 // Config.UseApp is true, container execution switches from ACA Jobs
 // to ACA Apps with internal-only ingress so peers have stable
-// per-revision FQDNs (BUG-716).
+// per-revision FQDNs.
 
 // buildAppName generates an ACA ContainerApp name from a container ID.
 // Distinct prefix from buildJobName so Jobs and Apps never collide in

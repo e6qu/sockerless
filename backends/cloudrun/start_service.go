@@ -11,10 +11,9 @@ import (
 	gcpcommon "github.com/sockerless/gcp-common"
 )
 
-// Phase 87 — single- and multi-container start paths for the Services
+// — single- and multi-container start paths for the Services
 // code path. When Config.UseService is true, ContainerStart dispatches
 // here instead of the Jobs flow in backend_impl.go.
-//
 // Services are long-running with MinInstanceCount=1, so there's no
 // execution-exit poller — the container stays "running" until
 // ContainerStop/Remove deletes the Service and closes WaitChs

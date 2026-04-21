@@ -58,7 +58,7 @@ func (p *acaCloudState) ListContainers(ctx context.Context, all bool, filters ma
 	}
 
 	// Query Azure Container Apps Jobs API for sockerless-managed resources.
-	// Phase 88: when Config.UseApp is true, also merge ContainerApps so
+	// when Config.UseApp is true, also merge ContainerApps so
 	// mixed deployments surface both tracks during migration. Jobs and
 	// Apps live in distinct ARM resource types so no double-counting.
 	cloudContainers, err := p.queryJobs(ctx)
@@ -227,7 +227,7 @@ func (p *acaCloudState) ListPods(ctx context.Context) ([]*api.PodListEntry, erro
 	return out, nil
 }
 
-// Phase 89 / BUG-723 step 2 cross-cloud sibling. Registry host comes
+// step 2 cross-cloud sibling. Registry host comes
 // from `<ACRName>.azurecr.io`; bearer token comes from the
 // ACRAuthProvider owned by the ImageManager.
 func (p *acaCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, error) {
@@ -250,7 +250,7 @@ func (p *acaCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, er
 
 // resolveNetworkState returns NetworkState for the given docker
 // network ID, deriving from cloud actuals when the in-memory cache is
-// empty. Phase 89 / BUG-726 cross-cloud sibling. Both the Private DNS
+// empty./cross-cloud sibling. Both the Private DNS
 // zone name (`skls-<net>.local`) and the NSG name
 // (`nsg-<env>-<net>`) are deterministic from the network name, so a
 // simple existence probe against each reconstitutes state.
@@ -293,7 +293,7 @@ func (s *Server) resolveNetworkState(ctx context.Context, networkID string) (Net
 }
 
 // resolveJobName returns the ACA Job name for a given container ID, or
-// "" if no matching sockerless-managed job is found. Phase 89 / BUG-725
+// "" if no matching sockerless-managed job is found./
 // cross-cloud sibling: state derived from cloud actuals (ACA Job tags).
 func (p *acaCloudState) resolveJobName(ctx context.Context, containerID string) (string, error) {
 	pager := p.server.azure.Jobs.NewListByResourceGroupPager(p.server.config.ResourceGroup, nil)
@@ -346,8 +346,8 @@ func (p *acaCloudState) resolveActiveExecution(ctx context.Context, jobName stri
 }
 
 // resolveACAState returns ACAState for the given container ID, deriving
-// from cloud actuals when the in-memory cache is empty. Phase 89 /
-// BUG-725 cross-cloud sibling.
+// from cloud actuals when the in-memory cache is empty./
+// cross-cloud sibling.
 func (s *Server) resolveACAState(ctx context.Context, containerID string) (ACAState, bool) {
 	if state, ok := s.ACA.Get(containerID); ok && state.JobName != "" {
 		return state, true

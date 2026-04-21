@@ -161,11 +161,11 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// Put the reverse-agent overlay image into play when CallbackURL
 	// is set so `docker exec` / `docker attach` can reach a running
 	// invocation. Two paths:
-	//  - PrebuiltOverlayImage configured: operator ships their own
-	//    agent-baked image; use it directly.
-	//  - Otherwise: build + push an overlay on top of the user's image
-	//    via BuildAndPushOverlayImage. Failure falls back to the base
-	//    image with a warning (exec will not work in that case).
+	// - PrebuiltOverlayImage configured: operator ships their own
+	// agent-baked image; use it directly.
+	// - Otherwise: build + push an overlay on top of the user's image
+	// via BuildAndPushOverlayImage. Failure falls back to the base
+	// image with a warning (exec will not work in that case).
 	if s.config.CallbackURL != "" {
 		if s.config.PrebuiltOverlayImage != "" {
 			imageURI = s.config.PrebuiltOverlayImage
@@ -349,18 +349,16 @@ func (s *Server) ContainerStart(ref string) error {
 // "cancel invoke" API and UpdateFunctionConfiguration only applies to
 // future invocations — an in-flight invoke cannot be aborted from the
 // control plane. Stop therefore does three things, in order:
-//
-//  1. Clamps the function timeout to the minimum (1s) so any subsequent
-//     invocations of this container are short-lived. Best-effort — a
-//     failure here is logged but non-fatal (the invocation may already
-//     be finishing and the function may already be gone).
-//  2. Requests the reverse agent (if connected) to exit, which causes
-//     the agent-as-handler Lambda invocation to return immediately.
-//     This is the only path that actually cuts short an in-flight
-//     invocation. Containers without the bundled agent will keep
-//     running until natural completion or the 15-min AWS hard cap.
-//  3. Closes the local wait channel so `docker wait` unblocks.
-//
+// 1. Clamps the function timeout to the minimum (1s) so any subsequent
+// invocations of this container are short-lived. Best-effort — a
+// failure here is logged but non-fatal (the invocation may already
+// be finishing and the function may already be gone).
+// 2. Requests the reverse agent (if connected) to exit, which causes
+// the agent-as-handler Lambda invocation to return immediately.
+// This is the only path that actually cuts short an in-flight
+// invocation. Containers without the bundled agent will keep
+// running until natural completion or the 15-min AWS hard cap.
+// 3. Closes the local wait channel so `docker wait` unblocks.
 // Exit code 137 matches Docker's convention for force-stopped containers.
 func (s *Server) ContainerStop(ref string, timeout *int) error {
 	c, ok := s.ResolveContainerAuto(context.Background(), ref)
@@ -375,7 +373,7 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 
 	s.StopHealthCheck(id)
 
-	// Phase 89 / BUG-725: cloud-fallback lookup so stop works post-restart.
+	// cloud-fallback lookup so stop works post-restart.
 	if lambdaState, ok := s.resolveLambdaState(s.ctx(), id); ok && lambdaState.FunctionName != "" {
 		_, err := s.aws.Lambda.UpdateFunctionConfiguration(s.ctx(),
 			&awslambda.UpdateFunctionConfigurationInput{
@@ -421,7 +419,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 
 	exitCode := core.SignalToExitCode(signal)
 
-	// Phase 89 / BUG-725: cloud-fallback lookup so kill works post-restart.
+	// cloud-fallback lookup so kill works post-restart.
 	lambdaState, _ := s.resolveLambdaState(s.ctx(), id)
 	if lambdaState.FunctionName != "" {
 		_, err := s.aws.Lambda.UpdateFunctionConfiguration(s.ctx(),

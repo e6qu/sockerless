@@ -40,7 +40,7 @@ func TestExtractAccountID(t *testing.T) {
 	}
 }
 
-// BUG-708: dockerHubCredentialARN reads from SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN.
+// dockerHubCredentialARN reads from SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN.
 // When unset, ensurePullThroughCache must reject docker-hub upstream with an
 // explicit error (no silent fallback).
 func TestDockerHubCredentialARN_ReadsEnv(t *testing.T) {

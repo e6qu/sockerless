@@ -23,11 +23,10 @@ type Config struct {
 	PollInterval          time.Duration // Cloud API poll interval (default 2s)
 
 	// UseApp switches container execution from ACA Jobs to ACA Apps
-	// with internal ingress. Required for Phase 88: Jobs don't have
-	// addressable per-execution IPs (BUG-716), so cross-container DNS
+	// with internal ingress. Required for: Jobs don't have
+	// addressable per-execution IPs, so cross-container DNS
 	// via Private DNS A-records is fundamentally broken. Apps with
 	// `Ingress.External=false` give peer-reachable internal FQDNs.
-	//
 	// Default false (Jobs path) until the Apps path is implemented.
 	// Set via `SOCKERLESS_ACA_USE_APP=1`.
 	UseApp bool
@@ -94,7 +93,7 @@ func (c Config) Validate() error {
 		return fmt.Errorf("SOCKERLESS_ACA_RESOURCE_GROUP is required")
 	}
 	if c.UseApp && c.Environment == "" {
-		return fmt.Errorf("SOCKERLESS_ACA_USE_APP=1 requires SOCKERLESS_ACA_ENVIRONMENT — Apps need an existing managed environment with VNet integration for peer-reachable internal FQDNs (BUG-716)")
+		return fmt.Errorf("SOCKERLESS_ACA_USE_APP=1 requires SOCKERLESS_ACA_ENVIRONMENT — Apps need an existing managed environment with VNet integration for peer-reachable internal FQDNs")
 	}
 	return nil
 }

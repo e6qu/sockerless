@@ -170,7 +170,7 @@ func TestOCIListImages_BearerTokenPropagated(t *testing.T) {
 }
 
 // TestOCIListImages_PerRepoFailureSwallowed — when one repo's
-// /tags/list returns 404, OCIListImages skips it and still emits
+// tags/list returns 404, OCIListImages skips it and still emits
 // summaries for the other repos.
 func TestOCIListImages_PerRepoFailureSwallowed(t *testing.T) {
 	// Build a custom mux where /v2/broken/tags/list returns 500.

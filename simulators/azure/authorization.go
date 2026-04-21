@@ -27,7 +27,7 @@ type RoleAssignmentProperties struct {
 }
 
 // parseRoleAssignmentPath extracts the scope and role assignment name from a path like
-// /subscriptions/{sub}/providers/Microsoft.Authorization/roleAssignments/{name}
+// subscriptions/{sub}/providers/Microsoft.Authorization/roleAssignments/{name}
 func parseRoleAssignmentPath(path string) (scope, raName string, ok bool) {
 	lowerPath := strings.ToLower(path)
 	const marker = "/providers/microsoft.authorization/roleassignments/"

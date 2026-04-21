@@ -3,7 +3,7 @@ package main
 // SSM Session Manager AgentMessage emitter for the ECS exec WebSocket.
 // The backend (backends/ecs/exec_cloud.go) expects the server side of
 // the exec channel to speak the AWS Session Manager binary protocol:
-// real AWS does, so the simulator has to as well (BUG-728). Wire layout
+// real AWS does, so the simulator has to as well. Wire layout
 // matches backends/ecs/ssm_proto.go — see that file + AWS's
 // session-manager-plugin source for the 120-byte fixed header format.
 

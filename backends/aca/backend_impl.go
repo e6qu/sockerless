@@ -209,7 +209,7 @@ func (s *Server) ContainerStart(ref string) error {
 		return s.startMultiContainerJobTyped(id, podContainers, exitCh)
 	}
 
-	// Phase 88 — Apps path. Separate function so the Jobs branch
+	// — Apps path. Separate function so the Jobs branch
 	// below can be deleted when Jobs support is sunset.
 	if s.config.UseApp {
 		acaState, _ := s.resolveAppACAState(s.ctx(), id)
@@ -387,7 +387,7 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 		return &api.NotModifiedError{}
 	}
 
-	// Phase 88 — for Apps, the ContainerApp IS the running instance;
+	// — for Apps, the ContainerApp IS the running instance;
 	// there's no in-flight Execution to stop. Delete the App to stop
 	// the container; next Start re-creates it.
 	if s.config.UseApp {
@@ -397,7 +397,7 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 			s.ACA.Update(id, func(st *ACAState) { st.AppName = "" })
 		}
 	} else {
-		// Phase 89 / BUG-725: cloud-fallback lookup so stop works post-restart.
+		// cloud-fallback lookup so stop works post-restart.
 		if acaState, ok := s.resolveACAState(s.ctx(), id); ok && acaState.JobName != "" && acaState.ExecutionName != "" {
 			s.stopExecution(acaState.JobName, acaState.ExecutionName)
 		}
@@ -432,7 +432,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 
 	exitCode := core.SignalToExitCode(signal)
 
-	// Phase 88 — same as Stop: Apps delete, Jobs cancel execution.
+	// — same as Stop: Apps delete, Jobs cancel execution.
 	if s.config.UseApp {
 		if appState, ok := s.resolveAppACAState(s.ctx(), id); ok && appState.AppName != "" {
 			s.deleteApp(appState.AppName)
@@ -440,7 +440,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 			s.ACA.Update(id, func(st *ACAState) { st.AppName = "" })
 		}
 	} else {
-		// Phase 89 / BUG-725: cloud-fallback lookup so kill works post-restart.
+		// cloud-fallback lookup so kill works post-restart.
 		if acaState, ok := s.resolveACAState(s.ctx(), id); ok && acaState.JobName != "" && acaState.ExecutionName != "" {
 			s.stopExecution(acaState.JobName, acaState.ExecutionName)
 		}
@@ -493,7 +493,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	s.StopHealthCheck(id)
 
-	// Phase 88 — delete the backing cloud resource. Jobs and Apps are
+	// — delete the backing cloud resource. Jobs and Apps are
 	// distinct ARM resource types so cached state is unambiguous.
 	if s.config.UseApp {
 		appState, _ := s.resolveAppACAState(s.ctx(), id)

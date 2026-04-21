@@ -1044,8 +1044,8 @@ type ecsExecSession struct {
 
 // ssmStreamWriter wraps chunks in an SSM output_stream_data AgentMessage
 // frame before sending over the WebSocket. The backend's decoder
-// (BUG-717) parses these frames to reconstruct the Docker-mux'd stream;
-// sending raw bytes silently produces empty exec output (BUG-728).
+// parses these frames to reconstruct the Docker-mux'd stream;
+// sending raw bytes silently produces empty exec output.
 type ssmStreamWriter struct {
 	conn        *websocket.Conn
 	payloadType uint32 // 1 = stdout, 11 = stderr
@@ -1207,9 +1207,9 @@ func handleECSExecWebSocket(sessionID string) http.HandlerFunc {
 
 				// Bridge: Docker exec → WebSocket wrapped in SSM
 				// AgentMessage frames. The backend's SSM decoder
-				// (backends/ecs/exec_cloud.go, BUG-717) will only see
+				// (backends/ecs/exec_cloud.go, will only see
 				// output if each chunk arrives as a proper
-				// output_stream_data frame (BUG-728).
+				// output_stream_data frame.
 				writeMu := &sync.Mutex{}
 				stdoutWriter := &ssmStreamWriter{conn: conn, payloadType: ssmPayloadStdout, mu: writeMu}
 				stderrWriter := &ssmStreamWriter{conn: conn, payloadType: ssmPayloadStderr, mu: writeMu}

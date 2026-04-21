@@ -23,10 +23,9 @@ func (s *Server) buildServiceParent() string {
 }
 
 // buildServiceSpec creates a Cloud Run Service protobuf from one or more
-// containers. Phase 87: Services replace Jobs for the cross-container DNS
+// containers.: Services replace Jobs for the cross-container DNS
 // path because Services have addressable per-revision internal IPs (via
-// VPC connector + internal ingress) whereas Jobs do not (BUG-715).
-//
+// VPC connector + internal ingress) whereas Jobs do not.
 // Callers are expected to have verified s.config.VPCConnector is non-empty
 // and s.config.UseService is true; this builder does not enforce that.
 func (s *Server) buildServiceSpec(containers []containerInput) *runpb.Service {

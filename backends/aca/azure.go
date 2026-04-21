@@ -31,7 +31,7 @@ func (f *fakeCredential) GetToken(_ context.Context, _ policy.TokenRequestOption
 type AzureClients struct {
 	Jobs              *armappcontainers.JobsClient
 	Executions        *armappcontainers.JobsExecutionsClient
-	ContainerApps     *armappcontainers.ContainerAppsClient // Phase 88: used when Config.UseApp is true
+	ContainerApps     *armappcontainers.ContainerAppsClient // used when Config.UseApp is true
 	Logs              *azquery.LogsClient
 	LogsHTTP          *httpLogsClient // Used when endpoint is HTTP (SDK rejects non-TLS bearer tokens)
 	PrivateDNSZones   *armprivatedns.PrivateZonesClient

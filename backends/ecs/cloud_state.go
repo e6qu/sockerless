@@ -157,7 +157,7 @@ func (p *ecsCloudState) queryTasks(ctx context.Context) ([]api.Container, error)
 
 // resolveNetworkState returns NetworkState for the given docker network
 // ID, deriving from cloud actuals when the in-memory cache is empty.
-// Per Phase 89 (BUG-725, BUG-726) the cache is an optimization; the
+// Per, the cache is an optimization; the
 // security group + Cloud Map namespace tagged with
 // `sockerless:network-id=<id>` are the source of truth.
 func (s *Server) resolveNetworkState(ctx context.Context, networkID string) (NetworkState, bool) {
@@ -174,7 +174,7 @@ func (s *Server) resolveNetworkState(ctx context.Context, networkID string) (Net
 	if err == nil && len(sgOut.SecurityGroups) > 0 {
 		state.SecurityGroupID = aws.ToString(sgOut.SecurityGroups[0].GroupId)
 	}
-	// Cloud Map namespace by tag (added at create time per Phase 89).
+	// Cloud Map namespace by tag (added at create time per.
 	nsOut, nsErr := s.aws.ServiceDiscovery.ListTagsForResource(ctx, &servicediscovery.ListTagsForResourceInput{
 		ResourceARN: nil,
 	})
@@ -226,8 +226,8 @@ func (s *Server) resolveNetworkState(ctx context.Context, networkID string) (Net
 }
 
 // ListPods groups sockerless-managed tasks by `sockerless-pod` tag
-// and returns one PodListEntry per unique pod name. Phase 89 /
-// BUG-724 cross-cloud sibling. Single-container tasks (no pod tag)
+// and returns one PodListEntry per unique pod name./
+// cross-cloud sibling. Single-container tasks (no pod tag)
 // are excluded; those show up as standalone containers in
 // docker ps but not in docker pod ps.
 func (p *ecsCloudState) ListPods(ctx context.Context) ([]*api.PodListEntry, error) {
@@ -315,8 +315,8 @@ func (p *ecsCloudState) ListPods(ctx context.Context) ([]*api.PodListEntry, erro
 
 // ListImages queries ECR for every image under every repository the
 // backend's account has access to, projecting to api.ImageSummary so
-// `docker images` returns the live cloud registry contents. Phase 89
-// / BUG-723 step 2.
+// `docker images` returns the live cloud registry contents.
+// step 2.
 func (p *ecsCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, error) {
 	if p.ecr == nil {
 		return nil, nil
@@ -383,8 +383,8 @@ func (p *ecsCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, er
 }
 
 // resolveTaskState returns ECSState for the given container ID, deriving
-// it from cloud actuals when the in-memory cache is empty. Per Phase 89
-// (BUG-725, BUG-722) the cache is an optimization; ECS tasks tagged with
+// it from cloud actuals when the in-memory cache is empty. Per
+// , the cache is an optimization; ECS tasks tagged with
 // `sockerless-container-id=<id>` are the source of truth. Returns false
 // only when no matching sockerless-managed task exists at all.
 func (s *Server) resolveTaskState(ctx context.Context, containerID string) (ECSState, bool) {
@@ -409,7 +409,7 @@ func (s *Server) resolveTaskState(ctx context.Context, containerID string) (ECSS
 
 // resolveTaskARN returns the ECS task ARN for a given container ID, or
 // "" if no matching sockerless-managed task is found. Used to recover
-// from in-memory state loss after backend restart (BUG-722).
+// from in-memory state loss after backend restart.
 func (p *ecsCloudState) resolveTaskARN(ctx context.Context, containerID string) (string, string, error) {
 	var allArns []string
 	for _, status := range []ecstypes.DesiredStatus{ecstypes.DesiredStatusRunning, ecstypes.DesiredStatusStopped} {

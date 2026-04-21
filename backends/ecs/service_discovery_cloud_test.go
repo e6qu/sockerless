@@ -10,7 +10,7 @@ import (
 	core "github.com/sockerless/backend-core"
 )
 
-// BUG-709: pollOperation must sleep between polls so that 60 attempts
+// pollOperation must sleep between polls so that 60 attempts
 // span ~120s of wall time, not <1s of back-to-back API calls.
 func TestPollOperation_SleepsBetweenAttempts(t *testing.T) {
 	var sleeps []time.Duration

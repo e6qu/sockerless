@@ -97,9 +97,9 @@ func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinit
 		containerDef.User = aws.String(config.User)
 	}
 
-	// BUG-711 fix: ECS rejects ContainerDefinition.DnsSearchDomains for
+	// ECS rejects ContainerDefinition.DnsSearchDomains for
 	// awsvpc mode. Wrap the user's command in a /bin/sh shim that rewrites
-	// /etc/resolv.conf to add the per-network Cloud Map namespaces as DNS
+	// etc/resolv.conf to add the per-network Cloud Map namespaces as DNS
 	// search domains, preserving VPC DNS nameservers, then exec's the
 	// original argv. Only applied when the container is on at least one
 	// user-defined network and has an explicit entrypoint or command (so we

@@ -48,9 +48,9 @@ func (s *Server) runECSTask(containerID, taskDefARN string, c *api.Container) (t
 		LaunchType:     ecstypes.LaunchTypeFargate,
 		Count:          aws.Int32(1),
 		Tags:           mapToECSTags(tags.AsMap()),
-		// BUG-719: ECS Exec must be enabled at task launch time for
+		// ECS Exec must be enabled at task launch time for
 		// docker exec to work. Combined with task-role ssmmessages:*
-		// permissions (BUG-720) this allows the in-task SSM agent to
+		// permissions this allows the in-task SSM agent to
 		// dial back to Session Manager.
 		EnableExecuteCommand: true,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{

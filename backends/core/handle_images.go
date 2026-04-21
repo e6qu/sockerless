@@ -19,7 +19,7 @@ import (
 // StoreImageWithAliases stores an image under all common lookup keys
 // in the in-memory cache: imageID, full reference, name without tag,
 // and short aliases for docker.io/library/ and docker.io/ prefixed
-// names. Per Phase 89 (BUG-723) the cache is purely an in-process
+// names. Per the cache is purely an in-process
 // optimization — after a restart the source of truth is the cloud
 // registry that each backend points at (ECR for ECS/Lambda, Artifact
 // Registry for Cloud Run/GCF, ACR for ACA/AZF). No disk persistence.

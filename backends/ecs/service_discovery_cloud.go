@@ -17,7 +17,7 @@ var _ = (*Server).cloudServiceResolve
 // Docker network. Services within the namespace are created on demand,
 // one per container hostname, so other containers can resolve each
 // other by short name via the namespace as a DNS search domain.
-// Idempotent (BUG-712): if a namespace with the same name already
+// Idempotent: if a namespace with the same name already
 // exists in the same VPC, reuse it instead of erroring.
 func (s *Server) cloudNamespaceCreate(name, networkID string) error {
 	// Resolve VPC ID for private DNS namespace.
@@ -42,7 +42,7 @@ func (s *Server) cloudNamespaceCreate(name, networkID string) error {
 			Vpc:         aws.String(vpcID),
 			Description: aws.String(fmt.Sprintf("Sockerless network: %s", name)),
 			Tags: []sdtypes.Tag{
-				// Phase 89: tag with network-id so resolveNetworkState
+				// tag with network-id so resolveNetworkState
 				// can recover NamespaceID from cloud after restart.
 				{Key: aws.String("sockerless:network-id"), Value: aws.String(networkID)},
 				{Key: aws.String("sockerless:network"), Value: aws.String(name)},
@@ -240,7 +240,6 @@ func (s *Server) cloudServiceResolve(serviceName, networkID string) ([]string, e
 
 // findNamespaceByName looks up a Cloud Map namespace by exact name and
 // returns its ID, or "" if not found. Used for idempotent creation
-// (BUG-712).
 func (s *Server) findNamespaceByName(name string) (string, error) {
 	listOut, err := s.aws.ServiceDiscovery.ListNamespaces(s.ctx(),
 		&servicediscovery.ListNamespacesInput{
@@ -294,11 +293,10 @@ func (s *Server) waitForOperation(operationID string) (string, error) {
 
 // pollOperation drives a status loop without any AWS dependency so its
 // timing + termination behaviour is unit-testable. Callbacks:
-//   - sleep:  invoked between polls (use time.Sleep in production; a
-//     counter in tests)
-//   - poll:   returns (status, payload, err) where payload is the
-//     namespace ID on SUCCESS or the error message on FAIL.
-//
+// - sleep: invoked between polls (use time.Sleep in production; a
+// counter in tests)
+// - poll: returns (status, payload, err) where payload is the
+// namespace ID on SUCCESS or the error message on FAIL.
 // Returns the namespace ID on SUCCESS, an error on FAIL/exhaustion.
 func pollOperation(
 	operationID string,

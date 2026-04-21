@@ -13,7 +13,7 @@ import (
 
 // craftSSMFrame builds a wire-format AgentMessage so the parser+ack tests
 // don't depend on an actual SSM endpoint. Each call produces a frame with
-// a distinct random UUID so the BUG-721 dedupe in ssmDecoder doesn't
+// a distinct random UUID so thededupe in ssmDecoder doesn't
 // collapse frames that the test intends to be sequential.
 func craftSSMFrame(t *testing.T, msgType string, payloadType uint32, seq int64, payload []byte) []byte {
 	t.Helper()

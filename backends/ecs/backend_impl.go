@@ -254,7 +254,7 @@ func (s *Server) ContainerStart(ref string) error {
 
 	// Wait for task to reach RUNNING — only then is the ENI's private IP
 	// known. Cloud Map registration must use that real IP, not the local
-	// placeholder `0.0.0.0` carried in c.NetworkSettings.Networks (BUG-714).
+	// placeholder `0.0.0.0` carried in c.NetworkSettings.Networks.
 	taskAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
@@ -370,7 +370,7 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 	}
 
 	// Stop the ECS task. resolveTaskState falls back to the cloud when
-	// in-memory cache is empty (post-restart) — Phase 89 / BUG-725.
+	// in-memory cache is empty (post-restart) —/.
 	if ecsState, ok := s.resolveTaskState(s.ctx(), id); ok {
 		cluster := s.config.Cluster
 		if ecsState.ClusterARN != "" {
@@ -411,7 +411,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 
 	exitCode := core.SignalToExitCode(signal)
 
-	// Phase 89 / BUG-725: cloud-fallback lookup so kill works post-restart.
+	// cloud-fallback lookup so kill works post-restart.
 	if ecsState, ok := s.resolveTaskState(s.ctx(), id); ok {
 		cluster := s.config.Cluster
 		if ecsState.ClusterARN != "" {
@@ -461,7 +461,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			"exitCode": "0",
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
-		// Phase 89 / BUG-725: cloud-fallback lookup so remove works post-restart.
+		// cloud-fallback lookup so remove works post-restart.
 		if ecsState, ok := s.resolveTaskState(s.ctx(), id); ok {
 			cluster := s.config.Cluster
 			if ecsState.ClusterARN != "" {
@@ -479,7 +479,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	// Deregister task definition. Read from cache when available; on
 	// cache miss (post-restart) derive TaskDefinitionArn from the running
-	// task via DescribeTasks (Phase 89 / BUG-725).
+	// task via DescribeTasks/.
 	ecsState, _ := s.ECS.Get(id)
 	if ecsState.TaskDefARN == "" {
 		if recovered, ok := s.resolveTaskState(s.ctx(), id); ok {
@@ -574,7 +574,7 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 	// Stop if running
 	if c.State.Running {
 		s.StopHealthCheck(id)
-		// Phase 89 / BUG-725: cloud-fallback lookup so restart works post-restart.
+		// cloud-fallback lookup so restart works post-restart.
 		ecsState, _ := s.resolveTaskState(s.ctx(), id)
 		if ecsState.TaskARN != "" {
 			cluster := s.config.Cluster
@@ -949,7 +949,7 @@ func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*ap
 	}
 
 	// ECS-specific: check that an ECS task is available for exec.
-	// Phase 89 / BUG-725: cloud-fallback lookup so ExecCreate works post-restart.
+	// cloud-fallback lookup so ExecCreate works post-restart.
 	if ecsState, ok := s.resolveTaskState(s.ctx(), c.ID); !ok || ecsState.TaskARN == "" {
 		return nil, &api.NotImplementedError{
 			Message: fmt.Sprintf("exec requires a running ECS task, but container %s has none (ECS backend)", strings.TrimPrefix(c.Name, "/")),

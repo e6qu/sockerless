@@ -20,7 +20,7 @@ import (
 type GCPClients struct {
 	Jobs       *run.JobsClient
 	Executions *run.ExecutionsClient
-	Services   *run.ServicesClient // Phase 87: used when Config.UseService is true
+	Services   *run.ServicesClient // used when Config.UseService is true
 	Logging    *logging.Client
 	LogAdmin   *logadmin.Client
 	Storage    *storage.Client

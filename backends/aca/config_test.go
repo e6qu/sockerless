@@ -2,7 +2,7 @@ package aca
 
 import "testing"
 
-// TestConfig_Validate_UseAppRequiresEnvironment — Phase 88.
+// TestConfig_Validate_UseAppRequiresEnvironment —.
 // UseApp=true needs a managed environment: the whole point of the
 // Apps path is peer-reachable internal FQDNs inside an environment
 // with VNet integration. Without one we have nothing to bind to.

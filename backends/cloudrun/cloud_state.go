@@ -53,7 +53,7 @@ func (p *cloudRunCloudState) ListContainers(ctx context.Context, all bool, filte
 	}
 
 	// Query Cloud Run Jobs API for all sockerless-managed jobs. When
-	// Config.UseService is true (Phase 87), also include Services —
+	// Config.UseService is true, also include Services —
 	// this lets mixed deployments surface both tracks during the
 	// migration window. Jobs and Services live in distinct GCP
 	// resource namespaces, so there's no double-counting.
@@ -232,7 +232,7 @@ func (p *cloudRunCloudState) ListPods(ctx context.Context) ([]*api.PodListEntry,
 
 // ListImages queries GCP Artifact Registry via the OCI distribution
 // catalog + tags endpoints for every image under the backend's
-// configured registry. Phase 89 / BUG-723 step 2 cross-cloud sibling.
+// configured registry./step 2 cross-cloud sibling.
 // Registry host is derived from project+region: `<region>-docker.pkg.dev`.
 // Bearer token comes from the ARAuthProvider that the ImageManager
 // already owns.
@@ -256,7 +256,7 @@ func (p *cloudRunCloudState) ListImages(ctx context.Context) ([]*api.ImageSummar
 
 // resolveNetworkState returns NetworkState for the given docker
 // network ID, deriving from cloud actuals when the in-memory cache is
-// empty. Phase 89 / BUG-726 cross-cloud sibling. Looks up the Cloud
+// empty./cross-cloud sibling. Looks up the Cloud
 // DNS managed zone whose sanitized name matches the network.
 // (Zones are created per-network in `cloudNetworkCreate`.)
 func (s *Server) resolveNetworkState(ctx context.Context, networkID string) (NetworkState, bool) {
@@ -291,8 +291,8 @@ func (s *Server) resolveNetworkState(ctx context.Context, networkID string) (Net
 }
 
 // resolveJobName returns the Cloud Run Job name for a given container
-// ID, or "" if no matching sockerless-managed job is found. Phase 89 /
-// BUG-725 cross-cloud sibling: state derived from cloud actuals (Cloud
+// ID, or "" if no matching sockerless-managed job is found./
+// cross-cloud sibling: state derived from cloud actuals (Cloud
 // Run Job labels), not from the in-memory cache.
 func (p *cloudRunCloudState) resolveJobName(ctx context.Context, containerID string) (string, error) {
 	it := p.server.gcp.Jobs.ListJobs(ctx, &runpb.ListJobsRequest{
@@ -346,7 +346,7 @@ func (p *cloudRunCloudState) resolveActiveExecution(ctx context.Context, jobName
 
 // resolveCloudRunState returns CloudRunState for the given container
 // ID, deriving from cloud actuals when the in-memory cache is empty.
-// Phase 89 / BUG-725 cross-cloud sibling.
+// cross-cloud sibling.
 func (s *Server) resolveCloudRunState(ctx context.Context, containerID string) (CloudRunState, bool) {
 	if state, ok := s.CloudRun.Get(containerID); ok && state.JobName != "" {
 		return state, true

@@ -24,7 +24,7 @@ func (s *Server) cloudNetworkCreate(name, networkID string) error {
 	s.Logger.Info().Str("vpc", vpcID).Str("network", name).Msg("creating security group for Docker network")
 
 	// Create the security group, or reuse an existing one with the same
-	// name in the same VPC (idempotent retry support — BUG-712).
+	// name in the same VPC (idempotent retry support —.
 	var sgID string
 	createOut, err := s.aws.EC2.CreateSecurityGroup(s.ctx(), &ec2.CreateSecurityGroupInput{
 		GroupName:   aws.String(groupName),
@@ -114,7 +114,7 @@ func (s *Server) cloudNetworkDelete(networkID string) error {
 
 // cloudNetworkConnect associates a network's security group with a container.
 // Appends to SecurityGroupIDs (supports multiple networks).
-// Phase 89 / BUG-726: cloud-fallback lookup so connect works post-restart.
+// cloud-fallback lookup so connect works post-restart.
 func (s *Server) cloudNetworkConnect(networkID, containerID string) error {
 	ns, ok := s.resolveNetworkState(s.ctx(), networkID)
 	if !ok || ns.SecurityGroupID == "" {

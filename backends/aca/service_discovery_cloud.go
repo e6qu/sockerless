@@ -16,8 +16,7 @@ var _ = (*Server).cloudServiceResolve
 // container's hostname inside the network's zone. Uses the real Azure
 // Private DNS SDK. The zone is created per-network in
 // `cloudNetworkCreate`; the record maps hostname -> container IP.
-//
-// BUG-716: ACA Job executions don't have addressable per-execution IPs
+// ACA Job executions don't have addressable per-execution IPs
 // reachable from other Jobs the way Fargate ENIs are. The caller passes
 // `ep.IPAddress` which is seeded as the placeholder "0.0.0.0". Skip
 // registration in that case rather than write a useless A-record. Proper
@@ -26,10 +25,10 @@ var _ = (*Server).cloudServiceResolve
 func (s *Server) cloudServiceRegister(containerID, hostname, ip, networkID string) error {
 	if ip == "" || ip == "0.0.0.0" {
 		s.Logger.Info().Str("container", containerID).Str("hostname", hostname).Str("network", networkID).
-			Msg("skipping Private DNS register: no real per-execution IP yet (BUG-716)")
+			Msg("skipping Private DNS register: ACA Jobs have no per-execution IP; enable UseApp for CNAME-based discovery")
 		return nil
 	}
-	// Phase 89 / BUG-726: cloud-fallback lookup for DNS zone state.
+	// cloud-fallback lookup for DNS zone state.
 	state, ok := s.resolveNetworkState(s.ctx(), networkID)
 	if !ok || state.DNSZoneName == "" {
 		s.Logger.Debug().
@@ -140,7 +139,7 @@ func (s *Server) cloudServiceResolve(serviceName, networkID string) ([]string, e
 
 // cloudServiceRegisterCNAME creates a Private DNS CNAME record mapping
 // the container's hostname to the ContainerApp's LatestRevisionFqdn.
-// Phase 88 parallel to cloudrun's cloudServiceRegisterCNAME: Apps have
+// parallel to cloudrun's cloudServiceRegisterCNAME: Apps have
 // stable internal FQDNs (reachable from other apps in the same
 // managed environment), so peers resolve by hostname → CNAME → FQDN.
 func (s *Server) cloudServiceRegisterCNAME(ctx context.Context, containerID, hostname, appName, networkID string) error {

@@ -32,8 +32,8 @@ func (s *BaseServer) PodCreate(req *api.PodCreateRequest) (*api.PodCreateRespons
 	return &api.PodCreateResponse{ID: pod.ID}, nil
 }
 
-// PodList returns all pods matching the given filters. Phase 89 /
-// BUG-724: when the backend implements CloudPodLister, merge pods
+// PodList returns all pods matching the given filters./
+// when the backend implements CloudPodLister, merge pods
 // derived from cloud actuals (multi-container task/app grouped by the
 // sockerless-pod tag) with the in-memory registry so that
 // `docker pod ps` after a restart still reflects the cloud truth.

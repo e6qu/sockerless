@@ -10,12 +10,11 @@ import (
 	"google.golang.org/api/iterator"
 )
 
-// Phase 87 — Service-oriented siblings of the Job helpers in
+// — Service-oriented siblings of the Job helpers in
 // cloud_state.go. When Config.UseService is true, sockerless provisions
 // Cloud Run Services (long-running, internal-ingress) instead of Jobs
 // so peer containers are reachable via stable per-revision IPs.
-//
-// These helpers are wired into the lifecycle code in later Phase 87
+// These helpers are wired into the lifecycle code in later
 // slices — they only query and derive state; they never mutate.
 
 // resolveServiceName returns the Cloud Run Service name for a given
@@ -191,11 +190,9 @@ func (p *cloudRunCloudState) serviceToContainer(svc *runpb.Service) (api.Contain
 // serviceContainerState derives api.ContainerState from the Service's
 // TerminalCondition and LatestReadyRevision. Unlike Jobs, Services are
 // long-running so there's no exit-code concept in the happy path:
-//
-//   - TerminalCondition Ready + LatestReadyRevision set → "running"
-//   - TerminalCondition still pending/reconciling → "created"
-//   - TerminalCondition failed → "exited" with code 1
-//
+// - TerminalCondition Ready + LatestReadyRevision set → "running"
+// - TerminalCondition still pending/reconciling → "created"
+// - TerminalCondition failed → "exited" with code 1
 // Reconciling=true (an active revision rollout) keeps the state as
 // "running" if a previous revision is already ready, so callers don't
 // see a blip when a new revision is deploying.

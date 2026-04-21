@@ -1,31 +1,21 @@
 # Sockerless — Status
 
-**86 phases (757 tasks). 726 bugs tracked: 725 fixed + 1 partially fixed (BUG-724). Phase 86 Phase C CLOSED 2026-04-20. Phase 87 (BUG-715, Cloud Run Services) and Phase 88 (BUG-716, ACA Apps) both CLOSED in code 2026-04-21; live-cloud validation pending. Phase 89 near-complete: `specs/CLOUD_RESOURCE_MAPPING.md` for all 7 backends; `Store.Images` disk persistence removed; all 4 cloud backends have `resolve*State` helpers with every cloud-state-dependent callsite migrated (BUG-725 fixed); `docker images` cloud-derived across all 6 cloud backends (BUG-723 fixed); ECS `ListPods` groups tasks via `sockerless-pod` tag; `resolveNetworkState` lands for ECS+Cloud Run+ACA (BUG-726 fixed). Remaining: `ListPods` for cloudrun+aca (both now unblocked post-87/88), per-backend restart-resilience integration tests. Branch `post-phase86-continuation`.**
+**89 phases (757 tasks). 728 bugs tracked, all fixed. Branch `post-phase86-continuation`.**
 
-## Phase 87 — Cloud Run Services (2026-04-21)
+See [PLAN.md](PLAN.md) for the roadmap, [BUGS.md](BUGS.md) for the bug log, [WHAT_WE_DID.md](WHAT_WE_DID.md) for the narrative, [specs/](specs/) for architecture specs.
 
-Closed BUG-715 in code. Five slices in `post-phase86-continuation`:
+## Phase roll-up
 
-- **87-01** `servicespec.go` — Service proto builder. Internal ingress, VPC connector ALL_TRAFFIC, Min=Max=1.
-- **87-02** `cloud_state_services.go` + `store.go` + `gcp.go` — `ServiceName` field, `Services` client, resolveServiceName / resolveServiceCloudRunState / queryServices / serviceToContainer / serviceContainerState (TerminalCondition → running/exited/created). `ListContainers` merges Services when UseService.
-- **87-03** `start_service.go` + `backend_impl.go` — ContainerStart branch: startSingleContainerService + startMultiContainerServiceTyped; `deleteService` helper.
-- **87-04** `backend_impl.go` — Stop/Kill/Remove delete Service (no cancel equivalent); cache cleared on stop.
-- **87-05** `config.go` + `backend_impl.go` + `backend_impl_network.go` + `service_discovery_cloud.go` — Validate gate opened (UseService requires VPCConnector). Logs filter → `cloud_run_revision` + `service_name`. `cloudServiceRegisterCNAME` / `cloudServiceDeregisterCNAME` write CNAMEs from `<hostname>.<network>.internal.` to `Service.Uri` host.
+| Phase | Scope | Status |
+|---|---|---|
+| 86 | Simulator parity (AWS + GCP + Azure) + Lambda agent-as-handler | Closed 2026-04-20 (PR #112). Phase C live-AWS validated. |
+| 87 | Cloud Run Jobs → Services (internal ingress + VPC connector) | Closed in code 2026-04-21. Live-GCP pending. |
+| 88 | ACA Jobs → Apps (internal ingress) | Closed in code 2026-04-21. Live-Azure pending. |
+| 89 | Stateless-backend audit — cloud resource mapping, `resolve*State`, cloud-derived `ListImages` / `ListPods`, `resolveNetworkState` | Closed 2026-04-21. |
 
-13 unit tests across the slices; `go test` + `golangci-lint` green for the cloudrun module.
+Detail per phase in [WHAT_WE_DID.md](WHAT_WE_DID.md). Open work items queued in [DO_NEXT.md](DO_NEXT.md).
 
-## Phase 88 — ACA Apps (2026-04-21)
-
-Closed BUG-716 in code. Same 5-slice shape as Phase 87:
-
-- **88-01** `appspec.go` — ContainerApp proto builder. Internal ingress (`External=false`), Single active revisions, MinReplicas=MaxReplicas=1.
-- **88-02** `cloud_state_apps.go` + `store.go` + `azure.go` — `AppName` field, `ContainerApps` client, resolveAppName / resolveAppACAState / queryApps / appToContainer / appContainerState (ProvisioningState → running/exited/created). `ListContainers` merges Apps when UseApp.
-- **88-03/04** `start_app.go` + `backend_impl.go` — ContainerStart single/multi branches. `startSingleContainerApp` + `startMultiContainerAppTyped` use BeginCreateOrUpdate + PollUntilDone. Stop/Kill/Remove delete the ContainerApp (no cancel-exec equivalent).
-- **88-05** `config.go` + `backend_impl.go` + `backend_impl_network.go` + `service_discovery_cloud.go` — Validate gate opened (UseApp requires Environment). Logs filter → `ContainerAppName_s` in `ContainerAppConsoleLogs_CL`. `cloudServiceRegisterCNAME` / `DeregisterCNAME` write Private DNS CNAMEs to `ContainerApp.LatestRevisionFqdn`.
-
-8 unit tests across the slices; `go test` + `golangci-lint` green for the aca module.
-
-## Test Counts
+## Test counts
 
 | Category | Count |
 |---|---|
@@ -38,25 +28,6 @@ Closed BUG-716 in code. Same 5-slice shape as Phase 87:
 | UI/Admin/bleephub | 512 |
 | Lint (18 modules) | 0 issues |
 
-## ECS Live Testing
+## ECS live testing
 
-6 rounds against real AWS ECS Fargate (`eu-west-1`). Round 6: Docker CLI all pass, Podman pull+pods pass (container ops blocked by response format), Advanced 3/4. See [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md).
-
-## Phase 86 — Complete Runner Support (simulator parity + Phase D)
-
-Done across AWS + GCP + Azure. Full simulator parity audited in `docs/SIMULATOR_PARITY_{AWS,GCP,AZURE}.md` (zero ✖ rows on runner path). All BUGS.md entries closed.
-
-Highlights this phase:
-- **A.5 testing contract** — pre-commit hook blocks sim-endpoint additions without matching SDK + CLI + terraform tests.
-- **BUG-696 ECR pull-through cache** — AWS ECR cache-rule CRUD + image URI rewriting.
-- **BUG-697 Store.Images persistence** — `docker pull` survives backend restart across all six cloud backends.
-- **BUG-700 cloud-side network-create Warning** — ECS + Cloud Run + ACA.
-- **BUG-701 cross-task DNS** — AWS Cloud Map / GCP Cloud DNS / Azure ACA environments all back themselves with real Docker networks.
-- **BUG-702 Azure Private DNS SDK wire** — backend calls real `armprivatedns`.
-- **BUG-703 Azure NSG SDK wire + simulator securityRules sub-resource**.
-- **BUG-704 GCP Cloud Build slice + BUG-707 Secret Manager integration**.
-- **BUG-705 AWS Lambda Runtime API slice** — `simulators/aws/lambda_runtime.go` implements the full cloud contract.
-- **BUG-706 Azure ACR Cache Rules** — simulator cache-rule CRUD + backend pull-through resolver.
-- **Phase D Lambda agent-as-handler** — bootstrap polling loop (`agent/cmd/sockerless-lambda-bootstrap`), overlay image build in `ContainerCreate`, reverse-agent WebSocket server on `/v1/lambda/reverse`.
-
-Live-AWS session (Phase E) is scripted in `scripts/phase86/*.sh` and dispatched by `.github/workflows/phase86-aws-live.yml`; awaits AWS credentials. Runner-capability matrix live columns stay pending-live until that session runs.
+6 rounds against real AWS ECS Fargate (`eu-west-1`). Round 6: Docker CLI all pass, Podman pull+pods pass (container ops blocked by response format), Advanced 3/4. See [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md). Phase 87/88 live-cloud validation runbooks still to be written (GCP/Azure equivalents of `scripts/phase86/*.sh`).

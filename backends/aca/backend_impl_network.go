@@ -71,7 +71,7 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 	c, _ := s.ResolveContainerAuto(context.Background(), containerID)
 	hostname := strings.TrimPrefix(c.Name, "/")
 
-	// Phase 88 — Apps path: register a CNAME pointing at the
+	// — Apps path: register a CNAME pointing at the
 	// ContainerApp's LatestRevisionFqdn. Apps have peer-reachable
 	// internal FQDNs inside the managed environment, unlike Jobs.
 	if s.config.UseApp {

@@ -9,14 +9,13 @@ import (
 	core "github.com/sockerless/backend-core"
 )
 
-// Phase 88 — single- and multi-container start paths for the Apps code
+// — single- and multi-container start paths for the Apps code
 // path. When Config.UseApp is true, ContainerStart dispatches here
 // instead of the Jobs flow in backend_impl.go.
-//
 // Apps are long-running with min/max replicas=1, so there's no
 // execution-exit poller — the container stays "running" until
 // ContainerStop/Remove deletes the ContainerApp and closes WaitChs
-// directly (see P88-04 changes to Stop/Kill/Remove).
+// directly (seechanges to Stop/Kill/Remove).
 
 // startSingleContainerApp provisions an ACA ContainerApp for one
 // container. Returns after the App resource is created (BeginCreateOrUpdate

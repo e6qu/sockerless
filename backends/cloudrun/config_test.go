@@ -2,7 +2,7 @@ package cloudrun
 
 import "testing"
 
-// TestConfig_Validate_UseServiceRequiresVPCConnector — Phase 87.
+// TestConfig_Validate_UseServiceRequiresVPCConnector —.
 // UseService=true needs a VPC connector: the whole point of the
 // Services path is peer-reachable internal DNS over the connector.
 // Without one, the CNAME records we write would target a URL that

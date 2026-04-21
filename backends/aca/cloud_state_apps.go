@@ -9,10 +9,10 @@ import (
 	core "github.com/sockerless/backend-core"
 )
 
-// Phase 88 — App-oriented siblings of the Job helpers in cloud_state.go.
+// — App-oriented siblings of the Job helpers in cloud_state.go.
 // When Config.UseApp is true, sockerless provisions ACA ContainerApps
 // with internal-only ingress so peer containers are reachable via
-// stable per-revision FQDNs (BUG-716).
+// stable per-revision FQDNs.
 
 // resolveAppName returns the ACA ContainerApp name for a given
 // container ID, or "" if no matching sockerless-managed App is found.
@@ -198,10 +198,9 @@ func (p *acaCloudState) appToContainer(app *armappcontainers.ContainerApp, tags 
 // appContainerState derives api.ContainerState from the ContainerApp's
 // provisioning state and LatestReadyRevisionName. Apps are long-running
 // so there's no exit-code concept in the happy path:
-//
-//   - Succeeded + LatestReadyRevisionName set → "running"
-//   - InProgress / unset → "created"
-//   - Failed / Canceled → "exited" with code 1
+// - Succeeded + LatestReadyRevisionName set → "running"
+// - InProgress / unset → "created"
+// - Failed / Canceled → "exited" with code 1
 func appContainerState(app *armappcontainers.ContainerApp) api.ContainerState {
 	startedAt := ""
 	if app.SystemData != nil && app.SystemData.CreatedAt != nil {

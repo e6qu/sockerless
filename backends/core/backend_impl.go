@@ -1409,7 +1409,7 @@ func (s *BaseServer) ImageTag(source string, repo string, tag string) error {
 	return nil
 }
 
-// ImageList lists images. Phase 89 / BUG-723 step 2: when the backend
+// ImageList lists images./step 2: when the backend
 // implements CloudImageLister, merge entries from the cloud registry
 // (ECR, Artifact Registry, ACR) with the in-memory cache so the
 // listing is accurate after a backend restart with an empty cache.

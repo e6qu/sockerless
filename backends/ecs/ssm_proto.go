@@ -1,10 +1,9 @@
 package ecs
 
 // SSM Session Manager binary protocol decoder + ack writer.
-//
 // Wire format reference: AWS open-source `session-manager-plugin`,
 // `src/message/clientmessage.go` + `src/message/messageparser.go`.
-// Header is 116 bytes big-endian, payload follows. See BUG-717.
+// Header is 116 bytes big-endian, payload follows. See.
 
 import (
 	"crypto/sha256"
@@ -40,8 +39,7 @@ const (
 )
 
 // SSM PayloadType (uint32). For output_stream_data:
-//
-//	1 = stdout text, 2 = error text, 11 = stderr text, 12 = exit code.
+// 1 = stdout text, 2 = error text, 11 = stderr text, 12 = exit code.
 const (
 	ssmPayloadOutput   = uint32(1)
 	ssmPayloadError    = uint32(2)

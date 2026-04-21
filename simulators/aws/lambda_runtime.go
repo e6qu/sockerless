@@ -315,7 +315,7 @@ func invokeLambdaViaRuntimeAPI(fn LambdaFunction, payload []byte) ([]byte, bool,
 		Args:    args,
 		Env:     cmdEnv,
 		// Timeout is enforced by the sidecar (waiting for /response or
-		// /error with a deadline); the container itself is given a
+		// error with a deadline); the container itself is given a
 		// generous wall-clock budget so slow handlers still surface a
 		// proper Lambda timeout instead of a container-level kill.
 		Timeout:    time.Duration(timeoutSec+5) * time.Second,

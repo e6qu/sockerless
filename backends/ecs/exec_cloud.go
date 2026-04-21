@@ -27,7 +27,7 @@ func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container, tty bo
 	if dbg {
 		fmt.Fprintf(os.Stderr, "[exec] cloudExecStart container=%s tty=%v\n", c.ID[:12], tty)
 	}
-	// Phase 89 / BUG-725: cloud-fallback lookup so exec works post-restart.
+	// cloud-fallback lookup so exec works post-restart.
 	ecsState, ok := s.resolveTaskState(s.ctx(), c.ID)
 	if !ok {
 		return nil, fmt.Errorf("no ECS task associated with container %s", c.ID[:12])
@@ -121,7 +121,7 @@ func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container, tty bo
 
 	// SSM Session Manager requires an OpenDataChannel handshake JSON as
 	// the first WebSocket message — without it the agent never sends
-	// AgentMessage frames (BUG-717 part 2). Token came from
+	// AgentMessage framespart 2). Token came from
 	// ECS.ExecuteCommand's Session.TokenValue.
 	tokenValue := aws.ToString(result.Session.TokenValue)
 	handshake := map[string]string{
@@ -145,7 +145,7 @@ func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container, tty bo
 	bridge := newWSBridge(conn)
 
 	// SSM Session Manager wraps the application stream in a binary
-	// AgentMessage protocol (see ssm_proto.go + BUG-717). Decode SSM frames,
+	// AgentMessage protocol (see ssm_proto.go +. Decode SSM frames,
 	// send acks back through the WebSocket, and surface the inner
 	// stdout/stderr to the Docker client. For non-TTY exec we additionally
 	// wrap the extracted bytes in Docker's 8-byte multiplexed stream
@@ -203,7 +203,7 @@ type ssmDecoder struct {
 	lastTag  byte         // 0x01 stdout / 0x02 stderr from last frame
 	closeErr error
 	debug    bool               // when true, fprintf'd to stderr
-	seenIDs  map[uuid.UUID]bool // BUG-721: dedupe retransmits by message UUID
+	seenIDs  map[uuid.UUID]bool // dedupe retransmits by message UUID until the agent accepts our acks
 }
 
 func newSSMDecoder(wire io.ReadWriteCloser) *ssmDecoder {
@@ -250,7 +250,7 @@ func (d *ssmDecoder) Read(p []byte) (int, error) {
 		}
 		switch f.MessageType {
 		case ssmMTOutputStreamData:
-			// BUG-721: SSM agent retransmits the same output_stream_data
+			// SSM agent retransmits the same output_stream_data
 			// frame until it sees an ack it accepts. Sockerless's ack
 			// format isn't (yet) accepted, so dedupe by MessageID before
 			// forwarding to docker — otherwise a single `echo` shows up

@@ -20,7 +20,7 @@ type gcfCloudState struct {
 }
 
 // ListImages queries GCP Artifact Registry via the OCI distribution
-// catalog + tags endpoints. Phase 89 / BUG-723 step 2 cross-cloud
+// catalog + tags endpoints./step 2 cross-cloud
 // sibling.
 func (p *gcfCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, error) {
 	if p.server.config.Region == "" || p.server.config.Project == "" {
