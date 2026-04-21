@@ -1,51 +1,62 @@
 package tests
 
 import (
-	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/volume"
 )
 
-// The ECS backend rejects every named-volume operation with a clear
-// NotImplemented error — there's no silent metadata-only store.
-// These tests pin that contract so a reintroduced silent store would
-// fail CI. Real EFS access-point provisioning is queued as its own
-// phase; when that lands, these tests are rewritten to exercise the
-// new end-to-end volume lifecycle.
+// Phase 91: the ECS backend backs Docker volumes with real EFS access
+// points on a sockerless-owned filesystem. These tests exercise the
+// full lifecycle (create → inspect → list → remove → 404) against
+// whichever runner backend the harness has wired up.
 
-const volumeNotImpl = "does not support named volumes"
+func TestVolume_LifecycleEFSAccessPoint(t *testing.T) {
+	name := "e2e-vol-" + generateTestID("lifecycle")
 
-func assertVolumeNotImpl(t *testing.T, err error) {
-	t.Helper()
-	if err == nil {
-		t.Fatal("expected NotImplemented error; got nil")
+	created, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: name})
+	if err != nil {
+		t.Fatalf("VolumeCreate: %v", err)
 	}
-	if !strings.Contains(err.Error(), volumeNotImpl) {
-		t.Errorf("error = %q, want substring %q", err.Error(), volumeNotImpl)
+	t.Cleanup(func() { _ = dockerClient.VolumeRemove(ctx, name, true) })
+
+	if created.Name != name {
+		t.Errorf("created.Name = %q, want %q", created.Name, name)
+	}
+	if created.Driver != "efs" {
+		t.Errorf("created.Driver = %q, want efs", created.Driver)
+	}
+	if created.Options["accessPointId"] == "" {
+		t.Errorf("created.Options missing accessPointId: %+v", created.Options)
+	}
+
+	inspected, err := dockerClient.VolumeInspect(ctx, name)
+	if err != nil {
+		t.Fatalf("VolumeInspect: %v", err)
+	}
+	if inspected.Name != name {
+		t.Errorf("inspect Name = %q, want %q", inspected.Name, name)
+	}
+
+	listed, err := dockerClient.VolumeList(ctx, volume.ListOptions{})
+	if err != nil {
+		t.Fatalf("VolumeList: %v", err)
+	}
+	found := false
+	for _, v := range listed.Volumes {
+		if v.Name == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("VolumeList did not return %q; got %d volumes", name, len(listed.Volumes))
+	}
+
+	if err := dockerClient.VolumeRemove(ctx, name, false); err != nil {
+		t.Fatalf("VolumeRemove: %v", err)
+	}
+	if _, err := dockerClient.VolumeInspect(ctx, name); err == nil {
+		t.Errorf("VolumeInspect after remove: expected error, got success")
 	}
 }
-
-func TestVolumeCreate_NotImplemented(t *testing.T) {
-	_, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: "test-vol-create"})
-	assertVolumeNotImpl(t, err)
-}
-
-func TestVolumeInspect_NotImplemented(t *testing.T) {
-	_, err := dockerClient.VolumeInspect(ctx, "any-name")
-	assertVolumeNotImpl(t, err)
-}
-
-func TestVolumeList_NotImplemented(t *testing.T) {
-	_, err := dockerClient.VolumeList(ctx, volume.ListOptions{})
-	assertVolumeNotImpl(t, err)
-}
-
-func TestVolumeRemove_NotImplemented(t *testing.T) {
-	err := dockerClient.VolumeRemove(ctx, "any-name", true)
-	assertVolumeNotImpl(t, err)
-}
-
-// Ensure the filters import is used
-var _ = filters.Args{}
