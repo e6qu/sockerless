@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**93 phases closed (761 tasks). 756 bugs tracked — 745 fixed, 11 open. BUG-744 closed by Phase 95; BUG-756 surfaced in sim/aws Lambda runtime stdout passthrough. Phase 94 (GCF + AZF real volumes) closed 2026-04-21. Remaining open: BUG-745/746 → Phase 96/97; BUG-748/749/754 → Phase 94b/99/100; BUG-750/751/752/753 → Phase 98/98b; BUG-756 → sim-Lambda stdout forwarding. 1 false positive. Branch `continue-plan-post-113`.**
+**94 phases closed (762 tasks). 756 bugs tracked — 746 fixed, 10 open. Phases 94 + 94b + 95 all closed 2026-04-21 — every FaaS backend (Lambda/GCF/AZF) now has real volume provisioning + real invocation-lifecycle tracking. Remaining open bugs: BUG-745/746 → Phase 96/97; BUG-749/754 → Phase 99/100; BUG-750/751/752/753 → Phase 98/98b; BUG-756 → sim-Lambda stdout forwarding. 1 false positive. Branch `continue-plan-post-113`.**
 
 See [PLAN.md](PLAN.md) for the roadmap, [BUGS.md](BUGS.md) for the bug log (+ open-bug descriptions), [WHAT_WE_DID.md](WHAT_WE_DID.md) for the narrative, [specs/](specs/) for architecture specs.
 
@@ -21,7 +21,7 @@ See [PLAN.md](PLAN.md) for the roadmap, [BUGS.md](BUGS.md) for the bug log (+ op
 | 95 | FaaS invocation-lifecycle tracker (Lambda + GCF + AZF) — re-enables 7 deleted tests from BUG-744 | Closed 2026-04-21 — core.InvocationResult + per-backend wiring + 7 tests re-enabled. |
 | 96 | Reverse-agent exec for Cloud Run Jobs + ACA Jobs (ports Lambda bootstrap pattern) | Queued — from BUG-745. |
 | 97 | Docker labels as GCP annotations / Azure tags on FaaS + Cloud Run / ACA | Queued — from BUG-746. |
-| 94b | Lambda EFS volume provisioning via `Function.FileSystemConfigs[]` (reuse ECS's EFS manager once lifted to `aws-common`) | Queued — revised from BUG-748's earlier 'platform limit' framing. |
+| 94b | Lambda EFS volume provisioning via `Function.FileSystemConfigs[]` (reuses `awscommon.EFSManager`) | Closed 2026-04-21. |
 | 98 | Agent-driven filesystem + introspection ops (`docker cp` / `export` / `stat` / `top` / `diff`) via reverse-agent or SSM ExecuteCommand | Queued — from BUG-751/752/753; depends on Phase 96. |
 | 98b | Agent-driven `docker commit` (opt-in via `SOCKERLESS_ENABLE_COMMIT`) | Queued — from BUG-750; depends on Phase 98. |
 | 99 | Agent-driven `docker pause` / `unpause` via SIGSTOP/SIGCONT over reverse-agent (Fargate uses SSM `signal`) | Queued — revised from BUG-749's earlier 'platform limit' framing; depends on Phase 96. |

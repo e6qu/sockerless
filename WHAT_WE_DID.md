@@ -4,6 +4,12 @@ Docker-compatible REST API that runs containers on cloud backends (ECS, Lambda, 
 
 See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for the bug log, [PLAN.md](PLAN.md) for the roadmap, [specs/](specs/) for architecture specs (start with [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md)).
 
+## Phase 94b — Lambda EFS volumes (2026-04-21)
+
+BUG-748 closed. Lambda backend gains the `EFS` client, embeds `volumeState` wrapping `awscommon.EFSManager` (same manager ECS already uses), and accepts `SOCKERLESS_LAMBDA_AGENT_EFS_ID` for operator EFS reuse. `Volume{Create,Inspect,List,Remove,Prune}` now provision sockerless-managed access points. `ContainerCreate` parses `HostConfig.Binds`, rejects host-path binds, and appends one `lambdatypes.FileSystemConfig{Arn, LocalMountPath}` per named volume to the `CreateFunctionInput`. Named volumes require the function to run in a VPC — the backend fails loud if `SOCKERLESS_LAMBDA_SUBNETS` is empty (matches AWS's own validation).
+
+`TestLambdaVolumeOperations` rewritten from the NotImplemented assertion to the real CRUD lifecycle.
+
 ## Phase 94 — GCF + AZF real per-cloud volumes (2026-04-21)
 
 `docker volume create` / `docker run -v name:/mnt` now provisions real cloud storage on GCF and AZF, closing the named-volume gap on every FaaS backend:
