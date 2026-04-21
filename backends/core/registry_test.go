@@ -402,27 +402,46 @@ func TestMockRegistryManifestList(t *testing.T) {
 	}
 }
 
-// TestFetchImageConfigGracefulFallback tests that network errors result in
-// nil config (not an error), allowing the caller to use synthetic config.
-func TestFetchImageConfigGracefulFallback(t *testing.T) {
-	// Clear cache
+// TestFetchImageConfig_PropagatesRegistryErrors — network / registry
+// failures surface to the caller rather than being swallowed into
+// synthetic metadata. Callers pick between failing the pull and
+// opting into SOCKERLESS_SKIP_IMAGE_CONFIG.
+func TestFetchImageConfig_PropagatesRegistryErrors(t *testing.T) {
 	imageMetadataCache.Lock()
 	imageMetadataCache.m = make(map[string]*ImageMetadataResult)
 	imageMetadataCache.Unlock()
+	t.Cleanup(func() {
+		imageMetadataCache.Lock()
+		imageMetadataCache.m = make(map[string]*ImageMetadataResult)
+		imageMetadataCache.Unlock()
+	})
 
 	os.Unsetenv("SOCKERLESS_SKIP_IMAGE_CONFIG")
 
-	// Try to fetch from a non-existent registry — should return nil, nil
 	cfg, err := FetchImageConfig("nonexistent.invalid/image:tag")
-	if err != nil {
-		t.Errorf("expected nil error for network failure, got: %v", err)
+	if err == nil {
+		t.Fatal("expected error for unresolvable registry, got nil")
 	}
 	if cfg != nil {
-		t.Error("expected nil config for network failure")
+		t.Errorf("expected nil config on failure, got %+v", cfg)
 	}
+}
 
-	// Clean up cache
+// TestFetchImageMetadata_SkipEnvVarReturnsNil — the explicit opt-out
+// path returns (nil, nil): operators set SOCKERLESS_SKIP_IMAGE_CONFIG=true
+// when they want placeholder metadata, and the fetch signals that by
+// returning nil meta + nil error.
+func TestFetchImageMetadata_SkipEnvVarReturnsNil(t *testing.T) {
 	imageMetadataCache.Lock()
 	imageMetadataCache.m = make(map[string]*ImageMetadataResult)
 	imageMetadataCache.Unlock()
+	t.Setenv("SOCKERLESS_SKIP_IMAGE_CONFIG", "true")
+
+	meta, err := FetchImageMetadata("anything:tag")
+	if err != nil {
+		t.Fatalf("expected no error with skip env var set, got %v", err)
+	}
+	if meta != nil {
+		t.Errorf("expected nil meta with skip env var, got %+v", meta)
+	}
 }

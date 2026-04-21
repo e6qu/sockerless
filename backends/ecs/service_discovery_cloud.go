@@ -216,7 +216,10 @@ func (s *Server) cloudServiceResolve(serviceName, networkID string) ([]string, e
 		return nil, fmt.Errorf("network %s has no Cloud Map namespace", networkID)
 	}
 
-	nsName := s.getNamespaceName(ns.NamespaceID)
+	nsName, err := s.getNamespaceName(ns.NamespaceID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve namespace for network %s: %w", networkID, err)
+	}
 
 	result, err := s.aws.ServiceDiscovery.DiscoverInstances(s.ctx(),
 		&servicediscovery.DiscoverInstancesInput{
@@ -402,7 +405,15 @@ func (s *Server) searchDomainsForContainer(c *api.Container) []string {
 		if !ok || ns.NamespaceID == "" {
 			continue
 		}
-		nsName := s.getNamespaceName(ns.NamespaceID)
+		nsName, err := s.getNamespaceName(ns.NamespaceID)
+		if err != nil {
+			// Aggregating search domains is a best-effort path (used for
+			// resolv.conf construction); log and skip unresolvable IDs
+			// rather than fail the container start.
+			s.Logger.Warn().Err(err).Str("namespace_id", ns.NamespaceID).
+				Msg("skipping namespace in search-domain list")
+			continue
+		}
 		if nsName == "" {
 			continue
 		}
@@ -416,14 +427,20 @@ func (s *Server) searchDomainsForContainer(c *api.Container) []string {
 }
 
 // getNamespaceName fetches the namespace name from Cloud Map by ID.
-func (s *Server) getNamespaceName(namespaceID string) string {
+// Returns the underlying error so callers can decide between retry,
+// skip, or propagate — substituting the raw ID produced confusing
+// downstream failures when the ID was then used as a DNS name.
+func (s *Server) getNamespaceName(namespaceID string) (string, error) {
 	result, err := s.aws.ServiceDiscovery.GetNamespace(s.ctx(),
 		&servicediscovery.GetNamespaceInput{
 			Id: aws.String(namespaceID),
 		},
 	)
-	if err != nil || result.Namespace == nil {
-		return namespaceID // fallback to ID
+	if err != nil {
+		return "", fmt.Errorf("GetNamespace(%s): %w", namespaceID, err)
 	}
-	return aws.ToString(result.Namespace.Name)
+	if result.Namespace == nil || result.Namespace.Name == nil {
+		return "", fmt.Errorf("GetNamespace(%s): response missing name", namespaceID)
+	}
+	return aws.ToString(result.Namespace.Name), nil
 }

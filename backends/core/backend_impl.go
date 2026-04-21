@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"net"
 	"os"
@@ -1135,14 +1134,22 @@ func (s *BaseServer) ExecInspect(id string) (*api.ExecInstance, error) {
 }
 
 // ImagePull pulls an image and stores it in the in-memory image store.
-// Uses synthetic metadata. Prefer ImagePullWithMetadata when registry data is available.
+// Fetches real registry metadata and fails if the registry can't be
+// reached (unless SOCKERLESS_SKIP_IMAGE_CONFIG=true explicitly opts
+// into synthetic defaults).
 func (s *BaseServer) ImagePull(ref string, auth string) (io.ReadCloser, error) {
-	return s.ImagePullWithMetadata(ref, auth, nil)
+	meta, err := FetchImageMetadata(ref)
+	if err != nil {
+		return nil, err
+	}
+	return s.ImagePullWithMetadata(ref, auth, meta)
 }
 
-// ImagePullWithMetadata pulls an image, using real registry metadata when available.
-// When meta is nil, falls back to synthetic data for backward compatibility.
-// Uses real sizes, digests, and layers from registry.
+// ImagePullWithMetadata pulls an image using the caller-supplied
+// registry metadata. When meta is nil it is an opt-in operator choice
+// (SOCKERLESS_SKIP_IMAGE_CONFIG=true) and we record a minimal image
+// entry derived deterministically from the ref; the synthetic path is
+// explicit and logged, not a silent fallback after a fetch failure.
 func (s *BaseServer) ImagePullWithMetadata(ref string, auth string, meta *ImageMetadataResult) (io.ReadCloser, error) {
 	if ref == "" {
 		return nil, &api.InvalidParameterError{Message: "image reference is required"}
@@ -1201,15 +1208,22 @@ func (s *BaseServer) ImagePullWithMetadata(ref string, auth string, meta *ImageM
 			s.Store.ImageHistory.Store(imageID, meta.History)
 		}
 	} else {
-		s.Logger.Warn().Str("ref", ref).Msg("using synthetic image metadata (registry fetch failed)")
-		// Synthetic fallback
+		// meta is nil: the operator has opted out of real registry
+		// metadata via SOCKERLESS_SKIP_IMAGE_CONFIG=true. Fail clean
+		// otherwise — the upstream Pull() and ImageManager.Pull() both
+		// return the registry error before reaching here.
+		if os.Getenv("SOCKERLESS_SKIP_IMAGE_CONFIG") != "true" {
+			return nil, fmt.Errorf("image pull %q: registry metadata unavailable and SOCKERLESS_SKIP_IMAGE_CONFIG is not set", ref)
+		}
+		s.Logger.Info().Str("ref", ref).Msg("SOCKERLESS_SKIP_IMAGE_CONFIG=true: recording image with deterministic placeholder metadata")
 		hash := sha256.Sum256([]byte(ref))
 		imageID = fmt.Sprintf("sha256:%x", hash)
-		h := fnv.New32a()
-		h.Write([]byte(ref))
-		imgSize = int64(10_000_000 + h.Sum32()%90_000_000)
+		// Size is unknown without the manifest. Record 0 rather than
+		// inventing one — docker clients should see 0 until a real
+		// pull succeeds.
+		imgSize = 0
 		repoDigests = []string{strings.Split(ref, ":")[0] + "@sha256:" + fmt.Sprintf("%x", hash)[:64]}
-		layers = []string{"sha256:" + GenerateID()}
+		layers = nil
 		arch = "amd64"
 		osName = "linux"
 		imgConfig = api.ContainerConfig{

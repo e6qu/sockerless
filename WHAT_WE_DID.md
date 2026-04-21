@@ -2,7 +2,24 @@
 
 Docker-compatible REST API that runs containers on cloud backends (ECS, Lambda, Cloud Run, GCF, ACA, AZF) or local Docker. 7 backends, 3 cloud simulators, validated against SDKs / CLIs / Terraform.
 
-89 phases, 757 tasks, 728 bugs tracked — all fixed. See [STATUS.md](STATUS.md) for the current roll-up, [BUGS.md](BUGS.md) for the bug log, [PLAN.md](PLAN.md) for the roadmap, [specs/](specs/) for architecture specs (start with [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md)).
+89 phases, 757 tasks, 737 bugs tracked — 732 fixed, 5 open. See [STATUS.md](STATUS.md) for the current roll-up, [BUGS.md](BUGS.md) for the bug log, [PLAN.md](PLAN.md) for the roadmap, [specs/](specs/) for architecture specs (start with [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md)).
+
+## Phase 90 — No-fakes / no-fallbacks audit (in progress 2026-04-21)
+
+Project-wide audit against the "no fakes, no fallbacks, no placeholders" principle. Every workaround, silent substitution, or placeholder field now gets treated as a bug — not a "known limitation". BUG-729 through BUG-737 were filed from the first sweep.
+
+Fixed in-session:
+- **BUG-730** — Core `ImagePullWithMetadata` stopped synthesising ID / size / layers when registry metadata fetch failed. `FetchImageMetadata` now propagates the real error. Opt-in `SOCKERLESS_SKIP_IMAGE_CONFIG=true` path preserved as an explicit choice but flagged for full removal (BUG-737).
+- **BUG-732** — Dead `cloudrun.NetworkState.FirewallRuleName` placeholder field deleted.
+- **BUG-733** — ECS stats no longer fabricates `PIDs: 1` when CloudWatch has no data yet; returns 0 instead.
+- **BUG-734** — ECS `getNamespaceName` propagates the underlying error instead of silently substituting the raw namespace ID for the name.
+
+Open (decisions made, fixes pending):
+- **BUG-729** — SSM ack workaround (live-AWS path); requires agent-side reverse-engineering.
+- **BUG-731** — `VolumeCreate` on ECS/Lambda/Cloud Run/ACA will return `NotImplemented` (silent metadata-only store elevated to a clean failure); real per-cloud volume provisioning tracked as separate phases.
+- **BUG-735** — ECS silently substituting empty scratch volumes for bind mounts when EFS isn't configured.
+- **BUG-736** — Cloud Run + ACA silently dropping `HostConfig.Binds` on the floor.
+- **BUG-737** — Remove `SOCKERLESS_SKIP_IMAGE_CONFIG` opt-out; require real registry metadata always; simulators must serve full `/v2/` manifest + config endpoints.
 
 ## Phase 89 — Stateless backend audit (2026-04-21)
 

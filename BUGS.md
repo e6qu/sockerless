@@ -1,15 +1,29 @@
 # Known Bugs
 
-**728 total — 728 fixed, 0 open, 0 false positives.**
+**737 total — 732 fixed, 5 open, 1 false positive.**
 
 For narrative context see [WHAT_WE_DID.md](WHAT_WE_DID.md) and [PLAN.md](PLAN.md). Architecture-level state derivation is documented in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) and [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md).
 
-Standing workflow rule: every CI / live-cloud failure lands here with a short root-cause trace before it's fixed.
+Standing workflow rule: every CI / live-cloud failure lands here with a short root-cause trace before it's fixed. Workarounds, fakes, placeholders, silent fallbacks, and incomplete implementations are all bugs and get the same treatment — "no fakes, no fallbacks" is a project-wide principle.
+
+## Open
+
+| ID | Sev | Area | Summary |
+|----|-----|------|---------|
+| 737 | M | core | `SOCKERLESS_SKIP_IMAGE_CONFIG=true` is an operator opt-out that replaces real registry metadata with a deterministic placeholder image record. Even as an explicit opt-in it is placeholder behaviour. Fix: remove the env var and the opt-out path, require real metadata always. Simulators' registry slices (ECR / AR / ACR) must serve `/v2/` manifest + config endpoints for every published image so metadata fetches never need a fallback. |
+| 736 | H | cloudrun/aca | Cloud Run jobspec/servicespec and ACA jobspec/appspec never translate `HostConfig.Binds` into container-runtime mount specs — bind mounts are silently dropped on the floor. Fix: reject `Binds` (and named-volume mounts) on these backends with a clear error until real mount support ships, so `docker run -v /h:/c` fails loudly instead of silently losing data. |
+| 735 | H | ecs | `backends/ecs/taskdef.go::buildContainerDef` silently substitutes an empty ECS scratch volume when `HostConfig.Binds` is set but `SOCKERLESS_ECS_AGENT_EFS_ID` isn't configured. Docker clients see the mount path exist but it's empty and non-persistent. Fix: reject bind mounts with a clear configuration error when EFS isn't set; no scratch fallback. |
+| 731 | H | all-cloud | `VolumeCreate` on ECS/Cloud Run/ACA/Lambda delegates to `BaseServer.VolumeCreate` which only stores metadata in `Store.Volumes`; no real cloud volume (EBS/EFS/GCS/Azure Files) is ever provisioned, so `-v volname:/mnt` on a cloud container spec is a silent no-op. Chosen fix: return NotImplemented from `VolumeCreate` / `VolumeRemove` / `VolumeInspect` / `VolumeList` on the four affected backends so named-volume use fails clean; delete dead placeholder fields `aca.VolumeState.ShareName` and `cloudrun.VolumeState.BucketPath`. Real per-cloud volume provisioning (EFS, Azure Files, Filestore/GCS) tracked as separate future phases. |
+| 729 | M | ecs | (Elevates BUG-721 from workaround-accepted to real bug.) `ssmDecoder` in `backends/ecs/exec_cloud.go` dedupes SSM `output_stream_data` frames by MessageID UUID because live AWS's Session Manager agent doesn't accept sockerless's `acknowledge` format — the agent retransmits until we're recognised, and without dedupe the docker CLI sees every line N times. Pragmatic, but it's still a workaround on the live-AWS path. Real fix: reverse-engineer the agent's exact ack-validation rules (suspect Flags or PayloadDigest semantics) so acks are accepted and retransmits stop. Requires live-AWS testing. |
 
 ## Fixed
 
 | ID | Sev | Area | Summary |
 |----|-----|------|---------|
+| 734 | M | ecs | `getNamespaceName` silently substituted the raw namespace ID for the name when `GetNamespace` failed. Now returns `(string, error)`; callers propagate or decide per-context (search-domain aggregation skips with a WARN; DNS discovery fails the call). |
+| 733 | L | ecs | `stats.go` returned `PIDs: 1` as a fabricated fallback when CloudWatch had no data for a new task. Now returns `{}` (PIDs=0); docker stats shows 0/0 until real metrics arrive. |
+| 732 | L | cloudrun | `NetworkState.FirewallRuleName` dead placeholder field deleted (never read; always written as `""`). Real VPC firewall management tracked as a separate future phase if parity with ECS security groups becomes required. |
+| 730 | H | core | `ImagePullWithMetadata` no longer synthesises ID / size / layers / config when metadata fetch fails. `FetchImageMetadata` propagates the registry error; `ImagePull` fails clean with the real error. Synthetic path retained behind an explicit operator opt-out (`SOCKERLESS_SKIP_IMAGE_CONFIG=true`) — tracked as BUG-737 for full removal. |
 | 728 | H | sim/aws | ECS exec WebSocket emitted raw bytes; backend's SSM decoder saw empty output. Simulator now builds real SSM AgentMessage frames (`output_stream_data`, exit-code PayloadType=12, `channel_closed`) — see `simulators/aws/ssm_proto.go`. |
 | 727 | H | ci | Unit job panicked on nil `dockerClient` in cloudrun/aca/gcf/azf arithmetic integration tests. CI `test` job now sets `SOCKERLESS_INTEGRATION=1` + verifies docker; TestMain CI guard fails loud if env var missing. |
 | 726 | H | aca/ecs/cloudrun | NetworkState (SG, Cloud Map namespace, DNS zone, NSG) was in-memory only. `resolveNetworkState` now derives from cloud actuals by deterministic name. |
@@ -17,7 +31,7 @@ Standing workflow rule: every CI / live-cloud failure lands here with a short ro
 | 724 | M | aca/cloudrun/ecs | Docker pods (libpod) were tracked in `Store.Pods` only. `BaseServer.PodList` now merges `CloudPodLister` results; each backend groups cloud resources by `sockerless-pod` tag. |
 | 723 | H | all-cloud | `Store.Images` disk persistence removed; `docker images` now cloud-derived across 6 cloud backends via `core.OCIListImages` (Artifact Registry / ACR) + ECR SDK (ECS/Lambda). |
 | 722 | H | ecs | Restart lost `ECSState.TaskARN`; `cloudExecStart` returned ASCII error through hijacked conn → docker CLI reported `unrecognized stream: 110`. `resolveTaskARN` lazy-recovery via ListTasks + tag filter. Later subsumed by BUG-725. |
-| 721 | M | ecs | SSM agent retransmits `output_stream_data` until it sees an ack it accepts; sockerless's ack format isn't yet recognised. Pragmatic dedupe by MessageID UUID in `ssmDecoder`. Proper ack-acceptance still outstanding as follow-up work. |
+| 721 | M | ecs | SSM agent retransmits `output_stream_data` until it sees an ack it accepts; sockerless's ack format isn't yet recognised. Pragmatic dedupe by MessageID UUID in `ssmDecoder`. Proper ack-acceptance tracked as BUG-729. |
 | 720 | H | ecs | Task IAM role missing `ssmmessages:*` permissions → ECS Exec data channel closed immediately. Terraform module adds `ECSExecSSMMessages` statement. |
 | 719 | H | ecs | `RunTask` omitted `EnableExecuteCommand: true` → exec fails post-launch. Fixed in `startTask`. |
 | 718 | H | lambda | Cross-cloud sibling of BUG-708 + silent `pushToECR` fallback. Same credential-ARN wiring; fallback removed. |
@@ -80,13 +94,13 @@ Standing workflow rule: every CI / live-cloud failure lands here with a short ro
 
 Earlier phases (≤ BUG-661) — one-liners per historical bug kept in `git log` + `specs/` specs. Summaries too terse to be useful here.
 
-## Open
-
-*(none)*
-
 ## False positives
 
-*(none)*
+Findings that look like bugs under the "no fakes, no workarounds" principle but are legitimate by design. Listed so future audits don't re-flag them.
+
+| Area | Finding | Why it's not a bug |
+|------|---------|--------------------|
+| `backends/aca/azure.go::fakeCredential` | Returns a literal `"fake-token"` as a bearer token when the backend is pointed at a simulator endpoint. | Simulators intentionally don't verify bearer tokens — token verification requires a real Azure AD endpoint which the sim doesn't emulate. The credential is only wired via `newAzureClientsWithEndpoint` (the simulator path); production uses `azidentity.NewDefaultAzureCredential`. Naming should clarify intent (sim-only) but the behaviour is correct. |
 
 ## Cross-cloud sweep notes
 

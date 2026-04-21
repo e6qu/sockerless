@@ -34,9 +34,8 @@ func (s *Server) cloudNetworkCreate(name, networkID string) error {
 			}
 			s.Logger.Info().Str("zone", existing.Name).Str("network", name).Msg("reusing existing Cloud DNS managed zone")
 			s.NetworkState.Put(networkID, NetworkState{
-				ManagedZoneName:  existing.Name,
-				DNSName:          existing.DnsName,
-				FirewallRuleName: "",
+				ManagedZoneName: existing.Name,
+				DNSName:         existing.DnsName,
 			})
 			return nil
 		}
@@ -54,9 +53,8 @@ func (s *Server) cloudNetworkCreate(name, networkID string) error {
 		Msg("created Cloud DNS managed zone for network")
 
 	s.NetworkState.Put(networkID, NetworkState{
-		ManagedZoneName:  created.Name,
-		DNSName:          created.DnsName,
-		FirewallRuleName: "", // No compute client — firewall rules not supported
+		ManagedZoneName: created.Name,
+		DNSName:         created.DnsName,
 	})
 
 	return nil

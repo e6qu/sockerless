@@ -1,8 +1,8 @@
 # Sockerless — Status
 
-**89 phases (757 tasks). 728 bugs tracked, all fixed. Branch `post-phase86-continuation`.**
+**89 phases (757 tasks). 737 bugs tracked — 732 fixed, 5 open (BUG-729/731/735/736/737), 1 false positive. Branch `post-phase86-continuation`.**
 
-See [PLAN.md](PLAN.md) for the roadmap, [BUGS.md](BUGS.md) for the bug log, [WHAT_WE_DID.md](WHAT_WE_DID.md) for the narrative, [specs/](specs/) for architecture specs.
+See [PLAN.md](PLAN.md) for the roadmap, [BUGS.md](BUGS.md) for the bug log (+ open-bug descriptions), [WHAT_WE_DID.md](WHAT_WE_DID.md) for the narrative, [specs/](specs/) for architecture specs.
 
 ## Phase roll-up
 
@@ -12,6 +12,7 @@ See [PLAN.md](PLAN.md) for the roadmap, [BUGS.md](BUGS.md) for the bug log, [WHA
 | 87 | Cloud Run Jobs → Services (internal ingress + VPC connector) | Closed in code 2026-04-21. Live-GCP pending. |
 | 88 | ACA Jobs → Apps (internal ingress) | Closed in code 2026-04-21. Live-Azure pending. |
 | 89 | Stateless-backend audit — cloud resource mapping, `resolve*State`, cloud-derived `ListImages` / `ListPods`, `resolveNetworkState` | Closed 2026-04-21. |
+| 90 | No-fakes/no-fallbacks audit — workarounds, placeholders, silent substitutions all elevated to bugs | In progress 2026-04-21. BUG-730/732/733/734 fixed; BUG-729/731/735/736/737 open. |
 
 Detail per phase in [WHAT_WE_DID.md](WHAT_WE_DID.md). Open work items queued in [DO_NEXT.md](DO_NEXT.md).
 

@@ -113,7 +113,7 @@ Each backend, the agent, and the test suite are separate Go modules connected vi
 ![azf](https://img.shields.io/badge/azf-1.9k-A0D8EF)
 ![cli](https://img.shields.io/badge/cli-1.6k-A0D8EF)
 ![gcf](https://img.shields.io/badge/gcf-1.7k-A0D8EF)
-![lambda](https://img.shields.io/badge/lambda-2.4k-A0D8EF)
+![lambda](https://img.shields.io/badge/lambda-2.3k-A0D8EF)
 
 **TypeScript**
 

@@ -77,8 +77,10 @@ func (p *ecsStatsProvider) ContainerMetrics(containerID string) (*core.Container
 		},
 	})
 	if err != nil {
-		// CloudWatch may not have data yet for new tasks — return zeros
-		return &core.ContainerMetrics{PIDs: 1}, nil
+		// CloudWatch may not have data yet for new tasks. Return zeros
+		// rather than invent a PID count — docker stats will show 0/0
+		// until real metrics arrive.
+		return &core.ContainerMetrics{}, nil
 	}
 
 	var cpuUnits, memMB float64
