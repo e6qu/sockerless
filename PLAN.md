@@ -31,6 +31,35 @@ Current state: [STATUS.md](STATUS.md). Bug log: [BUGS.md](BUGS.md). Narrative: [
 - **Phase 88 live-Azure** — same shape for ACA. Needs Azure subscription + managed environment with VNet integration.
 - **Phase 86 Lambda live track** — scripted already, deferred at Phase C closure for session-budget reasons. No architectural blockers.
 
+### Phase 91 — ECS real volumes (queued)
+
+Replace the `NotImplemented` returns from BUG-731 with real cloud-side provisioning.
+
+- **Simulator**: new `simulators/aws/efs.go` EFS slice — FileSystem + MountTarget + AccessPoint CRUD. Back each access point with a subdirectory on a host-side Docker volume so the sim's ECS task containers bind-mount the same path.
+- **Backend**: `backends/ecs/volume_cloud.go` — `VolumeCreate` ensures a sockerless-tagged EFS exists (reused across volumes), then creates an AccessPoint per volume with `PosixUser` + `RootDirectory` so each volume is isolated. `VolumeRemove` deletes the access point; EFS stays.
+- **Spec wiring**: `taskdef.go::buildContainerDef` rejects bind mounts without EFS (BUG-735) but now happily emits `EFSVolumeConfiguration{FileSystemId, AccessPointId, TransitEncryption=ENABLED}` when a volume reference is in scope.
+- **Tests**: SDK + CLI + terraform cover `efs:CreateAccessPoint` / `DescribeAccessPoints` / `DeleteAccessPoint`. Integration test spins up two containers sharing the same volume and verifies file visibility.
+- **Docs**: spec's "Volume provisioning per backend" row flips from design to "implemented in Phase 91".
+
+### Phase 92 — Cloud Run real volumes (queued)
+
+- **Simulator**: extend `simulators/gcp/storage.go` (GCS slice) to honour `Volume{Gcs{Bucket}}` on the Cloud Run simulator's spec-builder path, bind-mounting a host directory per bucket.
+- **Backend**: `backends/cloudrun/volume_cloud.go` — `VolumeCreate` calls `storage.Buckets.Insert` with `sockerless-managed=true` label. Service spec's `RevisionTemplate.Volumes[]` gets `Gcs{Bucket}`; `Container.VolumeMounts` references them. Operator IAM: service account needs `roles/storage.objectAdmin` on sockerless buckets.
+- **Out of scope for Phase 92**: Filestore POSIX mounts (different semantics — strong locking, `O_APPEND`). Filed as Phase 92.1 if GCS semantics prove insufficient.
+- **Tests**: SDK + CLI.
+
+### Phase 93 — ACA real volumes (queued)
+
+- **Simulator**: `simulators/azure/storage.go` grows Azure Files `fileServices/shares` CRUD (blob slice already present). `simulators/azure/containerappsenv.go` grows `storages` sub-resource.
+- **Backend**: `backends/aca/volume_cloud.go` — `VolumeCreate` ensures a sockerless storage account exists, then `FileShares.Create` + `ManagedEnvironmentsStorages.CreateOrUpdate` so the environment knows about the share. ContainerApp spec's `Template.Volumes[]` + `Container.VolumeMounts` reference the env-storage. `VolumeRemove` tears both down.
+- **Tests**: SDK + CLI.
+
+### Phase 94 — GCF + AZF volume alignment (queued)
+
+Sockerless targets only the latest generation of each cloud service (no fallbacks between generations). For GCP Cloud Functions that's Cloud Functions v2 (Cloud Run Services under the hood) — inherit Phase 92's implementation via a shared helper. For Azure Functions that's Flex Consumption / Premium plan (BYOS Azure Files) — inherit Phase 93's Azure Files share provisioning.
+
+If operators target an older generation (GCF v1, Azure Functions Consumption plan on older runtimes), the backend fails fast at config validation with a clear "upgrade your function to the supported generation" error rather than degrading silently.
+
 ### Phase 68 — Multi-Tenant Backend Pools (queued)
 
 Named pools of backends with scheduling and resource limits. `P68-001` done; remaining tasks:

@@ -20,6 +20,8 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 3. **Persistent on-disk state is forbidden.** No `~/.sockerless/state/*.json`, no S3 buckets, no DynamoDB. The only file paths backends touch on disk are: configuration (read-only), credentials (read-only), and CLI run-state (PID files etc.).
 4. **State buckets / lock tables for terraform are infrastructure, not sockerless state** — they hold Terraform's state for the operator-managed infra and have nothing to do with backend operation.
 5. **A "container" in the docker API is whatever the cloud calls a single container of work** — task, function invocation, app revision, job execution. A "pod" in the libpod API is a *group* of containers, which in clouds without first-class pods is a multi-container task / multi-container app.
+6. **Each cloud service has exactly one supported generation** — whichever is current. No backend keeps fallback paths to older generations (e.g. no GCF v1 alongside v2; no Azure Functions Consumption-v3 runtime alongside Flex Consumption). If the operator points sockerless at an older generation, `Config.Validate()` fails fast with an "upgrade to the supported generation" error; there is no silent downgrade.
+7. **No fakes, no fallbacks, no placeholders.** Workarounds, silent substitutions, placeholder fields, synthetic-metadata backstops — all are bugs and land in [BUGS.md](../BUGS.md) under "Open" until a real fix ships.
 
 ---
 
@@ -195,11 +197,178 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 | `lambda` | None (permanent). Lambda containers only have a 512 MB–10 GB ephemeral `/tmp`; there is no per-invocation cross-container storage docker volumes can usefully bind. | `VolumeCreate`/etc. stay `NotImplemented`. `ContainerCreate` with `-v volname:/x` should reject with a clear error pointing at S3 / DynamoDB / EFS-via-Lambda-VPC for durable state. | — | — |
 | `cloudrun` | **GCS bucket** per volume (simplest first pass), mounted via Cloud Run Service's native `Volume{Gcs{Bucket}}` in the revision template. Optional upgrade to **Filestore** later for POSIX semantics if `O_APPEND` / file locking is needed. | `VolumeCreate` → `storage.Buckets.Insert` with naming `sockerless-volume-<id>`, label `sockerless-managed=true`. `VolumeRemove` → `DeleteBucket` (requires empty; force=true uses `DeleteObjects` first). Bind / named mount → inject `RevisionTemplate.Volumes[].Gcs{Bucket}` + `Container.VolumeMounts` in the service spec. | `storage.buckets.create/delete/list`, `storage.objects.*` for prune/delete. Cloud Run service account needs `roles/storage.objectAdmin` on buckets it mounts. | `simulators/gcp/storage.go` already has GCS slice; extend with `Volume{Gcs}` honouring on the Cloud Run simulator path so the backing Docker container gets a real bind mount against the sim's bucket directory. |
 | `aca` | **Azure Files share** in a sockerless-owned storage account, linked into the managed environment as an `ManagedEnvironments/storages` resource, then referenced from `ContainerApp.Properties.Template.Volumes[]` + `Container.VolumeMounts`. | `VolumeCreate` → (ensure storage account exists) + `FileShares.Create` + `ManagedEnvironmentsStorages.CreateOrUpdate` so the env knows about the share. `VolumeRemove` → `FileShares.Delete` + `ManagedEnvironmentsStorages.Delete`. Bind / named mount → inject `ContainerAppProperties.Template.Volumes` + `Container.VolumeMounts` into the app spec. | `Microsoft.Storage/storageAccounts/read,write,listKeys`, `Microsoft.Storage/storageAccounts/fileServices/shares/read,write,delete`, `Microsoft.App/managedEnvironments/storages/read,write,delete`. | `simulators/azure/storage.go` gains `fileServices/shares` sub-resource CRUD (the storage slice today is blob-only). `simulators/azure/containerappsenv.go` gains `storages` sub-resource. The sim's ACA container bind-mounts a host-side directory per share so containers see real files. |
-| `cloudrun-functions` (gcf) | GCF 2nd gen is itself Cloud Run Services under the hood; volume story inherits Cloud Run's GCS-bucket-mount. GCF 1st gen has no volume concept. | Share implementation with `cloudrun` (same helper). 1st gen remains `NotImplemented`. | Same as cloudrun. | Shares `simulators/gcp/` GCS extensions. |
-| `azure-functions` (azf) | Function Apps on Premium plan support BYOS Azure Files mounts (`WEBSITE_CONTENTAZUREFILECONNECTIONSTRING` etc.); Consumption plan does not. | If the operator is on Premium, provision Azure Files share like ACA + attach via `/subscriptions/.../sites/<fn>/config/azurestorageaccounts`. Consumption plan returns `NotImplemented` with a clear "Premium plan required" message. | Same Azure Files permissions as ACA + `Microsoft.Web/sites/config/write`. | Shares `simulators/azure/` Azure Files extensions. |
+| `cloudrun-functions` (gcf) | GCP Cloud Functions (targeting the current v2 API only; v1 not supported). v2 is Cloud Run Services under the hood. | Shared helper with `cloudrun` — same GCS-bucket-mount lifecycle. | Same as cloudrun. | Shares `simulators/gcp/` GCS extensions. |
+| `azure-functions` (azf) | Azure Functions on the current Flex Consumption / Premium plan with BYOS Azure Files mounts. | Provision Azure Files share (shared helper with ACA), then attach to the Function App via `sites/<fn>/config/azurestorageaccounts`. | Same Azure Files permissions as ACA + `Microsoft.Web/sites/config/write`. | Shares `simulators/azure/` Azure Files extensions. |
 | `docker` | Real Docker volumes via the local daemon. | Already implemented — passthrough to `docker volume *` on the host daemon. | — | — |
 
 Each cloud's volume work is filed as its own phase in [PLAN.md](../PLAN.md) so real provisioning lands as discrete, reviewable units.
+
+---
+
+## Docker / Podman API coverage matrix
+
+Full list of every `api.Backend` method sockerless implements, per-backend status, and simulator coverage. Status legend:
+
+- **✓** — fully implemented against real cloud resources (or the docker daemon for the docker backend).
+- **⚠** — partially implemented; see notes row below the table.
+- **✗** — returns `api.NotImplementedError` with a clear message pointing at the cloud's native primitive. No silent acceptance.
+- **—** — not applicable: the cloud has no equivalent primitive and the API surface doesn't meaningfully extend to it.
+- **S✗** — **Simulator gap**: backend is implemented but the simulator doesn't yet emulate the underlying cloud slice, so the call only works against real cloud. Tracked as separate bugs / phases.
+
+### Container lifecycle + runtime ops
+
+| Method | docker | ecs | lambda | cloudrun | gcf | aca | azf |
+|--------|:------:|:---:|:------:|:--------:|:---:|:---:|:---:|
+| ContainerCreate | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ContainerStart | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ContainerStop | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ContainerKill | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ContainerRestart | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ContainerRemove | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ContainerWait | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ContainerInspect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ContainerList | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ContainerLogs | ✓ | ✓ (CloudWatch) | ✓ (CloudWatch) | ✓ (Cloud Logging) | ✓ | ✓ (Log Analytics) | ✓ |
+| ContainerStats | ✓ | ⚠ CloudWatch — zero until metrics arrive | ⚠ CloudWatch | ⚠ Cloud Monitoring | ⚠ | ⚠ Log Analytics | ⚠ |
+| ContainerTop | ✓ | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ | ⚠ agent only | ⚠ |
+| ContainerRename | ✓ | ⚠ local-name-only | ⚠ local-name-only | ⚠ local-name-only | ⚠ | ⚠ local-name-only | ⚠ |
+| ContainerUpdate | ✓ | ⚠ limited — CPU/mem only via task-def rev | ⚠ | ⚠ via new revision | ⚠ | ⚠ via new revision | ⚠ |
+| ContainerResize | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| ContainerPause | ✓ | ✗ Fargate no-pause | ✗ | ✗ Cloud Run no-pause | ✗ | ✗ ACA no-pause | ✗ |
+| ContainerUnpause | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| ContainerCommit | ✓ | ✗ Fargate no-snapshot | ✗ | ✗ | ✗ | ✗ | ✗ |
+| ContainerExport | ✓ | ✗ Fargate no-fs | ✗ | ✗ | ✗ | ✗ | ✗ |
+| ContainerChanges | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| ContainerStatPath | ✓ | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ | ⚠ agent only | ⚠ |
+| ContainerGetArchive | ✓ | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ | ⚠ agent only | ⚠ |
+| ContainerPutArchive | ✓ | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ | ⚠ agent only | ⚠ |
+| ContainerPrune | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ContainerAttach | ✓ | ✓ (CloudWatch stream) | ✓ (agent overlay) | ✓ | ✓ | ✓ | ✓ |
+
+Notes:
+
+- **ContainerStats ⚠** — cloud providers only surface aggregated per-task metrics with ~60s lag; no block-I/O or network-byte counters equivalent to docker's cgroup stats. Sockerless reports CPU-ns + mem-bytes + PIDs=0 (BUG-733) when nothing's there yet. A future phase may add cloud-native stats endpoints to each simulator for parity with docker's streaming stats.
+- **ContainerTop / Stat / GetArchive / PutArchive ⚠ agent only** — possible only when the sockerless agent is bundled into the container image (Lambda agent-as-handler pattern). Without the agent, the cloud runtime exposes no process listing or file-copy API. Simulator side already handles the fallback (tests skip). Real-cloud work: document the agent-only constraint in per-backend READMEs.
+- **ContainerRename ⚠** — cloud resources (ECS task, Cloud Run Job, ACA app) have immutable names derived from the container ID; the docker API's "rename" updates local metadata only (`sockerless-name` tag does stay updated via re-tag). `docker inspect` shows the new name but the cloud resource name doesn't change.
+- **ContainerUpdate ⚠** — resource-limit updates go through a new task-def revision / service revision / app revision. Docker's live `update --cpus --memory` semantics can't apply to already-running cloud tasks; the next start picks up the new limits.
+- **ContainerResize ✗** — TTY resize events (`SIGWINCH`) don't propagate through Cloud Run / Fargate / ACA to the container. Future phase may add a sim-side pipe for local testing.
+
+### Exec
+
+| Method | docker | ecs | lambda | cloudrun | gcf | aca | azf |
+|--------|:------:|:---:|:------:|:--------:|:---:|:---:|:---:|
+| ExecCreate | ✓ | ✓ (SSM) | ✓ (agent overlay) | ✗ | ✗ | ⚠ ACA console | ✗ |
+| ExecStart | ✓ | ✓ (SSM AgentMessage) | ✓ | ✗ | ✗ | ⚠ | ✗ |
+| ExecInspect | ✓ | ✓ | ✓ | ✗ | ✗ | ⚠ | ✗ |
+| ExecResize | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+
+Notes:
+
+- **ECS**: real `ExecuteCommand` via SSM Session Manager. Requires task IAM role grants for `ssmmessages:*` (BUG-720) + `EnableExecuteCommand: true` at RunTask (BUG-719) + full SSM AgentMessage decoder in the backend (BUG-717) + the workaround-turned-open BUG-729 for ack format.
+- **Lambda**: agent-as-handler pattern. `sockerless-lambda-bootstrap` dials back to the backend's `/v1/lambda/reverse` WebSocket; `docker exec` tunnels through.
+- **Cloud Run / GCF**: no native exec surface. Would require the same agent-overlay pattern Lambda uses. **S✗**: `simulators/gcp/` has no exec slice to emulate against.
+- **ACA ⚠**: ACA has a native console exec API (`containerappsrevisionreplicasexec`) but sockerless's ACA backend doesn't wire it yet. **S✗**: simulator doesn't serve it either.
+- **AZF**: no native exec (Consumption plan containers are invocation-scoped).
+
+### Images
+
+| Method | docker | ecs | lambda | cloudrun | gcf | aca | azf |
+|--------|:------:|:---:|:------:|:--------:|:---:|:---:|:---:|
+| ImagePull | ✓ | ✓ (ECR pull-through) | ✓ (ECR pull-through) | ✓ (AR) | ✓ | ✓ (ACR cache) | ✓ |
+| ImagePush | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ImageList | ✓ | ✓ ECR | ✓ ECR | ✓ AR | ✓ | ✓ ACR | ✓ |
+| ImageInspect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ImageRemove | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ImageTag | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ImageHistory | ✓ | ✓ (manifest) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ImageBuild | ✓ | ✓ CodeBuild / Cloud Build / ACR tasks? | ⚠ | ⚠ Cloud Build | ⚠ | ⚠ ACR build | ⚠ |
+| ImagePush | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ImageLoad | ✓ | ⚠ tarball → ECR push | ⚠ | ⚠ tarball → AR push | ⚠ | ⚠ tarball → ACR push | ⚠ |
+| ImageSave | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| ImageSearch | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| ImagePrune | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+Notes:
+
+- **ImageBuild**: the backend's ImageManager ships to the cloud's native build service — AWS CodeBuild / GCP Cloud Build / Azure ACR Tasks. The simulator serves each build API (GCP Cloud Build is implemented; AWS CodeBuild and ACR Tasks have slices). Still **⚠** per-backend because not every build option (cache-from, secrets mount, multi-arch) round-trips faithfully yet.
+- **ImageSave ✗** — cloud registries don't serve a full tar. Would require downloading manifest + all blobs and retaring. Possible but nobody's asked for it; marked NotImplemented clean.
+- **ImageSearch ✗** — cloud registries don't expose full-text search over public images. Docker Hub search via HTTPS still works but isn't what the docker search endpoint expects. Marked NotImplemented.
+
+### Networks
+
+| Method | docker | ecs | lambda | cloudrun | gcf | aca | azf |
+|--------|:------:|:---:|:------:|:--------:|:---:|:---:|:---:|
+| NetworkCreate | ✓ | ✓ SG + Cloud Map | — | ✓ Cloud DNS zone | — | ✓ Private DNS + NSG | — |
+| NetworkRemove | ✓ | ✓ | — | ✓ | — | ✓ | — |
+| NetworkInspect | ✓ | ✓ | — | ✓ | — | ✓ | — |
+| NetworkList | ✓ | ✓ | — | ✓ | — | ✓ | — |
+| NetworkConnect | ✓ | ✓ Cloud Map A-record | — | ✓ CNAME when UseService | — | ✓ CNAME when UseApp | — |
+| NetworkDisconnect | ✓ | ✓ | — | ✓ | — | ✓ | — |
+| NetworkPrune | ✓ | ✓ | — | ✓ | — | ✓ | — |
+
+Notes:
+
+- **Lambda / GCF / AZF (— columns)** — these three are invocation-scoped runtimes; there's no VPC-like peer-to-peer primitive they address with. "Networks" in the docker API would map to... nothing meaningful. The backends accept network names as local bookkeeping (so `-v net=foo` doesn't error) but nothing cloud-side ties to them.
+
+### Volumes
+
+| Method | docker | ecs | lambda | cloudrun | gcf | aca | azf |
+|--------|:------:|:---:|:------:|:--------:|:---:|:---:|:---:|
+| VolumeCreate | ✓ | ✗ (Phase 91) | ✗ (no equivalent) | ✗ (Phase 92) | ✗ (Phase 94) | ✗ (Phase 93) | ✗ (Phase 94) |
+| VolumeInspect | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| VolumeList | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| VolumeRemove | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| VolumePrune | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+
+See "Volume provisioning per backend" section above. Phases 91-94 land real provisioning.
+
+### Pods (libpod)
+
+| Method | docker | ecs | lambda | cloudrun | gcf | aca | azf |
+|--------|:------:|:---:|:------:|:--------:|:---:|:---:|:---:|
+| PodCreate | ✓ | ✓ multi-container task-def | ✗ | ✓ multi-container Service revision | ✗ | ✓ multi-container App | ✗ |
+| PodStart | ✓ | ✓ | ✗ | ✓ | ✗ | ✓ | ✗ |
+| PodStop | ✓ | ✓ | ✗ | ✓ | ✗ | ✓ | ✗ |
+| PodKill | ✓ | ✓ | ✗ | ✓ | ✗ | ✓ | ✗ |
+| PodRemove | ✓ | ✓ | ✗ | ✓ | ✗ | ✓ | ✗ |
+| PodList | ✓ | ✓ (group by `sockerless-pod` tag) | ✗ | ✓ (grouping across Jobs + Services) | ✗ | ✓ (grouping across Jobs + Apps) | ✗ |
+| PodInspect | ✓ | ✓ | ✗ | ✓ | ✗ | ✓ | ✗ |
+| PodExists | ✓ | ✓ | ✗ | ✓ | ✗ | ✓ | ✗ |
+
+Notes:
+
+- **Lambda / GCF / AZF ✗** — function-as-a-service platforms have no multi-container-per-invocation primitive. Pods would need an external coordinator (Step Functions / Cloud Workflows / Durable Functions) which is out of scope.
+
+### System + misc
+
+| Method | docker | ecs | lambda | cloudrun | gcf | aca | azf |
+|--------|:------:|:---:|:------:|:--------:|:---:|:---:|:---:|
+| Info | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| SystemDf | ✓ | ⚠ containers only; registry size N/A | ⚠ | ⚠ | ⚠ | ⚠ | ⚠ |
+| SystemEvents | ✓ | ⚠ local events only | ⚠ | ⚠ | ⚠ | ⚠ | ⚠ |
+| AuthLogin | ✓ | ✓ (ECR token) | ✓ | ✓ (GAR token) | ✓ | ✓ (ACR token) | ✓ |
+
+Notes:
+
+- **SystemDf ⚠** — `docker system df` shows disk usage by images / containers / volumes / build-cache. Sockerless reports container counts correctly; cloud registries don't cleanly expose aggregate size-on-disk per image without fetching every manifest. Marked partial.
+- **SystemEvents ⚠** — sockerless emits its own events (container create / start / stop / die / destroy / network create / etc.) on all backends. What's not emitted: cloud-side events originating outside sockerless (a manual `aws ecs stop-task`, `gcloud run services update` etc.). Future phase could poll each cloud's audit log and re-emit. Not currently prioritised.
+
+---
+
+## Simulator coverage gaps (S✗)
+
+Below is the current "implementing it against real cloud would work, but there's no sim-side emulation so local/CI testing falls back to real cloud":
+
+| Gap | Backend(s) | Blocks |
+|-----|------------|--------|
+| Azure Files share slice (`fileServices/shares`) in `simulators/azure/storage.go` | aca, azf | Phase 93, Phase 94 real volumes |
+| Managed-environment `storages` sub-resource in `simulators/azure/containerappsenv.go` | aca | Phase 93 real volumes |
+| GCS bucket-mount honouring in `simulators/gcp/cloudrun.go` spec-builder path | cloudrun, gcf | Phase 92 real volumes |
+| EFS `AccessPoint` CRUD in `simulators/aws/` (new `efs.go`) | ecs | Phase 91 real volumes |
+| ACA console exec proto in `simulators/azure/containerapps.go` | aca | ExecCreate/Start/Inspect |
+| Lambda reverse-agent (already wired) — no sim gap, works end-to-end | lambda | — |
+| Cloud Run exec: no upstream API exists; Lambda-style agent overlay would need to be ported | cloudrun, gcf | Exec family |
+| AWS Session Manager agent-side ack validation | ecs | BUG-729 |
 
 ---
 
