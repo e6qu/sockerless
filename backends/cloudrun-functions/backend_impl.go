@@ -72,6 +72,20 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		hostConfig.NetworkMode = "default"
 	}
 
+	// Phase 94: named-volume binds are allowed (`-v volName:/mnt[:ro]`)
+	// and land on sockerless-managed GCS buckets attached to the
+	// underlying Cloud Run Service. Host-path binds (`/h:/c`) are
+	// rejected — GCF containers have no host filesystem.
+	for _, b := range hostConfig.Binds {
+		parts := strings.SplitN(b, ":", 3)
+		if len(parts) < 2 {
+			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("invalid bind %q: expected src:dst[:mode]", b)}
+		}
+		if strings.HasPrefix(parts[0], "/") || strings.HasPrefix(parts[0], ".") {
+			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("host-path binds are not supported on Cloud Functions; use a named volume (docker volume create + -v name:%s)", parts[1])}
+		}
+	}
+
 	path := ""
 	var args []string
 	if len(config.Entrypoint) > 0 {
@@ -228,6 +242,26 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	functionURL := ""
 	if result.ServiceConfig != nil {
 		functionURL = result.ServiceConfig.Uri
+	}
+
+	// Phase 94: if the request carries named-volume binds, attach them
+	// to the underlying Cloud Run Service via the GetService /
+	// UpdateService escape hatch. GCF's Functions v2 API has no direct
+	// Volumes primitive in ServiceConfig (only SecretVolumes), so every
+	// other volume must be appended to the backing service's
+	// RevisionTemplate.
+	if len(hostConfig.Binds) > 0 {
+		if err := s.attachVolumesToFunctionService(s.ctx(), result, hostConfig.Binds); err != nil {
+			// Best-effort: delete the partially-configured function so
+			// the create appears atomic to the docker client.
+			if delOp, delErr := s.gcp.Functions.DeleteFunction(s.ctx(), &functionspb.DeleteFunctionRequest{
+				Name: fullFunctionName,
+			}); delErr == nil {
+				_ = delOp.Wait(s.ctx())
+			}
+			s.Logger.Error().Err(err).Str("function", funcName).Msg("failed to attach named-volume binds to underlying Cloud Run Service")
+			return nil, &api.ServerError{Message: fmt.Sprintf("attach volumes to function %q: %v", funcName, err)}
+		}
 	}
 
 	s.PendingCreates.Put(id, container)

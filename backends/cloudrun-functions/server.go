@@ -18,14 +18,16 @@ type Server struct {
 	ipCounter atomic.Int32
 
 	GCF *core.StateStore[GCFState]
+	gcsVolumeState
 }
 
 // NewServer creates a new Cloud Run Functions backend server.
 func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Server {
 	s := &Server{
-		config: config,
-		gcp:    gcpClients,
-		GCF:    core.NewStateStore[GCFState](),
+		config:         config,
+		gcp:            gcpClients,
+		GCF:            core.NewStateStore[GCFState](),
+		gcsVolumeState: gcsVolumeState{buckets: gcpcommon.NewBucketManager(gcpClients.Storage, config.Project, config.Region)},
 	}
 	s.ipCounter.Store(2)
 

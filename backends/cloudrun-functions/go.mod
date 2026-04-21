@@ -5,6 +5,8 @@ go 1.25.0
 require (
 	cloud.google.com/go/functions v1.19.7
 	cloud.google.com/go/logging v1.13.2
+	cloud.google.com/go/run v1.15.0
+	cloud.google.com/go/storage v1.61.3
 	github.com/docker/docker v27.5.1+incompatible
 	github.com/rs/zerolog v1.34.0
 	github.com/sockerless/api v0.0.0
@@ -24,7 +26,6 @@ require (
 	cloud.google.com/go/iam v1.6.0 // indirect
 	cloud.google.com/go/longrunning v0.8.0 // indirect
 	cloud.google.com/go/monitoring v1.24.3 // indirect
-	cloud.google.com/go/storage v1.61.3 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.30.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.55.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.55.0 // indirect
