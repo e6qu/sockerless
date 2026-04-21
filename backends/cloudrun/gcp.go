@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 	"strconv"
 
 	logging "cloud.google.com/go/logging"
@@ -15,6 +16,16 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
+// urlHost returns "host:port" from a URL, or an error if the URL is
+// malformed. Used to build STORAGE_EMULATOR_HOST for cloud.google.com/go/storage.
+func urlHost(rawURL string) (string, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", err
+	}
+	return u.Host, nil
+}
 
 // GCPClients holds all GCP SDK clients.
 type GCPClients struct {
@@ -80,6 +91,15 @@ func newGCPClientsWithEndpoint(ctx context.Context, project string, endpointURL 
 		return nil, err
 	}
 
+	// The cloud.google.com/go/storage client honours STORAGE_EMULATOR_HOST
+	// (used by the official gcloud emulator) and builds the canonical
+	// `/storage/v1/b...` paths against it. WithEndpoint alone is NOT
+	// enough — the storage client would skip the `/storage/v1/` prefix
+	// and send bare `/b` requests that the sim doesn't route. Set the
+	// env var so bucket CRUD + object ops hit the right paths.
+	if host, err := urlHost(endpointURL); err == nil {
+		_ = os.Setenv("STORAGE_EMULATOR_HOST", host)
+	}
 	storageClient, err := storage.NewClient(ctx, opts...)
 	if err != nil {
 		_ = jobsClient.Close()
