@@ -115,10 +115,13 @@ func TestLambdaAgentE2E_ReverseAgent(t *testing.T) {
 		AttachStdout: true,
 	})
 	if err != nil {
-		// NoSuchContainer error from API is acceptable — the container
-		// has gone fully away. That satisfies the "second exec returns
-		// NoSuchContainer" plan item.
-		if strings.Contains(err.Error(), "No such container") {
+		// Acceptable post-stop responses:
+		// - "No such container" — container fully gone.
+		// - "is not running" — Phase 95's InvocationResult marks the
+		//   container exited, so Docker's ExecCreate correctly rejects
+		//   the new exec against a non-running container.
+		if strings.Contains(err.Error(), "No such container") ||
+			strings.Contains(err.Error(), "is not running") {
 			return
 		}
 		t.Fatalf("post-stop exec create returned unexpected error: %v", err)
