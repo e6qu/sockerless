@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**94 phases closed (762 tasks). 756 bugs tracked — 746 fixed, 10 open. Phases 94 + 94b + 95 all closed 2026-04-21 — every FaaS backend (Lambda/GCF/AZF) now has real volume provisioning + real invocation-lifecycle tracking. Remaining open bugs: BUG-745/746 → Phase 96/97; BUG-749/754 → Phase 99/100; BUG-750/751/752/753 → Phase 98/98b; BUG-756 → sim-Lambda stdout forwarding. 1 false positive. Branch `continue-plan-post-113`.**
+**95 phases closed (763 tasks). 756 bugs tracked — 747 fixed, 9 open. Phases 94 + 94b + 95 + 97 all closed 2026-04-21 — every FaaS backend now has real volumes + real invocation-lifecycle tracking + label round-trip. Remaining open bugs: BUG-745 → Phase 96; BUG-749/754 → Phase 99/100; BUG-750/751/752/753 → Phase 98/98b; BUG-756 → sim-Lambda stdout forwarding. 1 false positive. Branch `continue-plan-post-113`.**
 
 See [PLAN.md](PLAN.md) for the roadmap, [BUGS.md](BUGS.md) for the bug log (+ open-bug descriptions), [WHAT_WE_DID.md](WHAT_WE_DID.md) for the narrative, [specs/](specs/) for architecture specs.
 
@@ -20,7 +20,7 @@ See [PLAN.md](PLAN.md) for the roadmap, [BUGS.md](BUGS.md) for the bug log (+ op
 | 94 | GCF + AZF real per-cloud volume provisioning — GCF via Functions v2 + underlying Cloud Run Service escape hatch; AZF via sites/config/azurestorageaccounts | Closed 2026-04-21. |
 | 95 | FaaS invocation-lifecycle tracker (Lambda + GCF + AZF) — re-enables 7 deleted tests from BUG-744 | Closed 2026-04-21 — core.InvocationResult + per-backend wiring + 7 tests re-enabled. |
 | 96 | Reverse-agent exec for Cloud Run Jobs + ACA Jobs (ports Lambda bootstrap pattern) | Queued — from BUG-745. |
-| 97 | Docker labels as GCP annotations / Azure tags on FaaS + Cloud Run / ACA | Queued — from BUG-746. |
+| 97 | Docker labels charset-safe on GCP — values failing `[a-z0-9_-]{0,63}` route to annotations / SOCKERLESS_LABELS env var | Closed 2026-04-21. |
 | 94b | Lambda EFS volume provisioning via `Function.FileSystemConfigs[]` (reuses `awscommon.EFSManager`) | Closed 2026-04-21. |
 | 98 | Agent-driven filesystem + introspection ops (`docker cp` / `export` / `stat` / `top` / `diff`) via reverse-agent or SSM ExecuteCommand | Queued — from BUG-751/752/753; depends on Phase 96. |
 | 98b | Agent-driven `docker commit` (opt-in via `SOCKERLESS_ENABLE_COMMIT`) | Queued — from BUG-750; depends on Phase 98. |

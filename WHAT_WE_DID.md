@@ -4,6 +4,10 @@ Docker-compatible REST API that runs containers on cloud backends (ECS, Lambda, 
 
 See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for the bug log, [PLAN.md](PLAN.md) for the roadmap, [specs/](specs/) for architecture specs (start with [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md)).
 
+## Phase 97 — GCP label-value charset compliance (2026-04-21)
+
+BUG-746 closed. Docker labels previously serialised as a single JSON blob into a GCP label value, which GCP rejects because the charset is restricted to `[a-z0-9_-]{0,63}`. `core.AsGCPLabels` now filters values for charset + length and routes failures to `AsGCPAnnotations`. Cloud Run's cloud_state merges `Job.Annotations` / `Service.Annotations` into the ParseLabelsFromTags input. GCF (Functions v2 has no Annotations field on the Function resource) takes a different route — labels are carried as a base64-JSON `SOCKERLESS_LABELS` env var on the function, decoded by cloud_state. `Test{CloudRun,GCF}ArithmeticWithLabels` now assert the round-trip explicitly.
+
 ## Phase 94b — Lambda EFS volumes (2026-04-21)
 
 BUG-748 closed. Lambda backend gains the `EFS` client, embeds `volumeState` wrapping `awscommon.EFSManager` (same manager ECS already uses), and accepts `SOCKERLESS_LAMBDA_AGENT_EFS_ID` for operator EFS reuse. `Volume{Create,Inspect,List,Remove,Prune}` now provision sockerless-managed access points. `ContainerCreate` parses `HostConfig.Binds`, rejects host-path binds, and appends one `lambdatypes.FileSystemConfig{Arn, LocalMountPath}` per named volume to the `CreateFunctionInput`. Named volumes require the function to run in a VPC — the backend fails loud if `SOCKERLESS_LAMBDA_SUBNETS` is empty (matches AWS's own validation).
