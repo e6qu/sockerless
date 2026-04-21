@@ -15,8 +15,3 @@ type NetworkState struct {
 	ManagedZoneName string // Cloud DNS managed zone name
 	DNSName         string // DNS zone name (e.g., "network-name.internal.")
 }
-
-// VolumeState tracks volume state.
-type VolumeState struct {
-	BucketPath string // GCS bucket path (placeholder)
-}

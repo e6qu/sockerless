@@ -205,22 +205,27 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 	return s.BaseServer.SystemEvents(opts)
 }
 
+// Named-volume operations are not supported by the Lambda backend.
+// Lambda containers only have an ephemeral /tmp writable layer; there
+// is no per-invocation cross-container storage the docker volume API
+// can usefully bind. Applications needing durable storage should use
+// S3 / EFS directly.
 func (s *Server) VolumeCreate(req *api.VolumeCreateRequest) (*api.Volume, error) {
-	return s.BaseServer.VolumeCreate(req)
+	return nil, &api.NotImplementedError{Message: "Lambda backend does not support named volumes; Lambda containers only have an ephemeral /tmp"}
 }
 
 func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
-	return s.BaseServer.VolumeInspect(name)
+	return nil, &api.NotImplementedError{Message: "Lambda backend does not support named volumes"}
 }
 
 func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListResponse, error) {
-	return s.BaseServer.VolumeList(filters)
+	return nil, &api.NotImplementedError{Message: "Lambda backend does not support named volumes"}
 }
 
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
-	return s.BaseServer.VolumePrune(filters)
+	return nil, &api.NotImplementedError{Message: "Lambda backend does not support named volumes"}
 }
 
 func (s *Server) VolumeRemove(name string, force bool) error {
-	return s.BaseServer.VolumeRemove(name, force)
+	return &api.NotImplementedError{Message: "Lambda backend does not support named volumes"}
 }

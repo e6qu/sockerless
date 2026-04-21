@@ -786,13 +786,13 @@ func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 	return s.images.Load(r)
 }
 
-// VolumeRemove removes a volume and its state.
+// VolumeRemove is not supported by the Cloud Run backend. Named docker
+// volumes aren't backed by real cloud-side storage; the earlier
+// in-memory store silently accepted and deleted volumes without ever
+// mounting them. Real Filestore / GCS mount provisioning is a
+// follow-up phase.
 func (s *Server) VolumeRemove(name string, force bool) error {
-	if !s.Store.Volumes.Delete(name) {
-		return &api.NotFoundError{Resource: "volume", ID: name}
-	}
-	s.VolumeState.Delete(name)
-	return nil
+	return &api.NotImplementedError{Message: "Cloud Run backend does not support named volumes"}
 }
 
 // ExecStart is not supported by the Cloud Run backend.
@@ -1058,38 +1058,7 @@ func (s *Server) AuthLogin(req *api.AuthRequest) (*api.AuthResponse, error) {
 	return s.BaseServer.AuthLogin(req)
 }
 
-// VolumePrune removes unused volumes.
+// VolumePrune is not supported by the Cloud Run backend — see VolumeRemove.
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
-	var deleted []string
-	var spaceReclaimed uint64
-	for _, v := range s.Store.Volumes.List() {
-		inUse := false
-		for _, c := range s.PendingCreates.List() {
-			for _, m := range c.Mounts {
-				if m.Name == v.Name {
-					inUse = true
-					break
-				}
-			}
-			if inUse {
-				break
-			}
-		}
-		if !inUse {
-			// Sum volume dir sizes for SpaceReclaimed
-			if dir, ok := s.Store.VolumeDirs.Load(v.Name); ok {
-				spaceReclaimed += uint64(core.DirSize(dir.(string)))
-			}
-			s.Store.Volumes.Delete(v.Name)
-			s.VolumeState.Delete(v.Name)
-			deleted = append(deleted, v.Name)
-		}
-	}
-	if deleted == nil {
-		deleted = []string{}
-	}
-	return &api.VolumePruneResponse{
-		VolumesDeleted: deleted,
-		SpaceReclaimed: spaceReclaimed,
-	}, nil
+	return nil, &api.NotImplementedError{Message: "Cloud Run backend does not support named volumes"}
 }

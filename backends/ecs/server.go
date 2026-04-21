@@ -18,7 +18,6 @@ type Server struct {
 	images       *core.ImageManager
 	ECS          *core.StateStore[ECSState]
 	NetworkState *core.StateStore[NetworkState]
-	VolumeState  *core.StateStore[VolumeState]
 	ipCounter    atomic.Int32
 }
 
@@ -29,7 +28,6 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		aws:          awsClients,
 		ECS:          core.NewStateStore[ECSState](),
 		NetworkState: core.NewStateStore[NetworkState](),
-		VolumeState:  core.NewStateStore[VolumeState](),
 	}
 
 	s.ipCounter.Store(2)

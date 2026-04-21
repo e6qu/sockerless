@@ -17,7 +17,6 @@ func newServerForState(t *testing.T) *Server {
 		}, zerolog.Nop()),
 		CloudRun:     core.NewStateStore[CloudRunState](),
 		NetworkState: core.NewStateStore[NetworkState](),
-		VolumeState:  core.NewStateStore[VolumeState](),
 		config:       Config{Project: "proj", Region: "us-central1"},
 	}
 	s.SetSelf(s)

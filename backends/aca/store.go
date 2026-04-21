@@ -17,8 +17,3 @@ type NetworkState struct {
 	NSGRuleNames []string // NSG rule names for this network
 	DNSZoneName  string   // Azure Private DNS zone backing this network
 }
-
-// VolumeState tracks volume state.
-type VolumeState struct {
-	ShareName string // Azure Files share (placeholder)
-}

@@ -18,7 +18,6 @@ func newServerForAppSpec(t *testing.T) *Server {
 		}, zerolog.Nop()),
 		ACA:          core.NewStateStore[ACAState](),
 		NetworkState: core.NewStateStore[NetworkState](),
-		VolumeState:  core.NewStateStore[VolumeState](),
 		config: Config{
 			SubscriptionID: "sub",
 			ResourceGroup:  "rg",

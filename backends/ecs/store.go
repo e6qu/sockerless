@@ -14,9 +14,3 @@ type NetworkState struct {
 	SecurityGroupID string
 	NamespaceID     string // Cloud Map namespace
 }
-
-// VolumeState maps sockerless volume names to AWS resources.
-type VolumeState struct {
-	EFSFileSystemID string
-	AccessPointID   string
-}

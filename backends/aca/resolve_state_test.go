@@ -16,7 +16,6 @@ func TestResolveACAState_CacheHit(t *testing.T) {
 		}, zerolog.Nop()),
 		ACA:          core.NewStateStore[ACAState](),
 		NetworkState: core.NewStateStore[NetworkState](),
-		VolumeState:  core.NewStateStore[VolumeState](),
 	}
 	s.SetSelf(s)
 	s.ACA.Put("abc123", ACAState{
@@ -37,7 +36,6 @@ func TestResolveACAState_MissAndNoCloud(t *testing.T) {
 		}, zerolog.Nop()),
 		ACA:          core.NewStateStore[ACAState](),
 		NetworkState: core.NewStateStore[NetworkState](),
-		VolumeState:  core.NewStateStore[VolumeState](),
 	}
 	s.SetSelf(s)
 	got, ok := s.resolveACAState(s.ctx(), "nonexistent")
@@ -55,7 +53,6 @@ func TestResolveNetworkState_CacheHit(t *testing.T) {
 		}, zerolog.Nop()),
 		ACA:          core.NewStateStore[ACAState](),
 		NetworkState: core.NewStateStore[NetworkState](),
-		VolumeState:  core.NewStateStore[VolumeState](),
 	}
 	s.SetSelf(s)
 	s.NetworkState.Put("netid-xyz", NetworkState{

@@ -128,16 +128,16 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 	return s.BaseServer.SystemEvents(opts)
 }
 
-// Volume methods (pass-through)
-
+// Named-volume operations are not supported by the Cloud Run backend.
+// Real Filestore / GCS mount provisioning is a follow-up phase.
 func (s *Server) VolumeCreate(req *api.VolumeCreateRequest) (*api.Volume, error) {
-	return s.BaseServer.VolumeCreate(req)
+	return nil, &api.NotImplementedError{Message: "Cloud Run backend does not support named volumes"}
 }
 
 func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
-	return s.BaseServer.VolumeInspect(name)
+	return nil, &api.NotImplementedError{Message: "Cloud Run backend does not support named volumes"}
 }
 
 func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListResponse, error) {
-	return s.BaseServer.VolumeList(filters)
+	return nil, &api.NotImplementedError{Message: "Cloud Run backend does not support named volumes"}
 }

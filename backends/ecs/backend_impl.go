@@ -740,13 +740,13 @@ func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 	return s.images.Load(r)
 }
 
-// VolumeRemove removes a volume by name.
+// VolumeRemove is not supported by the ECS backend. Named docker
+// volumes aren't backed by real cloud-side storage — the earlier
+// in-memory store silently accepted and deleted volumes without ever
+// mounting them. Reject cleanly so clients don't assume durable state.
+// Real EFS / EBS provisioning is tracked as a follow-up phase.
 func (s *Server) VolumeRemove(name string, force bool) error {
-	if !s.Store.Volumes.Delete(name) {
-		return &api.NotFoundError{Resource: "volume", ID: name}
-	}
-	s.VolumeState.Delete(name)
-	return nil
+	return &api.NotImplementedError{Message: "ECS backend does not support named volumes; provision EFS out-of-band and reference it via task-definition EFSVolumeConfiguration"}
 }
 
 // ExecStart starts an exec instance. For ECS, if no agent is connected,
@@ -978,41 +978,7 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 	return nil, &api.NotImplementedError{Message: "ECS backend does not support container commit; Fargate containers cannot be snapshotted"}
 }
 
-// VolumePrune removes all unused volumes.
+// VolumePrune is not supported by the ECS backend — see VolumeRemove.
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
-	// Query CloudState for all containers to check volume usage
-	allContainers, _ := s.CloudState.ListContainers(context.Background(), true, nil)
-
-	var deleted []string
-	var spaceReclaimed uint64
-	for _, v := range s.Store.Volumes.List() {
-		inUse := false
-		for _, c := range allContainers {
-			for _, m := range c.Mounts {
-				if m.Name == v.Name {
-					inUse = true
-					break
-				}
-			}
-			if inUse {
-				break
-			}
-		}
-		if !inUse {
-			// Sum volume dir sizes for SpaceReclaimed
-			if dir, ok := s.Store.VolumeDirs.Load(v.Name); ok {
-				spaceReclaimed += uint64(core.DirSize(dir.(string)))
-			}
-			s.Store.Volumes.Delete(v.Name)
-			s.VolumeState.Delete(v.Name)
-			deleted = append(deleted, v.Name)
-		}
-	}
-	if deleted == nil {
-		deleted = []string{}
-	}
-	return &api.VolumePruneResponse{
-		VolumesDeleted: deleted,
-		SpaceReclaimed: spaceReclaimed,
-	}, nil
+	return nil, &api.NotImplementedError{Message: "ECS backend does not support named volumes"}
 }

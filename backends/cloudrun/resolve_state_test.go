@@ -16,7 +16,6 @@ func TestResolveCloudRunState_CacheHit(t *testing.T) {
 		}, zerolog.Nop()),
 		CloudRun:     core.NewStateStore[CloudRunState](),
 		NetworkState: core.NewStateStore[NetworkState](),
-		VolumeState:  core.NewStateStore[VolumeState](),
 	}
 	s.SetSelf(s)
 	s.CloudRun.Put("abc123", CloudRunState{
@@ -37,7 +36,6 @@ func TestResolveCloudRunState_MissAndNoCloud(t *testing.T) {
 		}, zerolog.Nop()),
 		CloudRun:     core.NewStateStore[CloudRunState](),
 		NetworkState: core.NewStateStore[NetworkState](),
-		VolumeState:  core.NewStateStore[VolumeState](),
 	}
 	s.SetSelf(s)
 	got, ok := s.resolveCloudRunState(s.ctx(), "nonexistent")
@@ -55,7 +53,6 @@ func TestResolveNetworkState_CacheHit(t *testing.T) {
 		}, zerolog.Nop()),
 		CloudRun:     core.NewStateStore[CloudRunState](),
 		NetworkState: core.NewStateStore[NetworkState](),
-		VolumeState:  core.NewStateStore[VolumeState](),
 	}
 	s.SetSelf(s)
 	s.NetworkState.Put("netid-xyz", NetworkState{
