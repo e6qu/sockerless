@@ -1,6 +1,6 @@
 # Known Bugs
 
-**737 total — 732 fixed, 5 open, 1 false positive.**
+**737 total — 733 fixed, 4 open, 1 false positive.**
 
 For narrative context see [WHAT_WE_DID.md](WHAT_WE_DID.md) and [PLAN.md](PLAN.md). Architecture-level state derivation is documented in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) and [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md).
 
@@ -14,7 +14,6 @@ Standing workflow rule: every CI / live-cloud failure lands here with a short ro
 | 736 | H | cloudrun/aca | Cloud Run jobspec/servicespec and ACA jobspec/appspec never translate `HostConfig.Binds` into container-runtime mount specs — bind mounts are silently dropped on the floor. Fix: reject `Binds` (and named-volume mounts) on these backends with a clear error until real mount support ships, so `docker run -v /h:/c` fails loudly instead of silently losing data. |
 | 735 | H | ecs | `backends/ecs/taskdef.go::buildContainerDef` silently substitutes an empty ECS scratch volume when `HostConfig.Binds` is set but `SOCKERLESS_ECS_AGENT_EFS_ID` isn't configured. Docker clients see the mount path exist but it's empty and non-persistent. Fix: reject bind mounts with a clear configuration error when EFS isn't set; no scratch fallback. |
 | 731 | H | all-cloud | `VolumeCreate` on ECS/Cloud Run/ACA/Lambda delegates to `BaseServer.VolumeCreate` which only stores metadata in `Store.Volumes`; no real cloud volume (EBS/EFS/GCS/Azure Files) is ever provisioned, so `-v volname:/mnt` on a cloud container spec is a silent no-op. Chosen fix: return NotImplemented from `VolumeCreate` / `VolumeRemove` / `VolumeInspect` / `VolumeList` on the four affected backends so named-volume use fails clean; delete dead placeholder fields `aca.VolumeState.ShareName` and `cloudrun.VolumeState.BucketPath`. Real per-cloud volume provisioning (EFS, Azure Files, Filestore/GCS) tracked as separate future phases. |
-| 729 | M | ecs | (Elevates BUG-721 from workaround-accepted to real bug.) `ssmDecoder` in `backends/ecs/exec_cloud.go` dedupes SSM `output_stream_data` frames by MessageID UUID because live AWS's Session Manager agent doesn't accept sockerless's `acknowledge` format — the agent retransmits until we're recognised, and without dedupe the docker CLI sees every line N times. Pragmatic, but it's still a workaround on the live-AWS path. Real fix: reverse-engineer the agent's exact ack-validation rules (suspect Flags or PayloadDigest semantics) so acks are accepted and retransmits stop. Requires live-AWS testing. |
 
 ## Fixed
 

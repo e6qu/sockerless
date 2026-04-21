@@ -202,15 +202,13 @@ type ssmDecoder struct {
 	pending  bytes.Buffer // decoded text not yet returned to caller
 	lastTag  byte         // 0x01 stdout / 0x02 stderr from last frame
 	closeErr error
-	debug    bool               // when true, fprintf'd to stderr
-	seenIDs  map[uuid.UUID]bool // dedupe retransmits by message UUID until the agent accepts our acks
+	debug    bool // when true, fprintf'd to stderr
 }
 
 func newSSMDecoder(wire io.ReadWriteCloser) *ssmDecoder {
 	return &ssmDecoder{
-		wire:    wire,
-		debug:   os.Getenv("SOCKERLESS_SSM_DEBUG") == "1",
-		seenIDs: make(map[uuid.UUID]bool),
+		wire:  wire,
+		debug: os.Getenv("SOCKERLESS_SSM_DEBUG") == "1",
 	}
 }
 
@@ -250,18 +248,9 @@ func (d *ssmDecoder) Read(p []byte) (int, error) {
 		}
 		switch f.MessageType {
 		case ssmMTOutputStreamData:
-			// SSM agent retransmits the same output_stream_data
-			// frame until it sees an ack it accepts. Sockerless's ack
-			// format isn't (yet) accepted, so dedupe by MessageID before
-			// forwarding to docker — otherwise a single `echo` shows up
-			// 10× to the caller.
-			dup := d.seenIDs[f.MessageID]
-			d.seenIDs[f.MessageID] = true
-			if !dup {
-				if streamID, ok := ssmTextStreamID(f); ok {
-					d.lastTag = streamID
-					d.pending.Write(f.Payload)
-				}
+			if streamID, ok := ssmTextStreamID(f); ok {
+				d.lastTag = streamID
+				d.pending.Write(f.Payload)
 			}
 			if f.PayloadType == ssmPayloadExitCode {
 				d.closeErr = io.EOF

@@ -90,11 +90,14 @@ func parseSSMFrame(b []byte) (*ssmFrame, error) {
 		PayloadLength:  binary.BigEndian.Uint32(b[116:120]),
 	}
 
-	// MessageId: two int64 halves at offsets 64 (MSB) and 72 (LSB),
-	// reassembled into the Java-style UUID byte order.
+	// MessageId on the wire: LSL (UUID bytes 8-15) at offset 64,
+	// MSL (UUID bytes 0-7) at offset 72. This matches AWS's Java-style
+	// `putUuid` which writes leastSignificantLong first. Reassemble
+	// back into canonical UUID byte order (MSB-first) so string()
+	// round-trips exactly with what the SSM agent sent.
 	var idBytes [16]byte
-	copy(idBytes[0:8], b[64:72])
-	copy(idBytes[8:16], b[72:80])
+	copy(idBytes[0:8], b[72:80])  // MSL
+	copy(idBytes[8:16], b[64:72]) // LSL
 	f.MessageID = uuid.UUID(idBytes)
 
 	if len(b) < ssmFixedHeaderLen+int(f.PayloadLength) {
@@ -134,13 +137,14 @@ func buildSSMAck(received *ssmFrame) ([]byte, error) {
 
 	binary.BigEndian.PutUint32(out[36:40], 1) // schema version
 	binary.BigEndian.PutUint64(out[40:48], uint64(time.Now().UnixMilli()))
-	binary.BigEndian.PutUint64(out[48:56], 0) // sequence (always 0 for ack)
-	binary.BigEndian.PutUint64(out[56:64], 0) // flags (0 — agent rejects SYN|FIN on inbound acks)
+	binary.BigEndian.PutUint64(out[48:56], 0)              // sequence (always 0 for ack)
+	binary.BigEndian.PutUint64(out[56:64], ssmFlagsSynFin) // Flags=3 — matches AWS's SerializeClientMessageWithAcknowledgeContent
 
 	id := uuid.New()
 	idBytes, _ := id.MarshalBinary()
-	copy(out[64:72], idBytes[0:8])
-	copy(out[72:80], idBytes[8:16])
+	// AWS Java-style putUuid: LSL (UUID bytes 8-15) at offset 64, MSL (bytes 0-7) at offset 72.
+	copy(out[64:72], idBytes[8:16]) // LSL
+	copy(out[72:80], idBytes[0:8])  // MSL
 
 	copy(out[80:112], digest[:])
 	binary.BigEndian.PutUint32(out[112:116], 0) // payload type 0 for ack
@@ -197,8 +201,9 @@ func buildSSMInput(payload []byte) ([]byte, error) {
 
 	id := uuid.New()
 	idBytes, _ := id.MarshalBinary()
-	copy(out[64:72], idBytes[0:8])
-	copy(out[72:80], idBytes[8:16])
+	// AWS Java-style putUuid: LSL at offset 64, MSL at offset 72.
+	copy(out[64:72], idBytes[8:16]) // LSL
+	copy(out[72:80], idBytes[0:8])  // MSL
 
 	copy(out[80:112], digest[:])
 	binary.BigEndian.PutUint32(out[112:116], ssmPayloadOutput) // PayloadType=1 (raw)

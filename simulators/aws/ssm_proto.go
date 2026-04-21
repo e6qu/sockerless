@@ -66,8 +66,9 @@ func buildSSMOutputFrame(payloadType uint32, payload []byte) []byte {
 
 	id := uuid.New()
 	idBytes, _ := id.MarshalBinary()
-	copy(out[64:72], idBytes[0:8])
-	copy(out[72:80], idBytes[8:16])
+	// AWS Java-style putUuid: LSL (UUID bytes 8-15) at offset 64, MSL (bytes 0-7) at offset 72.
+	copy(out[64:72], idBytes[8:16]) // LSL
+	copy(out[72:80], idBytes[0:8])  // MSL
 
 	copy(out[80:112], digest[:])
 	binary.BigEndian.PutUint32(out[112:116], payloadType)
@@ -98,8 +99,9 @@ func buildSSMChannelClosed() []byte {
 
 	id := uuid.New()
 	idBytes, _ := id.MarshalBinary()
-	copy(out[64:72], idBytes[0:8])
-	copy(out[72:80], idBytes[8:16])
+	// AWS Java-style putUuid: LSL (UUID bytes 8-15) at offset 64, MSL (bytes 0-7) at offset 72.
+	copy(out[64:72], idBytes[8:16]) // LSL
+	copy(out[72:80], idBytes[0:8])  // MSL
 
 	copy(out[80:112], digest[:])
 	binary.BigEndian.PutUint32(out[112:116], 0) // PayloadType 0 for control
