@@ -415,13 +415,19 @@ func (p *cloudRunCloudState) queryJobs(ctx context.Context) ([]api.Container, er
 // jobToContainer reconstructs an api.Container from a Cloud Run Job and its execution status.
 func (p *cloudRunCloudState) jobToContainer(ctx context.Context, job *runpb.Job) (api.Container, error) {
 	labels := job.Labels
+	annotations := job.Annotations
 
-	// Full container ID from annotations (labels truncate at 63 chars, IDs are 64)
-	containerID := job.Annotations["sockerless_container_id"]
+	// Phase 97: Container ID + name may live in labels OR annotations
+	// depending on charset/length. Annotations win when both are set
+	// since they carry the unmutated value.
+	containerID := annotations["sockerless_container_id"]
 	if containerID == "" {
 		containerID = labels["sockerless_container_id"]
 	}
-	name := labels["sockerless_name"]
+	name := annotations["sockerless_name"]
+	if name == "" {
+		name = labels["sockerless_name"]
+	}
 	if name == "" && containerID != "" {
 		if len(containerID) >= 12 {
 			name = "/" + containerID[:12]
@@ -473,7 +479,12 @@ func (p *cloudRunCloudState) jobToContainer(ctx context.Context, job *runpb.Job)
 		dockerLabels = make(map[string]string)
 	}
 
-	networkName := labels["sockerless_network"]
+	// Phase 97: network name may fail charset too when operators use
+	// dashes aren't enough (e.g. dots). Check annotations too.
+	networkName := annotations["sockerless_network"]
+	if networkName == "" {
+		networkName = labels["sockerless_network"]
+	}
 	if networkName == "" {
 		networkName = "bridge"
 	}

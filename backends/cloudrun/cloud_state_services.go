@@ -114,11 +114,17 @@ func (p *cloudRunCloudState) queryServices(ctx context.Context) ([]api.Container
 func (p *cloudRunCloudState) serviceToContainer(svc *runpb.Service) (api.Container, error) {
 	labels := svc.Labels
 
-	containerID := svc.Annotations["sockerless_container_id"]
+	annotations := svc.Annotations
+	containerID := annotations["sockerless_container_id"]
 	if containerID == "" {
 		containerID = labels["sockerless_container_id"]
 	}
-	name := labels["sockerless_name"]
+	// Phase 97: name may live in labels OR annotations (`/` fails GCP
+	// label-value charset so `/webapp` moves to annotations).
+	name := annotations["sockerless_name"]
+	if name == "" {
+		name = labels["sockerless_name"]
+	}
 	if name == "" && containerID != "" {
 		if len(containerID) >= 12 {
 			name = "/" + containerID[:12]
@@ -165,7 +171,10 @@ func (p *cloudRunCloudState) serviceToContainer(svc *runpb.Service) (api.Contain
 		dockerLabels = make(map[string]string)
 	}
 
-	networkName := labels["sockerless_network"]
+	networkName := annotations["sockerless_network"]
+	if networkName == "" {
+		networkName = labels["sockerless_network"]
+	}
 	if networkName == "" {
 		networkName = "bridge"
 	}
