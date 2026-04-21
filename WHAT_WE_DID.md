@@ -4,6 +4,19 @@ Docker-compatible REST API that runs containers on cloud backends (ECS, Lambda, 
 
 See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for the bug log, [PLAN.md](PLAN.md) for the roadmap, [specs/](specs/) for architecture specs (start with [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md)).
 
+## Phase 95 — FaaS invocation-lifecycle tracker (2026-04-21)
+
+BUG-744 closed. New `core.InvocationResult` + `Store.{Put,Get,Delete}InvocationResult` capture each FaaS invocation's exit code + finished-at + error at the source:
+
+- **Lambda** maps `Invoke` result — `FunctionError` → 1, otherwise 0.
+- **GCF + AZF** map the HTTP trigger response via `core.HTTPStatusToExitCode` (2xx → 0, 408 → 124, else 1) and `core.HTTPInvokeErrorExitCode` (timeout/deadline → 124, else 1).
+
+Per-backend wiring: `ContainerStart` goroutine writes the result before closing the wait channel; `ContainerStop` / `ContainerKill` write `{ExitCode: 137}` (or `SignalToExitCode` for Kill) so stopped containers surface as exited even though Lambda has no invocation-cancel API; `ContainerRemove` clears the entry; `CloudState.{GetContainer,ListContainers,WaitForExit}` overlay the recorded outcome on `queryFunctions` / `queryFunctionApps` and short-circuit `WaitForExit` with the in-memory result before any cloud polling.
+
+Crash-scoped: restart loses `InvocationResults` and falls back to cloud state (function exists ⇒ `running` until removed). Matches docker's post-daemon-crash contract.
+
+Re-enabled 7 tests that were deleted as a BUG-744 stop-gap: `TestLambdaContainerLifecycle`, `TestLambdaContainerLogsFollowLazyStream`, `TestLambdaContainerStopUnblocksWait`, `TestGCFContainerLifecycle`, `TestGCFArithmeticInvalid`, `TestAZFContainerLifecycle`, `TestAZFArithmeticInvalid`.
+
 ## Phase 94 prereq — shared-helper lift (2026-04-21)
 
 Per-cloud volume managers promoted into common modules so FaaS backends can embed them without duplicating provisioning logic:

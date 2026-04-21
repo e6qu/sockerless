@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**91 phases closed (759 tasks). 754 bugs tracked — 743 fixed, 11 open (every open bug is scoped to a phase; no 'platform limit' exits). BUG-744/745/746 → Phase 95/96/97. BUG-748/749/754 rescoped to Phase 94b/99/100. BUG-750/751/752/753 → Phase 98/98b. 1 false positive. Branch `continue-plan-post-113`.**
+**92 phases closed (760 tasks). 755 bugs tracked — 745 fixed, 10 open. BUG-744 closed by Phase 95 (FaaS invocation tracker). Remaining open: BUG-745/746 → Phase 96/97; BUG-748/749/754 → Phase 94b/99/100; BUG-750/751/752/753 → Phase 98/98b. 1 false positive. Branch `continue-plan-post-113`.**
 
 See [PLAN.md](PLAN.md) for the roadmap, [BUGS.md](BUGS.md) for the bug log (+ open-bug descriptions), [WHAT_WE_DID.md](WHAT_WE_DID.md) for the narrative, [specs/](specs/) for architecture specs.
 
@@ -18,7 +18,7 @@ See [PLAN.md](PLAN.md) for the roadmap, [BUGS.md](BUGS.md) for the bug log (+ op
 | 93 | ACA Azure Files share provisioning (sim: `FileShareHostDir` + `managedEnvironmentStorages` CRUD + ACA Jobs exec Volume translation; backend: `volumes.go` share-per-volume + env-storage link; jobspec + appspec emit `Volume{StorageType=AzureFile}`) | Closed 2026-04-21. |
 | 94 prereq | Volume managers lifted to `aws-common` / `gcp-common` / `azure-common` so FaaS backends can embed them | Closed 2026-04-21. |
 | 94 | GCF + AZF inherit Phase 92/93 helpers | In progress — prereq lift done, GCF/AZF wiring queued. |
-| 95 | FaaS invocation-lifecycle tracker (Lambda + GCF + AZF) — re-enables 7 deleted tests from BUG-744 | Queued. Design: per-backend cloud-native completion signal (Lambda Invoke response + CloudWatch END RequestId; GCF/AZF HTTP response status). |
+| 95 | FaaS invocation-lifecycle tracker (Lambda + GCF + AZF) — re-enables 7 deleted tests from BUG-744 | Closed 2026-04-21 — core.InvocationResult + per-backend wiring + 7 tests re-enabled. |
 | 96 | Reverse-agent exec for Cloud Run Jobs + ACA Jobs (ports Lambda bootstrap pattern) | Queued — from BUG-745. |
 | 97 | Docker labels as GCP annotations / Azure tags on FaaS + Cloud Run / ACA | Queued — from BUG-746. |
 | 94b | Lambda EFS volume provisioning via `Function.FileSystemConfigs[]` (reuse ECS's EFS manager once lifted to `aws-common`) | Queued — revised from BUG-748's earlier 'platform limit' framing. |
