@@ -263,6 +263,20 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 		return err
 	}
+
+	// Short-lived task that exited 0 before we saw RUNNING: Cloud Map
+	// registration is pointless (nothing to discover), and pollTaskExit
+	// would race with the already-STOPPED state. Close the wait channel
+	// directly and return — ContainerWait will unblock, and
+	// CloudState.GetContainer reads STOPPED straight from ECS so
+	// inspect/ps reflect the real state.
+	if taskAddr == "" {
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
+		}
+		return nil
+	}
+
 	taskIP := taskAddr
 	if i := strings.LastIndex(taskAddr, ":"); i > 0 {
 		taskIP = taskAddr[:i]

@@ -89,8 +89,14 @@ func (s *Server) runECSTask(containerID, taskDefARN string, c *api.Container) (t
 	return taskARN, clusterARN, nil
 }
 
-// waitForTaskRunning polls ECS until the task reaches RUNNING state.
-// Returns the task IP address (ip:9111).
+// waitForTaskRunning polls ECS until the task reaches RUNNING state
+// or exits successfully before we observe RUNNING. A short-lived
+// command (`alpine echo hello`) can transition PENDING→STOPPED within
+// a single poll interval; treating that as a start failure would be
+// wrong — the task ran, produced output, and exited 0, which is what
+// docker semantics call a successful run. Returns the task IP
+// (`ip:9111`) when the task is observed RUNNING, or empty string when
+// the task already completed successfully.
 func (s *Server) waitForTaskRunning(ctx context.Context, taskARN string) (string, error) {
 	timeout := time.After(5 * time.Minute)
 	ticker := time.NewTicker(s.config.PollInterval)
@@ -125,11 +131,28 @@ func (s *Server) waitForTaskRunning(ctx context.Context, taskARN string) (string
 				}
 				return ip + ":9111", nil
 			case "STOPPED":
+				if taskExitedSuccessfully(task) {
+					return "", nil
+				}
 				reason := aws.ToString(task.StoppedReason)
 				return "", fmt.Errorf("task stopped: %s", reason)
 			}
 		}
 	}
+}
+
+// taskExitedSuccessfully reports whether a STOPPED task's essential
+// container exited with status 0.
+func taskExitedSuccessfully(task ecstypes.Task) bool {
+	if len(task.Containers) == 0 {
+		return false
+	}
+	for _, c := range task.Containers {
+		if c.ExitCode == nil || *c.ExitCode != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // mapToECSTags converts a map[string]string to ECS SDK tag format.
