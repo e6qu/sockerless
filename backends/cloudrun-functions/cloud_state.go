@@ -93,27 +93,24 @@ func (p *gcfCloudState) CheckNameAvailable(ctx context.Context, name string) (bo
 }
 
 func (p *gcfCloudState) WaitForExit(ctx context.Context, containerID string) (int, error) {
-	// Check WaitChs first — FaaS containers use exit channels
+	// Phase 95: fast path — invocation goroutine records the outcome.
+	if inv, ok := p.server.Store.GetInvocationResult(containerID); ok {
+		return inv.ExitCode, nil
+	}
+	// Check WaitChs — FaaS containers use exit channels
 	if ch, ok := p.server.Store.WaitChs.Load(containerID); ok {
 		select {
 		case <-ctx.Done():
 			return -1, ctx.Err()
 		case <-ch.(chan struct{}):
-			// Channel closed — container exited.
-			// Re-query to get exit code.
-			containers, err := p.queryFunctions(ctx)
-			if err == nil {
-				for _, c := range containers {
-					if c.ID == containerID {
-						return c.State.ExitCode, nil
-					}
-				}
+			if inv, ok := p.server.Store.GetInvocationResult(containerID); ok {
+				return inv.ExitCode, nil
 			}
 			return 0, nil
 		}
 	}
 
-	// Fallback: poll cloud API
+	// Fallback: poll cloud API (post-restart case)
 	interval := p.server.config.PollInterval
 	if interval == 0 {
 		interval = 2 * time.Second
@@ -126,6 +123,9 @@ func (p *gcfCloudState) WaitForExit(ctx context.Context, containerID string) (in
 		case <-ctx.Done():
 			return -1, ctx.Err()
 		case <-ticker.C:
+			if inv, ok := p.server.Store.GetInvocationResult(containerID); ok {
+				return inv.ExitCode, nil
+			}
 			containers, err := p.queryFunctions(ctx)
 			if err != nil {
 				continue
@@ -178,6 +178,18 @@ func (p *gcfCloudState) queryFunctions(ctx context.Context) ([]api.Container, er
 		seen[containerID] = true
 
 		c := functionToContainer(fn, labels)
+
+		// Phase 95: overlay recorded invocation outcome so exited state
+		// is visible to docker ps / docker inspect / docker wait.
+		if inv, ok := p.server.Store.GetInvocationResult(c.ID); ok {
+			c.State = api.ContainerState{
+				Status:     "exited",
+				Running:    false,
+				ExitCode:   inv.ExitCode,
+				FinishedAt: inv.FinishedAt.UTC().Format(time.RFC3339Nano),
+				Error:      inv.Error,
+			}
+		}
 
 		// Sync GCF state store with cloud state
 		if _, exists := p.server.GCF.Get(containerID); !exists {

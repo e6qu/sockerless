@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -135,19 +136,100 @@ type Store struct {
 	Pods           *PodRegistry
 	WaitChs        sync.Map // containerID → chan struct{}
 	LogBuffers     sync.Map // containerID → []byte
-	VolumeDirs     sync.Map // volumeName → string (host temp dir path)
-	StagingDirs    sync.Map // containerID → string (pre-start archive staging dir)
-	PathMappings   sync.Map // containerID → map[string]string (container path → host path)
-	HealthChecks   sync.Map // containerID → context.CancelFunc
-	BuildContexts  sync.Map // imageID → string (temp dir with COPY files at destination paths)
-	TmpfsDirs      sync.Map // containerID → []string (tmpfs temp dir paths)
-	PrevCPUStats   sync.Map // containerID → *prevCPUStats
-	ImageHistory   sync.Map // imageID → []ImageHistoryItem (real build history)
-	LayerContent   sync.Map // layerDigest → []byte (preserved layer tarballs from docker load)
-	IPAlloc        *IPAllocator
-	RenameMu       sync.Mutex
-	RestartHook    func(containerID string, exitCode int) bool
-	pidCounter     atomic.Int64 // incrementing PID counter
+	// InvocationResults records per-container FaaS invocation outcomes so
+	// CloudState can report an accurate `exited` state (+ exit code +
+	// stopped-at) once the invoke call returns. Populated by the
+	// invocation-driving goroutine on Lambda / GCF / AZF (Phase 95).
+	// Crash-scoped: a restarted backend loses these and falls back to
+	// cloud state (function exists ⇒ `running` until the user removes it).
+	InvocationResults sync.Map // containerID → InvocationResult
+	VolumeDirs        sync.Map // volumeName → string (host temp dir path)
+	StagingDirs       sync.Map // containerID → string (pre-start archive staging dir)
+	PathMappings      sync.Map // containerID → map[string]string (container path → host path)
+	HealthChecks      sync.Map // containerID → context.CancelFunc
+	BuildContexts     sync.Map // imageID → string (temp dir with COPY files at destination paths)
+	TmpfsDirs         sync.Map // containerID → []string (tmpfs temp dir paths)
+	PrevCPUStats      sync.Map // containerID → *prevCPUStats
+	ImageHistory      sync.Map // imageID → []ImageHistoryItem (real build history)
+	LayerContent      sync.Map // layerDigest → []byte (preserved layer tarballs from docker load)
+	IPAlloc           *IPAllocator
+	RenameMu          sync.Mutex
+	RestartHook       func(containerID string, exitCode int) bool
+	pidCounter        atomic.Int64 // incrementing PID counter
+}
+
+// InvocationResult captures the outcome of a single FaaS invocation so
+// Docker state can reflect the container as exited with the right exit
+// code and finish time. Lambda maps `FunctionError` → 1 (otherwise 0);
+// GCF/AZF map HTTP status codes (2xx ⇒ 0, 4xx/5xx ⇒ 1, 408 ⇒ 124);
+// ContainerStop writes 137.
+type InvocationResult struct {
+	ExitCode   int
+	FinishedAt time.Time
+	Error      string
+}
+
+// PutInvocationResult records the outcome of a container's FaaS
+// invocation. Sets FinishedAt to the current time if not provided.
+func (st *Store) PutInvocationResult(id string, r InvocationResult) {
+	if r.FinishedAt.IsZero() {
+		r.FinishedAt = time.Now()
+	}
+	st.InvocationResults.Store(id, r)
+}
+
+// GetInvocationResult returns the recorded outcome for a container, or
+// (zero, false) if the invocation hasn't finished (or hasn't happened).
+func (st *Store) GetInvocationResult(id string) (InvocationResult, bool) {
+	v, ok := st.InvocationResults.Load(id)
+	if !ok {
+		return InvocationResult{}, false
+	}
+	return v.(InvocationResult), true
+}
+
+// DeleteInvocationResult clears the recorded outcome for a container —
+// used by ContainerRemove so the container really disappears.
+func (st *Store) DeleteInvocationResult(id string) {
+	st.InvocationResults.Delete(id)
+}
+
+// HTTPStatusToExitCode maps a FaaS HTTP-trigger response status to a
+// Docker-style container exit code. 2xx ⇒ 0; 408 (request timeout) ⇒
+// 124 (GNU `timeout` convention matches what Lambda uses for timeouts);
+// any other 4xx/5xx ⇒ 1 (function-code crash). Used by GCF + AZF.
+func HTTPStatusToExitCode(status int) int {
+	switch {
+	case status >= 200 && status < 300:
+		return 0
+	case status == 408:
+		return 124
+	default:
+		return 1
+	}
+}
+
+// HTTPInvokeErrorExitCode maps an HTTP-client error (network, TLS,
+// context timeout) to an exit code. Context deadline / timeout becomes
+// 124; everything else becomes 1.
+func HTTPInvokeErrorExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	es := err.Error()
+	if containsAny(es, "context deadline exceeded", "Client.Timeout", "i/o timeout") {
+		return 124
+	}
+	return 1
+}
+
+func containsAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 // NewStore creates a new store with all sub-stores initialized.

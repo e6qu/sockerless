@@ -299,25 +299,32 @@ func (s *Server) ContainerStart(ref string) error {
 
 	s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 
-	// Invoke function via HTTP trigger asynchronously
+	// Invoke function via HTTP trigger asynchronously. Phase 95:
+	// capture the outcome in Store.InvocationResults so CloudState
+	// reflects the container as exited with a real exit code.
 	go func() {
-		if gcfState.FunctionURL != "" {
-			resp, err := gcfHTTPClient.Post(gcfState.FunctionURL, "application/json", nil)
-			if err != nil {
-				s.Logger.Error().Err(err).Str("function", gcfState.FunctionName).Msg("function invocation failed")
-			} else {
-				body, _ := io.ReadAll(resp.Body)
-				resp.Body.Close()
-				if len(body) > 0 && string(body) != "{}" {
-					s.Store.LogBuffers.Store(id, body)
-				}
-				if resp.StatusCode >= 400 {
-					s.Logger.Warn().Int("status", resp.StatusCode).Str("function", gcfState.FunctionName).Msg("function returned error status")
-				}
-			}
-		} else {
+		inv := core.InvocationResult{}
+		if gcfState.FunctionURL == "" {
 			s.Logger.Error().Str("function", gcfState.FunctionName).Msg("no function URL available for invocation")
+			inv.ExitCode = 1
+			inv.Error = "no function URL available"
+		} else if resp, err := gcfHTTPClient.Post(gcfState.FunctionURL, "application/json", nil); err != nil {
+			s.Logger.Error().Err(err).Str("function", gcfState.FunctionName).Msg("function invocation failed")
+			inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
+			inv.Error = err.Error()
+		} else {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if len(body) > 0 && string(body) != "{}" {
+				s.Store.LogBuffers.Store(id, body)
+			}
+			inv.ExitCode = core.HTTPStatusToExitCode(resp.StatusCode)
+			if inv.ExitCode != 0 {
+				inv.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
+				s.Logger.Warn().Int("status", resp.StatusCode).Str("function", gcfState.FunctionName).Msg("function returned error status")
+			}
 		}
+		s.Store.PutInvocationResult(id, inv)
 
 		// Close wait channel so ContainerWait unblocks
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
@@ -342,11 +349,14 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 
 	// Cloud Run Functions run to completion — stop transitions state
 	s.StopHealthCheck(id)
+	// Phase 95: record the stop outcome so CloudState reports exited with
+	// code 137 (Docker convention for force-stopped).
+	s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: 137})
 	// Close wait channel so ContainerWait unblocks
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
 	}
-	s.EmitEvent("container", "die", id, map[string]string{"exitCode": "0", "name": strings.TrimPrefix(c.Name, "/")})
+	s.EmitEvent("container", "die", id, map[string]string{"exitCode": "137", "name": strings.TrimPrefix(c.Name, "/")})
 	s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	return nil
 }
@@ -368,6 +378,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	s.StopHealthCheck(id)
 
 	exitCode := core.SignalToExitCode(signal)
+	s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: exitCode})
 
 	s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", exitCode), "name": strings.TrimPrefix(c.Name, "/")})
@@ -444,6 +455,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 	s.Store.LogBuffers.Delete(id)
 	s.Store.StagingDirs.Delete(id)
+	s.Store.DeleteInvocationResult(id)
 	if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(id); ok {
 		for _, d := range dirs.([]string) {
 			os.RemoveAll(d)
