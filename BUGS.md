@@ -1,6 +1,6 @@
 # Known Bugs
 
-**755 total — 745 fixed, 10 open, 1 false positive. BUG-744 closed by Phase 95.**
+**756 total — 745 fixed, 11 open, 1 false positive. BUG-744 closed by Phase 95; BUG-756 filed for sim-Lambda stdout passthrough.**
 
 For narrative context see [WHAT_WE_DID.md](WHAT_WE_DID.md) and [PLAN.md](PLAN.md). Architecture-level state derivation is documented in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) and [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md).
 
@@ -10,6 +10,7 @@ Standing workflow rule: every CI / live-cloud failure lands here with a short ro
 
 | ID | Sev | Area | Summary |
 |----|-----|------|---------|
+| 756 | M | sim/aws | Lambda sim captures the handler's `Invoke` response payload but drops subprocess stdout from commands like `sh -c 'for i ...; do echo follow-line-$i; done'` — only the runtime's `START RequestId: / END RequestId: / REPORT RequestId:` lines reach CloudWatch. Real Lambda writes subprocess stdout/stderr to the log stream; the sim should too. Surfaced when re-enabling `TestLambdaContainerLogsFollowLazyStream` in Phase 95 — the test now checks for the `RequestId` runtime markers (which prove follow-mode terminated) instead of the subprocess lines. Scope: extend `simulators/aws/lambda_runtime.go` (BUG-705's runtime impl) to capture child-process stdout/stderr from the invocation subprocess and forward it to the backing CloudWatch log stream. |
 | 754 | M | docker | `BackendDocker.PodCreate/Inspect/List/Exists` return `NotImplementedError` — the local Docker daemon has no native pod primitive (libpod's pods are a Podman feature). But sockerless's cloud backends already synthesise pods by grouping containers carrying a shared `sockerless-pod` tag; the Docker backend can do the same against its `Store.Pods` (already present for cross-backend pod state) + the local Docker API's container-label filter. Scoped as **Phase 100** — Docker backend pod synthesis via the shared `sockerless-pod` label convention. Same user-facing `podman pod create` / `docker container attach` behaviour as the cloud backends. |
 | 753 | M | all-cloud | `docker diff` (`ContainerChanges`) returns `NotImplementedError` across every cloud backend that can't introspect container filesystem changes (CR / ACA / GCF / AZF / Lambda ECS Fargate). Scoped as part of **Phase 98** — agent-driven filesystem ops — which would have the in-container agent walk the image's rootfs diff on demand. Fargate reverse-agent has no always-on return channel so this needs Phase 96 first; Lambda already has the reverse-agent hook so it lands there first. |
 | 752 | M | all-cloud | `docker container top` returns `NotImplementedError` on CR / ACA / GCF / AZF / Lambda. Scoped as part of **Phase 98** — agent-driven `ps` inside the container, returned over the reverse-agent WS. ECS Fargate has SSM ExecuteCommand which could carry the `ps` output today (follow-up to Phase 91). |
