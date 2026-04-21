@@ -68,15 +68,21 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		hostConfig.NetworkMode = "default"
 	}
 
-	// Cloud Run Jobs + Services don't yet support bind / named-volume
-	// mounts — reject them up-front so the caller gets a real error
-	// instead of silently losing data. Real GCS/Filestore mount support
-	// is Phase 92.
-	if len(hostConfig.Binds) > 0 {
-		return nil, &api.InvalidParameterError{Message: fmt.Sprintf(
-			"bind mount not supported on Cloud Run backend: real volume provisioning is Phase 92 (GCS bucket-mounts). Remove -v flags or target an ECS/ACA backend (mounts: %v)",
-			hostConfig.Binds,
-		)}
+	// Named-volume binds (`volName:/mnt`) map to Cloud Run
+	// `Volume{Gcs{Bucket}}` on the sockerless-owned project. Host-path
+	// binds (`/h:/c`) stay rejected — Cloud Run containers have no
+	// host filesystem to bind from.
+	for _, bind := range hostConfig.Binds {
+		parts := strings.SplitN(bind, ":", 3)
+		if len(parts) < 2 {
+			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("invalid bind mount spec %q", bind)}
+		}
+		if strings.HasPrefix(parts[0], "/") {
+			return nil, &api.InvalidParameterError{Message: fmt.Sprintf(
+				"host bind mounts are not supported on Cloud Run backend (%q); use a named volume (`docker volume create <name> && docker run -v <name>:/path`) — volumes are backed by sockerless-managed GCS buckets",
+				bind,
+			)}
+		}
 	}
 
 	path := ""
@@ -213,9 +219,13 @@ func (s *Server) ContainerStart(ref string) error {
 
 	// Build Cloud Run Job spec
 	jobName := buildJobName(id)
-	jobSpec := s.buildJobSpec([]containerInput{
+	jobSpec, err := s.buildJobSpec(s.ctx(), []containerInput{
 		{ID: id, Container: &c, IsMain: true},
 	})
+	if err != nil {
+		s.Store.WaitChs.Delete(id)
+		return err
+	}
 
 	// Create the Cloud Run Job
 	createOp, err := s.gcp.Jobs.CreateJob(s.ctx(), &runpb.CreateJobRequest{
@@ -304,7 +314,10 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 
 	// Build and create the combined job
 	jobName := buildJobName(mainID)
-	jobSpec := s.buildJobSpec(inputs)
+	jobSpec, err := s.buildJobSpec(s.ctx(), inputs)
+	if err != nil {
+		return err
+	}
 
 	createOp, err := s.gcp.Jobs.CreateJob(s.ctx(), &runpb.CreateJobRequest{
 		Parent: s.buildJobParent(),
@@ -797,13 +810,18 @@ func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 	return s.images.Load(r)
 }
 
-// VolumeRemove is not supported by the Cloud Run backend. Named docker
-// volumes aren't backed by real cloud-side storage; the earlier
-// in-memory store silently accepted and deleted volumes without ever
-// mounting them. Real Filestore / GCS mount provisioning is a
-// follow-up phase.
+// VolumeRemove deletes the GCS bucket bound to a named volume. When
+// `force` is true, objects are deleted first (GCS refuses to delete
+// non-empty buckets). Cloud Run's Runtime IAM stays intact because
+// buckets are per-volume, not shared.
 func (s *Server) VolumeRemove(name string, force bool) error {
-	return &api.NotImplementedError{Message: "Cloud Run backend does not support named volumes"}
+	if name == "" {
+		return &api.InvalidParameterError{Message: "volume name is required"}
+	}
+	if err := s.deleteBucketForVolume(s.ctx(), name, force); err != nil {
+		return &api.ServerError{Message: fmt.Sprintf("delete GCS bucket for %q: %v", name, err)}
+	}
+	return nil
 }
 
 // ExecStart is not supported by the Cloud Run backend.
@@ -1069,7 +1087,41 @@ func (s *Server) AuthLogin(req *api.AuthRequest) (*api.AuthResponse, error) {
 	return s.BaseServer.AuthLogin(req)
 }
 
-// VolumePrune is not supported by the Cloud Run backend — see VolumeRemove.
+// VolumePrune deletes every sockerless-managed GCS bucket that isn't
+// currently referenced by a pending container's binds. Bucket labels
+// already carry the `sockerless-managed` marker so this path only
+// touches buckets provisioned by sockerless.
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
-	return nil, &api.NotImplementedError{Message: "Cloud Run backend does not support named volumes"}
+	buckets, err := s.listManagedBuckets(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("list managed GCS buckets: %v", err)}
+	}
+	in := s.inUseVolumeNames()
+	resp := &api.VolumePruneResponse{}
+	for _, b := range buckets {
+		name := bucketVolumeName(b)
+		if _, busy := in[name]; busy {
+			continue
+		}
+		if err := s.deleteBucketForVolume(s.ctx(), name, true); err != nil {
+			return nil, &api.ServerError{Message: fmt.Sprintf("delete GCS bucket for %q: %v", name, err)}
+		}
+		resp.VolumesDeleted = append(resp.VolumesDeleted, name)
+	}
+	return resp, nil
+}
+
+// inUseVolumeNames returns the set of Docker volume names currently
+// referenced by pending Cloud Run jobs.
+func (s *Server) inUseVolumeNames() map[string]struct{} {
+	in := make(map[string]struct{})
+	for _, c := range s.PendingCreates.List() {
+		for _, b := range c.HostConfig.Binds {
+			parts := strings.SplitN(b, ":", 3)
+			if len(parts) >= 2 && !strings.HasPrefix(parts[0], "/") {
+				in[parts[0]] = struct{}{}
+			}
+		}
+	}
+	return in
 }

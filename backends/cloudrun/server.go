@@ -19,15 +19,17 @@ type Server struct {
 
 	CloudRun     *core.StateStore[CloudRunState]
 	NetworkState *core.StateStore[NetworkState]
+	gcsVolumeState
 }
 
 // NewServer creates a new Cloud Run backend server.
 func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Server {
 	s := &Server{
-		config:       config,
-		gcp:          gcpClients,
-		CloudRun:     core.NewStateStore[CloudRunState](),
-		NetworkState: core.NewStateStore[NetworkState](),
+		config:         config,
+		gcp:            gcpClients,
+		CloudRun:       core.NewStateStore[CloudRunState](),
+		NetworkState:   core.NewStateStore[NetworkState](),
+		gcsVolumeState: gcsVolumeState{gcsBucketCache: make(map[string]string)},
 	}
 	s.ipCounter.Store(2)
 

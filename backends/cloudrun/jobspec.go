@@ -1,6 +1,7 @@
 package cloudrun
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -28,8 +29,11 @@ func (s *Server) buildJobParent() string {
 	return fmt.Sprintf("projects/%s/locations/%s", s.config.Project, s.config.Region)
 }
 
-// buildContainerSpec builds a single Cloud Run container spec.
-func (s *Server) buildContainerSpec(ci containerInput) *runpb.Container {
+// buildContainerSpec builds a single Cloud Run container spec plus
+// any `VolumeMount` entries its Docker `HostConfig.Binds` produce.
+// Host-path binds are already rejected at `ContainerCreate` so every
+// entry here is a `volName:/mnt[:ro]` pair.
+func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*runpb.VolumeMount) {
 	config := ci.Container.Config
 
 	// Build environment variables
@@ -55,12 +59,25 @@ func (s *Server) buildContainerSpec(ci containerInput) *runpb.Container {
 
 	cpu, memory := mapCPUMemory()
 
+	var mounts []*runpb.VolumeMount
+	for _, bind := range ci.Container.HostConfig.Binds {
+		parts := strings.SplitN(bind, ":", 3)
+		if len(parts) < 2 {
+			continue
+		}
+		mounts = append(mounts, &runpb.VolumeMount{
+			Name:      parts[0],
+			MountPath: parts[1],
+		})
+	}
+
 	containerSpec := &runpb.Container{
-		Name:    defName,
-		Image:   config.Image,
-		Command: entrypoint,
-		Args:    command,
-		Env:     envVars,
+		Name:         defName,
+		Image:        config.Image,
+		Command:      entrypoint,
+		Args:         command,
+		Env:          envVars,
+		VolumeMounts: mounts,
 		Resources: &runpb.ResourceRequirements{
 			Limits: map[string]string{
 				"cpu":    cpu,
@@ -73,18 +90,40 @@ func (s *Server) buildContainerSpec(ci containerInput) *runpb.Container {
 		containerSpec.WorkingDir = config.WorkingDir
 	}
 
-	return containerSpec
+	return containerSpec, mounts
 }
 
-// buildJobSpec creates a Cloud Run Job protobuf from one or more containers.
-func (s *Server) buildJobSpec(containers []containerInput) *runpb.Job {
+// buildJobSpec creates a Cloud Run Job protobuf from one or more
+// containers, provisioning a GCS bucket per referenced named volume
+// and injecting matching RevisionTemplate Volumes.
+func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) (*runpb.Job, error) {
 	var specs []*runpb.Container
+	volSeen := make(map[string]struct{})
+	var volumes []*runpb.Volume
 	for _, ci := range containers {
-		specs = append(specs, s.buildContainerSpec(ci))
+		cs, mounts := s.buildContainerSpec(ci)
+		specs = append(specs, cs)
+		for _, mp := range mounts {
+			if _, done := volSeen[mp.Name]; done {
+				continue
+			}
+			bucket, err := s.bucketForVolume(ctx, mp.Name)
+			if err != nil {
+				return nil, fmt.Errorf("provision GCS bucket for volume %q: %w", mp.Name, err)
+			}
+			volumes = append(volumes, &runpb.Volume{
+				Name: mp.Name,
+				VolumeType: &runpb.Volume_Gcs{
+					Gcs: &runpb.GCSVolumeSource{Bucket: bucket},
+				},
+			})
+			volSeen[mp.Name] = struct{}{}
+		}
 	}
 
 	taskTemplate := &runpb.TaskTemplate{
 		Containers: specs,
+		Volumes:    volumes,
 		Retries:    &runpb.TaskTemplate_MaxRetries{MaxRetries: 0},
 		Timeout:    durationpb.New(4 * time.Hour),
 	}
@@ -119,7 +158,7 @@ func (s *Server) buildJobSpec(containers []containerInput) *runpb.Job {
 			Parallelism: 1,
 			Template:    taskTemplate,
 		},
-	}
+	}, nil
 }
 
 // mapCPUMemory returns the default Cloud Run resource limits.

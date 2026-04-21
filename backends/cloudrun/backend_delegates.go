@@ -2,10 +2,26 @@ package cloudrun
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"time"
 
+	"cloud.google.com/go/storage"
 	"github.com/sockerless/api"
 )
+
+// bucketToVolume converts a sockerless-managed GCS BucketAttrs into a
+// Docker-API Volume entry.
+func bucketToVolume(dockerName string, b *storage.BucketAttrs) *api.Volume {
+	return &api.Volume{
+		Name:       dockerName,
+		Driver:     "gcs",
+		Mountpoint: "gs://" + b.Name,
+		Scope:      "local",
+		Options:    map[string]string{"bucket": b.Name},
+		CreatedAt:  b.Created.UTC().Format(time.RFC3339Nano),
+	}
+}
 
 // Container methods with resolution
 
@@ -128,16 +144,52 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 	return s.BaseServer.SystemEvents(opts)
 }
 
-// Named-volume operations are not supported by the Cloud Run backend.
-// Real Filestore / GCS mount provisioning is a follow-up phase.
+// Named-volume operations map to GCS buckets on the sockerless-owned
+// project (Phase 92). Each Docker volume gets a dedicated bucket
+// labeled `sockerless-managed=true` + `sockerless-volume-name=<name>`;
+// Cloud Run tasks mount buckets via the RevisionTemplate's
+// `Volume{Gcs{Bucket}}` source. Bind specs `volName:/mnt` land on the
+// backing bucket; host-path binds (`/h:/c`) stay rejected.
 func (s *Server) VolumeCreate(req *api.VolumeCreateRequest) (*api.Volume, error) {
-	return nil, &api.NotImplementedError{Message: "Cloud Run backend does not support named volumes"}
+	if req == nil || req.Name == "" {
+		return nil, &api.InvalidParameterError{Message: "volume name is required"}
+	}
+	bucket, err := s.bucketForVolume(s.ctx(), req.Name)
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("provision GCS bucket for %q: %v", req.Name, err)}
+	}
+	return &api.Volume{
+		Name:       req.Name,
+		Driver:     "gcs",
+		Mountpoint: "gs://" + bucket,
+		Labels:     req.Labels,
+		Scope:      "local",
+		Options:    map[string]string{"bucket": bucket, "project": s.config.Project},
+		CreatedAt:  time.Now().UTC().Format(time.RFC3339Nano),
+	}, nil
 }
 
 func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
-	return nil, &api.NotImplementedError{Message: "Cloud Run backend does not support named volumes"}
+	buckets, err := s.listManagedBuckets(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("list managed GCS buckets: %v", err)}
+	}
+	for _, b := range buckets {
+		if bucketVolumeName(b) == sanitiseGCSLabelValue(name) {
+			return bucketToVolume(name, b), nil
+		}
+	}
+	return nil, &api.NotFoundError{Resource: "volume", ID: name}
 }
 
 func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListResponse, error) {
-	return nil, &api.NotImplementedError{Message: "Cloud Run backend does not support named volumes"}
+	buckets, err := s.listManagedBuckets(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("list managed GCS buckets: %v", err)}
+	}
+	vols := make([]*api.Volume, 0, len(buckets))
+	for _, b := range buckets {
+		vols = append(vols, bucketToVolume(bucketVolumeName(b), b))
+	}
+	return &api.VolumeListResponse{Volumes: vols}, nil
 }

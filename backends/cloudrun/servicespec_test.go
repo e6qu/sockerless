@@ -1,6 +1,7 @@
 package cloudrun
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -76,7 +77,7 @@ func TestBuildServiceParent(t *testing.T) {
 func TestBuildServiceSpec_Shape(t *testing.T) {
 	s := newServerForSpec(t, "projects/p/locations/us-central1/connectors/c1")
 	ci := demoContainer("abc123456789fffffffff", "/webapp", "gcr.io/proj/app:v1")
-	svc := s.buildServiceSpec([]containerInput{ci})
+	svc, _ := s.buildServiceSpec(context.Background(), []containerInput{ci})
 
 	if svc.Ingress != runpb.IngressTraffic_INGRESS_TRAFFIC_INTERNAL_ONLY {
 		t.Errorf("ingress = %v, want INGRESS_TRAFFIC_INTERNAL_ONLY", svc.Ingress)
@@ -119,7 +120,7 @@ func TestBuildServiceSpec_Shape(t *testing.T) {
 func TestBuildServiceSpec_NoVPCConnector(t *testing.T) {
 	s := newServerForSpec(t, "")
 	ci := demoContainer("idididididid0000000000", "/c", "img:1")
-	svc := s.buildServiceSpec([]containerInput{ci})
+	svc, _ := s.buildServiceSpec(context.Background(), []containerInput{ci})
 	if svc.Template.VpcAccess != nil {
 		t.Fatalf("expected nil VpcAccess when connector unset, got %+v", svc.Template.VpcAccess)
 	}
