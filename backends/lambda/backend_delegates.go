@@ -2,10 +2,37 @@ package lambda
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"strings"
+	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	efstypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
 	"github.com/sockerless/api"
+	awscommon "github.com/sockerless/aws-common"
 )
+
+// accessPointToVolume converts an EFS AccessPointDescription into the
+// Docker-API volume shape. Mirrors ECS's helper.
+func accessPointToVolume(ap efstypes.AccessPointDescription) *api.Volume {
+	name := awscommon.APVolumeName(ap)
+	root := ""
+	if ap.RootDirectory != nil {
+		root = aws.ToString(ap.RootDirectory.Path)
+	}
+	return &api.Volume{
+		Name:       name,
+		Driver:     "efs",
+		Mountpoint: root,
+		Scope:      "local",
+		Options: map[string]string{
+			"accessPointId": aws.ToString(ap.AccessPointId),
+			"fileSystemId":  aws.ToString(ap.FileSystemId),
+		},
+		CreatedAt: "",
+	}
+}
 
 // --- Container methods requiring resolution ---
 
@@ -205,27 +232,104 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 	return s.BaseServer.SystemEvents(opts)
 }
 
-// Named-volume operations are not supported by the Lambda backend.
-// Lambda containers only have an ephemeral /tmp writable layer; there
-// is no per-invocation cross-container storage the docker volume API
-// can usefully bind. Applications needing durable storage should use
-// S3 / EFS directly.
+// Phase 94b: named-volume operations provision sockerless-managed EFS
+// access points via awscommon.EFSManager (shared with ECS). Lambda
+// attaches them at CreateFunction time via Function.FileSystemConfigs[].
+// Named volumes require the function to run in a VPC with mount targets
+// in matching subnets — `SOCKERLESS_LAMBDA_SUBNETS` must be set.
+//
+// Host-path bind specs (`/h:/c`) stay rejected — Lambda containers have
+// no host filesystem.
 func (s *Server) VolumeCreate(req *api.VolumeCreateRequest) (*api.Volume, error) {
-	return nil, &api.NotImplementedError{Message: "Lambda backend does not support named volumes; Lambda containers only have an ephemeral /tmp"}
+	if req == nil || req.Name == "" {
+		return nil, &api.InvalidParameterError{Message: "volume name is required"}
+	}
+	apID, err := s.accessPointForVolume(s.ctx(), req.Name)
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("provision EFS access point for %q: %v", req.Name, err)}
+	}
+	fsID, err := s.efs.EnsureFilesystem(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("resolve EFS filesystem for %q: %v", req.Name, err)}
+	}
+	return &api.Volume{
+		Name:       req.Name,
+		Driver:     "efs",
+		Mountpoint: "/sockerless/volumes/" + awscommon.SanitiseVolumePath(req.Name),
+		Labels:     req.Labels,
+		Scope:      "local",
+		Options:    map[string]string{"accessPointId": apID, "fileSystemId": fsID},
+		CreatedAt:  time.Now().UTC().Format(time.RFC3339Nano),
+	}, nil
 }
 
 func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
-	return nil, &api.NotImplementedError{Message: "Lambda backend does not support named volumes"}
+	aps, err := s.listManagedAccessPoints(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("list EFS access points: %v", err)}
+	}
+	for _, ap := range aps {
+		if awscommon.APVolumeName(ap) == name {
+			return accessPointToVolume(ap), nil
+		}
+	}
+	return nil, &api.NotFoundError{Resource: "volume", ID: name}
 }
 
 func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListResponse, error) {
-	return nil, &api.NotImplementedError{Message: "Lambda backend does not support named volumes"}
+	aps, err := s.listManagedAccessPoints(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("list EFS access points: %v", err)}
+	}
+	vols := make([]*api.Volume, 0, len(aps))
+	for _, ap := range aps {
+		vols = append(vols, accessPointToVolume(ap))
+	}
+	return &api.VolumeListResponse{Volumes: vols}, nil
 }
 
-func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
-	return nil, &api.NotImplementedError{Message: "Lambda backend does not support named volumes"}
-}
-
+// VolumeRemove deletes the EFS access point backing a volume. The
+// underlying filesystem is left in place so other volumes keep working.
 func (s *Server) VolumeRemove(name string, force bool) error {
-	return &api.NotImplementedError{Message: "Lambda backend does not support named volumes"}
+	if err := s.deleteAccessPointForVolume(s.ctx(), name); err != nil {
+		return &api.ServerError{Message: fmt.Sprintf("delete EFS access point for %q: %v", name, err)}
+	}
+	return nil
+}
+
+// VolumePrune deletes every sockerless-managed access point not
+// referenced by a pending container's binds.
+func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
+	aps, err := s.listManagedAccessPoints(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("list EFS access points: %v", err)}
+	}
+	in := s.inUseVolumeNames()
+	resp := &api.VolumePruneResponse{}
+	for _, ap := range aps {
+		name := awscommon.APVolumeName(ap)
+		if _, busy := in[name]; busy {
+			continue
+		}
+		if err := s.deleteAccessPointForVolume(s.ctx(), name); err != nil {
+			return nil, &api.ServerError{Message: fmt.Sprintf("delete EFS access point for %q: %v", name, err)}
+		}
+		resp.VolumesDeleted = append(resp.VolumesDeleted, name)
+	}
+	return resp, nil
+}
+
+// inUseVolumeNames returns Docker volume names currently referenced by
+// pending container binds.
+func (s *Server) inUseVolumeNames() map[string]struct{} {
+	in := make(map[string]struct{})
+	for _, c := range s.PendingCreates.List() {
+		for _, b := range c.HostConfig.Binds {
+			parts := strings.SplitN(b, ":", 3)
+			if len(parts) >= 2 && !strings.HasPrefix(parts[0], "/") {
+				in[parts[0]] = struct{}{}
+			}
+		}
+	}
+	return in
 }

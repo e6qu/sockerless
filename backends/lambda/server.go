@@ -19,6 +19,7 @@ type Server struct {
 	Lambda        *core.StateStore[LambdaState]
 	reverseAgents *reverseAgentRegistry // reverse-agent session registry
 	ipCounter     atomic.Int32
+	volumeState
 }
 
 // NewServer creates a new Lambda backend server.
@@ -42,6 +43,13 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		NCPU:            2,
 		MemTotal:        4294967296,
 	}, logger)
+	s.volumeState = volumeState{efs: awscommon.NewEFSManager(awsClients.EFS, awscommon.EFSManagerConfig{
+		AgentEFSID:     config.AgentEFSID,
+		Subnets:        config.SubnetIDs,
+		SecurityGroups: config.SecurityGroupIDs,
+		PollInterval:   config.PollInterval,
+		InstanceID:     s.Desc.InstanceID,
+	})}
 	s.images = &core.ImageManager{
 		Base:   s.BaseServer,
 		Auth:   awscommon.NewECRAuthProvider(awsClients.ECR, logger, s.ctx),

@@ -232,6 +232,18 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		}
 	}
 
+	// Phase 94b: attach named-volume binds as EFS FileSystemConfigs.
+	// Reject host-path binds; require VPC + subnets (enforced by
+	// fileSystemConfigsForBinds). Access points are sockerless-managed
+	// via awscommon.EFSManager (shared with ECS).
+	if len(hostConfig.Binds) > 0 {
+		fsConfigs, err := s.fileSystemConfigsForBinds(s.ctx(), hostConfig.Binds)
+		if err != nil {
+			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("resolve Lambda file-system configs: %v", err)}
+		}
+		createInput.FileSystemConfigs = fsConfigs
+	}
+
 	// Set image config overrides if cmd/entrypoint specified
 	if len(config.Cmd) > 0 || len(config.Entrypoint) > 0 || config.WorkingDir != "" {
 		imgConfig := &lambdatypes.ImageConfig{}

@@ -9,6 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.45.7
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.68.13
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.56.2
+	github.com/aws/aws-sdk-go-v2/service/efs v1.41.15
 	github.com/aws/aws-sdk-go-v2/service/lambda v1.69.6
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.98.0
 	github.com/docker/docker v27.5.1+incompatible
@@ -28,7 +29,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.22 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.2 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.22 // indirect
-	github.com/aws/aws-sdk-go-v2/service/efs v1.41.15 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.13 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.21 // indirect

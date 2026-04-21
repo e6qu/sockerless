@@ -355,16 +355,55 @@ func TestLambdaNetworkOperations(t *testing.T) {
 // TestLambdaVolumeOperations pins BUG-731 — Lambda's /tmp is
 // per-invocation; named volumes require real EFS mounts and are
 // tracked as Phase 91.
+// TestLambdaVolumeOperations — Phase 94b EFS-backed named volumes:
+// VolumeCreate provisions a sockerless-managed EFS access point via
+// the shared awscommon.EFSManager (same manager ECS uses); VolumeInspect
+// + VolumeList surface it; VolumeRemove deletes it. Mount attach to
+// the function happens at ContainerCreate time via Function.FileSystemConfigs.
 func TestLambdaVolumeOperations(t *testing.T) {
 	skipIfNoIntegration(t)
 	ctx := context.Background()
 
-	_, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: "lambda-vol-" + generateTestID()})
-	if err == nil {
-		t.Fatal("expected VolumeCreate to fail with NotImplemented")
+	volName := "lambda_vol_" + generateTestID()
+	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: volName})
+	if err != nil {
+		t.Fatalf("VolumeCreate: %v", err)
 	}
-	if !strings.Contains(err.Error(), "does not support named volumes") {
-		t.Errorf("expected NotImplemented error, got: %v", err)
+	if vol.Name != volName {
+		t.Errorf("Volume.Name = %q, want %q", vol.Name, volName)
+	}
+	if vol.Driver != "efs" {
+		t.Errorf("Volume.Driver = %q, want efs", vol.Driver)
+	}
+	if vol.Options["accessPointId"] == "" {
+		t.Errorf("Volume.Options missing accessPointId: %+v", vol.Options)
+	}
+
+	inspected, err := dockerClient.VolumeInspect(ctx, volName)
+	if err != nil {
+		t.Fatalf("VolumeInspect: %v", err)
+	}
+	if inspected.Name != volName {
+		t.Errorf("inspected.Name = %q, want %q", inspected.Name, volName)
+	}
+
+	list, err := dockerClient.VolumeList(ctx, volume.ListOptions{})
+	if err != nil {
+		t.Fatalf("VolumeList: %v", err)
+	}
+	found := false
+	for _, v := range list.Volumes {
+		if v != nil && v.Name == volName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("VolumeList did not surface %q", volName)
+	}
+
+	if err := dockerClient.VolumeRemove(ctx, volName, false); err != nil {
+		t.Fatalf("VolumeRemove: %v", err)
 	}
 }
 
