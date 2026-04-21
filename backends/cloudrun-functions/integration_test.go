@@ -414,6 +414,62 @@ func generateTestID(parts ...string) string {
 	return id
 }
 
+// TestGCFContainerLifecycle — re-enabled from the BUG-744 deletion.
+// Phase 95 records the invocation's HTTP response (2xx → 0) in
+// Store.InvocationResults, so CloudState reports `exited` and
+// docker wait returns the real exit code.
+func TestGCFContainerLifecycle(t *testing.T) {
+	ctx := context.Background()
+
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	if err != nil {
+		t.Fatalf("image pull failed: %v", err)
+	}
+	io.Copy(io.Discard, rc)
+	rc.Close()
+
+	testID := generateTestID()
+	resp, err := dockerClient.ContainerCreate(ctx,
+		&container.Config{
+			Image: "alpine:latest",
+			Cmd:   []string{"echo", "hello from gcf"},
+		},
+		nil, nil, nil, "gcf_lc_"+testID,
+	)
+	if err != nil {
+		t.Fatalf("container create failed: %v", err)
+	}
+	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
+	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		t.Fatalf("container start failed: %v", err)
+	}
+
+	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case result := <-waitCh:
+		if result.StatusCode != 0 {
+			t.Errorf("expected exit code 0, got %d", result.StatusCode)
+		}
+	case err := <-errCh:
+		t.Fatalf("container wait error: %v", err)
+	case <-time.After(5 * time.Minute):
+		t.Fatal("timeout waiting for container")
+	}
+
+	info, err := dockerClient.ContainerInspect(ctx, resp.ID)
+	if err != nil {
+		t.Fatalf("container inspect failed: %v", err)
+	}
+	if info.State.Status != "exited" {
+		t.Errorf("expected status 'exited', got %q", info.State.Status)
+	}
+
+	if err := dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{}); err != nil {
+		t.Fatalf("container remove failed: %v", err)
+	}
+}
+
 func filterBuildEnv(env []string, extra ...string) []string {
 	var filtered []string
 	for _, e := range env {
