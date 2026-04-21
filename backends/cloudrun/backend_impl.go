@@ -1099,7 +1099,7 @@ func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneRespo
 	in := s.inUseVolumeNames()
 	resp := &api.VolumePruneResponse{}
 	for _, b := range buckets {
-		name := bucketVolumeName(b)
+		name := gcpcommon.BucketVolumeName(b)
 		if _, busy := in[name]; busy {
 			continue
 		}

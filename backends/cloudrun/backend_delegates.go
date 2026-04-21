@@ -8,6 +8,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/sockerless/api"
+	gcpcommon "github.com/sockerless/gcp-common"
 )
 
 // bucketToVolume converts a sockerless-managed GCS BucketAttrs into a
@@ -175,7 +176,7 @@ func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list managed GCS buckets: %v", err)}
 	}
 	for _, b := range buckets {
-		if bucketVolumeName(b) == sanitiseGCSLabelValue(name) {
+		if gcpcommon.BucketVolumeName(b) == gcpcommon.SanitiseLabelValue(name) {
 			return bucketToVolume(name, b), nil
 		}
 	}
@@ -189,7 +190,7 @@ func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListRespons
 	}
 	vols := make([]*api.Volume, 0, len(buckets))
 	for _, b := range buckets {
-		vols = append(vols, bucketToVolume(bucketVolumeName(b), b))
+		vols = append(vols, bucketToVolume(gcpcommon.BucketVolumeName(b), b))
 	}
 	return &api.VolumeListResponse{Volumes: vols}, nil
 }

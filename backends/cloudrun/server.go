@@ -29,7 +29,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		gcp:            gcpClients,
 		CloudRun:       core.NewStateStore[CloudRunState](),
 		NetworkState:   core.NewStateStore[NetworkState](),
-		gcsVolumeState: gcsVolumeState{gcsBucketCache: make(map[string]string)},
+		gcsVolumeState: gcsVolumeState{buckets: gcpcommon.NewBucketManager(gcpClients.Storage, config.Project, config.Region)},
 	}
 	s.ipCounter.Store(2)
 
