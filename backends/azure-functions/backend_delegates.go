@@ -195,24 +195,26 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 	return s.BaseServer.SystemEvents(opts)
 }
 
-// Volume methods (pass-through to BaseServer).
-
+// Named-volume operations are not supported by the AZF backend.
+// Azure Functions invocations run on ephemeral containers — there's
+// no stable cross-invocation mount. Durable shared storage should
+// come from Azure Files / Blob directly.
 func (s *Server) VolumeCreate(req *api.VolumeCreateRequest) (*api.Volume, error) {
-	return s.BaseServer.VolumeCreate(req)
+	return nil, &api.NotImplementedError{Message: "AZF backend does not support named volumes; Azure Functions invocations are ephemeral"}
 }
 
 func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
-	return s.BaseServer.VolumeInspect(name)
+	return nil, &api.NotImplementedError{Message: "AZF backend does not support named volumes"}
 }
 
 func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListResponse, error) {
-	return s.BaseServer.VolumeList(filters)
+	return nil, &api.NotImplementedError{Message: "AZF backend does not support named volumes"}
 }
 
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
-	return s.BaseServer.VolumePrune(filters)
+	return nil, &api.NotImplementedError{Message: "AZF backend does not support named volumes"}
 }
 
 func (s *Server) VolumeRemove(name string, force bool) error {
-	return s.BaseServer.VolumeRemove(name, force)
+	return &api.NotImplementedError{Message: "AZF backend does not support named volumes"}
 }

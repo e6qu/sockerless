@@ -89,8 +89,12 @@ func (s *Server) runECSTask(containerID, taskDefARN string, c *api.Container) (t
 	return taskARN, clusterARN, nil
 }
 
-// waitForTaskRunning polls ECS until the task reaches RUNNING state.
-// Returns the task IP address (ip:9111).
+// waitForTaskRunning polls ECS until the task reaches RUNNING state
+// (or exits successfully before we observe RUNNING — a short-lived
+// container that finishes within one poll interval is a valid start,
+// not a failure). Returns the task IP address (ip:9111) when the task
+// is observed running; returns an empty address when the task already
+// exited with a zero status.
 func (s *Server) waitForTaskRunning(ctx context.Context, taskARN string) (string, error) {
 	timeout := time.After(5 * time.Minute)
 	ticker := time.NewTicker(s.config.PollInterval)
@@ -125,11 +129,34 @@ func (s *Server) waitForTaskRunning(ctx context.Context, taskARN string) (string
 				}
 				return ip + ":9111", nil
 			case "STOPPED":
+				if taskExitedSuccessfully(task) {
+					// Task completed faster than our poll interval
+					// (e.g. a `docker run alpine echo hello`). That's a
+					// valid start + exit flow; return no IP so the
+					// caller skips Cloud Map registration (pointless for
+					// an already-stopped task) and proceeds.
+					return "", nil
+				}
 				reason := aws.ToString(task.StoppedReason)
 				return "", fmt.Errorf("task stopped: %s", reason)
 			}
 		}
 	}
+}
+
+// taskExitedSuccessfully reports whether a STOPPED task's essential
+// container exited with status 0. Mirrors how docker treats a
+// short-lived `docker run` — exit 0 is success regardless of speed.
+func taskExitedSuccessfully(task ecstypes.Task) bool {
+	for _, c := range task.Containers {
+		if c.ExitCode == nil {
+			return false
+		}
+		if *c.ExitCode != 0 {
+			return false
+		}
+	}
+	return len(task.Containers) > 0
 }
 
 // mapToECSTags converts a map[string]string to ECS SDK tag format.

@@ -78,7 +78,7 @@ func TestMain(m *testing.M) {
 	simDir := repoRoot + "/simulators/aws"
 	simBinary := simDir + "/simulator-aws"
 	fmt.Println("[sim] Building simulator-aws...")
-	build := exec.Command("go", "build", "-o", "simulator-aws", ".")
+	build := exec.Command("go", "build", "-tags", "noui", "-o", "simulator-aws", ".")
 	build.Dir = simDir
 	build.Env = filterBuildEnv(os.Environ(), "GOWORK=off")
 	build.Stdout = os.Stderr
@@ -116,7 +116,7 @@ func TestMain(m *testing.M) {
 	backendDir := repoRoot + "/backends/lambda"
 	backendBinary := backendDir + "/sockerless-backend-lambda"
 	fmt.Println("[sim] Building sockerless-backend-lambda...")
-	buildBackend := exec.Command("go", "build", "-o", "sockerless-backend-lambda", "./cmd/sockerless-backend-lambda")
+	buildBackend := exec.Command("go", "build", "-tags", "noui", "-o", "sockerless-backend-lambda", "./cmd/sockerless-backend-lambda")
 	buildBackend.Dir = backendDir
 	buildBackend.Stdout = os.Stderr
 	buildBackend.Stderr = os.Stderr

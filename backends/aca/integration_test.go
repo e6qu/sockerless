@@ -62,7 +62,7 @@ func TestMain(m *testing.M) {
 	simDir := repoRoot + "/simulators/azure"
 	simBinary := simDir + "/simulator-azure"
 	fmt.Println("[sim] Building simulator-azure...")
-	build := exec.Command("go", "build", "-o", "simulator-azure", ".")
+	build := exec.Command("go", "build", "-tags", "noui", "-o", "simulator-azure", ".")
 	build.Dir = simDir
 	build.Env = filterBuildEnv(os.Environ(), "GOWORK=off")
 	build.Stdout = os.Stderr
@@ -103,7 +103,7 @@ func TestMain(m *testing.M) {
 	backendDir := repoRoot + "/backends/aca"
 	backendBinary := backendDir + "/sockerless-backend-aca"
 	fmt.Println("[sim] Building sockerless-backend-aca...")
-	buildBackend := exec.Command("go", "build", "-o", "sockerless-backend-aca", "./cmd/sockerless-backend-aca")
+	buildBackend := exec.Command("go", "build", "-tags", "noui", "-o", "sockerless-backend-aca", "./cmd/sockerless-backend-aca")
 	buildBackend.Dir = backendDir
 	buildBackend.Stdout = os.Stderr
 	buildBackend.Stderr = os.Stderr
@@ -147,7 +147,7 @@ func TestMain(m *testing.M) {
 	frontendDir := repoRoot + "/frontends/docker"
 	frontendBinary := frontendDir + "/sockerless-docker-frontend"
 	fmt.Println("[sim] Building sockerless-docker-frontend...")
-	buildFrontend := exec.Command("go", "build", "-o", "sockerless-docker-frontend", "./cmd/")
+	buildFrontend := exec.Command("go", "build", "-tags", "noui", "-o", "sockerless-docker-frontend", "./cmd/")
 	buildFrontend.Dir = frontendDir
 	buildFrontend.Stdout = os.Stderr
 	buildFrontend.Stderr = os.Stderr

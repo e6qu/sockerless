@@ -213,24 +213,26 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 	return s.BaseServer.SystemEvents(opts)
 }
 
-// Volume methods (pass-through)
-
+// Named-volume operations are not supported by the GCF backend.
+// GCF containers are invocation-scoped — there's no stable cross-
+// invocation mount. Real shared storage should come from GCS or
+// Filestore directly.
 func (s *Server) VolumeCreate(req *api.VolumeCreateRequest) (*api.Volume, error) {
-	return s.BaseServer.VolumeCreate(req)
+	return nil, &api.NotImplementedError{Message: "GCF backend does not support named volumes; GCF containers are invocation-scoped"}
 }
 
 func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
-	return s.BaseServer.VolumeInspect(name)
+	return nil, &api.NotImplementedError{Message: "GCF backend does not support named volumes"}
 }
 
 func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListResponse, error) {
-	return s.BaseServer.VolumeList(filters)
+	return nil, &api.NotImplementedError{Message: "GCF backend does not support named volumes"}
 }
 
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
-	return s.BaseServer.VolumePrune(filters)
+	return nil, &api.NotImplementedError{Message: "GCF backend does not support named volumes"}
 }
 
 func (s *Server) VolumeRemove(name string, force bool) error {
-	return s.BaseServer.VolumeRemove(name, force)
+	return &api.NotImplementedError{Message: "GCF backend does not support named volumes"}
 }

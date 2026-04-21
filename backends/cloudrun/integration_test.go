@@ -62,7 +62,7 @@ func TestMain(m *testing.M) {
 	simDir := repoRoot + "/simulators/gcp"
 	simBinary := simDir + "/simulator-gcp"
 	fmt.Println("[sim] Building simulator-gcp...")
-	build := exec.Command("go", "build", "-o", "simulator-gcp", ".")
+	build := exec.Command("go", "build", "-tags", "noui", "-o", "simulator-gcp", ".")
 	build.Dir = simDir
 	build.Env = filterBuildEnv(os.Environ(), "GOWORK=off")
 	build.Stdout = os.Stderr
@@ -103,7 +103,7 @@ func TestMain(m *testing.M) {
 	backendDir := repoRoot + "/backends/cloudrun"
 	backendBinary := backendDir + "/sockerless-backend-cloudrun"
 	fmt.Println("[sim] Building sockerless-backend-cloudrun...")
-	buildBackend := exec.Command("go", "build", "-o", "sockerless-backend-cloudrun", "./cmd/sockerless-backend-cloudrun")
+	buildBackend := exec.Command("go", "build", "-tags", "noui", "-o", "sockerless-backend-cloudrun", "./cmd/sockerless-backend-cloudrun")
 	buildBackend.Dir = backendDir
 	buildBackend.Stdout = os.Stderr
 	buildBackend.Stderr = os.Stderr
@@ -146,7 +146,7 @@ func TestMain(m *testing.M) {
 	frontendDir := repoRoot + "/frontends/docker"
 	frontendBinary := frontendDir + "/sockerless-docker-frontend"
 	fmt.Println("[sim] Building sockerless-docker-frontend...")
-	buildFrontend := exec.Command("go", "build", "-o", "sockerless-docker-frontend", "./cmd/")
+	buildFrontend := exec.Command("go", "build", "-tags", "noui", "-o", "sockerless-docker-frontend", "./cmd/")
 	buildFrontend.Dir = frontendDir
 	buildFrontend.Stdout = os.Stderr
 	buildFrontend.Stderr = os.Stderr
