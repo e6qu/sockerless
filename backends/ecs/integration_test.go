@@ -451,20 +451,59 @@ func TestECSNetworkOperations(t *testing.T) {
 	}
 }
 
-// TestECSVolumeOperations pins BUG-731 — named volumes are not
-// supported on ECS (Fargate tasks are ephemeral; real persistence
-// requires EFS volume configuration on the task def). Real per-cloud
-// volume provisioning tracked as Phase 91.
+// TestECSVolumeOperations exercises the Phase 91 EFS-backed named
+// volume path: VolumeCreate provisions a sockerless-owned EFS access
+// point, VolumeInspect and VolumeList surface it, and VolumeRemove
+// deletes it. The simulator's EFS slice backs each access point with
+// a host-side directory so tasks bind-mount a real path.
 func TestECSVolumeOperations(t *testing.T) {
 	skipIfNoIntegration(t)
 	ctx := context.Background()
 
-	_, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: "ecs-test-vol-" + generateTestID()})
-	if err == nil {
-		t.Fatal("expected VolumeCreate to fail with NotImplemented")
+	volName := "ecs-test-vol-" + generateTestID()
+	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: volName})
+	if err != nil {
+		t.Fatalf("VolumeCreate failed: %v", err)
 	}
-	if !strings.Contains(err.Error(), "does not support named volumes") {
-		t.Errorf("expected NotImplemented error, got: %v", err)
+	if vol.Name != volName {
+		t.Errorf("Volume.Name: got %q, want %q", vol.Name, volName)
+	}
+	if vol.Driver != "efs" {
+		t.Errorf("Volume.Driver: got %q, want efs", vol.Driver)
+	}
+	if vol.Options["accessPointId"] == "" {
+		t.Errorf("Volume.Options missing accessPointId: %+v", vol.Options)
+	}
+
+	inspected, err := dockerClient.VolumeInspect(ctx, volName)
+	if err != nil {
+		t.Fatalf("VolumeInspect failed: %v", err)
+	}
+	if inspected.Name != volName {
+		t.Errorf("inspect Name: got %q, want %q", inspected.Name, volName)
+	}
+
+	listed, err := dockerClient.VolumeList(ctx, volume.ListOptions{})
+	if err != nil {
+		t.Fatalf("VolumeList failed: %v", err)
+	}
+	found := false
+	for _, v := range listed.Volumes {
+		if v.Name == volName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("VolumeList did not include %q; got %d volumes", volName, len(listed.Volumes))
+	}
+
+	if err := dockerClient.VolumeRemove(ctx, volName, false); err != nil {
+		t.Fatalf("VolumeRemove failed: %v", err)
+	}
+
+	if _, err := dockerClient.VolumeInspect(ctx, volName); err == nil {
+		t.Errorf("expected VolumeInspect to 404 after remove, got success")
 	}
 }
 

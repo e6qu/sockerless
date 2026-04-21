@@ -79,14 +79,25 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		hostConfig.NetworkMode = "default"
 	}
 
-	// Bind mounts require EFS on Fargate; refusing them up-front when
-	// no AgentEFSID is configured avoids silently provisioning an empty
-	// scratch volume the caller didn't ask for.
-	if len(hostConfig.Binds) > 0 && s.config.AgentEFSID == "" {
-		return nil, &api.InvalidParameterError{Message: fmt.Sprintf(
-			"bind mount not supported on ECS backend without EFS: set SOCKERLESS_ECS_AGENT_EFS_ID to an EFS filesystem ID, or remove -v flags (mounts: %v)",
-			hostConfig.Binds,
-		)}
+	// Validate mount specs up-front. On Fargate there's no host
+	// filesystem to bind from, so host-path bind mounts (`/h:/c`) are
+	// rejected — only named Docker volumes (`volname:/c`) are supported;
+	// those land on the sockerless-managed EFS filesystem via per-volume
+	// access points (Phase 91). Rejecting host binds here (rather than
+	// silently substituting an empty scratch volume or an EFS subdir
+	// named after the host path) keeps `docker run -v /host:/container`
+	// failures explicit.
+	for _, bind := range hostConfig.Binds {
+		parts := strings.SplitN(bind, ":", 3)
+		if len(parts) < 2 {
+			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("invalid bind mount spec %q", bind)}
+		}
+		if strings.HasPrefix(parts[0], "/") {
+			return nil, &api.InvalidParameterError{Message: fmt.Sprintf(
+				"host bind mounts are not supported on ECS backend (%q); use a named volume (`docker volume create <name> && docker run -v <name>:/path`) — volumes are backed by sockerless-managed EFS access points",
+				bind,
+			)}
+		}
 	}
 
 	path := ""
@@ -764,13 +775,18 @@ func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 	return s.images.Load(r)
 }
 
-// VolumeRemove is not supported by the ECS backend. Named docker
-// volumes aren't backed by real cloud-side storage — the earlier
-// in-memory store silently accepted and deleted volumes without ever
-// mounting them. Reject cleanly so clients don't assume durable state.
-// Real EFS / EBS provisioning is tracked as a follow-up phase.
+// VolumeRemove deletes the EFS access point bound to a named volume.
+// The backing filesystem is left in place so other volumes keep
+// working; `docker system prune --volumes` / Phase-92-style teardown
+// is a separate concern.
 func (s *Server) VolumeRemove(name string, force bool) error {
-	return &api.NotImplementedError{Message: "ECS backend does not support named volumes; provision EFS out-of-band and reference it via task-definition EFSVolumeConfiguration"}
+	if name == "" {
+		return &api.InvalidParameterError{Message: "volume name is required"}
+	}
+	if err := s.deleteAccessPointForVolume(s.ctx(), name); err != nil {
+		return &api.ServerError{Message: fmt.Sprintf("delete EFS access point for %q: %v", name, err)}
+	}
+	return nil
 }
 
 // ExecStart starts an exec instance. For ECS, if no agent is connected,
@@ -1002,7 +1018,43 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 	return nil, &api.NotImplementedError{Message: "ECS backend does not support container commit; Fargate containers cannot be snapshotted"}
 }
 
-// VolumePrune is not supported by the ECS backend — see VolumeRemove.
+// VolumePrune deletes all sockerless-managed EFS access points that
+// aren't currently referenced by any ECS task definition. The filter
+// map is accepted for Docker API parity but currently unused — access
+// points have no labels beyond the `sockerless-managed` + volume-name
+// tags, so filter-by-label would be a no-op.
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
-	return nil, &api.NotImplementedError{Message: "ECS backend does not support named volumes"}
+	aps, err := s.listManagedAccessPoints(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("list EFS access points: %v", err)}
+	}
+	in := s.inUseVolumeNames()
+	resp := &api.VolumePruneResponse{}
+	for _, ap := range aps {
+		name := apVolumeName(ap)
+		if _, busy := in[name]; busy {
+			continue
+		}
+		if err := s.deleteAccessPointForVolume(s.ctx(), name); err != nil {
+			return nil, &api.ServerError{Message: fmt.Sprintf("delete EFS access point for %q: %v", name, err)}
+		}
+		resp.VolumesDeleted = append(resp.VolumesDeleted, name)
+	}
+	return resp, nil
+}
+
+// inUseVolumeNames returns the set of Docker volume names currently
+// referenced by running or pending ECS tasks — used by VolumePrune
+// to avoid deleting access points out from under a live container.
+func (s *Server) inUseVolumeNames() map[string]struct{} {
+	in := make(map[string]struct{})
+	for _, c := range s.PendingCreates.List() {
+		for _, b := range c.HostConfig.Binds {
+			parts := strings.SplitN(b, ":", 3)
+			if len(parts) >= 2 && !strings.HasPrefix(parts[0], "/") {
+				in[parts[0]] = struct{}{}
+			}
+		}
+	}
+	return in
 }

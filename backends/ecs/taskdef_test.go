@@ -1,6 +1,7 @@
 package ecs
 
 import (
+	"context"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -32,7 +33,7 @@ func TestBuildContainerDef_BasicImage(t *testing.T) {
 		HostConfig: api.HostConfig{},
 	})
 
-	def, _ := s.buildContainerDef(ci)
+	def, _, _ := s.buildContainerDef(context.Background(), ci)
 
 	if aws.ToString(def.Image) != "nginx:latest" {
 		t.Fatalf("expected image nginx:latest, got %s", aws.ToString(def.Image))
@@ -77,7 +78,7 @@ func TestBuildContainerDef_Entrypoint(t *testing.T) {
 		HostConfig: api.HostConfig{},
 	})
 
-	def, _ := s.buildContainerDef(ci)
+	def, _, _ := s.buildContainerDef(context.Background(), ci)
 
 	if len(def.EntryPoint) != 2 || def.EntryPoint[0] != "/bin/sh" || def.EntryPoint[1] != "-c" {
 		t.Fatalf("expected entrypoint [/bin/sh -c], got %v", def.EntryPoint)
@@ -94,7 +95,7 @@ func TestBuildContainerDef_Command(t *testing.T) {
 		HostConfig: api.HostConfig{},
 	})
 
-	def, _ := s.buildContainerDef(ci)
+	def, _, _ := s.buildContainerDef(context.Background(), ci)
 
 	if len(def.Command) != 2 || def.Command[0] != "echo" || def.Command[1] != "hello" {
 		t.Fatalf("expected command [echo hello], got %v", def.Command)
@@ -111,7 +112,7 @@ func TestBuildContainerDef_EnvVars(t *testing.T) {
 		HostConfig: api.HostConfig{},
 	})
 
-	def, _ := s.buildContainerDef(ci)
+	def, _, _ := s.buildContainerDef(context.Background(), ci)
 
 	if len(def.Environment) != 2 {
 		t.Fatalf("expected 2 env vars, got %d", len(def.Environment))
@@ -134,7 +135,7 @@ func TestBuildContainerDef_WorkingDir(t *testing.T) {
 		HostConfig: api.HostConfig{},
 	})
 
-	def, _ := s.buildContainerDef(ci)
+	def, _, _ := s.buildContainerDef(context.Background(), ci)
 
 	if aws.ToString(def.WorkingDirectory) != "/app" {
 		t.Fatalf("expected working dir /app, got %s", aws.ToString(def.WorkingDirectory))
@@ -151,7 +152,7 @@ func TestBuildContainerDef_User(t *testing.T) {
 		HostConfig: api.HostConfig{},
 	})
 
-	def, _ := s.buildContainerDef(ci)
+	def, _, _ := s.buildContainerDef(context.Background(), ci)
 
 	if aws.ToString(def.User) != "nobody" {
 		t.Fatalf("expected user 'nobody', got %s", aws.ToString(def.User))
@@ -168,56 +169,18 @@ func TestBuildContainerDef_TTY(t *testing.T) {
 		HostConfig: api.HostConfig{},
 	})
 
-	def, _ := s.buildContainerDef(ci)
+	def, _, _ := s.buildContainerDef(context.Background(), ci)
 
 	if !aws.ToBool(def.PseudoTerminal) {
 		t.Fatal("expected PseudoTerminal=true when Tty=true")
 	}
 }
 
-func TestBuildContainerDef_MountPoints(t *testing.T) {
-	// buildContainerDef assumes ContainerCreate already validated that
-	// AgentEFSID is set when Binds are present (BUG-735). Set it here
-	// so the resulting task def carries a real EFSVolumeConfiguration.
-	s := testServer()
-	s.config.AgentEFSID = "fs-test"
-	ci := testInput(&api.Container{
-		Config: api.ContainerConfig{Image: "alpine"},
-		HostConfig: api.HostConfig{
-			Binds: []string{"/host/data:/container/data", "/host/conf:/container/conf:ro"},
-		},
-	})
-
-	def, vols := s.buildContainerDef(ci)
-
-	if len(vols) != 2 {
-		t.Fatalf("expected 2 volumes, got %d", len(vols))
-	}
-	if len(def.MountPoints) != 2 {
-		t.Fatalf("expected 2 mount points, got %d", len(def.MountPoints))
-	}
-
-	// First mount: read-write
-	if aws.ToString(def.MountPoints[0].ContainerPath) != "/container/data" {
-		t.Fatalf("expected container path /container/data, got %s", aws.ToString(def.MountPoints[0].ContainerPath))
-	}
-	if aws.ToBool(def.MountPoints[0].ReadOnly) {
-		t.Fatal("expected first mount to be read-write")
-	}
-
-	// Second mount: read-only
-	if aws.ToString(def.MountPoints[1].ContainerPath) != "/container/conf" {
-		t.Fatalf("expected container path /container/conf, got %s", aws.ToString(def.MountPoints[1].ContainerPath))
-	}
-	if !aws.ToBool(def.MountPoints[1].ReadOnly) {
-		t.Fatal("expected second mount to be read-only")
-	}
-
-	// Volume names link to mount points
-	if aws.ToString(vols[0].Name) != aws.ToString(def.MountPoints[0].SourceVolume) {
-		t.Fatalf("volume name %q != mount source %q", aws.ToString(vols[0].Name), aws.ToString(def.MountPoints[0].SourceVolume))
-	}
-}
+// Named-volume-to-EFS-access-point resolution lives in volumes.go and
+// requires a live EFS client; it's covered by integration tests
+// against the AWS simulator (`backends/ecs/integration_test.go`).
+// buildContainerDef's no-bind path is exercised by the other
+// TestBuildContainerDef_* unit tests above.
 
 func TestBuildContainerDef_LogConfig(t *testing.T) {
 	s := testServer()
@@ -229,7 +192,7 @@ func TestBuildContainerDef_LogConfig(t *testing.T) {
 		HostConfig: api.HostConfig{},
 	})
 
-	def, _ := s.buildContainerDef(ci)
+	def, _, _ := s.buildContainerDef(context.Background(), ci)
 
 	if def.LogConfiguration == nil {
 		t.Fatal("expected log configuration to be set")

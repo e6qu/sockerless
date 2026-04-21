@@ -19,6 +19,7 @@ type Server struct {
 	ECS          *core.StateStore[ECSState]
 	NetworkState *core.StateStore[NetworkState]
 	ipCounter    atomic.Int32
+	volumeState
 }
 
 // NewServer creates a new ECS backend server.
@@ -28,6 +29,7 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		aws:          awsClients,
 		ECS:          core.NewStateStore[ECSState](),
 		NetworkState: core.NewStateStore[NetworkState](),
+		volumeState:  volumeState{efsAPCache: make(map[string]string)},
 	}
 
 	s.ipCounter.Store(2)
