@@ -187,6 +187,27 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 
 ---
 
+## Per-invocation container state
+
+For long-running containers (ECS tasks, Cloud Run Jobs, ACA Jobs, Cloud Run Services, ACA ContainerApps) the cloud resource IS the container — `docker inspect` / `docker wait` / `docker ps` read directly from `DescribeTasks` / `Execution.status` / `Revision.status`. For **FaaS backends** the cloud function is long-lived but *invocations* are ephemeral, so `docker wait` needs a per-invocation signal, not a function-level one. Each backend has exactly one cloud-native signal for invocation completion + exit code; see [Phase 95 in PLAN.md](../PLAN.md) for the implementation plan.
+
+| Backend | Container-lifecycle resource | Completion signal | Exit-code source |
+|---------|------------------------------|-------------------|------------------|
+| `ecs` | `Task` | `Task.LastStatus=STOPPED` | `Task.Containers[].ExitCode` (already wired via BUG-738) |
+| `lambda` | Function Invocation | `lambda:Invoke` response OR CloudWatch Logs `END RequestId <id>` | `Invoke.FunctionError` ("Unhandled"/"Handled") → 1; 2xx + no error → 0; `REPORT … Status: timeout` → 124 |
+| `cloudrun` (Jobs) | `Execution` | `Execution.conditions[Type=Completed].status=True`; `completionTime` set | `failedCount > 0` → 1; `succeededCount > 0` → 0 |
+| `cloudrun` (Services, UseService=on) | `Revision` | `Revision.conditions` or request completion from service URL | HTTP 2xx → 0; 4xx/5xx → 1; 408 → 124 |
+| `cloudrun-functions` (gcf) | HTTP invocation to `ServiceConfig.Uri` | HTTP response status | 2xx → 0; 4xx/5xx → 1; 408 → 124 |
+| `aca` (Jobs) | `JobExecution` | `JobExecution.properties.status in {Succeeded, Failed, Stopped}`; `endTime` set | `status=Succeeded` → 0; `Failed`/`Stopped` → 1/137 |
+| `aca` (ContainerApps, UseApp=on) | `Revision` + container app logs | Request completion from container-app ingress | HTTP status mapping same as GCF/AZF |
+| `azure-functions` (azf) | HTTP invocation to Function App default host | HTTP response status | Same HTTP mapping as GCF |
+| `docker` | Local container | Daemon events | Daemon-reported |
+
+Rules:
+1. Backends never fabricate an exit code. If the signal isn't yet available (invocation still running / execution not yet `Succeeded`), `docker wait` blocks on the wait channel; it does not return 0 prematurely.
+2. Backends never conflate *function state* with *invocation state*. An `ACTIVE` Lambda / GCF / AZF function with no in-flight invocation still maps to `State.Status=exited` *for a specific container* once that container's invocation is known to have finished — the cloud function resource itself remains `Active` and reusable.
+3. Invocation results that can't be recovered from the cloud (e.g. in-memory `InvocationResults` map lost on backend restart) fall back to the conservative "container is running if its function still exists" view. That's the same invariant `resolveTaskState` already applies for restart-safe state recovery.
+
 ## Volume provisioning per backend
 
 `docker volume create`, `docker volume rm`, `docker volume ls`, `docker volume inspect`, `docker volume prune`, and `-v volname:/mnt` / bind-mount flags currently return `NotImplemented` on every cloud backend (BUG-731): the earlier in-memory metadata store silently accepted volumes but never bound them to any cloud-side storage. The table below is the design for real provisioning, phase by phase.

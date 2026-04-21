@@ -60,33 +60,69 @@ Sockerless targets only the latest generation of each cloud service (no fallback
 
 If operators target an older generation (GCF v1, Azure Functions Consumption plan on older runtimes), the backend fails fast at config validation with a clear "upgrade your function to the supported generation" error rather than degrading silently.
 
-### Phase 95 — Lambda invocation-lifecycle tracker (queued)
+### Phase 95 — FaaS invocation-lifecycle tracker (Lambda + GCF + AZF) (queued)
 
-BUG-744 root cause: Lambda CloudState reports functions as `running` regardless of invocation state — there's no "this invocation completed" signal derivable from `GetFunction`. `docker wait` / `docker inspect` / `docker ps` therefore can't surface an accurate exited state for short-lived Lambda runs, and `docker stop` can't cleanly coordinate with a pending `docker wait`.
+BUG-744 root cause: FaaS backends' CloudState can't distinguish "function is deployed" from "invocation is running". The *function* is `ACTIVE` regardless of invocation state. `docker wait` / `docker inspect` / `docker ps` therefore can't surface an accurate exited state for short-lived runs, and invocation-failure exit codes are lost (the sim returns HTTP 500 with a body but the backend persists no exit code). Same shape on Lambda, GCF, AZF.
 
-Scope:
-- Detect invocation completion from CloudWatch Logs (`END RequestId: <id>`) or a per-container ExitedAt marker owned by the backend (matching the in-memory `WaitChs` pattern — explicitly not a revival of `Store.Containers`).
-- `ContainerStop`: keep the wait channel in the map as a closed channel (or add a separate `Exited` sync.Map) so a subsequent `ContainerWait` sees the stopped state instead of falling through to `CloudState.WaitForExit`.
-- `CloudState.GetContainer` / `ListContainers`: once a container is marked exited, map its state to `{Status: "exited", Running: false, ExitCode: N}` regardless of the Lambda function's `Active` state.
-- Tests re-enable: `TestLambdaContainerLifecycle`, `TestLambdaContainerLogsFollowLazyStream`, `TestLambdaContainerStopUnblocksWait` (deleted in BUG-744 as a stop-gap).
+Each backend has a cloud-native signal for per-invocation completion — the fix is to wire that signal through, not to keep a local dictionary. Exactly *one* resource per invocation is authoritative:
+
+| Backend | Invocation resource | Completion signal | Exit-code source |
+|---|---|---|---|
+| Lambda | `lambda:Invoke` response + CloudWatch Logs `END RequestId` | `InvokeResponse` returns, or log stream gets its terminal `REPORT` line | `FunctionError` (`Unhandled`/`Handled`) ⇒ 1; payload OK ⇒ 0; timeout (`REPORT: … Status: timeout`) ⇒ 124 |
+| GCF | HTTP response from `ServiceConfig.Uri` | HTTP status from the invoke POST | 2xx ⇒ 0; 4xx/5xx ⇒ 1 (function-code crash); 408 ⇒ 124 (timeout) |
+| AZF | HTTP response from Function App default host | HTTP status from the HTTP trigger POST | Same mapping as GCF |
+
+The invocation-driving goroutine in each backend (`ContainerStart` → goroutine that calls `Invoke` / `POST functionURL`) already knows the outcome — it just drops the exit info today. The right design is:
+
+1. **Capture at the source.** The goroutine records `(containerID, exitCode, stoppedAt)` into a small `InvocationResults sync.Map` on the Server struct when the invocation finishes. This is in-memory, crash-scoped (the invocation was one-shot anyway — post-restart the function's done and the user won't call `docker wait` on it). Explicitly not a revival of `Store.Containers`.
+2. **CloudState reads from both.** `GetContainer` / `ListContainers` check `InvocationResults` first — if present, container state is `{Status: "exited", Running: false, ExitCode: N, FinishedAt: T}`. If absent, fall through to cloud lookup (function exists ⇒ `running`; function missing ⇒ `false, nil`).
+3. **ContainerStop becomes cooperative.** Write `{ExitCode: 137}` into `InvocationResults` + close the wait channel. Subsequent `Wait` unblocks; `Inspect` shows exited.
+
+What this buys in terms of Docker CLI coverage:
+- `docker wait` — returns the real invocation exit code (was always 0).
+- `docker inspect` — `State.Status` reflects exited after the invocation completes.
+- `docker ps` (no `-a`) — the exited container drops off.
+- `docker ps -a` — exited containers appear with their exit code.
+- `docker stop` + concurrent `docker wait` — stop unblocks wait (BUG-744 third branch).
+
+Post-restart behaviour (`InvocationResults` gone): `CloudState` sees the cloud function still exists and reports it as `running` until the user removes it. That matches docker's contract for a crashed daemon: state after restart derives from whatever the underlying cloud records — same invariant the rest of the backend already observes.
+
+Tests re-enable: `TestLambdaContainerLifecycle`, `TestLambdaContainerLogsFollowLazyStream`, `TestLambdaContainerStopUnblocksWait`, `TestGCFContainerLifecycle`, `TestGCFArithmeticInvalid`, `TestAZFContainerLifecycle`, `TestAZFArithmeticInvalid` (all deleted as stop-gap for BUG-744).
+
+Simulator work alongside (so live-cloud and simulator behaviour match): the GCP Cloud Functions sim already returns the container's exit code via HTTP status. The AZF sim does the same. The AWS Lambda sim's `Invoke` must set `FunctionError` on non-zero exit and include the last-4KB log tail in the `LogResult` response header — required by the Lambda backend's exit-code derivation.
 
 ### Phase 96 — Reverse-agent exec for Cloud Run Jobs + ACA Jobs (queued)
 
-BUG-745 root cause: Cloud Run Jobs and ACA Jobs have no native `docker exec` equivalent (no control-plane "attach to running container" API). The current backends return a synthetic "not supported" string in the exec stream, which is worse than a clean error because tests can't tell the two apart.
+BUG-745 root cause: Cloud Run Jobs and ACA Jobs have no control-plane "attach to running container" API — the Jobs products' entire abstraction is "submit work, read logs after". Lambda has the same gap and solved it by running an agent *inside* the container that dials back over WebSocket (see `agent/cmd/sockerless-lambda-bootstrap`). We port that pattern to Cloud Run + ACA Jobs.
 
-Scope:
-- Port Lambda's reverse-agent pattern (`sockerless-lambda-bootstrap` + `SOCKERLESS_CALLBACK_URL` WebSocket) to Cloud Run and ACA Jobs — build `sockerless-cloudrun-bootstrap` + `sockerless-aca-bootstrap` images that run the user's ENTRYPOINT+CMD in a subprocess while a parallel goroutine dials the backend's reverse-agent WS for exec frames.
-- Configure backends with a prebuilt overlay image (same `SOCKERLESS_*_PREBUILT_OVERLAY_IMAGE` env-var pattern Lambda already uses).
-- Re-enable `TestCloudRunContainerExec` / `TestACAContainerExec` (deleted in BUG-745) once the overlay images ship.
+Cloud resource mapping:
+
+| Backend | What the agent needs | Where it lives | How the backend reaches it |
+|---|---|---|---|
+| `cloudrun` (Jobs) | A pre-baked overlay image containing `sockerless-cloudrun-bootstrap` as its ENTRYPOINT; the bootstrap execs the user's original entrypoint+cmd in a subprocess AND dials `SOCKERLESS_CALLBACK_URL` over WS. | Published to the operator's Artifact Registry; backend references via `SOCKERLESS_GCR_PREBUILT_OVERLAY_IMAGE` env var (mirrors `SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE`). | Backend listens on `/v1/cloudrun/reverse` WS endpoint; agent container dials via Serverless VPC Access connector or the existing outbound-egress path. |
+| `aca` (Jobs) | Same pattern — `sockerless-aca-bootstrap` image. | Operator's ACR, referenced via `SOCKERLESS_ACA_PREBUILT_OVERLAY_IMAGE`. | Backend listens on `/v1/aca/reverse` WS; agent dials via the Managed Environment's outbound NAT. |
+
+Other scope:
+- Three bootstraps share the exec-handling code in `agent/reverse` (already factored out for Lambda); only the startup-time "how do I know my container ID" differs per cloud (Lambda takes `SOCKERLESS_CONTAINER_ID` env, Cloud Run reads `CLOUD_RUN_TASK_ATTEMPT` + job-execution tags, ACA reads `CONTAINER_APP_NAME` + job-execution tags).
+- Simulator work: the Cloud Run Jobs + ACA Jobs sims need to honour the prebuilt overlay image the same way the Lambda sim already does — just pull + run locally, no push-to-real-registry hoop.
+- Re-enable `TestCloudRunContainerExec` / `TestACAContainerExec` once the overlay images ship.
 
 ### Phase 97 — Docker labels on FaaS/GCP backends (queued)
 
-BUG-746 root cause: the Docker label map is serialised as JSON and stored in a single GCP label (`sockerless_labels`). GCP label values can only contain `[a-z0-9_-]` — JSON chars (`{`, `:`, `"`) are rejected by the real API, and the simulator silently drops invalid values. So `docker ps --filter label=arith-test=cloudrun` can't match a container whose labels never survived the round-trip.
+BUG-746 root cause: the Docker label map is serialised as JSON and stored in a single GCP *label* (`sockerless_labels`). GCP label values are `[a-z0-9_-]{0,63}` — JSON's `{`, `:`, `"` are rejected by the real API, the sim silently drops them, so `docker ps --filter label=…` can never match a container whose labels never survived the round-trip. ECS already uses AWS tags (no char restrictions) and works.
 
-Scope:
-- Switch the encoding from "JSON-in-label" to GCP **annotations** (arbitrary string values, 256 KB each) on Cloud Run Jobs + Services and Cloud Functions. Azure Functions uses App Settings (which already allow arbitrary strings) — same mechanism; just move to a different key prefix.
-- Update `core.TagSet` / `ParseLabelsFromTags` to read from the new location.
-- Keep a one-release back-compat window that still parses the old `sockerless_labels` key; drop it once redeployed.
+Per-cloud resource with arbitrary string values (where Docker labels should actually live):
+
+| Backend | Cloud resource that accepts arbitrary strings | Conventions |
+|---|---|---|
+| `cloudrun` (Jobs + Services) | **Annotations** on `Job` / `Service` (up to 256 KB per value) | Dedicated keys: `sockerless.dev/labels` for the JSON blob, `sockerless.dev/<kv>` for individual labels large enough to filter on without parsing JSON. |
+| `cloudrun-functions` (gcf) | **Annotations** on `Function` | Same convention as `cloudrun`. |
+| `aca` (Jobs + Apps) | **Tags** on the resource (Azure tag values allow any string) OR **Metadata** on the container template | Prefer tags — `docker ps --filter` can map to Azure's `resource tags` filter directly. |
+| `azure-functions` (azf) | **App Settings** (already arbitrary strings) OR **Tags** | Tags for filterability, App Settings for anything the runtime itself reads. |
+
+Other scope:
+- Update `core.TagSet.AsGCPLabels` / `AsGCPAnnotations` split so individual label keys sit in GCP labels when they're `[a-z0-9_-]{0,63}` (docker-ps filter path stays fast), and the JSON blob goes to an annotation only.
+- Simulator work: the GCP sim's `Function`, `Job`, `Service` resources all already carry annotation maps; add round-trip coverage for arbitrary string values.
 - Re-enable the label-filter assertions in `Test{CloudRun,ACA,GCF,AZF}ArithmeticWithLabels` (removed in BUG-746).
 
 ### Phase 68 — Multi-Tenant Backend Pools (queued)

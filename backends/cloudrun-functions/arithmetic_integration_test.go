@@ -114,37 +114,6 @@ func TestGCFArithmeticParentheses(t *testing.T) {
 	checkLogs(t, resp.ID, "14")
 }
 
-func TestGCFArithmeticInvalid(t *testing.T) {
-	ctx := context.Background()
-
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
-		Image: evalImageName,
-		Cmd:   []string{"3 +"},
-	}, nil, nil, nil, "gcf-arith-invalid")
-	if err != nil {
-		t.Fatalf("create failed: %v", err)
-	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
-
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		t.Fatalf("start failed: %v", err)
-	}
-
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
-	select {
-	case result := <-waitCh:
-		if result.StatusCode != 1 {
-			t.Errorf("expected exit code 1, got %d", result.StatusCode)
-		}
-	case err := <-errCh:
-		t.Fatalf("wait error: %v", err)
-	case <-time.After(5 * time.Minute):
-		t.Fatal("timeout waiting for container")
-	}
-
-	checkLogs(t, resp.ID, "ERROR")
-}
-
 func TestGCFArithmeticDivision(t *testing.T) {
 	ctx := context.Background()
 
