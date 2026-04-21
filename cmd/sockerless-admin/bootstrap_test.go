@@ -127,7 +127,7 @@ func TestBackendEnvAZF(t *testing.T) {
 }
 
 func TestBackendArgs(t *testing.T) {
-	args := BackendArgs(9100, "info")
+	args := BackendArgs(3375, "info")
 	if len(args) != 4 {
 		t.Fatalf("expected 4 args, got %d", len(args))
 	}
