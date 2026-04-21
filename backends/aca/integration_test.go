@@ -113,21 +113,30 @@ func TestMain(m *testing.M) {
 	}
 	fmt.Printf("[sim] simulator-azure is ready at %s\n", simURL)
 
-	// Pre-create the storage account in the sim so Phase 93 named-volume
-	// provisioning can land file shares under it. The operator would do
-	// this out-of-band in production; the test harness does it via a
-	// direct ARM PUT.
-	storageURL := simURL + "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/sim-rg/providers/Microsoft.Storage/storageAccounts/simstorage?api-version=2023-01-01"
-	storageBody := `{"location":"eastus","sku":{"name":"Standard_LRS"},"kind":"StorageV2","properties":{}}`
-	req, _ := http.NewRequest("PUT", storageURL, strings.NewReader(storageBody))
-	req.Header.Set("Content-Type", "application/json")
-	if resp, err := http.DefaultClient.Do(req); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create storage account in sim: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	} else {
+	// Pre-create the storage account + managed environment in the sim
+	// so Phase 93 named-volume provisioning can land file shares + the
+	// managedEnvironmentsStorages link. The operator would do both
+	// out-of-band in production; the test harness does them via direct
+	// ARM PUTs.
+	preCreate := func(url, body string) {
+		req, _ := http.NewRequest("PUT", url, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to pre-create sim resource %s: %v\n", url, err)
+			cleanup()
+			os.Exit(1)
+		}
 		resp.Body.Close()
 	}
+	preCreate(
+		simURL+"/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/sim-rg/providers/Microsoft.Storage/storageAccounts/simstorage?api-version=2023-01-01",
+		`{"location":"eastus","sku":{"name":"Standard_LRS"},"kind":"StorageV2","properties":{}}`,
+	)
+	preCreate(
+		simURL+"/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/sim-rg/providers/Microsoft.App/managedEnvironments/sockerless?api-version=2024-03-01",
+		`{"location":"eastus","properties":{}}`,
+	)
 
 	// Build backend
 	backendDir := repoRoot + "/backends/aca"
