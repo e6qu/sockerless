@@ -2,24 +2,26 @@
 
 Docker-compatible REST API that runs containers on cloud backends (ECS, Lambda, Cloud Run, GCF, ACA, AZF) or local Docker. 7 backends, 3 cloud simulators, validated against SDKs / CLIs / Terraform.
 
-89 phases, 757 tasks, 737 bugs tracked — 732 fixed, 5 open. See [STATUS.md](STATUS.md) for the current roll-up, [BUGS.md](BUGS.md) for the bug log, [PLAN.md](PLAN.md) for the roadmap, [specs/](specs/) for architecture specs (start with [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md)).
+89 phases, 757 tasks, 737 bugs tracked — 734 fixed, 3 open. See [STATUS.md](STATUS.md) for the current roll-up, [BUGS.md](BUGS.md) for the bug log, [PLAN.md](PLAN.md) for the roadmap, [specs/](specs/) for architecture specs (start with [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md)).
 
 ## Phase 90 — No-fakes / no-fallbacks audit (in progress 2026-04-21)
 
 Project-wide audit against the "no fakes, no fallbacks, no placeholders" principle. Every workaround, silent substitution, or placeholder field now gets treated as a bug — not a "known limitation". BUG-729 through BUG-737 were filed from the first sweep.
 
 Fixed in-session:
-- **BUG-730** — Core `ImagePullWithMetadata` stopped synthesising ID / size / layers when registry metadata fetch failed. `FetchImageMetadata` now propagates the real error. Opt-in `SOCKERLESS_SKIP_IMAGE_CONFIG=true` path preserved as an explicit choice but flagged for full removal (BUG-737).
+- **BUG-729** — SSM ack wire format rewritten to match AWS's `SerializeClientMessageWithAcknowledgeContent`: `Flags=3` and UUID packed as LSL at offset 64 + MSL at offset 72 (AWS Java-style `putUuid`). Sim mirrored. `ssmDecoder.seenIDs` dedupe workaround removed. Unit tests pin the wire layout + JSON body + no-dedupe.
+- **BUG-730** — Core `ImagePullWithMetadata` stopped synthesising ID / size / layers when registry metadata fetch failed. `FetchImageMetadata` now propagates the real error. `SOCKERLESS_SKIP_IMAGE_CONFIG` opt-in retained pending BUG-737.
+- **BUG-731** — `VolumeCreate` / `VolumeRemove` / `VolumeInspect` / `VolumeList` / `VolumePrune` on ECS/Lambda/Cloud Run/ACA return `NotImplemented` with a clear per-cloud message. Dead `VolumeState` structs + placeholder fields deleted.
 - **BUG-732** — Dead `cloudrun.NetworkState.FirewallRuleName` placeholder field deleted.
-- **BUG-733** — ECS stats no longer fabricates `PIDs: 1` when CloudWatch has no data yet; returns 0 instead.
+- **BUG-733** — ECS stats no longer fabricates `PIDs: 1` when CloudWatch has no data yet; returns 0.
 - **BUG-734** — ECS `getNamespaceName` propagates the underlying error instead of silently substituting the raw namespace ID for the name.
 
-Open (decisions made, fixes pending):
-- **BUG-729** — SSM ack workaround (live-AWS path); requires agent-side reverse-engineering.
-- **BUG-731** — `VolumeCreate` on ECS/Lambda/Cloud Run/ACA will return `NotImplemented` (silent metadata-only store elevated to a clean failure); real per-cloud volume provisioning tracked as separate phases.
-- **BUG-735** — ECS silently substituting empty scratch volumes for bind mounts when EFS isn't configured.
+Open (decisions made, fixes in progress):
+- **BUG-735** — ECS silently substituting empty scratch volumes for bind mounts when EFS isn't configured. Next up.
 - **BUG-736** — Cloud Run + ACA silently dropping `HostConfig.Binds` on the floor.
-- **BUG-737** — Remove `SOCKERLESS_SKIP_IMAGE_CONFIG` opt-out; require real registry metadata always; simulators must serve full `/v2/` manifest + config endpoints.
+- **BUG-737** — Remove `SOCKERLESS_SKIP_IMAGE_CONFIG` opt-out entirely; require real registry metadata always.
+
+Follow-up queued as phases 91-94: real per-cloud volume provisioning (EFS access points, GCS bucket mounts, Azure Files shares) with matching simulator slices. Designs in `specs/CLOUD_RESOURCE_MAPPING.md` under "Volume provisioning per backend".
 
 ## Phase 89 — Stateless backend audit (2026-04-21)
 
