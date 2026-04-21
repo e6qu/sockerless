@@ -1,6 +1,6 @@
 # Known Bugs
 
-**739 total — 735 fixed, 4 open, 1 false positive.**
+**740 total — 736 fixed, 4 open, 1 false positive.**
 
 For narrative context see [WHAT_WE_DID.md](WHAT_WE_DID.md) and [PLAN.md](PLAN.md). Architecture-level state derivation is documented in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) and [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md).
 
@@ -19,6 +19,7 @@ Standing workflow rule: every CI / live-cloud failure lands here with a short ro
 
 | ID | Sev | Area | Summary |
 |----|-----|------|---------|
+| 740 | H | ci | ECS / Cloud Run / ACA / GCF / AZF integration TestMains built and started a `sockerless-docker-frontend` binary from `../../frontends/docker` — a path that doesn't exist post-P67 (the frontend is in-process on the backend itself, which is what the Lambda integration test already does). CI failed with `chdir ../../frontends/docker: no such file or directory` once BUG-727 enabled integration in CI. Fix: dropped the frontend build + unix-socket frontend launch from all 5 files; docker client now points at `tcp://localhost:{backendPort}` directly (Lambda-style). |
 | 739 | H | ci | Backend integration `TestMain` builds (simulator-{aws,gcp,azure}, per-backend binaries, docker frontend) omitted `-tags noui`, so every unit CI run crashed with `ui_embed.go:12 pattern all:dist: no matching files found`. Added `-tags noui` to every sub-build across ECS / Lambda / Cloud Run / GCF / ACA / AZF integration tests. Lambda bootstrap (agent package, no UI) stays tag-less. |
 | 731 | H | all-cloud | `VolumeCreate` / `VolumeRemove` / `VolumeInspect` / `VolumeList` / `VolumePrune` on ECS/Lambda/Cloud Run/ACA/GCF/AZF now return `NotImplemented` with a clear per-cloud message — no more silent metadata-only store. Dead placeholder fields deleted (`aca.VolumeState.ShareName`, `cloudrun.VolumeState.BucketPath`, ECS `VolumeState` struct entirely). Core HTTP volume handlers (handle_volumes.go) route through `s.self.Volume*` so overrides fire. Real per-cloud volume provisioning (EFS / GCS / Azure Files) tracked as Phases 91-94 in PLAN.md. |
 | 729 | M | ecs | SSM ack wire format rewritten to match AWS's `SerializeClientMessageWithAcknowledgeContent`: `Flags=3` (SYN\|FIN) and UUID packed as LSL at offset 64 + MSL at offset 72 (AWS Java-style `putUuid`) — previously both were wrong, which is why the live agent rejected every ack and retransmitted. Sim-side frame builder mirrored. The BUG-721 `ssmDecoder.seenIDs` dedupe workaround removed. Unit tests pin flags + UUID layout + JSON body + no-dedupe. |
