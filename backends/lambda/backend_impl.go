@@ -152,52 +152,56 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		Labels:      config.Labels,
 	}
 
-	// Resolve image to ECR URI (Lambda only supports ECR images)
-	imageURI, err := s.resolveImageURI(s.ctx(), config.Image)
-	if err != nil {
-		return nil, &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", config.Image, err)}
-	}
-
-	// Put the reverse-agent overlay image into play when CallbackURL
-	// is set so `docker exec` / `docker attach` can reach a running
-	// invocation. Two paths:
-	// - PrebuiltOverlayImage configured: operator ships their own
-	// agent-baked image; use it directly.
-	// - Otherwise: build + push an overlay on top of the user's image
-	// via BuildAndPushOverlayImage. Failure falls back to the base
-	// image with a warning (exec will not work in that case).
-	if s.config.CallbackURL != "" {
-		if s.config.PrebuiltOverlayImage != "" {
-			imageURI = s.config.PrebuiltOverlayImage
+	// Resolve the image URI. If the operator shipped a pre-baked
+	// overlay (PrebuiltOverlayImage) and we're in reverse-agent mode
+	// (CallbackURL set), the user's Image is irrelevant — the Lambda
+	// function runs the operator's image, and the user's original
+	// entrypoint+cmd are passed via env vars. Skip ECR resolution
+	// entirely in that case; the prebuilt image is expected to be
+	// already pushed to ECR (or resolvable locally in integration).
+	var imageURI string
+	switch {
+	case s.config.CallbackURL != "" && s.config.PrebuiltOverlayImage != "":
+		imageURI = s.config.PrebuiltOverlayImage
+		envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
+		envVars["SOCKERLESS_CONTAINER_ID"] = id
+		if len(config.Entrypoint) > 0 {
+			envVars["SOCKERLESS_USER_ENTRYPOINT"] = strings.Join(config.Entrypoint, ":")
+		}
+		if len(config.Cmd) > 0 {
+			envVars["SOCKERLESS_USER_CMD"] = strings.Join(config.Cmd, ":")
+		}
+	case s.config.CallbackURL != "":
+		// Build + push an overlay on top of the user's image. Resolve
+		// the base image first so the Dockerfile's FROM can reference
+		// something Lambda can pull.
+		base, err := s.resolveImageURI(s.ctx(), config.Image)
+		if err != nil {
+			return nil, &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", config.Image, err)}
+		}
+		imageURI = base
+		spec := OverlayImageSpec{
+			BaseImageRef:        imageURI,
+			AgentBinaryPath:     s.config.AgentBinaryPath,
+			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+			UserEntrypoint:      config.Entrypoint,
+			UserCmd:             config.Cmd,
+		}
+		destRef := fmt.Sprintf("%s-overlay-%s", strings.TrimSuffix(imageURI, ":latest"), id[:12])
+		overlay, buildErr := BuildAndPushOverlayImage(s.ctx(), spec, destRef)
+		if buildErr != nil {
+			s.Logger.Warn().Err(buildErr).Str("image", imageURI).
+				Msg("overlay build failed; falling back to base image (docker exec will not work)")
+		} else {
+			imageURI = overlay.ImageURI
 			envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
 			envVars["SOCKERLESS_CONTAINER_ID"] = id
-			// Pass the user entrypoint+cmd as env vars — the pre-baked
-			// overlay image does not embed them (unlike the
-			// RenderOverlayDockerfile path which writes ENV lines).
-			if len(config.Entrypoint) > 0 {
-				envVars["SOCKERLESS_USER_ENTRYPOINT"] = strings.Join(config.Entrypoint, ":")
-			}
-			if len(config.Cmd) > 0 {
-				envVars["SOCKERLESS_USER_CMD"] = strings.Join(config.Cmd, ":")
-			}
-		} else {
-			spec := OverlayImageSpec{
-				BaseImageRef:        imageURI,
-				AgentBinaryPath:     s.config.AgentBinaryPath,
-				BootstrapBinaryPath: s.config.BootstrapBinaryPath,
-				UserEntrypoint:      config.Entrypoint,
-				UserCmd:             config.Cmd,
-			}
-			destRef := fmt.Sprintf("%s-overlay-%s", strings.TrimSuffix(imageURI, ":latest"), id[:12])
-			overlay, err := BuildAndPushOverlayImage(s.ctx(), spec, destRef)
-			if err != nil {
-				s.Logger.Warn().Err(err).Str("image", imageURI).
-					Msg("overlay build failed; falling back to base image (docker exec will not work)")
-			} else {
-				imageURI = overlay.ImageURI
-				envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
-				envVars["SOCKERLESS_CONTAINER_ID"] = id
-			}
+		}
+	default:
+		var resolveErr error
+		imageURI, resolveErr = s.resolveImageURI(s.ctx(), config.Image)
+		if resolveErr != nil {
+			return nil, &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", config.Image, resolveErr)}
 		}
 	}
 

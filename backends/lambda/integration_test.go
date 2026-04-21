@@ -20,8 +20,6 @@ import (
 )
 
 var dockerClient *client.Client
-var evalBinaryPath string
-var evalImageName string
 
 // State shared with the agent-e2e test. Populated by TestMain when
 // SOCKERLESS_INTEGRATION=1, consumed by the e2e test that drives
@@ -59,33 +57,6 @@ func TestMain(m *testing.M) {
 		for i := len(cleanups) - 1; i >= 0; i-- {
 			cleanups[i]()
 		}
-	}
-
-	// Build eval-arithmetic binary (static linux/amd64, to be embedded
-	// in a Docker image the container runtime can actually execute).
-	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
-	evalBinaryPath = evalDir + "/eval-arithmetic"
-	fmt.Println("[sim] Building eval-arithmetic (linux/amd64)...")
-	evalBuild := exec.Command("go", "build", "-o", "eval-arithmetic", ".")
-	evalBuild.Dir = evalDir
-	evalBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=amd64")
-	evalBuild.Stdout = os.Stderr
-	evalBuild.Stderr = os.Stderr
-	if err := evalBuild.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Bake the binary into a local Docker image so the container can
-	// actually run it.
-	evalImageName = "sockerless-eval-arithmetic:test"
-	fmt.Printf("[sim] Building %s...\n", evalImageName)
-	evalDockerfile := "FROM alpine:latest\nCOPY eval-arithmetic /usr/local/bin/eval-arithmetic\nENTRYPOINT [\"/usr/local/bin/eval-arithmetic\"]\n"
-	evalImageBuild := exec.Command("docker", "build", "-t", evalImageName, "-f", "-", evalDir)
-	evalImageBuild.Stdin = strings.NewReader(evalDockerfile)
-	if out, err := evalImageBuild.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic image: %v\n%s", err, out)
-		os.Exit(1)
 	}
 
 	// Build simulator
