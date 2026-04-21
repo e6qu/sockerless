@@ -113,6 +113,22 @@ func TestMain(m *testing.M) {
 	}
 	fmt.Printf("[sim] simulator-azure is ready at %s\n", simURL)
 
+	// Pre-create the storage account in the sim so Phase 93 named-volume
+	// provisioning can land file shares under it. The operator would do
+	// this out-of-band in production; the test harness does it via a
+	// direct ARM PUT.
+	storageURL := simURL + "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/sim-rg/providers/Microsoft.Storage/storageAccounts/simstorage?api-version=2023-01-01"
+	storageBody := `{"location":"eastus","sku":{"name":"Standard_LRS"},"kind":"StorageV2","properties":{}}`
+	req, _ := http.NewRequest("PUT", storageURL, strings.NewReader(storageBody))
+	req.Header.Set("Content-Type", "application/json")
+	if resp, err := http.DefaultClient.Do(req); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create storage account in sim: %v\n", err)
+		cleanup()
+		os.Exit(1)
+	} else {
+		resp.Body.Close()
+	}
+
 	// Build backend
 	backendDir := repoRoot + "/backends/aca"
 	backendBinary := backendDir + "/sockerless-backend-aca"

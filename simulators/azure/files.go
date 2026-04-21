@@ -78,13 +78,14 @@ type FileShare struct {
 
 // FileShareProperties holds the properties of a file share.
 type FileShareProperties struct {
-	ShareQuota        int    `json:"shareQuota,omitempty"`
-	AccessTier        string `json:"accessTier,omitempty"`
-	EnabledProtocols  string `json:"enabledProtocols,omitempty"`
-	ProvisioningState string `json:"provisioningState,omitempty"`
-	LastModifiedTime  string `json:"lastModifiedTime,omitempty"`
-	LeaseStatus       string `json:"leaseStatus,omitempty"`
-	LeaseState        string `json:"leaseState,omitempty"`
+	ShareQuota        int               `json:"shareQuota,omitempty"`
+	AccessTier        string            `json:"accessTier,omitempty"`
+	EnabledProtocols  string            `json:"enabledProtocols,omitempty"`
+	ProvisioningState string            `json:"provisioningState,omitempty"`
+	LastModifiedTime  string            `json:"lastModifiedTime,omitempty"`
+	LeaseStatus       string            `json:"leaseStatus,omitempty"`
+	LeaseState        string            `json:"leaseState,omitempty"`
+	Metadata          map[string]string `json:"metadata,omitempty"`
 }
 
 // Package-level store for dashboard access.
@@ -262,6 +263,7 @@ func registerAzureFiles(srv *sim.Server) {
 				LastModifiedTime:  time.Now().UTC().Format(time.RFC3339),
 				LeaseStatus:       "Unlocked",
 				LeaseState:        "Available",
+				Metadata:          req.Properties.Metadata,
 			},
 		}
 
