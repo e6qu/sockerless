@@ -233,7 +233,7 @@ The NAT Gateway is the largest fixed cost. For development, consider destroying 
 
 **Container image not found:** ECS pulls images at runtime. Ensure the image is accessible from the Fargate task (public images or ECR).
 
-**nginx / long-running images exit immediately:** This was caused by BUG-591 (fixed). The image's real Cmd/Entrypoint must be fetched from the registry. Ensure the backend can reach Docker Hub or your private registry. If using a proxy or restrictive network, set `SOCKERLESS_SKIP_IMAGE_CONFIG=true` and specify Cmd/Entrypoint explicitly in `docker create`.
+**nginx / long-running images exit immediately:** The image's real Cmd/Entrypoint must be fetched from the registry. Ensure the backend can reach Docker Hub or your private registry; an egress policy that blocks the registry surfaces as a pull-time error rather than a silent placeholder.
 
 **Orphaned containers from prior sessions:** The backend stores container state in memory. Restarting the backend clears all state. Orphaned ECS tasks can be found via `aws ecs list-tasks --cluster <name>` and stopped manually.
 
