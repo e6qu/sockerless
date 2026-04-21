@@ -1,6 +1,6 @@
 # Known Bugs
 
-**754 total — 743 fixed, 11 open, 1 false positive.**
+**755 total — 744 fixed, 11 open, 1 false positive — BUG-755 is the fixed tidy entry.**
 
 For narrative context see [WHAT_WE_DID.md](WHAT_WE_DID.md) and [PLAN.md](PLAN.md). Architecture-level state derivation is documented in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) and [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md).
 
@@ -26,6 +26,7 @@ Standing workflow rule: every CI / live-cloud failure lands here with a short ro
 
 | ID | Sev | Area | Summary |
 |----|-----|------|---------|
+| 755 | L | ci | CI build-check failed on the Phase 94 prereq / AWS lift commit (`8fd555d`) — `backends/lambda` imported `backends/aws-common`, but aws-common's `go mod tidy` bumped `aws-sdk-go-v2` 1.41.5→1.41.6 + `smithy-go` 1.24.2→1.25.0 + pulled in the EFS SDK as transitive, and lambda's go.mod still pinned the older versions. Go's build graph flagged it as `go: updates to go.mod needed; to update it: go mod tidy`. Fix: `go mod tidy` on `backends/lambda`, `backends/azure-functions` (which picked up `armstorage` as transitive of azure-common), and `go.work.sum` — all in commit `3c3c4dd`. Follow-up to prevent a repeat: shared-helper lifts must `go mod tidy` every importer, not just the shared module itself. |
 | 735 | H | ecs | `backends/ecs/taskdef.go::buildContainerDef` silently built a Fargate scratch volume when `Binds` was set but `SOCKERLESS_ECS_AGENT_EFS_ID` was unset — docker clients saw the mount path appear but it was empty and non-persistent. Initial fix rejected `Binds` up-front with a config error; **superseded by Phase 91** which provisions a sockerless-owned EFS filesystem + per-volume access point on demand, so named-volume binds (`-v name:/mnt`) now persist across runs. Host-path binds (`-v /h:/c`) remain rejected — Fargate has no host filesystem to bind from. |
 | 736 | H | cloudrun/aca | Cloud Run Jobs/Services and ACA Jobs/Apps silently dropped `HostConfig.Binds` on the floor — `docker run -v /h:/c` completed on a container that had no mount. Fix: `ContainerCreate` on both backends rejects `Binds` up-front with an `InvalidParameterError`. Real mount support is Phase 92 (Cloud Run GCS) and Phase 93 (ACA Azure Files); the rejection is the interim contract. |
 | 737 | M | core | `SOCKERLESS_SKIP_IMAGE_CONFIG=true` opt-out deleted entirely. `ImagePullWithMetadata` now requires non-nil metadata — callers that can't fetch it fail with the underlying registry error (matches what BUG-730 already enforced for the normal path). `FetchImageMetadata` no longer special-cases the env var; the synthetic placeholder branch (deterministic hash ID, `amd64`/`linux` stubs, `/bin/sh` Cmd) is gone. Registry slices in the simulators already serve real `/v2/` manifests + config blobs for every published image, so no fallback is needed for the sim path either. |
