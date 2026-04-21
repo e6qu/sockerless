@@ -2,10 +2,39 @@ package azf
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"strings"
+	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 	"github.com/sockerless/api"
+	azurecommon "github.com/sockerless/azure-common"
 )
+
+// shareToVolume converts a sockerless-managed Azure Files share into a
+// Docker-API Volume entry. Mirrors ACA's helper.
+func shareToVolume(dockerName, storageAccount string, sh *armstorage.FileShareItem) *api.Volume {
+	shareName := ""
+	if sh.Name != nil {
+		shareName = *sh.Name
+	}
+	created := ""
+	if sh.Properties != nil && sh.Properties.LastModifiedTime != nil {
+		created = sh.Properties.LastModifiedTime.UTC().Format(time.RFC3339Nano)
+	}
+	return &api.Volume{
+		Name:       dockerName,
+		Driver:     "azurefile",
+		Mountpoint: fmt.Sprintf("//%s.file.core.windows.net/%s", storageAccount, shareName),
+		Scope:      "local",
+		Options: map[string]string{
+			"storageAccount": storageAccount,
+			"share":          shareName,
+		},
+		CreatedAt: created,
+	}
+}
 
 // Container methods with resolution.
 
@@ -195,26 +224,105 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 	return s.BaseServer.SystemEvents(opts)
 }
 
-// Named-volume operations are not supported by the AZF backend.
-// Azure Functions invocations run on ephemeral containers — there's
-// no stable cross-invocation mount. Durable shared storage should
-// come from Azure Files / Blob directly.
+// Phase 94: named-volume operations provision sockerless-managed Azure
+// Files shares via azurecommon.FileShareManager (shared with ACA).
+// Shares are attached to the function site at ContainerStart time via
+// WebApps.UpdateAzureStorageAccounts (see volumes.go).
+//
+// Host-path bind specs (/h:/c) stay rejected — AZF containers have no
+// host filesystem.
 func (s *Server) VolumeCreate(req *api.VolumeCreateRequest) (*api.Volume, error) {
-	return nil, &api.NotImplementedError{Message: "AZF backend does not support named volumes; Azure Functions invocations are ephemeral"}
+	if req == nil || req.Name == "" {
+		return nil, &api.InvalidParameterError{Message: "volume name is required"}
+	}
+	shareName, err := s.shareForVolume(s.ctx(), req.Name)
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("provision Azure Files share for %q: %v", req.Name, err)}
+	}
+	return &api.Volume{
+		Name:       req.Name,
+		Driver:     "azurefile",
+		Mountpoint: fmt.Sprintf("//%s.file.core.windows.net/%s", s.config.StorageAccount, shareName),
+		Labels:     req.Labels,
+		Scope:      "local",
+		Options: map[string]string{
+			"storageAccount": s.config.StorageAccount,
+			"share":          shareName,
+		},
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}, nil
 }
 
 func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
-	return nil, &api.NotImplementedError{Message: "AZF backend does not support named volumes"}
+	shares, err := s.listManagedShares(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("list managed Azure Files shares: %v", err)}
+	}
+	for _, sh := range shares {
+		if azurecommon.ShareVolumeName(sh) == azurecommon.SanitiseMetaValue(name) {
+			return shareToVolume(name, s.config.StorageAccount, sh), nil
+		}
+	}
+	return nil, &api.NotFoundError{Resource: "volume", ID: name}
 }
 
 func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListResponse, error) {
-	return nil, &api.NotImplementedError{Message: "AZF backend does not support named volumes"}
+	shares, err := s.listManagedShares(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("list managed Azure Files shares: %v", err)}
+	}
+	vols := make([]*api.Volume, 0, len(shares))
+	for _, sh := range shares {
+		vols = append(vols, shareToVolume(azurecommon.ShareVolumeName(sh), s.config.StorageAccount, sh))
+	}
+	return &api.VolumeListResponse{Volumes: vols}, nil
 }
 
-func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
-	return nil, &api.NotImplementedError{Message: "AZF backend does not support named volumes"}
-}
-
+// VolumeRemove deletes the Azure Files share backing a Docker volume.
+// Any AZF site attachments must be removed first — the site's
+// azurestorageaccounts dictionary is not rewritten here; operators
+// remove the function app (or edit the dictionary) before removing the
+// volume.
 func (s *Server) VolumeRemove(name string, force bool) error {
-	return &api.NotImplementedError{Message: "AZF backend does not support named volumes"}
+	if err := s.deleteShareForVolume(s.ctx(), name); err != nil {
+		return &api.ServerError{Message: fmt.Sprintf("delete Azure Files share for %q: %v", name, err)}
+	}
+	return nil
+}
+
+// VolumePrune deletes every sockerless-managed Azure Files share that
+// isn't currently referenced by a pending container's binds.
+func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
+	shares, err := s.listManagedShares(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("list managed Azure Files shares: %v", err)}
+	}
+	in := s.inUseVolumeNames()
+	resp := &api.VolumePruneResponse{}
+	for _, sh := range shares {
+		name := azurecommon.ShareVolumeName(sh)
+		if _, busy := in[name]; busy {
+			continue
+		}
+		if err := s.deleteShareForVolume(s.ctx(), name); err != nil {
+			return nil, &api.ServerError{Message: fmt.Sprintf("delete Azure Files share for %q: %v", name, err)}
+		}
+		resp.VolumesDeleted = append(resp.VolumesDeleted, name)
+	}
+	return resp, nil
+}
+
+// inUseVolumeNames returns Docker volume names currently referenced by
+// pending container binds.
+func (s *Server) inUseVolumeNames() map[string]struct{} {
+	in := make(map[string]struct{})
+	for _, c := range s.PendingCreates.List() {
+		for _, b := range c.HostConfig.Binds {
+			parts := strings.SplitN(b, ":", 3)
+			if len(parts) >= 2 && !strings.HasPrefix(parts[0], "/") {
+				in[parts[0]] = struct{}{}
+			}
+		}
+	}
+	return in
 }

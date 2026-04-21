@@ -11,6 +11,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/monitor/azquery"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v4"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 )
 
 type fakeCredential struct{}
@@ -24,6 +25,13 @@ type AzureClients struct {
 	WebApps *armappservice.WebAppsClient
 	Logs    *azquery.LogsClient
 	Cred    azcore.TokenCredential
+
+	// Phase 94: FileShares provisions sockerless-managed Azure Files
+	// shares (shared with ACA via azurecommon.FileShareManager);
+	// StorageAccounts fetches the access key at mount-attach time so
+	// rotated keys take effect without a restart.
+	FileShares      *armstorage.FileSharesClient
+	StorageAccounts *armstorage.AccountsClient
 }
 
 // NewAzureClients initializes Azure SDK clients.
@@ -66,10 +74,21 @@ func newAzureClientsWithEndpoint(subscriptionID string, endpointURL string) (*Az
 		return nil, err
 	}
 
+	fileShares, err := armstorage.NewFileSharesClient(subscriptionID, cred, opts)
+	if err != nil {
+		return nil, err
+	}
+	storageAccounts, err := armstorage.NewAccountsClient(subscriptionID, cred, opts)
+	if err != nil {
+		return nil, err
+	}
+
 	return &AzureClients{
-		WebApps: webAppsClient,
-		Logs:    logsClient,
-		Cred:    cred,
+		WebApps:         webAppsClient,
+		Logs:            logsClient,
+		Cred:            cred,
+		FileShares:      fileShares,
+		StorageAccounts: storageAccounts,
 	}, nil
 }
 
@@ -89,9 +108,20 @@ func newAzureClientsDefault(subscriptionID string) (*AzureClients, error) {
 		return nil, err
 	}
 
+	fileShares, err := armstorage.NewFileSharesClient(subscriptionID, cred, nil)
+	if err != nil {
+		return nil, err
+	}
+	storageAccounts, err := armstorage.NewAccountsClient(subscriptionID, cred, nil)
+	if err != nil {
+		return nil, err
+	}
+
 	return &AzureClients{
-		WebApps: webAppsClient,
-		Logs:    logsClient,
-		Cred:    cred,
+		WebApps:         webAppsClient,
+		Logs:            logsClient,
+		Cred:            cred,
+		FileShares:      fileShares,
+		StorageAccounts: storageAccounts,
 	}, nil
 }

@@ -72,6 +72,20 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		hostConfig.NetworkMode = "default"
 	}
 
+	// Phase 94: named-volume binds are allowed (`-v volName:/mnt[:ro]`)
+	// and attached to the function site via WebApps.UpdateAzureStorageAccounts
+	// after BeginCreateOrUpdate returns. Host-path binds (`/h:/c`) are
+	// rejected — AZF containers have no host filesystem.
+	for _, b := range hostConfig.Binds {
+		parts := strings.SplitN(b, ":", 3)
+		if len(parts) < 2 {
+			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("invalid bind %q: expected src:dst[:mode]", b)}
+		}
+		if strings.HasPrefix(parts[0], "/") || strings.HasPrefix(parts[0], ".") {
+			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("host-path binds are not supported on Azure Functions; use a named volume (docker volume create + -v name:%s)", parts[1])}
+		}
+	}
+
 	path := ""
 	var args []string
 	if len(config.Entrypoint) > 0 {
@@ -221,6 +235,17 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		_, _ = s.azure.WebApps.Delete(s.ctx(), s.config.ResourceGroup, funcAppName, nil)
 		s.Logger.Error().Err(err).Str("functionApp", funcAppName).Msg("Function App creation failed")
 		return nil, azurecommon.MapAzureError(err, "function app", funcAppName)
+	}
+
+	// Phase 94: attach named-volume binds to the function site via
+	// sites/<site>/config/azurestorageaccounts. Freshest storage-account
+	// access key is fetched at attach-time.
+	if len(hostConfig.Binds) > 0 {
+		if err := s.attachVolumesToFunctionSite(s.ctx(), funcAppName, hostConfig.Binds); err != nil {
+			_, _ = s.azure.WebApps.Delete(s.ctx(), s.config.ResourceGroup, funcAppName, nil)
+			s.Logger.Error().Err(err).Str("functionApp", funcAppName).Msg("failed to attach Azure Files volumes")
+			return nil, &api.ServerError{Message: fmt.Sprintf("attach volumes to function app %q: %v", funcAppName, err)}
+		}
 	}
 
 	resourceID := ""
