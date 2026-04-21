@@ -8,6 +8,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 	"github.com/sockerless/api"
+	azurecommon "github.com/sockerless/azure-common"
 )
 
 // shareToVolume converts a sockerless-managed Azure Files share into
@@ -216,7 +217,7 @@ func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list managed Azure Files shares: %v", err)}
 	}
 	for _, sh := range shares {
-		if shareVolumeName(sh) == sanitiseAzureMetaValue(name) {
+		if azurecommon.ShareVolumeName(sh) == azurecommon.SanitiseMetaValue(name) {
 			return shareToVolume(name, s.config.StorageAccount, s.config.Environment, sh), nil
 		}
 	}
@@ -230,7 +231,7 @@ func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListRespons
 	}
 	vols := make([]*api.Volume, 0, len(shares))
 	for _, sh := range shares {
-		vols = append(vols, shareToVolume(shareVolumeName(sh), s.config.StorageAccount, s.config.Environment, sh))
+		vols = append(vols, shareToVolume(azurecommon.ShareVolumeName(sh), s.config.StorageAccount, s.config.Environment, sh))
 	}
 	return &api.VolumeListResponse{Volumes: vols}, nil
 }

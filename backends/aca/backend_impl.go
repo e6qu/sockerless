@@ -796,7 +796,7 @@ func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneRespo
 	in := s.inUseVolumeNames()
 	resp := &api.VolumePruneResponse{}
 	for _, sh := range shares {
-		name := shareVolumeName(sh)
+		name := azurecommon.ShareVolumeName(sh)
 		if _, busy := in[name]; busy {
 			continue
 		}

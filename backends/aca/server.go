@@ -29,7 +29,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		azure:            azureClients,
 		ACA:              core.NewStateStore[ACAState](),
 		NetworkState:     core.NewStateStore[NetworkState](),
-		azureVolumeState: azureVolumeState{azVolCache: make(map[string]string)},
+		azureVolumeState: azureVolumeState{shares: azurecommon.NewFileShareManager(azureClients.FileShares, config.ResourceGroup, config.StorageAccount)},
 	}
 	s.ipCounter.Store(2)
 
