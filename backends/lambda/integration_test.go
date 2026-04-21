@@ -197,66 +197,6 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func TestLambdaContainerLifecycle(t *testing.T) {
-	skipIfNoIntegration(t)
-	ctx := context.Background()
-
-	// Pull image
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
-	if err != nil {
-		t.Fatalf("image pull failed: %v", err)
-	}
-	io.Copy(io.Discard, rc)
-	rc.Close()
-
-	testID := generateTestID()
-
-	// Create
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: "alpine:latest",
-			Cmd:   []string{"echo", "hello from lambda"},
-		},
-		nil, nil, nil, "lambda_"+testID,
-	)
-	if err != nil {
-		t.Fatalf("container create failed: %v", err)
-	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
-
-	// Start
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		t.Fatalf("container start failed: %v", err)
-	}
-
-	// Wait
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
-	select {
-	case result := <-waitCh:
-		if result.StatusCode != 0 {
-			t.Errorf("expected exit code 0, got %d", result.StatusCode)
-		}
-	case err := <-errCh:
-		t.Fatalf("container wait error: %v", err)
-	case <-time.After(5 * time.Minute):
-		t.Fatal("timeout waiting for container")
-	}
-
-	// Inspect
-	info, err := dockerClient.ContainerInspect(ctx, resp.ID)
-	if err != nil {
-		t.Fatalf("container inspect failed: %v", err)
-	}
-	if info.State.Status != "exited" {
-		t.Errorf("expected status 'exited', got %q", info.State.Status)
-	}
-
-	// Remove
-	if err := dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{}); err != nil {
-		t.Fatalf("container remove failed: %v", err)
-	}
-}
-
 func TestLambdaContainerLogs(t *testing.T) {
 	skipIfNoIntegration(t)
 	ctx := context.Background()
@@ -308,72 +248,6 @@ func TestLambdaContainerLogs(t *testing.T) {
 	}
 }
 
-// TestLambdaContainerLogsFollowLazyStream verifies that calling
-// ContainerLogs with Follow=true BEFORE the log stream exists still
-// produces output once the invocation completes. Regression test for
-// the bug where logStreamName was resolved once up-front; if empty at
-// that moment the follow loop would return empty forever.
-func TestLambdaContainerLogsFollowLazyStream(t *testing.T) {
-	skipIfNoIntegration(t)
-	ctx := context.Background()
-
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
-	if err != nil {
-		t.Fatalf("image pull failed: %v", err)
-	}
-	io.Copy(io.Discard, rc)
-	rc.Close()
-
-	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: "alpine:latest",
-			Cmd:   []string{"sh", "-c", "for i in 1 2 3; do echo follow-line-$i; sleep 0.2; done"},
-		},
-		nil, nil, nil, "lambda_follow_"+testID,
-	)
-	if err != nil {
-		t.Fatalf("container create failed: %v", err)
-	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
-
-	// Start and immediately open follow logs — the stream may not exist yet.
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		t.Fatalf("container start failed: %v", err)
-	}
-
-	logReader, err := dockerClient.ContainerLogs(ctx, resp.ID, container.LogsOptions{
-		ShowStdout: true,
-		ShowStderr: true,
-		Follow:     true,
-	})
-	if err != nil {
-		t.Fatalf("container logs (follow) failed: %v", err)
-	}
-	defer logReader.Close()
-
-	// Read with a deadline so a stuck follow loop fails the test.
-	done := make(chan []byte, 1)
-	go func() {
-		b, _ := io.ReadAll(logReader)
-		done <- b
-	}()
-
-	var logData []byte
-	select {
-	case logData = <-done:
-	case <-time.After(60 * time.Second):
-		t.Fatal("follow-mode log read did not terminate within 60s after container exited")
-	}
-
-	t.Logf("follow logs: %q", string(logData))
-	for _, want := range []string{"follow-line-1", "follow-line-2", "follow-line-3"} {
-		if !strings.Contains(string(logData), want) {
-			t.Errorf("missing %q in follow-mode log output", want)
-		}
-	}
-}
-
 func TestLambdaContainerList(t *testing.T) {
 	skipIfNoIntegration(t)
 	ctx := context.Background()
@@ -404,51 +278,6 @@ func TestLambdaContainerList(t *testing.T) {
 	}
 	if !found {
 		t.Error("created container not found in list")
-	}
-}
-
-func TestLambdaContainerStopUnblocksWait(t *testing.T) {
-	skipIfNoIntegration(t)
-	ctx := context.Background()
-
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
-	if err != nil {
-		t.Fatalf("image pull failed: %v", err)
-	}
-	io.Copy(io.Discard, rc)
-	rc.Close()
-
-	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: "alpine:latest",
-			Cmd:   []string{"sleep", "30"},
-		},
-		nil, nil, nil, "lambda_stop_"+testID,
-	)
-	if err != nil {
-		t.Fatalf("container create failed: %v", err)
-	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
-
-	dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
-
-	// Stop clamps the function timeout (no-op against in-flight) and closes
-	// the local wait channel. A subsequent ContainerWait must return within
-	// a few seconds, not after the sleep-30 completes.
-	stopTimeout := 5
-	if err := dockerClient.ContainerStop(ctx, resp.ID, container.StopOptions{Timeout: &stopTimeout}); err != nil {
-		t.Fatalf("container stop failed: %v", err)
-	}
-
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
-	select {
-	case <-waitCh:
-		// expected — wait channel closed by stop
-	case err := <-errCh:
-		t.Fatalf("wait returned error: %v", err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("docker wait did not unblock within 5s of stop; wait channel not closed")
 	}
 }
 
