@@ -92,15 +92,16 @@ func newGCPClientsWithEndpoint(ctx context.Context, project string, endpointURL 
 	}
 
 	// The cloud.google.com/go/storage client honours STORAGE_EMULATOR_HOST
-	// (used by the official gcloud emulator) and builds the canonical
-	// `/storage/v1/b...` paths against it. WithEndpoint alone is NOT
-	// enough — the storage client would skip the `/storage/v1/` prefix
-	// and send bare `/b` requests that the sim doesn't route. Set the
-	// env var so bucket CRUD + object ops hit the right paths.
+	// (official gcloud emulator convention) and builds canonical
+	// `/storage/v1/b...` paths against it. option.WithEndpoint alone
+	// makes the client send XML-API-style `/b/...` paths that the GCP
+	// sim doesn't route. Set the env var AND drop WithEndpoint for the
+	// Storage client so the JSON API path is used.
+	storageOpts := []option.ClientOption{option.WithoutAuthentication()}
 	if host, err := urlHost(endpointURL); err == nil {
 		_ = os.Setenv("STORAGE_EMULATOR_HOST", host)
 	}
-	storageClient, err := storage.NewClient(ctx, opts...)
+	storageClient, err := storage.NewClient(ctx, storageOpts...)
 	if err != nil {
 		_ = jobsClient.Close()
 		_ = execClient.Close()
