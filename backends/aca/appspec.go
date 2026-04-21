@@ -1,6 +1,7 @@
 package aca
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -24,10 +25,33 @@ func buildAppName(containerID string) string {
 // containers. Internal ingress + min/max replicas = 1 keeps the app
 // long-running with a peer-reachable internal FQDN. Callers must have
 // Config.UseApp set; this builder does not enforce that.
-func (s *Server) buildAppSpec(containers []containerInput) armappcontainers.ContainerApp {
+func (s *Server) buildAppSpec(ctx context.Context, containers []containerInput) (armappcontainers.ContainerApp, error) {
 	var specs []*armappcontainers.Container
+	volSeen := make(map[string]struct{})
+	var volumes []*armappcontainers.Volume
+	storageType := armappcontainers.StorageTypeAzureFile
 	for _, ci := range containers {
-		specs = append(specs, s.buildContainerSpec(ci))
+		cs, mounts := s.buildContainerSpec(ci)
+		specs = append(specs, cs)
+		for _, mp := range mounts {
+			if mp.VolumeName == nil {
+				continue
+			}
+			volName := *mp.VolumeName
+			if _, done := volSeen[volName]; done {
+				continue
+			}
+			share, err := s.shareForVolume(ctx, volName)
+			if err != nil {
+				return armappcontainers.ContainerApp{}, fmt.Errorf("provision Azure Files share for volume %q: %w", volName, err)
+			}
+			volumes = append(volumes, &armappcontainers.Volume{
+				Name:        ptr(volName),
+				StorageType: &storageType,
+				StorageName: ptr(share),
+			})
+			volSeen[volName] = struct{}{}
+		}
 	}
 
 	environmentID := fmt.Sprintf(
@@ -76,11 +100,12 @@ func (s *Server) buildAppSpec(containers []containerInput) armappcontainers.Cont
 			},
 			Template: &armappcontainers.Template{
 				Containers: specs,
+				Volumes:    volumes,
 				Scale: &armappcontainers.Scale{
 					MinReplicas: &minR,
 					MaxReplicas: &maxR,
 				},
 			},
 		},
-	}
+	}, nil
 }

@@ -139,6 +139,7 @@ func TestMain(m *testing.M) {
 		"SOCKERLESS_ACA_SUBSCRIPTION_ID=00000000-0000-0000-0000-000000000001",
 		"SOCKERLESS_ACA_RESOURCE_GROUP=sim-rg",
 		"SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE=default",
+		"SOCKERLESS_ACA_STORAGE_ACCOUNT=simstorage",
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
@@ -360,18 +361,55 @@ func TestACANetworkOperations(t *testing.T) {
 	}
 }
 
-// TestACAVolumeOperations pins BUG-731 — Container App Jobs/Apps are
-// ephemeral; named volumes require Azure Files and are tracked as
-// Phase 93.
+// TestACAVolumeOperations — Phase 93 Azure-Files-backed named volumes:
+// VolumeCreate provisions a sockerless-managed file share + env-storage,
+// VolumeInspect/VolumeList surface it, VolumeRemove deletes both.
 func TestACAVolumeOperations(t *testing.T) {
 	ctx := context.Background()
 
-	_, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: "aca_vol_" + generateTestID()})
-	if err == nil {
-		t.Fatal("expected VolumeCreate to fail with NotImplemented")
+	volName := "aca_vol_" + generateTestID()
+	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: volName})
+	if err != nil {
+		t.Fatalf("VolumeCreate: %v", err)
 	}
-	if !strings.Contains(err.Error(), "does not support named volumes") {
-		t.Errorf("expected NotImplemented error, got: %v", err)
+	if vol.Name != volName {
+		t.Errorf("Volume.Name = %q, want %q", vol.Name, volName)
+	}
+	if vol.Driver != "azurefile" {
+		t.Errorf("Volume.Driver = %q, want azurefile", vol.Driver)
+	}
+	if vol.Options["shareName"] == "" {
+		t.Errorf("Volume.Options missing shareName: %+v", vol.Options)
+	}
+
+	inspected, err := dockerClient.VolumeInspect(ctx, volName)
+	if err != nil {
+		t.Fatalf("VolumeInspect: %v", err)
+	}
+	if inspected.Name != volName {
+		t.Errorf("inspect Name = %q, want %q", inspected.Name, volName)
+	}
+
+	listed, err := dockerClient.VolumeList(ctx, volume.ListOptions{})
+	if err != nil {
+		t.Fatalf("VolumeList: %v", err)
+	}
+	found := false
+	for _, v := range listed.Volumes {
+		if v.Name == volName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("VolumeList did not return %q; got %d volumes", volName, len(listed.Volumes))
+	}
+
+	if err := dockerClient.VolumeRemove(ctx, volName, true); err != nil {
+		t.Fatalf("VolumeRemove: %v", err)
+	}
+	if _, err := dockerClient.VolumeInspect(ctx, volName); err == nil {
+		t.Error("VolumeInspect after remove: expected error, got success")
 	}
 }
 

@@ -1,6 +1,7 @@
 package aca
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -65,7 +66,7 @@ func TestBuildAppName_PrefixAndLength(t *testing.T) {
 func TestBuildAppSpec_Shape(t *testing.T) {
 	s := newServerForAppSpec(t)
 	ci := demoAppContainer("abcdef012345abcdef", "/webapp", "myreg.azurecr.io/app:v1")
-	app := s.buildAppSpec([]containerInput{ci})
+	app, _ := s.buildAppSpec(context.Background(), []containerInput{ci})
 
 	if app.Location == nil || *app.Location != "eastus" {
 		t.Errorf("Location = %v, want eastus", app.Location)

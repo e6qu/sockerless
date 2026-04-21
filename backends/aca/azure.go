@@ -19,6 +19,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerregistry/armcontainerregistry"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v7"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 )
 
 type fakeCredential struct{}
@@ -43,7 +44,13 @@ type AzureClients struct {
 	// configured ACR pull-through cache, parallel to AWS ECR + GCP AR.
 	Registries    *armcontainerregistry.RegistriesClient
 	ACRCacheRules *armcontainerregistry.CacheRulesClient
-	Cred          azcore.TokenCredential
+	// Azure Files + managed-env storages for Phase 93 named volumes.
+	// FileShares provisions a share inside the operator-configured
+	// storage account; EnvStorages binds the share to the managed
+	// environment so Container Apps/Jobs can mount it.
+	FileShares  *armstorage.FileSharesClient
+	EnvStorages *armappcontainers.ManagedEnvironmentsStoragesClient
+	Cred        azcore.TokenCredential
 }
 
 // httpLogsClient makes direct HTTP calls to Log Analytics when the Azure SDK's
@@ -141,6 +148,14 @@ func newAzureClientsWithEndpoint(subscriptionID string, endpointURL string) (*Az
 	if err != nil {
 		return nil, err
 	}
+	fileSharesClient, err := armstorage.NewFileSharesClient(subscriptionID, cred, opts)
+	if err != nil {
+		return nil, err
+	}
+	envStoragesClient, err := armappcontainers.NewManagedEnvironmentsStoragesClient(subscriptionID, cred, opts)
+	if err != nil {
+		return nil, err
+	}
 
 	clients := &AzureClients{
 		Jobs:              jobsClient,
@@ -153,6 +168,8 @@ func newAzureClientsWithEndpoint(subscriptionID string, endpointURL string) (*Az
 		NSGRules:          nsgFactory.NewSecurityRulesClient(),
 		Registries:        acrFactory.NewRegistriesClient(),
 		ACRCacheRules:     acrFactory.NewCacheRulesClient(),
+		FileShares:        fileSharesClient,
+		EnvStorages:       envStoragesClient,
 		Cred:              cred,
 	}
 
@@ -208,6 +225,14 @@ func newAzureClientsDefault(subscriptionID string) (*AzureClients, error) {
 	if err != nil {
 		return nil, err
 	}
+	fileSharesClient, err := armstorage.NewFileSharesClient(subscriptionID, cred, nil)
+	if err != nil {
+		return nil, err
+	}
+	envStoragesClient, err := armappcontainers.NewManagedEnvironmentsStoragesClient(subscriptionID, cred, nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return &AzureClients{
 		Jobs:              jobsClient,
@@ -220,6 +245,8 @@ func newAzureClientsDefault(subscriptionID string) (*AzureClients, error) {
 		NSGRules:          nsgFactory.NewSecurityRulesClient(),
 		Registries:        acrFactory.NewRegistriesClient(),
 		ACRCacheRules:     acrFactory.NewCacheRulesClient(),
+		FileShares:        fileSharesClient,
+		EnvStorages:       envStoragesClient,
 		Cred:              cred,
 	}, nil
 }

@@ -2,10 +2,38 @@ package aca
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 	"github.com/sockerless/api"
 )
+
+// shareToVolume converts a sockerless-managed Azure Files share into
+// a Docker-API Volume entry.
+func shareToVolume(dockerName, storageAccount, environment string, sh *armstorage.FileShareItem) *api.Volume {
+	shareName := ""
+	if sh.Name != nil {
+		shareName = *sh.Name
+	}
+	created := ""
+	if sh.Properties != nil && sh.Properties.LastModifiedTime != nil {
+		created = sh.Properties.LastModifiedTime.UTC().Format(time.RFC3339Nano)
+	}
+	return &api.Volume{
+		Name:       dockerName,
+		Driver:     "azurefile",
+		Mountpoint: fmt.Sprintf("//%s.file.core.windows.net/%s", storageAccount, shareName),
+		Scope:      "local",
+		Options: map[string]string{
+			"storageAccount": storageAccount,
+			"shareName":      shareName,
+			"environment":    environment,
+		},
+		CreatedAt: created,
+	}
+}
 
 // Container methods with resolution.
 
@@ -154,16 +182,55 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 	return s.BaseServer.SystemEvents(opts)
 }
 
-// Named-volume operations are not supported by the ACA backend.
-// Real Azure Files share provisioning is a follow-up phase.
+// Named-volume operations map to Azure Files shares inside the
+// operator-configured storage account (Phase 93). Each volume gets
+// a dedicated share, and a matching `ManagedEnvironmentsStorages`
+// entry links the share to the env so Apps/Jobs can reference it by
+// storage name at container-start time.
 func (s *Server) VolumeCreate(req *api.VolumeCreateRequest) (*api.Volume, error) {
-	return nil, &api.NotImplementedError{Message: "ACA backend does not support named volumes"}
+	if req == nil || req.Name == "" {
+		return nil, &api.InvalidParameterError{Message: "volume name is required"}
+	}
+	share, err := s.shareForVolume(s.ctx(), req.Name)
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("provision Azure Files share for %q: %v", req.Name, err)}
+	}
+	return &api.Volume{
+		Name:       req.Name,
+		Driver:     "azurefile",
+		Mountpoint: fmt.Sprintf("//%s.file.core.windows.net/%s", s.config.StorageAccount, share),
+		Labels:     req.Labels,
+		Scope:      "local",
+		Options: map[string]string{
+			"storageAccount": s.config.StorageAccount,
+			"shareName":      share,
+			"environment":    s.config.Environment,
+		},
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}, nil
 }
 
 func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
-	return nil, &api.NotImplementedError{Message: "ACA backend does not support named volumes"}
+	shares, err := s.listManagedShares(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("list managed Azure Files shares: %v", err)}
+	}
+	for _, sh := range shares {
+		if shareVolumeName(sh) == sanitiseAzureMetaValue(name) {
+			return shareToVolume(name, s.config.StorageAccount, s.config.Environment, sh), nil
+		}
+	}
+	return nil, &api.NotFoundError{Resource: "volume", ID: name}
 }
 
 func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListResponse, error) {
-	return nil, &api.NotImplementedError{Message: "ACA backend does not support named volumes"}
+	shares, err := s.listManagedShares(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("list managed Azure Files shares: %v", err)}
+	}
+	vols := make([]*api.Volume, 0, len(shares))
+	for _, sh := range shares {
+		vols = append(vols, shareToVolume(shareVolumeName(sh), s.config.StorageAccount, s.config.Environment, sh))
+	}
+	return &api.VolumeListResponse{Volumes: vols}, nil
 }
