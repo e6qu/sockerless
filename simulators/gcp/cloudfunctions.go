@@ -259,11 +259,17 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 	})
 
 	if image != "" {
+		// Map cloud registry URIs (e.g. AR pull-through cache references
+		// like `us-central1-docker.pkg.dev/proj/docker-hub/library/alpine:latest`)
+		// back to their original Docker Hub / local tag so the sim can
+		// actually run them locally. Matches how the Cloud Run Jobs sim
+		// resolves images in the same process.
+		localImage := sim.ResolveLocalImage(image)
 		// Container-based execution. When SOCKERLESS_ENTRYPOINT is
 		// unset we leave Command nil so the image's ENTRYPOINT runs
 		// unchanged; userCmd becomes the container CMD (args).
 		handle, err := sim.StartContainerSync(sim.ContainerConfig{
-			Image:   image,
+			Image:   localImage,
 			Command: entrypoint,
 			Args:    userCmd,
 			Env:     cmdEnv,
