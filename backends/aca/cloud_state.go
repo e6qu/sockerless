@@ -129,6 +129,104 @@ func (p *acaCloudState) WaitForExit(ctx context.Context, containerID string) (in
 
 // ListImages queries Azure Container Registry via the OCI distribution
 // catalog + tags endpoints for every image in the configured ACR.
+// ListPods groups sockerless-managed ACA Jobs (and ContainerApps when
+// UseApp is set) by their `sockerless-pod` tag and returns one
+// PodListEntry per unique pod name. Jobs/Apps without a pod tag are
+// excluded — they surface as standalone containers in `docker ps`
+// but not in `docker pod ps`.
+func (p *acaCloudState) ListPods(ctx context.Context) ([]*api.PodListEntry, error) {
+	containers, err := p.ListContainers(ctx, true, nil)
+	if err != nil {
+		return nil, err
+	}
+	containerByID := make(map[string]api.Container, len(containers))
+	for _, c := range containers {
+		containerByID[c.ID] = c
+	}
+
+	groups := make(map[string][]api.PodContainerInfo)
+	created := make(map[string]string)
+	status := make(map[string]string)
+
+	walk := func(tagsPtr map[string]*string, createdAt string) {
+		tags := azureTagsToMap(tagsPtr)
+		if tags["sockerless-managed"] != "true" {
+			return
+		}
+		podName := tags["sockerless-pod"]
+		if podName == "" {
+			return
+		}
+		cid := tags["sockerless-container-id"]
+		if cid == "" {
+			return
+		}
+		cont, ok := containerByID[cid]
+		if !ok {
+			return
+		}
+		groups[podName] = append(groups[podName], api.PodContainerInfo{
+			ID:    cont.ID,
+			Name:  strings.TrimPrefix(cont.Name, "/"),
+			State: cont.State.Status,
+		})
+		if createdAt != "" && (created[podName] == "" || createdAt < created[podName]) {
+			created[podName] = createdAt
+		}
+		if cont.State.Running {
+			status[podName] = "Running"
+		} else if status[podName] == "" {
+			status[podName] = cont.State.Status
+		}
+	}
+
+	// Walk Jobs.
+	jobPager := p.server.azure.Jobs.NewListByResourceGroupPager(p.server.config.ResourceGroup, nil)
+	for jobPager.More() {
+		page, err := jobPager.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, job := range page.Value {
+			ca := ""
+			if job.SystemData != nil && job.SystemData.CreatedAt != nil {
+				ca = job.SystemData.CreatedAt.Format(time.RFC3339Nano)
+			}
+			walk(job.Tags, ca)
+		}
+	}
+
+	// Walk ContainerApps when UseApp is on.
+	if p.server.config.UseApp && p.server.azure.ContainerApps != nil {
+		appPager := p.server.azure.ContainerApps.NewListByResourceGroupPager(p.server.config.ResourceGroup, nil)
+		for appPager.More() {
+			page, err := appPager.NextPage(ctx)
+			if err != nil {
+				return nil, err
+			}
+			for _, app := range page.Value {
+				ca := ""
+				if app.SystemData != nil && app.SystemData.CreatedAt != nil {
+					ca = app.SystemData.CreatedAt.Format(time.RFC3339Nano)
+				}
+				walk(app.Tags, ca)
+			}
+		}
+	}
+
+	var out []*api.PodListEntry
+	for name, cs := range groups {
+		out = append(out, &api.PodListEntry{
+			ID:         "pod-" + name,
+			Name:       name,
+			Status:     status[name],
+			Created:    created[name],
+			Containers: cs,
+		})
+	}
+	return out, nil
+}
+
 // Phase 89 / BUG-723 step 2 cross-cloud sibling. Registry host comes
 // from `<ACRName>.azurecr.io`; bearer token comes from the
 // ACRAuthProvider owned by the ImageManager.

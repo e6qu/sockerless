@@ -126,6 +126,110 @@ func (p *cloudRunCloudState) WaitForExit(ctx context.Context, containerID string
 	}
 }
 
+// ListPods groups sockerless-managed Cloud Run Jobs (and Services
+// when UseService is set) by their `sockerless_pod` label and returns
+// one PodListEntry per unique pod name. Jobs/Services without a pod
+// label are excluded — they surface as standalone containers in
+// `docker ps` but not in `docker pod ps`.
+func (p *cloudRunCloudState) ListPods(ctx context.Context) ([]*api.PodListEntry, error) {
+	containers, err := p.ListContainers(ctx, true, nil)
+	if err != nil {
+		return nil, err
+	}
+	containerByID := make(map[string]api.Container, len(containers))
+	for _, c := range containers {
+		containerByID[c.ID] = c
+	}
+
+	groups := make(map[string][]api.PodContainerInfo)
+	created := make(map[string]string)
+	status := make(map[string]string)
+
+	walkJob := func(labels map[string]string, annotations map[string]string, createdAt string) {
+		if labels["sockerless_managed"] != "true" {
+			return
+		}
+		podName := labels["sockerless_pod"]
+		if podName == "" {
+			return
+		}
+		cid := annotations["sockerless_container_id"]
+		if cid == "" {
+			cid = labels["sockerless_container_id"]
+		}
+		cont, ok := containerByID[cid]
+		if !ok {
+			return
+		}
+		groups[podName] = append(groups[podName], api.PodContainerInfo{
+			ID:    cont.ID,
+			Name:  strings.TrimPrefix(cont.Name, "/"),
+			State: cont.State.Status,
+		})
+		if createdAt != "" && (created[podName] == "" || createdAt < created[podName]) {
+			created[podName] = createdAt
+		}
+		if cont.State.Running {
+			status[podName] = "Running"
+		} else if status[podName] == "" {
+			status[podName] = cont.State.Status
+		}
+	}
+
+	// Walk Jobs.
+	jobIt := p.server.gcp.Jobs.ListJobs(ctx, &runpb.ListJobsRequest{
+		Parent: p.server.buildJobParent(),
+	})
+	for {
+		job, err := jobIt.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		ca := ""
+		if job.CreateTime != nil {
+			ca = job.CreateTime.AsTime().Format(time.RFC3339Nano)
+		}
+		walkJob(job.Labels, job.Annotations, ca)
+	}
+
+	// Walk Services too when UseService is on — mixed deployments
+	// surface both tracks, and Services carry the same tag layout.
+	if p.server.config.UseService && p.server.gcp.Services != nil {
+		svcIt := p.server.gcp.Services.ListServices(ctx, &runpb.ListServicesRequest{
+			Parent: p.server.buildServiceParent(),
+		})
+		for {
+			svc, err := svcIt.Next()
+			if err == iterator.Done {
+				break
+			}
+			if err != nil {
+				return nil, err
+			}
+			ca := ""
+			if svc.CreateTime != nil {
+				ca = svc.CreateTime.AsTime().Format(time.RFC3339Nano)
+			}
+			walkJob(svc.Labels, svc.Annotations, ca)
+		}
+	}
+
+	var out []*api.PodListEntry
+	for name, cs := range groups {
+		out = append(out, &api.PodListEntry{
+			ID:         "pod-" + name,
+			Name:       name,
+			Status:     status[name],
+			Created:    created[name],
+			Containers: cs,
+		})
+	}
+	return out, nil
+}
+
 // ListImages queries GCP Artifact Registry via the OCI distribution
 // catalog + tags endpoints for every image under the backend's
 // configured registry. Phase 89 / BUG-723 step 2 cross-cloud sibling.

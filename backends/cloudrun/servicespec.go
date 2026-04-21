@@ -59,6 +59,11 @@ func (s *Server) buildServiceSpec(containers []containerInput) *runpb.Service {
 		Name:        containers[0].Container.Name,
 		Network:     containers[0].Container.HostConfig.NetworkMode,
 	}
+	// Carry pod membership through to Service labels so ListPods can
+	// reconstruct docker pods after a restart.
+	if pod, _ := s.Store.Pods.GetPodForContainer(containers[0].ID); pod != nil {
+		tags.Pod = pod.Name
+	}
 
 	return &runpb.Service{
 		Labels:             tags.AsGCPLabels(),

@@ -105,6 +105,11 @@ func (s *Server) buildJobSpec(containers []containerInput) *runpb.Job {
 		Name:        containers[0].Container.Name,
 		Network:     containers[0].Container.HostConfig.NetworkMode,
 	}
+	// Propagate pod membership so ListPods can reconstruct docker pods
+	// from the cloud's Job labels after a backend restart.
+	if pod, _ := s.Store.Pods.GetPodForContainer(containers[0].ID); pod != nil {
+		tags.Pod = pod.Name
+	}
 
 	return &runpb.Job{
 		Labels:      tags.AsGCPLabels(),

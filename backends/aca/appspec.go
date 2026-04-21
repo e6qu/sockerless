@@ -50,6 +50,11 @@ func (s *Server) buildAppSpec(containers []containerInput) armappcontainers.Cont
 		Network:     networkName,
 		Labels:      mainContainer.Config.Labels,
 	}
+	// Carry pod membership through to App tags so ListPods can
+	// reconstruct docker pods after a restart.
+	if pod, _ := s.Store.Pods.GetPodForContainer(containers[0].ID); pod != nil {
+		tags.Pod = pod.Name
+	}
 
 	ingress := &armappcontainers.Ingress{
 		External:   ptr(false),
