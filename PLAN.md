@@ -37,37 +37,46 @@ Current state: [STATUS.md](STATUS.md). Bug log: [BUGS.md](BUGS.md). Narrative: [
 
 Sockerless targets only the latest generation of each cloud service (no fallbacks between generations). For GCP Cloud Functions that's v2 (Cloud Run under the hood); for Azure Functions that's Flex Consumption / Premium plan (BYOS Azure Files). Both need real mounts, not NotImplemented — but the cloud APIs each expose a different path than Phase 92 / 93 used, so this is its own phase, not a "copy-paste inherit".
 
-**Sequencing prerequisite — refactor shared helpers** before the two backend implementations land:
+**Sequencing prerequisite** — shared-helper lift (closed 2026-04-21): `gcpcommon.BucketManager`, `azurecommon.FileShareManager`, `awscommon.EFSManager`. CR / ACA / ECS embed them today; GCF / AZF / Lambda embed them when the Phase 94 / 94b backend wiring lands.
 
-- `backends/gcp-common/volumes.go` — move CR's `bucketForVolume` / `deleteBucketForVolume` / `listManagedBuckets` into a `BucketManager` struct the two GCP backends embed. CR and GCF both pass their `storage.Client` + `project` + cache map in; the shared struct owns the sockerless-managed label convention.
-- `backends/azure-common/volumes.go` — move ACA's `shareForVolume` / `deleteShareForVolume` / `listManagedShares` into a `FileShareManager`. ACA + AZF both pass their `FileSharesClient` + resource group + storage account in; the shared struct owns the sockerless-managed metadata convention.
+#### API-surface realities (read before implementing)
 
-**GCF (Cloud Functions v2)**:
+**GCF Functions v2**: the public Functions API (`functionspb.Function.ServiceConfig`) exposes **only `SecretVolumes`** — no first-class GCS (or any other) volume primitive. Every other volume lives on the **underlying Cloud Run Service** that the function *is* under the hood. Google's docs surface this as "advanced per-function configuration via the underlying Cloud Run Service"; it's a sanctioned escape hatch, not a workaround. Two load-bearing consequences:
 
-GCF v2's public API (`functionspb.ServiceConfig`) only exposes `SecretVolumes` — there's no `Volumes` primitive for GCS mounts. But v2 **is** a Cloud Run Service underneath: `Function.ServiceConfig.Service` returns the resource name of the backing service. The documented escape hatch is to call `run.ServicesClient.GetService` on that name, modify `RevisionTemplate.Volumes` + `Container.VolumeMounts`, and `UpdateService`. Google surfaces this in their docs as "advanced per-function configuration via the underlying Cloud Run Service" — it's the sanctioned path, not a workaround.
+- **IAM scope grows.** The GCF backend now needs `run.services.get` + `run.services.update` on the same project, in addition to the `cloudfunctions.functions.*` it already has. Operators with narrow GCF-only IAM policies won't be able to mount volumes without a permissions update. Sockerless surfaces this cleanly at `UpdateService` call-time (no retry loops, no silent degradation).
+- **Two APIs, one state.** The sockerless-managed invariant (`sockerless-volume-name=<docker-name>` on the bucket) still holds, but the *attachment* lives on the CR Service resource, not the Function resource. If an operator edits the CR Service out-of-band, the function's next revision drops the mount. Phase 94 documents this; Phase 95's reconciliation loop (if we ever add one) would detect drift.
 
-Backend flow:
+**AZF Flex Consumption**: the file-share attachment API is `sites/<siteName>/config/azurestorageaccounts/<mountName>` — entirely separate from ACA's `managedEnvironmentsStorages`. Schema: `{type: "AzureFiles", accountName, shareName, accessKey, mountPath}`. Load-bearing differences from ACA:
+
+- **Auth model is access-key, not RBAC.** ACA's env-storages authenticate via the managed environment's workload identity against the share's ACL. AZF's azurestorageaccounts embeds the storage account's **plaintext access key** in the site config. Operators must rotate access keys manually; sockerless surfaces the rotation via a `VolumeCreate` cache-invalidation when the key rotates (Phase 94 fetches the key via `StorageAccountsClient.ListKeys` at attach-time, not at config-load, so the fresh key is always used).
+- **Mount path is per-site, not per-env.** One `azurestorageaccounts` entry maps one share to one mount path inside one function app. Unlike ACA (where an env-storage is attached to a Job/App volume-mount by name), AZF ties share→path directly on the site resource. `VolumeMount.MountPath` lives inside the `azurestorageaccounts` entry itself.
+
+Both cloud APIs mean sockerless-provisioned volumes are owned by sockerless but **attached on the operator-provisioned compute** (the function app / the CR Service backing the function). Phase 94 doesn't create function apps or CR Services; it hooks into the ones `ContainerCreate` already creates.
+
+#### GCF backend flow
+
 1. `VolumeCreate` — reuse `gcpcommon.BucketManager` to ensure a bucket, labelled identically to CR's.
 2. `ContainerCreate` — accept named-volume binds (`volName:/mnt`), reject host-path binds.
 3. `ContainerStart`:
    - `Functions.CreateFunction` + `op.Wait` as today.
    - If the request carried any named-volume binds: `Services.GetService(fn.ServiceConfig.Service)` → append `RevisionTemplate.Volumes[]` with `Volume_Gcs` + matching `VolumeMounts` → `Services.UpdateService`.
-   - The function's first invocation after UpdateService picks up the mounts (Cloud Run rolls a new revision).
-4. `VolumeRemove` — reuse `gcpcommon.BucketManager.Delete`.
+   - The function's first invocation after UpdateService picks up the mounts (Cloud Run rolls a new revision). If `Services.UpdateService` fails (IAM / quota / invalid bucket), sockerless best-effort-deletes the function so the create appears atomic to the docker client.
+4. `VolumeRemove` — reuse `gcpcommon.BucketManager.DeleteForVolume`.
 
 Sim work: the GCP sim's `/v2/projects/.../services/{name}` routes for `GetService` + `UpdateService` already exist (via Phase 87's sim hooks); confirm Volumes round-trip correctly when Phase 94 lands. Cloud Run Functions executor in the sim already translates `Volume{Gcs{Bucket}}` + VolumeMount to host binds (Phase 92).
 
-**AZF (Azure Functions Flex Consumption / Premium)**:
+New GCF client wiring: `GCPClients` gains `Storage *storage.Client` + `Services *run.ServicesClient` (both already present on the Cloud Run backend's `GCPClients`; just add to GCF's).
 
-Azure Functions attaches file shares via a different sub-resource from ACA's `managedEnvironmentsStorages`. The API is `sites/<siteName>/config/azurestorageaccounts/<mountName>` — each entry names a storage account + share + access key + target mount path inside the function container. Schema: `{type: "AzureFiles", accountName, shareName, accessKey, mountPath}`.
+#### AZF backend flow
 
-Backend flow:
 1. `VolumeCreate` — reuse `azurecommon.FileShareManager` to ensure a share on the configured storage account.
 2. `ContainerCreate` — accept named-volume binds, reject host-path binds.
-3. `ContainerStart` — after `WebApps.BeginCreateOrUpdate` lands, `WebApps.UpdateAzureStorageAccounts` (or the direct REST endpoint) to register each bound share → mount-path pair.
-4. `VolumeRemove` — delete the azurestorageaccounts entry + the share itself.
+3. `ContainerStart` — after `WebApps.BeginCreateOrUpdate` creates the function app, fetch the storage key via `StorageAccountsClient.ListKeys` (freshest key at attach-time) and `WebApps.UpdateAzureStorageAccounts` with one `AzureStorageInfoValue{Type=AzureFiles, AccountName, ShareName, AccessKey, MountPath}` entry per bound share.
+4. `VolumeRemove` — delete the azurestorageaccounts entry via `WebApps.UpdateAzureStorageAccounts` (omit the mount) then `FileShareManager.DeleteShare`.
 
-Sim work: `simulators/azure/functions.go` grows `sites/<siteName>/config/azurestorageaccounts/<mountName>` CRUD (PUT/GET/DELETE/list). The sim's AZF executor then looks up each configured mount at invoke-time and translates it to a real host bind using the existing `FileShareHostDir` helper from Phase 93.
+Sim work: `simulators/azure/functions.go` grows `sites/<siteName>/config/azurestorageaccounts/<mountName>` CRUD (PUT/GET/DELETE/list) matching the real ARM schema. The sim's AZF executor then looks up each configured mount at invoke-time and translates it to a real host bind using the existing `FileShareHostDir` helper from Phase 93.
+
+New AZF client wiring: `AzureClients` gains `FileShares *armstorage.FileSharesClient` + `StorageAccounts *armstorage.AccountsClient` + `WebApps *armappservice.WebAppsClient.UpdateAzureStorageAccounts` route.
 
 **Older-generation fallthrough**: operators targeting GCF v1 or Azure Functions Consumption plan get a `Config.Validate()` failure at backend boot (`SOCKERLESS_*_REQUIRE_LATEST_GEN` is implicit — sockerless doesn't support the older generations at all). No silent degradation.
 
