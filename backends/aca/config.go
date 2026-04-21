@@ -21,6 +21,15 @@ type Config struct {
 	BuildContainer        string        // Blob container for ACR build context
 	EndpointURL           string        // Custom endpoint URL
 	PollInterval          time.Duration // Cloud API poll interval (default 2s)
+
+	// UseApp switches container execution from ACA Jobs to ACA Apps
+	// with internal ingress. Required for: Jobs don't have
+	// addressable per-execution IPs, so cross-container DNS
+	// via Private DNS A-records is fundamentally broken. Apps with
+	// `Ingress.External=false` give peer-reachable internal FQDNs.
+	// Default false (Jobs path) until the Apps path is implemented.
+	// Set via `SOCKERLESS_ACA_USE_APP=1`.
+	UseApp bool
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -37,6 +46,7 @@ func ConfigFromEnv() Config {
 		BuildContainer:        os.Getenv("SOCKERLESS_AZURE_BUILD_CONTAINER"),
 		EndpointURL:           os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:          parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
+		UseApp:                os.Getenv("SOCKERLESS_ACA_USE_APP") == "1",
 	}
 }
 
@@ -81,6 +91,9 @@ func (c Config) Validate() error {
 	}
 	if c.ResourceGroup == "" {
 		return fmt.Errorf("SOCKERLESS_ACA_RESOURCE_GROUP is required")
+	}
+	if c.UseApp && c.Environment == "" {
+		return fmt.Errorf("SOCKERLESS_ACA_USE_APP=1 requires SOCKERLESS_ACA_ENVIRONMENT — Apps need an existing managed environment with VNet integration for peer-reachable internal FQDNs")
 	}
 	return nil
 }

@@ -1,112 +1,157 @@
 # Sockerless — Roadmap
 
-> 86 phases complete (757 tasks). 707 bugs fixed, 0 open.
->
 > **Goal:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners — backed by real cloud infrastructure (AWS, GCP, Azure).
 
-## Guiding Principles
+Current state: [STATUS.md](STATUS.md). Bug log: [BUGS.md](BUGS.md). Narrative: [WHAT_WE_DID.md](WHAT_WE_DID.md). Architecture: [specs/](specs/).
 
-1. **Docker API fidelity** — match Docker's REST API exactly
-2. **Real execution** — simulators and backends actually run commands
-3. **External validation** — proven by unmodified external test suites
-4. **No new frontend abstractions** — Docker REST API is the only interface
-5. **Driver-first handlers** — all handler code through driver interfaces
-6. **LLM-editable files** — source files under 400 lines
-7. **GitHub API fidelity** — bleephub works with unmodified `gh` CLI
-8. **State persistence** — every task ends with state save
+## Guiding principles
 
----
+1. **Docker API fidelity** — match Docker's REST API exactly.
+2. **Real execution** — simulators and backends actually run commands; no stubs, fakes, or mocks.
+3. **External validation** — proven by unmodified external test suites.
+4. **No new frontend abstractions** — Docker REST API is the only interface.
+5. **Driver-first handlers** — all handler code through driver interfaces.
+6. **LLM-editable files** — source files under 400 lines.
+7. **GitHub API fidelity** — bleephub works with unmodified `gh` CLI.
+8. **State persistence** — every task ends with state save (PLAN / STATUS / WHAT_WE_DID / BUGS / memory).
+9. **No fallbacks, no defers** — every functional gap is a real bug; every bug gets a real fix in the same session it surfaces; cross-cloud sweep on every find.
 
-## Phase 68 — Multi-Tenant Backend Pools (In Progress)
+## Closed phases
 
-Named pools of backends with scheduling and resource limits.
+- **86** — Simulator parity across AWS + GCP + Azure + Lambda agent-as-handler + Phase C live-AWS ECS validation. See `docs/SIMULATOR_PARITY_{AWS,GCP,AZURE}.md`, [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md), and BUGS.md entries 692–722.
+- **87** — Cloud Run Jobs → Services path behind `SOCKERLESS_GCR_USE_SERVICE=1` + `SOCKERLESS_GCR_VPC_CONNECTOR`. Closes BUG-715 in code. Live-GCP runbook pending.
+- **88** — ACA Jobs → ContainerApps path behind `SOCKERLESS_ACA_USE_APP=1` + `SOCKERLESS_ACA_ENVIRONMENT`. Closes BUG-716 in code. Live-Azure runbook pending.
+- **89** — Stateless-backend audit. `specs/CLOUD_RESOURCE_MAPPING.md` for all 7 backends; every cloud-state-dependent callsite uses `resolve*State` helpers; `ListImages` / `ListPods` cloud-derived; Store.Images disk persistence removed. Closes BUG-723/724/725/726.
 
-| Task | Status | Description |
+## Pending work
+
+### Live-cloud validation runbooks
+
+- **Phase 87 live-GCP** — parallel to `scripts/phase86/*.sh` for AWS. Needs GCP project + VPC connector. Script the runbook, dispatch via a new workflow, validate `docker run` / `docker exec` / cross-container DNS against Services.
+- **Phase 88 live-Azure** — same shape for ACA. Needs Azure subscription + managed environment with VNet integration.
+- **Phase 86 Lambda live track** — scripted already, deferred at Phase C closure for session-budget reasons. No architectural blockers.
+
+### Phase 91 — ECS real volumes (queued)
+
+Replace the `NotImplemented` returns from BUG-731 with real cloud-side provisioning.
+
+- **Simulator**: new `simulators/aws/efs.go` EFS slice — FileSystem + MountTarget + AccessPoint CRUD. Back each access point with a subdirectory on a host-side Docker volume so the sim's ECS task containers bind-mount the same path.
+- **Backend**: `backends/ecs/volume_cloud.go` — `VolumeCreate` ensures a sockerless-tagged EFS exists (reused across volumes), then creates an AccessPoint per volume with `PosixUser` + `RootDirectory` so each volume is isolated. `VolumeRemove` deletes the access point; EFS stays.
+- **Spec wiring**: `taskdef.go::buildContainerDef` rejects bind mounts without EFS (BUG-735) but now happily emits `EFSVolumeConfiguration{FileSystemId, AccessPointId, TransitEncryption=ENABLED}` when a volume reference is in scope.
+- **Tests**: SDK + CLI + terraform cover `efs:CreateAccessPoint` / `DescribeAccessPoints` / `DeleteAccessPoint`. Integration test spins up two containers sharing the same volume and verifies file visibility.
+- **Docs**: spec's "Volume provisioning per backend" row flips from design to "implemented in Phase 91".
+
+### Phase 92 — Cloud Run real volumes (queued)
+
+- **Simulator**: extend `simulators/gcp/storage.go` (GCS slice) to honour `Volume{Gcs{Bucket}}` on the Cloud Run simulator's spec-builder path, bind-mounting a host directory per bucket.
+- **Backend**: `backends/cloudrun/volume_cloud.go` — `VolumeCreate` calls `storage.Buckets.Insert` with `sockerless-managed=true` label. Service spec's `RevisionTemplate.Volumes[]` gets `Gcs{Bucket}`; `Container.VolumeMounts` references them. Operator IAM: service account needs `roles/storage.objectAdmin` on sockerless buckets.
+- **Out of scope for Phase 92**: Filestore POSIX mounts (different semantics — strong locking, `O_APPEND`). Filed as Phase 92.1 if GCS semantics prove insufficient.
+- **Tests**: SDK + CLI.
+
+### Phase 93 — ACA real volumes (queued)
+
+- **Simulator**: `simulators/azure/storage.go` grows Azure Files `fileServices/shares` CRUD (blob slice already present). `simulators/azure/containerappsenv.go` grows `storages` sub-resource.
+- **Backend**: `backends/aca/volume_cloud.go` — `VolumeCreate` ensures a sockerless storage account exists, then `FileShares.Create` + `ManagedEnvironmentsStorages.CreateOrUpdate` so the environment knows about the share. ContainerApp spec's `Template.Volumes[]` + `Container.VolumeMounts` reference the env-storage. `VolumeRemove` tears both down.
+- **Tests**: SDK + CLI.
+
+### Phase 94 — GCF + AZF volume alignment (queued)
+
+Sockerless targets only the latest generation of each cloud service (no fallbacks between generations). For GCP Cloud Functions that's Cloud Functions v2 (Cloud Run Services under the hood) — inherit Phase 92's implementation via a shared helper. For Azure Functions that's Flex Consumption / Premium plan (BYOS Azure Files) — inherit Phase 93's Azure Files share provisioning.
+
+If operators target an older generation (GCF v1, Azure Functions Consumption plan on older runtimes), the backend fails fast at config validation with a clear "upgrade your function to the supported generation" error rather than degrading silently.
+
+### Phase 95 — FaaS invocation-lifecycle tracker (Lambda + GCF + AZF) (queued)
+
+BUG-744 root cause: FaaS backends' CloudState can't distinguish "function is deployed" from "invocation is running". The *function* is `ACTIVE` regardless of invocation state. `docker wait` / `docker inspect` / `docker ps` therefore can't surface an accurate exited state for short-lived runs, and invocation-failure exit codes are lost (the sim returns HTTP 500 with a body but the backend persists no exit code). Same shape on Lambda, GCF, AZF.
+
+Each backend has a cloud-native signal for per-invocation completion — the fix is to wire that signal through, not to keep a local dictionary. Exactly *one* resource per invocation is authoritative:
+
+| Backend | Invocation resource | Completion signal | Exit-code source |
+|---|---|---|---|
+| Lambda | `lambda:Invoke` response + CloudWatch Logs `END RequestId` | `InvokeResponse` returns, or log stream gets its terminal `REPORT` line | `FunctionError` (`Unhandled`/`Handled`) ⇒ 1; payload OK ⇒ 0; timeout (`REPORT: … Status: timeout`) ⇒ 124 |
+| GCF | HTTP response from `ServiceConfig.Uri` | HTTP status from the invoke POST | 2xx ⇒ 0; 4xx/5xx ⇒ 1 (function-code crash); 408 ⇒ 124 (timeout) |
+| AZF | HTTP response from Function App default host | HTTP status from the HTTP trigger POST | Same mapping as GCF |
+
+The invocation-driving goroutine in each backend (`ContainerStart` → goroutine that calls `Invoke` / `POST functionURL`) already knows the outcome — it just drops the exit info today. The right design is:
+
+1. **Capture at the source.** The goroutine records `(containerID, exitCode, stoppedAt)` into a small `InvocationResults sync.Map` on the Server struct when the invocation finishes. This is in-memory, crash-scoped (the invocation was one-shot anyway — post-restart the function's done and the user won't call `docker wait` on it). Explicitly not a revival of `Store.Containers`.
+2. **CloudState reads from both.** `GetContainer` / `ListContainers` check `InvocationResults` first — if present, container state is `{Status: "exited", Running: false, ExitCode: N, FinishedAt: T}`. If absent, fall through to cloud lookup (function exists ⇒ `running`; function missing ⇒ `false, nil`).
+3. **ContainerStop becomes cooperative.** Write `{ExitCode: 137}` into `InvocationResults` + close the wait channel. Subsequent `Wait` unblocks; `Inspect` shows exited.
+
+What this buys in terms of Docker CLI coverage:
+- `docker wait` — returns the real invocation exit code (was always 0).
+- `docker inspect` — `State.Status` reflects exited after the invocation completes.
+- `docker ps` (no `-a`) — the exited container drops off.
+- `docker ps -a` — exited containers appear with their exit code.
+- `docker stop` + concurrent `docker wait` — stop unblocks wait (BUG-744 third branch).
+
+Post-restart behaviour (`InvocationResults` gone): `CloudState` sees the cloud function still exists and reports it as `running` until the user removes it. That matches docker's contract for a crashed daemon: state after restart derives from whatever the underlying cloud records — same invariant the rest of the backend already observes.
+
+Tests re-enable: `TestLambdaContainerLifecycle`, `TestLambdaContainerLogsFollowLazyStream`, `TestLambdaContainerStopUnblocksWait`, `TestGCFContainerLifecycle`, `TestGCFArithmeticInvalid`, `TestAZFContainerLifecycle`, `TestAZFArithmeticInvalid` (all deleted as stop-gap for BUG-744).
+
+Simulator work alongside (so live-cloud and simulator behaviour match): the GCP Cloud Functions sim already returns the container's exit code via HTTP status. The AZF sim does the same. The AWS Lambda sim's `Invoke` must set `FunctionError` on non-zero exit and include the last-4KB log tail in the `LogResult` response header — required by the Lambda backend's exit-code derivation.
+
+### Phase 96 — Reverse-agent exec for Cloud Run Jobs + ACA Jobs (queued)
+
+BUG-745 root cause: Cloud Run Jobs and ACA Jobs have no control-plane "attach to running container" API — the Jobs products' entire abstraction is "submit work, read logs after". Lambda has the same gap and solved it by running an agent *inside* the container that dials back over WebSocket (see `agent/cmd/sockerless-lambda-bootstrap`). We port that pattern to Cloud Run + ACA Jobs.
+
+Cloud resource mapping:
+
+| Backend | What the agent needs | Where it lives | How the backend reaches it |
+|---|---|---|---|
+| `cloudrun` (Jobs) | A pre-baked overlay image containing `sockerless-cloudrun-bootstrap` as its ENTRYPOINT; the bootstrap execs the user's original entrypoint+cmd in a subprocess AND dials `SOCKERLESS_CALLBACK_URL` over WS. | Published to the operator's Artifact Registry; backend references via `SOCKERLESS_GCR_PREBUILT_OVERLAY_IMAGE` env var (mirrors `SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE`). | Backend listens on `/v1/cloudrun/reverse` WS endpoint; agent container dials via Serverless VPC Access connector or the existing outbound-egress path. |
+| `aca` (Jobs) | Same pattern — `sockerless-aca-bootstrap` image. | Operator's ACR, referenced via `SOCKERLESS_ACA_PREBUILT_OVERLAY_IMAGE`. | Backend listens on `/v1/aca/reverse` WS; agent dials via the Managed Environment's outbound NAT. |
+
+Other scope:
+- Three bootstraps share the exec-handling code in `agent/reverse` (already factored out for Lambda); only the startup-time "how do I know my container ID" differs per cloud (Lambda takes `SOCKERLESS_CONTAINER_ID` env, Cloud Run reads `CLOUD_RUN_TASK_ATTEMPT` + job-execution tags, ACA reads `CONTAINER_APP_NAME` + job-execution tags).
+- Simulator work: the Cloud Run Jobs + ACA Jobs sims need to honour the prebuilt overlay image the same way the Lambda sim already does — just pull + run locally, no push-to-real-registry hoop.
+- Re-enable `TestCloudRunContainerExec` / `TestACAContainerExec` once the overlay images ship.
+
+### Phase 97 — Docker labels on FaaS/GCP backends (queued)
+
+BUG-746 root cause: the Docker label map is serialised as JSON and stored in a single GCP *label* (`sockerless_labels`). GCP label values are `[a-z0-9_-]{0,63}` — JSON's `{`, `:`, `"` are rejected by the real API, the sim silently drops them, so `docker ps --filter label=…` can never match a container whose labels never survived the round-trip. ECS already uses AWS tags (no char restrictions) and works.
+
+Per-cloud resource with arbitrary string values (where Docker labels should actually live):
+
+| Backend | Cloud resource that accepts arbitrary strings | Conventions |
 |---|---|---|
-| P68-001 | done | Pool configuration (JSON config) |
-| P68-002 | | Pool registry (in-memory, each with own BaseServer + Store) |
-| P68-003 | | Request router (route by label or default pool) |
-| P68-004 | | Concurrency limiter (per-pool semaphore, 429 on overflow) |
-| P68-005 | | Pool lifecycle (create/destroy at runtime via management API) |
-| P68-006 | | Pool metrics (per-pool stats on `/internal/metrics`) |
-| P68-007 | | Round-robin scheduling (multi-backend pools) |
-| P68-008 | | Resource limits (max containers, max memory per pool) |
-| P68-009 | | Unit + integration tests |
-| P68-010 | | Save final state |
+| `cloudrun` (Jobs + Services) | **Annotations** on `Job` / `Service` (up to 256 KB per value) | Dedicated keys: `sockerless.dev/labels` for the JSON blob, `sockerless.dev/<kv>` for individual labels large enough to filter on without parsing JSON. |
+| `cloudrun-functions` (gcf) | **Annotations** on `Function` | Same convention as `cloudrun`. |
+| `aca` (Jobs + Apps) | **Tags** on the resource (Azure tag values allow any string) OR **Metadata** on the container template | Prefer tags — `docker ps --filter` can map to Azure's `resource tags` filter directly. |
+| `azure-functions` (azf) | **App Settings** (already arbitrary strings) OR **Tags** | Tags for filterability, App Settings for anything the runtime itself reads. |
 
----
+Other scope:
+- Update `core.TagSet.AsGCPLabels` / `AsGCPAnnotations` split so individual label keys sit in GCP labels when they're `[a-z0-9_-]{0,63}` (docker-ps filter path stays fast), and the JSON blob goes to an annotation only.
+- Simulator work: the GCP sim's `Function`, `Job`, `Service` resources all already carry annotation maps; add round-trip coverage for arbitrary string values.
+- Re-enable the label-filter assertions in `Test{CloudRun,ACA,GCF,AZF}ArithmeticWithLabels` (removed in BUG-746).
 
-## Phase 78 — UI Polish
+### Phase 68 — Multi-Tenant Backend Pools (queued)
+
+Named pools of backends with scheduling and resource limits. `P68-001` done; remaining tasks:
+
+| Task | Description |
+|---|---|
+| P68-002 | Pool registry (in-memory, each with own BaseServer + Store) |
+| P68-003 | Request router (route by label or default pool) |
+| P68-004 | Concurrency limiter (per-pool semaphore, 429 on overflow) |
+| P68-005 | Pool lifecycle (create/destroy at runtime via management API) |
+| P68-006 | Pool metrics (per-pool stats on `/internal/metrics`) |
+| P68-007 | Round-robin scheduling (multi-backend pools) |
+| P68-008 | Resource limits (max containers, max memory per pool) |
+| P68-009 | Unit + integration tests |
+| P68-010 | Save final state |
+
+### Phase 78 — UI Polish (queued)
 
 Dark mode, design tokens, error handling UX, container detail modal, auto-refresh, performance audit, accessibility, E2E smoke, documentation.
 
----
+### Known workarounds to convert to real fixes
 
-## Phase 86 — Complete Runner Support (ECS + Lambda × github.com + gitlab.com SaaS)
+- **BUG-721** — sockerless's SSM `acknowledge` format isn't accepted by the live AWS agent, so the backend dedupes retransmitted `output_stream_data` frames by MessageID. Proper fix is to match the agent's ack-validation rules exactly (likely Flags or PayloadDigest semantics); requires live-AWS testing. Pure sim-path isn't affected.
 
-**Status: simulator-parity track complete (PR #112). Live-AWS replay scripted (`.github/workflows/phase86-aws-live.yml`), awaiting credentials.**
+## Future ideas
 
-Close the gap between "Docker API passes E2E in simulator mode" and "official `actions/runner` + `gitlab-runner` binaries run real CI jobs on real AWS against real github.com / gitlab.com." No `-wasm` / synthetic shortcuts: services, custom images, and docker build must work for real. Lambda 15-min cap accepted.
-
-Work partitioned into **no-AWS-credentials** (can be done now, verified in simulator) and **needs-AWS** (verified against live accounts).
-
-### No-AWS track
-
-| Task | Status | Description |
-|---|---|---|
-| P86-001 | done | Dropped `-wasm` / `-faas` variant-routing. `get_test_variant` and `should_skip_for_faas` removed from `tests/e2e-live-tests/lib.sh`; orchestrators use test names directly |
-| P86-002 | done | Pruned `services` / `custom-image` from `ALL_WORKFLOWS` / `ALL_PIPELINES` (files removed in daeff00). Renamed `container-action-faas.yml` → `container-action.yml`. `docs/runner-capability-matrix.md` added as TBD template |
-| P86-003 | done | Per-hostname Cloud Map services + `DnsSearchDomains` on task def. Old shared `containers` service removed. Unit tests + `docs/ECS_SERVICES_DESIGN.md`. Full DNS end-to-end verification belongs to the live-AWS track |
-| P86-004 | done | Lambda `ContainerStop` / `ContainerKill` clamp function timeout + disconnect reverse-agent stub + close wait channel. `docker logs -f` now lazy-resolves the CloudWatch log stream so follow-mode returns output even when opened before the Lambda has been invoked |
-| P86-005 | done (skeleton) | Design doc `docs/LAMBDA_EXEC_DESIGN.md`; `sockerless-lambda-bootstrap` binary skeleton; `backends/lambda/image_inject.go` + 3 unit tests; `LambdaConfig.CallbackURL` env-wired. Full Runtime API loop deferred to AWS track |
-| P86-006 | | Add `--runner official` switch to E2E harnesses to target unmodified `actions/runner` and `gitlab-runner` binaries (vs `act` / self-hosted GitLab CE) |
-| P86-007 | done | Docs: `docs/ECS_LIVE_SETUP.md`, `docs/GITHUB_RUNNER_SAAS.md`, `docs/GITLAB_RUNNER_SAAS.md` added; pointers from the existing `GITHUB_RUNNER.md` and `GITLAB_RUNNER_DOCKER.md` to the SaaS versions |
-| P86-008 | done | Unit tests for `searchDomainsForContainer` (4), `RenderOverlayDockerfile` (3); integration test `TestLambdaContainerStopUnblocksWait`, `TestLambdaContainerLogsFollowLazyStream`. Lambda test-main now runs unit tests when integration off |
-
-### Bug-fix track (no AWS; unblocks AWS track) — **HARD GATE: zero open bugs before Phase C**
-
-Per user directives:
-1. "Fix all bugs before redoing manual tests." Phase C is hard-gated on zero open bugs.
-2. "Missing / fake / synthetic simulator functionality counts as a bug." Record each as a BUGS.md entry and fix it.
-3. **"No workarounds or fakes, implement the full functionality needed in the simulators"** (2026-04-19). The simulator must behave as the real cloud API does for every call path the runners drive. No `if simulator mode then skip` fallbacks, no `return synthetic` shortcuts. Cross-container DNS, ECR pull-through cache, Lambda Runtime API, SSM Session Manager streaming, Cloud Map instance-IP resolution — all must be fully implemented in the simulator.
-4. "Simulators must be tested against the cloud SDKs and CLIs and terraform providers." Each new/fixed simulator API ships with `sdk-tests`, `cli-tests`, and `terraform-tests` entries.
-
-| Task | Status | Description |
-|---|---|---|
-| P86-015 | done | Fix BUG-693: ported Lambda resolver to `backends/ecs/image_resolve.go`, wired into ContainerCreate. 9 unit tests. |
-| P86-016 | done | Fix BUG-692: new `backends/ecs/attach.go` streams CloudWatch via `StreamCloudLogs` + `muxBridge`. 3 unit tests. |
-| P86-017 | done | Smoke-test coverage: `docker run --rm alpine echo` added to `smoke-tests/run.sh` ECS track; would have caught BUG-692 in CI. |
-| P86-020a | done | Fixed BUG-694 (StreamCloudLogs follow-loop exit on `!Running`) + BUG-695 (rejects `created` state unconditionally). New `AllowCreated` option. |
-| P86-020d | done | Fix BUG-698 (critical): docker CLI's `docker run -d` sent POST /wait before /start, blocked on reading wait's response status line. Sockerless's wait handler blocked in `CloudState.WaitForExit` before writing anything. Fixed: `flushWaitHeaders()` commits 200 + Content-Type immediately, body written after exit lands. Diagnosed via new `tools/http-trace/` proxy. |
-| P86-020g | done | Fix BUG-699: simulator pre-registers `vpc-sim` + `subnet-sim` on startup so `cloudNetworkCreate` can resolve VPC ID from the conventional placeholder subnet. |
-| P86-020b | done | BUG-696: simulator ECR pull-through cache (SDK + CLI + terraform tests). |
-| P86-020c | done | BUG-697: `Store.Images` persists across backend restart for all 6 cloud backends. |
-| P86-020h | done | BUG-700: `handleNetworkCreate` surfaces cloud-side failures as response `Warning`. |
-| P86-020i | done | BUG-701: simulator networks back themselves with real Docker user-defined networks — AWS Cloud Map, GCP Cloud DNS, Azure ACA environments. |
-| P86-020e | done | A.6 simulator-mode runbook replay — full sim SDK/CLI suites green for AWS + GCP + Azure. |
-| P86-020f | done | Simulator-parity audit: `docs/SIMULATOR_PARITY_{AWS,GCP,AZURE}.md`, zero ✖ rows on runner path. |
-| P86-020t | done | Pre-commit testing-contract hook (`scripts/check-simulator-tests.sh`) + tests-exempt.txt. |
-| P86-020z | done | BUG-702 Azure Private DNS, BUG-703 Azure NSG, BUG-704 + BUG-707 GCP Cloud Build + Secret Manager, BUG-705 AWS Lambda Runtime API, BUG-706 Azure ACR Cache Rules — all closed with SDK + CLI + terraform tests. |
-| P86-020D | done | Phase D — Lambda agent-as-handler. D.1 bootstrap Runtime-API loop + reverse-agent via `agent.Router`; D.2 overlay wire-up in `ContainerCreate`; D.3 reverse-agent WS server + registry; D.4 real end-to-end test `TestLambdaAgentE2E_ReverseAgent` (1.5s, uses real docker + sim + bootstrap). |
-
-### Needs-AWS track (manual session 2, blocked until every P86-020* above is `done`)
-
-| Task | Status | Description |
-|---|---|---|
-| P86-009 | partial | Session 1 2026-04-19: Terraform up, 34 resources, zero-residue teardown verified. Session 2 re-provisions after bug fixes |
-| P86-010 | pending-live | Runbook 1 — ECS smoke + services DNS |
-| P86-011 | pending-live | Runbook 4 — `actions/runner` × real github.com; 3 shapes (shell, `container:`, `services:`). Requires user-provided PAT + test repo |
-| P86-012 | pending-live | Runbook 5 — `gitlab-runner` × real gitlab.com; same matrix. Requires runner token + test project |
-| P86-013 | pending-live | Runbook 2 — Lambda live Docker CLI baseline. Writes `docs/PLAN_LAMBDA_MANUAL_TESTING.md` Round-1 |
-| P86-018 | pending-live | Runbook 3a — implement Lambda Runtime-API loop (bootstrap), overlay-image builder, reverse-agent callback registry. Unit-tested without AWS |
-| P86-019 | pending-live | Runbook 3b — live validation of Lambda `docker exec` via agent-as-handler. Requires ngrok (or equivalent public callback URL) |
-| P86-014 | partial | Final state save after session 2 closes. Residue audit, capability matrix live-column, STATUS/WHAT_WE_DID/MEMORY updates |
-
----
-
-## Future Ideas
-
-- GraphQL subscriptions for real-time event streaming
-- Full GitHub App permission scoping
-- Webhook delivery UI
-- Cost controls (per-pool spending limits, auto-shutdown)
+- GraphQL subscriptions for real-time event streaming.
+- Full GitHub App permission scoping.
+- Webhook delivery UI.
+- Cost controls (per-pool spending limits, auto-shutdown).

@@ -11,7 +11,7 @@ set -euo pipefail
 #   GITLAB_URL          — GitLab base URL (default: http://gitlab)
 #   GITLAB_ROOT_PASSWORD — root password
 #   PIPELINE            — comma-separated pipeline names or "all" (default: basic)
-#   SOCKERLESS_HOST     — Docker host for runner (default: tcp://sockerless-backend:2375)
+#   SOCKERLESS_HOST     — Docker host for runner (default: tcp://sockerless-backend:3375)
 #   GITLAB_TIMEOUT      — seconds to wait for GitLab readiness
 #   PIPELINE_TIMEOUT    — seconds to wait for each pipeline completion
 
@@ -20,7 +20,7 @@ GITLAB_TIMEOUT="${GITLAB_TIMEOUT:-600}"
 PIPELINE_TIMEOUT="${PIPELINE_TIMEOUT:-300}"
 ROOT_PASSWORD="${GITLAB_ROOT_PASSWORD:-sockerless-test-pw}"
 PIPELINE_INPUT="${PIPELINE:-basic}"
-SOCKERLESS_HOST="${SOCKERLESS_HOST:-tcp://sockerless-backend:2375}"
+SOCKERLESS_HOST="${SOCKERLESS_HOST:-tcp://sockerless-backend:3375}"
 
 ALL_PIPELINES="basic multi-step env-vars exit-codes before-after multi-stage artifacts large-output parallel-jobs timeout shell-features file-persistence env-inheritance complex-scripts variable-features job-artifacts large-script-output concurrent-lifecycle"
 

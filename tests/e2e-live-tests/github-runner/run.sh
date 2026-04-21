@@ -61,7 +61,7 @@ log_info "Starting Sockerless with backend=$BACKEND mode=$MODE"
 
 # Source start-backend.sh in a subshell-like way to get exports
 # We need to eval it in the current shell to get env vars
-BACKEND_ADDR="127.0.0.1:2375"
+BACKEND_ADDR="127.0.0.1:3375"
 PIDFILE="/tmp/sockerless-e2e.pids"
 
 cleanup() {

@@ -19,7 +19,6 @@ type Server struct {
 
 	CloudRun     *core.StateStore[CloudRunState]
 	NetworkState *core.StateStore[NetworkState]
-	VolumeState  *core.StateStore[VolumeState]
 }
 
 // NewServer creates a new Cloud Run backend server.
@@ -29,7 +28,6 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		gcp:          gcpClients,
 		CloudRun:     core.NewStateStore[CloudRunState](),
 		NetworkState: core.NewStateStore[NetworkState](),
-		VolumeState:  core.NewStateStore[VolumeState](),
 	}
 	s.ipCounter.Store(2)
 

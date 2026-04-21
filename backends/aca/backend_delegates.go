@@ -154,16 +154,16 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 	return s.BaseServer.SystemEvents(opts)
 }
 
-// Volume methods (pass-through to BaseServer).
-
+// Named-volume operations are not supported by the ACA backend.
+// Real Azure Files share provisioning is a follow-up phase.
 func (s *Server) VolumeCreate(req *api.VolumeCreateRequest) (*api.Volume, error) {
-	return s.BaseServer.VolumeCreate(req)
+	return nil, &api.NotImplementedError{Message: "ACA backend does not support named volumes"}
 }
 
 func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
-	return s.BaseServer.VolumeInspect(name)
+	return nil, &api.NotImplementedError{Message: "ACA backend does not support named volumes"}
 }
 
 func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListResponse, error) {
-	return s.BaseServer.VolumeList(filters)
+	return nil, &api.NotImplementedError{Message: "ACA backend does not support named volumes"}
 }

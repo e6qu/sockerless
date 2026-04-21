@@ -93,7 +93,7 @@ func TestLambda_InvokeCreatesLogStream(t *testing.T) {
 // TestLambda_InvokeRoundTrip exercises the Runtime API invoke path:
 // the simulator implements the real AWS Lambda Runtime API slice.
 // The handler image polls /next, echoes the payload back via
-// /response. Round-trip proves the Runtime API slice is wired
+// response. Round-trip proves the Runtime API slice is wired
 // end-to-end (simulator-side per-invocation sidecar + container env +
 // host.docker.internal + host gateway + /response propagation back
 // to the SDK caller).
@@ -124,7 +124,7 @@ func TestLambda_InvokeRoundTrip(t *testing.T) {
 
 // TestLambda_InvokeHandlerError exercises the /error branch of the
 // Runtime API: payload with "cause":"error" triggers a POST to
-// /invocation/{id}/error; caller sees X-Amz-Function-Error: Unhandled.
+// invocation/{id}/error; caller sees X-Amz-Function-Error: Unhandled.
 func TestLambda_InvokeHandlerError(t *testing.T) {
 	lc := lambdaClient()
 

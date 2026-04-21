@@ -46,6 +46,13 @@ repos:
         pass_filenames: false
         always_run: true
 
+      - id: port-defaults
+        name: Port defaults (BUG-710 — no :2375 / :9100 in production sources)
+        entry: bash scripts/check-port-defaults.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+
       - id: go-test-core
         name: Go test (core)
         entry: bash -c 'cd backends/core && go test ./... -count=1 -timeout 120s'

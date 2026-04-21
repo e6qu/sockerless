@@ -18,7 +18,7 @@ source "${SCRIPT_DIR}/lib.sh"
 # --- Parse args ---
 BACKEND=""
 MODE="simulator"
-BACKEND_ADDR="127.0.0.1:2375"
+BACKEND_ADDR="127.0.0.1:3375"
 PIDFILE="/tmp/sockerless-e2e.pids"
 
 while [ $# -gt 0 ]; do

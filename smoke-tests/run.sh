@@ -5,7 +5,7 @@
 set -euo pipefail
 
 BACKEND_TYPE="${BACKEND:-ecs}"
-BACKEND_ADDR="127.0.0.1:2375"
+BACKEND_ADDR="127.0.0.1:3375"
 # DOCKER_HOST is set per-command for CLI calls to the backend.
 # The simulator's Docker SDK must use the default socket (/var/run/docker.sock)
 # so it must NOT see DOCKER_HOST pointing at the backend.

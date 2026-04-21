@@ -183,14 +183,18 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 	return s.BaseServer.SystemEvents(opts)
 }
 
+// Named-volume operations are not supported by the ECS backend.
+// `docker volume create` etc. previously delegated to BaseServer which
+// only tracked metadata in-memory — containers never saw a real mount.
+// Real EFS provisioning is a follow-up phase.
 func (s *Server) VolumeCreate(req *api.VolumeCreateRequest) (*api.Volume, error) {
-	return s.BaseServer.VolumeCreate(req)
+	return nil, &api.NotImplementedError{Message: "ECS backend does not support named volumes; use task-definition EFSVolumeConfiguration on pre-provisioned EFS instead"}
 }
 
 func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
-	return s.BaseServer.VolumeInspect(name)
+	return nil, &api.NotImplementedError{Message: "ECS backend does not support named volumes"}
 }
 
 func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListResponse, error) {
-	return s.BaseServer.VolumeList(filters)
+	return nil, &api.NotImplementedError{Message: "ECS backend does not support named volumes"}
 }

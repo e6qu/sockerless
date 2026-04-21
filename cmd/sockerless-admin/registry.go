@@ -12,7 +12,7 @@ import (
 type Component struct {
 	Name   string `json:"name"`
 	Type   string `json:"type"`   // backend, frontend, simulator, coordinator
-	Addr   string `json:"addr"`   // e.g. http://localhost:9100
+	Addr   string `json:"addr"`   // e.g. http://localhost:3375
 	Health string `json:"health"` // up, down, unknown
 	Uptime int    `json:"uptime"` // seconds, from last health check
 }

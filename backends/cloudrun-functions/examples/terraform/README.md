@@ -49,7 +49,7 @@ terraform output -raw backend_env
 export SOCKERLESS_GCF_PROJECT=$(terraform output -raw project_id)
 export SOCKERLESS_GCF_REGION=$(terraform output -raw region)
 export SOCKERLESS_GCF_SERVICE_ACCOUNT=$(terraform output -raw service_account_email)
-export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:9100
+export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:3375
 ```
 
 **Important:** `SOCKERLESS_CALLBACK_URL` is required. Cloud Functions uses reverse agent mode exclusively — functions cannot accept inbound connections. Replace `<YOUR_BACKEND_HOST>` with a publicly reachable address.
@@ -67,7 +67,7 @@ go build -tags noui -o sockerless-backend-gcf ./backends/cloudrun-functions
 ## Step 5: Configure Docker to Use Sockerless
 
 ```bash
-export DOCKER_HOST=tcp://localhost:2375
+export DOCKER_HOST=tcp://localhost:3375
 ```
 
 ## Step 6: Use Docker Commands
@@ -151,7 +151,7 @@ gcloud functions delete skls-<id> --region=$(terraform output -raw region) --qui
 ┌──────────────┐     ┌──────────────────┐     ┌────────────────────────┐
 │  docker CLI  │────▶│ Sockerless       │────▶│ Cloud Run Functions    │
 │              │     │ Backend           │     │                        │
-│ pull, create,│     │ (localhost:9100)  │     │ Functions.Create       │
+│ pull, create,│     │ (localhost:3375)  │     │ Functions.Create       │
 │ start, exec, │     │                  │◀────│ HTTP POST invoke       │
 │ logs, rm     │     │ ◀── agent calls  │     │ Functions.Delete       │
 └──────────────┘     │     back here    │     │ LogAdmin.Entries       │

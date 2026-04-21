@@ -14,7 +14,7 @@ import (
 type ManagedProcess struct {
 	Name      string
 	Binary    string   // resolved path to binary
-	Args      []string // e.g., ["-addr", ":9100"]
+	Args      []string // e.g., ["-addr", ":3375"]
 	Env       []string // additional env vars (KEY=VALUE)
 	Addr      string   // expected listen address
 	Type      string   // backend, frontend, simulator, coordinator

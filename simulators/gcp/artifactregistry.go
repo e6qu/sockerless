@@ -253,9 +253,9 @@ func buildOCIHandler(manifests sim.Store[OCIManifest], blobs sim.Store[OCIBlob],
 		}
 
 		// Parse OCI paths: /v2/{name}/manifests/{reference}
-		//                   /v2/{name}/blobs/{digest}
-		//                   /v2/{name}/blobs/uploads/
-		//                   /v2/{name}/blobs/uploads/{uuid}
+		//                   v2/{name}/blobs/{digest}
+		//                   v2/{name}/blobs/uploads/
+		//                   v2/{name}/blobs/uploads/{uuid}
 		if idx := strings.Index(rest, "/manifests/"); idx >= 0 {
 			imageName := rest[:idx]
 			reference := rest[idx+len("/manifests/"):]

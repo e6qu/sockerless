@@ -8,7 +8,7 @@ Runs Docker containers as Azure Container Apps Jobs and Executions, with Log Ana
 environments:
   my-aca:
     backend: aca
-    addr: ":9100"
+    addr: ":3375"
     log_level: info
     azure:
       subscription_id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
@@ -47,10 +47,10 @@ environments:
 
 ```sh
 go build -o sockerless-backend-aca ./backends/aca/cmd/sockerless-backend-aca
-./sockerless-backend-aca -addr :9100 -log-level info
+./sockerless-backend-aca -addr :3375 -log-level info
 ```
 
-Flags: `-addr` (default `:9100`), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).
+Flags: `-addr` (default `:3375`), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).
 
 ## Cloud Notes
 

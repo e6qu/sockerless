@@ -127,11 +127,11 @@ func TestBackendEnvAZF(t *testing.T) {
 }
 
 func TestBackendArgs(t *testing.T) {
-	args := BackendArgs(9100, "info")
+	args := BackendArgs(3375, "info")
 	if len(args) != 4 {
 		t.Fatalf("expected 4 args, got %d", len(args))
 	}
-	if args[0] != "-addr" || args[1] != ":9100" {
+	if args[0] != "-addr" || args[1] != ":3375" {
 		t.Errorf("unexpected addr args: %v", args[:2])
 	}
 	if args[2] != "-log-level" || args[3] != "info" {

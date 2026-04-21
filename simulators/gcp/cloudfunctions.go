@@ -209,21 +209,32 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 		image = fn.BuildConfig.DockerRepository
 	}
 
-	// Determine command/args from SOCKERLESS_CMD or SimCommand
-	var cmd []string
+	// Read entrypoint + cmd separately — preserves docker's ENTRYPOINT
+	// vs CMD semantics, e.g. an image with ENTRYPOINT=/usr/local/bin/foo
+	// and user Cmd=["arg"] must invoke foo("arg"), not override
+	// ENTRYPOINT to "arg". SOCKERLESS_CMD backwards-compat path (no
+	// SOCKERLESS_ENTRYPOINT): treat the whole list as args so the
+	// image's ENTRYPOINT still fires — matches docker run's default
+	// behaviour when no --entrypoint flag is passed.
+	var entrypoint, userCmd []string
 	if fn.ServiceConfig != nil {
-		if cmdB64, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_CMD"]; ok {
-			if decoded, err := base64.StdEncoding.DecodeString(cmdB64); err == nil {
-				json.Unmarshal(decoded, &cmd)
+		if epB64, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_ENTRYPOINT"]; ok {
+			if decoded, err := base64.StdEncoding.DecodeString(epB64); err == nil {
+				json.Unmarshal(decoded, &entrypoint)
 			}
 		}
-		if len(cmd) == 0 {
-			cmd = fn.ServiceConfig.SimCommand
+		if cmdB64, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_CMD"]; ok {
+			if decoded, err := base64.StdEncoding.DecodeString(cmdB64); err == nil {
+				json.Unmarshal(decoded, &userCmd)
+			}
+		}
+		if len(entrypoint) == 0 && len(userCmd) == 0 {
+			userCmd = fn.ServiceConfig.SimCommand
 		}
 	}
 
-	// If no image and no command, nothing to run
-	if image == "" && len(cmd) == 0 {
+	// If no image and nothing to run, nothing to do
+	if image == "" && len(entrypoint) == 0 && len(userCmd) == 0 {
 		return []byte("{}"), 0
 	}
 
@@ -248,18 +259,19 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 	})
 
 	if image != "" {
-		// Container-based execution
-		var entrypoint, args []string
-		if len(cmd) > 0 {
-			entrypoint = cmd[:1]
-			if len(cmd) > 1 {
-				args = cmd[1:]
-			}
-		}
+		// Map cloud registry URIs (e.g. AR pull-through cache references
+		// like `us-central1-docker.pkg.dev/proj/docker-hub/library/alpine:latest`)
+		// back to their original Docker Hub / local tag so the sim can
+		// actually run them locally. Matches how the Cloud Run Jobs sim
+		// resolves images in the same process.
+		localImage := sim.ResolveLocalImage(image)
+		// Container-based execution. When SOCKERLESS_ENTRYPOINT is
+		// unset we leave Command nil so the image's ENTRYPOINT runs
+		// unchanged; userCmd becomes the container CMD (args).
 		handle, err := sim.StartContainerSync(sim.ContainerConfig{
-			Image:   image,
+			Image:   localImage,
 			Command: entrypoint,
-			Args:    args,
+			Args:    userCmd,
 			Env:     cmdEnv,
 			Timeout: timeout,
 			Name:    fmt.Sprintf("sockerless-sim-gcf-%s", functionID),
@@ -284,9 +296,12 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 		return []byte(output), result.ExitCode
 	}
 
-	// Fallback: process-based execution (no image available)
+	// Fallback: process-based execution (no image available) —
+	// entrypoint + args concatenated for a host-process exec.
+	procCmd := append([]string{}, entrypoint...)
+	procCmd = append(procCmd, userCmd...)
 	handle := sim.StartProcess(sim.ProcessConfig{
-		Command: cmd,
+		Command: procCmd,
 		Env:     cmdEnv,
 		Timeout: timeout,
 	}, collectSink)

@@ -14,7 +14,7 @@ GitLab CE (Docker Compose)
   ▼
 GitLab Runner (docker executor)
   │
-  ├── host = tcp://sockerless-backend:2375
+  ├── host = tcp://sockerless-backend:3375
   │
   ▼
 Sockerless Frontend (Docker API)
@@ -119,7 +119,7 @@ All output is captured to `tests/e2e-live-tests/logs/`:
 
 **GitLab takes too long to start**: GitLab CE startup can take 2-5 minutes. The orchestrator waits up to 600s (configurable via `GITLAB_TIMEOUT`). On low-resource machines, increase this.
 
-**Pipeline stuck in "pending"**: The runner may not have connected. Check that `SOCKERLESS_HOST` points to the correct frontend address (default: `tcp://sockerless-backend:2375`).
+**Pipeline stuck in "pending"**: The runner may not have connected. Check that `SOCKERLESS_HOST` points to the correct frontend address (default: `tcp://sockerless-backend:3375`).
 
 **Runner registration fails**: Both the new runner API (GitLab 16+) and legacy registration are attempted. Ensure the GitLab instance is fully initialized before the orchestrator connects.
 

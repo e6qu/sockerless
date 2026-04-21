@@ -77,7 +77,7 @@ The backend is now running locally and will create ECS Fargate tasks in your AWS
 Point the Docker CLI at the Sockerless backend:
 
 ```bash
-export DOCKER_HOST=tcp://localhost:2375
+export DOCKER_HOST=tcp://localhost:3375
 ```
 
 Now every `docker` command goes through Sockerless to ECS Fargate.
@@ -192,7 +192,7 @@ aws ecs stop-task --cluster sockerless-example --task <task-arn>
 ┌──────────────┐     ┌──────────────────┐     ┌────────────────────────┐
 │  docker CLI  │────▶│ Sockerless       │────▶│ AWS ECS Fargate        │
 │              │     │ Backend           │     │                        │
-│ pull, create,│     │ (localhost:9100)  │     │ RegisterTaskDefinition │
+│ pull, create,│     │ (localhost:3375)  │     │ RegisterTaskDefinition │
 │ start, exec, │     │                  │     │ RunTask                │
 │ logs, stop   │     │                  │     │ StopTask               │
 └──────────────┘     └──────────────────┘     │ GetLogEvents           │
@@ -210,7 +210,7 @@ The agent runs inside each ECS task. After the task reaches RUNNING state, Socke
 Set `SOCKERLESS_CALLBACK_URL` to enable. The agent inside the task connects back to Sockerless. This is useful when the backend is not in the same VPC or when tasks run in private subnets without public IPs.
 
 ```bash
-export SOCKERLESS_CALLBACK_URL=http://<backend-host>:9100
+export SOCKERLESS_CALLBACK_URL=http://<backend-host>:3375
 ```
 
 ## Estimated Costs

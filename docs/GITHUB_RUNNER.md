@@ -9,7 +9,7 @@ End-to-end tests for Sockerless using [act](https://github.com/nektos/act) as a 
 ```
 act (GitHub Actions runner)
   │
-  ├── DOCKER_HOST=tcp://frontend:2375
+  ├── DOCKER_HOST=tcp://frontend:3375
   │
   ▼
 Sockerless Frontend (Docker API)

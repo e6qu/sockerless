@@ -67,9 +67,22 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 		s.Logger.Warn().Err(err).Str("rule", ruleName).Msg("failed to create NSG rule")
 	}
 
-	// Register container in service discovery
+	// Register container in service discovery.
 	c, _ := s.ResolveContainerAuto(context.Background(), containerID)
 	hostname := strings.TrimPrefix(c.Name, "/")
+
+	// — Apps path: register a CNAME pointing at the
+	// ContainerApp's LatestRevisionFqdn. Apps have peer-reachable
+	// internal FQDNs inside the managed environment, unlike Jobs.
+	if s.config.UseApp {
+		if appState, ok := s.resolveAppACAState(s.ctx(), containerID); ok && appState.AppName != "" {
+			if err := s.cloudServiceRegisterCNAME(s.ctx(), containerID, hostname, appState.AppName, net.ID); err != nil {
+				s.Logger.Warn().Err(err).Msg("failed to register CNAME in Private DNS")
+			}
+		}
+		return nil
+	}
+
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID == net.ID && ep.IPAddress != "" {
 			if err := s.cloudServiceRegister(containerID, hostname, ep.IPAddress, net.ID); err != nil {
@@ -84,7 +97,7 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 
 // NetworkDisconnect disconnects a container from a network and deregisters it.
 func (s *Server) NetworkDisconnect(id string, req *api.NetworkDisconnectRequest) error {
-	// Deregister from service discovery before disconnecting
+	// Deregister from service discovery before disconnecting.
 	net, ok := s.Store.ResolveNetwork(id)
 	if ok {
 		containerID, _ := s.ResolveContainerIDAuto(context.Background(), req.Container)
@@ -94,7 +107,11 @@ func (s *Server) NetworkDisconnect(id string, req *api.NetworkDisconnectRequest)
 			if cOk {
 				hostname = strings.TrimPrefix(c.Name, "/")
 			}
-			_ = s.cloudServiceDeregister(containerID, hostname, net.ID)
+			if s.config.UseApp {
+				_ = s.cloudServiceDeregisterCNAME(s.ctx(), containerID, hostname, net.ID)
+			} else {
+				_ = s.cloudServiceDeregister(containerID, hostname, net.ID)
+			}
 		}
 	}
 	return s.BaseServer.NetworkDisconnect(id, req)

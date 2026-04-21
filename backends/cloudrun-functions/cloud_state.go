@@ -19,6 +19,27 @@ type gcfCloudState struct {
 	server *Server
 }
 
+// ListImages queries GCP Artifact Registry via the OCI distribution
+// catalog + tags endpoints./step 2 cross-cloud
+// sibling.
+func (p *gcfCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, error) {
+	if p.server.config.Region == "" || p.server.config.Project == "" {
+		return nil, nil
+	}
+	if p.server.images == nil || p.server.images.Auth == nil {
+		return nil, nil
+	}
+	registry := p.server.config.Region + "-docker.pkg.dev"
+	token, err := p.server.images.Auth.GetToken(registry)
+	if err != nil {
+		return nil, err
+	}
+	return core.OCIListImages(ctx, core.OCIListOptions{
+		Registry:  registry,
+		AuthToken: token,
+	})
+}
+
 func (p *gcfCloudState) GetContainer(ctx context.Context, ref string) (api.Container, bool, error) {
 	containers, err := p.queryFunctions(ctx)
 	if err != nil {

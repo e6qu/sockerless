@@ -16,12 +16,13 @@ import (
 	"github.com/sockerless/api"
 )
 
-// StoreImageWithAliases stores an image under all common lookup keys:
-// imageID, full reference, name without tag, and short aliases for
-// docker.io/library/ and docker.io/ prefixed names. After populating
-// the in-memory map, persists the store to disk if
-// store.ImageStatePath is set so `docker pull` state survives backend
-// restart.
+// StoreImageWithAliases stores an image under all common lookup keys
+// in the in-memory cache: imageID, full reference, name without tag,
+// and short aliases for docker.io/library/ and docker.io/ prefixed
+// names. Per the cache is purely an in-process
+// optimization — after a restart the source of truth is the cloud
+// registry that each backend points at (ECR for ECS/Lambda, Artifact
+// Registry for Cloud Run/GCF, ACR for ACA/AZF). No disk persistence.
 func StoreImageWithAliases(store *Store, ref string, img api.Image) {
 	store.Images.Put(img.ID, img)
 	store.Images.Put(ref, img)
@@ -50,12 +51,6 @@ func StoreImageWithAliases(store *Store, ref string, img api.Image) {
 		}
 		store.Images.Put(short+":"+tag, img)
 		store.Images.Put(short, img)
-	}
-
-	// Best-effort persistence. Errors are logged elsewhere (via the
-	// Store's logger if set) but don't block the pull path.
-	if store.ImageStatePath != "" {
-		_ = store.PersistImages(store.ImageStatePath)
 	}
 }
 

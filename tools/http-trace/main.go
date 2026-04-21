@@ -6,8 +6,8 @@
 //
 // Usage:
 //
-//	go run ./tools/http-trace -listen :12375 -upstream http://127.0.0.1:2375
-//	DOCKER_HOST=tcp://127.0.0.1:12375 docker run -d alpine echo hi
+//	go run ./tools/http-trace -listen :13375 -upstream http://127.0.0.1:3375
+//	DOCKER_HOST=tcp://127.0.0.1:13375 docker run -d alpine echo hi
 //
 // The proxy supports HTTP/1.1 hijacked connections (attach, exec) by
 // switching to raw TCP bridging on 101 Switching Protocols.
@@ -33,8 +33,8 @@ import (
 var reqID atomic.Int64
 
 func main() {
-	listen := flag.String("listen", ":12375", "listen address")
-	upstream := flag.String("upstream", "http://127.0.0.1:2375", "upstream URL")
+	listen := flag.String("listen", ":13375", "listen address")
+	upstream := flag.String("upstream", "http://127.0.0.1:3375", "upstream URL")
 	flag.Parse()
 
 	u, err := url.Parse(*upstream)

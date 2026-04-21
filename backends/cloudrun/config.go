@@ -18,6 +18,16 @@ type Config struct {
 	EndpointURL  string        // Custom endpoint URL
 	PollInterval time.Duration // Cloud API poll interval (default 2s)
 	LogTimeout   time.Duration // Cloud Logging query timeout (default 30s)
+
+	// UseService switches container execution from Cloud Run Jobs to
+	// Cloud Run Services with internal ingress. Required for:
+	// Jobs don't have addressable per-execution IPs, so
+	// cross-container DNS via Cloud DNS A-records is fundamentally
+	// broken. Services + a VPC connector give peer-reachable internal
+	// IPs that can back the DNS records.
+	// Default false (Jobs path) until the Services path is implemented.
+	// Set via `SOCKERLESS_GCR_USE_SERVICE=1`.
+	UseService bool
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -31,6 +41,7 @@ func ConfigFromEnv() Config {
 		EndpointURL:  os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval: parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 		LogTimeout:   parseDuration(os.Getenv("SOCKERLESS_LOG_TIMEOUT"), 30*time.Second),
+		UseService:   os.Getenv("SOCKERLESS_GCR_USE_SERVICE") == "1",
 	}
 }
 
@@ -72,6 +83,9 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 func (c Config) Validate() error {
 	if c.Project == "" {
 		return fmt.Errorf("SOCKERLESS_GCR_PROJECT is required")
+	}
+	if c.UseService && c.VPCConnector == "" {
+		return fmt.Errorf("SOCKERLESS_GCR_USE_SERVICE=1 requires SOCKERLESS_GCR_VPC_CONNECTOR — Services need a VPC connector for peer-reachable internal DNS")
 	}
 	return nil
 }

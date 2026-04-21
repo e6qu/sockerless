@@ -21,10 +21,18 @@ import (
 
 var dockerClient *client.Client
 var evalBinaryPath string
+var evalImageName string
 
 func TestMain(m *testing.M) {
 	if os.Getenv("SOCKERLESS_INTEGRATION") != "1" {
-		// Run unit tests only; integration tests check integrationEnabled().
+		// In CI, silent short-circuit would let integration tests "pass" by
+		// not running. Require the env var explicitly so a missing CI config
+		// fails loudfollow-up).
+		if os.Getenv("GITHUB_ACTIONS") == "true" || os.Getenv("CI") == "true" {
+			fmt.Fprintln(os.Stderr, "ERROR: SOCKERLESS_INTEGRATION must be set to 1 in CI — integration tests would otherwise be silently skipped.")
+			os.Exit(1)
+		}
+		// Local dev: run whatever unit tests exist and exit.
 		os.Exit(m.Run())
 	}
 
@@ -36,13 +44,14 @@ func TestMain(m *testing.M) {
 		}
 	}
 
-	// Build eval-arithmetic binary
+	// Build eval-arithmetic binary (static linux/amd64, to be embedded
+	// in a Docker image the container runtime can actually execute).
 	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
 	evalBinaryPath = evalDir + "/eval-arithmetic"
-	fmt.Println("[sim] Building eval-arithmetic...")
+	fmt.Println("[sim] Building eval-arithmetic (linux/amd64)...")
 	evalBuild := exec.Command("go", "build", "-o", "eval-arithmetic", ".")
 	evalBuild.Dir = evalDir
-	evalBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off")
+	evalBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=amd64")
 	evalBuild.Stdout = os.Stderr
 	evalBuild.Stderr = os.Stderr
 	if err := evalBuild.Run(); err != nil {
@@ -51,11 +60,23 @@ func TestMain(m *testing.M) {
 	}
 	cleanups = append(cleanups, func() { os.Remove(evalBinaryPath) })
 
+	// Bake the binary into a local Docker image so the container can
+	// actually run it. Matches the pattern in simulators/aws/sdk-tests.
+	evalImageName = "sockerless-eval-arithmetic:test"
+	fmt.Printf("[sim] Building %s...\n", evalImageName)
+	evalDockerfile := "FROM alpine:latest\nCOPY eval-arithmetic /usr/local/bin/eval-arithmetic\nENTRYPOINT [\"/usr/local/bin/eval-arithmetic\"]\n"
+	evalImageBuild := exec.Command("docker", "build", "-t", evalImageName, "-f", "-", evalDir)
+	evalImageBuild.Stdin = strings.NewReader(evalDockerfile)
+	if out, err := evalImageBuild.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic image: %v\n%s", err, out)
+		os.Exit(1)
+	}
+
 	// Build simulator
 	simDir := repoRoot + "/simulators/aws"
 	simBinary := simDir + "/simulator-aws"
 	fmt.Println("[sim] Building simulator-aws...")
-	build := exec.Command("go", "build", "-o", "simulator-aws", ".")
+	build := exec.Command("go", "build", "-tags", "noui", "-o", "simulator-aws", ".")
 	build.Dir = simDir
 	build.Env = filterBuildEnv(os.Environ(), "GOWORK=off")
 	build.Stdout = os.Stderr
@@ -111,7 +132,7 @@ func TestMain(m *testing.M) {
 	backendDir := repoRoot + "/backends/ecs"
 	backendBinary := backendDir + "/sockerless-backend-ecs"
 	fmt.Println("[sim] Building sockerless-backend-ecs...")
-	buildBackend := exec.Command("go", "build", "-o", "sockerless-backend-ecs", "./cmd/sockerless-backend-ecs")
+	buildBackend := exec.Command("go", "build", "-tags", "noui", "-o", "sockerless-backend-ecs", "./cmd/sockerless-backend-ecs")
 	buildBackend.Dir = backendDir
 	buildBackend.Stdout = os.Stderr
 	buildBackend.Stderr = os.Stderr
@@ -151,49 +172,11 @@ func TestMain(m *testing.M) {
 	}
 	fmt.Printf("[sim] backend is ready on %s\n", backendAddr)
 
-	// Build frontend
-	frontendDir := repoRoot + "/frontends/docker"
-	frontendBinary := frontendDir + "/sockerless-docker-frontend"
-	fmt.Println("[sim] Building sockerless-docker-frontend...")
-	buildFrontend := exec.Command("go", "build", "-o", "sockerless-docker-frontend", "./cmd/")
-	buildFrontend.Dir = frontendDir
-	buildFrontend.Stdout = os.Stderr
-	buildFrontend.Stderr = os.Stderr
-	if err := buildFrontend.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build frontend: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	cleanups = append(cleanups, func() { os.Remove(frontendBinary) })
-
-	// Start frontend on Unix socket
-	socketPath := fmt.Sprintf("/tmp/sockerless-ecs-inttest-%d.sock", os.Getpid())
-	os.Remove(socketPath)
-	fmt.Printf("[sim] Starting frontend on %s...\n", socketPath)
-	frontendCmd := exec.Command(frontendBinary,
-		"--addr", socketPath,
-		"--backend", fmt.Sprintf("http://localhost:%d", backendPort),
-		"--log-level", "debug",
-	)
-	frontendCmd.Stdout = os.Stderr
-	frontendCmd.Stderr = os.Stderr
-	if err := frontendCmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to start frontend: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	cleanups = append(cleanups, func() { frontendCmd.Process.Kill(); frontendCmd.Wait(); os.Remove(socketPath) })
-
-	if err := waitForUnixSocket(socketPath, 10*time.Second); err != nil {
-		fmt.Fprintf(os.Stderr, "frontend not ready: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	fmt.Printf("[sim] frontend is ready on %s\n", socketPath)
-
-	// Create Docker client
+	// The ECS backend serves the Docker API directly (no separate
+	// frontend binary — in-process wiring per post-P67 architecture).
+	// Point the docker SDK at the backend's TCP address.
 	dockerClient, err = client.NewClientWithOpts(
-		client.WithHost("unix://"+socketPath),
+		client.WithHost(fmt.Sprintf("tcp://localhost:%d", backendPort)),
 		client.WithAPIVersionNegotiation(),
 	)
 	if err != nil {
@@ -468,48 +451,27 @@ func TestECSNetworkOperations(t *testing.T) {
 	}
 }
 
+// TestECSVolumeOperations pins BUG-731 — named volumes are not
+// supported on ECS (Fargate tasks are ephemeral; real persistence
+// requires EFS volume configuration on the task def). Real per-cloud
+// volume provisioning tracked as Phase 91.
 func TestECSVolumeOperations(t *testing.T) {
 	skipIfNoIntegration(t)
 	ctx := context.Background()
 
-	// Create volume
-	volName := "ecs-test-vol-" + generateTestID()
-	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: volName})
-	if err != nil {
-		t.Fatalf("volume create failed: %v", err)
+	_, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: "ecs-test-vol-" + generateTestID()})
+	if err == nil {
+		t.Fatal("expected VolumeCreate to fail with NotImplemented")
 	}
-	defer dockerClient.VolumeRemove(ctx, vol.Name, true)
-
-	// Inspect
-	volInfo, err := dockerClient.VolumeInspect(ctx, vol.Name)
-	if err != nil {
-		t.Fatalf("volume inspect failed: %v", err)
-	}
-	if volInfo.Name != volName {
-		t.Errorf("expected name %q, got %q", volName, volInfo.Name)
-	}
-
-	// List
-	volList, err := dockerClient.VolumeList(ctx, volume.ListOptions{})
-	if err != nil {
-		t.Fatalf("volume list failed: %v", err)
-	}
-	found := false
-	for _, v := range volList.Volumes {
-		if v.Name == volName {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("volume not found in list")
+	if !strings.Contains(err.Error(), "does not support named volumes") {
+		t.Errorf("expected NotImplemented error, got: %v", err)
 	}
 }
 
 // --- helpers ---
 
 func findModuleDir(rel string) string {
-	// We're in backends/ecs, repo root is ../..
+	// We're in backends/ecs, repo root is../..
 	candidates := []string{
 		"../..",
 		"../../..",
@@ -545,29 +507,6 @@ func waitForReady(url string, timeout time.Duration) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("timeout waiting for %s", url)
-}
-
-func waitForUnixSocket(socketPath string, timeout time.Duration) error {
-	c := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-				return net.Dial("unix", socketPath)
-			},
-		},
-		Timeout: 2 * time.Second,
-	}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		resp, err := c.Get("http://localhost/_ping")
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == 200 {
-				return nil
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return fmt.Errorf("timeout waiting for socket %s", socketPath)
 }
 
 func generateTestID(parts ...string) string {

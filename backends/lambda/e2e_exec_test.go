@@ -22,7 +22,7 @@ import (
 
 // TestLambdaExec_EndToEnd_OverReverseAgent is the end-to-end proof
 // for docker exec routing: a fake "bootstrap" dials the backend's
-// /v1/lambda/reverse endpoint, the backend's lambdaExecDriver routes
+// v1/lambda/reverse endpoint, the backend's lambdaExecDriver routes
 // an exec through the reverse-agent session, and the fake bootstrap
 // echoes back the command's canned stdout + exit code. The test runs
 // entirely in-process — no docker build, no simulator, no live AWS.

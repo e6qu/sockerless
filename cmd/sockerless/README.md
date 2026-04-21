@@ -34,7 +34,7 @@ Flags for `context create`:
 | Flag | Description |
 |------|-------------|
 | `--backend` | Backend type (required): ecs, lambda, cloudrun, gcf, aca, azf, docker |
-| `--addr` | Server address (e.g. http://localhost:2375) |
+| `--addr` | Server address (e.g. http://localhost:3375) |
 | `--simulator` | Simulator name (from `config.yaml` simulators section) |
 | `--set KEY=VALUE` | Set environment variable (repeatable) |
 
@@ -51,7 +51,7 @@ Flags for `server start`:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--backend-bin` | `sockerless-backend-{type}` | Path to backend binary |
-| `--addr` | `:2375` | Listen address (Docker API + management) |
+| `--addr` | `:3375` | Listen address (Docker API + management) |
 
 ### status — show server health
 

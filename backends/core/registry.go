@@ -53,9 +53,11 @@ var imageMetadataCache = struct {
 }{m: make(map[string]*ImageMetadataResult)}
 
 // FetchImageMetadata fetches rich image metadata from a Docker v2 registry.
-// Returns nil, nil if fetching is skipped (SOCKERLESS_SKIP_IMAGE_CONFIG=true)
-// or the image reference can't be resolved (graceful fallback to synthetic).
-// Logs a warning on fetch failure instead of silently returning nil.
+// Returns (nil, nil) only when the operator explicitly opts out via
+// SOCKERLESS_SKIP_IMAGE_CONFIG=true (used by bootstrap paths that
+// don't need real layer digests). Any registry error is returned to
+// the caller so it can decide between failing the pull and opting
+// into synthetic metadata — no silent fallback.
 func FetchImageMetadata(ref string, basicAuth ...string) (*ImageMetadataResult, error) {
 	// Guard against empty reference (causes 401 from registry)
 	if ref == "" {
@@ -82,9 +84,7 @@ func FetchImageMetadata(ref string, basicAuth ...string) (*ImageMetadataResult, 
 
 	meta, err := fetchMetadataFromRegistry(rc, auth)
 	if err != nil {
-		// Log warning instead of silent fallback.
-		fmt.Fprintf(os.Stderr, "[WARN] FetchImageMetadata(%q): %v (falling back to synthetic)\n", ref, err)
-		return nil, nil
+		return nil, fmt.Errorf("fetch image metadata for %q: %w", ref, err)
 	}
 
 	// Cache the result

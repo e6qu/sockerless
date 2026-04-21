@@ -927,7 +927,7 @@ func mapNetworkingConfigToDocker(nc *api.NetworkingConfig) *network.NetworkingCo
 	return networkingConfig
 }
 
-// --- Phase 85 methods ---
+// ---methods ---
 
 // ContainerResize resizes the TTY of a container.
 func (s *Server) ContainerResize(id string, h, w int) error {

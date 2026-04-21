@@ -6,4 +6,4 @@ services:
     command: []
     environment:
       CLOUD: gcp
-      BACKEND_ADDR: ":9100"
+      BACKEND_ADDR: ":3375"

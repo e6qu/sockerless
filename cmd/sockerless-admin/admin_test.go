@@ -9,7 +9,7 @@ import (
 
 func TestRegistryAddAndGet(t *testing.T) {
 	reg := NewRegistry()
-	reg.Add(Component{Name: "memory", Type: "backend", Addr: "http://localhost:9100"})
+	reg.Add(Component{Name: "memory", Type: "backend", Addr: "http://localhost:3375"})
 
 	c, ok := reg.Get("memory")
 	if !ok {
@@ -28,7 +28,7 @@ func TestRegistryAddAndGet(t *testing.T) {
 
 func TestRegistryList(t *testing.T) {
 	reg := NewRegistry()
-	reg.Add(Component{Name: "memory", Type: "backend", Addr: "http://localhost:9100"})
+	reg.Add(Component{Name: "memory", Type: "backend", Addr: "http://localhost:3375"})
 	reg.Add(Component{Name: "sim-aws", Type: "simulator", Addr: "http://localhost:4566"})
 
 	list := reg.List()
@@ -39,7 +39,7 @@ func TestRegistryList(t *testing.T) {
 
 func TestRegistryListByType(t *testing.T) {
 	reg := NewRegistry()
-	reg.Add(Component{Name: "memory", Type: "backend", Addr: "http://localhost:9100"})
+	reg.Add(Component{Name: "memory", Type: "backend", Addr: "http://localhost:3375"})
 	reg.Add(Component{Name: "ecs", Type: "backend", Addr: "http://localhost:9102"})
 	reg.Add(Component{Name: "sim-aws", Type: "simulator", Addr: "http://localhost:4566"})
 
@@ -56,7 +56,7 @@ func TestRegistryListByType(t *testing.T) {
 
 func TestRegistryOverwrite(t *testing.T) {
 	reg := NewRegistry()
-	reg.Add(Component{Name: "memory", Type: "backend", Addr: "http://localhost:9100"})
+	reg.Add(Component{Name: "memory", Type: "backend", Addr: "http://localhost:3375"})
 	reg.Add(Component{Name: "memory", Type: "backend", Addr: "http://localhost:9200"})
 
 	if reg.Len() != 1 {
@@ -89,9 +89,9 @@ func TestNormalizeAddr(t *testing.T) {
 		input string
 		want  string
 	}{
-		{":9100", "http://localhost:9100"},
-		{"localhost:9100", "http://localhost:9100"},
-		{"http://localhost:9100", "http://localhost:9100"},
+		{":3375", "http://localhost:3375"},
+		{"localhost:3375", "http://localhost:3375"},
+		{"http://localhost:3375", "http://localhost:3375"},
 		{"https://admin.example.com", "https://admin.example.com"},
 	}
 	for _, tt := range tests {
@@ -103,7 +103,7 @@ func TestNormalizeAddr(t *testing.T) {
 
 func TestHandleComponents(t *testing.T) {
 	reg := NewRegistry()
-	reg.Add(Component{Name: "memory", Type: "backend", Addr: "http://localhost:9100"})
+	reg.Add(Component{Name: "memory", Type: "backend", Addr: "http://localhost:3375"})
 	reg.Add(Component{Name: "sim-aws", Type: "simulator", Addr: "http://localhost:4566"})
 
 	handler := handleComponents(reg)

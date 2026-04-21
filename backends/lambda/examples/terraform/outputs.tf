@@ -17,6 +17,6 @@ output "backend_env" {
     export SOCKERLESS_LAMBDA_ROLE_ARN=${module.sockerless_lambda.execution_role_arn}
     export SOCKERLESS_LAMBDA_MEMORY_SIZE=${var.lambda_memory_size}
     export SOCKERLESS_LAMBDA_TIMEOUT=${var.lambda_timeout}
-    export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:9100
+    export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:3375
   EOT
 }

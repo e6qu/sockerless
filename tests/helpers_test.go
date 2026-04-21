@@ -9,7 +9,6 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 )
 
@@ -104,20 +103,4 @@ func createNetwork(t *testing.T, name string) string {
 func removeNetwork(t *testing.T, id string) {
 	t.Helper()
 	dockerClient.NetworkRemove(ctx, id)
-}
-
-// createVolume creates a volume and returns its name.
-func createVolume(t *testing.T, name string) string {
-	t.Helper()
-	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: name})
-	if err != nil {
-		t.Fatalf("volume create failed: %v", err)
-	}
-	return vol.Name
-}
-
-// removeVolume removes a volume.
-func removeVolume(t *testing.T, name string) {
-	t.Helper()
-	dockerClient.VolumeRemove(ctx, name, true)
 }

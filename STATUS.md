@@ -1,8 +1,23 @@
 # Sockerless — Status
 
-**86 phases (757 tasks). 707 bugs fixed, 0 open. Cloud build services for all 6 backends. Phase 86 simulator parity complete across AWS + GCP + Azure; live-AWS session gated on creds (scripted via `.github/workflows/phase86-aws-live.yml`).**
+**89 phases (757 tasks). 737 bugs tracked — 734 fixed, 3 open (BUG-735/736/737), 1 false positive. Branch `post-phase86-continuation`.**
 
-## Test Counts
+See [PLAN.md](PLAN.md) for the roadmap, [BUGS.md](BUGS.md) for the bug log (+ open-bug descriptions), [WHAT_WE_DID.md](WHAT_WE_DID.md) for the narrative, [specs/](specs/) for architecture specs.
+
+## Phase roll-up
+
+| Phase | Scope | Status |
+|---|---|---|
+| 86 | Simulator parity (AWS + GCP + Azure) + Lambda agent-as-handler | Closed 2026-04-20 (PR #112). Phase C live-AWS validated. |
+| 87 | Cloud Run Jobs → Services (internal ingress + VPC connector) | Closed in code 2026-04-21. Live-GCP pending. |
+| 88 | ACA Jobs → Apps (internal ingress) | Closed in code 2026-04-21. Live-Azure pending. |
+| 89 | Stateless-backend audit — cloud resource mapping, `resolve*State`, cloud-derived `ListImages` / `ListPods`, `resolveNetworkState` | Closed 2026-04-21. |
+| 90 | No-fakes/no-fallbacks audit — workarounds, placeholders, silent substitutions all elevated to bugs | In progress 2026-04-21. BUG-729/730/731/732/733/734 fixed; BUG-735/736/737 open. |
+| 91-94 | Real per-cloud volume provisioning (EFS / Filestore-or-GCS / Azure Files), simulator slices + backend wiring | Queued. Designs + per-backend actions in `specs/CLOUD_RESOURCE_MAPPING.md`. |
+
+Detail per phase in [WHAT_WE_DID.md](WHAT_WE_DID.md). Open work items queued in [DO_NEXT.md](DO_NEXT.md).
+
+## Test counts
 
 | Category | Count |
 |---|---|
@@ -15,25 +30,6 @@
 | UI/Admin/bleephub | 512 |
 | Lint (18 modules) | 0 issues |
 
-## ECS Live Testing
+## ECS live testing
 
-6 rounds against real AWS ECS Fargate (`eu-west-1`). Round 6: Docker CLI all pass, Podman pull+pods pass (container ops blocked by response format), Advanced 3/4. See [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md).
-
-## Phase 86 — Complete Runner Support (simulator parity + Phase D)
-
-Done across AWS + GCP + Azure. Full simulator parity audited in `docs/SIMULATOR_PARITY_{AWS,GCP,AZURE}.md` (zero ✖ rows on runner path). All BUGS.md entries closed.
-
-Highlights this phase:
-- **A.5 testing contract** — pre-commit hook blocks sim-endpoint additions without matching SDK + CLI + terraform tests.
-- **BUG-696 ECR pull-through cache** — AWS ECR cache-rule CRUD + image URI rewriting.
-- **BUG-697 Store.Images persistence** — `docker pull` survives backend restart across all six cloud backends.
-- **BUG-700 cloud-side network-create Warning** — ECS + Cloud Run + ACA.
-- **BUG-701 cross-task DNS** — AWS Cloud Map / GCP Cloud DNS / Azure ACA environments all back themselves with real Docker networks.
-- **BUG-702 Azure Private DNS SDK wire** — backend calls real `armprivatedns`.
-- **BUG-703 Azure NSG SDK wire + simulator securityRules sub-resource**.
-- **BUG-704 GCP Cloud Build slice + BUG-707 Secret Manager integration**.
-- **BUG-705 AWS Lambda Runtime API slice** — `simulators/aws/lambda_runtime.go` implements the full cloud contract.
-- **BUG-706 Azure ACR Cache Rules** — simulator cache-rule CRUD + backend pull-through resolver.
-- **Phase D Lambda agent-as-handler** — bootstrap polling loop (`agent/cmd/sockerless-lambda-bootstrap`), overlay image build in `ContainerCreate`, reverse-agent WebSocket server on `/v1/lambda/reverse`.
-
-Live-AWS session (Phase E) is scripted in `scripts/phase86/*.sh` and dispatched by `.github/workflows/phase86-aws-live.yml`; awaits AWS credentials. Runner-capability matrix live columns stay pending-live until that session runs.
+6 rounds against real AWS ECS Fargate (`eu-west-1`). Round 6: Docker CLI all pass, Podman pull+pods pass (container ops blocked by response format), Advanced 3/4. See [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md). Phase 87/88 live-cloud validation runbooks still to be written (GCP/Azure equivalents of `scripts/phase86/*.sh`).

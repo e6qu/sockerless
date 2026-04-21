@@ -164,10 +164,18 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		})
 	}
 
-	// Pass command via app setting (cloud-native) for short-lived containers
-	cmd := core.BuildOriginalCommand(config.Entrypoint, config.Cmd)
-	if len(cmd) > 0 {
-		cmdJSON, _ := json.Marshal(cmd)
+	// Pass entrypoint + cmd SEPARATELY so the simulator preserves docker's
+	// ENTRYPOINT/CMD semantics (an image's ENTRYPOINT must still fire
+	// when the user only sets Cmd — flattening would override it).
+	if len(config.Entrypoint) > 0 {
+		epJSON, _ := json.Marshal(config.Entrypoint)
+		appSettings = append(appSettings, &armappservice.NameValuePair{
+			Name:  ptr("SOCKERLESS_ENTRYPOINT"),
+			Value: ptr(base64.StdEncoding.EncodeToString(epJSON)),
+		})
+	}
+	if len(config.Cmd) > 0 {
+		cmdJSON, _ := json.Marshal(config.Cmd)
 		appSettings = append(appSettings, &armappservice.NameValuePair{
 			Name:  ptr("SOCKERLESS_CMD"),
 			Value: ptr(base64.StdEncoding.EncodeToString(cmdJSON)),

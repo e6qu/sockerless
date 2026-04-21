@@ -57,12 +57,23 @@ func (p *acaCloudState) ListContainers(ctx context.Context, all bool, filters ma
 		pendingIDs[c.ID] = true
 	}
 
-	// Query Azure Container Apps Jobs API for sockerless-managed resources
+	// Query Azure Container Apps Jobs API for sockerless-managed resources.
+	// when Config.UseApp is true, also merge ContainerApps so
+	// mixed deployments surface both tracks during migration. Jobs and
+	// Apps live in distinct ARM resource types so no double-counting.
 	cloudContainers, err := p.queryJobs(ctx)
 	if err != nil {
 		// Log but don't fail — return what we have from PendingCreates
 		p.server.Logger.Debug().Err(err).Msg("failed to query ACA jobs for cloud state")
 		return result, nil
+	}
+	if p.server.config.UseApp {
+		apps, aErr := p.queryApps(ctx)
+		if aErr != nil {
+			p.server.Logger.Debug().Err(aErr).Msg("failed to query ACA apps for cloud state")
+		} else {
+			cloudContainers = append(cloudContainers, apps...)
+		}
 	}
 
 	for _, c := range cloudContainers {
@@ -114,6 +125,254 @@ func (p *acaCloudState) WaitForExit(ctx context.Context, containerID string) (in
 			}
 		}
 	}
+}
+
+// ListImages queries Azure Container Registry via the OCI distribution
+// catalog + tags endpoints for every image in the configured ACR.
+// ListPods groups sockerless-managed ACA Jobs (and ContainerApps when
+// UseApp is set) by their `sockerless-pod` tag and returns one
+// PodListEntry per unique pod name. Jobs/Apps without a pod tag are
+// excluded — they surface as standalone containers in `docker ps`
+// but not in `docker pod ps`.
+func (p *acaCloudState) ListPods(ctx context.Context) ([]*api.PodListEntry, error) {
+	containers, err := p.ListContainers(ctx, true, nil)
+	if err != nil {
+		return nil, err
+	}
+	containerByID := make(map[string]api.Container, len(containers))
+	for _, c := range containers {
+		containerByID[c.ID] = c
+	}
+
+	groups := make(map[string][]api.PodContainerInfo)
+	created := make(map[string]string)
+	status := make(map[string]string)
+
+	walk := func(tagsPtr map[string]*string, createdAt string) {
+		tags := azureTagsToMap(tagsPtr)
+		if tags["sockerless-managed"] != "true" {
+			return
+		}
+		podName := tags["sockerless-pod"]
+		if podName == "" {
+			return
+		}
+		cid := tags["sockerless-container-id"]
+		if cid == "" {
+			return
+		}
+		cont, ok := containerByID[cid]
+		if !ok {
+			return
+		}
+		groups[podName] = append(groups[podName], api.PodContainerInfo{
+			ID:    cont.ID,
+			Name:  strings.TrimPrefix(cont.Name, "/"),
+			State: cont.State.Status,
+		})
+		if createdAt != "" && (created[podName] == "" || createdAt < created[podName]) {
+			created[podName] = createdAt
+		}
+		if cont.State.Running {
+			status[podName] = "Running"
+		} else if status[podName] == "" {
+			status[podName] = cont.State.Status
+		}
+	}
+
+	// Walk Jobs.
+	jobPager := p.server.azure.Jobs.NewListByResourceGroupPager(p.server.config.ResourceGroup, nil)
+	for jobPager.More() {
+		page, err := jobPager.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, job := range page.Value {
+			ca := ""
+			if job.SystemData != nil && job.SystemData.CreatedAt != nil {
+				ca = job.SystemData.CreatedAt.Format(time.RFC3339Nano)
+			}
+			walk(job.Tags, ca)
+		}
+	}
+
+	// Walk ContainerApps when UseApp is on.
+	if p.server.config.UseApp && p.server.azure.ContainerApps != nil {
+		appPager := p.server.azure.ContainerApps.NewListByResourceGroupPager(p.server.config.ResourceGroup, nil)
+		for appPager.More() {
+			page, err := appPager.NextPage(ctx)
+			if err != nil {
+				return nil, err
+			}
+			for _, app := range page.Value {
+				ca := ""
+				if app.SystemData != nil && app.SystemData.CreatedAt != nil {
+					ca = app.SystemData.CreatedAt.Format(time.RFC3339Nano)
+				}
+				walk(app.Tags, ca)
+			}
+		}
+	}
+
+	var out []*api.PodListEntry
+	for name, cs := range groups {
+		out = append(out, &api.PodListEntry{
+			ID:         "pod-" + name,
+			Name:       name,
+			Status:     status[name],
+			Created:    created[name],
+			Containers: cs,
+		})
+	}
+	return out, nil
+}
+
+// step 2 cross-cloud sibling. Registry host comes
+// from `<ACRName>.azurecr.io`; bearer token comes from the
+// ACRAuthProvider owned by the ImageManager.
+func (p *acaCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, error) {
+	if p.server.config.ACRName == "" {
+		return nil, nil
+	}
+	if p.server.images == nil || p.server.images.Auth == nil {
+		return nil, nil
+	}
+	registry := p.server.config.ACRName + ".azurecr.io"
+	token, err := p.server.images.Auth.GetToken(registry)
+	if err != nil {
+		return nil, err
+	}
+	return core.OCIListImages(ctx, core.OCIListOptions{
+		Registry:  registry,
+		AuthToken: token,
+	})
+}
+
+// resolveNetworkState returns NetworkState for the given docker
+// network ID, deriving from cloud actuals when the in-memory cache is
+// empty./cross-cloud sibling. Both the Private DNS
+// zone name (`skls-<net>.local`) and the NSG name
+// (`nsg-<env>-<net>`) are deterministic from the network name, so a
+// simple existence probe against each reconstitutes state.
+func (s *Server) resolveNetworkState(ctx context.Context, networkID string) (NetworkState, bool) {
+	if state, ok := s.NetworkState.Get(networkID); ok && state.DNSZoneName != "" {
+		return state, true
+	}
+	if s.azure == nil || s.config.ResourceGroup == "" {
+		return NetworkState{}, false
+	}
+	net, ok := s.Store.ResolveNetwork(networkID)
+	if !ok {
+		return NetworkState{}, false
+	}
+	zoneName := "skls-" + net.Name + ".local"
+	nsgName := "nsg-" + s.config.Environment + "-" + net.Name
+	state := NetworkState{}
+	if s.azure.PrivateDNSZones != nil {
+		if _, err := s.azure.PrivateDNSZones.Get(ctx, s.config.ResourceGroup, zoneName, nil); err == nil {
+			state.DNSZoneName = zoneName
+		}
+	}
+	if s.azure.NSG != nil {
+		if _, err := s.azure.NSG.Get(ctx, s.config.ResourceGroup, nsgName, nil); err == nil {
+			state.NSGName = nsgName
+		}
+	}
+	if state.DNSZoneName == "" && state.NSGName == "" {
+		return NetworkState{}, false
+	}
+	s.NetworkState.Update(networkID, func(ns *NetworkState) {
+		if ns.DNSZoneName == "" {
+			ns.DNSZoneName = state.DNSZoneName
+		}
+		if ns.NSGName == "" {
+			ns.NSGName = state.NSGName
+		}
+	})
+	return state, true
+}
+
+// resolveJobName returns the ACA Job name for a given container ID, or
+// "" if no matching sockerless-managed job is found./
+// cross-cloud sibling: state derived from cloud actuals (ACA Job tags).
+func (p *acaCloudState) resolveJobName(ctx context.Context, containerID string) (string, error) {
+	pager := p.server.azure.Jobs.NewListByResourceGroupPager(p.server.config.ResourceGroup, nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return "", err
+		}
+		for _, job := range page.Value {
+			if job.Tags == nil {
+				continue
+			}
+			tags := azureTagsToMap(job.Tags)
+			if tags["sockerless-managed"] != "true" {
+				continue
+			}
+			if tags["sockerless-container-id"] == containerID {
+				if job.Name != nil {
+					return *job.Name, nil
+				}
+			}
+		}
+	}
+	return "", nil
+}
+
+// resolveActiveExecution returns the name of the latest non-terminal
+// execution for an ACA Job, or "" if none. Used when the cache doesn't
+// carry an ExecutionName (post-restart).
+func (p *acaCloudState) resolveActiveExecution(ctx context.Context, jobName string) (string, error) {
+	pager := p.server.azure.Executions.NewListPager(p.server.config.ResourceGroup, jobName, nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return "", err
+		}
+		for _, exec := range page.Value {
+			if exec.Status == nil {
+				continue
+			}
+			status := *exec.Status
+			if status == armappcontainers.JobExecutionRunningStateRunning || status == armappcontainers.JobExecutionRunningStateProcessing {
+				if exec.Name != nil {
+					return *exec.Name, nil
+				}
+			}
+		}
+	}
+	return "", nil
+}
+
+// resolveACAState returns ACAState for the given container ID, deriving
+// from cloud actuals when the in-memory cache is empty./
+// cross-cloud sibling.
+func (s *Server) resolveACAState(ctx context.Context, containerID string) (ACAState, bool) {
+	if state, ok := s.ACA.Get(containerID); ok && state.JobName != "" {
+		return state, true
+	}
+	csp, ok := s.CloudState.(*acaCloudState)
+	if !ok {
+		return ACAState{}, false
+	}
+	name, err := csp.resolveJobName(ctx, containerID)
+	if err != nil || name == "" {
+		return ACAState{}, false
+	}
+	state := ACAState{JobName: name}
+	if exec, execErr := csp.resolveActiveExecution(ctx, name); execErr == nil && exec != "" {
+		state.ExecutionName = exec
+	}
+	s.ACA.Update(containerID, func(st *ACAState) {
+		if st.JobName == "" {
+			st.JobName = name
+		}
+		if st.ExecutionName == "" && state.ExecutionName != "" {
+			st.ExecutionName = state.ExecutionName
+		}
+	})
+	return state, true
 }
 
 // queryJobs fetches all sockerless-managed ACA Jobs from the resource group and

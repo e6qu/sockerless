@@ -62,6 +62,20 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 	}
 	c, _ := s.ResolveContainerAuto(context.Background(), containerID)
 	hostname := strings.TrimPrefix(c.Name, "/")
+
+	// — Services path: register a CNAME pointing at the
+	// Service URL. A-records don't apply because Cloud Run Services
+	// have no per-instance IP; peers reach each other via the Service
+	// URL over the VPC connector.
+	if s.config.UseService {
+		if svcState, ok := s.resolveServiceCloudRunState(s.ctx(), containerID); ok && svcState.ServiceName != "" {
+			if err := s.cloudServiceRegisterCNAME(s.ctx(), containerID, hostname, svcState.ServiceName, net.ID); err != nil {
+				s.Logger.Warn().Err(err).Msg("failed to register CNAME in Cloud DNS")
+			}
+		}
+		return nil
+	}
+
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID == net.ID && ep.IPAddress != "" {
 			if err := s.cloudServiceRegister(containerID, hostname, ep.IPAddress, net.ID); err != nil {
@@ -83,7 +97,11 @@ func (s *Server) NetworkDisconnect(id string, req *api.NetworkDisconnectRequest)
 		if containerID != "" {
 			c, _ := s.ResolveContainerAuto(context.Background(), containerID)
 			hostname := strings.TrimPrefix(c.Name, "/")
-			if err := s.cloudServiceDeregister(containerID, hostname, net.ID); err != nil {
+			if s.config.UseService {
+				if err := s.cloudServiceDeregisterCNAME(s.ctx(), containerID, hostname, net.ID); err != nil {
+					s.Logger.Warn().Err(err).Msg("failed to deregister CNAME from Cloud DNS")
+				}
+			} else if err := s.cloudServiceDeregister(containerID, hostname, net.ID); err != nil {
 				s.Logger.Warn().Err(err).Msg("failed to deregister from Cloud DNS")
 			}
 		}

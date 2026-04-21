@@ -101,6 +101,11 @@ func (s *Server) buildJobSpec(containers []containerInput) armappcontainers.Job 
 		Network:     networkName,
 		Labels:      mainContainer.Config.Labels,
 	}
+	// Propagate pod membership so ListPods can reconstruct docker pods
+	// from Job tags after a backend restart.
+	if pod, _ := s.Store.Pods.GetPodForContainer(containers[0].ID); pod != nil {
+		tags.Pod = pod.Name
+	}
 
 	return armappcontainers.Job{
 		Location: ptr(s.config.Location),

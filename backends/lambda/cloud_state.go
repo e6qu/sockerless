@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	awslambda "github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
@@ -83,6 +84,132 @@ func (p *lambdaCloudState) WaitForExit(ctx context.Context, containerID string) 
 			}
 		}
 	}
+}
+
+// ListImages queries ECR for every image sockerless can use. Phase
+// 89 /step 2 cross-cloud sibling.
+func (p *lambdaCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, error) {
+	if p.server.aws.ECR == nil {
+		return nil, nil
+	}
+	var result []*api.ImageSummary
+	var nextToken *string
+	for {
+		reposOut, err := p.server.aws.ECR.DescribeRepositories(ctx, &ecr.DescribeRepositoriesInput{
+			NextToken: nextToken,
+		})
+		if err != nil {
+			return result, err
+		}
+		for _, repo := range reposOut.Repositories {
+			repoName := aws.ToString(repo.RepositoryName)
+			repoURI := aws.ToString(repo.RepositoryUri)
+			var imgToken *string
+			for {
+				imgsOut, imErr := p.server.aws.ECR.DescribeImages(ctx, &ecr.DescribeImagesInput{
+					RepositoryName: aws.String(repoName),
+					NextToken:      imgToken,
+				})
+				if imErr != nil {
+					break
+				}
+				for _, img := range imgsOut.ImageDetails {
+					var repoTags []string
+					for _, t := range img.ImageTags {
+						repoTags = append(repoTags, repoURI+":"+t)
+					}
+					digest := aws.ToString(img.ImageDigest)
+					size := int64(0)
+					if img.ImageSizeInBytes != nil {
+						size = *img.ImageSizeInBytes
+					}
+					pushedAt := int64(0)
+					if img.ImagePushedAt != nil {
+						pushedAt = img.ImagePushedAt.Unix()
+					}
+					result = append(result, &api.ImageSummary{
+						ID:          digest,
+						RepoTags:    repoTags,
+						RepoDigests: []string{repoURI + "@" + digest},
+						Created:     pushedAt,
+						Size:        size,
+						VirtualSize: size,
+					})
+				}
+				if imgsOut.NextToken == nil {
+					break
+				}
+				imgToken = imgsOut.NextToken
+			}
+		}
+		if reposOut.NextToken == nil {
+			break
+		}
+		nextToken = reposOut.NextToken
+	}
+	return result, nil
+}
+
+// resolveFunctionARN returns the Lambda function ARN for a given
+// container ID, or "" if no matching sockerless-managed function is
+// found.//cross-cloud sibling: state is
+// derived from cloud actuals (Lambda function tags), not from the
+// in-memory cache.
+func (p *lambdaCloudState) resolveFunctionARN(ctx context.Context, containerID string) (string, string, error) {
+	var marker *string
+	for {
+		result, err := p.server.aws.Lambda.ListFunctions(ctx, &awslambda.ListFunctionsInput{
+			Marker: marker,
+		})
+		if err != nil {
+			return "", "", err
+		}
+		for _, fn := range result.Functions {
+			tagsResult, err := p.server.aws.Lambda.ListTags(ctx, &awslambda.ListTagsInput{
+				Resource: fn.FunctionArn,
+			})
+			if err != nil {
+				continue
+			}
+			if tagsResult.Tags["sockerless-managed"] != "true" {
+				continue
+			}
+			if tagsResult.Tags["sockerless-container-id"] == containerID {
+				return aws.ToString(fn.FunctionArn), aws.ToString(fn.FunctionName), nil
+			}
+		}
+		if result.NextMarker == nil {
+			return "", "", nil
+		}
+		marker = result.NextMarker
+	}
+}
+
+// resolveLambdaState returns LambdaState for the given container ID,
+// deriving from cloud actuals when the in-memory cache is empty. Phase
+// 89 /cross-cloud sibling.
+func (s *Server) resolveLambdaState(ctx context.Context, containerID string) (LambdaState, bool) {
+	if state, ok := s.Lambda.Get(containerID); ok && state.FunctionARN != "" {
+		return state, true
+	}
+	csp, ok := s.CloudState.(*lambdaCloudState)
+	if !ok {
+		return LambdaState{}, false
+	}
+	arn, name, err := csp.resolveFunctionARN(ctx, containerID)
+	if err != nil || arn == "" {
+		return LambdaState{}, false
+	}
+	state := LambdaState{FunctionARN: arn, FunctionName: name}
+	s.Lambda.Update(containerID, func(st *LambdaState) {
+		if st.FunctionARN == "" {
+			st.FunctionARN = arn
+		}
+		if st.FunctionName == "" {
+			st.FunctionName = name
+		}
+	})
+	return state, true
 }
 
 // queryFunctions lists all sockerless-managed Lambda functions.

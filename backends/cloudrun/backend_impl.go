@@ -167,7 +167,7 @@ func (s *Server) ContainerStart(ref string) error {
 		return &api.NotModifiedError{}
 	}
 
-	crState, _ := s.CloudRun.Get(id)
+	crState, _ := s.resolveCloudRunState(s.ctx(), id)
 
 	exitCh := make(chan struct{})
 	s.Store.WaitChs.Store(id, exitCh)
@@ -181,8 +181,17 @@ func (s *Server) ContainerStart(ref string) error {
 	}
 
 	if len(podContainers) > 1 {
-		// Multi-container pod: build combined job and run
+		// Multi-container pod: build combined resource and run
+		if s.config.UseService {
+			return s.startMultiContainerServiceTyped(id, podContainers, exitCh)
+		}
 		return s.startMultiContainerJobTyped(id, podContainers, exitCh)
+	}
+
+	// — Services path. Separate function so the Jobs branch
+	// below can be deleted when Jobs support is sunset.
+	if s.config.UseService {
+		return s.startSingleContainerService(id, c, crState, exitCh)
 	}
 
 	// Clean up any existing Cloud Run Job from a previous start
@@ -376,10 +385,21 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 		return &api.NotModifiedError{}
 	}
 
-	// Cancel the Cloud Run execution
-	crState, _ := s.CloudRun.Get(id)
-	if crState.ExecutionName != "" {
-		s.cancelExecution(crState.ExecutionName)
+	// — for Services, the Service resource IS the running
+	// instance; there's no in-flight Execution to cancel. Delete the
+	// Service to stop the container. Restart re-creates via
+	// CreateService in the next ContainerStart.
+	if s.config.UseService {
+		if svcState, ok := s.resolveServiceCloudRunState(s.ctx(), id); ok && svcState.ServiceName != "" {
+			s.deleteService(svcState.ServiceName)
+			s.Registry.MarkCleanedUp(svcState.ServiceName)
+			s.CloudRun.Update(id, func(st *CloudRunState) { st.ServiceName = "" })
+		}
+	} else {
+		// cloud-fallback lookup so stop works post-restart.
+		if crState, ok := s.resolveCloudRunState(s.ctx(), id); ok && crState.ExecutionName != "" {
+			s.cancelExecution(crState.ExecutionName)
+		}
 	}
 
 	s.StopHealthCheck(id)
@@ -412,10 +432,19 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 
 	exitCode := core.SignalToExitCode(signal)
 
-	// Cancel the Cloud Run execution
-	crState, _ := s.CloudRun.Get(id)
-	if crState.ExecutionName != "" {
-		s.cancelExecution(crState.ExecutionName)
+	// — same story as Stop: for Services we delete the
+	// resource; for Jobs we cancel the execution.
+	if s.config.UseService {
+		if svcState, ok := s.resolveServiceCloudRunState(s.ctx(), id); ok && svcState.ServiceName != "" {
+			s.deleteService(svcState.ServiceName)
+			s.Registry.MarkCleanedUp(svcState.ServiceName)
+			s.CloudRun.Update(id, func(st *CloudRunState) { st.ServiceName = "" })
+		}
+	} else {
+		// cloud-fallback lookup so kill works post-restart.
+		if crState, ok := s.resolveCloudRunState(s.ctx(), id); ok && crState.ExecutionName != "" {
+			s.cancelExecution(crState.ExecutionName)
+		}
 	}
 
 	s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
@@ -457,32 +486,49 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			"exitCode": "0",
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
-		crState, _ := s.CloudRun.Get(id)
-		if crState.ExecutionName != "" {
-			s.cancelExecution(crState.ExecutionName)
+		if !s.config.UseService {
+			crState, _ := s.resolveCloudRunState(s.ctx(), id)
+			if crState.ExecutionName != "" {
+				s.cancelExecution(crState.ExecutionName)
+			}
 		}
 	}
 
 	s.StopHealthCheck(id)
 
-	// Delete Cloud Run Job (best-effort)
-	crState, _ := s.CloudRun.Get(id)
-	if crState.JobName != "" {
-		s.deleteJob(crState.JobName)
-		s.Registry.MarkCleanedUp(crState.JobName)
+	// — delete the backing cloud resource. Jobs and Services
+	// live in distinct GCP resource namespaces so cached state is
+	// unambiguous.
+	if s.config.UseService {
+		svcState, _ := s.resolveServiceCloudRunState(s.ctx(), id)
+		if svcState.ServiceName != "" {
+			s.deleteService(svcState.ServiceName)
+			s.Registry.MarkCleanedUp(svcState.ServiceName)
+		}
+	} else {
+		crState, _ := s.resolveCloudRunState(s.ctx(), id)
+		if crState.JobName != "" {
+			s.deleteJob(crState.JobName)
+			s.Registry.MarkCleanedUp(crState.JobName)
+		}
 	}
 
 	if pod, inPod := s.Store.Pods.GetPodForContainer(id); inPod {
 		s.Store.Pods.RemoveContainer(pod.ID, id)
 	}
 
-	// Deregister from Cloud DNS
+	// Deregister from Cloud DNS (CNAME for Services, A for Jobs)
 	hostname := strings.TrimPrefix(c.Name, "/")
 	for _, ep := range c.NetworkSettings.Networks {
-		if ep != nil && ep.NetworkID != "" {
-			if err := s.cloudServiceDeregister(id, hostname, ep.NetworkID); err != nil {
-				s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to deregister from Cloud DNS")
+		if ep == nil || ep.NetworkID == "" {
+			continue
+		}
+		if s.config.UseService {
+			if err := s.cloudServiceDeregisterCNAME(s.ctx(), id, hostname, ep.NetworkID); err != nil {
+				s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to deregister CNAME from Cloud DNS")
 			}
+		} else if err := s.cloudServiceDeregister(id, hostname, ep.NetworkID); err != nil {
+			s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to deregister from Cloud DNS")
 		}
 	}
 
@@ -513,27 +559,47 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	return nil
 }
 
-// ContainerLogs streams container logs from Cloud Logging.
+// ContainerLogs streams container logs from Cloud Logging. Filter
+// shape depends on Config.UseService: Jobs emit under resource.type=
+// "cloud_run_job" with a job_name label; Services emit under
+// "cloud_run_revision" with a service_name label.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
-	// Resolve cloud resource name for the log filter.
-	var shortJobName string
-	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
-		crState, _ := s.CloudRun.Get(id)
-		jobName := crState.JobName
-		if jobName == "" {
-			jobName = buildJobName(id)
+	id, _ := s.ResolveContainerIDAuto(context.Background(), ref)
+
+	var baseFilter string
+	if s.config.UseService {
+		var shortSvcName string
+		if id != "" {
+			svcState, _ := s.resolveServiceCloudRunState(s.ctx(), id)
+			name := svcState.ServiceName
+			if name == "" {
+				name = buildServiceName(id)
+			}
+			parts := strings.Split(name, "/")
+			shortSvcName = parts[len(parts)-1]
 		}
-		parts := strings.Split(jobName, "/")
-		shortJobName = parts[len(parts)-1]
+		baseFilter = fmt.Sprintf(
+			`resource.type="cloud_run_revision" AND resource.labels.service_name="%s"`,
+			shortSvcName,
+		)
+	} else {
+		var shortJobName string
+		if id != "" {
+			crState, _ := s.resolveCloudRunState(s.ctx(), id)
+			jobName := crState.JobName
+			if jobName == "" {
+				jobName = buildJobName(id)
+			}
+			parts := strings.Split(jobName, "/")
+			shortJobName = parts[len(parts)-1]
+		}
+		baseFilter = fmt.Sprintf(
+			`resource.type="cloud_run_job" AND resource.labels.job_name="%s"`,
+			shortJobName,
+		)
 	}
 
-	baseFilter := fmt.Sprintf(
-		`resource.type="cloud_run_job" AND resource.labels.job_name="%s"`,
-		shortJobName,
-	)
-
 	fetch := s.cloudLoggingFetch(baseFilter)
-
 	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{})
 }
 
@@ -594,7 +660,7 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 	if c.State.Running {
 		s.StopHealthCheck(id)
 
-		crState, _ := s.CloudRun.Get(id)
+		crState, _ := s.resolveCloudRunState(s.ctx(), id)
 		if crState.ExecutionName != "" {
 			s.cancelExecution(crState.ExecutionName)
 		}
@@ -650,7 +716,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 			spaceReclaimed += uint64(img.Size)
 		}
 		// Clean up Cloud Run resources
-		crState, _ := s.CloudRun.Get(c.ID)
+		crState, _ := s.resolveCloudRunState(s.ctx(), c.ID)
 		if crState.JobName != "" {
 			s.deleteJob(crState.JobName)
 			s.Registry.MarkCleanedUp(crState.JobName)
@@ -720,13 +786,13 @@ func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 	return s.images.Load(r)
 }
 
-// VolumeRemove removes a volume and its state.
+// VolumeRemove is not supported by the Cloud Run backend. Named docker
+// volumes aren't backed by real cloud-side storage; the earlier
+// in-memory store silently accepted and deleted volumes without ever
+// mounting them. Real Filestore / GCS mount provisioning is a
+// follow-up phase.
 func (s *Server) VolumeRemove(name string, force bool) error {
-	if !s.Store.Volumes.Delete(name) {
-		return &api.NotFoundError{Resource: "volume", ID: name}
-	}
-	s.VolumeState.Delete(name)
-	return nil
+	return &api.NotImplementedError{Message: "Cloud Run backend does not support named volumes"}
 }
 
 // ExecStart is not supported by the Cloud Run backend.
@@ -992,38 +1058,7 @@ func (s *Server) AuthLogin(req *api.AuthRequest) (*api.AuthResponse, error) {
 	return s.BaseServer.AuthLogin(req)
 }
 
-// VolumePrune removes unused volumes.
+// VolumePrune is not supported by the Cloud Run backend — see VolumeRemove.
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
-	var deleted []string
-	var spaceReclaimed uint64
-	for _, v := range s.Store.Volumes.List() {
-		inUse := false
-		for _, c := range s.PendingCreates.List() {
-			for _, m := range c.Mounts {
-				if m.Name == v.Name {
-					inUse = true
-					break
-				}
-			}
-			if inUse {
-				break
-			}
-		}
-		if !inUse {
-			// Sum volume dir sizes for SpaceReclaimed
-			if dir, ok := s.Store.VolumeDirs.Load(v.Name); ok {
-				spaceReclaimed += uint64(core.DirSize(dir.(string)))
-			}
-			s.Store.Volumes.Delete(v.Name)
-			s.VolumeState.Delete(v.Name)
-			deleted = append(deleted, v.Name)
-		}
-	}
-	if deleted == nil {
-		deleted = []string{}
-	}
-	return &api.VolumePruneResponse{
-		VolumesDeleted: deleted,
-		SpaceReclaimed: spaceReclaimed,
-	}, nil
+	return nil, &api.NotImplementedError{Message: "Cloud Run backend does not support named volumes"}
 }

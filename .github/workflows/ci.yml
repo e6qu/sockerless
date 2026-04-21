@@ -24,19 +24,30 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    env:
+      # Every backend's TestMain builds+runs its simulator binary, starts
+      # the backend process, and exercises real Docker containers pulled
+      # from Docker Hub. Ubuntu runners ship with dockerd running, so the
+      # integration tests work without extra setup. Set uniformly so no
+      # test is silently skipped (per the no-skip principle).
+      SOCKERLESS_INTEGRATION: "1"
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
           cache: true
-      - name: Unit tests
+      - name: Verify docker available
+        run: docker version && docker info
+      - name: Tests (unit + per-backend integration)
         run: |
           set -e
-          run() { echo "=== $1 ===" && (cd "$1" && go test -tags noui -v -timeout 2m ./...); }
-          run_noflags() { echo "=== $1 ===" && (cd "$1" && go test -v -timeout 2m ./...); }
-          run_race() { echo "=== $1 ===" && (cd "$1" && go test -v -race -timeout 2m ./...); }
-          run_work() { echo "=== $1 ===" && (cd "$1" && GOWORK=off go test -v -timeout 1m ./...); }
+          # Timeout covers TestMain spawning sim+backend, image pulls, and
+          # full arithmetic / lifecycle runs. Fast packages finish early.
+          run() { echo "=== $1 ===" && (cd "$1" && go test -tags noui -v -timeout 15m ./...); }
+          run_noflags() { echo "=== $1 ===" && (cd "$1" && go test -v -timeout 15m ./...); }
+          run_race() { echo "=== $1 ===" && (cd "$1" && go test -v -race -timeout 15m ./...); }
+          run_work() { echo "=== $1 ===" && (cd "$1" && GOWORK=off go test -v -timeout 2m ./...); }
 
           # Architecture checks
           bash scripts/check-cloud-backend-isolation.sh
@@ -51,7 +62,7 @@ jobs:
           run backends/gcp-common
           run backends/azure-common
 
-          # Cloud backends
+          # Cloud backends (with integration tests)
           run backends/ecs
           run backends/lambda
           run backends/cloudrun

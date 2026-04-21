@@ -45,6 +45,28 @@ func TestBuildContainerDef_BasicImage(t *testing.T) {
 	}
 }
 
+func TestShellQuoteArgs(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want string
+	}{
+		{"empty", nil, ""},
+		{"single plain", []string{"echo"}, "'echo'"},
+		{"two plain", []string{"echo", "hello"}, "'echo' 'hello'"},
+		{"with space", []string{"echo", "hello world"}, "'echo' 'hello world'"},
+		{"with single quote", []string{"echo", "it's"}, "'echo' 'it'\\''s'"},
+		{"with $", []string{"sh", "-c", "echo $HOME"}, "'sh' '-c' 'echo $HOME'"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shellQuoteArgs(tc.in); got != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBuildContainerDef_Entrypoint(t *testing.T) {
 	s := testServer()
 	ci := testInput(&api.Container{

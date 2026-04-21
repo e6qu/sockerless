@@ -12,7 +12,7 @@ github.com (cloud)
   ▼
 actions/runner binary (on any machine with Docker client libraries)
   │
-  │   DOCKER_HOST=tcp://sockerless:2375
+  │   DOCKER_HOST=tcp://sockerless:3375
   │
   ▼
 sockerless Docker API
@@ -54,7 +54,7 @@ tar xzf actions-runner-linux-x64.tar.gz
 Create `actions-runner/.env` (read by the runner on startup):
 
 ```
-DOCKER_HOST=tcp://<sockerless-host>:2375
+DOCKER_HOST=tcp://<sockerless-host>:3375
 DOCKER_API_VERSION=1.44
 ```
 
@@ -132,7 +132,7 @@ Push a commit. The runner should pick up all three jobs. The `with-services` job
 
 ## Troubleshooting
 
-- **"unable to connect to docker daemon"** — runner can't reach sockerless. Verify `DOCKER_HOST` from the runner host: `curl -sf http://<sockerless-host>:2375/_ping`.
+- **"unable to connect to docker daemon"** — runner can't reach sockerless. Verify `DOCKER_HOST` from the runner host: `curl -sf http://<sockerless-host>:3375/_ping`.
 - **Services resolve to wrong IP or fail DNS** — see `docs/ECS_SERVICES_DESIGN.md`. Private DNS on the VPC must be enabled.
 - **Jobs take 90+ seconds to start** — that's ECS cold-start for a new task definition. Warm pools aren't implemented; consider a runner-level pool or longer-running containers.
 - **`docker login` required** — runner steps that pull from private registries need credentials. Set them as GitHub secrets and pass them through a `docker login` step; sockerless forwards to ECR / wherever.

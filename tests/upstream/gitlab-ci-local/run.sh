@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # --- Defaults ---
 BACKEND="memory"
-BACKEND_ADDR="127.0.0.1:2375"
+BACKEND_ADDR="127.0.0.1:3375"
 PIDFILE="/tmp/upstream-gcl.pids"
 RESULTS_FILE="/tmp/upstream-gcl-results.log"
 

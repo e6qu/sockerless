@@ -202,8 +202,18 @@ func (s *Server) ContainerStart(ref string) error {
 	}
 
 	if len(podContainers) > 1 {
-		// Multi-container pod: build combined job and run
+		// Multi-container pod: build combined resource and run.
+		if s.config.UseApp {
+			return s.startMultiContainerAppTyped(id, podContainers, exitCh)
+		}
 		return s.startMultiContainerJobTyped(id, podContainers, exitCh)
+	}
+
+	// — Apps path. Separate function so the Jobs branch
+	// below can be deleted when Jobs support is sunset.
+	if s.config.UseApp {
+		acaState, _ := s.resolveAppACAState(s.ctx(), id)
+		return s.startSingleContainerApp(id, c, acaState, exitCh)
 	}
 
 	// Build ACA Job spec
@@ -377,10 +387,20 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 		return &api.NotModifiedError{}
 	}
 
-	// Stop the ACA Job execution
-	acaState, _ := s.ACA.Get(id)
-	if acaState.JobName != "" && acaState.ExecutionName != "" {
-		s.stopExecution(acaState.JobName, acaState.ExecutionName)
+	// — for Apps, the ContainerApp IS the running instance;
+	// there's no in-flight Execution to stop. Delete the App to stop
+	// the container; next Start re-creates it.
+	if s.config.UseApp {
+		if appState, ok := s.resolveAppACAState(s.ctx(), id); ok && appState.AppName != "" {
+			s.deleteApp(appState.AppName)
+			s.Registry.MarkCleanedUp(appState.AppName)
+			s.ACA.Update(id, func(st *ACAState) { st.AppName = "" })
+		}
+	} else {
+		// cloud-fallback lookup so stop works post-restart.
+		if acaState, ok := s.resolveACAState(s.ctx(), id); ok && acaState.JobName != "" && acaState.ExecutionName != "" {
+			s.stopExecution(acaState.JobName, acaState.ExecutionName)
+		}
 	}
 
 	s.StopHealthCheck(id)
@@ -412,10 +432,18 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 
 	exitCode := core.SignalToExitCode(signal)
 
-	// Stop the ACA Job execution
-	acaState, _ := s.ACA.Get(id)
-	if acaState.JobName != "" && acaState.ExecutionName != "" {
-		s.stopExecution(acaState.JobName, acaState.ExecutionName)
+	// — same as Stop: Apps delete, Jobs cancel execution.
+	if s.config.UseApp {
+		if appState, ok := s.resolveAppACAState(s.ctx(), id); ok && appState.AppName != "" {
+			s.deleteApp(appState.AppName)
+			s.Registry.MarkCleanedUp(appState.AppName)
+			s.ACA.Update(id, func(st *ACAState) { st.AppName = "" })
+		}
+	} else {
+		// cloud-fallback lookup so kill works post-restart.
+		if acaState, ok := s.resolveACAState(s.ctx(), id); ok && acaState.JobName != "" && acaState.ExecutionName != "" {
+			s.stopExecution(acaState.JobName, acaState.ExecutionName)
+		}
 	}
 
 	s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
@@ -455,29 +483,45 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			"exitCode": "0",
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
-		acaState, _ := s.ACA.Get(id)
-		if acaState.JobName != "" && acaState.ExecutionName != "" {
-			s.stopExecution(acaState.JobName, acaState.ExecutionName)
+		if !s.config.UseApp {
+			acaState, _ := s.resolveACAState(s.ctx(), id)
+			if acaState.JobName != "" && acaState.ExecutionName != "" {
+				s.stopExecution(acaState.JobName, acaState.ExecutionName)
+			}
 		}
 	}
 
 	s.StopHealthCheck(id)
 
-	// Delete ACA Job (best-effort)
-	acaState, _ := s.ACA.Get(id)
-	if acaState.JobName != "" {
-		s.deleteJob(acaState.JobName)
-		s.Registry.MarkCleanedUp(acaState.JobName)
+	// — delete the backing cloud resource. Jobs and Apps are
+	// distinct ARM resource types so cached state is unambiguous.
+	if s.config.UseApp {
+		appState, _ := s.resolveAppACAState(s.ctx(), id)
+		if appState.AppName != "" {
+			s.deleteApp(appState.AppName)
+			s.Registry.MarkCleanedUp(appState.AppName)
+		}
+	} else {
+		acaState, _ := s.resolveACAState(s.ctx(), id)
+		if acaState.JobName != "" {
+			s.deleteJob(acaState.JobName)
+			s.Registry.MarkCleanedUp(acaState.JobName)
+		}
 	}
 
 	if pod, inPod := s.Store.Pods.GetPodForContainer(id); inPod {
 		s.Store.Pods.RemoveContainer(pod.ID, id)
 	}
 
-	// Deregister from service discovery (Private DNS A record)
+	// Deregister from service discovery (CNAME for Apps, A for Jobs).
 	hostname := strings.TrimPrefix(c.Name, "/")
 	for _, ep := range c.NetworkSettings.Networks {
-		if ep != nil && ep.NetworkID != "" {
+		if ep == nil || ep.NetworkID == "" {
+			continue
+		}
+		if s.config.UseApp {
+			_ = s.cloudServiceDeregisterCNAME(s.ctx(), id, hostname, ep.NetworkID)
+		} else {
 			_ = s.cloudServiceDeregister(id, hostname, ep.NetworkID)
 		}
 	}
@@ -511,22 +555,35 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 }
 
 // ContainerLogs streams container logs from Azure Monitor Log Analytics.
+// Filter depends on Config.UseApp: Jobs log under ContainerGroupName_s;
+// Apps log under ContainerAppName_s in the same table.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
-	var jobName string
-	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
-		acaState, _ := s.ACA.Get(id)
-		jobName = acaState.JobName
-		if jobName == "" {
-			jobName = buildJobName(id)
+	id, _ := s.ResolveContainerIDAuto(context.Background(), ref)
+
+	var whereClause string
+	if s.config.UseApp {
+		var appName string
+		if id != "" {
+			appState, _ := s.resolveAppACAState(s.ctx(), id)
+			appName = appState.AppName
+			if appName == "" {
+				appName = buildAppName(id)
+			}
 		}
+		whereClause = fmt.Sprintf(`ContainerAppName_s == "%s"`, appName)
+	} else {
+		var jobName string
+		if id != "" {
+			acaState, _ := s.resolveACAState(s.ctx(), id)
+			jobName = acaState.JobName
+			if jobName == "" {
+				jobName = buildJobName(id)
+			}
+		}
+		whereClause = fmt.Sprintf(`ContainerGroupName_s == "%s"`, jobName)
 	}
 
-	fetch := s.azureLogsFetch(
-		`ContainerAppConsoleLogs_CL`,
-		fmt.Sprintf(`ContainerGroupName_s == "%s"`, jobName),
-		"Log_s",
-	)
-
+	fetch := s.azureLogsFetch(`ContainerAppConsoleLogs_CL`, whereClause, "Log_s")
 	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{})
 }
 
@@ -542,7 +599,7 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 	if c.State.Running {
 		s.StopHealthCheck(id)
 
-		acaState, _ := s.ACA.Get(id)
+		acaState, _ := s.resolveACAState(s.ctx(), id)
 		if acaState.JobName != "" && acaState.ExecutionName != "" {
 			s.stopExecution(acaState.JobName, acaState.ExecutionName)
 		}
@@ -602,7 +659,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 			spaceReclaimed += uint64(img.Size)
 		}
 		// Clean up ACA resources
-		acaState, _ := s.ACA.Get(c.ID)
+		acaState, _ := s.resolveACAState(s.ctx(), c.ID)
 		if acaState.JobName != "" {
 			s.deleteJob(acaState.JobName)
 			s.Registry.MarkCleanedUp(acaState.JobName)
@@ -693,48 +750,16 @@ func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 	return s.images.Load(r)
 }
 
-// VolumeRemove removes a volume and its state.
+// VolumeRemove is not supported by the ACA backend. Named docker
+// volumes aren't backed by real cloud-side storage; the earlier
+// in-memory store silently accepted and deleted volumes without ever
+// mounting them. Real Azure Files share provisioning is a follow-up
+// phase.
 func (s *Server) VolumeRemove(name string, force bool) error {
-	if !s.Store.Volumes.Delete(name) {
-		return &api.NotFoundError{Resource: "volume", ID: name}
-	}
-	s.VolumeState.Delete(name)
-	return nil
+	return &api.NotImplementedError{Message: "ACA backend does not support named volumes"}
 }
 
-// VolumePrune removes unused volumes.
+// VolumePrune is not supported by the ACA backend — see VolumeRemove.
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
-	var deleted []string
-	var spaceReclaimed uint64
-	allContainersForVol, _ := s.CloudState.ListContainers(context.Background(), true, nil)
-	for _, v := range s.Store.Volumes.List() {
-		inUse := false
-		for _, c := range allContainersForVol {
-			for _, m := range c.Mounts {
-				if m.Name == v.Name {
-					inUse = true
-					break
-				}
-			}
-			if inUse {
-				break
-			}
-		}
-		if !inUse {
-			// Sum volume dir sizes for SpaceReclaimed
-			if dir, ok := s.Store.VolumeDirs.Load(v.Name); ok {
-				spaceReclaimed += uint64(core.DirSize(dir.(string)))
-			}
-			s.Store.Volumes.Delete(v.Name)
-			s.VolumeState.Delete(v.Name)
-			deleted = append(deleted, v.Name)
-		}
-	}
-	if deleted == nil {
-		deleted = []string{}
-	}
-	return &api.VolumePruneResponse{
-		VolumesDeleted: deleted,
-		SpaceReclaimed: spaceReclaimed,
-	}, nil
+	return nil, &api.NotImplementedError{Message: "ACA backend does not support named volumes"}
 }

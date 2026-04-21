@@ -63,7 +63,7 @@ func TestReverseAgentServer_RegisterResolveDrop(t *testing.T) {
 // TestReverseAgentServer_RouteMountedOnBaseMux verifies that the
 // reverse-agent route is mounted on the same mux the BaseServer
 // serves, so a real Lambda backend process answers
-// /v1/lambda/reverse.
+// v1/lambda/reverse.
 func TestReverseAgentServer_RouteMountedOnBaseMux(t *testing.T) {
 	logger := zerolog.New(io.Discard)
 	base := &core.BaseServer{Logger: logger, Mux: http.NewServeMux()}

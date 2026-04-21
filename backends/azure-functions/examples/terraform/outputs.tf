@@ -27,6 +27,6 @@ output "backend_env" {
     export SOCKERLESS_AZF_LOCATION=${module.sockerless_azf.location}
     export SOCKERLESS_AZF_STORAGE_ACCOUNT=${module.sockerless_azf.storage_account_name}
     export SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE=${module.sockerless_azf.log_analytics_workspace_id}
-    export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:9100
+    export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:3375
   EOT
 }

@@ -252,28 +252,48 @@ func (s *Server) ContainerStart(ref string) error {
 		state.ClusterARN = clusterARN
 	})
 
-	// Register in Cloud Map for service discovery (skip pre-defined networks)
-	hostname := strings.TrimPrefix(c.Name, "/")
-	for netName, ep := range c.NetworkSettings.Networks {
-		if ep != nil && ep.NetworkID != "" && ep.IPAddress != "" {
-			// Skip Cloud Map for pre-defined networks (bridge, host, none)
-			if netName == "bridge" || netName == "host" || netName == "none" {
-				continue
-			}
-			if err := s.cloudServiceRegister(id, hostname, ep.IPAddress, ep.NetworkID); err != nil {
-				s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to register in Cloud Map")
-			}
-		}
-	}
-
-	// Wait for task to reach RUNNING, then start background poller for exit.
-	_, err = s.waitForTaskRunning(s.ctx(), taskARN)
+	// Wait for task to reach RUNNING — only then is the ENI's private IP
+	// known. Cloud Map registration must use that real IP, not the local
+	// placeholder `0.0.0.0` carried in c.NetworkSettings.Networks.
+	taskAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
 		}
 		return err
+	}
+
+	// Short-lived task that exited 0 before we saw RUNNING: Cloud Map
+	// registration is pointless (nothing to discover), and pollTaskExit
+	// would race with the already-STOPPED state. Close the wait channel
+	// directly and return — ContainerWait will unblock, and
+	// CloudState.GetContainer reads STOPPED straight from ECS so
+	// inspect/ps reflect the real state.
+	if taskAddr == "" {
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
+		}
+		return nil
+	}
+
+	taskIP := taskAddr
+	if i := strings.LastIndex(taskAddr, ":"); i > 0 {
+		taskIP = taskAddr[:i]
+	}
+
+	// Register in Cloud Map for service discovery (skip pre-defined networks)
+	hostname := strings.TrimPrefix(c.Name, "/")
+	for netName, ep := range c.NetworkSettings.Networks {
+		if ep == nil || ep.NetworkID == "" {
+			continue
+		}
+		if netName == "bridge" || netName == "host" || netName == "none" {
+			continue
+		}
+		if err := s.cloudServiceRegister(id, hostname, taskIP, ep.NetworkID); err != nil {
+			s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to register in Cloud Map")
+		}
 	}
 
 	// Start background poller to detect task exit
@@ -363,9 +383,9 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 		return &api.NotModifiedError{}
 	}
 
-	// Stop the ECS task (best-effort)
-	ecsState, _ := s.ECS.Get(id)
-	if ecsState.TaskARN != "" {
+	// Stop the ECS task. resolveTaskState falls back to the cloud when
+	// in-memory cache is empty (post-restart) —/.
+	if ecsState, ok := s.resolveTaskState(s.ctx(), id); ok {
 		cluster := s.config.Cluster
 		if ecsState.ClusterARN != "" {
 			cluster = ecsState.ClusterARN
@@ -405,9 +425,8 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 
 	exitCode := core.SignalToExitCode(signal)
 
-	// Stop the ECS task (best-effort)
-	ecsState, _ := s.ECS.Get(id)
-	if ecsState.TaskARN != "" {
+	// cloud-fallback lookup so kill works post-restart.
+	if ecsState, ok := s.resolveTaskState(s.ctx(), id); ok {
 		cluster := s.config.Cluster
 		if ecsState.ClusterARN != "" {
 			cluster = ecsState.ClusterARN
@@ -456,8 +475,8 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			"exitCode": "0",
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
-		ecsState, _ := s.ECS.Get(id)
-		if ecsState.TaskARN != "" {
+		// cloud-fallback lookup so remove works post-restart.
+		if ecsState, ok := s.resolveTaskState(s.ctx(), id); ok {
 			cluster := s.config.Cluster
 			if ecsState.ClusterARN != "" {
 				cluster = ecsState.ClusterARN
@@ -472,8 +491,22 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	s.StopHealthCheck(id)
 
-	// Deregister task definition (best-effort)
+	// Deregister task definition. Read from cache when available; on
+	// cache miss (post-restart) derive TaskDefinitionArn from the running
+	// task via DescribeTasks/.
 	ecsState, _ := s.ECS.Get(id)
+	if ecsState.TaskDefARN == "" {
+		if recovered, ok := s.resolveTaskState(s.ctx(), id); ok {
+			descOut, dErr := s.aws.ECS.DescribeTasks(s.ctx(), &awsecs.DescribeTasksInput{
+				Cluster: aws.String(recovered.ClusterARN),
+				Tasks:   []string{recovered.TaskARN},
+			})
+			if dErr == nil && len(descOut.Tasks) > 0 {
+				ecsState.TaskDefARN = aws.ToString(descOut.Tasks[0].TaskDefinitionArn)
+				ecsState.TaskARN = recovered.TaskARN
+			}
+		}
+	}
 	if ecsState.TaskDefARN != "" {
 		_, _ = s.aws.ECS.DeregisterTaskDefinition(s.ctx(), &awsecs.DeregisterTaskDefinitionInput{
 			TaskDefinition: aws.String(ecsState.TaskDefARN),
@@ -555,7 +588,8 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 	// Stop if running
 	if c.State.Running {
 		s.StopHealthCheck(id)
-		ecsState, _ := s.ECS.Get(id)
+		// cloud-fallback lookup so restart works post-restart.
+		ecsState, _ := s.resolveTaskState(s.ctx(), id)
 		if ecsState.TaskARN != "" {
 			cluster := s.config.Cluster
 			if ecsState.ClusterARN != "" {
@@ -720,13 +754,13 @@ func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 	return s.images.Load(r)
 }
 
-// VolumeRemove removes a volume by name.
+// VolumeRemove is not supported by the ECS backend. Named docker
+// volumes aren't backed by real cloud-side storage — the earlier
+// in-memory store silently accepted and deleted volumes without ever
+// mounting them. Reject cleanly so clients don't assume durable state.
+// Real EFS / EBS provisioning is tracked as a follow-up phase.
 func (s *Server) VolumeRemove(name string, force bool) error {
-	if !s.Store.Volumes.Delete(name) {
-		return &api.NotFoundError{Resource: "volume", ID: name}
-	}
-	s.VolumeState.Delete(name)
-	return nil
+	return &api.NotImplementedError{Message: "ECS backend does not support named volumes; provision EFS out-of-band and reference it via task-definition EFSVolumeConfiguration"}
 }
 
 // ExecStart starts an exec instance. For ECS, if no agent is connected,
@@ -929,8 +963,8 @@ func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*ap
 	}
 
 	// ECS-specific: check that an ECS task is available for exec.
-	ecsState, _ := s.ECS.Get(c.ID)
-	if ecsState.TaskARN == "" {
+	// cloud-fallback lookup so ExecCreate works post-restart.
+	if ecsState, ok := s.resolveTaskState(s.ctx(), c.ID); !ok || ecsState.TaskARN == "" {
 		return nil, &api.NotImplementedError{
 			Message: fmt.Sprintf("exec requires a running ECS task, but container %s has none (ECS backend)", strings.TrimPrefix(c.Name, "/")),
 		}
@@ -958,41 +992,7 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 	return nil, &api.NotImplementedError{Message: "ECS backend does not support container commit; Fargate containers cannot be snapshotted"}
 }
 
-// VolumePrune removes all unused volumes.
+// VolumePrune is not supported by the ECS backend — see VolumeRemove.
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
-	// Query CloudState for all containers to check volume usage
-	allContainers, _ := s.CloudState.ListContainers(context.Background(), true, nil)
-
-	var deleted []string
-	var spaceReclaimed uint64
-	for _, v := range s.Store.Volumes.List() {
-		inUse := false
-		for _, c := range allContainers {
-			for _, m := range c.Mounts {
-				if m.Name == v.Name {
-					inUse = true
-					break
-				}
-			}
-			if inUse {
-				break
-			}
-		}
-		if !inUse {
-			// Sum volume dir sizes for SpaceReclaimed
-			if dir, ok := s.Store.VolumeDirs.Load(v.Name); ok {
-				spaceReclaimed += uint64(core.DirSize(dir.(string)))
-			}
-			s.Store.Volumes.Delete(v.Name)
-			s.VolumeState.Delete(v.Name)
-			deleted = append(deleted, v.Name)
-		}
-	}
-	if deleted == nil {
-		deleted = []string{}
-	}
-	return &api.VolumePruneResponse{
-		VolumesDeleted: deleted,
-		SpaceReclaimed: spaceReclaimed,
-	}, nil
+	return nil, &api.NotImplementedError{Message: "ECS backend does not support named volumes"}
 }

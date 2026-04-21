@@ -3,14 +3,12 @@ package ecs
 import (
 	"bytes"
 	"context"
-	"io"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/pkg/stdcopy"
 )
 
@@ -40,23 +38,13 @@ func readContainerLogs(t *testing.T, id string) string {
 	return ""
 }
 
-func pullImage(t *testing.T) {
-	t.Helper()
-	rc, _ := dockerClient.ImagePull(context.Background(), "alpine:latest", image.PullOptions{})
-	if rc != nil {
-		io.Copy(io.Discard, rc)
-		rc.Close()
-	}
-}
-
 func TestECSArithmeticSuccess(t *testing.T) {
 	skipIfNoIntegration(t)
-	pullImage(t)
 	ctx := context.Background()
 
 	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
-		Image: "alpine:latest",
-		Cmd:   []string{evalBinaryPath, "3 + 4 * 2"},
+		Image: evalImageName,
+		Cmd:   []string{"3 + 4 * 2"},
 	}, nil, nil, nil, "ecs-arith-success")
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
@@ -87,12 +75,11 @@ func TestECSArithmeticSuccess(t *testing.T) {
 
 func TestECSArithmeticParentheses(t *testing.T) {
 	skipIfNoIntegration(t)
-	pullImage(t)
 	ctx := context.Background()
 
 	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
-		Image: "alpine:latest",
-		Cmd:   []string{evalBinaryPath, "(3 + 4) * 2"},
+		Image: evalImageName,
+		Cmd:   []string{"(3 + 4) * 2"},
 	}, nil, nil, nil, "ecs-arith-parens")
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
@@ -123,12 +110,11 @@ func TestECSArithmeticParentheses(t *testing.T) {
 
 func TestECSArithmeticInvalid(t *testing.T) {
 	skipIfNoIntegration(t)
-	pullImage(t)
 	ctx := context.Background()
 
 	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
-		Image: "alpine:latest",
-		Cmd:   []string{evalBinaryPath, "3 +"},
+		Image: evalImageName,
+		Cmd:   []string{"3 +"},
 	}, nil, nil, nil, "ecs-arith-invalid")
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
@@ -159,12 +145,11 @@ func TestECSArithmeticInvalid(t *testing.T) {
 
 func TestECSArithmeticDivision(t *testing.T) {
 	skipIfNoIntegration(t)
-	pullImage(t)
 	ctx := context.Background()
 
 	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
-		Image: "alpine:latest",
-		Cmd:   []string{evalBinaryPath, "10 / 3"},
+		Image: evalImageName,
+		Cmd:   []string{"10 / 3"},
 	}, nil, nil, nil, "ecs-arith-div")
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
@@ -195,12 +180,11 @@ func TestECSArithmeticDivision(t *testing.T) {
 
 func TestECSArithmeticWithLabels(t *testing.T) {
 	skipIfNoIntegration(t)
-	pullImage(t)
 	ctx := context.Background()
 
 	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
-		Image:  "alpine:latest",
-		Cmd:    []string{evalBinaryPath, "100 - 42"},
+		Image:  evalImageName,
+		Cmd:    []string{"100 - 42"},
 		Labels: map[string]string{"arith-test": "ecs"},
 	}, nil, nil, nil, "ecs-arith-labels")
 	if err != nil {
@@ -251,12 +235,11 @@ func TestECSArithmeticWithLabels(t *testing.T) {
 
 func TestECSArithmeticEnvVar(t *testing.T) {
 	skipIfNoIntegration(t)
-	pullImage(t)
 	ctx := context.Background()
 
 	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
-		Image: "alpine:latest",
-		Cmd:   []string{evalBinaryPath, "(3 + 4) * 2"},
+		Image: evalImageName,
+		Cmd:   []string{"(3 + 4) * 2"},
 		Env:   []string{"EXPR=(3 + 4) * 2"},
 	}, nil, nil, nil, "ecs-arith-env")
 	if err != nil {

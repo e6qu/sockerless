@@ -4,7 +4,7 @@
 set -euo pipefail
 
 : "${AWS_REGION:=eu-west-1}"
-TG_DIR="${TG_DIR:-deploy/live/ecs}"
+TG_DIR="${TG_DIR:-terraform/environments/ecs/live}"
 
 echo "=== terragrunt apply in $TG_DIR ==="
 cd "$TG_DIR"

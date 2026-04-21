@@ -99,7 +99,7 @@ func main() {
 
 // handleOneInvocation blocks on /next, spawns the user entrypoint with
 // the invocation payload as stdin, and posts the result to /response or
-// /error. The deadline header is enforced as a subprocess-level
+// error. The deadline header is enforced as a subprocess-level
 // context timeout.
 func handleOneInvocation(base string) error {
 	resp, err := http.Get(base + runtimeAPIPath + "/next")

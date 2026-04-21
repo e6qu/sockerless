@@ -20,6 +20,6 @@ output "backend_env" {
     export SOCKERLESS_GCF_PROJECT=${module.sockerless_gcf.project_id}
     export SOCKERLESS_GCF_REGION=${module.sockerless_gcf.region}
     export SOCKERLESS_GCF_SERVICE_ACCOUNT=${module.sockerless_gcf.service_account_email}
-    export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:9100
+    export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:3375
   EOT
 }

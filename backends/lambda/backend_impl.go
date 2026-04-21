@@ -152,52 +152,56 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		Labels:      config.Labels,
 	}
 
-	// Resolve image to ECR URI (Lambda only supports ECR images)
-	imageURI, err := s.resolveImageURI(s.ctx(), config.Image)
-	if err != nil {
-		return nil, &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", config.Image, err)}
-	}
-
-	// Put the reverse-agent overlay image into play when CallbackURL
-	// is set so `docker exec` / `docker attach` can reach a running
-	// invocation. Two paths:
-	//  - PrebuiltOverlayImage configured: operator ships their own
-	//    agent-baked image; use it directly.
-	//  - Otherwise: build + push an overlay on top of the user's image
-	//    via BuildAndPushOverlayImage. Failure falls back to the base
-	//    image with a warning (exec will not work in that case).
-	if s.config.CallbackURL != "" {
-		if s.config.PrebuiltOverlayImage != "" {
-			imageURI = s.config.PrebuiltOverlayImage
+	// Resolve the image URI. If the operator shipped a pre-baked
+	// overlay (PrebuiltOverlayImage) and we're in reverse-agent mode
+	// (CallbackURL set), the user's Image is irrelevant — the Lambda
+	// function runs the operator's image, and the user's original
+	// entrypoint+cmd are passed via env vars. Skip ECR resolution
+	// entirely in that case; the prebuilt image is expected to be
+	// already pushed to ECR (or resolvable locally in integration).
+	var imageURI string
+	switch {
+	case s.config.CallbackURL != "" && s.config.PrebuiltOverlayImage != "":
+		imageURI = s.config.PrebuiltOverlayImage
+		envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
+		envVars["SOCKERLESS_CONTAINER_ID"] = id
+		if len(config.Entrypoint) > 0 {
+			envVars["SOCKERLESS_USER_ENTRYPOINT"] = strings.Join(config.Entrypoint, ":")
+		}
+		if len(config.Cmd) > 0 {
+			envVars["SOCKERLESS_USER_CMD"] = strings.Join(config.Cmd, ":")
+		}
+	case s.config.CallbackURL != "":
+		// Build + push an overlay on top of the user's image. Resolve
+		// the base image first so the Dockerfile's FROM can reference
+		// something Lambda can pull.
+		base, err := s.resolveImageURI(s.ctx(), config.Image)
+		if err != nil {
+			return nil, &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", config.Image, err)}
+		}
+		imageURI = base
+		spec := OverlayImageSpec{
+			BaseImageRef:        imageURI,
+			AgentBinaryPath:     s.config.AgentBinaryPath,
+			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+			UserEntrypoint:      config.Entrypoint,
+			UserCmd:             config.Cmd,
+		}
+		destRef := fmt.Sprintf("%s-overlay-%s", strings.TrimSuffix(imageURI, ":latest"), id[:12])
+		overlay, buildErr := BuildAndPushOverlayImage(s.ctx(), spec, destRef)
+		if buildErr != nil {
+			s.Logger.Warn().Err(buildErr).Str("image", imageURI).
+				Msg("overlay build failed; falling back to base image (docker exec will not work)")
+		} else {
+			imageURI = overlay.ImageURI
 			envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
 			envVars["SOCKERLESS_CONTAINER_ID"] = id
-			// Pass the user entrypoint+cmd as env vars — the pre-baked
-			// overlay image does not embed them (unlike the
-			// RenderOverlayDockerfile path which writes ENV lines).
-			if len(config.Entrypoint) > 0 {
-				envVars["SOCKERLESS_USER_ENTRYPOINT"] = strings.Join(config.Entrypoint, ":")
-			}
-			if len(config.Cmd) > 0 {
-				envVars["SOCKERLESS_USER_CMD"] = strings.Join(config.Cmd, ":")
-			}
-		} else {
-			spec := OverlayImageSpec{
-				BaseImageRef:        imageURI,
-				AgentBinaryPath:     s.config.AgentBinaryPath,
-				BootstrapBinaryPath: s.config.BootstrapBinaryPath,
-				UserEntrypoint:      config.Entrypoint,
-				UserCmd:             config.Cmd,
-			}
-			destRef := fmt.Sprintf("%s-overlay-%s", strings.TrimSuffix(imageURI, ":latest"), id[:12])
-			overlay, err := BuildAndPushOverlayImage(s.ctx(), spec, destRef)
-			if err != nil {
-				s.Logger.Warn().Err(err).Str("image", imageURI).
-					Msg("overlay build failed; falling back to base image (docker exec will not work)")
-			} else {
-				imageURI = overlay.ImageURI
-				envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
-				envVars["SOCKERLESS_CONTAINER_ID"] = id
-			}
+		}
+	default:
+		var resolveErr error
+		imageURI, resolveErr = s.resolveImageURI(s.ctx(), config.Image)
+		if resolveErr != nil {
+			return nil, &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", config.Image, resolveErr)}
 		}
 	}
 
@@ -309,7 +313,7 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 	}
 
-	lambdaState, _ := s.Lambda.Get(id)
+	lambdaState, _ := s.resolveLambdaState(s.ctx(), id)
 
 	exitCh := make(chan struct{})
 	s.Store.WaitChs.Store(id, exitCh)
@@ -349,18 +353,16 @@ func (s *Server) ContainerStart(ref string) error {
 // "cancel invoke" API and UpdateFunctionConfiguration only applies to
 // future invocations — an in-flight invoke cannot be aborted from the
 // control plane. Stop therefore does three things, in order:
-//
-//  1. Clamps the function timeout to the minimum (1s) so any subsequent
-//     invocations of this container are short-lived. Best-effort — a
-//     failure here is logged but non-fatal (the invocation may already
-//     be finishing and the function may already be gone).
-//  2. Requests the reverse agent (if connected) to exit, which causes
-//     the agent-as-handler Lambda invocation to return immediately.
-//     This is the only path that actually cuts short an in-flight
-//     invocation. Containers without the bundled agent will keep
-//     running until natural completion or the 15-min AWS hard cap.
-//  3. Closes the local wait channel so `docker wait` unblocks.
-//
+// 1. Clamps the function timeout to the minimum (1s) so any subsequent
+// invocations of this container are short-lived. Best-effort — a
+// failure here is logged but non-fatal (the invocation may already
+// be finishing and the function may already be gone).
+// 2. Requests the reverse agent (if connected) to exit, which causes
+// the agent-as-handler Lambda invocation to return immediately.
+// This is the only path that actually cuts short an in-flight
+// invocation. Containers without the bundled agent will keep
+// running until natural completion or the 15-min AWS hard cap.
+// 3. Closes the local wait channel so `docker wait` unblocks.
 // Exit code 137 matches Docker's convention for force-stopped containers.
 func (s *Server) ContainerStop(ref string, timeout *int) error {
 	c, ok := s.ResolveContainerAuto(context.Background(), ref)
@@ -375,8 +377,8 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 
 	s.StopHealthCheck(id)
 
-	lambdaState, _ := s.Lambda.Get(id)
-	if lambdaState.FunctionName != "" {
+	// cloud-fallback lookup so stop works post-restart.
+	if lambdaState, ok := s.resolveLambdaState(s.ctx(), id); ok && lambdaState.FunctionName != "" {
 		_, err := s.aws.Lambda.UpdateFunctionConfiguration(s.ctx(),
 			&awslambda.UpdateFunctionConfigurationInput{
 				FunctionName: aws.String(lambdaState.FunctionName),
@@ -421,7 +423,8 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 
 	exitCode := core.SignalToExitCode(signal)
 
-	lambdaState, _ := s.Lambda.Get(id)
+	// cloud-fallback lookup so kill works post-restart.
+	lambdaState, _ := s.resolveLambdaState(s.ctx(), id)
 	if lambdaState.FunctionName != "" {
 		_, err := s.aws.Lambda.UpdateFunctionConfiguration(s.ctx(),
 			&awslambda.UpdateFunctionConfigurationInput{
@@ -479,7 +482,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	s.StopHealthCheck(id)
 
 	// Delete Lambda function (best-effort)
-	lambdaState, _ := s.Lambda.Get(id)
+	lambdaState, _ := s.resolveLambdaState(s.ctx(), id)
 	if lambdaState.FunctionName != "" {
 		_, _ = s.aws.Lambda.DeleteFunction(s.ctx(), &awslambda.DeleteFunctionInput{
 			FunctionName: aws.String(lambdaState.FunctionName),
@@ -530,7 +533,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
 	var logGroupName *string
 	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
-		lambdaState, _ := s.Lambda.Get(id)
+		lambdaState, _ := s.resolveLambdaState(s.ctx(), id)
 		if lambdaState.FunctionName != "" {
 			group := fmt.Sprintf("/aws/lambda/%s", lambdaState.FunctionName)
 			logGroupName = &group
@@ -675,7 +678,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 			spaceReclaimed += uint64(img.Size)
 		}
 		// Clean up Lambda cloud resources
-		lambdaState, _ := s.Lambda.Get(c.ID)
+		lambdaState, _ := s.resolveLambdaState(s.ctx(), c.ID)
 		if lambdaState.FunctionName != "" {
 			_, _ = s.aws.Lambda.DeleteFunction(s.ctx(), &awslambda.DeleteFunctionInput{
 				FunctionName: aws.String(lambdaState.FunctionName),

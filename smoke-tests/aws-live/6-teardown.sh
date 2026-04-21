@@ -5,10 +5,19 @@
 set -euo pipefail
 
 : "${AWS_REGION:=eu-west-1}"
-TG_DIR="${TG_DIR:-deploy/live/ecs}"
+: "${LAMBDA_REGION:=us-east-1}"
+TG_DIR="${TG_DIR:-terraform/environments/ecs/live}"
+LAMBDA_TG_DIR="${LAMBDA_TG_DIR:-terraform/environments/lambda/live}"
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+
+if [ -d "$REPO_ROOT/$LAMBDA_TG_DIR" ]; then
+  echo "=== terragrunt destroy in $LAMBDA_TG_DIR ==="
+  ( cd "$REPO_ROOT/$LAMBDA_TG_DIR" && terragrunt destroy -auto-approve || true )
+fi
 
 echo "=== terragrunt destroy in $TG_DIR ==="
-cd "$TG_DIR"
+cd "$REPO_ROOT/$TG_DIR"
 terragrunt destroy -auto-approve || true
 
 echo "--- residue check ---"
@@ -21,7 +30,7 @@ if [ -n "$clusters" ]; then
   fail=1
 fi
 
-functions=$(aws lambda list-functions --region "$AWS_REGION" --query 'Functions[].FunctionName' --output text | tr '\t' '\n' | grep -E '^(skls-|sockerless-)' || true)
+functions=$(aws lambda list-functions --region "$LAMBDA_REGION" --query 'Functions[].FunctionName' --output text | tr '\t' '\n' | grep -E '^(skls-|sockerless-)' || true)
 if [ -n "$functions" ]; then
   echo "LEAK: residual Lambda functions:" >&2
   echo "$functions" >&2

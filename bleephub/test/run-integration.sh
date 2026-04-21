@@ -29,8 +29,8 @@ show_diag() {
 # The official runner strips non-standard ports from URLs (uses uri.Host not uri.Authority).
 # So bleephub MUST run on port 80 (the default HTTP port).
 BLEEPHUB_ADDR="127.0.0.1:80"
-BACKEND_ADDR="127.0.0.1:9100"
-FRONTEND_ADDR="127.0.0.1:2375"
+BACKEND_ADDR="127.0.0.1:3375"
+FRONTEND_ADDR="127.0.0.1:3375"
 PIDS=()
 
 cleanup() {

@@ -20,6 +20,7 @@ import (
 type GCPClients struct {
 	Jobs       *run.JobsClient
 	Executions *run.ExecutionsClient
+	Services   *run.ServicesClient // used when Config.UseService is true
 	Logging    *logging.Client
 	LogAdmin   *logadmin.Client
 	Storage    *storage.Client
@@ -51,11 +52,19 @@ func newGCPClientsWithEndpoint(ctx context.Context, project string, endpointURL 
 		return nil, err
 	}
 
+	servicesClient, err := run.NewServicesRESTClient(ctx, opts...)
+	if err != nil {
+		_ = jobsClient.Close()
+		_ = execClient.Close()
+		return nil, err
+	}
+
 	// logadmin uses gRPC — connect to the simulator's gRPC port (HTTP port + 1)
 	grpcAddr, err := grpcAddrFromEndpoint(endpointURL)
 	if err != nil {
 		_ = jobsClient.Close()
 		_ = execClient.Close()
+		_ = servicesClient.Close()
 		return nil, fmt.Errorf("failed to derive gRPC address: %w", err)
 	}
 	logAdminOpts := []option.ClientOption{
@@ -67,6 +76,7 @@ func newGCPClientsWithEndpoint(ctx context.Context, project string, endpointURL 
 	if err != nil {
 		_ = jobsClient.Close()
 		_ = execClient.Close()
+		_ = servicesClient.Close()
 		return nil, err
 	}
 
@@ -74,6 +84,7 @@ func newGCPClientsWithEndpoint(ctx context.Context, project string, endpointURL 
 	if err != nil {
 		_ = jobsClient.Close()
 		_ = execClient.Close()
+		_ = servicesClient.Close()
 		_ = logAdminClient.Close()
 		return nil, err
 	}
@@ -82,6 +93,7 @@ func newGCPClientsWithEndpoint(ctx context.Context, project string, endpointURL 
 	if err != nil {
 		_ = jobsClient.Close()
 		_ = execClient.Close()
+		_ = servicesClient.Close()
 		_ = logAdminClient.Close()
 		_ = storageClient.Close()
 		return nil, err
@@ -90,6 +102,7 @@ func newGCPClientsWithEndpoint(ctx context.Context, project string, endpointURL 
 	return &GCPClients{
 		Jobs:       jobsClient,
 		Executions: execClient,
+		Services:   servicesClient,
 		Logging:    nil, // not used — only logadmin is used for reading logs
 		LogAdmin:   logAdminClient,
 		Storage:    storageClient,
@@ -109,10 +122,18 @@ func newGCPClientsDefault(ctx context.Context, project string) (*GCPClients, err
 		return nil, err
 	}
 
+	servicesClient, err := run.NewServicesClient(ctx)
+	if err != nil {
+		_ = jobsClient.Close()
+		_ = execClient.Close()
+		return nil, err
+	}
+
 	loggingClient, err := logging.NewClient(ctx, project)
 	if err != nil {
 		_ = jobsClient.Close()
 		_ = execClient.Close()
+		_ = servicesClient.Close()
 		return nil, err
 	}
 
@@ -120,6 +141,7 @@ func newGCPClientsDefault(ctx context.Context, project string) (*GCPClients, err
 	if err != nil {
 		_ = jobsClient.Close()
 		_ = execClient.Close()
+		_ = servicesClient.Close()
 		_ = loggingClient.Close()
 		return nil, err
 	}
@@ -128,6 +150,7 @@ func newGCPClientsDefault(ctx context.Context, project string) (*GCPClients, err
 	if err != nil {
 		_ = jobsClient.Close()
 		_ = execClient.Close()
+		_ = servicesClient.Close()
 		_ = loggingClient.Close()
 		_ = logAdminClient.Close()
 		return nil, err
@@ -137,6 +160,7 @@ func newGCPClientsDefault(ctx context.Context, project string) (*GCPClients, err
 	if err != nil {
 		_ = jobsClient.Close()
 		_ = execClient.Close()
+		_ = servicesClient.Close()
 		_ = loggingClient.Close()
 		_ = logAdminClient.Close()
 		_ = storageClient.Close()
@@ -146,6 +170,7 @@ func newGCPClientsDefault(ctx context.Context, project string) (*GCPClients, err
 	return &GCPClients{
 		Jobs:       jobsClient,
 		Executions: execClient,
+		Services:   servicesClient,
 		Logging:    loggingClient,
 		LogAdmin:   logAdminClient,
 		Storage:    storageClient,

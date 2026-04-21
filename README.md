@@ -8,9 +8,9 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-81.1k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-84.1k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
 [![TypeScript](https://img.shields.io/badge/TypeScript-8.5k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-46.6k_lines-brightgreen)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-46.9k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
@@ -34,7 +34,7 @@ Docker Client (CLI / SDK / CI Runner)
         ▼
 ┌─────────────────────────────┐
 │  Sockerless Backend         │  Docker REST API v1.44
-│  sockerless-backend-{name}  │  Listens on :2375 or unix socket
+│  sockerless-backend-{name}  │  Listens on :3375 or unix socket
 └──────────┬──────────────────┘
            │
            ▼
@@ -100,20 +100,20 @@ Each backend, the agent, and the test suite are separate Go modules connected vi
 
 ![core](https://img.shields.io/badge/core-14.4k-00ADD8)
 ![bleephub](https://img.shields.io/badge/bleephub-14.5k-00ADD8)
-![sim/aws](https://img.shields.io/badge/sim%2Faws-8.8k-00ADD8)
+![sim/aws](https://img.shields.io/badge/sim%2Faws-9k-00ADD8)
 ![sim/azure](https://img.shields.io/badge/sim%2Fazure-6.8k-00ADD8)
 ![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-6.3k-00ADD8)
 ![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)
-![ecs](https://img.shields.io/badge/ecs-3.8k-5BC0DE)
-![cloudrun](https://img.shields.io/badge/cloudrun-2.5k-5BC0DE)
-![aca](https://img.shields.io/badge/aca-2.9k-5BC0DE)
+![ecs](https://img.shields.io/badge/ecs-4.6k-5BC0DE)
+![cloudrun](https://img.shields.io/badge/cloudrun-3.5k-5BC0DE)
+![aca](https://img.shields.io/badge/aca-3.8k-5BC0DE)
 ![docker](https://img.shields.io/badge/docker-2.3k-5BC0DE)
 ![agent](https://img.shields.io/badge/agent-2.1k-5BC0DE)
 ![api](https://img.shields.io/badge/api-1.8k-5BC0DE)
 ![azf](https://img.shields.io/badge/azf-1.9k-A0D8EF)
 ![cli](https://img.shields.io/badge/cli-1.6k-A0D8EF)
 ![gcf](https://img.shields.io/badge/gcf-1.7k-A0D8EF)
-![lambda](https://img.shields.io/badge/lambda-2.2k-A0D8EF)
+![lambda](https://img.shields.io/badge/lambda-2.4k-A0D8EF)
 
 **TypeScript**
 
@@ -172,7 +172,7 @@ sockerless context create ecs-dev --backend ecs \
 sockerless server start
 
 # Use with Docker CLI
-export DOCKER_HOST=tcp://localhost:2375
+export DOCKER_HOST=tcp://localhost:3375
 docker version
 docker run --rm alpine echo "hello from sockerless"
 docker ps -a

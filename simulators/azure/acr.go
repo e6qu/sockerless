@@ -201,8 +201,8 @@ func registerACR(srv *sim.Server) {
 	// --- Cache Rules (pull-through cache) ---
 	//
 	// Matches armcontainerregistry.CacheRulesClient endpoints. Reference:
-	// /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerRegistry
-	//   /registries/{registry}/cacheRules[/{rule}]
+	// subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerRegistry
+	//   registries/{registry}/cacheRules[/{rule}]
 	// BeginCreate accepts 200/201 (we return 200 sync with final body).
 	// BeginDelete accepts 202/204 (we return 204 sync).
 	// Parallels the AWS ECR pull-through + GCP Artifact Registry slices.
@@ -313,7 +313,7 @@ func registerACR(srv *sim.Server) {
 	// Combined into a single handler because Go's ServeMux doesn't allow both patterns.
 	srv.HandleFunc("GET /v2/{path...}", func(w http.ResponseWriter, r *http.Request) {
 		fullPath := sim.PathParam(r, "path")
-		// /v2/ version check (empty path)
+		// v2/ version check (empty path)
 		if fullPath == "" {
 			w.Header().Set("Docker-Distribution-API-Version", "registry/2.0")
 			sim.WriteJSON(w, http.StatusOK, map[string]any{})
