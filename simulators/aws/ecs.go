@@ -729,11 +729,31 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 							break
 						}
 					}
-					// Build bind mounts from task definition volumes + container mount points
+					// Build bind mounts from task definition volumes + container mount points.
+					// For EFS volumes, translate to a real host path backed by the
+					// simulator's EFS slice (file system or access point root
+					// directory); otherwise fall through to a named Docker volume.
 					var binds []string
-					volMap := make(map[string]string) // volume name → source/name
+					volMap := make(map[string]string) // volume name → docker bind source
 					for _, v := range td.Volumes {
-						volMap[v.Name] = v.Name // Use volume name as Docker volume name
+						if v.EfsVolumeConfiguration != nil {
+							cfg := v.EfsVolumeConfiguration
+							var host string
+							if cfg.AuthorizationConfig != nil && cfg.AuthorizationConfig.AccessPointId != "" {
+								host = EFSAccessPointHostDir(cfg.AuthorizationConfig.AccessPointId)
+							}
+							if host == "" && cfg.FileSystemId != "" {
+								host = EFSFileSystemHostDir(cfg.FileSystemId)
+								if cfg.RootDirectory != "" && cfg.RootDirectory != "/" {
+									host = fmt.Sprintf("%s/%s", host, strings.TrimPrefix(cfg.RootDirectory, "/"))
+								}
+							}
+							if host != "" {
+								volMap[v.Name] = host
+								continue
+							}
+						}
+						volMap[v.Name] = v.Name // fall back to named Docker volume
 					}
 					if len(td.ContainerDefinitions) > 0 {
 						for _, mp := range td.ContainerDefinitions[0].MountPoints {
