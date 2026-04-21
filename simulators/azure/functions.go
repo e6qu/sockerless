@@ -257,11 +257,12 @@ func registerAzureFunctions(srv *sim.Server) {
 
 		responseBody := []byte("{}")
 		if matchedSite != nil {
-			// Check for SOCKERLESS_CMD app setting (cloud-native) or SimCommand fallback
+			// Check for SOCKERLESS_CMD / SOCKERLESS_ENTRYPOINT app setting
+			// (cloud-native) or SimCommand fallback
 			simCmd := false
 			if matchedSite.Properties.SiteConfig != nil {
 				for _, setting := range matchedSite.Properties.SiteConfig.AppSettings {
-					if setting.Name == "SOCKERLESS_CMD" {
+					if setting.Name == "SOCKERLESS_CMD" || setting.Name == "SOCKERLESS_ENTRYPOINT" {
 						simCmd = true
 						break
 					}
@@ -295,23 +296,28 @@ func registerAzureFunctions(srv *sim.Server) {
 // invokeAzureFunctionProcess executes a function app's container via sim.StartContainerSync
 // and returns the stdout output as the response body plus the process exit code.
 func invokeAzureFunctionProcess(site *Site) ([]byte, int) {
-	var cmd []string
+	var entrypoint, cmd []string
 	if site.Properties.SiteConfig != nil {
-		// Cloud-native: read SOCKERLESS_CMD from function's app settings
+		// Cloud-native: read SOCKERLESS_ENTRYPOINT + SOCKERLESS_CMD
+		// separately so docker's ENTRYPOINT vs CMD semantics are preserved.
 		for _, s := range site.Properties.SiteConfig.AppSettings {
-			if s.Name == "SOCKERLESS_CMD" {
+			switch s.Name {
+			case "SOCKERLESS_ENTRYPOINT":
+				if decoded, err := base64.StdEncoding.DecodeString(s.Value); err == nil {
+					json.Unmarshal(decoded, &entrypoint)
+				}
+			case "SOCKERLESS_CMD":
 				if decoded, err := base64.StdEncoding.DecodeString(s.Value); err == nil {
 					json.Unmarshal(decoded, &cmd)
 				}
-				break
 			}
 		}
 		// Fallback: SimCommand (backward compat for SDK tests)
-		if len(cmd) == 0 {
+		if len(entrypoint) == 0 && len(cmd) == 0 {
 			cmd = site.Properties.SiteConfig.SimCommand
 		}
 	}
-	if len(cmd) == 0 {
+	if len(entrypoint) == 0 && len(cmd) == 0 {
 		return []byte("{}"), 0
 	}
 
@@ -337,13 +343,6 @@ func invokeAzureFunctionProcess(site *Site) ([]byte, int) {
 		}
 	}
 
-	// Pass cmd as Args (Docker CMD) so the image's ENTRYPOINT is preserved.
-	// If the image has no entrypoint, Docker uses the first arg as the command.
-	var containerArgs []string
-	if len(cmd) > 0 {
-		containerArgs = cmd
-	}
-
 	timeout := 230 * time.Second // Azure Functions default timeout
 	sink := &funcLogSink{appName: site.Name}
 	var stdout bytes.Buffer
@@ -359,7 +358,8 @@ func invokeAzureFunctionProcess(site *Site) ([]byte, int) {
 
 	handle, err := sim.StartContainerSync(sim.ContainerConfig{
 		Image:   sim.ResolveLocalImage(containerImage),
-		Args:    containerArgs,
+		Command: entrypoint,
+		Args:    cmd,
 		Env:     cmdEnv,
 		Timeout: timeout,
 		Name:    containerName,

@@ -148,15 +148,28 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	parent := fmt.Sprintf("projects/%s/locations/%s", s.config.Project, s.config.Region)
 	fullFunctionName := fmt.Sprintf("%s/functions/%s", parent, funcName)
 
-	// Pass command via environment variable (cloud-native) for short-lived containers
-	cmd := core.BuildOriginalCommand(config.Entrypoint, config.Cmd)
-	if len(cmd) > 0 {
-		cmdJSON, _ := json.Marshal(cmd)
+	// Pass entrypoint + cmd SEPARATELY so the simulator preserves
+	// docker's ENTRYPOINT/CMD semantics. Flattening them into one
+	// slice loses the distinction: with image ENTRYPOINT=/usr/local/bin/foo
+	// and user Cmd=["arg"], a flattened slice yields ["arg"] and the
+	// sim would override ENTRYPOINT with "arg" — breaking tests like
+	// eval-arithmetic where the image entrypoint is the actual binary.
+	if len(config.Entrypoint) > 0 {
+		epJSON, _ := json.Marshal(config.Entrypoint)
+		envVars["SOCKERLESS_ENTRYPOINT"] = base64.StdEncoding.EncodeToString(epJSON)
+	}
+	if len(config.Cmd) > 0 {
+		cmdJSON, _ := json.Marshal(config.Cmd)
 		envVars["SOCKERLESS_CMD"] = base64.StdEncoding.EncodeToString(cmdJSON)
 	}
 
 	// Pass the container image so the simulator can run it directly
 	envVars["SOCKERLESS_IMG"] = config.Image
+
+	// Container IDs are 64 chars; GCP labels truncate at 63. Persist the
+	// full ID in an environment variable so CloudState.GetContainer can
+	// match requests by full ID post-start (when PendingCreates is empty).
+	envVars["SOCKERLESS_CONTAINER_ID"] = id
 
 	// Build service config
 	serviceConfig := &functionspb.ServiceConfig{
