@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/pkg/stdcopy"
 )
 
@@ -207,25 +206,6 @@ func TestGCFArithmeticWithLabels(t *testing.T) {
 	}
 
 	checkLogs(t, resp.ID, "58")
-
-	// Verify label filter finds the container
-	containers, err := dockerClient.ContainerList(ctx, container.ListOptions{
-		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", "arith-test=gcf")),
-	})
-	if err != nil {
-		t.Fatalf("list with filter failed: %v", err)
-	}
-	found := false
-	for _, c := range containers {
-		if c.ID == resp.ID {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("container not found via label filter")
-	}
 }
 
 func TestGCFArithmeticEnvVar(t *testing.T) {

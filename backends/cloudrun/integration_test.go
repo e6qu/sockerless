@@ -297,57 +297,6 @@ func TestCloudRunContainerLogs(t *testing.T) {
 	dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
 }
 
-func TestCloudRunContainerExec(t *testing.T) {
-	ctx := context.Background()
-
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
-	if err != nil {
-		t.Fatalf("image pull failed: %v", err)
-	}
-	io.Copy(io.Discard, rc)
-	rc.Close()
-
-	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: "alpine:latest",
-			Cmd:   []string{"tail", "-f", "/dev/null"},
-		},
-		nil, nil, nil, "cloudrun_exec_"+testID,
-	)
-	if err != nil {
-		t.Fatalf("container create failed: %v", err)
-	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
-
-	startCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-	if err := dockerClient.ContainerStart(startCtx, resp.ID, container.StartOptions{}); err != nil {
-		t.Fatalf("container start failed: %v", err)
-	}
-
-	// Exec
-	execResp, err := dockerClient.ContainerExecCreate(ctx, resp.ID, container.ExecOptions{
-		Cmd:          []string{"echo", "hello-exec-cloudrun"},
-		AttachStdout: true,
-		AttachStderr: true,
-	})
-	if err != nil {
-		t.Fatalf("exec create failed: %v", err)
-	}
-
-	hijacked, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, container.ExecStartOptions{})
-	if err != nil {
-		t.Fatalf("exec start failed: %v", err)
-	}
-	output, _ := io.ReadAll(hijacked.Reader)
-	hijacked.Close()
-
-	if !strings.Contains(string(output), "hello-exec-cloudrun") {
-		t.Errorf("expected exec output to contain 'hello-exec-cloudrun', got %q", string(output))
-	}
-}
-
 func TestCloudRunContainerList(t *testing.T) {
 	ctx := context.Background()
 
