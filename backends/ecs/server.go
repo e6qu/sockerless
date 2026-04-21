@@ -29,7 +29,6 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		aws:          awsClients,
 		ECS:          core.NewStateStore[ECSState](),
 		NetworkState: core.NewStateStore[NetworkState](),
-		volumeState:  volumeState{efsAPCache: make(map[string]string)},
 	}
 
 	s.ipCounter.Store(2)
@@ -45,6 +44,13 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		NCPU:            2,
 		MemTotal:        4294967296,
 	}, logger)
+	s.volumeState = volumeState{efs: awscommon.NewEFSManager(awsClients.EFS, awscommon.EFSManagerConfig{
+		AgentEFSID:     config.AgentEFSID,
+		Subnets:        config.Subnets,
+		SecurityGroups: config.SecurityGroups,
+		PollInterval:   config.PollInterval,
+		InstanceID:     s.Desc.InstanceID,
+	})}
 	s.images = &core.ImageManager{
 		Base:   s.BaseServer,
 		Auth:   awscommon.NewECRAuthProvider(awsClients.ECR, logger, s.ctx),

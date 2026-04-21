@@ -1031,7 +1031,7 @@ func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneRespo
 	in := s.inUseVolumeNames()
 	resp := &api.VolumePruneResponse{}
 	for _, ap := range aps {
-		name := apVolumeName(ap)
+		name := awscommon.APVolumeName(ap)
 		if _, busy := in[name]; busy {
 			continue
 		}

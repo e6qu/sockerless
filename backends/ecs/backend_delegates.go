@@ -11,13 +11,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	efstypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
 	"github.com/sockerless/api"
+	awscommon "github.com/sockerless/aws-common"
 )
 
 // accessPointToVolume converts an EFS AccessPointDescription into the
 // Docker-API volume shape clients expect from `docker volume inspect`
 // and `docker volume ls`.
 func accessPointToVolume(ap efstypes.AccessPointDescription) *api.Volume {
-	name := apVolumeName(ap)
+	name := awscommon.APVolumeName(ap)
 	root := ""
 	if ap.RootDirectory != nil {
 		root = aws.ToString(ap.RootDirectory.Path)
@@ -221,13 +222,17 @@ func (s *Server) VolumeCreate(req *api.VolumeCreateRequest) (*api.Volume, error)
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("provision EFS access point for %q: %v", req.Name, err)}
 	}
+	fsID, err := s.ensureEFSFilesystem(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("resolve EFS filesystem for %q: %v", req.Name, err)}
+	}
 	return &api.Volume{
 		Name:       req.Name,
 		Driver:     "efs",
-		Mountpoint: "/sockerless/volumes/" + sanitiseVolumePath(req.Name),
+		Mountpoint: "/sockerless/volumes/" + awscommon.SanitiseVolumePath(req.Name),
 		Labels:     req.Labels,
 		Scope:      "local",
-		Options:    map[string]string{"accessPointId": apID, "fileSystemId": s.efsCachedID},
+		Options:    map[string]string{"accessPointId": apID, "fileSystemId": fsID},
 		CreatedAt:  time.Now().UTC().Format(time.RFC3339Nano),
 	}, nil
 }
@@ -238,7 +243,7 @@ func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list EFS access points: %v", err)}
 	}
 	for _, ap := range aps {
-		if apVolumeName(ap) == name {
+		if awscommon.APVolumeName(ap) == name {
 			return accessPointToVolume(ap), nil
 		}
 	}
