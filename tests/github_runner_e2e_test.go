@@ -11,7 +11,6 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/pkg/stdcopy"
 )
 
@@ -215,15 +214,6 @@ func TestGitHubRunnerMultiStep(t *testing.T) {
 			}
 			io.Copy(io.Discard, rc)
 			rc.Close()
-
-			// Create volume for workspace
-			vol, err := c.VolumeCreate(ctx, volume.CreateOptions{
-				Name: "workspace_" + testID,
-			})
-			if err != nil {
-				t.Fatalf("volume create failed: %v", err)
-			}
-			defer c.VolumeRemove(ctx, vol.Name, true)
 
 			resp, err := c.ContainerCreate(ctx,
 				&container.Config{
