@@ -150,11 +150,17 @@ func (p *cloudRunCloudState) serviceToContainer(svc *runpb.Service) (api.Contain
 		created = svc.CreateTime.AsTime().Format(time.RFC3339Nano)
 	}
 
-	// Phase 97: merge annotations (which carry Docker-label JSON blob
-	// since it fails GCP label-value charset) before parsing.
-	merged := mergeLabelsAndAnnotations(labels, svc.Annotations)
-	gcpTags := gcpLabelsToTags(merged)
-	dockerLabels := core.ParseLabelsFromTags(gcpTags)
+	// Phase 97 (BUG-746): Docker labels round-trip via three paths, in
+	// priority order: SOCKERLESS_LABELS env var, GCP annotations, then
+	// legacy labels-split-across-chunks.
+	dockerLabels := decodeLabelsFromEnv(env)
+	if len(dockerLabels) == 0 {
+		merged := mergeLabelsAndAnnotations(labels, svc.Annotations)
+		gcpTags := gcpLabelsToTags(merged)
+		if parsed := core.ParseLabelsFromTags(gcpTags); parsed != nil {
+			dockerLabels = parsed
+		}
+	}
 	if dockerLabels == nil {
 		dockerLabels = make(map[string]string)
 	}

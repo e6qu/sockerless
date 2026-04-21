@@ -2,6 +2,8 @@ package cloudrun
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -46,6 +48,18 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 				Values: &runpb.EnvVar_Value{Value: parts[1]},
 			})
 		}
+	}
+
+	// Phase 97 (BUG-746): carry Docker labels as a base64-JSON env var so
+	// they round-trip through CloudState even if the GCP control-plane
+	// strips annotations (e.g. unsupported storage path or sim behaviour).
+	// cloud_state.go reads this variable back into Container.Config.Labels.
+	if ci.IsMain && len(config.Labels) > 0 {
+		labelsJSON, _ := json.Marshal(config.Labels)
+		envVars = append(envVars, &runpb.EnvVar{
+			Name:   "SOCKERLESS_LABELS",
+			Values: &runpb.EnvVar_Value{Value: base64.StdEncoding.EncodeToString(labelsJSON)},
+		})
 	}
 
 	entrypoint := config.Entrypoint
