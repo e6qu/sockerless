@@ -1,6 +1,6 @@
 # Known Bugs
 
-**737 total — 734 fixed, 3 open, 1 false positive.**
+**739 total — 735 fixed, 4 open, 1 false positive.**
 
 For narrative context see [WHAT_WE_DID.md](WHAT_WE_DID.md) and [PLAN.md](PLAN.md). Architecture-level state derivation is documented in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) and [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md).
 
@@ -10,6 +10,7 @@ Standing workflow rule: every CI / live-cloud failure lands here with a short ro
 
 | ID | Sev | Area | Summary |
 |----|-----|------|---------|
+| 738 | H | ecs | `waitForTaskRunning` treats a STOPPED task observed before RUNNING as a failure. Short-lived containers (`alpine echo 42`) that exit inside one poll interval surface as "task stopped: Essential container in task exited" to the docker client — a pre-existing CI flake. First fix attempt (accept STOPPED + exit 0 as success, skip Cloud Map registration) broke smoke test's docker inspect — the simulator ended up reporting the task as RUNNING even after docker had recognised its exit, producing an inconsistent state across `docker ps -a` vs `docker inspect`. Root cause of the inconsistency needs local repro before the retry. Reverted the first-attempt fix; bug stays open. |
 | 737 | M | core | `SOCKERLESS_SKIP_IMAGE_CONFIG=true` is an operator opt-out that replaces real registry metadata with a deterministic placeholder image record. Even as an explicit opt-in it is placeholder behaviour. Fix: remove the env var and the opt-out path, require real metadata always. Simulators' registry slices (ECR / AR / ACR) must serve `/v2/` manifest + config endpoints for every published image so metadata fetches never need a fallback. |
 | 736 | H | cloudrun/aca | Cloud Run jobspec/servicespec and ACA jobspec/appspec never translate `HostConfig.Binds` into container-runtime mount specs — bind mounts are silently dropped on the floor. Fix: reject `Binds` (and named-volume mounts) on these backends with a clear error until real mount support ships, so `docker run -v /h:/c` fails loudly instead of silently losing data. |
 | 735 | H | ecs | `backends/ecs/taskdef.go::buildContainerDef` silently substitutes an empty ECS scratch volume when `HostConfig.Binds` is set but `SOCKERLESS_ECS_AGENT_EFS_ID` isn't configured. Docker clients see the mount path exist but it's empty and non-persistent. Fix: reject bind mounts with a clear configuration error when EFS isn't set; no scratch fallback. |
@@ -18,7 +19,8 @@ Standing workflow rule: every CI / live-cloud failure lands here with a short ro
 
 | ID | Sev | Area | Summary |
 |----|-----|------|---------|
-| 731 | H | all-cloud | `VolumeCreate` / `VolumeRemove` / `VolumeInspect` / `VolumeList` / `VolumePrune` on ECS/Lambda/Cloud Run/ACA now return `NotImplemented` with a clear per-cloud message — no more silent metadata-only store. Dead placeholder fields deleted (`aca.VolumeState.ShareName`, `cloudrun.VolumeState.BucketPath`, ECS `VolumeState` struct entirely). Real per-cloud volume provisioning (EFS / GCS / Azure Files) tracked as Phases 91-94 in PLAN.md. |
+| 739 | H | ci | Backend integration `TestMain` builds (simulator-{aws,gcp,azure}, per-backend binaries, docker frontend) omitted `-tags noui`, so every unit CI run crashed with `ui_embed.go:12 pattern all:dist: no matching files found`. Added `-tags noui` to every sub-build across ECS / Lambda / Cloud Run / GCF / ACA / AZF integration tests. Lambda bootstrap (agent package, no UI) stays tag-less. |
+| 731 | H | all-cloud | `VolumeCreate` / `VolumeRemove` / `VolumeInspect` / `VolumeList` / `VolumePrune` on ECS/Lambda/Cloud Run/ACA/GCF/AZF now return `NotImplemented` with a clear per-cloud message — no more silent metadata-only store. Dead placeholder fields deleted (`aca.VolumeState.ShareName`, `cloudrun.VolumeState.BucketPath`, ECS `VolumeState` struct entirely). Core HTTP volume handlers (handle_volumes.go) route through `s.self.Volume*` so overrides fire. Real per-cloud volume provisioning (EFS / GCS / Azure Files) tracked as Phases 91-94 in PLAN.md. |
 | 729 | M | ecs | SSM ack wire format rewritten to match AWS's `SerializeClientMessageWithAcknowledgeContent`: `Flags=3` (SYN\|FIN) and UUID packed as LSL at offset 64 + MSL at offset 72 (AWS Java-style `putUuid`) — previously both were wrong, which is why the live agent rejected every ack and retransmitted. Sim-side frame builder mirrored. The BUG-721 `ssmDecoder.seenIDs` dedupe workaround removed. Unit tests pin flags + UUID layout + JSON body + no-dedupe. |
 | 734 | M | ecs | `getNamespaceName` silently substituted the raw namespace ID for the name when `GetNamespace` failed. Now returns `(string, error)`; callers propagate or decide per-context (search-domain aggregation skips with a WARN; DNS discovery fails the call). |
 | 733 | L | ecs | `stats.go` returned `PIDs: 1` as a fabricated fallback when CloudWatch had no data for a new task. Now returns `{}` (PIDs=0); docker stats shows 0/0 until real metrics arrive. |
