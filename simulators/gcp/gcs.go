@@ -8,11 +8,34 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	sim "github.com/sockerless/simulator"
 )
+
+// gcsHostRoot returns the on-disk backing directory for the whole
+// simulated GCS slice. Each bucket becomes a subdirectory so Cloud Run
+// tasks the sim launches can bind-mount a real host path and observe
+// the same files across invocations.
+func gcsHostRoot() string {
+	if dir := os.Getenv("SIM_GCS_DATA_DIR"); dir != "" {
+		return dir
+	}
+	return filepath.Join(os.TempDir(), "sockerless-sim-gcs")
+}
+
+// GCSBucketHostDir returns the on-disk directory backing a simulated
+// GCS bucket. Created lazily; safe for concurrent callers. Exported
+// for use by the Cloud Run Jobs/Services + Cloud Functions task
+// runners when they honour `Volume{Gcs{Bucket}}`.
+func GCSBucketHostDir(bucket string) string {
+	dir := filepath.Join(gcsHostRoot(), bucket)
+	_ = os.MkdirAll(dir, 0o777)
+	return dir
+}
 
 // GCS types
 
