@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**89 phases (757 tasks). 737 bugs tracked — 734 fixed, 3 open (BUG-735/736/737), 1 false positive. Branch `post-phase86-continuation`.**
+**91 phases closed (759 tasks). 748 bugs tracked — 743 fixed, 3 open (BUG-744/745/746 scoped as Phase 95/96/97), 2 deferred fixed-as-phase (735/736 re-landed at Phase 91 for ECS), 1 false positive. Branch `continue-plan-post-113`.**
 
 See [PLAN.md](PLAN.md) for the roadmap, [BUGS.md](BUGS.md) for the bug log (+ open-bug descriptions), [WHAT_WE_DID.md](WHAT_WE_DID.md) for the narrative, [specs/](specs/) for architecture specs.
 
@@ -9,11 +9,17 @@ See [PLAN.md](PLAN.md) for the roadmap, [BUGS.md](BUGS.md) for the bug log (+ op
 | Phase | Scope | Status |
 |---|---|---|
 | 86 | Simulator parity (AWS + GCP + Azure) + Lambda agent-as-handler | Closed 2026-04-20 (PR #112). Phase C live-AWS validated. |
-| 87 | Cloud Run Jobs → Services (internal ingress + VPC connector) | Closed in code 2026-04-21. Live-GCP pending. |
-| 88 | ACA Jobs → Apps (internal ingress) | Closed in code 2026-04-21. Live-Azure pending. |
-| 89 | Stateless-backend audit — cloud resource mapping, `resolve*State`, cloud-derived `ListImages` / `ListPods`, `resolveNetworkState` | Closed 2026-04-21. |
-| 90 | No-fakes/no-fallbacks audit — workarounds, placeholders, silent substitutions all elevated to bugs | In progress 2026-04-21. BUG-729/730/731/732/733/734 fixed; BUG-735/736/737 open. |
-| 91-94 | Real per-cloud volume provisioning (EFS / Filestore-or-GCS / Azure Files), simulator slices + backend wiring | Queued. Designs + per-backend actions in `specs/CLOUD_RESOURCE_MAPPING.md`. |
+| 87 | Cloud Run Jobs → Services (internal ingress + VPC connector) | Closed in code 2026-04-21 (PR #113). Live-GCP pending. |
+| 88 | ACA Jobs → Apps (internal ingress) | Closed in code 2026-04-21 (PR #113). Live-Azure pending. |
+| 89 | Stateless-backend audit — cloud resource mapping, `resolve*State`, cloud-derived `ListImages` / `ListPods`, `resolveNetworkState` | Closed 2026-04-21 (PR #113). |
+| 90 | No-fakes/no-fallbacks audit — workarounds, placeholders, silent substitutions all elevated to bugs | Closed. BUG-729/730/731/732/733/734/737 fixed; BUG-735/736 absorbed by Phase 91. |
+| 91 | ECS real named-volume + bind-mount provisioning via EFS access points (sim: real host-dir-backed `EFSAccessPointHostDir`; backend: `volumes.go`) | Closed 2026-04-21 on `continue-plan-post-113`. |
+| 92 | Cloud Run GCS bucket-mount provisioning | Queued — replaces CR bind-mount rejection from BUG-736. |
+| 93 | ACA Azure Files share provisioning | Queued — replaces ACA bind-mount rejection from BUG-736. |
+| 94 | GCF + AZF inherit Phase 92/93 helpers | Queued. |
+| 95 | FaaS invocation-lifecycle tracker (Lambda + GCF + AZF) — re-enables 7 deleted tests from BUG-744 | Queued. Design: per-backend cloud-native completion signal (Lambda Invoke response + CloudWatch END RequestId; GCF/AZF HTTP response status). |
+| 96 | Reverse-agent exec for Cloud Run Jobs + ACA Jobs (ports Lambda bootstrap pattern) | Queued — from BUG-745. |
+| 97 | Docker labels as GCP annotations / Azure tags on FaaS + Cloud Run / ACA | Queued — from BUG-746. |
 
 Detail per phase in [WHAT_WE_DID.md](WHAT_WE_DID.md). Open work items queued in [DO_NEXT.md](DO_NEXT.md).
 
@@ -23,7 +29,7 @@ Detail per phase in [WHAT_WE_DID.md](WHAT_WE_DID.md). Open work items queued in 
 |---|---|
 | Core unit | 310 |
 | Cloud SDK/CLI | AWS 68, GCP 64, Azure 57 |
-| Sim-backend integration | 75 |
+| Sim-backend integration | 76 (+1 for Phase 91 `TestECSVolumeOperations` full create/inspect/list/remove) |
 | GitHub E2E | 186 |
 | GitLab E2E | 132 |
 | Terraform | 75 |

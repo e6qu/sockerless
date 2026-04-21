@@ -4,41 +4,33 @@ Snapshot pointer for the next session. Updated after every task.
 
 ## Branch state
 
-`post-phase86-continuation` — PR #113. CI validating after BUG-729 + BUG-731 fixes.
+`continue-plan-post-113` — successor to PR #113. Phase 91 (ECS EFS volumes) landed, BUG-735/736/737 fixed. Local commits unpushed. Queue below is the sequence picked up on 2026-04-21.
 
-## Active: Phase 90 — no-fakes / no-fallbacks audit
+## Up next on this branch
 
-Remaining open bugs from the sweep:
+1. **Phase 92** — Cloud Run real volumes (GCS bucket-mounts). Unblocks `docker run -v name:/mnt` on Cloud Run Jobs + Services; replaces the BUG-736 rejection path for CR specifically.
+2. **Phase 93** — ACA real volumes (Azure Files shares). Same shape as 92 but against the Azure managed-environment `storages` sub-resource. Replaces the BUG-736 rejection path for ACA.
+3. **Phase 94** — GCF + AZF inherit helpers from Phase 92/93 via `backends/gcp-common` + `backends/azure-common`; no new cloud resources, just wiring.
+4. **Phase 95** — FaaS invocation-lifecycle tracker (Lambda + GCF + AZF). Per-backend cloud-native completion signal (Lambda `Invoke` response + CloudWatch `END RequestId`; GCF/AZF HTTP response from the invoke URL). Re-enables 7 deleted tests. See `specs/CLOUD_RESOURCE_MAPPING.md` § "Per-invocation container state" for the per-backend mapping.
+5. **Phase 96** — Reverse-agent exec for CR Jobs + ACA Jobs. Ports `sockerless-lambda-bootstrap` to two new overlay images + `/v1/cloudrun/reverse` + `/v1/aca/reverse` WebSocket endpoints.
+6. **Phase 97** — Docker labels as GCP annotations / Azure tags on FaaS + CR/ACA. Fixes BUG-746's round-trip drop — switches `TagSet.AsGCPLabels` to split individual labels between GCP labels (charset-safe keys) and annotations (the JSON blob fallback).
 
-1. **BUG-735** — ECS `buildContainerDef` rejects `HostConfig.Binds` with a clear error when `SOCKERLESS_ECS_AGENT_EFS_ID` is unset. No scratch-volume fallback. (Next up.)
-2. **BUG-736** — Cloud Run (`jobspec.go` / `servicespec.go`) + ACA (`jobspec.go` / `appspec.go`) reject `HostConfig.Binds` and named-volume mounts until real mount support ships (Phases 91-94).
-3. **BUG-737** — Remove `SOCKERLESS_SKIP_IMAGE_CONFIG` env var entirely; audit simulators (ECR / AR / ACR) to confirm they always serve `/v2/` manifest + config so metadata fetches never need a fallback.
-4. **Broader sweep** — final pass for swallowed errors (`_ = err`, `if err != nil { return nil }`), silent `continue`-on-error in aggregation loops, `NotImplemented` returns that could be real implementations.
-
-Each goes into BUGS.md with root-cause trace before the fix; docs refreshed after.
-
-## Queued follow-up phases
-
-Designs in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) under "Volume provisioning per backend". Phases in [PLAN.md](PLAN.md):
-
-- **Phase 91** — ECS EFS access-point provisioning (simulator: `simulators/aws/efs.go`).
-- **Phase 92** — Cloud Run GCS bucket-mount provisioning (extend GCS sim slice).
-- **Phase 93** — ACA Azure Files share provisioning (simulator: `fileServices/shares` + managed-env `storages` sub-resource).
-- **Phase 94** — GCF + AZF inherit latest-generation helpers from Phase 92/93.
+Each phase ships as granular commits under a single mega-PR (per user direction). Bug tracking remains in `BUGS.md`; each re-enabled test is referenced against its phase.
 
 ## Live-cloud validation runbooks (need creds)
 
 - **Phase 87 live-GCP** — Cloud Run Services validation against real GCP.
 - **Phase 88 live-Azure** — ACA Apps validation against real Azure.
 - **Phase 86 Lambda live track** — scripted already, deferred for session-budget reasons.
+- **Phase 91 live-AWS EFS** — exercise the access-point provisioning path against real EFS once Phase 91 has real-AWS burn-in.
 
 ## Other queued
 
-- **Phase 68 — Multi-Tenant Backend Pools** (P68-002 → 010).
-- **Phase 78 — UI Polish**.
+- **Phase 68** — Multi-Tenant Backend Pools (P68-002 → 010).
+- **Phase 78** — UI Polish.
 
 ## Operational state
 
-- AWS: zero residue (state buckets + DDB lock table retained).
-- Local sockerless backend: stopped.
-- No credentials in environment.
+- Branch pushed to GitHub: **no** (local-only, clean `continue-plan-post-113`).
+- Local `main` synced with `origin/main` through commit `0109667` (PR #113 merge).
+- `origin-gitlab/main` is 5 commits behind GitHub; push when convenient.

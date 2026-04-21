@@ -22,6 +22,8 @@ Current state: [STATUS.md](STATUS.md). Bug log: [BUGS.md](BUGS.md). Narrative: [
 - **87** — Cloud Run Jobs → Services path behind `SOCKERLESS_GCR_USE_SERVICE=1` + `SOCKERLESS_GCR_VPC_CONNECTOR`. Closes BUG-715 in code. Live-GCP runbook pending.
 - **88** — ACA Jobs → ContainerApps path behind `SOCKERLESS_ACA_USE_APP=1` + `SOCKERLESS_ACA_ENVIRONMENT`. Closes BUG-716 in code. Live-Azure runbook pending.
 - **89** — Stateless-backend audit. `specs/CLOUD_RESOURCE_MAPPING.md` for all 7 backends; every cloud-state-dependent callsite uses `resolve*State` helpers; `ListImages` / `ListPods` cloud-derived; Store.Images disk persistence removed. Closes BUG-723/724/725/726.
+- **90** — No-fakes/no-fallbacks audit. 11 bugs filed, 8 fixed in-sweep (BUG-729/730/731/732/733/734/735/736/737), 3 scoped as dedicated phases (BUG-744/745/746 → Phase 95/96/97). See WHAT_WE_DID.md for the full table.
+- **91** — ECS named volumes + named-volume bind mounts backed by EFS access points on a sockerless-owned filesystem. Simulator `EFSAccessPointHostDir` helper, backend `volumes.go` EFS manager, task defs emit real `EFSVolumeConfiguration`. Completes BUG-735 and the ECS half of BUG-736.
 
 ## Pending work
 
@@ -30,16 +32,6 @@ Current state: [STATUS.md](STATUS.md). Bug log: [BUGS.md](BUGS.md). Narrative: [
 - **Phase 87 live-GCP** — parallel to `scripts/phase86/*.sh` for AWS. Needs GCP project + VPC connector. Script the runbook, dispatch via a new workflow, validate `docker run` / `docker exec` / cross-container DNS against Services.
 - **Phase 88 live-Azure** — same shape for ACA. Needs Azure subscription + managed environment with VNet integration.
 - **Phase 86 Lambda live track** — scripted already, deferred at Phase C closure for session-budget reasons. No architectural blockers.
-
-### Phase 91 — ECS real volumes (queued)
-
-Replace the `NotImplemented` returns from BUG-731 with real cloud-side provisioning.
-
-- **Simulator**: new `simulators/aws/efs.go` EFS slice — FileSystem + MountTarget + AccessPoint CRUD. Back each access point with a subdirectory on a host-side Docker volume so the sim's ECS task containers bind-mount the same path.
-- **Backend**: `backends/ecs/volume_cloud.go` — `VolumeCreate` ensures a sockerless-tagged EFS exists (reused across volumes), then creates an AccessPoint per volume with `PosixUser` + `RootDirectory` so each volume is isolated. `VolumeRemove` deletes the access point; EFS stays.
-- **Spec wiring**: `taskdef.go::buildContainerDef` rejects bind mounts without EFS (BUG-735) but now happily emits `EFSVolumeConfiguration{FileSystemId, AccessPointId, TransitEncryption=ENABLED}` when a volume reference is in scope.
-- **Tests**: SDK + CLI + terraform cover `efs:CreateAccessPoint` / `DescribeAccessPoints` / `DeleteAccessPoint`. Integration test spins up two containers sharing the same volume and verifies file visibility.
-- **Docs**: spec's "Volume provisioning per backend" row flips from design to "implemented in Phase 91".
 
 ### Phase 92 — Cloud Run real volumes (queued)
 
