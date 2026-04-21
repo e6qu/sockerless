@@ -4,18 +4,24 @@ Snapshot pointer for the next session. Updated after every task.
 
 ## Branch state
 
-`continue-plan-post-113` — successor to PR #113. Phase 91 (ECS EFS volumes) landed, BUG-735/736/737 fixed. Local commits unpushed. Queue below is the sequence picked up on 2026-04-21.
+`continue-plan-post-113` — successor to PR #113. Phase 91/92/93 (real per-cloud volume provisioning on ECS/CR/ACA) landed on this branch. BUG-735/736/737 fixed. Queue below is the revised sequence after the 2026-04-21 "no workarounds, no fakes, real implementations" directive — every previously-framed "platform limit" is now a scoped phase.
 
 ## Up next on this branch
 
-1. **Phase 94** — GCF + AZF inherit helpers from Phase 92/93 via `backends/gcp-common` + `backends/azure-common`; no new cloud resources, just wiring.
-4. **Phase 95** — FaaS invocation-lifecycle tracker (Lambda + GCF + AZF). Per-backend cloud-native completion signal (Lambda `Invoke` response + CloudWatch `END RequestId`; GCF/AZF HTTP response from the invoke URL). Re-enables 7 deleted tests. See `specs/CLOUD_RESOURCE_MAPPING.md` § "Per-invocation container state" for the per-backend mapping.
-5. **Phase 96** — Reverse-agent exec for CR Jobs + ACA Jobs. Ports `sockerless-lambda-bootstrap` to two new overlay images + `/v1/cloudrun/reverse` + `/v1/aca/reverse` WebSocket endpoints.
-6. **Phase 97** — Docker labels as GCP annotations / Azure tags on FaaS + CR/ACA. Fixes BUG-746's round-trip drop — switches `TagSet.AsGCPLabels` to split individual labels between GCP labels (charset-safe keys) and annotations (the JSON blob fallback).
-7. **Phase 98** — Agent-driven `docker cp` / `export` / `stat` / `top` / `diff`. Reverse-agent RPCs (`agent.Archive*`, `agent.Stat`, `agent.ProcList`, `agent.Changes`) + ECS SSM archive helper. Fixes BUG-751/752/753 on every cloud backend that has the reverse-agent after Phase 96.
-8. **Phase 98b** — Optional agent-driven `docker commit` behind `SOCKERLESS_ENABLE_COMMIT`. Fixes BUG-750 for CR/ACA/Lambda; ECS/Lambda Fargate stay NotImplemented on control-plane grounds.
-
-**Platform limits** (documented, not fixable): BUG-748 (Lambda named volumes — no cross-invocation persistent storage), BUG-749 (`docker pause/unpause` — no cloud-native pause primitive across any backend), BUG-754 (Docker backend pods — docker daemon has no pod concept).
+1. **Phase 94 prereq — shared-helper lift.** Promote the per-cloud volume managers into common modules so the FaaS backends can embed them:
+   - `backends/cloudrun/volumes.go` → `backends/gcp-common/volumes.go` (`BucketManager`)
+   - `backends/aca/volumes.go` → `backends/azure-common/volumes.go` (`FileShareManager`)
+   - `backends/ecs/volumes.go` → `backends/aws-common/volumes.go` (`EFSManager`)
+   Pure refactor, no behaviour change; CR/ACA/ECS re-embed the lifted types.
+2. **Phase 94 — GCF + AZF real volumes.** GCF uses `Functions.CreateFunction` plus the underlying-Cloud-Run-Service escape hatch (`fn.ServiceConfig.Service` → `Services.GetService`/`UpdateService`) to attach the same GCS buckets Phase 92 provisions. AZF uses the `sites/<fn>/config/azurestorageaccounts/<mountName>` sub-resource to attach the same Azure Files shares Phase 93 provisions.
+3. **Phase 94b — Lambda EFS via `Function.FileSystemConfigs[]`.** Real AWS-native volume mounting; reuses the lifted `EFSManager` so ECS/Lambda share access-point provisioning.
+4. **Phase 95 — FaaS invocation-lifecycle tracker (Lambda + GCF + AZF).** Per-backend cloud-native completion signal (Lambda `Invoke` response + CloudWatch `END RequestId`; GCF/AZF HTTP response from the invoke URL). Re-enables the 7 deleted tests from BUG-744. See `specs/CLOUD_RESOURCE_MAPPING.md` § "Per-invocation container state".
+5. **Phase 96 — Reverse-agent exec for CR Jobs + ACA Jobs.** Ports `sockerless-lambda-bootstrap` to two new overlay images + `/v1/cloudrun/reverse` + `/v1/aca/reverse` WebSocket endpoints. Unblocks Phase 98/98b/99 on those backends.
+6. **Phase 97 — Docker labels as GCP annotations / Azure tags.** Fixes BUG-746's round-trip drop — switches `TagSet.AsGCPLabels` to split individual labels between GCP labels (charset-safe keys) and annotations (the JSON blob fallback); FaaS backends adopt the same split.
+7. **Phase 98 — Agent-driven filesystem + introspection ops.** Reverse-agent RPCs (`agent.Archive*`, `agent.Stat`, `agent.ProcList`, `agent.Changes`) for `docker cp` / `export` / `stat` / `top` / `diff`; ECS uses SSM `ExecuteCommand` for the archive path. Fixes BUG-751/752/753 on every backend that has the reverse-agent after Phase 96.
+8. **Phase 98b — Agent-driven `docker commit`.** Opt-in via `SOCKERLESS_ENABLE_COMMIT`. Fixes BUG-750 on CR/ACA/Lambda; ECS Fargate gets the agent path too once SSM archive + ECR push land.
+9. **Phase 99 — Agent-driven `pause` / `unpause`.** Reverse-agent SIGSTOP/SIGCONT broadcast to every process in the task; ECS Fargate uses SSM `signal`. Fixes BUG-749.
+10. **Phase 100 — Docker backend pod synthesis.** Shared `sockerless-pod=<id>` label convention across all backends so Docker reproduces the pod grouping every cloud backend already emits. Fixes BUG-754.
 
 Each phase ships as granular commits under a single mega-PR (per user direction). Bug tracking remains in `BUGS.md`; each re-enabled test is referenced against its phase.
 
@@ -25,6 +31,7 @@ Each phase ships as granular commits under a single mega-PR (per user direction)
 - **Phase 88 live-Azure** — ACA Apps validation against real Azure.
 - **Phase 86 Lambda live track** — scripted already, deferred for session-budget reasons.
 - **Phase 91 live-AWS EFS** — exercise the access-point provisioning path against real EFS once Phase 91 has real-AWS burn-in.
+- **Phase 92 live-GCP GCS volumes**, **Phase 93 live-Azure Files volumes** — real-cloud burn-in of the new volume paths.
 
 ## Other queued
 
@@ -33,6 +40,6 @@ Each phase ships as granular commits under a single mega-PR (per user direction)
 
 ## Operational state
 
-- Branch pushed to GitHub: **no** (local-only, clean `continue-plan-post-113`).
+- Branch pushed to GitHub: **yes** (`continue-plan-post-113`, latest `cfeea5f`).
 - Local `main` synced with `origin/main` through commit `0109667` (PR #113 merge).
 - `origin-gitlab/main` is 5 commits behind GitHub; push when convenient.
