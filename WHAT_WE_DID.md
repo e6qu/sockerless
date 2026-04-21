@@ -4,6 +4,16 @@ Docker-compatible REST API that runs containers on cloud backends (ECS, Lambda, 
 
 See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for the bug log, [PLAN.md](PLAN.md) for the roadmap, [specs/](specs/) for architecture specs (start with [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md)).
 
+## Phase 94 prereq — shared-helper lift (2026-04-21)
+
+Per-cloud volume managers promoted into common modules so FaaS backends can embed them without duplicating provisioning logic:
+
+- `backends/cloudrun/volumes.go` → `backends/gcp-common/volumes.go` as `gcpcommon.BucketManager` (GCS).
+- `backends/aca/volumes.go` → `backends/azure-common/volumes.go` as `azurecommon.FileShareManager` (Azure Files). The ACA-specific `ManagedEnvironmentsStorages` linkage stays in aca/volumes.go because AZF will use a different sub-resource (`sites/config/azurestorageaccounts`) for its mount-attach step.
+- `backends/ecs/volumes.go` → `backends/aws-common/volumes.go` as `awscommon.EFSManager` (EFS filesystem + access points).
+
+Pure refactor — CR/ACA/ECS behaviour unchanged, unit tests green. A small correctness fix fell out of the ECS lift: `VolumeCreate`'s `fileSystemId` option is now populated even when the operator provides `SOCKERLESS_ECS_AGENT_EFS_ID` (previously it was empty in that branch because the former `efsCachedID` was only set by the `sync.Once` path).
+
 ## Phase 92 / 93 — Cloud Run GCS + ACA Azure Files volumes (2026-04-21)
 
 `docker volume create` / `docker run -v name:/mnt` now provisions real cloud storage on both GCP and Azure:

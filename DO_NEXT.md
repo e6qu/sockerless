@@ -8,11 +8,7 @@ Snapshot pointer for the next session. Updated after every task.
 
 ## Up next on this branch
 
-1. **Phase 94 prereq — shared-helper lift.** Promote the per-cloud volume managers into common modules so the FaaS backends can embed them:
-   - `backends/cloudrun/volumes.go` → `backends/gcp-common/volumes.go` (`BucketManager`)
-   - `backends/aca/volumes.go` → `backends/azure-common/volumes.go` (`FileShareManager`)
-   - `backends/ecs/volumes.go` → `backends/aws-common/volumes.go` (`EFSManager`)
-   Pure refactor, no behaviour change; CR/ACA/ECS re-embed the lifted types.
+1. **Phase 94 prereq — shared-helper lift.** ✅ Closed 2026-04-21. Per-cloud volume managers now live in `backends/{aws,gcp,azure}-common/volumes.go`; CR/ACA/ECS embed them unchanged. A small correctness fix fell out of the ECS lift (`fileSystemId` option is now populated even with `SOCKERLESS_ECS_AGENT_EFS_ID` set).
 2. **Phase 94 — GCF + AZF real volumes.** GCF uses `Functions.CreateFunction` plus the underlying-Cloud-Run-Service escape hatch (`fn.ServiceConfig.Service` → `Services.GetService`/`UpdateService`) to attach the same GCS buckets Phase 92 provisions. AZF uses the `sites/<fn>/config/azurestorageaccounts/<mountName>` sub-resource to attach the same Azure Files shares Phase 93 provisions.
 3. **Phase 94b — Lambda EFS via `Function.FileSystemConfigs[]`.** Real AWS-native volume mounting; reuses the lifted `EFSManager` so ECS/Lambda share access-point provisioning.
 4. **Phase 95 — FaaS invocation-lifecycle tracker (Lambda + GCF + AZF).** Per-backend cloud-native completion signal (Lambda `Invoke` response + CloudWatch `END RequestId`; GCF/AZF HTTP response from the invoke URL). Re-enables the 7 deleted tests from BUG-744. See `specs/CLOUD_RESOURCE_MAPPING.md` § "Per-invocation container state".
