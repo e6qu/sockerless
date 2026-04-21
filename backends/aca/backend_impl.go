@@ -78,6 +78,17 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		hostConfig.NetworkMode = "default"
 	}
 
+	// ACA Jobs + ContainerApps don't yet support bind / named-volume
+	// mounts — reject them up-front so the caller gets a real error
+	// instead of silently losing data. Real Azure Files mount support
+	// is Phase 93.
+	if len(hostConfig.Binds) > 0 {
+		return nil, &api.InvalidParameterError{Message: fmt.Sprintf(
+			"bind mount not supported on ACA backend: real volume provisioning is Phase 93 (Azure Files shares). Remove -v flags or target an ECS backend (mounts: %v)",
+			hostConfig.Binds,
+		)}
+	}
+
 	path := ""
 	var args []string
 	if len(config.Entrypoint) > 0 {

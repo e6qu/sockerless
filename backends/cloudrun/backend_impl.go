@@ -68,6 +68,17 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		hostConfig.NetworkMode = "default"
 	}
 
+	// Cloud Run Jobs + Services don't yet support bind / named-volume
+	// mounts — reject them up-front so the caller gets a real error
+	// instead of silently losing data. Real GCS/Filestore mount support
+	// is Phase 92.
+	if len(hostConfig.Binds) > 0 {
+		return nil, &api.InvalidParameterError{Message: fmt.Sprintf(
+			"bind mount not supported on Cloud Run backend: real volume provisioning is Phase 92 (GCS bucket-mounts). Remove -v flags or target an ECS/ACA backend (mounts: %v)",
+			hostConfig.Binds,
+		)}
+	}
+
 	path := ""
 	var args []string
 	if len(config.Entrypoint) > 0 {

@@ -176,7 +176,11 @@ func TestBuildContainerDef_TTY(t *testing.T) {
 }
 
 func TestBuildContainerDef_MountPoints(t *testing.T) {
+	// buildContainerDef assumes ContainerCreate already validated that
+	// AgentEFSID is set when Binds are present (BUG-735). Set it here
+	// so the resulting task def carries a real EFSVolumeConfiguration.
 	s := testServer()
+	s.config.AgentEFSID = "fs-test"
 	ci := testInput(&api.Container{
 		Config: api.ContainerConfig{Image: "alpine"},
 		HostConfig: api.HostConfig{

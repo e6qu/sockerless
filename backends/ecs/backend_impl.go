@@ -79,6 +79,16 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		hostConfig.NetworkMode = "default"
 	}
 
+	// Bind mounts require EFS on Fargate; refusing them up-front when
+	// no AgentEFSID is configured avoids silently provisioning an empty
+	// scratch volume the caller didn't ask for.
+	if len(hostConfig.Binds) > 0 && s.config.AgentEFSID == "" {
+		return nil, &api.InvalidParameterError{Message: fmt.Sprintf(
+			"bind mount not supported on ECS backend without EFS: set SOCKERLESS_ECS_AGENT_EFS_ID to an EFS filesystem ID, or remove -v flags (mounts: %v)",
+			hostConfig.Binds,
+		)}
+	}
+
 	path := ""
 	var args []string
 	if len(config.Entrypoint) > 0 {

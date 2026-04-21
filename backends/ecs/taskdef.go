@@ -121,9 +121,8 @@ func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinit
 		}
 	}
 
-	// Build volumes and mount points for bind mounts.
-	// Use EFS when AgentEFSID is configured so bind mounts are not
-	// silently mapped to empty scratch volumes on Fargate.
+	// Build volumes and mount points for bind mounts. EFS is required;
+	// ContainerCreate already rejects binds when AgentEFSID is unset.
 	var volumes []ecstypes.Volume
 	var mountPoints []ecstypes.MountPoint
 	for i, bind := range ci.Container.HostConfig.Binds {
@@ -132,17 +131,14 @@ func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinit
 			continue
 		}
 		volName := fmt.Sprintf("%s-bind-%d", defName, i)
-		vol := ecstypes.Volume{
+		volumes = append(volumes, ecstypes.Volume{
 			Name: aws.String(volName),
-		}
-		if s.config.AgentEFSID != "" {
-			vol.EfsVolumeConfiguration = &ecstypes.EFSVolumeConfiguration{
+			EfsVolumeConfiguration: &ecstypes.EFSVolumeConfiguration{
 				FileSystemId: aws.String(s.config.AgentEFSID),
 				RootDirectory: aws.String(fmt.Sprintf("/sockerless/binds/%s/%s",
 					ci.ID[:12], strings.TrimPrefix(parts[0], "/"))),
-			}
-		}
-		volumes = append(volumes, vol)
+			},
+		})
 		readOnly := false
 		if len(parts) == 3 && parts[2] == "ro" {
 			readOnly = true
