@@ -210,6 +210,17 @@ func TestGCFArithmeticWithLabels(t *testing.T) {
 	}
 
 	checkLogs(t, resp.ID, "58")
+
+	// Phase 97 (BUG-746 fix): labels survive the round-trip via the
+	// SOCKERLESS_LABELS env var (GCF Functions v2 has no Annotations
+	// and GCP's label-value charset would reject the JSON blob).
+	info, err := dockerClient.ContainerInspect(ctx, resp.ID)
+	if err != nil {
+		t.Fatalf("inspect failed: %v", err)
+	}
+	if info.Config == nil || info.Config.Labels["arith-test"] != "gcf" {
+		t.Errorf("expected Labels[arith-test]=gcf to round-trip; got %+v", info.Config.Labels)
+	}
 }
 
 func TestGCFArithmeticEnvVar(t *testing.T) {

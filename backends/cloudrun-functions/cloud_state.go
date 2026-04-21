@@ -2,6 +2,8 @@ package gcf
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -238,11 +240,25 @@ func functionToContainer(fn *functionspb.Function, labels map[string]string) api
 	// Map function state to Docker state
 	state := mapFunctionState(fn)
 
-	// Parse Docker labels from GCP labels (convert underscores back to hyphens)
-	hyphenLabels := gcpLabelsToHyphenMap(labels)
-	dockerLabels := core.ParseLabelsFromTags(hyphenLabels)
-	if dockerLabels == nil {
-		dockerLabels = make(map[string]string)
+	// Phase 97 (BUG-746): Docker labels are carried as a base64-encoded
+	// JSON env var because GCP's label-value charset rejects the
+	// sockerless-labels JSON blob and Functions v2 has no Annotations
+	// field. Prefer the env-var source if present; fall back to the
+	// legacy split-across-labels path for resources created before the
+	// fix.
+	dockerLabels := map[string]string{}
+	if fn.ServiceConfig != nil {
+		if b64, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_LABELS"]; ok && b64 != "" {
+			if raw, err := base64.StdEncoding.DecodeString(b64); err == nil {
+				_ = json.Unmarshal(raw, &dockerLabels)
+			}
+		}
+	}
+	if len(dockerLabels) == 0 {
+		hyphenLabels := gcpLabelsToHyphenMap(labels)
+		if parsed := core.ParseLabelsFromTags(hyphenLabels); parsed != nil {
+			dockerLabels = parsed
+		}
 	}
 
 	// Extract environment variables

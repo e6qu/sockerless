@@ -1,6 +1,7 @@
 package core
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -141,8 +142,53 @@ func TestAsGCPAnnotations_AllShort(t *testing.T) {
 		CreatedAt:   time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC),
 	}
 	ann := ts.AsGCPAnnotations()
-	if len(ann) != 0 {
-		t.Errorf("expected empty annotations when all values <=63 chars, got %d entries", len(ann))
+	// Phase 97: created-at is RFC3339 (contains `T`, `:`, `Z`), so it
+	// fails GCP's label-value charset and lands in annotations even
+	// when its length is fine. Charset-safe values (managed, backend,
+	// container-id, instance) stay in labels.
+	if _, ok := ann["sockerless_created_at"]; !ok {
+		t.Errorf("expected sockerless_created_at in annotations (RFC3339 has non-GCP-safe chars)")
+	}
+	// Shouldn't include the charset-safe values.
+	if _, ok := ann["sockerless_backend"]; ok {
+		t.Errorf("unexpected sockerless_backend in annotations — charset-safe values belong in labels")
+	}
+}
+
+// TestAsGCPLabels_JSONBlobGoesToAnnotations — Phase 97 regression for
+// BUG-746: the sockerless-labels JSON blob's `{`, `:`, `"` characters
+// fail GCP's label-value charset, so labels go into annotations instead.
+func TestAsGCPLabels_JSONBlobGoesToAnnotations(t *testing.T) {
+	ts := TagSet{
+		ContainerID: "abcdef123456",
+		Backend:     "cloudrun",
+		CreatedAt:   time.Now(),
+		Labels:      map[string]string{"env": "prod", "app": "web"},
+	}
+	labels := ts.AsGCPLabels()
+	ann := ts.AsGCPAnnotations()
+
+	if _, ok := labels["sockerless_labels"]; ok {
+		t.Errorf("sockerless_labels JSON blob should NOT be in GCP labels (contains `{`, `:`, `\"`)")
+	}
+	if v, ok := ann["sockerless_labels"]; !ok {
+		t.Errorf("sockerless_labels JSON blob should be in GCP annotations")
+	} else if v == "" || !strings.Contains(v, "prod") {
+		t.Errorf("sockerless_labels annotation should contain the JSON blob, got %q", v)
+	}
+
+	// Round-trip: annotations keep underscores; caller merges with hyphen
+	// variants (cloud_state's gcpLabelsToHyphenMap) before ParseLabelsFromTags.
+	merged := make(map[string]string)
+	for k, v := range labels {
+		merged[strings.ReplaceAll(k, "_", "-")] = v
+	}
+	for k, v := range ann {
+		merged[strings.ReplaceAll(k, "_", "-")] = v
+	}
+	parsed := ParseLabelsFromTags(merged)
+	if parsed["env"] != "prod" || parsed["app"] != "web" {
+		t.Errorf("round-trip lost labels: got %+v", parsed)
 	}
 }
 

@@ -150,7 +150,10 @@ func (p *cloudRunCloudState) serviceToContainer(svc *runpb.Service) (api.Contain
 		created = svc.CreateTime.AsTime().Format(time.RFC3339Nano)
 	}
 
-	gcpTags := gcpLabelsToTags(labels)
+	// Phase 97: merge annotations (which carry Docker-label JSON blob
+	// since it fails GCP label-value charset) before parsing.
+	merged := mergeLabelsAndAnnotations(labels, svc.Annotations)
+	gcpTags := gcpLabelsToTags(merged)
 	dockerLabels := core.ParseLabelsFromTags(gcpTags)
 	if dockerLabels == nil {
 		dockerLabels = make(map[string]string)

@@ -185,6 +185,17 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// match requests by full ID post-start (when PendingCreates is empty).
 	envVars["SOCKERLESS_CONTAINER_ID"] = id
 
+	// Phase 97 (BUG-746): Docker labels can contain `{`, `:`, `"` etc.
+	// which fail GCP's label-value charset. Cloud Functions v2's
+	// Function resource has no Annotations field (unlike Cloud Run's
+	// Service resource), so carry the labels as a base64-encoded JSON
+	// env var. CloudState.queryFunctions decodes it back into
+	// container.Config.Labels.
+	if len(config.Labels) > 0 {
+		labelsJSON, _ := json.Marshal(config.Labels)
+		envVars["SOCKERLESS_LABELS"] = base64.StdEncoding.EncodeToString(labelsJSON)
+	}
+
 	// Build service config
 	serviceConfig := &functionspb.ServiceConfig{
 		AvailableMemory:      s.config.Memory,

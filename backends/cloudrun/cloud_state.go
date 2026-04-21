@@ -452,8 +452,12 @@ func (p *cloudRunCloudState) jobToContainer(ctx context.Context, job *runpb.Job)
 		created = job.CreateTime.AsTime().Format(time.RFC3339Nano)
 	}
 
-	// Parse Docker labels from GCP labels (convert underscores back to dashes)
-	gcpTags := gcpLabelsToTags(labels)
+	// Phase 97 (BUG-746): Docker labels land in GCP annotations (the
+	// JSON blob's `{`, `:`, `"` fail the label-value charset). Merge
+	// labels + annotations before ParseLabelsFromTags so both sources
+	// round-trip cleanly.
+	merged := mergeLabelsAndAnnotations(labels, job.Annotations)
+	gcpTags := gcpLabelsToTags(merged)
 	dockerLabels := core.ParseLabelsFromTags(gcpTags)
 	if dockerLabels == nil {
 		dockerLabels = make(map[string]string)
@@ -575,4 +579,20 @@ func gcpLabelsToTags(labels map[string]string) map[string]string {
 		m[dashKey] = v
 	}
 	return m
+}
+
+// mergeLabelsAndAnnotations combines GCP labels + annotations into a
+// single map (annotations win on key collision since they carry the
+// unmutated full-fidelity values). Phase 97: needed because Docker
+// labels land in annotations but identity fields land in labels, and
+// ParseLabelsFromTags needs both to reconstruct a container's metadata.
+func mergeLabelsAndAnnotations(labels, annotations map[string]string) map[string]string {
+	out := make(map[string]string, len(labels)+len(annotations))
+	for k, v := range labels {
+		out[k] = v
+	}
+	for k, v := range annotations {
+		out[k] = v
+	}
+	return out
 }
