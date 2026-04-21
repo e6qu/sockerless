@@ -4,6 +4,14 @@ Docker-compatible REST API that runs containers on cloud backends (ECS, Lambda, 
 
 See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for the bug log, [PLAN.md](PLAN.md) for the roadmap, [specs/](specs/) for architecture specs (start with [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md)).
 
+## Phase 92 / 93 — Cloud Run GCS + ACA Azure Files volumes (2026-04-21)
+
+`docker volume create` / `docker run -v name:/mnt` now provisions real cloud storage on both GCP and Azure:
+
+- **Cloud Run (Phase 92)** — one sockerless-owned GCS bucket per volume, labelled `sockerless-managed=true` + `sockerless-volume-name=<docker-name>`. Jobs/Services emit `Volume{Gcs{Bucket}}` in the revision/task template; the sim maps each bucket to a host directory under `$SIM_GCS_DATA_DIR` so tasks bind-mount real files.
+- **ACA (Phase 93)** — one Azure Files share per volume inside the operator-configured storage account (`SOCKERLESS_ACA_STORAGE_ACCOUNT`), paired with a `ManagedEnvironmentsStorages` entry so Jobs/Apps can reference it by name. Shares carry `sockerless-managed` + `sockerless-volume-name` metadata. The sim grows `managedEnvironments/<env>/storages/<name>` CRUD + file-share metadata round-trip, and the ACA Jobs executor binds each `(Volume{AzureFile}, VolumeMount)` pair to a real host path under `$SIM_AZURE_FILES_DATA_DIR`.
+- Both backends now accept named-volume binds in `ContainerCreate` (previously rejected wholesale — that was the BUG-736 stop-gap). Host-path binds (`-v /h:/c`) stay rejected on both backends because neither Cloud Run nor ACA has a host filesystem to bind from.
+
 ## Phase 91 — ECS real volumes via EFS access points (2026-04-21)
 
 `docker volume create` / `-v volname:/mnt` finally provisions real cloud storage on ECS:

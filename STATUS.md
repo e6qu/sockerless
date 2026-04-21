@@ -14,8 +14,8 @@ See [PLAN.md](PLAN.md) for the roadmap, [BUGS.md](BUGS.md) for the bug log (+ op
 | 89 | Stateless-backend audit — cloud resource mapping, `resolve*State`, cloud-derived `ListImages` / `ListPods`, `resolveNetworkState` | Closed 2026-04-21 (PR #113). |
 | 90 | No-fakes/no-fallbacks audit — workarounds, placeholders, silent substitutions all elevated to bugs | Closed. BUG-729/730/731/732/733/734/737 fixed; BUG-735/736 absorbed by Phase 91. |
 | 91 | ECS real named-volume + bind-mount provisioning via EFS access points (sim: real host-dir-backed `EFSAccessPointHostDir`; backend: `volumes.go`) | Closed 2026-04-21 on `continue-plan-post-113`. |
-| 92 | Cloud Run GCS bucket-mount provisioning | Queued — replaces CR bind-mount rejection from BUG-736. |
-| 93 | ACA Azure Files share provisioning | Queued — replaces ACA bind-mount rejection from BUG-736. |
+| 92 | Cloud Run GCS bucket-mount provisioning (sim: `GCSBucketHostDir` + CR Jobs exec Volume translation; backend: `volumes.go` GCS bucket-per-volume manager; jobspec + servicespec emit `Volume{Gcs{Bucket}}`) | Closed 2026-04-21. |
+| 93 | ACA Azure Files share provisioning (sim: `FileShareHostDir` + `managedEnvironmentStorages` CRUD + ACA Jobs exec Volume translation; backend: `volumes.go` share-per-volume + env-storage link; jobspec + appspec emit `Volume{StorageType=AzureFile}`) | Closed 2026-04-21. |
 | 94 | GCF + AZF inherit Phase 92/93 helpers | Queued. |
 | 95 | FaaS invocation-lifecycle tracker (Lambda + GCF + AZF) — re-enables 7 deleted tests from BUG-744 | Queued. Design: per-backend cloud-native completion signal (Lambda Invoke response + CloudWatch END RequestId; GCF/AZF HTTP response status). |
 | 96 | Reverse-agent exec for Cloud Run Jobs + ACA Jobs (ports Lambda bootstrap pattern) | Queued — from BUG-745. |

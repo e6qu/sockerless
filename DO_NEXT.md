@@ -8,9 +8,7 @@ Snapshot pointer for the next session. Updated after every task.
 
 ## Up next on this branch
 
-1. **Phase 92** — Cloud Run real volumes (GCS bucket-mounts). Unblocks `docker run -v name:/mnt` on Cloud Run Jobs + Services; replaces the BUG-736 rejection path for CR specifically.
-2. **Phase 93** — ACA real volumes (Azure Files shares). Same shape as 92 but against the Azure managed-environment `storages` sub-resource. Replaces the BUG-736 rejection path for ACA.
-3. **Phase 94** — GCF + AZF inherit helpers from Phase 92/93 via `backends/gcp-common` + `backends/azure-common`; no new cloud resources, just wiring.
+1. **Phase 94** — GCF + AZF inherit helpers from Phase 92/93 via `backends/gcp-common` + `backends/azure-common`; no new cloud resources, just wiring.
 4. **Phase 95** — FaaS invocation-lifecycle tracker (Lambda + GCF + AZF). Per-backend cloud-native completion signal (Lambda `Invoke` response + CloudWatch `END RequestId`; GCF/AZF HTTP response from the invoke URL). Re-enables 7 deleted tests. See `specs/CLOUD_RESOURCE_MAPPING.md` § "Per-invocation container state" for the per-backend mapping.
 5. **Phase 96** — Reverse-agent exec for CR Jobs + ACA Jobs. Ports `sockerless-lambda-bootstrap` to two new overlay images + `/v1/cloudrun/reverse` + `/v1/aca/reverse` WebSocket endpoints.
 6. **Phase 97** — Docker labels as GCP annotations / Azure tags on FaaS + CR/ACA. Fixes BUG-746's round-trip drop — switches `TagSet.AsGCPLabels` to split individual labels between GCP labels (charset-safe keys) and annotations (the JSON blob fallback).
