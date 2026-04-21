@@ -109,6 +109,26 @@ func TestMain(m *testing.M) {
 	}
 	fmt.Printf("[sim] simulator-azure is ready at %s\n", simURL)
 
+	// Pre-create the storage account so FileShareManager can provision
+	// shares into it. In production this is an operator responsibility
+	// (the sockerless-azf backend doesn't manage storage accounts); the
+	// test harness does it via direct ARM PUT. Mirrors the ACA setup.
+	preCreate := func(url, body string) {
+		req, _ := http.NewRequest("PUT", url, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to pre-create sim resource %s: %v\n", url, err)
+			cleanup()
+			os.Exit(1)
+		}
+		resp.Body.Close()
+	}
+	preCreate(
+		simURL+"/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/sim-rg/providers/Microsoft.Storage/storageAccounts/simstorage?api-version=2023-01-01",
+		`{"location":"eastus","sku":{"name":"Standard_LRS"},"kind":"StorageV2","properties":{}}`,
+	)
+
 	// Build backend
 	backendDir := repoRoot + "/backends/azure-functions"
 	backendBinary := backendDir + "/sockerless-backend-azf"
