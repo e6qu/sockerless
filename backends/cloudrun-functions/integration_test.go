@@ -24,7 +24,14 @@ var evalBinaryPath string
 
 func TestMain(m *testing.M) {
 	if os.Getenv("SOCKERLESS_INTEGRATION") != "1" {
-		// Run unit tests only; integration tests are gated separately.
+		// In CI, silent short-circuit would let integration tests "pass" by
+		// not running. Require the env var explicitly so a missing CI config
+		// fails loud (BUG-727 follow-up).
+		if os.Getenv("GITHUB_ACTIONS") == "true" || os.Getenv("CI") == "true" {
+			fmt.Fprintln(os.Stderr, "ERROR: SOCKERLESS_INTEGRATION must be set to 1 in CI — integration tests would otherwise be silently skipped.")
+			os.Exit(1)
+		}
+		// Local dev: run whatever unit tests exist and exit.
 		os.Exit(m.Run())
 	}
 

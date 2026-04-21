@@ -1042,13 +1042,24 @@ type ecsExecSession struct {
 	dockerContainerID string
 }
 
-// wsMessageWriter wraps a WebSocket conn as an io.Writer, sending each Write as a binary message.
-type wsMessageWriter struct {
-	conn *websocket.Conn
+// ssmStreamWriter wraps chunks in an SSM output_stream_data AgentMessage
+// frame before sending over the WebSocket. The backend's decoder
+// (BUG-717) parses these frames to reconstruct the Docker-mux'd stream;
+// sending raw bytes silently produces empty exec output (BUG-728).
+type ssmStreamWriter struct {
+	conn        *websocket.Conn
+	payloadType uint32 // 1 = stdout, 11 = stderr
+	mu          *sync.Mutex
 }
 
-func (w *wsMessageWriter) Write(p []byte) (int, error) {
-	if err := w.conn.WriteMessage(websocket.BinaryMessage, p); err != nil {
+func (w *ssmStreamWriter) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	frame := buildSSMOutputFrame(w.payloadType, p)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if err := w.conn.WriteMessage(websocket.BinaryMessage, frame); err != nil {
 		return 0, err
 	}
 	return len(p), nil
@@ -1194,10 +1205,31 @@ func handleECSExecWebSocket(sessionID string) http.HandlerFunc {
 				}
 				defer attach.Close()
 
-				// Bridge: Docker exec → WebSocket
-				// Docker non-TTY exec uses multiplexed stream. Demux with stdcopy.
-				wsWriter := &wsMessageWriter{conn: conn}
-				_, _ = stdcopy.StdCopy(wsWriter, wsWriter, attach.Reader)
+				// Bridge: Docker exec → WebSocket wrapped in SSM
+				// AgentMessage frames. The backend's SSM decoder
+				// (backends/ecs/exec_cloud.go, BUG-717) will only see
+				// output if each chunk arrives as a proper
+				// output_stream_data frame (BUG-728).
+				writeMu := &sync.Mutex{}
+				stdoutWriter := &ssmStreamWriter{conn: conn, payloadType: ssmPayloadStdout, mu: writeMu}
+				stderrWriter := &ssmStreamWriter{conn: conn, payloadType: ssmPayloadStderr, mu: writeMu}
+				_, _ = stdcopy.StdCopy(stdoutWriter, stderrWriter, attach.Reader)
+
+				// Real AWS Session Manager sends an output_stream_data
+				// frame with PayloadType=12 carrying the exec process's
+				// exit code before the channel is closed. Match that so
+				// the backend decoder sees the true exit status.
+				exitCode := 0
+				if inspect, err := cli.ContainerExecInspect(r.Context(), execResp.ID); err == nil {
+					exitCode = inspect.ExitCode
+				}
+				writeMu.Lock()
+				_ = conn.WriteMessage(websocket.BinaryMessage,
+					buildSSMOutputFrame(ssmPayloadExitCode, []byte(strconv.Itoa(exitCode))))
+				// Then signal channel close so the decoder unwinds cleanly.
+				_ = conn.WriteMessage(websocket.BinaryMessage, buildSSMChannelClosed())
+				writeMu.Unlock()
+
 				_ = conn.WriteControl(
 					websocket.CloseMessage,
 					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
