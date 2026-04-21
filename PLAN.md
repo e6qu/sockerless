@@ -33,24 +33,59 @@ Current state: [STATUS.md](STATUS.md). Bug log: [BUGS.md](BUGS.md). Narrative: [
 - **Phase 88 live-Azure** — same shape for ACA. Needs Azure subscription + managed environment with VNet integration.
 - **Phase 86 Lambda live track** — scripted already, deferred at Phase C closure for session-budget reasons. No architectural blockers.
 
-### Phase 92 — Cloud Run real volumes (queued)
+### Phase 94 — GCF + AZF real volumes (queued)
 
-- **Simulator**: extend `simulators/gcp/storage.go` (GCS slice) to honour `Volume{Gcs{Bucket}}` on the Cloud Run simulator's spec-builder path, bind-mounting a host directory per bucket.
-- **Backend**: `backends/cloudrun/volume_cloud.go` — `VolumeCreate` calls `storage.Buckets.Insert` with `sockerless-managed=true` label. Service spec's `RevisionTemplate.Volumes[]` gets `Gcs{Bucket}`; `Container.VolumeMounts` references them. Operator IAM: service account needs `roles/storage.objectAdmin` on sockerless buckets.
-- **Out of scope for Phase 92**: Filestore POSIX mounts (different semantics — strong locking, `O_APPEND`). Filed as Phase 92.1 if GCS semantics prove insufficient.
-- **Tests**: SDK + CLI.
+Sockerless targets only the latest generation of each cloud service (no fallbacks between generations). For GCP Cloud Functions that's v2 (Cloud Run under the hood); for Azure Functions that's Flex Consumption / Premium plan (BYOS Azure Files). Both need real mounts, not NotImplemented — but the cloud APIs each expose a different path than Phase 92 / 93 used, so this is its own phase, not a "copy-paste inherit".
 
-### Phase 93 — ACA real volumes (queued)
+**Sequencing prerequisite — refactor shared helpers** before the two backend implementations land:
 
-- **Simulator**: `simulators/azure/storage.go` grows Azure Files `fileServices/shares` CRUD (blob slice already present). `simulators/azure/containerappsenv.go` grows `storages` sub-resource.
-- **Backend**: `backends/aca/volume_cloud.go` — `VolumeCreate` ensures a sockerless storage account exists, then `FileShares.Create` + `ManagedEnvironmentsStorages.CreateOrUpdate` so the environment knows about the share. ContainerApp spec's `Template.Volumes[]` + `Container.VolumeMounts` reference the env-storage. `VolumeRemove` tears both down.
-- **Tests**: SDK + CLI.
+- `backends/gcp-common/volumes.go` — move CR's `bucketForVolume` / `deleteBucketForVolume` / `listManagedBuckets` into a `BucketManager` struct the two GCP backends embed. CR and GCF both pass their `storage.Client` + `project` + cache map in; the shared struct owns the sockerless-managed label convention.
+- `backends/azure-common/volumes.go` — move ACA's `shareForVolume` / `deleteShareForVolume` / `listManagedShares` into a `FileShareManager`. ACA + AZF both pass their `FileSharesClient` + resource group + storage account in; the shared struct owns the sockerless-managed metadata convention.
 
-### Phase 94 — GCF + AZF volume alignment (queued)
+**GCF (Cloud Functions v2)**:
 
-Sockerless targets only the latest generation of each cloud service (no fallbacks between generations). For GCP Cloud Functions that's Cloud Functions v2 (Cloud Run Services under the hood) — inherit Phase 92's implementation via a shared helper. For Azure Functions that's Flex Consumption / Premium plan (BYOS Azure Files) — inherit Phase 93's Azure Files share provisioning.
+GCF v2's public API (`functionspb.ServiceConfig`) only exposes `SecretVolumes` — there's no `Volumes` primitive for GCS mounts. But v2 **is** a Cloud Run Service underneath: `Function.ServiceConfig.Service` returns the resource name of the backing service. The documented escape hatch is to call `run.ServicesClient.GetService` on that name, modify `RevisionTemplate.Volumes` + `Container.VolumeMounts`, and `UpdateService`. Google surfaces this in their docs as "advanced per-function configuration via the underlying Cloud Run Service" — it's the sanctioned path, not a workaround.
 
-If operators target an older generation (GCF v1, Azure Functions Consumption plan on older runtimes), the backend fails fast at config validation with a clear "upgrade your function to the supported generation" error rather than degrading silently.
+Backend flow:
+1. `VolumeCreate` — reuse `gcpcommon.BucketManager` to ensure a bucket, labelled identically to CR's.
+2. `ContainerCreate` — accept named-volume binds (`volName:/mnt`), reject host-path binds.
+3. `ContainerStart`:
+   - `Functions.CreateFunction` + `op.Wait` as today.
+   - If the request carried any named-volume binds: `Services.GetService(fn.ServiceConfig.Service)` → append `RevisionTemplate.Volumes[]` with `Volume_Gcs` + matching `VolumeMounts` → `Services.UpdateService`.
+   - The function's first invocation after UpdateService picks up the mounts (Cloud Run rolls a new revision).
+4. `VolumeRemove` — reuse `gcpcommon.BucketManager.Delete`.
+
+Sim work: the GCP sim's `/v2/projects/.../services/{name}` routes for `GetService` + `UpdateService` already exist (via Phase 87's sim hooks); confirm Volumes round-trip correctly when Phase 94 lands. Cloud Run Functions executor in the sim already translates `Volume{Gcs{Bucket}}` + VolumeMount to host binds (Phase 92).
+
+**AZF (Azure Functions Flex Consumption / Premium)**:
+
+Azure Functions attaches file shares via a different sub-resource from ACA's `managedEnvironmentsStorages`. The API is `sites/<siteName>/config/azurestorageaccounts/<mountName>` — each entry names a storage account + share + access key + target mount path inside the function container. Schema: `{type: "AzureFiles", accountName, shareName, accessKey, mountPath}`.
+
+Backend flow:
+1. `VolumeCreate` — reuse `azurecommon.FileShareManager` to ensure a share on the configured storage account.
+2. `ContainerCreate` — accept named-volume binds, reject host-path binds.
+3. `ContainerStart` — after `WebApps.BeginCreateOrUpdate` lands, `WebApps.UpdateAzureStorageAccounts` (or the direct REST endpoint) to register each bound share → mount-path pair.
+4. `VolumeRemove` — delete the azurestorageaccounts entry + the share itself.
+
+Sim work: `simulators/azure/functions.go` grows `sites/<siteName>/config/azurestorageaccounts/<mountName>` CRUD (PUT/GET/DELETE/list). The sim's AZF executor then looks up each configured mount at invoke-time and translates it to a real host bind using the existing `FileShareHostDir` helper from Phase 93.
+
+**Older-generation fallthrough**: operators targeting GCF v1 or Azure Functions Consumption plan get a `Config.Validate()` failure at backend boot (`SOCKERLESS_*_REQUIRE_LATEST_GEN` is implicit — sockerless doesn't support the older generations at all). No silent degradation.
+
+**Tests**: SDK + CLI coverage on both sims; integration tests re-enable `TestGCFVolumeOperations` + `TestAZFVolumeOperations` from NotImplemented assertions (same as CR/ACA did) to real lifecycle.
+
+### Phase 94b — Lambda EFS volumes (queued)
+
+Revised from BUG-748: Lambda **does** support EFS mounts via `Function.FileSystemConfigs[]` (each entry pairs an EFS access-point ARN with a local mount path inside the function container). The requirement is Lambda-in-VPC + EFS mount targets in the function's subnets. Not a platform limit — just a more involved setup than ECS's EFS.
+
+Backend flow:
+1. `VolumeCreate` — reuse ECS's `volumes.go` EFS manager (the ARM resource is identical; the CRUD lives in `backends/aws-common/volumes.go` after a refactor lift-up from `backends/ecs/volumes.go`).
+2. `ContainerCreate` — accept named-volume binds when the Lambda config has at least one subnet configured (VPC + EFS mount targets assumed).
+3. `ContainerStart` — add `FileSystemConfigs{Arn: accessPointArn, LocalMountPath: mp}` to `CreateFunctionInput` for each bind. Lambda validates the access point is reachable from the function's subnets at create-time.
+4. `VolumeRemove` — same as ECS (delete access point, keep the filesystem).
+
+**Sequencing prerequisite**: refactor `backends/ecs/volumes.go` → `backends/aws-common/volumes.go` first, the same way Phase 94 refactors CR and ACA.
+
+Config-validation: `Config.Validate()` on the Lambda backend rejects `FileSystemConfigs`-carrying requests when `SubnetIds` is empty (matches AWS API behaviour at create-time).
 
 ### Phase 95 — FaaS invocation-lifecycle tracker (Lambda + GCF + AZF) (queued)
 
@@ -140,6 +175,28 @@ Scope:
 ### Phase 98b — Agent-driven `docker commit` (queued, optional)
 
 BUG-750 — Fargate/Lambda container images are control-plane-owned, but the in-container agent can tarball the rootfs and push it to the operator's registry (ECR / AR / ACR) after Phase 98 lands. Gated behind a config flag (`SOCKERLESS_ENABLE_COMMIT`) because it's a sharp edge: the resulting image isn't what the container started with, so it's not truly reproducible. Users opt in explicitly.
+
+### Phase 100 — Docker backend pod synthesis (queued)
+
+BUG-754 — the Docker backend's `PodCreate/Inspect/List/Exists` return `NotImplementedError` because the local Docker daemon has no pod primitive. Cloud backends (ECS, Cloud Run, ACA) already synthesise pods by tagging containers with a shared `sockerless-pod` label; the Docker backend can do the same against its local `Store.Pods` + Docker's container-label filter.
+
+Scope:
+- `backends/docker.PodCreate` — generate pod ID, tag each subsequent container (via `Config.Labels["sockerless-pod"] = name`) when the pod is specified. Store the pod metadata locally.
+- `backends/docker.PodList` — list local containers filtered by `label=sockerless-pod=*`, group by pod tag.
+- `backends/docker.PodInspect` — look up pod metadata + aggregate container state from Docker's container inspect.
+- `backends/docker.PodExists` — filter-by-label existence probe.
+- Tests: SDK + CLI (`podman pod create` / `podman pod inspect` / `podman pod ps`) against the Docker backend, matching behaviour with the cloud backends.
+
+### Phase 99 — Agent-driven `docker pause` / `unpause` (queued)
+
+BUG-749 — no cloud control plane exposes per-container pause as a first-class primitive, but the reverse-agent pattern from Phases 95/96 gives sockerless a direct line into the container's process tree. Pause = agent calls `syscall.Kill(userPid, syscall.SIGSTOP)` on the subprocess the bootstrap spawned; Unpause = `SIGCONT`. The agent tracks the PID at user-command fork time, so it knows which process to target.
+
+Scope:
+- `agent/reverse` grows `Pause` + `Unpause` RPCs on the existing WebSocket dispatcher. Bootstrap: Lambda today + Phase 96 for CR/ACA.
+- ECS Fargate uses SSM Session Manager's `signal` action on the ECS Exec session — same shape, different wire format.
+- Backends' `ContainerPause` / `ContainerUnpause` replace the `NotImplementedError` returns with the reverse-agent call.
+
+Dependency chain: Phase 96 must ship before this. ECS already has SSM so its half can land sooner.
 
 ### Phase 68 — Multi-Tenant Backend Pools (queued)
 
