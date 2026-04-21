@@ -400,33 +400,18 @@ func TestAZFNetworkOperations(t *testing.T) {
 	}
 }
 
+// TestAZFVolumeOperations pins BUG-731 — Azure Functions containers
+// are ephemeral; named volumes require real Azure Files mounts and
+// are tracked as Phase 93.
 func TestAZFVolumeOperations(t *testing.T) {
 	ctx := context.Background()
 
-	testID := generateTestID()
-
-	// Volume create should succeed
-	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: "azf-vol-" + testID})
-	if err != nil {
-		t.Fatalf("volume create failed: %v", err)
+	_, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: "azf-vol-" + generateTestID()})
+	if err == nil {
+		t.Fatal("expected VolumeCreate to fail with NotImplemented")
 	}
-
-	if vol.Name != "azf-vol-"+testID {
-		t.Errorf("expected volume name %q, got %q", "azf-vol-"+testID, vol.Name)
-	}
-
-	// Volume inspect
-	volInfo, err := dockerClient.VolumeInspect(ctx, vol.Name)
-	if err != nil {
-		t.Fatalf("volume inspect failed: %v", err)
-	}
-	if volInfo.Name != vol.Name {
-		t.Errorf("expected volume name %q, got %q", vol.Name, volInfo.Name)
-	}
-
-	// Volume remove
-	if err := dockerClient.VolumeRemove(ctx, vol.Name, false); err != nil {
-		t.Fatalf("volume remove failed: %v", err)
+	if !strings.Contains(err.Error(), "does not support named volumes") {
+		t.Errorf("expected NotImplemented error, got: %v", err)
 	}
 }
 

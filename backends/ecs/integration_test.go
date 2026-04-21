@@ -437,41 +437,20 @@ func TestECSNetworkOperations(t *testing.T) {
 	}
 }
 
+// TestECSVolumeOperations pins BUG-731 — named volumes are not
+// supported on ECS (Fargate tasks are ephemeral; real persistence
+// requires EFS volume configuration on the task def). Real per-cloud
+// volume provisioning tracked as Phase 91.
 func TestECSVolumeOperations(t *testing.T) {
 	skipIfNoIntegration(t)
 	ctx := context.Background()
 
-	// Create volume
-	volName := "ecs-test-vol-" + generateTestID()
-	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: volName})
-	if err != nil {
-		t.Fatalf("volume create failed: %v", err)
+	_, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: "ecs-test-vol-" + generateTestID()})
+	if err == nil {
+		t.Fatal("expected VolumeCreate to fail with NotImplemented")
 	}
-	defer dockerClient.VolumeRemove(ctx, vol.Name, true)
-
-	// Inspect
-	volInfo, err := dockerClient.VolumeInspect(ctx, vol.Name)
-	if err != nil {
-		t.Fatalf("volume inspect failed: %v", err)
-	}
-	if volInfo.Name != volName {
-		t.Errorf("expected name %q, got %q", volName, volInfo.Name)
-	}
-
-	// List
-	volList, err := dockerClient.VolumeList(ctx, volume.ListOptions{})
-	if err != nil {
-		t.Fatalf("volume list failed: %v", err)
-	}
-	found := false
-	for _, v := range volList.Volumes {
-		if v.Name == volName {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("volume not found in list")
+	if !strings.Contains(err.Error(), "does not support named volumes") {
+		t.Errorf("expected NotImplemented error, got: %v", err)
 	}
 }
 

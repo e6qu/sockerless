@@ -1,6 +1,6 @@
 # Known Bugs
 
-**740 total — 736 fixed, 4 open, 1 false positive.**
+**741 total — 737 fixed, 4 open, 1 false positive.**
 
 For narrative context see [WHAT_WE_DID.md](WHAT_WE_DID.md) and [PLAN.md](PLAN.md). Architecture-level state derivation is documented in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) and [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md).
 
@@ -19,6 +19,7 @@ Standing workflow rule: every CI / live-cloud failure lands here with a short ro
 
 | ID | Sev | Area | Summary |
 |----|-----|------|---------|
+| 741 | M | tests | `Test*VolumeOperations` integration tests on ECS / Lambda / Cloud Run / ACA / GCF / AZF all asserted the old "volumes succeed silently" contract — `VolumeCreate` expected to return a named volume the test then inspected/listed. Missed in the BUG-731 sweep (which updated only `tests/volumes_test.go`). Once CI could actually run the per-backend integration jobs (BUG-727 + BUG-740), `TestECSVolumeOperations` surfaced the mismatch. Fix: rewrote all 6 tests to assert the NotImplemented contract — `VolumeCreate` must fail with a "does not support named volumes" error. |
 | 740 | H | ci | ECS / Cloud Run / ACA / GCF / AZF integration TestMains built and started a `sockerless-docker-frontend` binary from `../../frontends/docker` — a path that doesn't exist post-P67 (the frontend is in-process on the backend itself, which is what the Lambda integration test already does). CI failed with `chdir ../../frontends/docker: no such file or directory` once BUG-727 enabled integration in CI. Fix: dropped the frontend build + unix-socket frontend launch from all 5 files; docker client now points at `tcp://localhost:{backendPort}` directly (Lambda-style). |
 | 739 | H | ci | Backend integration `TestMain` builds (simulator-{aws,gcp,azure}, per-backend binaries, docker frontend) omitted `-tags noui`, so every unit CI run crashed with `ui_embed.go:12 pattern all:dist: no matching files found`. Added `-tags noui` to every sub-build across ECS / Lambda / Cloud Run / GCF / ACA / AZF integration tests. Lambda bootstrap (agent package, no UI) stays tag-less. |
 | 731 | H | all-cloud | `VolumeCreate` / `VolumeRemove` / `VolumeInspect` / `VolumeList` / `VolumePrune` on ECS/Lambda/Cloud Run/ACA/GCF/AZF now return `NotImplemented` with a clear per-cloud message — no more silent metadata-only store. Dead placeholder fields deleted (`aca.VolumeState.ShareName`, `cloudrun.VolumeState.BucketPath`, ECS `VolumeState` struct entirely). Core HTTP volume handlers (handle_volumes.go) route through `s.self.Volume*` so overrides fire. Real per-cloud volume provisioning (EFS / GCS / Azure Files) tracked as Phases 91-94 in PLAN.md. |

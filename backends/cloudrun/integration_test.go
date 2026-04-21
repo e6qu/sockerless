@@ -396,31 +396,18 @@ func TestCloudRunNetworkOperations(t *testing.T) {
 	}
 }
 
+// TestCloudRunVolumeOperations pins BUG-731 — Cloud Run
+// Jobs/Services are invocation-scoped; named volumes require a real
+// GCS/Filestore mount and are tracked as Phase 92.
 func TestCloudRunVolumeOperations(t *testing.T) {
 	ctx := context.Background()
 
-	testID := generateTestID()
-	volName := "cloudrun_vol_" + testID
-
-	// Create
-	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: volName})
-	if err != nil {
-		t.Fatalf("volume create failed: %v", err)
+	_, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: "cloudrun_vol_" + generateTestID()})
+	if err == nil {
+		t.Fatal("expected VolumeCreate to fail with NotImplemented")
 	}
-	defer dockerClient.VolumeRemove(ctx, vol.Name, true)
-
-	// Inspect
-	volInfo, err := dockerClient.VolumeInspect(ctx, vol.Name)
-	if err != nil {
-		t.Fatalf("volume inspect failed: %v", err)
-	}
-	if volInfo.Name != volName {
-		t.Errorf("expected name %s, got %s", volName, volInfo.Name)
-	}
-
-	// Remove
-	if err := dockerClient.VolumeRemove(ctx, vol.Name, true); err != nil {
-		t.Fatalf("volume remove failed: %v", err)
+	if !strings.Contains(err.Error(), "does not support named volumes") {
+		t.Errorf("expected NotImplemented error, got: %v", err)
 	}
 }
 

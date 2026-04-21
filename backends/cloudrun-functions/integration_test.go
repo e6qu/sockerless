@@ -399,33 +399,18 @@ func TestGCFNetworkOperations(t *testing.T) {
 	}
 }
 
+// TestGCFVolumeOperations pins BUG-731 — GCF containers are
+// invocation-scoped; named volumes require real GCS/Filestore mounts
+// and are tracked as Phase 92.
 func TestGCFVolumeOperations(t *testing.T) {
 	ctx := context.Background()
 
-	testID := generateTestID()
-
-	// Volume create should succeed
-	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: "gcf-vol-" + testID})
-	if err != nil {
-		t.Fatalf("volume create failed: %v", err)
+	_, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: "gcf-vol-" + generateTestID()})
+	if err == nil {
+		t.Fatal("expected VolumeCreate to fail with NotImplemented")
 	}
-
-	if vol.Name != "gcf-vol-"+testID {
-		t.Errorf("expected volume name %q, got %q", "gcf-vol-"+testID, vol.Name)
-	}
-
-	// Volume inspect
-	volInfo, err := dockerClient.VolumeInspect(ctx, vol.Name)
-	if err != nil {
-		t.Fatalf("volume inspect failed: %v", err)
-	}
-	if volInfo.Name != vol.Name {
-		t.Errorf("expected volume name %q, got %q", vol.Name, volInfo.Name)
-	}
-
-	// Volume remove
-	if err := dockerClient.VolumeRemove(ctx, vol.Name, false); err != nil {
-		t.Fatalf("volume remove failed: %v", err)
+	if !strings.Contains(err.Error(), "does not support named volumes") {
+		t.Errorf("expected NotImplemented error, got: %v", err)
 	}
 }
 
