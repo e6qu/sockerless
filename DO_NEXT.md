@@ -9,7 +9,7 @@ Snapshot pointer for the next session. Updated after every task.
 ## Up next on this branch
 
 1. **Phase 94 prereq — shared-helper lift.** ✅ Closed 2026-04-21. Per-cloud volume managers now live in `backends/{aws,gcp,azure}-common/volumes.go`; CR/ACA/ECS embed them unchanged. A small correctness fix fell out of the ECS lift (`fileSystemId` option is now populated even with `SOCKERLESS_ECS_AGENT_EFS_ID` set).
-2. **Phase 94 — GCF + AZF real volumes.** GCF uses `Functions.CreateFunction` plus the underlying-Cloud-Run-Service escape hatch (`fn.ServiceConfig.Service` → `Services.GetService`/`UpdateService`) to attach the same GCS buckets Phase 92 provisions. AZF uses the `sites/<fn>/config/azurestorageaccounts/<mountName>` sub-resource to attach the same Azure Files shares Phase 93 provisions.
+2. **Phase 94 — GCF + AZF real volumes.** ✅ Closed 2026-04-21. GCF attaches GCS buckets via `Services.GetService`/`UpdateService` on `fn.ServiceConfig.Service`; AZF attaches Azure Files shares via `WebApps.UpdateAzureStorageAccounts`.
 3. **Phase 94b — Lambda EFS via `Function.FileSystemConfigs[]`.** Real AWS-native volume mounting; reuses the lifted `EFSManager` so ECS/Lambda share access-point provisioning.
 4. **Phase 95 — FaaS invocation-lifecycle tracker.** ✅ Closed 2026-04-21. `core.InvocationResult` + `Store.{Put,Get,Delete}InvocationResult`; per-backend wiring on Lambda + GCF + AZF; 7 BUG-744 tests re-enabled.
 5. **Phase 96 — Reverse-agent exec for CR Jobs + ACA Jobs.** Ports `sockerless-lambda-bootstrap` to two new overlay images + `/v1/cloudrun/reverse` + `/v1/aca/reverse` WebSocket endpoints. Unblocks Phase 98/98b/99 on those backends.

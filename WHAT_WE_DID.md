@@ -4,6 +4,15 @@ Docker-compatible REST API that runs containers on cloud backends (ECS, Lambda, 
 
 See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for the bug log, [PLAN.md](PLAN.md) for the roadmap, [specs/](specs/) for architecture specs (start with [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md)).
 
+## Phase 94 — GCF + AZF real per-cloud volumes (2026-04-21)
+
+`docker volume create` / `docker run -v name:/mnt` now provisions real cloud storage on GCF and AZF, closing the named-volume gap on every FaaS backend:
+
+- **GCF** (Functions v2) gains `Storage *storage.Client` + `Services *run.ServicesClient` in `GCPClients`. `VolumeCreate`/etc. use `gcpcommon.BucketManager` (shared with Cloud Run) to provision one GCS bucket per volume. Because `functionspb.ServiceConfig` only exposes `SecretVolumes`, volumes are attached via the sanctioned escape hatch: after `Functions.CreateFunction` returns, fetch the underlying Cloud Run Service via `fn.ServiceConfig.Service`, append `RevisionTemplate.Volumes[Gcs]` + matching `Container.VolumeMounts`, and `Services.UpdateService`. On failure, the partially-configured function is best-effort-deleted so the create appears atomic.
+- **AZF** (Flex Consumption / Premium plan) gains `FileShares` + `StorageAccounts` clients in `AzureClients`. `VolumeCreate`/etc. use `azurecommon.FileShareManager` (shared with ACA) to provision one Azure Files share per volume. After `WebApps.BeginCreateOrUpdate` creates the site, `attachVolumesToFunctionSite` fetches the freshest storage-account access key via `StorageAccounts.ListKeys` (so rotated keys take effect without a restart) and calls `WebApps.UpdateAzureStorageAccounts` with one `AzureStorageInfoValue{accountName, shareName, accessKey, mountPath}` per bound share.
+- Host-path bind specs (`/h:/c`) stay rejected on both backends.
+- `TestGCFVolumeOperations` + `TestAZFVolumeOperations` rewritten from the NotImplemented assertions to real-lifecycle assertions (create / inspect / list / remove).
+
 ## Phase 95 — FaaS invocation-lifecycle tracker (2026-04-21)
 
 BUG-744 closed. New `core.InvocationResult` + `Store.{Put,Get,Delete}InvocationResult` capture each FaaS invocation's exit code + finished-at + error at the source:
