@@ -117,6 +117,30 @@ Other scope:
 - Simulator work: the GCP sim's `Function`, `Job`, `Service` resources all already carry annotation maps; add round-trip coverage for arbitrary string values.
 - Re-enable the label-filter assertions in `Test{CloudRun,ACA,GCF,AZF}ArithmeticWithLabels` (removed in BUG-746).
 
+### Phase 98 — Agent-driven container filesystem + introspection ops (queued)
+
+BUG-751 / 752 / 753 root cause: `docker cp` / `docker export` / `docker container stat` / `docker container top` / `docker diff` all need access to a running container's filesystem + process list. Cloud control planes (ECS Describe* / Cloud Run jobs / ACA jobs / Lambda invoke) don't expose any of that; the only path that works is an in-container agent that runs the operation locally and ships the result back over the reverse-agent WebSocket.
+
+Depends on **Phase 96** for CR + ACA (reverse-agent bootstrap). Lambda already has the hook. ECS uses SSM ExecuteCommand as the equivalent channel.
+
+| Docker op | Agent RPC | Cloud resource that carries the result |
+|---|---|---|
+| `docker cp` / `ContainerGetArchive` | `agent.ArchiveGet(path)` — the agent `tar c <path>` and streams the tarball back | Reverse-agent WS frame `Type=Archive` |
+| `docker cp` / `ContainerPutArchive` | `agent.ArchivePut(path, tarball)` — agent untars into container fs | Reverse-agent WS frame `Type=Archive` (direction inverted) |
+| `docker container stat` / `ContainerStatPath` | `agent.Stat(path)` — returns `stat` syscall fields | Reverse-agent WS frame `Type=Stat` |
+| `docker container top` | `agent.ProcList(psArgs)` — agent runs `ps <psArgs>` and streams output | Reverse-agent WS frame `Type=Top` |
+| `docker export` / `ContainerExport` | `agent.ArchiveGet("/")` — entire rootfs | Same as ArchiveGet |
+| `docker diff` / `ContainerChanges` | `agent.Changes(imageDigest)` — agent walks image rootfs layers + container rootfs, returns per-path Added/Changed/Deleted entries | Reverse-agent WS frame `Type=Diff` |
+
+Scope:
+- `agent/reverse` grows an `Archive` RPC on top of the existing `Exec` plumbing. Per-backend bootstraps (`sockerless-lambda-bootstrap`, `sockerless-cloudrun-bootstrap`, `sockerless-aca-bootstrap`) pick it up automatically because they share the dispatcher.
+- ECS uses SSM `StartSession` with the `AWS-RunShellScript` document to run the same commands when no reverse-agent is connected; the existing `backends/ecs/exec_cloud.go` SSM wrapper gains an `archiveGet` helper.
+- The `NotImplementedError` returns in each backend's `ContainerGetArchive` / `ContainerPutArchive` / `ContainerStatPath` / `ContainerExport` / `ContainerTop` / `ContainerChanges` get replaced with a call into the reverse-agent helper; when no agent is connected the error stays NotImplemented but mentions the Phase-96 prerequisite.
+
+### Phase 98b — Agent-driven `docker commit` (queued, optional)
+
+BUG-750 — Fargate/Lambda container images are control-plane-owned, but the in-container agent can tarball the rootfs and push it to the operator's registry (ECR / AR / ACR) after Phase 98 lands. Gated behind a config flag (`SOCKERLESS_ENABLE_COMMIT`) because it's a sharp edge: the resulting image isn't what the container started with, so it's not truly reproducible. Users opt in explicitly.
+
 ### Phase 68 — Multi-Tenant Backend Pools (queued)
 
 Named pools of backends with scheduling and resource limits. `P68-001` done; remaining tasks:

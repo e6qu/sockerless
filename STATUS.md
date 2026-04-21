@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**91 phases closed (759 tasks). 748 bugs tracked — 743 fixed, 3 open (BUG-744/745/746 scoped as Phase 95/96/97), 2 deferred fixed-as-phase (735/736 re-landed at Phase 91 for ECS), 1 false positive. Branch `continue-plan-post-113`.**
+**91 phases closed (759 tasks). 754 bugs tracked — 743 fixed, 11 open (BUG-744/745/746 scoped as Phase 95/96/97; BUG-747/748/749/750/751/752/753/754 are the NotImplemented audit — platform limits + Phase 98 candidates), 1 false positive. Branch `continue-plan-post-113`.**
 
 See [PLAN.md](PLAN.md) for the roadmap, [BUGS.md](BUGS.md) for the bug log (+ open-bug descriptions), [WHAT_WE_DID.md](WHAT_WE_DID.md) for the narrative, [specs/](specs/) for architecture specs.
 
@@ -20,6 +20,8 @@ See [PLAN.md](PLAN.md) for the roadmap, [BUGS.md](BUGS.md) for the bug log (+ op
 | 95 | FaaS invocation-lifecycle tracker (Lambda + GCF + AZF) — re-enables 7 deleted tests from BUG-744 | Queued. Design: per-backend cloud-native completion signal (Lambda Invoke response + CloudWatch END RequestId; GCF/AZF HTTP response status). |
 | 96 | Reverse-agent exec for Cloud Run Jobs + ACA Jobs (ports Lambda bootstrap pattern) | Queued — from BUG-745. |
 | 97 | Docker labels as GCP annotations / Azure tags on FaaS + Cloud Run / ACA | Queued — from BUG-746. |
+| 98 | Agent-driven filesystem + introspection ops (`docker cp` / `export` / `stat` / `top` / `diff`) via reverse-agent or SSM ExecuteCommand | Queued — from BUG-751/752/753; depends on Phase 96. |
+| 98b | Agent-driven `docker commit` (opt-in via `SOCKERLESS_ENABLE_COMMIT`) | Queued — from BUG-750; depends on Phase 98. |
 
 Detail per phase in [WHAT_WE_DID.md](WHAT_WE_DID.md). Open work items queued in [DO_NEXT.md](DO_NEXT.md).
 
