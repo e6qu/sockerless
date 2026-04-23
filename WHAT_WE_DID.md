@@ -4,6 +4,18 @@ Docker-compatible REST API that runs containers on cloud backends (ECS, Lambda, 
 
 See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for the bug log, [PLAN.md](PLAN.md) for the roadmap, [specs/](specs/) for architecture specs (start with [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md)).
 
+## Phase 98 — ContainerTop via reverse-agent (2026-04-23, partial)
+
+First slice of BUG-752: `docker top` now routes through the reverse-agent on every backend that has a bootstrap inside the container.
+
+New shared helpers:
+- `agent.ReverseAgentConn.CollectExec(sessionID, cmd, env, workdir) → (stdout, stderr, exit, err)` runs a one-shot command and returns the output accumulated from streamed Message events. Different shape from `BridgeExec` (no caller conn to multiplex) — fits the backend-driven-introspection call pattern.
+- `core.RunContainerTopViaAgent(registry, containerID, psArgs) → *api.ContainerTopResponse` + `core.ParseTopOutput` handle the `ps` exec + output parsing.
+
+Per-backend wiring: Lambda, Cloud Run, ACA, GCF, AZF all now return a real `ContainerTopResponse` when a reverse-agent session is registered, or a precise NotImplementedError (`no session registered`) otherwise. GCF + AZF gained the reverse-agent scaffolding (registry, `/v1/<backend>/reverse` WS endpoint, `SOCKERLESS_CALLBACK_URL` + `SOCKERLESS_CONTAINER_ID` env var injection) that Phase 96 had already given CR + ACA.
+
+Remaining Phase 98 methods (`docker cp` / `stat` / `diff` / `export`) follow the same pattern — one-shot `CollectExec` with different argv, wrapped in a backend-agnostic helper in `backends/core`.
+
 ## Phase 100 — Docker backend pod synthesis (2026-04-23)
 
 BUG-754 closed. Docker daemon has no native pod primitive but sockerless has tracked cloud containers by the `sockerless-pod` tag since Phase 89. The Docker backend now follows the same convention:
