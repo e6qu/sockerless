@@ -1049,15 +1049,21 @@ func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArch
 	return resp, nil
 }
 
-// ContainerPutArchive is not supported by the Cloud Run backend.
+// ContainerPutArchive extracts the incoming tar body into <path> via
+// the reverse-agent. Phase 98.
 func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDir bool, body io.Reader) error {
-	if _, ok := s.ResolveContainerAuto(context.Background(), id); !ok {
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
+	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: id}
 	}
-
-	return &api.NotImplementedError{
-		Message: "archive put is not supported by Cloud Run backend; no container filesystem access",
+	err := core.RunContainerPutArchiveViaAgent(s.reverseAgents, c.ID, path, body)
+	if err == core.ErrNoReverseAgent {
+		return &api.NotImplementedError{Message: "docker cp requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
 	}
+	if err != nil {
+		return &api.ServerError{Message: fmt.Sprintf("put-archive via reverse-agent: %v", err)}
+	}
+	return nil
 }
 
 // ContainerStatPath runs `stat` inside the Cloud Run task via the

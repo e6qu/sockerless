@@ -163,6 +163,17 @@ func (r *ReverseAgentRegistry) RunAndCapture(containerID, sessionID string, cmd,
 	return rc.CollectExec(sessionID, cmd, env, workdir)
 }
 
+// RunAndCaptureWithStdin is RunAndCapture + stdin streaming. Used by
+// docker cp host→container which pipes the tar body into
+// `tar -xf - -C <dst>` inside the container. Phase 98.
+func (r *ReverseAgentRegistry) RunAndCaptureWithStdin(containerID, sessionID string, cmd, env []string, workdir string, stdin []byte) (stdout, stderr []byte, exitCode int, err error) {
+	rc, ok := r.Resolve(containerID)
+	if !ok {
+		return nil, nil, -1, ErrNoReverseAgent
+	}
+	return rc.CollectExecWithStdin(sessionID, cmd, env, workdir, stdin)
+}
+
 // LogBytes / LogSubscribe / LogUnsubscribe satisfy the StreamDriver
 // interface but are no-ops for the reverse-agent path — log content
 // comes from the cloud-native log store, not the attach channel.

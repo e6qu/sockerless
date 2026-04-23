@@ -68,11 +68,21 @@ func (s *Server) ContainerInspect(id string) (*api.Container, error) {
 	return s.BaseServer.ContainerInspect(id)
 }
 
+// ContainerPutArchive extracts the incoming tar body into <path> via
+// the reverse-agent. Phase 98.
 func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDir bool, body io.Reader) error {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return s.BaseServer.ContainerPutArchive(id, path, noOverwriteDirNonDir, body)
+	err := core.RunContainerPutArchiveViaAgent(s.reverseAgents, cid, path, body)
+	if err == core.ErrNoReverseAgent {
+		return &api.NotImplementedError{Message: "docker cp requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	if err != nil {
+		return &api.ServerError{Message: fmt.Sprintf("put-archive via reverse-agent: %v", err)}
+	}
+	return nil
 }
 
 func (s *Server) ContainerRename(id string, newName string) error {

@@ -45,25 +45,30 @@ func RunContainerGetArchiveViaAgent(reg *ReverseAgentRegistry, containerID, srcP
 }
 
 // RunContainerPutArchiveViaAgent implements `docker cp /host/src CONTAINER:/dst`
-// by reading the tar body into memory, streaming it as stdin to a
+// by reading the tar body into memory and streaming it as stdin to a
 // `tar -xf - -C <dst>` exec running inside the container. Buffered in
 // memory — same tradeoff as GetArchive. Phase 98.
-//
-// Note: the reverse-agent protocol doesn't currently support stdin
-// streaming to CollectExec (one-shot, no feedback channel). This path
-// needs a new message type or BridgeExec-with-buffered-stdin helper —
-// filed as TODO here so the method surfaces a precise error rather
-// than silently misbehaving.
 func RunContainerPutArchiveViaAgent(reg *ReverseAgentRegistry, containerID, dstPath string, body io.Reader) error {
-	_ = body
-	_ = dstPath
 	if reg == nil {
 		return ErrNoReverseAgent
 	}
-	if _, ok := reg.Resolve(containerID); !ok {
-		return ErrNoReverseAgent
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return fmt.Errorf("read archive body: %w", err)
 	}
-	return fmt.Errorf("docker cp host→container not yet implemented via reverse-agent: needs stdin-streaming exec variant")
+	argv := []string{"tar", "-xf", "-", "-C", dstPath}
+	stdout, stderr, exit, err := reg.RunAndCaptureWithStdin(containerID, "putarchive-"+containerID, argv, nil, "", data)
+	if err != nil {
+		return err
+	}
+	if exit != 0 {
+		msg := strings.TrimSpace(string(stderr))
+		if msg == "" {
+			msg = strings.TrimSpace(string(stdout))
+		}
+		return fmt.Errorf("tar extract failed (exit %d): %s", exit, msg)
+	}
+	return nil
 }
 
 // RunContainerExportViaAgent returns a tar stream of the container's
