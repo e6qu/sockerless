@@ -87,8 +87,8 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	// when a session is connected. The BaseServer's default
 	// LocalExecDriver/LocalStreamDriver error out since Lambda has no
 	// local container namespace; the reverse-agent pattern fills the gap.
-	s.Drivers.Exec = &lambdaExecDriver{registry: s.reverseAgents, logger: logger}
-	s.Drivers.Stream = &lambdaStreamDriver{registry: s.reverseAgents, logger: logger}
+	s.Drivers.Exec = &lambdaExecDriver{Registry: s.reverseAgents, Logger: logger}
+	s.Drivers.Stream = &lambdaStreamDriver{Registry: s.reverseAgents, Logger: logger}
 
 	return s
 }

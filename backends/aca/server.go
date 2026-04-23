@@ -20,6 +20,9 @@ type Server struct {
 	ACA          *core.StateStore[ACAState]
 	NetworkState *core.StateStore[NetworkState]
 	azureVolumeState
+	// Phase 96: reverse-agent registry for docker exec / attach through
+	// a bootstrap running inside the ACA Job/App container.
+	reverseAgents *core.ReverseAgentRegistry
 }
 
 // NewServer creates a new ACA backend server.
@@ -75,6 +78,14 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	}
 
 	registerUI(s.BaseServer)
+
+	// Phase 96: reverse-agent registry + WS endpoint (see cloudrun for
+	// design notes). Container-side bootstrap dials
+	// SOCKERLESS_CALLBACK_URL → /v1/aca/reverse?session_id=<container>.
+	s.reverseAgents = core.NewReverseAgentRegistry()
+	s.Mux.HandleFunc("/v1/aca/reverse", core.HandleReverseAgentWS(s.reverseAgents, logger))
+	s.Drivers.Exec = &core.ReverseAgentExecDriver{Registry: s.reverseAgents, Logger: logger}
+	s.Drivers.Stream = &core.ReverseAgentStreamDriver{Registry: s.reverseAgents, Logger: logger}
 
 	return s
 }

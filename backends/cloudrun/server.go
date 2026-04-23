@@ -20,6 +20,9 @@ type Server struct {
 	CloudRun     *core.StateStore[CloudRunState]
 	NetworkState *core.StateStore[NetworkState]
 	gcsVolumeState
+	// Phase 96: reverse-agent registry for docker exec / attach through
+	// a bootstrap running inside the CR Job/Service container.
+	reverseAgents *core.ReverseAgentRegistry
 }
 
 // NewServer creates a new Cloud Run backend server.
@@ -71,6 +74,16 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	}
 
 	registerUI(s.BaseServer)
+
+	// Phase 96: reverse-agent registry + WS endpoint. Container-side
+	// bootstraps dial `SOCKERLESS_CALLBACK_URL` → `/v1/cloudrun/reverse`
+	// and register under their container ID. Without a bootstrap image
+	// in use, the registry stays empty and Exec/Attach return code 126
+	// (no session).
+	s.reverseAgents = core.NewReverseAgentRegistry()
+	s.Mux.HandleFunc("/v1/cloudrun/reverse", core.HandleReverseAgentWS(s.reverseAgents, logger))
+	s.Drivers.Exec = &core.ReverseAgentExecDriver{Registry: s.reverseAgents, Logger: logger}
+	s.Drivers.Stream = &core.ReverseAgentStreamDriver{Registry: s.reverseAgents, Logger: logger}
 
 	return s
 }

@@ -38,7 +38,7 @@ func TestLambdaExec_EndToEnd_OverReverseAgent(t *testing.T) {
 		reverseAgents: newReverseAgentRegistry(),
 	}
 	s.registerReverseAgentRoutes(logger)
-	s.Drivers.Exec = &lambdaExecDriver{registry: s.reverseAgents, logger: logger}
+	s.Drivers.Exec = &lambdaExecDriver{Registry: s.reverseAgents, Logger: logger}
 
 	// Serve the reverse-agent endpoint.
 	srv := httptest.NewServer(base.Mux)
