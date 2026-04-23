@@ -305,7 +305,13 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 func waitAndCaptureLogs(ctx context.Context, cli *client.Client, containerID string, cfg ContainerConfig, sink LogSink) ProcessResult {
 	startedAt := time.Now()
 
-	// Attach to logs — must complete before we return the result
+	// Attach to logs — must complete before we return the result.
+	// The follow stream can race with very short-lived containers
+	// (StartContainerSync → ContainerLogs → container already exited
+	// with its stdout in Docker's buffer but the follow reader sees
+	// EOF before all of it reaches stdcopy). Track the line count so
+	// the post-exit backfill read below can fill any gap.
+	counter := &countingSink{inner: sink}
 	var logDone chan struct{}
 	logReader, err := cli.ContainerLogs(ctx, containerID, container.LogsOptions{
 		ShowStdout: true,
@@ -316,7 +322,7 @@ func waitAndCaptureLogs(ctx context.Context, cli *client.Client, containerID str
 	if err == nil {
 		logDone = make(chan struct{})
 		go func() {
-			streamDockerLogs(logReader, sink)
+			streamDockerLogs(logReader, counter)
 			close(logDone)
 		}()
 	}
@@ -378,7 +384,103 @@ func waitAndCaptureLogs(ctx context.Context, cli *client.Client, containerID str
 		}
 	}
 
+	// Backfill: the container has exited, so a non-follow read now
+	// returns everything Docker buffered for the container. If follow
+	// mode missed any lines (short-lived-container race), forward
+	// them. Uses the line counter maintained above to skip lines
+	// already emitted via the follow stream.
+	if err == nil {
+		backfillMissedLogs(ctx, cli, containerID, counter)
+	}
+
 	return result
+}
+
+// backfillMissedLogs does a non-follow ContainerLogs read and forwards
+// any lines beyond what the follow stream already saw. The container
+// must have exited before this is called.
+func backfillMissedLogs(ctx context.Context, cli *client.Client, containerID string, counter *countingSink) {
+	reader, err := cli.ContainerLogs(ctx, containerID, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     false,
+		Timestamps: false,
+	})
+	if err != nil {
+		return
+	}
+	defer reader.Close()
+
+	stdoutPR, stdoutPW := io.Pipe()
+	stderrPR, stderrPW := io.Pipe()
+
+	go func() {
+		_, _ = stdcopy.StdCopy(stdoutPW, stderrPW, reader)
+		_ = stdoutPW.Close()
+		_ = stderrPW.Close()
+	}()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Already-seen line counts, captured before we start consuming.
+	skipStdout := counter.StdoutCount()
+	skipStderr := counter.StderrCount()
+
+	scan := func(r io.Reader, stream string, skip int) {
+		defer wg.Done()
+		scanner := bufio.NewScanner(r)
+		seen := 0
+		for scanner.Scan() {
+			seen++
+			if seen <= skip {
+				continue
+			}
+			counter.inner.WriteLog(LogLine{
+				Stream:    stream,
+				Text:      scanner.Text(),
+				Timestamp: time.Now(),
+			})
+		}
+	}
+
+	go scan(stdoutPR, "stdout", skipStdout)
+	go scan(stderrPR, "stderr", skipStderr)
+
+	wg.Wait()
+}
+
+// countingSink wraps a LogSink and tracks per-stream line counts so
+// the post-exit backfill read knows how many lines have already been
+// forwarded via follow mode.
+type countingSink struct {
+	inner  LogSink
+	mu     sync.Mutex
+	stdout int
+	stderr int
+}
+
+func (c *countingSink) WriteLog(line LogLine) {
+	c.mu.Lock()
+	if line.Stream == "stderr" {
+		c.stderr++
+	} else {
+		c.stdout++
+	}
+	c.mu.Unlock()
+	c.inner.WriteLog(line)
+}
+
+func (c *countingSink) StdoutCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.stdout
+}
+
+func (c *countingSink) StderrCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.stderr
 }
 
 // streamDockerLogs demuxes Docker log output and sends lines to the sink.
