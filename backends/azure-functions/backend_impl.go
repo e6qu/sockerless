@@ -637,22 +637,24 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 	}, nil
 }
 
-// ContainerPause is not supported by the Azure Functions backend.
+// ContainerPause sends SIGSTOP to the user subprocess via the reverse-
+// agent.
 func (s *Server) ContainerPause(ref string) error {
-	_, ok := s.ResolveContainerIDAuto(context.Background(), ref)
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-	return &api.NotImplementedError{Message: "Azure Functions backend does not support pause"}
+	return core.MapPauseErr(core.RunContainerPauseViaAgent(s.reverseAgents, cid))
 }
 
-// ContainerUnpause is not supported by the Azure Functions backend.
+// ContainerUnpause sends SIGCONT to the user subprocess via the
+// reverse-agent.
 func (s *Server) ContainerUnpause(ref string) error {
-	_, ok := s.ResolveContainerIDAuto(context.Background(), ref)
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-	return &api.NotImplementedError{Message: "Azure Functions backend does not support unpause"}
+	return core.MapPauseErr(core.RunContainerUnpauseViaAgent(s.reverseAgents, cid))
 }
 
 // ImagePull delegates to ImageManager for unified cloud image handling.

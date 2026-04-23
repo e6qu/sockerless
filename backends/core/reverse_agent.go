@@ -97,6 +97,12 @@ func HandleReverseAgentWS(reg *ReverseAgentRegistry, logger zerolog.Logger) http
 // bootstrap hasn't dialed yet, or the container was killed.
 var ErrNoReverseAgent = errors.New("no reverse-agent session registered for container")
 
+// ErrBootstrapNoPIDFile is returned by pause/unpause when the bootstrap
+// inside the container does not write the main-PID file to the expected
+// path. Callers translate this to a NotImplementedError that names the
+// missing convention explicitly.
+var ErrBootstrapNoPIDFile = errors.New("bootstrap did not write main-PID file")
+
 // ReverseAgentExecDriver routes `docker exec` through the registry.
 // Returns exit code 126 when no session is registered — matches
 // Docker's convention for "command cannot execute".

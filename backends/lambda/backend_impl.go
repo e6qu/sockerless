@@ -761,20 +761,24 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 	}, nil
 }
 
-// ContainerPause is not supported by the Lambda backend.
+// ContainerPause sends SIGSTOP to the user subprocess via the reverse-
+// agent.
 func (s *Server) ContainerPause(ref string) error {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), ref); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
+	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-	return &api.NotImplementedError{Message: "Lambda backend does not support pause"}
+	return core.MapPauseErr(core.RunContainerPauseViaAgent(s.reverseAgents, cid))
 }
 
-// ContainerUnpause is not supported by the Lambda backend.
+// ContainerUnpause sends SIGCONT to the user subprocess via the
+// reverse-agent.
 func (s *Server) ContainerUnpause(ref string) error {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), ref); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
+	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-	return &api.NotImplementedError{Message: "Lambda backend does not support unpause"}
+	return core.MapPauseErr(core.RunContainerUnpauseViaAgent(s.reverseAgents, cid))
 }
 
 // ImagePull pulls an image, using ECR cloud auth when available.
