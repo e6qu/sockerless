@@ -2,6 +2,7 @@ package simulator
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -378,10 +379,23 @@ func drainContainerLogs(ctx context.Context, cli *client.Client, containerID str
 		Timestamps: false,
 	})
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "[sim-debug] ContainerLogs error for %s: %v\n", containerID[:12], err)
 		return
 	}
 	defer reader.Close()
-	streamDockerLogs(reader, sink)
+
+	// Read all bytes first so we can see what Docker actually returned
+	// before demuxing. Debug output to stderr while chasing BUG-756.
+	all, readErr := io.ReadAll(reader)
+	if readErr != nil {
+		fmt.Fprintf(os.Stderr, "[sim-debug] io.ReadAll error for %s: %v (got %d bytes)\n", containerID[:12], readErr, len(all))
+	}
+	fmt.Fprintf(os.Stderr, "[sim-debug] ContainerLogs %s returned %d bytes: %q\n", containerID[:12], len(all), string(all))
+
+	// Demux the captured bytes via stdcopy and forward lines to the
+	// sink. We use bytes.NewReader so the logic is identical to the
+	// live-stream path without re-opening the reader.
+	streamDockerLogs(io.NopCloser(bytes.NewReader(all)), sink)
 }
 
 // streamDockerLogs demuxes Docker log output and sends lines to the sink.
