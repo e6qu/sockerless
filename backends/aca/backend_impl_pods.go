@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/sockerless/api"
+	core "github.com/sockerless/backend-core"
 )
 
 // PodStart starts all containers in a pod by calling ContainerStart for each.
@@ -191,13 +192,21 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	return s.cloudExecStart(exec, &c)
 }
 
-// ContainerExport is not supported by the ACA backend.
-// ACA Jobs do not provide filesystem access for container export.
+// ContainerExport streams the container's rootfs as tar via the
+// reverse-agent. Phase 98 (BUG-751).
 func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), ref); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
-	return nil, &api.NotImplementedError{Message: "container export is not supported by ACA backend: no container filesystem access"}
+	rc, err := core.RunContainerExportViaAgent(s.reverseAgents, cid)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker export requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("export via reverse-agent: %v", err)}
+	}
+	return rc, nil
 }
 
 // ContainerCommit is not supported by the ACA backend.

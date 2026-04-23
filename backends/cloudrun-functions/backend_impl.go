@@ -742,15 +742,21 @@ func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
 	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
 }
 
-// ContainerExport is not supported by the Cloud Run Functions backend.
-// Cloud Run Functions have no local filesystem to export.
+// ContainerExport streams the function container's rootfs as tar via
+// the reverse-agent. Phase 98 (BUG-751).
 func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return nil, &api.NotImplementedError{
-		Message: "Cloud Run Functions backend does not support container export; functions have no local filesystem",
+	rc, err := core.RunContainerExportViaAgent(s.reverseAgents, cid)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker export requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
 	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("export via reverse-agent: %v", err)}
+	}
+	return rc, nil
 }
 
 // ContainerCommit is not supported by the Cloud Run Functions backend.

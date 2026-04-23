@@ -844,12 +844,21 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 	}
 }
 
-// ContainerExport is not supported by Cloud Run backend.
+// ContainerExport streams the container's rootfs as tar via the
+// reverse-agent. Phase 98 (BUG-751).
 func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), ref); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
-	return nil, &api.NotImplementedError{Message: "container export is not supported by Cloud Run backend: no container filesystem access"}
+	rc, err := core.RunContainerExportViaAgent(s.reverseAgents, cid)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker export requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("export via reverse-agent: %v", err)}
+	}
+	return rc, nil
 }
 
 // ContainerCommit is not supported by Cloud Run backend.
@@ -1023,15 +1032,21 @@ func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopRespon
 	return resp, nil
 }
 
-// ContainerGetArchive is not supported by the Cloud Run backend.
+// ContainerGetArchive runs `tar -cf - -C <parent> <name>` inside the
+// container via the reverse-agent. Phase 98 (BUG-751).
 func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArchiveResponse, error) {
-	if _, ok := s.ResolveContainerAuto(context.Background(), id); !ok {
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-
-	return nil, &api.NotImplementedError{
-		Message: "archive get is not supported by Cloud Run backend; no container filesystem access",
+	resp, err := core.RunContainerGetArchiveViaAgent(s.reverseAgents, c.ID, path)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker cp requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
 	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("archive via reverse-agent: %v", err)}
+	}
+	return resp, nil
 }
 
 // ContainerPutArchive is not supported by the Cloud Run backend.

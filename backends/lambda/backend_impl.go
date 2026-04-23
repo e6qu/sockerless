@@ -841,15 +841,22 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	}
 }
 
-// ContainerExport is not supported by the Lambda backend.
-// Lambda functions have no local filesystem to export.
+// ContainerExport streams a tar archive of the Lambda container's
+// rootfs via the reverse-agent. Phase 98 (BUG-751). Buffered in memory;
+// see core.RunContainerExportViaAgent for the size caveat.
 func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return nil, &api.NotImplementedError{
-		Message: "Lambda backend does not support container export; functions have no local filesystem",
+	rc, err := core.RunContainerExportViaAgent(s.reverseAgents, cid)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker export requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
 	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("export via reverse-agent: %v", err)}
+	}
+	return rc, nil
 }
 
 // ContainerCommit is not supported by the Lambda backend.
