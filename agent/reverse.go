@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -90,6 +91,53 @@ func (rc *ReverseAgentConn) BridgeExec(conn net.Conn, sessionID string, cmd []st
 	})
 
 	return rc.bridge(conn, sessionID, ch, tty)
+}
+
+// CollectExec runs a one-shot command on the remote agent and returns
+// (stdout, stderr, exit code). Unlike BridgeExec there's no caller
+// connection to multiplex — output is accumulated in memory and
+// returned when the remote process exits. Intended for backend-driven
+// introspection calls like `docker top` / `docker container stat`
+// where we need the output as a value, not a streamed proxy. Phase 98.
+func (rc *ReverseAgentConn) CollectExec(sessionID string, cmd []string, env []string, workdir string) (stdout, stderr []byte, exitCode int, err error) {
+	ch := make(chan Message, 64)
+	rc.sessions.Store(sessionID, ch)
+	defer rc.sessions.Delete(sessionID)
+
+	if err = rc.SendJSON(Message{
+		Type:    TypeExec,
+		ID:      sessionID,
+		Cmd:     cmd,
+		Env:     env,
+		WorkDir: workdir,
+	}); err != nil {
+		return nil, nil, -1, err
+	}
+
+	for {
+		select {
+		case msg := <-ch:
+			switch msg.Type {
+			case TypeStdout:
+				if b, derr := base64.StdEncoding.DecodeString(msg.Data); derr == nil {
+					stdout = append(stdout, b...)
+				}
+			case TypeStderr:
+				if b, derr := base64.StdEncoding.DecodeString(msg.Data); derr == nil {
+					stderr = append(stderr, b...)
+				}
+			case TypeExit:
+				if msg.Code != nil {
+					exitCode = *msg.Code
+				}
+				return stdout, stderr, exitCode, nil
+			case TypeError:
+				return stdout, stderr, -1, fmt.Errorf("agent error: %s", msg.Message)
+			}
+		case <-rc.done:
+			return stdout, stderr, -1, fmt.Errorf("agent connection closed")
+		}
+	}
 }
 
 // BridgeAttach sends an attach command and bridges the session bidirectionally.

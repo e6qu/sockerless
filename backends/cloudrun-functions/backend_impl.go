@@ -196,6 +196,13 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		envVars["SOCKERLESS_LABELS"] = base64.StdEncoding.EncodeToString(labelsJSON)
 	}
 
+	// Phase 98: inject reverse-agent callback URL when configured so a
+	// bootstrap inside the function container can dial back for docker
+	// top / exec / cp. SOCKERLESS_CONTAINER_ID is already set above.
+	if s.config.CallbackURL != "" {
+		envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
+	}
+
 	// Build service config
 	serviceConfig := &functionspb.ServiceConfig{
 		AvailableMemory:      s.config.Memory,

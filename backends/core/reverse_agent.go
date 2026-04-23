@@ -150,6 +150,19 @@ func (d *ReverseAgentStreamDriver) Attach(_ context.Context, containerID string,
 	return nil
 }
 
+// RunAndCapture executes a one-shot command in the container over the
+// reverse-agent WS and collects stdout/stderr/exit-code. Returns
+// (nil, nil, -1, ErrNoReverseAgent) if no session is registered.
+// Phase 98: used by ContainerTop / ContainerStatPath / ContainerChanges
+// which need command output as a value rather than a streamed proxy.
+func (r *ReverseAgentRegistry) RunAndCapture(containerID, sessionID string, cmd, env []string, workdir string) (stdout, stderr []byte, exitCode int, err error) {
+	rc, ok := r.Resolve(containerID)
+	if !ok {
+		return nil, nil, -1, ErrNoReverseAgent
+	}
+	return rc.CollectExec(sessionID, cmd, env, workdir)
+}
+
 // LogBytes / LogSubscribe / LogUnsubscribe satisfy the StreamDriver
 // interface but are no-ops for the reverse-agent path — log content
 // comes from the cloud-native log store, not the attach channel.

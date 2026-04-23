@@ -10,6 +10,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 	"github.com/sockerless/api"
 	azurecommon "github.com/sockerless/azure-common"
+	core "github.com/sockerless/backend-core"
 )
 
 // shareToVolume converts a sockerless-managed Azure Files share into a
@@ -98,11 +99,21 @@ func (s *Server) ContainerStats(id string, stream bool) (io.ReadCloser, error) {
 	return s.BaseServer.ContainerStats(id, stream)
 }
 
+// ContainerTop runs `ps` inside the function app container via the
+// reverse-agent. Phase 98 (BUG-752).
 func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopResponse, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return s.BaseServer.ContainerTop(id, psArgs)
+	resp, err := core.RunContainerTopViaAgent(s.reverseAgents, cid, psArgs)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker top requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("top via reverse-agent: %v", err)}
+	}
+	return resp, nil
 }
 
 func (s *Server) ContainerUpdate(id string, req *api.ContainerUpdateRequest) (*api.ContainerUpdateResponse, error) {

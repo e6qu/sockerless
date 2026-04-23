@@ -196,6 +196,18 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		})
 	}
 
+	// Phase 98: inject reverse-agent callback URL + container ID so a
+	// bootstrap in the function container can dial back for docker top /
+	// exec / cp.
+	appSettings = append(appSettings, &armappservice.NameValuePair{
+		Name: ptr("SOCKERLESS_CONTAINER_ID"), Value: ptr(id),
+	})
+	if s.config.CallbackURL != "" {
+		appSettings = append(appSettings, &armappservice.NameValuePair{
+			Name: ptr("SOCKERLESS_CALLBACK_URL"), Value: ptr(s.config.CallbackURL),
+		})
+	}
+
 	// Build the Function App Site resource
 	siteConfig := &armappservice.SiteConfig{
 		LinuxFxVersion: ptr("DOCKER|" + config.Image),

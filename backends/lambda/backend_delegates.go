@@ -11,6 +11,7 @@ import (
 	efstypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
 	"github.com/sockerless/api"
 	awscommon "github.com/sockerless/aws-common"
+	core "github.com/sockerless/backend-core"
 )
 
 // accessPointToVolume converts an EFS AccessPointDescription into the
@@ -92,11 +93,23 @@ func (s *Server) ContainerStats(id string, stream bool) (io.ReadCloser, error) {
 	return s.BaseServer.ContainerStats(id, stream)
 }
 
+// ContainerTop runs `ps` inside the container via the reverse-agent
+// and parses the output. Phase 98 (BUG-752). Requires a bootstrap /
+// agent running inside the container; returns ErrNoReverseAgent when
+// no session is registered.
 func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopResponse, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return s.BaseServer.ContainerTop(id, psArgs)
+	resp, err := core.RunContainerTopViaAgent(s.reverseAgents, cid, psArgs)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker top requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("top via reverse-agent: %v", err)}
+	}
+	return resp, nil
 }
 
 func (s *Server) ContainerUpdate(id string, req *api.ContainerUpdateRequest) (*api.ContainerUpdateResponse, error) {

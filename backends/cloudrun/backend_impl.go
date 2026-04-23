@@ -1000,7 +1000,9 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	}
 }
 
-// ContainerTop is not supported by the Cloud Run backend.
+// ContainerTop runs `ps` inside the container via the reverse-agent
+// and parses the output. Phase 98 (BUG-752). Requires a bootstrap
+// inside the container (SOCKERLESS_CALLBACK_URL).
 func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopResponse, error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
@@ -1011,7 +1013,14 @@ func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopRespon
 		return nil, &api.ConflictError{Message: fmt.Sprintf("Container %s is not running", id)}
 	}
 
-	return nil, &api.NotImplementedError{Message: "container top is not supported by Cloud Run backend"}
+	resp, err := core.RunContainerTopViaAgent(s.reverseAgents, c.ID, psArgs)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker top requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("top via reverse-agent: %v", err)}
+	}
+	return resp, nil
 }
 
 // ContainerGetArchive is not supported by the Cloud Run backend.
