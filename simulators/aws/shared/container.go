@@ -166,6 +166,9 @@ func StartContainerSync(cfg ContainerConfig, sink LogSink) (*ContainerHandle, er
 
 	managedContainers.Store(containerID, true)
 
+	fmt.Fprintf(os.Stderr, "[sim-debug] StartContainerSync %s image=%q entrypoint=%v cmd=%v timeout=%v\n",
+		containerID[:12], cfg.Image, cfg.Command, cfg.Args, cfg.Timeout)
+
 	// Stream logs and wait for exit in background
 	go func() {
 		result := waitAndCaptureLogs(ctx, cli, containerID, cfg, sink)
@@ -327,6 +330,7 @@ func waitAndCaptureLogs(ctx context.Context, cli *client.Client, containerID str
 	select {
 	case err := <-errCh:
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "[sim-debug] ContainerWait errCh for %s: %v\n", containerID[:12], err)
 			result = ProcessResult{
 				ExitCode:  -1,
 				StartedAt: startedAt,
@@ -335,12 +339,14 @@ func waitAndCaptureLogs(ctx context.Context, cli *client.Client, containerID str
 			}
 		}
 	case status := <-statusCh:
+		fmt.Fprintf(os.Stderr, "[sim-debug] ContainerWait statusCh for %s: exit=%d (waited %v)\n", containerID[:12], status.StatusCode, time.Since(startedAt))
 		result = ProcessResult{
 			ExitCode:  int(status.StatusCode),
 			StartedAt: startedAt,
 			StoppedAt: time.Now(),
 		}
 	case <-ctx.Done():
+		fmt.Fprintf(os.Stderr, "[sim-debug] ContainerWait ctx.Done for %s\n", containerID[:12])
 		timeout := 5
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer stopCancel()
