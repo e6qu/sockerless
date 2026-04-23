@@ -37,11 +37,21 @@ func accessPointToVolume(ap efstypes.AccessPointDescription) *api.Volume {
 
 // --- Container methods requiring resolution ---
 
+// ContainerChanges lists files modified since container boot via the
+// reverse-agent (find + /proc/1 baseline). Phase 98 (BUG-753).
 func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return s.BaseServer.ContainerChanges(id)
+	items, err := core.RunContainerChangesViaAgent(s.reverseAgents, cid)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker diff requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("changes via reverse-agent: %v", err)}
+	}
+	return items, nil
 }
 
 // ContainerGetArchive runs `tar -cf - -C <parent> <name>` inside the
