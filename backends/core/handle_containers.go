@@ -63,11 +63,25 @@ func (s *BaseServer) handleContainerCreate(w http.ResponseWriter, r *http.Reques
 
 	// Pod association via query param (Podman convention: ?pod=<nameOrID>)
 	podRef := r.URL.Query().Get("pod")
+	var podMeta *PodContext
 	if podRef != "" {
-		if _, ok := s.Store.Pods.GetPod(podRef); !ok {
+		pod, ok := s.Store.Pods.GetPod(podRef)
+		if !ok {
 			WriteError(w, &api.NotFoundError{Resource: "pod", ID: podRef})
 			return
 		}
+		podMeta = pod
+		// Tag the container's labels with sockerless-pod=<name> BEFORE
+		// ContainerCreate so every backend (Docker included) preserves
+		// pod membership on the underlying cloud resource, not just in
+		// Store.Pods. Phase 100 (BUG-754).
+		if req.ContainerConfig == nil {
+			req.ContainerConfig = &api.ContainerConfig{}
+		}
+		if req.Labels == nil {
+			req.Labels = make(map[string]string)
+		}
+		req.Labels["sockerless-pod"] = pod.Name
 	}
 
 	resp, err := s.self.ContainerCreate(&req)
@@ -77,9 +91,8 @@ func (s *BaseServer) handleContainerCreate(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Explicit pod association (validated above)
-	if podRef != "" {
-		pod, _ := s.Store.Pods.GetPod(podRef)
-		_ = s.Store.Pods.AddContainer(pod.ID, resp.ID)
+	if podMeta != nil {
+		_ = s.Store.Pods.AddContainer(podMeta.ID, resp.ID)
 	}
 
 	WriteJSON(w, http.StatusCreated, resp)

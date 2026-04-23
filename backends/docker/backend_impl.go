@@ -1128,44 +1128,239 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 	return &api.ContainerCommitResponse{ID: resp.ID}, nil
 }
 
-// PodCreate is not supported by Docker backend.
+// Phase 100 (BUG-754): Docker backend now synthesises pods via the
+// shared `sockerless-pod` label convention. Local Docker daemon has no
+// native pod primitive, but sockerless already tracks pods in
+// Store.Pods and labels cloud-managed containers with `sockerless-pod`
+// for cross-backend consistency. The Docker backend follows the same
+// pattern:
+//  - Store.Pods (via BaseServer's PodCreate/Inspect/Exists) holds the
+//    pod metadata within a backend run.
+//  - PodList merges Store.Pods with live Docker containers grouped by
+//    the `sockerless-pod` label so `docker pod ls` after a backend
+//    restart still reflects containers that survived.
+//  - PodStart/Stop/Kill/Remove fan out to the Docker daemon over the
+//    SDK — not the in-memory Store.Containers which the BaseServer
+//    defaults operate on.
+
+// PodCreate delegates to BaseServer (in-memory registry).
 func (s *Server) PodCreate(req *api.PodCreateRequest) (*api.PodCreateResponse, error) {
-	return nil, &api.NotImplementedError{Message: "pods are not supported by Docker backend"}
+	return s.BaseServer.PodCreate(req)
 }
 
-// PodList is not supported by Docker backend.
-func (s *Server) PodList(opts api.PodListOptions) ([]*api.PodListEntry, error) {
-	return []*api.PodListEntry{}, nil
-}
-
-// PodInspect is not supported by Docker backend.
+// PodInspect delegates to BaseServer for metadata, augmenting with live
+// docker container membership derived from the sockerless-pod label so
+// inspect output reflects containers that survived a restart.
 func (s *Server) PodInspect(name string) (*api.PodInspectResponse, error) {
-	return nil, &api.NotFoundError{Resource: "pod", ID: name}
+	if pod, ok := s.Store.Pods.GetPod(name); ok {
+		return s.BaseServer.PodInspect(pod.Name)
+	}
+	// Reconstruct from docker containers labelled with the pod name.
+	containers, err := s.dockerContainersByPodLabel(context.Background(), name)
+	if err != nil {
+		return nil, mapDockerError(err)
+	}
+	if len(containers) == 0 {
+		return nil, &api.NotFoundError{Resource: "pod", ID: name}
+	}
+	infos := make([]api.PodContainerInfo, 0, len(containers))
+	state := "stopped"
+	for _, c := range containers {
+		if c.State == "running" {
+			state = "running"
+		}
+		infos = append(infos, api.PodContainerInfo{ID: c.ID, Name: nameFromDocker(c), State: c.State})
+	}
+	created := ""
+	if len(containers) > 0 {
+		created = time.Unix(containers[0].Created, 0).UTC().Format(time.RFC3339Nano)
+	}
+	return &api.PodInspectResponse{
+		ID:            name,
+		Name:          name,
+		Created:       created,
+		State:         state,
+		Containers:    infos,
+		NumContainers: len(infos),
+	}, nil
 }
 
-// PodExists is not supported by Docker backend.
+// PodExists reports presence in Store.Pods OR by label lookup against
+// the Docker daemon.
 func (s *Server) PodExists(name string) (bool, error) {
-	return false, nil
+	if s.Store.Pods.Exists(name) {
+		return true, nil
+	}
+	containers, err := s.dockerContainersByPodLabel(context.Background(), name)
+	if err != nil {
+		return false, mapDockerError(err)
+	}
+	return len(containers) > 0, nil
 }
 
-// PodStart is not supported by Docker backend.
+// PodList merges in-memory Store.Pods entries with pods reconstructed
+// from local docker containers carrying the `sockerless-pod` label.
+func (s *Server) PodList(opts api.PodListOptions) ([]*api.PodListEntry, error) {
+	result := []*api.PodListEntry{}
+	seen := make(map[string]bool)
+	// In-memory pods first (these have richer metadata).
+	if base, err := s.BaseServer.PodList(opts); err == nil {
+		for _, p := range base {
+			result = append(result, p)
+			seen[p.Name] = true
+		}
+	}
+	// Pods synthesised from container labels for anything Store.Pods
+	// doesn't know about (post-restart reconstruction).
+	containers, err := s.docker.ContainerList(context.Background(), container.ListOptions{
+		All:     true,
+		Filters: filters.NewArgs(filters.Arg("label", "sockerless-pod")),
+	})
+	if err != nil {
+		return result, nil
+	}
+	groups := make(map[string][]types.Container)
+	for _, c := range containers {
+		podName := c.Labels["sockerless-pod"]
+		if podName == "" || seen[podName] {
+			continue
+		}
+		groups[podName] = append(groups[podName], c)
+	}
+	for podName, members := range groups {
+		state := "stopped"
+		infos := make([]api.PodContainerInfo, 0, len(members))
+		for _, c := range members {
+			if c.State == "running" {
+				state = "running"
+			}
+			infos = append(infos, api.PodContainerInfo{ID: c.ID, Name: nameFromDocker(c), State: c.State})
+		}
+		result = append(result, &api.PodListEntry{
+			ID:         podName,
+			Name:       podName,
+			Status:     state,
+			Containers: infos,
+		})
+	}
+	return result, nil
+}
+
+// PodStart starts all containers in a pod via the Docker daemon.
 func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
-	return nil, &api.NotFoundError{Resource: "pod", ID: name}
+	ids, err := s.podContainerIDs(context.Background(), name)
+	if err != nil {
+		return nil, err
+	}
+	ctx := context.Background()
+	var errs []string
+	for _, id := range ids {
+		if err := s.docker.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	if pod, ok := s.Store.Pods.GetPod(name); ok {
+		s.Store.Pods.SetStatus(pod.ID, "running")
+	}
+	return &api.PodActionResponse{ID: name, Errs: errs}, nil
 }
 
-// PodStop is not supported by Docker backend.
+// PodStop stops all containers in a pod via the Docker daemon.
 func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, error) {
-	return nil, &api.NotFoundError{Resource: "pod", ID: name}
+	ids, err := s.podContainerIDs(context.Background(), name)
+	if err != nil {
+		return nil, err
+	}
+	ctx := context.Background()
+	var errs []string
+	for _, id := range ids {
+		if err := s.docker.ContainerStop(ctx, id, container.StopOptions{Timeout: timeout}); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	if pod, ok := s.Store.Pods.GetPod(name); ok {
+		s.Store.Pods.SetStatus(pod.ID, "stopped")
+	}
+	return &api.PodActionResponse{ID: name, Errs: errs}, nil
 }
 
-// PodKill is not supported by Docker backend.
+// PodKill sends a signal to all containers in a pod.
 func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, error) {
-	return nil, &api.NotFoundError{Resource: "pod", ID: name}
+	ids, err := s.podContainerIDs(context.Background(), name)
+	if err != nil {
+		return nil, err
+	}
+	if signal == "" {
+		signal = "SIGKILL"
+	}
+	ctx := context.Background()
+	var errs []string
+	for _, id := range ids {
+		if err := s.docker.ContainerKill(ctx, id, signal); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	if pod, ok := s.Store.Pods.GetPod(name); ok {
+		s.Store.Pods.SetStatus(pod.ID, "exited")
+	}
+	return &api.PodActionResponse{ID: name, Errs: errs}, nil
 }
 
-// PodRemove is not supported by Docker backend.
+// PodRemove removes all containers in a pod and deletes the pod
+// metadata from Store.Pods.
 func (s *Server) PodRemove(name string, force bool) error {
-	return &api.NotFoundError{Resource: "pod", ID: name}
+	ids, err := s.podContainerIDs(context.Background(), name)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	for _, id := range ids {
+		if err := s.docker.ContainerRemove(ctx, id, container.RemoveOptions{Force: force}); err != nil {
+			return mapDockerError(err)
+		}
+	}
+	if pod, ok := s.Store.Pods.GetPod(name); ok {
+		s.Store.Pods.DeletePod(pod.ID)
+	}
+	return nil
+}
+
+// podContainerIDs returns the container IDs belonging to a pod. Prefers
+// Store.Pods, falls back to the sockerless-pod label scan on the Docker
+// daemon.
+func (s *Server) podContainerIDs(ctx context.Context, name string) ([]string, error) {
+	if pod, ok := s.Store.Pods.GetPod(name); ok {
+		return pod.ContainerIDs, nil
+	}
+	containers, err := s.dockerContainersByPodLabel(ctx, name)
+	if err != nil {
+		return nil, mapDockerError(err)
+	}
+	if len(containers) == 0 {
+		return nil, &api.NotFoundError{Resource: "pod", ID: name}
+	}
+	ids := make([]string, 0, len(containers))
+	for _, c := range containers {
+		ids = append(ids, c.ID)
+	}
+	return ids, nil
+}
+
+// dockerContainersByPodLabel queries the Docker daemon for containers
+// tagged with `sockerless-pod=<name>`.
+func (s *Server) dockerContainersByPodLabel(ctx context.Context, name string) ([]types.Container, error) {
+	return s.docker.ContainerList(ctx, container.ListOptions{
+		All:     true,
+		Filters: filters.NewArgs(filters.Arg("label", "sockerless-pod="+name)),
+	})
+}
+
+// nameFromDocker returns the first Docker name (trimmed of leading "/").
+func nameFromDocker(c types.Container) string {
+	if len(c.Names) == 0 {
+		return c.ID[:12]
+	}
+	return strings.TrimPrefix(c.Names[0], "/")
 }
 
 // Prevent unused import errors
