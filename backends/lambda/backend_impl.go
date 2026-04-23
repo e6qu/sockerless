@@ -232,6 +232,18 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		}
 	}
 
+	// Phase 94b: attach named-volume binds as EFS FileSystemConfigs.
+	// Reject host-path binds; require VPC + subnets (enforced by
+	// fileSystemConfigsForBinds). Access points are sockerless-managed
+	// via awscommon.EFSManager (shared with ECS).
+	if len(hostConfig.Binds) > 0 {
+		fsConfigs, err := s.fileSystemConfigsForBinds(s.ctx(), hostConfig.Binds)
+		if err != nil {
+			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("resolve Lambda file-system configs: %v", err)}
+		}
+		createInput.FileSystemConfigs = fsConfigs
+	}
+
 	// Set image config overrides if cmd/entrypoint specified
 	if len(config.Cmd) > 0 || len(config.Entrypoint) > 0 || config.WorkingDir != "" {
 		imgConfig := &lambdatypes.ImageConfig{}
@@ -323,23 +335,35 @@ func (s *Server) ContainerStart(ref string) error {
 	// Remove from PendingCreates now that the function is being invoked.
 	s.PendingCreates.Delete(id)
 
-	// Invoke Lambda function asynchronously
+	// Invoke Lambda function asynchronously. Phase 95: capture the
+	// outcome in Store.InvocationResults so CloudState reflects the
+	// container as exited with the real exit code.
 	go func() {
 		result, err := s.aws.Lambda.Invoke(s.ctx(), &awslambda.InvokeInput{
 			FunctionName: aws.String(lambdaState.FunctionName),
 		})
 
-		if err != nil {
+		inv := core.InvocationResult{}
+		switch {
+		case err != nil:
 			s.Logger.Error().Err(err).Str("function", lambdaState.FunctionName).Msg("Lambda invocation failed")
-		} else {
-			if result.FunctionError != nil {
-				s.Logger.Warn().Str("error", aws.ToString(result.FunctionError)).Msg("Lambda function returned error")
+			inv.ExitCode = 1
+			inv.Error = err.Error()
+		case result.FunctionError != nil:
+			fnErr := aws.ToString(result.FunctionError)
+			s.Logger.Warn().Str("error", fnErr).Msg("Lambda function returned error")
+			inv.ExitCode = 1
+			inv.Error = fnErr
+			if len(result.Payload) > 0 {
+				s.Store.LogBuffers.Store(id, result.Payload)
 			}
-			// Store response payload in log buffer for container logs
+		default:
+			// Successful invocation — exit code 0.
 			if len(result.Payload) > 0 && string(result.Payload) != "{}" {
 				s.Store.LogBuffers.Store(id, result.Payload)
 			}
 		}
+		s.Store.PutInvocationResult(id, inv)
 
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
@@ -393,6 +417,11 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 
 	s.disconnectReverseAgent(id)
 
+	// Record the stop outcome so CloudState reports the container as
+	// exited with code 137 (SIGKILL equivalent) even though Lambda has no
+	// invocation-cancel API. Phase 95.
+	s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: 137})
+
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
 	}
@@ -439,6 +468,10 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	}
 
 	s.disconnectReverseAgent(id)
+
+	// Record the kill outcome so CloudState reports the container as
+	// exited with the signal-derived code. Phase 95.
+	s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: exitCode})
 
 	s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", exitCode), "name": strings.TrimPrefix(c.Name, "/")})
@@ -511,6 +544,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 	s.Store.LogBuffers.Delete(id)
 	s.Store.StagingDirs.Delete(id)
+	s.Store.DeleteInvocationResult(id)
 	if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(id); ok {
 		for _, d := range dirs.([]string) {
 			os.RemoveAll(d)

@@ -94,10 +94,8 @@ func (m *ImageManager) Pull(ref string, auth string) (io.ReadCloser, error) {
 	// Fetch real metadata from registry (anonymous auth for public images).
 	// Do not pass Docker client auth (X-Registry-Auth) — it's
 	// base64-encoded JSON that breaks Docker Hub's token endpoint.
-	// FetchImageMetadata returns (nil, nil) only when the operator has
-	// set SOCKERLESS_SKIP_IMAGE_CONFIG=true; a registry failure comes
-	// back as an error, which we propagate so the pull fails cleanly
-	// instead of producing synthetic image records.
+	// Registry failures propagate as errors so the pull fails cleanly
+	// rather than producing a synthetic image record.
 	meta, err := FetchImageMetadata(ref)
 	if err != nil {
 		return nil, err

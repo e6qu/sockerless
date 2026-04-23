@@ -6,9 +6,35 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	efstypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
 	"github.com/sockerless/api"
+	awscommon "github.com/sockerless/aws-common"
 )
+
+// accessPointToVolume converts an EFS AccessPointDescription into the
+// Docker-API volume shape clients expect from `docker volume inspect`
+// and `docker volume ls`.
+func accessPointToVolume(ap efstypes.AccessPointDescription) *api.Volume {
+	name := awscommon.APVolumeName(ap)
+	root := ""
+	if ap.RootDirectory != nil {
+		root = aws.ToString(ap.RootDirectory.Path)
+	}
+	return &api.Volume{
+		Name:       name,
+		Driver:     "efs",
+		Mountpoint: root,
+		Scope:      "local",
+		Options: map[string]string{
+			"accessPointId": aws.ToString(ap.AccessPointId),
+			"fileSystemId":  aws.ToString(ap.FileSystemId),
+		},
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+}
 
 // --- Container methods requiring resolution ---
 
@@ -183,18 +209,55 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 	return s.BaseServer.SystemEvents(opts)
 }
 
-// Named-volume operations are not supported by the ECS backend.
-// `docker volume create` etc. previously delegated to BaseServer which
-// only tracked metadata in-memory — containers never saw a real mount.
-// Real EFS provisioning is a follow-up phase.
+// Named-volume operations map to EFS access points on a sockerless-owned
+// EFS filesystem (Phase 91). Each volume is backed by its own access
+// point + subdirectory so containers see real, persistent state. If the
+// operator provides `SOCKERLESS_ECS_AGENT_EFS_ID` the filesystem is
+// reused; otherwise one is created lazily on first use.
 func (s *Server) VolumeCreate(req *api.VolumeCreateRequest) (*api.Volume, error) {
-	return nil, &api.NotImplementedError{Message: "ECS backend does not support named volumes; use task-definition EFSVolumeConfiguration on pre-provisioned EFS instead"}
+	if req == nil || req.Name == "" {
+		return nil, &api.InvalidParameterError{Message: "volume name is required"}
+	}
+	apID, err := s.accessPointForVolume(s.ctx(), req.Name)
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("provision EFS access point for %q: %v", req.Name, err)}
+	}
+	fsID, err := s.ensureEFSFilesystem(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("resolve EFS filesystem for %q: %v", req.Name, err)}
+	}
+	return &api.Volume{
+		Name:       req.Name,
+		Driver:     "efs",
+		Mountpoint: "/sockerless/volumes/" + awscommon.SanitiseVolumePath(req.Name),
+		Labels:     req.Labels,
+		Scope:      "local",
+		Options:    map[string]string{"accessPointId": apID, "fileSystemId": fsID},
+		CreatedAt:  time.Now().UTC().Format(time.RFC3339Nano),
+	}, nil
 }
 
 func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
-	return nil, &api.NotImplementedError{Message: "ECS backend does not support named volumes"}
+	aps, err := s.listManagedAccessPoints(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("list EFS access points: %v", err)}
+	}
+	for _, ap := range aps {
+		if awscommon.APVolumeName(ap) == name {
+			return accessPointToVolume(ap), nil
+		}
+	}
+	return nil, &api.NotFoundError{Resource: "volume", ID: name}
 }
 
 func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListResponse, error) {
-	return nil, &api.NotImplementedError{Message: "ECS backend does not support named volumes"}
+	aps, err := s.listManagedAccessPoints(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("list EFS access points: %v", err)}
+	}
+	vols := make([]*api.Volume, 0, len(aps))
+	for _, ap := range aps {
+		vols = append(vols, accessPointToVolume(ap))
+	}
+	return &api.VolumeListResponse{Volumes: vols}, nil
 }

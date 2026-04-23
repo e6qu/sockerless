@@ -87,9 +87,35 @@ type ContainerPort struct {
 	ContainerPort int32  `json:"containerPort"`
 }
 
-// Volume represents a volume available to containers.
+// Volume represents a volume available to containers. Cloud Run's real
+// API supports gcs / secret / cloudSqlInstance / nfs sources; we
+// implement gcs here (Phase 92) — additional sources stay nil-able so
+// serialisation round-trips match real API responses.
 type Volume struct {
-	Name string `json:"name"`
+	Name   string              `json:"name"`
+	Gcs    *GcsVolumeSource    `json:"gcs,omitempty"`
+	Nfs    *NfsVolumeSource    `json:"nfs,omitempty"`
+	Secret *SecretVolumeSource `json:"secret,omitempty"`
+}
+
+// GcsVolumeSource mirrors google.cloud.run.v2.GCSVolumeSource.
+type GcsVolumeSource struct {
+	Bucket       string   `json:"bucket"`
+	ReadOnly     bool     `json:"readOnly,omitempty"`
+	MountOptions []string `json:"mountOptions,omitempty"`
+}
+
+// NfsVolumeSource mirrors google.cloud.run.v2.NFSVolumeSource.
+type NfsVolumeSource struct {
+	Server   string `json:"server"`
+	Path     string `json:"path"`
+	ReadOnly bool   `json:"readOnly,omitempty"`
+}
+
+// SecretVolumeSource mirrors google.cloud.run.v2.SecretVolumeSource.
+type SecretVolumeSource struct {
+	Secret      string `json:"secret"`
+	DefaultMode int32  `json:"defaultMode,omitempty"`
 }
 
 // VolumeMount represents a volume mount in a container.
@@ -376,6 +402,7 @@ func registerCloudRunJobs(srv *sim.Server) {
 			var image string
 			var entrypoint, args []string
 			var cmdEnv map[string]string
+			var binds []string
 			if taskTmpl != nil && len(taskTmpl.Containers) > 0 {
 				c := taskTmpl.Containers[0]
 				image = c.Image
@@ -385,6 +412,27 @@ func registerCloudRunJobs(srv *sim.Server) {
 					cmdEnv = make(map[string]string, len(c.Env))
 					for _, ev := range c.Env {
 						cmdEnv[ev.Name] = ev.Value
+					}
+				}
+				// Translate GCS-backed Volume + VolumeMount pairs to real
+				// host bind mounts. The GCS slice backs each bucket with
+				// a host directory under $SIM_GCS_DATA_DIR so Cloud Run
+				// tasks launched by this sim see real persistent files.
+				if taskTmpl.Volumes != nil && len(c.VolumeMounts) > 0 {
+					volByName := make(map[string]Volume, len(taskTmpl.Volumes))
+					for _, v := range taskTmpl.Volumes {
+						volByName[v.Name] = v
+					}
+					for _, mp := range c.VolumeMounts {
+						v, ok := volByName[mp.Name]
+						if !ok || v.Gcs == nil || v.Gcs.Bucket == "" {
+							continue
+						}
+						bind := GCSBucketHostDir(v.Gcs.Bucket) + ":" + mp.MountPath
+						if v.Gcs.ReadOnly {
+							bind += ":ro"
+						}
+						binds = append(binds, bind)
 					}
 				}
 			}
@@ -411,6 +459,7 @@ func registerCloudRunJobs(srv *sim.Server) {
 					Timeout: timeout,
 					Name:    fmt.Sprintf("sockerless-sim-gcp-job-%s", execShort),
 					Labels:  map[string]string{"sockerless-sim-execution": id},
+					Binds:   binds,
 				}, sink)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "ERROR: failed to start container for execution: image=%s err=%v\n", image, err)

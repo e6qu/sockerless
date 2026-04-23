@@ -3,11 +3,49 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	sim "github.com/sockerless/simulator"
 )
+
+// efsHostRoot returns the on-disk backing directory for the whole
+// simulated EFS slice. Each filesystem + access point becomes a
+// subdirectory so Docker tasks the ECS slice launches can bind-mount
+// a real host path and observe the same files across tasks.
+func efsHostRoot() string {
+	if dir := os.Getenv("SIM_EFS_DATA_DIR"); dir != "" {
+		return dir
+	}
+	return filepath.Join(os.TempDir(), "sockerless-sim-efs")
+}
+
+// EFSFileSystemHostDir returns the on-disk directory backing a
+// simulated EFS filesystem. Created lazily; safe for concurrent
+// callers. Exported for use by the ECS task runner.
+func EFSFileSystemHostDir(fsID string) string {
+	dir := filepath.Join(efsHostRoot(), fsID)
+	_ = os.MkdirAll(dir, 0o777)
+	return dir
+}
+
+// EFSAccessPointHostDir returns the on-disk directory that an EFS
+// access point points at (FileSystemHostDir + AccessPoint.RootDirectory).
+// Returns "" when the access point does not exist.
+func EFSAccessPointHostDir(apID string) string {
+	ap, ok := efsAccessPoints.Get(apID)
+	if !ok {
+		return ""
+	}
+	root := EFSFileSystemHostDir(ap.FileSystemId)
+	if ap.RootDirectory != nil && ap.RootDirectory.Path != "" {
+		root = filepath.Join(root, strings.TrimPrefix(ap.RootDirectory.Path, "/"))
+	}
+	_ = os.MkdirAll(root, 0o777)
+	return root
+}
 
 // EFS types
 
@@ -361,6 +399,10 @@ func handleEFSCreateAccessPoint(w http.ResponseWriter, r *http.Request) {
 		Tags:           req.Tags,
 	}
 	efsAccessPoints.Put(apId, ap)
+
+	// Pre-create the host-side directory so the ECS task runner can
+	// bind-mount it directly without racing on first use.
+	_ = EFSAccessPointHostDir(apId)
 
 	sim.WriteJSON(w, http.StatusOK, ap)
 }

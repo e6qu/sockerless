@@ -19,6 +19,7 @@ type Server struct {
 	ECS          *core.StateStore[ECSState]
 	NetworkState *core.StateStore[NetworkState]
 	ipCounter    atomic.Int32
+	volumeState
 }
 
 // NewServer creates a new ECS backend server.
@@ -43,6 +44,13 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		NCPU:            2,
 		MemTotal:        4294967296,
 	}, logger)
+	s.volumeState = volumeState{efs: awscommon.NewEFSManager(awsClients.EFS, awscommon.EFSManagerConfig{
+		AgentEFSID:     config.AgentEFSID,
+		Subnets:        config.Subnets,
+		SecurityGroups: config.SecurityGroups,
+		PollInterval:   config.PollInterval,
+		InstanceID:     s.Desc.InstanceID,
+	})}
 	s.images = &core.ImageManager{
 		Base:   s.BaseServer,
 		Auth:   awscommon.NewECRAuthProvider(awsClients.ECR, logger, s.ctx),

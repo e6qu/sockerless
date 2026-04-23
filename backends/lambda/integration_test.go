@@ -355,16 +355,55 @@ func TestLambdaNetworkOperations(t *testing.T) {
 // TestLambdaVolumeOperations pins BUG-731 — Lambda's /tmp is
 // per-invocation; named volumes require real EFS mounts and are
 // tracked as Phase 91.
+// TestLambdaVolumeOperations — Phase 94b EFS-backed named volumes:
+// VolumeCreate provisions a sockerless-managed EFS access point via
+// the shared awscommon.EFSManager (same manager ECS uses); VolumeInspect
+// + VolumeList surface it; VolumeRemove deletes it. Mount attach to
+// the function happens at ContainerCreate time via Function.FileSystemConfigs.
 func TestLambdaVolumeOperations(t *testing.T) {
 	skipIfNoIntegration(t)
 	ctx := context.Background()
 
-	_, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: "lambda-vol-" + generateTestID()})
-	if err == nil {
-		t.Fatal("expected VolumeCreate to fail with NotImplemented")
+	volName := "lambda_vol_" + generateTestID()
+	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: volName})
+	if err != nil {
+		t.Fatalf("VolumeCreate: %v", err)
 	}
-	if !strings.Contains(err.Error(), "does not support named volumes") {
-		t.Errorf("expected NotImplemented error, got: %v", err)
+	if vol.Name != volName {
+		t.Errorf("Volume.Name = %q, want %q", vol.Name, volName)
+	}
+	if vol.Driver != "efs" {
+		t.Errorf("Volume.Driver = %q, want efs", vol.Driver)
+	}
+	if vol.Options["accessPointId"] == "" {
+		t.Errorf("Volume.Options missing accessPointId: %+v", vol.Options)
+	}
+
+	inspected, err := dockerClient.VolumeInspect(ctx, volName)
+	if err != nil {
+		t.Fatalf("VolumeInspect: %v", err)
+	}
+	if inspected.Name != volName {
+		t.Errorf("inspected.Name = %q, want %q", inspected.Name, volName)
+	}
+
+	list, err := dockerClient.VolumeList(ctx, volume.ListOptions{})
+	if err != nil {
+		t.Fatalf("VolumeList: %v", err)
+	}
+	found := false
+	for _, v := range list.Volumes {
+		if v != nil && v.Name == volName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("VolumeList did not surface %q", volName)
+	}
+
+	if err := dockerClient.VolumeRemove(ctx, volName, false); err != nil {
+		t.Fatalf("VolumeRemove: %v", err)
 	}
 }
 
@@ -411,6 +450,179 @@ func generateTestID(parts ...string) string {
 		id += "-" + p
 	}
 	return id
+}
+
+// TestLambdaContainerLifecycle — re-enabled from the BUG-744 deletion.
+// Exercises the full create/start/wait/inspect/remove loop now that
+// Phase 95 records invocation outcomes in Store.InvocationResults so
+// CloudState reports `exited` + the real exit code.
+func TestLambdaContainerLifecycle(t *testing.T) {
+	skipIfNoIntegration(t)
+	ctx := context.Background()
+
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	if err != nil {
+		t.Fatalf("image pull failed: %v", err)
+	}
+	io.Copy(io.Discard, rc)
+	rc.Close()
+
+	testID := generateTestID()
+	resp, err := dockerClient.ContainerCreate(ctx,
+		&container.Config{
+			Image: "alpine:latest",
+			Cmd:   []string{"echo", "hello from lambda"},
+		},
+		nil, nil, nil, "lambda_lc_"+testID,
+	)
+	if err != nil {
+		t.Fatalf("container create failed: %v", err)
+	}
+	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
+	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		t.Fatalf("container start failed: %v", err)
+	}
+
+	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case result := <-waitCh:
+		if result.StatusCode != 0 {
+			t.Errorf("expected exit code 0, got %d", result.StatusCode)
+		}
+	case err := <-errCh:
+		t.Fatalf("container wait error: %v", err)
+	case <-time.After(5 * time.Minute):
+		t.Fatal("timeout waiting for container")
+	}
+
+	info, err := dockerClient.ContainerInspect(ctx, resp.ID)
+	if err != nil {
+		t.Fatalf("container inspect failed: %v", err)
+	}
+	if info.State.Status != "exited" {
+		t.Errorf("expected status 'exited', got %q", info.State.Status)
+	}
+
+	if err := dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{}); err != nil {
+		t.Fatalf("container remove failed: %v", err)
+	}
+}
+
+// TestLambdaContainerLogsFollowLazyStream — re-enabled from the
+// BUG-744 deletion. Regression test for the bug where logStreamName
+// was resolved once up-front; if empty at that moment the follow loop
+// would return empty forever. Phase 95's invocation tracker ensures
+// the follow loop knows when the invocation finished so it can stop.
+func TestLambdaContainerLogsFollowLazyStream(t *testing.T) {
+	skipIfNoIntegration(t)
+	ctx := context.Background()
+
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	if err != nil {
+		t.Fatalf("image pull failed: %v", err)
+	}
+	io.Copy(io.Discard, rc)
+	rc.Close()
+
+	testID := generateTestID()
+	resp, err := dockerClient.ContainerCreate(ctx,
+		&container.Config{
+			Image: "alpine:latest",
+			Cmd:   []string{"sh", "-c", "for i in 1 2 3; do echo follow-line-$i; sleep 0.2; done"},
+		},
+		nil, nil, nil, "lambda_follow_"+testID,
+	)
+	if err != nil {
+		t.Fatalf("container create failed: %v", err)
+	}
+	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
+	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		t.Fatalf("container start failed: %v", err)
+	}
+
+	logReader, err := dockerClient.ContainerLogs(ctx, resp.ID, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     true,
+	})
+	if err != nil {
+		t.Fatalf("container logs (follow) failed: %v", err)
+	}
+	defer logReader.Close()
+
+	done := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(logReader)
+		done <- b
+	}()
+
+	var logData []byte
+	select {
+	case logData = <-done:
+	case <-time.After(60 * time.Second):
+		t.Fatal("follow-mode log read did not terminate within 60s after container exited")
+	}
+
+	t.Logf("follow logs: %q", string(logData))
+	// The primary regression here is that follow mode used to return
+	// *nothing* forever when logStreamName was empty at first resolve.
+	// The sim's Lambda runtime writes START/END/REPORT RequestId markers
+	// around every invocation; seeing one of those proves the follow loop
+	// lazy-resolved the stream and the invocation completed. User-stdout
+	// capture from `sh -c` subprocesses is a separate concern tracked
+	// outside this test.
+	if !strings.Contains(string(logData), "RequestId") {
+		t.Errorf("follow-mode log output contains no Lambda runtime markers — follow loop didn't observe the invocation")
+	}
+}
+
+// TestLambdaContainerStopUnblocksWait — re-enabled from the BUG-744
+// deletion. Phase 95's ContainerStop writes {ExitCode: 137} into
+// Store.InvocationResults and closes the wait channel, so a concurrent
+// ContainerWait unblocks immediately instead of waiting for the
+// sleep-30 invocation to complete.
+func TestLambdaContainerStopUnblocksWait(t *testing.T) {
+	skipIfNoIntegration(t)
+	ctx := context.Background()
+
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	if err != nil {
+		t.Fatalf("image pull failed: %v", err)
+	}
+	io.Copy(io.Discard, rc)
+	rc.Close()
+
+	testID := generateTestID()
+	resp, err := dockerClient.ContainerCreate(ctx,
+		&container.Config{
+			Image: "alpine:latest",
+			Cmd:   []string{"sleep", "30"},
+		},
+		nil, nil, nil, "lambda_stop_"+testID,
+	)
+	if err != nil {
+		t.Fatalf("container create failed: %v", err)
+	}
+	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
+	dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
+
+	stopTimeout := 5
+	if err := dockerClient.ContainerStop(ctx, resp.ID, container.StopOptions{Timeout: &stopTimeout}); err != nil {
+		t.Fatalf("container stop failed: %v", err)
+	}
+
+	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case <-waitCh:
+		// expected — wait channel closed by stop
+	case err := <-errCh:
+		t.Fatalf("wait returned error: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("docker wait did not unblock within 5s of stop; wait channel not closed")
+	}
 }
 
 func filterBuildEnv(env []string, extra ...string) []string {

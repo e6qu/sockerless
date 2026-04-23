@@ -109,6 +109,26 @@ func TestMain(m *testing.M) {
 	}
 	fmt.Printf("[sim] simulator-azure is ready at %s\n", simURL)
 
+	// Pre-create the storage account so FileShareManager can provision
+	// shares into it. In production this is an operator responsibility
+	// (the sockerless-azf backend doesn't manage storage accounts); the
+	// test harness does it via direct ARM PUT. Mirrors the ACA setup.
+	preCreate := func(url, body string) {
+		req, _ := http.NewRequest("PUT", url, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to pre-create sim resource %s: %v\n", url, err)
+			cleanup()
+			os.Exit(1)
+		}
+		resp.Body.Close()
+	}
+	preCreate(
+		simURL+"/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/sim-rg/providers/Microsoft.Storage/storageAccounts/simstorage?api-version=2023-01-01",
+		`{"location":"eastus","sku":{"name":"Standard_LRS"},"kind":"StorageV2","properties":{}}`,
+	)
+
 	// Build backend
 	backendDir := repoRoot + "/backends/azure-functions"
 	backendBinary := backendDir + "/sockerless-backend-azf"
@@ -358,15 +378,54 @@ func TestAZFNetworkOperations(t *testing.T) {
 // TestAZFVolumeOperations pins BUG-731 — Azure Functions containers
 // are ephemeral; named volumes require real Azure Files mounts and
 // are tracked as Phase 93.
+// TestAZFVolumeOperations — Phase 94 Azure Files-backed named volumes:
+// VolumeCreate provisions a sockerless-managed share via the shared
+// azurecommon.FileShareManager, VolumeInspect + VolumeList surface it,
+// VolumeRemove deletes it. Site-attach (WebApps.UpdateAzureStorageAccounts)
+// is exercised when an arithmetic / lifecycle test carries Binds.
 func TestAZFVolumeOperations(t *testing.T) {
 	ctx := context.Background()
 
-	_, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: "azf-vol-" + generateTestID()})
-	if err == nil {
-		t.Fatal("expected VolumeCreate to fail with NotImplemented")
+	volName := "azf_vol_" + generateTestID()
+	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: volName})
+	if err != nil {
+		t.Fatalf("VolumeCreate: %v", err)
 	}
-	if !strings.Contains(err.Error(), "does not support named volumes") {
-		t.Errorf("expected NotImplemented error, got: %v", err)
+	if vol.Name != volName {
+		t.Errorf("Volume.Name = %q, want %q", vol.Name, volName)
+	}
+	if vol.Driver != "azurefile" {
+		t.Errorf("Volume.Driver = %q, want azurefile", vol.Driver)
+	}
+	if vol.Options["share"] == "" {
+		t.Errorf("Volume.Options missing share: %+v", vol.Options)
+	}
+
+	inspected, err := dockerClient.VolumeInspect(ctx, volName)
+	if err != nil {
+		t.Fatalf("VolumeInspect: %v", err)
+	}
+	if inspected.Name != volName {
+		t.Errorf("inspected.Name = %q, want %q", inspected.Name, volName)
+	}
+
+	list, err := dockerClient.VolumeList(ctx, volume.ListOptions{})
+	if err != nil {
+		t.Fatalf("VolumeList: %v", err)
+	}
+	found := false
+	for _, v := range list.Volumes {
+		if v != nil && v.Name == volName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("VolumeList did not surface %q", volName)
+	}
+
+	if err := dockerClient.VolumeRemove(ctx, volName, false); err != nil {
+		t.Fatalf("VolumeRemove: %v", err)
 	}
 }
 
@@ -413,6 +472,62 @@ func generateTestID(parts ...string) string {
 		id += "-" + p
 	}
 	return id
+}
+
+// TestAZFContainerLifecycle — re-enabled from the BUG-744 deletion.
+// Phase 95 records the invocation's HTTP response (2xx → 0) in
+// Store.InvocationResults, so CloudState reports `exited` and
+// docker wait returns the real exit code.
+func TestAZFContainerLifecycle(t *testing.T) {
+	ctx := context.Background()
+
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	if err != nil {
+		t.Fatalf("image pull failed: %v", err)
+	}
+	io.Copy(io.Discard, rc)
+	rc.Close()
+
+	testID := generateTestID()
+	resp, err := dockerClient.ContainerCreate(ctx,
+		&container.Config{
+			Image: "alpine:latest",
+			Cmd:   []string{"echo", "hello from azf"},
+		},
+		nil, nil, nil, "azf_lc_"+testID,
+	)
+	if err != nil {
+		t.Fatalf("container create failed: %v", err)
+	}
+	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
+	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		t.Fatalf("container start failed: %v", err)
+	}
+
+	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case result := <-waitCh:
+		if result.StatusCode != 0 {
+			t.Errorf("expected exit code 0, got %d", result.StatusCode)
+		}
+	case err := <-errCh:
+		t.Fatalf("container wait error: %v", err)
+	case <-time.After(5 * time.Minute):
+		t.Fatal("timeout waiting for container")
+	}
+
+	info, err := dockerClient.ContainerInspect(ctx, resp.ID)
+	if err != nil {
+		t.Fatalf("container inspect failed: %v", err)
+	}
+	if info.State.Status != "exited" {
+		t.Errorf("expected status 'exited', got %q", info.State.Status)
+	}
+
+	if err := dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{}); err != nil {
+		t.Fatalf("container remove failed: %v", err)
+	}
 }
 
 func filterBuildEnv(env []string, extra ...string) []string {

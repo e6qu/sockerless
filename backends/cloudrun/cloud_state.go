@@ -2,6 +2,8 @@ package cloudrun
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -413,13 +415,19 @@ func (p *cloudRunCloudState) queryJobs(ctx context.Context) ([]api.Container, er
 // jobToContainer reconstructs an api.Container from a Cloud Run Job and its execution status.
 func (p *cloudRunCloudState) jobToContainer(ctx context.Context, job *runpb.Job) (api.Container, error) {
 	labels := job.Labels
+	annotations := job.Annotations
 
-	// Full container ID from annotations (labels truncate at 63 chars, IDs are 64)
-	containerID := job.Annotations["sockerless_container_id"]
+	// Phase 97: Container ID + name may live in labels OR annotations
+	// depending on charset/length. Annotations win when both are set
+	// since they carry the unmutated value.
+	containerID := annotations["sockerless_container_id"]
 	if containerID == "" {
 		containerID = labels["sockerless_container_id"]
 	}
-	name := labels["sockerless_name"]
+	name := annotations["sockerless_name"]
+	if name == "" {
+		name = labels["sockerless_name"]
+	}
 	if name == "" && containerID != "" {
 		if len(containerID) >= 12 {
 			name = "/" + containerID[:12]
@@ -452,14 +460,31 @@ func (p *cloudRunCloudState) jobToContainer(ctx context.Context, job *runpb.Job)
 		created = job.CreateTime.AsTime().Format(time.RFC3339Nano)
 	}
 
-	// Parse Docker labels from GCP labels (convert underscores back to dashes)
-	gcpTags := gcpLabelsToTags(labels)
-	dockerLabels := core.ParseLabelsFromTags(gcpTags)
+	// Phase 97 (BUG-746): Docker labels round-trip via three places, in
+	// priority order:
+	//   1. SOCKERLESS_LABELS env var on the main container (robust against
+	//      control-plane or sim-side annotation stripping).
+	//   2. Job.Annotations (GCP annotations for labels whose JSON blob
+	//      fails the label-value charset).
+	//   3. Job.Labels (legacy split-across-chunks fallback).
+	dockerLabels := decodeLabelsFromEnv(env)
+	if len(dockerLabels) == 0 {
+		merged := mergeLabelsAndAnnotations(labels, job.Annotations)
+		gcpTags := gcpLabelsToTags(merged)
+		if parsed := core.ParseLabelsFromTags(gcpTags); parsed != nil {
+			dockerLabels = parsed
+		}
+	}
 	if dockerLabels == nil {
 		dockerLabels = make(map[string]string)
 	}
 
-	networkName := labels["sockerless_network"]
+	// Phase 97: network name may fail charset too when operators use
+	// dashes aren't enough (e.g. dots). Check annotations too.
+	networkName := annotations["sockerless_network"]
+	if networkName == "" {
+		networkName = labels["sockerless_network"]
+	}
 	if networkName == "" {
 		networkName = "bridge"
 	}
@@ -575,4 +600,43 @@ func gcpLabelsToTags(labels map[string]string) map[string]string {
 		m[dashKey] = v
 	}
 	return m
+}
+
+// decodeLabelsFromEnv extracts the Docker labels map from the
+// `SOCKERLESS_LABELS` env var (base64-encoded JSON) injected by
+// jobspec.go / servicespec.go. Returns nil if the var is missing or
+// malformed. Phase 97.
+func decodeLabelsFromEnv(env []string) map[string]string {
+	for _, e := range env {
+		if !strings.HasPrefix(e, "SOCKERLESS_LABELS=") {
+			continue
+		}
+		b64 := strings.TrimPrefix(e, "SOCKERLESS_LABELS=")
+		raw, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil {
+			return nil
+		}
+		var out map[string]string
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return nil
+		}
+		return out
+	}
+	return nil
+}
+
+// mergeLabelsAndAnnotations combines GCP labels + annotations into a
+// single map (annotations win on key collision since they carry the
+// unmutated full-fidelity values). Phase 97: needed because Docker
+// labels land in annotations but identity fields land in labels, and
+// ParseLabelsFromTags needs both to reconstruct a container's metadata.
+func mergeLabelsAndAnnotations(labels, annotations map[string]string) map[string]string {
+	out := make(map[string]string, len(labels)+len(annotations))
+	for k, v := range labels {
+		out[k] = v
+	}
+	for k, v := range annotations {
+		out[k] = v
+	}
+	return out
 }

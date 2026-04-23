@@ -357,15 +357,55 @@ func TestGCFNetworkOperations(t *testing.T) {
 // TestGCFVolumeOperations pins BUG-731 — GCF containers are
 // invocation-scoped; named volumes require real GCS/Filestore mounts
 // and are tracked as Phase 92.
+// TestGCFVolumeOperations — Phase 94 GCS-backed named volumes on GCF:
+// VolumeCreate provisions a sockerless-managed GCS bucket via the shared
+// gcpcommon.BucketManager, VolumeInspect + VolumeList surface it, and
+// VolumeRemove deletes it. The actual bucket-attach-to-function path
+// (Services.UpdateService escape hatch) is exercised by the
+// arithmetic + lifecycle tests when they carry Binds.
 func TestGCFVolumeOperations(t *testing.T) {
 	ctx := context.Background()
 
-	_, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: "gcf-vol-" + generateTestID()})
-	if err == nil {
-		t.Fatal("expected VolumeCreate to fail with NotImplemented")
+	volName := "gcf_vol_" + generateTestID()
+	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: volName})
+	if err != nil {
+		t.Fatalf("VolumeCreate: %v", err)
 	}
-	if !strings.Contains(err.Error(), "does not support named volumes") {
-		t.Errorf("expected NotImplemented error, got: %v", err)
+	if vol.Name != volName {
+		t.Errorf("Volume.Name = %q, want %q", vol.Name, volName)
+	}
+	if vol.Driver != "gcs" {
+		t.Errorf("Volume.Driver = %q, want gcs", vol.Driver)
+	}
+	if vol.Options["bucket"] == "" {
+		t.Errorf("Volume.Options missing bucket: %+v", vol.Options)
+	}
+
+	inspected, err := dockerClient.VolumeInspect(ctx, volName)
+	if err != nil {
+		t.Fatalf("VolumeInspect: %v", err)
+	}
+	if inspected.Name != volName {
+		t.Errorf("inspected.Name = %q, want %q", inspected.Name, volName)
+	}
+
+	list, err := dockerClient.VolumeList(ctx, volume.ListOptions{})
+	if err != nil {
+		t.Fatalf("VolumeList: %v", err)
+	}
+	found := false
+	for _, v := range list.Volumes {
+		if v != nil && v.Name == volName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("VolumeList did not surface %q", volName)
+	}
+
+	if err := dockerClient.VolumeRemove(ctx, volName, false); err != nil {
+		t.Fatalf("VolumeRemove: %v", err)
 	}
 }
 
@@ -412,6 +452,62 @@ func generateTestID(parts ...string) string {
 		id += "-" + p
 	}
 	return id
+}
+
+// TestGCFContainerLifecycle — re-enabled from the BUG-744 deletion.
+// Phase 95 records the invocation's HTTP response (2xx → 0) in
+// Store.InvocationResults, so CloudState reports `exited` and
+// docker wait returns the real exit code.
+func TestGCFContainerLifecycle(t *testing.T) {
+	ctx := context.Background()
+
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	if err != nil {
+		t.Fatalf("image pull failed: %v", err)
+	}
+	io.Copy(io.Discard, rc)
+	rc.Close()
+
+	testID := generateTestID()
+	resp, err := dockerClient.ContainerCreate(ctx,
+		&container.Config{
+			Image: "alpine:latest",
+			Cmd:   []string{"echo", "hello from gcf"},
+		},
+		nil, nil, nil, "gcf_lc_"+testID,
+	)
+	if err != nil {
+		t.Fatalf("container create failed: %v", err)
+	}
+	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
+	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		t.Fatalf("container start failed: %v", err)
+	}
+
+	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case result := <-waitCh:
+		if result.StatusCode != 0 {
+			t.Errorf("expected exit code 0, got %d", result.StatusCode)
+		}
+	case err := <-errCh:
+		t.Fatalf("container wait error: %v", err)
+	case <-time.After(5 * time.Minute):
+		t.Fatal("timeout waiting for container")
+	}
+
+	info, err := dockerClient.ContainerInspect(ctx, resp.ID)
+	if err != nil {
+		t.Fatalf("container inspect failed: %v", err)
+	}
+	if info.State.Status != "exited" {
+		t.Errorf("expected status 'exited', got %q", info.State.Status)
+	}
+
+	if err := dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{}); err != nil {
+		t.Fatalf("container remove failed: %v", err)
+	}
 }
 
 func filterBuildEnv(env []string, extra ...string) []string {

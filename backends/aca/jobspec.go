@@ -1,6 +1,7 @@
 package aca
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -22,8 +23,11 @@ func buildJobName(containerID string) string {
 	return fmt.Sprintf("sockerless-%s", containerID[:12])
 }
 
-// buildContainerSpec builds a single ACA container spec.
-func (s *Server) buildContainerSpec(ci containerInput) *armappcontainers.Container {
+// buildContainerSpec builds a single ACA container spec plus any
+// `VolumeMount` entries its Docker `HostConfig.Binds` produce. Host
+// binds are already rejected at ContainerCreate so every bind here
+// is `volName:/mnt[:ro]`.
+func (s *Server) buildContainerSpec(ci containerInput) (*armappcontainers.Container, []*armappcontainers.VolumeMount) {
 	config := ci.Container.Config
 
 	// Build environment variables
@@ -59,24 +63,62 @@ func (s *Server) buildContainerSpec(ci containerInput) *armappcontainers.Contain
 
 	cpu, memory := mapCPUTier()
 
+	var mounts []*armappcontainers.VolumeMount
+	for _, bind := range ci.Container.HostConfig.Binds {
+		parts := strings.SplitN(bind, ":", 3)
+		if len(parts) < 2 {
+			continue
+		}
+		mounts = append(mounts, &armappcontainers.VolumeMount{
+			VolumeName: ptr(parts[0]),
+			MountPath:  ptr(parts[1]),
+		})
+	}
+
 	return &armappcontainers.Container{
-		Name:    ptr(defName),
-		Image:   ptr(config.Image),
-		Command: command,
-		Args:    args,
-		Env:     envVars,
+		Name:         ptr(defName),
+		Image:        ptr(config.Image),
+		Command:      command,
+		Args:         args,
+		Env:          envVars,
+		VolumeMounts: mounts,
 		Resources: &armappcontainers.ContainerResources{
 			CPU:    &cpu,
 			Memory: ptr(memory),
 		},
-	}
+	}, mounts
 }
 
-// buildJobSpec creates an ACA Job resource from one or more containers.
-func (s *Server) buildJobSpec(containers []containerInput) armappcontainers.Job {
+// buildJobSpec creates an ACA Job resource from one or more containers,
+// provisioning an Azure Files share + env-storage per referenced named
+// volume and injecting matching JobTemplate Volumes.
+func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) (armappcontainers.Job, error) {
 	var specs []*armappcontainers.Container
+	volSeen := make(map[string]struct{})
+	var volumes []*armappcontainers.Volume
+	storageType := armappcontainers.StorageTypeAzureFile
 	for _, ci := range containers {
-		specs = append(specs, s.buildContainerSpec(ci))
+		cs, mounts := s.buildContainerSpec(ci)
+		specs = append(specs, cs)
+		for _, mp := range mounts {
+			if mp.VolumeName == nil {
+				continue
+			}
+			volName := *mp.VolumeName
+			if _, done := volSeen[volName]; done {
+				continue
+			}
+			share, err := s.shareForVolume(ctx, volName)
+			if err != nil {
+				return armappcontainers.Job{}, fmt.Errorf("provision Azure Files share for volume %q: %w", volName, err)
+			}
+			volumes = append(volumes, &armappcontainers.Volume{
+				Name:        ptr(volName),
+				StorageType: &storageType,
+				StorageName: ptr(share),
+			})
+			volSeen[volName] = struct{}{}
+		}
 	}
 
 	replicaTimeout := int32(3600 * 4) // 4 hours max
@@ -123,9 +165,10 @@ func (s *Server) buildJobSpec(containers []containerInput) armappcontainers.Job 
 			},
 			Template: &armappcontainers.JobTemplate{
 				Containers: specs,
+				Volumes:    volumes,
 			},
 		},
-	}
+	}, nil
 }
 
 // mapCPUTier returns the default ACA CPU/memory tier.

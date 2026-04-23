@@ -404,6 +404,7 @@ func registerContainerApps(srv *sim.Server) {
 			var containerCmd []string
 			var containerArgs []string
 			var cmdEnv map[string]string
+			var binds []string
 			if tmpl != nil && len(tmpl.Containers) > 0 {
 				c := tmpl.Containers[0]
 				containerImage = c.Image
@@ -413,6 +414,32 @@ func registerContainerApps(srv *sim.Server) {
 					cmdEnv = make(map[string]string, len(c.Env))
 					for _, ev := range c.Env {
 						cmdEnv[ev.Name] = ev.Value
+					}
+				}
+				// Translate Volume{StorageType: "AzureFile"} + VolumeMount
+				// into a real host bind mount backed by the
+				// managedEnvironmentStorage → storage-account / share
+				// pairing. Containers in this exec see real files on
+				// the host; siblings in the same env see the same
+				// directory.
+				if len(tmpl.Volumes) > 0 && len(c.VolumeMounts) > 0 {
+					volByName := make(map[string]JobVolume, len(tmpl.Volumes))
+					for _, v := range tmpl.Volumes {
+						volByName[v.Name] = v
+					}
+					for _, mp := range c.VolumeMounts {
+						v, ok := volByName[mp.VolumeName]
+						if !ok {
+							continue
+						}
+						if !strings.EqualFold(v.StorageType, "AzureFile") || v.StorageName == "" {
+							continue
+						}
+						acct, share, found := LookupEnvStorageBinding(envID, v.StorageName)
+						if !found {
+							continue
+						}
+						binds = append(binds, FileShareHostDir(acct, share)+":"+mp.MountPath)
 					}
 				}
 			}
@@ -456,6 +483,7 @@ func registerContainerApps(srv *sim.Server) {
 					},
 					Network:        netName,
 					NetworkAliases: netAliases,
+					Binds:          binds,
 				}, sink)
 				if err != nil {
 					succeeded = false

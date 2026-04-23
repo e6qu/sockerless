@@ -28,9 +28,13 @@ func (s *Server) startSingleContainerApp(id string, c api.Container, acaState AC
 	}
 
 	appName := buildAppName(id)
-	appSpec := s.buildAppSpec([]containerInput{
+	appSpec, err := s.buildAppSpec(s.ctx(), []containerInput{
 		{ID: id, Container: &c, IsMain: true},
 	})
+	if err != nil {
+		s.Store.WaitChs.Delete(id)
+		return err
+	}
 
 	createPoller, err := s.azure.ContainerApps.BeginCreateOrUpdate(s.ctx(), s.config.ResourceGroup, appName, appSpec, nil)
 	if err != nil {
@@ -79,7 +83,10 @@ func (s *Server) startMultiContainerAppTyped(_ string, podContainers []api.Conta
 	mainID := podContainers[0].ID
 
 	appName := buildAppName(mainID)
-	appSpec := s.buildAppSpec(inputs)
+	appSpec, err := s.buildAppSpec(s.ctx(), inputs)
+	if err != nil {
+		return err
+	}
 
 	createPoller, err := s.azure.ContainerApps.BeginCreateOrUpdate(s.ctx(), s.config.ResourceGroup, appName, appSpec, nil)
 	if err != nil {

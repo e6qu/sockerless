@@ -206,6 +206,16 @@ func TestCloudRunArithmeticWithLabels(t *testing.T) {
 	if !strings.Contains(logs, "58") {
 		t.Errorf("expected logs to contain '58', got %q", logs)
 	}
+
+	// Phase 97 (BUG-746 fix): labels round-trip via GCP annotations
+	// since their JSON representation fails the label-value charset.
+	info, err := dockerClient.ContainerInspect(ctx, resp.ID)
+	if err != nil {
+		t.Fatalf("inspect failed: %v", err)
+	}
+	if info.Config == nil || info.Config.Labels["arith-test"] != "cloudrun" {
+		t.Errorf("expected Labels[arith-test]=cloudrun to round-trip via annotations; got %+v", info.Config.Labels)
+	}
 }
 
 func TestCloudRunArithmeticEnvVar(t *testing.T) {

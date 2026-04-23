@@ -2,10 +2,28 @@ package gcf
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"strings"
+	"time"
 
+	"cloud.google.com/go/storage"
 	"github.com/sockerless/api"
+	gcpcommon "github.com/sockerless/gcp-common"
 )
+
+// bucketToVolume converts a sockerless-managed GCS BucketAttrs into a
+// Docker-API Volume entry. Mirrors Cloud Run's helper.
+func bucketToVolume(dockerName string, b *storage.BucketAttrs) *api.Volume {
+	return &api.Volume{
+		Name:       dockerName,
+		Driver:     "gcs",
+		Mountpoint: "gs://" + b.Name,
+		Scope:      "local",
+		Options:    map[string]string{"bucket": b.Name},
+		CreatedAt:  b.Created.UTC().Format(time.RFC3339Nano),
+	}
+}
 
 // Auth methods (pass-through)
 
@@ -213,26 +231,99 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 	return s.BaseServer.SystemEvents(opts)
 }
 
-// Named-volume operations are not supported by the GCF backend.
-// GCF containers are invocation-scoped — there's no stable cross-
-// invocation mount. Real shared storage should come from GCS or
-// Filestore directly.
+// Phase 94: named-volume operations provision sockerless-managed GCS
+// buckets via gcpcommon.BucketManager (shared with Cloud Run). Buckets
+// are attached to invocation-scoped containers by the
+// ContainerStart path (Services.GetService + UpdateService on the
+// underlying CR Service backing the function).
+//
+// Host-path bind specs (/h:/c) stay rejected — GCF containers have no
+// host filesystem to bind from.
 func (s *Server) VolumeCreate(req *api.VolumeCreateRequest) (*api.Volume, error) {
-	return nil, &api.NotImplementedError{Message: "GCF backend does not support named volumes; GCF containers are invocation-scoped"}
+	if req == nil || req.Name == "" {
+		return nil, &api.InvalidParameterError{Message: "volume name is required"}
+	}
+	bucket, err := s.bucketForVolume(s.ctx(), req.Name)
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("provision GCS bucket for %q: %v", req.Name, err)}
+	}
+	return &api.Volume{
+		Name:       req.Name,
+		Driver:     "gcs",
+		Mountpoint: "gs://" + bucket,
+		Labels:     req.Labels,
+		Scope:      "local",
+		Options:    map[string]string{"bucket": bucket, "project": s.config.Project},
+		CreatedAt:  time.Now().UTC().Format(time.RFC3339Nano),
+	}, nil
 }
 
 func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
-	return nil, &api.NotImplementedError{Message: "GCF backend does not support named volumes"}
+	buckets, err := s.listManagedBuckets(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("list managed GCS buckets: %v", err)}
+	}
+	for _, b := range buckets {
+		if gcpcommon.BucketVolumeName(b) == gcpcommon.SanitiseLabelValue(name) {
+			return bucketToVolume(name, b), nil
+		}
+	}
+	return nil, &api.NotFoundError{Resource: "volume", ID: name}
 }
 
 func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListResponse, error) {
-	return nil, &api.NotImplementedError{Message: "GCF backend does not support named volumes"}
+	buckets, err := s.listManagedBuckets(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("list managed GCS buckets: %v", err)}
+	}
+	vols := make([]*api.Volume, 0, len(buckets))
+	for _, b := range buckets {
+		vols = append(vols, bucketToVolume(gcpcommon.BucketVolumeName(b), b))
+	}
+	return &api.VolumeListResponse{Volumes: vols}, nil
 }
 
-func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
-	return nil, &api.NotImplementedError{Message: "GCF backend does not support named volumes"}
-}
-
+// VolumeRemove deletes the GCS bucket backing a Docker volume.
 func (s *Server) VolumeRemove(name string, force bool) error {
-	return &api.NotImplementedError{Message: "GCF backend does not support named volumes"}
+	if err := s.deleteBucketForVolume(s.ctx(), name, force); err != nil {
+		return &api.ServerError{Message: fmt.Sprintf("delete GCS bucket for %q: %v", name, err)}
+	}
+	return nil
+}
+
+// VolumePrune deletes every sockerless-managed GCS bucket that isn't
+// currently referenced by a pending container's binds.
+func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
+	buckets, err := s.listManagedBuckets(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("list managed GCS buckets: %v", err)}
+	}
+	in := s.inUseVolumeNames()
+	resp := &api.VolumePruneResponse{}
+	for _, b := range buckets {
+		name := gcpcommon.BucketVolumeName(b)
+		if _, busy := in[name]; busy {
+			continue
+		}
+		if err := s.deleteBucketForVolume(s.ctx(), name, true); err != nil {
+			return nil, &api.ServerError{Message: fmt.Sprintf("delete GCS bucket for %q: %v", name, err)}
+		}
+		resp.VolumesDeleted = append(resp.VolumesDeleted, name)
+	}
+	return resp, nil
+}
+
+// inUseVolumeNames returns Docker volume names currently referenced by
+// pending container binds.
+func (s *Server) inUseVolumeNames() map[string]struct{} {
+	in := make(map[string]struct{})
+	for _, c := range s.PendingCreates.List() {
+		for _, b := range c.HostConfig.Binds {
+			parts := strings.SplitN(b, ":", 3)
+			if len(parts) >= 2 && !strings.HasPrefix(parts[0], "/") {
+				in[parts[0]] = struct{}{}
+			}
+		}
+	}
+	return in
 }

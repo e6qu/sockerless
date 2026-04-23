@@ -1134,9 +1134,7 @@ func (s *BaseServer) ExecInspect(id string) (*api.ExecInstance, error) {
 }
 
 // ImagePull pulls an image and stores it in the in-memory image store.
-// Fetches real registry metadata and fails if the registry can't be
-// reached (unless SOCKERLESS_SKIP_IMAGE_CONFIG=true explicitly opts
-// into synthetic defaults).
+// Fetches real registry metadata and fails if the registry can't be reached.
 func (s *BaseServer) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 	meta, err := FetchImageMetadata(ref)
 	if err != nil {
@@ -1146,10 +1144,9 @@ func (s *BaseServer) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 }
 
 // ImagePullWithMetadata pulls an image using the caller-supplied
-// registry metadata. When meta is nil it is an opt-in operator choice
-// (SOCKERLESS_SKIP_IMAGE_CONFIG=true) and we record a minimal image
-// entry derived deterministically from the ref; the synthetic path is
-// explicit and logged, not a silent fallback after a fetch failure.
+// registry metadata. meta must be non-nil; callers that can't produce
+// real metadata should fail with the underlying registry error rather
+// than call this with nil (no placeholder fallback).
 func (s *BaseServer) ImagePullWithMetadata(ref string, auth string, meta *ImageMetadataResult) (io.ReadCloser, error) {
 	if ref == "" {
 		return nil, &api.InvalidParameterError{Message: "image reference is required"}
@@ -1185,53 +1182,25 @@ func (s *BaseServer) ImagePullWithMetadata(ref string, auth string, meta *ImageM
 
 	now := time.Now().UTC()
 
-	if meta != nil {
-		// Use real config digest as image ID
-		imageID = meta.ConfigDigest
-		// Use real total size from manifest layers
-		imgSize = meta.TotalSize
-		// Use real manifest digest for RepoDigests
-		repoDigests = []string{strings.Split(ref, ":")[0] + "@" + meta.ManifestDigest}
-		// Use real diff_ids from config blob
-		layers = meta.LayerDigests
-		arch = meta.Architecture
-		osName = meta.OS
-		imgConfig = *meta.Config
-		if meta.Created != "" {
-			created = meta.Created
-		} else {
-			created = now.Format(time.RFC3339Nano)
-		}
+	if meta == nil {
+		return nil, fmt.Errorf("image pull %q: registry metadata is required", ref)
+	}
 
-		// Store real history
-		if len(meta.History) > 0 {
-			s.Store.ImageHistory.Store(imageID, meta.History)
-		}
+	imageID = meta.ConfigDigest
+	imgSize = meta.TotalSize
+	repoDigests = []string{strings.Split(ref, ":")[0] + "@" + meta.ManifestDigest}
+	layers = meta.LayerDigests
+	arch = meta.Architecture
+	osName = meta.OS
+	imgConfig = *meta.Config
+	if meta.Created != "" {
+		created = meta.Created
 	} else {
-		// meta is nil: the operator has opted out of real registry
-		// metadata via SOCKERLESS_SKIP_IMAGE_CONFIG=true. Fail clean
-		// otherwise — the upstream Pull() and ImageManager.Pull() both
-		// return the registry error before reaching here.
-		if os.Getenv("SOCKERLESS_SKIP_IMAGE_CONFIG") != "true" {
-			return nil, fmt.Errorf("image pull %q: registry metadata unavailable and SOCKERLESS_SKIP_IMAGE_CONFIG is not set", ref)
-		}
-		s.Logger.Info().Str("ref", ref).Msg("SOCKERLESS_SKIP_IMAGE_CONFIG=true: recording image with deterministic placeholder metadata")
-		hash := sha256.Sum256([]byte(ref))
-		imageID = fmt.Sprintf("sha256:%x", hash)
-		// Size is unknown without the manifest. Record 0 rather than
-		// inventing one — docker clients should see 0 until a real
-		// pull succeeds.
-		imgSize = 0
-		repoDigests = []string{strings.Split(ref, ":")[0] + "@sha256:" + fmt.Sprintf("%x", hash)[:64]}
-		layers = nil
-		arch = "amd64"
-		osName = "linux"
-		imgConfig = api.ContainerConfig{
-			Env:    []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
-			Cmd:    []string{"/bin/sh"},
-			Labels: make(map[string]string),
-		}
 		created = now.Format(time.RFC3339Nano)
+	}
+
+	if len(meta.History) > 0 {
+		s.Store.ImageHistory.Store(imageID, meta.History)
 	}
 
 	idShort := imageID

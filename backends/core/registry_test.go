@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 
 	"github.com/sockerless/api"
@@ -93,25 +92,11 @@ func TestSplitAuthParams(t *testing.T) {
 	}
 }
 
-func TestFetchImageConfigDisabled(t *testing.T) {
-	os.Setenv("SOCKERLESS_SKIP_IMAGE_CONFIG", "true")
-	defer os.Unsetenv("SOCKERLESS_SKIP_IMAGE_CONFIG")
-	cfg, err := FetchImageConfig("alpine:latest")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg != nil {
-		t.Error("expected nil config when disabled")
-	}
-}
-
 func TestFetchImageConfigCaching(t *testing.T) {
 	// Clear cache
 	imageMetadataCache.Lock()
 	imageMetadataCache.m = make(map[string]*ImageMetadataResult)
 	imageMetadataCache.Unlock()
-
-	os.Unsetenv("SOCKERLESS_SKIP_IMAGE_CONFIG")
 
 	// Pre-populate cache with metadata
 	testCfg := &api.ContainerConfig{
@@ -404,8 +389,7 @@ func TestMockRegistryManifestList(t *testing.T) {
 
 // TestFetchImageConfig_PropagatesRegistryErrors — network / registry
 // failures surface to the caller rather than being swallowed into
-// synthetic metadata. Callers pick between failing the pull and
-// opting into SOCKERLESS_SKIP_IMAGE_CONFIG.
+// synthetic metadata.
 func TestFetchImageConfig_PropagatesRegistryErrors(t *testing.T) {
 	imageMetadataCache.Lock()
 	imageMetadataCache.m = make(map[string]*ImageMetadataResult)
@@ -416,32 +400,11 @@ func TestFetchImageConfig_PropagatesRegistryErrors(t *testing.T) {
 		imageMetadataCache.Unlock()
 	})
 
-	os.Unsetenv("SOCKERLESS_SKIP_IMAGE_CONFIG")
-
 	cfg, err := FetchImageConfig("nonexistent.invalid/image:tag")
 	if err == nil {
 		t.Fatal("expected error for unresolvable registry, got nil")
 	}
 	if cfg != nil {
 		t.Errorf("expected nil config on failure, got %+v", cfg)
-	}
-}
-
-// TestFetchImageMetadata_SkipEnvVarReturnsNil — the explicit opt-out
-// path returns (nil, nil): operators set SOCKERLESS_SKIP_IMAGE_CONFIG=true
-// when they want placeholder metadata, and the fetch signals that by
-// returning nil meta + nil error.
-func TestFetchImageMetadata_SkipEnvVarReturnsNil(t *testing.T) {
-	imageMetadataCache.Lock()
-	imageMetadataCache.m = make(map[string]*ImageMetadataResult)
-	imageMetadataCache.Unlock()
-	t.Setenv("SOCKERLESS_SKIP_IMAGE_CONFIG", "true")
-
-	meta, err := FetchImageMetadata("anything:tag")
-	if err != nil {
-		t.Fatalf("expected no error with skip env var set, got %v", err)
-	}
-	if meta != nil {
-		t.Errorf("expected nil meta with skip env var, got %+v", meta)
 	}
 }

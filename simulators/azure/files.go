@@ -3,11 +3,34 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	sim "github.com/sockerless/simulator"
 )
+
+// azureFilesHostRoot returns the on-disk backing directory for every
+// simulated Azure Files share. Each (storage account, share) pair
+// becomes a nested subdirectory so the ACA Jobs / Apps executor can
+// bind-mount a real host path when it resolves a
+// Volume{StorageType: AzureFile}.
+func azureFilesHostRoot() string {
+	if dir := os.Getenv("SIM_AZURE_FILES_DATA_DIR"); dir != "" {
+		return dir
+	}
+	return filepath.Join(os.TempDir(), "sockerless-sim-azure-files")
+}
+
+// FileShareHostDir returns the on-disk directory backing a simulated
+// Azure file share. Created lazily; safe for concurrent callers.
+// Exported for use by the ACA sim's Jobs/Apps executor.
+func FileShareHostDir(storageAccount, shareName string) string {
+	dir := filepath.Join(azureFilesHostRoot(), storageAccount, shareName)
+	_ = os.MkdirAll(dir, 0o777)
+	return dir
+}
 
 // StorageAccount represents an Azure Storage Account.
 type StorageAccount struct {
@@ -55,13 +78,14 @@ type FileShare struct {
 
 // FileShareProperties holds the properties of a file share.
 type FileShareProperties struct {
-	ShareQuota        int    `json:"shareQuota,omitempty"`
-	AccessTier        string `json:"accessTier,omitempty"`
-	EnabledProtocols  string `json:"enabledProtocols,omitempty"`
-	ProvisioningState string `json:"provisioningState,omitempty"`
-	LastModifiedTime  string `json:"lastModifiedTime,omitempty"`
-	LeaseStatus       string `json:"leaseStatus,omitempty"`
-	LeaseState        string `json:"leaseState,omitempty"`
+	ShareQuota        int               `json:"shareQuota,omitempty"`
+	AccessTier        string            `json:"accessTier,omitempty"`
+	EnabledProtocols  string            `json:"enabledProtocols,omitempty"`
+	ProvisioningState string            `json:"provisioningState,omitempty"`
+	LastModifiedTime  string            `json:"lastModifiedTime,omitempty"`
+	LeaseStatus       string            `json:"leaseStatus,omitempty"`
+	LeaseState        string            `json:"leaseState,omitempty"`
+	Metadata          map[string]string `json:"metadata,omitempty"`
 }
 
 // Package-level store for dashboard access.
@@ -239,6 +263,7 @@ func registerAzureFiles(srv *sim.Server) {
 				LastModifiedTime:  time.Now().UTC().Format(time.RFC3339),
 				LeaseStatus:       "Unlocked",
 				LeaseState:        "Available",
+				Metadata:          req.Properties.Metadata,
 			},
 		}
 

@@ -31,9 +31,13 @@ func (s *Server) startSingleContainerService(id string, c api.Container, crState
 	}
 
 	svcName := buildServiceName(id)
-	svcSpec := s.buildServiceSpec([]containerInput{
+	svcSpec, err := s.buildServiceSpec(s.ctx(), []containerInput{
 		{ID: id, Container: &c, IsMain: true},
 	})
+	if err != nil {
+		s.Store.WaitChs.Delete(id)
+		return err
+	}
 
 	createOp, err := s.gcp.Services.CreateService(s.ctx(), &runpb.CreateServiceRequest{
 		Parent:    s.buildServiceParent(),
@@ -88,7 +92,10 @@ func (s *Server) startMultiContainerServiceTyped(_ string, podContainers []api.C
 	mainID := podContainers[0].ID
 
 	svcName := buildServiceName(mainID)
-	svcSpec := s.buildServiceSpec(inputs)
+	svcSpec, err := s.buildServiceSpec(s.ctx(), inputs)
+	if err != nil {
+		return err
+	}
 
 	createOp, err := s.gcp.Services.CreateService(s.ctx(), &runpb.CreateServiceRequest{
 		Parent:    s.buildServiceParent(),

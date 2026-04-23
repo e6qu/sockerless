@@ -78,6 +78,22 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		hostConfig.NetworkMode = "default"
 	}
 
+	// Named-volume binds (`volName:/mnt`) map to Azure Files shares
+	// provisioned by VolumeCreate; see volumes.go. Host-path binds
+	// (`/h:/c`) stay rejected — ACA containers have no host filesystem.
+	for _, bind := range hostConfig.Binds {
+		parts := strings.SplitN(bind, ":", 3)
+		if len(parts) < 2 {
+			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("invalid bind mount spec %q", bind)}
+		}
+		if strings.HasPrefix(parts[0], "/") {
+			return nil, &api.InvalidParameterError{Message: fmt.Sprintf(
+				"host bind mounts are not supported on ACA backend (%q); use a named volume (`docker volume create <name> && docker run -v <name>:/path`) — volumes are backed by sockerless-managed Azure Files shares",
+				bind,
+			)}
+		}
+	}
+
 	path := ""
 	var args []string
 	if len(config.Entrypoint) > 0 {
@@ -218,9 +234,13 @@ func (s *Server) ContainerStart(ref string) error {
 
 	// Build ACA Job spec
 	jobName := buildJobName(id)
-	jobSpec := s.buildJobSpec([]containerInput{
+	jobSpec, err := s.buildJobSpec(s.ctx(), []containerInput{
 		{ID: id, Container: &c, IsMain: true},
 	})
+	if err != nil {
+		s.Store.WaitChs.Delete(id)
+		return err
+	}
 
 	// Create the ACA Job
 	createPoller, err := s.azure.Jobs.BeginCreateOrUpdate(s.ctx(), s.config.ResourceGroup, jobName, jobSpec, nil)
@@ -308,7 +328,10 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 
 	// Build and create the combined job
 	jobName := buildJobName(mainID)
-	jobSpec := s.buildJobSpec(inputs)
+	jobSpec, err := s.buildJobSpec(s.ctx(), inputs)
+	if err != nil {
+		return err
+	}
 
 	createPoller, err := s.azure.Jobs.BeginCreateOrUpdate(s.ctx(), s.config.ResourceGroup, jobName, jobSpec, nil)
 	if err != nil {
@@ -750,16 +773,52 @@ func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 	return s.images.Load(r)
 }
 
-// VolumeRemove is not supported by the ACA backend. Named docker
-// volumes aren't backed by real cloud-side storage; the earlier
-// in-memory store silently accepted and deleted volumes without ever
-// mounting them. Real Azure Files share provisioning is a follow-up
-// phase.
+// VolumeRemove deletes the Azure Files share + managed-env storage
+// resource backing a named volume. The storage account is left in
+// place so other volumes keep working.
 func (s *Server) VolumeRemove(name string, force bool) error {
-	return &api.NotImplementedError{Message: "ACA backend does not support named volumes"}
+	if name == "" {
+		return &api.InvalidParameterError{Message: "volume name is required"}
+	}
+	if err := s.deleteShareForVolume(s.ctx(), name); err != nil {
+		return &api.ServerError{Message: fmt.Sprintf("delete Azure Files share for %q: %v", name, err)}
+	}
+	return nil
 }
 
-// VolumePrune is not supported by the ACA backend — see VolumeRemove.
+// VolumePrune deletes every sockerless-managed Azure Files share that
+// isn't currently referenced by a pending container's binds.
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
-	return nil, &api.NotImplementedError{Message: "ACA backend does not support named volumes"}
+	shares, err := s.listManagedShares(s.ctx())
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("list managed Azure Files shares: %v", err)}
+	}
+	in := s.inUseVolumeNames()
+	resp := &api.VolumePruneResponse{}
+	for _, sh := range shares {
+		name := azurecommon.ShareVolumeName(sh)
+		if _, busy := in[name]; busy {
+			continue
+		}
+		if err := s.deleteShareForVolume(s.ctx(), name); err != nil {
+			return nil, &api.ServerError{Message: fmt.Sprintf("delete Azure Files share for %q: %v", name, err)}
+		}
+		resp.VolumesDeleted = append(resp.VolumesDeleted, name)
+	}
+	return resp, nil
+}
+
+// inUseVolumeNames returns the set of Docker volume names currently
+// referenced by pending ACA jobs.
+func (s *Server) inUseVolumeNames() map[string]struct{} {
+	in := make(map[string]struct{})
+	for _, c := range s.PendingCreates.List() {
+		for _, b := range c.HostConfig.Binds {
+			parts := strings.SplitN(b, ":", 3)
+			if len(parts) >= 2 && !strings.HasPrefix(parts[0], "/") {
+				in[parts[0]] = struct{}{}
+			}
+		}
+	}
+	return in
 }

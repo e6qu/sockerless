@@ -2,6 +2,8 @@ package gcf
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -93,27 +95,24 @@ func (p *gcfCloudState) CheckNameAvailable(ctx context.Context, name string) (bo
 }
 
 func (p *gcfCloudState) WaitForExit(ctx context.Context, containerID string) (int, error) {
-	// Check WaitChs first — FaaS containers use exit channels
+	// Phase 95: fast path — invocation goroutine records the outcome.
+	if inv, ok := p.server.Store.GetInvocationResult(containerID); ok {
+		return inv.ExitCode, nil
+	}
+	// Check WaitChs — FaaS containers use exit channels
 	if ch, ok := p.server.Store.WaitChs.Load(containerID); ok {
 		select {
 		case <-ctx.Done():
 			return -1, ctx.Err()
 		case <-ch.(chan struct{}):
-			// Channel closed — container exited.
-			// Re-query to get exit code.
-			containers, err := p.queryFunctions(ctx)
-			if err == nil {
-				for _, c := range containers {
-					if c.ID == containerID {
-						return c.State.ExitCode, nil
-					}
-				}
+			if inv, ok := p.server.Store.GetInvocationResult(containerID); ok {
+				return inv.ExitCode, nil
 			}
 			return 0, nil
 		}
 	}
 
-	// Fallback: poll cloud API
+	// Fallback: poll cloud API (post-restart case)
 	interval := p.server.config.PollInterval
 	if interval == 0 {
 		interval = 2 * time.Second
@@ -126,6 +125,9 @@ func (p *gcfCloudState) WaitForExit(ctx context.Context, containerID string) (in
 		case <-ctx.Done():
 			return -1, ctx.Err()
 		case <-ticker.C:
+			if inv, ok := p.server.Store.GetInvocationResult(containerID); ok {
+				return inv.ExitCode, nil
+			}
 			containers, err := p.queryFunctions(ctx)
 			if err != nil {
 				continue
@@ -179,6 +181,18 @@ func (p *gcfCloudState) queryFunctions(ctx context.Context) ([]api.Container, er
 
 		c := functionToContainer(fn, labels)
 
+		// Phase 95: overlay recorded invocation outcome so exited state
+		// is visible to docker ps / docker inspect / docker wait.
+		if inv, ok := p.server.Store.GetInvocationResult(c.ID); ok {
+			c.State = api.ContainerState{
+				Status:     "exited",
+				Running:    false,
+				ExitCode:   inv.ExitCode,
+				FinishedAt: inv.FinishedAt.UTC().Format(time.RFC3339Nano),
+				Error:      inv.Error,
+			}
+		}
+
 		// Sync GCF state store with cloud state
 		if _, exists := p.server.GCF.Get(containerID); !exists {
 			funcName := extractFunctionName(fn.Name)
@@ -226,11 +240,25 @@ func functionToContainer(fn *functionspb.Function, labels map[string]string) api
 	// Map function state to Docker state
 	state := mapFunctionState(fn)
 
-	// Parse Docker labels from GCP labels (convert underscores back to hyphens)
-	hyphenLabels := gcpLabelsToHyphenMap(labels)
-	dockerLabels := core.ParseLabelsFromTags(hyphenLabels)
-	if dockerLabels == nil {
-		dockerLabels = make(map[string]string)
+	// Phase 97 (BUG-746): Docker labels are carried as a base64-encoded
+	// JSON env var because GCP's label-value charset rejects the
+	// sockerless-labels JSON blob and Functions v2 has no Annotations
+	// field. Prefer the env-var source if present; fall back to the
+	// legacy split-across-labels path for resources created before the
+	// fix.
+	dockerLabels := map[string]string{}
+	if fn.ServiceConfig != nil {
+		if b64, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_LABELS"]; ok && b64 != "" {
+			if raw, err := base64.StdEncoding.DecodeString(b64); err == nil {
+				_ = json.Unmarshal(raw, &dockerLabels)
+			}
+		}
+	}
+	if len(dockerLabels) == 0 {
+		hyphenLabels := gcpLabelsToHyphenMap(labels)
+		if parsed := core.ParseLabelsFromTags(hyphenLabels); parsed != nil {
+			dockerLabels = parsed
+		}
 	}
 
 	// Extract environment variables

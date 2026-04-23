@@ -18,14 +18,16 @@ type Server struct {
 	ipCounter atomic.Int32
 
 	AZF *core.StateStore[AZFState]
+	azfVolumeState
 }
 
 // NewServer creates a new Azure Functions backend server.
 func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger) *Server {
 	s := &Server{
-		config: config,
-		azure:  azureClients,
-		AZF:    core.NewStateStore[AZFState](),
+		config:         config,
+		azure:          azureClients,
+		AZF:            core.NewStateStore[AZFState](),
+		azfVolumeState: azfVolumeState{shares: azurecommon.NewFileShareManager(azureClients.FileShares, config.ResourceGroup, config.StorageAccount)},
 	}
 	s.ipCounter.Store(2)
 

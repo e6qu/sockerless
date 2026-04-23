@@ -19,15 +19,17 @@ type Server struct {
 
 	ACA          *core.StateStore[ACAState]
 	NetworkState *core.StateStore[NetworkState]
+	azureVolumeState
 }
 
 // NewServer creates a new ACA backend server.
 func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger) *Server {
 	s := &Server{
-		config:       config,
-		azure:        azureClients,
-		ACA:          core.NewStateStore[ACAState](),
-		NetworkState: core.NewStateStore[NetworkState](),
+		config:           config,
+		azure:            azureClients,
+		ACA:              core.NewStateStore[ACAState](),
+		NetworkState:     core.NewStateStore[NetworkState](),
+		azureVolumeState: azureVolumeState{shares: azurecommon.NewFileShareManager(azureClients.FileShares, config.ResourceGroup, config.StorageAccount)},
 	}
 	s.ipCounter.Store(2)
 

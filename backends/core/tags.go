@@ -106,30 +106,60 @@ func ParseLabelsFromTags(tags map[string]string) map[string]string {
 	return nil
 }
 
-// AsGCPLabels returns tags with GCP-safe key format (underscores, lowercase, values max 63 chars).
+// AsGCPLabels returns tags as GCP-compatible labels (max 63 chars,
+// charset: [a-z0-9_-]). Values containing characters outside the GCP
+// label charset (e.g. the sockerless-labels JSON blob's `{`, `:`, `"`)
+// are dropped from labels — callers should pair this with
+// AsGCPAnnotations which captures the same data without charset limits.
+// Phase 97 (BUG-746): previously every value was blindly truncated and
+// pushed into labels, which caused GCP's ARM validator to reject the
+// whole resource when the JSON blob appeared.
 func (ts TagSet) AsGCPLabels() map[string]string {
 	m := ts.AsMap()
 	result := make(map[string]string, len(m))
 	for k, v := range m {
+		if !gcpLabelValueValid(v) {
+			continue
+		}
 		gcpKey := strings.ReplaceAll(k, "-", "_")
 		result[gcpKey] = truncate(v, 63)
 	}
 	return result
 }
 
-// AsGCPAnnotations returns tags that exceed GCP label limits as annotations.
-// GCP labels max 63 chars per value; annotations allow 32768 chars.
-// Use this alongside AsGCPLabels() to store the full container ID.
+// AsGCPAnnotations returns tags that can't fit in GCP labels — either
+// they contain characters outside the GCP label charset, or they exceed
+// the 63-char label-value limit. GCP annotations allow up to 32768
+// chars per value with arbitrary UTF-8, so Docker labels (which can
+// carry anything) always land here.
 func (ts TagSet) AsGCPAnnotations() map[string]string {
 	m := ts.AsMap()
 	result := make(map[string]string)
 	for k, v := range m {
-		if len(v) > 63 {
+		if !gcpLabelValueValid(v) || len(v) > 63 {
 			gcpKey := strings.ReplaceAll(k, "-", "_")
 			result[gcpKey] = v
 		}
 	}
 	return result
+}
+
+// gcpLabelValueValid reports whether a value is acceptable as a GCP
+// resource label value: only lowercase letters, digits, dashes, and
+// underscores are allowed. Values violating this must go into
+// annotations instead.
+func gcpLabelValueValid(v string) bool {
+	for _, r := range v {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= '0' && r <= '9',
+			r == '-', r == '_':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // AsAzurePtrMap returns tags as map[string]*string (Azure SDK convention).

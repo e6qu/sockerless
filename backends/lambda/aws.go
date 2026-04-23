@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
+	"github.com/aws/aws-sdk-go-v2/service/efs"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
@@ -20,6 +21,10 @@ type AWSClients struct {
 	ECR        *ecr.Client
 	CodeBuild  *codebuild.Client
 	S3         *s3.Client
+	// Phase 94b: EFS client backs named-volume provisioning via
+	// awscommon.EFSManager (shared with ECS) + Function.FileSystemConfigs[]
+	// attach on CreateFunction.
+	EFS *efs.Client
 }
 
 // NewAWSClients initializes AWS SDK clients from config.
@@ -52,6 +57,7 @@ func newClientsFromConfig(cfg aws.Config) *AWSClients {
 		ECR:        ecr.NewFromConfig(cfg),
 		CodeBuild:  codebuild.NewFromConfig(cfg),
 		S3:         s3.NewFromConfig(cfg),
+		EFS:        efs.NewFromConfig(cfg),
 	}
 }
 
@@ -62,5 +68,6 @@ func newClientsWithEndpoint(cfg aws.Config, endpoint string) *AWSClients {
 		ECR:        ecr.NewFromConfig(cfg, func(o *ecr.Options) { o.BaseEndpoint = aws.String(endpoint) }),
 		CodeBuild:  codebuild.NewFromConfig(cfg, func(o *codebuild.Options) { o.BaseEndpoint = aws.String(endpoint) }),
 		S3:         s3.NewFromConfig(cfg, func(o *s3.Options) { o.BaseEndpoint = aws.String(endpoint) }),
+		EFS:        efs.NewFromConfig(cfg, func(o *efs.Options) { o.BaseEndpoint = aws.String(endpoint) }),
 	}
 }

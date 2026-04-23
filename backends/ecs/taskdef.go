@@ -21,8 +21,9 @@ type containerInput struct {
 }
 
 // buildContainerDef builds a single ECS container definition.
-// Bind mounts use EFS when AgentEFSID is configured.
-func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinition, []ecstypes.Volume) {
+// Named-volume mounts are resolved to EFS access points against the
+// sockerless-managed filesystem.
+func (s *Server) buildContainerDef(ctx context.Context, ci containerInput) (ecstypes.ContainerDefinition, []ecstypes.Volume, error) {
 	config := ci.Container.Config
 
 	// Build environment variables
@@ -121,42 +122,55 @@ func (s *Server) buildContainerDef(ci containerInput) (ecstypes.ContainerDefinit
 		}
 	}
 
-	// Build volumes and mount points for bind mounts.
-	// Use EFS when AgentEFSID is configured so bind mounts are not
-	// silently mapped to empty scratch volumes on Fargate.
+	// Resolve each named-volume bind spec to an EFS access point on
+	// the sockerless-managed filesystem. ContainerCreate has already
+	// rejected host-path bind specs (`/h:/c`); everything left is
+	// `volName:/mnt[:ro]`. Each volume gets one ECS Volume + one
+	// MountPoint entry; the task role needs
+	// `elasticfilesystem:ClientMount/ClientWrite` to actually mount.
 	var volumes []ecstypes.Volume
 	var mountPoints []ecstypes.MountPoint
-	for i, bind := range ci.Container.HostConfig.Binds {
-		parts := strings.SplitN(bind, ":", 3)
-		if len(parts) < 2 {
-			continue
+	if len(ci.Container.HostConfig.Binds) > 0 {
+		fsID, err := s.ensureEFSFilesystem(ctx)
+		if err != nil {
+			return containerDef, nil, fmt.Errorf("ensure EFS filesystem: %w", err)
 		}
-		volName := fmt.Sprintf("%s-bind-%d", defName, i)
-		vol := ecstypes.Volume{
-			Name: aws.String(volName),
-		}
-		if s.config.AgentEFSID != "" {
-			vol.EfsVolumeConfiguration = &ecstypes.EFSVolumeConfiguration{
-				FileSystemId: aws.String(s.config.AgentEFSID),
-				RootDirectory: aws.String(fmt.Sprintf("/sockerless/binds/%s/%s",
-					ci.ID[:12], strings.TrimPrefix(parts[0], "/"))),
+		for _, bind := range ci.Container.HostConfig.Binds {
+			parts := strings.SplitN(bind, ":", 3)
+			if len(parts) < 2 {
+				continue
 			}
+			volName := parts[0]
+			apID, err := s.accessPointForVolume(ctx, volName)
+			if err != nil {
+				return containerDef, nil, fmt.Errorf("resolve access point for volume %q: %w", volName, err)
+			}
+			volumes = append(volumes, ecstypes.Volume{
+				Name: aws.String(volName),
+				EfsVolumeConfiguration: &ecstypes.EFSVolumeConfiguration{
+					FileSystemId:      aws.String(fsID),
+					TransitEncryption: ecstypes.EFSTransitEncryptionEnabled,
+					AuthorizationConfig: &ecstypes.EFSAuthorizationConfig{
+						AccessPointId: aws.String(apID),
+						Iam:           ecstypes.EFSAuthorizationConfigIAMEnabled,
+					},
+				},
+			})
+			readOnly := false
+			if len(parts) == 3 && parts[2] == "ro" {
+				readOnly = true
+			}
+			mountPoints = append(mountPoints, ecstypes.MountPoint{
+				SourceVolume:  aws.String(volName),
+				ContainerPath: aws.String(parts[1]),
+				ReadOnly:      aws.Bool(readOnly),
+			})
 		}
-		volumes = append(volumes, vol)
-		readOnly := false
-		if len(parts) == 3 && parts[2] == "ro" {
-			readOnly = true
-		}
-		mountPoints = append(mountPoints, ecstypes.MountPoint{
-			SourceVolume:  aws.String(volName),
-			ContainerPath: aws.String(parts[1]),
-			ReadOnly:      aws.Bool(readOnly),
-		})
 	}
 
 	containerDef.MountPoints = mountPoints
 
-	return containerDef, volumes
+	return containerDef, volumes, nil
 }
 
 // registerTaskDefinition creates an ECS task definition from one or more containers.
@@ -165,7 +179,10 @@ func (s *Server) registerTaskDefinition(ctx context.Context, containers []contai
 	var allVolumes []ecstypes.Volume
 
 	for _, ci := range containers {
-		def, vols := s.buildContainerDef(ci)
+		def, vols, err := s.buildContainerDef(ctx, ci)
+		if err != nil {
+			return "", err
+		}
 		allDefs = append(allDefs, def)
 		allVolumes = append(allVolumes, vols...)
 	}

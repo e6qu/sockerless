@@ -19,6 +19,10 @@ type Config struct {
 	Timeout          int
 	SubnetIDs        []string
 	SecurityGroupIDs []string
+	// AgentEFSID (optional) lets operators reuse an existing EFS filesystem
+	// for Lambda volumes instead of sockerless provisioning a fresh one.
+	// Mirrors SOCKERLESS_ECS_AGENT_EFS_ID on the ECS backend. Phase 94b.
+	AgentEFSID       string
 	CodeBuildProject string        // AWS CodeBuild project for docker build
 	BuildBucket      string        // S3 bucket for build context upload
 	EndpointURL      string        // Custom endpoint URL
@@ -54,6 +58,7 @@ func ConfigFromEnv() Config {
 		Timeout:              envOrDefaultInt("SOCKERLESS_LAMBDA_TIMEOUT", 900),
 		SubnetIDs:            splitCSV(os.Getenv("SOCKERLESS_LAMBDA_SUBNETS")),
 		SecurityGroupIDs:     splitCSV(os.Getenv("SOCKERLESS_LAMBDA_SECURITY_GROUPS")),
+		AgentEFSID:           os.Getenv("SOCKERLESS_LAMBDA_AGENT_EFS_ID"),
 		CodeBuildProject:     os.Getenv("SOCKERLESS_AWS_CODEBUILD_PROJECT"),
 		BuildBucket:          os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET"),
 		EndpointURL:          os.Getenv("SOCKERLESS_ENDPOINT_URL"),

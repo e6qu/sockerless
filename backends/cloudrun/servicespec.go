@@ -1,6 +1,7 @@
 package cloudrun
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -28,14 +29,34 @@ func (s *Server) buildServiceParent() string {
 // VPC connector + internal ingress) whereas Jobs do not.
 // Callers are expected to have verified s.config.VPCConnector is non-empty
 // and s.config.UseService is true; this builder does not enforce that.
-func (s *Server) buildServiceSpec(containers []containerInput) *runpb.Service {
+func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInput) (*runpb.Service, error) {
 	var specs []*runpb.Container
+	volSeen := make(map[string]struct{})
+	var volumes []*runpb.Volume
 	for _, ci := range containers {
-		specs = append(specs, s.buildContainerSpec(ci))
+		cs, mounts := s.buildContainerSpec(ci)
+		specs = append(specs, cs)
+		for _, mp := range mounts {
+			if _, done := volSeen[mp.Name]; done {
+				continue
+			}
+			bucket, err := s.bucketForVolume(ctx, mp.Name)
+			if err != nil {
+				return nil, fmt.Errorf("provision GCS bucket for volume %q: %w", mp.Name, err)
+			}
+			volumes = append(volumes, &runpb.Volume{
+				Name: mp.Name,
+				VolumeType: &runpb.Volume_Gcs{
+					Gcs: &runpb.GCSVolumeSource{Bucket: bucket},
+				},
+			})
+			volSeen[mp.Name] = struct{}{}
+		}
 	}
 
 	revTemplate := &runpb.RevisionTemplate{
 		Containers: specs,
+		Volumes:    volumes,
 		Scaling: &runpb.RevisionScaling{
 			MinInstanceCount: 1,
 			MaxInstanceCount: 1,
@@ -70,5 +91,5 @@ func (s *Server) buildServiceSpec(containers []containerInput) *runpb.Service {
 		Ingress:            runpb.IngressTraffic_INGRESS_TRAFFIC_INTERNAL_ONLY,
 		DefaultUriDisabled: true,
 		Template:           revTemplate,
-	}
+	}, nil
 }

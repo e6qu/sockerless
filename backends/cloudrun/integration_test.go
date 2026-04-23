@@ -359,18 +359,55 @@ func TestCloudRunNetworkOperations(t *testing.T) {
 	}
 }
 
-// TestCloudRunVolumeOperations pins BUG-731 — Cloud Run
-// Jobs/Services are invocation-scoped; named volumes require a real
-// GCS/Filestore mount and are tracked as Phase 92.
+// TestCloudRunVolumeOperations — Phase 92 GCS-backed named volumes:
+// VolumeCreate provisions a sockerless-managed GCS bucket, VolumeInspect
+// + VolumeList surface it, VolumeRemove deletes it.
 func TestCloudRunVolumeOperations(t *testing.T) {
 	ctx := context.Background()
 
-	_, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: "cloudrun_vol_" + generateTestID()})
-	if err == nil {
-		t.Fatal("expected VolumeCreate to fail with NotImplemented")
+	volName := "cloudrun_vol_" + generateTestID()
+	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: volName})
+	if err != nil {
+		t.Fatalf("VolumeCreate: %v", err)
 	}
-	if !strings.Contains(err.Error(), "does not support named volumes") {
-		t.Errorf("expected NotImplemented error, got: %v", err)
+	if vol.Name != volName {
+		t.Errorf("Volume.Name = %q, want %q", vol.Name, volName)
+	}
+	if vol.Driver != "gcs" {
+		t.Errorf("Volume.Driver = %q, want gcs", vol.Driver)
+	}
+	if vol.Options["bucket"] == "" {
+		t.Errorf("Volume.Options missing bucket: %+v", vol.Options)
+	}
+
+	inspected, err := dockerClient.VolumeInspect(ctx, volName)
+	if err != nil {
+		t.Fatalf("VolumeInspect: %v", err)
+	}
+	if inspected.Name != volName {
+		t.Errorf("inspect Name = %q, want %q", inspected.Name, volName)
+	}
+
+	listed, err := dockerClient.VolumeList(ctx, volume.ListOptions{})
+	if err != nil {
+		t.Fatalf("VolumeList: %v", err)
+	}
+	found := false
+	for _, v := range listed.Volumes {
+		if v.Name == volName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("VolumeList did not return %q; got %d volumes", volName, len(listed.Volumes))
+	}
+
+	if err := dockerClient.VolumeRemove(ctx, volName, true); err != nil {
+		t.Fatalf("VolumeRemove: %v", err)
+	}
+	if _, err := dockerClient.VolumeInspect(ctx, volName); err == nil {
+		t.Error("VolumeInspect after remove: expected error, got success")
 	}
 }
 

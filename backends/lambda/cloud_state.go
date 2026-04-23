@@ -66,6 +66,11 @@ func (p *lambdaCloudState) CheckNameAvailable(ctx context.Context, name string) 
 }
 
 func (p *lambdaCloudState) WaitForExit(ctx context.Context, containerID string) (int, error) {
+	// Phase 95: short-circuit on the in-memory invocation result if the
+	// goroutine has already recorded it.
+	if inv, ok := p.server.Store.GetInvocationResult(containerID); ok {
+		return inv.ExitCode, nil
+	}
 	ticker := time.NewTicker(p.server.config.PollInterval)
 	defer ticker.Stop()
 	for {
@@ -73,6 +78,9 @@ func (p *lambdaCloudState) WaitForExit(ctx context.Context, containerID string) 
 		case <-ctx.Done():
 			return -1, ctx.Err()
 		case <-ticker.C:
+			if inv, ok := p.server.Store.GetInvocationResult(containerID); ok {
+				return inv.ExitCode, nil
+			}
 			containers, err := p.queryFunctions(ctx)
 			if err != nil {
 				continue
@@ -247,15 +255,23 @@ func (p *lambdaCloudState) queryFunctions(ctx context.Context) ([]api.Container,
 				name = "/" + funcName
 			}
 
-			// Lambda functions are "running" (available for invocation) or don't exist
-			// Check Lambda state for function state
+			// Phase 95: if the invocation goroutine has recorded an exit
+			// outcome, surface it. Otherwise the function is either
+			// `running` (invocation in flight / available for a new one)
+			// or `exited` (Lambda control-plane reports Failed/Inactive).
 			state := api.ContainerState{
 				Status:  "running",
 				Running: true,
 			}
-
-			// Check if function is in a terminal state
-			if fn.State == "Failed" || fn.State == "Inactive" {
+			if inv, ok := p.server.Store.GetInvocationResult(containerID); ok {
+				state = api.ContainerState{
+					Status:     "exited",
+					Running:    false,
+					ExitCode:   inv.ExitCode,
+					FinishedAt: inv.FinishedAt.UTC().Format(time.RFC3339Nano),
+					Error:      inv.Error,
+				}
+			} else if fn.State == "Failed" || fn.State == "Inactive" {
 				state = api.ContainerState{
 					Status: "exited",
 					Error:  aws.ToString(fn.StateReason),
