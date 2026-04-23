@@ -12,12 +12,12 @@ Snapshot pointer for the next session. Updated after every task.
 2. **Phase 94 — GCF + AZF real volumes.** ✅ Closed 2026-04-21. GCF attaches GCS buckets via `Services.GetService`/`UpdateService` on `fn.ServiceConfig.Service`; AZF attaches Azure Files shares via `WebApps.UpdateAzureStorageAccounts`.
 3. **Phase 94b — Lambda EFS via `Function.FileSystemConfigs[]`.** ✅ Closed 2026-04-21. Reuses `awscommon.EFSManager` (shared with ECS); requires `SOCKERLESS_LAMBDA_SUBNETS` to be set.
 4. **Phase 95 — FaaS invocation-lifecycle tracker.** ✅ Closed 2026-04-21. `core.InvocationResult` + `Store.{Put,Get,Delete}InvocationResult`; per-backend wiring on Lambda + GCF + AZF; 7 BUG-744 tests re-enabled.
-5. **Phase 96 — Reverse-agent exec for CR Jobs + ACA Jobs.** Ports `sockerless-lambda-bootstrap` to two new overlay images + `/v1/cloudrun/reverse` + `/v1/aca/reverse` WebSocket endpoints. Unblocks Phase 98/98b/99 on those backends.
+5. **Phase 96 — Reverse-agent exec for CR Jobs + ACA Jobs.** Backend-side machinery closed 2026-04-23 (shared core.ReverseAgent*, CR+ACA register `/v1/{cloudrun,aca}/reverse` + Drivers.Exec/Stream + env vars). Container-side overlay bootstraps still needed; `sockerless-agent --callback --keep-alive <cmd>` is the minimum-viable pattern.
 6. **Phase 97 — Docker labels charset-safe on GCP.** ✅ Closed 2026-04-21. `AsGCPLabels` filters charset-invalid values to `AsGCPAnnotations`; GCF carries the JSON blob via a `SOCKERLESS_LABELS` env var (Function v2 has no Annotations field).
 7. **Phase 98 — Agent-driven filesystem + introspection ops.** Reverse-agent RPCs (`agent.Archive*`, `agent.Stat`, `agent.ProcList`, `agent.Changes`) for `docker cp` / `export` / `stat` / `top` / `diff`; ECS uses SSM `ExecuteCommand` for the archive path. Fixes BUG-751/752/753 on every backend that has the reverse-agent after Phase 96.
 8. **Phase 98b — Agent-driven `docker commit`.** Opt-in via `SOCKERLESS_ENABLE_COMMIT`. Fixes BUG-750 on CR/ACA/Lambda; ECS Fargate gets the agent path too once SSM archive + ECR push land.
 9. **Phase 99 — Agent-driven `pause` / `unpause`.** Reverse-agent SIGSTOP/SIGCONT broadcast to every process in the task; ECS Fargate uses SSM `signal`. Fixes BUG-749.
-10. **Phase 100 — Docker backend pod synthesis.** Shared `sockerless-pod=<id>` label convention across all backends so Docker reproduces the pod grouping every cloud backend already emits. Fixes BUG-754.
+10. **Phase 100 — Docker backend pod synthesis.** ✅ Closed 2026-04-23 (BUG-754). Store.Pods + sockerless-pod label filter; PodStart/Stop/Kill/Remove fan out to Docker daemon.
 
 Each phase ships as granular commits under a single mega-PR (per user direction). Bug tracking remains in `BUGS.md`; each re-enabled test is referenced against its phase.
 
