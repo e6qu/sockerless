@@ -72,7 +72,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		hostConfig.NetworkMode = "default"
 	}
 
-	// Phase 94: named-volume binds are allowed (`-v volName:/mnt[:ro]`)
+	// Named-volume binds are allowed (`-v volName:/mnt[:ro]`)
 	// and land on sockerless-managed GCS buckets attached to the
 	// underlying Cloud Run Service. Host-path binds (`/h:/c`) are
 	// rejected — GCF containers have no host filesystem.
@@ -185,8 +185,8 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// match requests by full ID post-start (when PendingCreates is empty).
 	envVars["SOCKERLESS_CONTAINER_ID"] = id
 
-	// Phase 97 (BUG-746): Docker labels can contain `{`, `:`, `"` etc.
-	// which fail GCP's label-value charset. Cloud Functions v2's
+	// Docker labels can contain `{`, `:`, `"` etc. which fail GCP's
+	// label-value charset. Cloud Functions v2's
 	// Function resource has no Annotations field (unlike Cloud Run's
 	// Service resource), so carry the labels as a base64-encoded JSON
 	// env var. CloudState.queryFunctions decodes it back into
@@ -196,9 +196,9 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		envVars["SOCKERLESS_LABELS"] = base64.StdEncoding.EncodeToString(labelsJSON)
 	}
 
-	// Phase 98: inject reverse-agent callback URL when configured so a
-	// bootstrap inside the function container can dial back for docker
-	// top / exec / cp. SOCKERLESS_CONTAINER_ID is already set above.
+	// Inject reverse-agent callback URL when configured so a bootstrap
+	// inside the function container can dial back for docker top / exec
+	// / cp. SOCKERLESS_CONTAINER_ID is already set above.
 	if s.config.CallbackURL != "" {
 		envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
 	}
@@ -262,8 +262,8 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		functionURL = result.ServiceConfig.Uri
 	}
 
-	// Phase 94: if the request carries named-volume binds, attach them
-	// to the underlying Cloud Run Service via the GetService /
+	// If the request carries named-volume binds, attach them to the
+	// underlying Cloud Run Service via the GetService /
 	// UpdateService escape hatch. GCF's Functions v2 API has no direct
 	// Volumes primitive in ServiceConfig (only SecretVolumes), so every
 	// other volume must be appended to the backing service's
@@ -351,9 +351,9 @@ func (s *Server) ContainerStart(ref string) error {
 
 	s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 
-	// Invoke function via HTTP trigger asynchronously. Phase 95:
-	// capture the outcome in Store.InvocationResults so CloudState
-	// reflects the container as exited with a real exit code.
+	// Invoke function via HTTP trigger asynchronously and capture the
+	// outcome in Store.InvocationResults so CloudState reflects the
+	// container as exited with a real exit code.
 	go func() {
 		inv := core.InvocationResult{}
 		if gcfState.FunctionURL == "" {
@@ -401,8 +401,8 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 
 	// Cloud Run Functions run to completion — stop transitions state
 	s.StopHealthCheck(id)
-	// Phase 95: record the stop outcome so CloudState reports exited with
-	// code 137 (Docker convention for force-stopped).
+	// Record the stop outcome so CloudState reports exited with code
+	// 137 (Docker convention for force-stopped).
 	s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: 137})
 	// Close wait channel so ContainerWait unblocks
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
@@ -745,7 +745,7 @@ func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
 }
 
 // ContainerExport streams the function container's rootfs as tar via
-// the reverse-agent. Phase 98 (BUG-751).
+// the reverse-agent.
 func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {

@@ -14,11 +14,9 @@ import (
 //
 // psArgs is the argv passed to `ps`; empty means `-ef` (matching
 // docker's default when `?ps_args=` isn't set). The first output line
-// is the column headers, subsequent lines are the processes.
-//
-// Phase 98 (BUG-752): the reverse-agent fallback gives backends a
-// working `docker top` even though their control-plane APIs don't
-// expose process listing.
+// is the column headers, subsequent lines are the processes. The
+// reverse-agent path gives backends a working `docker top` even though
+// their control-plane APIs don't expose process listing.
 func RunContainerTopViaAgent(reg *ReverseAgentRegistry, containerID, psArgs string) (*api.ContainerTopResponse, error) {
 	if reg == nil {
 		return nil, ErrNoReverseAgent

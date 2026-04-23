@@ -40,7 +40,7 @@ func shareToVolume(dockerName, storageAccount, environment string, sh *armstorag
 // Container methods with resolution.
 
 // ContainerChanges lists files modified since container boot via the
-// reverse-agent. Phase 98 (BUG-753).
+// reverse-agent.
 func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -56,7 +56,7 @@ func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) 
 	return items, nil
 }
 
-// ContainerGetArchive runs tar via the reverse-agent. Phase 98.
+// ContainerGetArchive runs tar via the reverse-agent.
 func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArchiveResponse, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -84,7 +84,7 @@ func (s *Server) ContainerList(opts api.ContainerListOptions) ([]*api.ContainerS
 }
 
 // ContainerPutArchive extracts the incoming tar body via the
-// reverse-agent. Phase 98.
+// reverse-agent.
 func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDir bool, body io.Reader) error {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -115,7 +115,7 @@ func (s *Server) ContainerResize(id string, h int, w int) error {
 }
 
 // ContainerStatPath runs `stat` inside the ACA job via the reverse-
-// agent. Phase 98 (BUG-751).
+// agent.
 func (s *Server) ContainerStatPath(id string, path string) (*api.ContainerPathStat, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -139,8 +139,8 @@ func (s *Server) ContainerStats(id string, stream bool) (io.ReadCloser, error) {
 }
 
 // ContainerTop runs `ps` inside the container via the reverse-agent
-// and parses the output. Phase 98 (BUG-752). Requires a bootstrap
-// inside the container (SOCKERLESS_CALLBACK_URL).
+// and parses the output. Requires a bootstrap inside the container
+// (SOCKERLESS_CALLBACK_URL).
 func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopResponse, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -235,7 +235,7 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 }
 
 // Named-volume operations map to Azure Files shares inside the
-// operator-configured storage account (Phase 93). Each volume gets
+// operator-configured storage account. Each volume gets
 // a dedicated share, and a matching `ManagedEnvironmentsStorages`
 // entry links the share to the env so Apps/Jobs can reference it by
 // storage name at container-start time.

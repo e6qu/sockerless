@@ -24,7 +24,7 @@ const (
 // Added + Modified. Detecting Deleted paths requires image-layer
 // access that isn't available from inside the container; the sockerless
 // reverse-agent path reports this as a known limitation rather than
-// lying with a fabricated diff. Phase 98 (BUG-753).
+// lying with a fabricated diff.
 func RunContainerChangesViaAgent(reg *ReverseAgentRegistry, containerID string) ([]api.ContainerChangeItem, error) {
 	if reg == nil {
 		return nil, ErrNoReverseAgent

@@ -72,7 +72,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		hostConfig.NetworkMode = "default"
 	}
 
-	// Phase 94: named-volume binds are allowed (`-v volName:/mnt[:ro]`)
+	// Named-volume binds are allowed (`-v volName:/mnt[:ro]`)
 	// and attached to the function site via WebApps.UpdateAzureStorageAccounts
 	// after BeginCreateOrUpdate returns. Host-path binds (`/h:/c`) are
 	// rejected — AZF containers have no host filesystem.
@@ -196,9 +196,8 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		})
 	}
 
-	// Phase 98: inject reverse-agent callback URL + container ID so a
-	// bootstrap in the function container can dial back for docker top /
-	// exec / cp.
+	// Inject reverse-agent callback URL + container ID so a bootstrap
+	// in the function container can dial back for docker top / exec / cp.
 	appSettings = append(appSettings, &armappservice.NameValuePair{
 		Name: ptr("SOCKERLESS_CONTAINER_ID"), Value: ptr(id),
 	})
@@ -249,7 +248,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		return nil, azurecommon.MapAzureError(err, "function app", funcAppName)
 	}
 
-	// Phase 94: attach named-volume binds to the function site via
+	// Attach named-volume binds to the function site via
 	// sites/<site>/config/azurestorageaccounts. Freshest storage-account
 	// access key is fetched at attach-time.
 	if len(hostConfig.Binds) > 0 {
@@ -343,9 +342,9 @@ func (s *Server) ContainerStart(ref string) error {
 
 	s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 
-	// Invoke the Function App via HTTP POST asynchronously. Phase 95:
-	// capture outcome in Store.InvocationResults so CloudState reflects
-	// the container as exited with a real exit code.
+	// Invoke the Function App via HTTP POST asynchronously and capture
+	// outcome in Store.InvocationResults so CloudState reflects the
+	// container as exited with a real exit code.
 	go func() {
 		inv := core.InvocationResult{}
 		if azfState.FunctionURL == "" {
@@ -396,7 +395,7 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 
 	// Azure Functions run to completion — stop transitions state
 	s.StopHealthCheck(id)
-	// Phase 95: record stop outcome so CloudState reports exited with 137.
+	// Record stop outcome so CloudState reports exited with 137.
 	s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: 137})
 	// Close wait channel so ContainerWait unblocks
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
@@ -677,7 +676,7 @@ func (s *Server) Info() (*api.BackendInfo, error) {
 }
 
 // ContainerExport streams the function container's rootfs as tar via
-// the reverse-agent. Phase 98 (BUG-751).
+// the reverse-agent.
 func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {

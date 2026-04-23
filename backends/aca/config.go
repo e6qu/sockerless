@@ -35,7 +35,7 @@ type Config struct {
 	// container env so a bootstrap running inside the container can
 	// dial back to the backend's /v1/aca/reverse endpoint. Enables
 	// docker exec / attach once an overlay image with the bootstrap
-	// binary is deployed. Phase 96.
+	// binary is deployed.
 	CallbackURL string
 }
 

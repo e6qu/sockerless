@@ -98,7 +98,7 @@ func (rc *ReverseAgentConn) BridgeExec(conn net.Conn, sessionID string, cmd []st
 // connection to multiplex — output is accumulated in memory and
 // returned when the remote process exits. Intended for backend-driven
 // introspection calls like `docker top` / `docker container stat`
-// where we need the output as a value, not a streamed proxy. Phase 98.
+// where we need the output as a value, not a streamed proxy.
 func (rc *ReverseAgentConn) CollectExec(sessionID string, cmd []string, env []string, workdir string) (stdout, stderr []byte, exitCode int, err error) {
 	ch := make(chan Message, 64)
 	rc.sessions.Store(sessionID, ch)
@@ -143,8 +143,8 @@ func (rc *ReverseAgentConn) CollectExec(sessionID string, cmd []string, env []st
 // CollectExecWithStdin runs a one-shot command and feeds the given
 // stdin bytes via TypeStdin messages before waiting for the exit.
 // Returns (stdout, stderr, exit, err) once the remote process finishes.
-// Phase 98: needed by docker cp host→container (tar input body goes
-// to a `tar -xf - -C <dst>` exec inside the container).
+// Needed by `docker cp` host→container: the tar body streams in as
+// stdin to a `tar -xf - -C <dst>` exec inside the container.
 func (rc *ReverseAgentConn) CollectExecWithStdin(sessionID string, cmd, env []string, workdir string, stdin []byte) (stdout, stderr []byte, exitCode int, err error) {
 	ch := make(chan Message, 64)
 	rc.sessions.Store(sessionID, ch)

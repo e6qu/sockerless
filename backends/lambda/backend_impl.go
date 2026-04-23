@@ -232,7 +232,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		}
 	}
 
-	// Phase 94b: attach named-volume binds as EFS FileSystemConfigs.
+	// Attach named-volume binds as EFS FileSystemConfigs.
 	// Reject host-path binds; require VPC + subnets (enforced by
 	// fileSystemConfigsForBinds). Access points are sockerless-managed
 	// via awscommon.EFSManager (shared with ECS).
@@ -335,9 +335,9 @@ func (s *Server) ContainerStart(ref string) error {
 	// Remove from PendingCreates now that the function is being invoked.
 	s.PendingCreates.Delete(id)
 
-	// Invoke Lambda function asynchronously. Phase 95: capture the
-	// outcome in Store.InvocationResults so CloudState reflects the
-	// container as exited with the real exit code.
+	// Invoke Lambda function asynchronously and capture the outcome
+	// in Store.InvocationResults so CloudState reflects the container
+	// as exited with the real exit code.
 	go func() {
 		result, err := s.aws.Lambda.Invoke(s.ctx(), &awslambda.InvokeInput{
 			FunctionName: aws.String(lambdaState.FunctionName),
@@ -418,8 +418,8 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 	s.disconnectReverseAgent(id)
 
 	// Record the stop outcome so CloudState reports the container as
-	// exited with code 137 (SIGKILL equivalent) even though Lambda has no
-	// invocation-cancel API. Phase 95.
+	// exited with code 137 (SIGKILL equivalent) even though Lambda has
+	// no invocation-cancel API.
 	s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: 137})
 
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
@@ -470,7 +470,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	s.disconnectReverseAgent(id)
 
 	// Record the kill outcome so CloudState reports the container as
-	// exited with the signal-derived code. Phase 95.
+	// exited with the signal-derived code.
 	s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: exitCode})
 
 	s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
@@ -846,8 +846,8 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 }
 
 // ContainerExport streams a tar archive of the Lambda container's
-// rootfs via the reverse-agent. Phase 98 (BUG-751). Buffered in memory;
-// see core.RunContainerExportViaAgent for the size caveat.
+// rootfs via the reverse-agent. Buffered in memory; see
+// core.RunContainerExportViaAgent for the size caveat.
 func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {

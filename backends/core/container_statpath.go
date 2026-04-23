@@ -14,8 +14,6 @@ import (
 // by executing `stat` inside the container via the reverse-agent.
 // The output format string is chosen so we can parse name, size, mode
 // (octal), mtime epoch, and symlink target unambiguously.
-//
-// Phase 98 (BUG-751).
 func RunContainerStatPathViaAgent(reg *ReverseAgentRegistry, containerID, path string) (*api.ContainerPathStat, error) {
 	if reg == nil {
 		return nil, ErrNoReverseAgent

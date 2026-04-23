@@ -16,10 +16,10 @@ import (
 // Also runs stat(1) to populate the PathStat header Docker clients
 // expect alongside the tarball.
 //
-// Phase 98 (BUG-751). The full tar is buffered in memory — this fits
-// the typical `docker cp` workflow (copying single files/directories)
-// but is not suitable for exporting TB-scale rootfs. For
-// `docker export` use RunContainerExportViaAgent.
+// The full tar is buffered in memory — this fits the typical
+// `docker cp` workflow (copying single files/directories) but is not
+// suitable for exporting TB-scale rootfs. For `docker export` use
+// RunContainerExportViaAgent.
 func RunContainerGetArchiveViaAgent(reg *ReverseAgentRegistry, containerID, srcPath string) (*api.ContainerArchiveResponse, error) {
 	if reg == nil {
 		return nil, ErrNoReverseAgent
@@ -47,7 +47,7 @@ func RunContainerGetArchiveViaAgent(reg *ReverseAgentRegistry, containerID, srcP
 // RunContainerPutArchiveViaAgent implements `docker cp /host/src CONTAINER:/dst`
 // by reading the tar body into memory and streaming it as stdin to a
 // `tar -xf - -C <dst>` exec running inside the container. Buffered in
-// memory — same tradeoff as GetArchive. Phase 98.
+// memory — same tradeoff as GetArchive.
 func RunContainerPutArchiveViaAgent(reg *ReverseAgentRegistry, containerID, dstPath string, body io.Reader) error {
 	if reg == nil {
 		return ErrNoReverseAgent
@@ -72,8 +72,8 @@ func RunContainerPutArchiveViaAgent(reg *ReverseAgentRegistry, containerID, dstP
 }
 
 // RunContainerExportViaAgent returns a tar stream of the container's
-// root filesystem (excluding Docker's typical mount points). Phase 98.
-// Same in-memory caveat as GetArchive — for multi-GB rootfs, this
+// root filesystem (excluding Docker's typical mount points). Same
+// in-memory caveat as GetArchive — for multi-GB rootfs, this
 // should stream directly to the caller's conn rather than buffer. Fits
 // most common `docker export` use (small containers, CI artifacts).
 func RunContainerExportViaAgent(reg *ReverseAgentRegistry, containerID string) (io.ReadCloser, error) {

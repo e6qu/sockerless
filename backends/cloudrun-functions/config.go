@@ -25,7 +25,7 @@ type Config struct {
 	// CallbackURL is the reverse-agent WebSocket URL injected into
 	// the function container env so a bootstrap inside can dial back
 	// to the backend's /v1/gcf/reverse endpoint. Empty ⇒ exec/top
-	// NotImplemented. Phase 98.
+	// NotImplemented.
 	CallbackURL string
 }
 

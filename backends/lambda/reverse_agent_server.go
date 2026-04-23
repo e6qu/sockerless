@@ -8,7 +8,7 @@ import (
 )
 
 // reverseAgentRegistry is a thin alias so existing call sites keep
-// compiling. Phase 96 moved the real implementation to
+// compiling. The real implementation lives in
 // backend-core.ReverseAgentRegistry so Cloud Run + ACA can share it.
 type reverseAgentRegistry = core.ReverseAgentRegistry
 

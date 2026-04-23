@@ -15,11 +15,8 @@ import (
 // ReverseAgentRegistry tracks live reverse-agent WebSocket sessions —
 // one per running container that has a reverse agent connected. Keyed
 // by sockerless container ID (which the bootstrap sends as `session_id`
-// on upgrade).
-//
-// Phase 96 (BUG-745): originally lived in the Lambda backend. Lifted
-// into core so Cloud Run Jobs, ACA Jobs (and anywhere else that can
-// host an in-container dial-back agent) share the same machinery.
+// on upgrade). Shared across every cloud backend that hosts an
+// in-container dial-back agent (Lambda, Cloud Run, ACA, GCF, AZF).
 type ReverseAgentRegistry struct {
 	mu       sync.RWMutex
 	sessions map[string]*agent.ReverseAgentConn
@@ -158,9 +155,9 @@ func (d *ReverseAgentStreamDriver) Attach(_ context.Context, containerID string,
 
 // RunAndCapture executes a one-shot command in the container over the
 // reverse-agent WS and collects stdout/stderr/exit-code. Returns
-// (nil, nil, -1, ErrNoReverseAgent) if no session is registered.
-// Phase 98: used by ContainerTop / ContainerStatPath / ContainerChanges
-// which need command output as a value rather than a streamed proxy.
+// (nil, nil, -1, ErrNoReverseAgent) if no session is registered. Used
+// by ContainerTop / ContainerStatPath / ContainerChanges which need
+// command output as a value rather than a streamed proxy.
 func (r *ReverseAgentRegistry) RunAndCapture(containerID, sessionID string, cmd, env []string, workdir string) (stdout, stderr []byte, exitCode int, err error) {
 	rc, ok := r.Resolve(containerID)
 	if !ok {
@@ -171,7 +168,7 @@ func (r *ReverseAgentRegistry) RunAndCapture(containerID, sessionID string, cmd,
 
 // RunAndCaptureWithStdin is RunAndCapture + stdin streaming. Used by
 // docker cp host→container which pipes the tar body into
-// `tar -xf - -C <dst>` inside the container. Phase 98.
+// `tar -xf - -C <dst>` inside the container.
 func (r *ReverseAgentRegistry) RunAndCaptureWithStdin(containerID, sessionID string, cmd, env []string, workdir string, stdin []byte) (stdout, stderr []byte, exitCode int, err error) {
 	rc, ok := r.Resolve(containerID)
 	if !ok {

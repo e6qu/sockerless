@@ -35,7 +35,7 @@ func (s *Server) AuthLogin(req *api.AuthRequest) (*api.AuthResponse, error) {
 // Container methods with resolution
 
 // ContainerChanges lists files modified since container boot via the
-// reverse-agent. Phase 98 (BUG-753).
+// reverse-agent.
 func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -51,7 +51,7 @@ func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) 
 	return items, nil
 }
 
-// ContainerGetArchive runs tar via the reverse-agent. Phase 98.
+// ContainerGetArchive runs tar via the reverse-agent.
 func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArchiveResponse, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -79,7 +79,7 @@ func (s *Server) ContainerList(opts api.ContainerListOptions) ([]*api.ContainerS
 }
 
 // ContainerPutArchive extracts the incoming tar body via the
-// reverse-agent. Phase 98.
+// reverse-agent.
 func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDir bool, body io.Reader) error {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -110,7 +110,7 @@ func (s *Server) ContainerResize(id string, h int, w int) error {
 }
 
 // ContainerStatPath runs `stat` inside the Cloud Function container
-// via the reverse-agent. Phase 98 (BUG-751).
+// via the reverse-agent.
 func (s *Server) ContainerStatPath(id string, path string) (*api.ContainerPathStat, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -134,7 +134,7 @@ func (s *Server) ContainerStats(id string, stream bool) (io.ReadCloser, error) {
 }
 
 // ContainerTop runs `ps` inside the function container via the
-// reverse-agent. Phase 98 (BUG-752).
+// reverse-agent.
 func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopResponse, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -281,8 +281,8 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 	return s.BaseServer.SystemEvents(opts)
 }
 
-// Phase 94: named-volume operations provision sockerless-managed GCS
-// buckets via gcpcommon.BucketManager (shared with Cloud Run). Buckets
+// Named-volume operations provision sockerless-managed GCS buckets
+// via gcpcommon.BucketManager (shared with Cloud Run). Buckets
 // are attached to invocation-scoped containers by the
 // ContainerStart path (Services.GetService + UpdateService on the
 // underlying CR Service backing the function).

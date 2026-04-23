@@ -193,7 +193,7 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 }
 
 // ContainerExport streams the container's rootfs as tar via the
-// reverse-agent. Phase 98 (BUG-751).
+// reverse-agent.
 func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
 	if !ok {

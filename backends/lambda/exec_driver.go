@@ -1,8 +1,7 @@
 package lambda
 
-// Phase 96 lifted the exec/stream drivers into backend-core.
-// Lambda now uses the shared types directly; the types below are just
-// aliases so existing Server.Drivers wiring keeps compiling.
+// Exec/stream drivers live in backend-core. The aliases below keep
+// existing Server.Drivers wiring compiling without a churn commit.
 
 import (
 	core "github.com/sockerless/backend-core"

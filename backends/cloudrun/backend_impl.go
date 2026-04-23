@@ -849,7 +849,7 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 }
 
 // ContainerExport streams the container's rootfs as tar via the
-// reverse-agent. Phase 98 (BUG-751).
+// reverse-agent.
 func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
 	if !ok {
@@ -1014,8 +1014,8 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 }
 
 // ContainerTop runs `ps` inside the container via the reverse-agent
-// and parses the output. Phase 98 (BUG-752). Requires a bootstrap
-// inside the container (SOCKERLESS_CALLBACK_URL).
+// and parses the output. Requires a bootstrap inside the container
+// (SOCKERLESS_CALLBACK_URL).
 func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopResponse, error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
@@ -1037,7 +1037,7 @@ func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopRespon
 }
 
 // ContainerGetArchive runs `tar -cf - -C <parent> <name>` inside the
-// container via the reverse-agent. Phase 98 (BUG-751).
+// container via the reverse-agent.
 func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArchiveResponse, error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
@@ -1054,7 +1054,7 @@ func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArch
 }
 
 // ContainerPutArchive extracts the incoming tar body into <path> via
-// the reverse-agent. Phase 98.
+// the reverse-agent.
 func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDir bool, body io.Reader) error {
 	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
@@ -1071,7 +1071,7 @@ func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDi
 }
 
 // ContainerStatPath runs `stat` inside the Cloud Run task via the
-// reverse-agent. Phase 98 (BUG-751).
+// reverse-agent.
 func (s *Server) ContainerStatPath(id string, path string) (*api.ContainerPathStat, error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
