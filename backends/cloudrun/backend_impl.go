@@ -1045,15 +1045,21 @@ func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDi
 	}
 }
 
-// ContainerStatPath is not supported by the Cloud Run backend.
+// ContainerStatPath runs `stat` inside the Cloud Run task via the
+// reverse-agent. Phase 98 (BUG-751).
 func (s *Server) ContainerStatPath(id string, path string) (*api.ContainerPathStat, error) {
-	if _, ok := s.ResolveContainerAuto(context.Background(), id); !ok {
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-
-	return nil, &api.NotImplementedError{
-		Message: "stat is not supported by Cloud Run backend; no container filesystem access",
+	stat, err := core.RunContainerStatPathViaAgent(s.reverseAgents, c.ID, path)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker container stat requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
 	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("stat via reverse-agent: %v", err)}
+	}
+	return stat, nil
 }
 
 // ContainerUpdate updates container resource constraints.

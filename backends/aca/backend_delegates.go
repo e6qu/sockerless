@@ -85,11 +85,21 @@ func (s *Server) ContainerResize(id string, h int, w int) error {
 	return s.BaseServer.ContainerResize(id, h, w)
 }
 
+// ContainerStatPath runs `stat` inside the ACA job via the reverse-
+// agent. Phase 98 (BUG-751).
 func (s *Server) ContainerStatPath(id string, path string) (*api.ContainerPathStat, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return s.BaseServer.ContainerStatPath(id, path)
+	stat, err := core.RunContainerStatPathViaAgent(s.reverseAgents, cid, path)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker container stat requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("stat via reverse-agent: %v", err)}
+	}
+	return stat, nil
 }
 
 func (s *Server) ContainerStats(id string, stream bool) (io.ReadCloser, error) {
