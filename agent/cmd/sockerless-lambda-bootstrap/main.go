@@ -145,9 +145,15 @@ func runUserInvocation(ctx context.Context, payload []byte) (stdout, stderr []by
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Env = os.Environ()
 	cmd.Stdin = bytes.NewReader(payload)
+	// Tee the subprocess's output into two places: the buffer that
+	// becomes the /response body, and the bootstrap's own
+	// stdout/stderr. The second destination is what the CONTAINER's
+	// log driver sees — without it, Docker (and therefore CloudWatch
+	// in the sim, or the backend's ContainerLogs in production) never
+	// observes user-process output.
 	var outBuf, errBuf bytes.Buffer
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
+	cmd.Stdout = io.MultiWriter(&outBuf, os.Stdout)
+	cmd.Stderr = io.MultiWriter(&errBuf, os.Stderr)
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			return outBuf.Bytes(), errBuf.Bytes(), ee.ExitCode()
