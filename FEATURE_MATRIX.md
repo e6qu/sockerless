@@ -47,8 +47,8 @@ This document maps Docker/Podman CLI commands to their REST API endpoints and th
 | `docker diff` | `GET /containers/{id}/changes` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker export` | `GET /containers/{id}/export` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker resize` | `POST /containers/{id}/resize` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `docker pause` | `POST /containers/{id}/pause` | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| `docker unpause` | `POST /containers/{id}/unpause` | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| `docker pause` | `POST /containers/{id}/pause` | ✅ | ✅ | ❌ | ⚠️ agent | ⚠️ agent | ⚠️ agent | ⚠️ agent | ⚠️ agent |
+| `docker unpause` | `POST /containers/{id}/unpause` | ✅ | ✅ | ❌ | ⚠️ agent | ⚠️ agent | ⚠️ agent | ⚠️ agent | ⚠️ agent |
 | `docker container prune` | `POST /containers/prune` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ### Cloud Service Mapping — Container Lifecycle
@@ -241,7 +241,7 @@ When containers connect to a Docker network, service discovery enables them to r
 |-------------|----------|------|--------|-----|----------|-----|--------|-----|-----|
 | `docker build` | `POST /build` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker builder prune` | `POST /build/prune` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `docker commit` | `POST /commit` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `docker commit` | `POST /commit` | ✅ | ✅ | ❌ | ⚠️ opt-in | ⚠️ opt-in | ⚠️ opt-in | ⚠️ opt-in | ⚠️ opt-in |
 
 - Core: In-memory Dockerfile processing, creates image record in store
 - Docker: Proxies to Docker Engine build API
@@ -266,22 +266,23 @@ When containers connect to a Docker network, service discovery enables them to r
 
 | CLI Command | REST API | Core | Docker | ECS | CloudRun | ACA | Lambda | GCF | AZF |
 |-------------|----------|------|--------|-----|----------|-----|--------|-----|-----|
-| `podman pod create` | `POST /libpod/pods/create` | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
-| `podman pod list` | `GET /libpod/pods/json` | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `podman pod inspect` | `GET /libpod/pods/{name}/json` | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `podman pod start` | `POST /libpod/pods/{name}/start` | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `podman pod stop` | `POST /libpod/pods/{name}/stop` | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `podman pod kill` | `POST /libpod/pods/{name}/kill` | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `podman pod rm` | `DELETE /libpod/pods/{name}` | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `podman pod create` | `POST /libpod/pods/create` | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
+| `podman pod list` | `GET /libpod/pods/json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `podman pod inspect` | `GET /libpod/pods/{name}/json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `podman pod start` | `POST /libpod/pods/{name}/start` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `podman pod stop` | `POST /libpod/pods/{name}/stop` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `podman pod kill` | `POST /libpod/pods/{name}/kill` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `podman pod rm` | `DELETE /libpod/pods/{name}` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ### Cloud Service Mapping — Pods
 
 | Backend | Multi-Container Pod | How It Works |
 |---------|-------------------|--------------|
-| ECS | ✅ | Multiple containers in one ECS task definition |
-| CloudRun | ✅ | Multiple containers in one Cloud Run Job |
-| ACA | ✅ | Multiple containers in one Container Apps Job |
-| Lambda/GCF/AZF | ❌ | FaaS backends reject multi-container pods |
+| Docker | ✅ | Phase 100 — `sockerless-pod` label on local Docker containers; PodList merges Store.Pods with the label filter so restarts don't drop pods. |
+| ECS | ✅ | Multiple containers in one ECS task definition. |
+| CloudRun | ✅ | Multiple containers in one Cloud Run Job/Service. |
+| ACA | ✅ | Multiple containers in one Container Apps Job/App. |
+| Lambda/GCF/AZF | ❌ | FaaS backends reject multi-container pods (platform is 1-container-per-function). |
 
 ---
 

@@ -1,14 +1,21 @@
 # Runner Capability Matrix
 
-Tracks what each backend can actually do when driving real CI runners through the Docker API. No `-wasm` / `-faas` shortcut variants.
+Tracks what each backend can actually do when driving real CI runners through the Docker API.
 
-## Phase 86 status
+## Capability summary (post-PR-#115)
 
-**Simulator-API parity**: complete. See `docs/SIMULATOR_PARITY_{AWS,GCP,AZURE}.md` — zero ✖ rows on the runner path; the 707 bugs logged during Phase 86 are all fixed. Runner-command unit coverage via sim SDK + CLI tests is green for every cloud.
+`specs/CLOUD_RESOURCE_MAPPING.md` carries the **architectural** runner-compatibility matrix (long-lived containers vs invocation-scoped FaaS; `tail -f /dev/null` keep-alive; `docker exec` transport). That matrix answers "can this backend ever serve as the docker daemon for a runner?" — summarised here:
 
-**Pipeline-level matrix population** (below): TBD cells are filled in by running the `make e2e-*` targets against each backend. The cells stay TBD until a dedicated Docker-in-Docker CI job cycles through the combinations — scripts for that job land via `scripts/phase86/*.sh` + `.github/workflows/phase86-aws-live.yml` (live-AWS) and the existing `smoke-test-act-*` / `smoke-test-gitlab-*` make targets (sim mode).
+| Backend | Long-lived container? | `docker exec` transport | Suitable for GitLab/GitHub runner? |
+|---|---|---|---|
+| docker | ✅ | native | ✅ |
+| ecs | ✅ Fargate task | SSM ExecuteCommand | ✅ with IAM + SSM enabled |
+| cloudrun (UseService) | ✅ CR Service | reverse-agent via bootstrap | ✅ if bootstrap is baked in |
+| aca (UseApp) | ✅ ACA App | reverse-agent or ACA console exec | ✅ |
+| cloudrun Jobs / aca Jobs | ❌ execution-scoped | — | ❌ use Services/Apps |
+| lambda / gcf / azf | ❌ invocation-scoped | — | ❌ fundamentally incompatible |
 
-**Live-AWS columns**: pending-live. `phase86-aws-live.yml` is dispatched manually when AWS credentials are available.
+This file tracks the **empirical** results of running the `make e2e-*` targets (per-pipeline) against each backend. Cells stay `TBD` until a Docker-in-Docker CI job cycles through the combinations (scripts under `scripts/phase86/*.sh` + `.github/workflows/phase86-aws-live.yml` for live-AWS; `smoke-test-act-*` / `smoke-test-gitlab-*` make targets for sim mode).
 
 ## How to populate this matrix
 

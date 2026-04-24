@@ -1,28 +1,28 @@
-# AWS Manual Testing Plan
+# Sockerless — Manual Testing Plan
 
-Manual testing of Sockerless against real AWS ECS Fargate and Lambda using `docker` CLI, `podman` CLI, and multi-container pods. Both backends share the same VPC infrastructure.
+Manual testing of Sockerless against real AWS ECS Fargate + Lambda, Cloud Run Jobs/Services, ACA Jobs/Apps, Cloud Functions, and Azure Functions, using `docker` CLI, `podman` CLI, and multi-container pods.
 
-## Results Summary
+Rolling run history is in `docs/manual-test-history.md`. This file is the current runbook.
 
-| Round | Date | ECS | Lambda | Podman | Bugs |
-|-------|------|-----|--------|--------|------|
-| R1 | 2026-03-29 | 11/12 | — | — | 28 fixed |
-| R2 | 2026-03-30 | partial | — | blocked | 6 found |
-| R3 | 2026-04-04 | 38/41 | — | 6/33 | 19 fixed |
-| R4 | 2026-04-05 | verified | — | 7/8 | 3 found |
-| R5 | 2026-04-05 | 43/46 | — | 7/8 | 4 found+fixed |
-| R6 | 2026-04-05 | all pass | — | pull works, containers blocked | 1 found+fixed |
+## Results summary (most recent rounds)
+
+| Round | Date | Backend | Score |
+|---|---|---|---|
+| R7 | TBD post-PR-#115 | ECS live | Needs re-run to exercise Phase 98/98b/99/101/102 paths. |
+| R6 | 2026-04-05 | ECS live | Docker CLI all pass; Podman pull + pods pass (container ops blocked by response format); Advanced 3/4. |
+| R5 | 2026-04-05 | ECS live | 43/46; 4 bugs found+fixed. |
+| R1–R4 | 2026-03-29 → 04-05 | ECS live | 28 bugs fixed across rounds. |
+
+Pre-PR-#115 status: A46 / C8 / C9 (pause / diff / export) were all `NotImplemented`. They are **implemented now** — any re-run must exercise them.
 
 ## Infrastructure
 
-Shared VPC via `terraform/environments/ecs/live/` (eu-west-1). Lambda uses the same subnets and security group.
+Shared VPC via `terraform/environments/ecs/live/` (eu-west-1). Lambda reuses the same subnets + security group.
 
 ```bash
-# Provision ECS infrastructure (creates VPC, subnets, SGs, ECS cluster, EFS, ECR, IAM, Cloud Map)
+# ECS infrastructure: VPC, subnets, SGs, cluster, EFS, ECR, IAM, Cloud Map.
 cd terraform/environments/ecs/live
 source aws.sh && terragrunt apply -auto-approve
-
-# Extract env vars
 terragrunt output -json | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -37,204 +37,174 @@ for k,v in {
   'SOCKERLESS_AGENT_EFS_ID': d['efs_filesystem_id']['value'],
   'SOCKERLESS_ECS_PUBLIC_IP': 'true',
 }.items(): print(f'export {k}={v}')
-" | tee /tmp/ecs-env.sh
+" > /tmp/ecs-env.sh
 
-# Provision Lambda infrastructure (IAM role, log group, ECR repo)
+# Lambda infrastructure: IAM role, log group, ECR repo.
 cd terraform/environments/lambda/live
 source aws.sh && terragrunt apply -auto-approve
-# Extract Lambda role ARN
-LAMBDA_ROLE=$(terragrunt output -json 2>/dev/null | python3 -c "import json,sys;print(json.load(sys.stdin)['execution_role_arn']['value'])")
+LAMBDA_ROLE=$(terragrunt output -json | python3 -c "import json,sys;print(json.load(sys.stdin)['execution_role_arn']['value'])")
 ```
 
 ## Setup
 
 ```bash
-# Build both backends
-cd backends/ecs && go build -o sockerless-backend-ecs ./cmd/sockerless-backend-ecs
+# Build backends.
+cd backends/ecs    && go build -o sockerless-backend-ecs    ./cmd/sockerless-backend-ecs
 cd backends/lambda && go build -o sockerless-backend-lambda ./cmd/sockerless-backend-lambda
 
-# Start ECS backend on :3375
+# ECS backend on :3375.
 source aws.sh && source /tmp/ecs-env.sh
-./sockerless-backend-ecs -addr :3375
+./sockerless-backend-ecs -addr :3375 &
 
-# Start Lambda backend on :9200 (shares VPC from ECS)
+# Lambda backend on :9200 (shares VPC from ECS).
 export SOCKERLESS_LAMBDA_ROLE_ARN=$LAMBDA_ROLE
 export SOCKERLESS_LAMBDA_SUBNETS=$SOCKERLESS_ECS_SUBNETS
 export SOCKERLESS_LAMBDA_SECURITY_GROUPS=$SOCKERLESS_ECS_SECURITY_GROUPS
-./sockerless-backend-lambda -addr :9200
+# Enable docker commit on Lambda (Phase 98b):
+export SOCKERLESS_ENABLE_COMMIT=1
+# Enable docker exec/attach/pause/cp via reverse-agent:
+export SOCKERLESS_CALLBACK_URL="wss://<public-endpoint-for-lambda>/v1/lambda/reverse"
+./sockerless-backend-lambda -addr :9200 &
 
-# Docker CLI
+# Docker CLI against either backend.
 export DOCKER_HOST=tcp://localhost:3375  # ECS
 # or: export DOCKER_HOST=tcp://localhost:9200  # Lambda
 
-# Podman CLI
-podman system connection add sockerless-ecs tcp://localhost:3375
+# Podman CLI.
+podman system connection add sockerless-ecs    tcp://localhost:3375
 podman system connection add sockerless-lambda tcp://localhost:9200
 ```
 
 ---
 
-## Track A: Docker CLI (both backends)
+## Track A — Docker CLI, core lifecycle (ECS + Lambda)
 
 | # | Test | Command | Expected |
-|---|------|---------|----------|
-| A1 | System info | `docker info` | Driver=ecs-fargate (or lambda) |
+|---|---|---|---|
+| A1 | System info | `docker info` | `Driver=ecs-fargate` (or `lambda`) |
 | A2 | Version | `docker version` | API 1.44 |
-| A3 | Pull alpine | `docker pull alpine:latest` | Real digest |
-| A4 | Pull nginx | `docker pull nginx:alpine` | Real config |
-| A5 | Pull python | `docker pull python:3-alpine` | Cmd=[python3] |
-| A6 | Inspect image | `docker inspect nginx:alpine` | Real config digest as ID |
-| A7 | Image history | `docker history nginx:alpine` | Real build steps |
-| A8 | Tag image | `docker tag alpine myalpine:v1` | Succeeds |
-| A9 | Remove tag | `docker rmi myalpine:v1` | Removed |
-| A10 | Create container | `docker create --name c1 alpine echo hello` | Returns ID |
-| A11 | Start container | `docker start c1` | RunTask / Invoke |
-| A12 | Inspect running | `docker inspect c1` | Running=true |
-| A13 | List containers | `docker ps` | Shows c1 |
-| A14 | Logs | `docker logs c1` | "hello" from CloudWatch |
-| A15 | Wait for exit | poll `docker ps -a` | Exited(0) |
-| A16 | Remove | `docker rm c1` | Removed |
-| A17 | Run detached nginx | `docker run -d --name nginx1 nginx:alpine` | Stays running |
-| A18 | Still running 60s | `sleep 60 && docker ps` | nginx1 Up |
-| A19 | Stats | `docker stats --no-stream nginx1` | Zeros (no Insights) |
-| A20 | Restart | `docker restart nginx1` | New task |
-| A21 | Verify restart | `docker ps` | RestartCount=1 |
-| A22 | Rename | `docker rename nginx1 web1` | Name updated |
-| A23 | Verify rename | `docker inspect web1` | Name=/web1 |
-| A24 | Stop | `docker stop web1` | StopTask |
-| A25 | Force remove | `docker rm -f web1` | Cleanup |
-| A26 | Env vars | `docker run --name env1 -e FOO=bar alpine env` | FOO=bar in logs |
-| A27 | Working dir | `docker run --name wd1 -w /tmp alpine pwd` | /tmp in logs |
-| A28 | Custom entrypoint | `docker run --name ep1 --entrypoint /bin/echo alpine hi` | "hi" in logs |
-| A29 | Memory limit | `docker run -d --name mem1 -m 1g nginx:alpine` | Valid Fargate tier |
-| A30 | Verify resources | `aws ecs describe-task-definition ...` | CPU/Memory correct |
-| A31 | Network create | `docker network create testnet` | VPC SG created |
-| A32 | Verify SG | `aws ec2 describe-security-groups ...` | Exists |
-| A33 | Run on network | `docker run -d --name net1 --network testnet nginx:alpine` | Task has network SG |
-| A34 | Network inspect | `docker network inspect testnet` | Shows net1 |
-| A35 | Disconnect/connect | `docker network disconnect/connect testnet net1` | SG updates |
-| A36 | Network remove | `docker rm -f net1 && docker network rm testnet` | SG deleted |
-| A37 | Volume CRUD | `docker volume create/inspect/rm v1` | Lifecycle |
-| A38 | Container prune | `docker container prune -f` | Stopped removed |
-| A39 | Image prune | `docker image prune -f` | Dangling removed |
-| A40 | System prune | `docker system prune -f` | Works |
-| A41 | System df | `docker system df` | Non-negative |
-| A42 | Events | `docker events --since 1m &` | Receives events |
-| A43 | Container wait | `docker run -d --name w1 alpine sleep 5 && docker wait w1` | Returns 0 |
-| A44 | Kill with signal | `docker run -d --name k1 nginx:alpine && docker kill -s SIGTERM k1` | Exits 143 |
-| A45 | Double remove | `docker rm k1 && docker rm k1` | Second returns 404 |
-| A46 | Pause (error) | `docker pause <running>` | NotImplemented |
-| A47 | Inspect nonexistent | `docker inspect nonexistent` | 404 |
-| A48 | AWS verification | `aws ecs list-tasks / describe-tasks` | Real resources |
-| A49 | CloudWatch logs | `aws logs get-log-events ...` | Real log data |
+| A3–A9 | Image pull / inspect / history / tag / rmi | `docker pull alpine:latest`, `docker inspect alpine`, `docker history alpine`, `docker tag / rmi` | Real registry digests; history has a real entry (no fake per-layer text — BUG-769). |
+| A10–A16 | Container lifecycle | `docker create / start / inspect / ps / logs / wait / rm` | RunTask/Invoke real Fargate/Lambda; logs from CloudWatch; `docker wait` returns real exit code. |
+| A17–A25 | Detached nginx (ECS only) | `docker run -d / ps / stats / restart / rename / stop / rm -f` | Real task lifecycle. Stats = zeros when CloudWatch has no data (BUG-733 ensures we don't fake PIDs=1). |
+| A26–A28 | Env / workdir / entrypoint | `docker run -e FOO=bar / -w /tmp / --entrypoint echo` | Overrides propagate through to the task/function env. |
+| A29–A30 | Resources | `docker run -d -m 1g nginx:alpine` + `aws ecs describe-task-definition` | CPU/Mem rounded to a valid Fargate tier (ECS) or mapped to Lambda `MemorySize`. |
+| A31–A36 | Network CRUD (ECS) | `docker network create/inspect/rm testnet` + per-container attach/detach | Real VPC SG created; container ENIs tagged; SG cleanup on `network rm`. |
+| A37 | Named volumes | `docker volume create v1 && docker run -v v1:/data alpine touch /data/x && docker run -v v1:/data alpine ls /data` | File persists across runs (EFS on ECS / Lambda, GCS on CR/GCF, Azure Files on ACA/AZF). |
+| A38–A42 | Prune + events | `docker container/image/system prune -f`, `docker events --since 1m` | Real prune; events emitted. |
+| A43 | Wait | `docker run -d alpine sleep 5 && docker wait <id>` | Returns `0`. |
+| A44 | Kill with signal | `docker run -d nginx:alpine && docker kill -s SIGTERM <id>` | Exits `143`. |
+| A45 | Double remove | `docker rm <gone> && docker rm <gone>` | First succeeds; second returns 404. |
+| A46 | **Pause / unpause (reverse-agent, Phase 99)** | `docker run -d --name p1 alpine sleep 3600 && docker pause p1 && docker unpause p1` | Pause succeeds on Lambda/CR/ACA/GCF/AZF when bootstrap writes `/tmp/.sockerless-mainpid`. ECS returns `NotImplementedError` (Phase 102 plans SSM path). |
+| A47 | Inspect nonexistent | `docker inspect nonexistent` | 404. |
+| A48 | AWS verification | `aws ecs list-tasks && aws ecs describe-tasks` | Task ARNs present. |
+| A49 | CloudWatch logs | `aws logs get-log-events ...` | Real log stream; subprocess stdout reaches CloudWatch (BUG-756 — no longer only START/END/REPORT). |
 
-**Lambda-specific notes:** A17-A25 (detached nginx) not applicable — Lambda is FaaS, containers exit after invocation. A29-A30 use Lambda memory tiers. A31-A36 networking not applicable.
+**Lambda-specific:** A17–A25 (detached nginx) not applicable — Lambda is invocation-scoped. A29–A30 use Lambda memory tiers. A31–A36 networking not applicable.
 
 ---
 
-## Track B: Podman CLI
+## Track B — Podman CLI
 
 | # | Test | Command | Expected |
-|---|------|---------|----------|
-| B1 | System info | `podman info` | Backend responds |
-| B2 | Version | `podman version` | API version |
-| B3 | Pull alpine | `podman pull alpine:latest` | Pulled with libpod format |
-| B4 | Pull nginx | `podman pull nginx:alpine` | Real config |
-| B5 | Create container | `podman create --name pc1 alpine echo hello` | Created |
-| B6 | Start container | `podman start pc1` | RunTask/Invoke |
-| B7 | Logs | `podman logs pc1` | Output |
-| B8 | List containers | `podman ps -a` | Shows container |
-| B9 | Remove | `podman rm pc1` | Cleanup |
-| B10 | Run detached | `podman run -d --name pn1 nginx:alpine` | Running |
-| B11 | Stop | `podman stop pn1` | StopTask |
-| B12 | Remove | `podman rm pn1` | Cleanup |
-| B13 | Pod create | `podman pod create --name mypod` | Pod registered |
-| B14 | Pod list | `podman pod ls` | Shows mypod |
-| B15 | Pod inspect | `podman pod inspect mypod` | Pod details |
-| B16 | Pod exists | `podman pod exists mypod` | Exit code 0 |
-| B29 | Pod remove | `podman pod rm mypod` | Cleaned up with PodRmReport |
-| B33 | Network ops | `podman network ls` | Shows bridge/host/none |
+|---|---|---|---|
+| B1–B2 | System info / version | `podman info / version` | Backend responds. |
+| B3–B4 | Pull | `podman pull alpine:latest / nginx:alpine` | libpod format. |
+| B5–B12 | Container lifecycle | `podman create / start / logs / ps -a / rm / run -d / stop` | Same semantics as docker track. |
+| B13–B16 | Pod create / list / inspect / exists | `podman pod create --name mypod && podman pod ls / inspect / exists` | Pod registered in Store.Pods + `sockerless-pod=<name>` label on cloud resource. |
+| B29 | Pod remove | `podman pod rm mypod` | `PodRmReport` shape. |
+| B33 | Network ops | `podman network ls` | Bridge/host/none surfaced. |
 
 ---
 
-## Track C: Advanced
+## Track C — Advanced (registry + agent-driven ops)
 
 | # | Test | Command | Expected |
-|---|------|---------|----------|
-| C1 | ECR login | `aws ecr get-login-password \| docker login ...` | Succeeds |
-| C2 | Tag for ECR | `docker tag alpine <ecr>:test` | Tagged |
-| C3 | Push to ECR | `docker push <ecr>:test` | OCI push (or error reported) |
-| C8 | Container diff | `docker diff <id>` | Error (no agent) |
-| C9 | Container export | `docker export <id>` | NotImplemented |
+|---|---|---|---|
+| C1 | ECR login | `aws ecr get-login-password \| docker login ...` | Succeeds. |
+| C2 | Tag for ECR | `docker tag alpine <ecr-host>/alpine:test` | Tagged. |
+| C3 | Push to ECR | `docker push <ecr-host>/alpine:test` | Real OCI push — layers + config + manifest (BUG-763/764). `aws ecr describe-images` shows the tag. |
+| C4 | **Diff (Phase 98)** | `docker diff <running-cid>` | Lists files added/modified since container boot. (Deletions not captured — find-based; documented limitation.) |
+| C5 | **Export (Phase 98)** | `docker export <cid> > out.tar && tar tvf out.tar` | Full rootfs tarball via reverse-agent. |
+| C6 | **Stat (Phase 98)** | `docker container stat <cid>:/etc/hostname` | Returns `ContainerPathStat` with real mode/size. |
+| C7 | **Cp host→container (Phase 98)** | `docker cp ./foo.txt <cid>:/tmp/foo.txt && docker exec <cid> cat /tmp/foo.txt` | File extracted via `tar -xf -`. |
+| C8 | **Cp container→host (Phase 98)** | `docker cp <cid>:/etc/hostname ./host.txt && cat host.txt` | Tarball streamed back. |
+| C9 | **Top (Phase 98)** | `docker top <cid> aux` | Real `ps` output via reverse-agent. |
+| C10 | **Commit (Phase 98b, opt-in)** | `SOCKERLESS_ENABLE_COMMIT=1` + `docker commit <cid> myimage:snap` | New image ID; `docker inspect myimage:snap` shows merged config + parent image. `docker push myimage:snap` to ECR works. |
+| C11 | Image-history after pull | `docker history nginx:alpine` | Real build-step entries (via registry-sourced history — BUG-769 means no more fake `ADD file:... in /` entries). |
 
 ---
 
-## Track E: Container-to-Container Communication (ECS)
-
-Tests real VPC networking between ECS Fargate tasks via Docker network security groups.
+## Track D — Lambda-specific
 
 | # | Test | Command | Expected |
-|---|------|---------|----------|
-| E1 | Create network | `docker network create commsnet` | VPC SG created |
-| E2 | Run nginx server | `docker run -d --name web --network commsnet nginx:alpine` | Task running |
-| E3 | Get server IP | `docker inspect web` → NetworkSettings IP | Real ENI IP (10.x.x.x) |
-| E4 | Curl from peer | `docker run --name client --network commsnet alpine wget -qO- http://<web-ip>` | nginx HTML response |
-| E5 | Verify SG allows | Both containers should have same SG (`skls-commsnet`) | Same SG in task descriptions |
-| E6 | Cross-network fail | `docker run --name isolated alpine wget -qO- --timeout=5 http://<web-ip>` | Timeout (no shared SG) |
-| E7 | Cleanup | `docker rm -f web client isolated && docker network rm commsnet` | SG deleted |
-
-## Track F: Podman Pods on ECS
-
-Tests multi-container ECS tasks driven by Podman pod API.
-
-| # | Test | Command | Expected |
-|---|------|---------|----------|
-| F1 | Create pod | `podman pod create --name mypod` | Pod registered |
-| F2 | Add nginx | `podman create --pod mypod --name svc1 nginx:alpine` | Associated |
-| F3 | Add sidecar | `podman create --pod mypod --name svc2 alpine sleep 3600` | Associated |
-| F4 | Pod inspect | `podman pod inspect mypod` | Shows svc1 + svc2 |
-| F5 | Start svc1 | `podman start svc1` | Deferred (not all started) |
-| F6 | Start svc2 | `podman start svc2` | Triggers multi-container ECS task |
-| F7 | Single ECS task | `aws ecs list-tasks` | 1 task for both containers |
-| F8 | Task definition | `aws ecs describe-task-definition` | 2 container definitions |
-| F9 | Both running | `podman ps` | svc1 + svc2 Up |
-| F10 | Localhost comms | From svc2: `wget -qO- http://localhost:80` | nginx response (shared netns) |
-| F11 | Pod stop | `podman pod stop mypod` | Both stopped |
-| F12 | Pod remove | `podman pod rm mypod` | Cleaned up |
+|---|---|---|---|
+| D1 | Info | `docker info` (on :9200) | Driver=lambda. |
+| D2–D3 | Create + start | `docker create --name l1 alpine echo hello && docker start l1` | Real Lambda invocation. |
+| D4 | Logs (follow-mode includes subprocess stdout) | `docker logs l1` after the invoke completes | Sees `hello` (BUG-756). START/END/REPORT also present from the runtime. |
+| D5 | Exit code | `docker inspect l1 --format '{{.State.ExitCode}}'` | 0 on success, 1 on error (BUG-744 invocation-lifecycle tracker). |
+| D6 | Error propagation | `docker run --name l2 alpine false` | ExitCode=1, State.Error set. |
+| D7 | Env vars | `docker run -e KEY=val alpine env` | KEY=val in output. |
+| D8 | Exec via reverse-agent | `docker exec l1 ps aux` | Real process list (requires `SOCKERLESS_CALLBACK_URL` + overlay image with `sockerless-lambda-bootstrap`). |
+| D9 | Attach via reverse-agent | `docker attach -i l1` | Interactive bidi (with agent) or log-streamed attach (no agent — `core.AttachViaCloudLogs`). |
 
 ---
 
-## Track G: Docker Compose
+## Track E — Container-to-container (ECS)
 
-Tests `docker compose` against the ECS backend. Requires a `docker-compose.yml` in a temp directory.
+| # | Test | Command | Expected |
+|---|---|---|---|
+| E1 | Create network | `docker network create commsnet` | VPC SG created. |
+| E2–E3 | Server + IP | `docker run -d --name web --network commsnet nginx:alpine && docker inspect web` | Real ENI IP (10.x). |
+| E4 | Peer curl | `docker run --rm --network commsnet alpine wget -qO- http://<web-ip>` | nginx HTML. |
+| E5 | Shared SG | `aws ecs describe-tasks ...` | Both tasks carry `skls-commsnet`. |
+| E6 | Cross-network isolation | `docker run --rm alpine wget -qO- --timeout=5 http://<web-ip>` | Timeout. |
+| E7 | Cleanup | `docker rm -f web && docker network rm commsnet` | SG deleted. |
+
+---
+
+## Track F — Podman pods on ECS
+
+| # | Test | Command | Expected |
+|---|---|---|---|
+| F1 | Create pod | `podman pod create --name mypod` | Pod registered. |
+| F2 | Add nginx | `podman create --pod mypod --name svc1 nginx:alpine` | Associated. |
+| F3 | Add sidecar | `podman create --pod mypod --name svc2 alpine sleep 3600` | Associated. |
+| F4 | Pod inspect | `podman pod inspect mypod` | Shows svc1 + svc2. |
+| F5 | Start svc1 | `podman start svc1` | Deferred (not all started). |
+| F6 | Start svc2 | `podman start svc2` | Single multi-container ECS task. |
+| F7 | Task listing | `aws ecs list-tasks` | 1 task. |
+| F8 | Task def | `aws ecs describe-task-definition` | 2 container definitions. |
+| F9 | Both running | `podman ps` | svc1 + svc2 Up. |
+| F10 | Localhost comms | inside svc2: `wget -qO- http://localhost:80` | nginx response (shared netns). |
+| F11–F12 | Stop + rm | `podman pod stop mypod && podman pod rm mypod` | Cleaned up. |
+
+---
+
+## Track G — Docker Compose
 
 ```yaml
 # /tmp/compose-test/docker-compose.yml
 services:
   web:
     image: nginx:alpine
-    ports:
-      - "8080:80"
+    ports: ["8080:80"]
   worker:
     image: alpine
     command: ["sleep", "3600"]
-    depends_on:
-      - web
+    depends_on: [web]
 ```
 
-| # | Test | Command | Expected |
-|---|------|---------|----------|
-| G1 | Compose up | `DOCKER_HOST=tcp://localhost:3375 docker compose up -d` | Both services created and started |
-| G2 | Compose ps | `docker compose ps` | web: running, worker: running |
-| G3 | Compose logs | `docker compose logs web` | nginx access logs |
-| G4 | Compose exec | `docker compose exec worker echo hello` | "hello" (requires agent) |
-| G5 | Compose stop | `docker compose stop` | Both stopped |
-| G6 | Compose down | `docker compose down` | Containers + network removed |
-| G7 | Compose down -v | `docker compose down -v` | Containers + network + volumes removed |
+| # | Test | Expected |
+|---|---|---|
+| G1 | `docker compose up -d` | Both services created + started. |
+| G2 | `docker compose ps` | Both running. |
+| G3 | `docker compose logs web` | nginx access logs. |
+| G4 | `docker compose exec worker echo hello` | "hello" (requires reverse-agent). |
+| G5 | `docker compose stop` | Both stopped. |
+| G6 | `docker compose down` | Containers + network removed. |
+| G7 | `docker compose down -v` | Volumes removed too. |
 
-## Track H: Podman Compose
-
-Tests `podman-compose` against the ECS backend via the Podman connection.
+## Track H — Podman Compose
 
 ```yaml
 # /tmp/podman-compose-test/docker-compose.yml
@@ -246,76 +216,74 @@ services:
     command: ["sleep", "3600"]
 ```
 
-| # | Test | Command | Expected |
-|---|------|---------|----------|
-| H1 | Compose up | `podman-compose --podman-args="--connection=sockerless-test" up -d` | Both created |
-| H2 | Compose ps | `podman-compose ps` | Both running |
-| H3 | Compose down | `podman-compose down` | Cleaned up |
+| # | Test | Expected |
+|---|---|---|
+| H1 | `podman-compose up -d` | Both created. |
+| H2 | `podman-compose ps` | Both running. |
+| H3 | `podman-compose down` | Cleaned up. |
 
 ---
 
-## Track I: Stateless Backend Verification
+## Track I — Stateless backend verification
 
-Verifies that the backend has zero local state — all container info comes from the cloud.
-
-| # | Test | Steps | Expected |
-|---|------|-------|----------|
-| I1 | Create+start | `docker run -d --name persist1 nginx:alpine` | Running on Fargate |
-| I2 | Verify running | `docker ps` | Shows persist1 |
-| I3 | **Kill backend** | `pkill sockerless-backend-ecs` | Backend exits |
-| I4 | **Restart backend** | Start backend again with same config | Backend starts fresh |
-| I5 | **Verify state survived** | `docker ps` | Shows persist1 still running (from cloud) |
-| I6 | **Inspect after restart** | `docker inspect persist1` | Full container details from ECS |
-| I7 | **Stop after restart** | `docker stop persist1` | StopTask works (task ARN from cloud) |
-| I8 | **Verify stopped** | `docker ps -a` | Shows persist1 Exited |
-| I9 | Clean | `docker rm persist1` | Cleaned |
+| # | Test | Expected |
+|---|---|---|
+| I1 | `docker run -d --name persist1 nginx:alpine` | Running on Fargate. |
+| I2 | `docker ps` | Shows persist1. |
+| I3 | `pkill sockerless-backend-ecs` | Backend exits. |
+| I4 | Restart backend with same config | Starts fresh; zero local state. |
+| I5 | `docker ps` | Shows persist1 (derived from ECS cloud state). |
+| I6 | `docker inspect persist1` | Full details from ECS. |
+| I7 | `docker stop persist1` | StopTask works using cloud-resolved ARN. |
+| I8 | `docker ps -a` | Shows Exited. |
+| I9 | `docker rm persist1` | Cleaned. |
 
 ---
 
-## Track D: Lambda-specific
+## Track J — Runner integration (Phase 101 doc)
 
-| # | Test | Command | Expected |
-|---|------|---------|----------|
-| D1 | System info | `docker info` (on :9200) | Driver=lambda |
-| D2 | Pull + create | `docker create --name l1 alpine echo hello` | Created |
-| D3 | Start | `docker start l1` | Lambda invocation |
-| D4 | Logs | `docker logs l1` (after delay) | Invocation output |
-| D5 | Exit code | `docker inspect l1 --format {{.State.ExitCode}}` | 0 on success |
-| D6 | Error propagation | `docker run --name l2 alpine false` | ExitCode=1, State.Error set |
-| D7 | Env vars | `docker run -e KEY=val alpine env` | KEY=val in output |
+Use sockerless as the docker daemon for GitLab Runner / GitHub Actions self-hosted runner.
+
+| # | Test | Expected |
+|---|---|---|
+| J1 | GitLab Runner docker executor against CR Services (`SOCKERLESS_GCR_USE_SERVICE=1`) | Job runs; `docker exec -i` for each step works via the bootstrap. |
+| J2 | GitHub Actions container-job against ACA Apps (`SOCKERLESS_ACA_USE_APP=1`) | `tail -f /dev/null` keep-alive + `docker exec` per step. |
+| J3 | Same against ECS | Works with SSM ExecuteCommand. |
+| J4 | Same against Lambda / CR Jobs / ACA Jobs / GCF / AZF | **Expected to fail** — invocation-scoped, no keep-alive. Spec says NotSupported for these. |
+
+Matrix + GitLab/GitHub runner design analysis in `specs/CLOUD_RESOURCE_MAPPING.md` §Exec.
 
 ---
 
 ## Teardown
 
 ```bash
-# Stop running tasks
 source aws.sh
+
+# Stop running tasks first (takes ~60s).
 for task in $(aws ecs list-tasks --cluster sockerless-live --region eu-west-1 --query 'taskArns[]' --output text); do
   aws ecs stop-task --cluster sockerless-live --task "$task" --region eu-west-1
 done
 sleep 60
 
-# Destroy ECS infrastructure
-cd terraform/environments/ecs/live && terragrunt destroy -auto-approve
-
-# Destroy Lambda infrastructure
+# Destroy.
+cd terraform/environments/ecs/live    && terragrunt destroy -auto-approve
 cd terraform/environments/lambda/live && terragrunt destroy -auto-approve
 
-# Deregister orphaned task definitions
+# Deregister orphan task definitions.
 for td in $(aws ecs list-task-definitions --region eu-west-1 --status ACTIVE \
   --query 'taskDefinitionArns[?contains(@,`sockerless`)]' --output text); do
   aws ecs deregister-task-definition --task-definition "$td" --region eu-west-1
 done
 
-# Remove S3 state bucket
+# Optional: remove tf state bucket.
 aws s3 rb s3://sockerless-tf-state --region eu-west-1 --force
 ```
 
-## Known Limitations
+## Known limitations
 
-- CloudWatch log latency (2-10s before logs appear)
-- Exec requires agent or SSM (not tested without agent setup)
-- CPU/memory rounded to nearest valid Fargate tier (ECS)
-- Lambda max 15 minutes, no long-running containers
-- NAT Gateway cost ~$0.045/hr while infrastructure exists
+- **CloudWatch log latency** — 2–10 s before logs appear. `docker logs -f` tolerates this.
+- **Fargate CPU/Memory tiers** — rounded to the nearest valid combo.
+- **Lambda 15-minute max** — no long-running Lambda containers.
+- **ECS reverse-agent ops (Phase 102)** — export / top / diff / stat / cp / pause via SSM ExecuteCommand are wired but depend on a task-def convention that writes `/tmp/.sockerless-mainpid`. Without that, pause/unpause returns the Phase 102 NotImplementedError message.
+- **NAT Gateway cost** ~$0.045/hr while the ECS VPC is up.

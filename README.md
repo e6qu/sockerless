@@ -286,5 +286,5 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 | [`AGENTS.md`](AGENTS.md) | Agent architecture (forward/reverse modes) |
 | [`DECISIONS.md`](DECISIONS.md) | Technical decision log across all phases |
 | [`PLAN.md`](PLAN.md) | Implementation plan and task tracking |
-| [`PLAN_ECS_MANUAL_TESTING.md`](PLAN_ECS_MANUAL_TESTING.md) | ECS live testing plan, results, and bugs found |
+| [`PLAN_ECS_MANUAL_TESTING.md`](PLAN_ECS_MANUAL_TESTING.md) | Manual testing runbook — ECS + Lambda (+ CR/ACA/GCF/AZF as applicable), Docker + Podman CLI, agent-driven `docker exec`/`cp`/`commit`/`pause`. |
 | [`STATUS.md`](STATUS.md) | Project status and phase history |
