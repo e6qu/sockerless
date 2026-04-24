@@ -154,13 +154,34 @@ func runUserInvocation(ctx context.Context, payload []byte) (stdout, stderr []by
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = io.MultiWriter(&outBuf, os.Stdout)
 	cmd.Stderr = io.MultiWriter(&errBuf, os.Stderr)
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Start(); err != nil {
+		return nil, nil, 1
+	}
+	// Publish the user-process PID so reverse-agent pause/unpause can
+	// SIGSTOP/SIGCONT it. The path is shared with backend-core via
+	// the well-known mainPIDFilePath constant.
+	writeMainPIDFile(cmd.Process.Pid)
+	defer removeMainPIDFile()
+	if err := cmd.Wait(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			return outBuf.Bytes(), errBuf.Bytes(), ee.ExitCode()
 		}
 		return outBuf.Bytes(), errBuf.Bytes(), 1
 	}
 	return outBuf.Bytes(), errBuf.Bytes(), 0
+}
+
+// mainPIDFilePath is the path the bootstrap writes the user-process
+// PID to. Backend-core's RunContainerPauseViaAgent reads from this
+// path to send SIGSTOP/SIGCONT.
+const mainPIDFilePath = "/tmp/.sockerless-mainpid"
+
+func writeMainPIDFile(pid int) {
+	_ = os.WriteFile(mainPIDFilePath, []byte(fmt.Sprintf("%d", pid)), 0o644)
+}
+
+func removeMainPIDFile() {
+	_ = os.Remove(mainPIDFilePath)
 }
 
 // postResult posts `body` to the Runtime API `/response` or `/error`
