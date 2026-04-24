@@ -833,16 +833,21 @@ func (s *Server) Info() (*api.BackendInfo, error) {
 	return info, nil
 }
 
-// ContainerAttach attaches to a container's streams.
-// Only supported when a reverse agent is connected; otherwise Lambda functions
-// are not interactive.
+// ContainerAttach bridges stdin/stdout/stderr to the bootstrap process
+// inside the Lambda invocation container via the reverse-agent
+// WebSocket. Lambda exposes no native attach API; without a
+// reverse-agent session registered for the container, return
+// NotImplementedError with the specific reason rather than producing
+// an empty stream.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return nil, &api.NotImplementedError{
-		Message: "Lambda backend does not support attach",
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
+		return nil, &api.NotImplementedError{Message: "docker attach requires a reverse-agent bootstrap inside the Lambda container (SOCKERLESS_CALLBACK_URL); no session registered"}
 	}
+	return s.BaseServer.ContainerAttach(id, opts)
 }
 
 // ContainerExport streams a tar archive of the Lambda container's

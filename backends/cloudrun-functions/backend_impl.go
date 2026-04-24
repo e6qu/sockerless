@@ -775,14 +775,20 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 	}
 }
 
-// ContainerAttach is not supported by the Cloud Run Functions backend.
+// ContainerAttach bridges stdin/stdout/stderr to the bootstrap process
+// inside the function container via the reverse-agent WebSocket.
+// Cloud Run Functions exposes no native attach API; without a
+// reverse-agent session registered for the container, return
+// NotImplementedError with the specific reason.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return nil, &api.NotImplementedError{
-		Message: "Cloud Run Functions backend does not support attach",
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
+		return nil, &api.NotImplementedError{Message: "docker attach requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
 	}
+	return s.BaseServer.ContainerAttach(id, opts)
 }
 
 // ImageBuild delegates to ImageManager.

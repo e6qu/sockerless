@@ -149,8 +149,9 @@ func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*ap
 	return s.BaseServer.ExecCreate(containerID, req)
 }
 
-// ExecStart starts an exec instance. If an agent is connected, delegates
-// to BaseServer (agent driver). Otherwise, falls back to cloudExecStart
+// ExecStart starts an exec instance. If a reverse-agent session is
+// registered for the container, route through BaseServer so the
+// ReverseAgentExecDriver fires. Otherwise fall back to cloudExecStart
 // which uses the ACA management API WebSocket exec endpoint.
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
 	exec, ok := s.Store.Execs.Get(id)
@@ -165,25 +166,30 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 		}
 	}
 
-	// Use cloud exec via ACA management API
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
+		return s.BaseServer.ExecStart(id, opts)
+	}
+
 	return s.cloudExecStart(&exec, &c)
 }
 
-// ContainerAttach attaches to a container's streams.
-// If an agent is connected, delegates to BaseServer (which uses the driver chain).
-// Otherwise, falls back to cloud exec via the ACA management API, creating a
-// shell session that serves as an attach-like experience.
+// ContainerAttach attaches to a container's streams. If a reverse-agent
+// session is registered for the container, route through BaseServer so
+// the ReverseAgentStreamDriver fires. Otherwise fall back to cloud
+// exec via the ACA management API, creating a shell session that
+// serves as an attach-like experience.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	cid := c.ID
 
-	// Fall back to cloud exec, creating a shell session as attach.
-	// Build a synthetic exec instance for the container's entrypoint.
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
+		return s.BaseServer.ContainerAttach(id, opts)
+	}
+
 	exec := &api.ExecInstance{
-		ContainerID: cid,
+		ContainerID: c.ID,
 		ProcessConfig: api.ExecProcessConfig{
 			Entrypoint: "/bin/sh",
 			Tty:        opts.Stream,

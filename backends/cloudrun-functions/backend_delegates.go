@@ -181,7 +181,22 @@ func (s *Server) ExecResize(id string, h int, w int) error {
 	return s.BaseServer.ExecResize(id, h, w)
 }
 
+// ExecStart runs the exec inside the function container via the
+// reverse-agent WebSocket. Cloud Run Functions exposes no native exec
+// API; the bootstrap is the only path. If no session is registered,
+// return NotImplementedError with the specific reason.
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
+	exec, ok := s.Store.Execs.Get(id)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "exec instance", ID: id}
+	}
+	c, ok := s.ResolveContainerAuto(context.Background(), exec.ContainerID)
+	if !ok {
+		return nil, &api.ConflictError{Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID)}
+	}
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
+		return nil, &api.NotImplementedError{Message: "docker exec requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
 	return s.BaseServer.ExecStart(id, opts)
 }
 

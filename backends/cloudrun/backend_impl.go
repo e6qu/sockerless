@@ -828,24 +828,24 @@ func (s *Server) VolumeRemove(name string, force bool) error {
 	return nil
 }
 
-// ExecStart is not supported by the Cloud Run backend.
-// Cloud Run Jobs do not support native exec — there is no Cloud Run API for
-// executing commands inside a running job container.
+// ExecStart runs the exec inside the container via the reverse-agent
+// WebSocket. Cloud Run Jobs/Services expose no native exec API, so
+// the bootstrap is the only path; if no session is registered for the
+// container, return NotImplementedError with the specific reason
+// instead of falling through to a generic failure.
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
 	exec, ok := s.Store.Execs.Get(id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "exec instance", ID: id}
 	}
-
-	if _, ok := s.ResolveContainerAuto(context.Background(), exec.ContainerID); !ok {
-		return nil, &api.ConflictError{
-			Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID),
-		}
+	c, ok := s.ResolveContainerAuto(context.Background(), exec.ContainerID)
+	if !ok {
+		return nil, &api.ConflictError{Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID)}
 	}
-
-	return nil, &api.NotImplementedError{
-		Message: "exec is not supported by Cloud Run backend; Cloud Run Jobs do not support native exec",
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
+		return nil, &api.NotImplementedError{Message: "docker exec requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
 	}
+	return s.BaseServer.ExecStart(id, opts)
 }
 
 // ContainerExport streams the container's rootfs as tar via the
@@ -1002,15 +1002,20 @@ func (s *Server) Info() (*api.BackendInfo, error) {
 	return info, nil
 }
 
-// ContainerAttach is not supported by the Cloud Run backend.
+// ContainerAttach bridges stdin/stdout/stderr to the bootstrap process
+// inside the container via the reverse-agent WebSocket. Cloud Run
+// Jobs/Services expose no native attach API; without a reverse-agent
+// session registered for the container, return NotImplementedError
+// with the specific reason rather than producing an empty stream.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	if _, ok := s.ResolveContainerAuto(context.Background(), id); !ok {
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-
-	return nil, &api.NotImplementedError{
-		Message: "attach is not supported by Cloud Run backend",
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
+		return nil, &api.NotImplementedError{Message: "docker attach requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
 	}
+	return s.BaseServer.ContainerAttach(id, opts)
 }
 
 // ContainerTop runs `ps` inside the container via the reverse-agent
