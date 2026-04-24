@@ -196,6 +196,16 @@ Scope:
 - `backends/docker.PodExists` — filter-by-label existence probe.
 - Tests: SDK + CLI (`podman pod create` / `podman pod inspect` / `podman pod ps`) against the Docker backend, matching behaviour with the cloud backends.
 
+### Phase 102 — ECS parity for filesystem-ops + pause/unpause via SSM (queued)
+
+BUG-761 + BUG-762. The reverse-agent path solved `docker top/cp/stat/diff/export/pause/unpause` for FaaS backends in Phase 98+99 by tunnelling shell commands over a WebSocket. ECS Fargate has the same need but a different transport: `ssm:ExecuteCommand` (same channel that already powers `docker exec` via `backends/ecs/exec_cloud.go`).
+
+Scope:
+- New `backends/ecs/ssm_capture.go`: `RunCommandViaSSM(taskARN, containerName, argv []string, stdin []byte) (stdout, stderr []byte, exitCode int, err error)` that opens an SSM Session, sends the command, captures the SSM AgentMessage `output_stream_data` frames, returns when the session closes. Mirrors the shape of `core.ReverseAgentRegistry.RunAndCapture(...)`.
+- `backends/ecs/backend_impl.go`: replace the `NotImplementedError` returns in `ContainerExport`/`ContainerTop`/`ContainerChanges`/`ContainerStatPath`/`ContainerGetArchive`/`ContainerPutArchive`/`ContainerPause`/`ContainerUnpause` with calls into the new helper, parsing the same shell outputs the FaaS helpers parse (reuse `core.ParseTopOutput`, `core.ParseStatOutput`, `core.ParseChangesOutput`, `core.MapPauseErr`).
+- Bootstrap convention for pause: same `/tmp/.sockerless-mainpid` path as Phase 99; ECS task-definitions need to ensure the user process writes its PID there (or sockerless adds an init script via `entryPoint`).
+- Tests: extend `backends/ecs/integration_test.go` with `TestECSContainerTop_ViaSSM`, `TestECSContainerPause_ViaSSM`, etc.
+
 ### Phase 101 — Simulator parity for cloud-native exec/attach surfaces (queued)
 
 The reverse-agent path (Lambda/CR/ACA/GCF/AZF) is end-to-end testable in CI today because the bootstrap dials the backend's WS endpoint directly — the simulator just runs the container with the right env vars. The remaining gap is the **cloud-native** exec/attach surfaces that backends route to as a second-choice when no agent is registered:

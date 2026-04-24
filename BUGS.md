@@ -1,6 +1,6 @@
 # Known Bugs
 
-**760 total — 759 fixed, 1 open (BUG-750 — Phase 98b queued for agent-driven docker commit), 1 false positive (BUG-747 is the audit umbrella, all sub-items fixed). BUG-756/759/760 fixed across the bootstrap stdout tee, the ContainerAttach/ExecStart audit, and Phase 101 (sim parity for ACA exec + cloud-log attach fallback).**
+**762 total — 759 fixed, 3 open (BUG-750 → Phase 98b queued, BUG-761/762 → Phase 102 queued for ECS-via-SSM parity), 1 false positive (BUG-747 is the audit umbrella).**
 
 For narrative context see [WHAT_WE_DID.md](WHAT_WE_DID.md) and [PLAN.md](PLAN.md). Architecture-level state derivation is documented in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) and [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md).
 
@@ -11,6 +11,8 @@ Standing workflow rule: every CI / live-cloud failure lands here with a short ro
 | ID | Sev | Area | Summary |
 |----|-----|------|---------|
 | 750 | M | all-cloud | `docker commit` (`ContainerCommit`) returns `NotImplementedError` on every cloud backend. Could be emulated via the in-container agent tarballing rootfs + pushing to the operator's registry, but that sidesteps the cloud-platform constraint that task images are immutable. Decision: keep NotImplemented on ECS/Lambda (Fargate + Lambda images are control-plane-owned); scope as **Phase 98b** for CR/ACA once reverse-agent ships, with an agent-driven snapshot + ECR/AR/ACR push. |
+| 761 | M | ecs | `ContainerExport` returns `NotImplementedError` with "Fargate tasks have no accessible filesystem", but Fargate's filesystem IS accessible through SSM `ExecuteCommand` (which sockerless already uses for `docker exec` — see `backends/ecs/exec_cloud.go`). Same applies to `ContainerTop`, `ContainerChanges`, `ContainerStatPath`, `ContainerGetArchive`, `ContainerPutArchive`. Scope: **Phase 102** — port the FaaS reverse-agent helpers (`core.RunContainer{Top,Changes,StatPath,GetArchive,PutArchive,Export}ViaAgent`) to a parallel SSM-routed helper that runs the same shell commands (`ps`, `find`, `stat`, `tar -cf`/`-xf`) over `ExecuteCommand`. |
+| 762 | M | ecs | `ContainerPause`/`ContainerUnpause` return `NotImplementedError` on ECS, but the same SSM `ExecuteCommand` channel that powers `docker exec` can also run `kill -SIGSTOP $(cat <pidfile>)` against a Fargate task — ECS Fargate has no native pause primitive but SSM gives full process-tree access. Scope: **Phase 102** alongside BUG-761; reuses Phase 99's `MainPIDConventionPath` convention but tunnels through SSM rather than reverse-agent WS. |
 | 747 | L | meta | `NotImplementedError` audit umbrella. Tracks the remaining NotImplemented paths so the "no fakes, no fallbacks, no platform-limit excuses" principle has full coverage. Each sub-entry has a concrete implementation path: Lambda volumes → Phase 94b (done), pause/unpause → Phase 99 (done), commit → Phase 98b (queued), cp/export/stat/top/diff → Phase 98 (done), Docker backend pods → Phase 100 (done), simulator parity for cloud-native exec/attach → Phase 101 (done). |
 
 ## Fixed
