@@ -1171,7 +1171,9 @@ func (s *BaseServer) ImagePullWithMetadata(ref string, auth string, meta *ImageM
 		return io.NopCloser(&buf), nil
 	}
 
-	// Determine image ID, size, digests, layers from real metadata or synthetic fallback
+	// Determine image ID, size, digests, layers from real metadata.
+	// Caller is required to fetch metadata from the registry (BUG-737)
+	// — no synthetic fallback exists.
 	var imageID string
 	var imgSize int64
 	var repoDigests []string
@@ -1538,33 +1540,19 @@ func (s *BaseServer) ImageHistory(name string) ([]*api.ImageHistoryEntry, error)
 		return result, nil
 	}
 
-	// Synthetic fallback
-	var result []*api.ImageHistoryEntry
+	// No registry-sourced history for this image (e.g., built
+	// locally without history tracking, or the image predates
+	// Phase 30's history-capture). Return a single top-level entry
+	// describing what we do know — image ID + size + creation time
+	// — rather than fabricating per-layer entries with made-up
+	// `CreatedBy` text that doesn't reflect the actual build.
 	created, _ := time.Parse(time.RFC3339Nano, img.Created)
-
-	for i, layer := range img.RootFS.Layers {
-		entry := &api.ImageHistoryEntry{
-			ID:        layer,
-			Created:   created.Unix() - int64(len(img.RootFS.Layers)-i),
-			CreatedBy: "/bin/sh -c #(nop) ADD file:... in / ",
-			Size:      img.Size / int64(len(img.RootFS.Layers)+1),
-		}
-		result = append(result, entry)
-	}
-
-	cmd := ""
-	if len(img.Config.Cmd) > 0 {
-		cmd = fmt.Sprintf("/bin/sh -c #(nop)  CMD [%q]", strings.Join(img.Config.Cmd, " "))
-	}
-	result = append(result, &api.ImageHistoryEntry{
-		ID:        img.ID,
-		Created:   created.Unix(),
-		CreatedBy: cmd,
-		Tags:      img.RepoTags,
-		Size:      0,
-	})
-
-	return result, nil
+	return []*api.ImageHistoryEntry{{
+		ID:      img.ID,
+		Created: created.Unix(),
+		Tags:    img.RepoTags,
+		Size:    img.Size,
+	}}, nil
 }
 
 // ImagePrune removes unused images.

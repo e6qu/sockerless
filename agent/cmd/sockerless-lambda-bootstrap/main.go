@@ -24,6 +24,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -42,13 +43,15 @@ import (
 	"github.com/sockerless/agent"
 )
 
-// Env vars the bootstrap consults.
+// Env vars the bootstrap consults. The argv lists arrive as
+// base64(JSON) so every byte round-trips cleanly through
+// `ENV KEY=VALUE` without Dockerfile or shell quoting.
 const (
 	envRuntimeAPI     = "AWS_LAMBDA_RUNTIME_API"
 	envCallbackURL    = "SOCKERLESS_CALLBACK_URL"
 	envContainerID    = "SOCKERLESS_CONTAINER_ID"
-	envUserEntrypoint = "SOCKERLESS_USER_ENTRYPOINT" // colon-separated list
-	envUserCmd        = "SOCKERLESS_USER_CMD"        // colon-separated list
+	envUserEntrypoint = "SOCKERLESS_USER_ENTRYPOINT" // base64(JSON-encoded argv)
+	envUserCmd        = "SOCKERLESS_USER_CMD"        // base64(JSON-encoded argv)
 )
 
 const (
@@ -81,8 +84,11 @@ func main() {
 			postInitError(base, err.Error())
 			os.Exit(1)
 		}
-		go serveReverseAgent(conn)
-		go sendHeartbeats(conn)
+		// Every goroutine that writes to conn must hold connMu —
+		// gorilla/websocket requires serialised writes.
+		connMu := &sync.Mutex{}
+		go serveReverseAgent(conn, connMu)
+		go sendHeartbeats(conn, connMu)
 		defer func() { _ = conn.Close() }()
 	}
 
@@ -135,7 +141,7 @@ func handleOneInvocation(base string) error {
 // invocation payload piped on stdin. Captures stdout + stderr and
 // returns the exit code. Cancelled by the deadline context.
 func runUserInvocation(ctx context.Context, payload []byte) (stdout, stderr []byte, exitCode int) {
-	argv := append(splitColon(os.Getenv(envUserEntrypoint)), splitColon(os.Getenv(envUserCmd))...)
+	argv := append(parseUserArgv(envUserEntrypoint), parseUserArgv(envUserCmd)...)
 	if len(argv) == 0 {
 		// Nothing to run; echo the payload as the response (matches the
 		// testdata handler semantics).
@@ -145,16 +151,43 @@ func runUserInvocation(ctx context.Context, payload []byte) (stdout, stderr []by
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Env = os.Environ()
 	cmd.Stdin = bytes.NewReader(payload)
+	// Tee the subprocess's output into two places: the buffer that
+	// becomes the /response body, and the bootstrap's own
+	// stdout/stderr. The second destination is what the CONTAINER's
+	// log driver sees — without it, Docker (and therefore CloudWatch
+	// in the sim, or the backend's ContainerLogs in production) never
+	// observes user-process output.
 	var outBuf, errBuf bytes.Buffer
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
-	if err := cmd.Run(); err != nil {
+	cmd.Stdout = io.MultiWriter(&outBuf, os.Stdout)
+	cmd.Stderr = io.MultiWriter(&errBuf, os.Stderr)
+	if err := cmd.Start(); err != nil {
+		return nil, nil, 1
+	}
+	// Publish the user-process PID so reverse-agent pause/unpause can
+	// SIGSTOP/SIGCONT it. The path is shared with backend-core via
+	// the well-known mainPIDFilePath constant.
+	writeMainPIDFile(cmd.Process.Pid)
+	defer removeMainPIDFile()
+	if err := cmd.Wait(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			return outBuf.Bytes(), errBuf.Bytes(), ee.ExitCode()
 		}
 		return outBuf.Bytes(), errBuf.Bytes(), 1
 	}
 	return outBuf.Bytes(), errBuf.Bytes(), 0
+}
+
+// mainPIDFilePath is the path the bootstrap writes the user-process
+// PID to. Backend-core's RunContainerPauseViaAgent reads from this
+// path to send SIGSTOP/SIGCONT.
+const mainPIDFilePath = "/tmp/.sockerless-mainpid"
+
+func writeMainPIDFile(pid int) {
+	_ = os.WriteFile(mainPIDFilePath, []byte(fmt.Sprintf("%d", pid)), 0o644)
+}
+
+func removeMainPIDFile() {
+	_ = os.Remove(mainPIDFilePath)
 }
 
 // postResult posts `body` to the Runtime API `/response` or `/error`
@@ -229,13 +262,12 @@ func dialReverseAgent(callbackURL, containerID string) (*websocket.Conn, error) 
 // reverse-agent protocol — inbound TypeExec / TypeAttach messages
 // spawn subprocesses in this container and stream stdout back over
 // the WS.
-func serveReverseAgent(conn *websocket.Conn) {
+func serveReverseAgent(conn *websocket.Conn, connMu *sync.Mutex) {
 	logger := zerolog.New(os.Stderr).With().Str("component", "bootstrap-reverse-agent").Logger()
 	registry := agent.NewSessionRegistry()
 	router := agent.NewRouter(registry, nil, logger)
 	defer registry.CleanupConn(conn)
 
-	connMu := &sync.Mutex{}
 	for {
 		_, data, err := conn.ReadMessage()
 		if err != nil {
@@ -251,15 +283,17 @@ func serveReverseAgent(conn *websocket.Conn) {
 
 // sendHeartbeats writes a ping frame every heartbeatPeriod so the
 // backend knows the container is alive between invocations. Exits
-// when the WS is closed. Writes are serialized via a shared mutex
-// with serveReverseAgent — here we just use WriteMessage which
-// gorilla/websocket serializes internally on a per-conn basis when
-// callers don't overlap.
-func sendHeartbeats(conn *websocket.Conn) {
+// when the WS is closed. connMu is shared with serveReverseAgent so
+// pings can't interleave with response frames — gorilla/websocket
+// requires serialised writes on a single conn.
+func sendHeartbeats(conn *websocket.Conn, connMu *sync.Mutex) {
 	t := time.NewTicker(heartbeatPeriod)
 	defer t.Stop()
 	for range t.C {
-		if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+		connMu.Lock()
+		err := conn.WriteMessage(websocket.PingMessage, nil)
+		connMu.Unlock()
+		if err != nil {
 			return
 		}
 	}
@@ -283,7 +317,7 @@ func contextWithDeadlineMs(deadlineMs string) (context.Context, context.CancelFu
 // with no Lambda framing. Used when the binary is run outside Lambda
 // (local container smoke tests, image-inject integration tests).
 func runUserProcessStandalone() {
-	argv := append(splitColon(os.Getenv(envUserEntrypoint)), splitColon(os.Getenv(envUserCmd))...)
+	argv := append(parseUserArgv(envUserEntrypoint), parseUserArgv(envUserCmd)...)
 	if len(argv) == 0 {
 		fmt.Fprintln(os.Stderr, "sockerless-lambda-bootstrap: no user entrypoint/cmd configured")
 		os.Exit(0)
@@ -299,16 +333,20 @@ func runUserProcessStandalone() {
 	}
 }
 
-func splitColon(s string) []string {
-	if s == "" {
+// parseUserArgv returns the argv list the backend encoded into the
+// given env var as base64(JSON). Empty / missing → nil.
+func parseUserArgv(key string) []string {
+	raw := os.Getenv(key)
+	if raw == "" {
 		return nil
 	}
-	parts := strings.Split(s, ":")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p != "" {
-			out = append(out, p)
-		}
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal(decoded, &out); err != nil {
+		return nil
 	}
 	return out
 }

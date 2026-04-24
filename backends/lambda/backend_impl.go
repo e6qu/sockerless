@@ -2,6 +2,8 @@ package lambda
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -165,11 +167,15 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		imageURI = s.config.PrebuiltOverlayImage
 		envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
 		envVars["SOCKERLESS_CONTAINER_ID"] = id
+		// Encode argv as base64(JSON) so every byte round-trips cleanly
+		// through the env var without Dockerfile / shell quoting.
 		if len(config.Entrypoint) > 0 {
-			envVars["SOCKERLESS_USER_ENTRYPOINT"] = strings.Join(config.Entrypoint, ":")
+			b, _ := json.Marshal(config.Entrypoint)
+			envVars["SOCKERLESS_USER_ENTRYPOINT"] = base64.StdEncoding.EncodeToString(b)
 		}
 		if len(config.Cmd) > 0 {
-			envVars["SOCKERLESS_USER_CMD"] = strings.Join(config.Cmd, ":")
+			b, _ := json.Marshal(config.Cmd)
+			envVars["SOCKERLESS_USER_CMD"] = base64.StdEncoding.EncodeToString(b)
 		}
 	case s.config.CallbackURL != "":
 		// Build + push an overlay on top of the user's image. Resolve
@@ -190,13 +196,15 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		destRef := fmt.Sprintf("%s-overlay-%s", strings.TrimSuffix(imageURI, ":latest"), id[:12])
 		overlay, buildErr := BuildAndPushOverlayImage(s.ctx(), spec, destRef)
 		if buildErr != nil {
-			s.Logger.Warn().Err(buildErr).Str("image", imageURI).
-				Msg("overlay build failed; falling back to base image (docker exec will not work)")
-		} else {
-			imageURI = overlay.ImageURI
-			envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
-			envVars["SOCKERLESS_CONTAINER_ID"] = id
+			// Fail loud — silently using the base image would leave
+			// the user with a function they think supports `docker
+			// exec` but doesn't. Caller set SOCKERLESS_CALLBACK_URL
+			// deliberately, so surface the build failure.
+			return nil, &api.ServerError{Message: fmt.Sprintf("overlay build failed for %q: %v", imageURI, buildErr)}
 		}
+		imageURI = overlay.ImageURI
+		envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
+		envVars["SOCKERLESS_CONTAINER_ID"] = id
 	default:
 		var resolveErr error
 		imageURI, resolveErr = s.resolveImageURI(s.ctx(), config.Image)
@@ -232,7 +240,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		}
 	}
 
-	// Phase 94b: attach named-volume binds as EFS FileSystemConfigs.
+	// Attach named-volume binds as EFS FileSystemConfigs.
 	// Reject host-path binds; require VPC + subnets (enforced by
 	// fileSystemConfigsForBinds). Access points are sockerless-managed
 	// via awscommon.EFSManager (shared with ECS).
@@ -335,9 +343,9 @@ func (s *Server) ContainerStart(ref string) error {
 	// Remove from PendingCreates now that the function is being invoked.
 	s.PendingCreates.Delete(id)
 
-	// Invoke Lambda function asynchronously. Phase 95: capture the
-	// outcome in Store.InvocationResults so CloudState reflects the
-	// container as exited with the real exit code.
+	// Invoke Lambda function asynchronously and capture the outcome
+	// in Store.InvocationResults so CloudState reflects the container
+	// as exited with the real exit code.
 	go func() {
 		result, err := s.aws.Lambda.Invoke(s.ctx(), &awslambda.InvokeInput{
 			FunctionName: aws.String(lambdaState.FunctionName),
@@ -418,8 +426,8 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 	s.disconnectReverseAgent(id)
 
 	// Record the stop outcome so CloudState reports the container as
-	// exited with code 137 (SIGKILL equivalent) even though Lambda has no
-	// invocation-cancel API. Phase 95.
+	// exited with code 137 (SIGKILL equivalent) even though Lambda has
+	// no invocation-cancel API.
 	s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: 137})
 
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
@@ -470,7 +478,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	s.disconnectReverseAgent(id)
 
 	// Record the kill outcome so CloudState reports the container as
-	// exited with the signal-derived code. Phase 95.
+	// exited with the signal-derived code.
 	s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: exitCode})
 
 	s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
@@ -565,6 +573,18 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 // return empty. In follow mode the fetch closure keeps checking until
 // the stream appears.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
+	fetch := s.buildCloudWatchFetcher(ref)
+	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{
+		CheckLogBuffers: true,
+	})
+}
+
+// buildCloudWatchFetcher returns a CloudLogFetchFunc closure that reads
+// log events for the given container's Lambda function. Shared by
+// ContainerLogs and ContainerAttach. The log group is resolved once;
+// the stream name is resolved lazily because Lambda creates the stream
+// only after the first invocation produces output.
+func (s *Server) buildCloudWatchFetcher(ref string) core.CloudLogFetchFunc {
 	var logGroupName *string
 	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
 		lambdaState, _ := s.resolveLambdaState(s.ctx(), id)
@@ -574,8 +594,6 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 		}
 	}
 
-	// resolveStream looks up the most recent log stream in the group;
-	// returns nil if the stream doesn't exist yet.
 	resolveStream := func() *string {
 		if logGroupName == nil {
 			return nil
@@ -592,11 +610,9 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 		return out.LogStreams[0].LogStreamName
 	}
 
-	// Cache the resolved stream once it appears so we don't pay
-	// DescribeLogStreams on every poll tick in follow mode.
 	var cachedStream *string
 
-	fetch := func(ctx context.Context, params core.CloudLogParams, cursor any) ([]core.CloudLogEntry, any, error) {
+	return func(ctx context.Context, params core.CloudLogParams, cursor any) ([]core.CloudLogEntry, any, error) {
 		if logGroupName == nil {
 			return nil, nil, nil
 		}
@@ -646,10 +662,6 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 		}
 		return entries, result.NextForwardToken, nil
 	}
-
-	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{
-		CheckLogBuffers: true,
-	})
 }
 
 // ContainerRestart stops and then starts a container.
@@ -761,20 +773,24 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 	}, nil
 }
 
-// ContainerPause is not supported by the Lambda backend.
+// ContainerPause sends SIGSTOP to the user subprocess via the reverse-
+// agent.
 func (s *Server) ContainerPause(ref string) error {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), ref); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
+	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-	return &api.NotImplementedError{Message: "Lambda backend does not support pause"}
+	return core.MapPauseErr(core.RunContainerPauseViaAgent(s.reverseAgents, cid))
 }
 
-// ContainerUnpause is not supported by the Lambda backend.
+// ContainerUnpause sends SIGCONT to the user subprocess via the
+// reverse-agent.
 func (s *Server) ContainerUnpause(ref string) error {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), ref); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
+	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-	return &api.NotImplementedError{Message: "Lambda backend does not support unpause"}
+	return core.MapPauseErr(core.RunContainerUnpauseViaAgent(s.reverseAgents, cid))
 }
 
 // ImagePull pulls an image, using ECR cloud auth when available.
@@ -829,41 +845,60 @@ func (s *Server) Info() (*api.BackendInfo, error) {
 	return info, nil
 }
 
-// ContainerAttach attaches to a container's streams.
-// Only supported when a reverse agent is connected; otherwise Lambda functions
-// are not interactive.
+// ContainerAttach bridges stdin/stdout/stderr to the bootstrap process
+// inside the Lambda invocation container via the reverse-agent
+// WebSocket when a session is registered. When no agent is registered
+// and the caller doesn't need stdin (read-only attach — `docker
+// attach` without -i, or `docker run` follow-mode), fall back to
+// streaming CloudWatch as the attached output. Interactive attach
+// without an agent has no native Lambda surface, so it stays
+// NotImplementedError.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return nil, &api.NotImplementedError{
-		Message: "Lambda backend does not support attach",
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
+		return s.BaseServer.ContainerAttach(id, opts)
 	}
+	if opts.Stdin {
+		return nil, &api.NotImplementedError{Message: "interactive docker attach requires a reverse-agent bootstrap inside the Lambda container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	return core.AttachViaCloudLogs(s.BaseServer, id, opts, s.buildCloudWatchFetcher(id))
 }
 
-// ContainerExport is not supported by the Lambda backend.
-// Lambda functions have no local filesystem to export.
+// ContainerExport streams a tar archive of the Lambda container's
+// rootfs via the reverse-agent. Buffered in memory; see
+// core.RunContainerExportViaAgent for the size caveat.
 func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return nil, &api.NotImplementedError{
-		Message: "Lambda backend does not support container export; functions have no local filesystem",
+	rc, err := core.RunContainerExportViaAgent(s.reverseAgents, cid)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker export requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
 	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("export via reverse-agent: %v", err)}
+	}
+	return rc, nil
 }
 
-// ContainerCommit is not supported by the Lambda backend.
-// Lambda functions have no local filesystem to commit.
+// ContainerCommit builds a new image from the invocation container's
+// rootfs via the reverse-agent and stores it in the image cache so
+// `docker push` can sync it to ECR. Gated behind EnableCommit because
+// the result wraps the whole rootfs as a single layer (no diff against
+// the original image — sockerless can't read it from the Lambda
+// backend host).
 func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
 	if req.Container == "" {
 		return nil, &api.InvalidParameterError{Message: "container query parameter is required"}
 	}
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), req.Container); !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
+	if !s.config.EnableCommit {
+		return nil, &api.NotImplementedError{Message: "docker commit on Lambda is gated — set SOCKERLESS_ENABLE_COMMIT=1 (the agent-driven commit captures the whole rootfs as a single layer; see PLAN.md Phase 98b)"}
 	}
-	return nil, &api.NotImplementedError{
-		Message: "Lambda backend does not support container commit; functions have no local filesystem",
-	}
+	return core.CommitContainerRequestViaAgent(s.BaseServer, s.reverseAgents, req)
 }
 
 // ImagePush pushes an image, syncing to ECR when applicable.

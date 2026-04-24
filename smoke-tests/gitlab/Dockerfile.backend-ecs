@@ -8,6 +8,7 @@ RUN GOWORK=off go build -tags noui -o /simulator-aws .
 # Build backend
 WORKDIR /src
 COPY api/ api/
+COPY agent/ agent/
 COPY backends/core/ backends/core/
 COPY backends/aws-common/ backends/aws-common/
 COPY backends/ecs/ backends/ecs/

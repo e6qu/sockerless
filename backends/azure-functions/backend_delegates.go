@@ -10,6 +10,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 	"github.com/sockerless/api"
 	azurecommon "github.com/sockerless/azure-common"
+	core "github.com/sockerless/backend-core"
 )
 
 // shareToVolume converts a sockerless-managed Azure Files share into a
@@ -38,18 +39,37 @@ func shareToVolume(dockerName, storageAccount string, sh *armstorage.FileShareIt
 
 // Container methods with resolution.
 
+// ContainerChanges lists files modified since container boot via the
+// reverse-agent. Phase 98 (BUG-753).
 func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return s.BaseServer.ContainerChanges(id)
+	items, err := core.RunContainerChangesViaAgent(s.reverseAgents, cid)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker diff requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("changes via reverse-agent: %v", err)}
+	}
+	return items, nil
 }
 
+// ContainerGetArchive runs tar via the reverse-agent. Phase 98.
 func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArchiveResponse, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return s.BaseServer.ContainerGetArchive(id, path)
+	resp, err := core.RunContainerGetArchiveViaAgent(s.reverseAgents, cid, path)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker cp requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("archive via reverse-agent: %v", err)}
+	}
+	return resp, nil
 }
 
 func (s *Server) ContainerInspect(id string) (*api.Container, error) {
@@ -63,11 +83,21 @@ func (s *Server) ContainerList(opts api.ContainerListOptions) ([]*api.ContainerS
 	return s.BaseServer.ContainerList(opts)
 }
 
+// ContainerPutArchive extracts the incoming tar body via the
+// reverse-agent. Phase 98.
 func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDir bool, body io.Reader) error {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return s.BaseServer.ContainerPutArchive(id, path, noOverwriteDirNonDir, body)
+	err := core.RunContainerPutArchiveViaAgent(s.reverseAgents, cid, path, body)
+	if err == core.ErrNoReverseAgent {
+		return &api.NotImplementedError{Message: "docker cp requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	if err != nil {
+		return &api.ServerError{Message: fmt.Sprintf("put-archive via reverse-agent: %v", err)}
+	}
+	return nil
 }
 
 func (s *Server) ContainerRename(id string, newName string) error {
@@ -84,11 +114,21 @@ func (s *Server) ContainerResize(id string, h int, w int) error {
 	return s.BaseServer.ContainerResize(id, h, w)
 }
 
+// ContainerStatPath runs `stat` inside the function container via the
+// reverse-agent. Phase 98 (BUG-751).
 func (s *Server) ContainerStatPath(id string, path string) (*api.ContainerPathStat, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return s.BaseServer.ContainerStatPath(id, path)
+	stat, err := core.RunContainerStatPathViaAgent(s.reverseAgents, cid, path)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker container stat requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("stat via reverse-agent: %v", err)}
+	}
+	return stat, nil
 }
 
 func (s *Server) ContainerStats(id string, stream bool) (io.ReadCloser, error) {
@@ -98,11 +138,21 @@ func (s *Server) ContainerStats(id string, stream bool) (io.ReadCloser, error) {
 	return s.BaseServer.ContainerStats(id, stream)
 }
 
+// ContainerTop runs `ps` inside the function app container via the
+// reverse-agent. Phase 98 (BUG-752).
 func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopResponse, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return s.BaseServer.ContainerTop(id, psArgs)
+	resp, err := core.RunContainerTopViaAgent(s.reverseAgents, cid, psArgs)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker top requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("top via reverse-agent: %v", err)}
+	}
+	return resp, nil
 }
 
 func (s *Server) ContainerUpdate(id string, req *api.ContainerUpdateRequest) (*api.ContainerUpdateResponse, error) {
@@ -136,7 +186,23 @@ func (s *Server) ExecResize(id string, h int, w int) error {
 	return s.BaseServer.ExecResize(id, h, w)
 }
 
+// ExecStart runs the exec inside the function container via the
+// reverse-agent WebSocket. Azure Functions exposes no native exec API
+// (Kudu uses a different protocol that's not implemented); the
+// bootstrap is the only path. If no session is registered, return
+// NotImplementedError with the specific reason.
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
+	exec, ok := s.Store.Execs.Get(id)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "exec instance", ID: id}
+	}
+	c, ok := s.ResolveContainerAuto(context.Background(), exec.ContainerID)
+	if !ok {
+		return nil, &api.ConflictError{Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID)}
+	}
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
+		return nil, &api.NotImplementedError{Message: "docker exec requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
 	return s.BaseServer.ExecStart(id, opts)
 }
 

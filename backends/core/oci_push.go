@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/sockerless/api"
 )
 
 // OCIPushOptions configures an OCI push operation.
@@ -18,10 +20,60 @@ type OCIPushOptions struct {
 	Tag        string // e.g. "latest"
 	AuthToken  string // Bearer token or empty
 	// LayerContent provides real layer data (keyed by digest).
-	// When nil or empty, falls back to synthetic empty layer.
 	LayerContent func(digest string) ([]byte, bool)
-	// Image layers to push (diff_ids from the image's RootFS.Layers).
+	// ImageLayers is the ordered list of diff_ids (uncompressed layer
+	// digests) from the image's RootFS.Layers. They become both the
+	// rootfs.diff_ids in the config blob AND the source of layer
+	// blobs in the manifest — they must match for the OCI spec to
+	// hold.
 	ImageLayers []string
+	// Architecture / OS describe the image's target platform. Defaults
+	// to amd64/linux when empty (matches Docker's default tag).
+	Architecture string
+	OS           string
+	// Config is the image's runtime config (Cmd, Env, Entrypoint,
+	// WorkingDir, …) that gets serialised into the OCI config blob.
+	// Optional — when nil, the config object in the manifest is empty.
+	Config *imageConfigBlob
+}
+
+// imageConfigBlob is the shape that gets serialised into an OCI image
+// config blob's `config` field. Mirrors the subset of
+// api.ContainerConfig that registries care about; unset fields are
+// elided from JSON via omitempty.
+type imageConfigBlob struct {
+	User         string              `json:"User,omitempty"`
+	ExposedPorts map[string]struct{} `json:"ExposedPorts,omitempty"`
+	Env          []string            `json:"Env,omitempty"`
+	Cmd          []string            `json:"Cmd,omitempty"`
+	Entrypoint   []string            `json:"Entrypoint,omitempty"`
+	WorkingDir   string              `json:"WorkingDir,omitempty"`
+	Labels       map[string]string   `json:"Labels,omitempty"`
+}
+
+// imageConfigFromAPI converts the stored api.ContainerConfig into the
+// OCI config-blob shape for OCIPush. Returns nil when the source
+// config is empty so OCIPush serialises an empty `config: {}` per the
+// OCI spec.
+func imageConfigFromAPI(c api.ContainerConfig) *imageConfigBlob {
+	if c.User == "" && len(c.Env) == 0 && len(c.Cmd) == 0 && len(c.Entrypoint) == 0 && c.WorkingDir == "" && len(c.Labels) == 0 && len(c.ExposedPorts) == 0 {
+		return nil
+	}
+	out := &imageConfigBlob{
+		User:       c.User,
+		Env:        c.Env,
+		Cmd:        c.Cmd,
+		Entrypoint: c.Entrypoint,
+		WorkingDir: c.WorkingDir,
+		Labels:     c.Labels,
+	}
+	if len(c.ExposedPorts) > 0 {
+		out.ExposedPorts = make(map[string]struct{}, len(c.ExposedPorts))
+		for p := range c.ExposedPorts {
+			out.ExposedPorts[string(p)] = struct{}{}
+		}
+	}
+	return out
 }
 
 // OCIPushResult contains the result of an OCI push.
@@ -37,9 +89,13 @@ var ociPushClient = &http.Client{
 	Timeout: 60 * time.Second,
 }
 
-// OCIPush pushes a synthetic image to an OCI-compliant registry.
-// It uploads a synthetic config blob, a synthetic layer blob, and a manifest.
-// Returns the push result or an error. The caller should treat errors as non-fatal.
+// OCIPush pushes an image to an OCI-compliant registry. It uploads the
+// config blob, all referenced layer blobs (using `opts.LayerContent`
+// keyed by diff_id), and the v2 manifest. Returns the push result or
+// an error. Callers are responsible for ensuring `opts.ImageLayers`
+// and `opts.LayerContent` together describe the full image — the
+// `rootfs.diff_ids` in the config blob is built from `ImageLayers` so
+// it matches the manifest's layer list.
 func OCIPush(opts OCIPushOptions) (*OCIPushResult, error) {
 	baseURL := fmt.Sprintf("https://%s/v2/%s", opts.Registry, opts.Repository)
 
@@ -48,15 +104,31 @@ func OCIPush(opts OCIPushOptions) (*OCIPushResult, error) {
 		return nil, fmt.Errorf("registry ping failed: %w", err)
 	}
 
-	// 2. Create synthetic config blob
+	// 2. Build the OCI config blob from the caller's metadata.
+	// rootfs.diff_ids must match the layers actually uploaded
+	// below — clients use this to verify the manifest's chain-of-trust.
+	arch := opts.Architecture
+	if arch == "" {
+		arch = "amd64"
+	}
+	osName := opts.OS
+	if osName == "" {
+		osName = "linux"
+	}
+	var cfg any
+	if opts.Config != nil {
+		cfg = opts.Config
+	} else {
+		cfg = map[string]any{}
+	}
 	configJSON, err := json.Marshal(map[string]any{
-		"architecture": "amd64",
-		"os":           "linux",
+		"architecture": arch,
+		"os":           osName,
 		"created":      time.Now().UTC().Format(time.RFC3339),
-		"config":       map[string]any{},
+		"config":       cfg,
 		"rootfs": map[string]any{
 			"type":     "layers",
-			"diff_ids": []string{},
+			"diff_ids": opts.ImageLayers,
 		},
 	})
 	if err != nil {

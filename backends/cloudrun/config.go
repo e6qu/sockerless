@@ -28,6 +28,20 @@ type Config struct {
 	// Default false (Jobs path) until the Services path is implemented.
 	// Set via `SOCKERLESS_GCR_USE_SERVICE=1`.
 	UseService bool
+
+	// CallbackURL is the reverse-agent WebSocket URL injected into
+	// container env (`SOCKERLESS_CALLBACK_URL`) so a bootstrap running
+	// inside the container can dial back to the backend's
+	// `/v1/cloudrun/reverse` endpoint. Enables `docker exec` /
+	// `docker attach` against CR Jobs/Services once an overlay image
+	// with the bootstrap binary is deployed. Empty ⇒ exec NotImpl. Phase 96.
+	CallbackURL string
+
+	// EnableCommit opts into the agent-driven `docker commit` path.
+	// See backends/core.CommitContainerViaAgent. Off by default — the
+	// resulting image wraps the whole rootfs as a single layer.
+	// Set via `SOCKERLESS_ENABLE_COMMIT=1`.
+	EnableCommit bool
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -42,6 +56,8 @@ func ConfigFromEnv() Config {
 		PollInterval: parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 		LogTimeout:   parseDuration(os.Getenv("SOCKERLESS_LOG_TIMEOUT"), 30*time.Second),
 		UseService:   os.Getenv("SOCKERLESS_GCR_USE_SERVICE") == "1",
+		CallbackURL:  os.Getenv("SOCKERLESS_CALLBACK_URL"),
+		EnableCommit: os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
 	}
 }
 

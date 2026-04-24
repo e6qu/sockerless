@@ -23,6 +23,16 @@ type Config struct {
 	BuildContainer        string        // Blob container for ACR build context
 	EndpointURL           string        // Custom endpoint URL
 	PollInterval          time.Duration // Cloud API poll interval (default 2s)
+
+	// CallbackURL is the reverse-agent WebSocket URL injected into the
+	// function app container env so a bootstrap inside can dial back
+	// to the backend's /v1/azf/reverse endpoint.
+	CallbackURL string
+
+	// EnableCommit opts into the agent-driven `docker commit` path.
+	// See backends/core.CommitContainerViaAgent. Set via
+	// `SOCKERLESS_ENABLE_COMMIT=1`.
+	EnableCommit bool
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -40,6 +50,8 @@ func ConfigFromEnv() Config {
 		BuildContainer:        os.Getenv("SOCKERLESS_AZURE_BUILD_CONTAINER"),
 		EndpointURL:           os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:          parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
+		CallbackURL:           os.Getenv("SOCKERLESS_CALLBACK_URL"),
+		EnableCommit:          os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
 	}
 }
 

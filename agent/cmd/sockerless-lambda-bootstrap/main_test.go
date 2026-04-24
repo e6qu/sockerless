@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +12,12 @@ import (
 	"sync/atomic"
 	"testing"
 )
+
+// encodeArgv matches the backend's encoding: base64(JSON(argv)).
+func encodeArgv(argv []string) string {
+	b, _ := json.Marshal(argv)
+	return base64.StdEncoding.EncodeToString(b)
+}
 
 // TestHandleOneInvocation_RoundTrip verifies the Runtime-API loop
 // (single iteration) polls /next, runs the user entrypoint with the
@@ -42,7 +50,7 @@ func TestHandleOneInvocation_RoundTrip(t *testing.T) {
 	defer srv.Close()
 
 	// Configure a user entrypoint that echoes stdin to stdout.
-	t.Setenv(envUserEntrypoint, "/bin/cat")
+	t.Setenv(envUserEntrypoint, encodeArgv([]string{"/bin/cat"}))
 	t.Setenv(envUserCmd, "")
 
 	if err := handleOneInvocation(srv.URL); err != nil {
@@ -86,9 +94,8 @@ func TestHandleOneInvocation_UserError(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	// false exits 1 with no output.
-	t.Setenv(envUserEntrypoint, "/bin/sh")
-	t.Setenv(envUserCmd, "-c:exit 7")
+	t.Setenv(envUserEntrypoint, encodeArgv([]string{"/bin/sh"}))
+	t.Setenv(envUserCmd, encodeArgv([]string{"-c", "exit 7"}))
 
 	if err := handleOneInvocation(srv.URL); err != nil {
 		t.Fatalf("handleOneInvocation: %v", err)

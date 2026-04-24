@@ -46,6 +46,15 @@ type Config struct {
 	// end-to-end test to exercise the reverse-agent path without
 	// requiring insecure-registry config on the docker daemon.
 	PrebuiltOverlayImage string
+
+	// EnableCommit opts into the agent-driven `docker commit` path
+	// (backends/core.CommitContainerViaAgent). Off by default because
+	// the result isn't a traditional diff-against-base-image commit —
+	// sockerless can't read the base image's rootfs from the backend
+	// host, so the whole container filesystem becomes a single
+	// new layer. Users who understand that tradeoff set
+	// SOCKERLESS_ENABLE_COMMIT=1 and accept the larger image.
+	EnableCommit bool
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -67,6 +76,7 @@ func ConfigFromEnv() Config {
 		AgentBinaryPath:      envOrDefault("SOCKERLESS_AGENT_BINARY", "/opt/sockerless/sockerless-agent"),
 		BootstrapBinaryPath:  envOrDefault("SOCKERLESS_LAMBDA_BOOTSTRAP", "/opt/sockerless/sockerless-lambda-bootstrap"),
 		PrebuiltOverlayImage: os.Getenv("SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE"),
+		EnableCommit:         os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
 	}
 }
 

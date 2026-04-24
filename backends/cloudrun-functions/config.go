@@ -21,6 +21,17 @@ type Config struct {
 	EndpointURL    string        // Custom endpoint URL
 	PollInterval   time.Duration // Cloud API poll interval (default 2s)
 	LogTimeout     time.Duration // Cloud Logging query timeout (default 30s)
+
+	// CallbackURL is the reverse-agent WebSocket URL injected into
+	// the function container env so a bootstrap inside can dial back
+	// to the backend's /v1/gcf/reverse endpoint. Empty ⇒ exec/top
+	// NotImplemented.
+	CallbackURL string
+
+	// EnableCommit opts into the agent-driven `docker commit` path.
+	// See backends/core.CommitContainerViaAgent. Set via
+	// `SOCKERLESS_ENABLE_COMMIT=1`.
+	EnableCommit bool
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -36,6 +47,8 @@ func ConfigFromEnv() Config {
 		EndpointURL:    os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:   parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 		LogTimeout:     parseDuration(os.Getenv("SOCKERLESS_LOG_TIMEOUT"), 30*time.Second),
+		CallbackURL:    os.Getenv("SOCKERLESS_CALLBACK_URL"),
+		EnableCommit:   os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
 	}
 }
 

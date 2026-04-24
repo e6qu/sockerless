@@ -196,6 +196,35 @@ Scope:
 - `backends/docker.PodExists` — filter-by-label existence probe.
 - Tests: SDK + CLI (`podman pod create` / `podman pod inspect` / `podman pod ps`) against the Docker backend, matching behaviour with the cloud backends.
 
+### Phase 102 — ECS parity for filesystem-ops + pause/unpause via SSM (queued)
+
+BUG-761 + BUG-762. The reverse-agent path solved `docker top/cp/stat/diff/export/pause/unpause` for FaaS backends in Phase 98+99 by tunnelling shell commands over a WebSocket. ECS Fargate has the same need but a different transport: `ssm:ExecuteCommand` (same channel that already powers `docker exec` via `backends/ecs/exec_cloud.go`).
+
+Scope:
+- New `backends/ecs/ssm_capture.go`: `RunCommandViaSSM(taskARN, containerName, argv []string, stdin []byte) (stdout, stderr []byte, exitCode int, err error)` that opens an SSM Session, sends the command, captures the SSM AgentMessage `output_stream_data` frames, returns when the session closes. Mirrors the shape of `core.ReverseAgentRegistry.RunAndCapture(...)`.
+- `backends/ecs/backend_impl.go`: replace the `NotImplementedError` returns in `ContainerExport`/`ContainerTop`/`ContainerChanges`/`ContainerStatPath`/`ContainerGetArchive`/`ContainerPutArchive`/`ContainerPause`/`ContainerUnpause` with calls into the new helper, parsing the same shell outputs the FaaS helpers parse (reuse `core.ParseTopOutput`, `core.ParseStatOutput`, `core.ParseChangesOutput`, `core.MapPauseErr`).
+- Bootstrap convention for pause: same `/tmp/.sockerless-mainpid` path as Phase 99; ECS task-definitions need to ensure the user process writes its PID there (or sockerless adds an init script via `entryPoint`).
+- Tests: extend `backends/ecs/integration_test.go` with `TestECSContainerTop_ViaSSM`, `TestECSContainerPause_ViaSSM`, etc.
+
+### Phase 101 — Simulator parity for cloud-native exec/attach surfaces (queued)
+
+The reverse-agent path (Lambda/CR/ACA/GCF/AZF) is end-to-end testable in CI today because the bootstrap dials the backend's WS endpoint directly — the simulator just runs the container with the right env vars. The remaining gap is the **cloud-native** exec/attach surfaces that backends route to as a second-choice when no agent is registered:
+
+| Backend | Cloud-native exec/attach | Sim status | Phase 101 work |
+|---|---|---|---|
+| ecs | SSM `ExecuteCommand` + AgentMessage frames | ✓ slice exists (`simulators/aws/ssm_proto.go`) | — |
+| aca | `Microsoft.App/jobs/{job}/executions/{exec}/exec` WebSocket (called by `aca/exec_cloud.go::cloudExecStart`) | ✗ not implemented | add `POST .../executions/{exec}/exec` WS endpoint to `simulators/azure/containerapps.go`; bridge to a real exec into the running Docker container the sim already owns |
+| azf | Kudu console / SSH (currently NOT wired in the backend) | ✗ | not needed until backend wires it |
+| lambda / cloudrun / gcf / azf — attach via cloud logs | CloudWatch / Cloud Logging / Log Analytics streaming | ✓ partial (logs work for `docker logs`); attach-via-logs not yet wired in backends | (a) wire `ContainerAttach` to use the same fetch closure the backend's `ContainerLogs` uses (no-stdin, log-stream as stdout) when no agent is present and `opts.Stream=false`; (b) sim slices already serve the log endpoints, no new sim work |
+
+Scope:
+- `simulators/azure/containerapps.go` — implement the ACA jobs-exec WebSocket and bridge it to a real `docker exec` into the running execution container. Same pattern as the existing `simulators/aws/ssm_*.go` files.
+- `backends/{lambda,cloudrun,cloudrun-functions,azure-functions}/backend_impl.go` — when `ContainerAttach` is called without a reverse-agent session AND `opts.Stdin=false`, fall back to the existing CloudWatch/Cloud Logging streaming via `core.StreamCloudLogs` (same fetch closure used by `ContainerLogs`). With `opts.Stdin=true` the `NotImplementedError` stays — there's no native interactive surface.
+- `backends/azure-functions/exec_cloud.go` (new) + sim Kudu slice — only if Azure Functions ever needs a non-agent exec path.
+- Tests: integration tests for ACA exec via the management-API path with no agent registered; cross-backend attach-via-logs assertion (same shape as `TestECSContainerAttach`).
+
+Tracks BUG-759 + BUG-760 (filed when the audit lands).
+
 ### Phase 99 — Agent-driven `docker pause` / `unpause` (queued)
 
 BUG-749 — no cloud control plane exposes per-container pause as a first-class primitive, but the reverse-agent pattern from Phases 95/96 gives sockerless a direct line into the container's process tree. Pause = agent calls `syscall.Kill(userPid, syscall.SIGSTOP)` on the subprocess the bootstrap spawned; Unpause = `SIGCONT`. The agent tracks the PID at user-command fork time, so it knows which process to target.

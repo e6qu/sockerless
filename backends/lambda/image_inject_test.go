@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"io"
 	"os"
 	"path/filepath"
@@ -78,11 +79,14 @@ func TestRenderOverlayDockerfile_UserEntrypointAndCmd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(df, "ENV SOCKERLESS_USER_ENTRYPOINT=/bin/sh:-c") {
-		t.Errorf("entrypoint env var missing or malformed:\n%s", df)
+	// base64("[\"/bin/sh\",\"-c\"]") / base64("[\"echo\",\"hello\"]")
+	wantEP := base64.StdEncoding.EncodeToString([]byte(`["/bin/sh","-c"]`))
+	wantCmd := base64.StdEncoding.EncodeToString([]byte(`["echo","hello"]`))
+	if !strings.Contains(df, "ENV SOCKERLESS_USER_ENTRYPOINT="+wantEP+"\n") {
+		t.Errorf("entrypoint env var missing or malformed (want %s):\n%s", wantEP, df)
 	}
-	if !strings.Contains(df, "ENV SOCKERLESS_USER_CMD=echo:hello") {
-		t.Errorf("cmd env var missing or malformed:\n%s", df)
+	if !strings.Contains(df, "ENV SOCKERLESS_USER_CMD="+wantCmd+"\n") {
+		t.Errorf("cmd env var missing or malformed (want %s):\n%s", wantCmd, df)
 	}
 }
 

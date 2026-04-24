@@ -69,24 +69,12 @@ func (p *ECRAuthProvider) OnPush(imageID, registry, repo, tag string) error {
 		return err
 	}
 
-	// Get auth token for OCI registry push
-	authToken, err := p.GetToken(registry)
-	if err != nil {
-		return fmt.Errorf("ECR auth failed: %w", err)
-	}
-
-	// Push via OCI registry v2 API (same protocol as GCR/ACR)
-	_, err = core.OCIPush(core.OCIPushOptions{
-		Registry:   registry,
-		Repository: repo,
-		Tag:        tag,
-		AuthToken:  authToken,
-	})
-	if err != nil {
-		p.logger.Warn().Err(err).Str("repo", repo).Str("tag", tag).Msg("ECR OCI push failed")
-		return err
-	}
-
+	// CreateRepository is the only ECR-specific bookkeeping needed
+	// before the push; the actual blob upload is done by
+	// BaseServer.ImagePush via core.OCIPush, which has access to the
+	// image's layer data through the local store. OnPush used to also
+	// call OCIPush here without layer data, which always failed
+	// (BUG-763).
 	return nil
 }
 
@@ -106,21 +94,9 @@ func (p *ECRAuthProvider) OnTag(imageID, registry, repo, newTag string) error {
 		return err
 	}
 
-	authToken, err := p.GetToken(registry)
-	if err != nil {
-		return fmt.Errorf("ECR auth failed: %w", err)
-	}
-
-	_, err = core.OCIPush(core.OCIPushOptions{
-		Registry:   registry,
-		Repository: repo,
-		Tag:        newTag,
-		AuthToken:  authToken,
-	})
-	if err != nil {
-		p.logger.Warn().Err(err).Str("repo", repo).Str("tag", newTag).Msg("ECR OCI tag failed")
-		return err
-	}
+	// OnTag triggers a fresh tag upload on the registry. The actual
+	// manifest re-PUT is done by BaseServer.ImagePush — we only need
+	// to ensure the repo exists (CreateRepository above).
 
 	return nil
 }

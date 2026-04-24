@@ -305,23 +305,7 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 func waitAndCaptureLogs(ctx context.Context, cli *client.Client, containerID string, cfg ContainerConfig, sink LogSink) ProcessResult {
 	startedAt := time.Now()
 
-	// Attach to logs — must complete before we return the result
-	var logDone chan struct{}
-	logReader, err := cli.ContainerLogs(ctx, containerID, container.LogsOptions{
-		ShowStdout: true,
-		ShowStderr: true,
-		Follow:     true,
-		Timestamps: false,
-	})
-	if err == nil {
-		logDone = make(chan struct{})
-		go func() {
-			streamDockerLogs(logReader, sink)
-			close(logDone)
-		}()
-	}
-
-	// Enforce timeout via a separate goroutine
+	// Enforce timeout via a separate goroutine.
 	if cfg.Timeout > 0 {
 		go func() {
 			select {
@@ -336,7 +320,7 @@ func waitAndCaptureLogs(ctx context.Context, cli *client.Client, containerID str
 		}()
 	}
 
-	// Wait for container to exit
+	// Wait for container to exit.
 	var result ProcessResult
 	statusCh, errCh := cli.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
 	select {
@@ -367,18 +351,37 @@ func waitAndCaptureLogs(ctx context.Context, cli *client.Client, containerID str
 		}
 	}
 
-	// Wait for log drain to complete before returning — ensures all container
-	// output reaches the LogSink (and thus Cloud Logging) before the execution
-	// is marked as completed.
-	if logDone != nil {
-		select {
-		case <-logDone:
-		case <-time.After(5 * time.Second):
-			// Safety timeout — don't hang forever if log reader is stuck
-		}
-	}
+	// Read the container's full log output via a single non-follow
+	// request. We deliberately do this AFTER ContainerWait instead of
+	// streaming live during execution: Docker's follow stream races
+	// with very short-lived containers (stdcopy sees EOF before all
+	// buffered output has been demuxed), and the sim's callers all
+	// wait for the container to finish before using the logs. Use a
+	// detached context with a generous timeout so any caller-side
+	// cancel doesn't interrupt the read mid-flight.
+	readCtx, readCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer readCancel()
+	drainContainerLogs(readCtx, cli, containerID, sink)
 
 	return result
+}
+
+// drainContainerLogs reads the full container log via non-follow
+// ContainerLogs and forwards every demuxed line to sink. Called once
+// the container has exited; Docker keeps the log buffer around until
+// the container is removed.
+func drainContainerLogs(ctx context.Context, cli *client.Client, containerID string, sink LogSink) {
+	reader, err := cli.ContainerLogs(ctx, containerID, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     false,
+		Timestamps: false,
+	})
+	if err != nil {
+		return
+	}
+	defer reader.Close()
+	streamDockerLogs(reader, sink)
 }
 
 // streamDockerLogs demuxes Docker log output and sends lines to the sink.

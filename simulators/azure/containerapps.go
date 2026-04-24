@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	dockercontainer "github.com/docker/docker/api/types/container"
+	"github.com/gorilla/websocket"
 	sim "github.com/sockerless/simulator"
 )
 
@@ -609,6 +611,120 @@ func registerContainerApps(srv *sim.Server) {
 
 		w.WriteHeader(http.StatusOK)
 	})
+
+	// POST - Console exec WebSocket. Backend's aca/exec_cloud.go dials
+	// this with the user command in the `command` query parameter.
+	// The handler upgrades to WebSocket and bridges to a `docker exec`
+	// against the running execution container — same pattern as
+	// simulators/aws/ecs.go's SSM ExecuteCommand handler, simpler
+	// frame format (raw binary in/out, no SSM AgentMessage wrapping).
+	srv.HandleFunc("POST "+basePath+"/jobs/{jobName}/executions/{execName}/exec", handleACAJobExec)
+}
+
+// handleACAJobExec serves the ACA jobs-exec WebSocket. The user
+// command arrives as `?command=<urlencoded>`; the running execution
+// container is looked up in acaProcessHandles; the WebSocket is then
+// bridged to a docker exec session against that container.
+func handleACAJobExec(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	jobName := sim.PathParam(r, "jobName")
+	execName := sim.PathParam(r, "execName")
+	command := r.URL.Query().Get("command")
+	if command == "" {
+		sim.AzureError(w, "BadRequest", "command query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	execID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/jobs/%s/executions/%s",
+		sub, rg, jobName, execName)
+	v, ok := acaProcessHandles.Load(execID)
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+			"No running execution container for '%s/%s'", jobName, execName)
+		return
+	}
+	handle := v.(*sim.ContainerHandle)
+
+	conn, err := acaWSUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close() //nolint:errcheck
+
+	cli := sim.DockerClient()
+	if cli == nil {
+		_ = conn.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "docker client not initialised"))
+		return
+	}
+
+	// Run the command via `sh -c "<command>"` to match what real ACA's
+	// console exec does and to support arbitrary shell expressions.
+	execCfg := dockercontainer.ExecOptions{
+		Cmd:          []string{"sh", "-c", command},
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+	ctx := r.Context()
+	execResp, err := cli.ContainerExecCreate(ctx, handle.ContainerID, execCfg)
+	if err != nil {
+		_ = conn.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseInternalServerErr, err.Error()))
+		return
+	}
+	attach, err := cli.ContainerExecAttach(ctx, execResp.ID, dockercontainer.ExecAttachOptions{})
+	if err != nil {
+		_ = conn.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseInternalServerErr, err.Error()))
+		return
+	}
+	defer attach.Close()
+
+	// Bridge: WebSocket binary frames → exec stdin; exec stdout+stderr
+	// → WebSocket binary frames. ACA's real protocol does not split
+	// stdout/stderr at the wire level, so we let stdcopy demux upstream
+	// in the backend / matching client (or just merge to one stream).
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		buf := make([]byte, 4096)
+		for {
+			n, rerr := attach.Reader.Read(buf)
+			if n > 0 {
+				if werr := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); werr != nil {
+					return
+				}
+			}
+			if rerr != nil {
+				return
+			}
+		}
+	}()
+
+	for {
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
+		if _, werr := attach.Conn.Write(msg); werr != nil {
+			break
+		}
+	}
+	_ = attach.CloseWrite()
+	<-done
+
+	_ = conn.WriteControl(
+		websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+		time.Now().Add(5*time.Second),
+	)
+}
+
+var acaWSUpgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
 // randomSuffix generates a random alphanumeric suffix of the given length.

@@ -4,6 +4,31 @@ Docker-compatible REST API that runs containers on cloud backends (ECS, Lambda, 
 
 See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for the bug log, [PLAN.md](PLAN.md) for the roadmap, [specs/](specs/) for architecture specs (start with [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md)).
 
+## Phase 98 — ContainerTop via reverse-agent (2026-04-23, partial)
+
+First slice of BUG-752: `docker top` now routes through the reverse-agent on every backend that has a bootstrap inside the container.
+
+New shared helpers:
+- `agent.ReverseAgentConn.CollectExec(sessionID, cmd, env, workdir) → (stdout, stderr, exit, err)` runs a one-shot command and returns the output accumulated from streamed Message events. Different shape from `BridgeExec` (no caller conn to multiplex) — fits the backend-driven-introspection call pattern.
+- `core.RunContainerTopViaAgent(registry, containerID, psArgs) → *api.ContainerTopResponse` + `core.ParseTopOutput` handle the `ps` exec + output parsing.
+
+Per-backend wiring: Lambda, Cloud Run, ACA, GCF, AZF all now return a real `ContainerTopResponse` when a reverse-agent session is registered, or a precise NotImplementedError (`no session registered`) otherwise. GCF + AZF gained the reverse-agent scaffolding (registry, `/v1/<backend>/reverse` WS endpoint, `SOCKERLESS_CALLBACK_URL` + `SOCKERLESS_CONTAINER_ID` env var injection) that Phase 96 had already given CR + ACA.
+
+Remaining Phase 98 methods (`docker cp` / `stat` / `diff` / `export`) follow the same pattern — one-shot `CollectExec` with different argv, wrapped in a backend-agnostic helper in `backends/core`.
+
+## Phase 100 — Docker backend pod synthesis (2026-04-23)
+
+BUG-754 closed. Docker daemon has no native pod primitive but sockerless has tracked cloud containers by the `sockerless-pod` tag since Phase 89. The Docker backend now follows the same convention:
+- `PodCreate`/`Inspect`/`Exists` delegate to BaseServer's Store.Pods (in-memory); `PodInspect` falls back to a label-scan reconstruction when Store.Pods doesn't know the pod (post-restart path).
+- `PodList` merges in-memory Store.Pods entries with live Docker containers carrying `sockerless-pod`, so a backend restart doesn't drop pods with running containers.
+- `PodStart/Stop/Kill/Remove` fan out to the Docker daemon over the SDK using the container IDs stored in Store.Pods (or looked up via the label filter post-restart).
+
+Core `handle_containers.go` injects the `sockerless-pod=<name>` label into the request's Labels BEFORE `ContainerCreate` runs, so every backend (Docker included) tags the underlying resource for cross-restart pod reconstruction.
+
+## Phase 96 — Reverse-agent machinery on backend-core (2026-04-23, partial)
+
+Backend-side scaffolding for the CR + ACA reverse-agent path (BUG-745). Lifted `ReverseAgentRegistry`, `HandleReverseAgentWS`, `ReverseAgentExecDriver`, `ReverseAgentStreamDriver`, `ErrNoReverseAgent` into `backends/core` so Lambda + CR + ACA all share them. Lambda refactored to use the shared types via aliases (behaviour unchanged). CR + ACA servers now own a registry, mount `/v1/cloudrun/reverse` / `/v1/aca/reverse`, wire `Drivers.Exec/Stream` to the shared drivers, and inject `SOCKERLESS_CALLBACK_URL` + `SOCKERLESS_CONTAINER_ID` env vars whenever `Config.CallbackURL` is configured. Without a bootstrap in the container image, Exec/Attach cleanly return exit code 126. Operators can use the existing `sockerless-agent --callback --keep-alive <cmd>` pattern for a first bootstrap overlay.
+
 ## Phase 97 — GCP label-value charset compliance (2026-04-21)
 
 BUG-746 closed. Docker labels previously serialised as a single JSON blob into a GCP label value, which GCP rejects because the charset is restricted to `[a-z0-9_-]{0,63}`. `core.AsGCPLabels` now filters values for charset + length and routes failures to `AsGCPAnnotations`. Cloud Run's cloud_state merges `Job.Annotations` / `Service.Annotations` into the ParseLabelsFromTags input. GCF (Functions v2 has no Annotations field on the Function resource) takes a different route — labels are carried as a base64-JSON `SOCKERLESS_LABELS` env var on the function, decoded by cloud_state. `Test{CloudRun,GCF}ArithmeticWithLabels` now assert the round-trip explicitly.

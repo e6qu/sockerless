@@ -30,6 +30,18 @@ type Config struct {
 	// Default false (Jobs path) until the Apps path is implemented.
 	// Set via `SOCKERLESS_ACA_USE_APP=1`.
 	UseApp bool
+
+	// CallbackURL is the reverse-agent WebSocket URL injected into
+	// container env so a bootstrap running inside the container can
+	// dial back to the backend's /v1/aca/reverse endpoint. Enables
+	// docker exec / attach once an overlay image with the bootstrap
+	// binary is deployed.
+	CallbackURL string
+
+	// EnableCommit opts into the agent-driven `docker commit` path.
+	// See backends/core.CommitContainerViaAgent. Set via
+	// `SOCKERLESS_ENABLE_COMMIT=1`.
+	EnableCommit bool
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -47,6 +59,8 @@ func ConfigFromEnv() Config {
 		EndpointURL:           os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:          parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 		UseApp:                os.Getenv("SOCKERLESS_ACA_USE_APP") == "1",
+		CallbackURL:           os.Getenv("SOCKERLESS_CALLBACK_URL"),
+		EnableCommit:          os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
 	}
 }
 

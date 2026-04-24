@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**95 phases closed (763 tasks). 756 bugs tracked — 747 fixed, 9 open. Phases 94 + 94b + 95 + 97 all closed 2026-04-21 — every FaaS backend now has real volumes + real invocation-lifecycle tracking + label round-trip. Remaining open bugs: BUG-745 → Phase 96; BUG-749/754 → Phase 99/100; BUG-750/751/752/753 → Phase 98/98b; BUG-756 → sim-Lambda stdout forwarding. 1 false positive. Branch `continue-plan-post-113`.**
+**96 phases closed (764 tasks). 756 bugs tracked — 748 fixed, 8 open. Phase 100 closed 2026-04-23 (BUG-754). Phase 96 backend-side machinery landed; container-side overlay bootstraps follow. Remaining open bugs: BUG-745 → Phase 96 bootstrap (container-side); BUG-749 → Phase 99; BUG-750/751/752/753 → Phase 98/98b; BUG-756 → sim-Lambda stdout forwarding. 1 false positive. Branch `phase96-onward`.**
 
 See [PLAN.md](PLAN.md) for the roadmap, [BUGS.md](BUGS.md) for the bug log (+ open-bug descriptions), [WHAT_WE_DID.md](WHAT_WE_DID.md) for the narrative, [specs/](specs/) for architecture specs.
 
@@ -19,13 +19,13 @@ See [PLAN.md](PLAN.md) for the roadmap, [BUGS.md](BUGS.md) for the bug log (+ op
 | 94 prereq | Volume managers lifted to `aws-common` / `gcp-common` / `azure-common` so FaaS backends can embed them | Closed 2026-04-21. |
 | 94 | GCF + AZF real per-cloud volume provisioning — GCF via Functions v2 + underlying Cloud Run Service escape hatch; AZF via sites/config/azurestorageaccounts | Closed 2026-04-21. |
 | 95 | FaaS invocation-lifecycle tracker (Lambda + GCF + AZF) — re-enables 7 deleted tests from BUG-744 | Closed 2026-04-21 — core.InvocationResult + per-backend wiring + 7 tests re-enabled. |
-| 96 | Reverse-agent exec for Cloud Run Jobs + ACA Jobs (ports Lambda bootstrap pattern) | Queued — from BUG-745. |
+| 96 | Reverse-agent exec for Cloud Run Jobs + ACA Jobs (ports Lambda bootstrap pattern) | Backend-side machinery closed 2026-04-23 — shared `core.ReverseAgentRegistry/HandleReverseAgentWS/ReverseAgent{Exec,Stream}Driver`; CR + ACA wire `/v1/{cloudrun,aca}/reverse` + inject `SOCKERLESS_CALLBACK_URL`. Container-side overlay bootstraps are follow-up work (existing `sockerless-agent --callback --keep-alive <cmd>` is viable). |
 | 97 | Docker labels charset-safe on GCP — values failing `[a-z0-9_-]{0,63}` route to annotations / SOCKERLESS_LABELS env var | Closed 2026-04-21. |
 | 94b | Lambda EFS volume provisioning via `Function.FileSystemConfigs[]` (reuses `awscommon.EFSManager`) | Closed 2026-04-21. |
-| 98 | Agent-driven filesystem + introspection ops (`docker cp` / `export` / `stat` / `top` / `diff`) via reverse-agent or SSM ExecuteCommand | Queued — from BUG-751/752/753; depends on Phase 96. |
+| 98 | Agent-driven filesystem + introspection ops (`docker cp` / `export` / `stat` / `top` / `diff`) via reverse-agent or SSM ExecuteCommand | Partial 2026-04-23: `ContainerTop` landed via shared `core.RunContainerTopViaAgent` + new `agent.CollectExec`. Lambda/CR/ACA/GCF/AZF route `docker top` through the reverse-agent; no-session case surfaces a precise NotImplemented. `docker cp` / `stat` / `diff` / `export` still pending — same pattern. |
 | 98b | Agent-driven `docker commit` (opt-in via `SOCKERLESS_ENABLE_COMMIT`) | Queued — from BUG-750; depends on Phase 98. |
 | 99 | Agent-driven `docker pause` / `unpause` via SIGSTOP/SIGCONT over reverse-agent (Fargate uses SSM `signal`) | Queued — revised from BUG-749's earlier 'platform limit' framing; depends on Phase 96. |
-| 100 | Docker backend pod synthesis via shared `sockerless-pod` label convention | Queued — revised from BUG-754's earlier 'won't fix' framing. |
+| 100 | Docker backend pod synthesis via shared `sockerless-pod` label convention | Closed 2026-04-23. |
 
 Detail per phase in [WHAT_WE_DID.md](WHAT_WE_DID.md). Open work items queued in [DO_NEXT.md](DO_NEXT.md).
 

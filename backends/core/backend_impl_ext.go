@@ -417,12 +417,16 @@ func (s *BaseServer) ImagePush(name string, tag string, auth string) (io.ReadClo
 
 		// Attempt real OCI push for non-Docker-Hub registries
 		if registry != "" && registry != "docker.io" && registry != "registry-1.docker.io" {
+			cfgBlob := imageConfigFromAPI(img.Config)
 			opts := OCIPushOptions{
-				Registry:    registry,
-				Repository:  repo,
-				Tag:         tag,
-				AuthToken:   auth,
-				ImageLayers: img.RootFS.Layers,
+				Registry:     registry,
+				Repository:   repo,
+				Tag:          tag,
+				AuthToken:    auth,
+				ImageLayers:  img.RootFS.Layers,
+				Architecture: img.Architecture,
+				OS:           img.Os,
+				Config:       cfgBlob,
 				LayerContent: func(digest string) ([]byte, bool) {
 					if v, ok := s.Store.LayerContent.Load(digest); ok {
 						return v.([]byte), true

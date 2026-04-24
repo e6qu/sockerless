@@ -72,7 +72,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		hostConfig.NetworkMode = "default"
 	}
 
-	// Phase 94: named-volume binds are allowed (`-v volName:/mnt[:ro]`)
+	// Named-volume binds are allowed (`-v volName:/mnt[:ro]`)
 	// and land on sockerless-managed GCS buckets attached to the
 	// underlying Cloud Run Service. Host-path binds (`/h:/c`) are
 	// rejected — GCF containers have no host filesystem.
@@ -185,8 +185,8 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// match requests by full ID post-start (when PendingCreates is empty).
 	envVars["SOCKERLESS_CONTAINER_ID"] = id
 
-	// Phase 97 (BUG-746): Docker labels can contain `{`, `:`, `"` etc.
-	// which fail GCP's label-value charset. Cloud Functions v2's
+	// Docker labels can contain `{`, `:`, `"` etc. which fail GCP's
+	// label-value charset. Cloud Functions v2's
 	// Function resource has no Annotations field (unlike Cloud Run's
 	// Service resource), so carry the labels as a base64-encoded JSON
 	// env var. CloudState.queryFunctions decodes it back into
@@ -194,6 +194,13 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	if len(config.Labels) > 0 {
 		labelsJSON, _ := json.Marshal(config.Labels)
 		envVars["SOCKERLESS_LABELS"] = base64.StdEncoding.EncodeToString(labelsJSON)
+	}
+
+	// Inject reverse-agent callback URL when configured so a bootstrap
+	// inside the function container can dial back for docker top / exec
+	// / cp. SOCKERLESS_CONTAINER_ID is already set above.
+	if s.config.CallbackURL != "" {
+		envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
 	}
 
 	// Build service config
@@ -255,8 +262,8 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		functionURL = result.ServiceConfig.Uri
 	}
 
-	// Phase 94: if the request carries named-volume binds, attach them
-	// to the underlying Cloud Run Service via the GetService /
+	// If the request carries named-volume binds, attach them to the
+	// underlying Cloud Run Service via the GetService /
 	// UpdateService escape hatch. GCF's Functions v2 API has no direct
 	// Volumes primitive in ServiceConfig (only SecretVolumes), so every
 	// other volume must be appended to the backing service's
@@ -344,9 +351,9 @@ func (s *Server) ContainerStart(ref string) error {
 
 	s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 
-	// Invoke function via HTTP trigger asynchronously. Phase 95:
-	// capture the outcome in Store.InvocationResults so CloudState
-	// reflects the container as exited with a real exit code.
+	// Invoke function via HTTP trigger asynchronously and capture the
+	// outcome in Store.InvocationResults so CloudState reflects the
+	// container as exited with a real exit code.
 	go func() {
 		inv := core.InvocationResult{}
 		if gcfState.FunctionURL == "" {
@@ -394,8 +401,8 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 
 	// Cloud Run Functions run to completion — stop transitions state
 	s.StopHealthCheck(id)
-	// Phase 95: record the stop outcome so CloudState reports exited with
-	// code 137 (Docker convention for force-stopped).
+	// Record the stop outcome so CloudState reports exited with code
+	// 137 (Docker convention for force-stopped).
 	s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: 137})
 	// Close wait channel so ContainerWait unblocks
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
@@ -516,22 +523,25 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 // ContainerLogs streams container logs from Cloud Logging.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
+	return core.StreamCloudLogs(s.BaseServer, ref, opts, s.buildCloudLogsFetcher(ref), core.StreamCloudLogsOptions{
+		CheckLogBuffers: true,
+	})
+}
+
+// buildCloudLogsFetcher returns a CloudLogFetchFunc closure that
+// queries Cloud Logging for the given function. Shared by
+// ContainerLogs and ContainerAttach.
+func (s *Server) buildCloudLogsFetcher(ref string) core.CloudLogFetchFunc {
 	var funcName string
 	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
 		gcfState, _ := s.GCF.Get(id)
 		funcName = gcfState.FunctionName
 	}
-
 	baseFilter := fmt.Sprintf(
 		`resource.type="cloud_run_revision" AND resource.labels.service_name="%s"`,
 		funcName,
 	)
-
-	fetch := s.cloudLoggingFetch(baseFilter)
-
-	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{
-		CheckLogBuffers: true,
-	})
+	return s.cloudLoggingFetch(baseFilter)
 }
 
 // cloudLoggingFetch returns a CloudLogFetchFunc that queries Cloud Logging.
@@ -682,22 +692,24 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 	}, nil
 }
 
-// ContainerPause is not supported by the Cloud Run Functions backend.
+// ContainerPause sends SIGSTOP to the user subprocess via the reverse-
+// agent.
 func (s *Server) ContainerPause(ref string) error {
-	_, ok := s.ResolveContainerIDAuto(context.Background(), ref)
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-	return &api.NotImplementedError{Message: "Cloud Run Functions backend does not support pause"}
+	return core.MapPauseErr(core.RunContainerPauseViaAgent(s.reverseAgents, cid))
 }
 
-// ContainerUnpause is not supported by the Cloud Run Functions backend.
+// ContainerUnpause sends SIGCONT to the user subprocess via the
+// reverse-agent.
 func (s *Server) ContainerUnpause(ref string) error {
-	_, ok := s.ResolveContainerIDAuto(context.Background(), ref)
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-	return &api.NotImplementedError{Message: "Cloud Run Functions backend does not support unpause"}
+	return core.MapPauseErr(core.RunContainerUnpauseViaAgent(s.reverseAgents, cid))
 }
 
 // ImagePull delegates to ImageManager which handles cloud auth and config fetching.
@@ -735,39 +747,55 @@ func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
 	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
 }
 
-// ContainerExport is not supported by the Cloud Run Functions backend.
-// Cloud Run Functions have no local filesystem to export.
+// ContainerExport streams the function container's rootfs as tar via
+// the reverse-agent.
 func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return nil, &api.NotImplementedError{
-		Message: "Cloud Run Functions backend does not support container export; functions have no local filesystem",
+	rc, err := core.RunContainerExportViaAgent(s.reverseAgents, cid)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker export requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
 	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("export via reverse-agent: %v", err)}
+	}
+	return rc, nil
 }
 
-// ContainerCommit is not supported by the Cloud Run Functions backend.
-// Cloud Run Functions have no local filesystem to commit.
+// ContainerCommit builds a new image from the function container's
+// post-boot filesystem changes via the reverse-agent. Gated behind
+// EnableCommit — the result is a single diff layer on top of the
+// function's base image.
 func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
 	if req.Container == "" {
 		return nil, &api.InvalidParameterError{Message: "container query parameter is required"}
 	}
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), req.Container); !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
+	if !s.config.EnableCommit {
+		return nil, &api.NotImplementedError{Message: "docker commit on Cloud Run Functions is gated — set SOCKERLESS_ENABLE_COMMIT=1"}
 	}
-	return nil, &api.NotImplementedError{
-		Message: "Cloud Run Functions backend does not support container commit; functions have no local filesystem",
-	}
+	return core.CommitContainerRequestViaAgent(s.BaseServer, s.reverseAgents, req)
 }
 
-// ContainerAttach is not supported by the Cloud Run Functions backend.
+// ContainerAttach bridges stdin/stdout/stderr to the bootstrap process
+// inside the function container via the reverse-agent WebSocket when a
+// session is registered. Without an agent, fall back to streaming
+// Cloud Logging for read-only attach (no stdin); interactive attach
+// has no native Cloud Run Functions surface and stays
+// NotImplementedError.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return nil, &api.NotImplementedError{
-		Message: "Cloud Run Functions backend does not support attach",
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
+		return s.BaseServer.ContainerAttach(id, opts)
 	}
+	if opts.Stdin {
+		return nil, &api.NotImplementedError{Message: "interactive docker attach requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	return core.AttachViaCloudLogs(s.BaseServer, id, opts, s.buildCloudLogsFetcher(id))
 }
 
 // ImageBuild delegates to ImageManager.

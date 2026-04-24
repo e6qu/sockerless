@@ -29,7 +29,7 @@ func TestReverseAgentServer_RegisterResolveDrop(t *testing.T) {
 	// Bind a real HTTP server to an ephemeral port so we can dial.
 	srv := httptest.NewServer(nil)
 	defer srv.Close()
-	srv.Config.Handler = http.HandlerFunc(s.handleReverseAgentWS)
+	srv.Config.Handler = core.HandleReverseAgentWS(s.reverseAgents, logger)
 
 	u, _ := url.Parse(srv.URL)
 	wsURL := "ws://" + u.Host + "/v1/lambda/reverse?session_id=c-abc"
@@ -115,10 +115,10 @@ func TestReverseAgentRegistry_ReplacesPriorSession(t *testing.T) {
 	rc1 := agent.NewReverseAgentConn(ws1)
 	rc2 := agent.NewReverseAgentConn(ws2)
 
-	r.register("dup", rc1)
-	r.register("dup", rc2)
+	r.Register("dup", rc1)
+	r.Register("dup", rc2)
 
-	if got, _ := r.resolve("dup"); got != rc2 {
+	if got, _ := r.Resolve("dup"); got != rc2 {
 		t.Errorf("resolve should return the newer session")
 	}
 	// rc1 should be closed — Done() chan is closed on Close.

@@ -19,6 +19,9 @@ type Server struct {
 
 	GCF *core.StateStore[GCFState]
 	gcsVolumeState
+	// Reverse-agent registry for docker top / cp / stat / diff via a
+	// bootstrap running inside the function container.
+	reverseAgents *core.ReverseAgentRegistry
 }
 
 // NewServer creates a new Cloud Run Functions backend server.
@@ -69,6 +72,12 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	}
 
 	registerUI(s.BaseServer)
+
+	// Reverse-agent registry + WS endpoint.
+	s.reverseAgents = core.NewReverseAgentRegistry()
+	s.Mux.HandleFunc("/v1/gcf/reverse", core.HandleReverseAgentWS(s.reverseAgents, logger))
+	s.Drivers.Exec = &core.ReverseAgentExecDriver{Registry: s.reverseAgents, Logger: logger}
+	s.Drivers.Stream = &core.ReverseAgentStreamDriver{Registry: s.reverseAgents, Logger: logger}
 
 	return s
 }

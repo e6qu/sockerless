@@ -160,27 +160,35 @@ func (m *ImageManager) Push(name string, tag string, auth string) (io.ReadCloser
 		tag = "latest"
 	}
 
-	// Sync to cloud registry
+	// Cloud-specific bookkeeping (e.g., ECR CreateRepository) before
+	// the actual blob upload. OnPush is no-op for AR/ACR, lightweight
+	// for ECR. Real OCI push happens below via BaseServer.ImagePush
+	// which has access to the layer data through the local store.
 	if m.Auth != nil {
 		registry, repo, _ := ParseImageRef(name)
 		if m.Auth.IsCloudRegistry(registry) {
 			if err := m.Auth.OnPush(img.ID, registry, repo, tag); err != nil {
-				m.Logger.Warn().Err(err).Str("name", name).Str("tag", tag).Msg("cloud push failed")
-				// Propagate cloud push failure to client
+				m.Logger.Warn().Err(err).Str("name", name).Str("tag", tag).Msg("cloud push pre-upload step failed")
 				pr, pw := io.Pipe()
 				go func() {
 					enc := json.NewEncoder(pw)
 					_ = enc.Encode(map[string]string{"status": "The push refers to repository [" + name + "]"})
-					_ = enc.Encode(map[string]string{"status": "Preparing", "id": tag})
 					_ = enc.Encode(map[string]any{"errorDetail": map[string]string{"message": err.Error()}, "error": err.Error()})
 					_ = pw.Close()
 				}()
 				return pr, nil
 			}
+			// Auto-fetch the cloud registry token if the caller didn't
+			// provide one — sockerless manages cloud creds out-of-band so
+			// users don't need to `docker login` first.
+			if auth == "" {
+				if token, err := m.Auth.GetToken(registry); err == nil {
+					auth = token
+				}
+			}
 		}
 	}
 
-	// Return progress stream via BaseServer
 	return m.Base.ImagePush(name, tag, auth)
 }
 

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -117,6 +118,10 @@ func NewMainProcess(logger zerolog.Logger, args []string, env []string) (*MainPr
 		return nil, err
 	}
 
+	// Publish the user-process PID so reverse-agent pause/unpause
+	// (Phase 99) can SIGSTOP/SIGCONT it.
+	writeMainPIDFile(cmd.Process.Pid)
+
 	// Fan-out stdout and stderr — tracked by WaitGroup so wait() can
 	// ensure all output is flushed before signaling done.
 	mp.fanOutWg.Add(2)
@@ -127,6 +132,20 @@ func NewMainProcess(logger zerolog.Logger, args []string, env []string) (*MainPr
 	go mp.wait()
 
 	return mp, nil
+}
+
+// mainPIDFilePath is the path the agent writes the user-process PID
+// to so backend-core's RunContainerPauseViaAgent (Phase 99) can read
+// it and signal the right process. Mirrors the constant in the
+// Lambda bootstrap.
+const mainPIDFilePath = "/tmp/.sockerless-mainpid"
+
+func writeMainPIDFile(pid int) {
+	_ = os.WriteFile(mainPIDFilePath, []byte(fmt.Sprintf("%d", pid)), 0o644)
+}
+
+func removeMainPIDFile() {
+	_ = os.Remove(mainPIDFilePath)
 }
 
 func (mp *MainProcess) fanOut(r io.Reader, stream string, buf *RingBuffer) {
@@ -171,6 +190,10 @@ func (mp *MainProcess) wait() {
 	// it to os.Stdout/os.Stderr before signaling done. Without this,
 	// the agent binary can exit before all output is flushed.
 	mp.fanOutWg.Wait()
+
+	// Clear the main-PID file so a stale value can't redirect a
+	// subsequent pause/unpause to a different process.
+	removeMainPIDFile()
 
 	code := 0
 	if err != nil {

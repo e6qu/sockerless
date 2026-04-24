@@ -62,7 +62,7 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 | Image | ECR repository / image | `<account>.dkr.ecr.<region>.amazonaws.com/<repo>:<tag>` | (registry-managed) |
 | Network | **Native cross-container DNS is not addressable per-execution.** Lambda VPC config only routes egress; peer-Lambda discovery requires Service Discovery + a separate fronting service. Treat docker networks as bookkeeping only. | (no cloud anchor) | (Phase 89 follow-up: file as known limitation) |
 | Volume | Lambda layers (read-only) or `/tmp` (per-invocation, ephemeral). Bind mounts and named volumes outside `/tmp` are not supported. | — | — |
-| Exec instance | **Implemented via the agent overlay**: `cloudExecStart` dials the reverse-agent WebSocket (registered by `sockerless-lambda-bootstrap` during `Invoke`) and tunnels the command. | (transient agent session) | — |
+| Exec instance | Reverse-agent overlay (`sockerless-lambda-bootstrap` dials back during `Invoke`); see [Exec](#exec). | (transient agent session) | — |
 
 **State derivation (implemented in Phase 89):**
 
@@ -84,7 +84,7 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 | Image | Artifact Registry / GCR | `<region>-docker.pkg.dev/<project>/<repo>/<image>:<tag>` | (registry-managed) |
 | Network | Cloud DNS private managed zone (1 zone per docker network, sanitized from name). **Post-Phase 87** also needs VPC connector + internal-ingress Service IP for cross-container routing to actually work (currently the A-records point at placeholder `0.0.0.0` per BUG-715). | managed-zone name | label `sockerless:network=<name>`, `sockerless:network-id=<id>` (Phase 89 follow-up) |
 | Volume | Cloud Storage Fuse mount (per-revision config) — currently bookkeeping only on the Jobs path. | bucket/prefix | — |
-| Exec instance | **Not supported natively** by Cloud Run Services / Jobs. Must go through the agent overlay (same pattern as Lambda) — Phase 87 deliverable. | — | — |
+| Exec instance | Reverse-agent overlay (no native exec on Cloud Run Jobs/Services); see [Exec](#exec). | (transient agent session) | — |
 
 **State derivation:**
 
@@ -109,7 +109,7 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 | Image | ACR | `<acrName>.azurecr.io/<repo>:<tag>` | (registry-managed) |
 | Network | Azure Private DNS Zone (per-network) + per-network NSG. Cross-container DNS via A-records currently broken on Jobs (BUG-716 — placeholder IPs); fixed when Phase 88 moves to Apps with internal ingress. | zone name + NSG id | tag `sockerless:network=<name>`, `sockerless:network-id=<id>` (Phase 89 follow-up) |
 | Volume | Azure Files share via ACA volumes (per-Job/App config) | mount config | — |
-| Exec instance | ACA exec console (`Jobs.NewListSecretsPager` is the data-plane analog) — different proto from SSM. Phase 88 deliverable. | — | — |
+| Exec instance | ACA console exec API (`Microsoft.App/jobs/{job}/executions/{exec}/exec` via `aca/exec_cloud.go`), with the reverse-agent preferred when present; see [Exec](#exec). | (transient management-API or agent session) | — |
 
 **State derivation:**
 
@@ -134,7 +134,7 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 | Image | Artifact Registry (the function's deployed container image) | `<region>-docker.pkg.dev/<project>/<repo>/<image>:<tag>` | (registry-managed) |
 | Network | **Not supported natively.** Cloud Functions can connect to a VPC for egress via a connector, but they don't expose addressable inbound IPs to peer functions. Cross-container DNS via a docker-network abstraction is not implementable on Cloud Functions; backend treats `docker network create` / `connect` as a no-op for cloud purposes (returns success but the network is bookkeeping only). | (no cloud anchor) | — |
 | Volume | **Not supported.** Cloud Functions have read-only filesystems plus `/tmp`. Bind mounts and named volumes are rejected at create time. | — | — |
-| Exec instance | **Not supported natively.** Like Lambda, exec must go through the agent overlay (function bootstrap dials back to sockerless via reverse-WebSocket). Implementation parallels `sockerless-lambda-bootstrap`; pending. | — | — |
+| Exec instance | Reverse-agent overlay (no native exec on Cloud Functions); see [Exec](#exec). | (transient agent session) | — |
 
 **State derivation:**
 
@@ -156,7 +156,7 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 | Image | ACR | `<acrName>.azurecr.io/<repo>:<tag>` | (registry-managed) |
 | Network | **Not supported natively.** Function Apps support VNet integration for outbound traffic but not addressable inbound IPs for peer apps. `docker network create` / `connect` is bookkeeping-only. | — | — |
 | Volume | **Not supported** for arbitrary bind mounts. App settings + Azure Files share via App Service mounts can be configured but aren't auto-translated from `--volume`. | — | — |
-| Exec instance | **Not supported natively.** Kudu console + SSH are the App Service equivalents but use a different protocol from SSM. Agent overlay would be needed; pending. | — | — |
+| Exec instance | Reverse-agent overlay (Kudu console / SSH not implemented); see [Exec](#exec). | (transient agent session) | — |
 
 **State derivation:**
 
@@ -257,19 +257,20 @@ Full list of every `api.Backend` method sockerless implements, per-backend statu
 | ContainerResize | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | ContainerPause | ✓ | ✗ Fargate no-pause | ✗ | ✗ Cloud Run no-pause | ✗ | ✗ ACA no-pause | ✗ |
 | ContainerUnpause | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| ContainerCommit | ✓ | ✗ Fargate no-snapshot | ✗ | ✗ | ✗ | ✗ | ✗ |
+| ContainerCommit | ✓ | ✗ ECS no-agent | ⚠ agent+opt-in | ⚠ agent+opt-in | ⚠ agent+opt-in | ⚠ agent+opt-in | ⚠ agent+opt-in |
 | ContainerExport | ✓ | ✗ Fargate no-fs | ✗ | ✗ | ✗ | ✗ | ✗ |
 | ContainerChanges | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | ContainerStatPath | ✓ | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ | ⚠ agent only | ⚠ |
 | ContainerGetArchive | ✓ | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ | ⚠ agent only | ⚠ |
 | ContainerPutArchive | ✓ | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ | ⚠ agent only | ⚠ |
 | ContainerPrune | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| ContainerAttach | ✓ | ✓ (CloudWatch stream) | ✓ (agent overlay) | ✓ | ✓ | ✓ | ✓ |
+| ContainerAttach | ✓ | ✓ (CloudWatch stream) | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ agent only / ACA console | ⚠ agent only |
 
 Notes:
 
 - **ContainerStats ⚠** — cloud providers only surface aggregated per-task metrics with ~60s lag; no block-I/O or network-byte counters equivalent to docker's cgroup stats. Sockerless reports CPU-ns + mem-bytes + PIDs=0 (BUG-733) when nothing's there yet. A future phase may add cloud-native stats endpoints to each simulator for parity with docker's streaming stats.
-- **ContainerTop / Stat / GetArchive / PutArchive ⚠ agent only** — possible only when the sockerless agent is bundled into the container image (Lambda agent-as-handler pattern). Without the agent, the cloud runtime exposes no process listing or file-copy API. Simulator side already handles the fallback (tests skip). Real-cloud work: document the agent-only constraint in per-backend READMEs.
+- **ContainerTop / Stat / GetArchive / PutArchive / Attach ⚠ agent only** — possible only when the sockerless agent is bundled into the container image (Lambda's agent-as-handler pattern; CR/ACA/GCF/AZF use the same overlay). Without a registered reverse-agent session, every backend returns a `NotImplementedError` that names the missing prerequisite (`SOCKERLESS_CALLBACK_URL`) — never a silently-empty stream. ACA additionally falls back to the cloud-native console exec API for ExecStart/Attach when no agent is present. See [Exec](#exec) below for the full resolution table.
+- **ContainerCommit ⚠ agent+opt-in** — the reverse-agent runs `find / -xdev -newer /proc/1` (same reference point as `docker diff`) + `tar -cf - --null -T -` to capture the files added or modified since container boot, then stacks the resulting blob as a new layer on top of the source image's rootfs. Gated behind `SOCKERLESS_ENABLE_COMMIT=1` per backend because the approach can't capture deletions (`find(1)` can't list files that no longer exist, and sockerless has no host-side access to the base image's rootfs to compute whiteouts) — this is documented, not a silent degradation. ECS has no bootstrap equivalent, so it stays `NotImplementedError`. Push to the operator's registry uses the existing `ImageManager.Push` path (BUG-763/764 fixed the config-blob and push plumbing).
 - **ContainerRename ⚠** — cloud resources (ECS task, Cloud Run Job, ACA app) have immutable names derived from the container ID; the docker API's "rename" updates local metadata only (`sockerless-name` tag does stay updated via re-tag). `docker inspect` shows the new name but the cloud resource name doesn't change.
 - **ContainerUpdate ⚠** — resource-limit updates go through a new task-def revision / service revision / app revision. Docker's live `update --cpus --memory` semantics can't apply to already-running cloud tasks; the next start picks up the new limits.
 - **ContainerResize ✗** — TTY resize events (`SIGWINCH`) don't propagate through Cloud Run / Fargate / ACA to the container. Future phase may add a sim-side pipe for local testing.
@@ -278,18 +279,60 @@ Notes:
 
 | Method | docker | ecs | lambda | cloudrun | gcf | aca | azf |
 |--------|:------:|:---:|:------:|:--------:|:---:|:---:|:---:|
-| ExecCreate | ✓ | ✓ (SSM) | ✓ (agent overlay) | ✗ | ✗ | ⚠ ACA console | ✗ |
-| ExecStart | ✓ | ✓ (SSM AgentMessage) | ✓ | ✗ | ✗ | ⚠ | ✗ |
-| ExecInspect | ✓ | ✓ | ✓ | ✗ | ✗ | ⚠ | ✗ |
+| ExecCreate | ✓ | ✓ (SSM) | ✓ (agent overlay) | ✓ (agent overlay) | ✓ (agent overlay) | ✓ ACA console / agent | ✓ (agent overlay) |
+| ExecStart | ✓ | ✓ (SSM AgentMessage) | ✓ agent | ✓ agent | ✓ agent | ✓ ACA console / agent | ✓ agent |
+| ExecInspect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | ExecResize | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 
 Notes:
 
-- **ECS**: real `ExecuteCommand` via SSM Session Manager. Requires task IAM role grants for `ssmmessages:*` (BUG-720) + `EnableExecuteCommand: true` at RunTask (BUG-719) + full SSM AgentMessage decoder in the backend (BUG-717) + the workaround-turned-open BUG-729 for ack format.
-- **Lambda**: agent-as-handler pattern. `sockerless-lambda-bootstrap` dials back to the backend's `/v1/lambda/reverse` WebSocket; `docker exec` tunnels through.
-- **Cloud Run / GCF**: no native exec surface. Would require the same agent-overlay pattern Lambda uses. **S✗**: `simulators/gcp/` has no exec slice to emulate against.
-- **ACA ⚠**: ACA has a native console exec API (`containerappsrevisionreplicasexec`) but sockerless's ACA backend doesn't wire it yet. **S✗**: simulator doesn't serve it either.
-- **AZF**: no native exec (Consumption plan containers are invocation-scoped).
+- **Resolution policy** (applies to ExecStart and ContainerAttach across every cloud backend): each call resolves the container, then dispatches as follows:
+  1. If a reverse-agent session is registered for the container → `BaseServer.{ExecStart,ContainerAttach}` runs through `Drivers.{Exec,Stream}` (= `core.ReverseAgent{Exec,Stream}Driver`), which bridges over the WebSocket.
+  2. Else, if the backend has a cloud-native exec surface (only ACA today via `cloudExecStart` against the ACA management API; ECS via SSM) → use that.
+  3. Else → return `NotImplementedError` naming the missing prerequisite (`SOCKERLESS_CALLBACK_URL` for the agent path) — never a silently-empty stream or exit-126.
+- **ECS**: real `ExecuteCommand` via SSM Session Manager. Requires task IAM role grants for `ssmmessages:*` (BUG-720) + `EnableExecuteCommand: true` at RunTask (BUG-719) + full SSM AgentMessage decoder in the backend (BUG-717).
+- **Lambda**: agent-as-handler. `sockerless-lambda-bootstrap` dials back to `/v1/lambda/reverse`; exec tunnels through.
+- **Cloud Run / GCF / AZF**: no native exec surface. Reverse-agent overlay is the only path; backends now route through `BaseServer.ExecStart` after verifying the session exists.
+- **ACA**: ACA has a native console exec API (`Microsoft.App/jobs/{job}/executions/{exec}/exec`) wired via `aca/exec_cloud.go::cloudExecStart`. The backend prefers the reverse-agent when present and falls back to cloudExecStart otherwise.
+
+#### How other workload schedulers handle exec/attach
+
+For reference, here is how the major job-runner ecosystems implement the same shape of problem. Sockerless's challenge — exec into a FaaS invocation — is one most schedulers sidestep entirely:
+
+| System | Mechanism | Reverse-agent? |
+|---|---|---|
+| GitLab Runner — `docker` executor | `docker exec` (Moby `ContainerExecCreate` + `ContainerExecAttach`) into the long-lived helper + build containers; one container per job, not per step | No (runner dials Docker) |
+| GitLab Runner — `kubernetes` executor | `POST /api/v1/namespaces/{ns}/pods/{pod}/exec` via SPDY/WebSocket from `k8s.io/client-go/tools/remotecommand` | No (runner dials kube-apiserver) |
+| GitLab Runner — `shell` / `ssh` / `custom` | Native fork+pipe / SSH session / user-supplied subprocess | No |
+| GitLab Runner trace upload | `PATCH /api/v4/jobs/:id/trace` with `Content-Range` every ~3s (HTTP, not WS) | n/a |
+| GitHub Actions runner — container job | One `docker create` + `docker start` per job with ENTRYPOINT overridden to `tail -f /dev/null` so the container outlives any single step; every step runs as `docker exec -i ... <containerId> <cmd>` invoked via in-process `ProcessInvoker` (stdio over OS pipes). `docker attach` is **never** used. Source: `actions/runner` `Runner.Worker/Container/DockerCommandManager.cs`, `Handlers/StepHost.cs`. | No |
+| GitHub Actions runner — service containers | Same `docker create` + `docker start`, no entrypoint override; logs collected at teardown via `docker logs --details <id>` (no live streaming). | No |
+| GitHub Actions runner — Kubernetes (ARC) | `ACTIONS_RUNNER_CONTAINER_HOOKS` JSON-over-stdin hook protocol delegates `prepare_job`/`run_script_step`/`cleanup_job` to an external binary that translates to `kubectl exec`. | No |
+| GitHub Actions runner — log streaming | Runner holds a `ClientWebSocket` to Actions' `feedStreamUrl` for live console; durable blobs via REST `AppendLogContentAsync`. | n/a |
+| Buildkite Agent | Long-lived agent on host invokes `docker run --rm` per step; `docker exec` for plugin hooks | No |
+| Argo Workflows | `kubectl exec` against per-step pods; init/wait containers handle artifact shuffle | No |
+
+Both GitLab Runner and GitHub Actions runner are **strictly pull-based**: the runner process is co-located with (or has direct network access to) a docker daemon, kube-apiserver, or SSH host, and dials it. Neither supports FaaS executors precisely because Lambda/Cloud Run/ACA invocations expose no server-mediated exec primitive. Sockerless's reverse-agent (bootstrap-dials-back) pattern is what fills that gap — it inverts the typical "scheduler → workload" control flow because the cloud control plane provides no inbound channel.
+
+The GitHub Actions `tail -f /dev/null` keep-alive idiom is directly reusable for any sockerless backend that supports long-lived containers (ECS, Cloud Run Services, ACA Apps). For invocation-scoped FaaS (Lambda, Cloud Functions, AZF) it doesn't apply — the platform forces termination at invocation completion regardless of what the entrypoint does.
+
+#### Using a sockerless cloud backend as the docker daemon for GitLab/GitHub runners
+
+Both GitLab Runner's `docker` executor and GitHub Actions runner expect a docker-API-compatible endpoint. Sockerless's cloud backends serve that API, so a runner can target them via `DOCKER_HOST=tcp://<sockerless-backend>:<port>`. The compatibility matrix:
+
+| Backend | Long-lived container model | `tail -f /dev/null` keep-alive | `docker exec` for each step | Suitable as docker daemon for runners? |
+|---|---|---|---|---|
+| docker | ✓ | ✓ | ✓ | ✓ Out of the box. |
+| ecs | ✓ Fargate task | ✓ (task runs whatever entrypoint specified) | ✓ via SSM ExecuteCommand | ✓ With SSM enabled (BUG-720/719/717/729 already covered). Each `docker exec` round-trips an SSM session — slower than local Docker but functionally identical. |
+| cloudrun (Services, `UseService=true`) | ✓ Long-lived service revision | ✓ | ✓ via reverse-agent | ✓ Bootstrap must be present; CR Services stay warm. |
+| aca (Apps, `UseApp=true`) | ✓ Long-lived app revision | ✓ | ✓ via reverse-agent or ACA console exec | ✓ Bootstrap or console exec available. |
+| cloudrun (Jobs) | ✗ Execution scoped to one Run | ✗ entrypoint exits → execution completes | ✗ no surface | ✗ Use the Service path instead. |
+| aca (Jobs) | ✗ Execution scoped to one Start | ✗ | ✗ | ✗ Use the App path instead. |
+| lambda | ✗ Invocation scoped | ✗ Lambda forces termination at handler return | ✗ The bootstrap stays alive only for the duration of one Invoke | ✗ Fundamentally incompatible — Lambda has no long-lived container concept. |
+| gcf | ✗ Same as Lambda | ✗ | ✗ | ✗ |
+| azf | ✗ Same as Lambda | ✗ | ✗ | ✗ |
+
+**Operational note.** A runner targeting an ECS/CR-Services/ACA-Apps sockerless backend will see one cloud "container" (task / revision / app) per CI job. Each step's `docker exec` becomes a SSM Session / reverse-agent exec round-trip. This is a real compatibility — the runner doesn't know it's not talking to local Docker — but performance is bound by the cloud's exec-channel latency. For latency-sensitive workloads, prefer self-hosted runners against the local `docker` backend.
 
 ### Images
 

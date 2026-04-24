@@ -72,7 +72,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		hostConfig.NetworkMode = "default"
 	}
 
-	// Phase 94: named-volume binds are allowed (`-v volName:/mnt[:ro]`)
+	// Named-volume binds are allowed (`-v volName:/mnt[:ro]`)
 	// and attached to the function site via WebApps.UpdateAzureStorageAccounts
 	// after BeginCreateOrUpdate returns. Host-path binds (`/h:/c`) are
 	// rejected — AZF containers have no host filesystem.
@@ -196,6 +196,17 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		})
 	}
 
+	// Inject reverse-agent callback URL + container ID so a bootstrap
+	// in the function container can dial back for docker top / exec / cp.
+	appSettings = append(appSettings, &armappservice.NameValuePair{
+		Name: ptr("SOCKERLESS_CONTAINER_ID"), Value: ptr(id),
+	})
+	if s.config.CallbackURL != "" {
+		appSettings = append(appSettings, &armappservice.NameValuePair{
+			Name: ptr("SOCKERLESS_CALLBACK_URL"), Value: ptr(s.config.CallbackURL),
+		})
+	}
+
 	// Build the Function App Site resource
 	siteConfig := &armappservice.SiteConfig{
 		LinuxFxVersion: ptr("DOCKER|" + config.Image),
@@ -237,7 +248,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		return nil, azurecommon.MapAzureError(err, "function app", funcAppName)
 	}
 
-	// Phase 94: attach named-volume binds to the function site via
+	// Attach named-volume binds to the function site via
 	// sites/<site>/config/azurestorageaccounts. Freshest storage-account
 	// access key is fetched at attach-time.
 	if len(hostConfig.Binds) > 0 {
@@ -331,9 +342,9 @@ func (s *Server) ContainerStart(ref string) error {
 
 	s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 
-	// Invoke the Function App via HTTP POST asynchronously. Phase 95:
-	// capture outcome in Store.InvocationResults so CloudState reflects
-	// the container as exited with a real exit code.
+	// Invoke the Function App via HTTP POST asynchronously and capture
+	// outcome in Store.InvocationResults so CloudState reflects the
+	// container as exited with a real exit code.
 	go func() {
 		inv := core.InvocationResult{}
 		if azfState.FunctionURL == "" {
@@ -384,7 +395,7 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 
 	// Azure Functions run to completion — stop transitions state
 	s.StopHealthCheck(id)
-	// Phase 95: record stop outcome so CloudState reports exited with 137.
+	// Record stop outcome so CloudState reports exited with 137.
 	s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: 137})
 	// Close wait channel so ContainerWait unblocks
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
@@ -503,6 +514,15 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 // ContainerLogs streams container logs from Azure Monitor.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
+	return core.StreamCloudLogs(s.BaseServer, ref, opts, s.buildCloudLogsFetcher(ref), core.StreamCloudLogsOptions{
+		CheckLogBuffers: true,
+	})
+}
+
+// buildCloudLogsFetcher returns a CloudLogFetchFunc closure that
+// queries Azure Monitor for the given function app's traces. Shared
+// by ContainerLogs and ContainerAttach.
+func (s *Server) buildCloudLogsFetcher(ref string) core.CloudLogFetchFunc {
 	var functionAppName string
 	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
 		azfState, _ := s.AZF.Get(id)
@@ -511,16 +531,11 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 			functionAppName = "skls-" + id[:12]
 		}
 	}
-
-	fetch := s.azureLogsFetch(
+	return s.azureLogsFetch(
 		`AppTraces`,
 		fmt.Sprintf(`AppRoleName == "%s"`, functionAppName),
 		"Message",
 	)
-
-	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{
-		CheckLogBuffers: true,
-	})
 }
 
 // ContainerRestart stops and then starts a container.
@@ -625,22 +640,24 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 	}, nil
 }
 
-// ContainerPause is not supported by the Azure Functions backend.
+// ContainerPause sends SIGSTOP to the user subprocess via the reverse-
+// agent.
 func (s *Server) ContainerPause(ref string) error {
-	_, ok := s.ResolveContainerIDAuto(context.Background(), ref)
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-	return &api.NotImplementedError{Message: "Azure Functions backend does not support pause"}
+	return core.MapPauseErr(core.RunContainerPauseViaAgent(s.reverseAgents, cid))
 }
 
-// ContainerUnpause is not supported by the Azure Functions backend.
+// ContainerUnpause sends SIGCONT to the user subprocess via the
+// reverse-agent.
 func (s *Server) ContainerUnpause(ref string) error {
-	_, ok := s.ResolveContainerIDAuto(context.Background(), ref)
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-	return &api.NotImplementedError{Message: "Azure Functions backend does not support unpause"}
+	return core.MapPauseErr(core.RunContainerUnpauseViaAgent(s.reverseAgents, cid))
 }
 
 // ImagePull delegates to ImageManager for unified cloud image handling.
@@ -662,39 +679,54 @@ func (s *Server) Info() (*api.BackendInfo, error) {
 	return info, nil
 }
 
-// ContainerExport is not supported by the Azure Functions backend.
-// Azure Functions have no local filesystem to export.
+// ContainerExport streams the function container's rootfs as tar via
+// the reverse-agent.
 func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return nil, &api.NotImplementedError{
-		Message: "Azure Functions backend does not support container export; functions have no local filesystem",
+	rc, err := core.RunContainerExportViaAgent(s.reverseAgents, cid)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker export requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
 	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("export via reverse-agent: %v", err)}
+	}
+	return rc, nil
 }
 
-// ContainerCommit is not supported by the Azure Functions backend.
-// Azure Functions have no local filesystem to commit.
+// ContainerCommit builds a new image from the function container's
+// post-boot filesystem changes via the reverse-agent. Gated behind
+// EnableCommit.
 func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
 	if req.Container == "" {
 		return nil, &api.InvalidParameterError{Message: "container query parameter is required"}
 	}
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), req.Container); !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
+	if !s.config.EnableCommit {
+		return nil, &api.NotImplementedError{Message: "docker commit on Azure Functions is gated — set SOCKERLESS_ENABLE_COMMIT=1"}
 	}
-	return nil, &api.NotImplementedError{
-		Message: "Azure Functions backend does not support container commit; functions have no local filesystem",
-	}
+	return core.CommitContainerRequestViaAgent(s.BaseServer, s.reverseAgents, req)
 }
 
-// ContainerAttach is not supported by the Azure Functions backend.
+// ContainerAttach bridges stdin/stdout/stderr to the bootstrap process
+// inside the function container via the reverse-agent WebSocket when a
+// session is registered. Without an agent, fall back to streaming
+// Azure Monitor for read-only attach (no stdin); interactive attach
+// has no native Azure Functions surface (Kudu uses a different
+// protocol that's not implemented) and stays NotImplementedError.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return nil, &api.NotImplementedError{
-		Message: "Azure Functions backend does not support attach",
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
+		return s.BaseServer.ContainerAttach(id, opts)
 	}
+	if opts.Stdin {
+		return nil, &api.NotImplementedError{Message: "interactive docker attach requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	return core.AttachViaCloudLogs(s.BaseServer, id, opts, s.buildCloudLogsFetcher(id))
 }
 
 // ImageBuild delegates to ImageManager for unified cloud image handling.

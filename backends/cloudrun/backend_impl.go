@@ -588,6 +588,13 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 // "cloud_run_job" with a job_name label; Services emit under
 // "cloud_run_revision" with a service_name label.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
+	return core.StreamCloudLogs(s.BaseServer, ref, opts, s.buildCloudLogsFetcher(ref), core.StreamCloudLogsOptions{})
+}
+
+// buildCloudLogsFetcher returns a CloudLogFetchFunc closure that
+// queries Cloud Logging for the given container's Job (or Service).
+// Shared by ContainerLogs and ContainerAttach.
+func (s *Server) buildCloudLogsFetcher(ref string) core.CloudLogFetchFunc {
 	id, _ := s.ResolveContainerIDAuto(context.Background(), ref)
 
 	var baseFilter string
@@ -623,8 +630,7 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 		)
 	}
 
-	fetch := s.cloudLoggingFetch(baseFilter)
-	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{})
+	return s.cloudLoggingFetch(baseFilter)
 }
 
 // cloudLoggingFetch returns a CloudLogFetchFunc that queries Cloud Logging.
@@ -784,20 +790,24 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 	}, nil
 }
 
-// ContainerPause is not supported by Cloud Run backend.
+// ContainerPause sends SIGSTOP to the user subprocess via the reverse-
+// agent.
 func (s *Server) ContainerPause(ref string) error {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), ref); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
+	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-	return &api.NotImplementedError{Message: "container pause is not supported by Cloud Run backend"}
+	return core.MapPauseErr(core.RunContainerPauseViaAgent(s.reverseAgents, cid))
 }
 
-// ContainerUnpause is not supported by Cloud Run backend.
+// ContainerUnpause sends SIGCONT to the user subprocess via the
+// reverse-agent.
 func (s *Server) ContainerUnpause(ref string) error {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), ref); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
+	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-	return &api.NotImplementedError{Message: "container unpause is not supported by Cloud Run backend"}
+	return core.MapPauseErr(core.RunContainerUnpauseViaAgent(s.reverseAgents, cid))
 }
 
 // ImagePull delegates to ImageManager which handles cloud auth and config fetching.
@@ -824,32 +834,41 @@ func (s *Server) VolumeRemove(name string, force bool) error {
 	return nil
 }
 
-// ExecStart is not supported by the Cloud Run backend.
-// Cloud Run Jobs do not support native exec — there is no Cloud Run API for
-// executing commands inside a running job container.
+// ExecStart runs the exec inside the container via the reverse-agent
+// WebSocket. Cloud Run Jobs/Services expose no native exec API, so
+// the bootstrap is the only path; if no session is registered for the
+// container, return NotImplementedError with the specific reason
+// instead of falling through to a generic failure.
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
 	exec, ok := s.Store.Execs.Get(id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "exec instance", ID: id}
 	}
-
-	if _, ok := s.ResolveContainerAuto(context.Background(), exec.ContainerID); !ok {
-		return nil, &api.ConflictError{
-			Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID),
-		}
+	c, ok := s.ResolveContainerAuto(context.Background(), exec.ContainerID)
+	if !ok {
+		return nil, &api.ConflictError{Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID)}
 	}
-
-	return nil, &api.NotImplementedError{
-		Message: "exec is not supported by Cloud Run backend; Cloud Run Jobs do not support native exec",
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
+		return nil, &api.NotImplementedError{Message: "docker exec requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
 	}
+	return s.BaseServer.ExecStart(id, opts)
 }
 
-// ContainerExport is not supported by Cloud Run backend.
+// ContainerExport streams the container's rootfs as tar via the
+// reverse-agent.
 func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), ref); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
-	return nil, &api.NotImplementedError{Message: "container export is not supported by Cloud Run backend: no container filesystem access"}
+	rc, err := core.RunContainerExportViaAgent(s.reverseAgents, cid)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker export requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("export via reverse-agent: %v", err)}
+	}
+	return rc, nil
 }
 
 // ContainerCommit is not supported by Cloud Run backend.
@@ -857,7 +876,10 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 	if _, ok := s.ResolveContainerIDAuto(context.Background(), req.Container); !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
 	}
-	return nil, &api.NotImplementedError{Message: "container commit is not supported by Cloud Run backend: cannot create images from running Cloud Run containers"}
+	if !s.config.EnableCommit {
+		return nil, &api.NotImplementedError{Message: "docker commit on Cloud Run is gated — set SOCKERLESS_ENABLE_COMMIT=1 (agent-driven commit captures added/modified files since container boot as a new layer)"}
+	}
+	return core.CommitContainerRequestViaAgent(s.BaseServer, s.reverseAgents, req)
 }
 
 // PodStart starts all containers in a pod by calling ContainerStart for each.
@@ -989,18 +1011,29 @@ func (s *Server) Info() (*api.BackendInfo, error) {
 	return info, nil
 }
 
-// ContainerAttach is not supported by the Cloud Run backend.
+// ContainerAttach bridges stdin/stdout/stderr to the bootstrap process
+// inside the container via the reverse-agent WebSocket when a session
+// is registered. When no agent is registered and the caller doesn't
+// need stdin (read-only attach), fall back to streaming Cloud Logging
+// as the attached output. Interactive attach without an agent has no
+// native Cloud Run surface, so it stays NotImplementedError.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	if _, ok := s.ResolveContainerAuto(context.Background(), id); !ok {
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-
-	return nil, &api.NotImplementedError{
-		Message: "attach is not supported by Cloud Run backend",
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
+		return s.BaseServer.ContainerAttach(id, opts)
 	}
+	if opts.Stdin {
+		return nil, &api.NotImplementedError{Message: "interactive docker attach requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	return core.AttachViaCloudLogs(s.BaseServer, id, opts, s.buildCloudLogsFetcher(id))
 }
 
-// ContainerTop is not supported by the Cloud Run backend.
+// ContainerTop runs `ps` inside the container via the reverse-agent
+// and parses the output. Requires a bootstrap inside the container
+// (SOCKERLESS_CALLBACK_URL).
 func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopResponse, error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
@@ -1011,40 +1044,65 @@ func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopRespon
 		return nil, &api.ConflictError{Message: fmt.Sprintf("Container %s is not running", id)}
 	}
 
-	return nil, &api.NotImplementedError{Message: "container top is not supported by Cloud Run backend"}
+	resp, err := core.RunContainerTopViaAgent(s.reverseAgents, c.ID, psArgs)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker top requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("top via reverse-agent: %v", err)}
+	}
+	return resp, nil
 }
 
-// ContainerGetArchive is not supported by the Cloud Run backend.
+// ContainerGetArchive runs `tar -cf - -C <parent> <name>` inside the
+// container via the reverse-agent.
 func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArchiveResponse, error) {
-	if _, ok := s.ResolveContainerAuto(context.Background(), id); !ok {
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-
-	return nil, &api.NotImplementedError{
-		Message: "archive get is not supported by Cloud Run backend; no container filesystem access",
+	resp, err := core.RunContainerGetArchiveViaAgent(s.reverseAgents, c.ID, path)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker cp requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
 	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("archive via reverse-agent: %v", err)}
+	}
+	return resp, nil
 }
 
-// ContainerPutArchive is not supported by the Cloud Run backend.
+// ContainerPutArchive extracts the incoming tar body into <path> via
+// the reverse-agent.
 func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDir bool, body io.Reader) error {
-	if _, ok := s.ResolveContainerAuto(context.Background(), id); !ok {
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
+	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: id}
 	}
-
-	return &api.NotImplementedError{
-		Message: "archive put is not supported by Cloud Run backend; no container filesystem access",
+	err := core.RunContainerPutArchiveViaAgent(s.reverseAgents, c.ID, path, body)
+	if err == core.ErrNoReverseAgent {
+		return &api.NotImplementedError{Message: "docker cp requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
 	}
+	if err != nil {
+		return &api.ServerError{Message: fmt.Sprintf("put-archive via reverse-agent: %v", err)}
+	}
+	return nil
 }
 
-// ContainerStatPath is not supported by the Cloud Run backend.
+// ContainerStatPath runs `stat` inside the Cloud Run task via the
+// reverse-agent.
 func (s *Server) ContainerStatPath(id string, path string) (*api.ContainerPathStat, error) {
-	if _, ok := s.ResolveContainerAuto(context.Background(), id); !ok {
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-
-	return nil, &api.NotImplementedError{
-		Message: "stat is not supported by Cloud Run backend; no container filesystem access",
+	stat, err := core.RunContainerStatPathViaAgent(s.reverseAgents, c.ID, path)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker container stat requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
 	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("stat via reverse-agent: %v", err)}
+	}
+	return stat, nil
 }
 
 // ContainerUpdate updates container resource constraints.

@@ -8,6 +8,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/sockerless/api"
+	core "github.com/sockerless/backend-core"
 	gcpcommon "github.com/sockerless/gcp-common"
 )
 
@@ -26,11 +27,21 @@ func bucketToVolume(dockerName string, b *storage.BucketAttrs) *api.Volume {
 
 // Container methods with resolution
 
+// ContainerChanges lists files modified since container boot via the
+// reverse-agent. Phase 98 (BUG-753).
 func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return s.BaseServer.ContainerChanges(id)
+	items, err := core.RunContainerChangesViaAgent(s.reverseAgents, cid)
+	if err == core.ErrNoReverseAgent {
+		return nil, &api.NotImplementedError{Message: "docker diff requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("changes via reverse-agent: %v", err)}
+	}
+	return items, nil
 }
 
 func (s *Server) ContainerInspect(id string) (*api.Container, error) {
