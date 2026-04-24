@@ -24,6 +24,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -42,13 +43,15 @@ import (
 	"github.com/sockerless/agent"
 )
 
-// Env vars the bootstrap consults.
+// Env vars the bootstrap consults. The argv lists arrive as
+// base64(JSON) so every byte round-trips cleanly through
+// `ENV KEY=VALUE` without Dockerfile or shell quoting.
 const (
 	envRuntimeAPI     = "AWS_LAMBDA_RUNTIME_API"
 	envCallbackURL    = "SOCKERLESS_CALLBACK_URL"
 	envContainerID    = "SOCKERLESS_CONTAINER_ID"
-	envUserEntrypoint = "SOCKERLESS_USER_ENTRYPOINT" // colon-separated list
-	envUserCmd        = "SOCKERLESS_USER_CMD"        // colon-separated list
+	envUserEntrypoint = "SOCKERLESS_USER_ENTRYPOINT" // base64(JSON-encoded argv)
+	envUserCmd        = "SOCKERLESS_USER_CMD"        // base64(JSON-encoded argv)
 )
 
 const (
@@ -135,7 +138,7 @@ func handleOneInvocation(base string) error {
 // invocation payload piped on stdin. Captures stdout + stderr and
 // returns the exit code. Cancelled by the deadline context.
 func runUserInvocation(ctx context.Context, payload []byte) (stdout, stderr []byte, exitCode int) {
-	argv := append(splitColon(os.Getenv(envUserEntrypoint)), splitColon(os.Getenv(envUserCmd))...)
+	argv := append(parseUserArgv(envUserEntrypoint), parseUserArgv(envUserCmd)...)
 	if len(argv) == 0 {
 		// Nothing to run; echo the payload as the response (matches the
 		// testdata handler semantics).
@@ -310,7 +313,7 @@ func contextWithDeadlineMs(deadlineMs string) (context.Context, context.CancelFu
 // with no Lambda framing. Used when the binary is run outside Lambda
 // (local container smoke tests, image-inject integration tests).
 func runUserProcessStandalone() {
-	argv := append(splitColon(os.Getenv(envUserEntrypoint)), splitColon(os.Getenv(envUserCmd))...)
+	argv := append(parseUserArgv(envUserEntrypoint), parseUserArgv(envUserCmd)...)
 	if len(argv) == 0 {
 		fmt.Fprintln(os.Stderr, "sockerless-lambda-bootstrap: no user entrypoint/cmd configured")
 		os.Exit(0)
@@ -326,16 +329,20 @@ func runUserProcessStandalone() {
 	}
 }
 
-func splitColon(s string) []string {
-	if s == "" {
+// parseUserArgv returns the argv list the backend encoded into the
+// given env var as base64(JSON). Empty / missing → nil.
+func parseUserArgv(key string) []string {
+	raw := os.Getenv(key)
+	if raw == "" {
 		return nil
 	}
-	parts := strings.Split(s, ":")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p != "" {
-			out = append(out, p)
-		}
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal(decoded, &out); err != nil {
+		return nil
 	}
 	return out
 }

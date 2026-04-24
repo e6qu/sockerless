@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -73,16 +75,22 @@ func RenderOverlayDockerfile(spec OverlayImageSpec) (string, error) {
 	return b.String(), nil
 }
 
-// joinForEnv encodes a []string as colon-separated for env-var
+// joinForEnv encodes a []string as base64-wrapped JSON for env-var
 // transport. Empty input returns empty string so the ENV line can be
-// omitted entirely. Colons inside args are intentionally not escaped —
-// callers controlling the entrypoint should avoid them; the bootstrap
-// documents this at the receiving end.
+// omitted entirely. Base64 produces an alphabet (A-Z a-z 0-9 + / =)
+// that needs no Dockerfile quoting and no shell escaping, so colons,
+// quotes, newlines, and any other byte round-trip exactly through
+// `ENV KEY=VALUE`. Matches the decoder in
+// agent/cmd/sockerless-lambda-bootstrap/main.go::parseUserArgv.
 func joinForEnv(parts []string) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return strings.Join(parts, ":")
+	b, err := json.Marshal(parts)
+	if err != nil {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(b)
 }
 
 // OverlayBuildResult is what BuildAndPushOverlayImage returns — the

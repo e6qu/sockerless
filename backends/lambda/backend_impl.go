@@ -2,6 +2,8 @@ package lambda
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -165,11 +167,15 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		imageURI = s.config.PrebuiltOverlayImage
 		envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
 		envVars["SOCKERLESS_CONTAINER_ID"] = id
+		// Encode argv as base64(JSON) so every byte round-trips cleanly
+		// through the env var without Dockerfile / shell quoting.
 		if len(config.Entrypoint) > 0 {
-			envVars["SOCKERLESS_USER_ENTRYPOINT"] = strings.Join(config.Entrypoint, ":")
+			b, _ := json.Marshal(config.Entrypoint)
+			envVars["SOCKERLESS_USER_ENTRYPOINT"] = base64.StdEncoding.EncodeToString(b)
 		}
 		if len(config.Cmd) > 0 {
-			envVars["SOCKERLESS_USER_CMD"] = strings.Join(config.Cmd, ":")
+			b, _ := json.Marshal(config.Cmd)
+			envVars["SOCKERLESS_USER_CMD"] = base64.StdEncoding.EncodeToString(b)
 		}
 	case s.config.CallbackURL != "":
 		// Build + push an overlay on top of the user's image. Resolve
