@@ -84,8 +84,11 @@ func main() {
 			postInitError(base, err.Error())
 			os.Exit(1)
 		}
-		go serveReverseAgent(conn)
-		go sendHeartbeats(conn)
+		// Every goroutine that writes to conn must hold connMu —
+		// gorilla/websocket requires serialised writes.
+		connMu := &sync.Mutex{}
+		go serveReverseAgent(conn, connMu)
+		go sendHeartbeats(conn, connMu)
 		defer func() { _ = conn.Close() }()
 	}
 
@@ -259,13 +262,12 @@ func dialReverseAgent(callbackURL, containerID string) (*websocket.Conn, error) 
 // reverse-agent protocol — inbound TypeExec / TypeAttach messages
 // spawn subprocesses in this container and stream stdout back over
 // the WS.
-func serveReverseAgent(conn *websocket.Conn) {
+func serveReverseAgent(conn *websocket.Conn, connMu *sync.Mutex) {
 	logger := zerolog.New(os.Stderr).With().Str("component", "bootstrap-reverse-agent").Logger()
 	registry := agent.NewSessionRegistry()
 	router := agent.NewRouter(registry, nil, logger)
 	defer registry.CleanupConn(conn)
 
-	connMu := &sync.Mutex{}
 	for {
 		_, data, err := conn.ReadMessage()
 		if err != nil {
@@ -281,15 +283,17 @@ func serveReverseAgent(conn *websocket.Conn) {
 
 // sendHeartbeats writes a ping frame every heartbeatPeriod so the
 // backend knows the container is alive between invocations. Exits
-// when the WS is closed. Writes are serialized via a shared mutex
-// with serveReverseAgent — here we just use WriteMessage which
-// gorilla/websocket serializes internally on a per-conn basis when
-// callers don't overlap.
-func sendHeartbeats(conn *websocket.Conn) {
+// when the WS is closed. connMu is shared with serveReverseAgent so
+// pings can't interleave with response frames — gorilla/websocket
+// requires serialised writes on a single conn.
+func sendHeartbeats(conn *websocket.Conn, connMu *sync.Mutex) {
 	t := time.NewTicker(heartbeatPeriod)
 	defer t.Stop()
 	for range t.C {
-		if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+		connMu.Lock()
+		err := conn.WriteMessage(websocket.PingMessage, nil)
+		connMu.Unlock()
+		if err != nil {
 			return
 		}
 	}
