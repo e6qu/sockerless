@@ -43,17 +43,11 @@ func accessPointToVolume(ap efstypes.AccessPointDescription) *api.Volume {
 // returning an immediately-EOF pipe.
 
 func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: id}
-	}
-	return s.BaseServer.ContainerChanges(id)
+	return s.ContainerChangesViaSSM(id)
 }
 
 func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArchiveResponse, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: id}
-	}
-	return s.BaseServer.ContainerGetArchive(id, path)
+	return s.ContainerGetArchiveViaSSM(id, path)
 }
 
 func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDir bool, body io.Reader) error {
@@ -62,25 +56,24 @@ func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDi
 		return &api.NotFoundError{Resource: "container", ID: id}
 	}
 
-	// If the container has a running ECS task, forward the archive to the simulator
-	// so it reaches the actual Docker container.
+	// If the container has a running ECS task and we're running
+	// against the simulator (EndpointURL set), prefer the sim's
+	// helper endpoint that pipes the tar straight into the Docker
+	// container — faster than round-tripping through SSM frames.
 	if ecsState, ok := s.ECS.Get(resolvedID); ok && ecsState.TaskARN != "" && s.config.EndpointURL != "" {
 		taskID := extractTaskIDFromARN(ecsState.TaskARN)
 		archiveURL := fmt.Sprintf("%s/sockerless/tasks/%s/archive?path=%s",
 			s.config.EndpointURL, taskID, url.QueryEscape(path))
-
 		req, err := http.NewRequest("PUT", archiveURL, body)
 		if err != nil {
 			return fmt.Errorf("failed to create archive request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/x-tar")
-
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return fmt.Errorf("failed to forward archive to simulator: %w", err)
 		}
 		defer resp.Body.Close()
-
 		if resp.StatusCode != http.StatusOK {
 			respBody, _ := io.ReadAll(resp.Body)
 			return fmt.Errorf("simulator archive upload failed (%d): %s", resp.StatusCode, string(respBody))
@@ -88,8 +81,9 @@ func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDi
 		return nil
 	}
 
-	// Fall back to local filesystem extraction (for pending/created containers)
-	return s.BaseServer.ContainerPutArchive(resolvedID, path, noOverwriteDirNonDir, body)
+	// Real ECS path: pipe the tar body through SSM ExecuteCommand
+	// running `tar -xf - -C <path>` inside the task.
+	return s.ContainerPutArchiveViaSSM(resolvedID, path, body)
 }
 
 func (s *Server) ContainerRename(id string, newName string) error {
@@ -107,10 +101,7 @@ func (s *Server) ContainerResize(id string, h int, w int) error {
 }
 
 func (s *Server) ContainerStatPath(id string, path string) (*api.ContainerPathStat, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: id}
-	}
-	return s.BaseServer.ContainerStatPath(id, path)
+	return s.ContainerStatPathViaSSM(id, path)
 }
 
 func (s *Server) ContainerStats(id string, stream bool) (io.ReadCloser, error) {
@@ -121,10 +112,7 @@ func (s *Server) ContainerStats(id string, stream bool) (io.ReadCloser, error) {
 }
 
 func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopResponse, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: id}
-	}
-	return s.BaseServer.ContainerTop(id, psArgs)
+	return s.ContainerTopViaSSM(id, psArgs)
 }
 
 func (s *Server) ContainerUpdate(id string, req *api.ContainerUpdateRequest) (*api.ContainerUpdateResponse, error) {

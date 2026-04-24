@@ -732,25 +732,18 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 	}, nil
 }
 
-// ContainerPause is not yet implemented on the ECS backend. The
-// SIGSTOP-via-bootstrap pattern from Phase 99 needs a SSM-routed
-// transport (Phase 102 / BUG-762) plus a task-definition convention
-// for writing the user PID to /tmp/.sockerless-mainpid.
+// ContainerPause sends SIGSTOP to the user subprocess via SSM
+// ExecuteCommand. Reuses the Phase 99 /tmp/.sockerless-mainpid
+// convention — task definitions must arrange for the user process to
+// write its PID there. Without that, the helper returns
+// NotImplementedError naming the missing prerequisite.
 func (s *Server) ContainerPause(ref string) error {
-	_, ok := s.ResolveContainerIDAuto(context.Background(), ref)
-	if !ok {
-		return &api.NotFoundError{Resource: "container", ID: ref}
-	}
-	return &api.NotImplementedError{Message: "docker pause not yet implemented for ECS — needs SSM-routed `kill -SIGSTOP $(cat /tmp/.sockerless-mainpid)` (Phase 102)"}
+	return s.ContainerSignalViaSSM(ref, "STOP")
 }
 
-// ContainerUnpause is not yet implemented on the ECS backend (Phase 102).
+// ContainerUnpause sends SIGCONT via the same SSM channel.
 func (s *Server) ContainerUnpause(ref string) error {
-	_, ok := s.ResolveContainerIDAuto(context.Background(), ref)
-	if !ok {
-		return &api.NotFoundError{Resource: "container", ID: ref}
-	}
-	return &api.NotImplementedError{Message: "docker unpause not yet implemented for ECS — needs SSM-routed `kill -SIGCONT $(cat /tmp/.sockerless-mainpid)` (Phase 102)"}
+	return s.ContainerSignalViaSSM(ref, "CONT")
 }
 
 // ImagePull pulls an image, using ECR cloud auth when available.
@@ -1003,17 +996,11 @@ func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*ap
 	return s.BaseServer.ExecCreate(containerID, req)
 }
 
-// ContainerExport is not yet implemented on the ECS backend. The
-// reverse-agent style helper (Phase 98 for FaaS backends) hasn't been
-// ported to SSM-routed capture yet; tracked as Phase 102 / BUG-761.
-// Fargate's filesystem IS reachable through `aws ecs execute-command`
-// — there's no platform constraint here, just unimplemented work.
+// ContainerExport tars the task's rootfs via SSM ExecuteCommand.
+// Fargate has no native export API, but the SSM channel that powers
+// `docker exec` can run `tar cf -` and stream the output back.
 func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {
-	_, ok := s.ResolveContainerIDAuto(context.Background(), ref)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: ref}
-	}
-	return nil, &api.NotImplementedError{Message: "docker export not yet implemented for ECS — needs SSM-routed `tar cf -` capture (Phase 102)"}
+	return s.ContainerExportViaSSM(ref)
 }
 
 // ContainerCommit is not implemented on the ECS backend. Fargate task
