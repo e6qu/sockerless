@@ -196,13 +196,15 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		destRef := fmt.Sprintf("%s-overlay-%s", strings.TrimSuffix(imageURI, ":latest"), id[:12])
 		overlay, buildErr := BuildAndPushOverlayImage(s.ctx(), spec, destRef)
 		if buildErr != nil {
-			s.Logger.Warn().Err(buildErr).Str("image", imageURI).
-				Msg("overlay build failed; falling back to base image (docker exec will not work)")
-		} else {
-			imageURI = overlay.ImageURI
-			envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
-			envVars["SOCKERLESS_CONTAINER_ID"] = id
+			// Fail loud — silently using the base image would leave
+			// the user with a function they think supports `docker
+			// exec` but doesn't. Caller set SOCKERLESS_CALLBACK_URL
+			// deliberately, so surface the build failure.
+			return nil, &api.ServerError{Message: fmt.Sprintf("overlay build failed for %q: %v", imageURI, buildErr)}
 		}
+		imageURI = overlay.ImageURI
+		envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
+		envVars["SOCKERLESS_CONTAINER_ID"] = id
 	default:
 		var resolveErr error
 		imageURI, resolveErr = s.resolveImageURI(s.ctx(), config.Image)
