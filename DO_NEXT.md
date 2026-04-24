@@ -4,38 +4,26 @@ Snapshot pointer for the next session. Updated after every task.
 
 ## Branch state
 
-`continue-plan-post-113` — successor to PR #113. Phase 91/92/93 (real per-cloud volume provisioning on ECS/CR/ACA) landed on this branch. BUG-735/736/737 fixed. Queue below is the revised sequence after the 2026-04-21 "no workarounds, no fakes, real implementations" directive — every previously-framed "platform limit" is now a scoped phase.
+`main` — PR #115 merged 2026-04-24 (Phases 96 / 98 / 98b / 99 / 100 / 101 / 102 + 13-bug audit sweep). PR #116 in flight with the state-doc update. 0 open bugs.
 
-## Up next on this branch
+## Up next
 
-1. **Phase 94 prereq — shared-helper lift.** ✅ Closed 2026-04-21. Per-cloud volume managers now live in `backends/{aws,gcp,azure}-common/volumes.go`; CR/ACA/ECS embed them unchanged. A small correctness fix fell out of the ECS lift (`fileSystemId` option is now populated even with `SOCKERLESS_ECS_AGENT_EFS_ID` set).
-2. **Phase 94 — GCF + AZF real volumes.** ✅ Closed 2026-04-21. GCF attaches GCS buckets via `Services.GetService`/`UpdateService` on `fn.ServiceConfig.Service`; AZF attaches Azure Files shares via `WebApps.UpdateAzureStorageAccounts`.
-3. **Phase 94b — Lambda EFS via `Function.FileSystemConfigs[]`.** ✅ Closed 2026-04-21. Reuses `awscommon.EFSManager` (shared with ECS); requires `SOCKERLESS_LAMBDA_SUBNETS` to be set.
-4. **Phase 95 — FaaS invocation-lifecycle tracker.** ✅ Closed 2026-04-21. `core.InvocationResult` + `Store.{Put,Get,Delete}InvocationResult`; per-backend wiring on Lambda + GCF + AZF; 7 BUG-744 tests re-enabled.
-5. **Phase 96 — Reverse-agent exec for CR Jobs + ACA Jobs.** Backend-side machinery closed 2026-04-23 (shared core.ReverseAgent*, CR+ACA register `/v1/{cloudrun,aca}/reverse` + Drivers.Exec/Stream + env vars). Container-side overlay bootstraps still needed; `sockerless-agent --callback --keep-alive <cmd>` is the minimum-viable pattern.
-6. **Phase 97 — Docker labels charset-safe on GCP.** ✅ Closed 2026-04-21. `AsGCPLabels` filters charset-invalid values to `AsGCPAnnotations`; GCF carries the JSON blob via a `SOCKERLESS_LABELS` env var (Function v2 has no Annotations field).
-7. **Phase 98 — Agent-driven filesystem + introspection ops.** Partial 2026-04-23 — `docker top` landed via `core.RunContainerTopViaAgent` + `agent.CollectExec`. Remaining: `docker cp` / `stat` / `diff` / `export` follow the same CollectExec pattern (different argv + output shape) on Lambda/CR/ACA/GCF/AZF.
-8. **Phase 98b — Agent-driven `docker commit`.** Opt-in via `SOCKERLESS_ENABLE_COMMIT`. Fixes BUG-750 on CR/ACA/Lambda; ECS Fargate gets the agent path too once SSM archive + ECR push land.
-9. **Phase 99 — Agent-driven `pause` / `unpause`.** Reverse-agent SIGSTOP/SIGCONT broadcast to every process in the task; ECS Fargate uses SSM `signal`. Fixes BUG-749.
-10. **Phase 100 — Docker backend pod synthesis.** ✅ Closed 2026-04-23 (BUG-754). Store.Pods + sockerless-pod label filter; PodStart/Stop/Kill/Remove fan out to Docker daemon.
+1. **Live-cloud burn-in.** Every code path landed but the cloud-side validation runbooks are still on paper. Priority order: (a) Phase 86 Lambda live track (scripts exist), (b) Phase 87 live-GCP, (c) Phase 88 live-Azure, (d) Phase 91 real-EFS burn-in, (e) Phases 92/93/94 real-GCS / real-Azure-Files burn-in, (f) Phase 98b commit round-trip through ECR/AR/ACR. Each runbook should produce a scripted equivalent of `scripts/phase86/*.sh`.
+2. **BUG-721 proper fix.** The SSM acknowledge-format workaround (backend dedupes retransmitted `output_stream_data` frames) needs a real wire-level match — Flags byte + PayloadDigest semantics — and that requires a live AWS agent to diff against.
+3. **Phase 68 — Multi-Tenant Backend Pools.** P68-001 done; 9 sub-tasks remain (see PLAN.md).
+4. **Phase 78 — UI Polish.** Dark mode, design tokens, container detail modal, accessibility, E2E smoke.
 
-Each phase ships as granular commits under a single mega-PR (per user direction). Bug tracking remains in `BUGS.md`; each re-enabled test is referenced against its phase.
+## Manual testing
 
-## Live-cloud validation runbooks (need creds)
+[PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md) has the ECS + Lambda manual runbook. Post-PR-#115, the following tests need refresh:
 
-- **Phase 87 live-GCP** — Cloud Run Services validation against real GCP.
-- **Phase 88 live-Azure** — ACA Apps validation against real Azure.
-- **Phase 86 Lambda live track** — scripted already, deferred for session-budget reasons.
-- **Phase 91 live-AWS EFS** — exercise the access-point provisioning path against real EFS once Phase 91 has real-AWS burn-in.
-- **Phase 92 live-GCP GCS volumes**, **Phase 93 live-Azure Files volumes** — real-cloud burn-in of the new volume paths.
-
-## Other queued
-
-- **Phase 68** — Multi-Tenant Backend Pools (P68-002 → 010).
-- **Phase 78** — UI Polish.
+- A46 (`docker pause`) — now works on every FaaS backend when the bootstrap writes `/tmp/.sockerless-mainpid` (Phase 99). Pause + unpause should be exercised end-to-end.
+- A47 onwards — add agent-driven `docker cp`, `docker top`, `docker diff`, `docker container stat`, `docker export`, `docker commit` (with `SOCKERLESS_ENABLE_COMMIT=1`). All now implemented on Lambda/CR/ACA/GCF/AZF.
+- C8/C9 (`diff`/`export`) — previously marked as Error/NotImplemented; now functional when agent is running.
+- Track I (stateless restart verification) — also applies after a Phase 98b commit round-trip (image must be resolvable from registry post-restart).
 
 ## Operational state
 
-- Branch pushed to GitHub: **yes** (`continue-plan-post-113`, latest `cfeea5f`).
-- Local `main` synced with `origin/main` through commit `0109667` (PR #113 merge).
-- `origin-gitlab/main` is 5 commits behind GitHub; push when convenient.
+- Local `main` synced with `origin/main` through commit `8494f79` (PR #115 merge).
+- `origin-gitlab/main` is behind; push when convenient.
+- Branch `state-post-pr115` open as PR #116 — pure doc update (PLAN/STATUS/WHAT_WE_DID compression + README badges).
