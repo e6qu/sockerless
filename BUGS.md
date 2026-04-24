@@ -1,6 +1,6 @@
 # Known Bugs
 
-**762 total — 761 fixed, 1 open (BUG-750 → Phase 98b queued for agent-driven docker commit), 1 false positive (BUG-747 is the audit umbrella).**
+**763 total — 762 fixed, 1 open (BUG-750 → Phase 98b queued for agent-driven docker commit), 1 false positive (BUG-747 is the audit umbrella).**
 
 For narrative context see [WHAT_WE_DID.md](WHAT_WE_DID.md) and [PLAN.md](PLAN.md). Architecture-level state derivation is documented in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) and [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md).
 
