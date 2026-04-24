@@ -565,6 +565,18 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 // return empty. In follow mode the fetch closure keeps checking until
 // the stream appears.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
+	fetch := s.buildCloudWatchFetcher(ref)
+	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{
+		CheckLogBuffers: true,
+	})
+}
+
+// buildCloudWatchFetcher returns a CloudLogFetchFunc closure that reads
+// log events for the given container's Lambda function. Shared by
+// ContainerLogs and ContainerAttach. The log group is resolved once;
+// the stream name is resolved lazily because Lambda creates the stream
+// only after the first invocation produces output.
+func (s *Server) buildCloudWatchFetcher(ref string) core.CloudLogFetchFunc {
 	var logGroupName *string
 	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
 		lambdaState, _ := s.resolveLambdaState(s.ctx(), id)
@@ -574,8 +586,6 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 		}
 	}
 
-	// resolveStream looks up the most recent log stream in the group;
-	// returns nil if the stream doesn't exist yet.
 	resolveStream := func() *string {
 		if logGroupName == nil {
 			return nil
@@ -592,11 +602,9 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 		return out.LogStreams[0].LogStreamName
 	}
 
-	// Cache the resolved stream once it appears so we don't pay
-	// DescribeLogStreams on every poll tick in follow mode.
 	var cachedStream *string
 
-	fetch := func(ctx context.Context, params core.CloudLogParams, cursor any) ([]core.CloudLogEntry, any, error) {
+	return func(ctx context.Context, params core.CloudLogParams, cursor any) ([]core.CloudLogEntry, any, error) {
 		if logGroupName == nil {
 			return nil, nil, nil
 		}
@@ -646,10 +654,6 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 		}
 		return entries, result.NextForwardToken, nil
 	}
-
-	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{
-		CheckLogBuffers: true,
-	})
 }
 
 // ContainerRestart stops and then starts a container.
@@ -835,19 +839,24 @@ func (s *Server) Info() (*api.BackendInfo, error) {
 
 // ContainerAttach bridges stdin/stdout/stderr to the bootstrap process
 // inside the Lambda invocation container via the reverse-agent
-// WebSocket. Lambda exposes no native attach API; without a
-// reverse-agent session registered for the container, return
-// NotImplementedError with the specific reason rather than producing
-// an empty stream.
+// WebSocket when a session is registered. When no agent is registered
+// and the caller doesn't need stdin (read-only attach — `docker
+// attach` without -i, or `docker run` follow-mode), fall back to
+// streaming CloudWatch as the attached output. Interactive attach
+// without an agent has no native Lambda surface, so it stays
+// NotImplementedError.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
-		return nil, &api.NotImplementedError{Message: "docker attach requires a reverse-agent bootstrap inside the Lambda container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
+		return s.BaseServer.ContainerAttach(id, opts)
 	}
-	return s.BaseServer.ContainerAttach(id, opts)
+	if opts.Stdin {
+		return nil, &api.NotImplementedError{Message: "interactive docker attach requires a reverse-agent bootstrap inside the Lambda container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	return core.AttachViaCloudLogs(s.BaseServer, id, opts, s.buildCloudWatchFetcher(id))
 }
 
 // ContainerExport streams a tar archive of the Lambda container's

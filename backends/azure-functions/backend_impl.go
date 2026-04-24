@@ -514,6 +514,15 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 // ContainerLogs streams container logs from Azure Monitor.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
+	return core.StreamCloudLogs(s.BaseServer, ref, opts, s.buildCloudLogsFetcher(ref), core.StreamCloudLogsOptions{
+		CheckLogBuffers: true,
+	})
+}
+
+// buildCloudLogsFetcher returns a CloudLogFetchFunc closure that
+// queries Azure Monitor for the given function app's traces. Shared
+// by ContainerLogs and ContainerAttach.
+func (s *Server) buildCloudLogsFetcher(ref string) core.CloudLogFetchFunc {
 	var functionAppName string
 	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
 		azfState, _ := s.AZF.Get(id)
@@ -522,16 +531,11 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 			functionAppName = "skls-" + id[:12]
 		}
 	}
-
-	fetch := s.azureLogsFetch(
+	return s.azureLogsFetch(
 		`AppTraces`,
 		fmt.Sprintf(`AppRoleName == "%s"`, functionAppName),
 		"Message",
 	)
-
-	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{
-		CheckLogBuffers: true,
-	})
 }
 
 // ContainerRestart stops and then starts a container.
@@ -707,20 +711,23 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 }
 
 // ContainerAttach bridges stdin/stdout/stderr to the bootstrap process
-// inside the function container via the reverse-agent WebSocket.
-// Azure Functions exposes no native attach API (Kudu uses a different
-// protocol that's not implemented); without a reverse-agent session
-// registered for the container, return NotImplementedError with the
-// specific reason.
+// inside the function container via the reverse-agent WebSocket when a
+// session is registered. Without an agent, fall back to streaming
+// Azure Monitor for read-only attach (no stdin); interactive attach
+// has no native Azure Functions surface (Kudu uses a different
+// protocol that's not implemented) and stays NotImplementedError.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
-		return nil, &api.NotImplementedError{Message: "docker attach requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
+		return s.BaseServer.ContainerAttach(id, opts)
 	}
-	return s.BaseServer.ContainerAttach(id, opts)
+	if opts.Stdin {
+		return nil, &api.NotImplementedError{Message: "interactive docker attach requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	return core.AttachViaCloudLogs(s.BaseServer, id, opts, s.buildCloudLogsFetcher(id))
 }
 
 // ImageBuild delegates to ImageManager for unified cloud image handling.

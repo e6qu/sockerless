@@ -294,6 +294,45 @@ Notes:
 - **Cloud Run / GCF / AZF**: no native exec surface. Reverse-agent overlay is the only path; backends now route through `BaseServer.ExecStart` after verifying the session exists.
 - **ACA**: ACA has a native console exec API (`Microsoft.App/jobs/{job}/executions/{exec}/exec`) wired via `aca/exec_cloud.go::cloudExecStart`. The backend prefers the reverse-agent when present and falls back to cloudExecStart otherwise.
 
+#### How other workload schedulers handle exec/attach
+
+For reference, here is how the major job-runner ecosystems implement the same shape of problem. Sockerless's challenge — exec into a FaaS invocation — is one most schedulers sidestep entirely:
+
+| System | Mechanism | Reverse-agent? |
+|---|---|---|
+| GitLab Runner — `docker` executor | `docker exec` (Moby `ContainerExecCreate` + `ContainerExecAttach`) into the long-lived helper + build containers; one container per job, not per step | No (runner dials Docker) |
+| GitLab Runner — `kubernetes` executor | `POST /api/v1/namespaces/{ns}/pods/{pod}/exec` via SPDY/WebSocket from `k8s.io/client-go/tools/remotecommand` | No (runner dials kube-apiserver) |
+| GitLab Runner — `shell` / `ssh` / `custom` | Native fork+pipe / SSH session / user-supplied subprocess | No |
+| GitLab Runner trace upload | `PATCH /api/v4/jobs/:id/trace` with `Content-Range` every ~3s (HTTP, not WS) | n/a |
+| GitHub Actions runner — container job | One `docker create` + `docker start` per job with ENTRYPOINT overridden to `tail -f /dev/null` so the container outlives any single step; every step runs as `docker exec -i ... <containerId> <cmd>` invoked via in-process `ProcessInvoker` (stdio over OS pipes). `docker attach` is **never** used. Source: `actions/runner` `Runner.Worker/Container/DockerCommandManager.cs`, `Handlers/StepHost.cs`. | No |
+| GitHub Actions runner — service containers | Same `docker create` + `docker start`, no entrypoint override; logs collected at teardown via `docker logs --details <id>` (no live streaming). | No |
+| GitHub Actions runner — Kubernetes (ARC) | `ACTIONS_RUNNER_CONTAINER_HOOKS` JSON-over-stdin hook protocol delegates `prepare_job`/`run_script_step`/`cleanup_job` to an external binary that translates to `kubectl exec`. | No |
+| GitHub Actions runner — log streaming | Runner holds a `ClientWebSocket` to Actions' `feedStreamUrl` for live console; durable blobs via REST `AppendLogContentAsync`. | n/a |
+| Buildkite Agent | Long-lived agent on host invokes `docker run --rm` per step; `docker exec` for plugin hooks | No |
+| Argo Workflows | `kubectl exec` against per-step pods; init/wait containers handle artifact shuffle | No |
+
+Both GitLab Runner and GitHub Actions runner are **strictly pull-based**: the runner process is co-located with (or has direct network access to) a docker daemon, kube-apiserver, or SSH host, and dials it. Neither supports FaaS executors precisely because Lambda/Cloud Run/ACA invocations expose no server-mediated exec primitive. Sockerless's reverse-agent (bootstrap-dials-back) pattern is what fills that gap — it inverts the typical "scheduler → workload" control flow because the cloud control plane provides no inbound channel.
+
+The GitHub Actions `tail -f /dev/null` keep-alive idiom is directly reusable for any sockerless backend that supports long-lived containers (ECS, Cloud Run Services, ACA Apps). For invocation-scoped FaaS (Lambda, Cloud Functions, AZF) it doesn't apply — the platform forces termination at invocation completion regardless of what the entrypoint does.
+
+#### Using a sockerless cloud backend as the docker daemon for GitLab/GitHub runners
+
+Both GitLab Runner's `docker` executor and GitHub Actions runner expect a docker-API-compatible endpoint. Sockerless's cloud backends serve that API, so a runner can target them via `DOCKER_HOST=tcp://<sockerless-backend>:<port>`. The compatibility matrix:
+
+| Backend | Long-lived container model | `tail -f /dev/null` keep-alive | `docker exec` for each step | Suitable as docker daemon for runners? |
+|---|---|---|---|---|
+| docker | ✓ | ✓ | ✓ | ✓ Out of the box. |
+| ecs | ✓ Fargate task | ✓ (task runs whatever entrypoint specified) | ✓ via SSM ExecuteCommand | ✓ With SSM enabled (BUG-720/719/717/729 already covered). Each `docker exec` round-trips an SSM session — slower than local Docker but functionally identical. |
+| cloudrun (Services, `UseService=true`) | ✓ Long-lived service revision | ✓ | ✓ via reverse-agent | ✓ Bootstrap must be present; CR Services stay warm. |
+| aca (Apps, `UseApp=true`) | ✓ Long-lived app revision | ✓ | ✓ via reverse-agent or ACA console exec | ✓ Bootstrap or console exec available. |
+| cloudrun (Jobs) | ✗ Execution scoped to one Run | ✗ entrypoint exits → execution completes | ✗ no surface | ✗ Use the Service path instead. |
+| aca (Jobs) | ✗ Execution scoped to one Start | ✗ | ✗ | ✗ Use the App path instead. |
+| lambda | ✗ Invocation scoped | ✗ Lambda forces termination at handler return | ✗ The bootstrap stays alive only for the duration of one Invoke | ✗ Fundamentally incompatible — Lambda has no long-lived container concept. |
+| gcf | ✗ Same as Lambda | ✗ | ✗ | ✗ |
+| azf | ✗ Same as Lambda | ✗ | ✗ | ✗ |
+
+**Operational note.** A runner targeting an ECS/CR-Services/ACA-Apps sockerless backend will see one cloud "container" (task / revision / app) per CI job. Each step's `docker exec` becomes a SSM Session / reverse-agent exec round-trip. This is a real compatibility — the runner doesn't know it's not talking to local Docker — but performance is bound by the cloud's exec-channel latency. For latency-sensitive workloads, prefer self-hosted runners against the local `docker` backend.
+
 ### Images
 
 | Method | docker | ecs | lambda | cloudrun | gcf | aca | azf |

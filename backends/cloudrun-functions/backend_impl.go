@@ -523,22 +523,25 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 // ContainerLogs streams container logs from Cloud Logging.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
+	return core.StreamCloudLogs(s.BaseServer, ref, opts, s.buildCloudLogsFetcher(ref), core.StreamCloudLogsOptions{
+		CheckLogBuffers: true,
+	})
+}
+
+// buildCloudLogsFetcher returns a CloudLogFetchFunc closure that
+// queries Cloud Logging for the given function. Shared by
+// ContainerLogs and ContainerAttach.
+func (s *Server) buildCloudLogsFetcher(ref string) core.CloudLogFetchFunc {
 	var funcName string
 	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
 		gcfState, _ := s.GCF.Get(id)
 		funcName = gcfState.FunctionName
 	}
-
 	baseFilter := fmt.Sprintf(
 		`resource.type="cloud_run_revision" AND resource.labels.service_name="%s"`,
 		funcName,
 	)
-
-	fetch := s.cloudLoggingFetch(baseFilter)
-
-	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{
-		CheckLogBuffers: true,
-	})
+	return s.cloudLoggingFetch(baseFilter)
 }
 
 // cloudLoggingFetch returns a CloudLogFetchFunc that queries Cloud Logging.
@@ -776,19 +779,23 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 }
 
 // ContainerAttach bridges stdin/stdout/stderr to the bootstrap process
-// inside the function container via the reverse-agent WebSocket.
-// Cloud Run Functions exposes no native attach API; without a
-// reverse-agent session registered for the container, return
-// NotImplementedError with the specific reason.
+// inside the function container via the reverse-agent WebSocket when a
+// session is registered. Without an agent, fall back to streaming
+// Cloud Logging for read-only attach (no stdin); interactive attach
+// has no native Cloud Run Functions surface and stays
+// NotImplementedError.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
-		return nil, &api.NotImplementedError{Message: "docker attach requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
+		return s.BaseServer.ContainerAttach(id, opts)
 	}
-	return s.BaseServer.ContainerAttach(id, opts)
+	if opts.Stdin {
+		return nil, &api.NotImplementedError{Message: "interactive docker attach requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	}
+	return core.AttachViaCloudLogs(s.BaseServer, id, opts, s.buildCloudLogsFetcher(id))
 }
 
 // ImageBuild delegates to ImageManager.
