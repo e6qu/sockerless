@@ -885,18 +885,20 @@ func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
 	return rc, nil
 }
 
-// ContainerCommit is not supported by the Lambda backend.
-// Lambda functions have no local filesystem to commit.
+// ContainerCommit builds a new image from the invocation container's
+// rootfs via the reverse-agent and stores it in the image cache so
+// `docker push` can sync it to ECR. Gated behind EnableCommit because
+// the result wraps the whole rootfs as a single layer (no diff against
+// the original image — sockerless can't read it from the Lambda
+// backend host).
 func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
 	if req.Container == "" {
 		return nil, &api.InvalidParameterError{Message: "container query parameter is required"}
 	}
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), req.Container); !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
+	if !s.config.EnableCommit {
+		return nil, &api.NotImplementedError{Message: "docker commit on Lambda is gated — set SOCKERLESS_ENABLE_COMMIT=1 (the agent-driven commit captures the whole rootfs as a single layer; see PLAN.md Phase 98b)"}
 	}
-	return nil, &api.NotImplementedError{
-		Message: "Lambda backend does not support container commit; functions have no local filesystem",
-	}
+	return core.CommitContainerRequestViaAgent(s.BaseServer, s.reverseAgents, req)
 }
 
 // ImagePush pushes an image, syncing to ECR when applicable.

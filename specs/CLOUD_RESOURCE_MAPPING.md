@@ -257,7 +257,7 @@ Full list of every `api.Backend` method sockerless implements, per-backend statu
 | ContainerResize | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | ContainerPause | ✓ | ✗ Fargate no-pause | ✗ | ✗ Cloud Run no-pause | ✗ | ✗ ACA no-pause | ✗ |
 | ContainerUnpause | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| ContainerCommit | ✓ | ✗ Fargate no-snapshot | ✗ | ✗ | ✗ | ✗ | ✗ |
+| ContainerCommit | ✓ | ✗ ECS no-agent | ⚠ agent+opt-in | ⚠ agent+opt-in | ⚠ agent+opt-in | ⚠ agent+opt-in | ⚠ agent+opt-in |
 | ContainerExport | ✓ | ✗ Fargate no-fs | ✗ | ✗ | ✗ | ✗ | ✗ |
 | ContainerChanges | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | ContainerStatPath | ✓ | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ | ⚠ agent only | ⚠ |
@@ -270,6 +270,7 @@ Notes:
 
 - **ContainerStats ⚠** — cloud providers only surface aggregated per-task metrics with ~60s lag; no block-I/O or network-byte counters equivalent to docker's cgroup stats. Sockerless reports CPU-ns + mem-bytes + PIDs=0 (BUG-733) when nothing's there yet. A future phase may add cloud-native stats endpoints to each simulator for parity with docker's streaming stats.
 - **ContainerTop / Stat / GetArchive / PutArchive / Attach ⚠ agent only** — possible only when the sockerless agent is bundled into the container image (Lambda's agent-as-handler pattern; CR/ACA/GCF/AZF use the same overlay). Without a registered reverse-agent session, every backend returns a `NotImplementedError` that names the missing prerequisite (`SOCKERLESS_CALLBACK_URL`) — never a silently-empty stream. ACA additionally falls back to the cloud-native console exec API for ExecStart/Attach when no agent is present. See [Exec](#exec) below for the full resolution table.
+- **ContainerCommit ⚠ agent+opt-in** — the reverse-agent runs `find / -xdev -newer /proc/1` (same reference point as `docker diff`) + `tar -cf - --null -T -` to capture the files added or modified since container boot, then stacks the resulting blob as a new layer on top of the source image's rootfs. Gated behind `SOCKERLESS_ENABLE_COMMIT=1` per backend because the approach can't capture deletions (`find(1)` can't list files that no longer exist, and sockerless has no host-side access to the base image's rootfs to compute whiteouts) — this is documented, not a silent degradation. ECS has no bootstrap equivalent, so it stays `NotImplementedError`. Push to the operator's registry uses the existing `ImageManager.Push` path (BUG-763/764 fixed the config-blob and push plumbing).
 - **ContainerRename ⚠** — cloud resources (ECS task, Cloud Run Job, ACA app) have immutable names derived from the container ID; the docker API's "rename" updates local metadata only (`sockerless-name` tag does stay updated via re-tag). `docker inspect` shows the new name but the cloud resource name doesn't change.
 - **ContainerUpdate ⚠** — resource-limit updates go through a new task-def revision / service revision / app revision. Docker's live `update --cpus --memory` semantics can't apply to already-running cloud tasks; the next start picks up the new limits.
 - **ContainerResize ✗** — TTY resize events (`SIGWINCH`) don't propagate through Cloud Run / Fargate / ACA to the container. Future phase may add a sim-side pipe for local testing.

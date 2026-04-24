@@ -764,18 +764,18 @@ func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
 	return rc, nil
 }
 
-// ContainerCommit is not supported by the Cloud Run Functions backend.
-// Cloud Run Functions have no local filesystem to commit.
+// ContainerCommit builds a new image from the function container's
+// post-boot filesystem changes via the reverse-agent. Gated behind
+// EnableCommit — the result is a single diff layer on top of the
+// function's base image.
 func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
 	if req.Container == "" {
 		return nil, &api.InvalidParameterError{Message: "container query parameter is required"}
 	}
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), req.Container); !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
+	if !s.config.EnableCommit {
+		return nil, &api.NotImplementedError{Message: "docker commit on Cloud Run Functions is gated — set SOCKERLESS_ENABLE_COMMIT=1"}
 	}
-	return nil, &api.NotImplementedError{
-		Message: "Cloud Run Functions backend does not support container commit; functions have no local filesystem",
-	}
+	return core.CommitContainerRequestViaAgent(s.BaseServer, s.reverseAgents, req)
 }
 
 // ContainerAttach bridges stdin/stdout/stderr to the bootstrap process

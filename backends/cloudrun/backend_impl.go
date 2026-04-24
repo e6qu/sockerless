@@ -876,7 +876,10 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 	if _, ok := s.ResolveContainerIDAuto(context.Background(), req.Container); !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
 	}
-	return nil, &api.NotImplementedError{Message: "container commit is not supported by Cloud Run backend: cannot create images from running Cloud Run containers"}
+	if !s.config.EnableCommit {
+		return nil, &api.NotImplementedError{Message: "docker commit on Cloud Run is gated — set SOCKERLESS_ENABLE_COMMIT=1 (agent-driven commit captures added/modified files since container boot as a new layer)"}
+	}
+	return core.CommitContainerRequestViaAgent(s.BaseServer, s.reverseAgents, req)
 }
 
 // PodStart starts all containers in a pod by calling ContainerStart for each.

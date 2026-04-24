@@ -1,6 +1,6 @@
 # Known Bugs
 
-**769 total — 768 fixed, 1 open (BUG-750 → Phase 98b queued for agent-driven docker commit), 1 false positive (BUG-747 is the audit umbrella).**
+**769 total — 769 fixed (all implemented), 1 false positive (BUG-747 is the audit umbrella).**
 
 For narrative context see [WHAT_WE_DID.md](WHAT_WE_DID.md) and [PLAN.md](PLAN.md). Architecture-level state derivation is documented in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) and [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md).
 
@@ -8,10 +8,7 @@ Standing workflow rule: every CI / live-cloud failure lands here with a short ro
 
 ## Open
 
-| ID | Sev | Area | Summary |
-|----|-----|------|---------|
-| 750 | M | all-cloud | `docker commit` (`ContainerCommit`) returns `NotImplementedError` on every cloud backend. Could be emulated via the in-container agent tarballing rootfs + pushing to the operator's registry, but that sidesteps the cloud-platform constraint that task images are immutable. Decision: keep NotImplemented on ECS/Lambda (Fargate + Lambda images are control-plane-owned); scope as **Phase 98b** for CR/ACA once reverse-agent ships, with an agent-driven snapshot + ECR/AR/ACR push. |
-| 747 | L | meta | `NotImplementedError` audit umbrella. Tracks the remaining NotImplemented paths so the "no fakes, no fallbacks, no platform-limit excuses" principle has full coverage. Each sub-entry has a concrete implementation path: Lambda volumes → Phase 94b (done), pause/unpause → Phase 99 (done), commit → Phase 98b (queued), cp/export/stat/top/diff → Phase 98 (done), Docker backend pods → Phase 100 (done), simulator parity for cloud-native exec/attach → Phase 101 (done), ECS via-SSM filesystem ops + pause → Phase 102 (done). |
+_All closed — see Fixed section below. BUG-747 remains as the audit umbrella (false positive)._
 
 ## Fixed
 
@@ -22,6 +19,7 @@ Standing workflow rule: every CI / live-cloud failure lands here with a short ro
 | 753 | M | all-cloud | `docker diff` (`ContainerChanges`) returned `NotImplementedError` across every cloud backend. Fixed by **Phase 98**: `core.RunContainerChangesViaAgent` runs `find / -xdev -newer /proc/1` over the reverse-agent and parses output into `api.ContainerChangeItem`. Wired in Lambda/CR/ACA/GCF/AZF. |
 | 752 | M | all-cloud | `docker container top` returned `NotImplementedError` on CR / ACA / GCF / AZF / Lambda. Fixed by **Phase 98**: `core.RunContainerTopViaAgent` runs `ps` over the reverse-agent. |
 | 751 | M | all-cloud | `docker cp` / `docker export` / `docker container stat` (`ContainerGetArchive` / `ContainerPutArchive` / `ContainerStatPath` / `ContainerExport`) returned `NotImplementedError` across every cloud backend. Fixed by **Phase 98**: `core.RunContainer{GetArchive,PutArchive,StatPath,Export}ViaAgent` use tar/stat over the reverse-agent. |
+| 750 | M | all-cloud | `docker commit` (`ContainerCommit`) returned `NotImplementedError` on every cloud backend. Fixed by **Phase 98b**: new `core.CommitContainerViaAgent` runs `find / -xdev -newer /proc/1` (same reference point as `docker diff` from Phase 98) to list added/modified paths, pipes them through `tar -cf - --null -T -` to package a proper diff layer, stacks it on top of the source image's rootfs, and registers the resulting `api.Image` in the store. Each cloud backend's `ContainerCommit` routes through `core.CommitContainerRequestViaAgent` gated behind a `SOCKERLESS_ENABLE_COMMIT=1` config flag. Lambda/CR/ACA/GCF/AZF all supported; ECS stays `NotImplementedError` (no bootstrap). Docs updated in `specs/CLOUD_RESOURCE_MAPPING.md`. Deletions aren't captured — documented limitation, not a silent fallback. |
 | 769 | L | core | `ImageHistory` synthesised per-layer entries with the fake `CreatedBy: "/bin/sh -c #(nop) ADD file:... in / "` text when no real registry-sourced history was stored for the image (e.g., locally-built images). Output looked like docker history but reflected nothing about the actual build. Fix: return a single top-level entry with just the image ID + size + creation time when no real history exists — no fabricated per-layer `CreatedBy` strings. Real history remains untouched for registry-sourced images where it's populated. |
 | 768 | M | lambda | `ContainerCreate` silently fell back to the base image when `BuildAndPushOverlayImage` failed — warning logged, function created anyway with `docker exec` permanently broken. User set `SOCKERLESS_CALLBACK_URL` expecting exec to work; they got a function that superficially worked but had no bootstrap. Violates the "no fakes, no fallbacks" principle. Fix: overlay-build failure now surfaces as a `ServerError` from `ContainerCreate`, matching the resolve-image-URI failure path a few lines above. |
 | 767 | M | agent/lambda-bootstrap | `sendHeartbeats` wrote a `websocket.PingMessage` directly to the reverse-agent WebSocket without taking the same mutex that `serveReverseAgent` / `router.Handle` use for response writes. gorilla/websocket requires serialised writes (see its Concurrency doc); concurrent calls to `WriteMessage` on the same conn can interleave frames on the wire. Fix: hoisted the conn mutex into `main` and passed it to both `serveReverseAgent` and `sendHeartbeats` so all writes go through the same lock. |

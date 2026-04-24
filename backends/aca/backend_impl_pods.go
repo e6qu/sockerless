@@ -221,7 +221,10 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 	if _, ok := s.ResolveContainerIDAuto(context.Background(), req.Container); !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
 	}
-	return nil, &api.NotImplementedError{Message: "container commit is not supported by ACA backend: cannot snapshot ACA containers into images"}
+	if !s.config.EnableCommit {
+		return nil, &api.NotImplementedError{Message: "docker commit on ACA is gated — set SOCKERLESS_ENABLE_COMMIT=1 (agent-driven commit captures added/modified files since container boot as a new layer)"}
+	}
+	return core.CommitContainerRequestViaAgent(s.BaseServer, s.reverseAgents, req)
 }
 
 // AuthLogin handles registry authentication.

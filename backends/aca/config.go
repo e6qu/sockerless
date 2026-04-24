@@ -37,6 +37,11 @@ type Config struct {
 	// docker exec / attach once an overlay image with the bootstrap
 	// binary is deployed.
 	CallbackURL string
+
+	// EnableCommit opts into the agent-driven `docker commit` path.
+	// See backends/core.CommitContainerViaAgent. Set via
+	// `SOCKERLESS_ENABLE_COMMIT=1`.
+	EnableCommit bool
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -55,6 +60,7 @@ func ConfigFromEnv() Config {
 		PollInterval:          parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 		UseApp:                os.Getenv("SOCKERLESS_ACA_USE_APP") == "1",
 		CallbackURL:           os.Getenv("SOCKERLESS_CALLBACK_URL"),
+		EnableCommit:          os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
 	}
 }
 

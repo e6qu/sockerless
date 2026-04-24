@@ -36,6 +36,12 @@ type Config struct {
 	// `docker attach` against CR Jobs/Services once an overlay image
 	// with the bootstrap binary is deployed. Empty ⇒ exec NotImpl. Phase 96.
 	CallbackURL string
+
+	// EnableCommit opts into the agent-driven `docker commit` path.
+	// See backends/core.CommitContainerViaAgent. Off by default — the
+	// resulting image wraps the whole rootfs as a single layer.
+	// Set via `SOCKERLESS_ENABLE_COMMIT=1`.
+	EnableCommit bool
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -51,6 +57,7 @@ func ConfigFromEnv() Config {
 		LogTimeout:   parseDuration(os.Getenv("SOCKERLESS_LOG_TIMEOUT"), 30*time.Second),
 		UseService:   os.Getenv("SOCKERLESS_GCR_USE_SERVICE") == "1",
 		CallbackURL:  os.Getenv("SOCKERLESS_CALLBACK_URL"),
+		EnableCommit: os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
 	}
 }
 
