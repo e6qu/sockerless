@@ -4,6 +4,37 @@ Docker-compatible REST API that runs containers on cloud backends (ECS, Lambda, 
 
 See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for the bug log, [PLAN.md](PLAN.md) for the roadmap, [specs/](specs/) for architecture specs (start with [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md)).
 
+## Phases 96/98/98b/99/100/101/102 + 13-bug audit sweep (2026-04-24, PR #115 merged)
+
+Landed together on the `phase96-onward` branch. 770 total bugs; 769 fixed; 0 open; 1 false-positive (BUG-747 audit umbrella).
+
+**Phase 96 closed.** `backends/core` owns the shared `ReverseAgentRegistry`, `HandleReverseAgentWS`, `ReverseAgent{Exec,Stream}Driver`, `ErrNoReverseAgent`. CR/ACA/GCF/AZF mount `/v1/<backend>/reverse`, wire `Drivers.Exec`/`Drivers.Stream`, inject `SOCKERLESS_CALLBACK_URL`. Closes BUG-745.
+
+**Phase 98 closed.** `core.RunContainer{Top,StatPath,GetArchive,PutArchive,Export,Changes}ViaAgent` wrap `ps` / `stat` / `tar` / `find` over the reverse-agent; shared parsers in `container_{top,statpath,changes}.go`. Wired in every FaaS backend. Closes BUG-751/752/753.
+
+**Phase 98b closed.** `core.CommitContainerViaAgent` runs `find / -xdev -newer /proc/1 -printf '%p\0'` + `tar -cf - --null -T -` through the reverse-agent to capture a proper diff layer stacked on the source image's rootfs. Gated behind `SOCKERLESS_ENABLE_COMMIT=1`. Deletions aren't captured (find-based, documented limitation — not a silent fallback). Closes BUG-750.
+
+**Phase 99 closed.** Bootstraps now publish the user-process PID to `/tmp/.sockerless-mainpid` after `cmd.Start()`. `core.RunContainer{Pause,Unpause}ViaAgent` sends SIGSTOP/SIGCONT via `kill -<sig> $(cat <file>)` over the agent WS. Closes BUG-749.
+
+**Phase 100 closed.** Docker backend synthesises pods via the shared `sockerless-pod` label. PodList merges Store.Pods with live Docker containers so restarts don't drop pods. Closes BUG-754.
+
+**Phase 101 closed.** Azure sim serves `.../Microsoft.App/jobs/{job}/executions/{exec}/exec` bridged to real `docker exec`; `core.AttachViaCloudLogs` (lifted from the existing ECS pattern) gives every FaaS backend a read-only log-streamed attach when no agent is registered. Closes BUG-760.
+
+**Phase 102 closed.** `backends/ecs/ssm_capture.go::RunCommandViaSSM` opens an SSM session, captures stdout/stderr/exit via AgentMessage frames. `backends/ecs/ssm_ops.go` wraps it for Export/Top/Changes/StatPath/cp/Pause using the same shell commands the FaaS helpers use; outputs go through the same `core.Parse{Top,Stat,Changes}Output` helpers. Closes BUG-761/762.
+
+**Audit sweep (BUG-756–769):**
+- BUG-756 — Lambda bootstrap user-process stdout/stderr now tee'd via `io.MultiWriter` to container stdio (was captured into `/response` buffers only); sim's `waitAndCaptureLogs` swapped from follow-mode race to post-exit non-follow read.
+- BUG-759 — `ContainerAttach`/`ExecStart` across all 5 cloud backends now dispatch per `specs/CLOUD_RESOURCE_MAPPING.md` §Exec: agent → cloud-native (ACA console) → NotImplementedError. No silent empty streams or fake exit-126s.
+- BUG-763 — `ImageAuthProvider.OnPush` was calling `core.OCIPush` without layer data and always failing; pushes to ECR/AR/ACR never uploaded blobs. OnPush trimmed to cloud-side bookkeeping (ECR CreateRepository only); real OCI push delegates to `BaseServer.ImagePush` which has layer access; `ImageManager.Push` auto-fetches the cloud token via `Auth.GetToken`.
+- BUG-764 — `OCIPush` hardcoded amd64/linux + empty config + empty `rootfs.diff_ids`, violating OCI spec. Now serialises real `Architecture`/`Os`/`Config` and builds `diff_ids` from `ImageLayers` so the config matches the manifest.
+- BUG-765 — Lambda bootstrap + generic `--keep-alive` path now publish the user PID to `/tmp/.sockerless-mainpid` (without this Phase 99's pause always hit the no-PID-file error).
+- BUG-766 — argv encoded as `:`-joined was fragile for `sh -c 'echo hello:world'`; swapped to base64(JSON) so every byte round-trips through env/Dockerfile/shell with no escaping.
+- BUG-767 — `sendHeartbeats` wrote PingMessage to the reverse-agent WS without the mutex `serveReverseAgent` uses for response writes; violated gorilla/websocket's Concurrency contract. Mutex now shared between both goroutines.
+- BUG-768 — Lambda `ContainerCreate` silently fell back to the base image when `BuildAndPushOverlayImage` failed (docker exec permanently broken but function appeared OK); now fails loud.
+- BUG-769 — `ImageHistory` synthesised fake per-layer `CreatedBy` entries when no real registry history was stored; now returns a single top-level entry for images without real history.
+
+**Spec updates:** `specs/CLOUD_RESOURCE_MAPPING.md` documents the per-backend dispatch policy, a GitLab Runner / GitHub Actions runner comparison (both pull-based, both sidestep FaaS — which grounds the reverse-agent pattern as the gap-filler), and a runner-compatibility matrix for `DOCKER_HOST=...` configurations. Commit path documented with the find+tar mechanism + deletion-capture limitation.
+
 ## Phase 98 — ContainerTop via reverse-agent (2026-04-23, partial)
 
 First slice of BUG-752: `docker top` now routes through the reverse-agent on every backend that has a bootstrap inside the container.
