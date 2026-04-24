@@ -34,7 +34,25 @@ func (s *BaseServer) handleContainerInspect(w http.ResponseWriter, r *http.Reque
 			c.SizeRw = &rw
 		}
 	}
+	normalizeContainerTimes(&c)
 	WriteJSON(w, http.StatusOK, c)
+}
+
+// normalizeContainerTimes replaces empty time strings on ContainerState
+// with the RFC3339 zero time. Docker clients tolerate empty strings;
+// podman's libpod client parses every time field as time.Time and
+// errors on "".
+func normalizeContainerTimes(c *api.Container) {
+	const zero = "0001-01-01T00:00:00Z"
+	if c.State.StartedAt == "" {
+		c.State.StartedAt = zero
+	}
+	if c.State.FinishedAt == "" {
+		c.State.FinishedAt = zero
+	}
+	if c.Created == "" {
+		c.Created = zero
+	}
 }
 
 func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request) {

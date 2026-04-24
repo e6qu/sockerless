@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -60,6 +61,27 @@ func (rr *ResourceRegistry) Register(entry ResourceEntry) {
 	rr.entries[entry.ResourceID] = &entry
 	rr.mu.Unlock()
 	rr.autoSave()
+}
+
+// Get returns the entry for the given resource ID.
+func (rr *ResourceRegistry) Get(resourceID string) (ResourceEntry, bool) {
+	rr.mu.RLock()
+	defer rr.mu.RUnlock()
+	if e, ok := rr.entries[resourceID]; ok {
+		return *e, true
+	}
+	return ResourceEntry{}, false
+}
+
+// IsCleanedUp reports whether the given resource is marked cleaned up
+// in the registry. Returns false when the resource is unknown.
+func (rr *ResourceRegistry) IsCleanedUp(resourceID string) bool {
+	rr.mu.RLock()
+	defer rr.mu.RUnlock()
+	if e, ok := rr.entries[resourceID]; ok {
+		return e.CleanedUp
+	}
+	return false
 }
 
 // MarkCleanedUp marks a resource as cleaned up.
@@ -138,6 +160,11 @@ func (rr *ResourceRegistry) Save() error {
 	rr.mu.RUnlock()
 	if err != nil {
 		return err
+	}
+	if dir := filepath.Dir(rr.filePath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return err
+		}
 	}
 	tmpPath := rr.filePath + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {

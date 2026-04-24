@@ -53,17 +53,16 @@ func (s *Server) buildContainerDef(ctx context.Context, ci containerInput) (ecst
 	}
 
 	// Resolve the user-supplied image reference to an ECR URI so
-	// Fargate can pull it. Already-ECR URIs pass through; failures
-	// fall back to the raw ref and Fargate surfaces the pull error.
-	// Unit tests may run without aws clients wired — skip resolution
-	// and pass the ref through verbatim in that case.
+	// Fargate can pull it. Already-ECR URIs pass through. Failure is
+	// surfaced (per project principle — no silent fallback); unit tests
+	// without aws clients wired pass the ref through.
 	image := config.Image
 	if s.aws != nil && s.aws.ECR != nil {
-		if resolved, err := s.resolveImageURI(context.Background(), image); err == nil {
-			image = resolved
-		} else {
-			s.Logger.Warn().Err(err).Str("image", config.Image).Msg("image URI resolution failed; Fargate may not be able to pull")
+		resolved, err := s.resolveImageURI(context.Background(), image)
+		if err != nil {
+			return ecstypes.ContainerDefinition{}, nil, fmt.Errorf("resolve image URI for %q: %w", config.Image, err)
 		}
+		image = resolved
 	}
 
 	containerDef := ecstypes.ContainerDefinition{

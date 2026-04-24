@@ -6,9 +6,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
+	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	efstypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
 	"github.com/sockerless/api"
 	awscommon "github.com/sockerless/aws-common"
@@ -87,10 +90,42 @@ func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDi
 }
 
 func (s *Server) ContainerRename(id string, newName string) error {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	resolvedID, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return s.BaseServer.ContainerRename(id, newName)
+	if err := s.BaseServer.ContainerRename(id, newName); err != nil {
+		return err
+	}
+	if !strings.HasPrefix(newName, "/") {
+		newName = "/" + newName
+	}
+	// For not-yet-started containers (still in PendingCreates) the
+	// rename is picked up by startTask when it writes the initial tag
+	// set. Nothing to do on the cloud side yet.
+	if _, pending := s.PendingCreates.Get(resolvedID); pending {
+		s.PendingCreates.Update(resolvedID, func(c *api.Container) {
+			c.Name = newName
+		})
+		return nil
+	}
+	// For running or stopped containers, push the new name to the ECS
+	// task's `sockerless-name` tag so cloud-derived state reflects the
+	// rename. Failure is surfaced — no silent in-memory-only fallback.
+	ecsState, stateOK := s.resolveTaskState(s.ctx(), resolvedID)
+	if !stateOK || ecsState.TaskARN == "" {
+		return fmt.Errorf("rename %q: container has no live ECS task to tag", resolvedID)
+	}
+	_, err := s.aws.ECS.TagResource(s.ctx(), &awsecs.TagResourceInput{
+		ResourceArn: aws.String(ecsState.TaskARN),
+		Tags: []ecstypes.Tag{
+			{Key: aws.String("sockerless-name"), Value: aws.String(newName)},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to sync rename to ECS task: %w", err)
+	}
+	return nil
 }
 
 func (s *Server) ContainerResize(id string, h int, w int) error {

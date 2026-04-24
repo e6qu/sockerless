@@ -35,6 +35,12 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 	if strings.Contains(ref, ".dkr.ecr.") && strings.Contains(ref, ".amazonaws.com") {
 		return ref, nil
 	}
+	// ECR Public (`public.ecr.aws/...`) is pullable by Fargate with no
+	// authentication. Pass through without rewriting through a
+	// pull-through cache rule.
+	if strings.HasPrefix(ref, "public.ecr.aws/") {
+		return ref, nil
+	}
 
 	registry, repo, tag := parseDockerRef(ref)
 

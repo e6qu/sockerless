@@ -1473,27 +1473,98 @@ func (s *BaseServer) ImageRemove(name string, force bool, prune bool) ([]*api.Im
 		}
 	}
 
+	resolvedTag := resolveTagForRemoval(name, img)
+	fullDelete := resolvedTag == "" || len(img.RepoTags) <= 1
+
 	var result []*api.ImageDeleteResponse
-	for _, tag := range img.RepoTags {
-		result = append(result, &api.ImageDeleteResponse{Untagged: tag})
-		s.Store.Images.Delete(tag)
-		parts := strings.SplitN(tag, ":", 2)
-		s.Store.Images.Delete(parts[0])
-		s.emitEvent("image", "untag", img.ID, map[string]string{"name": tag})
+	if fullDelete {
+		for _, tag := range img.RepoTags {
+			result = append(result, &api.ImageDeleteResponse{Untagged: tag})
+			s.Store.Images.Delete(tag)
+			parts := strings.SplitN(tag, ":", 2)
+			s.Store.Images.Delete(parts[0])
+			s.emitEvent("image", "untag", img.ID, map[string]string{"name": tag})
+		}
+		result = append(result, &api.ImageDeleteResponse{Deleted: img.ID})
+		s.Store.Images.Delete(img.ID)
+		if short := img.ID; len(short) > 19 {
+			s.Store.Images.Delete(short[:19])
+		}
+		if ctxDir, ok := s.Store.BuildContexts.LoadAndDelete(img.ID); ok {
+			os.RemoveAll(ctxDir.(string))
+		}
+		s.emitEvent("image", "delete", img.ID, map[string]string{"name": name})
+		return result, nil
 	}
-	result = append(result, &api.ImageDeleteResponse{Deleted: img.ID})
-	s.Store.Images.Delete(img.ID)
 
+	result = append(result, &api.ImageDeleteResponse{Untagged: resolvedTag})
+	s.Store.Images.Delete(resolvedTag)
+	s.emitEvent("image", "untag", img.ID, map[string]string{"name": resolvedTag})
+	remaining := make([]string, 0, len(img.RepoTags)-1)
+	for _, t := range img.RepoTags {
+		if t != resolvedTag {
+			remaining = append(remaining, t)
+		}
+	}
+	img.RepoTags = remaining
+	for _, t := range remaining {
+		s.Store.Images.Put(t, img)
+	}
+	s.Store.Images.Put(img.ID, img)
 	if short := img.ID; len(short) > 19 {
-		s.Store.Images.Delete(short[:19])
+		s.Store.Images.Put(short[:19], img)
 	}
-
-	if ctxDir, ok := s.Store.BuildContexts.LoadAndDelete(img.ID); ok {
-		os.RemoveAll(ctxDir.(string))
-	}
-
-	s.emitEvent("image", "delete", img.ID, map[string]string{"name": name})
 	return result, nil
+}
+
+// resolveTagForRemoval matches the user-supplied ref against the image's
+// RepoTags, returning the full tag string (registry/repo:tag) the user
+// asked to untag. Returns "" when the ref names the image by ID/digest
+// rather than by tag.
+func resolveTagForRemoval(name string, img api.Image) string {
+	if strings.HasPrefix(name, "sha256:") || strings.Contains(name, "@") {
+		return ""
+	}
+	if _, err := digest(name); err == nil {
+		return ""
+	}
+	candidates := []string{name}
+	if !strings.Contains(name, ":") {
+		candidates = append(candidates, name+":latest")
+	}
+	for _, cand := range candidates {
+		for _, tag := range img.RepoTags {
+			if tag == cand {
+				return tag
+			}
+			if stripDefaultRegistry(tag) == cand || stripDefaultRegistry(tag) == stripDefaultRegistry(cand) {
+				return tag
+			}
+		}
+	}
+	return ""
+}
+
+func stripDefaultRegistry(tag string) string {
+	for _, prefix := range []string{"docker.io/library/", "docker.io/", "registry-1.docker.io/library/", "registry-1.docker.io/"} {
+		if strings.HasPrefix(tag, prefix) {
+			return strings.TrimPrefix(tag, prefix)
+		}
+	}
+	return tag
+}
+
+// digest returns nil if the string looks like a bare sha256 (32+ hex chars).
+func digest(s string) (string, error) {
+	if len(s) < 12 {
+		return "", fmt.Errorf("not a digest")
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return "", fmt.Errorf("not a digest")
+		}
+	}
+	return s, nil
 }
 
 // ImageHistory returns the history of an image.

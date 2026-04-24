@@ -178,13 +178,14 @@ func (m *ImageManager) Push(name string, tag string, auth string) (io.ReadCloser
 				}()
 				return pr, nil
 			}
-			// Auto-fetch the cloud registry token if the caller didn't
-			// provide one — sockerless manages cloud creds out-of-band so
-			// users don't need to `docker login` first.
-			if auth == "" {
-				if token, err := m.Auth.GetToken(registry); err == nil {
-					auth = token
-				}
+			// Always use sockerless-managed credentials for our own
+			// cloud registries — the user's Docker CLI may send an
+			// `X-Registry-Auth` JSON that is either absent, stale, or
+			// encoded as a Docker-style username/password wrapper that
+			// OCIPush.SetOCIAuth can't interpret as a Basic token.
+			// Fetching a fresh token here is authoritative.
+			if token, err := m.Auth.GetToken(registry); err == nil {
+				auth = token
 			}
 		}
 	}

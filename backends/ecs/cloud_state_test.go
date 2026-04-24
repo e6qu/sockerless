@@ -15,7 +15,7 @@ func TestMapTaskStatus_Running(t *testing.T) {
 		StartedAt:  &startedAt,
 	}
 
-	state := mapTaskStatus(task)
+	state := mapTaskStatus(task, nil)
 
 	if state.Status != "running" {
 		t.Fatalf("expected status 'running', got %q", state.Status)
@@ -40,7 +40,7 @@ func TestMapTaskStatus_StoppedExitCode0(t *testing.T) {
 		},
 	}
 
-	state := mapTaskStatus(task)
+	state := mapTaskStatus(task, nil)
 
 	if state.Status != "exited" {
 		t.Fatalf("expected status 'exited', got %q", state.Status)
@@ -59,7 +59,7 @@ func TestMapTaskStatus_StoppedExitCode1(t *testing.T) {
 		},
 	}
 
-	state := mapTaskStatus(task)
+	state := mapTaskStatus(task, nil)
 
 	if state.Status != "exited" {
 		t.Fatalf("expected status 'exited', got %q", state.Status)
@@ -74,7 +74,7 @@ func TestMapTaskStatus_Pending(t *testing.T) {
 		LastStatus: aws.String("PENDING"),
 	}
 
-	state := mapTaskStatus(task)
+	state := mapTaskStatus(task, nil)
 
 	if state.Status != "created" {
 		t.Fatalf("expected status 'created', got %q", state.Status)
@@ -86,7 +86,7 @@ func TestMapTaskStatus_Provisioning(t *testing.T) {
 		LastStatus: aws.String("PROVISIONING"),
 	}
 
-	state := mapTaskStatus(task)
+	state := mapTaskStatus(task, nil)
 
 	if state.Status != "created" {
 		t.Fatalf("expected status 'created', got %q", state.Status)
@@ -112,7 +112,7 @@ func TestTaskToContainer_BasicFields(t *testing.T) {
 		"sockerless-name":         "/my-nginx",
 	}
 
-	c := taskToContainer(task, tags)
+	c := taskToContainer(task, tags, ecstypes.TaskDefinition{})
 
 	if c.ID != "abc123def456abc123def456abc123def456abc123def456abc123def456abcd" {
 		t.Fatalf("expected container ID from tag, got %q", c.ID)
@@ -142,7 +142,7 @@ func TestTaskToContainer_LabelsFromTags(t *testing.T) {
 		"sockerless-labels":       `{"app":"web","env":"prod"}`,
 	}
 
-	c := taskToContainer(task, tags)
+	c := taskToContainer(task, tags, ecstypes.TaskDefinition{})
 
 	if c.Config.Labels["app"] != "web" {
 		t.Fatalf("expected label app=web, got %q", c.Config.Labels["app"])
@@ -173,7 +173,7 @@ func TestTaskToContainer_NetworkIPFromENI(t *testing.T) {
 		"sockerless-name":         "/test",
 	}
 
-	c := taskToContainer(task, tags)
+	c := taskToContainer(task, tags, ecstypes.TaskDefinition{})
 
 	net := c.NetworkSettings.Networks["bridge"]
 	if net == nil {
@@ -199,7 +199,7 @@ func TestTaskToContainer_DefaultNameFromID(t *testing.T) {
 		"sockerless-container-id": "abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
 	}
 
-	c := taskToContainer(task, tags)
+	c := taskToContainer(task, tags, ecstypes.TaskDefinition{})
 
 	if c.Name != "/abc123def456" {
 		t.Fatalf("expected default name '/abc123def456', got %q", c.Name)
