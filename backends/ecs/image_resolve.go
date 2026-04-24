@@ -98,17 +98,24 @@ func (s *Server) ensurePullThroughCache(ctx context.Context, prefix, upstreamURL
 		UpstreamRegistryUrl: aws.String(upstreamURL),
 		UpstreamRegistry:    upstreamKind,
 	}
+	// Docker Hub upstream rules require a Secrets Manager credential
+	// ARN on real AWS; wire it through when the operator has set one.
+	// The simulator accepts either shape, so we let the actual API
+	// decide rather than pre-checking — on real AWS the caller gets a
+	// wrapped error naming the env var; on the simulator the call
+	// succeeds and the tests run.
 	if upstreamKind == ecrtypes.UpstreamRegistryDockerHub && upstreamURL == "registry-1.docker.io" {
-		credARN := dockerHubCredentialARN()
-		if credARN == "" {
-			return fmt.Errorf("docker-hub pull-through cache requires SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN (Secrets Manager ARN with {username, accessToken} JSON) — AWS rejects unauthenticated docker-hub upstream rules")
+		if credARN := dockerHubCredentialARN(); credARN != "" {
+			in.CredentialArn = aws.String(credARN)
 		}
-		in.CredentialArn = aws.String(credARN)
 	}
 
 	if _, err := s.aws.ECR.CreatePullThroughCacheRule(ctx, in); err != nil {
 		if strings.Contains(err.Error(), "PullThroughCacheRuleAlreadyExists") {
 			return nil
+		}
+		if upstreamKind == ecrtypes.UpstreamRegistryDockerHub && upstreamURL == "registry-1.docker.io" && dockerHubCredentialARN() == "" && strings.Contains(strings.ToLower(err.Error()), "credential") {
+			return fmt.Errorf("docker-hub pull-through cache requires SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN (Secrets Manager ARN with {username, accessToken} JSON): %w", err)
 		}
 		return fmt.Errorf("create pull-through cache rule: %w", err)
 	}

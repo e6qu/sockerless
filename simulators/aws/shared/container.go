@@ -435,12 +435,15 @@ func ResolveLocalImage(image string) string {
 		dockerPath = strings.TrimPrefix(dockerPath, "library/")
 		return dockerPath
 	}
-	// AWS ECR pull-through cache
+	// AWS ECR pull-through cache. Strip docker-hub/ first, THEN
+	// library/ — the URI is always `<acct>.dkr.ecr.<region>.amazonaws.com/docker-hub/library/<name>`
+	// for docker-hub pull-through cache hits, so reversing the order
+	// would leave `library/<name>` stuck to the front.
 	if strings.Contains(image, ".dkr.ecr.") && strings.Contains(image, ".amazonaws.com/") {
 		idx := strings.Index(image, ".amazonaws.com/")
 		dockerPath := image[idx+len(".amazonaws.com/"):]
-		dockerPath = strings.TrimPrefix(dockerPath, "library/")
 		dockerPath = strings.TrimPrefix(dockerPath, "docker-hub/")
+		dockerPath = strings.TrimPrefix(dockerPath, "library/")
 		return dockerPath
 	}
 	// Azure ACR
