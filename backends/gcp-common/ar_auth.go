@@ -43,36 +43,23 @@ func (a *ARAuthProvider) IsCloudRegistry(registry string) bool {
 	return core.IsGCPRegistry(registry)
 }
 
-// OnPush pushes a synthetic image to an OCI-compliant GCP registry using core.OCIPush.
-// The auth token is obtained internally via GetToken.
+// OnPush is a no-op for Artifact Registry — repositories are created
+// implicitly on first push, and the actual blob upload is done by
+// BaseServer.ImagePush via core.OCIPush, which has access to the
+// image's layer data through the local store. OnPush used to also
+// call OCIPush here without layer data, which always failed (BUG-763).
 func (a *ARAuthProvider) OnPush(imageID, registry, repo, tag string) error {
-	authToken, err := a.GetToken(registry)
-	if err != nil {
-		return fmt.Errorf("get token for push: %w", err)
-	}
-	_, err = core.OCIPush(core.OCIPushOptions{
-		Registry:   registry,
-		Repository: repo,
-		Tag:        tag,
-		AuthToken:  authToken,
-	})
-	return err
+	return nil
 }
 
-// OnTag re-pushes a manifest with a new tag to sync the tag in Artifact Registry.
-// The auth token is obtained internally via GetToken.
+// OnTag is a no-op for Artifact Registry — manifest re-PUT for the
+// new tag is handled by BaseServer.ImagePush.
 func (a *ARAuthProvider) OnTag(imageID, registry, repo, newTag string) error {
-	authToken, err := a.GetToken(registry)
-	if err != nil {
-		return fmt.Errorf("get token for tag: %w", err)
-	}
-	_, err = core.OCIPush(core.OCIPushOptions{
-		Registry:   registry,
-		Repository: repo,
-		Tag:        newTag,
-		AuthToken:  authToken,
-	})
-	return err
+	_ = imageID
+	_ = registry
+	_ = repo
+	_ = newTag
+	return nil
 }
 
 // OnRemove deletes manifests from Artifact Registry by tag.

@@ -1171,7 +1171,9 @@ func (s *BaseServer) ImagePullWithMetadata(ref string, auth string, meta *ImageM
 		return io.NopCloser(&buf), nil
 	}
 
-	// Determine image ID, size, digests, layers from real metadata or synthetic fallback
+	// Determine image ID, size, digests, layers from real metadata.
+	// Caller is required to fetch metadata from the registry (BUG-737)
+	// — no synthetic fallback exists.
 	var imageID string
 	var imgSize int64
 	var repoDigests []string

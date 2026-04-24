@@ -46,21 +46,13 @@ func (a *ACRAuthProvider) IsCloudRegistry(registry string) bool {
 	return strings.HasSuffix(registry, ".azurecr.io")
 }
 
-// OnPush pushes a synthetic OCI image to ACR via the Distribution API.
-// Errors are non-fatal -- the caller logs warnings on failure.
+// OnPush is a no-op for ACR — repositories are created implicitly on
+// first push and the actual blob upload is done by
+// BaseServer.ImagePush via core.OCIPush, which has access to the
+// image's layer data through the local store. OnPush used to also
+// call OCIPush here without layer data, which always failed (BUG-763).
 func (a *ACRAuthProvider) OnPush(imageID, registry, repo, tag string) error {
-	token, err := a.GetToken(registry)
-	if err != nil {
-		return fmt.Errorf("ACR auth: %w", err)
-	}
-
-	_, err = core.OCIPush(core.OCIPushOptions{
-		Registry:   registry,
-		Repository: repo,
-		Tag:        tag,
-		AuthToken:  token,
-	})
-	return err
+	return nil
 }
 
 // OnTag syncs a tag to ACR by fetching the source manifest and re-putting it with the new tag.
