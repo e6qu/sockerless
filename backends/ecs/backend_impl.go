@@ -732,22 +732,25 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 	}, nil
 }
 
-// ContainerPause is not supported by the ECS backend.
+// ContainerPause is not yet implemented on the ECS backend. The
+// SIGSTOP-via-bootstrap pattern from Phase 99 needs a SSM-routed
+// transport (Phase 102 / BUG-762) plus a task-definition convention
+// for writing the user PID to /tmp/.sockerless-mainpid.
 func (s *Server) ContainerPause(ref string) error {
 	_, ok := s.ResolveContainerIDAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-	return &api.NotImplementedError{Message: "ECS backend does not support pause"}
+	return &api.NotImplementedError{Message: "docker pause not yet implemented for ECS — needs SSM-routed `kill -SIGSTOP $(cat /tmp/.sockerless-mainpid)` (Phase 102)"}
 }
 
-// ContainerUnpause is not supported by the ECS backend.
+// ContainerUnpause is not yet implemented on the ECS backend (Phase 102).
 func (s *Server) ContainerUnpause(ref string) error {
 	_, ok := s.ResolveContainerIDAuto(context.Background(), ref)
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
-	return &api.NotImplementedError{Message: "ECS backend does not support unpause"}
+	return &api.NotImplementedError{Message: "docker unpause not yet implemented for ECS — needs SSM-routed `kill -SIGCONT $(cat /tmp/.sockerless-mainpid)` (Phase 102)"}
 }
 
 // ImagePull pulls an image, using ECR cloud auth when available.
@@ -1000,22 +1003,29 @@ func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*ap
 	return s.BaseServer.ExecCreate(containerID, req)
 }
 
-// ContainerExport is not supported by the ECS backend (no filesystem access on Fargate).
+// ContainerExport is not yet implemented on the ECS backend. The
+// reverse-agent style helper (Phase 98 for FaaS backends) hasn't been
+// ported to SSM-routed capture yet; tracked as Phase 102 / BUG-761.
+// Fargate's filesystem IS reachable through `aws ecs execute-command`
+// — there's no platform constraint here, just unimplemented work.
 func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {
 	_, ok := s.ResolveContainerIDAuto(context.Background(), ref)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
-	return nil, &api.NotImplementedError{Message: "ECS backend does not support container export; Fargate tasks have no accessible filesystem"}
+	return nil, &api.NotImplementedError{Message: "docker export not yet implemented for ECS — needs SSM-routed `tar cf -` capture (Phase 102)"}
 }
 
-// ContainerCommit is not supported by the ECS backend (cannot snapshot Fargate containers).
+// ContainerCommit is not implemented on the ECS backend. Fargate task
+// images are control-plane-owned (sourced from ECR), so commit needs
+// the same agent-driven snapshot + registry-push pipeline as Lambda;
+// tracked as Phase 98b / BUG-750.
 func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
 	_, ok := s.ResolveContainerIDAuto(context.Background(), req.Container)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
 	}
-	return nil, &api.NotImplementedError{Message: "ECS backend does not support container commit; Fargate containers cannot be snapshotted"}
+	return nil, &api.NotImplementedError{Message: "docker commit not yet implemented for ECS — needs agent-driven rootfs snapshot + ECR push (Phase 98b)"}
 }
 
 // VolumePrune deletes all sockerless-managed EFS access points that
