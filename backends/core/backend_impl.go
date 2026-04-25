@@ -1247,11 +1247,15 @@ func (s *BaseServer) ImagePullWithMetadata(ref string, auth string, meta *ImageM
 	// considered to have succeeded only when all blobs are cached.
 	var manifestLayers []ManifestLayerEntry
 	if len(meta.LayerBlobDigests) == len(meta.LayerSizes) && len(meta.LayerBlobDigests) > 0 {
-		rc := parseImageRef(ref)
-		token, terr := getRegistryToken(rc, auth)
-		if terr != nil {
-			return nil, fmt.Errorf("image pull %q: registry auth: %w", ref, terr)
+		// Reuse the token + registry config that FetchImageMetadata
+		// already obtained. Calling getRegistryToken twice in the same
+		// pull trips rate limits on Docker Hub (returns 400 on the
+		// second hit) — and the registry already authorised us once.
+		rc := meta.RegistryConfig
+		if rc.Registry == "" {
+			rc = parseImageRef(ref)
 		}
+		token := meta.Token
 		manifestLayers = make([]ManifestLayerEntry, len(meta.LayerBlobDigests))
 		for i, blobDigest := range meta.LayerBlobDigests {
 			blob, ferr := FetchLayerBlob(rc, token, blobDigest)

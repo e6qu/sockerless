@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,32 +77,22 @@ func TestContainerStatsStream(t *testing.T) {
 		t.Fatalf("start failed: %v", err)
 	}
 
-	// Get stats (streaming) with a timeout
+	// Streaming `docker stats` is an accepted gap on cloud backends —
+	// cloud metrics lag 30-60s so a streaming response would be a
+	// polling reskin that misleads callers. The integration tests run
+	// against simulator-backed cloud backends (CloudState is set), so
+	// the API returns NotImplementedError. Asserting the gap here so
+	// any regression that re-introduces fake streaming gets caught.
 	streamCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
 	resp, err := dockerClient.ContainerStats(streamCtx, id, true)
-	if err != nil {
-		t.Fatalf("stats stream failed: %v", err)
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("expected streaming stats to return NotImplemented on cloud backends, got success")
 	}
-	defer resp.Body.Close()
-
-	// Read at least 2 JSON objects from the stream
-	dec := json.NewDecoder(resp.Body)
-	count := 0
-	for count < 2 {
-		var stats map[string]any
-		if err := dec.Decode(&stats); err != nil {
-			break
-		}
-		if _, ok := stats["read"]; !ok {
-			t.Errorf("stats line %d missing 'read' field", count)
-		}
-		count++
-	}
-
-	if count < 2 {
-		t.Errorf("expected at least 2 stats entries from stream, got %d", count)
+	if !strings.Contains(err.Error(), "not supported") && !strings.Contains(err.Error(), "Not Implemented") {
+		t.Fatalf("expected NotImplemented-shaped error, got: %v", err)
 	}
 }
 

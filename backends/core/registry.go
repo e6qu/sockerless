@@ -37,6 +37,15 @@ type ImageMetadataResult struct {
 	OS               string               // e.g. "linux"
 	Author           string
 	Created          string // RFC3339
+	// Token is the bearer the registry handed back during the metadata
+	// fetch — reused by callers that need to fetch blobs from the same
+	// registry so we don't re-hit the token endpoint (Docker Hub will
+	// return 400 on the second call within a short window). Not
+	// serialised; populated only on a freshly-fetched result.
+	Token string `json:"-"`
+	// RegistryConfig records the parsed registry / repo / tag so the
+	// caller can reuse them for blob fetches without re-parsing.
+	RegistryConfig registryConfig `json:"-"`
 }
 
 // ImageHistoryItem represents a single build step from the image config.
@@ -151,6 +160,11 @@ var registryClient = &http.Client{
 }
 
 // fetchMetadataFromRegistry fetches rich image metadata from a v2 registry.
+// The returned `ImageMetadataResult` exposes the auth token + parsed
+// registry config so a caller that needs to fetch blobs (e.g.
+// `BaseServer.ImagePull`'s post-pull layer cache) can reuse the same
+// auth context — re-hitting the token endpoint within a short window
+// trips rate limits on Docker Hub (returns 400).
 func fetchMetadataFromRegistry(rc registryConfig, basicAuth string) (*ImageMetadataResult, error) {
 	// Step 1: Get auth token
 	token, err := getRegistryToken(rc, basicAuth)
@@ -210,6 +224,8 @@ func fetchMetadataFromRegistry(rc registryConfig, basicAuth string) (*ImageMetad
 		OS:               ociCfg.OS,
 		Author:           ociCfg.Author,
 		Created:          ociCfg.Created,
+		Token:            token,
+		RegistryConfig:   rc,
 	}, nil
 }
 

@@ -65,7 +65,11 @@ func (s *BaseServer) handleContainerStats(w http.ResponseWriter, r *http.Request
 		return
 	}
 	id := c.ID
-	stream := r.URL.Query().Get("stream") != "false"
+	// Docker clients send the stream flag as "true" / "false" (newer
+	// SDKs) or "1" / "0" (older). Normalise both forms — anything that
+	// parses as "no stream" is treated as one-shot.
+	streamRaw := r.URL.Query().Get("stream")
+	stream := streamRaw != "false" && streamRaw != "0"
 
 	// Streaming `docker stats` is an accepted gap on cloud backends
 	// (see specs/CLOUD_RESOURCE_MAPPING.md § Acceptable gaps): cloud
