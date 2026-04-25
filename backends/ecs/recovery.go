@@ -6,6 +6,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
+	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	core "github.com/sockerless/backend-core"
 )
 
@@ -127,4 +128,64 @@ func (s *Server) CleanupResource(ctx context.Context, entry core.ResourceEntry) 
 		Reason:  aws.String("Sockerless orphan cleanup"),
 	})
 	return err
+}
+
+// markTasksRemoved records every sockerless-managed task carrying the
+// given container ID as cleaned up in the local registry. ECS rejects
+// `TagResource` for STOPPED tasks, so we can't flag removal on the
+// cloud side — the registry is the source of truth for "user has
+// removed this container" and queryTasks treats any cleaned-up ARN as
+// hidden. Applies to both RUNNING and STOPPED tasks so restart-revision
+// leftovers disappear after rm.
+func (s *Server) markTasksRemoved(containerID string) {
+	ctx := s.ctx()
+	marked := 0
+	for _, status := range []ecstypes.DesiredStatus{ecstypes.DesiredStatusRunning, ecstypes.DesiredStatusStopped} {
+		listOut, err := s.aws.ECS.ListTasks(ctx, &awsecs.ListTasksInput{
+			Cluster:       aws.String(s.config.Cluster),
+			DesiredStatus: status,
+		})
+		if err != nil || len(listOut.TaskArns) == 0 {
+			continue
+		}
+		descOut, err := s.aws.ECS.DescribeTasks(ctx, &awsecs.DescribeTasksInput{
+			Cluster: aws.String(s.config.Cluster),
+			Tasks:   listOut.TaskArns,
+			Include: []ecstypes.TaskField{ecstypes.TaskFieldTags},
+		})
+		if err != nil {
+			continue
+		}
+		for _, t := range descOut.Tasks {
+			var tagContainerID string
+			for _, tg := range t.Tags {
+				if aws.ToString(tg.Key) == "sockerless-container-id" {
+					tagContainerID = aws.ToString(tg.Value)
+				}
+			}
+			if tagContainerID != containerID {
+				continue
+			}
+			arn := aws.ToString(t.TaskArn)
+			if _, known := s.Registry.Get(arn); !known {
+				s.Registry.Register(core.ResourceEntry{
+					ContainerID:  containerID,
+					Backend:      "ecs",
+					ResourceType: "task",
+					ResourceID:   arn,
+					InstanceID:   s.Desc.InstanceID,
+				})
+			}
+			s.Registry.MarkCleanedUp(arn)
+			marked++
+		}
+	}
+	s.Logger.Debug().Str("container", containerID[:minInt(12, len(containerID))]).Int("marked", marked).Msg("markTasksRemoved done")
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

@@ -168,13 +168,13 @@ func TestAsGCPLabels_JSONBlobGoesToAnnotations(t *testing.T) {
 	labels := ts.AsGCPLabels()
 	ann := ts.AsGCPAnnotations()
 
-	if _, ok := labels["sockerless_labels"]; ok {
-		t.Errorf("sockerless_labels JSON blob should NOT be in GCP labels (contains `{`, `:`, `\"`)")
+	// URL-safe base64 contains mixed-case characters; GCP labels
+	// require all-lowercase, so the b64 blob goes into annotations.
+	if _, ok := labels["sockerless_labels_b64"]; ok {
+		t.Errorf("b64 blob should NOT be in GCP labels (mixed-case)")
 	}
-	if v, ok := ann["sockerless_labels"]; !ok {
-		t.Errorf("sockerless_labels JSON blob should be in GCP annotations")
-	} else if v == "" || !strings.Contains(v, "prod") {
-		t.Errorf("sockerless_labels annotation should contain the JSON blob, got %q", v)
+	if _, ok := ann["sockerless_labels_b64"]; !ok {
+		t.Errorf("expected sockerless_labels_b64 in GCP annotations")
 	}
 
 	// Round-trip: annotations keep underscores; caller merges with hyphen
@@ -225,12 +225,12 @@ func TestParseLabelFromTags_MultiChunk(t *testing.T) {
 	}
 	tags := ts.AsMap()
 
-	// Verify it was split (no single sockerless-labels key)
-	if _, ok := tags["sockerless-labels"]; ok {
+	// Verify it was split (no single sockerless-labels-b64 key)
+	if _, ok := tags["sockerless-labels-b64"]; ok {
 		t.Fatal("expected labels to be split across chunks, not stored in single key")
 	}
-	if _, ok := tags["sockerless-labels-0"]; !ok {
-		t.Fatal("expected sockerless-labels-0 chunk")
+	if _, ok := tags["sockerless-labels-b64-0"]; !ok {
+		t.Fatal("expected sockerless-labels-b64-0 chunk")
 	}
 
 	// Round-trip through ParseLabelsFromTags

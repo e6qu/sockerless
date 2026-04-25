@@ -100,12 +100,24 @@ func (s *BaseServer) handleLibpodContainerCreate(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Extract pod field from raw JSON (Podman sends --pod here)
-	var rawFields struct {
-		Pod  string `json:"pod"`
-		Name string `json:"name"`
+	// Podman's specgen JSON uses lowercase, flat fields (`image`,
+	// `command`, `env`, `work_dir`, etc.) instead of Docker's
+	// `ContainerConfig` wrapper. Pull the fields we care about out of
+	// the raw body before we try the Docker-compat unmarshal.
+	var spec struct {
+		Pod        string            `json:"pod"`
+		Name       string            `json:"name"`
+		Image      string            `json:"image"`
+		Command    []string          `json:"command"`
+		Entrypoint []string          `json:"entrypoint"`
+		Env        map[string]string `json:"env"`
+		WorkDir    string            `json:"work_dir"`
+		Labels     map[string]string `json:"labels"`
+		Terminal   bool              `json:"terminal"`
+		Stdin      bool              `json:"stdin"`
+		Networks   map[string]any    `json:"Networks"`
 	}
-	_ = json.Unmarshal(bodyBytes, &rawFields)
+	_ = json.Unmarshal(bodyBytes, &spec)
 
 	// Parse the standard request
 	var req api.ContainerCreateRequest
@@ -114,15 +126,50 @@ func (s *BaseServer) handleLibpodContainerCreate(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// Merge podman specgen fields into the request when the
+	// Docker-compat fields are empty (which they usually are for
+	// libpod callers).
+	if req.ContainerConfig == nil {
+		req.ContainerConfig = &api.ContainerConfig{}
+	}
+	if req.Image == "" && spec.Image != "" {
+		req.Image = spec.Image
+	}
+	if len(req.Cmd) == 0 && len(spec.Command) > 0 {
+		req.Cmd = spec.Command
+	}
+	if len(req.Entrypoint) == 0 && len(spec.Entrypoint) > 0 {
+		req.Entrypoint = spec.Entrypoint
+	}
+	if req.WorkingDir == "" && spec.WorkDir != "" {
+		req.WorkingDir = spec.WorkDir
+	}
+	if len(req.Labels) == 0 && len(spec.Labels) > 0 {
+		req.Labels = spec.Labels
+	}
+	if !req.Tty && spec.Terminal {
+		req.Tty = true
+	}
+	if !req.OpenStdin && spec.Stdin {
+		req.OpenStdin = true
+	}
+	if len(req.Env) == 0 && len(spec.Env) > 0 {
+		env := make([]string, 0, len(spec.Env))
+		for k, v := range spec.Env {
+			env = append(env, k+"="+v)
+		}
+		req.Env = env
+	}
+
 	// Podman sends name in body; Docker compat uses ?name= query param
 	if qName := r.URL.Query().Get("name"); qName != "" {
 		req.Name = qName
-	} else if rawFields.Name != "" {
-		req.Name = rawFields.Name
+	} else if spec.Name != "" {
+		req.Name = spec.Name
 	}
 
 	// Pod from body or query param
-	podRef := rawFields.Pod
+	podRef := spec.Pod
 	if qPod := r.URL.Query().Get("pod"); qPod != "" {
 		podRef = qPod
 	}
@@ -217,8 +264,26 @@ func (s *BaseServer) handleLibpodContainerList(w http.ResponseWriter, r *http.Re
 		Status     string            `json:"Status"`
 	}
 
+	// Prefer cloud-derived state on stateless backends so podman ps
+	// sees the same containers as docker ps.
+	var containers []api.Container
+	if s.CloudState != nil {
+		cc, err := s.CloudState.ListContainers(r.Context(), all, filters)
+		if err == nil {
+			containers = cc
+		}
+	}
+	for _, pc := range s.PendingCreates.List() {
+		if all || pc.State.Running {
+			containers = append(containers, pc)
+		}
+	}
+	if s.CloudState == nil {
+		containers = s.Store.Containers.List()
+	}
+
 	var result []libpodContainer
-	for _, c := range s.Store.Containers.List() {
+	for _, c := range containers {
 		if !all && !c.State.Running {
 			continue
 		}

@@ -31,11 +31,21 @@ func TestResolveLocalImage_Passthrough(t *testing.T) {
 }
 
 func TestResolveLocalImage_ECR_DockerHub(t *testing.T) {
-	// ECR strips library/ first (no-op here), then docker-hub/.
-	// Remaining "library/nginx:1.25" is returned as-is because library/ was already attempted.
+	// ECR pull-through cache hit for a Docker Hub library image:
+	// `docker-hub/` and `library/` both get stripped so the resolved
+	// ref matches the plain Docker Hub name the local daemon can pull.
 	got := ResolveLocalImage("123456789012.dkr.ecr.us-east-1.amazonaws.com/docker-hub/library/nginx:1.25")
-	if got != "library/nginx:1.25" {
-		t.Errorf("expected library/nginx:1.25, got %q", got)
+	if got != "nginx:1.25" {
+		t.Errorf("expected nginx:1.25, got %q", got)
+	}
+}
+
+func TestResolveLocalImage_ECR_DockerHubNonLibrary(t *testing.T) {
+	// Non-library docker-hub image: strip docker-hub/ but leave the
+	// user/repo path intact so e.g. `user/myimg:tag` round-trips.
+	got := ResolveLocalImage("123456789012.dkr.ecr.us-east-1.amazonaws.com/docker-hub/user/myimg:tag")
+	if got != "user/myimg:tag" {
+		t.Errorf("expected user/myimg:tag, got %q", got)
 	}
 }
 

@@ -67,7 +67,7 @@ func ConfigFromEnv() Config {
 		Timeout:              envOrDefaultInt("SOCKERLESS_LAMBDA_TIMEOUT", 900),
 		SubnetIDs:            splitCSV(os.Getenv("SOCKERLESS_LAMBDA_SUBNETS")),
 		SecurityGroupIDs:     splitCSV(os.Getenv("SOCKERLESS_LAMBDA_SECURITY_GROUPS")),
-		AgentEFSID:           os.Getenv("SOCKERLESS_LAMBDA_AGENT_EFS_ID"),
+		AgentEFSID:           firstNonEmpty(os.Getenv("SOCKERLESS_LAMBDA_AGENT_EFS_ID"), os.Getenv("SOCKERLESS_AGENT_EFS_ID")),
 		CodeBuildProject:     os.Getenv("SOCKERLESS_AWS_CODEBUILD_PROJECT"),
 		BuildBucket:          os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET"),
 		EndpointURL:          os.Getenv("SOCKERLESS_ENDPOINT_URL"),
@@ -133,6 +133,15 @@ func envOrDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func envOrDefaultInt(key string, def int) int {

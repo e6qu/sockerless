@@ -20,16 +20,21 @@ func (s *Server) runECSTask(containerID, taskDefARN string, c *api.Container) (t
 		assignPublicIP = ecstypes.AssignPublicIpEnabled
 	}
 
+	restartCount := 0
+	if ecsState, ok := s.ECS.Get(containerID); ok {
+		restartCount = ecsState.RestartCount
+	}
 	tags := core.TagSet{
-		ContainerID: containerID,
-		Backend:     "ecs",
-		Cluster:     s.config.Cluster,
-		InstanceID:  s.Desc.InstanceID,
-		CreatedAt:   time.Now(),
-		Name:        c.Name,
-		Network:     c.HostConfig.NetworkMode,
-		Labels:      c.Config.Labels,
-		Tty:         c.Config.Tty,
+		ContainerID:  containerID,
+		Backend:      "ecs",
+		Cluster:      s.config.Cluster,
+		InstanceID:   s.Desc.InstanceID,
+		CreatedAt:    time.Now(),
+		Name:         c.Name,
+		Network:      c.HostConfig.NetworkMode,
+		Labels:       c.Config.Labels,
+		Tty:          c.Config.Tty,
+		RestartCount: restartCount,
 	}
 	// Set pod tag if container is in a pod
 	if pod, _ := s.Store.Pods.GetPodForContainer(containerID); pod != nil {

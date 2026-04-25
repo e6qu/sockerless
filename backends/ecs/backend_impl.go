@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
+	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/sockerless/api"
 	awscommon "github.com/sockerless/aws-common"
 	core "github.com/sockerless/backend-core"
@@ -48,8 +49,22 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		config = *req.ContainerConfig
 	}
 
-	// Merge image config if available
-	if img, ok := s.Store.ResolveImage(config.Image); ok {
+	// Merge image config if available. If the image isn't in the local
+	// Store (e.g. after backend restart, or `docker run` without an
+	// explicit preceding `docker pull`), fetch its metadata now so the
+	// task definition gets the real Cmd / Entrypoint / WorkingDir /
+	// Env from the image — this is what docker CLI users expect from
+	// `docker inspect` after running a container with an image default
+	// CMD.
+	img, ok := s.Store.ResolveImage(config.Image)
+	if !ok {
+		if rc, err := s.ImagePull(config.Image, ""); err == nil {
+			_, _ = io.Copy(io.Discard, rc)
+			_ = rc.Close()
+			img, ok = s.Store.ResolveImage(config.Image)
+		}
+	}
+	if ok {
 		config.Env = core.MergeEnvByKey(img.Config.Env, config.Env)
 		if len(config.Cmd) == 0 && len(config.Entrypoint) == 0 {
 			config.Cmd = img.Config.Cmd
@@ -164,6 +179,19 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 
 	// Store ECS state without task definition — defer registration to ContainerStart.
 	s.ECS.Put(id, ECSState{})
+
+	// Attach the user-defined network's security group so the task is
+	// launched on that SG (not just the default task SG). `docker run
+	// --network <name>` only reaches NetworkConnect for additional
+	// networks; the initial NetworkMode network still needs to be wired.
+	if networkID != "" && netName != "bridge" && netName != "host" && netName != "none" {
+		if err := s.cloudNetworkConnect(networkID, id); err != nil {
+			s.Logger.Warn().Err(err).
+				Str("container", id[:12]).
+				Str("network", netName).
+				Msg("failed to wire network security group at create time")
+		}
+	}
 
 	s.EmitEvent("container", "create", id, map[string]string{
 		"name":  strings.TrimPrefix(name, "/"),
@@ -452,6 +480,16 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 		if ecsState.ClusterARN != "" {
 			cluster = ecsState.ClusterARN
 		}
+		// Record the signal on the task before stopping it so the
+		// cloud-state reader can report 128+signum on inspect rather
+		// than whatever the container process happened to exit with
+		// (nginx-on-SIGTERM reports 1, which disagrees with Docker).
+		_, _ = s.aws.ECS.TagResource(s.ctx(), &awsecs.TagResourceInput{
+			ResourceArn: aws.String(ecsState.TaskARN),
+			Tags: []ecstypes.Tag{
+				{Key: aws.String("sockerless-kill-signal"), Value: aws.String(signal)},
+			},
+		})
 		_, _ = s.aws.ECS.StopTask(s.ctx(), &awsecs.StopTaskInput{
 			Cluster: aws.String(cluster),
 			Task:    aws.String(ecsState.TaskARN),
@@ -537,6 +575,13 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	if ecsState.TaskARN != "" {
 		s.Registry.MarkCleanedUp(ecsState.TaskARN)
 	}
+	// Mark every ECS task for this container as cleaned up in the
+	// registry. ECS's TagResource rejects STOPPED tasks, so we can't
+	// flag them with a cloud-side `sockerless-removed` tag — the
+	// registry is the source of truth for "user has removed this
+	// container" and queryTasks skips every cleanedUp ARN. Running
+	// tasks are tagged too for consistency post-stop.
+	s.markTasksRemoved(id)
 
 	if pod, inPod := s.Store.Pods.GetPodForContainer(id); inPod {
 		s.Store.Pods.RemoveContainer(pod.ID, id)
@@ -605,6 +650,16 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
 	id := c.ID
+	// Stamp the incoming-restart count on container state so the
+	// subsequent ContainerStart can propagate it onto the new task's
+	// tags. Read from the current cloud-derived container (which
+	// taskToContainer fills from the `sockerless-restart-count` tag).
+	newRestartCount := c.RestartCount + 1
+	if updated := s.ECS.Update(id, func(state *ECSState) {
+		state.RestartCount = newRestartCount
+	}); !updated {
+		s.ECS.Put(id, ECSState{RestartCount: newRestartCount})
+	}
 
 	// Stop if running
 	if c.State.Running {
@@ -646,6 +701,11 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 	}
 
 	// Re-add to PendingCreates so ContainerStart can find and launch it.
+	// State must read as not-running so ContainerStart doesn't short-circuit
+	// with NotModified (the old task is stopped; a fresh task is what we
+	// want).
+	c.State.Running = false
+	c.State.Status = "created"
 	s.PendingCreates.Put(id, c)
 
 	// Start the container directly via typed method

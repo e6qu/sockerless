@@ -65,6 +65,71 @@ resource "aws_vpc" "main" {
   })
 }
 
+# Sweep sockerless-runtime drift on `terragrunt destroy` so the VPC
+# isn't held back by Cloud Map namespaces, skls-* security groups, or
+# sockerless-owned EFS filesystems that are tagged but not part of
+# this module's state (runtime-created by `docker network create`,
+# `docker volume create`, etc.). Runs in its own null_resource gated
+# on the VPC's existence so terraform orders it before VPC delete.
+resource "null_resource" "sockerless_runtime_sweep" {
+  count = local.use_existing_vpc ? 0 : 1
+
+  triggers = {
+    vpc_id = aws_vpc.main[0].id
+    region = var.region
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      set -eu
+      region='${self.triggers.region}'
+      vpc='${self.triggers.vpc_id}'
+      echo "sockerless-runtime-sweep: region=$region vpc=$vpc"
+
+      # Cloud Map: delete sockerless-created namespaces (skls-*).
+      for ns_id in $(aws servicediscovery list-namespaces --region "$region" --query 'Namespaces[?starts_with(Name,`skls`)].Id' --output text); do
+        [ -z "$ns_id" ] && continue
+        for svc_id in $(aws servicediscovery list-services --region "$region" --filters "Name=NAMESPACE_ID,Values=$ns_id" --query 'Services[].Id' --output text); do
+          [ -z "$svc_id" ] && continue
+          for inst in $(aws servicediscovery list-instances --region "$region" --service-id "$svc_id" --query 'Instances[].Id' --output text); do
+            [ -z "$inst" ] && continue
+            aws servicediscovery deregister-instance --region "$region" --service-id "$svc_id" --instance-id "$inst" >/dev/null || true
+          done
+          sleep 2
+          aws servicediscovery delete-service --region "$region" --id "$svc_id" >/dev/null || true
+        done
+        sleep 3
+        aws servicediscovery delete-namespace --region "$region" --id "$ns_id" >/dev/null || true
+      done
+
+      # Security groups: delete sockerless-created network SGs (skls-*).
+      for sg in $(aws ec2 describe-security-groups --region "$region" --filters "Name=vpc-id,Values=$vpc" "Name=group-name,Values=skls-*" --query 'SecurityGroups[].GroupId' --output text); do
+        [ -z "$sg" ] && continue
+        aws ec2 delete-security-group --region "$region" --group-id "$sg" || true
+      done
+
+      # EFS: sockerless runtime sometimes creates its own filesystem
+      # (tagged sockerless-managed=true) when the operator hasn't wired
+      # SOCKERLESS_AGENT_EFS_ID. Drain mount targets then delete.
+      for fs in $(aws efs describe-file-systems --region "$region" --query 'FileSystems[?Tags[?Key==`sockerless-managed`&&Value==`true`]].FileSystemId' --output text); do
+        [ -z "$fs" ] && continue
+        for mt in $(aws efs describe-mount-targets --region "$region" --file-system-id "$fs" --query 'MountTargets[].MountTargetId' --output text); do
+          [ -z "$mt" ] && continue
+          aws efs delete-mount-target --region "$region" --mount-target-id "$mt" || true
+        done
+        # Wait for mount targets to drain (delete-file-system requires it).
+        for i in 1 2 3 4 5 6 7 8; do
+          left=$(aws efs describe-mount-targets --region "$region" --file-system-id "$fs" --query 'length(MountTargets)' --output text 2>/dev/null || echo 0)
+          [ "$left" = "0" ] && break
+          sleep 10
+        done
+        aws efs delete-file-system --region "$region" --file-system-id "$fs" || true
+      done
+    EOT
+  }
+}
+
 # =============================================================================
 # Internet Gateway
 # =============================================================================
@@ -465,13 +530,13 @@ resource "aws_security_group" "task" {
 resource "aws_security_group_rule" "task_self_ingress" {
   count = local.use_existing_vpc ? 0 : 1
 
-  description              = "Allow all traffic from tasks in the same security group"
-  type                     = "ingress"
-  from_port                = 0
-  to_port                  = 65535
-  protocol                 = "tcp"
-  self                     = true
-  security_group_id        = aws_security_group.task[0].id
+  description       = "Allow all traffic from tasks in the same security group"
+  type              = "ingress"
+  from_port         = 0
+  to_port           = 65535
+  protocol          = "tcp"
+  self              = true
+  security_group_id = aws_security_group.task[0].id
 }
 
 # Agent port: inbound TCP 9111 from self (for agent connectivity)

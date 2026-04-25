@@ -146,9 +146,9 @@ func (s *BaseServer) buildStatsEntry(containerID string, now time.Time, preread 
 		SystemCPUNanos: systemNanos,
 	})
 
-	// Look up container name
+	// Look up container name (try cloud state first for stateless backends)
 	var name string
-	if c, ok := s.Store.Containers.Get(containerID); ok {
+	if c, ok := s.ResolveContainerAuto(context.Background(), containerID); ok {
 		name = c.Name
 	}
 
@@ -210,60 +210,19 @@ func (s *BaseServer) buildNetworkStats(containerID string) map[string]any {
 
 func (s *BaseServer) handleContainerRename(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
-	id, ok := s.ResolveContainerIDAuto(r.Context(), ref)
-	if !ok {
-		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
-		return
-	}
-
 	newName := r.URL.Query().Get("name")
 	if newName == "" {
 		WriteError(w, &api.InvalidParameterError{Message: "name is required"})
 		return
 	}
-	if !strings.HasPrefix(newName, "/") {
-		newName = "/" + newName
-	}
-
-	// Serialize renames to prevent race between conflict check and swap
-	s.Store.RenameMu.Lock()
-	defer s.Store.RenameMu.Unlock()
-
-	c, _ := s.Store.Containers.Get(id)
-	oldName := c.Name
-
-	// Check for conflicts
-	if _, exists := s.Store.ContainerNames.Get(newName); exists {
-		WriteError(w, &api.ConflictError{
-			Message: fmt.Sprintf("Conflict. The container name \"%s\" is already in use", strings.TrimPrefix(newName, "/")),
-		})
+	// Route through s.self.ContainerRename so per-backend overrides
+	// (e.g. ECS pushing the new name to the task's `sockerless-name`
+	// tag) run. The base implementation handles in-memory Store updates
+	// and the network-name-map sync; backends wrap it.
+	if err := s.self.ContainerRename(ref, newName); err != nil {
+		WriteError(w, err)
 		return
 	}
-
-	s.Store.ContainerNames.Delete(oldName)
-	s.Store.ContainerNames.Put(newName, id)
-	s.Store.Containers.Update(id, func(c *api.Container) {
-		c.Name = newName
-	})
-
-	// Update name in each network's Containers map
-	c, _ = s.Store.Containers.Get(id)
-	for _, ep := range c.NetworkSettings.Networks {
-		if ep != nil && ep.NetworkID != "" {
-			s.Store.Networks.Update(ep.NetworkID, func(n *api.Network) {
-				if er, ok := n.Containers[id]; ok {
-					er.Name = strings.TrimPrefix(newName, "/")
-					n.Containers[id] = er
-				}
-			})
-		}
-	}
-
-	s.emitEvent("container", "rename", id, map[string]string{
-		"name":    strings.TrimPrefix(newName, "/"),
-		"oldName": strings.TrimPrefix(oldName, "/"),
-	})
-
 	w.WriteHeader(http.StatusNoContent)
 }
 
