@@ -75,6 +75,18 @@ resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
   policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+# AWSLambdaVPCAccessExecutionRole — grants ec2:CreateNetworkInterface,
+# DescribeNetworkInterfaces, DeleteNetworkInterface (and AssignPrivate
+# IpAddresses + UnassignPrivateIpAddresses for ENI cleanup). Required
+# whenever sockerless creates a Lambda with VpcConfig — the Lambda
+# service uses these to attach an ENI in the function's subnets.
+# Sockerless attaches VpcConfig whenever SOCKERLESS_LAMBDA_SUBNETS is
+# set, which the live runbook does to share the ECS VPC.
+resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
+  role       = aws_iam_role.execution.name
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
 # ECR pull permissions — allows Lambda to pull container images
 data "aws_iam_policy_document" "ecr_pull" {
   statement {
@@ -123,6 +135,10 @@ resource "aws_cloudwatch_log_group" "main" {
 resource "aws_ecr_repository" "main" {
   name                 = "${local.name_prefix}-lambda"
   image_tag_mutability = "MUTABLE"
+
+  # See ECS module for the rationale — destroy must succeed even with
+  # pushed images so live-cloud teardowns don't need extra commands.
+  force_delete = true
 
   image_scanning_configuration {
     scan_on_push = true

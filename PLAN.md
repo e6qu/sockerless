@@ -57,6 +57,21 @@ Dark mode, design tokens, error handling UX, container detail modal, auto-refres
 
 - **BUG-721** — SSM `acknowledge` format isn't accepted by the live AWS agent; backend dedupes retransmitted `output_stream_data` frames by MessageID. Proper fix requires live-AWS testing (Flags / PayloadDigest semantics). Pure sim path is unaffected.
 
+### Phase 103 — Overlay-rootfs bootstrap mode (queued)
+
+Replace the Phase 98 `find / -newer /proc/1` heuristic with a real overlay-FS-based diff/commit/cp/export path on every backend that runs through a sockerless bootstrap (Lambda, Cloud Run, ACA, GCF, AZF). The bootstrap mounts an overlayfs (`lowerdir=/, upperdir=…, workdir=…`), pivots into the merged dir, and execs the user command. The reverse-agent then reads `upper/` directly:
+
+- `docker diff` returns the overlay's upper-dir entries — captures **deletions** as whiteouts (closes the BUG-750 known limitation).
+- `docker commit` tars `upper/` directly — proper diff layer with whiteouts.
+- `docker cp` and `docker export` stream from the merged FS or the upper layer — no `tar -cf -` over a `find` listing.
+
+Gated behind `SOCKERLESS_OVERLAY_ROOTFS=1` per backend so existing deployments aren't disturbed. Out of scope: ECS — sockerless runs the operator's image as-is, so we can't insert a bootstrap there; ECS stays on Phase 102's SSM `find`/`tar` path.
+
+Caveats per backend (need verification before wiring):
+- **Lambda** — `CAP_SYS_ADMIN` available in the default execution context; workspace must live in `/tmp` (10 GB cap) since the function FS is read-only outside `/tmp`.
+- **Cloud Run / GCF** — gVisor is the container runtime; overlayfs support is partial. May need a `tmpfs` upper-dir; fallback to Phase 98's `find`-based path if mount fails.
+- **ACA / AZF** — full Linux containers; should work without caveats.
+
 ## Future ideas
 
 - GraphQL subscriptions for real-time event streaming.

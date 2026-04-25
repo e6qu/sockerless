@@ -22,11 +22,29 @@ type OCIPushOptions struct {
 	// LayerContent provides real layer data (keyed by digest).
 	LayerContent func(digest string) ([]byte, bool)
 	// ImageLayers is the ordered list of diff_ids (uncompressed layer
-	// digests) from the image's RootFS.Layers. They become both the
-	// rootfs.diff_ids in the config blob AND the source of layer
-	// blobs in the manifest — they must match for the OCI spec to
-	// hold.
+	// digests) from the image's RootFS.Layers. They become the
+	// rootfs.diff_ids in the config blob.
 	ImageLayers []string
+	// ManifestLayers carries the source manifest's layer entries —
+	// (compressed-blob digest, size, media type). One entry per layer,
+	// in the same order as ImageLayers (parallel slice). OCIPush
+	// uploads each blob using the digest as the LayerContent key and
+	// preserves all three values verbatim in the destination manifest.
+	//
+	// Two callsites populate this:
+	//   1. ImagePull (registry source) → digests come from the source
+	//      registry's manifest; LayerContent has the raw gzipped blobs
+	//      cached from FetchLayerBlob.
+	//   2. ImageLoad / ContainerCommit (local source) → digests are
+	//      computed from the local layer bytes the caller already has
+	//      (LayerContent stores them keyed by that same digest).
+	//
+	// ManifestLayers must be non-empty for any push to proceed — the
+	// registry needs the compressed-blob digests, which are not the
+	// same as diff_ids. There is no path that derives compressed
+	// digests from diff_ids alone (the uncompress→recompress would
+	// produce a different digest depending on gzip implementation).
+	ManifestLayers []ManifestLayerEntry
 	// Architecture / OS describe the image's target platform. Defaults
 	// to amd64/linux when empty (matches Docker's default tag).
 	Architecture string
@@ -141,36 +159,44 @@ func OCIPush(opts OCIPushOptions) (*OCIPushResult, error) {
 		return nil, fmt.Errorf("upload config blob: %w", err)
 	}
 
-	// 4. Upload layer blobs — use real content from LayerContent when available.
-	type layerEntry struct {
-		digest string
-		size   int
+	// 4. Upload layer blobs using the source manifest entries. Each
+	// layer's compressed-blob digest is the LayerContent key; the
+	// destination registry verifies the upload by recomputing the
+	// SHA-256 over the body, so we re-verify locally first to fail
+	// fast with a precise error if the cached blob got corrupted.
+	if len(opts.ManifestLayers) == 0 {
+		return nil, fmt.Errorf("push failed: image has no manifest layer entries (ImagePull / ImageLoad / ContainerCommit must populate ManifestLayers — bare diff_ids are not enough to address blobs in a registry)")
 	}
-	var layerEntries []layerEntry
-
-	if len(opts.ImageLayers) > 0 && opts.LayerContent != nil {
-		for _, diffID := range opts.ImageLayers {
-			if content, ok := opts.LayerContent(diffID); ok {
-				digest := fmt.Sprintf("sha256:%x", sha256.Sum256(content))
-				if err := ociUploadBlob(baseURL, opts.AuthToken, digest, content, "application/vnd.docker.image.rootfs.diff.tar.gzip"); err != nil {
-					return nil, fmt.Errorf("upload layer blob: %w", err)
-				}
-				layerEntries = append(layerEntries, layerEntry{digest: digest, size: len(content)})
-			}
+	if opts.LayerContent == nil {
+		return nil, fmt.Errorf("push failed: LayerContent provider not set")
+	}
+	for _, ml := range opts.ManifestLayers {
+		content, ok := opts.LayerContent(ml.Digest)
+		if !ok {
+			return nil, fmt.Errorf("push failed: layer %s missing from LayerContent cache", ml.Digest)
+		}
+		gotDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(content))
+		if gotDigest != ml.Digest {
+			return nil, fmt.Errorf("push failed: cached layer %s has wrong digest %s — manifest entry corrupted", ml.Digest, gotDigest)
+		}
+		if err := ociUploadBlob(baseURL, opts.AuthToken, ml.Digest, content, ml.MediaType); err != nil {
+			return nil, fmt.Errorf("upload layer blob %s: %w", ml.Digest, err)
 		}
 	}
 
-	if len(layerEntries) == 0 {
-		return nil, fmt.Errorf("push failed: image has no layer data available")
-	}
-
-	// 5. Create and PUT manifest
-	manifestLayers := make([]map[string]any, len(layerEntries))
-	for i, le := range layerEntries {
+	// 5. Create and PUT manifest using the source manifest layer
+	// entries verbatim — same digest, same size, same media type that
+	// the source registry served.
+	manifestLayers := make([]map[string]any, len(opts.ManifestLayers))
+	for i, ml := range opts.ManifestLayers {
+		mt := ml.MediaType
+		if mt == "" {
+			mt = "application/vnd.docker.image.rootfs.diff.tar.gzip"
+		}
 		manifestLayers[i] = map[string]any{
-			"mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
-			"size":      le.size,
-			"digest":    le.digest,
+			"mediaType": mt,
+			"size":      ml.Size,
+			"digest":    ml.Digest,
 		}
 	}
 
@@ -216,12 +242,12 @@ func OCIPush(opts OCIPushOptions) (*OCIPushResult, error) {
 		return nil, fmt.Errorf("put manifest returned %d: %s", resp.StatusCode, string(body))
 	}
 
-	var allDigests []string
+	allDigests := make([]string, 0, len(opts.ManifestLayers))
 	firstDigest := ""
-	for _, le := range layerEntries {
-		allDigests = append(allDigests, le.digest)
+	for _, ml := range opts.ManifestLayers {
+		allDigests = append(allDigests, ml.Digest)
 		if firstDigest == "" {
-			firstDigest = le.digest
+			firstDigest = ml.Digest
 		}
 	}
 

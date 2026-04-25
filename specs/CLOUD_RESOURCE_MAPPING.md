@@ -15,13 +15,17 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 
 ## Universal rules
 
-1. **Cloud resources are tagged at creation** with `sockerless-managed=true` plus identity tags so they can be enumerated and reattributed after restart.
+1. **Cloud resources are tagged at creation** with the managed-marker tag plus identity tags so they can be enumerated and reattributed after restart. Tag-key spelling differs by cloud's charset rules:
+   - **AWS** (ECS, Lambda) and **Azure** (ACA, AZF): `sockerless-managed=true`, `sockerless-container-id=<id>`, `sockerless-name=<name>`. Hyphens are universally accepted.
+   - **GCP** (Cloud Run, GCF): `sockerless_managed=true`, `sockerless_container_id=<id>`, `sockerless_name=<name>`. GCP labels use underscores by convention.
+   The semantics are identical; only the punctuation differs. When this doc later writes "the `sockerless-managed` tag" it means whichever spelling the cloud uses.
 2. **Every list / inspect call queries the cloud first.** In-memory caches are allowed but must be invalidatable, must be rebuilt on miss from cloud actuals, and must never be the source of truth.
 3. **Persistent on-disk state is forbidden.** No `~/.sockerless/state/*.json`, no S3 buckets, no DynamoDB. The only file paths backends touch on disk are: configuration (read-only), credentials (read-only), and CLI run-state (PID files etc.).
 4. **State buckets / lock tables for terraform are infrastructure, not sockerless state** — they hold Terraform's state for the operator-managed infra and have nothing to do with backend operation.
 5. **A "container" in the docker API is whatever the cloud calls a single container of work** — task, function invocation, app revision, job execution. A "pod" in the libpod API is a *group* of containers, which in clouds without first-class pods is a multi-container task / multi-container app.
 6. **Each cloud service has exactly one supported generation** — whichever is current. No backend keeps fallback paths to older generations (e.g. no GCF v1 alongside v2; no Azure Functions Consumption-v3 runtime alongside Flex Consumption). If the operator points sockerless at an older generation, `Config.Validate()` fails fast with an "upgrade to the supported generation" error; there is no silent downgrade.
 7. **No fakes, no fallbacks, no placeholders.** Workarounds, silent substitutions, placeholder fields, synthetic-metadata backstops — all are bugs and land in [BUGS.md](../BUGS.md) under "Open" until a real fix ships.
+8. **FaaS backends run user-supplied container images, never the native runtime.** Lambda, GCF (Cloud Run Functions gen2), and AZF (Azure Functions) deploy OCI images chosen by the operator. Sockerless never targets the platforms' "function-as-code" runtime contracts (Node/Python/Go handlers in a managed sandbox). Container deployment is what lets sockerless put its bootstrap at the entrypoint, which is the prerequisite for the reverse-agent, agent-as-handler, and (forthcoming Phase 103) overlay-rootfs patterns. ACA and Cloud Run are native container services, so this distinction is automatic — every deployment is a container.
 
 ---
 
@@ -31,11 +35,11 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 
 | Docker concept | Cloud resource | Identifier(s) | Tag(s) for discovery |
 |---|---|---|---|
-| Container | ECS task (Fargate) | `task ARN` (cloud), `containerID` (Docker) | `sockerless-managed=true`, `sockerless-container-id=<id>`, `sockerless-name=<name>`, `sockerless-instance=<backend-instance-id>` |
+| Container | ECS task (Fargate) | `task ARN` (cloud), `containerID` (Docker) | `sockerless-managed=true`, `sockerless-container-id=<id>`, `sockerless-name=<name>`, `sockerless-instance=<backend-instance-id>`. Per-container ops also stamp transient tags: `sockerless-network=<network-name>` (membership), `sockerless-restart-count=<n>` (BUG-772), `sockerless-kill-signal=<sig>` (BUG-781), `sockerless-removed=true` (registry-side cleanup, BUG-775), `sockerless-labels-b64[-<n>]=<base64-of-json>` (BUG-784, chunked for >256 chars). |
 | Pod (libpod) | ECS task with multi-container task definition | `task ARN`, `pod name` | + `sockerless-pod=<name>` |
 | Image | ECR repository / image | `<account>.dkr.ecr.<region>.amazonaws.com/<repo>:<tag>` | (registry-managed) |
-| Network (user-defined) | EC2 security group + Cloud Map private DNS namespace | `sg-…` + `ns-…` | `sockerless:network=<name>`, `sockerless:network-id=<id>` |
-| Volume (named) | EFS access point or empty volume in the task definition | (depends on backend EFS config) | (currently per-task-def; durable named volumes Phase-89-pending) |
+| Network (user-defined) | EC2 security group + Cloud Map private DNS namespace | `sg-…` + `ns-…` | Resource-level: `sockerless:network=<name>`, `sockerless:network-id=<id>` (colon-form is ECS-only — EC2/SD tags accept colons). |
+| Volume (named) | EFS access point on a sockerless-managed EFS filesystem; injected into the task-def's `Volumes` array as `EFSVolumeConfiguration{FileSystemId, AccessPointId, TransitEncryption=ENABLED}` plus `MountPoints` in the container def. **Phase 91 landed** — see `aws-common/volumes.go::EFSManager`. | EFS filesystem id + access-point id | EFS resource tags: `sockerless-managed=true`, `sockerless-volume-name=<name>` |
 | Exec instance | ECS `ExecuteCommand` session | (transient SSM session) | (transient — no recovery needed) |
 
 **State derivation (implemented in Phase 89):**
@@ -61,7 +65,7 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 | Pod | Multi-container pod is **not supported** by Lambda — one function = one container. Pods would require a coordinator (e.g. Step Functions); not in scope. | — | — |
 | Image | ECR repository / image | `<account>.dkr.ecr.<region>.amazonaws.com/<repo>:<tag>` | (registry-managed) |
 | Network | **Native cross-container DNS is not addressable per-execution.** Lambda VPC config only routes egress; peer-Lambda discovery requires Service Discovery + a separate fronting service. Treat docker networks as bookkeeping only. | (no cloud anchor) | (Phase 89 follow-up: file as known limitation) |
-| Volume | Lambda layers (read-only) or `/tmp` (per-invocation, ephemeral). Bind mounts and named volumes outside `/tmp` are not supported. | — | — |
+| Volume | EFS access point on a sockerless-managed EFS filesystem (shared with ECS), attached at `CreateFunction` via `Function.FileSystemConfigs[]`. Requires `SOCKERLESS_LAMBDA_SUBNETS` (Lambda-in-VPC). **Phase 94b landed** — see `backends/lambda/backend_delegates.go::VolumeCreate` + `aws-common/volumes.go::EFSManager`. `/tmp` (512 MB–10 GB ephemeral) is always present per-invocation; named volumes are durable across invocations. | EFS filesystem id + access-point id | EFS resource tags: `sockerless-managed=true`, `sockerless-volume-name=<name>` |
 | Exec instance | Reverse-agent overlay (`sockerless-lambda-bootstrap` dials back during `Invoke`); see [Exec](#exec). | (transient agent session) | — |
 
 **State derivation (implemented in Phase 89):**
@@ -79,12 +83,12 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 
 | Docker concept | Cloud resource | Identifier(s) | Tag(s) for discovery |
 |---|---|---|---|
-| Container | **Current:** Cloud Run **Job** + execution (`run.googleapis.com/v2`). **Post-Phase 87:** Cloud Run **Service** with internal ingress + VPC connector. | job name `sockerless-<containerID[:12]>` + execution id | label `sockerless-managed=true`, `sockerless-container-id=<id>`, `sockerless-name=<name>` |
-| Pod | **Current:** not supported (1 Job = 1 container). **Post-Phase 87:** Cloud Run Service with multi-container revision (sidecars). | revision ref + sidecar container names | + label `sockerless-pod=<name>` |
+| Container | Cloud Run **Job** + execution (default) or Cloud Run **Service** with internal ingress + VPC connector when `SOCKERLESS_GCR_USE_SERVICE=1` (Phase 87 closed). | job name `sockerless-<containerID[:12]>` + execution id | label `sockerless_managed=true`, `sockerless_container_id=<id>`, `sockerless_name=<name>` (GCP underscore convention). |
+| Pod | Service path: multi-container revision (sidecars). Jobs path: not supported (1 Job = 1 container). | revision ref + sidecar container names | + label `sockerless_pod=<name>` |
 | Image | Artifact Registry / GCR | `<region>-docker.pkg.dev/<project>/<repo>/<image>:<tag>` | (registry-managed) |
-| Network | Cloud DNS private managed zone (1 zone per docker network, sanitized from name). **Post-Phase 87** also needs VPC connector + internal-ingress Service IP for cross-container routing to actually work (currently the A-records point at placeholder `0.0.0.0` per BUG-715). | managed-zone name | label `sockerless:network=<name>`, `sockerless:network-id=<id>` (Phase 89 follow-up) |
-| Volume | Cloud Storage Fuse mount (per-revision config) — currently bookkeeping only on the Jobs path. | bucket/prefix | — |
-| Exec instance | Reverse-agent overlay (no native exec on Cloud Run Jobs/Services); see [Exec](#exec). | (transient agent session) | — |
+| Network | Cloud DNS private managed zone (1 zone per docker network, sanitized from name). Cross-container routing needs `SOCKERLESS_GCR_USE_SERVICE=1` + `SOCKERLESS_GCR_VPC_CONNECTOR` (Phase 87 — service path writes CNAMEs to `Service.Uri`); the Jobs-path placeholder-IP issue from BUG-715 is closed by switching to Services. | managed-zone name | label `sockerless_network=<name>` on the container; the zone itself is discoverable by name `skls-<sanitized>.local` |
+| Volume | Cloud Storage (GCS) bucket per volume; injected into Cloud Run Service revision template as `Volume{Gcs{Bucket}}` + `Container.VolumeMounts`. **Phase 92 landed** — see `backends/cloudrun/backend_delegates.go::VolumeCreate`. Jobs-path volumes also supported via the same GCS bucket lifecycle. | bucket name `sockerless-volume-<id>` | label `sockerless_managed=true`, `sockerless_volume_name=<name>` |
+| Exec instance | Reverse-agent overlay (Phase 96 closed) — bootstrap dials `SOCKERLESS_CALLBACK_URL` → `/v1/cloudrun/reverse`; see [Exec](#exec). | (transient agent session) | — |
 
 **State derivation:**
 
@@ -104,12 +108,12 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 
 | Docker concept | Cloud resource | Identifier(s) | Tag(s) for discovery |
 |---|---|---|---|
-| Container | **Current:** ACA **Job** + execution (`armcontainerapps.JobsClient`). **Post-Phase 88:** ACA **App** with internal ingress (`armcontainerapps.ContainerAppsClient`). | job name `sockerless-<containerID[:12]>` + execution id | tag `sockerless-managed=true`, `sockerless-container-id=<id>`, `sockerless-name=<name>` |
-| Pod | **Current:** not supported. **Post-Phase 88:** ACA App with multi-container template (sidecars). | app name + sidecar container names | + tag `sockerless-pod=<name>` |
+| Container | ACA **Job** + execution (default, `armcontainerapps.JobsClient`) or ACA **App** with internal ingress (`armcontainerapps.ContainerAppsClient`) when `SOCKERLESS_ACA_USE_APP=1` (Phase 88 closed). | job name `sockerless-<containerID[:12]>` + execution id | tag `sockerless-managed=true`, `sockerless-container-id=<id>`, `sockerless-name=<name>` |
+| Pod | App path: ACA App with multi-container template (sidecars). Jobs path: not supported. | app name + sidecar container names | + tag `sockerless-pod=<name>` |
 | Image | ACR | `<acrName>.azurecr.io/<repo>:<tag>` | (registry-managed) |
-| Network | Azure Private DNS Zone (per-network) + per-network NSG. Cross-container DNS via A-records currently broken on Jobs (BUG-716 — placeholder IPs); fixed when Phase 88 moves to Apps with internal ingress. | zone name + NSG id | tag `sockerless:network=<name>`, `sockerless:network-id=<id>` (Phase 89 follow-up) |
-| Volume | Azure Files share via ACA volumes (per-Job/App config) | mount config | — |
-| Exec instance | ACA console exec API (`Microsoft.App/jobs/{job}/executions/{exec}/exec` via `aca/exec_cloud.go`), with the reverse-agent preferred when present; see [Exec](#exec). | (transient management-API or agent session) | — |
+| Network | Azure Private DNS Zone (per-network) + per-network NSG. App path writes CNAMEs to `LatestRevisionFqdn` for cross-container DNS (Phase 88 closes BUG-716 placeholder-IP regression). | zone name + NSG id | tag `sockerless-network=<name>` on the container; zone is discoverable by name `skls-<network>.local` |
+| Volume | Azure Files share in a sockerless-owned storage account, registered as a `ManagedEnvironments/storages` resource and referenced from the Job/App template's `Volumes[]` + `Container.VolumeMounts`. **Phase 93 landed** — see `backends/aca/backend_impl.go::VolumeCreate`. | storage account + share name | tag `sockerless-managed=true`, `sockerless-volume-name=<name>` |
+| Exec instance | ACA console exec API (`Microsoft.App/jobs/{job}/executions/{exec}/exec` via `aca/exec_cloud.go`), with the reverse-agent preferred when present (Phase 96 closed — bootstrap dials `/v1/aca/reverse`); see [Exec](#exec). | (transient management-API or agent session) | — |
 
 **State derivation:**
 
@@ -129,11 +133,11 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 
 | Docker concept | Cloud resource | Identifier(s) | Tag(s) for discovery |
 |---|---|---|---|
-| Container | Cloud Function (gen 2) — backed by `cloudfunctions.v2.FunctionService` | function name `sockerless-<containerID[:12]>`, function name + revision | label `sockerless-managed=true`, `sockerless-container-id=<id>`, `sockerless-name=<name>` |
+| Container | Cloud Function (gen 2) — backed by `cloudfunctions.v2.FunctionService` | function name `sockerless-<containerID[:12]>`, function name + revision | label `sockerless_managed=true`, `sockerless_container_id=<id>`, `sockerless_name=<name>` (GCP underscore convention; full ID also stored as annotation per BUG-682 since GCP label values are 63-char limited). |
 | Pod | **Not supported.** Cloud Functions are 1-to-1 with a container; there is no first-class group abstraction. Multi-container pods would require a coordinator (e.g. Workflows + Pub/Sub) and are out of scope. | — | — |
 | Image | Artifact Registry (the function's deployed container image) | `<region>-docker.pkg.dev/<project>/<repo>/<image>:<tag>` | (registry-managed) |
 | Network | **Not supported natively.** Cloud Functions can connect to a VPC for egress via a connector, but they don't expose addressable inbound IPs to peer functions. Cross-container DNS via a docker-network abstraction is not implementable on Cloud Functions; backend treats `docker network create` / `connect` as a no-op for cloud purposes (returns success but the network is bookkeeping only). | (no cloud anchor) | — |
-| Volume | **Not supported.** Cloud Functions have read-only filesystems plus `/tmp`. Bind mounts and named volumes are rejected at create time. | — | — |
+| Volume | GCS bucket per volume (shared lifecycle helper with Cloud Run); attached via the function's runtime config (BYO mount path). **Phase 94 landed** — see `backends/cloudrun-functions/backend_delegates.go::VolumeCreate`. `/tmp` (read/write, ephemeral) is always present per-invocation. | bucket name `sockerless-volume-<id>` | label `sockerless_managed=true`, `sockerless_volume_name=<name>` |
 | Exec instance | Reverse-agent overlay (no native exec on Cloud Functions); see [Exec](#exec). | (transient agent session) | — |
 
 **State derivation:**
@@ -155,7 +159,7 @@ This document is the source of truth for Phase 89 (stateless-backend audit, BUG-
 | Pod | Multi-container Function App is **not supported** (Function Apps are 1-container). Pod deletion path does delete the underlying app, but pods are local-bookkeeping only. | — | — |
 | Image | ACR | `<acrName>.azurecr.io/<repo>:<tag>` | (registry-managed) |
 | Network | **Not supported natively.** Function Apps support VNet integration for outbound traffic but not addressable inbound IPs for peer apps. `docker network create` / `connect` is bookkeeping-only. | — | — |
-| Volume | **Not supported** for arbitrary bind mounts. App settings + Azure Files share via App Service mounts can be configured but aren't auto-translated from `--volume`. | — | — |
+| Volume | Azure Files share in a sockerless-owned storage account, attached to the Function App via `sites/<fn>/config/azurestorageaccounts`. **Phase 94 landed** — see `backends/azure-functions/backend_delegates.go::VolumeCreate`. | storage account + share name | tag `sockerless-managed=true`, `sockerless-volume-name=<name>` |
 | Exec instance | Reverse-agent overlay (Kudu console / SSH not implemented); see [Exec](#exec). | (transient agent session) | — |
 
 **State derivation:**
@@ -250,26 +254,28 @@ Full list of every `api.Backend` method sockerless implements, per-backend statu
 | ContainerInspect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | ContainerList | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | ContainerLogs | ✓ | ✓ (CloudWatch) | ✓ (CloudWatch) | ✓ (Cloud Logging) | ✓ | ✓ (Log Analytics) | ✓ |
-| ContainerStats | ✓ | ⚠ CloudWatch — zero until metrics arrive | ⚠ CloudWatch | ⚠ Cloud Monitoring | ⚠ | ⚠ Log Analytics | ⚠ |
-| ContainerTop | ✓ | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ | ⚠ agent only | ⚠ |
-| ContainerRename | ✓ | ⚠ local-name-only | ⚠ local-name-only | ⚠ local-name-only | ⚠ | ⚠ local-name-only | ⚠ |
+| ContainerStats (one-shot, `--no-stream`) | ✓ | ⚠ CloudWatch — latest aggregate | ⚠ CloudWatch | ⚠ Cloud Monitoring | ⚠ | ⚠ Log Analytics | ⚠ |
+| ContainerStats (streaming) | ✓ | ✗ accepted gap | ✗ accepted gap | ✗ accepted gap | ✗ accepted gap | ✗ accepted gap | ✗ accepted gap |
+| ContainerTop | ✓ | ⚠ via SSM (Phase 102) | ⚠ agent only — ✗ accepted gap when no agent | ⚠ agent only — ✗ accepted gap when no agent | ⚠ agent only — ✗ accepted gap when no agent | ⚠ agent only — ✗ accepted gap when no agent | ⚠ agent only — ✗ accepted gap when no agent |
+| ContainerRename | ✓ | ⚠ local-name-only (accepted divergence) | ⚠ local-name-only (accepted divergence) | ⚠ local-name-only (accepted divergence) | ⚠ local-name-only (accepted divergence) | ⚠ local-name-only (accepted divergence) | ⚠ local-name-only (accepted divergence) |
 | ContainerUpdate | ✓ | ⚠ limited — CPU/mem only via task-def rev | ⚠ | ⚠ via new revision | ⚠ | ⚠ via new revision | ⚠ |
-| ContainerResize | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| ContainerPause | ✓ | ✗ Fargate no-pause | ✗ | ✗ Cloud Run no-pause | ✗ | ✗ ACA no-pause | ✗ |
-| ContainerUnpause | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| ContainerResize | ✓ | ✗ accepted gap | ✗ accepted gap | ✗ accepted gap | ✗ accepted gap | ✗ accepted gap | ✗ accepted gap |
+| ContainerPause | ✓ | ⚠ via SSM (Phase 102, bootstrap-pidfile required) | ⚠ agent+opt-in | ⚠ agent+opt-in | ⚠ agent+opt-in | ⚠ agent+opt-in | ⚠ agent+opt-in |
+| ContainerUnpause | ✓ | ⚠ via SSM (Phase 102, bootstrap-pidfile required) | ⚠ agent+opt-in | ⚠ agent+opt-in | ⚠ agent+opt-in | ⚠ agent+opt-in | ⚠ agent+opt-in |
 | ContainerCommit | ✓ | ✗ ECS no-agent | ⚠ agent+opt-in | ⚠ agent+opt-in | ⚠ agent+opt-in | ⚠ agent+opt-in | ⚠ agent+opt-in |
-| ContainerExport | ✓ | ✗ Fargate no-fs | ✗ | ✗ | ✗ | ✗ | ✗ |
-| ContainerChanges | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| ContainerStatPath | ✓ | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ | ⚠ agent only | ⚠ |
-| ContainerGetArchive | ✓ | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ | ⚠ agent only | ⚠ |
-| ContainerPutArchive | ✓ | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ | ⚠ agent only | ⚠ |
+| ContainerExport | ✓ | ✗ accepted gap | ✗ accepted gap | ✗ accepted gap | ✗ accepted gap | ✗ accepted gap | ✗ accepted gap |
+| ContainerChanges | ✓ | ⚠ via SSM (Phase 102) | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ agent only |
+| ContainerStatPath | ✓ | ⚠ via SSM (Phase 102) | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ agent only |
+| ContainerGetArchive | ✓ | ⚠ via SSM (Phase 102) | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ agent only |
+| ContainerPutArchive | ✓ | ⚠ via SSM (Phase 102) | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ agent only |
 | ContainerPrune | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | ContainerAttach | ✓ | ✓ (CloudWatch stream) | ⚠ agent only | ⚠ agent only | ⚠ agent only | ⚠ agent only / ACA console | ⚠ agent only |
 
 Notes:
 
 - **ContainerStats ⚠** — cloud providers only surface aggregated per-task metrics with ~60s lag; no block-I/O or network-byte counters equivalent to docker's cgroup stats. Sockerless reports CPU-ns + mem-bytes + PIDs=0 (BUG-733) when nothing's there yet. A future phase may add cloud-native stats endpoints to each simulator for parity with docker's streaming stats.
-- **ContainerTop / Stat / GetArchive / PutArchive / Attach ⚠ agent only** — possible only when the sockerless agent is bundled into the container image (Lambda's agent-as-handler pattern; CR/ACA/GCF/AZF use the same overlay). Without a registered reverse-agent session, every backend returns a `NotImplementedError` that names the missing prerequisite (`SOCKERLESS_CALLBACK_URL`) — never a silently-empty stream. ACA additionally falls back to the cloud-native console exec API for ExecStart/Attach when no agent is present. See [Exec](#exec) below for the full resolution table.
+- **ECS via SSM (Phase 102)** — Container{Top, Changes, StatPath, GetArchive, PutArchive, Export, Pause, Unpause} on ECS run their respective shell commands (`ps`, `find`, `stat`, `tar`, `kill`) over `ExecuteCommand` via the SSM AgentMessage protocol. Implementations live in `backends/ecs/ssm_capture.go` + `backends/ecs/ssm_ops.go`; outputs are normalised through `core.Parse{Top,Stat,Changes}Output` for parity with the reverse-agent path. ContainerPause/Unpause additionally need the bootstrap convention (`/tmp/.sockerless-mainpid`) — without it the SSM call exits 64 and the backend surfaces a `NotImplementedError` naming the missing prerequisite.
+- **FaaS Container{Top / Stat / GetArchive / PutArchive / Attach} ⚠ agent only** — possible only when the sockerless agent is bundled into the container image (Lambda's agent-as-handler pattern; CR/ACA/GCF/AZF use the same overlay, port done in Phase 96). Without a registered reverse-agent session, every backend returns a `NotImplementedError` that names the missing prerequisite (`SOCKERLESS_CALLBACK_URL`) — never a silently-empty stream. ACA additionally falls back to the cloud-native console exec API for ExecStart/Attach when no agent is present. See [Exec](#exec) below for the full resolution table.
 - **ContainerCommit ⚠ agent+opt-in** — the reverse-agent runs `find / -xdev -newer /proc/1` (same reference point as `docker diff`) + `tar -cf - --null -T -` to capture the files added or modified since container boot, then stacks the resulting blob as a new layer on top of the source image's rootfs. Gated behind `SOCKERLESS_ENABLE_COMMIT=1` per backend because the approach can't capture deletions (`find(1)` can't list files that no longer exist, and sockerless has no host-side access to the base image's rootfs to compute whiteouts) — this is documented, not a silent degradation. ECS has no bootstrap equivalent, so it stays `NotImplementedError`. Push to the operator's registry uses the existing `ImageManager.Push` path (BUG-763/764 fixed the config-blob and push plumbing).
 - **ContainerRename ⚠** — cloud resources (ECS task, Cloud Run Job, ACA app) have immutable names derived from the container ID; the docker API's "rename" updates local metadata only (`sockerless-name` tag does stay updated via re-tag). `docker inspect` shows the new name but the cloud resource name doesn't change.
 - **ContainerUpdate ⚠** — resource-limit updates go through a new task-def revision / service revision / app revision. Docker's live `update --cpus --memory` semantics can't apply to already-running cloud tasks; the next start picks up the new limits.
@@ -345,11 +351,10 @@ Both GitLab Runner's `docker` executor and GitHub Actions runner expect a docker
 | ImageRemove | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | ImageTag | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | ImageHistory | ✓ | ✓ (manifest) | ✓ | ✓ | ✓ | ✓ | ✓ |
-| ImageBuild | ✓ | ✓ CodeBuild / Cloud Build / ACR tasks? | ⚠ | ⚠ Cloud Build | ⚠ | ⚠ ACR build | ⚠ |
-| ImagePush | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ImageBuild | ✓ | ✓ CodeBuild | ⚠ | ⚠ Cloud Build | ⚠ | ⚠ ACR build | ⚠ |
 | ImageLoad | ✓ | ⚠ tarball → ECR push | ⚠ | ⚠ tarball → AR push | ⚠ | ⚠ tarball → ACR push | ⚠ |
-| ImageSave | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| ImageSearch | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| ImageSave | ✓ | ✗ accepted gap | ✗ accepted gap | ✗ accepted gap | ✗ accepted gap | ✗ accepted gap | ✗ accepted gap |
+| ImageSearch | ✓ | ✗ accepted gap | ✗ accepted gap | ✗ accepted gap | ✗ accepted gap | ✗ accepted gap | ✗ accepted gap |
 | ImagePrune | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 Notes:
@@ -378,13 +383,13 @@ Notes:
 
 | Method | docker | ecs | lambda | cloudrun | gcf | aca | azf |
 |--------|:------:|:---:|:------:|:--------:|:---:|:---:|:---:|
-| VolumeCreate | ✓ | ✗ (Phase 91) | ✗ (no equivalent) | ✗ (Phase 92) | ✗ (Phase 94) | ✗ (Phase 93) | ✗ (Phase 94) |
-| VolumeInspect | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| VolumeList | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| VolumeRemove | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| VolumePrune | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| VolumeCreate | ✓ | ✓ EFS access point (Phase 91) | ✓ EFS access point (Phase 94b, Lambda-in-VPC) | ✓ GCS bucket (Phase 92) | ✓ GCS bucket (Phase 94) | ✓ Azure Files (Phase 93) | ✓ Azure Files (Phase 94) |
+| VolumeInspect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| VolumeList | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| VolumeRemove | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| VolumePrune | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-See "Volume provisioning per backend" section above. Phases 91-94 land real provisioning.
+See "Volume provisioning per backend" section above for the per-backend mechanics. Phases 91-94 are closed; the corresponding `VolumeCreate`/`VolumeInspect`/`VolumeList`/`VolumeRemove`/`VolumePrune` paths now bind to real EFS / GCS / Azure Files. Bind-mounts (`-v /h:/c`) are still rejected with `InvalidParameterError` on every cloud backend — Fargate / Cloud Run / Cloud Functions / ACA / Function Apps have no host filesystem to bind from.
 
 ### Pods (libpod)
 
@@ -419,20 +424,23 @@ Notes:
 
 ---
 
-## Simulator coverage gaps (S✗)
+## Simulator coverage
 
-Below is the current "implementing it against real cloud would work, but there's no sim-side emulation so local/CI testing falls back to real cloud":
+Below is the current state — items marked **closed** have full sim-side emulation; items marked **gap** still fall back to real cloud for local/CI testing.
 
-| Gap | Backend(s) | Blocks |
-|-----|------------|--------|
-| Azure Files share slice (`fileServices/shares`) in `simulators/azure/storage.go` | aca, azf | Phase 93, Phase 94 real volumes |
-| Managed-environment `storages` sub-resource in `simulators/azure/containerappsenv.go` | aca | Phase 93 real volumes |
-| GCS bucket-mount honouring in `simulators/gcp/cloudrun.go` spec-builder path | cloudrun, gcf | Phase 92 real volumes |
-| EFS `AccessPoint` CRUD in `simulators/aws/` (new `efs.go`) | ecs | Phase 91 real volumes |
-| ACA console exec proto in `simulators/azure/containerapps.go` | aca | ExecCreate/Start/Inspect |
-| Lambda reverse-agent (already wired) — no sim gap, works end-to-end | lambda | — |
-| Cloud Run exec: no upstream API exists; Lambda-style agent overlay would need to be ported | cloudrun, gcf | Exec family |
-| AWS Session Manager agent-side ack validation | ecs | BUG-729 |
+| Item | Backend(s) | Status | Reference |
+|------|------------|--------|-----------|
+| EFS `AccessPoint` CRUD | ecs, lambda | closed | `simulators/aws/efs.go` (Phase 91 / 94b) |
+| Azure Files share slice (`fileServices/shares`) | aca, azf | closed | `simulators/azure/files.go` (Phase 93 / 94) |
+| Managed-environment `storages` sub-resource | aca | closed | `simulators/azure/containerappsenv.go` (Phase 93) |
+| GCS bucket-mount honouring on Cloud Run spec-builder path | cloudrun, gcf | closed | `simulators/gcp/cloudrun.go` + `simulators/gcp/storage.go` (Phase 92 / 94) |
+| ACA console exec proto | aca | closed | `simulators/azure/containerapps.go::handleACAJobExec` (Phase 101) |
+| Cloud Run reverse-agent route | cloudrun | closed | backend `/v1/cloudrun/reverse` (Phase 96 — no sim work needed) |
+| ACA reverse-agent route | aca | closed | backend `/v1/aca/reverse` (Phase 96) |
+| Lambda reverse-agent (agent-as-handler) | lambda | closed | `simulators/aws/lambda_runtime.go` exposes the per-invocation Runtime API; reverse-agent works end-to-end against the sim |
+| AWS Session Manager agent-side ack validation | ecs | closed | BUG-729 — `simulators/aws/ssm_proto.go` mirrors `SerializeClientMessageWithAcknowledgeContent` |
+| Cloud-native streaming `ContainerStats` (analog of `docker stats`) | all | gap | future phase — sim would need to expose CW Metrics / Cloud Monitoring / Log Analytics Stats slices to test the lag-tolerant behaviour |
+| TTY-resize signal propagation (`ContainerResize` / `ExecResize`) | all | gap | clouds don't propagate `SIGWINCH`; would require a sim-side pipe for local testing only |
 
 ---
 
@@ -468,19 +476,31 @@ A backend that fails any of these contracts is in violation of Phase 89.
 
 ---
 
-## Phase 89 status
+## Acceptable gaps
 
-| Bug | Status | Notes |
+The "no fakes / no fallbacks" principle treats every functional gap as a bug by default — every gap lands in [BUGS.md](../BUGS.md) until it ships a real fix. The list below is the narrow set of gaps the maintainers have explicitly classified as **acceptable** (for now): each one is documented here, returns `NotImplementedError` with a clear message, and is excluded from the open-bugs scoreboard. Anything not on this list is still a bug. Adding to this list requires explicit maintainer sign-off, not implementor judgment.
+
+| Gap | Backend(s) | Why acceptable |
+|-----|------------|----------------|
+| `docker commit` | ecs | Fargate exposes no host filesystem to snapshot from, and ECS doesn't run a sockerless bootstrap that could capture a rootfs diff over SSM exec. The other backends (Lambda/CR/ACA/GCF/AZF) implement commit via the reverse-agent (Phase 98b) — ECS is the one platform where the architectural prerequisite simply isn't there. Operators wanting commit-style workflows on ECS should build images via `docker build` + `docker push` to ECR instead. |
+| `docker pause` / `docker unpause` | ecs (without bootstrap convention) | ECS pause/unpause runs `kill -SIGSTOP $(cat /tmp/.sockerless-mainpid)` over SSM exec — it works only when the user image cooperates by writing the main PID to that file. Sockerless can't insert a bootstrap into ECS user images (we run the operator's image as-is), so the no-bootstrap case returns `NotImplementedError` and that's accepted. With the convention in place the path works (Phase 102). Other backends (Lambda/CR/ACA/GCF/AZF) ship the convention in their bootstrap by default, so pause works there. |
+| `ContainerResize` / `ExecResize` (TTY size events / `SIGWINCH`) | all clouds | Cloud platforms don't propagate window-size events through to the container. Returning success would be a fake; the only honest answer is `NotImplementedError`. Affects only interactive TTY sessions where the user resizes the terminal mid-session. |
+| `docker image save` | all clouds | Cloud registries don't serve a single multi-blob tarball. Implementing `save` would require pulling the manifest + every layer blob and retaring locally — substantial work for an air-gapped-export use case that operators can replicate with `crane export` or `skopeo copy` against the registry directly. |
+| `docker image search` | all clouds | Docker Hub's search API isn't reachable through ECR / Artifact Registry / ACR. Cloud registries have no equivalent free-text search across public images. Operators looking for images should use Docker Hub's web UI or `crane catalog` / `oras discover`. |
+| `docker stats` (streaming) | all clouds | CloudWatch / Cloud Monitoring / Log Analytics surface metrics with 30–60 s+ lag, so a "streaming" stats response would be a polling reskin that misleads callers into thinking it's real-time. One-shot `docker stats --no-stream` stays ⚠ (returns the latest available aggregate), but `docker stats` (the streaming form) returns `NotImplementedError`. |
+| `docker container top` | every backend without an exec path | `top` (which translates to running `ps aux` inside the container) only works when sockerless can exec into the container — the reverse-agent for FaaS+CR+ACA, SSM for ECS. When neither is registered the call returns `NotImplementedError` rather than an empty / fabricated process list. |
+| `docker container export` | all clouds | Same shape as `image save` but for a running container's rootfs. Cloud platforms don't expose a host-side rootfs handle, so an export means "tar the entire FS over exec," which is slow, fragile, and rarely what the operator wants. Phase 103 (overlay-rootfs) would give a clean implementation on FaaS/CR/ACA but until then `export` returns `NotImplementedError`. ECS stays accepted indefinitely (no bootstrap path). |
+| `docker rename` semantics | all clouds | Cloud resources (ECS task ARN, Cloud Run job name, ACA app name, Lambda function name, etc.) are immutable. Sockerless updates the local `Container.Name` field and re-stamps the `sockerless-name` tag on the cloud resource, so `docker inspect` reflects the new name — but the cloud resource's *own* name doesn't change. This is a documented semantic divergence, not a partial implementation: the rename is real for sockerless-internal lookups; it does not propagate to the cloud's resource naming.|
+
+## Phase 89 — closed
+
+Phase 89 (stateless-backend audit + cloud-resource mapping) closed 2026-04-21. Summary of what landed; see `git log` and BUGS.md for full traces.
+
+| Bug | Status | Outcome |
 |---|---|---|
 | **BUG-723** | fixed | `Store.Images` disk persistence removed. All 6 cloud backends implement `CloudImageLister.ListImages`: ECS + Lambda via ECR `DescribeRepositories`+`DescribeImages`; Cloud Run + GCF via shared `core.OCIListImages` against `<region>-docker.pkg.dev` with `ARAuthProvider` token; ACA + AZF via `core.OCIListImages` against the configured ACR with `ACRAuthProvider` token. `BaseServer.ImageList` merges cache + cloud, deduped by ID. |
-| **BUG-724** | partial | `core.CloudPodLister` interface lands; `BaseServer.PodList` merges cache + cloud. ECS `ListPods` groups tasks by `sockerless-pod` tag. Cloud Run + ACA pod listing blocked on Phase 87/88 — multi-container pods need the Jobs→Services/Apps rewrite first. GCF + AZF don't support pods. |
-| **BUG-725** | fixed | `resolve*State` cache+cloud-fallback helpers landed across 4 backends (ECS, Lambda, Cloud Run, ACA). Every cloud-state-dependent callsite migrated (Stop, Kill, Remove, Restart, Wait, Logs, ExecCreate, cloudExecStart, etc.). Unit tests cover cache-hit + cache-miss-no-cloud paths. |
-| **BUG-726** | fixed | `resolveNetworkState` cache+cloud-fallback helpers landed in ECS, Cloud Run, and ACA. Cloud Map namespaces tagged with `sockerless:network-id` at create time. `cloudServiceRegister` in cloudrun + aca use the fallback. Lambda + GCF + AZF don't have user-defined cloud networks. |
+| **BUG-724** | fixed | `core.CloudPodLister` interface + `BaseServer.PodList` merging cache + cloud. ECS groups tasks by `sockerless-pod` tag. Cloud Run + ACA pod listing now works on the Service/App paths (Phases 87/88 closed). GCF + AZF don't support pods. |
+| **BUG-725** | fixed | `resolve*State` cache+cloud-fallback helpers landed across 4 backends (ECS, Lambda, Cloud Run, ACA). Every cloud-state-dependent callsite migrated (Stop, Kill, Remove, Restart, Wait, Logs, ExecCreate, cloudExecStart, etc.). |
+| **BUG-726** | fixed | `resolveNetworkState` cache+cloud-fallback helpers in ECS, Cloud Run, ACA. Cloud Map namespaces tagged with `sockerless:network-id` at create time. Lambda + GCF + AZF don't have user-defined cloud networks. |
 
-Remaining Phase 89 work:
-
-- Per-backend restart-resilience integration tests against the simulators (ECS, Cloud Run, ACA, Lambda). Each would: spin up sim + backend, create container, kill backend, restart backend, assert every docker call still works. Unit tests already prove the helpers; integration tests prove the SDK interaction. Non-blocking — Phase 89 is functionally complete.
-
-Dependencies:
-
-- BUG-724 full completion requires Phase 87 (cloudrun Jobs → Services with sidecars) + Phase 88 (aca Jobs → Apps with sidecars) so that multi-container pods have a cloud anchor.
+Phase 89's recovery contract is what ["Recovery contract"](#recovery-contract) above pins down — a backend that fails any of those assertions is in violation.

@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -33,43 +32,37 @@ func (m *mockScanner) CleanupResource(_ context.Context, _ ResourceEntry) error 
 	return nil
 }
 
-func TestRecoverOnStartupLoadsFromDisk(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "registry.json")
+// Recovery tests now exercise the in-memory + cloud-scan path only —
+// the disk-backed Save/Load was removed in BUG-800 (stateless invariant).
 
-	// Seed registry file
-	rr := NewResourceRegistry(path)
-	rr.Register(ResourceEntry{
-		ContainerID:  "abc123",
-		Backend:      "ecs",
-		ResourceType: "task",
-		ResourceID:   "arn:seeded",
-		InstanceID:   "host-1",
-		CreatedAt:    time.Now(),
-	})
-
-	// New registry, load via RecoverOnStartup
-	rr2 := NewResourceRegistry(path)
-	scanner := &mockScanner{}
-	if err := RecoverOnStartup(context.Background(), rr2, scanner, "host-1"); err != nil {
+func TestRecoverOnStartupLoadsCloudOrphans(t *testing.T) {
+	rr := NewResourceRegistry("")
+	scanner := &mockScanner{
+		orphans: []ResourceEntry{
+			{
+				ContainerID:  "abc123",
+				Backend:      "ecs",
+				ResourceType: "task",
+				ResourceID:   "arn:cloud",
+				InstanceID:   "host-1",
+				CreatedAt:    time.Now(),
+			},
+		},
+	}
+	if err := RecoverOnStartup(context.Background(), rr, scanner, "host-1"); err != nil {
 		t.Fatalf("RecoverOnStartup failed: %v", err)
 	}
-
-	active := rr2.ListActive()
+	active := rr.ListActive()
 	if len(active) != 1 {
 		t.Fatalf("expected 1 active, got %d", len(active))
 	}
-	if active[0].ResourceID != "arn:seeded" {
-		t.Errorf("expected arn:seeded, got %s", active[0].ResourceID)
+	if active[0].ResourceID != "arn:cloud" {
+		t.Errorf("expected arn:cloud, got %s", active[0].ResourceID)
 	}
 }
 
-func TestRecoverOnStartupMergesOrphans(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "registry.json")
-
-	// Seed one entry
-	rr := NewResourceRegistry(path)
+func TestRecoverOnStartupSkipsAlreadyKnown(t *testing.T) {
+	rr := NewResourceRegistry("")
 	rr.Register(ResourceEntry{
 		ContainerID:  "abc123",
 		Backend:      "ecs",
@@ -78,36 +71,23 @@ func TestRecoverOnStartupMergesOrphans(t *testing.T) {
 		InstanceID:   "host-1",
 		CreatedAt:    time.Now(),
 	})
-
-	// Recover with scanner that finds an orphan
-	rr2 := NewResourceRegistry(path)
 	scanner := &mockScanner{
 		orphans: []ResourceEntry{
-			{
-				ContainerID:  "orphan1",
-				Backend:      "ecs",
-				ResourceType: "task",
-				ResourceID:   "arn:orphan",
-				InstanceID:   "host-1",
-				CreatedAt:    time.Now().Add(-1 * time.Hour),
-			},
+			{ResourceID: "arn:known", ContainerID: "abc123", Backend: "ecs", ResourceType: "task", InstanceID: "host-1", CreatedAt: time.Now()},
+			{ResourceID: "arn:new", ContainerID: "def456", Backend: "ecs", ResourceType: "task", InstanceID: "host-1", CreatedAt: time.Now()},
 		},
 	}
-	if err := RecoverOnStartup(context.Background(), rr2, scanner, "host-1"); err != nil {
+	if err := RecoverOnStartup(context.Background(), rr, scanner, "host-1"); err != nil {
 		t.Fatalf("RecoverOnStartup failed: %v", err)
 	}
-
-	all := rr2.ListAll()
+	all := rr.ListAll()
 	if len(all) != 2 {
-		t.Fatalf("expected 2 entries (known + orphan), got %d", len(all))
+		t.Fatalf("expected 2 entries (deduped), got %d", len(all))
 	}
 }
 
 func TestRecoverOnStartupScanError(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "registry.json")
-
-	rr := NewResourceRegistry(path)
+	rr := NewResourceRegistry("")
 	scanner := &mockScanner{err: fmt.Errorf("cloud scan failed")}
 	err := RecoverOnStartup(context.Background(), rr, scanner, "host-1")
 	if err == nil {

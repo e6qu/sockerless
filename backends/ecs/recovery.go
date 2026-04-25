@@ -33,6 +33,18 @@ func (s *Server) ScanOrphanedResources(ctx context.Context, instanceID string) (
 
 	var orphans []core.ResourceEntry
 	for _, task := range descResult.Tasks {
+		// Skip STOPPED / DEPROVISIONING tasks — they're already
+		// terminated and ECS will expire them after ~1h. Treating them
+		// as "active" orphans would have ReconstructContainerState put
+		// them in Store.Containers as if they were running, which then
+		// poisons image-conflict checks (a long-stopped task using
+		// `alpine:latest` would block `docker rmi alpine` on the next
+		// session). Cloud-derived `docker ps -a` still surfaces them
+		// via `queryTasks` for inspect/log purposes; they just aren't
+		// active for the registry's purposes.
+		if status := aws.ToString(task.LastStatus); status == "STOPPED" || status == "DEPROVISIONING" {
+			continue
+		}
 		taskARN := aws.ToString(task.TaskArn)
 		tagsResult, err := s.aws.ECS.ListTagsForResource(ctx, &awsecs.ListTagsForResourceInput{
 			ResourceArn: aws.String(taskARN),

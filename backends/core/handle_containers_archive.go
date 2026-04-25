@@ -31,7 +31,7 @@ func (s *BaseServer) handleHeadArchive(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	stat, err := s.self.ContainerStatPath(r.PathValue("id"), path)
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		WriteError(w, err)
 		return
 	}
 
@@ -50,7 +50,7 @@ func (s *BaseServer) handleGetArchive(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	resp, err := s.self.ContainerGetArchive(r.PathValue("id"), path)
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		WriteError(w, err)
 		return
 	}
 	defer resp.Reader.Close()

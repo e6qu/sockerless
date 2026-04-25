@@ -1,8 +1,6 @@
 package core
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -90,129 +88,9 @@ func TestRegistryListOrphaned(t *testing.T) {
 	}
 }
 
-func TestRegistrySaveLoad(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "registry.json")
-
-	rr := NewResourceRegistry(path)
-	rr.Register(ResourceEntry{
-		ContainerID:  "abc123",
-		Backend:      "ecs",
-		ResourceType: "task",
-		ResourceID:   "arn:test",
-		InstanceID:   "host-1",
-		CreatedAt:    time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC),
-	})
-
-	if err := rr.Save(); err != nil {
-		t.Fatalf("Save failed: %v", err)
-	}
-
-	// Verify file exists
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("registry file not found: %v", err)
-	}
-
-	// Load into new registry
-	rr2 := NewResourceRegistry(path)
-	if err := rr2.Load(); err != nil {
-		t.Fatalf("Load failed: %v", err)
-	}
-
-	active := rr2.ListActive()
-	if len(active) != 1 {
-		t.Fatalf("expected 1 active after load, got %d", len(active))
-	}
-	if active[0].ContainerID != "abc123" {
-		t.Errorf("expected container abc123, got %s", active[0].ContainerID)
-	}
-}
-
-func TestRegistryLoadNonExistent(t *testing.T) {
-	rr := NewResourceRegistry("/nonexistent/path/registry.json")
-	if err := rr.Load(); err != nil {
-		t.Fatalf("Load of nonexistent file should not error, got: %v", err)
-	}
-}
-
-func TestRegistryAutoSave(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "registry.json")
-
-	rr := NewResourceRegistry(path)
-	rr.Register(ResourceEntry{
-		ContainerID:  "abc123",
-		Backend:      "ecs",
-		ResourceType: "task",
-		ResourceID:   "arn:auto",
-		InstanceID:   "host-1",
-		CreatedAt:    time.Now(),
-	})
-
-	// File should exist without explicit Save()
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("registry file should exist after Register: %v", err)
-	}
-
-	// Reload and verify
-	rr2 := NewResourceRegistry(path)
-	if err := rr2.Load(); err != nil {
-		t.Fatalf("Load failed: %v", err)
-	}
-	if active := rr2.ListActive(); len(active) != 1 {
-		t.Fatalf("expected 1 active after auto-save reload, got %d", len(active))
-	}
-}
-
-func TestRegistryAtomicWrite(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "registry.json")
-
-	rr := NewResourceRegistry(path)
-	rr.Register(ResourceEntry{
-		ContainerID:  "abc123",
-		Backend:      "ecs",
-		ResourceType: "task",
-		ResourceID:   "arn:atomic",
-		InstanceID:   "host-1",
-		CreatedAt:    time.Now(),
-	})
-
-	// No leftover .tmp file
-	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
-		t.Fatalf("expected no .tmp file, got: %v", err)
-	}
-}
-
-func TestRegistryAutoSaveOnCleanup(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "registry.json")
-
-	rr := NewResourceRegistry(path)
-	rr.Register(ResourceEntry{
-		ContainerID:  "abc123",
-		Backend:      "ecs",
-		ResourceType: "task",
-		ResourceID:   "arn:cleanup",
-		InstanceID:   "host-1",
-		CreatedAt:    time.Now(),
-	})
-
-	rr.MarkCleanedUp("arn:cleanup")
-
-	// Reload and verify cleanup persisted
-	rr2 := NewResourceRegistry(path)
-	if err := rr2.Load(); err != nil {
-		t.Fatalf("Load failed: %v", err)
-	}
-	if active := rr2.ListActive(); len(active) != 0 {
-		t.Fatalf("expected 0 active after cleanup reload, got %d", len(active))
-	}
-	all := rr2.ListAll()
-	if len(all) != 1 || !all[0].CleanedUp {
-		t.Fatalf("expected 1 cleaned-up entry, got %d", len(all))
-	}
-}
+// Persistence tests removed: BUG-800 collapsed Save/Load to no-ops to
+// keep the registry purely in-memory (stateless invariant). The
+// surviving tests cover the in-memory semantics.
 
 func TestRegistryStatusTransitions(t *testing.T) {
 	rr := NewResourceRegistry("")
@@ -266,11 +144,8 @@ func TestRegistryBackwardCompatibility(t *testing.T) {
 	}
 }
 
-func TestRegistryMetadataPersistence(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "registry.json")
-
-	rr := NewResourceRegistry(path)
+func TestRegistryMetadataInMemory(t *testing.T) {
+	rr := NewResourceRegistry("")
 	rr.Register(ResourceEntry{
 		ContainerID:  "abc123",
 		Backend:      "ecs",
@@ -281,12 +156,7 @@ func TestRegistryMetadataPersistence(t *testing.T) {
 		Metadata:     map[string]string{"image": "alpine:3.18", "name": "/mycontainer"},
 	})
 
-	// Reload and verify metadata
-	rr2 := NewResourceRegistry(path)
-	if err := rr2.Load(); err != nil {
-		t.Fatalf("Load failed: %v", err)
-	}
-	all := rr2.ListAll()
+	all := rr.ListAll()
 	if len(all) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(all))
 	}

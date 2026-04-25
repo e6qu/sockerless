@@ -1237,6 +1237,41 @@ func (s *BaseServer) ImagePullWithMetadata(ref string, auth string, meta *ImageM
 
 	StoreImageWithAliases(s.Store, ref, img)
 
+	// Fetch the layer blobs themselves so a subsequent `docker push`
+	// can mirror the image to a different registry without going back
+	// to the source. Without this, push fails with "image has no layer
+	// data available" (BUG-788). We fetch synchronously per-layer; for
+	// large images this lengthens the pull but matches Docker's own
+	// "Pull complete" semantics where the layer bytes are present
+	// after pull returns. Failure to fetch is fatal — pull is
+	// considered to have succeeded only when all blobs are cached.
+	var manifestLayers []ManifestLayerEntry
+	if len(meta.LayerBlobDigests) == len(meta.LayerSizes) && len(meta.LayerBlobDigests) > 0 {
+		rc := parseImageRef(ref)
+		token, terr := getRegistryToken(rc, auth)
+		if terr != nil {
+			return nil, fmt.Errorf("image pull %q: registry auth: %w", ref, terr)
+		}
+		manifestLayers = make([]ManifestLayerEntry, len(meta.LayerBlobDigests))
+		for i, blobDigest := range meta.LayerBlobDigests {
+			blob, ferr := FetchLayerBlob(rc, token, blobDigest)
+			if ferr != nil {
+				return nil, fmt.Errorf("image pull %q: fetch layer %s: %w", ref, blobDigest, ferr)
+			}
+			s.Store.LayerContent.Store(blobDigest, blob)
+			mediaType := "application/vnd.docker.image.rootfs.diff.tar.gzip"
+			if i < len(meta.LayerMediaTypes) && meta.LayerMediaTypes[i] != "" {
+				mediaType = meta.LayerMediaTypes[i]
+			}
+			manifestLayers[i] = ManifestLayerEntry{
+				Digest:    blobDigest,
+				Size:      meta.LayerSizes[i],
+				MediaType: mediaType,
+			}
+		}
+		s.Store.ImageManifestLayers.Store(imageID, manifestLayers)
+	}
+
 	// Use real layer digests for progress when available
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -1298,6 +1333,7 @@ func (s *BaseServer) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 
 	// Compute real layer digests and sizes from preserved content.
 	var layers []string
+	var manifestLayers []ManifestLayerEntry
 	var totalSize int64
 	if result != nil && len(result.Layers) > 0 {
 		for layerPath, content := range result.Layers {
@@ -1306,6 +1342,11 @@ func (s *BaseServer) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 			totalSize += int64(len(content))
 			// Store layer content for subsequent OCI push
 			s.Store.LayerContent.Store(digest, content)
+			manifestLayers = append(manifestLayers, ManifestLayerEntry{
+				Digest:    digest,
+				Size:      int64(len(content)),
+				MediaType: "application/vnd.docker.image.rootfs.diff.tar.gzip",
+			})
 			_ = layerPath
 		}
 	}
@@ -1347,6 +1388,9 @@ func (s *BaseServer) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 		StoreImageWithAliases(s.Store, tag, img)
 	}
 	s.Store.Images.Put(id, img)
+	if len(manifestLayers) > 0 {
+		s.Store.ImageManifestLayers.Store(id, manifestLayers)
+	}
 
 	displayTag := repoTags[0]
 	s.emitEvent("image", "load", id, map[string]string{"name": displayTag})
@@ -1507,12 +1551,19 @@ func (s *BaseServer) ImageRemove(name string, force bool, prune bool) ([]*api.Im
 		}
 	}
 	img.RepoTags = remaining
-	for _, t := range remaining {
-		s.Store.Images.Put(t, img)
-	}
-	s.Store.Images.Put(img.ID, img)
-	if short := img.ID; len(short) > 19 {
-		s.Store.Images.Put(short[:19], img)
+
+	// `StoreImageWithAliases` (used by ImagePull / ImageTag) puts the
+	// full Image value under several alias keys: the ID, the ref, the
+	// repo without tag, and Docker Hub short forms. After a partial
+	// untag, every one of those entries still holds the pre-untag
+	// RepoTags. ImageList iterates Store.Images.List() and dedupes by
+	// ID, so an arbitrary stale entry can win and the user sees the
+	// just-untagged tag come back. Sweep the store and rewrite every
+	// entry that points at this image with the freshly-trimmed value.
+	for _, e := range s.Store.Images.Entries() {
+		if e.Value.ID == img.ID {
+			s.Store.Images.Put(e.Key, img)
+		}
 	}
 	return result, nil
 }

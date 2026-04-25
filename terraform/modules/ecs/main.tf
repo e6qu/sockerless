@@ -126,6 +126,16 @@ resource "null_resource" "sockerless_runtime_sweep" {
         done
         aws efs delete-file-system --region "$region" --file-system-id "$fs" || true
       done
+
+      # ECS task definitions: sockerless registers one per container
+      # (sockerless-<containerID[:12]>) and never deregisters them.
+      # Without this sweep, every live-cloud test run leaves dozens of
+      # ACTIVE task-defs that linger forever (AWS keeps deregistered
+      # ones too, but at least they don't show as ACTIVE).
+      for td in $(aws ecs list-task-definitions --region "$region" --status ACTIVE --query 'taskDefinitionArns[?contains(@,`:task-definition/sockerless-`)]' --output text); do
+        [ -z "$td" ] && continue
+        aws ecs deregister-task-definition --region "$region" --task-definition "$td" >/dev/null || true
+      done
     EOT
   }
 }
@@ -357,6 +367,13 @@ resource "aws_service_discovery_private_dns_namespace" "main" {
 resource "aws_ecr_repository" "main" {
   name                 = local.name_prefix
   image_tag_mutability = "MUTABLE"
+
+  # Allow `terragrunt destroy` to drop the repo even when sockerless
+  # has pushed images (e.g. live-cloud test sweeps). Without this the
+  # destroy fails with `RepositoryNotEmptyException` and the operator
+  # has to manually batch-delete every image — exactly the kind of
+  # extra-step-after-destroy the project rules forbid.
+  force_delete = true
 
   image_scanning_configuration {
     scan_on_push = true

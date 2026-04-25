@@ -4,6 +4,36 @@ Docker-compatible REST API that runs containers on cloud backends (ECS, Lambda, 
 
 See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for the bug log, [PLAN.md](PLAN.md) for the roadmap, [specs/](specs/) for architecture (start with [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md)).
 
+## Round-8 live-AWS sweep — 13 bugs fixed (this branch — pending PR)
+
+Two-round live-AWS test sweep against `eu-west-1` ECS + Lambda. 278 tests across both rounds, 13 bugs filed, 13 fixed in the same branch. Two open follow-ups (BUG-789/798 SSM frame parsing on live AWS; BUG-795 podman-list pod members).
+
+**BUG-786 — `docker rmi <tag>` reappearing.** `StoreImageWithAliases` puts the image value under multiple keys for fast `ResolveImage` lookups; partial-untag only updated the "remaining" tag entries, leaving alias entries with stale `RepoTags`. Fix sweeps every `Store.Images` entry whose `Value.ID` matches the untagged image's ID and rewrites it. New `StateStore.Entries()` exposes the snapshot under-lock.
+
+**BUG-788 — `docker push` after `docker pull` failed with `image has no layer data available`.** `ImagePull` only stored manifest metadata, never the layer bytes — `Store.LayerContent` was populated only by `ImageLoad` / `ContainerCommit`. Fix: `FetchImageMetadata` extracts the source manifest's compressed-blob digests + media types; new `core.FetchLayerBlob` downloads the layers; `ImagePull` caches them in `Store.LayerContent[compressedDigest]` and stores `[]ManifestLayerEntry` in `Store.ImageManifestLayers`; `OCIPush` requires `ManifestLayers` and uses the digests verbatim. `ImageLoad` and `ContainerCommit` populate the same fields. Verified live: `docker pull public.ecr.aws/.../alpine && docker tag ... && docker push <ecr-uri>` → `Pushed`.
+
+**BUG-790 — `docker stop` returned async.** `ContainerStop` now blocks on `waitForTaskStopped` until ECS observes `LastStatus=STOPPED` (timeout = caller-supplied + 30s grace). Errors surface cleanly on `StopTask` failure or deadline expiry — no fallback "we stopped it" event. The synthesised `container.die` with fabricated `exitCode=0` was removed; the real `die` event comes from the cloud-state poller with the actual exit code. BUG-796 (pod rm timing) is closed transitively.
+
+**BUG-794 — cross-network isolation.** Per-network SG was *added* to the operator's default SG, so the default SG's permissive rules shadowed isolation. Fix: in `backends/ecs/containers.go`, when `ECSState.SecurityGroupIDs` is non-empty (container is on a user-defined network), use ONLY those SGs; default SG only applies to networkless containers. Verified: peer ON net reaches via service-name DNS; peer OFF net `wget` times out.
+
+**BUG-799 — recovery resurrected STOPPED tasks as active.** `ScanOrphanedResources` returned every sockerless-managed task tagged with our instanceID — including STOPPED ones. `ReconstructContainerState` then put them in `Store.Containers` as ghosts, tripping `ImageRemove`'s in-use check. Fix: skip `LastStatus=STOPPED`/`DEPROVISIONING` in the scan.
+
+**BUG-800 — stateless invariant violation.** `core.ResourceRegistry` was persisting to `./sockerless-registry.json` — found 11 stale registry files lying around the repo. Direct contradiction of `specs/CLOUD_RESOURCE_MAPPING.md` § State boundaries. Fix: `Save`/`Load`/`autoSave` collapsed to no-ops; the registry is purely in-memory, source-of-truth = cloud actuals + cloud scan on every startup. All 11 stale files deleted; persistence-related tests rewritten.
+
+**BUG-793 — Lambda IAM missing VPC perms.** `terraform/modules/lambda/main.tf` only attached `AWSLambdaBasicExecutionRole`; `CreateFunction` with `VpcConfig` requires `ec2:CreateNetworkInterface`. Now also attaches `AWSLambdaVPCAccessExecutionRole`.
+
+**BUG-797 — Lambda public.ecr.aws short-circuit.** Lambda's `resolveImageURI` rewrote `public.ecr.aws/...` through an ECR pull-through cache that returned a multi-arch manifest list (which `CreateFunction` rejects). Fix: ported the ECS short-circuit (BUG-776) — pass `public.ecr.aws/...` through directly.
+
+**Smaller fixes:** BUG-787 (spec-doc drift across landed phases), BUG-791 (`handleGetArchive` bare 404 → `WriteError`), BUG-792 (ECS commit error message stripped of phase reference).
+
+**Acceptable gaps formalised** in `specs/CLOUD_RESOURCE_MAPPING.md` per maintainer decision: ECS `docker commit`, ECS pause/unpause without bootstrap, `ContainerResize`/`ExecResize` across clouds, `ImageSave` / `ImageSearch`, streaming `docker stats`, `ContainerTop` without exec path, `ContainerExport` across clouds, `ContainerRename` semantic divergence (cloud names immutable).
+
+**Code drops to match the gaps.** `BaseServer.ContainerResize`/`ExecResize`/`ImageSave`/`ImageSearch` now return `NotImplementedError` with operator-friendly messages. Streaming `docker stats` returns NotImpl when `CloudState` is set. Local docker backend keeps full functionality via its overrides.
+
+**Teardown self-sufficiency.** `aws_ecr_repository.force_delete = true` on both ECS and Lambda modules; ECS module's destroy-time sweep also deregisters orphan task definitions (`sockerless-<containerID[:12]>`). `terragrunt destroy` now succeeds without manual `aws ecr batch-delete-image` or task-def deregistration.
+
+**Phase 103 queued in PLAN.md** — overlay-rootfs bootstrap for FaaS+CR+ACA — replaces Phase 98's `find -newer /proc/1` heuristic with an overlayfs-based diff/cp/export so deletions are captured (closes the BUG-750 known limitation).
+
 ## Phases 96 / 98 / 98b / 99 / 100 / 101 / 102 + 13-bug audit sweep (2026-04-24, PR #115)
 
 Shipped on the merged `phase96-onward` branch. 770 total bugs after this PR — 769 fixed, 0 open, 1 false positive (BUG-747 audit umbrella).

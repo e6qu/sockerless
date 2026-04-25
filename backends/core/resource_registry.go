@@ -1,9 +1,6 @@
 package core
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -143,49 +140,17 @@ func (rr *ResourceRegistry) ListAll() []ResourceEntry {
 	return result
 }
 
-// autoSave persists the registry to disk, logging warnings on failure.
-func (rr *ResourceRegistry) autoSave() {
-	if err := rr.Save(); err != nil {
-		rr.logger.Warn().Err(err).Msg("failed to auto-save resource registry")
-	}
-}
+// autoSave is a no-op. The registry is purely in-memory; durable
+// state lives in the cloud (sockerless-managed=true tags), and on
+// startup `RecoverOnStartup` repopulates the registry from a cloud
+// scan. Persisting to disk would (a) make CWD load-bearing for backend
+// recovery and (b) drift out of sync with cloud actuals — both
+// violations of the stateless invariant in
+// `specs/CLOUD_RESOURCE_MAPPING.md` § State boundaries.
+func (rr *ResourceRegistry) autoSave() {}
 
-// Save writes the registry to disk as JSON using atomic rename.
-func (rr *ResourceRegistry) Save() error {
-	if rr.filePath == "" {
-		return nil
-	}
-	rr.mu.RLock()
-	data, err := json.MarshalIndent(rr.entries, "", "  ")
-	rr.mu.RUnlock()
-	if err != nil {
-		return err
-	}
-	if dir := filepath.Dir(rr.filePath); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return err
-		}
-	}
-	tmpPath := rr.filePath + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, rr.filePath)
-}
+// Save is a no-op kept for API stability. See autoSave.
+func (rr *ResourceRegistry) Save() error { return nil }
 
-// Load reads the registry from disk.
-func (rr *ResourceRegistry) Load() error {
-	if rr.filePath == "" {
-		return nil
-	}
-	data, err := os.ReadFile(rr.filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	rr.mu.Lock()
-	defer rr.mu.Unlock()
-	return json.Unmarshal(data, &rr.entries)
-}
+// Load is a no-op kept for API stability. See autoSave.
+func (rr *ResourceRegistry) Load() error { return nil }

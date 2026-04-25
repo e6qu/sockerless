@@ -166,10 +166,13 @@ func CommitContainerViaAgent(ctx context.Context, store *Store, reg *ReverseAgen
 	imageID := "sha256:" + hexOf(configSum[:])
 
 	// Stash the compressed new layer in the Store so ImagePush /
-	// OCIPush can upload it via LayerContent lookup. The source
-	// image's prior layers are already registered in the store from
-	// the initial pull.
-	store.LayerContent.Store(diffID, gzBlob)
+	// OCIPush can upload it via LayerContent lookup. The store key is
+	// the compressed-blob digest (what registries serve by) — same
+	// convention ImagePull uses. The parent's prior layers are
+	// already cached in store.LayerContent from the initial pull.
+	gzSum := sha256.Sum256(gzBlob)
+	gzDigest := "sha256:" + hexOf(gzSum[:])
+	store.LayerContent.Store(gzDigest, gzBlob)
 
 	newImage := api.Image{
 		ID:           imageID,
@@ -194,6 +197,23 @@ func CommitContainerViaAgent(ctx context.Context, store *Store, reg *ReverseAgen
 	// Register under all aliases so `docker inspect <id>` /
 	// `docker inspect <repo:tag>` both work.
 	StoreImageWithAliases(store, spec.Ref, newImage)
+
+	// Inherit the parent image's manifest layers and append the new
+	// commit layer. ImagePush uses this to address blobs in the
+	// destination registry by the same compressed digest the source
+	// registry served them under.
+	var parentManifestLayers []ManifestLayerEntry
+	if v, ok := store.ImageManifestLayers.Load(spec.SourceImage.ID); ok {
+		parentManifestLayers = v.([]ManifestLayerEntry)
+	}
+	combined := make([]ManifestLayerEntry, 0, len(parentManifestLayers)+1)
+	combined = append(combined, parentManifestLayers...)
+	combined = append(combined, ManifestLayerEntry{
+		Digest:    gzDigest,
+		Size:      int64(len(gzBlob)),
+		MediaType: "application/vnd.docker.image.rootfs.diff.tar.gzip",
+	})
+	store.ImageManifestLayers.Store(imageID, combined)
 
 	return &newImage, nil
 }

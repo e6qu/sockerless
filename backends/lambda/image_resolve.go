@@ -34,6 +34,13 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 	if strings.Contains(ref, ".dkr.ecr.") && strings.Contains(ref, ".amazonaws.com") {
 		return ref, nil
 	}
+	// ECR Public (`public.ecr.aws/...`) is pullable directly without a
+	// pull-through cache rule; routing through one yields a multi-arch
+	// manifest that Lambda's CreateFunction rejects. Match the ECS
+	// short-circuit (BUG-776).
+	if strings.HasPrefix(ref, "public.ecr.aws/") {
+		return ref, nil
+	}
 
 	// Parse Docker Hub reference
 	registry, repo, tag := parseDockerRef(ref)
