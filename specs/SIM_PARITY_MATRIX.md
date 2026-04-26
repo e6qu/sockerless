@@ -81,41 +81,39 @@ Backends: Cloud Run Jobs (cloudrun), Cloud Run Functions (cloudrun-functions). S
 
 ## Azure
 
-Backends: Container Apps (aca), Azure Functions (azure-functions). Sim: `simulators/azure/`.
+Backends: Container Apps (aca), Azure Functions (azure-functions). Sim: `simulators/azure/`. **Audit completed 2026-04-26.** 28/28 calls implemented after BUG-834/835 fixes.
 
 | Service | Method | Used by | Sim status | Notes |
 |---|---|---|---|---|
-| Container Apps | Jobs.BeginCreateOrUpdate | aca | tbd | |
-| Container Apps | Jobs.BeginDelete | aca | tbd | |
-| Container Apps | Jobs.BeginStart | aca | tbd | |
-| Container Apps | Jobs.BeginStopExecution | aca | tbd | |
-| Container Apps | Jobs.NewListByResourceGroupPager | aca | tbd | |
-| Container Apps | ContainerApps.BeginCreateOrUpdate | aca (UseApp) | tbd | |
-| Container Apps | ContainerApps.BeginDelete | aca (UseApp) | tbd | |
-| Container Apps | ContainerApps.Get | aca (UseApp) | tbd | |
-| Container Apps | EnvStorages.CreateOrUpdate | aca | tbd | |
-| Container Apps | EnvStorages.Delete | aca | tbd | |
-| Container Apps | Executions.NewListPager | aca | tbd | |
-| Network | NSG.BeginCreateOrUpdate | aca | tbd | |
-| Network | NSG.BeginDelete | aca | tbd | |
-| Network | NSG.Get | aca | tbd | |
-| Network | NSGRules.BeginCreateOrUpdate | aca | tbd | |
-| Private DNS | PrivateDNSZones.BeginCreateOrUpdate | aca | tbd | |
-| Private DNS | PrivateDNSZones.BeginDelete | aca | tbd | |
-| Private DNS | PrivateDNSZones.Get | aca | tbd | |
-| Private DNS | PrivateDNSRecords.CreateOrUpdate | aca | tbd | |
-| Private DNS | PrivateDNSRecords.Delete | aca | tbd | |
-| Private DNS | PrivateDNSRecords.Get | aca | tbd | |
-| Storage | StorageAccounts.ListKeys | aca, azure-functions | tbd | |
-| Log Analytics | Logs.QueryWorkspace | aca, azure-functions | tbd | |
-| Log Analytics | LogsHTTP.QueryWorkspace | aca | tbd | (HTTP fallback path for non-TLS sim runs) |
-| App Service | WebApps.BeginCreateOrUpdate | azure-functions | tbd | |
-| App Service | WebApps.Delete | azure-functions | tbd | |
-| App Service | WebApps.NewListByResourceGroupPager | azure-functions | tbd | |
-| App Service | WebApps.UpdateAzureStorageAccounts | azure-functions | tbd | |
+| Container Apps | Jobs.BeginCreateOrUpdate | aca | ✓ | (containerapps.go:240) — full LRO + JobProperties + provisioningState=Succeeded |
+| Container Apps | Jobs.BeginDelete | aca | ✓ | (containerapps.go:325) — cascades execution delete |
+| Container Apps | Jobs.BeginStart | aca | ✓ | (containerapps.go:347) — execution metadata + LRO |
+| Container Apps | Jobs.BeginStopExecution | aca | ✓ | (containerapps.go:592) |
+| Container Apps | Jobs.NewListByResourceGroupPager | aca | ✓ | (containerapps.go:310) — pagination |
+| Container Apps | ContainerApps.BeginCreateOrUpdate | aca (UseApp) | ✓ | **BUG-834 (2026-04-26)** — sim only had Jobs routes; backend's UseApp path uses `ContainerAppsClient.BeginCreateOrUpdate` against `Microsoft.App/containerApps` and silently 404'd. Added `registerContainerAppsApps` in `simulators/azure/containerapps_apps.go` returning provisioningState=Succeeded + LatestReadyRevisionName + LatestRevisionFqdn so `appContainerState` reads "running" and `cloudServiceRegisterCNAME` can seed Private DNS. |
+| Container Apps | ContainerApps.BeginDelete | aca (UseApp) | ✓ | (containerapps_apps.go) — BUG-834 |
+| Container Apps | ContainerApps.Get | aca (UseApp) | ✓ | (containerapps_apps.go) — BUG-834; backend reads `LatestRevisionFqdn` for CNAME registration |
+| Container Apps | EnvStorages.CreateOrUpdate | aca | ✓ | (containerappsenv.go:210) |
+| Container Apps | EnvStorages.Delete | aca | ✓ | (containerappsenv.go:254) |
+| Container Apps | Executions.NewListPager | aca | ✓ | (containerapps.go:548) |
+| Network | NSG.BeginCreateOrUpdate | aca | ✓ | (network.go:276) — SecurityRules + provisioningState |
+| Network | NSG.BeginDelete | aca | ✓ | (network.go:329) |
+| Network | NSG.Get | aca | ✓ | (network.go:313) |
+| Network | NSGRules.BeginCreateOrUpdate | aca | ✓ | (network.go:353) |
+| Private DNS | PrivateDNSZones.BeginCreateOrUpdate | aca | ✓ | (dns.go:84) |
+| Private DNS | PrivateDNSZones.BeginDelete | aca | ✓ | (dns.go:176) |
+| Private DNS | PrivateDNSZones.Get | aca | ✓ | (dns.go:132) |
+| Private DNS | PrivateDNSRecords.CreateOrUpdate | aca | ✓ | (dns.go:192) — A + CNAME |
+| Private DNS | PrivateDNSRecords.Delete | aca | ✓ | (dns.go:232) |
+| Private DNS | PrivateDNSRecords.Get | aca | ✓ | (dns.go:212) |
+| Storage | StorageAccounts.ListKeys | aca, azure-functions | ✓ | (files.go:335) |
+| Log Analytics | Logs.QueryWorkspace | aca, azure-functions | ✓ | (monitor.go:349) — KQL parsing + Tables[0].Rows |
+| Log Analytics | LogsHTTP.QueryWorkspace | aca | ✓ | (monitor.go:349) — HTTP fallback for non-TLS sim runs |
+| App Service | WebApps.BeginCreateOrUpdate | azure-functions | ✓ | (functions.go:88) |
+| App Service | WebApps.Delete | azure-functions | ✓ | (functions.go:178) |
+| App Service | WebApps.NewListByResourceGroupPager | azure-functions | ✓ | (functions.go:163) |
+| App Service | WebApps.UpdateAzureStorageAccounts | azure-functions | ✓ | **BUG-835 (2026-04-26)** — sim was missing `PUT /sites/{name}/config/azurestorageaccounts`; backend's `volumes.go` could not bind named docker volumes to Azure Files shares. Added handler + `AzureStoragePropertyDictionaryResource`/`AzureStorageInfoValue` types in `simulators/azure/functions.go`; site stores the dict and round-trips it on the GET (list) endpoint. |
 
 ## Closure tracking
 
-Each `tbd` cell becomes ✓/⚠/✗ as Phase 108 audits the row. Every ⚠ / ✗ entry is filed as a BUG and fixed in-phase per the no-defer rule.
-
-When all rows show ✓, Phase 108 closes and a follow-up rule is added: any new SDK call added to a backend must update this matrix and add a sim handler in the same commit (the existing "sim parity per commit" rule made stronger).
+**Phase 108 closed 2026-04-26.** All 77 rows (33 AWS + 16 GCP + 28 Azure) ship ✓. Audit pass closed BUG-832 (sim/aws ECS TagResource), BUG-833 (sim/gcp v2 Cloud Run Services), BUG-834 (sim/azure ContainerApps Apps), BUG-835 (sim/azure WebApps.UpdateAzureStorageAccounts). Follow-up rule (active): any new SDK call added to a backend must update this matrix and add a sim handler in the same commit — the existing "sim parity per commit" rule made stronger.

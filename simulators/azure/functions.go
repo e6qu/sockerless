@@ -25,17 +25,18 @@ type Site struct {
 
 // SiteProperties holds the properties of a function app.
 type SiteProperties struct {
-	State            string      `json:"state,omitempty"`
-	DefaultHostName  string      `json:"defaultHostName,omitempty"`
-	HostNames        []string    `json:"hostNames,omitempty"`
-	Enabled          bool        `json:"enabled"`
-	EnabledHostNames []string    `json:"enabledHostNames,omitempty"`
-	ServerFarmID     string      `json:"serverFarmId,omitempty"`
-	Reserved         bool        `json:"reserved,omitempty"`
-	SiteConfig       *SiteConfig `json:"siteConfig,omitempty"`
-	ResourceGroup    string      `json:"resourceGroup,omitempty"`
-	LastModifiedTime string      `json:"lastModifiedTimeUtc,omitempty"`
-	HTTPSOnly        bool        `json:"httpsOnly,omitempty"`
+	State                string                            `json:"state,omitempty"`
+	DefaultHostName      string                            `json:"defaultHostName,omitempty"`
+	HostNames            []string                          `json:"hostNames,omitempty"`
+	Enabled              bool                              `json:"enabled"`
+	EnabledHostNames     []string                          `json:"enabledHostNames,omitempty"`
+	ServerFarmID         string                            `json:"serverFarmId,omitempty"`
+	Reserved             bool                              `json:"reserved,omitempty"`
+	SiteConfig           *SiteConfig                       `json:"siteConfig,omitempty"`
+	ResourceGroup        string                            `json:"resourceGroup,omitempty"`
+	LastModifiedTime     string                            `json:"lastModifiedTimeUtc,omitempty"`
+	HTTPSOnly            bool                              `json:"httpsOnly,omitempty"`
+	AzureStorageAccounts map[string]*AzureStorageInfoValue `json:"-"`
 }
 
 // SiteConfig holds the site configuration for a function app.
@@ -291,6 +292,87 @@ func registerAzureFunctions(srv *sim.Server) {
 		w.WriteHeader(http.StatusOK)
 		w.Write(responseBody)
 	})
+
+	// PUT - Update site's azurestorageaccounts mapping. Backend's
+	// volumes.go uses WebApps.UpdateAzureStorageAccounts to bind named
+	// docker volumes to Azure Files shares on the function app site.
+	// Wire format: AzureStoragePropertyDictionaryResource —
+	// `{ "properties": { "<volname>": { "type": "AzureFiles",
+	// "accountName": "...", "shareName": "...", "accessKey": "...",
+	// "mountPath": "/mnt/<vol>" }, ... } }`. The sim stores the dict
+	// onto the site's AzureStorageAccounts field so subsequent GETs
+	// round-trip the mapping.
+	srv.HandleFunc("PUT "+armBase+"/sites/{siteName}/config/azurestorageaccounts", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "siteName")
+
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Web/sites/%s", sub, rg, name)
+		site, ok := sites.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.Web/sites/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
+
+		var req AzureStoragePropertyDictionaryResource
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		site.Properties.AzureStorageAccounts = req.Properties
+		sites.Put(resourceID, site)
+
+		// ARM convention: respond with the resource shape that was PUT.
+		sim.WriteJSON(w, http.StatusOK, AzureStoragePropertyDictionaryResource{
+			ID:         resourceID + "/config/azurestorageaccounts",
+			Name:       "azurestorageaccounts",
+			Type:       "Microsoft.Web/sites/config",
+			Properties: site.Properties.AzureStorageAccounts,
+		})
+	})
+
+	// GET — symmetrical read so terraform / inspect tooling can verify
+	// the mapping.
+	srv.HandleFunc("GET "+armBase+"/sites/{siteName}/config/azurestorageaccounts/list", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "siteName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Web/sites/%s", sub, rg, name)
+		site, ok := sites.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.Web/sites/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, AzureStoragePropertyDictionaryResource{
+			ID:         resourceID + "/config/azurestorageaccounts",
+			Name:       "azurestorageaccounts",
+			Type:       "Microsoft.Web/sites/config",
+			Properties: site.Properties.AzureStorageAccounts,
+		})
+	})
+}
+
+// AzureStoragePropertyDictionaryResource is the wire shape for
+// WebApps.UpdateAzureStorageAccounts. Mirrors
+// armappservice.AzureStoragePropertyDictionaryResource — a flat
+// dictionary of volume-name → Azure Files mount info.
+type AzureStoragePropertyDictionaryResource struct {
+	ID         string                            `json:"id,omitempty"`
+	Name       string                            `json:"name,omitempty"`
+	Type       string                            `json:"type,omitempty"`
+	Properties map[string]*AzureStorageInfoValue `json:"properties,omitempty"`
+}
+
+// AzureStorageInfoValue mirrors armappservice.AzureStorageInfoValue.
+type AzureStorageInfoValue struct {
+	Type        string `json:"type,omitempty"`
+	AccountName string `json:"accountName,omitempty"`
+	ShareName   string `json:"shareName,omitempty"`
+	AccessKey   string `json:"accessKey,omitempty"`
+	MountPath   string `json:"mountPath,omitempty"`
 }
 
 // invokeAzureFunctionProcess executes a function app's container via sim.StartContainerSync

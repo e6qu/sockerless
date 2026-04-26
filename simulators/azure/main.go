@@ -50,6 +50,7 @@ func main() {
 	// used by Container Apps and Functions log injection.
 	registerAzureMonitor(srv)
 	registerContainerApps(srv)
+	registerContainerAppsApps(srv)
 	registerAzureFiles(srv)
 	registerACR(srv)
 	registerPrivateDNS(srv)
