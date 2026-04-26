@@ -28,10 +28,12 @@ func MatchContainerFilters(c api.Container, filters map[string][]string) bool {
 				return false
 			}
 		case "name":
+			// Docker/Podman: `--filter name=foo` matches any container
+			// whose name contains "foo" — substring, not equality.
 			matched := false
 			for _, v := range values {
 				name := strings.TrimPrefix(c.Name, "/")
-				if name == v || c.Name == v {
+				if strings.Contains(name, v) || strings.Contains(c.Name, v) {
 					matched = true
 					break
 				}

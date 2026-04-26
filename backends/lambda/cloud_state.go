@@ -290,9 +290,19 @@ func (p *lambdaCloudState) queryFunctions(ctx context.Context) ([]api.Container,
 				labels = make(map[string]string)
 			}
 
+			// AWS Lambda's `LastModified` ships in
+			// `"2006-01-02T15:04:05.000+0000"` format (`%Y-%m-%dT%H:%M:%S.fff%z`),
+			// which is not RFC3339-parseable. The shared
+			// `ContainerSummary.Created` projection in `backend-core`
+			// parses `c.Created` as RFC3339Nano to convert to Unix
+			// seconds — without normalising here, that parse fails
+			// silently and `docker ps` rendered Created as 0
+			// (1970-01-01 → "292 years ago" by 2026).
 			created := ""
 			if fn.LastModified != nil {
-				created = *fn.LastModified
+				if t, perr := time.Parse("2006-01-02T15:04:05.000-0700", *fn.LastModified); perr == nil {
+					created = t.UTC().Format(time.RFC3339Nano)
+				}
 			}
 
 			containers = append(containers, api.Container{

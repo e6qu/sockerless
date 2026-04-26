@@ -138,10 +138,14 @@ func (s *Server) RunCommandViaSSM(taskARN, cmd string, stdin []byte) (stdout, st
 	exitCode = -1
 	var stdoutBuf, stderrBuf bytes.Buffer
 
+	cap := openSSMCapture(taskARN, cmd)
+	defer cap.Close()
+
 	for {
 		hdr := make([]byte, ssmFixedHeaderLen)
 		if _, rerr := io.ReadFull(bridge, hdr); rerr != nil {
 			if rerr == io.EOF {
+				cap.note("EOF before channel_closed; exitCode=%d stdoutLen=%d stderrLen=%d", exitCode, stdoutBuf.Len(), stderrBuf.Len())
 				break
 			}
 			return stdoutBuf.Bytes(), stderrBuf.Bytes(), exitCode, fmt.Errorf("read SSM header: %w", rerr)
@@ -157,8 +161,10 @@ func (s *Server) RunCommandViaSSM(taskARN, cmd string, stdin []byte) (stdout, st
 		}
 		f, perr := parseSSMFrame(raw)
 		if perr != nil {
+			cap.frame("PARSE-FAIL", raw, fmt.Sprintf("err=%v", perr))
 			return stdoutBuf.Bytes(), stderrBuf.Bytes(), exitCode, fmt.Errorf("parse SSM frame: %w", perr)
 		}
+		cap.frame(f.MessageType, raw, fmt.Sprintf("payloadType=%d seq=%d", f.PayloadType, f.SequenceNumber))
 
 		switch f.MessageType {
 		case ssmMTOutputStreamData:
@@ -177,6 +183,17 @@ func (s *Server) RunCommandViaSSM(taskARN, cmd string, stdin []byte) (stdout, st
 				_, _ = bridge.Write(ack)
 			}
 		case ssmMTChannelClosed:
+			cap.note("channel_closed; exitCode=%d stdoutLen=%d stderrLen=%d", exitCode, stdoutBuf.Len(), stderrBuf.Len())
+			// AWS ECS ExecuteCommand (Interactive=true) closes the
+			// session with channel_closed but does NOT send a separate
+			// output_stream_data frame with payloadType=exit_code for
+			// short-lived one-shot commands — confirmed against live
+			// Fargate by capturing every WS frame. Returning -1 here is
+			// correct for the raw transport; one-shot callers above
+			// (`runViaSSMOrNotImpl`) wrap commands in an exit-marker
+			// printf so they recover the real exit code from stdout.
+			// `cloudExecStart` (docker exec) doesn't need a fabricated
+			// exit code — docker reads it via ExecInspect afterwards.
 			return stdoutBuf.Bytes(), stderrBuf.Bytes(), exitCode, nil
 		}
 	}

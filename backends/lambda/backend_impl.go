@@ -368,7 +368,7 @@ func (s *Server) ContainerStart(ref string) error {
 			FunctionName: aws.String(lambdaState.FunctionName),
 		})
 
-		inv := core.InvocationResult{}
+		inv := core.InvocationResult{FinishedAt: time.Now()}
 		switch {
 		case err != nil:
 			s.Logger.Error().Err(err).Str("function", lambdaState.FunctionName).Msg("Lambda invocation failed")
@@ -389,6 +389,7 @@ func (s *Server) ContainerStart(ref string) error {
 			}
 		}
 		s.Store.PutInvocationResult(id, inv)
+		s.persistInvocationResultToTags(s.ctx(), lambdaState.FunctionARN, inv)
 
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))

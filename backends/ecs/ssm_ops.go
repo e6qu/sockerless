@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/sockerless/api"
@@ -24,7 +25,15 @@ func (s *Server) resolveTaskARNForOps(containerID string) string {
 }
 
 // runViaSSMOrNotImpl is shared boilerplate: resolve container, resolve
-// task, run the command, return ssm output or a uniform error.
+// task, run the command, return ssm output or a uniform error. The
+// command is wrapped in `sh -c '<cmd>; printf "<marker>%d<marker>" $?'`
+// because AWS ECS ExecuteCommand sessions are interactive and never
+// send the SSM `output_stream_data` frame with `payloadType=exit_code`
+// — channel_closed is the only terminal signal — so the only reliable
+// way to recover the command's exit code is to have the in-container
+// shell print it. The wrapper strips the marker (and the preceding
+// bytes that constituted the exit-code text) before returning the
+// caller's stdout.
 func (s *Server) runViaSSMOrNotImpl(containerID, cmd string, stdin []byte) (stdout, stderr []byte, exitCode int, _ error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), containerID)
 	if !ok {
@@ -34,11 +43,46 @@ func (s *Server) runViaSSMOrNotImpl(containerID, cmd string, stdin []byte) (stdo
 	if taskARN == "" {
 		return nil, nil, -1, &api.NotImplementedError{Message: "ECS operation requires a running task; container has no active execution"}
 	}
-	out, errOut, code, err := s.RunCommandViaSSM(taskARN, cmd, stdin)
+	wrapped := "sh -c " + shellQuote(cmd+`; printf "__SOCKEXIT:%d:__" $?`)
+	out, errOut, _, err := s.RunCommandViaSSM(taskARN, wrapped, stdin)
 	if err != nil {
 		return nil, nil, -1, &api.ServerError{Message: fmt.Sprintf("SSM exec: %v", err)}
 	}
-	return out, errOut, code, nil
+	cleanOut, code, ok := extractSSMExitMarker(out)
+	if !ok {
+		return out, errOut, -1, &api.ServerError{Message: fmt.Sprintf("SSM exec: command produced no exit marker (stdout=%q stderr=%q)", string(out), string(errOut))}
+	}
+	return cleanOut, errOut, code, nil
+}
+
+// extractSSMExitMarker strips the `__SOCKEXIT:N:__` suffix from the
+// command's stdout and returns the cleaned bytes plus the parsed exit
+// code. ok=false when the marker is absent (which means the command
+// crashed before the wrapping printf ran — caller treats as an SSM
+// error rather than masking exit=0).
+func extractSSMExitMarker(out []byte) ([]byte, int, bool) {
+	const prefix = "__SOCKEXIT:"
+	const suffix = ":__"
+	idx := strings.LastIndex(string(out), prefix)
+	if idx < 0 {
+		return out, 0, false
+	}
+	rest := string(out[idx+len(prefix):])
+	end := strings.Index(rest, suffix)
+	if end < 0 {
+		return out, 0, false
+	}
+	code, err := strconv.Atoi(strings.TrimSpace(rest[:end]))
+	if err != nil {
+		return out, 0, false
+	}
+	clean := out[:idx]
+	// Drop a trailing CR/LF the in-container shell may have emitted
+	// between the user command's last line and our printf.
+	for len(clean) > 0 && (clean[len(clean)-1] == '\n' || clean[len(clean)-1] == '\r') {
+		clean = clean[:len(clean)-1]
+	}
+	return clean, code, true
 }
 
 // ContainerTopViaSSM runs `ps <psArgs>` inside the running task via
@@ -58,10 +102,13 @@ func (s *Server) ContainerTopViaSSM(containerID, psArgs string) (*api.ContainerT
 }
 
 // ContainerChangesViaSSM walks the container's rootfs via `find` and
-// returns the post-boot diff. Same shape as the reverse-agent path
-// (Phase 98 / BUG-753); the shell command is identical.
+// returns the post-boot diff in the `<type>\t<path>` format
+// `core.ParseChangesOutput` expects. Uses three `find -type` passes
+// (busybox-compatible — GNU find's `-printf` is not available on
+// alpine's busybox build) plus a sed prefix to emit the type tag.
+// `runViaSSMOrNotImpl` wraps the script in `sh -c` for us.
 func (s *Server) ContainerChangesViaSSM(containerID string) ([]api.ContainerChangeItem, error) {
-	cmd := `find / -xdev -newer /proc/1 -printf '%y\t%p\n'`
+	const cmd = `for t in d f l; do find / -xdev -newer /proc/1 -type "$t" | sed "s|^|$t	|"; done`
 	stdout, stderr, exit, err := s.runViaSSMOrNotImpl(containerID, cmd, nil)
 	if err != nil {
 		return nil, err
@@ -73,9 +120,12 @@ func (s *Server) ContainerChangesViaSSM(containerID string) ([]api.ContainerChan
 }
 
 // ContainerStatPathViaSSM runs `stat` on the given path inside the
-// task and parses the result.
+// task and parses the result. The format string uses literal tab
+// characters because busybox `stat -c` does not interpret backslash
+// escapes inside single-quoted format args, so `\t` would land in
+// the output verbatim and ParseStatOutput would reject it.
 func (s *Server) ContainerStatPathViaSSM(containerID, path string) (*api.ContainerPathStat, error) {
-	cmd := fmt.Sprintf(`stat -c '%%n\t%%s\t%%f\t%%Y\t%%N' %s`, shellQuote(path))
+	cmd := fmt.Sprintf("stat -c '%%n\t%%s\t%%f\t%%Y\t%%N' %s", shellQuote(path))
 	stdout, stderr, exit, err := s.runViaSSMOrNotImpl(containerID, cmd, nil)
 	if err != nil {
 		return nil, err

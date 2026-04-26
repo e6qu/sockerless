@@ -48,6 +48,9 @@ func main() {
 	if err := s.RecoverRegistry(context.Background(), s); err != nil {
 		logger.Warn().Err(err).Msg("registry recovery failed (continuing)")
 	}
+	if err := s.ReplayInvocationsFromCloudWatch(context.Background()); err != nil {
+		logger.Warn().Err(err).Msg("invocation replay failed (continuing)")
+	}
 	logger.Info().Str("addr", *addr).Msg("starting Lambda backend")
 	if err := s.ListenAndServe(*addr, *tlsCert, *tlsKey); err != nil {
 		logger.Fatal().Err(err).Msg("server failed")
