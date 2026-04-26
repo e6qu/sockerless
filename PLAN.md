@@ -24,28 +24,11 @@ Detail in [WHAT_WE_DID.md](WHAT_WE_DID.md); commit + BUG refs in [BUGS.md](BUGS.
 |---|---|
 | 86–102 + audit sweep | Foundation — sim parity, stateless backends, real volumes, FaaS invocation tracking, reverse-agent exec / cp / diff / commit / pause, Docker pod synthesis, ACA console exec, ECS SSM ops, OCI push, log fidelity. Closes BUG-661–769. |
 | Round-7 (PR #117) | Live-AWS bug sweep — 16 bugs (BUG-770..785). |
-| Round-8 (PR #118) | Live-AWS bug sweep — 13 bugs (BUG-786..800). Restored Phase 89 stateless invariant (BUG-799/800), real registry-to-registry layer mirror (BUG-788), sync `docker stop` (BUG-790), per-network SG isolation (BUG-794), spec-doc refresh + accepted-gaps section (BUG-787). |
+| Round-8 + Round-9 (PR #118) | Live-AWS bug sweep — 30 bugs (BUG-786..819). Round 8: stateless invariant (BUG-799/800), real layer mirror (BUG-788), sync `docker stop` (BUG-790), per-network SG isolation (BUG-794). Round 9: live SSM frame capture → exit-code marker (BUG-789/798), `sh -c` exec wrap (BUG-815), busybox-compat find/stat (BUG-816/817), Lambda invoke waiter (BUG-807), tag-based InvocationResult persistence (BUG-811), filter substring match (BUG-795), per-cloud `null_resource sockerless_runtime_sweep` so `terragrunt destroy` is self-sufficient (BUG-819). |
 
 ## Pending work
 
 Order is the order of execution unless noted.
-
-### Round-9 manual-test crosswalk (in progress, this branch)
-
-Per-test walk through [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md) cross-referenced against [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md). Live working state: [docs/manual-test-spec-crosswalk.md](docs/manual-test-spec-crosswalk.md). Mismatches file as BUG-801..NNN; coverage gaps (spec claims with no test) get added to the runbook as new test rows.
-
-**Scope (in scope, not deferred):**
-
-- ECS — Tracks A (49 tests), B (33), C (11), E (7), F (12), G (7), I (9). **Done.** 3 bugs filed and fixed in-track (BUG-801, BUG-803, BUG-805); 2 deferred to Phase 105 (BUG-804, BUG-806); 1 withdrawn (BUG-802 — measurement artifact).
-- **Lambda — Track D (9 tests).** Runs with a sockerless-lambda-bootstrap prebuilt overlay image (`SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE`) — D2-D7 verify the function-invocation lifecycle; D8/D9 verify the spec's "NotImpl with named missing prerequisite" path without `SOCKERLESS_CALLBACK_URL`. Cross-built binaries staged at `/tmp/r9-overlay/`; build needs Docker Desktop / podman-machine running on the operator's host.
-- **Coverage-gap test rows** to add to the runbook after Track D — verify `sockerless-restart-count` tag value, `sockerless-kill-signal` exit-code, ImagePush layer-byte content, etc.
-- **A46 NotImpl wrapper** — translate the bootstrap-PID-file exit-64 case into a clean `NotImplementedError` per spec (currently surfaces as a generic `kill -STOP failed (exit -1):`).
-
-**Skipped this round:**
-
-- Track H (podman-compose) — not installed locally.
-- Track J (runner integration) — needs a real GitLab Runner / GitHub Actions runner.
-- Tracks against GCP / Azure — terraform live envs don't exist yet.
 
 ### Phase 104 — Cross-backend driver framework
 
