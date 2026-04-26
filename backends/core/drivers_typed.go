@@ -121,9 +121,12 @@ type CommitOptions struct {
 // Implementations: docker→LocalDockerBuild; ECS+Lambda→CodeBuild;
 // CR+GCF→CloudBuild; ACA+AZF→ACRTasks. Alternate
 // `KanikoInContainer`, `BuildKitRemote` plug in here.
+//
+// Build takes `api.ImageBuildOptions` directly — no projected subset —
+// so no field is silently dropped between the handler and the impl.
 type BuildDriver interface {
 	Driver
-	Build(dctx DriverContext, opts BuildOptions, ctxReader io.Reader) (io.ReadCloser, error)
+	Build(dctx DriverContext, opts api.ImageBuildOptions, ctxReader io.Reader) (io.ReadCloser, error)
 	// Available reports whether the underlying build service is
 	// reachable / configured. Returning false routes to a
 	// `NotImplementedError` with a clear missing-prerequisite
@@ -131,20 +134,6 @@ type BuildDriver interface {
 	// parser unless the operator opts in via
 	// `SOCKERLESS_LOCAL_DOCKERFILE_BUILD=1`.
 	Available() bool
-}
-
-// BuildOptions wraps `api.ImageBuildOptions` for the typed surface.
-type BuildOptions struct {
-	Dockerfile string
-	Tags       []string
-	BuildArgs  map[string]string
-	Target     string
-	NoCache    bool
-	Platform   string
-	Labels     map[string]string
-	CacheFrom  []string
-	CacheTo    []string
-	Secrets    []string
 }
 
 // StatsDriver lifts the docker-stats path.

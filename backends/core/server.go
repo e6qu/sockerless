@@ -181,6 +181,13 @@ func (s *BaseServer) initTypedDrivers() {
 		},
 		s.Desc.Driver, "default-self-dispatch",
 	)
+	s.Typed.Build = WrapLegacyBuild(
+		func(opts api.ImageBuildOptions, ctxReader io.Reader) (io.ReadCloser, error) {
+			return s.self.ImageBuild(opts, ctxReader)
+		},
+		nil, // assume available — legacy ImageBuild surfaces NotImpl from the impl itself
+		s.Desc.Driver, "default-self-dispatch",
+	)
 }
 
 func (s *BaseServer) registerRoutes() {
