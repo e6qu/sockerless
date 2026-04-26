@@ -148,6 +148,39 @@ func (s *BaseServer) initTypedDrivers() {
 		},
 		s.Desc.Driver, "default-self-dispatch",
 	)
+	s.Typed.FSRead = WrapLegacyFSRead(
+		func(ref, path string) (*api.ContainerPathStat, error) {
+			return s.self.ContainerStatPath(ref, path)
+		},
+		func(ref, path string) (*api.ContainerArchiveResponse, error) {
+			return s.self.ContainerGetArchive(ref, path)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
+	s.Typed.FSWrite = WrapLegacyFSWrite(
+		func(ref, path string, noOverwriteDirNonDir bool, body io.Reader) error {
+			return s.self.ContainerPutArchive(ref, path, noOverwriteDirNonDir, body)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
+	s.Typed.FSExport = WrapLegacyFSExport(
+		func(ref string) (io.ReadCloser, error) {
+			return s.self.ContainerExport(ref)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
+	s.Typed.Stats = WrapLegacyStats(
+		func(ref string, stream bool) (io.ReadCloser, error) {
+			return s.self.ContainerStats(ref, stream)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
+	s.Typed.Commit = WrapLegacyCommit(
+		func(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
+			return s.self.ContainerCommit(req)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
 }
 
 func (s *BaseServer) registerRoutes() {
