@@ -56,7 +56,8 @@ func (a *ACRAuthProvider) OnPush(imageID, registry, repo, tag string) error {
 }
 
 // OnTag syncs a tag to ACR by fetching the source manifest and re-putting it with the new tag.
-// Errors are non-fatal -- the caller logs warnings on failure.
+// Errors are returned to the caller (ImageManager) which aggregates
+// them and surfaces via HTTP error per BUG-825 + the no-fallbacks rule.
 func (a *ACRAuthProvider) OnTag(imageID, registry, repo, newTag string) error {
 	token, err := a.GetToken(registry)
 	if err != nil {
@@ -108,8 +109,12 @@ func (a *ACRAuthProvider) OnTag(imageID, registry, repo, newTag string) error {
 	return nil
 }
 
-// OnRemove deletes a manifest from ACR. Graceful on 404/405.
-// Errors are non-fatal -- the caller logs warnings on failure.
+// OnRemove deletes manifests from ACR. Graceful on 404/405 (already
+// gone / sim doesn't support DELETE). BUG-829: previously every
+// per-tag failure was logged + `continue`, so OnRemove returned nil
+// success even when some tags couldn't be removed and the ACR-side
+// state diverged from local. Now aggregates per-tag failures and
+// surfaces them per BUG-825 + the no-fallbacks rule.
 func (a *ACRAuthProvider) OnRemove(registry, repo string, tags []string) error {
 	token, err := a.GetToken(registry)
 	if err != nil {
@@ -118,8 +123,9 @@ func (a *ACRAuthProvider) OnRemove(registry, repo string, tags []string) error {
 
 	client := &http.Client{Timeout: 30 * time.Second}
 
+	var failures []string
 	for _, tag := range tags {
-		// Try to get the manifest digest first
+		// Try to get the manifest digest first.
 		manifestURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s", registry, repo, tag)
 		req, _ := http.NewRequest("HEAD", manifestURL, nil)
 		req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json")
@@ -127,17 +133,17 @@ func (a *ACRAuthProvider) OnRemove(registry, repo string, tags []string) error {
 
 		headResp, err := client.Do(req)
 		if err != nil {
-			a.Logger.Warn().Err(err).Str("registry", registry).Str("tag", tag).Msg("ACR remove: manifest HEAD failed")
+			failures = append(failures, fmt.Sprintf("%s: HEAD failed: %v", tag, err))
 			continue
 		}
 		headResp.Body.Close()
 
 		if headResp.StatusCode == 404 || headResp.StatusCode == 405 {
-			continue // manifest not found or delete not supported -- graceful
+			continue // manifest not found / DELETE not supported by sim — graceful
 		}
 
 		if headResp.StatusCode != 200 {
-			a.Logger.Warn().Int("status", headResp.StatusCode).Str("registry", registry).Str("tag", tag).Msg("ACR remove: manifest not found")
+			failures = append(failures, fmt.Sprintf("%s: HEAD HTTP %d", tag, headResp.StatusCode))
 			continue
 		}
 
@@ -146,23 +152,29 @@ func (a *ACRAuthProvider) OnRemove(registry, repo string, tags []string) error {
 			digest = tag
 		}
 
-		// DELETE manifest
+		// DELETE manifest.
 		delURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s", registry, repo, digest)
 		delReq, _ := http.NewRequest("DELETE", delURL, nil)
 		core.SetOCIAuth(delReq, token)
 
 		delResp, err := client.Do(delReq)
 		if err != nil {
-			a.Logger.Warn().Err(err).Str("registry", registry).Str("tag", tag).Msg("ACR remove: manifest DELETE failed")
+			failures = append(failures, fmt.Sprintf("%s: DELETE failed: %v", tag, err))
 			continue
 		}
 		delResp.Body.Close()
 
-		if delResp.StatusCode != 202 && delResp.StatusCode != 200 && delResp.StatusCode != 404 && delResp.StatusCode != 405 {
-			a.Logger.Warn().Int("status", delResp.StatusCode).Str("registry", registry).Str("tag", tag).Msg("ACR remove: manifest DELETE returned error")
+		switch delResp.StatusCode {
+		case http.StatusOK, http.StatusAccepted, http.StatusNotFound, http.StatusMethodNotAllowed:
+			// OK
+		default:
+			failures = append(failures, fmt.Sprintf("%s: DELETE HTTP %d", tag, delResp.StatusCode))
 		}
 	}
 
+	if len(failures) > 0 {
+		return fmt.Errorf("ACR delete failed for some tags: %s", strings.Join(failures, "; "))
+	}
 	return nil
 }
 
