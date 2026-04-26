@@ -139,17 +139,38 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 		Logger:    s.Logger,
 	}
 	cmd := append([]string{exec.ProcessConfig.Entrypoint}, exec.ProcessConfig.Arguments...)
+	env := mergeEnv(c.Config.Env, exec.ProcessConfig.Env)
+	workDir := exec.ProcessConfig.WorkingDir
+	if workDir == "" {
+		workDir = c.Config.WorkingDir
+	}
 	opts := ExecOptions{
 		ExecID:  id,
 		Cmd:     cmd,
-		Env:     exec.ProcessConfig.Env,
-		WorkDir: exec.ProcessConfig.WorkingDir,
+		Env:     env,
+		WorkDir: workDir,
 		TTY:     tty,
 		User:    exec.ProcessConfig.User,
 	}
-	if _, err := s.Typed.Exec.Exec(dctx, opts, conn); err != nil {
+
+	// Bookkeeping previously lived in BaseServer.ExecStart. Centralised
+	// here so cloud-native typed drivers don't each have to track
+	// Running/PID/ExitCode for the exec instance.
+	execPid := s.Store.NextPID()
+	s.Store.Execs.Update(id, func(e *api.ExecInstance) {
+		e.Running = true
+		e.Pid = execPid
+	})
+	exitCode, err := s.Typed.Exec.Exec(dctx, opts, conn)
+	if err != nil {
 		s.Logger.Debug().Err(err).Str("exec", id).Msg("typed exec dispatch error after hijack")
 	}
+	s.Store.Execs.Update(id, func(e *api.ExecInstance) {
+		e.Running = false
+		e.Pid = 0
+		e.ExitCode = exitCode
+		e.CanRemove = true
+	})
 }
 
 // mergeEnv merges base env vars with override env vars. Override values

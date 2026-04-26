@@ -86,6 +86,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	s.Mux.HandleFunc("/v1/aca/reverse", core.HandleReverseAgentWS(s.reverseAgents, logger))
 	s.Drivers.Exec = &core.ReverseAgentExecDriver{Registry: s.reverseAgents, Logger: logger}
 	s.Drivers.Stream = &core.ReverseAgentStreamDriver{Registry: s.reverseAgents, Logger: logger}
+	s.Typed.Exec = core.WrapLegacyExec(s.Drivers.Exec, "aca", "ReverseAgentExec")
 
 	// Cloud-native typed Logs + Attach driving Azure Monitor / Log
 	// Analytics via the per-container fetcher factory.

@@ -84,6 +84,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	s.Mux.HandleFunc("/v1/cloudrun/reverse", core.HandleReverseAgentWS(s.reverseAgents, logger))
 	s.Drivers.Exec = &core.ReverseAgentExecDriver{Registry: s.reverseAgents, Logger: logger}
 	s.Drivers.Stream = &core.ReverseAgentStreamDriver{Registry: s.reverseAgents, Logger: logger}
+	s.Typed.Exec = core.WrapLegacyExec(s.Drivers.Exec, "cloudrun", "ReverseAgentExec")
 
 	// Cloud-native typed Logs + Attach driving Cloud Logging via the
 	// per-container fetcher factory.

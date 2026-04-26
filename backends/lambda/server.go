@@ -89,6 +89,10 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	// local container namespace; the reverse-agent pattern fills the gap.
 	s.Drivers.Exec = &lambdaExecDriver{Registry: s.reverseAgents, Logger: logger}
 	s.Drivers.Stream = &lambdaStreamDriver{Registry: s.reverseAgents, Logger: logger}
+	// Typed Exec driver — bypasses BaseServer.ExecStart's pipeConn
+	// bridge and dispatches directly to the reverse-agent driver with
+	// the hijacked conn handed in by handleExecStart.
+	s.Typed.Exec = core.WrapLegacyExec(s.Drivers.Exec, "lambda", "ReverseAgentExec")
 
 	// Cloud-native typed drivers for Logs + Attach. Both go through
 	// CloudWatch with a per-container log-group factory so the typed
