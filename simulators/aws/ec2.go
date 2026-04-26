@@ -210,7 +210,10 @@ func AllocateSubnetIP(subnetID string) (string, error) {
 	return ip.String(), nil
 }
 
-const ec2Owner = "123456789012"
+// ec2Owner() returns the EC2 resource owner — same as the AWS account
+// ID. Tracks awsAccountID() so a SOCKERLESS_AWS_ACCOUNT_ID override
+// propagates through every VPC/Subnet/SG OwnerId.
+func ec2Owner() string { return awsAccountID() }
 
 // ensureSimDefaults creates `vpc-sim` and `subnet-0123456789abcdef0` entries if they
 // don't already exist. Called on simulator startup. Idempotent.
@@ -220,7 +223,7 @@ func ensureSimDefaults() {
 			VpcId:              "vpc-sim",
 			CidrBlock:          "10.0.0.0/16",
 			State:              "available",
-			OwnerId:            ec2Owner,
+			OwnerId:            ec2Owner(),
 			IsDefault:          true,
 			EnableDnsSupport:   true,
 			EnableDnsHostnames: true,
@@ -231,9 +234,9 @@ func ensureSimDefaults() {
 			SubnetId:            "subnet-0123456789abcdef0",
 			VpcId:               "vpc-sim",
 			CidrBlock:           "10.0.1.0/24",
-			AvailabilityZone:    "us-east-1a",
+			AvailabilityZone:    awsAvailabilityZone(),
 			State:               "available",
-			OwnerId:             ec2Owner,
+			OwnerId:             ec2Owner(),
 			MapPublicIpOnLaunch: false,
 		})
 	}
@@ -360,7 +363,7 @@ func handleCreateVpc(w http.ResponseWriter, r *http.Request) {
 		CidrBlock:          cidr,
 		State:              "available",
 		Tags:               tags,
-		OwnerId:            ec2Owner,
+		OwnerId:            ec2Owner(),
 		IsDefault:          false,
 		EnableDnsSupport:   true,
 		EnableDnsHostnames: false,
@@ -375,7 +378,7 @@ func handleCreateVpc(w http.ResponseWriter, r *http.Request) {
     <ownerId>%s</ownerId><isDefault>false</isDefault>
     %s
   </vpc>
-</CreateVpcResponse>`, ec2Xmlns(), generateUUID(), id, cidr, ec2Owner, writeTagSetXML(tags))
+</CreateVpcResponse>`, ec2Xmlns(), generateUUID(), id, cidr, ec2Owner(), writeTagSetXML(tags))
 }
 
 func vpcItemXML(vpc EC2Vpc) string {
@@ -480,7 +483,7 @@ func handleCreateSubnet(w http.ResponseWriter, r *http.Request) {
 		AvailabilityZone: az,
 		State:            "available",
 		Tags:             tags,
-		OwnerId:          ec2Owner,
+		OwnerId:          ec2Owner(),
 	}
 	ec2Subnets.Put(id, subnet)
 
@@ -493,7 +496,7 @@ func handleCreateSubnet(w http.ResponseWriter, r *http.Request) {
     <mapPublicIpOnLaunch>false</mapPublicIpOnLaunch><ownerId>%s</ownerId>
     %s
   </subnet>
-</CreateSubnetResponse>`, ec2Xmlns(), generateUUID(), id, vpcId, cidr, az, ec2Owner, writeTagSetXML(tags))
+</CreateSubnetResponse>`, ec2Xmlns(), generateUUID(), id, vpcId, cidr, az, ec2Owner(), writeTagSetXML(tags))
 }
 
 func subnetItemXML(s EC2Subnet) string {
@@ -564,7 +567,7 @@ func handleCreateInternetGateway(w http.ResponseWriter, r *http.Request) {
 	igw := EC2InternetGateway{
 		InternetGatewayId: id,
 		Tags:              tags,
-		OwnerId:           ec2Owner,
+		OwnerId:           ec2Owner(),
 	}
 	ec2InternetGateways.Put(id, igw)
 
@@ -577,7 +580,7 @@ func handleCreateInternetGateway(w http.ResponseWriter, r *http.Request) {
     <ownerId>%s</ownerId>
     %s
   </internetGateway>
-</CreateInternetGatewayResponse>`, ec2Xmlns(), generateUUID(), id, ec2Owner, writeTagSetXML(tags))
+</CreateInternetGatewayResponse>`, ec2Xmlns(), generateUUID(), id, ec2Owner(), writeTagSetXML(tags))
 }
 
 func handleAttachInternetGateway(w http.ResponseWriter, r *http.Request) {
@@ -869,7 +872,7 @@ func handleCreateRouteTable(w http.ResponseWriter, r *http.Request) {
 			Origin:               "CreateRouteTable",
 		}},
 		Tags:    tags,
-		OwnerId: ec2Owner,
+		OwnerId: ec2Owner(),
 	}
 	ec2RouteTables.Put(id, rt)
 
@@ -1081,7 +1084,7 @@ func handleCreateSecurityGroup(w http.ResponseWriter, r *http.Request) {
 		Description: desc,
 		VpcId:       vpcId,
 		Tags:        tags,
-		OwnerId:     ec2Owner,
+		OwnerId:     ec2Owner(),
 	}
 	ec2SecurityGroups.Put(id, sg)
 

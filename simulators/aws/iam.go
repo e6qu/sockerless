@@ -81,7 +81,7 @@ func handleIAMCreateRole(w http.ResponseWriter, r *http.Request) {
 	role := IAMRole{
 		RoleName:                 name,
 		RoleId:                   "AROA" + strings.ToUpper(generateUUID()[:16]),
-		Arn:                      fmt.Sprintf("arn:aws:iam::123456789012:role/%s", name),
+		Arn:                      fmt.Sprintf("arn:aws:iam::"+awsAccountID()+":role/%s", name),
 		Path:                     path,
 		AssumeRolePolicyDocument: assumeDoc,
 		CreateDate:               time.Now().UTC().Format(time.RFC3339),

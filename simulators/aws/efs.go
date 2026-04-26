@@ -127,7 +127,7 @@ var (
 )
 
 func efsArn(resourceType, id string) string {
-	return fmt.Sprintf("arn:aws:elasticfilesystem:us-east-1:123456789012:%s/%s", resourceType, id)
+	return fmt.Sprintf("arn:aws:elasticfilesystem:"+awsRegion()+":"+awsAccountID()+":%s/%s", resourceType, id)
 }
 
 func registerEFS(srv *sim.Server) {
@@ -192,7 +192,7 @@ func handleEFSCreateFileSystem(w http.ResponseWriter, r *http.Request) {
 		CreationTime:    time.Now().Unix(),
 		LifeCycleState:  "available",
 		Name:            name,
-		OwnerId:         "123456789012",
+		OwnerId:         awsAccountID(),
 		PerformanceMode: req.PerformanceMode,
 		ThroughputMode:  req.ThroughputMode,
 		Tags:            req.Tags,
@@ -328,8 +328,8 @@ func handleEFSCreateMountTarget(w http.ResponseWriter, r *http.Request) {
 		LifeCycleState:       "available",
 		NetworkInterfaceId:   "eni-" + generateUUID()[:8],
 		AvailabilityZoneId:   "use1-az1",
-		AvailabilityZoneName: "us-east-1a",
-		OwnerId:              "123456789012",
+		AvailabilityZoneName: awsAvailabilityZone(),
+		OwnerId:              awsAccountID(),
 		SecurityGroups:       req.SecurityGroups,
 	}
 	efsMountTargets.Put(mtId, mt)
@@ -400,7 +400,7 @@ func handleEFSCreateAccessPoint(w http.ResponseWriter, r *http.Request) {
 		FileSystemId:   req.FileSystemId,
 		LifeCycleState: "available",
 		Name:           name,
-		OwnerId:        "123456789012",
+		OwnerId:        awsAccountID(),
 		RootDirectory:  req.RootDirectory,
 		PosixUser:      req.PosixUser,
 		Tags:           req.Tags,

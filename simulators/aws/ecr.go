@@ -56,10 +56,14 @@ var (
 	ecrPullThroughCacheRules sim.Store[ECRPullThroughCacheRule]
 )
 
-const ecrRegistryId = "123456789012"
+// ecrRegistryId() returns the registry ID — same as the AWS account ID.
+// Real ECR uses the caller's account; the sim defers to awsAccountID
+// so a SOCKERLESS_AWS_ACCOUNT_ID override propagates through every ECR
+// ARN, repository URI, and authorization-token endpoint.
+func ecrRegistryId() string { return awsAccountID() }
 
 func ecrArn(resourceType, name string) string {
-	return "arn:aws:ecr:us-east-1:" + ecrRegistryId + ":" + resourceType + "/" + name
+	return "arn:aws:ecr:" + awsRegion() + ":" + ecrRegistryId() + ":" + resourceType + "/" + name
 }
 
 func registerECR(r *sim.AWSRouter, srv *sim.Server) {
@@ -121,7 +125,7 @@ func handleECRCreatePullThroughCacheRule(w http.ResponseWriter, r *http.Request)
 	now := time.Now().Unix()
 	regID := req.RegistryId
 	if regID == "" {
-		regID = ecrRegistryId
+		regID = ecrRegistryId()
 	}
 	rule := ECRPullThroughCacheRule{
 		EcrRepositoryPrefix: req.EcrRepositoryPrefix,
@@ -234,8 +238,8 @@ func handleECRCreateRepository(w http.ResponseWriter, r *http.Request) {
 	repo := ECRRepository{
 		RepositoryArn:  ecrArn("repository", req.RepositoryName),
 		RepositoryName: req.RepositoryName,
-		RepositoryUri:  ecrRegistryId + ".dkr.ecr.us-east-1.amazonaws.com/" + req.RepositoryName,
-		RegistryId:     ecrRegistryId,
+		RepositoryUri:  ecrRegistryId() + ".dkr.ecr." + awsRegion() + ".amazonaws.com/" + req.RepositoryName,
+		RegistryId:     ecrRegistryId(),
 		CreatedAt:      time.Now().Unix(),
 	}
 	ecrRepositories.Put(req.RepositoryName, repo)
@@ -314,7 +318,7 @@ func handleECRGetAuthorizationToken(w http.ResponseWriter, r *http.Request) {
 			{
 				"authorizationToken": token,
 				"expiresAt":          expiresAt,
-				"proxyEndpoint":      "https://" + ecrRegistryId + ".dkr.ecr.us-east-1.amazonaws.com",
+				"proxyEndpoint":      "https://" + ecrRegistryId() + ".dkr.ecr." + awsRegion() + ".amazonaws.com",
 			},
 		},
 	})
@@ -399,7 +403,7 @@ func handleECRPutImage(w http.ResponseWriter, r *http.Request) {
 
 	digest := "sha256:" + generateUUID()
 	img := ECRImageDetail{
-		RegistryId:     ecrRegistryId,
+		RegistryId:     ecrRegistryId(),
 		RepositoryName: req.RepositoryName,
 		ImageDigest:    digest,
 		ImageTags:      []string{req.ImageTag},
@@ -529,14 +533,14 @@ func handleECRPutLifecyclePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	policy := ECRLifecyclePolicy{
-		RegistryId:          ecrRegistryId,
+		RegistryId:          ecrRegistryId(),
 		RepositoryName:      req.RepositoryName,
 		LifecyclePolicyText: req.LifecyclePolicyText,
 	}
 	ecrLifecyclePolicies.Put(req.RepositoryName, policy)
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"registryId":          ecrRegistryId,
+		"registryId":          ecrRegistryId(),
 		"repositoryName":      req.RepositoryName,
 		"lifecyclePolicyText": req.LifecyclePolicyText,
 	})

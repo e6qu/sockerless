@@ -12,13 +12,14 @@ func registerSTS(r *sim.AWSQueryRouter) {
 }
 
 func handleGetCallerIdentity(w http.ResponseWriter, r *http.Request) {
+	acct := awsAccountID()
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<GetCallerIdentityResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
   <GetCallerIdentityResult>
-    <Arn>arn:aws:iam::123456789012:user/simulator</Arn>
+    <Arn>arn:aws:iam::%s:user/simulator</Arn>
     <UserId>AKIAIOSFODNN7EXAMPLE</UserId>
-    <Account>123456789012</Account>
+    <Account>%s</Account>
   </GetCallerIdentityResult>
   <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
-</GetCallerIdentityResponse>`, generateUUID())
+</GetCallerIdentityResponse>`, acct, acct, generateUUID())
 }

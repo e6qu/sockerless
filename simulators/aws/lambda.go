@@ -80,7 +80,7 @@ type LambdaImageConfig struct {
 var lambdaFunctions sim.Store[LambdaFunction]
 
 func lambdaArn(name string) string {
-	return fmt.Sprintf("arn:aws:lambda:us-east-1:123456789012:function:%s", name)
+	return fmt.Sprintf("arn:aws:lambda:%s:%s:function:%s", awsRegion(), awsAccountID(), name)
 }
 
 func registerLambda(srv *sim.Server) {
@@ -216,7 +216,7 @@ func handleLambdaGetFunction(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"Configuration": fn,
 		"Code": map[string]string{
-			"Location": fmt.Sprintf("https://awslambda-us-east-1-tasks.s3.us-east-1.amazonaws.com/snapshots/%s", name),
+			"Location": fmt.Sprintf("https://awslambda-%s-tasks.s3.%s.amazonaws.com/snapshots/%s", awsRegion(), awsRegion(), name),
 		},
 	})
 }

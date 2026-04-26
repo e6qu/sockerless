@@ -49,11 +49,11 @@ var (
 )
 
 func cwLogGroupArn(name string) string {
-	return fmt.Sprintf("arn:aws:logs:us-east-1:123456789012:log-group:%s", name)
+	return fmt.Sprintf("arn:aws:logs:"+awsRegion()+":"+awsAccountID()+":log-group:%s", name)
 }
 
 func cwLogStreamArn(group, stream string) string {
-	return fmt.Sprintf("arn:aws:logs:us-east-1:123456789012:log-group:%s:log-stream:%s", group, stream)
+	return fmt.Sprintf("arn:aws:logs:"+awsRegion()+":"+awsAccountID()+":log-group:%s:log-stream:%s", group, stream)
 }
 
 func cwEventsKey(group, stream string) string {

@@ -79,7 +79,7 @@ var (
 )
 
 func cmArn(resourceType, id string) string {
-	return fmt.Sprintf("arn:aws:servicediscovery:us-east-1:123456789012:%s/%s", resourceType, id)
+	return fmt.Sprintf("arn:aws:servicediscovery:%s:%s:%s/%s", awsRegion(), awsAccountID(), resourceType, id)
 }
 
 func cmInstanceKey(serviceId, instanceId string) string {
