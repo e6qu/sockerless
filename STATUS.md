@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**103 phases closed (Phase 108 closed 2026-04-26). 835 bugs tracked — 835 fixed, 0 open. 1 false positive.** PR #118 merged. PR #120 open with: 22 audit closures (BUG-802 + 638/640/646/648 retro + 804/806 + 820..831 + 832..835); Phase 104 skeleton + dimension lifts 1-4 (Exec, Attach, Logs, Signal) + typed framework renamed to drop 104 suffix; Phase 105 waves 1-3 (libpod-shape golden tests, 8 handlers); Phase 108 closed in-branch (77/77 sim-parity matrix ✓ — 33 AWS / 16 GCP / 28 Azure); manual-tests directory + state-doc streamline. **Next on this branch:** continue Phase 104 dimension lifts (9 left) + first per-backend migration (docker → `TypedDriverSet.{Exec,Attach}`).
+**103 phases closed (Phase 108 closed 2026-04-26). 835 bugs tracked — 835 fixed, 0 open. 1 false positive.** PR #118 merged. PR #120 open with: 22 audit closures (BUG-802 + 638/640/646/648 retro + 804/806 + 820..831 + 832..835); Phase 104 skeleton + 6 typed adapters (Exec, Attach, Logs, Signal, ProcList, FSDiff) + 4 dispatch sites migrated to TypedDriverSet (Logs, Signal, ProcList, FSDiff) + framework renamed to drop 104 suffix; Phase 105 waves 1-3 (libpod-shape golden tests, 8 handlers); Phase 108 closed in-branch (77/77 sim-parity matrix ✓ — 33 AWS / 16 GCP / 28 Azure); manual-tests directory + repo-wide code/doc cleanup. **Next on this branch:** lift + migrate Stats / Build / Registry / Commit / FSRead / FSWrite / FSExport, then per-backend typed-driver overrides, then handler re-architecting for Exec + Attach.
 
 See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer).
 
@@ -23,7 +23,7 @@ See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md]
 
 ## Open work (full detail in [PLAN.md](PLAN.md))
 
-- **Phase 104** — cross-backend driver framework. 13 dimensions; lifts 1-4 done (Exec, Attach, Logs, Signal); 9 left + per-backend migration starting with docker.
+- **Phase 104** — cross-backend driver framework. 13 dimensions; 6 adapters shipped (Exec, Attach, Logs, Signal, ProcList, FSDiff); 4 dispatch sites migrated; 7 dimensions still need lift+migrate (Stats, Build, Registry, Commit, FSRead, FSWrite, FSExport); Exec + Attach dispatch sites need handler re-architecting.
 - **Phase 105** — libpod-shape conformance, rolling. Waves 1-3 done; wave 4 (events stream, exec start hijack, container CRUD) lower-priority.
 - **Phase 106** — real GitHub Actions runner integration. Architecture sketched (per-backend daemon v1; label-dispatch v2 via Phase 68). ECS + Lambda first.
 - **Phase 107** — real GitLab Runner integration (origin-gitlab mirror). Same shape; `dind` sub-test included.

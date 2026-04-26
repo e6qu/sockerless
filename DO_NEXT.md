@@ -5,15 +5,17 @@ Resume pointer for the next session / post-compaction. Updated after every task.
 ## Branch state
 
 - `main` synced with `origin/main` at PR #119 merge.
-- **`post-pr-118-bug-audit-and-phases`** — open as PR #120, ~25 commits ahead. Cumulative: 22 bugs closed; Phase 104 skeleton + lifts 1-4 (Exec, Attach, Logs, Signal); typed driver framework renamed to drop 104 suffix (`ExecDriver`, `AttachDriver`, `TypedDriverSet`); Phase 105 waves 1-3 (8 libpod-shape handlers); Phase 108 closed (77/77 sim-parity matrix ✓); manual-tests directory + state-doc streamline.
+- **`post-pr-118-bug-audit-and-phases`** — open as PR #120, ~28 commits ahead. Cumulative: 22 bugs closed; Phase 104 skeleton + 6 typed adapters (Exec, Attach, Logs, Signal, ProcList, FSDiff); typed framework renamed to drop 104 suffix (`ExecDriver`, `AttachDriver`, `TypedDriverSet`); 4 dispatch sites migrated to `TypedDriverSet` (Logs, Signal, ProcList, FSDiff); Phase 105 waves 1-3 (8 libpod-shape handlers); Phase 108 closed (77/77 sim-parity matrix ✓); manual-tests directory + repo-wide phase/bug-ref strip from code + docs.
 
 ## Up next on this branch
 
-1. **Phase 104 first per-backend migration** — wire docker backend's exec call site through `TypedDriverSet.Exec` (using `WrapLegacyExec`). Smallest backend, no cloud round-trips, integration tests in `tests/exec_test.go` verify parity.
-2. **Remaining Phase 104 lifts** — FSRead/Write/Diff/Export, Commit, Build, Stats, ProcList, Registry. Piecemeal, one per commit, sim parity per commit.
-3. **Phase 105 wave 4** (lower priority) — events stream, exec start hijack shape, container CRUD beyond list.
+1. **Stats / Build / Registry / Commit lifts + dispatch migrations.** Each has a non-trivial shape gap between the legacy `BaseServer` method and the typed `Driver`: Stats takes (ref, stream, w) instead of returning a reader; Commit takes a request struct vs the typed `CommitOptions`; Build/Registry are streaming. Each warrants its own commit with adapter + lift + dispatch + tests.
+2. **FSRead / FSWrite / FSExport.** Typed shape uses `io.Writer` while the legacy shape returns `*api.ContainerArchiveResponse` (Reader-based). Bridge via `io.Pipe` inside the adapter. The dispatch sites already use `s.Drivers.Filesystem` directly (not `s.self.ContainerGetArchive`), so the migration also reframes how the typed driver fits into the existing Filesystem driver chain.
+3. **Exec + Attach dispatch migration.** `BaseServer.ExecStart` returns `io.ReadWriteCloser`; the typed `ExecDriver.Exec` writes to a passed `conn`. Different control flow — the handler currently hijacks then copies; the typed driver needs the hijacked conn handed in. Re-architect `handleExecStart` to hijack first, then dispatch.
+4. **Per-backend typed driver overrides.** Once a backend has all dispatch sites flowing through `TypedDriverSet`, swap the default legacy adapter for a cloud-native typed driver (e.g. ECS → SSMExec; Lambda → ReverseAgentExec; FaaS → CloudLogsLogsDriver instead of WrapLegacyLogs).
+5. **Phase 105 wave 4** (lower priority) — events stream, exec start hijack shape, container CRUD beyond list.
 
-After this branch's Phase 104 work reaches first-dimension parity (Exec lifted across all 7 backends), the typed framework is ready for Phase 106/107 (real CI runners) to exercise it.
+After this branch's typed framework reaches first-dimension parity across all 7 backends (each backend overrides at least one slot with a cloud-native typed driver), the framework is ready for Phase 106/107 (real CI runners) to exercise it.
 
 ## Cross-links
 
