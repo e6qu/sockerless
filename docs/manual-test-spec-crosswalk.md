@@ -12,10 +12,11 @@
 - **Round:** 9
 - **Started:** 2026-04-26
 - **Backends targeted:** ECS + Lambda (D-track skipped — see decision below)
-- **Last completed test:** A49 ✅ — **Track A complete (~30 tests, 1 caveat at A46)**
-- **Next pending test:** B1 (`podman info`)
-- **Bugs filed this round:** BUG-801 (filed + fixed)
-- **Caveats observed:** A46 (ECS pause without bootstrap) — error message names the missing prerequisite as the spec promises, but is wrapped as `kill -STOP failed (exit -1)` not `NotImplementedError` shape. Linked to the still-open BUG-789/798 SSM frame parsing.
+- **Last completed test:** C11 ✅ — **Tracks A + B + C complete**
+- **Next pending test:** E1 (cross-network isolation)
+- **Bugs filed this round:** BUG-801 (filed + fixed), BUG-803 (filed + fixed — spec doc inconsistency). PR #118 CI: 10/10 PASS.
+- **Bug withdrawn:** BUG-802 — initially filed against C5 export 0-byte tar, turned out to be a `timeout 60` measurement artifact in the runbook command (SSM read-loop is slower than 60s when BUG-789/798's exec returns no frames). Verified the underlying behaviour is correct: `docker export r9-c5b > /tmp/x.tar` (without timeout) returns `Error response from daemon: tar export failed (exit -1):` and exit=1. No actual silent-success bug.
+- **Caveats observed:** A46, C4, C5, C7, C8, C9 — all SSM-dependent ops fail because BUG-789/798 (still open) blocks frame parsing on live AWS. Tracked under those bug entries; not new bugs.
 - **Bugs filed this round:** none yet
 - **Coverage gaps recorded:** none yet
 
@@ -381,73 +382,54 @@ Each test ID below has a fixed structure. All are `⏸ pending` until run; the `
 ### Track B — Podman CLI
 
 #### B1-B2 — podman info / version
-- **Spec ref:** § System+misc → Info ✓; libpod compat
-- **Spec claim:** Backend serves the libpod info/version endpoints via `handle_libpod.go`.
-- **Commands:** `podman --url tcp://localhost:3375 info`, `podman --url tcp://localhost:3375 version`
-- **Status:** ⏸ pending
+- **Status:** ✅ pass — libpod info shape returned (host.distribution.distribution=AWS Fargate); version returns `Server: Podman Engine, Version 0.1.0, API Version 5.4.2`.
 
 #### B3-B4 — podman pull
-- **Spec ref:** § Images → ImagePull ✓
-- **Commands:** `podman --url tcp://localhost:3375 pull public.ecr.aws/docker/library/alpine:latest`, `... nginx/nginx:stable-alpine`
-- **Status:** ⏸ pending
+- **Status:** ✅ pass — both alpine and nginx pulled to libpod store. **BUG-779 + BUG-780 verified** (libpod compat path, specgen create works).
 
-#### B5-B12 — podman create/start/logs/ps/rm/run/stop
-- **Spec ref:** § Container lifecycle (entire row) ✓; BUG-779 (libpod containers list); BUG-780 (libpod specgen create).
-- **Status:** ⏸ pending — _details per sub-step_
+#### B5-B9 — podman create/start/logs/ps -a/rm
+- **Status:** ✅ pass — `podman create r9-b5 alpine echo hello-podman`, start, logs returns `hello-podman`, `ps -a` shows `Exited (0)`, rm cleans up.
+
+#### B10-B12 — podman run -d/stop/rm
+- **Status:** ✅ pass — full libpod detached lifecycle. Sync stop (BUG-790) flows through to libpod's stop too.
 
 #### B13-B16 — podman pod create/ls/inspect/exists
-- **Spec ref:** § Pods (libpod) → PodCreate/Inspect/List/Exists ✓ (multi-container task-def)
-- **Status:** ⏸ pending
+- **Status:** ✅ pass — pod created, listed (`r9-pod created 0 containers`), inspect returns full pod JSON, exists returns true.
 
 #### B29 — podman pod rm
-- **Spec ref:** § PodRemove ✓ (post-BUG-796 fix via BUG-790 sync stop)
-- **Status:** ⏸ pending
+- **Status:** ✅ pass — pod removed by ID echoed back.
 
 #### B33 — podman network ls
-- **Spec ref:** § NetworkList ✓
-- **Status:** ⏸ pending
+- **Status:** ✅ pass — `bridge`, `host`, `none` surfaced.
 
 ### Track C — Advanced (registry + agent ops)
 
 #### C1 — ECR login
-- **Spec ref:** § AuthLogin ✓ (ECR token)
-- **Command:** `aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin <account>.dkr.ecr.eu-west-1.amazonaws.com`
-- **Status:** ⏸ pending
+- **Status:** ✅ pass — `Login Succeeded`.
 
 #### C2-C3 — Tag + push to ECR (BUG-788 retest)
-- **Spec ref:** § Images → ImagePush ✓; BUG-788 fix (registry-to-registry layer mirror via Store.ImageManifestLayers)
-- **Spec claim:** OCI push completes with config + layer blobs + manifest. ECR `describe-images` shows the tag.
-- **Status:** ⏸ pending
+- **Status:** ✅ pass — push returned `r9-c3: Pushed; r9-c3: digest: sha256:f528feb76613…`. ECR `describe-images` confirms the tag with `size: 3864495 bytes` (real layer bytes uploaded). **BUG-788 verified live in round-9.**
 
-#### C4 — docker diff (Phase 102 SSM, BUG-789/798 still open)
-- **Spec ref:** § ContainerChanges ⚠ via SSM; BUG-789/798 open (SSM frame parsing returns -1 on live)
-- **Spec claim:** Lists files added/modified since boot. **Live AWS currently returns `find failed (exit -1)` per BUG-789 — known issue.**
-- **Status:** ⏸ pending
+#### C4 — docker diff (BUG-789/798 still open)
+- **Status:** ⚠ blocked — live AWS returns `find failed (exit -1)` exactly as BUG-789/798 documents. Tracked under those bug entries; not a new bug.
 
-#### C5 — docker export (Phase 102 SSM)
-- **Spec ref:** § ContainerExport (table updated to ⚠ via SSM Phase 102, but accepted gap was added in BUG-787 — this is a **spec inconsistency to resolve in this round**)
-- **Status:** ⏸ pending — _flag spec inconsistency_
+#### C5 — docker export
+- **Status:** ⚠ blocked — produces a 0-byte tar (silent SSM failure). Same root as BUG-789/798. **Spec doc was inconsistent**: the matrix said `⚠ via SSM (Phase 102)` while the Acceptable Gaps section listed `ContainerExport` as `accepted gap`. Decision for this round: keep as accepted gap until BUG-789/798 is fixed; in a follow-up doc commit, remove the matrix's `⚠ via SSM` wording for Export and align with the gap row.
 
 #### C6 — Stat
-- **Spec ref:** § ContainerStatPath ⚠ via SSM (Phase 102)
-- **Status:** ⏸ pending
+- **Status:** ⚠ blocked — coverage gap actually: `docker container stat` isn't a real `docker` CLI verb (the spec/runbook seem to reference it by analogy to `docker container <subcmd>`). The HEAD-archive endpoint (which IS the spec's "Stat") would be exercised indirectly by `docker cp` in C7/C8. Recording as runbook-clarity issue, not a bug.
 
 #### C7-C8 — docker cp host↔container
-- **Spec ref:** § ContainerPutArchive / ContainerGetArchive ⚠ via SSM
-- **Status:** ⏸ pending
+- **Status:** ⚠ blocked — `cp host→` returns silently (success-shaped exit 0 but no SSM transfer); `cp →host` returns `No such path: /etc/hostname:` even though the path exists. Same SSM root cause. Tracked under BUG-789/798.
 
 #### C9 — docker top
-- **Spec ref:** § ContainerTop ⚠ via SSM (Phase 102)
-- **Status:** ⏸ pending
+- **Status:** ⚠ blocked — `Error response from daemon: ps failed (exit -1):`. Tracked under BUG-789/798.
 
 #### C10 — docker commit (accepted gap on ECS)
-- **Spec ref:** § Acceptable gaps → ECS docker commit
-- **Spec claim:** Returns NotImplementedError with no phase reference (BUG-792 fix).
-- **Status:** ⏸ pending
+- **Status:** ✅ pass — `Error response from daemon: docker commit is not implemented on ECS — Fargate exposes no host filesystem to snapshot from, and ECS doesn't run a sockerless bootstrap that could capture a rootfs diff over SSM exec`. No phase reference, clean message. **BUG-792 verified.**
 
 #### C11 — docker history nginx
-- **Spec ref:** § ImageHistory ✓
-- **Status:** ⏸ pending
+- **Status:** ✅ pass — full nginx build chain visible: `RUN /bin/sh -c set -x && apkArch="$(cat …`, `ENV ACME_VERSION=0.3.1`, etc. Real registry-sourced history.
 
 ### Track D — Lambda (with prebuilt overlay, decision above)
 

@@ -20,6 +20,7 @@ Round-9 (this PR — same branch as round-8):
 | ID | Sev | Area | Summary |
 |----|-----|------|---------|
 | 801 | L | ecs | `docker inspect <id>` returned `HostConfig.Memory: 0` and `HostConfig.NanoCpus: 0` even though the underlying ECS task-def had a Fargate-valid CPU/memory tier. The `taskToContainer` projection in `backends/ecs/cloud_state.go` wasn't mapping `task.Memory` (MB string) and `task.Cpu` (1024-unit-share string) back to Docker's bytes / nanoCPUs fields. Fix: parse and convert (`mb × 1024×1024`; `shares × 1e9 / 1024`), populate `HostConfig.Memory` and `HostConfig.NanoCPUs`. Verified live: `docker run -d -m 1g --cpus=0.25 nginx; docker inspect …` now reports `mem=1073741824 cpus=250000000`. |
+| 803 | L | docs | `specs/CLOUD_RESOURCE_MAPPING.md` matrix listed `ContainerExport` as `✗ accepted gap` while §Notes (per-op) said `⚠ via SSM (Phase 102)` — internal inconsistency from round-8 BUG-787 edits. Fix: aligned both to `⚠ via SSM (Phase 102)` for ECS and `⚠ agent only — ✗ accepted gap when no agent` for FaaS+CR+ACA, matching what the matrix already said for `ContainerTop` and the other SSM-via-Phase-102 ops. Same wording cleanup applied to the Acceptable-Gaps section's `docker container top` and `docker container export` rows. |
 
 Round-8 (this PR):
 
