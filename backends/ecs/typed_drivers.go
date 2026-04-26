@@ -3,6 +3,7 @@ package ecs
 import (
 	"errors"
 	"io"
+	"strings"
 
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
@@ -76,5 +77,16 @@ type ssmSignalDriver struct{ s *Server }
 
 func (d *ssmSignalDriver) Describe() string { return "ecs SSMKill" }
 func (d *ssmSignalDriver) Kill(dctx core.DriverContext, signal string) error {
-	return d.s.ContainerSignalViaSSM(dctx.Container.ID, signal)
+	// SIGSTOP / SIGCONT (`docker pause` / `docker unpause`) require
+	// signaling the user PID inside the running task — only SSM can do
+	// that on Fargate. Every other signal (SIGTERM/SIGKILL/SIGINT/etc.
+	// from `docker kill -s`) is a docker-stop semantic; route it to the
+	// legacy ContainerKill which calls ECS StopTask. This matches docker
+	// daemon behavior on a swarm/managed runtime where signal delivery
+	// to PID 1 is by definition "stop the container".
+	switch strings.ToUpper(strings.TrimPrefix(signal, "SIG")) {
+	case "STOP", "CONT":
+		return d.s.ContainerSignalViaSSM(dctx.Container.ID, signal)
+	}
+	return d.s.ContainerKill(dctx.Container.ID, signal)
 }

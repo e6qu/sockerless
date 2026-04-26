@@ -1363,6 +1363,7 @@ func handleECSExecWebSocket(sessionID string) http.HandlerFunc {
 				execCmd := []string{"sh", "-c", sess.command}
 				execCfg := dockercontainer.ExecOptions{
 					Cmd:          execCmd,
+					AttachStdin:  true,
 					AttachStdout: true,
 					AttachStderr: true,
 				}
@@ -1379,6 +1380,39 @@ func handleECSExecWebSocket(sessionID string) http.HandlerFunc {
 					return
 				}
 				defer attach.Close()
+
+				// Bridge: WebSocket → Docker exec stdin. The backend wraps
+				// stdin in SSM `input_stream_data` AgentMessage frames; real
+				// ssm-agent decodes the frame, forwards only the payload to
+				// the user process, and closes the user's stdin when the
+				// frame's FIN flag is set so readers like `cat`, `tar`, and
+				// `gzip` see EOF. Match that contract.
+				go func() {
+					defer attach.CloseWrite() //nolint:errcheck
+					for {
+						_, msg, rerr := conn.ReadMessage()
+						if rerr != nil {
+							return
+						}
+						payload, mt, fin, perr := decodeSSMInputFrame(msg)
+						if perr != nil {
+							// Not a parseable SSM frame — skip silently.
+							// Real ssm-agent ignores unrecognized frames.
+							continue
+						}
+						if mt != ssmMTInputStreamData {
+							continue
+						}
+						if len(payload) > 0 {
+							if _, werr := attach.Conn.Write(payload); werr != nil {
+								return
+							}
+						}
+						if fin {
+							return
+						}
+					}
+				}()
 
 				// Bridge: Docker exec → WebSocket wrapped in SSM
 				// AgentMessage frames. The backend's SSM decoder
