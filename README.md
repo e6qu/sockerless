@@ -8,9 +8,9 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-90.4k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-90.5k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
 [![TypeScript](https://img.shields.io/badge/TypeScript-8.5k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-47.6k_lines-brightgreen)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-47.7k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
@@ -98,7 +98,7 @@ Each backend, the agent, and the test suite are separate Go modules connected vi
 
 **Go**
 
-![core](https://img.shields.io/badge/core-15.8k-00ADD8)
+![core](https://img.shields.io/badge/core-15.9k-00ADD8)
 ![bleephub](https://img.shields.io/badge/bleephub-14.5k-00ADD8)
 ![sim/aws](https://img.shields.io/badge/sim%2Faws-9.1k-00ADD8)
 ![sim/azure](https://img.shields.io/badge/sim%2Fazure-7.1k-00ADD8)
@@ -109,7 +109,7 @@ Each backend, the agent, and the test suite are separate Go modules connected vi
 ![aca](https://img.shields.io/badge/aca-4.2k-5BC0DE)
 ![docker](https://img.shields.io/badge/docker-2.5k-5BC0DE)
 ![agent](https://img.shields.io/badge/agent-2.3k-5BC0DE)
-![api](https://img.shields.io/badge/api-1.8k-5BC0DE)
+![api](https://img.shields.io/badge/api-1.9k-5BC0DE)
 ![azf](https://img.shields.io/badge/azf-2.3k-A0D8EF)
 ![cli](https://img.shields.io/badge/cli-1.6k-A0D8EF)
 ![gcf](https://img.shields.io/badge/gcf-2.2k-A0D8EF)
