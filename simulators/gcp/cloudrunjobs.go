@@ -507,7 +507,17 @@ func registerCloudRunJobs(srv *sim.Server) {
 						}
 					})
 				}
-				injectCloudRunJobLog(proj, job, "Execution completed successfully")
+				// BUG-827: previously injected "Execution completed
+				// successfully" regardless of `succeeded`, masking
+				// failed jobs as fake-success in the log stream and
+				// breaking tests like TestCloudRunArithmeticInvalid
+				// that assert on the failure marker. Match the actual
+				// outcome.
+				if succeeded {
+					injectCloudRunJobLog(proj, job, "Execution completed successfully")
+				} else {
+					injectCloudRunJobLog(proj, job, "Execution failed")
+				}
 			}
 		}(execName, taskCount, project, jobID, tmpl)
 
