@@ -65,20 +65,26 @@ func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container, tty bo
 		cdPrefix = fmt.Sprintf("cd %s && ", workDir)
 	}
 
-	var cmd string
+	var script string
 	if (entrypoint == "sh" || entrypoint == "/bin/sh" || entrypoint == "bash" || entrypoint == "/bin/bash") && len(args) >= 2 && args[0] == "-c" {
-		// sh -c "script" — extract the script and prepend env vars directly
-		// The simulator will wrap the final command in sh -c, so we just send the script
-		cmd = cdPrefix + envPrefix + strings.Join(args[1:], " ")
+		// sh -c "script" — use the user's script verbatim plus the cd
+		// and env-export prefixes.
+		script = cdPrefix + envPrefix + strings.Join(args[1:], " ")
 	} else {
-		// Regular command — join all parts
+		// Regular command — join all parts as the script body.
 		parts := []string{}
 		if entrypoint != "" {
 			parts = append(parts, entrypoint)
 		}
 		parts = append(parts, args...)
-		cmd = cdPrefix + envPrefix + strings.Join(parts, " ")
+		script = cdPrefix + envPrefix + strings.Join(parts, " ")
 	}
+	// Real AWS ECS ExecuteCommand exec()s argv[0] directly — without a
+	// shell wrapper, anything that uses shell builtins / redirections /
+	// env-var expansion (cd, &&, |, $VAR) fails with `Unable to start
+	// command: Failed to start pty: exec: "<word>": executable file not
+	// found in $PATH`. Wrap in `sh -c` so the agent runs a real shell.
+	cmd := "sh -c " + shellQuote(script)
 
 	result, err := s.aws.ECS.ExecuteCommand(s.ctx(), &awsecs.ExecuteCommandInput{
 		Cluster:     aws.String(cluster),
@@ -151,6 +157,7 @@ func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container, tty bo
 	// wrap the extracted bytes in Docker's 8-byte multiplexed stream
 	// headers since `docker exec` expects that framing.
 	dec := newSSMDecoder(bridge)
+	dec.capture = openSSMCapture(ecsState.TaskARN, cmd)
 	if !tty {
 		return &muxBridge{rwc: dec}, nil
 	}
@@ -203,6 +210,7 @@ type ssmDecoder struct {
 	lastTag  byte         // 0x01 stdout / 0x02 stderr from last frame
 	closeErr error
 	debug    bool // when true, fprintf'd to stderr
+	capture  *ssmFrameCapture
 }
 
 func newSSMDecoder(wire io.ReadWriteCloser) *ssmDecoder {
@@ -240,12 +248,14 @@ func (d *ssmDecoder) Read(p []byte) (int, error) {
 		f, perr := parseSSMFrame(raw)
 		if perr != nil {
 			d.closeErr = perr
+			d.capture.frame("PARSE-FAIL", raw, fmt.Sprintf("err=%v", perr))
 			continue
 		}
 		if d.debug {
 			fmt.Fprintf(os.Stderr, "[ssm] in: type=%q payloadType=%d seq=%d len=%d preview=%q\n",
 				f.MessageType, f.PayloadType, f.SequenceNumber, len(f.Payload), previewBytes(f.Payload, 80))
 		}
+		d.capture.frame(f.MessageType, raw, fmt.Sprintf("payloadType=%d seq=%d flags=0x%x payloadLen=%d", f.PayloadType, f.SequenceNumber, f.Flags, len(f.Payload)))
 		switch f.MessageType {
 		case ssmMTOutputStreamData:
 			if streamID, ok := ssmTextStreamID(f); ok {

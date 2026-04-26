@@ -12,6 +12,45 @@ locals {
 }
 
 # ---------------------------------------------------------------------------
+# Sockerless runtime sweep
+# ---------------------------------------------------------------------------
+# Sockerless creates Container Apps + Container App Jobs at runtime
+# inside the resource group; they're not in this module's state. On
+# destroy, sweep every sockerless-tagged resource before letting the
+# resource group / VNet teardown proceed. Symmetric with the
+# AWS ECS / Lambda module sweeps per the project teardown rule.
+resource "null_resource" "sockerless_runtime_sweep" {
+  triggers = {
+    rg = var.create_resource_group ? "${var.name_prefix}-${var.environment}-rg" : var.resource_group_name
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      set -eu
+      rg='${self.triggers.rg}'
+      echo "sockerless-aca-sweep: rg=$rg"
+
+      # Azure tags allow hyphens; sockerless emits sockerless-managed=true.
+      for app in $(az containerapp list --resource-group "$rg" --query "[?tags.\"sockerless-managed\"=='true'].name" -o tsv 2>/dev/null); do
+        [ -z "$app" ] && continue
+        az containerapp delete --resource-group "$rg" --name "$app" --yes >/dev/null 2>&1 || true
+      done
+
+      for job in $(az containerapp job list --resource-group "$rg" --query "[?tags.\"sockerless-managed\"=='true'].name" -o tsv 2>/dev/null); do
+        [ -z "$job" ] && continue
+        # Stop any running execution first so delete doesn't race.
+        for exec in $(az containerapp job execution list --resource-group "$rg" --name "$job" --query "[?properties.status=='Running'].name" -o tsv 2>/dev/null); do
+          [ -z "$exec" ] && continue
+          az containerapp job stop --resource-group "$rg" --name "$job" --execution-name "$exec" >/dev/null 2>&1 || true
+        done
+        az containerapp job delete --resource-group "$rg" --name "$job" --yes >/dev/null 2>&1 || true
+      done
+    EOT
+  }
+}
+
+# ---------------------------------------------------------------------------
 # Random suffix for globally unique storage account name
 # ---------------------------------------------------------------------------
 resource "random_string" "storage_suffix" {

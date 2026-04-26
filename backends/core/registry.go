@@ -24,17 +24,28 @@ type registryConfig struct {
 // ImageMetadataResult holds all metadata fetched from a Docker v2 / OCI registry.
 // This replaces the old FetchImageConfig which only returned ContainerConfig.
 type ImageMetadataResult struct {
-	Config         *api.ContainerConfig // Cmd, Entrypoint, Env, WorkingDir, Labels, etc.
-	ConfigDigest   string               // Real config blob digest (e.g. "sha256:abc...")
-	ManifestDigest string               // Manifest digest (e.g. "sha256:def...")
-	LayerDigests   []string             // diff_ids from config blob rootfs
-	LayerSizes     []int64              // Layer sizes from manifest (parallel to LayerDigests)
-	TotalSize      int64                // Sum of all layer sizes + config size
-	History        []ImageHistoryItem   // Build history from config blob
-	Architecture   string               // e.g. "amd64"
-	OS             string               // e.g. "linux"
-	Author         string
-	Created        string // RFC3339
+	Config           *api.ContainerConfig // Cmd, Entrypoint, Env, WorkingDir, Labels, etc.
+	ConfigDigest     string               // Real config blob digest (e.g. "sha256:abc...")
+	ManifestDigest   string               // Manifest digest (e.g. "sha256:def...")
+	LayerDigests     []string             // diff_ids from config blob rootfs (uncompressed digests)
+	LayerBlobDigests []string             // Compressed-blob digests from manifest (parallel to LayerDigests)
+	LayerMediaTypes  []string             // Manifest layer media types (parallel)
+	LayerSizes       []int64              // Layer sizes from manifest (parallel)
+	TotalSize        int64                // Sum of all layer sizes + config size
+	History          []ImageHistoryItem   // Build history from config blob
+	Architecture     string               // e.g. "amd64"
+	OS               string               // e.g. "linux"
+	Author           string
+	Created          string // RFC3339
+	// Token is the bearer the registry handed back during the metadata
+	// fetch — reused by callers that need to fetch blobs from the same
+	// registry so we don't re-hit the token endpoint (Docker Hub will
+	// return 400 on the second call within a short window). Not
+	// serialised; populated only on a freshly-fetched result.
+	Token string `json:"-"`
+	// RegistryConfig records the parsed registry / repo / tag so the
+	// caller can reuse them for blob fetches without re-parsing.
+	RegistryConfig registryConfig `json:"-"`
 }
 
 // ImageHistoryItem represents a single build step from the image config.
@@ -149,6 +160,11 @@ var registryClient = &http.Client{
 }
 
 // fetchMetadataFromRegistry fetches rich image metadata from a v2 registry.
+// The returned `ImageMetadataResult` exposes the auth token + parsed
+// registry config so a caller that needs to fetch blobs (e.g.
+// `BaseServer.ImagePull`'s post-pull layer cache) can reuse the same
+// auth context — re-hitting the token endpoint within a short window
+// trips rate limits on Docker Hub (returns 400).
 func fetchMetadataFromRegistry(rc registryConfig, basicAuth string) (*ImageMetadataResult, error) {
 	// Step 1: Get auth token
 	token, err := getRegistryToken(rc, basicAuth)
@@ -195,17 +211,21 @@ func fetchMetadataFromRegistry(rc registryConfig, basicAuth string) (*ImageMetad
 	totalSize += minfo.configSize
 
 	return &ImageMetadataResult{
-		Config:         cfg,
-		ConfigDigest:   minfo.configDigest,
-		ManifestDigest: minfo.manifestDigest,
-		LayerDigests:   ociCfg.RootFS.DiffIDs,
-		LayerSizes:     minfo.layerSizes,
-		TotalSize:      totalSize,
-		History:        history,
-		Architecture:   ociCfg.Architecture,
-		OS:             ociCfg.OS,
-		Author:         ociCfg.Author,
-		Created:        ociCfg.Created,
+		Config:           cfg,
+		ConfigDigest:     minfo.configDigest,
+		ManifestDigest:   minfo.manifestDigest,
+		LayerDigests:     ociCfg.RootFS.DiffIDs,
+		LayerBlobDigests: minfo.layerDigests,
+		LayerMediaTypes:  minfo.layerMediaTypes,
+		LayerSizes:       minfo.layerSizes,
+		TotalSize:        totalSize,
+		History:          history,
+		Architecture:     ociCfg.Architecture,
+		OS:               ociCfg.OS,
+		Author:           ociCfg.Author,
+		Created:          ociCfg.Created,
+		Token:            token,
+		RegistryConfig:   rc,
 	}, nil
 }
 
@@ -411,10 +431,12 @@ type ociHistoryItem struct {
 
 // manifestInfo holds the parsed manifest data.
 type manifestInfo struct {
-	configDigest   string
-	configSize     int64
-	manifestDigest string
-	layerSizes     []int64
+	configDigest    string
+	configSize      int64
+	manifestDigest  string
+	layerSizes      []int64
+	layerDigests    []string // compressed-blob digests, parallel to layerSizes
+	layerMediaTypes []string // media types, parallel to layerSizes
 }
 
 // getManifestInfo resolves the image manifest to get config digest, layer info,
@@ -483,18 +505,59 @@ func getManifestInfo(rc registryConfig, token string) (*manifestInfo, error) {
 		return nil, fmt.Errorf("no config digest in manifest")
 	}
 
-	// Extract layer sizes from manifest
+	// Extract layer info from manifest (compressed digests, sizes, media types)
 	layerSizes := make([]int64, len(sm.Layers))
+	layerDigests := make([]string, len(sm.Layers))
+	layerMediaTypes := make([]string, len(sm.Layers))
 	for i, l := range sm.Layers {
 		layerSizes[i] = l.Size
+		layerDigests[i] = l.Digest
+		layerMediaTypes[i] = l.MediaType
 	}
 
 	return &manifestInfo{
-		configDigest:   sm.Config.Digest,
-		configSize:     sm.Config.Size,
-		manifestDigest: manifestDigest,
-		layerSizes:     layerSizes,
+		configDigest:    sm.Config.Digest,
+		configSize:      sm.Config.Size,
+		manifestDigest:  manifestDigest,
+		layerSizes:      layerSizes,
+		layerDigests:    layerDigests,
+		layerMediaTypes: layerMediaTypes,
 	}, nil
+}
+
+// FetchLayerBlob fetches a layer blob from the source registry using
+// the given compressed-blob digest. Returns the raw bytes — caller must
+// hold them in memory or stream through. Used by ImagePush to mirror a
+// registry-pulled image to a different registry without requiring the
+// blob to be cached locally first (BUG-788).
+func FetchLayerBlob(rc registryConfig, token, digest string) ([]byte, error) {
+	url := fmt.Sprintf("https://%s/v2/%s/blobs/%s", rc.Registry, rc.Repository, digest)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create blob request: %w", err)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	req.Header.Set("Accept", "application/vnd.docker.image.rootfs.diff.tar.gzip, application/vnd.oci.image.layer.v1.tar+gzip, */*")
+	resp, err := registryClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch blob %s: %w", digest, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("fetch blob %s: HTTP %d: %s", digest, resp.StatusCode, string(body))
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read blob %s: %w", digest, err)
+	}
+	gotDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(body))
+	if gotDigest != digest {
+		return nil, fmt.Errorf("blob digest mismatch for %s: got %s", digest, gotDigest)
+	}
+	return body, nil
 }
 
 // getFullConfigBlob fetches and parses the full OCI image config blob.

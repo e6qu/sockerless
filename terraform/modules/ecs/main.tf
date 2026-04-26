@@ -126,6 +126,52 @@ resource "null_resource" "sockerless_runtime_sweep" {
         done
         aws efs delete-file-system --region "$region" --file-system-id "$fs" || true
       done
+
+      # ECS task definitions: sockerless registers one per container
+      # (sockerless-<containerID[:12]>) and never deregisters them.
+      # Without this sweep, every live-cloud test run leaves dozens of
+      # ACTIVE task-defs that linger forever (AWS keeps deregistered
+      # ones too, but at least they don't show as ACTIVE).
+      for td in $(aws ecs list-task-definitions --region "$region" --status ACTIVE --query 'taskDefinitionArns[?contains(@,`:task-definition/sockerless-`)]' --output text); do
+        [ -z "$td" ] && continue
+        aws ecs deregister-task-definition --region "$region" --task-definition "$td" >/dev/null || true
+      done
+
+      # Lambda hyperplane ENIs: when sockerless-managed Lambda functions
+      # are configured with VpcConfig pointing at this VPC's subnets +
+      # SG, AWS Lambda creates `ela-attach`-style ENIs (Description
+      # starts with "AWS Lambda VPC ENI"). After the function is
+      # deleted, AWS releases these ENIs lazily — typically 5-30 min,
+      # sometimes longer. They block this module's
+      # `aws_security_group.task` and `aws_subnet.private` destroys.
+      #
+      # The Lambda module's own sweep (terraform/modules/lambda)
+      # iterates sockerless-managed functions on its destroy and
+      # patches VpcConfig to empty before deleting them, which signals
+      # AWS to start releasing immediately. But operators can also
+      # trigger this state by deleting Lambda functions out-of-band, or
+      # by destroying the ECS env without first destroying Lambda env.
+      # So we always poll here as a backstop. Up to 30 min — beyond
+      # that we surface a real terraform error rather than hanging
+      # silently. AWS hyperplane attachments cannot be force-detached
+      # by operator credentials (`ela-attach` is AWS-Lambda-owned).
+      lambda_eni_query='NetworkInterfaces[?starts_with(Description,`AWS Lambda VPC ENI`)].NetworkInterfaceId'
+      for i in $(seq 1 60); do
+        left=$(aws ec2 describe-network-interfaces --region "$region" --filters "Name=vpc-id,Values=$vpc" --query "$lambda_eni_query" --output text 2>/dev/null)
+        if [ -z "$left" ]; then
+          echo "sockerless-runtime-sweep: no Lambda hyperplane ENIs left in $vpc"
+          break
+        fi
+        echo "sockerless-runtime-sweep: waiting on Lambda hyperplane ENIs ($left) — AWS releases async after function delete; iter=$i/60"
+        sleep 30
+      done
+      # Now delete any released ENIs in `available` state. (Released ela-
+      # attach ENIs flip from `in-use` to `available` when AWS detaches
+      # them; deletion still has to be explicit.)
+      for eni in $(aws ec2 describe-network-interfaces --region "$region" --filters "Name=vpc-id,Values=$vpc" "Name=status,Values=available" --query 'NetworkInterfaces[].NetworkInterfaceId' --output text); do
+        [ -z "$eni" ] && continue
+        aws ec2 delete-network-interface --region "$region" --network-interface-id "$eni" >/dev/null || true
+      done
     EOT
   }
 }
@@ -357,6 +403,13 @@ resource "aws_service_discovery_private_dns_namespace" "main" {
 resource "aws_ecr_repository" "main" {
   name                 = local.name_prefix
   image_tag_mutability = "MUTABLE"
+
+  # Allow `terragrunt destroy` to drop the repo even when sockerless
+  # has pushed images (e.g. live-cloud test sweeps). Without this the
+  # destroy fails with `RepositoryNotEmptyException` and the operator
+  # has to manually batch-delete every image — exactly the kind of
+  # extra-step-after-destroy the project rules forbid.
+  force_delete = true
 
   image_scanning_configuration {
     scan_on_push = true

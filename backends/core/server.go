@@ -363,11 +363,8 @@ func (sr *statusRecorder) Flush() {
 // If addr starts with /, it listens on a Unix socket (TLS is ignored).
 // If certFile and keyFile are both non-empty, the TCP listener uses TLS.
 func (s *BaseServer) ListenAndServe(addr, certFile, keyFile string) error {
-	// Crash-only startup: load persisted registry state
-	if err := s.Registry.Load(); err != nil {
-		s.Logger.Warn().Err(err).Msg("failed to load resource registry")
-	} else if active := s.Registry.ListActive(); len(active) > 0 {
-		s.Logger.Info().Int("active_resources", len(active)).Msg("loaded resource registry from disk")
+	if active := s.Registry.ListActive(); len(active) > 0 {
+		s.Logger.Info().Int("active_resources", len(active)).Msg("active resource registry entries (in-memory; populated by cloud scan on RecoverOnStartup)")
 	}
 
 	wrapped := stripVersionPrefix(s.Mux)

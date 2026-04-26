@@ -602,6 +602,26 @@ func taskToContainer(task ecstypes.Task, tags map[string]string, td ecstypes.Tas
 		}
 	}
 
+	// Map the task-def's CPU/Memory tier back to Docker's HostConfig
+	// fields so `docker inspect` reflects the operator's `-m`/`--cpus`
+	// request. Fargate stores `task.Memory` as MB (string) and
+	// `task.Cpu` as 1024-unit shares (e.g. "256" = 0.25 vCPU). Docker's
+	// HostConfig expects bytes and nanoCPUs respectively. (BUG-801.)
+	var memBytes int64
+	if task.Memory != nil {
+		if mb, err := strconv.ParseInt(aws.ToString(task.Memory), 10, 64); err == nil && mb > 0 {
+			memBytes = mb * 1024 * 1024
+		}
+	}
+	var nanoCPUs int64
+	if task.Cpu != nil {
+		if shares, err := strconv.ParseInt(aws.ToString(task.Cpu), 10, 64); err == nil && shares > 0 {
+			// Fargate's "cpu" is in 1024-share units; 1024 = 1 vCPU.
+			// Docker's NanoCPUs is 1e9 = 1 CPU.
+			nanoCPUs = shares * 1e9 / 1024
+		}
+	}
+
 	return api.Container{
 		ID:           containerID,
 		Name:         name,
@@ -621,6 +641,8 @@ func taskToContainer(task ecstypes.Task, tags map[string]string, td ecstypes.Tas
 		},
 		HostConfig: api.HostConfig{
 			NetworkMode: networkName,
+			Memory:      memBytes,
+			NanoCPUs:    nanoCPUs,
 		},
 		NetworkSettings: api.NetworkSettings{
 			Networks: map[string]*api.EndpointSettings{

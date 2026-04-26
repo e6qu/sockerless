@@ -432,26 +432,46 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 		return &api.NotModifiedError{}
 	}
 
-	// Stop the ECS task. resolveTaskState falls back to the cloud when
-	// in-memory cache is empty (post-restart) —/.
-	if ecsState, ok := s.resolveTaskState(s.ctx(), id); ok {
-		cluster := s.config.Cluster
-		if ecsState.ClusterARN != "" {
-			cluster = ecsState.ClusterARN
-		}
-		_, _ = s.aws.ECS.StopTask(s.ctx(), &awsecs.StopTaskInput{
-			Cluster: aws.String(cluster),
-			Task:    aws.String(ecsState.TaskARN),
-			Reason:  aws.String("Container stopped via API"),
-		})
+	ecsState, hasState := s.resolveTaskState(s.ctx(), id)
+	if !hasState {
+		return &api.ServerError{Message: fmt.Sprintf("docker stop %s: cannot resolve underlying ECS task — task ARN unknown", ref)}
+	}
+	cluster := s.config.Cluster
+	if ecsState.ClusterARN != "" {
+		cluster = ecsState.ClusterARN
+	}
+	taskARN := ecsState.TaskARN
+	if _, err := s.aws.ECS.StopTask(s.ctx(), &awsecs.StopTaskInput{
+		Cluster: aws.String(cluster),
+		Task:    aws.String(taskARN),
+		Reason:  aws.String("Container stopped via API"),
+	}); err != nil {
+		return &api.ServerError{Message: fmt.Sprintf("docker stop %s: ECS StopTask failed: %v", ref, err)}
 	}
 
 	s.StopHealthCheck(id)
-	// Close wait channel so ContainerWait unblocks
+
+	// Block until the task reaches STOPPED so docker stop matches
+	// docker semantics (caller can immediately rm the container). Docker
+	// uses a 10-second default timeout for SIGTERM before SIGKILL;
+	// Fargate's StopTask sends SIGTERM then SIGKILL after 30 s, plus
+	// another ~30 s for STOPPING → DEPROVISIONING → STOPPED with ENI
+	// release. 120 s default covers the worst case observed live; if
+	// the caller supplies `t=N`, add 60 s grace on top of that.
+	// If the deadline lapses without observing STOPPED, the container is
+	// genuinely still running — surface that to the caller rather than
+	// pretend the stop succeeded.
+	stopTimeout := 120 * time.Second
+	if timeout != nil && *timeout > 0 {
+		stopTimeout = time.Duration(*timeout)*time.Second + 60*time.Second
+	}
+	if err := s.waitForTaskStopped(s.ctx(), cluster, taskARN, stopTimeout); err != nil {
+		return &api.ServerError{Message: fmt.Sprintf("docker stop %s: %v", ref, err)}
+	}
+
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
 	}
-	s.EmitEvent("container", "die", id, map[string]string{"exitCode": "0", "name": strings.TrimPrefix(c.Name, "/")})
 	s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	return nil
 }
@@ -1072,7 +1092,7 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: req.Container}
 	}
-	return nil, &api.NotImplementedError{Message: "docker commit not yet implemented for ECS — needs agent-driven rootfs snapshot + ECR push (Phase 98b)"}
+	return nil, &api.NotImplementedError{Message: "docker commit is not implemented on ECS — Fargate exposes no host filesystem to snapshot from, and ECS doesn't run a sockerless bootstrap that could capture a rootfs diff over SSM exec"}
 }
 
 // VolumePrune deletes all sockerless-managed EFS access points that

@@ -9,39 +9,31 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/sockerless/api"
 )
 
-// ContainerResize resizes the TTY of a container.
+// ContainerResize is a no-op on cloud backends — TTY size events
+// (`SIGWINCH`) don't propagate through Cloud Run / Fargate / ACA /
+// Lambda to the running container, so accepting the resize and
+// silently dropping it would be a fake. The local docker backend
+// overrides this with the real `dockerd.ContainerResize` call.
 func (s *BaseServer) ContainerResize(id string, h, w int) error {
-	resolvedID, ok := s.ResolveContainerIDAuto(context.Background(), id)
-	if !ok {
+	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
 		return &api.NotFoundError{Resource: "container", ID: id}
 	}
-	if h > 0 || w > 0 {
-		s.Store.Containers.Update(resolvedID, func(c *api.Container) {
-			c.HostConfig.ConsoleSize = [2]uint{uint(h), uint(w)}
-		})
-	}
-	return nil
+	return &api.NotImplementedError{Message: "TTY resize is not supported on cloud backends — clouds don't propagate SIGWINCH to managed containers"}
 }
 
-// ExecResize resizes the TTY of an exec instance.
+// ExecResize — same shape as ContainerResize. Local docker backend
+// overrides with `dockerd.ContainerExecResize`.
 func (s *BaseServer) ExecResize(id string, h, w int) error {
-	exec, ok := s.Store.Execs.Get(id)
-	if !ok {
+	if _, ok := s.Store.Execs.Get(id); !ok {
 		return &api.NotFoundError{Resource: "exec instance", ID: id}
 	}
-	if h > 0 || w > 0 {
-		s.Store.Containers.Update(exec.ContainerID, func(c *api.Container) {
-			c.HostConfig.ConsoleSize = [2]uint{uint(h), uint(w)}
-		})
-	}
-	return nil
+	return &api.NotImplementedError{Message: "TTY resize is not supported on cloud backends — clouds don't propagate SIGWINCH to managed exec sessions"}
 }
 
 // ContainerPutArchive extracts a tar archive to the container filesystem.
@@ -418,15 +410,20 @@ func (s *BaseServer) ImagePush(name string, tag string, auth string) (io.ReadClo
 		// Attempt real OCI push for non-Docker-Hub registries
 		if registry != "" && registry != "docker.io" && registry != "registry-1.docker.io" {
 			cfgBlob := imageConfigFromAPI(img.Config)
+			var manifestLayers []ManifestLayerEntry
+			if v, ok := s.Store.ImageManifestLayers.Load(img.ID); ok {
+				manifestLayers = v.([]ManifestLayerEntry)
+			}
 			opts := OCIPushOptions{
-				Registry:     registry,
-				Repository:   repo,
-				Tag:          tag,
-				AuthToken:    auth,
-				ImageLayers:  img.RootFS.Layers,
-				Architecture: img.Architecture,
-				OS:           img.Os,
-				Config:       cfgBlob,
+				Registry:       registry,
+				Repository:     repo,
+				Tag:            tag,
+				AuthToken:      auth,
+				ImageLayers:    img.RootFS.Layers,
+				ManifestLayers: manifestLayers,
+				Architecture:   img.Architecture,
+				OS:             img.Os,
+				Config:         cfgBlob,
 				LayerContent: func(digest string) ([]byte, bool) {
 					if v, ok := s.Store.LayerContent.Load(digest); ok {
 						return v.([]byte), true
@@ -457,90 +454,24 @@ func (s *BaseServer) ImagePush(name string, tag string, auth string) (io.ReadClo
 	return pr, nil
 }
 
-// ImageSave exports images as a tar archive.
+// ImageSave is not implemented on cloud backends. Cloud registries
+// don't serve a single multi-blob tarball; reconstructing one would
+// require pulling the manifest plus every layer blob and retaring
+// locally. Operators should use `crane export` or `skopeo copy`
+// against the registry directly. Local docker backend overrides this
+// with `dockerd.ImageSave`.
 func (s *BaseServer) ImageSave(names []string) (io.ReadCloser, error) {
-	// Validate all images exist before starting
-	for _, name := range names {
-		if _, ok := s.Store.ResolveImage(name); !ok {
-			return nil, &api.NotFoundError{Resource: "image", ID: name}
-		}
-	}
-
-	pr, pw := io.Pipe()
-	go func() {
-		tw := tar.NewWriter(pw)
-		var manifests []map[string]any
-		for _, name := range names {
-			img, ok := s.Store.ResolveImage(name)
-			if !ok {
-				continue
-			}
-			layers := img.RootFS.Layers
-			if layers == nil {
-				layers = []string{}
-			}
-			manifests = append(manifests, map[string]any{
-				"Config":   img.ID + ".json",
-				"RepoTags": img.RepoTags,
-				"Layers":   layers,
-			})
-
-			configData, _ := json.Marshal(map[string]any{
-				"architecture": img.Architecture,
-				"os":           img.Os,
-				"created":      img.Created,
-				"config":       img.Config,
-				"rootfs":       img.RootFS,
-			})
-			_ = tw.WriteHeader(&tar.Header{Name: img.ID + ".json", Size: int64(len(configData))})
-			_, _ = tw.Write(configData)
-		}
-		if manifests == nil {
-			manifests = []map[string]any{}
-		}
-		data, _ := json.Marshal(manifests)
-		_ = tw.WriteHeader(&tar.Header{Name: "manifest.json", Size: int64(len(data))})
-		_, _ = tw.Write(data)
-		_ = tw.Close()
-		_ = pw.Close()
-	}()
-
-	return pr, nil
+	return nil, &api.NotImplementedError{Message: "docker image save is not supported against cloud registries — use `crane export` or `skopeo copy` to read images directly from ECR / Artifact Registry / ACR"}
 }
 
-// ImageSearch searches local images by term.
+// ImageSearch is not implemented on cloud backends. Docker Hub's
+// search API isn't reachable through ECR / Artifact Registry / ACR;
+// cloud registries have no equivalent free-text search. Operators
+// looking for images should use Docker Hub's web UI or
+// `crane catalog` / `oras discover`. Local docker backend forwards
+// to its own daemon, which can search via Docker Hub.
 func (s *BaseServer) ImageSearch(term string, limit int, filters map[string][]string) ([]*api.ImageSearchResult, error) {
-	var results []*api.ImageSearchResult
-	seen := make(map[string]bool)
-	for _, img := range s.Store.Images.List() {
-		if seen[img.ID] {
-			continue
-		}
-		seen[img.ID] = true
-		for _, tag := range img.RepoTags {
-			if strings.Contains(tag, term) {
-				results = append(results, &api.ImageSearchResult{
-					Name: tag,
-				})
-				break
-			}
-		}
-	}
-	if results == nil {
-		results = []*api.ImageSearchResult{}
-	}
-	sort.Slice(results, func(i, j int) bool {
-		iExact := results[i].Name == term
-		jExact := results[j].Name == term
-		if iExact != jExact {
-			return iExact
-		}
-		return results[i].Name < results[j].Name
-	})
-	if limit > 0 && limit < len(results) {
-		results = results[:limit]
-	}
-	return results, nil
+	return nil, &api.NotImplementedError{Message: "docker image search is not supported on cloud backends — cloud registries (ECR / Artifact Registry / ACR) don't expose Docker Hub-style free-text search"}
 }
 
 // ContainerCommit creates a new image from a container's current state.

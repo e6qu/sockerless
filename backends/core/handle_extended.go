@@ -65,7 +65,23 @@ func (s *BaseServer) handleContainerStats(w http.ResponseWriter, r *http.Request
 		return
 	}
 	id := c.ID
-	stream := r.URL.Query().Get("stream") != "false"
+	// Docker clients send the stream flag as "true" / "false" (newer
+	// SDKs) or "1" / "0" (older). Normalise both forms — anything that
+	// parses as "no stream" is treated as one-shot.
+	streamRaw := r.URL.Query().Get("stream")
+	stream := streamRaw != "false" && streamRaw != "0"
+
+	// Streaming `docker stats` is an accepted gap on cloud backends
+	// (see specs/CLOUD_RESOURCE_MAPPING.md § Acceptable gaps): cloud
+	// metrics surface with 30–60 s+ lag, so a "stream" would be a
+	// high-latency polling reskin that misleads callers. Local docker
+	// backend overrides this handler with a real streaming impl. For
+	// every cloud backend (CloudState set), fall back to a single
+	// snapshot regardless of the stream flag.
+	if stream && s.CloudState != nil {
+		WriteError(w, &api.NotImplementedError{Message: "streaming `docker stats` is not supported on cloud backends — use `docker stats --no-stream` for one-shot metrics (cloud metrics lag 30-60s)"})
+		return
+	}
 
 	memLimit := int64(1073741824) // 1 GiB default
 	if c.HostConfig.Memory > 0 {
@@ -82,37 +98,11 @@ func (s *BaseServer) handleContainerStats(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusOK)
 
 	enc := json.NewEncoder(w)
-	preread := "0001-01-01T00:00:00Z"
-
-	for {
-		now := time.Now().UTC()
-		entry := s.buildStatsEntry(id, now, preread, memLimit)
-		_ = enc.Encode(entry)
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
-
-		if !stream {
-			return
-		}
-
-		preread = now.Format(time.RFC3339Nano)
-
-		select {
-		case <-r.Context().Done():
-			return
-		case <-time.After(1 * time.Second):
-			// Stop streaming if container is no longer running
-			if ch, ok := s.Store.WaitChs.Load(id); ok {
-				select {
-				case <-ch.(chan struct{}):
-					return
-				default:
-				}
-			} else if cur, ok := s.ResolveContainerAuto(r.Context(), id); ok && !cur.State.Running {
-				return
-			}
-		}
+	now := time.Now().UTC()
+	entry := s.buildStatsEntry(id, now, "0001-01-01T00:00:00Z", memLimit)
+	_ = enc.Encode(entry)
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
 	}
 }
 

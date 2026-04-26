@@ -1195,17 +1195,20 @@ func handleECSExecWebSocket(sessionID string) http.HandlerFunc {
 		if sess.dockerContainerID != "" {
 			cli := sim.DockerClient()
 			if cli != nil {
-				// Parse exec command: if it starts with "sh -c" or similar shell
-				// invocation, pass it through to Docker exec as-is.
-				// Otherwise wrap in sh -c for shell interpretation.
-				var execCmd []string
-				if strings.HasPrefix(sess.command, "sh -c ") || strings.HasPrefix(sess.command, "/bin/sh -c ") {
-					// Already a shell command — split into [sh, -c, rest]
-					idx := strings.Index(sess.command, "-c ") + 3
-					execCmd = []string{"sh", "-c", sess.command[idx:]}
-				} else {
-					execCmd = []string{"sh", "-c", sess.command}
-				}
+				// Always wrap the entire received string as a shell script.
+				// Backends now wrap commands in `sh -c '<script>'` before
+				// sending to ECS.ExecuteCommand (real AWS exec()s argv[0]
+				// and rejects shell builtins / pipes / env-expansion). The
+				// previous "unwrap if it starts with sh -c " path stripped
+				// `-c ` then handed the remaining bytes to Docker exec
+				// verbatim, which left the surrounding single quotes
+				// intact — `'echo …'` was then exec()'d as a single
+				// command name and produced "sh: 'echo …': not found".
+				// Treat the whole received string as one shell script
+				// regardless of whether the backend already wrapped it;
+				// double-wrapping is correct (the inner shell parses the
+				// outer script and dispatches the inner shell itself).
+				execCmd := []string{"sh", "-c", sess.command}
 				execCfg := dockercontainer.ExecOptions{
 					Cmd:          execCmd,
 					AttachStdout: true,

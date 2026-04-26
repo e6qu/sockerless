@@ -103,6 +103,18 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	}
 	tty := exec.ProcessConfig.Tty || req.Tty
 
+	// Start the exec BEFORE hijacking — if the backend returns an error
+	// (e.g. NotImplementedError on a FaaS backend without a reverse-agent
+	// session), the client gets a normal HTTP error response instead of
+	// trying to parse an error-message body as a multiplexed stdcopy
+	// stream and emitting `unrecognized stream: <byte>`.
+	rwc, err := s.self.ExecStart(id, req)
+	if err != nil {
+		WriteError(w, err)
+		return
+	}
+	defer rwc.Close()
+
 	// Hijack the connection
 	hj, ok := w.(http.Hijacker)
 	if !ok {
@@ -110,8 +122,8 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, buf, err := hj.Hijack()
-	if err != nil {
+	conn, buf, hjErr := hj.Hijack()
+	if hjErr != nil {
 		return
 	}
 	defer conn.Close()
@@ -127,14 +139,6 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	buf.WriteString("Upgrade: tcp\r\n")
 	buf.WriteString("\r\n")
 	buf.Flush()
-
-	rwc, err := s.self.ExecStart(id, req)
-	if err != nil {
-		// Already hijacked — write error inline
-		_, _ = conn.Write([]byte(err.Error()))
-		return
-	}
-	defer rwc.Close()
 
 	// Copy data between the exec stream and the hijacked connection
 	done := make(chan struct{})

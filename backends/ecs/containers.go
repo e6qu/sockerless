@@ -42,9 +42,19 @@ func (s *Server) runECSTask(containerID, taskDefARN string, c *api.Container) (t
 	}
 
 	// Merge per-container security groups from network associations.
-	securityGroups := append([]string{}, s.config.SecurityGroups...)
+	// When the container is attached to one or more user-defined
+	// networks, the per-network SG(s) are the sole authority for
+	// peer reachability — otherwise the operator's default SG (which
+	// typically allows VPC-wide self-traffic) shadows the per-network
+	// isolation and any container can reach any other container by IP.
+	// The default SG is still applied to containers running without an
+	// explicit network membership so they can reach the internet via
+	// the operator's egress rules.
+	var securityGroups []string
 	if ecsState, ok := s.ECS.Get(containerID); ok && len(ecsState.SecurityGroupIDs) > 0 {
 		securityGroups = append(securityGroups, ecsState.SecurityGroupIDs...)
+	} else {
+		securityGroups = append(securityGroups, s.config.SecurityGroups...)
 	}
 
 	runResult, err := s.aws.ECS.RunTask(s.ctx(), &awsecs.RunTaskInput{
@@ -136,7 +146,14 @@ func (s *Server) waitForTaskRunning(ctx context.Context, taskARN string) (string
 				}
 				return ip + ":9111", nil
 			case "STOPPED":
-				if taskExitedSuccessfully(task) {
+				// If the user process produced an exit code — even a non-
+				// zero one — start succeeded; the task ran and exited
+				// before we observed RUNNING. The exit code surfaces
+				// through ContainerWait/Inspect, matching docker
+				// semantics. Only treat it as a start failure when no
+				// exit code is recorded (Fargate-level failure: image
+				// pull, role, ENI provisioning, etc.).
+				if taskHasContainerExitCode(task) {
 					return "", nil
 				}
 				reason := aws.ToString(task.StoppedReason)
@@ -146,18 +163,52 @@ func (s *Server) waitForTaskRunning(ctx context.Context, taskARN string) (string
 	}
 }
 
-// taskExitedSuccessfully reports whether a STOPPED task's essential
-// container exited with status 0.
-func taskExitedSuccessfully(task ecstypes.Task) bool {
-	if len(task.Containers) == 0 {
-		return false
-	}
-	for _, c := range task.Containers {
-		if c.ExitCode == nil || *c.ExitCode != 0 {
-			return false
+// waitForTaskStopped polls ECS until the task reaches STOPPED state or
+// the timeout elapses. Returns nil when STOPPED is observed; returns
+// the timeout error when the deadline expires (non-fatal — caller may
+// proceed to mark the container removed regardless). Used by
+// ContainerStop and ContainerRemove so that docker stop / docker rm
+// match docker semantics where the operation completes synchronously.
+func (s *Server) waitForTaskStopped(ctx context.Context, cluster, taskARN string, timeout time.Duration) error {
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(s.config.PollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline:
+			return fmt.Errorf("timeout waiting for task %s to reach STOPPED", taskARN)
+		case <-ticker.C:
+			result, err := s.aws.ECS.DescribeTasks(ctx, &awsecs.DescribeTasksInput{
+				Cluster: aws.String(cluster),
+				Tasks:   []string{taskARN},
+			})
+			if err != nil {
+				continue
+			}
+			if len(result.Tasks) == 0 {
+				return nil
+			}
+			if aws.ToString(result.Tasks[0].LastStatus) == "STOPPED" {
+				return nil
+			}
 		}
 	}
-	return true
+}
+
+// taskHasContainerExitCode reports whether the task's essential container
+// recorded any exit code (zero or non-zero). Used by start polling to tell
+// "user process exited fast" (start succeeded) apart from "Fargate failed
+// to start the container" (start failed) — only the latter has no exit code.
+func taskHasContainerExitCode(task ecstypes.Task) bool {
+	for _, c := range task.Containers {
+		if c.ExitCode != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // mapToECSTags converts a map[string]string to ECS SDK tag format.

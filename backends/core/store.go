@@ -120,6 +120,35 @@ func (s *StateStore[T]) Keys() []string {
 	return keys
 }
 
+// Entry pairs a stored key with its value for callers that need both.
+type Entry[T any] struct {
+	Key   string
+	Value T
+}
+
+// Entries returns a snapshot of every key/value pair under the lock.
+// Use when a caller needs to rewrite multiple aliased entries that
+// share an underlying ID — see ImageRemove's partial-untag sweep.
+func (s *StateStore[T]) Entries() []Entry[T] {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]Entry[T], 0, len(s.items))
+	for k, v := range s.items {
+		result = append(result, Entry[T]{Key: k, Value: v})
+	}
+	return result
+}
+
+// ManifestLayerEntry captures a layer as it appeared in the source
+// registry's manifest — the (compressed-blob digest, size, media type)
+// triple that the source registry served. Used to mirror an image
+// across registries without rederiving digests from raw layer bytes.
+type ManifestLayerEntry struct {
+	Digest    string
+	Size      int64
+	MediaType string
+}
+
 // Store holds all in-memory state shared by all backends. Per
 // the Images store is purely an in-process cache; no on-disk
 // persistence. `docker images` / `docker inspect <image>` are served
@@ -152,10 +181,20 @@ type Store struct {
 	PrevCPUStats      sync.Map // containerID → *prevCPUStats
 	ImageHistory      sync.Map // imageID → []ImageHistoryItem (real build history)
 	LayerContent      sync.Map // layerDigest → []byte (preserved layer tarballs from docker load)
-	IPAlloc           *IPAllocator
-	RenameMu          sync.Mutex
-	RestartHook       func(containerID string, exitCode int) bool
-	pidCounter        atomic.Int64 // incrementing PID counter
+	// ImageManifestLayers tracks the source registry's manifest layer
+	// entries for each pulled image — the (compressed-blob digest, size,
+	// media type) trio that was served by the source. ImagePush uses
+	// this to mirror the image to a different registry without
+	// re-computing digests from layer content (which would only work for
+	// uncompressed-and-equal-to-diff-id layers — never the case for
+	// real registry pulls). Populated by ImagePull alongside
+	// LayerContent (which holds the blob bytes keyed by the same
+	// compressed digest). Closes BUG-788.
+	ImageManifestLayers sync.Map // imageID → []ManifestLayerEntry
+	IPAlloc             *IPAllocator
+	RenameMu            sync.Mutex
+	RestartHook         func(containerID string, exitCode int) bool
+	pidCounter          atomic.Int64 // incrementing PID counter
 }
 
 // InvocationResult captures the outcome of a single FaaS invocation so
