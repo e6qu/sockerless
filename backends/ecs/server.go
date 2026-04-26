@@ -104,6 +104,15 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	s.Typed.Attach = core.NewCloudLogsAttachDriver(s.BaseServer, logFactory,
 		"ecs", "CloudLogsReadOnlyAttach")
 
+	// SSM-based typed drivers — bypass the api.Backend round-trip and
+	// dispatch directly through ContainerXxxViaSSM helpers.
+	s.Typed.ProcList = &ssmProcListDriver{s: s}
+	s.Typed.FSDiff = &ssmFSDiffDriver{s: s}
+	s.Typed.FSRead = &ssmFSReadDriver{s: s}
+	s.Typed.FSWrite = &ssmFSWriteDriver{s: s}
+	s.Typed.FSExport = &ssmFSExportDriver{s: s}
+	s.Typed.Signal = &ssmSignalDriver{s: s}
+
 	return s
 }
 
