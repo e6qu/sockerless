@@ -104,10 +104,8 @@ func TestVersionedPing(t *testing.T) {
 func TestImageBuild(t *testing.T) {
 	// The e2e harness runs the ECS backend with no CodeBuild project
 	// configured, so /build returns NotImplementedError naming the missing
-	// prerequisite. Real Docker behavior: a backend that can't build is
-	// expected to fail this call cleanly, not produce a synthetic image.
-	// Asserting the error contract here ensures the no-fakes guarantee
-	// (BUG-822) stays honored as the build path is refactored.
+	// prerequisite. A backend that can't build must fail cleanly, not
+	// produce a synthetic image — this test guards that contract.
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	dockerfile := []byte("FROM alpine\nENTRYPOINT [\"echo\"]\n")
