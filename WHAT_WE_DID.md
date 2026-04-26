@@ -2,135 +2,91 @@
 
 Docker-compatible REST API that runs containers on cloud backends (ECS, Lambda, Cloud Run, GCF, ACA, AZF) or local Docker. 7 backends, 3 cloud simulators, validated against SDKs / CLIs / Terraform.
 
-See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for the bug log, [PLAN.md](PLAN.md) for the roadmap, [specs/](specs/) for architecture (start with [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md)).
+See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for the bug log, [PLAN.md](PLAN.md) for the roadmap, [DO_NEXT.md](DO_NEXT.md) for the resume pointer, [specs/](specs/) for architecture (start with [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md)).
 
 ## Round-9 manual-test ↔ spec crosswalk (in progress, this branch)
 
-Per-test walk through [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md) cross-referenced against [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md). Each test runs one at a time on live ECS + Lambda; result recorded in [docs/manual-test-spec-crosswalk.md](docs/manual-test-spec-crosswalk.md). The crosswalk file's `## Status` block always names the next pending test, so a post-compaction resume picks up cleanly.
+Per-test walk through [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md) cross-referenced against [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md). Each test runs one at a time on live ECS + Lambda; result recorded in [docs/manual-test-spec-crosswalk.md](docs/manual-test-spec-crosswalk.md). Crosswalk file's `## Status` block names the next pending test for post-compaction resume.
 
-Decisions logged so far in this round:
-- **Lambda Track D is in scope.** Runs with a sockerless-lambda-bootstrap prebuilt overlay image (option (b) — BUG-797 documented that plain alpine isn't Lambda-runnable). D2-D7 verify the invocation lifecycle; D8/D9 verify the spec's "NotImpl with named missing prerequisite" path (no callback URL set on this laptop).
-- Track H (podman-compose) and Track J (runner integration) skipped — separate setup needed.
-- Discrepancies file as BUG-801..NNN; three classes recorded (real bugs, spec-needs-update, coverage-gap).
+**ECS side complete** — Tracks A (49) + B (33) + C (11) + E (7) + F (12) + G (7) + I (9) ≈ 80 tests. **3 bugs filed and fixed in-track:**
+- **BUG-801** — `docker inspect` returned `HostConfig.Memory: 0` and `NanoCpus: 0`. `taskToContainer` now maps task-def `memory` (MB) and `cpu` (1024-share) back to bytes / nanoCPUs.
+- **BUG-803** — `specs/CLOUD_RESOURCE_MAPPING.md` matrix said `ContainerExport: ✗ accepted gap` while §Notes said `⚠ via SSM`. Aligned both rows to the SSM wording.
+- **BUG-805** — `docker stop` 60 s default timeout too short for Fargate STOPPING → DEPROVISIONING → STOPPED + ENI release. Bumped to 120 s default + 60 s grace on `t=`.
 
-## Round-8 live-AWS sweep — 13 bugs fixed (this branch — pending PR)
+**2 bugs deferred to Phase 105** (libpod-shape conformance): BUG-804 (`pod inspect` returns array, libpod expects object), BUG-806 (`PodStopReport.Errs` shape mismatch).
 
-Two-round live-AWS test sweep against `eu-west-1` ECS + Lambda. 278 tests across both rounds, 13 bugs filed, 13 fixed in the same branch. Two open follow-ups (BUG-789/798 SSM frame parsing on live AWS; BUG-795 podman-list pod members).
+**1 bug withdrawn**: BUG-802 — initially filed against silent 0-byte `docker export`; turned out to be a `timeout 60` measurement artifact (SSM read-loop > 60 s when BUG-789/798 returns no frames). Without the timeout wrapper, `docker export` correctly returns `tar export failed (exit -1)` and exits 1.
 
-**BUG-786 — `docker rmi <tag>` reappearing.** `StoreImageWithAliases` puts the image value under multiple keys for fast `ResolveImage` lookups; partial-untag only updated the "remaining" tag entries, leaving alias entries with stale `RepoTags`. Fix sweeps every `Store.Images` entry whose `Value.ID` matches the untagged image's ID and rewrites it. New `StateStore.Entries()` exposes the snapshot under-lock.
+**Lambda Track D** — sockerless-lambda-bootstrap binaries cross-built (linux/amd64) at `/tmp/r9-overlay/sockerless-{agent,lambda-bootstrap}` with Dockerfile staged. Build-and-push to ECR resumes once Docker Desktop / podman-machine is up.
 
-**BUG-788 — `docker push` after `docker pull` failed with `image has no layer data available`.** `ImagePull` only stored manifest metadata, never the layer bytes — `Store.LayerContent` was populated only by `ImageLoad` / `ContainerCommit`. Fix: `FetchImageMetadata` extracts the source manifest's compressed-blob digests + media types; new `core.FetchLayerBlob` downloads the layers; `ImagePull` caches them in `Store.LayerContent[compressedDigest]` and stores `[]ManifestLayerEntry` in `Store.ImageManifestLayers`; `OCIPush` requires `ManifestLayers` and uses the digests verbatim. `ImageLoad` and `ContainerCommit` populate the same fields. Verified live: `docker pull public.ecr.aws/.../alpine && docker tag ... && docker push <ecr-uri>` → `Pushed`.
+**Phase 104 (cross-backend driver framework) drafted in PLAN.md** — every "perform docker action X" goes through a typed `Driver` interface in `backends/core/drivers/`; implementations live with their cloud (`backends/ecs/drivers/`, `backends/aws-common/drivers/`, etc.); operators override per-cloud-per-dimension via env vars; sim parity required for the default driver in each dimension. 13 dimensions: Exec, Attach, FSRead, FSWrite, FSDiff, FSExport, Commit, Build, Stats, ProcList, Logs, Signal, Registry. Phase 103 (overlay-rootfs) ships under Phase 104 as alternate FSDiff/Commit drivers. Phase 105 (libpod-shape conformance) runs in parallel.
 
-**BUG-790 — `docker stop` returned async.** `ContainerStop` now blocks on `waitForTaskStopped` until ECS observes `LastStatus=STOPPED` (timeout = caller-supplied + 30s grace). Errors surface cleanly on `StopTask` failure or deadline expiry — no fallback "we stopped it" event. The synthesised `container.die` with fabricated `exitCode=0` was removed; the real `die` event comes from the cloud-state poller with the actual exit code. BUG-796 (pod rm timing) is closed transitively.
+## Round-8 live-AWS sweep — 13 bugs fixed (this branch — pending PR #118)
 
-**BUG-794 — cross-network isolation.** Per-network SG was *added* to the operator's default SG, so the default SG's permissive rules shadowed isolation. Fix: in `backends/ecs/containers.go`, when `ECSState.SecurityGroupIDs` is non-empty (container is on a user-defined network), use ONLY those SGs; default SG only applies to networkless containers. Verified: peer ON net reaches via service-name DNS; peer OFF net `wget` times out.
+Two-round live-AWS test sweep against `eu-west-1` ECS + Lambda. 278 tests across both rounds, 13 bugs filed + fixed. Two open follow-ups (BUG-789/798 SSM frame parsing, BUG-795 podman pod-list filter).
 
-**BUG-799 — recovery resurrected STOPPED tasks as active.** `ScanOrphanedResources` returned every sockerless-managed task tagged with our instanceID — including STOPPED ones. `ReconstructContainerState` then put them in `Store.Containers` as ghosts, tripping `ImageRemove`'s in-use check. Fix: skip `LastStatus=STOPPED`/`DEPROVISIONING` in the scan.
+Headline fixes:
+- **BUG-786 — `docker rmi <tag>` reappearing.** `StoreImageWithAliases` puts the image value under multiple keys; partial-untag only updated the "remaining" tag entries. Fix sweeps every `Store.Images` entry whose `Value.ID` matches and rewrites it. New `StateStore.Entries()` exposes the snapshot under-lock.
+- **BUG-788 — registry-to-registry layer mirror.** `ImagePull` now downloads layer blobs into `Store.LayerContent` and records `[]ManifestLayerEntry` per image; `OCIPush` uses source compressed digests verbatim. Verified live: `docker pull public.ecr.aws/.../alpine && docker tag … && docker push <ecr>` → `Pushed`.
+- **BUG-790 — sync `docker stop`.** New `waitForTaskStopped` blocks until ECS observes STOPPED; immediate `docker rm` succeeds. Synthesised `container.die exitCode=0` event removed; real die event comes from cloud-state poller. Closes BUG-796 transitively.
+- **BUG-794 — cross-network isolation.** Per-network SG is the sole authority for containers with `--network X`; default SG only applies to networkless containers.
+- **BUG-799 — recovery skip STOPPED.** `ScanOrphanedResources` no longer treats STOPPED tasks as active orphans.
+- **BUG-800 — stateless invariant restored.** `core.ResourceRegistry` Save/Load collapsed to no-ops; 11 stale `sockerless-registry.json` files swept from the tree.
+- **BUG-787 — spec-doc refresh.** `specs/CLOUD_RESOURCE_MAPPING.md` now reflects landed Phases 91–94, 96, 102; new "Acceptable gaps" section formalises maintainer-approved exceptions (ECS commit, ECS pause-without-bootstrap, ContainerResize/ExecResize, ImageSave/Search, streaming stats, ContainerTop without exec, ContainerExport, rename divergence).
 
-**BUG-800 — stateless invariant violation.** `core.ResourceRegistry` was persisting to `./sockerless-registry.json` — found 11 stale registry files lying around the repo. Direct contradiction of `specs/CLOUD_RESOURCE_MAPPING.md` § State boundaries. Fix: `Save`/`Load`/`autoSave` collapsed to no-ops; the registry is purely in-memory, source-of-truth = cloud actuals + cloud scan on every startup. All 11 stale files deleted; persistence-related tests rewritten.
+Smaller: BUG-791 (`handleGetArchive` → `WriteError`), BUG-792 (commit error stripped of phase ref), BUG-793 (terraform attaches `AWSLambdaVPCAccessExecutionRole`), BUG-797 (Lambda public.ecr.aws short-circuit). Code-side gap matching: BaseServer.ContainerResize/ExecResize/ImageSave/ImageSearch return clean NotImpl on cloud backends; streaming `docker stats` returns NotImpl when CloudState is set; local docker backend keeps full functionality via overrides. Teardown self-sufficiency: `aws_ecr_repository.force_delete = true` + ECS module's destroy-time task-def deregister sweep — `terragrunt destroy` succeeds without manual cleanup.
 
-**BUG-793 — Lambda IAM missing VPC perms.** `terraform/modules/lambda/main.tf` only attached `AWSLambdaBasicExecutionRole`; `CreateFunction` with `VpcConfig` requires `ec2:CreateNetworkInterface`. Now also attaches `AWSLambdaVPCAccessExecutionRole`.
+## Round-7 live-AWS sweep — 16 bugs fixed (PR #117, 2026-04-25)
 
-**BUG-797 — Lambda public.ecr.aws short-circuit.** Lambda's `resolveImageURI` rewrote `public.ecr.aws/...` through an ECR pull-through cache that returned a multi-arch manifest list (which `CreateFunction` rejects). Fix: ported the ECS short-circuit (BUG-776) — pass `public.ecr.aws/...` through directly.
+BUG-770..785 closed across one round of live-AWS testing. Categories: ImageRemove correctness, ECS task lifecycle (rename, restart, kill-signal mapping, removal-via-registry), libpod compat (specgen create, container list, normalised times), OCI push auth + config-blob correctness, lambda bootstrap PID publishing + heartbeat mutex, registry persistence robustness. See git log for individual fixes.
 
-**Smaller fixes:** BUG-787 (spec-doc drift across landed phases), BUG-791 (`handleGetArchive` bare 404 → `WriteError`), BUG-792 (ECS commit error message stripped of phase reference).
+## Closed phases — narrative
 
-**Acceptable gaps formalised** in `specs/CLOUD_RESOURCE_MAPPING.md` per maintainer decision: ECS `docker commit`, ECS pause/unpause without bootstrap, `ContainerResize`/`ExecResize` across clouds, `ImageSave` / `ImageSearch`, streaming `docker stats`, `ContainerTop` without exec path, `ContainerExport` across clouds, `ContainerRename` semantic divergence (cloud names immutable).
+Newest first; older entries deliberately compressed (full detail in `git log` and BUGS.md).
 
-**Code drops to match the gaps.** `BaseServer.ContainerResize`/`ExecResize`/`ImageSave`/`ImageSearch` now return `NotImplementedError` with operator-friendly messages. Streaming `docker stats` returns NotImpl when `CloudState` is set. Local docker backend keeps full functionality via its overrides.
+### Phases 96 / 98 / 98b / 99 / 100 / 101 / 102 + 13-bug audit sweep (PR #115, 2026-04-24)
 
-**Teardown self-sufficiency.** `aws_ecr_repository.force_delete = true` on both ECS and Lambda modules; ECS module's destroy-time sweep also deregisters orphan task definitions (`sockerless-<containerID[:12]>`). `terragrunt destroy` now succeeds without manual `aws ecr batch-delete-image` or task-def deregistration.
+Reverse-agent + SSM machinery for every dimension docker exposes that needs in-container access:
 
-**Phase 103 queued in PLAN.md** — overlay-rootfs bootstrap for FaaS+CR+ACA — replaces Phase 98's `find -newer /proc/1` heuristic with an overlayfs-based diff/cp/export so deletions are captured (closes the BUG-750 known limitation).
+- **96** — shared `core.ReverseAgentRegistry` + `HandleReverseAgentWS` + `ReverseAgent{Exec,Stream}Driver`. CR/ACA/GCF/AZF mount `/v1/<backend>/reverse` and inject `SOCKERLESS_CALLBACK_URL` so the bootstrap dials back. Closes BUG-745.
+- **98** — agent-driven `docker top / stat / get-archive / put-archive / export / diff` via `core.RunContainer*ViaAgent` (ps/stat/tar/find over the WS). Wired across every FaaS backend. Closes BUG-750/751/752/753.
+- **98b** — agent-driven `docker commit` (opt-in via `SOCKERLESS_ENABLE_COMMIT=1`): `find / -xdev -newer /proc/1` + `tar` over the agent → diff layer stacked on the source image's rootfs. Deletions not captured — documented limitation, addressed by Phase 103.
+- **99** — `docker pause` / `unpause` via SIGSTOP/SIGCONT over the agent, using the bootstrap-published `/tmp/.sockerless-mainpid`. Closes BUG-749.
+- **100** — Docker backend pod synthesis via the shared `sockerless-pod` label convention. Closes BUG-754.
+- **101** — sim parity for cloud-native exec/attach + read-only log-streamed attach fallback for FaaS. Closes BUG-760.
+- **102** — ECS parity for filesystem-ops + pause/unpause via SSM ExecuteCommand (`backends/ecs/ssm_capture.go::RunCommandViaSSM` + `ssm_ops.go`). Output goes through the same `core.Parse{Top,Stat,Changes}Output` helpers as the FaaS path. Closes BUG-761/762.
 
-## Phases 96 / 98 / 98b / 99 / 100 / 101 / 102 + 13-bug audit sweep (2026-04-24, PR #115)
+13-bug audit sweep (756–769) cleaned up dispatch policy, OCI push correctness, argv encoding, PID publishing, heartbeat mutex serialization, overlay-build hard-fail (no silent fallback to base image), and `ImageHistory` fake-text removal.
 
-Shipped on the merged `phase96-onward` branch. 770 total bugs after this PR — 769 fixed, 0 open, 1 false positive (BUG-747 audit umbrella).
+### Phases 91 / 92 / 93 / 94 / 94b — real per-cloud volumes (PR #114, 2026-04-21)
 
-**Phase 96 — reverse-agent exec for CR/ACA Jobs.** `backends/core` owns the shared `ReverseAgentRegistry`, `HandleReverseAgentWS`, `ReverseAgent{Exec,Stream}Driver`, `ErrNoReverseAgent`. CR/ACA/GCF/AZF mount `/v1/<backend>/reverse`, wire `Drivers.Exec`/`Drivers.Stream`, inject `SOCKERLESS_CALLBACK_URL`. Closes BUG-745.
+`docker volume create` / `docker run -v name:/mnt` provisions real cloud storage on every backend: ECS+Lambda → EFS access points (shared `aws-common.EFSManager`), CR+GCF → GCS buckets, ACA+AZF → Azure Files shares. Host-path binds remain rejected (no host filesystem in the cloud). Closes BUG-735/736/748.
 
-**Phase 98 — agent-driven filesystem + introspection ops.** `core.RunContainer{Top,StatPath,GetArchive,PutArchive,Export,Changes}ViaAgent` wrap `ps`, `stat`, `tar`, `find` over the reverse-agent; shared parsers in `container_{top,statpath,changes}.go`. Wired across every FaaS backend. Closes BUG-751/752/753.
+### Phase 95 — FaaS invocation-lifecycle tracker (PR #114)
 
-**Phase 98b — agent-driven `docker commit` (opt-in).** `core.CommitContainerViaAgent` runs `find / -xdev -newer /proc/1 -printf '%p\0'` + `tar -cf - --null -T -` through the reverse-agent to capture a proper diff layer stacked on the source image's rootfs. Gated behind `SOCKERLESS_ENABLE_COMMIT=1`. Deletions not captured (find-based — documented limitation, not a silent fallback). Closes BUG-750.
+`core.InvocationResult` + `Store.{Put,Get,Delete}InvocationResult` capture per-container exit code + finished-at + error at the invocation source. Lambda → `Invoke` result; GCF/AZF → HTTP trigger response via `core.HTTPStatusToExitCode`. CloudState overlays the recorded outcome on `queryFunctions`. Closes BUG-744; re-enabled 7 tests deleted as the original stop-gap.
 
-**Phase 99 — agent-driven pause/unpause.** Bootstraps publish the user-process PID to `/tmp/.sockerless-mainpid` after `cmd.Start()`. `core.RunContainer{Pause,Unpause}ViaAgent` sends SIGSTOP/SIGCONT via `kill -<sig> $(cat <file>)` over the agent WS. Closes BUG-749.
+### Phase 97 — GCP label-value charset compliance (PR #114)
 
-**Phase 100 — Docker backend pod synthesis.** Docker daemon has no native pod primitive but sockerless tracks cloud containers by the `sockerless-pod` label; the Docker backend now follows the same convention. `PodList` merges Store.Pods with live Docker containers via the label filter so restarts don't drop pods. Closes BUG-754.
+Charset-safe label encoding via `core.AsGCPLabels` + annotation routing for non-conforming values; GCF carries labels as base64-JSON env. Closes BUG-746.
 
-**Phase 101 — simulator parity for cloud-native exec/attach.** Azure sim serves `.../Microsoft.App/jobs/{job}/executions/{exec}/exec` bridged to a real `docker exec`; `core.AttachViaCloudLogs` (lifted from the existing ECS pattern) gives every FaaS backend a read-only log-streamed attach when no agent is registered. Closes BUG-760.
+### Phases 89 / 90 — stateless audit + no-fakes sweep (PR #113, 2026-04-21)
 
-**Phase 102 — ECS parity via SSM.** `backends/ecs/ssm_capture.go::RunCommandViaSSM` opens an SSM session and captures stdout/stderr/exit via AgentMessage frames. `ssm_ops.go` wraps it for Export/Top/Changes/StatPath/cp/Pause using the same shell commands the FaaS reverse-agent helpers use; output goes through the same `core.Parse{Top,Stat,Changes}Output` helpers. Closes BUG-761/762.
+- **89** — every cloud backend derives state from cloud actuals. `resolve*State` cache+cloud-fallback helpers, cloud-derived `ListImages` / `ListPods`, `Store.Images` disk persistence removed. Closes BUG-723–726. (BUG-800 in round-8 caught a residual `ResourceRegistry` persistence and finished the job.)
+- **90** — project-wide audit of workarounds, silent substitutions, placeholder fields. 11 bugs filed; 8 fixed in-sweep (729 SSM ack, 730 synthetic image metadata, 731 NotImpl volumes, 732 dead placeholder, 733 fabricated PIDs, 734 silent namespace substitution, 735 host-path bind rejection, 737 `SKIP_IMAGE_CONFIG` opt-out deleted); 3 → dedicated phases (744 → 95, 745 → 96, 746 → 97).
 
-**Audit sweep (BUG-756 → 769):**
-- 756 — Lambda bootstrap user-process stdout/stderr tee'd via `io.MultiWriter` so Docker's log driver sees it. Sim's `waitAndCaptureLogs` swapped from follow-mode race to post-exit non-follow read.
-- 759 — `ContainerAttach` / `ExecStart` across all 5 cloud backends now dispatch per `specs/CLOUD_RESOURCE_MAPPING.md` §Exec: agent → cloud-native (ACA console) → NotImplementedError. No silent empty streams or fake exit-126s.
-- 763 — `ImageAuthProvider.OnPush` was calling `core.OCIPush` without layer data and always failing; real push now happens in `BaseServer.ImagePush` which has layer access. `ImageManager.Push` auto-fetches the cloud token via `Auth.GetToken`.
-- 764 — `OCIPush` hardcoded `amd64`/`linux` + empty `config` + empty `rootfs.diff_ids`; now serialises real `Architecture` / `Os` / `Config` with `diff_ids` matching the manifest's layers.
-- 765 — Lambda bootstrap + generic `--keep-alive` path publish the user PID to `/tmp/.sockerless-mainpid` so Phase 99's pause can actually find it.
-- 766 — argv encoded via `:`-join broke for args containing `:`; switched to base64(JSON) through env/Dockerfile/shell.
-- 767 — `sendHeartbeats` wrote `PingMessage` without the mutex `serveReverseAgent` uses for response writes — violates gorilla/websocket's Concurrency contract. Mutex now shared.
-- 768 — Lambda `ContainerCreate` silently fell back to the base image when `BuildAndPushOverlayImage` failed; now fails loud.
-- 769 — `ImageHistory` synthesised fake per-layer `CreatedBy` entries for images without stored history; now returns a single top-level entry.
+### Phases 87 / 88 — Cloud Run Services + ACA Apps (PR #113)
 
-**Spec updates.** `specs/CLOUD_RESOURCE_MAPPING.md` documents the per-backend dispatch policy, a GitLab Runner / GitHub Actions runner comparison (both strictly pull-based — the reverse-agent pattern fills the FaaS gap both sidestep), and a runner-compatibility matrix for `DOCKER_HOST=<sockerless>` configurations. Commit path documented with the find+tar mechanism and the deletion-capture limitation.
+Two execution paths selected by `SOCKERLESS_GCR_USE_SERVICE` / `SOCKERLESS_ACA_USE_APP`. Services/Apps create internal-ingress workloads with VPC connector / managed environment; peers resolve via Cloud DNS / Private DNS CNAMEs. Jobs path (default) unchanged. Closes BUG-715, 716.
 
-## Phases 91 / 92 / 93 / 94 / 94b — real per-cloud volumes (2026-04-21, PR #114)
+### Phase 86 — simulator parity + Lambda agent-as-handler (PR #112, 2026-04-20)
 
-`docker volume create` / `docker run -v name:/mnt` provisions real cloud storage across every backend:
-
-- **ECS (91)** — one sockerless-owned EFS filesystem per backend (or reused via `SOCKERLESS_ECS_AGENT_EFS_ID`), one access point per Docker volume, tagged for discovery. Task defs emit `EFSVolumeConfiguration{TransitEncryption=ENABLED, AuthorizationConfig.AccessPointId}`.
-- **Cloud Run (92)** — one GCS bucket per volume, labelled `sockerless-managed=true` + `sockerless-volume-name=<name>`. Jobs/Services emit `Volume{Gcs{Bucket}}`.
-- **ACA (93)** — one Azure Files share per volume inside the operator's storage account, paired with a `ManagedEnvironmentsStorages` entry. Jobs/Apps emit `Volume{StorageType=AzureFile}`.
-- **GCF (94)** — Functions v2's `ServiceConfig` only exposes `SecretVolumes`; volumes attach via the sanctioned escape hatch: `Services.GetService` → append `RevisionTemplate.Volumes[Gcs]` + `VolumeMounts` → `Services.UpdateService`. Partial-attach failures trigger a best-effort function delete so the create appears atomic.
-- **AZF (94)** — one Azure Files share per volume; `WebApps.UpdateAzureStorageAccounts` embeds the share's plaintext access key, fetched via `StorageAccounts.ListKeys` at attach-time so rotated keys take effect without restart.
-- **Lambda (94b)** — `Function.FileSystemConfigs[]` attaches EFS access points via `awscommon.EFSManager` (shared with ECS). Named volumes require Lambda-in-VPC; the backend fails loud if `SOCKERLESS_LAMBDA_SUBNETS` is empty.
-
-Volume managers promoted into common modules (`aws-common.EFSManager`, `gcp-common.BucketManager`, `azurecommon.FileShareManager`) so FaaS backends embed them without duplication. Host-path binds (`-v /h:/c`) remain rejected across all cloud backends — no host filesystem to bind from. `Test*VolumeOperations` rewritten from NotImplemented assertions to real lifecycle assertions.
-
-## Phase 95 — FaaS invocation-lifecycle tracker (2026-04-21, PR #114)
-
-New `core.InvocationResult` + `Store.{Put,Get,Delete}InvocationResult` capture each FaaS invocation's exit code + finished-at + error at the source:
-
-- Lambda maps `Invoke` result — `FunctionError` → 1, otherwise 0.
-- GCF + AZF map the HTTP trigger response via `core.HTTPStatusToExitCode` (2xx → 0, 408 → 124, else 1).
-- `ContainerStart` goroutine writes the result before closing the wait channel; `ContainerStop`/`ContainerKill` write `{ExitCode: 137}` (or `SignalToExitCode`) so stopped functions surface as exited even though Lambda has no invocation-cancel API.
-- `CloudState.{GetContainer,ListContainers,WaitForExit}` overlay the recorded outcome on `queryFunctions` / `queryFunctionApps` and short-circuit `WaitForExit` before any cloud polling.
-
-Crash-scoped: restart loses `InvocationResults` and falls back to cloud state (matches docker's post-daemon-crash contract). Re-enabled 7 tests that were deleted as a BUG-744 stop-gap.
-
-## Phase 97 — GCP label-value charset compliance (2026-04-21, PR #114)
-
-Docker labels previously serialised as a single JSON blob into a GCP label value, which GCP rejects because the charset is restricted to `[a-z0-9_-]{0,63}`. `core.AsGCPLabels` now filters values for charset + length and routes failures to `AsGCPAnnotations`. Cloud Run's cloud_state merges `Job.Annotations` / `Service.Annotations` into the label parser input. GCF (Functions v2 has no Annotations field on the Function resource) carries labels as a base64-JSON `SOCKERLESS_LABELS` env var on the function, decoded by cloud_state. `Test{CloudRun,GCF}ArithmeticWithLabels` assert the round-trip. Closes BUG-746.
-
-## Phases 89 / 90 — stateless-backend audit + no-fakes sweep (2026-04-21, PR #113)
-
-- **89 (stateless)** — every cloud backend derives state from cloud actuals; no on-disk state, no canonical in-memory state. `specs/CLOUD_RESOURCE_MAPPING.md` formalises the docker↔cloud mapping + restart-recovery contract. Every cloud-state callsite uses `resolve*State` helpers. `ListImages` / `ListPods` are cloud-derived. `Store.Images` disk persistence removed — cache is in-process only. Closes BUG-723–726.
-- **90 (no-fakes)** — project-wide audit. Every workaround, silent substitution, and placeholder field became a bug. 11 bugs filed; 8 fixed in-sweep (729 SSM ack format, 730 synthetic image metadata, 731 NotImplemented volumes, 732 dead placeholder field, 733 fabricated PID count, 734 silent namespace substitution, 735 host-path bind rejection, 737 `SKIP_IMAGE_CONFIG` opt-out deleted); 3 scoped as dedicated phases (744 → 95, 745 → 96, 746 → 97).
-
-## Phases 87 / 88 — Cloud Run Services + ACA Apps (2026-04-21, PR #113)
-
-Two execution paths selected by `SOCKERLESS_GCR_USE_SERVICE` / `SOCKERLESS_ACA_USE_APP`:
-
-- **Services (87)** — `Services.CreateService` with `INGRESS_TRAFFIC_INTERNAL_ONLY` + VPC connector + scale = 1. Peers resolve via Cloud DNS CNAMEs → `Service.Uri`. Validates VPC connector is set.
-- **Apps (88)** — `ContainerAppsClient.BeginCreateOrUpdate` with internal ingress + managed environment + min/max = 1. Peers resolve via Private DNS CNAMEs → `ContainerApp.LatestRevisionFqdn`. Validates managed environment is set.
-
-Jobs path (default) unchanged.
-
-## Phase 86 — simulator parity + Lambda agent-as-handler (2026-04-20, PR #112)
-
-Every cloud-API slice sockerless depends on is a first-class slice in its per-cloud simulator, validated with SDK + CLI + terraform tests (or an explicit `tests-exempt.txt` entry):
-
-- AWS ECR pull-through cache, Lambda Runtime API (per-invocation HTTP sidecar on `host.docker.internal`), Cloud Map backed by real Docker networks.
-- GCP Cloud Build + Secret Manager, Cloud DNS private zones backed by real Docker networks.
-- Azure Private DNS Zones + NSG + ACR Cache Rules, managed environment backed by real Docker networks.
-- Lambda agent-as-handler: `sockerless-lambda-bootstrap` polling loop + overlay-image build in `ContainerCreate` + reverse-agent WebSocket on `/v1/lambda/reverse`.
-
-Pre-commit testing contract: every `r.Register` addition needs SDK + CLI + terraform coverage. Phase C live-AWS validated ECS end-to-end in `eu-west-1`: `docker run`, `docker run -d`, FQDN + short-name cross-container DNS, `docker exec`. 13 real bugs fixed in-branch (BUG-708–722). See [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md).
+Every cloud-API slice sockerless depends on is a first-class slice in its per-cloud simulator, validated with SDK + CLI + terraform tests. AWS ECR pull-through cache, Lambda Runtime API, Cloud Map; GCP Cloud Build + Secret Manager, Cloud DNS; Azure Private DNS + NSG + ACR Cache Rules, managed environment. Lambda agent-as-handler: `sockerless-lambda-bootstrap` polling loop + overlay-image build in `ContainerCreate` + reverse-agent WS at `/v1/lambda/reverse`. Pre-commit contract: every new sim handler needs SDK+CLI+terraform coverage. Phase C validated ECS end-to-end in `eu-west-1`. Closes BUG-708–722.
 
 ## Stack & structure
 
-- **Simulators** — `simulators/{aws,gcp,azure}/`, each a separate Go module. `simulators/<cloud>/shared/` for container + network helpers, `sdk-tests/` / `cli-tests/` / `terraform-tests/` for external validation.
+- **Simulators** — `simulators/{aws,gcp,azure}/`, separate Go modules. `simulators/<cloud>/shared/` for container + network helpers; `sdk-tests/` / `cli-tests/` / `terraform-tests/` for external validation.
 - **Backends** — 7 backends (`backends/docker`, `backends/ecs`, `backends/lambda`, `backends/cloudrun`, `backends/cloudrun-functions`, `backends/aca`, `backends/azure-functions`). Each a separate Go module. Cloud-common shared: `backends/{aws,gcp,azure}-common/`. Core driver + shared types: `backends/core/`.
-- **Agent** — `agent/` with sub-commands for the in-container driver + Lambda bootstrap. Shared simulator library: `github.com/sockerless/simulator` (aliased as `sim`).
-- **Frontend** — Docker REST API. `cmd/sockerless/` CLI (zero-deps). UI SPA at `ui/` (Bun / React 19 / Vite / React Router 7 / TanStack / Tailwind 4 / Turborepo), embedded via Go `!noui` build tag. 12 UI packages across core + 6 cloud backends + docker backend + docker frontend + admin + bleephub.
-- **Tests** — `tests/` for cross-backend e2e, `tests/upstream/` for external suite replays (act, gitlab-ci-local), `tests/e2e-live-tests/` for runner orchestration, `tests/terraform-integration/`, `smoke-tests/` for per-cloud Docker-backed smokes.
+- **Agent** — `agent/` with sub-commands for the in-container driver + Lambda bootstrap. Shared simulator library: `github.com/sockerless/simulator`.
+- **Frontend** — Docker REST API. `cmd/sockerless/` zero-dep CLI. UI SPA at `ui/` (Bun / React 19 / Vite / React Router 7 / TanStack / Tailwind 4 / Turborepo), embedded via Go `!noui` build tag.
+- **Tests** — `tests/` for cross-backend e2e, `tests/upstream/` for external-suite replays (act, gitlab-ci-local), `tests/e2e-live-tests/` for runner orchestration, `tests/terraform-integration/`, `smoke-tests/` for per-cloud Docker-backed smokes.

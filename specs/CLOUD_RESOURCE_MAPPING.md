@@ -444,6 +444,71 @@ Below is the current state — items marked **closed** have full sim-side emulat
 
 ---
 
+## Driver framework (Phase 104, in progress)
+
+Every "perform docker action X against the cloud" decision flows through a typed `Driver` interface in `backends/core/drivers/`. **Interfaces in core; implementations live with the cloud they use** (`backends/ecs/drivers/`, `backends/aws-common/drivers/`, `backends/aca/drivers/`, etc.). Each backend constructs its `DriverSet` at startup; operators override per-cloud-per-dimension via `SOCKERLESS_<BACKEND>_<DIMENSION>=<impl>`; sim parity is required for the default driver in every dimension.
+
+**Envelope:**
+
+```go
+type DriverContext struct {
+    Ctx       context.Context
+    Container api.Container        // pre-resolved by ResolveContainerAuto
+    Backend   string               // "docker" | "ecs" | "lambda" | …
+    Region    string
+    Logger    zerolog.Logger
+}
+
+type Driver interface {
+    Describe() string  // "<backend> <dimension> via <transport>; missing: <prereq>"
+}
+```
+
+The dispatcher in `backends/core/backend_impl.go` calls `ResolveContainerAuto` once, builds the `DriverContext`, then invokes `s.Drivers.<X>.<method>(dctx, opts)`. Per-dimension typed `<X>Options` / `<X>Result` types layer on top — exec returns 3 streams, build returns a JSON status stream, stats returns a snapshot, etc. An unset / `NotImpl` driver auto-emits `NotImplementedError` whose message comes from `Describe()`.
+
+**13 driver dimensions:**
+
+| Dimension | Default per backend |
+|---|---|
+| `ExecDriver` | docker→DockerExec; ECS→SSMExec; FaaS+CR→ReverseAgentExec; ACA→ACAConsoleExec ⇄ ReverseAgentExec |
+| `AttachDriver` | docker→DockerAttach; ECS→CloudWatchAttach; FaaS→CloudLogsReadOnlyAttach |
+| `FSReadDriver` (cp →, stat, get-archive) | docker→DockerArchive; ECS→SSMTar; FaaS+CR+ACA→ReverseAgentTar |
+| `FSWriteDriver` (cp ←, put-archive) | docker→DockerArchive; ECS→SSMTarExtract; FaaS+CR+ACA→ReverseAgentTarExtract |
+| `FSDiffDriver` | docker→DockerChanges; ECS→SSMFindNewer; FaaS+CR+ACA→ReverseAgentFindNewer |
+| `FSExportDriver` | docker→DockerExport; ECS→SSMTarRoot; FaaS+CR+ACA→ReverseAgentTarRoot |
+| `CommitDriver` | docker→DockerCommit; FaaS+CR+ACA→ReverseAgentTarLayer+Push; ECS→accepted-gap NotImpl |
+| `BuildDriver` | docker→LocalDockerBuild; ECS+Lambda→CodeBuild; CR+GCF→CloudBuild; ACA+AZF→ACRTasks |
+| `StatsDriver` (one-shot) | docker→DockerStats; AWS→CloudWatchAggregate; GCP→CloudMonitoring; Azure→LogAnalytics |
+| `ProcListDriver` (top) | docker→DockerTop; ECS→SSMPs; FaaS+CR+ACA→ReverseAgentPs |
+| `LogsDriver` | docker→DockerLogs; AWS→CloudWatch; GCP→CloudLogging; Azure→LogAnalytics |
+| `SignalDriver` (pause/unpause/kill) | docker→DockerKill; ECS→SSMKill; FaaS+CR+ACA→ReverseAgentKill |
+| `RegistryDriver` (push/pull) | per-cloud: ECRPullThrough+ECRPush; ARPullThrough+ARPush; ACRCacheRule+ACRPush |
+
+**Layout:**
+
+```
+backends/core/drivers/
+  types.go            # DriverContext + 13 interfaces
+  set.go              # DriverSet aggregate
+  override.go         # SOCKERLESS_<BACKEND>_<DIMENSION> env-var overrides
+  reverseagent/       # cloud-agnostic — bootstrap-dials-back pattern, used by every backend that ships a sockerless bootstrap
+
+backends/docker/drivers/        # host docker SDK
+backends/aws-common/drivers/    # SSM, CodeBuild, ECR (shared ECS+Lambda)
+backends/ecs/drivers/           # CloudWatch Logs/Metrics/Attach (ECS-only)
+backends/aca/drivers/           # ACA console exec
+backends/gcp-common/drivers/    # CloudBuild, Cloud Logging, Cloud Monitoring, AR
+backends/azure-common/drivers/  # ACR Tasks, Log Analytics, ACR
+```
+
+**Composition rule:** unset / `NotImpl` driver auto-emits `NotImplementedError` whose message comes from `Describe()`. No per-backend boilerplate.
+
+**Sim contract:** every default driver must work end-to-end against its cloud's simulator. Alternate drivers (Kaniko, OverlayUpper) may be operator-installable only, with a clear note here.
+
+**Driver-impl testing:** sim-only — drivers test against the real cloud SDK pointed at the simulator, matching the project culture (no mocks).
+
+**Migration sequence:** piecemeal, dimension at a time, no behaviour change per commit. Order: Exec → FSRead → FSWrite → FSDiff → FSExport → ProcList → Signal → Stats → Logs → Attach → Commit → Build → Registry. Each commit lifts the bespoke per-backend method into a typed driver impl, deletes the bespoke method, adds a sim test for the default driver.
+
 ## State boundaries
 
 These are the only places sockerless backends are allowed to keep state:

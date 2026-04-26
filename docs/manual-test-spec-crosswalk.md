@@ -13,7 +13,7 @@
 - **Started:** 2026-04-26
 - **Backends targeted:** ECS + Lambda (D-track skipped — see decision below)
 - **Last completed test:** I9 ✅ — **Tracks A + B + C + E + F + G + I complete (ECS side done)**
-- **Next pending test:** Lambda Track D — first build the sockerless-lambda-bootstrap overlay image, push to ECR, then run D1-D9.
+- **Next pending test:** D1 (Lambda info) — **blocked on local Docker daemon**. The pre-built overlay image build needs Docker Desktop or podman-machine running. See DO_NEXT.md for the exact resume commands. Cross-built binaries are at `/tmp/r9-overlay/sockerless-{agent,lambda-bootstrap}` and Dockerfile is at `/tmp/r9-overlay/Dockerfile`.
 - **Bugs filed this round:** BUG-801 + BUG-803 + BUG-805 (filed + fixed); BUG-804 + BUG-806 (filed, fixes deferred — need libpod-source research). PR #118 CI: 10/10 PASS at last commit.
 - **Tracks G + I both pass cleanly.** G1 hit a public.ecr.aws 429 rate-limit on the first try (too many nginx pulls in this session); resolved by adding `pull_policy: missing` to the compose file so docker compose uses the already-pulled image. G2-G7 all pass after that. I1-I9 verifies Phase 89 stateless recovery contract end-to-end (kill backend, restart, persist1 visible+running+stop+rm all work from cloud-derived state).
 - **Bugs filed this round:** BUG-801 (filed + fixed), BUG-803 (filed + fixed — spec doc inconsistency). PR #118 CI: 10/10 PASS.

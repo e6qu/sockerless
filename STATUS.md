@@ -1,55 +1,51 @@
 # Sockerless — Status
 
-**102 phases closed. 800 bugs tracked — 798 fixed, 2 open (BUG-789/798 SSM frame parsing, BUG-795 podman-list pod members), 1 false positive. Branch `round-8-bug-sweep` open.**
+**102 phases closed. 806 bugs tracked — 803 fixed, 3 open (BUG-789/798 SSM frame parsing, BUG-795 podman pod-list filter, BUG-804/806 libpod shape — last two queued for Phase 105). 1 false positive. Branch `round-8-bug-sweep` open with rounds 8 + 9 stacked on PR #118.**
 
-See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [specs/](specs/) (architecture).
+See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer), [specs/](specs/) (architecture).
 
-## Recent merges
+## Branch state
 
-| PR | Phases | Landed |
-|---|---|---|
-| #117 | Round-7 live-AWS sweep — 16 bugs fixed (BUG-770..785) | 2026-04-25 |
-| #116 | State docs + manual-testing runbook refresh | 2026-04-25 |
-| #115 | 96 / 98 / 98b / 99 / 100 / 101 / 102 + 13-bug audit sweep (BUG-756–769) | 2026-04-24 |
-| #114 | 91 (ECS EFS volumes) + BUG-735/736/737 | 2026-04-22 |
-| #113 | 87 / 88 (CR Services, ACA Apps) + 89 (stateless audit) + 90 (no-fakes sweep) | 2026-04-21 |
-| #112 | 86 (sim parity + Lambda agent-as-handler + live-AWS ECS validation) | 2026-04-20 |
+- **`round-8-bug-sweep`** — open as PR #118. Rounds 8 + 9 both stacked here per maintainer direction (single-branch-per-phase rule). All CI green at last commit; MERGEABLE.
+- **`origin/main`** — clean at PR #117 merge. Local `main` synced.
+- **`origin-gitlab/main`** — mirror, lags; pushed when convenient.
 
-Per-phase detail in [WHAT_WE_DID.md](WHAT_WE_DID.md).
+## Round-9 (in progress)
 
-## Round-9 (in progress, this branch)
+Per-test crosswalk of [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md) against [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), live ECS + Lambda. Working state in [docs/manual-test-spec-crosswalk.md](docs/manual-test-spec-crosswalk.md) (the file's `## Status` block names the next pending test, so post-compaction resume picks up cleanly).
 
-Per-test crosswalk between [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md) and [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), driven by the live ECS + Lambda backends. Working state lives in [docs/manual-test-spec-crosswalk.md](docs/manual-test-spec-crosswalk.md) — that file's `## Status` block names the next pending test, so a post-compaction resume should start there.
+ECS side **complete** — Tracks A/B/C/E/F/G/I (~80 tests). 3 bugs filed and fixed in-track (BUG-801, 803, 805); 2 deferred to Phase 105 (804, 806 — libpod shape). 1 withdrawn (802 — measurement artifact).
 
-**Both backends in scope.** ECS Tracks A/B/C/E/F/G/I + Lambda Track D. Lambda exercises a sockerless-lambda-bootstrap prebuilt overlay (`SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE`) since plain alpine isn't Lambda-runnable (BUG-797).
+Lambda Track D **partially staged** — sockerless-lambda-bootstrap binaries cross-built at `/tmp/r9-overlay/`; build-and-push to ECR resumes once Docker Desktop / podman-machine is up.
 
-See [DO_NEXT.md](DO_NEXT.md) for the resume pointer and [PLAN.md](PLAN.md#round-9-manual-test-crosswalk-in-progress) for the full scope list.
+Phase 104 (cross-backend driver framework) drafted in PLAN.md as the next major work item; ships as the natural home for Phase 103 (overlay-rootfs) and operator-overridable per-cloud driver swaps (e.g. Kaniko for builds).
 
-## Round-8 (this branch — pending PR)
+## Recent merges (compressed — full detail in [WHAT_WE_DID.md](WHAT_WE_DID.md))
 
-Two-round live-AWS sweep against `eu-west-1`. **278 tests across rounds 1+2** (142 + 136 in round-2 v2). 13 bugs filed and fixed (BUG-786, 787, 788, 790, 791, 792, 793, 794, 796, 797, 799, 800 + accepted-gaps classification for ECS commit / pause / ContainerResize / ImageSave / ImageSearch / streaming stats). 2 bugs remain open as P1-or-later (789/798 SSM frame parsing, 795 podman-list pod members).
+| PR | Summary |
+|---|---|
+| #117 | Round-7 live-AWS sweep — 16 bugs (BUG-770..785) |
+| #116 | Post-PR-#115 state-doc refresh |
+| #115 | Phases 96/98/98b/99/100/101/102 + 13-bug audit sweep |
+| #114 | Phase 91 ECS EFS volumes + BUG-735/736/737 |
+| #113 | Phases 87/88 (CR Services + ACA Apps) + 89 (stateless audit) + 90 (no-fakes) |
+| #112 | Phase 86 — sim parity + Lambda agent-as-handler + live-AWS ECS validation |
 
-Headline fixes:
-- **Phase 89 stateless invariant restored** — registry persistence at `./sockerless-registry.json` removed (BUG-800); recovery now skips STOPPED tasks (BUG-799); 11 stale registry files swept from the tree.
-- **BUG-788 registry-to-registry layer mirror** — new `core.FetchLayerBlob` + `Store.ImageManifestLayers` populated by `ImagePull` / `ImageLoad` / `ContainerCommit`; `OCIPush` preserves source compressed digests verbatim. Verified live: pulled image pushed back to ECR.
-- **BUG-790 sync `docker stop`** — new `waitForTaskStopped` blocks until ECS reports STOPPED so immediate `docker rm` succeeds.
-- **BUG-794 cross-network isolation** — per-network SG is the sole authority for containers with `--network X`; default SG only applies to networkless containers.
-- **BUG-786 rmi alias-entry sweep** — `ImageRemove` rewrites every `Store.Images` entry whose `Value.ID` matches.
-- **Spec doc** — `specs/CLOUD_RESOURCE_MAPPING.md` now reflects landed phases (91–94, 96, 102) and lists 9 maintainer-approved acceptable gaps.
+## Open work pointers
 
-## Pending
+- **BUG-789/798**: live-AWS SSM frame parsing — exec returns -1 with no stdout. Sim path passes; needs WS-frame capture against a live exec to diagnose. Linked to BUG-721 ack-format issue.
+- **BUG-795**: `podman ps --filter name=…` returns empty for pod-attached containers; `podman pod inspect` sees them.
+- **BUG-804/806**: libpod-shape divergences for `pod inspect` (returns array; libpod expects object) and `pod stop` (Errs serialization). Queued for Phase 105.
+- **Phase 103**: overlay-rootfs bootstrap mode — ships under Phase 104 as alternate FSDiff/Commit drivers.
+- **Phase 104**: cross-backend driver framework — design locked; piecemeal delivery, dimension at a time. See PLAN.md for the dimension list and refactor order.
+- **Phase 105**: libpod-shape conformance.
+- **GCP / Azure live runbooks** — terraform live envs to add, then port the round-7/8/9 sweep against each.
 
-- **BUG-789/798**: SSM exec returns -1 on live AWS even with `ExecuteCommandAgent` readiness wait. Sim-backed tests pass; needs WS-frame capture against live exec session to diagnose ack-format mismatch on `ExecuteCommand` path.
-- **BUG-795**: `podman ps --filter` doesn't return pod-attached containers; `podman pod inspect` does see them.
-- **Live-cloud runbooks**: GCP (Phase 87) + Azure (Phase 88) + Lambda track. Code closed; need scripted equivalents of `scripts/phase86/*.sh`.
-- **Phase 103** (overlay-rootfs): queued; replace `find -newer /proc/1` heuristic with overlayfs-based diff/cp/export for FaaS+CR+ACA.
-- **BUG-721**: SSM `acknowledge` format still wrong for live AWS agent. Sim-side ack format is correct (BUG-729 closed it for sim); live remains broken.
-
-## Test counts
+## Test counts (head of `round-8-bug-sweep`)
 
 | Category | Count |
 |---|---|
-| Core unit | 312 (BUG-786 + 788 fixes added Entries() / FetchLayerBlob tests; persistence tests removed for BUG-800) |
+| Core unit | 312 |
 | Cloud SDK/CLI | AWS 68, GCP 64, Azure 57 |
 | Sim-backend integration | 77 |
 | GitHub E2E | 186 |
@@ -57,8 +53,5 @@ Headline fixes:
 | Terraform | 75 |
 | UI/Admin/bleephub | 512 |
 | Lint (18 modules) | 0 |
-| Round-8 live-AWS manual sweep | 278 tests, 274 pass, 4 expected fails (404-on-not-found + BUG-799 ghost which the new binary fixes) |
-
-## ECS live testing
-
-8 rounds against `eu-west-1`. Round 8: 142 tests (round 1) + 136 (round 2 post-fixes, including stateless-recovery I-track all-pass) + 26 final retest verifying all bug fixes end-to-end. See [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md).
+| Round-8 live-AWS manual sweep | 278 tests; 274 pass + 4 BUG-799 ghosts (now fixed) |
+| Round-9 live-AWS manual sweep | ~80 tests done so far (ECS A/B/C/E/F/G/I); Track D pending |
