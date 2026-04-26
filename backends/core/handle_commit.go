@@ -47,12 +47,30 @@ func (s *BaseServer) handleContainerCommit(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	resp, err := s.self.ContainerCommit(&req)
+	c, _ := s.ResolveContainerAuto(r.Context(), req.Container)
+	if c.ID == "" {
+		c.ID = req.Container
+	}
+	dctx := DriverContext{
+		Ctx:       r.Context(),
+		Container: c,
+		Backend:   s.Desc.Driver,
+		Logger:    s.Logger,
+	}
+	imageID, err := s.Typed.Commit.Commit(dctx, CommitOptions{
+		Author:  req.Author,
+		Comment: req.Comment,
+		Repo:    req.Repo,
+		Tag:     req.Tag,
+		Pause:   req.Pause,
+		Changes: req.Changes,
+		Config:  req.Config,
+	})
 	if err != nil {
 		WriteError(w, err)
 		return
 	}
-	WriteJSON(w, http.StatusCreated, resp)
+	WriteJSON(w, http.StatusCreated, &api.ContainerCommitResponse{ID: imageID})
 }
 
 // parseJSONOrShell tries to parse value as a JSON array, falling back to shell form.

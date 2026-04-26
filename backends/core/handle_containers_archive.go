@@ -15,11 +15,28 @@ import (
 	"github.com/sockerless/api"
 )
 
+// archiveDriverContext builds the typed driver context used by the
+// FS read/write dispatch sites. Resolves the container via the
+// CloudState-aware path so cloud backends pick up cloud actuals.
+func (s *BaseServer) archiveDriverContext(r *http.Request, ref string) DriverContext {
+	c, _ := s.ResolveContainerAuto(r.Context(), ref)
+	if c.ID == "" {
+		c.ID = ref
+	}
+	return DriverContext{
+		Ctx:       r.Context(),
+		Container: c,
+		Backend:   s.Desc.Driver,
+		Logger:    s.Logger,
+	}
+}
+
 // handlePutArchive accepts a tar archive and extracts it to the container filesystem.
 func (s *BaseServer) handlePutArchive(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	noOverwrite := r.URL.Query().Get("noOverwriteDirNonDir") == "1" || r.URL.Query().Get("noOverwriteDirNonDir") == "true"
-	if err := s.self.ContainerPutArchive(r.PathValue("id"), path, noOverwrite, r.Body); err != nil {
+	dctx := s.archiveDriverContext(r, r.PathValue("id"))
+	if err := s.Typed.FSWrite.PutArchive(dctx, path, r.Body, noOverwrite); err != nil {
 		WriteError(w, err)
 		return
 	}
@@ -29,7 +46,8 @@ func (s *BaseServer) handlePutArchive(w http.ResponseWriter, r *http.Request) {
 // handleHeadArchive returns a stat header for the requested path.
 func (s *BaseServer) handleHeadArchive(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
-	stat, err := s.self.ContainerStatPath(r.PathValue("id"), path)
+	dctx := s.archiveDriverContext(r, r.PathValue("id"))
+	stat, err := s.Typed.FSRead.StatPath(dctx, path)
 	if err != nil {
 		WriteError(w, err)
 		return
@@ -45,26 +63,30 @@ func (s *BaseServer) handleHeadArchive(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleGetArchive returns a tar archive of the requested path.
+// handleGetArchive returns a tar archive of the requested path. Stat
+// header is set via a separate StatPath call before the body stream
+// begins, since the typed FSRead.GetArchive writes directly into the
+// response writer (no Reader is returned to read the stat from).
 func (s *BaseServer) handleGetArchive(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
-	resp, err := s.self.ContainerGetArchive(r.PathValue("id"), path)
+	dctx := s.archiveDriverContext(r, r.PathValue("id"))
+	stat, err := s.Typed.FSRead.StatPath(dctx, path)
 	if err != nil {
 		WriteError(w, err)
 		return
 	}
-	defer resp.Reader.Close()
-
 	statJSON, _ := json.Marshal(map[string]interface{}{
-		"name":  resp.Stat.Name,
-		"size":  resp.Stat.Size,
-		"mode":  resp.Stat.Mode,
-		"mtime": resp.Stat.Mtime.Format(time.RFC3339),
+		"name":  stat.Name,
+		"size":  stat.Size,
+		"mode":  stat.Mode,
+		"mtime": stat.Mtime.Format(time.RFC3339),
 	})
 	w.Header().Set("X-Docker-Container-Path-Stat", base64.StdEncoding.EncodeToString(statJSON))
 	w.Header().Set("Content-Type", "application/x-tar")
 	w.WriteHeader(http.StatusOK)
-	io.Copy(w, resp.Reader)
+	if err := s.Typed.FSRead.GetArchive(dctx, path, w); err != nil {
+		s.Logger.Debug().Err(err).Str("path", path).Msg("get-archive write error after headers sent")
+	}
 }
 
 // extractTar extracts a tar archive into destDir.
