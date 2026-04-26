@@ -94,7 +94,7 @@ func TestECS_ExitCodeNilWhileRunning(t *testing.T) {
 		LaunchType:     ecstypes.LaunchTypeFargate,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
-				Subnets: []string{"subnet-sim"},
+				Subnets: []string{"subnet-0123456789abcdef0"},
 			},
 		},
 	})
@@ -175,7 +175,7 @@ func TestECS_StopCodeUserInitiated(t *testing.T) {
 		LaunchType:     ecstypes.LaunchTypeFargate,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
-				Subnets: []string{"subnet-sim"},
+				Subnets: []string{"subnet-0123456789abcdef0"},
 			},
 		},
 	})
@@ -237,7 +237,7 @@ func ecsRunTaskHelper(t *testing.T, name string, containerDef ecstypes.Container
 		LaunchType:     ecstypes.LaunchTypeFargate,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
-				Subnets: []string{"subnet-sim"},
+				Subnets: []string{"subnet-0123456789abcdef0"},
 			},
 		},
 	})

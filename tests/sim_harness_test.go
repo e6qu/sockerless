@@ -37,7 +37,7 @@ var simBackends = map[string]simBackendInfo{
 		EnvVarSocket: "SOCKERLESS_ECS_SOCKET",
 		ExtraEnv: map[string]string{
 			"SOCKERLESS_ECS_CLUSTER":            "sim-cluster",
-			"SOCKERLESS_ECS_SUBNETS":            "subnet-sim",
+			"SOCKERLESS_ECS_SUBNETS":            "subnet-0123456789abcdef0",
 			"SOCKERLESS_ECS_EXECUTION_ROLE_ARN": "arn:aws:iam::000000000000:role/sim",
 		},
 	},

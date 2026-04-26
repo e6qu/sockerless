@@ -248,7 +248,7 @@ func TestCloudMap_CrossTaskDNS_CLI(t *testing.T) {
 			"--task-definition", regTd.TaskDefinition.TaskDefinitionArn,
 			"--count", "1",
 			"--launch-type", "FARGATE",
-			"--network-configuration", "awsvpcConfiguration={subnets=[subnet-sim]}",
+			"--network-configuration", "awsvpcConfiguration={subnets=[subnet-0123456789abcdef0]}",
 			"--tags", "key=sockerless-container-id,value="+cid,
 			"--output", "json",
 		))

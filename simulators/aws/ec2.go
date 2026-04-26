@@ -212,7 +212,7 @@ func AllocateSubnetIP(subnetID string) (string, error) {
 
 const ec2Owner = "123456789012"
 
-// ensureSimDefaults creates `vpc-sim` and `subnet-sim` entries if they
+// ensureSimDefaults creates `vpc-sim` and `subnet-0123456789abcdef0` entries if they
 // don't already exist. Called on simulator startup. Idempotent.
 func ensureSimDefaults() {
 	if _, ok := ec2Vpcs.Get("vpc-sim"); !ok {
@@ -226,9 +226,9 @@ func ensureSimDefaults() {
 			EnableDnsHostnames: true,
 		})
 	}
-	if _, ok := ec2Subnets.Get("subnet-sim"); !ok {
-		ec2Subnets.Put("subnet-sim", EC2Subnet{
-			SubnetId:            "subnet-sim",
+	if _, ok := ec2Subnets.Get("subnet-0123456789abcdef0"); !ok {
+		ec2Subnets.Put("subnet-0123456789abcdef0", EC2Subnet{
+			SubnetId:            "subnet-0123456789abcdef0",
 			VpcId:               "vpc-sim",
 			CidrBlock:           "10.0.1.0/24",
 			AvailabilityZone:    "us-east-1a",
@@ -299,7 +299,7 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("RevokeSecurityGroupIngress", handleRevokeSecurityGroupIngress)
 	r.Register("RevokeSecurityGroupEgress", handleRevokeSecurityGroupEgress)
 
-	// Pre-register a default `vpc-sim` + `subnet-sim` so harnesses that
+	// Pre-register a default `vpc-sim` + `subnet-0123456789abcdef0` so harnesses that
 	// hardcode those IDs (smoke-tests/run.sh, backend config examples)
 	// can call DescribeSubnets / DescribeVpcs without first provisioning.
 	// Real AWS would never have these exact IDs; they're a simulator

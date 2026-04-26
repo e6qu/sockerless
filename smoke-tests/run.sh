@@ -50,7 +50,7 @@ case "$BACKEND_TYPE" in
             -d '{"clusterName":"sim-cluster"}' >/dev/null
         export SOCKERLESS_ENDPOINT_URL="http://127.0.0.1:4566"
         export SOCKERLESS_ECS_CLUSTER="sim-cluster"
-        export SOCKERLESS_ECS_SUBNETS="subnet-sim"
+        export SOCKERLESS_ECS_SUBNETS="subnet-0123456789abcdef0"
         export SOCKERLESS_ECS_EXECUTION_ROLE_ARN="arn:aws:iam::000000000000:role/sim"
         BACKEND_BIN="/usr/local/bin/sockerless-backend-ecs"
         ;;

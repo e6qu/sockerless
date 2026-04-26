@@ -49,7 +49,7 @@ func TestECS_CLI_RunTaskAndCheckLogs(t *testing.T) {
 		"--task-definition", tdResult.TaskDefinition.TaskDefinitionArn,
 		"--launch-type", "FARGATE",
 		"--count", "1",
-		"--network-configuration", `awsvpcConfiguration={subnets=[subnet-sim]}`,
+		"--network-configuration", `awsvpcConfiguration={subnets=[subnet-0123456789abcdef0]}`,
 		"--output", "json",
 	))
 
@@ -149,7 +149,7 @@ func TestECS_CLI_RunTaskNonZeroExit(t *testing.T) {
 		"--task-definition", tdResult.TaskDefinition.TaskDefinitionArn,
 		"--launch-type", "FARGATE",
 		"--count", "1",
-		"--network-configuration", `awsvpcConfiguration={subnets=[subnet-sim]}`,
+		"--network-configuration", `awsvpcConfiguration={subnets=[subnet-0123456789abcdef0]}`,
 		"--output", "json",
 	))
 
@@ -217,7 +217,7 @@ func TestECS_CLI_TagAndUntagTask(t *testing.T) {
 		"--task-definition", tdResult.TaskDefinition.TaskDefinitionArn,
 		"--launch-type", "FARGATE",
 		"--count", "1",
-		"--network-configuration", `awsvpcConfiguration={subnets=[subnet-sim]}`,
+		"--network-configuration", `awsvpcConfiguration={subnets=[subnet-0123456789abcdef0]}`,
 		"--output", "json",
 	))
 	var runResult struct {

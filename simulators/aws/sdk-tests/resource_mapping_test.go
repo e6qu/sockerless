@@ -193,7 +193,7 @@ func TestECS_RunTaskTags(t *testing.T) {
 		Tags:           tags,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
-				Subnets: []string{"subnet-sim"},
+				Subnets: []string{"subnet-0123456789abcdef0"},
 			},
 		},
 	})
