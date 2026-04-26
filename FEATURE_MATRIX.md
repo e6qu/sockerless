@@ -107,14 +107,16 @@ Exec/attach has two paths per cloud backend:
 
 | Backend | Agent Path | Cloud-Native Path | Cloud API |
 |---------|------------|-------------------|-----------|
-| Core | AgentExecDriver (forward/reverse agent) | N/A | Local process |
+| Core | LocalExecDriver (synthetic process) | N/A | Local process |
 | Docker | N/A | Docker SDK | `ContainerExecCreate` + `ContainerExecAttach` |
-| ECS | Agent driver chain | ECS ExecuteCommand | `ecs:ExecuteCommand` → SSM WebSocket session |
-| CloudRun | Agent driver chain | Not supported | Cloud Run Jobs have no exec API |
-| ACA | Agent driver chain | Container Apps exec | REST `POST .../exec` → WebSocket session |
-| Lambda | Reverse agent | N/A | FaaS — no persistent process |
-| GCF | Reverse agent | N/A | FaaS — no persistent process |
-| AZF | Reverse agent | N/A | FaaS — no persistent process |
+| ECS | N/A (no in-container bootstrap) | ECS ExecuteCommand | `ecs:ExecuteCommand` → SSM WebSocket session |
+| CloudRun | ReverseAgentExecDriver | Not supported | Cloud Run Jobs have no exec API |
+| ACA | ReverseAgentExecDriver | Container Apps exec | REST `POST .../exec` → WebSocket session |
+| Lambda | ReverseAgentExecDriver | N/A | FaaS — no persistent process |
+| GCF | ReverseAgentExecDriver | N/A | FaaS — no persistent process |
+| AZF | ReverseAgentExecDriver | N/A | FaaS — no persistent process |
+
+The agent path (when present) is wired through the typed `ExecDriver` slot in `TypedDriverSet` via `core.WrapLegacyExec` wrapping `ReverseAgentExecDriver`. ECS uses SSM ExecuteCommand directly through its typed Exec adapter (`backends/ecs/typed_drivers.go`).
 
 ---
 
@@ -304,19 +306,26 @@ When containers connect to a Docker network, service discovery enables them to r
 
 ## Driver Architecture
 
-Sockerless uses a driver-based architecture where each Docker API operation dispatches through pluggable interfaces. Cloud backends override the default drivers with cloud-native implementations.
+Sockerless dispatches every Docker API operation through `core.TypedDriverSet` — 13 typed driver dimensions (Exec, Attach, Logs, Signal, ProcList, FSDiff, FSRead, FSWrite, FSExport, Commit, Build, Stats, Registry). Each backend constructs a `TypedDriverSet` at startup; cloud backends populate slots with cloud-native typed drivers (CloudWatch / Cloud Logging / Azure Monitor for Logs+Attach; SSM for ECS exec/fs/signal; reverse-agent for FaaS+CR+ACA exec/fs/commit/proclist). The full per-backend default-driver matrix lives in [specs/DRIVERS.md](specs/DRIVERS.md).
 
-| Driver | Interface | Core Default | Purpose |
-|--------|-----------|-------------|---------|
-| ExecDriver | `core.ExecDriver` | AgentExecDriver | Run commands in containers |
-| StreamDriver | `core.StreamDriver` | AgentStreamDriver | Attach/logs streaming |
-| FilesystemDriver | `core.FilesystemDriver` | AgentFilesystemDriver | Archive ops (docker cp) |
-| NetworkDriver | `api.NetworkDriver` | SyntheticNetworkDriver | Docker network operations |
-| CloudExecDriver | `core.CloudExecDriver` | NoOpCloudExecDriver | Cloud-native exec (no agent) |
-| CloudNetworkDriver | `core.CloudNetworkDriver` | NoOpCloudNetworkDriver | Cloud VPC/SG/firewall mgmt |
-| ServiceDiscoveryDriver | `core.ServiceDiscoveryDriver` | NoOpServiceDiscoveryDriver | DNS-based service resolution |
-| StorageDriver | `core.StorageDriver` | NoOpStorageDriver | Cloud-native volume mounts |
-| LogDriver | `api.LogDriver` | StreamCloudLogs + CloudLogFetchFunc | Cloud log streaming |
+The narrow `core.DriverSet` (Exec/Filesystem/Stream/Network) predates the typed framework and remains for the Network driver chain (which has platform-specific Linux netns logic that doesn't fit the per-container DriverContext envelope) and as bridge points for the typed framework's default adapters.
+
+| Driver | Interface | Default | Cloud-native overrides |
+|--------|-----------|---------|---|
+| Exec | `core.ExecDriver` | `WrapLegacyExecStart` (rwc bridge) | `WrapLegacyExec(ReverseAgentExecDriver)` for FaaS+CR+ACA |
+| Attach | `core.AttachDriver` | `WrapLegacyContainerAttach` | `NewCloudLogsAttachDriver` for 6 cloud backends |
+| Logs | `core.LogsDriver` | `WrapLegacyLogs` | `NewCloudLogsLogsDriver` for 6 cloud backends |
+| Signal | `core.SignalDriver` | `WrapLegacyKill` | ECS `ssmSignalDriver` |
+| ProcList | `core.ProcListDriver` | `WrapLegacyTop` | ECS `ssmProcListDriver`; FaaS+CR+ACA `NewReverseAgentProcListDriver` |
+| FSDiff | `core.FSDiffDriver` | `WrapLegacyChanges` | ECS `ssmFSDiffDriver`; FaaS+CR+ACA `NewReverseAgentFSDiffDriver` |
+| FSRead | `core.FSReadDriver` | `WrapLegacyFSRead` | ECS `ssmFSReadDriver`; FaaS+CR+ACA `NewReverseAgentFSReadDriver` |
+| FSWrite | `core.FSWriteDriver` | `WrapLegacyFSWrite` | ECS `ssmFSWriteDriver`; FaaS+CR+ACA `NewReverseAgentFSWriteDriver` |
+| FSExport | `core.FSExportDriver` | `WrapLegacyFSExport` | ECS `ssmFSExportDriver`; FaaS+CR+ACA `NewReverseAgentFSExportDriver` |
+| Commit | `core.CommitDriver` | `WrapLegacyCommit` | FaaS+CR+ACA `NewReverseAgentCommitDriver` |
+| Build | `core.BuildDriver` | `WrapLegacyBuild` (delegates to api.Backend.ImageBuild) | per-cloud build service inside the legacy impl |
+| Stats | `core.StatsDriver` | `WrapLegacyStats` | (handler builds responses inline) |
+| Registry | `core.RegistryDriver` | `WrapLegacyRegistry` (takes typed `core.ImageRef`) | (per-cloud handled inside the legacy impl) |
+| Network | `api.NetworkDriver` | `SyntheticNetworkDriver` | `LinuxNetworkDriver` on Linux; cloud overlays via api.Backend |
 
 ### Per-Cloud Driver Implementations
 

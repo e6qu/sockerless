@@ -1,20 +1,20 @@
 # Sockerless — Status
 
-**103 phases closed (Phase 108 closed 2026-04-26). 835 bugs tracked — 835 fixed, 0 open. 1 false positive.** PR #118 merged. PR #120 open with: 22 audit closures (BUG-802 + 638/640/646/648 retro + 804/806 + 820..831 + 832..835); **Phase 104 framework migration complete** — all 13 typed adapters shipped, every dispatch site flowing through TypedDriverSet, framework renamed to drop 104 suffix; Phase 105 waves 1-3 (libpod-shape golden tests, 8 handlers); Phase 108 closed in-branch (77/77 sim-parity matrix ✓ — 33 AWS / 16 GCP / 28 Azure); manual-tests directory + repo-wide code/doc cleanup. **Next on this branch:** per-backend cloud-native typed driver overrides — replace legacy adapter defaults with real typed cloud drivers.
+**103 phases closed (Phase 108 closed 2026-04-26). 835 bugs tracked — 835 fixed, 0 open. 1 false positive.** PR #118 merged. PR #120 open (~50 commits ahead) with: 22 audit closures (BUG-802 + 638/640/646/648 retro + 804/806 + 820..831 + 832..835); **Phase 104 framework migration complete + cloud-native typed drivers across every backend** (44/91 matrix cells cloud-native; the rest stay on legacy adapters whose api.Backend method already does the cloud-native thing); Phase 105 waves 1-3 (8 libpod-shape golden tests); Phase 108 closed (77/77 sim-parity matrix ✓ — 33 AWS / 16 GCP / 28 Azure); Phase 106/107 harnesses shipped under `tests/runners/{github,gitlab}/`; `core.ImageRef` typed domain object lands at the typed Registry boundary; manual-tests directory + repo-wide code/doc cleanup (Phase/BUG refs stripped from 95 Go files + every spec/doc). **Next on this branch:** wrapper-removal pass + further interface tightening (typed Signal enum, structured Stats, ResolveImageReg helper for the registry-resolution sites still using `splitImageRefRegistry`).
 
 See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer).
 
 ## Branch state
 
 - **`main`** — synced with `origin/main` at PR #119 merge.
-- **`post-pr-118-bug-audit-and-phases`** — open as PR #120, ~20 commits ahead of main.
+- **`post-pr-118-bug-audit-and-phases`** — open as PR #120, ~50 commits ahead of main.
 - **`origin-gitlab/main`** — mirror, lags; pushed when convenient.
 
 ## Recent merges
 
 | PR | Summary |
 |---|---|
-| #120 (open) | Post-PR-#118 audit + Phase 104 lifts 1+2 + Phase 105 waves 1-3 + Phase 108 closed (BUG-802 + 638/640/646/648 retro + 804/806 + 820..831 + 832..835). |
+| #120 (open) | Audit + Phase 104 framework migration + cloud-native typed drivers + Phase 105 waves 1-3 + Phase 108 closed + Phase 106/107 harness scaffolding + ImageRef domain type + repo-wide code/doc cleanup (BUG-802 / 638-648 retro / 804 / 806 / 820-831 / 832-835). |
 | #119 | Post-PR-#118 state-doc refresh — Phase 104 promoted to active. |
 | #118 | Round-8 + Round-9 live-AWS sweep — 30 bugs (BUG-786..819), per-cloud terragrunt sweep parity. |
 | #117 | Round-7 live-AWS sweep — 16 bugs (BUG-770..785). |
@@ -23,11 +23,9 @@ See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md]
 
 ## Open work (full detail in [PLAN.md](PLAN.md))
 
-- **Phase 104** — cross-backend driver framework. **Framework migration complete + cloud-native coverage near-full.** All 13 adapters; every dispatch site flows through TypedDriverSet. Per-backend default-driver matrix in [specs/DRIVERS.md](specs/DRIVERS.md) — 44 of 91 cells (excluding docker, where the local SDK passthrough is itself the cloud-native path) ship a cloud-native typed driver bypassing api.Backend; the remaining cells use legacy adapters that wrap `s.self.<api.Backend method>`. Cloud-native typed drivers shipped: Logs + Attach (6 cloud backends, CloudWatch / Cloud Logging / Azure Monitor); ProcList/FSDiff/FSRead/FSWrite/FSExport (ECS via SSM; FaaS+CR+ACA via reverse-agent); Signal (ECS via SSM); Exec (5 reverse-agent backends); Commit (5 reverse-agent backends). Remaining slots that aren't cloud-native: Build/Registry/Stats — the api.Backend method already does the cloud-native thing for these; lifting them gives no architectural win.
-- **Phase 106 / 107** — real CI runner harnesses shipped under `tests/runners/{github,gitlab}/`, build-tag-gated. End-to-end runs against live cloud + real repo/project still pending.
-- **Phase 105** — libpod-shape conformance, rolling. Waves 1-3 done; wave 4 (events stream, exec start hijack, container CRUD) lower-priority.
-- **Phase 106** — real GitHub Actions runner integration. Architecture sketched (per-backend daemon v1; label-dispatch v2 via Phase 68). ECS + Lambda first.
-- **Phase 107** — real GitLab Runner integration (origin-gitlab mirror). Same shape; `dind` sub-test included.
+- **Phase 104** — cross-backend driver framework. **Framework migration complete + cloud-native coverage near-full.** All 13 adapters; every dispatch site flows through TypedDriverSet. Per-backend default-driver matrix: [specs/DRIVERS.md](specs/DRIVERS.md). 44/91 cells cloud-native (excluding docker, where local SDK passthrough is itself the cloud-native path); the rest stay on legacy adapters whose api.Backend method already does the cloud-native thing. `core.ImageRef` typed domain object landed at the typed `RegistryDriver.Push/Pull` boundary — first instance of the interface-tightening track. Remaining: wrapper-removal pass (gated on docker getting typed drivers OR accepting wrappers as permanent); typed Signal enum / structured Stats; `ResolveImageReg(ImageRef)` helper to migrate the registry-resolution call sites still on `splitImageRefRegistry`.
+- **Phase 105** — libpod-shape conformance, rolling. Waves 1-3 done (8 handlers); wave 4 (events stream, exec start hijack, container CRUD) lower-priority.
+- **Phase 106 / 107** — real CI runner harnesses shipped under `tests/runners/{github,gitlab}/`, build-tag-gated. End-to-end runs against live cloud + real repo/project pending — needs operator to reactivate AWS root-account key + provision live ECS via [manual-tests/01-infrastructure.md](manual-tests/01-infrastructure.md). Architecture: per-backend daemon (v1) → label-dispatch via Phase 68 (v2). `dind` sub-test included on the GitLab side.
 - **Phase 68** — Multi-Tenant Backend Pools. P68-001 done; 9 sub-tasks remaining; Phase 106 label-routing motivates this.
 - **Live-cloud runbooks** — GCP + Azure terraform live envs to add; per-cloud `sockerless_runtime_sweep` makes destroy self-sufficient.
 

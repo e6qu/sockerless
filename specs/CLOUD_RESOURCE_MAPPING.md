@@ -446,7 +446,9 @@ Below is the current state — items marked **closed** have full sim-side emulat
 
 ## Driver framework
 
-Every "perform docker action X against the cloud" decision flows through a typed `Driver` interface in `backends/core/drivers/`. **Interfaces in core; implementations live with the cloud they use** (`backends/ecs/drivers/`, `backends/aws-common/drivers/`, `backends/aca/drivers/`, etc.). Each backend constructs its `DriverSet` at startup; operators override per-cloud-per-dimension via `SOCKERLESS_<BACKEND>_<DIMENSION>=<impl>`; sim parity is required for the default driver in every dimension.
+Every "perform docker action X against the cloud" decision flows through a typed driver interface in [`backends/core/drivers_typed.go`](../backends/core/drivers_typed.go). The 13 typed dimensions (`ExecDriver`, `AttachDriver`, `LogsDriver`, `SignalDriver`, `ProcListDriver`, `FSDiffDriver`, `FSReadDriver`, `FSWriteDriver`, `FSExportDriver`, `CommitDriver`, `BuildDriver`, `StatsDriver`, `RegistryDriver`) compose into `core.TypedDriverSet`. Each backend constructs one at startup; the BaseServer's HTTP handlers dispatch through it. Operators override per-cloud-per-dimension via `SOCKERLESS_<BACKEND>_<DIMENSION>=<impl>` resolved by [`backends/core/driver_override.go`](../backends/core/driver_override.go).
+
+The full per-backend default-driver matrix lives in **[specs/DRIVERS.md](DRIVERS.md)**. That doc is the source of truth for which typed driver each backend wires for each dimension; this section gives the architecture context.
 
 **Envelope:**
 
@@ -464,50 +466,15 @@ type Driver interface {
 }
 ```
 
-The dispatcher in `backends/core/backend_impl.go` calls `ResolveContainerAuto` once, builds the `DriverContext`, then invokes `s.Drivers.<X>.<method>(dctx, opts)`. Per-dimension typed `<X>Options` / `<X>Result` types layer on top — exec returns 3 streams, build returns a JSON status stream, stats returns a snapshot, etc. An unset / `NotImpl` driver auto-emits `NotImplementedError` whose message comes from `Describe()`.
+The handler resolves the container once via `ResolveContainerAuto`, builds a `DriverContext`, then invokes `s.Typed.<X>.<method>(dctx, opts)`. Per-dimension typed `<X>Options` / `<X>Result` types layer on top. An unset / `NotImpl` driver auto-emits `NotImplementedError` whose message comes from `Describe()`.
 
-**13 driver dimensions:**
+**Adapter layer.** Most dimensions ship with a `WrapLegacyXxx` adapter in `backends/core/driver_adapt_*.go` that converts an existing `BaseServer.ContainerXxx` method into the typed shape. Backends that have a cloud-native typed driver override the slot directly (e.g. `s.Typed.Logs = NewCloudLogsLogsDriver(...)` in Lambda's `NewServer`); backends that don't fall back to the wrapping adapter. The wrapper-removal pass tracked in PLAN.md collapses the indirection once every backend has a typed cloud-native driver per dimension.
 
-| Dimension | Default per backend |
-|---|---|
-| `ExecDriver` | docker→DockerExec; ECS→SSMExec; FaaS+CR→ReverseAgentExec; ACA→ACAConsoleExec ⇄ ReverseAgentExec |
-| `AttachDriver` | docker→DockerAttach; ECS→CloudWatchAttach; FaaS→CloudLogsReadOnlyAttach |
-| `FSReadDriver` (cp →, stat, get-archive) | docker→DockerArchive; ECS→SSMTar; FaaS+CR+ACA→ReverseAgentTar |
-| `FSWriteDriver` (cp ←, put-archive) | docker→DockerArchive; ECS→SSMTarExtract; FaaS+CR+ACA→ReverseAgentTarExtract |
-| `FSDiffDriver` | docker→DockerChanges; ECS→SSMFindNewer; FaaS+CR+ACA→ReverseAgentFindNewer |
-| `FSExportDriver` | docker→DockerExport; ECS→SSMTarRoot; FaaS+CR+ACA→ReverseAgentTarRoot |
-| `CommitDriver` | docker→DockerCommit; FaaS+CR+ACA→ReverseAgentTarLayer+Push; ECS→accepted-gap NotImpl |
-| `BuildDriver` | docker→LocalDockerBuild; ECS+Lambda→CodeBuild; CR+GCF→CloudBuild; ACA+AZF→ACRTasks |
-| `StatsDriver` (one-shot) | docker→DockerStats; AWS→CloudWatchAggregate; GCP→CloudMonitoring; Azure→LogAnalytics |
-| `ProcListDriver` (top) | docker→DockerTop; ECS→SSMPs; FaaS+CR+ACA→ReverseAgentPs |
-| `LogsDriver` | docker→DockerLogs; AWS→CloudWatch; GCP→CloudLogging; Azure→LogAnalytics |
-| `SignalDriver` (pause/unpause/kill) | docker→DockerKill; ECS→SSMKill; FaaS+CR+ACA→ReverseAgentKill |
-| `RegistryDriver` (push/pull) | per-cloud: ECRPullThrough+ECRPush; ARPullThrough+ARPush; ACRCacheRule+ACRPush |
+**Type tightening.** `core.ImageRef` ([backends/core/image_ref.go](../backends/core/image_ref.go)) is the canonical parsed image reference (`{Domain, Path, Tag, Digest}`) used by the typed `RegistryDriver.Push/Pull` boundary. The handler parses once at the dispatch site; the typed driver receives a structured value. The pattern extends to typed Signal enums + a `ResolveImageReg(ImageRef)` helper for the registry-resolution call sites that still use `splitImageRefRegistry` for docker-hub default rewrites.
 
-**Layout:**
+**Sim contract.** Every default driver works end-to-end against its cloud's simulator. Alternate drivers (Kaniko, OverlayUpper) are operator-installable only.
 
-```
-backends/core/drivers/
-  types.go            # DriverContext + 13 interfaces
-  set.go              # DriverSet aggregate
-  override.go         # SOCKERLESS_<BACKEND>_<DIMENSION> env-var overrides
-  reverseagent/       # cloud-agnostic — bootstrap-dials-back pattern, used by every backend that ships a sockerless bootstrap
-
-backends/docker/drivers/        # host docker SDK
-backends/aws-common/drivers/    # SSM, CodeBuild, ECR (shared ECS+Lambda)
-backends/ecs/drivers/           # CloudWatch Logs/Metrics/Attach (ECS-only)
-backends/aca/drivers/           # ACA console exec
-backends/gcp-common/drivers/    # CloudBuild, Cloud Logging, Cloud Monitoring, AR
-backends/azure-common/drivers/  # ACR Tasks, Log Analytics, ACR
-```
-
-**Composition rule:** unset / `NotImpl` driver auto-emits `NotImplementedError` whose message comes from `Describe()`. No per-backend boilerplate.
-
-**Sim contract:** every default driver must work end-to-end against its cloud's simulator. Alternate drivers (Kaniko, OverlayUpper) may be operator-installable only, with a clear note here.
-
-**Driver-impl testing:** sim-only — drivers test against the real cloud SDK pointed at the simulator, matching the project culture (no mocks).
-
-**Migration sequence:** piecemeal, dimension at a time, no behaviour change per commit. Order: Exec → FSRead → FSWrite → FSDiff → FSExport → ProcList → Signal → Stats → Logs → Attach → Commit → Build → Registry. Each commit lifts the bespoke per-backend method into a typed driver impl, deletes the bespoke method, adds a sim test for the default driver.
+**Driver-impl testing.** Sim-only — drivers test against the real cloud SDK pointed at the simulator, matching the project culture (no mocks).
 
 ## State boundaries
 

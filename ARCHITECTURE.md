@@ -87,7 +87,7 @@ graph TB
         MUX["HTTP Router"]
         STORE["StateStore<br/><i>containers, images,<br/>networks, volumes</i>"]
         REG["AgentRegistry<br/><i>reverse agent conns</i>"]
-        DRV["DriverSet<br/><i>Exec, Filesystem,<br/>Stream, Network</i>"]
+        DRV["TypedDriverSet (13 dimensions)<br/><i>Exec, Attach, Logs, Signal,<br/>ProcList, FSDiff, FS*,<br/>Commit, Build, Stats, Registry</i>"]
         DH["Default Handlers<br/><i>inspect, list, wait,<br/>exec create, ...</i>"]
     end
 
@@ -118,9 +118,13 @@ graph TB
 
 **Docker backend** proxies to a real Docker daemon — no agent needed.
 
-**Container backends** (ECS, CloudRun, ACA) use **forward agent** in production (backend dials agent inside container) and **reverse agent** in simulator mode (agent dials back to backend).
+**Container backends:**
+- **ECS** uses SSM ExecuteCommand for in-container ops (exec / top / stat / cp / find / kill). No agent in the user image required.
+- **Cloud Run + ACA** use the **reverse agent** — sockerless ships a small bootstrap as the container entrypoint; the bootstrap dials `SOCKERLESS_CALLBACK_URL` over WebSocket; the backend uses that connection to drive exec / fs ops. ACA also has the native Container Apps exec API as a fallback.
 
-**FaaS backends** (Lambda, GCF, AZF) always use **reverse agent** — inbound connections aren't possible, so the agent inside the function dials out to the backend via a callback URL.
+**FaaS backends** (Lambda, GCF, AZF) always use the **reverse agent** — inbound connections aren't possible, so the bootstrap inside the function dials out via the callback URL.
+
+The driver framework hides these per-backend details behind 13 typed dimensions; per-cloud cloud-native typed drivers (e.g. SSM-based ProcList for ECS, reverse-agent-based ProcList for FaaS) plug into the same `TypedDriverSet.ProcList` slot. See [specs/DRIVERS.md](specs/DRIVERS.md) for the per-backend matrix.
 
 ---
 

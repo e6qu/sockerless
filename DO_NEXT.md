@@ -5,17 +5,25 @@ Resume pointer for the next session / post-compaction. Updated after every task.
 ## Branch state
 
 - `main` synced with `origin/main` at PR #119 merge.
-- **`post-pr-118-bug-audit-and-phases`** — open as PR #120, ~37 commits ahead. Cumulative: 22 bugs closed; **Phase 104 framework migration complete** — all 13 typed adapters shipped, every dispatch site flows through `TypedDriverSet` (Exec, Attach, Logs, Signal, ProcList, FSDiff, FSRead, FSWrite, FSExport, Commit, Build, Registry); framework renamed to drop 104 suffix (`ExecDriver`, `AttachDriver`, `TypedDriverSet`); Phase 105 waves 1-3 (8 libpod-shape handlers); Phase 108 closed (77/77 sim-parity matrix ✓); manual-tests directory + repo-wide phase/bug-ref strip from code + docs.
+- **`post-pr-118-bug-audit-and-phases`** — open as PR #120, ~50 commits ahead. Cumulative state:
+  - 22 bug closures (BUG-802 + 638/640/646/648 retro + 804/806 + 820..831 + 832..835).
+  - **Phase 104 framework migration complete** — all 13 typed adapters shipped, every dispatch site flows through `TypedDriverSet` (Exec, Attach, Logs, Signal, ProcList, FSDiff, FSRead/Write/Export, Commit, Build, Registry). Framework renamed to drop the temporary `104` suffix (`ExecDriver`, `AttachDriver`, `TypedDriverSet`).
+  - **Cloud-native typed drivers across every backend.** 44/91 cells in the per-backend matrix are cloud-native, bypassing api.Backend; the rest stay on legacy adapters whose api.Backend method already does the cloud-native thing. Matrix: [specs/DRIVERS.md](specs/DRIVERS.md).
+  - **`core.ImageRef`** typed domain object lands at the typed Registry boundary — first instance of the interface-tightening track.
+  - Phase 105 waves 1-3 (8 libpod-shape handlers).
+  - Phase 108 closed (77/77 sim-parity matrix ✓).
+  - Phase 106/107 harnesses scaffolded (build-tag-gated; live runs pending operator key reactivation).
+  - manual-tests directory + repo-wide phase/bug-ref strip from code + docs.
 
 ## Up next on this branch
 
-1. **Wrapper removal + interface tightening (post-migration cleanup).** Two coordinated changes:
-   - Either give docker the same cloud-native typed driver treatment (calling the docker SDK from a typed driver), or accept that "legacy adapter wrapping s.self" is the permanent path for backends where the api.Backend method *is* the cloud-native impl. Once decided, drop unused `WrapLegacyXxx` / `LegacyXxxFn` scaffolding accordingly and shrink api.Backend.
-   - **Add `core.ImageRef` domain type** (`{Domain, Path, Tag, Digest}` + `ParseImageRef` + `String()`) and migrate the typed Registry interface + the 10+ ad-hoc parse sites (`backends/core/{registry.go,backend_impl.go,handle_docker_api.go}`, `backends/docker/backend_impl.go`, `backends/aws-common/build.go`, etc.). Same shape: typed enums for Signal / RestartCondition. Tracked in PLAN.md § Phase 104 "Stronger type safety".
-2. **Phase 106/107 live-cloud runs.** Harnesses exist (`tests/runners/{github,gitlab}/`). Next step: reactivate AWS root-account key (currently deactivated; see [STATUS.md](STATUS.md)), provision live ECS via [manual-tests/01-infrastructure.md](manual-tests/01-infrastructure.md), and run the harness end-to-end against a real GitHub repo + GitLab project. First findings get filed as bugs.
-3. **Phase 105 wave 4** (lower priority) — events stream, exec start hijack shape, container CRUD beyond list.
-
-The runner-integration hot path (Logs/Attach/Exec/Signal/FS/Commit) is fully cloud-native typed across the cloud backends. Build/Registry/Stats stay on legacy adapters — their api.Backend methods already are the cloud-native paths, so a typed wrapper would just re-route the same call.
+1. **Wrapper removal pass.** Decide: either give docker typed cloud-native drivers (calling docker SDK directly from typed drivers) so every cell in the matrix is cloud-native, or accept that "legacy adapter wrapping s.self" is permanent for backends whose api.Backend method *is* the cloud-native impl. Once decided, drop unused `WrapLegacyXxx` / `LegacyXxxFn` scaffolding and shrink api.Backend correspondingly. Coordinated landing.
+2. **Further interface tightening.** ImageRef proves the pattern. Next:
+   - **Typed Signal enum** — `core.Signal` constants for SIGTERM/SIGKILL/etc., `SignalDriver.Kill(dctx, Signal)` instead of `string`. Parser at the handler boundary.
+   - **`ResolveImageReg(ImageRef) (RegistryConfig, error)`** helper to migrate the registry-resolution call sites (`registry.go`, `image_manager.go`, `backend_impl_ext.go`, etc.) from `splitImageRefRegistry` onto the typed ImageRef path. Adds the docker-hub default rewrites the bare `ParseImageRef` parser intentionally skips.
+   - **Structured `Stats` struct** instead of map[string]any-shaped JSON.
+3. **Phase 106/107 live-cloud runs.** Reactivate AWS root-account key (see [STATUS.md](STATUS.md)), provision live ECS via [manual-tests/01-infrastructure.md](manual-tests/01-infrastructure.md), run the GH harness against a real repo + GitLab harness against the `origin-gitlab` mirror. First findings get filed as bugs.
+4. **Phase 105 wave 4** (lower priority) — events stream, exec start hijack shape, container CRUD beyond list.
 
 ## Cross-links
 

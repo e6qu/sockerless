@@ -8,7 +8,7 @@ Architectural and implementation decisions, with the *why*. Referenced from [PLA
 
 **Docker API as sole interface.** No Kubernetes, no Podman (except libpod pod extensions), no custom APIs. CI runners talk to Sockerless as if it were Docker.
 
-**Driver interfaces.** Cross-backend driver framework with typed dimensions (Exec, Attach, FSRead, FSWrite, FSDiff, FSExport, Commit, Build, Stats, ProcList, Logs, Signal, Registry). `DriverContext` envelope; `Driver.Describe()` populates `NotImplementedError` automatically. Backends construct a `DriverSet` at startup; operators override per-cloud-per-dimension via `SOCKERLESS_<BACKEND>_<DIMENSION>=<impl>`. Sim parity required for the default driver in every dimension. See [specs/DRIVERS.md](specs/DRIVERS.md) for the full interface table.
+**Driver interfaces.** Cross-backend driver framework with typed dimensions (Exec, Attach, FSRead, FSWrite, FSDiff, FSExport, Commit, Build, Stats, ProcList, Logs, Signal, Registry). `DriverContext` envelope; `Driver.Describe()` populates `NotImplementedError` automatically. Backends construct a `core.TypedDriverSet` at startup; operators override per-cloud-per-dimension via `SOCKERLESS_<BACKEND>_<DIMENSION>=<impl>`. Sim parity required for the default driver in every dimension. Type tightening underway — `core.ImageRef` is the canonical parsed image reference at the typed `RegistryDriver.Push/Pull` boundary. See [specs/DRIVERS.md](specs/DRIVERS.md) for the full per-backend driver matrix.
 
 **Backend model.** 7 backends sharing common `BaseServer` + `Store` from `backend-core`. Cloud backends use self-dispatch (`self api.Backend` field) for typed method overrides. 3 cloud simulators validated against SDKs, CLIs, and Terraform.
 
