@@ -1,0 +1,13 @@
+name: gotest-ecs
+on:
+  workflow_dispatch:
+jobs:
+  gotest:
+    runs-on: [self-hosted, sockerless-ecs]
+    container:
+      image: golang:1.25-alpine
+    steps:
+      - uses: actions/checkout@v4
+      - run: go version
+      - run: go build ./...
+      - run: go test -count=1 -short ./...

@@ -1,0 +1,15 @@
+services_test:
+  image: alpine:latest
+  tags:
+    - sockerless-ecs
+  services:
+    - name: postgres:15-alpine
+      alias: db
+      variables:
+        POSTGRES_PASSWORD: test
+        POSTGRES_USER: test
+        POSTGRES_DB: test
+  script:
+    - apk add --no-cache postgresql-client
+    - sleep 5
+    - psql -h db -U test -d test -c "SELECT version();"
