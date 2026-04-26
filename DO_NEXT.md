@@ -9,14 +9,15 @@ Resume pointer for the next session / post-compaction. Updated after every task.
 
 ## Up next on this branch
 
-1. **Per-backend cloud-native typed driver overrides.** Now that every dispatch site flows through `TypedDriverSet`, replace legacy adapter defaults with cloud-native typed drivers slot-by-slot. Quick wins:
-   - Lambda → `NewCloudLogsLogsDriver` for `Typed.Logs` (already shipped, just needs `s.Typed.Logs = ...` in Lambda's NewServer).
-   - Cloud Run / GCF / ACA / AZF → same `NewCloudLogsLogsDriver` pattern.
-   - Lambda / CR / GCF / AZF → `NewCloudLogsAttachDriver` for `Typed.Attach` (FaaS read-only attach).
+1. **Per-backend cloud-native overrides for the remaining dimensions.** Logs + Attach are done across all 6 cloud backends. Remaining slots that have cloud-native paths to wire:
+   - **Exec** — ECS via SSM ExecuteCommand; FaaS+CR+ACA via the existing reverse-agent narrow drivers (already in `s.Drivers.Exec`; just need a typed wrapper that calls them directly).
+   - **FS*** — same pattern: ECS via SSM tar/find/stat; FaaS via reverse-agent.
+   - **Signal** — ECS via SSM kill; FaaS via reverse-agent kill.
+   - **Commit / Build / Registry / ProcList** — per-cloud paths exist (CodeBuild, CloudBuild, ACR Tasks, etc.); typed wrappers slot in.
 2. **Phase 105 wave 4** (lower priority) — events stream, exec start hijack shape, container CRUD beyond list.
 3. **Phase 106/107** — real GitHub Actions / GitLab Runner integration. Architecture in PLAN.md; needs scaffolding under `tests/runners/{github,gitlab}/`.
 
-After typed-driver overrides land in at least one backend per cloud (Lambda for AWS, GCF for GCP, AZF for Azure), the framework has demonstrated cloud-native exit paths and is ready for Phase 106/107 to exercise it against real CI workloads.
+The typed driver framework is now demonstrably operational across all 6 cloud backends for the streaming dimensions (Logs, Attach). Phase 106/107 can start in parallel — runner integration doesn't depend on more dimensions being lifted.
 
 ## Cross-links
 
