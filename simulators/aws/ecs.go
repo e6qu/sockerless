@@ -197,6 +197,8 @@ func registerECS(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerServiceV20141113.ListTasks", handleECSListTasks)
 	r.Register("AmazonEC2ContainerServiceV20141113.DeleteCluster", handleECSDeleteCluster)
 	r.Register("AmazonEC2ContainerServiceV20141113.ListTagsForResource", handleECSListTagsForResource)
+	r.Register("AmazonEC2ContainerServiceV20141113.TagResource", handleECSTagResource)
+	r.Register("AmazonEC2ContainerServiceV20141113.UntagResource", handleECSUntagResource)
 	r.Register("AmazonEC2ContainerServiceV20141113.ExecuteCommand", handleECSExecuteCommand(srv))
 
 	// Static WebSocket route for ECS exec sessions (session ID is a path param)
@@ -1015,6 +1017,156 @@ func handleECSDeleteCluster(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"cluster": cluster,
 	})
+}
+
+// handleECSTagResource implements `AmazonEC2ContainerServiceV20141113.TagResource`.
+// BUG-832 (Phase 108 audit): the sim previously had ListTagsForResource
+// but no TagResource, so backend code paths that tag tasks (kill-signal
+// tag for BUG-781's exit-code mapping, restart-count tag for BUG-772,
+// rename's sockerless-name tag) were silently no-oping against the sim.
+// `mergeECSTagsByKey` adds new tags + overwrites existing keys; missing
+// tags persist. Real ECS rejects TagResource on STOPPED tasks; we
+// mirror that behaviour so the recovery.go BUG-799 path's "skip
+// STOPPED" logic exercises the same gate.
+func handleECSTagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceArn string   `json:"resourceArn"`
+		Tags        []ECSTag `json:"tags"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ResourceArn == "" {
+		sim.AWSError(w, "InvalidParameterException", "resourceArn is required", http.StatusBadRequest)
+		return
+	}
+
+	// Task ARN: tag the task in-place. Real ECS rejects TagResource
+	// on STOPPED tasks with InvalidParameterException; mirror that.
+	if strings.Contains(req.ResourceArn, ":task/") {
+		parts := strings.Split(req.ResourceArn, "/")
+		if len(parts) == 0 {
+			sim.AWSError(w, "InvalidParameterException", "malformed task ARN", http.StatusBadRequest)
+			return
+		}
+		taskID := parts[len(parts)-1]
+		task, ok := ecsTasks.Get(taskID)
+		if !ok {
+			sim.AWSError(w, "ClusterNotFoundException", "task not found: "+req.ResourceArn, http.StatusBadRequest)
+			return
+		}
+		if task.LastStatus == "STOPPED" || task.LastStatus == "DEPROVISIONING" {
+			sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
+				"The specified task is not in a state to be tagged: %s", task.LastStatus)
+			return
+		}
+		task.Tags = mergeECSTagsByKey(task.Tags, req.Tags)
+		ecsTasks.Put(taskID, task)
+		sim.WriteJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
+
+	// Task-definition ARN: tag the task-def.
+	if strings.Contains(req.ResourceArn, ":task-definition/") {
+		key := extractTDKey(req.ResourceArn)
+		td, ok := ecsTaskDefinitions.Get(key)
+		if !ok {
+			sim.AWSError(w, "ClientException", "task definition not found", http.StatusBadRequest)
+			return
+		}
+		td.Tags = mergeECSTagsByKey(td.Tags, req.Tags)
+		ecsTaskDefinitions.Put(key, td)
+		sim.WriteJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
+
+	// Other resource types (cluster, service, container-instance) —
+	// not used by sockerless today; surface a clear error rather
+	// than silently succeeding (no fakes / no fallbacks).
+	sim.AWSError(w, "InvalidParameterException", "tag-target type not implemented in sim: "+req.ResourceArn, http.StatusBadRequest)
+}
+
+// handleECSUntagResource implements `AmazonEC2ContainerServiceV20141113.UntagResource`.
+// Companion to TagResource; removes the named tags. Same STOPPED-task
+// rejection rule.
+func handleECSUntagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceArn string   `json:"resourceArn"`
+		TagKeys     []string `json:"tagKeys"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ResourceArn == "" || len(req.TagKeys) == 0 {
+		sim.AWSError(w, "InvalidParameterException", "resourceArn and tagKeys are required", http.StatusBadRequest)
+		return
+	}
+	keep := func(tags []ECSTag) []ECSTag {
+		drop := make(map[string]struct{}, len(req.TagKeys))
+		for _, k := range req.TagKeys {
+			drop[k] = struct{}{}
+		}
+		out := tags[:0]
+		for _, t := range tags {
+			if _, gone := drop[t.Key]; gone {
+				continue
+			}
+			out = append(out, t)
+		}
+		return out
+	}
+	if strings.Contains(req.ResourceArn, ":task/") {
+		parts := strings.Split(req.ResourceArn, "/")
+		taskID := parts[len(parts)-1]
+		task, ok := ecsTasks.Get(taskID)
+		if !ok {
+			sim.AWSError(w, "ClusterNotFoundException", "task not found", http.StatusBadRequest)
+			return
+		}
+		if task.LastStatus == "STOPPED" || task.LastStatus == "DEPROVISIONING" {
+			sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
+				"The specified task is not in a state to be tagged: %s", task.LastStatus)
+			return
+		}
+		task.Tags = keep(task.Tags)
+		ecsTasks.Put(taskID, task)
+		sim.WriteJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
+	if strings.Contains(req.ResourceArn, ":task-definition/") {
+		key := extractTDKey(req.ResourceArn)
+		td, ok := ecsTaskDefinitions.Get(key)
+		if !ok {
+			sim.AWSError(w, "ClientException", "task definition not found", http.StatusBadRequest)
+			return
+		}
+		td.Tags = keep(td.Tags)
+		ecsTaskDefinitions.Put(key, td)
+		sim.WriteJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
+	sim.AWSError(w, "InvalidParameterException", "untag-target type not implemented in sim: "+req.ResourceArn, http.StatusBadRequest)
+}
+
+// mergeECSTagsByKey combines `existing` with `incoming`: any key
+// present in both is overwritten by the `incoming` value (matching
+// real ECS TagResource semantics — "If existing tags on a resource
+// are not specified in the request parameters, they aren't changed").
+func mergeECSTagsByKey(existing, incoming []ECSTag) []ECSTag {
+	byKey := make(map[string]ECSTag, len(existing)+len(incoming))
+	for _, t := range existing {
+		byKey[t.Key] = t
+	}
+	for _, t := range incoming {
+		byKey[t.Key] = t
+	}
+	out := make([]ECSTag, 0, len(byKey))
+	for _, t := range byKey {
+		out = append(out, t)
+	}
+	return out
 }
 
 func handleECSListTagsForResource(w http.ResponseWriter, r *http.Request) {

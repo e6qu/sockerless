@@ -14,47 +14,47 @@ The matrix was seeded from a `grep -roh '\b[ps]\.<provider>\.<Service>\.<Method>
 
 ## AWS
 
-Backends: ECS (Fargate), Lambda. Sim: `simulators/aws/`.
+Backends: ECS (Fargate), Lambda. Sim: `simulators/aws/`. **Audit completed 2026-04-26.** 33/33 calls implemented after BUG-832 fix.
 
 | Service | Method | Used by | Sim status | Notes |
 |---|---|---|---|---|
-| ECS | DescribeClusters | ECS | tbd | |
-| ECS | DescribeTasks | ECS | tbd | |
-| ECS | ListTasks | ECS | tbd | |
-| ECS | RunTask | ECS | tbd | |
-| ECS | StopTask | ECS | tbd | |
-| ECS | RegisterTaskDefinition | ECS | tbd | |
-| ECS | DeregisterTaskDefinition | ECS | tbd | |
-| ECS | TagResource | ECS | tbd | |
-| ECS | ListTagsForResource | ECS | tbd | |
-| ECS | ExecuteCommand | ECS | tbd | BUG-789/798 fix verified live; sim parity verified post-fix. |
-| Lambda | CreateFunction | Lambda | tbd | |
-| Lambda | DeleteFunction | Lambda | tbd | |
-| Lambda | Invoke | Lambda | tbd | |
-| Lambda | UpdateFunctionConfiguration | Lambda | tbd | |
-| Lambda | TagResource | Lambda | tbd | BUG-811 persisted InvocationResult to tags. |
-| Lambda | ListTags | Lambda | tbd | |
-| ECR | CreatePullThroughCacheRule | ECS, Lambda | tbd | |
-| ECR | DescribePullThroughCacheRules | ECS, Lambda | tbd | |
-| ECR | CreateRepository | aws-common | tbd | |
-| ECR | BatchDeleteImage | aws-common | tbd | BUG-825 surfaces real errors now. |
-| ECR | GetAuthorizationToken | aws-common | tbd | |
-| CloudWatch Logs | DescribeLogStreams | ECS, Lambda | tbd | |
-| CloudWatch Logs | GetLogEvents | ECS, Lambda | tbd | |
-| EFS | EnsureFilesystem (helper) | aws-common | tbd | |
-| ServiceDiscovery (Cloud Map) | CreatePrivateDnsNamespace | ECS | tbd | |
-| ServiceDiscovery | DeleteNamespace | ECS | tbd | |
-| ServiceDiscovery | GetNamespace | ECS | tbd | |
-| ServiceDiscovery | ListNamespaces | ECS | tbd | |
-| ServiceDiscovery | CreateService | ECS | tbd | |
-| ServiceDiscovery | DeleteService | ECS | tbd | |
-| ServiceDiscovery | ListServices | ECS | tbd | |
-| ServiceDiscovery | RegisterInstance | ECS | tbd | |
-| ServiceDiscovery | DeregisterInstance | ECS | tbd | |
-| ServiceDiscovery | ListInstances | ECS | tbd | |
-| ServiceDiscovery | DiscoverInstances | ECS | tbd | |
-| ServiceDiscovery | ListTagsForResource | ECS | tbd | |
-| ServiceDiscovery | GetOperation | ECS | tbd | |
+| ECS | DescribeClusters | ECS | ✓ | `handleECSDescribeClusters` (ecs.go:281) |
+| ECS | DescribeTasks | ECS | ✓ | `handleECSDescribeTasks` (ecs.go:833) |
+| ECS | ListTasks | ECS | ✓ | `handleECSListTasks` (ecs.go:930) |
+| ECS | RunTask | ECS | ✓ | `handleECSRunTask` (ecs.go:473) — full task-def + VPC config |
+| ECS | StopTask | ECS | ✓ | `handleECSStopTask` (ecs.go:873) |
+| ECS | RegisterTaskDefinition | ECS | ✓ | revision tracking |
+| ECS | DeregisterTaskDefinition | ECS | ✓ | |
+| ECS | TagResource | ECS | ✓ | **BUG-832 (2026-04-26)** — sim was missing this handler; backend's BUG-781 kill-signal tag + BUG-772 restart-count tag + rename tag silently no-op'd against the sim. Added `handleECSTagResource` + `handleECSUntagResource` in `simulators/aws/ecs.go` plus `mergeECSTagsByKey` helper; rejects STOPPED tasks like real ECS. |
+| ECS | ListTagsForResource | ECS | ✓ | `handleECSListTagsForResource` (ecs.go:1020) |
+| ECS | ExecuteCommand | ECS | ✓ | BUG-789/798 fix verified live; sim parity via WebSocket + SSM frame writer |
+| Lambda | CreateFunction | Lambda | ✓ | tags + VpcConfig + ImageConfig |
+| Lambda | DeleteFunction | Lambda | ✓ | |
+| Lambda | Invoke | Lambda | ✓ | container-based exec via Runtime API sidecar (BUG-744) |
+| Lambda | UpdateFunctionConfiguration | Lambda | ✓ | |
+| Lambda | TagResource | Lambda | ✓ | BUG-811 persisted InvocationResult to tags. |
+| Lambda | ListTags | Lambda | ✓ | |
+| ECR | CreatePullThroughCacheRule | ECS, Lambda | ✓ | |
+| ECR | DescribePullThroughCacheRules | ECS, Lambda | ✓ | filters by prefix |
+| ECR | CreateRepository | aws-common | ✓ | |
+| ECR | BatchDeleteImage | aws-common | ✓ | BUG-825 surfaces real errors now. |
+| ECR | GetAuthorizationToken | aws-common | ✓ | |
+| CloudWatch Logs | DescribeLogStreams | ECS, Lambda | ✓ | |
+| CloudWatch Logs | GetLogEvents | ECS, Lambda | ✓ | pagination |
+| EFS | DescribeFileSystems / CreateFileSystem / CreateMountTarget / DescribeMountTargets / CreateAccessPoint | aws-common | ✓ | All five EFS calls under `EnsureFilesystem` helper |
+| ServiceDiscovery (Cloud Map) | CreatePrivateDnsNamespace | ECS | ✓ | also creates Docker network for sim cross-talk |
+| ServiceDiscovery | DeleteNamespace | ECS | ✓ | |
+| ServiceDiscovery | GetNamespace | ECS | ✓ | |
+| ServiceDiscovery | ListNamespaces | ECS | ✓ | |
+| ServiceDiscovery | CreateService | ECS | ✓ | |
+| ServiceDiscovery | DeleteService | ECS | ✓ | |
+| ServiceDiscovery | ListServices | ECS | ✓ | filters by namespace |
+| ServiceDiscovery | RegisterInstance | ECS | ✓ | |
+| ServiceDiscovery | DeregisterInstance | ECS | ✓ | |
+| ServiceDiscovery | ListInstances | ECS | ✓ | |
+| ServiceDiscovery | DiscoverInstances | ECS | ✓ | DNS discovery |
+| ServiceDiscovery | ListTagsForResource | ECS | ✓ | |
+| ServiceDiscovery | GetOperation | ECS | ✓ | |
 
 ## GCP
 

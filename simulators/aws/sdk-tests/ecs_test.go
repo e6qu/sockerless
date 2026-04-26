@@ -381,3 +381,102 @@ func TestECS_TaskNoCommandStaysRunning(t *testing.T) {
 		assert.Nil(t, c.ExitCode, "ExitCode should be nil while RUNNING")
 	}
 }
+
+// BUG-832 — sim previously was missing TagResource/UntagResource handlers.
+// These tests pin the contract: tag a running task, list tags, untag,
+// and confirm STOPPED tasks reject tagging.
+func TestECS_TagResource_OnRunningTask(t *testing.T) {
+	client, cluster, taskArn := ecsRunTaskHelper(t, "tag-task", ecstypes.ContainerDefinition{
+		Name:    aws.String("app"),
+		Image:   aws.String("alpine:latest"),
+		Command: []string{"tail", "-f", "/dev/null"},
+	})
+	_ = cluster
+
+	_, err := client.TagResource(ctx, &ecs.TagResourceInput{
+		ResourceArn: aws.String(taskArn),
+		Tags: []ecstypes.Tag{
+			{Key: aws.String("sockerless-name"), Value: aws.String("my-task")},
+			{Key: aws.String("sockerless-restart-count"), Value: aws.String("0")},
+		},
+	})
+	require.NoError(t, err)
+
+	listOut, err := client.ListTagsForResource(ctx, &ecs.ListTagsForResourceInput{
+		ResourceArn: aws.String(taskArn),
+	})
+	require.NoError(t, err)
+
+	got := map[string]string{}
+	for _, tag := range listOut.Tags {
+		got[*tag.Key] = *tag.Value
+	}
+	assert.Equal(t, "my-task", got["sockerless-name"])
+	assert.Equal(t, "0", got["sockerless-restart-count"])
+
+	// Overwrite an existing key — merge-by-key semantics.
+	_, err = client.TagResource(ctx, &ecs.TagResourceInput{
+		ResourceArn: aws.String(taskArn),
+		Tags: []ecstypes.Tag{
+			{Key: aws.String("sockerless-restart-count"), Value: aws.String("3")},
+		},
+	})
+	require.NoError(t, err)
+
+	listOut, err = client.ListTagsForResource(ctx, &ecs.ListTagsForResourceInput{
+		ResourceArn: aws.String(taskArn),
+	})
+	require.NoError(t, err)
+	got = map[string]string{}
+	for _, tag := range listOut.Tags {
+		got[*tag.Key] = *tag.Value
+	}
+	assert.Equal(t, "my-task", got["sockerless-name"], "existing key should persist after partial update")
+	assert.Equal(t, "3", got["sockerless-restart-count"], "matching key should be overwritten")
+
+	// Untag one key.
+	_, err = client.UntagResource(ctx, &ecs.UntagResourceInput{
+		ResourceArn: aws.String(taskArn),
+		TagKeys:     []string{"sockerless-restart-count"},
+	})
+	require.NoError(t, err)
+
+	listOut, err = client.ListTagsForResource(ctx, &ecs.ListTagsForResourceInput{
+		ResourceArn: aws.String(taskArn),
+	})
+	require.NoError(t, err)
+	got = map[string]string{}
+	for _, tag := range listOut.Tags {
+		got[*tag.Key] = *tag.Value
+	}
+	_, ok := got["sockerless-restart-count"]
+	assert.False(t, ok, "untagged key should be gone")
+	assert.Equal(t, "my-task", got["sockerless-name"], "non-untagged key should remain")
+}
+
+func TestECS_TagResource_RejectsStoppedTask(t *testing.T) {
+	client, cluster, taskArn := ecsRunTaskHelper(t, "tag-stopped", ecstypes.ContainerDefinition{
+		Name:    aws.String("app"),
+		Image:   aws.String("alpine:latest"),
+		Command: []string{"sh", "-c", "exit 0"},
+	})
+
+	// Wait for STOPPED.
+	time.Sleep(8 * time.Second)
+	descOut, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+		Cluster: aws.String(cluster),
+		Tasks:   []string{taskArn},
+	})
+	require.NoError(t, err)
+	require.Len(t, descOut.Tasks, 1)
+	require.Equal(t, "STOPPED", *descOut.Tasks[0].LastStatus, "task should be STOPPED before this assertion")
+
+	// Real ECS rejects TagResource on STOPPED tasks; sim must too.
+	_, err = client.TagResource(ctx, &ecs.TagResourceInput{
+		ResourceArn: aws.String(taskArn),
+		Tags: []ecstypes.Tag{
+			{Key: aws.String("sockerless-name"), Value: aws.String("late-tag")},
+		},
+	})
+	require.Error(t, err, "TagResource on a STOPPED task should fail with InvalidParameterException")
+}
