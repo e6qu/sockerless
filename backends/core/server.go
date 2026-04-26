@@ -197,6 +197,19 @@ func (s *BaseServer) initTypedDrivers() {
 		},
 		s.Desc.Driver, "default-self-dispatch",
 	)
+	s.Typed.Exec = WrapLegacyExecStart(
+		func(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
+			return s.self.ExecStart(id, opts)
+		},
+		s.Store,
+		s.Desc.Driver, "default-self-dispatch",
+	)
+	s.Typed.Attach = WrapLegacyContainerAttach(
+		func(ref string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
+			return s.self.ContainerAttach(ref, opts)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
 }
 
 func (s *BaseServer) registerRoutes() {

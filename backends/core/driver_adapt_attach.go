@@ -54,6 +54,58 @@ func (a *legacyAttachAdapter) Attach(dctx DriverContext, tty bool, conn io.ReadW
 	return a.narrow.Attach(dctx.Ctx, dctx.Container.ID, tty, netConn)
 }
 
+// LegacyContainerAttachFn matches BaseServer.ContainerAttach.
+type LegacyContainerAttachFn func(ref string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error)
+
+// WrapLegacyContainerAttach adapts the legacy ContainerAttach
+// (`func(ref, opts) (io.ReadWriteCloser, error)`) into the typed
+// AttachDriver shape. Mirrors WrapLegacyExecStart: calls the legacy fn
+// to get the virtual rwc, then bridges to the caller-supplied conn
+// via two io.Copy goroutines.
+func WrapLegacyContainerAttach(fn LegacyContainerAttachFn, backend, impl string) AttachDriver {
+	return &legacyContainerAttachAdapter{fn: fn, backend: backend, impl: impl}
+}
+
+type legacyContainerAttachAdapter struct {
+	fn      LegacyContainerAttachFn
+	backend string
+	impl    string
+}
+
+func (a *legacyContainerAttachAdapter) Describe() string {
+	if a.backend == "" && a.impl == "" {
+		return "attach via legacy ContainerAttach function"
+	}
+	return a.backend + " " + a.impl + " (legacy ContainerAttach adapter)"
+}
+
+func (a *legacyContainerAttachAdapter) Attach(dctx DriverContext, tty bool, conn io.ReadWriter) error {
+	if a.fn == nil {
+		return errors.New("legacy container-attach adapter: function is nil")
+	}
+	rwc, err := a.fn(dctx.Container.ID, api.ContainerAttachOptions{
+		Stream: true,
+		Stdin:  true,
+		Stdout: true,
+		Stderr: true,
+	})
+	if err != nil {
+		return err
+	}
+	defer rwc.Close()
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(conn, rwc)
+		close(done)
+	}()
+	go func() {
+		_, _ = io.Copy(rwc, conn)
+	}()
+	<-done
+	return nil
+}
+
 // cloudLogsAttachDriver is the typed AttachDriver wrapper for
 // `core.AttachViaCloudLogs`. Lifts the FaaS read-only attach into the
 // typed framework so backends like Lambda / cloudrun-functions /

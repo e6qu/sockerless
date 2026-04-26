@@ -3,7 +3,6 @@ package core
 import (
 	"crypto/sha256"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"strconv"
@@ -297,33 +296,17 @@ func prependDetailsToLines(data []byte, prefix string) []byte {
 // handleContainerAttach establishes a bidirectional stream to the container.
 func (s *BaseServer) handleContainerAttach(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
-
-	opts := api.ContainerAttachOptions{
-		Stream: r.URL.Query().Get("stream") != "false",
-		Stdin:  r.URL.Query().Get("stdin") == "1" || r.URL.Query().Get("stdin") == "true",
-		Stdout: r.URL.Query().Get("stdout") != "0" && r.URL.Query().Get("stdout") != "false",
-		Stderr: r.URL.Query().Get("stderr") == "1" || r.URL.Query().Get("stderr") == "true",
-		Logs:   r.URL.Query().Get("logs") == "1" || r.URL.Query().Get("logs") == "true",
-	}
-
-	rwc, err := s.self.ContainerAttach(ref, opts)
-	if err != nil {
-		WriteError(w, err)
-		return
-	}
-	defer rwc.Close()
-
-	// Determine framing from container TTY
 	c, _ := s.ResolveContainerAuto(r.Context(), ref)
+	if c.ID == "" {
+		c.ID = ref
+	}
 	tty := c.Config.Tty
 
-	// Hijack the connection for bidirectional streaming
 	hj, ok := w.(http.Hijacker)
 	if !ok {
 		WriteError(w, &api.ServerError{Message: "hijacking not supported"})
 		return
 	}
-
 	conn, buf, herr := hj.Hijack()
 	if herr != nil {
 		WriteError(w, &api.ServerError{Message: herr.Error()})
@@ -335,7 +318,6 @@ func (s *BaseServer) handleContainerAttach(w http.ResponseWriter, r *http.Reques
 	if tty {
 		contentType = "application/vnd.docker.raw-stream"
 	}
-
 	buf.WriteString("HTTP/1.1 101 UPGRADED\r\n")
 	buf.WriteString("Content-Type: " + contentType + "\r\n")
 	buf.WriteString("Connection: Upgrade\r\n")
@@ -343,16 +325,15 @@ func (s *BaseServer) handleContainerAttach(w http.ResponseWriter, r *http.Reques
 	buf.WriteString("\r\n")
 	buf.Flush()
 
-	// Copy data between the attached stream and the hijacked connection
-	done := make(chan struct{})
-	go func() {
-		io.Copy(conn, rwc)
-		close(done)
-	}()
-	go func() {
-		io.Copy(rwc, conn)
-	}()
-	<-done
+	dctx := DriverContext{
+		Ctx:       r.Context(),
+		Container: c,
+		Backend:   s.Desc.Driver,
+		Logger:    s.Logger,
+	}
+	if err := s.Typed.Attach.Attach(dctx, tty, conn); err != nil {
+		s.Logger.Debug().Err(err).Str("container", c.ID).Msg("typed attach dispatch error after hijack")
+	}
 }
 
 // buildPortList converts PortBindings and ExposedPorts into a list of Port entries
