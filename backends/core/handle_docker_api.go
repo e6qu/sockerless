@@ -334,7 +334,8 @@ func (s *BaseServer) handleDockerImageCreate(w http.ResponseWriter, r *http.Requ
 
 	auth := r.Header.Get("X-Registry-Auth")
 
-	rc, err := s.self.ImagePull(ref, auth)
+	dctx := DriverContext{Ctx: r.Context(), Backend: s.Desc.Driver, Logger: s.Logger}
+	rc, err := s.Typed.Registry.Pull(dctx, ref, auth)
 	if err != nil {
 		WriteError(w, err)
 		return
@@ -410,7 +411,12 @@ func (s *BaseServer) handleDockerImageHistory(w http.ResponseWriter, _ *http.Req
 func (s *BaseServer) handleDockerImagePush(w http.ResponseWriter, r *http.Request, name string) {
 	tag := r.URL.Query().Get("tag")
 	auth := r.Header.Get("X-Registry-Auth")
-	rc, err := s.self.ImagePush(name, tag, auth)
+	ref := name
+	if tag != "" {
+		ref = name + ":" + tag
+	}
+	dctx := DriverContext{Ctx: r.Context(), Backend: s.Desc.Driver, Logger: s.Logger}
+	rc, err := s.Typed.Registry.Push(dctx, ref, auth)
 	if err != nil {
 		WriteError(w, err)
 		return

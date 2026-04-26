@@ -63,7 +63,8 @@ func (s *BaseServer) handleImagePull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rc, err := s.self.ImagePull(req.Reference, req.Auth)
+	dctx := DriverContext{Ctx: r.Context(), Backend: s.Desc.Driver, Logger: s.Logger}
+	rc, err := s.Typed.Registry.Pull(dctx, req.Reference, req.Auth)
 	if err != nil {
 		WriteError(w, err)
 		return
@@ -606,7 +607,12 @@ func (s *BaseServer) handleImagePush(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tag := r.URL.Query().Get("tag")
-	rc, err := s.self.ImagePush(ref, tag, r.URL.Query().Get("auth"))
+	pushRef := ref
+	if tag != "" {
+		pushRef = ref + ":" + tag
+	}
+	dctx := DriverContext{Ctx: r.Context(), Backend: s.Desc.Driver, Logger: s.Logger}
+	rc, err := s.Typed.Registry.Push(dctx, pushRef, r.URL.Query().Get("auth"))
 	if err != nil {
 		WriteError(w, err)
 		return

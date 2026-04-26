@@ -208,7 +208,8 @@ func (s *BaseServer) handleLibpodImagePull(w http.ResponseWriter, r *http.Reques
 
 	auth := r.Header.Get("X-Registry-Auth")
 
-	rc, err := s.self.ImagePull(ref, auth)
+	dctx := DriverContext{Ctx: r.Context(), Backend: s.Desc.Driver, Logger: s.Logger}
+	rc, err := s.Typed.Registry.Pull(dctx, ref, auth)
 	if err != nil {
 		WriteError(w, err)
 		return

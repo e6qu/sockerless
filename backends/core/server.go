@@ -188,6 +188,15 @@ func (s *BaseServer) initTypedDrivers() {
 		nil, // assume available — legacy ImageBuild surfaces NotImpl from the impl itself
 		s.Desc.Driver, "default-self-dispatch",
 	)
+	s.Typed.Registry = WrapLegacyRegistry(
+		func(ref, auth string) (io.ReadCloser, error) {
+			return s.self.ImagePull(ref, auth)
+		},
+		func(name, tag, auth string) (io.ReadCloser, error) {
+			return s.self.ImagePush(name, tag, auth)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
 }
 
 func (s *BaseServer) registerRoutes() {
