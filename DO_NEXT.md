@@ -8,10 +8,11 @@ Resume pointer for the next session / post-compaction. Updated after every task.
 
 ## Up next (in execution order)
 
-**Round-9 — all manual tests + bug fixes done; teardown remains.**
-Live working state: [docs/manual-test-spec-crosswalk.md](docs/manual-test-spec-crosswalk.md). All ECS + Lambda tracks complete. The Lambda overlay image lives at `729079515331.dkr.ecr.eu-west-1.amazonaws.com/sockerless-live-lambda:r9-overlay`; cross-built binaries staged at `/tmp/r9-overlay/`.
+**Round-9 — done. AWS torn down. PR #118 ready for maintainer merge.**
 
-1. **Round-9 wrap** — verify CI green on the latest push; teardown AWS (`terragrunt destroy` ECS + Lambda); deactivate IAM key `AKIA2TQEGRDBRV2KFW6L`; PR #118 ready for maintainer merge.
+- All ECS + Lambda manual tests complete. State doc: [docs/manual-test-spec-crosswalk.md](docs/manual-test-spec-crosswalk.md).
+- AWS infra destroyed (ECS + Lambda live); 6 sockerless-managed Lambda functions deleted; 2 orphan Lambda hyperplane ENIs cleaned up (BUG-819 fix prevents this manual step on future destroys).
+- **Manual step left for maintainer:** deactivate root-account access key `AKIA2TQEGRDBRV2KFW6L` via the AWS Console (`IAM → Security credentials → Access keys`). The CLI cannot deactivate root-account keys.
 
 After round-9 closes, queued work picks up per [PLAN.md](PLAN.md):
 
