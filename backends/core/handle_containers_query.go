@@ -222,15 +222,20 @@ func (s *BaseServer) handleContainerLogs(w http.ResponseWriter, r *http.Request)
 		Until:      r.URL.Query().Get("until"),
 	}
 
-	rc, err := s.self.ContainerLogs(ref, opts)
+	c, _ := s.ResolveContainerAuto(r.Context(), ref)
+	dctx := DriverContext{
+		Ctx:       r.Context(),
+		Container: c,
+		Backend:   s.Desc.Driver,
+		Logger:    s.Logger,
+	}
+	rc, err := s.Typed.Logs.Logs(dctx, opts)
 	if err != nil {
 		WriteError(w, err)
 		return
 	}
 	defer rc.Close()
 
-	// Determine framing from container TTY
-	c, _ := s.ResolveContainerAuto(r.Context(), ref)
 	tty := c.Config.Tty
 
 	// Read details query parameter and prepend labels

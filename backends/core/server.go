@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -49,6 +50,7 @@ type BaseServer struct {
 	Desc           BackendDescriptor
 	Mux            *http.ServeMux
 	Drivers        DriverSet
+	Typed          TypedDriverSet
 	Registry       *ResourceRegistry
 	StartedAt      time.Time
 	Metrics        *Metrics
@@ -113,6 +115,21 @@ func NewBaseServer(store *Store, desc BackendDescriptor, logger zerolog.Logger) 
 	s.registerRoutes()
 	s.InitDefaultNetwork()
 	return s
+}
+
+// initTypedDrivers populates Typed with default adapters that wrap the
+// existing self-dispatch path. Backends opt into typed drivers by
+// replacing slots after NewBaseServer (e.g. setting `s.Typed.Logs` to a
+// cloud-native impl). Each default closes over `s.self` so cloud
+// backends that call `SetSelf` post-construction get their overridden
+// methods picked up automatically.
+func (s *BaseServer) initTypedDrivers() {
+	s.Typed.Logs = WrapLegacyLogs(
+		func(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
+			return s.self.ContainerLogs(ref, opts)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
 }
 
 func (s *BaseServer) registerRoutes() {
@@ -288,6 +305,8 @@ func (s *BaseServer) InitDrivers() {
 	s.Drivers.Exec = &LocalExecDriver{Store: s.Store, Logger: s.Logger}
 	s.Drivers.Filesystem = &LocalFilesystemDriver{Store: s.Store, Logger: s.Logger}
 	s.Drivers.Stream = &LocalStreamDriver{Store: s.Store, Logger: s.Logger}
+
+	s.initTypedDrivers()
 
 	syntheticNet := &SyntheticNetworkDriver{Store: s.Store, IPAlloc: s.Store.IPAlloc}
 	if platformDriver := NewPlatformNetworkDriver(syntheticNet, s.Logger); platformDriver != nil {
