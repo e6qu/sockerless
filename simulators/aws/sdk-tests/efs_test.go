@@ -184,7 +184,7 @@ func TestEFS_FullLifecycle(t *testing.T) {
 	// Create mount target
 	mtOut, err := client.CreateMountTarget(ctx, &efs.CreateMountTargetInput{
 		FileSystemId: aws.String(fsID),
-		SubnetId:     aws.String("subnet-lifecycle"),
+		SubnetId:     aws.String("subnet-sim"),
 	})
 	require.NoError(t, err)
 	mtID := *mtOut.MountTargetId
