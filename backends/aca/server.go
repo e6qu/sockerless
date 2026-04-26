@@ -87,6 +87,17 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	s.Drivers.Exec = &core.ReverseAgentExecDriver{Registry: s.reverseAgents, Logger: logger}
 	s.Drivers.Stream = &core.ReverseAgentStreamDriver{Registry: s.reverseAgents, Logger: logger}
 
+	// Cloud-native typed Logs + Attach driving Azure Monitor / Log
+	// Analytics via the per-container fetcher factory.
+	logFactory := func(containerID string) core.CloudLogFetchFunc {
+		return s.buildCloudLogsFetcher(containerID)
+	}
+	s.Typed.Logs = core.NewCloudLogsLogsDriver(s.BaseServer, logFactory,
+		core.StreamCloudLogsOptions{},
+		"aca", "AzureMonitor")
+	s.Typed.Attach = core.NewCloudLogsAttachDriver(s.BaseServer, logFactory,
+		"aca", "CloudLogsReadOnlyAttach")
+
 	return s
 }
 

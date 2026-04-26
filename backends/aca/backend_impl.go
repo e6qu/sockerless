@@ -582,11 +582,18 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 }
 
 // ContainerLogs streams container logs from Azure Monitor Log Analytics.
-// Filter depends on Config.UseApp: Jobs log under ContainerGroupName_s;
-// Apps log under ContainerAppName_s in the same table.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
 	id, _ := s.ResolveContainerIDAuto(context.Background(), ref)
+	fetch := s.buildCloudLogsFetcher(id)
+	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{})
+}
 
+// buildCloudLogsFetcher returns a CloudLogFetchFunc closure that
+// queries Azure Monitor / Log Analytics. Filter depends on
+// Config.UseApp: Jobs log under ContainerGroupName_s; Apps log under
+// ContainerAppName_s in the same table. Shared by ContainerLogs +
+// ContainerAttach + the typed Logs/Attach drivers.
+func (s *Server) buildCloudLogsFetcher(id string) core.CloudLogFetchFunc {
 	var whereClause string
 	if s.config.UseApp {
 		var appName string
@@ -609,9 +616,7 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 		}
 		whereClause = fmt.Sprintf(`ContainerGroupName_s == "%s"`, jobName)
 	}
-
-	fetch := s.azureLogsFetch(`ContainerAppConsoleLogs_CL`, whereClause, "Log_s")
-	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{})
+	return s.azureLogsFetch(`ContainerAppConsoleLogs_CL`, whereClause, "Log_s")
 }
 
 // ContainerRestart stops and then starts a container.

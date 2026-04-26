@@ -92,6 +92,18 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 
 	registerUI(s.BaseServer)
 
+	// Cloud-native typed Logs + Attach driving CloudWatch via the per-
+	// container fetcher factory. Bypasses the legacy s.self.ContainerLogs
+	// /ContainerAttach round-trip.
+	logFactory := func(containerID string) core.CloudLogFetchFunc {
+		return s.buildCloudWatchFetcher(containerID)
+	}
+	s.Typed.Logs = core.NewCloudLogsLogsDriver(s.BaseServer, logFactory,
+		core.StreamCloudLogsOptions{},
+		"ecs", "CloudWatchLogs")
+	s.Typed.Attach = core.NewCloudLogsAttachDriver(s.BaseServer, logFactory,
+		"ecs", "CloudLogsReadOnlyAttach")
+
 	return s
 }
 
