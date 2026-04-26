@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**102 phases closed. 817 bugs tracked — 815 fixed, 2 open (BUG-804/806 libpod shape — queued for Phase 105 by maintainer). 1 false positive. Branch `round-8-bug-sweep` open with rounds 8 + 9 stacked on PR #118.**
+**102 phases closed. 818 bugs tracked — 816 fixed, 2 open (BUG-804/806 libpod shape — queued for Phase 105 by maintainer). 1 false positive. Branch `round-8-bug-sweep` open with rounds 8 + 9 stacked on PR #118.**
 
 See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer), [specs/](specs/) (architecture).
 

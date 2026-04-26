@@ -1,6 +1,6 @@
 # Known Bugs
 
-**817 total — 815 fixed (Round-7 closed BUG-770..785; Round-8 closed BUG-786..794, 797, 799, 800; Round-9 closed BUG-789/798, 801, 803, 805, 807..817), 2 still open (BUG-804 + BUG-806 libpod shape — deferred to Phase 105 by maintainer), 1 false positive (BUG-747 is the audit umbrella).**
+**818 total — 816 fixed (Round-7 closed BUG-770..785; Round-8 closed BUG-786..794, 797, 799, 800; Round-9 closed BUG-789/798, 801, 803, 805, 807..818), 2 still open (BUG-804 + BUG-806 libpod shape — deferred to Phase 105 by maintainer), 1 false positive (BUG-747 is the audit umbrella).**
 
 For narrative context see [WHAT_WE_DID.md](WHAT_WE_DID.md) and [PLAN.md](PLAN.md). Architecture-level state derivation is documented in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) and [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md).
 
@@ -38,6 +38,7 @@ Round-9 (this PR — same branch as round-8):
 | 811 | M | lambda | After backend restart, `docker ps -a` reported every previously-invoked Lambda function as `Up Less than a second` and `docker inspect` returned `Running=true ExitCode=0`. Root cause: `Store.InvocationResults` is in-memory only. Fix: invoke goroutine now also writes the InvocationResult to function tags (`sockerless-last-exit-code`, `sockerless-last-finished-at`, `sockerless-last-error`); new `ReplayInvocationsFromCloudWatch` (called from main.go after RecoverRegistry) reads those tags and rebuilds the in-memory map on startup. Tags are atomic, exit codes losslessly preserved. Verified live: kill backend after `docker run …; docker wait …`, restart, `docker inspect …` reports the real exit code + FinishedAt. |
 | 812 | L | lambda | `docker ps -a` reported `292 years ago` for CREATED. Root cause: AWS Lambda's `LastModified` ships in `"2006-01-02T15:04:05.000+0000"` format which is not RFC3339-parseable; the shared `ContainerSummary.Created` projection parses `c.Created` as RFC3339Nano → 0 → 1970. Fix: parse the AWS-specific format in `lambda/cloud_state.go::queryFunctions` and re-emit as RFC3339Nano. |
 | 795 | M | core | `podman ps --filter name=svc` returned an empty list even when `svc1` and `svc2` were running. Root cause: `MatchContainerFilters`'s `name` case did exact equality, but docker/podman `--filter name=foo` is documented as substring match. Fix: `strings.Contains(name, v)` instead of `name == v`. |
+| 818 | H | sim/aws | After BUG-815 the ECS backend wraps every exec command in `sh -c '<script>'`. The AWS simulator's `handleECSExecWebSocket` had an unwrap branch (`strings.Index("-c ") + 3`) that left the surrounding single quotes intact when handing the script to `docker exec`, so the inner shell saw `'echo $((7 * 6))'` as a single quoted command name → `sh: 'echo …': not found`. Closes e2e regressions on `TestArithmeticExecInContainer/ecs`, `TestGitHubRunner*`, `TestGitLabRunner*`, `TestExecShellScript`. Fix: drop the unwrap branch entirely, always wrap — double-wrapping is correct (outer shell parses the wrapped script and dispatches the inner shell itself). |
 
 Round-8 (this PR):
 
