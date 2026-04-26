@@ -72,14 +72,15 @@ func azureCreateSiteWithImage(t *testing.T, rg, name string, simCommand []string
 	require.Equal(t, http.StatusOK, siteResp.StatusCode)
 }
 
-// azureInvokeFunction invokes POST /api/function and returns the response body.
-func azureInvokeFunction(t *testing.T) []byte {
+// azureInvokeFunction connects to the sim's TCP port but sets the Host header
+// to the site's `<name>.azurewebsites.net` (real Azure routing).
+func azureInvokeFunction(t *testing.T, siteName string) []byte {
 	t.Helper()
 	invokeReq, _ := http.NewRequestWithContext(ctx, "POST",
 		baseURL+"/api/function",
 		strings.NewReader("{}"))
 	invokeReq.Header.Set("Content-Type", "application/json")
-	invokeReq.Host = baseURL[len("http://"):]
+	invokeReq.Host = siteName + ".azurewebsites.net"
 	invokeResp, err := http.DefaultClient.Do(invokeReq)
 	require.NoError(t, err)
 	defer invokeResp.Body.Close()
@@ -88,13 +89,13 @@ func azureInvokeFunction(t *testing.T) []byte {
 	return body
 }
 
-func azureInvokeFunctionExpectError(t *testing.T) {
+func azureInvokeFunctionExpectError(t *testing.T, siteName string) {
 	t.Helper()
 	invokeReq, _ := http.NewRequestWithContext(ctx, "POST",
 		baseURL+"/api/function",
 		strings.NewReader("{}"))
 	invokeReq.Header.Set("Content-Type", "application/json")
-	invokeReq.Host = baseURL[len("http://"):]
+	invokeReq.Host = siteName + ".azurewebsites.net"
 	invokeResp, err := http.DefaultClient.Do(invokeReq)
 	require.NoError(t, err)
 	invokeResp.Body.Close()
@@ -106,7 +107,7 @@ func TestAzureFunctions_InvokeInjectsLogEntries(t *testing.T) {
 	azureCreateSite(t, rg, name, nil)
 	defer azureDeleteSite(rg, name)
 
-	azureInvokeFunction(t)
+	azureInvokeFunction(t, name)
 
 	kql := `AppTraces | where AppRoleName == "log-func-app"`
 	result := queryWorkspace(t, "default", kql)
@@ -138,7 +139,7 @@ func TestAzureFunctions_InvokeExecutesCommand(t *testing.T) {
 	azureCreateSiteWithImage(t, rg, name, []string{"echo", "hello-from-azure"}, "alpine:latest")
 	defer azureDeleteSite(rg, name)
 
-	respBody := azureInvokeFunction(t)
+	respBody := azureInvokeFunction(t, name)
 	assert.Contains(t, string(respBody), "hello-from-azure")
 }
 
@@ -147,7 +148,7 @@ func TestAzureFunctions_InvokeNonZeroExit(t *testing.T) {
 	azureCreateSiteWithImage(t, rg, name, []string{"sh", "-c", "exit 1"}, "alpine:latest")
 	defer azureDeleteSite(rg, name)
 
-	azureInvokeFunctionExpectError(t)
+	azureInvokeFunctionExpectError(t, name)
 
 	kql := `AppTraces | where AppRoleName == "fail-func-app"`
 	result := queryWorkspace(t, "default", kql)
@@ -179,7 +180,7 @@ func TestAzureFunctions_InvokeLogsRealOutput(t *testing.T) {
 	azureCreateSiteWithImage(t, rg, name, []string{"echo", "real-azure-output"}, "alpine:latest")
 	defer azureDeleteSite(rg, name)
 
-	azureInvokeFunction(t)
+	azureInvokeFunction(t, name)
 
 	kql := `AppTraces | where AppRoleName == "out-func-app"`
 	result := queryWorkspace(t, "default", kql)
@@ -228,9 +229,13 @@ func TestAzureFunctions_DefaultHostNameReachability(t *testing.T) {
 	defaultHostName := props["defaultHostName"].(string)
 	require.NotEmpty(t, defaultHostName, "DefaultHostName should be set")
 
-	invokeURL := "http://" + defaultHostName + "/api/function"
-	invokeReq, _ := http.NewRequestWithContext(ctx, "POST", invokeURL, strings.NewReader("{}"))
+	// Real Azure: invoke goes to https://<site>.azurewebsites.net/api/function.
+	// The sim hosts every site on the same port, so we connect to the sim's
+	// TCP address but set Host = the site's hostname so the routing matches.
+	invokeReq, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/api/function", strings.NewReader("{}"))
 	invokeReq.Header.Set("Content-Type", "application/json")
+	invokeReq.Host = defaultHostName
 	invokeResp, err := http.DefaultClient.Do(invokeReq)
 	require.NoError(t, err)
 	defer invokeResp.Body.Close()

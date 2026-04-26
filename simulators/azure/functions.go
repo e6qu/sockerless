@@ -109,9 +109,12 @@ func registerAzureFunctions(srv *sim.Server) {
 			kind = "functionapp"
 		}
 
-		// Use the simulator's own host as the default hostname so function
-		// invocations in simulator mode route back to us.
-		defaultHostName := r.Host
+		// Real Azure assigns a per-site hostname `<site>.azurewebsites.net`
+		// — invocations route to the right function app by HTTP Host header.
+		// The sim hosts every site on a single port, so callers connect to
+		// the sim's TCP address but set Host = `<name>.azurewebsites.net`;
+		// the invoke handler matches that against DefaultHostName.
+		defaultHostName := name + ".azurewebsites.net"
 
 		site := Site{
 			ID:       resourceID,
@@ -242,50 +245,53 @@ func registerAzureFunctions(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, fn)
 	})
 
-	// POST - Invoke function (simulator-only endpoint for function URL invocation)
+	// POST /api/function — invoke a function app, identified by HTTP Host
+	// header matching the site's DefaultHostName (real Azure routing).
+	// Each site has a unique `<name>.azurewebsites.net` hostname; the
+	// azure-functions backend builds invoke URLs from DefaultHostName, and
+	// SDK tests set the Host header explicitly when connecting to the sim's
+	// TCP port.
 	srv.HandleFunc("POST /api/function", func(w http.ResponseWriter, r *http.Request) {
-		// Find the site that matches this request's Host header.
-		// The backend constructs the function URL using the site's DefaultHostName.
 		host := r.Host
 		var matchedSite *Site
 		for _, s := range sites.List() {
 			if s.Properties.DefaultHostName == host {
-				s := s // copy
+				s := s
 				matchedSite = &s
 				break
 			}
 		}
+		if matchedSite == nil {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"no function app with DefaultHostName=%q (set Host header to <site>.azurewebsites.net)", host)
+			return
+		}
 
 		responseBody := []byte("{}")
-		if matchedSite != nil {
-			// Check for SOCKERLESS_CMD / SOCKERLESS_ENTRYPOINT app setting
-			// (cloud-native) or SimCommand fallback
-			simCmd := false
-			if matchedSite.Properties.SiteConfig != nil {
-				for _, setting := range matchedSite.Properties.SiteConfig.AppSettings {
-					if setting.Name == "SOCKERLESS_CMD" || setting.Name == "SOCKERLESS_ENTRYPOINT" {
-						simCmd = true
-						break
-					}
-				}
-				if !simCmd && len(matchedSite.Properties.SiteConfig.SimCommand) > 0 {
-					simCmd = true
+		hasCmd := false
+		if matchedSite.Properties.SiteConfig != nil {
+			for _, setting := range matchedSite.Properties.SiteConfig.AppSettings {
+				if setting.Name == "SOCKERLESS_CMD" || setting.Name == "SOCKERLESS_ENTRYPOINT" {
+					hasCmd = true
+					break
 				}
 			}
-
-			if simCmd {
-				var exitCode int
-				responseBody, exitCode = invokeAzureFunctionProcess(matchedSite)
-				if exitCode != 0 {
-					// Real Azure Functions returns HTTP error when function crashes
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusInternalServerError)
-					w.Write(responseBody)
-					return
-				}
-			} else {
-				injectAppTrace(matchedSite.Name, "Function invoked")
+			if !hasCmd && len(matchedSite.Properties.SiteConfig.SimCommand) > 0 {
+				hasCmd = true
 			}
+		}
+		if hasCmd {
+			var exitCode int
+			responseBody, exitCode = invokeAzureFunctionProcess(matchedSite)
+			if exitCode != 0 {
+				// Real Azure Functions returns HTTP error when function crashes
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write(responseBody)
+				return
+			}
+		} else {
+			injectAppTrace(matchedSite.Name, "Function invoked")
 		}
 
 		w.Header().Set("Content-Type", "application/json")

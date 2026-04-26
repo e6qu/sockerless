@@ -78,8 +78,9 @@ func TestECS_ExitCodeNilWhileRunning(t *testing.T) {
 		Memory:                  aws.String("512"),
 		ContainerDefinitions: []ecstypes.ContainerDefinition{
 			{
-				Name:  aws.String("app"),
-				Image: aws.String("alpine:latest"),
+				Name:    aws.String("app"),
+				Image:   aws.String("alpine:latest"),
+				Command: []string{"sleep", "30"}, // long-running so RUNNING window is real
 			},
 		},
 	})
@@ -460,18 +461,27 @@ func TestECS_TagResource_RejectsStoppedTask(t *testing.T) {
 		Command: []string{"sh", "-c", "exit 0"},
 	})
 
-	// Wait for STOPPED.
-	time.Sleep(8 * time.Second)
-	descOut, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
-		Cluster: aws.String(cluster),
-		Tasks:   []string{taskArn},
-	})
-	require.NoError(t, err)
-	require.Len(t, descOut.Tasks, 1)
+	// Poll for STOPPED — podman lifecycle (image pull + start + exit + sim
+	// state update) can take >8s under CI contention; a fixed sleep flakes.
+	var descOut *ecs.DescribeTasksOutput
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		var err error
+		descOut, err = client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+			Cluster: aws.String(cluster),
+			Tasks:   []string{taskArn},
+		})
+		require.NoError(t, err)
+		require.Len(t, descOut.Tasks, 1)
+		if *descOut.Tasks[0].LastStatus == "STOPPED" {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 	require.Equal(t, "STOPPED", *descOut.Tasks[0].LastStatus, "task should be STOPPED before this assertion")
 
 	// Real ECS rejects TagResource on STOPPED tasks; sim must too.
-	_, err = client.TagResource(ctx, &ecs.TagResourceInput{
+	_, err := client.TagResource(ctx, &ecs.TagResourceInput{
 		ResourceArn: aws.String(taskArn),
 		Tags: []ecstypes.Tag{
 			{Key: aws.String("sockerless-name"), Value: aws.String("late-tag")},

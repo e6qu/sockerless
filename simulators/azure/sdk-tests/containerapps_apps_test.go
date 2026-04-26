@@ -104,6 +104,8 @@ func TestSDK_WebApps_UpdateAzureStorageAccounts(t *testing.T) {
 	client, err := armappservice.NewWebAppsClient(subscriptionID, cred, clientOpts())
 	require.NoError(t, err)
 
+	defer azureDeleteSite(rg, "sdk-storage-site")
+
 	// Create a site first.
 	createPoller, err := client.BeginCreateOrUpdate(ctx, rg, "sdk-storage-site", armappservice.Site{
 		Location: to.Ptr("eastus"),

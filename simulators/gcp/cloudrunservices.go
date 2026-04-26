@@ -1,12 +1,47 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
 	sim "github.com/sockerless/simulator"
 )
+
+// enumString accepts both proto-JSON enum encodings: the canonical
+// string ("INGRESS_TRAFFIC_INTERNAL_ONLY") and the numeric form (4)
+// emitted by some Go REST clients (run/apiv2.NewServicesRESTClient
+// serializes IngressTraffic as a number even though the wire spec
+// allows both). Real Cloud Run accepts either; the sim must too.
+type enumString string
+
+func (e *enumString) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || string(data) == "null" {
+		*e = ""
+		return nil
+	}
+	if data[0] == '"' {
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return err
+		}
+		*e = enumString(s)
+		return nil
+	}
+	// Numeric enum form — keep the digits as the string value.
+	// The sim doesn't validate ingress against a known set; readers
+	// only round-trip it on Get/List, so preserving the bytes works.
+	*e = enumString(string(data))
+	return nil
+}
+
+func (e enumString) MarshalJSON() ([]byte, error) {
+	if e == "" {
+		return []byte("null"), nil
+	}
+	return json.Marshal(string(e))
+}
 
 // Cloud Run v2 services slice. The cloudrun backend uses
 // cloud.google.com/go/run/apiv2 (REST client) which talks to the v2
@@ -32,7 +67,7 @@ type ServiceV2 struct {
 	CreateTime            string            `json:"createTime,omitempty"`
 	UpdateTime            string            `json:"updateTime,omitempty"`
 	LaunchStage           string            `json:"launchStage,omitempty"`
-	Ingress               string            `json:"ingress,omitempty"`
+	Ingress               enumString        `json:"ingress,omitempty"`
 	DefaultUriDisabled    bool              `json:"defaultUriDisabled,omitempty"`
 	Template              *RevisionTemplate `json:"template,omitempty"`
 	Traffic               []TrafficTarget   `json:"traffic,omitempty"`

@@ -674,7 +674,9 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				}
 			})
 
-			// Inject CloudWatch logs for containers with awslogs log driver
+			// Inject CloudWatch logs for containers with awslogs log driver,
+			// and pick a sink for the real container we start below.
+			var sink sim.LogSink = discardLogSink{}
 			for _, cd := range td.ContainerDefinitions {
 				if cd.LogConfiguration == nil || cd.LogConfiguration.LogDriver != "awslogs" {
 					continue
@@ -721,83 +723,85 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 					},
 				})
 
-				// If image is available, run a real container and stream output to this log stream
-				if imageURI != "" {
-					// Check task tags for TTY propagation
-					wantTTY := false
-					for _, tag := range taskTags {
-						if tag.Key == "sockerless-tty" && tag.Value == "true" {
-							wantTTY = true
-							break
-						}
-					}
-					// Build bind mounts from task definition volumes + container mount points.
-					// For EFS volumes, translate to a real host path backed by the
-					// simulator's EFS slice (file system or access point root
-					// directory); otherwise fall through to a named Docker volume.
-					var binds []string
-					volMap := make(map[string]string) // volume name → docker bind source
-					for _, v := range td.Volumes {
-						if v.EfsVolumeConfiguration != nil {
-							cfg := v.EfsVolumeConfiguration
-							var host string
-							if cfg.AuthorizationConfig != nil && cfg.AuthorizationConfig.AccessPointId != "" {
-								host = EFSAccessPointHostDir(cfg.AuthorizationConfig.AccessPointId)
-							}
-							if host == "" && cfg.FileSystemId != "" {
-								host = EFSFileSystemHostDir(cfg.FileSystemId)
-								if cfg.RootDirectory != "" && cfg.RootDirectory != "/" {
-									host = fmt.Sprintf("%s/%s", host, strings.TrimPrefix(cfg.RootDirectory, "/"))
-								}
-							}
-							if host != "" {
-								volMap[v.Name] = host
-								continue
-							}
-						}
-						volMap[v.Name] = v.Name // fall back to named Docker volume
-					}
-					if len(td.ContainerDefinitions) > 0 {
-						for _, mp := range td.ContainerDefinitions[0].MountPoints {
-							if src, ok := volMap[mp.SourceVolume]; ok {
-								bind := src + ":" + mp.ContainerPath
-								if mp.ReadOnly {
-									bind += ":ro"
-								}
-								binds = append(binds, bind)
-							}
-						}
-					}
+				sink = &cwLogSink{logGroup: logGroup, logStream: logStreamName}
+				break
+			}
 
-					sink := &cwLogSink{logGroup: logGroup, logStream: logStreamName}
-					handle, err := sim.StartContainerSync(sim.ContainerConfig{
-						Image:     sim.ResolveLocalImage(imageURI),
-						Command:   entrypoint,
-						Args:      args,
-						Env:       cmdEnv,
-						Name:      fmt.Sprintf("sockerless-sim-aws-task-%s", id[:12]),
-						Labels:    map[string]string{"sockerless-sim-task": id},
-						Tty:       wantTTY,
-						OpenStdin: wantTTY,
-						Binds:     binds,
-					}, sink)
-					if err != nil {
-						// Mark task as STOPPED with failure
-						stoppedAt := time.Now().Unix()
-						ecsTasks.Update(id, func(t *ECSTask) {
-							t.LastStatus = "STOPPED"
-							t.DesiredStatus = "STOPPED"
-							t.StoppedAt = &stoppedAt
-							t.StopCode = "EssentialContainerExited"
-							t.StoppedReason = fmt.Sprintf("Container start failed: %v", err)
-							exitCode := -1
-							for j := range t.Containers {
-								t.Containers[j].LastStatus = "STOPPED"
-								t.Containers[j].ExitCode = &exitCode
-							}
-						})
-						continue
+			// Always start the real container when an image is specified —
+			// task lifecycle (RUNNING → STOPPED) depends on handle.Wait()
+			// returning, regardless of whether logs are configured.
+			if imageURI != "" {
+				wantTTY := false
+				for _, tag := range taskTags {
+					if tag.Key == "sockerless-tty" && tag.Value == "true" {
+						wantTTY = true
+						break
 					}
+				}
+				// Build bind mounts from task definition volumes + container mount points.
+				// For EFS volumes, translate to a real host path backed by the
+				// simulator's EFS slice (file system or access point root
+				// directory); otherwise fall through to a named Docker volume.
+				var binds []string
+				volMap := make(map[string]string) // volume name → docker bind source
+				for _, v := range td.Volumes {
+					if v.EfsVolumeConfiguration != nil {
+						cfg := v.EfsVolumeConfiguration
+						var host string
+						if cfg.AuthorizationConfig != nil && cfg.AuthorizationConfig.AccessPointId != "" {
+							host = EFSAccessPointHostDir(cfg.AuthorizationConfig.AccessPointId)
+						}
+						if host == "" && cfg.FileSystemId != "" {
+							host = EFSFileSystemHostDir(cfg.FileSystemId)
+							if cfg.RootDirectory != "" && cfg.RootDirectory != "/" {
+								host = fmt.Sprintf("%s/%s", host, strings.TrimPrefix(cfg.RootDirectory, "/"))
+							}
+						}
+						if host != "" {
+							volMap[v.Name] = host
+							continue
+						}
+					}
+					volMap[v.Name] = v.Name // fall back to named Docker volume
+				}
+				if len(td.ContainerDefinitions) > 0 {
+					for _, mp := range td.ContainerDefinitions[0].MountPoints {
+						if src, ok := volMap[mp.SourceVolume]; ok {
+							bind := src + ":" + mp.ContainerPath
+							if mp.ReadOnly {
+								bind += ":ro"
+							}
+							binds = append(binds, bind)
+						}
+					}
+				}
+
+				handle, err := sim.StartContainerSync(sim.ContainerConfig{
+					Image:     sim.ResolveLocalImage(imageURI),
+					Command:   entrypoint,
+					Args:      args,
+					Env:       cmdEnv,
+					Name:      fmt.Sprintf("sockerless-sim-aws-task-%s", id[:12]),
+					Labels:    map[string]string{"sockerless-sim-task": id},
+					Tty:       wantTTY,
+					OpenStdin: wantTTY,
+					Binds:     binds,
+				}, sink)
+				if err != nil {
+					stoppedAt := time.Now().Unix()
+					ecsTasks.Update(id, func(t *ECSTask) {
+						t.LastStatus = "STOPPED"
+						t.DesiredStatus = "STOPPED"
+						t.StoppedAt = &stoppedAt
+						t.StopCode = "EssentialContainerExited"
+						t.StoppedReason = fmt.Sprintf("Container start failed: %v", err)
+						exitCode := -1
+						for j := range t.Containers {
+							t.Containers[j].LastStatus = "STOPPED"
+							t.Containers[j].ExitCode = &exitCode
+						}
+					})
+				} else {
 					ecsProcessHandles.Store(id, handle)
 
 					go func(taskID string, handle *sim.ContainerHandle) {
@@ -1506,6 +1510,13 @@ func extractTDKey(arn string) string {
 	}
 	return arn
 }
+
+// discardLogSink drops log lines. Used when a task definition has no
+// awslogs configuration — the container still runs (so task lifecycle
+// transitions to STOPPED) but its stdout/stderr aren't captured.
+type discardLogSink struct{}
+
+func (discardLogSink) WriteLog(sim.LogLine) {}
 
 // cwLogSink implements sim.LogSink and writes log lines to CloudWatch.
 type cwLogSink struct {
