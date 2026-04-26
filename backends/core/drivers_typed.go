@@ -175,15 +175,14 @@ type SignalDriver interface {
 // Implementations: per-cloud — ECRPullThrough+ECRPush;
 // ARPullThrough+ARPush; ACRCacheRule+ACRPush.
 //
-// Push takes the full `<name>[:<tag>]` ref (the handler joins them
-// before dispatch). Both Push and Pull return an io.ReadCloser
-// streaming the OCI progress JSON the docker client expects, matching
-// the legacy ImagePull/ImagePush shape so the adapter is a thin
-// pass-through.
+// Both Push and Pull take a parsed `ImageRef` (the handler parses the
+// raw `<domain>/<path>[:<tag>][@<digest>]` string at the dispatch
+// boundary, exactly once) and return an io.ReadCloser streaming the
+// OCI progress JSON the docker client expects.
 type RegistryDriver interface {
 	Driver
-	Push(dctx DriverContext, ref, auth string) (io.ReadCloser, error)
-	Pull(dctx DriverContext, ref, auth string) (io.ReadCloser, error)
+	Push(dctx DriverContext, ref ImageRef, auth string) (io.ReadCloser, error)
+	Pull(dctx DriverContext, ref ImageRef, auth string) (io.ReadCloser, error)
 }
 
 // TypedDriverSet aggregates all 13 typed drivers. Backends construct

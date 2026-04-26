@@ -84,7 +84,7 @@ type ImageManager struct {
 // Pull pulls an image, using cloud auth if available.
 func (m *ImageManager) Pull(ref string, auth string) (io.ReadCloser, error) {
 	if m.Auth != nil {
-		registry, _, _ := ParseImageRef(ref)
+		registry, _, _ := splitImageRefRegistry(ref)
 		if auth == "" && m.Auth.IsCloudRegistry(registry) {
 			if token, err := m.Auth.GetToken(registry); err == nil {
 				auth = token
@@ -111,7 +111,7 @@ func (m *ImageManager) Pull(ref string, auth string) (io.ReadCloser, error) {
 
 	// Sync to cloud registry (non-fatal)
 	if m.Auth != nil {
-		registry, repo, tag := ParseImageRef(ref)
+		registry, repo, tag := splitImageRefRegistry(ref)
 		if m.Auth.IsCloudRegistry(registry) {
 			if img, ok := m.Base.Store.ResolveImage(ref); ok {
 				if err := m.Auth.OnPush(img.ID, registry, repo, tag); err != nil {
@@ -168,7 +168,7 @@ func (m *ImageManager) Push(name string, tag string, auth string) (io.ReadCloser
 	// for ECR. Real OCI push happens below via BaseServer.ImagePush
 	// which has access to the layer data through the local store.
 	if m.Auth != nil {
-		registry, repo, _ := ParseImageRef(name)
+		registry, repo, _ := splitImageRefRegistry(name)
 		if m.Auth.IsCloudRegistry(registry) {
 			if err := m.Auth.OnPush(img.ID, registry, repo, tag); err != nil {
 				m.Logger.Warn().Err(err).Str("name", name).Str("tag", tag).Msg("cloud push pre-upload step failed")
@@ -208,7 +208,7 @@ func (m *ImageManager) Tag(source string, repo string, tag string) error {
 		if tag != "" {
 			ref = repo + ":" + tag
 		}
-		registry, repoPath, newTag := ParseImageRef(ref)
+		registry, repoPath, newTag := splitImageRefRegistry(ref)
 		if m.Auth.IsCloudRegistry(registry) {
 			if img, ok := m.Base.Store.ResolveImage(ref); ok {
 				if err := m.Auth.OnTag(img.ID, registry, repoPath, newTag); err != nil {
@@ -235,7 +235,7 @@ func (m *ImageManager) Remove(name string, force bool, prune bool) ([]*api.Image
 		if img, ok := m.Base.Store.ResolveImage(name); ok {
 			refs := make(map[string]*cloudRef)
 			for _, repoTag := range img.RepoTags {
-				registry, repo, imgTag := ParseImageRef(repoTag)
+				registry, repo, imgTag := splitImageRefRegistry(repoTag)
 				if m.Auth.IsCloudRegistry(registry) {
 					key := registry + "/" + repo
 					if _, exists := refs[key]; !exists {
@@ -399,9 +399,15 @@ func (m *ImageManager) Search(term string, limit int, filters map[string][]strin
 	return m.Base.ImageSearch(term, limit, filters)
 }
 
-// ParseImageRef splits an image reference into registry, repository, and tag.
-// Exported for use by AuthProvider implementations and backends.
-func ParseImageRef(ref string) (registry, repo, tag string) {
+// splitImageRefRegistry splits a reference into the (registry, repo,
+// tag) tuple used by `core.AuthProvider` and the image-manager
+// internals — registry-scope identification rather than
+// general-purpose parsing. The canonical parser is `ParseImageRef`
+// returning a typed `ImageRef`; this helper unwraps the registryConfig
+// computed by `parseImageRef` for callers that want the
+// docker-hub-default rewrite (`docker.io` → `registry-1.docker.io`,
+// bare names → `library/<name>`).
+func splitImageRefRegistry(ref string) (registry, repo, tag string) {
 	rc := parseImageRef(ref)
 	return rc.Registry, rc.Repository, rc.Tag
 }

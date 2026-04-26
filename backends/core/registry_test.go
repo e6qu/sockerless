@@ -10,7 +10,7 @@ import (
 	"github.com/sockerless/api"
 )
 
-func TestParseImageRef(t *testing.T) {
+func TestSplitImageRefRegistry(t *testing.T) {
 	tests := []struct {
 		input    string
 		registry string

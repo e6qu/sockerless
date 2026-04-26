@@ -208,8 +208,13 @@ func (s *BaseServer) handleLibpodImagePull(w http.ResponseWriter, r *http.Reques
 
 	auth := r.Header.Get("X-Registry-Auth")
 
+	parsed, err := ParseImageRef(ref)
+	if err != nil {
+		WriteError(w, &api.InvalidParameterError{Message: "invalid image reference: " + err.Error()})
+		return
+	}
 	dctx := DriverContext{Ctx: r.Context(), Backend: s.Desc.Driver, Logger: s.Logger}
-	rc, err := s.Typed.Registry.Pull(dctx, ref, auth)
+	rc, err := s.Typed.Registry.Pull(dctx, parsed, auth)
 	if err != nil {
 		WriteError(w, err)
 		return

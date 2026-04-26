@@ -399,7 +399,7 @@ func (s *BaseServer) ImagePush(name string, tag string, auth string) (io.ReadClo
 		tag = "latest"
 	}
 
-	registry, repo, _ := ParseImageRef(name)
+	registry, repo, _ := splitImageRefRegistry(name)
 
 	pr, pw := io.Pipe()
 	go func() {
