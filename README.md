@@ -98,7 +98,7 @@ Each backend, the agent, and the test suite are separate Go modules connected vi
 
 **Go**
 
-![core](https://img.shields.io/badge/core-16.6k-00ADD8)
+![core](https://img.shields.io/badge/core-16.7k-00ADD8)
 ![bleephub](https://img.shields.io/badge/bleephub-14.5k-00ADD8)
 ![sim/aws](https://img.shields.io/badge/sim%2Faws-9.2k-00ADD8)
 ![sim/azure](https://img.shields.io/badge/sim%2Fazure-7.4k-00ADD8)
@@ -269,7 +269,7 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 - **Infrastructure provisioning** — [`terraform/README.md`](terraform/README.md) (modules, state backends, CI/CD workflows)
 - **Step-by-step walkthroughs** — each backend's [`examples/terraform/README.md`](backends/ecs/examples/terraform/) (terraform apply through validation)
 - **Configuration reference** — each backend's [`README.md`](backends/) (env vars, terraform output mapping)
-- **Live test results** — [`PLAN_ECS_MANUAL_TESTING.md`](PLAN_ECS_MANUAL_TESTING.md) (ECS Fargate tested against real AWS, 11/12 phases pass)
+- **Manual test runbooks** — [`manual-tests/`](manual-tests/) (per-cloud live-infra sweeps; AWS validated in eu-west-1)
 
 ## Documentation
 
@@ -286,5 +286,5 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 | [`AGENTS.md`](AGENTS.md) | Agent architecture (forward/reverse modes) |
 | [`DECISIONS.md`](DECISIONS.md) | Technical decision log across all phases |
 | [`PLAN.md`](PLAN.md) | Implementation plan and task tracking |
-| [`PLAN_ECS_MANUAL_TESTING.md`](PLAN_ECS_MANUAL_TESTING.md) | ECS live testing plan, results, and bugs found |
+| [`manual-tests/`](manual-tests/) | Per-cloud live-infra manual test runbooks |
 | [`STATUS.md`](STATUS.md) | Project status and phase history |
