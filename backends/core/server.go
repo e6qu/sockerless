@@ -249,6 +249,13 @@ func (s *BaseServer) InitDefaultNetwork() {
 		Labels:     make(map[string]string),
 		Created:    now,
 	})
+	// Register the bridge subnet with the IP allocator so AllocateIP
+	// for bridge-attached containers returns from the real pool, not
+	// the BUG-821 hardcoded 172.17.0.2 fallback.
+	s.Store.IPAlloc.AllocateSubnet(bridgeID, &api.IPAMConfig{
+		Subnet:  "172.17.0.0/16",
+		Gateway: "172.17.0.1",
+	})
 	hostID := "f00000000000000000000000000000000000000000000000000000000host0000"
 	s.Store.Networks.Put(hostID, api.Network{
 		Name:       "host",

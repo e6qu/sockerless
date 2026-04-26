@@ -89,8 +89,18 @@ func (a *IPAllocator) AllocateIP(networkID string) (ip string, prefixLen int, ga
 
 	state, ok := a.subnets[networkID]
 	if !ok {
-		// Fallback for unknown networks (e.g. bridge initialized before allocator)
-		return "172.17.0.2", 16, "172.17.0.1", "02:42:ac:11:00:02"
+		// BUG-821: previously returned hardcoded 172.17.0.2/16 here
+		// when the network wasn't registered with the allocator,
+		// silently producing colliding IPs across containers and
+		// masking real "unknown network" bugs as fake-success. With
+		// `InitDefaultNetwork` now registering bridge/host/none with
+		// the allocator at server-init time, this path is reached
+		// only when a caller passes a genuinely-unknown networkID —
+		// which is a bug at the caller. We return zeroes so the
+		// caller's downstream check (e.g. empty IPAddress is treated
+		// as "no endpoint") fires explicitly instead of producing a
+		// duplicate 172.17.0.2.
+		return "", 0, "", ""
 	}
 
 	var host int

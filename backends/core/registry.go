@@ -463,7 +463,14 @@ func getManifestInfo(rc registryConfig, token string) (*manifestInfo, error) {
 			return nil, fmt.Errorf("decode manifest list: %w", err)
 		}
 
-		// Find amd64/linux manifest
+		// Find amd64/linux manifest. Sockerless backends (Lambda,
+		// Fargate, Cloud Run, ACA) all run linux/amd64 — picking any
+		// other platform would silently mismatch the runtime and
+		// produce confusing exec errors at run time. BUG-820: the
+		// previous fallback to ml.Manifests[0] silently took whatever
+		// was first (often arm64/linux on multi-arch images), and the
+		// resulting container would crash with `exec format error`.
+		// Now we return a clear error listing what was available.
 		digest := ""
 		for _, m := range ml.Manifests {
 			if m.Platform.Architecture == "amd64" && m.Platform.OS == "linux" {
@@ -471,12 +478,12 @@ func getManifestInfo(rc registryConfig, token string) (*manifestInfo, error) {
 				break
 			}
 		}
-		if digest == "" && len(ml.Manifests) > 0 {
-			// Fallback to first manifest
-			digest = ml.Manifests[0].Digest
-		}
 		if digest == "" {
-			return nil, fmt.Errorf("no suitable manifest in manifest list")
+			available := make([]string, 0, len(ml.Manifests))
+			for _, m := range ml.Manifests {
+				available = append(available, fmt.Sprintf("%s/%s", m.Platform.OS, m.Platform.Architecture))
+			}
+			return nil, fmt.Errorf("manifest list has no linux/amd64 entry — sockerless backends are linux/amd64; available platforms: %s", strings.Join(available, ", "))
 		}
 
 		// Fetch the platform-specific manifest

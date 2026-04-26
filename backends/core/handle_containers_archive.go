@@ -248,21 +248,29 @@ func (s *BaseServer) buildContainerFromConfig(id, name string, config api.Contai
 		Driver:   s.Desc.Driver,
 	}
 
-	// Set up default network — resolve via store for correct IPAM
+	// Set up default network — resolve via store for correct IPAM.
 	netName := hostConfig.NetworkMode
 	if netName == "default" {
 		netName = "bridge"
 	}
 	endpoint := s.buildEndpointForNetwork(netName, id, name, nil)
-	container.NetworkSettings.Networks[netName] = endpoint
+	if endpoint != nil {
+		container.NetworkSettings.Networks[netName] = endpoint
+	}
 	if netName == "bridge" {
 		container.NetworkSettings.Bridge = "docker0"
 	}
 
-	// Process explicit NetworkingConfig (e.g. from service containers)
+	// Process explicit NetworkingConfig (e.g. from service containers).
+	// BUG-824: skip endpoints whose network doesn't resolve — callers
+	// surface the missing network via a separate NetworkConnect lookup
+	// rather than getting a synthetic 172.17.0.x placeholder here.
 	if networkingConfig != nil {
 		for netRef, reqEndpoint := range networkingConfig.EndpointsConfig {
 			ep := s.buildEndpointForNetwork(netRef, id, name, reqEndpoint)
+			if ep == nil {
+				continue
+			}
 			// Find the display name for this network
 			displayName := netRef
 			if net, ok := s.Store.ResolveNetwork(netRef); ok {
@@ -283,20 +291,17 @@ func (s *BaseServer) buildContainerFromConfig(id, name string, config api.Contai
 	return container
 }
 
-// buildEndpointForNetwork creates an EndpointSettings for a network, resolving
-// IPAM from the IPAllocator and adding the container to the Network.Containers map.
+// buildEndpointForNetwork creates an EndpointSettings for a network,
+// resolving IPAM from the IPAllocator and adding the container to the
+// Network.Containers map. Returns nil if the referenced network does
+// not exist — callers must check and surface a NotFoundError. BUG-824:
+// previously this synthesised a hardcoded `172.17.0.<N>` endpoint for
+// unknown networks, producing colliding IPs across containers and
+// silently masking "unknown network" errors as fake-success.
 func (s *BaseServer) buildEndpointForNetwork(netRef, containerID, containerName string, reqEndpoint *api.EndpointSettings) *api.EndpointSettings {
 	net, found := s.Store.ResolveNetwork(netRef)
 	if !found {
-		// Fallback for unknown networks
-		return &api.EndpointSettings{
-			NetworkID:   netRef,
-			EndpointID:  GenerateID()[:16],
-			Gateway:     "172.17.0.1",
-			IPAddress:   fmt.Sprintf("172.17.0.%d", s.Store.Containers.Len()+2),
-			IPPrefixLen: 16,
-			MacAddress:  "02:42:ac:11:00:02",
-		}
+		return nil
 	}
 
 	ip, prefixLen, gateway, mac := s.Store.IPAlloc.AllocateIP(net.ID)

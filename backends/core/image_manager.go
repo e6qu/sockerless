@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -252,17 +255,37 @@ func (m *ImageManager) Remove(name string, force bool, prune bool) ([]*api.Image
 		return nil, err
 	}
 
-	// Sync removal to cloud (non-fatal)
+	// Sync removal to cloud. BUG-825: previously silent warning on
+	// error, which left the operator believing the image was gone
+	// from the cloud registry when it might still be present. Real
+	// fix: aggregate the cloud-side errors and surface them — the
+	// local removal already succeeded, so we return result *plus* the
+	// cloud error so callers see both.
+	var cloudErrs []string
 	for _, ref := range cloudRefs {
 		if err := m.Auth.OnRemove(ref.registry, ref.repo, ref.tags); err != nil {
-			m.Logger.Warn().Err(err).Str("repo", ref.repo).Msg("cloud remove sync failed")
+			cloudErrs = append(cloudErrs, fmt.Sprintf("%s: %v", ref.repo, err))
 		}
+	}
+	if len(cloudErrs) > 0 {
+		// We already removed locally; report the cloud-side failures
+		// as a server error so the operator can rerun rmi to retry
+		// or check the cloud-side state.
+		return result, &api.ServerError{Message: "local image removed but cloud-registry sync failed: " + strings.Join(cloudErrs, "; ")}
 	}
 
 	return result, nil
 }
 
-// Build delegates to BaseServer's synthetic Dockerfile parser.
+// Build delegates to the configured cloud build service. When no
+// cloud build service is configured (`m.BuildService == nil` or its
+// `Available()` returns false) and the docker backend is not in use,
+// `docker build` returns NotImplementedError — we don't silently fall
+// back to a local Dockerfile parser that drops `RUN` steps as a no-op
+// (BUG-822). The local-Dockerfile path remains for the docker backend
+// only, gated by `SOCKERLESS_LOCAL_DOCKERFILE_BUILD=1` for cases where
+// the operator deliberately wants the no-RUN parse-only mode (e.g.
+// CI smoke tests of metadata-only images).
 func (m *ImageManager) Build(opts api.ImageBuildOptions, ctxReader io.Reader) (io.ReadCloser, error) {
 	if m.BuildService != nil && m.BuildService.Available() {
 		// Buffer context so we can pass to cloud build service
@@ -329,8 +352,16 @@ func (m *ImageManager) Build(opts api.ImageBuildOptions, ctxReader io.Reader) (i
 		return pr, nil
 	}
 
-	// Fallback: local Dockerfile parsing only (no RUN execution)
-	return m.Base.ImageBuild(opts, ctxReader)
+	// No cloud build service configured. Per BUG-822, we don't
+	// silently route to the local Dockerfile parser (which drops RUN
+	// steps as no-ops, producing a "successful" build that doesn't
+	// match the user's Dockerfile). Local parsing is enabled only
+	// when the operator opts in via SOCKERLESS_LOCAL_DOCKERFILE_BUILD=1
+	// — used by docker-backend smoke tests where RUN isn't required.
+	if os.Getenv("SOCKERLESS_LOCAL_DOCKERFILE_BUILD") == "1" {
+		return m.Base.ImageBuild(opts, ctxReader)
+	}
+	return nil, &api.NotImplementedError{Message: "docker build requires a cloud build service (CodeBuild / Cloud Build / ACR Tasks); none is configured. Set SOCKERLESS_LOCAL_DOCKERFILE_BUILD=1 to opt in to the local parse-only path (no RUN execution; metadata-only)"}
 }
 
 // Inspect delegates to BaseServer.
