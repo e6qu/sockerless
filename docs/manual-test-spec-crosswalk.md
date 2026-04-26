@@ -12,8 +12,10 @@
 - **Round:** 9
 - **Started:** 2026-04-26
 - **Backends targeted:** ECS + Lambda (D-track skipped — see decision below)
-- **Last completed test:** C11 ✅ — **Tracks A + B + C complete**
-- **Next pending test:** E1 (cross-network isolation)
+- **Last completed test:** I9 ✅ — **Tracks A + B + C + E + F + G + I complete (ECS side done)**
+- **Next pending test:** Lambda Track D — first build the sockerless-lambda-bootstrap overlay image, push to ECR, then run D1-D9.
+- **Bugs filed this round:** BUG-801 + BUG-803 + BUG-805 (filed + fixed); BUG-804 + BUG-806 (filed, fixes deferred — need libpod-source research). PR #118 CI: 10/10 PASS at last commit.
+- **Tracks G + I both pass cleanly.** G1 hit a public.ecr.aws 429 rate-limit on the first try (too many nginx pulls in this session); resolved by adding `pull_policy: missing` to the compose file so docker compose uses the already-pulled image. G2-G7 all pass after that. I1-I9 verifies Phase 89 stateless recovery contract end-to-end (kill backend, restart, persist1 visible+running+stop+rm all work from cloud-derived state).
 - **Bugs filed this round:** BUG-801 (filed + fixed), BUG-803 (filed + fixed — spec doc inconsistency). PR #118 CI: 10/10 PASS.
 - **Bug withdrawn:** BUG-802 — initially filed against C5 export 0-byte tar, turned out to be a `timeout 60` measurement artifact in the runbook command (SSM read-loop is slower than 60s when BUG-789/798's exec returns no frames). Verified the underlying behaviour is correct: `docker export r9-c5b > /tmp/x.tar` (without timeout) returns `Error response from daemon: tar export failed (exit -1):` and exit=1. No actual silent-success bug.
 - **Caveats observed:** A46, C4, C5, C7, C8, C9 — all SSM-dependent ops fail because BUG-789/798 (still open) blocks frame parsing on live AWS. Tracked under those bug entries; not new bugs.
