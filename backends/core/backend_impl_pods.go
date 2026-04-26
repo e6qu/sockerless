@@ -174,15 +174,16 @@ func (s *BaseServer) PodStop(name string, timeout *int) (*api.PodActionResponse,
 		return nil, &api.NotFoundError{Resource: "pod", ID: name}
 	}
 
+	stopExitCode := SignalToExitCode("SIGTERM") // 128+15 = 143 (BUG-826)
 	for _, cid := range pod.ContainerIDs {
 		c, ok := s.Store.Containers.Get(cid)
 		if !ok || !c.State.Running {
 			continue
 		}
 		s.StopHealthCheck(cid)
-		s.Store.ForceStopContainer(cid, 0)
+		s.Store.ForceStopContainer(cid, stopExitCode)
 		s.emitEvent("container", "die", cid, map[string]string{
-			"exitCode": "0",
+			"exitCode": fmt.Sprintf("%d", stopExitCode),
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
 		s.emitEvent("container", "stop", cid, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})

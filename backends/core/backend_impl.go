@@ -344,7 +344,15 @@ func (s *BaseServer) ContainerStart(ref string) error {
 	return nil
 }
 
-// ContainerStop stops a running container.
+// ContainerStop stops a running container. `docker stop` semantics:
+// SIGTERM first, then SIGKILL after the timeout. BaseServer is the
+// fallback path used when the backend doesn't override (the docker
+// backend overrides with the real Docker SDK that returns the user-
+// process's actual exit code; cloud backends override with cloud-
+// stop APIs). For the BaseServer fallback, we don't have a real
+// user process to wait on — but we can still emit the honest
+// docker-convention exit code (128+SIGTERM=143) instead of the
+// fabricated `0` (BUG-826).
 func (s *BaseServer) ContainerStop(ref string, timeout *int) error {
 	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
@@ -356,10 +364,11 @@ func (s *BaseServer) ContainerStop(ref string, timeout *int) error {
 		return &api.NotModifiedError{}
 	}
 
+	stopExitCode := SignalToExitCode("SIGTERM") // 128+15 = 143
 	s.StopHealthCheck(id)
-	s.Store.ForceStopContainer(id, 0)
+	s.Store.ForceStopContainer(id, stopExitCode)
 	s.emitEvent("container", "die", id, map[string]string{
-		"exitCode": "0",
+		"exitCode": fmt.Sprintf("%d", stopExitCode),
 		"name":     strings.TrimPrefix(c.Name, "/"),
 	})
 	s.emitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
@@ -420,12 +429,15 @@ func (s *BaseServer) ContainerRemove(ref string, force bool) error {
 	}
 
 	if c.State.Running {
+		// `docker rm -f` is a SIGKILL by convention (BUG-826); emit
+		// the honest 137 exit code instead of fabricating 0.
+		killExitCode := SignalToExitCode("SIGKILL") // 128+9 = 137
 		s.emitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 		s.emitEvent("container", "die", id, map[string]string{
-			"exitCode": "0",
+			"exitCode": fmt.Sprintf("%d", killExitCode),
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
-		s.Store.ForceStopContainer(id, 0)
+		s.Store.ForceStopContainer(id, killExitCode)
 	}
 
 	s.StopHealthCheck(id)
@@ -634,10 +646,14 @@ func (s *BaseServer) ContainerRestart(ref string, timeout *int) error {
 	}
 	id := c.ID
 	if c.State.Running {
+		// `docker restart` sends SIGTERM first (graceful), then
+		// SIGKILL after the timeout — same as `docker stop`. BUG-826:
+		// emit the honest 143 exit code instead of fabricating 0.
+		stopExitCode := SignalToExitCode("SIGTERM") // 128+15 = 143
 		s.StopHealthCheck(id)
-		s.Store.ForceStopContainer(id, 0)
+		s.Store.ForceStopContainer(id, stopExitCode)
 		s.emitEvent("container", "die", id, map[string]string{
-			"exitCode": "0",
+			"exitCode": fmt.Sprintf("%d", stopExitCode),
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
 		s.emitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
