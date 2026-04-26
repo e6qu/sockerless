@@ -5,7 +5,7 @@ Resume pointer for the next session / post-compaction. Updated after every task.
 ## Branch state
 
 - `main` synced with `origin/main` at PR #119 merge (squash commit `b547ee9`).
-- `post-pr-118-bug-audit-and-phases` — **open as PR #120**, 12 commits ahead of main. Per maintainer instruction the branch + PR stay open. Cumulative: 18 bugs closed (BUG-802/638/640/646/648/804/806 + BUG-820..831), Phase 104 skeleton landed (13 typed driver interfaces + DriverContext + override resolver + tests), Phase 105 second wave landed (golden shape tests for libpod info / containers/json / rm-report).
+- `post-pr-118-bug-audit-and-phases` — **open as PR #120**, 16 commits ahead of main. Cumulative: 18 bugs closed; Phase 104 skeleton + first dimension lift (`WrapLegacyExec` ExecDriver104 adapter, `backends/core/driver_adapt_exec.go`); Phase 105 second + third waves (golden shape tests in `handle_libpod_shape_test.go` + `handle_libpod_wave3_shape_test.go` covering 7 handlers); Phase 108 prep (`specs/SIM_PARITY_MATRIX.md` seeded with 77 cloud-API rows).
 
 ## Up next (in execution order)
 
@@ -13,9 +13,10 @@ Resume pointer for the next session / post-compaction. Updated after every task.
 
 ## Up next on this branch (in execution order)
 
-1. **Phase 104 first dimension lift — `ExecDriver104`.** Implement an adapter that wraps the existing `core.Drivers.Exec` (narrow `ExecDriver` shape) to the new typed `ExecDriver104`. Migrate one backend's call site (suggest: docker — smallest, no cloud round-trips) to dispatch through `DriverSet104.Exec` instead of `Drivers.Exec`. Verify behaviour parity via integration tests. Then repeat for ECS / Lambda / Cloud Run / GCF / ACA / AZF.
-2. **Phase 105 third wave** — golden shape tests for the remaining libpod handlers: `images/pull`, `networks/json`, `networks/{id}/json`, `volumes/json`, `volumes/{name}/json`, `exec/{id}/start`, `events`, `system/df`. Same pattern as the second wave (one per handler-group, file: `handle_libpod_*_shape_test.go`).
-3. **Phase 108 prep — sim parity matrix.** Stand up a generated `specs/SIM_PARITY_MATRIX.md` listing every cloud-API call sockerless makes and which sim backs it. Each row will be either ✓ (sim has it), ⚠ (partial / TODO), or ✗ (gap to close in Phase 108). The matrix becomes the source of truth for Phase 108 closure tracking.
+1. **Phase 104 second dimension lift — `AttachDriver104`.** Same pattern as `WrapLegacyExec`: write `WrapLegacyAttach` that adapts the narrow `core.StreamDriver.Attach` to the new typed `AttachDriver104`. Plus write a typed `cloudLogsAttach` that lifts `core.AttachViaCloudLogs` (the FaaS read-only attach) into the framework. Tests cover both adapters.
+2. **Phase 104 first per-backend migration** — wire the docker backend's exec call site through `DriverSet104.Exec` (using `WrapLegacyExec`). Smallest backend; no cloud round-trips; integration tests in `tests/exec_test.go` verify parity.
+3. **Phase 108 audit** — start populating `specs/SIM_PARITY_MATRIX.md` rows. Begin with AWS rows (33 calls, biggest set). Each `tbd` becomes ✓ / ⚠ / ✗ after auditing the corresponding sim handler. Every ⚠ / ✗ row gets a BUG entry + a real fix in this phase.
+4. **Phase 105 fourth wave** (lower priority) — events stream, exec start hijack shape, container CRUD beyond list. The first three waves already cover the high-risk handlers; this is rounding out coverage.
 
 After Phase 104 reaches first-dimension parity (ExecDriver lifted across all 7 backends), the typed framework is ready for Phase 106 (GitHub Actions runner) and Phase 107 (GitLab runner) to exercise it against real CI workloads.
 

@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**102 phases closed. 831 bugs tracked — 831 fixed, 0 open. 1 false positive. PR #118 merged (Rounds 8 + 9); PR #120 open with the post-merge audit + phase plan (18 closures: BUG-802 + 638/640/646/648 + 804/806 + 820..831) + Phase 104 skeleton + Phase 105 second-wave shape tests. Project rule (PLAN.md principle #9): no defer, no fakes, no fallbacks. Phase 104 dimension lifts continue next; Phase 105 third wave (network/volume/exec libpod shape tests) queued; Phases 106/107/108 follow.**
+**102 phases closed. 831 bugs tracked — 831 fixed, 0 open. 1 false positive. PR #118 merged (Rounds 8 + 9); PR #120 open with: 18 audit closures (BUG-802 + 638/640/646/648 + 804/806 + 820..831), Phase 104 skeleton + first dimension lift (`WrapLegacyExec` ExecDriver104 adapter), Phase 105 second + third waves of libpod-shape golden tests (7 handlers covered), Phase 108 prep (`specs/SIM_PARITY_MATRIX.md` seeded with 77 cloud-API rows). Project rule (PLAN.md principle #9): no defer, no fakes, no fallbacks. Next on this branch: Phase 104 second dimension lift (Attach), then per-backend migration of `DriverSet104.Exec` starting with docker.**
 
 See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer), [specs/](specs/) (architecture).
 
