@@ -79,6 +79,11 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	s.Drivers.Exec = &core.ReverseAgentExecDriver{Registry: s.reverseAgents, Logger: logger}
 	s.Drivers.Stream = &core.ReverseAgentStreamDriver{Registry: s.reverseAgents, Logger: logger}
 	s.Typed.Exec = core.WrapLegacyExec(s.Drivers.Exec, "gcf", "ReverseAgentExec")
+	s.Typed.ProcList = core.NewReverseAgentProcListDriver(s.reverseAgents, "gcf")
+	s.Typed.FSDiff = core.NewReverseAgentFSDiffDriver(s.reverseAgents, "gcf")
+	s.Typed.FSRead = core.NewReverseAgentFSReadDriver(s.reverseAgents, "gcf")
+	s.Typed.FSWrite = core.NewReverseAgentFSWriteDriver(s.reverseAgents, "gcf")
+	s.Typed.FSExport = core.NewReverseAgentFSExportDriver(s.reverseAgents, "gcf")
 
 	// Cloud-native typed drivers for Logs + Attach. Both go through
 	// Cloud Logging via a per-container fetcher factory.

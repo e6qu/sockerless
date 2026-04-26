@@ -93,6 +93,11 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	// bridge and dispatches directly to the reverse-agent driver with
 	// the hijacked conn handed in by handleExecStart.
 	s.Typed.Exec = core.WrapLegacyExec(s.Drivers.Exec, "lambda", "ReverseAgentExec")
+	s.Typed.ProcList = core.NewReverseAgentProcListDriver(s.reverseAgents, "lambda")
+	s.Typed.FSDiff = core.NewReverseAgentFSDiffDriver(s.reverseAgents, "lambda")
+	s.Typed.FSRead = core.NewReverseAgentFSReadDriver(s.reverseAgents, "lambda")
+	s.Typed.FSWrite = core.NewReverseAgentFSWriteDriver(s.reverseAgents, "lambda")
+	s.Typed.FSExport = core.NewReverseAgentFSExportDriver(s.reverseAgents, "lambda")
 
 	// Cloud-native typed drivers for Logs + Attach. Both go through
 	// CloudWatch with a per-container log-group factory so the typed
