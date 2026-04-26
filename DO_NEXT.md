@@ -5,21 +5,19 @@ Resume pointer for the next session / post-compaction. Updated after every task.
 ## Branch state
 
 - `main` synced with `origin/main` at PR #119 merge (squash commit `b547ee9`).
-- `post-pr-118-bug-audit-and-phases` — **open as PR #120**, 9 commits ahead of main. Per maintainer instruction the branch + PR stay open while audit work continues. Latest commit closes BUG-826 (extension to cloudrun + azure-functions). Cumulative: 18 bugs closed (BUG-802/638/640/646/648/804/806 + BUG-820..831).
+- `post-pr-118-bug-audit-and-phases` — **open as PR #120**, 12 commits ahead of main. Per maintainer instruction the branch + PR stay open. Cumulative: 18 bugs closed (BUG-802/638/640/646/648/804/806 + BUG-820..831), Phase 104 skeleton landed (13 typed driver interfaces + DriverContext + override resolver + tests), Phase 105 second wave landed (golden shape tests for libpod info / containers/json / rm-report).
 
 ## Up next (in execution order)
 
-**Active: PR #120 audit pass — 18 bugs closed, sweep at diminishing returns.** Audit covered registry / IPAM / network / build / cloud-sync / event-emit / docker-info / placeholder-IP / per-tag-delete paths across `backends/core/`, all 7 cloud backends, `aws-common`, `gcp-common`, `azure-common`, `simulators/azure/`, `simulators/gcp/`. Remaining audit candidates (lower yield expected): `simulators/aws/`, terraform-modules input validation, agent paths, frontend-docker passthrough.
+**Active: PR #120 — audit + Phase 104 skeleton + Phase 105 second wave.** Per maintainer instruction the branch stays open while work continues; PR scope has expanded beyond the original "audit + phase plan" but the maintainer has explicitly opted into this. Audit closed at 18 bugs (BUG-802 + 638/640/646/648 + 804/806 + 820..831), Phase 104 skeleton landed, Phase 105 second-wave shape tests landed.
 
-## Decision point — what to do next
+## Up next on this branch (in execution order)
 
-Three credible next steps:
+1. **Phase 104 first dimension lift — `ExecDriver104`.** Implement an adapter that wraps the existing `core.Drivers.Exec` (narrow `ExecDriver` shape) to the new typed `ExecDriver104`. Migrate one backend's call site (suggest: docker — smallest, no cloud round-trips) to dispatch through `DriverSet104.Exec` instead of `Drivers.Exec`. Verify behaviour parity via integration tests. Then repeat for ECS / Lambda / Cloud Run / GCF / ACA / AZF.
+2. **Phase 105 third wave** — golden shape tests for the remaining libpod handlers: `images/pull`, `networks/json`, `networks/{id}/json`, `volumes/json`, `volumes/{name}/json`, `exec/{id}/start`, `events`, `system/df`. Same pattern as the second wave (one per handler-group, file: `handle_libpod_*_shape_test.go`).
+3. **Phase 108 prep — sim parity matrix.** Stand up a generated `specs/SIM_PARITY_MATRIX.md` listing every cloud-API call sockerless makes and which sim backs it. Each row will be either ✓ (sim has it), ⚠ (partial / TODO), or ✗ (gap to close in Phase 108). The matrix becomes the source of truth for Phase 108 closure tracking.
 
-1. **Continue audit** — Sweep `simulators/aws/`, terraform input validation, agent/, ui/. Yield expected: low single-digit additional bug closures.
-2. **Phase 104 skeleton** — Land the `backends/core/drivers/{types.go, set.go, override.go}` interfaces + `DriverContext` + the Describe()-based NotImpl composition rule, then lift `ExecDriver` (smallest dimension) into the new shape with sim parity. Sets up the foundation for Phases 106/107 to exercise the framework against real CI runners.
-3. **Phase 105 second wave** — Cross-walk every libpod handler in `backends/core/handle_libpod*.go` against upstream `pkg/api/handlers/libpod` shapes. First wave (BUG-804/806) landed; this finishes the sweep + adds golden tests for each handler.
-
-PR #120 stays open per maintainer instruction. Phase 104 / 105 / 108 work would land on a new branch (post #120 merge) so PR #120 stays scoped to "audit + phase plan" and doesn't grow into a multi-phase PR.
+After Phase 104 reaches first-dimension parity (ExecDriver lifted across all 7 backends), the typed framework is ready for Phase 106 (GitHub Actions runner) and Phase 107 (GitLab runner) to exercise it against real CI workloads.
 
 **Phase 104 — Cross-backend driver framework.** Design locked in [PLAN.md](PLAN.md); piecemeal delivery, one dimension at a time, no behaviour change per commit. First dimension to lift is `ExecDriver` since it's the smallest and the existing `core.Drivers.Exec` already exists — the work is to expand the `Drivers` struct into `DriverSet` with the 13 typed dimensions, add `DriverContext`, and migrate ExecDriver into the new shape with sim-parity tests.
 

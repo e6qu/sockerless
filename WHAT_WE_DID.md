@@ -6,7 +6,11 @@ See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for
 
 ## Post-PR-#118 audit + phase plan (PR #120 — open)
 
-PR #118 merged the round-8 + round-9 live-AWS sweep. The post-merge audit pass (PR #120, branch `post-pr-118-bug-audit-and-phases`) records every previously-open or "known-issue" bug as a real fix in this branch, per the project's no-defer / no-fakes / no-fallbacks rule. **18 bug closures total** + the runner / sim-parity phase plan. Audit is at diminishing returns; the obvious silent-fallback / fake-success patterns are now closed.
+PR #118 merged the round-8 + round-9 live-AWS sweep. The post-merge audit pass (PR #120, branch `post-pr-118-bug-audit-and-phases`) records every previously-open or "known-issue" bug as a real fix in this branch, per the project's no-defer / no-fakes / no-fallbacks rule, and ships the **Phase 104 skeleton** + **Phase 105 second-wave** golden tests on the same branch.
+
+- **18 bug closures.** BUG-802 + 638/640/646/648 + 804/806 + 820..831.
+- **Phase 104 skeleton.** 13 typed driver interfaces (`backends/core/drivers_phase104.go`) — Exec / Attach / FSRead / FSWrite / FSDiff / FSExport / Commit / Build / Stats / ProcList / Logs / Signal / Registry — plus the `DriverContext` envelope, the `Driver.Describe()` composition rule, and the `SOCKERLESS_<BACKEND>_<DIMENSION>` override resolver with unit-test coverage. No behaviour change yet; per-dimension lifts follow.
+- **Phase 105 second wave.** Golden shape tests for `handleLibpodInfo`, `handleLibpodContainerList`, `handleLibpodContainerRemove`. Same pattern as the first-wave `pod_inspect_shape_test.go` from BUG-804 — pin top-level shape (object vs array) plus every required field name. Third wave (network / volume / exec / events / df) queued.
 
 **Closed in this audit** (full text in BUGS.md):
 
