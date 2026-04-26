@@ -15,6 +15,12 @@ Standing workflow rule: every CI / live-cloud failure lands here with a short ro
 
 ## Fixed
 
+Round-9 (this PR — same branch as round-8):
+
+| ID | Sev | Area | Summary |
+|----|-----|------|---------|
+| 801 | L | ecs | `docker inspect <id>` returned `HostConfig.Memory: 0` and `HostConfig.NanoCpus: 0` even though the underlying ECS task-def had a Fargate-valid CPU/memory tier. The `taskToContainer` projection in `backends/ecs/cloud_state.go` wasn't mapping `task.Memory` (MB string) and `task.Cpu` (1024-unit-share string) back to Docker's bytes / nanoCPUs fields. Fix: parse and convert (`mb × 1024×1024`; `shares × 1e9 / 1024`), populate `HostConfig.Memory` and `HostConfig.NanoCPUs`. Verified live: `docker run -d -m 1g --cpus=0.25 nginx; docker inspect …` now reports `mem=1073741824 cpus=250000000`. |
+
 Round-8 (this PR):
 
 | ID | Sev | Area | Summary |

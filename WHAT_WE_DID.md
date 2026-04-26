@@ -4,6 +4,15 @@ Docker-compatible REST API that runs containers on cloud backends (ECS, Lambda, 
 
 See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for the bug log, [PLAN.md](PLAN.md) for the roadmap, [specs/](specs/) for architecture (start with [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md)).
 
+## Round-9 manual-test ↔ spec crosswalk (in progress, this branch)
+
+Per-test walk through [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md) cross-referenced against [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md). Each test runs one at a time on live ECS + Lambda; result recorded in [docs/manual-test-spec-crosswalk.md](docs/manual-test-spec-crosswalk.md). The crosswalk file's `## Status` block always names the next pending test, so a post-compaction resume picks up cleanly.
+
+Decisions logged so far in this round:
+- **Lambda Track D is in scope.** Runs with a sockerless-lambda-bootstrap prebuilt overlay image (option (b) — BUG-797 documented that plain alpine isn't Lambda-runnable). D2-D7 verify the invocation lifecycle; D8/D9 verify the spec's "NotImpl with named missing prerequisite" path (no callback URL set on this laptop).
+- Track H (podman-compose) and Track J (runner integration) skipped — separate setup needed.
+- Discrepancies file as BUG-801..NNN; three classes recorded (real bugs, spec-needs-update, coverage-gap).
+
 ## Round-8 live-AWS sweep — 13 bugs fixed (this branch — pending PR)
 
 Two-round live-AWS test sweep against `eu-west-1` ECS + Lambda. 278 tests across both rounds, 13 bugs filed, 13 fixed in the same branch. Two open follow-ups (BUG-789/798 SSM frame parsing on live AWS; BUG-795 podman-list pod members).

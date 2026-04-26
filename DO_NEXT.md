@@ -4,26 +4,40 @@ Snapshot pointer for the next session. Updated after every task.
 
 ## Branch state
 
-`main` — PR #115 merged 2026-04-24 (Phases 96 / 98 / 98b / 99 / 100 / 101 / 102 + 13-bug audit sweep). PR #116 in flight with the state-doc update. 0 open bugs.
+`round-8-bug-sweep` — PR #118 open with 13 bugs fixed (BUG-786..800), all 10 CI checks SUCCESS, MERGEABLE. **Round-9 manual sweep in progress on the same branch (commits will be additional fixes / doc updates).**
 
 ## Up next
 
-1. **Live-cloud burn-in.** Every code path landed but the cloud-side validation runbooks are still on paper. Priority order: (a) Phase 86 Lambda live track (scripts exist), (b) Phase 87 live-GCP, (c) Phase 88 live-Azure, (d) Phase 91 real-EFS burn-in, (e) Phases 92/93/94 real-GCS / real-Azure-Files burn-in, (f) Phase 98b commit round-trip through ECR/AR/ACR. Each runbook should produce a scripted equivalent of `scripts/phase86/*.sh`.
-2. **BUG-721 proper fix.** The SSM acknowledge-format workaround (backend dedupes retransmitted `output_stream_data` frames) needs a real wire-level match — Flags byte + PayloadDigest semantics — and that requires a live AWS agent to diff against.
-3. **Phase 68 — Multi-Tenant Backend Pools.** P68-001 done; 9 sub-tasks remain (see PLAN.md).
-4. **Phase 78 — UI Polish.** Dark mode, design tokens, container detail modal, accessibility, E2E smoke.
+**Round-9 manual sweep — per-test crosswalk against the spec.** Live working state: [docs/manual-test-spec-crosswalk.md](docs/manual-test-spec-crosswalk.md). That file's `## Status` block names the next pending test; resume from there.
 
-## Manual testing
+Order of business:
 
-[PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md) has the ECS + Lambda manual runbook. Post-PR-#115, the following tests need refresh:
+1. **Continue the per-test walkthrough.** Each test runs, results recorded in the crosswalk file, mismatches filed as BUG-801..NNN. ECS Tracks A→B→C→E→F→G→I, then Lambda Track D with a prebuilt overlay image.
+2. **Build the Lambda overlay image** before D-track. `agent/cmd/sockerless-lambda-bootstrap` → push to ECR → `SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE=<ecr-uri>`. (Track D uses option (b) per round-9 decision — see crosswalk file.)
+3. **Add coverage-gap tests** to `PLAN_ECS_MANUAL_TESTING.md` after the walkthrough — see the crosswalk file's "Coverage gaps" section.
+4. **Teardown after sweep** + new commit on this branch + PR #118 update + CI re-run.
 
-- A46 (`docker pause`) — now works on every FaaS backend when the bootstrap writes `/tmp/.sockerless-mainpid` (Phase 99). Pause + unpause should be exercised end-to-end.
-- A47 onwards — add agent-driven `docker cp`, `docker top`, `docker diff`, `docker container stat`, `docker export`, `docker commit` (with `SOCKERLESS_ENABLE_COMMIT=1`). All now implemented on Lambda/CR/ACA/GCF/AZF.
-- C8/C9 (`diff`/`export`) — previously marked as Error/NotImplemented; now functional when agent is running.
-- Track I (stateless restart verification) — also applies after a Phase 98b commit round-trip (image must be resolvable from registry post-restart).
+After round-9 is closed, prior queued items resume:
+
+- **Live-cloud burn-in** for GCP / Azure / Lambda (the runbooks for those are still the paper ones from earlier rounds).
+- **BUG-721** SSM ack-format proper fix — needs live AWS agent diff (BUG-789/798 from round-8 may share root cause).
+- **Phase 103** overlay-rootfs bootstrap for FaaS+CR+ACA — replaces Phase 98 `find -newer /proc/1` heuristic.
+- **Phase 68** Multi-Tenant Backend Pools (P68-001 done; 9 sub-tasks remain in PLAN.md).
+- **Phase 78** UI Polish.
+
+## Cross-links
+
+- Roadmap: [PLAN.md](PLAN.md)
+- Phase roll-up: [STATUS.md](STATUS.md)
+- Narrative: [WHAT_WE_DID.md](WHAT_WE_DID.md)
+- Bug log: [BUGS.md](BUGS.md)
+- Architecture: [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md)
+- Manual-test runbook: [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md)
+- **Round-9 working state:** [docs/manual-test-spec-crosswalk.md](docs/manual-test-spec-crosswalk.md)
 
 ## Operational state
 
-- Local `main` synced with `origin/main` through commit `8494f79` (PR #115 merge).
-- `origin-gitlab/main` is behind; push when convenient.
-- Branch `state-post-pr115` open as PR #116 — pure doc update (PLAN/STATUS/WHAT_WE_DID compression + README badges).
+- Local `main` at commit `f7ca1d2` (PR #117 merged, last clean state).
+- Branch `round-8-bug-sweep` is **2 commits ahead** of `origin/main` (round-8 fix + CI patch); PR #118 open and green.
+- `origin-gitlab/main` is a mirror, behind; push when convenient.
+- Live AWS infra (eu-west-1): ECS + Lambda **provisioned** for round-9; teardown at end.

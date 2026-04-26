@@ -17,6 +17,14 @@ See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md]
 
 Per-phase detail in [WHAT_WE_DID.md](WHAT_WE_DID.md).
 
+## Round-9 (in progress, this branch)
+
+Per-test crosswalk between [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md) and [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), driven by the live ECS + Lambda backends. Working state lives in [docs/manual-test-spec-crosswalk.md](docs/manual-test-spec-crosswalk.md) — that file's `## Status` block names the next pending test, so a post-compaction resume should start there.
+
+**Both backends in scope.** ECS Tracks A/B/C/E/F/G/I + Lambda Track D. Lambda exercises a sockerless-lambda-bootstrap prebuilt overlay (`SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE`) since plain alpine isn't Lambda-runnable (BUG-797).
+
+See [DO_NEXT.md](DO_NEXT.md) for the resume pointer and [PLAN.md](PLAN.md#round-9-manual-test-crosswalk-in-progress) for the full scope list.
+
 ## Round-8 (this branch — pending PR)
 
 Two-round live-AWS sweep against `eu-west-1`. **278 tests across rounds 1+2** (142 + 136 in round-2 v2). 13 bugs filed and fixed (BUG-786, 787, 788, 790, 791, 792, 793, 794, 796, 797, 799, 800 + accepted-gaps classification for ECS commit / pause / ContainerResize / ImageSave / ImageSearch / streaming stats). 2 bugs remain open as P1-or-later (789/798 SSM frame parsing, 795 podman-list pod members).

@@ -39,6 +39,21 @@ Detail in [WHAT_WE_DID.md](WHAT_WE_DID.md); commit + BUG refs in [BUGS.md](BUGS.
 
 ## Pending work
 
+### Round-9 manual-test crosswalk (in progress)
+
+Per-test walk through [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md) cross-referenced against [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md). Live working state: [docs/manual-test-spec-crosswalk.md](docs/manual-test-spec-crosswalk.md). Mismatches file as BUG-801..NNN under the Open section of [BUGS.md](BUGS.md). Coverage gaps (spec claims with no test) get added to the runbook at the end.
+
+**Scope (in scope, not deferred):**
+
+- ECS — Tracks A (49 tests), B (33 tests), C (11 tests), E (7 tests), F (12 tests), G (7 tests), I (9 tests).
+- **Lambda — Track D (9 tests). Runs with a sockerless-lambda-bootstrap prebuilt overlay image** built from `agent/cmd/sockerless-lambda-bootstrap`, pushed to the Lambda ECR repo, and pointed at via `SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE`. D2-D7 (create/start/logs/exit-code/error/env) verify the function-invocation lifecycle. D8/D9 (exec/attach) run too — without `SOCKERLESS_CALLBACK_URL` they verify the spec's "NotImpl with named missing prerequisite" path, which is itself the testable behaviour.
+
+**Skipped this round (separate work item):**
+
+- Track H (podman-compose) — no `podman-compose` installed locally; trivial to add when `brew install podman-compose` is OK.
+- Track J (runner integration) — needs a real GitLab Runner / GitHub Actions self-hosted runner; out of scope for one-laptop manual sweep.
+- Tracks against GCP / Azure backends — need separate `terraform/environments/{cloudrun,aca,gcf,azf}/live` setups, none of which exist yet.
+
 ### Live-cloud validation runbooks
 
 - **Phase 87 live-GCP** — GCP parallel to `scripts/phase86/*.sh`. Needs project + VPC connector.
