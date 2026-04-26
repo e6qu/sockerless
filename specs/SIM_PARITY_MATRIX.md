@@ -58,26 +58,26 @@ Backends: ECS (Fargate), Lambda. Sim: `simulators/aws/`. **Audit completed 2026-
 
 ## GCP
 
-Backends: Cloud Run Jobs (cloudrun), Cloud Run Functions (cloudrun-functions). Sim: `simulators/gcp/`.
+Backends: Cloud Run Jobs (cloudrun), Cloud Run Functions (cloudrun-functions). Sim: `simulators/gcp/`. **Audit completed 2026-04-26.** 16/16 calls implemented after BUG-833 fix.
 
 | Service | Method | Used by | Sim status | Notes |
 |---|---|---|---|---|
-| Cloud Run | Jobs.CreateJob | cloudrun | tbd | |
-| Cloud Run | Jobs.DeleteJob | cloudrun | tbd | |
-| Cloud Run | Jobs.ListJobs | cloudrun | tbd | |
-| Cloud Run | Jobs.RunJob | cloudrun | tbd | |
-| Cloud Run | Executions.GetExecution | cloudrun | tbd | |
-| Cloud Run | Executions.CancelExecution | cloudrun | tbd | |
-| Cloud Run | Services.CreateService | cloudrun | tbd | |
-| Cloud Run | Services.GetService | cloudrun | tbd | |
-| Cloud Run | Services.UpdateService | cloudrun | tbd | |
-| Cloud Run | Services.DeleteService | cloudrun | tbd | |
-| Cloud Functions | CreateFunction | cloudrun-functions | tbd | |
-| Cloud Functions | DeleteFunction | cloudrun-functions | tbd | |
-| Cloud Functions | ListFunctions | cloudrun-functions | tbd | |
-| Cloud Logging | LogAdmin.Entries | cloudrun, cloudrun-functions | tbd | |
-| Cloud DNS | ManagedZones | cloudrun, cloudrun-functions | tbd | |
-| Cloud DNS | ResourceRecordSets | cloudrun, cloudrun-functions | tbd | |
+| Cloud Run | Jobs.CreateJob | cloudrun | ✓ | `registerCloudRunJobs` (cloudrunjobs.go:225) — full LRO + job metadata |
+| Cloud Run | Jobs.DeleteJob | cloudrun | ✓ | (cloudrunjobs.go:317) — cascades execution delete |
+| Cloud Run | Jobs.ListJobs | cloudrun | ✓ | (cloudrunjobs.go:302) — filters by project/location prefix |
+| Cloud Run | Jobs.RunJob | cloudrun | ✓ | (cloudrunjobs.go:344) — creates execution with task metadata |
+| Cloud Run | Executions.GetExecution | cloudrun | ✓ | (cloudrunjobs.go:539) — full execution state |
+| Cloud Run | Executions.CancelExecution | cloudrun | ✓ | (cloudrunjobs.go:571) — stops container + injects cancel log |
+| Cloud Run | Services.CreateService | cloudrun (UseService) | ✓ | **BUG-833 (2026-04-26)** — sim only had v1 Knative routes; backend uses run.NewServicesRESTClient (v2 REST). Added `registerCloudRunServicesV2` in `simulators/gcp/cloudrunservices.go` covering Create/Get/List/Update/Delete on `/v2/projects/{p}/locations/{l}/services` with proto-JSON shape (TerminalCondition, LatestReadyRevision, generation as int64-string). |
+| Cloud Run | Services.GetService | cloudrun (UseService) | ✓ | (cloudrunservices.go) — service_discovery_cloud.go uses this for CNAME resolution |
+| Cloud Run | Services.UpdateService | cloudrun (declarative) | ✓ | (cloudrunservices.go) — terraform `google_cloud_run_v2_service` parity; backend recreates rather than patches today |
+| Cloud Run | Services.DeleteService | cloudrun (UseService) | ✓ | (cloudrunservices.go) — LRO + store delete |
+| Cloud Functions | CreateFunction | cloudrun-functions | ✓ | (cloudfunctions.go:57) — full LRO + function URI |
+| Cloud Functions | DeleteFunction | cloudrun-functions | ✓ | (cloudfunctions.go:181) — LRO |
+| Cloud Functions | ListFunctions | cloudrun-functions | ✓ | (cloudfunctions.go:114) — filters by project/location prefix |
+| Cloud Logging | LogAdmin.Entries | cloudrun, cloudrun-functions | ✓ | (logging.go:151) — REST ListLogEntries with filter + pageSize |
+| Cloud DNS | ManagedZones | cloudrun, cloudrun-functions | ✓ | (dns.go:44/96/114/128) — Create/Get/List/Delete + Docker network backing for private zones |
+| Cloud DNS | ResourceRecordSets | cloudrun, cloudrun-functions | ✓ | (dns.go:159/190/236) — List/Create/Delete + Docker network connection for A records |
 
 ## Azure
 

@@ -45,6 +45,7 @@ func main() {
 	// Register GCP service routes (HTTP/REST)
 	registerCloudRunJobs(srv)
 	registerCloudRun(srv)
+	registerCloudRunServicesV2(srv)
 	registerCloudLogging(srv)
 	registerCloudDNS(srv)
 	registerGCS(srv)
