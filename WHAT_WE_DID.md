@@ -6,7 +6,7 @@ See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for
 
 ## Post-PR-#118 audit + phase plan (PR #120 — open)
 
-PR #118 merged the round-8 + round-9 live-AWS sweep. The post-merge audit pass (PR #120, branch `post-pr-118-bug-audit-and-phases`) records every previously-open or "known-issue" bug as a real fix in this branch, per the project's no-defer / no-fakes / no-fallbacks rule. 16 bug closures so far + the runner / sim-parity phase plan.
+PR #118 merged the round-8 + round-9 live-AWS sweep. The post-merge audit pass (PR #120, branch `post-pr-118-bug-audit-and-phases`) records every previously-open or "known-issue" bug as a real fix in this branch, per the project's no-defer / no-fakes / no-fallbacks rule. **18 bug closures total** + the runner / sim-parity phase plan. Audit is at diminishing returns; the obvious silent-fallback / fake-success patterns are now closed.
 
 **Closed in this audit** (full text in BUGS.md):
 
@@ -19,6 +19,9 @@ PR #118 merged the round-8 + round-9 live-AWS sweep. The post-merge audit pass (
 - **BUG-827** — Azure ContainerApps + GCP Cloud Run Jobs simulators emitted "Execution completed successfully" even when the user container failed. Now branches on `succeeded` and emits "Execution failed" on the failure path. Symmetric across both sims.
 - **BUG-828** — `NetnsManager.CreateVethPair` silently ignored `ip addr add` / `ip link set up` errors, leaving half-configured veths. Now error-checked + rolls back on failure.
 - **BUG-829** — `ARAuthProvider.OnRemove` and `ACRAuthProvider.OnRemove` silently `continue`d on per-tag delete failures, returning nil success while the cloud-side state diverged. Now aggregates per-tag failures and surfaces them via the BUG-825 ImageManager aggregator. Stale "non-fatal" docstrings on the AWS / GCP / Azure auth-provider hooks rewritten to match the post-BUG-825 reality.
+- **BUG-830** — docker passthrough backend hardcoded `NCPU: 4, MemTotal: 8 GB` (and similar) in its `BackendDescriptor`. The `/info` handler reads real values from the daemon at request time, but if the daemon was unreachable at startup the hardcoded fallback values would be served. Fix: query the daemon's `/info` at `NewServer` with a 5-second deadline; fail startup if unavailable rather than serve fabricated capacity values.
+- **BUG-831** — `ContainerCreate` and the cloud_state projections in cloudrun-functions / azure-functions / lambda seeded `EndpointSettings.IPAddress` as the literal string `"0.0.0.0"` for cloud containers without yet-routable IPs. `docker inspect` on a freshly-created container then read as if 0.0.0.0 was a real address. Fix: switch the seed to `""` across all 7 backends; the two-phase service-discovery detection in `aca`/`cloudrun`/`service_discovery_cloud.go` already accepts both as the unresolved-IP sentinel, so existing logic still works on state recovered from older registries.
+- **BUG-826 (extension)** — round-9's BUG-826 fix landed in core / ecs / aca / cloudrun-functions but missed the cloudrun and azure-functions backends. Same SIGTERM=143 / SIGKILL=137 fix shape applied to bring all 7 backends to docker-convention parity.
 
 **New phases queued** ([PLAN.md](PLAN.md)):
 

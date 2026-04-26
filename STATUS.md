@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**102 phases closed. 829 bugs tracked — 829 fixed, 0 open. 1 false positive. PR #118 merged (Rounds 8 + 9); PR #120 open with the post-merge audit + phase plan (BUG-802 withdrawn; BUG-638/640/646/648 backfilled as retroactively closed by BUG-788; BUG-804/806 libpod-shape; BUG-820..829 fallback / synthetic-data findings). Project rule (recorded as principle #9 in PLAN.md): no defer, no fakes, no fallbacks. Phase 104 (cross-backend driver framework) is the next active work, followed by Phases 106 (GitHub Actions runner) + 107 (GitLab runner) + 108 (sim feature parity).**
+**102 phases closed. 831 bugs tracked — 831 fixed, 0 open. 1 false positive. PR #118 merged (Rounds 8 + 9); PR #120 open with the post-merge audit + phase plan (BUG-802 withdrawn; BUG-638/640/646/648 backfilled as retroactively closed by BUG-788; BUG-804/806 libpod-shape; BUG-820..831 fallback / synthetic-data findings). Project rule (recorded as principle #9 in PLAN.md): no defer, no fakes, no fallbacks. Phase 104 (cross-backend driver framework) is the next active work, followed by Phases 106 (GitHub Actions runner) + 107 (GitLab runner) + 108 (sim feature parity).**
 
 See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer), [specs/](specs/) (architecture).
 

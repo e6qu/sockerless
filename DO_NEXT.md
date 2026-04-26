@@ -5,11 +5,21 @@ Resume pointer for the next session / post-compaction. Updated after every task.
 ## Branch state
 
 - `main` synced with `origin/main` at PR #119 merge (squash commit `b547ee9`).
-- `post-pr-118-bug-audit-and-phases` — **open as PR #120**, 5 commits ahead of main. Per maintainer instruction the branch + PR stay open while audit work continues. Latest commit closes BUG-829 (per-tag delete failures in AR / ACR auth providers).
+- `post-pr-118-bug-audit-and-phases` — **open as PR #120**, 9 commits ahead of main. Per maintainer instruction the branch + PR stay open while audit work continues. Latest commit closes BUG-826 (extension to cloudrun + azure-functions). Cumulative: 18 bugs closed (BUG-802/638/640/646/648/804/806 + BUG-820..831).
 
 ## Up next (in execution order)
 
-**Active: PR #120 audit pass.** While #120 is open, the audit-and-fix work continues in-place per maintainer instruction. Each new finding gets a BUG entry + a real fix on the same branch (no defers). 16 bugs closed so far in the audit; sweeps still planned through `simulators/` handlers (sim-side parity audit prep), the cloud-side `cloud_state.go` projections, and the BaseServer event-emit paths.
+**Active: PR #120 audit pass — 18 bugs closed, sweep at diminishing returns.** Audit covered registry / IPAM / network / build / cloud-sync / event-emit / docker-info / placeholder-IP / per-tag-delete paths across `backends/core/`, all 7 cloud backends, `aws-common`, `gcp-common`, `azure-common`, `simulators/azure/`, `simulators/gcp/`. Remaining audit candidates (lower yield expected): `simulators/aws/`, terraform-modules input validation, agent paths, frontend-docker passthrough.
+
+## Decision point — what to do next
+
+Three credible next steps:
+
+1. **Continue audit** — Sweep `simulators/aws/`, terraform input validation, agent/, ui/. Yield expected: low single-digit additional bug closures.
+2. **Phase 104 skeleton** — Land the `backends/core/drivers/{types.go, set.go, override.go}` interfaces + `DriverContext` + the Describe()-based NotImpl composition rule, then lift `ExecDriver` (smallest dimension) into the new shape with sim parity. Sets up the foundation for Phases 106/107 to exercise the framework against real CI runners.
+3. **Phase 105 second wave** — Cross-walk every libpod handler in `backends/core/handle_libpod*.go` against upstream `pkg/api/handlers/libpod` shapes. First wave (BUG-804/806) landed; this finishes the sweep + adds golden tests for each handler.
+
+PR #120 stays open per maintainer instruction. Phase 104 / 105 / 108 work would land on a new branch (post #120 merge) so PR #120 stays scoped to "audit + phase plan" and doesn't grow into a multi-phase PR.
 
 **Phase 104 — Cross-backend driver framework.** Design locked in [PLAN.md](PLAN.md); piecemeal delivery, one dimension at a time, no behaviour change per commit. First dimension to lift is `ExecDriver` since it's the smallest and the existing `core.Drivers.Exec` already exists — the work is to expand the `Drivers` struct into `DriverSet` with the 13 typed dimensions, add `DriverContext`, and migrate ExecDriver into the new shape with sim-parity tests.
 
