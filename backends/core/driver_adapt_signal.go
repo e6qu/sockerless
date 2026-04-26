@@ -8,7 +8,7 @@ import "errors"
 // signature (`func(ref, signal) error`) into the typed `SignalDriver`.
 // Backends that override `BaseServer.ContainerKill` today (every cloud
 // backend, via `self`-dispatch) plug their existing function into
-// `DriverSet104.Signal` without behaviour change. Pause/unpause are
+// `TypedDriverSet.Signal` without behaviour change. Pause/unpause are
 // expressed as Kill("SIGSTOP") / Kill("SIGCONT") per the SignalDriver
 // contract — no separate adapter for those today.
 //

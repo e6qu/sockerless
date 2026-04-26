@@ -6,30 +6,30 @@ import (
 	"github.com/sockerless/api"
 )
 
-// Cross-backend driver framework
+// Cross-backend typed driver framework.
 //
-// Thirteen typed driver dimensions covering every "perform docker
-// action X against the cloud" decision sockerless makes. Interfaces
-// live here in `backends/core`; default implementations and per-cloud
-// implementations live in `backends/<cloud>/drivers/` and
-// `backends/<cloud>-common/drivers/`. Each backend constructs its
-// `DriverSet104` at startup and operators override per-cloud-per-
-// dimension via `SOCKERLESS_<BACKEND>_<DIMENSION>=<impl>` (resolved by
-// the override registry in `driver_override.go`).
+// Thirteen typed driver dimensions covering every "perform docker action
+// X against the cloud" decision sockerless makes. Interfaces live here in
+// `backends/core`; default implementations and per-cloud implementations
+// live in `backends/<cloud>/drivers/` and `backends/<cloud>-common/drivers/`.
+// Each backend constructs its `TypedDriverSet` at startup and operators
+// override per-cloud-per-dimension via
+// `SOCKERLESS_<BACKEND>_<DIMENSION>=<impl>` (resolved by the override
+// registry in `driver_override.go`).
 //
 // The typed dimensions are kept distinct from the existing narrow
-// `core.DriverSet` (Exec / Filesystem / Stream / Network) so the lift
-// can run dimension-by-dimension with no behaviour change per commit.
-// Each lift moves one dimension's existing implementation into the
-// new typed shape and switches the BaseServer dispatch site to call
-// through the typed driver. The narrow `DriverSet` is removed once
-// the last dimension is absorbed.
+// `core.DriverSet` (Exec / Filesystem / Stream / Network) so the lift can
+// run dimension-by-dimension with no behaviour change per commit. Each
+// lift moves one dimension's existing implementation into the typed
+// shape and switches the BaseServer dispatch site to call through the
+// typed driver. The narrow `DriverSet` is removed once the last
+// dimension is absorbed.
 
-// ExecDriver104 lifts `core.Drivers.Exec` into the typed shape.
+// ExecDriver lifts the narrow LegacyExecDriver into the typed shape.
 // Implementations: docker→DockerExec; ECS→SSMExec;
 // Lambda/CR/GCF/AZF→ReverseAgentExec; ACA→ACAConsoleExec ⇄
 // ReverseAgentExec.
-type ExecDriver104 interface {
+type ExecDriver interface {
 	Driver
 	// Exec runs a command in the container and streams I/O over the
 	// caller-supplied io.ReadWriter (typically the hijacked HTTP
@@ -49,11 +49,11 @@ type ExecOptions struct {
 	User    string
 }
 
-// AttachDriver104 lifts the docker-attach path into the typed shape.
+// AttachDriver lifts the docker-attach path into the typed shape.
 // Implementations: docker→DockerAttach; ECS→CloudWatchAttach;
-// FaaS+CR+ACA→CloudLogsReadOnlyAttach (lift `core.AttachViaCloudLogs`
+// FaaS+CR+ACA→CloudLogsReadOnlyAttach (lifts `core.AttachViaCloudLogs`
 // into a typed driver).
-type AttachDriver104 interface {
+type AttachDriver interface {
 	Driver
 	Attach(dctx DriverContext, tty bool, conn io.ReadWriter) error
 }
@@ -191,12 +191,12 @@ type RegistryDriver interface {
 	Pull(dctx DriverContext, ref string, w io.Writer) error
 }
 
-// DriverSet104 aggregates all 13 typed drivers. Backends construct
+// TypedDriverSet aggregates all 13 typed drivers. Backends construct
 // this at startup; the BaseServer's dispatch sites call through
 // these interfaces.
-type DriverSet104 struct {
-	Exec     ExecDriver104
-	Attach   AttachDriver104
+type TypedDriverSet struct {
+	Exec     ExecDriver
+	Attach   AttachDriver
 	FSRead   FSReadDriver
 	FSWrite  FSWriteDriver
 	FSDiff   FSDiffDriver

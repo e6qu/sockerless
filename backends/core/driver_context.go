@@ -14,8 +14,8 @@ import (
 // the BaseServer through their public surface.
 //
 // Foundation envelope for the 13 typed driver dimensions defined in
-// `drivers_phase104.go`. Existing narrow interfaces in `drivers.go`
-// (`ExecDriver`, `StreamDriver`, `FilesystemDriver`) keep their
+// `drivers_typed.go`. Existing narrow interfaces in `drivers.go`
+// (`LegacyExecDriver`, `StreamDriver`, `FilesystemDriver`) keep their
 // current shape and are gradually absorbed into the typed dimensions
 // one at a time, no behaviour change per commit.
 type DriverContext struct {
@@ -47,7 +47,7 @@ type DriverContext struct {
 }
 
 // Driver is the common interface implemented by every typed driver
-// dimension below (ExecDriver104, AttachDriver104, …). The single
+// dimension below (ExecDriver, AttachDriver, …). The single
 // method Describe() returns a short human-readable description used
 // by the NotImpl-composition rule: when an operator hits an action
 // whose driver is missing or returns NotImpl, the surfaced error

@@ -14,7 +14,7 @@ import (
 // signature (`func(ref, opts) (io.ReadCloser, error)`) into the typed
 // `LogsDriver` shape. Backends that override `BaseServer.ContainerLogs`
 // today (every cloud backend does, via `self`-dispatch) can plug their
-// existing function into `DriverSet104.Logs` without behaviour change.
+// existing function into `TypedDriverSet.Logs` without behaviour change.
 //
 // `NewCloudLogsLogsDriver` is the typed wrapper around `StreamCloudLogs`
 // — the helper every cloud backend already uses to fetch logs from

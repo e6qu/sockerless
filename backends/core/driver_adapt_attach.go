@@ -13,21 +13,20 @@ import (
 //
 // `WrapLegacyAttach` adapts the existing narrow `core.StreamDriver`
 // (raw `Attach(ctx, containerID, tty, conn) error`) into the typed
-// `AttachDriver104` shape (`Attach(dctx, tty, conn io.ReadWriter) error`).
+// `AttachDriver` shape (`Attach(dctx, tty, conn io.ReadWriter) error`).
 //
 // `NewCloudLogsAttachDriver` is the typed wrapper for the FaaS
 // "log-streamed read-only attach" path that today lives at
 // `core.AttachViaCloudLogs`. Backends without a real bidirectional
-// attach (Lambda, Cloud Run Functions, ACA Jobs without console
-// exec) plug this in as their `DriverSet104.Attach` so `docker
-// attach -i <fn-cid>` produces a clear read-only stream from
-// CloudWatch / Cloud Logging / Log Analytics rather than a generic
-// NotImpl.
+// attach (Lambda, Cloud Run Functions, ACA Jobs without console exec)
+// plug this in as their `TypedDriverSet.Attach` so `docker attach -i
+// <fn-cid>` produces a clear read-only stream from CloudWatch / Cloud
+// Logging / Log Analytics rather than a generic NotImpl.
 
-// WrapLegacyAttach returns an AttachDriver104 that delegates to the
+// WrapLegacyAttach returns an AttachDriver that delegates to the
 // supplied narrow StreamDriver. `backend` and `impl` populate the
 // `Describe()` string used by `NotImplDriverError`.
-func WrapLegacyAttach(narrow StreamDriver, backend, impl string) AttachDriver104 {
+func WrapLegacyAttach(narrow StreamDriver, backend, impl string) AttachDriver {
 	return &legacyAttachAdapter{narrow: narrow, backend: backend, impl: impl}
 }
 
@@ -46,7 +45,7 @@ func (a *legacyAttachAdapter) Describe() string {
 
 func (a *legacyAttachAdapter) Attach(dctx DriverContext, tty bool, conn io.ReadWriter) error {
 	if a.narrow == nil {
-		return errors.New("legacy attach adapter: narrow driver is nil — register one via DriverSet.Stream or replace this adapter with a typed AttachDriver104")
+		return errors.New("legacy attach adapter: narrow driver is nil — register one via DriverSet.Stream or replace this adapter with a typed AttachDriver")
 	}
 	netConn, ok := conn.(net.Conn)
 	if !ok {
@@ -55,11 +54,11 @@ func (a *legacyAttachAdapter) Attach(dctx DriverContext, tty bool, conn io.ReadW
 	return a.narrow.Attach(dctx.Ctx, dctx.Container.ID, tty, netConn)
 }
 
-// cloudLogsAttachDriver is the typed `AttachDriver104` wrapper for
-// `core.AttachViaCloudLogs`. Lifts the FaaS read-only attach into
-// the typed framework so backends like Lambda / cloudrun-functions /
-// azure-functions / ACA-Jobs (which have no real bidirectional
-// attach) can plug it directly into `DriverSet104.Attach`.
+// cloudLogsAttachDriver is the typed AttachDriver wrapper for
+// `core.AttachViaCloudLogs`. Lifts the FaaS read-only attach into the
+// typed framework so backends like Lambda / cloudrun-functions /
+// azure-functions / ACA-Jobs (which have no real bidirectional attach)
+// can plug it directly into `TypedDriverSet.Attach`.
 type cloudLogsAttachDriver struct {
 	server  *BaseServer
 	fetch   CloudLogFetchFunc
@@ -71,7 +70,7 @@ type cloudLogsAttachDriver struct {
 // driver backed by `AttachViaCloudLogs`. `fetch` is the per-backend
 // log-fetcher (CloudWatch for Lambda; Cloud Logging for Cloud Run
 // Functions; Log Analytics for ACA Jobs / Azure Functions).
-func NewCloudLogsAttachDriver(s *BaseServer, fetch CloudLogFetchFunc, backend, impl string) AttachDriver104 {
+func NewCloudLogsAttachDriver(s *BaseServer, fetch CloudLogFetchFunc, backend, impl string) AttachDriver {
 	return &cloudLogsAttachDriver{server: s, fetch: fetch, backend: backend, impl: impl}
 }
 
@@ -95,8 +94,8 @@ func (d *cloudLogsAttachDriver) Attach(dctx DriverContext, tty bool, conn io.Rea
 	defer rwc.Close()
 	// Pump cloud-logs → caller. Read-only: we ignore conn→rwc.
 	if _, err := io.Copy(conn, rwc); err != nil {
-		// EOF / closed-connection is the documented terminal state
-		// of `docker attach`; treat it as nil so the handler doesn't
+		// EOF / closed-connection is the documented terminal state of
+		// `docker attach`; treat it as nil so the handler doesn't
 		// surface a confusing error after a clean close.
 		if errors.Is(err, io.EOF) {
 			return nil

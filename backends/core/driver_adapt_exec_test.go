@@ -10,7 +10,7 @@ import (
 	"github.com/sockerless/api"
 )
 
-// stubNarrowExec is a minimal narrow-ExecDriver impl for the adapter
+// stubNarrowExec is a minimal LegacyExecDriver impl for the adapter
 // tests. The "stub" prefix is intentional and explicit — this is
 // test scaffolding only; production code paths never wrap a stub.
 type stubNarrowExec struct {
