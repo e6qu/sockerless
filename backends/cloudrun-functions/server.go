@@ -79,6 +79,17 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	s.Drivers.Exec = &core.ReverseAgentExecDriver{Registry: s.reverseAgents, Logger: logger}
 	s.Drivers.Stream = &core.ReverseAgentStreamDriver{Registry: s.reverseAgents, Logger: logger}
 
+	// Cloud-native typed drivers for Logs + Attach. Both go through
+	// Cloud Logging via a per-container fetcher factory.
+	logFactory := func(containerID string) core.CloudLogFetchFunc {
+		return s.buildCloudLogsFetcher(containerID)
+	}
+	s.Typed.Logs = core.NewCloudLogsLogsDriver(s.BaseServer, logFactory,
+		core.StreamCloudLogsOptions{CheckLogBuffers: true},
+		"gcf", "CloudLogging")
+	s.Typed.Attach = core.NewCloudLogsAttachDriver(s.BaseServer, logFactory,
+		"gcf", "CloudLogsReadOnlyAttach")
+
 	return s
 }
 

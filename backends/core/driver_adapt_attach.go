@@ -113,17 +113,18 @@ func (a *legacyContainerAttachAdapter) Attach(dctx DriverContext, tty bool, conn
 // can plug it directly into `TypedDriverSet.Attach`.
 type cloudLogsAttachDriver struct {
 	server  *BaseServer
-	fetch   CloudLogFetchFunc
+	factory CloudLogFetchFactory
 	backend string
 	impl    string
 }
 
 // NewCloudLogsAttachDriver constructs the typed read-only attach
-// driver backed by `AttachViaCloudLogs`. `fetch` is the per-backend
-// log-fetcher (CloudWatch for Lambda; Cloud Logging for Cloud Run
-// Functions; Log Analytics for ACA Jobs / Azure Functions).
-func NewCloudLogsAttachDriver(s *BaseServer, fetch CloudLogFetchFunc, backend, impl string) AttachDriver {
-	return &cloudLogsAttachDriver{server: s, fetch: fetch, backend: backend, impl: impl}
+// driver backed by `AttachViaCloudLogs`. `factory` returns a
+// per-container `CloudLogFetchFunc` (CloudWatch for Lambda; Cloud
+// Logging for Cloud Run Functions; Log Analytics for ACA Jobs / Azure
+// Functions).
+func NewCloudLogsAttachDriver(s *BaseServer, factory CloudLogFetchFactory, backend, impl string) AttachDriver {
+	return &cloudLogsAttachDriver{server: s, factory: factory, backend: backend, impl: impl}
 }
 
 func (d *cloudLogsAttachDriver) Describe() string {
@@ -131,15 +132,19 @@ func (d *cloudLogsAttachDriver) Describe() string {
 }
 
 func (d *cloudLogsAttachDriver) Attach(dctx DriverContext, tty bool, conn io.ReadWriter) error {
-	if d.server == nil || d.fetch == nil {
-		return errors.New("cloud-logs attach: server / fetch is nil — backend init must wire both")
+	if d.server == nil || d.factory == nil {
+		return errors.New("cloud-logs attach: server / factory is nil — backend init must wire both")
+	}
+	fetch := d.factory(dctx.Container.ID)
+	if fetch == nil {
+		return errors.New("cloud-logs attach: factory returned a nil fetcher for the container")
 	}
 	rwc, err := AttachViaCloudLogs(d.server, dctx.Container.ID, api.ContainerAttachOptions{
 		Stdout: true,
 		Stderr: true,
 		Stream: true,
 		Logs:   true,
-	}, d.fetch)
+	}, fetch)
 	if err != nil {
 		return err
 	}

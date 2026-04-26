@@ -90,6 +90,21 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	s.Drivers.Exec = &lambdaExecDriver{Registry: s.reverseAgents, Logger: logger}
 	s.Drivers.Stream = &lambdaStreamDriver{Registry: s.reverseAgents, Logger: logger}
 
+	// Cloud-native typed drivers for Logs + Attach. Both go through
+	// CloudWatch with a per-container log-group factory so the typed
+	// dispatch sites bypass the legacy s.self.ContainerLogs /
+	// ContainerAttach round-trip. The factory closure resolves the
+	// log group lazily at call time because Lambda creates the
+	// CloudWatch stream only after the first invocation.
+	logFactory := func(containerID string) core.CloudLogFetchFunc {
+		return s.buildCloudWatchFetcher(containerID)
+	}
+	s.Typed.Logs = core.NewCloudLogsLogsDriver(s.BaseServer, logFactory,
+		core.StreamCloudLogsOptions{CheckLogBuffers: true},
+		"lambda", "CloudWatchLogs")
+	s.Typed.Attach = core.NewCloudLogsAttachDriver(s.BaseServer, logFactory,
+		"lambda", "CloudLogsReadOnlyAttach")
+
 	return s
 }
 

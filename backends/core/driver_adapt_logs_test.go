@@ -78,7 +78,7 @@ func TestNewCloudLogsLogsDriver_Describe(t *testing.T) {
 func TestNewCloudLogsLogsDriver_NilServer_ReturnsError(t *testing.T) {
 	d := NewCloudLogsLogsDriver(nil, nil, StreamCloudLogsOptions{}, "lambda", "")
 	_, err := d.Logs(DriverContext{}, api.ContainerLogsOptions{})
-	if err == nil || !strings.Contains(err.Error(), "server / fetch is nil") {
-		t.Errorf("expected nil-server/fetch error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "server / factory is nil") {
+		t.Errorf("expected nil-server/factory error, got %v", err)
 	}
 }

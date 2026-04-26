@@ -54,28 +54,36 @@ func (a *legacyLogsAdapter) Logs(dctx DriverContext, opts api.ContainerLogsOptio
 	return a.fn(dctx.Container.ID, opts)
 }
 
+// CloudLogFetchFactory builds a per-container CloudLogFetchFunc.
+// Cloud-native log drivers like Lambda's CloudWatch fetcher resolve
+// the log group / stream lazily per container, so the typed driver
+// asks for a fresh fetcher at call time rather than binding one at
+// construction.
+type CloudLogFetchFactory func(containerID string) CloudLogFetchFunc
+
 // cloudLogsLogsDriver is the typed `LogsDriver` wrapper for
 // `core.StreamCloudLogs`. Lifts the cloud-logs read path used by
-// every cloud backend (ECS / Lambda / CR / GCF / ACA / AZF) into
-// the typed driver framework. Backends construct one with their
-// per-backend `CloudLogFetchFunc` (the same one Attach uses) plus
-// the `StreamCloudLogsOptions` that controls FaaS LogBuffers
-// fallback and pre-start tolerance.
+// every cloud backend (ECS / Lambda / CR / GCF / ACA / AZF) into the
+// typed driver framework. Backends construct one with a factory that
+// returns a per-container `CloudLogFetchFunc`, plus
+// `StreamCloudLogsOptions` controlling FaaS LogBuffers fallback and
+// pre-start tolerance.
 type cloudLogsLogsDriver struct {
 	server  *BaseServer
-	fetch   CloudLogFetchFunc
+	factory CloudLogFetchFactory
 	sopts   StreamCloudLogsOptions
 	backend string
 	impl    string
 }
 
 // NewCloudLogsLogsDriver constructs the typed read path backed by
-// `StreamCloudLogs`. `fetch` is the per-backend log-fetcher (same one
-// passed to `NewCloudLogsAttachDriver`). `sopts` mirrors the existing
+// `StreamCloudLogs`. `factory` returns a per-container
+// `CloudLogFetchFunc` so backends with per-ref log-group resolution
+// (Lambda, GCF, AZF) can stay correct. `sopts` mirrors the existing
 // `StreamCloudLogs` knobs (CheckLogBuffers for FaaS; AllowCreated for
 // the create→attach→start docker flow).
-func NewCloudLogsLogsDriver(s *BaseServer, fetch CloudLogFetchFunc, sopts StreamCloudLogsOptions, backend, impl string) LogsDriver {
-	return &cloudLogsLogsDriver{server: s, fetch: fetch, sopts: sopts, backend: backend, impl: impl}
+func NewCloudLogsLogsDriver(s *BaseServer, factory CloudLogFetchFactory, sopts StreamCloudLogsOptions, backend, impl string) LogsDriver {
+	return &cloudLogsLogsDriver{server: s, factory: factory, sopts: sopts, backend: backend, impl: impl}
 }
 
 func (d *cloudLogsLogsDriver) Describe() string {
@@ -83,8 +91,12 @@ func (d *cloudLogsLogsDriver) Describe() string {
 }
 
 func (d *cloudLogsLogsDriver) Logs(dctx DriverContext, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
-	if d.server == nil || d.fetch == nil {
-		return nil, errors.New("cloud-logs driver: server / fetch is nil — backend init must wire both")
+	if d.server == nil || d.factory == nil {
+		return nil, errors.New("cloud-logs driver: server / factory is nil — backend init must wire both")
 	}
-	return StreamCloudLogs(d.server, dctx.Container.ID, opts, d.fetch, d.sopts)
+	fetch := d.factory(dctx.Container.ID)
+	if fetch == nil {
+		return nil, errors.New("cloud-logs driver: factory returned a nil fetcher for the container")
+	}
+	return StreamCloudLogs(d.server, dctx.Container.ID, opts, fetch, d.sopts)
 }

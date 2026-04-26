@@ -93,7 +93,7 @@ func TestNewCloudLogsAttachDriver_Describe(t *testing.T) {
 func TestNewCloudLogsAttachDriver_NilServer_ReturnsError(t *testing.T) {
 	d := NewCloudLogsAttachDriver(nil, nil, "lambda", "")
 	err := d.Attach(DriverContext{}, false, &fakeNetConn{})
-	if err == nil || !strings.Contains(err.Error(), "server / fetch is nil") {
-		t.Errorf("expected nil-server/fetch error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "server / factory is nil") {
+		t.Errorf("expected nil-server/factory error, got %v", err)
 	}
 }
