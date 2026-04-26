@@ -98,6 +98,7 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	s.Typed.FSRead = core.NewReverseAgentFSReadDriver(s.reverseAgents, "lambda")
 	s.Typed.FSWrite = core.NewReverseAgentFSWriteDriver(s.reverseAgents, "lambda")
 	s.Typed.FSExport = core.NewReverseAgentFSExportDriver(s.reverseAgents, "lambda")
+	s.Typed.Commit = core.NewReverseAgentCommitDriver(s.BaseServer, s.reverseAgents, "lambda")
 
 	// Cloud-native typed drivers for Logs + Attach. Both go through
 	// CloudWatch with a per-container log-group factory so the typed

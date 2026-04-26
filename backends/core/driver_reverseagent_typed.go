@@ -113,3 +113,41 @@ func (d *reverseAgentFSExport) Export(dctx DriverContext, w io.Writer) error {
 	}
 	return err
 }
+
+// NewReverseAgentCommitDriver wraps CommitContainerRequestViaAgent.
+// The underlying impl needs the BaseServer to resolve the source
+// image, so the driver carries it.
+func NewReverseAgentCommitDriver(s *BaseServer, reg *ReverseAgentRegistry, backend string) CommitDriver {
+	return &reverseAgentCommit{s: s, reg: reg, backend: backend}
+}
+
+type reverseAgentCommit struct {
+	s       *BaseServer
+	reg     *ReverseAgentRegistry
+	backend string
+}
+
+func (d *reverseAgentCommit) Describe() string {
+	return d.backend + " ReverseAgentTarLayer+Push"
+}
+
+func (d *reverseAgentCommit) Commit(dctx DriverContext, opts CommitOptions) (string, error) {
+	req := &api.ContainerCommitRequest{
+		Container: dctx.Container.ID,
+		Author:    opts.Author,
+		Comment:   opts.Comment,
+		Repo:      opts.Repo,
+		Tag:       opts.Tag,
+		Pause:     opts.Pause,
+		Changes:   opts.Changes,
+		Config:    opts.Config,
+	}
+	resp, err := CommitContainerRequestViaAgent(d.s, d.reg, req)
+	if err != nil {
+		return "", err
+	}
+	if resp == nil {
+		return "", nil
+	}
+	return resp.ID, nil
+}

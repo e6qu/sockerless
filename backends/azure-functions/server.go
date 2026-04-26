@@ -88,6 +88,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	s.Typed.FSRead = core.NewReverseAgentFSReadDriver(s.reverseAgents, "azf")
 	s.Typed.FSWrite = core.NewReverseAgentFSWriteDriver(s.reverseAgents, "azf")
 	s.Typed.FSExport = core.NewReverseAgentFSExportDriver(s.reverseAgents, "azf")
+	s.Typed.Commit = core.NewReverseAgentCommitDriver(s.BaseServer, s.reverseAgents, "azf")
 
 	// Cloud-native typed drivers for Logs + Attach. Both go through
 	// Azure Monitor / Log Analytics via a per-container fetcher factory.

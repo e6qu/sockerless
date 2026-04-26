@@ -90,6 +90,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	s.Typed.FSRead = core.NewReverseAgentFSReadDriver(s.reverseAgents, "cloudrun")
 	s.Typed.FSWrite = core.NewReverseAgentFSWriteDriver(s.reverseAgents, "cloudrun")
 	s.Typed.FSExport = core.NewReverseAgentFSExportDriver(s.reverseAgents, "cloudrun")
+	s.Typed.Commit = core.NewReverseAgentCommitDriver(s.BaseServer, s.reverseAgents, "cloudrun")
 
 	// Cloud-native typed Logs + Attach driving Cloud Logging via the
 	// per-container fetcher factory.

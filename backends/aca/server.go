@@ -92,6 +92,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	s.Typed.FSRead = core.NewReverseAgentFSReadDriver(s.reverseAgents, "aca")
 	s.Typed.FSWrite = core.NewReverseAgentFSWriteDriver(s.reverseAgents, "aca")
 	s.Typed.FSExport = core.NewReverseAgentFSExportDriver(s.reverseAgents, "aca")
+	s.Typed.Commit = core.NewReverseAgentCommitDriver(s.BaseServer, s.reverseAgents, "aca")
 
 	// Cloud-native typed Logs + Attach driving Azure Monitor / Log
 	// Analytics via the per-container fetcher factory.
