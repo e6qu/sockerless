@@ -24,7 +24,7 @@ After this branch's Phase 104 work reaches first-dimension parity (Exec lifted a
 - Narrative: [WHAT_WE_DID.md](WHAT_WE_DID.md)
 - Bug log: [BUGS.md](BUGS.md)
 - Architecture: [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md), [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md), [specs/SIM_PARITY_MATRIX.md](specs/SIM_PARITY_MATRIX.md)
-- Manual-test runbook: [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md)
+- Manual-test runbooks: [manual-tests/](manual-tests/)
 
 ## Operational state
 

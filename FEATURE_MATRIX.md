@@ -278,7 +278,7 @@ When containers connect to a Docker network, service discovery enables them to r
 
 | Backend | Multi-Container Pod | How It Works |
 |---------|-------------------|--------------|
-| Docker | ✅ | Phase 100 — `sockerless-pod` label on local Docker containers; PodList merges Store.Pods with the label filter so restarts don't drop pods. |
+| Docker | ✅ | `sockerless-pod` label on local Docker containers; PodList merges Store.Pods with the label filter so restarts don't drop pods. |
 | ECS | ✅ | Multiple containers in one ECS task definition. |
 | CloudRun | ✅ | Multiple containers in one Cloud Run Job/Service. |
 | ACA | ✅ | Multiple containers in one Container Apps Job/App. |

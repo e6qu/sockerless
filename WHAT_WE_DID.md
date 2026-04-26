@@ -24,7 +24,7 @@ PR #118 merged the round-8 + round-9 live-AWS sweep. The post-merge audit pass o
 
 ## Round-7 / Round-8 / Round-9 live-AWS sweeps (PRs #117, #118)
 
-Three rounds of live-AWS testing in `eu-west-1` against ECS + Lambda, replaying the per-test crosswalk in [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md) against [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md). Working state archived in [docs/manual-test-spec-crosswalk.md](docs/manual-test-spec-crosswalk.md).
+Three rounds of live-AWS testing in `eu-west-1` against ECS + Lambda, replaying the canonical sweep in [manual-tests/02-aws-runbook.md](manual-tests/02-aws-runbook.md) against [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
 
 **Round-7 (PR #117).** 16 bugs closed (BUG-770..785). Categories: ImageRemove correctness, ECS task lifecycle (rename, restart, kill-signal mapping, removal-via-registry), libpod compat (specgen create, container list, normalised times), OCI push auth + config-blob, Lambda bootstrap PID publishing + heartbeat mutex, registry persistence robustness.
 

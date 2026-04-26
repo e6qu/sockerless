@@ -134,17 +134,12 @@ Implements the OCI Distribution Spec v2 push protocol:
 
 Used by GCP and Azure auth providers. ECR uses the ECR SDK directly (PutImage) instead of the OCI protocol.
 
-**Resolved by BUG-788 (round 8).** Earlier sockerless versions had several
-push-path issues — ECR-direct push that called PutImage without uploading
-blobs (BUG-638), `ImagePush` returning a synthetic "Pushed" stream
-regardless of OCI outcome (BUG-640), and OCI push falling back to an
-empty gzip layer when no real layer data was available (BUG-646). All
-three are closed by BUG-788's real registry-to-registry layer mirror:
-`core.FetchLayerBlob` downloads each layer's compressed bytes during
-`ImagePull`, caches them in `Store.LayerContent[compressedDigest]` keyed
-by the source manifest digest, and `OCIPush` requires `ManifestLayers`
-and uses each entry's compressed digest verbatim. No recompute, no
-empty-layer fallback, no synthetic success.
+**Real registry-to-registry layer mirror.** `core.FetchLayerBlob`
+downloads each layer's compressed bytes during `ImagePull`, caches
+them in `Store.LayerContent[compressedDigest]` keyed by the source
+manifest digest, and `OCIPush` requires `ManifestLayers` and uses
+each entry's compressed digest verbatim. No recompute, no empty-layer
+fallback, no synthetic success.
 
 ## Registry Metadata
 
@@ -161,10 +156,8 @@ Source: `backends/core/registry.go`
 
 When fetch fails (registry unreachable, auth error), `FetchImageMetadata`
 returns the real underlying error — there is no synthetic-metadata
-fallback. Earlier sockerless versions (BUG-648) returned a fabricated
-metadata stub on error, which masked auth bugs as fake-success;
-Phase 90's no-fakes audit (BUG-731-734) and BUG-788's metadata-must-be-real
-path closed that.
+fallback. Real auth failures surface as the original error, never as a
+fabricated metadata stub.
 
 ## Backend Initialization
 

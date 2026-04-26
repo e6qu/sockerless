@@ -51,8 +51,8 @@ Three principles govern every simulator change. They are load-bearing; a PR that
 4. Add SDK + CLI + Terraform tests per the testing contract below — the pre-commit hook enforces this.
 
 **What "cloud-API fidelity" rules out:**
-- Stdout-as-response shortcuts (see BUG-705 for the Lambda version).
-- In-memory TODO placeholders that claim "we'll call the SDK later" (see BUG-702, BUG-703 for the Azure ACA versions).
+- Stdout-as-response shortcuts (where the simulator returns whatever the user-process printed instead of the real cloud's response shape).
+- In-memory TODO placeholders that claim "we'll call the SDK later".
 - Embedding AWS's `aws-lambda-rie` or similar third-party local emulators inside test images — that bypasses our cloud slice; the simulator IS the cloud from the container's perspective.
 - Synthetic disambiguation (custom headers, custom env vars) that real cloud bootstraps wouldn't produce.
 

@@ -239,4 +239,4 @@ The NAT Gateway is the largest fixed cost. For development, consider destroying 
 
 ## Tested on Real AWS
 
-This example has been validated against real AWS ECS Fargate (eu-west-1, 2026-03-29). See [`PLAN_ECS_MANUAL_TESTING.md`](../../../../PLAN_ECS_MANUAL_TESTING.md) for the full test plan and results.
+This example has been validated against real AWS ECS Fargate (eu-west-1). See [`manual-tests/02-aws-runbook.md`](../../../../manual-tests/02-aws-runbook.md) for the canonical sweep.

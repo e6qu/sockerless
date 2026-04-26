@@ -1,20 +1,18 @@
-# Cross-simulator feature parity matrix (Phase 108)
+# Cross-simulator feature parity matrix
 
-This file is the source-of-truth tracker for **Phase 108 — cross-simulator feature parity audit** (queued in [PLAN.md](../PLAN.md)).
-
-Each row is a cloud-API call sockerless makes from one of the 7 backends. Each column is one of the three simulators. The cell records whether the simulator implements the call at the fidelity sockerless requires.
+Source of truth for which cloud-API calls each simulator implements at the fidelity sockerless requires. Each row is a cloud-API call sockerless makes from one of the 7 backends. Each column is one of the three simulators.
 
 Legend:
 - ✓ — sim implements the call at sockerless's required fidelity (used by integration tests; passes against the sim).
-- ⚠ — sim implements the call but with reduced fidelity (e.g. always returns the same fake field; missing pagination; ignores filters). A bug to close in Phase 108.
-- ✗ — sim does not implement the call. A bug to close in Phase 108.
+- ⚠ — sim implements the call but with reduced fidelity (e.g. always returns the same fake field; missing pagination; ignores filters). Filed as a bug.
+- ✗ — sim does not implement the call. Filed as a bug.
 - — — call is not made by any backend pointed at this cloud (not applicable).
 
-The matrix was seeded from a `grep -roh '\b[ps]\.<provider>\.<Service>\.<Method>\b'` sweep across every backend on `2026-04-26`. Entries are filled in as Phase 108 audits each row against the corresponding sim handler in `simulators/<provider>/`. **Per the project no-defer rule, every ⚠ / ✗ row is a BUG that gets a real fix in this phase.**
+**Standing rule:** any new SDK call added to a backend must update this matrix and add the sim handler in the same commit (PLAN.md principle #10). Every ⚠ / ✗ row is a bug that gets a real fix in the same session per the no-defer rule.
 
 ## AWS
 
-Backends: ECS (Fargate), Lambda. Sim: `simulators/aws/`. **Audit completed 2026-04-26.** 33/33 calls implemented after BUG-832 fix.
+Backends: ECS (Fargate), Lambda. Sim: `simulators/aws/`. **33/33 ✓.**
 
 | Service | Method | Used by | Sim status | Notes |
 |---|---|---|---|---|
@@ -25,19 +23,19 @@ Backends: ECS (Fargate), Lambda. Sim: `simulators/aws/`. **Audit completed 2026-
 | ECS | StopTask | ECS | ✓ | `handleECSStopTask` (ecs.go:873) |
 | ECS | RegisterTaskDefinition | ECS | ✓ | revision tracking |
 | ECS | DeregisterTaskDefinition | ECS | ✓ | |
-| ECS | TagResource | ECS | ✓ | **BUG-832 (2026-04-26)** — sim was missing this handler; backend's BUG-781 kill-signal tag + BUG-772 restart-count tag + rename tag silently no-op'd against the sim. Added `handleECSTagResource` + `handleECSUntagResource` in `simulators/aws/ecs.go` plus `mergeECSTagsByKey` helper; rejects STOPPED tasks like real ECS. |
+| ECS | TagResource | ECS | ✓ | `handleECSTagResource` + `handleECSUntagResource` + `mergeECSTagsByKey` helper; rejects STOPPED / DEPROVISIONING tasks like real ECS. |
 | ECS | ListTagsForResource | ECS | ✓ | `handleECSListTagsForResource` (ecs.go:1020) |
-| ECS | ExecuteCommand | ECS | ✓ | BUG-789/798 fix verified live; sim parity via WebSocket + SSM frame writer |
+| ECS | ExecuteCommand | ECS | ✓ | sim parity via WebSocket + SSM AgentMessage frame writer + exit-code marker |
 | Lambda | CreateFunction | Lambda | ✓ | tags + VpcConfig + ImageConfig |
 | Lambda | DeleteFunction | Lambda | ✓ | |
-| Lambda | Invoke | Lambda | ✓ | container-based exec via Runtime API sidecar (BUG-744) |
+| Lambda | Invoke | Lambda | ✓ | container-based exec via Runtime API sidecar |
 | Lambda | UpdateFunctionConfiguration | Lambda | ✓ | |
-| Lambda | TagResource | Lambda | ✓ | BUG-811 persisted InvocationResult to tags. |
+| Lambda | TagResource | Lambda | ✓ | InvocationResult persisted to tags for `docker wait` exit-code recovery. |
 | Lambda | ListTags | Lambda | ✓ | |
 | ECR | CreatePullThroughCacheRule | ECS, Lambda | ✓ | |
 | ECR | DescribePullThroughCacheRules | ECS, Lambda | ✓ | filters by prefix |
 | ECR | CreateRepository | aws-common | ✓ | |
-| ECR | BatchDeleteImage | aws-common | ✓ | BUG-825 surfaces real errors now. |
+| ECR | BatchDeleteImage | aws-common | ✓ | Surfaces real errors via the ImageManager.Remove aggregator. |
 | ECR | GetAuthorizationToken | aws-common | ✓ | |
 | CloudWatch Logs | DescribeLogStreams | ECS, Lambda | ✓ | |
 | CloudWatch Logs | GetLogEvents | ECS, Lambda | ✓ | pagination |
@@ -58,7 +56,7 @@ Backends: ECS (Fargate), Lambda. Sim: `simulators/aws/`. **Audit completed 2026-
 
 ## GCP
 
-Backends: Cloud Run Jobs (cloudrun), Cloud Run Functions (cloudrun-functions). Sim: `simulators/gcp/`. **Audit completed 2026-04-26.** 16/16 calls implemented after BUG-833 fix.
+Backends: Cloud Run Jobs (cloudrun), Cloud Run Functions (cloudrun-functions). Sim: `simulators/gcp/`. **16/16 ✓.**
 
 | Service | Method | Used by | Sim status | Notes |
 |---|---|---|---|---|
@@ -68,7 +66,7 @@ Backends: Cloud Run Jobs (cloudrun), Cloud Run Functions (cloudrun-functions). S
 | Cloud Run | Jobs.RunJob | cloudrun | ✓ | (cloudrunjobs.go:344) — creates execution with task metadata |
 | Cloud Run | Executions.GetExecution | cloudrun | ✓ | (cloudrunjobs.go:539) — full execution state |
 | Cloud Run | Executions.CancelExecution | cloudrun | ✓ | (cloudrunjobs.go:571) — stops container + injects cancel log |
-| Cloud Run | Services.CreateService | cloudrun (UseService) | ✓ | **BUG-833 (2026-04-26)** — sim only had v1 Knative routes; backend uses run.NewServicesRESTClient (v2 REST). Added `registerCloudRunServicesV2` in `simulators/gcp/cloudrunservices.go` covering Create/Get/List/Update/Delete on `/v2/projects/{p}/locations/{l}/services` with proto-JSON shape (TerminalCondition, LatestReadyRevision, generation as int64-string). |
+| Cloud Run | Services.CreateService | cloudrun (UseService) | ✓ | v2 REST routes in `simulators/gcp/cloudrunservices.go::registerCloudRunServicesV2` covering Create/Get/List/Update/Delete on `/v2/projects/{p}/locations/{l}/services`. Returns proto-JSON shape `runpb.Service` expects (TerminalCondition=CONDITION_SUCCEEDED, LatestReadyRevision populated, generation as int64-string). |
 | Cloud Run | Services.GetService | cloudrun (UseService) | ✓ | (cloudrunservices.go) — service_discovery_cloud.go uses this for CNAME resolution |
 | Cloud Run | Services.UpdateService | cloudrun (declarative) | ✓ | (cloudrunservices.go) — terraform `google_cloud_run_v2_service` parity; backend recreates rather than patches today |
 | Cloud Run | Services.DeleteService | cloudrun (UseService) | ✓ | (cloudrunservices.go) — LRO + store delete |
@@ -81,7 +79,7 @@ Backends: Cloud Run Jobs (cloudrun), Cloud Run Functions (cloudrun-functions). S
 
 ## Azure
 
-Backends: Container Apps (aca), Azure Functions (azure-functions). Sim: `simulators/azure/`. **Audit completed 2026-04-26.** 28/28 calls implemented after BUG-834/835 fixes.
+Backends: Container Apps (aca), Azure Functions (azure-functions). Sim: `simulators/azure/`. **28/28 ✓.**
 
 | Service | Method | Used by | Sim status | Notes |
 |---|---|---|---|---|
@@ -90,9 +88,9 @@ Backends: Container Apps (aca), Azure Functions (azure-functions). Sim: `simulat
 | Container Apps | Jobs.BeginStart | aca | ✓ | (containerapps.go:347) — execution metadata + LRO |
 | Container Apps | Jobs.BeginStopExecution | aca | ✓ | (containerapps.go:592) |
 | Container Apps | Jobs.NewListByResourceGroupPager | aca | ✓ | (containerapps.go:310) — pagination |
-| Container Apps | ContainerApps.BeginCreateOrUpdate | aca (UseApp) | ✓ | **BUG-834 (2026-04-26)** — sim only had Jobs routes; backend's UseApp path uses `ContainerAppsClient.BeginCreateOrUpdate` against `Microsoft.App/containerApps` and silently 404'd. Added `registerContainerAppsApps` in `simulators/azure/containerapps_apps.go` returning provisioningState=Succeeded + LatestReadyRevisionName + LatestRevisionFqdn so `appContainerState` reads "running" and `cloudServiceRegisterCNAME` can seed Private DNS. |
-| Container Apps | ContainerApps.BeginDelete | aca (UseApp) | ✓ | (containerapps_apps.go) — BUG-834 |
-| Container Apps | ContainerApps.Get | aca (UseApp) | ✓ | (containerapps_apps.go) — BUG-834; backend reads `LatestRevisionFqdn` for CNAME registration |
+| Container Apps | ContainerApps.BeginCreateOrUpdate | aca (UseApp) | ✓ | `registerContainerAppsApps` in `simulators/azure/containerapps_apps.go`. Returns `provisioningState=Succeeded` + `LatestReadyRevisionName` + `LatestRevisionFqdn` so `appContainerState` reads "running" and `cloudServiceRegisterCNAME` can seed Private DNS. |
+| Container Apps | ContainerApps.BeginDelete | aca (UseApp) | ✓ | `containerapps_apps.go` |
+| Container Apps | ContainerApps.Get | aca (UseApp) | ✓ | `containerapps_apps.go` — backend reads `LatestRevisionFqdn` for CNAME registration |
 | Container Apps | EnvStorages.CreateOrUpdate | aca | ✓ | (containerappsenv.go:210) |
 | Container Apps | EnvStorages.Delete | aca | ✓ | (containerappsenv.go:254) |
 | Container Apps | Executions.NewListPager | aca | ✓ | (containerapps.go:548) |
@@ -112,8 +110,8 @@ Backends: Container Apps (aca), Azure Functions (azure-functions). Sim: `simulat
 | App Service | WebApps.BeginCreateOrUpdate | azure-functions | ✓ | (functions.go:88) |
 | App Service | WebApps.Delete | azure-functions | ✓ | (functions.go:178) |
 | App Service | WebApps.NewListByResourceGroupPager | azure-functions | ✓ | (functions.go:163) |
-| App Service | WebApps.UpdateAzureStorageAccounts | azure-functions | ✓ | **BUG-835 (2026-04-26)** — sim was missing `PUT /sites/{name}/config/azurestorageaccounts`; backend's `volumes.go` could not bind named docker volumes to Azure Files shares. Added handler + `AzureStoragePropertyDictionaryResource`/`AzureStorageInfoValue` types in `simulators/azure/functions.go`; site stores the dict and round-trips it on the GET (list) endpoint. |
+| App Service | WebApps.UpdateAzureStorageAccounts | azure-functions | ✓ | `PUT /sites/{name}/config/azurestorageaccounts` in `simulators/azure/functions.go`. Round-trip of `AzureStoragePropertyDictionaryResource` matches `armappservice` wire format. |
 
 ## Closure tracking
 
-**Phase 108 closed 2026-04-26.** All 77 rows (33 AWS + 16 GCP + 28 Azure) ship ✓. Audit pass closed BUG-832 (sim/aws ECS TagResource), BUG-833 (sim/gcp v2 Cloud Run Services), BUG-834 (sim/azure ContainerApps Apps), BUG-835 (sim/azure WebApps.UpdateAzureStorageAccounts). Follow-up rule (active): any new SDK call added to a backend must update this matrix and add a sim handler in the same commit — the existing "sim parity per commit" rule made stronger.
+All 77 rows (33 AWS + 16 GCP + 28 Azure) ship ✓. Standing rule: any new SDK call added to a backend must update this matrix and add a sim handler in the same commit (PLAN.md principle #10).

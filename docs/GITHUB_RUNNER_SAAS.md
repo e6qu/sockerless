@@ -137,6 +137,6 @@ Push a commit. The runner should pick up all three jobs. The `with-services` job
 - **Jobs take 90+ seconds to start** — that's ECS cold-start for a new task definition. Warm pools aren't implemented; consider a runner-level pool or longer-running containers.
 - **`docker login` required** — runner steps that pull from private registries need credentials. Set them as GitHub secrets and pass them through a `docker login` step; sockerless forwards to ECR / wherever.
 
-## Phase 86 AWS track
+## Live-cloud validation
 
-This doc describes the target flow. The three shapes (shell, `container:`, `services:`) have not yet been validated against a real github.com + live ECS deployment — that's blocked on the AWS-credentials step of the Phase 86 roadmap. When that work lands, this doc will gain "verified on ECS with runner vX.Y.Z" callouts and the capability matrix will fill in the `ecs (live)` column.
+This doc describes the target flow. The three shapes (shell, `container:`, `services:`) need validation against real github.com + live ECS — see [`manual-tests/02-aws-runbook.md`](../manual-tests/02-aws-runbook.md) for the canonical sweep.

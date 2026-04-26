@@ -21,7 +21,7 @@
 | [IMAGE_REGISTRY.md](IMAGE_REGISTRY.md) | OCI Distribution v2 protocol, per-cloud registry features, auth caching |
 | [IMAGE_SCANNING.md](IMAGE_SCANNING.md) | Vulnerability scanning, image signing, supply chain security |
 | [BACKEND_STATE.md](BACKEND_STATE.md) | Stateless backends, cloud tags as source of truth, resource tagging conventions |
-| [CLOUD_RESOURCE_MAPPING.md](CLOUD_RESOURCE_MAPPING.md) | Per-cloud authoritative mapping (docker container/pod/network/image/exec → cloud resource), state-derivation rules, recovery contract — Phase 89 |
+| [CLOUD_RESOURCE_MAPPING.md](CLOUD_RESOURCE_MAPPING.md) | Per-cloud authoritative mapping (docker container/pod/network/image/exec → cloud resource), state-derivation rules, stateless recovery contract |
 | [FAAS_PODS.md](FAAS_PODS.md) | Pod support on FaaS: Lambda Extensions, Cloud Run sidecars, ACA multi-container |
 | [SIMULATOR_PERSISTENCE.md](SIMULATOR_PERSISTENCE.md) | SQLite state persistence, Store interface, process tracking |
 | [SIMULATOR_RECOVERY.md](SIMULATOR_RECOVERY.md) | Recovery on restart, PID re-attachment, backend re-sync, tagging conventions |

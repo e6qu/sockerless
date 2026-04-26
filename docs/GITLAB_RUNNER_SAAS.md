@@ -153,6 +153,6 @@ sudo gitlab-runner run --working-directory /home/gitlab-runner --config /etc/git
 - **Services unreachable (`psql -h db` fails)** — verify Cloud Map namespace exists for the sockerless network and the task's security group allows task-to-task traffic. See `docs/ECS_SERVICES_DESIGN.md`.
 - **Stuck at `Running with gitlab-runner 18.x.x`** — means the runner can't pull the helper image. sockerless may be refusing the ECR pull; check the sockerless logs for `pull-through cache` errors.
 
-## Phase 86 AWS track
+## Live-cloud validation
 
-This doc describes the target flow. The three shapes above have not yet been validated against real gitlab.com + live ECS. When the AWS-credentials step lands we'll add a "verified on gitlab-runner vX.Y.Z" section and populate `docs/runner-capability-matrix.md`'s `ecs (live)` column.
+This doc describes the target flow. The three shapes need validation against real gitlab.com + live ECS — see [`manual-tests/02-aws-runbook.md`](../manual-tests/02-aws-runbook.md) for the canonical sweep.

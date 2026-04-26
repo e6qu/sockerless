@@ -93,7 +93,7 @@ DOCKER_HOST=tcp://127.0.0.1:3375 docker run --rm alpine uname -a
 DOCKER_HOST=tcp://127.0.0.1:3375 docker ps -a
 ```
 
-`PLAN_ECS_MANUAL_TESTING.md` has the full Round-1 through Round-6 smoke matrix for what's been validated live.
+[`manual-tests/02-aws-runbook.md`](../manual-tests/02-aws-runbook.md) has the canonical AWS sweep (ECS + Lambda).
 
 ## Troubleshooting
 
