@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**102 phases closed. 831 bugs tracked — 831 fixed, 0 open. 1 false positive. PR #118 merged (Rounds 8 + 9); PR #120 open with: 18 audit closures (BUG-802 + 638/640/646/648 + 804/806 + 820..831), Phase 104 skeleton + first dimension lift (`WrapLegacyExec` ExecDriver104 adapter), Phase 105 second + third waves of libpod-shape golden tests (7 handlers covered), Phase 108 prep (`specs/SIM_PARITY_MATRIX.md` seeded with 77 cloud-API rows). Project rule (PLAN.md principle #9): no defer, no fakes, no fallbacks. Next on this branch: Phase 104 second dimension lift (Attach), then per-backend migration of `DriverSet104.Exec` starting with docker.**
+**103 phases closed (Phase 108 closed 2026-04-26). 835 bugs tracked — 835 fixed, 0 open. 1 false positive. PR #118 merged (Rounds 8 + 9); PR #120 open with: 22 audit closures (BUG-802 + 638/640/646/648 + 804/806 + 820..831 + 832/833/834/835), Phase 104 skeleton + first two dimension lifts (Exec, Attach), Phase 105 second + third waves of libpod-shape golden tests (7 handlers covered), Phase 108 closed (77/77 sim-parity matrix rows ✓ — 33 AWS / 16 GCP / 28 Azure). Project rule (PLAN.md principle #9): no defer, no fakes, no fallbacks. Next on this branch: continue Phase 104 dimension lifts (FSRead/Write/Diff/Export/Commit/Build/Stats/ProcList/Logs/Signal/Registry — 11 left) + per-backend migration of `DriverSet104.Exec`/`Attach` starting with docker.**
 
 See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer), [specs/](specs/) (architecture).
 
@@ -24,7 +24,7 @@ AWS infra torn down post-merge. Root-account IAM key `AKIA2TQEGRDBRV2KFW6L` deac
 
 | PR | Summary |
 |---|---|
-| #120 (open) | Post-PR-#118 bug audit + phase plan — 16 closures (BUG-802 + 638/640/646/648 retroactive + 804/806 libpod-shape + 820..829 fallback/synthetic-data audit). Phases 106/107/108 added. |
+| #120 (open) | Post-PR-#118 bug audit + phase plan — 22 closures (BUG-802 + 638/640/646/648 retroactive + 804/806 libpod-shape + 820..831 fallback/synthetic-data audit + 832/833/834/835 sim-parity gaps). Phases 106/107 queued; Phase 108 closed in-branch (77/77 sim-parity matrix ✓). |
 | #119 | Post-PR-#118 state-doc refresh — Phase 104 promoted to active. |
 | #118 | Round-8 + Round-9 live-AWS sweep — 30 bugs (BUG-786..819), per-cloud terragrunt sweep parity |
 | #117 | Round-7 live-AWS sweep — 16 bugs (BUG-770..785) |

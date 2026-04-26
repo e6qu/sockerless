@@ -5,18 +5,19 @@ Resume pointer for the next session / post-compaction. Updated after every task.
 ## Branch state
 
 - `main` synced with `origin/main` at PR #119 merge (squash commit `b547ee9`).
-- `post-pr-118-bug-audit-and-phases` — **open as PR #120**, 16 commits ahead of main. Cumulative: 18 bugs closed; Phase 104 skeleton + first dimension lift (`WrapLegacyExec` ExecDriver104 adapter, `backends/core/driver_adapt_exec.go`); Phase 105 second + third waves (golden shape tests in `handle_libpod_shape_test.go` + `handle_libpod_wave3_shape_test.go` covering 7 handlers); Phase 108 prep (`specs/SIM_PARITY_MATRIX.md` seeded with 77 cloud-API rows).
+- `post-pr-118-bug-audit-and-phases` — **open as PR #120**, 19+ commits ahead of main. Cumulative: 22 bugs closed; Phase 104 skeleton + two dimension lifts (Exec + Attach); Phase 105 second + third waves of golden shape tests (7 handlers covered); **Phase 108 closed in-branch — 77/77 sim-parity matrix rows ✓** (33 AWS / 16 GCP / 28 Azure).
 
 ## Up next (in execution order)
 
-**Active: PR #120 — audit + Phase 104 skeleton + Phase 105 second wave.** Per maintainer instruction the branch stays open while work continues; PR scope has expanded beyond the original "audit + phase plan" but the maintainer has explicitly opted into this. Audit closed at 18 bugs (BUG-802 + 638/640/646/648 + 804/806 + 820..831), Phase 104 skeleton landed, Phase 105 second-wave shape tests landed.
+**Active: PR #120 — audit + Phase 104 skeleton + Phase 105 + Phase 108 closure.** Per maintainer instruction the branch stays open while work continues. Audit + sim-parity tracks landed: 22 bugs closed (BUG-802 + 638/640/646/648 + 804/806 + 820..831 + 832/833/834/835), Phase 108 closed, Phase 104 lifts 1+2 done.
 
 ## Up next on this branch (in execution order)
 
-1. **Phase 104 second dimension lift — `AttachDriver104`.** Same pattern as `WrapLegacyExec`: write `WrapLegacyAttach` that adapts the narrow `core.StreamDriver.Attach` to the new typed `AttachDriver104`. Plus write a typed `cloudLogsAttach` that lifts `core.AttachViaCloudLogs` (the FaaS read-only attach) into the framework. Tests cover both adapters.
-2. **Phase 104 first per-backend migration** — wire the docker backend's exec call site through `DriverSet104.Exec` (using `WrapLegacyExec`). Smallest backend; no cloud round-trips; integration tests in `tests/exec_test.go` verify parity.
-3. **Phase 108 audit** — start populating `specs/SIM_PARITY_MATRIX.md` rows. Begin with AWS rows (33 calls, biggest set). Each `tbd` becomes ✓ / ⚠ / ✗ after auditing the corresponding sim handler. Every ⚠ / ✗ row gets a BUG entry + a real fix in this phase.
-4. **Phase 105 fourth wave** (lower priority) — events stream, exec start hijack shape, container CRUD beyond list. The first three waves already cover the high-risk handlers; this is rounding out coverage.
+1. **Phase 104 third dimension lift — `LogsDriver`.** Per-backend log-fetcher already exists today (`CloudLogFetchFunc` in `core.AttachViaCloudLogs`); lift it into a typed `LogsDriver104` so `docker logs <id>` flows through `DriverSet104.Logs`. Tests pin the contract.
+2. **Phase 104 fourth dimension lift — `SignalDriver`.** SignalToExitCode exists (BUG-826 hardened SIGTERM=143/SIGKILL=137); typed `SignalDriver104` with WrapLegacy adapter + per-backend overrides.
+3. **Phase 104 first per-backend migration** — wire the docker backend's exec call site through `DriverSet104.Exec` (using `WrapLegacyExec`). Smallest backend; no cloud round-trips; integration tests in `tests/exec_test.go` verify parity.
+4. **Remaining Phase 104 lifts** — FSRead/Write/Diff/Export, Commit, Build, Stats, ProcList, Registry. Piecemeal one per commit; sim parity per commit.
+5. **Phase 105 fourth wave** (lower priority) — events stream, exec start hijack shape, container CRUD beyond list. The first three waves already cover the high-risk handlers; this is rounding out coverage.
 
 After Phase 104 reaches first-dimension parity (ExecDriver lifted across all 7 backends), the typed framework is ready for Phase 106 (GitHub Actions runner) and Phase 107 (GitLab runner) to exercise it against real CI workloads.
 
@@ -36,7 +37,7 @@ After Phase 104:
 
 - **Phase 106 — Real GitHub Actions runner integration.** End-to-end `actions/runner` binary against sockerless via DOCKER_HOST. ECS + Lambda first; rest gated on Phase 104. Canonical workload sweep (matrix, services, artifacts, secrets, fail-fast).
 - **Phase 107 — Real GitLab runner integration.** GitLab Runner docker-executor → sockerless. Same coverage shape as Phase 106. dind sub-test included. Kubernetes-executor as a follow-up under Phase 104.
-- **Phase 108 — Cross-simulator feature parity audit.** Walk every cloud-API call sockerless makes; build a parity matrix (rows = SDK calls, columns = aws/gcp/azure sim); fix every gap in-phase per the no-defer rule.
+- ~~**Phase 108 — Cross-simulator feature parity audit.**~~ ✓ closed 2026-04-26 in PR #120 (BUG-832/833/834/835 fixes; 77/77 matrix rows ✓). Standing rule strengthened: any new SDK call added to a backend must update `specs/SIM_PARITY_MATRIX.md` + add the sim handler in the same commit.
 
 Independent of Phase 104 (can run in parallel):
 
