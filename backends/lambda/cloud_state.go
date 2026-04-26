@@ -318,7 +318,7 @@ func (p *lambdaCloudState) queryFunctions(ctx context.Context) ([]api.Container,
 				HostConfig: api.HostConfig{NetworkMode: "bridge"},
 				NetworkSettings: api.NetworkSettings{
 					Networks: map[string]*api.EndpointSettings{
-						"bridge": {NetworkID: "bridge", IPAddress: "0.0.0.0"},
+						"bridge": {NetworkID: "bridge", IPAddress: ""},
 					},
 				},
 			})

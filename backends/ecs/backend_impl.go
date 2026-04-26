@@ -170,7 +170,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		NetworkID:   networkID,
 		EndpointID:  core.GenerateID()[:16],
 		Gateway:     "",
-		IPAddress:   "0.0.0.0",
+		IPAddress:   "",
 		IPPrefixLen: 16,
 		MacAddress:  "",
 	}

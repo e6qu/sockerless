@@ -289,7 +289,7 @@ func functionToContainer(fn *functionspb.Function, labels map[string]string) api
 			Networks: map[string]*api.EndpointSettings{
 				networkName: {
 					NetworkID: networkName,
-					IPAddress: "0.0.0.0",
+					IPAddress: "",
 				},
 			},
 		},

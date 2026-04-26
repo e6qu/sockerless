@@ -271,7 +271,7 @@ func siteToContainer(tags map[string]*string, props interface{}, siteName *strin
 			Networks: map[string]*api.EndpointSettings{
 				networkName: {
 					NetworkID: networkName,
-					IPAddress: "0.0.0.0",
+					IPAddress: "",
 				},
 			},
 		},
