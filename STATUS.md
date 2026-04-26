@@ -1,12 +1,13 @@
 # Sockerless — Status
 
-**102 phases closed. 819 bugs tracked — 819 fixed, 0 open. 1 false positive. PR #118 merged (Rounds 8 + 9); BUG-804/806 fixed post-merge as the first wave of Phase 105 + BUG-638/640/646/648 backfilled as retroactively closed by BUG-788. Project rule (effective immediately): no bug deferral — every filed bug ships a fix in the same phase. Branch back on `main`, in sync with `origin/main`. Phase 104 (cross-backend driver framework) is the next active work, followed by Phases 106 (GitHub Actions runner) + 107 (GitLab runner) + 108 (sim feature parity).**
+**102 phases closed. 829 bugs tracked — 829 fixed, 0 open. 1 false positive. PR #118 merged (Rounds 8 + 9); PR #120 open with the post-merge audit + phase plan (BUG-802 withdrawn; BUG-638/640/646/648 backfilled as retroactively closed by BUG-788; BUG-804/806 libpod-shape; BUG-820..829 fallback / synthetic-data findings). Project rule (recorded as principle #9 in PLAN.md): no defer, no fakes, no fallbacks. Phase 104 (cross-backend driver framework) is the next active work, followed by Phases 106 (GitHub Actions runner) + 107 (GitLab runner) + 108 (sim feature parity).**
 
 See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer), [specs/](specs/) (architecture).
 
 ## Branch state
 
-- **`main`** — current. Synced with `origin/main` at PR #118 merge (squash commit `204e25e`).
+- **`main`** — synced with `origin/main` at PR #119 merge (squash commit `b547ee9`).
+- **`post-pr-118-bug-audit-and-phases`** — open as PR #120. Audit pass with 16 bug closures + phase plan refresh (Phases 106/107/108 added).
 - **`origin-gitlab/main`** — mirror, lags; pushed when convenient.
 
 ## Round-8 + Round-9 (closed via PR #118)
@@ -23,12 +24,13 @@ AWS infra torn down post-merge. Root-account IAM key `AKIA2TQEGRDBRV2KFW6L` deac
 
 | PR | Summary |
 |---|---|
+| #120 (open) | Post-PR-#118 bug audit + phase plan — 16 closures (BUG-802 + 638/640/646/648 retroactive + 804/806 libpod-shape + 820..829 fallback/synthetic-data audit). Phases 106/107/108 added. |
+| #119 | Post-PR-#118 state-doc refresh — Phase 104 promoted to active. |
 | #118 | Round-8 + Round-9 live-AWS sweep — 30 bugs (BUG-786..819), per-cloud terragrunt sweep parity |
 | #117 | Round-7 live-AWS sweep — 16 bugs (BUG-770..785) |
 | #116 | Post-PR-#115 state-doc refresh |
 | #115 | Phases 96/98/98b/99/100/101/102 + 13-bug audit sweep |
 | #114 | Phase 91 ECS EFS volumes + BUG-735/736/737 |
-| #113 | Phases 87/88 (CR Services + ACA Apps) + 89 (stateless audit) + 90 (no-fakes) |
 
 ## Open work pointers
 

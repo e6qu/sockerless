@@ -4,22 +4,35 @@ Docker-compatible REST API that runs containers on cloud backends (ECS, Lambda, 
 
 See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for the bug log, [PLAN.md](PLAN.md) for the roadmap, [DO_NEXT.md](DO_NEXT.md) for the resume pointer, [specs/](specs/) for architecture (start with [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md)).
 
-## Round-9 manual-test ↔ spec crosswalk (in progress, this branch)
+## Post-PR-#118 audit + phase plan (PR #120 — open)
 
-Per-test walk through [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md) cross-referenced against [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md). Each test runs one at a time on live ECS + Lambda; result recorded in [docs/manual-test-spec-crosswalk.md](docs/manual-test-spec-crosswalk.md). Crosswalk file's `## Status` block names the next pending test for post-compaction resume.
+PR #118 merged the round-8 + round-9 live-AWS sweep. The post-merge audit pass (PR #120, branch `post-pr-118-bug-audit-and-phases`) records every previously-open or "known-issue" bug as a real fix in this branch, per the project's no-defer / no-fakes / no-fallbacks rule. 16 bug closures so far + the runner / sim-parity phase plan.
 
-**ECS side complete** — Tracks A (49) + B (33) + C (11) + E (7) + F (12) + G (7) + I (9) ≈ 80 tests. **3 bugs filed and fixed in-track:**
-- **BUG-801** — `docker inspect` returned `HostConfig.Memory: 0` and `NanoCpus: 0`. `taskToContainer` now maps task-def `memory` (MB) and `cpu` (1024-share) back to bytes / nanoCPUs.
-- **BUG-803** — `specs/CLOUD_RESOURCE_MAPPING.md` matrix said `ContainerExport: ✗ accepted gap` while §Notes said `⚠ via SSM`. Aligned both rows to the SSM wording.
-- **BUG-805** — `docker stop` 60 s default timeout too short for Fargate STOPPING → DEPROVISIONING → STOPPED + ENI release. Bumped to 120 s default + 60 s grace on `t=`.
+**Closed in this audit** (full text in BUGS.md):
 
-**2 bugs deferred to Phase 105** (libpod-shape conformance): BUG-804 (`pod inspect` returns array, libpod expects object), BUG-806 (`PodStopReport.Errs` shape mismatch).
+- **BUG-802** — withdrawn (round-9 measurement artifact, closed transitively by BUG-789/798).
+- **BUG-638 / 640 / 646 / 648** — retroactive. Spec docs called these "known issues" (ECR push not uploading blobs, synthetic `Pushed` stream, empty-layer fallback, synthetic-metadata fallback). All four were closed by BUG-788 + Phase 90 no-fakes audit; BUGS.md rows added; `specs/IMAGE_MANAGEMENT.md` rewritten from "Known issue" to "Resolved by BUG-788".
+- **BUG-804** — `podman pod inspect` libpod-shape mismatch. `api.PodInspectResponse` expanded to mirror podman's full `define.InspectPodData` (Namespace, CreateCommand, ExitPolicy, InfraContainerID, InfraConfig, CgroupParent/Path, LockNumber, RestartPolicy, BlkioWeight, CPU/Memory limits, BlkioDeviceReadBps/WriteBps, VolumesFrom, SecurityOpts, mounts, devices, device_read_bps). New schemas in `api/openapi.yaml`. Golden test in `pod_inspect_shape_test.go` asserts the response is a JSON object (never array, the original failure shape) and every libpod-shape key is present.
+- **BUG-806** — `podman pod stop` Errs serialization. `[]error` can't round-trip JSON (verified against podman's own bindings). Real podman uses HTTP 409 + ErrorModel for failures and `Errs: []` on success. New `writePodActionResponse` in `handle_pods.go` emits `Errs: []` (success) or 409 + `{cause, message, response}` body (failure). `PodActionResponse.RawInput` field added.
+- **BUG-820..825** — fallback / synthetic-data sweep across `backends/core`. Manifest-list silent first-fallback (820), IPAM hardcoded `172.17.0.2` (821), ImageBuild silent local-parser fallback (822), LinuxNetworkDriver netns silent-degrade (823), buildEndpointForNetwork synthetic endpoint (824), ImageRemove cloud-sync silent warn (825). Each fix surfaces the real error rather than producing fake-success.
+- **BUG-826** — synthetic `exitCode: 0` in `docker stop` / `rm -f` / `restart` and `pod stop` die events. Now uses honest docker convention: SIGTERM → 143, SIGKILL → 137. Touched core + ECS + ACA + cloudrun-functions.
+- **BUG-827** — Azure ContainerApps + GCP Cloud Run Jobs simulators emitted "Execution completed successfully" even when the user container failed. Now branches on `succeeded` and emits "Execution failed" on the failure path. Symmetric across both sims.
+- **BUG-828** — `NetnsManager.CreateVethPair` silently ignored `ip addr add` / `ip link set up` errors, leaving half-configured veths. Now error-checked + rolls back on failure.
+- **BUG-829** — `ARAuthProvider.OnRemove` and `ACRAuthProvider.OnRemove` silently `continue`d on per-tag delete failures, returning nil success while the cloud-side state diverged. Now aggregates per-tag failures and surfaces them via the BUG-825 ImageManager aggregator. Stale "non-fatal" docstrings on the AWS / GCP / Azure auth-provider hooks rewritten to match the post-BUG-825 reality.
 
-**1 bug withdrawn**: BUG-802 — initially filed against silent 0-byte `docker export`; turned out to be a `timeout 60` measurement artifact (SSM read-loop > 60 s when BUG-789/798 returns no frames). Without the timeout wrapper, `docker export` correctly returns `tar export failed (exit -1)` and exits 1.
+**New phases queued** ([PLAN.md](PLAN.md)):
 
-**Lambda Track D** — sockerless-lambda-bootstrap binaries cross-built (linux/amd64) at `/tmp/r9-overlay/sockerless-{agent,lambda-bootstrap}` with Dockerfile staged. Build-and-push to ECR resumes once Docker Desktop / podman-machine is up.
+- **Phase 106** — Real GitHub Actions runner integration via `actions/runner` + DOCKER_HOST → sockerless. ECS+Lambda first; rest gated on Phase 104. Canonical workload sweep (matrix builds, services, artifacts, secrets, fail-fast, log streaming).
+- **Phase 107** — Real GitLab Runner docker-executor → sockerless. Same coverage shape; `dind` sub-test included; Kubernetes-executor follow-up under Phase 104.
+- **Phase 108** — Cross-simulator feature parity audit. Walk every cloud-API call sockerless makes; build aws/gcp/azure parity matrix; close every gap in-phase per the no-defer rule.
 
-**Phase 104 (cross-backend driver framework) drafted in PLAN.md** — every "perform docker action X" goes through a typed `Driver` interface in `backends/core/drivers/`; implementations live with their cloud (`backends/ecs/drivers/`, `backends/aws-common/drivers/`, etc.); operators override per-cloud-per-dimension via env vars; sim parity required for the default driver in each dimension. 13 dimensions: Exec, Attach, FSRead, FSWrite, FSDiff, FSExport, Commit, Build, Stats, ProcList, Logs, Signal, Registry. Phase 103 (overlay-rootfs) ships under Phase 104 as alternate FSDiff/Commit drivers. Phase 105 (libpod-shape conformance) runs in parallel.
+Phase 105 reframed as "rolling — first wave landed" since BUG-804/806 are now closed.
+
+## Round-9 manual-test ↔ spec crosswalk (closed via PR #118)
+
+Per-test walk through [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md) cross-referenced against [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md). Each test ran one at a time on live ECS + Lambda; results archived in [docs/manual-test-spec-crosswalk.md](docs/manual-test-spec-crosswalk.md).
+
+ECS Tracks A/B/C/E/F/G/I (~80 tests) + Lambda Track D (D1-D9). 14 bugs filed and fixed (BUG-801, 803, 805, 813, 789/798, 815, 816, 817, 795, 818, 819 + the Lambda set 807, 808, 809, 810, 811, 812). Live AWS torn down post-merge; per-cloud terragrunt sweep (BUG-819 fix) makes destroys self-sufficient.
 
 ## Round-8 live-AWS sweep — 13 bugs fixed (this branch — pending PR #118)
 

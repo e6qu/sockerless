@@ -4,9 +4,12 @@ Resume pointer for the next session / post-compaction. Updated after every task.
 
 ## Branch state
 
-`main` — current. Synced with `origin/main` at PR #118 merge (squash commit `204e25e`). No active feature branch.
+- `main` synced with `origin/main` at PR #119 merge (squash commit `b547ee9`).
+- `post-pr-118-bug-audit-and-phases` — **open as PR #120**, 5 commits ahead of main. Per maintainer instruction the branch + PR stay open while audit work continues. Latest commit closes BUG-829 (per-tag delete failures in AR / ACR auth providers).
 
 ## Up next (in execution order)
+
+**Active: PR #120 audit pass.** While #120 is open, the audit-and-fix work continues in-place per maintainer instruction. Each new finding gets a BUG entry + a real fix on the same branch (no defers). 16 bugs closed so far in the audit; sweeps still planned through `simulators/` handlers (sim-side parity audit prep), the cloud-side `cloud_state.go` projections, and the BaseServer event-emit paths.
 
 **Phase 104 — Cross-backend driver framework.** Design locked in [PLAN.md](PLAN.md); piecemeal delivery, one dimension at a time, no behaviour change per commit. First dimension to lift is `ExecDriver` since it's the smallest and the existing `core.Drivers.Exec` already exists — the work is to expand the `Drivers` struct into `DriverSet` with the 13 typed dimensions, add `DriverContext`, and migrate ExecDriver into the new shape with sim-parity tests.
 

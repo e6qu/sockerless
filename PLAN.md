@@ -25,6 +25,7 @@ Detail in [WHAT_WE_DID.md](WHAT_WE_DID.md); commit + BUG refs in [BUGS.md](BUGS.
 | 86–102 + audit sweep | Foundation — sim parity, stateless backends, real volumes, FaaS invocation tracking, reverse-agent exec / cp / diff / commit / pause, Docker pod synthesis, ACA console exec, ECS SSM ops, OCI push, log fidelity. Closes BUG-661–769. |
 | Round-7 (PR #117) | Live-AWS bug sweep — 16 bugs (BUG-770..785). |
 | Round-8 + Round-9 (PR #118) | Live-AWS bug sweep — 30 bugs (BUG-786..819). Round 8: stateless invariant (BUG-799/800), real layer mirror (BUG-788), sync `docker stop` (BUG-790), per-network SG isolation (BUG-794). Round 9: live SSM frame capture → exit-code marker (BUG-789/798), `sh -c` exec wrap (BUG-815), busybox-compat find/stat (BUG-816/817), Lambda invoke waiter (BUG-807), tag-based InvocationResult persistence (BUG-811), filter substring match (BUG-795), per-cloud `null_resource sockerless_runtime_sweep` so `terragrunt destroy` is self-sufficient (BUG-819). |
+| Post-PR-#118 audit (PR #120 — open) | Bug-audit sweep + phase plan — 16 bugs closed (BUG-802 withdrawn; BUG-638/640/646/648 backfilled retroactively as closed by BUG-788; BUG-804/806 libpod-shape; BUG-820..829 fallback / synthetic-data findings). New phases queued: 106 (GitHub Actions runner), 107 (GitLab runner), 108 (cross-simulator feature parity audit). Project rule recorded: no defer, no fakes, no fallbacks. |
 
 ## Pending work
 
