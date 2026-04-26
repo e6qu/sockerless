@@ -130,6 +130,12 @@ func (s *BaseServer) initTypedDrivers() {
 		},
 		s.Desc.Driver, "default-self-dispatch",
 	)
+	s.Typed.Signal = WrapLegacyKill(
+		func(ref, signal string) error {
+			return s.self.ContainerKill(ref, signal)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
 }
 
 func (s *BaseServer) registerRoutes() {

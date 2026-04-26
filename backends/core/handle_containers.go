@@ -131,7 +131,18 @@ func (s *BaseServer) handleContainerStop(w http.ResponseWriter, r *http.Request)
 
 func (s *BaseServer) handleContainerKill(w http.ResponseWriter, r *http.Request) {
 	signal := r.URL.Query().Get("signal")
-	if err := s.self.ContainerKill(r.PathValue("id"), signal); err != nil {
+	ref := r.PathValue("id")
+	c, _ := s.ResolveContainerAuto(r.Context(), ref)
+	if c.ID == "" {
+		c.ID = ref
+	}
+	dctx := DriverContext{
+		Ctx:       r.Context(),
+		Container: c,
+		Backend:   s.Desc.Driver,
+		Logger:    s.Logger,
+	}
+	if err := s.Typed.Signal.Kill(dctx, signal); err != nil {
 		WriteError(w, err)
 		return
 	}
