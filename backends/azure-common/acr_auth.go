@@ -50,14 +50,14 @@ func (a *ACRAuthProvider) IsCloudRegistry(registry string) bool {
 // first push and the actual blob upload is done by
 // BaseServer.ImagePush via core.OCIPush, which has access to the
 // image's layer data through the local store. OnPush used to also
-// call OCIPush here without layer data, which always failed (BUG-763).
+// call OCIPush here without layer data, which always failed.
 func (a *ACRAuthProvider) OnPush(imageID, registry, repo, tag string) error {
 	return nil
 }
 
 // OnTag syncs a tag to ACR by fetching the source manifest and re-putting it with the new tag.
 // Errors are returned to the caller (ImageManager) which aggregates
-// them and surfaces via HTTP error per BUG-825 + the no-fallbacks rule.
+// them and surfaces via HTTP error per the no-fallbacks rule.
 func (a *ACRAuthProvider) OnTag(imageID, registry, repo, newTag string) error {
 	token, err := a.GetToken(registry)
 	if err != nil {
@@ -110,11 +110,11 @@ func (a *ACRAuthProvider) OnTag(imageID, registry, repo, newTag string) error {
 }
 
 // OnRemove deletes manifests from ACR. Graceful on 404/405 (already
-// gone / sim doesn't support DELETE). BUG-829: previously every
-// per-tag failure was logged + `continue`, so OnRemove returned nil
-// success even when some tags couldn't be removed and the ACR-side
-// state diverged from local. Now aggregates per-tag failures and
-// surfaces them per BUG-825 + the no-fallbacks rule.
+// gone / sim doesn't support DELETE). Aggregates per-tag failures and
+// surfaces them per the no-fallbacks rule (previously each per-tag
+// failure was logged + `continue`, so OnRemove returned nil success
+// even when some tags couldn't be removed and the ACR-side state
+// diverged from local).
 func (a *ACRAuthProvider) OnRemove(registry, repo string, tags []string) error {
 	token, err := a.GetToken(registry)
 	if err != nil {

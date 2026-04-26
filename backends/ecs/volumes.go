@@ -7,7 +7,7 @@ import (
 	awscommon "github.com/sockerless/aws-common"
 )
 
-// Phase 91 — EFS-backed named-volume + bind-mount provisioning for ECS.
+// EFS-backed named-volume + bind-mount provisioning for ECS.
 //
 // Docker volume semantics on Fargate map to EFS access points: one
 // filesystem per backend instance, one access point per named volume.
@@ -15,7 +15,7 @@ import (
 // subdirectory on the shared filesystem.
 //
 // Implementation lives in backends/aws-common/volumes.go as
-// awscommon.EFSManager so Lambda (Phase 94b) can share it.
+// awscommon.EFSManager so Lambda can share it.
 
 // volumeState embeds the shared EFSManager. Initialised by NewServer
 // once the EFS client and config are available.

@@ -10,11 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// BUG-834 — sim was missing v2 ContainerApps Apps routes
-// (Microsoft.App/containerApps); only Jobs were registered. The aca
+// v2 ContainerApps Apps routes (Microsoft.App/containerApps). The aca
 // backend's UseApp path uses ContainerAppsClient.{BeginCreateOrUpdate,
-// Get, BeginDelete} which silently 404'd against the sim. Pin the
-// contract using the same SDK + types the backend uses.
+// Get, BeginDelete}. Pin the contract using the same SDK + types the
+// backend uses.
 
 func TestSDK_ContainerAppsApps_CreateGetDelete(t *testing.T) {
 	rg := "sdk-aca-app-rg"
@@ -93,10 +92,10 @@ func TestSDK_ContainerAppsApps_CreateGetDelete(t *testing.T) {
 	assert.Error(t, err, "Get after delete must fail")
 }
 
-// BUG-835 — sim was missing the WebApps.UpdateAzureStorageAccounts
-// route. The azure-functions backend's volumes.go binds named docker
-// volumes to Azure Files shares via this call; without it, function
-// apps cannot mount user volumes.
+// WebApps.UpdateAzureStorageAccounts route — the azure-functions
+// backend's volumes.go binds named docker volumes to Azure Files
+// shares via this call; without it, function apps cannot mount user
+// volumes.
 func TestSDK_WebApps_UpdateAzureStorageAccounts(t *testing.T) {
 	rg := "sdk-azf-storage-rg"
 	ensureRG(t, rg)

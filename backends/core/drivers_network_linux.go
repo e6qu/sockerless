@@ -12,15 +12,15 @@ import (
 
 // LinuxNetworkDriver adds real network namespace operations on top of
 // synthetic networking. When netns is `Available()` (kernel + capabilities
-// permit), creation must succeed — BUG-823: previously a netns
-// CreateNamespace / CreateVethPair failure was logged as a warning and
-// the driver silently continued in synthetic-only mode, which produced
-// containers that thought they had real networking but actually didn't
-// (cross-container DNS / port bindings broke without an obvious cause).
-// Now any netns failure surfaces as a real error and the network create
-// rolls back. Operators who want best-effort degradation can opt in via
-// `SOCKERLESS_NETNS_BEST_EFFORT=1`, in which case a warning is logged and
-// the synthetic-only path is used — but only when explicitly chosen.
+// permit), creation must succeed: any netns CreateNamespace /
+// CreateVethPair failure surfaces as a real error and the network
+// create rolls back (the previous best-effort degrade silently
+// produced containers that thought they had real networking but
+// actually didn't, breaking cross-container DNS / port bindings
+// without an obvious cause). Operators who want best-effort
+// degradation can opt in via `SOCKERLESS_NETNS_BEST_EFFORT=1`, in
+// which case a warning is logged and the synthetic-only path is
+// used — but only when explicitly chosen.
 type LinuxNetworkDriver struct {
 	Synthetic *SyntheticNetworkDriver
 	Netns     *NetnsManager

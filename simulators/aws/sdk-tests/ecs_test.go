@@ -382,9 +382,8 @@ func TestECS_TaskNoCommandStaysRunning(t *testing.T) {
 	}
 }
 
-// BUG-832 — sim previously was missing TagResource/UntagResource handlers.
-// These tests pin the contract: tag a running task, list tags, untag,
-// and confirm STOPPED tasks reject tagging.
+// TagResource/UntagResource contract: tag a running task, list tags,
+// untag, and confirm STOPPED tasks reject tagging.
 func TestECS_TagResource_OnRunningTask(t *testing.T) {
 	client, cluster, taskArn := ecsRunTaskHelper(t, "tag-task", ecstypes.ContainerDefinition{
 		Name:    aws.String("app"),

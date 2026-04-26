@@ -457,7 +457,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	if c.State.Running {
-		// `docker rm -f` is SIGKILL → exit 137 (BUG-826).
+		// `docker rm -f` is SIGKILL → exit 137.
 		killExitCode := core.SignalToExitCode("SIGKILL")
 		s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 		s.EmitEvent("container", "die", id, map[string]string{
@@ -554,7 +554,7 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
 		}
-		// `docker restart` sends SIGTERM → exit 143 (BUG-826).
+		// `docker restart` sends SIGTERM → exit 143.
 		stopExitCode := core.SignalToExitCode("SIGTERM")
 		s.EmitEvent("container", "die", id, map[string]string{
 			"exitCode": fmt.Sprintf("%d", stopExitCode),

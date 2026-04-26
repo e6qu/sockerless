@@ -6,19 +6,19 @@ import (
 	"net"
 )
 
-// Phase 104 — ExecDriver narrow→typed adapter.
+// ExecDriver narrow→typed adapter.
 //
 // `legacyExecAdapter` wraps the existing narrow `ExecDriver` interface
 // (`Exec(ctx, containerID, execID, cmd, env, workDir, tty, conn) int`)
 // into the new typed `ExecDriver104` shape
 // (`Exec(dctx DriverContext, opts ExecOptions, conn io.ReadWriter) (int, error)`).
 //
-// This is the first dimension-lift of Phase 104: it lets backends opt
-// into the typed framework without rewriting their existing exec
-// implementation. Backends keep their `core.ExecDriver` impl in the
-// narrow `Drivers.Exec` slot during the transition; setting
-// `DriverSet104.Exec = WrapLegacyExec(narrow, "<backend>", "<impl>")`
-// surfaces it as a typed `ExecDriver104` for the new dispatch sites.
+// This adapter lets backends opt into the typed framework without
+// rewriting their existing exec implementation. Backends keep their
+// `core.ExecDriver` impl in the narrow `Drivers.Exec` slot during the
+// transition; setting `DriverSet104.Exec = WrapLegacyExec(narrow,
+// "<backend>", "<impl>")` surfaces it as a typed `ExecDriver104` for
+// the new dispatch sites.
 //
 // Once every backend's exec call site is migrated to dispatch through
 // `DriverSet104.Exec`, the narrow `core.ExecDriver` interface is

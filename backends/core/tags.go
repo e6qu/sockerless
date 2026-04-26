@@ -150,9 +150,9 @@ func ParseLabelsFromTags(tags map[string]string) map[string]string {
 // label charset (e.g. the sockerless-labels JSON blob's `{`, `:`, `"`)
 // are dropped from labels — callers should pair this with
 // AsGCPAnnotations which captures the same data without charset limits.
-// Phase 97 (BUG-746): previously every value was blindly truncated and
-// pushed into labels, which caused GCP's ARM validator to reject the
-// whole resource when the JSON blob appeared.
+// Previously every value was blindly truncated and pushed into
+// labels, which caused GCP's ARM validator to reject the whole
+// resource when the JSON blob appeared.
 func (ts TagSet) AsGCPLabels() map[string]string {
 	m := ts.AsMap()
 	result := make(map[string]string, len(m))

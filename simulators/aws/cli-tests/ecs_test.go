@@ -188,7 +188,7 @@ func TestECS_CLI_RunTaskNonZeroExit(t *testing.T) {
 	assert.Equal(t, 1, *descResult.Tasks[0].Containers[0].ExitCode)
 }
 
-// BUG-832 — CLI-level coverage for the missing tag handlers.
+// CLI-level coverage for the ECS Tag/Untag handlers.
 func TestECS_CLI_TagAndUntagTask(t *testing.T) {
 	runCLI(t, awsCLI("ecs", "create-cluster", "--cluster-name", "cli-tag-cluster"))
 

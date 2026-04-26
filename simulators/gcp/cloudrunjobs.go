@@ -89,7 +89,7 @@ type ContainerPort struct {
 
 // Volume represents a volume available to containers. Cloud Run's real
 // API supports gcs / secret / cloudSqlInstance / nfs sources; we
-// implement gcs here (Phase 92) — additional sources stay nil-able so
+// implement gcs here — additional sources stay nil-able so
 // serialisation round-trips match real API responses.
 type Volume struct {
 	Name   string              `json:"name"`
@@ -507,12 +507,12 @@ func registerCloudRunJobs(srv *sim.Server) {
 						}
 					})
 				}
-				// BUG-827: previously injected "Execution completed
-				// successfully" regardless of `succeeded`, masking
-				// failed jobs as fake-success in the log stream and
-				// breaking tests like TestCloudRunArithmeticInvalid
-				// that assert on the failure marker. Match the actual
-				// outcome.
+				// Match the actual outcome (the previous behaviour
+				// always injected "Execution completed successfully"
+				// regardless of `succeeded`, masking failed jobs as
+				// fake-success in the log stream and breaking tests
+				// like TestCloudRunArithmeticInvalid that assert on
+				// the failure marker).
 				if succeeded {
 					injectCloudRunJobLog(proj, job, "Execution completed successfully")
 				} else {

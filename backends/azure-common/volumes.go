@@ -12,7 +12,7 @@ import (
 
 // FileShareManager owns sockerless-managed Azure Files shares backing
 // Docker named volumes for every Azure backend that can mount file
-// shares (ACA today, AZF in Phase 94). One share per Docker volume,
+// shares (ACA + AZF). One share per Docker volume,
 // inside the operator-configured storage account, with this metadata:
 //
 //   - sockerless-managed=true  → identifies sockerless-owned shares
@@ -21,7 +21,7 @@ import (
 // Each backend layers its own mount-attach semantics on top:
 //   - ACA adds a ManagedEnvironmentsStorages entry linking the share to
 //     the managed environment so Jobs/Apps can reference it by name.
-//   - AZF (Phase 94) adds a `sites/<fn>/config/azurestorageaccounts/<mount>`
+//   - AZF adds a `sites/<fn>/config/azurestorageaccounts/<mount>`
 //     sub-resource linking the share to the function app.
 //
 // The share itself is identical across backends, so it's managed here.

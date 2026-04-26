@@ -7,13 +7,13 @@ import (
 	"github.com/sockerless/api"
 )
 
-// Phase 104 — per-cloud-per-dimension driver overrides
+// Per-cloud-per-dimension driver overrides
 //
 // Operators select an alternate driver for a dimension via the env
 // var `SOCKERLESS_<BACKEND>_<DIMENSION>=<impl>`. Examples:
 //
 //   SOCKERLESS_ECS_BUILD=Kaniko             # ECS Build → KanikoInContainer
-//   SOCKERLESS_LAMBDA_FSDIFF=OverlayUpper   # Lambda FSDiff → Phase 103
+//   SOCKERLESS_LAMBDA_FSDIFF=OverlayUpper   # Lambda FSDiff → overlay rootfs
 //
 // `<DIMENSION>` is the typed dimension name without the trailing
 // `Driver` ("EXEC", "ATTACH", "FSREAD", "FSWRITE", "FSDIFF",
@@ -98,9 +98,9 @@ func ResolveDriverFor(backend, dimension string) (Driver, bool, error) {
 //	 registered. Configured driver: lambda ReverseAgentExec"
 //
 // Centralising the message shape keeps every NotImpl response
-// shaped the same way across all backends + dimensions, and matches
-// the BUG-792 "no phase reference in error" rule. Pass the typed
-// driver's `Describe()` value as `description`.
+// shaped the same way across all backends + dimensions, with no
+// phase or bug references leaking into the operator-visible error.
+// Pass the typed driver's `Describe()` value as `description`.
 func NotImplDriverError(action, description string) *api.NotImplementedError {
 	return &api.NotImplementedError{Message: "docker " + action + " requires " + description}
 }

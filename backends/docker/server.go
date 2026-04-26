@@ -16,14 +16,12 @@ type Server struct {
 	docker *dockerclient.Client
 }
 
-// NewServer creates a new Docker backend server. BUG-830: previously
-// the BackendDescriptor hardcoded `NCPU: 4` and `MemTotal: 8 GB` as
-// fallbacks for when the daemon's `/info` query failed. Per the
-// project no-fallbacks rule, that meant `docker info` could ship
-// fabricated CPU/memory values to clients without any signal. Now the
-// daemon is queried at startup with a 5-second deadline; failure is
-// fatal so the operator gets a clear error instead of a sockerless
-// pretending the daemon has 4 CPUs and 8 GB RAM.
+// NewServer creates a new Docker backend server. The daemon is
+// queried at startup with a 5-second deadline; failure is fatal so
+// the operator gets a clear error instead of fabricated CPU/memory
+// values. Per the project no-fallbacks rule we never ship a
+// hardcoded `NCPU: 4` / `MemTotal: 8 GB` placeholder when the
+// daemon's `/info` query fails.
 func NewServer(logger zerolog.Logger, dockerHost string) (*Server, error) {
 	opts := []dockerclient.Opt{
 		dockerclient.WithAPIVersionNegotiation(),

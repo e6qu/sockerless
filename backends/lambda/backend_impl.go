@@ -914,7 +914,7 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 		return nil, &api.InvalidParameterError{Message: "container query parameter is required"}
 	}
 	if !s.config.EnableCommit {
-		return nil, &api.NotImplementedError{Message: "docker commit on Lambda is gated — set SOCKERLESS_ENABLE_COMMIT=1 (the agent-driven commit captures the whole rootfs as a single layer; see PLAN.md Phase 98b)"}
+		return nil, &api.NotImplementedError{Message: "docker commit on Lambda is gated — set SOCKERLESS_ENABLE_COMMIT=1 (the agent-driven commit captures the whole rootfs as a single layer)"}
 	}
 	return core.CommitContainerRequestViaAgent(s.BaseServer, s.reverseAgents, req)
 }

@@ -83,10 +83,9 @@ func TestGCFArithmeticSuccess(t *testing.T) {
 	checkLogs(t, resp.ID, "11")
 }
 
-// TestGCFArithmeticInvalid — re-enabled from the BUG-744 deletion.
-// The eval-arithmetic binary exits 1 on invalid syntax; Phase 95 maps
-// the function's non-2xx HTTP response via core.HTTPStatusToExitCode
-// so docker wait returns exit code 1 here.
+// TestGCFArithmeticInvalid: the eval-arithmetic binary exits 1 on
+// invalid syntax; the function's non-2xx HTTP response is mapped via
+// core.HTTPStatusToExitCode so docker wait returns exit code 1 here.
 func TestGCFArithmeticInvalid(t *testing.T) {
 	ctx := context.Background()
 
@@ -211,9 +210,9 @@ func TestGCFArithmeticWithLabels(t *testing.T) {
 
 	checkLogs(t, resp.ID, "58")
 
-	// Phase 97 (BUG-746 fix): labels survive the round-trip via the
-	// SOCKERLESS_LABELS env var (GCF Functions v2 has no Annotations
-	// and GCP's label-value charset would reject the JSON blob).
+	// Labels survive the round-trip via the SOCKERLESS_LABELS env var
+	// (GCF Functions v2 has no Annotations and GCP's label-value
+	// charset would reject the JSON blob).
 	info, err := dockerClient.ContainerInspect(ctx, resp.ID)
 	if err != nil {
 		t.Fatalf("inspect failed: %v", err)

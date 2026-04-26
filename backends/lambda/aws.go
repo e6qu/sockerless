@@ -21,7 +21,7 @@ type AWSClients struct {
 	ECR        *ecr.Client
 	CodeBuild  *codebuild.Client
 	S3         *s3.Client
-	// Phase 94b: EFS client backs named-volume provisioning via
+	// EFS client backs named-volume provisioning via
 	// awscommon.EFSManager (shared with ECS) + Function.FileSystemConfigs[]
 	// attach on CreateFunction.
 	EFS *efs.Client

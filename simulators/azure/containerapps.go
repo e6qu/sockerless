@@ -514,12 +514,12 @@ func registerContainerApps(srv *sim.Server) {
 				e.EndTime = time.Now().UTC().Format(time.RFC3339)
 			})
 			if completed {
-				// BUG-827: previously injected "Execution completed
-				// successfully" regardless of `succeeded`, masking
-				// failed jobs as fake-success in the log stream and
-				// breaking tests like TestACAArithmeticInvalid that
-				// assert on the failure marker. Now match the actual
-				// outcome.
+				// Match the actual outcome (the previous behaviour
+				// always injected "Execution completed successfully"
+				// regardless of `succeeded`, masking failed jobs as
+				// fake-success in the log stream and breaking tests
+				// like TestACAArithmeticInvalid that assert on the
+				// failure marker).
 				if succeeded {
 					injectContainerAppLog(jobShortName, "Execution completed successfully")
 				} else {

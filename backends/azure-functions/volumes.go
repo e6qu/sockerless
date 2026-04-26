@@ -11,8 +11,8 @@ import (
 	azurecommon "github.com/sockerless/azure-common"
 )
 
-// Phase 94 — Azure Files-backed named-volume provisioning for Azure
-// Functions Flex Consumption / Premium plan.
+// Azure Files-backed named-volume provisioning for Azure Functions
+// Flex Consumption / Premium plan.
 //
 // Unlike ACA (which uses `managedEnvironmentsStorages`), Azure Functions
 // attaches file shares via the `sites/<siteName>/config/azurestorageaccounts/`
@@ -22,9 +22,8 @@ import (
 // via StorageAccounts.ListKeys at attach-time rather than caching.
 //
 // Volume CRUD reuses azurecommon.FileShareManager shared with the ACA
-// backend (Phase 94 prereq). ContainerStart (backend_impl.go) calls
-// this file's helper to attach shares after WebApps.BeginCreateOrUpdate
-// returns.
+// backend. ContainerStart (backend_impl.go) calls this file's helper to
+// attach shares after WebApps.BeginCreateOrUpdate returns.
 //
 // Host-path bind specs (`/h:/c`) stay rejected — AZF containers have no
 // host filesystem to bind from.
@@ -51,7 +50,7 @@ func (s *Server) listManagedShares(ctx context.Context) ([]*armstorage.FileShare
 // (`volName:/mnt[:ro]`), provisions a file share per unique named
 // volume, fetches the fresh storage-account access key, and calls
 // `WebApps.UpdateAzureStorageAccounts` to register each share → mount
-// path pair on the site. Phase 94.
+// path pair on the site.
 func (s *Server) attachVolumesToFunctionSite(ctx context.Context, siteName string, binds []string) error {
 	if len(binds) == 0 {
 		return nil

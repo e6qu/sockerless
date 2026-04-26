@@ -606,7 +606,7 @@ func taskToContainer(task ecstypes.Task, tags map[string]string, td ecstypes.Tas
 	// fields so `docker inspect` reflects the operator's `-m`/`--cpus`
 	// request. Fargate stores `task.Memory` as MB (string) and
 	// `task.Cpu` as 1024-unit shares (e.g. "256" = 0.25 vCPU). Docker's
-	// HostConfig expects bytes and nanoCPUs respectively. (BUG-801.)
+	// HostConfig expects bytes and nanoCPUs respectively.
 	var memBytes int64
 	if task.Memory != nil {
 		if mb, err := strconv.ParseInt(aws.ToString(task.Memory), 10, 64); err == nil && mb > 0 {

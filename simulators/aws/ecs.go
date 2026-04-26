@@ -1020,14 +1020,10 @@ func handleECSDeleteCluster(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleECSTagResource implements `AmazonEC2ContainerServiceV20141113.TagResource`.
-// BUG-832 (Phase 108 audit): the sim previously had ListTagsForResource
-// but no TagResource, so backend code paths that tag tasks (kill-signal
-// tag for BUG-781's exit-code mapping, restart-count tag for BUG-772,
-// rename's sockerless-name tag) were silently no-oping against the sim.
-// `mergeECSTagsByKey` adds new tags + overwrites existing keys; missing
-// tags persist. Real ECS rejects TagResource on STOPPED tasks; we
-// mirror that behaviour so the recovery.go BUG-799 path's "skip
-// STOPPED" logic exercises the same gate.
+// `mergeECSTagsByKey` adds new tags + overwrites existing keys;
+// missing tags persist. Real ECS rejects TagResource on STOPPED
+// tasks; we mirror that behaviour so the recovery.go "skip STOPPED"
+// logic exercises the same gate.
 func handleECSTagResource(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ResourceArn string   `json:"resourceArn"`

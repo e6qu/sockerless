@@ -9,9 +9,9 @@ import (
 
 // TestPodInspectShape_GoldenJSON locks down the wire shape returned by
 // `GET /libpod/pods/<name>/json` against the libpod CLI's expectations.
-// BUG-804 surfaced when one of the optional fields was absent and
-// podman's auto-decoder fell through to a slice path with a
-// `cannot unmarshal array into …` error. The golden assertion here is:
+// When an optional field is absent, podman's auto-decoder falls
+// through to a slice path with a `cannot unmarshal array into …`
+// error. The golden assertion here is:
 //
 //   - response is a JSON OBJECT (starts with `{`, not `[`)
 //   - every `define.InspectPodData` field present in our spec is
@@ -47,7 +47,7 @@ func TestPodInspectShape_GoldenJSON(t *testing.T) {
 		// sockerless core fields
 		"Id", "Name", "Created", "State", "Hostname", "Labels",
 		"NumContainers", "Containers", "SharedNamespaces",
-		// libpod-shape additions (BUG-804)
+		// libpod-shape additions
 		"Namespace", "CreateCommand", "ExitPolicy", "InfraContainerID",
 		"InfraConfig", "CgroupParent", "CgroupPath", "LockNumber",
 		"RestartPolicy", "BlkioWeight", "CPUPeriod", "CPUQuota",
@@ -78,11 +78,10 @@ func TestPodInspectShape_GoldenJSON(t *testing.T) {
 }
 
 // TestPodActionResponse_WireShape locks down the wire shape returned
-// by `POST /libpod/pods/<name>/stop` (and kill). BUG-806 surfaced
-// because podman's `PodStopReport.Errs` is `[]error` and never
-// round-trips JSON. Our handler emits `Errs: []` on success and
-// routes len(errs)>0 through HTTP 409 — the success body must
-// always have an empty array.
+// by `POST /libpod/pods/<name>/stop` (and kill). Podman's
+// `PodStopReport.Errs` is `[]error` and never round-trips JSON. Our
+// handler emits `Errs: []` on success and routes len(errs)>0 through
+// HTTP 409 — the success body must always have an empty array.
 func TestPodActionResponse_WireShape(t *testing.T) {
 	resp := &api.PodActionResponse{ID: "abc", Errs: []string{}}
 	body, _ := json.Marshal(resp)

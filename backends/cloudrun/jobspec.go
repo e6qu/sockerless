@@ -50,9 +50,9 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 		}
 	}
 
-	// Phase 97 (BUG-746): carry Docker labels as a base64-JSON env var so
-	// they round-trip through CloudState even if the GCP control-plane
-	// strips annotations (e.g. unsupported storage path or sim behaviour).
+	// Carry Docker labels as a base64-JSON env var so they round-trip
+	// through CloudState even if the GCP control-plane strips
+	// annotations (e.g. unsupported storage path or sim behaviour).
 	// cloud_state.go reads this variable back into Container.Config.Labels.
 	if ci.IsMain && len(config.Labels) > 0 {
 		labelsJSON, _ := json.Marshal(config.Labels)
@@ -62,10 +62,10 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 		})
 	}
 
-	// Phase 96: inject reverse-agent callback URL + container ID so a
-	// bootstrap baked into the container image can dial back for
-	// `docker exec` / `docker attach`. Empty CallbackURL ⇒ reverse-agent
-	// disabled (exec returns 126 for this container).
+	// Inject reverse-agent callback URL + container ID so a bootstrap
+	// baked into the container image can dial back for `docker exec` /
+	// `docker attach`. Empty CallbackURL ⇒ reverse-agent disabled
+	// (exec returns 126 for this container).
 	if ci.IsMain && s.config.CallbackURL != "" {
 		envVars = append(envVars,
 			&runpb.EnvVar{Name: "SOCKERLESS_CALLBACK_URL", Values: &runpb.EnvVar_Value{Value: s.config.CallbackURL}},

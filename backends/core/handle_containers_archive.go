@@ -262,9 +262,9 @@ func (s *BaseServer) buildContainerFromConfig(id, name string, config api.Contai
 	}
 
 	// Process explicit NetworkingConfig (e.g. from service containers).
-	// BUG-824: skip endpoints whose network doesn't resolve — callers
-	// surface the missing network via a separate NetworkConnect lookup
-	// rather than getting a synthetic 172.17.0.x placeholder here.
+	// Skip endpoints whose network doesn't resolve — callers surface
+	// the missing network via a separate NetworkConnect lookup rather
+	// than getting a synthetic 172.17.0.x placeholder here.
 	if networkingConfig != nil {
 		for netRef, reqEndpoint := range networkingConfig.EndpointsConfig {
 			ep := s.buildEndpointForNetwork(netRef, id, name, reqEndpoint)
@@ -294,8 +294,8 @@ func (s *BaseServer) buildContainerFromConfig(id, name string, config api.Contai
 // buildEndpointForNetwork creates an EndpointSettings for a network,
 // resolving IPAM from the IPAllocator and adding the container to the
 // Network.Containers map. Returns nil if the referenced network does
-// not exist — callers must check and surface a NotFoundError. BUG-824:
-// previously this synthesised a hardcoded `172.17.0.<N>` endpoint for
+// not exist — callers must check and surface a NotFoundError.
+// Previously this synthesised a hardcoded `172.17.0.<N>` endpoint for
 // unknown networks, producing colliding IPs across containers and
 // silently masking "unknown network" errors as fake-success.
 func (s *BaseServer) buildEndpointForNetwork(netRef, containerID, containerName string, reqEndpoint *api.EndpointSettings) *api.EndpointSettings {

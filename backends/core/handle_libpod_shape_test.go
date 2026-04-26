@@ -10,22 +10,21 @@ import (
 	"github.com/sockerless/api"
 )
 
-// Phase 105 — libpod-shape conformance, second wave.
+// Libpod-shape conformance, second wave.
 //
 // These tests pin down the JSON shape of every libpod handler that
-// has a non-trivial response. The first wave (BUG-804 + BUG-806)
-// shipped golden tests for `pod inspect` and `pod stop` in
-// `pod_inspect_shape_test.go`; this file extends the same coverage
-// to `info`, `containers/json`, `containers/{id}` (remove),
-// `images/pull`, and `containers/{id}/json` (libpod inspect).
+// has a non-trivial response. The first wave shipped golden tests for
+// `pod inspect` and `pod stop` in `pod_inspect_shape_test.go`; this
+// file extends the same coverage to `info`, `containers/json`,
+// `containers/{id}` (remove), `images/pull`, and
+// `containers/{id}/json` (libpod inspect).
 //
 // Each test asserts the response is a JSON object (or the documented
 // shape — array for remove, stream for pull) and every field
 // podman's bindings in `pkg/api/handlers/libpod` look at is present.
 // Field absence in our response triggers podman's auto-decoder to
 // fall through to the wrong path, surfacing as a confusing
-// `cannot unmarshal X into Y` error from the CLI (the BUG-804
-// failure mode).
+// `cannot unmarshal X into Y` error from the CLI.
 
 func newShapeTestServer(t *testing.T) *BaseServer {
 	t.Helper()
@@ -113,8 +112,8 @@ func TestLibpodInfoShape(t *testing.T) {
 // `pkg/api/handlers/libpod.GenerateLibpodContainerListResponseBody`
 // expects every libpod-specific field to be present (Pod, PodName,
 // IsInfra, AutoRemove, Mounts, Pid, …), even if zero/empty. A
-// missing key triggers the same auto-decoder fall-through that hit
-// BUG-804.
+// missing key triggers the same auto-decoder fall-through that hits
+// the libpod CLI bindings.
 func TestLibpodContainerListShape(t *testing.T) {
 	s := newShapeTestServer(t)
 

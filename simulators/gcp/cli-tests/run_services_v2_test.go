@@ -8,10 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// BUG-833 — CLI-level smoke for the v2 Cloud Run Services routes added
-// to the sim in Phase 108. The sim previously only handled v1 Knative
-// service paths (`/v1/namespaces/{ns}/services`); this exercises the
-// v2 REST surface used by run.NewServicesRESTClient.
+// CLI-level smoke for the v2 Cloud Run Services routes. The sim
+// previously only handled v1 Knative service paths
+// (`/v1/namespaces/{ns}/services`); this exercises the v2 REST
+// surface used by run.NewServicesRESTClient.
 
 func servicesBaseURL() string {
 	return fmt.Sprintf("%s/v2/projects/%s/locations/%s/services", baseURL, project, location)

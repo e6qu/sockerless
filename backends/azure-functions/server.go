@@ -19,8 +19,8 @@ type Server struct {
 
 	AZF *core.StateStore[AZFState]
 	azfVolumeState
-	// Phase 98: reverse-agent registry for docker top / cp / stat
-	// via a bootstrap running inside the function app container.
+	// Reverse-agent registry for docker top / cp / stat via a
+	// bootstrap running inside the function app container.
 	reverseAgents *core.ReverseAgentRegistry
 }
 
@@ -77,7 +77,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 
 	registerUI(s.BaseServer)
 
-	// Phase 98: reverse-agent registry + WS endpoint.
+	// Reverse-agent registry + WS endpoint.
 	s.reverseAgents = core.NewReverseAgentRegistry()
 	s.Mux.HandleFunc("/v1/azf/reverse", core.HandleReverseAgentWS(s.reverseAgents, logger))
 	s.Drivers.Exec = &core.ReverseAgentExecDriver{Registry: s.reverseAgents, Logger: logger}

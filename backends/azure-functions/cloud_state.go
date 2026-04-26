@@ -91,7 +91,7 @@ func (p *azfCloudState) CheckNameAvailable(ctx context.Context, name string) (bo
 }
 
 func (p *azfCloudState) WaitForExit(ctx context.Context, containerID string) (int, error) {
-	// Phase 95: fast path — invocation goroutine records the outcome.
+	// Fast path — invocation goroutine records the outcome.
 	if inv, ok := p.server.Store.GetInvocationResult(containerID); ok {
 		return inv.ExitCode, nil
 	}
@@ -176,7 +176,7 @@ func (p *azfCloudState) queryFunctionApps(ctx context.Context) ([]api.Container,
 
 			c := siteToContainer(site.Tags, site.Properties, site.Name)
 
-			// Phase 95: overlay recorded invocation outcome.
+			// Overlay recorded invocation outcome.
 			if inv, ok := p.server.Store.GetInvocationResult(c.ID); ok {
 				c.State = api.ContainerState{
 					Status:     "exited",

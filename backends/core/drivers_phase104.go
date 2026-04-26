@@ -6,7 +6,7 @@ import (
 	"github.com/sockerless/api"
 )
 
-// Phase 104 — Cross-backend driver framework
+// Cross-backend driver framework
 //
 // Thirteen typed driver dimensions covering every "perform docker
 // action X against the cloud" decision sockerless makes. Interfaces
@@ -17,13 +17,13 @@ import (
 // dimension via `SOCKERLESS_<BACKEND>_<DIMENSION>=<impl>` (resolved by
 // the override registry in `driver_override.go`).
 //
-// The Phase 104 dimensions are kept distinct from the existing
-// narrow `core.DriverSet` (Exec / Filesystem / Stream / Network) so
-// the lift can run dimension-by-dimension with no behaviour change
-// per commit. Each lift moves one dimension's existing implementation
-// into the new typed shape and switches the BaseServer dispatch site
-// to call through the typed driver. The narrow `DriverSet` is
-// removed once the last dimension is absorbed.
+// The typed dimensions are kept distinct from the existing narrow
+// `core.DriverSet` (Exec / Filesystem / Stream / Network) so the lift
+// can run dimension-by-dimension with no behaviour change per commit.
+// Each lift moves one dimension's existing implementation into the
+// new typed shape and switches the BaseServer dispatch site to call
+// through the typed driver. The narrow `DriverSet` is removed once
+// the last dimension is absorbed.
 
 // ExecDriver104 lifts `core.Drivers.Exec` into the typed shape.
 // Implementations: docker→DockerExec; ECS→SSMExec;
@@ -62,8 +62,8 @@ type AttachDriver104 interface {
 // Implementations: docker→DockerArchive; ECS→SSMTar;
 // FaaS+CR+ACA→ReverseAgentTar.
 //
-// Phase 103's overlay-rootfs alternate `OverlayUpperRead` ships under
-// this dimension once Phase 104 lands.
+// The overlay-rootfs alternate `OverlayUpperRead` ships under this
+// dimension once the typed-driver framework lands fully.
 type FSReadDriver interface {
 	Driver
 	GetArchive(dctx DriverContext, path string, w io.Writer) error
@@ -72,8 +72,7 @@ type FSReadDriver interface {
 
 // FSWriteDriver lifts the cp-to-container / put-archive paths.
 // Implementations: docker→DockerArchive; ECS→SSMTarExtract;
-// FaaS+CR+ACA→ReverseAgentTarExtract; alternate `OverlayUpperWrite`
-// (Phase 103).
+// FaaS+CR+ACA→ReverseAgentTarExtract; alternate `OverlayUpperWrite`.
 type FSWriteDriver interface {
 	Driver
 	PutArchive(dctx DriverContext, path string, body io.Reader, noOverwriteDirNonDir bool) error
@@ -82,7 +81,7 @@ type FSWriteDriver interface {
 // FSDiffDriver lifts the docker-diff (find-newer) path.
 // Implementations: docker→DockerChanges; ECS→SSMFindNewer;
 // FaaS+CR+ACA→ReverseAgentFindNewer; alternate `OverlayUpperDiff`
-// (Phase 103) closes the BUG-750 deletion-not-captured limitation.
+// closes the deletion-not-captured limitation.
 type FSDiffDriver interface {
 	Driver
 	Changes(dctx DriverContext) ([]api.ContainerChangeItem, error)
@@ -90,8 +89,7 @@ type FSDiffDriver interface {
 
 // FSExportDriver lifts the docker-export path.
 // Implementations: docker→DockerExport; ECS→SSMTarRoot;
-// FaaS+CR+ACA→ReverseAgentTarRoot; alternate `OverlayMergedExport`
-// (Phase 103).
+// FaaS+CR+ACA→ReverseAgentTarRoot; alternate `OverlayMergedExport`.
 type FSExportDriver interface {
 	Driver
 	Export(dctx DriverContext, w io.Writer) error
@@ -100,8 +98,8 @@ type FSExportDriver interface {
 // CommitDriver lifts the docker-commit path.
 // Implementations: docker→DockerCommit;
 // FaaS+CR+ACA→ReverseAgentTarLayer+Push; ECS→accepted-gap NotImpl
-// (no Fargate host fs); alternate `OverlayLayerCommit` (Phase 103)
-// closes the ECS gap.
+// (no Fargate host fs); alternate `OverlayLayerCommit` closes the
+// ECS gap.
 type CommitDriver interface {
 	Driver
 	Commit(dctx DriverContext, opts CommitOptions) (imageID string, err error)
@@ -127,7 +125,7 @@ type BuildDriver interface {
 	Driver
 	Build(dctx DriverContext, opts BuildOptions, ctxReader io.Reader) (io.ReadCloser, error)
 	// Available reports whether the underlying build service is
-	// reachable / configured. BUG-822: returning false routes to a
+	// reachable / configured. Returning false routes to a
 	// `NotImplementedError` with a clear missing-prerequisite
 	// message; never falls back to a synthetic local-Dockerfile
 	// parser unless the operator opts in via

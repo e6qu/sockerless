@@ -13,8 +13,7 @@ import (
 // REST surface — `/v2/projects/{project}/locations/{location}/services`
 // — not the v1 Knative paths handled in cloudrun.go. When
 // Config.UseService=true the backend hits these endpoints; without
-// them every Service call 404s, which is why Phase 108's GCP audit
-// flagged BUG-833.
+// them every Service call 404s.
 //
 // Real API: https://cloud.google.com/run/docs/reference/rest/v2/projects.locations.services
 
@@ -184,9 +183,9 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 	// UpdateService is not invoked by sockerless today (the backend
 	// recreates services rather than patching them). Implement it
 	// anyway so terraform's `google_cloud_run_v2_service` resource
-	// round-trips against the sim — Phase 108's no-defer rule says
-	// every cloud-API call sockerless or its declarative-driver
-	// counterparts touch must be implemented at fidelity.
+	// round-trips against the sim — every cloud-API call sockerless
+	// or its declarative-driver counterparts touch must be implemented
+	// at fidelity.
 	srv.HandleFunc("PATCH /v2/projects/{project}/locations/{location}/services/{service}", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
 		location := sim.PathParam(r, "location")

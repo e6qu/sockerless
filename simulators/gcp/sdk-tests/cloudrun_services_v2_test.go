@@ -11,10 +11,10 @@ import (
 	"google.golang.org/api/option"
 )
 
-// BUG-833 — sim was missing v2 Cloud Run Services routes; the
-// cloudrun backend uses run.NewServicesRESTClient (v2 REST) when
-// Config.UseService=true and silently 404'd against the sim. These
-// tests pin the v2 contract using the same client the backend uses.
+// v2 Cloud Run Services routes contract. The cloudrun backend uses
+// run.NewServicesRESTClient (v2 REST) when Config.UseService=true.
+// These tests pin the v2 contract using the same client the backend
+// uses.
 
 func newServicesClient(t *testing.T) *run.ServicesClient {
 	t.Helper()

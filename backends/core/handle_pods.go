@@ -135,7 +135,7 @@ func (s *BaseServer) handlePodKill(w http.ResponseWriter, r *http.Request) {
 }
 
 // writePodActionResponse serializes a PodActionResponse using the
-// podman-compatible convention (BUG-806): success path emits
+// podman-compatible convention: success path emits
 // `Errs: []` (the only `[]error` shape that survives podman's bindings
 // json.Unmarshal); per-container stop/kill failures are surfaced via
 // HTTP 409 + an ErrorModel-shaped body so the CLI prints them and

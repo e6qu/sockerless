@@ -8,9 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// BUG-834 — sim was missing the v2 ContainerApps "Apps" routes
-// (Microsoft.App/containerApps). Smoke-test the CRUD via az rest so a
-// regression in the route registration is caught at the wire level.
+// v2 ContainerApps "Apps" routes (Microsoft.App/containerApps).
+// Smoke-test the CRUD via az rest so a regression in the route
+// registration is caught at the wire level.
 func TestContainerAppsApps_CLI_CreateGetDelete(t *testing.T) {
 	appURL := acaURL("containerApps/cli-test-app")
 	body := `{
@@ -67,8 +67,8 @@ func TestContainerAppsApps_CLI_CreateGetDelete(t *testing.T) {
 	assert.Equal(t, 404, resp.StatusCode, "GET after delete must be 404")
 }
 
-// BUG-835 — sim was missing WebApps.UpdateAzureStorageAccounts; the
-// azure-functions backend uses it to bind named volumes to Azure Files.
+// WebApps.UpdateAzureStorageAccounts is what the azure-functions
+// backend uses to bind named volumes to Azure Files.
 func TestWebApps_CLI_UpdateAzureStorageAccounts(t *testing.T) {
 	const azfAPIVersion = "2024-04-01"
 	siteURL := armURL("Microsoft.Web", "sites/cli-storage-site", azfAPIVersion)

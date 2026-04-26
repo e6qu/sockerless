@@ -197,8 +197,8 @@ func (s *Server) ContainerExportViaSSM(containerID string) (io.ReadCloser, error
 }
 
 // ContainerSignalViaSSM sends a Unix signal to the user subprocess
-// PID written by the bootstrap to /tmp/.sockerless-mainpid (Phase 99
-// convention). Used by ContainerPause/Unpause.
+// PID written by the bootstrap to /tmp/.sockerless-mainpid. Used by
+// ContainerPause/Unpause.
 func (s *Server) ContainerSignalViaSSM(containerID, signal string) error {
 	cmd := fmt.Sprintf(
 		`sh -c 'test -r %s || { echo "sockerless bootstrap PID file not found at %s" >&2; exit 64; }; kill -%s $(cat %s)'`,

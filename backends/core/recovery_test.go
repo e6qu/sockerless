@@ -33,7 +33,7 @@ func (m *mockScanner) CleanupResource(_ context.Context, _ ResourceEntry) error 
 }
 
 // Recovery tests now exercise the in-memory + cloud-scan path only —
-// the disk-backed Save/Load was removed in BUG-800 (stateless invariant).
+// the disk-backed Save/Load was removed (stateless invariant).
 
 func TestRecoverOnStartupLoadsCloudOrphans(t *testing.T) {
 	rr := NewResourceRegistry("")

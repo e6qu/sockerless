@@ -10,23 +10,22 @@ import (
 	"github.com/sockerless/api"
 )
 
-// Phase 105 — third wave shape tests for libpod handlers that don't
-// have golden coverage yet: image-pull stream, networks (list +
-// inspect), volumes (list + inspect), system events, system df.
+// Third-wave shape tests for libpod handlers that don't have golden
+// coverage yet: image-pull stream, networks (list + inspect), volumes
+// (list + inspect), system events, system df.
 //
 // Same shape-test pattern as the second wave: pin top-level type
 // (object vs array vs stream) plus every field name podman's CLI
 // bindings look at. Field absence is the regression we're guarding
 // against — it triggers podman's auto-decoder to fall through to
-// the wrong path (BUG-804 failure mode).
+// the wrong path.
 
 // TestLibpodImagePullStreamShape pins the JSON-stream format that
 // podman's `pkg/bindings/images.Pull` consumes. The response is a
 // chunked stream where each chunk is a JSON object — podman reads
 // one object per chunk and looks for an `id` field on the final
 // chunk to identify the pulled image. Earlier sockerless versions
-// returned a single object body (BUG-501 / pre-Phase 50) which
-// broke `podman pull`.
+// returned a single object body which broke `podman pull`.
 func TestLibpodImagePullStreamShape(t *testing.T) {
 	s := newShapeTestServer(t)
 
@@ -107,7 +106,7 @@ func TestLibpodNetworkListShape(t *testing.T) {
 
 // TestLibpodVolumeListShape pins the volume-list response.
 // Podman expects `{Volumes: [...], Warnings: [...]}` — never a bare
-// array (see BUG-804 failure mode). After `volumeCreate`, the
+// array. After `volumeCreate`, the
 // volume entry must include all `api.Volume` keys.
 func TestLibpodVolumeListShape(t *testing.T) {
 	s := newShapeTestServer(t)

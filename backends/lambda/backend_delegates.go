@@ -38,7 +38,7 @@ func accessPointToVolume(ap efstypes.AccessPointDescription) *api.Volume {
 // --- Container methods requiring resolution ---
 
 // ContainerChanges lists files modified since container boot via the
-// reverse-agent (find + /proc/1 baseline). Phase 98 (BUG-753).
+// reverse-agent (find + /proc/1 baseline).
 func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -55,7 +55,7 @@ func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) 
 }
 
 // ContainerGetArchive runs `tar -cf - -C <parent> <name>` inside the
-// container via the reverse-agent. Phase 98 (BUG-751).
+// container via the reverse-agent.
 func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArchiveResponse, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -79,7 +79,7 @@ func (s *Server) ContainerInspect(id string) (*api.Container, error) {
 }
 
 // ContainerPutArchive extracts the incoming tar body into <path> via
-// the reverse-agent. Phase 98.
+// the reverse-agent.
 func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDir bool, body io.Reader) error {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -110,7 +110,7 @@ func (s *Server) ContainerResize(id string, h int, w int) error {
 }
 
 // ContainerStatPath runs `stat` inside the container via the
-// reverse-agent and parses the output. Phase 98 (BUG-751).
+// reverse-agent and parses the output.
 func (s *Server) ContainerStatPath(id string, path string) (*api.ContainerPathStat, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -134,9 +134,9 @@ func (s *Server) ContainerStats(id string, stream bool) (io.ReadCloser, error) {
 }
 
 // ContainerTop runs `ps` inside the container via the reverse-agent
-// and parses the output. Phase 98 (BUG-752). Requires a bootstrap /
-// agent running inside the container; returns ErrNoReverseAgent when
-// no session is registered.
+// and parses the output. Requires a bootstrap / agent running inside
+// the container; returns ErrNoReverseAgent when no session is
+// registered.
 func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopResponse, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -301,8 +301,8 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 	return s.BaseServer.SystemEvents(opts)
 }
 
-// Phase 94b: named-volume operations provision sockerless-managed EFS
-// access points via awscommon.EFSManager (shared with ECS). Lambda
+// Named-volume operations provision sockerless-managed EFS access
+// points via awscommon.EFSManager (shared with ECS). Lambda
 // attaches them at CreateFunction time via Function.FileSystemConfigs[].
 // Named volumes require the function to run in a VPC with mount targets
 // in matching subnets — `SOCKERLESS_LAMBDA_SUBNETS` must be set.

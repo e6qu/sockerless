@@ -451,8 +451,8 @@ func TestECSNetworkOperations(t *testing.T) {
 	}
 }
 
-// TestECSVolumeOperations exercises the Phase 91 EFS-backed named
-// volume path: VolumeCreate provisions a sockerless-owned EFS access
+// TestECSVolumeOperations exercises the EFS-backed named volume path:
+// VolumeCreate provisions a sockerless-owned EFS access
 // point, VolumeInspect and VolumeList surface it, and VolumeRemove
 // deletes it. The simulator's EFS slice backs each access point with
 // a host-side directory so tasks bind-mount a real path.

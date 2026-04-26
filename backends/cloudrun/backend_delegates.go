@@ -28,7 +28,7 @@ func bucketToVolume(dockerName string, b *storage.BucketAttrs) *api.Volume {
 // Container methods with resolution
 
 // ContainerChanges lists files modified since container boot via the
-// reverse-agent. Phase 98 (BUG-753).
+// reverse-agent.
 func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -157,7 +157,7 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 }
 
 // Named-volume operations map to GCS buckets on the sockerless-owned
-// project (Phase 92). Each Docker volume gets a dedicated bucket
+// project. Each Docker volume gets a dedicated bucket
 // labeled `sockerless-managed=true` + `sockerless-volume-name=<name>`;
 // Cloud Run tasks mount buckets via the RevisionTemplate's
 // `Volume{Gcs{Bucket}}` source. Bind specs `volName:/mnt` land on the

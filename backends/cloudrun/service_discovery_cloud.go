@@ -19,9 +19,9 @@ var _ = (*Server).cloudServiceResolve
 // Cloud Run Job executions don't have addressable per-execution IPs
 // reachable from other Jobs in the same VPC the way Fargate ENIs are. The
 // caller passes `ep.IPAddress` which is seeded as the empty-string
-// placeholder "" (was "0.0.0.0" pre-BUG-831; the gate below still
-// accepts the legacy value). Skip registration in that case rather
-// than write a useless A-record.
+// placeholder "" (the gate below still accepts the legacy "0.0.0.0"
+// for backward compat). Skip registration in that case rather than
+// write a useless A-record.
 // Under UseService, callers use cloudServiceRegisterCNAME instead — Services
 // have stable per-revision URLs that work with VPC connector egress.
 func (s *Server) cloudServiceRegister(containerID, hostname, ip, networkID string) error {

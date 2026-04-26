@@ -92,8 +92,8 @@ func (s *BaseServer) PodInspect(name string) (*api.PodInspectResponse, error) {
 		Containers:       containers,
 		SharedNamespaces: pod.SharedNS,
 
-		// Libpod-shape optional fields (BUG-804). Sockerless pods are a
-		// thin labelling wrapper over containers — we don't run a real
+		// Libpod-shape optional fields. Sockerless pods are a thin
+		// labelling wrapper over containers — we don't run a real
 		// infra container and don't enforce per-pod cgroup / IPC /
 		// blkio limits — so emit zero-valued shapes rather than
 		// omitting. Empty slices/maps preferred over nil so the JSON
@@ -174,7 +174,7 @@ func (s *BaseServer) PodStop(name string, timeout *int) (*api.PodActionResponse,
 		return nil, &api.NotFoundError{Resource: "pod", ID: name}
 	}
 
-	stopExitCode := SignalToExitCode("SIGTERM") // 128+15 = 143 (BUG-826)
+	stopExitCode := SignalToExitCode("SIGTERM") // 128+15 = 143
 	for _, cid := range pod.ContainerIDs {
 		c, ok := s.Store.Containers.Get(cid)
 		if !ok || !c.State.Running {

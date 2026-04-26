@@ -13,12 +13,11 @@ import (
 // `s.ResolveContainerAuto(...)` themselves and don't have to thread
 // the BaseServer through their public surface.
 //
-// Phase 104: this is the foundation envelope for the 13 typed driver
-// dimensions defined in `drivers_phase104.go`. Existing narrow
-// interfaces in `drivers.go` (`ExecDriver`, `StreamDriver`,
-// `FilesystemDriver`) keep their current shape and are gradually
-// absorbed into the typed dimensions one at a time, no behaviour
-// change per commit.
+// Foundation envelope for the 13 typed driver dimensions defined in
+// `drivers_phase104.go`. Existing narrow interfaces in `drivers.go`
+// (`ExecDriver`, `StreamDriver`, `FilesystemDriver`) keep their
+// current shape and are gradually absorbed into the typed dimensions
+// one at a time, no behaviour change per commit.
 type DriverContext struct {
 	// Ctx is the request-scoped context. Drivers must honour
 	// cancellation; long-running drivers (Build, exec stream) check
@@ -52,9 +51,9 @@ type DriverContext struct {
 // method Describe() returns a short human-readable description used
 // by the NotImpl-composition rule: when an operator hits an action
 // whose driver is missing or returns NotImpl, the surfaced error
-// names the backend, the dimension, and the missing prerequisite —
-// the same shape used in BUG-792's "no phase reference in error"
-// fix.
+// names the backend, the dimension, and the missing prerequisite,
+// without leaking phase or bug references into the operator-visible
+// error.
 //
 // Example Describe() values:
 //   - "ecs SSMExec via SSM ExecuteCommand (requires ExecuteCommand-enabled task)"

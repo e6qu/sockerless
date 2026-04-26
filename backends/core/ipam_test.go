@@ -108,8 +108,8 @@ func TestIPAllocatorReleaseSubnet(t *testing.T) {
 	alloc.ReleaseSubnet("net1")
 
 	// After release, AllocateIP for the released network must return
-	// an empty IP — BUG-821 (no synthetic-fallback to 172.17.0.2 for
-	// unknown networks). Callers check for empty IP and surface the
+	// an empty IP (no synthetic-fallback to 172.17.0.2 for unknown
+	// networks). Callers check for empty IP and surface the
 	// "unknown network" error explicitly rather than producing a
 	// duplicate IP that collides with the bridge default.
 	ip, prefixLen, gateway, mac := alloc.AllocateIP("net1")

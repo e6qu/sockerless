@@ -233,7 +233,7 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 }
 
 // Named-volume operations map to EFS access points on a sockerless-owned
-// EFS filesystem (Phase 91). Each volume is backed by its own access
+// EFS filesystem. Each volume is backed by its own access
 // point + subdirectory so containers see real, persistent state. If the
 // operator provides `SOCKERLESS_ECS_AGENT_EFS_ID` the filesystem is
 // reused; otherwise one is created lazily on first use.

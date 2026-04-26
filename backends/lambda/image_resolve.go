@@ -37,7 +37,7 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 	// ECR Public (`public.ecr.aws/...`) is pullable directly without a
 	// pull-through cache rule; routing through one yields a multi-arch
 	// manifest that Lambda's CreateFunction rejects. Match the ECS
-	// short-circuit (BUG-776).
+	// short-circuit.
 	if strings.HasPrefix(ref, "public.ecr.aws/") {
 		return ref, nil
 	}

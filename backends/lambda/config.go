@@ -21,7 +21,7 @@ type Config struct {
 	SecurityGroupIDs []string
 	// AgentEFSID (optional) lets operators reuse an existing EFS filesystem
 	// for Lambda volumes instead of sockerless provisioning a fresh one.
-	// Mirrors SOCKERLESS_ECS_AGENT_EFS_ID on the ECS backend. Phase 94b.
+	// Mirrors SOCKERLESS_ECS_AGENT_EFS_ID on the ECS backend.
 	AgentEFSID       string
 	CodeBuildProject string        // AWS CodeBuild project for docker build
 	BuildBucket      string        // S3 bucket for build context upload

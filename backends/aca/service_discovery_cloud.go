@@ -19,11 +19,11 @@ var _ = (*Server).cloudServiceResolve
 // ACA Job executions don't have addressable per-execution IPs
 // reachable from other Jobs the way Fargate ENIs are. The caller passes
 // `ep.IPAddress` which is seeded as the empty-string placeholder ""
-// (was "0.0.0.0" pre-BUG-831; the gate below still accepts the legacy
-// value for backward compat). Skip registration in that case rather
-// than write a useless A-record. Architectural follow-up: ACA Apps
-// with ingress carry stable URLs and could be CNAME-discovered (Phase
-// 87/88 / Phase 104 driver framework's RegistryDriver dimension).
+// (the gate below still accepts the legacy "0.0.0.0" for backward
+// compat). Skip registration in that case rather than write a useless
+// A-record. Architectural follow-up: ACA Apps with ingress carry stable
+// URLs and could be CNAME-discovered via the driver framework's
+// RegistryDriver dimension.
 func (s *Server) cloudServiceRegister(containerID, hostname, ip, networkID string) error {
 	if ip == "" || ip == "0.0.0.0" {
 		s.Logger.Info().Str("container", containerID).Str("hostname", hostname).Str("network", networkID).

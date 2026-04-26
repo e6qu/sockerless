@@ -48,7 +48,7 @@ func (a *ARAuthProvider) IsCloudRegistry(registry string) bool {
 // implicitly on first push, and the actual blob upload is done by
 // BaseServer.ImagePush via core.OCIPush, which has access to the
 // image's layer data through the local store. OnPush used to also
-// call OCIPush here without layer data, which always failed (BUG-763).
+// call OCIPush here without layer data, which always failed.
 func (a *ARAuthProvider) OnPush(imageID, registry, repo, tag string) error {
 	return nil
 }
@@ -72,11 +72,11 @@ func (a *ARAuthProvider) OnRemove(registry, repo string, tags []string) error {
 		return fmt.Errorf("get token for remove: %w", err)
 	}
 
-	// BUG-829: previously each per-tag failure was logged + `continue`,
-	// so OnRemove returned nil even when some tags couldn't be deleted
-	// — `docker rmi <ar-uri>` reported success while the AR-side state
-	// diverged. Per BUG-825 we now aggregate failures and return them
-	// to the ImageManager which surfaces the combined error.
+	// Aggregate per-tag failures and return them to the ImageManager
+	// which surfaces the combined error (previously each per-tag failure
+	// was logged + `continue`, so OnRemove returned nil even when some
+	// tags couldn't be deleted — `docker rmi <ar-uri>` reported success
+	// while the AR-side state diverged).
 	var failures []string
 	for _, tag := range tags {
 		deleteURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s", registry, repo, tag)

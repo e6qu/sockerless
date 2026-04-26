@@ -7,9 +7,8 @@ import (
 	gcpcommon "github.com/sockerless/gcp-common"
 )
 
-// Phase 92 — GCS-backed named-volume + named-volume bind-mount
-// provisioning for Cloud Run (Jobs today; Services when the v2 sim
-// route ships).
+// GCS-backed named-volume + named-volume bind-mount provisioning for
+// Cloud Run (Jobs today; Services when the v2 sim route ships).
 //
 // Docker volume semantics on Cloud Run map to GCS buckets: one bucket
 // per named volume, labelled so VolumeList / VolumePrune can identify
@@ -21,7 +20,7 @@ import (
 // have no host filesystem to bind from.
 //
 // Implementation lives in backends/gcp-common/volumes.go as
-// gcpcommon.BucketManager so GCF (Phase 94) can share it.
+// gcpcommon.BucketManager so GCF can share it.
 
 // gcsVolumeState embeds the shared BucketManager. Initialised by
 // NewServer once the storage client is available.

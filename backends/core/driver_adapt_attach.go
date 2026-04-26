@@ -8,9 +8,8 @@ import (
 	"github.com/sockerless/api"
 )
 
-// Phase 104 — AttachDriver narrow→typed adapter, plus a typed
-// `cloudLogsAttach` that lifts `core.AttachViaCloudLogs` into the
-// new framework.
+// AttachDriver narrow→typed adapter, plus a typed `cloudLogsAttach`
+// that lifts `core.AttachViaCloudLogs` into the typed framework.
 //
 // `WrapLegacyAttach` adapts the existing narrow `core.StreamDriver`
 // (raw `Attach(ctx, containerID, tty, conn) error`) into the typed
@@ -58,10 +57,9 @@ func (a *legacyAttachAdapter) Attach(dctx DriverContext, tty bool, conn io.ReadW
 
 // cloudLogsAttachDriver is the typed `AttachDriver104` wrapper for
 // `core.AttachViaCloudLogs`. Lifts the FaaS read-only attach into
-// the Phase 104 framework so backends like Lambda / cloudrun-
-// functions / azure-functions / ACA-Jobs (which have no real
-// bidirectional attach) can plug it directly into
-// `DriverSet104.Attach`.
+// the typed framework so backends like Lambda / cloudrun-functions /
+// azure-functions / ACA-Jobs (which have no real bidirectional
+// attach) can plug it directly into `DriverSet104.Attach`.
 type cloudLogsAttachDriver struct {
 	server  *BaseServer
 	fetch   CloudLogFetchFunc

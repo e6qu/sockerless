@@ -114,7 +114,7 @@ func TestMain(m *testing.M) {
 	fmt.Printf("[sim] simulator-azure is ready at %s\n", simURL)
 
 	// Pre-create the storage account + managed environment in the sim
-	// so Phase 93 named-volume provisioning can land file shares + the
+	// so named-volume provisioning can land file shares + the
 	// managedEnvironmentsStorages link. The operator would do both
 	// out-of-band in production; the test harness does them via direct
 	// ARM PUTs.
@@ -386,7 +386,7 @@ func TestACANetworkOperations(t *testing.T) {
 	}
 }
 
-// TestACAVolumeOperations — Phase 93 Azure-Files-backed named volumes:
+// TestACAVolumeOperations — Azure-Files-backed named volumes:
 // VolumeCreate provisions a sockerless-managed file share + env-storage,
 // VolumeInspect/VolumeList surface it, VolumeRemove deletes both.
 func TestACAVolumeOperations(t *testing.T) {

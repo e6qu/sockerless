@@ -56,9 +56,8 @@ func (p *ECRAuthProvider) IsCloudRegistry(registry string) bool {
 // OnPush creates an ECR repository (if needed) and pushes the image via OCI registry v2 API.
 // Failures are returned to the caller (ImageManager) which aggregates
 // them and surfaces via HTTP error so the operator can rerun rmi/push
-// or inspect the cloud-side state. Per BUG-825 + the project's
-// no-fallbacks rule, these are not silent warnings — the previous
-// docstring claim of "non-fatal" was stale.
+// or inspect the cloud-side state. Per the project's no-fallbacks
+// rule, these are not silent warnings.
 func (p *ECRAuthProvider) OnPush(imageID, registry, repo, tag string) error {
 	if !p.IsCloudRegistry(registry) {
 		return nil
@@ -77,17 +76,15 @@ func (p *ECRAuthProvider) OnPush(imageID, registry, repo, tag string) error {
 	// before the push; the actual blob upload is done by
 	// BaseServer.ImagePush via core.OCIPush, which has access to the
 	// image's layer data through the local store. OnPush used to also
-	// call OCIPush here without layer data, which always failed
-	// (BUG-763).
+	// call OCIPush here without layer data, which always failed.
 	return nil
 }
 
 // OnTag pushes the image with a new tag via OCI registry v2 API.
 // Failures are returned to the caller (ImageManager) which aggregates
 // them and surfaces via HTTP error so the operator can rerun rmi/push
-// or inspect the cloud-side state. Per BUG-825 + the project's
-// no-fallbacks rule, these are not silent warnings — the previous
-// docstring claim of "non-fatal" was stale.
+// or inspect the cloud-side state. Per the project's no-fallbacks
+// rule, these are not silent warnings.
 func (p *ECRAuthProvider) OnTag(imageID, registry, repo, newTag string) error {
 	if !p.IsCloudRegistry(registry) {
 		return nil
@@ -112,9 +109,8 @@ func (p *ECRAuthProvider) OnTag(imageID, registry, repo, newTag string) error {
 // OnRemove removes image tags from ECR via BatchDeleteImage.
 // Failures are returned to the caller (ImageManager) which aggregates
 // them and surfaces via HTTP error so the operator can rerun rmi/push
-// or inspect the cloud-side state. Per BUG-825 + the project's
-// no-fallbacks rule, these are not silent warnings — the previous
-// docstring claim of "non-fatal" was stale.
+// or inspect the cloud-side state. Per the project's no-fallbacks
+// rule, these are not silent warnings.
 func (p *ECRAuthProvider) OnRemove(registry, repo string, tags []string) error {
 	if !p.IsCloudRegistry(registry) {
 		return nil

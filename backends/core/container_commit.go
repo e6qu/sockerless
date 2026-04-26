@@ -83,7 +83,7 @@ func CommitContainerRequestViaAgent(s *BaseServer, reg *ReverseAgentRegistry, re
 // Limitation: deletions are not captured. `find(1)` can't report
 // files that no longer exist, and without host-side access to the
 // base image's rootfs we can't compute whiteout entries. Same scope
-// as `core.RunContainerChangesViaAgent` (Phase 98 / BUG-753).
+// as `core.RunContainerChangesViaAgent`.
 //
 // Cloud backends wiring this must gate on an explicit opt-in config
 // flag (`SOCKERLESS_ENABLE_COMMIT`) and follow with

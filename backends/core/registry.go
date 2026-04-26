@@ -466,9 +466,9 @@ func getManifestInfo(rc registryConfig, token string) (*manifestInfo, error) {
 		// Find amd64/linux manifest. Sockerless backends (Lambda,
 		// Fargate, Cloud Run, ACA) all run linux/amd64 — picking any
 		// other platform would silently mismatch the runtime and
-		// produce confusing exec errors at run time. BUG-820: the
-		// previous fallback to ml.Manifests[0] silently took whatever
-		// was first (often arm64/linux on multi-arch images), and the
+		// produce confusing exec errors at run time. The previous
+		// fallback to ml.Manifests[0] silently took whatever was
+		// first (often arm64/linux on multi-arch images), and the
 		// resulting container would crash with `exec format error`.
 		// Now we return a clear error listing what was available.
 		digest := ""
@@ -536,7 +536,7 @@ func getManifestInfo(rc registryConfig, token string) (*manifestInfo, error) {
 // the given compressed-blob digest. Returns the raw bytes — caller must
 // hold them in memory or stream through. Used by ImagePush to mirror a
 // registry-pulled image to a different registry without requiring the
-// blob to be cached locally first (BUG-788).
+// blob to be cached locally first.
 func FetchLayerBlob(rc registryConfig, token, digest string) ([]byte, error) {
 	url := fmt.Sprintf("https://%s/v2/%s/blobs/%s", rc.Registry, rc.Repository, digest)
 	req, err := http.NewRequest(http.MethodGet, url, nil)

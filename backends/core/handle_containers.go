@@ -74,7 +74,7 @@ func (s *BaseServer) handleContainerCreate(w http.ResponseWriter, r *http.Reques
 		// Tag the container's labels with sockerless-pod=<name> BEFORE
 		// ContainerCreate so every backend (Docker included) preserves
 		// pod membership on the underlying cloud resource, not just in
-		// Store.Pods. Phase 100 (BUG-754).
+		// Store.Pods.
 		if req.ContainerConfig == nil {
 			req.ContainerConfig = &api.ContainerConfig{}
 		}

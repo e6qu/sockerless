@@ -255,12 +255,12 @@ func (m *ImageManager) Remove(name string, force bool, prune bool) ([]*api.Image
 		return nil, err
 	}
 
-	// Sync removal to cloud. BUG-825: previously silent warning on
-	// error, which left the operator believing the image was gone
-	// from the cloud registry when it might still be present. Real
-	// fix: aggregate the cloud-side errors and surface them — the
-	// local removal already succeeded, so we return result *plus* the
-	// cloud error so callers see both.
+	// Sync removal to cloud. Aggregate the cloud-side errors and
+	// surface them — the local removal already succeeded, so we
+	// return result *plus* the cloud error so callers see both
+	// (the previous silent-warning behaviour left the operator
+	// believing the image was gone from the cloud registry when it
+	// might still be present).
 	var cloudErrs []string
 	for _, ref := range cloudRefs {
 		if err := m.Auth.OnRemove(ref.registry, ref.repo, ref.tags); err != nil {
@@ -281,9 +281,9 @@ func (m *ImageManager) Remove(name string, force bool, prune bool) ([]*api.Image
 // cloud build service is configured (`m.BuildService == nil` or its
 // `Available()` returns false) and the docker backend is not in use,
 // `docker build` returns NotImplementedError — we don't silently fall
-// back to a local Dockerfile parser that drops `RUN` steps as a no-op
-// (BUG-822). The local-Dockerfile path remains for the docker backend
-// only, gated by `SOCKERLESS_LOCAL_DOCKERFILE_BUILD=1` for cases where
+// back to a local Dockerfile parser that drops `RUN` steps as a no-op.
+// The local-Dockerfile path remains for the docker backend only,
+// gated by `SOCKERLESS_LOCAL_DOCKERFILE_BUILD=1` for cases where
 // the operator deliberately wants the no-RUN parse-only mode (e.g.
 // CI smoke tests of metadata-only images).
 func (m *ImageManager) Build(opts api.ImageBuildOptions, ctxReader io.Reader) (io.ReadCloser, error) {
@@ -352,12 +352,12 @@ func (m *ImageManager) Build(opts api.ImageBuildOptions, ctxReader io.Reader) (i
 		return pr, nil
 	}
 
-	// No cloud build service configured. Per BUG-822, we don't
-	// silently route to the local Dockerfile parser (which drops RUN
-	// steps as no-ops, producing a "successful" build that doesn't
-	// match the user's Dockerfile). Local parsing is enabled only
-	// when the operator opts in via SOCKERLESS_LOCAL_DOCKERFILE_BUILD=1
-	// — used by docker-backend smoke tests where RUN isn't required.
+	// No cloud build service configured. We don't silently route to
+	// the local Dockerfile parser (which drops RUN steps as no-ops,
+	// producing a "successful" build that doesn't match the user's
+	// Dockerfile). Local parsing is enabled only when the operator
+	// opts in via SOCKERLESS_LOCAL_DOCKERFILE_BUILD=1 — used by
+	// docker-backend smoke tests where RUN isn't required.
 	if os.Getenv("SOCKERLESS_LOCAL_DOCKERFILE_BUILD") == "1" {
 		return m.Base.ImageBuild(opts, ctxReader)
 	}

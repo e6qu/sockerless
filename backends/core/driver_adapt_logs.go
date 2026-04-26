@@ -57,7 +57,7 @@ func (a *legacyLogsAdapter) Logs(dctx DriverContext, opts api.ContainerLogsOptio
 // cloudLogsLogsDriver is the typed `LogsDriver` wrapper for
 // `core.StreamCloudLogs`. Lifts the cloud-logs read path used by
 // every cloud backend (ECS / Lambda / CR / GCF / ACA / AZF) into
-// the Phase 104 framework. Backends construct one with their
+// the typed driver framework. Backends construct one with their
 // per-backend `CloudLogFetchFunc` (the same one Attach uses) plus
 // the `StreamCloudLogsOptions` that controls FaaS LogBuffers
 // fallback and pre-start tolerance.

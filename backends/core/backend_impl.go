@@ -352,7 +352,7 @@ func (s *BaseServer) ContainerStart(ref string) error {
 // stop APIs). For the BaseServer fallback, we don't have a real
 // user process to wait on — but we can still emit the honest
 // docker-convention exit code (128+SIGTERM=143) instead of the
-// fabricated `0` (BUG-826).
+// fabricated `0`.
 func (s *BaseServer) ContainerStop(ref string, timeout *int) error {
 	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
@@ -429,8 +429,8 @@ func (s *BaseServer) ContainerRemove(ref string, force bool) error {
 	}
 
 	if c.State.Running {
-		// `docker rm -f` is a SIGKILL by convention (BUG-826); emit
-		// the honest 137 exit code instead of fabricating 0.
+		// `docker rm -f` is a SIGKILL by convention; emit the honest
+		// 137 exit code instead of fabricating 0.
 		killExitCode := SignalToExitCode("SIGKILL") // 128+9 = 137
 		s.emitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 		s.emitEvent("container", "die", id, map[string]string{
@@ -647,8 +647,8 @@ func (s *BaseServer) ContainerRestart(ref string, timeout *int) error {
 	id := c.ID
 	if c.State.Running {
 		// `docker restart` sends SIGTERM first (graceful), then
-		// SIGKILL after the timeout — same as `docker stop`. BUG-826:
-		// emit the honest 143 exit code instead of fabricating 0.
+		// SIGKILL after the timeout — same as `docker stop`. Emit the
+		// honest 143 exit code instead of fabricating 0.
 		stopExitCode := SignalToExitCode("SIGTERM") // 128+15 = 143
 		s.StopHealthCheck(id)
 		s.Store.ForceStopContainer(id, stopExitCode)
@@ -1188,8 +1188,8 @@ func (s *BaseServer) ImagePullWithMetadata(ref string, auth string, meta *ImageM
 	}
 
 	// Determine image ID, size, digests, layers from real metadata.
-	// Caller is required to fetch metadata from the registry (BUG-737)
-	// — no synthetic fallback exists.
+	// Caller is required to fetch metadata from the registry — no
+	// synthetic fallback exists.
 	var imageID string
 	var imgSize int64
 	var repoDigests []string
@@ -1256,7 +1256,7 @@ func (s *BaseServer) ImagePullWithMetadata(ref string, auth string, meta *ImageM
 	// Fetch the layer blobs themselves so a subsequent `docker push`
 	// can mirror the image to a different registry without going back
 	// to the source. Without this, push fails with "image has no layer
-	// data available" (BUG-788). We fetch synchronously per-layer; for
+	// data available". We fetch synchronously per-layer; for
 	// large images this lengthens the pull but matches Docker's own
 	// "Pull complete" semantics where the layer bytes are present
 	// after pull returns. Failure to fetch is fatal — pull is
