@@ -65,7 +65,7 @@ func TestIntegration_ECSFullLifecycle(t *testing.T) {
 		LaunchType:     ecstypes.LaunchTypeFargate,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
-				Subnets: []string{"subnet-12345"},
+				Subnets: []string{"subnet-sim"},
 			},
 		},
 	})

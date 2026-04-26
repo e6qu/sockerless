@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -151,7 +153,62 @@ var (
 	ec2RouteTables        sim.Store[EC2RouteTable]
 	ec2SecurityGroups     sim.Store[EC2SecurityGroup]
 	ec2SecurityGroupRules sim.Store[EC2SecurityGroupRule]
+	// ec2SubnetIPCursor tracks the next host octet to hand out per
+	// subnet for AllocateSubnetIP. Real EC2 maintains a per-subnet
+	// allocation pool; we approximate with a monotonic counter that
+	// starts at .4 (real AWS reserves .0/.1/.2/.3 + last for broadcast).
+	ec2SubnetIPCursor   = make(map[string]uint32)
+	ec2SubnetIPCursorMu sync.Mutex
 )
+
+// AllocateSubnetIP picks the next available host address from a
+// subnet's CIDR block. Returns an error if the subnet isn't registered
+// (matches real AWS, where RunTask / CreateNetworkInterface against a
+// non-existent subnet returns InvalidSubnetID.NotFound). The first four
+// addresses (network + AWS-reserved router/DNS/future) and the last
+// (broadcast) are skipped, mirroring AWS's reserved-host convention.
+func AllocateSubnetIP(subnetID string) (string, error) {
+	subnet, ok := ec2Subnets.Get(subnetID)
+	if !ok {
+		return "", fmt.Errorf("subnet %q not found", subnetID)
+	}
+	_, cidr, perr := net.ParseCIDR(subnet.CidrBlock)
+	if perr != nil {
+		return "", fmt.Errorf("subnet %q has invalid CidrBlock %q: %v", subnetID, subnet.CidrBlock, perr)
+	}
+	ec2SubnetIPCursorMu.Lock()
+	defer ec2SubnetIPCursorMu.Unlock()
+	cursor, ok := ec2SubnetIPCursor[subnetID]
+	if !ok {
+		// AWS reserves the first 4 host addresses in every subnet
+		// (.0 network, .1 router, .2 DNS, .3 future use) and the
+		// final .255 for broadcast. Start handing out at .4.
+		cursor = 4
+	}
+	ones, bits := cidr.Mask.Size()
+	hostBits := bits - ones
+	if hostBits < 3 {
+		return "", fmt.Errorf("subnet %q CIDR %q too small for AWS host reservations", subnetID, subnet.CidrBlock)
+	}
+	maxHosts := uint32(1) << uint32(hostBits)
+	if cursor >= maxHosts-1 {
+		return "", fmt.Errorf("subnet %q exhausted: no host addresses left in %q", subnetID, subnet.CidrBlock)
+	}
+	base := cidr.IP.To4()
+	if base == nil {
+		return "", fmt.Errorf("subnet %q CidrBlock %q is not IPv4", subnetID, subnet.CidrBlock)
+	}
+	ip := make(net.IP, 4)
+	copy(ip, base)
+	hostInt := uint32(ip[0])<<24 | uint32(ip[1])<<16 | uint32(ip[2])<<8 | uint32(ip[3])
+	hostInt += cursor
+	ip[0] = byte(hostInt >> 24)
+	ip[1] = byte(hostInt >> 16)
+	ip[2] = byte(hostInt >> 8)
+	ip[3] = byte(hostInt)
+	ec2SubnetIPCursor[subnetID] = cursor + 1
+	return ip.String(), nil
+}
 
 const ec2Owner = "123456789012"
 

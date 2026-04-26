@@ -193,7 +193,7 @@ func TestECS_RunTaskTags(t *testing.T) {
 		Tags:           tags,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
-				Subnets: []string{"subnet-12345"},
+				Subnets: []string{"subnet-sim"},
 			},
 		},
 	})
@@ -265,7 +265,19 @@ func TestECS_RunTaskNetworkConfig(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	subnets := []string{"subnet-aaa111", "subnet-bbb222"}
+	// Real ECS validates subnets exist in EC2; create them up front so
+	// the simulator's RunTask hits the real-AWS validation contract.
+	sub1Out, err := ec2C.CreateSubnet(ctx, &ec2sdk.CreateSubnetInput{
+		VpcId:     aws.String(vpcID),
+		CidrBlock: aws.String("10.0.10.0/24"),
+	})
+	require.NoError(t, err)
+	sub2Out, err := ec2C.CreateSubnet(ctx, &ec2sdk.CreateSubnetInput{
+		VpcId:     aws.String(vpcID),
+		CidrBlock: aws.String("10.0.20.0/24"),
+	})
+	require.NoError(t, err)
+	subnets := []string{*sub1Out.Subnet.SubnetId, *sub2Out.Subnet.SubnetId}
 	securityGroups := []string{*sg1Out.GroupId, *sg2Out.GroupId}
 
 	runOut, err := client.RunTask(ctx, &ecs.RunTaskInput{

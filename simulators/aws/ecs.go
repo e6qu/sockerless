@@ -556,13 +556,33 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Real ECS validates the subnet exists in EC2 and uses its CIDR for
+	// task IP assignment. Pull the requested subnet up front; surface a
+	// clean InvalidParameterException when the caller passes one we
+	// don't know about (matches real AWS InvalidSubnetID.NotFound).
+	var requestedSubnet string
+	if req.NetworkConfiguration != nil && req.NetworkConfiguration.AwsvpcConfiguration != nil &&
+		len(req.NetworkConfiguration.AwsvpcConfiguration.Subnets) > 0 {
+		requestedSubnet = req.NetworkConfiguration.AwsvpcConfiguration.Subnets[0]
+	}
+
 	var tasks []ECSTask
 	for i := 0; i < req.Count; i++ {
+		_ = i
 		taskID := generateUUID()
 		taskArn := fmt.Sprintf("arn:aws:ecs:us-east-1:123456789012:task/%s/%s", clusterName, taskID)
 
 		eniID := generateUUID()
-		fakeIP := fmt.Sprintf("10.0.%d.%d", (i+1)%256, (i+100)%256)
+		var privateIP, subnetID string
+		if requestedSubnet != "" {
+			ip, ipErr := AllocateSubnetIP(requestedSubnet)
+			if ipErr != nil {
+				sim.AWSError(w, "InvalidParameterException", ipErr.Error(), http.StatusBadRequest)
+				return
+			}
+			privateIP = ip
+			subnetID = requestedSubnet
+		}
 		createdAt := float64(time.Now().Unix())
 
 		var containers []ECSTaskContainer
@@ -574,7 +594,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				NetworkInterfaces: []ECSNetworkInterface{
 					{
 						AttachmentId:       eniID,
-						PrivateIpv4Address: fakeIP,
+						PrivateIpv4Address: privateIP,
 					},
 				},
 			})
@@ -586,6 +606,13 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 			taskTags = append(taskTags, td.Tags...)
 		}
 		taskTags = append(taskTags, req.Tags...)
+
+		attachmentDetails := []ECSKeyValuePair{
+			{Name: "privateIPv4Address", Value: privateIP},
+		}
+		if subnetID != "" {
+			attachmentDetails = append([]ECSKeyValuePair{{Name: "subnetId", Value: subnetID}}, attachmentDetails...)
+		}
 
 		task := ECSTask{
 			TaskArn:              taskArn,
@@ -603,13 +630,10 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 			EnableExecuteCommand: req.EnableExecuteCommand,
 			Attachments: []ECSAttachment{
 				{
-					Id:     eniID,
-					Type:   "ElasticNetworkInterface",
-					Status: "ATTACHING",
-					Details: []ECSKeyValuePair{
-						{Name: "subnetId", Value: "subnet-sim00001"},
-						{Name: "privateIPv4Address", Value: fakeIP},
-					},
+					Id:      eniID,
+					Type:    "ElasticNetworkInterface",
+					Status:  "ATTACHING",
+					Details: attachmentDetails,
 				},
 			},
 		}

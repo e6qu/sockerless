@@ -155,7 +155,7 @@ aws ecs run-task \
   --task-definition my-task \
   --count 1 \
   --launch-type FARGATE \
-  --network-configuration 'awsvpcConfiguration={subnets=[subnet-12345]}'
+  --network-configuration 'awsvpcConfiguration={subnets=[subnet-sim]}'
 # => { "tasks": [{ "taskArn": "arn:aws:ecs:...", "lastStatus": "RUNNING", ... }] }
 
 # Wait a moment for the process to complete, then check task status
@@ -230,7 +230,7 @@ func main() {
 		LaunchType:     ecstypes.LaunchTypeFargate,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
-				Subnets: []string{"subnet-12345"},
+				Subnets: []string{"subnet-sim"},
 			},
 		},
 	})
