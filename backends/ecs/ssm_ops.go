@@ -161,13 +161,15 @@ func (s *Server) ContainerGetArchiveViaSSM(containerID, path string) (*api.Conta
 }
 
 // ContainerPutArchiveViaSSM extracts the incoming tar body into <path>
-// inside the task by piping it as stdin to `tar -xf - -C <path>`.
+// inside the task. Real docker daemon creates the destination directory
+// if missing — `mkdir -p` upfront matches that contract so callers can
+// copy into a path that doesn't exist yet (act, GitHub Actions runners).
 func (s *Server) ContainerPutArchiveViaSSM(containerID, path string, body io.Reader) error {
 	data, err := io.ReadAll(body)
 	if err != nil {
 		return &api.ServerError{Message: fmt.Sprintf("read archive body: %v", err)}
 	}
-	cmd := fmt.Sprintf(`tar -xf - -C %s`, shellQuote(path))
+	cmd := fmt.Sprintf(`mkdir -p %s && tar -xf - -C %s`, shellQuote(path), shellQuote(path))
 	stdout, stderr, exit, ferr := s.runViaSSMOrNotImpl(containerID, cmd, data)
 	if ferr != nil {
 		return ferr
@@ -197,8 +199,8 @@ func (s *Server) ContainerExportViaSSM(containerID string) (io.ReadCloser, error
 }
 
 // ContainerSignalViaSSM sends a Unix signal to the user subprocess
-// PID written by the bootstrap to /tmp/.sockerless-mainpid (Phase 99
-// convention). Used by ContainerPause/Unpause.
+// PID written by the bootstrap to /tmp/.sockerless-mainpid. Used by
+// ContainerPause/Unpause.
 func (s *Server) ContainerSignalViaSSM(containerID, signal string) error {
 	cmd := fmt.Sprintf(
 		`sh -c 'test -r %s || { echo "sockerless bootstrap PID file not found at %s" >&2; exit 64; }; kill -%s $(cat %s)'`,

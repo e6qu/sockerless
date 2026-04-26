@@ -152,7 +152,7 @@ func TestMain(m *testing.M) {
 		"SOCKERLESS_ENDPOINT_URL="+simURL,
 		"SOCKERLESS_POLL_INTERVAL=500ms",
 		"SOCKERLESS_ECS_CLUSTER=sim-cluster",
-		"SOCKERLESS_ECS_SUBNETS=subnet-sim",
+		"SOCKERLESS_ECS_SUBNETS=subnet-0123456789abcdef0",
 		"SOCKERLESS_ECS_EXECUTION_ROLE_ARN=arn:aws:iam::000000000000:role/sim",
 	)
 	backendCmd.Stdout = os.Stderr
@@ -451,8 +451,8 @@ func TestECSNetworkOperations(t *testing.T) {
 	}
 }
 
-// TestECSVolumeOperations exercises the Phase 91 EFS-backed named
-// volume path: VolumeCreate provisions a sockerless-owned EFS access
+// TestECSVolumeOperations exercises the EFS-backed named volume path:
+// VolumeCreate provisions a sockerless-owned EFS access
 // point, VolumeInspect and VolumeList surface it, and VolumeRemove
 // deletes it. The simulator's EFS slice backs each access point with
 // a host-side directory so tasks bind-mount a real path.

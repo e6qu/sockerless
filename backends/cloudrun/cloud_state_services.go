@@ -119,7 +119,7 @@ func (p *cloudRunCloudState) serviceToContainer(svc *runpb.Service) (api.Contain
 	if containerID == "" {
 		containerID = labels["sockerless_container_id"]
 	}
-	// Phase 97: name may live in labels OR annotations (`/` fails GCP
+	// Name may live in labels OR annotations (`/` fails GCP
 	// label-value charset so `/webapp` moves to annotations).
 	name := annotations["sockerless_name"]
 	if name == "" {
@@ -156,9 +156,9 @@ func (p *cloudRunCloudState) serviceToContainer(svc *runpb.Service) (api.Contain
 		created = svc.CreateTime.AsTime().Format(time.RFC3339Nano)
 	}
 
-	// Phase 97 (BUG-746): Docker labels round-trip via three paths, in
-	// priority order: SOCKERLESS_LABELS env var, GCP annotations, then
-	// legacy labels-split-across-chunks.
+	// Docker labels round-trip via three paths, in priority order:
+	// SOCKERLESS_LABELS env var, GCP annotations, then legacy
+	// labels-split-across-chunks.
 	dockerLabels := decodeLabelsFromEnv(env)
 	if len(dockerLabels) == 0 {
 		merged := mergeLabelsAndAnnotations(labels, svc.Annotations)

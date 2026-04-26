@@ -63,7 +63,13 @@ func (s *BaseServer) handleImagePull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rc, err := s.self.ImagePull(req.Reference, req.Auth)
+	parsed, err := ParseImageRef(req.Reference)
+	if err != nil {
+		WriteError(w, &api.InvalidParameterError{Message: "invalid image reference: " + err.Error()})
+		return
+	}
+	dctx := DriverContext{Ctx: r.Context(), Backend: s.Desc.Driver, Logger: s.Logger}
+	rc, err := s.Typed.Registry.Pull(dctx, parsed, req.Auth)
 	if err != nil {
 		WriteError(w, err)
 		return
@@ -606,7 +612,17 @@ func (s *BaseServer) handleImagePush(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tag := r.URL.Query().Get("tag")
-	rc, err := s.self.ImagePush(ref, tag, r.URL.Query().Get("auth"))
+	pushRefStr := ref
+	if tag != "" {
+		pushRefStr = ref + ":" + tag
+	}
+	parsed, err := ParseImageRef(pushRefStr)
+	if err != nil {
+		WriteError(w, &api.InvalidParameterError{Message: "invalid image reference: " + err.Error()})
+		return
+	}
+	dctx := DriverContext{Ctx: r.Context(), Backend: s.Desc.Driver, Logger: s.Logger}
+	rc, err := s.Typed.Registry.Push(dctx, parsed, r.URL.Query().Get("auth"))
 	if err != nil {
 		WriteError(w, err)
 		return

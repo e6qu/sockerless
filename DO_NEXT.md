@@ -1,38 +1,29 @@
 # Do Next
 
-Resume pointer for the next session / post-compaction. Updated after every task.
+Resume pointer for the next session / post-compaction. Updated after every task. Roadmap detail lives in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md); bug log in [BUGS.md](BUGS.md).
 
 ## Branch state
 
-`main` — current. Synced with `origin/main` at PR #118 merge (squash commit `204e25e`). No active feature branch.
+- `main` synced with `origin/main` at PR #119 merge.
+- **`post-pr-118-bug-audit-and-phases`** — open as PR #120, ~50 commits ahead. Cumulative state:
+  - 22 bug closures (BUG-802 + 638/640/646/648 retro + 804/806 + 820..831 + 832..835).
+  - **Phase 104 framework migration complete** — all 13 typed adapters shipped, every dispatch site flows through `TypedDriverSet` (Exec, Attach, Logs, Signal, ProcList, FSDiff, FSRead/Write/Export, Commit, Build, Registry). Framework renamed to drop the temporary `104` suffix (`ExecDriver`, `AttachDriver`, `TypedDriverSet`).
+  - **Cloud-native typed drivers across every backend.** 44/91 cells in the per-backend matrix are cloud-native, bypassing api.Backend; the rest stay on legacy adapters whose api.Backend method already does the cloud-native thing. Matrix: [specs/DRIVERS.md](specs/DRIVERS.md).
+  - **`core.ImageRef`** typed domain object lands at the typed Registry boundary — first instance of the interface-tightening track.
+  - Phase 105 waves 1-3 (8 libpod-shape handlers).
+  - Phase 108 closed (77/77 sim-parity matrix ✓).
+  - Phase 106/107 harnesses scaffolded (build-tag-gated; live runs pending operator key reactivation).
+  - manual-tests directory + repo-wide phase/bug-ref strip from code + docs.
 
-## Up next (in execution order)
+## Up next on this branch
 
-**Phase 104 — Cross-backend driver framework.** Design locked in [PLAN.md](PLAN.md); piecemeal delivery, one dimension at a time, no behaviour change per commit. First dimension to lift is `ExecDriver` since it's the smallest and the existing `core.Drivers.Exec` already exists — the work is to expand the `Drivers` struct into `DriverSet` with the 13 typed dimensions, add `DriverContext`, and migrate ExecDriver into the new shape with sim-parity tests.
-
-Suggested order for the dimension lifts:
-1. Skeleton: `backends/core/drivers/{types.go, set.go, override.go}` + DriverContext + Describe()-based NotImpl composition rule.
-2. Lift `ExecDriver` (smallest; already exists in `core.Drivers.Exec`).
-3. Lift `AttachDriver` (lift `core.AttachViaCloudLogs` into a typed CloudLogsReadOnlyAttach).
-4. Lift `LogsDriver` (touchpoints already exist per backend; just typed).
-5. `FSReadDriver`, `FSWriteDriver`, `FSDiffDriver`, `FSExportDriver` — currently in `backends/<cloud>/ssm_ops.go` / `reverse_agent.go` and similar.
-6. `ProcListDriver`, `SignalDriver`, `StatsDriver`, `CommitDriver`, `BuildDriver`, `RegistryDriver`.
-
-Phase 103 (overlay-rootfs bootstrap) ships under Phase 104 as alternate FSRead/FSWrite/FSDiff/FSExport/Commit drivers gated behind `SOCKERLESS_OVERLAY_ROOTFS=1`.
-
-Independent of Phase 104 (can run in parallel):
-
-- **Phase 105 — libpod-shape conformance.** Closes BUG-804 (`pod inspect` returns array) and BUG-806 (`PodStopReport.Errs` shape). Cross-walks every libpod handler in `backends/core/handle_libpod*.go` against upstream `pkg/api/handlers/libpod` shapes; adds golden-file tests so future shape regressions land at CI time.
-- **Live-cloud runbooks** — GCP (Phase 87) + Azure (Phase 88) terraform live envs to add, then port the round-7/8/9 sweep against each. New per-cloud `null_resource sockerless_runtime_sweep` (BUG-819 fix) means destroys should be self-sufficient.
-
-## Manual step left for maintainer (post round-9)
-
-Deactivate root-account access key `AKIA2TQEGRDBRV2KFW6L` via the AWS Console (`IAM → Security credentials → Access keys`). The CLI cannot deactivate root-account keys.
-
-Other queued work per [PLAN.md](PLAN.md):
-
-- **Phase 68** — Multi-Tenant Backend Pools (P68-001 done; 9 sub-tasks remaining).
-- **Phase 78** — UI Polish.
+1. **Wrapper removal pass.** Decide: either give docker typed cloud-native drivers (calling docker SDK directly from typed drivers) so every cell in the matrix is cloud-native, or accept that "legacy adapter wrapping s.self" is permanent for backends whose api.Backend method *is* the cloud-native impl. Once decided, drop unused `WrapLegacyXxx` / `LegacyXxxFn` scaffolding and shrink api.Backend correspondingly. Coordinated landing.
+2. **Further interface tightening.** ImageRef proves the pattern. Next:
+   - **Typed Signal enum** — `core.Signal` constants for SIGTERM/SIGKILL/etc., `SignalDriver.Kill(dctx, Signal)` instead of `string`. Parser at the handler boundary.
+   - **`ResolveImageReg(ImageRef) (RegistryConfig, error)`** helper to migrate the registry-resolution call sites (`registry.go`, `image_manager.go`, `backend_impl_ext.go`, etc.) from `splitImageRefRegistry` onto the typed ImageRef path. Adds the docker-hub default rewrites the bare `ParseImageRef` parser intentionally skips.
+   - **Structured `Stats` struct** instead of map[string]any-shaped JSON.
+3. **Phase 106/107 live-cloud runs.** Reactivate AWS root-account key (see [STATUS.md](STATUS.md)), provision live ECS via [manual-tests/01-infrastructure.md](manual-tests/01-infrastructure.md), run the GH harness against a real repo + GitLab harness against the `origin-gitlab` mirror. First findings get filed as bugs.
+4. **Phase 105 wave 4** (lower priority) — events stream, exec start hijack shape, container CRUD beyond list.
 
 ## Cross-links
 
@@ -40,12 +31,10 @@ Other queued work per [PLAN.md](PLAN.md):
 - Phase roll-up: [STATUS.md](STATUS.md)
 - Narrative: [WHAT_WE_DID.md](WHAT_WE_DID.md)
 - Bug log: [BUGS.md](BUGS.md)
-- Architecture: [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md), [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md)
-- Manual-test runbook: [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md)
-- Round-9 working state (archive): [docs/manual-test-spec-crosswalk.md](docs/manual-test-spec-crosswalk.md)
+- Architecture: [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md), [specs/SOCKERLESS_SPEC.md](specs/SOCKERLESS_SPEC.md), [specs/SIM_PARITY_MATRIX.md](specs/SIM_PARITY_MATRIX.md)
+- Manual-test runbooks: [manual-tests/](manual-tests/)
 
 ## Operational state
 
-- **Live AWS infra (eu-west-1):** torn down at PR #118 close. Future live runs need a fresh `terragrunt apply` (per-cloud sweeps mean teardown is self-sufficient now — BUG-819 fix).
-- **IAM key** `AKIA2TQEGRDBRV2KFW6L`: **maintainer must deactivate via AWS Console** (root-account key, IAM API doesn't allow operator-issued status changes).
-- **CI** at PR #118 merge: 10/10 PASS on commit `b39ce42`.
+- **Live AWS infra (eu-west-1)** torn down at PR #118 close; per-cloud sweeps mean re-apply + destroy are self-sufficient (BUG-819).
+- **AWS root-account key `AKIA2TQEGRDBRV2KFW6L`** — deactivated by maintainer 2026-04-26. Ask the maintainer to reactivate before any future live-AWS test pass (Phase 106 ECS work, future round-10 sweeps).

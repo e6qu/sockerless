@@ -1,151 +1,116 @@
 # Driver Specification
 
-Drivers provide backend-agnostic interfaces for execution, filesystem access, streaming, and networking. They are composed into a `DriverSet` on `BaseServer`.
+Sockerless dispatches every "perform docker action X against the cloud" decision through one of 13 typed driver interfaces in `backends/core/drivers_typed.go`. Each backend constructs a `TypedDriverSet` at startup; HTTP handlers in `backends/core/handle_*.go` call through these interfaces instead of branching on backend identity. Operators can override per-cloud-per-dimension via `SOCKERLESS_<BACKEND>_<DIMENSION>=<impl>` env vars resolved by `backends/core/driver_override.go`.
 
-Source: `backends/core/drivers.go`
+The narrow `DriverSet` (Exec/Filesystem/Stream/Network) in `backends/core/drivers.go` predates the typed framework and is being absorbed into it dimension-by-dimension. Interfaces still defined there are kept for the network driver chain (which has platform-specific Linux netns logic that doesn't fit the typed shape) and as bridge points for the typed framework's default adapters.
+
+## Typed dimensions
 
 ```go
-type DriverSet struct {
-    Exec       ExecDriver
-    Filesystem FilesystemDriver
-    Stream     StreamDriver
-    Network    api.NetworkDriver
+type TypedDriverSet struct {
+    Exec     ExecDriver
+    Attach   AttachDriver
+    FSRead   FSReadDriver
+    FSWrite  FSWriteDriver
+    FSDiff   FSDiffDriver
+    FSExport FSExportDriver
+    Commit   CommitDriver
+    Build    BuildDriver
+    Stats    StatsDriver
+    ProcList ProcListDriver
+    Logs     LogsDriver
+    Signal   SignalDriver
+    Registry RegistryDriver
 }
 ```
 
-## ExecDriver
+Every driver implements `Driver.Describe() string` so `NotImplementedError` messages name the backend + the missing prerequisite without leaking metadata into operator-visible errors.
 
-Runs commands inside containers.
+The envelope passed to every typed driver call:
 
 ```go
-type ExecDriver interface {
-    Exec(ctx context.Context, containerID, execID string, cmd []string,
-         env []string, workDir string, tty bool, conn net.Conn) (exitCode int)
+type DriverContext struct {
+    Ctx       context.Context
+    Container api.Container        // pre-resolved by the handler via ResolveContainerAuto
+    Backend   string               // "docker" | "ecs" | "lambda" | "cloudrun" | "gcf" | "aca" | "azf"
+    Region    string
+    Logger    zerolog.Logger
 }
 ```
 
-- Streams I/O over `net.Conn`
-- Non-TTY mode: wraps output with Docker multiplexed stream headers (8-byte prefix: stream type + length)
-- Returns process exit code
+## Per-backend default-driver matrix
 
-**Implementations:**
-- `AgentExecDriver` — default for all backends. Forwards exec to a connected agent process inside the container via the agent HTTP API.
+Each cell shows the typed driver wired into the slot at backend startup. **bold** = cloud-native typed driver bypassing the api.Backend interface; *italic* = legacy adapter wrapping `s.self.<api.Backend method>`.
 
-## FilesystemDriver
+| Dimension | docker | ecs | lambda | cloudrun | gcf | aca | azf |
+|---|---|---|---|---|---|---|---|
+| `ExecDriver` | *WrapLegacyExecStart* (docker SDK) | *WrapLegacyExecStart* (SSM) | **WrapLegacyExec** (ReverseAgent) | **WrapLegacyExec** (ReverseAgent) | **WrapLegacyExec** (ReverseAgent) | **WrapLegacyExec** (ReverseAgent) | **WrapLegacyExec** (ReverseAgent) |
+| `AttachDriver` | *WrapLegacyContainerAttach* | **NewCloudLogsAttachDriver** (CloudWatch) | **NewCloudLogsAttachDriver** (CloudWatch) | **NewCloudLogsAttachDriver** (Cloud Logging) | **NewCloudLogsAttachDriver** (Cloud Logging) | **NewCloudLogsAttachDriver** (Azure Monitor) | **NewCloudLogsAttachDriver** (Azure Monitor) |
+| `LogsDriver` | *WrapLegacyLogs* (docker SDK) | **NewCloudLogsLogsDriver** (CloudWatch) | **NewCloudLogsLogsDriver** (CloudWatch) | **NewCloudLogsLogsDriver** (Cloud Logging) | **NewCloudLogsLogsDriver** (Cloud Logging) | **NewCloudLogsLogsDriver** (Azure Monitor) | **NewCloudLogsLogsDriver** (Azure Monitor) |
+| `SignalDriver` | *WrapLegacyKill* | **ssmSignalDriver** (SSM kill) | *WrapLegacyKill* | *WrapLegacyKill* | *WrapLegacyKill* | *WrapLegacyKill* | *WrapLegacyKill* |
+| `ProcListDriver` | *WrapLegacyTop* | **ssmProcListDriver** (SSM ps) | **ReverseAgentProcList** | **ReverseAgentProcList** | **ReverseAgentProcList** | **ReverseAgentProcList** | **ReverseAgentProcList** |
+| `FSDiffDriver` | *WrapLegacyChanges* | **ssmFSDiffDriver** (SSM find) | **ReverseAgentFSDiff** | **ReverseAgentFSDiff** | **ReverseAgentFSDiff** | **ReverseAgentFSDiff** | **ReverseAgentFSDiff** |
+| `FSReadDriver` | *WrapLegacyFSRead* | **ssmFSReadDriver** (SSM stat+tar) | **ReverseAgentFSRead** | **ReverseAgentFSRead** | **ReverseAgentFSRead** | **ReverseAgentFSRead** | **ReverseAgentFSRead** |
+| `FSWriteDriver` | *WrapLegacyFSWrite* | **ssmFSWriteDriver** (SSM tar -x) | **ReverseAgentFSWrite** | **ReverseAgentFSWrite** | **ReverseAgentFSWrite** | **ReverseAgentFSWrite** | **ReverseAgentFSWrite** |
+| `FSExportDriver` | *WrapLegacyFSExport* | **ssmFSExportDriver** (SSM tar root) | **ReverseAgentFSExport** | **ReverseAgentFSExport** | **ReverseAgentFSExport** | **ReverseAgentFSExport** | **ReverseAgentFSExport** |
+| `CommitDriver` | *WrapLegacyCommit* (docker SDK) | *WrapLegacyCommit* (NotImpl — accepted gap; no Fargate host fs) | **ReverseAgentCommit** | **ReverseAgentCommit** | **ReverseAgentCommit** | **ReverseAgentCommit** | **ReverseAgentCommit** |
+| `BuildDriver` | *WrapLegacyBuild* (docker SDK) | *WrapLegacyBuild* (CodeBuild via api.Backend) | *WrapLegacyBuild* (CodeBuild via api.Backend) | *WrapLegacyBuild* (CloudBuild via api.Backend) | *WrapLegacyBuild* (CloudBuild via api.Backend) | *WrapLegacyBuild* (ACR Tasks via api.Backend) | *WrapLegacyBuild* (ACR Tasks via api.Backend) |
+| `StatsDriver` | *WrapLegacyStats* | *WrapLegacyStats* | *WrapLegacyStats* | *WrapLegacyStats* | *WrapLegacyStats* | *WrapLegacyStats* | *WrapLegacyStats* |
+| `RegistryDriver` | *WrapLegacyRegistry* (docker SDK) | *WrapLegacyRegistry* (ECR via api.Backend) | *WrapLegacyRegistry* (ECR via api.Backend) | *WrapLegacyRegistry* (Artifact Registry) | *WrapLegacyRegistry* (Artifact Registry) | *WrapLegacyRegistry* (ACR) | *WrapLegacyRegistry* (ACR) |
 
-Archive operations on container filesystems.
+**Legend:**
+- ✅ Cloud-native typed driver wired (44 of 91 cells excluding docker, where "legacy adapter wrapping the docker SDK" is the cloud-native path).
+- The legacy adapters call through `s.self.<api.Backend method>` — they're scaffolding for the wrapper-removal pass tracked in [PLAN.md § Phase 104](../PLAN.md).
 
-```go
-type FilesystemDriver interface {
-    PutArchive(containerID, path string, tarStream io.Reader) error
-    GetArchive(containerID, path string, w io.Writer) (*FileInfo, error)
-    StatPath(containerID, path string) (*FileInfo, error)
-    RootPath(containerID string) string
-}
+## Composition rule
+
+A driver slot returning `NotImplementedError` from its `Describe()` surfaces a precise message naming the backend + dimension + missing prerequisite. Example: an ECS exec call with no SSM session returns:
+
+```
+ecs SSMExec via SSM ExecuteCommand: requires task IAM role with ssmmessages:* and EnableExecuteCommand=true
 ```
 
-- `PutArchive` — extracts tar into container at path (`docker cp` into)
-- `GetArchive` — writes tar of container path to writer (`docker cp` out)
-- `StatPath` — stat a path inside the container
-- `RootPath` — host filesystem root for the container (empty string if no local filesystem)
+`backends/core/driver_override.go` provides a registry where alternate drivers (overlay-rootfs FSDiff, Kaniko Build, BuildKitRemote) can be installed by name. Operators flip them on via `SOCKERLESS_<BACKEND>_<DIMENSION>=<impl>` — e.g. `SOCKERLESS_LAMBDA_FSDIFF=overlay-upper` to use overlay-rootfs upper-dir diff instead of `find / -newer`.
 
-**Implementations:**
-- `AgentFilesystemDriver` — default. Forwards to agent HTTP API (`/archive`, `/stat`).
+## Adapters in `backends/core/driver_adapt_*.go`
 
-## StreamDriver
+| File | Wraps | Used for |
+|---|---|---|
+| `driver_adapt_exec.go` | narrow `LegacyExecDriver` | typed Exec on FaaS+CR+ACA (calls `ReverseAgentExecDriver` directly with the hijacked conn) |
+| `driver_adapt_execstart.go` | `BaseServer.ExecStart` | typed Exec default (bridges legacy ExecStart's rwc to the typed conn) |
+| `driver_adapt_attach.go` | narrow `StreamDriver` + cloud-logs factory | typed Attach default + cloud-native FaaS attach |
+| `driver_adapt_logs.go` | `BaseServer.ContainerLogs` + cloud-logs factory | typed Logs default + cloud-native cloud backends |
+| `driver_adapt_signal.go` | `BaseServer.ContainerKill` | typed Signal default |
+| `driver_adapt_proclist.go` | `BaseServer.ContainerTop` | typed ProcList default |
+| `driver_adapt_fsdiff.go` | `BaseServer.ContainerChanges` | typed FSDiff default |
+| `driver_adapt_fs.go` | `BaseServer.Container{Stat,Get,Put}Archive` + `ContainerExport` | typed FSRead/FSWrite/FSExport defaults |
+| `driver_adapt_commit.go` | `BaseServer.ContainerCommit` | typed Commit default |
+| `driver_adapt_build.go` | `BaseServer.ImageBuild` | typed Build default |
+| `driver_adapt_stats.go` | `BaseServer.ContainerStats` | typed Stats default |
+| `driver_adapt_registry.go` | `BaseServer.ImagePull` + `ImagePush` | typed Registry default |
 
-Container attach and log streaming.
+The `driver_reverseagent_typed.go` file holds the cloud-native typed drivers shared by every reverse-agent backend (Lambda / GCF / AZF / Cloud Run / ACA): ProcList, FSDiff, FSRead, FSWrite, FSExport, Commit. The `backends/ecs/typed_drivers.go` file holds the parallel SSM-based set for ECS (ProcList, FSDiff, FS*, Signal).
 
-```go
-type StreamDriver interface {
-    Attach(ctx context.Context, containerID string, tty bool, conn net.Conn)
-    LogBytes(containerID string) []byte
-    LogSubscribe(containerID, subID string) chan []byte
-    LogUnsubscribe(containerID, subID string)
-}
-```
+## Network driver
 
-- `Attach` — bidirectional stream to container (hijacked HTTP connection)
-- `LogBytes` — returns buffered log output
-- `LogSubscribe` — returns channel for live log chunks (follow mode); nil if unsupported
-- `LogUnsubscribe` — removes subscription
-
-**Implementations:**
-- `AgentStreamDriver` — default. Connects to agent for attach; uses agent log buffer.
-
-## NetworkDriver
-
-Container networking (create/inspect/connect/disconnect/remove networks).
+Network operations (create / connect / disconnect / inspect / remove networks) use a separate driver chain in `core.DriverSet.Network`, not a typed `TypedDriverSet` slot. The split exists because network drivers have platform-specific real-Linux behaviour (veth, netns) that doesn't fit the per-container `DriverContext` envelope.
 
 ```go
 type NetworkDriver interface {
     Name() string
-    Create(ctx context.Context, name string, opts *NetworkCreateRequest) (*NetworkCreateResponse, error)
-    Inspect(ctx context.Context, id string) (*Network, error)
-    List(ctx context.Context, filters map[string][]string) ([]*Network, error)
-    Remove(ctx context.Context, id string) error
-    Connect(ctx context.Context, networkID, containerID string, config *EndpointSettings) error
-    Disconnect(ctx context.Context, networkID, containerID string) error
-    Prune(ctx context.Context, filters map[string][]string) (*NetworkPruneResponse, error)
+    Create(ctx, name, opts) (*NetworkCreateResponse, error)
+    Inspect(ctx, id) (*Network, error)
+    List(ctx, filters) ([]*Network, error)
+    Remove(ctx, id) error
+    Connect(ctx, networkID, containerID, config) error
+    Disconnect(ctx, networkID, containerID) error
+    Prune(ctx, filters) (*NetworkPruneResponse, error)
 }
 ```
 
 **Implementations:**
 
-### SyntheticNetworkDriver
+- **`SyntheticNetworkDriver`** (`backends/core/drivers_network.go`) — in-memory network management with IP allocation from configurable subnets. Used as the base on every platform.
+- **`LinuxNetworkDriver`** (`backends/core/drivers_network_linux.go`) — wraps `SyntheticNetworkDriver` with real Linux network namespace operations: creates veth pairs, moves interfaces into container netns, assigns IPs inside the namespace. Active only on Linux; other platforms use `SyntheticNetworkDriver` directly.
 
-Source: `backends/core/drivers_network.go`
-
-In-memory network management with IP allocation from configurable subnets. Used on all platforms as the base.
-
-- `Create` — generates ID, allocates subnet from IPAM, stores in `Store.Networks`
-- `Connect` — allocates IP, adds to network's Containers map and container's NetworkSettings
-- `Disconnect` — releases IP, removes from both maps
-- `Remove` — rejects pre-defined networks (bridge, host, none), deletes from store
-- `Prune` — removes networks with no connected containers
-
-### LinuxNetworkDriver
-
-Source: `backends/core/drivers_network_linux.go`
-
-Wraps `SyntheticNetworkDriver` with real Linux network namespace operations:
-- Creates veth pairs
-- Moves interfaces into container netns
-- Assigns IPs inside namespace
-- Gracefully degrades to synthetic if netns unavailable
-
-Only active on Linux. Other platforms use `SyntheticNetworkDriver` directly.
-
-## Driver Initialization
-
-Source: `backends/core/server.go:InitDrivers()`
-
-```go
-func (s *BaseServer) InitDrivers() {
-    s.Drivers.Exec = &AgentExecDriver{...}
-    s.Drivers.Filesystem = &AgentFilesystemDriver{...}
-    s.Drivers.Stream = &AgentStreamDriver{...}
-
-    syntheticNet := &SyntheticNetworkDriver{Store: s.Store, ...}
-    if platformDriver := NewPlatformNetworkDriver(syntheticNet, logger); platformDriver != nil {
-        s.Drivers.Network = platformDriver  // Linux: real netns
-    } else {
-        s.Drivers.Network = syntheticNet    // macOS/Windows: in-memory
-    }
-}
-```
-
-## Cloud-Specific Extensions
-
-Cloud backends extend beyond the base drivers with cloud-native operations wired into the `api.Backend` method overrides (not the driver layer):
-
-| Backend | Networking | Service Discovery | Exec | Logging |
-|---------|-----------|-------------------|------|---------|
-| ECS | VPC Security Groups | AWS Cloud Map | SSM ExecuteCommand | CloudWatch |
-| Cloud Run | Cloud DNS zones | Cloud DNS A records | Agent sidecar | Cloud Logging |
-| ACA | NSG tracking | In-process DNS | Container Apps exec API | Azure Monitor KQL |
-| Lambda | — | — | — | CloudWatch |
-| GCF | — | — | — | Cloud Logging |
-| AZF | — | — | — | Azure Monitor |
-
-These are implemented directly on the backend Server structs, not as pluggable drivers, because they depend on cloud-specific SDK clients.
+Cloud backends layer on top: ECS uses VPC Security Groups + Cloud Map; Cloud Run uses Cloud DNS managed zones; ACA uses NSG + in-process DNS. Those layers are wired through `api.Backend.NetworkCreate / Connect / etc.` rather than the typed driver framework — see [CLOUD_RESOURCE_MAPPING.md](CLOUD_RESOURCE_MAPPING.md) § Networking per cloud.

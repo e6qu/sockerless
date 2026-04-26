@@ -16,7 +16,7 @@ func TestAzureFunctions_InvokeArithmetic(t *testing.T) {
 	azureCreateSiteWithImage(t, rg, name, []string{"3 + 4 * 2"}, evalImageName)
 	defer azureDeleteSite(rg, name)
 
-	body := azureInvokeFunction(t)
+	body := azureInvokeFunction(t, name)
 	assert.Contains(t, string(body), "11")
 }
 
@@ -25,7 +25,7 @@ func TestAzureFunctions_InvokeArithmeticParentheses(t *testing.T) {
 	azureCreateSiteWithImage(t, rg, name, []string{"(3 + 4) * 2"}, evalImageName)
 	defer azureDeleteSite(rg, name)
 
-	body := azureInvokeFunction(t)
+	body := azureInvokeFunction(t, name)
 	assert.Contains(t, string(body), "14")
 }
 
@@ -34,7 +34,7 @@ func TestAzureFunctions_InvokeArithmeticInvalid(t *testing.T) {
 	azureCreateSiteWithImage(t, rg, name, []string{"3 +"}, evalImageName)
 	defer azureDeleteSite(rg, name)
 
-	azureInvokeFunctionExpectError(t)
+	azureInvokeFunctionExpectError(t, name)
 
 	kql := `AppTraces | where AppRoleName == "arith-invalid-app"`
 	result := queryWorkspace(t, "default", kql)
@@ -66,7 +66,7 @@ func TestAzureFunctions_InvokeArithmeticLogs(t *testing.T) {
 	azureCreateSiteWithImage(t, rg, name, []string{"((2+3)*4-1)/3"}, evalImageName)
 	defer azureDeleteSite(rg, name)
 
-	body := azureInvokeFunction(t)
+	body := azureInvokeFunction(t, name)
 	assert.Contains(t, string(body), "6.333")
 
 	kql := `AppTraces | where AppRoleName == "arith-logs-app"`

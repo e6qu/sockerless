@@ -14,7 +14,7 @@ import (
 
 // EFSManager owns sockerless-managed EFS filesystem + access points
 // backing Docker named volumes for every AWS backend that can mount
-// EFS (ECS today, Lambda in Phase 94b). One filesystem per backend
+// EFS (ECS today, Lambda planned). One filesystem per backend
 // instance, one access point per Docker volume, tagged:
 //
 //   - sockerless-managed=true       → identifies sockerless-owned resources

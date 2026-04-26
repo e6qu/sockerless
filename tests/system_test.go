@@ -3,7 +3,6 @@ package tests
 import (
 	"archive/tar"
 	"bytes"
-	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -103,7 +102,10 @@ func TestVersionedPing(t *testing.T) {
 }
 
 func TestImageBuild(t *testing.T) {
-	// Create a minimal tar with a Dockerfile
+	// The e2e harness runs the ECS backend with no CodeBuild project
+	// configured, so /build returns NotImplementedError naming the missing
+	// prerequisite. A backend that can't build must fail cleanly, not
+	// produce a synthetic image — this test guards that contract.
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	dockerfile := []byte("FROM alpine\nENTRYPOINT [\"echo\"]\n")
@@ -125,41 +127,12 @@ func TestImageBuild(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusNotImplemented {
 		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
+		t.Fatalf("expected 501 (no cloud build service configured), got %d: %s", resp.StatusCode, body)
 	}
-
-	// Read streaming JSON, verify stream and aux messages
 	body, _ := io.ReadAll(resp.Body)
-	lines := strings.Split(strings.TrimSpace(string(body)), "\n")
-	hasStream := false
-	hasAux := false
-	for _, line := range lines {
-		var msg map[string]any
-		if err := json.Unmarshal([]byte(line), &msg); err != nil {
-			continue
-		}
-		if _, ok := msg["stream"]; ok {
-			hasStream = true
-		}
-		if _, ok := msg["aux"]; ok {
-			hasAux = true
-		}
-	}
-	if !hasStream {
-		t.Error("expected at least one stream message in build output")
-	}
-	if !hasAux {
-		t.Error("expected aux message with image ID in build output")
-	}
-
-	// Verify the image exists and has correct entrypoint
-	img, _, err := dockerClient.ImageInspectWithRaw(ctx, "test-build:latest")
-	if err != nil {
-		t.Fatalf("image inspect failed: %v", err)
-	}
-	if len(img.Config.Entrypoint) != 1 || img.Config.Entrypoint[0] != "echo" {
-		t.Errorf("entrypoint = %v, want [echo]", img.Config.Entrypoint)
+	if !strings.Contains(string(body), "cloud build service") {
+		t.Errorf("expected error to name the missing build service, got: %s", body)
 	}
 }

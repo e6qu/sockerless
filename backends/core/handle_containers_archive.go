@@ -15,11 +15,28 @@ import (
 	"github.com/sockerless/api"
 )
 
+// archiveDriverContext builds the typed driver context used by the
+// FS read/write dispatch sites. Resolves the container via the
+// CloudState-aware path so cloud backends pick up cloud actuals.
+func (s *BaseServer) archiveDriverContext(r *http.Request, ref string) DriverContext {
+	c, _ := s.ResolveContainerAuto(r.Context(), ref)
+	if c.ID == "" {
+		c.ID = ref
+	}
+	return DriverContext{
+		Ctx:       r.Context(),
+		Container: c,
+		Backend:   s.Desc.Driver,
+		Logger:    s.Logger,
+	}
+}
+
 // handlePutArchive accepts a tar archive and extracts it to the container filesystem.
 func (s *BaseServer) handlePutArchive(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	noOverwrite := r.URL.Query().Get("noOverwriteDirNonDir") == "1" || r.URL.Query().Get("noOverwriteDirNonDir") == "true"
-	if err := s.self.ContainerPutArchive(r.PathValue("id"), path, noOverwrite, r.Body); err != nil {
+	dctx := s.archiveDriverContext(r, r.PathValue("id"))
+	if err := s.Typed.FSWrite.PutArchive(dctx, path, r.Body, noOverwrite); err != nil {
 		WriteError(w, err)
 		return
 	}
@@ -29,7 +46,8 @@ func (s *BaseServer) handlePutArchive(w http.ResponseWriter, r *http.Request) {
 // handleHeadArchive returns a stat header for the requested path.
 func (s *BaseServer) handleHeadArchive(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
-	stat, err := s.self.ContainerStatPath(r.PathValue("id"), path)
+	dctx := s.archiveDriverContext(r, r.PathValue("id"))
+	stat, err := s.Typed.FSRead.StatPath(dctx, path)
 	if err != nil {
 		WriteError(w, err)
 		return
@@ -45,26 +63,30 @@ func (s *BaseServer) handleHeadArchive(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleGetArchive returns a tar archive of the requested path.
+// handleGetArchive returns a tar archive of the requested path. Stat
+// header is set via a separate StatPath call before the body stream
+// begins, since the typed FSRead.GetArchive writes directly into the
+// response writer (no Reader is returned to read the stat from).
 func (s *BaseServer) handleGetArchive(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
-	resp, err := s.self.ContainerGetArchive(r.PathValue("id"), path)
+	dctx := s.archiveDriverContext(r, r.PathValue("id"))
+	stat, err := s.Typed.FSRead.StatPath(dctx, path)
 	if err != nil {
 		WriteError(w, err)
 		return
 	}
-	defer resp.Reader.Close()
-
 	statJSON, _ := json.Marshal(map[string]interface{}{
-		"name":  resp.Stat.Name,
-		"size":  resp.Stat.Size,
-		"mode":  resp.Stat.Mode,
-		"mtime": resp.Stat.Mtime.Format(time.RFC3339),
+		"name":  stat.Name,
+		"size":  stat.Size,
+		"mode":  stat.Mode,
+		"mtime": stat.Mtime.Format(time.RFC3339),
 	})
 	w.Header().Set("X-Docker-Container-Path-Stat", base64.StdEncoding.EncodeToString(statJSON))
 	w.Header().Set("Content-Type", "application/x-tar")
 	w.WriteHeader(http.StatusOK)
-	io.Copy(w, resp.Reader)
+	if err := s.Typed.FSRead.GetArchive(dctx, path, w); err != nil {
+		s.Logger.Debug().Err(err).Str("path", path).Msg("get-archive write error after headers sent")
+	}
 }
 
 // extractTar extracts a tar archive into destDir.
@@ -248,21 +270,29 @@ func (s *BaseServer) buildContainerFromConfig(id, name string, config api.Contai
 		Driver:   s.Desc.Driver,
 	}
 
-	// Set up default network — resolve via store for correct IPAM
+	// Set up default network — resolve via store for correct IPAM.
 	netName := hostConfig.NetworkMode
 	if netName == "default" {
 		netName = "bridge"
 	}
 	endpoint := s.buildEndpointForNetwork(netName, id, name, nil)
-	container.NetworkSettings.Networks[netName] = endpoint
+	if endpoint != nil {
+		container.NetworkSettings.Networks[netName] = endpoint
+	}
 	if netName == "bridge" {
 		container.NetworkSettings.Bridge = "docker0"
 	}
 
-	// Process explicit NetworkingConfig (e.g. from service containers)
+	// Process explicit NetworkingConfig (e.g. from service containers).
+	// Skip endpoints whose network doesn't resolve — callers surface
+	// the missing network via a separate NetworkConnect lookup rather
+	// than getting a synthetic 172.17.0.x placeholder here.
 	if networkingConfig != nil {
 		for netRef, reqEndpoint := range networkingConfig.EndpointsConfig {
 			ep := s.buildEndpointForNetwork(netRef, id, name, reqEndpoint)
+			if ep == nil {
+				continue
+			}
 			// Find the display name for this network
 			displayName := netRef
 			if net, ok := s.Store.ResolveNetwork(netRef); ok {
@@ -283,20 +313,17 @@ func (s *BaseServer) buildContainerFromConfig(id, name string, config api.Contai
 	return container
 }
 
-// buildEndpointForNetwork creates an EndpointSettings for a network, resolving
-// IPAM from the IPAllocator and adding the container to the Network.Containers map.
+// buildEndpointForNetwork creates an EndpointSettings for a network,
+// resolving IPAM from the IPAllocator and adding the container to the
+// Network.Containers map. Returns nil if the referenced network does
+// not exist — callers must check and surface a NotFoundError.
+// Previously this synthesised a hardcoded `172.17.0.<N>` endpoint for
+// unknown networks, producing colliding IPs across containers and
+// silently masking "unknown network" errors as fake-success.
 func (s *BaseServer) buildEndpointForNetwork(netRef, containerID, containerName string, reqEndpoint *api.EndpointSettings) *api.EndpointSettings {
 	net, found := s.Store.ResolveNetwork(netRef)
 	if !found {
-		// Fallback for unknown networks
-		return &api.EndpointSettings{
-			NetworkID:   netRef,
-			EndpointID:  GenerateID()[:16],
-			Gateway:     "172.17.0.1",
-			IPAddress:   fmt.Sprintf("172.17.0.%d", s.Store.Containers.Len()+2),
-			IPPrefixLen: 16,
-			MacAddress:  "02:42:ac:11:00:02",
-		}
+		return nil
 	}
 
 	ip, prefixLen, gateway, mac := s.Store.IPAlloc.AllocateIP(net.ID)

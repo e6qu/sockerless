@@ -1,7 +1,6 @@
 package core
 
 import (
-	"io"
 	"net/http"
 	"strings"
 
@@ -87,7 +86,7 @@ func (s *BaseServer) handleExecInspect(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, exec)
 }
 
-// --- Default exec start (delegates to s.self for virtual dispatch) ---
+// --- Exec start dispatch — hijack first, then route through Typed.Exec ---
 
 func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -95,33 +94,27 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	var req api.ExecStartRequest
 	_ = ReadJSON(r, &req)
 
-	// Determine TTY before starting (for HTTP upgrade framing)
+	// Resolve exec metadata up front. The handler must surface a 404
+	// before hijacking, because once the conn is hijacked the client
+	// would parse error-message bytes as a multiplexed stdcopy stream
+	// and emit `unrecognized stream: <byte>`.
 	exec, ok := s.Store.Execs.Get(id)
 	if !ok {
 		WriteError(w, &api.NotFoundError{Resource: "exec instance", ID: id})
 		return
 	}
 	tty := exec.ProcessConfig.Tty || req.Tty
-
-	// Start the exec BEFORE hijacking — if the backend returns an error
-	// (e.g. NotImplementedError on a FaaS backend without a reverse-agent
-	// session), the client gets a normal HTTP error response instead of
-	// trying to parse an error-message body as a multiplexed stdcopy
-	// stream and emitting `unrecognized stream: <byte>`.
-	rwc, err := s.self.ExecStart(id, req)
-	if err != nil {
-		WriteError(w, err)
-		return
+	c, _ := s.ResolveContainerAuto(r.Context(), exec.ContainerID)
+	if c.ID == "" {
+		c.ID = exec.ContainerID
 	}
-	defer rwc.Close()
 
-	// Hijack the connection
+	// Hijack the connection.
 	hj, ok := w.(http.Hijacker)
 	if !ok {
 		WriteError(w, &api.ServerError{Message: "hijacking not supported"})
 		return
 	}
-
 	conn, buf, hjErr := hj.Hijack()
 	if hjErr != nil {
 		return
@@ -132,7 +125,6 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	if tty {
 		contentType = "application/vnd.docker.raw-stream"
 	}
-
 	buf.WriteString("HTTP/1.1 101 UPGRADED\r\n")
 	buf.WriteString("Content-Type: " + contentType + "\r\n")
 	buf.WriteString("Connection: Upgrade\r\n")
@@ -140,16 +132,45 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	buf.WriteString("\r\n")
 	buf.Flush()
 
-	// Copy data between the exec stream and the hijacked connection
-	done := make(chan struct{})
-	go func() {
-		io.Copy(conn, rwc)
-		close(done)
-	}()
-	go func() {
-		io.Copy(rwc, conn)
-	}()
-	<-done
+	dctx := DriverContext{
+		Ctx:       r.Context(),
+		Container: c,
+		Backend:   s.Desc.Driver,
+		Logger:    s.Logger,
+	}
+	cmd := append([]string{exec.ProcessConfig.Entrypoint}, exec.ProcessConfig.Arguments...)
+	env := mergeEnv(c.Config.Env, exec.ProcessConfig.Env)
+	workDir := exec.ProcessConfig.WorkingDir
+	if workDir == "" {
+		workDir = c.Config.WorkingDir
+	}
+	opts := ExecOptions{
+		ExecID:  id,
+		Cmd:     cmd,
+		Env:     env,
+		WorkDir: workDir,
+		TTY:     tty,
+		User:    exec.ProcessConfig.User,
+	}
+
+	// Bookkeeping previously lived in BaseServer.ExecStart. Centralised
+	// here so cloud-native typed drivers don't each have to track
+	// Running/PID/ExitCode for the exec instance.
+	execPid := s.Store.NextPID()
+	s.Store.Execs.Update(id, func(e *api.ExecInstance) {
+		e.Running = true
+		e.Pid = execPid
+	})
+	exitCode, err := s.Typed.Exec.Exec(dctx, opts, conn)
+	if err != nil {
+		s.Logger.Debug().Err(err).Str("exec", id).Msg("typed exec dispatch error after hijack")
+	}
+	s.Store.Execs.Update(id, func(e *api.ExecInstance) {
+		e.Running = false
+		e.Pid = 0
+		e.ExitCode = exitCode
+		e.CanRemove = true
+	})
 }
 
 // mergeEnv merges base env vars with override env vars. Override values

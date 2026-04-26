@@ -119,7 +119,7 @@ func NewMainProcess(logger zerolog.Logger, args []string, env []string) (*MainPr
 	}
 
 	// Publish the user-process PID so reverse-agent pause/unpause
-	// (Phase 99) can SIGSTOP/SIGCONT it.
+	// can SIGSTOP/SIGCONT it.
 	writeMainPIDFile(cmd.Process.Pid)
 
 	// Fan-out stdout and stderr — tracked by WaitGroup so wait() can
@@ -135,9 +135,9 @@ func NewMainProcess(logger zerolog.Logger, args []string, env []string) (*MainPr
 }
 
 // mainPIDFilePath is the path the agent writes the user-process PID
-// to so backend-core's RunContainerPauseViaAgent (Phase 99) can read
-// it and signal the right process. Mirrors the constant in the
-// Lambda bootstrap.
+// to so backend-core's RunContainerPauseViaAgent can read it and
+// signal the right process. Mirrors the constant in the Lambda
+// bootstrap.
 const mainPIDFilePath = "/tmp/.sockerless-mainpid"
 
 func writeMainPIDFile(pid int) {

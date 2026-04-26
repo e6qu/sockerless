@@ -95,7 +95,7 @@ func (p *gcfCloudState) CheckNameAvailable(ctx context.Context, name string) (bo
 }
 
 func (p *gcfCloudState) WaitForExit(ctx context.Context, containerID string) (int, error) {
-	// Phase 95: fast path — invocation goroutine records the outcome.
+	// Fast path — invocation goroutine records the outcome.
 	if inv, ok := p.server.Store.GetInvocationResult(containerID); ok {
 		return inv.ExitCode, nil
 	}
@@ -181,8 +181,8 @@ func (p *gcfCloudState) queryFunctions(ctx context.Context) ([]api.Container, er
 
 		c := functionToContainer(fn, labels)
 
-		// Phase 95: overlay recorded invocation outcome so exited state
-		// is visible to docker ps / docker inspect / docker wait.
+		// Overlay recorded invocation outcome so exited state is
+		// visible to docker ps / docker inspect / docker wait.
 		if inv, ok := p.server.Store.GetInvocationResult(c.ID); ok {
 			c.State = api.ContainerState{
 				Status:     "exited",
@@ -240,12 +240,11 @@ func functionToContainer(fn *functionspb.Function, labels map[string]string) api
 	// Map function state to Docker state
 	state := mapFunctionState(fn)
 
-	// Phase 97 (BUG-746): Docker labels are carried as a base64-encoded
-	// JSON env var because GCP's label-value charset rejects the
-	// sockerless-labels JSON blob and Functions v2 has no Annotations
-	// field. Prefer the env-var source if present; fall back to the
-	// legacy split-across-labels path for resources created before the
-	// fix.
+	// Docker labels are carried as a base64-encoded JSON env var
+	// because GCP's label-value charset rejects the sockerless-labels
+	// JSON blob and Functions v2 has no Annotations field. Prefer the
+	// env-var source if present; fall back to the legacy
+	// split-across-labels path for resources created before the fix.
 	dockerLabels := map[string]string{}
 	if fn.ServiceConfig != nil {
 		if b64, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_LABELS"]; ok && b64 != "" {
@@ -289,7 +288,7 @@ func functionToContainer(fn *functionspb.Function, labels map[string]string) api
 			Networks: map[string]*api.EndpointSettings{
 				networkName: {
 					NetworkID: networkName,
-					IPAddress: "0.0.0.0",
+					IPAddress: "",
 				},
 			},
 		},

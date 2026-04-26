@@ -334,7 +334,13 @@ func (s *BaseServer) handleDockerImageCreate(w http.ResponseWriter, r *http.Requ
 
 	auth := r.Header.Get("X-Registry-Auth")
 
-	rc, err := s.self.ImagePull(ref, auth)
+	parsed, err := ParseImageRef(ref)
+	if err != nil {
+		WriteError(w, &api.InvalidParameterError{Message: "invalid image reference: " + err.Error()})
+		return
+	}
+	dctx := DriverContext{Ctx: r.Context(), Backend: s.Desc.Driver, Logger: s.Logger}
+	rc, err := s.Typed.Registry.Pull(dctx, parsed, auth)
 	if err != nil {
 		WriteError(w, err)
 		return
@@ -410,7 +416,17 @@ func (s *BaseServer) handleDockerImageHistory(w http.ResponseWriter, _ *http.Req
 func (s *BaseServer) handleDockerImagePush(w http.ResponseWriter, r *http.Request, name string) {
 	tag := r.URL.Query().Get("tag")
 	auth := r.Header.Get("X-Registry-Auth")
-	rc, err := s.self.ImagePush(name, tag, auth)
+	rawRef := name
+	if tag != "" {
+		rawRef = name + ":" + tag
+	}
+	parsed, err := ParseImageRef(rawRef)
+	if err != nil {
+		WriteError(w, &api.InvalidParameterError{Message: "invalid image reference: " + err.Error()})
+		return
+	}
+	dctx := DriverContext{Ctx: r.Context(), Backend: s.Desc.Driver, Logger: s.Logger}
+	rc, err := s.Typed.Registry.Push(dctx, parsed, auth)
 	if err != nil {
 		WriteError(w, err)
 		return

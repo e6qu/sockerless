@@ -11,7 +11,7 @@ import (
 	awscommon "github.com/sockerless/aws-common"
 )
 
-// Phase 94b — EFS-backed named-volume provisioning for Lambda.
+// EFS-backed named-volume provisioning for Lambda.
 //
 // Lambda supports cross-invocation durable storage via
 // `Function.FileSystemConfigs[]` — each entry pairs an EFS access-point

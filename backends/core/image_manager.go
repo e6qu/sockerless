@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -81,7 +84,7 @@ type ImageManager struct {
 // Pull pulls an image, using cloud auth if available.
 func (m *ImageManager) Pull(ref string, auth string) (io.ReadCloser, error) {
 	if m.Auth != nil {
-		registry, _, _ := ParseImageRef(ref)
+		registry, _, _ := splitImageRefRegistry(ref)
 		if auth == "" && m.Auth.IsCloudRegistry(registry) {
 			if token, err := m.Auth.GetToken(registry); err == nil {
 				auth = token
@@ -108,7 +111,7 @@ func (m *ImageManager) Pull(ref string, auth string) (io.ReadCloser, error) {
 
 	// Sync to cloud registry (non-fatal)
 	if m.Auth != nil {
-		registry, repo, tag := ParseImageRef(ref)
+		registry, repo, tag := splitImageRefRegistry(ref)
 		if m.Auth.IsCloudRegistry(registry) {
 			if img, ok := m.Base.Store.ResolveImage(ref); ok {
 				if err := m.Auth.OnPush(img.ID, registry, repo, tag); err != nil {
@@ -165,7 +168,7 @@ func (m *ImageManager) Push(name string, tag string, auth string) (io.ReadCloser
 	// for ECR. Real OCI push happens below via BaseServer.ImagePush
 	// which has access to the layer data through the local store.
 	if m.Auth != nil {
-		registry, repo, _ := ParseImageRef(name)
+		registry, repo, _ := splitImageRefRegistry(name)
 		if m.Auth.IsCloudRegistry(registry) {
 			if err := m.Auth.OnPush(img.ID, registry, repo, tag); err != nil {
 				m.Logger.Warn().Err(err).Str("name", name).Str("tag", tag).Msg("cloud push pre-upload step failed")
@@ -205,7 +208,7 @@ func (m *ImageManager) Tag(source string, repo string, tag string) error {
 		if tag != "" {
 			ref = repo + ":" + tag
 		}
-		registry, repoPath, newTag := ParseImageRef(ref)
+		registry, repoPath, newTag := splitImageRefRegistry(ref)
 		if m.Auth.IsCloudRegistry(registry) {
 			if img, ok := m.Base.Store.ResolveImage(ref); ok {
 				if err := m.Auth.OnTag(img.ID, registry, repoPath, newTag); err != nil {
@@ -232,7 +235,7 @@ func (m *ImageManager) Remove(name string, force bool, prune bool) ([]*api.Image
 		if img, ok := m.Base.Store.ResolveImage(name); ok {
 			refs := make(map[string]*cloudRef)
 			for _, repoTag := range img.RepoTags {
-				registry, repo, imgTag := ParseImageRef(repoTag)
+				registry, repo, imgTag := splitImageRefRegistry(repoTag)
 				if m.Auth.IsCloudRegistry(registry) {
 					key := registry + "/" + repo
 					if _, exists := refs[key]; !exists {
@@ -252,17 +255,37 @@ func (m *ImageManager) Remove(name string, force bool, prune bool) ([]*api.Image
 		return nil, err
 	}
 
-	// Sync removal to cloud (non-fatal)
+	// Sync removal to cloud. Aggregate the cloud-side errors and
+	// surface them — the local removal already succeeded, so we
+	// return result *plus* the cloud error so callers see both
+	// (the previous silent-warning behaviour left the operator
+	// believing the image was gone from the cloud registry when it
+	// might still be present).
+	var cloudErrs []string
 	for _, ref := range cloudRefs {
 		if err := m.Auth.OnRemove(ref.registry, ref.repo, ref.tags); err != nil {
-			m.Logger.Warn().Err(err).Str("repo", ref.repo).Msg("cloud remove sync failed")
+			cloudErrs = append(cloudErrs, fmt.Sprintf("%s: %v", ref.repo, err))
 		}
+	}
+	if len(cloudErrs) > 0 {
+		// We already removed locally; report the cloud-side failures
+		// as a server error so the operator can rerun rmi to retry
+		// or check the cloud-side state.
+		return result, &api.ServerError{Message: "local image removed but cloud-registry sync failed: " + strings.Join(cloudErrs, "; ")}
 	}
 
 	return result, nil
 }
 
-// Build delegates to BaseServer's synthetic Dockerfile parser.
+// Build delegates to the configured cloud build service. When no
+// cloud build service is configured (`m.BuildService == nil` or its
+// `Available()` returns false) and the docker backend is not in use,
+// `docker build` returns NotImplementedError — we don't silently fall
+// back to a local Dockerfile parser that drops `RUN` steps as a no-op.
+// The local-Dockerfile path remains for the docker backend only,
+// gated by `SOCKERLESS_LOCAL_DOCKERFILE_BUILD=1` for cases where
+// the operator deliberately wants the no-RUN parse-only mode (e.g.
+// CI smoke tests of metadata-only images).
 func (m *ImageManager) Build(opts api.ImageBuildOptions, ctxReader io.Reader) (io.ReadCloser, error) {
 	if m.BuildService != nil && m.BuildService.Available() {
 		// Buffer context so we can pass to cloud build service
@@ -329,8 +352,16 @@ func (m *ImageManager) Build(opts api.ImageBuildOptions, ctxReader io.Reader) (i
 		return pr, nil
 	}
 
-	// Fallback: local Dockerfile parsing only (no RUN execution)
-	return m.Base.ImageBuild(opts, ctxReader)
+	// No cloud build service configured. We don't silently route to
+	// the local Dockerfile parser (which drops RUN steps as no-ops,
+	// producing a "successful" build that doesn't match the user's
+	// Dockerfile). Local parsing is enabled only when the operator
+	// opts in via SOCKERLESS_LOCAL_DOCKERFILE_BUILD=1 — used by
+	// docker-backend smoke tests where RUN isn't required.
+	if os.Getenv("SOCKERLESS_LOCAL_DOCKERFILE_BUILD") == "1" {
+		return m.Base.ImageBuild(opts, ctxReader)
+	}
+	return nil, &api.NotImplementedError{Message: "docker build requires a cloud build service (CodeBuild / Cloud Build / ACR Tasks); none is configured. Set SOCKERLESS_LOCAL_DOCKERFILE_BUILD=1 to opt in to the local parse-only path (no RUN execution; metadata-only)"}
 }
 
 // Inspect delegates to BaseServer.
@@ -368,9 +399,15 @@ func (m *ImageManager) Search(term string, limit int, filters map[string][]strin
 	return m.Base.ImageSearch(term, limit, filters)
 }
 
-// ParseImageRef splits an image reference into registry, repository, and tag.
-// Exported for use by AuthProvider implementations and backends.
-func ParseImageRef(ref string) (registry, repo, tag string) {
+// splitImageRefRegistry splits a reference into the (registry, repo,
+// tag) tuple used by `core.AuthProvider` and the image-manager
+// internals — registry-scope identification rather than
+// general-purpose parsing. The canonical parser is `ParseImageRef`
+// returning a typed `ImageRef`; this helper unwraps the registryConfig
+// computed by `parseImageRef` for callers that want the
+// docker-hub-default rewrite (`docker.io` → `registry-1.docker.io`,
+// bare names → `library/<name>`).
+func splitImageRefRegistry(ref string) (registry, repo, tag string) {
 	rc := parseImageRef(ref)
 	return rc.Registry, rc.Repository, rc.Tag
 }

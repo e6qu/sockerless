@@ -10,7 +10,7 @@ import (
 	"github.com/sockerless/api"
 )
 
-// testExecDriver is a mock ExecDriver that returns a configurable exit code.
+// testExecDriver is a mock LegacyExecDriver that returns a configurable exit code.
 type testExecDriver struct {
 	exitCode int
 	output   string
@@ -25,7 +25,7 @@ func (d *testExecDriver) Exec(_ context.Context, _ string, _ string,
 }
 
 // newTestServer creates a minimal BaseServer for health check testing.
-func newTestServer(execDriver ExecDriver) *BaseServer {
+func newTestServer(execDriver LegacyExecDriver) *BaseServer {
 	store := NewStore()
 	logger := zerolog.Nop()
 	s := &BaseServer{

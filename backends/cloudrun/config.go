@@ -34,7 +34,7 @@ type Config struct {
 	// inside the container can dial back to the backend's
 	// `/v1/cloudrun/reverse` endpoint. Enables `docker exec` /
 	// `docker attach` against CR Jobs/Services once an overlay image
-	// with the bootstrap binary is deployed. Empty ⇒ exec NotImpl. Phase 96.
+	// with the bootstrap binary is deployed. Empty ⇒ exec NotImpl.
 	CallbackURL string
 
 	// EnableCommit opts into the agent-driven `docker commit` path.

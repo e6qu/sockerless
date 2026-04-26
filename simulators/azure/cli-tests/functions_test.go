@@ -70,10 +70,12 @@ func TestFunctionApp_CLI_InvokeAndCheckLogs(t *testing.T) {
 	}`
 	runCLI(t, azRest("PUT", url, body))
 
-	// Invoke function via HTTP POST to /api/function
-	// We need to use az rest to the simulator's baseURL
+	// Invoke function via HTTP POST. Real Azure routes by per-site hostname
+	// `<site>.azurewebsites.net`; the sim hosts every site on one port so we
+	// connect to the sim's TCP address and pin the Host header. az rest's
+	// --headers flag carries it through.
 	invokeURL := baseURL + "/api/function"
-	runCLI(t, azRest("POST", invokeURL, "{}"))
+	runCLI(t, azRest("POST", invokeURL, "{}", "--headers", "Host=cli-invoke-funcapp.azurewebsites.net"))
 
 	// Query AppTraces for the function app
 	queryURL := baseURL + "/v1/workspaces/default/query"

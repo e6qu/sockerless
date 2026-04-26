@@ -168,7 +168,7 @@ type Store struct {
 	// InvocationResults records per-container FaaS invocation outcomes so
 	// CloudState can report an accurate `exited` state (+ exit code +
 	// stopped-at) once the invoke call returns. Populated by the
-	// invocation-driving goroutine on Lambda / GCF / AZF (Phase 95).
+	// invocation-driving goroutine on Lambda / GCF / AZF.
 	// Crash-scoped: a restarted backend loses these and falls back to
 	// cloud state (function exists ⇒ `running` until the user removes it).
 	InvocationResults sync.Map // containerID → InvocationResult
@@ -189,7 +189,7 @@ type Store struct {
 	// uncompressed-and-equal-to-diff-id layers — never the case for
 	// real registry pulls). Populated by ImagePull alongside
 	// LayerContent (which holds the blob bytes keyed by the same
-	// compressed digest). Closes BUG-788.
+	// compressed digest).
 	ImageManifestLayers sync.Map // imageID → []ManifestLayerEntry
 	IPAlloc             *IPAllocator
 	RenameMu            sync.Mutex

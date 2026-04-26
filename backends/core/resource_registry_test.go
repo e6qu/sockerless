@@ -88,9 +88,9 @@ func TestRegistryListOrphaned(t *testing.T) {
 	}
 }
 
-// Persistence tests removed: BUG-800 collapsed Save/Load to no-ops to
-// keep the registry purely in-memory (stateless invariant). The
-// surviving tests cover the in-memory semantics.
+// Persistence tests removed: Save/Load collapsed to no-ops to keep
+// the registry purely in-memory (stateless invariant). The surviving
+// tests cover the in-memory semantics.
 
 func TestRegistryStatusTransitions(t *testing.T) {
 	rr := NewResourceRegistry("")

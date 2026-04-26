@@ -149,7 +149,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		NetworkID:   networkID,
 		EndpointID:  core.GenerateID()[:16],
 		Gateway:     "",
-		IPAddress:   "0.0.0.0",
+		IPAddress:   "",
 		IPPrefixLen: 16,
 		MacAddress:  "",
 	}
@@ -432,7 +432,9 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
 	}
-	s.EmitEvent("container", "die", id, map[string]string{"exitCode": "0", "name": strings.TrimPrefix(c.Name, "/")})
+	// `docker stop` is SIGTERM → exit 143.
+	stopExitCode := core.SignalToExitCode("SIGTERM")
+	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", stopExitCode), "name": strings.TrimPrefix(c.Name, "/")})
 	s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	return nil
 }
@@ -501,9 +503,11 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	if c.State.Running {
+		// `docker rm -f` is SIGKILL → exit 137.
+		killExitCode := core.SignalToExitCode("SIGKILL")
 		s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 		s.EmitEvent("container", "die", id, map[string]string{
-			"exitCode": "0",
+			"exitCode": fmt.Sprintf("%d", killExitCode),
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
 		if !s.config.UseApp {
@@ -578,11 +582,18 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 }
 
 // ContainerLogs streams container logs from Azure Monitor Log Analytics.
-// Filter depends on Config.UseApp: Jobs log under ContainerGroupName_s;
-// Apps log under ContainerAppName_s in the same table.
 func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
 	id, _ := s.ResolveContainerIDAuto(context.Background(), ref)
+	fetch := s.buildCloudLogsFetcher(id)
+	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{})
+}
 
+// buildCloudLogsFetcher returns a CloudLogFetchFunc closure that
+// queries Azure Monitor / Log Analytics. Filter depends on
+// Config.UseApp: Jobs log under ContainerGroupName_s; Apps log under
+// ContainerAppName_s in the same table. Shared by ContainerLogs +
+// ContainerAttach + the typed Logs/Attach drivers.
+func (s *Server) buildCloudLogsFetcher(id string) core.CloudLogFetchFunc {
 	var whereClause string
 	if s.config.UseApp {
 		var appName string
@@ -605,9 +616,7 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 		}
 		whereClause = fmt.Sprintf(`ContainerGroupName_s == "%s"`, jobName)
 	}
-
-	fetch := s.azureLogsFetch(`ContainerAppConsoleLogs_CL`, whereClause, "Log_s")
-	return core.StreamCloudLogs(s.BaseServer, ref, opts, fetch, core.StreamCloudLogsOptions{})
+	return s.azureLogsFetch(`ContainerAppConsoleLogs_CL`, whereClause, "Log_s")
 }
 
 // ContainerRestart stops and then starts a container.
@@ -639,8 +648,10 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
 		}
+		// `docker restart` sends SIGTERM → exit 143.
+		stopExitCode := core.SignalToExitCode("SIGTERM")
 		s.EmitEvent("container", "die", id, map[string]string{
-			"exitCode": "0",
+			"exitCode": fmt.Sprintf("%d", stopExitCode),
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
 		s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})

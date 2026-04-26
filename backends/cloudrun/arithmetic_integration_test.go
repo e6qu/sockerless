@@ -207,8 +207,8 @@ func TestCloudRunArithmeticWithLabels(t *testing.T) {
 		t.Errorf("expected logs to contain '58', got %q", logs)
 	}
 
-	// Phase 97 (BUG-746 fix): labels round-trip via GCP annotations
-	// since their JSON representation fails the label-value charset.
+	// Labels round-trip via GCP annotations since their JSON
+	// representation fails the label-value charset.
 	info, err := dockerClient.ContainerInspect(ctx, resp.ID)
 	if err != nil {
 		t.Fatalf("inspect failed: %v", err)

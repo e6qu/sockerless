@@ -26,8 +26,8 @@ type AzureClients struct {
 	Logs    *azquery.LogsClient
 	Cred    azcore.TokenCredential
 
-	// Phase 94: FileShares provisions sockerless-managed Azure Files
-	// shares (shared with ACA via azurecommon.FileShareManager);
+	// FileShares provisions sockerless-managed Azure Files shares
+	// (shared with ACA via azurecommon.FileShareManager);
 	// StorageAccounts fetches the access key at mount-attach time so
 	// rotated keys take effect without a restart.
 	FileShares      *armstorage.FileSharesClient

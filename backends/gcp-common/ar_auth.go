@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -47,7 +48,7 @@ func (a *ARAuthProvider) IsCloudRegistry(registry string) bool {
 // implicitly on first push, and the actual blob upload is done by
 // BaseServer.ImagePush via core.OCIPush, which has access to the
 // image's layer data through the local store. OnPush used to also
-// call OCIPush here without layer data, which always failed (BUG-763).
+// call OCIPush here without layer data, which always failed.
 func (a *ARAuthProvider) OnPush(imageID, registry, repo, tag string) error {
 	return nil
 }
@@ -71,33 +72,42 @@ func (a *ARAuthProvider) OnRemove(registry, repo string, tags []string) error {
 		return fmt.Errorf("get token for remove: %w", err)
 	}
 
+	// Aggregate per-tag failures and return them to the ImageManager
+	// which surfaces the combined error (previously each per-tag failure
+	// was logged + `continue`, so OnRemove returned nil even when some
+	// tags couldn't be deleted — `docker rmi <ar-uri>` reported success
+	// while the AR-side state diverged).
+	var failures []string
 	for _, tag := range tags {
 		deleteURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s", registry, repo, tag)
-		req, err := http.NewRequest(http.MethodDelete, deleteURL, nil)
-		if err != nil {
-			a.logger.Warn().Err(err).Str("tag", tag).Msg("failed to create delete request")
+		req, rerr := http.NewRequest(http.MethodDelete, deleteURL, nil)
+		if rerr != nil {
+			failures = append(failures, fmt.Sprintf("%s: build request: %v", tag, rerr))
 			continue
 		}
 		core.SetOCIAuth(req, authToken)
 
 		client := &http.Client{Timeout: 30 * time.Second}
-		resp, err := client.Do(req)
-		if err != nil {
-			a.logger.Warn().Err(err).Str("tag", tag).Msg("delete request failed")
+		resp, rerr := client.Do(req)
+		if rerr != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", tag, rerr))
 			continue
 		}
 		io.ReadAll(resp.Body) //nolint:errcheck
 		_ = resp.Body.Close()
 
-		// 200, 202: success; 404: already gone; 405: not supported (simulator)
+		// 200, 202: success; 404: already gone; 405: not supported (simulator).
 		switch resp.StatusCode {
 		case http.StatusOK, http.StatusAccepted, http.StatusNotFound, http.StatusMethodNotAllowed:
 			// OK
 		default:
-			a.logger.Warn().Int("status", resp.StatusCode).Str("tag", tag).Msg("delete manifest returned unexpected status")
+			failures = append(failures, fmt.Sprintf("%s: HTTP %d", tag, resp.StatusCode))
 		}
 	}
 
+	if len(failures) > 0 {
+		return fmt.Errorf("AR delete failed for some tags: %s", strings.Join(failures, "; "))
+	}
 	return nil
 }
 

@@ -124,11 +124,13 @@ func waitForHealth(url string) error {
 
 // azRest creates an "az rest" command with config isolation.
 // Uses az rest to bypass cloud registration issues with HTTP endpoints.
-func azRest(method, url, body string) *exec.Cmd {
+// Extra args are appended verbatim — used by callers that need --headers.
+func azRest(method, url, body string, extra ...string) *exec.Cmd {
 	args := []string{"rest", "--method", method, "--url", url, "--output", "json"}
 	if body != "" {
 		args = append(args, "--body", body)
 	}
+	args = append(args, extra...)
 	cmd := exec.Command("az", args...)
 	cmd.Env = append(os.Environ(),
 		"AZURE_CONFIG_DIR="+filepath.Join(tmpDir, "azure-config"),

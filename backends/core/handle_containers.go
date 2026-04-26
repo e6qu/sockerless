@@ -74,7 +74,7 @@ func (s *BaseServer) handleContainerCreate(w http.ResponseWriter, r *http.Reques
 		// Tag the container's labels with sockerless-pod=<name> BEFORE
 		// ContainerCreate so every backend (Docker included) preserves
 		// pod membership on the underlying cloud resource, not just in
-		// Store.Pods. Phase 100 (BUG-754).
+		// Store.Pods.
 		if req.ContainerConfig == nil {
 			req.ContainerConfig = &api.ContainerConfig{}
 		}
@@ -131,7 +131,18 @@ func (s *BaseServer) handleContainerStop(w http.ResponseWriter, r *http.Request)
 
 func (s *BaseServer) handleContainerKill(w http.ResponseWriter, r *http.Request) {
 	signal := r.URL.Query().Get("signal")
-	if err := s.self.ContainerKill(r.PathValue("id"), signal); err != nil {
+	ref := r.PathValue("id")
+	c, _ := s.ResolveContainerAuto(r.Context(), ref)
+	if c.ID == "" {
+		c.ID = ref
+	}
+	dctx := DriverContext{
+		Ctx:       r.Context(),
+		Container: c,
+		Backend:   s.Desc.Driver,
+		Logger:    s.Logger,
+	}
+	if err := s.Typed.Signal.Kill(dctx, signal); err != nil {
 		WriteError(w, err)
 		return
 	}

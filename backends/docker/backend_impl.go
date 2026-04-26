@@ -1128,8 +1128,8 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 	return &api.ContainerCommitResponse{ID: resp.ID}, nil
 }
 
-// Phase 100 (BUG-754): Docker backend now synthesises pods via the
-// shared `sockerless-pod` label convention. Local Docker daemon has no
+// Docker backend synthesises pods via the shared `sockerless-pod`
+// label convention. Local Docker daemon has no
 // native pod primitive, but sockerless already tracks pods in
 // Store.Pods and labels cloud-managed containers with `sockerless-pod`
 // for cross-backend consistency. The Docker backend follows the same

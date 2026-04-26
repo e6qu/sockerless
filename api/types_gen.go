@@ -707,8 +707,15 @@ type NetworkingConfig struct {
 
 // PodActionResponse is a generated type.
 type PodActionResponse struct {
-	Errs []string `json:"Errs"`
-	ID   string   `json:"Id"`
+	Errs     []string `json:"Errs"`
+	ID       string   `json:"Id"`
+	RawInput string   `json:"RawInput"`
+}
+
+// PodBlkioDeviceRate is a generated type.
+type PodBlkioDeviceRate struct {
+	Path string `json:"Path"`
+	Rate uint64 `json:"Rate"`
 }
 
 // PodContainerInfo is a generated type.
@@ -732,17 +739,75 @@ type PodCreateResponse struct {
 	ID string `json:"Id"`
 }
 
+// PodInfraConfig is a generated type.
+type PodInfraConfig struct {
+	DNSOption          []string                 `json:"DNSOption"`
+	DNSSearch          []string                 `json:"DNSSearch"`
+	DNSServer          []string                 `json:"DNSServer"`
+	HostAdd            []string                 `json:"HostAdd"`
+	HostNetwork        bool                     `json:"HostNetwork"`
+	NetworkOptions     map[string][]string      `json:"NetworkOptions"`
+	Networks           []string                 `json:"Networks"`
+	NoManageHosts      bool                     `json:"NoManageHosts"`
+	NoManageResolvConf bool                     `json:"NoManageResolvConf"`
+	PortBindings       map[string][]PortBinding `json:"PortBindings"`
+	StaticIP           string                   `json:"StaticIP"`
+	StaticMAC          string                   `json:"StaticMAC"`
+	Pid_ns             string                   `json:"pid_ns"`
+	Userns             string                   `json:"userns"`
+	Uts_ns             string                   `json:"uts_ns"`
+}
+
+// PodInspectDevice is a generated type.
+type PodInspectDevice struct {
+	CgroupPermissions string `json:"CgroupPermissions"`
+	PathInContainer   string `json:"PathInContainer"`
+	PathOnHost        string `json:"PathOnHost"`
+}
+
+// PodInspectMount is a generated type.
+type PodInspectMount struct {
+	Destination string `json:"Destination"`
+	Mode        string `json:"Mode"`
+	RW          bool   `json:"RW"`
+	Source      string `json:"Source"`
+	Type        string `json:"Type"`
+}
+
 // PodInspectResponse is a generated type.
 type PodInspectResponse struct {
-	Containers       []PodContainerInfo `json:"Containers"`
-	Created          string             `json:"Created"`
-	Hostname         string             `json:"Hostname"`
-	ID               string             `json:"Id"`
-	Labels           map[string]string  `json:"Labels"`
-	Name             string             `json:"Name"`
-	NumContainers    int                `json:"NumContainers"`
-	SharedNamespaces []string           `json:"SharedNamespaces"`
-	State            string             `json:"State"`
+	BlkioDeviceReadBps  []PodBlkioDeviceRate `json:"BlkioDeviceReadBps"`
+	BlkioDeviceWriteBps []PodBlkioDeviceRate `json:"BlkioDeviceWriteBps"`
+	BlkioWeight         int                  `json:"BlkioWeight"`
+	CPUPeriod           uint64               `json:"CPUPeriod"`
+	CPUQuota            int64                `json:"CPUQuota"`
+	CPUSetCPUs          string               `json:"CPUSetCPUs"`
+	CPUShares           uint64               `json:"CPUShares"`
+	CgroupParent        string               `json:"CgroupParent"`
+	CgroupPath          string               `json:"CgroupPath"`
+	Containers          []PodContainerInfo   `json:"Containers"`
+	CreateCommand       []string             `json:"CreateCommand"`
+	Created             string               `json:"Created"`
+	ExitPolicy          string               `json:"ExitPolicy"`
+	Hostname            string               `json:"Hostname"`
+	ID                  string               `json:"Id"`
+	InfraConfig         PodInfraConfig       `json:"InfraConfig"`
+	InfraContainerID    string               `json:"InfraContainerID"`
+	Labels              map[string]string    `json:"Labels"`
+	LockNumber          int                  `json:"LockNumber"`
+	MemoryLimit         uint64               `json:"MemoryLimit"`
+	MemorySwap          uint64               `json:"MemorySwap"`
+	Name                string               `json:"Name"`
+	Namespace           string               `json:"Namespace"`
+	NumContainers       int                  `json:"NumContainers"`
+	RestartPolicy       string               `json:"RestartPolicy"`
+	SecurityOpts        []string             `json:"SecurityOpts"`
+	SharedNamespaces    []string             `json:"SharedNamespaces"`
+	State               string               `json:"State"`
+	VolumesFrom         []string             `json:"VolumesFrom"`
+	Device_read_bps     []PodBlkioDeviceRate `json:"device_read_bps"`
+	Devices             []PodInspectDevice   `json:"devices"`
+	Mounts              []PodInspectMount    `json:"mounts"`
 }
 
 // PodListEntry is a generated type.

@@ -1,0 +1,11 @@
+name: hello-lambda
+on:
+  workflow_dispatch:
+jobs:
+  hello:
+    runs-on: [self-hosted, sockerless-lambda]
+    container:
+      image: alpine:latest
+    steps:
+      - run: echo "hello from sockerless lambda"
+      - run: date -u

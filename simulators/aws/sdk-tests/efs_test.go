@@ -67,7 +67,7 @@ func TestEFS_CreateAndDescribeMountTargets(t *testing.T) {
 	// Create mount target
 	mtOut, err := client.CreateMountTarget(ctx, &efs.CreateMountTargetInput{
 		FileSystemId:   aws.String(fsID),
-		SubnetId:       aws.String("subnet-12345"),
+		SubnetId:       aws.String("subnet-0123456789abcdef0"),
 		SecurityGroups: []string{"sg-12345"},
 	})
 	require.NoError(t, err)
@@ -184,7 +184,7 @@ func TestEFS_FullLifecycle(t *testing.T) {
 	// Create mount target
 	mtOut, err := client.CreateMountTarget(ctx, &efs.CreateMountTargetInput{
 		FileSystemId: aws.String(fsID),
-		SubnetId:     aws.String("subnet-lifecycle"),
+		SubnetId:     aws.String("subnet-0123456789abcdef0"),
 	})
 	require.NoError(t, err)
 	mtID := *mtOut.MountTargetId

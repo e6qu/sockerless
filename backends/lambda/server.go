@@ -89,6 +89,31 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	// local container namespace; the reverse-agent pattern fills the gap.
 	s.Drivers.Exec = &lambdaExecDriver{Registry: s.reverseAgents, Logger: logger}
 	s.Drivers.Stream = &lambdaStreamDriver{Registry: s.reverseAgents, Logger: logger}
+	// Typed Exec driver — bypasses BaseServer.ExecStart's pipeConn
+	// bridge and dispatches directly to the reverse-agent driver with
+	// the hijacked conn handed in by handleExecStart.
+	s.Typed.Exec = core.WrapLegacyExec(s.Drivers.Exec, "lambda", "ReverseAgentExec")
+	s.Typed.ProcList = core.NewReverseAgentProcListDriver(s.reverseAgents, "lambda")
+	s.Typed.FSDiff = core.NewReverseAgentFSDiffDriver(s.reverseAgents, "lambda")
+	s.Typed.FSRead = core.NewReverseAgentFSReadDriver(s.reverseAgents, "lambda")
+	s.Typed.FSWrite = core.NewReverseAgentFSWriteDriver(s.reverseAgents, "lambda")
+	s.Typed.FSExport = core.NewReverseAgentFSExportDriver(s.reverseAgents, "lambda")
+	s.Typed.Commit = core.NewReverseAgentCommitDriver(s.BaseServer, s.reverseAgents, "lambda")
+
+	// Cloud-native typed drivers for Logs + Attach. Both go through
+	// CloudWatch with a per-container log-group factory so the typed
+	// dispatch sites bypass the legacy s.self.ContainerLogs /
+	// ContainerAttach round-trip. The factory closure resolves the
+	// log group lazily at call time because Lambda creates the
+	// CloudWatch stream only after the first invocation.
+	logFactory := func(containerID string) core.CloudLogFetchFunc {
+		return s.buildCloudWatchFetcher(containerID)
+	}
+	s.Typed.Logs = core.NewCloudLogsLogsDriver(s.BaseServer, logFactory,
+		core.StreamCloudLogsOptions{CheckLogBuffers: true},
+		"lambda", "CloudWatchLogs")
+	s.Typed.Attach = core.NewCloudLogsAttachDriver(s.BaseServer, logFactory,
+		"lambda", "CloudLogsReadOnlyAttach")
 
 	return s
 }

@@ -192,9 +192,7 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 	}
 }
 
-// TestGitLabRunnerMultiStageJob is intentionally absent until Phase 91
-// (real EFS volume provisioning on ECS) ships. The realistic multi-stage
-// GitLab CI flow depends on a shared cache volume across stages, which
-// the ECS backend cannot honour today — `VolumeCreate` returns
-// `NotImplemented` by design (see `tests/volumes_test.go`). When Phase 91
-// lands, re-add this test exercising the real EFS-backed shared cache.
+// TestGitLabRunnerMultiStageJob is intentionally absent: the
+// realistic multi-stage GitLab CI flow depends on a shared cache
+// volume across stages. Once real EFS-backed shared cache support
+// lands across the runner backends, re-add this test.

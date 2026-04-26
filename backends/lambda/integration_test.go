@@ -352,10 +352,7 @@ func TestLambdaNetworkOperations(t *testing.T) {
 	}
 }
 
-// TestLambdaVolumeOperations pins BUG-731 — Lambda's /tmp is
-// per-invocation; named volumes require real EFS mounts and are
-// tracked as Phase 91.
-// TestLambdaVolumeOperations — Phase 94b EFS-backed named volumes:
+// TestLambdaVolumeOperations — EFS-backed named volumes:
 // VolumeCreate provisions a sockerless-managed EFS access point via
 // the shared awscommon.EFSManager (same manager ECS uses); VolumeInspect
 // + VolumeList surface it; VolumeRemove deletes it. Mount attach to
@@ -452,10 +449,10 @@ func generateTestID(parts ...string) string {
 	return id
 }
 
-// TestLambdaContainerLifecycle — re-enabled from the BUG-744 deletion.
-// Exercises the full create/start/wait/inspect/remove loop now that
-// Phase 95 records invocation outcomes in Store.InvocationResults so
-// CloudState reports `exited` + the real exit code.
+// TestLambdaContainerLifecycle exercises the full
+// create/start/wait/inspect/remove loop. The invocation goroutine
+// records outcomes in Store.InvocationResults so CloudState reports
+// `exited` + the real exit code.
 func TestLambdaContainerLifecycle(t *testing.T) {
 	skipIfNoIntegration(t)
 	ctx := context.Background()
@@ -509,11 +506,11 @@ func TestLambdaContainerLifecycle(t *testing.T) {
 	}
 }
 
-// TestLambdaContainerLogsFollowLazyStream — re-enabled from the
-// BUG-744 deletion. Regression test for the bug where logStreamName
-// was resolved once up-front; if empty at that moment the follow loop
-// would return empty forever. Phase 95's invocation tracker ensures
-// the follow loop knows when the invocation finished so it can stop.
+// TestLambdaContainerLogsFollowLazyStream — regression test for the
+// bug where logStreamName was resolved once up-front; if empty at
+// that moment the follow loop would return empty forever. The
+// invocation tracker ensures the follow loop knows when the
+// invocation finished so it can stop.
 func TestLambdaContainerLogsFollowLazyStream(t *testing.T) {
 	skipIfNoIntegration(t)
 	ctx := context.Background()
@@ -572,7 +569,7 @@ func TestLambdaContainerLogsFollowLazyStream(t *testing.T) {
 	//      (the original regression this test guards).
 	//   2. The subprocess stdout lines (`follow-line-1/2/3`) prove the
 	//      sim's Lambda runtime forwards container-process output to
-	//      CloudWatch — the gap tracked as BUG-756.
+	//      CloudWatch.
 	logStr := string(logData)
 	if !strings.Contains(logStr, "RequestId") {
 		t.Errorf("follow-mode log output contains no Lambda runtime markers — follow loop didn't observe the invocation")
@@ -584,11 +581,10 @@ func TestLambdaContainerLogsFollowLazyStream(t *testing.T) {
 	}
 }
 
-// TestLambdaContainerStopUnblocksWait — re-enabled from the BUG-744
-// deletion. Phase 95's ContainerStop writes {ExitCode: 137} into
-// Store.InvocationResults and closes the wait channel, so a concurrent
-// ContainerWait unblocks immediately instead of waiting for the
-// sleep-30 invocation to complete.
+// TestLambdaContainerStopUnblocksWait — ContainerStop writes
+// {ExitCode: 137} into Store.InvocationResults and closes the wait
+// channel, so a concurrent ContainerWait unblocks immediately
+// instead of waiting for the sleep-30 invocation to complete.
 func TestLambdaContainerStopUnblocksWait(t *testing.T) {
 	skipIfNoIntegration(t)
 	ctx := context.Background()

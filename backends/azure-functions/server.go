@@ -19,8 +19,8 @@ type Server struct {
 
 	AZF *core.StateStore[AZFState]
 	azfVolumeState
-	// Phase 98: reverse-agent registry for docker top / cp / stat
-	// via a bootstrap running inside the function app container.
+	// Reverse-agent registry for docker top / cp / stat via a
+	// bootstrap running inside the function app container.
 	reverseAgents *core.ReverseAgentRegistry
 }
 
@@ -77,11 +77,29 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 
 	registerUI(s.BaseServer)
 
-	// Phase 98: reverse-agent registry + WS endpoint.
+	// Reverse-agent registry + WS endpoint.
 	s.reverseAgents = core.NewReverseAgentRegistry()
 	s.Mux.HandleFunc("/v1/azf/reverse", core.HandleReverseAgentWS(s.reverseAgents, logger))
 	s.Drivers.Exec = &core.ReverseAgentExecDriver{Registry: s.reverseAgents, Logger: logger}
 	s.Drivers.Stream = &core.ReverseAgentStreamDriver{Registry: s.reverseAgents, Logger: logger}
+	s.Typed.Exec = core.WrapLegacyExec(s.Drivers.Exec, "azf", "ReverseAgentExec")
+	s.Typed.ProcList = core.NewReverseAgentProcListDriver(s.reverseAgents, "azf")
+	s.Typed.FSDiff = core.NewReverseAgentFSDiffDriver(s.reverseAgents, "azf")
+	s.Typed.FSRead = core.NewReverseAgentFSReadDriver(s.reverseAgents, "azf")
+	s.Typed.FSWrite = core.NewReverseAgentFSWriteDriver(s.reverseAgents, "azf")
+	s.Typed.FSExport = core.NewReverseAgentFSExportDriver(s.reverseAgents, "azf")
+	s.Typed.Commit = core.NewReverseAgentCommitDriver(s.BaseServer, s.reverseAgents, "azf")
+
+	// Cloud-native typed drivers for Logs + Attach. Both go through
+	// Azure Monitor / Log Analytics via a per-container fetcher factory.
+	logFactory := func(containerID string) core.CloudLogFetchFunc {
+		return s.buildCloudLogsFetcher(containerID)
+	}
+	s.Typed.Logs = core.NewCloudLogsLogsDriver(s.BaseServer, logFactory,
+		core.StreamCloudLogsOptions{CheckLogBuffers: true},
+		"azf", "AzureMonitor")
+	s.Typed.Attach = core.NewCloudLogsAttachDriver(s.BaseServer, logFactory,
+		"azf", "CloudLogsReadOnlyAttach")
 
 	return s
 }

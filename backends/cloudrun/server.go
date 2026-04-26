@@ -84,6 +84,24 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	s.Mux.HandleFunc("/v1/cloudrun/reverse", core.HandleReverseAgentWS(s.reverseAgents, logger))
 	s.Drivers.Exec = &core.ReverseAgentExecDriver{Registry: s.reverseAgents, Logger: logger}
 	s.Drivers.Stream = &core.ReverseAgentStreamDriver{Registry: s.reverseAgents, Logger: logger}
+	s.Typed.Exec = core.WrapLegacyExec(s.Drivers.Exec, "cloudrun", "ReverseAgentExec")
+	s.Typed.ProcList = core.NewReverseAgentProcListDriver(s.reverseAgents, "cloudrun")
+	s.Typed.FSDiff = core.NewReverseAgentFSDiffDriver(s.reverseAgents, "cloudrun")
+	s.Typed.FSRead = core.NewReverseAgentFSReadDriver(s.reverseAgents, "cloudrun")
+	s.Typed.FSWrite = core.NewReverseAgentFSWriteDriver(s.reverseAgents, "cloudrun")
+	s.Typed.FSExport = core.NewReverseAgentFSExportDriver(s.reverseAgents, "cloudrun")
+	s.Typed.Commit = core.NewReverseAgentCommitDriver(s.BaseServer, s.reverseAgents, "cloudrun")
+
+	// Cloud-native typed Logs + Attach driving Cloud Logging via the
+	// per-container fetcher factory.
+	logFactory := func(containerID string) core.CloudLogFetchFunc {
+		return s.buildCloudLogsFetcher(containerID)
+	}
+	s.Typed.Logs = core.NewCloudLogsLogsDriver(s.BaseServer, logFactory,
+		core.StreamCloudLogsOptions{},
+		"cloudrun", "CloudLogging")
+	s.Typed.Attach = core.NewCloudLogsAttachDriver(s.BaseServer, logFactory,
+		"cloudrun", "CloudLogsReadOnlyAttach")
 
 	return s
 }

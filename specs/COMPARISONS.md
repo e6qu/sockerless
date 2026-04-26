@@ -2,11 +2,9 @@
 
 > **Date:** February 2026
 >
-> **Status:** Updated to reflect actual implementation (Phase 35). For current per-backend coverage, see [FEATURE_MATRIX.md](../FEATURE_MATRIX.md).
+> **Purpose:** Per-operation comparison of what Docker does natively vs. what each Sockerless backend uses to achieve the same result. For current per-backend coverage, see [FEATURE_MATRIX.md](../FEATURE_MATRIX.md).
 >
-> **Purpose:** Per-operation comparison of what Docker does natively vs. what each Sockerless backend uses to achieve the same result.
->
-> **Note:** Cloud backends use **in-memory state** for container inspect/list and volume operations. They call cloud APIs for container lifecycle operations (create, start, stop, remove), logs, and — as of Phase 103 — cloud-native networking and service discovery. ECS uses VPC Security Groups + Cloud Map, CloudRun uses Cloud DNS, and ACA uses NSG + in-process DNS. ECS and ACA also have cloud-native exec drivers. See [FEATURE_MATRIX.md](../FEATURE_MATRIX.md) for current per-backend coverage.
+> **Note:** Cloud backends derive state from cloud-native tags/labels (the cloud is the source of truth) and call cloud APIs for container lifecycle, logs, networking, and service discovery. ECS uses VPC Security Groups + Cloud Map, CloudRun uses Cloud DNS, and ACA uses NSG + in-process DNS. ECS and ACA also have cloud-native exec drivers.
 
 ---
 
@@ -179,7 +177,7 @@ These are not Docker REST API calls but show how the agent is used internally by
 
 ## 11. Capability Summary per Backend
 
-> **Note:** This table reflects Phase 35. For current cloud service mappings (including cloud-native networking, exec, and service discovery added in Phase 103), see [FEATURE_MATRIX.md](../FEATURE_MATRIX.md).
+> **Note:** This is a high-level summary. For the current per-backend matrix (cloud-native networking, exec, service discovery), see [FEATURE_MATRIX.md](../FEATURE_MATRIX.md).
 
 | Capability | Docker | ECS | Lambda | Cloud Run | CR Functions | ACA | Azure Functions |
 |---|---|---|---|---|---|---|---|

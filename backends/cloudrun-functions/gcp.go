@@ -20,13 +20,13 @@ import (
 type GCPClients struct {
 	Functions *functions.FunctionClient
 	LogAdmin  *logadmin.Client
-	// Phase 94: Services client is the escape hatch for GCS volumes —
+	// Services client is the escape hatch for GCS volumes —
 	// Functions v2's ServiceConfig exposes only SecretVolumes, so every
 	// other volume must be attached via the underlying Cloud Run
 	// Service resource (`fn.ServiceConfig.Service`).
 	Services *run.ServicesClient
-	// Phase 94: Storage client for provisioning sockerless-managed GCS
-	// buckets backing named volumes (reused across GCP backends via
+	// Storage client for provisioning sockerless-managed GCS buckets
+	// backing named volumes (reused across GCP backends via
 	// gcpcommon.BucketManager).
 	Storage *storage.Client
 }

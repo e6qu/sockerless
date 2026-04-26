@@ -317,7 +317,7 @@ run_test "ecs run-task (text)" \
         --task-definition bash-task \
         --launch-type FARGATE \
         --count 1 \
-        --network-configuration 'awsvpcConfiguration={subnets=[subnet-12345]}' \
+        --network-configuration 'awsvpcConfiguration={subnets=[subnet-0123456789abcdef0]}' \
         --output text
 
 run_test_json "ecs run-task (json)" '.tasks[0].taskArn' \
@@ -326,7 +326,7 @@ run_test_json "ecs run-task (json)" '.tasks[0].taskArn' \
         --task-definition "$TD_ARN" \
         --launch-type FARGATE \
         --count 1 \
-        --network-configuration 'awsvpcConfiguration={subnets=[subnet-12345]}' \
+        --network-configuration 'awsvpcConfiguration={subnets=[subnet-0123456789abcdef0]}' \
         --output json
 
 TASK_ARN=$(echo "$TEST_OUTPUT" | jq -r '.tasks[0].taskArn')
@@ -365,7 +365,7 @@ run_test_json "ecs run-task for stop (json)" '.tasks[0].taskArn' \
         --task-definition "$TD_ARN" \
         --launch-type FARGATE \
         --count 1 \
-        --network-configuration 'awsvpcConfiguration={subnets=[subnet-12345]}' \
+        --network-configuration 'awsvpcConfiguration={subnets=[subnet-0123456789abcdef0]}' \
         --output json
 
 TASK_ARN2=$(echo "$TEST_OUTPUT" | jq -r '.tasks[0].taskArn')

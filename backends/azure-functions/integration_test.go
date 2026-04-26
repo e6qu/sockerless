@@ -375,10 +375,7 @@ func TestAZFNetworkOperations(t *testing.T) {
 	}
 }
 
-// TestAZFVolumeOperations pins BUG-731 — Azure Functions containers
-// are ephemeral; named volumes require real Azure Files mounts and
-// are tracked as Phase 93.
-// TestAZFVolumeOperations — Phase 94 Azure Files-backed named volumes:
+// TestAZFVolumeOperations — Azure-Files-backed named volumes:
 // VolumeCreate provisions a sockerless-managed share via the shared
 // azurecommon.FileShareManager, VolumeInspect + VolumeList surface it,
 // VolumeRemove deletes it. Site-attach (WebApps.UpdateAzureStorageAccounts)
@@ -474,10 +471,9 @@ func generateTestID(parts ...string) string {
 	return id
 }
 
-// TestAZFContainerLifecycle — re-enabled from the BUG-744 deletion.
-// Phase 95 records the invocation's HTTP response (2xx → 0) in
-// Store.InvocationResults, so CloudState reports `exited` and
-// docker wait returns the real exit code.
+// TestAZFContainerLifecycle: invocation goroutine records the HTTP
+// response (2xx → 0) in Store.InvocationResults, so CloudState reports
+// `exited` and docker wait returns the real exit code.
 func TestAZFContainerLifecycle(t *testing.T) {
 	ctx := context.Background()
 

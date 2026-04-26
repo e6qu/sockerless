@@ -91,7 +91,7 @@ func (p *azfCloudState) CheckNameAvailable(ctx context.Context, name string) (bo
 }
 
 func (p *azfCloudState) WaitForExit(ctx context.Context, containerID string) (int, error) {
-	// Phase 95: fast path — invocation goroutine records the outcome.
+	// Fast path — invocation goroutine records the outcome.
 	if inv, ok := p.server.Store.GetInvocationResult(containerID); ok {
 		return inv.ExitCode, nil
 	}
@@ -176,7 +176,7 @@ func (p *azfCloudState) queryFunctionApps(ctx context.Context) ([]api.Container,
 
 			c := siteToContainer(site.Tags, site.Properties, site.Name)
 
-			// Phase 95: overlay recorded invocation outcome.
+			// Overlay recorded invocation outcome.
 			if inv, ok := p.server.Store.GetInvocationResult(c.ID); ok {
 				c.State = api.ContainerState{
 					Status:     "exited",
@@ -197,18 +197,16 @@ func (p *azfCloudState) queryFunctionApps(ctx context.Context) ([]api.Container,
 				if site.ID != nil {
 					resourceID = *site.ID
 				}
-				functionURL := ""
+				functionURL, functionHost := "", ""
 				if site.Properties != nil && site.Properties.DefaultHostName != nil {
-					scheme := "https"
-					if strings.HasPrefix(p.server.config.EndpointURL, "http://") {
-						scheme = "http"
-					}
-					functionURL = scheme + "://" + *site.Properties.DefaultHostName + "/api/function"
+					functionHost = *site.Properties.DefaultHostName
+					functionURL = invokeURLForHost(p.server.config.EndpointURL, functionHost)
 				}
 				p.server.AZF.Put(containerID, AZFState{
 					FunctionAppName: funcAppName,
 					ResourceID:      resourceID,
 					FunctionURL:     functionURL,
+					FunctionHost:    functionHost,
 				})
 			}
 
@@ -271,7 +269,7 @@ func siteToContainer(tags map[string]*string, props interface{}, siteName *strin
 			Networks: map[string]*api.EndpointSettings{
 				networkName: {
 					NetworkID: networkName,
-					IPAddress: "0.0.0.0",
+					IPAddress: "",
 				},
 			},
 		},

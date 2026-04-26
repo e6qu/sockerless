@@ -40,7 +40,7 @@ func shareToVolume(dockerName, storageAccount string, sh *armstorage.FileShareIt
 // Container methods with resolution.
 
 // ContainerChanges lists files modified since container boot via the
-// reverse-agent. Phase 98 (BUG-753).
+// reverse-agent.
 func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -56,7 +56,7 @@ func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) 
 	return items, nil
 }
 
-// ContainerGetArchive runs tar via the reverse-agent. Phase 98.
+// ContainerGetArchive runs tar via the reverse-agent.
 func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArchiveResponse, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -84,7 +84,7 @@ func (s *Server) ContainerList(opts api.ContainerListOptions) ([]*api.ContainerS
 }
 
 // ContainerPutArchive extracts the incoming tar body via the
-// reverse-agent. Phase 98.
+// reverse-agent.
 func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDir bool, body io.Reader) error {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -115,7 +115,7 @@ func (s *Server) ContainerResize(id string, h int, w int) error {
 }
 
 // ContainerStatPath runs `stat` inside the function container via the
-// reverse-agent. Phase 98 (BUG-751).
+// reverse-agent.
 func (s *Server) ContainerStatPath(id string, path string) (*api.ContainerPathStat, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -139,7 +139,7 @@ func (s *Server) ContainerStats(id string, stream bool) (io.ReadCloser, error) {
 }
 
 // ContainerTop runs `ps` inside the function app container via the
-// reverse-agent. Phase 98 (BUG-752).
+// reverse-agent.
 func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopResponse, error) {
 	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
 	if !ok {
@@ -290,8 +290,8 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 	return s.BaseServer.SystemEvents(opts)
 }
 
-// Phase 94: named-volume operations provision sockerless-managed Azure
-// Files shares via azurecommon.FileShareManager (shared with ACA).
+// Named-volume operations provision sockerless-managed Azure Files
+// shares via azurecommon.FileShareManager (shared with ACA).
 // Shares are attached to the function site at ContainerStart time via
 // WebApps.UpdateAzureStorageAccounts (see volumes.go).
 //

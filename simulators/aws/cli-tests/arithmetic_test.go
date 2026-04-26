@@ -50,7 +50,7 @@ func TestECS_CLI_ArithmeticEval(t *testing.T) {
 		"--task-definition", tdResult.TaskDefinition.TaskDefinitionArn,
 		"--launch-type", "FARGATE",
 		"--count", "1",
-		"--network-configuration", `awsvpcConfiguration={subnets=[subnet-12345]}`,
+		"--network-configuration", `awsvpcConfiguration={subnets=[subnet-0123456789abcdef0]}`,
 		"--output", "json",
 	))
 
@@ -150,7 +150,7 @@ func TestECS_CLI_ArithmeticInvalid(t *testing.T) {
 		"--task-definition", tdResult.TaskDefinition.TaskDefinitionArn,
 		"--launch-type", "FARGATE",
 		"--count", "1",
-		"--network-configuration", `awsvpcConfiguration={subnets=[subnet-12345]}`,
+		"--network-configuration", `awsvpcConfiguration={subnets=[subnet-0123456789abcdef0]}`,
 		"--output", "json",
 	))
 

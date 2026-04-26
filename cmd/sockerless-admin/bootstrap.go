@@ -72,7 +72,7 @@ func BackendEnv(cloud CloudType, backend BackendType, simPort int, projectName s
 		env = append(env,
 			"AWS_REGION=us-east-1",
 			"SOCKERLESS_ECS_CLUSTER="+projectName+"-cluster",
-			"SOCKERLESS_ECS_SUBNETS=subnet-sim",
+			"SOCKERLESS_ECS_SUBNETS=subnet-0123456789abcdef0",
 			"SOCKERLESS_ECS_EXECUTION_ROLE_ARN=arn:aws:iam::0:role/sim",
 		)
 	case BackendLambda:

@@ -498,7 +498,12 @@ func (s *BaseServer) handleImageBuild(w http.ResponseWriter, r *http.Request) {
 		opts.CacheTo = []string{v}
 	}
 
-	rc, err := s.self.ImageBuild(opts, r.Body)
+	dctx := DriverContext{
+		Ctx:     r.Context(),
+		Backend: s.Desc.Driver,
+		Logger:  s.Logger,
+	}
+	rc, err := s.Typed.Build.Build(dctx, opts, r.Body)
 	if err != nil {
 		WriteError(w, err)
 		return

@@ -1,6 +1,10 @@
 package docker
 
 import (
+	"context"
+	"fmt"
+	"time"
+
 	dockerclient "github.com/docker/docker/client"
 	"github.com/rs/zerolog"
 	core "github.com/sockerless/backend-core"
@@ -12,7 +16,12 @@ type Server struct {
 	docker *dockerclient.Client
 }
 
-// NewServer creates a new Docker backend server.
+// NewServer creates a new Docker backend server. The daemon is
+// queried at startup with a 5-second deadline; failure is fatal so
+// the operator gets a clear error instead of fabricated CPU/memory
+// values. Per the project no-fallbacks rule we never ship a
+// hardcoded `NCPU: 4` / `MemTotal: 8 GB` placeholder when the
+// daemon's `/info` query fails.
 func NewServer(logger zerolog.Logger, dockerHost string) (*Server, error) {
 	opts := []dockerclient.Opt{
 		dockerclient.WithAPIVersionNegotiation(),
@@ -28,6 +37,33 @@ func NewServer(logger zerolog.Logger, dockerHost string) (*Server, error) {
 		return nil, err
 	}
 
+	// Query the underlying daemon for real CPU / memory / kernel /
+	// architecture so the BackendDescriptor reflects truth from the
+	// first /info request, not a placeholder.
+	infoCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	info, err := cli.Info(infoCtx)
+	if err != nil {
+		return nil, fmt.Errorf("docker daemon Info() failed (host=%q): %w — sockerless docker backend requires a reachable daemon at startup", cli.DaemonHost(), err)
+	}
+
+	osType := info.OSType
+	if osType == "" {
+		osType = "linux"
+	}
+	arch := info.Architecture
+	if arch == "" {
+		arch = "amd64"
+	}
+	operatingSystem := info.OperatingSystem
+	if operatingSystem == "" {
+		operatingSystem = "Docker Desktop"
+	}
+	serverVersion := info.ServerVersion
+	if serverVersion == "" {
+		serverVersion = "0.1.0"
+	}
+
 	s := &Server{
 		docker: cli,
 	}
@@ -35,13 +71,13 @@ func NewServer(logger zerolog.Logger, dockerHost string) (*Server, error) {
 	s.BaseServer = core.NewBaseServer(core.NewStore(), core.BackendDescriptor{
 		ID:              "docker-local",
 		Name:            "sockerless-docker",
-		ServerVersion:   "0.1.0",
+		ServerVersion:   serverVersion,
 		Driver:          "docker",
-		OperatingSystem: "Docker Desktop",
-		OSType:          "linux",
-		Architecture:    "amd64",
-		NCPU:            4,
-		MemTotal:        8589934592,
+		OperatingSystem: operatingSystem,
+		OSType:          osType,
+		Architecture:    arch,
+		NCPU:            info.NCPU,
+		MemTotal:        info.MemTotal,
 	}, logger)
 	s.SetSelf(s)
 

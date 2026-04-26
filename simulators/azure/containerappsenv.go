@@ -173,8 +173,8 @@ func registerContainerAppEnvironment(srv *sim.Server) {
 }
 
 // ManagedEnvironmentStorage pairs a sockerless-known name with a
-// storage-account + file-share backing it. Phase 93: ACA jobs/apps
-// reference these by storage.name to resolve their VolumeMounts.
+// storage-account + file-share backing it. ACA jobs/apps reference
+// these by storage.name to resolve their VolumeMounts.
 type ManagedEnvironmentStorage struct {
 	ID         string                              `json:"id"`
 	Name       string                              `json:"name"`

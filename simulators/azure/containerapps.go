@@ -514,7 +514,17 @@ func registerContainerApps(srv *sim.Server) {
 				e.EndTime = time.Now().UTC().Format(time.RFC3339)
 			})
 			if completed {
-				injectContainerAppLog(jobShortName, "Execution completed successfully")
+				// Match the actual outcome (the previous behaviour
+				// always injected "Execution completed successfully"
+				// regardless of `succeeded`, masking failed jobs as
+				// fake-success in the log stream and breaking tests
+				// like TestACAArithmeticInvalid that assert on the
+				// failure marker).
+				if succeeded {
+					injectContainerAppLog(jobShortName, "Execution completed successfully")
+				} else {
+					injectContainerAppLog(jobShortName, "Execution failed")
+				}
 			}
 		}(execID, name, job.Properties.EnvironmentID, replicaTimeout, template)
 

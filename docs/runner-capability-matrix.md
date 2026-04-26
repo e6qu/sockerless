@@ -102,4 +102,4 @@ This matrix supersedes the prior silent `-wasm` / `-faas` remapping. Before this
 
 - GitHub workflow `container-action` and GitLab pipeline `container-action` were renamed from `container-action-faas` in this PR. The test body is unchanged.
 - `services` and `custom-image` are removed from the `ALL_WORKFLOWS` / `ALL_PIPELINES` lists — the corresponding `.yml` files were removed in commit `daeff00` and no replacement was added. `services-http` remains and exercises a real HTTP service container.
-- Live-mode cells (AWS / GCP / Azure real accounts) are out of scope for this matrix; track them in a `-live` variant of this doc under Phase 86 AWS track.
+- Live-mode cells (AWS / GCP / Azure real accounts) are out of scope for this matrix; the live-cloud sweeps live in [`manual-tests/`](../manual-tests/).

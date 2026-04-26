@@ -49,7 +49,7 @@ func TestECS_CLI_RunTaskAndCheckLogs(t *testing.T) {
 		"--task-definition", tdResult.TaskDefinition.TaskDefinitionArn,
 		"--launch-type", "FARGATE",
 		"--count", "1",
-		"--network-configuration", `awsvpcConfiguration={subnets=[subnet-12345]}`,
+		"--network-configuration", `awsvpcConfiguration={subnets=[subnet-0123456789abcdef0]}`,
 		"--output", "json",
 	))
 
@@ -149,7 +149,7 @@ func TestECS_CLI_RunTaskNonZeroExit(t *testing.T) {
 		"--task-definition", tdResult.TaskDefinition.TaskDefinitionArn,
 		"--launch-type", "FARGATE",
 		"--count", "1",
-		"--network-configuration", `awsvpcConfiguration={subnets=[subnet-12345]}`,
+		"--network-configuration", `awsvpcConfiguration={subnets=[subnet-0123456789abcdef0]}`,
 		"--output", "json",
 	))
 
@@ -186,4 +186,86 @@ func TestECS_CLI_RunTaskNonZeroExit(t *testing.T) {
 	require.NotEmpty(t, descResult.Tasks[0].Containers)
 	require.NotNil(t, descResult.Tasks[0].Containers[0].ExitCode)
 	assert.Equal(t, 1, *descResult.Tasks[0].Containers[0].ExitCode)
+}
+
+// CLI-level coverage for the ECS Tag/Untag handlers.
+func TestECS_CLI_TagAndUntagTask(t *testing.T) {
+	runCLI(t, awsCLI("ecs", "create-cluster", "--cluster-name", "cli-tag-cluster"))
+
+	out := runCLI(t, awsCLI("ecs", "register-task-definition",
+		"--family", "cli-tag-task",
+		"--requires-compatibilities", "FARGATE",
+		"--network-mode", "awsvpc",
+		"--cpu", "256",
+		"--memory", "512",
+		"--container-definitions", `[{
+			"name": "app",
+			"image": "alpine:latest",
+			"command": ["tail", "-f", "/dev/null"]
+		}]`,
+		"--output", "json",
+	))
+	var tdResult struct {
+		TaskDefinition struct {
+			TaskDefinitionArn string `json:"taskDefinitionArn"`
+		} `json:"taskDefinition"`
+	}
+	parseJSON(t, out, &tdResult)
+
+	out = runCLI(t, awsCLI("ecs", "run-task",
+		"--cluster", "cli-tag-cluster",
+		"--task-definition", tdResult.TaskDefinition.TaskDefinitionArn,
+		"--launch-type", "FARGATE",
+		"--count", "1",
+		"--network-configuration", `awsvpcConfiguration={subnets=[subnet-0123456789abcdef0]}`,
+		"--output", "json",
+	))
+	var runResult struct {
+		Tasks []struct {
+			TaskArn string `json:"taskArn"`
+		} `json:"tasks"`
+	}
+	parseJSON(t, out, &runResult)
+	require.Len(t, runResult.Tasks, 1)
+	taskArn := runResult.Tasks[0].TaskArn
+
+	runCLI(t, awsCLI("ecs", "tag-resource",
+		"--resource-arn", taskArn,
+		"--tags", "key=sockerless-name,value=cli-task",
+	))
+
+	out = runCLI(t, awsCLI("ecs", "list-tags-for-resource",
+		"--resource-arn", taskArn,
+		"--output", "json",
+	))
+	var listResult struct {
+		Tags []struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		} `json:"tags"`
+	}
+	parseJSON(t, out, &listResult)
+
+	found := false
+	for _, tag := range listResult.Tags {
+		if tag.Key == "sockerless-name" && tag.Value == "cli-task" {
+			found = true
+		}
+	}
+	assert.True(t, found, "tag must be visible via list-tags-for-resource after tag-resource")
+
+	runCLI(t, awsCLI("ecs", "untag-resource",
+		"--resource-arn", taskArn,
+		"--tag-keys", "sockerless-name",
+	))
+
+	out = runCLI(t, awsCLI("ecs", "list-tags-for-resource",
+		"--resource-arn", taskArn,
+		"--output", "json",
+	))
+	listResult.Tags = nil
+	parseJSON(t, out, &listResult)
+	for _, tag := range listResult.Tags {
+		assert.NotEqual(t, "sockerless-name", tag.Key, "untagged key should not be present")
+	}
 }

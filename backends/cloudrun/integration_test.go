@@ -359,7 +359,7 @@ func TestCloudRunNetworkOperations(t *testing.T) {
 	}
 }
 
-// TestCloudRunVolumeOperations — Phase 92 GCS-backed named volumes:
+// TestCloudRunVolumeOperations — GCS-backed named volumes:
 // VolumeCreate provisions a sockerless-managed GCS bucket, VolumeInspect
 // + VolumeList surface it, VolumeRemove deletes it.
 func TestCloudRunVolumeOperations(t *testing.T) {

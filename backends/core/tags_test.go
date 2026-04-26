@@ -142,9 +142,9 @@ func TestAsGCPAnnotations_AllShort(t *testing.T) {
 		CreatedAt:   time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC),
 	}
 	ann := ts.AsGCPAnnotations()
-	// Phase 97: created-at is RFC3339 (contains `T`, `:`, `Z`), so it
-	// fails GCP's label-value charset and lands in annotations even
-	// when its length is fine. Charset-safe values (managed, backend,
+	// created-at is RFC3339 (contains `T`, `:`, `Z`), so it fails
+	// GCP's label-value charset and lands in annotations even when
+	// its length is fine. Charset-safe values (managed, backend,
 	// container-id, instance) stay in labels.
 	if _, ok := ann["sockerless_created_at"]; !ok {
 		t.Errorf("expected sockerless_created_at in annotations (RFC3339 has non-GCP-safe chars)")
@@ -155,9 +155,9 @@ func TestAsGCPAnnotations_AllShort(t *testing.T) {
 	}
 }
 
-// TestAsGCPLabels_JSONBlobGoesToAnnotations — Phase 97 regression for
-// BUG-746: the sockerless-labels JSON blob's `{`, `:`, `"` characters
-// fail GCP's label-value charset, so labels go into annotations instead.
+// TestAsGCPLabels_JSONBlobGoesToAnnotations — the sockerless-labels
+// JSON blob's `{`, `:`, `"` characters fail GCP's label-value
+// charset, so labels go into annotations instead.
 func TestAsGCPLabels_JSONBlobGoesToAnnotations(t *testing.T) {
 	ts := TagSet{
 		ContainerID: "abcdef123456",

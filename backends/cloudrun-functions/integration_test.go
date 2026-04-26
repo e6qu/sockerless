@@ -354,10 +354,7 @@ func TestGCFNetworkOperations(t *testing.T) {
 	}
 }
 
-// TestGCFVolumeOperations pins BUG-731 — GCF containers are
-// invocation-scoped; named volumes require real GCS/Filestore mounts
-// and are tracked as Phase 92.
-// TestGCFVolumeOperations — Phase 94 GCS-backed named volumes on GCF:
+// TestGCFVolumeOperations — GCS-backed named volumes on GCF:
 // VolumeCreate provisions a sockerless-managed GCS bucket via the shared
 // gcpcommon.BucketManager, VolumeInspect + VolumeList surface it, and
 // VolumeRemove deletes it. The actual bucket-attach-to-function path
@@ -454,10 +451,9 @@ func generateTestID(parts ...string) string {
 	return id
 }
 
-// TestGCFContainerLifecycle — re-enabled from the BUG-744 deletion.
-// Phase 95 records the invocation's HTTP response (2xx → 0) in
-// Store.InvocationResults, so CloudState reports `exited` and
-// docker wait returns the real exit code.
+// TestGCFContainerLifecycle: invocation goroutine records the HTTP
+// response (2xx → 0) in Store.InvocationResults, so CloudState reports
+// `exited` and docker wait returns the real exit code.
 func TestGCFContainerLifecycle(t *testing.T) {
 	ctx := context.Background()
 

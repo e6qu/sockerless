@@ -19,8 +19,11 @@ import (
 // through drivers instead of branching on container state directly.
 // Operations return errors when no agent is connected.
 
-// ExecDriver runs commands inside containers and captures output + exit code.
-type ExecDriver interface {
+// LegacyExecDriver is the narrow exec interface kept for backends not yet
+// migrated to the typed ExecDriver framework. New code should use
+// ExecDriver (the typed shape) directly; legacy implementations plug into
+// it via WrapLegacyExec.
+type LegacyExecDriver interface {
 	// Exec runs a command in the container and streams I/O over conn.
 	// When tty is false, output must be wrapped with Docker multiplexed
 	// stream headers (8-byte prefix per chunk).
@@ -67,7 +70,7 @@ type StreamDriver interface {
 // Handlers dispatch through these interfaces instead of using if/else chains.
 // A nil driver means the handler uses its built-in default behavior.
 type DriverSet struct {
-	Exec       ExecDriver
+	Exec       LegacyExecDriver
 	Filesystem FilesystemDriver
 	Stream     StreamDriver
 	Network    api.NetworkDriver

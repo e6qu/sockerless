@@ -4,13 +4,23 @@ package core
 
 import (
 	"context"
+	"os"
 
 	"github.com/rs/zerolog"
 	"github.com/sockerless/api"
 )
 
-// LinuxNetworkDriver adds real network namespace operations on top of synthetic networking.
-// If netns operations fail (e.g. no root), it logs a warning and continues with synthetic-only.
+// LinuxNetworkDriver adds real network namespace operations on top of
+// synthetic networking. When netns is `Available()` (kernel + capabilities
+// permit), creation must succeed: any netns CreateNamespace /
+// CreateVethPair failure surfaces as a real error and the network
+// create rolls back (the previous best-effort degrade silently
+// produced containers that thought they had real networking but
+// actually didn't, breaking cross-container DNS / port bindings
+// without an obvious cause). Operators who want best-effort
+// degradation can opt in via `SOCKERLESS_NETNS_BEST_EFFORT=1`, in
+// which case a warning is logged and the synthetic-only path is
+// used — but only when explicitly chosen.
 type LinuxNetworkDriver struct {
 	Synthetic *SyntheticNetworkDriver
 	Netns     *NetnsManager
@@ -32,7 +42,14 @@ func (d *LinuxNetworkDriver) Create(ctx context.Context, name string, opts *api.
 			gateway := net.IPAM.Config[0].Gateway
 			subnet := net.IPAM.Config[0].Subnet
 			if nsErr := d.Netns.CreateNamespace(resp.ID, name, gateway, subnet); nsErr != nil {
-				d.Logger.Warn().Err(nsErr).Str("network", name).Msg("netns creation failed, using synthetic networking")
+				if os.Getenv("SOCKERLESS_NETNS_BEST_EFFORT") == "1" {
+					d.Logger.Warn().Err(nsErr).Str("network", name).Msg("netns creation failed, falling back to synthetic networking (SOCKERLESS_NETNS_BEST_EFFORT=1)")
+				} else {
+					// Roll back the synthetic record so the caller
+					// doesn't see a half-created network.
+					_ = d.Synthetic.Remove(ctx, resp.ID)
+					return nil, &api.ServerError{Message: "netns creation failed: " + nsErr.Error() + " — set SOCKERLESS_NETNS_BEST_EFFORT=1 to fall back to synthetic networking"}
+				}
 			}
 		}
 	}
@@ -71,7 +88,14 @@ func (d *LinuxNetworkDriver) Connect(ctx context.Context, networkID, containerID
 		if ok {
 			if ep, epOk := c.NetworkSettings.Networks[net.Name]; epOk && ep != nil {
 				if nsErr := d.Netns.CreateVethPair(net.ID, containerID, ep.IPAddress); nsErr != nil {
-					d.Logger.Warn().Err(nsErr).Str("container", containerID).Msg("veth creation failed, using synthetic networking")
+					if os.Getenv("SOCKERLESS_NETNS_BEST_EFFORT") == "1" {
+						d.Logger.Warn().Err(nsErr).Str("container", containerID).Msg("veth creation failed, falling back to synthetic networking (SOCKERLESS_NETNS_BEST_EFFORT=1)")
+					} else {
+						// Roll back the synthetic Connect so the caller
+						// doesn't think the container is on the network.
+						_ = d.Synthetic.Disconnect(ctx, networkID, containerID)
+						return &api.ServerError{Message: "veth creation failed: " + nsErr.Error() + " — set SOCKERLESS_NETNS_BEST_EFFORT=1 to fall back to synthetic networking"}
+					}
 				}
 			}
 		}

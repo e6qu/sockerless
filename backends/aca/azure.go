@@ -44,7 +44,7 @@ type AzureClients struct {
 	// configured ACR pull-through cache, parallel to AWS ECR + GCP AR.
 	Registries    *armcontainerregistry.RegistriesClient
 	ACRCacheRules *armcontainerregistry.CacheRulesClient
-	// Azure Files + managed-env storages for Phase 93 named volumes.
+	// Azure Files + managed-env storages for named volumes.
 	// FileShares provisions a share inside the operator-configured
 	// storage account; EnvStorages binds the share to the managed
 	// environment so Container Apps/Jobs can mount it.

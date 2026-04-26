@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -49,6 +50,7 @@ type BaseServer struct {
 	Desc           BackendDescriptor
 	Mux            *http.ServeMux
 	Drivers        DriverSet
+	Typed          TypedDriverSet
 	Registry       *ResourceRegistry
 	StartedAt      time.Time
 	Metrics        *Metrics
@@ -113,6 +115,101 @@ func NewBaseServer(store *Store, desc BackendDescriptor, logger zerolog.Logger) 
 	s.registerRoutes()
 	s.InitDefaultNetwork()
 	return s
+}
+
+// initTypedDrivers populates Typed with default adapters that wrap the
+// existing self-dispatch path. Backends opt into typed drivers by
+// replacing slots after NewBaseServer (e.g. setting `s.Typed.Logs` to a
+// cloud-native impl). Each default closes over `s.self` so cloud
+// backends that call `SetSelf` post-construction get their overridden
+// methods picked up automatically.
+func (s *BaseServer) initTypedDrivers() {
+	s.Typed.Logs = WrapLegacyLogs(
+		func(ref string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
+			return s.self.ContainerLogs(ref, opts)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
+	s.Typed.Signal = WrapLegacyKill(
+		func(ref, signal string) error {
+			return s.self.ContainerKill(ref, signal)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
+	s.Typed.ProcList = WrapLegacyTop(
+		func(ref, psArgs string) (*api.ContainerTopResponse, error) {
+			return s.self.ContainerTop(ref, psArgs)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
+	s.Typed.FSDiff = WrapLegacyChanges(
+		func(ref string) ([]api.ContainerChangeItem, error) {
+			return s.self.ContainerChanges(ref)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
+	s.Typed.FSRead = WrapLegacyFSRead(
+		func(ref, path string) (*api.ContainerPathStat, error) {
+			return s.self.ContainerStatPath(ref, path)
+		},
+		func(ref, path string) (*api.ContainerArchiveResponse, error) {
+			return s.self.ContainerGetArchive(ref, path)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
+	s.Typed.FSWrite = WrapLegacyFSWrite(
+		func(ref, path string, noOverwriteDirNonDir bool, body io.Reader) error {
+			return s.self.ContainerPutArchive(ref, path, noOverwriteDirNonDir, body)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
+	s.Typed.FSExport = WrapLegacyFSExport(
+		func(ref string) (io.ReadCloser, error) {
+			return s.self.ContainerExport(ref)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
+	s.Typed.Stats = WrapLegacyStats(
+		func(ref string, stream bool) (io.ReadCloser, error) {
+			return s.self.ContainerStats(ref, stream)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
+	s.Typed.Commit = WrapLegacyCommit(
+		func(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
+			return s.self.ContainerCommit(req)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
+	s.Typed.Build = WrapLegacyBuild(
+		func(opts api.ImageBuildOptions, ctxReader io.Reader) (io.ReadCloser, error) {
+			return s.self.ImageBuild(opts, ctxReader)
+		},
+		nil, // assume available — legacy ImageBuild surfaces NotImpl from the impl itself
+		s.Desc.Driver, "default-self-dispatch",
+	)
+	s.Typed.Registry = WrapLegacyRegistry(
+		func(ref, auth string) (io.ReadCloser, error) {
+			return s.self.ImagePull(ref, auth)
+		},
+		func(name, tag, auth string) (io.ReadCloser, error) {
+			return s.self.ImagePush(name, tag, auth)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
+	s.Typed.Exec = WrapLegacyExecStart(
+		func(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
+			return s.self.ExecStart(id, opts)
+		},
+		s.Store,
+		s.Desc.Driver, "default-self-dispatch",
+	)
+	s.Typed.Attach = WrapLegacyContainerAttach(
+		func(ref string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
+			return s.self.ContainerAttach(ref, opts)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
 }
 
 func (s *BaseServer) registerRoutes() {
@@ -249,6 +346,13 @@ func (s *BaseServer) InitDefaultNetwork() {
 		Labels:     make(map[string]string),
 		Created:    now,
 	})
+	// Register the bridge subnet with the IP allocator so AllocateIP
+	// for bridge-attached containers returns from the real pool, not
+	// a hardcoded 172.17.0.2 fallback.
+	s.Store.IPAlloc.AllocateSubnet(bridgeID, &api.IPAMConfig{
+		Subnet:  "172.17.0.0/16",
+		Gateway: "172.17.0.1",
+	})
 	hostID := "f00000000000000000000000000000000000000000000000000000000host0000"
 	s.Store.Networks.Put(hostID, api.Network{
 		Name:       "host",
@@ -281,6 +385,8 @@ func (s *BaseServer) InitDrivers() {
 	s.Drivers.Exec = &LocalExecDriver{Store: s.Store, Logger: s.Logger}
 	s.Drivers.Filesystem = &LocalFilesystemDriver{Store: s.Store, Logger: s.Logger}
 	s.Drivers.Stream = &LocalStreamDriver{Store: s.Store, Logger: s.Logger}
+
+	s.initTypedDrivers()
 
 	syntheticNet := &SyntheticNetworkDriver{Store: s.Store, IPAlloc: s.Store.IPAlloc}
 	if platformDriver := NewPlatformNetworkDriver(syntheticNet, s.Logger); platformDriver != nil {

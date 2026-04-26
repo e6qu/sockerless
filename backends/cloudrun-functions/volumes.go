@@ -11,7 +11,7 @@ import (
 	gcpcommon "github.com/sockerless/gcp-common"
 )
 
-// Phase 94 — GCS-backed named-volume provisioning for Cloud Functions v2.
+// GCS-backed named-volume provisioning for Cloud Functions v2.
 //
 // Cloud Functions v2's public API (functionspb.ServiceConfig) exposes
 // only SecretVolumes — no first-class GCS volume primitive. But v2 IS a
@@ -21,9 +21,9 @@ import (
 // RevisionTemplate.Volumes + Container.VolumeMounts, and UpdateService.
 //
 // Volume CRUD reuses gcpcommon.BucketManager shared with the Cloud Run
-// backend (Phase 94 prereq). ContainerStart (backend_impl.go) calls this
-// file's helpers to provision buckets up-front and attach them to the
-// underlying CR Service after Functions.CreateFunction returns.
+// backend. ContainerStart (backend_impl.go) calls this file's helpers
+// to provision buckets up-front and attach them to the underlying CR
+// Service after Functions.CreateFunction returns.
 //
 // Host-path bind specs (`/h:/c`) stay rejected — Cloud Functions
 // containers have no host filesystem to bind from.
@@ -50,8 +50,8 @@ func (s *Server) listManagedBuckets(ctx context.Context) ([]*storage.BucketAttrs
 // (`volName:/mnt[:ro]`), provisions a GCS bucket per unique named
 // volume, fetches the underlying Cloud Run Service backing the
 // function, appends the matching Volume + VolumeMount entries to its
-// RevisionTemplate, and UpdateService's the result. Phase 94 escape
-// hatch because Functions v2's ServiceConfig has no first-class Volumes
+// RevisionTemplate, and UpdateService's the result. Escape hatch
+// because Functions v2's ServiceConfig has no first-class Volumes
 // primitive.
 func (s *Server) attachVolumesToFunctionService(ctx context.Context, fn *functionspb.Function, binds []string) error {
 	if fn == nil || fn.ServiceConfig == nil || fn.ServiceConfig.Service == "" {

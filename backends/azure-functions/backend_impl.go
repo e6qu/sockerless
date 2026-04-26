@@ -141,7 +141,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		NetworkID:   networkID,
 		EndpointID:  core.GenerateID()[:16],
 		Gateway:     "",
-		IPAddress:   "0.0.0.0",
+		IPAddress:   "",
 		IPPrefixLen: 16,
 		MacAddress:  "",
 	}
@@ -274,13 +274,10 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		Metadata:     map[string]string{"image": container.Image, "name": container.Name, "functionAppName": funcAppName},
 	})
 
-	functionURL := ""
+	functionURL, functionHost := "", ""
 	if result.Properties != nil && result.Properties.DefaultHostName != nil {
-		scheme := "https"
-		if strings.HasPrefix(s.config.EndpointURL, "http://") {
-			scheme = "http"
-		}
-		functionURL = fmt.Sprintf("%s://%s/api/function", scheme, *result.Properties.DefaultHostName)
+		functionHost = *result.Properties.DefaultHostName
+		functionURL = invokeURLForHost(s.config.EndpointURL, functionHost)
 	}
 
 	s.PendingCreates.Put(id, container)
@@ -289,6 +286,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		FunctionAppName: funcAppName,
 		ResourceID:      resourceID,
 		FunctionURL:     functionURL,
+		FunctionHost:    functionHost,
 	})
 
 	s.EmitEvent("container", "create", id, map[string]string{
@@ -353,7 +351,12 @@ func (s *Server) ContainerStart(ref string) error {
 			inv.Error = "no function URL available"
 		} else {
 			client := &http.Client{Timeout: time.Duration(s.config.Timeout) * time.Second}
-			if resp, err := client.Post(azfState.FunctionURL, "application/json", nil); err != nil {
+			invokeReq, _ := http.NewRequest("POST", azfState.FunctionURL, nil)
+			invokeReq.Header.Set("Content-Type", "application/json")
+			if azfState.FunctionHost != "" {
+				invokeReq.Host = azfState.FunctionHost
+			}
+			if resp, err := client.Do(invokeReq); err != nil {
 				s.Logger.Error().Err(err).Str("functionApp", azfState.FunctionAppName).Msg("Function App invocation failed")
 				inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
 				inv.Error = err.Error()
@@ -457,9 +460,11 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	if c.State.Running {
+		// `docker rm -f` is SIGKILL → exit 137.
+		killExitCode := core.SignalToExitCode("SIGKILL")
 		s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 		s.EmitEvent("container", "die", id, map[string]string{
-			"exitCode": "0",
+			"exitCode": fmt.Sprintf("%d", killExitCode),
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
 	}
@@ -552,8 +557,10 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
 		}
+		// `docker restart` sends SIGTERM → exit 143.
+		stopExitCode := core.SignalToExitCode("SIGTERM")
 		s.EmitEvent("container", "die", id, map[string]string{
-			"exitCode": "0",
+			"exitCode": fmt.Sprintf("%d", stopExitCode),
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
 		s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})

@@ -1,0 +1,7 @@
+hello:
+  image: alpine:latest
+  tags:
+    - sockerless-ecs
+  script:
+    - echo "hello from sockerless"
+    - env | sort

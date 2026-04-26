@@ -98,7 +98,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// filesystem to bind from, so host-path bind mounts (`/h:/c`) are
 	// rejected — only named Docker volumes (`volname:/c`) are supported;
 	// those land on the sockerless-managed EFS filesystem via per-volume
-	// access points (Phase 91). Rejecting host binds here (rather than
+	// access points. Rejecting host binds here (rather than
 	// silently substituting an empty scratch volume or an EFS subdir
 	// named after the host path) keeps `docker run -v /host:/container`
 	// failures explicit.
@@ -170,7 +170,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		NetworkID:   networkID,
 		EndpointID:  core.GenerateID()[:16],
 		Gateway:     "",
-		IPAddress:   "0.0.0.0",
+		IPAddress:   "",
 		IPPrefixLen: 16,
 		MacAddress:  "",
 	}
@@ -549,9 +549,11 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	if c.State.Running {
+		// `docker rm -f` is SIGKILL → exit 137 by docker convention.
+		killExitCode := core.SignalToExitCode("SIGKILL")
 		s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 		s.EmitEvent("container", "die", id, map[string]string{
-			"exitCode": "0",
+			"exitCode": fmt.Sprintf("%d", killExitCode),
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
 		// cloud-fallback lookup so remove works post-restart.
@@ -713,8 +715,10 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
 		}
+		// `docker restart` sends SIGTERM → exit 143.
+		stopExitCode := core.SignalToExitCode("SIGTERM")
 		s.EmitEvent("container", "die", id, map[string]string{
-			"exitCode": "0",
+			"exitCode": fmt.Sprintf("%d", stopExitCode),
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
 		s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
@@ -813,10 +817,10 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 }
 
 // ContainerPause sends SIGSTOP to the user subprocess via SSM
-// ExecuteCommand. Reuses the Phase 99 /tmp/.sockerless-mainpid
-// convention — task definitions must arrange for the user process to
-// write its PID there. Without that, the helper returns
-// NotImplementedError naming the missing prerequisite.
+// ExecuteCommand. Reuses the /tmp/.sockerless-mainpid convention —
+// task definitions must arrange for the user process to write its
+// PID there. Without that, the helper returns NotImplementedError
+// naming the missing prerequisite.
 func (s *Server) ContainerPause(ref string) error {
 	return s.ContainerSignalViaSSM(ref, "STOP")
 }
@@ -1085,8 +1089,7 @@ func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {
 
 // ContainerCommit is not implemented on the ECS backend. Fargate task
 // images are control-plane-owned (sourced from ECR), so commit needs
-// the same agent-driven snapshot + registry-push pipeline as Lambda;
-// tracked as Phase 98b / BUG-750.
+// the same agent-driven snapshot + registry-push pipeline as Lambda.
 func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
 	_, ok := s.ResolveContainerIDAuto(context.Background(), req.Container)
 	if !ok {

@@ -309,7 +309,14 @@ func handleEFSCreateMountTarget(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.IpAddress == "" {
-		req.IpAddress = fmt.Sprintf("10.0.1.%d", efsMountTargets.Len()+10)
+		// Real EFS allocates the mount target IP from the subnet's CIDR
+		// block — not from a global counter. Match that contract.
+		ip, ipErr := AllocateSubnetIP(req.SubnetId)
+		if ipErr != nil {
+			sim.AWSError(w, "SubnetNotFound", ipErr.Error(), http.StatusBadRequest)
+			return
+		}
+		req.IpAddress = ip
 	}
 
 	mtId := "fsmt-" + generateUUID()[:8]

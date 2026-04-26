@@ -8,9 +8,9 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-90.4k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-93.6k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
 [![TypeScript](https://img.shields.io/badge/TypeScript-8.5k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-47.6k_lines-brightgreen)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-49.9k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
@@ -98,19 +98,19 @@ Each backend, the agent, and the test suite are separate Go modules connected vi
 
 **Go**
 
-![core](https://img.shields.io/badge/core-15.8k-00ADD8)
+![core](https://img.shields.io/badge/core-17.7k-00ADD8)
 ![bleephub](https://img.shields.io/badge/bleephub-14.5k-00ADD8)
-![sim/aws](https://img.shields.io/badge/sim%2Faws-9.1k-00ADD8)
-![sim/azure](https://img.shields.io/badge/sim%2Fazure-7.1k-00ADD8)
-![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-6.3k-00ADD8)
+![sim/aws](https://img.shields.io/badge/sim%2Faws-9.3k-00ADD8)
+![sim/azure](https://img.shields.io/badge/sim%2Fazure-7.4k-00ADD8)
+![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-6.6k-00ADD8)
 ![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)
-![ecs](https://img.shields.io/badge/ecs-5.8k-5BC0DE)
+![ecs](https://img.shields.io/badge/ecs-5.9k-5BC0DE)
 ![cloudrun](https://img.shields.io/badge/cloudrun-3.9k-5BC0DE)
-![aca](https://img.shields.io/badge/aca-4.2k-5BC0DE)
-![docker](https://img.shields.io/badge/docker-2.5k-5BC0DE)
+![aca](https://img.shields.io/badge/aca-4.3k-5BC0DE)
+![docker](https://img.shields.io/badge/docker-2.6k-5BC0DE)
 ![agent](https://img.shields.io/badge/agent-2.3k-5BC0DE)
-![api](https://img.shields.io/badge/api-1.8k-5BC0DE)
-![azf](https://img.shields.io/badge/azf-2.3k-A0D8EF)
+![api](https://img.shields.io/badge/api-1.9k-5BC0DE)
+![azf](https://img.shields.io/badge/azf-2.4k-A0D8EF)
 ![cli](https://img.shields.io/badge/cli-1.6k-A0D8EF)
 ![gcf](https://img.shields.io/badge/gcf-2.2k-A0D8EF)
 ![lambda](https://img.shields.io/badge/lambda-2.8k-A0D8EF)
@@ -269,7 +269,7 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 - **Infrastructure provisioning** — [`terraform/README.md`](terraform/README.md) (modules, state backends, CI/CD workflows)
 - **Step-by-step walkthroughs** — each backend's [`examples/terraform/README.md`](backends/ecs/examples/terraform/) (terraform apply through validation)
 - **Configuration reference** — each backend's [`README.md`](backends/) (env vars, terraform output mapping)
-- **Live test results** — [`PLAN_ECS_MANUAL_TESTING.md`](PLAN_ECS_MANUAL_TESTING.md) (ECS Fargate tested against real AWS, 11/12 phases pass)
+- **Manual test runbooks** — [`manual-tests/`](manual-tests/) (per-cloud live-infra sweeps; AWS validated in eu-west-1)
 
 ## Documentation
 
@@ -286,5 +286,5 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 | [`AGENTS.md`](AGENTS.md) | Agent architecture (forward/reverse modes) |
 | [`DECISIONS.md`](DECISIONS.md) | Technical decision log across all phases |
 | [`PLAN.md`](PLAN.md) | Implementation plan and task tracking |
-| [`PLAN_ECS_MANUAL_TESTING.md`](PLAN_ECS_MANUAL_TESTING.md) | ECS live testing plan, results, and bugs found |
+| [`manual-tests/`](manual-tests/) | Per-cloud live-infra manual test runbooks |
 | [`STATUS.md`](STATUS.md) | Project status and phase history |

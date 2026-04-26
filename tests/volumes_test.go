@@ -6,9 +6,9 @@ import (
 	"github.com/docker/docker/api/types/volume"
 )
 
-// Phase 91: the ECS backend backs Docker volumes with real EFS access
-// points on a sockerless-owned filesystem. These tests exercise the
-// full lifecycle (create → inspect → list → remove → 404) against
+// The ECS backend backs Docker volumes with real EFS access points
+// on a sockerless-owned filesystem. These tests exercise the full
+// lifecycle (create → inspect → list → remove → 404) against
 // whichever runner backend the harness has wired up.
 
 func TestVolume_LifecycleEFSAccessPoint(t *testing.T) {

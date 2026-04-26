@@ -61,10 +61,10 @@ func (s *Server) persistInvocationResultToTags(ctx context.Context, functionARN 
 // invocation to function tags (the single source of truth alongside the
 // in-memory map) and read it back on startup.
 //
-// Name kept for compatibility with the original BUG-811 design pass;
-// implementation now reads tags instead of CloudWatch logs because tag
-// reads are atomic, exit codes survive losslessly, and we don't have
-// to interpret AWS's runtime log strings.
+// Name kept for compatibility with the original CloudWatch-based
+// design; implementation now reads tags instead of CloudWatch logs
+// because tag reads are atomic, exit codes survive losslessly, and
+// we don't have to interpret AWS's runtime log strings.
 func (s *Server) ReplayInvocationsFromCloudWatch(ctx context.Context) error {
 	if s.aws.Lambda == nil {
 		return nil

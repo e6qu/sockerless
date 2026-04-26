@@ -10,10 +10,17 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
+)
+
+var (
+	errSSMFrameTooShort  = errors.New("ssm frame: shorter than 120-byte fixed header")
+	errSSMFrameTruncated = errors.New("ssm frame: truncated payload")
 )
 
 const (
@@ -27,6 +34,7 @@ const (
 // MessageType constants (right-padded with spaces to 32 bytes).
 const (
 	ssmMTOutputStreamData = "output_stream_data"
+	ssmMTInputStreamData  = "input_stream_data"
 	ssmMTChannelClosed    = "channel_closed"
 )
 
@@ -75,6 +83,28 @@ func buildSSMOutputFrame(payloadType uint32, payload []byte) []byte {
 	binary.BigEndian.PutUint32(out[116:120], uint32(len(payload)))
 	copy(out[ssmFixedHeaderLen:], payload)
 	return out
+}
+
+// decodeSSMInputFrame parses an inbound AgentMessage from the backend's
+// stdin pipe and returns the payload bytes, the frame's MessageType
+// (`input_stream_data` for stdin data, `acknowledge` for sequence acks,
+// etc), and whether the FIN flag is set (indicating no more frames will
+// follow). Real ssm-agent only forwards `input_stream_data` payloads to
+// the user process and closes the user's stdin after the FIN frame; the
+// simulator must do the same so binary stdin (tar archives, gzip-
+// compressed input, etc) reaches the process intact, and tar / cat /
+// other readers see EOF when the backend is done sending.
+func decodeSSMInputFrame(b []byte) (payload []byte, messageType string, fin bool, err error) {
+	if len(b) < ssmFixedHeaderLen {
+		return nil, "", false, errSSMFrameTooShort
+	}
+	mt := strings.TrimRight(string(b[4:4+ssmMessageTypeLen]), " \x00")
+	flags := binary.BigEndian.Uint64(b[56:64])
+	payloadLen := binary.BigEndian.Uint32(b[116:120])
+	if uint32(len(b)) < uint32(ssmFixedHeaderLen)+payloadLen {
+		return nil, mt, false, errSSMFrameTruncated
+	}
+	return b[ssmFixedHeaderLen : ssmFixedHeaderLen+int(payloadLen)], mt, (flags & 2) != 0, nil
 }
 
 // buildSSMChannelClosed builds the channel_closed frame that tells the

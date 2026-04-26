@@ -3166,6 +3166,9 @@ components:
         Id:
           type: string
 
+    # PodInspectResponse mirrors podman's libpod `define.InspectPodData`
+    # so `podman pod inspect --format ...` templates against any of the
+    # optional fields produce non-zero output (BUG-804).
     PodInspectResponse:
       type: object
       properties:
@@ -3191,6 +3194,78 @@ components:
         SharedNamespaces:
           type: array
           items: { type: string }
+        Namespace:           { type: string }
+        CreateCommand:       { type: array, items: { type: string } }
+        ExitPolicy:          { type: string }
+        InfraContainerID:    { type: string }
+        InfraConfig:         { $ref: "#/components/schemas/PodInfraConfig" }
+        CgroupParent:        { type: string }
+        CgroupPath:          { type: string }
+        LockNumber:          { type: integer, format: uint32 }
+        RestartPolicy:       { type: string }
+        BlkioWeight:         { type: integer, format: uint16 }
+        CPUPeriod:           { type: integer, format: uint64 }
+        CPUQuota:            { type: integer, format: int64 }
+        CPUShares:           { type: integer, format: uint64 }
+        CPUSetCPUs:          { type: string }
+        MemoryLimit:         { type: integer, format: uint64 }
+        MemorySwap:          { type: integer, format: uint64 }
+        BlkioDeviceReadBps:  { type: array, items: { $ref: "#/components/schemas/PodBlkioDeviceRate" } }
+        BlkioDeviceWriteBps: { type: array, items: { $ref: "#/components/schemas/PodBlkioDeviceRate" } }
+        VolumesFrom:         { type: array, items: { type: string } }
+        SecurityOpts:        { type: array, items: { type: string } }
+        mounts:              { type: array, items: { $ref: "#/components/schemas/PodInspectMount" } }
+        devices:             { type: array, items: { $ref: "#/components/schemas/PodInspectDevice" } }
+        device_read_bps:     { type: array, items: { $ref: "#/components/schemas/PodBlkioDeviceRate" } }
+
+    PodInfraConfig:
+      type: object
+      properties:
+        PortBindings:
+          type: object
+          additionalProperties:
+            type: array
+            items: { $ref: "#/components/schemas/PortBinding" }
+        HostNetwork:        { type: boolean }
+        StaticIP:           { type: string }
+        StaticMAC:          { type: string }
+        NoManageResolvConf: { type: boolean }
+        DNSServer:          { type: array, items: { type: string } }
+        DNSSearch:          { type: array, items: { type: string } }
+        DNSOption:          { type: array, items: { type: string } }
+        NoManageHosts:      { type: boolean }
+        HostAdd:            { type: array, items: { type: string } }
+        Networks:           { type: array, items: { type: string } }
+        NetworkOptions:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+        pid_ns:             { type: string }
+        userns:             { type: string }
+        uts_ns:             { type: string }
+
+    PodBlkioDeviceRate:
+      type: object
+      properties:
+        Path: { type: string }
+        Rate: { type: integer, format: uint64 }
+
+    PodInspectMount:
+      type: object
+      properties:
+        Type:        { type: string }
+        Source:      { type: string }
+        Destination: { type: string }
+        RW:          { type: boolean }
+        Mode:        { type: string }
+
+    PodInspectDevice:
+      type: object
+      properties:
+        PathOnHost:        { type: string }
+        PathInContainer:   { type: string }
+        CgroupPermissions: { type: string }
 
     PodContainerInfo:
       type: object
@@ -3221,6 +3296,12 @@ components:
           items:
             $ref: "#/components/schemas/PodContainerInfo"
 
+    # PodActionResponse — wire shape note (BUG-806): podman's
+    # `PodStopReport.Errs` is `[]error`, which can never round-trip
+    # JSON cleanly. The libpod handler emits `Errs: []` on success and
+    # routes any per-container failure through HTTP 409. The Errs
+    # field here is for sockerless-internal use; it is normalised
+    # before serialization.
     PodActionResponse:
       type: object
       properties:
@@ -3229,6 +3310,8 @@ components:
         Errs:
           type: array
           items: { type: string }
+        RawInput:
+          type: string
 
     PodListOptions:
       type: object

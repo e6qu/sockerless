@@ -1,42 +1,34 @@
 # Sockerless — Status
 
-**102 phases closed. 819 bugs tracked — 817 fixed, 2 open (BUG-804/806 libpod shape — queued for Phase 105 by maintainer). 1 false positive. PR #118 merged (Rounds 8 + 9). Branch back on `main`, in sync with `origin/main`. Phase 104 (cross-backend driver framework) is the next active work.**
+**103 phases closed (Phase 108 closed 2026-04-26). 844 bugs tracked — 844 fixed, 0 open. 1 false positive.** PR #118 merged. PR #120 open (~60 commits ahead) with: 31 audit closures (BUG-802 + 638/640/646/648 retro + 804/806 + 820..831 + 832..844); **Phase 104 framework migration complete + cloud-native typed drivers across every backend** (44/91 matrix cells cloud-native; the rest stay on legacy adapters whose api.Backend method already does the cloud-native thing); Phase 105 waves 1-3 (8 libpod-shape golden tests); Phase 108 closed (77/77 sim-parity matrix ✓ — 33 AWS / 16 GCP / 28 Azure); Phase 106/107 harnesses shipped under `tests/runners/{github,gitlab}/`; `core.ImageRef` typed domain object lands at the typed Registry boundary; manual-tests directory + repo-wide code/doc cleanup (Phase/BUG refs stripped from 95 Go files + every spec/doc). **Phase 109 (strict cloud-API fidelity audit) opened mid-PR-120** — closed BUG-836..844 (real ECS task lifecycle without awslogs, real SSM AgentMessage stdin protocol, real subnet-CIDR IP allocation, real per-site Azure hostnames, real signal routing); pending sequence (Lambda VPC IPs, region/account scoping, Cloud Run + ACA state machines, full VPC/firewall/IAM/service-discovery/storage parity for runner support) tracked in PLAN.md § Phase 109. **Next on this branch:** finish Phase 109 sequence, then wrapper-removal + further interface tightening.
 
-See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer), [specs/](specs/) (architecture).
+See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer).
 
 ## Branch state
 
-- **`main`** — current. Synced with `origin/main` at PR #118 merge (squash commit `204e25e`).
+- **`main`** — synced with `origin/main` at PR #119 merge.
+- **`post-pr-118-bug-audit-and-phases`** — open as PR #120, ~50 commits ahead of main.
 - **`origin-gitlab/main`** — mirror, lags; pushed when convenient.
 
-## Round-8 + Round-9 (closed via PR #118)
-
-Per-test crosswalk of [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md) against [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), live ECS + Lambda. Working state archived in [docs/manual-test-spec-crosswalk.md](docs/manual-test-spec-crosswalk.md).
-
-- ECS Tracks A/B/C/E/F/G/I (~80 tests) — bugs fixed: 801, 803, 805, 813 (start polling), 789/798 (SSM exit-code marker), 815 (exec sh -c wrap), 816 (busybox find compat), 817 (stat tab format), 795 (filter substring match), 818 (sim ECS exec parser), 819 (terragrunt sweep parity).
-- Lambda Track D (9 tests) — bugs fixed: 807 (wait-for-Active waiter), 808 (PrebuiltOverlayImage independent of CallbackURL), 809 (ExecStart hijack-before-error), 810 (stale "loaded from disk" log), 811 (tag-based InvocationResult persistence + replay), 812 (LastModified RFC3339Nano conversion).
-- 2 queued for Phase 105 (804, 806 — libpod shape). 1 withdrawn (802 — measurement artifact).
-
-AWS infra torn down post-merge. Root-account IAM key `AKIA2TQEGRDBRV2KFW6L` deactivation has to be done by the maintainer via the AWS Console (CLI can't manage root-account keys).
-
-## Recent merges (compressed — full detail in [WHAT_WE_DID.md](WHAT_WE_DID.md))
+## Recent merges
 
 | PR | Summary |
 |---|---|
-| #118 | Round-8 + Round-9 live-AWS sweep — 30 bugs (BUG-786..819), per-cloud terragrunt sweep parity |
-| #117 | Round-7 live-AWS sweep — 16 bugs (BUG-770..785) |
-| #116 | Post-PR-#115 state-doc refresh |
-| #115 | Phases 96/98/98b/99/100/101/102 + 13-bug audit sweep |
-| #114 | Phase 91 ECS EFS volumes + BUG-735/736/737 |
-| #113 | Phases 87/88 (CR Services + ACA Apps) + 89 (stateless audit) + 90 (no-fakes) |
+| #120 (open) | Audit + Phase 104 framework migration + cloud-native typed drivers + Phase 105 waves 1-3 + Phase 108 closed + Phase 106/107 harness scaffolding + ImageRef domain type + Phase 109 strict-fidelity audit (BUG-836..844: real ECS lifecycle, real SSM AgentMessage protocol, real subnet-CIDR IP allocation, real Azure per-site hostnames, real kill signal routing) + repo-wide code/doc cleanup. |
+| #119 | Post-PR-#118 state-doc refresh — Phase 104 promoted to active. |
+| #118 | Round-8 + Round-9 live-AWS sweep — 30 bugs (BUG-786..819), per-cloud terragrunt sweep parity. |
+| #117 | Round-7 live-AWS sweep — 16 bugs (BUG-770..785). |
+| #115 | Phases 96/98/98b/99/100/101/102 + 13-bug audit sweep. |
+| #114 | Phase 91 ECS EFS volumes + BUG-735/736/737. |
 
-## Open work pointers
+## Open work (full detail in [PLAN.md](PLAN.md))
 
-- **BUG-804/806**: libpod-shape divergences for `pod inspect` (returns array; libpod expects object) and `pod stop` (Errs serialization). Queued for Phase 105 by maintainer.
-- **Phase 103**: overlay-rootfs bootstrap mode — ships under Phase 104 as alternate FSDiff/Commit drivers.
-- **Phase 104**: cross-backend driver framework — design locked; piecemeal delivery, dimension at a time. See PLAN.md for the dimension list and refactor order.
-- **Phase 105**: libpod-shape conformance.
-- **GCP / Azure live runbooks** — terraform live envs to add, then port the round-7/8/9 sweep against each.
+- **Phase 104** — cross-backend driver framework. **Framework migration complete + cloud-native coverage near-full.** All 13 adapters; every dispatch site flows through TypedDriverSet. Per-backend default-driver matrix: [specs/DRIVERS.md](specs/DRIVERS.md). 44/91 cells cloud-native (excluding docker, where local SDK passthrough is itself the cloud-native path); the rest stay on legacy adapters whose api.Backend method already does the cloud-native thing. `core.ImageRef` typed domain object landed at the typed `RegistryDriver.Push/Pull` boundary — first instance of the interface-tightening track. Remaining: wrapper-removal pass (gated on docker getting typed drivers OR accepting wrappers as permanent); typed Signal enum / structured Stats; `ResolveImageReg(ImageRef)` helper to migrate the registry-resolution call sites still on `splitImageRefRegistry`.
+- **Phase 105** — libpod-shape conformance, rolling. Waves 1-3 done (8 handlers); wave 4 (events stream, exec start hijack, container CRUD) lower-priority.
+- **Phase 106 / 107** — real CI runner harnesses shipped under `tests/runners/{github,gitlab}/`, build-tag-gated. End-to-end runs against live cloud + real repo/project pending — needs operator to reactivate AWS root-account key + provision live ECS via [manual-tests/01-infrastructure.md](manual-tests/01-infrastructure.md). Architecture: per-backend daemon (v1) → label-dispatch via Phase 68 (v2). `dind` sub-test included on the GitLab side.
+- **Phase 109** — strict cloud-API fidelity audit (in flight). Triggered by PR #120 CI failures that traced back to synthetic responses. Goal: every sim slice sockerless touches behaves like the real cloud — same wire shape, same validation rules, same state transitions, same SDK / CLI / Terraform-provider compatibility. **Closed in this branch:** real ECS task lifecycle (was log-config-gated), real SSM AgentMessage stdin protocol (was dropping binary frames), real subnet-CIDR IP allocation (was hardcoded `10.0.x.x`), real per-site Azure hostnames (was sharing simulator host), AWS-shape default subnet ID (CLI param validator). **Pending sequence in PLAN.md § Phase 109:** Lambda VPC ENI IPs, region/account scoping, Cloud Run jobs + ACA state machines, full VPC/firewall/IAM/service-discovery/storage parity scoped to GH+GitLab runner needs.
+- **Phase 68** — Multi-Tenant Backend Pools. P68-001 done; 9 sub-tasks remaining; Phase 106 label-routing motivates this.
+- **Live-cloud runbooks** — GCP + Azure terraform live envs to add; per-cloud `sockerless_runtime_sweep` makes destroy self-sufficient.
 
 ## Test counts (head of `main`)
 
@@ -50,5 +42,7 @@ AWS infra torn down post-merge. Root-account IAM key `AKIA2TQEGRDBRV2KFW6L` deac
 | Terraform | 75 |
 | UI/Admin/bleephub | 512 |
 | Lint (18 modules) | 0 |
-| Round-8 live-AWS manual sweep | 278 tests; 274 pass + 4 BUG-799 ghosts (now fixed) |
-| Round-8 + Round-9 live-AWS manual sweep | ~150 tests across both rounds; 30 bugs fixed (BUG-786..819); coverage rows C12-C15 added |
+
+## AWS access key state
+
+Root-account access key `AKIA2TQEGRDBRV2KFW6L` deactivated by maintainer 2026-04-26 post-round-9. **Reactivate via AWS Console before any future live-AWS test pass** (Phase 106 ECS workloads, Phase 87 live-GCP doesn't need it, Phase 88 live-Azure doesn't need it). Per-cloud `null_resource sockerless_runtime_sweep` (BUG-819) makes `terragrunt apply` + `terragrunt destroy` self-sufficient.

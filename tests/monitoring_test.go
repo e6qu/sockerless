@@ -198,8 +198,9 @@ func TestSystemDf(t *testing.T) {
 		t.Error("disk usage did not include test container")
 	}
 	// Volume disk usage is intentionally not asserted here: named
-	// volumes are unsupported on the ECS backend (tests/volumes_test.go
-	// pins `VolumeCreate` as NotImplemented). Phase 91 re-enables.
+	// volumes on cloud backends route through real cloud-storage
+	// provisioning (EFS / Files / GCS) so the disk-usage interaction
+	// is exercised by per-backend integration tests instead.
 }
 
 func TestSystemDfWithRunningContainer(t *testing.T) {
@@ -238,7 +239,6 @@ func TestSystemDfWithRunningContainer(t *testing.T) {
 	t.Error("running container not found in disk usage")
 }
 
-// TestContainerCreateVolume removed — named volumes aren't supported
-// on the ECS backend (see tests/volumes_test.go and BUG-731). The
-// disk-usage / volume interaction will be re-tested when Phase 91
-// ships real EFS-backed volume provisioning.
+// TestContainerCreateVolume — exercised by per-backend volume
+// integration tests, which assert the real cloud-storage provisioning
+// (EFS / Azure Files / GCS) underpinning Docker named volumes.

@@ -58,7 +58,7 @@ func TestEFS_CreateMountTarget(t *testing.T) {
 
 	out = runCLI(t, awsCLI("efs", "create-mount-target",
 		"--file-system-id", fs.FileSystemId,
-		"--subnet-id", "subnet-12345678",
+		"--subnet-id", "subnet-0123456789abcdef0",
 		"--output", "json",
 	))
 

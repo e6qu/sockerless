@@ -122,21 +122,20 @@ func TestIntegration_AzureFunctionsLifecycle(t *testing.T) {
 	defaultHostName := props["defaultHostName"].(string)
 	require.NotEmpty(t, defaultHostName)
 
-	// 4. Invoke function via DefaultHostName
-	invokeURL := "http://" + defaultHostName + "/api/function"
-	invokeReq, _ := http.NewRequestWithContext(ctx, "POST", invokeURL, strings.NewReader("{}"))
+	// 4. Invoke via DefaultHostName (matches real Azure routing). Sim hosts
+	// every site on one port so connect to baseURL but pin Host header.
+	invokeReq, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/api/function", strings.NewReader("{}"))
 	invokeReq.Header.Set("Content-Type", "application/json")
+	invokeReq.Host = defaultHostName
 	invokeResp, err := http.DefaultClient.Do(invokeReq)
 	require.NoError(t, err)
 	invokeResp.Body.Close()
 	require.Equal(t, http.StatusOK, invokeResp.StatusCode)
 
-	// 5. Query AppTraces — verify at least one "Function invoked" entry exists.
-	// Note: the invoke handler matches sites by Host header; when multiple
-	// function apps share the same simulator host, the matched site may vary,
-	// so we query all AppTraces with Message filter rather than AppRoleName.
+	// 5. Query AppTraces for the function we just invoked.
 	time.Sleep(100 * time.Millisecond)
-	kql := `AppTraces | where Message == "Function invoked"`
+	kql := `AppTraces | where AppRoleName == "` + siteName + `"`
 	result := queryWorkspace(t, "default", kql)
 	require.Len(t, result.Tables, 1)
 	require.GreaterOrEqual(t, len(result.Tables[0].Rows), 1, "should have at least one Function invoked AppTraces entry")
