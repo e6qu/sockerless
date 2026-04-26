@@ -136,6 +136,18 @@ func (s *BaseServer) initTypedDrivers() {
 		},
 		s.Desc.Driver, "default-self-dispatch",
 	)
+	s.Typed.ProcList = WrapLegacyTop(
+		func(ref, psArgs string) (*api.ContainerTopResponse, error) {
+			return s.self.ContainerTop(ref, psArgs)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
+	s.Typed.FSDiff = WrapLegacyChanges(
+		func(ref string) ([]api.ContainerChangeItem, error) {
+			return s.self.ContainerChanges(ref)
+		},
+		s.Desc.Driver, "default-self-dispatch",
+	)
 }
 
 func (s *BaseServer) registerRoutes() {

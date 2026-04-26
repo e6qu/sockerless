@@ -37,8 +37,17 @@ func (s *BaseServer) handleExecResize(w http.ResponseWriter, r *http.Request) {
 func (s *BaseServer) handleContainerTop(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
 	psArgs := r.URL.Query().Get("ps_args")
-
-	resp, err := s.self.ContainerTop(ref, psArgs)
+	c, _ := s.ResolveContainerAuto(r.Context(), ref)
+	if c.ID == "" {
+		c.ID = ref
+	}
+	dctx := DriverContext{
+		Ctx:       r.Context(),
+		Container: c,
+		Backend:   s.Desc.Driver,
+		Logger:    s.Logger,
+	}
+	resp, err := s.Typed.ProcList.Top(dctx, psArgs)
 	if err != nil {
 		WriteError(w, err)
 		return
@@ -385,7 +394,18 @@ func (s *BaseServer) handleContainerUpdate(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *BaseServer) handleContainerChanges(w http.ResponseWriter, r *http.Request) {
-	result, err := s.self.ContainerChanges(r.PathValue("id"))
+	ref := r.PathValue("id")
+	c, _ := s.ResolveContainerAuto(r.Context(), ref)
+	if c.ID == "" {
+		c.ID = ref
+	}
+	dctx := DriverContext{
+		Ctx:       r.Context(),
+		Container: c,
+		Backend:   s.Desc.Driver,
+		Logger:    s.Logger,
+	}
+	result, err := s.Typed.FSDiff.Changes(dctx)
 	if err != nil {
 		WriteError(w, err)
 		return
