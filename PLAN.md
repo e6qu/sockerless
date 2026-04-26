@@ -146,6 +146,36 @@ Same shape as Phase 106 but for GitLab Runner with the `docker` executor. Regist
 
 **Bugs surfaced** filed BUG-836+ and fixed in-phase.
 
+### Phase 109 — Strict cloud-API fidelity audit across all sims (in flight)
+
+Audit-driven sweep against the rule **"no fakes, no fallbacks, no synthetic data; sim shape must match the real cloud API end-to-end"**. Triggered by PR #120 CI failures that traced back to synthetic responses (hardcoded subnet IDs, hardcoded private IPs, AgentMessage-frame stdin dropped on the floor, etc). Goal: every sim slice sockerless touches behaves like the real cloud — same wire shape, same validation rules, same state transitions, same SDK / CLI / Terraform-provider compatibility.
+
+**Why now.** Sockerless's runner-coverage phases (106 + 107) drive workloads that exercise the sims at much higher fidelity than the SDK/CLI matrix has so far — image pulls + service containers + multi-step shells + binary stdin (act / setup-go / actions/cache). Every fake the runner trips becomes a live-cloud bug we'd hit on the real cloud. Better to stamp them out in the sim now.
+
+**Scope (closed in PR #120 — already shipped):**
+- BUG-836: AWS sim ECS task lifecycle ran the real container only when `awslogs` was configured — synthetic RUNNING-forever for log-less tasks. Fixed: container starts unconditionally; `discardLogSink` carries the path when no log driver is configured.
+- BUG-839: Azure sim every site shared `r.Host` as DefaultHostName — multi-site routing collided. Fixed: per-site `<name>.azurewebsites.net` matching real Azure.
+- BUG-842: AWS sim SSM session ignored `input_stream_data` AgentMessage frames — binary stdin (tar, gzip) never reached the user process. Fixed: simulator now decodes the AgentMessage protocol matching real ssm-agent.
+- BUG-844: AWS sim ECS RunTask returned hardcoded subnet ID `subnet-sim00001` and `10.0.<i>.<i+100>` IPs ignoring the request — fixed: subnet must exist in EC2 sim store, IP allocated from its real CidrBlock.
+- AWS sim EFS `CreateMountTarget` IPs from real subnet CIDR (same fix shape as ECS).
+- AWS sim default subnet ID renamed to AWS-shape `subnet-0123456789abcdef0` so it round-trips through the AWS CLI's parameter validator (min length 15).
+
+**Scope (still pending — sequencing):**
+
+1. **AWS sim — Lambda VPC ENI IPs.** Same shape as ECS/EFS — when `VpcConfig.SubnetIds` is set on `CreateFunction`, the sim should allocate the function's ENI IPs from the subnet's CIDR (currently ignored).
+2. **AWS sim — region / account scoping.** Region is hardcoded `us-east-1` and account is hardcoded `123456789012` across every ARN-emitting handler. Real AWS reads region from the endpoint host (`ecs.us-west-2.amazonaws.com`) and account from caller-identity (`sts:GetCallerIdentity`). Fix: extract region from request host, expose configurable account ID via `SOCKERLESS_AWS_ACCOUNT_ID` (default `123456789012` for backward-compat).
+3. **GCP sim — Cloud Run jobs state machine.** Jobs immediately get `TerminalCondition.State = "CONDITION_SUCCEEDED"` on create. Real Cloud Run transitions through `CONDITION_INITIALIZING` → `CONDITION_BUILDING` → `CONDITION_DEPLOYING` → `CONDITION_SUCCEEDED`. Fix: synchronous `INITIALIZING` on create, transition to `SUCCEEDED` on first GET (or after a small delay) so backends that poll the LRO see the real shape. Same pattern for Services.
+4. **Azure sim — Container Apps `provisioningState` machine.** `provisioningState=Succeeded` on Create. Real Azure: `Creating` → `Succeeded`. Fix: same shape as item 3.
+5. **All sims — VPC / subnet / NAT parity.** AWS already has `EC2Vpc`/`EC2Subnet`/`EC2NatGateway`/`EC2RouteTable`. GCP: confirm `compute.Network`/`compute.Subnetwork` parity (and add `compute.Router`/Cloud NAT if backends need it for serverless egress). Azure: VNet/subnet model under `Microsoft.Network/virtualNetworks` already partly present; confirm route-table + NAT-gateway shape for backends that require explicit egress.
+6. **All sims — firewall parity.** AWS `EC2SecurityGroup` already round-trips (rounds 7-9). GCP `compute.firewall` rules — confirm `Network`/`SourceRanges`/`TargetTags` shape; add if missing. Azure `Microsoft.Network/networkSecurityGroups` + rules — same audit.
+7. **All sims — IAM parity for runner credential flow.** AWS: `IAM Role` + `STS:AssumeRole` already wired. GCP: `IAM ServiceAccount` round-trips; confirm `iam:GenerateAccessToken` for runner-side gcloud. Azure: confirm `Microsoft.Authorization/roleAssignments` + managed-identity `IDENTITY_ENDPOINT`/`IDENTITY_HEADER` env-var contract.
+8. **All sims — service discovery for backend ↔ runner reachability.** AWS Cloud Map (`servicediscovery`) ✓. GCP Cloud DNS — confirm `dns.managedZones` + record shapes. Azure Private DNS — confirm `Microsoft.Network/privateDnsZones` parity.
+9. **All sims — storage parity for runner artifact / cache flows.** S3 ✓. GCS ✓. Azure Blob Storage — confirm `Microsoft.Storage/storageAccounts/blobServices/containers` parity (currently the storage account types are present; round-trip read/write still needs an audit pass).
+10. **All sims — timestamps + state stamps respect-on-write.** Several handlers re-set `CreatedAt = time.Now()` on every read, so DescribeFoo doesn't preserve creation order across calls. Fix: stamp at write, return as-stored.
+11. **No-fakes audit pass on test fixtures.** Repo-wide grep for `subnet-*`, `vpc-*`, `arn:aws:*`, `projects/test-*`, `00000000-...` style IDs in tests — every test must either use a sim-pre-registered ID or create the resource via the sim's CRUD API first (same flow real-cloud SDK callers take).
+
+**Per-bug log lives in [BUGS.md](BUGS.md) round-10.** Each item lands as its own commit with: typed sim handler change → SDK/CLI test pass against the new contract → no-fakes regression test added.
+
 ### Live-cloud validation runbooks
 
 Per-cloud `null_resource sockerless_runtime_sweep` (BUG-819) makes every backend's `terragrunt destroy` self-sufficient.
