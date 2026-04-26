@@ -53,8 +53,10 @@ func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, err
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(cid); ok {
 			close(ch.(chan struct{}))
 		}
+		// `pod stop` sends SIGTERM → exit 143 (BUG-826).
+		stopExitCode := core.SignalToExitCode("SIGTERM")
 		s.EmitEvent("container", "die", cid, map[string]string{
-			"exitCode": "0",
+			"exitCode": fmt.Sprintf("%d", stopExitCode),
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
 		s.EmitEvent("container", "stop", cid, map[string]string{
@@ -131,11 +133,13 @@ func (s *Server) PodRemove(name string, force bool) error {
 		}
 
 		if force && c.State.Running {
+			// `pod rm -f` is SIGKILL → exit 137 (BUG-826).
+			killExitCode := core.SignalToExitCode("SIGKILL")
 			s.EmitEvent("container", "kill", cid, map[string]string{
 				"name": strings.TrimPrefix(c.Name, "/"),
 			})
 			s.EmitEvent("container", "die", cid, map[string]string{
-				"exitCode": "0",
+				"exitCode": fmt.Sprintf("%d", killExitCode),
 				"name":     strings.TrimPrefix(c.Name, "/"),
 			})
 			if ch, ok := s.Store.WaitChs.LoadAndDelete(cid); ok {
