@@ -15,178 +15,136 @@ Current state: [STATUS.md](STATUS.md). Bug log: [BUGS.md](BUGS.md). Narrative: [
 7. **GitHub API fidelity** — bleephub works with unmodified `gh` CLI.
 8. **State persistence** — every task ends with a state save (PLAN / STATUS / WHAT_WE_DID / DO_NEXT / BUGS / memory).
 9. **No fallbacks, no defers** — every functional gap is a real bug; every bug gets a real fix in the same session it surfaces; cross-cloud sweep on every find.
+10. **Sim parity per commit** — any new SDK call added to a backend must update [specs/SIM_PARITY_MATRIX.md](specs/SIM_PARITY_MATRIX.md) and add the sim handler in the same commit.
 
 ## Closed phases
 
 Detail in [WHAT_WE_DID.md](WHAT_WE_DID.md); commit + BUG refs in [BUGS.md](BUGS.md).
 
-| Phase(s) | Summary |
-|---|---|
-| 86–102 + audit sweep | Foundation — sim parity, stateless backends, real volumes, FaaS invocation tracking, reverse-agent exec / cp / diff / commit / pause, Docker pod synthesis, ACA console exec, ECS SSM ops, OCI push, log fidelity. Closes BUG-661–769. |
-| Round-7 (PR #117) | Live-AWS bug sweep — 16 bugs (BUG-770..785). |
-| Round-8 + Round-9 (PR #118) | Live-AWS bug sweep — 30 bugs (BUG-786..819). Round 8: stateless invariant (BUG-799/800), real layer mirror (BUG-788), sync `docker stop` (BUG-790), per-network SG isolation (BUG-794). Round 9: live SSM frame capture → exit-code marker (BUG-789/798), `sh -c` exec wrap (BUG-815), busybox-compat find/stat (BUG-816/817), Lambda invoke waiter (BUG-807), tag-based InvocationResult persistence (BUG-811), filter substring match (BUG-795), per-cloud `null_resource sockerless_runtime_sweep` so `terragrunt destroy` is self-sufficient (BUG-819). |
-| Post-PR-#118 audit + Phase 104 skel/lift1+2 + Phase 105 waves 2-3 + Phase 108 closed (PR #120 — open) | **22 bugs closed**: BUG-802 withdrawn; BUG-638/640/646/648 backfilled retroactively as closed by BUG-788; BUG-804/806 libpod-shape; BUG-820..831 fallback / synthetic-data findings; **Phase 108 audit closes BUG-832 (sim/aws ECS TagResource), BUG-833 (sim/gcp v2 Cloud Run Services), BUG-834 (sim/azure ContainerApps Apps), BUG-835 (sim/azure WebApps.UpdateAzureStorageAccounts).** **Phase 104**: 13 typed driver interfaces (`backends/core/drivers_phase104.go`) + `DriverContext` envelope + per-cloud-per-dimension override resolver (`SOCKERLESS_<BACKEND>_<DIMENSION>=<impl>`) + centralised `NotImplDriverError` formatter + `WrapLegacyExec` adapter (lift 1) + `WrapLegacyAttach` + `NewCloudLogsAttachDriver` (lift 2) + tests. **Phase 105 waves 2 + 3**: golden shape tests for libpod `info` / `containers/json` / rm-report / `images/pull` stream / `networks/json` / `volumes/json` / `system/df`. **Phase 108 closed**: 77/77 sim-parity matrix rows ✓ (33 AWS / 16 GCP / 28 Azure), follow-up "sim parity per commit" project rule strengthened. New phases queued: 106 (GitHub Actions runner), 107 (GitLab runner). Project rule recorded: no defer, no fakes, no fallbacks. |
+| Phase(s) / round | Headline | Bugs closed |
+|---|---|---|
+| 86–102 (PRs #112–#115) | Sim parity, stateless backends, real volumes, FaaS invocation tracking, reverse-agent exec/cp/diff/commit/pause, Docker pod synthesis, ACA console exec, ECS SSM ops, OCI push, log fidelity. | 661–769 |
+| Round-7 (PR #117) | Live-AWS bug sweep | 770–785 |
+| Round-8 + Round-9 (PR #118) | Live-AWS bug sweep — stateless invariant, real layer mirror, sync `docker stop`, per-network SG isolation, live SSM frame capture → exit-code marker, `sh -c` exec wrap, busybox-compat find/stat, Lambda invoke waiter, tag-based InvocationResult persistence, per-cloud terragrunt sweep | 786–819 |
+| Post-PR-#118 audit + Phase 104 lifts 1+2 + Phase 105 waves 1-3 + Phase 108 (PR #120 — open) | Audit pass; Phase 104 skeleton + Exec/Attach lifts; libpod-shape golden tests for 8 handlers; Phase 108 sim-parity matrix audit (33 AWS + 16 GCP + 28 Azure rows ✓) | 802 / 638-648 retro / 804 / 806 / 820–831 / 832–835 |
 
 ## Pending work
 
 Order is the order of execution unless noted.
 
-### Phase 104 — Cross-backend driver framework
+### Phase 104 — Cross-backend driver framework (in flight)
 
-Sockerless has a narrow `core.Drivers{Exec, Stream, Filesystem}` and a few concrete drivers (`ReverseAgentExecDriver`, `LocalFilesystemDriver`); each backend then routes its own bespoke implementations of build / commit / cp / diff / export / pause / stats / top / logs through ad-hoc paths. Phase 104 lifts that into one pluggable system.
+Lift sockerless's narrow `core.Drivers{Exec, Stream, Filesystem}` plus the bespoke per-backend ad-hoc paths into one pluggable system: every "perform docker action X against the cloud" decision flows through a typed `Driver` interface. **Interfaces in core; implementations live with the cloud they use.** Each backend constructs its `DriverSet` at startup; operators override per-cloud-per-dimension via `SOCKERLESS_<BACKEND>_<DIMENSION>=<impl>`; sim parity required for the default driver in every dimension.
 
-**Goal:** every "perform docker action X against the cloud" decision flows through a typed `Driver` interface in `backends/core/drivers/`. **Interfaces in core; implementations live with the cloud they use** (`backends/ecs/drivers/`, `backends/aws-common/drivers/`, `backends/aca/drivers/`, etc.). Each backend constructs its `DriverSet` at startup; operators override per-cloud-per-dimension via `SOCKERLESS_<BACKEND>_<DIMENSION>=<impl>`; sim parity required for the default driver in every dimension.
+**13 driver dimensions** (kept finer-grained for independent swap):
 
-**Driver dimensions (13 separate interfaces — kept finer-grained for independent swap):**
+| Dimension | Default per backend |
+|---|---|
+| `ExecDriver` ✓ adapter shipped | docker→DockerExec; ECS→SSMExec; Lambda/CR/GCF/AZF→ReverseAgentExec; ACA→ACAConsoleExec |
+| `AttachDriver` ✓ adapter shipped | docker→DockerAttach; ECS→CloudWatchAttach; FaaS→CloudLogsReadOnlyAttach |
+| `LogsDriver` | docker→DockerLogs; AWS→CloudWatch; GCP→CloudLogging; Azure→LogAnalytics |
+| `SignalDriver` | docker→DockerKill; ECS→SSMKill; FaaS+CR+ACA→ReverseAgentKill |
+| `FSReadDriver` (cp →, stat, get-archive) | docker→DockerArchive; ECS→SSMTar; FaaS+CR+ACA→ReverseAgentTar |
+| `FSWriteDriver` (cp ←, put-archive) | docker→DockerArchive; ECS→SSMTarExtract; FaaS+CR+ACA→ReverseAgentTarExtract |
+| `FSDiffDriver` | docker→DockerChanges; ECS→SSMFindNewer; FaaS+CR+ACA→ReverseAgentFindNewer |
+| `FSExportDriver` | docker→DockerExport; ECS→SSMTarRoot; FaaS+CR+ACA→ReverseAgentTarRoot |
+| `CommitDriver` | docker→DockerCommit; FaaS+CR+ACA→ReverseAgentTarLayer+Push; ECS→accepted-gap NotImpl |
+| `BuildDriver` | docker→LocalDockerBuild; ECS+Lambda→CodeBuild; CR+GCF→CloudBuild; ACA+AZF→ACRTasks |
+| `StatsDriver` | docker→DockerStats; AWS→CloudWatchAggregate; GCP→CloudMonitoring; Azure→LogAnalytics |
+| `ProcListDriver` (top) | docker→DockerTop; ECS→SSMPs; FaaS+CR+ACA→ReverseAgentPs |
+| `RegistryDriver` (push/pull) | per-cloud: ECRPullThrough+ECRPush; ARPullThrough+ARPush; ACRCacheRule+ACRPush |
 
-| Dimension | Default per backend | Alt drivers we'd add |
-|---|---|---|
-| `ExecDriver` | docker→DockerExec; ECS→SSMExec; Lambda/CR/GCF/AZF→ReverseAgentExec; ACA→ACAConsoleExec ⇄ ReverseAgentExec | (none yet) |
-| `AttachDriver` | docker→DockerAttach; ECS→CloudWatchAttach; FaaS→CloudLogsReadOnlyAttach (lift `core.AttachViaCloudLogs`) | ACAConsoleAttach |
-| `FSReadDriver` (cp →, stat, get-archive) | docker→DockerArchive; ECS→SSMTar; FaaS+CR+ACA→ReverseAgentTar | OverlayUpperRead (Phase 103) |
-| `FSWriteDriver` (cp ←, put-archive) | docker→DockerArchive; ECS→SSMTarExtract; FaaS+CR+ACA→ReverseAgentTarExtract | OverlayUpperWrite |
-| `FSDiffDriver` | docker→DockerChanges; ECS→SSMFindNewer; FaaS+CR+ACA→ReverseAgentFindNewer | OverlayUpperDiff |
-| `FSExportDriver` | docker→DockerExport; ECS→SSMTarRoot; FaaS+CR+ACA→ReverseAgentTarRoot | OverlayMergedExport |
-| `CommitDriver` | docker→DockerCommit; FaaS+CR+ACA→ReverseAgentTarLayer+Push; ECS→accepted-gap NotImpl | OverlayLayerCommit |
-| `BuildDriver` | docker→LocalDockerBuild; ECS+Lambda→CodeBuild; CR+GCF→CloudBuild; ACA+AZF→ACRTasks | KanikoInContainer, BuildKitRemote |
-| `StatsDriver` | docker→DockerStats; AWS→CloudWatchAggregate; GCP→CloudMonitoring; Azure→LogAnalytics | CloudWatchInsightsRich |
-| `ProcListDriver` (top) | docker→DockerTop; ECS→SSMPs; FaaS+CR+ACA→ReverseAgentPs | ProcSelfBootstrap |
-| `LogsDriver` | docker→DockerLogs; AWS→CloudWatch; GCP→CloudLogging; Azure→LogAnalytics | (none yet) |
-| `SignalDriver` (pause/unpause/kill) | docker→DockerKill; ECS→SSMKill; FaaS+CR+ACA→ReverseAgentKill | (none yet) |
-| `RegistryDriver` (push/pull) | per-cloud: ECRPullThrough+ECRPush; ARPullThrough+ARPush; ACRCacheRule+ACRPush | (none yet) |
+**Envelope:** `DriverContext{Ctx, Container, Backend, Region, Logger}` + per-dimension typed Options/Result. Every driver implements `Describe() string` so unset/`NotImpl` slots auto-emit `NotImplementedError` with a precise message.
 
-**Envelope:**
-
-```go
-type DriverContext struct {
-    Ctx       context.Context
-    Container api.Container        // pre-resolved by ResolveContainerAuto
-    Backend   string               // "docker" | "ecs" | "lambda" | …
-    Region    string
-    Logger    zerolog.Logger
-}
-
-type Driver interface {
-    Describe() string  // "<backend> <dimension> via <transport>; missing: <prereq>"
-}
-
-// per-dimension typed Options/Result (Exec returns 3 streams, Build returns
-// a JSON status stream, Stats returns a snapshot, …)
+**Layout:**
 ```
-
-The dispatcher in `backends/core/backend_impl.go` calls `ResolveContainerAuto` once, builds `DriverContext`, then invokes `s.Drivers.<X>.<method>(dctx, opts)`. An unset / `NotImpl` driver auto-emits `NotImplementedError` from `Describe()`.
-
-**Layout (interfaces in core, implementations next to their cloud):**
-
-```
-backends/core/drivers/
-  types.go            # DriverContext + 13 interfaces
-  set.go              # DriverSet aggregate
-  override.go         # SOCKERLESS_<BACKEND>_<DIMENSION> env-var overrides
-  reverseagent/       # cloud-agnostic — used by every backend that ships
-                      # a sockerless bootstrap. Existing core.ReverseAgent*
-                      # drivers move here unchanged.
-
-backends/docker/drivers/        # host docker SDK
-backends/aws-common/drivers/    # SSM / CodeBuild / ECR (shared ECS+Lambda)
-backends/ecs/drivers/           # CloudWatch Logs/Metrics/Attach (ECS-only)
-backends/aca/drivers/           # ACA console exec
+backends/core/drivers/      # interfaces only
+backends/docker/drivers/    # host docker SDK
+backends/aws-common/drivers/    # SSM / CodeBuild / ECR
+backends/ecs/drivers/       # CloudWatch Logs/Metrics/Attach
+backends/aca/drivers/       # ACA console exec
 backends/gcp-common/drivers/    # CloudBuild / Cloud Logging / Cloud Monitoring / AR
 backends/azure-common/drivers/  # ACR Tasks / Log Analytics / ACR
 ```
 
-**Refactor delivery — piecemeal, dimension at a time, no behaviour change per commit:**
+**Refactor delivery — piecemeal, one dimension per commit, no behaviour change per commit.** Each dimension gets: typed driver interface → typed default impl with `Describe()` → `backend_impl.go` reroutes through the driver → sim integration test for the default driver lands in the same commit → bespoke method (e.g. `ContainerExportViaSSM`) deleted. After all dimensions are lifted, the operator-override env-var dispatcher comes online. Spec doc gets a per-backend default-driver matrix table.
 
-1. Add `core/drivers/types.go` with `DriverContext` + per-dimension interfaces.
-2. Lift existing `core.ReverseAgent{Exec,Stream}Driver` and `core.LocalFilesystemDriver` into the new namespace; semantic-preserving move.
-3. For each dimension in this order — Exec, FSRead, FSWrite, FSDiff, FSExport, ProcList, Signal, Stats, Logs, Attach, Commit, Build, Registry:
-   - Add the typed driver interface.
-   - Move bespoke per-backend code into a typed driver impl (with `Describe()`).
-   - Each backend's `server.go` constructs the default for that dimension.
-   - `backend_impl.go` method gets rerouted through the driver.
-   - Sim integration test for the default driver lands in the same commit.
-   - Bespoke method (e.g. `ContainerExportViaSSM`) gets deleted.
-4. After all dimensions are lifted, add the operator-override env-var dispatcher.
-5. Spec doc gets a per-backend default-driver matrix table.
+**Sim contract:** every default driver must work end-to-end against its cloud's simulator. Alternate drivers (Kaniko, OverlayUpper) may be operator-installable only.
 
-**Composition rule:** unset / `NotImpl` driver auto-emits `NotImplementedError` whose message comes from `Describe()`. No per-backend boilerplate.
+**Phase 103 (overlay-rootfs bootstrap)** ships under Phase 104 as alternate FSRead/Write/Diff/Export/Commit drivers gated behind `SOCKERLESS_OVERLAY_ROOTFS=1`. Replaces Phase 98's `find / -newer /proc/1` heuristic with overlayfs upper-dir for diff/commit/cp/export on every backend that ships a sockerless bootstrap (Lambda, Cloud Run, ACA, GCF, AZF). Captures deletions as whiteouts (closes the BUG-750 known limitation). Out of scope on ECS — operator's image runs as-is, no bootstrap insertion point.
 
-**Sim contract:** every default driver must work end-to-end against its cloud's simulator. Alternate drivers (Kaniko, OverlayUpper) may be operator-installable only, with a clear "sim doesn't emulate this" note in `specs/CLOUD_RESOURCE_MAPPING.md`.
+### Phase 105 — Libpod-shape conformance (rolling — waves 1-3 landed)
 
-**Driver-impl testing:** sim-only — drivers test against the real cloud SDK pointed at the simulator, matching today's project culture (no mocks).
+`podman` CLI uses bindings that expect specific JSON shapes. **Waves 1-3 landed** in PRs #119/#120: BUG-804 (`PodInspectResponse` mirrors `define.InspectPodData`), BUG-806 (`PodStop`/`PodKill` Errs normalised; per-container failures via HTTP 409 ErrorModel), plus golden shape tests for `info`, `containers/json`, rm-report, `images/pull` stream, `networks/json`, `volumes/json`, `system/df` — 8 handlers covered.
 
-### Phase 103 — Overlay-rootfs bootstrap (under Phase 104)
-
-Replaces Phase 98's `find / -newer /proc/1` heuristic with overlayfs upper-dir for diff / commit / cp / export on every backend that ships a sockerless bootstrap (Lambda, Cloud Run, ACA, GCF, AZF). Bootstrap mounts `overlay -o lowerdir=/,upperdir=/sockerless/upper,workdir=/sockerless/work /merged`, pivots, execs user CMD; reverse-agent reads `upper/` directly. Captures deletions as whiteouts (closes the BUG-750 known limitation). Out of scope on ECS — operator's image runs as-is, no bootstrap insertion point.
-
-**Ships under Phase 104** as the first set of alternate drivers under the new framework: `OverlayUpperRead`, `OverlayUpperWrite`, `OverlayUpperDiff`, `OverlayMergedExport`, `OverlayLayerCommit`. Gated behind `SOCKERLESS_OVERLAY_ROOTFS=1` per backend. Caveats: Lambda needs `CAP_SYS_ADMIN` (default has it) + `/tmp` workspace (10 GB cap); Cloud Run / GCF run gVisor with partial overlayfs support (may need tmpfs upper-dir); ACA / AZF full Linux, no caveats.
-
-### Phase 105 — Libpod-shape conformance (rolling — first wave landed in PR #119)
-
-`podman` CLI uses bindings that expect specific JSON shapes. Sockerless's responses match docker-API but diverge from libpod in places, breaking the CLI even when the docker path works. **First-wave fixes shipped post-PR-#118**: BUG-804 (`PodInspectResponse` expanded to mirror `define.InspectPodData`) and BUG-806 (`PodStop`/`PodKill` Errs normalised to `[]`; per-container failures routed via HTTP 409 ErrorModel) plus golden-shape tests in `backends/core/pod_inspect_shape_test.go`.
-
-Remaining work for this phase: cross-walk every libpod handler in `backends/core/handle_libpod*.go` against upstream `pkg/api/handlers/libpod` shapes; add golden tests for each so future shape regressions land at CI time; verify against a real podman client (currently we have no live podman CLI in CI). Can run in parallel with Phase 104.
+**Wave 4 remaining** (lower priority): events stream, exec start hijack, container CRUD beyond list. Verify against a real podman client (currently no live podman in CI). Can run in parallel with Phase 104.
 
 ### Phase 106 — Real GitHub Actions runner integration
 
-End-to-end test of GitHub Actions self-hosted runners pointed at sockerless via `DOCKER_HOST` (docker-executor mode). Currently we only have synthetic `tests/github_runner_e2e_test.go` mocking the runner's docker calls; this phase runs the real `actions/runner` binary against sockerless and validates the end-to-end flow.
+End-to-end test of GitHub Actions self-hosted runners pointed at sockerless via `DOCKER_HOST`. The repo already has *simulated* runner E2E tests (`tests/github_runner_e2e_test.go` replays the runner's Docker REST sequence); this phase runs the real `actions/runner` binary against sockerless and validates the live flow.
 
-**Backends covered:** ECS + Lambda first (parity with rounds 7-9 live infra). GCF / Cloud Run / ACA / AZF gated on Phase 104's driver framework landing — once the cross-backend driver framework is in, the runner sweeps re-run against every backend with no per-backend code paths.
+**Architecture.** Runner is long-lived on a runner host (small VM, container, or laptop) with `DOCKER_HOST=tcp://sockerless:2375`. Stock runner binary — no fork. Every step container, service container, and `uses: docker://` action gets intercepted by sockerless and dispatched to the configured backend. Jobs are ephemeral (run inside ECS or Lambda); the runner itself stays up.
 
-**Sockerless wiring:**
-- `actions/runner` configured with the standard registration token flow (real repo or real org).
-- `DOCKER_HOST=tcp://<sockerless>:3375` so every step container, service container, and action runs through sockerless.
-- No kubernetes-executor in this phase — that's a follow-up sub-phase if needed.
+**Backend routing — two paths:**
+- **(a) Per-backend daemon (v1).** One sockerless instance per backend, each on its own port. The runner host runs one self-hosted runner per `runs-on:` label; each runner uses a different DOCKER_HOST. Simple, no new code, but you register two runners per host.
+- **(b) Single daemon, label-based dispatch (v2 — Phase 68 follow-up).** Sockerless reads a `SOCKERLESS_LABEL_TO_BACKEND` map and routes `/containers/create` per the label header the runner sends. Lines up with Phase 68 (Multi-Tenant Backend Pools). Lands once Phase 68 is unblocked.
 
-**Test workloads (canonical):**
-1. Single-job, container step (`runs-on: self-hosted` + `container: image=alpine`).
+**ECS vs Lambda dispatch.** ECS is the default for everything: long-running, exec-able, multi-step, services, cache. Lambda fits *fast one-shots* only (≤15 min, no service container, no `docker attach` mid-stream) — best for container actions, lint, fast unit tests.
+
+**Backends covered.** ECS + Lambda first (parity with rounds 7-9 live infra). GCF / Cloud Run / ACA / AZF gated on Phase 104's driver framework — once cross-backend drivers are typed, runner sweeps re-run against every backend with no per-backend code paths.
+
+**Test workloads (canonical, ECS unless noted):**
+1. Single-job, container step (`runs-on: self-hosted` + `container: image=alpine`) — both ECS + Lambda.
 2. Matrix build (3 OS × 2 versions, container per leg).
 3. Service container (`services: redis: image=redis:7`) — health check, network reach.
 4. Composite action with `actions/checkout`, `actions/setup-go`, `actions/cache`.
-5. Artifact upload + download across jobs (`actions/upload-artifact` / `actions/download-artifact`).
+5. Artifact upload + download across jobs.
 6. Secrets injection.
-7. Job-failure semantics (a failing step short-circuits subsequent steps, runner reports correct exit code).
-8. Step output streaming (live log lines via `docker logs --follow` semantics).
+7. Job-failure semantics (failing step short-circuits; runner reports correct exit code).
+8. Step output streaming (live log lines via `docker logs --follow`).
+9. Container action (`uses: docker://alpine:latest`) — Lambda candidate (one-shot, fast).
 
-**Cost / live-AWS posture:** time-boxed — provision live infra, run the canonical sweep + 1 real OSS-project workflow, teardown. New per-cloud `null_resource sockerless_runtime_sweep` (BUG-819 fix) means destroys are self-sufficient — no manual cleanup needed.
+**Cost / live-AWS posture.** Time-boxed — provision live infra, run the canonical sweep + 1 real OSS-project workflow, teardown. Per-cloud `null_resource sockerless_runtime_sweep` (BUG-819) means destroys are self-sufficient.
 
-**Bugs surfaced** are filed BUG-820+ and **fixed in the same phase** (no-defer rule). Golden test fixtures land in `tests/runners/github/`.
+**Test scaffolding.** `tests/runners/github/harness_test.go` gates on `SOCKERLESS_GH_RUNNER_TOKEN` + `SOCKERLESS_GH_REPO` env vars; downloads `actions/runner`, configures it, dispatches a workflow via `gh api repos/.../dispatches`, polls completion. Sample workflow YAMLs in `tests/runners/github/workflows/`.
+
+**Bugs surfaced** filed BUG-836+ and **fixed in the same phase** (no-defer rule).
 
 ### Phase 107 — Real GitLab runner integration
 
-Same shape as Phase 106 but for GitLab Runner with the `docker` executor. The runner registers against gitlab.com (project-scoped) or a self-hosted GitLab; `runners.docker.host` is set to the sockerless DOCKER_HOST.
+Same shape as Phase 106 but for GitLab Runner with the `docker` executor. Registered against gitlab.com (via the project's `origin-gitlab` mirror) or a self-hosted GitLab; `runners.docker.host` = sockerless DOCKER_HOST.
 
-**Backends covered:** ECS + Lambda first; rest gated on Phase 104.
+**Mirror-side prep.** The `origin-gitlab` mirror needs CI enabled — likely a one-time settings flip. Alternative: a self-hosted GitLab CE in a test container (heavier, isolated).
+
+**Backends covered.** ECS + Lambda first; rest gated on Phase 104.
 
 **Test workloads (canonical):**
 1. Single-job pipeline (`image: alpine`, single `script:`).
 2. Multi-stage pipeline (build → test → deploy with artifact passing via `artifacts:`).
-3. Services (`services: postgres:15` — reach via service name on the network sockerless creates per-job).
+3. Services (`services: postgres:15` — reach via service name on the per-job network sockerless creates).
 4. Cache (`cache.paths` — pull/push to sockerless's image store).
-5. `dind` job — `image: docker:cli` + `services: docker:dind` — verify nested docker calls work.
+5. `dind` job — `image: docker:cli` + `services: docker:dind`.
 6. Parallel matrix.
 7. Manual jobs / `when: on_failure` semantics.
-8. Trace streaming (log fidelity; runner's incremental update protocol).
+8. Trace streaming.
 
-**Sockerless wiring:** docker-executor only this phase. Kubernetes-executor (very common in GitLab self-hosted) is a follow-up under Phase 104 once `backends/core/drivers/` provides the kube-shaped driver dispatcher.
+**Sockerless wiring.** Docker-executor only this phase. Kubernetes-executor (very common in GitLab self-hosted) is a follow-up under Phase 104 once `backends/core/drivers/` provides the kube-shaped driver dispatcher.
 
-**Bugs surfaced** filed BUG-820+ and fixed in-phase. Fixtures in `tests/runners/gitlab/`.
+**Test scaffolding.** `tests/runners/gitlab/harness_test.go` gates on `SOCKERLESS_GL_RUNNER_TOKEN` + `SOCKERLESS_GL_PROJECT`; downloads `gitlab-runner`, registers + runs.
 
-### Phase 108 — Cross-simulator feature parity audit ✓ closed 2026-04-26
-
-All 77 cloud-API rows in [specs/SIM_PARITY_MATRIX.md](../specs/SIM_PARITY_MATRIX.md) ship ✓ (33 AWS / 16 GCP / 28 Azure). Closed BUG-832 (sim/aws ECS TagResource), BUG-833 (sim/gcp v2 Cloud Run Services), BUG-834 (sim/azure Microsoft.App/containerApps), BUG-835 (sim/azure WebApps.UpdateAzureStorageAccounts).
-
-Standing project rule strengthened: any new SDK call added to a backend must update the matrix + add the sim handler in the same commit (the existing "sim parity per commit" rule, now binding for both backends-in-tree code and the matrix doc).
+**Bugs surfaced** filed BUG-836+ and fixed in-phase.
 
 ### Live-cloud validation runbooks
 
-- **Phase 86 Lambda live track** — scripted already; covered partially by round-9 Track D.
-- **Phase 87 live-GCP** — needs project + VPC connector; terraform env to add. New per-cloud `null_resource sockerless_runtime_sweep` means destroy is self-sufficient (BUG-819 fix).
-- **Phase 88 live-Azure** — needs subscription + managed environment with VNet integration; terraform env to add. Same teardown self-sufficiency.
+Per-cloud `null_resource sockerless_runtime_sweep` (BUG-819) makes every backend's `terragrunt destroy` self-sufficient.
+
+- **Lambda live track** — scripted; partially covered by round-9 Track D.
+- **Live-GCP** — needs project + VPC connector; terraform env to add.
+- **Live-Azure** — needs subscription + managed environment with VNet integration; terraform env to add.
 
 ### Phase 68 — Multi-Tenant Backend Pools (queued)
 
-Named pools of backends with scheduling and resource limits. P68-001 done; 9 sub-tasks remain (registry, router, limiter, lifecycle, metrics, scheduling, limits, tests, state save).
+Named pools of backends with scheduling and resource limits. P68-001 done; 9 sub-tasks remain (registry, router, limiter, lifecycle, metrics, scheduling, limits, tests, state save). Fold in Phase 106's label-based-dispatch as the headline use case.
 
 ### Phase 78 — UI Polish (queued)
 
