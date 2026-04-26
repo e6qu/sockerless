@@ -9,15 +9,10 @@ Resume pointer for the next session / post-compaction. Updated after every task.
 
 ## Up next on this branch
 
-1. **Per-backend cloud-native overrides for the remaining dimensions.** Logs + Attach are done across all 6 cloud backends. Remaining slots that have cloud-native paths to wire:
-   - **Exec** — ECS via SSM ExecuteCommand; FaaS+CR+ACA via the existing reverse-agent narrow drivers (already in `s.Drivers.Exec`; just need a typed wrapper that calls them directly).
-   - **FS*** — same pattern: ECS via SSM tar/find/stat; FaaS via reverse-agent.
-   - **Signal** — ECS via SSM kill; FaaS via reverse-agent kill.
-   - **Commit / Build / Registry / ProcList** — per-cloud paths exist (CodeBuild, CloudBuild, ACR Tasks, etc.); typed wrappers slot in.
-2. **Phase 105 wave 4** (lower priority) — events stream, exec start hijack shape, container CRUD beyond list.
-3. **Phase 106/107** — real GitHub Actions / GitLab Runner integration. Architecture in PLAN.md; needs scaffolding under `tests/runners/{github,gitlab}/`.
-
-The typed driver framework is now demonstrably operational across all 6 cloud backends for the streaming dimensions (Logs, Attach). Phase 106/107 can start in parallel — runner integration doesn't depend on more dimensions being lifted.
+1. **Cloud Run / ACA / FaaS typed cloud-native Exec / FS / Signal overrides.** Same pattern as ECS's SSM typed drivers, but routed through reverse-agent. The narrow `ReverseAgentExecDriver` etc. exist; new typed wrappers in each backend's `typed_drivers.go` call them directly and bypass `s.self.ExecStart`'s pipeConn bridge. Bookkeeping (Running/ExitCode in Store.Execs) needs to live in either the typed driver or a shared helper.
+2. **Wrapper removal + interface tightening (post-migration).** Once every backend has a cloud-native typed driver per dimension, drop `WrapLegacyXxx` / `LegacyXxxFn` scaffolding from `backends/core/driver_adapt_*.go` and tighten the typed interfaces (typed enums for Signal, Stats struct instead of map[string]any, ImageRef domain type, etc.). Tracked in PLAN.md § Phase 104 "Wrapper-removal pass" + "Stronger type safety".
+3. **Phase 106/107 live-cloud runs.** Harnesses are in place (`tests/runners/{github,gitlab}/`); next step is provisioning live ECS via `manual-tests/01-infrastructure.md` and running the harness end-to-end against a real GitHub repo + GitLab project. First findings get filed as bugs.
+4. **Phase 105 wave 4** (lower priority) — events stream, exec start hijack shape, container CRUD beyond list.
 
 ## Cross-links
 
