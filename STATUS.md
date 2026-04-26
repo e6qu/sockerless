@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**103 phases closed (Phase 108 closed 2026-04-26). 835 bugs tracked — 835 fixed, 0 open. 1 false positive.** PR #118 merged. PR #120 open with: 22 audit closures (BUG-802 + 638/640/646/648 retro + 804/806 + 820..831 + 832..835); Phase 104 skeleton + all 13 typed adapters shipped + 11 dispatch sites flowing through TypedDriverSet + framework renamed to drop 104 suffix; Phase 105 waves 1-3 (libpod-shape golden tests, 8 handlers); Phase 108 closed in-branch (77/77 sim-parity matrix ✓ — 33 AWS / 16 GCP / 28 Azure); manual-tests directory + repo-wide code/doc cleanup. **Next on this branch:** Exec + Attach handler re-architecting (hijack-then-dispatch); per-backend cloud-native typed driver overrides.
+**103 phases closed (Phase 108 closed 2026-04-26). 835 bugs tracked — 835 fixed, 0 open. 1 false positive.** PR #118 merged. PR #120 open with: 22 audit closures (BUG-802 + 638/640/646/648 retro + 804/806 + 820..831 + 832..835); **Phase 104 framework migration complete** — all 13 typed adapters shipped, every dispatch site flowing through TypedDriverSet, framework renamed to drop 104 suffix; Phase 105 waves 1-3 (libpod-shape golden tests, 8 handlers); Phase 108 closed in-branch (77/77 sim-parity matrix ✓ — 33 AWS / 16 GCP / 28 Azure); manual-tests directory + repo-wide code/doc cleanup. **Next on this branch:** per-backend cloud-native typed driver overrides — replace legacy adapter defaults with real typed cloud drivers.
 
 See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer).
 
@@ -23,7 +23,7 @@ See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md]
 
 ## Open work (full detail in [PLAN.md](PLAN.md))
 
-- **Phase 104** — cross-backend driver framework. All 13 adapters shipped; 11 dispatch sites flow through TypedDriverSet (Logs, Signal, ProcList, FSDiff, FSRead, FSWrite, FSExport, Commit, Build, Registry-Pull, Registry-Push); Stats has no dispatch site (handler is inline). Remaining: Exec + Attach handler re-architecting (hijack-then-dispatch); per-backend cloud-native typed overrides.
+- **Phase 104** — cross-backend driver framework. **Framework migration complete.** All 13 adapters shipped; every dispatch site (Exec, Attach, Logs, Signal, ProcList, FSDiff, FSRead, FSWrite, FSExport, Commit, Build, Registry-Pull, Registry-Push) flows through TypedDriverSet via legacy adapters wrapping s.self. Backends now override slots with cloud-native typed drivers as the next iteration; Stats has no api.Backend dispatch site (handler builds responses inline).
 - **Phase 105** — libpod-shape conformance, rolling. Waves 1-3 done; wave 4 (events stream, exec start hijack, container CRUD) lower-priority.
 - **Phase 106** — real GitHub Actions runner integration. Architecture sketched (per-backend daemon v1; label-dispatch v2 via Phase 68). ECS + Lambda first.
 - **Phase 107** — real GitLab Runner integration (origin-gitlab mirror). Same shape; `dind` sub-test included.
