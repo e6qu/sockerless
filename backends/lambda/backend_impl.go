@@ -163,10 +163,12 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// already pushed to ECR (or resolvable locally in integration).
 	var imageURI string
 	switch {
-	case s.config.CallbackURL != "" && s.config.PrebuiltOverlayImage != "":
+	case s.config.PrebuiltOverlayImage != "":
 		imageURI = s.config.PrebuiltOverlayImage
-		envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
 		envVars["SOCKERLESS_CONTAINER_ID"] = id
+		if s.config.CallbackURL != "" {
+			envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
+		}
 		// Encode argv as base64(JSON) so every byte round-trips cleanly
 		// through the env var without Dockerfile / shell quoting.
 		if len(config.Entrypoint) > 0 {
@@ -347,6 +349,21 @@ func (s *Server) ContainerStart(ref string) error {
 	// in Store.InvocationResults so CloudState reflects the container
 	// as exited with the real exit code.
 	go func() {
+		// Wait for AWS to finish provisioning the function (image pull,
+		// ENI attach for VPC config). Invoking during State=Pending fails
+		// with ResourceConflictException.
+		waiter := awslambda.NewFunctionActiveV2Waiter(s.aws.Lambda)
+		if werr := waiter.Wait(s.ctx(), &awslambda.GetFunctionInput{
+			FunctionName: aws.String(lambdaState.FunctionName),
+		}, 5*time.Minute); werr != nil {
+			s.Logger.Error().Err(werr).Str("function", lambdaState.FunctionName).Msg("Lambda function did not become Active")
+			s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: 1, Error: werr.Error()})
+			if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+				close(ch.(chan struct{}))
+			}
+			return
+		}
+
 		result, err := s.aws.Lambda.Invoke(s.ctx(), &awslambda.InvokeInput{
 			FunctionName: aws.String(lambdaState.FunctionName),
 		})

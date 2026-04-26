@@ -8,25 +8,14 @@ Resume pointer for the next session / post-compaction. Updated after every task.
 
 ## Up next (in execution order)
 
-**Round-9 manual sweep — Lambda Track D blocked on local Docker daemon.**
-Live working state: [docs/manual-test-spec-crosswalk.md](docs/manual-test-spec-crosswalk.md). That file's `## Status` block names the next pending test.
+**Round-9 manual sweep — manual tests done; final wrap remains.**
+Live working state: [docs/manual-test-spec-crosswalk.md](docs/manual-test-spec-crosswalk.md). All ECS + Lambda tracks complete. The Lambda overlay image lives at `729079515331.dkr.ecr.eu-west-1.amazonaws.com/sockerless-live-lambda:r9-overlay`; cross-built binaries staged at `/tmp/r9-overlay/`.
 
-1. **Build the Lambda overlay image.** Cross-built binaries already at `/tmp/r9-overlay/sockerless-{agent,lambda-bootstrap}` (linux/amd64) and Dockerfile staged. To resume:
-   ```bash
-   cd /tmp/r9-overlay && unset DOCKER_HOST
-   docker build --platform linux/amd64 -t r9-lambda-overlay:latest .
-   source /Users/zardoz/projects/sockerless/aws.sh
-   aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin 729079515331.dkr.ecr.eu-west-1.amazonaws.com
-   docker tag r9-lambda-overlay:latest 729079515331.dkr.ecr.eu-west-1.amazonaws.com/sockerless-live-lambda:r9-overlay
-   docker push 729079515331.dkr.ecr.eu-west-1.amazonaws.com/sockerless-live-lambda:r9-overlay
-   ```
-   Set `SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE=729079515331.dkr.ecr.eu-west-1.amazonaws.com/sockerless-live-lambda:r9-overlay` and restart the Lambda backend; D1-D9 run.
+1. **A46 NotImpl wrapper** — translate the bootstrap-PID-file exit-64 case in `backends/ecs/ssm_ops.go::ContainerSignalViaSSM` into a clean `NotImplementedError` per spec. Currently surfaces as a generic `kill -STOP failed (exit -1):` (artifact of BUG-789/798).
 
-2. **A46 NotImpl wrapper** — translate the bootstrap-PID-file exit-64 case in `backends/ecs/ssm_ops.go::ContainerSignalViaSSM` into a clean `NotImplementedError` per spec. Currently surfaces as a generic `kill -STOP failed (exit -1):` (artifact of BUG-789/798).
+2. **Coverage-gap test rows** in `PLAN_ECS_MANUAL_TESTING.md`. Per the crosswalk file's "Coverage gaps" section, add rows verifying `sockerless-restart-count` tag value, `sockerless-kill-signal` tag presence + exit-code mapping, ImagePush layer-byte content (non-public.ecr.aws sources), `Store.LayerContent` cache eviction behaviour.
 
-3. **Coverage-gap test rows** in `PLAN_ECS_MANUAL_TESTING.md`. Per the crosswalk file's "Coverage gaps" section, add rows verifying `sockerless-restart-count` tag value, `sockerless-kill-signal` tag presence + exit-code mapping, ImagePush layer-byte content (non-public.ecr.aws sources), `Store.LayerContent` cache eviction behaviour.
-
-4. **Round-9 wrap** — final state-doc commit; teardown AWS (terragrunt destroy ECS + Lambda); deactivate IAM key `AKIA2TQEGRDBRV2KFW6L`; CI re-run + verify green; PR #118 ready for maintainer merge.
+3. **Round-9 wrap** — final state-doc commit; teardown AWS (terragrunt destroy ECS + Lambda); deactivate IAM key `AKIA2TQEGRDBRV2KFW6L`; CI re-run + verify green; PR #118 ready for maintainer merge.
 
 After round-9 closes, queued work picks up per [PLAN.md](PLAN.md):
 
@@ -35,6 +24,7 @@ After round-9 closes, queued work picks up per [PLAN.md](PLAN.md):
 - **Phase 105 — libpod-shape conformance.** Independent of Phase 104; can run in parallel. Closes BUG-804 (`pod inspect` returns array), BUG-806 (`PodStopReport.Errs` shape).
 - **Live-cloud runbooks** — GCP (Phase 87) + Azure (Phase 88) terraform live envs to add, then port the round-7/8/9 sweep against each.
 - **BUG-721 / BUG-789 / BUG-798** — live-AWS SSM frame parsing. Needs WS frame capture against a live exec session.
+- **BUG-811 / BUG-812** — Lambda CloudState post-restart accuracy. Real fix: replay each managed function's most recent CloudWatch invocation log stream on backend startup to reconstruct synthetic InvocationResult; also convert `fn.LastModified` into Unix seconds for `ContainerSummary.Created` so `docker ps` doesn't show "292 years ago".
 - **Phase 68** — Multi-Tenant Backend Pools (P68-001 done; 9 sub-tasks remaining).
 - **Phase 78** — UI Polish.
 
@@ -52,4 +42,4 @@ After round-9 closes, queued work picks up per [PLAN.md](PLAN.md):
 
 - **Live AWS infra (eu-west-1):** ECS + Lambda **provisioned** for round-9; teardown at end.
 - **IAM key** `AKIA2TQEGRDBRV2KFW6L` reactivated for round-9; **deactivate at end** of round per maintainer.
-- **CI** PR #118 last commit `664d37c` (Round-9 Tracks E+F+G+I + BUG-805 fix) — 10/10 SUCCESS.
+- **CI** PR #118 — pending verification on the Round-9 D-track + BUG-807..813 commit. Previous commit (`0e63f6f`, doc-streamline) failed the `test` job on `TestECSArithmeticInvalid` flake; BUG-813 fix is in this commit and verified locally (count=5 all pass).

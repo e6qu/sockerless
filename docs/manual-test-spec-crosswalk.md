@@ -11,10 +11,10 @@
 
 - **Round:** 9
 - **Started:** 2026-04-26
-- **Backends targeted:** ECS + Lambda (D-track skipped — see decision below)
-- **Last completed test:** I9 ✅ — **Tracks A + B + C + E + F + G + I complete (ECS side done)**
-- **Next pending test:** D1 (Lambda info) — **blocked on local Docker daemon**. The pre-built overlay image build needs Docker Desktop or podman-machine running. See DO_NEXT.md for the exact resume commands. Cross-built binaries are at `/tmp/r9-overlay/sockerless-{agent,lambda-bootstrap}` and Dockerfile is at `/tmp/r9-overlay/Dockerfile`.
-- **Bugs filed this round:** BUG-801 + BUG-803 + BUG-805 (filed + fixed); BUG-804 + BUG-806 (filed, fixes deferred — need libpod-source research). PR #118 CI: 10/10 PASS at last commit.
+- **Backends targeted:** ECS + Lambda
+- **Last completed test:** D9 ✅ — **All ECS + Lambda tracks complete (A + B + C + D + E + F + G + I)**
+- **Next pending test:** *None — round-9 manual sweep complete.* Remaining round-9 wrap items: A46 NotImpl wrapper for SSM signal (deferred), coverage-gap rows for restart-count/kill-signal/ImagePush layer-bytes/LayerContent eviction (deferred), AWS teardown, IAM key deactivate.
+- **Bugs filed this round:** BUG-801 + BUG-803 + BUG-805 + BUG-807 + BUG-808 + BUG-809 + BUG-810 (filed + fixed); BUG-804 + BUG-806 (filed, fixes deferred — need libpod-source research, queued for Phase 105); BUG-811 + BUG-812 (filed, fixes deferred — Lambda CloudState post-restart accuracy needs CloudWatch invocation-replay design).
 - **Tracks G + I both pass cleanly.** G1 hit a public.ecr.aws 429 rate-limit on the first try (too many nginx pulls in this session); resolved by adding `pull_policy: missing` to the compose file so docker compose uses the already-pulled image. G2-G7 all pass after that. I1-I9 verifies Phase 89 stateless recovery contract end-to-end (kill backend, restart, persist1 visible+running+stop+rm all work from cloud-derived state).
 - **Bugs filed this round:** BUG-801 (filed + fixed), BUG-803 (filed + fixed — spec doc inconsistency). PR #118 CI: 10/10 PASS.
 - **Bug withdrawn:** BUG-802 — initially filed against C5 export 0-byte tar, turned out to be a `timeout 60` measurement artifact in the runbook command (SSM read-loop is slower than 60s when BUG-789/798's exec returns no frames). Verified the underlying behaviour is correct: `docker export r9-c5b > /tmp/x.tar` (without timeout) returns `Error response from daemon: tar export failed (exit -1):` and exit=1. No actual silent-success bug.
@@ -439,40 +439,40 @@ Each test ID below has a fixed structure. All are `⏸ pending` until run; the `
 - **Spec ref:** § AWS Lambda / § System+misc → Info ✓
 - **Spec claim:** Driver=lambda; OS=AWS Lambda.
 - **Command:** `DOCKER_HOST=tcp://localhost:9200 docker info`
-- **Status:** ⏸ pending
+- **Status:** ✅ pass — `Storage Driver: lambda`, `Operating System: AWS Lambda`, `Kernel Version: 5.10.0-aws-lambda`.
 
 #### D2-D3 — create + start (with prebuilt overlay)
 - **Spec ref:** § AWS Lambda / Container row + § ContainerCreate ✓ (with prebuilt overlay)
 - **Spec claim:** `CreateFunction` succeeds with the overlay image; `Invoke` runs the bootstrap which exec's the user's Cmd.
-- **Command:** `docker create --name r9-l1 ... echo hello-from-lambda && docker start r9-l1`
-- **Status:** ⏸ pending — _needs prebuilt overlay built+pushed first_
+- **Command:** `docker create --name r9-l1d 729079515331.dkr.ecr.eu-west-1.amazonaws.com/sockerless-live-lambda:r9-overlay echo hello-from-lambda && docker start r9-l1d`
+- **Status:** ✅ pass — after BUG-807 (wait-for-Active waiter) + BUG-808 (PrebuiltOverlayImage independent of CallbackURL). `docker wait r9-l1d` returns 0; total ~2.5 min including VPC ENI cold-start.
 
 #### D4 — Lambda logs (BUG-756)
 - **Spec ref:** § ContainerLogs ✓; BUG-756 (subprocess stdout reaches CloudWatch)
 - **Spec claim:** `docker logs` shows the user's `echo hello-from-lambda` plus START/END/REPORT.
-- **Status:** ⏸ pending
+- **Status:** ✅ pass — `docker logs r9-l1d` returns `hello-from-lambda` (with the bootstrap MultiWriter feeding os.Stdout → CloudWatch). Note: AWS Lambda's runtime-managed log lines (START/END/REPORT) end up in the function's auto-created `/aws/lambda/<funcname>` log group, not in our explicit `/sockerless/lambda/sockerless-live` group; sockerless `docker logs` reads from the function-specific group correctly.
 
 #### D5 — Lambda exit code (BUG-744)
 - **Spec ref:** § Per-invocation container state → Lambda row; BUG-744 (`InvocationResult` capture)
 - **Spec claim:** `Invoke.FunctionError` ⇒ ExitCode=1; success ⇒ ExitCode=0.
-- **Status:** ⏸ pending
+- **Status:** ✅ pass — `docker inspect r9-l1d` reports `ExitCode=0 Status=exited` after the in-session invocation completes.
 
 #### D6 — Lambda error propagation
 - **Spec ref:** § ContainerWait ✓; BUG-744
-- **Status:** ⏸ pending
+- **Status:** ✅ pass — `docker create … sh -c 'echo failing; exit 7'` followed by start + wait returns ExitCode=1 (Lambda's Invoke envelope only distinguishes success vs FunctionError; per spec the actual exit code can't survive Lambda's wire format, and we map FunctionError → 1).
 
 #### D7 — Lambda env vars
 - **Spec ref:** § ContainerCreate ✓
-- **Status:** ⏸ pending
+- **Status:** ✅ pass — `docker run -e GREETING=hola … sh -c 'echo "hello: $GREETING"'` → `hello: hola` in `docker logs`.
 
 #### D8 — Lambda exec (without callback, NotImpl)
 - **Spec ref:** § Exec → ExecStart resolution policy; without `SOCKERLESS_CALLBACK_URL` returns NotImplementedError.
 - **Spec claim:** With no agent session, returns clear NotImpl error pointing at `SOCKERLESS_CALLBACK_URL`.
-- **Status:** ⏸ pending
+- **Status:** ✅ pass after BUG-809 fix — `docker exec r9-l-sleep2 echo …` now reports `unable to upgrade to tcp, received 501` (was `unrecognized stream: 100` before — CLI was decoding the NotImpl message as a stdcopy frame because `handle_exec.go::handleExecStart` hijacked the connection before calling `ExecStart`). Body is the real NotImpl message: `docker exec requires a reverse-agent bootstrap inside the Lambda container (SOCKERLESS_CALLBACK_URL); no session registered`.
 
 #### D9 — Lambda attach (without callback, log-streamed fallback)
 - **Spec ref:** § ContainerAttach (FaaS row) — `core.AttachViaCloudLogs` provides read-only log-streamed attach when no agent.
-- **Status:** ⏸ pending
+- **Status:** ✅ pass — `timeout 10 docker attach r9-l-sleep2` streams `START RequestId: …` from CloudWatch and returns when the timeout fires. Read-only log stream as spec'd.
 
 ### Track E — Container-to-container (ECS)
 

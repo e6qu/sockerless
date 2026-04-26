@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**102 phases closed. 806 bugs tracked — 803 fixed, 3 open (BUG-789/798 SSM frame parsing, BUG-795 podman pod-list filter, BUG-804/806 libpod shape — last two queued for Phase 105). 1 false positive. Branch `round-8-bug-sweep` open with rounds 8 + 9 stacked on PR #118.**
+**102 phases closed. 813 bugs tracked — 809 fixed, 5 open (BUG-789/798 SSM frame parsing, BUG-795 podman pod-list filter, BUG-804/806 libpod shape — queued for Phase 105; BUG-811/812 Lambda CloudState post-restart accuracy — deferred). 1 false positive. Branch `round-8-bug-sweep` open with rounds 8 + 9 stacked on PR #118.**
 
 See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer), [specs/](specs/) (architecture).
 
@@ -14,9 +14,9 @@ See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md]
 
 Per-test crosswalk of [PLAN_ECS_MANUAL_TESTING.md](PLAN_ECS_MANUAL_TESTING.md) against [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md), live ECS + Lambda. Working state in [docs/manual-test-spec-crosswalk.md](docs/manual-test-spec-crosswalk.md) (the file's `## Status` block names the next pending test, so post-compaction resume picks up cleanly).
 
-ECS side **complete** — Tracks A/B/C/E/F/G/I (~80 tests). 3 bugs filed and fixed in-track (BUG-801, 803, 805); 2 deferred to Phase 105 (804, 806 — libpod shape). 1 withdrawn (802 — measurement artifact).
+ECS side **complete** — Tracks A/B/C/E/F/G/I (~80 tests). 4 bugs filed and fixed in-track (BUG-801, 803, 805, 813); 2 deferred to Phase 105 (804, 806 — libpod shape). 1 withdrawn (802 — measurement artifact).
 
-Lambda Track D **partially staged** — sockerless-lambda-bootstrap binaries cross-built at `/tmp/r9-overlay/`; build-and-push to ECR resumes once Docker Desktop / podman-machine is up.
+Lambda Track D **complete** — D1-D9 all pass with prebuilt overlay (`r9-overlay` pushed to `729079515331.dkr.ecr.eu-west-1.amazonaws.com/sockerless-live-lambda:r9-overlay`). 4 bugs filed and fixed in-track (BUG-807 wait-for-Active waiter, BUG-808 PrebuiltOverlayImage independent of CallbackURL, BUG-809 ExecStart hijack-before-error, BUG-810 stale "loaded from disk" log); 2 deferred (BUG-811 Lambda CloudState post-restart accuracy, BUG-812 ContainerSummary.Created Unix-int64 conversion).
 
 Phase 104 (cross-backend driver framework) drafted in PLAN.md as the next major work item; ships as the natural home for Phase 103 (overlay-rootfs) and operator-overridable per-cloud driver swaps (e.g. Kaniko for builds).
 
@@ -36,6 +36,7 @@ Phase 104 (cross-backend driver framework) drafted in PLAN.md as the next major 
 - **BUG-789/798**: live-AWS SSM frame parsing — exec returns -1 with no stdout. Sim path passes; needs WS-frame capture against a live exec to diagnose. Linked to BUG-721 ack-format issue.
 - **BUG-795**: `podman ps --filter name=…` returns empty for pod-attached containers; `podman pod inspect` sees them.
 - **BUG-804/806**: libpod-shape divergences for `pod inspect` (returns array; libpod expects object) and `pod stop` (Errs serialization). Queued for Phase 105.
+- **BUG-811/812**: Lambda CloudState post-restart accuracy — `docker ps`/`inspect` reports already-exited Lambda containers as `Running=true` because `Store.InvocationResults` is in-memory only; `CreatedAt` rendered as "292 years ago" because `ContainerSummary.Created` (int64 Unix seconds) isn't populated from `fn.LastModified` (RFC3339 string). Deferred — fix needs CloudWatch invocation-replay design on backend startup.
 - **Phase 103**: overlay-rootfs bootstrap mode — ships under Phase 104 as alternate FSDiff/Commit drivers.
 - **Phase 104**: cross-backend driver framework — design locked; piecemeal delivery, dimension at a time. See PLAN.md for the dimension list and refactor order.
 - **Phase 105**: libpod-shape conformance.
@@ -54,4 +55,4 @@ Phase 104 (cross-backend driver framework) drafted in PLAN.md as the next major 
 | UI/Admin/bleephub | 512 |
 | Lint (18 modules) | 0 |
 | Round-8 live-AWS manual sweep | 278 tests; 274 pass + 4 BUG-799 ghosts (now fixed) |
-| Round-9 live-AWS manual sweep | ~80 tests done so far (ECS A/B/C/E/F/G/I); Track D pending |
+| Round-9 live-AWS manual sweep | ~90 tests; ECS A/B/C/E/F/G/I + Lambda D complete |

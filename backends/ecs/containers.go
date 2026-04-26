@@ -146,7 +146,14 @@ func (s *Server) waitForTaskRunning(ctx context.Context, taskARN string) (string
 				}
 				return ip + ":9111", nil
 			case "STOPPED":
-				if taskExitedSuccessfully(task) {
+				// If the user process produced an exit code — even a non-
+				// zero one — start succeeded; the task ran and exited
+				// before we observed RUNNING. The exit code surfaces
+				// through ContainerWait/Inspect, matching docker
+				// semantics. Only treat it as a start failure when no
+				// exit code is recorded (Fargate-level failure: image
+				// pull, role, ENI provisioning, etc.).
+				if taskHasContainerExitCode(task) {
 					return "", nil
 				}
 				reason := aws.ToString(task.StoppedReason)
@@ -191,18 +198,17 @@ func (s *Server) waitForTaskStopped(ctx context.Context, cluster, taskARN string
 	}
 }
 
-// taskExitedSuccessfully reports whether a STOPPED task's essential
-// container exited with status 0.
-func taskExitedSuccessfully(task ecstypes.Task) bool {
-	if len(task.Containers) == 0 {
-		return false
-	}
+// taskHasContainerExitCode reports whether the task's essential container
+// recorded any exit code (zero or non-zero). Used by start polling to tell
+// "user process exited fast" (start succeeded) apart from "Fargate failed
+// to start the container" (start failed) — only the latter has no exit code.
+func taskHasContainerExitCode(task ecstypes.Task) bool {
 	for _, c := range task.Containers {
-		if c.ExitCode == nil || *c.ExitCode != 0 {
-			return false
+		if c.ExitCode != nil {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // mapToECSTags converts a map[string]string to ECS SDK tag format.
