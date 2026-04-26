@@ -163,9 +163,23 @@ func (m *NetnsManager) CreateVethPair(networkID, containerID, containerIP string
 			}
 		}
 	}
-	_ = exec.Command("ip", "netns", "exec", nsName, "ip", "addr", "add", cidr, "dev", vethContainer).Run()
-	_ = exec.Command("ip", "netns", "exec", nsName, "ip", "link", "set", vethContainer, "up").Run()
-	_ = exec.Command("ip", "link", "set", vethHost, "up").Run()
+	// BUG-828: each of these three steps was previously silent on
+	// error. If any failed the container's veth was half-configured
+	// (e.g. no IP, link down) but the function returned success and
+	// the operator only noticed when network reach broke. Now we
+	// roll back the veth pair on the first failure.
+	if err := exec.Command("ip", "netns", "exec", nsName, "ip", "addr", "add", cidr, "dev", vethContainer).Run(); err != nil {
+		_ = exec.Command("ip", "link", "del", vethHost).Run()
+		return fmt.Errorf("failed to assign IP %s to veth in netns: %w", cidr, err)
+	}
+	if err := exec.Command("ip", "netns", "exec", nsName, "ip", "link", "set", vethContainer, "up").Run(); err != nil {
+		_ = exec.Command("ip", "link", "del", vethHost).Run()
+		return fmt.Errorf("failed to bring veth up inside netns: %w", err)
+	}
+	if err := exec.Command("ip", "link", "set", vethHost, "up").Run(); err != nil {
+		_ = exec.Command("ip", "link", "del", vethHost).Run()
+		return fmt.Errorf("failed to bring host-side veth up: %w", err)
+	}
 
 	return nil
 }
