@@ -44,6 +44,35 @@ locals {
 }
 
 # =============================================================================
+# Sockerless runtime sweep
+# =============================================================================
+# Sockerless creates Function Apps at runtime inside the resource
+# group; they're not in this module's state. On destroy, sweep every
+# sockerless-tagged Function App before the storage / ACR / service
+# plan teardown — Function App removal is gated on these resources and
+# Azure surfaces confusing "in use" errors otherwise. Symmetric with
+# the AWS / GCP module sweeps per the project teardown rule.
+resource "null_resource" "sockerless_runtime_sweep" {
+  triggers = {
+    rg = local.resource_group_name
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      set -eu
+      rg='${self.triggers.rg}'
+      echo "sockerless-azf-sweep: rg=$rg"
+
+      for app in $(az functionapp list --resource-group "$rg" --query "[?tags.\"sockerless-managed\"=='true'].name" -o tsv 2>/dev/null); do
+        [ -z "$app" ] && continue
+        az functionapp delete --resource-group "$rg" --name "$app" >/dev/null 2>&1 || true
+      done
+    EOT
+  }
+}
+
+# =============================================================================
 # Resource Group
 # =============================================================================
 

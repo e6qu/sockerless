@@ -45,6 +45,56 @@ data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 
 # =============================================================================
+# Sockerless runtime sweep
+# =============================================================================
+#
+# Sockerless creates Lambda functions at runtime (one per
+# `docker create`/`docker run`); they're not in this module's terraform
+# state. On `terragrunt destroy` we iterate every sockerless-managed
+# function and (a) clear its VpcConfig so AWS Lambda starts releasing
+# the hyperplane ENI, (b) delete the function. Without this sweep,
+# orphan functions outlive the IAM execution role, and any subsequent
+# ECS-stack destroy hangs on the SG/subnet because the ENIs are still
+# attached. Equivalent of the ECS module's sockerless_runtime_sweep —
+# kept symmetric across backends per the
+# `[AWS teardown — terragrunt destroy must be self-sufficient]`
+# project rule.
+resource "null_resource" "sockerless_runtime_sweep" {
+  triggers = {
+    region = var.region
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      set -eu
+      region='${self.triggers.region}'
+      echo "sockerless-lambda-sweep: region=$region"
+
+      # List sockerless-managed Lambda functions. ListTags is per-ARN
+      # so we walk every function once.
+      for arn in $(aws lambda list-functions --region "$region" --query 'Functions[].FunctionArn' --output text); do
+        [ -z "$arn" ] && continue
+        managed=$(aws lambda list-tags --region "$region" --resource "$arn" --query 'Tags."sockerless-managed"' --output text 2>/dev/null || echo None)
+        [ "$managed" != "true" ] && continue
+        name=$(echo "$arn" | awk -F: '{print $NF}')
+        # Clear VpcConfig so AWS Lambda releases the hyperplane ENI. If
+        # the function has no VpcConfig this is a no-op. Wait briefly
+        # for `LastUpdateStatus=Successful` so the subsequent delete
+        # doesn't race.
+        aws lambda update-function-configuration --region "$region" --function-name "$name" --vpc-config 'SubnetIds=[],SecurityGroupIds=[]' >/dev/null 2>&1 || true
+        for j in 1 2 3 4 5; do
+          status=$(aws lambda get-function --region "$region" --function-name "$name" --query 'Configuration.LastUpdateStatus' --output text 2>/dev/null || echo Failed)
+          [ "$status" = "Successful" ] && break
+          sleep 5
+        done
+        aws lambda delete-function --region "$region" --function-name "$name" >/dev/null 2>&1 || true
+      done
+    EOT
+  }
+}
+
+# =============================================================================
 # IAM — Lambda Execution Role
 # =============================================================================
 

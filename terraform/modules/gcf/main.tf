@@ -46,6 +46,39 @@ locals {
 # Enable Required APIs
 # =============================================================================
 
+# ---------------------------------------------------------------------------
+# Sockerless runtime sweep
+# ---------------------------------------------------------------------------
+# Sockerless creates Cloud Functions (gen2) at runtime; they're not in
+# this module's state. On destroy, sweep every sockerless-labeled
+# function so the IAM service account + Artifact Registry repo can be
+# torn down cleanly. Symmetric with the AWS / Cloud Run / Azure module
+# sweeps per the project teardown rule.
+resource "null_resource" "sockerless_runtime_sweep" {
+  triggers = {
+    project = var.project_id
+    region  = var.region
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      set -eu
+      project='${self.triggers.project}'
+      region='${self.triggers.region}'
+      echo "sockerless-gcf-sweep: project=$project region=$region"
+
+      # GCP labels use underscores per per-cloud spelling rule
+      # (sockerless_managed=true).
+      for fn in $(gcloud functions list --project="$project" --regions="$region" --filter='labels.sockerless_managed=true' --format='value(name)' 2>/dev/null); do
+        [ -z "$fn" ] && continue
+        gcloud functions delete "$fn" --project="$project" --region="$region" --quiet --gen2 >/dev/null 2>&1 || \
+          gcloud functions delete "$fn" --project="$project" --region="$region" --quiet >/dev/null 2>&1 || true
+      done
+    EOT
+  }
+}
+
 resource "google_project_service" "cloudfunctions" {
   project = var.project_id
   service = "cloudfunctions.googleapis.com"

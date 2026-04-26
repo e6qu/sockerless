@@ -19,6 +19,50 @@
 #   }
 
 # ---------------------------------------------------------------------------
+# Sockerless runtime sweep
+# ---------------------------------------------------------------------------
+# Sockerless creates Cloud Run services + jobs at runtime; they're not in
+# this module's state. On destroy, sweep every sockerless-labeled
+# resource so the IAM SA + VPC connector can be torn down without dangling
+# references. Symmetric with the AWS ECS / Lambda module sweeps per the
+# `[AWS teardown — terragrunt destroy must be self-sufficient]` rule.
+
+resource "null_resource" "sockerless_runtime_sweep" {
+  triggers = {
+    project = var.project_id
+    region  = var.region
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      set -eu
+      project='${self.triggers.project}'
+      region='${self.triggers.region}'
+      echo "sockerless-cloudrun-sweep: project=$project region=$region"
+
+      # Cloud Run services: GCP labels use underscores
+      # (sockerless_managed=true) per the per-cloud spelling rule.
+      for svc in $(gcloud run services list --project="$project" --region="$region" --filter='metadata.labels.sockerless_managed=true' --format='value(metadata.name)' 2>/dev/null); do
+        [ -z "$svc" ] && continue
+        gcloud run services delete "$svc" --project="$project" --region="$region" --quiet >/dev/null 2>&1 || true
+      done
+
+      # Cloud Run jobs: same label rule.
+      for job in $(gcloud run jobs list --project="$project" --region="$region" --filter='metadata.labels.sockerless_managed=true' --format='value(metadata.name)' 2>/dev/null); do
+        [ -z "$job" ] && continue
+        # Cancel running executions first (delete won't terminate them).
+        for exec in $(gcloud run jobs executions list --job="$job" --project="$project" --region="$region" --filter='status.completionTime=NULL' --format='value(metadata.name)' 2>/dev/null); do
+          [ -z "$exec" ] && continue
+          gcloud run jobs executions cancel "$exec" --job="$job" --project="$project" --region="$region" --quiet >/dev/null 2>&1 || true
+        done
+        gcloud run jobs delete "$job" --project="$project" --region="$region" --quiet >/dev/null 2>&1 || true
+      done
+    EOT
+  }
+}
+
+# ---------------------------------------------------------------------------
 # API Enablement
 # ---------------------------------------------------------------------------
 # Enable required GCP APIs. disable_on_destroy = false prevents disabling

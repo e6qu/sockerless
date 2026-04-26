@@ -136,6 +136,42 @@ resource "null_resource" "sockerless_runtime_sweep" {
         [ -z "$td" ] && continue
         aws ecs deregister-task-definition --region "$region" --task-definition "$td" >/dev/null || true
       done
+
+      # Lambda hyperplane ENIs: when sockerless-managed Lambda functions
+      # are configured with VpcConfig pointing at this VPC's subnets +
+      # SG, AWS Lambda creates `ela-attach`-style ENIs (Description
+      # starts with "AWS Lambda VPC ENI"). After the function is
+      # deleted, AWS releases these ENIs lazily — typically 5-30 min,
+      # sometimes longer. They block this module's
+      # `aws_security_group.task` and `aws_subnet.private` destroys.
+      #
+      # The Lambda module's own sweep (terraform/modules/lambda)
+      # iterates sockerless-managed functions on its destroy and
+      # patches VpcConfig to empty before deleting them, which signals
+      # AWS to start releasing immediately. But operators can also
+      # trigger this state by deleting Lambda functions out-of-band, or
+      # by destroying the ECS env without first destroying Lambda env.
+      # So we always poll here as a backstop. Up to 30 min — beyond
+      # that we surface a real terraform error rather than hanging
+      # silently. AWS hyperplane attachments cannot be force-detached
+      # by operator credentials (`ela-attach` is AWS-Lambda-owned).
+      lambda_eni_query='NetworkInterfaces[?starts_with(Description,`AWS Lambda VPC ENI`)].NetworkInterfaceId'
+      for i in $(seq 1 60); do
+        left=$(aws ec2 describe-network-interfaces --region "$region" --filters "Name=vpc-id,Values=$vpc" --query "$lambda_eni_query" --output text 2>/dev/null)
+        if [ -z "$left" ]; then
+          echo "sockerless-runtime-sweep: no Lambda hyperplane ENIs left in $vpc"
+          break
+        fi
+        echo "sockerless-runtime-sweep: waiting on Lambda hyperplane ENIs ($left) — AWS releases async after function delete; iter=$i/60"
+        sleep 30
+      done
+      # Now delete any released ENIs in `available` state. (Released ela-
+      # attach ENIs flip from `in-use` to `available` when AWS detaches
+      # them; deletion still has to be explicit.)
+      for eni in $(aws ec2 describe-network-interfaces --region "$region" --filters "Name=vpc-id,Values=$vpc" "Name=status,Values=available" --query 'NetworkInterfaces[].NetworkInterfaceId' --output text); do
+        [ -z "$eni" ] && continue
+        aws ec2 delete-network-interface --region "$region" --network-interface-id "$eni" >/dev/null || true
+      done
     EOT
   }
 }
