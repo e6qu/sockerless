@@ -5,15 +5,13 @@ Resume pointer for the next session / post-compaction. Updated after every task.
 ## Branch state
 
 - `main` synced with `origin/main` at PR #119 merge.
-- **`post-pr-118-bug-audit-and-phases`** — open as PR #120, ~20 commits ahead. Cumulative: 22 bugs closed; Phase 104 skeleton + lifts 1+2 (Exec, Attach); Phase 105 waves 1-3 (8 libpod-shape handlers); Phase 108 closed (77/77 sim-parity matrix ✓).
+- **`post-pr-118-bug-audit-and-phases`** — open as PR #120, ~25 commits ahead. Cumulative: 22 bugs closed; Phase 104 skeleton + lifts 1-4 (Exec, Attach, Logs, Signal); typed driver framework renamed to drop 104 suffix (`ExecDriver`, `AttachDriver`, `TypedDriverSet`); Phase 105 waves 1-3 (8 libpod-shape handlers); Phase 108 closed (77/77 sim-parity matrix ✓); manual-tests directory + state-doc streamline.
 
 ## Up next on this branch
 
-1. **Phase 104 lift 3 — `LogsDriver`.** Per-backend log-fetcher already exists (`CloudLogFetchFunc` in `core.AttachViaCloudLogs`); lift it into a typed `LogsDriver104` so `docker logs <id>` flows through `DriverSet104.Logs`. Tests pin the contract.
-2. **Phase 104 lift 4 — `SignalDriver`.** SignalToExitCode hardened in BUG-826 (SIGTERM=143 / SIGKILL=137); typed `SignalDriver104` with WrapLegacy adapter + per-backend overrides.
-3. **Phase 104 first per-backend migration** — wire docker backend's exec call site through `DriverSet104.Exec` (using `WrapLegacyExec`). Smallest backend, no cloud round-trips, integration tests in `tests/exec_test.go` verify parity.
-4. **Remaining Phase 104 lifts** — FSRead/Write/Diff/Export, Commit, Build, Stats, ProcList, Registry. Piecemeal, one per commit, sim parity per commit.
-5. **Phase 105 wave 4** (lower priority) — events stream, exec start hijack shape, container CRUD beyond list.
+1. **Phase 104 first per-backend migration** — wire docker backend's exec call site through `TypedDriverSet.Exec` (using `WrapLegacyExec`). Smallest backend, no cloud round-trips, integration tests in `tests/exec_test.go` verify parity.
+2. **Remaining Phase 104 lifts** — FSRead/Write/Diff/Export, Commit, Build, Stats, ProcList, Registry. Piecemeal, one per commit, sim parity per commit.
+3. **Phase 105 wave 4** (lower priority) — events stream, exec start hijack shape, container CRUD beyond list.
 
 After this branch's Phase 104 work reaches first-dimension parity (Exec lifted across all 7 backends), the typed framework is ready for Phase 106/107 (real CI runners) to exercise it.
 

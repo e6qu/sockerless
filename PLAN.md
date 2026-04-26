@@ -26,7 +26,7 @@ Detail in [WHAT_WE_DID.md](WHAT_WE_DID.md); commit + BUG refs in [BUGS.md](BUGS.
 | 86–102 (PRs #112–#115) | Sim parity, stateless backends, real volumes, FaaS invocation tracking, reverse-agent exec/cp/diff/commit/pause, Docker pod synthesis, ACA console exec, ECS SSM ops, OCI push, log fidelity. | 661–769 |
 | Round-7 (PR #117) | Live-AWS bug sweep | 770–785 |
 | Round-8 + Round-9 (PR #118) | Live-AWS bug sweep — stateless invariant, real layer mirror, sync `docker stop`, per-network SG isolation, live SSM frame capture → exit-code marker, `sh -c` exec wrap, busybox-compat find/stat, Lambda invoke waiter, tag-based InvocationResult persistence, per-cloud terragrunt sweep | 786–819 |
-| Post-PR-#118 audit + Phase 104 lifts 1+2 + Phase 105 waves 1-3 + Phase 108 (PR #120 — open) | Audit pass; Phase 104 skeleton + Exec/Attach lifts; libpod-shape golden tests for 8 handlers; Phase 108 sim-parity matrix audit (33 AWS + 16 GCP + 28 Azure rows ✓) | 802 / 638-648 retro / 804 / 806 / 820–831 / 832–835 |
+| Post-PR-#118 audit + Phase 104 lifts 1-4 + Phase 105 waves 1-3 + Phase 108 (PR #120 — open) | Audit pass; Phase 104 skeleton + Exec/Attach/Logs/Signal lifts (typed framework renamed to drop 104 suffix); libpod-shape golden tests for 8 handlers; Phase 108 sim-parity matrix audit (33 AWS + 16 GCP + 28 Azure rows ✓); manual-tests directory + repo-wide phase/bug-ref strip from code + docs | 802 / 638-648 retro / 804 / 806 / 820–831 / 832–835 |
 
 ## Pending work
 
@@ -42,8 +42,8 @@ Lift sockerless's narrow `core.Drivers{Exec, Stream, Filesystem}` plus the bespo
 |---|---|
 | `ExecDriver` ✓ adapter shipped | docker→DockerExec; ECS→SSMExec; Lambda/CR/GCF/AZF→ReverseAgentExec; ACA→ACAConsoleExec |
 | `AttachDriver` ✓ adapter shipped | docker→DockerAttach; ECS→CloudWatchAttach; FaaS→CloudLogsReadOnlyAttach |
-| `LogsDriver` | docker→DockerLogs; AWS→CloudWatch; GCP→CloudLogging; Azure→LogAnalytics |
-| `SignalDriver` | docker→DockerKill; ECS→SSMKill; FaaS+CR+ACA→ReverseAgentKill |
+| `LogsDriver` ✓ adapter shipped | docker→DockerLogs; AWS→CloudWatch; GCP→CloudLogging; Azure→LogAnalytics |
+| `SignalDriver` ✓ adapter shipped | docker→DockerKill; ECS→SSMKill; FaaS+CR+ACA→ReverseAgentKill |
 | `FSReadDriver` (cp →, stat, get-archive) | docker→DockerArchive; ECS→SSMTar; FaaS+CR+ACA→ReverseAgentTar |
 | `FSWriteDriver` (cp ←, put-archive) | docker→DockerArchive; ECS→SSMTarExtract; FaaS+CR+ACA→ReverseAgentTarExtract |
 | `FSDiffDriver` | docker→DockerChanges; ECS→SSMFindNewer; FaaS+CR+ACA→ReverseAgentFindNewer |
