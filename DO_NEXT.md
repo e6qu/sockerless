@@ -20,10 +20,16 @@ Suggested order for the dimension lifts:
 
 Phase 103 (overlay-rootfs bootstrap) ships under Phase 104 as alternate FSRead/FSWrite/FSDiff/FSExport/Commit drivers gated behind `SOCKERLESS_OVERLAY_ROOTFS=1`.
 
+After Phase 104:
+
+- **Phase 106 — Real GitHub Actions runner integration.** End-to-end `actions/runner` binary against sockerless via DOCKER_HOST. ECS + Lambda first; rest gated on Phase 104. Canonical workload sweep (matrix, services, artifacts, secrets, fail-fast).
+- **Phase 107 — Real GitLab runner integration.** GitLab Runner docker-executor → sockerless. Same coverage shape as Phase 106. dind sub-test included. Kubernetes-executor as a follow-up under Phase 104.
+- **Phase 108 — Cross-simulator feature parity audit.** Walk every cloud-API call sockerless makes; build a parity matrix (rows = SDK calls, columns = aws/gcp/azure sim); fix every gap in-phase per the no-defer rule.
+
 Independent of Phase 104 (can run in parallel):
 
-- **Phase 105 — libpod-shape conformance.** Closes BUG-804 (`pod inspect` returns array) and BUG-806 (`PodStopReport.Errs` shape). Cross-walks every libpod handler in `backends/core/handle_libpod*.go` against upstream `pkg/api/handlers/libpod` shapes; adds golden-file tests so future shape regressions land at CI time.
-- **Live-cloud runbooks** — GCP (Phase 87) + Azure (Phase 88) terraform live envs to add, then port the round-7/8/9 sweep against each. New per-cloud `null_resource sockerless_runtime_sweep` (BUG-819 fix) means destroys should be self-sufficient.
+- **Phase 105 — libpod-shape conformance (rolling).** First wave landed: BUG-804 (`PodInspectResponse` mirrors `define.InspectPodData` + golden test) and BUG-806 (`PodActionResponse.Errs` normalised to `[]`; HTTP 409 + ErrorModel for failures). Remaining: cross-walk every other libpod handler against upstream shapes; add golden tests; verify against a real podman client.
+- **Live-cloud runbooks** — GCP (Phase 87) + Azure (Phase 88) terraform live envs to add, then port the round-7/8/9 sweep against each. New per-cloud `null_resource sockerless_runtime_sweep` (BUG-819 fix) means destroys are self-sufficient.
 
 ## Manual step left for maintainer (post round-9)
 

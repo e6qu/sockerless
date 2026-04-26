@@ -91,6 +91,36 @@ func (s *BaseServer) PodInspect(name string) (*api.PodInspectResponse, error) {
 		NumContainers:    len(pod.ContainerIDs),
 		Containers:       containers,
 		SharedNamespaces: pod.SharedNS,
+
+		// Libpod-shape optional fields (BUG-804). Sockerless pods are a
+		// thin labelling wrapper over containers — we don't run a real
+		// infra container and don't enforce per-pod cgroup / IPC /
+		// blkio limits — so emit zero-valued shapes rather than
+		// omitting. Empty slices/maps preferred over nil so the JSON
+		// is always present in the expected type.
+		Namespace:           "",
+		CreateCommand:       []string{},
+		ExitPolicy:          "continue",
+		InfraContainerID:    "",
+		InfraConfig:         api.PodInfraConfig{PortBindings: map[string][]api.PortBinding{}, DNSServer: []string{}, DNSSearch: []string{}, DNSOption: []string{}, HostAdd: []string{}, Networks: []string{}, NetworkOptions: map[string][]string{}},
+		CgroupParent:        "",
+		CgroupPath:          "",
+		LockNumber:          0,
+		RestartPolicy:       "",
+		BlkioWeight:         0,
+		CPUPeriod:           0,
+		CPUQuota:            0,
+		CPUShares:           0,
+		CPUSetCPUs:          "",
+		MemoryLimit:         0,
+		MemorySwap:          0,
+		BlkioDeviceReadBps:  []api.PodBlkioDeviceRate{},
+		BlkioDeviceWriteBps: []api.PodBlkioDeviceRate{},
+		VolumesFrom:         []string{},
+		SecurityOpts:        []string{},
+		Mounts:              []api.PodInspectMount{},
+		Devices:             []api.PodInspectDevice{},
+		Device_read_bps:     []api.PodBlkioDeviceRate{},
 	}, nil
 }
 

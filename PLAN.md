@@ -120,19 +120,68 @@ Replaces Phase 98's `find / -newer /proc/1` heuristic with overlayfs upper-dir f
 
 **Ships under Phase 104** as the first set of alternate drivers under the new framework: `OverlayUpperRead`, `OverlayUpperWrite`, `OverlayUpperDiff`, `OverlayMergedExport`, `OverlayLayerCommit`. Gated behind `SOCKERLESS_OVERLAY_ROOTFS=1` per backend. Caveats: Lambda needs `CAP_SYS_ADMIN` (default has it) + `/tmp` workspace (10 GB cap); Cloud Run / GCF run gVisor with partial overlayfs support (may need tmpfs upper-dir); ACA / AZF full Linux, no caveats.
 
-### Phase 105 — Libpod-shape conformance (parallel to 104)
+### Phase 105 — Libpod-shape conformance (rolling — first wave landed in PR #119)
 
-`podman` CLI uses bindings that expect specific JSON shapes. Sockerless's responses match docker-API but diverge from libpod in places, breaking the CLI even when the docker path works. Cross-walks every libpod handler in `backends/core/handle_libpod*.go` against upstream `pkg/api/handlers/libpod` shapes; fixes BUG-804 (`pod inspect` returns array, libpod expects object), BUG-806 (`pod stop` `Errs` shape mismatch); adds golden-file tests so future shape regressions land at CI time. Independent of Phase 104 — can run in parallel.
+`podman` CLI uses bindings that expect specific JSON shapes. Sockerless's responses match docker-API but diverge from libpod in places, breaking the CLI even when the docker path works. **First-wave fixes shipped post-PR-#118**: BUG-804 (`PodInspectResponse` expanded to mirror `define.InspectPodData`) and BUG-806 (`PodStop`/`PodKill` Errs normalised to `[]`; per-container failures routed via HTTP 409 ErrorModel) plus golden-shape tests in `backends/core/pod_inspect_shape_test.go`.
+
+Remaining work for this phase: cross-walk every libpod handler in `backends/core/handle_libpod*.go` against upstream `pkg/api/handlers/libpod` shapes; add golden tests for each so future shape regressions land at CI time; verify against a real podman client (currently we have no live podman CLI in CI). Can run in parallel with Phase 104.
+
+### Phase 106 — Real GitHub Actions runner integration
+
+End-to-end test of GitHub Actions self-hosted runners pointed at sockerless via `DOCKER_HOST` (docker-executor mode). Currently we only have synthetic `tests/github_runner_e2e_test.go` mocking the runner's docker calls; this phase runs the real `actions/runner` binary against sockerless and validates the end-to-end flow.
+
+**Backends covered:** ECS + Lambda first (parity with rounds 7-9 live infra). GCF / Cloud Run / ACA / AZF gated on Phase 104's driver framework landing — once the cross-backend driver framework is in, the runner sweeps re-run against every backend with no per-backend code paths.
+
+**Sockerless wiring:**
+- `actions/runner` configured with the standard registration token flow (real repo or real org).
+- `DOCKER_HOST=tcp://<sockerless>:3375` so every step container, service container, and action runs through sockerless.
+- No kubernetes-executor in this phase — that's a follow-up sub-phase if needed.
+
+**Test workloads (canonical):**
+1. Single-job, container step (`runs-on: self-hosted` + `container: image=alpine`).
+2. Matrix build (3 OS × 2 versions, container per leg).
+3. Service container (`services: redis: image=redis:7`) — health check, network reach.
+4. Composite action with `actions/checkout`, `actions/setup-go`, `actions/cache`.
+5. Artifact upload + download across jobs (`actions/upload-artifact` / `actions/download-artifact`).
+6. Secrets injection.
+7. Job-failure semantics (a failing step short-circuits subsequent steps, runner reports correct exit code).
+8. Step output streaming (live log lines via `docker logs --follow` semantics).
+
+**Cost / live-AWS posture:** time-boxed — provision live infra, run the canonical sweep + 1 real OSS-project workflow, teardown. New per-cloud `null_resource sockerless_runtime_sweep` (BUG-819 fix) means destroys are self-sufficient — no manual cleanup needed.
+
+**Bugs surfaced** are filed BUG-820+ and **fixed in the same phase** (no-defer rule). Golden test fixtures land in `tests/runners/github/`.
+
+### Phase 107 — Real GitLab runner integration
+
+Same shape as Phase 106 but for GitLab Runner with the `docker` executor. The runner registers against gitlab.com (project-scoped) or a self-hosted GitLab; `runners.docker.host` is set to the sockerless DOCKER_HOST.
+
+**Backends covered:** ECS + Lambda first; rest gated on Phase 104.
+
+**Test workloads (canonical):**
+1. Single-job pipeline (`image: alpine`, single `script:`).
+2. Multi-stage pipeline (build → test → deploy with artifact passing via `artifacts:`).
+3. Services (`services: postgres:15` — reach via service name on the network sockerless creates per-job).
+4. Cache (`cache.paths` — pull/push to sockerless's image store).
+5. `dind` job — `image: docker:cli` + `services: docker:dind` — verify nested docker calls work.
+6. Parallel matrix.
+7. Manual jobs / `when: on_failure` semantics.
+8. Trace streaming (log fidelity; runner's incremental update protocol).
+
+**Sockerless wiring:** docker-executor only this phase. Kubernetes-executor (very common in GitLab self-hosted) is a follow-up under Phase 104 once `backends/core/drivers/` provides the kube-shaped driver dispatcher.
+
+**Bugs surfaced** filed BUG-820+ and fixed in-phase. Fixtures in `tests/runners/gitlab/`.
+
+### Phase 108 — Cross-simulator feature parity audit
+
+Walks every cloud-API surface sockerless touches and verifies the AWS / GCP / Azure simulators implement it at the same fidelity. Driven by `specs/CLOUD_RESOURCE_MAPPING.md` § "Simulator coverage" plus a fresh inventory of every `Op:` in each sim's `*.go` handlers vs the cloud SDK methods sockerless calls. Output: a parity matrix (rows = SDK calls sockerless makes, columns = aws/gcp/azure sim) and a closed-issue list for every gap. Each gap is filed as a BUG and fixed in this phase per the no-defer rule.
+
+The sim binaries already share a `simulators/<cloud>/shared/` package for container execution; any new driver lifted under Phase 104 must land sim parity in the same commit (already a project rule). Phase 108 is the catch-up for parity drift that accumulated before that rule existed.
 
 ### Live-cloud validation runbooks
 
 - **Phase 86 Lambda live track** — scripted already; covered partially by round-9 Track D.
-- **Phase 87 live-GCP** — needs project + VPC connector; terraform env to add.
-- **Phase 88 live-Azure** — needs subscription + managed environment with VNet integration; terraform env to add.
-
-### Known workaround to convert to a real fix
-
-**BUG-721** — SSM `acknowledge` format isn't accepted by the live AWS agent; backend dedupes retransmitted `output_stream_data` frames by MessageID. BUG-789/798 likely share root cause (live AWS SSM frame parsing). Proper fix needs WebSocket frame capture against a live exec session. Sim path is unaffected.
+- **Phase 87 live-GCP** — needs project + VPC connector; terraform env to add. New per-cloud `null_resource sockerless_runtime_sweep` means destroy is self-sufficient (BUG-819 fix).
+- **Phase 88 live-Azure** — needs subscription + managed environment with VNet integration; terraform env to add. Same teardown self-sufficiency.
 
 ### Phase 68 — Multi-Tenant Backend Pools (queued)
 

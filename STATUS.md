@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**102 phases closed. 819 bugs tracked — 817 fixed, 2 open (BUG-804/806 libpod shape — queued for Phase 105 by maintainer). 1 false positive. PR #118 merged (Rounds 8 + 9). Branch back on `main`, in sync with `origin/main`. Phase 104 (cross-backend driver framework) is the next active work.**
+**102 phases closed. 819 bugs tracked — 819 fixed, 0 open. 1 false positive. PR #118 merged (Rounds 8 + 9); BUG-804/806 fixed post-merge as the first wave of Phase 105 + BUG-638/640/646/648 backfilled as retroactively closed by BUG-788. Project rule (effective immediately): no bug deferral — every filed bug ships a fix in the same phase. Branch back on `main`, in sync with `origin/main`. Phase 104 (cross-backend driver framework) is the next active work, followed by Phases 106 (GitHub Actions runner) + 107 (GitLab runner) + 108 (sim feature parity).**
 
 See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer), [specs/](specs/) (architecture).
 
@@ -32,7 +32,11 @@ AWS infra torn down post-merge. Root-account IAM key `AKIA2TQEGRDBRV2KFW6L` deac
 
 ## Open work pointers
 
-- **BUG-804/806**: libpod-shape divergences for `pod inspect` (returns array; libpod expects object) and `pod stop` (Errs serialization). Queued for Phase 105 by maintainer.
+- **Phase 104** — Cross-backend driver framework. 13 dimension lifts; piecemeal delivery, sim parity per commit.
+- **Phase 105 (rolling)** — libpod-shape conformance. First wave done (BUG-804/806). Remaining: cross-walk every other libpod handler against upstream shapes; add golden tests.
+- **Phase 106** — Real GitHub Actions runner integration (post-Phase-104). Canonical workload sweep against ECS + Lambda first.
+- **Phase 107** — Real GitLab runner integration (post-Phase-104). docker-executor; dind sub-test; kube-executor follow-up.
+- **Phase 108** — Cross-simulator feature parity audit. Parity matrix + gap closure.
 - **Phase 103**: overlay-rootfs bootstrap mode — ships under Phase 104 as alternate FSDiff/Commit drivers.
 - **Phase 104**: cross-backend driver framework — design locked; piecemeal delivery, dimension at a time. See PLAN.md for the dimension list and refactor order.
 - **Phase 105**: libpod-shape conformance.

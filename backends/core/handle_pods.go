@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -120,7 +121,7 @@ func (s *BaseServer) handlePodStop(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, err)
 		return
 	}
-	WriteJSON(w, http.StatusOK, resp)
+	writePodActionResponse(w, resp)
 }
 
 func (s *BaseServer) handlePodKill(w http.ResponseWriter, r *http.Request) {
@@ -130,7 +131,38 @@ func (s *BaseServer) handlePodKill(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, err)
 		return
 	}
-	WriteJSON(w, http.StatusOK, resp)
+	writePodActionResponse(w, resp)
+}
+
+// writePodActionResponse serializes a PodActionResponse using the
+// podman-compatible convention (BUG-806): success path emits
+// `Errs: []` (the only `[]error` shape that survives podman's bindings
+// json.Unmarshal); per-container stop/kill failures are surfaced via
+// HTTP 409 + an ErrorModel-shaped body so the CLI prints them and
+// exits non-zero. Sockerless callers that want the per-error detail
+// can read the response body verbatim.
+func writePodActionResponse(w http.ResponseWriter, resp *api.PodActionResponse) {
+	if resp == nil {
+		WriteJSON(w, http.StatusOK, map[string]any{"Errs": []any{}, "Id": ""})
+		return
+	}
+	if len(resp.Errs) > 0 {
+		// Match podman's ErrorModel shape — `cause` + `message` + `response`.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"cause":    "pod-action errors",
+			"message":  strings.Join(resp.Errs, "; "),
+			"response": http.StatusConflict,
+		})
+		return
+	}
+	// Success — always emit Errs: [] (never null, never populated).
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"Errs":     []any{},
+		"Id":       resp.ID,
+		"RawInput": resp.RawInput,
+	})
 }
 
 func (s *BaseServer) handlePodRemove(w http.ResponseWriter, r *http.Request) {
