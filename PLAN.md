@@ -130,6 +130,56 @@ Two Sockerless daemons (one per backend label, Phase-68-v1 split). One daemon se
 
 **Phase 110 succeeds when** all 4 cells have a green run on file (harness logs in `tests/runners/<runner>/logs/`), and any bug surfaced during the run has a closed entry in BUGS.md. Capability matrix at [`docs/runner-capability-matrix.md`](docs/runner-capability-matrix.md) gets the cells updated from `TBD` to `PASS`/`FAIL` per workload.
 
+### Phase 111 — Workload identity for runner jobs (queued; gated on Phase 110 closure)
+
+Once the Phase 110 4-cell harness runs end-to-end, the next gap is **workload identity inside the per-job container** — making `aws sts get-caller-identity`, `gcloud auth print-identity-token`, and `az account show` resolve to a real cloud identity from inside a sockerless-dispatched container, exactly as they would on a native cloud runner. Without this, runner jobs that touch cloud APIs (the most common real-world pattern: `aws s3 cp`, `gcloud builds submit`, `az acr login`) would either fail or fall back to PAT-style env var creds, which violates the "no fakes, no fallbacks" rule for end-user workloads.
+
+**What "minimal" means.** The user's job calls `aws sts get-caller-identity` (or equivalent). The CLI inside the container resolves credentials via the platform's standard discovery path. Sockerless ensures that path is actually wired to the cloud workload's identity (task role / function role / service account / managed identity).
+
+**Per-backend wiring — what each cloud already provides.** Real cloud runtimes hand the workload an identity through a standard endpoint; sockerless's only job is to make sure the backend attaches the right role / SA / MI when it provisions the workload, and that the standard endpoints are reachable from inside the container.
+
+| Backend | Native discovery path | What sockerless attaches | Gap to verify |
+|---|---|---|---|
+| ECS Fargate | `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` → `http://169.254.170.2/v2/credentials/<id>` | `taskRoleArn` (and `executionRoleArn`) on the task definition | TaskRole must include `sts:GetCallerIdentity` + whatever the workload actually needs |
+| AWS Lambda | env vars `AWS_ACCESS_KEY_ID` etc. + `AWS_LAMBDA_RUNTIME_API` for refresh | Function execution role | Same — execution role needs the workload-side permissions |
+| Cloud Run / GCF | `http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token` | Service account on the Service / Function | Backend must accept a configurable SA email; SA needs the workload permissions |
+| ACA / AZF | IMDS at `http://169.254.169.254/metadata/identity/oauth2/token` (closed in Phase 109 for the sim) and `IDENTITY_ENDPOINT` for App Service-style | System-assigned or user-assigned managed identity on the Container App / Site | Backend must accept a `--managed-identity` config knob and attach it on PUT |
+
+**Sim-side (already partially landed in Phase 109):**
+- AWS STS `GetCallerIdentity` — ✓ in `simulators/aws/sts.go` (returns synthetic `arn:aws:sts::<account>:assumed-role/...`).
+- AWS ECS Container Credentials endpoint at `169.254.170.2/v2/credentials/<id>` — ✗ not yet served. Required for SDK clients running inside a sim-provisioned container to find creds.
+- GCP `iam.serviceAccounts.generateAccessToken` — ✓ closed in Phase 109.
+- GCP metadata server at `metadata.google.internal/computeMetadata/v1/...` — ✗ not yet served end-to-end (the sim's HTTP listener can serve it, but containers need DNS / `/etc/hosts` rewriting to reach the sim by that hostname).
+- Azure IMDS metadata token endpoint — ✓ closed in Phase 109.
+
+**Scope of "minimal":**
+
+1. **Each backend grows a config knob** for the workload identity:
+   - ECS: `SOCKERLESS_ECS_TASK_ROLE_ARN` (already present); add a sanity check that the role's trust policy allows `ecs-tasks.amazonaws.com`.
+   - Lambda: `SOCKERLESS_LAMBDA_EXECUTION_ROLE_ARN` (already present).
+   - Cloud Run / GCF: `SOCKERLESS_GCR_SERVICE_ACCOUNT` / `SOCKERLESS_GCF_SERVICE_ACCOUNT` — currently the backend attaches the project's default compute SA; should be operator-configurable.
+   - ACA / AZF: `SOCKERLESS_ACA_MANAGED_IDENTITY` / `SOCKERLESS_AZF_MANAGED_IDENTITY` — system-assigned by default with optional user-assigned passthrough.
+
+2. **Each cloud's sim grows the missing endpoints** so dev runs without real cloud also succeed:
+   - AWS sim: ECS Container Credentials endpoint at the standard IP. Containers run with `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` pointing at it.
+   - GCP sim: metadata server at the standard hostname; containers get `metadata.google.internal` resolved via `/etc/hosts` injection or sidecar DNS.
+   - Azure sim: already serves IMDS — verify reachability from inside a sim-provisioned container (may need `169.254.169.254` route trick, or env-var alias).
+
+3. **End-to-end verification.** Add a runner workflow / pipeline (`identity-check.yml` / `.gitlab-ci.yml`) that runs the platform's CLI from inside the container:
+   - GitHub × ECS: `aws sts get-caller-identity` returns the configured task role's `assumed-role/...` ARN.
+   - GitHub × Lambda: same against the function execution role.
+   - GitLab × ECS / × Lambda: same.
+   - Add the same shape for GCP + Azure backends once Phase 110's matrix extends past AWS (currently scoped to ECS + Lambda).
+
+**Bug discipline.** Same as Phase 110 — every gap surfaces a real bug; gets fixed in-branch.
+
+**What this is not.**
+- Not a new credential broker or sidecar — we use the cloud's native discovery path.
+- Not a sockerless-specific identity model — sockerless just stitches the workload to the cloud's existing identity primitives.
+- Not OIDC federation between GitHub/GitLab → cloud (separate Phase 112+ if it ever becomes interesting).
+
+**Sequencing.** Phase 111 starts after Phase 110's hello workflow passes on all 4 cells. Most of the work is already partially landed (Phase 109's sim endpoints + per-backend role config); this phase is the verification-and-fill-in pass plus the test workflow.
+
 ### Phase 106 — Real GitHub Actions runner integration (in flight)
 
 End-to-end test of GitHub Actions self-hosted runners pointed at sockerless via `DOCKER_HOST`. The repo already has *simulated* runner E2E tests (`tests/github_runner_e2e_test.go` replays the runner's Docker REST sequence); this phase runs the real `actions/runner` binary against sockerless and validates the live flow.
