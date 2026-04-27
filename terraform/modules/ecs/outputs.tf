@@ -113,8 +113,3 @@ output "ecr_repository_url" {
   description = "URL of the ECR repository for container images"
   value       = aws_ecr_repository.main.repository_url
 }
-
-output "dockerhub_credential_secret_arn" {
-  description = "ARN of the Docker Hub credential secret for ECR pull-through (passes through `var.dockerhub_credential_secret_arn` so downstream env-extraction can echo it to SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN). Empty if not configured."
-  value       = var.dockerhub_credential_secret_arn
-}

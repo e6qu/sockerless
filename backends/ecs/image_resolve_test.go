@@ -40,16 +40,22 @@ func TestExtractAccountID(t *testing.T) {
 	}
 }
 
-// dockerHubCredentialARN reads from SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN.
-// When unset, ensurePullThroughCache must reject docker-hub upstream with an
-// explicit error (no silent fallback).
-func TestDockerHubCredentialARN_ReadsEnv(t *testing.T) {
-	t.Setenv("SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN", "")
-	if got := dockerHubCredentialARN(); got != "" {
-		t.Fatalf("expected empty, got %q", got)
+// upstreamRegistryFor maps known public registry hostnames to ECR's
+// UpstreamRegistry enum. Used for ghcr.io / quay.io / etc. routing —
+// Docker Hub is handled inline in resolveImageURI by rewriting to AWS
+// Public Gallery without involving a pull-through cache.
+func TestUpstreamRegistryFor(t *testing.T) {
+	cases := map[string]string{
+		"ghcr.io":           "github-container-registry",
+		"quay.io":           "quay",
+		"registry.k8s.io":   "k8s",
+		"k8s.gcr.io":        "k8s",
+		"mcr.microsoft.com": "azure-container-registry",
+		"public.ecr.aws":    "ecr-public",
 	}
-	t.Setenv("SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN", "arn:aws:secretsmanager:eu-west-1:123:secret/skls-dh-XYZ")
-	if got := dockerHubCredentialARN(); got != "arn:aws:secretsmanager:eu-west-1:123:secret/skls-dh-XYZ" {
-		t.Fatalf("expected ARN, got %q", got)
+	for host, want := range cases {
+		if got := string(upstreamRegistryFor(host)); got != want {
+			t.Errorf("upstreamRegistryFor(%q) = %q, want %q", host, got, want)
+		}
 	}
 }

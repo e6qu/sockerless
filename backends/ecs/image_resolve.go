@@ -3,7 +3,6 @@ package ecs
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -11,65 +10,64 @@ import (
 	ecrtypes "github.com/aws/aws-sdk-go-v2/service/ecr/types"
 )
 
-// dockerHubCredentialARN returns the Secrets Manager ARN holding docker-hub
-// credentials for ECR pull-through cache, or "" if not configured.
-// Secret JSON shape: {"username":"...","accessToken":"..."}
-func dockerHubCredentialARN() string {
-	return os.Getenv("SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN")
-}
-
-// resolveImageURI converts a Docker image reference to an ECR URI that
-// Fargate can pull. Short references like `alpine` or `node:20` are
-// rewritten to the account's ECR pull-through cache, which fetches from
-// Docker Hub (or another upstream) on first request. Already-ECR URIs
-// are returned unchanged.
-// Examples:
-// - "alpine:latest" → "<account>.dkr.ecr.<region>.amazonaws.com/docker-hub/library/alpine:latest"
-// - "node:20" → "<account>.dkr.ecr.<region>.amazonaws.com/docker-hub/library/node:20"
-// - "ghcr.io/owner/repo:v1" → "<account>.dkr.ecr.<region>.amazonaws.com/ghcr-io/owner/repo:v1"
-// - "<account>.dkr.ecr.<region>.amazonaws.com/repo:tag" → used as-is
-// Returns an error (not a silent fallback) if pull-through cache
-// setup fails, so the operator sees the real failure (e.g. missing
-// docker-hub credential ARN — see.
+// resolveImageURI converts a Docker image reference to a registry that
+// Fargate can pull from. The routing rules:
+//
+//  1. Already-ECR URIs (`<account>.dkr.ecr.<region>.amazonaws.com/...`)
+//     pass through unchanged.
+//  2. Already-public-gallery URIs (`public.ecr.aws/...`) pass through —
+//     pullable by Fargate with no authentication.
+//  3. Docker Hub library refs (`alpine`, `node:20`, `nginx:alpine` —
+//     i.e. the official-image namespace) get rewritten to the AWS
+//     Public Gallery Docker mirror at
+//     `public.ecr.aws/docker/library/<name>:<tag>`. AWS hosts an
+//     official mirror; no credentials needed.
+//  4. Other public registries (`ghcr.io/...`, `quay.io/...`, etc.) get
+//     routed through an ECR pull-through cache rule that points at the
+//     upstream — none of these require credentials when caching public
+//     images. Fargate then pulls the cached copy from ECR.
+//  5. Docker Hub user/org refs (`myorg/myapp`) are rejected with a clear
+//     error because (a) AWS Public Gallery only mirrors `library/` and
+//     (b) Docker Hub user-image pull-through needs Docker Hub PAT-backed
+//     auth which the project's no-credentials-on-disk discipline avoids
+//     by design. Operators who need such an image should `docker push`
+//     it to their ECR repo first.
 func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error) {
 	if strings.Contains(ref, ".dkr.ecr.") && strings.Contains(ref, ".amazonaws.com") {
 		return ref, nil
 	}
-	// ECR Public (`public.ecr.aws/...`) is pullable by Fargate with no
-	// authentication. Pass through without rewriting through a
-	// pull-through cache rule.
 	if strings.HasPrefix(ref, "public.ecr.aws/") {
 		return ref, nil
 	}
 
 	registry, repo, tag := parseDockerRef(ref)
 
-	var cachePrefix, upstreamURL string
-	var upstreamKind ecrtypes.UpstreamRegistry
 	switch registry {
 	case "", "docker.io", "registry-1.docker.io":
-		cachePrefix = "docker-hub"
-		upstreamURL = "registry-1.docker.io"
-		upstreamKind = ecrtypes.UpstreamRegistryDockerHub
-		if !strings.Contains(repo, "/") {
-			repo = "library/" + repo
+		// Docker Hub. Library images are mirrored on AWS Public Gallery
+		// at `public.ecr.aws/docker/library/<name>`; user/org images
+		// aren't.
+		if strings.Contains(repo, "/") {
+			return ref, fmt.Errorf("docker hub user/org image %q is not on AWS Public Gallery; push it to your ECR repository first (sockerless avoids Docker Hub PAT credentials by design — use `docker push <ecr-uri>` to host the image yourself, or reference its public.ecr.aws equivalent if one exists)", ref)
 		}
-	default:
-		cachePrefix = strings.ReplaceAll(registry, ".", "-")
-		upstreamURL = registry
-		// Default to DockerHub-style upstream; ECR also supports ghcr, quay,
-		// Microsoft and others via distinct UpstreamRegistry values. For
-		// unknown registries the caller will see a clear ECR error on the
-		// first pull attempt rather than a silent misroute.
-		upstreamKind = ecrtypes.UpstreamRegistryDockerHub
+		mirrored := fmt.Sprintf("public.ecr.aws/docker/library/%s:%s", repo, tag)
+		s.Logger.Debug().Str("original", ref).Str("public", mirrored).Msg("resolved Docker Hub library ref via AWS Public Gallery")
+		return mirrored, nil
 	}
+
+	// Other registries (ghcr.io, quay.io, k8s.gcr.io, registry.k8s.io,
+	// etc.). Route through an ECR pull-through cache rule. Unauthenticated
+	// upstreams (which is most public-image registries) don't need any
+	// CredentialArn — the rule just needs to exist.
+	cachePrefix := strings.ReplaceAll(registry, ".", "-")
+	upstreamKind := upstreamRegistryFor(registry)
 
 	accountID := extractAccountID(s.config.ExecutionRoleARN)
 	if accountID == "" {
 		return ref, fmt.Errorf("cannot determine AWS account ID from ExecutionRoleARN %q", s.config.ExecutionRoleARN)
 	}
 
-	if err := s.ensurePullThroughCache(ctx, cachePrefix, upstreamURL, upstreamKind); err != nil {
+	if err := s.ensurePullThroughCache(ctx, cachePrefix, registry, upstreamKind); err != nil {
 		return ref, fmt.Errorf("ECR pull-through cache setup for %q: %w", cachePrefix, err)
 	}
 
@@ -78,13 +76,36 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 	return ecrURI, nil
 }
 
-// ensurePullThroughCache creates an ECR pull-through cache rule if
-// one doesn't already exist for the given prefix + upstream pair.
-// Idempotent on repeated calls. For docker-hub upstream,
-// AWS now requires a Secrets Manager `CredentialArn` containing the
-// upstream registry credentials — read from
-// `SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN`. Returns an explicit
-// error when the credential is needed but not configured.
+// upstreamRegistryFor maps a hostname to ECR's UpstreamRegistry enum.
+// Used for non-Docker-Hub registries; Docker Hub is handled inline by
+// rewriting to AWS Public Gallery.
+func upstreamRegistryFor(registry string) ecrtypes.UpstreamRegistry {
+	switch registry {
+	case "ghcr.io":
+		return ecrtypes.UpstreamRegistryGitHubContainerRegistry
+	case "quay.io":
+		return ecrtypes.UpstreamRegistryQuay
+	case "registry.k8s.io", "k8s.gcr.io":
+		return ecrtypes.UpstreamRegistryK8s
+	case "mcr.microsoft.com":
+		return ecrtypes.UpstreamRegistryAzureContainerRegistry
+	case "public.ecr.aws":
+		return ecrtypes.UpstreamRegistryEcrPublic
+	default:
+		// AWS rejects unknown upstream registries at create time with a
+		// clear error; let the API surface it rather than guessing.
+		return ecrtypes.UpstreamRegistryEcrPublic
+	}
+}
+
+// ensurePullThroughCache creates an ECR pull-through cache rule if one
+// doesn't already exist for the given prefix + upstream pair. Idempotent
+// on repeated calls. No CredentialArn is set — sockerless only routes
+// public registries through pull-through cache (Docker Hub library refs
+// go via AWS Public Gallery directly, see resolveImageURI). Operators
+// who need authenticated upstreams should provision the rule and the
+// secret out of band; sockerless will pick up the existing rule via the
+// describe call above and use it as-is.
 func (s *Server) ensurePullThroughCache(ctx context.Context, prefix, upstreamURL string, upstreamKind ecrtypes.UpstreamRegistry) error {
 	rules, err := s.aws.ECR.DescribePullThroughCacheRules(ctx, &ecr.DescribePullThroughCacheRulesInput{
 		EcrRepositoryPrefixes: []string{prefix},
@@ -98,24 +119,9 @@ func (s *Server) ensurePullThroughCache(ctx context.Context, prefix, upstreamURL
 		UpstreamRegistryUrl: aws.String(upstreamURL),
 		UpstreamRegistry:    upstreamKind,
 	}
-	// Docker Hub upstream rules require a Secrets Manager credential
-	// ARN on real AWS; wire it through when the operator has set one.
-	// The simulator accepts either shape, so we let the actual API
-	// decide rather than pre-checking — on real AWS the caller gets a
-	// wrapped error naming the env var; on the simulator the call
-	// succeeds and the tests run.
-	if upstreamKind == ecrtypes.UpstreamRegistryDockerHub && upstreamURL == "registry-1.docker.io" {
-		if credARN := dockerHubCredentialARN(); credARN != "" {
-			in.CredentialArn = aws.String(credARN)
-		}
-	}
-
 	if _, err := s.aws.ECR.CreatePullThroughCacheRule(ctx, in); err != nil {
 		if strings.Contains(err.Error(), "PullThroughCacheRuleAlreadyExists") {
 			return nil
-		}
-		if upstreamKind == ecrtypes.UpstreamRegistryDockerHub && upstreamURL == "registry-1.docker.io" && dockerHubCredentialARN() == "" && strings.Contains(strings.ToLower(err.Error()), "credential") {
-			return fmt.Errorf("docker-hub pull-through cache requires SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN (Secrets Manager ARN with {username, accessToken} JSON): %w", err)
 		}
 		return fmt.Errorf("create pull-through cache rule: %w", err)
 	}

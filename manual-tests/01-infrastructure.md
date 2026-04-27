@@ -6,38 +6,15 @@ Per-cloud terraform / terragrunt environments that bring up the live infra each 
 
 Shared VPC; Lambda reuses the ECS subnets + security group.
 
-### Prerequisite: Docker Hub credentials in Secrets Manager
+### Image source policy
 
-The ECS backend pulls Docker Hub images (`alpine:latest`, `node:20`, etc.) through an ECR pull-through cache. AWS requires a Secrets Manager secret containing valid Docker Hub credentials for the cache rule to mint pull tokens — this is a real cloud requirement, not a sockerless choice. Without it, the very first `docker run alpine:latest` fails with `UnsupportedUpstreamRegistryException` (per BUG-708 the backend surfaces this clearly rather than falling back).
+Sockerless on AWS deliberately avoids Docker Hub credentials. Three routes are supported, all credential-free:
 
-One-time setup per AWS account:
+- **AWS Public Gallery** (`public.ecr.aws/...`) — pullable directly by Fargate / Lambda. Sockerless's `resolveImageURI` rewrites Docker Hub library refs (`alpine`, `node:20`, `nginx:alpine`) to `public.ecr.aws/docker/library/<name>:<tag>` automatically, so a workflow's `image: alpine:latest` resolves to AWS's official Docker Hub mirror without operator setup.
+- **ECR pull-through cache** for other public registries (`ghcr.io/...`, `quay.io/...`, `registry.k8s.io/...`, `mcr.microsoft.com/...`). The backend creates the cache rule on first pull; no credentials.
+- **Operator-owned ECR** for everything else — push your private images to the ECR repository this terraform creates (`docker push <ecr-uri>`), then reference the ECR URI directly.
 
-```bash
-# 1. Mint a Docker Hub access token at
-#    https://hub.docker.com/settings/security → "New Access Token"
-#    Scope: Public Repo Read-only. Copy the token.
-
-# 2. Create the secret. The name MUST start with `ecr-pullthroughcache/`
-#    — the AWSServiceRoleForECRPullThroughCache role only has read
-#    permission on secrets matching that prefix (per AWS docs), and
-#    without that prefix every pull-through call fails 400 even with
-#    a valid PAT.
-read -s DH_TOKEN  # paste; hit enter
-read -p "Docker Hub username: " DH_USER
-
-aws secretsmanager create-secret \
-  --name ecr-pullthroughcache/sockerless-dockerhub \
-  --description "Docker Hub PAT for ECR pull-through cache (sockerless)" \
-  --region eu-west-1 \
-  --secret-string "{\"username\":\"$DH_USER\",\"accessToken\":\"$DH_TOKEN\"}"
-unset DH_TOKEN
-
-# 3. Capture the ARN — backend reads it via SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN.
-export SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN=$(aws secretsmanager describe-secret \
-  --secret-id ecr-pullthroughcache/sockerless-dockerhub --region eu-west-1 --query ARN --output text)
-```
-
-Once this secret exists you can persist the ARN export in `aws.sh` so future sessions pick it up automatically. The secret stays valid until you rotate the Docker Hub PAT.
+Docker Hub user/org images (e.g. `myorg/myapp:v1`) are rejected with a clear error pointing the operator at `docker push <ecr-uri>` — the project's no-credentials-on-disk discipline avoids Docker Hub PATs by design.
 
 ### Provision
 
@@ -60,9 +37,6 @@ for k,v in {
   'SOCKERLESS_ECS_PUBLIC_IP': 'true',
 }.items(): print(f'export {k}={v}')
 " > /tmp/ecs-env.sh
-
-# Also export the Docker Hub creds ARN from the prereq above.
-echo "export SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN=$SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN" >> /tmp/ecs-env.sh
 
 # Lambda infrastructure: IAM role, log group, ECR repo.
 cd terraform/environments/lambda/live
