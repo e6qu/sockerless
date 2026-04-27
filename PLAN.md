@@ -180,6 +180,57 @@ Once the Phase 110 4-cell harness runs end-to-end, the next gap is **workload id
 
 **Sequencing.** Phase 111 starts after Phase 110's hello workflow passes on all 4 cells. Most of the work is already partially landed (Phase 109's sim endpoints + per-backend role config); this phase is the verification-and-fill-in pass plus the test workflow.
 
+### Phase 112 — Instance metadata services (queued; conditional)
+
+Phase 111 covers the **identity-credential** half of cloud-instance metadata. Phase 112 covers the **everything else** half — instance attributes (region, AZ, instance type, network interface IPs), tags, user-data, custom attributes — exposed via the cloud's IMDS / metadata server. Activation gated on whether Phase 110/111 surface real-world workloads that trip on it; lots of CI tooling reads IMDS for region detection (`actions/cache` self-tunes by region, `gcloud config list project` falls through to metadata, Azure CLI uses IMDS for default tenant/subscription).
+
+**Per-cloud endpoint surface (what real cloud serves):**
+
+| Cloud | Native endpoint | What runner / app code asks for |
+|---|---|---|
+| AWS EC2 | `http://169.254.169.254/latest/meta-data/{instance-id,placement/region,placement/availability-zone,iam/security-credentials/<role>,...}` | Region, AZ, instance metadata, ec2 tags (IMDSv2 token-required) |
+| AWS Fargate | `${ECS_CONTAINER_METADATA_URI_V4}` → `http://169.254.170.2/v4/<task-id>/{stats,task,...}` | Task ARN, family/revision, container constraints, network namespace info |
+| AWS Lambda | env vars only — no metadata server. `AWS_REGION`, `AWS_LAMBDA_FUNCTION_NAME`, etc. directly in env. | Region, function name, memory tier |
+| GCP | `http://metadata.google.internal/computeMetadata/v1/{instance,project,...}` (requires `Metadata-Flavor: Google` header) | Project ID, zone, region, instance ID, custom attributes, network interfaces |
+| Azure | `http://169.254.169.254/metadata/instance?api-version=...` (requires `Metadata: true` header) | Subscription, resource group, region, VM size, tags, network IP |
+
+**Sim-side state:**
+- AWS STS sim: `GetCallerIdentity` ✓ closed in Phase 109.
+- AWS IMDSv2 sim: ✗ not implemented. Token-required flow (`PUT /latest/api/token` + `X-aws-ec2-metadata-token` on subsequent GETs).
+- AWS Fargate task-metadata v4 sim: ✗ not implemented. Must serve at the ECS task's eth0 link-local IP, scoped per task (so two concurrent sim tasks don't see each other's stats).
+- GCP metadata server sim: ✗ not implemented. Already has DNS resolution for `metadata.google.internal` if we add it, but the endpoint itself doesn't exist in the sim yet.
+- Azure IMDS sim: token endpoint at `/metadata/identity/oauth2/token` ✓ closed in Phase 109. Instance metadata at `/metadata/instance` ✗ not implemented.
+
+**Conditional activation.** If Phase 110/111 ship and the only metadata operations runners actually exercise are identity-credential reads, Phase 112 stays in the queue indefinitely. If real workloads start hitting region/AZ/instance-metadata endpoints, scope:
+
+1. **Per backend, attach the right metadata service to the workload's network namespace.**
+   - ECS: Fargate already serves task-metadata v4 by default — sockerless just needs to ensure the task's `ECS_CONTAINER_METADATA_URI_V4` env var flows through (probably already does).
+   - Lambda: env vars only — no IMDS. Phase 111 covers what's needed.
+   - Cloud Run / GCF: GCP metadata server reachable from inside the workload by default. Verify.
+   - ACA / AZF: Azure IMDS reachable from inside the container app by default. Verify (IMDS Phase 109 sim work is already on the right footing).
+
+2. **Sim-side endpoints.** Bring up the missing four:
+   - AWS IMDSv2 (with token discipline)
+   - AWS Fargate task-metadata v4 (per-task scoping)
+   - GCP metadata server with `Metadata-Flavor: Google` header gate
+   - Azure instance metadata at `/metadata/instance`
+
+   Each routed to the sim's HTTP listener; reachable from sim-provisioned containers via DNS/`/etc/hosts` injection or the link-local IP route already used elsewhere.
+
+3. **Runner workflow / pipeline coverage.** Add a `metadata-check.yml` per cell that runs the cloud's native metadata-introspection CLI:
+   - AWS: `aws ec2 describe-instances --instance-ids $(curl -s 169.254.169.254/latest/meta-data/instance-id)` (skipped on Fargate; replaced with `curl ${ECS_CONTAINER_METADATA_URI_V4}/task`).
+   - GCP: `curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/project/project-id`.
+   - Azure: `curl -H "Metadata: true" 'http://169.254.169.254/metadata/instance?api-version=2021-02-01'`.
+
+   Assert each returns a real-shape response (matching the cloud's documented JSON / text shape).
+
+**What this is not.**
+- Not a custom metadata broker — we mirror the cloud's native shape.
+- Not user-data or cloud-init scope — those are out of band of CI runner needs.
+- Not generic key-value storage — sockerless's own state lives in cloud-tag space, not metadata.
+
+**Sequencing.** Phase 112 starts only if a Phase 110 / 111 sweep finds runner workloads that trip on missing metadata endpoints. Until then it sits queued; the spec above is the design draft so the scope doesn't drift.
+
 ### Phase 106 — Real GitHub Actions runner integration (in flight)
 
 End-to-end test of GitHub Actions self-hosted runners pointed at sockerless via `DOCKER_HOST`. The repo already has *simulated* runner E2E tests (`tests/github_runner_e2e_test.go` replays the runner's Docker REST sequence); this phase runs the real `actions/runner` binary against sockerless and validates the live flow.
