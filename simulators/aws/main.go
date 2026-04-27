@@ -47,6 +47,7 @@ func main() {
 	registerCloudMap(awsRouter, srv)
 	registerSecretsManager(awsRouter, srv)
 	registerSSMParameterStore(awsRouter, srv)
+	registerKMS(awsRouter, srv)
 
 	// Register AWS Query Protocol services (Action form parameter routing)
 	queryRouter := sim.NewAWSQueryRouter()
