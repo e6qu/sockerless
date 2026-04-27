@@ -4,11 +4,8 @@ package github_runner_test
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,77 +18,58 @@ import (
 )
 
 // Real GitHub Actions runner harness — the 4-cell matrix's GH side.
-// Build-tag-gated (`github_runner_live`) so default `go test ./...`
-// doesn't try to download the runner. Run via:
+// The runner runs inside a *Linux container* on the host (Docker
+// Desktop / colima provides the Linux VM); the container is built
+// from tests/runners/github/dockerfile/. GitHub Actions' `container:`
+// directive only works on Linux runners, so a darwin-native runner
+// can't drive the canonical workloads. Sockerless's host arch is
+// irrelevant — the runner is just a docker *client* that points at
+// the sockerless daemon via DOCKER_HOST.
+//
+// Build-tag-gated (`github_runner_live`). Run via:
 //
 //	go test -v -tags github_runner_live -run TestGitHub_ECS_Hello \
 //	  -timeout 30m ./tests/runners/github
 //	go test -v -tags github_runner_live -run TestGitHub_Lambda_Hello \
 //	  -timeout 30m ./tests/runners/github
 //
-// Wiring + token strategy in docs/RUNNERS.md. Each cell:
-//   1. Reads the GitHub PAT via `gh auth token` (keychain-backed).
-//   2. Mints a registration token via the API.
-//   3. Self-heals — deletes any leftover sockerless-* runners from
-//      a previous crash.
-//   4. Downloads + configures + starts an ephemeral runner.
-//   5. Dispatches the workflow_dispatch, polls until success.
-//   6. Cleans up — runner.remove + cancel context + log capture.
-//
-// Each cell points at its own DOCKER_HOST (the ECS Sockerless daemon
-// on :3375 vs the Lambda daemon on :3376). Both daemons + live AWS
-// infra come up via manual-tests/01-infrastructure.md before the test
-// runs — the harness does not provision them.
+// Wiring + token strategy in docs/RUNNERS.md.
 
 const (
-	// Default to a release we've verified darwin-arm64 + linux-x64
-	// assets exist for. Override via SOCKERLESS_GH_RUNNER_VERSION.
 	defaultRunnerVersion = "2.334.0"
 	defaultRepo          = "e6qu/sockerless"
 	pollInterval         = 5 * time.Second
+	runnerImageTag       = "sockerless-actions-runner:local"
 )
 
-// TestGitHub_ECS_Hello — cell 1 of 4. Runs the hello-ecs workflow on
-// a self-hosted runner labelled `sockerless-ecs`, pointed at the ECS
-// Sockerless daemon.
 func TestGitHub_ECS_Hello(t *testing.T) {
 	runCell(t, cellConfig{
-		Label:    "sockerless-ecs",
-		Workflow: "hello-ecs.yml",
-		WorkflowYAML: workflowYAML("hello-ecs", "sockerless-ecs",
-			`      - run: echo "hello from sockerless ecs"`,
-			`      - run: env | sort`,
-		),
+		Label:             "sockerless-ecs",
+		Workflow:          "hello-ecs.yml",
 		DefaultDockerHost: "tcp://localhost:3375",
 	})
 }
 
-// TestGitHub_Lambda_Hello — cell 2 of 4. Same shape, Lambda label.
 func TestGitHub_Lambda_Hello(t *testing.T) {
 	runCell(t, cellConfig{
-		Label:    "sockerless-lambda",
-		Workflow: "hello-lambda.yml",
-		WorkflowYAML: workflowYAML("hello-lambda", "sockerless-lambda",
-			`      - run: echo "hello from sockerless lambda"`,
-			`      - run: date -u`,
-		),
+		Label:             "sockerless-lambda",
+		Workflow:          "hello-lambda.yml",
 		DefaultDockerHost: "tcp://localhost:3376",
 	})
 }
 
 type cellConfig struct {
-	Label             string // self-hosted label the workflow's runs-on requests
-	Workflow          string // file name under .github/workflows/
-	WorkflowYAML      string // body to commit
-	DefaultDockerHost string // overridden by SOCKERLESS_DOCKER_HOST env if set
+	Label             string
+	Workflow          string
+	DefaultDockerHost string
 }
 
 func runCell(t *testing.T, c cellConfig) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skipf("docker CLI required to run the runner container: %v", err)
+	}
 	repo := envOr("SOCKERLESS_GH_REPO", defaultRepo)
 	dockerHost := envOr("SOCKERLESS_DOCKER_HOST", c.DefaultDockerHost)
-	if os.Getenv("DOCKER_HOST") == "" {
-		os.Setenv("DOCKER_HOST", dockerHost)
-	}
 
 	pat, err := runnersinternal.GitHubPAT()
 	if err != nil {
@@ -104,36 +82,28 @@ func runCell(t *testing.T, c cellConfig) {
 	if err := runnersinternal.CleanupOldGitHubRunners(repo, "sockerless-"); err != nil {
 		t.Logf("warning: pre-run cleanup of old runners failed: %v", err)
 	}
+	cancelLeftoverRuns(t, repo, c.Workflow)
 
 	regToken, err := runnersinternal.MintGitHubRegistrationToken(repo)
 	if err != nil {
 		t.Fatalf("mint registration token: %v", err)
 	}
-	defer func() {
-		if rmTok, err := runnersinternal.MintGitHubRemoveToken(repo); err == nil {
-			t.Logf("issued removal token (length %d) for any orphan runner", len(rmTok))
-		}
-	}()
 
 	runnerName := fmt.Sprintf("sockerless-%s-%s", c.Label, runnersinternal.Timestamp())
-	workdir := t.TempDir()
-	t.Logf("runner workdir: %s", workdir)
 	t.Logf("runner name: %s", runnerName)
 
-	runnerBin := downloadRunner(t, workdir, defaultRunnerVersion)
-	configureRunner(t, runnerBin, repo, regToken, c.Label, runnerName)
-	cancel := startRunner(t, runnerBin)
-	t.Cleanup(func() {
-		cancel()
-		removeRunner(t, runnerBin, repo)
-	})
+	buildRunnerImage(t)
+	containerID := startRunnerContainer(t, runnerName, repo, regToken, c.Label, dockerHost)
+	t.Cleanup(func() { stopRunnerContainer(t, containerID) })
 
-	commitWorkflow(t, repo, c.Workflow, c.WorkflowYAML)
+	// Wait for the runner to register itself with GitHub. Until it
+	// shows up in the runners list, dispatch can't route the job.
+	waitForRunnerRegistration(t, repo, runnerName, 90*time.Second)
+
 	runID := dispatchWorkflow(t, repo, c.Workflow)
 	conclusion := waitForRun(t, repo, runID, 15*time.Minute)
 	if conclusion != "success" {
-		logs := fetchRunLogs(t, repo, runID)
-		t.Fatalf("workflow run %d concluded with %q, expected success.\nLogs:\n%s", runID, conclusion, logs)
+		t.Fatalf("workflow run %d concluded with %q, expected success.\nLogs at https://github.com/%s/actions/runs/%d", runID, conclusion, repo, runID)
 	}
 }
 
@@ -147,128 +117,147 @@ func envOr(key, fallback string) string {
 func pingDocker(t *testing.T, host string) {
 	t.Helper()
 	pingURL := strings.Replace(host, "tcp://", "http://", 1) + "/_ping"
-	resp, err := http.Get(pingURL)
+	resp, err := exec.Command("curl", "-fsS", pingURL).Output()
 	if err != nil {
 		t.Fatalf("Sockerless daemon at %s unreachable: %v", host, err)
 	}
-	resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Fatalf("Sockerless daemon at %s returned %d on /_ping", host, resp.StatusCode)
-	}
+	t.Logf("Sockerless ping: %s", strings.TrimSpace(string(resp)))
 }
 
-func downloadRunner(t *testing.T, workdir, version string) string {
+func buildRunnerImage(t *testing.T) {
 	t.Helper()
-	runnerDir := filepath.Join(workdir, "runner")
-	if err := os.MkdirAll(runnerDir, 0o755); err != nil {
-		t.Fatal(err)
+	dockerfileDir := dockerfileDir(t)
+	// Match the runner-binary arch to the local Docker VM arch.
+	// Docker Desktop on Apple Silicon ships a linux/arm64 VM; on
+	// Intel it's linux/amd64. Mapping runtime.GOARCH (the host's Go
+	// arch — same as Docker Desktop's VM arch in practice) → AWS-
+	// runner asset suffix.
+	targetArch := runtime.GOARCH
+	if targetArch == "amd64" {
+		targetArch = "x64"
 	}
-	// actions/runner uses `osx` (not `darwin`) in its release-asset
-	// naming convention for macOS, and `x64` (not `amd64`) for Intel.
-	// Translate Go's runtime values to match the asset path.
-	osTag := runtime.GOOS
-	if osTag == "darwin" {
-		osTag = "osx"
-	}
-	archTag := runtime.GOARCH
-	if archTag == "amd64" {
-		archTag = "x64"
-	}
-	url := fmt.Sprintf("https://github.com/actions/runner/releases/download/v%s/actions-runner-%s-%s-%s.tar.gz",
-		version, osTag, archTag, version)
-	t.Logf("downloading runner: %s", url)
-	resp, err := http.Get(url)
-	if err != nil {
-		t.Fatalf("download runner: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Fatalf("download runner: HTTP %d", resp.StatusCode)
-	}
-	tarPath := filepath.Join(runnerDir, "runner.tar.gz")
-	f, err := os.Create(tarPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := io.Copy(f, resp.Body); err != nil {
-		f.Close()
-		t.Fatal(err)
-	}
-	f.Close()
-	cmd := exec.Command("tar", "xzf", tarPath, "-C", runnerDir)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("extract runner: %v\n%s", err, out)
-	}
-	return filepath.Join(runnerDir, "config.sh")
-}
-
-func configureRunner(t *testing.T, runnerBin, repo, token, label, name string) {
-	t.Helper()
-	cmd := exec.Command(runnerBin,
-		"--url", "https://github.com/"+repo,
-		"--token", token,
-		"--unattended",
-		"--ephemeral",
-		"--labels", label+",sockerless",
-		"--name", name,
-		"--replace",
+	cmd := exec.Command("docker", "build",
+		"--build-arg", "TARGETARCH="+targetArch,
+		"--build-arg", "RUNNER_VERSION="+defaultRunnerVersion,
+		"-t", runnerImageTag,
+		dockerfileDir,
 	)
-	cmd.Dir = filepath.Dir(runnerBin)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("configure runner: %v\n%s", err, out)
+	cmd.Stdout = testLogWriter{t: t, prefix: "build: "}
+	cmd.Stderr = testLogWriter{t: t, prefix: "build: "}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("docker build runner image: %v", err)
 	}
+	t.Logf("built runner image %s for linux/%s", runnerImageTag, targetArch)
 }
 
-func startRunner(t *testing.T, runnerBin string) func() {
+func dockerfileDir(t *testing.T) string {
 	t.Helper()
-	runScript := filepath.Join(filepath.Dir(runnerBin), "run.sh")
-	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, runScript)
-	cmd.Dir = filepath.Dir(runnerBin)
-	cmd.Stdout = testLogWriter{t: t, prefix: "runner: "}
-	cmd.Stderr = testLogWriter{t: t, prefix: "runner: "}
-	if err := cmd.Start(); err != nil {
-		cancel()
-		t.Fatalf("start runner: %v", err)
-	}
-	time.Sleep(10 * time.Second) // settle window before workflow dispatch
-	return func() {
-		cancel()
-		_ = cmd.Wait()
-	}
-}
-
-func removeRunner(t *testing.T, runnerBin, repo string) {
-	t.Helper()
-	rmTok, err := runnersinternal.MintGitHubRemoveToken(repo)
+	wd, err := os.Getwd()
 	if err != nil {
-		t.Logf("removal token fetch failed (runner left for GH auto-cleanup): %v", err)
+		t.Fatal(err)
+	}
+	// Walk up until we find tests/runners/github/dockerfile.
+	cur := wd
+	for i := 0; i < 5; i++ {
+		candidate := filepath.Join(cur, "tests", "runners", "github", "dockerfile")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+		// Also check sibling-relative for `go test` in package dir.
+		candidate = filepath.Join(cur, "dockerfile")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+		cur = filepath.Dir(cur)
+	}
+	t.Fatalf("could not locate runner dockerfile dir from %s", wd)
+	return ""
+}
+
+func startRunnerContainer(t *testing.T, name, repo, regToken, label, dockerHost string) string {
+	t.Helper()
+	// `host.docker.internal` resolves to the host laptop from inside
+	// the container on Docker Desktop / colima. Translate the harness's
+	// localhost-form DOCKER_HOST into that for the runner container's
+	// internal use.
+	innerHost := strings.Replace(dockerHost, "localhost", "host.docker.internal", 1)
+	innerHost = strings.Replace(innerHost, "127.0.0.1", "host.docker.internal", 1)
+
+	args := []string{"run", "-d", "--rm",
+		"--name", name,
+		"--add-host", "host.docker.internal:host-gateway",
+		"-e", "RUNNER_REPO_URL=https://github.com/" + repo,
+		"-e", "RUNNER_TOKEN=" + regToken,
+		"-e", "RUNNER_NAME=" + name,
+		"-e", "RUNNER_LABELS=" + label + ",sockerless",
+		"-e", "DOCKER_HOST=" + innerHost,
+		runnerImageTag,
+	}
+	out, err := exec.Command("docker", args...).Output()
+	if err != nil {
+		t.Fatalf("docker run runner: %v", err)
+	}
+	id := strings.TrimSpace(string(out))
+	t.Logf("started runner container %s (%s)", name, id[:12])
+
+	// Stream container logs for visibility.
+	go func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		cmd := exec.CommandContext(ctx, "docker", "logs", "-f", id)
+		cmd.Stdout = testLogWriter{t: t, prefix: "runner: "}
+		cmd.Stderr = testLogWriter{t: t, prefix: "runner: "}
+		_ = cmd.Run()
+	}()
+	return id
+}
+
+func stopRunnerContainer(t *testing.T, id string) {
+	t.Helper()
+	if id == "" {
 		return
 	}
-	cmd := exec.Command(runnerBin, "remove", "--token", rmTok, "--unattended")
-	cmd.Dir = filepath.Dir(runnerBin)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Logf("runner remove warning: %v\n%s", err, out)
+	if out, err := exec.Command("docker", "stop", id).CombinedOutput(); err != nil {
+		t.Logf("docker stop %s: %v\n%s", id, err, out)
 	}
 }
 
-func commitWorkflow(t *testing.T, repo, name, body string) {
+func waitForRunnerRegistration(t *testing.T, repo, name string, timeout time.Duration) {
 	t.Helper()
-	path := ".github/workflows/" + name
-	var sha string
-	if out, err := exec.Command("gh", "api", "/repos/"+repo+"/contents/"+path, "--jq", ".sha").Output(); err == nil {
-		sha = strings.TrimSpace(string(out))
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		out, err := exec.Command("gh", "api",
+			"/repos/"+repo+"/actions/runners",
+			"--jq", `[.runners[] | select(.name=="`+name+`" and .status=="online")] | length`,
+		).Output()
+		if err == nil && strings.TrimSpace(string(out)) == "1" {
+			t.Logf("runner %s registered + online", name)
+			return
+		}
+		time.Sleep(pollInterval)
 	}
-	args := []string{
-		"api", "-X", "PUT", "/repos/" + repo + "/contents/" + path,
-		"-f", "message=test: harness workflow update",
-		"-f", "content=" + base64.StdEncoding.EncodeToString([]byte(body)),
+	t.Fatalf("runner %s did not appear online within %s", name, timeout)
+}
+
+// cancelLeftoverRuns forces `cancelled` on any queued/in-progress runs
+// for this workflow that an earlier crashed harness left behind, so a
+// fresh ephemeral runner doesn't get poached by an old job. Each
+// previous harness session would otherwise leave a queued workflow_dispatch
+// run waiting for its (now-deregistered) runner.
+func cancelLeftoverRuns(t *testing.T, repo, workflow string) {
+	t.Helper()
+	out, err := exec.Command("gh", "api",
+		"/repos/"+repo+"/actions/workflows/"+workflow+"/runs?status=queued&per_page=20",
+		"--jq", "[.workflow_runs[] | .id]",
+	).Output()
+	if err != nil {
+		return
 	}
-	if sha != "" {
-		args = append(args, "-f", "sha="+sha)
-	}
-	if out, err := exec.Command("gh", args...).CombinedOutput(); err != nil {
-		t.Fatalf("commit workflow: %v\n%s", err, out)
+	var ids []int64
+	_ = json.Unmarshal(out, &ids)
+	for _, id := range ids {
+		_ = exec.Command("gh", "api", "-X", "POST",
+			fmt.Sprintf("/repos/%s/actions/runs/%d/cancel", repo, id)).Run()
 	}
 }
 
@@ -281,19 +270,26 @@ func dispatchWorkflow(t *testing.T, repo, file string) int64 {
 	if out, err := disp.CombinedOutput(); err != nil {
 		t.Fatalf("dispatch workflow: %v\n%s", err, out)
 	}
+	dispatchedAt := time.Now().Add(-30 * time.Second) // 30s slack for clock skew
 	deadline := time.Now().Add(2 * time.Minute)
 	for time.Now().Before(deadline) {
 		out, err := exec.Command("gh", "api",
-			"/repos/"+repo+"/actions/workflows/"+file+"/runs?per_page=1",
+			"/repos/"+repo+"/actions/workflows/"+file+"/runs?per_page=5",
 		).Output()
 		if err == nil {
 			var resp struct {
 				WorkflowRuns []struct {
-					ID int64 `json:"id"`
+					ID        int64     `json:"id"`
+					Event     string    `json:"event"`
+					CreatedAt time.Time `json:"created_at"`
 				} `json:"workflow_runs"`
 			}
-			if jerr := json.Unmarshal(out, &resp); jerr == nil && len(resp.WorkflowRuns) > 0 {
-				return resp.WorkflowRuns[0].ID
+			if jerr := json.Unmarshal(out, &resp); jerr == nil {
+				for _, r := range resp.WorkflowRuns {
+					if r.Event == "workflow_dispatch" && r.CreatedAt.After(dispatchedAt) {
+						return r.ID
+					}
+				}
 			}
 		}
 		time.Sleep(pollInterval)
@@ -323,32 +319,6 @@ func waitForRun(t *testing.T, repo string, runID int64, timeout time.Duration) s
 	}
 	t.Fatalf("workflow run %d did not complete within %s", runID, timeout)
 	return ""
-}
-
-func fetchRunLogs(t *testing.T, repo string, runID int64) string {
-	t.Helper()
-	out, err := exec.Command("gh", "api", fmt.Sprintf("/repos/%s/actions/runs/%d/logs", repo, runID)).Output()
-	if err != nil {
-		return fmt.Sprintf("(failed to fetch logs: %v)", err)
-	}
-	return string(out)
-}
-
-func workflowYAML(name, label string, steps ...string) string {
-	return fmt.Sprintf(`name: %s
-on:
-  workflow_dispatch:
-  pull_request:
-    paths:
-      - tests/runners/**
-jobs:
-  hello:
-    runs-on: [self-hosted, %s]
-    container:
-      image: alpine:latest
-    steps:
-%s
-`, name, label, strings.Join(steps, "\n"))
 }
 
 func zero(b []byte) {
