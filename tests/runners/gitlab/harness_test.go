@@ -13,51 +13,122 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	runnersinternal "github.com/sockerless/tests/runners/internal"
 )
 
-// Real GitLab runner harness. Gated by the `gitlab_runner_live` build
-// tag. Run via:
+// Real GitLab Runner harness — the 4-cell matrix's GitLab side.
+// Build-tag-gated (`gitlab_runner_live`). Run via:
 //
-//   go test -v -tags gitlab_runner_live -run TestRealGitLabRunner -timeout 30m
+//	go test -v -tags gitlab_runner_live -run TestGitLab_ECS_Hello \
+//	  -timeout 30m ./tests/runners/gitlab
+//	go test -v -tags gitlab_runner_live -run TestGitLab_Lambda_Hello \
+//	  -timeout 30m ./tests/runners/gitlab
 //
-// Prereqs in tests/runners/gitlab/README.md.
+// Wiring + token strategy in docs/RUNNERS.md. Each cell:
+//   1. Reads the GitLab PAT from the macOS Keychain.
+//   2. Resolves the project ID for SOCKERLESS_GL_PROJECT.
+//   3. Self-heals — deletes any leftover sockerless-* runners.
+//   4. Creates a runner via POST /api/v4/user/runners (modern API);
+//      receives an authentication token.
+//   5. Registers gitlab-runner with --executor docker --docker-host.
+//   6. Commits the .gitlab-ci.yml to a per-cell branch via API; triggers
+//      a pipeline on that branch via POST /projects/:id/pipeline.
+//   7. Polls until success.
+//   8. Cleanup — gitlab-runner unregister, DELETE /runners/:id.
 
 const (
-	defaultGLURL  = "https://gitlab.com"
-	defaultGLTags = "sockerless,sockerless-ecs"
-	pollInterval  = 5 * time.Second
+	defaultGLProject = "e6qu/sockerless"
+	defaultGLURL     = "https://gitlab.com"
+	pollInterval     = 5 * time.Second
 )
 
-func TestRealGitLabRunner(t *testing.T) {
-	regToken := os.Getenv("SOCKERLESS_GL_RUNNER_TOKEN")
-	project := os.Getenv("SOCKERLESS_GL_PROJECT")
-	apiToken := os.Getenv("SOCKERLESS_GL_API_TOKEN")
-	if regToken == "" || project == "" {
-		t.Skip("SOCKERLESS_GL_RUNNER_TOKEN + SOCKERLESS_GL_PROJECT not set — skipping")
+// TestGitLab_ECS_Hello — cell 3 of 4.
+func TestGitLab_ECS_Hello(t *testing.T) {
+	runCell(t, cellConfig{
+		Tag:          "sockerless-ecs",
+		BranchPrefix: "sockerless-ecs",
+		PipelineYAML: pipelineYAML("sockerless-ecs",
+			`    - echo "hello from sockerless ecs"`,
+			`    - env | sort`,
+		),
+		DefaultDockerHost: "tcp://localhost:3375",
+	})
+}
+
+// TestGitLab_Lambda_Hello — cell 4 of 4.
+func TestGitLab_Lambda_Hello(t *testing.T) {
+	runCell(t, cellConfig{
+		Tag:          "sockerless-lambda",
+		BranchPrefix: "sockerless-lambda",
+		PipelineYAML: pipelineYAML("sockerless-lambda",
+			`    - echo "hello from sockerless lambda"`,
+			`    - date -u`,
+		),
+		DefaultDockerHost: "tcp://localhost:3376",
+	})
+}
+
+type cellConfig struct {
+	Tag               string
+	BranchPrefix      string
+	PipelineYAML      string
+	DefaultDockerHost string
+}
+
+func runCell(t *testing.T, c cellConfig) {
+	if _, err := exec.LookPath("gitlab-runner"); err != nil {
+		t.Skipf("gitlab-runner not installed (brew install gitlab-runner): %v", err)
 	}
-	if apiToken == "" {
-		t.Skip("SOCKERLESS_GL_API_TOKEN not set — needed for pipeline triggering")
-	}
+	projectPath := envOr("SOCKERLESS_GL_PROJECT", defaultGLProject)
+	dockerHost := envOr("SOCKERLESS_DOCKER_HOST", c.DefaultDockerHost)
 	if os.Getenv("DOCKER_HOST") == "" {
-		t.Fatal("DOCKER_HOST must be set to a running sockerless instance")
+		os.Setenv("DOCKER_HOST", dockerHost)
 	}
 
-	glURL := envOr("SOCKERLESS_GL_URL", defaultGLURL)
-	tags := envOr("SOCKERLESS_GL_RUNNER_TAGS", defaultGLTags)
+	pat, err := runnersinternal.GitLabPAT()
+	if err != nil {
+		t.Skipf("GitLab PAT unavailable: %v", err)
+	}
+	defer zero(pat)
+
+	pingDocker(t, dockerHost)
+
+	projectID, err := runnersinternal.ResolveGitLabProjectID(pat, projectPath)
+	if err != nil {
+		t.Fatalf("resolve project: %v", err)
+	}
+
+	if err := runnersinternal.CleanupOldGitLabRunners(pat, projectID, "sockerless-"); err != nil {
+		t.Logf("warning: pre-run cleanup failed: %v", err)
+	}
+
+	description := fmt.Sprintf("sockerless-%s-%s", c.Tag, runnersinternal.Timestamp())
+	runner, err := runnersinternal.CreateGitLabRunner(pat, projectID, description, []string{c.Tag, "sockerless"})
+	if err != nil {
+		t.Fatalf("create GitLab runner: %v", err)
+	}
+	t.Logf("registered GitLab runner %d (%s)", runner.ID, description)
+	t.Cleanup(func() {
+		if err := runnersinternal.DeleteGitLabRunner(pat, runner.ID); err != nil {
+			t.Logf("delete GitLab runner %d: %v", runner.ID, err)
+		}
+	})
 
 	workdir := t.TempDir()
-	t.Logf("runner workdir: %s", workdir)
-
 	configPath := filepath.Join(workdir, "config.toml")
-	authToken := registerRunner(t, glURL, regToken, tags, configPath)
-	t.Cleanup(func() { unregisterRunner(t, glURL, authToken, configPath) })
+	registerRunner(t, runner.Token, dockerHost, description, configPath)
+	stop := startRunner(t, configPath)
+	t.Cleanup(stop)
 
-	runnerCancel := startRunner(t, configPath)
-	t.Cleanup(runnerCancel)
+	branch := fmt.Sprintf("%s-%s", c.BranchPrefix, runnersinternal.Timestamp())
+	defaultBr := defaultBranch(t, pat, projectPath)
+	createBranch(t, pat, projectPath, branch, defaultBr)
+	t.Cleanup(func() { deleteBranch(t, pat, projectPath, branch) })
 
-	commitPipeline(t, glURL, apiToken, project, helloPipelineYAML(tags))
-	pipelineID := triggerPipeline(t, glURL, apiToken, project)
-	status := waitForPipeline(t, glURL, apiToken, project, pipelineID, 15*time.Minute)
+	commitPipeline(t, pat, projectPath, branch, c.PipelineYAML)
+	pipelineID := triggerPipeline(t, pat, projectPath, branch)
+	status := waitForPipeline(t, pat, projectPath, pipelineID, 15*time.Minute)
 	if status != "success" {
 		t.Fatalf("pipeline %d concluded with %q, expected success", pipelineID, status)
 	}
@@ -70,61 +141,32 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-// registerRunner shells out to `gitlab-runner register --non-interactive`
-// and writes a config.toml at the supplied path. Returns the runner's
-// long-lived auth token (parsed from the config file) so the cleanup
-// step can unregister it.
-func registerRunner(t *testing.T, glURL, regToken, tags, configPath string) string {
+func pingDocker(t *testing.T, host string) {
 	t.Helper()
-	dockerHost := os.Getenv("DOCKER_HOST")
+	pingURL := strings.Replace(host, "tcp://", "http://", 1) + "/_ping"
+	resp, err := http.Get(pingURL)
+	if err != nil {
+		t.Fatalf("Sockerless daemon at %s unreachable: %v", host, err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("Sockerless daemon at %s returned %d", host, resp.StatusCode)
+	}
+}
+
+func registerRunner(t *testing.T, authToken, dockerHost, description, configPath string) {
+	t.Helper()
 	cmd := exec.Command("gitlab-runner", "register", "--non-interactive",
-		"--url", glURL,
-		"--registration-token", regToken,
+		"--url", defaultGLURL,
+		"--token", authToken,
 		"--executor", "docker",
 		"--docker-image", "alpine:latest",
 		"--docker-host", dockerHost,
-		"--tag-list", tags,
-		"--description", "sockerless-test-runner-"+timestamp(),
-		"--locked", "false",
-		"--access-level", "not_protected",
+		"--description", description,
 		"--config", configPath,
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("register runner: %v\n%s", err, out)
-	}
-	return parseRunnerToken(t, configPath)
-}
-
-// parseRunnerToken pulls the `token = "..."` line out of a config.toml.
-// Hand-parsed because the standard `tomlite` libs aren't a dep here.
-func parseRunnerToken(t *testing.T, configPath string) string {
-	t.Helper()
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("read config.toml: %v", err)
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "token = ") {
-			return strings.Trim(strings.TrimPrefix(line, "token = "), `"`)
-		}
-	}
-	t.Fatal("config.toml missing runner token")
-	return ""
-}
-
-func unregisterRunner(t *testing.T, glURL, authToken, configPath string) {
-	t.Helper()
-	if authToken == "" {
-		return
-	}
-	cmd := exec.Command("gitlab-runner", "unregister",
-		"--url", glURL,
-		"--token", authToken,
-		"--config", configPath,
-	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Logf("unregister runner: %v\n%s", err, out)
+		t.Fatalf("gitlab-runner register: %v\n%s", err, out)
 	}
 }
 
@@ -134,9 +176,9 @@ func startRunner(t *testing.T, configPath string) func() {
 	cmd.Stdout = testLogWriter{t: t, prefix: "runner: "}
 	cmd.Stderr = testLogWriter{t: t, prefix: "runner: "}
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("start runner: %v", err)
+		t.Fatalf("start gitlab-runner: %v", err)
 	}
-	time.Sleep(5 * time.Second) // give it a moment to settle
+	time.Sleep(5 * time.Second)
 	return func() {
 		if cmd.Process != nil {
 			_ = cmd.Process.Signal(os.Interrupt)
@@ -145,46 +187,11 @@ func startRunner(t *testing.T, configPath string) func() {
 	}
 }
 
-// commitPipeline writes .gitlab-ci.yml to the default branch via the
-// GitLab Repository Files API.
-func commitPipeline(t *testing.T, glURL, apiToken, project, body string) {
+func defaultBranch(t *testing.T, pat []byte, project string) string {
 	t.Helper()
-	encoded := url.PathEscape(".gitlab-ci.yml")
-	endpoint := fmt.Sprintf("%s/api/v4/projects/%s/repository/files/%s",
-		glURL, url.PathEscape(project), encoded)
-
-	branch := defaultBranch(t, glURL, apiToken, project)
-	payload := map[string]string{
-		"branch":         branch,
-		"content":        body,
-		"commit_message": "test: harness pipeline update",
-	}
-	body1 := mustJSON(payload)
-
-	// Try update (PUT). If the file doesn't exist, fall back to POST
-	// (create). This is two paths because GitLab returns 400 for
-	// PUT-on-missing instead of an explicit signal.
-	for _, method := range []string{http.MethodPut, http.MethodPost} {
-		req, _ := http.NewRequest(method, endpoint, strings.NewReader(body1))
-		req.Header.Set("PRIVATE-TOKEN", apiToken)
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("commit pipeline (%s): %v", method, err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode == 200 || resp.StatusCode == 201 {
-			return
-		}
-	}
-	t.Fatal("commit pipeline: both PUT and POST failed")
-}
-
-func defaultBranch(t *testing.T, glURL, apiToken, project string) string {
-	t.Helper()
-	endpoint := fmt.Sprintf("%s/api/v4/projects/%s", glURL, url.PathEscape(project))
+	endpoint := defaultGLURL + "/api/v4/projects/" + url.PathEscape(project)
 	req, _ := http.NewRequest(http.MethodGet, endpoint, nil)
-	req.Header.Set("PRIVATE-TOKEN", apiToken)
+	req.Header.Set("PRIVATE-TOKEN", string(pat))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("fetch project: %v", err)
@@ -199,13 +206,66 @@ func defaultBranch(t *testing.T, glURL, apiToken, project string) string {
 	return p.DefaultBranch
 }
 
-func triggerPipeline(t *testing.T, glURL, apiToken, project string) int64 {
+func createBranch(t *testing.T, pat []byte, project, branch, ref string) {
 	t.Helper()
-	branch := defaultBranch(t, glURL, apiToken, project)
-	endpoint := fmt.Sprintf("%s/api/v4/projects/%s/pipeline?ref=%s",
-		glURL, url.PathEscape(project), url.QueryEscape(branch))
+	endpoint := fmt.Sprintf("%s/api/v4/projects/%s/repository/branches?branch=%s&ref=%s",
+		defaultGLURL, url.PathEscape(project), url.QueryEscape(branch), url.QueryEscape(ref))
 	req, _ := http.NewRequest(http.MethodPost, endpoint, nil)
-	req.Header.Set("PRIVATE-TOKEN", apiToken)
+	req.Header.Set("PRIVATE-TOKEN", string(pat))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("create branch %s: %v", branch, err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 201 && resp.StatusCode != 400 { // 400 = already exists
+		t.Fatalf("create branch %s: HTTP %d", branch, resp.StatusCode)
+	}
+}
+
+func deleteBranch(t *testing.T, pat []byte, project, branch string) {
+	t.Helper()
+	endpoint := fmt.Sprintf("%s/api/v4/projects/%s/repository/branches/%s",
+		defaultGLURL, url.PathEscape(project), url.PathEscape(branch))
+	req, _ := http.NewRequest(http.MethodDelete, endpoint, nil)
+	req.Header.Set("PRIVATE-TOKEN", string(pat))
+	resp, err := http.DefaultClient.Do(req)
+	if err == nil {
+		resp.Body.Close()
+	}
+}
+
+func commitPipeline(t *testing.T, pat []byte, project, branch, body string) {
+	t.Helper()
+	endpoint := fmt.Sprintf("%s/api/v4/projects/%s/repository/files/%s",
+		defaultGLURL, url.PathEscape(project), url.PathEscape(".gitlab-ci.yml"))
+	payload := map[string]string{
+		"branch":         branch,
+		"content":        body,
+		"commit_message": "test: harness pipeline",
+	}
+	bodyBytes, _ := json.Marshal(payload)
+	for _, method := range []string{http.MethodPost, http.MethodPut} {
+		req, _ := http.NewRequest(method, endpoint, strings.NewReader(string(bodyBytes)))
+		req.Header.Set("PRIVATE-TOKEN", string(pat))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("commit pipeline (%s): %v", method, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode == 200 || resp.StatusCode == 201 {
+			return
+		}
+	}
+	t.Fatal("commit pipeline: both POST and PUT failed")
+}
+
+func triggerPipeline(t *testing.T, pat []byte, project, branch string) int64 {
+	t.Helper()
+	endpoint := fmt.Sprintf("%s/api/v4/projects/%s/pipeline?ref=%s",
+		defaultGLURL, url.PathEscape(project), url.QueryEscape(branch))
+	req, _ := http.NewRequest(http.MethodPost, endpoint, nil)
+	req.Header.Set("PRIVATE-TOKEN", string(pat))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("trigger pipeline: %v", err)
@@ -223,14 +283,14 @@ func triggerPipeline(t *testing.T, glURL, apiToken, project string) int64 {
 	return p.ID
 }
 
-func waitForPipeline(t *testing.T, glURL, apiToken, project string, id int64, timeout time.Duration) string {
+func waitForPipeline(t *testing.T, pat []byte, project string, id int64, timeout time.Duration) string {
 	t.Helper()
 	endpoint := fmt.Sprintf("%s/api/v4/projects/%s/pipelines/%d",
-		glURL, url.PathEscape(project), id)
+		defaultGLURL, url.PathEscape(project), id)
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		req, _ := http.NewRequest(http.MethodGet, endpoint, nil)
-		req.Header.Set("PRIVATE-TOKEN", apiToken)
+		req.Header.Set("PRIVATE-TOKEN", string(pat))
 		resp, err := http.DefaultClient.Do(req)
 		if err == nil {
 			var p struct {
@@ -250,25 +310,20 @@ func waitForPipeline(t *testing.T, glURL, apiToken, project string, id int64, ti
 	return ""
 }
 
-func mustJSON(v any) string {
-	b, _ := json.Marshal(v)
-	return string(b)
-}
-
-func helloPipelineYAML(tags string) string {
-	primary := strings.Split(tags, ",")[0]
+func pipelineYAML(tag string, scriptLines ...string) string {
 	return fmt.Sprintf(`hello:
   image: alpine:latest
   tags:
     - %s
   script:
-    - echo "hello from sockerless"
-    - env | sort
-`, primary)
+%s
+`, tag, strings.Join(scriptLines, "\n"))
 }
 
-func timestamp() string {
-	return time.Now().UTC().Format("20060102-150405")
+func zero(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
 }
 
 type testLogWriter struct {

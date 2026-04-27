@@ -1,6 +1,6 @@
 # Known Bugs
 
-**844 total — 844 fixed, 0 open, 1 false positive.** Three sections: [Open](#open) / [False positives](#false-positives) / [Resolved](#resolved). Per-project rule: no bug deferral, no fakes, no fallbacks — every filed bug ships a fix in the same round. Fix detail beyond the one-liner: see `git log <commit>` or the linked PR.
+**845 total — 845 fixed, 0 open, 1 false positive.** Three sections: [Open](#open) / [False positives](#false-positives) / [Resolved](#resolved). Per-project rule: no bug deferral, no fakes, no fallbacks — every filed bug ships a fix in the same round. Fix detail beyond the one-liner: see `git log <commit>` or the linked PR.
 
 For narrative context see [WHAT_WE_DID.md](WHAT_WE_DID.md) and [PLAN.md](PLAN.md). Architecture-level state derivation is in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) and [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md).
 
@@ -21,6 +21,12 @@ Findings that look like bugs under the "no fakes, no workarounds" principle but 
 ## Resolved
 
 One-liner per bug. Latest first; pre-Round-7 entries are extra-terse (full detail in `git log` / PR descriptions).
+
+### Phase 110 prep (PR #122 — open) (BUG-845)
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| 845 | M | terraform | `terraform/environments/lambda/live/terragrunt.hcl` was pinned to `us-east-1` + bucket `sockerless-terraform-state` + dynamodb_table — drift from the ECS live env (`eu-west-1` + `sockerless-tf-state`). `manual-tests/01-infrastructure.md` documents Lambda reusing the ECS subnets + security group, which is impossible cross-region. Fix: realign Lambda live env to `eu-west-1` + `sockerless-tf-state`; mirror the ECS env's `provider "aws"` generate block; drop the dynamodb_table reference (ECS env doesn't use one). |
 
 ### PR #120 — typed-driver migration CI pass (BUG-836..844)
 
