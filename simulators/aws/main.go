@@ -45,6 +45,8 @@ func main() {
 	registerECR(awsRouter, srv)
 	registerCloudWatchLogs(awsRouter, srv)
 	registerCloudMap(awsRouter, srv)
+	registerSecretsManager(awsRouter, srv)
+	registerSSMParameterStore(awsRouter, srv)
 
 	// Register AWS Query Protocol services (Action form parameter routing)
 	queryRouter := sim.NewAWSQueryRouter()
