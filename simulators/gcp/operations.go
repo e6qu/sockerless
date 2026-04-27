@@ -8,7 +8,9 @@ import (
 )
 
 func registerOperations(srv *sim.Server) {
-	operations := sim.MakeStore[Operation](srv.DB(), "operations")
+	if crOperations == nil {
+		crOperations = sim.MakeStore[Operation](srv.DB(), "operations")
+	}
 
 	// Get operation - v1 prefix
 	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/operations/{operation}", func(w http.ResponseWriter, r *http.Request) {
@@ -17,16 +19,13 @@ func registerOperations(srv *sim.Server) {
 		opID := sim.PathParam(r, "operation")
 		name := fmt.Sprintf("projects/%s/locations/%s/operations/%s", project, location, opID)
 
-		op, ok := operations.Get(name)
-		if !ok {
-			// Since the simulator returns all operations as immediately done,
-			// and we don't persist them, return a generic done operation.
-			op = Operation{
-				Name: name,
-				Done: true,
-			}
+		if op, ok := crOperations.Get(name); ok {
+			sim.WriteJSON(w, http.StatusOK, op)
+			return
 		}
-		sim.WriteJSON(w, http.StatusOK, op)
+		// Real GCP returns NOT_FOUND when an operation doesn't exist; the
+		// previous synthetic done=true response masked client-side bugs.
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "operation %q not found", name)
 	})
 
 	// Get operation - v2 prefix
@@ -36,14 +35,10 @@ func registerOperations(srv *sim.Server) {
 		opID := sim.PathParam(r, "operation")
 		name := fmt.Sprintf("projects/%s/locations/%s/operations/%s", project, location, opID)
 
-		op, ok := operations.Get(name)
-		if !ok {
-			// Return a generic done operation since all simulator operations complete immediately
-			op = Operation{
-				Name: name,
-				Done: true,
-			}
+		if op, ok := crOperations.Get(name); ok {
+			sim.WriteJSON(w, http.StatusOK, op)
+			return
 		}
-		sim.WriteJSON(w, http.StatusOK, op)
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "operation %q not found", name)
 	})
 }

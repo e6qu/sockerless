@@ -1,6 +1,7 @@
 package gcp_sdk_test
 
 import (
+	"net/http"
 	"testing"
 	"time"
 
@@ -59,6 +60,44 @@ func TestSDK_CloudRun_CreateJob(t *testing.T) {
 	assert.Contains(t, job.Name, "sdk-create-job")
 	assert.NotEmpty(t, job.Uid)
 	assert.Equal(t, int64(1), job.Generation)
+}
+
+// TestSDK_CloudRun_CreateJob_OperationsPersisted pins the real Cloud Run
+// LRO contract: the operation returned by CreateJob is addressable by name
+// (GET /operations/{op} returns the same record); unknown ops 404.
+// Previously the sim returned a synthetic `done=true` Operation for any op
+// id, which masked client bugs and dropped LRO inspection by name.
+func TestSDK_CloudRun_CreateJob_OperationsPersisted(t *testing.T) {
+	client := newJobsClient(t)
+
+	op, err := client.CreateJob(ctx, &runpb.CreateJobRequest{
+		Parent: "projects/test-project/locations/us-central1",
+		JobId:  "sdk-ops-persist-job",
+		Job: &runpb.Job{
+			Template: &runpb.ExecutionTemplate{
+				Template: &runpb.TaskTemplate{
+					Containers: []*runpb.Container{
+						{Image: "alpine:latest"},
+					},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	job, err := op.Wait(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, job.TerminalCondition)
+	assert.Equal(t, runpb.Condition_CONDITION_SUCCEEDED, job.TerminalCondition.State)
+
+	// The operation record must be retrievable by name from the
+	// /operations endpoint — real Cloud Run keeps LRO records around for
+	// the SDK to GetOperation against. Unknown operation ids must 404
+	// (not silently return done=true).
+	resp, err := http.Get(baseURL + "/v2/projects/test-project/locations/us-central1/operations/does-not-exist-op")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode,
+		"unknown operation id must 404, not return synthetic done=true")
 }
 
 func TestSDK_CloudRun_RunJob(t *testing.T) {

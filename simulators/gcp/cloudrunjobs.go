@@ -177,6 +177,11 @@ func nowTimestamp() string {
 	return time.Now().UTC().Format(time.RFC3339Nano)
 }
 
+// newLRO creates a completed Long-Running Operation and persists it so
+// subsequent GET /operations/{op} polls return the same record. The sim does
+// no asynchronous work, so the operation is always returned with `done=true`
+// and the embedded response — that matches what real Cloud Run returns once
+// the underlying resource has settled.
 func newLRO(project, location string, resource any, typeName string) Operation {
 	opID := generateUUID()
 	// Convert resource to a map and add @type for protobuf Any compatibility.
@@ -185,7 +190,10 @@ func newLRO(project, location string, resource any, typeName string) Operation {
 	var responseMap map[string]any
 	if resource != nil {
 		data, _ := json.Marshal(resource)
-		json.Unmarshal(data, &responseMap)
+		_ = json.Unmarshal(data, &responseMap)
+		if responseMap == nil {
+			responseMap = map[string]any{}
+		}
 		responseMap["@type"] = typeName
 	} else {
 		responseMap = map[string]any{"@type": typeName}
@@ -193,13 +201,11 @@ func newLRO(project, location string, resource any, typeName string) Operation {
 
 	// Derive target from the resource's name field if available
 	var target string
-	if responseMap != nil {
-		if n, ok := responseMap["name"].(string); ok {
-			target = n
-		}
+	if n, ok := responseMap["name"].(string); ok {
+		target = n
 	}
 
-	return Operation{
+	op := Operation{
 		Name: fmt.Sprintf("projects/%s/locations/%s/operations/%s", project, location, opID),
 		Metadata: map[string]any{
 			"createTime": nowTimestamp(),
@@ -208,6 +214,10 @@ func newLRO(project, location string, resource any, typeName string) Operation {
 		Done:     true,
 		Response: responseMap,
 	}
+	if crOperations != nil {
+		crOperations.Put(op.Name, op)
+	}
+	return op
 }
 
 // Container handle tracker for Cloud Run Jobs real execution
@@ -216,10 +226,18 @@ var crjProcessHandles sync.Map // map[execName]*sim.ContainerHandle
 // Package-level stores for dashboard access.
 var crjJobs sim.Store[Job]
 
+// crOperations holds long-running Operation records so the SDK can
+// `GetOperation` against the LRO returned by Create/Run/Delete, matching
+// real Cloud Run. Unknown ops 404 instead of synthetic done=true.
+var crOperations sim.Store[Operation]
+
 func registerCloudRunJobs(srv *sim.Server) {
 	jobs := sim.MakeStore[Job](srv.DB(), "crj_jobs")
 	executions := sim.MakeStore[Execution](srv.DB(), "crj_executions")
 	crjJobs = jobs
+	if crOperations == nil {
+		crOperations = sim.MakeStore[Operation](srv.DB(), "operations")
+	}
 
 	// Create job
 	srv.HandleFunc("POST /v2/projects/{project}/locations/{location}/jobs", func(w http.ResponseWriter, r *http.Request) {
@@ -252,12 +270,20 @@ func registerCloudRunJobs(srv *sim.Server) {
 		if job.LaunchStage == "" {
 			job.LaunchStage = "GA"
 		}
+		// The sim has no real reconciliation to do (no image pull, no
+		// IAM check, no infra plumbing) — so the resource settles to
+		// CONDITION_SUCCEEDED the moment it is stored. Real Cloud Run
+		// transitions through CONDITION_RECONCILING only because actual
+		// work takes time; injecting a synthetic delay just to mimic the
+		// shape would be exactly the kind of fake behaviour this audit
+		// is about removing.
 		job.TerminalCondition = &Condition{
 			Type:               "Ready",
 			State:              "CONDITION_SUCCEEDED",
 			LastTransitionTime: now,
 		}
 		job.Conditions = []Condition{
+			{Type: "ConfigurationsReady", State: "CONDITION_SUCCEEDED", LastTransitionTime: now},
 			{Type: "Ready", State: "CONDITION_SUCCEEDED", LastTransitionTime: now},
 		}
 		job.Reconciling = false
