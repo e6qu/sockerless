@@ -159,6 +159,65 @@ func TestNetwork_NSGSecurityRulesCRUD(t *testing.T) {
 	assert.Empty(t, nsgResp.Properties.SecurityRules)
 }
 
+// TestNetwork_NSGRule_RejectsDuplicatePriority pins the priority+
+// direction uniqueness constraint that real Azure enforces. Two rules
+// in the same NSG can share a priority only when they differ in
+// Direction; otherwise the second create returns
+// SecurityRuleParameterPriorityAlreadyTaken (HTTP 400).
+func TestNetwork_NSGRule_RejectsDuplicatePriority(t *testing.T) {
+	rgClient, err := armresources.NewResourceGroupsClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	_, err = rgClient.CreateOrUpdate(ctx, "nsg-prio-rg", armresources.ResourceGroup{Location: ptrStr("eastus")}, nil)
+	require.NoError(t, err)
+
+	nsgClient, err := armnetwork.NewSecurityGroupsClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	poller, err := nsgClient.BeginCreateOrUpdate(ctx, "nsg-prio-rg", "prio-nsg", armnetwork.SecurityGroup{
+		Location: ptrStr("eastus"),
+	}, nil)
+	require.NoError(t, err)
+	_, err = poller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+
+	rulesClient, err := armnetwork.NewSecurityRulesClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+
+	makeRule := func(priority int32, direction armnetwork.SecurityRuleDirection) armnetwork.SecurityRule {
+		return armnetwork.SecurityRule{
+			Properties: &armnetwork.SecurityRulePropertiesFormat{
+				Protocol:                 ptrProto(armnetwork.SecurityRuleProtocolTCP),
+				SourcePortRange:          ptrStr("*"),
+				DestinationPortRange:     ptrStr("80"),
+				SourceAddressPrefix:      ptrStr("*"),
+				DestinationAddressPrefix: ptrStr("*"),
+				Access:                   ptrAccess(armnetwork.SecurityRuleAccessAllow),
+				Priority:                 ptrInt32(priority),
+				Direction:                ptrDir(direction),
+			},
+		}
+	}
+
+	// First rule: priority 200, INGRESS — should succeed.
+	p1, err := rulesClient.BeginCreateOrUpdate(ctx, "nsg-prio-rg", "prio-nsg", "first",
+		makeRule(200, armnetwork.SecurityRuleDirectionInbound), nil)
+	require.NoError(t, err)
+	_, err = p1.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+
+	// Second rule: same priority + direction — must fail.
+	_, err = rulesClient.BeginCreateOrUpdate(ctx, "nsg-prio-rg", "prio-nsg", "duplicate",
+		makeRule(200, armnetwork.SecurityRuleDirectionInbound), nil)
+	require.Error(t, err, "duplicate Priority+Direction must fail like real Azure")
+
+	// Third rule: same priority but EGRESS — should succeed (priority
+	// space is per-direction, not global).
+	p3, err := rulesClient.BeginCreateOrUpdate(ctx, "nsg-prio-rg", "prio-nsg", "egress-same-prio",
+		makeRule(200, armnetwork.SecurityRuleDirectionOutbound), nil)
+	require.NoError(t, err)
+	_, err = p3.PollUntilDone(ctx, nil)
+	require.NoError(t, err, "same priority across different directions must be accepted")
+}
+
 func ptrProto(p armnetwork.SecurityRuleProtocol) *armnetwork.SecurityRuleProtocol { return &p }
 func ptrAccess(a armnetwork.SecurityRuleAccess) *armnetwork.SecurityRuleAccess    { return &a }
 func ptrDir(d armnetwork.SecurityRuleDirection) *armnetwork.SecurityRuleDirection { return &d }

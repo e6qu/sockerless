@@ -380,6 +380,26 @@ func registerNetwork(srv *sim.Server) {
 			req.Type = "Microsoft.Network/networkSecurityGroups/securityRules"
 			req.Properties.ProvisioningState = "Succeeded"
 
+			// Real Azure rejects duplicate priorities within an NSG +
+			// direction (a rule cannot share a (Priority, Direction)
+			// pair with another rule on the same NSG). The error code
+			// is `SecurityRuleParameterPriorityAlreadyTaken`. Match
+			// that contract so terraform configurations and SDK callers
+			// see the real validation flow instead of a silent overwrite.
+			for _, existing := range nsg.Properties.SecurityRules {
+				if existing.Name == ruleName {
+					continue
+				}
+				if existing.Properties.Priority == req.Properties.Priority &&
+					strings.EqualFold(existing.Properties.Direction, req.Properties.Direction) {
+					sim.AzureErrorf(w, "SecurityRuleParameterPriorityAlreadyTaken",
+						http.StatusBadRequest,
+						"Priority %d is already in use for direction %s by rule %q in NSG %q",
+						req.Properties.Priority, req.Properties.Direction, existing.Name, nsgName)
+					return
+				}
+			}
+
 			// Upsert inside NSG.Properties.SecurityRules so GET NSG stays consistent.
 			found := false
 			for i := range nsg.Properties.SecurityRules {
