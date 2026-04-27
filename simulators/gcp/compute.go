@@ -30,6 +30,45 @@ func newComputeOp(project, scope string, targetLink string) map[string]any {
 	}
 }
 
+// ComputeFirewall mirrors `compute#firewall`. Field set covers what
+// terraform-provider-google's `google_compute_firewall` and the Go
+// SDK's `compute.NewFirewallsRESTClient` round-trip; runner setup
+// flows that grant ingress to the build host hit Create/Get/Delete.
+type ComputeFirewall struct {
+	Kind                  string                  `json:"kind,omitempty"`
+	Id                    string                  `json:"id,omitempty"`
+	Name                  string                  `json:"name"`
+	SelfLink              string                  `json:"selfLink,omitempty"`
+	CreationTimestamp     string                  `json:"creationTimestamp,omitempty"`
+	Description           string                  `json:"description,omitempty"`
+	Network               string                  `json:"network,omitempty"`
+	Direction             string                  `json:"direction,omitempty"` // INGRESS / EGRESS
+	Priority              int32                   `json:"priority,omitempty"`
+	Disabled              bool                    `json:"disabled,omitempty"`
+	SourceRanges          []string                `json:"sourceRanges,omitempty"`
+	DestinationRanges     []string                `json:"destinationRanges,omitempty"`
+	SourceTags            []string                `json:"sourceTags,omitempty"`
+	TargetTags            []string                `json:"targetTags,omitempty"`
+	SourceServiceAccounts []string                `json:"sourceServiceAccounts,omitempty"`
+	TargetServiceAccounts []string                `json:"targetServiceAccounts,omitempty"`
+	Allowed               []ComputeFirewallAction `json:"allowed,omitempty"`
+	Denied                []ComputeFirewallAction `json:"denied,omitempty"`
+	LogConfig             *ComputeFirewallLog     `json:"logConfig,omitempty"`
+}
+
+// ComputeFirewallAction is the allow/deny rule shape — protocol +
+// optional port list. Matches `compute#firewallAllowed` / `Denied`.
+type ComputeFirewallAction struct {
+	IPProtocol string   `json:"IPProtocol"`
+	Ports      []string `json:"ports,omitempty"`
+}
+
+// ComputeFirewallLog enables logging on a firewall rule.
+type ComputeFirewallLog struct {
+	Enable   bool   `json:"enable"`
+	Metadata string `json:"metadata,omitempty"`
+}
+
 type ComputeNetwork struct {
 	Kind                  string `json:"kind"`
 	Id                    string `json:"id"`
@@ -222,6 +261,120 @@ func registerCompute(srv *sim.Server) {
 
 		subnetworks.Delete(selfLink)
 		op := newComputeOp(project, "regions/"+region, selfLink)
+		sim.WriteJSON(w, http.StatusOK, op)
+	})
+
+	// Firewalls — `compute#firewall` resource. Real GCP scopes firewall
+	// rules to a Network (VPC) and tracks ingress/egress separately.
+	// Sockerless workloads provision firewall rules to allow runner
+	// traffic between VPCs and the build host; without this surface,
+	// terraform's `google_compute_firewall` and runner setup scripts
+	// hit a 404 against the sim.
+	firewalls := sim.MakeStore[ComputeFirewall](srv.DB(), "compute_firewalls")
+
+	srv.HandleFunc("POST /compute/v1/projects/{project}/global/firewalls", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		var fw ComputeFirewall
+		if err := sim.ReadJSON(r, &fw); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if fw.Name == "" {
+			sim.GCPError(w, http.StatusBadRequest, "name is required", "INVALID_ARGUMENT")
+			return
+		}
+		fw.Kind = "compute#firewall"
+		fw.Id = computeNumericID()
+		fw.SelfLink = fmt.Sprintf("projects/%s/global/firewalls/%s", project, fw.Name)
+		fw.CreationTimestamp = time.Now().UTC().Format(time.RFC3339)
+		if fw.Direction == "" {
+			fw.Direction = "INGRESS"
+		}
+		if fw.Priority == 0 {
+			fw.Priority = 1000
+		}
+		firewalls.Put(fw.SelfLink, fw)
+		op := newComputeOp(project, "global", fw.SelfLink)
+		sim.WriteJSON(w, http.StatusOK, op)
+	})
+
+	srv.HandleFunc("GET /compute/v1/projects/{project}/global/firewalls/{name}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		name := sim.PathParam(r, "name")
+		selfLink := fmt.Sprintf("projects/%s/global/firewalls/%s", project, name)
+		fw, ok := firewalls.Get(selfLink)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "firewall %q not found", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, fw)
+	})
+
+	srv.HandleFunc("GET /compute/v1/projects/{project}/global/firewalls", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		prefix := fmt.Sprintf("projects/%s/global/firewalls/", project)
+		all := firewalls.Filter(func(f ComputeFirewall) bool {
+			return strings.HasPrefix(f.SelfLink, prefix)
+		})
+		if all == nil {
+			all = []ComputeFirewall{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":  "compute#firewallList",
+			"items": all,
+		})
+	})
+
+	srv.HandleFunc("DELETE /compute/v1/projects/{project}/global/firewalls/{name}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		name := sim.PathParam(r, "name")
+		selfLink := fmt.Sprintf("projects/%s/global/firewalls/%s", project, name)
+		firewalls.Delete(selfLink)
+		op := newComputeOp(project, "global", selfLink)
+		sim.WriteJSON(w, http.StatusOK, op)
+	})
+
+	srv.HandleFunc("PATCH /compute/v1/projects/{project}/global/firewalls/{name}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		name := sim.PathParam(r, "name")
+		selfLink := fmt.Sprintf("projects/%s/global/firewalls/%s", project, name)
+		var patch ComputeFirewall
+		if err := sim.ReadJSON(r, &patch); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		ok := firewalls.Update(selfLink, func(fw *ComputeFirewall) {
+			if patch.Description != "" {
+				fw.Description = patch.Description
+			}
+			if patch.SourceRanges != nil {
+				fw.SourceRanges = patch.SourceRanges
+			}
+			if patch.SourceTags != nil {
+				fw.SourceTags = patch.SourceTags
+			}
+			if patch.TargetTags != nil {
+				fw.TargetTags = patch.TargetTags
+			}
+			if patch.Allowed != nil {
+				fw.Allowed = patch.Allowed
+			}
+			if patch.Denied != nil {
+				fw.Denied = patch.Denied
+			}
+			if patch.Direction != "" {
+				fw.Direction = patch.Direction
+			}
+			if patch.Priority != 0 {
+				fw.Priority = patch.Priority
+			}
+			fw.Disabled = patch.Disabled
+		})
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "firewall %q not found", name)
+			return
+		}
+		op := newComputeOp(project, "global", selfLink)
 		sim.WriteJSON(w, http.StatusOK, op)
 	})
 
