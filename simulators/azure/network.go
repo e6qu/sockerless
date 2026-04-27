@@ -103,6 +103,73 @@ type SecurityRuleProperties struct {
 	ProvisioningState          string   `json:"provisioningState,omitempty"`
 }
 
+// NatGateway mirrors Microsoft.Network/natGateways. Sockerless flows
+// using ACA Apps with VNet integration provision a NAT gateway for
+// outbound connectivity. Field set covers what `azurerm_nat_gateway`
+// and `armnetwork.NewNatGatewaysClient` round-trip on Get/List.
+type NatGateway struct {
+	ID         string            `json:"id"`
+	Name       string            `json:"name"`
+	Type       string            `json:"type"`
+	Location   string            `json:"location"`
+	Tags       map[string]string `json:"tags,omitempty"`
+	Sku        *SkuName          `json:"sku,omitempty"`
+	Properties NatGatewayProps   `json:"properties"`
+}
+
+// NatGatewayProps holds the per-instance configuration for a NAT
+// gateway: idle timeout, public IPs, attached subnets.
+type NatGatewayProps struct {
+	IdleTimeoutInMinutes int           `json:"idleTimeoutInMinutes,omitempty"`
+	PublicIPAddresses    []SubResource `json:"publicIpAddresses,omitempty"`
+	PublicIPPrefixes     []SubResource `json:"publicIpPrefixes,omitempty"`
+	Subnets              []SubResource `json:"subnets,omitempty"`
+	ProvisioningState    string        `json:"provisioningState,omitempty"`
+}
+
+// SkuName is the standard Azure SKU envelope used by NAT gateways and
+// other resources that carry just a name.
+type SkuName struct {
+	Name string `json:"name"`
+}
+
+// SubResource is the standard Azure ARM reference shape — `{"id": "..."}`.
+type SubResource struct {
+	ID string `json:"id"`
+}
+
+// RouteTable mirrors Microsoft.Network/routeTables. Custom routing
+// is provisioned by attaching a route table to a subnet.
+type RouteTable struct {
+	ID         string            `json:"id"`
+	Name       string            `json:"name"`
+	Type       string            `json:"type"`
+	Location   string            `json:"location"`
+	Tags       map[string]string `json:"tags,omitempty"`
+	Properties RouteTableProps   `json:"properties"`
+}
+
+// RouteTableProps holds the per-table configuration.
+type RouteTableProps struct {
+	DisableBgpRoutePropagation bool         `json:"disableBgpRoutePropagation,omitempty"`
+	Routes                     []RouteEntry `json:"routes,omitempty"`
+	ProvisioningState          string       `json:"provisioningState,omitempty"`
+}
+
+// RouteEntry is one row in a route table.
+type RouteEntry struct {
+	Name       string          `json:"name,omitempty"`
+	Properties RouteEntryProps `json:"properties"`
+}
+
+// RouteEntryProps holds the per-route configuration: address prefix +
+// next-hop type / IP.
+type RouteEntryProps struct {
+	AddressPrefix    string `json:"addressPrefix"`
+	NextHopType      string `json:"nextHopType"`
+	NextHopIPAddress string `json:"nextHopIpAddress,omitempty"`
+}
+
 func registerNetwork(srv *sim.Server) {
 	vnets := sim.MakeStore[VirtualNetwork](srv.DB(), "network_vnets")
 	subnets := sim.MakeStore[Subnet](srv.DB(), "network_subnets")
@@ -491,4 +558,128 @@ func registerNetwork(srv *sim.Server) {
 				"value": nsg.Properties.SecurityRules,
 			})
 		})
+
+	// --- NAT Gateways + Route Tables ---
+	// Real Azure: `Microsoft.Network/natGateways` provides outbound
+	// connectivity for subnets that need explicit egress; route tables
+	// (`Microsoft.Network/routeTables`) override default-route behavior.
+	// Sockerless's serverless egress flows (ACA Apps with VNet integration
+	// reaching the Internet) provision a NAT gateway; without these
+	// handlers, terraform's `azurerm_nat_gateway` and `azurerm_route_table`
+	// 404. Field set covers what the SDK round-trips on Get/List.
+	natGateways := sim.MakeStore[NatGateway](srv.DB(), "nat_gateways")
+	routeTables := sim.MakeStore[RouteTable](srv.DB(), "route_tables")
+
+	srv.HandleFunc("PUT "+armBase+"/natGateways/{name}", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "name")
+		var req NatGateway
+		_ = sim.ReadJSON(r, &req)
+		resourceID := fmt.Sprintf(
+			"/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/natGateways/%s",
+			sub, rg, name)
+		gw := NatGateway{
+			ID:       resourceID,
+			Name:     name,
+			Type:     "Microsoft.Network/natGateways",
+			Location: req.Location,
+			Tags:     req.Tags,
+			Sku:      req.Sku,
+			Properties: NatGatewayProps{
+				IdleTimeoutInMinutes: req.Properties.IdleTimeoutInMinutes,
+				PublicIPAddresses:    req.Properties.PublicIPAddresses,
+				PublicIPPrefixes:     req.Properties.PublicIPPrefixes,
+				Subnets:              req.Properties.Subnets,
+				ProvisioningState:    "Succeeded",
+			},
+		}
+		if gw.Properties.IdleTimeoutInMinutes == 0 {
+			gw.Properties.IdleTimeoutInMinutes = 4 // real Azure default
+		}
+		if gw.Sku == nil {
+			gw.Sku = &SkuName{Name: "Standard"}
+		}
+		natGateways.Put(resourceID, gw)
+		sim.WriteJSON(w, http.StatusOK, gw)
+	})
+
+	srv.HandleFunc("GET "+armBase+"/natGateways/{name}", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "name")
+		resourceID := fmt.Sprintf(
+			"/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/natGateways/%s",
+			sub, rg, name)
+		gw, ok := natGateways.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"NAT gateway %q not found.", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, gw)
+	})
+
+	srv.HandleFunc("DELETE "+armBase+"/natGateways/{name}", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "name")
+		resourceID := fmt.Sprintf(
+			"/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/natGateways/%s",
+			sub, rg, name)
+		natGateways.Delete(resourceID)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv.HandleFunc("PUT "+armBase+"/routeTables/{name}", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "name")
+		var req RouteTable
+		_ = sim.ReadJSON(r, &req)
+		resourceID := fmt.Sprintf(
+			"/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/routeTables/%s",
+			sub, rg, name)
+		rt := RouteTable{
+			ID:       resourceID,
+			Name:     name,
+			Type:     "Microsoft.Network/routeTables",
+			Location: req.Location,
+			Tags:     req.Tags,
+			Properties: RouteTableProps{
+				DisableBgpRoutePropagation: req.Properties.DisableBgpRoutePropagation,
+				Routes:                     req.Properties.Routes,
+				ProvisioningState:          "Succeeded",
+			},
+		}
+		routeTables.Put(resourceID, rt)
+		sim.WriteJSON(w, http.StatusOK, rt)
+	})
+
+	srv.HandleFunc("GET "+armBase+"/routeTables/{name}", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "name")
+		resourceID := fmt.Sprintf(
+			"/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/routeTables/%s",
+			sub, rg, name)
+		rt, ok := routeTables.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"Route table %q not found.", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, rt)
+	})
+
+	srv.HandleFunc("DELETE "+armBase+"/routeTables/{name}", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "name")
+		resourceID := fmt.Sprintf(
+			"/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/routeTables/%s",
+			sub, rg, name)
+		routeTables.Delete(resourceID)
+		w.WriteHeader(http.StatusOK)
+	})
 }
