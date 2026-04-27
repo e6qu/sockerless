@@ -217,6 +217,19 @@ func (s *Server) registerTaskDefinition(ctx context.Context, containers []contai
 		input.TaskRoleArn = aws.String(s.config.TaskRoleARN)
 	}
 
+	// RuntimePlatform: Fargate defaults to LINUX/X86_64 if omitted, but
+	// passing the operator-configured value explicitly keeps the
+	// task-def shape honest and lets `SOCKERLESS_ECS_CPU_ARCHITECTURE
+	// =ARM64` schedule on Graviton without a separate code path.
+	cpuArch := ecstypes.CPUArchitectureX8664
+	if strings.EqualFold(s.config.CpuArchitecture, "ARM64") {
+		cpuArch = ecstypes.CPUArchitectureArm64
+	}
+	input.RuntimePlatform = &ecstypes.RuntimePlatform{
+		CpuArchitecture:       cpuArch,
+		OperatingSystemFamily: ecstypes.OSFamilyLinux,
+	}
+
 	result, err := s.aws.ECS.RegisterTaskDefinition(ctx, input)
 	if err != nil {
 		return "", err

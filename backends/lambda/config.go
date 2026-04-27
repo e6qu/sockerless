@@ -55,6 +55,15 @@ type Config struct {
 	// new layer. Users who understand that tradeoff set
 	// SOCKERLESS_ENABLE_COMMIT=1 and accept the larger image.
 	EnableCommit bool
+
+	// Architecture is the Lambda function architecture: "x86_64"
+	// (default) or "arm64". The sockerless backend reports this value
+	// (Docker-style: amd64 / arm64) via `docker info` so clients pull
+	// single-arch images that actually run on the cloud workload —
+	// sockerless's own host arch is irrelevant (client/server model:
+	// Docker clients on any host arch report the *server* arch, and our
+	// server is the cloud workload). Set via SOCKERLESS_LAMBDA_ARCHITECTURE.
+	Architecture string
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -77,6 +86,7 @@ func ConfigFromEnv() Config {
 		BootstrapBinaryPath:  envOrDefault("SOCKERLESS_LAMBDA_BOOTSTRAP", "/opt/sockerless/sockerless-lambda-bootstrap"),
 		PrebuiltOverlayImage: os.Getenv("SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE"),
 		EnableCommit:         os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
+		Architecture:         os.Getenv("SOCKERLESS_LAMBDA_ARCHITECTURE"),
 	}
 }
 
@@ -124,6 +134,12 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 func (c Config) Validate() error {
 	if c.RoleARN == "" {
 		return fmt.Errorf("SOCKERLESS_LAMBDA_ROLE_ARN is required")
+	}
+	switch strings.ToLower(c.Architecture) {
+	case "x86_64", "arm64":
+		// ok
+	default:
+		return fmt.Errorf("SOCKERLESS_LAMBDA_ARCHITECTURE must be set to x86_64 or arm64 (no default — sockerless reports the cloud workload's architecture, not its own host arch); got %q", c.Architecture)
 	}
 	return nil
 }

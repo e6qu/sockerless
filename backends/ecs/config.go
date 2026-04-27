@@ -20,10 +20,18 @@ type Config struct {
 	LogGroup         string
 	AgentEFSID       string // EFS filesystem ID for bind mount volumes
 	AssignPublicIP   bool
-	CodeBuildProject string        // AWS CodeBuild project for docker build
-	BuildBucket      string        // S3 bucket for build context upload
-	EndpointURL      string        // Custom endpoint URL
-	PollInterval     time.Duration // Cloud API poll interval (default 2s)
+	CodeBuildProject string // AWS CodeBuild project for docker build
+	BuildBucket      string // S3 bucket for build context upload
+	EndpointURL      string // Custom endpoint URL
+	// CpuArchitecture maps to ECS RuntimePlatform.CpuArchitecture.
+	// Valid: "X86_64" (Fargate default) or "ARM64" (Graviton). The
+	// sockerless backend reports this value (Docker-style) via
+	// `docker info` so clients pull single-arch images that actually
+	// run on the cloud workload — sockerless's own host architecture
+	// is irrelevant (client/server: the Docker client may run on any
+	// arch, what matters is the server side).
+	CpuArchitecture string
+	PollInterval    time.Duration // Cloud API poll interval (default 2s)
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -41,6 +49,7 @@ func ConfigFromEnv() Config {
 		CodeBuildProject: os.Getenv("SOCKERLESS_AWS_CODEBUILD_PROJECT"),
 		BuildBucket:      os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET"),
 		EndpointURL:      os.Getenv("SOCKERLESS_ENDPOINT_URL"),
+		CpuArchitecture:  os.Getenv("SOCKERLESS_ECS_CPU_ARCHITECTURE"),
 		PollInterval:     parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 	}
 }
@@ -95,6 +104,12 @@ func (c Config) Validate() error {
 	}
 	if c.ExecutionRoleARN == "" {
 		return fmt.Errorf("execution role ARN is required")
+	}
+	switch strings.ToUpper(c.CpuArchitecture) {
+	case "X86_64", "ARM64":
+		// ok
+	default:
+		return fmt.Errorf("SOCKERLESS_ECS_CPU_ARCHITECTURE must be set to X86_64 or ARM64 (no default — sockerless reports the cloud workload's architecture, not its own host arch); got %q", c.CpuArchitecture)
 	}
 	return nil
 }

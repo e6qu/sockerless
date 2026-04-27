@@ -40,9 +40,14 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		Driver:          "ecs-fargate",
 		OperatingSystem: "AWS Fargate",
 		OSType:          "linux",
-		Architecture:    "amd64",
-		NCPU:            2,
-		MemTotal:        4294967296,
+		// Architecture reflects the Fargate task arch (X86_64 / ARM64),
+		// translated to Docker's amd64 / arm64 spelling — sockerless's
+		// own host arch is irrelevant (client/server model: clients
+		// running on any host arch report the *server* arch via
+		// `docker info`, and our server is the cloud workload).
+		Architecture: dockerArchFromAWS(config.CpuArchitecture),
+		NCPU:         2,
+		MemTotal:     4294967296,
 	}, logger)
 	s.volumeState = volumeState{efs: awscommon.NewEFSManager(awsClients.EFS, awscommon.EFSManagerConfig{
 		AgentEFSID:     config.AgentEFSID,
@@ -119,4 +124,22 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 // ctx returns a background context.
 func (s *Server) ctx() context.Context {
 	return context.Background()
+}
+
+// dockerArchFromAWS translates AWS ECS RuntimePlatform.CpuArchitecture
+// values into Docker's image-arch spelling. AWS uses X86_64 / ARM64;
+// Docker / OCI use amd64 / arm64. Unknown / empty values pass through
+// verbatim so misconfiguration surfaces in `docker info` instead of
+// being silently coerced — Config.Validate refuses to start the
+// server with an empty value, so this branch should never fire in
+// production.
+func dockerArchFromAWS(awsArch string) string {
+	switch strings.ToUpper(awsArch) {
+	case "ARM64":
+		return "arm64"
+	case "X86_64":
+		return "amd64"
+	default:
+		return strings.ToLower(awsArch)
+	}
 }

@@ -3,6 +3,7 @@ package lambda
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
@@ -39,9 +40,15 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		Driver:          "lambda",
 		OperatingSystem: "AWS Lambda",
 		OSType:          "linux",
-		Architecture:    "amd64",
-		NCPU:            2,
-		MemTotal:        4294967296,
+		// Architecture reflects the Lambda function arch (x86_64 /
+		// arm64), translated to Docker's amd64 / arm64 spelling —
+		// sockerless's own host arch is irrelevant (client/server
+		// model: Docker clients on any host arch report the *server*
+		// arch via `docker info`, and our server is the cloud
+		// workload).
+		Architecture: dockerArchFromLambda(config.Architecture),
+		NCPU:         2,
+		MemTotal:     4294967296,
 	}, logger)
 	s.volumeState = volumeState{efs: awscommon.NewEFSManager(awsClients.EFS, awscommon.EFSManagerConfig{
 		AgentEFSID:     config.AgentEFSID,
@@ -121,4 +128,20 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 // ctx returns a background context.
 func (s *Server) ctx() context.Context {
 	return context.Background()
+}
+
+// dockerArchFromLambda translates AWS Lambda Architectures values
+// (`x86_64` / `arm64`) into Docker's image-arch spelling
+// (`amd64` / `arm64`). Empty or unknown values pass through verbatim;
+// Config.Validate refuses to start the server with an empty or
+// unrecognised value so this branch should never fire in production.
+func dockerArchFromLambda(lambdaArch string) string {
+	switch strings.ToLower(lambdaArch) {
+	case "arm64":
+		return "arm64"
+	case "x86_64":
+		return "amd64"
+	default:
+		return strings.ToLower(lambdaArch)
+	}
 }

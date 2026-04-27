@@ -215,11 +215,19 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		}
 	}
 
-	// Create Lambda function
+	// Create Lambda function. Architectures is the operator-configured
+	// `Config.Architecture` value — sockerless reports this same value
+	// (Docker-style) via `docker info` so clients pull single-arch
+	// images that actually match the Lambda runtime.
+	arch := lambdatypes.ArchitectureX8664
+	if strings.EqualFold(s.config.Architecture, "arm64") {
+		arch = lambdatypes.ArchitectureArm64
+	}
 	createInput := &awslambda.CreateFunctionInput{
-		FunctionName: aws.String(funcName),
-		Role:         aws.String(s.config.RoleARN),
-		PackageType:  lambdatypes.PackageTypeImage,
+		FunctionName:  aws.String(funcName),
+		Role:          aws.String(s.config.RoleARN),
+		PackageType:   lambdatypes.PackageTypeImage,
+		Architectures: []lambdatypes.Architecture{arch},
 		Code: &lambdatypes.FunctionCode{
 			ImageUri: aws.String(imageURI),
 		},

@@ -44,7 +44,9 @@ import (
 // runs — the harness does not provision them.
 
 const (
-	defaultRunnerVersion = "2.319.1"
+	// Default to a release we've verified darwin-arm64 + linux-x64
+	// assets exist for. Override via SOCKERLESS_GH_RUNNER_VERSION.
+	defaultRunnerVersion = "2.334.0"
 	defaultRepo          = "e6qu/sockerless"
 	pollInterval         = 5 * time.Second
 )
@@ -161,7 +163,13 @@ func downloadRunner(t *testing.T, workdir, version string) string {
 	if err := os.MkdirAll(runnerDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// actions/runner uses `osx` (not `darwin`) in its release-asset
+	// naming convention for macOS, and `x64` (not `amd64`) for Intel.
+	// Translate Go's runtime values to match the asset path.
 	osTag := runtime.GOOS
+	if osTag == "darwin" {
+		osTag = "osx"
+	}
 	archTag := runtime.GOARCH
 	if archTag == "amd64" {
 		archTag = "x64"
