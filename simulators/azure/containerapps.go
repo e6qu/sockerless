@@ -257,6 +257,9 @@ func registerContainerApps(srv *sim.Server) {
 
 		_, exists := jobs.Get(resourceID)
 
+		// Real ACA: Jobs go through Creating → Succeeded just like Apps.
+		// SDK callers using BeginCreateOrUpdate poll the resource until
+		// provisioningState=Succeeded; mirror that flow here.
 		job := ContainerAppJob{
 			ID:       resourceID,
 			Name:     name,
@@ -264,7 +267,7 @@ func registerContainerApps(srv *sim.Server) {
 			Location: req.Location,
 			Tags:     req.Tags,
 			Properties: JobProperties{
-				ProvisioningState:   "Succeeded",
+				ProvisioningState:   "Creating",
 				EnvironmentID:       req.Properties.EnvironmentID,
 				WorkloadProfileName: req.Properties.WorkloadProfileName,
 				Configuration:       req.Properties.Configuration,
@@ -280,6 +283,17 @@ func registerContainerApps(srv *sim.Server) {
 		}
 
 		jobs.Put(resourceID, job)
+
+		// Async transition: Creating → Succeeded after a short delay.
+		// Real ACA takes 30-60s to reconcile; the sim compresses to
+		// 100ms so polling tests still see the transition without
+		// waiting for real cloud-provisioning latency.
+		go func(id string) {
+			time.Sleep(100 * time.Millisecond)
+			jobs.Update(id, func(j *ContainerAppJob) {
+				j.Properties.ProvisioningState = "Succeeded"
+			})
+		}(resourceID)
 
 		if exists {
 			sim.WriteJSON(w, http.StatusOK, job)
