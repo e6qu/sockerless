@@ -185,7 +185,7 @@ func registerContainerAppsApps(srv *sim.Server) {
 		}
 
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/containerApps/%s", sub, rg, name)
-		_, exists := apps.Get(resourceID)
+		existing, exists := apps.Get(resourceID)
 
 		// Real ACA: PUT returns 201 Created with provisioningState=Creating
 		// + an Azure-AsyncOperation header pointing at an
@@ -206,6 +206,18 @@ func registerContainerAppsApps(srv *sim.Server) {
 		revName := fmt.Sprintf("%s--00001", name)
 		fqdn := fmt.Sprintf("%s.internal.sim-env.%s.azurecontainerapps.io", name, req.Location)
 
+		// Real ARM stamps `createdAt` once on resource creation and only
+		// updates `lastModifiedAt` on subsequent PUT/PATCH writes — preserve
+		// the original CreatedAt across updates instead of restamping.
+		nowStamp := time.Now().UTC().Format(time.RFC3339Nano)
+		systemData := &SystemData{
+			CreatedAt:      nowStamp,
+			LastModifiedAt: nowStamp,
+		}
+		if exists && existing.SystemData != nil && existing.SystemData.CreatedAt != "" {
+			systemData.CreatedAt = existing.SystemData.CreatedAt
+		}
+
 		app := ContainerApp{
 			ID:       resourceID,
 			Name:     name,
@@ -223,9 +235,7 @@ func registerContainerAppsApps(srv *sim.Server) {
 				LatestReadyRevisionName: revName,
 				LatestRevisionFqdn:      fqdn,
 			},
-			SystemData: &SystemData{
-				CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
-			},
+			SystemData: systemData,
 		}
 		if app.Properties.Configuration != nil && app.Properties.Configuration.ActiveRevisionsMode == "" {
 			app.Properties.Configuration.ActiveRevisionsMode = "Single"

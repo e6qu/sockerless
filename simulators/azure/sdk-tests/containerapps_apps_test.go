@@ -2,6 +2,7 @@ package azure_sdk_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v3"
@@ -90,6 +91,68 @@ func TestSDK_ContainerAppsApps_CreateGetDelete(t *testing.T) {
 	// GET after delete should 404.
 	_, err = client.Get(ctx, rg, "sdk-test-app", nil)
 	assert.Error(t, err, "Get after delete must fail")
+}
+
+// TestSDK_ContainerAppsApps_SystemDataPreservedAcrossUpdates pins ARM
+// SystemData semantics: `createdAt` is stamped once on resource creation
+// and preserved across PUT/PATCH updates; `lastModifiedAt` reflects the
+// last write. Real Azure ARM enforces this — restamping createdAt on
+// every update breaks audit trails and surfaces in azure-cli `--query
+// systemData` output.
+func TestSDK_ContainerAppsApps_SystemDataPreservedAcrossUpdates(t *testing.T) {
+	rg := "sdk-aca-systemdata-rg"
+	ensureRG(t, rg)
+
+	cred := &fakeCredential{}
+	client, err := armappcontainers.NewContainerAppsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+
+	envID := "/subscriptions/" + subscriptionID + "/resourceGroups/" + rg +
+		"/providers/Microsoft.App/managedEnvironments/sim-env"
+	mkApp := func(image string) armappcontainers.ContainerApp {
+		return armappcontainers.ContainerApp{
+			Location: to.Ptr("eastus"),
+			Properties: &armappcontainers.ContainerAppProperties{
+				EnvironmentID: to.Ptr(envID),
+				Template: &armappcontainers.Template{
+					Containers: []*armappcontainers.Container{
+						{Name: to.Ptr("main"), Image: to.Ptr(image)},
+					},
+				},
+			},
+		}
+	}
+
+	poller, err := client.BeginCreateOrUpdate(ctx, rg, "sdk-systemdata-app", mkApp("alpine:3.18"), nil)
+	require.NoError(t, err)
+	created, err := poller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, created.SystemData)
+	require.NotNil(t, created.SystemData.CreatedAt)
+	originalCreatedAt := *created.SystemData.CreatedAt
+	require.NotEmpty(t, originalCreatedAt, "createdAt must be stamped on initial create")
+
+	// Update with a different image — wait long enough that any restamp
+	// would produce a strictly later timestamp than originalCreatedAt.
+	time.Sleep(20 * time.Millisecond)
+	upPoller, err := client.BeginCreateOrUpdate(ctx, rg, "sdk-systemdata-app", mkApp("alpine:latest"), nil)
+	require.NoError(t, err)
+	updated, err := upPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, updated.SystemData)
+	require.NotNil(t, updated.SystemData.CreatedAt)
+	assert.Equal(t, originalCreatedAt, *updated.SystemData.CreatedAt,
+		"systemData.createdAt must be preserved across updates (real ARM stamps once on create)")
+
+	// LastModifiedAt should be present and >= originalCreatedAt.
+	require.NotNil(t, updated.SystemData.LastModifiedAt)
+	assert.NotEmpty(t, *updated.SystemData.LastModifiedAt,
+		"systemData.lastModifiedAt must be stamped on every write")
+
+	// Cleanup.
+	delPoller, err := client.BeginDelete(ctx, rg, "sdk-systemdata-app", nil)
+	require.NoError(t, err)
+	_, _ = delPoller.PollUntilDone(ctx, nil)
 }
 
 // WebApps.UpdateAzureStorageAccounts route — the azure-functions
