@@ -1,20 +1,21 @@
 # Sockerless — Status
 
-**103 phases closed (Phase 108 closed 2026-04-26). 844 bugs tracked — 844 fixed, 0 open. 1 false positive.** PR #118 merged. PR #120 open (~60 commits ahead) with: 31 audit closures (BUG-802 + 638/640/646/648 retro + 804/806 + 820..831 + 832..844); **Phase 104 framework migration complete + cloud-native typed drivers across every backend** (44/91 matrix cells cloud-native; the rest stay on legacy adapters whose api.Backend method already does the cloud-native thing); Phase 105 waves 1-3 (8 libpod-shape golden tests); Phase 108 closed (77/77 sim-parity matrix ✓ — 33 AWS / 16 GCP / 28 Azure); Phase 106/107 harnesses shipped under `tests/runners/{github,gitlab}/`; `core.ImageRef` typed domain object lands at the typed Registry boundary; manual-tests directory + repo-wide code/doc cleanup (Phase/BUG refs stripped from 95 Go files + every spec/doc). **Phase 109 (strict cloud-API fidelity audit) opened mid-PR-120** — closed BUG-836..844 (real ECS task lifecycle without awslogs, real SSM AgentMessage stdin protocol, real subnet-CIDR IP allocation, real per-site Azure hostnames, real signal routing); pending sequence (Lambda VPC IPs, region/account scoping, Cloud Run + ACA state machines, full VPC/firewall/IAM/service-discovery/storage parity for runner support) tracked in PLAN.md § Phase 109. **Next on this branch:** finish Phase 109 sequence, then wrapper-removal + further interface tightening.
+**103 phases closed (Phase 108 closed 2026-04-26). 844 bugs tracked — 844 fixed, 0 open. 1 false positive.** PR #118 merged. PR #120 merged. PR #121 open (Phase 109 strict cloud-API fidelity sweep; 8 audit items closed in flight). **Phase 109 — closed in PR #121:** AWS Lambda VpcConfig from real subnet CIDR; AWS region/account scoping via `SOCKERLESS_AWS_*` env vars; GCP `compute.firewalls` resource (was missing); GCP `iam.serviceAccounts.generateAccessToken` (was missing); Azure IMDS metadata token endpoint (was missing — `DefaultAzureCredential` 404'd); Azure Blob Container ARM control plane (was missing — `azurerm_storage_container` 404'd); Azure NSG rule priority+direction uniqueness validation; Azure Private DNS AAAA/CNAME/MX/PTR/SRV/TXT records (was A-only). **Phase 109 — pending in PLAN.md:** Azure ACA state-machine async transition, GCP Cloud Run Jobs state machine, GCP Cloud NAT/Routers, Azure NAT Gateways/Route Tables, timestamps respect-on-write, no-fakes test-fixture sweep. Phase 104 framework migration complete + cloud-native typed drivers across every backend (44/91 cells cloud-native); Phase 105 waves 1-3 done (8 libpod-shape golden tests); Phase 108 done (77/77 sim-parity matrix ✓); Phase 106/107 runner harnesses shipped under `tests/runners/{github,gitlab}/`. **Next on this branch:** finish Phase 109 sequence, then wrapper-removal + further interface tightening.
 
 See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer).
 
 ## Branch state
 
-- **`main`** — synced with `origin/main` at PR #119 merge.
-- **`post-pr-118-bug-audit-and-phases`** — open as PR #120, ~50 commits ahead of main.
+- **`main`** — synced with `origin/main` at PR #120 merge.
+- **`phase-109-strict-fidelity-sweep`** — open as PR #121, ~12 commits ahead of main (Phase 109 sweep in flight; 8 closures so far).
 - **`origin-gitlab/main`** — mirror, lags; pushed when convenient.
 
 ## Recent merges
 
 | PR | Summary |
 |---|---|
-| #120 (open) | Audit + Phase 104 framework migration + cloud-native typed drivers + Phase 105 waves 1-3 + Phase 108 closed + Phase 106/107 harness scaffolding + ImageRef domain type + Phase 109 strict-fidelity audit (BUG-836..844: real ECS lifecycle, real SSM AgentMessage protocol, real subnet-CIDR IP allocation, real Azure per-site hostnames, real kill signal routing) + repo-wide code/doc cleanup. |
+| #121 (open) | Phase 109 strict cloud-API fidelity sweep — AWS Lambda VpcConfig + region/account scoping; GCP `compute.firewalls` + `iam.generateAccessToken`; Azure IMDS token endpoint + Blob Container ARM CRUD + NSG priority+direction validation + Private DNS AAAA/CNAME/MX/PTR/SRV/TXT records. |
+| #120 | Audit + Phase 104 framework migration + cloud-native typed drivers + Phase 105 waves 1-3 + Phase 108 closed + Phase 106/107 harness scaffolding + ImageRef domain type + Phase 109 first-round (BUG-836..844: real ECS lifecycle, real SSM AgentMessage protocol, real subnet-CIDR IP allocation, real Azure per-site hostnames, real kill signal routing) + repo-wide code/doc cleanup. |
 | #119 | Post-PR-#118 state-doc refresh — Phase 104 promoted to active. |
 | #118 | Round-8 + Round-9 live-AWS sweep — 30 bugs (BUG-786..819), per-cloud terragrunt sweep parity. |
 | #117 | Round-7 live-AWS sweep — 16 bugs (BUG-770..785). |
