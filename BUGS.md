@@ -1,6 +1,6 @@
 # Known Bugs
 
-**845 total — 845 fixed, 0 open, 1 false positive.** Three sections: [Open](#open) / [False positives](#false-positives) / [Resolved](#resolved). Per-project rule: no bug deferral, no fakes, no fallbacks — every filed bug ships a fix in the same round. Fix detail beyond the one-liner: see `git log <commit>` or the linked PR.
+**846 total — 846 fixed, 0 open, 1 false positive.** Three sections: [Open](#open) / [False positives](#false-positives) / [Resolved](#resolved). Per-project rule: no bug deferral, no fakes, no fallbacks — every filed bug ships a fix in the same round. Fix detail beyond the one-liner: see `git log <commit>` or the linked PR.
 
 For narrative context see [WHAT_WE_DID.md](WHAT_WE_DID.md) and [PLAN.md](PLAN.md). Architecture-level state derivation is in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) and [specs/BACKEND_STATE.md](specs/BACKEND_STATE.md).
 
@@ -22,11 +22,12 @@ Findings that look like bugs under the "no fakes, no workarounds" principle but 
 
 One-liner per bug. Latest first; pre-Round-7 entries are extra-terse (full detail in `git log` / PR descriptions).
 
-### Phase 110 prep (PR #122 — open) (BUG-845)
+### Phase 110 prep (PR #122 — open) (BUG-845..846)
 
 | ID | Sev | Area | One-liner |
 |----|-----|------|-----------|
 | 845 | M | terraform | `terraform/environments/lambda/live/terragrunt.hcl` was pinned to `us-east-1` + bucket `sockerless-terraform-state` + dynamodb_table — drift from the ECS live env (`eu-west-1` + `sockerless-tf-state`). `manual-tests/01-infrastructure.md` documents Lambda reusing the ECS subnets + security group, which is impossible cross-region. Fix: realign Lambda live env to `eu-west-1` + `sockerless-tf-state`; mirror the ECS env's `provider "aws"` generate block; drop the dynamodb_table reference (ECS env doesn't use one). |
+| 846 | M | terraform + docs | Live AWS test pass against an empty account fails immediately on first `docker run alpine:latest` because the ECS backend (correctly per BUG-708) demands `SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN` for ECR pull-through cache against Docker Hub — but neither `manual-tests/01-infrastructure.md` documents the prereq nor `terraform/modules/ecs/main.tf` provisions the secret. Fix: (a) document the operator's one-time Docker Hub PAT mint + Secrets Manager secret create steps in 01-infrastructure.md; (b) add an optional `dockerhub_credential_secret_arn` input to the ECS terraform module that, when set to a JSON-shaped Secrets Manager ARN, attaches `secretsmanager:GetSecretValue` permission to the ECR pull-through service-linked role; (c) `01-infrastructure.md` env-extraction block now exports `SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN` so the backend picks it up automatically. |
 
 ### PR #120 — typed-driver migration CI pass (BUG-836..844)
 

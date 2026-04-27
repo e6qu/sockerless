@@ -106,3 +106,26 @@ variable "existing_security_group_id" {
   type        = string
   default     = ""
 }
+
+# Optional pass-through: the ARN of an out-of-band Secrets Manager secret
+# holding Docker Hub credentials (`{username, accessToken}` JSON). The
+# secret name MUST start with `ecr-pullthroughcache/` — that's the only
+# prefix the AWSServiceRoleForECRPullThroughCache role has read access to,
+# so secrets named anything else fail at pull-through-rule create time
+# even with a valid PAT. The module doesn't grant any extra permissions
+# here (the SLR handles credential retrieval); the variable just lets
+# downstream consumers (env-extraction in manual-tests/01-infrastructure.md)
+# echo the ARN through to `SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN`.
+# Without this, sockerless's first `docker run alpine:latest` fails with
+# `UnsupportedUpstreamRegistryException` (BUG-708 — explicit error, no
+# silent fallback).
+variable "dockerhub_credential_secret_arn" {
+  description = "ARN of a Secrets Manager secret named ecr-pullthroughcache/<...> with `{username, accessToken}` for Docker Hub. Empty = no Docker Hub pull-through (only public.ecr.aws, ECR, and operator-provisioned registries will work)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.dockerhub_credential_secret_arn == "" || can(regex(":secret:ecr-pullthroughcache/", var.dockerhub_credential_secret_arn))
+    error_message = "Docker Hub credential secret name must start with `ecr-pullthroughcache/` — required by the AWSServiceRoleForECRPullThroughCache service-linked role."
+  }
+}

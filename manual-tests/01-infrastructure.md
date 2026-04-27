@@ -6,6 +6,41 @@ Per-cloud terraform / terragrunt environments that bring up the live infra each 
 
 Shared VPC; Lambda reuses the ECS subnets + security group.
 
+### Prerequisite: Docker Hub credentials in Secrets Manager
+
+The ECS backend pulls Docker Hub images (`alpine:latest`, `node:20`, etc.) through an ECR pull-through cache. AWS requires a Secrets Manager secret containing valid Docker Hub credentials for the cache rule to mint pull tokens — this is a real cloud requirement, not a sockerless choice. Without it, the very first `docker run alpine:latest` fails with `UnsupportedUpstreamRegistryException` (per BUG-708 the backend surfaces this clearly rather than falling back).
+
+One-time setup per AWS account:
+
+```bash
+# 1. Mint a Docker Hub access token at
+#    https://hub.docker.com/settings/security → "New Access Token"
+#    Scope: Public Repo Read-only. Copy the token.
+
+# 2. Create the secret. The name MUST start with `ecr-pullthroughcache/`
+#    — the AWSServiceRoleForECRPullThroughCache role only has read
+#    permission on secrets matching that prefix (per AWS docs), and
+#    without that prefix every pull-through call fails 400 even with
+#    a valid PAT.
+read -s DH_TOKEN  # paste; hit enter
+read -p "Docker Hub username: " DH_USER
+
+aws secretsmanager create-secret \
+  --name ecr-pullthroughcache/sockerless-dockerhub \
+  --description "Docker Hub PAT for ECR pull-through cache (sockerless)" \
+  --region eu-west-1 \
+  --secret-string "{\"username\":\"$DH_USER\",\"accessToken\":\"$DH_TOKEN\"}"
+unset DH_TOKEN
+
+# 3. Capture the ARN — backend reads it via SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN.
+export SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN=$(aws secretsmanager describe-secret \
+  --secret-id ecr-pullthroughcache/sockerless-dockerhub --region eu-west-1 --query ARN --output text)
+```
+
+Once this secret exists you can persist the ARN export in `aws.sh` so future sessions pick it up automatically. The secret stays valid until you rotate the Docker Hub PAT.
+
+### Provision
+
 ```bash
 # ECS infrastructure: VPC, subnets, SGs, cluster, EFS, ECR, IAM, Cloud Map.
 cd terraform/environments/ecs/live
@@ -25,6 +60,9 @@ for k,v in {
   'SOCKERLESS_ECS_PUBLIC_IP': 'true',
 }.items(): print(f'export {k}={v}')
 " > /tmp/ecs-env.sh
+
+# Also export the Docker Hub creds ARN from the prereq above.
+echo "export SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN=$SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN" >> /tmp/ecs-env.sh
 
 # Lambda infrastructure: IAM role, log group, ECR repo.
 cd terraform/environments/lambda/live
