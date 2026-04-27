@@ -30,6 +30,103 @@ func newComputeOp(project, scope string, targetLink string) map[string]any {
 	}
 }
 
+// ComputeFirewall mirrors `compute#firewall`. Field set covers what
+// terraform-provider-google's `google_compute_firewall` and the Go
+// SDK's `compute.NewFirewallsRESTClient` round-trip; runner setup
+// flows that grant ingress to the build host hit Create/Get/Delete.
+type ComputeFirewall struct {
+	Kind                  string                  `json:"kind,omitempty"`
+	Id                    string                  `json:"id,omitempty"`
+	Name                  string                  `json:"name"`
+	SelfLink              string                  `json:"selfLink,omitempty"`
+	CreationTimestamp     string                  `json:"creationTimestamp,omitempty"`
+	Description           string                  `json:"description,omitempty"`
+	Network               string                  `json:"network,omitempty"`
+	Direction             string                  `json:"direction,omitempty"` // INGRESS / EGRESS
+	Priority              int32                   `json:"priority,omitempty"`
+	Disabled              bool                    `json:"disabled,omitempty"`
+	SourceRanges          []string                `json:"sourceRanges,omitempty"`
+	DestinationRanges     []string                `json:"destinationRanges,omitempty"`
+	SourceTags            []string                `json:"sourceTags,omitempty"`
+	TargetTags            []string                `json:"targetTags,omitempty"`
+	SourceServiceAccounts []string                `json:"sourceServiceAccounts,omitempty"`
+	TargetServiceAccounts []string                `json:"targetServiceAccounts,omitempty"`
+	Allowed               []ComputeFirewallAction `json:"allowed,omitempty"`
+	Denied                []ComputeFirewallAction `json:"denied,omitempty"`
+	LogConfig             *ComputeFirewallLog     `json:"logConfig,omitempty"`
+}
+
+// ComputeFirewallAction is the allow/deny rule shape — protocol +
+// optional port list. Matches `compute#firewallAllowed` / `Denied`.
+type ComputeFirewallAction struct {
+	IPProtocol string   `json:"IPProtocol"`
+	Ports      []string `json:"ports,omitempty"`
+}
+
+// ComputeFirewallLog enables logging on a firewall rule.
+type ComputeFirewallLog struct {
+	Enable   bool   `json:"enable"`
+	Metadata string `json:"metadata,omitempty"`
+}
+
+// ComputeRouter mirrors `compute#router`. Cloud NAT lives on a Router
+// — a workload that needs serverless egress (Cloud Run, Cloud
+// Functions with VPC connector) provisions a Router with a `nats[]`
+// entry. Without router CRUD, terraform's `google_compute_router` and
+// `google_compute_router_nat` 404 against the sim.
+type ComputeRouter struct {
+	Kind              string             `json:"kind,omitempty"`
+	Id                string             `json:"id,omitempty"`
+	Name              string             `json:"name"`
+	SelfLink          string             `json:"selfLink,omitempty"`
+	CreationTimestamp string             `json:"creationTimestamp,omitempty"`
+	Description       string             `json:"description,omitempty"`
+	Network           string             `json:"network,omitempty"`
+	Region            string             `json:"region,omitempty"`
+	Bgp               *ComputeRouterBgp  `json:"bgp,omitempty"`
+	Nats              []ComputeRouterNAT `json:"nats,omitempty"`
+}
+
+// ComputeRouterBgp mirrors `compute#router.bgp` — the Border Gateway
+// Protocol settings for the router. Sockerless's Cloud NAT use case
+// doesn't need real BGP routing, just round-trip storage.
+type ComputeRouterBgp struct {
+	Asn               int32  `json:"asn,omitempty"`
+	AdvertiseMode     string `json:"advertiseMode,omitempty"`
+	KeepaliveInterval int32  `json:"keepaliveInterval,omitempty"`
+}
+
+// ComputeRouterNAT mirrors `compute#routerNat` — a Cloud NAT config
+// embedded in a router. Real GCP supports per-NAT IP allocation
+// (auto/manual), source-subnetwork-IP-ranges-to-NAT (LIST_OF_SUBNET-
+// WORKS / ALL_SUBNETWORKS_ALL_IP_RANGES), TCP/UDP timeout overrides.
+// The fields below cover what `google_compute_router_nat` round-trips.
+type ComputeRouterNAT struct {
+	Name                          string                       `json:"name"`
+	NatIpAllocateOption           string                       `json:"natIpAllocateOption,omitempty"`
+	NatIps                        []string                     `json:"natIps,omitempty"`
+	SourceSubnetworkIpRangesToNat string                       `json:"sourceSubnetworkIpRangesToNat,omitempty"`
+	Subnetworks                   []ComputeRouterNATSubnetwork `json:"subnetworks,omitempty"`
+	MinPortsPerVm                 int32                        `json:"minPortsPerVm,omitempty"`
+	UdpIdleTimeoutSec             int32                        `json:"udpIdleTimeoutSec,omitempty"`
+	TcpEstablishedIdleTimeoutSec  int32                        `json:"tcpEstablishedIdleTimeoutSec,omitempty"`
+	IcmpIdleTimeoutSec            int32                        `json:"icmpIdleTimeoutSec,omitempty"`
+	LogConfig                     *ComputeRouterNATLogConfig   `json:"logConfig,omitempty"`
+}
+
+// ComputeRouterNATSubnetwork picks a specific subnet for NAT'ing.
+type ComputeRouterNATSubnetwork struct {
+	Name                  string   `json:"name"`
+	SourceIpRangesToNat   []string `json:"sourceIpRangesToNat,omitempty"`
+	SecondaryIpRangeNames []string `json:"secondaryIpRangeNames,omitempty"`
+}
+
+// ComputeRouterNATLogConfig enables NAT logging.
+type ComputeRouterNATLogConfig struct {
+	Enable bool   `json:"enable"`
+	Filter string `json:"filter,omitempty"`
+}
+
 type ComputeNetwork struct {
 	Kind                  string `json:"kind"`
 	Id                    string `json:"id"`
@@ -221,6 +318,221 @@ func registerCompute(srv *sim.Server) {
 		selfLink := fmt.Sprintf("projects/%s/regions/%s/subnetworks/%s", project, region, name)
 
 		subnetworks.Delete(selfLink)
+		op := newComputeOp(project, "regions/"+region, selfLink)
+		sim.WriteJSON(w, http.StatusOK, op)
+	})
+
+	// Firewalls — `compute#firewall` resource. Real GCP scopes firewall
+	// rules to a Network (VPC) and tracks ingress/egress separately.
+	// Sockerless workloads provision firewall rules to allow runner
+	// traffic between VPCs and the build host; without this surface,
+	// terraform's `google_compute_firewall` and runner setup scripts
+	// hit a 404 against the sim.
+	firewalls := sim.MakeStore[ComputeFirewall](srv.DB(), "compute_firewalls")
+
+	srv.HandleFunc("POST /compute/v1/projects/{project}/global/firewalls", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		var fw ComputeFirewall
+		if err := sim.ReadJSON(r, &fw); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if fw.Name == "" {
+			sim.GCPError(w, http.StatusBadRequest, "name is required", "INVALID_ARGUMENT")
+			return
+		}
+		fw.Kind = "compute#firewall"
+		fw.Id = computeNumericID()
+		fw.SelfLink = fmt.Sprintf("projects/%s/global/firewalls/%s", project, fw.Name)
+		fw.CreationTimestamp = time.Now().UTC().Format(time.RFC3339)
+		if fw.Direction == "" {
+			fw.Direction = "INGRESS"
+		}
+		if fw.Priority == 0 {
+			fw.Priority = 1000
+		}
+		firewalls.Put(fw.SelfLink, fw)
+		op := newComputeOp(project, "global", fw.SelfLink)
+		sim.WriteJSON(w, http.StatusOK, op)
+	})
+
+	srv.HandleFunc("GET /compute/v1/projects/{project}/global/firewalls/{name}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		name := sim.PathParam(r, "name")
+		selfLink := fmt.Sprintf("projects/%s/global/firewalls/%s", project, name)
+		fw, ok := firewalls.Get(selfLink)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "firewall %q not found", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, fw)
+	})
+
+	srv.HandleFunc("GET /compute/v1/projects/{project}/global/firewalls", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		prefix := fmt.Sprintf("projects/%s/global/firewalls/", project)
+		all := firewalls.Filter(func(f ComputeFirewall) bool {
+			return strings.HasPrefix(f.SelfLink, prefix)
+		})
+		if all == nil {
+			all = []ComputeFirewall{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":  "compute#firewallList",
+			"items": all,
+		})
+	})
+
+	srv.HandleFunc("DELETE /compute/v1/projects/{project}/global/firewalls/{name}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		name := sim.PathParam(r, "name")
+		selfLink := fmt.Sprintf("projects/%s/global/firewalls/%s", project, name)
+		firewalls.Delete(selfLink)
+		op := newComputeOp(project, "global", selfLink)
+		sim.WriteJSON(w, http.StatusOK, op)
+	})
+
+	srv.HandleFunc("PATCH /compute/v1/projects/{project}/global/firewalls/{name}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		name := sim.PathParam(r, "name")
+		selfLink := fmt.Sprintf("projects/%s/global/firewalls/%s", project, name)
+		var patch ComputeFirewall
+		if err := sim.ReadJSON(r, &patch); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		ok := firewalls.Update(selfLink, func(fw *ComputeFirewall) {
+			if patch.Description != "" {
+				fw.Description = patch.Description
+			}
+			if patch.SourceRanges != nil {
+				fw.SourceRanges = patch.SourceRanges
+			}
+			if patch.SourceTags != nil {
+				fw.SourceTags = patch.SourceTags
+			}
+			if patch.TargetTags != nil {
+				fw.TargetTags = patch.TargetTags
+			}
+			if patch.Allowed != nil {
+				fw.Allowed = patch.Allowed
+			}
+			if patch.Denied != nil {
+				fw.Denied = patch.Denied
+			}
+			if patch.Direction != "" {
+				fw.Direction = patch.Direction
+			}
+			if patch.Priority != 0 {
+				fw.Priority = patch.Priority
+			}
+			fw.Disabled = patch.Disabled
+		})
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "firewall %q not found", name)
+			return
+		}
+		op := newComputeOp(project, "global", selfLink)
+		sim.WriteJSON(w, http.StatusOK, op)
+	})
+
+	// Routers + Cloud NAT — `compute#router` is a regional resource;
+	// Cloud NAT configs are embedded in `router.nats[]`. Sockerless's
+	// serverless egress flows (Cloud Run / Cloud Functions reaching
+	// Internet via a VPC connector) provision a Router with a NAT;
+	// without these handlers, terraform's `google_compute_router` and
+	// `google_compute_router_nat` 404.
+	routers := sim.MakeStore[ComputeRouter](srv.DB(), "compute_routers")
+
+	srv.HandleFunc("POST /compute/v1/projects/{project}/regions/{region}/routers", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		region := sim.PathParam(r, "region")
+		var rt ComputeRouter
+		if err := sim.ReadJSON(r, &rt); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if rt.Name == "" {
+			sim.GCPError(w, http.StatusBadRequest, "name is required", "INVALID_ARGUMENT")
+			return
+		}
+		rt.Kind = "compute#router"
+		rt.Id = computeNumericID()
+		rt.SelfLink = fmt.Sprintf("projects/%s/regions/%s/routers/%s", project, region, rt.Name)
+		rt.Region = fmt.Sprintf("projects/%s/regions/%s", project, region)
+		rt.CreationTimestamp = time.Now().UTC().Format(time.RFC3339)
+		routers.Put(rt.SelfLink, rt)
+		op := newComputeOp(project, "regions/"+region, rt.SelfLink)
+		sim.WriteJSON(w, http.StatusOK, op)
+	})
+
+	srv.HandleFunc("GET /compute/v1/projects/{project}/regions/{region}/routers/{name}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		region := sim.PathParam(r, "region")
+		name := sim.PathParam(r, "name")
+		selfLink := fmt.Sprintf("projects/%s/regions/%s/routers/%s", project, region, name)
+		rt, ok := routers.Get(selfLink)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "router %q not found", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, rt)
+	})
+
+	srv.HandleFunc("GET /compute/v1/projects/{project}/regions/{region}/routers", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		region := sim.PathParam(r, "region")
+		prefix := fmt.Sprintf("projects/%s/regions/%s/routers/", project, region)
+		all := routers.Filter(func(rt ComputeRouter) bool {
+			return strings.HasPrefix(rt.SelfLink, prefix)
+		})
+		if all == nil {
+			all = []ComputeRouter{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":  "compute#routerList",
+			"items": all,
+		})
+	})
+
+	srv.HandleFunc("DELETE /compute/v1/projects/{project}/regions/{region}/routers/{name}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		region := sim.PathParam(r, "region")
+		name := sim.PathParam(r, "name")
+		selfLink := fmt.Sprintf("projects/%s/regions/%s/routers/%s", project, region, name)
+		routers.Delete(selfLink)
+		op := newComputeOp(project, "regions/"+region, selfLink)
+		sim.WriteJSON(w, http.StatusOK, op)
+	})
+
+	srv.HandleFunc("PATCH /compute/v1/projects/{project}/regions/{region}/routers/{name}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		region := sim.PathParam(r, "region")
+		name := sim.PathParam(r, "name")
+		selfLink := fmt.Sprintf("projects/%s/regions/%s/routers/%s", project, region, name)
+		var patch ComputeRouter
+		if err := sim.ReadJSON(r, &patch); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		ok := routers.Update(selfLink, func(rt *ComputeRouter) {
+			if patch.Description != "" {
+				rt.Description = patch.Description
+			}
+			if patch.Network != "" {
+				rt.Network = patch.Network
+			}
+			if patch.Bgp != nil {
+				rt.Bgp = patch.Bgp
+			}
+			if patch.Nats != nil {
+				rt.Nats = patch.Nats
+			}
+		})
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "router %q not found", name)
+			return
+		}
 		op := newComputeOp(project, "regions/"+region, selfLink)
 		sim.WriteJSON(w, http.StatusOK, op)
 	})

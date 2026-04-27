@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	cwltypes "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
+	ec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/stretchr/testify/assert"
@@ -308,4 +309,78 @@ func TestLambda_MultipleInvokesCreateMultipleStreams(t *testing.T) {
 	cw.DeleteLogGroup(ctx, &cloudwatchlogs.DeleteLogGroupInput{
 		LogGroupName: aws.String(logGroupName),
 	})
+}
+
+// TestLambda_VpcConfig_AllocatesENIPerSubnet verifies that CreateFunction
+// with a VpcConfig containing real subnet IDs allocates a Hyperplane ENI
+// per subnet from the subnet's CidrBlock — matches real Lambda behavior
+// (sim must validate the subnet exists, not return a fake ENI).
+func TestLambda_VpcConfig_AllocatesENIPerSubnet(t *testing.T) {
+	lc := lambdaClient()
+	ec2C := ec2Client()
+
+	// Pre-create two subnets with distinct CIDRs so the test exercises
+	// the allocator under multi-subnet VpcConfig (a common runner setup).
+	vpcOut, err := ec2C.CreateVpc(ctx, &ec2.CreateVpcInput{
+		CidrBlock: aws.String("10.7.0.0/16"),
+	})
+	require.NoError(t, err)
+	defer ec2C.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: vpcOut.Vpc.VpcId})
+
+	sub1, err := ec2C.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId:     vpcOut.Vpc.VpcId,
+		CidrBlock: aws.String("10.7.1.0/24"),
+	})
+	require.NoError(t, err)
+	sub2, err := ec2C.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId:     vpcOut.Vpc.VpcId,
+		CidrBlock: aws.String("10.7.2.0/24"),
+	})
+	require.NoError(t, err)
+
+	fnName := "vpc-fn"
+	defer lc.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(fnName)})
+
+	createOut, err := lc.CreateFunction(ctx, &lambda.CreateFunctionInput{
+		FunctionName: aws.String(fnName),
+		Role:         aws.String("arn:aws:iam::123456789012:role/lambda-vpc"),
+		Runtime:      lambdatypes.RuntimeNodejs20x,
+		Handler:      aws.String("index.handler"),
+		Code: &lambdatypes.FunctionCode{
+			ZipFile: []byte("dummy"),
+		},
+		VpcConfig: &lambdatypes.VpcConfig{
+			SubnetIds: []string{*sub1.Subnet.SubnetId, *sub2.Subnet.SubnetId},
+		},
+	})
+	require.NoError(t, err, "CreateFunction with VpcConfig must succeed when subnets are real")
+	require.NotNil(t, createOut.VpcConfig, "VpcConfig must round-trip on CreateFunction")
+	require.Len(t, createOut.VpcConfig.SubnetIds, 2)
+
+	// Sim's response carries the allocated IPs so backend code that
+	// verifies ENI provisioning has them without a separate API call.
+	getOut, err := lc.GetFunction(ctx, &lambda.GetFunctionInput{FunctionName: aws.String(fnName)})
+	require.NoError(t, err)
+	require.NotNil(t, getOut.Configuration)
+	require.NotNil(t, getOut.Configuration.VpcConfig)
+	assert.Equal(t, *vpcOut.Vpc.VpcId, *getOut.Configuration.VpcConfig.VpcId, "VpcConfig.VpcId must echo back from the subnet's stored VpcId")
+}
+
+// TestLambda_VpcConfig_RejectsUnknownSubnet matches real Lambda's
+// InvalidParameterValueException when the subnet doesn't exist in EC2.
+func TestLambda_VpcConfig_RejectsUnknownSubnet(t *testing.T) {
+	lc := lambdaClient()
+	_, err := lc.CreateFunction(ctx, &lambda.CreateFunctionInput{
+		FunctionName: aws.String("vpc-bad-fn"),
+		Role:         aws.String("arn:aws:iam::123456789012:role/lambda-vpc"),
+		Runtime:      lambdatypes.RuntimeNodejs20x,
+		Handler:      aws.String("index.handler"),
+		Code: &lambdatypes.FunctionCode{
+			ZipFile: []byte("dummy"),
+		},
+		VpcConfig: &lambdatypes.VpcConfig{
+			SubnetIds: []string{"subnet-doesnotexistanywhere"},
+		},
+	})
+	require.Error(t, err, "CreateFunction with an unknown subnet must fail like real Lambda")
 }

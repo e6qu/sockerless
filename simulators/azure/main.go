@@ -64,6 +64,7 @@ func main() {
 	registerResourceGroups(srv)
 	registerNetwork(srv)
 	registerManagedIdentity(srv)
+	registerKeyVault(srv)
 	registerAuthorization(srv)
 	registerContainerAppEnvironment(srv)
 	registerAppServicePlan(srv)

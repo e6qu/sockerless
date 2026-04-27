@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -116,6 +117,36 @@ func registerIAM(srv *sim.Server) {
 
 		serviceAccounts.Delete(name)
 		sim.WriteJSON(w, http.StatusOK, map[string]any{})
+	})
+
+	// generateAccessToken — short-lived OAuth 2.0 access token for the
+	// service account. Real GCP path:
+	//   POST /v1/projects/{p}/serviceAccounts/{email}:generateAccessToken
+	// Sockerless runner setup (gcloud auth application-default,
+	// google-github-actions/auth) calls this to mint scoped tokens
+	// against the workload-identity-federated SA. The simulator returns
+	// a deterministic placeholder token + expiry; real GCP returns a
+	// signed JWT but the SDK tests don't validate the signature.
+	srv.HandleFunc("POST /v1/projects/{project}/serviceAccounts/{emailAction}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		emailAction := sim.PathParam(r, "emailAction")
+		email, action, _ := strings.Cut(emailAction, ":")
+		if action != "generateAccessToken" {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unsupported service-account action %q", action)
+			return
+		}
+		name := fmt.Sprintf("projects/%s/serviceAccounts/%s", project, email)
+		if _, ok := serviceAccounts.Get(name); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Service account %s not found", email)
+			return
+		}
+		// Real expiry is RFC3339Nano with timezone offset; the SDK
+		// parses it with time.Parse(time.RFC3339).
+		expireTime := time.Now().UTC().Add(1 * time.Hour).Format(time.RFC3339)
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"accessToken": "ya29.sim-" + generateUUID(),
+			"expireTime":  expireTime,
+		})
 	})
 
 	// List service accounts

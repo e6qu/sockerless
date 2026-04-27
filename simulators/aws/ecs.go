@@ -177,7 +177,7 @@ func generateUUID() string {
 }
 
 func ecsArn(resourceType, id string) string {
-	return fmt.Sprintf("arn:aws:ecs:us-east-1:123456789012:%s/%s", resourceType, id)
+	return fmt.Sprintf("arn:aws:ecs:"+awsRegion()+":"+awsAccountID()+":%s/%s", resourceType, id)
 }
 
 func registerECS(r *sim.AWSRouter, srv *sim.Server) {
@@ -368,7 +368,7 @@ func handleECSRegisterTaskDefinition(w http.ResponseWriter, r *http.Request) {
 	ecsRevisionMu.Unlock()
 
 	td := ECSTaskDefinition{
-		TaskDefinitionArn:       fmt.Sprintf("arn:aws:ecs:us-east-1:123456789012:task-definition/%s:%d", req.Family, revision),
+		TaskDefinitionArn:       fmt.Sprintf("arn:aws:ecs:"+awsRegion()+":"+awsAccountID()+":task-definition/%s:%d", req.Family, revision),
 		Family:                  req.Family,
 		Revision:                revision,
 		ContainerDefinitions:    req.ContainerDefinitions,
@@ -570,7 +570,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 	for i := 0; i < req.Count; i++ {
 		_ = i
 		taskID := generateUUID()
-		taskArn := fmt.Sprintf("arn:aws:ecs:us-east-1:123456789012:task/%s/%s", clusterName, taskID)
+		taskArn := fmt.Sprintf("arn:aws:ecs:"+awsRegion()+":"+awsAccountID()+":task/%s/%s", clusterName, taskID)
 
 		eniID := generateUUID()
 		var privateIP, subnetID string
@@ -588,7 +588,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		var containers []ECSTaskContainer
 		for _, cd := range td.ContainerDefinitions {
 			containers = append(containers, ECSTaskContainer{
-				ContainerArn: fmt.Sprintf("arn:aws:ecs:us-east-1:123456789012:container/%s", generateUUID()),
+				ContainerArn: fmt.Sprintf("arn:aws:ecs:"+awsRegion()+":"+awsAccountID()+":container/%s", generateUUID()),
 				Name:         cd.Name,
 				LastStatus:   "PROVISIONING",
 				NetworkInterfaces: []ECSNetworkInterface{

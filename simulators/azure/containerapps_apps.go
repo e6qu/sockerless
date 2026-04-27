@@ -96,10 +96,77 @@ type ContainerAppScale struct {
 	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
 }
 
+// AsyncOperationStatus is the response shape for a polled
+// Azure-AsyncOperation status URL — `{"status":"Succeeded","name":...}`
+// is what `armappcontainers` (and every azcore poller) reads.
+type AsyncOperationStatus struct {
+	Name      string `json:"name"`
+	Status    string `json:"status"` // InProgress / Succeeded / Failed
+	StartTime string `json:"startTime,omitempty"`
+	EndTime   string `json:"endTime,omitempty"`
+}
+
+// acaOps stores async-operation status keyed by opId. Initialized lazily
+// in registerContainerAppsApps + reused by registerContainerApps (Jobs).
+var acaOps sim.Store[AsyncOperationStatus]
+
+// acaIssueAsyncOp records a new operation in the Creating→Succeeded
+// state machine. Returns the opId; the caller writes the
+// Azure-AsyncOperation header pointing at the polling URL. A goroutine
+// flips the op to Succeeded after the configured delay (compresses real
+// Azure's 30-60s reconcile window) — SDK pollers see the transition
+// without having to wait for a real-cloud-provisioning timeline.
+func acaIssueAsyncOp(loc string) string {
+	opID := generateUUID()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	acaOps.Put(opID, AsyncOperationStatus{
+		Name:      opID,
+		Status:    "InProgress",
+		StartTime: now,
+	})
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		acaOps.Update(opID, func(o *AsyncOperationStatus) {
+			o.Status = "Succeeded"
+			o.EndTime = time.Now().UTC().Format(time.RFC3339Nano)
+		})
+	}()
+	return opID
+}
+
+// acaAsyncOpHeader returns the Azure-AsyncOperation header value for a
+// given operation. Backend SDK pollers GET this URL until status=
+// Succeeded (or Failed), then do a final GET on the resource. The path
+// matches real ARM conventions for the Microsoft.App provider.
+func acaAsyncOpHeader(r *http.Request, sub, loc, opID string) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s/subscriptions/%s/providers/Microsoft.App/locations/%s/operationStatuses/%s?api-version=2024-03-01",
+		scheme, r.Host, sub, loc, opID)
+}
+
 func registerContainerAppsApps(srv *sim.Server) {
 	apps := sim.MakeStore[ContainerApp](srv.DB(), "aca_apps")
+	acaOps = sim.MakeStore[AsyncOperationStatus](srv.DB(), "aca_ops")
 
 	const basePath = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.App"
+
+	// Operation status endpoint — Azure-AsyncOperation header points
+	// here. SDK pollers GET this URL with the api-version query param;
+	// we match real ARM by ignoring the api-version on read.
+	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.App/locations/{location}/operationStatuses/{opId}",
+		func(w http.ResponseWriter, r *http.Request) {
+			opID := sim.PathParam(r, "opId")
+			op, ok := acaOps.Get(opID)
+			if !ok {
+				sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+					"Operation %q not found.", opID)
+				return
+			}
+			sim.WriteJSON(w, http.StatusOK, op)
+		})
 
 	// PUT - Create or update containerApp
 	srv.HandleFunc("PUT "+basePath+"/containerApps/{appName}", func(w http.ResponseWriter, r *http.Request) {
@@ -118,14 +185,38 @@ func registerContainerAppsApps(srv *sim.Server) {
 		}
 
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/containerApps/%s", sub, rg, name)
-		_, exists := apps.Get(resourceID)
+		existing, exists := apps.Get(resourceID)
 
-		// Apps come up Succeeded immediately in the sim. The internal
-		// FQDN format mirrors real ACA: <app>.internal.<env-id>.<region>.azurecontainerapps.io.
-		// Backend's cloudServiceRegisterCNAME reads LatestRevisionFqdn
-		// to seed the Private DNS A/CNAME record for peer discovery.
+		// Real ACA: PUT returns 201 Created with provisioningState=Creating
+		// + an Azure-AsyncOperation header pointing at an
+		// /providers/Microsoft.App/locations/{loc}/operationStatuses/{id}
+		// URL; the SDK poller (azcore.NewPoller) GETs that URL until
+		// status=Succeeded, then does a final GET on the resource itself.
+		// We match that flow: store the resource with Succeeded directly
+		// (so the final GET always returns the desired state), record an
+		// async operation that flips Creating→Succeeded after a small
+		// delay (50ms — compresses real Azure's 30-60s reconcile window),
+		// and emit Azure-AsyncOperation in the response header. The body
+		// still echoes Succeeded so SDK clients that bypass polling and
+		// read the body directly also see the right state.
+		// The internal FQDN format mirrors real ACA:
+		// <app>.internal.<env-id>.<region>.azurecontainerapps.io.
+		// Backend's cloudServiceRegisterCNAME reads LatestRevisionFqdn to
+		// seed the Private DNS A/CNAME record for peer discovery.
 		revName := fmt.Sprintf("%s--00001", name)
 		fqdn := fmt.Sprintf("%s.internal.sim-env.%s.azurecontainerapps.io", name, req.Location)
+
+		// Real ARM stamps `createdAt` once on resource creation and only
+		// updates `lastModifiedAt` on subsequent PUT/PATCH writes — preserve
+		// the original CreatedAt across updates instead of restamping.
+		nowStamp := time.Now().UTC().Format(time.RFC3339Nano)
+		systemData := &SystemData{
+			CreatedAt:      nowStamp,
+			LastModifiedAt: nowStamp,
+		}
+		if exists && existing.SystemData != nil && existing.SystemData.CreatedAt != "" {
+			systemData.CreatedAt = existing.SystemData.CreatedAt
+		}
 
 		app := ContainerApp{
 			ID:       resourceID,
@@ -144,9 +235,7 @@ func registerContainerAppsApps(srv *sim.Server) {
 				LatestReadyRevisionName: revName,
 				LatestRevisionFqdn:      fqdn,
 			},
-			SystemData: &SystemData{
-				CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
-			},
+			SystemData: systemData,
 		}
 		if app.Properties.Configuration != nil && app.Properties.Configuration.ActiveRevisionsMode == "" {
 			app.Properties.Configuration.ActiveRevisionsMode = "Single"
@@ -156,6 +245,10 @@ func registerContainerAppsApps(srv *sim.Server) {
 		}
 
 		apps.Put(resourceID, app)
+
+		// Set Azure-AsyncOperation so SDK pollers exercise the real flow.
+		opID := acaIssueAsyncOp(req.Location)
+		w.Header().Set("Azure-AsyncOperation", acaAsyncOpHeader(r, sub, req.Location, opID))
 
 		if exists {
 			sim.WriteJSON(w, http.StatusOK, app)

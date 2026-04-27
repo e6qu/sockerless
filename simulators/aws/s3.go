@@ -107,7 +107,7 @@ func handleS3ListBuckets(w http.ResponseWriter, r *http.Request) {
 	result := s3ListAllMyBucketsResult{
 		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
 		Owner: s3Owner{
-			ID:          "123456789012",
+			ID:          awsAccountID(),
 			DisplayName: "simulator",
 		},
 		Buckets: s3Buckets{

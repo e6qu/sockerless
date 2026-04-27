@@ -28,9 +28,13 @@ type ContainerAppJob struct {
 	SystemData *SystemData       `json:"systemData,omitempty"`
 }
 
-// SystemData holds Azure Resource Manager metadata.
+// SystemData holds Azure Resource Manager metadata. Real ARM stamps
+// `createdAt` once on resource creation and updates `lastModifiedAt` on
+// every write — the sim must preserve `createdAt` across PATCH/PUT
+// updates instead of restamping it.
 type SystemData struct {
-	CreatedAt string `json:"createdAt,omitempty"`
+	CreatedAt      string `json:"createdAt,omitempty"`
+	LastModifiedAt string `json:"lastModifiedAt,omitempty"`
 }
 
 // JobProperties holds the properties of a Container Apps Job.
@@ -255,7 +259,26 @@ func registerContainerApps(srv *sim.Server) {
 
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/jobs/%s", sub, rg, name)
 
-		_, exists := jobs.Get(resourceID)
+		existing, exists := jobs.Get(resourceID)
+
+		// Real ACA: Jobs go through Creating → Succeeded just like Apps.
+		// Mirror the Azure-AsyncOperation polling flow: store the resource
+		// with Succeeded directly + emit the header so SDK pollers
+		// exercise the real path. acaIssueAsyncOp handles the async-op
+		// store + the InProgress→Succeeded transition timer; the polling
+		// endpoint is registered in containerapps_apps.go alongside the
+		// Apps surface (operationStatuses/{opId} is shared across the
+		// Microsoft.App provider).
+		// Real ARM stamps SystemData.createdAt once and only updates
+		// lastModifiedAt on subsequent writes — preserve CreatedAt on update.
+		nowStamp := time.Now().UTC().Format(time.RFC3339Nano)
+		systemData := &SystemData{
+			CreatedAt:      nowStamp,
+			LastModifiedAt: nowStamp,
+		}
+		if exists && existing.SystemData != nil && existing.SystemData.CreatedAt != "" {
+			systemData.CreatedAt = existing.SystemData.CreatedAt
+		}
 
 		job := ContainerAppJob{
 			ID:       resourceID,
@@ -270,9 +293,7 @@ func registerContainerApps(srv *sim.Server) {
 				Configuration:       req.Properties.Configuration,
 				Template:            req.Properties.Template,
 			},
-			SystemData: &SystemData{
-				CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
-			},
+			SystemData: systemData,
 		}
 
 		if job.Properties.Configuration != nil && job.Properties.Configuration.TriggerType == "" {
@@ -280,6 +301,9 @@ func registerContainerApps(srv *sim.Server) {
 		}
 
 		jobs.Put(resourceID, job)
+
+		opID := acaIssueAsyncOp(req.Location)
+		w.Header().Set("Azure-AsyncOperation", acaAsyncOpHeader(r, sub, req.Location, opID))
 
 		if exists {
 			sim.WriteJSON(w, http.StatusOK, job)

@@ -73,3 +73,72 @@ func TestCompute_ListNetworks(t *testing.T) {
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(resp.Items), 1)
 }
+
+// TestCompute_Firewall_CreateGetListDelete pins the firewall rule
+// surface that runner setup flows hit. Real GCP rejects unknown
+// directions / negative priorities; the sim defaults to INGRESS +
+// priority=1000 like real GCP.
+func TestCompute_Firewall_CreateGetListDelete(t *testing.T) {
+	svc := computeService(t)
+
+	rule := &compute.Firewall{
+		Name:         "fw-allow-runner-ingress",
+		Network:      "projects/test-project/global/networks/test-network",
+		Direction:    "INGRESS",
+		Priority:     900,
+		SourceRanges: []string{"10.0.0.0/8"},
+		Allowed: []*compute.FirewallAllowed{
+			{IPProtocol: "tcp", Ports: []string{"22", "80", "443"}},
+		},
+	}
+
+	op, err := svc.Firewalls.Insert("test-project", rule).Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "DONE", op.Status)
+
+	got, err := svc.Firewalls.Get("test-project", rule.Name).Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, rule.Name, got.Name)
+	assert.Equal(t, "INGRESS", got.Direction)
+	assert.Equal(t, int64(900), got.Priority)
+	require.Len(t, got.Allowed, 1)
+	assert.Equal(t, "tcp", got.Allowed[0].IPProtocol)
+	assert.ElementsMatch(t, []string{"22", "80", "443"}, got.Allowed[0].Ports)
+
+	listOut, err := svc.Firewalls.List("test-project").Context(ctx).Do()
+	require.NoError(t, err)
+	found := false
+	for _, fw := range listOut.Items {
+		if fw.Name == rule.Name {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "firewall must show up in List")
+
+	_, err = svc.Firewalls.Delete("test-project", rule.Name).Context(ctx).Do()
+	require.NoError(t, err)
+
+	_, err = svc.Firewalls.Get("test-project", rule.Name).Context(ctx).Do()
+	require.Error(t, err, "Get after Delete must 404")
+}
+
+func TestCompute_Firewall_DefaultsToIngressPriority1000(t *testing.T) {
+	svc := computeService(t)
+
+	rule := &compute.Firewall{
+		Name:    "fw-defaults",
+		Network: "projects/test-project/global/networks/test-network",
+		Allowed: []*compute.FirewallAllowed{
+			{IPProtocol: "icmp"},
+		},
+	}
+	_, err := svc.Firewalls.Insert("test-project", rule).Context(ctx).Do()
+	require.NoError(t, err)
+	defer svc.Firewalls.Delete("test-project", rule.Name).Context(ctx).Do()
+
+	got, err := svc.Firewalls.Get("test-project", rule.Name).Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "INGRESS", got.Direction, "default direction must match real GCP")
+	assert.Equal(t, int64(1000), got.Priority, "default priority must match real GCP")
+}
