@@ -1,0 +1,14 @@
+name: hello-ecs
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - tests/runners/**
+jobs:
+  hello:
+    runs-on: [self-hosted, sockerless-ecs]
+    container:
+      image: alpine:latest
+    steps:
+      - run: echo "hello from sockerless ecs"
+      - run: env | sort
