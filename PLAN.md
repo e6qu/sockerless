@@ -26,7 +26,8 @@ Detail in [WHAT_WE_DID.md](WHAT_WE_DID.md); commit + BUG refs in [BUGS.md](BUGS.
 | 86–102 (PRs #112–#115) | Sim parity, stateless backends, real volumes, FaaS invocation tracking, reverse-agent exec/cp/diff/commit/pause, Docker pod synthesis, ACA console exec, ECS SSM ops, OCI push, log fidelity. | 661–769 |
 | Round-7 (PR #117) | Live-AWS bug sweep | 770–785 |
 | Round-8 + Round-9 (PR #118) | Live-AWS bug sweep — stateless invariant, real layer mirror, sync `docker stop`, per-network SG isolation, live SSM frame capture → exit-code marker, `sh -c` exec wrap, busybox-compat find/stat, Lambda invoke waiter, tag-based InvocationResult persistence, per-cloud terragrunt sweep | 786–819 |
-| Post-PR-#118 audit + Phase 104 framework + Phase 105 waves 1-3 + Phase 108 + Phase 106/107 prep (PR #120 — open) | Audit pass; Phase 104 framework migration complete (13 typed adapters, every dispatch site routed, framework renamed to drop 104 suffix) + cloud-native typed drivers across every cloud backend (Logs/Attach/Exec/Signal/FS/Commit/ProcList; 44/91 matrix cells cloud-native); `core.ImageRef` typed domain object at the typed Registry boundary; libpod-shape golden tests for 8 handlers; Phase 108 sim-parity matrix audit (33 AWS + 16 GCP + 28 Azure rows ✓); Phase 106/107 real-runner harnesses scaffolded under `tests/runners/{github,gitlab}/`; manual-tests directory + repo-wide Phase/BUG-ref strip from code + docs | 802 / 638-648 retro / 804 / 806 / 820–831 / 832–835 |
+| Post-PR-#118 audit + Phase 104 framework + Phase 105 waves 1-3 + Phase 108 + Phase 106/107 prep (PR #120) | Audit pass; Phase 104 framework migration complete (13 typed adapters, every dispatch site routed, framework renamed to drop 104 suffix) + cloud-native typed drivers across every cloud backend (Logs/Attach/Exec/Signal/FS/Commit/ProcList; 44/91 matrix cells cloud-native); `core.ImageRef` typed domain object at the typed Registry boundary; libpod-shape golden tests for 8 handlers; Phase 108 sim-parity matrix audit (33 AWS + 16 GCP + 28 Azure rows ✓); Phase 106/107 real-runner harnesses scaffolded under `tests/runners/{github,gitlab}/`; manual-tests directory + repo-wide Phase/BUG-ref strip from code + docs | 802 / 638-648 retro / 804 / 806 / 820–831 / 832–835 / 836–844 |
+| Phase 109 strict cloud-API fidelity audit (PR #121) | 19 audit items: Lambda VpcConfig from real subnet CIDR, region/account scoping, AWS Secrets Manager + SSM Parameter Store + KMS + DynamoDB, GCP `compute.firewalls` + `compute.routers`/Cloud NAT + `iam.generateAccessToken` + operations endpoint persistence, Azure IMDS token endpoint + Blob Container ARM CRUD + NSG priority+direction validation + Private DNS AAAA/CNAME/MX/PTR/SRV/TXT records + NAT Gateways + Route Tables + Container Apps/Jobs Azure-AsyncOperation polling + Key Vault ARM+data plane + ARM `SystemData.createdAt` preservation. No-fakes audit on test fixtures clean. | (audit items, no new BUG numbers) |
 
 ## Pending work
 
@@ -84,6 +85,50 @@ backends/azure-common/drivers/  # ACR Tasks / Log Analytics / ACR
 `podman` CLI uses bindings that expect specific JSON shapes. **Waves 1-3 landed** in PRs #119/#120: BUG-804 (`PodInspectResponse` mirrors `define.InspectPodData`), BUG-806 (`PodStop`/`PodKill` Errs normalised; per-container failures via HTTP 409 ErrorModel), plus golden shape tests for `info`, `containers/json`, rm-report, `images/pull` stream, `networks/json`, `volumes/json`, `system/df` — 8 handlers covered.
 
 **Wave 4 remaining** (lower priority): events stream, exec start hijack, container CRUD beyond list. Verify against a real podman client (currently no live podman in CI). Can run in parallel with Phase 104.
+
+### Phase 110 — Real GitHub + GitLab runner integration on the active branch (in flight)
+
+Phase 110 collapses Phases 106 (GitHub) and 107 (GitLab) into one execution stream against ECS + Lambda backends, plus a live-AWS manual test pass that seeds the runner harness with a known-good baseline. Architecture and token strategy live in [`docs/RUNNERS.md`](docs/RUNNERS.md) (canonical) — Phase 106/107 sections below remain as the per-runner reference. Branch: `phase-110-runner-integration`.
+
+**Coverage matrix — 4 cells. All required.**
+
+| Runner | Backend | Sockerless port | Runner label / tag |
+|---|---|---|---|
+| GitHub `actions/runner` | ECS Fargate | `:3375` | `sockerless-ecs` |
+| GitHub `actions/runner` | AWS Lambda | `:3376` | `sockerless-lambda` |
+| `gitlab-runner` (docker exec) | ECS Fargate | `:3375` | `sockerless-ecs` |
+| `gitlab-runner` (docker exec) | AWS Lambda | `:3376` | `sockerless-lambda` |
+
+Two Sockerless daemons (one per backend label, Phase-68-v1 split). One daemon serves both runners — they don't see each other's containers.
+
+**Token strategy.** No long-lived tokens in env vars / project settings / disk plaintext / shell history. PATs in macOS Keychain (`gh` keychain-backed for GitHub; `security(1)` entry for GitLab). Runner registration tokens minted per harness run via the platform API (`gh api .../registration-token` for GitHub; `POST /api/v4/user/runners` for GitLab) and deleted on harness exit. Harness reads PATs via `gh auth token` and `security find-generic-password -s sockerless-gl-pat -a "$USER" -w`. Self-healing cleanup: each run starts by deleting any leftover `sockerless-*` runners from a previous crash. Full detail in `docs/RUNNERS.md`.
+
+**Workflow / pipeline trigger discipline.**
+- GitHub workflows under `.github/workflows/sockerless-runner-*.yml` use **only** `workflow_dispatch:` and `pull_request: paths: ['tests/runners/**']`. Never trigger on push to main.
+- GitLab pipelines kept isolated under `tests/runners/gitlab/pipelines/`; harness triggers via `POST /projects/:id/pipeline` with `ref` set to a throwaway branch.
+
+**Lambda 15-minute hard limit.** Lambda label is for short, fast workloads only — lint, format, container actions (`uses: docker://...`), single-command tests. Real CI jobs that take >10 min use the ECS label. Documented in `docs/RUNNERS.md`.
+
+**Execution sequence (in order):**
+
+1. **State-doc compression.** ✓ done in this branch (BUGS / STATUS / WHAT_WE_DID / DO_NEXT all compressed; BUGS now 3-section).
+2. **Plan written.** ✓ this section.
+3. **Live AWS manual test pass — 2-h time-box.** Provision live ECS + Lambda per [`manual-tests/01-infrastructure.md`](manual-tests/01-infrastructure.md); walk every track in [`manual-tests/02-aws-runbook.md`](manual-tests/02-aws-runbook.md). Per user override for this session: **fix-as-you-go** (record bug → fix → re-test → continue). Bugs filed in BUGS.md before the fix, per the standing log-first rule.
+4. **One-time PAT keychain setup (operator).** `gh auth login` (already complete) + `security add-generic-password -U -s sockerless-gl-pat -a "$USER" -w` for the GitLab PAT (`create_runner` + `api` scopes).
+5. **4-cell harness execution.** Each `go test -tags <runner>_runner_live -run TestX_Y_Hello -timeout 30m ./tests/runners/<runner>` exercises one cell end-to-end: mint registration token → register runner → dispatch / trigger → poll until success → unregister → delete runner via API.
+6. **Tear down live AWS** via `terragrunt destroy` per backend env (self-sufficient via `null_resource sockerless_runtime_sweep`, BUG-819).
+
+**Test workloads (per cell, minimum):**
+- `hello` — single-job `echo $RUNNER_NAME`. Smoke / wiring sanity.
+- `gotest` — `actions/checkout` + `setup-go` + `go test -count=1 ./...` against a tiny Go module included in the workflow. Multi-step exec, real artifact pull-down. ECS only on first pass.
+- `service-job` — `services: postgres:16` connectivity. Cross-container DNS via Cloud Map. ECS only.
+- `container-action` — `uses: docker://alpine:latest` (GitHub) / image-with-script (GitLab). Lambda candidate.
+
+**Bug discipline.** Every harness run that fails for a sockerless reason files a BUG in [BUGS.md](BUGS.md) (`Open` section), gets fixed in-branch, and the entry moves to the relevant `Resolved` section. Per the no-defer / no-fakes rule.
+
+**Live-cloud posture.** AWS creds active for this session (per operator confirmation 2026-04-27). Time-box 2 h for the manual-test pass; cells 1-4 of the harness can extend that as needed but should each unregister cleanly even on fail.
+
+**Phase 110 succeeds when** all 4 cells have a green run on file (harness logs in `tests/runners/<runner>/logs/`), and any bug surfaced during the run has a closed entry in BUGS.md. Capability matrix at [`docs/runner-capability-matrix.md`](docs/runner-capability-matrix.md) gets the cells updated from `TBD` to `PASS`/`FAIL` per workload.
 
 ### Phase 106 — Real GitHub Actions runner integration (in flight)
 
