@@ -258,9 +258,13 @@ func registerContainerApps(srv *sim.Server) {
 		_, exists := jobs.Get(resourceID)
 
 		// Real ACA: Jobs go through Creating → Succeeded just like Apps.
-		// Until the sim wires an Azure-AsyncOperation polling endpoint,
-		// return Succeeded directly (real Azure also has a sync
-		// fast-path). Tracked in PLAN § Phase 109 as a follow-up.
+		// Mirror the Azure-AsyncOperation polling flow: store the resource
+		// with Succeeded directly + emit the header so SDK pollers
+		// exercise the real path. acaIssueAsyncOp handles the async-op
+		// store + the InProgress→Succeeded transition timer; the polling
+		// endpoint is registered in containerapps_apps.go alongside the
+		// Apps surface (operationStatuses/{opId} is shared across the
+		// Microsoft.App provider).
 		job := ContainerAppJob{
 			ID:       resourceID,
 			Name:     name,
@@ -284,6 +288,9 @@ func registerContainerApps(srv *sim.Server) {
 		}
 
 		jobs.Put(resourceID, job)
+
+		opID := acaIssueAsyncOp(req.Location)
+		w.Header().Set("Azure-AsyncOperation", acaAsyncOpHeader(r, sub, req.Location, opID))
 
 		if exists {
 			sim.WriteJSON(w, http.StatusOK, job)
