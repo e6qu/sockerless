@@ -8,6 +8,24 @@ Resume pointer. Updated after every task. Roadmap detail lives in [PLAN.md](PLAN
 - `origin-gitlab/main` mirrors `origin/main` (in sync as of 2026-04-27 — pre-push hook now mirror-aware via `PRE_COMMIT_REMOTE_NAME`).
 - **`phase-110-runner-integration`** — open as the active branch. Phase 110 = real GitHub Actions + GitLab Runner integration against ECS + Lambda backends, plus a live-AWS manual test pass to feed into the harness.
 
+## Pause point — 2026-04-28 ~02:00 UTC
+
+Live AWS infra **torn down** (Lambda 8 + ECS 35 resources destroyed; eu-west-1 verified clean of sockerless tags). Operator pausing to disable the AWS access key. Before re-running the harness in the next session: reactivate the access key, then `terragrunt apply` from `terraform/environments/{ecs,lambda}/live` (will re-provision the same shape; the BUG-845/846/848 fixes mean the new infra works end-to-end without Docker Hub creds).
+
+**Bug log this session (PR #122 in flight):**
+- ✓ BUG-845 — Lambda live env was us-east-1; realigned to eu-west-1 + sockerless-tf-state.
+- ✓ BUG-846 — Docker Hub PAT path replaced with AWS Public Gallery routing in `resolveImageURI`. Verified live: `docker run --rm alpine:latest echo hi` → exit 0 from Fargate.
+- ✓ BUG-847 — GH runner asset URL (`darwin` → `osx`) + version bump (2.319.1 → 2.334.0). Superseded by BUG-849's Linux-container-runner approach.
+- ✓ BUG-848 — `docker info` reported hardcoded `amd64`; now reflects configured `RuntimePlatform.CpuArchitecture` (ECS) / `Architectures` (Lambda). Required env vars: `SOCKERLESS_ECS_CPU_ARCHITECTURE` (X86_64/ARM64) + `SOCKERLESS_LAMBDA_ARCHITECTURE` (x86_64/arm64). No defaults — Validate() rejects empty.
+- ✓ BUG-849 (partial) — GH harness now builds + runs the actions/runner inside a Linux container locally (because GitHub Actions' `container:` directive only works on Linux runners). Image build succeeds; `docker run` fails with exit 125 — investigation deferred to next session.
+
+**4-cell harness state on resume:**
+- Cell 1 (GH × ECS): `docker run runner: exit status 125` after a clean `docker build`. Investigate docker daemon error first (likely `--add-host host.docker.internal:host-gateway` syntax against the local podman/colima/Desktop combo, OR runtime network mode).
+- Cells 2/3/4: blocked on cell 1.
+
+**Polluting commits on origin/main from earlier failed runs:**
+- `4ce87f0`, `1447b4b` — `test: harness workflow update` (added `.github/workflows/hello-ecs.yml` directly to main). Cleaned up via BUG-849 fix that drops the API-driven workflow commits in favour of repo-checked-in YAMLs. Don't revert these — `hello-ecs.yml` on main is needed for `workflow_dispatch` registration; the new harness expects it there.
+
 ## Phase 110 progress (2026-04-27 session)
 
 ✓ State-doc compression (BUGS 3-section restructure, STATUS/WHAT_WE_DID/DO_NEXT compressed).
