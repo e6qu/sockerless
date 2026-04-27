@@ -22,7 +22,7 @@ No existing project fills this niche. Docker Engine, Podman, Colima, and Rancher
 
 Primary use cases:
 
-- **CI runners** — GitLab Runner (docker-executor) and GitHub Actions Runner (container jobs) work without modification
+- **CI runners** — GitLab Runner (docker-executor) and GitHub Actions Runner (container jobs) work without modification — see [`docs/RUNNERS.md`](docs/RUNNERS.md) for the wiring guide
 - **Docker Compose** — `docker compose up/down/ps/logs` works for basic service stacks
 - **General usage** — `docker run`, `docker exec`, `docker logs` against cloud infrastructure
 
@@ -281,6 +281,7 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 | [`FEATURE_MATRIX.md`](FEATURE_MATRIX.md) | Docker API compatibility, cloud service mappings, test results |
 | [`simulators/README.md`](simulators/README.md) | Cloud simulators: services, state management, CLI usage, bash tests |
 | [`backends/*/README.md`](backends/) | Per-backend configuration and terraform output mapping |
+| [`docs/RUNNERS.md`](docs/RUNNERS.md) | **CI runner wiring** — canonical guide: GitHub Actions + GitLab Runner against ECS + Lambda, token strategy, 4-cell coverage matrix |
 | [`docs/GITHUB_RUNNER.md`](docs/GITHUB_RUNNER.md) | GitHub Actions E2E test guide (act + official runner) |
 | [`docs/GITLAB_RUNNER_DOCKER.md`](docs/GITLAB_RUNNER_DOCKER.md) | GitLab Runner docker executor E2E test guide |
 | [`AGENTS.md`](AGENTS.md) | Agent architecture (forward/reverse modes) |

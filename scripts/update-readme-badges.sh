@@ -1,9 +1,19 @@
 #!/usr/bin/env bash
 # Updates all badge values in README.md based on current codebase stats.
 # Used as a pre-push hook or run manually.
+#
+# Mirror remote pushes (any pre-commit `PRE_COMMIT_REMOTE_NAME` other
+# than `origin`) are intentional fast-forwards of origin/main; they
+# carry whatever badges origin/main already has, so this hook is a
+# no-op for them.
 
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
+
+remote_name="${PRE_COMMIT_REMOTE_NAME:-origin}"
+if [ "$remote_name" != "origin" ]; then
+  exit 0
+fi
 
 readme="README.md"
 
