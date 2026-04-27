@@ -181,9 +181,11 @@ Audit-driven sweep against the rule **"no fakes, no fallbacks, no synthetic data
 17. ✓ **GCP sim — operations endpoint persistence.** Real Cloud Run keeps LRO records around for the SDK to `GetOperation` against. The sim previously returned a synthetic `done=true` Operation for any op id (including ones the sim never issued) — that masked client bugs. Operations are now persisted in a shared `crOperations` Store; `newLRO` writes the record on issue, and `GET /v{1,2}/.../operations/{op}` returns the persisted record or 404 for unknown ids. Cloud Run jobs settle to `CONDITION_SUCCEEDED` on create because the sim has no real reconciliation to do — injecting a synthetic delay just to mimic real Cloud Run's `RECONCILING → SUCCEEDED` window would be exactly the fake behaviour this audit removes.
 18. ✓ **Azure sim — `SystemData.createdAt` preserved across updates.** Real ARM stamps `systemData.createdAt` once on resource creation and only updates `lastModifiedAt` on subsequent writes — restamping on every PUT/PATCH would surface in `azure-cli --query systemData` output and break audit trails. Container Apps + Jobs PUT handlers now read the existing record's CreatedAt and reuse it across updates; `LastModifiedAt` is stamped fresh on every write. SystemData type extended with the standard `lastModifiedAt` field. SDK test asserts the contract.
 
+19. ✓ **No-fakes audit on test fixtures — clean.** Repo-wide sweep of `simulators/*/{sdk,cli,terraform,bash}-tests/` confirmed zero violations. All hardcoded IDs are either: (a) sim-pre-registered defaults (e.g. `subnet-0123456789abcdef0` from `ec2.go`), (b) configuration values like subscription/tenant/project IDs, (c) caller-provided UUIDs that real Azure accepts (role-assignment names), or (d) intentional negative-test inputs (`subnet-doesnotexistanywhere` to verify rejection). Tests that need real resource state create resources via the CRUD API first and reference the returned IDs.
+
 **Scope (still pending — sequencing):**
 
-19. **No-fakes audit pass on test fixtures.** Repo-wide grep for `subnet-*`, `vpc-*`, `arn:aws:*`, `projects/test-*`, `00000000-...` style IDs in tests — every test must either use a sim-pre-registered ID or create the resource via the sim's CRUD API first.
+(Phase 109 audit-tracked work is complete. Further audit items will be added as they surface.)
 
 **Per-bug log lives in [BUGS.md](BUGS.md) round-10.** Each item lands as its own commit with: typed sim handler change → SDK/CLI test pass against the new contract → no-fakes regression test added.
 
