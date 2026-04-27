@@ -120,14 +120,19 @@ func registerContainerAppsApps(srv *sim.Server) {
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/containerApps/%s", sub, rg, name)
 		_, exists := apps.Get(resourceID)
 
-		// Real ACA: PUT returns 201 Created with provisioningState=Creating;
-		// the SDK poller (azcore.NewPoller) GETs the resource until
-		// provisioningState transitions to Succeeded. Mirror that flow so
-		// backends that poll see the real state machine instead of an
-		// instant-Succeeded response. The internal FQDN format mirrors real
-		// ACA: <app>.internal.<env-id>.<region>.azurecontainerapps.io.
-		// Backend's cloudServiceRegisterCNAME reads LatestRevisionFqdn
-		// to seed the Private DNS A/CNAME record for peer discovery.
+		// Real ACA: PUT returns 201 Created with provisioningState=Creating
+		// + an Azure-AsyncOperation header; the SDK poller follows that
+		// header until status=Succeeded. Until the sim wires a proper
+		// operation-status endpoint, return the resource with
+		// provisioningState=Succeeded directly so the SDK's poller sees a
+		// completed sync response (real Azure also has a sync fast-path
+		// for resources that complete within the request window). Tracked
+		// in PLAN § Phase 109 as the "Container Apps state machine"
+		// follow-up.
+		// The internal FQDN format mirrors real ACA:
+		// <app>.internal.<env-id>.<region>.azurecontainerapps.io.
+		// Backend's cloudServiceRegisterCNAME reads LatestRevisionFqdn to
+		// seed the Private DNS A/CNAME record for peer discovery.
 		revName := fmt.Sprintf("%s--00001", name)
 		fqdn := fmt.Sprintf("%s.internal.sim-env.%s.azurecontainerapps.io", name, req.Location)
 
@@ -138,7 +143,7 @@ func registerContainerAppsApps(srv *sim.Server) {
 			Location: req.Location,
 			Tags:     req.Tags,
 			Properties: ContainerAppProps{
-				ProvisioningState:       "Creating",
+				ProvisioningState:       "Succeeded",
 				EnvironmentID:           req.Properties.EnvironmentID,
 				ManagedEnvironmentID:    req.Properties.ManagedEnvironmentID,
 				WorkloadProfileName:     req.Properties.WorkloadProfileName,
@@ -160,17 +165,6 @@ func registerContainerAppsApps(srv *sim.Server) {
 		}
 
 		apps.Put(resourceID, app)
-
-		// Async transition to Succeeded after a short delay. The poller
-		// will GET the resource a few times during this window — same
-		// shape real Azure exhibits, just compressed (real ACA takes
-		// 30-60s, sim takes 100ms).
-		go func(id string) {
-			time.Sleep(100 * time.Millisecond)
-			apps.Update(id, func(a *ContainerApp) {
-				a.Properties.ProvisioningState = "Succeeded"
-			})
-		}(resourceID)
 
 		if exists {
 			sim.WriteJSON(w, http.StatusOK, app)
