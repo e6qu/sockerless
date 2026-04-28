@@ -6,6 +6,20 @@ See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for
 
 This file keeps narrative / "why we did it" context that doesn't live in BUGS.md or git log. Per-bug detail belongs in [BUGS.md](BUGS.md) — don't duplicate it here.
 
+## Phase 110 — runner integration (in flight, PR #122)
+
+Architecture exploration that landed two important separations:
+
+**GitLab vs GitHub runner — dispatcher pattern vs worker pattern.** GitLab Runner is a *dispatcher*: the master polls GitLab and uses the docker executor's `docker create + docker exec` to spawn the job container. The master is just a docker client; it never bind-mounts its own filesystem; it can run anywhere with `--docker-host` pointing at sockerless. **Cells 3 + 4 need zero new sockerless code.** GitHub Actions Runner is a *worker*: it *is* the workspace. For `container:` jobs it does `docker create -v /home/runner/_work:/__w …` — host bind mounts that assume a shared filesystem with the spawned container. On Fargate two tasks don't share filesystems by default. **Cells 1 + 2 require both a topology change (runner-as-ECS-task with EFS-backed workspace) and a sockerless feature (bind-mount → EFS translation).**
+
+**`github-runner-dispatcher` is sockerless-agnostic.** A new top-level Go module (own `go.mod`, separate dep tree) that speaks only the public Docker API / CLI. Pointed at local Podman it spawns runners locally; pointed at sockerless via `DOCKER_HOST` it spawns runners in Fargate. The dispatcher doesn't know sockerless exists — same `docker run` call, different daemon. Sockerless's role (sidecar injection, EFS bind-mount translation) is invisible to the dispatcher; it's encoded in (a) image labels set at runner-image build time and (b) a pre-registered ECS task definition that sockerless's ECS backend recognizes via the image label and dispatches to.
+
+**Static task definition for the runner-task.** The runner-task's shape (multi-container: runner + sockerless sidecar; EFS-backed workspace; IAM role; log config) lives in Terraform as a pre-registered ECS task definition with a stable ARN. Sockerless's ECS backend, when it sees an image with `LABEL com.sockerless.ecs.task-definition-family=sockerless-runner`, calls `RunTask --task-definition sockerless-runner:LATEST` with per-job container-override env vars (`REG_TOKEN` / `LABELS` / `RUNNER_NAME`) — no dynamic task-def composition. Operator owns the runner-task spec; sockerless just dispatches. (Job-tasks the runner subsequently spawns inside the workflow keep dynamic composition; that's where the bind-mount-via-EFS feature plugs in.)
+
+Splits into two PRs: 110a (cells 3 + 4 + dispatcher skeleton — closes PR #122) and 110b (sockerless EFS feature + runner image push to ECR + cells 1 + 2). See [PLAN.md § Phase 110](PLAN.md) for the full plan, [docs/RUNNERS.md](docs/RUNNERS.md) for token strategy + wiring.
+
+**Bugs surfaced + fixed in 110a (PR #122):** BUG-845 (Lambda live env was us-east-1; realigned to eu-west-1 + sockerless-tf-state), BUG-846 (Docker Hub PAT path replaced with AWS Public Gallery routing for `alpine`-style library refs — verified live: `docker run alpine echo hi` exits 0 from Fargate), BUG-847 (GH runner asset URL `darwin` → `osx`; pinned 2.319.1 → 2.334.0), BUG-848 (`docker info` reported hardcoded `amd64` — now reflects required `SOCKERLESS_ECS_CPU_ARCHITECTURE` / `SOCKERLESS_LAMBDA_ARCHITECTURE` env vars; ECS RuntimePlatform + Lambda Architectures wired through), BUG-849 (Linux runner container approach: `--add-host host-gateway` syntax fails on Podman 5.x because Podman natively provides `host.docker.internal` and `host.containers.internal` aliases; drop the `--add-host` flag entirely + install docker CLI in the runner image so `container:` directive can do its docker create + exec).
+
 ## Phase 109 — strict cloud-API fidelity sweep (PR #121, merged 2026-04-27)
 
 19 audit items closed. Triggered by PR #120 CI failures that traced back to synthetic responses. Goal: every sim slice sockerless touches behaves like the real cloud — same wire shape, same validation rules, same state transitions, same SDK / CLI / Terraform-provider compatibility.

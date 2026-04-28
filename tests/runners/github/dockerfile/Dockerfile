@@ -23,10 +23,24 @@ ARG RUNNER_VERSION=2.334.0
 # linux-VM-arch (Docker Desktop on Apple Silicon = linux/arm64; on
 # Intel = linux/amd64). Override via --build-arg if the host VM diverges.
 ARG TARGETARCH=arm64
+# Docker CLI version. The runner needs `docker` on PATH to honor a
+# workflow's `container:` directive (and any `run: docker run …`
+# steps). It's pure client — it talks to DOCKER_HOST (= sockerless on
+# the host) over TCP, so no daemon, no docker.sock mount.
+ARG DOCKER_VERSION=27.3.1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       curl ca-certificates libicu74 git sudo jq && \
     rm -rf /var/lib/apt/lists/*
+
+RUN case "$TARGETARCH" in \
+      amd64) DOCKER_ARCH=x86_64 ;; \
+      arm64) DOCKER_ARCH=aarch64 ;; \
+      *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac && \
+    curl -fsSL "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-${DOCKER_VERSION}.tgz" \
+    | tar xz --strip-components=1 -C /usr/local/bin docker/docker && \
+    /usr/local/bin/docker --version
 
 RUN useradd -m runner && \
     echo "runner ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers

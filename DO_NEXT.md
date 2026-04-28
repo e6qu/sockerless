@@ -6,66 +6,62 @@ Resume pointer. Updated after every task. Roadmap detail lives in [PLAN.md](PLAN
 
 - `main` synced with `origin/main` at PR #121 merge.
 - `origin-gitlab/main` mirrors `origin/main` (in sync as of 2026-04-27 — pre-push hook now mirror-aware via `PRE_COMMIT_REMOTE_NAME`).
-- **`phase-110-runner-integration`** — open as the active branch. Phase 110 = real GitHub Actions + GitLab Runner integration against ECS + Lambda backends, plus a live-AWS manual test pass to feed into the harness.
+- **`phase-110-runner-integration`** — open as the active branch. PR #122 in flight. **Phase 110 split into 110a + 110b** (architecture decision recorded 2026-04-28; see [PLAN.md § Phase 110](PLAN.md) and [WHAT_WE_DID.md § Phase 110](WHAT_WE_DID.md) for the rationale).
 
-## Pause point — 2026-04-28 ~02:00 UTC
-
-Live AWS infra **torn down** (Lambda 8 + ECS 35 resources destroyed; eu-west-1 verified clean of sockerless tags). Operator pausing to disable the AWS access key. Before re-running the harness in the next session: reactivate the access key, then `terragrunt apply` from `terraform/environments/{ecs,lambda}/live` (will re-provision the same shape; the BUG-845/846/848 fixes mean the new infra works end-to-end without Docker Hub creds).
-
-**Bug log this session (PR #122 in flight):**
-- ✓ BUG-845 — Lambda live env was us-east-1; realigned to eu-west-1 + sockerless-tf-state.
-- ✓ BUG-846 — Docker Hub PAT path replaced with AWS Public Gallery routing in `resolveImageURI`. Verified live: `docker run --rm alpine:latest echo hi` → exit 0 from Fargate.
-- ✓ BUG-847 — GH runner asset URL (`darwin` → `osx`) + version bump (2.319.1 → 2.334.0). Superseded by BUG-849's Linux-container-runner approach.
-- ✓ BUG-848 — `docker info` reported hardcoded `amd64`; now reflects configured `RuntimePlatform.CpuArchitecture` (ECS) / `Architectures` (Lambda). Required env vars: `SOCKERLESS_ECS_CPU_ARCHITECTURE` (X86_64/ARM64) + `SOCKERLESS_LAMBDA_ARCHITECTURE` (x86_64/arm64). No defaults — Validate() rejects empty.
-- ✓ BUG-849 (partial) — GH harness now builds + runs the actions/runner inside a Linux container locally (because GitHub Actions' `container:` directive only works on Linux runners). Image build succeeds; `docker run` fails with exit 125 — investigation deferred to next session.
-
-**4-cell harness state on resume:**
-- Cell 1 (GH × ECS): `docker run runner: exit status 125` after a clean `docker build`. Investigate docker daemon error first (likely `--add-host host.docker.internal:host-gateway` syntax against the local podman/colima/Desktop combo, OR runtime network mode).
-- Cells 2/3/4: blocked on cell 1.
-
-**Polluting commits on origin/main from earlier failed runs:**
-- `4ce87f0`, `1447b4b` — `test: harness workflow update` (added `.github/workflows/hello-ecs.yml` directly to main). Cleaned up via BUG-849 fix that drops the API-driven workflow commits in favour of repo-checked-in YAMLs. Don't revert these — `hello-ecs.yml` on main is needed for `workflow_dispatch` registration; the new harness expects it there.
-
-## Phase 110 progress (2026-04-27 session)
-
-✓ State-doc compression (BUGS 3-section restructure, STATUS/WHAT_WE_DID/DO_NEXT compressed).
-✓ Phase 110 plan in PLAN.md (4-cell matrix; token strategy; execution sequence).
-✓ Phase 111 + Phase 112 planned (workload identity; instance metadata services).
-✓ `docs/RUNNERS.md` canonical wiring guide; linked from README.
-✓ Pre-push hooks mirror-aware via `PRE_COMMIT_REMOTE_NAME`; `origin-gitlab` mirror in sync.
-✓ Harness refactored — `tests/runners/internal/{tokens.sh,tokens.go,runners.go}` + 4 test cells (`TestGitHub_{ECS,Lambda}_Hello`, `TestGitLab_{ECS,Lambda}_Hello`); compiles clean with build tags.
-✓ All 3 operator prereqs satisfied: AWS creds active via `aws.sh`; `gh` PAT has `workflow` scope; `gitlab-runner` installed; GitLab PAT in keychain.
-✓ Live AWS infra provisioned (eu-west-1): ECS cluster `sockerless-live`, Lambda execution role, EFS, ECR, NAT Gateway, VPC.
-✓ ECS sockerless backend daemon running on `tcp://localhost:3375`.
-✓ BUG-845 fixed (Lambda live env was us-east-1; realigned to eu-west-1 to share ECS subnets per runbook).
-✓ BUG-846 fixed in code (Docker Hub creds prereq documented + terraform passthrough); operator setup still required.
-
-⏳ **Blocker — Docker Hub credentials in Secrets Manager.** First `docker run alpine:latest` against the ECS backend fails with `UnsupportedUpstreamRegistryException` because the ECR pull-through cache requires Docker Hub credentials. Per BUG-708 the backend surfaces this clearly (no fallback). Per BUG-846 (just fixed) the prereq is now documented in [`manual-tests/01-infrastructure.md`](manual-tests/01-infrastructure.md) § "Prerequisite: Docker Hub credentials in Secrets Manager".
-
-   **What unblocks:** operator runs the new prereq section once — mints a Docker Hub PAT (https://hub.docker.com/settings/security, scope: Public Repo Read-only), creates a Secrets Manager secret named `ecr-pullthroughcache/sockerless-dockerhub` (the prefix is required by the AWSServiceRoleForECRPullThroughCache role), exports the ARN as `SOCKERLESS_ECR_DOCKERHUB_CREDENTIAL_ARN`, restarts the ECS backend daemon. Next session picks up from there.
-
-⏸ **Live infra still up** in eu-west-1. NAT Gateway is ~$0.05/hr; tear down via `terragrunt destroy` from `terraform/environments/{ecs,lambda}/live` whenever convenient. Self-sufficient teardown via `null_resource sockerless_runtime_sweep` (BUG-819).
-
-## Up next on this branch (Phase 110 remaining)
-
-1. **Operator: provision Docker Hub creds secret** per the new doc.
-2. **Re-run smoke** — `docker run --rm alpine:latest echo hi` against `tcp://localhost:3375`. Expected: alpine task runs to completion in Fargate, exits 0.
-3. **Walk the relevant tracks of [`manual-tests/02-aws-runbook.md`](manual-tests/02-aws-runbook.md)** in the time the operator allocates. Fix-as-you-go bugs to BUGS.md.
-4. **4-cell runner harness** end-to-end:
-   - `go test -tags github_runner_live -run TestGitHub_ECS_Hello -timeout 30m ./tests/runners/github`
-   - `go test -tags github_runner_live -run TestGitHub_Lambda_Hello -timeout 30m ./tests/runners/github`
-   - `go test -tags gitlab_runner_live -run TestGitLab_ECS_Hello -timeout 30m ./tests/runners/gitlab`
-   - `go test -tags gitlab_runner_live -run TestGitLab_Lambda_Hello -timeout 30m ./tests/runners/gitlab`
-5. **Tear down live AWS** via `terragrunt destroy`.
-
-## Operational state
+## Operational state — 2026-04-28 ~12:45 UTC
 
 - **AWS creds:** active via `. /Users/zardoz/projects/sockerless/aws.sh` (root account `729079515331`).
-- **GitHub PAT:** keychain-backed via `gh`; scopes include `workflow`; registration-token mint smoke-tested.
-- **GitLab PAT:** keychain entry `sockerless-gl-pat` present; scopes include `api`, `create_runner`, `manage_runner`; `gitlab-runner` v18.11.1 installed.
-- **Runner registration tokens:** ephemeral; minted per harness run, deleted on exit. Never on disk.
-- **Pre-push hooks** mirror-aware (`PRE_COMMIT_REMOTE_NAME`); pre-commit was reinstalled via `pipx reinstall pre-commit` after `brew install gitlab-runner` broke its python venv symlink.
-- **PR #122**: open against `phase-110-runner-integration` (TBD — open after this commit).
+- **Live AWS infra: UP in eu-west-1.** Re-provisioned this session via `terragrunt apply` from both `terraform/environments/{ecs,lambda}/live`. ECS = 35 resources (VPC + NAT + cluster + EFS + ECR + IAM + Cloud Map). Lambda = 8 resources (IAM execution role + ECR repo + log group). NAT Gateway runs ~$0.045/hr — tear down via `terragrunt destroy` when the session ends.
+- **Sockerless backends RUNNING.**
+  - ECS daemon on `tcp://localhost:3375` (cluster `sockerless-live`).
+  - Lambda daemon on `tcp://localhost:3376` (eu-west-1, sharing the ECS VPC subnets per BUG-845).
+  - Required env vars: `SOCKERLESS_ECS_CPU_ARCHITECTURE=X86_64` / `SOCKERLESS_LAMBDA_ARCHITECTURE=x86_64` (BUG-848, no defaults).
+  - Smoke verified: `DOCKER_HOST=tcp://localhost:3375 docker run --rm alpine:latest echo hi` exits 0 from a Fargate task — confirms BUG-846 (AWS Public Gallery routing) holds after re-provisioning.
+- **Podman machine running** (applehv VM). Used for local-Podman dispatcher testing in 110a; not used for cells 3 + 4 (gitlab-runner master is darwin-native binary).
+
+## Phase 110a — pending tasks (close PR #122)
+
+1. **Run cell 3 — GitLab × ECS.** No new code; the harness already runs `gitlab-runner` locally with the docker executor pointed at sockerless on `:3375`. Mints a runner authentication token via `POST /api/v4/user/runners`, registers the runner, commits a per-cell pipeline YAML on a throwaway branch, triggers the pipeline, polls to success, then unregisters + deletes runner + branch.
+   ```bash
+   go test -v -tags gitlab_runner_live -run TestGitLab_ECS_Hello -timeout 25m ./tests/runners/gitlab/
+   ```
+2. **Run cell 4 — GitLab × Lambda.** Same harness, points at `:3376`. Lambda's 15-minute hard cap applies per job.
+   ```bash
+   go test -v -tags gitlab_runner_live -run TestGitLab_Lambda_Hello -timeout 25m ./tests/runners/gitlab/
+   ```
+3. **Scaffold `github-runner-dispatcher` top-level module.** New top-level Go module at the repo root (own `go.mod`, builds independently). Coupled **only to the public Docker API / CLI** — zero awareness of sockerless. Components:
+   - `github-runner-dispatcher/cmd/github-runner-dispatcher/main.go` — entry point with mandatory `--repo` flag (no default).
+   - `github-runner-dispatcher/pkg/poller/poller.go` — short-poller (`/repos/{repo}/actions/runs?status=queued` + per-run `/jobs`) every 15 s. Stateless dedup via seen-set with 5-min TTL.
+   - `github-runner-dispatcher/pkg/spawner/spawner.go` — Docker SDK client doing `docker run --pull never <runner-image-uri> -e RUNNER_REG_TOKEN=… -e RUNNER_LABELS=…`. `DOCKER_HOST` env dictates target daemon.
+   - `github-runner-dispatcher/pkg/config/config.go` — TOML loader at `~/.sockerless/dispatcher/config.toml` mapping label → `{daemon URL, runner image URI}`. CLI flags can override.
+   - Explicit scope verification at startup via `gh api /` checking the PAT scopes; fail loud with full instructions on missing scopes.
+   - Sockerless-daemon-liveness check: skip the poll cycle if `DOCKER_HOST` is unreachable; log warning, don't crash.
+4. **Smoke-test the dispatcher** against local Podman with the existing `sockerless-actions-runner:local` image. No ECR push needed for 110a.
+5. **Update [docs/RUNNERS.md](docs/RUNNERS.md)** — document the dispatcher's role, the 110a/110b split, and what each half ships.
+6. **Update [docs/runner-capability-matrix.md](docs/runner-capability-matrix.md)** — fill in cells 3 + 4 with `PASS` (per the runs above); cells 1 + 2 stay `TBD` until 110b.
+7. **Tear down live AWS** (operator-scheduled) via `terragrunt destroy` from both terragrunt envs.
+
+## Phase 110b — queued (next branch)
+
+Not started; landing target is a fresh branch + PR after 110a closes. See [PLAN.md § Phase 110b](PLAN.md). Headlines:
+- Bind-mount → EFS translation feature in sockerless ECS + Lambda backends.
+- New `sockerless-runner` ECR repo via Terraform.
+- Runner image push (with `LABEL com.sockerless.ecs.task-definition-family=sockerless-runner`).
+- Pre-registered `sockerless-runner` ECS task definition (multi-container: runner + sockerless sidecar; EFS-backed workspace) in Terraform under `terraform/environments/runner/live/`.
+- Lambda function definition for cell 2 (with `FileSystemConfigs` for EFS).
+- Cells 1 + 2 wired via the dispatcher.
+
+## Bug log this session (PR #122)
+
+All resolved.
+
+- ✓ BUG-845 — Lambda live env was us-east-1; realigned to eu-west-1 + sockerless-tf-state.
+- ✓ BUG-846 — Docker Hub PAT path replaced with AWS Public Gallery routing in `resolveImageURI`. Verified live: `docker run --rm alpine:latest echo hi` → exit 0 from Fargate.
+- ✓ BUG-847 — GH runner asset URL (`darwin` → `osx`) + version bump (2.319.1 → 2.334.0). Reusable in 110b.
+- ✓ BUG-848 — `docker info` reported hardcoded `amd64`; now reflects configured `RuntimePlatform.CpuArchitecture` (ECS) / `Architectures` (Lambda). Required env vars: `SOCKERLESS_ECS_CPU_ARCHITECTURE` (X86_64/ARM64) + `SOCKERLESS_LAMBDA_ARCHITECTURE` (x86_64/arm64). No defaults — Validate() rejects empty.
+- ✓ BUG-849 — runner image fixes: drop `--add-host host-gateway` (broken on Podman 5.x — auto-resolved aliases work without it); install docker CLI in the runner image so `container:` directive can do its docker create + exec.
+
+The bind-mount limitation (`container:` directive's host bind mounts of `/home/runner/_work`) is **not a bug of BUG-849** — it's the architectural mismatch between GitHub's worker-pattern runner and Fargate's task-isolated filesystem. Resolved in 110b via the bind-mount → EFS translation feature.
 
 ## Cross-links
 
@@ -84,3 +80,4 @@ Live AWS infra **torn down** (Lambda 8 + ECS 35 resources destroyed; eu-west-1 v
 - **State save after every task** — PLAN / STATUS / WHAT_WE_DID / DO_NEXT / BUGS / memory.
 - **Never merge PRs** — user handles all merges; agent only creates PRs and waits for CI.
 - **Branch hygiene** — rebase PR branch on `origin/main` before push; sync local `main` after push.
+- **`github-runner-dispatcher` is sockerless-agnostic** — pure Docker SDK / CLI client. Sockerless integration is invisible to it; encoded in image labels + pre-registered ECS task definitions.

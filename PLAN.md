@@ -86,49 +86,82 @@ backends/azure-common/drivers/  # ACR Tasks / Log Analytics / ACR
 
 **Wave 4 remaining** (lower priority): events stream, exec start hijack, container CRUD beyond list. Verify against a real podman client (currently no live podman in CI). Can run in parallel with Phase 104.
 
-### Phase 110 — Real GitHub + GitLab runner integration on the active branch (in flight)
+### Phase 110 — Real GitHub + GitLab runner integration (in flight; split into 110a + 110b)
 
-Phase 110 collapses Phases 106 (GitHub) and 107 (GitLab) into one execution stream against ECS + Lambda backends, plus a live-AWS manual test pass that seeds the runner harness with a known-good baseline. Architecture and token strategy live in [`docs/RUNNERS.md`](docs/RUNNERS.md) (canonical) — Phase 106/107 sections below remain as the per-runner reference. Branch: `phase-110-runner-integration`.
+Phase 110 collapses Phases 106 (GitHub) and 107 (GitLab) into one execution stream against ECS + Lambda backends. Architecture and token strategy live in [`docs/RUNNERS.md`](docs/RUNNERS.md) (canonical) — Phase 106/107 sections below remain as the per-runner reference. Branch: `phase-110-runner-integration` (PR #122) for 110a; subsequent branch for 110b.
 
-**Coverage matrix — 4 cells. All required.**
+**Coverage matrix — 4 cells. All required by the end of 110b.**
 
-| Runner | Backend | Sockerless port | Runner label / tag |
-|---|---|---|---|
-| GitHub `actions/runner` | ECS Fargate | `:3375` | `sockerless-ecs` |
-| GitHub `actions/runner` | AWS Lambda | `:3376` | `sockerless-lambda` |
-| `gitlab-runner` (docker exec) | ECS Fargate | `:3375` | `sockerless-ecs` |
-| `gitlab-runner` (docker exec) | AWS Lambda | `:3376` | `sockerless-lambda` |
+| Cell | Runner | Backend | Sockerless port | Runner label / tag | Lands in |
+|---|---|---|---|---|---|
+| 1 | GitHub `actions/runner` | ECS Fargate | `:3375` | `sockerless-ecs` | 110b |
+| 2 | GitHub `actions/runner` | AWS Lambda | `:3376` | `sockerless-lambda` | 110b |
+| 3 | `gitlab-runner` (docker exec) | ECS Fargate | `:3375` | `sockerless-ecs` | 110a |
+| 4 | `gitlab-runner` (docker exec) | AWS Lambda | `:3376` | `sockerless-lambda` | 110a |
 
-Two Sockerless daemons (one per backend label, Phase-68-v1 split). One daemon serves both runners — they don't see each other's containers.
+**Architectural split — why two halves.**
 
-**Token strategy.** No long-lived tokens in env vars / project settings / disk plaintext / shell history. PATs in macOS Keychain (`gh` keychain-backed for GitHub; `security(1)` entry for GitLab). Runner registration tokens minted per harness run via the platform API (`gh api .../registration-token` for GitHub; `POST /api/v4/user/runners` for GitLab) and deleted on harness exit. Harness reads PATs via `gh auth token` and `security find-generic-password -s sockerless-gl-pat -a "$USER" -w`. Self-healing cleanup: each run starts by deleting any leftover `sockerless-*` runners from a previous crash. Full detail in `docs/RUNNERS.md`.
+GitLab Runner is a **dispatcher pattern**: the runner master polls GitLab, and for each job it uses the docker executor to spawn a *job container* via `docker create + docker exec`. The master is just a docker client; it never bind-mounts its own filesystem into the job container; it doesn't need to be co-located with the workload. So **gitlab-runner master can run on the laptop**, point its `--docker-host` at sockerless, and every job container becomes an ECS task or Lambda invocation. **No new sockerless code needed for cells 3 + 4.**
+
+GitHub Actions Runner is a **worker pattern**: the runner *is* the workspace. Its filesystem holds the checkout, the action sources, the job artifacts. For `container:`-using jobs it runs `docker create` with **host bind mounts** (`/home/runner/_work` → `/__w`, `/var/run/docker.sock`, etc.), assuming a shared filesystem between runner and job container. On Fargate / Lambda, two tasks don't share filesystems by default. So GitHub runners can't run as a local laptop process and dispatch jobs to Fargate via sockerless — the bind-mount semantics break. **Cells 1 + 2 require a sockerless code change** and a different topology (runner-as-ECS-task, EFS-backed workspace, sockerless sidecar, bind-mount → EFS translation).
+
+**Token strategy (both halves).** No long-lived tokens in env vars / project settings / disk plaintext / shell history. PATs in macOS Keychain (`gh` keychain-backed for GitHub; `security(1)` entry for GitLab). Runner registration tokens minted per harness run via the platform API (`gh api .../registration-token` for GitHub; `POST /api/v4/user/runners` for GitLab) and deleted on harness exit. Self-healing cleanup: each run starts by deleting any leftover `sockerless-*` runners from a previous crash. Full detail in `docs/RUNNERS.md`.
 
 **Workflow / pipeline trigger discipline.**
 - GitHub workflows under `.github/workflows/sockerless-runner-*.yml` use **only** `workflow_dispatch:` and `pull_request: paths: ['tests/runners/**']`. Never trigger on push to main.
 - GitLab pipelines kept isolated under `tests/runners/gitlab/pipelines/`; harness triggers via `POST /projects/:id/pipeline` with `ref` set to a throwaway branch.
 
-**Lambda 15-minute hard limit.** Lambda label is for short, fast workloads only — lint, format, container actions (`uses: docker://...`), single-command tests. Real CI jobs that take >10 min use the ECS label. Documented in `docs/RUNNERS.md`.
+#### Phase 110a — GitLab cells + dispatcher skeleton (closes PR #122)
 
-**Execution sequence (in order):**
+Two deliverables, neither blocked on the other:
 
-1. **State-doc compression.** ✓ done in this branch (BUGS / STATUS / WHAT_WE_DID / DO_NEXT all compressed; BUGS now 3-section).
-2. **Plan written.** ✓ this section.
-3. **Live AWS manual test pass — 2-h time-box.** Provision live ECS + Lambda per [`manual-tests/01-infrastructure.md`](manual-tests/01-infrastructure.md); walk every track in [`manual-tests/02-aws-runbook.md`](manual-tests/02-aws-runbook.md). Per user override for this session: **fix-as-you-go** (record bug → fix → re-test → continue). Bugs filed in BUGS.md before the fix, per the standing log-first rule.
-4. **One-time PAT keychain setup (operator).** `gh auth login` (already complete) + `security add-generic-password -U -s sockerless-gl-pat -a "$USER" -w` for the GitLab PAT (`create_runner` + `api` scopes).
-5. **4-cell harness execution.** Each `go test -tags <runner>_runner_live -run TestX_Y_Hello -timeout 30m ./tests/runners/<runner>` exercises one cell end-to-end: mint registration token → register runner → dispatch / trigger → poll until success → unregister → delete runner via API.
-6. **Tear down live AWS** via `terragrunt destroy` per backend env (self-sufficient via `null_resource sockerless_runtime_sweep`, BUG-819).
+1. **Cells 3 + 4 — GitLab × ECS / GitLab × Lambda against live infra.** No new code. The GitLab harness already runs `gitlab-runner` locally with the docker executor. Each test cell mints a runner authentication token via `POST /api/v4/user/runners`, registers the runner with `--docker-host tcp://localhost:3375` (or `:3376`), commits a per-cell pipeline YAML on a throwaway branch, triggers a pipeline, polls to success, then unregisters + deletes the runner + branch. Headline value: validates that the live ECS + Lambda backends translate `docker create + exec` (the gitlab-runner pattern) end-to-end against real Fargate / Lambda invocations.
 
-**Test workloads (per cell, minimum):**
-- `hello` — single-job `echo $RUNNER_NAME`. Smoke / wiring sanity.
-- `gotest` — `actions/checkout` + `setup-go` + `go test -count=1 ./...` against a tiny Go module included in the workflow. Multi-step exec, real artifact pull-down. ECS only on first pass.
-- `service-job` — `services: postgres:16` connectivity. Cross-container DNS via Cloud Map. ECS only.
-- `container-action` — `uses: docker://alpine:latest` (GitHub) / image-with-script (GitLab). Lambda candidate.
+2. **`github-runner-dispatcher` top-level module skeleton.** A new sibling Go module at the repo root (own `go.mod`, independent dep tree, builds standalone). Coupled **only to the public Docker API / CLI** — zero awareness of sockerless. The dispatcher pointed at any docker daemon (local Podman, Docker Desktop, or sockerless via `DOCKER_HOST=tcp://…`) does the same thing: poll GitHub, spawn runner containers, exit. Sockerless is invisible to it.
+
+   - **Mandatory `--repo` flag** (no default — explicit).
+   - **`gh auth token` + explicit scope verification at startup**, fail loud with full instructions on missing scopes.
+   - **Stateless poller**: `GET /repos/{repo}/actions/runs?status=queued` + per-run `GET .../jobs` every 15 s. Dedup via seen-set with 5-min TTL.
+   - **Per-job spawner**: `docker run --pull never <runner-image-uri> -e RUNNER_REG_TOKEN=… -e RUNNER_LABELS=…`. Uses Docker SDK; `DOCKER_HOST` environment dictates target daemon.
+   - **60-s idle timeout** enforced inside the runner image's entrypoint script — if `actions/runner` stdout doesn't show "Running job:" within the window, the entrypoint kills the runner. Cleans up duplicate-spawn races without dispatcher state.
+   - **Sockerless-daemon liveness check**: skip the poll cycle if `DOCKER_HOST` is unreachable; log a warning. Don't crash, don't auto-start.
+   - **Config file** at `~/.sockerless/dispatcher/config.toml` mapping label → `{daemon URL, runner image URI}`. CLI flags can override.
+   - **Failure handling**: log + skip on spawn errors. Stateless. Job stays queued; retried next poll.
+   - **Logs to stdout only** at this stage (no `/metrics`, no `/healthz` — laptop-foreground binary).
+
+   Skeleton compiles + passes a smoke test against local Podman in 110a; full wiring + ECR push lands in 110b.
+
+110a closes when cells 3 + 4 pass and the dispatcher module compiles + smoke-tests cleanly.
+
+#### Phase 110b — GitHub cells, sockerless EFS feature, dispatcher fully wired
+
+**The bind-mount → EFS translation feature in sockerless ECS + Lambda backends.** This is the headline 110b deliverable.
+
+When a docker client (the actions/runner inside an ECS task or Lambda invocation) calls `docker create -v src:dst`:
+1. Sockerless identifies the caller via task metadata (ECS `169.254.170.2/v4/`) or function context (Lambda).
+2. Looks up the caller's volume mounts (ECS task definition / Lambda `FileSystemConfigs`).
+3. If `src` matches a `containerPath` of an EFS-backed volume in the caller, rewrite the bind mount to a named volume reference for the same EFS access point in the spawned sub-task.
+4. Special-case `/var/run/docker.sock`: drop the mount, inject `DOCKER_HOST=tcp://<sidecar-ip>:3375` env in the sub-task so nested `docker run` works.
+5. Sub-task runs in the same ECS cluster, mounts the same EFS access point, sees the same workspace data — `container:` directive works end-to-end.
+
+**Runner workload topology** — the runner runs as an ECS task (cell 1) or Lambda invocation (cell 2):
+
+- **Pre-registered ECS task definition** (in Terraform under `terraform/environments/runner/live/`) — multi-container shape (runner + sockerless-backend-ecs sidecar), one EFS volume mounted at `/home/runner/_work`, IAM role + log config + networking all owned by Terraform. Sockerless's ECS backend recognizes the runner image (via `LABEL com.sockerless.ecs.task-definition-family=sockerless-runner` set at Dockerfile build time) and calls `RunTask --task-definition sockerless-runner:LATEST` with per-job env-var container overrides for `REG_TOKEN` / `LABELS` / `RUNNER_NAME`. **No dynamic task def composition for the runner-task** — operator owns the spec. (Job-tasks the runner subsequently spawns via `container:` keep dynamic composition; that's where the EFS-bind-mount feature plugs in.)
+- **Lambda function** (cell 2) — same runner image; `FileSystemConfigs` mounts EFS at `/home/runner/_work`. The runner's `DOCKER_HOST` points at sockerless ECS daemon (Lambda doesn't get a sockerless sidecar — Lambda runs one container per invocation). Cell 2 is restricted to non-`container:` workflows (steps run in the runner's Lambda filesystem; only `run: docker run …` steps go through sockerless). Documented limitation, not a fake — Lambda's invocation model doesn't support sibling containers.
+
+**Runner image** — pushed to ECR via a new `sockerless-runner` repo (separate Terraform module from the existing `sockerless-live` ECR repo to avoid mixing per-task images with long-lived runner images). Image carries `LABEL com.sockerless.ecs.task-definition-family=sockerless-runner` so sockerless picks the right pre-registered task def. `:latest` tag during dev iteration; switch to versioned tags + bumped task-def revisions post-Phase 110.
+
+**Dispatcher fully wired** — same `github-runner-dispatcher` binary as 110a, now configured (via the TOML config) to point at the live ECR runner image URI + `tcp://localhost:3375` / `:3376` daemons. The dispatcher is unchanged; it just learned a new image URI.
+
+**Test workloads (per cell):**
+- `hello` — single-job `echo $RUNNER_NAME` + `uname -a`. Smoke / wiring sanity. All 4 cells.
+- `container-step` — workflow with `container: alpine:latest` and a `run:` step inside. Exercises the bind-mount → EFS translation. Cells 1 + 3 (ECS); cell 2 only if the workflow's runtime fits in 14 min.
+- `gotest` — `actions/checkout` + `setup-go` + `go test -count=1 ./...` against a tiny Go module. Multi-step exec, real artifact pull-down. Cell 1 (ECS) only on first pass.
+- `service-job` — `services: postgres:16` connectivity. Cross-container DNS via Cloud Map. Cell 1 (ECS) only.
 
 **Bug discipline.** Every harness run that fails for a sockerless reason files a BUG in [BUGS.md](BUGS.md) (`Open` section), gets fixed in-branch, and the entry moves to the relevant `Resolved` section. Per the no-defer / no-fakes rule.
 
-**Live-cloud posture.** AWS creds active for this session (per operator confirmation 2026-04-27). Time-box 2 h for the manual-test pass; cells 1-4 of the harness can extend that as needed but should each unregister cleanly even on fail.
-
-**Phase 110 succeeds when** all 4 cells have a green run on file (harness logs in `tests/runners/<runner>/logs/`), and any bug surfaced during the run has a closed entry in BUGS.md. Capability matrix at [`docs/runner-capability-matrix.md`](docs/runner-capability-matrix.md) gets the cells updated from `TBD` to `PASS`/`FAIL` per workload.
+**Phase 110 succeeds when** all 4 cells have a green run on file (workflow runs visible in github.com / gitlab.com Actions UIs), and any bug surfaced during the run has a closed entry in BUGS.md. Capability matrix at [`docs/runner-capability-matrix.md`](docs/runner-capability-matrix.md) gets the cells updated from `TBD` to `PASS`/`FAIL` per workload.
 
 ### Phase 111 — Workload identity for runner jobs (queued; gated on Phase 110 closure)
 
@@ -230,6 +263,21 @@ Phase 111 covers the **identity-credential** half of cloud-instance metadata. Ph
 - Not generic key-value storage — sockerless's own state lives in cloud-tag space, not metadata.
 
 **Sequencing.** Phase 112 starts only if a Phase 110 / 111 sweep finds runner workloads that trip on missing metadata endpoints. Until then it sits queued; the spec above is the design draft so the scope doesn't drift.
+
+### Phase 113 — Production github-runner-dispatcher (queued; gated on Phase 110b closure)
+
+Phase 110a/b ship the `github-runner-dispatcher` as a laptop-local binary: short-poll, stateless, single-PAT, single-repo (the `--repo` flag forces explicit scope). Phase 113 is the production-shape variant — what you'd run as a deployed service:
+
+- **Webhook ingress** (replaces 15-s short-polling). HTTPS receiver behind a public URL; subscribes to GitHub `workflow_job:queued` webhook events. Webhook secret validation. Drops latency from ~15 s to ~1 s.
+- **GitHub App install model** (replaces PAT). Long-lived via App's installation tokens; finer-grained scope; install-per-repo or install-per-org; rotation handled by the App framework. PAT path stays as a dev-mode fallback.
+- **Multi-repo / org-scope**. Webhook config at the org level fans out to N repos. Dispatcher routes by repo + label combination.
+- **Warm pool management**. Pre-spawned idle runners absorb queue latency. Stateful — needs a small persistence layer (DynamoDB / Postgres / Redis depending on deployment shape).
+- **Deployable shapes**. Lambda function with API Gateway / Function URL for webhooks; ECS service for the polling fallback; Helm chart for k8s. All thin wrappers over the same dispatcher core.
+- **Observability**. `/metrics` (Prometheus shape: jobs_seen, runners_spawned, runners_idle_timeout, errors), `/healthz` for liveness, structured logs.
+
+This phase is *not* a rewrite of the laptop-local dispatcher — the core dispatcher logic stays sockerless-agnostic and Docker-API-only. Phase 113 wraps it with ingress + auth + state + deploy infrastructure.
+
+Activation gated on whether the laptop-local 110a/b dispatcher proves the architecture and someone wants the production shape.
 
 ### Phase 106 — Real GitHub Actions runner integration (in flight)
 

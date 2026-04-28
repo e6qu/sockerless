@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**104 phases closed (Phase 109 closed in PR #121, merged 2026-04-27). 844 bugs tracked — 844 fixed, 0 open. 1 false positive.** Active branch: **`phase-110-runner-integration`** (Phase 110 = real GitHub + GitLab runner integration against ECS + Lambda backends, plus a live-AWS manual test pass — see [PLAN.md § Phase 110](PLAN.md) and [docs/RUNNERS.md](docs/RUNNERS.md)). PRs #117 / #118 / #119 / #120 / #121 merged. Mirror `origin-gitlab/main` in sync with `origin/main` as of 2026-04-27.
+**104 phases closed (Phase 109 closed in PR #121, merged 2026-04-27). 849 bugs tracked — 849 fixed, 0 open. 1 false positive.** Active branch: **`phase-110-runner-integration`** (Phase 110a — GitLab cells + `github-runner-dispatcher` skeleton; see [PLAN.md § Phase 110](PLAN.md), [docs/RUNNERS.md](docs/RUNNERS.md)). PRs #117 / #118 / #119 / #120 / #121 merged. Mirror `origin-gitlab/main` in sync with `origin/main` as of 2026-04-27.
 
 See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer), [docs/RUNNERS.md](docs/RUNNERS.md) (runner wiring).
 
@@ -24,7 +24,8 @@ Older PRs (#112–#115) — sim parity, real volumes, FaaS invocation tracking, 
 
 ## Open work
 
-- **Phase 110** — real GitHub + GitLab runner integration. 4-cell matrix (GH + GL × ECS + Lambda); local Sockerless daemons (`:3375`/`:3376`) dispatching to live AWS; ephemeral runner-registration tokens minted per harness run. Live-AWS manual test pass (2-h time-box) seeds the harness with a known-good baseline. Architecture + token strategy: [docs/RUNNERS.md](docs/RUNNERS.md). Operator one-time setup: `gh auth login` (done) + `security add-generic-password -U -s sockerless-gl-pat -a "$USER" -w` for the GitLab PAT.
+- **Phase 110a (active branch, PR #122)** — Cells 3 + 4 (GitLab × ECS, GitLab × Lambda) against live infra + `github-runner-dispatcher` top-level Go module skeleton. No new sockerless code needed for the GitLab cells (gitlab-runner master is local; docker executor with `--docker-host tcp://localhost:3375` / `:3376` exercises the live backends). Dispatcher is sockerless-agnostic — pure Docker SDK / CLI client.
+- **Phase 110b (queued)** — Cells 1 + 2 (GitHub × ECS, GitHub × Lambda). Headline deliverable: **bind-mount → EFS translation** in sockerless ECS + Lambda backends, so GitHub Actions' `container:` directive works end-to-end with the runner running as an ECS task / Lambda invocation. Pre-registered `sockerless-runner` ECS task definition in Terraform (multi-container: runner + sockerless sidecar; EFS-backed `/home/runner/_work`). Runner image pushed to a new `sockerless-runner` ECR repo with `LABEL com.sockerless.ecs.task-definition-family=sockerless-runner`.
 - **Phase 104 wrapper-removal pass** — gated on docker getting typed cloud-native drivers OR accepting wrappers as permanent. Once decided: drop unused `WrapLegacyXxx` / `LegacyXxxFn` scaffolding and shrink `api.Backend` correspondingly. Coordinated landing.
 - **Phase 104 interface tightening** — typed `Signal` enum, `ResolveImageReg(ImageRef)` helper, structured `Stats` struct.
 - **Phase 105 wave 4** (lower priority) — events stream, exec start hijack shape, container CRUD beyond list.
@@ -42,6 +43,9 @@ Older PRs (#112–#115) — sim parity, real volumes, FaaS invocation tracking, 
 
 ## Operational state
 
-- **AWS creds: ACTIVE** for the Phase 110 manual-test session (2026-04-27).
-- **Live AWS infra** — torn down post-PR #118; per-cloud `null_resource sockerless_runtime_sweep` (BUG-819) means re-apply + destroy are self-sufficient.
-- **PAT keychain entries** — `gh` (GitHub) keychain-backed; GitLab PAT to be added by operator via `security(1)` (one-time, interactive — agent cannot do it).
+- **AWS creds: ACTIVE** for the Phase 110a session (2026-04-28).
+- **Live AWS infra: UP in eu-west-1** — re-provisioned 2026-04-28 after the previous-session teardown. ECS (35 resources: VPC + NAT + ECS cluster + EFS + ECR + IAM + Cloud Map) and Lambda (8 resources: IAM execution role + ECR repo + log group). NAT Gateway runs ~$0.045/hr — tear down via `terragrunt destroy` from `terraform/environments/{ecs,lambda}/live` when the session ends.
+- **Sockerless daemons: RUNNING.** ECS backend on `tcp://localhost:3375` (cluster `sockerless-live`); Lambda backend on `tcp://localhost:3376` (eu-west-1, sharing the ECS VPC subnets per BUG-845). Required env vars: `SOCKERLESS_ECS_CPU_ARCHITECTURE=X86_64` / `SOCKERLESS_LAMBDA_ARCHITECTURE=x86_64` (BUG-848 — no defaults).
+- **Smoke verified** — `DOCKER_HOST=tcp://localhost:3375 docker run --rm alpine:latest echo hi` exits 0 from a Fargate task; verifies the BUG-846 AWS-Public-Gallery routing for Docker Hub library refs.
+- **Podman machine** — running (applehv VM, user-mode networking, 4 CPU / 10 GiB / 100 GiB). Used for local-Podman dispatcher testing in 110a; not used for cell 3+4 (gitlab-runner master is a darwin-native binary).
+- **PAT keychain entries** — `gh` (GitHub) keychain-backed; GitLab PAT in `security(1)` keychain entry `sockerless-gl-pat`.

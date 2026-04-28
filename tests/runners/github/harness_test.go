@@ -4,6 +4,7 @@ package github_runner_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -45,7 +46,7 @@ const (
 func TestGitHub_ECS_Hello(t *testing.T) {
 	runCell(t, cellConfig{
 		Label:             "sockerless-ecs",
-		Workflow:          "hello-ecs.yml",
+		WorkflowFile:      "hello-ecs.yml",
 		DefaultDockerHost: "tcp://localhost:3375",
 	})
 }
@@ -53,14 +54,23 @@ func TestGitHub_ECS_Hello(t *testing.T) {
 func TestGitHub_Lambda_Hello(t *testing.T) {
 	runCell(t, cellConfig{
 		Label:             "sockerless-lambda",
-		Workflow:          "hello-lambda.yml",
+		WorkflowFile:      "hello-lambda.yml",
 		DefaultDockerHost: "tcp://localhost:3376",
 	})
 }
 
 type cellConfig struct {
-	Label             string
-	Workflow          string
+	Label string
+	// Name of a workflow file already present on `main`. Dispatched
+	// with `ref=main` (or `ref=<branch>` if WorkflowYAML is set, in
+	// which case the throwaway branch's content of this same path
+	// runs instead).
+	WorkflowFile string
+	// Optional workflow YAML body to commit to a throwaway branch at
+	// `WorkflowFile`'s path; when set, dispatch fires with the
+	// throwaway branch as ref. Useful for cell variants that need
+	// different workflow content without polluting main.
+	WorkflowYAML      string
 	DefaultDockerHost string
 }
 
@@ -82,7 +92,26 @@ func runCell(t *testing.T, c cellConfig) {
 	if err := runnersinternal.CleanupOldGitHubRunners(repo, "sockerless-"); err != nil {
 		t.Logf("warning: pre-run cleanup of old runners failed: %v", err)
 	}
-	cancelLeftoverRuns(t, repo, c.Workflow)
+
+	// Resolve workflow source — either an inline YAML committed to a
+	// per-cell throwaway branch, or a pre-existing file on main.
+	var workflowFile, dispatchRef string
+	if c.WorkflowYAML != "" {
+		workflowFile = c.WorkflowFile
+		branch := fmt.Sprintf("sockerless-gh-%s-%s", c.Label, runnersinternal.Timestamp())
+		mainSHA := resolveBranchSHA(t, repo, "main")
+		createGitHubBranch(t, repo, branch, mainSHA)
+		t.Cleanup(func() { deleteGitHubBranch(t, repo, branch) })
+		commitGitHubFile(t, repo, branch,
+			".github/workflows/"+workflowFile, c.WorkflowYAML,
+			fmt.Sprintf("test: harness workflow for %s", c.Label))
+		dispatchRef = branch
+	} else {
+		workflowFile = c.WorkflowFile
+		dispatchRef = "main"
+	}
+
+	cancelLeftoverRuns(t, repo, workflowFile)
 
 	regToken, err := runnersinternal.MintGitHubRegistrationToken(repo)
 	if err != nil {
@@ -100,7 +129,8 @@ func runCell(t *testing.T, c cellConfig) {
 	// shows up in the runners list, dispatch can't route the job.
 	waitForRunnerRegistration(t, repo, runnerName, 90*time.Second)
 
-	runID := dispatchWorkflow(t, repo, c.Workflow)
+	runID := dispatchWorkflow(t, repo, workflowFile, dispatchRef)
+	t.Logf("workflow run URL: https://github.com/%s/actions/runs/%d", repo, runID)
 	conclusion := waitForRun(t, repo, runID, 15*time.Minute)
 	if conclusion != "success" {
 		t.Fatalf("workflow run %d concluded with %q, expected success.\nLogs at https://github.com/%s/actions/runs/%d", runID, conclusion, repo, runID)
@@ -176,16 +206,18 @@ func dockerfileDir(t *testing.T) string {
 
 func startRunnerContainer(t *testing.T, name, repo, regToken, label, dockerHost string) string {
 	t.Helper()
-	// `host.docker.internal` resolves to the host laptop from inside
-	// the container on Docker Desktop / colima. Translate the harness's
-	// localhost-form DOCKER_HOST into that for the runner container's
-	// internal use.
+	// `host.docker.internal` is auto-resolved on both Docker Desktop
+	// and Podman 5.x (and Podman also auto-adds `host.containers.internal`).
+	// No `--add-host` flag is needed; in fact, `--add-host
+	// host.docker.internal:host-gateway` *fails* on Podman 5.x with
+	// "host containers internal IP address is empty" because Podman
+	// doesn't honor the host-gateway literal — it overrides the
+	// auto-provided alias and then can't resolve the literal.
 	innerHost := strings.Replace(dockerHost, "localhost", "host.docker.internal", 1)
 	innerHost = strings.Replace(innerHost, "127.0.0.1", "host.docker.internal", 1)
 
 	args := []string{"run", "-d", "--rm",
 		"--name", name,
-		"--add-host", "host.docker.internal:host-gateway",
 		"-e", "RUNNER_REPO_URL=https://github.com/" + repo,
 		"-e", "RUNNER_TOKEN=" + regToken,
 		"-e", "RUNNER_NAME=" + name,
@@ -261,11 +293,11 @@ func cancelLeftoverRuns(t *testing.T, repo, workflow string) {
 	}
 }
 
-func dispatchWorkflow(t *testing.T, repo, file string) int64 {
+func dispatchWorkflow(t *testing.T, repo, file, ref string) int64 {
 	t.Helper()
 	disp := exec.Command("gh", "api", "-X", "POST",
 		"/repos/"+repo+"/actions/workflows/"+file+"/dispatches",
-		"-f", "ref=main",
+		"-f", "ref="+ref,
 	)
 	if out, err := disp.CombinedOutput(); err != nil {
 		t.Fatalf("dispatch workflow: %v\n%s", err, out)
@@ -296,6 +328,85 @@ func dispatchWorkflow(t *testing.T, repo, file string) int64 {
 	}
 	t.Fatal("dispatch workflow: no run ID found within 2 minutes")
 	return 0
+}
+
+// resolveBranchSHA returns the head commit SHA of the given branch.
+func resolveBranchSHA(t *testing.T, repo, branch string) string {
+	t.Helper()
+	out, err := exec.Command("gh", "api",
+		"/repos/"+repo+"/git/refs/heads/"+branch,
+		"--jq", ".object.sha",
+	).Output()
+	if err != nil {
+		t.Fatalf("resolve %s sha: %v", branch, err)
+	}
+	sha := strings.TrimSpace(string(out))
+	if sha == "" {
+		t.Fatalf("resolve %s sha: empty result", branch)
+	}
+	return sha
+}
+
+// createGitHubBranch creates a new branch on the repo at the given
+// commit SHA. Uses the Refs API (POST /repos/.../git/refs).
+func createGitHubBranch(t *testing.T, repo, branch, fromSHA string) {
+	t.Helper()
+	cmd := exec.Command("gh", "api", "-X", "POST",
+		"/repos/"+repo+"/git/refs",
+		"-f", "ref=refs/heads/"+branch,
+		"-f", "sha="+fromSHA,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("create branch %s: %v\n%s", branch, err, out)
+	}
+	t.Logf("created throwaway branch %s @ %s", branch, fromSHA[:8])
+}
+
+// deleteGitHubBranch removes a branch via the Refs API. Best-effort —
+// logs but doesn't fail the test if the branch is already gone.
+func deleteGitHubBranch(t *testing.T, repo, branch string) {
+	t.Helper()
+	cmd := exec.Command("gh", "api", "-X", "DELETE",
+		"/repos/"+repo+"/git/refs/heads/"+branch,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Logf("delete branch %s (best-effort): %v\n%s", branch, err, out)
+		return
+	}
+	t.Logf("deleted throwaway branch %s", branch)
+}
+
+// commitGitHubFile commits a single file's content to a branch via
+// the Contents API (PUT /repos/.../contents/{path}). Uses base64 for
+// the content body. Tries POST first (for new files); if the path
+// already exists, fetches the file's blob SHA and retries with the
+// `sha` parameter (which the API requires for updates).
+func commitGitHubFile(t *testing.T, repo, branch, path, content, message string) {
+	t.Helper()
+	encoded := base64.StdEncoding.EncodeToString([]byte(content))
+	args := []string{"api", "-X", "PUT",
+		"/repos/" + repo + "/contents/" + path,
+		"-f", "branch=" + branch,
+		"-f", "message=" + message,
+		"-f", "content=" + encoded,
+	}
+	if out, err := exec.Command("gh", args...).CombinedOutput(); err != nil {
+		// 422 means the file already exists; need to provide the
+		// existing blob SHA. (Throwaway branches branched from main
+		// shouldn't have this file, but be defensive.)
+		shaOut, shaErr := exec.Command("gh", "api",
+			"/repos/"+repo+"/contents/"+path+"?ref="+branch,
+			"--jq", ".sha",
+		).Output()
+		if shaErr != nil {
+			t.Fatalf("commit file %s on %s: %v\n%s", path, branch, err, out)
+		}
+		args = append(args, "-f", "sha="+strings.TrimSpace(string(shaOut)))
+		if out2, err2 := exec.Command("gh", args...).CombinedOutput(); err2 != nil {
+			t.Fatalf("commit file %s on %s (retry with sha): %v\n%s", path, branch, err2, out2)
+		}
+	}
+	t.Logf("committed %s on branch %s", path, branch)
 }
 
 func waitForRun(t *testing.T, repo string, runID int64, timeout time.Duration) string {
