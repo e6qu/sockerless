@@ -1,0 +1,267 @@
+# Runner Lambda — `actions/runner` wrapped as a Lambda function.
+#
+# Each invocation = one ephemeral runner that polls GitHub for one
+# job, runs it, and exits. Sockerless-backend-ecs is baked into the
+# image (see `tests/runners/github/dockerfile-lambda/`) so the
+# runner's docker calls resolve to ECS RunTask sub-task spawns
+# (sub-tasks dispatch to Fargate to avoid Lambda-in-Lambda recursion).
+#
+# Cell 2 of the 4-cell matrix. Caveat: 15-minute hard cap on Lambda
+# invocations means cell 2 is restricted to short workflows.
+#
+# Depends on the ECS-side live env for:
+# - EFS filesystem + access points (workspace + externals — same
+#   shared access points the runner-task uses, so a Lambda runner
+#   and an ECS runner can share state when run sequentially).
+# - VPC subnets + security group (for Lambda VPC config so the
+#   Lambda can mount EFS).
+#
+# Looked up via data sources by tag/name so this module doesn't need
+# explicit inputs from the ECS module.
+
+data "terraform_remote_state" "ecs" {
+  backend = "s3"
+  config = {
+    bucket = "sockerless-tf-state"
+    key    = "environments/ecs/live/terraform.tfstate"
+    region = "eu-west-1"
+  }
+}
+
+locals {
+  ecs_state                    = data.terraform_remote_state.ecs.outputs
+  ecs_efs_filesystem_id        = local.ecs_state.efs_filesystem_id
+  ecs_runner_workspace_apid    = local.ecs_state.runner_workspace_access_point_id
+  ecs_private_subnet_ids       = local.ecs_state.private_subnet_ids
+  ecs_task_security_group_id   = local.ecs_state.task_security_group_id
+  ecs_task_role_arn            = local.ecs_state.task_role_arn
+  ecs_execution_role_arn       = local.ecs_state.execution_role_arn
+  ecs_log_group_name           = local.ecs_state.log_group_name
+}
+
+# Resolve the workspace access point ARN from its ID via a data lookup
+# (Lambda's file_system_config requires the full ARN).
+data "aws_efs_access_point" "runner_workspace" {
+  access_point_id = local.ecs_runner_workspace_apid
+}
+
+# IAM role for the runner-Lambda. Like the runner-task role, this
+# is broader than a regular Lambda role because sockerless-backend-ecs
+# inside the Lambda is itself a docker daemon dispatching sub-tasks.
+resource "aws_iam_role" "runner_lambda" {
+  name               = "${local.name_prefix}-runner-lambda-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-runner-lambda-role"
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "runner_lambda_basic" {
+  role       = aws_iam_role.runner_lambda.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "runner_lambda_vpc" {
+  role       = aws_iam_role.runner_lambda.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
+data "aws_iam_policy_document" "runner_lambda" {
+  statement {
+    sid    = "SockerlessECSDispatchFromLambda"
+    effect = "Allow"
+    actions = [
+      "ecs:RunTask",
+      "ecs:StopTask",
+      "ecs:DescribeTasks",
+      "ecs:ListTasks",
+      "ecs:RegisterTaskDefinition",
+      "ecs:DeregisterTaskDefinition",
+      "ecs:DescribeTaskDefinition",
+      "ecs:ListTaskDefinitions",
+      "ecs:TagResource",
+      "ecs:UntagResource",
+      "ecs:DescribeClusters",
+      "ecs:ExecuteCommand",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "PassRoleForSubTasks"
+    effect = "Allow"
+    actions = ["iam:PassRole"]
+    resources = [
+      "*",
+    ]
+  }
+
+  statement {
+    sid    = "EC2NetworkDescribe"
+    effect = "Allow"
+    actions = [
+      "ec2:DescribeSubnets",
+      "ec2:DescribeSecurityGroups",
+      "ec2:DescribeNetworkInterfaces",
+      "ec2:DescribeVpcs",
+      "ec2:DescribeAvailabilityZones",
+      "ec2:CreateSecurityGroup",
+      "ec2:DeleteSecurityGroup",
+      "ec2:AuthorizeSecurityGroupIngress",
+      "ec2:RevokeSecurityGroupIngress",
+      "ec2:CreateTags",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "ECRPull"
+    effect = "Allow"
+    actions = [
+      "ecr:GetAuthorizationToken",
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:GetDownloadUrlForLayer",
+      "ecr:BatchGetImage",
+      "ecr:DescribeRepositories",
+      "ecr:CreatePullThroughCacheRule",
+      "ecr:DescribePullThroughCacheRules",
+      "ecr:DescribeImages",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "EFSAccess"
+    effect = "Allow"
+    actions = [
+      "elasticfilesystem:ClientMount",
+      "elasticfilesystem:ClientWrite",
+      "elasticfilesystem:ClientRootAccess",
+      "elasticfilesystem:DescribeAccessPoints",
+      "elasticfilesystem:DescribeFileSystems",
+      "elasticfilesystem:DescribeMountTargets",
+      "elasticfilesystem:CreateAccessPoint",
+      "elasticfilesystem:DeleteAccessPoint",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "CloudMap"
+    effect = "Allow"
+    actions = [
+      "servicediscovery:RegisterInstance",
+      "servicediscovery:DeregisterInstance",
+      "servicediscovery:CreateService",
+      "servicediscovery:GetService",
+      "servicediscovery:ListServices",
+      "servicediscovery:DeleteService",
+      "servicediscovery:CreateHttpNamespace",
+      "servicediscovery:CreatePrivateDnsNamespace",
+      "servicediscovery:DeleteNamespace",
+      "servicediscovery:GetNamespace",
+      "servicediscovery:ListNamespaces",
+      "servicediscovery:GetOperation",
+      "servicediscovery:TagResource",
+      "servicediscovery:UntagResource",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "SSMMessages"
+    effect = "Allow"
+    actions = [
+      "ssmmessages:CreateControlChannel",
+      "ssmmessages:CreateDataChannel",
+      "ssmmessages:OpenControlChannel",
+      "ssmmessages:OpenDataChannel",
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "runner_lambda" {
+  name   = "${local.name_prefix}-runner-lambda-policy"
+  role   = aws_iam_role.runner_lambda.id
+  policy = data.aws_iam_policy_document.runner_lambda.json
+}
+
+resource "aws_lambda_function" "sockerless_runner" {
+  function_name = "${local.name_prefix}-runner"
+  role          = aws_iam_role.runner_lambda.arn
+  package_type  = "Image"
+  image_uri     = "${aws_ecr_repository.main.repository_url}:runner-amd64"
+  architectures = ["x86_64"]
+  memory_size   = 3008
+  timeout       = 900 # Lambda hard cap
+  publish       = true
+
+  vpc_config {
+    subnet_ids         = local.ecs_private_subnet_ids
+    security_group_ids = [local.ecs_task_security_group_id]
+  }
+
+  file_system_config {
+    arn              = data.aws_efs_access_point.runner_workspace.arn
+    # Lambda requires file system mount paths under /mnt/. The
+    # bootstrap symlinks /home/runner/_work → /mnt/runner-workspace
+    # so the runner's hardcoded workspace paths still resolve to
+    # the EFS mount.
+    local_mount_path = "/mnt/runner-workspace"
+  }
+
+  # Lambda only allows ONE file_system_config per function — externals
+  # is mounted as a sub-path of the same access point in this Lambda
+  # variant. The runner-task on ECS uses two access points; for the
+  # Lambda variant we trade off and use a single workspace AP, with
+  # the bootstrap pre-populating /home/runner/externals from the
+  # image-staged copy (Lambda writes externals into /tmp instead of
+  # EFS, since /tmp is writable and large enough for node20).
+  #
+  # NOTE: Lambda's `file_system_config` block is singular by design.
+  # If you need both access points mounted simultaneously, the right
+  # path is to pre-populate externals at image-build time inside
+  # /home/runner/externals (in the read-only image layer) — the
+  # bootstrap copies to /tmp/runner-externals on first invocation.
+
+  environment {
+    variables = {
+      # AWS_REGION is reserved on Lambda — set automatically by the
+      # runtime to the function's region. Don't set explicitly.
+      SOCKERLESS_ECS_CLUSTER           = "sockerless-live"
+      SOCKERLESS_ECS_SUBNETS           = join(",", local.ecs_private_subnet_ids)
+      SOCKERLESS_ECS_SECURITY_GROUPS   = local.ecs_task_security_group_id
+      SOCKERLESS_ECS_TASK_ROLE_ARN     = local.ecs_task_role_arn
+      SOCKERLESS_ECS_EXECUTION_ROLE_ARN = local.ecs_execution_role_arn
+      SOCKERLESS_ECS_LOG_GROUP         = local.ecs_log_group_name
+      SOCKERLESS_AGENT_EFS_ID          = local.ecs_efs_filesystem_id
+      SOCKERLESS_ECS_PUBLIC_IP         = "false"
+      SOCKERLESS_ECS_CPU_ARCHITECTURE  = "X86_64"
+      # Bind-mount → EFS translation. Same shape as the ECS runner-task.
+      SOCKERLESS_ECS_SHARED_VOLUMES = "workspace=/home/runner/_work=${local.ecs_runner_workspace_apid}"
+    }
+  }
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-runner"
+  })
+
+  depends_on = [
+    aws_iam_role_policy_attachment.runner_lambda_vpc,
+    aws_iam_role_policy.runner_lambda,
+  ]
+}
+
+output "runner_lambda_function_name" {
+  value = aws_lambda_function.sockerless_runner.function_name
+}
+
+output "runner_lambda_function_arn" {
+  value = aws_lambda_function.sockerless_runner.arn
+}
+
+output "runner_lambda_role_arn" {
+  value = aws_iam_role.runner_lambda.arn
+}

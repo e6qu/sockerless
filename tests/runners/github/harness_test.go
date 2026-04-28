@@ -79,11 +79,32 @@ func TestGitHub_ECS_Hello(t *testing.T) {
 	})
 }
 
-// TestGitHub_Lambda_Hello — cell 2. Lambda variant pending the
-// invocation-orchestration piece (see PLAN.md § Phase 110b). For now
-// the test skips when the live-infra env isn't fully wired.
+// TestGitHub_Lambda_Hello — cell 2 of the 4-cell matrix.
+//
+// Architecture: runner runs as a Lambda invocation. Sockerless-
+// backend-ecs is baked into the runner image; the bootstrap starts
+// it on localhost:3375 inside the Lambda execution environment.
+// `docker create` calls flow through sockerless to ECS Fargate
+// sub-task spawns (sub-tasks dispatch to ECS, not back to Lambda,
+// to avoid Lambda-in-Lambda recursion). Lambda's 15-minute hard
+// cap means cell 2 is restricted to short workflows.
+//
+// Required env (Lambda runner-function deployed via
+// `terraform/modules/lambda/runner.tf`):
+//   - SOCKERLESS_LAMBDA_TEST_REGION (default eu-west-1)
+//   - SOCKERLESS_LAMBDA_TEST_FUNCTION (default sockerless-live-runner)
 func TestGitHub_Lambda_Hello(t *testing.T) {
-	t.Skip("cell 2 (GitHub × Lambda) deferred — needs Lambda invocation orchestration; see PLAN.md § Phase 110b")
+	region := envOr("SOCKERLESS_LAMBDA_TEST_REGION", "eu-west-1")
+	function := envOr("SOCKERLESS_LAMBDA_TEST_FUNCTION", "sockerless-live-runner")
+	if function == "" {
+		t.Skip("SOCKERLESS_LAMBDA_TEST_FUNCTION not set; cell 2 needs the runner-Lambda live infra")
+	}
+	runCell(t, cellConfig{
+		Label:          "sockerless-lambda",
+		WorkflowFile:   "hello-lambda.yml",
+		LambdaFunction: function,
+		LambdaRegion:   region,
+	})
 }
 
 type cellConfig struct {
@@ -117,6 +138,15 @@ type cellConfig struct {
 	ECSSubnets string
 	// Security groups for awsvpc network mode. Comma-separated. Required when ECSTaskDefinition is set.
 	ECSSecurityGroups string
+	// LambdaFunction (when set) takes precedence over both local-
+	// Podman and ECSTaskDefinition paths: runCell invokes the named
+	// Lambda function asynchronously with the registration token /
+	// labels / repo URL in the event payload. The runner-Lambda's
+	// bootstrap polls the Runtime API for the next invocation,
+	// configures + runs actions/runner --ephemeral, and exits.
+	LambdaFunction string
+	// AWS region for the Lambda invocation. Required when LambdaFunction is set.
+	LambdaRegion string
 }
 
 func runCell(t *testing.T, c cellConfig) {
@@ -171,7 +201,9 @@ func runCell(t *testing.T, c cellConfig) {
 	runnerName := fmt.Sprintf("sockerless-%s-%s", c.Label, runnersinternal.Timestamp())
 	t.Logf("runner name: %s", runnerName)
 
-	if c.ECSTaskDefinition != "" {
+	if c.LambdaFunction != "" {
+		invokeLambdaRunner(t, c, runnerName, repo, regToken)
+	} else if c.ECSTaskDefinition != "" {
 		taskARN := runEcsRunnerTask(t, c, runnerName, repo, regToken)
 		t.Cleanup(func() { stopEcsRunnerTask(t, c, taskARN) })
 	} else {
@@ -322,6 +354,44 @@ func extendErr(err error) error {
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(ee.Stderr)))
 	}
 	return err
+}
+
+// invokeLambdaRunner dispatches the runner-Lambda function via
+// `aws lambda invoke --invocation-type Event` (async) with the
+// per-cell registration token / labels / repo URL in the payload.
+// The bootstrap inside the Lambda picks up the event from the
+// Runtime API, runs `actions/runner --ephemeral` for one job, and
+// exits. The harness then waits for runner registration + workflow
+// completion via the standard polling paths. No cleanup function
+// — the Lambda invocation is self-terminating once the runner
+// exits.
+func invokeLambdaRunner(t *testing.T, c cellConfig, runnerName, repo, regToken string) {
+	t.Helper()
+	if _, err := exec.LookPath("aws"); err != nil {
+		t.Fatalf("aws CLI required for Lambda dispatch: %v", err)
+	}
+	payload := fmt.Sprintf(`{"runner_repo_url":"https://github.com/%s","runner_token":"%s","runner_name":"%s","runner_labels":"%s,sockerless"}`,
+		repo, regToken, runnerName, c.Label)
+
+	tmp, err := os.CreateTemp("", "lambda-out-*.json")
+	if err != nil {
+		t.Fatalf("create temp: %v", err)
+	}
+	tmp.Close()
+	t.Cleanup(func() { _ = os.Remove(tmp.Name()) })
+
+	cmd := exec.Command("aws", "lambda", "invoke",
+		"--region", c.LambdaRegion,
+		"--function-name", c.LambdaFunction,
+		"--invocation-type", "Event",
+		"--cli-binary-format", "raw-in-base64-out",
+		"--payload", payload,
+		tmp.Name(),
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("aws lambda invoke: %v\n%s", err, out)
+	}
+	t.Logf("Lambda invocation queued: function=%s runner=%s", c.LambdaFunction, runnerName)
 }
 
 func envOr(key, fallback string) string {
