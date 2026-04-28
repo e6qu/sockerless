@@ -248,8 +248,16 @@ resource "aws_lambda_function" "sockerless_runner" {
       SOCKERLESS_AGENT_EFS_ID          = local.ecs_efs_filesystem_id
       SOCKERLESS_ECS_PUBLIC_IP         = "false"
       SOCKERLESS_ECS_CPU_ARCHITECTURE  = "X86_64"
-      # Bind-mount → EFS translation. Same shape as the ECS runner-task.
-      SOCKERLESS_ECS_SHARED_VOLUMES = "workspace=/home/runner/_work=${local.ecs_runner_workspace_apid}"
+      # Bind-mount → EFS translation. The Lambda bootstrap stages
+      # actions/runner to /tmp/runner-state (Lambda's image filesystem
+      # is read-only outside /tmp + EFS), so the runner's bind-mount
+      # sources are /tmp/runner-state/_work etc. Map the workspace
+      # path to the shared EFS access point; sub-paths (`_work/_temp`
+      # etc.) are dropped automatically by sockerless. Externals
+      # stays as a sub-path of the same access point — the bootstrap
+      # symlinks /tmp/runner-state/externals into /tmp/runner-state/_work
+      # if needed at startup.
+      SOCKERLESS_ECS_SHARED_VOLUMES = "workspace=/tmp/runner-state/_work=${local.ecs_runner_workspace_apid}"
     }
   }
 

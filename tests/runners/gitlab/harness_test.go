@@ -156,17 +156,21 @@ func pingDocker(t *testing.T, host string) {
 
 func registerRunner(t *testing.T, authToken, dockerHost, description, configPath string) {
 	t.Helper()
-	// --docker-disable-cache: skip the cache-permission helper image
-	// (gitlab-runner's `setVolumePermissions` would try to pull a
-	// `registry.gitlab.com/...` image that AWS ECR pull-through cache
-	// can't fetch without auth). The hello pipelines don't use cache.
+	// --docker-helper-image: point gitlab-runner at a sockerless-
+	// routable copy of gitlab-runner-helper (mirrored to live ECR by
+	// the harness setup). Default `registry.gitlab.com/...` isn't
+	// supported by ECR pull-through without Secrets Manager auth.
+	// Sockerless's ECR auth fix (BUG-857) makes the manifest fetch
+	// authenticate via ECR's GetAuthorizationToken before pulling.
+	helperImage := envOr("SOCKERLESS_GL_HELPER_IMAGE",
+		"729079515331.dkr.ecr.eu-west-1.amazonaws.com/sockerless-live:gitlab-runner-helper-amd64")
 	cmd := exec.Command("gitlab-runner", "register", "--non-interactive",
 		"--url", defaultGLURL,
 		"--token", authToken,
 		"--executor", "docker",
 		"--docker-image", "alpine:latest",
 		"--docker-host", dockerHost,
-		"--docker-disable-cache",
+		"--docker-helper-image", helperImage,
 		"--description", description,
 		"--config", configPath,
 	)

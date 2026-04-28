@@ -237,7 +237,20 @@ type tokenResponse struct {
 
 // getRegistryToken gets an auth token for the given registry/repo.
 // If basicAuth is non-empty, it is sent as Basic auth on the token exchange.
+//
+// For registries that use HTTP Basic auth directly on the registry
+// API (notably AWS ECR — `*.dkr.ecr.*.amazonaws.com`), the caller
+// passes the pre-computed Basic auth string and we short-circuit the
+// Bearer token-exchange flow: the caller's auth IS the registry-level
+// credential, no token server is involved.
 func getRegistryToken(rc registryConfig, basicAuth string) (string, error) {
+	if isBasicAuthRegistry(rc.Registry) && basicAuth != "" {
+		// Basic-auth-direct mode: prefix the returned token with
+		// `basic:` so downstream HTTP requests can pass it as the full
+		// Authorization header verbatim via `setRegistryAuth`.
+		return "basic:" + basicAuth, nil
+	}
+
 	// Try to access the manifests endpoint first to discover auth
 	manifestURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s",
 		rc.Registry, rc.Repository, rc.Tag)
@@ -305,6 +318,35 @@ func getRegistryToken(rc registryConfig, basicAuth string) (string, error) {
 		return tr.Token, nil
 	}
 	return tr.AccessToken, nil
+}
+
+// isBasicAuthRegistry reports whether the given registry hostname uses
+// HTTP Basic auth directly on the registry API (skipping the Bearer
+// token-exchange flow most registries use). AWS ECR is the canonical
+// example: callers obtain a pre-signed Basic-auth string via
+// `aws ecr get-authorization-token` and use it as the Authorization
+// header on every registry API call. Recognising the pattern lets
+// `getRegistryToken` short-circuit the Bearer dance.
+func isBasicAuthRegistry(registry string) bool {
+	// AWS ECR: *.dkr.ecr.*.amazonaws.com
+	return strings.HasSuffix(registry, ".amazonaws.com") && strings.Contains(registry, ".dkr.ecr.")
+}
+
+// setRegistryAuth attaches the appropriate Authorization header to a
+// registry HTTP request. Empty token = anonymous. A token prefixed
+// with `basic:` is treated as a pre-formed Basic-auth credential
+// (used for AWS ECR and any other registry that uses HTTP Basic auth
+// directly on the registry API). All other tokens are treated as
+// Bearer tokens (the standard Docker Registry HTTP API V2 auth).
+func setRegistryAuth(req *http.Request, token string) {
+	if token == "" {
+		return
+	}
+	if strings.HasPrefix(token, "basic:") {
+		req.Header.Set("Authorization", "Basic "+strings.TrimPrefix(token, "basic:"))
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 }
 
 // parseWWWAuthenticate parses a Bearer Www-Authenticate header.
@@ -544,7 +586,7 @@ func FetchLayerBlob(rc registryConfig, token, digest string) ([]byte, error) {
 		return nil, fmt.Errorf("create blob request: %w", err)
 	}
 	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+		setRegistryAuth(req, token)
 	}
 	req.Header.Set("Accept", "application/vnd.docker.image.rootfs.diff.tar.gzip, application/vnd.oci.image.layer.v1.tar+gzip, */*")
 	resp, err := registryClient.Do(req)
@@ -593,7 +635,7 @@ func registryGet(url, token string, accept []string) ([]byte, string, error) {
 	}
 
 	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+		setRegistryAuth(req, token)
 	}
 
 	if len(accept) > 0 {
