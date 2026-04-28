@@ -39,6 +39,8 @@ var simBackends = map[string]simBackendInfo{
 			"SOCKERLESS_ECS_CLUSTER":            "sim-cluster",
 			"SOCKERLESS_ECS_SUBNETS":            "subnet-0123456789abcdef0",
 			"SOCKERLESS_ECS_EXECUTION_ROLE_ARN": "arn:aws:iam::000000000000:role/sim",
+			// BUG-848 made arch mandatory; no default.
+			"SOCKERLESS_ECS_CPU_ARCHITECTURE": "X86_64",
 		},
 	},
 	"lambda": {
@@ -49,7 +51,8 @@ var simBackends = map[string]simBackendInfo{
 		BinaryName:   "sockerless-backend-lambda",
 		EnvVarSocket: "SOCKERLESS_LAMBDA_SOCKET",
 		ExtraEnv: map[string]string{
-			"SOCKERLESS_LAMBDA_ROLE_ARN": "arn:aws:iam::000000000000:role/sim",
+			"SOCKERLESS_LAMBDA_ROLE_ARN":     "arn:aws:iam::000000000000:role/sim",
+			"SOCKERLESS_LAMBDA_ARCHITECTURE": "x86_64",
 		},
 	},
 	"cloudrun": {

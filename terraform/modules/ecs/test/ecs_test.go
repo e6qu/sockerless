@@ -245,8 +245,11 @@ func TestECSModule_PlanResourceCount(t *testing.T) {
 	// VPC, subnets, IGW, NAT, route tables, ECS cluster, EFS, CW logs,
 	// Cloud Map, ECR, IAM roles, security groups, etc.
 	// We just verify it plans to create *something* reasonable.
+	// Use a regex match that requires the literal "0 to add" with a
+	// word boundary on the left so "40 to add" doesn't trigger a
+	// false positive (BUG-864).
 	assert.Contains(t, planLine, "to add")
-	assert.NotContains(t, planLine, "0 to add")
+	assert.NotRegexp(t, `(^|\s)0 to add`, planLine)
 }
 
 func keysOf(m map[string]bool) []string {

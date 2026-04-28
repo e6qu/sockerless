@@ -160,6 +160,8 @@ func TestMain(m *testing.M) {
 		"SOCKERLESS_LAMBDA_ROLE_ARN=arn:aws:iam::000000000000:role/sim",
 		"SOCKERLESS_CALLBACK_URL="+lambdaBackendWSURL,
 		"SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE="+agentTestImageName,
+		// BUG-848 made arch mandatory; no default.
+		"SOCKERLESS_LAMBDA_ARCHITECTURE=x86_64",
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
