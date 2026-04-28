@@ -44,6 +44,15 @@ RUN curl -fsSL "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/d
 COPY sockerless-backend-lambda /usr/local/bin/sockerless-backend-lambda
 RUN chmod +x /usr/local/bin/sockerless-backend-lambda
 
+# Sockerless's image-inject path needs the sockerless-agent and
+# sockerless-lambda-bootstrap binaries available locally so it can
+# COPY them into per-sub-task Lambda images at build time. Defaults
+# read from /opt/sockerless/* (see backends/lambda/config.go).
+RUN mkdir -p /opt/sockerless
+COPY sockerless-agent              /opt/sockerless/sockerless-agent
+COPY sockerless-lambda-bootstrap   /opt/sockerless/sockerless-lambda-bootstrap
+RUN chmod +x /opt/sockerless/sockerless-agent /opt/sockerless/sockerless-lambda-bootstrap
+
 # actions/runner extracted into /opt/runner. Lambda's filesystem is
 # read-only except /tmp + EFS mount points; the runner does its
 # config + state writes under /tmp at runtime.

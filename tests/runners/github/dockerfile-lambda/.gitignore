@@ -1,1 +1,7 @@
+# Cross-compiled linux/amd64 binaries staged into the build context.
+# Built locally (or in CI) before `docker build`; never committed.
+sockerless-backend-lambda
+sockerless-agent
+sockerless-lambda-bootstrap
+# Legacy pre-BUG-862 artifact; harness cleans up but ignored too.
 sockerless-backend-ecs
