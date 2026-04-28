@@ -32,6 +32,15 @@ type volumeState struct {
 }
 
 func (s *Server) accessPointForVolume(ctx context.Context, volName string) (string, error) {
+	// If the volume matches a pre-configured shared volume (declared
+	// via SOCKERLESS_LAMBDA_SHARED_VOLUMES), use its EFS access point
+	// directly — that's how the runner-Lambda and the spawned sub-task
+	// share a workspace via EFS without sockerless having to provision
+	// a fresh access point per docker run. Mirror of the ECS backend's
+	// same-named function.
+	if sv := s.config.LookupSharedVolumeByName(volName); sv != nil {
+		return sv.AccessPointID, nil
+	}
 	return s.efs.AccessPointForVolume(ctx, volName)
 }
 
@@ -57,6 +66,19 @@ func (s *Server) fileSystemConfigsForBinds(ctx context.Context, binds []string) 
 	}
 
 	// Build FileSystemConfigs[] for the bound volumes.
+	//
+	// Three special cases for host-path binds (mirror of the ECS
+	// backend's bind-mount handling — same semantics, same env-var
+	// shape, just routed through Lambda's FileSystemConfigs instead
+	// of ECS's EFSVolumeConfiguration):
+	//
+	//   1. `/var/run/docker.sock` — drop silently (no socket on Lambda).
+	//   2. Source path matches a configured SharedVolume.ContainerPath
+	//      → translate to that SharedVolume's named-volume reference;
+	//      the spawned sub-task (typically dispatched cross-backend to
+	//      ECS) mounts the same EFS access point.
+	//   3. Source path is a sub-path of a mapped SharedVolume → drop
+	//      (the parent EFS mount already exposes it via subdirectory).
 	seen := make(map[string]struct{})
 	out := make([]lambdatypes.FileSystemConfig, 0, len(binds))
 	for _, b := range binds {
@@ -65,8 +87,17 @@ func (s *Server) fileSystemConfigsForBinds(ctx context.Context, binds []string) 
 			return nil, fmt.Errorf("invalid bind %q", b)
 		}
 		volName, mountPath := parts[0], parts[1]
+		if volName == "/var/run/docker.sock" {
+			continue
+		}
 		if strings.HasPrefix(volName, "/") || strings.HasPrefix(volName, ".") {
-			return nil, fmt.Errorf("host-path binds are not supported on Lambda; use a named volume")
+			if sv := s.config.LookupSharedVolumeBySourcePath(volName); sv != nil {
+				volName = sv.Name
+			} else if isSubPathOfSharedVolume(volName, s.config.SharedVolumes) {
+				continue
+			} else {
+				return nil, fmt.Errorf("host-path binds are not supported on Lambda; use a named volume or configure SOCKERLESS_LAMBDA_SHARED_VOLUMES")
+			}
 		}
 		if _, dup := seen[volName]; dup {
 			// One FileSystemConfig per volume; Lambda rejects duplicates.

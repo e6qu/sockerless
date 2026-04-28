@@ -64,6 +64,30 @@ type Config struct {
 	// Docker clients on any host arch report the *server* arch, and our
 	// server is the cloud workload). Set via SOCKERLESS_LAMBDA_ARCHITECTURE.
 	Architecture string
+
+	// SharedVolumes mirrors the ECS backend's same-named field. When
+	// sockerless runs inside a Lambda invocation that already has EFS
+	// access points mounted at known paths (via FileSystemConfigs on
+	// the Lambda function), and the runner inside the invocation does
+	// `docker create -v /home/runner/_work:/__w alpine`, sockerless
+	// translates the host bind mount into a named-volume reference
+	// whose EFS access point is shared with the runner-Lambda. Sub-
+	// tasks (spawned via the ECS backend, since Lambda can't easily
+	// dispatch to itself recursively) mount the same access point.
+	// Format identical to ECS: SOCKERLESS_LAMBDA_SHARED_VOLUMES=name=path=fsap-XXX[=fs-YYY],...
+	SharedVolumes []SharedVolume
+}
+
+// SharedVolume describes a workspace volume mounted via EFS that the
+// caller (the runner-Lambda) shares with sockerless. When docker
+// create sees a bind mount whose source matches ContainerPath, the
+// bind is rewritten to a named volume named Name backed by the EFS
+// access point AccessPointID. Mirror of `ecs.SharedVolume`.
+type SharedVolume struct {
+	Name          string // logical volume name used in spawned sub-tasks
+	ContainerPath string // path inside the calling container (= the bind-mount source)
+	AccessPointID string // EFS access point ID (fsap-...)
+	FileSystemID  string // EFS filesystem ID (fs-...); defaults to Config.AgentEFSID
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -87,7 +111,78 @@ func ConfigFromEnv() Config {
 		PrebuiltOverlayImage: os.Getenv("SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE"),
 		EnableCommit:         os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
 		Architecture:         os.Getenv("SOCKERLESS_LAMBDA_ARCHITECTURE"),
+		SharedVolumes:        parseSharedVolumes(os.Getenv("SOCKERLESS_LAMBDA_SHARED_VOLUMES")),
 	}
+}
+
+// parseSharedVolumes parses the SOCKERLESS_LAMBDA_SHARED_VOLUMES
+// env-var (`name=containerPath=fsap-XXXX[=fs-YYYY],name2=...`).
+// Mirror of `ecs.parseSharedVolumes`.
+func parseSharedVolumes(s string) []SharedVolume {
+	if s == "" {
+		return nil
+	}
+	var out []SharedVolume
+	for _, entry := range strings.Split(s, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		parts := strings.Split(entry, "=")
+		if len(parts) < 3 || len(parts) > 4 {
+			continue
+		}
+		sv := SharedVolume{
+			Name:          strings.TrimSpace(parts[0]),
+			ContainerPath: strings.TrimSpace(parts[1]),
+			AccessPointID: strings.TrimSpace(parts[2]),
+		}
+		if len(parts) == 4 {
+			sv.FileSystemID = strings.TrimSpace(parts[3])
+		}
+		if sv.Name == "" || sv.ContainerPath == "" || sv.AccessPointID == "" {
+			continue
+		}
+		out = append(out, sv)
+	}
+	return out
+}
+
+// LookupSharedVolumeBySourcePath returns the SharedVolume entry whose
+// ContainerPath equals the given path, or nil if none matches.
+func (c Config) LookupSharedVolumeBySourcePath(path string) *SharedVolume {
+	for i := range c.SharedVolumes {
+		if c.SharedVolumes[i].ContainerPath == path {
+			return &c.SharedVolumes[i]
+		}
+	}
+	return nil
+}
+
+// LookupSharedVolumeByName returns the SharedVolume entry whose Name
+// equals the given volume name, or nil if none matches.
+func (c Config) LookupSharedVolumeByName(name string) *SharedVolume {
+	for i := range c.SharedVolumes {
+		if c.SharedVolumes[i].Name == name {
+			return &c.SharedVolumes[i]
+		}
+	}
+	return nil
+}
+
+// isSubPathOfSharedVolume reports whether path is a strict sub-path
+// (descendant) of any SharedVolume's ContainerPath.
+func isSubPathOfSharedVolume(path string, vols []SharedVolume) bool {
+	for i := range vols {
+		base := vols[i].ContainerPath
+		if base == "" {
+			continue
+		}
+		if strings.HasPrefix(path, base+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // ConfigFromEnvironment creates Config from a unified config environment.
