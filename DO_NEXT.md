@@ -38,7 +38,11 @@ Iteration history (recorded for future debugging):
 
 ## Up next on this branch
 
-1. **Cell 2 — GitHub × Lambda.** Mirror the ECS architecture for the Lambda backend:
+1. **Debug BUG-858** — gitlab-runner cell 3 fails on the predefined container's `docker exec` with "No such container". Sockerless's `queryTasks` tags + filters look correct; the exec-create handler resolves through `ResolveContainerAuto` which checks PendingCreates → CloudState → Store. PendingCreates is deleted in `ContainerStart` line 351 before `waitForTaskRunning`. Check:
+   - Whether the gitlab-runner predefined container's ECS task actually transitions to RUNNING (perhaps the helper-image bind-mount/EFS config is wrong).
+   - Whether `queryTasks` is returning STOPPED tasks but `queryTasks` filter is excluding them somehow.
+   - Whether the runner's exec ID format differs from sockerless's.
+2. **Cell 2 — GitHub × Lambda.** Mirror the ECS architecture for the Lambda backend:
    - `backends/lambda/config.go`: add `SharedVolumes` field + parse + lookup helpers (copy from `backends/ecs/config.go`).
    - `backends/lambda/backend_impl.go` (or wherever ContainerCreate is): same bind-mount → EFS-volume translation as ECS, plus sub-path drop + docker.sock drop. Lambda's volume code maps to `FileSystemConfig` (Lambda's EFS attachment shape) instead of `EFSVolumeConfiguration` (ECS).
    - Cross-compile Lambda backend binary; build a Lambda-runtime container image (different shape from ECS — needs the AWS Lambda Runtime Interface Emulator or the runner runs as the Lambda handler). One option: use the AWS-provided `aws-lambda-runtime-interface-emulator` so the same actions/runner image works as a Lambda function.
