@@ -24,7 +24,18 @@ Older PRs (#112–#115) — sim parity, real volumes, FaaS invocation tracking, 
 
 ## Open work
 
-- **Phase 110b (cells 1+2 in flight)** — Cell 1 (GitHub × ECS) GREEN at https://github.com/e6qu/sockerless/actions/runs/25075259911 (2026-04-28 20:13 UTC). Cell 2 (GitHub × Lambda) failed at run 25075247501 with bind-mount rejection on `/tmp/runner-state/externals:/__e:ro`; root cause was BUG-862 (runner-Lambda was baking `sockerless-backend-ecs` instead of `-lambda` and dispatching sub-tasks via `ecs.RunTask` to Fargate — backend ↔ host primitive mismatch). Source corrected (Dockerfile + bootstrap.sh use sockerless-backend-lambda; terraform IAM swapped from ECS dispatch perms to Lambda perms; env vars all `SOCKERLESS_LAMBDA_*`; agent + bootstrap binaries staged into `/opt/sockerless`). Awaits image rebuild (Docker daemon) + `terragrunt apply`. Cells 3 + 4 await sockerless restart on local backends to pick up BUG-859/860 fixes (the running PIDs hold pre-fix code via mmap; new fix binaries staged at `/tmp/sockerless-backend-{ecs,lambda}`).
+- **Phase 110b (cells 1+2 in flight)** — Cell 1 (GitHub × ECS) GREEN at https://github.com/e6qu/sockerless/actions/runs/25075259911 (2026-04-28 20:13 UTC). Cell 2 (GitHub × Lambda) failed at run 25075247501 with bind-mount rejection on `/tmp/runner-state/externals:/__e:ro`; root cause was BUG-862 (runner-Lambda was baking `sockerless-backend-ecs` instead of `-lambda` and dispatching sub-tasks via `ecs.RunTask` to Fargate — backend ↔ host primitive mismatch). Source corrected (Dockerfile + bootstrap.sh use sockerless-backend-lambda; terraform IAM swapped from ECS dispatch perms to Lambda perms; env vars all `SOCKERLESS_LAMBDA_*`; agent + bootstrap binaries staged into `/opt/sockerless`; CodeBuild project + S3 build-context provisioned for no-local-docker rebuilds + sub-task image builds). Awaits `terragrunt apply` + `make codebuild-update`. Cells 3 + 4 await sockerless restart on local backends to pick up BUG-859/860 fixes (the running PIDs hold pre-fix code via mmap; new fix binaries staged at `/tmp/sockerless-backend-{ecs,lambda}`).
+
+### Paths forward to GREEN — full per-cell unblock plan
+
+| Cell | Source-side state | Operator runtime steps |
+|---|---|---|
+| 1 GH × ECS | ✅ GREEN | none — re-run during sweep |
+| 2 GH × Lambda | ✅ corrected | `terragrunt apply` (lambda module) → `make codebuild-update` → re-run harness |
+| 3 GL × ECS | ✅ corrected (BUG-859 in `c10a317`) | sockerless ECS restart → re-run harness |
+| 4 GL × Lambda | ✅ corrected (BUG-860 in `6e3d0fa`) | pre-stage agent + bootstrap to `/opt/sockerless` → set `SOCKERLESS_CODEBUILD_PROJECT/BUILD_BUCKET` in `/tmp/lambda-env.sh` → sockerless Lambda restart → re-run harness |
+
+Detailed unblock plans per cell live in [PLAN.md § Phase 110 — paths forward to GREEN](PLAN.md). Per-bug closure paths in [BUGS.md](BUGS.md). Resume command + sequence in [DO_NEXT.md](DO_NEXT.md).
 - **Phase 110a — github-runner-dispatcher skeleton: shipped** at commit `ba797b6`. Top-level Go module, sockerless-agnostic (only stdlib + BurntSushi/toml). State recovery via container labels (`sockerless.dispatcher.{job_id,runner_name,managed_by}`); GC sweep every 2 min reaps exited containers + offline GitHub runners; graceful shutdown drains in-flight work bounded to 30 s.
 - **Phase 113 (queued)** — production-shape `github-runner-dispatcher` (webhook ingress, GitHub App install, multi-repo, deployable). See [PLAN.md § Phase 113].
 - **Phase 104 wrapper-removal pass** — gated on docker getting typed cloud-native drivers OR accepting wrappers as permanent. Once decided: drop unused `WrapLegacyXxx` / `LegacyXxxFn` scaffolding and shrink `api.Backend` correspondingly. Coordinated landing.

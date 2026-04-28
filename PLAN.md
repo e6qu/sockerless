@@ -163,6 +163,67 @@ When a docker client (the actions/runner inside an ECS task or Lambda invocation
 
 **Phase 110 succeeds when** all 4 cells have a green run on file (workflow runs visible in github.com / gitlab.com Actions UIs), and any bug surfaced during the run has a closed entry in BUGS.md. Capability matrix at [`docs/runner-capability-matrix.md`](docs/runner-capability-matrix.md) gets the cells updated from `TBD` to `PASS`/`FAIL` per workload.
 
+#### Phase 110 — paths forward to GREEN (2026-04-29)
+
+Concrete unblock plan per cell. Source corrections shipped at commit `8c70d1a`; remaining work is operator-driven runtime steps (apply, build, restart) and a re-test sweep.
+
+##### Cell 1 — GitHub × ECS — ✅ GREEN
+
+No further work; reference run https://github.com/e6qu/sockerless/actions/runs/25075259911 (2026-04-28 20:13 UTC). Re-runs on the same task-def + image are expected to PASS. Will be re-fired during the cells-2/3/4 sweep as a regression check.
+
+##### Cell 2 — GitHub × Lambda — ❌ → unblock via 4 steps
+
+Failure: run [25075247501](https://github.com/e6qu/sockerless/actions/runs/25075247501) hit "host bind mounts not supported on ECS backend (`/tmp/runner-state/externals:/__e:ro`)". Surfaced **BUG-861** (missing externals shared-volume entry) which led to **BUG-862** (CRITICAL, runner-Lambda baking the wrong backend). Source-side corrections:
+
+- Dockerfile + bootstrap.sh now use `sockerless-backend-lambda`.
+- Terraform IAM swapped from ECS dispatch perms to Lambda dispatch perms (`lambda:CreateFunction/Invoke/Delete/Get/UpdateConfiguration/Tag/ListFunctions`); env vars all `SOCKERLESS_LAMBDA_*`; SHARED_VOLUMES carries both workspace + externals to the same EFS access point.
+- New CodeBuild project + S3 build-context bucket so the in-Lambda backend can build sub-task images at runtime without a docker daemon.
+- `tests/runners/github/dockerfile-lambda/` Dockerfile now stages `sockerless-agent` + `sockerless-lambda-bootstrap` into `/opt/sockerless/` (image-inject prerequisite for the in-Lambda backend).
+
+**Steps to GREEN:**
+1. `cd terraform/environments/lambda/live && source aws.sh && terragrunt apply` — provisions `sockerless-live-image-builder` (CodeBuild) + `sockerless-live-build-context` (S3) + new IAM/env vars on `sockerless-live-runner`. Validates clean today.
+2. `cd tests/runners/github/dockerfile-lambda && make codebuild-update` — `make stage` cross-compiles linux/amd64 backend + agent + bootstrap into the build context; `make codebuild-build` tars + S3-uploads the context, triggers CodeBuild, polls until SUCCEEDED; `make update-function` does `aws lambda update-function-code --publish`; `make wait` blocks on `function-updated-v2`. Pure-AWS, no local Docker required. (Local-Docker alternative: `make all`.)
+3. Re-run `go test -tags github_runner_live -run TestGitHub_Lambda_Hello -timeout 25m ./tests/runners/github`. Expected: hello workflow runs to GREEN; the `container: alpine:latest` directive triggers the in-Lambda `sockerless-backend-lambda` to spawn an alpine sub-task Lambda (image-mode container) sharing the workspace EFS access point.
+4. If new bugs surface (likely candidates: image-inject layer-pull perms; sub-task Lambda VPC config inheriting ENI cap), file in BUGS.md immediately and fix in-branch — no deferral.
+
+##### Cell 3 — GitLab × ECS — ⏸ blocked → unblock via restart
+
+All gitlab-runner harness pre-reqs verified (PAT in keychain, project resolves, runner mint works). Code fix (BUG-859 — `ecsStdinAttachDriver` + `launchAfterStdin`) committed at `c10a317`; the macOS-arm64 fix binary is at `/tmp/sockerless-backend-ecs`. Running PID 75092 still holds pre-fix code via mmap.
+
+**Steps to GREEN:**
+1. Restart sockerless ECS — see DO_NEXT.md § "Sockerless restart command". One shell block.
+2. `go test -tags gitlab_runner_live -run TestGitLab_ECS_Hello -timeout 30m ./tests/runners/gitlab`. Expected: helper-image pull (BUG-857 fix) → predefined-container env prep + git clone + cleanup (BUG-858 fix) → user-script alpine container with stdin script delivered via the new attach-stdin pipe (BUG-859 fix); `hello from sockerless ecs` + `env | sort` appears in the GitLab job trace.
+3. Document the GitLab pipeline URL in DO_NEXT.md. Promote BUG-859 to confirmed-fixed after the green run lands.
+
+##### Cell 4 — GitLab × Lambda — ⏸ blocked → unblock via restart + verify same pattern as cell 3
+
+Local gitlab-runner pointed at sockerless on `:3376`. Code fix (BUG-860 — `lambdaStdinAttachDriver` + deferred-Invoke baking stdin into Payload) committed at `6e3d0fa`; macOS-arm64 fix binary at `/tmp/sockerless-backend-lambda`. PID 70870 still on pre-fix code.
+
+**Caveat — the laptop sockerless-backend-lambda needs the agent + bootstrap binaries on disk** for its own image-inject path (used when gitlab-runner spawns `container:` sub-tasks). Current default paths: `/opt/sockerless/sockerless-agent` + `/opt/sockerless/sockerless-lambda-bootstrap`. On the laptop those will not exist; the user must either:
+- Copy the linux/amd64 binaries from `tests/runners/github/dockerfile-lambda/` to `/opt/sockerless/` (the laptop sockerless dispatches builds to CodeBuild, so linux/amd64 is correct even on macOS), OR
+- Set `SOCKERLESS_AGENT_BINARY` + `SOCKERLESS_LAMBDA_BOOTSTRAP` env vars in `/tmp/lambda-env.sh` to point at the staged copies, OR
+- Provision a sockerless-lambda-runner-on-laptop config that uses the in-cloud CodeBuild project for builds (which already has `SOCKERLESS_AGENT_BINARY`/etc. baked into the image).
+
+**Steps to GREEN:**
+1. Pre-stage agent + bootstrap binaries (one-time): copy from `tests/runners/github/dockerfile-lambda/` to `/opt/sockerless/`, OR add the env vars to `/tmp/lambda-env.sh`.
+2. Restart sockerless Lambda — same restart block as cell 3, just the `:3376` half.
+3. Set `SOCKERLESS_CODEBUILD_PROJECT=sockerless-live-image-builder` + `SOCKERLESS_BUILD_BUCKET=sockerless-live-build-context` in `/tmp/lambda-env.sh` so the laptop sockerless can build sub-task images via CodeBuild.
+4. `go test -tags gitlab_runner_live -run TestGitLab_Lambda_Hello -timeout 30m ./tests/runners/gitlab`. Expected: gitlab-runner registered with `--docker-host tcp://localhost:3376`, helper image pulled to ECR-routed Lambda creation, predefined helper Lambda + user-script alpine sub-task Lambda with stdin script in Payload (BUG-860 path), `hello from sockerless lambda` + `date -u` in the GitLab job trace.
+5. Document new bugs as they surface; expected candidates: laptop sockerless-lambda + ECR pull-through cache auth from outside-AWS (different network shape than the runner-Lambda case), Lambda function name length / character set issues with gitlab-runner's helper-container naming (`runner-<id>-project-<id>-...`).
+
+##### Cell sweep — single-shot 4-cell verification
+
+Once cells 2/3/4 individually pass, fire all four in sequence to confirm no cross-cell interference:
+
+```bash
+go test -v -tags github_runner_live -run TestGitHub_ECS_Hello   -timeout 30m ./tests/runners/github
+go test -v -tags github_runner_live -run TestGitHub_Lambda_Hello -timeout 30m ./tests/runners/github
+go test -v -tags gitlab_runner_live -run TestGitLab_ECS_Hello    -timeout 30m ./tests/runners/gitlab
+go test -v -tags gitlab_runner_live -run TestGitLab_Lambda_Hello -timeout 30m ./tests/runners/gitlab
+```
+
+Capture all 4 run/pipeline URLs in DO_NEXT.md. Update `docs/runner-capability-matrix.md` cells from TBD to PASS. Phase 110 closes.
+
 ### Phase 111 — Workload identity for runner jobs (queued; gated on Phase 110 closure)
 
 Once the Phase 110 4-cell harness runs end-to-end, the next gap is **workload identity inside the per-job container** — making `aws sts get-caller-identity`, `gcloud auth print-identity-token`, and `az account show` resolve to a real cloud identity from inside a sockerless-dispatched container, exactly as they would on a native cloud runner. Without this, runner jobs that touch cloud APIs (the most common real-world pattern: `aws s3 cp`, `gcloud builds submit`, `az acr login`) would either fail or fall back to PAT-style env var creds, which violates the "no fakes, no fallbacks" rule for end-user workloads.

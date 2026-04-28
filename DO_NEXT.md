@@ -45,16 +45,91 @@ Iteration history (recorded for future debugging):
 | 3 GL × ECS | blocked | Sockerless ECS PID 75092 still on pre-BUG-859 binary (mmap'd). User must `kill 75092` and relaunch from `/tmp/sockerless-backend-ecs` (now contains the fix). |
 | 4 GL × Lambda | blocked | Sockerless Lambda PID 70870 still on pre-BUG-860 binary. User must `kill 70870` and relaunch from `/tmp/sockerless-backend-lambda`. |
 
-## Up next on this branch
+## Up next on this branch — paths forward to all-cells-GREEN
 
-1. **Sockerless restart** — drops cells 3+4 from blocked into runnable. Command in [restart command block below](#sockerless-restart-command).
-2. **Cell 2 image rebuild** — the runner-Lambda image needs the corrected `sockerless-backend-lambda` (not `-ecs`) baked in. Two paths:
-   - Local Docker daemon up briefly: `cd tests/runners/github/dockerfile-lambda && make all` (does `make stage build push update-function wait`).
-   - **Without local Docker**: provision a small AWS CodeBuild project (deferred — would be a single-shot `docker build` driven by a buildspec.yml that pulls the build context from S3). Cleaner but pulls in more terraform.
-3. **`terragrunt apply` for the lambda module** — the new IAM policy (Lambda dispatch perms) + env vars (`SOCKERLESS_LAMBDA_*`) need to land on the `sockerless-live-runner` Lambda before the rebuilt image will work end-to-end.
-4. **Re-run cells 2/3/4 once unblocked**; expected outcome: all four cells GREEN with workflow / pipeline run URLs captured in this doc.
-5. **github-runner-dispatcher** — Phase 110a skeleton + state recovery shipped (commit `ba797b6`). Phase 110b production wiring remains: ECR push pipeline for the dispatcher's runner image, end-to-end harness wiring through the dispatcher (vs the current per-cell harness paths).
-6. **Tear down live AWS** at session end (`terragrunt destroy` from both `terraform/environments/{ecs,lambda}/live`).
+Source-side corrections shipped through commit `8c70d1a`. Remaining work is operator-driven runtime steps in this exact order:
+
+### Step 1 — Apply terraform (cells 2 + 4 prep)
+
+```bash
+cd /Users/zardoz/projects/sockerless/terraform/environments/lambda/live
+source aws.sh
+terragrunt apply
+```
+
+Provisions on `sockerless-live`:
+- `sockerless-live-image-builder` CodeBuild project (linux/amd64 standard, privileged docker, inline buildspec)
+- `sockerless-live-build-context` S3 bucket (24-hour lifecycle on `build-context/` prefix)
+- IAM role `sockerless-live-codebuild-role` (S3 read + ECR push + CloudWatch Logs)
+- Updates `sockerless-live-runner` Lambda: ECS dispatch IAM perms → Lambda dispatch perms; env vars all `SOCKERLESS_LAMBDA_*` (workspace + externals SHARED_VOLUMES, plus CODEBUILD_PROJECT + BUILD_BUCKET).
+
+### Step 2 — Rebuild runner-Lambda image (cell 2 unblock)
+
+No local Docker daemon needed:
+
+```bash
+cd /Users/zardoz/projects/sockerless/tests/runners/github/dockerfile-lambda
+make codebuild-update
+```
+
+Pipeline: `make stage` (cross-compile linux/amd64 backend + agent + bootstrap into the build context) → `make upload-context` (tar + S3 upload) → `make codebuild-build` (start CodeBuild + poll every 10 s until SUCCEEDED) → `make update-function` (`aws lambda update-function-code --publish`) → `make wait` (`aws lambda wait function-updated-v2`).
+
+Local-Docker alternative if preferred: `make all`.
+
+### Step 3 — Restart sockerless backends (cells 3 + 4 unblock)
+
+```bash
+kill 75092 70870
+source /Users/zardoz/projects/sockerless/aws.sh
+source /tmp/ecs-env.sh
+nohup /tmp/sockerless-backend-ecs    -addr :3375 -log-level debug \
+    >>/tmp/sockerless-ecs.log    2>&1 &
+source /tmp/lambda-env.sh
+nohup /tmp/sockerless-backend-lambda -addr :3376 -log-level debug \
+    >>/tmp/sockerless-lambda.log 2>&1 &
+curl -s http://localhost:3375/_ping; echo
+curl -s http://localhost:3376/_ping; echo
+```
+
+The macOS-arm64 binaries at `/tmp/sockerless-backend-{ecs,lambda}` were rebuilt this session and contain BUG-859 / BUG-860 fixes.
+
+### Step 3a — Cell-4 prerequisite: agent + bootstrap on disk
+
+The laptop sockerless-backend-lambda's image-inject path needs the agent + bootstrap binaries available locally. Pick one:
+
+```bash
+# Option A: copy the linux/amd64 binaries to /opt/sockerless/
+sudo mkdir -p /opt/sockerless && \
+  sudo cp /Users/zardoz/projects/sockerless/tests/runners/github/dockerfile-lambda/sockerless-agent /opt/sockerless/ && \
+  sudo cp /Users/zardoz/projects/sockerless/tests/runners/github/dockerfile-lambda/sockerless-lambda-bootstrap /opt/sockerless/
+
+# Option B: append env vars to /tmp/lambda-env.sh before re-sourcing it in step 3:
+cat >> /tmp/lambda-env.sh <<'EOF'
+export SOCKERLESS_AGENT_BINARY=/Users/zardoz/projects/sockerless/tests/runners/github/dockerfile-lambda/sockerless-agent
+export SOCKERLESS_LAMBDA_BOOTSTRAP=/Users/zardoz/projects/sockerless/tests/runners/github/dockerfile-lambda/sockerless-lambda-bootstrap
+export SOCKERLESS_CODEBUILD_PROJECT=sockerless-live-image-builder
+export SOCKERLESS_BUILD_BUCKET=sockerless-live-build-context
+EOF
+```
+
+### Step 4 — 4-cell verification sweep
+
+Tell me when steps 1-3 are done and I'll fire all four cells:
+
+```bash
+go test -v -tags github_runner_live -run TestGitHub_ECS_Hello    -timeout 30m ./tests/runners/github
+go test -v -tags github_runner_live -run TestGitHub_Lambda_Hello -timeout 30m ./tests/runners/github
+go test -v -tags gitlab_runner_live -run TestGitLab_ECS_Hello    -timeout 30m ./tests/runners/gitlab
+go test -v -tags gitlab_runner_live -run TestGitLab_Lambda_Hello -timeout 30m ./tests/runners/gitlab
+```
+
+I'll capture all four run / pipeline URLs back into this doc. Phase 110 closes when all four are GREEN with their evidence URLs recorded.
+
+### After all four cells GREEN
+
+5. Update `docs/runner-capability-matrix.md`: TBD → PASS for cells 1-4.
+6. Phase 110b dispatcher wiring: ECR push pipeline for the dispatcher's own runner image; end-to-end harness wiring through the dispatcher binary (vs the current per-cell direct dispatch).
+7. **Tear down live AWS** at session end (`terragrunt destroy` from both `terraform/environments/{ecs,lambda}/live`).
 
 ## Sockerless restart command
 
