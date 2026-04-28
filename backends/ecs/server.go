@@ -3,6 +3,7 @@ package ecs
 import (
 	"context"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
@@ -20,6 +21,12 @@ type Server struct {
 	NetworkState *core.StateStore[NetworkState]
 	ipCounter    atomic.Int32
 	volumeState
+	// stdinPipes buffers stdin bytes written via the hijacked attach
+	// connection for containers created with OpenStdin && AttachStdin.
+	// Keyed by container ID. ContainerStart drains the pipe and bakes
+	// the buffered bytes into the task definition's command override
+	// (Fargate has no remote stdin channel for a running task).
+	stdinPipes sync.Map
 }
 
 // NewServer creates a new ECS backend server.
@@ -126,8 +133,7 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	s.Typed.Logs = core.NewCloudLogsLogsDriver(s.BaseServer, logFactory,
 		core.StreamCloudLogsOptions{},
 		"ecs", "CloudWatchLogs")
-	s.Typed.Attach = core.NewCloudLogsAttachDriver(s.BaseServer, logFactory,
-		"ecs", "CloudLogsReadOnlyAttach")
+	s.Typed.Attach = &ecsStdinAttachDriver{s: s}
 
 	// SSM-based typed drivers — bypass the api.Backend round-trip and
 	// dispatch directly through ContainerXxxViaSSM helpers.

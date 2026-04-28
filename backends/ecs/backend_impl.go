@@ -232,7 +232,9 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	s.PendingCreates.Put(id, container)
 
 	// Store ECS state without task definition — defer registration to ContainerStart.
-	s.ECS.Put(id, ECSState{})
+	s.ECS.Put(id, ECSState{
+		OpenStdin: config.OpenStdin && config.AttachStdin,
+	})
 
 	// Attach the user-defined network's security group so the task is
 	// launched on that SG (not just the default task SG). `docker run
@@ -299,21 +301,6 @@ func (s *Server) ContainerStart(ref string) error {
 
 	ecsState, _ := s.ECS.Get(id)
 
-	// Deferred task definition registration: if not yet registered, do it now
-	if ecsState.TaskDefARN == "" {
-		taskDefARN, err := s.registerTaskDefinition(s.ctx(), []containerInput{
-			{ID: id, Container: &c, IsMain: true},
-		})
-		if err != nil {
-			s.Logger.Error().Err(err).Msg("failed to register task definition")
-			return awscommon.MapAWSError(err, "task-definition", id)
-		}
-		s.ECS.Update(id, func(state *ECSState) {
-			state.TaskDefARN = taskDefARN
-		})
-		ecsState.TaskDefARN = taskDefARN
-	}
-
 	// markRunning emits the start event and sets up the wait channel.
 	// Container state is no longer written to Store.Containers — the cloud is the truth.
 	markRunning := func() chan struct{} {
@@ -327,6 +314,55 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 		s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 		return exitCh
+	}
+
+	// gitlab-runner / `docker run -i` pattern: container was created
+	// with OpenStdin && AttachStdin. The attach driver has wired up a
+	// stdinPipe; the script will arrive over the hijacked attach
+	// connection AFTER `docker start` returns 204. We can't run the
+	// task yet (Fargate has no remote stdin channel for a running
+	// task), so return success immediately and let a goroutine take
+	// over: wait for the stdin pipe to close (caller half-closes after
+	// streaming the script), bake the buffered bytes into the task's
+	// Entrypoint/Cmd, then run the task through the normal launch
+	// path. ContainerWait blocks on the WaitCh which closes when the
+	// task exits — same end-to-end semantics as a synchronous start.
+	if ecsState.OpenStdin {
+		// Brief wait for the attach driver to register an open pipe.
+		// gitlab-runner's flow sequences attach (hijacked, 101) before
+		// start, but between sockerless's attach handler sending 101
+		// and entering the typed Attach() (which calls pipe.Open()),
+		// there's a tiny window where start can arrive first.
+		pipe := s.waitForStdinPipe(id, 2*time.Second)
+		if pipe != nil {
+			exitCh := markRunning()
+			cContainer := c
+			go s.launchAfterStdin(id, &cContainer, pipe, exitCh)
+			return nil
+		}
+		// OpenStdin was set but no attach happened (or attach didn't
+		// open the pipe in time). The container's `sh` reads stdin
+		// that will never arrive — fail clearly rather than silently
+		// running a task that hangs.
+		return &api.InvalidParameterError{Message: fmt.Sprintf(
+			"container %s was created with OpenStdin but no attach connection was established before start; sockerless ECS needs the attach hijack open at start time so the task command can be baked from buffered stdin",
+			id[:12],
+		)}
+	}
+
+	// Deferred task definition registration: if not yet registered, do it now
+	if ecsState.TaskDefARN == "" {
+		taskDefARN, err := s.registerTaskDefinition(s.ctx(), []containerInput{
+			{ID: id, Container: &c, IsMain: true},
+		})
+		if err != nil {
+			s.Logger.Error().Err(err).Msg("failed to register task definition")
+			return awscommon.MapAWSError(err, "task-definition", id)
+		}
+		s.ECS.Update(id, func(state *ECSState) {
+			state.TaskDefARN = taskDefARN
+		})
+		ecsState.TaskDefARN = taskDefARN
 	}
 
 	// Deferred start: if container is in a multi-container pod, wait for all siblings
@@ -713,6 +749,11 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	// Clean up PendingCreates (container may have been created but never started)
 	s.PendingCreates.Delete(id)
 	s.ECS.Delete(id)
+	// Unblock any deferred-stdin launcher waiting on the pipe so its
+	// goroutine can exit cleanly without launching a phantom task.
+	if v, ok := s.stdinPipes.LoadAndDelete(id); ok {
+		_ = v.(*stdinPipe).Close()
+	}
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
 	}
@@ -1222,4 +1263,147 @@ func (s *Server) inUseVolumeNames() map[string]struct{} {
 		}
 	}
 	return in
+}
+
+// waitForStdinPipe polls for an open stdinPipe registered by the
+// attach driver, up to the given timeout. Returns the pipe if one
+// becomes ready, or nil otherwise. Polled-style wait (rather than
+// channel-style) keeps the attach driver's pipe-creation code simple
+// — it doesn't have to publish a "pipe-created" signal separately.
+func (s *Server) waitForStdinPipe(id string, timeout time.Duration) *stdinPipe {
+	deadline := time.Now().Add(timeout)
+	for {
+		if v, ok := s.stdinPipes.Load(id); ok {
+			pipe := v.(*stdinPipe)
+			if pipe.IsOpen() {
+				return pipe
+			}
+		}
+		if time.Now().After(deadline) {
+			return nil
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// launchAfterStdin runs the deferred-RunTask flow used by containers
+// created with OpenStdin && AttachStdin. Sequence: wait for the
+// hijacked attach connection's stdin EOF (caller half-close after the
+// script has streamed) → bake the buffered bytes into the task's
+// Entrypoint/Cmd → register the task definition → run the task → wait
+// for RUNNING → register Cloud Map → spawn pollTaskExit. Mirrors the
+// synchronous post-`markRunning` portion of ContainerStart but with
+// the Cmd override applied first.
+//
+// Errors (RunTask failure, taskdef registration failure, etc.) close
+// the WaitCh so ContainerWait unblocks; the failure surfaces through
+// CloudState.GetContainer reading STOPPED state.
+func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, exitCh chan struct{}) {
+	defer func() {
+		s.stdinPipes.Delete(id)
+	}()
+
+	// Wait for the caller to half-close the hijacked attach connection
+	// (gitlab-runner does `io.Copy(conn, stdinSource); CloseWrite()` —
+	// the EOF on the conn-read side closes the pipe).
+	select {
+	case <-pipe.Done():
+	case <-s.ctx().Done():
+		s.Logger.Warn().Str("container", id[:12]).Msg("stdin-pipe wait cancelled before EOF")
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
+		}
+		return
+	}
+
+	script := pipe.Bytes()
+	// Build a per-cycle copy of the container with the buffered script
+	// baked into Entrypoint+Cmd. We do NOT mutate the stored container
+	// (PendingCreates / Store) because gitlab-runner reuses the same
+	// container ID across multiple start/stop cycles — each cycle
+	// needs a fresh stdin buffer and a fresh script-to-Cmd rewrite.
+	// RunTask's ContainerOverrides only carries Command (not
+	// Entrypoint), so the rewrite has to live in the task definition.
+	cycleContainer := *c
+	cycleConfig := c.Config
+	if len(script) > 0 {
+		cycleConfig.Entrypoint = []string{"sh", "-c"}
+		cycleConfig.Cmd = []string{string(script)}
+	}
+	cycleConfig.AttachStdin = false
+	cycleConfig.OpenStdin = false
+	cycleConfig.StdinOnce = false
+	cycleContainer.Config = cycleConfig
+
+	taskDefARN, err := s.registerTaskDefinition(s.ctx(), []containerInput{
+		{ID: id, Container: &cycleContainer, IsMain: true},
+	})
+	if err != nil {
+		s.Logger.Error().Err(err).Str("container", id[:12]).Msg("deferred-stdin: failed to register task definition")
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
+		}
+		return
+	}
+	s.ECS.Update(id, func(state *ECSState) { state.TaskDefARN = taskDefARN })
+
+	taskARN, clusterARN, err := s.runECSTask(id, taskDefARN, &cycleContainer)
+	if err != nil {
+		s.Logger.Error().Err(err).Str("container", id[:12]).Msg("deferred-stdin: failed to run ECS task")
+		_, _ = s.aws.ECS.DeregisterTaskDefinition(s.ctx(), &awsecs.DeregisterTaskDefinitionInput{
+			TaskDefinition: aws.String(taskDefARN),
+		})
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
+		}
+		return
+	}
+	s.ECS.Update(id, func(state *ECSState) {
+		state.TaskARN = taskARN
+		state.ClusterARN = clusterARN
+	})
+
+	taskAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
+	if err != nil {
+		s.Logger.Error().Err(err).Str("task", taskARN).Msg("deferred-stdin: task failed to reach RUNNING state")
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
+		}
+		return
+	}
+
+	if taskAddr == "" {
+		// Short-lived task already STOPPED before we observed RUNNING.
+		// Keep PendingCreates: gitlab-runner restarts the same
+		// container across script steps, and CloudState's
+		// containerFromTask synthesises Config without Binds /
+		// VolumesFrom / OpenStdin etc. The cached PendingCreates
+		// entry is the source of truth for the container's full
+		// shape; only ContainerRemove drops it.
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
+		}
+		return
+	}
+
+	// Keep PendingCreates across cycles; see short-lived branch above.
+
+	taskIP := taskAddr
+	if i := strings.LastIndex(taskAddr, ":"); i > 0 {
+		taskIP = taskAddr[:i]
+	}
+	hostname := strings.TrimPrefix(c.Name, "/")
+	for netName, ep := range c.NetworkSettings.Networks {
+		if ep == nil || ep.NetworkID == "" {
+			continue
+		}
+		if netName == "bridge" || netName == "host" || netName == "none" {
+			continue
+		}
+		if err := s.cloudServiceRegister(id, hostname, taskIP, ep.NetworkID); err != nil {
+			s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("deferred-stdin: failed to register in Cloud Map")
+		}
+	}
+
+	go s.pollTaskExit(id, taskARN, exitCh)
 }

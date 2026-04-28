@@ -8,7 +8,7 @@ Resume pointer. Updated after every task. Roadmap detail in [PLAN.md](PLAN.md); 
 - `origin-gitlab/main` mirrors `origin/main` (in sync as of 2026-04-27).
 - **`phase-110-runner-integration`** — active. PR #122 in flight. Phase 110b architecture work landing on this branch (Phase 110a deferred to a follow-on once 110b proves the architecture).
 
-## Operational state — 2026-04-28 ~15:30 UTC
+## Operational state — 2026-04-28 ~17:30 UTC
 
 - **AWS creds:** active via `aws.sh` (root `729079515331`).
 - **Live AWS infra: UP in eu-west-1.** ECS cluster `sockerless-live` (35 base + 4 runner-extension resources). Lambda live env (8 resources). EFS `fs-069c02e0e8823b64e` with two access points: `runner_workspace=fsap-0f60e569bae585f25`, `runner_externals=fsap-0ff9f9686208c4ed7`.
@@ -38,10 +38,11 @@ Iteration history (recorded for future debugging):
 
 ## Up next on this branch
 
-1. **Debug BUG-858** — gitlab-runner cell 3 fails on the predefined container's `docker exec` with "No such container". Sockerless's `queryTasks` tags + filters look correct; the exec-create handler resolves through `ResolveContainerAuto` which checks PendingCreates → CloudState → Store. PendingCreates is deleted in `ContainerStart` line 351 before `waitForTaskRunning`. Check:
-   - Whether the gitlab-runner predefined container's ECS task actually transitions to RUNNING (perhaps the helper-image bind-mount/EFS config is wrong).
-   - Whether `queryTasks` is returning STOPPED tasks but `queryTasks` filter is excluding them somehow.
-   - Whether the runner's exec ID format differs from sockerless's.
+1. **Re-run cell 3 (GitLab × ECS) end-to-end** with BUG-859 fix shipped. Expected behaviour:
+   - gitlab-runner's user-script container (alpine) gets the script piped through `docker attach` stdin
+   - Sockerless's `ecsStdinAttachDriver` buffers the bytes; ContainerStart defers RunTask
+   - On stdin EOF, sockerless bakes the script into the task definition (`Entrypoint=[sh,-c]` + `Cmd=[<script>]`) and runs the task
+   - GitLab pipeline reaches GREEN; user-script stdout (`hello from sockerless`, `env | sort`) appears in the job trace.
 2. **Cell 2 — GitHub × Lambda.** Mirror the ECS architecture for the Lambda backend:
    - `backends/lambda/config.go`: add `SharedVolumes` field + parse + lookup helpers (copy from `backends/ecs/config.go`).
    - `backends/lambda/backend_impl.go` (or wherever ContainerCreate is): same bind-mount → EFS-volume translation as ECS, plus sub-path drop + docker.sock drop. Lambda's volume code maps to `FileSystemConfig` (Lambda's EFS attachment shape) instead of `EFSVolumeConfiguration` (ECS).
@@ -76,6 +77,12 @@ All resolved.
 | 851 | M | ecs (network) | Override `s.Drivers.Network` with metadata-only synthetic; netns is wrong for Fargate. |
 | 852 | M | ecs (network) | Sub-tasks need operator default SG too (EFS mount target allow-list). |
 | 853 | H | ecs (exec) | Wait for `ExecuteCommandAgent.LastStatus == RUNNING` before `ExecuteCommand`. |
+| 854 | M | ecs (image-resolve) | sha256-only refs no longer misroute through `public.ecr.aws/docker/library/sha256:...`; resolve via local Store or surface clear error. |
+| 855 | M | aws-common (volumes) | EFS access-point path overflow on long volume names — fall back to `/sockerless/v/<sha256[:16]>`. |
+| 856 | M | terraform / runner-lambda | `SOCKERLESS_ECS_SHARED_VOLUMES` aligned to Lambda's `/tmp/runner-state/...` paths. |
+| 857 | M | tests/runners (gitlab) | gitlab-runner-helper image pre-pushed to ECR + Basic-auth-direct routing for ECR-shaped registries. |
+| 858 | M | ecs (container lifecycle) | `ContainerStart` falls back to `ResolveContainerAuto` for STOPPED-then-restarted containers; PendingCreates preserved through `waitForTaskRunning`. |
+| 859 | H | ecs (attach stdin) | `ecsStdinAttachDriver` captures `docker attach` stdin into a per-cycle `stdinPipe`; `launchAfterStdin` defers RunTask until stdin EOF then bakes the script into the task definition's `Entrypoint=[sh,-c]` + `Cmd=[<script>]`. ECSState gains `OpenStdin` so per-cycle restarts (gitlab-runner reuses container ID across script steps) survive PendingCreates churn. |
 
 ## Cross-links
 
