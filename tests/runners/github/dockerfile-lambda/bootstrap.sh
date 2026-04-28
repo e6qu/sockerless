@@ -4,9 +4,11 @@
 #
 # 1. Fetches the invocation event from
 #    `${AWS_LAMBDA_RUNTIME_API}/2018-06-01/runtime/invocation/next`.
-# 2. Starts `sockerless-backend-ecs` on `localhost:3375` in the
-#    background (so the runner's docker calls resolve to ECS RunTask
-#    sub-task spawns).
+# 2. Starts `sockerless-backend-lambda` on `localhost:3375` in the
+#    background (so the runner's docker calls dispatch each
+#    `container:` sub-task as a fresh Lambda invocation — keeping
+#    the workflow on Lambda primitives, per project rule "backend ↔
+#    host primitive must match").
 # 3. Configures + runs `actions/runner --ephemeral` with the
 #    registration token / labels / repo URL pulled from the event
 #    payload.
@@ -75,7 +77,7 @@ handle_invocation() {
 
   # Start sockerless on localhost:3375. Reads its config from env
   # vars set by Terraform on the Lambda function.
-  /usr/local/bin/sockerless-backend-ecs -addr :3375 -log-level debug 2>&1 \
+  /usr/local/bin/sockerless-backend-lambda -addr :3375 -log-level debug 2>&1 \
     | sed -u 's/^/[sockerless] /' &
   local sockerless_pid=$!
 
@@ -89,7 +91,7 @@ handle_invocation() {
   done
 
   if ! curl -fsS http://localhost:3375/_ping > /dev/null 2>&1; then
-    local err="sockerless-backend-ecs never became ready"
+    local err="sockerless-backend-lambda never became ready"
     curl -sS -X POST "${RUNTIME_API}/invocation/${request_id}/error" \
       -H 'Content-Type: application/json' \
       -d "{\"errorMessage\":\"${err}\",\"errorType\":\"BootstrapFailure\"}"

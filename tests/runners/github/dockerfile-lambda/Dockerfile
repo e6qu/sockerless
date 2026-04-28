@@ -2,16 +2,16 @@
 #
 # Wraps `actions/runner` as a Lambda function via the AWS Lambda
 # Runtime API. Each Lambda invocation = one ephemeral runner that
-# polls GitHub for one job, runs it, and exits. Sockerless-backend-ecs
-# (not -lambda — sub-tasks dispatch to Fargate to avoid Lambda-in-
-# Lambda recursion) is baked alongside the runner; the bootstrap
-# starts it on localhost:3375 before launching the runner so docker
-# create/exec calls flow through.
+# polls GitHub for one job, runs it, and exits. Sockerless-backend-
+# **lambda** is baked alongside the runner; the bootstrap starts it
+# on localhost:3375 so the runner's docker create/exec calls dispatch
+# **as Lambda invocations** (one per `container:` sub-task) — keeping
+# the lambda-runner workflow on Lambda primitives end-to-end. (Project
+# rule: backend ↔ host primitive must match. ECS in ECS, Lambda in
+# Lambda.)
 #
 # Lambda 15-minute hard cap means cell 2 is restricted to short
-# workflows. The architecture is the same as ECS (BUG-850/851/852/853
-# fixes apply); the only difference is the wrapper that turns the
-# image into a Lambda-runtime-API speaker.
+# workflows.
 
 FROM public.ecr.aws/lambda/provided:al2
 
@@ -37,11 +37,12 @@ RUN curl -fsSL "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/d
     | tar xz --strip-components=1 -C /usr/local/bin docker/docker && \
     /usr/local/bin/docker --version
 
-# Pre-built sockerless-backend-ecs (cross-compiled linux/amd64).
-# Same binary the ECS runner image uses; sockerless inside the
-# Lambda dispatches sub-tasks to ECS Fargate (not back to Lambda).
-COPY sockerless-backend-ecs /usr/local/bin/sockerless-backend-ecs
-RUN chmod +x /usr/local/bin/sockerless-backend-ecs
+# Pre-built sockerless-backend-lambda (cross-compiled linux/amd64).
+# Sockerless inside the Lambda dispatches each `container:` sub-task
+# as a separate Lambda invocation (image-mode container Lambda
+# created on demand); workflows stay entirely on Lambda primitives.
+COPY sockerless-backend-lambda /usr/local/bin/sockerless-backend-lambda
+RUN chmod +x /usr/local/bin/sockerless-backend-lambda
 
 # actions/runner extracted into /opt/runner. Lambda's filesystem is
 # read-only except /tmp + EFS mount points; the runner does its

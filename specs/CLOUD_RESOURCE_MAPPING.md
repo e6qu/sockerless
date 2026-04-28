@@ -27,6 +27,17 @@ This document is the source of truth for the stateless-backend invariant.
 7. **No fakes, no fallbacks, no placeholders.** Workarounds, silent substitutions, placeholder fields, synthetic-metadata backstops — all are bugs and land in [BUGS.md](../BUGS.md) under "Open" until a real fix ships.
 8. **FaaS backends run user-supplied container images, never the native runtime.** Lambda, GCF (Cloud Run Functions gen2), and AZF (Azure Functions) deploy OCI images chosen by the operator. Sockerless never targets the platforms' "function-as-code" runtime contracts (Node/Python/Go handlers in a managed sandbox). Container deployment is what lets sockerless put its bootstrap at the entrypoint, which is the prerequisite for the reverse-agent, agent-as-handler, and overlay-rootfs (opt-in via `SOCKERLESS_OVERLAY_ROOTFS=1`) patterns. ACA and Cloud Run are native container services, so this distinction is automatic — every deployment is a container.
 
+9. **Backend ↔ host primitive must match (CRITICAL).** When a sockerless backend is deployed *as part of a workload running on a cloud* (e.g. baked into a CI runner image), the backend must match that cloud's primitive: ECS backend in ECS, Lambda backend in Lambda, Cloud Run backend in Cloud Run, CRF in CRF, ACA in ACA, AZF in AZF. Cross-pollination ("bake the ECS backend into a Lambda image to dispatch sub-tasks via Fargate and avoid Lambda-in-Lambda recursion") is a class of architectural error tracked at top of [BUGS.md](../BUGS.md). Each cloud's own dispatch primitives are the answer for sub-task workloads on that cloud, even when 15-min caps or concurrency limits make it harder. The **runner-on-FaaS dispatch table** below gives the per-cloud primitive used for `container:` sub-tasks:
+
+   | Backend | Primitive for `container:` sub-task | IAM (in addition to base FaaS perms) |
+   |---|---|---|
+   | `lambda` | `lambda.CreateFunction` (image-mode container) per sub-task → `lambda.Invoke`. Sub-task functions share the runner's workspace EFS access point via `FileSystemConfig`. After invoke + completion, `lambda.DeleteFunction`. | `lambda:CreateFunction/Invoke/Delete/Get/UpdateConfiguration/Tag/ListFunctions`, `iam:PassRole` for sub-task execution role. |
+   | `cloudrun-functions` (gcf) | `functions.CallFunction` against a function newly created via `functions.CreateFunction`; or warm pool. Workspace shared via GCS bucket pre-mounted by the bootstrap. | `cloudfunctions.functions.create/call/delete`, `iam.serviceAccounts.actAs`. |
+   | `azure-functions` (azf) | Function-app deployment + HTTP trigger invoke; sub-task workspace mounted as Azure Files share via the function app's site config. | `Microsoft.Web/sites/{create,invoke,delete}`, managed-identity `actAs`. |
+   | `ecs` | `ecs.RunTask` (Fargate) per sub-task; not relevant *inside* an ECS workload because ECS tasks run a long-lived sockerless that handles repeated `RunTask` directly. | (default ECS task role.) |
+   | `cloudrun` (services) | `run.Services.CreateRevision` against a per-sub-task Service; long-lived for the duration of the parent workload. | `run.services.create/get/delete`. |
+   | `aca` | `containerapps.CreateOrUpdate` against a per-sub-task App. | `Microsoft.App/containerApps/write/delete`. |
+
 ---
 
 ## Mapping per cloud

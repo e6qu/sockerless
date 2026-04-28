@@ -1,10 +1,13 @@
 # Runner Lambda — `actions/runner` wrapped as a Lambda function.
 #
 # Each invocation = one ephemeral runner that polls GitHub for one
-# job, runs it, and exits. Sockerless-backend-ecs is baked into the
-# image (see `tests/runners/github/dockerfile-lambda/`) so the
-# runner's docker calls resolve to ECS RunTask sub-task spawns
-# (sub-tasks dispatch to Fargate to avoid Lambda-in-Lambda recursion).
+# job, runs it, and exits. Sockerless-backend-**lambda** is baked
+# into the image (see `tests/runners/github/dockerfile-lambda/`) so
+# the runner's docker calls dispatch each `container:` sub-task as a
+# fresh Lambda invocation (image-mode container Lambda created on
+# demand, sharing the workspace EFS access point via FileSystemConfig).
+# Workflows stay on Lambda primitives end-to-end, per the project rule
+# "backend ↔ host primitive must match" (BUG-862).
 #
 # Cell 2 of the 4-cell matrix. Caveat: 15-minute hard cap on Lambda
 # invocations means cell 2 is restricted to short workflows.
@@ -45,9 +48,15 @@ data "aws_efs_access_point" "runner_workspace" {
   access_point_id = local.ecs_runner_workspace_apid
 }
 
-# IAM role for the runner-Lambda. Like the runner-task role, this
-# is broader than a regular Lambda role because sockerless-backend-ecs
-# inside the Lambda is itself a docker daemon dispatching sub-tasks.
+# IAM role for the runner-Lambda. Broader than a regular Lambda role
+# because sockerless-backend-lambda inside the Lambda is itself a
+# docker daemon dispatching sub-task Lambdas (one per `container:`
+# directive). It needs CreateFunction / Invoke / Delete (image-mode
+# container Lambdas), iam:PassRole (to assign this same role to
+# the spawned sub-task functions), ECR pull (so spawned Lambdas can
+# pull the user image), EFS access (so spawned Lambdas can mount
+# the shared workspace access point), and EC2 describe (Lambda VPC
+# config validates against the VPC's subnets/SGs).
 resource "aws_iam_role" "runner_lambda" {
   name               = "${local.name_prefix}-runner-lambda-role"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
@@ -69,21 +78,20 @@ resource "aws_iam_role_policy_attachment" "runner_lambda_vpc" {
 
 data "aws_iam_policy_document" "runner_lambda" {
   statement {
-    sid    = "SockerlessECSDispatchFromLambda"
+    sid    = "SockerlessLambdaSubTaskDispatch"
     effect = "Allow"
     actions = [
-      "ecs:RunTask",
-      "ecs:StopTask",
-      "ecs:DescribeTasks",
-      "ecs:ListTasks",
-      "ecs:RegisterTaskDefinition",
-      "ecs:DeregisterTaskDefinition",
-      "ecs:DescribeTaskDefinition",
-      "ecs:ListTaskDefinitions",
-      "ecs:TagResource",
-      "ecs:UntagResource",
-      "ecs:DescribeClusters",
-      "ecs:ExecuteCommand",
+      "lambda:CreateFunction",
+      "lambda:DeleteFunction",
+      "lambda:InvokeFunction",
+      "lambda:GetFunction",
+      "lambda:GetFunctionConfiguration",
+      "lambda:UpdateFunctionConfiguration",
+      "lambda:UpdateFunctionCode",
+      "lambda:ListFunctions",
+      "lambda:TagResource",
+      "lambda:UntagResource",
+      "lambda:ListTags",
     ]
     resources = ["*"]
   }
@@ -239,25 +247,29 @@ resource "aws_lambda_function" "sockerless_runner" {
     variables = {
       # AWS_REGION is reserved on Lambda — set automatically by the
       # runtime to the function's region. Don't set explicitly.
-      SOCKERLESS_ECS_CLUSTER           = "sockerless-live"
-      SOCKERLESS_ECS_SUBNETS           = join(",", local.ecs_private_subnet_ids)
-      SOCKERLESS_ECS_SECURITY_GROUPS   = local.ecs_task_security_group_id
-      SOCKERLESS_ECS_TASK_ROLE_ARN     = local.ecs_task_role_arn
-      SOCKERLESS_ECS_EXECUTION_ROLE_ARN = local.ecs_execution_role_arn
-      SOCKERLESS_ECS_LOG_GROUP         = local.ecs_log_group_name
-      SOCKERLESS_AGENT_EFS_ID          = local.ecs_efs_filesystem_id
-      SOCKERLESS_ECS_PUBLIC_IP         = "false"
-      SOCKERLESS_ECS_CPU_ARCHITECTURE  = "X86_64"
-      # Bind-mount → EFS translation. The Lambda bootstrap stages
-      # actions/runner to /tmp/runner-state (Lambda's image filesystem
-      # is read-only outside /tmp + EFS), so the runner's bind-mount
-      # sources are /tmp/runner-state/_work etc. Map the workspace
-      # path to the shared EFS access point; sub-paths (`_work/_temp`
-      # etc.) are dropped automatically by sockerless. Externals
-      # stays as a sub-path of the same access point — the bootstrap
-      # symlinks /tmp/runner-state/externals into /tmp/runner-state/_work
-      # if needed at startup.
-      SOCKERLESS_ECS_SHARED_VOLUMES = "workspace=/tmp/runner-state/_work=${local.ecs_runner_workspace_apid}"
+      #
+      # Sockerless-backend-lambda runs inside this Lambda (per
+      # BUG-862 architecture rule: backend ↔ host primitive must
+      # match). It dispatches each `container:` sub-task as a fresh
+      # Lambda function on demand using these knobs:
+      SOCKERLESS_LAMBDA_ROLE_ARN          = aws_iam_role.runner_lambda.arn
+      SOCKERLESS_LAMBDA_LOG_GROUP         = "/sockerless/lambda/${local.name_prefix}"
+      SOCKERLESS_LAMBDA_SUBNETS           = join(",", local.ecs_private_subnet_ids)
+      SOCKERLESS_LAMBDA_SECURITY_GROUPS   = local.ecs_task_security_group_id
+      SOCKERLESS_LAMBDA_AGENT_EFS_ID      = local.ecs_efs_filesystem_id
+      SOCKERLESS_LAMBDA_ARCHITECTURE      = "x86_64"
+      # Bind-mount → EFS translation for sub-task Lambdas. The runner
+      # bootstrap stages actions/runner to /tmp/runner-state (Lambda's
+      # image filesystem is read-only outside /tmp + EFS), so the
+      # runner's bind-mount sources are /tmp/runner-state/_work +
+      # /tmp/runner-state/externals etc. Both paths map to the same
+      # workspace access point root (Lambda's single-FileSystemConfig
+      # constraint); sub-paths under _work (`_temp`, `_actions`, `_tool`)
+      # are dropped automatically by sockerless.
+      SOCKERLESS_LAMBDA_SHARED_VOLUMES = join(",", [
+        "workspace=/tmp/runner-state/_work=${local.ecs_runner_workspace_apid}",
+        "externals=/tmp/runner-state/externals=${local.ecs_runner_workspace_apid}",
+      ])
     }
   }
 
