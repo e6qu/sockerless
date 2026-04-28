@@ -360,16 +360,16 @@ func (s *Server) ContainerStart(ref string) error {
 	// open pipe so the invoke goroutine can wait for stdin EOF
 	// before calling Invoke. The brief wait covers the race window
 	// between the attach handler sending 101 and Attach() entering.
+	// BUG-866: OpenStdin can be set on containers that never receive
+	// piped stdin (gitlab-runner's predefined helper Lambda is created
+	// with OpenStdin=true but only the per-script user Lambda actually
+	// has bytes piped through attach). If no pipe opens within the
+	// wait window, fall through to a regular Invoke (no Payload) so
+	// the deferred-stdin path activates only when there's actually
+	// stdin to bake — same shape as the ECS backend's BUG-866 fix.
 	var stdinP *stdinPipe
 	if lambdaState.OpenStdin {
 		stdinP = s.waitForStdinPipe(id, 2*time.Second)
-		if stdinP == nil {
-			s.Store.WaitChs.Delete(id)
-			return &api.InvalidParameterError{Message: fmt.Sprintf(
-				"container %s was created with OpenStdin but no attach connection was established before start; sockerless Lambda needs the attach hijack open at start time so the Invoke Payload can be baked from buffered stdin",
-				id[:12],
-			)}
-		}
 	}
 
 	// Invoke Lambda function asynchronously and capture the outcome

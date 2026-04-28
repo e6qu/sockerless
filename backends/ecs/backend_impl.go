@@ -340,14 +340,16 @@ func (s *Server) ContainerStart(ref string) error {
 			go s.launchAfterStdin(id, &cContainer, pipe, exitCh)
 			return nil
 		}
-		// OpenStdin was set but no attach happened (or attach didn't
-		// open the pipe in time). The container's `sh` reads stdin
-		// that will never arrive — fail clearly rather than silently
-		// running a task that hangs.
-		return &api.InvalidParameterError{Message: fmt.Sprintf(
-			"container %s was created with OpenStdin but no attach connection was established before start; sockerless ECS needs the attach hijack open at start time so the task command can be baked from buffered stdin",
-			id[:12],
-		)}
+		// BUG-866: OpenStdin can be set on containers that never
+		// receive piped stdin (gitlab-runner's predefined helper
+		// container is created with OpenStdin=true but only the
+		// per-script user container actually has bytes piped through
+		// attach). When no pipe is opened within the wait window,
+		// fall through to the standard synchronous flow rather than
+		// erroring — the container's command runs as-defined; if it
+		// genuinely needs stdin it'll see EOF and exit naturally,
+		// matching docker engine semantics for a non-attached
+		// `docker start` of an OpenStdin container.
 	}
 
 	// Deferred task definition registration: if not yet registered, do it now
