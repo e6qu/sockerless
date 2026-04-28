@@ -2,6 +2,8 @@ package awscommon
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"sync"
@@ -186,7 +188,16 @@ func (m *EFSManager) AccessPointForVolume(ctx context.Context, volName string) (
 		return id, nil
 	}
 
+	// AWS EFS rejects rootDirectory.path > 100 chars. Volume names from
+	// gitlab-runner (`runner-<id>-project-<id>-concurrent-<n>-<hex>-cache-<sha>`)
+	// regularly exceed that. Fall back to a SHA256-hashed short path
+	// when the full sanitised form would overflow.
+	const efsRootPathMax = 100
 	rootDir := "/sockerless/volumes/" + SanitiseVolumePath(volName)
+	if len(rootDir) > efsRootPathMax {
+		sum := sha256.Sum256([]byte(volName))
+		rootDir = "/sockerless/v/" + hex.EncodeToString(sum[:16])
+	}
 	created, err := m.Client.CreateAccessPoint(ctx, &efs.CreateAccessPointInput{
 		FileSystemId: aws.String(fsID),
 		RootDirectory: &efstypes.RootDirectory{

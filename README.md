@@ -104,7 +104,7 @@ Each backend, the agent, and the test suite are separate Go modules connected vi
 ![sim/azure](https://img.shields.io/badge/sim%2Fazure-8.5k-00ADD8)
 ![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-7k-00ADD8)
 ![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)
-![ecs](https://img.shields.io/badge/ecs-6.1k-5BC0DE)
+![ecs](https://img.shields.io/badge/ecs-6.2k-5BC0DE)
 ![cloudrun](https://img.shields.io/badge/cloudrun-3.9k-5BC0DE)
 ![aca](https://img.shields.io/badge/aca-4.3k-5BC0DE)
 ![docker](https://img.shields.io/badge/docker-2.6k-5BC0DE)

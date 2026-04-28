@@ -156,12 +156,17 @@ func pingDocker(t *testing.T, host string) {
 
 func registerRunner(t *testing.T, authToken, dockerHost, description, configPath string) {
 	t.Helper()
+	// --docker-disable-cache: skip the cache-permission helper image
+	// (gitlab-runner's `setVolumePermissions` would try to pull a
+	// `registry.gitlab.com/...` image that AWS ECR pull-through cache
+	// can't fetch without auth). The hello pipelines don't use cache.
 	cmd := exec.Command("gitlab-runner", "register", "--non-interactive",
 		"--url", defaultGLURL,
 		"--token", authToken,
 		"--executor", "docker",
 		"--docker-image", "alpine:latest",
 		"--docker-host", dockerHost,
+		"--docker-disable-cache",
 		"--description", description,
 		"--config", configPath,
 	)
