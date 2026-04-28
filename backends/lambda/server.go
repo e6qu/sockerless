@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
@@ -21,6 +22,12 @@ type Server struct {
 	reverseAgents *reverseAgentRegistry // reverse-agent session registry
 	ipCounter     atomic.Int32
 	volumeState
+	// stdinPipes buffers stdin bytes written via the hijacked attach
+	// connection for containers created with OpenStdin && AttachStdin.
+	// ContainerStart drains the pipe and bakes the buffered bytes into
+	// the Lambda Invoke Payload (the bootstrap pipes Payload to the
+	// user entrypoint as stdin).
+	stdinPipes sync.Map
 }
 
 // NewServer creates a new Lambda backend server.
@@ -119,8 +126,7 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	s.Typed.Logs = core.NewCloudLogsLogsDriver(s.BaseServer, logFactory,
 		core.StreamCloudLogsOptions{CheckLogBuffers: true},
 		"lambda", "CloudWatchLogs")
-	s.Typed.Attach = core.NewCloudLogsAttachDriver(s.BaseServer, logFactory,
-		"lambda", "CloudLogsReadOnlyAttach")
+	s.Typed.Attach = &lambdaStdinAttachDriver{s: s}
 
 	return s
 }

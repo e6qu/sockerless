@@ -83,6 +83,7 @@ All resolved.
 | 857 | M | tests/runners (gitlab) | gitlab-runner-helper image pre-pushed to ECR + Basic-auth-direct routing for ECR-shaped registries. |
 | 858 | M | ecs (container lifecycle) | `ContainerStart` falls back to `ResolveContainerAuto` for STOPPED-then-restarted containers; PendingCreates preserved through `waitForTaskRunning`. |
 | 859 | H | ecs (attach stdin) | `ecsStdinAttachDriver` captures `docker attach` stdin into a per-cycle `stdinPipe`; `launchAfterStdin` defers RunTask until stdin EOF then bakes the script into the task definition's `Entrypoint=[sh,-c]` + `Cmd=[<script>]`. ECSState gains `OpenStdin` so per-cycle restarts (gitlab-runner reuses container ID across script steps) survive PendingCreates churn. |
+| 860 | H | lambda (attach stdin) | Mirror of BUG-859 for Lambda: `lambdaStdinAttachDriver` captures stdin → buffered → `lambda.Invoke` Payload (the bootstrap pipes Payload to user entrypoint as stdin, so `Cmd=[sh]` runs the script). LambdaState gains `OpenStdin`. |
 
 ## Cross-links
 

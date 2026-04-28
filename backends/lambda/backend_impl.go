@@ -290,6 +290,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	s.Lambda.Put(id, LambdaState{
 		FunctionName: funcName,
 		FunctionARN:  functionARN,
+		OpenStdin:    config.OpenStdin && config.AttachStdin,
 	})
 
 	s.Registry.Register(core.ResourceEntry{
@@ -353,6 +354,24 @@ func (s *Server) ContainerStart(ref string) error {
 	// Remove from PendingCreates now that the function is being invoked.
 	s.PendingCreates.Delete(id)
 
+	// gitlab-runner / `docker run -i` pattern: the container will
+	// receive its actual command via stdin on the hijacked attach
+	// connection. Wait briefly for the attach driver to register an
+	// open pipe so the invoke goroutine can wait for stdin EOF
+	// before calling Invoke. The brief wait covers the race window
+	// between the attach handler sending 101 and Attach() entering.
+	var stdinP *stdinPipe
+	if lambdaState.OpenStdin {
+		stdinP = s.waitForStdinPipe(id, 2*time.Second)
+		if stdinP == nil {
+			s.Store.WaitChs.Delete(id)
+			return &api.InvalidParameterError{Message: fmt.Sprintf(
+				"container %s was created with OpenStdin but no attach connection was established before start; sockerless Lambda needs the attach hijack open at start time so the Invoke Payload can be baked from buffered stdin",
+				id[:12],
+			)}
+		}
+	}
+
 	// Invoke Lambda function asynchronously and capture the outcome
 	// in Store.InvocationResults so CloudState reflects the container
 	// as exited with the real exit code.
@@ -372,8 +391,20 @@ func (s *Server) ContainerStart(ref string) error {
 			return
 		}
 
+		// Block until stdin EOF for OpenStdin containers; bake the
+		// buffered bytes into InvokeInput.Payload. The bootstrap's
+		// runUserInvocation pipes Payload to the user entrypoint as
+		// stdin, so `Cmd=[sh]` + Payload=script runs the script.
+		var invokePayload []byte
+		if stdinP != nil {
+			<-stdinP.Done()
+			invokePayload = stdinP.Bytes()
+			s.stdinPipes.Delete(id)
+		}
+
 		result, err := s.aws.Lambda.Invoke(s.ctx(), &awslambda.InvokeInput{
 			FunctionName: aws.String(lambdaState.FunctionName),
+			Payload:      invokePayload,
 		})
 
 		inv := core.InvocationResult{FinishedAt: time.Now()}
@@ -573,6 +604,11 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	s.PendingCreates.Delete(id)
 	s.Lambda.Delete(id)
+	// Unblock any deferred-stdin Invoke goroutine waiting on the pipe
+	// so it can exit cleanly without firing a phantom invocation.
+	if v, ok := s.stdinPipes.LoadAndDelete(id); ok {
+		_ = v.(*stdinPipe).Close()
+	}
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
 	}
@@ -930,4 +966,24 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 // ImagePush pushes an image, syncing to ECR when applicable.
 func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
 	return s.images.Push(name, tag, auth)
+}
+
+// waitForStdinPipe polls for an open stdinPipe registered by the
+// attach driver, up to the given timeout. Returns the pipe if one
+// becomes ready, or nil otherwise. Mirrors `Server.waitForStdinPipe`
+// in the ECS backend.
+func (s *Server) waitForStdinPipe(id string, timeout time.Duration) *stdinPipe {
+	deadline := time.Now().Add(timeout)
+	for {
+		if v, ok := s.stdinPipes.Load(id); ok {
+			pipe := v.(*stdinPipe)
+			if pipe.IsOpen() {
+				return pipe
+			}
+		}
+		if time.Now().After(deadline) {
+			return nil
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
