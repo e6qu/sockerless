@@ -18,5 +18,6 @@ use (
 	./bleephub
 	./cmd/sockerless
 	./cmd/sockerless-admin
+	./github-runner-dispatcher
 	./tests
 )
