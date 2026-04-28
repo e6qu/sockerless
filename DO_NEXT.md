@@ -8,7 +8,7 @@ Resume pointer. Updated after every task. Roadmap detail in [PLAN.md](PLAN.md); 
 - `origin-gitlab/main` mirrors `origin/main` (in sync as of 2026-04-27).
 - **`phase-110-runner-integration`** — active. PR #122 in flight. Phase 110b architecture work landing on this branch (Phase 110a deferred to a follow-on once 110b proves the architecture).
 
-## Operational state — 2026-04-28 ~17:30 UTC
+## Operational state — 2026-04-29 ~00:00 UTC
 
 - **AWS creds:** active via `aws.sh` (root `729079515331`).
 - **Live AWS infra: UP in eu-west-1.** ECS cluster `sockerless-live` (35 base + 4 runner-extension resources). Lambda live env (8 resources). EFS `fs-069c02e0e8823b64e` with two access points: `runner_workspace=fsap-0f60e569bae585f25`, `runner_externals=fsap-0ff9f9686208c4ed7`.
@@ -36,23 +36,42 @@ Iteration history (recorded for future debugging):
 - 25052216785, 25052362819 — same exec-agent-not-ready failure (BUG-853 confirmed, fix not yet shipped).
 - 25052661438 — **GREEN** — first run with the BUG-853 wait fix shipped.
 
+## 4-cell verification status (2026-04-29)
+
+| Cell | Status | Run / Blocker |
+|---|---|---|
+| 1 GH × ECS | ✅ PASS | https://github.com/e6qu/sockerless/actions/runs/25075259911 (2026-04-28 20:13 UTC) |
+| 2 GH × Lambda | ❌ FAIL → architecture corrected | Run 25075247501 surfaced BUG-861 → BUG-862. Source fixed; **needs runner-Lambda image rebuild** (Docker daemon required) + `terragrunt apply` for new IAM/env vars. |
+| 3 GL × ECS | blocked | Sockerless ECS PID 75092 still on pre-BUG-859 binary (mmap'd). User must `kill 75092` and relaunch from `/tmp/sockerless-backend-ecs` (now contains the fix). |
+| 4 GL × Lambda | blocked | Sockerless Lambda PID 70870 still on pre-BUG-860 binary. User must `kill 70870` and relaunch from `/tmp/sockerless-backend-lambda`. |
+
 ## Up next on this branch
 
-1. **Re-run cell 3 (GitLab × ECS) end-to-end** with BUG-859 fix shipped. Expected behaviour:
-   - gitlab-runner's user-script container (alpine) gets the script piped through `docker attach` stdin
-   - Sockerless's `ecsStdinAttachDriver` buffers the bytes; ContainerStart defers RunTask
-   - On stdin EOF, sockerless bakes the script into the task definition (`Entrypoint=[sh,-c]` + `Cmd=[<script>]`) and runs the task
-   - GitLab pipeline reaches GREEN; user-script stdout (`hello from sockerless`, `env | sort`) appears in the job trace.
-2. **Cell 2 — GitHub × Lambda.** Mirror the ECS architecture for the Lambda backend:
-   - `backends/lambda/config.go`: add `SharedVolumes` field + parse + lookup helpers (copy from `backends/ecs/config.go`).
-   - `backends/lambda/backend_impl.go` (or wherever ContainerCreate is): same bind-mount → EFS-volume translation as ECS, plus sub-path drop + docker.sock drop. Lambda's volume code maps to `FileSystemConfig` (Lambda's EFS attachment shape) instead of `EFSVolumeConfiguration` (ECS).
-   - Cross-compile Lambda backend binary; build a Lambda-runtime container image (different shape from ECS — needs the AWS Lambda Runtime Interface Emulator or the runner runs as the Lambda handler). One option: use the AWS-provided `aws-lambda-runtime-interface-emulator` so the same actions/runner image works as a Lambda function.
-   - Push to ECR.
-   - Define a Lambda function in Terraform (`terraform/modules/lambda/runner.tf`) with `FileSystemConfig` for the workspace + externals EFS access points. Lambda function role with `lambda:InvokeFunction`, EFS mount perms, ECS RunTask + EC2 perms (so sockerless inside the Lambda can dispatch sub-tasks to Fargate).
-   - Harness change: `runLambdaRunnerTask` shells out to `aws lambda invoke` with the per-cell registration token. Caveat: Lambda 15-min hard cap — cell 2 is restricted to short workflows.
-2. **Cells 3 + 4 (GitLab)** — gitlab-runner master runs locally on the laptop. No sockerless changes needed. Just an explicit run from `tests/runners/gitlab/`.
-3. **`github-runner-dispatcher` top-level Go module** — Phase 110a deliverable. Sockerless-agnostic Docker-API client. Skeleton + smoke test against local Podman.
-4. **Tear down live AWS** at session end (`terragrunt destroy` from both `terraform/environments/{ecs,lambda}/live`).
+1. **Sockerless restart** — drops cells 3+4 from blocked into runnable. Command in [restart command block below](#sockerless-restart-command).
+2. **Cell 2 image rebuild** — the runner-Lambda image needs the corrected `sockerless-backend-lambda` (not `-ecs`) baked in. Two paths:
+   - Local Docker daemon up briefly: `cd tests/runners/github/dockerfile-lambda && make all` (does `make stage build push update-function wait`).
+   - **Without local Docker**: provision a small AWS CodeBuild project (deferred — would be a single-shot `docker build` driven by a buildspec.yml that pulls the build context from S3). Cleaner but pulls in more terraform.
+3. **`terragrunt apply` for the lambda module** — the new IAM policy (Lambda dispatch perms) + env vars (`SOCKERLESS_LAMBDA_*`) need to land on the `sockerless-live-runner` Lambda before the rebuilt image will work end-to-end.
+4. **Re-run cells 2/3/4 once unblocked**; expected outcome: all four cells GREEN with workflow / pipeline run URLs captured in this doc.
+5. **github-runner-dispatcher** — Phase 110a skeleton + state recovery shipped (commit `ba797b6`). Phase 110b production wiring remains: ECR push pipeline for the dispatcher's runner image, end-to-end harness wiring through the dispatcher (vs the current per-cell harness paths).
+6. **Tear down live AWS** at session end (`terragrunt destroy` from both `terraform/environments/{ecs,lambda}/live`).
+
+## Sockerless restart command
+
+```bash
+kill 75092 70870
+source /Users/zardoz/projects/sockerless/aws.sh
+source /tmp/ecs-env.sh
+nohup /tmp/sockerless-backend-ecs    -addr :3375 -log-level debug \
+    >>/tmp/sockerless-ecs.log    2>&1 &
+source /tmp/lambda-env.sh
+nohup /tmp/sockerless-backend-lambda -addr :3376 -log-level debug \
+    >>/tmp/sockerless-lambda.log 2>&1 &
+curl -s http://localhost:3375/_ping; echo
+curl -s http://localhost:3376/_ping; echo
+```
+
+The macOS-arm64 binaries at `/tmp/sockerless-backend-{ecs,lambda}` were rebuilt this session and contain BUG-859 / BUG-860 fixes.
 
 ## Resume notes
 
@@ -64,7 +83,7 @@ Iteration history (recorded for future debugging):
 
 ## Bug log this session (PR #122)
 
-All resolved.
+860 fixed (BUG-845..860). 2 open: BUG-861 (Lambda externals shared-volume entry) + BUG-862 (CRITICAL — backend ↔ host primitive mismatch, runner-Lambda baked the ECS backend). Both ship as part of the same cell-2 fix round (rebuild runner-Lambda image with sockerless-backend-lambda + apply new terraform). Class-of-bug rule documented at top of [BUGS.md](BUGS.md): cross-cloud-primitive baking is a P0.
 
 | # | Sev | Area | One-liner |
 |---|-----|------|-----------|
@@ -84,6 +103,8 @@ All resolved.
 | 858 | M | ecs (container lifecycle) | `ContainerStart` falls back to `ResolveContainerAuto` for STOPPED-then-restarted containers; PendingCreates preserved through `waitForTaskRunning`. |
 | 859 | H | ecs (attach stdin) | `ecsStdinAttachDriver` captures `docker attach` stdin into a per-cycle `stdinPipe`; `launchAfterStdin` defers RunTask until stdin EOF then bakes the script into the task definition's `Entrypoint=[sh,-c]` + `Cmd=[<script>]`. ECSState gains `OpenStdin` so per-cycle restarts (gitlab-runner reuses container ID across script steps) survive PendingCreates churn. |
 | 860 | H | lambda (attach stdin) | Mirror of BUG-859 for Lambda: `lambdaStdinAttachDriver` captures stdin → buffered → `lambda.Invoke` Payload (the bootstrap pipes Payload to user entrypoint as stdin, so `Cmd=[sh]` runs the script). LambdaState gains `OpenStdin`. |
+| 861 | H | runner-lambda image + lambda backend | ⚠ open. Cell 2 fail surfaced "host bind mounts not supported on ECS backend" for `/tmp/runner-state/externals:/__e:ro`. Root cause was BUG-862 (wrong backend baked in); fix lands together with BUG-862's terraform `SOCKERLESS_LAMBDA_SHARED_VOLUMES` carrying both workspace + externals paths. |
+| 862 | **CRITICAL** | architecture / runner-lambda | ⚠ open. Runner-Lambda image baked `sockerless-backend-ecs` and dispatched `container:` sub-tasks via `ecs.RunTask` to Fargate — backend ↔ host primitive mismatch. Project rule (now top of BUGS.md + MEMORY.md + CLOUD_RESOURCE_MAPPING.md universal rule #9): each backend runs on its own native primitive. Source fixed (Dockerfile, bootstrap, terraform IAM + env vars, agent + bootstrap binaries staged into image); awaits image rebuild + `terragrunt apply`. |
 
 ## Cross-links
 

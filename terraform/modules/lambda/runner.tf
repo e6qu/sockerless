@@ -96,6 +96,38 @@ data "aws_iam_policy_document" "runner_lambda" {
     resources = ["*"]
   }
 
+  # Sockerless's image-inject path inside the runner-Lambda needs to
+  # build per-sub-task images via CodeBuild (no docker daemon
+  # available inside the Lambda runtime). It uploads the build
+  # context to the S3 bucket and starts a CodeBuild project that
+  # does the actual `docker build` + `docker push`. See
+  # codebuild.tf in this module.
+  statement {
+    sid    = "CodeBuildImageBuilds"
+    effect = "Allow"
+    actions = [
+      "codebuild:StartBuild",
+      "codebuild:BatchGetBuilds",
+      "codebuild:StopBuild",
+    ]
+    resources = [aws_codebuild_project.image_builder.arn]
+  }
+
+  statement {
+    sid    = "S3BuildContextWrite"
+    effect = "Allow"
+    actions = [
+      "s3:PutObject",
+      "s3:GetObject",
+      "s3:DeleteObject",
+      "s3:ListBucket",
+    ]
+    resources = [
+      aws_s3_bucket.build_context.arn,
+      "${aws_s3_bucket.build_context.arn}/*",
+    ]
+  }
+
   statement {
     sid    = "PassRoleForSubTasks"
     effect = "Allow"
@@ -270,6 +302,12 @@ resource "aws_lambda_function" "sockerless_runner" {
         "workspace=/tmp/runner-state/_work=${local.ecs_runner_workspace_apid}",
         "externals=/tmp/runner-state/externals=${local.ecs_runner_workspace_apid}",
       ])
+      # Image builds for sub-task Lambdas — sockerless-backend-lambda
+      # has no docker daemon inside the Lambda runtime, so it
+      # delegates `docker build` to AWS CodeBuild via these knobs.
+      # See backends/aws-common/build.go::CodeBuildService.
+      SOCKERLESS_CODEBUILD_PROJECT = aws_codebuild_project.image_builder.name
+      SOCKERLESS_BUILD_BUCKET      = aws_s3_bucket.build_context.bucket
     }
   }
 

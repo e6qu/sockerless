@@ -77,4 +77,58 @@ wait:
 all: stage build push update-function wait
 	@echo "runner-Lambda updated to $(ECR_URI)"
 
-.PHONY: stage build push ecr-login update-function wait all
+# -----------------------------------------------------------------
+# CodeBuild-driven build path (no local docker daemon required).
+# Provisions the image via the AWS CodeBuild project provisioned in
+# `terraform/modules/lambda/codebuild.tf`. Used when the operator
+# doesn't have Docker Desktop / Podman handy locally.
+# -----------------------------------------------------------------
+
+CODEBUILD_PROJECT ?= sockerless-live-image-builder
+BUILD_BUCKET      ?= sockerless-live-build-context
+
+# Tar the build context (Dockerfile + bootstrap.sh + 3 cross-
+# compiled binaries) and upload to the S3 bucket the CodeBuild
+# project reads from.
+upload-context: stage
+	tar --exclude='.gitignore' --exclude='Makefile' --exclude='context.tar.gz' \
+		-czf context.tar.gz -C $(CURDIR) .
+	@key="build-context/runner-lambda-$$(date +%s).tar.gz" ; \
+	echo "Uploading $$key to s3://$(BUILD_BUCKET)/" ; \
+	aws s3 cp context.tar.gz "s3://$(BUILD_BUCKET)/$$key" --region $(REGION) --no-cli-pager ; \
+	echo "$$key" > .last-context-key
+	rm -f context.tar.gz
+
+# Trigger a CodeBuild run that pulls the staged context from S3,
+# does `docker build --push`. Blocks until completion (poll every
+# 10 s). Use `make codebuild-update` for the full rebuild + Lambda
+# update path.
+codebuild-build: upload-context
+	@key=$$(cat .last-context-key) ; \
+	echo "Starting CodeBuild $(CODEBUILD_PROJECT) → $(ECR_URI)" ; \
+	build_id=$$(aws codebuild start-build \
+		--project-name "$(CODEBUILD_PROJECT)" \
+		--region $(REGION) \
+		--no-cli-pager \
+		--environment-variables-override \
+		  "name=BUILD_CONTEXT_KEY,value=$$key,type=PLAINTEXT" \
+		  "name=IMAGE_URI,value=$(ECR_URI),type=PLAINTEXT" \
+		  "name=TARGET_PLATFORM,value=amd64,type=PLAINTEXT" \
+		--query 'build.id' --output text) ; \
+	echo "Build id: $$build_id" ; \
+	while true ; do \
+	  status=$$(aws codebuild batch-get-builds --ids "$$build_id" --region $(REGION) --query 'builds[0].buildStatus' --output text --no-cli-pager) ; \
+	  case "$$status" in \
+	    SUCCEEDED) echo "Build SUCCEEDED" ; break ;; \
+	    FAILED|FAULT|TIMED_OUT|STOPPED) echo "Build $$status" ; exit 1 ;; \
+	    *) echo "  status=$$status (polling…)" ; sleep 10 ;; \
+	  esac \
+	done
+
+# Full CodeBuild path: stage → upload context → CodeBuild → update
+# Lambda function to the new image. This is the no-local-docker
+# equivalent of `make all`.
+codebuild-update: codebuild-build update-function wait
+	@echo "runner-Lambda updated to $(ECR_URI) via CodeBuild"
+
+.PHONY: stage build push ecr-login update-function wait all upload-context codebuild-build codebuild-update
