@@ -35,7 +35,7 @@ Older PRs (#112–#115) — sim parity, real volumes, FaaS invocation tracking, 
 | 3 GL × ECS | ✅ corrected (BUG-859 in `c10a317`) | sockerless ECS restart → re-run harness |
 | 4 GL × Lambda | ✅ corrected (BUG-860 in `6e3d0fa`) | pre-stage agent + bootstrap to `/opt/sockerless` → set `SOCKERLESS_CODEBUILD_PROJECT/BUILD_BUCKET` in `/tmp/lambda-env.sh` → sockerless Lambda restart → re-run harness |
 
-Detailed unblock plans per cell live in [PLAN.md § Phase 110 — paths forward to GREEN](PLAN.md). Per-bug closure paths in [BUGS.md](BUGS.md). Resume command + sequence in [DO_NEXT.md](DO_NEXT.md).
+Detailed unblock plans per cell live in [PLAN.md § Phase 110 — paths forward to GREEN](PLAN.md). Per-bug closure paths in [BUGS.md](BUGS.md). Resume command + sequence in [DO_NEXT.md](DO_NEXT.md). Full runner hurdle catalog (closed + predicted) in [docs/RUNNERS.md § Runner hurdles](docs/RUNNERS.md).
 - **Phase 110a — github-runner-dispatcher skeleton: shipped** at commit `ba797b6`. Top-level Go module, sockerless-agnostic (only stdlib + BurntSushi/toml). State recovery via container labels (`sockerless.dispatcher.{job_id,runner_name,managed_by}`); GC sweep every 2 min reaps exited containers + offline GitHub runners; graceful shutdown drains in-flight work bounded to 30 s.
 - **Phase 113 (queued)** — production-shape `github-runner-dispatcher` (webhook ingress, GitHub App install, multi-repo, deployable). See [PLAN.md § Phase 113].
 - **Phase 104 wrapper-removal pass** — gated on docker getting typed cloud-native drivers OR accepting wrappers as permanent. Once decided: drop unused `WrapLegacyXxx` / `LegacyXxxFn` scaffolding and shrink `api.Backend` correspondingly. Coordinated landing.

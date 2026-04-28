@@ -47,7 +47,9 @@ Iteration history (recorded for future debugging):
 
 ## Up next on this branch — paths forward to all-cells-GREEN
 
-Source-side corrections shipped through commit `8c70d1a`. Remaining work is operator-driven runtime steps in this exact order:
+Source-side corrections shipped through commit `8c70d1a`. Full runner hurdle catalog (15 closed + 8 predicted) in [docs/RUNNERS.md § Runner hurdles](docs/RUNNERS.md) — that's where future-debugging starts.
+
+Remaining work is operator-driven runtime steps in this exact order:
 
 ### Step 1 — Apply terraform (cells 2 + 4 prep)
 
