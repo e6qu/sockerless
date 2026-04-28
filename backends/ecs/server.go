@@ -97,6 +97,26 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 
 	registerUI(s.BaseServer)
 
+	// Use the metadata-only network driver. BaseServer.InitDrivers
+	// installs the Linux platform driver (real `ip netns add` + veth
+	// pairs) which is correct for the local docker backend (where
+	// docker networks are kernel netns) but wrong for ECS, where
+	// docker networks map to *cloud* networking primitives — VPC
+	// security groups + Cloud Map namespaces (provisioned by
+	// `cloudNetworkCreate` / `cloudNamespaceCreate` in
+	// `backend_impl_network.go`). Linux kernel netns inside the
+	// runner-task are irrelevant: spawned sub-tasks each get their
+	// own Fargate ENI and netns from ECS itself.
+	//
+	// `SyntheticNetworkDriver` is the in-memory metadata store for
+	// docker networks — the "synthetic" name is historical, not a
+	// signal that this is fake or stub behavior. It records that the
+	// docker network exists so subsequent `docker network ls` /
+	// `docker network inspect` calls work; the actual cloud-side
+	// networking lives in the ECS NetworkCreate wrapper that runs
+	// after the BaseServer call returns.
+	s.Drivers.Network = &core.SyntheticNetworkDriver{Store: s.Store, IPAlloc: s.Store.IPAlloc}
+
 	// Cloud-native typed Logs + Attach driving CloudWatch via the per-
 	// container fetcher factory. Bypasses the legacy s.self.ContainerLogs
 	// /ContainerAttach round-trip.

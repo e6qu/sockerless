@@ -43,20 +43,47 @@ const (
 	runnerImageTag       = "sockerless-actions-runner:local"
 )
 
+// TestGitHub_ECS_Hello — cell 1 of the 4-cell matrix.
+//
+// Architecture: runner runs as a Fargate task in the live ECS
+// cluster, with sockerless-backend-ecs baked into the same image and
+// listening on `tcp://localhost:3375` inside the task. The runner's
+// `docker create -v /home/runner/_work:/__w alpine` (from the
+// `container: alpine:latest` directive in `hello-ecs.yml`) flows
+// through sockerless, which translates the host bind mount to the
+// shared EFS access point and dispatches the alpine sub-task to ECS
+// with the same EFS volume mounted at `/__w`. Both runner-task and
+// sub-task see the same workspace via EFS — `container:` works
+// end-to-end on Fargate.
+//
+// Required env (read from the live ECS terragrunt outputs):
+//   - SOCKERLESS_ECS_TEST_REGION (default eu-west-1)
+//   - SOCKERLESS_ECS_TEST_CLUSTER (default sockerless-live)
+//   - SOCKERLESS_ECS_TEST_TASK_DEFINITION (default sockerless-live-runner)
+//   - SOCKERLESS_ECS_TEST_SUBNETS (comma-separated, must be in the cluster's VPC)
+//   - SOCKERLESS_ECS_TEST_SECURITY_GROUPS (comma-separated)
 func TestGitHub_ECS_Hello(t *testing.T) {
+	subnets := os.Getenv("SOCKERLESS_ECS_TEST_SUBNETS")
+	sgs := os.Getenv("SOCKERLESS_ECS_TEST_SECURITY_GROUPS")
+	if subnets == "" || sgs == "" {
+		t.Skip("SOCKERLESS_ECS_TEST_SUBNETS / SOCKERLESS_ECS_TEST_SECURITY_GROUPS not set; cell 1 needs live infra. Run `terragrunt output` and export them.")
+	}
 	runCell(t, cellConfig{
 		Label:             "sockerless-ecs",
 		WorkflowFile:      "hello-ecs.yml",
-		DefaultDockerHost: "tcp://localhost:3375",
+		ECSTaskDefinition: envOr("SOCKERLESS_ECS_TEST_TASK_DEFINITION", "sockerless-live-runner"),
+		ECSRegion:         envOr("SOCKERLESS_ECS_TEST_REGION", "eu-west-1"),
+		ECSCluster:        envOr("SOCKERLESS_ECS_TEST_CLUSTER", "sockerless-live"),
+		ECSSubnets:        subnets,
+		ECSSecurityGroups: sgs,
 	})
 }
 
+// TestGitHub_Lambda_Hello — cell 2. Lambda variant pending the
+// invocation-orchestration piece (see PLAN.md § Phase 110b). For now
+// the test skips when the live-infra env isn't fully wired.
 func TestGitHub_Lambda_Hello(t *testing.T) {
-	runCell(t, cellConfig{
-		Label:             "sockerless-lambda",
-		WorkflowFile:      "hello-lambda.yml",
-		DefaultDockerHost: "tcp://localhost:3376",
-	})
+	t.Skip("cell 2 (GitHub × Lambda) deferred — needs Lambda invocation orchestration; see PLAN.md § Phase 110b")
 }
 
 type cellConfig struct {
@@ -70,16 +97,30 @@ type cellConfig struct {
 	// `WorkflowFile`'s path; when set, dispatch fires with the
 	// throwaway branch as ref. Useful for cell variants that need
 	// different workflow content without polluting main.
-	WorkflowYAML      string
+	WorkflowYAML string
+	// Default DOCKER_HOST when spawning the runner as a *local*
+	// container (the dev-mode path against local Podman / Docker
+	// Desktop). Ignored when ECSTaskDefinition is set.
 	DefaultDockerHost string
+	// When set, runCell skips the local-Podman runner-image build +
+	// docker-run, and instead spawns the runner via AWS ECS RunTask
+	// using the named pre-registered task definition family. The
+	// runner runs in Fargate; sockerless is baked into the runner
+	// image and listens on the task's localhost. Cell exits when the
+	// ephemeral task stops.
+	ECSTaskDefinition string
+	// AWS region for the ECS dispatch. Required when ECSTaskDefinition is set.
+	ECSRegion string
+	// ECS cluster name for the dispatch. Required when ECSTaskDefinition is set.
+	ECSCluster string
+	// Subnets for awsvpc network mode. Comma-separated. Required when ECSTaskDefinition is set.
+	ECSSubnets string
+	// Security groups for awsvpc network mode. Comma-separated. Required when ECSTaskDefinition is set.
+	ECSSecurityGroups string
 }
 
 func runCell(t *testing.T, c cellConfig) {
-	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skipf("docker CLI required to run the runner container: %v", err)
-	}
 	repo := envOr("SOCKERLESS_GH_REPO", defaultRepo)
-	dockerHost := envOr("SOCKERLESS_DOCKER_HOST", c.DefaultDockerHost)
 
 	pat, err := runnersinternal.GitHubPAT()
 	if err != nil {
@@ -87,7 +128,16 @@ func runCell(t *testing.T, c cellConfig) {
 	}
 	defer zero(pat)
 
-	pingDocker(t, dockerHost)
+	if c.ECSTaskDefinition == "" {
+		// Local dev mode: requires a local docker daemon (Podman/Docker
+		// Desktop). The cloud-mode path uses ECS RunTask and doesn't
+		// need a local docker.
+		if _, err := exec.LookPath("docker"); err != nil {
+			t.Skipf("docker CLI required to run the runner container: %v", err)
+		}
+		dockerHost := envOr("SOCKERLESS_DOCKER_HOST", c.DefaultDockerHost)
+		pingDocker(t, dockerHost)
+	}
 
 	if err := runnersinternal.CleanupOldGitHubRunners(repo, "sockerless-"); err != nil {
 		t.Logf("warning: pre-run cleanup of old runners failed: %v", err)
@@ -121,13 +171,19 @@ func runCell(t *testing.T, c cellConfig) {
 	runnerName := fmt.Sprintf("sockerless-%s-%s", c.Label, runnersinternal.Timestamp())
 	t.Logf("runner name: %s", runnerName)
 
-	buildRunnerImage(t)
-	containerID := startRunnerContainer(t, runnerName, repo, regToken, c.Label, dockerHost)
-	t.Cleanup(func() { stopRunnerContainer(t, containerID) })
+	if c.ECSTaskDefinition != "" {
+		taskARN := runEcsRunnerTask(t, c, runnerName, repo, regToken)
+		t.Cleanup(func() { stopEcsRunnerTask(t, c, taskARN) })
+	} else {
+		dockerHost := envOr("SOCKERLESS_DOCKER_HOST", c.DefaultDockerHost)
+		buildRunnerImage(t)
+		containerID := startRunnerContainer(t, runnerName, repo, regToken, c.Label, dockerHost)
+		t.Cleanup(func() { stopRunnerContainer(t, containerID) })
+	}
 
 	// Wait for the runner to register itself with GitHub. Until it
 	// shows up in the runners list, dispatch can't route the job.
-	waitForRunnerRegistration(t, repo, runnerName, 90*time.Second)
+	waitForRunnerRegistration(t, repo, runnerName, 5*time.Minute)
 
 	runID := dispatchWorkflow(t, repo, workflowFile, dispatchRef)
 	t.Logf("workflow run URL: https://github.com/%s/actions/runs/%d", repo, runID)
@@ -135,6 +191,137 @@ func runCell(t *testing.T, c cellConfig) {
 	if conclusion != "success" {
 		t.Fatalf("workflow run %d concluded with %q, expected success.\nLogs at https://github.com/%s/actions/runs/%d", runID, conclusion, repo, runID)
 	}
+}
+
+// runEcsRunnerTask dispatches the runner-task to ECS Fargate via
+// `aws ecs run-task` with container overrides for the per-cell env
+// vars (REG_TOKEN / RUNNER_NAME / RUNNER_LABELS / RUNNER_REPO_URL).
+// Returns the task ARN. Caller is responsible for cleanup via
+// stopEcsRunnerTask.
+func runEcsRunnerTask(t *testing.T, c cellConfig, runnerName, repo, regToken string) string {
+	t.Helper()
+	if _, err := exec.LookPath("aws"); err != nil {
+		t.Fatalf("aws CLI required for ECS dispatch: %v", err)
+	}
+	overrides := fmt.Sprintf(`{
+		"containerOverrides":[
+			{
+				"name":"runner",
+				"environment":[
+					{"name":"RUNNER_REPO_URL","value":"https://github.com/%s"},
+					{"name":"RUNNER_TOKEN","value":"%s"},
+					{"name":"RUNNER_NAME","value":"%s"},
+					{"name":"RUNNER_LABELS","value":"%s,sockerless"}
+				]
+			}
+		]
+	}`, repo, regToken, runnerName, c.Label)
+
+	subnetsJSON := strings.Join(quoteCSV(c.ECSSubnets), ",")
+	sgsJSON := strings.Join(quoteCSV(c.ECSSecurityGroups), ",")
+	netCfg := fmt.Sprintf(`{"awsvpcConfiguration":{"subnets":[%s],"securityGroups":[%s],"assignPublicIp":"DISABLED"}}`,
+		subnetsJSON, sgsJSON)
+
+	out, err := exec.Command("aws", "ecs", "run-task",
+		"--region", c.ECSRegion,
+		"--cluster", c.ECSCluster,
+		"--task-definition", c.ECSTaskDefinition,
+		"--launch-type", "FARGATE",
+		"--network-configuration", netCfg,
+		"--overrides", overrides,
+		"--output", "json",
+	).Output()
+	if err != nil {
+		t.Fatalf("aws ecs run-task: %v\n--overrides %s\n--network-configuration %s",
+			extendErr(err), overrides, netCfg)
+	}
+	var resp struct {
+		Tasks []struct {
+			TaskArn string `json:"taskArn"`
+		} `json:"tasks"`
+		Failures []map[string]any `json:"failures"`
+	}
+	if jerr := json.Unmarshal(out, &resp); jerr != nil {
+		t.Fatalf("parse run-task response: %v\n%s", jerr, out)
+	}
+	if len(resp.Failures) > 0 {
+		t.Fatalf("ecs run-task failures: %v", resp.Failures)
+	}
+	if len(resp.Tasks) == 0 {
+		t.Fatalf("ecs run-task: no task in response: %s", out)
+	}
+	taskARN := resp.Tasks[0].TaskArn
+	t.Logf("ECS RunTask started: %s", taskARN)
+
+	// Tail container logs in the background for visibility.
+	go tailEcsTaskLogs(t, c, taskARN)
+
+	return taskARN
+}
+
+// stopEcsRunnerTask sends `aws ecs stop-task` for graceful shutdown.
+// The runner is `--ephemeral` so it usually exits on its own, but
+// stop-task ensures cleanup if the test crashes mid-run.
+func stopEcsRunnerTask(t *testing.T, c cellConfig, taskARN string) {
+	t.Helper()
+	out, err := exec.Command("aws", "ecs", "stop-task",
+		"--region", c.ECSRegion,
+		"--cluster", c.ECSCluster,
+		"--task", taskARN,
+		"--reason", "harness cleanup",
+	).CombinedOutput()
+	if err != nil {
+		t.Logf("stop-task %s (best-effort): %v\n%s", taskARN, err, out)
+	}
+}
+
+// tailEcsTaskLogs streams the runner container's CloudWatch logs to
+// the test output. Best-effort — uses `aws logs tail` which is
+// simpler than the full GetLogEvents pagination.
+func tailEcsTaskLogs(t *testing.T, c cellConfig, taskARN string) {
+	parts := strings.Split(taskARN, "/")
+	if len(parts) == 0 {
+		return
+	}
+	taskID := parts[len(parts)-1]
+	logStream := "runner/runner/" + taskID
+	logGroup := "/sockerless/live/containers"
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	cmd := exec.CommandContext(ctx, "aws", "logs", "tail",
+		"--region", c.ECSRegion,
+		"--follow",
+		"--log-stream-names", logStream,
+		logGroup,
+	)
+	cmd.Stdout = testLogWriter{t: t, prefix: "ecs-runner: "}
+	cmd.Stderr = testLogWriter{t: t, prefix: "ecs-runner: "}
+	_ = cmd.Run()
+}
+
+func quoteCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		out = append(out, "\""+p+"\"")
+	}
+	return out
+}
+
+// extendErr enriches an exec.ExitError with the captured stderr so
+// tests print useful diagnostics instead of just "exit status 254".
+func extendErr(err error) error {
+	if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(ee.Stderr)))
+	}
+	return err
 }
 
 func envOr(key, fallback string) string {

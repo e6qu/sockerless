@@ -102,18 +102,72 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// silently substituting an empty scratch volume or an EFS subdir
 	// named after the host path) keeps `docker run -v /host:/container`
 	// failures explicit.
+	//
+	// Exception 1 — shared-volume translation. When sockerless runs
+	// inside an ECS task that has EFS access points mounted at
+	// configured paths (declared via SOCKERLESS_ECS_SHARED_VOLUMES),
+	// a bind mount whose source matches a shared volume's
+	// ContainerPath is rewritten to a named-volume reference. The
+	// spawned sub-task mounts the same EFS access point, so caller
+	// and sub-task share the workspace via EFS — this is what makes
+	// GitHub Actions `container:` bind-mounts work end-to-end on
+	// Fargate.
+	//
+	// Exception 2 — `/var/run/docker.sock`. The runner unconditionally
+	// adds this for nested-docker support. On Fargate there's no
+	// docker daemon socket; sockerless silently drops the mount.
+	// Sub-task containers that try to use docker.sock will fail at
+	// the step level, surfacing the limitation.
+	translatedBinds := hostConfig.Binds[:0]
 	for _, bind := range hostConfig.Binds {
 		parts := strings.SplitN(bind, ":", 3)
 		if len(parts) < 2 {
 			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("invalid bind mount spec %q", bind)}
 		}
-		if strings.HasPrefix(parts[0], "/") {
-			return nil, &api.InvalidParameterError{Message: fmt.Sprintf(
-				"host bind mounts are not supported on ECS backend (%q); use a named volume (`docker volume create <name> && docker run -v <name>:/path`) — volumes are backed by sockerless-managed EFS access points",
-				bind,
-			)}
+		src, dst := parts[0], parts[1]
+		mode := ""
+		if len(parts) == 3 {
+			mode = parts[2]
 		}
+		if !strings.HasPrefix(src, "/") {
+			// Already a named-volume reference (`volname:/path`) — keep as-is.
+			translatedBinds = append(translatedBinds, bind)
+			continue
+		}
+		if src == "/var/run/docker.sock" {
+			// Drop silently — Fargate has no docker.sock. Nested-docker
+			// support would require a separate dispatch path back to a
+			// sockerless instance; out of scope for the runner-task
+			// shape.
+			continue
+		}
+		if sv := s.config.LookupSharedVolumeBySourcePath(src); sv != nil {
+			// Rewrite `/host:/container[:ro]` → `<volume>:/container[:ro]`.
+			translated := sv.Name + ":" + dst
+			if mode != "" {
+				translated += ":" + mode
+			}
+			translatedBinds = append(translatedBinds, translated)
+			continue
+		}
+		// Sub-path of a mapped shared volume — drop the bind. The
+		// parent volume's EFS mount already exposes this sub-path
+		// inside the spawned container at the parent's containerPath +
+		// the sub-path's relative offset. The runner uses redundant
+		// per-sub-path bind mounts (e.g. `/_work/_temp`, `/_work/_actions`)
+		// when the parent `/_work` is already mapped — those land
+		// inside the same EFS naturally.
+		if isSubPathOfSharedVolume(src, s.config.SharedVolumes) {
+			s.Logger.Debug().Str("source", src).Str("dest", dst).
+				Msg("dropping sub-path bind mount; parent shared volume already mapped")
+			continue
+		}
+		return nil, &api.InvalidParameterError{Message: fmt.Sprintf(
+			"host bind mounts are not supported on ECS backend (%q); use a named volume (`docker volume create <name> && docker run -v <name>:/path`) — volumes are backed by sockerless-managed EFS access points. Configure SOCKERLESS_ECS_SHARED_VOLUMES to translate runner-task bind mounts to shared EFS access points.",
+			bind,
+		)}
 	}
+	hostConfig.Binds = translatedBinds
 
 	path := ""
 	var args []string
