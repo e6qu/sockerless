@@ -40,6 +40,28 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 		return ref, nil
 	}
 
+	// Digest-only refs (`sha256:...` with no preceding name) — try to
+	// resolve via the local image Store. Sockerless's `docker pull` /
+	// `docker tag` records each image with its tags + digest, so a
+	// caller (e.g. gitlab-runner's volume-permission helper) that
+	// references an image by digest after a previous pull can be
+	// resolved back to the canonical name+tag we originally fetched.
+	// If the digest isn't in the Store, surface a clear error rather
+	// than misrouting through `public.ecr.aws/docker/library/sha256:...`
+	// (which 404s and triggers a 7×-retry pull failure on Fargate).
+	if strings.HasPrefix(ref, "sha256:") && !strings.ContainsAny(ref, "/@") {
+		if img, ok := s.Store.ResolveImage(ref); ok && len(img.RepoTags) > 0 {
+			canonical := img.RepoTags[0]
+			s.Logger.Debug().Str("digest", ref).Str("canonical", canonical).
+				Msg("resolved digest-only ref via image Store")
+			return s.resolveImageURI(ctx, canonical)
+		}
+		return ref, fmt.Errorf(
+			"digest-only image reference %q can't be resolved on ECS — Fargate pulls fresh per task and sockerless's image Store has no record of this digest. Either reference the image by name+digest (`name@%s`) or pull it first via `docker pull <name>`",
+			ref, ref,
+		)
+	}
+
 	registry, repo, tag := parseDockerRef(ref)
 
 	switch registry {
