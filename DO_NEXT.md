@@ -21,26 +21,41 @@ Resume pointer. Updated after every task. Roadmap detail in [PLAN.md](PLAN.md); 
   5. `cloudExecStart` waits for `ExecuteCommandAgent.LastStatus == RUNNING` before issuing `ExecuteCommand`.
 - **PR-#122 commits:** working tree has all the above plus state-doc updates; ready to commit + push.
 
-## Phase 110b — Cell 1 status (in flight, multiple iterations recorded above)
+## Phase 110b — Cell 1 status: ✅ GREEN
 
-Past workflow runs against the new architecture (oldest → newest):
-- https://github.com/e6qu/sockerless/actions/runs/25049909614 — `Initialize containers` failed: bind mount rejection (BUG-850 not yet implemented).
-- https://github.com/e6qu/sockerless/actions/runs/25051339655 — Initialize failed: netns creation (BUG-851 fix not yet shipped to image).
-- https://github.com/e6qu/sockerless/actions/runs/25051469196 — Initialize failed: EFS mount timeout from sub-task (BUG-852 fix not yet shipped).
-- https://github.com/e6qu/sockerless/actions/runs/25051866900 — Initialize containers ✓; `Run echo` step failed exit 255 (BUG-853 — exec agent not ready yet, fix not yet shipped).
-- https://github.com/e6qu/sockerless/actions/runs/25052043048 — Initialize ✓; exec failed: missing `ecs:ExecuteCommand` IAM permission (added to runner-task IAM role).
-- https://github.com/e6qu/sockerless/actions/runs/25052216785 — Initialize ✓; exec failed: `InvalidParameterException ... execute command agent isn't running` (BUG-853 confirmed, fix in progress).
-- https://github.com/e6qu/sockerless/actions/runs/25052362819 — same as above; agent-ready wait fix not yet shipped.
-- **In flight:** https://github.com/e6qu/sockerless/actions/runs/25052661438 — first run with the agent-ready wait fix. Result will appear here once it completes.
+**Successful run:** https://github.com/e6qu/sockerless/actions/runs/25052661438 (commit `7362197` pushed 2026-04-28).
+
+All 6 workflow steps passed. `container: alpine:latest` directive flowed through sockerless's bind-mount → EFS translation; sub-task spawned in Fargate with shared EFS access points; `docker exec` succeeded after the new ExecuteCommandAgent-ready wait.
+
+Iteration history (recorded for future debugging):
+- 25049909614 — Initialize containers failed: bind mount rejection (BUG-850 not yet shipped).
+- 25051339655 — Initialize failed: netns (BUG-851).
+- 25051469196 — Initialize failed: EFS mount timeout from sub-task (BUG-852).
+- 25051866900 — Initialize ✓; Run echo failed exit 255 (BUG-853).
+- 25052043048 — Initialize ✓; exec failed: missing `ecs:ExecuteCommand` IAM perm.
+- 25052216785, 25052362819 — same exec-agent-not-ready failure (BUG-853 confirmed, fix not yet shipped).
+- 25052661438 — **GREEN** — first run with the BUG-853 wait fix shipped.
 
 ## Up next on this branch
 
-1. **Verify cell 1 green** — `https://github.com/e6qu/sockerless/actions/runs/25052661438` should show `success` once the SSM agent comes up and the exec succeeds.
-2. **Commit + push** all the sockerless + Terraform + Dockerfile + entrypoint + harness + state-doc changes (the workspace currently has many uncommitted files).
-3. **Apply same architecture to Lambda backend** (cell 2 — GitHub × Lambda). Lambda has FileSystemConfigs equivalent to ECS volumes; bind-mount-via-EFS translation should plug in symmetrically. Caveat from PLAN.md: cell 2 is restricted to non-`container:` workflows or short jobs (Lambda 15-min hard cap).
-4. **Cells 3 + 4 (GitLab × ECS, Lambda)** — GitLab side has no architectural blockers; runs locally. Just needs an explicit run.
-5. **`github-runner-dispatcher` top-level Go module** — production-shape dispatcher. Sockerless-agnostic Docker-API client. Phase 110a deliverable.
-6. **Tear down live AWS** at session end via `terragrunt destroy`.
+1. **Cell 2 — GitHub × Lambda.** Mirror the ECS architecture for the Lambda backend:
+   - `backends/lambda/config.go`: add `SharedVolumes` field + parse + lookup helpers (copy from `backends/ecs/config.go`).
+   - `backends/lambda/backend_impl.go` (or wherever ContainerCreate is): same bind-mount → EFS-volume translation as ECS, plus sub-path drop + docker.sock drop. Lambda's volume code maps to `FileSystemConfig` (Lambda's EFS attachment shape) instead of `EFSVolumeConfiguration` (ECS).
+   - Cross-compile Lambda backend binary; build a Lambda-runtime container image (different shape from ECS — needs the AWS Lambda Runtime Interface Emulator or the runner runs as the Lambda handler). One option: use the AWS-provided `aws-lambda-runtime-interface-emulator` so the same actions/runner image works as a Lambda function.
+   - Push to ECR.
+   - Define a Lambda function in Terraform (`terraform/modules/lambda/runner.tf`) with `FileSystemConfig` for the workspace + externals EFS access points. Lambda function role with `lambda:InvokeFunction`, EFS mount perms, ECS RunTask + EC2 perms (so sockerless inside the Lambda can dispatch sub-tasks to Fargate).
+   - Harness change: `runLambdaRunnerTask` shells out to `aws lambda invoke` with the per-cell registration token. Caveat: Lambda 15-min hard cap — cell 2 is restricted to short workflows.
+2. **Cells 3 + 4 (GitLab)** — gitlab-runner master runs locally on the laptop. No sockerless changes needed. Just an explicit run from `tests/runners/gitlab/`.
+3. **`github-runner-dispatcher` top-level Go module** — Phase 110a deliverable. Sockerless-agnostic Docker-API client. Skeleton + smoke test against local Podman.
+4. **Tear down live AWS** at session end (`terragrunt destroy` from both `terraform/environments/{ecs,lambda}/live`).
+
+## Resume notes
+
+- **Live infra is UP** — re-run `terragrunt destroy` when done with the session.
+- Sockerless ECS backend running locally on `:3375` (laptop), Lambda on `:3376`. Both in `eu-west-1`.
+- Runner image already pushed to ECR; ECS task def revision 2 active.
+- `gh auth token` keychain-backed; GitLab PAT in `security` keychain.
+- The architecture proven by run 25052661438 generalizes to Lambda once SharedVolumes is mirrored. The user said "no fakes / no fallbacks / no workarounds" — Lambda work should follow the same shape.
 
 ## Bug log this session (PR #122)
 
