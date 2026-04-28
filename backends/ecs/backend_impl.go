@@ -274,7 +274,22 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 	}
 	if !ok {
-		return &api.NotFoundError{Resource: "container", ID: ref}
+		// Fall back to CloudState / Store so callers can `docker start`
+		// a previously-run container (e.g. gitlab-runner's docker
+		// executor stops + re-runs its predefined helper container
+		// across script stages). Without this fallback, the second
+		// start returns 404 even though `docker inspect` finds the
+		// (STOPPED) container.
+		resolved, found := s.ResolveContainerAuto(context.Background(), ref)
+		if !found {
+			return &api.NotFoundError{Resource: "container", ID: ref}
+		}
+		c = resolved
+		// Restore the container to PendingCreates so the rest of the
+		// start flow (taskdef registration, RunTask, waitForRunning)
+		// finds it via the existing path. The entry is removed again
+		// after waitForTaskRunning per the BUG-858 lifecycle.
+		s.PendingCreates.Put(c.ID, c)
 	}
 	id := c.ID
 
@@ -347,9 +362,6 @@ func (s *Server) ContainerStart(ref string) error {
 
 	markRunning()
 
-	// Remove from PendingCreates now that the task is launched in the cloud.
-	s.PendingCreates.Delete(id)
-
 	s.ECS.Update(id, func(state *ECSState) {
 		state.TaskARN = taskARN
 		state.ClusterARN = clusterARN
@@ -358,6 +370,17 @@ func (s *Server) ContainerStart(ref string) error {
 	// Wait for task to reach RUNNING — only then is the ENI's private IP
 	// known. Cloud Map registration must use that real IP, not the local
 	// placeholder `0.0.0.0` carried in c.NetworkSettings.Networks.
+	//
+	// IMPORTANT: PendingCreates is NOT removed here pre-RUNNING. The
+	// `ResolveContainerAuto` lookup checks PendingCreates first; if a
+	// caller (e.g. gitlab-runner) issues `docker exec` immediately
+	// after `docker start` returns, the cloud-state DescribeTasks-based
+	// lookup might not yet reflect the new task (eventual consistency
+	// or the task is still PENDING/PROVISIONING in this moment).
+	// Keeping the entry in PendingCreates lets the lookup short-circuit
+	// to the in-memory record — which now carries the running TaskARN
+	// via the ECS state map — so exec/inspect/logs all resolve.
+	// PendingCreates.Delete moves to after waitForTaskRunning succeeds.
 	taskAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
@@ -374,11 +397,19 @@ func (s *Server) ContainerStart(ref string) error {
 	// CloudState.GetContainer reads STOPPED straight from ECS so
 	// inspect/ps reflect the real state.
 	if taskAddr == "" {
+		// Short-lived task already STOPPED — drop from PendingCreates
+		// so subsequent inspect/ps reads come from CloudState (which
+		// reflects the actual STOPPED state).
+		s.PendingCreates.Delete(id)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
 		}
 		return nil
 	}
+
+	// Task is RUNNING; CloudState (DescribeTasks) reliably finds it
+	// via the sockerless-container-id tag. Drop the in-memory cache.
+	s.PendingCreates.Delete(id)
 
 	taskIP := taskAddr
 	if i := strings.LastIndex(taskAddr, ":"); i > 0 {
