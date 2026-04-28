@@ -62,6 +62,20 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 		)
 	}
 
+	// Locally-built images (e.g. `sockerless-eval-arithmetic:test`,
+	// integration test images, runner-image dev iterations) live only
+	// in the local image Store. Don't reroute them through Public
+	// Gallery — the simulator's `ResolveLocalImage` only knows how
+	// to strip ECR pull-through cache URIs back to local form, so a
+	// `public.ecr.aws/docker/library/<local-name>` reference would
+	// fail to resolve and the container would either pull a wrong
+	// image or fail at task launch. Using the ref as-is keeps local
+	// containers running off the local image directly. (BUG-865)
+	if _, ok := s.Store.ResolveImage(ref); ok {
+		s.Logger.Debug().Str("ref", ref).Msg("image found in local Store; no registry rewrite needed")
+		return ref, nil
+	}
+
 	registry, repo, tag := parseDockerRef(ref)
 
 	switch registry {
