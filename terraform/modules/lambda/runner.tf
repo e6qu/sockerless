@@ -198,6 +198,15 @@ resource "aws_lambda_function" "sockerless_runner" {
   timeout       = 900 # Lambda hard cap
   publish       = true
 
+  # Lambda's default /tmp is 512 MB — too small for the runner state
+  # copy (actions/runner externals alone are ~600 MB with node20 +
+  # node24 + various tooling). Lambda supports up to 10 GB ephemeral
+  # storage; 5 GB is enough for the full runner tree + some
+  # workspace scratch space.
+  ephemeral_storage {
+    size = 5120
+  }
+
   vpc_config {
     subnet_ids         = local.ecs_private_subnet_ids
     security_group_ids = [local.ecs_task_security_group_id]

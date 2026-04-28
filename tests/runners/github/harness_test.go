@@ -99,9 +99,25 @@ func TestGitHub_Lambda_Hello(t *testing.T) {
 	if function == "" {
 		t.Skip("SOCKERLESS_LAMBDA_TEST_FUNCTION not set; cell 2 needs the runner-Lambda live infra")
 	}
+	// hello-lambda.yml isn't on main; commit a Lambda-shaped content
+	// to the registered hello-ecs.yml slot on a per-cell throwaway
+	// branch and dispatch with ref=<branch>. Same trick as cell 1's
+	// via-run variant.
 	runCell(t, cellConfig{
-		Label:          "sockerless-lambda",
-		WorkflowFile:   "hello-lambda.yml",
+		Label:        "sockerless-lambda",
+		WorkflowFile: "hello-ecs.yml",
+		WorkflowYAML: `name: hello-lambda
+on:
+  workflow_dispatch:
+jobs:
+  hello:
+    runs-on: [self-hosted, sockerless-lambda]
+    container:
+      image: alpine:latest
+    steps:
+      - run: echo "hello from sockerless lambda"
+      - run: date -u
+`,
 		LambdaFunction: function,
 		LambdaRegion:   region,
 	})
@@ -158,10 +174,10 @@ func runCell(t *testing.T, c cellConfig) {
 	}
 	defer zero(pat)
 
-	if c.ECSTaskDefinition == "" {
+	if c.ECSTaskDefinition == "" && c.LambdaFunction == "" {
 		// Local dev mode: requires a local docker daemon (Podman/Docker
-		// Desktop). The cloud-mode path uses ECS RunTask and doesn't
-		// need a local docker.
+		// Desktop). The cloud-mode paths (ECS RunTask / Lambda Invoke)
+		// don't need a local docker daemon.
 		if _, err := exec.LookPath("docker"); err != nil {
 			t.Skipf("docker CLI required to run the runner container: %v", err)
 		}

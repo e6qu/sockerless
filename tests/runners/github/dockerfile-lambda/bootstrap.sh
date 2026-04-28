@@ -54,24 +54,24 @@ handle_invocation() {
   fi
   export RUNNER_REPO_URL RUNNER_TOKEN RUNNER_NAME RUNNER_LABELS
 
-  # Lambda mounts EFS under /mnt/ only — symlink the runner's
-  # workspace to the actual mount. Runner thinks
-  # /home/runner/_work exists at the canonical path; reads/writes
-  # go to /mnt/runner-workspace which is EFS.
-  mkdir -p /home/runner
-  if [ ! -L /home/runner/_work ]; then
-    rm -rf /home/runner/_work
-    ln -sfn /mnt/runner-workspace /home/runner/_work
+  # Lambda's image filesystem is read-only except /tmp + EFS mount
+  # (/mnt/runner-workspace). Set up the runner's working tree under
+  # /tmp/runner-state — it copies the actions/runner binary tree
+  # there (config.sh writes its registration files into the working
+  # dir) and symlinks _work / externals appropriately.
+  mkdir -p /tmp/runner-state
+  if [ ! -e /tmp/runner-state/run.sh ]; then
+    # First invocation in this execution environment — populate
+    # working tree from the image.
+    echo "[bootstrap] staging runner working tree to /tmp/runner-state…"
+    cp -a /opt/runner/. /tmp/runner-state/
   fi
-
-  # Externals: Lambda's single file_system_config rule means we can
-  # only mount one access point. Externals lives in the read-only
-  # image layer at /opt/runner/externals; the runner reads from
-  # /home/runner/externals → /opt/runner/externals via symlink.
-  mkdir -p /home/runner
-  if [ ! -L /home/runner/externals ] && [ ! -d /home/runner/externals ]; then
-    ln -sfn /opt/runner/externals /home/runner/externals
-  fi
+  # Symlink _work → EFS-mounted workspace (shared with sub-tasks).
+  rm -rf /tmp/runner-state/_work
+  ln -sfn /mnt/runner-workspace /tmp/runner-state/_work
+  # externals stays as the staged copy in /tmp/runner-state/externals
+  # (already populated by the cp -a above; image's externals tree
+  # comes along for the ride).
 
   # Start sockerless on localhost:3375. Reads its config from env
   # vars set by Terraform on the Lambda function.
@@ -97,16 +97,16 @@ handle_invocation() {
     return 1
   fi
 
-  # The runner config files are written to /opt/runner by config.sh.
-  # /opt is read-only on Lambda — we need a writable dir. Symlink the
-  # runner state into /tmp and run from there.
-  if [ ! -L /home/runner/work-area ]; then
-    rm -rf /tmp/runner-state
-    mkdir -p /tmp/runner-state
-    cp -a /opt/runner/. /tmp/runner-state/
-    ln -sfn /tmp/runner-state /home/runner/work-area
-  fi
-  cd /home/runner/work-area
+  cd /tmp/runner-state
+
+  # Lambda execution environments are reused across invocations.
+  # The runner's config files (.runner, .credentials,
+  # .credentials_rsaparams) persist in /tmp from a prior invocation
+  # — but the registration on GitHub's side is auto-cleaned by the
+  # ephemeral lifecycle. Remove the local state files so config.sh
+  # creates a fresh registration matching the new RUNNER_NAME /
+  # RUNNER_TOKEN.
+  rm -f .runner .credentials .credentials_rsaparams
 
   ./config.sh \
     --url "$RUNNER_REPO_URL" \
