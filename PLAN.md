@@ -340,6 +340,49 @@ This phase is *not* a rewrite of the laptop-local dispatcher — the core dispat
 
 Activation gated on whether the laptop-local 110a/b dispatcher proves the architecture and someone wants the production shape.
 
+### Phase 114 — Long-lived helper task for gitlab-runner on ECS (queued; cell 3/4 unblock)
+
+**Why.** gitlab-runner's docker executor uses a `start-attach-script` per-command lifecycle: each script step does `docker start <helper>` followed by `docker attach` with stdin piped. In standard docker semantics, `docker start` resumes a stopped container and re-runs its entrypoint. On Fargate, tasks are not restartable — once a task transitions to STOPPED, its task ARN is gone. Sockerless's BUG-858 fallback re-launches a fresh task per /start, but the task entrypoint runs once and exits, so the `cleanup_file_variables` → `step_script` transition fails (BUG-868). gitlab-runner expects the helper to STAY RUNNING for subsequent steps.
+
+**Cloud primitive in use.** Fargate task lifecycle (PROVISIONING → RUNNING → STOPPED, non-reversible) + ECS ExecuteCommand (SSM-backed sidecar that runs commands inside an already-RUNNING task).
+
+**Fix shape.** Keep one Fargate task alive across multiple `/start` cycles, run each script step via `ExecuteCommand`:
+
+1. **First /start for a container** (ECSState.OpenStdin && AttachStdin && pipe-loaded && not gitlab-runner -predefined): launch a Fargate task whose entrypoint is `sh -c 'while sleep 60; do :; done'` (or equivalent). Record task ARN. Don't bake the user script into the task command.
+2. **Subsequent /start cycles for the same container ID**: detect "task already RUNNING" via `resolveTaskState`, skip RunTask, don't launch a fresh task. Capture the buffered stdin script bytes.
+3. **Run the script via ExecuteCommand**: feed the buffered bytes to `aws ecs execute-command --interactive --command "/bin/sh"` and stream stdout/stderr/exit-code back to the /attach connection. Existing SSM frame-handling code (closed in Round-8) already does the exit-code marker.
+4. **/wait, /stop, /kill**: terminate the helper task with `ecs.StopTask`, propagate exit code from the SSM session's last marker.
+5. **/exec**: same path as before — ExecuteCommand against the running task.
+
+**Why this matches the Fargate primitive.** Fargate tasks support long-lived workloads. The task entrypoint stays a no-op idle loop; sockerless dispatches per-command work via ExecuteCommand (which is the cloud's "run a command in a running task" primitive). This is exactly how Docker's behaviour maps when the host is Fargate. No retries, no fakes, no fallbacks — the cloud has the primitive (`ExecuteCommand`); sockerless wires Docker's `start-attach-script` semantics to it.
+
+**Not in scope.**
+- Lambda mirror — Lambda has no equivalent ExecuteCommand primitive (per-invocation isolation is the Lambda model). gitlab-runner on Lambda is a separate problem; we'll address it after the ECS path proves out, and the answer may simply be "use ECS for gitlab-runner".
+- Cross-cell concurrency — keeping multiple long-lived helper tasks per backend instance is a bookkeeping concern handled via the existing CloudState resolver.
+
+Closes BUG-868. Cell 3 GREEN gates Phase 114 closure. Cell 4 stays blocked until Phase 115 lands.
+
+### Phase 115 — Always-on overlay-inject for Lambda CreateFunction (queued; cell 2/4 unblock)
+
+**Why.** Lambda image-mode imposes two hard constraints on every function image: (a) manifest must be Docker Image Manifest V2 Schema 2 (OCI rejected with `image manifest, config or layer media type ... is not supported`), and (b) the image's ENTRYPOINT must be a Lambda Runtime API client — it has to poll `/2018-06-01/runtime/invocation/next` and post results to `/response` or `/error`, otherwise the function never serves an invocation. The cell-2 alpine image fails both: alpine on AWS Public Gallery is `application/vnd.oci.image.index.v1+json`, and `tail -f /dev/null` ENTRYPOINT doesn't speak Lambda Runtime API (BUG-873).
+
+**Cloud primitive in use.** Lambda CreateFunction with `PackageType=Image, Code.ImageUri=<ECR ref>`. Lambda's image ingestion at function creation time copies layers into a Lambda-internal store; from then on, `Invoke` cold-starts boot the user image and call its ENTRYPOINT. The Runtime API contract is specified at https://docs.aws.amazon.com/lambda/latest/dg/runtimes-api.html.
+
+**Fix shape.** Sockerless owns a translation layer that bridges arbitrary Docker images to Lambda's image-mode contract:
+
+1. **Always go through `BuildAndPushOverlayImage`** for Lambda CreateFunction — drop the no-CallbackURL default branch in `backends/lambda/backend_impl.go`. The overlay (a) bakes `sockerless-lambda-bootstrap` as ENTRYPOINT (resolves Runtime-API gap), (b) is built via plain `docker build` + `docker push` which produces Docker schema 2 (resolves manifest-format gap), (c) preserves the user's original ENTRYPOINT/CMD as `SOCKERLESS_USER_ENTRYPOINT` / `SOCKERLESS_USER_CMD` env vars decoded at bootstrap time.
+2. **Use `awscommon.CodeBuildService` when no local docker daemon is available.** The runner-Lambda execution environment has no docker; the existing `BuildAndPushOverlayImage` calls `os/exec docker build` which would fail. Already wired via `s.images.BuildService` in `backends/lambda/server.go:72-76`. Refactor `BuildAndPushOverlayImage` to take a `core.CloudBuildService` dependency and prefer it over `os/exec` when set.
+3. **Cache converted images by source-content hash.** sha256 of (BaseImageRef + AgentBinaryPath + BootstrapBinaryPath + UserEntrypoint + UserCmd) → tag in a sockerless-managed `sockerless-live-overlay` ECR repo. Cache hit skips the rebuild; cache miss runs CodeBuild + push.
+4. **specs/CLOUD_RESOURCE_MAPPING.md update.** Lambda mapping row already says "container deployment is what lets sockerless put its bootstrap at the entrypoint, which is the prerequisite for the reverse-agent, agent-as-handler, and overlay-rootfs patterns" — extend with explicit "All Lambda images go through overlay-inject; OCI inputs auto-converted to Docker schema 2 by the overlay build."
+
+**Why this matches the Lambda primitive.** Lambda's only image format is Docker schema 2; its only invocation contract is Runtime API. Sockerless cannot "make Lambda accept OCI" — that's an AWS decision. The honest mapping is "every user image gets re-tagged with sockerless-lambda-bootstrap as ENTRYPOINT" — and that re-tag is done via the cloud's image-build primitive (CodeBuild) when local docker isn't available. Same nature as sockerless's reverse-agent translation of `docker exec` for Lambda (no native primitive, sockerless implements the Docker semantic on top of what the cloud actually offers).
+
+**Not in scope.**
+- Skipping the overlay when the user supplies an already-Lambda-aware image — possible but fragile to detect (manifest type + runtime API client). Default to overlay-always; operators can opt out via `PrebuiltOverlayImage` (already supported).
+- Cross-cloud overlay registry sharing — each cloud needs its own primitive (CodeBuild for AWS, Cloud Build for GCP, ACR Tasks for Azure). Phase 95 + Task #95 audits will close those for the other backends.
+
+Closes BUG-873. Cell 2 GREEN gates Phase 115 closure. Cell 4 inherits Phase 115 + Phase 114; it goes GREEN once both land.
+
 ### Phase 106 — Real GitHub Actions runner integration (in flight)
 
 End-to-end test of GitHub Actions self-hosted runners pointed at sockerless via `DOCKER_HOST`. The repo already has *simulated* runner E2E tests (`tests/github_runner_e2e_test.go` replays the runner's Docker REST sequence); this phase runs the real `actions/runner` binary against sockerless and validates the live flow.

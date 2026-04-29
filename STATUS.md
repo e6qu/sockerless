@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**104 phases closed (Phase 109 closed in PR #121, merged 2026-04-27). 866 bugs tracked — 866 fixed, 0 open. 1 false positive.** **PR #122 CI fully GREEN as of commit `88aca1e`** (BUG-866 v2: 10/10 jobs pass — lint, test, test (e2e), sim aws/gcp/azure, ui, build-check, smoke, terraform). Active branch: **`phase-110-runner-integration`** (Phase 110a github-runner-dispatcher shipped; cell 1 GH×ECS GREEN; cells 2/3/4 blocked on sockerless restart + runner-Lambda image rebuild). Mirror `origin-gitlab/phase-110-runner-integration` in sync with `origin` at `58a2d66` (2026-04-29).
+**104 phases closed (Phase 109 closed in PR #121, merged 2026-04-27). 873 bugs tracked — 871 fixed, 2 open (BUG-868 gitlab-runner lifecycle; BUG-873 Lambda image-mode + Runtime API client). 1 false positive.** **PR #122 CI GREEN as of commit `88aca1e`** (10/10 jobs); latest pushes `99c8ca0` (BUG-869+870) and `b3be64f` (BUG-871+872) re-running. Active branch: **`phase-110-runner-integration`**. Cell 1 GH×ECS GREEN; cell 2 GH×Lambda advancing through 5 architectural walls and currently blocked on BUG-873; cells 3/4 GitLab inherit BUG-868 + BUG-873. Mirror `origin-gitlab/phase-110-runner-integration` in sync with `origin`.
 
 See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer), [docs/RUNNERS.md](docs/RUNNERS.md) (runner wiring).
 
@@ -24,18 +24,18 @@ Older PRs (#112–#115) — sim parity, real volumes, FaaS invocation tracking, 
 
 ## Open work
 
-- **Phase 110b (cells 1+2 in flight)** — Cell 1 (GitHub × ECS) GREEN at https://github.com/e6qu/sockerless/actions/runs/25075259911 (2026-04-28 20:13 UTC). Cell 2 (GitHub × Lambda) failed at run 25075247501 with bind-mount rejection on `/tmp/runner-state/externals:/__e:ro`; root cause was BUG-862 (runner-Lambda was baking `sockerless-backend-ecs` instead of `-lambda` and dispatching sub-tasks via `ecs.RunTask` to Fargate — backend ↔ host primitive mismatch). Source corrected (Dockerfile + bootstrap.sh use sockerless-backend-lambda; terraform IAM swapped from ECS dispatch perms to Lambda perms; env vars all `SOCKERLESS_LAMBDA_*`; agent + bootstrap binaries staged into `/opt/sockerless`; CodeBuild project + S3 build-context provisioned for no-local-docker rebuilds + sub-task image builds). Awaits `terragrunt apply` + `make codebuild-update`. Cells 3 + 4 await sockerless restart on local backends to pick up BUG-859/860 fixes (the running PIDs hold pre-fix code via mmap; new fix binaries staged at `/tmp/sockerless-backend-{ecs,lambda}`).
+- **Phase 110b (cell 2 advancing)** — Cell 1 (GH×ECS) GREEN at https://github.com/e6qu/sockerless/actions/runs/25075259911. Cell 2 (GH×Lambda) made it through 5 architectural walls this session (BUG-862 wrong backend; BUG-869 OCI manifest from CodeBuild; BUG-870 EFS lookup tag filter; BUG-871 Lambda single-FSC + `/mnt/` constraint with collapse + BIND_LINKS bootstrap symlinks + EFS subpaths; BUG-872 cache prefix mismatch with ECS) and is blocked at **BUG-873**: Lambda image-mode rejects OCI manifests *and* requires a Lambda Runtime API client at the entrypoint. Both walls fall to the same architectural fix — route every Lambda CreateFunction through the existing `BuildAndPushOverlayImage` path, swapping the `os/exec docker build` invocation for `awscommon.CodeBuildService` so it works inside the runner-Lambda. Cells 3/4 GitLab inherit BUG-868 (gitlab-runner `start-attach-script` per-command lifecycle vs Fargate non-restartable task) on top of BUG-873.
 
 ### Paths forward to GREEN — full per-cell unblock plan
 
-| Cell | Source-side state | Operator runtime steps |
+| Cell | State | Next step |
 |---|---|---|
 | 1 GH × ECS | ✅ GREEN | none — re-run during sweep |
-| 2 GH × Lambda | ✅ corrected | `terragrunt apply` (lambda module) → `make codebuild-update` → re-run harness |
-| 3 GL × ECS | ✅ corrected (BUG-859 in `c10a317`) | sockerless ECS restart → re-run harness |
-| 4 GL × Lambda | ✅ corrected (BUG-860 in `6e3d0fa`) | pre-stage agent + bootstrap to `/opt/sockerless` → set `SOCKERLESS_CODEBUILD_PROJECT/BUILD_BUCKET` in `/tmp/lambda-env.sh` → sockerless Lambda restart → re-run harness |
+| 2 GH × Lambda | 🟡 5 walls past, BUG-873 next | implement always-on overlay-build via CodeBuild; verify alpine-based workflow runs end-to-end |
+| 3 GL × ECS | 🟡 progressed past cleanup_file_variables, BUG-868 blocks step_script | architectural fix: re-use one Fargate task across `start-attach-script` cycles via SSM ExecuteCommand; staged as Phase 114 |
+| 4 GL × Lambda | ⏸ inherits BUG-868 + BUG-873 | unblocks once BUG-868 + BUG-873 land |
 
-Detailed unblock plans per cell live in [PLAN.md § Phase 110 — paths forward to GREEN](PLAN.md). Per-bug closure paths in [BUGS.md](BUGS.md). Resume command + sequence in [DO_NEXT.md](DO_NEXT.md). Full runner hurdle catalog (closed + predicted) in [docs/RUNNERS.md § Runner hurdles](docs/RUNNERS.md).
+Detailed unblock plans per cell live in [PLAN.md § Phase 110 — paths forward to GREEN](PLAN.md). Per-bug closure paths in [BUGS.md](BUGS.md). Resume command + sequence in [DO_NEXT.md](DO_NEXT.md). Full runner hurdle catalog (closed + predicted) in [docs/RUNNERS.md § Runner hurdles](docs/RUNNERS.md). Lambda volume primitive translation in [specs/CLOUD_RESOURCE_MAPPING.md § Lambda bind-mount translation](specs/CLOUD_RESOURCE_MAPPING.md).
 - **Phase 110a — github-runner-dispatcher skeleton: shipped** at commit `ba797b6`. Top-level Go module, sockerless-agnostic (only stdlib + BurntSushi/toml). State recovery via container labels (`sockerless.dispatcher.{job_id,runner_name,managed_by}`); GC sweep every 2 min reaps exited containers + offline GitHub runners; graceful shutdown drains in-flight work bounded to 30 s.
 - **Phase 113 (queued)** — production-shape `github-runner-dispatcher` (webhook ingress, GitHub App install, multi-repo, deployable). See [PLAN.md § Phase 113].
 - **Phase 104 wrapper-removal pass** — gated on docker getting typed cloud-native drivers OR accepting wrappers as permanent. Once decided: drop unused `WrapLegacyXxx` / `LegacyXxxFn` scaffolding and shrink `api.Backend` correspondingly. Coordinated landing.

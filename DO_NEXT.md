@@ -10,10 +10,10 @@ Resume pointer. Updated after every task. Roadmap detail in [PLAN.md](PLAN.md); 
 
 ## ⚠ Active blockers (must clear before resuming cell-2/3/4 work)
 
-1. **AWS creds expired** — `aws sts get-caller-identity` returns `InvalidClientTokenId` against `aws.sh` (last touched 2026-04-28 12:12). Refresh `aws.sh` before Step 1/2/4. Cell 2's `make codebuild-update` cannot start without creds (needs sts → s3 cp → codebuild start-build → lambda update-function-code).
-2. **BUG-868 architectural fix not yet implemented** — gitlab-runner's `start-attach-script` per-command pattern keeps cells 3+4 from completing the user-script step. The fix is large enough that it ships as **Phase 111** (see PLAN.md). Until Phase 111 lands, cells 3 + 4 will fail at `step_script` even with creds + sockerless restart.
+1. **BUG-873 — Lambda image-mode requires Docker schema 2 + Runtime API client at ENTRYPOINT.** Cell 2 currently fails at `lambda.CreateFunction` with `image manifest, config or layer media type ... is not supported` (alpine carries `vnd.oci.image.index.v1+json`). Even when that's fixed, alpine's `tail -f /dev/null` ENTRYPOINT never calls `/next` so the function would be unresponsive. Architectural fix routes ALL Lambda CreateFunction through the existing `BuildAndPushOverlayImage` overlay-inject path (extending it to use `awscommon.CodeBuildService` when no local docker daemon is available). Tracked as **Phase 115** in PLAN.md.
+2. **BUG-868 — gitlab-runner `start-attach-script` per-command lifecycle vs Fargate non-restartable task.** Each script step does `docker start <helper>` + `docker attach`; Fargate tasks can't restart, so sockerless re-launches a fresh task per /start, but the task entrypoint exits after the first script. Fix: keep the helper task alive with a synthetic entrypoint (`tail -f /dev/null`), route each /start's script through SSM ExecuteCommand. Tracked as **Phase 114** in PLAN.md.
 
-Cell 1 (GH × ECS) is GREEN and stays green — no action needed there. PR #122 CI is GREEN at `88aca1e`.
+Cell 1 (GH × ECS) is GREEN and stays green — no action needed there. PR #122 CI is GREEN at `88aca1e`. Latest pushes `99c8ca0` + `b3be64f` close BUG-869/870/871/872 and surface BUG-873.
 
 ## Operational state — 2026-04-29 ~00:00 UTC
 
@@ -43,14 +43,14 @@ Iteration history (recorded for future debugging):
 - 25052216785, 25052362819 — same exec-agent-not-ready failure (BUG-853 confirmed, fix not yet shipped).
 - 25052661438 — **GREEN** — first run with the BUG-853 wait fix shipped.
 
-## 4-cell verification status (2026-04-29 ~03:25 UTC)
+## 4-cell verification status (2026-04-29 ~10:08 UTC)
 
-| Cell | Status | Notes |
-|---|---|---|
-| 1 GH × ECS | ✅ PASS | Run https://github.com/e6qu/sockerless/actions/runs/25075259911 (2026-04-28 20:13 UTC). Re-run during sweep once cells 3+4 verified. |
-| 2 GH × Lambda | source corrected | Last failed at 25075247501 surfaced BUG-861 → BUG-862. Source fixes shipped (Dockerfile bakes lambda backend, terraform IAM swapped, CodeBuild + S3 build-context provisioned for no-Docker rebuild). Awaits `terragrunt apply` (lambda module) + `cd tests/runners/github/dockerfile-lambda && make codebuild-update` + re-run harness. |
-| 3 GL × ECS | running on BUG-866 v2 binary | Cell 3 retried at 03:22 UTC with the BUG-866 v2 binary (only enter deferred-stdin path when pipe already registered). Helper container's start now takes 25 s real synchronous RunTask (was 10 µs broken fast-path). Pipeline 2486848000. |
-| 4 GL × Lambda | not yet attempted | Will run after cell 3 verifies. Same BUG-866 v2 fix applies. Needs `SOCKERLESS_AGENT_BINARY` + `SOCKERLESS_LAMBDA_BOOTSTRAP` exports for in-Lambda image inject (or pre-stage to `/opt/sockerless/`). |
+| Cell | Status | Latest evidence URL | Next |
+|---|---|---|---|
+| 1 GH × ECS | ✅ PASS | https://github.com/e6qu/sockerless/actions/runs/25075259911 | re-run during sweep once 2/3/4 verified |
+| 2 GH × Lambda | 🟡 5 walls past, blocked at BUG-873 | https://github.com/e6qu/sockerless/actions/runs/25102901975 (failed at OCI manifest) | implement Phase 115 (always-on overlay-inject via CodeBuild) |
+| 3 GL × ECS | 🟡 progresses past cleanup_file_variables | https://gitlab.com/e6qu/sockerless/-/jobs/14137580070 | implement Phase 114 (long-lived helper task + SSM ExecuteCommand) |
+| 4 GL × Lambda | ⏸ inherits BUG-868 + BUG-873 | n/a | unblocks once Phases 111 + 112 land |
 
 ## CI status
 
@@ -66,12 +66,35 @@ Iteration history (recorded for future debugging):
 - BUG-864 (L, terraform-test substring-match false positive)
 - BUG-865 (H, image-resolve routes locally-built images through Public Gallery)
 - BUG-866 (H, deferred-stdin path entered too eagerly — v1 fall-through, v2 only-when-pipe-loaded)
+- BUG-869 (H, CodeBuild buildspec produced OCI manifest; Lambda image-mode rejects)
+- BUG-870 (H, EFS access-point ARN lookup filtered by `sockerless-managed` tag — operator-provisioned APs lacked it)
+- BUG-871 (H, Lambda single-FSC + `/mnt/...` mount path constraint — collapse + BIND_LINKS bootstrap symlinks + EFS subpath in SharedVolume)
+- BUG-872 (H, pull-through cache prefix mismatch with ECS — derive prefix the same way both backends do)
 
-## Up next on this branch — paths forward to all-cells-GREEN
+## Up next on this branch — Phase 115 (BUG-873) and Phase 114 (BUG-868)
 
-Source-side corrections shipped through commit `8c70d1a`. Full runner hurdle catalog (15 closed + 8 predicted) in [docs/RUNNERS.md § Runner hurdles](docs/RUNNERS.md) — that's where future-debugging starts.
+Phase 115 — Lambda image-mode requires Docker schema 2 manifests AND Runtime API client at the entrypoint. Cell 2's alpine image fails both. Architectural fix: route ALL Lambda CreateFunction calls through `BuildAndPushOverlayImage` overlay-inject, swapping its `os/exec docker build` for `awscommon.CodeBuildService` so it works inside the runner-Lambda. Cache converted images by source-content hash. Implementation steps:
 
-Remaining work is operator-driven runtime steps in this exact order:
+1. Refactor `BuildAndPushOverlayImage` in `backends/lambda/image_inject.go`: accept a `core.CloudBuildService` dependency. When available, build via CodeBuild (already wired via `s.images.BuildService` in `server.go:72-76`); else fall back to local docker.
+2. `backend_impl.go` create flow: drop the no-CallbackURL default branch. Always go through overlay-inject.
+3. New ECR repo (`sockerless-live-overlay`) for converted images, tag = sha256 of `BaseImageRef + AgentBinaryPath + BootstrapBinaryPath + UserEntrypoint + UserCmd`. Skip rebuild on cache hit.
+4. `specs/CLOUD_RESOURCE_MAPPING.md` Lambda mapping row: extend with "Lambda images go through overlay-inject; OCI inputs auto-converted to Docker schema 2 by the overlay build."
+
+Phase 114 — gitlab-runner `start-attach-script` per-command lifecycle. Each script step does `docker start <helper>` + `docker attach`. On Fargate the task entrypoint runs once and exits — gitlab-runner expects the helper to stay running. Fix: keep the task alive with synthetic `tail -f /dev/null`-style entrypoint, route each /start's script through SSM ExecuteCommand. Implementation steps:
+
+1. Add a "long-lived helper" mode to ECS ContainerStart when ECSState.OpenStdin is true and the gitlab-runner -predefined suffix is absent (i.e. user-script container).
+2. First /start: run a task whose entrypoint is `sh -c 'while sleep 60; do :; done'`; record the task ARN.
+3. Subsequent /start cycles for the same container ID: skip RunTask; use SSM ExecuteCommand to run the buffered stdin bytes as a script in the existing task.
+4. /attach reads from SSM session output (already implemented for `docker exec`).
+5. Container stop: `ecs.StopTask`.
+
+After Phases 111 + 112 land, all 4 cells should reach GREEN.
+
+## Original cell-2 unblock recipe (now superseded by Phase 115)
+
+Source-side corrections shipped through commit `b3be64f`. Full runner hurdle catalog (15 closed + 8 predicted) in [docs/RUNNERS.md § Runner hurdles](docs/RUNNERS.md) — that's where future-debugging starts.
+
+The operator-driven runtime steps below remain accurate as the live-infra prep needed for any cell-2 verification run after Phase 115 lands:
 
 ### Step 1 — Apply terraform (cells 2 + 4 prep)
 
