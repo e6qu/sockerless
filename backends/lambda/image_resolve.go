@@ -53,14 +53,14 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 		if strings.Contains(repo, "/") {
 			return ref, fmt.Errorf("docker hub user/org image %q is not on AWS Public Gallery; push it to your ECR repository first (sockerless avoids Docker Hub PAT credentials by design — use `docker push <ecr-uri>` to host the image yourself, or reference its public.ecr.aws equivalent if one exists)", ref)
 		}
-		cachePrefix = "ecr-public"
 		upstreamURL = "public.ecr.aws"
 		upstreamKind = ecrtypes.UpstreamRegistryEcrPublic
 		repo = "docker/library/" + repo
+		cachePrefix = strings.ReplaceAll(upstreamURL, ".", "-")
 	case "public.ecr.aws":
-		cachePrefix = "ecr-public"
 		upstreamURL = "public.ecr.aws"
 		upstreamKind = ecrtypes.UpstreamRegistryEcrPublic
+		cachePrefix = strings.ReplaceAll(upstreamURL, ".", "-")
 	default:
 		cachePrefix = strings.ReplaceAll(registry, ".", "-")
 		upstreamURL = registry

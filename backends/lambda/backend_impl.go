@@ -250,16 +250,23 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		}
 	}
 
-	// Attach named-volume binds as EFS FileSystemConfigs.
-	// Reject host-path binds; require VPC + subnets (enforced by
-	// fileSystemConfigsForBinds). Access points are sockerless-managed
-	// via awscommon.EFSManager (shared with ECS).
+	// Attach named-volume binds as a single EFS FileSystemConfig and
+	// emit the per-bind symlink mappings the bootstrap creates before
+	// the user entrypoint runs. Lambda enforces at most 1 FSC per
+	// function and `/mnt/...` mount paths — see
+	// `specs/CLOUD_RESOURCE_MAPPING.md` § "Lambda bind-mount translation".
 	if len(hostConfig.Binds) > 0 {
-		fsConfigs, err := s.fileSystemConfigsForBinds(s.ctx(), hostConfig.Binds)
+		fsConfigs, bindLinks, err := s.fileSystemConfigsForBinds(s.ctx(), hostConfig.Binds)
 		if err != nil {
 			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("resolve Lambda file-system configs: %v", err)}
 		}
 		createInput.FileSystemConfigs = fsConfigs
+		if len(bindLinks) > 0 {
+			if createInput.Environment == nil {
+				createInput.Environment = &lambdatypes.Environment{Variables: envVars}
+			}
+			createInput.Environment.Variables["SOCKERLESS_LAMBDA_BIND_LINKS"] = strings.Join(bindLinks, ",")
+		}
 	}
 
 	// Set image config overrides if cmd/entrypoint specified

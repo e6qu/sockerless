@@ -32,6 +32,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -50,8 +51,9 @@ const (
 	envRuntimeAPI     = "AWS_LAMBDA_RUNTIME_API"
 	envCallbackURL    = "SOCKERLESS_CALLBACK_URL"
 	envContainerID    = "SOCKERLESS_CONTAINER_ID"
-	envUserEntrypoint = "SOCKERLESS_USER_ENTRYPOINT" // base64(JSON-encoded argv)
-	envUserCmd        = "SOCKERLESS_USER_CMD"        // base64(JSON-encoded argv)
+	envUserEntrypoint = "SOCKERLESS_USER_ENTRYPOINT"   // base64(JSON-encoded argv)
+	envUserCmd        = "SOCKERLESS_USER_CMD"          // base64(JSON-encoded argv)
+	envBindLinks      = "SOCKERLESS_LAMBDA_BIND_LINKS" // CSV of `<dst>=<mnt-target>` pairs
 )
 
 const (
@@ -61,6 +63,17 @@ const (
 )
 
 func main() {
+	// Materialise bind-mount symlinks before anything else so the
+	// reverse-agent and the user entrypoint both see the expected
+	// container paths. Lambda enforces a single FileSystemConfig at
+	// `/mnt/...`; sockerless's bind translation collapses Docker `-v`
+	// targets into symlinks pointing at the shared mount. See
+	// `specs/CLOUD_RESOURCE_MAPPING.md` § "Lambda bind-mount translation".
+	if err := materialiseBindLinks(os.Getenv(envBindLinks)); err != nil {
+		fmt.Fprintf(os.Stderr, "bootstrap: materialise bind links: %v\n", err)
+		os.Exit(1)
+	}
+
 	runtimeAPI := os.Getenv(envRuntimeAPI)
 	if runtimeAPI == "" {
 		// Not running under Lambda — exec the user entrypoint directly.
@@ -331,6 +344,56 @@ func runUserProcessStandalone() {
 		fmt.Fprintf(os.Stderr, "sockerless-lambda-bootstrap: exec %q: %v\n", bin, err)
 		os.Exit(126)
 	}
+}
+
+// materialiseBindLinks creates the symlinks declared in
+// `SOCKERLESS_LAMBDA_BIND_LINKS` so the user entrypoint sees Docker's
+// `-v src:dst` semantics on top of Lambda's single-FileSystemConfig
+// constraint. The env carries CSV of `<dst>=<mnt-target>` pairs; the
+// Lambda backend emits these from `fileSystemConfigsForBinds`. See
+// `specs/CLOUD_RESOURCE_MAPPING.md` § "Lambda bind-mount translation".
+//
+// Idempotent: re-running with the same env (Lambda execution-environment
+// reuse across invocations) leaves the symlinks in their declared state.
+// Existing files / directories at `dst` are removed and replaced with
+// the symlink — Lambda's image filesystem doesn't carry user state, so
+// any pre-existing entry was created by the bootstrap itself.
+func materialiseBindLinks(spec string) error {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return nil
+	}
+	for _, entry := range strings.Split(spec, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		eq := strings.IndexByte(entry, '=')
+		if eq < 0 {
+			return fmt.Errorf("invalid bind link %q: expected <dst>=<target>", entry)
+		}
+		dst := strings.TrimSpace(entry[:eq])
+		target := strings.TrimSpace(entry[eq+1:])
+		if dst == "" || target == "" {
+			return fmt.Errorf("invalid bind link %q: empty dst or target", entry)
+		}
+		if !filepath.IsAbs(dst) {
+			return fmt.Errorf("bind link dst %q must be an absolute path", dst)
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return fmt.Errorf("mkdir parent of %s: %w", dst, err)
+		}
+		if cur, err := os.Readlink(dst); err == nil && cur == target {
+			continue
+		}
+		if err := os.RemoveAll(dst); err != nil {
+			return fmt.Errorf("remove existing %s: %w", dst, err)
+		}
+		if err := os.Symlink(target, dst); err != nil {
+			return fmt.Errorf("symlink %s → %s: %w", dst, target, err)
+		}
+	}
+	return nil
 }
 
 // parseUserArgv returns the argv list the backend encoded into the

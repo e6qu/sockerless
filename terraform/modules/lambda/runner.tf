@@ -290,17 +290,19 @@ resource "aws_lambda_function" "sockerless_runner" {
       SOCKERLESS_LAMBDA_SECURITY_GROUPS   = local.ecs_task_security_group_id
       SOCKERLESS_LAMBDA_AGENT_EFS_ID      = local.ecs_efs_filesystem_id
       SOCKERLESS_LAMBDA_ARCHITECTURE      = "x86_64"
-      # Bind-mount → EFS translation for sub-task Lambdas. The runner
-      # bootstrap stages actions/runner to /tmp/runner-state (Lambda's
-      # image filesystem is read-only outside /tmp + EFS), so the
-      # runner's bind-mount sources are /tmp/runner-state/_work +
-      # /tmp/runner-state/externals etc. Both paths map to the same
-      # workspace access point root (Lambda's single-FileSystemConfig
-      # constraint); sub-paths under _work (`_temp`, `_actions`, `_tool`)
-      # are dropped automatically by sockerless.
+      # Bind-mount → EFS translation for sub-task Lambdas. Lambda
+      # enforces at most one `FileSystemConfig` per function with mount
+      # path `/mnt/...`, so sockerless collapses both runner-side
+      # volumes onto the same access point and uses sub-paths to keep
+      # workspace + externals separated. The `==<subpath>` suffix on
+      # each entry tells sockerless where on EFS each volume's data
+      # actually lives. See specs/CLOUD_RESOURCE_MAPPING.md §
+      # "Lambda bind-mount translation". Sub-paths under _work
+      # (`_temp`, `_actions`, `_tool`) are dropped automatically by
+      # sockerless via the same isSubPathOfSharedVolume rule.
       SOCKERLESS_LAMBDA_SHARED_VOLUMES = join(",", [
-        "workspace=/tmp/runner-state/_work=${local.ecs_runner_workspace_apid}",
-        "externals=/tmp/runner-state/externals=${local.ecs_runner_workspace_apid}",
+        "workspace=/tmp/runner-state/_work=${local.ecs_runner_workspace_apid}==_work",
+        "externals=/tmp/runner-state/externals=${local.ecs_runner_workspace_apid}==externals",
       ])
       # Image builds for sub-task Lambdas — sockerless-backend-lambda
       # has no docker daemon inside the Lambda runtime, so it

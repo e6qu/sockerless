@@ -83,11 +83,21 @@ type Config struct {
 // create sees a bind mount whose source matches ContainerPath, the
 // bind is rewritten to a named volume named Name backed by the EFS
 // access point AccessPointID. Mirror of `ecs.SharedVolume`.
+//
+// EFSSubpath is the relative path (under the access-point root) where
+// this volume's content lives. When multiple SharedVolumes share an
+// AccessPointID, EFSSubpath disambiguates which directory each volume
+// maps to inside the AP. Used by the Lambda backend to collapse
+// duplicate-ARN binds into a single FileSystemConfig and emit a set
+// of `<container-target>=/mnt/<mount>/<subpath>` symlink mappings the
+// in-Lambda bootstrap creates before the user entrypoint runs (Lambda
+// allows at most one FileSystemConfig and only `/mnt/...` mount paths).
 type SharedVolume struct {
 	Name          string // logical volume name used in spawned sub-tasks
 	ContainerPath string // path inside the calling container (= the bind-mount source)
 	AccessPointID string // EFS access point ID (fsap-...)
 	FileSystemID  string // EFS filesystem ID (fs-...); defaults to Config.AgentEFSID
+	EFSSubpath    string // sub-directory under the AP root where this volume's data lives ("" = AP root)
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -116,8 +126,16 @@ func ConfigFromEnv() Config {
 }
 
 // parseSharedVolumes parses the SOCKERLESS_LAMBDA_SHARED_VOLUMES
-// env-var (`name=containerPath=fsap-XXXX[=fs-YYYY],name2=...`).
-// Mirror of `ecs.parseSharedVolumes`.
+// env-var. Each comma-separated entry is `=`-split into 3-5 parts:
+//
+//	name=containerPath=fsap-XXXX                            (3 parts)
+//	name=containerPath=fsap-XXXX=fs-YYYY                    (4 parts; explicit FS)
+//	name=containerPath=fsap-XXXX==subpath                   (5 parts; subpath only)
+//	name=containerPath=fsap-XXXX=fs-YYYY=subpath            (5 parts; FS + subpath)
+//
+// `subpath` is the directory under the AP root where the volume's
+// content lives. Required when multiple SharedVolumes share an
+// AccessPointID; otherwise optional. Mirror of `ecs.parseSharedVolumes`.
 func parseSharedVolumes(s string) []SharedVolume {
 	if s == "" {
 		return nil
@@ -129,7 +147,7 @@ func parseSharedVolumes(s string) []SharedVolume {
 			continue
 		}
 		parts := strings.Split(entry, "=")
-		if len(parts) < 3 || len(parts) > 4 {
+		if len(parts) < 3 || len(parts) > 5 {
 			continue
 		}
 		sv := SharedVolume{
@@ -137,8 +155,11 @@ func parseSharedVolumes(s string) []SharedVolume {
 			ContainerPath: strings.TrimSpace(parts[1]),
 			AccessPointID: strings.TrimSpace(parts[2]),
 		}
-		if len(parts) == 4 {
+		if len(parts) >= 4 {
 			sv.FileSystemID = strings.TrimSpace(parts[3])
+		}
+		if len(parts) == 5 {
+			sv.EFSSubpath = strings.Trim(strings.TrimSpace(parts[4]), "/")
 		}
 		if sv.Name == "" || sv.ContainerPath == "" || sv.AccessPointID == "" {
 			continue

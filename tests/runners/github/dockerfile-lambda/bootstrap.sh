@@ -57,23 +57,31 @@ handle_invocation() {
   export RUNNER_REPO_URL RUNNER_TOKEN RUNNER_NAME RUNNER_LABELS
 
   # Lambda's image filesystem is read-only except /tmp + EFS mount
-  # (/mnt/runner-workspace). Set up the runner's working tree under
-  # /tmp/runner-state — it copies the actions/runner binary tree
-  # there (config.sh writes its registration files into the working
-  # dir) and symlinks _work / externals appropriately.
-  mkdir -p /tmp/runner-state
+  # (/mnt/runner-workspace). Stage the runner's working tree under
+  # /tmp/runner-state (config.sh writes its registration files into
+  # the working dir). _work and externals must live on EFS so the
+  # sub-task Lambda — which mounts the same access point — can see
+  # them; both go under EFS subpaths.
+  mkdir -p /tmp/runner-state /mnt/runner-workspace/_work /mnt/runner-workspace/externals
   if [ ! -e /tmp/runner-state/run.sh ]; then
-    # First invocation in this execution environment — populate
-    # working tree from the image.
+    # First invocation in this execution environment — copy the
+    # actions/runner tree into /tmp (skipping _work and externals;
+    # those go to EFS).
     echo "[bootstrap] staging runner working tree to /tmp/runner-state…"
     cp -a /opt/runner/. /tmp/runner-state/
   fi
-  # Symlink _work → EFS-mounted workspace (shared with sub-tasks).
-  rm -rf /tmp/runner-state/_work
-  ln -sfn /mnt/runner-workspace /tmp/runner-state/_work
-  # externals stays as the staged copy in /tmp/runner-state/externals
-  # (already populated by the cp -a above; image's externals tree
-  # comes along for the ride).
+  # Stage externals onto EFS once per filesystem. The sub-task Lambda
+  # reads externals via its own FSC mount of the same AP, so it must
+  # see the same files. Idempotent: skip when EFS already has the
+  # node20 binary (sentinel for a populated externals tree).
+  if [ ! -x /mnt/runner-workspace/externals/node20/bin/node ]; then
+    echo "[bootstrap] staging externals to EFS…"
+    cp -a /opt/runner/externals/. /mnt/runner-workspace/externals/
+  fi
+  # Symlink runner-side paths into the EFS subpaths.
+  rm -rf /tmp/runner-state/_work /tmp/runner-state/externals
+  ln -sfn /mnt/runner-workspace/_work /tmp/runner-state/_work
+  ln -sfn /mnt/runner-workspace/externals /tmp/runner-state/externals
 
   # Start sockerless on localhost:3375. Reads its config from env
   # vars set by Terraform on the Lambda function.
