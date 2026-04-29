@@ -381,7 +381,28 @@ Closes BUG-868. Cell 3 GREEN gates Phase 114 closure. Cell 4 stays blocked until
 - Skipping the overlay when the user supplies an already-Lambda-aware image — possible but fragile to detect (manifest type + runtime API client). Default to overlay-always; operators can opt out via `PrebuiltOverlayImage` (already supported).
 - Cross-cloud overlay registry sharing — each cloud needs its own primitive (CodeBuild for AWS, Cloud Build for GCP, ACR Tasks for Azure). Phase 95 + Task #95 audits will close those for the other backends.
 
-Closes BUG-873. Cell 2 GREEN gates Phase 115 closure. Cell 4 inherits Phase 115 + Phase 114; it goes GREEN once both land.
+Closes BUG-873. Verified live (workflow run 25105165208) at commit `d5073b4`: CodeBuild SUCCEEDED + Lambda CreateFunction returned the ARN. Phase 115 closed. Cell 2 still blocks on BUG-874 (start/exec lifecycle) — see Phase 116.
+
+### Phase 116 — Reverse-agent dial-back for runner-on-Lambda exec lifecycle (queued; cell 2/4 unblock)
+
+**Why.** After Phase 115 lands, the next runner-on-Lambda wall is a docker-vs-Lambda lifecycle mismatch (BUG-874). Lambda has no "start" primitive — only `Invoke` that runs the function once. The current ContainerStart returns immediately while a goroutine fires the V2 Active waiter + Invoke later; the GH runner's first `docker exec` arrives in ~80ms and fails because the function is still `Pending`. Verified live (workflow run 25105474526): runner does `docker create` (201) → `docker start` (204 in 21ms) → `docker exec` 80ms later → `DELETE container` 478ms after that — all before the function transitions to Active, so the Active waiter then logs `Function not found: arn:...:skls-...` because sockerless's DELETE deleted the function.
+
+**Cloud primitive in use.** Lambda Invoke (sync) + the existing reverse-agent WebSocket pattern (`agent_e2e_integration_test.go` already exercises this end-to-end on the sim). The reverse-agent path lets sockerless tunnel `docker exec` frames into a running Lambda invocation through a long-lived WebSocket connection that the bootstrap dials back when it boots.
+
+**Fix shape.**
+
+1. **`SOCKERLESS_CALLBACK_URL` infrastructure** — provision an ALB (or Lambda Function URL with VPC endpoint) fronting the runner-Lambda's sockerless on port 3375 so sub-task Lambdas in the same VPC can dial back. terraform/modules/lambda/runner.tf adds: `aws_lb` + `aws_lb_target_group` (target_type=lambda, attached to `aws_lambda_function.sockerless_runner`) or `aws_lambda_function_url` if simpler.
+2. **`SOCKERLESS_CALLBACK_URL` env on the runner-Lambda** — points at the ALB DNS so the in-Lambda sockerless backend wires it through to sub-task `CreateFunctionInput.Environment.Variables["SOCKERLESS_CALLBACK_URL"]`.
+3. **Synchronous `ContainerStart`** — block until (a) `FunctionActiveV2Waiter` returns Active, AND (b) `lambda.Invoke` is dispatched (async, since the bootstrap runs the runtime-API loop), AND (c) the reverse-agent dials back (registered in `s.ReverseAgentRegistry`). Only then return 204 to the runner. Time budget: ~30-90s typical for image-mode Lambda + VPC.
+4. **`docker exec` via reverse-agent** — already implemented in the lambda backend's exec path when CallbackURL is set. With Phase 116 wiring, this works end-to-end for any sub-task.
+5. **`docker stop` / `wait`** — terminate the invocation by sending a TypeShutdown over the reverse-agent WebSocket; the bootstrap exits the runtime-API loop, Lambda completes the invocation, sockerless caches the exit code in `Store.InvocationResults`. Existing pattern; just needs to fire on stop.
+
+**Why this matches the Lambda primitive.** Lambda has no native "long-lived container with synchronous exec" semantic. The reverse-agent pattern is sockerless's translation: an Invoke that stays running until told to exit, with WebSocket as the side-channel for arbitrary commands. Same nature as Phase 114's "long-lived Fargate task + ECS ExecuteCommand" — both translate Docker's stateful container lifecycle onto cloud primitives that don't have it natively. Documented in `specs/CLOUD_RESOURCE_MAPPING.md` Lambda mapping row's "container deployment is what lets sockerless put its bootstrap at the entrypoint, which is the prerequisite for the reverse-agent" line.
+
+**Not in scope.**
+- Cell 4 (GitLab × Lambda) — inherits Phases 114 + 116 once both land. The architectural rule "backend ↔ host primitive must match" means GitLab's `start-attach-script` lifecycle on Lambda is doubly mediated: long-lived invocation (Phase 116) + per-step exec (Phase 114-style script-via-WebSocket). May need a Phase 117 to close.
+
+Closes BUG-874. Cell 2 GREEN gates Phase 116 closure.
 
 ### Phase 106 — Real GitHub Actions runner integration (in flight)
 

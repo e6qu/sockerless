@@ -8,12 +8,17 @@ Resume pointer. Updated after every task. Roadmap detail in [PLAN.md](PLAN.md); 
 - `origin-gitlab/main` mirrors `origin/main` (in sync as of 2026-04-27).
 - **`phase-110-runner-integration`** — active. PR #122 in flight. Phase 110b architecture work landing on this branch (Phase 110a deferred to a follow-on once 110b proves the architecture).
 
-## ⚠ Active blockers (must clear before resuming cell-2/3/4 work)
+## ⚠ Active blockers
 
-1. **BUG-873 — Lambda image-mode requires Docker schema 2 + Runtime API client at ENTRYPOINT.** Cell 2 currently fails at `lambda.CreateFunction` with `image manifest, config or layer media type ... is not supported` (alpine carries `vnd.oci.image.index.v1+json`). Even when that's fixed, alpine's `tail -f /dev/null` ENTRYPOINT never calls `/next` so the function would be unresponsive. Architectural fix routes ALL Lambda CreateFunction through the existing `BuildAndPushOverlayImage` overlay-inject path (extending it to use `awscommon.CodeBuildService` when no local docker daemon is available). Tracked as **Phase 115** in PLAN.md.
-2. **BUG-868 — gitlab-runner `start-attach-script` per-command lifecycle vs Fargate non-restartable task.** Each script step does `docker start <helper>` + `docker attach`; Fargate tasks can't restart, so sockerless re-launches a fresh task per /start, but the task entrypoint exits after the first script. Fix: keep the helper task alive with a synthetic entrypoint (`tail -f /dev/null`), route each /start's script through SSM ExecuteCommand. Tracked as **Phase 114** in PLAN.md.
+1. **BUG-874 — Lambda has no synchronous "start" primitive.** Cell 2's GH runner does `docker create + start (returns 21ms) + exec (80ms later) + DELETE (after exec fails)` before Lambda transitions the function to Active. Architectural fix: Phase 116 — provision an ALB fronting the runner-Lambda's sockerless port; set `SOCKERLESS_CALLBACK_URL` on sub-task `CreateFunctionInput.Environment`; ContainerStart blocks until `FunctionActiveV2Waiter` returns AND a reverse-agent dial-back is registered; `docker exec` tunnels via the existing reverse-agent path.
+2. **BUG-868 — gitlab-runner `start-attach-script` per-command lifecycle vs Fargate non-restartable task.** Each script step does `docker start <helper>` + `docker attach`; Fargate tasks can't restart. Fix: Phase 114 — keep the helper task alive with synthetic `tail -f /dev/null` entrypoint, route each /start's script through SSM ExecuteCommand.
 
-Cell 1 (GH × ECS) is GREEN and stays green — no action needed there. PR #122 CI is GREEN at `88aca1e`. Latest pushes `99c8ca0` + `b3be64f` close BUG-869/870/871/872 and surface BUG-873.
+Cell 1 (GH × ECS) GREEN. PR #122 CI GREEN at `88aca1e`. Recent pushes:
+
+- `99c8ca0` — BUG-869 + BUG-870 (CodeBuild buildspec → Docker schema 2; EFS access point lookup)
+- `b3be64f` — BUG-871 + BUG-872 (Lambda single-FSC + `/mnt/...` mount path collapse + symlinks; cache prefix mismatch)
+- `9e3e6ab` — state-doc refresh
+- `d5073b4` — Phase 116 always-on overlay-inject (closes BUG-873)
 
 ## Operational state — 2026-04-29 ~00:00 UTC
 
@@ -48,7 +53,7 @@ Iteration history (recorded for future debugging):
 | Cell | Status | Latest evidence URL | Next |
 |---|---|---|---|
 | 1 GH × ECS | ✅ PASS | https://github.com/e6qu/sockerless/actions/runs/25075259911 | re-run during sweep once 2/3/4 verified |
-| 2 GH × Lambda | 🟡 5 walls past, blocked at BUG-873 | https://github.com/e6qu/sockerless/actions/runs/25102901975 (failed at OCI manifest) | implement Phase 115 (always-on overlay-inject via CodeBuild) |
+| 2 GH × Lambda | 🟡 5 walls past, blocked at BUG-873 | https://github.com/e6qu/sockerless/actions/runs/25102901975 (failed at OCI manifest) | implement Phase 116 (always-on overlay-inject via CodeBuild) |
 | 3 GL × ECS | 🟡 progresses past cleanup_file_variables | https://gitlab.com/e6qu/sockerless/-/jobs/14137580070 | implement Phase 114 (long-lived helper task + SSM ExecuteCommand) |
 | 4 GL × Lambda | ⏸ inherits BUG-868 + BUG-873 | n/a | unblocks once Phases 111 + 112 land |
 
@@ -71,9 +76,9 @@ Iteration history (recorded for future debugging):
 - BUG-871 (H, Lambda single-FSC + `/mnt/...` mount path constraint — collapse + BIND_LINKS bootstrap symlinks + EFS subpath in SharedVolume)
 - BUG-872 (H, pull-through cache prefix mismatch with ECS — derive prefix the same way both backends do)
 
-## Up next on this branch — Phase 115 (BUG-873) and Phase 114 (BUG-868)
+## Up next on this branch — Phase 116 (BUG-873) and Phase 114 (BUG-868)
 
-Phase 115 — Lambda image-mode requires Docker schema 2 manifests AND Runtime API client at the entrypoint. Cell 2's alpine image fails both. Architectural fix: route ALL Lambda CreateFunction calls through `BuildAndPushOverlayImage` overlay-inject, swapping its `os/exec docker build` for `awscommon.CodeBuildService` so it works inside the runner-Lambda. Cache converted images by source-content hash. Implementation steps:
+Phase 116 — Lambda image-mode requires Docker schema 2 manifests AND Runtime API client at the entrypoint. Cell 2's alpine image fails both. Architectural fix: route ALL Lambda CreateFunction calls through `BuildAndPushOverlayImage` overlay-inject, swapping its `os/exec docker build` for `awscommon.CodeBuildService` so it works inside the runner-Lambda. Cache converted images by source-content hash. Implementation steps:
 
 1. Refactor `BuildAndPushOverlayImage` in `backends/lambda/image_inject.go`: accept a `core.CloudBuildService` dependency. When available, build via CodeBuild (already wired via `s.images.BuildService` in `server.go:72-76`); else fall back to local docker.
 2. `backend_impl.go` create flow: drop the no-CallbackURL default branch. Always go through overlay-inject.
@@ -90,11 +95,11 @@ Phase 114 — gitlab-runner `start-attach-script` per-command lifecycle. Each sc
 
 After Phases 111 + 112 land, all 4 cells should reach GREEN.
 
-## Original cell-2 unblock recipe (now superseded by Phase 115)
+## Original cell-2 unblock recipe (now superseded by Phase 116)
 
 Source-side corrections shipped through commit `b3be64f`. Full runner hurdle catalog (15 closed + 8 predicted) in [docs/RUNNERS.md § Runner hurdles](docs/RUNNERS.md) — that's where future-debugging starts.
 
-The operator-driven runtime steps below remain accurate as the live-infra prep needed for any cell-2 verification run after Phase 115 lands:
+The operator-driven runtime steps below remain accurate as the live-infra prep needed for any cell-2 verification run after Phase 116 lands:
 
 ### Step 1 — Apply terraform (cells 2 + 4 prep)
 

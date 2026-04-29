@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**104 phases closed (Phase 109 closed in PR #121, merged 2026-04-27). 873 bugs tracked — 871 fixed, 2 open (BUG-868 gitlab-runner lifecycle; BUG-873 Lambda image-mode + Runtime API client). 1 false positive.** **PR #122 CI GREEN as of commit `88aca1e`** (10/10 jobs); latest pushes `99c8ca0` (BUG-869+870) and `b3be64f` (BUG-871+872) re-running. Active branch: **`phase-110-runner-integration`**. Cell 1 GH×ECS GREEN; cell 2 GH×Lambda advancing through 5 architectural walls and currently blocked on BUG-873; cells 3/4 GitLab inherit BUG-868 + BUG-873. Mirror `origin-gitlab/phase-110-runner-integration` in sync with `origin`.
+**104 phases closed (Phase 109 closed in PR #121, merged 2026-04-27). 874 bugs tracked — 872 fixed, 2 open (BUG-868 gitlab-runner lifecycle; BUG-874 Lambda start/exec lifecycle). 1 false positive.** **PR #122 CI GREEN as of commit `88aca1e`** (10/10 jobs); latest commit `d5073b4` Phase 115 always-on overlay-inject re-running. Active branch: **`phase-110-runner-integration`**. Cell 1 GH×ECS GREEN. Cell 2 GH×Lambda has cleared 6 architectural walls (BUG-862, 869, 870, 871, 872, 873) and now blocks at BUG-874 (Lambda has no synchronous "start" primitive, so the GH runner's `docker create + start + exec` arrives at a function still in `Pending`). Cells 3/4 GitLab inherit BUG-868 + BUG-874. Phase 115 closed; Phases 114 + 116 queued.
 
 See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer), [docs/RUNNERS.md](docs/RUNNERS.md) (runner wiring).
 
@@ -31,9 +31,9 @@ Older PRs (#112–#115) — sim parity, real volumes, FaaS invocation tracking, 
 | Cell | State | Next step |
 |---|---|---|
 | 1 GH × ECS | ✅ GREEN | none — re-run during sweep |
-| 2 GH × Lambda | 🟡 5 walls past, BUG-873 next | implement always-on overlay-build via CodeBuild; verify alpine-based workflow runs end-to-end |
-| 3 GL × ECS | 🟡 progressed past cleanup_file_variables, BUG-868 blocks step_script | architectural fix: re-use one Fargate task across `start-attach-script` cycles via SSM ExecuteCommand; staged as Phase 114 |
-| 4 GL × Lambda | ⏸ inherits BUG-868 + BUG-873 | unblocks once BUG-868 + BUG-873 land |
+| 2 GH × Lambda | 🟡 6 walls past, BUG-874 next | Phase 116: ALB fronting the runner-Lambda's sockerless port + reverse-agent dial-back; ContainerStart blocks until Active + dial-back; exec tunnels via reverse-agent |
+| 3 GL × ECS | 🟡 progressed past cleanup_file_variables, BUG-868 blocks step_script | Phase 114: long-lived Fargate helper task (`tail -f /dev/null`) + SSM ExecuteCommand per script step |
+| 4 GL × Lambda | ⏸ inherits BUG-868 + BUG-874 | unblocks once Phases 114 + 116 land |
 
 Detailed unblock plans per cell live in [PLAN.md § Phase 110 — paths forward to GREEN](PLAN.md). Per-bug closure paths in [BUGS.md](BUGS.md). Resume command + sequence in [DO_NEXT.md](DO_NEXT.md). Full runner hurdle catalog (closed + predicted) in [docs/RUNNERS.md § Runner hurdles](docs/RUNNERS.md). Lambda volume primitive translation in [specs/CLOUD_RESOURCE_MAPPING.md § Lambda bind-mount translation](specs/CLOUD_RESOURCE_MAPPING.md).
 - **Phase 110a — github-runner-dispatcher skeleton: shipped** at commit `ba797b6`. Top-level Go module, sockerless-agnostic (only stdlib + BurntSushi/toml). State recovery via container labels (`sockerless.dispatcher.{job_id,runner_name,managed_by}`); GC sweep every 2 min reaps exited containers + offline GitHub runners; graceful shutdown drains in-flight work bounded to 30 s.
