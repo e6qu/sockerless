@@ -279,6 +279,37 @@ Choice of path is per-container, decided at exec time:
 
 Path B's payload format matches what `agent/cmd/sockerless-lambda-bootstrap/main.go` parses in `runUserInvocation`. An empty Payload (or a non-JSON one) keeps the existing "run user entrypoint+cmd as a subprocess" behaviour for the function's main invocation.
 
+### ECS gitlab-runner script delivery (Fargate has no runtime stdin)
+
+gitlab-runner's docker executor follows a `start-attach-script` lifecycle: for each script stage (prepare_script, get_sources, step_script, after_script, archive_*, cleanup_file_variables) it does `docker create` once and then per-stage `docker start <container>` followed by `docker attach -i` with the stage's script piped through stdin. The Docker daemon delivers the piped bytes to the running container's PID-1 stdin in real time.
+
+Fargate has **no equivalent runtime stdin channel**. Once `ecs.RunTask` starts, the task's stdin is closed; there's no API to write more bytes to it. Sockerless's BUG-859 fix bakes the buffered attach-stdin bytes into the task definition's `Entrypoint=["sh","-c"], Cmd=[<script>]` so each /start cycle runs a fresh task with the script as its command. That works for the user's BUILD container (alpine, etc.) — gitlab-runner half-closes stdin after streaming each script step, sockerless captures the EOF and bakes.
+
+It does **not** work for gitlab-runner's predefined helper container (`gitlab-runner-helper` image, container name suffixed `-predefined`). gitlab-runner uses the helper's stdin in two distinct modes that share the same `OpenStdin` flag at create-time:
+
+- **Mode A — script delivery**: gitlab-runner pipes a shell script through `/attach` stdin (same as the build container) for stages like `get_sources`. The helper image's `dumb-init -- gitlab-runner-helper` ENTRYPOINT reads stdin and runs the script.
+- **Mode B — log streaming**: gitlab-runner attaches purely to read the helper's stdout, NEVER writing bytes to stdin. The attach connection stays open for the full job duration.
+
+A purely client-side detector ("did stdin EOF arrive?") doesn't disambiguate Mode A from Mode B in time:
+
+- If sockerless waits for stdin EOF before launching the task, Mode B hangs forever (gitlab-runner never closes the connection until the job ends).
+- If sockerless times out the wait and falls through to "run with original entrypoint", Mode A loses the script and the helper either exits with no work done OR hangs waiting for stdin that never arrives (the helper image's PID 1 expects script bytes on stdin).
+- BUG-867's filter (`name has -predefined suffix → use synchronous RunTask, no script bake`) avoids the hang but means the helper runs without ever receiving Mode A's script. The helper's subcommand (whatever gitlab-runner set in CMD at create-time) executes default behaviour for ~30 s, exits, the stage appears to "succeed" but did no real work — git clone never ran, so there are no checked-out sources, so `step_script` is silently skipped, so cell 3 fails at the architectural mismatch.
+
+**Architectural fix (Phase 114)**: route around Fargate's no-runtime-stdin constraint with a long-lived helper task + per-stage `ecs.ExecuteCommand` (SSM Session Manager) script delivery:
+
+1. **First /start with stdin pipe on a `-predefined` helper**: launch the Fargate task ONCE with overridden `Entrypoint=["sh","-c"], Cmd=["while sleep 60; do :; done"]` (or `tail -f /dev/null` equivalent). Wait for RUNNING. Cache the task ARN against the container ID. Don't bake any script.
+2. **Subsequent /start cycles for the same container ID**: detect cached running task → skip RunTask. Buffer the new stdin bytes from the per-cycle attach pipe.
+3. **Per-cycle script delivery**: open an `ecs.ExecuteCommand` SSM session targeting the live task with `--command "/bin/sh"`, write the buffered script bytes to the session's stdin (the existing SSM frame-capture machinery from Round-8 carries them), capture stdout/stderr from the SSM stream, write framed bytes into the docker `/attach` hijacked connection. End-of-session is signalled by an exit-code marker which becomes the stage's exit status — gitlab-runner reads it via `/wait`.
+4. **/wait, /stop, /kill, /rm**: `/wait` blocks until the current SSM session emits its exit-code marker. `/stop` calls `ecs.StopTask` (SIGTERM the long-lived loop, the Fargate task transitions to STOPPED). `/rm` deregisters the task definition + drops the cached ARN.
+5. **/exec on the same container**: same path — open a fresh SSM session against the live task, run the requested command.
+
+The build-container path (Mode A's home) doesn't need this — its existing `launchAfterStdin` flow correctly bakes the script into a fresh per-cycle task. The architectural rule:
+
+> **Predefined helper containers** (gitlab-runner's `-predefined`-suffixed pattern, or any future client whose container name signals "long-lived between attach cycles") use the long-lived-task + SSM ExecuteCommand pattern. **Per-cycle build containers** (no `-predefined` suffix, OpenStdin && AttachStdin) use the `launchAfterStdin` per-task bake. The container-name suffix is the only signal sockerless can act on at create time without inspecting client behaviour.
+
+Cell 4 (GitLab × Lambda) inherits the same architectural class — gitlab-runner's `start-attach-script` lifecycle on Lambda. Lambda has `lambda.Invoke` instead of `ExecuteCommand`; the per-cycle stdin bytes become a fresh `lambda.Invoke` Payload. Phase 116's `lambdaInvokeExecDriver` already covers single execs (cell 2's GitHub-runner case). The gitlab-runner-helper bridge needs the equivalent "long-lived function + per-cycle Invoke for each script stage" wiring; tracked as Phase 117.
+
 ---
 
 ## Docker / Podman API coverage matrix

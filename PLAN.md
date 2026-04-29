@@ -340,27 +340,91 @@ This phase is *not* a rewrite of the laptop-local dispatcher — the core dispat
 
 Activation gated on whether the laptop-local 110a/b dispatcher proves the architecture and someone wants the production shape.
 
-### Phase 114 — Long-lived helper task for gitlab-runner on ECS (queued; cell 3/4 unblock)
+### Phase 114 — Long-lived helper task + ECS ExecuteCommand for gitlab-runner on ECS (queued; cell 3 unblock; substantial)
 
-**Why.** gitlab-runner's docker executor uses a `start-attach-script` per-command lifecycle: each script step does `docker start <helper>` followed by `docker attach` with stdin piped. In standard docker semantics, `docker start` resumes a stopped container and re-runs its entrypoint. On Fargate, tasks are not restartable — once a task transitions to STOPPED, its task ARN is gone. Sockerless's BUG-858 fallback re-launches a fresh task per /start, but the task entrypoint runs once and exits, so the `cleanup_file_variables` → `step_script` transition fails (BUG-868). gitlab-runner expects the helper to STAY RUNNING for subsequent steps.
+**gitlab-runner docker-executor architecture** (refresher — drives the design):
 
-**Cloud primitive in use.** Fargate task lifecycle (PROVISIONING → RUNNING → STOPPED, non-reversible) + ECS ExecuteCommand (SSM-backed sidecar that runs commands inside an already-RUNNING task).
+Per job, gitlab-runner v18 creates two persistent containers (plus one per `services:` entry) and walks them through ~10 stages:
 
-**Fix shape.** Keep one Fargate task alive across multiple `/start` cycles, run each script step via `ExecuteCommand`:
+| Stage | Container | Source-of-script |
+|---|---|---|
+| `resolve_secrets` | (server-side) | gitlab.com |
+| `prepare_executor` | — | docker create + network setup, NO container exec |
+| `prepare_script` | helper (`-predefined`) | shell wrapper around `mkdir`/`chmod`/`echo` for the build dir |
+| `get_sources` | helper | `git init` + `git remote` + `git fetch` + `git checkout` |
+| `download_artifacts` | helper | `gitlab-runner-helper artifacts-downloader` (only if `dependencies:` set) |
+| `step_script` | **build** (e.g. alpine) | `before_script:` + `script:` from `.gitlab-ci.yml` |
+| `after_script` | **build** | `after_script:` from `.gitlab-ci.yml` |
+| `archive_cache_on_success` / `archive_cache_on_failure` | helper | `gitlab-runner-helper cache-archiver` (only if `cache:` set) |
+| `upload_artifacts_on_success` / `upload_artifacts_on_failure` | helper | `gitlab-runner-helper artifacts-uploader` (only if `artifacts:` set) |
+| `cleanup_file_variables` | helper | `rm -rf` over `$CI_PROJECT_DIR/tmp` for file-typed CI variables |
 
-1. **First /start for a container** (ECSState.OpenStdin && AttachStdin && pipe-loaded && not gitlab-runner -predefined): launch a Fargate task whose entrypoint is `sh -c 'while sleep 60; do :; done'` (or equivalent). Record task ARN. Don't bake the user script into the task command.
-2. **Subsequent /start cycles for the same container ID**: detect "task already RUNNING" via `resolveTaskState`, skip RunTask, don't launch a fresh task. Capture the buffered stdin script bytes.
-3. **Run the script via ExecuteCommand**: feed the buffered bytes to `aws ecs execute-command --interactive --command "/bin/sh"` and stream stdout/stderr/exit-code back to the /attach connection. Existing SSM frame-handling code (closed in Round-8) already does the exit-code marker.
-4. **/wait, /stop, /kill**: terminate the helper task with `ecs.StopTask`, propagate exit code from the SSM session's last marker.
-5. **/exec**: same path as before — ExecuteCommand against the running task.
+Both containers are created with the SAME stdin-reading entrypoint (gitlab-runner overrides whatever the source image had via `--entrypoint`):
 
-**Why this matches the Fargate primitive.** Fargate tasks support long-lived workloads. The task entrypoint stays a no-op idle loop; sockerless dispatches per-command work via ExecuteCommand (which is the cloud's "run a command in a running task" primitive). This is exactly how Docker's behaviour maps when the host is Fargate. No retries, no fakes, no fallbacks — the cloud has the primitive (`ExecuteCommand`); sockerless wires Docker's `start-attach-script` semantics to it.
+```
+ENTRYPOINT ["sh", "-c",
+  "if [ -x /usr/local/bin/bash ]; then exec /usr/local/bin/bash; \
+   elif [ -x /usr/bin/bash ]; then exec /usr/bin/bash; \
+   elif [ -x /bin/bash ]; then exec /bin/bash; \
+   elif [ -x /usr/local/bin/sh ]; then exec /usr/local/bin/sh; \
+   ... etc ... \
+   else echo shell not found; exit 1; fi"]
+```
 
-**Not in scope.**
-- Lambda mirror — Lambda has no equivalent ExecuteCommand primitive (per-invocation isolation is the Lambda model). gitlab-runner on Lambda is a separate problem; we'll address it after the ECS path proves out, and the answer may simply be "use ECS for gitlab-runner".
-- Cross-cell concurrency — keeping multiple long-lived helper tasks per backend instance is a bookkeeping concern handled via the existing CloudState resolver.
+`OpenStdin=true, AttachStdin=true, StdinOnce=true, Tty=false`. The sh-then-bash exec wrapper sits waiting on stdin. Per stage:
 
-Closes BUG-868. Cell 3 GREEN gates Phase 114 closure. Cell 4 stays blocked until Phase 115 lands.
+1. `docker start <container>` — re-runs the entrypoint (real Docker re-runs ENTRYPOINT on every `start` of a STOPPED container).
+2. `docker attach -i <container>` — gitlab-runner pipes the stage's generated shell script as stdin bytes. The shell reads, executes, exits when stdin EOFs.
+3. `/wait` — gets the exit code; if non-zero, gitlab-runner skips the user-script stages (`step_script`, `after_script`) and routes through the failure-cleanup chain (`archive_cache_on_failure`, `upload_artifacts_on_failure`, `cleanup_file_variables`).
+
+Every stage's "Running on $(hostname) via $(client)..." banner comes from the **generated shell script's first line**, NOT from the helper image's compiled-in code. So both the helper and build containers are just bash-script-runners; the only difference is which image's filesystem they execute on.
+
+**Why Fargate breaks this**:
+
+- Fargate tasks are **not restartable** — once a task transitions to STOPPED, that task ARN is gone. `RunTask` always creates a new task ARN.
+- Fargate tasks have **no runtime stdin channel** — once `RunTask` starts, the task's PID-1 stdin is closed; there's no SDK call to write more bytes to it.
+
+Sockerless's BUG-859 fix translated each `docker start <build-container>` cycle into a fresh `RunTask` with the script baked into `Entrypoint=["sh","-c"], Cmd=[<script>]`. That works for the BUILD container because the bytes ARE the script — replacing the bash-wrapper with `sh -c <script>` is functionally equivalent to `bash <(echo "<script>")`.
+
+It does **not** work for the predefined helper container as currently implemented:
+
+- BUG-867's `-predefined`-suffix filter routes the helper through synchronous `RunTask` with the bash-wrapper Entrypoint. The wrapper exec's into bash, bash reads stdin which closes immediately (Fargate has no runtime stdin), bash exits 0 in <1 s. Stage "succeeds" but did no work — `git fetch` never ran, no sources are checked out, gitlab-runner detects the empty workspace at `step_script` time and routes to the failure-cleanup chain. Cell 3 fails at BUG-868's symptom.
+- Removing the `-predefined` filter and entering `launchAfterStdin` for the helper too produces a 13-min hang: gitlab-runner's predefined helper /attach is sometimes for log streaming (no stdin write) — the goroutine waits for stdin EOF that never arrives.
+- Adding a content-empirical timeout (3 s) makes the goroutine fall through with an empty buffer; the helper runs with the bash-wrapper Entrypoint preserved (no script bake), and bash again exits in <1 s with no work done.
+
+**Cloud primitive in use** (Phase 114's translation target): Fargate task lifecycle (PROVISIONING → RUNNING → STOPPED, non-reversible) + **ECS ExecuteCommand (SSM Session Manager)** — the cloud's "open an interactive session against a running task" primitive. The task must have been launched with `enableExecuteCommand: true` (sockerless's task definitions already do).
+
+**Fix shape**:
+
+1. **Helper-container detection at /create time**: container's name has `-predefined` suffix → annotate `ECSState.LongLivedHelper = true`. Build containers (no suffix) keep the existing `launchAfterStdin` per-cycle path.
+2. **First /start on a long-lived helper**: launch the Fargate task ONCE with overridden `Entrypoint=["sh","-c"], Cmd=["while true; do sleep 60; done"]` (a SIGTERM-friendly idle loop). Wait for `RUNNING + ExecuteCommandAgent.LastStatus == RUNNING` (the latter takes 5-30 s after task RUNNING — already handled by the `cloudExecStart` wait in BUG-853). Cache `(containerID → taskARN)`.
+3. **Subsequent /start cycles for the same container**: short-circuit. Don't `RunTask`. Buffer the per-cycle stdin script bytes from the attach pipe.
+4. **Per-cycle script delivery via ExecuteCommand**:
+   - Open an SSM session: `aws ecs execute-command --task <ARN> --interactive --command "/bin/sh"` — equivalent SDK call: `ssm.StartSession` with the ECS-ExecuteCommand-generated session token.
+   - Write the buffered script bytes through the session's I/O stream (the existing SSM AgentMessage frame protocol from Round-8 already handles this — see `backends/ecs/ssm_session.go`).
+   - Stream stdout/stderr from the SSM stream into the docker `/attach` hijacked connection with multiplexed-stream framing for non-tty execs.
+   - End-of-script marker: emit `; echo SOCKERLESS_EXIT_CODE=$? >&2; exit` after the user script (existing `wrapWithExitCodeMarker` helper).
+   - Capture the exit code from the marker line; surface via `/wait` and the container's State.ExitCode.
+5. **/wait, /stop, /kill, /rm**:
+   - `/wait` blocks until the current SSM session ends + exit-code marker is captured. If no script-delivery cycle is active, `/wait` returns immediately with the last-known exit code.
+   - `/stop` calls `ecs.StopTask` (SIGTERM the idle loop, Fargate transitions to STOPPED). Drop the cached taskARN.
+   - `/kill` same as /stop with SIGKILL semantics (`StopTask` with `Reason="killed"`).
+   - `/rm` deregisters the task definition + drops cached ARN.
+6. **/exec on the same container**: same SSM path — open a fresh session against the live task, run the requested command. Already implemented by `cloudExecStart` for non-stdin /exec; needs minor wiring for the stdin-pipe path.
+
+**File layout**:
+
+- New `backends/ecs/long_lived_helper.go` — the long-lived task launcher + per-cycle SSM session bridge.
+- Reuse existing `backends/ecs/ssm_session.go` for the stream wiring (already proven by `cloudExecStart`).
+- New unit test `backends/ecs/long_lived_helper_test.go` — async-mock SSM session, verify the script-bytes-in / stdout-bytes-out / exit-code-marker round-trip.
+
+**Estimated scope**: ~400-600 lines new code + ~150 lines refactor in `backends/ecs/backend_impl.go`. Comparable to Phase 116's `lambdaInvokeExecDriver`.
+
+**Why this matches the Fargate primitive**: Fargate tasks support long-running workloads with `enableExecuteCommand: true`. The task entrypoint stays an idle loop; sockerless dispatches per-stage work via the cloud's actual "run command in a live task" primitive. No retries, no fakes — `docker start` semantics map onto `RunTask` once + `ExecuteCommand` per cycle.
+
+**Not in scope**: cross-cell concurrency (one long-lived helper per `(backend instance, container ID)` is sufficient — ECS ExecuteCommand supports concurrent sessions per task).
+
+Closes BUG-868. Cell 3 GREEN gates Phase 114 closure. Cell 4 separately addressed by Phase 117.
 
 ### Phase 115 — Always-on overlay-inject for Lambda CreateFunction (queued; cell 2/4 unblock)
 
@@ -400,9 +464,36 @@ Closes BUG-873. Verified live (workflow run 25105165208) at commit `d5073b4`: Co
 **Why this matches the Lambda primitive.** Lambda has no native "long-lived container with synchronous exec" semantic. The reverse-agent pattern is sockerless's translation: an Invoke that stays running until told to exit, with WebSocket as the side-channel for arbitrary commands. Same nature as Phase 114's "long-lived Fargate task + ECS ExecuteCommand" — both translate Docker's stateful container lifecycle onto cloud primitives that don't have it natively. Documented in `specs/CLOUD_RESOURCE_MAPPING.md` Lambda mapping row's "container deployment is what lets sockerless put its bootstrap at the entrypoint, which is the prerequisite for the reverse-agent" line.
 
 **Not in scope.**
-- Cell 4 (GitLab × Lambda) — inherits Phases 114 + 116 once both land. The architectural rule "backend ↔ host primitive must match" means GitLab's `start-attach-script` lifecycle on Lambda is doubly mediated: long-lived invocation (Phase 116) + per-step exec (Phase 114-style script-via-WebSocket). May need a Phase 117 to close.
+- Cell 4 (GitLab × Lambda) — separately addressed by Phase 117 (gitlab-runner stdin-piped per-stage scripts on Lambda primitives).
 
-Closes BUG-874. Cell 2 GREEN gates Phase 116 closure.
+Closes BUG-874. Cell 2 GREEN gates Phase 116 closure (CLOSED 2026-04-29 at workflow run 25113565115).
+
+### Phase 117 — gitlab-runner per-stage script delivery on Lambda (queued; cell 4 unblock)
+
+**Why.** Phase 116's `lambdaInvokeExecDriver` covers single `docker exec` calls (the GH-runner-on-Lambda case from cell 2 — each `run:` step is one `docker exec` ⟶ one `lambda.Invoke`). gitlab-runner's docker executor instead uses `docker start + docker attach -i` per stage with the script piped through stdin (see Phase 114's gitlab-runner refresher table). On Lambda, the build container is created via `lambda.CreateFunction`; gitlab-runner's per-stage `/start + /attach` cycle has to translate to `lambda.Invoke` calls per stage.
+
+**Cloud primitive in use**: `lambda.Invoke` per script stage, with the script bytes carried in the `Payload`. The bootstrap's `runUserInvocation` already accepts an exec-envelope `{"sockerless":{"exec":{"argv":[...]}}}` form (Phase 116 / Path B). Phase 117 adds a SCRIPT-envelope form: `{"sockerless":{"script":{"shell":"sh","body":"<base64>","workdir":"...","env":[...]}}}` — the bootstrap unwraps it and runs `bash -c "<decoded body>"` in a subprocess.
+
+**Fix shape**:
+
+1. **Build-container side**: `backends/lambda/backend_impl.go` ContainerStart's stdin-pipe path (BUG-860 — currently bakes script bytes into Invoke Payload as-is) is extended to recognise the gitlab-runner stdin-pipe lifecycle. Per /start cycle: Read buffered stdin → wrap as a SCRIPT envelope → call `lambda.Invoke` with the envelope as Payload → wait for response → tunnel stdout/stderr to the docker /attach hijacked conn → record exit code.
+2. **Predefined helper side**: same path. Lambda has no equivalent of "long-lived task with ExecuteCommand" — every Invoke is a fresh execution environment. So each stage's helper-image SCRIPT envelope creates a fresh function invocation. State persistence between stages happens via EFS (workspace + externals are shared across invocations, same as cell 2). gitlab-runner's "Running on $(hostname) via $(client)..." banner per stage = each invocation prints its own.
+3. **Bootstrap envelope handling**: `agent/cmd/sockerless-lambda-bootstrap` adds a `parseScriptEnvelope` helper alongside the existing `parseExecEnvelope`. When the Invoke Payload matches the script envelope, run `bash -c "<body>"` (or `sh -c` for `shell:"sh"`); otherwise fall through to the existing Path B exec / main-cmd handling.
+4. **Path A fallback** (reverse-agent): if `SOCKERLESS_CALLBACK_URL` is set on the runner-Lambda, the bootstrap dials back via WebSocket — gitlab-runner's per-stage scripts still translate to Invoke, but exec-style follow-ups (rare for gitlab-runner) tunnel through the dial-back. This isn't strictly required for cell 4; included for symmetry with Phase 116.
+
+**Why this matches the Lambda primitive**: each gitlab-runner stage is bounded — a few seconds to a few minutes. Lambda's 15-min hard cap is a non-issue for individual stages. Cross-stage state lives on EFS (workspace, externals, file-typed CI variables). The per-stage `lambda.Invoke` model is naturally "Invoke once per discrete unit of work", which matches gitlab-runner's stage abstraction. No long-lived "tail -f /dev/null" workaround needed; Lambda's invoke model fits gitlab-runner's stage cadence cleanly.
+
+**File layout**:
+
+- Modify `agent/cmd/sockerless-lambda-bootstrap/main.go`: add `scriptEnvelope` + `runScriptInvocation`. Mirror of `execEnvelope` / `runExecInvocation` from Phase 116.
+- Modify `backends/lambda/backend_impl.go`'s stdin-pipe goroutine: marshal script envelope when `lambdaState.OpenStdin` indicates the per-stage stdin-pipe pattern (use the same per-cycle stdinPipe buffer that Path B's `lambdaInvokeExecDriver` uses — these can share infrastructure).
+- New unit tests for the script-envelope round-trip.
+
+**Estimated scope**: ~250-400 lines. Smaller than Phase 114 because Lambda already has the canonical per-cycle dispatch primitive (`Invoke`); we just need a script-shaped envelope.
+
+**Not in scope**: long-lived Lambda functions per gitlab-runner job. Lambda's primitive doesn't support that (15-min cap; no "exec into a running invocation" channel). Each stage = fresh invocation. `/tmp` doesn't persist; EFS does. This is documented in `specs/CLOUD_RESOURCE_MAPPING.md` § "ECS gitlab-runner script delivery" already.
+
+Closes BUG-868's Lambda half (cell 4). Phase 117 can land independently of Phase 114 — the Lambda translation doesn't depend on the ECS long-lived-task work.
 
 ### Phase 106 — Real GitHub Actions runner integration (in flight)
 

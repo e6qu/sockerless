@@ -32,8 +32,8 @@ Older PRs (#112–#115) — sim parity, real volumes, FaaS invocation tracking, 
 |---|---|---|
 | 1 GH × ECS | ✅ GREEN | https://github.com/e6qu/sockerless/actions/runs/25075259911 |
 | 2 GH × Lambda | ✅ GREEN | https://github.com/e6qu/sockerless/actions/runs/25113565115 (Phase 115 + 116 closed BUG-862..874) |
-| 3 GL × ECS | 🟡 progressed past cleanup_file_variables, BUG-868 blocks step_script | Phase 114: long-lived Fargate helper task (`tail -f /dev/null`) + SSM ExecuteCommand per script step |
-| 4 GL × Lambda | ⏸ inherits BUG-868 | unblocks once Phase 114's lifecycle pattern is ported to Lambda (cell-2's Path B handles single execs; gitlab-runner's per-step lifecycle adds another layer) |
+| 3 GL × ECS | 🟡 BUG-868 (Phase 114 — substantial; long-lived Fargate task + SSM ExecuteCommand per stage) | latest https://gitlab.com/e6qu/sockerless/-/jobs/14146329550 |
+| 4 GL × Lambda | ⏸ Phase 117 — gitlab-runner per-stage SCRIPT envelope via lambda.Invoke (independent of Phase 114) | n/a |
 
 Detailed unblock plans per cell live in [PLAN.md § Phase 110 — paths forward to GREEN](PLAN.md). Per-bug closure paths in [BUGS.md](BUGS.md). Resume command + sequence in [DO_NEXT.md](DO_NEXT.md). Full runner hurdle catalog (closed + predicted) in [docs/RUNNERS.md § Runner hurdles](docs/RUNNERS.md). Lambda volume primitive translation in [specs/CLOUD_RESOURCE_MAPPING.md § Lambda bind-mount translation](specs/CLOUD_RESOURCE_MAPPING.md).
 - **Phase 110a — github-runner-dispatcher skeleton: shipped** at commit `ba797b6`. Top-level Go module, sockerless-agnostic (only stdlib + BurntSushi/toml). State recovery via container labels (`sockerless.dispatcher.{job_id,runner_name,managed_by}`); GC sweep every 2 min reaps exited containers + offline GitHub runners; graceful shutdown drains in-flight work bounded to 30 s.
