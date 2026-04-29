@@ -36,14 +36,29 @@ Iteration history (recorded for future debugging):
 - 25052216785, 25052362819 — same exec-agent-not-ready failure (BUG-853 confirmed, fix not yet shipped).
 - 25052661438 — **GREEN** — first run with the BUG-853 wait fix shipped.
 
-## 4-cell verification status (2026-04-29)
+## 4-cell verification status (2026-04-29 ~03:25 UTC)
 
-| Cell | Status | Run / Blocker |
+| Cell | Status | Notes |
 |---|---|---|
-| 1 GH × ECS | ✅ PASS | https://github.com/e6qu/sockerless/actions/runs/25075259911 (2026-04-28 20:13 UTC) |
-| 2 GH × Lambda | ❌ FAIL → architecture corrected | Run 25075247501 surfaced BUG-861 → BUG-862. Source fixed; **needs runner-Lambda image rebuild** (Docker daemon required) + `terragrunt apply` for new IAM/env vars. |
-| 3 GL × ECS | blocked | Sockerless ECS PID 75092 still on pre-BUG-859 binary (mmap'd). User must `kill 75092` and relaunch from `/tmp/sockerless-backend-ecs` (now contains the fix). |
-| 4 GL × Lambda | blocked | Sockerless Lambda PID 70870 still on pre-BUG-860 binary. User must `kill 70870` and relaunch from `/tmp/sockerless-backend-lambda`. |
+| 1 GH × ECS | ✅ PASS | Run https://github.com/e6qu/sockerless/actions/runs/25075259911 (2026-04-28 20:13 UTC). Re-run during sweep once cells 3+4 verified. |
+| 2 GH × Lambda | source corrected | Last failed at 25075247501 surfaced BUG-861 → BUG-862. Source fixes shipped (Dockerfile bakes lambda backend, terraform IAM swapped, CodeBuild + S3 build-context provisioned for no-Docker rebuild). Awaits `terragrunt apply` (lambda module) + `cd tests/runners/github/dockerfile-lambda && make codebuild-update` + re-run harness. |
+| 3 GL × ECS | running on BUG-866 v2 binary | Cell 3 retried at 03:22 UTC with the BUG-866 v2 binary (only enter deferred-stdin path when pipe already registered). Helper container's start now takes 25 s real synchronous RunTask (was 10 µs broken fast-path). Pipeline 2486848000. |
+| 4 GL × Lambda | not yet attempted | Will run after cell 3 verifies. Same BUG-866 v2 fix applies. Needs `SOCKERLESS_AGENT_BINARY` + `SOCKERLESS_LAMBDA_BOOTSTRAP` exports for in-Lambda image inject (or pre-stage to `/opt/sockerless/`). |
+
+## CI status
+
+✅ **PR #122 CI fully GREEN** as of commit `88aca1e` (BUG-866 v2): all 10 jobs PASS — lint, test, test (e2e), sim (aws/gcp/azure), ui, build-check, smoke, terraform.
+
+## Bugs shipped this iteration (PR #122)
+
+- BUG-859 (H, ECS attach stdin)
+- BUG-860 (H, Lambda attach stdin)
+- BUG-861 (H, Lambda externals shared-volume entry — symptom of BUG-862)
+- BUG-862 (CRITICAL, runner-Lambda baked wrong backend — codified class-of-bug rule)
+- BUG-863 (M, integration / smoke / test arch env var missing)
+- BUG-864 (L, terraform-test substring-match false positive)
+- BUG-865 (H, image-resolve routes locally-built images through Public Gallery)
+- BUG-866 (H, deferred-stdin path entered too eagerly — v1 fall-through, v2 only-when-pipe-loaded)
 
 ## Up next on this branch — paths forward to all-cells-GREEN
 
