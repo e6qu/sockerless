@@ -1,6 +1,6 @@
 # Known Bugs
 
-**867 total — 867 fixed, 0 open, 1 false positive.** Resolution status: BUG-861 + BUG-862 source-fixed (await `terragrunt apply` + image rebuild for live verification); BUG-863, BUG-864, BUG-865, BUG-866 fully closed per CI green at commit `88aca1e`; BUG-867 source-fixed (gitlab-runner predefined helper detection — verified locally; awaits cell-3 live re-run). Three sections: [Open](#open) / [False positives](#false-positives) / [Resolved](#resolved). Per-project rule: no bug deferral, no fakes, no fallbacks — every filed bug ships a fix in the same round. Fix detail beyond the one-liner: see `git log <commit>` or the linked PR.
+**868 total — 867 fixed, 1 open (BUG-868), 1 false positive.** Resolution status: BUG-861 + BUG-862 source-fixed (await `terragrunt apply` + image rebuild for live verification); BUG-863, BUG-864, BUG-865, BUG-866 fully closed per CI green at commit `88aca1e`; BUG-867 source-fixed + verified live (cell 3 progresses past prepare_executor → prepare_script → get_sources → cleanup_file_variables stages). BUG-868 open (cell 3 user-script container still doesn't run; helper start/stop/start cycles need a real fix that re-uses the Fargate task across attach cycles instead of launching a fresh task per /start). Three sections: [Open](#open) / [False positives](#false-positives) / [Resolved](#resolved). Per-project rule: no bug deferral, no fakes, no fallbacks — every filed bug ships a fix in the same round. Fix detail beyond the one-liner: see `git log <commit>` or the linked PR.
 
 **Class-of-bug — backend ↔ host primitive mismatch (CRITICAL).** Each cloud backend MUST run on its own native primitive. ECS backend in ECS, Lambda backend in Lambda, Cloud Run backend in Cloud Run, Cloud Run Functions in CRF, ACA in ACA, Azure Functions in AZF. Baking a backend into a host of a different primitive (e.g. `sockerless-backend-ecs` inside a Lambda function "to avoid Lambda-in-Lambda recursion") is a critical architectural error — the cloud's own primitives are the answer for sub-task dispatch on that cloud, even when it's harder. Future audits should re-flag any cross-pollution as a P0 bug. Documented in `MEMORY.md` workflow rules and `specs/CLOUD_RESOURCE_MAPPING.md` § runner-on-FaaS dispatch.
 
@@ -10,7 +10,11 @@ Standing workflow rule: every CI / live-cloud failure lands here with a short ro
 
 ## Open
 
-_None._ See "Source-fixed, awaiting infra" section below for items that ship code-side fixes but need operator runtime steps to be visibly closed (currently BUG-861, BUG-862).
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| 868 | H | ecs (gitlab-runner lifecycle) | Cell 3 (GitLab × ECS) progresses through prepare_executor → prepare_script → get_sources → cleanup_file_variables (verified at https://gitlab.com/e6qu/sockerless/-/jobs/14137580070 with BUG-867 fix) but never reaches step_script — gitlab-runner exits with `Job failed: exit code 1` after cleanup_file_variables. Root cause architectural: gitlab-runner's docker executor uses `start-attach-script` per command (not exec-against-running-task), so each script step does `docker start <helper>` followed by `docker attach` with stdin-piped commands. Sockerless's BUG-858 fallback re-launches a fresh Fargate task per /start, but the task's ENTRYPOINT runs once and exits — gitlab-runner expects the helper to STAY RUNNING for subsequent steps. **Fix shape**: re-use a running Fargate task across multiple /start cycles rather than launching a fresh task each time. Either (a) keep the task alive with a synthetic `tail -f /dev/null`-style entrypoint and route each /start's script through SSM ExecuteCommand, or (b) detect "container already has running task" in ContainerStart and skip RunTask, instead waking the existing task. Substantial enough to stage as a separate phase. |
+
+See "Source-fixed, awaiting infra" section below for items that ship code-side fixes but need operator runtime steps to be visibly closed (currently BUG-861, BUG-862).
 
 ## Source-fixed, awaiting infra
 
