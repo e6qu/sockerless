@@ -339,11 +339,16 @@ func (s *Server) ContainerStart(ref string) error {
 	// flags but uses /exec (not /attach with piped script) for actual
 	// commands — its /attach is just for log streaming. Treating the
 	// predefined helper as a script-delivery container leads to
-	// premature termination after the first attach close.
+	// premature termination after the first attach close — OR a
+	// 13-min hang when our deferred-RunTask path (re-)activates with
+	// content-empirical filtering, because Fargate doesn't deliver
+	// runtime stdin and the helper image's entrypoint waits for it.
+	// (BUG-859 / BUG-866 / BUG-867 / BUG-868 — Phase 114 in progress.)
 	//
-	// The `-predefined` suffix is gitlab-runner-specific; user images
-	// in `docker run -i` mode follow different naming and would not
-	// match. (BUG-859 / BUG-866 / BUG-867).
+	// The full fix shape per BUG-868 is "long-lived helper task with
+	// `tail -f /dev/null` entrypoint + per-stage script via ECS
+	// ExecuteCommand", which routes around Fargate's no-stdin
+	// limitation. Tracked separately.
 	if ecsState.OpenStdin && !isGitlabRunnerPredefined(c.Name) {
 		if v, ok := s.stdinPipes.Load(id); ok {
 			pipe := v.(*stdinPipe)
