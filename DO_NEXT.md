@@ -10,15 +10,15 @@ Resume pointer. Updated after every task. Roadmap detail in [PLAN.md](PLAN.md); 
 
 ## ⚠ Active blockers
 
-1. **BUG-874 — Lambda has no synchronous "start" primitive.** Cell 2's GH runner does `docker create + start (returns 21ms) + exec (80ms later) + DELETE (after exec fails)` before Lambda transitions the function to Active. Architectural fix: Phase 116 — provision an ALB fronting the runner-Lambda's sockerless port; set `SOCKERLESS_CALLBACK_URL` on sub-task `CreateFunctionInput.Environment`; ContainerStart blocks until `FunctionActiveV2Waiter` returns AND a reverse-agent dial-back is registered; `docker exec` tunnels via the existing reverse-agent path.
-2. **BUG-868 — gitlab-runner `start-attach-script` per-command lifecycle vs Fargate non-restartable task.** Each script step does `docker start <helper>` + `docker attach`; Fargate tasks can't restart. Fix: Phase 114 — keep the helper task alive with synthetic `tail -f /dev/null` entrypoint, route each /start's script through SSM ExecuteCommand.
+1. **BUG-868 — gitlab-runner skips `step_script` and goes straight to cleanup_file_variables.** Verified live (job https://gitlab.com/e6qu/sockerless/-/jobs/14144936826): trace shows `prepare_executor → prepare_script → get_sources → cleanup_file_variables → ERROR exit 1` with NO `step_script` section in between. `.gitlab-ci.yml` has a valid `script:` block. Local sockerless ECS log shows the 3 stage tasks each ran 28-30s and exited cleanly via launchAfterStdin's RunTask path. The build-container's first /start probably succeeds but gitlab-runner's "is container running for step_script" pre-check sees the task already STOPPED (because the previous stage's task baked `Cmd` ran to completion → task auto-exited) and bails. **Fix candidate**: keep the build container "running" semantically across stages — e.g. detect "container ID has just had a successful task run, /start is being invoked again" → don't run a new task, return success and use SSM ExecuteCommand for the new script bytes. Or: launch the BUILD container once with `tail -f /dev/null` entrypoint, route every script-stage's stdin through SSM ExecuteCommand against the live task. Tracked as **Phase 114**.
 
-Cell 1 (GH × ECS) GREEN. PR #122 CI GREEN at `88aca1e`. Recent pushes:
+Cells 1 + 2 GREEN. PR #122 CI GREEN at `88aca1e`. Recent pushes:
 
 - `99c8ca0` — BUG-869 + BUG-870 (CodeBuild buildspec → Docker schema 2; EFS access point lookup)
 - `b3be64f` — BUG-871 + BUG-872 (Lambda single-FSC + `/mnt/...` mount path collapse + symlinks; cache prefix mismatch)
-- `9e3e6ab` — state-doc refresh
-- `d5073b4` — Phase 116 always-on overlay-inject (closes BUG-873)
+- `d5073b4` — Phase 115 always-on overlay-inject (closes BUG-873)
+- `455c019` — Phase 116 exec-via-Invoke partial (Path B + bind-link bake + workdir off Lambda)
+- `9695341` — Phase 116 wire-up via lambdaInvokeExecDriver in Typed.Exec (closes BUG-874; cell 2 GREEN at workflow run https://github.com/e6qu/sockerless/actions/runs/25113565115)
 
 ## Operational state — 2026-04-29 ~00:00 UTC
 
@@ -48,14 +48,14 @@ Iteration history (recorded for future debugging):
 - 25052216785, 25052362819 — same exec-agent-not-ready failure (BUG-853 confirmed, fix not yet shipped).
 - 25052661438 — **GREEN** — first run with the BUG-853 wait fix shipped.
 
-## 4-cell verification status (2026-04-29 ~10:08 UTC)
+## 4-cell verification status (2026-04-29 ~14:30 UTC)
 
 | Cell | Status | Latest evidence URL | Next |
 |---|---|---|---|
-| 1 GH × ECS | ✅ PASS | https://github.com/e6qu/sockerless/actions/runs/25075259911 | re-run during sweep once 2/3/4 verified |
-| 2 GH × Lambda | 🟡 5 walls past, blocked at BUG-873 | https://github.com/e6qu/sockerless/actions/runs/25102901975 (failed at OCI manifest) | implement Phase 116 (always-on overlay-inject via CodeBuild) |
-| 3 GL × ECS | 🟡 progresses past cleanup_file_variables | https://gitlab.com/e6qu/sockerless/-/jobs/14137580070 | implement Phase 114 (long-lived helper task + SSM ExecuteCommand) |
-| 4 GL × Lambda | ⏸ inherits BUG-868 + BUG-873 | n/a | unblocks once Phases 111 + 112 land |
+| 1 GH × ECS | ✅ PASS | https://github.com/e6qu/sockerless/actions/runs/25075259911 | re-run during sweep once 3/4 verified |
+| 2 GH × Lambda | ✅ PASS | https://github.com/e6qu/sockerless/actions/runs/25113565115 | re-run during sweep once 3/4 verified |
+| 3 GL × ECS | 🟡 step_script skipped (BUG-868) | latest https://gitlab.com/e6qu/sockerless/-/jobs/14144936826 | implement Phase 114 (long-lived BUILD container + SSM ExecuteCommand for stdin-piped script delivery) |
+| 4 GL × Lambda | ⏸ inherits Phase 114 pattern | n/a | adapt Phase 114 to Lambda primitives (Path B exec-via-Invoke from Phase 116 already covers single execs; need gitlab-runner stdin-pipe → lambda.Invoke flow) |
 
 ## CI status
 

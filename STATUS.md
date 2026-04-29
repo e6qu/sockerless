@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**104 phases closed (Phase 109 closed in PR #121, merged 2026-04-27). 874 bugs tracked — 872 fixed, 2 open (BUG-868 gitlab-runner lifecycle; BUG-874 Lambda start/exec lifecycle, partially closed by Phase 116). 1 false positive.** **PR #122 CI GREEN as of commit `88aca1e`** (10/10 jobs); latest commit `455c019` Phase 116 exec-via-Invoke shipping. Active branch: **`phase-110-runner-integration`**. Cell 1 GH×ECS GREEN. Cell 2 GH×Lambda cleared 6 architectural walls (BUG-862, 869, 870, 871, 872, 873) and Phase 116 partial (synchronous-Active ContainerStart + Path B exec-via-Invoke + build-time symlink baking + workdir off Lambda config) — one remaining diagnostic wall (exec returns 126 without sub-task CloudWatch entries) for next iteration. Cells 3/4 GitLab inherit BUG-868 + remaining BUG-874. Phase 115 closed; Phase 116 substantively shipped; Phase 114 queued.
+**104 phases closed (Phase 109 closed in PR #121, merged 2026-04-27). 874 bugs tracked — 873 fixed, 1 open (BUG-868 gitlab-runner lifecycle). 1 false positive.** **PR #122 CI GREEN as of commit `88aca1e`** (10/10 jobs); latest commit `9695341` Phase 116 wire-up shipping. Active branch: **`phase-110-runner-integration`**. **Cells 1 + 2 GREEN.** Cell 1 GH×ECS https://github.com/e6qu/sockerless/actions/runs/25075259911. Cell 2 GH×Lambda https://github.com/e6qu/sockerless/actions/runs/25113565115 — closed 7 architectural walls in this session (BUG-862, 869, 870, 871, 872, 873, 874). Cells 3 + 4 GitLab still need Phase 114 (long-lived helper task + ECS ExecuteCommand for cell 3; cell 4 inherits the same architectural pattern via Lambda primitives).
 
 See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer), [docs/RUNNERS.md](docs/RUNNERS.md) (runner wiring).
 
@@ -30,10 +30,10 @@ Older PRs (#112–#115) — sim parity, real volumes, FaaS invocation tracking, 
 
 | Cell | State | Next step |
 |---|---|---|
-| 1 GH × ECS | ✅ GREEN | none — re-run during sweep |
-| 2 GH × Lambda | 🟡 6 walls past, BUG-874 next | Phase 116: ALB fronting the runner-Lambda's sockerless port + reverse-agent dial-back; ContainerStart blocks until Active + dial-back; exec tunnels via reverse-agent |
+| 1 GH × ECS | ✅ GREEN | https://github.com/e6qu/sockerless/actions/runs/25075259911 |
+| 2 GH × Lambda | ✅ GREEN | https://github.com/e6qu/sockerless/actions/runs/25113565115 (Phase 115 + 116 closed BUG-862..874) |
 | 3 GL × ECS | 🟡 progressed past cleanup_file_variables, BUG-868 blocks step_script | Phase 114: long-lived Fargate helper task (`tail -f /dev/null`) + SSM ExecuteCommand per script step |
-| 4 GL × Lambda | ⏸ inherits BUG-868 + BUG-874 | unblocks once Phases 114 + 116 land |
+| 4 GL × Lambda | ⏸ inherits BUG-868 | unblocks once Phase 114's lifecycle pattern is ported to Lambda (cell-2's Path B handles single execs; gitlab-runner's per-step lifecycle adds another layer) |
 
 Detailed unblock plans per cell live in [PLAN.md § Phase 110 — paths forward to GREEN](PLAN.md). Per-bug closure paths in [BUGS.md](BUGS.md). Resume command + sequence in [DO_NEXT.md](DO_NEXT.md). Full runner hurdle catalog (closed + predicted) in [docs/RUNNERS.md § Runner hurdles](docs/RUNNERS.md). Lambda volume primitive translation in [specs/CLOUD_RESOURCE_MAPPING.md § Lambda bind-mount translation](specs/CLOUD_RESOURCE_MAPPING.md).
 - **Phase 110a — github-runner-dispatcher skeleton: shipped** at commit `ba797b6`. Top-level Go module, sockerless-agnostic (only stdlib + BurntSushi/toml). State recovery via container labels (`sockerless.dispatcher.{job_id,runner_name,managed_by}`); GC sweep every 2 min reaps exited containers + offline GitHub runners; graceful shutdown drains in-flight work bounded to 30 s.
