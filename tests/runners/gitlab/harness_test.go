@@ -181,7 +181,10 @@ func registerRunner(t *testing.T, authToken, dockerHost, description, configPath
 
 func startRunner(t *testing.T, configPath string) func() {
 	t.Helper()
-	cmd := exec.Command("gitlab-runner", "run", "--config", configPath)
+	// `--debug` surfaces the per-stage transitions + executor-level
+	// errors. Without it, the harness only sees WARNING+ — making
+	// silent step_script skips invisible.
+	cmd := exec.Command("gitlab-runner", "--debug", "run", "--config", configPath)
 	cmd.Stdout = testLogWriter{t: t, prefix: "runner: "}
 	cmd.Stderr = testLogWriter{t: t, prefix: "runner: "}
 	if err := cmd.Start(); err != nil {
