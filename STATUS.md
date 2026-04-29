@@ -1,14 +1,15 @@
 # Sockerless — Status
 
-**104 phases closed (Phase 109 closed in PR #121, merged 2026-04-27). 874 bugs tracked — 873 fixed, 1 open (BUG-868 gitlab-runner lifecycle). 1 false positive.** **PR #122 CI GREEN as of commit `88aca1e`** (10/10 jobs). Active branch: **`phase-110-runner-integration`**. **Cells 1 + 2 GREEN.** Cell 1 GH×ECS https://github.com/e6qu/sockerless/actions/runs/25075259911. Cell 2 GH×Lambda https://github.com/e6qu/sockerless/actions/runs/25113565115 — closed 7 architectural walls (BUG-862, 869, 870, 871, 872, 873, 874).
+**104 phases closed. Active branch: `phase-110-runner-integration`. Cells 1 + 2 + 3 GREEN.**
+- Cell 1 GH×ECS: https://github.com/e6qu/sockerless/actions/runs/25075259911
+- Cell 2 GH×Lambda: https://github.com/e6qu/sockerless/actions/runs/25113565115 — 7 architectural walls (BUG-862, 869, 870, 871, 872, 873, 874).
+- **Cell 3 GL×ECS (NEW 2026-04-29): https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177** (status: success) — job 14148678472 ran `echo "hello from sockerless ecs"` + `env | sort` in 270.8 s on 9 sequential per-stage Fargate tasks (prepare_script → get_sources → restore_cache → download_artifacts → step_script → after_script → archive_cache → upload_artifacts_on_success → cleanup_file_variables). Closed three live-AWS bugs at once in commit `aa2419a`:
+  1. `launchAfterStdin` short-lived AND running branches now drop `PendingCreates` so the cloud-logs follower sees `Status="exited"` from CloudState (not stale "created").
+  2. `ContainerInspect` override forces `Status="running"` while `Store.WaitChs[id]` is open so cycle 2+'s cloud-logs follower keeps polling across the new task's startup.
+  3. Stage-boundary attach barrier — wait up to 5 s for `/start`'s `markRunning` before kicking off the cloud-logs follower, closing the `/attach`-vs-`/start` race that EOFed the new stage's stream.
+  Plus diagnostic logging on `launchAfterStdin` entry/exit + 30 s `pipe.Done()` timeout fallback for log-streaming `/attach` callers.
 
-**Cell 3 (GL×ECS) — BUG-868 still open after multiple Phase 114 attempts (2026-04-29):**
-- **Long-lived helper attempt**: `helperState` + `helperCycle` + `dispatchHelperCycle` (idle-loop Fargate task + ExecuteCommand per stage). Hit a chain of issues: `panic: close of closed channel` on cycle 2 (fixed via `LoadAndDelete` + select-default close), then `/stop` per-stage spam, then `/inspect` overrides for cycle-state-vs-task-state, then per-stage `/rm` killing the cross-stage task. **Reverted** to per-stage Fargate task (the simpler `launchAfterStdin` path that cell 1 also uses).
-- **Per-stage Fargate attempt**: dropped `BUG-867` predefined-suffix filter, added empty-stdin → `sh -c "exit 0"` defensive case, added 30 s timeout on the `pipe.Done()` wait so a no-half-close `/attach` can't deadlock. Also fails — gitlab-runner's `/attach` is held open for 13 minutes (cloud-logs reader doesn't return EOF), `/wait` lands after `/attach` but the underlying task lifecycle never completes within gitlab.com's 15-min job timeout. The pipe.Done() wait + 30 s fallback are correct in isolation but the `/attach` hang downstream still kills the run.
-- **Diagnostic-mode left in main**: entry/exit `Logger.Info` lines in `launchAfterStdin` so the next pass can see whether the goroutine reaches the timeout. Re-run will surface that.
-- Implementation captured at HEAD; a fresh design pass needs the `/attach` cloud-logs reader to terminate when the per-stage task exits (currently it only EOFs when CloudWatch closes the stream, which lags).
-
-**Cell 4 (GL×Lambda) — Phase 117 not yet attempted** in this session. Open per `DO_NEXT.md`.
+**Cell 4 (GL×Lambda) — Phase 117 not yet attempted** in this session.
 
 See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer), [docs/RUNNERS.md](docs/RUNNERS.md) (runner wiring).
 
