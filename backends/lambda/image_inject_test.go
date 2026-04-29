@@ -3,6 +3,7 @@ package lambda
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/base64"
 	"io"
@@ -10,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	core "github.com/sockerless/backend-core"
 )
 
 func TestRenderOverlayDockerfile_RequiredFields(t *testing.T) {
@@ -52,10 +55,13 @@ func TestRenderOverlayDockerfile_BasicStructure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	// COPY sources are stable, context-relative names regardless of
+	// the host-side AgentBinaryPath / BootstrapBinaryPath values —
+	// TarOverlayContext stages them under those names.
 	for _, want := range []string{
 		"FROM 123.dkr.ecr.us-east-1.amazonaws.com/docker-hub/library/alpine:latest",
-		"COPY bin/sockerless-agent /opt/sockerless/sockerless-agent",
-		"COPY bin/sockerless-lambda-bootstrap /opt/sockerless/sockerless-lambda-bootstrap",
+		"COPY sockerless-agent /opt/sockerless/sockerless-agent",
+		"COPY sockerless-lambda-bootstrap /opt/sockerless/sockerless-lambda-bootstrap",
 		`ENTRYPOINT ["/opt/sockerless/sockerless-lambda-bootstrap"]`,
 	} {
 		if !strings.Contains(df, want) {
@@ -116,7 +122,12 @@ func TestTarOverlayContext_HasDockerfileAndBinaries(t *testing.T) {
 		t.Fatalf("TarOverlayContext: %v", err)
 	}
 
-	tr := tar.NewReader(bytes.NewReader(data))
+	gz, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("gzip reader: %v", err)
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
 	seen := map[string]string{}
 	for {
 		hdr, err := tr.Next()
@@ -135,20 +146,149 @@ func TestTarOverlayContext_HasDockerfileAndBinaries(t *testing.T) {
 	} else if !strings.Contains(df, "FROM alpine:latest") {
 		t.Errorf("Dockerfile content wrong: %s", df)
 	}
-	if _, ok := seen[agentPath]; !ok {
-		t.Errorf("agent binary missing at %q (entries: %v)", agentPath, keys(seen))
+	// Tar entries use the stable context names regardless of where the
+	// host binaries live.
+	if got, ok := seen["sockerless-agent"]; !ok {
+		t.Errorf("agent binary missing at sockerless-agent (entries: %v)", keys(seen))
+	} else if got != "agent-binary" {
+		t.Errorf("agent binary content unexpected: %q", got)
 	}
-	if _, ok := seen[bootPath]; !ok {
-		t.Errorf("bootstrap binary missing at %q (entries: %v)", bootPath, keys(seen))
+	if got, ok := seen["sockerless-lambda-bootstrap"]; !ok {
+		t.Errorf("bootstrap binary missing at sockerless-lambda-bootstrap (entries: %v)", keys(seen))
+	} else if got != "bootstrap-binary" {
+		t.Errorf("bootstrap binary content unexpected: %q", got)
 	}
 }
 
 // TestBuildAndPushOverlayImage_MissingDest verifies the input
 // validation before any external tool runs.
 func TestBuildAndPushOverlayImage_MissingDest(t *testing.T) {
-	_, err := BuildAndPushOverlayImage(context.TODO(), OverlayImageSpec{BaseImageRef: "alpine"}, "")
+	_, err := BuildAndPushOverlayImage(context.TODO(), OverlayImageSpec{BaseImageRef: "alpine"}, "", nil)
 	if err == nil || !strings.Contains(err.Error(), "destRef is required") {
 		t.Errorf("want destRef-required error, got %v", err)
+	}
+}
+
+func TestOverlayContentTag(t *testing.T) {
+	spec := OverlayImageSpec{
+		BaseImageRef:        "alpine:latest",
+		AgentBinaryPath:     "agent",
+		BootstrapBinaryPath: "bootstrap",
+		UserEntrypoint:      []string{"tail"},
+		UserCmd:             []string{"-f", "/dev/null"},
+	}
+	first := OverlayContentTag(spec)
+	second := OverlayContentTag(spec)
+	if first != second {
+		t.Fatalf("unstable tag: %q != %q", first, second)
+	}
+	if !strings.HasPrefix(first, "overlay-") {
+		t.Errorf("tag missing overlay- prefix: %q", first)
+	}
+
+	// Mutating any input changes the tag.
+	spec2 := spec
+	spec2.UserCmd = []string{"date"}
+	if got := OverlayContentTag(spec2); got == first {
+		t.Errorf("tag did not change after UserCmd mutation: %q", got)
+	}
+	spec3 := spec
+	spec3.BaseImageRef = "alpine:3.20"
+	if got := OverlayContentTag(spec3); got == first {
+		t.Errorf("tag did not change after BaseImageRef mutation: %q", got)
+	}
+}
+
+// stubBuilder is a CloudBuildService test double that records the
+// Build call and returns a canned result. Used to verify
+// BuildAndPushOverlayImage routes through the cloud path when a
+// builder is supplied.
+type stubBuilder struct {
+	available bool
+	result    *core.CloudBuildResult
+	err       error
+	called    bool
+	gotOpts   core.CloudBuildOptions
+}
+
+func (b *stubBuilder) Available() bool { return b.available }
+func (b *stubBuilder) Build(_ context.Context, opts core.CloudBuildOptions) (*core.CloudBuildResult, error) {
+	b.called = true
+	b.gotOpts = opts
+	if b.err != nil {
+		return nil, b.err
+	}
+	return b.result, nil
+}
+
+func TestBuildAndPushOverlayImage_RoutesViaCloudBuild(t *testing.T) {
+	dir := t.TempDir()
+	agentPath := filepath.Join(dir, "agent")
+	bootPath := filepath.Join(dir, "bootstrap")
+	if err := os.WriteFile(agentPath, []byte("agent-bytes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bootPath, []byte("boot-bytes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spec := OverlayImageSpec{
+		BaseImageRef:        "alpine:latest",
+		AgentBinaryPath:     agentPath,
+		BootstrapBinaryPath: bootPath,
+		UserEntrypoint:      []string{"tail"},
+	}
+	dest := "729079515331.dkr.ecr.eu-west-1.amazonaws.com/sockerless-live-lambda:overlay-deadbeef"
+	stub := &stubBuilder{
+		available: true,
+		result:    &core.CloudBuildResult{ImageRef: dest},
+	}
+	got, err := BuildAndPushOverlayImage(context.TODO(), spec, dest, stub)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !stub.called {
+		t.Fatal("CloudBuildService.Build was not invoked")
+	}
+	if got.ImageURI != dest {
+		t.Errorf("ImageURI = %q, want %q", got.ImageURI, dest)
+	}
+	if len(stub.gotOpts.Tags) != 1 || stub.gotOpts.Tags[0] != dest {
+		t.Errorf("Tags = %v, want [%q]", stub.gotOpts.Tags, dest)
+	}
+	if stub.gotOpts.Platform != "linux/amd64" {
+		t.Errorf("Platform = %q, want linux/amd64", stub.gotOpts.Platform)
+	}
+	if stub.gotOpts.Dockerfile != "Dockerfile" {
+		t.Errorf("Dockerfile = %q, want Dockerfile", stub.gotOpts.Dockerfile)
+	}
+	// Context tar should be non-empty (Dockerfile + 2 binaries).
+	if stub.gotOpts.ContextTar == nil {
+		t.Fatal("ContextTar is nil")
+	}
+	buf, _ := io.ReadAll(stub.gotOpts.ContextTar)
+	if len(buf) < 100 {
+		t.Errorf("ContextTar too small: %d bytes", len(buf))
+	}
+}
+
+func TestBuildAndPushOverlayImage_FallsBackToLocalDockerWhenBuilderUnavailable(t *testing.T) {
+	stub := &stubBuilder{available: false}
+	// The local-docker fallback will fail (no `docker` binary in test
+	// env on most CI), so we don't assert on success — just that
+	// stub.Build wasn't called when Available() returned false.
+	dir := t.TempDir()
+	agentPath := filepath.Join(dir, "agent")
+	bootPath := filepath.Join(dir, "bootstrap")
+	_ = os.WriteFile(agentPath, []byte("a"), 0o755)
+	_ = os.WriteFile(bootPath, []byte("b"), 0o755)
+	spec := OverlayImageSpec{
+		BaseImageRef:        "alpine:latest",
+		AgentBinaryPath:     agentPath,
+		BootstrapBinaryPath: bootPath,
+	}
+	_, _ = BuildAndPushOverlayImage(context.TODO(), spec, "x:y", stub)
+	if stub.called {
+		t.Fatal("CloudBuildService.Build called even though Available()=false")
 	}
 }
 

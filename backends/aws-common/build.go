@@ -70,15 +70,25 @@ func (s *CodeBuildService) Build(ctx context.Context, opts core.CloudBuildOption
 		return nil, fmt.Errorf("upload context to S3: %w", err)
 	}
 
-	// Determine target image reference
-	tag := "latest"
-	if len(opts.Tags) > 0 {
-		tag = opts.Tags[0]
-		if idx := strings.LastIndex(tag, ":"); idx >= 0 {
-			tag = tag[idx+1:]
+	// Determine target image reference. A fully-qualified ref in
+	// `Tags[0]` (anything containing a slash, i.e. `<host>/<repo>:tag`)
+	// is used as-is — callers needing a different ECR repo than the
+	// service-default `s.ecrRepo` (e.g. Lambda's overlay-inject path
+	// pushing to `sockerless-live-lambda-overlay`) pass the full ref.
+	// Otherwise the legacy `s.ecrRepo:tag` shape applies.
+	var imageRef string
+	if len(opts.Tags) > 0 && strings.Contains(opts.Tags[0], "/") {
+		imageRef = opts.Tags[0]
+	} else {
+		tag := "latest"
+		if len(opts.Tags) > 0 {
+			tag = opts.Tags[0]
+			if idx := strings.LastIndex(tag, ":"); idx >= 0 {
+				tag = tag[idx+1:]
+			}
 		}
+		imageRef = fmt.Sprintf("%s:%s", s.ecrRepo, tag)
 	}
-	imageRef := fmt.Sprintf("%s:%s", s.ecrRepo, tag)
 
 	// Build the docker build command
 	dockerCmd := fmt.Sprintf("docker build -f %s", opts.Dockerfile)
@@ -131,20 +141,30 @@ func (s *CodeBuildService) Build(ctx context.Context, opts core.CloudBuildOption
 		}
 	}
 
-	// Buildspec
+	// Buildspec. Login URL is derived from `imageRef` (the resolved
+	// destination) rather than `s.ecrRepo` so callers passing a fully-
+	// qualified Tags[0] log in to the right registry.
+	//
+	// CodeBuild's S3 source type does NOT auto-extract `.tar.gz`
+	// uploads (only ZIPs auto-extract). We download + extract the
+	// tarball explicitly in pre_build so the Dockerfile + binaries
+	// land where `docker build` expects them.
+	loginRegistry := strings.Split(imageRef, "/")[0]
 	buildspec := fmt.Sprintf(`version: 0.2
 phases:
   pre_build:
     commands:
-      - echo Logging in to ECR...
+      - aws s3 cp "s3://%s/%s" /tmp/context.tar.gz
+      - mkdir -p /tmp/build-context
+      - tar -xzf /tmp/context.tar.gz -C /tmp/build-context
       - aws ecr get-login-password --region %s | docker login --username AWS --password-stdin %s
   build:
     commands:
-      - %s
+      - cd /tmp/build-context && %s
   post_build:
     commands:
       - docker push %s
-`, s.region, strings.Split(s.ecrRepo, "/")[0], dockerCmd, imageRef)
+`, s.bucket, objectKey, s.region, loginRegistry, dockerCmd, imageRef)
 
 	// Start build
 	buildResult, err := s.codebuild.StartBuild(ctx, &codebuild.StartBuildInput{

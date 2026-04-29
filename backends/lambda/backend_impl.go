@@ -154,65 +154,74 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		Labels:      config.Labels,
 	}
 
-	// Resolve the image URI. If the operator shipped a pre-baked
-	// overlay (PrebuiltOverlayImage) and we're in reverse-agent mode
-	// (CallbackURL set), the user's Image is irrelevant — the Lambda
-	// function runs the operator's image, and the user's original
-	// entrypoint+cmd are passed via env vars. Skip ECR resolution
-	// entirely in that case; the prebuilt image is expected to be
-	// already pushed to ECR (or resolvable locally in integration).
+	// Resolve the image URI. Lambda image-mode imposes two hard
+	// constraints on every function image: (a) Docker schema 2 manifest
+	// (OCI rejected), and (b) ENTRYPOINT must be a Lambda Runtime API
+	// client (poll /next, post /response). User images rarely satisfy
+	// either. Sockerless's responsibility per
+	// `specs/CLOUD_RESOURCE_MAPPING.md` § Lambda mapping: route every
+	// CreateFunction through the overlay-inject path which (a) bakes
+	// `sockerless-lambda-bootstrap` as ENTRYPOINT (resolves the
+	// Runtime-API gap) and (b) runs `docker build` + `docker push` /
+	// CodeBuild — both produce Docker schema 2 (resolves the manifest
+	// gap). The user's original ENTRYPOINT + CMD ride along as
+	// `SOCKERLESS_USER_*` env vars; the bootstrap exec's them as a
+	// subprocess on each invocation.
 	var imageURI string
+	envVars["SOCKERLESS_CONTAINER_ID"] = id
+	if s.config.CallbackURL != "" {
+		envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
+	}
+	// Encode argv as base64(JSON) so every byte round-trips cleanly
+	// through the env var without Dockerfile / shell quoting.
+	if len(config.Entrypoint) > 0 {
+		b, _ := json.Marshal(config.Entrypoint)
+		envVars["SOCKERLESS_USER_ENTRYPOINT"] = base64.StdEncoding.EncodeToString(b)
+	}
+	if len(config.Cmd) > 0 {
+		b, _ := json.Marshal(config.Cmd)
+		envVars["SOCKERLESS_USER_CMD"] = base64.StdEncoding.EncodeToString(b)
+	}
 	switch {
 	case s.config.PrebuiltOverlayImage != "":
+		// Operator shipped a ready overlay — skip the build, use as-is.
 		imageURI = s.config.PrebuiltOverlayImage
-		envVars["SOCKERLESS_CONTAINER_ID"] = id
-		if s.config.CallbackURL != "" {
-			envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
-		}
-		// Encode argv as base64(JSON) so every byte round-trips cleanly
-		// through the env var without Dockerfile / shell quoting.
-		if len(config.Entrypoint) > 0 {
-			b, _ := json.Marshal(config.Entrypoint)
-			envVars["SOCKERLESS_USER_ENTRYPOINT"] = base64.StdEncoding.EncodeToString(b)
-		}
-		if len(config.Cmd) > 0 {
-			b, _ := json.Marshal(config.Cmd)
-			envVars["SOCKERLESS_USER_CMD"] = base64.StdEncoding.EncodeToString(b)
-		}
-	case s.config.CallbackURL != "":
-		// Build + push an overlay on top of the user's image. Resolve
-		// the base image first so the Dockerfile's FROM can reference
-		// something Lambda can pull.
-		base, err := s.resolveImageURI(s.ctx(), config.Image)
-		if err != nil {
-			return nil, &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", config.Image, err)}
-		}
-		imageURI = base
-		spec := OverlayImageSpec{
-			BaseImageRef:        imageURI,
-			AgentBinaryPath:     s.config.AgentBinaryPath,
-			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
-			UserEntrypoint:      config.Entrypoint,
-			UserCmd:             config.Cmd,
-		}
-		destRef := fmt.Sprintf("%s-overlay-%s", strings.TrimSuffix(imageURI, ":latest"), id[:12])
-		overlay, buildErr := BuildAndPushOverlayImage(s.ctx(), spec, destRef)
-		if buildErr != nil {
-			// Fail loud — silently using the base image would leave
-			// the user with a function they think supports `docker
-			// exec` but doesn't. Caller set SOCKERLESS_CALLBACK_URL
-			// deliberately, so surface the build failure.
-			return nil, &api.ServerError{Message: fmt.Sprintf("overlay build failed for %q: %v", imageURI, buildErr)}
-		}
-		imageURI = overlay.ImageURI
-		envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
-		envVars["SOCKERLESS_CONTAINER_ID"] = id
-	default:
+	case s.config.EndpointURL != "":
+		// Custom-endpoint mode (sim Lambda / integration tests). The
+		// sim doesn't enforce real Lambda's Docker-schema-2 +
+		// Runtime-API constraints, so overlay-inject is unnecessary.
+		// Resolve and use the base image directly.
 		var resolveErr error
 		imageURI, resolveErr = s.resolveImageURI(s.ctx(), config.Image)
 		if resolveErr != nil {
 			return nil, &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", config.Image, resolveErr)}
 		}
+	default:
+		base, err := s.resolveImageURI(s.ctx(), config.Image)
+		if err != nil {
+			return nil, &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", config.Image, err)}
+		}
+		spec := OverlayImageSpec{
+			BaseImageRef:        base,
+			AgentBinaryPath:     s.config.AgentBinaryPath,
+			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+			UserEntrypoint:      config.Entrypoint,
+			UserCmd:             config.Cmd,
+		}
+		repo, repoErr := s.overlayECRRepo()
+		if repoErr != nil {
+			return nil, &api.ServerError{Message: repoErr.Error()}
+		}
+		destRef := repo + ":" + OverlayContentTag(spec)
+		var builder core.CloudBuildService
+		if s.images != nil {
+			builder = s.images.BuildService
+		}
+		overlay, buildErr := BuildAndPushOverlayImage(s.ctx(), spec, destRef, builder)
+		if buildErr != nil {
+			return nil, &api.ServerError{Message: fmt.Sprintf("overlay build failed for %q: %v", base, buildErr)}
+		}
+		imageURI = overlay.ImageURI
 	}
 
 	// Create Lambda function. Architectures is the operator-configured
@@ -388,6 +397,27 @@ func (s *Server) ContainerStart(ref string) error {
 	// in Store.InvocationResults so CloudState reflects the container
 	// as exited with the real exit code.
 	go func() {
+		// Lambda has a brief eventual-consistency window after
+		// CreateFunction where GetFunction can return 404. Tolerate that
+		// for a few seconds before handing off to the V2 waiter, which
+		// then enforces State=Active (image pull, ENI attach for VPC).
+		// Without this initial loop, the waiter sometimes returns
+		// "ResourceNotFoundException" mere seconds after CreateFunction
+		// succeeded.
+		visibilityDeadline := time.Now().Add(30 * time.Second)
+		for time.Now().Before(visibilityDeadline) {
+			_, gerr := s.aws.Lambda.GetFunction(s.ctx(), &awslambda.GetFunctionInput{
+				FunctionName: aws.String(lambdaState.FunctionName),
+			})
+			if gerr == nil {
+				break
+			}
+			if !strings.Contains(gerr.Error(), "ResourceNotFoundException") {
+				break
+			}
+			time.Sleep(2 * time.Second)
+		}
+
 		// Wait for AWS to finish provisioning the function (image pull,
 		// ENI attach for VPC config). Invoking during State=Pending fails
 		// with ResourceConflictException.

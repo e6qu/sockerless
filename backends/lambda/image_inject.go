@@ -3,8 +3,11 @@ package lambda
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +15,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	core "github.com/sockerless/backend-core"
 )
 
 // OverlayImageSpec describes the per-container overlay image that the
@@ -40,10 +45,21 @@ type OverlayImageSpec struct {
 	UserCmd []string
 }
 
+// Build-context-relative file names for the agent + bootstrap binaries
+// inside the overlay tarball. Both the renderer (for Dockerfile COPY
+// sources) and the tar packager (for in-tar entry names) use these so
+// the layout is stable regardless of where the binaries live on the
+// host running sockerless.
+const (
+	overlayAgentContextName     = "sockerless-agent"
+	overlayBootstrapContextName = "sockerless-lambda-bootstrap"
+)
+
 // RenderOverlayDockerfile returns the Dockerfile content that, when
-// built against a context containing the agent + bootstrap binaries,
-// produces a Lambda-compatible image with exec routed through the
-// reverse agent.
+// built against a context containing the agent + bootstrap binaries
+// (named per `overlayAgentContextName` / `overlayBootstrapContextName`),
+// produces a Lambda-compatible image with `sockerless-lambda-bootstrap`
+// at the entrypoint.
 //
 // The user's original ENTRYPOINT and CMD are captured in env vars
 // (SOCKERLESS_USER_ENTRYPOINT / SOCKERLESS_USER_CMD) rather than
@@ -62,8 +78,8 @@ func RenderOverlayDockerfile(spec OverlayImageSpec) (string, error) {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "FROM %s\n", spec.BaseImageRef)
-	fmt.Fprintf(&b, "COPY %s /opt/sockerless/sockerless-agent\n", spec.AgentBinaryPath)
-	fmt.Fprintf(&b, "COPY %s /opt/sockerless/sockerless-lambda-bootstrap\n", spec.BootstrapBinaryPath)
+	fmt.Fprintf(&b, "COPY %s /opt/sockerless/sockerless-agent\n", overlayAgentContextName)
+	fmt.Fprintf(&b, "COPY %s /opt/sockerless/sockerless-lambda-bootstrap\n", overlayBootstrapContextName)
 	fmt.Fprintln(&b, `RUN chmod +x /opt/sockerless/sockerless-agent /opt/sockerless/sockerless-lambda-bootstrap`)
 	if ep := joinForEnv(spec.UserEntrypoint); ep != "" {
 		fmt.Fprintf(&b, "ENV SOCKERLESS_USER_ENTRYPOINT=%s\n", ep)
@@ -102,20 +118,56 @@ type OverlayBuildResult struct {
 
 // BuildAndPushOverlayImage materializes the overlay Dockerfile + a
 // build context containing the agent and bootstrap binaries, then
-// invokes `docker build` + `docker push` against the destination
-// registry (real ECR live; sim-ECR in tests).
+// builds + pushes via either a CloudBuildService (when running with
+// no local docker daemon — the runner-Lambda case) or local
+// `docker build` / `docker push` (laptop case). When a build service
+// is supplied AND `Available()` returns true, that path is preferred.
 //
 // The destRef must be a fully-qualified registry reference — e.g.
-// `<account>.dkr.ecr.<region>.amazonaws.com/<repo>:skls-<id>`. The
-// caller is responsible for choosing a tag that avoids cache
-// collisions (the container ID is a good default).
+// `<account>.dkr.ecr.<region>.amazonaws.com/<repo>:<tag>`. Callers
+// derive the tag via `OverlayContentTag(spec)` for content-addressed
+// caching, or pass an explicit tag when content addressing isn't
+// useful (e.g. integration tests).
 //
 // The returned ImageURI is the digest-or-tag form that Lambda should
 // pull. Callers wire this into `CreateFunctionInput.Code.ImageUri`.
-func BuildAndPushOverlayImage(ctx context.Context, spec OverlayImageSpec, destRef string) (*OverlayBuildResult, error) {
+func BuildAndPushOverlayImage(ctx context.Context, spec OverlayImageSpec, destRef string, builder core.CloudBuildService) (*OverlayBuildResult, error) {
 	if destRef == "" {
 		return nil, fmt.Errorf("BuildAndPushOverlayImage: destRef is required")
 	}
+	if builder != nil && builder.Available() {
+		return buildOverlayViaCloudBuild(ctx, spec, destRef, builder)
+	}
+	return buildOverlayViaLocalDocker(ctx, spec, destRef)
+}
+
+// buildOverlayViaCloudBuild routes the overlay build through a
+// `core.CloudBuildService` (e.g. AWS CodeBuild). Used when sockerless
+// is running inside a Lambda function (no docker daemon) and during
+// any other docker-less environment. The build context tar contains
+// the rendered Dockerfile + the agent + bootstrap binaries staged at
+// their declared paths.
+func buildOverlayViaCloudBuild(ctx context.Context, spec OverlayImageSpec, destRef string, builder core.CloudBuildService) (*OverlayBuildResult, error) {
+	contextTar, err := TarOverlayContext(spec)
+	if err != nil {
+		return nil, fmt.Errorf("tar overlay context: %w", err)
+	}
+	result, err := builder.Build(ctx, core.CloudBuildOptions{
+		Dockerfile: "Dockerfile",
+		ContextTar: bytes.NewReader(contextTar),
+		Tags:       []string{destRef},
+		Platform:   "linux/amd64",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("cloud build %s: %w", destRef, err)
+	}
+	return &OverlayBuildResult{ImageURI: result.ImageRef}, nil
+}
+
+// buildOverlayViaLocalDocker is the legacy path: shell out to local
+// `docker build` + `docker push`. Used on a laptop with Docker Desktop
+// or an external Podman VM available via DOCKER_HOST.
+func buildOverlayViaLocalDocker(ctx context.Context, spec OverlayImageSpec, destRef string) (*OverlayBuildResult, error) {
 	dockerfile, err := RenderOverlayDockerfile(spec)
 	if err != nil {
 		return nil, fmt.Errorf("render Dockerfile: %w", err)
@@ -158,31 +210,68 @@ func BuildAndPushOverlayImage(ctx context.Context, spec OverlayImageSpec, destRe
 	return &OverlayBuildResult{ImageURI: destRef}, nil
 }
 
-// TarOverlayContext packages a Dockerfile + binaries into a tarball
-// suitable for `docker ImageBuild` or an equivalent SDK call. Used by
-// tests to assert the context contents without calling out to the
-// docker CLI.
+// OverlayContentTag returns a stable, content-addressed tag for the
+// overlay image identified by `spec`. The tag is `overlay-<sha256[:16]>`
+// computed over the inputs that determine the image's bytes:
+//
+//   - BaseImageRef (the user image we layer on top of)
+//   - AgentBinaryPath + BootstrapBinaryPath (paths used by COPY in the
+//     rendered Dockerfile)
+//   - User entrypoint + cmd (encoded into ENV in the rendered Dockerfile)
+//
+// Two `docker create` calls with the same base image, same user
+// entrypoint/cmd, and the same agent/bootstrap binaries collide on the
+// same tag — Lambda's CreateFunction can reuse the already-pushed image
+// and skip the rebuild. Different inputs produce different tags.
+//
+// Callers append `-amd64` (or another platform suffix) externally if
+// they support multiple Lambda architectures from the same overlay
+// pipeline.
+func OverlayContentTag(spec OverlayImageSpec) string {
+	h := sha256.New()
+	fmt.Fprintln(h, spec.BaseImageRef)
+	fmt.Fprintln(h, spec.AgentBinaryPath)
+	fmt.Fprintln(h, spec.BootstrapBinaryPath)
+	if epb, err := json.Marshal(spec.UserEntrypoint); err == nil {
+		h.Write(epb)
+	}
+	if cmdb, err := json.Marshal(spec.UserCmd); err == nil {
+		h.Write(cmdb)
+	}
+	sum := h.Sum(nil)
+	return "overlay-" + hex.EncodeToString(sum[:8])
+}
+
+// TarOverlayContext packages a Dockerfile + binaries into a gzipped
+// tarball suitable for `docker ImageBuild` or upload to CodeBuild's S3
+// build-context source. Tar entries use stable, context-relative names
+// (`Dockerfile`, `sockerless-agent`, `sockerless-lambda-bootstrap`)
+// matching the COPY directives in `RenderOverlayDockerfile`.
 func TarOverlayContext(spec OverlayImageSpec) ([]byte, error) {
 	dockerfile, err := RenderOverlayDockerfile(spec)
 	if err != nil {
 		return nil, err
 	}
 
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
+	var raw bytes.Buffer
+	gz := gzip.NewWriter(&raw)
+	tw := tar.NewWriter(gz)
 	if err := writeTarEntry(tw, "Dockerfile", []byte(dockerfile), 0o644); err != nil {
 		return nil, err
 	}
-	if err := writeTarFile(tw, spec.AgentBinaryPath, spec.AgentBinaryPath); err != nil {
+	if err := writeTarFile(tw, spec.AgentBinaryPath, overlayAgentContextName); err != nil {
 		return nil, err
 	}
-	if err := writeTarFile(tw, spec.BootstrapBinaryPath, spec.BootstrapBinaryPath); err != nil {
+	if err := writeTarFile(tw, spec.BootstrapBinaryPath, overlayBootstrapContextName); err != nil {
 		return nil, err
 	}
 	if err := tw.Close(); err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	if err := gz.Close(); err != nil {
+		return nil, err
+	}
+	return raw.Bytes(), nil
 }
 
 func copyFile(src, dst string) error {

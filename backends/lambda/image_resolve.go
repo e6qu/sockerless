@@ -152,6 +152,24 @@ func parseDockerRef(ref string) (registry, repo, tag string) {
 	return
 }
 
+// overlayECRRepo returns the fully-qualified ECR repo (no tag) where
+// sockerless pushes overlay-converted user images. Honours the operator
+// override `SOCKERLESS_LAMBDA_OVERLAY_ECR_REPO` and otherwise falls back
+// to `<account>.dkr.ecr.<region>.amazonaws.com/sockerless-live-lambda`,
+// the same repo terraform/modules/lambda already provisions for the
+// runner-Lambda image. Tags are content-addressed via
+// `OverlayContentTag(spec)`.
+func (s *Server) overlayECRRepo() (string, error) {
+	if s.config.OverlayECRRepo != "" {
+		return s.config.OverlayECRRepo, nil
+	}
+	accountID := extractAccountID(s.config.RoleARN)
+	if accountID == "" {
+		return "", fmt.Errorf("cannot determine AWS account ID from role ARN %q for overlay ECR repo (set SOCKERLESS_LAMBDA_OVERLAY_ECR_REPO to override)", s.config.RoleARN)
+	}
+	return fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com/sockerless-live-lambda", accountID, s.config.Region), nil
+}
+
 // extractAccountID returns the AWS account ID from an IAM ARN.
 // "arn:aws:iam::123456789012:role/name" → "123456789012"
 func extractAccountID(arn string) string {

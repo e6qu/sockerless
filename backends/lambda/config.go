@@ -47,6 +47,16 @@ type Config struct {
 	// requiring insecure-registry config on the docker daemon.
 	PrebuiltOverlayImage string
 
+	// OverlayECRRepo is the ECR repository sockerless pushes overlay-
+	// converted user images to. Tags are content-addressed via
+	// `OverlayContentTag(spec)` so identical inputs share a tag — Lambda
+	// CreateFunction reuses the cached image. Format:
+	// `<account>.dkr.ecr.<region>.amazonaws.com/<repo>` (no tag). When
+	// empty, the lambda backend defaults to
+	// `<account>.dkr.ecr.<region>.amazonaws.com/sockerless-live-lambda`.
+	// Set by `SOCKERLESS_LAMBDA_OVERLAY_ECR_REPO`.
+	OverlayECRRepo string
+
 	// EnableCommit opts into the agent-driven `docker commit` path
 	// (backends/core.CommitContainerViaAgent). Off by default because
 	// the result isn't a traditional diff-against-base-image commit —
@@ -111,14 +121,15 @@ func ConfigFromEnv() Config {
 		SubnetIDs:            splitCSV(os.Getenv("SOCKERLESS_LAMBDA_SUBNETS")),
 		SecurityGroupIDs:     splitCSV(os.Getenv("SOCKERLESS_LAMBDA_SECURITY_GROUPS")),
 		AgentEFSID:           firstNonEmpty(os.Getenv("SOCKERLESS_LAMBDA_AGENT_EFS_ID"), os.Getenv("SOCKERLESS_AGENT_EFS_ID")),
-		CodeBuildProject:     os.Getenv("SOCKERLESS_AWS_CODEBUILD_PROJECT"),
-		BuildBucket:          os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET"),
+		CodeBuildProject:     firstNonEmpty(os.Getenv("SOCKERLESS_LAMBDA_CODEBUILD_PROJECT"), os.Getenv("SOCKERLESS_CODEBUILD_PROJECT"), os.Getenv("SOCKERLESS_AWS_CODEBUILD_PROJECT")),
+		BuildBucket:          firstNonEmpty(os.Getenv("SOCKERLESS_LAMBDA_BUILD_BUCKET"), os.Getenv("SOCKERLESS_BUILD_BUCKET"), os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET")),
 		EndpointURL:          os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:         parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 		CallbackURL:          os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		AgentBinaryPath:      envOrDefault("SOCKERLESS_AGENT_BINARY", "/opt/sockerless/sockerless-agent"),
 		BootstrapBinaryPath:  envOrDefault("SOCKERLESS_LAMBDA_BOOTSTRAP", "/opt/sockerless/sockerless-lambda-bootstrap"),
 		PrebuiltOverlayImage: os.Getenv("SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE"),
+		OverlayECRRepo:       os.Getenv("SOCKERLESS_LAMBDA_OVERLAY_ECR_REPO"),
 		EnableCommit:         os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
 		Architecture:         os.Getenv("SOCKERLESS_LAMBDA_ARCHITECTURE"),
 		SharedVolumes:        parseSharedVolumes(os.Getenv("SOCKERLESS_LAMBDA_SHARED_VOLUMES")),
