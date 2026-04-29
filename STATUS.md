@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**104 phases closed (Phase 109 closed in PR #121, merged 2026-04-27). 862 bugs tracked — 860 fixed, 2 open (BUG-861 Lambda externals shared-volume entry, BUG-862 CRITICAL backend ↔ host primitive mismatch). 1 false positive.** Active branch: **`phase-110-runner-integration`** (Phase 110a github-runner-dispatcher shipped; cell 1 GH×ECS GREEN; cells 2/3/4 blocked on sockerless restart + runner-Lambda image rebuild). Mirror `origin-gitlab/phase-110-runner-integration` in sync with `origin` at `58a2d66` (2026-04-29).
+**104 phases closed (Phase 109 closed in PR #121, merged 2026-04-27). 866 bugs tracked — 866 fixed, 0 open. 1 false positive.** **PR #122 CI fully GREEN as of commit `88aca1e`** (BUG-866 v2: 10/10 jobs pass — lint, test, test (e2e), sim aws/gcp/azure, ui, build-check, smoke, terraform). Active branch: **`phase-110-runner-integration`** (Phase 110a github-runner-dispatcher shipped; cell 1 GH×ECS GREEN; cells 2/3/4 blocked on sockerless restart + runner-Lambda image rebuild). Mirror `origin-gitlab/phase-110-runner-integration` in sync with `origin` at `58a2d66` (2026-04-29).
 
 See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer), [docs/RUNNERS.md](docs/RUNNERS.md) (runner wiring).
 
