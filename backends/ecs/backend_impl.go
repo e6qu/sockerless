@@ -327,29 +327,30 @@ func (s *Server) ContainerStart(ref string) error {
 	// Entrypoint/Cmd, then run the task through the normal launch
 	// path. ContainerWait blocks on the WaitCh which closes when the
 	// task exits — same end-to-end semantics as a synchronous start.
+	// Defer RunTask to launchAfterStdin ONLY when an attach pipe is
+	// already registered at start time. The attach driver creates the
+	// pipe on /attach (which gitlab-runner sequences before /start for
+	// containers it actually pipes stdin to). Containers with
+	// OpenStdin=true but no /attach call (gitlab-runner's predefined
+	// helper container is created OpenStdin=true for consistency but
+	// never piped stdin) take the standard synchronous flow.
+	//
+	// No blocking wait here — relying on /attach having reached
+	// pipe.Open() before /start lands. If /attach is in flight when
+	// /start arrives (race window), we conservatively fall through to
+	// the synchronous flow; the helper container runs its declared
+	// command which is fine for the non-script-feeding case.
+	// (BUG-859 / BUG-866 / debugged-via-PR-#122).
 	if ecsState.OpenStdin {
-		// Brief wait for the attach driver to register an open pipe.
-		// gitlab-runner's flow sequences attach (hijacked, 101) before
-		// start, but between sockerless's attach handler sending 101
-		// and entering the typed Attach() (which calls pipe.Open()),
-		// there's a tiny window where start can arrive first.
-		pipe := s.waitForStdinPipe(id, 2*time.Second)
-		if pipe != nil {
-			exitCh := markRunning()
-			cContainer := c
-			go s.launchAfterStdin(id, &cContainer, pipe, exitCh)
-			return nil
+		if v, ok := s.stdinPipes.Load(id); ok {
+			pipe := v.(*stdinPipe)
+			if pipe.IsOpen() {
+				exitCh := markRunning()
+				cContainer := c
+				go s.launchAfterStdin(id, &cContainer, pipe, exitCh)
+				return nil
+			}
 		}
-		// BUG-866: OpenStdin can be set on containers that never
-		// receive piped stdin (gitlab-runner's predefined helper
-		// container is created with OpenStdin=true but only the
-		// per-script user container actually has bytes piped through
-		// attach). When no pipe is opened within the wait window,
-		// fall through to the standard synchronous flow rather than
-		// erroring — the container's command runs as-defined; if it
-		// genuinely needs stdin it'll see EOF and exit naturally,
-		// matching docker engine semantics for a non-attached
-		// `docker start` of an OpenStdin container.
 	}
 
 	// Deferred task definition registration: if not yet registered, do it now
@@ -1265,27 +1266,6 @@ func (s *Server) inUseVolumeNames() map[string]struct{} {
 		}
 	}
 	return in
-}
-
-// waitForStdinPipe polls for an open stdinPipe registered by the
-// attach driver, up to the given timeout. Returns the pipe if one
-// becomes ready, or nil otherwise. Polled-style wait (rather than
-// channel-style) keeps the attach driver's pipe-creation code simple
-// — it doesn't have to publish a "pipe-created" signal separately.
-func (s *Server) waitForStdinPipe(id string, timeout time.Duration) *stdinPipe {
-	deadline := time.Now().Add(timeout)
-	for {
-		if v, ok := s.stdinPipes.Load(id); ok {
-			pipe := v.(*stdinPipe)
-			if pipe.IsOpen() {
-				return pipe
-			}
-		}
-		if time.Now().After(deadline) {
-			return nil
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
 }
 
 // launchAfterStdin runs the deferred-RunTask flow used by containers

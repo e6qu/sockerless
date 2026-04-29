@@ -360,16 +360,20 @@ func (s *Server) ContainerStart(ref string) error {
 	// open pipe so the invoke goroutine can wait for stdin EOF
 	// before calling Invoke. The brief wait covers the race window
 	// between the attach handler sending 101 and Attach() entering.
-	// BUG-866: OpenStdin can be set on containers that never receive
-	// piped stdin (gitlab-runner's predefined helper Lambda is created
-	// with OpenStdin=true but only the per-script user Lambda actually
-	// has bytes piped through attach). If no pipe opens within the
-	// wait window, fall through to a regular Invoke (no Payload) so
-	// the deferred-stdin path activates only when there's actually
-	// stdin to bake — same shape as the ECS backend's BUG-866 fix.
+	// Only bake stdin into Invoke Payload when an attach pipe is
+	// already registered. The attach driver opens the pipe on /attach
+	// (gitlab-runner sequences attach before start for containers it
+	// actually pipes stdin to). No blocking wait — predefined helper
+	// Lambdas with OpenStdin=true but no /attach take the regular
+	// Invoke path (no Payload). (BUG-859 / BUG-866).
 	var stdinP *stdinPipe
 	if lambdaState.OpenStdin {
-		stdinP = s.waitForStdinPipe(id, 2*time.Second)
+		if v, ok := s.stdinPipes.Load(id); ok {
+			pipe := v.(*stdinPipe)
+			if pipe.IsOpen() {
+				stdinP = pipe
+			}
+		}
 	}
 
 	// Invoke Lambda function asynchronously and capture the outcome
@@ -966,24 +970,4 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 // ImagePush pushes an image, syncing to ECR when applicable.
 func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
 	return s.images.Push(name, tag, auth)
-}
-
-// waitForStdinPipe polls for an open stdinPipe registered by the
-// attach driver, up to the given timeout. Returns the pipe if one
-// becomes ready, or nil otherwise. Mirrors `Server.waitForStdinPipe`
-// in the ECS backend.
-func (s *Server) waitForStdinPipe(id string, timeout time.Duration) *stdinPipe {
-	deadline := time.Now().Add(timeout)
-	for {
-		if v, ok := s.stdinPipes.Load(id); ok {
-			pipe := v.(*stdinPipe)
-			if pipe.IsOpen() {
-				return pipe
-			}
-		}
-		if time.Now().After(deadline) {
-			return nil
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
 }
