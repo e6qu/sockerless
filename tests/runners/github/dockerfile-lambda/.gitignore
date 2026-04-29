@@ -3,5 +3,8 @@
 sockerless-backend-lambda
 sockerless-agent
 sockerless-lambda-bootstrap
-# Legacy pre-BUG-862 artifact; harness cleans up but ignored too.
+# Legacy artifact; harness cleans up but ignored too.
 sockerless-backend-ecs
+# CodeBuild upload key tracking; written by `make upload-context`.
+.last-context-key
+context.tar.gz

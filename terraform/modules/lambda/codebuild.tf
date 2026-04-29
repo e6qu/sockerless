@@ -1,7 +1,7 @@
 # CodeBuild project + S3 build-context bucket. Used by:
 #
-# 1. The cell-2 manual rebuild path (`make all` → drives this project
-#    to rebuild the runner-Lambda image from a tarball uploaded to S3).
+# 1. Manual runner-Lambda image rebuild (`make codebuild-update`
+#    drives this project to rebuild from a tarball uploaded to S3).
 # 2. The runner-Lambda's bundled `sockerless-backend-lambda` at
 #    runtime: when a workflow's `container:` directive triggers a
 #    sub-task Lambda creation, the lambda backend uses
@@ -9,8 +9,7 @@
 #    + `SOCKERLESS_BUILD_BUCKET` to build the per-sub-task image
 #    (image-mode container Lambda with sockerless-agent + bootstrap
 #    injected). This is what enables Lambda-in-Lambda dispatch
-#    without needing a docker daemon inside the runner-Lambda
-#    (BUG-862).
+#    without needing a docker daemon inside the runner-Lambda.
 
 resource "aws_s3_bucket" "build_context" {
   bucket = "${local.name_prefix}-build-context"
@@ -124,7 +123,7 @@ resource "aws_iam_role_policy" "codebuild" {
 # come up inside the build container.
 resource "aws_codebuild_project" "image_builder" {
   name          = "${local.name_prefix}-image-builder"
-  description   = "Builds container images from S3-staged build contexts; pushes to ECR. Used by runner-Lambda cell-2 rebuild + sockerless-backend-lambda runtime image-inject."
+  description   = "Builds container images from S3-staged build contexts; pushes to ECR. Used by runner-Lambda manual rebuilds + sockerless-backend-lambda runtime image-inject."
   service_role  = aws_iam_role.codebuild.arn
   build_timeout = 30
 
@@ -167,7 +166,12 @@ resource "aws_codebuild_project" "image_builder" {
             - cd /tmp/build-context
             - echo "Building $${IMAGE_URI} for linux/$${TARGET_PLATFORM:-amd64}"
             - docker buildx create --use --name sockerless-builder --driver docker-container || true
-            - docker buildx build --platform "linux/$${TARGET_PLATFORM:-amd64}" -t "$${IMAGE_URI}" --push .
+            # Lambda image-mode requires Docker schema 2 manifests, not OCI.
+            # `--provenance=false` suppresses the attestation manifest list,
+            # `oci-mediatypes=false` flips media types from OCI to Docker
+            # schema 2. Without these, `aws lambda update-function-code`
+            # rejects the image with InvalidParameterValueException.
+            - docker buildx build --platform "linux/$${TARGET_PLATFORM:-amd64}" --provenance=false --output "type=image,name=$${IMAGE_URI},oci-mediatypes=false,push=true" .
         post_build:
           commands:
             - echo "Pushed $${IMAGE_URI}"

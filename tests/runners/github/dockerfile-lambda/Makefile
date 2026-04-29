@@ -1,7 +1,7 @@
 # Runner-Lambda image build / push / function-update.
 #
 # Single-shot rebuild of the runner-Lambda image after a backend
-# binary change (e.g. BUG-862 architecture correction). Requires:
+# binary change. Requires:
 #   - linux/amd64 sockerless-backend-lambda staged at ./sockerless-backend-lambda
 #   - DOCKER_HOST pointing at a daemon that can build linux/amd64
 #     (Docker Desktop, Podman VM, sockerless-with-CodeBuild, etc.)
@@ -54,8 +54,9 @@ ecr-login:
 		docker login --username AWS --password-stdin $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com
 
 # Update the runner Lambda function to point at the freshly-pushed
-# image. `--publish` cuts a new function version so cell 2 picks up
-# the new code without execution-environment cache hangover.
+# image. `--publish` cuts a new function version so the next
+# invocation picks up the new code without execution-environment
+# cache hangover.
 update-function:
 	aws lambda update-function-code \
 		--function-name $(FUNCTION) \
@@ -66,14 +67,14 @@ update-function:
 
 # Wait for the function's UpdateStatus to settle. Lambda image-mode
 # updates take 30-60 s before invocations route to the new image;
-# without this wait, cell 2's first invocation may hit the old code.
+# without this wait, the first invocation may hit the old code.
 wait:
 	aws lambda wait function-updated-v2 \
 		--function-name $(FUNCTION) \
 		--region $(REGION)
 
 # One-shot. Stage → build → push → update → wait. The end-to-end
-# rebuild path; what cell 2 needs after a backend change.
+# local-Docker rebuild path after a backend code change.
 all: stage build push update-function wait
 	@echo "runner-Lambda updated to $(ECR_URI)"
 

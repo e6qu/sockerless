@@ -259,6 +259,22 @@ func (m *EFSManager) DeleteAccessPointForVolume(ctx context.Context, volName str
 	return nil
 }
 
+// DescribeAccessPoint returns the EFS access point with the given ID,
+// without requiring sockerless-managed tagging. Used when the operator
+// pre-provisions an access point (e.g. via terraform) and passes its
+// ID through SOCKERLESS_*_SHARED_VOLUMES — sockerless owns the data
+// plane usage but not the resource.
+func (m *EFSManager) DescribeAccessPoint(ctx context.Context, apID string) (efstypes.AccessPointDescription, error) {
+	out, err := m.Client.DescribeAccessPoints(ctx, &efs.DescribeAccessPointsInput{AccessPointId: aws.String(apID)})
+	if err != nil {
+		return efstypes.AccessPointDescription{}, fmt.Errorf("describe access point %s: %w", apID, err)
+	}
+	if len(out.AccessPoints) == 0 {
+		return efstypes.AccessPointDescription{}, fmt.Errorf("access point %s not found", apID)
+	}
+	return out.AccessPoints[0], nil
+}
+
 // ListManagedAccessPoints returns every access point on the sockerless
 // filesystem whose tags mark it as a Docker-volume-owned access point.
 func (m *EFSManager) ListManagedAccessPoints(ctx context.Context) ([]efstypes.AccessPointDescription, error) {

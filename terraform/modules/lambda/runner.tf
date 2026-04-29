@@ -7,10 +7,10 @@
 # fresh Lambda invocation (image-mode container Lambda created on
 # demand, sharing the workspace EFS access point via FileSystemConfig).
 # Workflows stay on Lambda primitives end-to-end, per the project rule
-# "backend ↔ host primitive must match" (BUG-862).
+# "backend ↔ host primitive must match".
 #
-# Cell 2 of the 4-cell matrix. Caveat: 15-minute hard cap on Lambda
-# invocations means cell 2 is restricted to short workflows.
+# 15-minute hard cap on Lambda invocations means workflows on this
+# runner are restricted to short jobs.
 #
 # Depends on the ECS-side live env for:
 # - EFS filesystem + access points (workspace + externals — same
@@ -280,10 +280,10 @@ resource "aws_lambda_function" "sockerless_runner" {
       # AWS_REGION is reserved on Lambda — set automatically by the
       # runtime to the function's region. Don't set explicitly.
       #
-      # Sockerless-backend-lambda runs inside this Lambda (per
-      # BUG-862 architecture rule: backend ↔ host primitive must
-      # match). It dispatches each `container:` sub-task as a fresh
-      # Lambda function on demand using these knobs:
+      # Sockerless-backend-lambda runs inside this Lambda (project
+      # rule: backend ↔ host primitive must match). It dispatches
+      # each `container:` sub-task as a fresh Lambda function on
+      # demand using these knobs:
       SOCKERLESS_LAMBDA_ROLE_ARN          = aws_iam_role.runner_lambda.arn
       SOCKERLESS_LAMBDA_LOG_GROUP         = "/sockerless/lambda/${local.name_prefix}"
       SOCKERLESS_LAMBDA_SUBNETS           = join(",", local.ecs_private_subnet_ids)

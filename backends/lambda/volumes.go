@@ -122,20 +122,14 @@ func (s *Server) fileSystemConfigsForBinds(ctx context.Context, binds []string) 
 
 // accessPointARN resolves an access-point ID to its ARN via a single
 // DescribeAccessPoints call. Lambda's FileSystemConfigs wants the full
-// ARN, not just the ID.
+// ARN, not just the ID. Operator-provisioned access points (passed via
+// SOCKERLESS_LAMBDA_SHARED_VOLUMES) don't carry the sockerless-managed
+// tag, so we look them up by ID directly rather than filtering through
+// the managed list.
 func (s *Server) accessPointARN(ctx context.Context, apID string) (string, error) {
-	fsID, err := s.efs.EnsureFilesystem(ctx)
+	ap, err := s.efs.DescribeAccessPoint(ctx, apID)
 	if err != nil {
 		return "", err
 	}
-	aps, err := s.efs.ListManagedAccessPoints(ctx)
-	if err != nil {
-		return "", err
-	}
-	for _, ap := range aps {
-		if aws.ToString(ap.AccessPointId) == apID && aws.ToString(ap.FileSystemId) == fsID {
-			return aws.ToString(ap.AccessPointArn), nil
-		}
-	}
-	return "", fmt.Errorf("access point %s not found on filesystem %s", apID, fsID)
+	return aws.ToString(ap.AccessPointArn), nil
 }

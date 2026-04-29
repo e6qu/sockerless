@@ -8,9 +8,16 @@ Resume pointer. Updated after every task. Roadmap detail in [PLAN.md](PLAN.md); 
 - `origin-gitlab/main` mirrors `origin/main` (in sync as of 2026-04-27).
 - **`phase-110-runner-integration`** — active. PR #122 in flight. Phase 110b architecture work landing on this branch (Phase 110a deferred to a follow-on once 110b proves the architecture).
 
+## ⚠ Active blockers (must clear before resuming cell-2/3/4 work)
+
+1. **AWS creds expired** — `aws sts get-caller-identity` returns `InvalidClientTokenId` against `aws.sh` (last touched 2026-04-28 12:12). Refresh `aws.sh` before Step 1/2/4. Cell 2's `make codebuild-update` cannot start without creds (needs sts → s3 cp → codebuild start-build → lambda update-function-code).
+2. **BUG-868 architectural fix not yet implemented** — gitlab-runner's `start-attach-script` per-command pattern keeps cells 3+4 from completing the user-script step. The fix is large enough that it ships as **Phase 111** (see PLAN.md). Until Phase 111 lands, cells 3 + 4 will fail at `step_script` even with creds + sockerless restart.
+
+Cell 1 (GH × ECS) is GREEN and stays green — no action needed there. PR #122 CI is GREEN at `88aca1e`.
+
 ## Operational state — 2026-04-29 ~00:00 UTC
 
-- **AWS creds:** active via `aws.sh` (root `729079515331`).
+- **AWS creds:** ⚠ expired; was active via `aws.sh` (root `729079515331`). Refresh before resuming.
 - **Live AWS infra: UP in eu-west-1.** ECS cluster `sockerless-live` (35 base + 4 runner-extension resources). Lambda live env (8 resources). EFS `fs-069c02e0e8823b64e` with two access points: `runner_workspace=fsap-0f60e569bae585f25`, `runner_externals=fsap-0ff9f9686208c4ed7`.
 - **Runner-task ECS task definition:** `sockerless-live-runner:2` registered in eu-west-1. Single-container Fargate (1024 CPU / 2048 MB, X86_64). Image: `729079515331.dkr.ecr.eu-west-1.amazonaws.com/sockerless-live:runner-amd64` (latest digest pushed to ECR; `LABEL com.sockerless.ecs.task-definition-family=sockerless-runner`). EFS volumes mounted at `/home/runner/_work` and `/home/runner/externals`; entrypoint pre-populates externals on first start (tar pipe).
 - **Sockerless code changes (BUG-850..853 — all on this branch):**

@@ -18,7 +18,7 @@ import (
 	runnersinternal "github.com/sockerless/tests/runners/internal"
 )
 
-// Real GitHub Actions runner harness — the 4-cell matrix's GH side.
+// Real GitHub Actions runner harness against live AWS.
 // The runner runs inside a *Linux container* on the host (Docker
 // Desktop / colima provides the Linux VM); the container is built
 // from tests/runners/github/dockerfile/. GitHub Actions' `container:`
@@ -43,7 +43,7 @@ const (
 	runnerImageTag       = "sockerless-actions-runner:local"
 )
 
-// TestGitHub_ECS_Hello — cell 1 of the 4-cell matrix.
+// TestGitHub_ECS_Hello — GitHub Actions runner on ECS Fargate.
 //
 // Architecture: runner runs as a Fargate task in the live ECS
 // cluster, with sockerless-backend-ecs baked into the same image and
@@ -66,7 +66,7 @@ func TestGitHub_ECS_Hello(t *testing.T) {
 	subnets := os.Getenv("SOCKERLESS_ECS_TEST_SUBNETS")
 	sgs := os.Getenv("SOCKERLESS_ECS_TEST_SECURITY_GROUPS")
 	if subnets == "" || sgs == "" {
-		t.Skip("SOCKERLESS_ECS_TEST_SUBNETS / SOCKERLESS_ECS_TEST_SECURITY_GROUPS not set; cell 1 needs live infra. Run `terragrunt output` and export them.")
+		t.Skip("SOCKERLESS_ECS_TEST_SUBNETS / SOCKERLESS_ECS_TEST_SECURITY_GROUPS not set; live ECS infra required. Run `terragrunt output` and export them.")
 	}
 	runCell(t, cellConfig{
 		Label:             "sockerless-ecs",
@@ -79,15 +79,15 @@ func TestGitHub_ECS_Hello(t *testing.T) {
 	})
 }
 
-// TestGitHub_Lambda_Hello — cell 2 of the 4-cell matrix.
+// TestGitHub_Lambda_Hello — GitHub Actions runner on AWS Lambda.
 //
 // Architecture: runner runs as a Lambda invocation. Sockerless-
-// backend-ecs is baked into the runner image; the bootstrap starts
-// it on localhost:3375 inside the Lambda execution environment.
-// `docker create` calls flow through sockerless to ECS Fargate
-// sub-task spawns (sub-tasks dispatch to ECS, not back to Lambda,
-// to avoid Lambda-in-Lambda recursion). Lambda's 15-minute hard
-// cap means cell 2 is restricted to short workflows.
+// backend-lambda is baked into the runner image; the bootstrap
+// starts it on localhost:3375 inside the Lambda execution
+// environment. `docker create` calls flow through sockerless to
+// per-sub-task Lambda function creations (image-mode containers
+// built via CodeBuild). Lambda's 15-minute hard cap restricts
+// this path to short workflows.
 //
 // Required env (Lambda runner-function deployed via
 // `terraform/modules/lambda/runner.tf`):
@@ -97,12 +97,11 @@ func TestGitHub_Lambda_Hello(t *testing.T) {
 	region := envOr("SOCKERLESS_LAMBDA_TEST_REGION", "eu-west-1")
 	function := envOr("SOCKERLESS_LAMBDA_TEST_FUNCTION", "sockerless-live-runner")
 	if function == "" {
-		t.Skip("SOCKERLESS_LAMBDA_TEST_FUNCTION not set; cell 2 needs the runner-Lambda live infra")
+		t.Skip("SOCKERLESS_LAMBDA_TEST_FUNCTION not set; runner-Lambda live infra required")
 	}
-	// hello-lambda.yml isn't on main; commit a Lambda-shaped content
-	// to the registered hello-ecs.yml slot on a per-cell throwaway
-	// branch and dispatch with ref=<branch>. Same trick as cell 1's
-	// via-run variant.
+	// hello-lambda.yml isn't on main; commit a Lambda-shaped body
+	// to the registered hello-ecs.yml slot on a throwaway branch and
+	// dispatch with ref=<branch>. Same trick the ECS variant uses.
 	runCell(t, cellConfig{
 		Label:        "sockerless-lambda",
 		WorkflowFile: "hello-ecs.yml",

@@ -10,8 +10,7 @@
 # rule: backend ↔ host primitive must match. ECS in ECS, Lambda in
 # Lambda.)
 #
-# Lambda 15-minute hard cap means cell 2 is restricted to short
-# workflows.
+# Lambda 15-minute hard cap restricts this runner to short workflows.
 
 FROM public.ecr.aws/lambda/provided:al2
 

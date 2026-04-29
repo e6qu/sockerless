@@ -17,7 +17,7 @@ import (
 	runnersinternal "github.com/sockerless/tests/runners/internal"
 )
 
-// Real GitLab Runner harness — the 4-cell matrix's GitLab side.
+// Real GitLab Runner harness against live AWS.
 // Build-tag-gated (`gitlab_runner_live`). Run via:
 //
 //	go test -v -tags gitlab_runner_live -run TestGitLab_ECS_Hello \
@@ -25,15 +25,15 @@ import (
 //	go test -v -tags gitlab_runner_live -run TestGitLab_Lambda_Hello \
 //	  -timeout 30m ./tests/runners/gitlab
 //
-// Wiring + token strategy in docs/RUNNERS.md. Each cell:
+// Wiring + token strategy in docs/RUNNERS.md. Each run:
 //   1. Reads the GitLab PAT from the macOS Keychain.
 //   2. Resolves the project ID for SOCKERLESS_GL_PROJECT.
 //   3. Self-heals — deletes any leftover sockerless-* runners.
 //   4. Creates a runner via POST /api/v4/user/runners (modern API);
 //      receives an authentication token.
 //   5. Registers gitlab-runner with --executor docker --docker-host.
-//   6. Commits the .gitlab-ci.yml to a per-cell branch via API; triggers
-//      a pipeline on that branch via POST /projects/:id/pipeline.
+//   6. Commits the .gitlab-ci.yml to a throwaway branch via API;
+//      triggers a pipeline on that branch via POST /projects/:id/pipeline.
 //   7. Polls until success.
 //   8. Cleanup — gitlab-runner unregister, DELETE /runners/:id.
 
@@ -43,7 +43,7 @@ const (
 	pollInterval     = 5 * time.Second
 )
 
-// TestGitLab_ECS_Hello — cell 3 of 4.
+// TestGitLab_ECS_Hello — gitlab-runner docker executor pointed at sockerless-ECS.
 func TestGitLab_ECS_Hello(t *testing.T) {
 	runCell(t, cellConfig{
 		Tag:          "sockerless-ecs",
@@ -56,7 +56,7 @@ func TestGitLab_ECS_Hello(t *testing.T) {
 	})
 }
 
-// TestGitLab_Lambda_Hello — cell 4 of 4.
+// TestGitLab_Lambda_Hello — gitlab-runner docker executor pointed at sockerless-Lambda.
 func TestGitLab_Lambda_Hello(t *testing.T) {
 	runCell(t, cellConfig{
 		Tag:          "sockerless-lambda",
@@ -160,8 +160,8 @@ func registerRunner(t *testing.T, authToken, dockerHost, description, configPath
 	// routable copy of gitlab-runner-helper (mirrored to live ECR by
 	// the harness setup). Default `registry.gitlab.com/...` isn't
 	// supported by ECR pull-through without Secrets Manager auth.
-	// Sockerless's ECR auth fix (BUG-857) makes the manifest fetch
-	// authenticate via ECR's GetAuthorizationToken before pulling.
+	// Sockerless's ECR auth path makes the manifest fetch authenticate
+	// via ECR's GetAuthorizationToken before pulling.
 	helperImage := envOr("SOCKERLESS_GL_HELPER_IMAGE",
 		"729079515331.dkr.ecr.eu-west-1.amazonaws.com/sockerless-live:gitlab-runner-helper-amd64")
 	cmd := exec.Command("gitlab-runner", "register", "--non-interactive",
