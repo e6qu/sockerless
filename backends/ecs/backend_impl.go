@@ -1169,7 +1169,37 @@ func (s *Server) ContainerInspect(ref string) (*api.Container, error) {
 	}
 
 	// Delegate to CloudState via BaseServer (which uses ResolveContainerAuto)
-	return s.BaseServer.ContainerInspect(ref)
+	c, err := s.BaseServer.ContainerInspect(ref)
+	if err != nil {
+		return nil, err
+	}
+
+	// Deferred-stdin path: a fresh /start has spawned `launchAfterStdin`
+	// but the new Fargate task isn't observable in CloudState yet
+	// (image pull + ENI provision typically takes 30-40 s). Without
+	// this override `/inspect` would return CloudState's view, which
+	// reflects the PREVIOUS stage's task — Status="exited" for cycles
+	// 2+ on a gitlab-runner predefined helper. The cloud-logs follower
+	// inside the new stage's `/attach` reads that "exited" status,
+	// hits `isTerminalState`, and EOFs the stream before the new task
+	// has produced any output — gitlab-runner sees an empty stage and
+	// reports it as failed.
+	//
+	// While a deferred-launch is in flight (an open WaitCh exists in
+	// the Store), force Status="running" so the cloud-logs follower
+	// keeps polling until the new task actually exits.
+	if ch, ok := s.Store.WaitChs.Load(c.ID); ok {
+		select {
+		case <-ch.(chan struct{}):
+			// Channel already closed — task ran and stopped; let
+			// CloudState's view stand.
+		default:
+			c.State.Running = true
+			c.State.Status = "running"
+		}
+	}
+
+	return c, nil
 }
 
 // ContainerList lists containers from CloudState, plus PendingCreates.
@@ -1372,19 +1402,28 @@ func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, 
 
 	if taskAddr == "" {
 		// Short-lived task already STOPPED before we observed RUNNING.
-		// Keep PendingCreates: gitlab-runner restarts the same
-		// container across script steps, and CloudState's
-		// containerFromTask synthesises Config without Binds /
-		// VolumesFrom / OpenStdin etc. The cached PendingCreates
-		// entry is the source of truth for the container's full
-		// shape; only ContainerRemove drops it.
+		// Drop PendingCreates so /inspect reads the actual STOPPED
+		// state from CloudState (Status="exited") instead of the
+		// stale "created" carried in the PendingCreates entry.
+		// Without this drop, the cloud-logs follower in /attach polls
+		// /inspect, sees Status="created" (non-terminal), and never
+		// EOFs the stream — gitlab-runner's per-stage `docker attach`
+		// hangs indefinitely waiting for the container to "exit".
+		s.PendingCreates.Delete(id)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
 		}
 		return
 	}
 
-	// Keep PendingCreates across cycles; see short-lived branch above.
+	// Drop PendingCreates: from this point on, CloudState (DescribeTasks)
+	// is the source of truth for the container's State, and the stale
+	// "created" Status in the PendingCreates entry would otherwise
+	// shadow CloudState's "running" / "exited" through ResolveContainerAuto
+	// — that breaks `/attach`'s cloud-logs follower (it polls /inspect
+	// expecting Status="exited" to terminate the stream when the task
+	// stops).
+	s.PendingCreates.Delete(id)
 
 	taskIP := taskAddr
 	if i := strings.LastIndex(taskAddr, ":"); i > 0 {

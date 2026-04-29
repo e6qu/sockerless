@@ -3,6 +3,7 @@ package ecs
 import (
 	"errors"
 	"io"
+	"time"
 
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
@@ -31,6 +32,40 @@ func (d *ecsStdinAttachDriver) Describe() string {
 
 func (d *ecsStdinAttachDriver) Attach(dctx core.DriverContext, tty bool, conn io.ReadWriter) error {
 	id := dctx.Container.ID
+
+	// Stage-boundary barrier for the gitlab-runner predefined-helper
+	// flow: gitlab-runner does /attach then /start per stage on the
+	// same container ID, but the previous stage's Fargate task is
+	// already STOPPED in CloudState. If the cloud-logs follower below
+	// starts before /start fires `markRunning`, its first poll sees
+	// Status="exited" from CloudState and EOFs immediately — the new
+	// stage's task hasn't even been registered yet, so nothing
+	// streams to the caller and gitlab-runner reports an empty
+	// (failed) stage.
+	//
+	// Wait briefly (up to 5 s) for /start to register a fresh WaitCh
+	// in the Store. Once it's there, the ContainerInspect override
+	// returns Status="running" while the WaitCh is open, keeping
+	// the cloud-logs follower alive across the new task's startup.
+	// Containers that never see a /start (e.g. log-streaming attaches
+	// the caller will close on its own) just hit the timeout and
+	// fall through to the existing flow.
+	deadline := time.After(5 * time.Second)
+	tick := time.NewTicker(50 * time.Millisecond)
+	for {
+		if _, ok := d.s.Store.WaitChs.Load(id); ok {
+			break
+		}
+		select {
+		case <-deadline:
+			tick.Stop()
+			goto barrierDone
+		case <-tick.C:
+		}
+	}
+barrierDone:
+	tick.Stop()
+
 	fetch := d.s.buildCloudWatchFetcher(id)
 
 	rwc, err := core.AttachViaCloudLogs(d.s.BaseServer, id, api.ContainerAttachOptions{
