@@ -43,6 +43,13 @@ type OverlayImageSpec struct {
 	UserEntrypoint []string
 	// UserCmd is the original Dockerfile CMD.
 	UserCmd []string
+	// BindLinks is the set of `<dst>=<mnt-target>` symlink mappings
+	// the overlay should create at build time (Lambda's root
+	// filesystem is read-only at runtime, so the bootstrap can't
+	// create them on first boot). One `RUN ln -sfn <target> <dst>`
+	// directive is emitted per entry. Same env-var format the
+	// bootstrap recognises if BindLinks isn't pre-baked.
+	BindLinks []string
 }
 
 // Build-context-relative file names for the agent + bootstrap binaries
@@ -81,6 +88,18 @@ func RenderOverlayDockerfile(spec OverlayImageSpec) (string, error) {
 	fmt.Fprintf(&b, "COPY %s /opt/sockerless/sockerless-agent\n", overlayAgentContextName)
 	fmt.Fprintf(&b, "COPY %s /opt/sockerless/sockerless-lambda-bootstrap\n", overlayBootstrapContextName)
 	fmt.Fprintln(&b, `RUN chmod +x /opt/sockerless/sockerless-agent /opt/sockerless/sockerless-lambda-bootstrap`)
+	// Pre-create bind-link symlinks at build time. Lambda's runtime
+	// container filesystem is read-only outside /tmp + the EFS mount,
+	// so the bootstrap can't create these on first boot. Targets are
+	// stored as path strings — the destination dir doesn't need to
+	// exist at build time.
+	for _, entry := range spec.BindLinks {
+		dst, target, ok := splitBindLink(entry)
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(&b, "RUN mkdir -p %s && ln -sfn %s %s\n", shellQuote(filepath.Dir(dst)), shellQuote(target), shellQuote(dst))
+	}
 	if ep := joinForEnv(spec.UserEntrypoint); ep != "" {
 		fmt.Fprintf(&b, "ENV SOCKERLESS_USER_ENTRYPOINT=%s\n", ep)
 	}
@@ -210,6 +229,24 @@ func buildOverlayViaLocalDocker(ctx context.Context, spec OverlayImageSpec, dest
 	return &OverlayBuildResult{ImageURI: destRef}, nil
 }
 
+// splitBindLink parses a `<dst>=<target>` entry. Same format as the
+// CSV in `SOCKERLESS_LAMBDA_BIND_LINKS`. Returns ok=false on malformed
+// entries so callers can skip them silently (the bootstrap repeats the
+// validation at runtime if they ever leak through).
+func splitBindLink(entry string) (dst, target string, ok bool) {
+	idx := strings.IndexByte(entry, '=')
+	if idx <= 0 || idx == len(entry)-1 {
+		return "", "", false
+	}
+	return strings.TrimSpace(entry[:idx]), strings.TrimSpace(entry[idx+1:]), true
+}
+
+// shellQuote produces a single-quoted shell literal. Used inside RUN
+// directives where the path could contain shell metacharacters.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // OverlayContentTag returns a stable, content-addressed tag for the
 // overlay image identified by `spec`. The tag is `overlay-<sha256[:16]>`
 // computed over the inputs that determine the image's bytes:
@@ -237,6 +274,9 @@ func OverlayContentTag(spec OverlayImageSpec) string {
 	}
 	if cmdb, err := json.Marshal(spec.UserCmd); err == nil {
 		h.Write(cmdb)
+	}
+	for _, entry := range spec.BindLinks {
+		fmt.Fprintln(h, entry)
 	}
 	sum := h.Sum(nil)
 	return "overlay-" + hex.EncodeToString(sum[:8])

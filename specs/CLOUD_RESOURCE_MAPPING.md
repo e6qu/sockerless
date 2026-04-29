@@ -264,6 +264,21 @@ When `subpath` is set, the volume's data lives under `<APRoot>/<subpath>` on EFS
 
 This is the only correct mapping of Docker's `-v` semantics onto Lambda's volume primitive — same nature as sockerless's reverse-agent translation of `docker exec` for Lambda (which has no docker exec), or sockerless's metadata-only network driver for Fargate (which has its own netns).
 
+### Lambda exec semantics
+
+Lambda has no native `docker exec` primitive — once a function is invoked, there's no inbound channel to push additional commands into the running execution environment. Sockerless implements `docker exec` against Lambda containers via two complementary translations:
+
+**Path A — reverse-agent (preferred when reachable):** the bootstrap dials a long-lived WebSocket back to sockerless at `SOCKERLESS_CALLBACK_URL` during init; sockerless pushes `TypeExec` messages over the WebSocket; the bootstrap spawns the command in the same execution environment, streams stdout/stderr/exit-code back. Preserves Docker fidelity (multiple execs share `/tmp`, file descriptors, etc.). Requires a stable inbound endpoint reachable from the sub-task's VPC subnets — typically API Gateway WebSocket API or a separate sockerless service running outside Lambda (e.g. ECS Fargate behind an NLB).
+
+**Path B — exec-via-Invoke (fallback, native to Lambda's primitive):** each `docker exec` triggers a fresh `lambda.Invoke` whose Payload is a JSON envelope `{"sockerless":{"exec":{"argv":[...],"tty":...,"workdir":...,"env":[...]}}}`. The bootstrap parses the envelope, spawns the command, returns `{"sockerlessExecResult":{"exitCode":N,"stdout":"<base64>","stderr":"<base64>"}}` via `/response`. Sockerless tunnels the response into the docker-exec attach stream. Each exec is a separate Lambda invocation: the execution environment may or may not be reused (Lambda's warm-pool decision). State persistence between execs is via EFS-mounted volumes only — `/tmp` does NOT persist across invocations. Required when no inbound endpoint is available (e.g., sockerless baked into the runner-Lambda image with no fronting API Gateway).
+
+Choice of path is per-container, decided at exec time:
+1. If `s.reverseAgents.Resolve(containerID)` returns a registered session → Path A.
+2. Else if the function is `Active` and reachable via `lambda.Invoke` → Path B.
+3. Else → `NotImplementedError` with a clear message.
+
+Path B's payload format matches what `agent/cmd/sockerless-lambda-bootstrap/main.go` parses in `runUserInvocation`. An empty Payload (or a non-JSON one) keeps the existing "run user entrypoint+cmd as a subprocess" behaviour for the function's main invocation.
+
 ---
 
 ## Docker / Podman API coverage matrix

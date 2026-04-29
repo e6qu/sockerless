@@ -54,6 +54,7 @@ const (
 	envUserEntrypoint = "SOCKERLESS_USER_ENTRYPOINT"   // base64(JSON-encoded argv)
 	envUserCmd        = "SOCKERLESS_USER_CMD"          // base64(JSON-encoded argv)
 	envBindLinks      = "SOCKERLESS_LAMBDA_BIND_LINKS" // CSV of `<dst>=<mnt-target>` pairs
+	envUserWorkdir    = "SOCKERLESS_USER_WORKDIR"      // chdir target for the user subprocess
 )
 
 const (
@@ -150,10 +151,48 @@ func handleOneInvocation(base string) error {
 	return postResult(base, requestID, "/response", stdout)
 }
 
+// execEnvelope is the JSON shape sockerless's lambda backend uses to
+// dispatch `docker exec` via `lambda.Invoke` when the reverse-agent
+// path isn't wired (e.g. in-Lambda sockerless with no fronting API
+// Gateway). Documented in `specs/CLOUD_RESOURCE_MAPPING.md` § Lambda
+// exec semantics — Path B.
+type execEnvelope struct {
+	Sockerless struct {
+		Exec *struct {
+			Argv    []string `json:"argv"`
+			Tty     bool     `json:"tty,omitempty"`
+			Workdir string   `json:"workdir,omitempty"`
+			Env     []string `json:"env,omitempty"`
+			Stdin   string   `json:"stdin,omitempty"` // base64-encoded
+		} `json:"exec,omitempty"`
+	} `json:"sockerless,omitempty"`
+}
+
+// execResult is the JSON shape the bootstrap returns when the Invoke
+// payload was an exec envelope. Matches `specs/CLOUD_RESOURCE_MAPPING.md`
+// § Lambda exec semantics — Path B response shape.
+type execResult struct {
+	SockerlessExecResult struct {
+		ExitCode int    `json:"exitCode"`
+		Stdout   string `json:"stdout"` // base64-encoded
+		Stderr   string `json:"stderr"` // base64-encoded
+	} `json:"sockerlessExecResult"`
+}
+
 // runUserInvocation runs the user's declared entrypoint+cmd with the
 // invocation payload piped on stdin. Captures stdout + stderr and
 // returns the exit code. Cancelled by the deadline context.
+//
+// When the payload parses as an `execEnvelope` with a non-nil `exec`
+// field, the bootstrap instead spawns that argv with the envelope's
+// stdin/env/workdir and returns an `execResult` JSON response. This is
+// how sockerless's lambda backend implements `docker exec` against a
+// Lambda-deployed container without needing a long-lived inbound
+// channel back to sockerless.
 func runUserInvocation(ctx context.Context, payload []byte) (stdout, stderr []byte, exitCode int) {
+	if env, ok := parseExecEnvelope(payload); ok {
+		return runExecInvocation(ctx, env)
+	}
 	argv := append(parseUserArgv(envUserEntrypoint), parseUserArgv(envUserCmd)...)
 	if len(argv) == 0 {
 		// Nothing to run; echo the payload as the response (matches the
@@ -164,6 +203,9 @@ func runUserInvocation(ctx context.Context, payload []byte) (stdout, stderr []by
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Env = os.Environ()
 	cmd.Stdin = bytes.NewReader(payload)
+	if wd := os.Getenv(envUserWorkdir); wd != "" {
+		cmd.Dir = wd
+	}
 	// Tee the subprocess's output into two places: the buffer that
 	// becomes the /response body, and the bootstrap's own
 	// stdout/stderr. The second destination is what the CONTAINER's
@@ -188,6 +230,79 @@ func runUserInvocation(ctx context.Context, payload []byte) (stdout, stderr []by
 		return outBuf.Bytes(), errBuf.Bytes(), 1
 	}
 	return outBuf.Bytes(), errBuf.Bytes(), 0
+}
+
+// parseExecEnvelope decodes payload as an exec envelope. Returns
+// (envelope, true) when the payload is valid JSON containing a
+// non-nil sockerless.exec object; (zero, false) otherwise so callers
+// fall through to the standard "user entrypoint" path.
+func parseExecEnvelope(payload []byte) (execEnvelope, bool) {
+	if len(payload) == 0 || payload[0] != '{' {
+		return execEnvelope{}, false
+	}
+	var env execEnvelope
+	if err := json.Unmarshal(payload, &env); err != nil {
+		return execEnvelope{}, false
+	}
+	if env.Sockerless.Exec == nil || len(env.Sockerless.Exec.Argv) == 0 {
+		return execEnvelope{}, false
+	}
+	return env, true
+}
+
+// runExecInvocation handles a Path B exec request. The argv runs as a
+// subprocess with the envelope's stdin / env / workdir; the result is
+// returned as a JSON `execResult` to the Lambda Runtime API so
+// sockerless's lambda backend can decode + tunnel into the docker exec
+// attach connection.
+func runExecInvocation(ctx context.Context, env execEnvelope) (stdout, stderr []byte, exitCode int) {
+	spec := env.Sockerless.Exec
+	cmd := exec.CommandContext(ctx, spec.Argv[0], spec.Argv[1:]...)
+	cmd.Env = os.Environ()
+	if len(spec.Env) > 0 {
+		// Append per-exec env atop the inherited environment — Docker's
+		// exec semantics allow extra env vars without dropping the
+		// container's defaults.
+		cmd.Env = append(cmd.Env, spec.Env...)
+	}
+	if spec.Workdir != "" {
+		cmd.Dir = spec.Workdir
+	} else if wd := os.Getenv(envUserWorkdir); wd != "" {
+		cmd.Dir = wd
+	}
+	if spec.Stdin != "" {
+		stdinBytes, err := base64.StdEncoding.DecodeString(spec.Stdin)
+		if err == nil {
+			cmd.Stdin = bytes.NewReader(stdinBytes)
+		}
+	}
+
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = io.MultiWriter(&outBuf, os.Stdout)
+	cmd.Stderr = io.MultiWriter(&errBuf, os.Stderr)
+
+	code := 0
+	if err := cmd.Run(); err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			code = ee.ExitCode()
+		} else {
+			code = 1
+		}
+	}
+
+	// Encode the result as JSON so the lambda backend's exec-attach
+	// adapter can recover it from the `lambda.Invoke` response.
+	res := execResult{}
+	res.SockerlessExecResult.ExitCode = code
+	res.SockerlessExecResult.Stdout = base64.StdEncoding.EncodeToString(outBuf.Bytes())
+	res.SockerlessExecResult.Stderr = base64.StdEncoding.EncodeToString(errBuf.Bytes())
+	body, _ := json.Marshal(res)
+	// Lambda's invocation contract returns one body — we put the JSON
+	// response in stdout (the /response payload), leave stderr empty,
+	// and set the function-level exit code to 0 so Lambda doesn't
+	// classify the invocation as a function-error. The actual exec exit
+	// code travels inside the JSON body.
+	return body, nil, 0
 }
 
 // mainPIDFilePath is the path the bootstrap writes the user-process
@@ -334,6 +449,12 @@ func runUserProcessStandalone() {
 	if len(argv) == 0 {
 		fmt.Fprintln(os.Stderr, "sockerless-lambda-bootstrap: no user entrypoint/cmd configured")
 		os.Exit(0)
+	}
+	if wd := os.Getenv(envUserWorkdir); wd != "" {
+		if err := os.Chdir(wd); err != nil {
+			fmt.Fprintf(os.Stderr, "sockerless-lambda-bootstrap: chdir %q: %v\n", wd, err)
+			os.Exit(126)
+		}
 	}
 	bin, err := exec.LookPath(argv[0])
 	if err != nil {

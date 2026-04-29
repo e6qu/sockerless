@@ -182,6 +182,20 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		b, _ := json.Marshal(config.Cmd)
 		envVars["SOCKERLESS_USER_CMD"] = base64.StdEncoding.EncodeToString(b)
 	}
+	// Resolve bind-mount FileSystemConfigs early so the bind-link
+	// symlinks can be baked into the overlay image at build time
+	// (Lambda's runtime root filesystem is read-only — runtime
+	// symlink creation fails).
+	var fsConfigs []lambdatypes.FileSystemConfig
+	var bindLinks []string
+	if len(hostConfig.Binds) > 0 {
+		var err error
+		fsConfigs, bindLinks, err = s.fileSystemConfigsForBinds(s.ctx(), hostConfig.Binds)
+		if err != nil {
+			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("resolve Lambda file-system configs: %v", err)}
+		}
+	}
+
 	switch {
 	case s.config.PrebuiltOverlayImage != "":
 		// Operator shipped a ready overlay — skip the build, use as-is.
@@ -207,6 +221,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
 			UserEntrypoint:      config.Entrypoint,
 			UserCmd:             config.Cmd,
+			BindLinks:           bindLinks,
 		}
 		repo, repoErr := s.overlayECRRepo()
 		if repoErr != nil {
@@ -259,38 +274,40 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		}
 	}
 
-	// Attach named-volume binds as a single EFS FileSystemConfig and
-	// emit the per-bind symlink mappings the bootstrap creates before
-	// the user entrypoint runs. Lambda enforces at most 1 FSC per
-	// function and `/mnt/...` mount paths — see
+	// Attach the resolved FileSystemConfig (already computed above so
+	// the bind-link symlinks could be baked into the overlay image).
+	// `SOCKERLESS_LAMBDA_BIND_LINKS` env is still emitted as a fallback
+	// for runtime-flexible deployments (sim mode, where the overlay
+	// path doesn't fire); the in-Lambda bootstrap is idempotent —
+	// finding pre-existing symlinks is a no-op. See
 	// `specs/CLOUD_RESOURCE_MAPPING.md` § "Lambda bind-mount translation".
-	if len(hostConfig.Binds) > 0 {
-		fsConfigs, bindLinks, err := s.fileSystemConfigsForBinds(s.ctx(), hostConfig.Binds)
-		if err != nil {
-			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("resolve Lambda file-system configs: %v", err)}
-		}
+	if len(fsConfigs) > 0 {
 		createInput.FileSystemConfigs = fsConfigs
-		if len(bindLinks) > 0 {
-			if createInput.Environment == nil {
-				createInput.Environment = &lambdatypes.Environment{Variables: envVars}
-			}
-			createInput.Environment.Variables["SOCKERLESS_LAMBDA_BIND_LINKS"] = strings.Join(bindLinks, ",")
+	}
+	if len(bindLinks) > 0 {
+		if createInput.Environment == nil {
+			createInput.Environment = &lambdatypes.Environment{Variables: envVars}
 		}
+		createInput.Environment.Variables["SOCKERLESS_LAMBDA_BIND_LINKS"] = strings.Join(bindLinks, ",")
 	}
 
-	// Set image config overrides if cmd/entrypoint specified
-	if len(config.Cmd) > 0 || len(config.Entrypoint) > 0 || config.WorkingDir != "" {
-		imgConfig := &lambdatypes.ImageConfig{}
-		if len(config.Entrypoint) > 0 {
-			imgConfig.EntryPoint = config.Entrypoint
+	// We DON'T propagate Cmd/Entrypoint/WorkingDir to Lambda's
+	// ImageConfig — the overlay-inject path bakes
+	// `sockerless-lambda-bootstrap` as the ENTRYPOINT (it owns the
+	// Lambda Runtime API loop) and handles the user's argv + workdir
+	// via env vars (`SOCKERLESS_USER_ENTRYPOINT/CMD/WORKDIR`). Setting
+	// `ImageConfig.WorkingDirectory` here would make Lambda's runtime
+	// chdir BEFORE the bootstrap runs — and BIND_LINKS-targeted paths
+	// like `/__w/<repo>` only exist as symlinks created by the
+	// bootstrap, so Lambda's pre-bootstrap chdir fails with
+	// `Runtime.InvalidWorkingDir`. The user's workdir is honoured by
+	// the bootstrap when it spawns the user subprocess (or in
+	// `execEnvelope.Workdir` for Path B execs).
+	if config.WorkingDir != "" {
+		if createInput.Environment == nil {
+			createInput.Environment = &lambdatypes.Environment{Variables: envVars}
 		}
-		if len(config.Cmd) > 0 {
-			imgConfig.Command = config.Cmd
-		}
-		if config.WorkingDir != "" {
-			imgConfig.WorkingDirectory = aws.String(config.WorkingDir)
-		}
-		createInput.ImageConfig = imgConfig
+		createInput.Environment.Variables["SOCKERLESS_USER_WORKDIR"] = config.WorkingDir
 	}
 
 	result, err := s.aws.Lambda.CreateFunction(s.ctx(), createInput)
@@ -393,89 +410,91 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 	}
 
-	// Invoke Lambda function asynchronously and capture the outcome
-	// in Store.InvocationResults so CloudState reflects the container
-	// as exited with the real exit code.
-	go func() {
-		// Lambda has a brief eventual-consistency window after
-		// CreateFunction where GetFunction can return 404. Tolerate that
-		// for a few seconds before handing off to the V2 waiter, which
-		// then enforces State=Active (image pull, ENI attach for VPC).
-		// Without this initial loop, the waiter sometimes returns
-		// "ResourceNotFoundException" mere seconds after CreateFunction
-		// succeeded.
-		visibilityDeadline := time.Now().Add(30 * time.Second)
-		for time.Now().Before(visibilityDeadline) {
-			_, gerr := s.aws.Lambda.GetFunction(s.ctx(), &awslambda.GetFunctionInput{
-				FunctionName: aws.String(lambdaState.FunctionName),
-			})
-			if gerr == nil {
-				break
-			}
-			if !strings.Contains(gerr.Error(), "ResourceNotFoundException") {
-				break
-			}
-			time.Sleep(2 * time.Second)
-		}
-
-		// Wait for AWS to finish provisioning the function (image pull,
-		// ENI attach for VPC config). Invoking during State=Pending fails
-		// with ResourceConflictException.
-		waiter := awslambda.NewFunctionActiveV2Waiter(s.aws.Lambda)
-		if werr := waiter.Wait(s.ctx(), &awslambda.GetFunctionInput{
+	// Block synchronously until the function is Active — clients
+	// (especially CI runners) typically issue `docker exec` immediately
+	// after `docker start` returns, and Invoke against a Pending
+	// function fails with ResourceConflictException. The runner-on-
+	// Lambda path (`specs/CLOUD_RESOURCE_MAPPING.md` § Lambda exec
+	// semantics — Path B) routes each `docker exec` through a fresh
+	// `lambda.Invoke`, so the function MUST be Active before /start
+	// returns.
+	//
+	// Lambda has a brief eventual-consistency window after CreateFunction
+	// where GetFunction can return 404. Tolerate that for a few seconds
+	// before handing off to the V2 waiter, which then enforces
+	// State=Active (image pull, ENI attach for VPC).
+	visibilityDeadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(visibilityDeadline) {
+		_, gerr := s.aws.Lambda.GetFunction(s.ctx(), &awslambda.GetFunctionInput{
 			FunctionName: aws.String(lambdaState.FunctionName),
-		}, 5*time.Minute); werr != nil {
-			s.Logger.Error().Err(werr).Str("function", lambdaState.FunctionName).Msg("Lambda function did not become Active")
-			s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: 1, Error: werr.Error()})
-			if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-				close(ch.(chan struct{}))
-			}
-			return
-		}
-
-		// Block until stdin EOF for OpenStdin containers; bake the
-		// buffered bytes into InvokeInput.Payload. The bootstrap's
-		// runUserInvocation pipes Payload to the user entrypoint as
-		// stdin, so `Cmd=[sh]` + Payload=script runs the script.
-		var invokePayload []byte
-		if stdinP != nil {
-			<-stdinP.Done()
-			invokePayload = stdinP.Bytes()
-			s.stdinPipes.Delete(id)
-		}
-
-		result, err := s.aws.Lambda.Invoke(s.ctx(), &awslambda.InvokeInput{
-			FunctionName: aws.String(lambdaState.FunctionName),
-			Payload:      invokePayload,
 		})
-
-		inv := core.InvocationResult{FinishedAt: time.Now()}
-		switch {
-		case err != nil:
-			s.Logger.Error().Err(err).Str("function", lambdaState.FunctionName).Msg("Lambda invocation failed")
-			inv.ExitCode = 1
-			inv.Error = err.Error()
-		case result.FunctionError != nil:
-			fnErr := aws.ToString(result.FunctionError)
-			s.Logger.Warn().Str("error", fnErr).Msg("Lambda function returned error")
-			inv.ExitCode = 1
-			inv.Error = fnErr
-			if len(result.Payload) > 0 {
-				s.Store.LogBuffers.Store(id, result.Payload)
-			}
-		default:
-			// Successful invocation — exit code 0.
-			if len(result.Payload) > 0 && string(result.Payload) != "{}" {
-				s.Store.LogBuffers.Store(id, result.Payload)
-			}
+		if gerr == nil {
+			break
 		}
-		s.Store.PutInvocationResult(id, inv)
-		s.persistInvocationResultToTags(s.ctx(), lambdaState.FunctionARN, inv)
-
+		if !strings.Contains(gerr.Error(), "ResourceNotFoundException") {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	waiter := awslambda.NewFunctionActiveV2Waiter(s.aws.Lambda)
+	if werr := waiter.Wait(s.ctx(), &awslambda.GetFunctionInput{
+		FunctionName: aws.String(lambdaState.FunctionName),
+	}, 5*time.Minute); werr != nil {
+		s.Logger.Error().Err(werr).Str("function", lambdaState.FunctionName).Msg("Lambda function did not become Active")
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
 		}
-	}()
+		return &api.ServerError{Message: fmt.Sprintf("lambda function %s did not become Active: %v", lambdaState.FunctionName, werr)}
+	}
+
+	// Function is Active. The "main Invoke" only fires when there is a
+	// concrete payload to deliver (gitlab-runner stdin-piped script).
+	// The exec-driven model — `docker create` then per-step `docker
+	// exec` — does NOT auto-invoke a stay-alive entrypoint like
+	// `tail -f /dev/null` because Lambda has no equivalent primitive
+	// (Lambda functions are invoke-on-demand, not "long-running"). The
+	// container stays "Running" in CloudState as long as the function
+	// exists, regardless of whether any invocation is in flight. Each
+	// `docker exec` fires its own concurrent `lambda.Invoke`. See
+	// `specs/CLOUD_RESOURCE_MAPPING.md` § Lambda exec semantics.
+	if stdinP != nil {
+		go func() {
+			<-stdinP.Done()
+			invokePayload := stdinP.Bytes()
+			s.stdinPipes.Delete(id)
+
+			result, err := s.aws.Lambda.Invoke(s.ctx(), &awslambda.InvokeInput{
+				FunctionName: aws.String(lambdaState.FunctionName),
+				Payload:      invokePayload,
+			})
+
+			inv := core.InvocationResult{FinishedAt: time.Now()}
+			switch {
+			case err != nil:
+				s.Logger.Error().Err(err).Str("function", lambdaState.FunctionName).Msg("Lambda invocation failed")
+				inv.ExitCode = 1
+				inv.Error = err.Error()
+			case result.FunctionError != nil:
+				fnErr := aws.ToString(result.FunctionError)
+				s.Logger.Warn().Str("error", fnErr).Msg("Lambda function returned error")
+				inv.ExitCode = 1
+				inv.Error = fnErr
+				if len(result.Payload) > 0 {
+					s.Store.LogBuffers.Store(id, result.Payload)
+				}
+			default:
+				if len(result.Payload) > 0 && string(result.Payload) != "{}" {
+					s.Store.LogBuffers.Store(id, result.Payload)
+				}
+			}
+			s.Store.PutInvocationResult(id, inv)
+			s.persistInvocationResultToTags(s.ctx(), lambdaState.FunctionARN, inv)
+
+			if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+				close(ch.(chan struct{}))
+			}
+		}()
+	}
 
 	return nil
 }

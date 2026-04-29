@@ -183,11 +183,21 @@ func (s *Server) ExecResize(id string, h int, w int) error {
 	return s.BaseServer.ExecResize(id, h, w)
 }
 
-// ExecStart runs the exec inside the container via the reverse-agent
-// WebSocket. Lambda exposes no native exec API; the bootstrap is the
-// only path. If no session is registered, return NotImplementedError
-// with the specific reason rather than letting the driver silently
-// return exit code 126.
+// ExecStart runs the exec inside the container. Lambda has no native
+// exec API; sockerless implements `docker exec` via two complementary
+// translations (see `specs/CLOUD_RESOURCE_MAPPING.md` § Lambda exec
+// semantics):
+//
+//   - Path A (preferred): reverse-agent WebSocket — when a session is
+//     registered, dispatch through `BaseServer.ExecStart` which routes
+//     via `s.Drivers.Exec` (the `ReverseAgentExecDriver`). Preserves
+//     Docker fidelity — multiple execs share `/tmp` etc.
+//   - Path B (fallback): exec-via-Invoke — issue a fresh `lambda.Invoke`
+//     whose Payload is an exec envelope; the bootstrap parses, runs the
+//     command, returns stdout + exit-code. State persistence between
+//     execs is via EFS-mounted volumes only. Required when sockerless's
+//     lambda backend runs in-Lambda with no fronting API Gateway for the
+//     reverse-agent dial-back.
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
 	exec, ok := s.Store.Execs.Get(id)
 	if !ok {
@@ -197,10 +207,10 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 	if !ok {
 		return nil, &api.ConflictError{Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID)}
 	}
-	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
-		return nil, &api.NotImplementedError{Message: "docker exec requires a reverse-agent bootstrap inside the Lambda container (SOCKERLESS_CALLBACK_URL); no session registered"}
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
+		return s.BaseServer.ExecStart(id, opts)
 	}
-	return s.BaseServer.ExecStart(id, opts)
+	return s.execStartViaInvoke(id, exec, opts)
 }
 
 // --- Non-container pass-through methods ---
