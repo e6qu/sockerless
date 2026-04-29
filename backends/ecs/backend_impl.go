@@ -327,21 +327,24 @@ func (s *Server) ContainerStart(ref string) error {
 	// Entrypoint/Cmd, then run the task through the normal launch
 	// path. ContainerWait blocks on the WaitCh which closes when the
 	// task exits — same end-to-end semantics as a synchronous start.
-	// Defer RunTask to launchAfterStdin ONLY when an attach pipe is
-	// already registered at start time. The attach driver creates the
-	// pipe on /attach (which gitlab-runner sequences before /start for
-	// containers it actually pipes stdin to). Containers with
-	// OpenStdin=true but no /attach call (gitlab-runner's predefined
-	// helper container is created OpenStdin=true for consistency but
-	// never piped stdin) take the standard synchronous flow.
+	// Defer RunTask to launchAfterStdin ONLY when:
+	//   1. ecsState.OpenStdin is set (created with stdin pipe)
+	//   2. an attach pipe is already registered at start time
+	//   3. the container is NOT a gitlab-runner predefined helper
+	//      (name ending with `-predefined`)
 	//
-	// No blocking wait here — relying on /attach having reached
-	// pipe.Open() before /start lands. If /attach is in flight when
-	// /start arrives (race window), we conservatively fall through to
-	// the synchronous flow; the helper container runs its declared
-	// command which is fine for the non-script-feeding case.
-	// (BUG-859 / BUG-866 / debugged-via-PR-#122).
-	if ecsState.OpenStdin {
+	// gitlab-runner uses /attach with stdin on the user-script
+	// container to deliver each script step's bytes. It also creates
+	// a long-lived predefined helper container with the same OpenStdin
+	// flags but uses /exec (not /attach with piped script) for actual
+	// commands — its /attach is just for log streaming. Treating the
+	// predefined helper as a script-delivery container leads to
+	// premature termination after the first attach close.
+	//
+	// The `-predefined` suffix is gitlab-runner-specific; user images
+	// in `docker run -i` mode follow different naming and would not
+	// match. (BUG-859 / BUG-866 / BUG-867).
+	if ecsState.OpenStdin && !isGitlabRunnerPredefined(c.Name) {
 		if v, ok := s.stdinPipes.Load(id); ok {
 			pipe := v.(*stdinPipe)
 			if pipe.IsOpen() {
@@ -1266,6 +1269,23 @@ func (s *Server) inUseVolumeNames() map[string]struct{} {
 		}
 	}
 	return in
+}
+
+// isGitlabRunnerPredefined reports whether the container name matches
+// gitlab-runner's "-predefined" suffix pattern. gitlab-runner creates
+// these long-lived helper containers for the duration of a job and
+// uses /exec rather than /attach for actual commands — they must NOT
+// take the deferred-stdin path (BUG-867).
+//
+// Naming pattern (gitlab-runner ≥ 17.x):
+//
+//	runner-<runner-token-prefix>-project-<project-id>-concurrent-<n>-<hex>-predefined
+//
+// Anything that ends with `-predefined` is treated as the helper.
+// The prefix `runner-` is intentionally not required so future
+// gitlab-runner naming changes that drop it still match.
+func isGitlabRunnerPredefined(name string) bool {
+	return strings.HasSuffix(strings.TrimPrefix(name, "/"), "-predefined")
 }
 
 // launchAfterStdin runs the deferred-RunTask flow used by containers

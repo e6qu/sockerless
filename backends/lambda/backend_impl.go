@@ -360,14 +360,15 @@ func (s *Server) ContainerStart(ref string) error {
 	// open pipe so the invoke goroutine can wait for stdin EOF
 	// before calling Invoke. The brief wait covers the race window
 	// between the attach handler sending 101 and Attach() entering.
-	// Only bake stdin into Invoke Payload when an attach pipe is
-	// already registered. The attach driver opens the pipe on /attach
-	// (gitlab-runner sequences attach before start for containers it
-	// actually pipes stdin to). No blocking wait — predefined helper
-	// Lambdas with OpenStdin=true but no /attach take the regular
-	// Invoke path (no Payload). (BUG-859 / BUG-866).
+	// Only bake stdin into Invoke Payload when:
+	//   1. lambdaState.OpenStdin is set
+	//   2. an attach pipe is already registered
+	//   3. the container is NOT a gitlab-runner predefined helper
+	// gitlab-runner attaches to predefined helpers for log streaming,
+	// not script delivery; treating that attach as script-delivery
+	// terminates the helper prematurely. (BUG-859 / BUG-866 / BUG-867).
 	var stdinP *stdinPipe
-	if lambdaState.OpenStdin {
+	if lambdaState.OpenStdin && !isGitlabRunnerPredefined(c.Name) {
 		if v, ok := s.stdinPipes.Load(id); ok {
 			pipe := v.(*stdinPipe)
 			if pipe.IsOpen() {
@@ -457,6 +458,13 @@ func (s *Server) ContainerStart(ref string) error {
 // running until natural completion or the 15-min AWS hard cap.
 // 3. Closes the local wait channel so `docker wait` unblocks.
 // Exit code 137 matches Docker's convention for force-stopped containers.
+// isGitlabRunnerPredefined reports whether the container name matches
+// gitlab-runner's "-predefined" suffix pattern. Mirrors the ECS backend
+// helper. See BUG-867.
+func isGitlabRunnerPredefined(name string) bool {
+	return strings.HasSuffix(strings.TrimPrefix(name, "/"), "-predefined")
+}
+
 func (s *Server) ContainerStop(ref string, timeout *int) error {
 	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
