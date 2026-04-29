@@ -97,16 +97,27 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	registerUI(s.BaseServer)
 	s.registerReverseAgentRoutes(logger)
 
-	// Route `docker exec` + `docker attach` through the reverse-agent
-	// when a session is connected. The BaseServer's default
-	// LocalExecDriver/LocalStreamDriver error out since Lambda has no
-	// local container namespace; the reverse-agent pattern fills the gap.
-	s.Drivers.Exec = &lambdaExecDriver{Registry: s.reverseAgents, Logger: logger}
+	// Route `docker exec` against Lambda. Two implementations exist
+	// (per `specs/CLOUD_RESOURCE_MAPPING.md` § "Lambda exec semantics");
+	// the deployment-time decision picks ONE — no runtime fallback:
+	//
+	//   - Path A (CallbackURL set): reverse-agent WebSocket. Bootstrap
+	//     dials back during init, sockerless pushes TypeExec messages.
+	//     Preserves Docker fidelity (multiple execs share /tmp).
+	//     Requires inbound network for the dial-back.
+	//   - Path B (CallbackURL empty): exec-via-Invoke. Each docker
+	//     exec triggers a fresh `lambda.Invoke` whose payload is a
+	//     JSON envelope; bootstrap parses, runs, returns. Native to
+	//     Lambda's primitive — no inbound network needed.
+	if config.CallbackURL != "" {
+		s.Drivers.Exec = &lambdaExecDriver{Registry: s.reverseAgents, Logger: logger}
+		s.Typed.Exec = core.WrapLegacyExec(s.Drivers.Exec, "lambda", "ReverseAgentExec")
+	} else {
+		invokeDriver := &lambdaInvokeExecDriver{server: s, logger: logger}
+		s.Drivers.Exec = invokeDriver
+		s.Typed.Exec = core.WrapLegacyExec(invokeDriver, "lambda", "InvokeExec")
+	}
 	s.Drivers.Stream = &lambdaStreamDriver{Registry: s.reverseAgents, Logger: logger}
-	// Typed Exec driver — bypasses BaseServer.ExecStart's pipeConn
-	// bridge and dispatches directly to the reverse-agent driver with
-	// the hijacked conn handed in by handleExecStart.
-	s.Typed.Exec = core.WrapLegacyExec(s.Drivers.Exec, "lambda", "ReverseAgentExec")
 	s.Typed.ProcList = core.NewReverseAgentProcListDriver(s.reverseAgents, "lambda")
 	s.Typed.FSDiff = core.NewReverseAgentFSDiffDriver(s.reverseAgents, "lambda")
 	s.Typed.FSRead = core.NewReverseAgentFSReadDriver(s.reverseAgents, "lambda")

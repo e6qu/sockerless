@@ -232,6 +232,15 @@ func runUserInvocation(ctx context.Context, payload []byte) (stdout, stderr []by
 	return outBuf.Bytes(), errBuf.Bytes(), 0
 }
 
+// truncateBytes returns at most n bytes of b. Used to bound diagnostic
+// log lines without dropping meaningful prefixes.
+func truncateBytes(b []byte, n int) []byte {
+	if len(b) > n {
+		return b[:n]
+	}
+	return b
+}
+
 // parseExecEnvelope decodes payload as an exec envelope. Returns
 // (envelope, true) when the payload is valid JSON containing a
 // non-nil sockerless.exec object; (zero, false) otherwise so callers
@@ -257,6 +266,7 @@ func parseExecEnvelope(payload []byte) (execEnvelope, bool) {
 // attach connection.
 func runExecInvocation(ctx context.Context, env execEnvelope) (stdout, stderr []byte, exitCode int) {
 	spec := env.Sockerless.Exec
+	fmt.Fprintf(os.Stderr, "bootstrap exec: argv=%v workdir=%q env=%d-vars stdin=%d-bytes\n", spec.Argv, spec.Workdir, len(spec.Env), len(spec.Stdin))
 	cmd := exec.CommandContext(ctx, spec.Argv[0], spec.Argv[1:]...)
 	cmd.Env = os.Environ()
 	if len(spec.Env) > 0 {
@@ -285,8 +295,10 @@ func runExecInvocation(ctx context.Context, env execEnvelope) (stdout, stderr []
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			code = ee.ExitCode()
+			fmt.Fprintf(os.Stderr, "bootstrap exec: exit %d (stderr=%q)\n", code, truncateBytes(errBuf.Bytes(), 256))
 		} else {
 			code = 1
+			fmt.Fprintf(os.Stderr, "bootstrap exec: cmd.Run failed: %v\n", err)
 		}
 	}
 
