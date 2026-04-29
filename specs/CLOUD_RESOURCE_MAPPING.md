@@ -281,34 +281,55 @@ Path B's payload format matches what `agent/cmd/sockerless-lambda-bootstrap/main
 
 ### ECS gitlab-runner script delivery (Fargate has no runtime stdin)
 
-gitlab-runner's docker executor follows a `start-attach-script` lifecycle: for each script stage (prepare_script, get_sources, step_script, after_script, archive_*, cleanup_file_variables) it does `docker create` once and then per-stage `docker start <container>` followed by `docker attach -i` with the stage's script piped through stdin. The Docker daemon delivers the piped bytes to the running container's PID-1 stdin in real time.
+**Per-job containers, per-stage scripts.** Each gitlab-runner job creates its own pair of containers — one helper (image: `gitlab-runner-helper`, name suffix `-predefined`) and one build (image from `.gitlab-ci.yml`'s `image:` field, e.g. `alpine`) — plus one per `services:` entry. Both live for exactly that one job; `docker rm` runs at job end. The next job creates fresh containers from scratch. No state crosses job boundaries.
 
-Fargate has **no equivalent runtime stdin channel**. Once `ecs.RunTask` starts, the task's stdin is closed; there's no API to write more bytes to it. Sockerless's BUG-859 fix bakes the buffered attach-stdin bytes into the task definition's `Entrypoint=["sh","-c"], Cmd=[<script>]` so each /start cycle runs a fresh task with the script as its command. That works for the user's BUILD container (alpine, etc.) — gitlab-runner half-closes stdin after streaming each script step, sockerless captures the EOF and bakes.
+Within a job, gitlab-runner walks both containers through ~10 stages (`prepare_script`, `get_sources`, `download_artifacts`, `step_script`, `after_script`, `archive_*`, `upload_artifacts_*`, `cleanup_file_variables`). For each stage, gitlab-runner does `docker start <container>` followed by `docker attach -i <container>` with the stage's generated shell script piped as stdin bytes. Real Docker re-runs the container's ENTRYPOINT on each `start` of a STOPPED container; the entrypoint reads stdin, runs the script, exits when stdin EOFs.
 
-It does **not** work for gitlab-runner's predefined helper container (`gitlab-runner-helper` image, container name suffixed `-predefined`). gitlab-runner uses the helper's stdin in two distinct modes that share the same `OpenStdin` flag at create-time:
+Both containers (helper and build) are created with the same stdin-reading entrypoint — gitlab-runner overrides whatever the source image had:
 
-- **Mode A — script delivery**: gitlab-runner pipes a shell script through `/attach` stdin (same as the build container) for stages like `get_sources`. The helper image's `dumb-init -- gitlab-runner-helper` ENTRYPOINT reads stdin and runs the script.
-- **Mode B — log streaming**: gitlab-runner attaches purely to read the helper's stdout, NEVER writing bytes to stdin. The attach connection stays open for the full job duration.
+```
+ENTRYPOINT ["sh", "-c",
+  "if [ -x /usr/local/bin/bash ]; then exec /usr/local/bin/bash; \
+   elif [ -x /usr/bin/bash ]; then exec /usr/bin/bash; \
+   ... etc ... \
+   else echo shell not found; exit 1; fi"]
+```
 
-A purely client-side detector ("did stdin EOF arrive?") doesn't disambiguate Mode A from Mode B in time:
+The "Running on $(hostname) via $(client)..." identity banner per stage comes from the FIRST LINE of the generated shell script, NOT from helper-image-specific code. The helper and build containers are functionally just shell-script-runners; only their image filesystem differs.
 
-- If sockerless waits for stdin EOF before launching the task, Mode B hangs forever (gitlab-runner never closes the connection until the job ends).
-- If sockerless times out the wait and falls through to "run with original entrypoint", Mode A loses the script and the helper either exits with no work done OR hangs waiting for stdin that never arrives (the helper image's PID 1 expects script bytes on stdin).
-- BUG-867's filter (`name has -predefined suffix → use synchronous RunTask, no script bake`) avoids the hang but means the helper runs without ever receiving Mode A's script. The helper's subcommand (whatever gitlab-runner set in CMD at create-time) executes default behaviour for ~30 s, exits, the stage appears to "succeed" but did no real work — git clone never ran, so there are no checked-out sources, so `step_script` is silently skipped, so cell 3 fails at the architectural mismatch.
+**Fargate breaks this lifecycle in two ways**:
 
-**Architectural fix (Phase 114)**: route around Fargate's no-runtime-stdin constraint with a long-lived helper task + per-stage `ecs.ExecuteCommand` (SSM Session Manager) script delivery:
+1. Fargate tasks are **not restartable**. Once a task transitions to STOPPED, that task ARN is gone; `ecs.RunTask` always creates a new task. Real Docker's `docker start` semantics ("re-run entrypoint on stopped container") have no Fargate equivalent.
+2. Fargate has **no runtime stdin channel**. Once `RunTask` starts, the task's PID-1 stdin is closed; no SDK call writes more bytes to it. Real Docker's `docker attach -i` ("pipe bytes into a running container's stdin") has no Fargate equivalent either.
 
-1. **First /start with stdin pipe on a `-predefined` helper**: launch the Fargate task ONCE with overridden `Entrypoint=["sh","-c"], Cmd=["while sleep 60; do :; done"]` (or `tail -f /dev/null` equivalent). Wait for RUNNING. Cache the task ARN against the container ID. Don't bake any script.
-2. **Subsequent /start cycles for the same container ID**: detect cached running task → skip RunTask. Buffer the new stdin bytes from the per-cycle attach pipe.
-3. **Per-cycle script delivery**: open an `ecs.ExecuteCommand` SSM session targeting the live task with `--command "/bin/sh"`, write the buffered script bytes to the session's stdin (the existing SSM frame-capture machinery from Round-8 carries them), capture stdout/stderr from the SSM stream, write framed bytes into the docker `/attach` hijacked connection. End-of-session is signalled by an exit-code marker which becomes the stage's exit status — gitlab-runner reads it via `/wait`.
-4. **/wait, /stop, /kill, /rm**: `/wait` blocks until the current SSM session emits its exit-code marker. `/stop` calls `ecs.StopTask` (SIGTERM the long-lived loop, the Fargate task transitions to STOPPED). `/rm` deregisters the task definition + drops the cached ARN.
-5. **/exec on the same container**: same path — open a fresh SSM session against the live task, run the requested command.
+**Sockerless's translation rule — one Fargate task per gitlab-runner job, multi-container.** ECS task definitions are multi-container by design: one task can host the helper container, the build container, and any `services:` sidecars in a single `RunTask`. The containers share the task's network namespace (so `localhost` works between helper and build), share the same task IAM role, and each container is independently addressable by `ecs.ExecuteCommand --container <name>`. This is the natural mapping for gitlab-runner's "one job uses N containers on a shared docker network" topology.
 
-The build-container path (Mode A's home) doesn't need this — its existing `launchAfterStdin` flow correctly bakes the script into a fresh per-cycle task. The architectural rule:
+The grouping signal is the **docker network**: gitlab-runner creates a job-scoped network (`runner-XXX-project-YYY-concurrent-Z-NNN`) and creates each of the job's containers with `--network <that network>`. Sockerless detects this signal at /start time:
 
-> **Predefined helper containers** (gitlab-runner's `-predefined`-suffixed pattern, or any future client whose container name signals "long-lived between attach cycles") use the long-lived-task + SSM ExecuteCommand pattern. **Per-cycle build containers** (no `-predefined` suffix, OpenStdin && AttachStdin) use the `launchAfterStdin` per-task bake. The container-name suffix is the only signal sockerless can act on at create time without inspecting client behaviour.
+1. **/create** records the container's network membership in `PendingCreates` but doesn't register a task definition yet.
+2. **First /start that targets a user-defined network** scans `PendingCreates` for sibling containers on the same network. If one or more siblings exist, sockerless registers a multi-container task definition with one `ContainerDefinition` per sibling (entrypoint + cmd preserved per container, including the long-lived idle loop for stdin-pipe containers; `enableExecuteCommand: true` set on every container) and runs the task once.
+3. **Each container in the multi-container task** caches `(containerID → (taskARN, containerName))`. The task-level state is shared; per-container exit codes come from the task's STOPPED `containers[].exitCode` field once the task completes.
+4. **Subsequent /start cycles on the same container ID** skip RunTask and rely on `ecs.ExecuteCommand --task <ARN> --container <name> --interactive --command "/bin/sh"` to deliver each stage's buffered stdin script. Sockerless writes the script bytes through the SSM session, streams stdout/stderr into the docker `/attach` hijacked connection (multiplexed-stream framing for non-tty), captures the exit-code marker emitted at the end of each script as the stage's exit status.
+5. **/exec** on any container hits the same `ExecuteCommand --container <name>` path against the live task — already implemented for non-stdin /exec by `cloudExecStart`.
+6. **/wait** for a container blocks until the task transitions to STOPPED and reads the per-container exit code from the task's `containers[]` array. **/stop and /kill** call `ecs.StopTask` (the entire task; its containers go down together — gitlab-runner removes the helper and build containers as a pair at job end, so this matches gitlab-runner's lifecycle). **/rm** drops cache entries and deregisters the task definition.
 
-Cell 4 (GitLab × Lambda) inherits the same architectural class — gitlab-runner's `start-attach-script` lifecycle on Lambda. Lambda has `lambda.Invoke` instead of `ExecuteCommand`; the per-cycle stdin bytes become a fresh `lambda.Invoke` Payload. Phase 116's `lambdaInvokeExecDriver` already covers single execs (cell 2's GitHub-runner case). The gitlab-runner-helper bridge needs the equivalent "long-lived function + per-cycle Invoke for each script stage" wiring; tracked as Phase 117.
+Per-stage / per-container script delivery rules within the multi-container task:
+
+> **Stdin-pipe lifecycle (gitlab-runner pattern; `OpenStdin && AttachStdin`)** — applies to BOTH the helper and the build container in the multi-container task. The container's `ContainerDefinition.Command` is the long-lived idle loop (`["sh","-c","while true; do sleep 60; done"]`) so the container stays running for the whole task lifetime. Per /start cycle: stdin script bytes get written to an SSM session opened against `--container <name>`. The shell session reads + executes the script. Stdout/stderr stream back through the hijacked `/attach`. Exit-code marker (echoed by sockerless's `wrapWithExitCodeMarker`) carries the stage exit status.
+
+> **Single-shot lifecycle** (no stdin pipe) — the original `Entrypoint`/`Cmd` from /create is preserved in the task definition; the container runs once and exits. /wait surfaces its exit code from the task's `containers[]` array. This is the path for sidecar `services:` containers that just need to start, run their image's entrypoint, and stay reachable on the task's network.
+
+Single-container fallback: if the container at first-/start has no user-defined network OR has no sibling containers in `PendingCreates` on that network, sockerless registers a single-container task definition (current behaviour preserved for `docker run` / GitHub-Actions-runner workloads where there's only one job container).
+
+The docker-network signal works for any client that follows the "create a network, attach all of the job's containers to it" idiom (gitlab-runner, docker-compose, k8s pods translated through libpod's pod API). No client-specific name parsing required.
+
+**Cell 4 (GitLab × Lambda) — one Lambda function per container.** Lambda has no multi-container execution model — each function runs exactly one container. Each of gitlab-runner's per-job containers (helper, build, services) maps 1:1 to its own Lambda function: sockerless's existing `lambda.CreateFunction`-per-`docker create` flow already does this. There's no equivalent of ECS's "multi-container task" grouping; each function is independent. The functions don't need to talk to each other at runtime — gitlab-runner's helper and build containers coordinate via the EFS-mounted `$CI_PROJECT_DIR` (workspace), the same way they would on a single Docker host (Docker shares the `/builds` volume between them; sockerless's bind-mount → EFS translation routes both functions to the same access point under `/mnt/sockerless-shared/_work`). All cross-stage state lives on EFS.
+
+Each gitlab-runner stage's stdin-piped script becomes one fresh `lambda.Invoke` whose Payload is a SCRIPT envelope `{"sockerless":{"script":{"shell":"sh","body":"<base64>","workdir":"...","env":[...]}}}`. The bootstrap parses, runs `bash -c "<decoded body>"` as a subprocess, returns `{"sockerlessScriptResult":{"exitCode":N,"stdout":"...","stderr":"..."}}`. Cross-stage state persists via EFS only — `/tmp` is per-invocation. Same per-job-isolation rule as ECS: each gitlab-runner job creates its own functions, deletes them at /rm. (Phase 117.)
+
+The stock `gitlab-runner-helper` image is used unmodified on both backends. Sockerless's overlay-inject path (Phase 115) wraps it with `sockerless-lambda-bootstrap` as ENTRYPOINT; the bootstrap parses each Invoke's Payload (exec or script envelope) and dispatches. The helper image's `gitlab-runner-helper` binary remains on the function's PATH; per-stage scripts can invoke it directly when needed.
+
+**Path A (reverse-agent) for either backend** stays available when `SOCKERLESS_CALLBACK_URL` is set: the bootstrap dials back via WebSocket and sockerless pushes per-stage messages over the connection. Path A preserves Docker fidelity (multiple stages share `/tmp`, file descriptors) at the cost of inbound network. Phases 114 and 117 implement the no-inbound-network paths and remain the default when CallbackURL is unset.
 
 ---
 

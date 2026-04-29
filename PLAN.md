@@ -344,7 +344,7 @@ Activation gated on whether the laptop-local 110a/b dispatcher proves the archit
 
 **gitlab-runner docker-executor architecture** (refresher — drives the design):
 
-Per job, gitlab-runner v18 creates two persistent containers (plus one per `services:` entry) and walks them through ~10 stages:
+Each gitlab-runner job creates its OWN helper container and its OWN build container — they live for the duration of that job and only that job. `docker rm` happens at job end; the next job creates fresh containers from scratch. No state carries over between jobs. (Plus one container per `services:` entry, similarly per-job.) The job walks both containers through ~10 stages:
 
 | Stage | Container | Source-of-script |
 |---|---|---|
