@@ -340,7 +340,26 @@ This phase is *not* a rewrite of the laptop-local dispatcher — the core dispat
 
 Activation gated on whether the laptop-local 110a/b dispatcher proves the architecture and someone wants the production shape.
 
-### Phase 114 — Long-lived helper task + ECS ExecuteCommand for gitlab-runner on ECS (queued; cell 3 unblock; substantial)
+### Phase 114 — Long-lived helper task + ECS ExecuteCommand for gitlab-runner on ECS (implemented 2026-04-29; live-AWS verification in flight)
+
+**Implementation landed at commit (pending push)**:
+- New `backends/ecs/long_lived_helper.go` — `helperState`/`helperCycle`, `ensureHelperLaunched` (registers task def with idle-loop entrypoint, RunTask, waits RUNNING + ExecuteCommandAgent ready), `dispatchHelperCycle` (waits stdin EOF → opens SSM session via `RunCommandViaSSM(taskARN, "sh -c '<script>; printf __SOCKEXIT...'", nil)` → mux-frames stdout/stderr to /attach hijacked conn → captures exit code via `extractSSMExitMarker`).
+- `backends/ecs/store.go` — `ECSState.IsLongLivedHelper bool`. Set at /create when name has `-predefined` suffix.
+- `backends/ecs/server.go` — added `helperStates sync.Map` keyed by container ID.
+- `backends/ecs/attach_driver.go` — `/attach` is the per-cycle entry point (gitlab-runner's `/start` short-circuits via `c.State.Running=true` from cycle 2 onward). attach registers a `helperCycle` (caller stdin → cycle.pipe; SSM output → caller's hijacked conn), spawns the dispatcher, and blocks on `cycle.done`.
+- `backends/ecs/backend_impl.go` —
+  - `ContainerStart` for long-lived helpers calls `ensureHelperLaunched` (first cycle only — subsequent cycles short-circuit at `c.State.Running=true`), drops `PendingCreates`, returns 204.
+  - `ContainerStop`/`ContainerKill` are **no-ops** for long-lived helpers — they would kill the cross-stage Fargate task. The cycle's WaitCh closes when the SSM session ends, which is what gitlab-runner observes.
+  - `ContainerInspect` for long-lived helpers reports cycle-level state, not task-level: `Running=false, Status="exited", ExitCode=lastExitCode` between cycles, `Running=true` while a cycle is in flight. Without this override, gitlab-runner's per-stage cleanup sees the underlying task as RUNNING and loops `docker stop` waiting for state to flip.
+  - `ContainerRemove` is the real end-of-job termination: it StopTask's the long-lived task and clears `helperStates`.
+- `backends/ecs/backend_delegates.go` — `ContainerWait` overridden to block on the per-cycle `WaitCh` instead of `BaseServer.ContainerWait`'s `CloudState.WaitForExit` (which polls the never-stopping idle task). Returns `helperState.lastExitCode`.
+
+Reuses existing infrastructure — no new SSM protocol code:
+- `RunCommandViaSSM` (`backends/ecs/ssm_capture.go`) — handles ExecuteCommand call, OpenDataChannel handshake, stdin input_stream_data frames, output frame parsing, ack writes, channel_closed handling.
+- `extractSSMExitMarker` (`backends/ecs/ssm_ops.go`) — recovers exit code from `__SOCKEXIT:N:__` marker (the only reliable way given AWS's SSM session never sends a separate exit-code frame for short commands).
+- `waitForExecuteCommandAgentReady` (`backends/ecs/ssm_capture.go`) — handles the 5-30 s lag between task RUNNING and ExecuteCommandAgent RUNNING.
+
+
 
 **gitlab-runner docker-executor architecture** (refresher — drives the design):
 

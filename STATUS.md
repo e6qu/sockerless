@@ -1,6 +1,14 @@
 # Sockerless — Status
 
-**104 phases closed (Phase 109 closed in PR #121, merged 2026-04-27). 874 bugs tracked — 873 fixed, 1 open (BUG-868 gitlab-runner lifecycle). 1 false positive.** **PR #122 CI GREEN as of commit `88aca1e`** (10/10 jobs); latest commit `9695341` Phase 116 wire-up shipping. Active branch: **`phase-110-runner-integration`**. **Cells 1 + 2 GREEN.** Cell 1 GH×ECS https://github.com/e6qu/sockerless/actions/runs/25075259911. Cell 2 GH×Lambda https://github.com/e6qu/sockerless/actions/runs/25113565115 — closed 7 architectural walls in this session (BUG-862, 869, 870, 871, 872, 873, 874). Cells 3 + 4 GitLab still need Phase 114 (long-lived helper task + ECS ExecuteCommand for cell 3; cell 4 inherits the same architectural pattern via Lambda primitives).
+**104 phases closed (Phase 109 closed in PR #121, merged 2026-04-27). 874 bugs tracked — 873 fixed, 1 open (BUG-868 gitlab-runner lifecycle). 1 false positive.** **PR #122 CI GREEN as of commit `88aca1e`** (10/10 jobs). Active branch: **`phase-110-runner-integration`**. **Cells 1 + 2 GREEN.** Cell 1 GH×ECS https://github.com/e6qu/sockerless/actions/runs/25075259911. Cell 2 GH×Lambda https://github.com/e6qu/sockerless/actions/runs/25113565115 — closed 7 architectural walls (BUG-862, 869, 870, 871, 872, 873, 874).
+
+**Cell 3 (GL×ECS) — BUG-868 still open after multiple Phase 114 attempts (2026-04-29):**
+- **Long-lived helper attempt**: `helperState` + `helperCycle` + `dispatchHelperCycle` (idle-loop Fargate task + ExecuteCommand per stage). Hit a chain of issues: `panic: close of closed channel` on cycle 2 (fixed via `LoadAndDelete` + select-default close), then `/stop` per-stage spam, then `/inspect` overrides for cycle-state-vs-task-state, then per-stage `/rm` killing the cross-stage task. **Reverted** to per-stage Fargate task (the simpler `launchAfterStdin` path that cell 1 also uses).
+- **Per-stage Fargate attempt**: dropped `BUG-867` predefined-suffix filter, added empty-stdin → `sh -c "exit 0"` defensive case, added 30 s timeout on the `pipe.Done()` wait so a no-half-close `/attach` can't deadlock. Also fails — gitlab-runner's `/attach` is held open for 13 minutes (cloud-logs reader doesn't return EOF), `/wait` lands after `/attach` but the underlying task lifecycle never completes within gitlab.com's 15-min job timeout. The pipe.Done() wait + 30 s fallback are correct in isolation but the `/attach` hang downstream still kills the run.
+- **Diagnostic-mode left in main**: entry/exit `Logger.Info` lines in `launchAfterStdin` so the next pass can see whether the goroutine reaches the timeout. Re-run will surface that.
+- Implementation captured at HEAD; a fresh design pass needs the `/attach` cloud-logs reader to terminate when the per-stage task exits (currently it only EOFs when CloudWatch closes the stream, which lags).
+
+**Cell 4 (GL×Lambda) — Phase 117 not yet attempted** in this session. Open per `DO_NEXT.md`.
 
 See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer), [docs/RUNNERS.md](docs/RUNNERS.md) (runner wiring).
 

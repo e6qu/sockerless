@@ -327,29 +327,14 @@ func (s *Server) ContainerStart(ref string) error {
 	// Entrypoint/Cmd, then run the task through the normal launch
 	// path. ContainerWait blocks on the WaitCh which closes when the
 	// task exits — same end-to-end semantics as a synchronous start.
-	// Defer RunTask to launchAfterStdin ONLY when:
-	//   1. ecsState.OpenStdin is set (created with stdin pipe)
-	//   2. an attach pipe is already registered at start time
-	//   3. the container is NOT a gitlab-runner predefined helper
-	//      (name ending with `-predefined`)
 	//
-	// gitlab-runner uses /attach with stdin on the user-script
-	// container to deliver each script step's bytes. It also creates
-	// a long-lived predefined helper container with the same OpenStdin
-	// flags but uses /exec (not /attach with piped script) for actual
-	// commands — its /attach is just for log streaming. Treating the
-	// predefined helper as a script-delivery container leads to
-	// premature termination after the first attach close — OR a
-	// 13-min hang when our deferred-RunTask path (re-)activates with
-	// content-empirical filtering, because Fargate doesn't deliver
-	// runtime stdin and the helper image's entrypoint waits for it.
-	// (BUG-859 / BUG-866 / BUG-867 / BUG-868 — Phase 114 in progress.)
-	//
-	// The full fix shape per BUG-868 is "long-lived helper task with
-	// `tail -f /dev/null` entrypoint + per-stage script via ECS
-	// ExecuteCommand", which routes around Fargate's no-stdin
-	// limitation. Tracked separately.
-	if ecsState.OpenStdin && !isGitlabRunnerPredefined(c.Name) {
+	// Predefined helpers (gitlab-runner) go through this same path:
+	// each stage gets a fresh Fargate task with the stage's script
+	// baked into Cmd. gitlab-runner's per-stage flow (Remove +
+	// Create + Attach + Start + script + EOF) maps onto a fresh
+	// task per stage; cross-stage state lives on the cache volumes
+	// gitlab-runner mounts itself, not on a long-lived container.
+	if ecsState.OpenStdin {
 		if v, ok := s.stdinPipes.Load(id); ok {
 			pipe := v.(*stdinPipe)
 			if pipe.IsOpen() {
@@ -1276,23 +1261,6 @@ func (s *Server) inUseVolumeNames() map[string]struct{} {
 	return in
 }
 
-// isGitlabRunnerPredefined reports whether the container name matches
-// gitlab-runner's "-predefined" suffix pattern. gitlab-runner creates
-// these long-lived helper containers for the duration of a job and
-// uses /exec rather than /attach for actual commands — they must NOT
-// take the deferred-stdin path (BUG-867).
-//
-// Naming pattern (gitlab-runner ≥ 17.x):
-//
-//	runner-<runner-token-prefix>-project-<project-id>-concurrent-<n>-<hex>-predefined
-//
-// Anything that ends with `-predefined` is treated as the helper.
-// The prefix `runner-` is intentionally not required so future
-// gitlab-runner naming changes that drop it still match.
-func isGitlabRunnerPredefined(name string) bool {
-	return strings.HasSuffix(strings.TrimPrefix(name, "/"), "-predefined")
-}
-
 // launchAfterStdin runs the deferred-RunTask flow used by containers
 // created with OpenStdin && AttachStdin. Sequence: wait for the
 // hijacked attach connection's stdin EOF (caller half-close after the
@@ -1306,15 +1274,27 @@ func isGitlabRunnerPredefined(name string) bool {
 // the WaitCh so ContainerWait unblocks; the failure surfaces through
 // CloudState.GetContainer reading STOPPED state.
 func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, exitCh chan struct{}) {
+	s.Logger.Info().Str("container", id[:12]).Msg("launchAfterStdin: entered, waiting for stdin EOF")
 	defer func() {
+		s.Logger.Info().Str("container", id[:12]).Msg("launchAfterStdin: returning")
 		s.stdinPipes.Delete(id)
 	}()
 
 	// Wait for the caller to half-close the hijacked attach connection
-	// (gitlab-runner does `io.Copy(conn, stdinSource); CloseWrite()` —
-	// the EOF on the conn-read side closes the pipe).
+	// (the docker SDK pattern: `io.Copy(conn, stdinSource); CloseWrite()` —
+	// the EOF on the conn-read side closes the pipe). gitlab-runner's
+	// docker-executor uses an attach flow that does NOT always
+	// CloseWrite() — for the predefined helper it streams the script
+	// then reads stdout until container exit, leaving stdin open
+	// throughout. Without a timeout this goroutine waits forever and
+	// blocks ContainerWait. After 30 s we treat whatever's in the
+	// pipe as the script (typical scripts are <12 KB and arrive in
+	// <100 ms over local TCP, so 30 s is well past the legitimate
+	// upper bound for a script write).
 	select {
 	case <-pipe.Done():
+	case <-time.After(30 * time.Second):
+		s.Logger.Info().Str("container", id[:12]).Int("buffered_bytes", len(pipe.Bytes())).Msg("stdin-pipe wait timeout — proceeding with buffered bytes")
 	case <-s.ctx().Done():
 		s.Logger.Warn().Str("container", id[:12]).Msg("stdin-pipe wait cancelled before EOF")
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
@@ -1333,7 +1313,18 @@ func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, 
 	// Entrypoint), so the rewrite has to live in the task definition.
 	cycleContainer := *c
 	cycleConfig := c.Config
-	if len(script) > 0 {
+	// When the caller half-closes stdin without writing anything (e.g.
+	// gitlab-runner's "log-streaming /attach" pattern that just opens
+	// the conn and closes it without piping a script), bake an explicit
+	// no-op shell so the task exits cleanly. Without this override the
+	// container would inherit the source image's entrypoint, which for
+	// the gitlab-runner-helper image is a bash-detect wrapper that
+	// blocks reading stdin — and Fargate has no remote stdin channel
+	// for a running task, so the container hangs (BUG-867 regression).
+	if len(script) == 0 {
+		cycleConfig.Entrypoint = []string{"sh", "-c"}
+		cycleConfig.Cmd = []string{"exit 0"}
+	} else {
 		cycleConfig.Entrypoint = []string{"sh", "-c"}
 		cycleConfig.Cmd = []string{string(script)}
 	}
