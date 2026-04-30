@@ -163,7 +163,20 @@ When a docker client (the actions/runner inside an ECS task or Lambda invocation
 
 **Phase 110 succeeds when** all 4 cells have a green run on file (workflow runs visible in github.com / gitlab.com Actions UIs), and any bug surfaced during the run has a closed entry in BUGS.md. Capability matrix at [`docs/runner-capability-matrix.md`](docs/runner-capability-matrix.md) gets the cells updated from `TBD` to `PASS`/`FAIL` per workload.
 
-#### Phase 110 — paths forward to GREEN (2026-04-29)
+#### Phase 110 — CLOSED 2026-04-30 (all 4 cells GREEN)
+
+Final URLs:
+
+| Cell | URL |
+|---|---|
+| 1 GH × ECS | https://github.com/e6qu/sockerless/actions/runs/25075259911 |
+| 2 GH × Lambda | https://github.com/e6qu/sockerless/actions/runs/25113565115 |
+| 3 GL × ECS | https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 |
+| 4 GL × Lambda | https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943 |
+
+Cell 4 closure (commit `5fc3e6b`): BUG-875 (start/attach race — empty-payload Invoke piped `{}` into bash) + BUG-876 (`docker.io/library/<name>` rejected as user/org image) + diagnostic infrastructure (`LogType=Tail` on Invoke surfaces the bash crash inline). The historical unblock plan from 2026-04-29 lives below for reference.
+
+##### Historical unblock plan (kept for reference) — paths forward to GREEN (2026-04-29)
 
 Concrete unblock plan per cell. Source corrections shipped at commit `8c70d1a`; remaining work is operator-driven runtime steps (apply, build, restart) and a re-test sweep.
 
