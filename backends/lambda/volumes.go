@@ -122,11 +122,25 @@ func (s *Server) fileSystemConfigsForBinds(ctx context.Context, binds []string) 
 			}
 		} else if sv := s.config.LookupSharedVolumeByName(volName); sv != nil {
 			subpath = sv.EFSSubpath
+		} else if len(s.config.SharedVolumes) > 0 {
+			// No matching SharedVolume: collapse onto the FIRST
+			// configured shared AP and use the volume name as a
+			// sub-path. Lambda's single-FSC constraint forbids
+			// ad-hoc per-volume APs, but gitlab-runner creates
+			// arbitrarily many named volumes (cache, build, ...).
+			// Sharing one AP with sub-paths is the only viable
+			// translation. Mirrors the "collapse onto sub-paths"
+			// rule documented in specs/CLOUD_RESOURCE_MAPPING.md
+			// § "Lambda bind-mount translation".
+			anchor := s.config.SharedVolumes[0]
+			subpath = anchor.EFSSubpath + "/" + awscommon.SanitiseVolumePath(volName)
+			subpath = strings.Trim(subpath, "/")
+			volName = anchor.Name
 		}
-		if _, dup := seen[volName+":"+dst]; dup {
+		if _, dup := seen[volName+":"+dst+":"+subpath]; dup {
 			continue
 		}
-		seen[volName+":"+dst] = struct{}{}
+		seen[volName+":"+dst+":"+subpath] = struct{}{}
 		apID, err := s.accessPointForVolume(ctx, volName)
 		if err != nil {
 			return nil, nil, fmt.Errorf("provision access point for %q: %w", volName, err)

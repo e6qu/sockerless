@@ -134,13 +134,60 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// Build function name from container name
 	funcName := "skls-" + id[:12]
 
-	// Build environment variables
+	// Build environment variables. Lambda caps Environment.Variables
+	// JSON at 4 KB total; gitlab-runner sets ~3 KB of CI_* vars at
+	// /create time. Drop the user-supplied vars when adding them
+	// would push us over budget — they are re-exported at the top of
+	// every gitlab-runner stage script (and embedded in the Invoke
+	// Payload for Path-B execs) so the runtime values are still
+	// available to user processes; only the Lambda-config-level vars
+	// suffer (which is fine — gitlab-runner doesn't read them from
+	// the environment, it reads them via its own protocol).
 	envVars := make(map[string]string)
+	// Lambda's 4 KB Environment.Variables JSON budget is small for
+	// runners that pass huge env up front (gitlab-runner ships ~50
+	// CI_* vars, three JWT tokens at ~600 bytes each, and a 1 KB
+	// GitLab features list — together >4 KB before sockerless adds
+	// its own SOCKERLESS_* vars). Two-stage filter:
+	//
+	//  1. Drop entries that gitlab-runner re-exports at the top of
+	//     every script anyway (the `: | eval $'export CI_…'` block);
+	//     keeping them in Lambda's config-level env is redundant and
+	//     leaks credentials into Lambda's GetFunction response.
+	//  2. Hard cap remaining entries at 2 KB to leave 2 KB headroom
+	//     for the SOCKERLESS_* additions below
+	//     (SOCKERLESS_LAMBDA_BIND_LINKS alone can be ~500 B for
+	//     gitlab-runner's two-volume setup).
+	const lambdaEnvBudget = 2000
+	estimatedSize := 2 // for `{}`
+	dropped := 0
 	for _, e := range config.Env {
 		parts := strings.SplitN(e, "=", 2)
-		if len(parts) == 2 {
-			envVars[parts[0]] = parts[1]
+		if len(parts) != 2 {
+			continue
 		}
+		// Filter rule (1): gitlab-runner / GitLab CI vars + GitLab feature
+		// flags are re-exported at runtime by gitlab-runner's script
+		// preamble. Forwarding them via Lambda env is pure overhead.
+		if strings.HasPrefix(parts[0], "CI_") ||
+			strings.HasPrefix(parts[0], "FF_") ||
+			strings.HasPrefix(parts[0], "GITLAB_") ||
+			parts[0] == "GIT_TERMINAL_PROMPT" ||
+			parts[0] == "GCM_INTERACTIVE" ||
+			parts[0] == "RUNNER_TEMP_PROJECT_DIR" {
+			dropped++
+			continue
+		}
+		entrySize := len(parts[0]) + len(parts[1]) + 6 // `"k":"v",`
+		if estimatedSize+entrySize > lambdaEnvBudget {
+			dropped++
+			continue
+		}
+		envVars[parts[0]] = parts[1]
+		estimatedSize += entrySize
+	}
+	if dropped > 0 {
+		s.Logger.Info().Int("dropped", dropped).Int("kept", len(envVars)).Msg("lambda env: dropped CI/FF/GITLAB vars + size-cap user vars (Lambda 4KB Environment limit; runner script re-exports them at runtime)")
 	}
 
 	// Build resource tags
@@ -362,7 +409,21 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 	}
 	if !ok {
-		return &api.NotFoundError{Resource: "container", ID: ref}
+		// CloudState fallback: gitlab-runner's docker-executor reuses
+		// the same container ID across stages (/start cycle 2+).
+		// PendingCreates is dropped after cycle 1's deferred Invoke,
+		// so subsequent /start calls without this fallback would 404
+		// even though the Lambda function still exists. Mirror of the
+		// same pattern in `backends/ecs/backend_impl.go::ContainerStart`.
+		resolved, found := s.ResolveContainerAuto(context.Background(), ref)
+		if !found {
+			return &api.NotFoundError{Resource: "container", ID: ref}
+		}
+		c = resolved
+		// Restore the container to PendingCreates so the rest of the
+		// start flow finds it. Dropped again at end of the deferred
+		// Invoke goroutine.
+		s.PendingCreates.Put(c.ID, c)
 	}
 	id := c.ID
 
@@ -389,26 +450,25 @@ func (s *Server) ContainerStart(ref string) error {
 
 	// gitlab-runner / `docker run -i` pattern: the container will
 	// receive its actual command via stdin on the hijacked attach
-	// connection. Wait briefly for the attach driver to register an
-	// open pipe so the invoke goroutine can wait for stdin EOF
-	// before calling Invoke. The brief wait covers the race window
-	// between the attach handler sending 101 and Attach() entering.
+	// connection. The Docker SDK's standard sequence is /create →
+	// /start → /attach, so /start often arrives BEFORE /attach has
+	// registered the stdin pipe. The Invoke goroutine polls
+	// `stdinPipes` for a few seconds (covers the /start→/attach
+	// gap) so it can wait for stdin EOF before calling Invoke
+	// rather than racing in with an empty `{}` payload — bash
+	// reading `{}` as a command was the source of the
+	// predefined-helper "Unhandled" Lambda errors when OpenStdin
+	// was set but the goroutine fired before /attach registered.
 	// Only bake stdin into Invoke Payload when:
 	//   1. lambdaState.OpenStdin is set
-	//   2. an attach pipe is already registered
-	//   3. the container is NOT a gitlab-runner predefined helper
-	// gitlab-runner attaches to predefined helpers for log streaming,
-	// not script delivery; treating that attach as script-delivery
-	// terminates the helper prematurely. (BUG-859 / BUG-866 / BUG-867).
-	var stdinP *stdinPipe
-	if lambdaState.OpenStdin && !isGitlabRunnerPredefined(c.Name) {
-		if v, ok := s.stdinPipes.Load(id); ok {
-			pipe := v.(*stdinPipe)
-			if pipe.IsOpen() {
-				stdinP = pipe
-			}
-		}
-	}
+	//   2. an attach pipe registers within the polling window
+	//
+	// Predefined helpers (gitlab-runner) go through this same path:
+	// each stage gets a fresh `lambda.Invoke` with the stage's stdin
+	// script as the Payload — analogous to the per-stage Fargate task
+	// flow on ECS (Phase 114). Cross-stage state lives on EFS via the
+	// shared volume mounts gitlab-runner sets up itself, not on a
+	// long-lived Lambda execution.
 
 	// Block synchronously until the function is Active — clients
 	// (especially CI runners) typically issue `docker exec` immediately
@@ -457,44 +517,132 @@ func (s *Server) ContainerStart(ref string) error {
 	// exists, regardless of whether any invocation is in flight. Each
 	// `docker exec` fires its own concurrent `lambda.Invoke`. See
 	// `specs/CLOUD_RESOURCE_MAPPING.md` § Lambda exec semantics.
-	if stdinP != nil {
-		go func() {
-			<-stdinP.Done()
-			invokePayload := stdinP.Bytes()
+	// Containers with no stdin pipe (e.g. gitlab-runner's volume-
+	// permission helper, which runs `chown -R` baked as Cmd at
+	// /create time and never opens an /attach for stdin) still need
+	// the function to actually be invoked — without this branch the
+	// function is created+Active but never runs anything, and the
+	// caller's `docker wait` hangs. Treat it as an empty-payload
+	// Invoke so the bootstrap runs the user Cmd directly.
+	go func() {
+		// Resolve the attach pipe with a polling window. Docker SDK
+		// clients (gitlab-runner included) typically issue /create →
+		// /start → /attach in that order, so when /start returns the
+		// pipe may not be registered yet. Poll for up to 5 s; if no
+		// pipe shows up by then assume this isn't an OpenStdin caller
+		// after all (or it crashed before attaching) and fall through
+		// to an empty-payload Invoke.
+		var stdinP *stdinPipe
+		if lambdaState.OpenStdin {
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				if v, ok := s.stdinPipes.Load(id); ok {
+					if pipe := v.(*stdinPipe); pipe.IsOpen() {
+						stdinP = pipe
+						break
+					}
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+			if stdinP == nil {
+				s.Logger.Warn().Str("container", id[:12]).Msg("lambda-stdin: OpenStdin set but no attach pipe registered within 5s — invoking with empty payload")
+			}
+		}
+
+		var invokePayload []byte
+		if stdinP != nil {
+			// Wait up to 30 s for caller to half-close the hijacked
+			// attach connection. gitlab-runner's docker-executor flow
+			// streams the script then signals EOF via CloseWrite();
+			// log-streaming attaches (no stdin write) hit the timeout
+			// and proceed with whatever's buffered. Without the timeout
+			// this goroutine waits forever, the WaitCh stays open, and
+			// the caller's `docker wait` hangs.
+			select {
+			case <-stdinP.Done():
+			case <-time.After(30 * time.Second):
+				s.Logger.Info().Str("container", id[:12]).Int("buffered_bytes", len(stdinP.Bytes())).Msg("lambda-stdin: pipe wait timeout — proceeding with buffered bytes")
+			}
+			scriptBytes := stdinP.Bytes()
 			s.stdinPipes.Delete(id)
 
-			result, err := s.aws.Lambda.Invoke(s.ctx(), &awslambda.InvokeInput{
-				FunctionName: aws.String(lambdaState.FunctionName),
-				Payload:      invokePayload,
-			})
-
-			inv := core.InvocationResult{FinishedAt: time.Now()}
-			switch {
-			case err != nil:
-				s.Logger.Error().Err(err).Str("function", lambdaState.FunctionName).Msg("Lambda invocation failed")
-				inv.ExitCode = 1
-				inv.Error = err.Error()
-			case result.FunctionError != nil:
-				fnErr := aws.ToString(result.FunctionError)
-				s.Logger.Warn().Str("error", fnErr).Msg("Lambda function returned error")
-				inv.ExitCode = 1
-				inv.Error = fnErr
-				if len(result.Payload) > 0 {
-					s.Store.LogBuffers.Store(id, result.Payload)
+			// Lambda's Invoke expects a JSON Payload. gitlab-runner's
+			// docker-executor sends a raw bash script via /attach
+			// stdin — we wrap it as a Path-B exec envelope
+			// (`{"sockerless":{"exec":{"argv":["sh","-c","<script>"]}}}`)
+			// so the in-Lambda bootstrap parses it as a docker-exec
+			// dispatch, runs the script, and returns
+			// `{"sockerlessExecResult":...}`. Without the wrapping
+			// Lambda's API rejects the raw `#!/usr/bin/env bash`
+			// header as invalid JSON.
+			if len(scriptBytes) > 0 {
+				envelope := execEnvelopeRequest{}
+				envelope.Sockerless.Exec = execEnvelopeExec{
+					Argv: []string{"sh", "-c", string(scriptBytes)},
 				}
-			default:
-				if len(result.Payload) > 0 && string(result.Payload) != "{}" {
-					s.Store.LogBuffers.Store(id, result.Payload)
+				if p, err := json.Marshal(envelope); err == nil {
+					invokePayload = p
+				} else {
+					s.Logger.Error().Err(err).Msg("lambda-stdin: marshal exec envelope failed")
+					if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+						close(ch.(chan struct{}))
+					}
+					return
 				}
 			}
-			s.Store.PutInvocationResult(id, inv)
-			s.persistInvocationResultToTags(s.ctx(), lambdaState.FunctionARN, inv)
+		}
 
-			if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-				close(ch.(chan struct{}))
+		result, err := s.aws.Lambda.Invoke(s.ctx(), &awslambda.InvokeInput{
+			FunctionName: aws.String(lambdaState.FunctionName),
+			Payload:      invokePayload,
+			LogType:      lambdatypes.LogTypeTail,
+		})
+
+		inv := core.InvocationResult{FinishedAt: time.Now()}
+		switch {
+		case err != nil:
+			s.Logger.Error().Err(err).Str("function", lambdaState.FunctionName).Msg("Lambda invocation failed")
+			inv.ExitCode = 1
+			inv.Error = err.Error()
+		case result.FunctionError != nil:
+			fnErr := aws.ToString(result.FunctionError)
+			payloadPreview := string(result.Payload)
+			if len(payloadPreview) > 4096 {
+				payloadPreview = payloadPreview[:4096] + "...(truncated)"
 			}
-		}()
-	}
+			// LogResult is base64-encoded last 4KB of the function's stderr.
+			// Lambda returns it inline when LogType=Tail is set on Invoke,
+			// avoiding a round-trip to CloudWatch when the function dies
+			// before the log group propagates.
+			var logTail string
+			if result.LogResult != nil {
+				if decoded, derr := base64.StdEncoding.DecodeString(aws.ToString(result.LogResult)); derr == nil {
+					logTail = string(decoded)
+				}
+			}
+			s.Logger.Warn().
+				Str("error", fnErr).
+				Str("function", lambdaState.FunctionName).
+				Str("payload", payloadPreview).
+				Str("log_tail", logTail).
+				Msg("Lambda function returned error")
+			inv.ExitCode = 1
+			inv.Error = fnErr
+			if len(result.Payload) > 0 {
+				s.Store.LogBuffers.Store(id, result.Payload)
+			}
+		default:
+			if len(result.Payload) > 0 && string(result.Payload) != "{}" {
+				s.Store.LogBuffers.Store(id, result.Payload)
+			}
+		}
+		s.Store.PutInvocationResult(id, inv)
+		s.persistInvocationResultToTags(s.ctx(), lambdaState.FunctionARN, inv)
+
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
+		}
+	}()
 
 	return nil
 }
@@ -514,13 +662,6 @@ func (s *Server) ContainerStart(ref string) error {
 // running until natural completion or the 15-min AWS hard cap.
 // 3. Closes the local wait channel so `docker wait` unblocks.
 // Exit code 137 matches Docker's convention for force-stopped containers.
-// isGitlabRunnerPredefined reports whether the container name matches
-// gitlab-runner's "-predefined" suffix pattern. Mirrors the ECS backend
-// helper. See BUG-867.
-func isGitlabRunnerPredefined(name string) bool {
-	return strings.HasSuffix(strings.TrimPrefix(name, "/"), "-predefined")
-}
-
 func (s *Server) ContainerStop(ref string, timeout *int) error {
 	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {

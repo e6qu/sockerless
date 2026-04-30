@@ -1,15 +1,13 @@
 # Sockerless — Status
 
-**104 phases closed. Active branch: `phase-110-runner-integration`. Cells 1 + 2 + 3 GREEN.**
+**104 phases closed. Active branch: `phase-110-runner-integration`. ALL 4 CELLS GREEN.**
 - Cell 1 GH×ECS: https://github.com/e6qu/sockerless/actions/runs/25075259911
 - Cell 2 GH×Lambda: https://github.com/e6qu/sockerless/actions/runs/25113565115 — 7 architectural walls (BUG-862, 869, 870, 871, 872, 873, 874).
-- **Cell 3 GL×ECS (NEW 2026-04-29): https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177** (status: success) — job 14148678472 ran `echo "hello from sockerless ecs"` + `env | sort` in 270.8 s on 9 sequential per-stage Fargate tasks (prepare_script → get_sources → restore_cache → download_artifacts → step_script → after_script → archive_cache → upload_artifacts_on_success → cleanup_file_variables). Closed three live-AWS bugs at once in commit `aa2419a`:
-  1. `launchAfterStdin` short-lived AND running branches now drop `PendingCreates` so the cloud-logs follower sees `Status="exited"` from CloudState (not stale "created").
-  2. `ContainerInspect` override forces `Status="running"` while `Store.WaitChs[id]` is open so cycle 2+'s cloud-logs follower keeps polling across the new task's startup.
-  3. Stage-boundary attach barrier — wait up to 5 s for `/start`'s `markRunning` before kicking off the cloud-logs follower, closing the `/attach`-vs-`/start` race that EOFed the new stage's stream.
-  Plus diagnostic logging on `launchAfterStdin` entry/exit + 30 s `pipe.Done()` timeout fallback for log-streaming `/attach` callers.
-
-**Cell 4 (GL×Lambda) — Phase 117 not yet attempted** in this session.
+- Cell 3 GL×ECS (2026-04-29): https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 — job 14148678472 ran `echo "hello from sockerless ecs"` + `env | sort` in 270.8 s on 9 sequential per-stage Fargate tasks. Closed in commit `aa2419a`.
+- **Cell 4 GL×Lambda (NEW 2026-04-30): https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943** (status: success) — job 14156021860 ran `echo "hello from sockerless lambda"` + `date -u` in 260.5 s. Closed seven Lambda-primitive bugs across the session culminating in two final fixes:
+  1. **stdinPipe/start race**: `/start`'s Invoke goroutine did a one-shot `stdinPipes.Load()`, missing the standard Docker SDK ordering (/create → /start → /attach). Fix: poll `stdinPipes` for up to 5 s inside the goroutine before deciding to skip stdin. Without this, OpenStdin containers Invoked with empty payload `{}`, which the bootstrap piped to bash, producing `/bin/bash: line 1: {}: command not found` and Lambda `Unhandled` errors on every predefined-helper container.
+  2. **`docker.io/library/<name>` rejection**: `image_resolve.go` rejected `docker.io/library/alpine:latest` as "Docker Hub user/org image" because `repo` retained the `library/` prefix and matched `strings.Contains(repo, "/")`. Fix: strip `library/` prefix before the user/org check.
+  3. Plus diagnostic logging — `LogType=Tail` on every `lambda.Invoke` so the function's last 4 KB of stderr ride back inline; payload preview + log_tail emitted on `FunctionError`. The `{}: command not found` line that pinpointed the race came directly from this tail.
 
 See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer), [docs/RUNNERS.md](docs/RUNNERS.md) (runner wiring).
 
@@ -33,16 +31,16 @@ Older PRs (#112–#115) — sim parity, real volumes, FaaS invocation tracking, 
 
 ## Open work
 
-- **Phase 110b (cell 2 advancing)** — Cell 1 (GH×ECS) GREEN at https://github.com/e6qu/sockerless/actions/runs/25075259911. Cell 2 (GH×Lambda) made it through 5 architectural walls this session (BUG-862 wrong backend; BUG-869 OCI manifest from CodeBuild; BUG-870 EFS lookup tag filter; BUG-871 Lambda single-FSC + `/mnt/` constraint with collapse + BIND_LINKS bootstrap symlinks + EFS subpaths; BUG-872 cache prefix mismatch with ECS) and is blocked at **BUG-873**: Lambda image-mode rejects OCI manifests *and* requires a Lambda Runtime API client at the entrypoint. Both walls fall to the same architectural fix — route every Lambda CreateFunction through the existing `BuildAndPushOverlayImage` path, swapping the `os/exec docker build` invocation for `awscommon.CodeBuildService` so it works inside the runner-Lambda. Cells 3/4 GitLab inherit BUG-868 (gitlab-runner `start-attach-script` per-command lifecycle vs Fargate non-restartable task) on top of BUG-873.
+- **Phase 110 — all 4 cells GREEN.** Closing summary commit pending. Branch ready for PR.
 
-### Paths forward to GREEN — full per-cell unblock plan
+### 4-cell matrix
 
-| Cell | State | Next step |
+| Cell | State | URL |
 |---|---|---|
 | 1 GH × ECS | ✅ GREEN | https://github.com/e6qu/sockerless/actions/runs/25075259911 |
-| 2 GH × Lambda | ✅ GREEN | https://github.com/e6qu/sockerless/actions/runs/25113565115 (Phase 115 + 116 closed BUG-862..874) |
-| 3 GL × ECS | 🟡 BUG-868 (Phase 114 — substantial; long-lived Fargate task + SSM ExecuteCommand per stage) | latest https://gitlab.com/e6qu/sockerless/-/jobs/14146329550 |
-| 4 GL × Lambda | ⏸ Phase 117 — gitlab-runner per-stage SCRIPT envelope via lambda.Invoke (independent of Phase 114) | n/a |
+| 2 GH × Lambda | ✅ GREEN | https://github.com/e6qu/sockerless/actions/runs/25113565115 |
+| 3 GL × ECS | ✅ GREEN | https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 |
+| 4 GL × Lambda | ✅ GREEN | https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943 |
 
 Detailed unblock plans per cell live in [PLAN.md § Phase 110 — paths forward to GREEN](PLAN.md). Per-bug closure paths in [BUGS.md](BUGS.md). Resume command + sequence in [DO_NEXT.md](DO_NEXT.md). Full runner hurdle catalog (closed + predicted) in [docs/RUNNERS.md § Runner hurdles](docs/RUNNERS.md). Lambda volume primitive translation in [specs/CLOUD_RESOURCE_MAPPING.md § Lambda bind-mount translation](specs/CLOUD_RESOURCE_MAPPING.md).
 - **Phase 110a — github-runner-dispatcher skeleton: shipped** at commit `ba797b6`. Top-level Go module, sockerless-agnostic (only stdlib + BurntSushi/toml). State recovery via container labels (`sockerless.dispatcher.{job_id,runner_name,managed_by}`); GC sweep every 2 min reaps exited containers + offline GitHub runners; graceful shutdown drains in-flight work bounded to 30 s.

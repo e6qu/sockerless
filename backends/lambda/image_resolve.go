@@ -38,6 +38,25 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 		return ref, nil
 	}
 
+	// Digest-only refs (`sha256:...` with no preceding name) — resolve
+	// via the local image Store. gitlab-runner's volume-permission
+	// helper references images by digest after a prior pull; without
+	// this lookup parseDockerRef would split `sha256:hex` into
+	// repo="sha256" tag="hex" and the resulting Dockerfile FROM
+	// `…/public-ecr-aws/docker/library/sha256:hex` 404s in CodeBuild.
+	if strings.HasPrefix(ref, "sha256:") && !strings.ContainsAny(ref, "/@") {
+		if img, ok := s.Store.ResolveImage(ref); ok && len(img.RepoTags) > 0 {
+			canonical := img.RepoTags[0]
+			s.Logger.Debug().Str("digest", ref).Str("canonical", canonical).
+				Msg("resolved digest-only ref via image Store")
+			return s.resolveImageURI(ctx, canonical)
+		}
+		return ref, fmt.Errorf(
+			"digest-only image reference %q can't be resolved on Lambda — image Store has no record of this digest; reference the image by name+digest (`name@%s`) or pull it first via `docker pull <name>`",
+			ref, ref,
+		)
+	}
+
 	// Decompose the reference. For public.ecr.aws/<path> we treat it
 	// the same as any registry-prefixed ref so it goes through a
 	// pull-through cache (Lambda needs single-arch ECR-hosted images).
@@ -50,6 +69,11 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 	switch registry {
 	case "", "docker.io", "registry-1.docker.io":
 		// Library images live on AWS Public Gallery as `docker/library/<name>`.
+		// Strip the explicit `library/` prefix some clients emit
+		// (gitlab-runner resolves `alpine:latest` to
+		// `docker.io/library/alpine:latest` before Cmd dispatch) so the
+		// "user/org image rejected" guard below doesn't false-positive.
+		repo = strings.TrimPrefix(repo, "library/")
 		if strings.Contains(repo, "/") {
 			return ref, fmt.Errorf("docker hub user/org image %q is not on AWS Public Gallery; push it to your ECR repository first (sockerless avoids Docker Hub PAT credentials by design — use `docker push <ecr-uri>` to host the image yourself, or reference its public.ecr.aws equivalent if one exists)", ref)
 		}
