@@ -2,6 +2,8 @@ package awscommon
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"sync"
@@ -186,7 +188,16 @@ func (m *EFSManager) AccessPointForVolume(ctx context.Context, volName string) (
 		return id, nil
 	}
 
+	// AWS EFS rejects rootDirectory.path > 100 chars. Volume names from
+	// gitlab-runner (`runner-<id>-project-<id>-concurrent-<n>-<hex>-cache-<sha>`)
+	// regularly exceed that. Fall back to a SHA256-hashed short path
+	// when the full sanitised form would overflow.
+	const efsRootPathMax = 100
 	rootDir := "/sockerless/volumes/" + SanitiseVolumePath(volName)
+	if len(rootDir) > efsRootPathMax {
+		sum := sha256.Sum256([]byte(volName))
+		rootDir = "/sockerless/v/" + hex.EncodeToString(sum[:16])
+	}
 	created, err := m.Client.CreateAccessPoint(ctx, &efs.CreateAccessPointInput{
 		FileSystemId: aws.String(fsID),
 		RootDirectory: &efstypes.RootDirectory{
@@ -246,6 +257,22 @@ func (m *EFSManager) DeleteAccessPointForVolume(ctx context.Context, volName str
 	}
 	delete(m.apCache, volName)
 	return nil
+}
+
+// DescribeAccessPoint returns the EFS access point with the given ID,
+// without requiring sockerless-managed tagging. Used when the operator
+// pre-provisions an access point (e.g. via terraform) and passes its
+// ID through SOCKERLESS_*_SHARED_VOLUMES — sockerless owns the data
+// plane usage but not the resource.
+func (m *EFSManager) DescribeAccessPoint(ctx context.Context, apID string) (efstypes.AccessPointDescription, error) {
+	out, err := m.Client.DescribeAccessPoints(ctx, &efs.DescribeAccessPointsInput{AccessPointId: aws.String(apID)})
+	if err != nil {
+		return efstypes.AccessPointDescription{}, fmt.Errorf("describe access point %s: %w", apID, err)
+	}
+	if len(out.AccessPoints) == 0 {
+		return efstypes.AccessPointDescription{}, fmt.Errorf("access point %s not found", apID)
+	}
+	return out.AccessPoints[0], nil
 }
 
 // ListManagedAccessPoints returns every access point on the sockerless

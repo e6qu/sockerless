@@ -2,6 +2,8 @@
 
 This guide is for the **real** `actions/runner` binary registered with a real `github.com` repo or organization, with `DOCKER_HOST` pointing at a sockerless deployment. For the `act`-based simulator flow used in CI, see [`GITHUB_RUNNER.md`](./GITHUB_RUNNER.md).
 
+> **Looking for the canonical wiring guide that also covers GitLab + token hygiene + the 4-cell (GH + GL × ECS + Lambda) coverage matrix?** See [`RUNNERS.md`](./RUNNERS.md). This doc remains the per-platform reference for the GitHub side only.
+
 ## Architecture
 
 ```

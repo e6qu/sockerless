@@ -27,6 +27,17 @@ This document is the source of truth for the stateless-backend invariant.
 7. **No fakes, no fallbacks, no placeholders.** Workarounds, silent substitutions, placeholder fields, synthetic-metadata backstops — all are bugs and land in [BUGS.md](../BUGS.md) under "Open" until a real fix ships.
 8. **FaaS backends run user-supplied container images, never the native runtime.** Lambda, GCF (Cloud Run Functions gen2), and AZF (Azure Functions) deploy OCI images chosen by the operator. Sockerless never targets the platforms' "function-as-code" runtime contracts (Node/Python/Go handlers in a managed sandbox). Container deployment is what lets sockerless put its bootstrap at the entrypoint, which is the prerequisite for the reverse-agent, agent-as-handler, and overlay-rootfs (opt-in via `SOCKERLESS_OVERLAY_ROOTFS=1`) patterns. ACA and Cloud Run are native container services, so this distinction is automatic — every deployment is a container.
 
+9. **Backend ↔ host primitive must match (CRITICAL).** When a sockerless backend is deployed *as part of a workload running on a cloud* (e.g. baked into a CI runner image), the backend must match that cloud's primitive: ECS backend in ECS, Lambda backend in Lambda, Cloud Run backend in Cloud Run, CRF in CRF, ACA in ACA, AZF in AZF. Cross-pollination ("bake the ECS backend into a Lambda image to dispatch sub-tasks via Fargate and avoid Lambda-in-Lambda recursion") is a class of architectural error tracked at top of [BUGS.md](../BUGS.md). Each cloud's own dispatch primitives are the answer for sub-task workloads on that cloud, even when 15-min caps or concurrency limits make it harder. The **runner-on-FaaS dispatch table** below gives the per-cloud primitive used for `container:` sub-tasks:
+
+   | Backend | Primitive for `container:` sub-task | IAM (in addition to base FaaS perms) |
+   |---|---|---|
+   | `lambda` | `lambda.CreateFunction` (image-mode container) per sub-task → `lambda.Invoke`. Sub-task functions share the runner's workspace EFS access point via `FileSystemConfig`. After invoke + completion, `lambda.DeleteFunction`. | `lambda:CreateFunction/Invoke/Delete/Get/UpdateConfiguration/Tag/ListFunctions`, `iam:PassRole` for sub-task execution role. |
+   | `cloudrun-functions` (gcf) | `functions.CallFunction` against a function newly created via `functions.CreateFunction`; or warm pool. Workspace shared via GCS bucket pre-mounted by the bootstrap. | `cloudfunctions.functions.create/call/delete`, `iam.serviceAccounts.actAs`. |
+   | `azure-functions` (azf) | Function-app deployment + HTTP trigger invoke; sub-task workspace mounted as Azure Files share via the function app's site config. | `Microsoft.Web/sites/{create,invoke,delete}`, managed-identity `actAs`. |
+   | `ecs` | `ecs.RunTask` (Fargate) per sub-task; not relevant *inside* an ECS workload because ECS tasks run a long-lived sockerless that handles repeated `RunTask` directly. | (default ECS task role.) |
+   | `cloudrun` (services) | `run.Services.CreateRevision` against a per-sub-task Service; long-lived for the duration of the parent workload. | `run.services.create/get/delete`. |
+   | `aca` | `containerapps.CreateOrUpdate` against a per-sub-task App. | `Microsoft.App/containerApps/write/delete`. |
+
 ---
 
 ## Mapping per cloud
@@ -65,7 +76,7 @@ This document is the source of truth for the stateless-backend invariant.
 | Pod | Multi-container pod is **not supported** by Lambda — one function = one container. Pods would require a coordinator (e.g. Step Functions); not in scope. | — | — |
 | Image | ECR repository / image | `<account>.dkr.ecr.<region>.amazonaws.com/<repo>:<tag>` | (registry-managed) |
 | Network | **Native cross-container DNS is not addressable per-execution.** Lambda VPC config only routes egress; peer-Lambda discovery requires Service Discovery + a separate fronting service. Treat docker networks as bookkeeping only. | (no cloud anchor) | (known limitation) |
-| Volume | EFS access point on a sockerless-managed EFS filesystem (shared with ECS), attached at `CreateFunction` via `Function.FileSystemConfigs[]`. Requires `SOCKERLESS_LAMBDA_SUBNETS` (Lambda-in-VPC). See `backends/lambda/backend_delegates.go::VolumeCreate` + `aws-common/volumes.go::EFSManager`. `/tmp` (512 MB–10 GB ephemeral) is always present per-invocation; named volumes are durable across invocations. | EFS filesystem id + access-point id | EFS resource tags: `sockerless-managed=true`, `sockerless-volume-name=<name>` |
+| Volume | EFS access point on a sockerless-managed EFS filesystem (shared with ECS), attached at `CreateFunction` via `Function.FileSystemConfigs[]` (Lambda permits one per function, mount path constrained to `/mnt/[A-Za-z0-9_.\-]+`). Requires `SOCKERLESS_LAMBDA_SUBNETS` (Lambda-in-VPC). See `backends/lambda/backend_delegates.go::VolumeCreate` + `aws-common/volumes.go::EFSManager` + the **"Lambda bind-mount translation"** subsection of "Volume provisioning per backend" for the `-v src:dst` translation rules. `/tmp` (512 MB–10 GB ephemeral) is always present per-invocation; named volumes are durable across invocations. | EFS filesystem id + access-point id | EFS resource tags: `sockerless-managed=true`, `sockerless-volume-name=<name>` |
 | Exec instance | Reverse-agent overlay (`sockerless-lambda-bootstrap` dials back during `Invoke`); see [Exec](#exec). | (transient agent session) | — |
 
 **State derivation:**
@@ -219,7 +230,7 @@ Real per-cloud volume provisioning: ECS + Lambda → EFS access points; Cloud Ru
 | Backend | Cloud resource | Lifecycle mapping | IAM / API actions needed | Simulator work |
 |---------|----------------|--------------------|--------------------------|----------------|
 | `ecs` | **EFS** file system + per-AZ mount targets + per-volume access point. Access point maps the volume name to a subdirectory owned by a fixed UID/GID so tasks can't trample each other. | `VolumeCreate` → ensure one EFS per backend (reuse by tag `sockerless-managed=true`), then `CreateAccessPoint` per volume, store volume-name → access-point-id in tags. `VolumeRemove` → `DeleteAccessPoint` (EFS stays, holding other volumes). Bind / named mounts → inject `EFSVolumeConfiguration{FileSystemId, AccessPointId, TransitEncryption=ENABLED}` into the task-def's `Volumes` array + `MountPoints` in the container def. | `elasticfilesystem:CreateFileSystem`, `DescribeFileSystems`, `CreateMountTarget`, `DescribeMountTargets`, `CreateAccessPoint`, `DescribeAccessPoints`, `DeleteAccessPoint`, `TagResource`, `PutFileSystemPolicy`. Task execution role needs `elasticfilesystem:ClientMount/ClientWrite/ClientRootAccess`. | `simulators/aws/efs.go` — real EFS-like slice. Store file systems + mount targets + access points; back access points with per-volume subdirectories on a host-side Docker volume so the per-task Docker container can mount the same path and see the same files. |
-| `lambda` | None (permanent). Lambda containers only have a 512 MB–10 GB ephemeral `/tmp`; there is no per-invocation cross-container storage docker volumes can usefully bind. | `VolumeCreate`/etc. stay `NotImplemented`. `ContainerCreate` with `-v volname:/x` should reject with a clear error pointing at S3 / DynamoDB / EFS-via-Lambda-VPC for durable state. | — | — |
+| `lambda` | **EFS** file system + per-AZ mount targets + access points (shared with `ecs`'s `EFSManager`). Each Lambda function gets at most one `FileSystemConfig` (Lambda enforces this) mounted at a single `/mnt/<name>` path (Lambda enforces `localMountPath` to match `/mnt/[A-Za-z0-9_.\-]+`). `/tmp` (512 MB–10 GB ephemeral) is always present per-invocation; EFS-backed named volumes are durable across invocations and across functions. | `VolumeCreate` → `EFSManager.AccessPointForVolume` (creates an AP whose `RootDirectory.Path` is unique per volume). Bind / named mounts → translated by `backends/lambda/volumes.go::fileSystemConfigsForBinds` per the rules in **"Lambda bind-mount translation"** below — multiple Docker volumes that share an access point collapse to one `FileSystemConfig`; non-`/mnt/` Docker target paths get bootstrap-time symlinks. | Same as ECS — `EFSManager` is shared. | Sim Lambda runtime needs `FileSystemConfigs` to be honoured on the simulator's container path so EFS-backed binds work end-to-end against the sim. |
 | `cloudrun` | **GCS bucket** per volume (simplest first pass), mounted via Cloud Run Service's native `Volume{Gcs{Bucket}}` in the revision template. Optional upgrade to **Filestore** later for POSIX semantics if `O_APPEND` / file locking is needed. | `VolumeCreate` → `storage.Buckets.Insert` with naming `sockerless-volume-<id>`, label `sockerless-managed=true`. `VolumeRemove` → `DeleteBucket` (requires empty; force=true uses `DeleteObjects` first). Bind / named mount → inject `RevisionTemplate.Volumes[].Gcs{Bucket}` + `Container.VolumeMounts` in the service spec. | `storage.buckets.create/delete/list`, `storage.objects.*` for prune/delete. Cloud Run service account needs `roles/storage.objectAdmin` on buckets it mounts. | `simulators/gcp/storage.go` already has GCS slice; extend with `Volume{Gcs}` honouring on the Cloud Run simulator path so the backing Docker container gets a real bind mount against the sim's bucket directory. |
 | `aca` | **Azure Files share** in a sockerless-owned storage account, linked into the managed environment as an `ManagedEnvironments/storages` resource, then referenced from `ContainerApp.Properties.Template.Volumes[]` + `Container.VolumeMounts`. | `VolumeCreate` → (ensure storage account exists) + `FileShares.Create` + `ManagedEnvironmentsStorages.CreateOrUpdate` so the env knows about the share. `VolumeRemove` → `FileShares.Delete` + `ManagedEnvironmentsStorages.Delete`. Bind / named mount → inject `ContainerAppProperties.Template.Volumes` + `Container.VolumeMounts` into the app spec. | `Microsoft.Storage/storageAccounts/read,write,listKeys`, `Microsoft.Storage/storageAccounts/fileServices/shares/read,write,delete`, `Microsoft.App/managedEnvironments/storages/read,write,delete`. | `simulators/azure/storage.go` gains `fileServices/shares` sub-resource CRUD (the storage slice today is blob-only). `simulators/azure/containerappsenv.go` gains `storages` sub-resource. The sim's ACA container bind-mounts a host-side directory per share so containers see real files. |
 | `cloudrun-functions` (gcf) | GCP Cloud Functions (targeting the current v2 API only; v1 not supported). v2 is Cloud Run Services under the hood. | Shared helper with `cloudrun` — same GCS-bucket-mount lifecycle. | Same as cloudrun. | Shares `simulators/gcp/` GCS extensions. |
@@ -227,6 +238,98 @@ Real per-cloud volume provisioning: ECS + Lambda → EFS access points; Cloud Ru
 | `docker` | Real Docker volumes via the local daemon. | Already implemented — passthrough to `docker volume *` on the host daemon. | — | — |
 
 Each cloud's volume work is filed as its own phase in [PLAN.md](../PLAN.md) so real provisioning lands as discrete, reviewable units.
+
+### Lambda bind-mount translation
+
+Lambda's volume primitive carries two hard constraints that diverge from Docker's volume model:
+
+1. **At most one `FileSystemConfig` per function.** A Lambda function can mount one EFS access point — no more.
+2. **`localMountPath` must match `/mnt/[A-Za-z0-9_.\-]+`.** Mounting at arbitrary paths (`/__w`, `/home/runner/_work`, etc.) is rejected by `lambda.CreateFunction`.
+
+Sockerless's `backends/lambda/volumes.go::fileSystemConfigsForBinds` translates Docker `-v src:dst` into Lambda primitives subject to those constraints:
+
+- **Single AP per function.** All EFS-backed volumes a Lambda function references must share one access point. When multiple `SharedVolume` entries (declared via `SOCKERLESS_LAMBDA_SHARED_VOLUMES`) name the same `AccessPointID`, they collapse to one `FileSystemConfig`. Multiple distinct APs in the same `CreateFunction` call are rejected at sockerless's boundary with a clear error pointing at this constraint.
+- **Single mount path; bind targets are symlinks.** The collapsed `FileSystemConfig` mounts at `/mnt/sockerless-shared`. Each Docker bind's `dst` is exposed via a **symlink** created by sockerless's bootstrap before the user entrypoint runs. The symlink target is `/mnt/sockerless-shared/<EFSSubpath>`, where `EFSSubpath` is declared on the `SharedVolume` (the directory under the AP root where that volume's data lives — e.g. `_work` for the runner workspace, `externals` for actions/runner externals).
+- **`SOCKERLESS_LAMBDA_BIND_LINKS` env var** carries `<dst>=/mnt/sockerless-shared/<EFSSubpath>` mappings into the sub-task function. The bootstrap parses this on startup, `mkdir -p`s the parent of each `dst`, and `ln -sfn`s the link.
+- **`/var/run/docker.sock` binds drop silently** — Lambda has no docker socket; the runner-side process should be using sockerless on `localhost:3375` instead.
+
+`SOCKERLESS_LAMBDA_SHARED_VOLUMES` syntax accommodates the AP-subpath:
+
+    name=containerPath=fsap-XXXX                            # AP root contains the volume's data
+    name=containerPath=fsap-XXXX=fs-YYYY                    # explicit FS id, AP root
+    name=containerPath=fsap-XXXX==subpath                   # AP root + subpath
+    name=containerPath=fsap-XXXX=fs-YYYY=subpath            # explicit FS + subpath
+
+When `subpath` is set, the volume's data lives under `<APRoot>/<subpath>` on EFS; bind translations point their symlinks at `/mnt/sockerless-shared/<subpath>` accordingly.
+
+This is the only correct mapping of Docker's `-v` semantics onto Lambda's volume primitive — same nature as sockerless's reverse-agent translation of `docker exec` for Lambda (which has no docker exec), or sockerless's metadata-only network driver for Fargate (which has its own netns).
+
+### Lambda exec semantics
+
+Lambda has no native `docker exec` primitive — once a function is invoked, there's no inbound channel to push additional commands into the running execution environment. Sockerless implements `docker exec` against Lambda containers via two complementary translations:
+
+**Path A — reverse-agent (preferred when reachable):** the bootstrap dials a long-lived WebSocket back to sockerless at `SOCKERLESS_CALLBACK_URL` during init; sockerless pushes `TypeExec` messages over the WebSocket; the bootstrap spawns the command in the same execution environment, streams stdout/stderr/exit-code back. Preserves Docker fidelity (multiple execs share `/tmp`, file descriptors, etc.). Requires a stable inbound endpoint reachable from the sub-task's VPC subnets — typically API Gateway WebSocket API or a separate sockerless service running outside Lambda (e.g. ECS Fargate behind an NLB).
+
+**Path B — exec-via-Invoke (fallback, native to Lambda's primitive):** each `docker exec` triggers a fresh `lambda.Invoke` whose Payload is a JSON envelope `{"sockerless":{"exec":{"argv":[...],"tty":...,"workdir":...,"env":[...]}}}`. The bootstrap parses the envelope, spawns the command, returns `{"sockerlessExecResult":{"exitCode":N,"stdout":"<base64>","stderr":"<base64>"}}` via `/response`. Sockerless tunnels the response into the docker-exec attach stream. Each exec is a separate Lambda invocation: the execution environment may or may not be reused (Lambda's warm-pool decision). State persistence between execs is via EFS-mounted volumes only — `/tmp` does NOT persist across invocations. Required when no inbound endpoint is available (e.g., sockerless baked into the runner-Lambda image with no fronting API Gateway).
+
+Choice of path is per-container, decided at exec time:
+1. If `s.reverseAgents.Resolve(containerID)` returns a registered session → Path A.
+2. Else if the function is `Active` and reachable via `lambda.Invoke` → Path B.
+3. Else → `NotImplementedError` with a clear message.
+
+Path B's payload format matches what `agent/cmd/sockerless-lambda-bootstrap/main.go` parses in `runUserInvocation`. An empty Payload (or a non-JSON one) keeps the existing "run user entrypoint+cmd as a subprocess" behaviour for the function's main invocation.
+
+### ECS gitlab-runner script delivery (Fargate has no runtime stdin)
+
+**Per-job containers, per-stage scripts.** Each gitlab-runner job creates its own pair of containers — one helper (image: `gitlab-runner-helper`, name suffix `-predefined`) and one build (image from `.gitlab-ci.yml`'s `image:` field, e.g. `alpine`) — plus one per `services:` entry. Both live for exactly that one job; `docker rm` runs at job end. The next job creates fresh containers from scratch. No state crosses job boundaries.
+
+Within a job, gitlab-runner walks both containers through ~10 stages (`prepare_script`, `get_sources`, `download_artifacts`, `step_script`, `after_script`, `archive_*`, `upload_artifacts_*`, `cleanup_file_variables`). For each stage, gitlab-runner does `docker start <container>` followed by `docker attach -i <container>` with the stage's generated shell script piped as stdin bytes. Real Docker re-runs the container's ENTRYPOINT on each `start` of a STOPPED container; the entrypoint reads stdin, runs the script, exits when stdin EOFs.
+
+Both containers (helper and build) are created with the same stdin-reading entrypoint — gitlab-runner overrides whatever the source image had:
+
+```
+ENTRYPOINT ["sh", "-c",
+  "if [ -x /usr/local/bin/bash ]; then exec /usr/local/bin/bash; \
+   elif [ -x /usr/bin/bash ]; then exec /usr/bin/bash; \
+   ... etc ... \
+   else echo shell not found; exit 1; fi"]
+```
+
+The "Running on $(hostname) via $(client)..." identity banner per stage comes from the FIRST LINE of the generated shell script, NOT from helper-image-specific code. The helper and build containers are functionally just shell-script-runners; only their image filesystem differs.
+
+**Fargate breaks this lifecycle in two ways**:
+
+1. Fargate tasks are **not restartable**. Once a task transitions to STOPPED, that task ARN is gone; `ecs.RunTask` always creates a new task. Real Docker's `docker start` semantics ("re-run entrypoint on stopped container") have no Fargate equivalent.
+2. Fargate has **no runtime stdin channel**. Once `RunTask` starts, the task's PID-1 stdin is closed; no SDK call writes more bytes to it. Real Docker's `docker attach -i` ("pipe bytes into a running container's stdin") has no Fargate equivalent either.
+
+**Sockerless's translation rule — one Fargate task per gitlab-runner job, multi-container.** ECS task definitions are multi-container by design: one task can host the helper container, the build container, and any `services:` sidecars in a single `RunTask`. The containers share the task's network namespace (so `localhost` works between helper and build), share the same task IAM role, and each container is independently addressable by `ecs.ExecuteCommand --container <name>`. This is the natural mapping for gitlab-runner's "one job uses N containers on a shared docker network" topology.
+
+The grouping signal is the **docker network**: gitlab-runner creates a job-scoped network (`runner-XXX-project-YYY-concurrent-Z-NNN`) and creates each of the job's containers with `--network <that network>`. Sockerless detects this signal at /start time:
+
+1. **/create** records the container's network membership in `PendingCreates` but doesn't register a task definition yet.
+2. **First /start that targets a user-defined network** scans `PendingCreates` for sibling containers on the same network. If one or more siblings exist, sockerless registers a multi-container task definition with one `ContainerDefinition` per sibling (entrypoint + cmd preserved per container, including the long-lived idle loop for stdin-pipe containers; `enableExecuteCommand: true` set on every container) and runs the task once.
+3. **Each container in the multi-container task** caches `(containerID → (taskARN, containerName))`. The task-level state is shared; per-container exit codes come from the task's STOPPED `containers[].exitCode` field once the task completes.
+4. **Subsequent /start cycles on the same container ID** skip RunTask and rely on `ecs.ExecuteCommand --task <ARN> --container <name> --interactive --command "/bin/sh"` to deliver each stage's buffered stdin script. Sockerless writes the script bytes through the SSM session, streams stdout/stderr into the docker `/attach` hijacked connection (multiplexed-stream framing for non-tty), captures the exit-code marker emitted at the end of each script as the stage's exit status.
+5. **/exec** on any container hits the same `ExecuteCommand --container <name>` path against the live task — already implemented for non-stdin /exec by `cloudExecStart`.
+6. **/wait** for a container blocks until the task transitions to STOPPED and reads the per-container exit code from the task's `containers[]` array. **/stop and /kill** call `ecs.StopTask` (the entire task; its containers go down together — gitlab-runner removes the helper and build containers as a pair at job end, so this matches gitlab-runner's lifecycle). **/rm** drops cache entries and deregisters the task definition.
+
+Per-stage / per-container script delivery rules within the multi-container task:
+
+> **Stdin-pipe lifecycle (gitlab-runner pattern; `OpenStdin && AttachStdin`)** — applies to BOTH the helper and the build container in the multi-container task. The container's `ContainerDefinition.Command` is the long-lived idle loop (`["sh","-c","while true; do sleep 60; done"]`) so the container stays running for the whole task lifetime. Per /start cycle: stdin script bytes get written to an SSM session opened against `--container <name>`. The shell session reads + executes the script. Stdout/stderr stream back through the hijacked `/attach`. Exit-code marker (echoed by sockerless's `wrapWithExitCodeMarker`) carries the stage exit status.
+
+> **Single-shot lifecycle** (no stdin pipe) — the original `Entrypoint`/`Cmd` from /create is preserved in the task definition; the container runs once and exits. /wait surfaces its exit code from the task's `containers[]` array. This is the path for sidecar `services:` containers that just need to start, run their image's entrypoint, and stay reachable on the task's network.
+
+Single-container fallback: if the container at first-/start has no user-defined network OR has no sibling containers in `PendingCreates` on that network, sockerless registers a single-container task definition (current behaviour preserved for `docker run` / GitHub-Actions-runner workloads where there's only one job container).
+
+The docker-network signal works for any client that follows the "create a network, attach all of the job's containers to it" idiom (gitlab-runner, docker-compose, k8s pods translated through libpod's pod API). No client-specific name parsing required.
+
+**Cell 4 (GitLab × Lambda) — one Lambda function per container.** Lambda has no multi-container execution model — each function runs exactly one container. Each of gitlab-runner's per-job containers (helper, build, services) maps 1:1 to its own Lambda function: sockerless's existing `lambda.CreateFunction`-per-`docker create` flow already does this. There's no equivalent of ECS's "multi-container task" grouping; each function is independent. The functions don't need to talk to each other at runtime — gitlab-runner's helper and build containers coordinate via the EFS-mounted `$CI_PROJECT_DIR` (workspace), the same way they would on a single Docker host (Docker shares the `/builds` volume between them; sockerless's bind-mount → EFS translation routes both functions to the same access point under `/mnt/sockerless-shared/_work`). All cross-stage state lives on EFS.
+
+Each gitlab-runner stage's stdin-piped script becomes one fresh `lambda.Invoke` whose Payload is a SCRIPT envelope `{"sockerless":{"script":{"shell":"sh","body":"<base64>","workdir":"...","env":[...]}}}`. The bootstrap parses, runs `bash -c "<decoded body>"` as a subprocess, returns `{"sockerlessScriptResult":{"exitCode":N,"stdout":"...","stderr":"..."}}`. Cross-stage state persists via EFS only — `/tmp` is per-invocation. Same per-job-isolation rule as ECS: each gitlab-runner job creates its own functions, deletes them at /rm. (Phase 117.)
+
+The stock `gitlab-runner-helper` image is used unmodified on both backends. Sockerless's overlay-inject path (Phase 115) wraps it with `sockerless-lambda-bootstrap` as ENTRYPOINT; the bootstrap parses each Invoke's Payload (exec or script envelope) and dispatches. The helper image's `gitlab-runner-helper` binary remains on the function's PATH; per-stage scripts can invoke it directly when needed.
+
+**Path A (reverse-agent) for either backend** stays available when `SOCKERLESS_CALLBACK_URL` is set: the bootstrap dials back via WebSocket and sockerless pushes per-stage messages over the connection. Path A preserves Docker fidelity (multiple stages share `/tmp`, file descriptors) at the cost of inbound network. Phases 114 and 117 implement the no-inbound-network paths and remain the default when CallbackURL is unset.
 
 ---
 

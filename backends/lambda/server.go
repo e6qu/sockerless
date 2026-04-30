@@ -3,6 +3,8 @@ package lambda
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
@@ -20,6 +22,12 @@ type Server struct {
 	reverseAgents *reverseAgentRegistry // reverse-agent session registry
 	ipCounter     atomic.Int32
 	volumeState
+	// stdinPipes buffers stdin bytes written via the hijacked attach
+	// connection for containers created with OpenStdin && AttachStdin.
+	// ContainerStart drains the pipe and bakes the buffered bytes into
+	// the Lambda Invoke Payload (the bootstrap pipes Payload to the
+	// user entrypoint as stdin).
+	stdinPipes sync.Map
 }
 
 // NewServer creates a new Lambda backend server.
@@ -39,9 +47,15 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		Driver:          "lambda",
 		OperatingSystem: "AWS Lambda",
 		OSType:          "linux",
-		Architecture:    "amd64",
-		NCPU:            2,
-		MemTotal:        4294967296,
+		// Architecture reflects the Lambda function arch (x86_64 /
+		// arm64), translated to Docker's amd64 / arm64 spelling —
+		// sockerless's own host arch is irrelevant (client/server
+		// model: Docker clients on any host arch report the *server*
+		// arch via `docker info`, and our server is the cloud
+		// workload).
+		Architecture: dockerArchFromLambda(config.Architecture),
+		NCPU:         2,
+		MemTotal:     4294967296,
 	}, logger)
 	s.volumeState = volumeState{efs: awscommon.NewEFSManager(awsClients.EFS, awscommon.EFSManagerConfig{
 		AgentEFSID:     config.AgentEFSID,
@@ -83,16 +97,27 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	registerUI(s.BaseServer)
 	s.registerReverseAgentRoutes(logger)
 
-	// Route `docker exec` + `docker attach` through the reverse-agent
-	// when a session is connected. The BaseServer's default
-	// LocalExecDriver/LocalStreamDriver error out since Lambda has no
-	// local container namespace; the reverse-agent pattern fills the gap.
-	s.Drivers.Exec = &lambdaExecDriver{Registry: s.reverseAgents, Logger: logger}
+	// Route `docker exec` against Lambda. Two implementations exist
+	// (per `specs/CLOUD_RESOURCE_MAPPING.md` § "Lambda exec semantics");
+	// the deployment-time decision picks ONE — no runtime fallback:
+	//
+	//   - Path A (CallbackURL set): reverse-agent WebSocket. Bootstrap
+	//     dials back during init, sockerless pushes TypeExec messages.
+	//     Preserves Docker fidelity (multiple execs share /tmp).
+	//     Requires inbound network for the dial-back.
+	//   - Path B (CallbackURL empty): exec-via-Invoke. Each docker
+	//     exec triggers a fresh `lambda.Invoke` whose payload is a
+	//     JSON envelope; bootstrap parses, runs, returns. Native to
+	//     Lambda's primitive — no inbound network needed.
+	if config.CallbackURL != "" {
+		s.Drivers.Exec = &lambdaExecDriver{Registry: s.reverseAgents, Logger: logger}
+		s.Typed.Exec = core.WrapLegacyExec(s.Drivers.Exec, "lambda", "ReverseAgentExec")
+	} else {
+		invokeDriver := &lambdaInvokeExecDriver{server: s, logger: logger}
+		s.Drivers.Exec = invokeDriver
+		s.Typed.Exec = core.WrapLegacyExec(invokeDriver, "lambda", "InvokeExec")
+	}
 	s.Drivers.Stream = &lambdaStreamDriver{Registry: s.reverseAgents, Logger: logger}
-	// Typed Exec driver — bypasses BaseServer.ExecStart's pipeConn
-	// bridge and dispatches directly to the reverse-agent driver with
-	// the hijacked conn handed in by handleExecStart.
-	s.Typed.Exec = core.WrapLegacyExec(s.Drivers.Exec, "lambda", "ReverseAgentExec")
 	s.Typed.ProcList = core.NewReverseAgentProcListDriver(s.reverseAgents, "lambda")
 	s.Typed.FSDiff = core.NewReverseAgentFSDiffDriver(s.reverseAgents, "lambda")
 	s.Typed.FSRead = core.NewReverseAgentFSReadDriver(s.reverseAgents, "lambda")
@@ -112,8 +137,7 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	s.Typed.Logs = core.NewCloudLogsLogsDriver(s.BaseServer, logFactory,
 		core.StreamCloudLogsOptions{CheckLogBuffers: true},
 		"lambda", "CloudWatchLogs")
-	s.Typed.Attach = core.NewCloudLogsAttachDriver(s.BaseServer, logFactory,
-		"lambda", "CloudLogsReadOnlyAttach")
+	s.Typed.Attach = &lambdaStdinAttachDriver{s: s}
 
 	return s
 }
@@ -121,4 +145,20 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 // ctx returns a background context.
 func (s *Server) ctx() context.Context {
 	return context.Background()
+}
+
+// dockerArchFromLambda translates AWS Lambda Architectures values
+// (`x86_64` / `arm64`) into Docker's image-arch spelling
+// (`amd64` / `arm64`). Empty or unknown values pass through verbatim;
+// Config.Validate refuses to start the server with an empty or
+// unrecognised value so this branch should never fire in production.
+func dockerArchFromLambda(lambdaArch string) string {
+	switch strings.ToLower(lambdaArch) {
+	case "arm64":
+		return "arm64"
+	case "x86_64":
+		return "amd64"
+	default:
+		return strings.ToLower(lambdaArch)
+	}
 }

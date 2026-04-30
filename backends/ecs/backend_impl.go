@@ -102,18 +102,72 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// silently substituting an empty scratch volume or an EFS subdir
 	// named after the host path) keeps `docker run -v /host:/container`
 	// failures explicit.
+	//
+	// Exception 1 — shared-volume translation. When sockerless runs
+	// inside an ECS task that has EFS access points mounted at
+	// configured paths (declared via SOCKERLESS_ECS_SHARED_VOLUMES),
+	// a bind mount whose source matches a shared volume's
+	// ContainerPath is rewritten to a named-volume reference. The
+	// spawned sub-task mounts the same EFS access point, so caller
+	// and sub-task share the workspace via EFS — this is what makes
+	// GitHub Actions `container:` bind-mounts work end-to-end on
+	// Fargate.
+	//
+	// Exception 2 — `/var/run/docker.sock`. The runner unconditionally
+	// adds this for nested-docker support. On Fargate there's no
+	// docker daemon socket; sockerless silently drops the mount.
+	// Sub-task containers that try to use docker.sock will fail at
+	// the step level, surfacing the limitation.
+	translatedBinds := hostConfig.Binds[:0]
 	for _, bind := range hostConfig.Binds {
 		parts := strings.SplitN(bind, ":", 3)
 		if len(parts) < 2 {
 			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("invalid bind mount spec %q", bind)}
 		}
-		if strings.HasPrefix(parts[0], "/") {
-			return nil, &api.InvalidParameterError{Message: fmt.Sprintf(
-				"host bind mounts are not supported on ECS backend (%q); use a named volume (`docker volume create <name> && docker run -v <name>:/path`) — volumes are backed by sockerless-managed EFS access points",
-				bind,
-			)}
+		src, dst := parts[0], parts[1]
+		mode := ""
+		if len(parts) == 3 {
+			mode = parts[2]
 		}
+		if !strings.HasPrefix(src, "/") {
+			// Already a named-volume reference (`volname:/path`) — keep as-is.
+			translatedBinds = append(translatedBinds, bind)
+			continue
+		}
+		if src == "/var/run/docker.sock" {
+			// Drop silently — Fargate has no docker.sock. Nested-docker
+			// support would require a separate dispatch path back to a
+			// sockerless instance; out of scope for the runner-task
+			// shape.
+			continue
+		}
+		if sv := s.config.LookupSharedVolumeBySourcePath(src); sv != nil {
+			// Rewrite `/host:/container[:ro]` → `<volume>:/container[:ro]`.
+			translated := sv.Name + ":" + dst
+			if mode != "" {
+				translated += ":" + mode
+			}
+			translatedBinds = append(translatedBinds, translated)
+			continue
+		}
+		// Sub-path of a mapped shared volume — drop the bind. The
+		// parent volume's EFS mount already exposes this sub-path
+		// inside the spawned container at the parent's containerPath +
+		// the sub-path's relative offset. The runner uses redundant
+		// per-sub-path bind mounts (e.g. `/_work/_temp`, `/_work/_actions`)
+		// when the parent `/_work` is already mapped — those land
+		// inside the same EFS naturally.
+		if isSubPathOfSharedVolume(src, s.config.SharedVolumes) {
+			s.Logger.Debug().Str("source", src).Str("dest", dst).
+				Msg("dropping sub-path bind mount; parent shared volume already mapped")
+			continue
+		}
+		return nil, &api.InvalidParameterError{Message: fmt.Sprintf(
+			"host bind mounts are not supported on ECS backend (%q); use a named volume (`docker volume create <name> && docker run -v <name>:/path`) — volumes are backed by sockerless-managed EFS access points. Configure SOCKERLESS_ECS_SHARED_VOLUMES to translate runner-task bind mounts to shared EFS access points.",
+			bind,
+		)}
 	}
+	hostConfig.Binds = translatedBinds
 
 	path := ""
 	var args []string
@@ -178,7 +232,9 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	s.PendingCreates.Put(id, container)
 
 	// Store ECS state without task definition — defer registration to ContainerStart.
-	s.ECS.Put(id, ECSState{})
+	s.ECS.Put(id, ECSState{
+		OpenStdin: config.OpenStdin && config.AttachStdin,
+	})
 
 	// Attach the user-defined network's security group so the task is
 	// launched on that SG (not just the default task SG). `docker run
@@ -220,7 +276,22 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 	}
 	if !ok {
-		return &api.NotFoundError{Resource: "container", ID: ref}
+		// Fall back to CloudState / Store so callers can `docker start`
+		// a previously-run container (e.g. gitlab-runner's docker
+		// executor stops + re-runs its predefined helper container
+		// across script stages). Without this fallback, the second
+		// start returns 404 even though `docker inspect` finds the
+		// (STOPPED) container.
+		resolved, found := s.ResolveContainerAuto(context.Background(), ref)
+		if !found {
+			return &api.NotFoundError{Resource: "container", ID: ref}
+		}
+		c = resolved
+		// Restore the container to PendingCreates so the rest of the
+		// start flow (taskdef registration, RunTask, waitForRunning)
+		// finds it via the existing path. The entry is removed again
+		// after waitForTaskRunning per the BUG-858 lifecycle.
+		s.PendingCreates.Put(c.ID, c)
 	}
 	id := c.ID
 
@@ -229,21 +300,6 @@ func (s *Server) ContainerStart(ref string) error {
 	}
 
 	ecsState, _ := s.ECS.Get(id)
-
-	// Deferred task definition registration: if not yet registered, do it now
-	if ecsState.TaskDefARN == "" {
-		taskDefARN, err := s.registerTaskDefinition(s.ctx(), []containerInput{
-			{ID: id, Container: &c, IsMain: true},
-		})
-		if err != nil {
-			s.Logger.Error().Err(err).Msg("failed to register task definition")
-			return awscommon.MapAWSError(err, "task-definition", id)
-		}
-		s.ECS.Update(id, func(state *ECSState) {
-			state.TaskDefARN = taskDefARN
-		})
-		ecsState.TaskDefARN = taskDefARN
-	}
 
 	// markRunning emits the start event and sets up the wait channel.
 	// Container state is no longer written to Store.Containers — the cloud is the truth.
@@ -258,6 +314,51 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 		s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 		return exitCh
+	}
+
+	// gitlab-runner / `docker run -i` pattern: container was created
+	// with OpenStdin && AttachStdin. The attach driver has wired up a
+	// stdinPipe; the script will arrive over the hijacked attach
+	// connection AFTER `docker start` returns 204. We can't run the
+	// task yet (Fargate has no remote stdin channel for a running
+	// task), so return success immediately and let a goroutine take
+	// over: wait for the stdin pipe to close (caller half-closes after
+	// streaming the script), bake the buffered bytes into the task's
+	// Entrypoint/Cmd, then run the task through the normal launch
+	// path. ContainerWait blocks on the WaitCh which closes when the
+	// task exits — same end-to-end semantics as a synchronous start.
+	//
+	// Predefined helpers (gitlab-runner) go through this same path:
+	// each stage gets a fresh Fargate task with the stage's script
+	// baked into Cmd. gitlab-runner's per-stage flow (Remove +
+	// Create + Attach + Start + script + EOF) maps onto a fresh
+	// task per stage; cross-stage state lives on the cache volumes
+	// gitlab-runner mounts itself, not on a long-lived container.
+	if ecsState.OpenStdin {
+		if v, ok := s.stdinPipes.Load(id); ok {
+			pipe := v.(*stdinPipe)
+			if pipe.IsOpen() {
+				exitCh := markRunning()
+				cContainer := c
+				go s.launchAfterStdin(id, &cContainer, pipe, exitCh)
+				return nil
+			}
+		}
+	}
+
+	// Deferred task definition registration: if not yet registered, do it now
+	if ecsState.TaskDefARN == "" {
+		taskDefARN, err := s.registerTaskDefinition(s.ctx(), []containerInput{
+			{ID: id, Container: &c, IsMain: true},
+		})
+		if err != nil {
+			s.Logger.Error().Err(err).Msg("failed to register task definition")
+			return awscommon.MapAWSError(err, "task-definition", id)
+		}
+		s.ECS.Update(id, func(state *ECSState) {
+			state.TaskDefARN = taskDefARN
+		})
+		ecsState.TaskDefARN = taskDefARN
 	}
 
 	// Deferred start: if container is in a multi-container pod, wait for all siblings
@@ -293,9 +394,6 @@ func (s *Server) ContainerStart(ref string) error {
 
 	markRunning()
 
-	// Remove from PendingCreates now that the task is launched in the cloud.
-	s.PendingCreates.Delete(id)
-
 	s.ECS.Update(id, func(state *ECSState) {
 		state.TaskARN = taskARN
 		state.ClusterARN = clusterARN
@@ -304,6 +402,17 @@ func (s *Server) ContainerStart(ref string) error {
 	// Wait for task to reach RUNNING — only then is the ENI's private IP
 	// known. Cloud Map registration must use that real IP, not the local
 	// placeholder `0.0.0.0` carried in c.NetworkSettings.Networks.
+	//
+	// IMPORTANT: PendingCreates is NOT removed here pre-RUNNING. The
+	// `ResolveContainerAuto` lookup checks PendingCreates first; if a
+	// caller (e.g. gitlab-runner) issues `docker exec` immediately
+	// after `docker start` returns, the cloud-state DescribeTasks-based
+	// lookup might not yet reflect the new task (eventual consistency
+	// or the task is still PENDING/PROVISIONING in this moment).
+	// Keeping the entry in PendingCreates lets the lookup short-circuit
+	// to the in-memory record — which now carries the running TaskARN
+	// via the ECS state map — so exec/inspect/logs all resolve.
+	// PendingCreates.Delete moves to after waitForTaskRunning succeeds.
 	taskAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
@@ -320,11 +429,19 @@ func (s *Server) ContainerStart(ref string) error {
 	// CloudState.GetContainer reads STOPPED straight from ECS so
 	// inspect/ps reflect the real state.
 	if taskAddr == "" {
+		// Short-lived task already STOPPED — drop from PendingCreates
+		// so subsequent inspect/ps reads come from CloudState (which
+		// reflects the actual STOPPED state).
+		s.PendingCreates.Delete(id)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
 		}
 		return nil
 	}
+
+	// Task is RUNNING; CloudState (DescribeTasks) reliably finds it
+	// via the sockerless-container-id tag. Drop the in-memory cache.
+	s.PendingCreates.Delete(id)
 
 	taskIP := taskAddr
 	if i := strings.LastIndex(taskAddr, ":"); i > 0 {
@@ -628,6 +745,11 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	// Clean up PendingCreates (container may have been created but never started)
 	s.PendingCreates.Delete(id)
 	s.ECS.Delete(id)
+	// Unblock any deferred-stdin launcher waiting on the pipe so its
+	// goroutine can exit cleanly without launching a phantom task.
+	if v, ok := s.stdinPipes.LoadAndDelete(id); ok {
+		_ = v.(*stdinPipe).Close()
+	}
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
 	}
@@ -1047,7 +1169,37 @@ func (s *Server) ContainerInspect(ref string) (*api.Container, error) {
 	}
 
 	// Delegate to CloudState via BaseServer (which uses ResolveContainerAuto)
-	return s.BaseServer.ContainerInspect(ref)
+	c, err := s.BaseServer.ContainerInspect(ref)
+	if err != nil {
+		return nil, err
+	}
+
+	// Deferred-stdin path: a fresh /start has spawned `launchAfterStdin`
+	// but the new Fargate task isn't observable in CloudState yet
+	// (image pull + ENI provision typically takes 30-40 s). Without
+	// this override `/inspect` would return CloudState's view, which
+	// reflects the PREVIOUS stage's task — Status="exited" for cycles
+	// 2+ on a gitlab-runner predefined helper. The cloud-logs follower
+	// inside the new stage's `/attach` reads that "exited" status,
+	// hits `isTerminalState`, and EOFs the stream before the new task
+	// has produced any output — gitlab-runner sees an empty stage and
+	// reports it as failed.
+	//
+	// While a deferred-launch is in flight (an open WaitCh exists in
+	// the Store), force Status="running" so the cloud-logs follower
+	// keeps polling until the new task actually exits.
+	if ch, ok := s.Store.WaitChs.Load(c.ID); ok {
+		select {
+		case <-ch.(chan struct{}):
+			// Channel already closed — task ran and stopped; let
+			// CloudState's view stand.
+		default:
+			c.State.Running = true
+			c.State.Status = "running"
+		}
+	}
+
+	return c, nil
 }
 
 // ContainerList lists containers from CloudState, plus PendingCreates.
@@ -1137,4 +1289,158 @@ func (s *Server) inUseVolumeNames() map[string]struct{} {
 		}
 	}
 	return in
+}
+
+// launchAfterStdin runs the deferred-RunTask flow used by containers
+// created with OpenStdin && AttachStdin. Sequence: wait for the
+// hijacked attach connection's stdin EOF (caller half-close after the
+// script has streamed) → bake the buffered bytes into the task's
+// Entrypoint/Cmd → register the task definition → run the task → wait
+// for RUNNING → register Cloud Map → spawn pollTaskExit. Mirrors the
+// synchronous post-`markRunning` portion of ContainerStart but with
+// the Cmd override applied first.
+//
+// Errors (RunTask failure, taskdef registration failure, etc.) close
+// the WaitCh so ContainerWait unblocks; the failure surfaces through
+// CloudState.GetContainer reading STOPPED state.
+func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, exitCh chan struct{}) {
+	s.Logger.Info().Str("container", id[:12]).Msg("launchAfterStdin: entered, waiting for stdin EOF")
+	defer func() {
+		s.Logger.Info().Str("container", id[:12]).Msg("launchAfterStdin: returning")
+		s.stdinPipes.Delete(id)
+	}()
+
+	// Wait for the caller to half-close the hijacked attach connection
+	// (the docker SDK pattern: `io.Copy(conn, stdinSource); CloseWrite()` —
+	// the EOF on the conn-read side closes the pipe). gitlab-runner's
+	// docker-executor uses an attach flow that does NOT always
+	// CloseWrite() — for the predefined helper it streams the script
+	// then reads stdout until container exit, leaving stdin open
+	// throughout. Without a timeout this goroutine waits forever and
+	// blocks ContainerWait. After 30 s we treat whatever's in the
+	// pipe as the script (typical scripts are <12 KB and arrive in
+	// <100 ms over local TCP, so 30 s is well past the legitimate
+	// upper bound for a script write).
+	select {
+	case <-pipe.Done():
+	case <-time.After(30 * time.Second):
+		s.Logger.Info().Str("container", id[:12]).Int("buffered_bytes", len(pipe.Bytes())).Msg("stdin-pipe wait timeout — proceeding with buffered bytes")
+	case <-s.ctx().Done():
+		s.Logger.Warn().Str("container", id[:12]).Msg("stdin-pipe wait cancelled before EOF")
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
+		}
+		return
+	}
+
+	script := pipe.Bytes()
+	// Build a per-cycle copy of the container with the buffered script
+	// baked into Entrypoint+Cmd. We do NOT mutate the stored container
+	// (PendingCreates / Store) because gitlab-runner reuses the same
+	// container ID across multiple start/stop cycles — each cycle
+	// needs a fresh stdin buffer and a fresh script-to-Cmd rewrite.
+	// RunTask's ContainerOverrides only carries Command (not
+	// Entrypoint), so the rewrite has to live in the task definition.
+	cycleContainer := *c
+	cycleConfig := c.Config
+	// When the caller half-closes stdin without writing anything (e.g.
+	// gitlab-runner's "log-streaming /attach" pattern that just opens
+	// the conn and closes it without piping a script), bake an explicit
+	// no-op shell so the task exits cleanly. Without this override the
+	// container would inherit the source image's entrypoint, which for
+	// the gitlab-runner-helper image is a bash-detect wrapper that
+	// blocks reading stdin — and Fargate has no remote stdin channel
+	// for a running task, so the container hangs (BUG-867 regression).
+	if len(script) == 0 {
+		cycleConfig.Entrypoint = []string{"sh", "-c"}
+		cycleConfig.Cmd = []string{"exit 0"}
+	} else {
+		cycleConfig.Entrypoint = []string{"sh", "-c"}
+		cycleConfig.Cmd = []string{string(script)}
+	}
+	cycleConfig.AttachStdin = false
+	cycleConfig.OpenStdin = false
+	cycleConfig.StdinOnce = false
+	cycleContainer.Config = cycleConfig
+
+	taskDefARN, err := s.registerTaskDefinition(s.ctx(), []containerInput{
+		{ID: id, Container: &cycleContainer, IsMain: true},
+	})
+	if err != nil {
+		s.Logger.Error().Err(err).Str("container", id[:12]).Msg("deferred-stdin: failed to register task definition")
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
+		}
+		return
+	}
+	s.ECS.Update(id, func(state *ECSState) { state.TaskDefARN = taskDefARN })
+
+	taskARN, clusterARN, err := s.runECSTask(id, taskDefARN, &cycleContainer)
+	if err != nil {
+		s.Logger.Error().Err(err).Str("container", id[:12]).Msg("deferred-stdin: failed to run ECS task")
+		_, _ = s.aws.ECS.DeregisterTaskDefinition(s.ctx(), &awsecs.DeregisterTaskDefinitionInput{
+			TaskDefinition: aws.String(taskDefARN),
+		})
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
+		}
+		return
+	}
+	s.ECS.Update(id, func(state *ECSState) {
+		state.TaskARN = taskARN
+		state.ClusterARN = clusterARN
+	})
+
+	taskAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
+	if err != nil {
+		s.Logger.Error().Err(err).Str("task", taskARN).Msg("deferred-stdin: task failed to reach RUNNING state")
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
+		}
+		return
+	}
+
+	if taskAddr == "" {
+		// Short-lived task already STOPPED before we observed RUNNING.
+		// Drop PendingCreates so /inspect reads the actual STOPPED
+		// state from CloudState (Status="exited") instead of the
+		// stale "created" carried in the PendingCreates entry.
+		// Without this drop, the cloud-logs follower in /attach polls
+		// /inspect, sees Status="created" (non-terminal), and never
+		// EOFs the stream — gitlab-runner's per-stage `docker attach`
+		// hangs indefinitely waiting for the container to "exit".
+		s.PendingCreates.Delete(id)
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
+		}
+		return
+	}
+
+	// Drop PendingCreates: from this point on, CloudState (DescribeTasks)
+	// is the source of truth for the container's State, and the stale
+	// "created" Status in the PendingCreates entry would otherwise
+	// shadow CloudState's "running" / "exited" through ResolveContainerAuto
+	// — that breaks `/attach`'s cloud-logs follower (it polls /inspect
+	// expecting Status="exited" to terminate the stream when the task
+	// stops).
+	s.PendingCreates.Delete(id)
+
+	taskIP := taskAddr
+	if i := strings.LastIndex(taskAddr, ":"); i > 0 {
+		taskIP = taskAddr[:i]
+	}
+	hostname := strings.TrimPrefix(c.Name, "/")
+	for netName, ep := range c.NetworkSettings.Networks {
+		if ep == nil || ep.NetworkID == "" {
+			continue
+		}
+		if netName == "bridge" || netName == "host" || netName == "none" {
+			continue
+		}
+		if err := s.cloudServiceRegister(id, hostname, taskIP, ep.NetworkID); err != nil {
+			s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("deferred-stdin: failed to register in Cloud Map")
+		}
+	}
+
+	go s.pollTaskExit(id, taskARN, exitCh)
 }

@@ -4,10 +4,9 @@ package github_runner_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,53 +14,399 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	runnersinternal "github.com/sockerless/tests/runners/internal"
 )
 
-// Real GitHub Actions runner harness. Gated by the `github_runner_live`
-// build tag so the regular `go test ./...` sweep doesn't try to
-// download a runner. Run via:
+// Real GitHub Actions runner harness against live AWS.
+// The runner runs inside a *Linux container* on the host (Docker
+// Desktop / colima provides the Linux VM); the container is built
+// from tests/runners/github/dockerfile/. GitHub Actions' `container:`
+// directive only works on Linux runners, so a darwin-native runner
+// can't drive the canonical workloads. Sockerless's host arch is
+// irrelevant — the runner is just a docker *client* that points at
+// the sockerless daemon via DOCKER_HOST.
 //
-//   go test -v -tags github_runner_live -run TestRealGitHubRunner -timeout 30m
+// Build-tag-gated (`github_runner_live`). Run via:
 //
-// Prereqs in tests/runners/github/README.md.
+//	go test -v -tags github_runner_live -run TestGitHub_ECS_Hello \
+//	  -timeout 30m ./tests/runners/github
+//	go test -v -tags github_runner_live -run TestGitHub_Lambda_Hello \
+//	  -timeout 30m ./tests/runners/github
+//
+// Wiring + token strategy in docs/RUNNERS.md.
 
 const (
-	defaultRunnerVersion = "2.319.1"
-	defaultLabels        = "sockerless,sockerless-ecs"
+	defaultRunnerVersion = "2.334.0"
+	defaultRepo          = "e6qu/sockerless"
 	pollInterval         = 5 * time.Second
+	runnerImageTag       = "sockerless-actions-runner:local"
 )
 
-func TestRealGitHubRunner(t *testing.T) {
-	token := os.Getenv("SOCKERLESS_GH_RUNNER_TOKEN")
-	repo := os.Getenv("SOCKERLESS_GH_REPO")
-	if token == "" || repo == "" {
-		t.Skip("SOCKERLESS_GH_RUNNER_TOKEN + SOCKERLESS_GH_REPO not set — skipping real-runner harness")
+// TestGitHub_ECS_Hello — GitHub Actions runner on ECS Fargate.
+//
+// Architecture: runner runs as a Fargate task in the live ECS
+// cluster, with sockerless-backend-ecs baked into the same image and
+// listening on `tcp://localhost:3375` inside the task. The runner's
+// `docker create -v /home/runner/_work:/__w alpine` (from the
+// `container: alpine:latest` directive in `hello-ecs.yml`) flows
+// through sockerless, which translates the host bind mount to the
+// shared EFS access point and dispatches the alpine sub-task to ECS
+// with the same EFS volume mounted at `/__w`. Both runner-task and
+// sub-task see the same workspace via EFS — `container:` works
+// end-to-end on Fargate.
+//
+// Required env (read from the live ECS terragrunt outputs):
+//   - SOCKERLESS_ECS_TEST_REGION (default eu-west-1)
+//   - SOCKERLESS_ECS_TEST_CLUSTER (default sockerless-live)
+//   - SOCKERLESS_ECS_TEST_TASK_DEFINITION (default sockerless-live-runner)
+//   - SOCKERLESS_ECS_TEST_SUBNETS (comma-separated, must be in the cluster's VPC)
+//   - SOCKERLESS_ECS_TEST_SECURITY_GROUPS (comma-separated)
+func TestGitHub_ECS_Hello(t *testing.T) {
+	subnets := os.Getenv("SOCKERLESS_ECS_TEST_SUBNETS")
+	sgs := os.Getenv("SOCKERLESS_ECS_TEST_SECURITY_GROUPS")
+	if subnets == "" || sgs == "" {
+		t.Skip("SOCKERLESS_ECS_TEST_SUBNETS / SOCKERLESS_ECS_TEST_SECURITY_GROUPS not set; live ECS infra required. Run `terragrunt output` and export them.")
 	}
-	if os.Getenv("DOCKER_HOST") == "" {
-		t.Fatal("DOCKER_HOST must be set to a running sockerless instance")
+	runCell(t, cellConfig{
+		Label:             "sockerless-ecs",
+		WorkflowFile:      "hello-ecs.yml",
+		ECSTaskDefinition: envOr("SOCKERLESS_ECS_TEST_TASK_DEFINITION", "sockerless-live-runner"),
+		ECSRegion:         envOr("SOCKERLESS_ECS_TEST_REGION", "eu-west-1"),
+		ECSCluster:        envOr("SOCKERLESS_ECS_TEST_CLUSTER", "sockerless-live"),
+		ECSSubnets:        subnets,
+		ECSSecurityGroups: sgs,
+	})
+}
+
+// TestGitHub_Lambda_Hello — GitHub Actions runner on AWS Lambda.
+//
+// Architecture: runner runs as a Lambda invocation. Sockerless-
+// backend-lambda is baked into the runner image; the bootstrap
+// starts it on localhost:3375 inside the Lambda execution
+// environment. `docker create` calls flow through sockerless to
+// per-sub-task Lambda function creations (image-mode containers
+// built via CodeBuild). Lambda's 15-minute hard cap restricts
+// this path to short workflows.
+//
+// Required env (Lambda runner-function deployed via
+// `terraform/modules/lambda/runner.tf`):
+//   - SOCKERLESS_LAMBDA_TEST_REGION (default eu-west-1)
+//   - SOCKERLESS_LAMBDA_TEST_FUNCTION (default sockerless-live-runner)
+func TestGitHub_Lambda_Hello(t *testing.T) {
+	region := envOr("SOCKERLESS_LAMBDA_TEST_REGION", "eu-west-1")
+	function := envOr("SOCKERLESS_LAMBDA_TEST_FUNCTION", "sockerless-live-runner")
+	if function == "" {
+		t.Skip("SOCKERLESS_LAMBDA_TEST_FUNCTION not set; runner-Lambda live infra required")
 	}
-	if _, err := exec.LookPath("gh"); err != nil {
-		t.Fatalf("gh CLI required: %v", err)
+	// hello-lambda.yml isn't on main; commit a Lambda-shaped body
+	// to the registered hello-ecs.yml slot on a throwaway branch and
+	// dispatch with ref=<branch>. Same trick the ECS variant uses.
+	runCell(t, cellConfig{
+		Label:        "sockerless-lambda",
+		WorkflowFile: "hello-ecs.yml",
+		WorkflowYAML: `name: hello-lambda
+on:
+  workflow_dispatch:
+jobs:
+  hello:
+    runs-on: [self-hosted, sockerless-lambda]
+    container:
+      image: alpine:latest
+    steps:
+      - run: echo "hello from sockerless lambda"
+      - run: date -u
+`,
+		LambdaFunction: function,
+		LambdaRegion:   region,
+	})
+}
+
+type cellConfig struct {
+	Label string
+	// Name of a workflow file already present on `main`. Dispatched
+	// with `ref=main` (or `ref=<branch>` if WorkflowYAML is set, in
+	// which case the throwaway branch's content of this same path
+	// runs instead).
+	WorkflowFile string
+	// Optional workflow YAML body to commit to a throwaway branch at
+	// `WorkflowFile`'s path; when set, dispatch fires with the
+	// throwaway branch as ref. Useful for cell variants that need
+	// different workflow content without polluting main.
+	WorkflowYAML string
+	// Default DOCKER_HOST when spawning the runner as a *local*
+	// container (the dev-mode path against local Podman / Docker
+	// Desktop). Ignored when ECSTaskDefinition is set.
+	DefaultDockerHost string
+	// When set, runCell skips the local-Podman runner-image build +
+	// docker-run, and instead spawns the runner via AWS ECS RunTask
+	// using the named pre-registered task definition family. The
+	// runner runs in Fargate; sockerless is baked into the runner
+	// image and listens on the task's localhost. Cell exits when the
+	// ephemeral task stops.
+	ECSTaskDefinition string
+	// AWS region for the ECS dispatch. Required when ECSTaskDefinition is set.
+	ECSRegion string
+	// ECS cluster name for the dispatch. Required when ECSTaskDefinition is set.
+	ECSCluster string
+	// Subnets for awsvpc network mode. Comma-separated. Required when ECSTaskDefinition is set.
+	ECSSubnets string
+	// Security groups for awsvpc network mode. Comma-separated. Required when ECSTaskDefinition is set.
+	ECSSecurityGroups string
+	// LambdaFunction (when set) takes precedence over both local-
+	// Podman and ECSTaskDefinition paths: runCell invokes the named
+	// Lambda function asynchronously with the registration token /
+	// labels / repo URL in the event payload. The runner-Lambda's
+	// bootstrap polls the Runtime API for the next invocation,
+	// configures + runs actions/runner --ephemeral, and exits.
+	LambdaFunction string
+	// AWS region for the Lambda invocation. Required when LambdaFunction is set.
+	LambdaRegion string
+}
+
+func runCell(t *testing.T, c cellConfig) {
+	repo := envOr("SOCKERLESS_GH_REPO", defaultRepo)
+
+	pat, err := runnersinternal.GitHubPAT()
+	if err != nil {
+		t.Skipf("GitHub PAT unavailable: %v", err)
+	}
+	defer zero(pat)
+
+	if c.ECSTaskDefinition == "" && c.LambdaFunction == "" {
+		// Local dev mode: requires a local docker daemon (Podman/Docker
+		// Desktop). The cloud-mode paths (ECS RunTask / Lambda Invoke)
+		// don't need a local docker daemon.
+		if _, err := exec.LookPath("docker"); err != nil {
+			t.Skipf("docker CLI required to run the runner container: %v", err)
+		}
+		dockerHost := envOr("SOCKERLESS_DOCKER_HOST", c.DefaultDockerHost)
+		pingDocker(t, dockerHost)
 	}
 
-	version := envOr("SOCKERLESS_GH_RUNNER_VERSION", defaultRunnerVersion)
-	labels := envOr("SOCKERLESS_GH_RUNNER_LABELS", defaultLabels)
+	if err := runnersinternal.CleanupOldGitHubRunners(repo, "sockerless-"); err != nil {
+		t.Logf("warning: pre-run cleanup of old runners failed: %v", err)
+	}
 
-	workdir := t.TempDir()
-	t.Logf("runner workdir: %s", workdir)
+	// Resolve workflow source — either an inline YAML committed to a
+	// per-cell throwaway branch, or a pre-existing file on main.
+	var workflowFile, dispatchRef string
+	if c.WorkflowYAML != "" {
+		workflowFile = c.WorkflowFile
+		branch := fmt.Sprintf("sockerless-gh-%s-%s", c.Label, runnersinternal.Timestamp())
+		mainSHA := resolveBranchSHA(t, repo, "main")
+		createGitHubBranch(t, repo, branch, mainSHA)
+		t.Cleanup(func() { deleteGitHubBranch(t, repo, branch) })
+		commitGitHubFile(t, repo, branch,
+			".github/workflows/"+workflowFile, c.WorkflowYAML,
+			fmt.Sprintf("test: harness workflow for %s", c.Label))
+		dispatchRef = branch
+	} else {
+		workflowFile = c.WorkflowFile
+		dispatchRef = "main"
+	}
 
-	runnerBin := downloadRunner(t, workdir, version)
-	configureRunner(t, workdir, runnerBin, repo, token, labels)
-	runnerCancel := startRunner(t, workdir, runnerBin)
-	t.Cleanup(runnerCancel)
+	cancelLeftoverRuns(t, repo, workflowFile)
 
-	commitWorkflow(t, repo, "hello-ecs.yml", helloWorkflowYAML(labels))
-	runID := dispatchWorkflow(t, repo, "hello-ecs.yml")
+	regToken, err := runnersinternal.MintGitHubRegistrationToken(repo)
+	if err != nil {
+		t.Fatalf("mint registration token: %v", err)
+	}
+
+	runnerName := fmt.Sprintf("sockerless-%s-%s", c.Label, runnersinternal.Timestamp())
+	t.Logf("runner name: %s", runnerName)
+
+	if c.LambdaFunction != "" {
+		invokeLambdaRunner(t, c, runnerName, repo, regToken)
+	} else if c.ECSTaskDefinition != "" {
+		taskARN := runEcsRunnerTask(t, c, runnerName, repo, regToken)
+		t.Cleanup(func() { stopEcsRunnerTask(t, c, taskARN) })
+	} else {
+		dockerHost := envOr("SOCKERLESS_DOCKER_HOST", c.DefaultDockerHost)
+		buildRunnerImage(t)
+		containerID := startRunnerContainer(t, runnerName, repo, regToken, c.Label, dockerHost)
+		t.Cleanup(func() { stopRunnerContainer(t, containerID) })
+	}
+
+	// Wait for the runner to register itself with GitHub. Until it
+	// shows up in the runners list, dispatch can't route the job.
+	waitForRunnerRegistration(t, repo, runnerName, 5*time.Minute)
+
+	runID := dispatchWorkflow(t, repo, workflowFile, dispatchRef)
+	t.Logf("workflow run URL: https://github.com/%s/actions/runs/%d", repo, runID)
 	conclusion := waitForRun(t, repo, runID, 15*time.Minute)
 	if conclusion != "success" {
-		logs := fetchRunLogs(t, repo, runID)
-		t.Fatalf("workflow run %d concluded with %q, expected success.\nLogs:\n%s", runID, conclusion, logs)
+		t.Fatalf("workflow run %d concluded with %q, expected success.\nLogs at https://github.com/%s/actions/runs/%d", runID, conclusion, repo, runID)
 	}
+}
+
+// runEcsRunnerTask dispatches the runner-task to ECS Fargate via
+// `aws ecs run-task` with container overrides for the per-cell env
+// vars (REG_TOKEN / RUNNER_NAME / RUNNER_LABELS / RUNNER_REPO_URL).
+// Returns the task ARN. Caller is responsible for cleanup via
+// stopEcsRunnerTask.
+func runEcsRunnerTask(t *testing.T, c cellConfig, runnerName, repo, regToken string) string {
+	t.Helper()
+	if _, err := exec.LookPath("aws"); err != nil {
+		t.Fatalf("aws CLI required for ECS dispatch: %v", err)
+	}
+	overrides := fmt.Sprintf(`{
+		"containerOverrides":[
+			{
+				"name":"runner",
+				"environment":[
+					{"name":"RUNNER_REPO_URL","value":"https://github.com/%s"},
+					{"name":"RUNNER_TOKEN","value":"%s"},
+					{"name":"RUNNER_NAME","value":"%s"},
+					{"name":"RUNNER_LABELS","value":"%s,sockerless"}
+				]
+			}
+		]
+	}`, repo, regToken, runnerName, c.Label)
+
+	subnetsJSON := strings.Join(quoteCSV(c.ECSSubnets), ",")
+	sgsJSON := strings.Join(quoteCSV(c.ECSSecurityGroups), ",")
+	netCfg := fmt.Sprintf(`{"awsvpcConfiguration":{"subnets":[%s],"securityGroups":[%s],"assignPublicIp":"DISABLED"}}`,
+		subnetsJSON, sgsJSON)
+
+	out, err := exec.Command("aws", "ecs", "run-task",
+		"--region", c.ECSRegion,
+		"--cluster", c.ECSCluster,
+		"--task-definition", c.ECSTaskDefinition,
+		"--launch-type", "FARGATE",
+		"--network-configuration", netCfg,
+		"--overrides", overrides,
+		"--output", "json",
+	).Output()
+	if err != nil {
+		t.Fatalf("aws ecs run-task: %v\n--overrides %s\n--network-configuration %s",
+			extendErr(err), overrides, netCfg)
+	}
+	var resp struct {
+		Tasks []struct {
+			TaskArn string `json:"taskArn"`
+		} `json:"tasks"`
+		Failures []map[string]any `json:"failures"`
+	}
+	if jerr := json.Unmarshal(out, &resp); jerr != nil {
+		t.Fatalf("parse run-task response: %v\n%s", jerr, out)
+	}
+	if len(resp.Failures) > 0 {
+		t.Fatalf("ecs run-task failures: %v", resp.Failures)
+	}
+	if len(resp.Tasks) == 0 {
+		t.Fatalf("ecs run-task: no task in response: %s", out)
+	}
+	taskARN := resp.Tasks[0].TaskArn
+	t.Logf("ECS RunTask started: %s", taskARN)
+
+	// Tail container logs in the background for visibility.
+	go tailEcsTaskLogs(t, c, taskARN)
+
+	return taskARN
+}
+
+// stopEcsRunnerTask sends `aws ecs stop-task` for graceful shutdown.
+// The runner is `--ephemeral` so it usually exits on its own, but
+// stop-task ensures cleanup if the test crashes mid-run.
+func stopEcsRunnerTask(t *testing.T, c cellConfig, taskARN string) {
+	t.Helper()
+	out, err := exec.Command("aws", "ecs", "stop-task",
+		"--region", c.ECSRegion,
+		"--cluster", c.ECSCluster,
+		"--task", taskARN,
+		"--reason", "harness cleanup",
+	).CombinedOutput()
+	if err != nil {
+		t.Logf("stop-task %s (best-effort): %v\n%s", taskARN, err, out)
+	}
+}
+
+// tailEcsTaskLogs streams the runner container's CloudWatch logs to
+// the test output. Best-effort — uses `aws logs tail` which is
+// simpler than the full GetLogEvents pagination.
+func tailEcsTaskLogs(t *testing.T, c cellConfig, taskARN string) {
+	parts := strings.Split(taskARN, "/")
+	if len(parts) == 0 {
+		return
+	}
+	taskID := parts[len(parts)-1]
+	logStream := "runner/runner/" + taskID
+	logGroup := "/sockerless/live/containers"
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	cmd := exec.CommandContext(ctx, "aws", "logs", "tail",
+		"--region", c.ECSRegion,
+		"--follow",
+		"--log-stream-names", logStream,
+		logGroup,
+	)
+	cmd.Stdout = testLogWriter{t: t, prefix: "ecs-runner: "}
+	cmd.Stderr = testLogWriter{t: t, prefix: "ecs-runner: "}
+	_ = cmd.Run()
+}
+
+func quoteCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		out = append(out, "\""+p+"\"")
+	}
+	return out
+}
+
+// extendErr enriches an exec.ExitError with the captured stderr so
+// tests print useful diagnostics instead of just "exit status 254".
+func extendErr(err error) error {
+	if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(ee.Stderr)))
+	}
+	return err
+}
+
+// invokeLambdaRunner dispatches the runner-Lambda function via
+// `aws lambda invoke --invocation-type Event` (async) with the
+// per-cell registration token / labels / repo URL in the payload.
+// The bootstrap inside the Lambda picks up the event from the
+// Runtime API, runs `actions/runner --ephemeral` for one job, and
+// exits. The harness then waits for runner registration + workflow
+// completion via the standard polling paths. No cleanup function
+// — the Lambda invocation is self-terminating once the runner
+// exits.
+func invokeLambdaRunner(t *testing.T, c cellConfig, runnerName, repo, regToken string) {
+	t.Helper()
+	if _, err := exec.LookPath("aws"); err != nil {
+		t.Fatalf("aws CLI required for Lambda dispatch: %v", err)
+	}
+	payload := fmt.Sprintf(`{"runner_repo_url":"https://github.com/%s","runner_token":"%s","runner_name":"%s","runner_labels":"%s,sockerless"}`,
+		repo, regToken, runnerName, c.Label)
+
+	tmp, err := os.CreateTemp("", "lambda-out-*.json")
+	if err != nil {
+		t.Fatalf("create temp: %v", err)
+	}
+	tmp.Close()
+	t.Cleanup(func() { _ = os.Remove(tmp.Name()) })
+
+	cmd := exec.Command("aws", "lambda", "invoke",
+		"--region", c.LambdaRegion,
+		"--function-name", c.LambdaFunction,
+		"--invocation-type", "Event",
+		"--cli-binary-format", "raw-in-base64-out",
+		"--payload", payload,
+		tmp.Name(),
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("aws lambda invoke: %v\n%s", err, out)
+	}
+	t.Logf("Lambda invocation queued: function=%s runner=%s", c.LambdaFunction, runnerName)
 }
 
 func envOr(key, fallback string) string {
@@ -71,206 +416,269 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-// downloadRunner fetches the actions/runner tarball into workdir/runner
-// and extracts it. Returns the path to config.sh.
-func downloadRunner(t *testing.T, workdir, version string) string {
+func pingDocker(t *testing.T, host string) {
 	t.Helper()
-	runnerDir := filepath.Join(workdir, "runner")
-	if err := os.MkdirAll(runnerDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	osTag := runtime.GOOS
-	archTag := runtime.GOARCH
-	if archTag == "amd64" {
-		archTag = "x64"
-	}
-	url := fmt.Sprintf("https://github.com/actions/runner/releases/download/v%s/actions-runner-%s-%s-%s.tar.gz",
-		version, osTag, archTag, version)
-	t.Logf("downloading runner from %s", url)
-
-	resp, err := http.Get(url)
+	pingURL := strings.Replace(host, "tcp://", "http://", 1) + "/_ping"
+	resp, err := exec.Command("curl", "-fsS", pingURL).Output()
 	if err != nil {
-		t.Fatalf("download runner: %v", err)
+		t.Fatalf("Sockerless daemon at %s unreachable: %v", host, err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Fatalf("download runner: HTTP %d", resp.StatusCode)
-	}
-
-	tarPath := filepath.Join(runnerDir, "runner.tar.gz")
-	f, err := os.Create(tarPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := io.Copy(f, resp.Body); err != nil {
-		f.Close()
-		t.Fatal(err)
-	}
-	f.Close()
-
-	cmd := exec.Command("tar", "xzf", tarPath, "-C", runnerDir)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("extract runner: %v\n%s", err, out)
-	}
-	return filepath.Join(runnerDir, "config.sh")
+	t.Logf("Sockerless ping: %s", strings.TrimSpace(string(resp)))
 }
 
-func configureRunner(t *testing.T, workdir, runnerBin, repo, token, labels string) {
+func buildRunnerImage(t *testing.T) {
 	t.Helper()
-	cmd := exec.Command(runnerBin,
-		"--url", "https://github.com/"+repo,
-		"--token", token,
-		"--unattended",
-		"--labels", labels,
-		"--name", "sockerless-test-runner-"+timestamp(),
-		"--replace",
+	dockerfileDir := dockerfileDir(t)
+	// Match the runner-binary arch to the local Docker VM arch.
+	// Docker Desktop on Apple Silicon ships a linux/arm64 VM; on
+	// Intel it's linux/amd64. Mapping runtime.GOARCH (the host's Go
+	// arch — same as Docker Desktop's VM arch in practice) → AWS-
+	// runner asset suffix.
+	targetArch := runtime.GOARCH
+	if targetArch == "amd64" {
+		targetArch = "x64"
+	}
+	cmd := exec.Command("docker", "build",
+		"--build-arg", "TARGETARCH="+targetArch,
+		"--build-arg", "RUNNER_VERSION="+defaultRunnerVersion,
+		"-t", runnerImageTag,
+		dockerfileDir,
 	)
-	cmd.Dir = filepath.Dir(runnerBin)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("configure runner: %v\n%s", err, out)
+	cmd.Stdout = testLogWriter{t: t, prefix: "build: "}
+	cmd.Stderr = testLogWriter{t: t, prefix: "build: "}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("docker build runner image: %v", err)
 	}
+	t.Logf("built runner image %s for linux/%s", runnerImageTag, targetArch)
 }
 
-// startRunner kicks off `./run.sh` in a goroutine and returns a
-// cancel function that stops the runner cleanly.
-func startRunner(t *testing.T, workdir, runnerBin string) func() {
+func dockerfileDir(t *testing.T) string {
 	t.Helper()
-	runScript := filepath.Join(filepath.Dir(runnerBin), "run.sh")
-	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, runScript)
-	cmd.Dir = filepath.Dir(runnerBin)
-	cmd.Stdout = testLogWriter{t: t, prefix: "runner: "}
-	cmd.Stderr = testLogWriter{t: t, prefix: "runner: "}
-	if err := cmd.Start(); err != nil {
-		cancel()
-		t.Fatalf("start runner: %v", err)
-	}
-
-	// Give the runner a moment to come online before tests dispatch
-	// workflows. Real polling against the GitHub API would be more
-	// robust; for a first-pass harness this short fixed sleep is fine.
-	time.Sleep(10 * time.Second)
-
-	return func() {
-		cancel()
-		_ = cmd.Wait()
-		// Unregister the runner so the repo doesn't accumulate stale
-		// entries.
-		removeToken := getRemovalToken(t, t.Name())
-		if removeToken != "" {
-			unregister := exec.Command(runnerBin, "remove", "--token", removeToken, "--unattended")
-			unregister.Dir = filepath.Dir(runnerBin)
-			_, _ = unregister.CombinedOutput()
-		}
-	}
-}
-
-func getRemovalToken(t *testing.T, _ string) string {
-	repo := os.Getenv("SOCKERLESS_GH_REPO")
-	out, err := exec.Command("gh", "api", "-X", "POST", "/repos/"+repo+"/actions/runners/remove-token", "--jq", ".token").Output()
+	wd, err := os.Getwd()
 	if err != nil {
-		t.Logf("removal token fetch failed: %v", err)
-		return ""
+		t.Fatal(err)
 	}
-	return strings.TrimSpace(string(out))
+	// Walk up until we find tests/runners/github/dockerfile.
+	cur := wd
+	for i := 0; i < 5; i++ {
+		candidate := filepath.Join(cur, "tests", "runners", "github", "dockerfile")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+		// Also check sibling-relative for `go test` in package dir.
+		candidate = filepath.Join(cur, "dockerfile")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+		cur = filepath.Dir(cur)
+	}
+	t.Fatalf("could not locate runner dockerfile dir from %s", wd)
+	return ""
 }
 
-// commitWorkflow writes the workflow YAML to .github/workflows/<name>
-// in the target repo via the GitHub contents API. If the file already
-// exists, it's updated (PATCH); otherwise created (PUT-equivalent
-// through gh api).
-func commitWorkflow(t *testing.T, repo, name, body string) {
+func startRunnerContainer(t *testing.T, name, repo, regToken, label, dockerHost string) string {
 	t.Helper()
-	path := ".github/workflows/" + name
+	// `host.docker.internal` is auto-resolved on both Docker Desktop
+	// and Podman 5.x (and Podman also auto-adds `host.containers.internal`).
+	// No `--add-host` flag is needed; in fact, `--add-host
+	// host.docker.internal:host-gateway` *fails* on Podman 5.x with
+	// "host containers internal IP address is empty" because Podman
+	// doesn't honor the host-gateway literal — it overrides the
+	// auto-provided alias and then can't resolve the literal.
+	innerHost := strings.Replace(dockerHost, "localhost", "host.docker.internal", 1)
+	innerHost = strings.Replace(innerHost, "127.0.0.1", "host.docker.internal", 1)
 
-	// Look up the current SHA if the file exists, so we can update it.
-	var sha string
-	if out, err := exec.Command("gh", "api", "/repos/"+repo+"/contents/"+path, "--jq", ".sha").Output(); err == nil {
-		sha = strings.TrimSpace(string(out))
+	args := []string{"run", "-d", "--rm",
+		"--name", name,
+		"-e", "RUNNER_REPO_URL=https://github.com/" + repo,
+		"-e", "RUNNER_TOKEN=" + regToken,
+		"-e", "RUNNER_NAME=" + name,
+		"-e", "RUNNER_LABELS=" + label + ",sockerless",
+		"-e", "DOCKER_HOST=" + innerHost,
+		runnerImageTag,
 	}
+	out, err := exec.Command("docker", args...).Output()
+	if err != nil {
+		t.Fatalf("docker run runner: %v", err)
+	}
+	id := strings.TrimSpace(string(out))
+	t.Logf("started runner container %s (%s)", name, id[:12])
 
-	args := []string{
-		"api", "-X", "PUT", "/repos/" + repo + "/contents/" + path,
-		"-f", "message=test: harness workflow update",
-		"-f", "content=" + base64Encode(body),
+	// Stream container logs for visibility.
+	go func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		cmd := exec.CommandContext(ctx, "docker", "logs", "-f", id)
+		cmd.Stdout = testLogWriter{t: t, prefix: "runner: "}
+		cmd.Stderr = testLogWriter{t: t, prefix: "runner: "}
+		_ = cmd.Run()
+	}()
+	return id
+}
+
+func stopRunnerContainer(t *testing.T, id string) {
+	t.Helper()
+	if id == "" {
+		return
 	}
-	if sha != "" {
-		args = append(args, "-f", "sha="+sha)
-	}
-	cmd := exec.Command("gh", args...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("commit workflow: %v\n%s", err, out)
+	if out, err := exec.Command("docker", "stop", id).CombinedOutput(); err != nil {
+		t.Logf("docker stop %s: %v\n%s", id, err, out)
 	}
 }
 
-func base64Encode(s string) string {
-	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-	var out strings.Builder
-	in := []byte(s)
-	for i := 0; i < len(in); i += 3 {
-		end := i + 3
-		if end > len(in) {
-			end = len(in)
+func waitForRunnerRegistration(t *testing.T, repo, name string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		out, err := exec.Command("gh", "api",
+			"/repos/"+repo+"/actions/runners",
+			"--jq", `[.runners[] | select(.name=="`+name+`" and .status=="online")] | length`,
+		).Output()
+		if err == nil && strings.TrimSpace(string(out)) == "1" {
+			t.Logf("runner %s registered + online", name)
+			return
 		}
-		chunk := in[i:end]
-		var n uint32
-		for j := 0; j < 3; j++ {
-			n <<= 8
-			if j < len(chunk) {
-				n |= uint32(chunk[j])
-			}
-		}
-		out.WriteByte(alphabet[(n>>18)&0x3f])
-		out.WriteByte(alphabet[(n>>12)&0x3f])
-		if len(chunk) > 1 {
-			out.WriteByte(alphabet[(n>>6)&0x3f])
-		} else {
-			out.WriteByte('=')
-		}
-		if len(chunk) > 2 {
-			out.WriteByte(alphabet[n&0x3f])
-		} else {
-			out.WriteByte('=')
-		}
+		time.Sleep(pollInterval)
 	}
-	return out.String()
+	t.Fatalf("runner %s did not appear online within %s", name, timeout)
 }
 
-func dispatchWorkflow(t *testing.T, repo, file string) int64 {
+// cancelLeftoverRuns forces `cancelled` on any queued/in-progress runs
+// for this workflow that an earlier crashed harness left behind, so a
+// fresh ephemeral runner doesn't get poached by an old job. Each
+// previous harness session would otherwise leave a queued workflow_dispatch
+// run waiting for its (now-deregistered) runner.
+func cancelLeftoverRuns(t *testing.T, repo, workflow string) {
+	t.Helper()
+	out, err := exec.Command("gh", "api",
+		"/repos/"+repo+"/actions/workflows/"+workflow+"/runs?status=queued&per_page=20",
+		"--jq", "[.workflow_runs[] | .id]",
+	).Output()
+	if err != nil {
+		return
+	}
+	var ids []int64
+	_ = json.Unmarshal(out, &ids)
+	for _, id := range ids {
+		_ = exec.Command("gh", "api", "-X", "POST",
+			fmt.Sprintf("/repos/%s/actions/runs/%d/cancel", repo, id)).Run()
+	}
+}
+
+func dispatchWorkflow(t *testing.T, repo, file, ref string) int64 {
 	t.Helper()
 	disp := exec.Command("gh", "api", "-X", "POST",
 		"/repos/"+repo+"/actions/workflows/"+file+"/dispatches",
-		"-f", "ref=main",
+		"-f", "ref="+ref,
 	)
 	if out, err := disp.CombinedOutput(); err != nil {
 		t.Fatalf("dispatch workflow: %v\n%s", err, out)
 	}
-
-	// GitHub doesn't return the run ID from the dispatch call; poll the
-	// recent-runs endpoint and pick the newest one for our workflow.
+	dispatchedAt := time.Now().Add(-30 * time.Second) // 30s slack for clock skew
 	deadline := time.Now().Add(2 * time.Minute)
 	for time.Now().Before(deadline) {
 		out, err := exec.Command("gh", "api",
-			"/repos/"+repo+"/actions/workflows/"+file+"/runs?per_page=1",
+			"/repos/"+repo+"/actions/workflows/"+file+"/runs?per_page=5",
 		).Output()
 		if err == nil {
 			var resp struct {
 				WorkflowRuns []struct {
-					ID         int64  `json:"id"`
-					Status     string `json:"status"`
-					Conclusion string `json:"conclusion"`
-					CreatedAt  string `json:"created_at"`
+					ID        int64     `json:"id"`
+					Event     string    `json:"event"`
+					CreatedAt time.Time `json:"created_at"`
 				} `json:"workflow_runs"`
 			}
-			if jsonErr := json.Unmarshal(out, &resp); jsonErr == nil && len(resp.WorkflowRuns) > 0 {
-				return resp.WorkflowRuns[0].ID
+			if jerr := json.Unmarshal(out, &resp); jerr == nil {
+				for _, r := range resp.WorkflowRuns {
+					if r.Event == "workflow_dispatch" && r.CreatedAt.After(dispatchedAt) {
+						return r.ID
+					}
+				}
 			}
 		}
 		time.Sleep(pollInterval)
 	}
 	t.Fatal("dispatch workflow: no run ID found within 2 minutes")
 	return 0
+}
+
+// resolveBranchSHA returns the head commit SHA of the given branch.
+func resolveBranchSHA(t *testing.T, repo, branch string) string {
+	t.Helper()
+	out, err := exec.Command("gh", "api",
+		"/repos/"+repo+"/git/refs/heads/"+branch,
+		"--jq", ".object.sha",
+	).Output()
+	if err != nil {
+		t.Fatalf("resolve %s sha: %v", branch, err)
+	}
+	sha := strings.TrimSpace(string(out))
+	if sha == "" {
+		t.Fatalf("resolve %s sha: empty result", branch)
+	}
+	return sha
+}
+
+// createGitHubBranch creates a new branch on the repo at the given
+// commit SHA. Uses the Refs API (POST /repos/.../git/refs).
+func createGitHubBranch(t *testing.T, repo, branch, fromSHA string) {
+	t.Helper()
+	cmd := exec.Command("gh", "api", "-X", "POST",
+		"/repos/"+repo+"/git/refs",
+		"-f", "ref=refs/heads/"+branch,
+		"-f", "sha="+fromSHA,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("create branch %s: %v\n%s", branch, err, out)
+	}
+	t.Logf("created throwaway branch %s @ %s", branch, fromSHA[:8])
+}
+
+// deleteGitHubBranch removes a branch via the Refs API. Best-effort —
+// logs but doesn't fail the test if the branch is already gone.
+func deleteGitHubBranch(t *testing.T, repo, branch string) {
+	t.Helper()
+	cmd := exec.Command("gh", "api", "-X", "DELETE",
+		"/repos/"+repo+"/git/refs/heads/"+branch,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Logf("delete branch %s (best-effort): %v\n%s", branch, err, out)
+		return
+	}
+	t.Logf("deleted throwaway branch %s", branch)
+}
+
+// commitGitHubFile commits a single file's content to a branch via
+// the Contents API (PUT /repos/.../contents/{path}). Uses base64 for
+// the content body. Tries POST first (for new files); if the path
+// already exists, fetches the file's blob SHA and retries with the
+// `sha` parameter (which the API requires for updates).
+func commitGitHubFile(t *testing.T, repo, branch, path, content, message string) {
+	t.Helper()
+	encoded := base64.StdEncoding.EncodeToString([]byte(content))
+	args := []string{"api", "-X", "PUT",
+		"/repos/" + repo + "/contents/" + path,
+		"-f", "branch=" + branch,
+		"-f", "message=" + message,
+		"-f", "content=" + encoded,
+	}
+	if out, err := exec.Command("gh", args...).CombinedOutput(); err != nil {
+		// 422 means the file already exists; need to provide the
+		// existing blob SHA. (Throwaway branches branched from main
+		// shouldn't have this file, but be defensive.)
+		shaOut, shaErr := exec.Command("gh", "api",
+			"/repos/"+repo+"/contents/"+path+"?ref="+branch,
+			"--jq", ".sha",
+		).Output()
+		if shaErr != nil {
+			t.Fatalf("commit file %s on %s: %v\n%s", path, branch, err, out)
+		}
+		args = append(args, "-f", "sha="+strings.TrimSpace(string(shaOut)))
+		if out2, err2 := exec.Command("gh", args...).CombinedOutput(); err2 != nil {
+			t.Fatalf("commit file %s on %s (retry with sha): %v\n%s", path, branch, err2, out2)
+		}
+	}
+	t.Logf("committed %s on branch %s", path, branch)
 }
 
 func waitForRun(t *testing.T, repo string, runID int64, timeout time.Duration) string {
@@ -283,7 +691,7 @@ func waitForRun(t *testing.T, repo string, runID int64, timeout time.Duration) s
 				Status     string `json:"status"`
 				Conclusion string `json:"conclusion"`
 			}
-			if jsonErr := json.Unmarshal(out, &resp); jsonErr == nil {
+			if jerr := json.Unmarshal(out, &resp); jerr == nil {
 				if resp.Status == "completed" {
 					return resp.Conclusion
 				}
@@ -296,37 +704,12 @@ func waitForRun(t *testing.T, repo string, runID int64, timeout time.Duration) s
 	return ""
 }
 
-func fetchRunLogs(t *testing.T, repo string, runID int64) string {
-	t.Helper()
-	out, err := exec.Command("gh", "api", fmt.Sprintf("/repos/%s/actions/runs/%d/logs", repo, runID)).Output()
-	if err != nil {
-		return fmt.Sprintf("(failed to fetch logs: %v)", err)
+func zero(b []byte) {
+	for i := range b {
+		b[i] = 0
 	}
-	return string(out)
 }
 
-func helloWorkflowYAML(labels string) string {
-	primary := strings.Split(labels, ",")[0]
-	return fmt.Sprintf(`name: hello-ecs
-on:
-  workflow_dispatch:
-jobs:
-  hello:
-    runs-on: [self-hosted, %s]
-    container:
-      image: alpine:latest
-    steps:
-      - run: echo "hello from sockerless"
-      - run: env | sort
-`, primary)
-}
-
-func timestamp() string {
-	return time.Now().UTC().Format("20060102-150405")
-}
-
-// testLogWriter pipes runner stdout/stderr lines to the test logger so
-// the harness emits them in real time.
 type testLogWriter struct {
 	t      *testing.T
 	prefix string

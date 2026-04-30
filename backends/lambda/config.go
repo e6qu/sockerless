@@ -47,6 +47,16 @@ type Config struct {
 	// requiring insecure-registry config on the docker daemon.
 	PrebuiltOverlayImage string
 
+	// OverlayECRRepo is the ECR repository sockerless pushes overlay-
+	// converted user images to. Tags are content-addressed via
+	// `OverlayContentTag(spec)` so identical inputs share a tag — Lambda
+	// CreateFunction reuses the cached image. Format:
+	// `<account>.dkr.ecr.<region>.amazonaws.com/<repo>` (no tag). When
+	// empty, the lambda backend defaults to
+	// `<account>.dkr.ecr.<region>.amazonaws.com/sockerless-live-lambda`.
+	// Set by `SOCKERLESS_LAMBDA_OVERLAY_ECR_REPO`.
+	OverlayECRRepo string
+
 	// EnableCommit opts into the agent-driven `docker commit` path
 	// (backends/core.CommitContainerViaAgent). Off by default because
 	// the result isn't a traditional diff-against-base-image commit —
@@ -55,6 +65,49 @@ type Config struct {
 	// new layer. Users who understand that tradeoff set
 	// SOCKERLESS_ENABLE_COMMIT=1 and accept the larger image.
 	EnableCommit bool
+
+	// Architecture is the Lambda function architecture: "x86_64"
+	// (default) or "arm64". The sockerless backend reports this value
+	// (Docker-style: amd64 / arm64) via `docker info` so clients pull
+	// single-arch images that actually run on the cloud workload —
+	// sockerless's own host arch is irrelevant (client/server model:
+	// Docker clients on any host arch report the *server* arch, and our
+	// server is the cloud workload). Set via SOCKERLESS_LAMBDA_ARCHITECTURE.
+	Architecture string
+
+	// SharedVolumes mirrors the ECS backend's same-named field. When
+	// sockerless runs inside a Lambda invocation that already has EFS
+	// access points mounted at known paths (via FileSystemConfigs on
+	// the Lambda function), and the runner inside the invocation does
+	// `docker create -v /home/runner/_work:/__w alpine`, sockerless
+	// translates the host bind mount into a named-volume reference
+	// whose EFS access point is shared with the runner-Lambda. Sub-
+	// tasks (spawned via the ECS backend, since Lambda can't easily
+	// dispatch to itself recursively) mount the same access point.
+	// Format identical to ECS: SOCKERLESS_LAMBDA_SHARED_VOLUMES=name=path=fsap-XXX[=fs-YYY],...
+	SharedVolumes []SharedVolume
+}
+
+// SharedVolume describes a workspace volume mounted via EFS that the
+// caller (the runner-Lambda) shares with sockerless. When docker
+// create sees a bind mount whose source matches ContainerPath, the
+// bind is rewritten to a named volume named Name backed by the EFS
+// access point AccessPointID. Mirror of `ecs.SharedVolume`.
+//
+// EFSSubpath is the relative path (under the access-point root) where
+// this volume's content lives. When multiple SharedVolumes share an
+// AccessPointID, EFSSubpath disambiguates which directory each volume
+// maps to inside the AP. Used by the Lambda backend to collapse
+// duplicate-ARN binds into a single FileSystemConfig and emit a set
+// of `<container-target>=/mnt/<mount>/<subpath>` symlink mappings the
+// in-Lambda bootstrap creates before the user entrypoint runs (Lambda
+// allows at most one FileSystemConfig and only `/mnt/...` mount paths).
+type SharedVolume struct {
+	Name          string // logical volume name used in spawned sub-tasks
+	ContainerPath string // path inside the calling container (= the bind-mount source)
+	AccessPointID string // EFS access point ID (fsap-...)
+	FileSystemID  string // EFS filesystem ID (fs-...); defaults to Config.AgentEFSID
+	EFSSubpath    string // sub-directory under the AP root where this volume's data lives ("" = AP root)
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -68,16 +121,100 @@ func ConfigFromEnv() Config {
 		SubnetIDs:            splitCSV(os.Getenv("SOCKERLESS_LAMBDA_SUBNETS")),
 		SecurityGroupIDs:     splitCSV(os.Getenv("SOCKERLESS_LAMBDA_SECURITY_GROUPS")),
 		AgentEFSID:           firstNonEmpty(os.Getenv("SOCKERLESS_LAMBDA_AGENT_EFS_ID"), os.Getenv("SOCKERLESS_AGENT_EFS_ID")),
-		CodeBuildProject:     os.Getenv("SOCKERLESS_AWS_CODEBUILD_PROJECT"),
-		BuildBucket:          os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET"),
+		CodeBuildProject:     firstNonEmpty(os.Getenv("SOCKERLESS_LAMBDA_CODEBUILD_PROJECT"), os.Getenv("SOCKERLESS_CODEBUILD_PROJECT"), os.Getenv("SOCKERLESS_AWS_CODEBUILD_PROJECT")),
+		BuildBucket:          firstNonEmpty(os.Getenv("SOCKERLESS_LAMBDA_BUILD_BUCKET"), os.Getenv("SOCKERLESS_BUILD_BUCKET"), os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET")),
 		EndpointURL:          os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:         parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 		CallbackURL:          os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		AgentBinaryPath:      envOrDefault("SOCKERLESS_AGENT_BINARY", "/opt/sockerless/sockerless-agent"),
 		BootstrapBinaryPath:  envOrDefault("SOCKERLESS_LAMBDA_BOOTSTRAP", "/opt/sockerless/sockerless-lambda-bootstrap"),
 		PrebuiltOverlayImage: os.Getenv("SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE"),
+		OverlayECRRepo:       os.Getenv("SOCKERLESS_LAMBDA_OVERLAY_ECR_REPO"),
 		EnableCommit:         os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
+		Architecture:         os.Getenv("SOCKERLESS_LAMBDA_ARCHITECTURE"),
+		SharedVolumes:        parseSharedVolumes(os.Getenv("SOCKERLESS_LAMBDA_SHARED_VOLUMES")),
 	}
+}
+
+// parseSharedVolumes parses the SOCKERLESS_LAMBDA_SHARED_VOLUMES
+// env-var. Each comma-separated entry is `=`-split into 3-5 parts:
+//
+//	name=containerPath=fsap-XXXX                            (3 parts)
+//	name=containerPath=fsap-XXXX=fs-YYYY                    (4 parts; explicit FS)
+//	name=containerPath=fsap-XXXX==subpath                   (5 parts; subpath only)
+//	name=containerPath=fsap-XXXX=fs-YYYY=subpath            (5 parts; FS + subpath)
+//
+// `subpath` is the directory under the AP root where the volume's
+// content lives. Required when multiple SharedVolumes share an
+// AccessPointID; otherwise optional. Mirror of `ecs.parseSharedVolumes`.
+func parseSharedVolumes(s string) []SharedVolume {
+	if s == "" {
+		return nil
+	}
+	var out []SharedVolume
+	for _, entry := range strings.Split(s, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		parts := strings.Split(entry, "=")
+		if len(parts) < 3 || len(parts) > 5 {
+			continue
+		}
+		sv := SharedVolume{
+			Name:          strings.TrimSpace(parts[0]),
+			ContainerPath: strings.TrimSpace(parts[1]),
+			AccessPointID: strings.TrimSpace(parts[2]),
+		}
+		if len(parts) >= 4 {
+			sv.FileSystemID = strings.TrimSpace(parts[3])
+		}
+		if len(parts) == 5 {
+			sv.EFSSubpath = strings.Trim(strings.TrimSpace(parts[4]), "/")
+		}
+		if sv.Name == "" || sv.ContainerPath == "" || sv.AccessPointID == "" {
+			continue
+		}
+		out = append(out, sv)
+	}
+	return out
+}
+
+// LookupSharedVolumeBySourcePath returns the SharedVolume entry whose
+// ContainerPath equals the given path, or nil if none matches.
+func (c Config) LookupSharedVolumeBySourcePath(path string) *SharedVolume {
+	for i := range c.SharedVolumes {
+		if c.SharedVolumes[i].ContainerPath == path {
+			return &c.SharedVolumes[i]
+		}
+	}
+	return nil
+}
+
+// LookupSharedVolumeByName returns the SharedVolume entry whose Name
+// equals the given volume name, or nil if none matches.
+func (c Config) LookupSharedVolumeByName(name string) *SharedVolume {
+	for i := range c.SharedVolumes {
+		if c.SharedVolumes[i].Name == name {
+			return &c.SharedVolumes[i]
+		}
+	}
+	return nil
+}
+
+// isSubPathOfSharedVolume reports whether path is a strict sub-path
+// (descendant) of any SharedVolume's ContainerPath.
+func isSubPathOfSharedVolume(path string, vols []SharedVolume) bool {
+	for i := range vols {
+		base := vols[i].ContainerPath
+		if base == "" {
+			continue
+		}
+		if strings.HasPrefix(path, base+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // ConfigFromEnvironment creates Config from a unified config environment.
@@ -124,6 +261,12 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 func (c Config) Validate() error {
 	if c.RoleARN == "" {
 		return fmt.Errorf("SOCKERLESS_LAMBDA_ROLE_ARN is required")
+	}
+	switch strings.ToLower(c.Architecture) {
+	case "x86_64", "arm64":
+		// ok
+	default:
+		return fmt.Errorf("SOCKERLESS_LAMBDA_ARCHITECTURE must be set to x86_64 or arm64 (no default — sockerless reports the cloud workload's architecture, not its own host arch); got %q", c.Architecture)
 	}
 	return nil
 }

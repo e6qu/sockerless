@@ -8,9 +8,9 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-96.7k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-100.3k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
 [![TypeScript](https://img.shields.io/badge/TypeScript-8.5k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-51.1k_lines-brightgreen)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-52.3k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
@@ -22,7 +22,7 @@ No existing project fills this niche. Docker Engine, Podman, Colima, and Rancher
 
 Primary use cases:
 
-- **CI runners** — GitLab Runner (docker-executor) and GitHub Actions Runner (container jobs) work without modification
+- **CI runners** — GitLab Runner (docker-executor) and GitHub Actions Runner (container jobs) work without modification — see [`docs/RUNNERS.md`](docs/RUNNERS.md) for the wiring guide
 - **Docker Compose** — `docker compose up/down/ps/logs` works for basic service stacks
 - **General usage** — `docker run`, `docker exec`, `docker logs` against cloud infrastructure
 
@@ -98,22 +98,22 @@ Each backend, the agent, and the test suite are separate Go modules connected vi
 
 **Go**
 
-![core](https://img.shields.io/badge/core-17.7k-00ADD8)
+![core](https://img.shields.io/badge/core-17.8k-00ADD8)
 ![bleephub](https://img.shields.io/badge/bleephub-14.5k-00ADD8)
 ![sim/aws](https://img.shields.io/badge/sim%2Faws-11k-00ADD8)
 ![sim/azure](https://img.shields.io/badge/sim%2Fazure-8.5k-00ADD8)
 ![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-7k-00ADD8)
 ![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)
-![ecs](https://img.shields.io/badge/ecs-5.9k-5BC0DE)
+![ecs](https://img.shields.io/badge/ecs-6.7k-5BC0DE)
 ![cloudrun](https://img.shields.io/badge/cloudrun-3.9k-5BC0DE)
 ![aca](https://img.shields.io/badge/aca-4.3k-5BC0DE)
 ![docker](https://img.shields.io/badge/docker-2.6k-5BC0DE)
-![agent](https://img.shields.io/badge/agent-2.3k-5BC0DE)
+![agent](https://img.shields.io/badge/agent-2.5k-5BC0DE)
 ![api](https://img.shields.io/badge/api-1.9k-5BC0DE)
 ![azf](https://img.shields.io/badge/azf-2.4k-A0D8EF)
 ![cli](https://img.shields.io/badge/cli-1.6k-A0D8EF)
 ![gcf](https://img.shields.io/badge/gcf-2.2k-A0D8EF)
-![lambda](https://img.shields.io/badge/lambda-2.8k-A0D8EF)
+![lambda](https://img.shields.io/badge/lambda-4k-A0D8EF)
 
 **TypeScript**
 
@@ -281,6 +281,7 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 | [`FEATURE_MATRIX.md`](FEATURE_MATRIX.md) | Docker API compatibility, cloud service mappings, test results |
 | [`simulators/README.md`](simulators/README.md) | Cloud simulators: services, state management, CLI usage, bash tests |
 | [`backends/*/README.md`](backends/) | Per-backend configuration and terraform output mapping |
+| [`docs/RUNNERS.md`](docs/RUNNERS.md) | **CI runner wiring** — canonical guide: GitHub Actions + GitLab Runner against ECS + Lambda, token strategy, 4-cell coverage matrix |
 | [`docs/GITHUB_RUNNER.md`](docs/GITHUB_RUNNER.md) | GitHub Actions E2E test guide (act + official runner) |
 | [`docs/GITLAB_RUNNER_DOCKER.md`](docs/GITLAB_RUNNER_DOCKER.md) | GitLab Runner docker executor E2E test guide |
 | [`AGENTS.md`](AGENTS.md) | Agent architecture (forward/reverse modes) |

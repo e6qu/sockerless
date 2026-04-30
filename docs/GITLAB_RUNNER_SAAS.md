@@ -2,6 +2,8 @@
 
 Use the real `gitlab-runner` binary with the **docker executor**, registered against a real `gitlab.com` project or group, with `[runners.docker].host` pointing at a sockerless deployment. For the self-hosted GitLab CE simulator flow used in CI, see [`GITLAB_RUNNER_DOCKER.md`](./GITLAB_RUNNER_DOCKER.md).
 
+> **Looking for the canonical wiring guide that also covers GitHub + token hygiene + the 4-cell (GH + GL × ECS + Lambda) coverage matrix?** See [`RUNNERS.md`](./RUNNERS.md). This doc remains the per-platform reference for the GitLab side only.
+
 ## Architecture
 
 ```

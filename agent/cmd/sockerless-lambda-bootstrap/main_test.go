@@ -8,10 +8,54 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 )
+
+func TestMaterialiseBindLinks(t *testing.T) {
+	root := t.TempDir()
+	mnt := filepath.Join(root, "mnt", "sockerless-shared")
+	if err := os.MkdirAll(filepath.Join(mnt, "_work"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(mnt, "externals"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dstWork := filepath.Join(root, "__w")
+	dstExt := filepath.Join(root, "__e")
+	spec := dstWork + "=" + filepath.Join(mnt, "_work") + "," + dstExt + "=" + filepath.Join(mnt, "externals")
+	if err := materialiseBindLinks(spec); err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	for _, d := range []string{dstWork, dstExt} {
+		fi, err := os.Lstat(d)
+		if err != nil {
+			t.Fatalf("lstat %s: %v", d, err)
+		}
+		if fi.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("%s not a symlink", d)
+		}
+	}
+	// Idempotent: rerunning leaves the same symlinks intact.
+	if err := materialiseBindLinks(spec); err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+}
+
+func TestMaterialiseBindLinks_RejectsRelativeDst(t *testing.T) {
+	if err := materialiseBindLinks("__w=/mnt/sockerless-shared/_work"); err == nil {
+		t.Fatal("expected error for relative dst")
+	}
+}
+
+func TestMaterialiseBindLinks_EmptyAccepted(t *testing.T) {
+	if err := materialiseBindLinks(""); err != nil {
+		t.Fatalf("empty spec should be accepted: %v", err)
+	}
+}
 
 // encodeArgv matches the backend's encoding: base64(JSON(argv)).
 func encodeArgv(argv []string) string {

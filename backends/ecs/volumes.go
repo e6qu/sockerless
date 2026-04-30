@@ -28,6 +28,14 @@ func (s *Server) ensureEFSFilesystem(ctx context.Context) (string, error) {
 }
 
 func (s *Server) accessPointForVolume(ctx context.Context, volName string) (string, error) {
+	// If the volume matches a pre-configured shared volume (declared
+	// via SOCKERLESS_ECS_SHARED_VOLUMES), use its EFS access point
+	// directly — that's how the calling task and the spawned sub-task
+	// share a workspace via EFS without sockerless having to provision
+	// a fresh access point per docker run.
+	if sv := s.config.LookupSharedVolumeByName(volName); sv != nil {
+		return sv.AccessPointID, nil
+	}
 	return s.efs.AccessPointForVolume(ctx, volName)
 }
 

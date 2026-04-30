@@ -453,6 +453,19 @@ func ResolveLocalImage(image string) string {
 		dockerPath = strings.TrimPrefix(dockerPath, "library/")
 		return dockerPath
 	}
+	// AWS Public Gallery (BUG-865). The ECS backend's resolveImageURI
+	// (BUG-846) routes Docker Hub library refs to
+	// `public.ecr.aws/docker/library/<name>:<tag>` for direct pulls
+	// from Fargate. The simulator runs containers locally on Podman /
+	// Docker; locally-built test images and standard Docker Hub
+	// library images both want the bare `<name>:<tag>` form. Strip
+	// the prefix so e.g. `public.ecr.aws/docker/library/alpine:latest`
+	// → `alpine:latest`, and
+	// `public.ecr.aws/docker/library/sockerless-eval-arithmetic:test`
+	// → `sockerless-eval-arithmetic:test`.
+	if strings.HasPrefix(image, "public.ecr.aws/docker/library/") {
+		return strings.TrimPrefix(image, "public.ecr.aws/docker/library/")
+	}
 	return image
 }
 

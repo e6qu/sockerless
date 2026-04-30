@@ -20,10 +20,47 @@ type Config struct {
 	LogGroup         string
 	AgentEFSID       string // EFS filesystem ID for bind mount volumes
 	AssignPublicIP   bool
-	CodeBuildProject string        // AWS CodeBuild project for docker build
-	BuildBucket      string        // S3 bucket for build context upload
-	EndpointURL      string        // Custom endpoint URL
-	PollInterval     time.Duration // Cloud API poll interval (default 2s)
+	CodeBuildProject string // AWS CodeBuild project for docker build
+	BuildBucket      string // S3 bucket for build context upload
+	EndpointURL      string // Custom endpoint URL
+	// CpuArchitecture maps to ECS RuntimePlatform.CpuArchitecture.
+	// Valid: "X86_64" (Fargate default) or "ARM64" (Graviton). The
+	// sockerless backend reports this value (Docker-style) via
+	// `docker info` so clients pull single-arch images that actually
+	// run on the cloud workload — sockerless's own host architecture
+	// is irrelevant (client/server: the Docker client may run on any
+	// arch, what matters is the server side).
+	CpuArchitecture string
+	PollInterval    time.Duration // Cloud API poll interval (default 2s)
+
+	// SharedVolumes maps host bind-mount paths the calling docker
+	// client sees (in its own container's filesystem) to EFS access
+	// points already mounted in the calling task at the same path.
+	// When sockerless runs as a sidecar (or single-container with
+	// sockerless baked in) inside an ECS task that has EFS mounts at
+	// e.g. `/home/runner/_work`, the runner inside the task does
+	// `docker create -v /home/runner/_work:/__w alpine`. Without this
+	// config, sockerless rejects the host bind mount because Fargate
+	// has no host filesystem. With it, sockerless translates the bind
+	// mount to a named volume reference whose EFS access point is
+	// shared with the runner-task — both the runner-task and the
+	// spawned sub-task see the same workspace via EFS.
+	//
+	// Format: SOCKERLESS_ECS_SHARED_VOLUMES="name1=containerPath1=fsap-XXXX[=efsFilesystemID],name2=containerPath2=fsap-YYYY[=efsFilesystemID]"
+	// The trailing efsFilesystemID is optional — defaults to AgentEFSID.
+	SharedVolumes []SharedVolume
+}
+
+// SharedVolume describes a workspace volume mounted via EFS that the
+// caller (running in another ECS task) shares with sockerless. When
+// docker create sees a bind mount whose source matches ContainerPath,
+// the bind mount is rewritten to a named volume named Name backed by
+// the EFS access point AccessPointID.
+type SharedVolume struct {
+	Name          string // logical volume name used in spawned sub-tasks
+	ContainerPath string // path inside the calling container (= the bind-mount source)
+	AccessPointID string // EFS access point ID (fsap-...)
+	FileSystemID  string // EFS filesystem ID (fs-...); defaults to Config.AgentEFSID
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -41,8 +78,80 @@ func ConfigFromEnv() Config {
 		CodeBuildProject: os.Getenv("SOCKERLESS_AWS_CODEBUILD_PROJECT"),
 		BuildBucket:      os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET"),
 		EndpointURL:      os.Getenv("SOCKERLESS_ENDPOINT_URL"),
+		CpuArchitecture:  os.Getenv("SOCKERLESS_ECS_CPU_ARCHITECTURE"),
 		PollInterval:     parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
+		SharedVolumes:    parseSharedVolumes(os.Getenv("SOCKERLESS_ECS_SHARED_VOLUMES")),
 	}
+}
+
+// parseSharedVolumes parses the SOCKERLESS_ECS_SHARED_VOLUMES env-var
+// shape (`name=containerPath=fsap-XXXX[=fs-YYYY],name2=...`) into a
+// slice of SharedVolume entries. Returns nil for empty input.
+func parseSharedVolumes(s string) []SharedVolume {
+	if s == "" {
+		return nil
+	}
+	var out []SharedVolume
+	for _, entry := range strings.Split(s, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		parts := strings.Split(entry, "=")
+		if len(parts) < 3 || len(parts) > 4 {
+			continue
+		}
+		sv := SharedVolume{
+			Name:          strings.TrimSpace(parts[0]),
+			ContainerPath: strings.TrimSpace(parts[1]),
+			AccessPointID: strings.TrimSpace(parts[2]),
+		}
+		if len(parts) == 4 {
+			sv.FileSystemID = strings.TrimSpace(parts[3])
+		}
+		if sv.Name == "" || sv.ContainerPath == "" || sv.AccessPointID == "" {
+			continue
+		}
+		out = append(out, sv)
+	}
+	return out
+}
+
+// LookupSharedVolumeBySourcePath returns the SharedVolume entry whose
+// ContainerPath equals the given path, or nil if none matches.
+func (c Config) LookupSharedVolumeBySourcePath(path string) *SharedVolume {
+	for i := range c.SharedVolumes {
+		if c.SharedVolumes[i].ContainerPath == path {
+			return &c.SharedVolumes[i]
+		}
+	}
+	return nil
+}
+
+// LookupSharedVolumeByName returns the SharedVolume entry whose Name
+// equals the given volume name, or nil if none matches.
+func (c Config) LookupSharedVolumeByName(name string) *SharedVolume {
+	for i := range c.SharedVolumes {
+		if c.SharedVolumes[i].Name == name {
+			return &c.SharedVolumes[i]
+		}
+	}
+	return nil
+}
+
+// isSubPathOfSharedVolume reports whether path is a strict sub-path
+// (descendant) of any SharedVolume's ContainerPath.
+func isSubPathOfSharedVolume(path string, vols []SharedVolume) bool {
+	for i := range vols {
+		base := vols[i].ContainerPath
+		if base == "" {
+			continue
+		}
+		if strings.HasPrefix(path, base+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // ConfigFromEnvironment creates Config from a unified config environment.
@@ -95,6 +204,12 @@ func (c Config) Validate() error {
 	}
 	if c.ExecutionRoleARN == "" {
 		return fmt.Errorf("execution role ARN is required")
+	}
+	switch strings.ToUpper(c.CpuArchitecture) {
+	case "X86_64", "ARM64":
+		// ok
+	default:
+		return fmt.Errorf("SOCKERLESS_ECS_CPU_ARCHITECTURE must be set to X86_64 or ARM64 (no default — sockerless reports the cloud workload's architecture, not its own host arch); got %q", c.CpuArchitecture)
 	}
 	return nil
 }

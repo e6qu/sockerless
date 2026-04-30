@@ -1,0 +1,10 @@
+# Cross-compiled linux/amd64 binaries staged into the build context.
+# Built locally (or in CI) before `docker build`; never committed.
+sockerless-backend-lambda
+sockerless-agent
+sockerless-lambda-bootstrap
+# Legacy artifact; harness cleans up but ignored too.
+sockerless-backend-ecs
+# CodeBuild upload key tracking; written by `make upload-context`.
+.last-context-key
+context.tar.gz

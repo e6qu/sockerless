@@ -86,6 +86,21 @@ func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container, tty bo
 	// found in $PATH`. Wrap in `sh -c` so the agent runs a real shell.
 	cmd := "sh -c " + shellQuote(script)
 
+	// Wait for the ExecuteCommand managed agent inside the Fargate task
+	// to reach RUNNING. The task is RUNNING (which is what `docker
+	// start` waits for), but the SSM agent itself takes 5-30 s after
+	// task-RUNNING to come up. Without this, the first `docker exec`
+	// after a fresh `docker start` returns
+	// `InvalidParameterException: ... execute command agent isn't
+	// running` — particularly common in the GitHub Actions runner
+	// flow where the runner immediately exec's into the freshly-
+	// started job container. 60 s upper bound (real Fargate startup
+	// is well under that). On the simulator path (no managed agents),
+	// this returns immediately.
+	if waitErr := s.waitForExecuteCommandAgentReady(s.ctx(), cluster, ecsState.TaskARN, 60*time.Second); waitErr != nil {
+		return nil, fmt.Errorf("ECS ExecuteCommand prerequisites: %w", waitErr)
+	}
+
 	result, err := s.aws.ECS.ExecuteCommand(s.ctx(), &awsecs.ExecuteCommandInput{
 		Cluster:     aws.String(cluster),
 		Task:        aws.String(ecsState.TaskARN),

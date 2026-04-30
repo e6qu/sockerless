@@ -121,3 +121,11 @@ tmp/
 
 aws.sh
 .claude/
+
+# Runner harness runtime state — never committed (per-run runner config,
+# unpacked binaries, log captures). Tokens never get persisted here even
+# without this rule, but isolation keeps the dir from growing unboundedly.
+tests/runners/github/.runner-*/
+tests/runners/gitlab/.runner-*/
+tests/runners/*/logs/
+tests/runners/*/.runners/

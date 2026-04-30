@@ -1,49 +1,70 @@
 # Sockerless — Status
 
-**103 phases closed (Phase 108 closed 2026-04-26). 844 bugs tracked — 844 fixed, 0 open. 1 false positive.** PR #118 merged. PR #120 merged. PR #121 open (Phase 109 strict cloud-API fidelity sweep; **19 audit items closed, all CI green**). **Phase 109 — closed in PR #121:** (1) AWS Lambda VpcConfig from real subnet CIDR; (2) AWS region/account scoping via `SOCKERLESS_AWS_*` env vars; (3) GCP `compute.firewalls`; (4) GCP `iam.serviceAccounts.generateAccessToken`; (5) Azure IMDS metadata token endpoint; (6) Azure Blob Container ARM control plane; (7) Azure NSG rule priority+direction uniqueness validation; (8) Azure Private DNS AAAA/CNAME/MX/PTR/SRV/TXT records; (9) GCP `compute.routers` + Cloud NAT; (10) Azure `Microsoft.Network/natGateways` + `routeTables`; (11) Azure `Azure-AsyncOperation` polling for Container Apps + Jobs; (12) AWS Secrets Manager; (13) AWS SSM Parameter Store; (14) AWS KMS Encrypt/Decrypt + key management; (15) Azure Key Vault (ARM control + data plane subdomain routing); (16) AWS DynamoDB (CRUD + Terraform state-lock semantics via `attribute_not_exists` ConditionExpression); (17) GCP Cloud Run operations endpoint persistence (no synthetic done=true for unknown ops); (18) Azure ARM `SystemData.createdAt` preserved across updates (lastModifiedAt stamped fresh); (19) no-fakes audit on test fixtures — clean. Phase 104 framework migration complete + cloud-native typed drivers across every backend (44/91 cells cloud-native); Phase 105 waves 1-3 done (8 libpod-shape golden tests); Phase 108 done (77/77 sim-parity matrix ✓); Phase 106/107 runner harnesses shipped under `tests/runners/{github,gitlab}/`. **Next on this branch:** wait for the user to merge PR #121, then continue with wrapper-removal + further interface tightening.
+**104 phases closed. Active branch: `phase-110-runner-integration`. ALL 4 CELLS GREEN.**
+- Cell 1 GH×ECS: https://github.com/e6qu/sockerless/actions/runs/25075259911
+- Cell 2 GH×Lambda: https://github.com/e6qu/sockerless/actions/runs/25113565115 — 7 architectural walls (BUG-862, 869, 870, 871, 872, 873, 874).
+- Cell 3 GL×ECS (2026-04-29): https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 — job 14148678472 ran `echo "hello from sockerless ecs"` + `env | sort` in 270.8 s on 9 sequential per-stage Fargate tasks. Closed in commit `aa2419a`.
+- **Cell 4 GL×Lambda (NEW 2026-04-30): https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943** (status: success) — job 14156021860 ran `echo "hello from sockerless lambda"` + `date -u` in 260.5 s. Closed seven Lambda-primitive bugs across the session culminating in two final fixes:
+  1. **stdinPipe/start race**: `/start`'s Invoke goroutine did a one-shot `stdinPipes.Load()`, missing the standard Docker SDK ordering (/create → /start → /attach). Fix: poll `stdinPipes` for up to 5 s inside the goroutine before deciding to skip stdin. Without this, OpenStdin containers Invoked with empty payload `{}`, which the bootstrap piped to bash, producing `/bin/bash: line 1: {}: command not found` and Lambda `Unhandled` errors on every predefined-helper container.
+  2. **`docker.io/library/<name>` rejection**: `image_resolve.go` rejected `docker.io/library/alpine:latest` as "Docker Hub user/org image" because `repo` retained the `library/` prefix and matched `strings.Contains(repo, "/")`. Fix: strip `library/` prefix before the user/org check.
+  3. Plus diagnostic logging — `LogType=Tail` on every `lambda.Invoke` so the function's last 4 KB of stderr ride back inline; payload preview + log_tail emitted on `FunctionError`. The `{}: command not found` line that pinpointed the race came directly from this tail.
 
-See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer).
+See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer), [docs/RUNNERS.md](docs/RUNNERS.md) (runner wiring).
 
 ## Branch state
 
-- **`main`** — synced with `origin/main` at PR #120 merge.
-- **`phase-109-strict-fidelity-sweep`** — open as PR #121, ~25 commits ahead of main (Phase 109 sweep in flight; 19 audit items closed, all CI green).
-- **`origin-gitlab/main`** — mirror, lags; pushed when convenient.
+- **`main`** — synced with `origin/main` at PR #121 merge.
+- **`origin-gitlab/main`** — mirror, pre-push hooks now mirror-aware so `git push origin-gitlab main` is a clean fast-forward.
+- **`phase-110-runner-integration`** — active; baseline commit `f5c1ab7` shipped `docs/RUNNERS.md` + the mirror-aware hooks.
 
 ## Recent merges
 
 | PR | Summary |
 |---|---|
-| #121 (open) | Phase 109 strict cloud-API fidelity sweep — 19 items: AWS Lambda VpcConfig + region/account scoping + Secrets Manager + SSM Parameter Store + KMS + DynamoDB; GCP `compute.firewalls` + `compute.routers`/Cloud NAT + `iam.generateAccessToken` + operations endpoint persistence; Azure IMDS token endpoint + Blob Container ARM CRUD + NSG priority+direction validation + Private DNS AAAA/CNAME/MX/PTR/SRV/TXT records + NAT Gateways + Route Tables + Container Apps/Jobs Azure-AsyncOperation polling + Key Vault ARM+data plane + ARM `SystemData.createdAt` preservation. Test-fixtures no-fakes audit clean. |
+| #121 | Phase 109 strict cloud-API fidelity sweep — 19 audit items: AWS Lambda VpcConfig + region/account scoping + Secrets Manager + SSM Parameter Store + KMS + DynamoDB; GCP `compute.firewalls` + `compute.routers`/Cloud NAT + `iam.generateAccessToken` + operations endpoint persistence; Azure IMDS token endpoint + Blob Container ARM CRUD + NSG priority+direction validation + Private DNS AAAA/CNAME/MX/PTR/SRV/TXT records + NAT Gateways + Route Tables + Container Apps/Jobs Azure-AsyncOperation polling + Key Vault ARM+data plane + ARM `SystemData.createdAt` preservation. Test-fixtures no-fakes audit clean. |
 | #120 | Audit + Phase 104 framework migration + cloud-native typed drivers + Phase 105 waves 1-3 + Phase 108 closed + Phase 106/107 harness scaffolding + ImageRef domain type + Phase 109 first-round (BUG-836..844: real ECS lifecycle, real SSM AgentMessage protocol, real subnet-CIDR IP allocation, real Azure per-site hostnames, real kill signal routing) + repo-wide code/doc cleanup. |
 | #119 | Post-PR-#118 state-doc refresh — Phase 104 promoted to active. |
 | #118 | Round-8 + Round-9 live-AWS sweep — 30 bugs (BUG-786..819), per-cloud terragrunt sweep parity. |
 | #117 | Round-7 live-AWS sweep — 16 bugs (BUG-770..785). |
-| #115 | Phases 96/98/98b/99/100/101/102 + 13-bug audit sweep. |
-| #114 | Phase 91 ECS EFS volumes + BUG-735/736/737. |
 
-## Open work (full detail in [PLAN.md](PLAN.md))
+Older PRs (#112–#115) — sim parity, real volumes, FaaS invocation tracking, reverse-agent ops, Phase 91/86/87/88 closures. Detail in [WHAT_WE_DID.md](WHAT_WE_DID.md) and per-bug entries in [BUGS.md](BUGS.md).
 
-- **Phase 104** — cross-backend driver framework. **Framework migration complete + cloud-native coverage near-full.** All 13 adapters; every dispatch site flows through TypedDriverSet. Per-backend default-driver matrix: [specs/DRIVERS.md](specs/DRIVERS.md). 44/91 cells cloud-native (excluding docker, where local SDK passthrough is itself the cloud-native path); the rest stay on legacy adapters whose api.Backend method already does the cloud-native thing. `core.ImageRef` typed domain object landed at the typed `RegistryDriver.Push/Pull` boundary — first instance of the interface-tightening track. Remaining: wrapper-removal pass (gated on docker getting typed drivers OR accepting wrappers as permanent); typed Signal enum / structured Stats; `ResolveImageReg(ImageRef)` helper to migrate the registry-resolution call sites still on `splitImageRefRegistry`.
-- **Phase 105** — libpod-shape conformance, rolling. Waves 1-3 done (8 handlers); wave 4 (events stream, exec start hijack, container CRUD) lower-priority.
-- **Phase 106 / 107** — real CI runner harnesses shipped under `tests/runners/{github,gitlab}/`, build-tag-gated. End-to-end runs against live cloud + real repo/project pending — needs operator to reactivate AWS root-account key + provision live ECS via [manual-tests/01-infrastructure.md](manual-tests/01-infrastructure.md). Architecture: per-backend daemon (v1) → label-dispatch via Phase 68 (v2). `dind` sub-test included on the GitLab side.
-- **Phase 109** — strict cloud-API fidelity audit (in flight on PR #121). Goal: every sim slice sockerless touches behaves like the real cloud — same wire shape, same validation rules, same state transitions, same SDK / CLI / Terraform-provider compatibility. PR #120 closed the first round (BUG-836..844: real ECS lifecycle, real SSM AgentMessage protocol, real subnet-CIDR IP allocation, real Azure per-site hostnames, real kill signal routing). PR #121 closes 19 more audit items — see headline above; full per-item context in [PLAN.md](PLAN.md) § Phase 109.
-- **Phase 68** — Multi-Tenant Backend Pools. P68-001 done; 9 sub-tasks remaining; Phase 106 label-routing motivates this.
-- **Live-cloud runbooks** — GCP + Azure terraform live envs to add; per-cloud `sockerless_runtime_sweep` makes destroy self-sufficient.
+## Open work
+
+- **Phase 110 — all 4 cells GREEN.** Closing summary commit pending. Branch ready for PR.
+
+### 4-cell matrix
+
+| Cell | State | URL |
+|---|---|---|
+| 1 GH × ECS | ✅ GREEN | https://github.com/e6qu/sockerless/actions/runs/25075259911 |
+| 2 GH × Lambda | ✅ GREEN | https://github.com/e6qu/sockerless/actions/runs/25113565115 |
+| 3 GL × ECS | ✅ GREEN | https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 |
+| 4 GL × Lambda | ✅ GREEN | https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943 |
+
+Detailed unblock plans per cell live in [PLAN.md § Phase 110 — paths forward to GREEN](PLAN.md). Per-bug closure paths in [BUGS.md](BUGS.md). Resume command + sequence in [DO_NEXT.md](DO_NEXT.md). Full runner hurdle catalog (closed + predicted) in [docs/RUNNERS.md § Runner hurdles](docs/RUNNERS.md). Lambda volume primitive translation in [specs/CLOUD_RESOURCE_MAPPING.md § Lambda bind-mount translation](specs/CLOUD_RESOURCE_MAPPING.md).
+- **Phase 110a — github-runner-dispatcher skeleton: shipped** at commit `ba797b6`. Top-level Go module, sockerless-agnostic (only stdlib + BurntSushi/toml). State recovery via container labels (`sockerless.dispatcher.{job_id,runner_name,managed_by}`); GC sweep every 2 min reaps exited containers + offline GitHub runners; graceful shutdown drains in-flight work bounded to 30 s.
+- **Phase 113 (queued)** — production-shape `github-runner-dispatcher` (webhook ingress, GitHub App install, multi-repo, deployable). See [PLAN.md § Phase 113].
+- **Phase 104 wrapper-removal pass** — gated on docker getting typed cloud-native drivers OR accepting wrappers as permanent. Once decided: drop unused `WrapLegacyXxx` / `LegacyXxxFn` scaffolding and shrink `api.Backend` correspondingly. Coordinated landing.
+- **Phase 104 interface tightening** — typed `Signal` enum, `ResolveImageReg(ImageRef)` helper, structured `Stats` struct.
+- **Phase 105 wave 4** (lower priority) — events stream, exec start hijack shape, container CRUD beyond list.
+- **Phase 68** (Multi-Tenant Backend Pools) — P68-001 done; 9 sub-tasks remain. Phase 110's 4-cell setup uses Phase-68-v1 (one daemon per backend); Phase 68-v2 collapses to label-based dispatch on a single daemon.
 
 ## Test counts (head of `main`)
 
 | Category | Count |
 |---|---|
 | Core unit | 312 |
-| Cloud SDK/CLI | AWS 68, GCP 64, Azure 57 |
-| Sim-backend integration | 77 |
-| GitHub E2E | 186 |
-| GitLab E2E | 132 |
-| Terraform | 75 |
-| UI/Admin/bleephub | 512 |
-| Lint (18 modules) | 0 |
+| Cloud SDK/CLI | AWS 68+, GCP 64+, Azure 57+ |
+| Sim-backend integration | 77 (parity matrix at 77/77 ✓) |
+| Libpod golden-shape | 8 |
+| External-suite replays | 12 (act + gitlab-ci-local) |
 
-## AWS access key state
+## Operational state
 
-Root-account access key `AKIA2TQEGRDBRV2KFW6L` deactivated by maintainer 2026-04-26 post-round-9. **Reactivate via AWS Console before any future live-AWS test pass** (Phase 106 ECS workloads, Phase 87 live-GCP doesn't need it, Phase 88 live-Azure doesn't need it). Per-cloud `null_resource sockerless_runtime_sweep` (BUG-819) makes `terragrunt apply` + `terragrunt destroy` self-sufficient.
+- **AWS creds: ACTIVE** as of 2026-04-30 (root `729079515331`, eu-west-1) — refresh via `source aws.sh`.
+- **Live AWS infra: UP in eu-west-1** — provisioned 2026-04-28; still running. ECS + Lambda live envs as above. NAT Gateway runs ~$0.045/hr — tear down via `terragrunt destroy` from `terraform/environments/{ecs,lambda}/live` when the session ends.
+- **Sockerless daemons:** Lambda backend running on the cell-4-fix binary at `/tmp/sockerless-backend-lambda` (verified live with the GREEN cell 4 pipeline). ECS daemon was last seen on the BUG-859/860 fix binary; cells 3+4 verified GREEN against current code.
+- **Smoke verified** — `DOCKER_HOST=tcp://localhost:3375 docker run --rm alpine:latest echo hi` exits 0 from a Fargate task; verifies the BUG-846 AWS-Public-Gallery routing for Docker Hub library refs.
+- **Podman machine** — running (applehv VM, user-mode networking, 4 CPU / 10 GiB / 100 GiB). Used for local-Podman dispatcher testing in 110a; not used for cell 3+4 (gitlab-runner master is a darwin-native binary).
+- **PAT keychain entries** — `gh` (GitHub) keychain-backed; GitLab PAT in `security(1)` keychain entry `sockerless-gl-pat`.

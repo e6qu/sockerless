@@ -134,13 +134,60 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// Build function name from container name
 	funcName := "skls-" + id[:12]
 
-	// Build environment variables
+	// Build environment variables. Lambda caps Environment.Variables
+	// JSON at 4 KB total; gitlab-runner sets ~3 KB of CI_* vars at
+	// /create time. Drop the user-supplied vars when adding them
+	// would push us over budget — they are re-exported at the top of
+	// every gitlab-runner stage script (and embedded in the Invoke
+	// Payload for Path-B execs) so the runtime values are still
+	// available to user processes; only the Lambda-config-level vars
+	// suffer (which is fine — gitlab-runner doesn't read them from
+	// the environment, it reads them via its own protocol).
 	envVars := make(map[string]string)
+	// Lambda's 4 KB Environment.Variables JSON budget is small for
+	// runners that pass huge env up front (gitlab-runner ships ~50
+	// CI_* vars, three JWT tokens at ~600 bytes each, and a 1 KB
+	// GitLab features list — together >4 KB before sockerless adds
+	// its own SOCKERLESS_* vars). Two-stage filter:
+	//
+	//  1. Drop entries that gitlab-runner re-exports at the top of
+	//     every script anyway (the `: | eval $'export CI_…'` block);
+	//     keeping them in Lambda's config-level env is redundant and
+	//     leaks credentials into Lambda's GetFunction response.
+	//  2. Hard cap remaining entries at 2 KB to leave 2 KB headroom
+	//     for the SOCKERLESS_* additions below
+	//     (SOCKERLESS_LAMBDA_BIND_LINKS alone can be ~500 B for
+	//     gitlab-runner's two-volume setup).
+	const lambdaEnvBudget = 2000
+	estimatedSize := 2 // for `{}`
+	dropped := 0
 	for _, e := range config.Env {
 		parts := strings.SplitN(e, "=", 2)
-		if len(parts) == 2 {
-			envVars[parts[0]] = parts[1]
+		if len(parts) != 2 {
+			continue
 		}
+		// Filter rule (1): gitlab-runner / GitLab CI vars + GitLab feature
+		// flags are re-exported at runtime by gitlab-runner's script
+		// preamble. Forwarding them via Lambda env is pure overhead.
+		if strings.HasPrefix(parts[0], "CI_") ||
+			strings.HasPrefix(parts[0], "FF_") ||
+			strings.HasPrefix(parts[0], "GITLAB_") ||
+			parts[0] == "GIT_TERMINAL_PROMPT" ||
+			parts[0] == "GCM_INTERACTIVE" ||
+			parts[0] == "RUNNER_TEMP_PROJECT_DIR" {
+			dropped++
+			continue
+		}
+		entrySize := len(parts[0]) + len(parts[1]) + 6 // `"k":"v",`
+		if estimatedSize+entrySize > lambdaEnvBudget {
+			dropped++
+			continue
+		}
+		envVars[parts[0]] = parts[1]
+		estimatedSize += entrySize
+	}
+	if dropped > 0 {
+		s.Logger.Info().Int("dropped", dropped).Int("kept", len(envVars)).Msg("lambda env: dropped CI/FF/GITLAB vars + size-cap user vars (Lambda 4KB Environment limit; runner script re-exports them at runtime)")
 	}
 
 	// Build resource tags
@@ -154,72 +201,104 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		Labels:      config.Labels,
 	}
 
-	// Resolve the image URI. If the operator shipped a pre-baked
-	// overlay (PrebuiltOverlayImage) and we're in reverse-agent mode
-	// (CallbackURL set), the user's Image is irrelevant — the Lambda
-	// function runs the operator's image, and the user's original
-	// entrypoint+cmd are passed via env vars. Skip ECR resolution
-	// entirely in that case; the prebuilt image is expected to be
-	// already pushed to ECR (or resolvable locally in integration).
+	// Resolve the image URI. Lambda image-mode imposes two hard
+	// constraints on every function image: (a) Docker schema 2 manifest
+	// (OCI rejected), and (b) ENTRYPOINT must be a Lambda Runtime API
+	// client (poll /next, post /response). User images rarely satisfy
+	// either. Sockerless's responsibility per
+	// `specs/CLOUD_RESOURCE_MAPPING.md` § Lambda mapping: route every
+	// CreateFunction through the overlay-inject path which (a) bakes
+	// `sockerless-lambda-bootstrap` as ENTRYPOINT (resolves the
+	// Runtime-API gap) and (b) runs `docker build` + `docker push` /
+	// CodeBuild — both produce Docker schema 2 (resolves the manifest
+	// gap). The user's original ENTRYPOINT + CMD ride along as
+	// `SOCKERLESS_USER_*` env vars; the bootstrap exec's them as a
+	// subprocess on each invocation.
 	var imageURI string
+	envVars["SOCKERLESS_CONTAINER_ID"] = id
+	if s.config.CallbackURL != "" {
+		envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
+	}
+	// Encode argv as base64(JSON) so every byte round-trips cleanly
+	// through the env var without Dockerfile / shell quoting.
+	if len(config.Entrypoint) > 0 {
+		b, _ := json.Marshal(config.Entrypoint)
+		envVars["SOCKERLESS_USER_ENTRYPOINT"] = base64.StdEncoding.EncodeToString(b)
+	}
+	if len(config.Cmd) > 0 {
+		b, _ := json.Marshal(config.Cmd)
+		envVars["SOCKERLESS_USER_CMD"] = base64.StdEncoding.EncodeToString(b)
+	}
+	// Resolve bind-mount FileSystemConfigs early so the bind-link
+	// symlinks can be baked into the overlay image at build time
+	// (Lambda's runtime root filesystem is read-only — runtime
+	// symlink creation fails).
+	var fsConfigs []lambdatypes.FileSystemConfig
+	var bindLinks []string
+	if len(hostConfig.Binds) > 0 {
+		var err error
+		fsConfigs, bindLinks, err = s.fileSystemConfigsForBinds(s.ctx(), hostConfig.Binds)
+		if err != nil {
+			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("resolve Lambda file-system configs: %v", err)}
+		}
+	}
+
 	switch {
 	case s.config.PrebuiltOverlayImage != "":
+		// Operator shipped a ready overlay — skip the build, use as-is.
 		imageURI = s.config.PrebuiltOverlayImage
-		envVars["SOCKERLESS_CONTAINER_ID"] = id
-		if s.config.CallbackURL != "" {
-			envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
-		}
-		// Encode argv as base64(JSON) so every byte round-trips cleanly
-		// through the env var without Dockerfile / shell quoting.
-		if len(config.Entrypoint) > 0 {
-			b, _ := json.Marshal(config.Entrypoint)
-			envVars["SOCKERLESS_USER_ENTRYPOINT"] = base64.StdEncoding.EncodeToString(b)
-		}
-		if len(config.Cmd) > 0 {
-			b, _ := json.Marshal(config.Cmd)
-			envVars["SOCKERLESS_USER_CMD"] = base64.StdEncoding.EncodeToString(b)
-		}
-	case s.config.CallbackURL != "":
-		// Build + push an overlay on top of the user's image. Resolve
-		// the base image first so the Dockerfile's FROM can reference
-		// something Lambda can pull.
-		base, err := s.resolveImageURI(s.ctx(), config.Image)
-		if err != nil {
-			return nil, &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", config.Image, err)}
-		}
-		imageURI = base
-		spec := OverlayImageSpec{
-			BaseImageRef:        imageURI,
-			AgentBinaryPath:     s.config.AgentBinaryPath,
-			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
-			UserEntrypoint:      config.Entrypoint,
-			UserCmd:             config.Cmd,
-		}
-		destRef := fmt.Sprintf("%s-overlay-%s", strings.TrimSuffix(imageURI, ":latest"), id[:12])
-		overlay, buildErr := BuildAndPushOverlayImage(s.ctx(), spec, destRef)
-		if buildErr != nil {
-			// Fail loud — silently using the base image would leave
-			// the user with a function they think supports `docker
-			// exec` but doesn't. Caller set SOCKERLESS_CALLBACK_URL
-			// deliberately, so surface the build failure.
-			return nil, &api.ServerError{Message: fmt.Sprintf("overlay build failed for %q: %v", imageURI, buildErr)}
-		}
-		imageURI = overlay.ImageURI
-		envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
-		envVars["SOCKERLESS_CONTAINER_ID"] = id
-	default:
+	case s.config.EndpointURL != "":
+		// Custom-endpoint mode (sim Lambda / integration tests). The
+		// sim doesn't enforce real Lambda's Docker-schema-2 +
+		// Runtime-API constraints, so overlay-inject is unnecessary.
+		// Resolve and use the base image directly.
 		var resolveErr error
 		imageURI, resolveErr = s.resolveImageURI(s.ctx(), config.Image)
 		if resolveErr != nil {
 			return nil, &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", config.Image, resolveErr)}
 		}
+	default:
+		base, err := s.resolveImageURI(s.ctx(), config.Image)
+		if err != nil {
+			return nil, &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", config.Image, err)}
+		}
+		spec := OverlayImageSpec{
+			BaseImageRef:        base,
+			AgentBinaryPath:     s.config.AgentBinaryPath,
+			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+			UserEntrypoint:      config.Entrypoint,
+			UserCmd:             config.Cmd,
+			BindLinks:           bindLinks,
+		}
+		repo, repoErr := s.overlayECRRepo()
+		if repoErr != nil {
+			return nil, &api.ServerError{Message: repoErr.Error()}
+		}
+		destRef := repo + ":" + OverlayContentTag(spec)
+		var builder core.CloudBuildService
+		if s.images != nil {
+			builder = s.images.BuildService
+		}
+		overlay, buildErr := BuildAndPushOverlayImage(s.ctx(), spec, destRef, builder)
+		if buildErr != nil {
+			return nil, &api.ServerError{Message: fmt.Sprintf("overlay build failed for %q: %v", base, buildErr)}
+		}
+		imageURI = overlay.ImageURI
 	}
 
-	// Create Lambda function
+	// Create Lambda function. Architectures is the operator-configured
+	// `Config.Architecture` value — sockerless reports this same value
+	// (Docker-style) via `docker info` so clients pull single-arch
+	// images that actually match the Lambda runtime.
+	arch := lambdatypes.ArchitectureX8664
+	if strings.EqualFold(s.config.Architecture, "arm64") {
+		arch = lambdatypes.ArchitectureArm64
+	}
 	createInput := &awslambda.CreateFunctionInput{
-		FunctionName: aws.String(funcName),
-		Role:         aws.String(s.config.RoleARN),
-		PackageType:  lambdatypes.PackageTypeImage,
+		FunctionName:  aws.String(funcName),
+		Role:          aws.String(s.config.RoleARN),
+		PackageType:   lambdatypes.PackageTypeImage,
+		Architectures: []lambdatypes.Architecture{arch},
 		Code: &lambdatypes.FunctionCode{
 			ImageUri: aws.String(imageURI),
 		},
@@ -242,31 +321,40 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		}
 	}
 
-	// Attach named-volume binds as EFS FileSystemConfigs.
-	// Reject host-path binds; require VPC + subnets (enforced by
-	// fileSystemConfigsForBinds). Access points are sockerless-managed
-	// via awscommon.EFSManager (shared with ECS).
-	if len(hostConfig.Binds) > 0 {
-		fsConfigs, err := s.fileSystemConfigsForBinds(s.ctx(), hostConfig.Binds)
-		if err != nil {
-			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("resolve Lambda file-system configs: %v", err)}
-		}
+	// Attach the resolved FileSystemConfig (already computed above so
+	// the bind-link symlinks could be baked into the overlay image).
+	// `SOCKERLESS_LAMBDA_BIND_LINKS` env is still emitted as a fallback
+	// for runtime-flexible deployments (sim mode, where the overlay
+	// path doesn't fire); the in-Lambda bootstrap is idempotent —
+	// finding pre-existing symlinks is a no-op. See
+	// `specs/CLOUD_RESOURCE_MAPPING.md` § "Lambda bind-mount translation".
+	if len(fsConfigs) > 0 {
 		createInput.FileSystemConfigs = fsConfigs
 	}
+	if len(bindLinks) > 0 {
+		if createInput.Environment == nil {
+			createInput.Environment = &lambdatypes.Environment{Variables: envVars}
+		}
+		createInput.Environment.Variables["SOCKERLESS_LAMBDA_BIND_LINKS"] = strings.Join(bindLinks, ",")
+	}
 
-	// Set image config overrides if cmd/entrypoint specified
-	if len(config.Cmd) > 0 || len(config.Entrypoint) > 0 || config.WorkingDir != "" {
-		imgConfig := &lambdatypes.ImageConfig{}
-		if len(config.Entrypoint) > 0 {
-			imgConfig.EntryPoint = config.Entrypoint
+	// We DON'T propagate Cmd/Entrypoint/WorkingDir to Lambda's
+	// ImageConfig — the overlay-inject path bakes
+	// `sockerless-lambda-bootstrap` as the ENTRYPOINT (it owns the
+	// Lambda Runtime API loop) and handles the user's argv + workdir
+	// via env vars (`SOCKERLESS_USER_ENTRYPOINT/CMD/WORKDIR`). Setting
+	// `ImageConfig.WorkingDirectory` here would make Lambda's runtime
+	// chdir BEFORE the bootstrap runs — and BIND_LINKS-targeted paths
+	// like `/__w/<repo>` only exist as symlinks created by the
+	// bootstrap, so Lambda's pre-bootstrap chdir fails with
+	// `Runtime.InvalidWorkingDir`. The user's workdir is honoured by
+	// the bootstrap when it spawns the user subprocess (or in
+	// `execEnvelope.Workdir` for Path B execs).
+	if config.WorkingDir != "" {
+		if createInput.Environment == nil {
+			createInput.Environment = &lambdatypes.Environment{Variables: envVars}
 		}
-		if len(config.Cmd) > 0 {
-			imgConfig.Command = config.Cmd
-		}
-		if config.WorkingDir != "" {
-			imgConfig.WorkingDirectory = aws.String(config.WorkingDir)
-		}
-		createInput.ImageConfig = imgConfig
+		createInput.Environment.Variables["SOCKERLESS_USER_WORKDIR"] = config.WorkingDir
 	}
 
 	result, err := s.aws.Lambda.CreateFunction(s.ctx(), createInput)
@@ -282,6 +370,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	s.Lambda.Put(id, LambdaState{
 		FunctionName: funcName,
 		FunctionARN:  functionARN,
+		OpenStdin:    config.OpenStdin && config.AttachStdin,
 	})
 
 	s.Registry.Register(core.ResourceEntry{
@@ -320,7 +409,21 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 	}
 	if !ok {
-		return &api.NotFoundError{Resource: "container", ID: ref}
+		// CloudState fallback: gitlab-runner's docker-executor reuses
+		// the same container ID across stages (/start cycle 2+).
+		// PendingCreates is dropped after cycle 1's deferred Invoke,
+		// so subsequent /start calls without this fallback would 404
+		// even though the Lambda function still exists. Mirror of the
+		// same pattern in `backends/ecs/backend_impl.go::ContainerStart`.
+		resolved, found := s.ResolveContainerAuto(context.Background(), ref)
+		if !found {
+			return &api.NotFoundError{Resource: "container", ID: ref}
+		}
+		c = resolved
+		// Restore the container to PendingCreates so the rest of the
+		// start flow finds it. Dropped again at end of the deferred
+		// Invoke goroutine.
+		s.PendingCreates.Put(c.ID, c)
 	}
 	id := c.ID
 
@@ -345,27 +448,154 @@ func (s *Server) ContainerStart(ref string) error {
 	// Remove from PendingCreates now that the function is being invoked.
 	s.PendingCreates.Delete(id)
 
-	// Invoke Lambda function asynchronously and capture the outcome
-	// in Store.InvocationResults so CloudState reflects the container
-	// as exited with the real exit code.
-	go func() {
-		// Wait for AWS to finish provisioning the function (image pull,
-		// ENI attach for VPC config). Invoking during State=Pending fails
-		// with ResourceConflictException.
-		waiter := awslambda.NewFunctionActiveV2Waiter(s.aws.Lambda)
-		if werr := waiter.Wait(s.ctx(), &awslambda.GetFunctionInput{
+	// gitlab-runner / `docker run -i` pattern: the container will
+	// receive its actual command via stdin on the hijacked attach
+	// connection. The Docker SDK's standard sequence is /create →
+	// /start → /attach, so /start often arrives BEFORE /attach has
+	// registered the stdin pipe. The Invoke goroutine polls
+	// `stdinPipes` for a few seconds (covers the /start→/attach
+	// gap) so it can wait for stdin EOF before calling Invoke
+	// rather than racing in with an empty `{}` payload — bash
+	// reading `{}` as a command was the source of the
+	// predefined-helper "Unhandled" Lambda errors when OpenStdin
+	// was set but the goroutine fired before /attach registered.
+	// Only bake stdin into Invoke Payload when:
+	//   1. lambdaState.OpenStdin is set
+	//   2. an attach pipe registers within the polling window
+	//
+	// Predefined helpers (gitlab-runner) go through this same path:
+	// each stage gets a fresh `lambda.Invoke` with the stage's stdin
+	// script as the Payload — analogous to the per-stage Fargate task
+	// flow on ECS (Phase 114). Cross-stage state lives on EFS via the
+	// shared volume mounts gitlab-runner sets up itself, not on a
+	// long-lived Lambda execution.
+
+	// Block synchronously until the function is Active — clients
+	// (especially CI runners) typically issue `docker exec` immediately
+	// after `docker start` returns, and Invoke against a Pending
+	// function fails with ResourceConflictException. The runner-on-
+	// Lambda path (`specs/CLOUD_RESOURCE_MAPPING.md` § Lambda exec
+	// semantics — Path B) routes each `docker exec` through a fresh
+	// `lambda.Invoke`, so the function MUST be Active before /start
+	// returns.
+	//
+	// Lambda has a brief eventual-consistency window after CreateFunction
+	// where GetFunction can return 404. Tolerate that for a few seconds
+	// before handing off to the V2 waiter, which then enforces
+	// State=Active (image pull, ENI attach for VPC).
+	visibilityDeadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(visibilityDeadline) {
+		_, gerr := s.aws.Lambda.GetFunction(s.ctx(), &awslambda.GetFunctionInput{
 			FunctionName: aws.String(lambdaState.FunctionName),
-		}, 5*time.Minute); werr != nil {
-			s.Logger.Error().Err(werr).Str("function", lambdaState.FunctionName).Msg("Lambda function did not become Active")
-			s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: 1, Error: werr.Error()})
-			if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-				close(ch.(chan struct{}))
+		})
+		if gerr == nil {
+			break
+		}
+		if !strings.Contains(gerr.Error(), "ResourceNotFoundException") {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	waiter := awslambda.NewFunctionActiveV2Waiter(s.aws.Lambda)
+	if werr := waiter.Wait(s.ctx(), &awslambda.GetFunctionInput{
+		FunctionName: aws.String(lambdaState.FunctionName),
+	}, 5*time.Minute); werr != nil {
+		s.Logger.Error().Err(werr).Str("function", lambdaState.FunctionName).Msg("Lambda function did not become Active")
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
+		}
+		return &api.ServerError{Message: fmt.Sprintf("lambda function %s did not become Active: %v", lambdaState.FunctionName, werr)}
+	}
+
+	// Function is Active. The "main Invoke" only fires when there is a
+	// concrete payload to deliver (gitlab-runner stdin-piped script).
+	// The exec-driven model — `docker create` then per-step `docker
+	// exec` — does NOT auto-invoke a stay-alive entrypoint like
+	// `tail -f /dev/null` because Lambda has no equivalent primitive
+	// (Lambda functions are invoke-on-demand, not "long-running"). The
+	// container stays "Running" in CloudState as long as the function
+	// exists, regardless of whether any invocation is in flight. Each
+	// `docker exec` fires its own concurrent `lambda.Invoke`. See
+	// `specs/CLOUD_RESOURCE_MAPPING.md` § Lambda exec semantics.
+	// Containers with no stdin pipe (e.g. gitlab-runner's volume-
+	// permission helper, which runs `chown -R` baked as Cmd at
+	// /create time and never opens an /attach for stdin) still need
+	// the function to actually be invoked — without this branch the
+	// function is created+Active but never runs anything, and the
+	// caller's `docker wait` hangs. Treat it as an empty-payload
+	// Invoke so the bootstrap runs the user Cmd directly.
+	go func() {
+		// Resolve the attach pipe with a polling window. Docker SDK
+		// clients (gitlab-runner included) typically issue /create →
+		// /start → /attach in that order, so when /start returns the
+		// pipe may not be registered yet. Poll for up to 5 s; if no
+		// pipe shows up by then assume this isn't an OpenStdin caller
+		// after all (or it crashed before attaching) and fall through
+		// to an empty-payload Invoke.
+		var stdinP *stdinPipe
+		if lambdaState.OpenStdin {
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				if v, ok := s.stdinPipes.Load(id); ok {
+					if pipe := v.(*stdinPipe); pipe.IsOpen() {
+						stdinP = pipe
+						break
+					}
+				}
+				time.Sleep(50 * time.Millisecond)
 			}
-			return
+			if stdinP == nil {
+				s.Logger.Warn().Str("container", id[:12]).Msg("lambda-stdin: OpenStdin set but no attach pipe registered within 5s — invoking with empty payload")
+			}
+		}
+
+		var invokePayload []byte
+		if stdinP != nil {
+			// Wait up to 30 s for caller to half-close the hijacked
+			// attach connection. gitlab-runner's docker-executor flow
+			// streams the script then signals EOF via CloseWrite();
+			// log-streaming attaches (no stdin write) hit the timeout
+			// and proceed with whatever's buffered. Without the timeout
+			// this goroutine waits forever, the WaitCh stays open, and
+			// the caller's `docker wait` hangs.
+			select {
+			case <-stdinP.Done():
+			case <-time.After(30 * time.Second):
+				s.Logger.Info().Str("container", id[:12]).Int("buffered_bytes", len(stdinP.Bytes())).Msg("lambda-stdin: pipe wait timeout — proceeding with buffered bytes")
+			}
+			scriptBytes := stdinP.Bytes()
+			s.stdinPipes.Delete(id)
+
+			// Lambda's Invoke expects a JSON Payload. gitlab-runner's
+			// docker-executor sends a raw bash script via /attach
+			// stdin — we wrap it as a Path-B exec envelope
+			// (`{"sockerless":{"exec":{"argv":["sh","-c","<script>"]}}}`)
+			// so the in-Lambda bootstrap parses it as a docker-exec
+			// dispatch, runs the script, and returns
+			// `{"sockerlessExecResult":...}`. Without the wrapping
+			// Lambda's API rejects the raw `#!/usr/bin/env bash`
+			// header as invalid JSON.
+			if len(scriptBytes) > 0 {
+				envelope := execEnvelopeRequest{}
+				envelope.Sockerless.Exec = execEnvelopeExec{
+					Argv: []string{"sh", "-c", string(scriptBytes)},
+				}
+				if p, err := json.Marshal(envelope); err == nil {
+					invokePayload = p
+				} else {
+					s.Logger.Error().Err(err).Msg("lambda-stdin: marshal exec envelope failed")
+					if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+						close(ch.(chan struct{}))
+					}
+					return
+				}
+			}
 		}
 
 		result, err := s.aws.Lambda.Invoke(s.ctx(), &awslambda.InvokeInput{
 			FunctionName: aws.String(lambdaState.FunctionName),
+			Payload:      invokePayload,
+			LogType:      lambdatypes.LogTypeTail,
 		})
 
 		inv := core.InvocationResult{FinishedAt: time.Now()}
@@ -376,14 +606,32 @@ func (s *Server) ContainerStart(ref string) error {
 			inv.Error = err.Error()
 		case result.FunctionError != nil:
 			fnErr := aws.ToString(result.FunctionError)
-			s.Logger.Warn().Str("error", fnErr).Msg("Lambda function returned error")
+			payloadPreview := string(result.Payload)
+			if len(payloadPreview) > 4096 {
+				payloadPreview = payloadPreview[:4096] + "...(truncated)"
+			}
+			// LogResult is base64-encoded last 4KB of the function's stderr.
+			// Lambda returns it inline when LogType=Tail is set on Invoke,
+			// avoiding a round-trip to CloudWatch when the function dies
+			// before the log group propagates.
+			var logTail string
+			if result.LogResult != nil {
+				if decoded, derr := base64.StdEncoding.DecodeString(aws.ToString(result.LogResult)); derr == nil {
+					logTail = string(decoded)
+				}
+			}
+			s.Logger.Warn().
+				Str("error", fnErr).
+				Str("function", lambdaState.FunctionName).
+				Str("payload", payloadPreview).
+				Str("log_tail", logTail).
+				Msg("Lambda function returned error")
 			inv.ExitCode = 1
 			inv.Error = fnErr
 			if len(result.Payload) > 0 {
 				s.Store.LogBuffers.Store(id, result.Payload)
 			}
 		default:
-			// Successful invocation — exit code 0.
 			if len(result.Payload) > 0 && string(result.Payload) != "{}" {
 				s.Store.LogBuffers.Store(id, result.Payload)
 			}
@@ -565,6 +813,11 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	s.PendingCreates.Delete(id)
 	s.Lambda.Delete(id)
+	// Unblock any deferred-stdin Invoke goroutine waiting on the pipe
+	// so it can exit cleanly without firing a phantom invocation.
+	if v, ok := s.stdinPipes.LoadAndDelete(id); ok {
+		_ = v.(*stdinPipe).Close()
+	}
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
 	}

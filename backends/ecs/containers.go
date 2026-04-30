@@ -43,16 +43,22 @@ func (s *Server) runECSTask(containerID, taskDefARN string, c *api.Container) (t
 
 	// Merge per-container security groups from network associations.
 	// When the container is attached to one or more user-defined
-	// networks, the per-network SG(s) are the sole authority for
-	// peer reachability — otherwise the operator's default SG (which
-	// typically allows VPC-wide self-traffic) shadows the per-network
-	// isolation and any container can reach any other container by IP.
-	// The default SG is still applied to containers running without an
-	// explicit network membership so they can reach the internet via
-	// the operator's egress rules.
+	// networks, both the per-network SG(s) AND the operator's default
+	// SG are applied. The per-network SG provides peer isolation between
+	// docker-network members; the operator's default SG provides shared
+	// infrastructure access (EFS workspace mounts, the operator's
+	// allow-listed services, the egress rules). Without the default SG,
+	// sub-tasks can't mount EFS — the EFS mount target's allow-list is
+	// scoped to the operator's task SG, not the dynamically-created
+	// per-network SGs. The per-network SG still gates *peer* traffic
+	// (sub-task ↔ sub-task across docker networks) because peer SGs
+	// don't appear in the EFS allow-list — only the operator's default
+	// SG does. Containers without explicit network membership use the
+	// default SG only.
 	var securityGroups []string
 	if ecsState, ok := s.ECS.Get(containerID); ok && len(ecsState.SecurityGroupIDs) > 0 {
 		securityGroups = append(securityGroups, ecsState.SecurityGroupIDs...)
+		securityGroups = append(securityGroups, s.config.SecurityGroups...)
 	} else {
 		securityGroups = append(securityGroups, s.config.SecurityGroups...)
 	}

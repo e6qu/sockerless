@@ -1,0 +1,7 @@
+hello:
+  image: alpine:latest
+  tags:
+    - sockerless-lambda
+  script:
+    - echo "hello from sockerless lambda"
+    - date -u

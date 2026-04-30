@@ -1,14 +1,26 @@
 #!/usr/bin/env bash
 # Checks that the current branch is rebased on top of origin/main.
 # Fails if origin/main has commits not in the current branch.
+#
+# Mirror remotes (any remote whose name is not exactly `origin`) are
+# expected to track origin/main verbatim — fast-forward pushes of main
+# to them are intentional and exempt from the rebase / "no main push"
+# checks. pre-commit exposes the target remote via $PRE_COMMIT_REMOTE_NAME.
 
 set -euo pipefail
 
+remote_name="${PRE_COMMIT_REMOTE_NAME:-origin}"
+if [ "$remote_name" != "origin" ]; then
+  # Mirror push: nothing to validate against origin/main since the
+  # mirror is *supposed* to receive main as-is.
+  exit 0
+fi
+
 branch=$(git rev-parse --abbrev-ref HEAD)
 
-# Never push directly to main
+# Never push directly to main on origin
 if [ "$branch" = "main" ]; then
-  echo "ERROR: Do not push directly to main. Create a branch first."
+  echo "ERROR: Do not push directly to main on origin. Create a branch first."
   exit 1
 fi
 

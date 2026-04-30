@@ -3,6 +3,7 @@ package ecs
 import (
 	"context"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
@@ -20,6 +21,12 @@ type Server struct {
 	NetworkState *core.StateStore[NetworkState]
 	ipCounter    atomic.Int32
 	volumeState
+	// stdinPipes buffers stdin bytes written via the hijacked attach
+	// connection for containers created with OpenStdin && AttachStdin.
+	// Keyed by container ID. ContainerStart drains the pipe and bakes
+	// the buffered bytes into the task definition's command override
+	// (Fargate has no remote stdin channel for a running task).
+	stdinPipes sync.Map
 }
 
 // NewServer creates a new ECS backend server.
@@ -40,9 +47,14 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		Driver:          "ecs-fargate",
 		OperatingSystem: "AWS Fargate",
 		OSType:          "linux",
-		Architecture:    "amd64",
-		NCPU:            2,
-		MemTotal:        4294967296,
+		// Architecture reflects the Fargate task arch (X86_64 / ARM64),
+		// translated to Docker's amd64 / arm64 spelling — sockerless's
+		// own host arch is irrelevant (client/server model: clients
+		// running on any host arch report the *server* arch via
+		// `docker info`, and our server is the cloud workload).
+		Architecture: dockerArchFromAWS(config.CpuArchitecture),
+		NCPU:         2,
+		MemTotal:     4294967296,
 	}, logger)
 	s.volumeState = volumeState{efs: awscommon.NewEFSManager(awsClients.EFS, awscommon.EFSManagerConfig{
 		AgentEFSID:     config.AgentEFSID,
@@ -92,6 +104,26 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 
 	registerUI(s.BaseServer)
 
+	// Use the metadata-only network driver. BaseServer.InitDrivers
+	// installs the Linux platform driver (real `ip netns add` + veth
+	// pairs) which is correct for the local docker backend (where
+	// docker networks are kernel netns) but wrong for ECS, where
+	// docker networks map to *cloud* networking primitives — VPC
+	// security groups + Cloud Map namespaces (provisioned by
+	// `cloudNetworkCreate` / `cloudNamespaceCreate` in
+	// `backend_impl_network.go`). Linux kernel netns inside the
+	// runner-task are irrelevant: spawned sub-tasks each get their
+	// own Fargate ENI and netns from ECS itself.
+	//
+	// `SyntheticNetworkDriver` is the in-memory metadata store for
+	// docker networks — the "synthetic" name is historical, not a
+	// signal that this is fake or stub behavior. It records that the
+	// docker network exists so subsequent `docker network ls` /
+	// `docker network inspect` calls work; the actual cloud-side
+	// networking lives in the ECS NetworkCreate wrapper that runs
+	// after the BaseServer call returns.
+	s.Drivers.Network = &core.SyntheticNetworkDriver{Store: s.Store, IPAlloc: s.Store.IPAlloc}
+
 	// Cloud-native typed Logs + Attach driving CloudWatch via the per-
 	// container fetcher factory. Bypasses the legacy s.self.ContainerLogs
 	// /ContainerAttach round-trip.
@@ -101,8 +133,7 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	s.Typed.Logs = core.NewCloudLogsLogsDriver(s.BaseServer, logFactory,
 		core.StreamCloudLogsOptions{},
 		"ecs", "CloudWatchLogs")
-	s.Typed.Attach = core.NewCloudLogsAttachDriver(s.BaseServer, logFactory,
-		"ecs", "CloudLogsReadOnlyAttach")
+	s.Typed.Attach = &ecsStdinAttachDriver{s: s}
 
 	// SSM-based typed drivers — bypass the api.Backend round-trip and
 	// dispatch directly through ContainerXxxViaSSM helpers.
@@ -119,4 +150,22 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 // ctx returns a background context.
 func (s *Server) ctx() context.Context {
 	return context.Background()
+}
+
+// dockerArchFromAWS translates AWS ECS RuntimePlatform.CpuArchitecture
+// values into Docker's image-arch spelling. AWS uses X86_64 / ARM64;
+// Docker / OCI use amd64 / arm64. Unknown / empty values pass through
+// verbatim so misconfiguration surfaces in `docker info` instead of
+// being silently coerced — Config.Validate refuses to start the
+// server with an empty value, so this branch should never fire in
+// production.
+func dockerArchFromAWS(awsArch string) string {
+	switch strings.ToUpper(awsArch) {
+	case "ARM64":
+		return "arm64"
+	case "X86_64":
+		return "amd64"
+	default:
+		return strings.ToLower(awsArch)
+	}
 }
