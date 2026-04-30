@@ -6,9 +6,34 @@ See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for
 
 This file keeps narrative / "why we did it" context that doesn't live in BUGS.md or git log. Per-bug detail belongs in [BUGS.md](BUGS.md) — don't duplicate it here.
 
-## Phase 110 — runner integration (in flight, PR #122)
+## Phase 110 — runner integration (CLOSED 2026-04-30, all 4 cells GREEN)
 
-Architecture exploration that landed two important separations:
+All four runner-integration cells GREEN against live AWS in eu-west-1:
+
+| Cell | URL |
+|---|---|
+| 1 GH × ECS | https://github.com/e6qu/sockerless/actions/runs/25075259911 |
+| 2 GH × Lambda | https://github.com/e6qu/sockerless/actions/runs/25113565115 |
+| 3 GL × ECS | https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 |
+| 4 GL × Lambda | https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943 |
+
+**Cell 4 closure (commit `5fc3e6b`).** Two final bugs blocked GL × Lambda:
+
+- **BUG-875 (start/attach race).** `Server.ContainerStart` did a one-shot `stdinPipes.Load(id)` before firing the Invoke goroutine. The Docker SDK's standard sequence is /create → /start → /attach, so /start arrives BEFORE /attach registers the pipe. With OpenStdin set but no pipe captured, the goroutine invoked Lambda with `Payload: nil`, AWS encoded that as `{}`, the bootstrap piped `{}` into bash's stdin (the gitlab-runner shell-finder Cmd execs `bash`, which reads commands from stdin), bash tried to execute `{}` as a command, exited 1, and Lambda classified the result as `Unhandled`. Every gitlab-runner predefined-helper container hit this. Fix: move pipe lookup INSIDE the goroutine and poll `stdinPipes` for up to 5 s (50 ms tick).
+- **BUG-876 (image-resolve).** `resolveImageURI` rejected `docker.io/library/alpine:latest` as "Docker Hub user/org image" because `parseDockerRef` returns `repo="library/alpine"` (with slash) and the user/org guard `strings.Contains(repo, "/")` fired before the library-image rewrite. Fix: strip `library/` prefix immediately when registry is `""`/`docker.io`/`registry-1.docker.io`.
+
+**Diagnostic infrastructure that pinpointed the bash crash.** Added `LogType=Tail` to every `lambda.Invoke` so the function's last 4 KB of stderr returns inline. Combined with `result.Payload` truncated preview, the log line `/bin/bash: line 1: {}: command not found` surfaced directly in the backend log — without it diagnosis would have required correlating CloudWatch streams across many sub-task functions, each named `skls-<containerID12>` and burned shortly after the failure. Pattern memorialised in `feedback_lambda_invoke_diagnostics.md`.
+
+**Cell 3 closure (commit `aa2419a`).** Earlier in the same session: BUG-868 closed via `launchAfterStdin` per-stage Fargate task plus three lifecycle fixes — `PendingCreates` drop in both `launchAfterStdin` branches, `ContainerInspect` override forcing `Status="running"` while `WaitCh` open, attach-driver stage-boundary barrier (5 s wait for `markRunning` before kicking off the cloud-logs follower).
+
+**Volumes / env / image bookkeeping for Lambda gitlab-runner.** Lambda's single-FSC + 4 KB Environment + 256 KB Cmd budget intersects awkwardly with gitlab-runner's resource use:
+- Volumes collapse onto the workspace shared AP via sub-paths (gitlab-runner cache + build → workspace.subpath). Lambda's single-FSC constraint can't host two distinct AP ARNs in one function.
+- Env filter drops `CI_*` / `FF_*` / `GITLAB_*` prefixes + 2 KB hard cap (gitlab-runner re-exports them at the top of every stage script via the `eval $'export …'` preamble, so config-level forwarding is pure overhead).
+- Sha256-only image refs from gitlab-runner resolve via the local image Store before falling through to ECR pull-through cache routing.
+
+---
+
+Earlier in flight (PR #122 — Phase 110a). Architecture exploration that landed two important separations:
 
 **GitLab vs GitHub runner — dispatcher pattern vs worker pattern.** GitLab Runner is a *dispatcher*: the master polls GitLab and uses the docker executor's `docker create + docker exec` to spawn the job container. The master is just a docker client; it never bind-mounts its own filesystem; it can run anywhere with `--docker-host` pointing at sockerless. **Cells 3 + 4 need zero new sockerless code.** GitHub Actions Runner is a *worker*: it *is* the workspace. For `container:` jobs it does `docker create -v /home/runner/_work:/__w …` — host bind mounts that assume a shared filesystem with the spawned container. On Fargate two tasks don't share filesystems by default. **Cells 1 + 2 require both a topology change (runner-as-ECS-task with EFS-backed workspace) and a sockerless feature (bind-mount → EFS translation).**
 

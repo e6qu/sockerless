@@ -62,9 +62,9 @@ Detailed unblock plans per cell live in [PLAN.md § Phase 110 — paths forward 
 
 ## Operational state
 
-- **AWS creds: ACTIVE** as of 2026-04-29 (root `729079515331`, eu-west-1).
+- **AWS creds: ACTIVE** as of 2026-04-30 (root `729079515331`, eu-west-1) — refresh via `source aws.sh`.
 - **Live AWS infra: UP in eu-west-1** — provisioned 2026-04-28; still running. ECS + Lambda live envs as above. NAT Gateway runs ~$0.045/hr — tear down via `terragrunt destroy` from `terraform/environments/{ecs,lambda}/live` when the session ends.
-- **Sockerless daemons: RUNNING but on PRE-FIX BINARIES (mmap'd).** ECS PID 75092 started 2026-04-28 17:17 UTC; Lambda PID 70870 started 2026-04-28 16:53 UTC. Cells 3+4 require restart to pick up BUG-859/860 fixes — the on-disk binaries at `/tmp/sockerless-backend-{ecs,lambda}` are post-fix. See `DO_NEXT.md` § "Sockerless restart command".
+- **Sockerless daemons:** Lambda backend running on the cell-4-fix binary at `/tmp/sockerless-backend-lambda` (verified live with the GREEN cell 4 pipeline). ECS daemon was last seen on the BUG-859/860 fix binary; cells 3+4 verified GREEN against current code.
 - **Smoke verified** — `DOCKER_HOST=tcp://localhost:3375 docker run --rm alpine:latest echo hi` exits 0 from a Fargate task; verifies the BUG-846 AWS-Public-Gallery routing for Docker Hub library refs.
 - **Podman machine** — running (applehv VM, user-mode networking, 4 CPU / 10 GiB / 100 GiB). Used for local-Podman dispatcher testing in 110a; not used for cell 3+4 (gitlab-runner master is a darwin-native binary).
 - **PAT keychain entries** — `gh` (GitHub) keychain-backed; GitLab PAT in `security(1)` keychain entry `sockerless-gl-pat`.

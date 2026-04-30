@@ -6,9 +6,29 @@ Resume pointer. Updated after every task. Roadmap detail in [PLAN.md](PLAN.md); 
 
 - `main` synced with `origin/main` at PR #121 merge.
 - `origin-gitlab/main` mirrors `origin/main` (in sync as of 2026-04-27).
-- **`phase-110-runner-integration`** — active. PR #122 in flight. Phase 110b architecture work landing on this branch (Phase 110a deferred to a follow-on once 110b proves the architecture).
+- **`phase-110-runner-integration`** — active, **all 4 cells GREEN as of 2026-04-30**. Tip: `bac59fc`. Ready to push + open PR.
 
-## ⚠ Active blockers
+## Phase 110 final URLs
+
+| Cell | URL |
+|---|---|
+| 1 GH × ECS | https://github.com/e6qu/sockerless/actions/runs/25075259911 |
+| 2 GH × Lambda | https://github.com/e6qu/sockerless/actions/runs/25113565115 |
+| 3 GL × ECS | https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 |
+| 4 GL × Lambda | https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943 |
+
+## Next actions
+
+1. `git push origin phase-110-runner-integration` (force-with-lease if branch already on remote).
+2. `gh pr create` — body should call out: 4 cells GREEN with URLs, BUG-875 + BUG-876 closed in `5fc3e6b`, BUG-868 closed in `aa2419a`.
+3. Tear down live infra after PR merge: `cd terraform/environments/{ecs,lambda}/live && terragrunt destroy` (NAT Gateway runs ~$0.045/hr).
+4. Phase 111 (workload identity) is queued and gated on Phase 110 closure (now satisfied).
+
+## Active blockers (none)
+
+Phase 110 closed; cells stable. Historic blockers retained below for context only.
+
+### Historic blockers (all closed)
 
 1. **BUG-868 (Phase 114, substantial) — gitlab-runner stdin-piped per-stage scripts vs Fargate's no-runtime-stdin + non-restartable tasks.** Verified live with `--debug`: cell 3 traces (https://gitlab.com/e6qu/sockerless/-/jobs/14144936826 + 14146329550) show `prepare_script → get_sources → archive_cache_on_failure → upload_artifacts_on_failure → cleanup_file_variables → ERROR exit 1` — gitlab-runner's failure-path cleanup chain. `step_script` is silently skipped because `get_sources` did no real work (stdin script never delivered to predefined helper). **Phase 114 implementation**: launch the predefined helper as a long-lived Fargate task (`Cmd=["while true; do sleep 60; done"]`), cache `(containerID → taskARN)`, dispatch each stage's stdin script via `ecs.ExecuteCommand` (SSM Session Manager) against the live task, capture exit-code marker. Reuses existing SSM frame-capture from Round-8. ~400-600 lines. Detailed implementation plan + gitlab-runner architectural refresher in `PLAN.md § Phase 114`. Doc: `specs/CLOUD_RESOURCE_MAPPING.md § "ECS gitlab-runner script delivery"`.
 2. **Phase 117 — gitlab-runner per-stage script delivery on Lambda (cell 4).** Independent of Phase 114. Each gitlab-runner stage's stdin-piped script becomes one `lambda.Invoke` with a SCRIPT envelope `{"sockerless":{"script":{"body":"<base64>",...}}}`. The bootstrap parses + runs `bash -c "<body>"`. EFS for cross-stage state. ~250-400 lines. See `PLAN.md § Phase 117`.
