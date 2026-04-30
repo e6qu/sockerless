@@ -33,18 +33,26 @@ data "terraform_remote_state" "ecs" {
 
 locals {
   ecs_state                    = data.terraform_remote_state.ecs.outputs
-  ecs_efs_filesystem_id        = local.ecs_state.efs_filesystem_id
-  ecs_runner_workspace_apid    = local.ecs_state.runner_workspace_access_point_id
-  ecs_private_subnet_ids       = local.ecs_state.private_subnet_ids
-  ecs_task_security_group_id   = local.ecs_state.task_security_group_id
-  ecs_task_role_arn            = local.ecs_state.task_role_arn
-  ecs_execution_role_arn       = local.ecs_state.execution_role_arn
-  ecs_log_group_name           = local.ecs_state.log_group_name
+  # try() wrappers keep `terragrunt destroy` self-sufficient when the
+  # ECS env's state has already been destroyed (cross-env teardown
+  # ordering). Without them, destroy plans fail at locals evaluation
+  # before any resource can be removed. Apply paths still error
+  # explicitly via the downstream resource references (count = 0 on
+  # missing AP, etc.), so this only relaxes the *destroy* path.
+  ecs_efs_filesystem_id        = try(local.ecs_state.efs_filesystem_id, "")
+  ecs_runner_workspace_apid    = try(local.ecs_state.runner_workspace_access_point_id, "")
+  ecs_private_subnet_ids       = try(local.ecs_state.private_subnet_ids, [])
+  ecs_task_security_group_id   = try(local.ecs_state.task_security_group_id, "")
+  ecs_task_role_arn            = try(local.ecs_state.task_role_arn, "")
+  ecs_execution_role_arn       = try(local.ecs_state.execution_role_arn, "")
+  ecs_log_group_name           = try(local.ecs_state.log_group_name, "")
 }
 
 # Resolve the workspace access point ARN from its ID via a data lookup
-# (Lambda's file_system_config requires the full ARN).
+# (Lambda's file_system_config requires the full ARN). count = 0 on
+# missing AP so destroy works after the ECS env is torn down.
 data "aws_efs_access_point" "runner_workspace" {
+  count           = local.ecs_runner_workspace_apid == "" ? 0 : 1
   access_point_id = local.ecs_runner_workspace_apid
 }
 
@@ -253,7 +261,7 @@ resource "aws_lambda_function" "sockerless_runner" {
   }
 
   file_system_config {
-    arn              = data.aws_efs_access_point.runner_workspace.arn
+    arn              = try(data.aws_efs_access_point.runner_workspace[0].arn, "")
     # Lambda requires file system mount paths under /mnt/. The
     # bootstrap symlinks /home/runner/_work → /mnt/runner-workspace
     # so the runner's hardcoded workspace paths still resolve to
