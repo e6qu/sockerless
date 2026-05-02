@@ -215,10 +215,9 @@ func executeBuild(ctx context.Context, b Build) Build {
 		return fail("source.storageSource is required")
 	}
 
-	// Fetch the tarball from gcsObjects (populated by gcs.go).
-	objKey := b.Source.StorageSource.Bucket + "/" + b.Source.StorageSource.Object
-	obj, ok := gcsObjects.Get(objKey)
-	if !ok {
+	// Fetch the tarball from sim GCS (gcs.go on-disk + sim.Store metadata).
+	data := GCSObjectBytes(b.Source.StorageSource.Bucket, b.Source.StorageSource.Object)
+	if data == nil {
 		return fail(fmt.Sprintf("source object %s not found in bucket %s",
 			b.Source.StorageSource.Object, b.Source.StorageSource.Bucket))
 	}
@@ -230,7 +229,7 @@ func executeBuild(ctx context.Context, b Build) Build {
 	}
 	defer os.RemoveAll(workDir)
 
-	if err := extractTarball(obj.data, workDir); err != nil {
+	if err := extractTarball(data, workDir); err != nil {
 		return fail(fmt.Sprintf("extract source: %v", err))
 	}
 
