@@ -125,32 +125,41 @@ type imageLoadResult struct {
 }
 
 // parseImageTarFull parses a docker save tar and preserves layer content.
-// Layer tarballs are kept for subsequent push operations.
+// Handles two on-disk layouts:
+//
+//   - Classic docker save layout: config blob at root as `<digest>.json`,
+//     layers under `<digest>/layer.tar`. manifest.json's Config field is
+//     a bare filename like `1ab49....json`.
+//
+//   - OCI v1 layout (modern docker / BuildKit): blobs under
+//     `blobs/sha256/<digest>` with no extension; manifest.json's Config
+//     field is a path like `blobs/sha256/<digest>`. Layer .tar.gz blobs
+//     also live under `blobs/sha256/`.
+//
+// Both formats use the same outer manifest.json structure ([{Config,
+// RepoTags, Layers}]); the difference is just where the referenced
+// blobs live in the tar. We index every file we encounter by its full
+// path so the manifest's Config/Layers references resolve regardless
+// of layout.
 func parseImageTarFull(body io.Reader) *imageLoadResult {
 	tr := tar.NewReader(body)
 	var manifestData []byte
-	configFiles := make(map[string][]byte)
-	layerFiles := make(map[string][]byte)
+	allFiles := make(map[string][]byte)
 
 	for {
 		hdr, err := tr.Next()
 		if err != nil {
 			break
 		}
-
-		switch {
-		case hdr.Name == "manifest.json":
-			manifestData, _ = io.ReadAll(tr)
-		case strings.HasSuffix(hdr.Name, ".json") && hdr.Name != "manifest.json" && !strings.Contains(hdr.Name, "/"):
-			data, _ := io.ReadAll(tr)
-			configFiles[hdr.Name] = data
-		case strings.HasSuffix(hdr.Name, "/layer.tar"):
-			// Preserve layer content
-			data, _ := io.ReadAll(tr)
-			layerFiles[hdr.Name] = data
-		default:
-			io.Copy(io.Discard, tr)
+		if hdr.Typeflag == tar.TypeDir {
+			continue
 		}
+		data, _ := io.ReadAll(tr)
+		if hdr.Name == "manifest.json" {
+			manifestData = data
+			continue
+		}
+		allFiles[hdr.Name] = data
 	}
 
 	if manifestData == nil {
@@ -166,13 +175,26 @@ func parseImageTarFull(body io.Reader) *imageLoadResult {
 		return nil
 	}
 
+	// Layer files: index under both their classic key
+	// (`<digest>/layer.tar`) and OCI key (`blobs/sha256/<digest>`).
+	// Callers downstream may key by either path.
+	layerFiles := make(map[string][]byte)
+	for _, layerPath := range manifest[0].Layers {
+		if data, ok := allFiles[layerPath]; ok {
+			layerFiles[layerPath] = data
+		}
+	}
+
 	result := &imageLoadResult{
 		RepoTags: manifest[0].RepoTags,
 		Layers:   layerFiles,
 	}
 
-	// Parse config file for container config
-	if configData, ok := configFiles[manifest[0].Config]; ok {
+	// Parse config blob for container config. The blob path comes
+	// directly from manifest.json's Config field — same lookup works
+	// for both classic (`<digest>.json`) and OCI (`blobs/sha256/<digest>`)
+	// layouts because we indexed every file in the tar.
+	if configData, ok := allFiles[manifest[0].Config]; ok {
 		var imgJSON struct {
 			Config struct {
 				Env        []string          `json:"Env"`
