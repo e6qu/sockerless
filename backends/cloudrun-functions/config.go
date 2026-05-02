@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	core "github.com/sockerless/backend-core"
@@ -48,6 +49,25 @@ type Config struct {
 	// specs/CLOUD_RESOURCE_MAPPING.md § Stateless image cache + Function pool.
 	// SOCKERLESS_GCF_POOL_MAX, default 10.
 	PoolMax int
+
+	// SharedVolumes mirrors cloudrun.SharedVolumes / ecs / lambda.
+	// Cloud Functions Gen2 are backed by Cloud Run Service, which
+	// supports `Volume{Gcs{Bucket}}` on its template. The runner
+	// inside the function does `docker create -v /tmp/runner-work:/__w`;
+	// sockerless translates the host bind to a named-volume reference
+	// whose GCS bucket is shared with the runner-task. Format:
+	// SOCKERLESS_GCP_SHARED_VOLUMES="name=path=bucket,name2=path2=bucket2"
+	// (BUG-909).
+	SharedVolumes []SharedVolume
+}
+
+// SharedVolume mirrors `cloudrun.SharedVolume`. GCS bucket backs the
+// volume; Cloud Run Service ServiceV2.Template.Volumes is the runtime
+// mount mechanism (Cloud Functions Gen2 builds on Cloud Run).
+type SharedVolume struct {
+	Name          string
+	ContainerPath string
+	Bucket        string
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -69,8 +89,75 @@ func ConfigFromEnv() Config {
 			"SOCKERLESS_GCF_BOOTSTRAP",
 			"/opt/sockerless/sockerless-gcf-bootstrap",
 		),
-		PoolMax: envOrDefaultInt("SOCKERLESS_GCF_POOL_MAX", 10),
+		PoolMax:       envOrDefaultInt("SOCKERLESS_GCF_POOL_MAX", 10),
+		SharedVolumes: parseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES")),
 	}
+}
+
+// parseSharedVolumes parses SOCKERLESS_GCP_SHARED_VOLUMES
+// (`name=path=bucket,...`). Returns nil for empty input.
+func parseSharedVolumes(s string) []SharedVolume {
+	if s == "" {
+		return nil
+	}
+	var out []SharedVolume
+	for _, entry := range strings.Split(s, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		parts := strings.Split(entry, "=")
+		if len(parts) != 3 {
+			continue
+		}
+		sv := SharedVolume{
+			Name:          strings.TrimSpace(parts[0]),
+			ContainerPath: strings.TrimSpace(parts[1]),
+			Bucket:        strings.TrimSpace(parts[2]),
+		}
+		if sv.Name == "" || sv.ContainerPath == "" || sv.Bucket == "" {
+			continue
+		}
+		out = append(out, sv)
+	}
+	return out
+}
+
+// LookupSharedVolumeBySourcePath returns the SharedVolume entry whose
+// ContainerPath equals the given path, or nil if none matches.
+func (c Config) LookupSharedVolumeBySourcePath(path string) *SharedVolume {
+	for i := range c.SharedVolumes {
+		if c.SharedVolumes[i].ContainerPath == path {
+			return &c.SharedVolumes[i]
+		}
+	}
+	return nil
+}
+
+// LookupSharedVolumeByName returns the SharedVolume entry whose Name
+// equals the given volume name, or nil if none matches.
+func (c Config) LookupSharedVolumeByName(name string) *SharedVolume {
+	for i := range c.SharedVolumes {
+		if c.SharedVolumes[i].Name == name {
+			return &c.SharedVolumes[i]
+		}
+	}
+	return nil
+}
+
+// isSubPathOfSharedVolume reports whether path is a strict sub-path
+// (descendant) of any SharedVolume's ContainerPath.
+func isSubPathOfSharedVolume(path string, vols []SharedVolume) bool {
+	for i := range vols {
+		base := vols[i].ContainerPath
+		if base == "" {
+			continue
+		}
+		if strings.HasPrefix(path, base+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // ConfigFromEnvironment creates Config from a unified config environment.

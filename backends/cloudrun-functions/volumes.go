@@ -35,6 +35,12 @@ type gcsVolumeState struct {
 }
 
 func (s *Server) bucketForVolume(ctx context.Context, volName string) (string, error) {
+	// SharedVolumes (operator-configured via SOCKERLESS_GCP_SHARED_VOLUMES)
+	// pin the GCS bucket directly so the runner-task and sub-task land on
+	// the same pre-created bucket the dispatcher mounted.
+	if sv := s.config.LookupSharedVolumeByName(volName); sv != nil {
+		return sv.Bucket, nil
+	}
 	return s.buckets.ForVolume(ctx, volName)
 }
 
