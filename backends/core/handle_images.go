@@ -193,24 +193,21 @@ func parseImageTarFull(body io.Reader) *imageLoadResult {
 	// Parse config blob for container config. The blob path comes
 	// directly from manifest.json's Config field — same lookup works
 	// for both classic (`<digest>.json`) and OCI (`blobs/sha256/<digest>`)
-	// layouts because we indexed every file in the tar.
+	// layouts because we indexed every file in the tar. Reuses the
+	// canonical `ociImageConfig` schema from registry.go so the
+	// in-tar (`docker save`) and over-the-wire (registry-pull) parsers
+	// share one source of truth for the OCI image-config shape.
 	if configData, ok := allFiles[manifest[0].Config]; ok {
-		var imgJSON struct {
-			Config struct {
-				Env        []string          `json:"Env"`
-				Cmd        []string          `json:"Cmd"`
-				Entrypoint []string          `json:"Entrypoint"`
-				WorkingDir string            `json:"WorkingDir"`
-				Labels     map[string]string `json:"Labels"`
-			} `json:"config"`
-		}
-		if json.Unmarshal(configData, &imgJSON) == nil {
+		var ociCfg ociImageConfig
+		if json.Unmarshal(configData, &ociCfg) == nil {
 			result.Config = &api.ContainerConfig{
-				Env:        imgJSON.Config.Env,
-				Cmd:        imgJSON.Config.Cmd,
-				Entrypoint: imgJSON.Config.Entrypoint,
-				WorkingDir: imgJSON.Config.WorkingDir,
-				Labels:     imgJSON.Config.Labels,
+				Env:          ociCfg.Config.Env,
+				Cmd:          ociCfg.Config.Cmd,
+				Entrypoint:   ociCfg.Config.Entrypoint,
+				WorkingDir:   ociCfg.Config.WorkingDir,
+				User:         ociCfg.Config.User,
+				Labels:       ociCfg.Config.Labels,
+				ExposedPorts: ociCfg.Config.ExposedPorts,
 			}
 		}
 	}
