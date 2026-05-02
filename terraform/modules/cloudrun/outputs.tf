@@ -65,6 +65,11 @@ output "build_context_bucket" {
   value       = google_storage_bucket.build_context.name
 }
 
+output "runner_workspace_bucket" {
+  description = "GCS bucket backing the github-runner-dispatcher-gcp spawned runner Cloud Run Job's /tmp/runner-work + /opt/runner/externals shared volumes (BUG-909). Set as the dispatcher config's `runner_workspace_bucket` TOML field."
+  value       = google_storage_bucket.runner_workspace.name
+}
+
 # Artifact Registry
 
 output "artifact_registry_repository_name" {
