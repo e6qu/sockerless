@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -149,8 +150,13 @@ func TestMain(m *testing.M) {
 	// overlay-and-swap path (Phase 118 gcf re-architecture) can stage
 	// it into the Cloud Build context tar. Real deployments install
 	// this binary at /opt/sockerless via the runner image; integration
-	// tests build it on demand.
+	// tests build it on demand. Path must be absolute — the backend
+	// process runs with a different cwd than the test binary, so a
+	// relative path resolves wrong inside the backend.
 	gcfBootstrapPath := repoRoot + "/agent/sockerless-gcf-bootstrap-test"
+	if abs, absErr := filepath.Abs(gcfBootstrapPath); absErr == nil {
+		gcfBootstrapPath = abs
+	}
 	fmt.Println("[sim] Building sockerless-gcf-bootstrap...")
 	bootstrapBuild := exec.Command("go", "build", "-o", gcfBootstrapPath, "./cmd/sockerless-gcf-bootstrap")
 	bootstrapBuild.Dir = repoRoot + "/agent"
