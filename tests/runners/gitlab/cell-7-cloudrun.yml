@@ -31,6 +31,16 @@ probe-and-compile:
     PGPASSWORD: ci
   script:
     - apk add --no-cache git gcc musl-dev postgresql-client
+    - echo "=== probe-cloud-urls ==="
+    - env | grep -E '^(CLOUD_RUN_|K_SERVICE|K_REVISION|GOOGLE_CLOUD_)' | sort || true
+    - |
+      PROJ="${GOOGLE_CLOUD_PROJECT:-${GCP_PROJECT:-unknown}}"
+      REG="${GOOGLE_CLOUD_REGION:-${CLOUD_RUN_REGION:-us-central1}}"
+      JOB="${CLOUD_RUN_JOB:-${K_SERVICE:-unknown}}"
+      EXEC="${CLOUD_RUN_EXECUTION:-unknown}"
+      echo "Job execution: https://console.cloud.google.com/run/jobs/executions/details/$REG/$EXEC/tasks?project=$PROJ"
+      echo "Job overview:  https://console.cloud.google.com/run/jobs/details/$REG/$JOB?project=$PROJ"
+      echo "Cloud Logging: https://console.cloud.google.com/logs/query;query=resource.type%3D%22cloud_run_job%22%20resource.labels.job_name%3D%22$JOB%22?project=$PROJ"
     - echo "=== probe-host ==="
     - hostname; whoami; id
     - cat /etc/os-release 2>/dev/null || true

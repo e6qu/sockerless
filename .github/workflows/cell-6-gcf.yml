@@ -27,6 +27,23 @@ jobs:
           POSTGRES_USER: ci
           POSTGRES_DB: ci
     steps:
+      - name: probe-cloud-urls
+        # Cloud Run Functions Gen2 are backed by a Cloud Run service;
+        # the function URL routes through the underlying service. The
+        # platform populates K_SERVICE / K_REVISION / GOOGLE_CLOUD_PROJECT.
+        # Function name lives in K_SERVICE under Gen2.
+        run: |
+          echo "=== Cloud Run env (set by the platform) ==="
+          env | grep -E '^(CLOUD_RUN_|K_SERVICE|K_REVISION|GOOGLE_CLOUD_|FUNCTION_)' | sort || true
+          PROJ="${GOOGLE_CLOUD_PROJECT:-${GCP_PROJECT:-unknown}}"
+          REG="${GOOGLE_CLOUD_REGION:-${CLOUD_RUN_REGION:-us-central1}}"
+          FN="${K_SERVICE:-${FUNCTION_TARGET:-unknown}}"
+          REV="${K_REVISION:-unknown}"
+          echo "=== Cloud console URLs ==="
+          echo "Function:       https://console.cloud.google.com/functions/details/$REG/$FN?project=$PROJ"
+          echo "Backing service: https://console.cloud.google.com/run/detail/$REG/$FN/revisions?project=$PROJ"
+          echo "Cloud Logging:  https://console.cloud.google.com/logs/query;query=resource.type%3D%22cloud_run_revision%22%20resource.labels.service_name%3D%22$FN%22?project=$PROJ"
+          echo "Revision:       $REV"
       - name: probe-host
         run: |
           echo "=== identity ==="

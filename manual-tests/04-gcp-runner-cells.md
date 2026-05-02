@@ -164,10 +164,30 @@ gh run watch --repo $GITHUB_REPO    # cells 5+6
 
 ## Step 5 — Capture URLs in STATUS.md
 
-After each cell completes GREEN, append the URL to STATUS.md's
-4-cell table (extend the existing AWS table from Phase 110). Each
-cell's pipeline body covers (per the cell's `cell-N-{cloudrun,gcf}.yml`):
+After each cell completes GREEN, append THREE URLs to STATUS.md's
+4-cell table (extend the existing AWS table from Phase 110):
 
+1. **CI run URL** — the GitHub Actions run (cells 5+6) or GitLab
+   pipeline (cells 7+8) that orchestrates the cell.
+2. **Cloud execution URL** — the Cloud Run Job execution (cells 5+7)
+   or Cloud Run Function (cells 6+8) that the runner step container
+   actually executed inside. The pipeline's first step
+   (`probe-cloud-urls`) prints this; copy from the run logs.
+3. **Cloud Logging URL** — pre-filtered Cloud Logging query that
+   returns this specific execution's stdout/stderr. Also printed by
+   `probe-cloud-urls`.
+
+The three-URL set proves the cell ran end-to-end through real cloud
+infrastructure (runner orchestration → backend dispatch → cloud
+execution → cloud-side logs) — no synthetic shortcuts.
+
+Each cell's pipeline body covers (per the cell's
+`cell-N-{cloudrun,gcf}.yml`):
+
+- `probe-cloud-urls` — Cloud Run platform env (CLOUD_RUN_JOB,
+  CLOUD_RUN_EXECUTION, K_SERVICE, K_REVISION, GOOGLE_CLOUD_PROJECT)
+  + computed cloud console URLs for the backing job/function/service
+  + Cloud Logging URL pre-filtered to the execution.
 - `probe-host` — hostname / whoami / id / /etc/os-release / df / mount
 - `probe-capabilities` — /proc/self/status caps / cgroup / namespace honesty
 - `probe-kernel` — uname -a / /proc/version / /proc/sys/kernel

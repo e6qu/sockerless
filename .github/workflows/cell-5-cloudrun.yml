@@ -38,6 +38,26 @@ jobs:
           POSTGRES_USER: ci
           POSTGRES_DB: ci
     steps:
+      - name: probe-cloud-urls
+        # Surface the backing Cloud Run Job execution URL + Cloud
+        # Logging URL so the operator can attach them to STATUS.md
+        # alongside the outer GitHub Actions run URL. Cloud Run Jobs
+        # populate CLOUD_RUN_JOB / CLOUD_RUN_EXECUTION / GOOGLE_CLOUD_PROJECT
+        # / GOOGLE_CLOUD_REGION (or CLOUD_RUN_TASK_INDEX for tasks)
+        # automatically; the runner container inherits them and the
+        # step container (this) inherits them again via the
+        # sockerless-backend-cloudrun → Cloud Run Job spawn.
+        run: |
+          echo "=== Cloud Run env (set by the platform) ==="
+          env | grep -E '^(CLOUD_RUN_|K_SERVICE|K_REVISION|GOOGLE_CLOUD_)' | sort || true
+          PROJ="${GOOGLE_CLOUD_PROJECT:-${GCP_PROJECT:-unknown}}"
+          REG="${GOOGLE_CLOUD_REGION:-${CLOUD_RUN_REGION:-us-central1}}"
+          JOB="${CLOUD_RUN_JOB:-${K_SERVICE:-unknown}}"
+          EXEC="${CLOUD_RUN_EXECUTION:-unknown}"
+          echo "=== Cloud console URLs ==="
+          echo "Job execution: https://console.cloud.google.com/run/jobs/executions/details/$REG/$EXEC/tasks?project=$PROJ"
+          echo "Job overview:  https://console.cloud.google.com/run/jobs/details/$REG/$JOB?project=$PROJ"
+          echo "Cloud Logging: https://console.cloud.google.com/logs/query;query=resource.type%3D%22cloud_run_job%22%20resource.labels.job_name%3D%22$JOB%22?project=$PROJ"
       - name: probe-host
         run: |
           echo "=== identity ==="
