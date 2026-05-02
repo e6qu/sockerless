@@ -6,6 +6,32 @@ See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for
 
 This file keeps narrative / "why we did it" context that doesn't live in BUGS.md or git log. Per-bug detail belongs in [BUGS.md](BUGS.md) — don't duplicate it here.
 
+## Phase 119 — sockerless-as-virtual-kubelet (DISCARDED 2026-05-02)
+
+Briefly explored a Kubernetes API surface (`k8s-shim/`) so the runners' kubernetes executors could spawn workloads as k8s Pods backed by sockerless. Operator pulled the plug: "no k8s, ditch the ARC idea and GKE, it's a bad idea, clean up everything." Reverted the `k8s-shim/` module + the GKE/ARC terraform; no live infra was provisioned (GKE API was never enabled in the live project). The Phase 120 cells use the docker executor + existing dispatcher pattern instead.
+
+## Phase 120 — Live-GCP runner cells (4 cells, docker executor, no k8s) (in flight 2026-05-02)
+
+Four cells, all docker-executor + sockerless backends, mirror of Phase 110's AWS cells 1-4 but on GCP. No k8s, no GKE, no ARC. Code complete on the `phase-118-faas-pods` branch; live-cloud verification pending operator runs.
+
+| Cell | Runner | Backend | Runner image | Dispatcher |
+|---|---|---|---|---|
+| 5 | github-actions-runner | cloudrun | `sockerless-runner-cloudrun` | github-runner-dispatcher (label `sockerless-cloudrun`) |
+| 6 | github-actions-runner | gcf      | `sockerless-runner-gcf`      | github-runner-dispatcher (label `sockerless-gcf`) |
+| 7 | gitlab-runner         | cloudrun | `sockerless-gitlab-runner-cloudrun` | none (long-lived) |
+| 8 | gitlab-runner         | gcf      | `sockerless-gitlab-runner-gcf`      | none (long-lived) |
+
+Per BUG-862 (backend ↔ host primitive must match), each runner image bakes the matching sockerless backend so step containers spawned by the runner go through the in-image backend → Cloud Run Job (cells 5/7) or Cloud Run Function with Phase 118d pod overlay for `services:` (cells 6/8). The existing `github-runner-dispatcher` already supports multi-label / multi-backend routing via its `[[label]]` TOML config — cells 5+6 add two new entries; no dispatcher code changes needed (that compensates for github-runner not having a master daemon, per operator).
+
+Each cell runs an identical pipeline: probe caps/kernel/env/parameters, postgres-sidecar localhost peer reachability (proves Phase 118d pod overlay net-ns sharing), git clone + go build + run `simulators/testdata/eval-arithmetic` with five expressions (`3+4*2`=11, `(10-3)*2`=14, `100/5+1`=21, `2*(3+4)-1`=13, `1.5+2.5*2`=6.5). Cell GREEN gate: all probes return non-error output, postgres reachable, Go compile produces a working binary, all five arithmetic invocations exit 0. Per-cell URLs captured in STATUS.md's 4-cell table. Phase 120 closes when all four GREEN.
+
+Files added:
+- `tests/runners/{github,gitlab}/dockerfile-{cloudrun,gcf}/{Dockerfile,bootstrap.sh,Makefile}` — four runner image build trees.
+- `.github/workflows/cell-5-cloudrun.yml`, `cell-6-gcf.yml`.
+- `tests/runners/gitlab/cell-7-cloudrun.yml`, `cell-8-gcf.yml`.
+- `tests/runners/gcp-cells/{harness_test.go,go.mod}` — build-tag-gated `gcp_runner_live` harness.
+- `manual-tests/04-gcp-runner-cells.md` — operator runbook.
+
 ## Phase 118 — live-GCP cloudrun manual sweep + gcf re-architecture + cross-FaaS pool/cache + pod design (2026-05-02, in progress)
 
 **Sub-118d-gcf code complete (2026-05-02)**: FaaS pod overlay for the gcf backend — supervisor-in-overlay pattern per `specs/CLOUD_RESOURCE_MAPPING.md § "Podman pods on FaaS backends"`. Five files touched, all unit-tested:

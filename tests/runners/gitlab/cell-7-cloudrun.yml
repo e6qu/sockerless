@@ -1,0 +1,67 @@
+# Cell 7 — GitLab Runner (docker executor) → sockerless cloudrun backend.
+#
+# Same pipeline as cells 5/6 (probe + compile + arithmetic) for parity.
+# The runner image bakes `sockerless-backend-cloudrun` and runs as a
+# long-lived sockerless-managed container. gitlab-runner inside polls
+# GitLab and dispatches each job's step containers via DOCKER_HOST →
+# in-image sockerless backend → Cloud Run Job per step (the docker
+# executor's standard "step container" model). `services:` rides
+# alongside as a sockerless pod (Phase 118d).
+#
+# No dispatcher needed — gitlab-runner has its own polling master.
+
+variables:
+  SOCKERLESS_REF: "main"
+
+stages:
+  - probe-and-compile
+
+probe-and-compile:
+  stage: probe-and-compile
+  tags: [sockerless-cloudrun]
+  image: golang:1.22-alpine
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+      variables:
+        POSTGRES_PASSWORD: ci
+        POSTGRES_USER: ci
+        POSTGRES_DB: ci
+  variables:
+    PGPASSWORD: ci
+  script:
+    - apk add --no-cache git gcc musl-dev postgresql-client
+    - echo "=== probe-capabilities ==="
+    - grep -E '^(Cap|Seccomp|NoNew)' /proc/self/status || true
+    - cat /proc/self/cgroup || true
+    - echo "=== probe-kernel ==="
+    - uname -a
+    - cat /proc/version || true
+    - echo "=== probe-env ==="
+    - env | sort | grep -vE '^(SOCKERLESS_|CI_|GITLAB_|HOME|PATH|HOSTNAME)' | head -50
+    - echo "=== probe-parameters ==="
+    - getconf -a 2>/dev/null | head -30 || echo "getconf -a unavailable"
+    - ulimit -a
+    - echo "nproc=$(nproc)"
+    - echo "=== probe-localhost-peer (postgres sidecar) ==="
+    - |
+      for i in 1 2 3 4 5 6 7 8 9 10; do
+        if pg_isready -h postgres -p 5432 -t 5 -U ci; then echo "postgres ready"; break; fi
+        echo "postgres not ready yet (attempt $i)"; sleep 3
+      done
+    - psql "host=postgres user=ci dbname=ci" -c 'SELECT version();'
+    - echo "=== clone-and-compile ==="
+    - git clone --depth=1 --branch="$SOCKERLESS_REF" https://github.com/e6qu/sockerless /work/sockerless
+    - cd /work/sockerless/simulators/testdata/eval-arithmetic
+    - go build -v -o eval-arithmetic .
+    - ls -la eval-arithmetic
+    - file eval-arithmetic
+    - echo "=== run-arithmetic ==="
+    - |
+      set -e
+      got1=$(./eval-arithmetic '3 + 4 * 2'); test "$got1" = "11" || { echo "expected 11 got $got1"; exit 1; }
+      got2=$(./eval-arithmetic '(10 - 3) * 2'); test "$got2" = "14" || { echo "expected 14 got $got2"; exit 1; }
+      got3=$(./eval-arithmetic '100 / 5 + 1'); test "$got3" = "21" || { echo "expected 21 got $got3"; exit 1; }
+      got4=$(./eval-arithmetic '2 * (3 + 4) - 1'); test "$got4" = "13" || { echo "expected 13 got $got4"; exit 1; }
+      got5=$(./eval-arithmetic '1.5 + 2.5 * 2'); test "$got5" = "6.5" || { echo "expected 6.5 got $got5"; exit 1; }
+      echo "all arithmetic checks pass"

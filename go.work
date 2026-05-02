@@ -20,4 +20,5 @@ use (
 	./cmd/sockerless-admin
 	./github-runner-dispatcher
 	./tests
+	./tests/runners/gcp-cells
 )

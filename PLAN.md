@@ -602,155 +602,53 @@ The only documented mapping is the post-create UpdateService image-swap pattern 
 
 **Phase 118 PR rule**: per guiding principle #11, this phase closes only when the sub-118d-gcf + sub-118d-lambda commits land on a branch (`phase-118-faas-pods`), the PR is opened against `main`, and all CI jobs pass green. User merges (workflow rule).
 
-### Phase 119 — Sockerless-as-virtual-kubelet (k8s API surface for FaaS pods)
+### Phase 120 — Live-GCP runner cells (4 cells, docker executor, no k8s)
 
-**Why.** The Phase 120 runner cells (5/6/7/8 — see below) use the **kubernetes executor** for both gitlab-runner and github-runner. gitlab-runner's k8s executor and github's actions-runner-controller (ARC) both spawn workloads as k8s `Pod` objects via the kubernetes API. To back those pods with sockerless's FaaS backends (cloudrun, gcf, azf later) we add a minimal k8s-API-compatible front end to sockerless that translates `POST /api/v1/namespaces/<ns>/pods` into the same pod-overlay materialisation path Phase 118d shipped. Each k8s Pod becomes one sockerless pod becomes one Cloud Run Function/Job, with all member containers chroot-supervised under the merged-rootfs overlay.
-
-This is a separate phase (not a sub-task of 118) because the k8s API surface is a substantive new component — its own port, its own request decoders, its own watch+exec endpoints, its own stateless backend mapping (k8s namespaces → sockerless network/pod scoping).
-
-**Cloud primitives in use**:
-- HTTP server on a separate port (default `:8080` to match the kubelet/apiserver convention; configurable via `SOCKERLESS_K8S_LISTEN`).
-- Sockerless's existing `core.BaseServer` for the underlying pod create / start / wait / log / exec semantics.
-- Phase 118d's `materializePodFunction` (gcf + lambda + future azf).
-
-**Minimum k8s API surface required by gitlab-runner k8s executor + ARC** (verified against the upstream client code; sockerless implements this subset and returns proper k8s-shaped errors for unhandled endpoints):
-
-| Endpoint | Verb | Purpose |
-|---|---|---|
-| `/api/v1/namespaces` | POST/GET | Namespace CRUD (one ns per CI project; maps to a sockerless docker network for pod-grouping) |
-| `/api/v1/namespaces/<ns>/pods` | POST/GET/DELETE/WATCH | Pod CRUD — POST creates pod members and triggers `materializePodFunction` on start |
-| `/api/v1/namespaces/<ns>/pods/<name>` | GET/DELETE | Pod inspect + delete |
-| `/api/v1/namespaces/<ns>/pods/<name>/log` | GET (stream) | Pod log streaming — bridges to sockerless's existing `StreamCloudLogs` |
-| `/api/v1/namespaces/<ns>/pods/<name>/exec` | WS upgrade | Pod exec — bridges to sockerless's existing reverse-agent / Path B Lambda invoke exec |
-| `/api/v1/namespaces/<ns>/pods/<name>/attach` | WS upgrade | Pod attach — bridges to sockerless's existing `ContainerAttach` |
-| `/api/v1/namespaces/<ns>/configmaps` | POST/GET/DELETE | ConfigMap projection (gitlab-runner ships scripts via configmap) |
-| `/api/v1/namespaces/<ns>/secrets` | POST/GET/DELETE | Secret projection (registration tokens, CI variables) |
-| `/version` | GET | k8s version handshake — return a synthetic v1.28+ |
-| `/api`, `/apis` | GET | API discovery |
-| `/openapi/v2`, `/openapi/v3` | GET | Schema discovery (return cached static blobs sufficient for client-go) |
-
-**Sub-task breakdown**:
-
-- **119a — Skeleton + version/discovery + Pod CRUD**. New top-level Go module `k8s-shim/` (own go.mod; coupled only to sockerless's `api.Backend` interface so the dispatching cleanly translates pod creates → `ContainerCreate` × N + `PodStart`). Translate `POST /pods` → for each container in `spec.containers`, call `ContainerCreate(name=podname-c<idx>, network=<ns>)`; the network membership auto-forms the sockerless pod via the existing `GetPodForNetwork` middleware; final `ContainerStart` triggers `materializePodFunction`. Round-trip k8s `Pod.metadata.labels` to sockerless container labels. Tests: `client-go fakeclient` round-trip on local sockerless+sim.
-- **119b — Log + exec + attach**. Bridge k8s `/log` SPDY/WebSocket streaming to sockerless's existing `ContainerLogs` + `StreamCloudLogs`. Bridge `/exec` (k8s remotecommand v4) to sockerless's `ContainerExec` (which already routes through reverse-agent or Lambda Path B). Tests: `kubectl exec` against sockerless+sim.
-- **119c — ConfigMap + Secret projection**. ConfigMaps/Secrets become tmpfs/EFS-backed volume mounts on the corresponding sockerless pod members. gitlab-runner ships its per-stage shell script via a ConfigMap volume mount at `/scripts/`; ARC ships the runner registration token via a Secret. Tests: configmap projection round-trip via gitlab-runner + ARC.
-- **119d — Watch endpoints + status conditions**. `WATCH /pods?watch=true` streams pod state transitions (Pending → Running → Succeeded/Failed) so the runners can correlate their dispatched pods with sockerless's invocation state. State derived from sockerless's `PodDeferredStart` + `InvocationResult` — stateless, no local k8s state cache.
-
-**Files**:
-
-- `k8s-shim/cmd/sockerless-k8s-shim/main.go` — entrypoint; parses `SOCKERLESS_K8S_LISTEN`, `DOCKER_HOST` (sockerless backend target), `SOCKERLESS_K8S_NAMESPACE_DEFAULT` (default ns when client omits).
-- `k8s-shim/internal/api/v1/pods.go` — Pod CRUD translator.
-- `k8s-shim/internal/api/v1/exec.go` — exec/attach SPDY+WS bridge.
-- `k8s-shim/internal/api/v1/log.go` — log streaming bridge.
-- `k8s-shim/internal/api/v1/configmap.go`, `secret.go` — projection.
-- `k8s-shim/internal/scheme/discovery.go` — `/version` + `/api(s)` + `/openapi/v[23]` discovery responses.
-- `tests/k8s-shim/` — round-trip tests: `client-go` against local sockerless-sim; gitlab-runner k8s executor against local sockerless-sim; ARC against local sockerless-sim.
-
-**Closes**: enables Phase 120's k8s-executor cells without further per-cell shim work.
-
-**Phase 119 PR rule**: branch `phase-119-k8s-shim`; phase closes when the PR is open + CI green.
-
-### Phase 120 — Live-GCP runner cells with kubernetes-executor (4 cells)
-
-**Why.** Each cell is a working end-to-end CI pipeline that demonstrates a sockerless cloud backend backing a real CI runner. The cells use the kubernetes executor for both gitlab-runner and github-runner (replaces the docker-executor model from the Phase 110 AWS cells); workloads land as k8s Pods that sockerless's Phase 119 k8s-shim translates into pod-overlay-backed Cloud Run Functions / Cloud Run Jobs.
+**Why.** Each cell is a working end-to-end CI pipeline that demonstrates a sockerless cloud backend backing a real CI runner. All four cells use the **docker executor** (no kubernetes executor, no k8s shim, no GKE, no ARC). Cells 5+6 (github) ride on the existing `github-runner-dispatcher` (Phase 110a — that compensates for github-runner not having a "master" daemon). Cells 7+8 (gitlab) are picked up by long-lived `gitlab-runner` containers deployed once via `docker run`.
 
 **Cells**:
 
-| Cell | Runner | Backend | Sockerless backend daemon | Pod materialisation path |
+| Cell | Runner | Backend | Runner image | Dispatcher |
 |---|---|---|---|---|
-| 5 | github-actions-runner (via ARC) | cloudrun | sockerless-backend-cloudrun + sockerless-k8s-shim | k8s Pod → sockerless pod → 1 Cloud Run Job (multi-container) |
-| 6 | github-actions-runner (via ARC) | gcf       | sockerless-backend-gcf + sockerless-k8s-shim       | k8s Pod → sockerless pod → 1 Cloud Run Function with merged-rootfs overlay (sub-118d-gcf path) |
-| 7 | gitlab-runner (k8s executor)     | cloudrun | sockerless-backend-cloudrun + sockerless-k8s-shim | k8s Pod → sockerless pod → 1 Cloud Run Job per stage |
-| 8 | gitlab-runner (k8s executor)     | gcf       | sockerless-backend-gcf + sockerless-k8s-shim       | k8s Pod → sockerless pod → 1 Cloud Run Function with merged-rootfs overlay |
+| 5 | github-actions-runner | cloudrun | `sockerless-runner-cloudrun` (bakes sockerless-backend-cloudrun) | github-runner-dispatcher routes label `sockerless-cloudrun` |
+| 6 | github-actions-runner | gcf      | `sockerless-runner-gcf` (bakes sockerless-backend-gcf + the gcf bootstrap binary) | github-runner-dispatcher routes label `sockerless-gcf` |
+| 7 | gitlab-runner         | cloudrun | `sockerless-gitlab-runner-cloudrun` (long-lived, polls GitLab) | none |
+| 8 | gitlab-runner         | gcf      | `sockerless-gitlab-runner-gcf` (long-lived) | none |
 
-**Working pipeline shape** (identical across the 4 cells; only the runner side and backend differ — proves the same workload rides every combination):
+Per BUG-862 (backend ↔ host primitive must match), each runner image bakes the matching sockerless backend. The runner's docker executor uses `DOCKER_HOST=tcp://localhost:3375` (cloudrun) or `:3376` (gcf) to spawn step containers via the in-image sockerless backend → Cloud Run Job (cells 5/7) or Cloud Run Function with Phase 118d pod overlay (cells 6/8).
 
-The pipeline runs in a pod with:
-- Main container: `golang:1.22-alpine` with `git`, `gcc`, `musl-dev` apt-add'd
-- Optional sidecar: `postgres:16-alpine` (proves localhost peer-reachability via the Phase 118d pod overlay)
+**Runner-dispatcher impact**. The existing `github-runner-dispatcher` (Phase 110a) already supports the multi-label / multi-backend pattern via its `[[label]]` TOML config. Cells 5+6 add two new entries to `~/.sockerless/dispatcher/config.toml` — no dispatcher code changes needed. gitlab-runner has its own polling master; cells 7+8 just need long-lived runner containers deployed via `docker run` against the sockerless backend.
 
-Pipeline steps:
+**Working pipeline shape** (identical across all 4 cells; only the runner side and backend differ — proves the same workload rides every combination):
 
-```yaml
-# .gitlab-ci.yml / .github/workflows/cell-N.yml shape
-steps:
-  - name: probe-capabilities
-    run: |
-      echo "=== /proc/self/status caps ==="
-      grep -E '^(Cap|Seccomp|NoNew)' /proc/self/status
-      echo "=== capsh --print (if present) ==="
-      command -v capsh && capsh --print || echo "capsh not installed"
-  - name: probe-kernel
-    run: |
-      uname -a
-      cat /proc/version
-      ls -1 /proc/sys/kernel/ | head -20
-  - name: probe-env
-    run: |
-      env | sort | grep -vE '^(SOCKERLESS_|GCP_|GITHUB_|GITLAB_|CI_)' | head -50
-      echo "---"
-      env | sort | grep -E '^(SOCKERLESS_)' | head -20
-  - name: probe-parameters
-    run: |
-      getconf -a 2>/dev/null | head -30 || echo "getconf -a unavailable"
-      echo "ulimit -a:"; ulimit -a
-      echo "nproc: $(nproc)"
-      echo "memory: $(free -h 2>/dev/null || cat /proc/meminfo | head -3)"
-  - name: probe-localhost-peer
-    if: cell has postgres sidecar
-    run: |
-      apk add --no-cache postgresql-client || true
-      pg_isready -h localhost -p 5432 -t 30
-      psql "host=localhost user=postgres" -c 'SELECT version();'
-  - name: clone-and-compile
-    run: |
-      apk add --no-cache git gcc musl-dev
-      git clone --depth=1 https://github.com/e6qu/sockerless /work/sockerless
-      cd /work/sockerless/simulators/testdata/eval-arithmetic
-      go build -v -o eval-arithmetic .
-      ls -la eval-arithmetic
-      file eval-arithmetic
-  - name: run-arithmetic
-    run: |
-      cd /work/sockerless/simulators/testdata/eval-arithmetic
-      ./eval-arithmetic '3 + 4 * 2'        # expect 11
-      ./eval-arithmetic '(10 - 3) * 2'     # expect 14
-      ./eval-arithmetic '100 / 5 + 1'      # expect 21
-      ./eval-arithmetic '2 * (3 + 4) - 1'  # expect 13
-      ./eval-arithmetic '1.5 + 2.5 * 2'    # expect 6.5
-```
+The pipeline runs in a container (`golang:1.22-alpine`) with a postgres sidecar (`postgres:16-alpine`) in the same Phase 118d pod, and runs:
 
-A cell is GREEN when:
-1. The pipeline above runs end-to-end on the cell's runner+backend combination
-2. All probe steps emit non-error output
-3. The localhost-peer step (cells 5/6/7/8 with postgres sidecar) succeeds — proves sub-118d's pod overlay shares net namespace
-4. The Go compile produces a working `eval-arithmetic` binary
-5. All five arithmetic invocations print the expected result and exit 0
-6. Pipeline URL captured in STATUS.md per the existing 4-cell-table pattern
+1. **probe-capabilities** — `grep '^(Cap|Seccomp|NoNew)' /proc/self/status`, `cat /proc/self/cgroup`
+2. **probe-kernel** — `uname -a`, `cat /proc/version`
+3. **probe-env** — filtered `env | sort` dump
+4. **probe-parameters** — `getconf -a`, `ulimit -a`, `nproc`, memory
+5. **probe-localhost-peer** — `pg_isready -h localhost`, `psql ... -c 'SELECT version()'` (proves the sub-118d pod overlay shares net-ns)
+6. **clone-and-compile** — `git clone https://github.com/e6qu/sockerless`, `go build` of `simulators/testdata/eval-arithmetic`
+7. **run-arithmetic** — five expressions: `3+4*2`=11, `(10-3)*2`=14, `100/5+1`=21, `2*(3+4)-1`=13, `1.5+2.5*2`=6.5
 
-**Sub-task breakdown**:
-
-- **120a — GKE Autopilot host cluster + ARC + gitlab-runner deployment**. Provision a minimal GKE Autopilot cluster (free-tier eligible) in `sockerless-live-46x3zg4imo`. Deploy actions-runner-controller (gh side) and gitlab-runner with k8s executor (gl side). Both configured to point at sockerless-k8s-shim instead of the GKE apiserver for job pods. The HOST cluster runs ARC + gitlab-runner only (lightweight); job workloads land on sockerless via the shim. Terraform under `terraform/modules/gcp-runner-host/`.
-- **120b — Cell 5 (gh + cloudrun)**. Deploy ARC pointed at e6qu/sockerless; configure the gh workflow file at `.github/workflows/cell-5.yml`; runner pods land on cloudrun via k8s-shim. Run the workflow; capture URL. Close BUGs as they surface.
-- **120c — Cell 6 (gh + gcf)**. Same as 120b but `runs-on: [self-hosted, sockerless-gcf]`; sockerless-k8s-shim points at the gcf backend daemon; pod members materialise via merged-rootfs overlay (Phase 118d-gcf).
-- **120d — Cell 7 (gl + cloudrun)**. Configure gitlab-runner with `[runners.kubernetes] host = "<k8s-shim-url>"`; deploy `.gitlab-ci.yml` at `tests/runners/gitlab/cell-7-cloudrun.yml`; run pipeline; capture URL.
-- **120e — Cell 8 (gl + gcf)**. Same as 120d but pointed at the gcf shim instance.
-
-**Runner-dispatcher impact**: The current `github-runner-dispatcher` (Phase 110a — shells out to `docker run -d` per queued job) is **replaced for these cells by ARC**. ARC is the standard k8s-native dispatcher for github-runner; it watches `workflow_jobs` and creates RunnerScaleSets which spawn Pods. The existing `github-runner-dispatcher` stays in the repo for the AWS cells (1/2 — docker-executor model); the GCP cells (5/6) use ARC. gitlab-runner doesn't need a separate dispatcher — its k8s executor is its own dispatcher.
+A cell is GREEN when all probes return non-error output, postgres is reachable via localhost, the Go compile produces a working binary, and all five arithmetic invocations print the expected result and exit 0. Pipeline URL captured in STATUS.md per the existing 4-cell-table pattern.
 
 **Files**:
 
-- `terraform/modules/gcp-runner-host/main.tf` — GKE Autopilot + ARC helm release + gitlab-runner deployment.
-- `tests/runners/github/workflows/cell-5-cloudrun.yml`, `cell-6-gcf.yml` — gh workflow files.
-- `tests/runners/gitlab/cell-7-cloudrun.yml`, `cell-8-gcf.yml` — gl pipeline files.
-- `tests/runners/k8s-shim-cells/` — harness Go module with one test per cell (build-tag-gated `gcp_runner_live`) that posts a workflow_dispatch / pipeline trigger and polls until completion + asserts URL captured.
-- `scripts/manual-test-runner-cells.sh` — operator script: provision GKE+ARC+gitlab-runner, run all 4 cells sequentially, dump URLs.
+- `tests/runners/github/dockerfile-cloudrun/{Dockerfile,bootstrap.sh,Makefile}` — sockerless-runner-cloudrun image (cell 5).
+- `tests/runners/github/dockerfile-gcf/{Dockerfile,bootstrap.sh,Makefile}` — sockerless-runner-gcf image (cell 6).
+- `tests/runners/gitlab/dockerfile-cloudrun/{Dockerfile,bootstrap.sh,Makefile}` — sockerless-gitlab-runner-cloudrun image (cell 7).
+- `tests/runners/gitlab/dockerfile-gcf/{Dockerfile,bootstrap.sh,Makefile}` — sockerless-gitlab-runner-gcf image (cell 8).
+- `.github/workflows/cell-5-cloudrun.yml`, `.github/workflows/cell-6-gcf.yml` — gh workflow files.
+- `tests/runners/gitlab/cell-7-cloudrun.yml`, `tests/runners/gitlab/cell-8-gcf.yml` — gl pipeline files.
+- `tests/runners/gcp-cells/harness_test.go` — build-tag-gated harness (`gcp_runner_live`) with one test per cell.
+- `manual-tests/04-gcp-runner-cells.md` — operator runbook (build runner images → configure dispatcher / deploy gitlab-runners → run cells → capture URLs → teardown).
 
-**Closes**: each cell's GREEN URL captured in STATUS.md's 4-cell table (extended from the existing AWS table). Phase closes when all 4 cells GREEN.
+**Closes**: each cell's GREEN URL captured in STATUS.md's 4-cell table (extended from the Phase 110 AWS table). Phase 120 closes when all four cells GREEN.
 
-**Phase 120 PR rule**: branch `phase-120-gcp-runner-cells`; phase closes when the PR is open + CI green AND all 4 cell URLs are recorded GREEN in STATUS.md.
+**Phase 120 PR rule**: lands on the same `phase-118-faas-pods` branch as the rest of Phase 118-120 (per user direction: all work in one PR, even large). PR closes when CI green AND all 4 cell URLs recorded.
 
-**Test workload non-trivialness rationale**: probe-capabilities + probe-kernel + probe-parameters expose any cloud-sandbox restrictions early (and confirm sub-118d's "shared-degraded" honesty surface). probe-localhost-peer validates the pod overlay's net-ns sharing. clone-and-compile + run-arithmetic exercises Go compilation in the sandbox (memory + CPU) AND validates the resulting binary actually runs with correct output — catching whole classes of "looked OK but didn't actually work" bugs.
+**Test workload non-trivialness rationale**: probe-{capabilities,kernel,parameters} expose any cloud-sandbox restrictions early (and confirm sub-118d's "shared-degraded" honesty surface). probe-localhost-peer validates the pod overlay's net-ns sharing. clone-and-compile + run-arithmetic exercises Go compilation in the sandbox (memory + CPU) AND validates the resulting binary actually runs with correct output — catching whole classes of "looked OK but didn't actually work" bugs.
 
 ### Phase 106 — Real GitHub Actions runner integration (in flight)
 

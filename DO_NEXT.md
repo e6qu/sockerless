@@ -20,7 +20,19 @@ Resume pointer. Updated after every task. Roadmap detail in [PLAN.md](PLAN.md); 
 
 State-save after each task: STATUS.md + WHAT_WE_DID.md + BUGS.md + memory + this file.
 
-**Resume pointer for next session: sub-118d-gcf code is complete; next is sub-118d-lambda (mirror to Lambda backend). After 118d-lambda → sub-118e (4 new live-GCP runner cells). Sub-118a, 118b code are done; live-AWS test of 118b is deferred (operator to authorize separately). Live-GCP verification of 118d-gcf is also deferred to the 118e cell sweeps where pod-shaped runner workloads will exercise it end-to-end.**
+**Resume pointer for next session: PR #123 (`phase-118-faas-pods`) bundles Phase 118 (sub-118a/b/d-gcf/d-lambda) + Phase 120 (4 GCP runner cells, docker executor — no k8s, no GKE, no ARC). All code complete; awaiting (1) CI to go green on the PR, (2) operator runs of cells 5/6/7/8 to capture GREEN URLs in STATUS.md. Phase 119 (k8s shim) was discarded after exploration. Live-AWS test of 118b is deferred (operator to authorize). Sub-118c (AZF) deferred until cells GREEN.**
+
+**Next session work order:**
+
+1. Check PR #123 CI status (`gh pr checks 123`); fix any CI failures.
+2. Build + push the four runner images (`tests/runners/{github,gitlab}/dockerfile-{cloudrun,gcf}/Makefile` — `make all`).
+3. Configure `~/.sockerless/dispatcher/config.toml` with the two new label entries (cells 5+6).
+4. `docker run` the two long-lived gitlab-runner containers (cells 7+8).
+5. Run each cell harness: `go test -v -tags=gcp_runner_live -run TestCell5_GH_Cloudrun -timeout 30m ./tests/runners/gcp-cells` (and the others).
+6. Capture GREEN URLs in STATUS.md's 4-cell table; iterate on bugs (BUG-887+) until all four GREEN.
+7. Tear down: stop gitlab-runner containers; stop dispatcher; eventually `gcloud projects delete sockerless-live-46x3zg4imo`.
+
+See `manual-tests/04-gcp-runner-cells.md` for the full operator runbook.
 
 1. ✅ **Sub-118a — Fix BUG-886** (closed 2026-05-02). Cursor `>=lastTS` + per-entry seen-set dedup + 18s settle window + write-error pipe-close detection. cloudrun manual sweep ALL 16 ROWS PASS.
 2. ✅ **gcf full sweep retest** (closed 2026-05-02). After adding `CheckLogBuffers: true` to `core.AttachViaCloudLogs`: `manual-test-real-workloads.sh gcf` ALL 16 ROWS PASS — including end-to-end Go-build-and-run in `golang:1.22-alpine` through the overlay-and-swap path.
