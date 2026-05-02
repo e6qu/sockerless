@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"fmt"
@@ -268,7 +269,7 @@ func executeBuild(ctx context.Context, b Build) Build {
 // extractTarball unpacks a gzip-compressed tar archive into dir.
 // Cloud Build context uploads use .tar.gz convention.
 func extractTarball(data []byte, dir string) error {
-	var r io.Reader = bytesReader(data)
+	var r io.Reader = bytes.NewReader(data)
 	// Best-effort gzip detection: Cloud Build uploads are typically
 	// gzipped; skip the gzip layer if magic doesn't match.
 	if len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b {
@@ -343,18 +344,6 @@ func runDockerStep(ctx context.Context, workDir string, step *BuildStep, secretV
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
-}
-
-// bytesReader wraps a byte slice as an io.Reader. Avoids importing
-// bytes just for the NewReader call; a tiny shim.
-type bytesReader []byte
-
-func (b bytesReader) Read(p []byte) (int, error) {
-	if len(b) == 0 {
-		return 0, io.EOF
-	}
-	n := copy(p, b)
-	return n, nil
 }
 
 // structToMap converts a Build to a generic map[string]any for
