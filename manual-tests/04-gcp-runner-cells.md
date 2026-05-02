@@ -1,15 +1,20 @@
 # Phase 120 — GCP runner cells (5/6/7/8) operator runbook
 
 Four cells, all docker-executor + sockerless backends, no k8s, no GKE,
-no ARC. Cells 5+6 use the existing `github-runner-dispatcher` (Phase
-110a) — that compensates for GitHub Actions runner not having a
-"master" daemon. Cells 7+8 use long-lived `gitlab-runner` containers
-deployed once.
+no ARC. Cells 5+6 use the GCP-native `github-runner-dispatcher-gcp`
+(Phase 122) — that compensates for GitHub Actions runner not having a
+"master" daemon. The dispatcher creates one Cloud Run Job execution
+per queued workflow_job via `cloud.google.com/go/run/apiv2`; the
+runner image bakes the matching sockerless backend so step containers
+spawned by the runner go through the in-image backend → Cloud Run Job
+(cell 5) or Cloud Run Function with Phase 118d pod overlay for
+`services:` (cell 6). Cells 7+8 use long-lived `gitlab-runner`
+containers deployed once.
 
 | Cell | Runner | Backend | Image | Dispatcher? |
 |---|---|---|---|---|
-| 5 | github-actions-runner | cloudrun | `sockerless-runner-cloudrun` | github-runner-dispatcher (label: sockerless-cloudrun) |
-| 6 | github-actions-runner | gcf      | `sockerless-runner-gcf`      | github-runner-dispatcher (label: sockerless-gcf) |
+| 5 | github-actions-runner | cloudrun | `sockerless-runner-cloudrun` | github-runner-dispatcher-gcp (label: sockerless-cloudrun) |
+| 6 | github-actions-runner | gcf      | `sockerless-runner-gcf`      | github-runner-dispatcher-gcp (label: sockerless-gcf) |
 | 7 | gitlab-runner         | cloudrun | `sockerless-gitlab-runner-cloudrun` | none (long-lived runner polls GitLab) |
 | 8 | gitlab-runner         | gcf      | `sockerless-gitlab-runner-gcf`      | none |
 
@@ -56,26 +61,30 @@ After `make all`, four runner images live in
 - `gitlab-runner-cloudrun-amd64`
 - `gitlab-runner-gcf-amd64`
 
-## Step 2 — Configure github-runner-dispatcher (cells 5+6)
+## Step 2 — Configure github-runner-dispatcher-gcp (cells 5+6)
 
 ```toml
-# ~/.sockerless/dispatcher/config.toml
+# ~/.sockerless/dispatcher-gcp/config.toml
 [[label]]
-name        = "sockerless-cloudrun"
-docker_host = "tcp://127.0.0.1:3375"
-image       = "us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live:runner-cloudrun-amd64"
+name             = "sockerless-cloudrun"
+gcp_project      = "sockerless-live-46x3zg4imo"
+gcp_region       = "us-central1"
+image            = "us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live:runner-cloudrun-amd64"
+service_account  = "github-runners@sockerless-live-46x3zg4imo.iam.gserviceaccount.com"
 
 [[label]]
-name        = "sockerless-gcf"
-docker_host = "tcp://127.0.0.1:3376"
-image       = "us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live:runner-gcf-amd64"
+name             = "sockerless-gcf"
+gcp_project      = "sockerless-live-46x3zg4imo"
+gcp_region       = "us-central1"
+image            = "us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live:runner-gcf-amd64"
+service_account  = "github-runners@sockerless-live-46x3zg4imo.iam.gserviceaccount.com"
 ```
 
-Run the dispatcher:
+Run the dispatcher (uses GCP Application Default Credentials — `gcloud auth application-default login` first):
 
 ```bash
 GITHUB_TOKEN=$(gh auth token) \
-  go run ./github-runner-dispatcher/cmd/github-runner-dispatcher --repo e6qu/sockerless
+  go run ./github-runner-dispatcher-gcp/cmd/github-runner-dispatcher-gcp --repo e6qu/sockerless
 ```
 
 The dispatcher polls GitHub every 15 s, mints an ephemeral runner

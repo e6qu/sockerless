@@ -120,7 +120,7 @@ Two deliverables, neither blocked on the other:
 
 1. **Cells 3 + 4 — GitLab × ECS / GitLab × Lambda against live infra.** No new code. The GitLab harness already runs `gitlab-runner` locally with the docker executor. Each test cell mints a runner authentication token via `POST /api/v4/user/runners`, registers the runner with `--docker-host tcp://localhost:3375` (or `:3376`), commits a per-cell pipeline YAML on a throwaway branch, triggers a pipeline, polls to success, then unregisters + deletes the runner + branch. Headline value: validates that the live ECS + Lambda backends translate `docker create + exec` (the gitlab-runner pattern) end-to-end against real Fargate / Lambda invocations.
 
-2. **`github-runner-dispatcher` top-level module skeleton.** A new sibling Go module at the repo root (own `go.mod`, independent dep tree, builds standalone). Coupled **only to the public Docker API / CLI** — zero awareness of sockerless. The dispatcher pointed at any docker daemon (local Podman, Docker Desktop, or sockerless via `DOCKER_HOST=tcp://…`) does the same thing: poll GitHub, spawn runner containers, exit. Sockerless is invisible to it.
+2. **`github-runner-dispatcher-aws` top-level module skeleton.** A new sibling Go module at the repo root (own `go.mod`, independent dep tree, builds standalone). Coupled **only to the public Docker API / CLI** — zero awareness of sockerless. The dispatcher pointed at any docker daemon (local Podman, Docker Desktop, or sockerless via `DOCKER_HOST=tcp://…`) does the same thing: poll GitHub, spawn runner containers, exit. Sockerless is invisible to it.
 
    - **Mandatory `--repo` flag** (no default — explicit).
    - **`gh auth token` + explicit scope verification at startup**, fail loud with full instructions on missing scopes.
@@ -154,7 +154,7 @@ When a docker client (the actions/runner inside an ECS task or Lambda invocation
 
 **Runner image** — pushed to ECR via a new `sockerless-runner` repo (separate Terraform module from the existing `sockerless-live` ECR repo to avoid mixing per-task images with long-lived runner images). Image carries `LABEL com.sockerless.ecs.task-definition-family=sockerless-runner` so sockerless picks the right pre-registered task def. `:latest` tag during dev iteration; switch to versioned tags + bumped task-def revisions post-Phase 110.
 
-**Dispatcher fully wired** — same `github-runner-dispatcher` binary as 110a, now configured (via the TOML config) to point at the live ECR runner image URI + `tcp://localhost:3375` / `:3376` daemons. The dispatcher is unchanged; it just learned a new image URI.
+**Dispatcher fully wired** — same `github-runner-dispatcher-aws` binary as 110a, now configured (via the TOML config) to point at the live ECR runner image URI + `tcp://localhost:3375` / `:3376` daemons. The dispatcher is unchanged; it just learned a new image URI.
 
 **Test workloads (per cell):**
 - `hello` — single-job `echo $RUNNER_NAME` + `uname -a`. Smoke / wiring sanity. All 4 cells.
@@ -341,9 +341,9 @@ Phase 111 covers the **identity-credential** half of cloud-instance metadata. Ph
 
 **Sequencing.** Phase 112 starts only if a Phase 110 / 111 sweep finds runner workloads that trip on missing metadata endpoints. Until then it sits queued; the spec above is the design draft so the scope doesn't drift.
 
-### Phase 113 — Production github-runner-dispatcher (queued; gated on Phase 110b closure)
+### Phase 113 — Production github-runner-dispatcher (aws/gcp/azure variants) (queued; gated on Phase 110b closure)
 
-Phase 110a/b ship the `github-runner-dispatcher` as a laptop-local binary: short-poll, stateless, single-PAT, single-repo (the `--repo` flag forces explicit scope). Phase 113 is the production-shape variant — what you'd run as a deployed service:
+Phase 110a/b ship the `github-runner-dispatcher-aws` as a laptop-local binary: short-poll, stateless, single-PAT, single-repo (the `--repo` flag forces explicit scope). Phase 122 + 122b shipped the GCP + Azure variants in PR #123. Phase 113 is the production-shape variant — what you'd run as a deployed service (applies to all three cloud variants):
 
 - **Webhook ingress** (replaces 15-s short-polling). HTTPS receiver behind a public URL; subscribes to GitHub `workflow_job:queued` webhook events. Webhook secret validation. Drops latency from ~15 s to ~1 s.
 - **GitHub App install model** (replaces PAT). Long-lived via App's installation tokens; finer-grained scope; install-per-repo or install-per-org; rotation handled by the App framework. PAT path stays as a dev-mode fallback.
@@ -606,20 +606,20 @@ The only documented mapping is the post-create UpdateService image-swap pattern 
 
 ### Phase 120 — Live-GCP runner cells (4 cells, docker executor, no k8s)
 
-**Why.** Each cell is a working end-to-end CI pipeline that demonstrates a sockerless cloud backend backing a real CI runner. All four cells use the **docker executor** (no kubernetes executor, no k8s shim, no GKE, no ARC). Cells 5+6 (github) ride on the existing `github-runner-dispatcher` (Phase 110a — that compensates for github-runner not having a "master" daemon). Cells 7+8 (gitlab) are picked up by long-lived `gitlab-runner` containers deployed once via `docker run`.
+**Why.** Each cell is a working end-to-end CI pipeline that demonstrates a sockerless cloud backend backing a real CI runner. All four cells use the **docker executor** (no kubernetes executor, no k8s shim, no GKE, no ARC). Cells 5+6 (github) ride on the GCP-native `github-runner-dispatcher-gcp` (Phase 122 — Cloud Run Jobs API). Cells 7+8 (gitlab) are picked up by long-lived `gitlab-runner` containers deployed once via `docker run`.
 
 **Cells**:
 
 | Cell | Runner | Backend | Runner image | Dispatcher |
 |---|---|---|---|---|
-| 5 | github-actions-runner | cloudrun | `sockerless-runner-cloudrun` (bakes sockerless-backend-cloudrun) | github-runner-dispatcher routes label `sockerless-cloudrun` |
-| 6 | github-actions-runner | gcf      | `sockerless-runner-gcf` (bakes sockerless-backend-gcf + the gcf bootstrap binary) | github-runner-dispatcher routes label `sockerless-gcf` |
+| 5 | github-actions-runner | cloudrun | `sockerless-runner-cloudrun` (bakes sockerless-backend-cloudrun) | github-runner-dispatcher-gcp routes label `sockerless-cloudrun` |
+| 6 | github-actions-runner | gcf      | `sockerless-runner-gcf` (bakes sockerless-backend-gcf + the gcf bootstrap binary) | github-runner-dispatcher-gcp routes label `sockerless-gcf` |
 | 7 | gitlab-runner         | cloudrun | `sockerless-gitlab-runner-cloudrun` (long-lived, polls GitLab) | none |
 | 8 | gitlab-runner         | gcf      | `sockerless-gitlab-runner-gcf` (long-lived) | none |
 
 Per BUG-862 (backend ↔ host primitive must match), each runner image bakes the matching sockerless backend. The runner's docker executor uses `DOCKER_HOST=tcp://localhost:3375` (cloudrun) or `:3376` (gcf) to spawn step containers via the in-image sockerless backend → Cloud Run Job (cells 5/7) or Cloud Run Function with Phase 118d pod overlay (cells 6/8).
 
-**Runner-dispatcher impact**. The existing `github-runner-dispatcher` (Phase 110a) already supports the multi-label / multi-backend pattern via its `[[label]]` TOML config. Cells 5+6 add two new entries to `~/.sockerless/dispatcher/config.toml` — no dispatcher code changes needed. gitlab-runner has its own polling master; cells 7+8 just need long-lived runner containers deployed via `docker run` against the sockerless backend.
+**Runner-dispatcher impact**. Phase 122 ships `github-runner-dispatcher-gcp` (Cloud Run Jobs API) which routes labels `sockerless-cloudrun` and `sockerless-gcf` per its `[[label]]` TOML config at `~/.sockerless/dispatcher-gcp/config.toml`. Cells 5+6 add two entries; no dispatcher code changes needed. gitlab-runner has its own polling master; cells 7+8 just need long-lived runner containers deployed via `docker run` against the sockerless backend.
 
 **Working pipeline shape** (identical across all 4 cells; only the runner side and backend differ — proves the same workload rides every combination):
 
@@ -676,9 +676,11 @@ Mirror Phase 121's GCP work onto `simulators/azure/`:
 
 Closes when ACA + Azure Functions integration tests pass with the same fidelity GCF now has.
 
-### Phase 122 — Per-cloud github-runner-dispatcher (GCP + Azure mirrors)
+### Phase 122 — Per-cloud github-runner-dispatcher (GCP + Azure mirrors) — CLOSED 2026-05-02 on PR #123
 
-**Why.** The existing `github-runner-dispatcher` (Phase 110a) shells out to the docker CLI per queued workflow_job, which works on AWS via DOCKER_HOST→sockerless-backend-{ecs,lambda}. For Phase 120's GCP cells the same pattern works (DOCKER_HOST→sockerless-backend-{cloudrun,gcf}), but it's not the most natural fit for cloud-native deployments where operators expect to use the cloud's own job-dispatch primitive directly. Adapt the dispatcher to GCP + Azure conventions while keeping the github-runner-dispatcher core sockerless-agnostic.
+**Shipped.** `github-runner-dispatcher-aws` renamed (was `github-runner-dispatcher`). New top-level Go modules `github-runner-dispatcher-gcp` and `github-runner-dispatcher-azure` ship in the same PR. Both reuse the AWS dispatcher's poller / scopes / registration-token mint via `replace github.com/sockerless/github-runner-dispatcher-aws => ../github-runner-dispatcher-aws` in their go.mod (poller + scopes promoted from `internal/` to `pkg/` so cross-module imports resolve). GCP variant uses `cloud.google.com/go/run/apiv2` to create one Cloud Run Job execution per queued workflow_job; Azure variant uses `armappcontainers` for ACA Jobs. State recovery via Cloud Run Job labels (GCP) / ACA Job tags (Azure); 2-min cleanup ticker reaps Jobs whose terminal condition is succeeded/failed/cancelled. Live-validation pending operator runs.
+
+**Why.** The original `github-runner-dispatcher-aws` shells out to the docker CLI per queued workflow_job, which works for any cloud via DOCKER_HOST→sockerless-backend-{ecs,lambda,cloudrun,gcf,aca,azure-functions}. For deployments that want to bypass sockerless and dispatch directly via the cloud's own control plane, the GCP and Azure variants provide that path without forcing a docker daemon to be present.
 
 **Sub-tasks**:
 

@@ -300,6 +300,6 @@ Per the project rule "if very hard we can stage the fixes and refactorings acros
 
 - **Phase 110b** — runner integration completion (where most of GH-* and GL-* live).
 - **Phase 111** — workload identity for runner jobs (cloud-API access from inside `container:` steps).
-- **Phase 113** — production-shape `github-runner-dispatcher` (webhook ingress, GitHub App install, multi-repo, deployable).
+- **Phase 113** — production-shape `github-runner-dispatcher-{aws,gcp,azure}` variants (webhook ingress, GitHub App install, multi-repo, deployable).
 
 If a hurdle from this catalog stays open across a phase boundary, it gets a sub-task entry in the new phase, and the catalog row's "Resolution" column links to it. The catalog itself never declares a hurdle "deferred indefinitely" — every entry has either a closed bug ID or an open bug ID with an active phase.

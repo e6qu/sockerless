@@ -2,7 +2,7 @@
 #
 # Per BUG-862 (backend ↔ host primitive must match), the runner image
 # bakes `sockerless-backend-cloudrun` and runs as a Cloud Run Job (or
-# Service) dispatched via the github-runner-dispatcher (Phase 110a /
+# Service) dispatched via the github-runner-dispatcher-gcp (Phase 122 /
 # 113). The runner's docker calls (container: directive + services:)
 # go through DOCKER_HOST=tcp://localhost:3375 to the in-image
 # sockerless backend, which dispatches each step container as a

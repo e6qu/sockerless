@@ -5,7 +5,7 @@
 # then registers + runs an ephemeral GitHub Actions runner. Exits when
 # the runner completes one job (--ephemeral mode).
 #
-# Required env (set by github-runner-dispatcher's `docker run -e ...`):
+# Required env (set by github-runner-dispatcher-gcp's Cloud Run Job container env):
 #
 #   RUNNER_REG_TOKEN  - ephemeral registration token from
 #                       POST /repos/<r>/actions/runners/registration-token

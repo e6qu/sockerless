@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sockerless/github-runner-dispatcher/internal/config"
-	"github.com/sockerless/github-runner-dispatcher/internal/poller"
+	"github.com/sockerless/github-runner-dispatcher-aws/internal/config"
+	"github.com/sockerless/github-runner-dispatcher-aws/pkg/poller"
 )
 
 // TestSmokeDispatchLoopSkipsUnknownLabel verifies the main loop's

@@ -3,7 +3,7 @@
 //
 // All four cells use the docker-executor pattern (no k8s, no GKE, no
 // ARC). Cells 5+6 (gh) are dispatched via the existing
-// github-runner-dispatcher (Phase 110a). Cells 7+8 (gl) are picked up
+// github-runner-dispatcher-gcp (Phase 122). Cells 7+8 (gl) are picked up
 // by long-lived sockerless-managed gitlab-runner containers.
 //
 // Each test:

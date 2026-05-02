@@ -31,10 +31,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sockerless/github-runner-dispatcher/internal/config"
-	"github.com/sockerless/github-runner-dispatcher/internal/poller"
-	"github.com/sockerless/github-runner-dispatcher/internal/scopes"
-	"github.com/sockerless/github-runner-dispatcher/internal/spawner"
+	"github.com/sockerless/github-runner-dispatcher-aws/internal/config"
+	"github.com/sockerless/github-runner-dispatcher-aws/internal/spawner"
+	"github.com/sockerless/github-runner-dispatcher-aws/pkg/poller"
+	"github.com/sockerless/github-runner-dispatcher-aws/pkg/scopes"
 )
 
 func main() {

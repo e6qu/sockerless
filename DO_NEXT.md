@@ -34,7 +34,7 @@ State-save after each task: STATUS.md + WHAT_WE_DID.md + BUGS.md + memory + this
 **Next session work order:**
 
 1. Run the parallel-fix sweep above (one commit per concern, on the same `phase-118-faas-pods` branch).
-2. Phase 122 (GCP runner dispatcher): copy `github-runner-dispatcher/` → `github-runner-dispatcher-gcp/`; swap the docker-CLI spawner for Cloud Run Jobs API (`cloud.google.com/go/run/apiv2`); reuse poller / config / scopes modules unchanged.
+2. ~~Phase 122 (GCP runner dispatcher)~~ SHIPPED 2026-05-02 on PR #123. `github-runner-dispatcher-gcp/` uses `cloud.google.com/go/run/apiv2` for Cloud Run Jobs creation; reuses the AWS dispatcher's poller / scopes via `replace github.com/sockerless/github-runner-dispatcher-aws => ../github-runner-dispatcher-aws` (poller + scopes promoted from `internal/` to `pkg/` so cross-module imports resolve). The original `github-runner-dispatcher` was renamed to `github-runner-dispatcher-aws` for naming consistency.
 3. Phase 122b (Azure runner dispatcher): mirror onto ACA Jobs API (`Microsoft.App/jobs`).
 4. Build + push the four runner images (`tests/runners/{github,gitlab}/dockerfile-{cloudrun,gcf}/Makefile` — `make all`).
 5. Original work-order item: re-check PR #123 CI status (`gh pr checks 123`); ALL GREEN at `a646602` but every commit triggers a fresh run.
@@ -329,4 +329,4 @@ The macOS-arm64 binaries at `/tmp/sockerless-backend-{ecs,lambda}` were rebuilt 
 - **State save after every major piece of work** (PLAN / STATUS / WHAT_WE_DID / DO_NEXT / BUGS) — mandatory at ~80% context.
 - **Never merge PRs** — user handles all merges.
 - **Branch hygiene** — rebase on `origin/main` before push.
-- **`github-runner-dispatcher` is sockerless-agnostic** — pure Docker SDK / CLI client.
+- **`github-runner-dispatcher-aws` is sockerless-agnostic** — pure Docker SDK / CLI client. (GCP variant `github-runner-dispatcher-gcp` and Azure variant `github-runner-dispatcher-azure` use `cloud.google.com/go/run/apiv2` and `armappcontainers` respectively, also sockerless-agnostic — they dispatch directly via the cloud control plane.)
