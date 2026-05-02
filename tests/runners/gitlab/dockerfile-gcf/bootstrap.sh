@@ -9,8 +9,8 @@ set -euo pipefail
 : "${SOCKERLESS_GCF_REGION:?SOCKERLESS_GCF_REGION is required (the operator-side docker run -e config sets this)}"
 : "${SOCKERLESS_GCP_BUILD_BUCKET:?SOCKERLESS_GCP_BUILD_BUCKET is required (the operator-side docker run -e config sets this)}"
 
-nohup /usr/local/bin/sockerless-backend-gcf -addr :3376 -log-level info \
-    >/tmp/sockerless-backend.log 2>&1 &
+nohup /usr/local/bin/sockerless-backend-gcf -addr :3376 -log-level debug \
+    > >(tee /tmp/sockerless-backend.log >&2) 2>&1 &
 
 deadline=$((SECONDS + 30))
 until curl -sfo /dev/null http://localhost:3376/_ping; do

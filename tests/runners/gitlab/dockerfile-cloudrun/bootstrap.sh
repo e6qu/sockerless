@@ -26,8 +26,11 @@ set -euo pipefail
 : "${SOCKERLESS_GCR_REGION:?SOCKERLESS_GCR_REGION is required (the operator-side docker run -e config sets this)}"
 : "${SOCKERLESS_GCP_BUILD_BUCKET:?SOCKERLESS_GCP_BUILD_BUCKET is required (the operator-side docker run -e config sets this)}"
 
-nohup /usr/local/bin/sockerless-backend-cloudrun -addr :3375 -log-level info \
-    >/tmp/sockerless-backend.log 2>&1 &
+# Backend log goes to stderr so Cloud Logging captures it (without
+# this redirect to /tmp/sockerless-backend.log it never surfaced and
+# BUG-917 was undiagnosable). Use `tee` to keep both file + stderr.
+nohup /usr/local/bin/sockerless-backend-cloudrun -addr :3375 -log-level debug \
+    > >(tee /tmp/sockerless-backend.log >&2) 2>&1 &
 
 deadline=$((SECONDS + 30))
 until curl -sfo /dev/null http://localhost:3375/_ping; do
