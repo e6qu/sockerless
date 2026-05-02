@@ -51,10 +51,20 @@ func TestMain(m *testing.M) {
 		}
 	}
 
+	// stderr-step logger: TestMain runs before any test function, so its
+	// stdout output is buffered by `go test -v` and only flushed when a
+	// test starts. If TestMain hangs (e.g. a download stalls or a sim
+	// HTTP call blocks), we'd never see WHERE — the last visible CI line
+	// would be `go: downloading <module>` from the outer `go test`.
+	// Writing to os.Stderr is unbuffered and surfaces progress live.
+	step := func(label string) { fmt.Fprintf(os.Stderr, "[testmain] %s\n", label) }
+	step("entered TestMain (SOCKERLESS_INTEGRATION=1)")
+
 	// Build eval-arithmetic binary (static linux/amd64, to be embedded
 	// in a Docker image the container runtime can actually execute).
 	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
 	evalBinaryPath = evalDir + "/eval-arithmetic"
+	step("building eval-arithmetic (linux/amd64)")
 	fmt.Println("[sim] Building eval-arithmetic (linux/amd64)...")
 	evalBuild := exec.Command("go", "build", "-o", "eval-arithmetic", ".")
 	evalBuild.Dir = evalDir
@@ -69,6 +79,7 @@ func TestMain(m *testing.M) {
 	// Bake the binary into a local Docker image so the container can
 	// actually run it.
 	evalImageName = "sockerless-eval-arithmetic:test"
+	step("docker build " + evalImageName)
 	fmt.Printf("[sim] Building %s...\n", evalImageName)
 	evalDockerfile := "FROM alpine:latest\nCOPY eval-arithmetic /usr/local/bin/eval-arithmetic\nENTRYPOINT [\"/usr/local/bin/eval-arithmetic\"]\n"
 	evalImageBuild := exec.Command("docker", "build", "-t", evalImageName, "-f", "-", evalDir)
@@ -97,6 +108,7 @@ func TestMain(m *testing.M) {
 	// AR URL so `docker build` (run by the sim's executor) finds it in
 	// the local cache instead of attempting an anonymous AR token fetch
 	// (which 403s on CI for nonexistent AR projects).
+	step("docker pull alpine:latest + AR-tag")
 	fmt.Println("[sim] Pre-pulling alpine:latest...")
 	if out, err := exec.Command("docker", "pull", "alpine:latest").CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to pull alpine:latest: %v\n%s", err, out)
@@ -111,6 +123,7 @@ func TestMain(m *testing.M) {
 	// Build simulator
 	simDir := repoRoot + "/simulators/gcp"
 	simBinary := simDir + "/simulator-gcp"
+	step("go build simulator-gcp")
 	fmt.Println("[sim] Building simulator-gcp...")
 	build := exec.Command("go", "build", "-tags", "noui", "-o", "simulator-gcp", ".")
 	build.Dir = simDir
@@ -127,6 +140,7 @@ func TestMain(m *testing.M) {
 	simPort := findFreePort()
 	simAddr := fmt.Sprintf(":%d", simPort)
 	simURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
+	step("starting simulator-gcp")
 	fmt.Printf("[sim] Starting simulator-gcp on %s...\n", simAddr)
 	simCmd := exec.Command(simBinary)
 	simCmd.Env = append(os.Environ(), "SIM_LISTEN_ADDR="+simAddr)
@@ -139,6 +153,7 @@ func TestMain(m *testing.M) {
 	}
 	cleanups = append(cleanups, func() { simCmd.Process.Kill(); simCmd.Wait() })
 
+	step("waiting for simulator-gcp /health")
 	if err := waitForReady(simURL+"/health", 10*time.Second); err != nil {
 		fmt.Fprintf(os.Stderr, "simulator-gcp not ready: %v\n", err)
 		cleanup()
@@ -150,6 +165,7 @@ func TestMain(m *testing.M) {
 	// uploads. Real GCS doesn't auto-create buckets; the backend doesn't
 	// either (operator infrastructure — terraform creates the bucket in
 	// production deployments). Tests stand in for terraform here.
+	step("create GCS bucket sockerless-test-build")
 	if err := createGCSBucket(simURL, "sockerless-test", "sockerless-test-build"); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create sockerless-test-build: %v\n", err)
 		cleanup()
@@ -159,6 +175,7 @@ func TestMain(m *testing.M) {
 	// Build backend
 	backendDir := repoRoot + "/backends/cloudrun-functions"
 	backendBinary := backendDir + "/sockerless-backend-gcf"
+	step("go build sockerless-backend-gcf")
 	fmt.Println("[sim] Building sockerless-backend-gcf...")
 	buildBackend := exec.Command("go", "build", "-tags", "noui", "-o", "sockerless-backend-gcf", "./cmd/sockerless-backend-gcf")
 	buildBackend.Dir = backendDir
@@ -179,6 +196,7 @@ func TestMain(m *testing.M) {
 	// signed token (token validation is a real-Cloud-Run concern, not
 	// a sim concern) — but the AUTH HEADER PRESENCE is the same wire
 	// shape as production, so the backend code path stays identical.
+	step("staging fake SA JSON")
 	saJSONPath, err := writeFakeServiceAccountJSON(simURL + "/token")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to stage fake SA JSON: %v\n", err)
@@ -198,6 +216,7 @@ func TestMain(m *testing.M) {
 	if abs, absErr := filepath.Abs(gcfBootstrapPath); absErr == nil {
 		gcfBootstrapPath = abs
 	}
+	step("go build sockerless-gcf-bootstrap")
 	fmt.Println("[sim] Building sockerless-gcf-bootstrap...")
 	bootstrapBuild := exec.Command("go", "build", "-o", gcfBootstrapPath, "./cmd/sockerless-gcf-bootstrap")
 	bootstrapBuild.Dir = repoRoot + "/agent"
@@ -214,6 +233,7 @@ func TestMain(m *testing.M) {
 	// Start backend
 	backendPort := findFreePort()
 	backendAddr := fmt.Sprintf(":%d", backendPort)
+	step("starting sockerless-backend-gcf")
 	fmt.Printf("[sim] Starting sockerless-backend-gcf on %s...\n", backendAddr)
 	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
 	// urlHost extracts host:port from http://host:port for STORAGE_EMULATOR_HOST.
@@ -251,6 +271,7 @@ func TestMain(m *testing.M) {
 	cleanups = append(cleanups, func() { backendCmd.Process.Kill(); backendCmd.Wait() })
 
 	backendURL := fmt.Sprintf("http://localhost:%d/internal/v1/info", backendPort)
+	step("waiting for sockerless-backend-gcf /info")
 	if err := waitForReady(backendURL, 15*time.Second); err != nil {
 		fmt.Fprintf(os.Stderr, "backend not ready: %v\n", err)
 		cleanup()
@@ -271,6 +292,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	step("entering m.Run() — TestMain setup complete")
 	code := m.Run()
 	cleanup()
 	os.Exit(code)
@@ -686,10 +708,16 @@ func writeFakeServiceAccountJSON(tokenURI string) (string, error) {
 // {name: "<bucket>"} body. The sim accepts this form too (sim/gcp/gcs.go).
 // Stands in for terraform in integration tests; production operators
 // create the bucket as infrastructure before launching the backend.
+//
+// Bound by a 5s context so a hung sim surfaces as a clear error rather
+// than blocking TestMain indefinitely (the request is local and a
+// healthy sim should answer in single-digit ms).
 func createGCSBucket(simURL, project, bucket string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	body := []byte(fmt.Sprintf(`{"name":%q}`, bucket))
 	url := fmt.Sprintf("%s/storage/v1/b?project=%s", simURL, project)
-	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
