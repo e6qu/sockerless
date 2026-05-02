@@ -59,4 +59,4 @@ sudo -u runner ./config.sh \
 # --once: runner exits after one job, matching the github-runner-
 # dispatcher's per-job model. Idle timeout via the runner's natural
 # polling loop — no job picked up within RUNNER_IDLE_SECONDS = exit.
-exec sudo -u runner -E timeout "${RUNNER_IDLE_SECONDS:-60}" ./run.sh --once
+exec sudo -u runner -E timeout "${RUNNER_IDLE_SECONDS:-3600}" ./run.sh --once

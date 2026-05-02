@@ -137,6 +137,11 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 			{Name: "RUNNER_REPO", Values: &runpb.EnvVar_Value{Value: req.Repo}},
 			{Name: "RUNNER_NAME", Values: &runpb.EnvVar_Value{Value: req.RunnerName}},
 			{Name: "RUNNER_LABELS", Values: &runpb.EnvVar_Value{Value: strings.Join(req.Labels, ",")}},
+			// BUG-910: bootstrap.sh wraps run.sh with `timeout`; the
+			// 60s default kills the runner mid-job. 3600s = upper
+			// bound for one CI pipeline; --once / --ephemeral exits
+			// naturally when the single job completes.
+			{Name: "RUNNER_IDLE_SECONDS", Values: &runpb.EnvVar_Value{Value: "3600"}},
 			{Name: prefix + "PROJECT", Values: &runpb.EnvVar_Value{Value: req.Project}},
 			{Name: prefix + "REGION", Values: &runpb.EnvVar_Value{Value: req.Region}},
 			{Name: "SOCKERLESS_GCP_BUILD_BUCKET", Values: &runpb.EnvVar_Value{Value: req.BuildBucket}},

@@ -35,4 +35,4 @@ sudo -u runner ./config.sh \
     --labels "${RUNNER_LABELS}" \
     --work /tmp/runner-work
 
-exec sudo -u runner -E timeout "${RUNNER_IDLE_SECONDS:-60}" ./run.sh --once
+exec sudo -u runner -E timeout "${RUNNER_IDLE_SECONDS:-3600}" ./run.sh --once
