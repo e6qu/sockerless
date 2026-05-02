@@ -145,6 +145,25 @@ func TestMain(m *testing.M) {
 	}
 	cleanups = append(cleanups, func() { _ = os.Remove(saJSONPath) })
 
+	// Build the sockerless-gcf-bootstrap binary so the backend's
+	// overlay-and-swap path (Phase 118 gcf re-architecture) can stage
+	// it into the Cloud Build context tar. Real deployments install
+	// this binary at /opt/sockerless via the runner image; integration
+	// tests build it on demand.
+	gcfBootstrapPath := repoRoot + "/agent/sockerless-gcf-bootstrap-test"
+	fmt.Println("[sim] Building sockerless-gcf-bootstrap...")
+	bootstrapBuild := exec.Command("go", "build", "-o", gcfBootstrapPath, "./cmd/sockerless-gcf-bootstrap")
+	bootstrapBuild.Dir = repoRoot + "/agent"
+	bootstrapBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=amd64")
+	bootstrapBuild.Stdout = os.Stderr
+	bootstrapBuild.Stderr = os.Stderr
+	if err := bootstrapBuild.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build sockerless-gcf-bootstrap: %v\n", err)
+		cleanup()
+		os.Exit(1)
+	}
+	cleanups = append(cleanups, func() { _ = os.Remove(gcfBootstrapPath) })
+
 	// Start backend
 	backendPort := findFreePort()
 	backendAddr := fmt.Sprintf(":%d", backendPort)
@@ -161,6 +180,9 @@ func TestMain(m *testing.M) {
 		"SOCKERLESS_GCP_BUILD_BUCKET=sim-bucket",
 		// idtoken.NewClient ADC source. Generated fresh per test run.
 		"GOOGLE_APPLICATION_CREDENTIALS="+saJSONPath,
+		// Path to the sockerless-gcf-bootstrap binary the backend stages
+		// into Cloud Build context tarballs (overlay image build).
+		"SOCKERLESS_GCF_BOOTSTRAP="+gcfBootstrapPath,
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
