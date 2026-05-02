@@ -1,6 +1,11 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -18,39 +23,68 @@ import (
 // subsequent requests.
 //
 // The sim's role: accept the POST, return a real-shape token response.
-// We don't validate the JWT signature — the sim isn't an emulator and
-// doesn't enforce GCP's auth gate; it just responds with the wire shape
-// the SDK expects so the SDK proceeds to the actual API call. Real
-// production deployments hit oauth2.googleapis.com which DOES validate;
-// the sim plays the same role from the SDK's perspective without the
-// validation cost.
-//
-// Operators (or tests) point the SA JSON's `token_uri` at this endpoint
-// when their backend's GCP SDKs should mint tokens against the sim
-// instead of Google's real token service.
+// The access_token is issued as a real-shape JWT (header.payload.signature
+// base64url segments) so SDKs that parse the token before using it
+// (cloudbuild.NewRESTClient does) accept the response. The JWT's HMAC
+// signature uses a per-process random key — the sim doesn't validate
+// inbound tokens; the signature is real-shape but unverifiable by
+// downstream consumers, which is fine because the sim's audience
+// handlers (e.g. /v2-functions-invoke/, /v1/projects/.../builds) don't
+// validate inbound tokens either. Real production routes through
+// oauth2.googleapis.com whose tokens ARE validated by Google's
+// audience services; the sim plays the same role from the SDK's
+// perspective without the validation cost.
 func registerOAuth2(srv *sim.Server) {
-	// POST /token — the bare path the SA JSON's token_uri resolves to.
-	// The Google client lib also accepts /oauth2/v4/token historically.
+	// One signing key per simulator process. Real production uses
+	// Google's signing infrastructure with rotated keys; the sim is
+	// process-scoped because a sim restart issues fresh tokens
+	// regardless.
+	signKey := make([]byte, 32)
+	_, _ = rand.Read(signKey)
+
 	handler := func(w http.ResponseWriter, r *http.Request) {
-		// Body parsing intentionally permissive: real SDKs send
-		// form-encoded JWT-bearer requests; service-to-service flows
-		// also use grant_type=client_credentials. We don't enforce —
-		// just respond with the standard token envelope.
 		_ = r.ParseForm()
+		now := time.Now()
+		expires := now.Add(1 * time.Hour)
+
+		token := mintSimJWT(signKey, "sockerless-sim", "sockerless-sim", now, expires)
+		idToken := mintSimJWT(signKey, "sockerless-sim", "sockerless-sim", now, expires)
+
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"access_token": "sim-access-" + generateUUID(),
-			"expires_in":   int((1 * time.Hour).Seconds()),
+			"access_token": token,
+			"expires_in":   int(time.Until(expires).Seconds()),
 			"token_type":   "Bearer",
-			// The id_token is what idtoken.NewClient flows expect —
-			// it's a JWT but the SDK doesn't verify it locally before
-			// using as the Authorization header. Returning a non-empty
-			// string is sufficient. Production tokens are real signed
-			// JWTs the audience verifies; the sim's audience handler
-			// (e.g. /v2-functions-invoke/) doesn't validate, so any
-			// non-empty bearer works.
-			"id_token": "sim-id-" + generateUUID(),
+			"id_token":     idToken,
 		})
 	}
 	srv.HandleFunc("POST /token", handler)
 	srv.HandleFunc("POST /oauth2/v4/token", handler)
+}
+
+// mintSimJWT produces a real-shape JWT (`header.payload.signature`)
+// signed with HS256 against the sim's per-process key. Real Google
+// JWTs use RS256 with rotated keys; HS256 is sufficient here because
+// the sim doesn't verify inbound tokens — the only requirement is
+// that SDKs that parse the token (the cloudbuild SDK does) accept
+// the structure.
+func mintSimJWT(signKey []byte, issuer, subject string, issuedAt, expiresAt time.Time) string {
+	headerJSON, _ := json.Marshal(map[string]string{
+		"alg": "HS256",
+		"typ": "JWT",
+	})
+	payloadJSON, _ := json.Marshal(map[string]any{
+		"iss":   issuer,
+		"sub":   subject,
+		"aud":   "https://oauth2.googleapis.com/token",
+		"iat":   issuedAt.Unix(),
+		"exp":   expiresAt.Unix(),
+		"scope": "https://www.googleapis.com/auth/cloud-platform",
+	})
+	headerB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
+	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadJSON)
+	signingInput := headerB64 + "." + payloadB64
+	mac := hmac.New(sha256.New, signKey)
+	mac.Write([]byte(signingInput))
+	sigB64 := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return signingInput + "." + sigB64
 }
