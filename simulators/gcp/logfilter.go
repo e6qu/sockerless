@@ -30,9 +30,10 @@ func parseFilter(filter string) []filterClause {
 type filterOp int
 
 const (
-	opEq filterOp = iota // =
-	opGt                 // >
-	opGe                 // >=
+	opEq  filterOp = iota // =
+	opGt                  // >
+	opGe                  // >=
+	opHas                 // : (Cloud Logging substring/has operator)
 )
 
 type filterClause struct {
@@ -42,7 +43,16 @@ type filterClause struct {
 }
 
 // parseClause parses a single clause like `field="value"`, `field >= "value"`,
-// or `field > "value"`. Handles optional whitespace around the operator.
+// `field > "value"`, or `field:"value"`. Handles optional whitespace around
+// the operator.
+//
+// The `:` operator is Cloud Logging's "has" / substring-match form
+// (https://cloud.google.com/logging/docs/view/logging-query-language#operators).
+// Real Cloud Logging supports it natively; the sockerless cloudrun backend
+// uses it for the `logName:"run.googleapis.com"` clause that filters out
+// Cloud Audit Logs (BUG-878). The sim must accept it too — without this
+// branch the clause falls through to the wildcard `*` and silently matches
+// nothing, dropping every container's stdout from `docker logs` (BUG-887).
 func parseClause(s string) filterClause {
 	// Try >= first (before > to avoid partial match)
 	if idx := strings.Index(s, ">="); idx > 0 {
@@ -59,6 +69,11 @@ func parseClause(s string) filterClause {
 		field := strings.TrimSpace(s[:idx])
 		value := unquote(strings.TrimSpace(s[idx+1:]))
 		return filterClause{field: field, op: opEq, value: value}
+	}
+	if idx := strings.Index(s, ":"); idx > 0 {
+		field := strings.TrimSpace(s[:idx])
+		value := unquote(strings.TrimSpace(s[idx+1:]))
+		return filterClause{field: field, op: opHas, value: value}
 	}
 	// Fallback: bare string without operator — do a substring search
 	// across textPayload, logName, and severity (like GCP's simple filter).
@@ -155,6 +170,16 @@ func matchesFilter(entry LogEntry, filter string) bool {
 			}
 		case opGe:
 			if val < c.value {
+				return false
+			}
+		case opHas:
+			// Cloud Logging's `:` operator is substring-match: the
+			// clause matches when the field's value CONTAINS the
+			// query string. Real Cloud Logging additionally supports
+			// glob/colon-prefix tokenisation; the sim implements the
+			// substring subset since that's what the cloudrun + gcf
+			// backends emit (`logName:"run.googleapis.com"`).
+			if !strings.Contains(val, c.value) {
 				return false
 			}
 		}
