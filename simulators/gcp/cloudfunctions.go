@@ -38,6 +38,7 @@ type BuildConfig struct {
 // ServiceConfig holds the service configuration for a function.
 type ServiceConfig struct {
 	Uri                  string            `json:"uri,omitempty"`
+	Service              string            `json:"service,omitempty"` // Underlying Cloud Run service name (Gen2)
 	TimeoutSeconds       int               `json:"timeoutSeconds,omitempty"`
 	AvailableMemory      string            `json:"availableMemory,omitempty"`
 	MaxInstanceCount     int               `json:"maxInstanceCount,omitempty"`
@@ -88,6 +89,26 @@ func registerCloudFunctions(srv *sim.Server) {
 		}
 		// Use the simulator's own address as the function URL for invocations
 		fn.ServiceConfig.Uri = fmt.Sprintf("http://%s/v2-functions-invoke/%s", r.Host, functionID)
+
+		// Cloud Functions Gen2 are backed by a Cloud Run service that
+		// real GCP creates server-side as part of CreateFunction. The
+		// gcf overlay-and-swap path relies on `fn.ServiceConfig.Service`
+		// being populated so it can call `Run.Services.GetService` /
+		// `UpdateService` to swap the throwaway Buildpacks image with
+		// the real overlay. Mirror that linkage here: stamp the
+		// service name onto the function, and seed a backing ServiceV2
+		// row so subsequent Get/PATCH on the service round-trip.
+		stubImage := ""
+		if fn.BuildConfig != nil {
+			stubImage = fn.BuildConfig.DockerRepository
+		}
+		backingService := seedServiceV2Defaults(ServiceV2{
+			Template: &RevisionTemplate{
+				Containers: []Container{{Name: functionID, Image: stubImage}},
+			},
+		}, project, location, functionID)
+		fn.ServiceConfig.Service = backingService.Name
+		crv2Services.Put(backingService.Name, backingService)
 
 		functions.Put(name, fn)
 
@@ -200,13 +221,18 @@ func registerCloudFunctions(srv *sim.Server) {
 // invokeCloudFunctionProcess executes a Cloud Function via sim.StartContainerSync
 // and returns the stdout output as the response body plus the container exit code.
 func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byte, int) {
-	// Determine container image
+	// Container image lives on the underlying Cloud Run service —
+	// Cloud Functions Gen2 are backed by a Run service, and the gcf
+	// backend's overlay-and-swap path lands the real image there via
+	// `Run.Services.UpdateService`. Read it back from there; the sim
+	// has no other source of truth for what to execute.
 	var image string
-	if fn.ServiceConfig != nil {
-		image = fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_IMG"]
-	}
-	if image == "" && fn.BuildConfig != nil {
-		image = fn.BuildConfig.DockerRepository
+	if fn.ServiceConfig != nil && fn.ServiceConfig.Service != "" {
+		if svc, ok := crv2Services.Get(fn.ServiceConfig.Service); ok {
+			if svc.Template != nil && len(svc.Template.Containers) > 0 {
+				image = svc.Template.Containers[0].Image
+			}
+		}
 	}
 
 	// Read entrypoint + cmd separately — preserves docker's ENTRYPOINT
