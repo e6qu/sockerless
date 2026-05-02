@@ -90,6 +90,24 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	// Tests that don't use eval-arithmetic still pass plain "alpine:latest"
+	// as the container image. The backend rewrites that to the AR URL via
+	// gcpcommon.ResolveGCPImageURI; Cloud Build's FROM then needs the
+	// rewritten URL to resolve locally. Pre-pull alpine and tag it to the
+	// AR URL so `docker build` (run by the sim's executor) finds it in
+	// the local cache instead of attempting an anonymous AR token fetch
+	// (which 403s on CI for nonexistent AR projects).
+	fmt.Println("[sim] Pre-pulling alpine:latest...")
+	if out, err := exec.Command("docker", "pull", "alpine:latest").CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to pull alpine:latest: %v\n%s", err, out)
+		os.Exit(1)
+	}
+	alpineARTag := "us-central1-docker.pkg.dev/sockerless-test/docker-hub/library/alpine:latest"
+	if out, err := exec.Command("docker", "tag", "alpine:latest", alpineARTag).CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to AR-tag alpine:latest: %v\n%s", err, out)
+		os.Exit(1)
+	}
+
 	// Build simulator
 	simDir := repoRoot + "/simulators/gcp"
 	simBinary := simDir + "/simulator-gcp"
