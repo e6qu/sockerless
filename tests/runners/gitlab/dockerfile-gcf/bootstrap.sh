@@ -4,6 +4,11 @@
 # port differ.
 set -euo pipefail
 
+# Required env (no fallbacks, no optional vars — fail loudly):
+: "${SOCKERLESS_GCF_PROJECT:?SOCKERLESS_GCF_PROJECT is required (the operator-side docker run -e config sets this)}"
+: "${SOCKERLESS_GCF_REGION:?SOCKERLESS_GCF_REGION is required (the operator-side docker run -e config sets this)}"
+: "${SOCKERLESS_GCP_BUILD_BUCKET:?SOCKERLESS_GCP_BUILD_BUCKET is required (the operator-side docker run -e config sets this)}"
+
 nohup /usr/local/bin/sockerless-backend-gcf -addr :3376 -log-level info \
     >/tmp/sockerless-backend.log 2>&1 &
 

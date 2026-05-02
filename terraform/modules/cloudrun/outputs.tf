@@ -60,6 +60,11 @@ output "gcs_bucket_url" {
   value       = google_storage_bucket.volumes.url
 }
 
+output "build_context_bucket" {
+  description = "Set as SOCKERLESS_GCP_BUILD_BUCKET on any sockerless GCP backend that needs runtime image builds."
+  value       = google_storage_bucket.build_context.name
+}
+
 # Artifact Registry
 
 output "artifact_registry_repository_name" {

@@ -104,6 +104,22 @@ resource "google_project_service" "storage" {
   disable_on_destroy = false
 }
 
+# Cloud Build is the sockerless-sanctioned image builder for GCP — the
+# cloudrun + gcf backends both call `gcpcommon.GCPBuildService` which
+# drives Cloud Build via the GCS build-context bucket below. Required
+# (no fallback) on every GCP project that runs sockerless.
+resource "google_project_service" "cloudbuild" {
+  project            = var.project_id
+  service            = "cloudbuild.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_project_service" "iam" {
+  project            = var.project_id
+  service            = "iam.googleapis.com"
+  disable_on_destroy = false
+}
+
 # ---------------------------------------------------------------------------
 # VPC Network
 # ---------------------------------------------------------------------------
@@ -183,6 +199,40 @@ resource "google_storage_bucket" "volumes" {
   lifecycle_rule {
     condition {
       age = var.gcs_lifecycle_days
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
+  depends_on = [google_project_service.storage]
+}
+
+# ---------------------------------------------------------------------------
+# Cloud Build context bucket
+# ---------------------------------------------------------------------------
+# Sockerless backend's runtime image-build path uploads the build
+# context as a tarball to this bucket; Cloud Build downloads it,
+# builds the image (per-arch + manifest list), pushes to AR. This
+# bucket is the GCP analogue of the AWS lambda module's
+# `aws_s3_bucket.build_context`. Lifecycle policy mirrors AWS:
+# build contexts are single-use, expire after 1 day.
+#
+# The dispatcher passes this bucket name on the runner Cloud Run Job
+# as `SOCKERLESS_GCP_BUILD_BUCKET` (required env var; bootstrap.sh
+# fails loudly if missing).
+
+resource "google_storage_bucket" "build_context" {
+  project                     = var.project_id
+  name                        = "${local.name_prefix}-build-context"
+  location                    = var.gcs_location
+  uniform_bucket_level_access = true
+  labels                      = local.common_labels
+  force_destroy               = true
+
+  lifecycle_rule {
+    condition {
+      age = 1
     }
     action {
       type = "Delete"
@@ -280,11 +330,56 @@ resource "google_project_iam_member" "runner_dns_admin" {
   member  = "serviceAccount:${google_service_account.runner.email}"
 }
 
-# roles/artifactregistry.reader - Pull images from Artifact Registry
-resource "google_artifact_registry_repository_iam_member" "runner_ar_reader" {
+# roles/artifactregistry.writer - Push runtime-built images to AR.
+# Required because the in-image sockerless backend runs `docker build`
+# at runtime via Cloud Build and pushes to AR (per-arch + manifest list).
+resource "google_artifact_registry_repository_iam_member" "runner_ar_writer" {
   project    = var.project_id
   location   = google_artifact_registry_repository.main.location
   repository = google_artifact_registry_repository.main.repository_id
-  role       = "roles/artifactregistry.reader"
+  role       = "roles/artifactregistry.writer"
   member     = "serviceAccount:${google_service_account.runner.email}"
+}
+
+# roles/cloudbuild.builds.editor - Submit Cloud Build jobs from the
+# in-image sockerless backend (`gcpcommon.GCPBuildService.Build`).
+resource "google_project_iam_member" "runner_cloudbuild_editor" {
+  project = var.project_id
+  role    = "roles/cloudbuild.builds.editor"
+  member  = "serviceAccount:${google_service_account.runner.email}"
+}
+
+# roles/run.admin - Create / start / delete Cloud Run Jobs at runtime
+# (the in-image sockerless cloudrun backend dispatches sub-tasks as
+# Cloud Run Jobs).
+resource "google_project_iam_member" "runner_run_admin" {
+  project = var.project_id
+  role    = "roles/run.admin"
+  member  = "serviceAccount:${google_service_account.runner.email}"
+}
+
+# roles/iam.serviceAccountUser - Allow the runner SA to act as itself
+# when creating Cloud Run Jobs that run under the same SA. Required
+# by the Cloud Run + Cloud Build APIs whenever a service is created
+# that runs as a particular SA.
+resource "google_service_account_iam_member" "runner_act_as_self" {
+  service_account_id = google_service_account.runner.id
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.runner.email}"
+}
+
+# roles/storage.admin (scoped to build_context bucket) - Upload build
+# contexts; Cloud Build downloads them.
+resource "google_storage_bucket_iam_member" "runner_build_bucket_admin" {
+  bucket = google_storage_bucket.build_context.name
+  role   = "roles/storage.admin"
+  member = "serviceAccount:${google_service_account.runner.email}"
+}
+
+# roles/logging.viewer - Read sub-task logs back to surface them via
+# `docker logs` on the in-image backend.
+resource "google_project_iam_member" "runner_logging_viewer" {
+  project = var.project_id
+  role    = "roles/logging.viewer"
+  member  = "serviceAccount:${google_service_account.runner.email}"
 }

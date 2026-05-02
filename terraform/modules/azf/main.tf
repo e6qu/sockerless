@@ -175,12 +175,44 @@ resource "azurerm_role_assignment" "acr_pull" {
   principal_id         = azurerm_user_assigned_identity.main.principal_id
 }
 
+# AcrPush — allow the in-image sockerless backend to push runtime
+# image builds (per-arch + manifest list) produced by ACR Tasks.
+resource "azurerm_role_assignment" "acr_push" {
+  scope                = azurerm_container_registry.main.id
+  role_definition_name = "AcrPush"
+  principal_id         = azurerm_user_assigned_identity.main.principal_id
+}
+
+# Contributor on the ACR — required to submit ACR Tasks (the
+# sockerless-sanctioned image builder for Azure, analogous to
+# AWS CodeBuild and GCP Cloud Build).
+resource "azurerm_role_assignment" "acr_contributor" {
+  scope                = azurerm_container_registry.main.id
+  role_definition_name = "Contributor"
+  principal_id         = azurerm_user_assigned_identity.main.principal_id
+}
+
 # Storage Blob Data Contributor — allow the managed identity to access
 # the storage account used by Azure Functions runtime
 resource "azurerm_role_assignment" "storage_blob_contributor" {
   scope                = azurerm_storage_account.main.id
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = azurerm_user_assigned_identity.main.principal_id
+}
+
+# ACR cache rule for Docker Hub — Azure analogue of the GCP
+# `docker-hub` Artifact Registry remote-proxy. Sockerless rewrites
+# `docker.io/library/alpine:latest` to
+# `<acr>.azurecr.io/docker-hub/library/alpine:latest`. Required for
+# AZF sub-task containers that reference any Docker Hub base image.
+#
+# Cache rules require Standard or Premium ACR SKU.
+resource "azurerm_container_registry_cache_rule" "docker_hub" {
+  count                 = var.create_docker_hub_cache_rule ? 1 : 0
+  name                  = "docker-hub"
+  container_registry_id = azurerm_container_registry.main.id
+  target_repo           = "docker-hub/*"
+  source_repo           = "docker.io/*"
 }
 
 # Monitoring Reader — allow the managed identity to read monitoring data

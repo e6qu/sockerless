@@ -29,3 +29,8 @@ output "service_account_email" {
   description = "Email of the service account for Cloud Functions"
   value       = google_service_account.main.email
 }
+
+output "build_context_bucket" {
+  description = "Set as SOCKERLESS_GCP_BUILD_BUCKET on any sockerless GCP backend that needs runtime image builds."
+  value       = google_storage_bucket.build_context.name
+}

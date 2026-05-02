@@ -23,6 +23,11 @@
 #                                    runner-task secret)
 set -euo pipefail
 
+# Required env (no fallbacks, no optional vars — fail loudly):
+: "${SOCKERLESS_GCR_PROJECT:?SOCKERLESS_GCR_PROJECT is required (set by github-runner-dispatcher-gcp from the gcp_project label config)}"
+: "${SOCKERLESS_GCR_REGION:?SOCKERLESS_GCR_REGION is required (set by github-runner-dispatcher-gcp from the gcp_region label config)}"
+: "${SOCKERLESS_GCP_BUILD_BUCKET:?SOCKERLESS_GCP_BUILD_BUCKET is required (set by github-runner-dispatcher-gcp from the build_bucket label config)}"
+
 # Sockerless backend in background. -log-level info keeps CloudWatch /
 # CloudLogging output manageable.
 nohup /usr/local/bin/sockerless-backend-cloudrun -addr :3375 -log-level info \

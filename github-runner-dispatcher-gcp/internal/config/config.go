@@ -31,12 +31,16 @@ import (
 )
 
 // Label maps a runs-on label to a GCP project + region + runner image.
+//
+// All fields required (no optional vars, no fallbacks per project
+// rule) — fail-loudly at config-load time if any are missing.
 type Label struct {
 	Name           string `toml:"name"`
 	Project        string `toml:"gcp_project"`
 	Region         string `toml:"gcp_region"`
 	Image          string `toml:"image"`
 	ServiceAccount string `toml:"service_account"`
+	BuildBucket    string `toml:"build_bucket"` // GCS bucket for Cloud Build context (sockerless backend uses this for `docker build`)
 }
 
 // Config is the on-disk dispatcher config.
@@ -78,6 +82,12 @@ func Load(path string) (Config, error) {
 		}
 		if l.Image == "" {
 			return Config{}, fmt.Errorf("label %q: image is required", l.Name)
+		}
+		if l.ServiceAccount == "" {
+			return Config{}, fmt.Errorf("label %q: service_account is required", l.Name)
+		}
+		if l.BuildBucket == "" {
+			return Config{}, fmt.Errorf("label %q: build_bucket is required (GCS bucket for sockerless backend's docker build context uploads)", l.Name)
 		}
 	}
 	return cfg, nil

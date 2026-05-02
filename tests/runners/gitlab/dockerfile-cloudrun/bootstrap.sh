@@ -21,6 +21,11 @@
 #   SOCKERLESS_GCP_BUILD_BUCKET, GOOGLE_APPLICATION_CREDENTIALS
 set -euo pipefail
 
+# Required env (no fallbacks, no optional vars — fail loudly):
+: "${SOCKERLESS_GCR_PROJECT:?SOCKERLESS_GCR_PROJECT is required (the operator-side docker run -e config sets this)}"
+: "${SOCKERLESS_GCR_REGION:?SOCKERLESS_GCR_REGION is required (the operator-side docker run -e config sets this)}"
+: "${SOCKERLESS_GCP_BUILD_BUCKET:?SOCKERLESS_GCP_BUILD_BUCKET is required (the operator-side docker run -e config sets this)}"
+
 nohup /usr/local/bin/sockerless-backend-cloudrun -addr :3375 -log-level info \
     >/tmp/sockerless-backend.log 2>&1 &
 

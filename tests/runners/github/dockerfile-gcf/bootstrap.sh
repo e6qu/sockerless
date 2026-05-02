@@ -6,6 +6,11 @@
 # dockerfile-cloudrun/bootstrap.sh, only the backend binary differs.
 set -euo pipefail
 
+# Required env (no fallbacks, no optional vars — fail loudly):
+: "${SOCKERLESS_GCF_PROJECT:?SOCKERLESS_GCF_PROJECT is required (set by github-runner-dispatcher-gcp from the gcp_project label config)}"
+: "${SOCKERLESS_GCF_REGION:?SOCKERLESS_GCF_REGION is required (set by github-runner-dispatcher-gcp from the gcp_region label config)}"
+: "${SOCKERLESS_GCP_BUILD_BUCKET:?SOCKERLESS_GCP_BUILD_BUCKET is required (set by github-runner-dispatcher-gcp from the build_bucket label config)}"
+
 nohup /usr/local/bin/sockerless-backend-gcf -addr :3376 -log-level info \
     >/tmp/sockerless-backend.log 2>&1 &
 SOCKERLESS_PID=$!

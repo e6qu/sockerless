@@ -265,11 +265,45 @@ resource "azurerm_role_assignment" "identity_acr_pull" {
   principal_id         = azurerm_user_assigned_identity.this.principal_id
 }
 
+# AcrPush on the ACR — allows the sockerless backend to push runtime
+# image builds (per-arch + manifest list) produced by ACR Tasks.
+resource "azurerm_role_assignment" "identity_acr_push" {
+  scope                = azurerm_container_registry.this.id
+  role_definition_name = "AcrPush"
+  principal_id         = azurerm_user_assigned_identity.this.principal_id
+}
+
+# Contributor on the ACR — required to submit ACR Tasks (the
+# sockerless-sanctioned image builder for Azure, analogous to
+# AWS CodeBuild and GCP Cloud Build).
+resource "azurerm_role_assignment" "identity_acr_contributor" {
+  scope                = azurerm_container_registry.this.id
+  role_definition_name = "Contributor"
+  principal_id         = azurerm_user_assigned_identity.this.principal_id
+}
+
 # Monitoring Reader on the resource group — allows reading logs and metrics
 resource "azurerm_role_assignment" "identity_monitoring_reader" {
   scope                = local.resource_group_id
   role_definition_name = "Monitoring Reader"
   principal_id         = azurerm_user_assigned_identity.this.principal_id
+}
+
+# ACR cache rule for Docker Hub — Azure analogue of the GCP
+# `docker-hub` Artifact Registry remote-proxy. Sockerless rewrites
+# `docker.io/library/alpine:latest` to
+# `<acr>.azurecr.io/docker-hub/library/alpine:latest`; the first pull
+# populates the cache. Required for ACA + AZF sub-task containers
+# that reference any Docker Hub base image (alpine, ubuntu, etc.).
+#
+# `cache_rule` requires the registry to be on a Standard or Premium
+# SKU — Basic SKU users will see a `400 BadRequest` here.
+resource "azurerm_container_registry_cache_rule" "docker_hub" {
+  count                 = var.create_docker_hub_cache_rule ? 1 : 0
+  name                  = "docker-hub"
+  container_registry_id = azurerm_container_registry.this.id
+  target_repo           = "docker-hub/*"
+  source_repo           = "docker.io/*"
 }
 
 # ---------------------------------------------------------------------------

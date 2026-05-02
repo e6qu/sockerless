@@ -69,3 +69,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "manage_docker_hub_pull_through_cache" {
+  description = "Whether this module owns the docker-hub ECR pull-through cache rule. Pull-through cache rules are singleton per (account, region, prefix); set to false on the lambda module when the ecs module in the same account+region already manages it."
+  type        = bool
+  default     = true
+}

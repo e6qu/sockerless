@@ -39,21 +39,23 @@ const (
 	LabelManagedVal = "github-runner-dispatcher-gcp"
 )
 
-// Request is one spawn directive.
+// Request is one spawn directive. Every field required (no fallbacks
+// per project rule) — caller validates before invoking Spawn.
 type Request struct {
-	Project    string // GCP project ID
-	Region     string // Cloud Run region (e.g. "us-central1")
-	Image      string // runner image URI (Artifact Registry)
-	RegToken   string // GitHub ephemeral runner registration token
-	Repo       string // owner/repo for runner registration
-	RunnerName string // unique name; logs / Actions UI uses it
-	Labels     []string
-	JobID      int64 // GitHub workflow_job ID — written to LabelJobID for restart recovery
-	// ServiceAccount is the email of the GCP service account the Job
-	// execution runs as. Required: workflow_jobs need cloud creds to
-	// pull from AR + write to GCS, etc. Defaults to the project's
-	// default Compute service account when empty.
-	ServiceAccount string
+	Project        string // GCP project ID
+	Region         string // Cloud Run region (e.g. "us-central1")
+	Image          string // runner image URI (Artifact Registry)
+	RegToken       string // GitHub ephemeral runner registration token
+	Repo           string // owner/repo for runner registration
+	RunnerName     string // unique name; logs / Actions UI uses it
+	Labels         []string
+	JobID          int64  // GitHub workflow_job ID — written to LabelJobID for restart recovery
+	ServiceAccount string // GCP service account email (Job execution identity)
+	BuildBucket    string // GCS bucket for sockerless backend's `docker build` context uploads
+	// BackendKind selects which sockerless backend the runner image
+	// bakes — drives which SOCKERLESS_<KIND>_* env vars get set on
+	// the Job. "cloudrun" or "gcf".
+	BackendKind string
 }
 
 // Spawn calls Cloud Run Jobs CreateJob then RunJob. Returns the Job
@@ -88,6 +90,26 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 	jobID := jobIDFromRunnerName(req.RunnerName, req.JobID)
 	fullName := fmt.Sprintf("%s/jobs/%s", parent, jobID)
 
+	if req.BuildBucket == "" {
+		return "", fmt.Errorf("BuildBucket required (sockerless backend's docker build context bucket)")
+	}
+	if req.BackendKind == "" {
+		return "", fmt.Errorf("BackendKind required (\"cloudrun\" or \"gcf\")")
+	}
+
+	// Sockerless backend env vars — required (fail-loudly contract).
+	// BackendKind selects which prefix (SOCKERLESS_GCR_* for cloudrun,
+	// SOCKERLESS_GCF_* for gcf) the in-image backend reads.
+	var prefix string
+	switch req.BackendKind {
+	case "cloudrun":
+		prefix = "SOCKERLESS_GCR_"
+	case "gcf":
+		prefix = "SOCKERLESS_GCF_"
+	default:
+		return "", fmt.Errorf("unknown BackendKind %q (want \"cloudrun\" or \"gcf\")", req.BackendKind)
+	}
+
 	containerCfg := &runpb.Container{
 		Image: req.Image,
 		Env: []*runpb.EnvVar{
@@ -95,6 +117,9 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 			{Name: "RUNNER_REPO", Values: &runpb.EnvVar_Value{Value: req.Repo}},
 			{Name: "RUNNER_NAME", Values: &runpb.EnvVar_Value{Value: req.RunnerName}},
 			{Name: "RUNNER_LABELS", Values: &runpb.EnvVar_Value{Value: strings.Join(req.Labels, ",")}},
+			{Name: prefix + "PROJECT", Values: &runpb.EnvVar_Value{Value: req.Project}},
+			{Name: prefix + "REGION", Values: &runpb.EnvVar_Value{Value: req.Region}},
+			{Name: "SOCKERLESS_GCP_BUILD_BUCKET", Values: &runpb.EnvVar_Value{Value: req.BuildBucket}},
 		},
 	}
 

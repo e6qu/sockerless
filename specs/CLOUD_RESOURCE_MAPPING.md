@@ -783,6 +783,21 @@ The "no fakes / no fallbacks" principle treats every functional gap as a bug by 
 
 **Runner-image build hookup**. `tests/runners/{github,gitlab}/dockerfile-{cloudrun,gcf}/Makefile` calls each per-arch build separately (`make build-amd64`, `make build-arm64`), pushes both, then `docker manifest create` + `docker manifest push` to land the manifest list. The Makefile uses the docker CLI for these (since runner images are built outside the running sockerless backend), but the in-cloud build path produces equivalent results via the sanctioned cloud builder + `AssembleMultiArchManifest`.
 
+**Terraform resources that back the builder pipeline**. Every sanctioned builder requires concrete cloud resources and IAM bindings; these are provisioned by the terraform modules under `terraform/modules/<backend>/`. Each module owns the resources its backend needs at runtime — no resource is operator-supplied or fallback-discovered.
+
+| Cloud | Terraform module | Build context store | Builder service | Pull-through cache | Runner SA / identity roles |
+|---|---|---|---|---|---|
+| AWS | `terraform/modules/lambda` (+ `ecs`) | `aws_s3_bucket.build_context` (`<prefix>-build-context`, 1-day expiry) | `aws_codebuild_project.image_builder` (privileged_mode, buildx with `oci-mediatypes=false`) | `aws_ecr_pull_through_cache_rule.docker_hub` (`docker-hub` → `registry-1.docker.io`); singleton per (account, region, prefix) — toggle `manage_docker_hub_pull_through_cache` to false on whichever module isn't authoritative | CodeBuild service role: S3 read on context bucket, ECR push/pull, CloudWatch Logs write |
+| GCP | `terraform/modules/cloudrun` (+ `gcf`) | `google_storage_bucket.build_context` (`<prefix>-build-context`, 1-day expiry) | `google_project_service.cloudbuild` enabled; runtime calls Cloud Build via `gcp-common.GCPBuildService` | `google_artifact_registry_repository.docker_hub` (REMOTE_REPOSITORY → DOCKER_HUB) | runner SA: `artifactregistry.writer`, `cloudbuild.builds.editor`, `run.admin` (cloudrun) / `cloudfunctions.developer` + `run.admin` (gcf), `iam.serviceAccountUser` on self, `storage.admin` on build_context bucket, `logging.viewer` |
+| Azure | `terraform/modules/aca` (+ `azf`) | ACR Tasks streams the context inline (no separate bucket) | `azurerm_container_registry.this` + ACR Tasks (runtime invocation; no resource is needed at-rest beyond the registry) | `azurerm_container_registry_cache_rule.docker_hub` (`docker-hub/*` ← `docker.io/*`); requires Standard/Premium SKU — gated by `create_docker_hub_cache_rule` | managed identity: `AcrPull`, `AcrPush`, `Contributor` on ACR (for ACR Tasks) |
+
+Outputs the dispatcher + bootstrap consume:
+- AWS: `output "build_context_bucket"` → `SOCKERLESS_BUILD_BUCKET`; `output "codebuild_project_name"` → `SOCKERLESS_CODEBUILD_PROJECT`.
+- GCP: `output "build_context_bucket"` → `SOCKERLESS_GCP_BUILD_BUCKET`; project + region → `SOCKERLESS_{GCR,GCF}_{PROJECT,REGION}`.
+- Azure: ACR login server + identity client ID → `SOCKERLESS_ACR_LOGIN_SERVER` + `SOCKERLESS_AZURE_CLIENT_ID`.
+
+The dispatcher (`github-runner-dispatcher-<cloud>`) sets these env vars on the runner Job container at spawn time. The runner image's `bootstrap.sh` validates them with `${VAR:?required}` and exits non-zero if any are missing — fail-loudly, no fallbacks, no auto-discovery.
+
 ## Per-cloud github-runner-dispatcher (Phase 110a / 122 / 122b)
 
 Sockerless ships three top-level Go modules that turn queued GitHub Actions workflow_jobs into per-job runner containers, one variant per cloud control plane:

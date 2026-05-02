@@ -6,6 +6,26 @@ See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for
 
 This file keeps narrative / "why we did it" context that doesn't live in BUGS.md or git log. Per-bug detail belongs in [BUGS.md](BUGS.md) — don't duplicate it here.
 
+## Phase 122c — Sockerless-sanctioned cloud builders + terraform-managed dispatcher resources (in flight 2026-05-02)
+
+Following the Phase 122 dispatchers (GCP + Azure), the multi-arch builder pipeline was made symmetric across all three clouds and the terraform modules were extended to provision the cloud resources the dispatchers + bootstrap reference at runtime.
+
+- **Universal multi-arch manifest assembly** in `backends/core/multiarch.go` — single OCI distribution v2 implementation that fetches each per-arch manifest's digest+size+platform via `GET /v2/<repo>/manifests/<tag>` + `GET /v2/<repo>/blobs/<config-digest>`, builds `application/vnd.docker.distribution.manifest.list.v2+json`, and PUTs it. Each per-cloud builder supplies a `tokenForRepo(repo) (string, error)` callback so the helper signs requests with the cloud-appropriate bearer (ECR basic-base64 / GAR ADC / ACR AAD).
+- **Per-cloud `AssembleMultiArchManifest`** added to `core.CloudBuildService` and implemented in `aws-common.CodeBuildService` (ECR auth, strips `Basic ` prefix to use as Bearer), `gcp-common.GCPBuildService` (`google.FindDefaultCredentials` + `cloud-platform` scope), and `azure-common.ACRBuildService` (`azcore.TokenCredential.GetToken` + `https://management.azure.com/.default` scope).
+- **Bash bootstrap fail-loudly hardening** (BUG-907) — all 4 runner image bootstrap.sh files now validate every required env (`SOCKERLESS_GCR_PROJECT`, `SOCKERLESS_GCR_REGION`, `SOCKERLESS_GCP_BUILD_BUCKET`, etc.) with `: "${VAR:?<msg>}"`. No fallbacks, no auto-discovery; missing env crashes the runner before it tries to register with GitHub. Apostrophe in original error messages caused bash to mis-lex the embedded message; rephrased to remove apostrophes.
+- **Dispatcher config required-fields** — `github-runner-dispatcher-gcp/internal/config/config.go` rejects label entries missing `gcp_project`, `gcp_region`, `image`, `service_account`, or `build_bucket`. Spawner derives `BackendKind` from the matched label name (`sockerless-cloudrun` → `cloudrun`, `sockerless-gcf` → `gcf`) and stamps `SOCKERLESS_<GCR|GCF>_{PROJECT,REGION}` + `SOCKERLESS_GCP_BUILD_BUCKET` on the Cloud Run Job container env.
+- **Terraform — GCP modules** (`terraform/modules/{cloudrun,gcf}/main.tf`):
+  - `google_storage_bucket.build_context` — `<prefix>-build-context` / `<prefix>-gcf-build-context` (1-day lifecycle expiry, mirrors the AWS lambda module's `aws_s3_bucket.build_context`); name surfaced as `output "build_context_bucket"`.
+  - `google_project_service.cloudbuild` + `iam` enabled.
+  - Runner SA roles extended: `artifactregistry.writer` (push runtime-built images), `cloudbuild.builds.editor` (submit builds), `run.admin` (cloudrun) / `cloudfunctions.developer` + `run.admin` (gcf) for dispatching sub-tasks, `iam.serviceAccountUser` on self (required when creating Cloud Run / Cloud Functions that run as the same SA), `storage.admin` on build_context, `logging.viewer` (read sub-task logs back).
+- **Terraform — AWS modules** (`terraform/modules/{lambda,ecs}/main.tf`):
+  - `aws_ecr_pull_through_cache_rule.docker_hub` — `docker-hub` prefix → `registry-1.docker.io`. AWS analogue of the GCP `docker-hub` AR remote-proxy. Sockerless rewrites `docker.io/library/<x>:<t>` to `<account>.dkr.ecr.<region>.amazonaws.com/docker-hub/library/<x>:<t>` and the first pull populates the cache.
+  - Pull-through cache rules are singleton per (account, region, prefix); both modules expose `manage_docker_hub_pull_through_cache` (default true) so the operator picks the authoritative module when both are deployed in the same account+region.
+- **Terraform — Azure modules** (`terraform/modules/{aca,azf}/main.tf`):
+  - `azurerm_container_registry_cache_rule.docker_hub` — `docker-hub/*` ← `docker.io/*`. Azure analogue of the GCP/AWS pull-through paths. Requires Standard/Premium ACR SKU; gated by `create_docker_hub_cache_rule` (default false because the existing modules ship with Basic SKU).
+  - Managed identity extended with `AcrPush` (push runtime-built images) + `Contributor` on ACR (required to submit ACR Tasks — the sockerless-sanctioned Azure builder).
+- **Specs updated** — `specs/CLOUD_RESOURCE_MAPPING.md` § "Sockerless-sanctioned cloud image builders" gained a "Terraform resources that back the builder pipeline" subsection mapping each backend's terraform module → resources → dispatcher env-var consumers. `terraform validate` clean across all 6 modules.
+
 ## Phase 121 — Cloud-faithful GCP simulator hardening (CLOSED 2026-05-02)
 
 PR #123 picked up Phase 118 code-complete but with the gcf integration tests deferred for "Phase 121" — the sim was missing too many real-cloud behaviours for the Phase 118 overlay-and-swap path to round-trip. Closed via a bug chain that surfaced layer by layer in CI:
