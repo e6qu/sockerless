@@ -342,6 +342,27 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	// Verify the backend resolved the image with its real ENTRYPOINT
+	// — without the entrypoint baked into the overlay, the bootstrap
+	// would run user CMD as a shell command and fail. Surface this
+	// upfront with a clear error rather than letting tests fail with
+	// an opaque "exit code 1".
+	step("verify backend resolved eval-arithmetic ENTRYPOINT")
+	verifyCtx, verifyCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer verifyCancel()
+	inspected, _, inspErr := dockerClient.ImageInspectWithRaw(verifyCtx, evalImageName)
+	if inspErr != nil {
+		fmt.Fprintf(os.Stderr, "[testmain] preload verification failed: backend can't inspect %s: %v\n", evalImageName, inspErr)
+		cleanup()
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "[testmain] backend image inspect: id=%s entrypoint=%v cmd=%v\n", inspected.ID, inspected.Config.Entrypoint, inspected.Config.Cmd)
+	if len(inspected.Config.Entrypoint) == 0 {
+		fmt.Fprintf(os.Stderr, "[testmain] preload verification failed: backend has no ENTRYPOINT for %s (config=%+v)\n", evalImageName, inspected.Config)
+		cleanup()
+		os.Exit(1)
+	}
+
 	step("entering m.Run() — TestMain setup complete")
 	code := m.Run()
 	cleanup()
