@@ -77,6 +77,18 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic image: %v\n%s", err, out)
 		os.Exit(1)
 	}
+	// Also tag the image with the AR-prefixed name the gcf backend's
+	// gcpcommon.ResolveGCPImageURI rewrites unqualified Docker Hub
+	// references to. Cloud Build's `FROM` (executed via the sim's
+	// build executor running real `docker build` against the local
+	// daemon) finds the image in the local cache without pulling
+	// from the AR URL — production deployments would have the image
+	// already in AR; the local tag is the equivalent for tests.
+	arTag := "us-central1-docker.pkg.dev/sockerless-test/docker-hub/library/" + evalImageName
+	if out, err := exec.Command("docker", "tag", evalImageName, arTag).CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to AR-tag eval-arithmetic image: %v\n%s", err, out)
+		os.Exit(1)
+	}
 
 	// Build simulator
 	simDir := repoRoot + "/simulators/gcp"
