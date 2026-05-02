@@ -40,11 +40,6 @@ until curl -sfo /dev/null http://localhost:3375/_ping; do
 done
 echo "bootstrap: sockerless-backend-cloudrun ready"
 
-# BUG-913: gitlab-runner crashes with `chdir: no such file or directory`
-# if --working-directory doesn't exist. Cloud Run gives us an empty
-# rootfs (no host bind mounts); create the work dir up-front.
-mkdir -p /tmp/runner-work
-
 # Cloud Run $PORT healthcheck. Cloud Run requires the container to
 # bind $PORT (default 8080). socat proxies $PORT → sockerless backend
 # on :3375 so /_ping etc. answer the healthchecks. Without this the
@@ -65,8 +60,7 @@ gitlab-runner register \
     --executor docker \
     --docker-image alpine:latest \
     --docker-host "tcp://localhost:3375" \
-    --docker-pull-policy if-not-present \
-    --docker-disable-cache=true
+    --docker-pull-policy if-not-present
 
 # Long-lived polling loop. gitlab-runner re-execs itself on SIGHUP for
 # config reloads; SIGTERM stops gracefully.
