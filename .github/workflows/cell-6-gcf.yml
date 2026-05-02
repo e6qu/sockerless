@@ -108,3 +108,5 @@ jobs:
           got4=$(./eval-arithmetic '2 * (3 + 4) - 1'); test "$got4" = "13" || { echo "expected 13 got $got4"; exit 1; }
           got5=$(./eval-arithmetic '1.5 + 2.5 * 2'); test "$got5" = "6.5" || { echo "expected 6.5 got $got5"; exit 1; }
           echo "all arithmetic checks pass"
+
+# trigger: 2026-05-03 BUG-909 cloudrun fix
