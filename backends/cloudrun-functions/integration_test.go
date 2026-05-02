@@ -1,6 +1,7 @@
 package gcf
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -114,6 +115,16 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	fmt.Printf("[sim] simulator-gcp is ready at %s\n", simURL)
+
+	// Pre-create the GCS bucket the backend uses for Cloud Build context
+	// uploads. Real GCS doesn't auto-create buckets; the backend doesn't
+	// either (operator infrastructure — terraform creates the bucket in
+	// production deployments). Tests stand in for terraform here.
+	if err := createGCSBucket(simURL, "sim-project", "sim-bucket"); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create sim-bucket: %v\n", err)
+		cleanup()
+		os.Exit(1)
+	}
 
 	// Build backend
 	backendDir := repoRoot + "/backends/cloudrun-functions"
@@ -625,4 +636,29 @@ func writeFakeServiceAccountJSON() (string, error) {
 		return "", err
 	}
 	return f.Name(), nil
+}
+
+// createGCSBucket POSTs to the sim's GCS bucket-create endpoint. Real
+// GCS uses the same shape: POST /storage/v1/b?project=<id> with a
+// {name: "<bucket>"} body. The sim accepts this form too (sim/gcp/gcs.go).
+// Stands in for terraform in integration tests; production operators
+// create the bucket as infrastructure before launching the backend.
+func createGCSBucket(simURL, project, bucket string) error {
+	body := []byte(fmt.Sprintf(`{"name":%q}`, bucket))
+	url := fmt.Sprintf("%s/storage/v1/b?project=%s", simURL, project)
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("create bucket %s: %d: %s", bucket, resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	return nil
 }
