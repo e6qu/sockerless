@@ -40,7 +40,11 @@ gitlab-runner register \
     --executor docker \
     --docker-image alpine:latest \
     --docker-host "tcp://localhost:3376" \
-    --docker-pull-policy if-not-present \
-    --docker-disable-cache=true
+    --docker-pull-policy if-not-present
+
+# BUG-915: post-edit to ensure disable_cache=true (default cache
+# volume name exceeds GCS 63-char limit).
+sed -i 's/disable_cache = false/disable_cache = true/' /etc/gitlab-runner/config.toml
+cat /etc/gitlab-runner/config.toml
 
 exec gitlab-runner run --config /etc/gitlab-runner/config.toml --working-directory /tmp/runner-work

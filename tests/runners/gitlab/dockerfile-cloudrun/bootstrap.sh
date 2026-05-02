@@ -65,8 +65,14 @@ gitlab-runner register \
     --executor docker \
     --docker-image alpine:latest \
     --docker-host "tcp://localhost:3375" \
-    --docker-pull-policy if-not-present \
-    --docker-disable-cache=true
+    --docker-pull-policy if-not-present
+
+# BUG-915: --docker-disable-cache CLI flag doesn't always propagate
+# to config.toml. Post-edit to ensure disable_cache=true (the default
+# gitlab-runner cache volume name exceeds GCS's 63-char bucket limit).
+sed -i 's/disable_cache = false/disable_cache = true/' /etc/gitlab-runner/config.toml
+echo "bootstrap: gitlab-runner config.toml:"
+cat /etc/gitlab-runner/config.toml
 
 # Long-lived polling loop. gitlab-runner re-execs itself on SIGHUP for
 # config reloads; SIGTERM stops gracefully.
