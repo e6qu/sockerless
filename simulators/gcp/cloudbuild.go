@@ -320,9 +320,29 @@ func extractTarball(data []byte, dir string) error {
 // Args are the docker sub-command args (e.g. ["build","-t","img","."]).
 // secretValues map env-var-name → resolved secret payload; these are
 // added to the subprocess env when the step's secretEnv references them.
+//
+// `docker push` semantics: real Cloud Build pushes the built image to
+// the target registry (Artifact Registry / Container Registry / etc.).
+// The sim's local docker daemon IS the sim's registry — the build step
+// already tagged the image with the target URL via `docker build -t
+// <URL>`, and sim.StartContainerSync uses that local tag directly when
+// the function is invoked. Push is therefore confirmed-local: verify
+// the image exists in the daemon and exit 0. No network egress to real
+// AR/GCR (which would need real GCP credentials).
 func runDockerStep(ctx context.Context, workDir string, step *BuildStep, secretValues map[string]string) error {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return fmt.Errorf("docker CLI not available: %w", err)
+	}
+	if len(step.Args) >= 2 && step.Args[0] == "push" {
+		target := step.Args[1]
+		// Verify the local daemon has the tag the build step produced.
+		check := exec.CommandContext(ctx, "docker", "image", "inspect", target)
+		check.Env = os.Environ()
+		if out, err := check.CombinedOutput(); err != nil {
+			return fmt.Errorf("docker push %s (sim local-only): image not present in local daemon: %v: %s",
+				target, err, strings.TrimSpace(string(out)))
+		}
+		return nil
 	}
 	cmd := exec.CommandContext(ctx, "docker", step.Args...)
 	cmd.Dir = workDir
