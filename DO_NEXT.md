@@ -2,6 +2,25 @@
 
 Resume pointer. Updated after every task. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md); bug log in [BUGS.md](BUGS.md); runner wiring in [docs/RUNNERS.md](docs/RUNNERS.md).
 
+## Resume pointer (2026-05-03 v2 — late session)
+
+**Current state**: Cells 5/6/7/8 all in flight live with multiple iterations. Closed live-only bugs BUG-907..916. Cells 7+8 currently failing on **BUG-917 OPEN** (cloudrun backend's `ContainerStart` can't find Cloud Run Job for permission containers — `Error response from daemon: No such job: <container-id>`). gitlab-runner spawns short-lived permission containers (chown the volume mount); cloudrun backend creates the Cloud Run Job in ContainerCreate, returns container ID, but ContainerStart can't find the Job for that ID. Likely the dispatcher's cleanup loop OR auto-remove path deletes the Job between Create + Start. **Investigate**: `backends/cloudrun/backend_impl.go::ContainerStart` lookup path (`PendingCreates` vs `CloudState`); `github-runner-dispatcher-gcp/internal/spawner/spawner.go::Cleanup` (does it filter only managed-by-label, or sweep all?). Repro: re-fire cells 7 or 8 via a small commit on `gitlab-cell-{7,8}-test` branch + tail `gcloud logging read resource.type=cloud_run_revision resource.labels.service_name=gitlab-runner-cloudrun textPayload=~"No such job"`.
+
+**Live infra state**:
+- Dispatcher rev `00006-j4v` — BUG-908/911/912 fixes deployed
+- Cloudrun runner image `runner:cloudrun-amd64` digest `f43b200a` — BUG-907/909/910 fixes
+- GCF runner image `runner:gcf-amd64` digest `e0d523dd` — BUG-907/909/910 fixes
+- gitlab-runner-cloudrun rev `00006-kr9` — BUG-913/915 + (rebuilt with) BUG-916
+- gitlab-runner-gcf rev `00007-r8k` — same fixes
+- GCS bucket `sockerless-live-46x3zg4imo-runner-workspace` — runner SA storage.admin
+- Secret Manager: `github-pat`, `gitlab-pat`, `gitlab-runner-token-cloudrun`, `gitlab-runner-token-gcf` — all granted to runner SA
+
+**Branches**:
+- `phase-118-faas-pods` — PR #123 open, BUG-907..916 fixes committed (commits `bc4bf13` `e8450af` `0375a2e` `351c504` `8b202c3` `98b34c5` `fcc6b8a` `ca25405` `b554654` `abed7e1` `ee18898`).
+- `cell-workflows-on-main` — PR #124 (throwaway, do NOT merge), drives cell 5+6 firing.
+- `gitlab-cell-7-test` (branch only on origin-gitlab) — drives cell 7 pipeline.
+- `gitlab-cell-8-test` (branch only on origin-gitlab) — drives cell 8 pipeline.
+
 ## Resume pointer (2026-05-03)
 
 **PR #123** (`phase-118-faas-pods`): all standard CI green. Cells 5+6 in flight live; cells 7+8 not started. Goal: all four green BEFORE merging #123.
