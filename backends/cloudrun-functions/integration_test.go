@@ -120,8 +120,8 @@ func TestMain(m *testing.M) {
 	// uploads. Real GCS doesn't auto-create buckets; the backend doesn't
 	// either (operator infrastructure — terraform creates the bucket in
 	// production deployments). Tests stand in for terraform here.
-	if err := createGCSBucket(simURL, "sim-project", "sim-bucket"); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create sim-bucket: %v\n", err)
+	if err := createGCSBucket(simURL, "sockerless-test", "sockerless-test-build"); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create sockerless-test-build: %v\n", err)
 		cleanup()
 		os.Exit(1)
 	}
@@ -186,20 +186,27 @@ func TestMain(m *testing.M) {
 	backendAddr := fmt.Sprintf(":%d", backendPort)
 	fmt.Printf("[sim] Starting sockerless-backend-gcf on %s...\n", backendAddr)
 	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
+	// urlHost extracts host:port from http://host:port for STORAGE_EMULATOR_HOST.
+	storageHost := strings.TrimPrefix(simURL, "http://")
+	storageHost = strings.TrimPrefix(storageHost, "https://")
 	backendCmd.Env = append(os.Environ(),
 		"SOCKERLESS_ENDPOINT_URL="+simURL,
 		"SOCKERLESS_POLL_INTERVAL=500ms",
 		"SOCKERLESS_LOG_TIMEOUT=2s",
-		"SOCKERLESS_GCF_PROJECT=sim-project",
+		"SOCKERLESS_GCF_PROJECT=sockerless-test",
 		// Real Cloud Functions Gen2 requires a GCS bucket for the
-		// stub-Buildpacks-Go source archive; the sim's GCS handler
-		// holds the upload too, so the same bucket name works for both.
-		"SOCKERLESS_GCP_BUILD_BUCKET=sim-bucket",
+		// stub-Buildpacks-Go source archive.
+		"SOCKERLESS_GCP_BUILD_BUCKET=sockerless-test-build",
 		// idtoken.NewClient ADC source. Generated fresh per test run.
 		"GOOGLE_APPLICATION_CREDENTIALS="+saJSONPath,
 		// Path to the sockerless-gcf-bootstrap binary the backend stages
 		// into Cloud Build context tarballs (overlay image build).
 		"SOCKERLESS_GCF_BOOTSTRAP="+gcfBootstrapPath,
+		// Standard gcloud emulator convention. The cloud.google.com/go/storage
+		// SDK routes its requests at this host when the env var is set; this
+		// is what the backend's Cloud Build path uses to upload context
+		// tarballs. Real production deployments don't set this var.
+		"STORAGE_EMULATOR_HOST="+storageHost,
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
@@ -609,15 +616,15 @@ func writeFakeServiceAccountJSON() (string, error) {
 
 	sa := map[string]string{
 		"type":                        "service_account",
-		"project_id":                  "sim-project",
+		"project_id":                  "sockerless-test",
 		"private_key_id":              "sim-key",
 		"private_key":                 string(keyPEM),
-		"client_email":                "sim-runner@sim-project.iam.gserviceaccount.com",
+		"client_email":                "sockerless-runner@sockerless-test.iam.gserviceaccount.com",
 		"client_id":                   "111111111111111111111",
 		"auth_uri":                    "https://accounts.google.com/o/oauth2/auth",
 		"token_uri":                   "https://oauth2.googleapis.com/token",
 		"auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-		"client_x509_cert_url":        "https://www.googleapis.com/robot/v1/metadata/x509/sim-runner@sim-project.iam.gserviceaccount.com",
+		"client_x509_cert_url":        "https://www.googleapis.com/robot/v1/metadata/x509/sockerless-runner@sockerless-test.iam.gserviceaccount.com",
 		"universe_domain":             "googleapis.com",
 	}
 	body, err := json.Marshal(sa)
