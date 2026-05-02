@@ -15,7 +15,7 @@ ARG DOCKER_ARCH=x86_64
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       curl ca-certificates tar gzip jq sudo \
-      iproute2 git \
+      iproute2 git socat \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-${DOCKER_VERSION}.tgz" \

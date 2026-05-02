@@ -204,14 +204,16 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 		return "", fmt.Errorf("CreateJob %s wait: %w", fullName, err)
 	}
 
-	runOp, err := cli.RunJob(ctx, &runpb.RunJobRequest{Name: fullName})
-	if err != nil {
-		// Best-effort cleanup — leave the job orphaned rather than retry.
+	// BUG-912: do NOT runOp.Wait — the operation completes when the
+	// EXECUTION ends (which can take an hour for a CI pipeline), and
+	// blocking here serializes the dispatcher's poll loop. RunJob's
+	// own return is the synchronous "execution accepted" ack we need;
+	// state recovery picks up the job's terminal condition on the
+	// next poll cycle.
+	if _, err := cli.RunJob(ctx, &runpb.RunJobRequest{Name: fullName}); err != nil {
+		// Best-effort: leave the job orphaned rather than retry.
 		// State recovery sweep will catch it.
 		return fullName, fmt.Errorf("RunJob %s: %w", fullName, err)
-	}
-	if _, err := runOp.Wait(ctx); err != nil {
-		return fullName, fmt.Errorf("RunJob %s wait: %w", fullName, err)
 	}
 	return fullName, nil
 }

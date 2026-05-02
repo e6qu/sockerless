@@ -23,12 +23,17 @@ until curl -sfo /dev/null http://localhost:3376/_ping; do
 done
 echo "bootstrap: sockerless-backend-gcf ready"
 
+if [ -n "${PORT:-}" ]; then
+    nohup socat "TCP-LISTEN:${PORT},reuseaddr,fork" "TCP:127.0.0.1:3376" \
+        >/tmp/socat.log 2>&1 &
+    echo "bootstrap: socat \$PORT=${PORT} → sockerless-backend-gcf:3376"
+fi
+
 gitlab-runner register \
     --non-interactive \
     --url "${GITLAB_URL:-https://gitlab.com}" \
-    --registration-token "${GITLAB_RUNNER_TOKEN}" \
+    --token "${GITLAB_RUNNER_TOKEN}" \
     --name "${GITLAB_RUNNER_NAME:-$(hostname)}" \
-    --tag-list "${GITLAB_RUNNER_TAGS:-sockerless-gcf}" \
     --executor docker \
     --docker-image alpine:latest \
     --docker-host "tcp://localhost:3376" \
