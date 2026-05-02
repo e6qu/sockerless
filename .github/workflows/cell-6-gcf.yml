@@ -110,3 +110,5 @@ jobs:
           echo "all arithmetic checks pass"
 
 # trigger: 2026-05-03 BUG-909 cloudrun fix
+
+# trigger: 2026-05-03 BUG-909 gcf runner image rebuilt
