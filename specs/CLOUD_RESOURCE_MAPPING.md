@@ -760,6 +760,48 @@ The "no fakes / no fallbacks" principle treats every functional gap as a bug by 
 | `docker container export` | every backend without an exec path | Same constraint as `top` — `export` requires "tar the entire FS over exec" via SSM (ECS) or the reverse-agent (FaaS+CR+ACA). When the exec path is available, export works (slowly); when it isn't, `NotImplementedError` instead of an empty tar. Overlay-rootfs mode (`SOCKERLESS_OVERLAY_ROOTFS=1`) gives a faster implementation that reads from the upper-dir directly. |
 | `docker rename` semantics | all clouds | Cloud resources (ECS task ARN, Cloud Run job name, ACA app name, Lambda function name, etc.) are immutable. Sockerless updates the local `Container.Name` field and re-stamps the `sockerless-name` tag on the cloud resource, so `docker inspect` reflects the new name — but the cloud resource's *own* name doesn't change. This is a documented semantic divergence, not a partial implementation: the rename is real for sockerless-internal lookups; it does not propagate to the cloud's resource naming.|
 
+## Per-cloud github-runner-dispatcher (Phase 110a / 122 / 122b)
+
+Sockerless ships three top-level Go modules that turn queued GitHub Actions workflow_jobs into per-job runner containers, one variant per cloud control plane:
+
+| Module | Cloud primitive | Spawn shape | State recovery | Cleanup |
+|---|---|---|---|---|
+| `github-runner-dispatcher-aws` (Phase 110a) | docker daemon at `DOCKER_HOST` | `docker run --rm -d --pull never <image>` with `sockerless.dispatcher.{job_id,runner_name,managed_by}` labels | `docker ps --filter label=sockerless.dispatcher.managed_by` | `docker rm` exited containers + `gh api …/actions/runners` reaps offline `dispatcher-*` runners |
+| `github-runner-dispatcher-gcp` (Phase 122) | Cloud Run Jobs (`cloud.google.com/go/run/apiv2`) | `Jobs.CreateJob` (one-shot, `MaxRetries: 0`) + `Jobs.RunJob`; tags via Job `Labels` (`sockerless-dispatcher-managed-by` etc.) | `Jobs.ListJobs` filtered by managed-by label | `Jobs.DeleteJob` for executions in terminal `TerminalCondition.State` (`CONDITION_SUCCEEDED` / `CONDITION_FAILED` / `CONDITION_CANCELLED`) |
+| `github-runner-dispatcher-azure` (Phase 122b) | Container Apps Jobs (`armappcontainers`) | `Jobs.BeginCreateOrUpdate` + `Jobs.BeginStart` (Manual trigger, `Parallelism: 1`, `ReplicaRetryLimit: 0`); tags via ARM `Tags` (`sockerless-dispatcher-managed-by` etc.) | `Jobs.NewListByResourceGroupPager` filtered by managed-by tag | `Jobs.BeginDelete` for jobs in terminal `Properties.ProvisioningState` (`Succeeded` / `Failed` / `Canceled`) |
+
+All three share the same:
+- Poll loop (`pkg/poller`): `GET /repos/{r}/actions/runs?status=queued` every 15 s with a 5-min seen-set.
+- Scopes verification (`pkg/scopes`): startup check that the PAT can mint registration tokens + read workflow_jobs.
+- Registration token mint: `POST /actions/runners/registration-token` per spawn.
+- Same `--repo`, `--token`, `--config`, `--once`, `--cleanup-only` flag surface.
+- Stateless: no on-disk dispatcher state. Cloud resources (containers / Jobs) are the source of truth.
+
+The poller + scopes packages live in `github-runner-dispatcher-aws/pkg/{poller,scopes}` and are imported by the GCP + Azure variants via `replace github.com/sockerless/github-runner-dispatcher-aws => ../github-runner-dispatcher-aws` in their `go.mod`.
+
+**When to use which**:
+
+| Scenario | Dispatcher |
+|---|---|
+| Cells / deployments where sockerless is the docker daemon (DOCKER_HOST→sockerless-backend-{ecs,lambda,cloudrun,gcf,aca,azf}) — the standard pattern | `-aws` (works on any cloud — it's the docker shape, not the AWS shape; the name reflects its Phase 110a origin where AWS was the first target) |
+| GCP-native deployment that wants to bypass sockerless and dispatch directly via Cloud Run Jobs | `-gcp` |
+| Azure-native deployment that wants to bypass sockerless and dispatch directly via ACA Jobs | `-azure` |
+
+**Cell wiring** (Phase 120 + future Phase 123 Azure cells):
+
+| Cell | Runner | Backend | Dispatcher | Notes |
+|---|---|---|---|---|
+| 1 | github-actions-runner | ecs | `-aws` (DOCKER_HOST→sockerless-backend-ecs) | Phase 110 |
+| 2 | github-actions-runner | lambda | `-aws` (DOCKER_HOST→sockerless-backend-lambda) | Phase 110 |
+| 3 | gitlab-runner | ecs | none (long-lived runner) | Phase 110 |
+| 4 | gitlab-runner | lambda | none | Phase 110 |
+| 5 | github-actions-runner | cloudrun | `-gcp` (Cloud Run Jobs API direct) | Phase 120 |
+| 6 | github-actions-runner | gcf | `-gcp` | Phase 120 |
+| 7 | gitlab-runner | cloudrun | none | Phase 120 |
+| 8 | gitlab-runner | gcf | none | Phase 120 |
+
+Per-cell pipeline body (`probe-cloud-urls` + `probe-host` + `probe-capabilities` + `probe-kernel` + `probe-env` + `probe-parameters` + `probe-localhost-peer` + `clone-and-compile` + `run-arithmetic`) lives in `.github/workflows/cell-{5,6}-*.yml` and `tests/runners/gitlab/cell-{7,8}-*.yml`. Cell GREEN gate captures three URLs per cell: outer CI run + cloud execution + Cloud Logging — see [manual-tests/04-gcp-runner-cells.md](../manual-tests/04-gcp-runner-cells.md).
+
 ## Stateless invariant — reference implementation
 
 Summary of how each backend honours the stateless contract pinned down by the [Recovery contract](#recovery-contract):
