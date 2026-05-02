@@ -13,6 +13,7 @@ import (
 	"cloud.google.com/go/storage"
 	"github.com/rs/zerolog"
 	core "github.com/sockerless/backend-core"
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
 )
 
@@ -84,6 +85,25 @@ func NewGCPBuildService(ctx context.Context, project, bucket, arRepo, endpointUR
 
 func (s *GCPBuildService) Available() bool {
 	return s.project != "" && s.bucket != ""
+}
+
+// AssembleMultiArchManifest delegates to the universal helper, with
+// the Artifact Registry bearer token (Application Default Credentials
+// → cloud-platform scope) for the auth callback. AR honours the
+// standard OCI distribution v2 PUT /v2/<repo>/manifests/<tag>
+// request with a Docker manifest-list / OCI image-index media type.
+func (s *GCPBuildService) AssembleMultiArchManifest(ctx context.Context, opts core.MultiArchManifestOptions) error {
+	return core.AssembleMultiArchManifest(ctx, opts, func(_ string) (string, error) {
+		creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
+		if err != nil {
+			return "", fmt.Errorf("ADC: %w", err)
+		}
+		tok, err := creds.TokenSource.Token()
+		if err != nil {
+			return "", fmt.Errorf("ADC token: %w", err)
+		}
+		return tok.AccessToken, nil
+	})
 }
 
 func (s *GCPBuildService) Build(ctx context.Context, opts core.CloudBuildOptions) (*core.CloudBuildResult, error) {

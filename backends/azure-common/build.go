@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerregistry/armcontainerregistry"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
@@ -29,6 +30,7 @@ type ACRBuildService struct {
 	acrName        string
 	storageAccount string
 	containerName  string // blob container for context upload
+	cred           azcore.TokenCredential
 	logger         zerolog.Logger
 }
 
@@ -68,12 +70,33 @@ func NewACRBuildService(cred azcore.TokenCredential, subscriptionID, resourceGro
 		acrName:        acrName,
 		storageAccount: storageAccount,
 		containerName:  containerName,
+		cred:           cred,
 		logger:         logger,
 	}, nil
 }
 
 func (s *ACRBuildService) Available() bool {
 	return s.acrName != "" && s.storageAccount != ""
+}
+
+// AssembleMultiArchManifest delegates to the universal helper, with
+// the ACR bearer token (mints via the registry's `/oauth2/token`
+// exchange of an AAD access token). ACR honours the standard OCI
+// distribution v2 PUT /v2/<repo>/manifests/<tag> request.
+func (s *ACRBuildService) AssembleMultiArchManifest(ctx context.Context, opts core.MultiArchManifestOptions) error {
+	return core.AssembleMultiArchManifest(ctx, opts, func(_ string) (string, error) {
+		tok, err := s.cred.GetToken(ctx, policy.TokenRequestOptions{
+			Scopes: []string{"https://management.azure.com/.default"},
+		})
+		if err != nil {
+			return "", fmt.Errorf("AAD token: %w", err)
+		}
+		// ACR's OCI v2 endpoint accepts AAD bearer tokens directly
+		// when the caller has AcrPush role. The /oauth2/token
+		// exchange (AAD → ACR refresh token → ACR access token) is
+		// only required for tools that need long-lived creds.
+		return tok.Token, nil
+	})
 }
 
 func (s *ACRBuildService) Build(ctx context.Context, opts core.CloudBuildOptions) (*core.CloudBuildResult, error) {

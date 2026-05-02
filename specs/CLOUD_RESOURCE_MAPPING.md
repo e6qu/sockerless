@@ -760,6 +760,29 @@ The "no fakes / no fallbacks" principle treats every functional gap as a bug by 
 | `docker container export` | every backend without an exec path | Same constraint as `top` — `export` requires "tar the entire FS over exec" via SSM (ECS) or the reverse-agent (FaaS+CR+ACA). When the exec path is available, export works (slowly); when it isn't, `NotImplementedError` instead of an empty tar. Overlay-rootfs mode (`SOCKERLESS_OVERLAY_ROOTFS=1`) gives a faster implementation that reads from the upper-dir directly. |
 | `docker rename` semantics | all clouds | Cloud resources (ECS task ARN, Cloud Run job name, ACA app name, Lambda function name, etc.) are immutable. Sockerless updates the local `Container.Name` field and re-stamps the `sockerless-name` tag on the cloud resource, so `docker inspect` reflects the new name — but the cloud resource's *own* name doesn't change. This is a documented semantic divergence, not a partial implementation: the rename is real for sockerless-internal lookups; it does not propagate to the cloud's resource naming.|
 
+## Sockerless-sanctioned cloud image builders
+
+`docker build` against a sockerless backend delegates to the cloud's native build service via `core.CloudBuildService`. Each cloud has one sanctioned builder that's wired into BOTH backends for that cloud, so any sockerless deployment on that cloud uses the same pipeline regardless of which backend handles execution. Multi-arch manifest assembly (`AssembleMultiArchManifest`) is a method on the same interface — the per-arch builds go through the cloud's builder, and the resulting manifest list is PUT directly to the cloud's container registry via OCI distribution v2.
+
+| Cloud | Builder service | Backends wired into | Container registry | Pull-through proxy | Multi-arch shape |
+|---|---|---|---|---|---|
+| AWS | **CodeBuild** (`aws-common.CodeBuildService`, `core.CloudBuildService`) | `backends/ecs`, `backends/lambda` | **ECR** | ECR Pull-through Cache (Docker Hub / GHCR / Quay / k8s.io / etc.) | Per-arch tags `<image>:<tag>-{amd64,arm64}` pushed via CodeBuild; manifest list at `<image>:<tag>` PUT via `ECRAuthProvider`-bearer to ECR's OCI v2 endpoint |
+| GCP | **Cloud Build** (`gcp-common.GCPBuildService`, `core.CloudBuildService`) | `backends/cloudrun`, `backends/cloudrun-functions` | **Artifact Registry** (GAR) | GAR Remote Repositories (Docker Hub / GHCR / Quay / k8s.io / pull-through) | Per-arch tags pushed via Cloud Build; manifest list PUT via ADC-bearer (cloud-platform scope) to GAR's OCI v2 endpoint |
+| Azure | **ACR Tasks** (`azure-common.ACRBuildService`, `core.CloudBuildService`) | `backends/aca`, `backends/azure-functions` | **Azure Container Registry** (ACR) | ACR Cache Rules (Docker Hub / Microsoft Container Registry / etc.) | Per-arch tags pushed via ACR Tasks; manifest list PUT via AAD-bearer (`https://management.azure.com/.default` scope; AcrPush role) to ACR's OCI v2 endpoint |
+
+**Wiring**. Each backend's `cmd/<backend>/main.go` constructs the cloud-common `<XXX>BuildService` from operator config (project, bucket, repo, etc.) and assigns it to `core.ImageManager.BuildService`. `docker build` against the backend goes:
+
+1. `BaseServer.handleImageBuild` accepts the multipart context tar.
+2. `ImageManager.Build` checks `BuildService.Available()` — if yes, delegates; if no, returns `NotImplementedError` with a clear "configure CodeBuild / Cloud Build / ACR Tasks" message.
+3. `BuildService.Build` uploads the context to the cloud's blob store (S3 / GCS / Azure Blob), triggers the cloud's build (CodeBuild project run / Cloud Build operation / ACR Run), waits for completion, returns the pushed image ref + cloud-side log URL.
+4. Multi-arch flow: caller invokes `Build` once per platform with `Platform: "linux/amd64"` then `"linux/arm64"`, then `BuildService.AssembleMultiArchManifest` to glue the per-arch tags into a single architecture-agnostic tag.
+
+**Universal manifest assembly**. `core.AssembleMultiArchManifest` (in `backends/core/multiarch.go`) is the shared OCI distribution v2 implementation — fetches each per-arch manifest's digest+size+platform via standard `GET /v2/<repo>/manifests/<tag>` + `GET /v2/<repo>/blobs/<config-digest>`, builds a `application/vnd.docker.distribution.manifest.list.v2+json` with the entries, and `PUT /v2/<repo>/manifests/<base-tag>` it. Each per-cloud builder supplies a `tokenForRepo(repo) (string, error)` callback so the helper signs requests with the cloud-appropriate bearer (ECR basic-base64 / GAR ADC / ACR AAD).
+
+**No fakes**. Every cloud has a REAL builder + REAL registry — no mocks, no fallbacks. The local docker daemon is NOT a sanctioned builder for any backend (because deployed sockerless instances don't have one). Operators that want local builds set `SOCKERLESS_LOCAL_DOCKERFILE_BUILD=1` to opt into a parse-only path that produces metadata-only images (no RUN execution); use that for development only.
+
+**Runner-image build hookup**. `tests/runners/{github,gitlab}/dockerfile-{cloudrun,gcf}/Makefile` calls each per-arch build separately (`make build-amd64`, `make build-arm64`), pushes both, then `docker manifest create` + `docker manifest push` to land the manifest list. The Makefile uses the docker CLI for these (since runner images are built outside the running sockerless backend), but the in-cloud build path produces equivalent results via the sanctioned cloud builder + `AssembleMultiArchManifest`.
+
 ## Per-cloud github-runner-dispatcher (Phase 110a / 122 / 122b)
 
 Sockerless ships three top-level Go modules that turn queued GitHub Actions workflow_jobs into per-job runner containers, one variant per cloud control plane:

@@ -1,25 +1,59 @@
-# Build sockerless-runner-cloudrun image.
+# Build sockerless-runner-cloudrun multi-arch image.
 #
-# Cross-compiles sockerless-backend-cloudrun for linux/amd64, stages it
-# next to the Dockerfile, builds the image, pushes to AR.
+# Cross-compiles sockerless-backend-cloudrun for linux/{amd64,arm64},
+# stages each next to the Dockerfile, builds per-arch images, pushes
+# both to AR, then assembles an OCI manifest list at the suffix-less
+# tag so `docker pull <REPO>/runner:cloudrun` resolves to the right
+# arch automatically.
+#
+# Per-arch tag shape (both pushed):
+#   <REPO>/runner:cloudrun-amd64
+#   <REPO>/runner:cloudrun-arm64
+# Manifest-list tag (pushed via docker manifest):
+#   <REPO>/runner:cloudrun
 
-REPO     ?= us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live
-IMAGE    ?= $(REPO):runner-cloudrun-amd64
+REPO            ?= us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live
+IMAGE_NAME      ?= runner
+TAG_BASE        ?= cloudrun
+IMAGE_AMD64     := $(REPO)/$(IMAGE_NAME):$(TAG_BASE)-amd64
+IMAGE_ARM64     := $(REPO)/$(IMAGE_NAME):$(TAG_BASE)-arm64
+IMAGE_MULTI     := $(REPO)/$(IMAGE_NAME):$(TAG_BASE)
 SOCKERLESS_REPO_ROOT := $(shell cd ../../../../ && pwd)
+BACKEND_DIR     := $(SOCKERLESS_REPO_ROOT)/backends/cloudrun/cmd/sockerless-backend-cloudrun
 
-.PHONY: stage build push all
+.PHONY: stage-amd64 stage-arm64 build-amd64 build-arm64 push-amd64 push-arm64 manifest all
 
-stage:
+stage-amd64:
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
-		-C $(SOCKERLESS_REPO_ROOT)/backends/cloudrun/cmd/sockerless-backend-cloudrun \
-		-tags noui \
-		-o $(CURDIR)/sockerless-backend-cloudrun .
-	@ls -la sockerless-backend-cloudrun
+		-C $(BACKEND_DIR) -tags noui \
+		-o $(CURDIR)/sockerless-backend-cloudrun-amd64 .
 
-build: stage
-	docker build --platform linux/amd64 -t $(IMAGE) .
+stage-arm64:
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build \
+		-C $(BACKEND_DIR) -tags noui \
+		-o $(CURDIR)/sockerless-backend-cloudrun-arm64 .
 
-push: build
-	docker push $(IMAGE)
+build-amd64: stage-amd64
+	cp sockerless-backend-cloudrun-amd64 sockerless-backend-cloudrun
+	docker build --platform linux/amd64 -t $(IMAGE_AMD64) .
+	rm -f sockerless-backend-cloudrun
 
-all: push
+build-arm64: stage-arm64
+	cp sockerless-backend-cloudrun-arm64 sockerless-backend-cloudrun
+	docker build --platform linux/arm64 -t $(IMAGE_ARM64) .
+	rm -f sockerless-backend-cloudrun
+
+push-amd64: build-amd64
+	docker push $(IMAGE_AMD64)
+
+push-arm64: build-arm64
+	docker push $(IMAGE_ARM64)
+
+manifest: push-amd64 push-arm64
+	docker manifest rm $(IMAGE_MULTI) 2>/dev/null || true
+	docker manifest create $(IMAGE_MULTI) $(IMAGE_AMD64) $(IMAGE_ARM64)
+	docker manifest annotate $(IMAGE_MULTI) $(IMAGE_AMD64) --arch amd64 --os linux
+	docker manifest annotate $(IMAGE_MULTI) $(IMAGE_ARM64) --arch arm64 --os linux
+	docker manifest push $(IMAGE_MULTI)
+
+all: manifest
