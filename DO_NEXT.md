@@ -20,13 +20,24 @@ Resume pointer. Updated after every task. Roadmap detail in [PLAN.md](PLAN.md); 
 
 State-save after each task: STATUS.md + WHAT_WE_DID.md + BUGS.md + memory + this file.
 
-**Resume pointer for next session: PR #123 (`phase-118-faas-pods`) bundles Phase 118 (sub-118a/b/d-gcf/d-lambda) + Phase 120 (4 GCP runner cells, docker executor) + Phase 121 (sim hardening — NEXT) + Phase 122 (per-cloud github-runner-dispatcher GCP/Azure mirrors). PR is open against main; gcf integration tests in CI will fail until Phase 121 lands. Phase 119 (k8s shim) was discarded after exploration. Live-AWS test of 118b deferred (operator to authorize). Sub-118c (AZF) deferred until cells GREEN.**
+**Resume pointer for next session: PR #123 (`phase-118-faas-pods`) bundles Phase 118 + Phase 120 + Phase 121 — ALL CI GREEN at commit `a646602` (2026-05-02). Phase 121 (cloud-faithful GCP sim hardening) closed via the BUG-893..906 chain. Phase 121b (Azure mirror) and Phase 122 (per-cloud github-runner-dispatcher GCP/Azure mirrors) are queued — if continuing on the same branch/PR per the "all work in one PR" direction, start with the parallel-fix sweep below; otherwise the PR is ready for the operator to merge as-is. Phase 119 (k8s shim) was discarded after exploration. Live-AWS test of 118b deferred (operator to authorize). Sub-118c (AZF) deferred until cells GREEN.**
 
 **Operator rule reinforced 2026-05-02**: backends MUST stay clean — stateless, with no awareness of the simulator code or each other. EndpointURL-gated bypasses inside backend code are tech debt per the no-fakes / no-fallbacks rule. The simulator must present a faithful API surface so backends behave identically against either. Lambda's existing `case s.config.EndpointURL != "":` branch is also flagged for removal (Phase 121e).
 
+**Parallel-fix sweep before Phase 121b/122 (queued for next session)**:
+
+1. **AWS sim — Lambda ListFunctions filter** (`simulators/aws/lambda.go::handleLambdaListFunctions`): currently returns every function; mirror the GCP sim's `matchesFunctionFilter` shape onto AWS Lambda's tag-filter / `Marker` / `MaxItems` query params. Same root-cause class as BUG-906.
+2. **Azure sim shared helpers** (`simulators/azure/shared/container.go`): copy `StartHTTPContainer` / `StopAndRemoveContainer` / `StreamContainerLogs` from `simulators/gcp/shared/container.go`; ACA / Azure Functions invocation will need them once the overlay-bootstrap shape lands.
+3. **Azure sim — `simulators/azure/functions.go::invokeAzureFunctionProcess`**: replace the blocking `sim.StartContainerSync` call with the cloud-faithful HTTP-invoke pattern from `invokeOverlayContainerHTTP` once `backends/azure-functions` adopts the overlay-bootstrap shape.
+4. **Azure sim — backing-resource auto-creation in `PUT /sites/{siteName}`**: `seedAppServicePlanDefaults` + `seedStorageAccountDefaults` mirroring the gcf ↔ Cloud Run linkage from BUG-901.
+
 **Next session work order:**
 
-1. Check PR #123 CI status (`gh pr checks 123`); fix any CI failures.
+1. Run the parallel-fix sweep above (one commit per concern, on the same `phase-118-faas-pods` branch).
+2. Phase 122 (GCP runner dispatcher): copy `github-runner-dispatcher/` → `github-runner-dispatcher-gcp/`; swap the docker-CLI spawner for Cloud Run Jobs API (`cloud.google.com/go/run/apiv2`); reuse poller / config / scopes modules unchanged.
+3. Phase 122b (Azure runner dispatcher): mirror onto ACA Jobs API (`Microsoft.App/jobs`).
+4. Build + push the four runner images (`tests/runners/{github,gitlab}/dockerfile-{cloudrun,gcf}/Makefile` — `make all`).
+5. Original work-order item: re-check PR #123 CI status (`gh pr checks 123`); ALL GREEN at `a646602` but every commit triggers a fresh run.
 2. Build + push the four runner images (`tests/runners/{github,gitlab}/dockerfile-{cloudrun,gcf}/Makefile` — `make all`).
 3. Configure `~/.sockerless/dispatcher/config.toml` with the two new label entries (cells 5+6).
 4. `docker run` the two long-lived gitlab-runner containers (cells 7+8).
