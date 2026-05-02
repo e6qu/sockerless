@@ -319,6 +319,29 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	// Pre-load the eval-arithmetic image into the backend's image
+	// store via `docker save | dockerClient.ImageLoad`. This exercises
+	// the backend's existing general-purpose `ImageLoad` capability —
+	// the same code path used to load images in any deployment where
+	// the operator has a tarball but no live registry. The backend's
+	// `ImageLoad` handler parses the tar and registers the image
+	// (with its full Config: Entrypoint, Cmd, Env, WorkingDir) in
+	// `core.Store.Images`. After this, `Store.ResolveImage(ref)` finds
+	// the image, so backend's `ContainerCreate` correctly inherits
+	// ENTRYPOINT/CMD defaults when the user didn't override them —
+	// necessary for arithmetic tests where the user passes only
+	// `Cmd: ["3 + 4 * 2"]` and expects the image's
+	// `/usr/local/bin/eval-arithmetic` ENTRYPOINT to consume it. Real
+	// cloud achieves the same effect by querying Artifact Registry
+	// for the image's manifest; tests use ImageLoad as the local
+	// equivalent.
+	step("docker save eval-arithmetic | dockerClient.ImageLoad (pre-populate s.Store)")
+	if err := preloadImageIntoBackend(evalImageName); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to preload %s into backend image store: %v\n", evalImageName, err)
+		cleanup()
+		os.Exit(1)
+	}
+
 	step("entering m.Run() — TestMain setup complete")
 	code := m.Run()
 	cleanup()
@@ -667,6 +690,39 @@ func TestGCFContainerLifecycle(t *testing.T) {
 	if err := dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{}); err != nil {
 		t.Fatalf("container remove failed: %v", err)
 	}
+}
+
+// preloadImageIntoBackend pipes `docker save <ref>` into
+// `dockerClient.ImageLoad`. The backend's ImageLoad handler is the
+// general-purpose image-tarball ingestion path — same one used in
+// any deployment that loads images from local tarballs (offline
+// envs, air-gapped clusters, CI pipelines that build images locally
+// before deployment). It parses the tar and registers the image
+// with its full Config in `core.Store.Images`.
+func preloadImageIntoBackend(ref string) error {
+	saveCtx, saveCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer saveCancel()
+	save := exec.CommandContext(saveCtx, "docker", "save", ref)
+	stdout, err := save.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("docker save stdout pipe: %w", err)
+	}
+	if err := save.Start(); err != nil {
+		return fmt.Errorf("docker save start: %w", err)
+	}
+	loadCtx, loadCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer loadCancel()
+	resp, err := dockerClient.ImageLoad(loadCtx, stdout, true)
+	if err != nil {
+		_ = save.Wait()
+		return fmt.Errorf("dockerClient.ImageLoad: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if err := save.Wait(); err != nil {
+		return fmt.Errorf("docker save wait: %w", err)
+	}
+	return nil
 }
 
 func filterBuildEnv(env []string, extra ...string) []string {
