@@ -202,10 +202,13 @@ func TestMain(m *testing.M) {
 		// Path to the sockerless-gcf-bootstrap binary the backend stages
 		// into Cloud Build context tarballs (overlay image build).
 		"SOCKERLESS_GCF_BOOTSTRAP="+gcfBootstrapPath,
-		// Standard gcloud emulator convention. The cloud.google.com/go/storage
-		// SDK routes its requests at this host when the env var is set; this
-		// is what the backend's Cloud Build path uses to upload context
-		// tarballs. Real production deployments don't set this var.
+		// STORAGE_EMULATOR_HOST is Google's SDK-side name for "where
+		// to route storage API requests" (not a description of what's
+		// at the other end — the sockerless GCP simulator implements
+		// real GCS-shape storage backed by real on-disk files, not an
+		// emulation). Operators set this env var when their storage
+		// SDK should target a non-default host. Production sets nothing
+		// and uses the default storage.googleapis.com discovery.
 		"STORAGE_EMULATOR_HOST="+storageHost,
 	)
 	backendCmd.Stdout = os.Stderr

@@ -46,10 +46,11 @@ type GCPBuildService struct {
 // validate ignore it.
 //
 // Storage uses the standard `cloud.google.com/go/storage` client. The
-// SDK's native `STORAGE_EMULATOR_HOST` env var (Google's documented
-// emulator convention) routes storage requests at a non-default host
-// when set — operators set that env var on the backend process if
-// they need it. The build service makes no env-var side effects.
+// SDK's native `STORAGE_EMULATOR_HOST` env var routes storage requests
+// at a non-default host when set — operators set that env var on the
+// backend process if they need to (the env-var name is Google's, not
+// a comment on what's at the other end). The build service makes no
+// env-var side effects of its own.
 func NewGCPBuildService(ctx context.Context, project, bucket, arRepo, endpointURL string, logger zerolog.Logger) (*GCPBuildService, error) {
 	if project == "" || bucket == "" {
 		return nil, nil
