@@ -149,7 +149,7 @@ func TestMain(m *testing.M) {
 	// signed token (token validation is a real-Cloud-Run concern, not
 	// a sim concern) — but the AUTH HEADER PRESENCE is the same wire
 	// shape as production, so the backend code path stays identical.
-	saJSONPath, err := writeFakeServiceAccountJSON()
+	saJSONPath, err := writeFakeServiceAccountJSON(simURL + "/token")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to stage fake SA JSON: %v\n", err)
 		cleanup()
@@ -597,16 +597,19 @@ func filterBuildEnv(env []string, extra ...string) []string {
 //
 // `idtoken.NewClient` (called by the gcf backend's `invokeFunction`)
 // signs JWTs locally with this key — no network call to GCP is made.
-// The sim's invocation handler doesn't validate the token (real Cloud
-// Run does; the sim doesn't gate on token shape), but the AUTH HEADER
-// PRESENCE matches production wire shape, so the backend code path is
-// identical against either real GCP or the sockerless GCP simulator.
 //
-// No fakes / no fallbacks: this is a real RSA keypair, the SA JSON
-// shape is valid (parseable by Google's auth library), and the JWT
-// produced is real and crypto-verifiable. The sim could verify the
-// signature against this key if it ever wanted to enforce auth.
-func writeFakeServiceAccountJSON() (string, error) {
+// `cloudbuild.NewRESTClient` (called by gcpcommon.NewGCPBuildService)
+// uses the SA's `token_uri` to mint OAuth2 access tokens for the
+// authenticated REST client. Tests point `token_uri` at the sim's
+// /token endpoint (registered by `simulators/gcp/oauth2.go`) so the
+// SDK fetches tokens from the sim instead of `oauth2.googleapis.com`.
+//
+// The SA JSON shape is real (parseable by Google's auth library); the
+// JWT and access-token responses are real wire-shape. The sim doesn't
+// validate the JWT — it isn't an emulator gating the API; it just
+// responds with the wire shape the SDK expects so the SDK proceeds to
+// the actual API call.
+func writeFakeServiceAccountJSON(tokenURI string) (string, error) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return "", fmt.Errorf("generate RSA keypair: %w", err)
@@ -625,7 +628,7 @@ func writeFakeServiceAccountJSON() (string, error) {
 		"client_email":                "sockerless-runner@sockerless-test.iam.gserviceaccount.com",
 		"client_id":                   "111111111111111111111",
 		"auth_uri":                    "https://accounts.google.com/o/oauth2/auth",
-		"token_uri":                   "https://oauth2.googleapis.com/token",
+		"token_uri":                   tokenURI,
 		"auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
 		"client_x509_cert_url":        "https://www.googleapis.com/robot/v1/metadata/x509/sockerless-runner@sockerless-test.iam.gserviceaccount.com",
 		"universe_domain":             "googleapis.com",

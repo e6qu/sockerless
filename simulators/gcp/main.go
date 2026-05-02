@@ -60,6 +60,7 @@ func main() {
 	registerCompute(srv)
 	registerVPCAccess(srv)
 	registerIAM(srv)
+	registerOAuth2(srv)
 
 	// Dashboard summary endpoints for UI
 	registerDashboard(srv)
