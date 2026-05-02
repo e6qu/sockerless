@@ -32,6 +32,22 @@ type Config struct {
 	// See backends/core.CommitContainerViaAgent. Set via
 	// `SOCKERLESS_ENABLE_COMMIT=1`.
 	EnableCommit bool
+
+	// BootstrapBinaryPath is the host filesystem path of the
+	// sockerless-gcf-bootstrap binary. The backend tar-packages this
+	// alongside a generated Dockerfile and submits to Cloud Build to
+	// produce the per-content-hash overlay image in AR. Defaults to the
+	// SOCKERLESS_GCF_BOOTSTRAP env var (or /opt/sockerless/sockerless-gcf-bootstrap).
+	BootstrapBinaryPath string
+
+	// PoolMax caps the number of free Functions kept warm per
+	// overlay-content-hash. On `docker rm`, if free count >= PoolMax the
+	// function is deleted; otherwise its `sockerless_allocation` label is
+	// cleared and it returns to the reuse pool. Set 0 to disable pooling
+	// (every container creates+deletes a fresh Function). See
+	// specs/CLOUD_RESOURCE_MAPPING.md § Stateless image cache + Function pool.
+	// SOCKERLESS_GCF_POOL_MAX, default 10.
+	PoolMax int
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -49,6 +65,11 @@ func ConfigFromEnv() Config {
 		LogTimeout:     parseDuration(os.Getenv("SOCKERLESS_LOG_TIMEOUT"), 30*time.Second),
 		CallbackURL:    os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		EnableCommit:   os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
+		BootstrapBinaryPath: envOrDefault(
+			"SOCKERLESS_GCF_BOOTSTRAP",
+			"/opt/sockerless/sockerless-gcf-bootstrap",
+		),
+		PoolMax: envOrDefaultInt("SOCKERLESS_GCF_POOL_MAX", 10),
 	}
 }
 
@@ -98,6 +119,9 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 func (c Config) Validate() error {
 	if c.Project == "" {
 		return fmt.Errorf("SOCKERLESS_GCF_PROJECT is required")
+	}
+	if c.BuildBucket == "" {
+		return fmt.Errorf("SOCKERLESS_GCP_BUILD_BUCKET is required (Cloud Functions Gen2 source archive lands here)")
 	}
 	return nil
 }

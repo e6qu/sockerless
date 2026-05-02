@@ -168,6 +168,7 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 		CreatedAt:   time.Now(),
 		Name:        containers[0].Container.Name,
 		Network:     containers[0].Container.HostConfig.NetworkMode,
+		AutoRemove:  containers[0].Container.HostConfig.AutoRemove,
 	}
 	// Propagate pod membership so ListPods can reconstruct docker pods
 	// from the cloud's Job labels after a backend restart.

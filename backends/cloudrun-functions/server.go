@@ -17,7 +17,6 @@ type Server struct {
 	images    *core.ImageManager
 	ipCounter atomic.Int32
 
-	GCF *core.StateStore[GCFState]
 	gcsVolumeState
 	// Reverse-agent registry for docker top / cp / stat / diff via a
 	// bootstrap running inside the function container.
@@ -29,7 +28,6 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	s := &Server{
 		config:         config,
 		gcp:            gcpClients,
-		GCF:            core.NewStateStore[GCFState](),
 		gcsVolumeState: gcsVolumeState{buckets: gcpcommon.NewBucketManager(gcpClients.Storage, config.Project, config.Region)},
 	}
 	s.ipCounter.Store(2)

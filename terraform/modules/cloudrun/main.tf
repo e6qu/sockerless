@@ -218,6 +218,29 @@ resource "google_artifact_registry_repository" "main" {
   depends_on = [google_project_service.artifactregistry]
 }
 
+# Remote-Docker-Hub-proxy repository named exactly `docker-hub` —
+# `gcpcommon.ResolveGCPImageURI` rewrites Docker Hub refs to
+# `{region}-docker.pkg.dev/{project}/docker-hub/{repo}:{tag}`. Without
+# this repo every `docker run alpine` against real GCP fails with
+# `Image not found`.
+resource "google_artifact_registry_repository" "docker_hub" {
+  project       = var.project_id
+  location      = var.region
+  repository_id = "docker-hub"
+  format        = "DOCKER"
+  mode          = "REMOTE_REPOSITORY"
+  description   = "Docker Hub proxy for sockerless image-resolve"
+
+  remote_repository_config {
+    description = "Proxies docker.io / Docker Hub"
+    docker_repository {
+      public_repository = "DOCKER_HUB"
+    }
+  }
+
+  depends_on = [google_project_service.artifactregistry]
+}
+
 # ---------------------------------------------------------------------------
 # IAM Service Account
 # ---------------------------------------------------------------------------

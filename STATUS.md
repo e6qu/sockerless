@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**104 phases closed. Active branch: `phase-110-runner-integration`. ALL 4 CELLS GREEN.**
+**104 phases closed. Phase 110 closed — all 4 cells GREEN. Phase 118 in flight: cloudrun + gcf manual sweeps BOTH report ALL 16 ROWS PASS on `manual-test-real-workloads.sh` (incl. real Go-build-and-run workload). BUG-877..886 closed. Sub-118a closed. Sub-118b code done (live test deferred). Sub-118d-gcf code done (FaaS pod overlay for the gcf backend — bootstrap supervisor + pod-aware image_inject + ContainerStart materialize + cloud_state pod row emission, all unit-tested; live verification deferred). Sub-118d-lambda (Lambda mirror) queued. Sub-118e (4 new GCP runner cells) gated on 118d-lambda. Sub-118c (AZF) deferred until after 118e.**
 - Cell 1 GH×ECS: https://github.com/e6qu/sockerless/actions/runs/25075259911
 - Cell 2 GH×Lambda: https://github.com/e6qu/sockerless/actions/runs/25113565115 — 7 architectural walls (BUG-862, 869, 870, 871, 872, 873, 874).
 - Cell 3 GL×ECS (2026-04-29): https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 — job 14148678472 ran `echo "hello from sockerless ecs"` + `env | sort` in 270.8 s on 9 sequential per-stage Fargate tasks. Closed in commit `aa2419a`.
@@ -31,7 +31,12 @@ Older PRs (#112–#115) — sim parity, real volumes, FaaS invocation tracking, 
 
 ## Open work
 
-- **Phase 110 — all 4 cells GREEN.** Closing summary commit pending. Branch ready for PR.
+- **Phase 118 — live-GCP track + cross-FaaS pool/cache + pod design.**
+  - cloudrun (Cloud Run Jobs) bugs BUG-877..885 fixed live.
+  - gcf (Cloud Run Functions Gen2) BUG-884 fixed live: stub-Buildpacks source + post-create `Run.Services.UpdateService` image swap; content-addressed AR cache; stateless reuse pool keyed on `sockerless_overlay_hash` + `sockerless_allocation` labels; idtoken-authenticated invocation (no `allUsers` workaround); fail-loud on user-credential ADC. Tested live end-to-end (`docker run --rm alpine echo` returns clean stdout via gcf).
+  - **Open: BUG-886** — `core.StreamCloudLogs` loses entries from a fast-burst-then-exit container (bundle-O case). Cursor refactor to `>=lastTS` + seen-set dedup didn't catch it. Likely iterator pagination or write-side blocking issue. Next fix.
+  - **Queued in this phase**: Lambda pool reuse (overlay caching exists; needs label-based claim/release on top); AZF live track (greenfield — needs Azure infra setup from operator); FaaS pod implementation (spec done with honest namespace-isolation caveats — net+IPC+UTS shared per podman default, mount+PID isolated per podman default but degraded-shared on FaaS due to no `CAP_SYS_ADMIN`).
+- **Phase 110 — closed 2026-04-30.** All 4 cells GREEN.
 
 ### 4-cell matrix
 

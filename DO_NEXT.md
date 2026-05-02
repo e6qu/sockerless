@@ -4,27 +4,62 @@ Resume pointer. Updated after every task. Roadmap detail in [PLAN.md](PLAN.md); 
 
 ## Branch state
 
-- `main` synced with `origin/main` at PR #121 merge.
-- `origin-gitlab/main` mirrors `origin/main` (in sync as of 2026-04-27).
-- **`phase-110-runner-integration`** — active, **all 4 cells GREEN as of 2026-04-30**. Tip: `bac59fc`. Ready to push + open PR.
+- `main` synced with `origin/main` at PR #121 merge. Phase 110 PR (#122) merged.
+- **Active session: Phase 118 — live-GCP track**, working on `main` since the changes touch shared core code (`backends/core/log_driver.go`, `backends/core/tags.go`) plus per-backend modules. Branch will be cut as `phase-118-live-gcp` before push.
+- Active live-cloud project: `sockerless-live-46x3zg4imo` (billing 019E9E-AF0BD0-6A6F75 free trial, ephemeral-project workflow per `feedback_teardown_aggressive.md` adapted for GCP).
 
-## Phase 110 final URLs
+## Phase 118 — live-GCP track
 
-| Cell | URL |
+| Backend | State |
 |---|---|
-| 1 GH × ECS | https://github.com/e6qu/sockerless/actions/runs/25075259911 |
-| 2 GH × Lambda | https://github.com/e6qu/sockerless/actions/runs/25113565115 |
-| 3 GL × ECS | https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 |
-| 4 GL × Lambda | https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943 |
+| `cloudrun` (Cloud Run Jobs) | ✅ Live-validated. BUG-877..885 closed (image-resolve, logs filter, post-mortem logs, ps -a dedup, stale rows, --rm cleanup, log-ingestion race). Manual sweep clean: clean stdout, zero leaked Jobs, zero ghost containers. |
+| `gcf` (Cloud Run Functions Gen2) | 🚧 Architecture decided + spec updated. BUG-884 fix in progress: stub-Buildpacks-Go-source + post-create `Run.Services.UpdateService(image=overlay)` + content-addressed AR cache + label-based stateless reuse pool. |
+| `azf` (Azure Functions) | Queued. Direct image deploy supported on Premium/Flex/AppService — simpler shape than gcf. Pod question (E supervision-via-overlay vs G NotImplemented) still open. |
 
-## Next actions
+## Next actions (sequenced by user 2026-05-02)
 
-1. `git push origin phase-110-runner-integration` (force-with-lease if branch already on remote).
-2. `gh pr create` — body should call out: 4 cells GREEN with URLs, BUG-875 + BUG-876 closed in `5fc3e6b`, BUG-868 closed in `aa2419a`.
-3. Tear down live infra after PR merge: `cd terraform/environments/{ecs,lambda}/live && terragrunt destroy` (NAT Gateway runs ~$0.045/hr).
-4. Phase 111 (workload identity) is queued and gated on Phase 110 closure (now satisfied).
+State-save after each task: STATUS.md + WHAT_WE_DID.md + BUGS.md + memory + this file.
 
-## Active blockers (none)
+**Resume pointer for next session: sub-118d-gcf code is complete; next is sub-118d-lambda (mirror to Lambda backend). After 118d-lambda → sub-118e (4 new live-GCP runner cells). Sub-118a, 118b code are done; live-AWS test of 118b is deferred (operator to authorize separately). Live-GCP verification of 118d-gcf is also deferred to the 118e cell sweeps where pod-shaped runner workloads will exercise it end-to-end.**
+
+1. ✅ **Sub-118a — Fix BUG-886** (closed 2026-05-02). Cursor `>=lastTS` + per-entry seen-set dedup + 18s settle window + write-error pipe-close detection. cloudrun manual sweep ALL 16 ROWS PASS.
+2. ✅ **gcf full sweep retest** (closed 2026-05-02). After adding `CheckLogBuffers: true` to `core.AttachViaCloudLogs`: `manual-test-real-workloads.sh gcf` ALL 16 ROWS PASS — including end-to-end Go-build-and-run in `golang:1.22-alpine` through the overlay-and-swap path.
+3. ✅ **Sub-118b code complete** (2026-05-02): `backends/lambda/pool.go` (claim/release via tags), `backend_impl.go` ContainerCreate pool-query + post-create tagging, ContainerRemove pool-release-or-delete, `config.go` SOCKERLESS_LAMBDA_POOL_MAX (default 10). Build + vet + unit tests pass. ⏳ Live-AWS test pending operator authorization — separate from main flow.
+4. ✅ **Sub-118d-gcf — FaaS pod implementation for the gcf backend** (code complete 2026-05-02). Five files touched, all unit-tested:
+   - `agent/cmd/sockerless-gcf-bootstrap/main.go` — supervisor mode when `SOCKERLESS_POD_CONTAINERS` is set: fork+chroot+exec per non-main pod member as long-lived sidecar; main member runs in foreground per HTTP invoke; sidecar stdout teed to supervisor stdout with `[<name>] ` prefix; honest namespace-degradation warning at startup.
+   - `backends/cloudrun-functions/image_inject.go` — `PodOverlaySpec`, `RenderPodOverlayDockerfile` (multi-stage COPY --from per member; first member's rootfs cp -a snapshot before layered COPYs), `EncodePodManifest`/`DecodePodManifest`, `PodOverlayContentTag`, `TarPodOverlayContext`.
+   - `backends/cloudrun-functions/pod_materialize.go` — `materializePodFunction` collapses the pod into one Function (deletes per-member throwaways → builds merged pod overlay → CreateFunction with `sockerless_pod=<name>` label → UpdateService image swap → HTTP invoke fanning result to all member WaitChs + LogBuffers).
+   - `backends/cloudrun-functions/backend_impl.go::ContainerStart` — replaces the previous multi-container rejection with the `PodDeferredStart` → `materializePodFunction` path. Single-container path unchanged.
+   - `backends/cloudrun-functions/cloud_state.go::queryFunctions` — pod-aware row emission: when `sockerless_pod` label set, decode `SOCKERLESS_POD_CONTAINERS` and emit one `docker ps` row per member with `HostConfig.PidMode = "shared-degraded"` + `Config.Labels["sockerless.namespace.*"]` honesty surface.
+   - Tests: `cmd/sockerless-gcf-bootstrap/main_test.go` (parsing, quoting, prefix-writer, pod-main pick), `image_inject_pod_test.go` (manifest roundtrip, dockerfile rendering, content-tag stability), `pod_materialize_test.go` (containers→spec conversion across name/unnamed/main-at-zero variants), `pod_cloud_state_test.go` (pod members from function, degradation labels). All pass under `go test -run ...`. Live verification deferred to sub-118e cell sweeps.
+5. 🚧 **Sub-118d-lambda — FaaS pod implementation for the Lambda backend (NEXT)**. Mirror the gcf work to lambda. Mostly mechanical from the gcf design:
+   - `agent/cmd/sockerless-lambda-bootstrap/main.go` — add supervisor mode that pre-warms sidecars on init (Lambda invocation is `lambda.Invoke`, so sidecars start at function-instance init not per-request); main member runs via the existing Runtime API loop.
+   - `backends/lambda/image_inject.go` — add `RenderPodOverlayDockerfile` + `PodOverlayContentTag` siblings to the existing single-container helpers.
+   - `backends/lambda/pod_materialize.go` (new) — same shape as `backends/cloudrun-functions/pod_materialize.go`. Per-member throwaway Lambdas deleted; merged pod Lambda created with `sockerless-pod=<name>` tag (Lambda uses tags not labels) + `SOCKERLESS_POD_CONTAINERS` env.
+   - `backends/lambda/backend_impl.go::ContainerStart` — wire `PodDeferredStart` → `materializePodFunction`.
+   - `backends/lambda/cloud_state.go` — pod-aware row emission via `Function.Tags["sockerless-pod"]` lookup.
+5. 🚧 **Sub-118e — 4 new live-GCP runner cells (AFTER 118d)**:
+   - **Cell 5 GH × cloudrun**: GitHub Actions self-hosted runner with docker-executor → sockerless cloudrun. User workflow `container:` directive becomes a Cloud Run Job per step. `services:` (e.g. postgres sidecar) ride along as a sockerless pod (multi-container in one Cloud Run Job's task definition). Goal: `echo hello-from-sockerless-cloudrun` runs in a workflow.
+   - **Cell 6 GH × gcf**: same shape but every container goes through the gcf overlay-and-swap path; pods become a multi-container overlay with the supervisor-in-overlay bootstrap (sub-118d output).
+   - **Cell 7 GL × cloudrun**: GitLab Runner with docker-executor → cloudrun. Per-stage scripts map to per-stage Cloud Run Jobs. Helper / pre / post containers as pod members.
+   - **Cell 8 GL × gcf**: stages reuse pool entries via overlay-content-hash (same image content = same Function reused, sub-118b-style amortized cold start). Helpers as pod members via 118d.
+   - Goal: each cell's hello-world workflow runs end-to-end through the runner; `services:` (e.g. postgres) demonstrates localhost peer reachability via the supervisor pattern.
+   - Harness pattern: mirror `tests/runners/{github,gitlab}/` cells 1-4 (existing AWS runner-cells); the fixtures are the same, only the backend differs.
+6. **Sub-118c — AZF live track + greenfield pool** (defer until 118e closes): needs Azure subscription + service principal from operator. Then `agent/cmd/sockerless-azf-bootstrap`, ACR overlay-build, `WebApps.CreateOrUpdate(linuxFxVersion=DOCKER|<overlay>)`, pool reuse. Cells 9-12 (GH/GL × azf-cloudrun-equivalent / azf-functions) would mirror 118e for Azure.
+7. **Teardown** — `gcloud projects delete sockerless-live-46x3zg4imo` once 118d + 118e close.
+
+## Live-cloud project state at session boundary
+
+- **Project**: `sockerless-live-46x3zg4imo` (free-trial billing, ephemeral-project workflow per `feedback_teardown_aggressive.md` adapted for GCP)
+- **Service account**: `sockerless-runner@sockerless-live-46x3zg4imo.iam.gserviceaccount.com` with run.admin / run.invoker / cloudfunctions.developer / iam.serviceAccountUser / logging.viewer / storage.admin / artifactregistry.writer / cloudbuild.builds.editor + bucket-level objectAdmin on the build bucket
+- **SA key**: `/tmp/sockerless-live-46x3zg4imo-key.json` — set `GOOGLE_APPLICATION_CREDENTIALS` to this for gcf invoke (idtoken signing requires SA creds; user-cred ADC fails loudly)
+- **AR repos**: `docker-hub` (remote-Docker-Hub proxy), `sockerless-overlay` (overlay images), `sockerless-live` (initial)
+- **GCS bucket**: `gs://sockerless-live-46x3zg4imo-build` (Cloud Build context + stub-Buildpacks-Go source archive)
+- **Background backends running**: cloudrun on `127.0.0.1:3375` (PID in `/tmp/sockerless-live-logs/cloudrun.pid`), gcf on `127.0.0.1:3376` (PID in `/tmp/sockerless-live-logs/gcf.pid`). Logs in `/tmp/sockerless-live-logs/`.
+- **Test-results dir**: `/tmp/sockerless-real-workloads/{cloudrun,gcf}/`
+- **Manual sweep script**: `scripts/manual-test-real-workloads.sh` (bundled probes + Go-build workload)
+
+## Active blockers
 
 Phase 110 closed; cells stable. Historic blockers retained below for context only.
 

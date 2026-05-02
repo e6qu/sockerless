@@ -75,16 +75,22 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 
 		entries, cursor, err := fetch(ctx, params, nil)
 		if err != nil {
+			s.Logger.Debug().Err(err).Str("container", id[:12]).Msg("cloud-logs initial fetch error")
 			return
 		}
+		s.Logger.Debug().Str("container", id[:12]).Int("entries", len(entries)).Msg("cloud-logs initial fetch")
 
 		// Apply tail filtering.
 		if params.Tail >= 0 && len(entries) > params.Tail {
 			entries = entries[len(entries)-params.Tail:]
 		}
 
-		for _, e := range entries {
-			writeLogLine(pw, params.FormatLine(e.Message, e.Timestamp))
+		for i, e := range entries {
+			n, werr := io.WriteString(pw, params.FormatLine(e.Message, e.Timestamp))
+			if werr != nil {
+				s.Logger.Debug().Err(werr).Str("container", id[:12]).Int("idx", i).Int("len", n).Msg("cloud-logs initial write error — pipe likely closed")
+				return
+			}
 		}
 
 		if !params.Follow {
@@ -103,10 +109,30 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 			// `!Running` as the exit trigger would drop the stream
 			// before the container ever emits its first line.
 			if cc, ccOK := s.ResolveContainerAuto(ctx, id); ccOK && isTerminalState(cc.State.Status) {
-				// Final fetch before exit.
-				entries, _, _ = fetch(ctx, params, cursor)
-				for _, e := range entries {
-					writeLogLine(pw, params.FormatLine(e.Message, e.Timestamp))
+				// Cloud-logging ingestion lag (Cloud Logging,
+				// CloudWatch, Log Analytics) is variable: 1-5 s for
+				// streaming stdout, but **batched writes near container
+				// exit** (e.g. a Go program that prints many lines just
+				// before exiting) can take 15-30 s to become
+				// queryable, because the cloud's logging agent batches
+				// the final flush. Without a sufficient settle window
+				// we silently drop the container's last burst of output.
+				// Six iterations of 3 s each cover the worst case
+				// observed on Cloud Run Jobs + Cloud Run Functions for
+				// `go run`-style workloads. Cursor-advancing so we
+				// don't double-emit entries that arrived between polls.
+				for i := 0; i < 6; i++ {
+					time.Sleep(3 * time.Second)
+					var newEntries []CloudLogEntry
+					newEntries, cursor, _ = fetch(ctx, params, cursor)
+					s.Logger.Debug().Str("container", id[:12]).Int("iter", i).Int("entries", len(newEntries)).Msg("cloud-logs settle fetch")
+					for j, e := range newEntries {
+						n, werr := io.WriteString(pw, params.FormatLine(e.Message, e.Timestamp))
+						if werr != nil {
+							s.Logger.Debug().Err(werr).Str("container", id[:12]).Int("iter", i).Int("idx", j).Int("len", n).Msg("cloud-logs settle write error — pipe closed")
+							return
+						}
+					}
 				}
 				return
 			}
@@ -115,8 +141,13 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 			if err != nil {
 				continue
 			}
-			for _, e := range entries {
-				writeLogLine(pw, params.FormatLine(e.Message, e.Timestamp))
+			s.Logger.Debug().Str("container", id[:12]).Int("entries", len(entries)).Msg("cloud-logs follow fetch")
+			for i, e := range entries {
+				n, werr := io.WriteString(pw, params.FormatLine(e.Message, e.Timestamp))
+				if werr != nil {
+					s.Logger.Debug().Err(werr).Str("container", id[:12]).Int("idx", i).Int("len", n).Msg("cloud-logs follow write error — pipe closed")
+					return
+				}
 			}
 		}
 	}()

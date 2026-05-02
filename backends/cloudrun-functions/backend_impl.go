@@ -158,9 +158,11 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		}
 	}
 
-	// Build fully qualified function name
+	// Parent path used by CreateFunction below; the per-pool-shard
+	// fullFunctionName is computed after the content tag is known.
 	parent := fmt.Sprintf("projects/%s/locations/%s", s.config.Project, s.config.Region)
-	fullFunctionName := fmt.Sprintf("%s/functions/%s", parent, funcName)
+	_ = funcName // recomputed below once content tag drives the pool-shard naming
+	var fullFunctionName string
 
 	// Pass entrypoint + cmd SEPARATELY so the simulator preserves
 	// docker's ENTRYPOINT/CMD semantics. Flattening them into one
@@ -221,22 +223,101 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		Backend:     "gcf",
 		InstanceID:  s.Desc.InstanceID,
 		CreatedAt:   time.Now(),
+		AutoRemove:  hostConfig.AutoRemove,
 	}
 
-	// Create the Cloud Run Function
+	// Cloud Run Functions Gen2 deploy = stub-source CreateFunction +
+	// post-create UpdateService image swap. See specs/CLOUD_RESOURCE_MAPPING.md
+	// § GCP Cloud Run Functions for the full sequence rationale.
+	overlaySpec := OverlayImageSpec{
+		BaseImageRef:        config.Image,
+		BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+		UserEntrypoint:      config.Entrypoint,
+		UserCmd:             config.Cmd,
+		UserWorkdir:         config.WorkingDir,
+	}
+	contentTag := OverlayContentTag(overlaySpec)
+	overlayURI, err := s.ensureOverlayImage(s.ctx(), overlaySpec, contentTag)
+	if err != nil {
+		return nil, fmt.Errorf("ensure overlay image: %w", err)
+	}
+
+	// Pool query: try to claim a free pre-built Function with this overlay-hash.
+	if claimed, claimErr := s.claimFreeFunction(s.ctx(), contentTag, id, name); claimErr == nil && claimed != "" {
+		// Pool hit — function already exists with our overlay; allocation label was
+		// CAS-claimed atomically. Skip CreateFunction + UpdateService entirely.
+		s.PendingCreates.Put(id, container)
+		// Stateless: do NOT cache function name/URL locally. Reads go to
+		// `resolveGCFFromCloud` which queries `Functions.ListFunctions` by
+		// `sockerless_allocation` label. The CAS claim above is the only
+		// source of truth.
+		s.Registry.Register(core.ResourceEntry{
+			ContainerID:  id,
+			Backend:      "gcf",
+			ResourceType: "function",
+			ResourceID:   claimed,
+			InstanceID:   s.Desc.InstanceID,
+			CreatedAt:    time.Now(),
+			Metadata: map[string]string{
+				"image":          container.Image,
+				"name":           container.Name,
+				"functionName":   shortFunctionName(claimed),
+				"overlayHash":    contentTag,
+				"reusedFromPool": "true",
+			},
+		})
+		s.EmitEvent("container", "create", id, map[string]string{
+			"name":  strings.TrimPrefix(name, "/"),
+			"image": config.Image,
+		})
+		return &api.ContainerCreateResponse{ID: id, Warnings: []string{}}, nil
+	}
+
+	// Pool miss — provision a fresh Function. Stage stub source (once per project,
+	// idempotent) and then call CreateFunction.
+	stubObject := "sockerless-stub/sockerless-gcf-stub.zip"
+	if err := stageStubSourceIfMissing(s.ctx(), s.gcp.Storage, s.config.BuildBucket, stubObject); err != nil {
+		return nil, fmt.Errorf("stage stub source: %w", err)
+	}
+
+	// Pool-aware function name: include content-tag and a shard so multiple
+	// pool entries for the same overlay coexist. Function ID rules: lowercase
+	// alphanumeric + hyphen, max 63 chars.
+	funcName = fmt.Sprintf("skls-%s-%s", contentTag, id[:6])
+	fullFunctionName = fmt.Sprintf("%s/functions/%s", parent, funcName)
+
+	// Pool labels: managed=true, overlay-hash=<tag>, allocation=<containerID>.
+	if tags.Labels == nil {
+		tags.Labels = make(map[string]string)
+	}
+	gcpLabels := tags.AsGCPLabels()
+	gcpLabels["sockerless_overlay_hash"] = contentTag
+	gcpLabels["sockerless_allocation"] = shortAllocLabel(id)
+
+	// Create the Cloud Run Function with the stub Buildpacks-Go source. The
+	// underlying Service's image gets replaced post-create via UpdateService.
 	createReq := &functionspb.CreateFunctionRequest{
 		Parent:     parent,
 		FunctionId: funcName,
 		Function: &functionspb.Function{
 			Name:   fullFunctionName,
-			Labels: tags.AsGCPLabels(),
+			Labels: gcpLabels,
 			BuildConfig: &functionspb.BuildConfig{
-				Runtime:    "docker",
-				EntryPoint: "",
+				Runtime:    "go124",
+				EntryPoint: "Stub",
+				Source: &functionspb.Source{
+					Source: &functionspb.Source_StorageSource{
+						StorageSource: &functionspb.StorageSource{
+							Bucket: s.config.BuildBucket,
+							Object: stubObject,
+						},
+					},
+				},
 			},
 			ServiceConfig: serviceConfig,
 		},
 	}
+	_ = overlayURI // captured by deferred image swap below; suppress unused-warn until then.
 
 	op, err := s.gcp.Functions.CreateFunction(s.ctx(), createReq)
 	if err != nil {
@@ -256,11 +337,37 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		return nil, gcpcommon.MapGCPError(err, "function", funcName)
 	}
 
-	// Get function URL from the result
-	functionURL := ""
-	if result.ServiceConfig != nil {
-		functionURL = result.ServiceConfig.Uri
+	// Image swap: replace the stub Buildpacks-built image with our overlay
+	// via Run.Services.UpdateService. Cloud Functions does not reconcile
+	// Service.Template.Containers[0].Image; the swap holds for the lifetime
+	// of the function. See specs/CLOUD_RESOURCE_MAPPING.md § GCP Cloud Run Functions.
+	if err := s.swapServiceImage(s.ctx(), result, overlayURI); err != nil {
+		// Best-effort cleanup so the create appears atomic.
+		if delOp, delErr := s.gcp.Functions.DeleteFunction(s.ctx(), &functionspb.DeleteFunctionRequest{
+			Name: fullFunctionName,
+		}); delErr == nil {
+			_ = delOp.Wait(s.ctx())
+		}
+		s.Logger.Error().Err(err).Str("function", funcName).Msg("failed to swap service image")
+		return nil, &api.ServerError{Message: fmt.Sprintf("swap overlay image on %q: %v", funcName, err)}
 	}
+
+	// Re-read the function so result reflects post-swap state (URL, etc.).
+	result, err = s.gcp.Functions.GetFunction(s.ctx(), &functionspb.GetFunctionRequest{Name: fullFunctionName})
+	if err != nil {
+		s.Logger.Warn().Err(err).Str("function", funcName).Msg("failed to re-read function after image swap")
+	}
+
+	// Authenticated invoke is required (see invokeFunction in containers.go).
+	// We deliberately do NOT bind allUsers → roles/run.invoker — exposing the
+	// function URL to the public internet to work around user-credential ADC's
+	// inability to sign ID tokens would violate the operator's security
+	// posture. If invocation fails with 403, the operator must switch to
+	// service-account ADC; the failure surfaces in ContainerStart.
+
+	// Function URL is now derived from cloud labels via resolveGCFFromCloud
+	// at every read. No local cache. result is kept for the volume-attach
+	// path below which needs the underlying-Service name.
 
 	// If the request carries named-volume binds, attach them to the
 	// underlying Cloud Run Service via the GetService /
@@ -283,12 +390,9 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	}
 
 	s.PendingCreates.Put(id, container)
-
-	s.GCF.Put(id, GCFState{
-		FunctionName: funcName,
-		FunctionURL:  functionURL,
-		LogResource:  funcName,
-	})
+	// Stateless: function name/URL are derived from cloud labels via
+	// resolveGCFFromCloud — no local cache. functionURL captured above is
+	// only used for the EmitEvent metadata payload below.
 
 	s.Registry.Register(core.ResourceEntry{
 		ContainerID:  id,
@@ -334,14 +438,29 @@ func (s *Server) ContainerStart(ref string) error {
 		return &api.NotModifiedError{}
 	}
 
-	// Multi-container pods are not supported by FaaS backends
+	// Multi-container pod handling: defer until all members have been
+	// started, then collapse the pod into a single Cloud Run Function
+	// backed by a merged-rootfs overlay (per spec § "Podman pods on
+	// FaaS backends — supervisor-in-overlay"). The supervisor (PID 1
+	// of the function container) forks one chroot'd subprocess per
+	// pod member; the main member's stdout becomes the HTTP response
+	// body and sidecars run for the lifetime of the invocation.
 	if pod, inPod := s.Store.Pods.GetPodForContainer(id); inPod && len(pod.ContainerIDs) > 1 {
-		return &api.InvalidParameterError{
-			Message: "multi-container pods are not supported by the cloudrun-functions backend",
+		exitCh := make(chan struct{})
+		s.Store.WaitChs.Store(id, exitCh)
+		shouldDefer, podContainers := s.PodDeferredStart(id)
+		if shouldDefer {
+			// Earlier pod members wait for the main's start to trigger
+			// the merged-Function build. Their WaitChs stay registered
+			// so `docker wait <member>` blocks until invokePodFunction
+			// fans the result out.
+			return nil
 		}
+		s.PendingCreates.Delete(id)
+		return s.materializePodFunction(id, podContainers, exitCh)
 	}
 
-	gcfState, _ := s.GCF.Get(id)
+	gcfState, _ := s.resolveGCFFromCloud(s.ctx(), id)
 
 	// Remove from PendingCreates now that we're starting.
 	s.PendingCreates.Delete(id)
@@ -360,7 +479,7 @@ func (s *Server) ContainerStart(ref string) error {
 			s.Logger.Error().Str("function", gcfState.FunctionName).Msg("no function URL available for invocation")
 			inv.ExitCode = 1
 			inv.Error = "no function URL available"
-		} else if resp, err := gcfHTTPClient.Post(gcfState.FunctionURL, "application/json", nil); err != nil {
+		} else if resp, err := invokeFunction(s.ctx(), gcfState.FunctionURL); err != nil {
 			s.Logger.Error().Err(err).Str("function", gcfState.FunctionName).Msg("function invocation failed")
 			inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
 			inv.Error = err.Error()
@@ -478,15 +597,35 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	s.StopHealthCheck(id)
 
-	// Delete Cloud Run Function (best-effort)
-	gcfState, _ := s.GCF.Get(id)
+	// Pool-aware release: derive (function-name, overlay-hash) from cloud labels
+	// so the release path is correct after a backend restart (no in-memory state).
+	gcfState, _ := s.resolveGCFFromCloud(s.ctx(), id)
+	fullName := ""
 	if gcfState.FunctionName != "" {
-		fullName := fmt.Sprintf("projects/%s/locations/%s/functions/%s", s.config.Project, s.config.Region, gcfState.FunctionName)
-		op, err := s.gcp.Functions.DeleteFunction(s.ctx(), &functionspb.DeleteFunctionRequest{
-			Name: fullName,
-		})
-		if err == nil {
-			_ = op.Wait(s.ctx()) // best-effort wait
+		// Cache hit
+		if strings.HasPrefix(gcfState.FunctionName, "projects/") {
+			fullName = gcfState.FunctionName
+		} else {
+			fullName = fmt.Sprintf("projects/%s/locations/%s/functions/%s", s.config.Project, s.config.Region, gcfState.FunctionName)
+		}
+	} else {
+		// Recover from cloud labels: list sockerless-managed Functions
+		// allocated to this container.
+		parent := fmt.Sprintf("projects/%s/locations/%s", s.config.Project, s.config.Region)
+		filter := fmt.Sprintf(`labels.sockerless_allocation:"%s"`, shortAllocLabel(id))
+		it := s.gcp.Functions.ListFunctions(s.ctx(), &functionspb.ListFunctionsRequest{Parent: parent, Filter: filter})
+		if fn, err := it.Next(); err == nil && fn != nil {
+			fullName = fn.GetName()
+		}
+	}
+	if fullName != "" {
+		fn, gerr := s.gcp.Functions.GetFunction(s.ctx(), &functionspb.GetFunctionRequest{Name: fullName})
+		contentTag := ""
+		if gerr == nil && fn != nil {
+			contentTag = fn.GetLabels()["sockerless_overlay_hash"]
+		}
+		if err := s.releaseOrDeleteFunction(s.ctx(), fullName, contentTag); err != nil {
+			s.Logger.Warn().Err(err).Str("function", fullName).Msg("pool release failed")
 		}
 		s.Registry.MarkCleanedUp(fullName)
 	}
@@ -503,7 +642,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	s.PendingCreates.Delete(id)
-	s.GCF.Delete(id)
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
 	}
@@ -533,32 +671,46 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 // buildCloudLogsFetcher returns a CloudLogFetchFunc closure that
 // queries Cloud Logging for the given function. Shared by
 // ContainerLogs and ContainerAttach.
+//
+// The `logName:"run.googleapis.com"` substring clause restricts the
+// query to Cloud Run runtime logs (Gen2 functions run on Cloud Run).
+// Without it, Cloud Audit Logs (`cloudaudit.googleapis.com/...`) match
+// the same `resource.type="cloud_run_revision"` and would be merged
+// into docker logs as multi-KB textproto AuditLog dumps.
 func (s *Server) buildCloudLogsFetcher(ref string) core.CloudLogFetchFunc {
 	var funcName string
 	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
-		gcfState, _ := s.GCF.Get(id)
+		gcfState, _ := s.resolveGCFFromCloud(s.ctx(), id)
 		funcName = gcfState.FunctionName
 	}
 	baseFilter := fmt.Sprintf(
-		`resource.type="cloud_run_revision" AND resource.labels.service_name="%s"`,
+		`resource.type="cloud_run_revision" AND resource.labels.service_name="%s" AND logName:"run.googleapis.com"`,
 		funcName,
 	)
 	return s.cloudLoggingFetch(baseFilter)
 }
 
-// cloudLoggingFetch returns a CloudLogFetchFunc that queries Cloud Logging.
-// cursor is a time.Time tracking the latest seen timestamp for dedup.
+// gcfLogCursor mirrors cloudrun's `cloudLogCursor`: tracks lastTS plus a
+// per-entry seen-set so tied-timestamp Cloud Logging entries (batched
+// stdout writes) are not lost between fetches and not duplicated.
+type gcfLogCursor struct {
+	lastTS time.Time
+	seen   map[string]struct{}
+}
+
+// cloudLoggingFetch returns a CloudLogFetchFunc that queries Cloud Logging
+// using `timestamp>=cursor.lastTS` plus a `seen` set for dedup.
 func (s *Server) cloudLoggingFetch(baseFilter string) core.CloudLogFetchFunc {
 	return func(ctx context.Context, params core.CloudLogParams, cursor any) ([]core.CloudLogEntry, any, error) {
 		logFilter := baseFilter
 
-		var lastTS time.Time
-		if cursor != nil {
-			lastTS = cursor.(time.Time)
+		c, _ := cursor.(*gcfLogCursor)
+		if c == nil {
+			c = &gcfLogCursor{seen: make(map[string]struct{})}
 		}
 
-		if !lastTS.IsZero() {
-			logFilter += fmt.Sprintf(` AND timestamp>"%s"`, lastTS.UTC().Format(time.RFC3339Nano))
+		if !c.lastTS.IsZero() {
+			logFilter += fmt.Sprintf(` AND timestamp>="%s"`, c.lastTS.UTC().Format(time.RFC3339Nano))
 		} else {
 			logFilter += params.CloudLoggingSinceFilter()
 			logFilter += params.CloudLoggingUntilFilter()
@@ -579,13 +731,18 @@ func (s *Server) cloudLoggingFetch(baseFilter string) core.CloudLogFetchFunc {
 			if line == "" {
 				continue
 			}
+			key := fmt.Sprintf("%d:%s", entry.Timestamp.UnixNano(), line)
+			if _, dup := c.seen[key]; dup {
+				continue
+			}
+			c.seen[key] = struct{}{}
 			entries = append(entries, core.CloudLogEntry{Timestamp: entry.Timestamp, Message: line})
-			if entry.Timestamp.After(lastTS) {
-				lastTS = entry.Timestamp
+			if entry.Timestamp.After(c.lastTS) {
+				c.lastTS = entry.Timestamp
 			}
 		}
 
-		return entries, lastTS, nil
+		return entries, c, nil
 	}
 }
 
@@ -646,7 +803,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 			spaceReclaimed += uint64(img.Size)
 		}
 		// Clean up Cloud Run Functions cloud resources
-		gcfState, _ := s.GCF.Get(c.ID)
+		gcfState, _ := s.resolveGCFFromCloud(s.ctx(), c.ID)
 		if gcfState.FunctionName != "" {
 			fullName := fmt.Sprintf("projects/%s/locations/%s/functions/%s", s.config.Project, s.config.Region, gcfState.FunctionName)
 			if op, err := s.gcp.Functions.DeleteFunction(s.ctx(), &functionspb.DeleteFunctionRequest{
@@ -668,7 +825,6 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 			s.Store.Pods.RemoveContainer(pod.ID, c.ID)
 		}
 		s.PendingCreates.Delete(c.ID)
-		s.GCF.Delete(c.ID)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
 			close(ch.(chan struct{}))
 		}

@@ -173,7 +173,43 @@ func (p *gcfCloudState) queryFunctions(ctx context.Context) ([]api.Container, er
 			continue
 		}
 
-		containerID := labels["sockerless_container_id"]
+		// Pod Functions: one Function backs N container rows. The pod
+		// manifest is in the SOCKERLESS_POD_CONTAINERS env var; each
+		// member becomes a `docker ps` row keyed on its original
+		// container ID (round-tripped through the manifest's
+		// container_id field). Skip the per-member emit and fall
+		// through to single-container handling when the function is
+		// not pod-managed.
+		if labels["sockerless_pod"] != "" {
+			members := podMembersFromFunction(fn)
+			for _, m := range members {
+				if m.ContainerID == "" || seen[m.ContainerID] {
+					continue
+				}
+				seen[m.ContainerID] = true
+				c := podMemberToContainer(fn, labels, m)
+				if inv, ok := p.server.Store.GetInvocationResult(c.ID); ok {
+					c.State = api.ContainerState{
+						Status:     "exited",
+						Running:    false,
+						ExitCode:   inv.ExitCode,
+						FinishedAt: inv.FinishedAt.UTC().Format(time.RFC3339Nano),
+						Error:      inv.Error,
+					}
+				}
+				containers = append(containers, c)
+			}
+			continue
+		}
+
+		// Free pool entries are not containers — they have no
+		// `sockerless_allocation` label set. Skip them in container listings.
+		// Pre-pool builds used `sockerless_container_id` directly; honour both
+		// during the migration window.
+		containerID := labels["sockerless_allocation"]
+		if containerID == "" {
+			containerID = labels["sockerless_container_id"]
+		}
 		if containerID == "" || seen[containerID] {
 			continue
 		}
@@ -193,24 +229,94 @@ func (p *gcfCloudState) queryFunctions(ctx context.Context) ([]api.Container, er
 			}
 		}
 
-		// Sync GCF state store with cloud state
-		if _, exists := p.server.GCF.Get(containerID); !exists {
-			funcName := extractFunctionName(fn.Name)
-			functionURL := ""
-			if fn.ServiceConfig != nil {
-				functionURL = fn.ServiceConfig.Uri
-			}
-			p.server.GCF.Put(containerID, GCFState{
-				FunctionName: funcName,
-				FunctionURL:  functionURL,
-				LogResource:  funcName,
-			})
-		}
+		// Stateless: function name/URL are read directly from `fn` whenever
+		// needed (this is itself the cloud-side query). No local cache.
 
 		containers = append(containers, c)
 	}
 
 	return containers, nil
+}
+
+// podMembersFromFunction extracts the per-member manifest from the
+// Function's SOCKERLESS_POD_CONTAINERS env var. Returns nil if the
+// env is missing or undecodable — the caller treats the Function as
+// non-pod in that case.
+func podMembersFromFunction(fn *functionspb.Function) []PodMemberJSON {
+	if fn.ServiceConfig == nil {
+		return nil
+	}
+	enc := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_POD_CONTAINERS"]
+	if enc == "" {
+		return nil
+	}
+	members, err := DecodePodManifest(enc)
+	if err != nil {
+		return nil
+	}
+	return members
+}
+
+// podMemberToContainer builds a `docker ps` row for one pod member.
+// Stateless: every field is derived from the Function's labels + envs
+// + per-member manifest entry. HostConfig.MountNamespaceMode and PidMode
+// surface the spec's "shared-degraded" honesty so operators detecting
+// the field can choose a non-FaaS backend (cloudrun-jobs / aca) when
+// they need real per-container isolation.
+func podMemberToContainer(fn *functionspb.Function, labels map[string]string, m PodMemberJSON) api.Container {
+	name := "/" + m.Name
+	if m.ContainerID != "" && m.Name == "" {
+		name = "/" + m.ContainerID[:12]
+	}
+	state := mapFunctionState(fn)
+	created := labels["sockerless_created_at"]
+	netName := "bridge"
+	return api.Container{
+		ID:      m.ContainerID,
+		Name:    name,
+		Created: created,
+		Image:   m.Image,
+		State:   state,
+		Config: api.ContainerConfig{
+			Image:      m.Image,
+			Entrypoint: m.Entrypoint,
+			Cmd:        m.Cmd,
+			Env:        m.Env,
+			WorkingDir: m.Workdir,
+			// Per spec § "Podman pods on FaaS backends — Honest mapping",
+			// pod members on FaaS share mount-ns (chroot only — no real
+			// mount-ns) and PID-ns because the cloud sandbox blocks
+			// `unshare(CLONE_NEWNS|CLONE_NEWPID)`. Surfacing this via
+			// `docker inspect` is the operator's signal to fall through
+			// to a real-isolation backend (cloudrun-jobs / aca) when
+			// isolation is load-bearing. Labels carry this since
+			// api.HostConfig has only PidMode (no MountNamespaceMode);
+			// PidMode below carries the same signal in docker's native
+			// schema.
+			Labels: map[string]string{
+				"sockerless.pod":               labels["sockerless_pod"],
+				"sockerless.pod.member":        m.Name,
+				"sockerless.namespace.mount":   "shared-degraded",
+				"sockerless.namespace.pid":     "shared-degraded",
+				"sockerless.namespace.user":    "shared-degraded",
+				"sockerless.namespace.cgroup":  "shared-degraded",
+				"sockerless.namespace.network": "shared",
+				"sockerless.namespace.ipc":     "shared",
+				"sockerless.namespace.uts":     "shared",
+			},
+		},
+		HostConfig: api.HostConfig{
+			NetworkMode: netName,
+			PidMode:     "shared-degraded",
+		},
+		NetworkSettings: api.NetworkSettings{
+			Networks: map[string]*api.EndpointSettings{
+				netName: {NetworkID: netName},
+			},
+		},
+		Platform: "linux",
+		Driver:   "cloud-run-functions",
+	}
 }
 
 // functionToContainer reconstructs an api.Container from a Cloud Function and its labels.
@@ -347,13 +453,4 @@ func gcpLabelsToHyphenMap(labels map[string]string) map[string]string {
 		m[hyphenKey] = v
 	}
 	return m
-}
-
-// extractFunctionName extracts the short function name from a fully qualified name.
-// e.g. "projects/my-project/locations/us-central1/functions/skls-abc123" -> "skls-abc123"
-func extractFunctionName(fullName string) string {
-	if i := strings.LastIndex(fullName, "/"); i >= 0 && i < len(fullName)-1 {
-		return fullName[i+1:]
-	}
-	return fullName
 }

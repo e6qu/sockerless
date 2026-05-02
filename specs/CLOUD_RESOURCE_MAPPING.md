@@ -32,7 +32,7 @@ This document is the source of truth for the stateless-backend invariant.
    | Backend | Primitive for `container:` sub-task | IAM (in addition to base FaaS perms) |
    |---|---|---|
    | `lambda` | `lambda.CreateFunction` (image-mode container) per sub-task → `lambda.Invoke`. Sub-task functions share the runner's workspace EFS access point via `FileSystemConfig`. After invoke + completion, `lambda.DeleteFunction`. | `lambda:CreateFunction/Invoke/Delete/Get/UpdateConfiguration/Tag/ListFunctions`, `iam:PassRole` for sub-task execution role. |
-   | `cloudrun-functions` (gcf) | `functions.CallFunction` against a function newly created via `functions.CreateFunction`; or warm pool. Workspace shared via GCS bucket pre-mounted by the bootstrap. | `cloudfunctions.functions.create/call/delete`, `iam.serviceAccounts.actAs`. |
+   | `cloudrun-functions` (gcf) | HTTP invoke (`https://<service-uri>/`) of a sockerless-overlay-imaged Function created via `functions.CreateFunction(stub-buildpacks-source)` + post-create `run.Services.UpdateService(image=overlay)`. See [§ GCP Cloud Run Functions](#gcp-cloud-run-functions-backend-cloudrun-functions--gcf). Function reuse pool keyed on overlay-content-hash so amortized startup matches Cloud Run Functions normal cold-start. Workspace shared via GCS bucket pre-mounted by the bootstrap. | `cloudfunctions.functions.create/get/list/update/delete`, `run.services.get/update`, `cloudbuild.builds.create`, `artifactregistry.repositories.uploadArtifacts`, `iam.serviceAccounts.actAs`. |
    | `azure-functions` (azf) | Function-app deployment + HTTP trigger invoke; sub-task workspace mounted as Azure Files share via the function app's site config. | `Microsoft.Web/sites/{create,invoke,delete}`, managed-identity `actAs`. |
    | `ecs` | `ecs.RunTask` (Fargate) per sub-task; not relevant *inside* an ECS workload because ECS tasks run a long-lived sockerless that handles repeated `RunTask` directly. | (default ECS task role.) |
    | `cloudrun` (services) | `run.Services.CreateRevision` against a per-sub-task Service; long-lived for the duration of the parent workload. | `run.services.create/get/delete`. |
@@ -73,7 +73,7 @@ This document is the source of truth for the stateless-backend invariant.
 | Docker concept | Cloud resource | Identifier(s) | Tag(s) for discovery |
 |---|---|---|---|
 | Container | Lambda function | `function ARN`, `containerID` | function tags: `sockerless-managed=true`, `sockerless-container-id=<id>`, `sockerless-name=<name>` |
-| Pod | Multi-container pod is **not supported** by Lambda — one function = one container. Pods would require a coordinator (e.g. Step Functions); not in scope. | — | — |
+| Pod | **Supported via supervisor-in-overlay** (degraded namespace isolation — see "Podman pods on FaaS backends" below). Lambda's image-mode container backs the function with a single Linux container; the overlay bakes all pod containers' rootfs and `sockerless-lambda-bootstrap` (supervisor) into one image. Pod containers share net/IPC/UTS namespaces (matches podman default — `localhost:PORT` works) but mount + PID namespaces are also shared because the Lambda execution environment doesn't grant `CAP_SYS_ADMIN`. Per-container restart is NotImpl. | function name `sockerless-pod-<podName>-...` | + tag `sockerless-pod=<name>`, env `SOCKERLESS_POD_CONTAINERS=<base64-JSON>` for round-trip |
 | Image | ECR repository / image | `<account>.dkr.ecr.<region>.amazonaws.com/<repo>:<tag>` | (registry-managed) |
 | Network | **Native cross-container DNS is not addressable per-execution.** Lambda VPC config only routes egress; peer-Lambda discovery requires Service Discovery + a separate fronting service. Treat docker networks as bookkeeping only. | (no cloud anchor) | (known limitation) |
 | Volume | EFS access point on a sockerless-managed EFS filesystem (shared with ECS), attached at `CreateFunction` via `Function.FileSystemConfigs[]` (Lambda permits one per function, mount path constrained to `/mnt/[A-Za-z0-9_.\-]+`). Requires `SOCKERLESS_LAMBDA_SUBNETS` (Lambda-in-VPC). See `backends/lambda/backend_delegates.go::VolumeCreate` + `aws-common/volumes.go::EFSManager` + the **"Lambda bind-mount translation"** subsection of "Volume provisioning per backend" for the `-v src:dst` translation rules. `/tmp` (512 MB–10 GB ephemeral) is always present per-invocation; named volumes are durable across invocations. | EFS filesystem id + access-point id | EFS resource tags: `sockerless-managed=true`, `sockerless-volume-name=<name>` |
@@ -144,30 +144,49 @@ This document is the source of truth for the stateless-backend invariant.
 
 | Docker concept | Cloud resource | Identifier(s) | Tag(s) for discovery |
 |---|---|---|---|
-| Container | Cloud Function (gen 2) — backed by `cloudfunctions.v2.FunctionService` | function name `sockerless-<containerID[:12]>`, function name + revision | label `sockerless_managed=true`, `sockerless_container_id=<id>`, `sockerless_name=<name>` (GCP underscore convention; full ID also stored as annotation since GCP label values are 63-char limited). |
-| Pod | **Not supported.** Cloud Functions are 1-to-1 with a container; there is no first-class group abstraction. Multi-container pods would require a coordinator (e.g. Workflows + Pub/Sub) and are out of scope. | — | — |
-| Image | Artifact Registry (the function's deployed container image) | `<region>-docker.pkg.dev/<project>/<repo>/<image>:<tag>` | (registry-managed) |
+| Container | Cloud Function (gen 2) — backed by `cloudfunctions.v2.FunctionService`. Sockerless overlay image runs as the function's actual workload (see "Deploy sequence" below). One Function maps to *at most one* live container at a time via the `sockerless_allocation` label; when the container is removed the Function may go back into the reuse pool (see "Stateless image cache + Function reuse pool"). | function name `sockerless-<overlayHash>-<n>`, full resource path `projects/<project>/locations/<region>/functions/<name>`. The `<n>` suffix lets multiple Functions coexist for the same overlay (pool capacity) — sockerless never reuses a name within a pool. | label `sockerless_managed=true`, `sockerless_overlay_hash=<contentTag>`, `sockerless_allocation=<containerID>` (empty/absent ⇒ in pool, free), `sockerless_name=<name>` (GCP underscore convention; full container ID stored as annotation since GCP label values are 63-char limited). |
+| Pod | **Supported via supervisor-in-overlay** (degraded namespace isolation — see "Podman pods on FaaS backends" below). Cloud Functions Gen2 backs each Function with a single Cloud Run container; sockerless's overlay bakes all pod containers' rootfs and a supervisor bootstrap into one image. Pod containers share net/IPC/UTS namespaces (matches podman pod default — `localhost:PORT`, `/dev/shm` work) but mount + PID namespaces are also shared because the Cloud Run sandbox blocks `unshare(CLONE_NEWNS|CLONE_NEWPID)` (no CAP_SYS_ADMIN). Compatible with CI workloads (gitlab/github runner `services:` sidecars). Per-container restart is NotImpl. | function name `sockerless-pod-<podName>-...` (overlay tagged with combined content hash) | + label `sockerless_pod=<name>`, env `SOCKERLESS_POD_CONTAINERS=<base64-JSON of [{name,image,entrypoint,cmd}]>` for round-trip |
+| Image | Artifact Registry — overlay built once per content hash by Cloud Build, pushed to a sockerless-owned AR repo. | `<region>-docker.pkg.dev/<project>/sockerless-overlay/gcf:<contentTag>` where `<contentTag> = sha256(user-image, bootstrap-binary, user-cmd, user-entrypoint, user-workdir)[:16]` | (content-addressed; repo lifecycle managed by terraform). The Docker Hub remote-repo at `<region>-docker.pkg.dev/<project>/docker-hub/library/<name>` proxies user images for the overlay's `FROM`. |
 | Network | **Not supported natively.** Cloud Functions can connect to a VPC for egress via a connector, but they don't expose addressable inbound IPs to peer functions. Cross-container DNS via a docker-network abstraction is not implementable on Cloud Functions; backend treats `docker network create` / `connect` as a no-op for cloud purposes (returns success but the network is bookkeeping only). | (no cloud anchor) | — |
 | Volume | GCS bucket per volume (shared lifecycle helper with Cloud Run); attached via the function's runtime config (BYO mount path). See `backends/cloudrun-functions/backend_delegates.go::VolumeCreate`. `/tmp` (read/write, ephemeral) is always present per-invocation. | bucket name `sockerless-volume-<id>` | label `sockerless_managed=true`, `sockerless_volume_name=<name>` |
 | Exec instance | Reverse-agent overlay (no native exec on Cloud Functions); see [Exec](#exec). | (transient agent session) | — |
 
-**State derivation:**
+**Deploy sequence (`docker run <user-image> <user-cmd>` on a free overlay):**
 
-- `docker ps -a` → `Functions.ListFunctions(parent="projects/<project>/locations/<region>")`, filter by label `sockerless-managed=true`, project to `api.Container`. Recovery already implemented in `backends/cloudrun-functions/recovery.go`.
-- `docker stop` → `Functions.DeleteFunction(name)` (Cloud Functions have no in-place stop; deletion is the analog).
+Cloud Run Functions Gen2's `CreateFunction` API requires a Buildpacks-compatible source archive (Go/Node/Python/Java/Ruby/PHP/.NET) — there is **no documented path** to deploy a generic OCI image directly. To deploy sockerless's overlay (`FROM <user-image>` + `sockerless-gcf-bootstrap`), the backend uses a two-stage flow:
+
+1. **Compute `<contentTag>`** = `OverlayContentTag(spec)` — sha256 of (resolved-user-image, bootstrap-binary-path, user-entrypoint, user-cmd, user-workdir).
+2. **Pool query**: `Functions.ListFunctions(filter: sockerless_managed=true AND sockerless_overlay_hash=<contentTag>)`. From the result, pick any with `sockerless_allocation=""`. **Atomic claim** via `Functions.UpdateFunction(labels.add: sockerless_allocation=<containerID>)` with the function's current `etag`. Etag mismatch ⇒ another sockerless instance won; loop. If a free function is claimed, **skip to step 6**.
+3. **Image cache check**: `ArtifactRegistry.GetDockerImage(URI=<region>-docker.pkg.dev/<project>/sockerless-overlay/gcf:<contentTag>)`. 200 ⇒ overlay already exists; skip to 4. 404 ⇒ next step.
+4. **Overlay build via Cloud Build**: tar a `Dockerfile` (`FROM <resolved-user-image>`, `COPY sockerless-gcf-bootstrap /opt/sockerless/...`, `ENV SOCKERLESS_USER_*=...`, `ENTRYPOINT [".../bootstrap"]`) + the bootstrap binary, upload to `gs://<build-bucket>/`, fire `cloudbuild.CreateBuild(steps: [docker build, docker push])` against the AR URI from step 3. Cloud Build deduplicates by source hash so re-fires are no-ops.
+5. **Stub-source CreateFunction**: stage a no-op Go source archive at `gs://<build-bucket>/sockerless-stub-go.zip` (one-time per project; the source is identical for every sockerless deployment), `Functions.CreateFunction(parent, FunctionId=sockerless-<contentTag>-<n>, BuildConfig{Runtime:"go124", Source:storage(stub-zip), EntryPoint:"Stub"}, ServiceConfig{...env vars...}, Labels{sockerless_managed=true, sockerless_overlay_hash=<contentTag>, sockerless_allocation=<containerID>})`. Buildpacks builds a throwaway image; the function moves to ACTIVE in 30-60s.
+6. **Image swap**: `Run.Services.UpdateService(name=<function.ServiceConfig.Service>, Template.Containers[0].Image=<overlay-AR-URI>)` to replace the Buildpacks-built throwaway with our overlay. Cloud Functions does not reconcile this field — the swap holds.
+7. **Invoke**: HTTP POST to `Function.ServiceConfig.Uri`. The `sockerless-gcf-bootstrap` inside the overlay handles the request, exec's `SOCKERLESS_USER_*` as a subprocess, returns stdout in the response body, and copies stdout/stderr to its own (which Cloud Logging captures under `run.googleapis.com%2Fstdout` for the existing `buildCloudLogsFetcher`).
+
+**The stub-Buildpacks-source step is not a hack** — it's the documented escape hatch for non-Buildpacks-compatible deployments and is the same pattern as `attachVolumesToFunctionService`'s post-create UpdateService for volume mounts. Cloud Functions' API surface manages function metadata (URL, IAM, trigger spec); the underlying Cloud Run Service's `Template.Containers[0].Image` is operator-controlled and persists across function updates.
+
+**Release sequence (`docker rm <containerID>`):**
+
+1. `Functions.ListFunctions(filter: sockerless_allocation=<containerID>)` ⇒ the claimed function.
+2. Count free (allocation-empty) functions for the same overlay-hash: `ListFunctions(filter: sockerless_overlay_hash=<contentTag> AND sockerless_allocation="")`.
+3. If count `>= SOCKERLESS_GCF_POOL_MAX` (default 10) ⇒ `Functions.DeleteFunction(name)` (returns to a steady-state pool size).
+4. Otherwise ⇒ `Functions.UpdateFunction(labels.remove: sockerless_allocation)` to release back to the pool. Future `docker run` calls will reuse this function via the claim path in step 2 of the deploy sequence — amortized startup matches Cloud Run Functions' normal warm-pool cold-start (~1-3s, sub-100ms if `min-instances=1`).
+
+**State derivation (every list/inspect call queries the cloud — no local caches):**
+
+- `docker ps -a` → `Functions.ListFunctions(parent="projects/<project>/locations/<region>", filter: sockerless_managed=true AND sockerless_allocation!="")`. Free pool entries are excluded from `ps -a` (they have no associated container). Each returned function projects to one `api.Container` via the `sockerless_allocation`+`sockerless_container_id` labels.
+- `docker stop` → mark container exited via `Store.LogBuffers` (the function keeps existing in the pool); subsequent `docker rm` runs the release sequence above.
 - `docker images` → `gcfCloudState.ListImages` via the shared `core.OCIListImages` against `<region>-docker.pkg.dev` with token from `ARAuthProvider`.
-- `docker logs` → Cloud Logging `LogAdmin.Entries(filter='resource.type="cloud_function" labels.function_name="<name>"')`.
+- `docker logs` → Cloud Logging `LogAdmin.Entries(filter='resource.type="cloud_run_revision" labels.service_name="<service>" AND logName:"run.googleapis.com"')`. The `logName:` substring clause excludes Cloud Audit Logs (cf BUG-878).
 
-**In-memory state as a cache:**
-
-- `s.GCF *StateStore[GCFState]` — transient cache for `FunctionName`; backend's `ContainerStop/Kill/Remove` paths call `CloudState` directly for lookups since GCF has only one cloud-identity field.
+**Stateless invariant — implementation:** the gcf backend has zero per-container `StateStore` entries. All container/pool state is the cloud-side label set on Functions, queried fresh on every operation. `s.GCF *StateStore[GCFState]` from earlier rounds is gone — pool semantics make a transient cache useless because allocation can change concurrently across sockerless instances.
 
 ### Azure Functions (backend `azure-functions` / `azf`)
 
 | Docker concept | Cloud resource | Identifier(s) | Tag(s) for discovery |
 |---|---|---|---|
 | Container | Function App (Linux container deployment) — `armappservice.WebAppsClient` | function app name `sockerless-<containerID[:12]>` | tag `sockerless-managed=true`, `sockerless-container-id=<id>`, `sockerless-name=<name>` |
-| Pod | Multi-container Function App is **not supported** (Function Apps are 1-container). Pod deletion path does delete the underlying app, but pods are local-bookkeeping only. | — | — |
+| Pod | **Supported via supervisor-in-overlay** (degraded namespace isolation — see "Podman pods on FaaS backends" below). Azure Functions on Linux container plans (Premium / Flex Consumption / App Service) back each Function App with a single Linux container; the overlay bakes all pod containers' rootfs and `sockerless-azf-bootstrap` (supervisor) into one image. Pod containers share net/IPC/UTS namespaces (matches podman default — `localhost:PORT` works) but mount + PID namespaces are also shared because Function App containers don't get `CAP_SYS_ADMIN` by default. Per-container restart is NotImpl. | function app name `sockerless-pod-<podName>-...` | + tag `sockerless-pod=<name>`, app setting `SOCKERLESS_POD_CONTAINERS=<base64-JSON>` for round-trip |
 | Image | ACR | `<acrName>.azurecr.io/<repo>:<tag>` | (registry-managed) |
 | Network | **Not supported natively.** Function Apps support VNet integration for outbound traffic but not addressable inbound IPs for peer apps. `docker network create` / `connect` is bookkeeping-only. | — | — |
 | Volume | Azure Files share in a sockerless-owned storage account, attached to the Function App via `sites/<fn>/config/azurestorageaccounts`. See `backends/azure-functions/backend_delegates.go::VolumeCreate`. | storage account + share name | tag `sockerless-managed=true`, `sockerless-volume-name=<name>` |
@@ -593,6 +612,120 @@ Forbidden:
 - `~/.sockerless/state/images.json` — never written. All 6 cloud backends derive `docker images` from their respective cloud registries.
 - Backend-side databases, KV stores, message queues for state.
 - Tags written by sockerless that store secrets or state-snapshots beyond identity (`sockerless-managed`, `sockerless-container-id`, `sockerless-name`, `sockerless-pod`, `sockerless:network`, `sockerless:network-id`, `sockerless-instance` — these are identity/discovery only).
+
+---
+
+## Podman pods on FaaS backends — supervisor-in-overlay
+
+FaaS backends (`lambda`, `gcf`, `azf`) all back a Function with a single Linux container. There is no first-class "multiple containers per function" primitive on any of the three clouds. To support podman pods sockerless layers all pod containers' rootfs into one image and runs each as a child process of a small supervisor (the overlay bootstrap as PID 1 of the function's Linux container).
+
+**Podman pod namespace defaults — what's actually shared.**
+
+| Namespace | Podman pod default | Single-Linux-container reality |
+|---|---|---|
+| `net` | **shared** across pod | shared (single netns of the function's container) — ✅ matches |
+| `ipc` | **shared** across pod | shared (single IPC ns) — ✅ matches |
+| `uts` | **shared** across pod (hostname) | shared (single UTS ns) — ✅ matches |
+| `mount` | **isolated per container** | shared by default — ❌ DIFFERS from podman default |
+| `pid` | **isolated per container** (unless `--share=pid`) | shared by default — ❌ DIFFERS from podman default |
+| `user` | **isolated per container** (when userns enabled) | shared (no userns) — ❌ DIFFERS |
+| `cgroup` | **isolated per container** | shared — ❌ DIFFERS |
+
+**Where sockerless can recover the per-container isolation.** Linux's `unshare(CLONE_NEWNS|CLONE_NEWPID)` lets a privileged process give a child its own mount + PID namespace while staying in the parent's net+IPC+UTS namespaces — exactly what podman does. This requires `CAP_SYS_ADMIN` inside the function's container.
+
+| Backend | `CAP_SYS_ADMIN` available? | mount/pid isolation per pod container? |
+|---|---|---|
+| `lambda` (image-mode) | No (Lambda execution environment drops most capabilities; `unshare` returns EPERM) | ❌ — pod containers share mount + PID ns of the function's Linux container |
+| `gcf` (Cloud Run Functions Gen2 = Cloud Run Service backing) | No (default Cloud Run sandbox is non-privileged; `unshare(CLONE_NEWNS)` fails with EPERM unless the operator opts into Cloud Run's `executionEnvironment=gen2` + a custom run-time security policy that explicitly grants the cap, which Google does not currently expose via the Functions API) | ❌ same as lambda |
+| `azf` (Premium / Flex Consumption / App Service Linux container plans) | Same constraint as Cloud Run — Azure doesn't grant CAP_SYS_ADMIN to Function App containers by default | ❌ same as lambda |
+
+**Honest mapping.** For pods on FaaS, sockerless delivers:
+
+- ✅ **Pod-level networking** (`localhost:PORT` between pod containers) — matches podman default.
+- ✅ **Shared IPC** (`/dev/shm`, SysV IPC) — matches podman default.
+- ✅ **Shared UTS** (single hostname, settable by any pod container) — matches podman default.
+- ⚠️ **Mount-ns approximation via chroot per child.** `chroot` + per-container subdir under `/containers/<name>` gives path-based isolation for the binaries each container looks up via `PATH`, but is NOT a real mount-ns. Two pod containers writing the same absolute path inside their chroots stay isolated; two pod containers writing the same path OUTSIDE the chroot (e.g. both opening `/proc/self/cgroup`, both touching `/dev/null`) see the same file. Surfaces in `docker inspect <pod-member>.HostConfig.MountNamespaceMode = "shared-degraded"` so operators can detect.
+- ❌ **PID-ns is shared, not isolated.** A pod container running `ps -ef` sees every other pod container's processes (and the supervisor). `kill -9 <peer-pid>` reaches across containers. This matches podman's `--share=pid` mode but NOT podman's default. Sockerless surfaces this in `docker inspect` as `HostConfig.PidMode = "shared-degraded"`.
+- ❌ **User-ns + cgroup-ns are shared** — degradation symmetric with PID. Surfaced via `docker inspect`.
+
+**Why we don't fake the isolation.** Per the project's no-fakes / no-fallbacks rule: when the cloud sandbox blocks `unshare(CLONE_NEWNS|CLONE_NEWPID)`, we don't pretend isolation exists. Operators relying on per-container mount/PID isolation get a clear `inspect` field telling them the truth, plus a startup warning in the function's Cloud Logging stream:
+
+```
+sockerless-<backend>-bootstrap: WARNING — pod uses degraded namespace isolation:
+  mount-ns: shared (chroot only — would require CAP_SYS_ADMIN)
+  pid-ns:   shared (would require CAP_SYS_ADMIN)
+  net-ns:   shared per podman default ✓
+  ipc-ns:   shared per podman default ✓
+  uts-ns:   shared per podman default ✓
+```
+
+**Workloads this works for.** GitLab/GitHub runner jobs that use `services:` (e.g. a postgres sidecar): the runner's main container reaches the postgres container via `localhost:5432` (shared net), and rarely cares about mount-ns isolation across the pair. CI workloads are the primary target.
+
+**Workloads this doesn't work for.** Pods where one container does `mount`/`pivot_root`/`unshare` for its own private filesystem layout (e.g. running a containerized container runtime inside a pod). The chroot approximation isn't enough; operators get a `NotImpl` from the bootstrap when the user image's ENTRYPOINT actually fails on `mount`.
+
+**Overlay shape.** For pod `mypod` containing `[web: nginx:alpine, sidecar: alpine sleep 3600]`, sockerless's overlay-build merges both rootfs into one image with per-container subdirectories:
+
+```
+FROM <merge-base>
+COPY --from=nginx:alpine / /containers/web/
+COPY --from=alpine / /containers/sidecar/
+COPY sockerless-<backend>-bootstrap /opt/sockerless/bootstrap
+ENV SOCKERLESS_POD_CONTAINERS=<base64-JSON [
+   {name:"web",     root:"/containers/web",     entrypoint:["nginx","-g","daemon off;"], cmd:[]},
+   {name:"sidecar", root:"/containers/sidecar", entrypoint:[],                            cmd:["sleep","3600"]}]>
+ENTRYPOINT ["/opt/sockerless/bootstrap"]
+```
+
+The bootstrap parses `SOCKERLESS_POD_CONTAINERS` and for each entry: forks; in the child, `chroot` into the per-container root, `chdir` to "/", exec entrypoint+cmd. Stdout/stderr tee to per-container ring buffer + the supervisor's stdout (so Cloud Logging captures with per-container labels via a `[<container-name>]` line prefix). Per-container `docker exec mypod-web ...` re-enters via the bootstrap's child-PID registry, which forks a new chroot'd process.
+
+**Limitations.**
+
+- **No per-container restart.** Restarting one pod container would require killing its child without disturbing peers, and its filesystem state inside the merged rootfs persists. `docker container restart <pod-member>` returns NotImpl with a clear message; operators use `podman pod restart` (deletes + recreates the function).
+- **Image overlap on COPY.** If two pod members ship conflicting versions of the same path (`/etc/nginx.conf` from both a base and an override), the second `COPY --from=` wins. Sockerless detects collisions at build time and fails the pod create with an actionable error.
+- **Bake-time merge cost.** Pod overlay = base + N user images → larger image than single-container overlays. Built once per pod-content-hash, cached in AR/ECR/ACR.
+
+**Operator escape hatch for genuinely-isolated pods.** When operators need full per-container mount/PID isolation (e.g. running container-of-containers workloads, or strict security tenancy), the supervisor pattern is insufficient. Sockerless surfaces this via `inspect.HostConfig.MountNamespaceMode = "shared-degraded"` — operators detecting that field can fall through to a different sockerless backend (`cloudrun-jobs`, `aca`) that does allow per-container Linux containers (one Cloud Run Job per pod container, networked via VPC connector + Cloud DNS). FaaS pods are explicitly the lower-isolation tier.
+
+**Stateless invariant.** Pod metadata round-trips via `SOCKERLESS_POD_CONTAINERS` env var on the function (or app-setting on AZF). `docker pod ps` queries the cloud for sockerless-managed functions with `sockerless_pod=<name>` label and reconstructs the pod from the env var. Per-container exit codes ride in `Store.LogBuffers` keyed by `<containerID>` — the bootstrap stamps each subprocess's exit code into its own buffer, sockerless reads them via the existing FaaS LogBuffers path.
+
+---
+
+## Stateless image cache + Function/Site reuse pool (FaaS backends)
+
+FaaS backends (`lambda`, `gcf`, `azf`) wrap the user image with a sockerless bootstrap so the cloud's invocation runtime (Lambda Runtime API, HTTP, etc.) can drive a one-shot subprocess execution of the user CMD. Two independent caches live entirely in cloud-side resources to keep the stateless invariant ironclad while still meeting the amortized-startup goal (second-touch of a known image runs at the cloud's normal warm cold-start, not at first-touch build cost).
+
+**1. Content-addressed overlay image cache.**
+
+| Element | Definition |
+|---|---|
+| Content tag | `<contentTag> = sha256(resolvedUserImage, bootstrapBinaryPath, userEntrypoint, userCmd, userWorkdir)[:16]` |
+| Image URI | `lambda`: `<account>.dkr.ecr.<region>.amazonaws.com/sockerless-overlay:<contentTag>`. `gcf`: `<region>-docker.pkg.dev/<project>/sockerless-overlay/gcf:<contentTag>`. `azf`: `<acr>.azurecr.io/sockerless-overlay/azf:<contentTag>`. |
+| Cache check | `ECR.DescribeImages(imageIds=[contentTag])` / `ArtifactRegistry.GetDockerImage(URI)` / `ContainerRegistry.GetTag` — 200 ⇒ skip build, 404 ⇒ build via `core.CloudBuildService` and push. |
+| Cache eviction | Operator-controlled lifecycle policy on the registry (TTL on untagged + per-image-tag retention). Sockerless does not delete overlay images — multiple Functions/Sites can reference the same content tag. |
+
+**2. Stateless reuse pool keyed on overlay content hash.**
+
+The cloud Function (gcf) / Function App (azf) / Lambda function (lambda) is the unit of pool capacity. Each is labeled with the overlay-hash it was built for and an allocation marker (the container-id currently using it, or empty for "free").
+
+| Label / tag | Semantics | Read at |
+|---|---|---|
+| `sockerless-managed=true` | Marks resources sockerless owns | every list call |
+| `sockerless-overlay-hash=<contentTag>` | Groups reusable resources by image content | every list call |
+| `sockerless-allocation=<containerID>` | "In use" marker. Empty/absent ⇒ free, in pool | every list call |
+
+**Claim sequence (`docker run`):** list resources matching `sockerless_managed=true AND sockerless_overlay_hash=<contentTag>`; pick first with empty allocation; atomic CAS via `Update*({allocation: <containerID>}, etag=<currentEtag>)`. Etag mismatch ⇒ another sockerless instance won; loop. If no free resource exists, build overlay (cache check above), create new resource (lambda: `CreateFunction`; gcf: `CreateFunction(stub-source) + UpdateService(image=overlay)`; azf: `WebApps.CreateOrUpdate(linuxFxVersion=DOCKER|<overlay>)`).
+
+**Release sequence (`docker rm`):** find the container's claimed resource via `sockerless_allocation=<containerID>`; count free resources for this overlay-hash; if count `>= SOCKERLESS_<BACKEND>_POOL_MAX` (default 10) ⇒ delete; otherwise clear the allocation label so a future `docker run` reuses it.
+
+**Multi-instance safety:** etag-conditional updates are documented compare-and-swap primitives on every cloud (Cloud Functions `Function.etag`, Lambda function tags via `RevisionId` analog, Azure resource ETag). Two sockerless backends can't both claim the same free resource.
+
+**Restart safety:** all cache and pool state lives in cloud resource labels. A sockerless backend restart with empty in-memory state derives the full pool by listing tagged resources — no on-disk JSON, no in-memory `StateStore` of pool entries.
+
+**Operator knobs:**
+- `SOCKERLESS_<BACKEND>_POOL_MAX` (default `10`): cap on free resources kept warm per overlay-hash. Set to `0` to disable pooling (every container creates+deletes a fresh resource — preserves the shape but eliminates amortization).
+- Pool reuse never crosses overlay-hashes. Different user-image / cmd / entrypoint combinations get distinct pools.
+
+**Stateless invariant — implementation:** FaaS backends have zero per-container `StateStore` entries. Container/pool state is the cloud-side label set, queried fresh on every operation. Older `s.<Backend> *StateStore[<Backend>State]` caches that held `FunctionName`/`InvocationResult` are gone in the pool model — concurrent allocation changes across sockerless instances make a transient cache stale, and the cloud query is the only safe answer.
 
 ---
 

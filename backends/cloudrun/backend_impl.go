@@ -244,6 +244,8 @@ func (s *Server) ContainerStart(ref string) error {
 	if err != nil {
 		s.deleteJob(fmt.Sprintf("%s/jobs/%s", s.buildJobParent(), jobName))
 		s.Store.WaitChs.Delete(id)
+		s.PendingCreates.Delete(id)
+		s.CloudRun.Delete(id)
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
 		return gcpcommon.MapGCPError(err, "job", id)
 	}
@@ -268,6 +270,8 @@ func (s *Server) ContainerStart(ref string) error {
 		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("failed to run job")
 		s.deleteJob(jobFullName)
 		s.Store.WaitChs.Delete(id)
+		s.PendingCreates.Delete(id)
+		s.CloudRun.Delete(id)
 		return gcpcommon.MapGCPError(err, "execution", id)
 	}
 
@@ -277,6 +281,8 @@ func (s *Server) ContainerStart(ref string) error {
 		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("run job failed")
 		s.deleteJob(jobFullName)
 		s.Store.WaitChs.Delete(id)
+		s.PendingCreates.Delete(id)
+		s.CloudRun.Delete(id)
 		return gcpcommon.MapGCPError(err, "execution", id)
 	}
 
@@ -598,8 +604,20 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 // buildCloudLogsFetcher returns a CloudLogFetchFunc closure that
 // queries Cloud Logging for the given container's Job (or Service).
 // Shared by ContainerLogs and ContainerAttach.
+//
+// The `logName:"run.googleapis.com"` substring clause restricts the
+// query to Cloud Run runtime logs (stdout / stderr / varlog system).
+// Without it, Cloud Audit Logs (`cloudaudit.googleapis.com/...`) share
+// the same `resource.type="cloud_run_job"` and would be merged into the
+// docker logs stream as multi-KB textproto AuditLog dumps. Substring
+// match is used (instead of exact `logName=` with the canonical
+// `…/logs/run.googleapis.com%2Fstdout` form) because the cloud.google.com/go
+// logadmin client double-encodes `%` in the filter, which makes the
+// canonical form silently match nothing.
 func (s *Server) buildCloudLogsFetcher(ref string) core.CloudLogFetchFunc {
 	id, _ := s.ResolveContainerIDAuto(context.Background(), ref)
+
+	const logNameClause = `logName:"run.googleapis.com"`
 
 	var baseFilter string
 	if s.config.UseService {
@@ -614,8 +632,8 @@ func (s *Server) buildCloudLogsFetcher(ref string) core.CloudLogFetchFunc {
 			shortSvcName = parts[len(parts)-1]
 		}
 		baseFilter = fmt.Sprintf(
-			`resource.type="cloud_run_revision" AND resource.labels.service_name="%s"`,
-			shortSvcName,
+			`resource.type="cloud_run_revision" AND resource.labels.service_name="%s" AND %s`,
+			shortSvcName, logNameClause,
 		)
 	} else {
 		var shortJobName string
@@ -629,30 +647,40 @@ func (s *Server) buildCloudLogsFetcher(ref string) core.CloudLogFetchFunc {
 			shortJobName = parts[len(parts)-1]
 		}
 		baseFilter = fmt.Sprintf(
-			`resource.type="cloud_run_job" AND resource.labels.job_name="%s"`,
-			shortJobName,
+			`resource.type="cloud_run_job" AND resource.labels.job_name="%s" AND %s`,
+			shortJobName, logNameClause,
 		)
 	}
 
 	return s.cloudLoggingFetch(baseFilter)
 }
 
+// cloudLogCursor tracks the cloud-logs follow-mode position. Strict
+// `timestamp>lastTS` cursor causes silent loss when Cloud Logging
+// timestamps multiple entries identically (batched stdout writes from
+// a fast-exit container). The cursor uses `timestamp>=lastTS` plus
+// per-entry `seen` dedup keyed on (timestamp, insertId-or-message-hash)
+// so we never miss a tied entry and never emit a duplicate.
+type cloudLogCursor struct {
+	lastTS time.Time
+	seen   map[string]struct{} // key: <unix-nano>:<message-hash>
+}
+
 // cloudLoggingFetch returns a CloudLogFetchFunc that queries Cloud Logging.
-// cursor is a *time.Time tracking the latest seen timestamp for dedup.
+// Uses `timestamp>=cursor.lastTS` for the next-page query (so tied-timestamp
+// entries are not dropped) plus a `seen` set to prevent duplicate emission.
 func (s *Server) cloudLoggingFetch(baseFilter string) core.CloudLogFetchFunc {
 	return func(ctx context.Context, params core.CloudLogParams, cursor any) ([]core.CloudLogEntry, any, error) {
 		logFilter := baseFilter
 
-		var lastTS time.Time
-		if cursor != nil {
-			lastTS = cursor.(time.Time)
+		c, _ := cursor.(*cloudLogCursor)
+		if c == nil {
+			c = &cloudLogCursor{seen: make(map[string]struct{})}
 		}
 
-		if !lastTS.IsZero() {
-			// Follow mode: only entries after last seen.
-			logFilter += fmt.Sprintf(` AND timestamp>"%s"`, lastTS.UTC().Format(time.RFC3339Nano))
+		if !c.lastTS.IsZero() {
+			logFilter += fmt.Sprintf(` AND timestamp>="%s"`, c.lastTS.UTC().Format(time.RFC3339Nano))
 		} else {
-			// Initial fetch: apply since/until.
 			logFilter += params.CloudLoggingSinceFilter()
 			logFilter += params.CloudLoggingUntilFilter()
 		}
@@ -672,13 +700,18 @@ func (s *Server) cloudLoggingFetch(baseFilter string) core.CloudLogFetchFunc {
 			if line == "" {
 				continue
 			}
+			key := fmt.Sprintf("%d:%s", entry.Timestamp.UnixNano(), line)
+			if _, dup := c.seen[key]; dup {
+				continue
+			}
+			c.seen[key] = struct{}{}
 			entries = append(entries, core.CloudLogEntry{Timestamp: entry.Timestamp, Message: line})
-			if entry.Timestamp.After(lastTS) {
-				lastTS = entry.Timestamp
+			if entry.Timestamp.After(c.lastTS) {
+				c.lastTS = entry.Timestamp
 			}
 		}
 
-		return entries, lastTS, nil
+		return entries, c, nil
 	}
 }
 
