@@ -23,6 +23,9 @@ until curl -sfo /dev/null http://localhost:3376/_ping; do
 done
 echo "bootstrap: sockerless-backend-gcf ready"
 
+# BUG-913: gitlab-runner needs --working-directory to exist; create it.
+mkdir -p /tmp/runner-work
+
 if [ -n "${PORT:-}" ]; then
     nohup socat "TCP-LISTEN:${PORT},reuseaddr,fork" "TCP:127.0.0.1:3376" \
         >/tmp/socat.log 2>&1 &
@@ -37,6 +40,7 @@ gitlab-runner register \
     --executor docker \
     --docker-image alpine:latest \
     --docker-host "tcp://localhost:3376" \
-    --docker-pull-policy if-not-present
+    --docker-pull-policy if-not-present \
+    --docker-disable-cache=true
 
 exec gitlab-runner run --config /etc/gitlab-runner/config.toml --working-directory /tmp/runner-work
