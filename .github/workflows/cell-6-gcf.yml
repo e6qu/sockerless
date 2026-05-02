@@ -27,6 +27,17 @@ jobs:
           POSTGRES_USER: ci
           POSTGRES_DB: ci
     steps:
+      - name: probe-host
+        run: |
+          echo "=== identity ==="
+          hostname; whoami; id
+          echo "=== /etc/os-release ==="
+          cat /etc/os-release 2>/dev/null || true
+          echo "=== /etc/hostname ==="
+          cat /etc/hostname 2>/dev/null || true
+          echo "=== filesystem ==="
+          df -h 2>/dev/null | head -10 || true
+          mount | head -20 || true
       - name: probe-capabilities
         run: |
           echo "=== /proc/self/status caps ==="

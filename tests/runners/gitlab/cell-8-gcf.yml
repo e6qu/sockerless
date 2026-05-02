@@ -27,6 +27,12 @@ probe-and-compile:
     PGPASSWORD: ci
   script:
     - apk add --no-cache git gcc musl-dev postgresql-client
+    - echo "=== probe-host ==="
+    - hostname; whoami; id
+    - cat /etc/os-release 2>/dev/null || true
+    - cat /etc/hostname 2>/dev/null || true
+    - df -h 2>/dev/null | head -10 || true
+    - mount | head -20 || true
     - echo "=== probe-capabilities (Phase 118d shared-degraded honest surface) ==="
     - grep -E '^(Cap|Seccomp|NoNew)' /proc/self/status || true
     - env | grep -E 'SOCKERLESS_(POD|NAMESPACE)' || true

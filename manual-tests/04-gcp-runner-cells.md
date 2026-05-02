@@ -131,6 +131,11 @@ Run Job (cell 7) or Cloud Run Function (cell 8) per step.
 
 ## Step 4 — Run the cells
 
+Two paths — the test harness (Go-controlled, validates each cell
+end-to-end) or the dispatch script (one-shot trigger, faster).
+
+### 4a — Test harness (recommended for CI / first-run validation)
+
 ```bash
 export SOCKERLESS_GH_REPO=e6qu/sockerless
 export SOCKERLESS_GL_PROJECT=e6qu/sockerless
@@ -141,10 +146,43 @@ go test -v -tags=gcp_runner_live -run TestCell7_GL_Cloudrun -timeout 30m ./tests
 go test -v -tags=gcp_runner_live -run TestCell8_GL_Gcf      -timeout 30m ./tests/runners/gcp-cells
 ```
 
+### 4b — Dispatch script (one-shot, captures URLs)
+
+```bash
+GITHUB_REPO=e6qu/sockerless GITLAB_REPO=e6qu/sockerless \
+  GITLAB_TOKEN=glpat-… \
+  ./scripts/dispatch-gcp-cells.sh
+```
+
+The script prints the four run URLs as cells get triggered. It does
+NOT block waiting for green; watch the URLs externally:
+
+```bash
+gh run watch --repo $GITHUB_REPO    # cells 5+6
+# cells 7+8: open the printed gitlab pipeline URLs
+```
+
 ## Step 5 — Capture URLs in STATUS.md
 
 After each cell completes GREEN, append the URL to STATUS.md's
-4-cell table (extend the existing AWS table from Phase 110).
+4-cell table (extend the existing AWS table from Phase 110). Each
+cell's pipeline body covers (per the cell's `cell-N-{cloudrun,gcf}.yml`):
+
+- `probe-host` — hostname / whoami / id / /etc/os-release / df / mount
+- `probe-capabilities` — /proc/self/status caps / cgroup / namespace honesty
+- `probe-kernel` — uname -a / /proc/version / /proc/sys/kernel
+- `probe-env` — full env dump (filtered)
+- `probe-parameters` — getconf -a / ulimit / nproc / memory
+- `probe-localhost-peer` — postgres sidecar reachable via localhost (cells 5+6) or `postgres` alias (cells 7+8) — proves Phase 118d pod-overlay net-ns sharing
+- `clone-and-compile` — git clone sockerless + go build the
+  `simulators/testdata/eval-arithmetic` package
+- `run-arithmetic` — exec the binary against five non-trivial
+  expressions (`3 + 4 * 2` = 11, `(10 - 3) * 2` = 14, `100 / 5 + 1`
+  = 21, `2 * (3 + 4) - 1` = 13, `1.5 + 2.5 * 2` = 6.5)
+
+Cell GREEN gate: every probe section emits non-error output, postgres
+is reachable, the Go binary builds, and all five arithmetic
+invocations exit 0 with the expected stdout.
 
 ## Step 6 — Teardown
 
