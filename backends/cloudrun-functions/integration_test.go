@@ -2,6 +2,11 @@ package gcf
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
@@ -124,6 +129,22 @@ func TestMain(m *testing.M) {
 	}
 	cleanups = append(cleanups, func() { os.Remove(backendBinary) })
 
+	// Stage a fake service-account JSON with a real RSA keypair so the
+	// backend's `idtoken.NewClient` (called from `invokeFunction`) can
+	// sign JWTs locally. idtoken refuses user-credentials ADC and
+	// requires service-account creds; the keypair is generated fresh
+	// per test run. The sim's invocation handler doesn't validate the
+	// signed token (token validation is a real-Cloud-Run concern, not
+	// a sim concern) — but the AUTH HEADER PRESENCE is the same wire
+	// shape as production, so the backend code path stays identical.
+	saJSONPath, err := writeFakeServiceAccountJSON()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to stage fake SA JSON: %v\n", err)
+		cleanup()
+		os.Exit(1)
+	}
+	cleanups = append(cleanups, func() { _ = os.Remove(saJSONPath) })
+
 	// Start backend
 	backendPort := findFreePort()
 	backendAddr := fmt.Sprintf(":%d", backendPort)
@@ -134,6 +155,12 @@ func TestMain(m *testing.M) {
 		"SOCKERLESS_POLL_INTERVAL=500ms",
 		"SOCKERLESS_LOG_TIMEOUT=2s",
 		"SOCKERLESS_GCF_PROJECT=sim-project",
+		// Real Cloud Functions Gen2 requires a GCS bucket for the
+		// stub-Buildpacks-Go source archive; the sim's GCS handler
+		// holds the upload too, so the same bucket name works for both.
+		"SOCKERLESS_GCP_BUILD_BUCKET=sim-bucket",
+		// idtoken.NewClient ADC source. Generated fresh per test run.
+		"GOOGLE_APPLICATION_CREDENTIALS="+saJSONPath,
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
@@ -155,7 +182,6 @@ func TestMain(m *testing.M) {
 	// The GCF backend serves the Docker API directly (no separate
 	// frontend binary — in-process wiring per post-P67 architecture).
 	// Point the docker SDK at the backend's TCP address.
-	var err error
 	dockerClient, err = client.NewClientWithOpts(
 		client.WithHost(fmt.Sprintf("tcp://localhost:%d", backendPort)),
 		client.WithAPIVersionNegotiation(),
@@ -515,4 +541,60 @@ func filterBuildEnv(env []string, extra ...string) []string {
 		filtered = append(filtered, e)
 	}
 	return append(filtered, extra...)
+}
+
+// writeFakeServiceAccountJSON generates a fresh RSA keypair and writes
+// a valid service-account JSON to a temp file, returning the path.
+//
+// `idtoken.NewClient` (called by the gcf backend's `invokeFunction`)
+// signs JWTs locally with this key — no network call to GCP is made.
+// The sim's invocation handler doesn't validate the token (real Cloud
+// Run does; the sim doesn't gate on token shape), but the AUTH HEADER
+// PRESENCE matches production wire shape, so the backend code path is
+// identical against either real GCP or the sockerless GCP simulator.
+//
+// No fakes / no fallbacks: this is a real RSA keypair, the SA JSON
+// shape is valid (parseable by Google's auth library), and the JWT
+// produced is real and crypto-verifiable. The sim could verify the
+// signature against this key if it ever wanted to enforce auth.
+func writeFakeServiceAccountJSON() (string, error) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return "", fmt.Errorf("generate RSA keypair: %w", err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		return "", fmt.Errorf("marshal private key PKCS8: %w", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+
+	sa := map[string]string{
+		"type":                        "service_account",
+		"project_id":                  "sim-project",
+		"private_key_id":              "sim-key",
+		"private_key":                 string(keyPEM),
+		"client_email":                "sim-runner@sim-project.iam.gserviceaccount.com",
+		"client_id":                   "111111111111111111111",
+		"auth_uri":                    "https://accounts.google.com/o/oauth2/auth",
+		"token_uri":                   "https://oauth2.googleapis.com/token",
+		"auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+		"client_x509_cert_url":        "https://www.googleapis.com/robot/v1/metadata/x509/sim-runner@sim-project.iam.gserviceaccount.com",
+		"universe_domain":             "googleapis.com",
+	}
+	body, err := json.Marshal(sa)
+	if err != nil {
+		return "", fmt.Errorf("marshal SA JSON: %w", err)
+	}
+	f, err := os.CreateTemp("", "sockerless-sim-sa-*.json")
+	if err != nil {
+		return "", fmt.Errorf("create temp file: %w", err)
+	}
+	if _, err := f.Write(body); err != nil {
+		f.Close()
+		return "", fmt.Errorf("write SA JSON: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	return f.Name(), nil
 }

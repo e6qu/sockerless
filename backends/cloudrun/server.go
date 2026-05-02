@@ -52,7 +52,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		Auth:   gcpcommon.NewARAuthProvider(s.ctx, logger),
 		Logger: logger,
 	}
-	if svc, err := gcpcommon.NewGCPBuildService(context.Background(), config.Project, config.BuildBucket, "", logger); err == nil && svc != nil {
+	if svc, err := gcpcommon.NewGCPBuildService(context.Background(), config.Project, config.BuildBucket, "", config.EndpointURL, logger); err == nil && svc != nil {
 		s.images.BuildService = svc
 	}
 	s.SetSelf(s)
