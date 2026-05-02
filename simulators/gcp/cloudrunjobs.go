@@ -24,7 +24,7 @@ type Job struct {
 	Annotations            map[string]string   `json:"annotations,omitempty"`
 	CreateTime             string              `json:"createTime"`
 	UpdateTime             string              `json:"updateTime"`
-	LaunchStage            string              `json:"launchStage,omitempty"`
+	LaunchStage            enumString          `json:"launchStage,omitempty"`
 	Template               *ExecutionTemplate  `json:"template"`
 	TerminalCondition      *Condition          `json:"terminalCondition,omitempty"`
 	Conditions             []Condition         `json:"conditions,omitempty"`

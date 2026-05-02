@@ -66,7 +66,7 @@ type ServiceV2 struct {
 	Annotations           map[string]string `json:"annotations,omitempty"`
 	CreateTime            string            `json:"createTime,omitempty"`
 	UpdateTime            string            `json:"updateTime,omitempty"`
-	LaunchStage           string            `json:"launchStage,omitempty"`
+	LaunchStage           enumString        `json:"launchStage,omitempty"`
 	Ingress               enumString        `json:"ingress,omitempty"`
 	DefaultUriDisabled    bool              `json:"defaultUriDisabled,omitempty"`
 	Template              *RevisionTemplate `json:"template,omitempty"`
