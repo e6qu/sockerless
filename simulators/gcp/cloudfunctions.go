@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -266,13 +267,15 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 		// Cloud-faithful: HTTP-invoke the overlay's bootstrap.
 		body, exitCode, err := invokeOverlayContainerHTTP(image, functionID, timeout, sink)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "[sim-gcf] invocation error fn=%s img=%s: %v\n", functionID, image, err)
 			injectCloudFunctionLog(project, functionID,
 				fmt.Sprintf("Function invocation error: %v", err))
 			return []byte(fmt.Sprintf(`{"error":%q}`, err.Error())), 1
 		}
 		if exitCode != 0 {
+			fmt.Fprintf(os.Stderr, "[sim-gcf] non-zero exit fn=%s img=%s exit=%d body=%q\n", functionID, image, exitCode, string(body))
 			injectCloudFunctionLog(project, functionID,
-				fmt.Sprintf("Function exited with code %d", exitCode))
+				fmt.Sprintf("Function exited with code %d body=%q", exitCode, string(body)))
 		}
 		return body, exitCode
 	}
