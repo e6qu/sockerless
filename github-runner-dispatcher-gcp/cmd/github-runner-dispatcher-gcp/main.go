@@ -56,11 +56,35 @@ func run() error {
 	cleanupOnly := flag.Bool("cleanup-only", false, "run a single GC sweep (Cloud Run Jobs + GitHub runners) and exit; no polling")
 	flag.Parse()
 
+	// Cloud Run / serverless deployment: --repo and --token can come
+	// from env (REPO + GITHUB_TOKEN) so the container starts with no
+	// command-line args. The Cloud Run Service revision env variables
+	// are how secrets ride in (Secret Manager → env binding).
+	if *repo == "" {
+		*repo = os.Getenv("REPO")
+	}
 	if *repo == "" || !strings.Contains(*repo, "/") {
-		return fmt.Errorf("--repo owner/repo is required (e.g. --repo e6qu/sockerless)")
+		return fmt.Errorf("--repo owner/repo (or $REPO) is required (e.g. --repo e6qu/sockerless)")
 	}
 	if *token == "" {
 		return fmt.Errorf("github token is empty — set $GITHUB_TOKEN, run `gh auth token | …`, or pass --token=…")
+	}
+
+	// $PORT is set by Cloud Run; the container must bind it within
+	// the startup probe budget or the revision is killed. Tiny
+	// /healthz responder; the polling loop runs in a goroutine.
+	if port := os.Getenv("PORT"); port != "" {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		})
+		go func() {
+			log.Printf("dispatcher-gcp http listening on :%s", port)
+			if err := http.ListenAndServe(":"+port, mux); err != nil {
+				log.Fatalf("http listen: %v", err)
+			}
+		}()
 	}
 
 	cfgPath := *configPath

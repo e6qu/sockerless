@@ -1,0 +1,15 @@
+[[label]]
+name             = "sockerless-cloudrun"
+gcp_project      = "sockerless-live-46x3zg4imo"
+gcp_region       = "us-central1"
+image            = "us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/runner:cloudrun-amd64"
+service_account  = "sockerless-runner@sockerless-live-46x3zg4imo.iam.gserviceaccount.com"
+build_bucket     = "sockerless-live-46x3zg4imo-build"
+
+[[label]]
+name             = "sockerless-gcf"
+gcp_project      = "sockerless-live-46x3zg4imo"
+gcp_region       = "us-central1"
+image            = "us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/runner:gcf-amd64"
+service_account  = "sockerless-runner@sockerless-live-46x3zg4imo.iam.gserviceaccount.com"
+build_bucket     = "sockerless-live-46x3zg4imo-build"

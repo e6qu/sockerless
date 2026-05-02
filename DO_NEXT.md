@@ -2,6 +2,42 @@
 
 Resume pointer. Updated after every task. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md); bug log in [BUGS.md](BUGS.md); runner wiring in [docs/RUNNERS.md](docs/RUNNERS.md).
 
+## Resume pointer (2026-05-03)
+
+**PR #123** (`phase-118-faas-pods`): all standard CI green. Cells 5+6 in flight live; cells 7+8 not started. Goal: all four green BEFORE merging #123.
+
+**PR #124** (`cell-workflows-on-main`, throwaway): lands cell-5/6 workflow yamls on `main` so `workflow_dispatch` can fire them with `--ref phase-118-faas-pods`. Also carries TEMP `pull_request:` triggers on cell-5/6 (constrained to `branches: [main]`+`paths: [.github/workflows/cell-{5,6}-*.yml]`) so PR-#124 pushes auto-fire those cells. **Must NOT be merged.** Close after cells 5+6 GREEN — the `pull_request` trigger is throwaway; PR #123's cell yamls have only `workflow_dispatch` so post-merge state is manual-only (matches cells 1-4).
+
+**Live infra deployed (sockerless-live-46x3zg4imo)**:
+- AR `dispatcher:gcp-amd64` (built via Cloud Build, sockerless-sanctioned).
+- Secret Manager `github-pat` v1 = `gh auth token`; granted to `sockerless-runner@…iam` SA.
+- Cloud Run Service `github-runner-dispatcher-gcp` (us-central1, min=max=1, no-cpu-throttling, runner SA, $PORT=8080 /healthz, REPO=e6qu/sockerless env, GITHUB_TOKEN secret-mounted). URL: `https://github-runner-dispatcher-gcp-199307773205.us-central1.run.app`. Currently serving rev `00002-ll6` (post BUG-908 fix).
+
+**Bugs surfaced live this session**:
+- **BUG-907 (closed in PR #123 + rebuilt images)**: bash apostrophe in `${var:?msg}` form crashes runner bootstrap. Fixed text + rebuilt cloudrun + gcf runner images in AR.
+- **BUG-908 (closed in dispatcher rev 00002)**: `Cloud Run Jobs.CreateJob` rejects nested `Job.Name` — must be empty (name comes from `JobId` field on the request). `spawner.go` fixed.
+- **BUG-909 (open, IN PROGRESS)**: cloudrun + gcf backends lack bind-mount → managed-volume translation. github-runner emits `-v /var/run/docker.sock:/var/run/docker.sock`, `-v /tmp/runner-work:/__w`, `-v /opt/runner/externals:/__e:ro`; sockerless-backend-cloudrun rejects all of them with "host bind mounts are not supported". Phase-110b-equivalent for GCP. Mirror `backends/ecs/config.go::SharedVolume{Name,ContainerPath,AccessPointID,FileSystemID}` + `backends/ecs/backend_impl.go::ContainerCreate` bind-mount translator. **For GCP**: SharedVolume backed by GCS bucket (Cloud Run Jobs `Volume{Gcs{Bucket}}`). Drop `/var/run/docker.sock` mount unconditionally. Translate matching ContainerPath → named-volume ref; drop sub-paths.
+
+**BUG-909 wire-up beyond the backend**:
+- `github-runner-dispatcher-gcp/internal/spawner/spawner.go` must add a Cloud Run `Volume{Gcs{Bucket}}` to the spawned runner Cloud Run Job + a corresponding container `VolumeMounts` entry mounting at `/tmp/runner-work` (and `/opt/runner/externals`), AND set `SOCKERLESS_GCP_SHARED_VOLUMES=runner-workspace=/tmp/runner-work=<bucket>,runner-externals=/opt/runner/externals=<bucket>` env so the in-image backend's translation knows the mapping.
+- New terraform resource: `google_storage_bucket.runner_workspace` in `terraform/modules/cloudrun/runner.tf` (force_destroy + 1-day lifecycle, mirrors `aws_efs_file_system` + access points in `terraform/modules/ecs/runner.tf`). Bucket name surfaces as dispatcher config `runner_workspace_bucket` field.
+
+**Next steps (sequenced)**:
+1. Read `backends/ecs/config.go` lines 40-155 + `backends/ecs/backend_impl.go` lines ~100-170 for the canonical SharedVolumes + ContainerCreate translator pattern. Mirror onto `backends/cloudrun/config.go` + `backend_impl.go` + `containers.go` (Cloud Run Job creation must add `Volume.Gcs.Bucket` + container `VolumeMounts`).
+2. Same for `backends/cloudrun-functions/` (gcf — uses Cloud Run Service under the hood for Gen2; check whether Functions Gen2 supports gcs volumes — if not, fall back to GCS-FUSE-via-overlay-bootstrap pattern; do NOT add fakes/fallbacks).
+3. Add `runner_workspace_bucket` TOML field to `github-runner-dispatcher-gcp/internal/config/config.go` (REQUIRED, no fallback). Update `internal/spawner/spawner.go::Spawn` to add the Volume + VolumeMount + env.
+4. Create the GCS bucket: `gsutil mb -p sockerless-live-46x3zg4imo -b on gs://sockerless-live-46x3zg4imo-runner-workspace`; grant SA `storage.admin`.
+5. Update `~/.sockerless/dispatcher-gcp/config.toml` + the baked `github-runner-dispatcher-gcp/config.toml.example` with the new `runner_workspace_bucket = "sockerless-live-46x3zg4imo-runner-workspace"`.
+6. Rebuild backends: `make -C tests/runners/github/dockerfile-cloudrun push-amd64` + `make -C tests/runners/github/dockerfile-gcf push-amd64`.
+7. Rebuild + redeploy dispatcher: `gcloud builds submit --config=github-runner-dispatcher-gcp/cloudbuild.yaml --gcs-source-staging-dir=gs://sockerless-live-46x3zg4imo-build/source .` then `gcloud run services update github-runner-dispatcher-gcp --image=us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/dispatcher:gcp-amd64 --region=us-central1 --project=sockerless-live-46x3zg4imo`.
+8. Trigger PR #124 push (any small commit on `cell-workflows-on-main`) to re-fire cells 5+6.
+9. Watch `gh pr checks 124 --watch` + `gcloud logging read resource.type=cloud_run_revision resource.labels.service_name=github-runner-dispatcher-gcp` for spawn events.
+10. Capture three URLs per cell into STATUS.md (CI run + Cloud Run Job execution + Cloud Logging).
+11. After cells 5+6 GREEN: build serverless gitlab-runner on Cloud Run, register against `e6qu/sockerless` GitLab project, push the cell-7/8 yamls via the existing `tests/runners/gitlab/harness_test.go::runCell` pattern. GitLab PAT at `~/.sockerless/gitlab-pat` (mode 600).
+12. Close PR #124 (do NOT merge). Update STATUS / WHAT_WE_DID / BUGS / PLAN.
+
+**Re-orient if context lost**: read `.github/workflows/cell-5-cloudrun.yml` (current shape), `backends/cloudrun/backend_impl.go::ContainerCreate` (line ~75 — bind-mount rejection), `backends/ecs/backend_impl.go::ContainerCreate` (line ~100 — reference impl), `backends/ecs/config.go` lines 40-155 (SharedVolume + helpers).
+
 ## Branch state
 
 - `main` synced with `origin/main` at PR #121 merge. Phase 110 PR (#122) merged.

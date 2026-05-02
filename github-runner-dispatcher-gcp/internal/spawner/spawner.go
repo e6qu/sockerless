@@ -135,11 +135,13 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 		template.Template.ServiceAccount = req.ServiceAccount
 	}
 
+	// Cloud Run Jobs API requires Job.Name to be empty on CreateJob —
+	// the name comes from CreateJobRequest.JobId. Setting it on the
+	// nested struct returns 400 BadRequest "job.name must be empty".
 	createOp, err := cli.CreateJob(ctx, &runpb.CreateJobRequest{
 		Parent: parent,
 		JobId:  jobID,
 		Job: &runpb.Job{
-			Name: fullName,
 			Labels: map[string]string{
 				LabelManagedBy:  LabelManagedVal,
 				LabelJobID:      fmt.Sprintf("%d", req.JobID),

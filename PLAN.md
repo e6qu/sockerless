@@ -604,6 +604,30 @@ The only documented mapping is the post-create UpdateService image-swap pattern 
 
 **Phase 118 PR rule**: per guiding principle #11, this phase closes only when the sub-118d-gcf + sub-118d-lambda commits land on a branch (`phase-118-faas-pods`), the PR is opened against `main`, and all CI jobs pass green. User merges (workflow rule).
 
+### Phase 122d — BUG-909 cloudrun/gcf SharedVolumes (Phase-110b-equivalent for GCP)
+
+**Why.** Cells 5+6 surfaced live (2026-05-03) that the cloudrun + gcf backends reject every host bind mount the github-runner emits. Same shape as the AWS Phase-110b problem; same fix shape with GCS buckets replacing EFS access points. Without this, `runs-on: [self-hosted, sockerless-cloudrun]` workflows can't have a working `container:` directive, which breaks the very thing cells 5+6 exist to demonstrate.
+
+**Reference impls to mirror**:
+- `backends/ecs/config.go` lines 40-155 — `SharedVolume{Name, ContainerPath, AccessPointID, FileSystemID}` + `parseSharedVolumes` + `LookupSharedVolumeBySourcePath` + `LookupSharedVolumeByName` + `isSubPathOfSharedVolume` (file-internal helper).
+- `backends/ecs/backend_impl.go` lines ~100-170 — bind-mount loop in `ContainerCreate`: `/var/run/docker.sock` drop, named-volume rewrite for matching ContainerPath, sub-path drop, hard-reject everything else with the "host bind mounts are not supported" error.
+- `backends/lambda/` — same shape but Lambda uses single-FSC EFS so the translation collapses both shared volumes onto the workspace-AP via sub-paths (see lambda/backend_impl.go::translateBindsForLambda or equivalent).
+- `terraform/modules/ecs/runner.tf` + `terraform/modules/lambda/runner.tf` — pre-provisioned EFS + access points + IAM bindings.
+
+**GCP-specific design choices**:
+- `SharedVolume{Name, ContainerPath, Bucket}` (no equivalent of AccessPointID; GCS bucket is the unit).
+- Cloud Run Jobs `Volume{Gcs{Bucket, ReadOnly}}` is the runtime mount mechanism. Container `VolumeMounts{Name, MountPath}` references the named volume.
+- gcf path: Cloud Run Functions Gen2 are backed by Cloud Run Service. Check whether Service supports Volume.Gcs — yes per `cloud.google.com/go/run/apiv2/runpb` (`ServiceV2.Template.Volumes`). gcf backend's UpdateService overlay-and-swap path adds the Volume + VolumeMount in the service spec.
+- Dispatcher (`github-runner-dispatcher-gcp/internal/spawner/spawner.go`) adds the GCS Volume + VolumeMount to the **runner** Cloud Run Job AND sets `SOCKERLESS_GCP_SHARED_VOLUMES=runner-workspace=/tmp/runner-work=<bucket>,runner-externals=/opt/runner/externals=<bucket>` env on the runner container so the in-image backend's translation map matches what the runner-task has mounted.
+
+**Sub-tasks**:
+- 122d-a: `backends/cloudrun/config.go` + `backend_impl.go::ContainerCreate` + `containers.go` Cloud Run Job creation (Volume + VolumeMount).
+- 122d-b: same for `backends/cloudrun-functions/` (Service.Template.Volumes path).
+- 122d-c: `github-runner-dispatcher-gcp/internal/{config,spawner}.go` — `runner_workspace_bucket` config field (REQUIRED, fail-loudly), spawner adds Volume + VolumeMount + env on the runner Cloud Run Job.
+- 122d-d: `terraform/modules/cloudrun/runner.tf` (NEW) — `google_storage_bucket.runner_workspace` (force_destroy + 1-day lifecycle, mirrors AWS EFS shape).
+- 122d-e: rebuild + push runner images (cloudrun + gcf), rebuild + redeploy dispatcher.
+- 122d-f: re-fire cells 5+6 via PR #124 push; capture three URLs each.
+
 ### Phase 120 — Live-GCP runner cells (4 cells, docker executor, no k8s)
 
 **Why.** Each cell is a working end-to-end CI pipeline that demonstrates a sockerless cloud backend backing a real CI runner. All four cells use the **docker executor** (no kubernetes executor, no k8s shim, no GKE, no ARC). Cells 5+6 (github) ride on the GCP-native `github-runner-dispatcher-gcp` (Phase 122 — Cloud Run Jobs API). Cells 7+8 (gitlab) are picked up by long-lived `gitlab-runner` containers deployed once via `docker run`.
