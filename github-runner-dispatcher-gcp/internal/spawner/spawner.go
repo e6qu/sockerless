@@ -23,9 +23,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 
 	run "cloud.google.com/go/run/apiv2"
 	runpb "cloud.google.com/go/run/apiv2/runpb"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 // Labels stamped on every Cloud Run Job so a restarted dispatcher can
@@ -169,6 +171,11 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 			// One-shot: failed job → failed execution, no retries.
 			// MaxRetries is a oneof; wrap the int in the typed wrapper.
 			Retries: &runpb.TaskTemplate_MaxRetries{MaxRetries: 0},
+			// BUG-911: Cloud Run Job task_timeout default is 10 min;
+			// runner-task running a real CI pipeline needs much more.
+			// Match RUNNER_IDLE_SECONDS (3600s) so the bash timeout
+			// and Cloud Run task timeout are aligned.
+			Timeout: durationpb.New(3600 * time.Second),
 		},
 	}
 	if req.ServiceAccount != "" {
