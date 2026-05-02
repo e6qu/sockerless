@@ -198,17 +198,18 @@ func (d *dispatchLoop) Step(ctx context.Context) error {
 			continue
 		}
 		fullName, err := spawner.Spawn(ctx, spawner.Request{
-			Project:        label.Project,
-			Region:         label.Region,
-			Image:          label.Image,
-			ServiceAccount: label.ServiceAccount,
-			BuildBucket:    label.BuildBucket,
-			BackendKind:    backendKind,
-			RegToken:       regToken,
-			Repo:           job.Repo,
-			RunnerName:     runnerName,
-			Labels:         job.Labels,
-			JobID:          job.JobID,
+			Project:               label.Project,
+			Region:                label.Region,
+			Image:                 label.Image,
+			ServiceAccount:        label.ServiceAccount,
+			BuildBucket:           label.BuildBucket,
+			RunnerWorkspaceBucket: label.RunnerWorkspaceBucket,
+			BackendKind:           backendKind,
+			RegToken:              regToken,
+			Repo:                  job.Repo,
+			RunnerName:            runnerName,
+			Labels:                job.Labels,
+			JobID:                 job.JobID,
 		})
 		if err != nil {
 			log.Printf("skip job %d: spawn (%s/%s): %v", job.JobID, label.Project, label.Region, err)

@@ -70,20 +70,46 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 
 	// Named-volume binds (`volName:/mnt`) map to Cloud Run
 	// `Volume{Gcs{Bucket}}` on the sockerless-owned project. Host-path
-	// binds (`/h:/c`) stay rejected — Cloud Run containers have no
-	// host filesystem to bind from.
+	// binds (`/h:/c`) translate via SharedVolumes (config-driven map
+	// from caller-side mount path → sockerless-managed named-volume +
+	// GCS bucket). Mirrors the ECS + Lambda translators.
+	translatedBinds := make([]string, 0, len(hostConfig.Binds))
 	for _, bind := range hostConfig.Binds {
 		parts := strings.SplitN(bind, ":", 3)
 		if len(parts) < 2 {
 			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("invalid bind mount spec %q", bind)}
 		}
-		if strings.HasPrefix(parts[0], "/") {
+		src, dst := parts[0], parts[1]
+		mode := ""
+		if len(parts) == 3 {
+			mode = parts[2]
+		}
+		// /var/run/docker.sock — silently dropped (no docker socket
+		// on Cloud Run; the github-runner adds this unconditionally).
+		if src == "/var/run/docker.sock" {
+			continue
+		}
+		if strings.HasPrefix(src, "/") {
+			if sv := s.config.LookupSharedVolumeBySourcePath(src); sv != nil {
+				translated := sv.Name + ":" + dst
+				if mode != "" {
+					translated += ":" + mode
+				}
+				translatedBinds = append(translatedBinds, translated)
+				continue
+			}
+			if isSubPathOfSharedVolume(src, s.config.SharedVolumes) {
+				continue
+			}
 			return nil, &api.InvalidParameterError{Message: fmt.Sprintf(
-				"host bind mounts are not supported on Cloud Run backend (%q); use a named volume (`docker volume create <name> && docker run -v <name>:/path`) — volumes are backed by sockerless-managed GCS buckets",
+				"host bind mounts are not supported on Cloud Run backend (%q); use a named volume (`docker volume create <name> && docker run -v <name>:/path`) — volumes are backed by sockerless-managed GCS buckets. Configure SOCKERLESS_GCP_SHARED_VOLUMES to translate runner-task bind mounts to shared GCS buckets.",
 				bind,
 			)}
 		}
+		// Already a named volume — pass through.
+		translatedBinds = append(translatedBinds, bind)
 	}
+	hostConfig.Binds = translatedBinds
 
 	path := ""
 	var args []string

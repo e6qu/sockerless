@@ -56,6 +56,13 @@ type Request struct {
 	// bakes — drives which SOCKERLESS_<KIND>_* env vars get set on
 	// the Job. "cloudrun" or "gcf".
 	BackendKind string
+	// RunnerWorkspaceBucket is the GCS bucket that backs the runner-
+	// task workspace shared volume (`/tmp/runner-work` and
+	// `/opt/runner/externals`). Mounted on the spawned runner Cloud
+	// Run Job via Volume{Gcs{Bucket}}; the in-image sockerless backend
+	// reads `SOCKERLESS_GCP_SHARED_VOLUMES` to translate sub-task bind
+	// mounts into the same bucket. BUG-909 — Phase-110b-equivalent.
+	RunnerWorkspaceBucket string
 }
 
 // Spawn calls Cloud Run Jobs CreateJob then RunJob. Returns the Job
@@ -96,6 +103,9 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 	if req.BackendKind == "" {
 		return "", fmt.Errorf("BackendKind required (\"cloudrun\" or \"gcf\")")
 	}
+	if req.RunnerWorkspaceBucket == "" {
+		return "", fmt.Errorf("RunnerWorkspaceBucket required (GCS bucket backing the runner-task /tmp/runner-work + /opt/runner/externals shared volumes — BUG-909)")
+	}
 
 	// Sockerless backend env vars — required (fail-loudly contract).
 	// BackendKind selects which prefix (SOCKERLESS_GCR_* for cloudrun,
@@ -110,6 +120,16 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 		return "", fmt.Errorf("unknown BackendKind %q (want \"cloudrun\" or \"gcf\")", req.BackendKind)
 	}
 
+	// SharedVolumes string the in-image sockerless backend reads to
+	// translate sub-task bind mounts. Two named volumes back the
+	// github-actions-runner workspace; both ride one GCS bucket via
+	// distinct mount paths. Subpath-style binds the runner emits
+	// (`/tmp/runner-work/_temp` etc.) drop via isSubPathOfSharedVolume.
+	sharedVolumesEnv := fmt.Sprintf(
+		"runner-workspace=/tmp/runner-work=%s,runner-externals=/opt/runner/externals=%s",
+		req.RunnerWorkspaceBucket, req.RunnerWorkspaceBucket,
+	)
+
 	containerCfg := &runpb.Container{
 		Image: req.Image,
 		Env: []*runpb.EnvVar{
@@ -120,12 +140,27 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 			{Name: prefix + "PROJECT", Values: &runpb.EnvVar_Value{Value: req.Project}},
 			{Name: prefix + "REGION", Values: &runpb.EnvVar_Value{Value: req.Region}},
 			{Name: "SOCKERLESS_GCP_BUILD_BUCKET", Values: &runpb.EnvVar_Value{Value: req.BuildBucket}},
+			{Name: "SOCKERLESS_GCP_SHARED_VOLUMES", Values: &runpb.EnvVar_Value{Value: sharedVolumesEnv}},
+		},
+		VolumeMounts: []*runpb.VolumeMount{
+			{Name: "runner-workspace", MountPath: "/tmp/runner-work"},
+			{Name: "runner-externals", MountPath: "/opt/runner/externals"},
 		},
 	}
 
 	template := &runpb.ExecutionTemplate{
 		Template: &runpb.TaskTemplate{
 			Containers: []*runpb.Container{containerCfg},
+			Volumes: []*runpb.Volume{
+				{
+					Name:       "runner-workspace",
+					VolumeType: &runpb.Volume_Gcs{Gcs: &runpb.GCSVolumeSource{Bucket: req.RunnerWorkspaceBucket}},
+				},
+				{
+					Name:       "runner-externals",
+					VolumeType: &runpb.Volume_Gcs{Gcs: &runpb.GCSVolumeSource{Bucket: req.RunnerWorkspaceBucket}},
+				},
+			},
 			// One-shot: failed job → failed execution, no retries.
 			// MaxRetries is a oneof; wrap the int in the typed wrapper.
 			Retries: &runpb.TaskTemplate_MaxRetries{MaxRetries: 0},

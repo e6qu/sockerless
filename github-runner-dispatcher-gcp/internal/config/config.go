@@ -35,12 +35,13 @@ import (
 // All fields required (no optional vars, no fallbacks per project
 // rule) — fail-loudly at config-load time if any are missing.
 type Label struct {
-	Name           string `toml:"name"`
-	Project        string `toml:"gcp_project"`
-	Region         string `toml:"gcp_region"`
-	Image          string `toml:"image"`
-	ServiceAccount string `toml:"service_account"`
-	BuildBucket    string `toml:"build_bucket"` // GCS bucket for Cloud Build context (sockerless backend uses this for `docker build`)
+	Name                  string `toml:"name"`
+	Project               string `toml:"gcp_project"`
+	Region                string `toml:"gcp_region"`
+	Image                 string `toml:"image"`
+	ServiceAccount        string `toml:"service_account"`
+	BuildBucket           string `toml:"build_bucket"`            // GCS bucket for Cloud Build context (sockerless backend uses this for `docker build`)
+	RunnerWorkspaceBucket string `toml:"runner_workspace_bucket"` // GCS bucket backing runner-task /tmp/runner-work + /opt/runner/externals (BUG-909)
 }
 
 // Config is the on-disk dispatcher config.
@@ -88,6 +89,9 @@ func Load(path string) (Config, error) {
 		}
 		if l.BuildBucket == "" {
 			return Config{}, fmt.Errorf("label %q: build_bucket is required (GCS bucket for sockerless backend's docker build context uploads)", l.Name)
+		}
+		if l.RunnerWorkspaceBucket == "" {
+			return Config{}, fmt.Errorf("label %q: runner_workspace_bucket is required (GCS bucket backing runner-task /tmp/runner-work + /opt/runner/externals — BUG-909)", l.Name)
 		}
 	}
 	return cfg, nil
