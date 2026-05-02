@@ -26,24 +26,7 @@ import (
 // allUsers → run.invoker as a workaround: a public function URL that
 // any internet caller could trigger violates the security posture
 // sockerless inherits from the operator's project. Failures are loud.
-//
-// Sim-mode bypass: when the audienceURL is plain `http://` (not
-// `https://`), the URL points at the local sockerless GCP simulator —
-// no Cloud Run, no ID token required. Skip idtoken entirely; do an
-// unauthenticated POST with the default http.Client. The sim invokes
-// the configured docker container directly and returns the captured
-// stdout. Real Cloud Run URLs are always https://, so this branch
-// never fires in production.
 func invokeFunction(ctx context.Context, audienceURL string) (*http.Response, error) {
-	if strings.HasPrefix(audienceURL, "http://") {
-		req, err := http.NewRequestWithContext(ctx, "POST", audienceURL, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Content-Type", "application/json")
-		client := &http.Client{Timeout: 10 * time.Minute}
-		return client.Do(req)
-	}
 	client, err := idtoken.NewClient(ctx, audienceURL)
 	if err != nil {
 		if isUnsupportedCredsErr(err) {

@@ -120,12 +120,7 @@ func (c Config) Validate() error {
 	if c.Project == "" {
 		return fmt.Errorf("SOCKERLESS_GCF_PROJECT is required")
 	}
-	// BuildBucket is required when targeting real GCP (Cloud Functions
-	// Gen2 needs a GCS source archive for the stub-Buildpacks-Go
-	// CreateFunction call). The sim doesn't go through that path —
-	// EndpointURL is set in sim mode, in which case we tolerate an
-	// unset bucket so integration tests don't have to fabricate one.
-	if c.BuildBucket == "" && c.EndpointURL == "" {
+	if c.BuildBucket == "" {
 		return fmt.Errorf("SOCKERLESS_GCP_BUILD_BUCKET is required (Cloud Functions Gen2 source archive lands here)")
 	}
 	return nil

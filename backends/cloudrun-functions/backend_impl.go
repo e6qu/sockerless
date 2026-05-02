@@ -229,14 +229,6 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// Cloud Run Functions Gen2 deploy = stub-source CreateFunction +
 	// post-create UpdateService image swap. See specs/CLOUD_RESOURCE_MAPPING.md
 	// § GCP Cloud Run Functions for the full sequence rationale.
-	//
-	// Sim-mode bypass (EndpointURL set): the simulator doesn't enforce
-	// Cloud Functions Gen2's Buildpacks-source gate and has no Cloud
-	// Build; integration tests need ContainerCreate to succeed without
-	// fabricating a build bucket. Skip ensureOverlayImage in that path
-	// — the pool-claim + Function-create flow below tolerates an empty
-	// overlayURI by falling back to the resolved base image. Mirrors
-	// the Lambda backend's `case s.config.EndpointURL != "":` branch.
 	overlaySpec := OverlayImageSpec{
 		BaseImageRef:        config.Image,
 		BootstrapBinaryPath: s.config.BootstrapBinaryPath,
@@ -245,18 +237,9 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		UserWorkdir:         config.WorkingDir,
 	}
 	contentTag := OverlayContentTag(overlaySpec)
-	var overlayURI string
-	if s.config.EndpointURL == "" {
-		var err error
-		overlayURI, err = s.ensureOverlayImage(s.ctx(), overlaySpec, contentTag)
-		if err != nil {
-			return nil, fmt.Errorf("ensure overlay image: %w", err)
-		}
-	} else {
-		// Sim-mode: use the base image directly. The sim's CreateFunction
-		// handler accepts any image URI; no Buildpacks gate, no UpdateService
-		// swap needed.
-		overlayURI = config.Image
+	overlayURI, err := s.ensureOverlayImage(s.ctx(), overlaySpec, contentTag)
+	if err != nil {
+		return nil, fmt.Errorf("ensure overlay image: %w", err)
 	}
 
 	// Pool query: try to claim a free pre-built Function with this overlay-hash.
@@ -290,17 +273,11 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		return &api.ContainerCreateResponse{ID: id, Warnings: []string{}}, nil
 	}
 
-	// Pool miss — provision a fresh Function. In real-GCP mode stage the
-	// stub Buildpacks-Go source so CreateFunction's Buildpacks gate
-	// passes; the underlying Cloud Run Service's image gets swapped to
-	// the overlay via UpdateService below. Sim-mode skips both: the
-	// simulator's CreateFunction handler tolerates a missing BuildConfig
-	// and uses the ServiceConfig image directly.
+	// Pool miss — provision a fresh Function. Stage stub source (once per project,
+	// idempotent) and then call CreateFunction.
 	stubObject := "sockerless-stub/sockerless-gcf-stub.zip"
-	if s.config.EndpointURL == "" {
-		if err := stageStubSourceIfMissing(s.ctx(), s.gcp.Storage, s.config.BuildBucket, stubObject); err != nil {
-			return nil, fmt.Errorf("stage stub source: %w", err)
-		}
+	if err := stageStubSourceIfMissing(s.ctx(), s.gcp.Storage, s.config.BuildBucket, stubObject); err != nil {
+		return nil, fmt.Errorf("stage stub source: %w", err)
 	}
 
 	// Pool-aware function name: include content-tag and a shard so multiple
@@ -317,33 +294,28 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	gcpLabels["sockerless_overlay_hash"] = contentTag
 	gcpLabels["sockerless_allocation"] = shortAllocLabel(id)
 
-	// Create the Cloud Run Function. Real-GCP mode supplies a Buildpacks-Go
-	// stub source (image gets swapped post-create via UpdateService);
-	// sim mode supplies the resolved image directly via ServiceConfig and
-	// omits BuildConfig — the simulator handler doesn't enforce the
-	// Buildpacks gate.
+	// Create the Cloud Run Function with the stub Buildpacks-Go source. The
+	// underlying Service's image gets replaced post-create via UpdateService.
 	createReq := &functionspb.CreateFunctionRequest{
 		Parent:     parent,
 		FunctionId: funcName,
 		Function: &functionspb.Function{
-			Name:          fullFunctionName,
-			Labels:        gcpLabels,
-			ServiceConfig: serviceConfig,
-		},
-	}
-	if s.config.EndpointURL == "" {
-		createReq.Function.BuildConfig = &functionspb.BuildConfig{
-			Runtime:    "go124",
-			EntryPoint: "Stub",
-			Source: &functionspb.Source{
-				Source: &functionspb.Source_StorageSource{
-					StorageSource: &functionspb.StorageSource{
-						Bucket: s.config.BuildBucket,
-						Object: stubObject,
+			Name:   fullFunctionName,
+			Labels: gcpLabels,
+			BuildConfig: &functionspb.BuildConfig{
+				Runtime:    "go124",
+				EntryPoint: "Stub",
+				Source: &functionspb.Source{
+					Source: &functionspb.Source_StorageSource{
+						StorageSource: &functionspb.StorageSource{
+							Bucket: s.config.BuildBucket,
+							Object: stubObject,
+						},
 					},
 				},
 			},
-		}
+			ServiceConfig: serviceConfig,
+		},
 	}
 	_ = overlayURI // captured by deferred image swap below; suppress unused-warn until then.
 
@@ -369,20 +341,15 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// via Run.Services.UpdateService. Cloud Functions does not reconcile
 	// Service.Template.Containers[0].Image; the swap holds for the lifetime
 	// of the function. See specs/CLOUD_RESOURCE_MAPPING.md § GCP Cloud Run Functions.
-	// Sim mode skips the swap — CreateFunction already received the
-	// final image via ServiceConfig (no Buildpacks-built throwaway to
-	// replace).
-	if s.config.EndpointURL == "" {
-		if err := s.swapServiceImage(s.ctx(), result, overlayURI); err != nil {
-			// Best-effort cleanup so the create appears atomic.
-			if delOp, delErr := s.gcp.Functions.DeleteFunction(s.ctx(), &functionspb.DeleteFunctionRequest{
-				Name: fullFunctionName,
-			}); delErr == nil {
-				_ = delOp.Wait(s.ctx())
-			}
-			s.Logger.Error().Err(err).Str("function", funcName).Msg("failed to swap service image")
-			return nil, &api.ServerError{Message: fmt.Sprintf("swap overlay image on %q: %v", funcName, err)}
+	if err := s.swapServiceImage(s.ctx(), result, overlayURI); err != nil {
+		// Best-effort cleanup so the create appears atomic.
+		if delOp, delErr := s.gcp.Functions.DeleteFunction(s.ctx(), &functionspb.DeleteFunctionRequest{
+			Name: fullFunctionName,
+		}); delErr == nil {
+			_ = delOp.Wait(s.ctx())
 		}
+		s.Logger.Error().Err(err).Str("function", funcName).Msg("failed to swap service image")
+		return nil, &api.ServerError{Message: fmt.Sprintf("swap overlay image on %q: %v", funcName, err)}
 	}
 
 	// Re-read the function so result reflects post-swap state (URL, etc.).
