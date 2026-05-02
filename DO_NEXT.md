@@ -20,7 +20,9 @@ Resume pointer. Updated after every task. Roadmap detail in [PLAN.md](PLAN.md); 
 
 State-save after each task: STATUS.md + WHAT_WE_DID.md + BUGS.md + memory + this file.
 
-**Resume pointer for next session: PR #123 (`phase-118-faas-pods`) bundles Phase 118 (sub-118a/b/d-gcf/d-lambda) + Phase 120 (4 GCP runner cells, docker executor — no k8s, no GKE, no ARC). All code complete; awaiting (1) CI to go green on the PR, (2) operator runs of cells 5/6/7/8 to capture GREEN URLs in STATUS.md. Phase 119 (k8s shim) was discarded after exploration. Live-AWS test of 118b is deferred (operator to authorize). Sub-118c (AZF) deferred until cells GREEN.**
+**Resume pointer for next session: PR #123 (`phase-118-faas-pods`) bundles Phase 118 (sub-118a/b/d-gcf/d-lambda) + Phase 120 (4 GCP runner cells, docker executor) + Phase 121 (sim hardening — NEXT) + Phase 122 (per-cloud github-runner-dispatcher GCP/Azure mirrors). PR is open against main; gcf integration tests in CI will fail until Phase 121 lands. Phase 119 (k8s shim) was discarded after exploration. Live-AWS test of 118b deferred (operator to authorize). Sub-118c (AZF) deferred until cells GREEN.**
+
+**Operator rule reinforced 2026-05-02**: backends MUST stay clean — stateless, with no awareness of the simulator code or each other. EndpointURL-gated bypasses inside backend code are tech debt per the no-fakes / no-fallbacks rule. The simulator must present a faithful API surface so backends behave identically against either. Lambda's existing `case s.config.EndpointURL != "":` branch is also flagged for removal (Phase 121e).
 
 **Next session work order:**
 

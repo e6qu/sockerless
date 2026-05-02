@@ -650,6 +650,44 @@ A cell is GREEN when all probes return non-error output, postgres is reachable v
 
 **Test workload non-trivialness rationale**: probe-{capabilities,kernel,parameters} expose any cloud-sandbox restrictions early (and confirm sub-118d's "shared-degraded" honesty surface). probe-localhost-peer validates the pod overlay's net-ns sharing. clone-and-compile + run-arithmetic exercises Go compilation in the sandbox (memory + CPU) AND validates the resulting binary actually runs with correct output — catching whole classes of "looked OK but didn't actually work" bugs.
 
+### Phase 121 — Cloud-faithful simulator hardening (GCP + Azure)
+
+**Why.** Backends MUST be clean — stateless, with no awareness of the simulator code or each other (operator rule, project guiding principle #2). Phase 118 made the gcf overlay-and-swap path mandatory, exposing missing pieces in the GCP simulator: there's no Cloud Build endpoint (so `ensureOverlayImage` can't run), no IAM/token endpoint (so `idtoken.NewClient` fails with "could not find default credentials"), and the invocation endpoint doesn't accept the Authorization header that real Cloud Run requires. Attempting to add EndpointURL-gated bypasses inside the gcf backend (BUG-888/889/890) was reverted as BUG-891 — the wrong fix shape. **The right fix is on the simulator.**
+
+**Sub-tasks**:
+
+- **121a — GCP simulator Cloud Build endpoint**. Add a gRPC `cloudbuild.v1.CloudBuild` service to the sim. `CreateBuild` accepts the `Build` proto, walks the steps, and either (a) actually runs `docker build` + `docker push` against the local docker daemon, or (b) records the target image URI as "available" in the sim's AR + returns SUCCESS. Option (b) is simpler and matches the existing sim philosophy of "execute real containers when possible, simulate the cloud-side metadata otherwise". The sim's existing `invokeCloudFunctionProcess` already executes the resolved image via `sim.StartContainerSync`, so an "available" image with no actual layers is sufficient — the sim will pull-and-run on first invoke.
+- **121b — GCP simulator IAM token endpoint + test SA JSON helper**. Add an HTTP endpoint `/iam/projects/-/serviceAccounts/<sa>:generateIdToken` that returns an unsigned-but-shape-correct JWT. Add a sim helper `sim.WriteFakeSAJSON(path)` that writes a self-contained service-account JSON file with a real RSA keypair the sim's IAM endpoint accepts. Test setups (`integration_test.go`'s TestMain) call this helper, set `GOOGLE_APPLICATION_CREDENTIALS=<temp>`, and `idtoken.NewClient` succeeds without backend changes.
+- **121c — GCP simulator invocation auth acceptance**. The sim's `/v2-functions-invoke/<id>` handler currently doesn't validate the Authorization header. Add a check that the header is PRESENT (any value) so the test exercises the same code path as real Cloud Run; without it, the backend's idtoken-signed request still passes — just no validation. Documented as "sim accepts any token" so test failures don't mask real-cloud auth problems.
+- **121d — GCP simulator `Run.Services.UpdateService` swap acceptance**. The sim's existing `UpdateService` may already accept the post-create image swap; verify it does, and that subsequent invokes use the swapped image. If not, fix the sim's PATCH handler to propagate `Template.Containers[0].Image` into the function's `ServiceConfig.Image` lookup.
+- **121e — Lambda EndpointURL bypass removal**. Lambda's existing `case s.config.EndpointURL != "":` branch (`backends/lambda/backend_impl.go:257-267`) is the same shape of tech debt this phase eliminates. Remove it; rely on the sim's existing CodeBuild-equivalent + Runtime API + STS token endpoints. Per the no-fakes rule, the sim should support the full overlay-inject path without backend modes.
+- **121f — Azure simulator hardening (sister sub-task)**. Same shape as 121a-d but for the ACA + AZF backends: ACR-backed build endpoint, AAD token endpoint, function/site invocation auth acceptance. Lambda+ECS already have the bypass-pattern tech debt; AWS sim hardening (121g) is the same removal exercise.
+
+**Files**:
+
+- `simulators/gcp/cloudbuild.go` (new) — gRPC + REST `CreateBuild` handler.
+- `simulators/gcp/iam.go` — add `generateIdToken` endpoint + supporting fake-key generator.
+- `simulators/shared/sa_json.go` (new) — `WriteFakeSAJSON(path) error` test helper.
+- `simulators/azure/{containerregistry,aad,...}.go` — analogous endpoints.
+- `backends/lambda/backend_impl.go` — drop `case s.config.EndpointURL != "":` branch.
+- `backends/cloudrun-functions/integration_test.go` — TestMain calls `WriteFakeSAJSON` + sets `GOOGLE_APPLICATION_CREDENTIALS` + `SOCKERLESS_GCP_BUILD_BUCKET=sim-bucket`.
+
+**Closes**: gcf integration tests pass against the sim with the unmodified backend code path. Backends gain zero awareness of the simulator. Same applies to ACA + AZF (Azure side) once 121f lands.
+
+**Phase 121 PR rule**: lands on the same `phase-118-faas-pods` branch (per "all work in one PR" direction). PR closes when CI is green and all backend EndpointURL-gated bypasses are removed.
+
+### Phase 122 — Per-cloud github-runner-dispatcher (GCP + Azure mirrors)
+
+**Why.** The existing `github-runner-dispatcher` (Phase 110a) shells out to the docker CLI per queued workflow_job, which works on AWS via DOCKER_HOST→sockerless-backend-{ecs,lambda}. For Phase 120's GCP cells the same pattern works (DOCKER_HOST→sockerless-backend-{cloudrun,gcf}), but it's not the most natural fit for cloud-native deployments where operators expect to use the cloud's own job-dispatch primitive directly. Adapt the dispatcher to GCP + Azure conventions while keeping the github-runner-dispatcher core sockerless-agnostic.
+
+**Sub-tasks**:
+
+- **122a — GCP-shaped dispatcher (`github-runner-dispatcher-gcp`)**. New top-level Go module that polls GitHub for queued workflow_jobs and dispatches each as a Cloud Run Job (or Cloud Run Service for long-lived runners) via the `run.googleapis.com` API. Per-label config maps `runs-on:` labels to the matching sockerless backend (cloudrun or gcf). Workload Identity for auth; Cloud Logging for audit trail. Same stateless / label-recovery shape as the docker dispatcher.
+- **122b — Azure-shaped dispatcher (`github-runner-dispatcher-azure`)**. Mirror of 122a using ACA Jobs / Container Apps API.
+- **122c — Documentation + cell wiring**. Update the Phase 120 cells 5-6 runbook to use the GCP dispatcher (where appropriate) instead of the docker-CLI dispatcher; add Azure dispatcher to the (future) Phase 123 Azure cells.
+
+**Closes**: operators get a cloud-native dispatch story per backend without the dispatcher having to know sockerless internals.
+
 ### Phase 106 — Real GitHub Actions runner integration (in flight)
 
 End-to-end test of GitHub Actions self-hosted runners pointed at sockerless via `DOCKER_HOST`. The repo already has *simulated* runner E2E tests (`tests/github_runner_e2e_test.go` replays the runner's Docker REST sequence); this phase runs the real `actions/runner` binary against sockerless and validates the live flow.
