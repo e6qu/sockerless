@@ -141,9 +141,13 @@ func registerCloudFunctions(srv *sim.Server) {
 		project := sim.PathParam(r, "project")
 		location := sim.PathParam(r, "location")
 		prefix := fmt.Sprintf("projects/%s/locations/%s/functions/", project, location)
+		filter := r.URL.Query().Get("filter")
 
 		result := functions.Filter(func(fn Function) bool {
-			return strings.HasPrefix(fn.Name, prefix)
+			if !strings.HasPrefix(fn.Name, prefix) {
+				return false
+			}
+			return matchesFunctionFilter(&fn, filter)
 		})
 		if result == nil {
 			result = []Function{}
@@ -349,6 +353,95 @@ type cfLogSink struct {
 
 func (s *cfLogSink) WriteLog(line sim.LogLine) {
 	injectCloudFunctionLog(s.project, s.functionName, line.Text)
+}
+
+// matchesFunctionFilter evaluates a Cloud Functions ListFunctions
+// `filter` query against a Function. Supports the subset the gcf
+// backend uses for pool-claim and allocation lookup:
+//
+//   - `labels.<key>:"<value>"` — Cloud Logging-style "has" / substring
+//     match against the label value (the `:` operator).
+//   - `labels.<key>="<value>"` — exact match.
+//   - `-labels.<key>:*` — negation + wildcard: clause matches when the
+//     label is unset or empty (i.e. the function is "free" of an
+//     allocation claim, used by claimFreeFunction).
+//   - Multiple clauses joined by ` AND `.
+//
+// Empty filter matches every Function. Real Cloud Functions supports
+// the full Cloud Logging filter syntax; this is the operator subset
+// the backend exercises today.
+func matchesFunctionFilter(fn *Function, filter string) bool {
+	filter = strings.TrimSpace(filter)
+	if filter == "" {
+		return true
+	}
+	for _, raw := range strings.Split(filter, " AND ") {
+		clause := strings.TrimSpace(raw)
+		if clause == "" {
+			continue
+		}
+		negate := false
+		if strings.HasPrefix(clause, "-") {
+			negate = true
+			clause = clause[1:]
+		}
+		// Wildcard form `labels.<key>:*` — clause is true when the
+		// label is set to anything non-empty. With `-` prefix, true
+		// when the label is unset/empty.
+		if strings.HasSuffix(clause, ":*") {
+			field := strings.TrimSuffix(clause, ":*")
+			val := lookupFunctionField(fn, field)
+			present := val != ""
+			matched := present
+			if negate {
+				matched = !present
+			}
+			if !matched {
+				return false
+			}
+			continue
+		}
+		c := parseClause(clause)
+		val := lookupFunctionField(fn, c.field)
+		matched := false
+		switch c.op {
+		case opEq:
+			matched = val == c.value
+		case opHas:
+			matched = strings.Contains(val, c.value)
+		default:
+			// Functions don't have ordered fields the backend
+			// filters on — > / >= are unsupported here.
+			matched = false
+		}
+		if negate {
+			matched = !matched
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+// lookupFunctionField resolves a dot-notation field path on a Function.
+// Currently supports `labels.<key>` and `name`; extend as the backend
+// surfaces new filter shapes.
+func lookupFunctionField(fn *Function, field string) string {
+	if strings.HasPrefix(field, "labels.") {
+		key := field[len("labels."):]
+		if fn.Labels != nil {
+			return fn.Labels[key]
+		}
+		return ""
+	}
+	switch field {
+	case "name":
+		return fn.Name
+	case "state":
+		return string(fn.State)
+	}
+	return ""
 }
 
 // injectCloudFunctionLog writes a log entry to the Cloud Logging store for a
