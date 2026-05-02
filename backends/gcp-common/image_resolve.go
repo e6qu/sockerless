@@ -28,6 +28,18 @@ func ResolveGCPImageURI(ref, project, region string) string {
 		return ref
 	}
 
+	// BUG-918: gitlab-runner permission containers reference images by
+	// bare `sha256:<digest>` (no repo). The legacy `parseDockerRef` would
+	// split this on `:` producing repo="sha256" tag="<digest>" → AR URL
+	// `<AR>/docker-hub/library/sha256:<digest>` which Cloud Run rejects.
+	// Bare digest refs can't be rewritten to AR — they must already be
+	// in the local image store. Return as-is; caller (cloudrun backend)
+	// resolves via Store.ResolveImage before calling us, so this path
+	// only fires when Store lookup missed (genuine error).
+	if strings.HasPrefix(ref, "sha256:") && !strings.Contains(ref, "/") {
+		return ref
+	}
+
 	// Parse the Docker reference
 	registry, repo, tag := parseDockerRef(ref)
 

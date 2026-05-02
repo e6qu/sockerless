@@ -116,10 +116,30 @@ func (st *Store) ResolveImage(ref string) (api.Image, bool) {
 			return img, true
 		}
 	}
-	// Try prefix match on ID
+	// Try prefix match on ID (BUG-918: gitlab-runner uses bare digest
+	// refs like `sha256:180e3...` — match against img.ID with or without
+	// the `sha256:` prefix since image IDs may be stored either way).
+	bareDigest := strings.TrimPrefix(ref, "sha256:")
 	for _, img := range st.Images.List() {
 		if strings.HasPrefix(img.ID, ref) {
 			return img, true
+		}
+		if bareDigest != ref {
+			bareID := strings.TrimPrefix(img.ID, "sha256:")
+			if strings.HasPrefix(bareID, bareDigest) {
+				return img, true
+			}
+		}
+	}
+	// Try RepoDigest match (image was pulled with a digest reference;
+	// store may have RepoDigests like `repo@sha256:<digest>`).
+	if strings.HasPrefix(ref, "sha256:") {
+		for _, img := range st.Images.List() {
+			for _, rd := range img.RepoDigests {
+				if strings.HasSuffix(rd, "@"+ref) {
+					return img, true
+				}
+			}
 		}
 	}
 	return api.Image{}, false

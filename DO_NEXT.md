@@ -4,7 +4,22 @@ Resume pointer. Updated after every task. Roadmap detail in [PLAN.md](PLAN.md); 
 
 ## Resume pointer (2026-05-03 v2 — late session)
 
-**Current state**: Cells 5/6/7/8 all in flight live with multiple iterations. Closed live-only bugs BUG-907..916. Cells 7+8 currently failing on **BUG-917 OPEN**: cloudrun backend's `/containers/<id>/start` returns NotFoundError "No such container: <id>" (gitlab-runner re-formats as "No such job") for gitlab-runner's short-lived permission containers (chown the cache volume mount). gitlab-runner does `docker create --name=...` → `docker start <id>` very quickly. Dispatcher's cleanup loop filters by managed-by-label so it shouldn't touch arbitrary containers — but PendingCreates lookup STILL fails for the just-created container. **Visibility blocker**: bootstrap.sh redirected sockerless-backend-cloudrun output to `/tmp/sockerless-backend.log` which never surfaced in Cloud Logging — undiagnosable. **Just fixed**: bootstrap.sh now does `> >(tee /tmp/sockerless-backend.log >&2)` so backend logs ride stderr → Cloud Logging. Also bumped `-log-level info` → `debug`. **REBUILD + REDEPLOY** gitlab-runner-{cloudrun,gcf} to pick up the log fix, THEN re-fire cell 7 + tail `gcloud logging read 'resource.type="cloud_run_revision" resource.labels.service_name="gitlab-runner-cloudrun" textPayload=~"PendingCreates|ContainerStart|ContainerCreate|<container-id-prefix>"'` to see actual flow. Hypothesis: maybe gitlab-runner sends a HostConfig that fails the bind-mount translator (since /var/run/docker.sock is in the perm-container) and we error out in ContainerCreate but still return ID, leaving stale state.
+**Current state**: Cells 5/6/7/8 all in flight live with multiple iterations. Closed live-only bugs BUG-907..916. Cells 7+8 currently failing on **BUG-917 OPEN**: cloudrun backend's `/containers/<id>/start` returns NotFoundError "No such container: <id>" (gitlab-runner re-formats as "No such job") for gitlab-runner's short-lived permission containers (chown the cache volume mount). gitlab-runner does `docker create --name=...` → `docker start <id>` very quickly. Dispatcher's cleanup loop filters by managed-by-label so it shouldn't touch arbitrary containers — but PendingCreates lookup STILL fails for the just-created container. **Visibility blocker**: bootstrap.sh redirected sockerless-backend-cloudrun output to `/tmp/sockerless-backend.log` which never surfaced in Cloud Logging — undiagnosable. **Backend logs visible (2026-05-03 v3)**: bootstrap.sh now does `> >(tee /tmp/sockerless-backend.log >&2)` so backend logs ride stderr → Cloud Logging. Cell 7 retry surfaced the REAL root cause:
+
+**BUG-918 ROOT CAUSE**: `[2026-05-02 11:49PM] ERR job creation failed error="rpc error: code = NotFound desc = Image 'us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/docker-hub/library/sha256:180e325237fc...' not found."`. gitlab-runner pulls helper image successfully (`/images/<image>/json` 200), then creates a permission container with the image ref `sha256:180e325237fc...` (bare digest). Sockerless's `parseDockerRef` splits this on `:` → repo="sha256", tag="180e3..." → mangles into `<AR>/docker-hub/library/sha256:180e3...` which Cloud Run rejects.
+
+**Partial fixes shipped (Phase 122e)**:
+1. `backends/gcp-common/image_resolve.go`: `ResolveGCPImageURI` returns bare `sha256:` refs as-is (no AR rewrite).
+2. `backends/core/resolve.go`: `Store.ResolveImage` now matches bare digests against image IDs (with/without `sha256:` prefix) AND RepoDigests.
+
+**Remaining gap**: cloudrun backend's image cache may not be populated when gitlab-runner uses sha256: refs. The image was pulled to AR (via docker-hub passthrough) but not necessarily into sockerless's Store. Need to either:
+- (a) Populate Store on every successful ImagePull / ImageInspect call so sha256:digest → original ref is resolvable
+- (b) Maintain a Cloud Run-side digest → AR-URL mapping (e.g. via AR tag listing)
+- (c) Have gitlab-runner pin the helper image by tag not digest (set `helper_image` config option)
+
+(c) is the easy wedge: in bootstrap.sh's `gitlab-runner register`, add `--docker-helper-image registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-v17.5.0` so the permission container uses the tag-form not the digest form.
+
+Investigation hint: `gcloud logging read 'resource.type=cloud_run_revision resource.labels.service_name=gitlab-runner-cloudrun textPayload=~"sha256|backend-cloudrun|ResolveImage"'` shows the full backend flow.
 
 **Live infra state**:
 - Dispatcher rev `00006-j4v` — BUG-908/911/912 fixes deployed
