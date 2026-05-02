@@ -2,10 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -218,8 +222,24 @@ func registerCloudFunctions(srv *sim.Server) {
 	})
 }
 
-// invokeCloudFunctionProcess executes a Cloud Function via sim.StartContainerSync
-// and returns the stdout output as the response body plus the container exit code.
+// invokeCloudFunctionProcess executes a Cloud Function invocation. Two
+// paths:
+//
+//   - Image path (cloud-faithful): the function is backed by a real
+//     Cloud Run service whose container image is the sockerless overlay.
+//     The overlay's ENTRYPOINT is the bootstrap HTTP server, which on
+//     each request runs the user's entrypoint+cmd as a subprocess and
+//     returns the captured output. The sim mirrors this by starting
+//     the overlay container, POSTing to its bootstrap, reading the
+//     response, then stopping the container — which is what real Cloud
+//     Run Functions Gen2 does on every invocation. Exit code rides in
+//     the `X-Sockerless-Exit-Code` header.
+//
+//   - Process path (sim-only test convenience): the function has no
+//     image and a `simCommand` set on its ServiceConfig. The sim runs
+//     the command as a host process. Used by SDK tests that want to
+//     verify Cloud Functions invocation semantics without staging an
+//     overlay image.
 func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byte, int) {
 	// Container image lives on the underlying Cloud Run service —
 	// Cloud Functions Gen2 are backed by a Run service, and the gcf
@@ -235,23 +255,41 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 		}
 	}
 
-	// Read entrypoint + cmd separately — preserves docker's ENTRYPOINT
-	// vs CMD semantics, e.g. an image with ENTRYPOINT=/usr/local/bin/foo
-	// and user Cmd=["arg"] must invoke foo("arg"), not override
-	// ENTRYPOINT to "arg". SOCKERLESS_CMD backwards-compat path (no
-	// SOCKERLESS_ENTRYPOINT): treat the whole list as args so the
-	// image's ENTRYPOINT still fires — matches docker run's default
-	// behaviour when no --entrypoint flag is passed.
+	timeout := 60 * time.Second // GCP default
+	if fn.ServiceConfig != nil && fn.ServiceConfig.TimeoutSeconds > 0 {
+		timeout = time.Duration(fn.ServiceConfig.TimeoutSeconds) * time.Second
+	}
+
+	sink := &cfLogSink{project: project, functionName: functionID}
+
+	if image != "" {
+		// Cloud-faithful: HTTP-invoke the overlay's bootstrap.
+		body, exitCode, err := invokeOverlayContainerHTTP(image, functionID, timeout, sink)
+		if err != nil {
+			injectCloudFunctionLog(project, functionID,
+				fmt.Sprintf("Function invocation error: %v", err))
+			return []byte(fmt.Sprintf(`{"error":%q}`, err.Error())), 1
+		}
+		if exitCode != 0 {
+			injectCloudFunctionLog(project, functionID,
+				fmt.Sprintf("Function exited with code %d", exitCode))
+		}
+		return body, exitCode
+	}
+
+	// Process path: SimCommand-based (SDK tests). Decode any user
+	// entrypoint/cmd from base64-JSON env vars first; fall back to
+	// SimCommand if neither is set.
 	var entrypoint, userCmd []string
 	if fn.ServiceConfig != nil {
-		if epB64, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_ENTRYPOINT"]; ok {
+		if epB64, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_USER_ENTRYPOINT"]; ok {
 			if decoded, err := base64.StdEncoding.DecodeString(epB64); err == nil {
-				json.Unmarshal(decoded, &entrypoint)
+				_ = json.Unmarshal(decoded, &entrypoint)
 			}
 		}
-		if cmdB64, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_CMD"]; ok {
+		if cmdB64, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_USER_CMD"]; ok {
 			if decoded, err := base64.StdEncoding.DecodeString(cmdB64); err == nil {
-				json.Unmarshal(decoded, &userCmd)
+				_ = json.Unmarshal(decoded, &userCmd)
 			}
 		}
 		if len(entrypoint) == 0 && len(userCmd) == 0 {
@@ -259,8 +297,8 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 		}
 	}
 
-	// If no image and nothing to run, nothing to do
-	if image == "" && len(entrypoint) == 0 && len(userCmd) == 0 {
+	if len(entrypoint) == 0 && len(userCmd) == 0 {
+		// Nothing to invoke — function is essentially a stub.
 		return []byte("{}"), 0
 	}
 
@@ -269,12 +307,6 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 		cmdEnv = fn.ServiceConfig.EnvironmentVariables
 	}
 
-	timeout := 60 * time.Second // GCP default
-	if fn.ServiceConfig != nil && fn.ServiceConfig.TimeoutSeconds > 0 {
-		timeout = time.Duration(fn.ServiceConfig.TimeoutSeconds) * time.Second
-	}
-
-	sink := &cfLogSink{project: project, functionName: functionID}
 	var stdout bytes.Buffer
 	collectSink := sim.FuncSink(func(line sim.LogLine) {
 		sink.WriteLog(line)
@@ -284,46 +316,6 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 		}
 	})
 
-	if image != "" {
-		// Map cloud registry URIs (e.g. AR pull-through cache references
-		// like `us-central1-docker.pkg.dev/proj/docker-hub/library/alpine:latest`)
-		// back to their original Docker Hub / local tag so the sim can
-		// actually run them locally. Matches how the Cloud Run Jobs sim
-		// resolves images in the same process.
-		localImage := sim.ResolveLocalImage(image)
-		// Container-based execution. When SOCKERLESS_ENTRYPOINT is
-		// unset we leave Command nil so the image's ENTRYPOINT runs
-		// unchanged; userCmd becomes the container CMD (args).
-		handle, err := sim.StartContainerSync(sim.ContainerConfig{
-			Image:   localImage,
-			Command: entrypoint,
-			Args:    userCmd,
-			Env:     cmdEnv,
-			Timeout: timeout,
-			Name:    fmt.Sprintf("sockerless-sim-gcf-%s", functionID),
-			Labels:  map[string]string{"sockerless-sim-function": functionID},
-		}, collectSink)
-		if err != nil {
-			injectCloudFunctionLog(project, functionID,
-				fmt.Sprintf("Function execution error: container start failed: %v", err))
-			return []byte(fmt.Sprintf(`{"error":"%v"}`, err)), 1
-		}
-		result := handle.Wait()
-
-		if result.ExitCode != 0 {
-			injectCloudFunctionLog(project, functionID,
-				fmt.Sprintf("Function execution error: container exited with code %d", result.ExitCode))
-		}
-
-		output := strings.TrimRight(stdout.String(), "\n")
-		if output == "" {
-			return []byte("{}"), result.ExitCode
-		}
-		return []byte(output), result.ExitCode
-	}
-
-	// Fallback: process-based execution (no image available) —
-	// entrypoint + args concatenated for a host-process exec.
 	procCmd := append([]string{}, entrypoint...)
 	procCmd = append(procCmd, userCmd...)
 	handle := sim.StartProcess(sim.ProcessConfig{
@@ -365,4 +357,155 @@ func injectCloudFunctionLog(project, functionName, text string) {
 		Type:   "cloud_run_revision",
 		Labels: map[string]string{"service_name": functionName},
 	}, nil, []LogEntry{{TextPayload: text}})
+}
+
+// invokeOverlayContainerHTTP runs the cloud-faithful invocation flow:
+// start the overlay container detached, wait for the bootstrap HTTP
+// server to be ready on its assigned host port, POST to it, read the
+// response body + the bootstrap-set `X-Sockerless-Exit-Code` header,
+// then stop and remove the container.
+//
+// This mirrors what real Cloud Run does for every Cloud Functions Gen2
+// invocation: route the request to the underlying container's HTTP
+// listener and return the response. The exit code header is set by
+// `sockerless-gcf-bootstrap` so the docker-shell perceives the
+// underlying subprocess's true exit status (matters for `docker run
+// --rm <fail>` semantics where 1 should propagate, etc.).
+//
+// The container is short-lived per invocation (start → POST → stop).
+// That keeps the sim's container-state footprint bounded — at most one
+// in-flight invocation container per concurrent request — and matches
+// docker-run-style one-shot semantics. Real Cloud Run keeps containers
+// warm across invocations; the sim's per-invocation lifecycle is a
+// simplification that doesn't change the semantic contract (the same
+// command is run, the same output is returned).
+//
+// Errors are returned only for infrastructure failures (image pull,
+// container start, networking). Subprocess non-zero exit is NOT an
+// error — it surfaces via the `exitCode` return value.
+func invokeOverlayContainerHTTP(image, functionID string, timeout time.Duration, sink sim.LogSink) (responseBody []byte, exitCode int, err error) {
+	cli := sim.DockerClient()
+	if cli == nil {
+		return nil, -1, fmt.Errorf("docker client not initialized")
+	}
+
+	localImage := sim.ResolveLocalImage(image)
+
+	// Bootstrap listens on $PORT (defaults 8080). Bind to a random host
+	// port so concurrent invocations on the same host don't collide.
+	hostPort, err := pickFreeTCPPort()
+	if err != nil {
+		return nil, -1, fmt.Errorf("pick free port: %w", err)
+	}
+
+	containerName := fmt.Sprintf("sockerless-sim-gcf-%s-%d", functionID, hostPort)
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	containerID, err := sim.StartHTTPContainer(ctx, sim.HTTPContainerConfig{
+		Image:    localImage,
+		HostPort: hostPort,
+		Env: map[string]string{
+			"PORT": "8080",
+		},
+		Name: containerName,
+		Labels: map[string]string{
+			"sockerless-sim-function": functionID,
+		},
+	})
+	if err != nil {
+		return nil, -1, fmt.Errorf("start overlay container: %w", err)
+	}
+	defer sim.StopAndRemoveContainer(containerID)
+
+	// Stream container logs to Cloud Logging in the background. Uses
+	// the same sink as the process path so test assertions on
+	// `gcpFunctionLogMessages` find the bootstrap's stdout/stderr (the
+	// user subprocess output is written to the bootstrap's own
+	// stdout/stderr via io.MultiWriter — see agent/cmd/sockerless-gcf-
+	// bootstrap/main.go::handleInvoke).
+	logStreamCtx, logStreamCancel := context.WithCancel(context.Background())
+	defer logStreamCancel()
+	go sim.StreamContainerLogs(logStreamCtx, containerID, sink)
+
+	// Wait for the bootstrap to start serving HTTP. Bootstrap prints
+	// "sockerless-gcf-bootstrap: listening on :8080" then calls
+	// ListenAndServe — once the listener is up, any TCP dial succeeds.
+	bootstrapURL := fmt.Sprintf("http://127.0.0.1:%d/", hostPort)
+	if err := waitForHTTP(ctx, bootstrapURL, 30*time.Second); err != nil {
+		return nil, -1, fmt.Errorf("bootstrap not ready at %s: %w", bootstrapURL, err)
+	}
+
+	// POST the invocation. Empty body matches what the gcf backend's
+	// invokeFunction sends (it calls POST with nil body).
+	httpClient := &http.Client{Timeout: timeout}
+	req, err := http.NewRequestWithContext(ctx, "POST", bootstrapURL, nil)
+	if err != nil {
+		return nil, -1, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, -1, fmt.Errorf("invoke bootstrap: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	// Exit code propagation: bootstrap sets X-Sockerless-Exit-Code on
+	// non-zero exit so the calling docker-shell perceives the
+	// underlying subprocess's true status. Successful invocations
+	// (HTTP 200) imply exit 0 even without the header.
+	exitCode = 0
+	if hdr := resp.Header.Get("X-Sockerless-Exit-Code"); hdr != "" {
+		if n, parseErr := strconv.Atoi(hdr); parseErr == nil {
+			exitCode = n
+		}
+	} else if resp.StatusCode >= 400 {
+		// Bootstrap omitted the header but returned an error status —
+		// surface a non-zero exit so the caller treats this as a
+		// failed invocation rather than a silent success.
+		exitCode = 1
+	}
+
+	return body, exitCode, nil
+}
+
+// pickFreeTCPPort opens a transient TCP listener to discover a
+// free port number, then closes it. The OS may reassign the port
+// before the caller binds it (TOCTOU); on a single-host sim this is
+// vanishingly rare and reusing it is safe.
+func pickFreeTCPPort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+	return port, nil
+}
+
+// waitForHTTP polls `url` until any response is received (2xx, 4xx,
+// 5xx — all OK) or the deadline elapses. Used to detect that the
+// container's HTTP server has bound to its port and is accepting
+// connections; the response status doesn't matter, only that the
+// server answered.
+func waitForHTTP(ctx context.Context, url string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	client := &http.Client{Timeout: 1 * time.Second}
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		resp, err := client.Get(url)
+		if err == nil {
+			resp.Body.Close()
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("timeout after %s", timeout)
 }

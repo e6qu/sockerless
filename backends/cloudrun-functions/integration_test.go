@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/pprof"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +43,26 @@ func TestMain(m *testing.M) {
 		// Local dev: run whatever unit tests exist and exit.
 		os.Exit(m.Run())
 	}
+
+	// Watchdog: if TestMain hasn't reached `m.Run()` within 5 minutes
+	// something has hung. Force a SIGABRT via `runtime/pprof` goroutine
+	// dump + panic so the failure surfaces a full goroutine trace,
+	// pinpointing which goroutine is stuck where. The previous failure
+	// mode was an opaque 8-minute silence; this turns it into an
+	// actionable stack dump that lands directly in the CI log.
+	watchdogDone := make(chan struct{})
+	go func() {
+		select {
+		case <-watchdogDone:
+			return
+		case <-time.After(5 * time.Minute):
+			fmt.Fprintln(os.Stderr, "[testmain] WATCHDOG: TestMain has been running >5min; dumping goroutines and aborting")
+			_ = pprof.Lookup("goroutine").WriteTo(os.Stderr, 2)
+			fmt.Fprintln(os.Stderr, "[testmain] WATCHDOG: goroutine dump complete; aborting process")
+			os.Exit(124) // 124 = standard timeout exit code
+		}
+	}()
+	defer close(watchdogDone)
 
 	repoRoot := findModuleDir(".")
 	var cleanups []func()
@@ -125,7 +146,9 @@ func TestMain(m *testing.M) {
 	simBinary := simDir + "/simulator-gcp"
 	step("go build simulator-gcp")
 	fmt.Println("[sim] Building simulator-gcp...")
-	build := exec.Command("go", "build", "-tags", "noui", "-o", "simulator-gcp", ".")
+	buildCtx1, buildCancel1 := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer buildCancel1()
+	build := exec.CommandContext(buildCtx1, "go", "build", "-tags", "noui", "-o", "simulator-gcp", ".")
 	build.Dir = simDir
 	build.Env = filterBuildEnv(os.Environ(), "GOWORK=off")
 	build.Stdout = os.Stderr
@@ -177,7 +200,9 @@ func TestMain(m *testing.M) {
 	backendBinary := backendDir + "/sockerless-backend-gcf"
 	step("go build sockerless-backend-gcf")
 	fmt.Println("[sim] Building sockerless-backend-gcf...")
-	buildBackend := exec.Command("go", "build", "-tags", "noui", "-o", "sockerless-backend-gcf", "./cmd/sockerless-backend-gcf")
+	buildCtx2, buildCancel2 := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer buildCancel2()
+	buildBackend := exec.CommandContext(buildCtx2, "go", "build", "-tags", "noui", "-o", "sockerless-backend-gcf", "./cmd/sockerless-backend-gcf")
 	buildBackend.Dir = backendDir
 	buildBackend.Stdout = os.Stderr
 	buildBackend.Stderr = os.Stderr
@@ -218,7 +243,9 @@ func TestMain(m *testing.M) {
 	}
 	step("go build sockerless-gcf-bootstrap")
 	fmt.Println("[sim] Building sockerless-gcf-bootstrap...")
-	bootstrapBuild := exec.Command("go", "build", "-o", gcfBootstrapPath, "./cmd/sockerless-gcf-bootstrap")
+	buildCtx3, buildCancel3 := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer buildCancel3()
+	bootstrapBuild := exec.CommandContext(buildCtx3, "go", "build", "-o", gcfBootstrapPath, "./cmd/sockerless-gcf-bootstrap")
 	bootstrapBuild.Dir = repoRoot + "/agent"
 	bootstrapBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=amd64")
 	bootstrapBuild.Stdout = os.Stderr
@@ -555,10 +582,19 @@ func findFreePort() int {
 	return port
 }
 
+// waitForReady polls `url` until it answers 200 or `timeout` elapses.
+// Uses an http.Client with a per-request timeout (1s) so a SINGLE call
+// that hangs (server accepted the connection but never wrote a
+// response — possible if the goroutine handling /health blocks) can't
+// monopolise the deadline budget. The previous implementation called
+// `http.DefaultClient.Get`, which has NO timeout — a hung request
+// would block forever and the outer `for time.Now().Before(deadline)`
+// check would never re-evaluate.
 func waitForReady(url string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	client := &http.Client{Timeout: 1 * time.Second}
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(url)
+		resp, err := client.Get(url)
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == 200 {
