@@ -142,6 +142,7 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}) {
 		return
 	}
 
+	s.Logger.Info().Str("container", id).Msg("invokeServiceDefaultCmd: minting idtoken client")
 	client, err := idtoken.NewClient(s.ctx(), serviceURL)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("container", id).Msg("idtoken client for service invoke")
@@ -150,7 +151,8 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}) {
 		s.Store.PutInvocationResult(id, inv)
 		return
 	}
-	client.Timeout = 1 * time.Hour
+	client.Timeout = 10 * time.Minute
+	s.Logger.Info().Str("container", id).Msg("invokeServiceDefaultCmd: idtoken client ready")
 
 	req, err := http.NewRequestWithContext(s.ctx(), http.MethodPost, serviceURL, nil)
 	if err != nil {
@@ -161,7 +163,11 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	s.Logger.Info().Str("container", id).Str("url", serviceURL).Msg("invokeServiceDefaultCmd: POST starting")
+	postStart := time.Now()
 	resp, err := client.Do(req)
+	postDur := time.Since(postStart)
+	s.Logger.Info().Str("container", id).Dur("dur", postDur).Err(err).Msg("invokeServiceDefaultCmd: POST returned")
 	if err != nil {
 		s.Logger.Error().Err(err).Str("container", id).Msg("service invocation failed")
 		inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
@@ -170,6 +176,7 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}) {
 		return
 	}
 	defer resp.Body.Close()
+	s.Logger.Info().Str("container", id).Int("status", resp.StatusCode).Msg("invokeServiceDefaultCmd: response status")
 
 	body, _ := io.ReadAll(resp.Body)
 	if len(body) > 0 {
