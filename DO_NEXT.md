@@ -2,9 +2,29 @@
 
 Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md); bug log in [BUGS.md](BUGS.md); architecture in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
 
-## Resume pointer (2026-05-03 v12 — end of session)
+## Resume pointer (2026-05-03 v15 — end of session)
 
 **Goal**: cells 5/6/7/8 GREEN with REAL workload (compile + use eval-arithmetic + probe environment) before merging PR #123.
+
+**Where we landed (v15)**: Phase 122g + Phase 122h shipped (15+ commits on `phase-118-faas-pods`). Live cell 7 progression confirms the architecture works:
+- Cloud Run Service deploys via overlay+bootstrap ✓
+- `sockerless-cloudrun-bootstrap: subprocess argv=[/usr/bin/dumb-init /entrypoint gitlab-runner-helper cache-init /gitlab-runner-cache-init] exit=0` (real cmd ran) ✓
+- Postgres service container UP and listening on :5432 ✓
+- BUILD container (golang:1.22-alpine) deployed ✓
+- gitlab-runner trace bytesize=28550 (vs. previous 1144) ✓
+
+**Architectural insights from source (verified 2026-05-03)**:
+- `gitlab-runner` v17.5 `executors/docker/internal/exec/exec.go::defaultDocker.Exec` uses HIJACKED `ContainerAttach(Stream+Stdin+Stdout+Stderr)` + `ContainerStart` + raw stdin-pipe per stage. NOT `/exec/...` API.
+- ECS + Lambda backends already had `stdin_pipe.go` (~80 lines) — that's why cells 3+4 are GREEN. cloudrun + gcf were missing this.
+- Phase 122h ports the proven AWS pattern: stdin_pipe.go (lifted from ecs) + attach_stream.go (hijacked-shaped RWC) + invoke goroutine consumes captured stdin and POSTs `execEnvelope{argv:[/bin/sh], stdin:<captured>}`.
+
+**Current blocker** (new — not yet diagnosed): rev `00040-qj6` of `gitlab-runner-cloudrun` (Phase 122h image, digest `4fc5abd0951729dcc683dd3491bfc10185cdc00749a19d011d86f99f34524f27`) failed Cloud Run startup health probe — bootstrap silently dies before binding PORT 8080. Rolled back to rev `00038-f42` which serves the older Phase 122g code without stdinPipe. Phase 122h code is committed (`commit 9f9f872`) but not running live.
+
+**Next session resume**:
+1. Debug rev 00040 startup failure: docker-run the image locally with full Cloud Run env vars (PORT=8080, K_SERVICE, K_REVISION, K_CONFIGURATION) and trace bootstrap.sh step-by-step. Likely candidates: my new `stdin_pipe.go` / `attach_stream.go` panic at init, OR a Go module dep changed binary startup path. Compare to working rev 00038 binary by `strings | grep -c stdinPipe`.
+2. Once rev 00040 is healthy, retrigger cell 7 → expect REAL stdin captured + real bash script run on Cloud Run Service.
+3. After cell 7 GREEN, port the same stdinPipe pattern to gcf for cell 8.
+4. For cells 5+6: confirm GitHub PAT refresh (user did `gh auth refresh` but token is rate-limited — rate limit resets hourly). Then mint scoped PAT, upload to Secret Manager `github-pat`, dispatcher resumes polling.
 
 **Architectural state — clear path forward (Phase 122g)**: today's session diagnosed the actual blocker. Cell 7 falsely reported SUCCESS while running zero workload (BUG-927). Backend logs proved gitlab-runner's docker-executor flow: `attach 200 (216s) → exec 409 'Container not running' → wait 200 → stop 304 × N`. Cloud Run Job (one-shot) cannot host gitlab-runner's "long-lived build container + per-stage exec" model. Stock images (`golang:1.22-alpine`, `postgres:16-alpine`) have no in-container exec endpoint.
 
