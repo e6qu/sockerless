@@ -1187,3 +1187,28 @@ The runner image bundles `sockerless-backend-{cloudrun,gcf,...}`. THAT process I
 5. **Failure propagation** (return codes from cloud APIs → docker error responses).
 
 Each backend's engine implementation lives in `backends/<backend>/backend_impl.go`. The engine MUST stay backend-pure (no cross-cloud calls) per the no-cross-contamination rule.
+
+### Network namespace = MUST-HAVE; PID namespace = if-needed (best-effort)
+
+User directive 2026-05-03 (clarification): **shared network namespace** (so pod members reach each other on `localhost:<port>`) is a HARD REQUIREMENT for any pod-shape on any backend. **Shared PID namespace** is only needed for specific workloads (e.g. signal forwarding, `ps -ef` visibility) and is best-effort — fail loudly when explicitly requested but unavailable; otherwise silently use the cloud's default (separate PID per container) without flagging.
+
+So the pod-on-FaaS rules become:
+
+1. ALWAYS provide shared netns. On gcf this means multi-container Cloud Run Service template (UpdateService escape). On Lambda + AZF this means Phase 118d overlay-supervisor (single Function, fork-execed sidecars in shared netns).
+2. PID-shared ONLY if `Container.HostConfig.PidMode == "container:<id>"` is explicitly requested AND the backend can deliver — otherwise stick with cloud-default isolated PID. Don't flag, don't degrade, don't inject "shared-degraded" annotations.
+
+### Agents + supervisors = LAST RESORT; cached builds for speed
+
+User directive 2026-05-03 (continuation): IF the cloud-native primitives + chained Function invocations don't cover the requirement, agents + supervisors (Phase 118d shape) MAY be used — but the project emphasizes **simplicity, reliability, and fast-startup**. Practical implications:
+
+1. **Prefer the simpler primitive every time**: a multi-container Cloud Run Service over an in-image fork-supervisor; an idempotent cached image pull over a runtime image-build; a Function reuse pool entry over a fresh CreateFunction.
+2. **Image builds must be cached**. The cache layer (per-content-hash overlay tag + AR push, sockerless_overlay_hash labels, pool reuse) MUST make the SECOND run of the same image take <10 s. The first run pays the Cloud Build cost; subsequent runs are pool-claim only. If a build pipeline has 5 stages all using `golang:1.22-alpine` as the build container, only ONE Cloud Build fires across the whole pipeline.
+3. **Reverse-agent / supervisor adds latency**: a Function with a reverse-agent dial-back has cold-start + WebSocket-handshake + per-exec round-trip overhead. For fast-startup goals, prefer the cloud's NATIVE exec primitive when one exists (ACA `containerapp exec`, ECS SSM `ExecuteCommand`); fall back to reverse-agent only when the cloud genuinely lacks it (Cloud Run Service, gcf, AZF).
+4. **Init / post containers** (gitlab-runner permission containers, github-actions service prep): these are short-lived; the cached path (pool reuse OR pre-deployed Function with min_instance_count=0 for cold-start tolerance) MUST keep their second-run startup time < 5 s.
+
+### What this means for cells 5-8 unblock
+
+- **Cells 5+7 (cloudrun)**: build container (`tail -f /dev/null` golang image) declares no ExposedPorts → routes to Cloud Run Job (long-lived for cmd duration). Postgres service container (declares 5432 in image) routes to Cloud Run Service. Multi-container pod path keeps all members in ONE Service for shared netns. Reverse-agent for `docker exec` chain.
+- **Cells 6+8 (gcf)**: same shape, but each container is a Cloud Function whose underlying Cloud Run Service is mutated via UpdateService. Pod members = entries in `svc.Template.Containers[]`. Image cache: build container's overlay built ONCE per content-hash (Phase 118 BUG-884 sub-118b pool reuse keeps it warm).
+
+The simplicity / fast-startup rule explicitly invalidates Phase 118d's "always overlay-build per container" pattern — only build when no cached image exists.
