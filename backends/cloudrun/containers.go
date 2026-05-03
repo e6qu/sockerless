@@ -38,22 +38,17 @@ func (s *Server) pollExecutionExit(containerID, executionName string, exitCh cha
 	}
 }
 
-// maybeAutoRemove deletes the cloud-side Cloud Run Job (and clears the Store/CloudRun
-// entries) for a container created with HostConfig.AutoRemove=true. Called from the
-// execution-exit poller after the wait channel has been signaled. Cloud Run is a
-// stateless backend (Store.Containers is empty), so AutoRemove rides on the
-// SOCKERLESS_AUTOREMOVE annotation that buildJobSpec writes onto the cloud-side Job.
+// maybeAutoRemove was the auto-remove-on-exit hook for HostConfig.AutoRemove=true
+// containers. BUG-922: gitlab-runner / github-runner expect to `docker exec` into
+// the SAME container ID across N stages even AFTER the cmd has exited (the docker
+// daemon model keeps stopped containers around for inspect/exec until explicit
+// remove). Cloud Run Job auto-removal on execution completion broke this — once
+// the helper container's first command exited, sockerless removed the Job, the
+// next exec failed with "No such container". Phase 122g rule: NEVER auto-remove;
+// require explicit ContainerRemove from the client.
 func (s *Server) maybeAutoRemove(containerID string) {
-	c, ok := s.ResolveContainerAuto(s.ctx(), containerID)
-	if !ok {
-		return
-	}
-	if !c.HostConfig.AutoRemove {
-		return
-	}
-	if err := s.ContainerRemove(containerID, false); err != nil {
-		s.Logger.Warn().Err(err).Str("container", containerID[:12]).Msg("auto-remove failed")
-	}
+	// No-op: auto-remove disabled per BUG-922 / docker-semantics fix.
+	_ = containerID
 }
 
 // cancelExecution cancels a Cloud Run execution (best-effort), waiting for completion.
