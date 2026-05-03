@@ -242,6 +242,15 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		EnvironmentVariables: envVars,
 	}
 
+	// Phase 122f: runner-pattern (long-lived) containers need
+	// min_instance_count=1 so the underlying Cloud Run Service stays
+	// warm between chained HTTP invocations (each docker exec = one
+	// invocation). Detection mirrors cloudrun's isRunnerPattern.
+	if isRunnerPatternGCF(&container) {
+		serviceConfig.MinInstanceCount = 1
+		s.Logger.Info().Str("container", id).Msg("Phase 122f: runner-pattern → min_instance_count=1")
+	}
+
 	if s.config.ServiceAccount != "" {
 		serviceConfig.ServiceAccountEmail = s.config.ServiceAccount
 	}
