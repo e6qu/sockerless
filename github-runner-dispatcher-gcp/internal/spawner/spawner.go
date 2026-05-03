@@ -53,18 +53,6 @@ type Request struct {
 	Labels         []string
 	JobID          int64  // GitHub workflow_job ID — written to LabelJobID for restart recovery
 	ServiceAccount string // GCP service account email (Job execution identity)
-	BuildBucket    string // GCS bucket for sockerless backend's `docker build` context uploads
-	// BackendKind selects which sockerless backend the runner image
-	// bakes — drives which SOCKERLESS_<KIND>_* env vars get set on
-	// the Job. "cloudrun" or "gcf".
-	BackendKind string
-	// RunnerWorkspaceBucket is the GCS bucket that backs the runner-
-	// task workspace shared volume (`/tmp/runner-work` and
-	// `/opt/runner/externals`). Mounted on the spawned runner Cloud
-	// Run Job via Volume{Gcs{Bucket}}; the in-image sockerless backend
-	// reads `SOCKERLESS_GCP_SHARED_VOLUMES` to translate sub-task bind
-	// mounts into the same bucket. BUG-909 — Phase-110b-equivalent.
-	RunnerWorkspaceBucket string
 }
 
 // Spawn calls Cloud Run Jobs CreateJob then RunJob. Returns the Job
@@ -99,39 +87,12 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 	jobID := jobIDFromRunnerName(req.RunnerName, req.JobID)
 	fullName := fmt.Sprintf("%s/jobs/%s", parent, jobID)
 
-	if req.BuildBucket == "" {
-		return "", fmt.Errorf("BuildBucket required (sockerless backend's docker build context bucket)")
-	}
-	if req.BackendKind == "" {
-		return "", fmt.Errorf("BackendKind required (\"cloudrun\" or \"gcf\")")
-	}
-	if req.RunnerWorkspaceBucket == "" {
-		return "", fmt.Errorf("RunnerWorkspaceBucket required (GCS bucket backing the runner-task /tmp/runner-work + /opt/runner/externals shared volumes — BUG-909)")
-	}
-
-	// Sockerless backend env vars — required (fail-loudly contract).
-	// BackendKind selects which prefix (SOCKERLESS_GCR_* for cloudrun,
-	// SOCKERLESS_GCF_* for gcf) the in-image backend reads.
-	var prefix string
-	switch req.BackendKind {
-	case "cloudrun":
-		prefix = "SOCKERLESS_GCR_"
-	case "gcf":
-		prefix = "SOCKERLESS_GCF_"
-	default:
-		return "", fmt.Errorf("unknown BackendKind %q (want \"cloudrun\" or \"gcf\")", req.BackendKind)
-	}
-
-	// SharedVolumes string the in-image sockerless backend reads to
-	// translate sub-task bind mounts. Two named volumes back the
-	// github-actions-runner workspace; both ride one GCS bucket via
-	// distinct mount paths. Subpath-style binds the runner emits
-	// (`/tmp/runner-work/_temp` etc.) drop via isSubPathOfSharedVolume.
-	sharedVolumesEnv := fmt.Sprintf(
-		"runner-workspace=/tmp/runner-work=%s,runner-externals=/opt/runner/externals=%s",
-		req.RunnerWorkspaceBucket, req.RunnerWorkspaceBucket,
-	)
-
+	// Dispatcher scope (per CLOUD_RESOURCE_MAPPING.md § "Adjustment to
+	// dispatcher scope"): only the runner-side env (GitHub PAT-derived
+	// token, repo, name, labels). NO sockerless-shaped env or volumes
+	// — the runner image owns its own backend config + workspace
+	// mounting internally. BUG-911 (TaskTemplate.Timeout 3600s) stays
+	// because it's a Cloud Run resource concern, not runner-internal.
 	containerCfg := &runpb.Container{
 		Image: req.Image,
 		Env: []*runpb.EnvVar{
@@ -139,42 +100,17 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 			{Name: "RUNNER_REPO", Values: &runpb.EnvVar_Value{Value: req.Repo}},
 			{Name: "RUNNER_NAME", Values: &runpb.EnvVar_Value{Value: req.RunnerName}},
 			{Name: "RUNNER_LABELS", Values: &runpb.EnvVar_Value{Value: strings.Join(req.Labels, ",")}},
-			// BUG-910: bootstrap.sh wraps run.sh with `timeout`; the
-			// 60s default kills the runner mid-job. 3600s = upper
-			// bound for one CI pipeline; --once / --ephemeral exits
-			// naturally when the single job completes.
-			{Name: "RUNNER_IDLE_SECONDS", Values: &runpb.EnvVar_Value{Value: "3600"}},
-			{Name: prefix + "PROJECT", Values: &runpb.EnvVar_Value{Value: req.Project}},
-			{Name: prefix + "REGION", Values: &runpb.EnvVar_Value{Value: req.Region}},
-			{Name: "SOCKERLESS_GCP_BUILD_BUCKET", Values: &runpb.EnvVar_Value{Value: req.BuildBucket}},
-			{Name: "SOCKERLESS_GCP_SHARED_VOLUMES", Values: &runpb.EnvVar_Value{Value: sharedVolumesEnv}},
-		},
-		VolumeMounts: []*runpb.VolumeMount{
-			{Name: "runner-workspace", MountPath: "/tmp/runner-work"},
-			{Name: "runner-externals", MountPath: "/opt/runner/externals"},
 		},
 	}
 
 	template := &runpb.ExecutionTemplate{
 		Template: &runpb.TaskTemplate{
 			Containers: []*runpb.Container{containerCfg},
-			Volumes: []*runpb.Volume{
-				{
-					Name:       "runner-workspace",
-					VolumeType: &runpb.Volume_Gcs{Gcs: &runpb.GCSVolumeSource{Bucket: req.RunnerWorkspaceBucket}},
-				},
-				{
-					Name:       "runner-externals",
-					VolumeType: &runpb.Volume_Gcs{Gcs: &runpb.GCSVolumeSource{Bucket: req.RunnerWorkspaceBucket}},
-				},
-			},
 			// One-shot: failed job → failed execution, no retries.
-			// MaxRetries is a oneof; wrap the int in the typed wrapper.
 			Retries: &runpb.TaskTemplate_MaxRetries{MaxRetries: 0},
-			// BUG-911: Cloud Run Job task_timeout default is 10 min;
-			// runner-task running a real CI pipeline needs much more.
-			// Match RUNNER_IDLE_SECONDS (3600s) so the bash timeout
-			// and Cloud Run task timeout are aligned.
+			// BUG-911: Cloud Run Job task_timeout default 10 min; bump
+			// to 1h to fit a real CI pipeline. This is a Cloud Run
+			// resource limit, not a sockerless-shaped concern.
 			Timeout: durationpb.New(3600 * time.Second),
 		},
 	}

@@ -182,34 +182,16 @@ func (d *dispatchLoop) Step(ctx context.Context) error {
 			continue
 		}
 		runnerName := fmt.Sprintf("dispatcher-gcp-%d-%d", job.JobID, time.Now().Unix())
-		// Derive backend kind from the matched label name. The
-		// runner image bakes the matching backend (BUG-862:
-		// backend ↔ host primitive must match), so the label name
-		// directly maps to which sockerless backend the in-image
-		// process runs.
-		backendKind := ""
-		switch label.Name {
-		case "sockerless-cloudrun":
-			backendKind = "cloudrun"
-		case "sockerless-gcf":
-			backendKind = "gcf"
-		default:
-			log.Printf("skip job %d: label %q has no known backend kind (expected sockerless-cloudrun or sockerless-gcf)", job.JobID, label.Name)
-			continue
-		}
 		fullName, err := spawner.Spawn(ctx, spawner.Request{
-			Project:               label.Project,
-			Region:                label.Region,
-			Image:                 label.Image,
-			ServiceAccount:        label.ServiceAccount,
-			BuildBucket:           label.BuildBucket,
-			RunnerWorkspaceBucket: label.RunnerWorkspaceBucket,
-			BackendKind:           backendKind,
-			RegToken:              regToken,
-			Repo:                  job.Repo,
-			RunnerName:            runnerName,
-			Labels:                job.Labels,
-			JobID:                 job.JobID,
+			Project:        label.Project,
+			Region:         label.Region,
+			Image:          label.Image,
+			ServiceAccount: label.ServiceAccount,
+			RegToken:       regToken,
+			Repo:           job.Repo,
+			RunnerName:     runnerName,
+			Labels:         job.Labels,
+			JobID:          job.JobID,
 		})
 		if err != nil {
 			log.Printf("skip job %d: spawn (%s/%s): %v", job.JobID, label.Project, label.Region, err)
