@@ -2,7 +2,9 @@ package cloudrun
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -226,8 +228,9 @@ func mapCPUMemory() (string, string) {
 	return "1", "512Mi"
 }
 
-// sanitizeContainerName converts a container name to a valid Cloud Run container name.
-// Strips leading "/" and replaces non-alphanumeric characters with "-".
+// sanitizeContainerName converts a container name to a valid Cloud Run
+// container name per RFC 1123: lowercase ASCII letters/digits/hyphens
+// and periods, must begin and end with letter or digit, length < 64.
 func sanitizeContainerName(name string) string {
 	name = strings.TrimPrefix(name, "/")
 	if name == "" {
@@ -235,17 +238,44 @@ func sanitizeContainerName(name string) string {
 	}
 	var b strings.Builder
 	for _, c := range name {
-		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-', c == '.':
 			b.WriteRune(c)
-		} else if c >= 'A' && c <= 'Z' {
+		case c >= 'A' && c <= 'Z':
 			b.WriteRune(c + 32) // lowercase
-		} else {
+		default:
 			b.WriteByte('-')
 		}
 	}
 	result := b.String()
+	// Trim leading non-alphanumeric (must begin with letter or digit).
+	for len(result) > 0 && !isAlnum(result[0]) {
+		result = result[1:]
+	}
+	// Cap to 50 chars (leave room for any future suffixes; Cloud Run
+	// limit is 63).
+	if len(result) > 50 {
+		// Keep a stable hash of the original to avoid collisions when
+		// multiple long names share the same 50-char prefix.
+		hash := nameHash(name)
+		result = result[:50-9] + "-" + hash
+	}
+	// Trim trailing non-alphanumeric (must end with letter or digit).
+	for len(result) > 0 && !isAlnum(result[len(result)-1]) {
+		result = result[:len(result)-1]
+	}
 	if result == "" {
 		return "sidecar"
 	}
 	return result
+}
+
+func isAlnum(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9')
+}
+
+// nameHash returns a short 8-char hex hash for use as a name disambiguator.
+func nameHash(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:4])
 }
