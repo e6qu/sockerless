@@ -65,9 +65,17 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 	}
 
 	if s.config.VPCConnector != "" {
+		// PRIVATE_RANGES_ONLY: only RFC1918 traffic (cross-container
+		// peer-to-peer via VPC) goes through the connector. Public
+		// google APIs (storage.googleapis.com — required by GCSFuse for
+		// GCS volume mounts; cloudrun control plane invokes; etc.) go
+		// via the platform's normal egress so they don't depend on
+		// in-VPC NAT or Private Google Access. Phase 122g BUG-928 —
+		// ALL_TRAFFIC routed GCSFuse through the connector subnet which
+		// has no NAT, breaking every Service-path container start.
 		revTemplate.VpcAccess = &runpb.VpcAccess{
 			Connector: s.config.VPCConnector,
-			Egress:    runpb.VpcAccess_ALL_TRAFFIC,
+			Egress:    runpb.VpcAccess_PRIVATE_RANGES_ONLY,
 		}
 	}
 

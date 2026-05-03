@@ -184,9 +184,13 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 
 	// Add VPC connector if configured
 	if s.config.VPCConnector != "" {
+		// PRIVATE_RANGES_ONLY — see servicespec.go for the full
+		// rationale (BUG-928). Same egress mode for Jobs so a Job that
+		// also has GCS volume mounts doesn't hit the same GCSFuse
+		// connectivity problem as Services did.
 		taskTemplate.VpcAccess = &runpb.VpcAccess{
 			Connector: s.config.VPCConnector,
-			Egress:    runpb.VpcAccess_ALL_TRAFFIC,
+			Egress:    runpb.VpcAccess_PRIVATE_RANGES_ONLY,
 		}
 	}
 
