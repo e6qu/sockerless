@@ -10,7 +10,22 @@ Resume pointer. Updated after every task. Roadmap detail in [PLAN.md](PLAN.md); 
 
 > Cloud Run **Jobs** are one-shot. Runner cells need long-lived containers persisting across N `docker exec` calls. The proper fix is the Cloud Run **Service** path (config flag `SOCKERLESS_GCR_USE_SERVICE=1` already exists) PLUS the reverse-agent for `docker exec` (already in ACA, port to cloudrun + gcf).
 
-## Phase 122f infra in flight (2026-05-03 v10)
+## Phase 122f cloudrun progress + remaining gaps (2026-05-03 v11)
+
+**Phase 122f bootstrap+backend changes shipped this session**:
+- Runner bootstraps (4 of 4 images) auto-discover sockerless config from GCP metadata server (project, region, build_bucket convention).
+- cloudrun bootstraps set `SOCKERLESS_GCR_USE_SERVICE=1` + `SOCKERLESS_GCR_VPC_CONNECTOR=projects/<p>/locations/<r>/connectors/sockerless-connector`.
+- `backends/cloudrun/runner_pattern.go` (NEW): `isRunnerPattern` detects long-lived containers via `tail -f /dev/null`-style cmd OR known long-lived images (postgres, mysql, redis, etc.) OR explicit `sockerless.runner-pattern=true` label.
+- ContainerStart now routes Service path ONLY for runner-pattern; else Cloud Run Job (BUG-924 fix — permission containers / chown / etc. correctly stay on Job).
+- gcf parallel: `backends/cloudrun-functions/runner_pattern.go` + `serviceConfig.MinInstanceCount=1` for runner-pattern (BUG-923 mitigation — keeps Function instance warm between chained HTTP invocations).
+
+**Live infra additions Phase 122f**:
+- VPC `sockerless-vpc` + subnet `sockerless-connector-subnet` (10.8.0.0/28) + connector `sockerless-connector` provisioned in us-central1.
+- VPC Access API + Compute API + Service Networking API enabled on the live project.
+
+**BUG-925 NEW (open)**: After BUG-924 fix, cell 7 progressed past helper container into "Starting service postgres:16-alpine" — postgres IS routed to Cloud Run Service correctly, but per-container Service deployment takes >120s (gitlab-runner's docker daemon connection timeout). PLUS Cloud Run Services have HTTPS URLs, not the docker-network `postgres:5432` direct-port reachability that gitlab-runner expects from `services:` directive. **Real fix**: implement Lesson 1 (pre-deploy ONE Service per runner-image shape, terraform-managed) + private DNS via VPC connector so `postgres` resolves to the Service's internal IP.
+
+**Phase 122f infra in flight (2026-05-03 v10)**
 
 - VPC Access API + Compute API + Service Networking API ENABLED on `sockerless-live-46x3zg4imo`.
 - VPC `sockerless-vpc` + subnet `sockerless-connector-subnet` (`10.8.0.0/28`) created in `us-central1`.
