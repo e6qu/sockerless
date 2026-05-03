@@ -309,18 +309,29 @@ func (s *Server) ContainerStart(ref string) error {
 		return gcpcommon.MapGCPError(err, "execution", id)
 	}
 
-	// Wait for RunJob LRO to return the execution
-	execution, err := runOp.Wait(s.ctx())
-	if err != nil {
-		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("run job failed")
-		s.deleteJob(jobFullName)
-		s.Store.WaitChs.Delete(id)
-		s.PendingCreates.Delete(id)
-		s.CloudRun.Delete(id)
-		return gcpcommon.MapGCPError(err, "execution", id)
+	// BUG-921: do NOT runOp.Wait — that blocks until execution
+	// COMPLETES (~10-30 min for real CI workloads), holding the docker
+	// /start HTTP handler open and tripping gitlab-runner's 120s docker
+	// connection timeout. Instead, extract the execution name from the
+	// operation's metadata (populated as soon as RunJob is accepted).
+	// Same shape fix as BUG-912 in github-runner-dispatcher-gcp/spawner.
+	executionName := ""
+	if md, mdErr := runOp.Metadata(); mdErr == nil && md != nil {
+		executionName = md.Name
 	}
-
-	executionName := execution.Name
+	if executionName == "" {
+		// Fallback: list executions on the job + take the most recent.
+		// Operation metadata may be empty for very fast initial calls.
+		it := s.gcp.Executions.ListExecutions(s.ctx(), &runpb.ListExecutionsRequest{
+			Parent: jobFullName,
+		})
+		if e, err := it.Next(); err == nil && e != nil {
+			executionName = e.Name
+		}
+	}
+	if executionName == "" {
+		s.Logger.Warn().Str("job", jobFullName).Msg("RunJob accepted but execution name not yet available; pollExecutionExit will rediscover")
+	}
 
 	// Remove from PendingCreates now that the job is launched in the cloud.
 	s.PendingCreates.Delete(id)
@@ -406,17 +417,20 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 		return gcpcommon.MapGCPError(err, "execution", mainID)
 	}
 
-	execution, err := runOp.Wait(s.ctx())
-	if err != nil {
-		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("run job failed")
-		s.deleteJob(jobFullName)
-		for _, pc := range podContainers {
-			s.Store.WaitChs.Delete(pc.ID)
-		}
-		return gcpcommon.MapGCPError(err, "execution", mainID)
+	// BUG-921: extract execution name from operation metadata, don't
+	// block on Wait — see single-container path above for full rationale.
+	executionName := ""
+	if md, mdErr := runOp.Metadata(); mdErr == nil && md != nil {
+		executionName = md.Name
 	}
-
-	executionName := execution.Name
+	if executionName == "" {
+		it := s.gcp.Executions.ListExecutions(s.ctx(), &runpb.ListExecutionsRequest{
+			Parent: jobFullName,
+		})
+		if e, err := it.Next(); err == nil && e != nil {
+			executionName = e.Name
+		}
+	}
 
 	// Remove all pod containers from PendingCreates now that the job is launched.
 	for _, pc := range podContainers {
