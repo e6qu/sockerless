@@ -911,8 +911,16 @@ func (s *Server) ContainerUnpause(ref string) error {
 }
 
 // ImagePull delegates to ImageManager which handles cloud auth and config fetching.
+// Rewrites Docker Hub / GitLab Registry refs to the AR remote-proxy so all pulls
+// in the project hit AR (avoids Docker Hub rate limits). When rewriting, discard
+// the caller's auth — it was scoped to the original registry and is invalid for
+// AR; ImageManager.Pull's cloud-auth path mints an AR token via ARAuthProvider.
 func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
-	return s.images.Pull(ref, auth)
+	resolved := gcpcommon.ResolveGCPImageURI(ref, s.config.Project, s.config.Region)
+	if resolved != ref {
+		auth = ""
+	}
+	return s.images.Pull(resolved, auth)
 }
 
 // ImageLoad delegates to ImageManager.

@@ -966,6 +966,13 @@ func (s *Server) ContainerUnpause(ref string) error {
 // /images/create which bypassed the rewrite.
 func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 	resolved := gcpcommon.ResolveGCPImageURI(ref, s.config.Project, s.config.Region)
+	if resolved != ref {
+		// The caller's auth was scoped to the original registry (Docker
+		// Hub, registry.gitlab.com, etc.) and is invalid for AR. Discard
+		// it so ImageManager.Pull's cloud-auth path mints an AR token
+		// via ARAuthProvider; otherwise AR returns 401.
+		auth = ""
+	}
 	return s.images.Pull(resolved, auth)
 }
 
