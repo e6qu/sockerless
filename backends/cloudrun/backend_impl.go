@@ -40,7 +40,12 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		config = *req.ContainerConfig
 	}
 
-	// Merge image config if available
+	// Merge image config if available + resolve digest refs to RepoTag
+	// (BUG-918: gitlab-runner uses image ID `sha256:<digest>` for create
+	// after pull-by-tag; Cloud Run rejects bare digest refs because it
+	// rewrites them to `mirror.gcr.io/library/sha256:<digest>` which 404s.
+	// Replace `sha256:<digest>` with the first RepoTag from the local
+	// Store entry — the image was pulled by tag, so a tag is available).
 	if img, ok := s.Store.ResolveImage(config.Image); ok {
 		config.Env = core.MergeEnvByKey(img.Config.Env, config.Env)
 		if len(config.Cmd) == 0 && len(config.Entrypoint) == 0 {
@@ -51,6 +56,9 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		}
 		if config.WorkingDir == "" {
 			config.WorkingDir = img.Config.WorkingDir
+		}
+		if strings.HasPrefix(config.Image, "sha256:") && len(img.RepoTags) > 0 {
+			config.Image = img.RepoTags[0]
 		}
 	}
 	if config.Labels == nil {

@@ -56,6 +56,12 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		if config.WorkingDir == "" {
 			config.WorkingDir = img.Config.WorkingDir
 		}
+		// BUG-918: replace bare digest ref with first RepoTag — Cloud
+		// Run rewrites bare sha256: refs to mirror.gcr.io/library/...
+		// which 404s. Image was pulled by tag so RepoTag exists.
+		if strings.HasPrefix(config.Image, "sha256:") && len(img.RepoTags) > 0 {
+			config.Image = img.RepoTags[0]
+		}
 	}
 	if config.Labels == nil {
 		config.Labels = make(map[string]string)
