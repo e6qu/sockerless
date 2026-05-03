@@ -114,7 +114,9 @@ jobs:
           git clone --depth=1 --branch="${{ github.event.inputs.sockerless_ref || 'main' }}" \
             https://github.com/e6qu/sockerless /work/sockerless
           cd /work/sockerless/simulators/testdata/eval-arithmetic
-          go build -v -o eval-arithmetic .
+          # eval-arithmetic's go.mod requires Go ≥ 1.24 — auto-download
+          # via toolchain directive; ignore parent repo's go.work.
+          GOTOOLCHAIN=auto GOWORK=off go build -v -o eval-arithmetic .
           ls -la eval-arithmetic
           file eval-arithmetic
       - name: run-arithmetic
