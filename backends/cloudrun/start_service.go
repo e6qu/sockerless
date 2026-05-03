@@ -3,12 +3,16 @@ package cloudrun
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"strconv"
 	"time"
 
 	runpb "cloud.google.com/go/run/apiv2/runpb"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 	gcpcommon "github.com/sockerless/gcp-common"
+	"google.golang.org/api/idtoken"
 )
 
 // — single- and multi-container start paths for the Services
@@ -23,7 +27,15 @@ import (
 // container. Returns after the Service is created and the first
 // revision has a terminal Ready condition (or we give up waiting and
 // return an error with the failed condition message).
-func (s *Server) startSingleContainerService(id string, c api.Container, crState CloudRunState, _ chan struct{}) error {
+//
+// Phase 122g: spawns a background goroutine that POSTs an empty body to
+// the Service URL — bootstrap's default invoke runs SOCKERLESS_USER_CMD
+// as a subprocess and returns combined stdout. On HTTP response (or
+// error) the goroutine records the exit code in InvocationResults and
+// closes the WaitCh so docker-wait unblocks. Without this, the
+// bootstrap stays alive as an HTTP server forever and gitlab-runner's
+// docker wait blocks indefinitely.
+func (s *Server) startSingleContainerService(id string, c api.Container, crState CloudRunState, exitCh chan struct{}) error {
 	// Clean up any existing resources from a previous start.
 	if crState.ServiceName != "" {
 		s.deleteService(crState.ServiceName)
@@ -73,7 +85,97 @@ func (s *Server) startSingleContainerService(id string, c api.Container, crState
 	s.CloudRun.Update(id, func(state *CloudRunState) {
 		state.ServiceName = svcFullName
 	})
+
+	// Phase 122g: kick off the bootstrap's default invoke so the user
+	// CMD actually runs. Mirror of gcf's launch-invoke goroutine in
+	// backends/cloudrun-functions/backend_impl.go::ContainerStart.
+	go s.invokeServiceDefaultCmd(id, svc.Uri, exitCh)
 	return nil
+}
+
+// invokeServiceDefaultCmd POSTs an empty body to the Service URL,
+// triggering the bootstrap's default invoke (which runs the env-baked
+// SOCKERLESS_USER_CMD and returns combined stdout). Records the
+// exit code from the X-Sockerless-Exit-Code header in
+// InvocationResults so CloudState reflects exited+ExitCode and
+// closes WaitCh so ContainerWait unblocks.
+func (s *Server) invokeServiceDefaultCmd(id, serviceURL string, exitCh chan struct{}) {
+	defer func() {
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+			close(ch.(chan struct{}))
+		} else if exitCh != nil {
+			// Belt-and-suspenders close in case WaitChs was already
+			// drained (e.g. by ContainerStop firing before invoke
+			// returned). Closing the local channel is harmless if
+			// nobody's reading.
+			select {
+			case <-exitCh:
+			default:
+				close(exitCh)
+			}
+		}
+	}()
+
+	inv := core.InvocationResult{}
+
+	if serviceURL == "" {
+		s.Logger.Error().Str("container", id).Msg("no Service URL available for invocation")
+		inv.ExitCode = 1
+		inv.Error = "no service URL available"
+		s.Store.PutInvocationResult(id, inv)
+		return
+	}
+
+	client, err := idtoken.NewClient(s.ctx(), serviceURL)
+	if err != nil {
+		s.Logger.Error().Err(err).Str("container", id).Msg("idtoken client for service invoke")
+		inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
+		inv.Error = err.Error()
+		s.Store.PutInvocationResult(id, inv)
+		return
+	}
+	client.Timeout = 1 * time.Hour
+
+	req, err := http.NewRequestWithContext(s.ctx(), http.MethodPost, serviceURL, nil)
+	if err != nil {
+		inv.ExitCode = 1
+		inv.Error = err.Error()
+		s.Store.PutInvocationResult(id, inv)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		s.Logger.Error().Err(err).Str("container", id).Msg("service invocation failed")
+		inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
+		inv.Error = err.Error()
+		s.Store.PutInvocationResult(id, inv)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if len(body) > 0 {
+		s.Store.LogBuffers.Store(id, body)
+	}
+
+	// Bootstrap rides the real subprocess exit code in this header
+	// (mirrors sockerless-gcf-bootstrap). Falls back to HTTP status
+	// code mapping when the header is absent / unparseable.
+	if exitHeader := resp.Header.Get("X-Sockerless-Exit-Code"); exitHeader != "" {
+		if code, perr := strconv.Atoi(exitHeader); perr == nil {
+			inv.ExitCode = code
+		} else {
+			inv.ExitCode = core.HTTPStatusToExitCode(resp.StatusCode)
+		}
+	} else {
+		inv.ExitCode = core.HTTPStatusToExitCode(resp.StatusCode)
+	}
+	if inv.ExitCode != 0 {
+		inv.Error = fmt.Sprintf("HTTP %d (exit-code %d)", resp.StatusCode, inv.ExitCode)
+	}
+	s.Store.PutInvocationResult(id, inv)
 }
 
 // startMultiContainerServiceTyped provisions a single Cloud Run Service
