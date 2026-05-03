@@ -114,6 +114,27 @@ func (s *Server) startSingleContainerService(id string, c api.Container, crState
 // Service revisions can take 60-90s to reach serving state.
 func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}) {
 	s.Logger.Info().Str("container", id).Msg("invokeServiceDefaultCmd: goroutine entered")
+
+	// Phase 122g attach-via-stdin-pipe: if a stdinPipe was registered
+	// (gitlab-runner hijacked attach with OpenStdin), wait for the
+	// caller to half-close (= stdin EOF) so we can replay the captured
+	// bytes as the bootstrap's `execEnvelope.Stdin`. Skip if no pipe
+	// (= no attach happened, run env-baked SOCKERLESS_USER_CMD instead).
+	var capturedStdin []byte
+	if v, ok := s.stdinPipes.LoadAndDelete(id); ok {
+		pipe := v.(*stdinPipe)
+		// Wait for caller to half-close stdin OR timeout. gitlab-runner
+		// pipes the script then CloseWrite()s within milliseconds. 30s
+		// upper bound mirrors backends/ecs/backend_impl.go::launchAfterStdin.
+		select {
+		case <-pipe.Done():
+		case <-time.After(30 * time.Second):
+			s.Logger.Warn().Str("container", id).Msg("invokeServiceDefaultCmd: stdin pipe Done timeout — proceeding with whatever was captured")
+		}
+		capturedStdin = pipe.Bytes()
+		s.Logger.Info().Str("container", id).Int("stdin_bytes", len(capturedStdin)).Msg("invokeServiceDefaultCmd: stdin pipe drained")
+	}
+
 	serviceURL := s.waitForServiceURL(id, 5*time.Minute)
 	s.Logger.Info().Str("container", id).Str("url", serviceURL).Msg("invokeServiceDefaultCmd: waitForServiceURL returned")
 	defer func() {
@@ -158,51 +179,84 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}) {
 	client.Timeout = 10 * time.Minute
 	s.Logger.Info().Str("container", id).Msg("invokeServiceDefaultCmd: idtoken client ready")
 
-	req, err := http.NewRequestWithContext(s.ctx(), http.MethodPost, serviceURL, nil)
+	// Two POST shapes:
+	//   - capturedStdin nil: empty body, bootstrap runs env-baked
+	//     SOCKERLESS_USER_CMD as default invoke (`docker run` semantics)
+	//   - capturedStdin non-nil: gcpcommon.ExecEnvelopeRequest with
+	//     argv=[/bin/sh] + Stdin=<captured>, bootstrap pipes the script
+	//     into sh (gitlab-runner attach pattern)
+	res, err := s.postBootstrap(client, serviceURL, capturedStdin)
 	if err != nil {
+		s.Logger.Error().Err(err).Str("container", id).Msg("service invocation failed")
 		inv.ExitCode = 1
 		inv.Error = err.Error()
 		s.Store.PutInvocationResult(id, inv)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	s.Logger.Info().Str("container", id).Str("url", serviceURL).Msg("invokeServiceDefaultCmd: POST starting")
-	postStart := time.Now()
-	resp, err := client.Do(req)
-	postDur := time.Since(postStart)
-	s.Logger.Info().Str("container", id).Dur("dur", postDur).Err(err).Msg("invokeServiceDefaultCmd: POST returned")
-	if err != nil {
-		s.Logger.Error().Err(err).Str("container", id).Msg("service invocation failed")
-		inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
-		inv.Error = err.Error()
-		s.Store.PutInvocationResult(id, inv)
-		return
-	}
-	defer resp.Body.Close()
-	s.Logger.Info().Str("container", id).Int("status", resp.StatusCode).Msg("invokeServiceDefaultCmd: response status")
-
-	body, _ := io.ReadAll(resp.Body)
-	if len(body) > 0 {
-		s.Store.LogBuffers.Store(id, body)
-	}
-
-	// Bootstrap rides the real subprocess exit code in this header
-	// (mirrors sockerless-gcf-bootstrap). Falls back to HTTP status
-	// code mapping when the header is absent / unparseable.
-	if exitHeader := resp.Header.Get("X-Sockerless-Exit-Code"); exitHeader != "" {
-		if code, perr := strconv.Atoi(exitHeader); perr == nil {
-			inv.ExitCode = code
-		} else {
-			inv.ExitCode = core.HTTPStatusToExitCode(resp.StatusCode)
+		// Fan-out failure to attached caller too so it doesn't block.
+		if v, ok := s.attachStreams.LoadAndDelete(id); ok {
+			v.(*attachStream).publishAttachResponse(nil, []byte(err.Error()))
 		}
-	} else {
-		inv.ExitCode = core.HTTPStatusToExitCode(resp.StatusCode)
+		return
 	}
+	s.Logger.Info().Str("container", id).Int("exit", res.ExitCode).Int("stdout", len(res.Stdout)).Int("stderr", len(res.Stderr)).Msg("invokeServiceDefaultCmd: bootstrap response")
+
+	if len(res.Stdout) > 0 {
+		s.Store.LogBuffers.Store(id, res.Stdout)
+	}
+	inv.ExitCode = res.ExitCode
 	if inv.ExitCode != 0 {
-		inv.Error = fmt.Sprintf("HTTP %d (exit-code %d)", resp.StatusCode, inv.ExitCode)
+		inv.Error = fmt.Sprintf("subprocess exit %d", inv.ExitCode)
 	}
 	s.Store.PutInvocationResult(id, inv)
+
+	// Fan-out stdout+stderr to the attached gitlab-runner (if any).
+	if v, ok := s.attachStreams.LoadAndDelete(id); ok {
+		v.(*attachStream).publishAttachResponse(res.Stdout, res.Stderr)
+	}
+}
+
+// postBootstrap dispatches to the appropriate bootstrap call shape
+// based on whether stdin was captured.
+//
+//   - stdin nil: empty-body POST. Bootstrap's parseExecEnvelope sees
+//     no envelope -> falls through to default-invoke path running the
+//     env-baked SOCKERLESS_USER_CMD (`docker run` semantics).
+//   - stdin non-nil: envelope POST with argv=[/bin/sh] + Stdin=<bytes>.
+//     Bootstrap pipes the script into sh (gitlab-runner attach pattern).
+//
+// Both shapes return ExecResult with exitCode/stdout/stderr — the
+// default-invoke path's response is plain bytes (we pack into Stdout).
+func (s *Server) postBootstrap(client *http.Client, url string, stdin []byte) (*gcpcommon.ExecResult, error) {
+	if len(stdin) > 0 {
+		return gcpcommon.PostExecEnvelope(s.ctx(), client, url, "", gcpcommon.ExecEnvelopeExec{
+			Argv:  []string{"/bin/sh"},
+			Stdin: gcpcommon.EncodeStdin(stdin),
+		})
+	}
+	// Default-invoke path — empty POST. The bootstrap returns a
+	// plain-text body (not envelope JSON) plus X-Sockerless-Exit-Code
+	// header. Read both manually.
+	req, err := http.NewRequestWithContext(s.ctx(), http.MethodPost, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	exitCode := 0
+	if exitHeader := resp.Header.Get("X-Sockerless-Exit-Code"); exitHeader != "" {
+		if code, perr := strconv.Atoi(exitHeader); perr == nil {
+			exitCode = code
+		} else {
+			exitCode = core.HTTPStatusToExitCode(resp.StatusCode)
+		}
+	} else {
+		exitCode = core.HTTPStatusToExitCode(resp.StatusCode)
+	}
+	return &gcpcommon.ExecResult{ExitCode: exitCode, Stdout: body}, nil
 }
 
 // startMultiContainerServiceTyped provisions a single Cloud Run Service

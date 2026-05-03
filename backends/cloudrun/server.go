@@ -2,6 +2,7 @@ package cloudrun
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
@@ -23,6 +24,18 @@ type Server struct {
 	// Reverse-agent registry for docker exec / attach through a
 	// bootstrap running inside the CR Job/Service container.
 	reverseAgents *core.ReverseAgentRegistry
+	// stdinPipes buffers stdin bytes written via the hijacked attach
+	// connection (gitlab-runner / `docker run -i` pattern). Each per-
+	// container pipe is read by invokeServiceDefaultCmd at deferred
+	// invoke time and POSTed as the bootstrap's `execEnvelope.Stdin`.
+	// Mirror of backends/ecs/server.go::stdinPipes + lambda equivalent.
+	stdinPipes sync.Map
+	// attachStreams maps containerID -> *attachStream so
+	// invokeServiceDefaultCmd can publish the bootstrap response (mux-
+	// framed stdout/stderr) back to the attached gitlab-runner. One
+	// per container at a time; gitlab-runner cycles attach→start→stop
+	// per stage and each new attach gets a fresh entry.
+	attachStreams sync.Map
 }
 
 // NewServer creates a new Cloud Run backend server.

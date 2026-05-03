@@ -1169,11 +1169,19 @@ func (s *Server) Info() (*api.BackendInfo, error) {
 }
 
 // ContainerAttach bridges stdin/stdout/stderr to the bootstrap process
-// inside the container via the reverse-agent WebSocket when a session
-// is registered. When no agent is registered and the caller doesn't
-// need stdin (read-only attach), fall back to streaming Cloud Logging
-// as the attached output. Interactive attach without an agent has no
-// native Cloud Run surface, so it stays NotImplementedError.
+// inside the container.
+//
+// When the container has a reverse-agent session registered, route
+// through the existing WebSocket bridge. Otherwise:
+//
+//   - opts.Stdin=true (gitlab-runner v17 pattern): wire stdin into a
+//     per-container `stdinPipe` that invokeServiceDefaultCmd consumes
+//     at deferred-invoke time. Read side returns combined stdout/stderr
+//     from the bootstrap's POST response (mux-framed). Mirrors
+//     backends/ecs/attach_driver.go::ecsStdinAttachDriver.
+//
+//   - opts.Stdin=false: fall back to streaming Cloud Logging as the
+//     attached output (read-only, mux-framed). Existing behaviour.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
@@ -1182,8 +1190,22 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
 		return s.BaseServer.ContainerAttach(id, opts)
 	}
+	// Phase 122g attach-via-stdin-pipe: when caller asks for stdin
+	// AND the container has the sockerless-cloudrun-bootstrap overlay,
+	// register a stdinPipe and let the deferred invoke (in
+	// invokeServiceDefaultCmd) replay the captured bytes as the
+	// bootstrap's `execEnvelope.Stdin`. Returns a hijacked-shaped
+	// io.ReadWriteCloser whose Read blocks until the bootstrap's
+	// response is ready.
+	if opts.Stdin && hasSockerlessOverlayRepo(c.Config.Image) {
+		p := newStdinPipe()
+		actual, _ := s.stdinPipes.LoadOrStore(c.ID, p)
+		pipe := actual.(*stdinPipe)
+		pipe.Open()
+		return s.newAttachStream(c.ID, pipe), nil
+	}
 	if opts.Stdin {
-		return nil, &api.NotImplementedError{Message: "interactive docker attach requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
+		return nil, &api.NotImplementedError{Message: "interactive docker attach requires either a reverse-agent (SOCKERLESS_CALLBACK_URL) OR the sockerless-cloudrun-bootstrap overlay (SOCKERLESS_CLOUDRUN_BOOTSTRAP)"}
 	}
 	return core.AttachViaCloudLogs(s.BaseServer, id, opts, s.buildCloudLogsFetcher(id))
 }
