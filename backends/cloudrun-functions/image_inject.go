@@ -11,45 +11,37 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
-	"os"
 	"strings"
 
 	"cloud.google.com/go/storage"
+	gcpcommon "github.com/sockerless/gcp-common"
 )
 
-// OverlayImageSpec describes the per-container overlay image that the
-// gcf backend builds on top of the user's image. Mirrors the Lambda
-// backend's `OverlayImageSpec` shape so the bootstrap argv encoding is
-// cross-cloud consistent (base64-JSON env vars).
-//
-// The overlay is built directly by Cloud Build (gcpcommon.GCPBuildService)
-// and pushed to AR. Cloud Functions Gen2's CreateFunction is then called
-// with a separate stub Go source so the API gate passes; the overlay
-// image replaces the stub via a post-create Run.Services.UpdateService
-// call. See specs/CLOUD_RESOURCE_MAPPING.md § GCP Cloud Run Functions for
-// the full deploy sequence.
-type OverlayImageSpec struct {
-	// BaseImageRef is the user's requested image, already resolved via
-	// gcpcommon.ResolveGCPImageURI to an AR-routable reference.
-	BaseImageRef string
-	// BootstrapBinaryPath is the host path of the
-	// sockerless-gcf-bootstrap binary that should be COPYed into
-	// /opt/sockerless inside the overlay.
-	BootstrapBinaryPath string
-	// UserEntrypoint is the original Dockerfile ENTRYPOINT from the
-	// container's create request. May be empty (image default used).
-	UserEntrypoint []string
-	// UserCmd is the original Dockerfile CMD.
-	UserCmd []string
-	// UserWorkdir is the WorkingDir for the user subprocess.
-	UserWorkdir string
+// OverlayImageSpec, RenderOverlayDockerfile, OverlayContentTag, and
+// TarOverlayContext live in gcp-common so cloudrun + gcf share one
+// renderer (Phase 122g). The gcf-specific aliases below preserve the
+// existing call sites without forcing every callsite to qualify.
+
+// OverlayImageSpec aliases gcpcommon.OverlayImageSpec for in-package use.
+type OverlayImageSpec = gcpcommon.OverlayImageSpec
+
+const overlayBootstrapContextName = "sockerless-gcf-bootstrap"
+
+// RenderOverlayDockerfile delegates to gcpcommon.RenderOverlayDockerfile.
+func RenderOverlayDockerfile(spec OverlayImageSpec) (string, error) {
+	return gcpcommon.RenderOverlayDockerfile(spec)
 }
 
-// In-build-context names for files inside the Cloud Build tarball. Both
-// the renderer (COPY directive sources) and the tar packager use these
-// so the layout is stable across hosts.
-const overlayBootstrapContextName = "sockerless-gcf-bootstrap"
+// OverlayContentTag delegates to gcpcommon.OverlayContentTag with the
+// `gcf-` prefix so the AR tag namespace stays per-cloud.
+func OverlayContentTag(spec OverlayImageSpec) string {
+	return gcpcommon.OverlayContentTag("gcf-", spec)
+}
+
+// TarOverlayContext delegates to gcpcommon.TarOverlayContext.
+func TarOverlayContext(spec OverlayImageSpec) ([]byte, error) {
+	return gcpcommon.TarOverlayContext(spec)
+}
 
 // PodOverlaySpec describes the merged-rootfs pod overlay built when
 // sockerless materialises a multi-container pod into one Cloud Run
@@ -105,51 +97,6 @@ type PodMemberSpec struct {
 	Cmd        []string
 	Workdir    string
 	Env        []string
-}
-
-// RenderOverlayDockerfile returns the Dockerfile content that, when
-// built against a context containing the bootstrap binary, produces an
-// HTTP-serving image with the bootstrap as ENTRYPOINT. The user's
-// original entrypoint+cmd are captured as base64-JSON env vars
-// (SOCKERLESS_USER_*) for the bootstrap to decode at HTTP-request time
-// and exec as a subprocess.
-func RenderOverlayDockerfile(spec OverlayImageSpec) (string, error) {
-	if spec.BaseImageRef == "" {
-		return "", fmt.Errorf("BaseImageRef is required")
-	}
-	if spec.BootstrapBinaryPath == "" {
-		return "", fmt.Errorf("BootstrapBinaryPath is required")
-	}
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "FROM %s\n", spec.BaseImageRef)
-	fmt.Fprintf(&b, "COPY %s /opt/sockerless/sockerless-gcf-bootstrap\n", overlayBootstrapContextName)
-	fmt.Fprintln(&b, `RUN chmod +x /opt/sockerless/sockerless-gcf-bootstrap`)
-	if ep := joinForEnv(spec.UserEntrypoint); ep != "" {
-		fmt.Fprintf(&b, "ENV SOCKERLESS_USER_ENTRYPOINT=%s\n", ep)
-	}
-	if cmd := joinForEnv(spec.UserCmd); cmd != "" {
-		fmt.Fprintf(&b, "ENV SOCKERLESS_USER_CMD=%s\n", cmd)
-	}
-	if spec.UserWorkdir != "" {
-		fmt.Fprintf(&b, "ENV SOCKERLESS_USER_WORKDIR=%s\n", spec.UserWorkdir)
-	}
-	fmt.Fprintln(&b, `ENTRYPOINT ["/opt/sockerless/sockerless-gcf-bootstrap"]`)
-	return b.String(), nil
-}
-
-// joinForEnv encodes a []string as base64(JSON) for env-var transport.
-// Identical to the Lambda overlay encoding so the bootstrap argv-decoder
-// stays cross-cloud-consistent.
-func joinForEnv(parts []string) string {
-	if len(parts) == 0 {
-		return ""
-	}
-	b, err := json.Marshal(parts)
-	if err != nil {
-		return ""
-	}
-	return base64.StdEncoding.EncodeToString(b)
 }
 
 // PodMemberJSON is the wire shape the bootstrap consumes via
@@ -311,57 +258,10 @@ func TarPodOverlayContext(spec PodOverlaySpec) ([]byte, error) {
 	var raw bytes.Buffer
 	gz := gzip.NewWriter(&raw)
 	tw := tar.NewWriter(gz)
-	if err := writeTarEntry(tw, "Dockerfile", []byte(dockerfile), 0o644); err != nil {
+	if err := gcpcommon.WriteTarEntry(tw, "Dockerfile", []byte(dockerfile), 0o644); err != nil {
 		return nil, err
 	}
-	if err := writeTarFile(tw, spec.BootstrapBinaryPath, overlayBootstrapContextName); err != nil {
-		return nil, err
-	}
-	if err := tw.Close(); err != nil {
-		return nil, err
-	}
-	if err := gz.Close(); err != nil {
-		return nil, err
-	}
-	return raw.Bytes(), nil
-}
-
-// OverlayContentTag returns a stable content-addressed tag for the
-// overlay image. Used as the AR image tag so identical (user-image,
-// bootstrap, entrypoint, cmd, workdir) tuples reuse the already-built
-// overlay across `docker run` invocations and across sockerless-backend
-// instances. Format: `gcf-<sha256[:16]>` (8 bytes hex = 16 chars).
-func OverlayContentTag(spec OverlayImageSpec) string {
-	h := sha256.New()
-	fmt.Fprintln(h, spec.BaseImageRef)
-	fmt.Fprintln(h, spec.BootstrapBinaryPath)
-	if epb, err := json.Marshal(spec.UserEntrypoint); err == nil {
-		h.Write(epb)
-	}
-	if cmdb, err := json.Marshal(spec.UserCmd); err == nil {
-		h.Write(cmdb)
-	}
-	fmt.Fprintln(h, spec.UserWorkdir)
-	sum := h.Sum(nil)
-	return "gcf-" + hex.EncodeToString(sum[:8])
-}
-
-// TarOverlayContext packages the Dockerfile + bootstrap binary into a
-// gzipped tar archive suitable as the build context for
-// gcpcommon.GCPBuildService.Build (Cloud Build accepts tar.gz).
-func TarOverlayContext(spec OverlayImageSpec) ([]byte, error) {
-	dockerfile, err := RenderOverlayDockerfile(spec)
-	if err != nil {
-		return nil, err
-	}
-
-	var raw bytes.Buffer
-	gz := gzip.NewWriter(&raw)
-	tw := tar.NewWriter(gz)
-	if err := writeTarEntry(tw, "Dockerfile", []byte(dockerfile), 0o644); err != nil {
-		return nil, err
-	}
-	if err := writeTarFile(tw, spec.BootstrapBinaryPath, overlayBootstrapContextName); err != nil {
+	if err := gcpcommon.WriteTarFile(tw, spec.BootstrapBinaryPath, overlayBootstrapContextName); err != nil {
 		return nil, err
 	}
 	if err := tw.Close(); err != nil {
@@ -457,41 +357,6 @@ func stageStubSourceIfMissing(ctx context.Context, sc *storage.Client, bucket, o
 		return fmt.Errorf("close gs://%s/%s: %w", bucket, object, err)
 	}
 	return nil
-}
-
-// — tar/zip helpers ———————————————————————————————————————————————
-
-func writeTarEntry(tw *tar.Writer, name string, data []byte, mode int64) error {
-	if err := tw.WriteHeader(&tar.Header{
-		Name: name,
-		Mode: mode,
-		Size: int64(len(data)),
-	}); err != nil {
-		return err
-	}
-	_, err := tw.Write(data)
-	return err
-}
-
-func writeTarFile(tw *tar.Writer, src, name string) error {
-	f, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return fmt.Errorf("stat %s: %w", src, err)
-	}
-	if err := tw.WriteHeader(&tar.Header{
-		Name: name,
-		Mode: 0o755,
-		Size: info.Size(),
-	}); err != nil {
-		return err
-	}
-	_, err = io.Copy(tw, f)
-	return err
 }
 
 func writeZipEntry(zw *zip.Writer, name string, data []byte) error {
