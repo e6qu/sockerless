@@ -51,6 +51,11 @@ sed -i '/\[runners.docker\]/a\
     helper_image = "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-v17.5.0"' \
     /etc/gitlab-runner/config.toml
 
+# BUG-920 wedge: drop default ["/cache"] volume → no permission
+# container, no 120s docker timeout. See cloudrun bootstrap for full
+# rationale.
+sed -i 's|volumes = \["/cache"\]|volumes = []|' /etc/gitlab-runner/config.toml
+
 cat /etc/gitlab-runner/config.toml
 
 exec gitlab-runner run --config /etc/gitlab-runner/config.toml --working-directory /tmp/runner-work

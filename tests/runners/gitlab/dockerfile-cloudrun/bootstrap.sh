@@ -83,6 +83,14 @@ sed -i '/\[runners.docker\]/a\
     helper_image = "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-v17.5.0"' \
     /etc/gitlab-runner/config.toml
 
+# BUG-920 wedge: drop default ["/cache"] volume so gitlab-runner skips
+# the permission container entirely. The permission container does a
+# chown on the volume mount path, takes ~120s on cloudrun (Cloud Run
+# Job CreateJob + RunJob + execution), exceeds gitlab-runner's 120s
+# docker connection timeout. With volumes=[], no permission container
+# spawns. /cache disable_cache=true already in place.
+sed -i 's|volumes = \["/cache"\]|volumes = []|' /etc/gitlab-runner/config.toml
+
 echo "bootstrap: gitlab-runner config.toml:"
 cat /etc/gitlab-runner/config.toml
 
