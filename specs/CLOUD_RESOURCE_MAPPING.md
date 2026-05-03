@@ -848,3 +848,76 @@ Summary of how each backend honours the stateless contract pinned down by the [R
 - **Pod state derives from cloud tags.** `core.CloudPodLister` interface + `BaseServer.PodList` merging cache + cloud. ECS groups tasks by `sockerless-pod` tag. Cloud Run + ACA pod listing works on the Service/App paths. GCF + AZF don't support pods.
 - **`resolve*State` cache+cloud-fallback helpers** landed across 4 backends (ECS, Lambda, Cloud Run, ACA). Every cloud-state-dependent callsite (Stop, Kill, Remove, Restart, Wait, Logs, ExecCreate, cloudExecStart, etc.) goes through them.
 - **`resolveNetworkState` cache+cloud-fallback helpers** in ECS, Cloud Run, ACA. Cloud Map namespaces tagged with `sockerless:network-id` at create time. Lambda + GCF + AZF don't have user-defined cloud networks.
+
+## Runner job lifecycle (docker executor) — required cloud primitives
+
+Both GitLab Runner and GitHub Actions Runner, when configured with the **docker executor**, share a fundamental shape that does NOT match the one-shot Cloud Run Job / Lambda / Function model. This section maps each lifecycle phase to the cloud primitive sockerless must provide for the runner to function correctly.
+
+### GitLab Runner — docker executor state machine
+
+The gitlab-runner master polls GitLab for jobs and orchestrates each via the docker executor. One job = many docker calls into the local docker daemon (= sockerless backend):
+
+| # | Phase | Docker calls | Container persistence | Sockerless primitive needed |
+|---|---|---|---|---|
+| 1 | Pull | `POST /images/<helper>/create`, `POST /images/<image>/create` | n/a | `ImagePull` populates `Store.Images` keyed by both RepoTag AND `sha256:<digest>` (BUG-918) |
+| 2 | Permission setter | `POST /containers/create` (helper image, `chown` cmd), `POST /containers/<id>/start`, wait for exit, `DELETE /containers/<id>` | One-shot, ~100 ms ideal | Cloud Run Job is acceptable IF /create + /start return in <120 s (gitlab-runner timeout). Today: gcf takes 150-200 s on Cloud Build → BUG-923 |
+| 3 | Service container(s) | `POST /containers/create` (e.g. postgres:16-alpine), `POST /containers/<id>/start`, network attach | **Long-lived** (entire job duration; tens of seconds to hours) | Long-lived primitive: Cloud Run Service (`UseService=1`) or ACA App / EKS Pod / similar. Cloud Run Job (one-shot) does NOT fit |
+| 4 | Build container | `POST /containers/create` (user image, `tail -f /dev/null` cmd) — runs FOREVER until cleanup | **Long-lived** (entire job) | Same as service container — must persist |
+| 5 | Step exec (×N) | `POST /containers/<id>/exec/create` + `POST /exec/<id>/start` for: `prepare_script`, `get_sources`, `download_artifacts`, `step_script`, `after_script`, `upload_artifacts`, `cleanup` | Each exec is a process inside the persistent container; container stays running | `ExecCreate` + `ExecStart` against the running long-lived container. Currently routed via reverse-agent (Cloud Run + ACA) or SSM (ECS) or Invoke-as-handler (Lambda) |
+| 6 | Cleanup | `POST /containers/<id>/stop`, `DELETE /containers/<id>` (×all containers including services) | n/a | `ContainerStop` + `ContainerRemove` |
+
+**Critical invariant**: between phases 3-4-5, the SAME container ID must be reachable for `docker exec`. The container exits ONLY at phase 6. Sockerless's current cloudrun-Jobs path (BUG-922) auto-cleans the Cloud Run Job after the first exec completes, breaking phase 5.
+
+**Permission setter quirk**: gitlab-runner spawns one permission container PER mounted volume (e.g. `/cache`, `/builds`, etc.). On each retry it spawns a fresh container. With cache volumes disabled (`disable_cache = true`) the `/cache` setter is skipped, but the build-volume setter still fires. Real fix: speed up sockerless's create+start path so each setter completes in <120 s.
+
+### GitHub Actions Runner — `container:` directive state machine
+
+The github-actions-runner runs as the workspace itself. When a workflow specifies `container:`, the runner orchestrates one job container + zero-or-more service containers:
+
+| # | Phase | Docker calls | Container persistence | Sockerless primitive needed |
+|---|---|---|---|---|
+| 1 | Initialize | `POST /networks/create` (per-job network), `POST /images/<job-image>/create`, `POST /images/<service>/create` | n/a | `ImagePull` + `NetworkCreate` |
+| 2 | Job container | `POST /containers/create` with `--workdir /__w/<repo>/<repo> --network <job-net> -v /tmp/runner-work:/__w -v /opt/runner/externals:/__e:ro --entrypoint tail <image> -f /dev/null` | **Long-lived** (entire job) | Long-lived primitive (Cloud Run Service / ACA App / Fargate task with `tail -f` cmd) |
+| 3 | Service container(s) | `POST /containers/create -v /var/run/docker.sock:/var/run/docker.sock --network <job-net> <image>` | **Long-lived** | Same long-lived primitive |
+| 4 | Step exec (×N) | `POST /containers/<id>/exec/create` + `POST /exec/<id>/start` for each step's `bash -c` | Each exec is a process inside; container stays | `ExecCreate` + `ExecStart` |
+| 5 | Cleanup | `POST /containers/<id>/stop` + `DELETE /containers/<id>`, `DELETE /networks/<job-net>` | n/a | Standard removal |
+
+**Critical invariant**: workspace (`/__w` = `/tmp/runner-work`) must persist across all containers in the same job AND survive container restart. This is BUG-909 (already addressed via `SharedVolume` on cloudrun + gcf with GCS bucket backing).
+
+**`/var/run/docker.sock` mount**: github-runner unconditionally mounts the docker socket on the JOB container so user steps can do nested `docker run`. On Cloud Run there's no docker socket — sockerless drops the mount silently AND the user step cannot do `docker run`. Documented limitation; user code that actually requires nested docker fails at runtime with `cannot connect`.
+
+### Comparison table — what each backend can offer
+
+| Capability | ECS (Fargate) | Lambda | Cloud Run **Jobs** | Cloud Run **Service** | Cloud Run Functions Gen2 | ACA (Container Apps) | Azure Functions |
+|---|---|---|---|---|---|---|---|
+| Long-lived container (>10 min) | ✅ Native | ⚠ 15 min max per Invoke | ❌ One-shot, max 24 h but exits when cmd returns | ✅ Native (auto-scales) | ❌ Same as Jobs (one shot per invoke) | ✅ Native | ⚠ Function model (event-driven) |
+| `docker exec` semantics | ✅ Via SSM ExecuteCommand | ⚠ Via Invoke-as-handler | ❌ No native exec; needs reverse-agent | ✅ Via reverse-agent or ACA exec API | ⚠ Via overlay-bootstrap HTTP-invoke | ✅ Via `az containerapp exec` (ACA exec API) | ⚠ Via overlay-bootstrap |
+| Bind-mount workspace shared across containers | ✅ EFS access points | ⚠ Single FSC + sub-path collapse | ✅ GCS bucket Volume.Gcs | ✅ Same | ✅ Same (Service.Template.Volumes) | ✅ Azure Files share | ⚠ Via EFS-equivalent on Premium |
+| Multi-container in shared net namespace (pod) | ✅ Multi-container task def | ❌ Single container per function | ✅ Multi-container Job/Service | ✅ Same | ❌ Single container | ✅ Multi-container app | ❌ Single container |
+| Per-job network isolation | ✅ Per-task netns | ⚠ Lambda VPC config | ✅ Per-execution netns | ✅ Per-revision | ✅ Per-revision | ✅ Per-app | ✅ Per-function VNet |
+
+### Required adjustment — runner cells MUST use the long-lived path
+
+For runner-integration cells (5-8 + 1-4), sockerless cloudrun + gcf backends MUST default to the LONG-LIVED primitive when the container's `Cmd` looks like a runner-pattern (e.g. `tail -f /dev/null`, `sleep infinity`, gitlab-runner-helper, github-runner). Specifically:
+
+1. **Cloud Run backend**: switch from Cloud Run Jobs to Cloud Run Services for any container with no exit-on-completion semantics. The `UseService=1` config flag already exists; runner cells should set it. Job creation can stay for one-shot CI sub-tasks (e.g. simulator runs), but the runner's job container itself MUST be a Service.
+
+2. **GCF backend**: a Cloud Function is per-invocation (one-shot at the bootstrap level). For long-lived containers, gcf must materialize the container AS a long-running Cloud Run Service (since Gen2 IS Cloud Run under the hood) rather than as a Function-with-overlay-bootstrap. The pod-overlay path (Phase 118d) is the right abstraction; extend it for runner-pattern detection.
+
+3. **`docker exec` against Cloud Run Service**: must work via the reverse-agent path (already implemented for ACA) — the in-image bootstrap establishes a websocket back to the backend, and exec calls multiplex over that. Cloud Run does not expose an exec API directly.
+
+4. **Backend cleanup**: ContainerStop + ContainerRemove must clean up the Cloud Run Service revision. ContainerStart on a stopped Service can re-deploy with min-instances=1.
+
+### Adjustment to dispatcher scope
+
+The `github-runner-dispatcher-{aws,gcp,azure}` modules SHALL only spawn the runner container. They MUST NOT inject any sockerless-specific configuration (env vars, volumes, mounts, secrets, network settings beyond what the runner itself needs to phone home to GitHub). Specifically:
+
+- ✅ Allowed: `RUNNER_REG_TOKEN`, `RUNNER_REPO`, `RUNNER_NAME`, `RUNNER_LABELS`, `GITLAB_URL`, `GITLAB_RUNNER_TOKEN` (the GitHub/GitLab plumbing the runner needs).
+- ❌ Forbidden: `SOCKERLESS_*` env vars (project, region, buckets, shared volumes), Volume mounts for sockerless's runner workspace, Cloud Run Job timeout overrides for sockerless backend behavior.
+
+The runner image itself is responsible for:
+- Bringing up sockerless-backend-{cloudrun,gcf,...} on its expected port.
+- Configuring the backend's environment (project, region, build bucket, shared volumes) via its OWN env / config files, baked at image-build time or set by the operator at deploy time.
+- The dispatcher just hands the runner-image a registration token + a few GitHub/GitLab-side identifiers; everything sockerless-shaped is inside the image.
+
+This separation matches the AWS dispatcher's original shape (dispatch via `docker run --rm <runner-image>` with no sockerless env injection) and the project rule "**Backend ↔ host primitive must match**".
