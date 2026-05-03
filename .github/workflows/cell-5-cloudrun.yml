@@ -143,3 +143,5 @@ jobs:
 # trigger: 122f UseService
 
 # trigger: BUG-924
+
+# trigger: no-defaults revert

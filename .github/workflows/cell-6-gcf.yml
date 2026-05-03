@@ -126,3 +126,5 @@ jobs:
 # trigger: 122f gcf state
 
 # trigger: BUG-923 mit
+
+# trigger: no-defaults revert
