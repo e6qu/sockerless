@@ -1,6 +1,32 @@
 # Sockerless — Status
 
-**Date: 2026-05-03**. PR #123 (`phase-118-faas-pods`) all standard CI green; runner cells 5-8 LIVE work in flight; Phase 122g architectural rebuild planned.
+**Date: 2026-05-03 v15**. PR #123 (`phase-118-faas-pods`) — Phase 122g + 122h shipped (15+ commits this session). Architectural insights from reading gitlab-runner v17.5 + github-runner v2.334 source verified live. Cell 7 reached the BUILD container stage with postgres service running.
+
+## Phase 122g + 122h shipped
+
+Cell 7 progression captured in backend logs:
+- v13 (BUG-928 PRIVATE_RANGES_ONLY) — bootstrap reached PORT 8080
+- v14-v16 (BUG-929/931 series) — POST 200 + Service URL populated
+- v20 (BUG-932 Cloud NAT + ALL_TRAFFIC) — `sockerless-cloudrun-bootstrap: subprocess argv=[/usr/bin/dumb-init /entrypoint gitlab-runner-helper cache-init /gitlab-runner-cache-init] exit=0` confirmed real cmd execution
+- v21-v25 (BUG-934/935/936 wait+inspect fast-paths) — runner progressed to BUILD container (golang:1.22-alpine), POSTGRES service container UP listening on :5432, trace bytesize=28550
+- v27 (Phase 122h stdinPipe + attach hijack) — code shipped (commit `9f9f872`); rev `00040-qj6` health probe failed; rolled back to `00038-f42`
+
+## Source-code verified architectural findings (2026-05-03)
+
+* gitlab-runner v17.5 `executors/docker/internal/exec/exec.go::defaultDocker.Exec`: HIJACKED `ContainerAttach(Stream+Stdin+Stdout+Stderr)` + `ContainerStart` + raw stdin-pipe per stage. NOT `/exec/...` API. Container reused via `StopKillWait`.
+* github-runner v2.334.0 `src/Runner.Worker/Container/DockerCommandManager.cs`: `DockerExec` per step. Long-lived container `tail -f /dev/null`. Path B HTTP envelope maps directly.
+
+ECS + Lambda already had `stdin_pipe.go` (~80 lines) for the gitlab-runner pattern — that's why cells 3+4 are GREEN. cloudrun + gcf were missing this. cloudrun's `AttachViaCloudLogs` is read-only — silently dropped script bytes.
+
+## Live infra state
+
+- `gitlab-runner-cloudrun` rolled back to rev `00038-f42` (pre-122h). Phase 122h rev `00040-qj6` health probe failed; needs debug.
+- Cloud NAT `sockerless-nat` + Cloud Router `sockerless-router` provisioned (BUG-932).
+- All long-lived Cloud Run Services have `ingress=internal`.
+- CI lint `scripts/check-no-public-cloud-services.sh` enforces no `allUsers` invoker bindings.
+- 13 new BUGs closed (922-936), 2 deferred (923 gcf timeout, 925 postgres DNS).
+
+## Original baseline below — preserved for context.
 
 ## Cells 1-4 (AWS) — GREEN (Phase 110, closed 2026-04-30)
 | Cell | URL |
