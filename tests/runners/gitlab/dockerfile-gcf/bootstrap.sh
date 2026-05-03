@@ -4,10 +4,14 @@
 # port differ.
 set -euo pipefail
 
-# Required env (no fallbacks, no optional vars — fail loudly):
-: "${SOCKERLESS_GCF_PROJECT:?SOCKERLESS_GCF_PROJECT is required (the operator-side docker run -e config sets this)}"
-: "${SOCKERLESS_GCF_REGION:?SOCKERLESS_GCF_REGION is required (the operator-side docker run -e config sets this)}"
-: "${SOCKERLESS_GCP_BUILD_BUCKET:?SOCKERLESS_GCP_BUILD_BUCKET is required (the operator-side docker run -e config sets this)}"
+# Auto-discover sockerless config from GCP instance metadata.
+META=http://metadata.google.internal/computeMetadata/v1
+HDR='Metadata-Flavor: Google'
+export SOCKERLESS_GCF_PROJECT=$(curl -sf -H "$HDR" $META/project/project-id)
+export SOCKERLESS_GCF_REGION=$(curl -sf -H "$HDR" $META/instance/region | awk -F/ '{print $NF}')
+export SOCKERLESS_GCP_BUILD_BUCKET="${SOCKERLESS_GCF_PROJECT}-build"
+export SOCKERLESS_GCP_SHARED_VOLUMES="runner-workspace=/tmp/runner-work=${SOCKERLESS_GCF_PROJECT}-runner-workspace,runner-externals=/opt/runner/externals=${SOCKERLESS_GCF_PROJECT}-runner-workspace"
+echo "bootstrap: project=$SOCKERLESS_GCF_PROJECT region=$SOCKERLESS_GCF_REGION"
 
 nohup /usr/local/bin/sockerless-backend-gcf -addr :3376 -log-level debug \
     > >(tee /tmp/sockerless-backend.log >&2) 2>&1 &

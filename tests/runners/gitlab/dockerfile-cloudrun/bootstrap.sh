@@ -21,10 +21,18 @@
 #   SOCKERLESS_GCP_BUILD_BUCKET, GOOGLE_APPLICATION_CREDENTIALS
 set -euo pipefail
 
-# Required env (no fallbacks, no optional vars — fail loudly):
-: "${SOCKERLESS_GCR_PROJECT:?SOCKERLESS_GCR_PROJECT is required (the operator-side docker run -e config sets this)}"
-: "${SOCKERLESS_GCR_REGION:?SOCKERLESS_GCR_REGION is required (the operator-side docker run -e config sets this)}"
-: "${SOCKERLESS_GCP_BUILD_BUCKET:?SOCKERLESS_GCP_BUILD_BUCKET is required (the operator-side docker run -e config sets this)}"
+# Auto-discover sockerless config from GCP instance metadata (Phase
+# 122e dispatcher scope cleanup — runner image owns config).
+META=http://metadata.google.internal/computeMetadata/v1
+HDR='Metadata-Flavor: Google'
+export SOCKERLESS_GCR_PROJECT=$(curl -sf -H "$HDR" $META/project/project-id)
+export SOCKERLESS_GCR_REGION=$(curl -sf -H "$HDR" $META/instance/region | awk -F/ '{print $NF}')
+export SOCKERLESS_GCP_BUILD_BUCKET="${SOCKERLESS_GCR_PROJECT}-build"
+export SOCKERLESS_GCP_SHARED_VOLUMES="runner-workspace=/tmp/runner-work=${SOCKERLESS_GCR_PROJECT}-runner-workspace,runner-externals=/opt/runner/externals=${SOCKERLESS_GCR_PROJECT}-runner-workspace"
+# Phase 122f: Cloud Run Service path for runner-pattern containers.
+export SOCKERLESS_GCR_USE_SERVICE=1
+export SOCKERLESS_GCR_VPC_CONNECTOR="projects/${SOCKERLESS_GCR_PROJECT}/locations/${SOCKERLESS_GCR_REGION}/connectors/sockerless-connector"
+echo "bootstrap: project=$SOCKERLESS_GCR_PROJECT region=$SOCKERLESS_GCR_REGION use_service=1"
 
 # Backend log goes to stderr so Cloud Logging captures it (without
 # this redirect to /tmp/sockerless-backend.log it never surfaced and

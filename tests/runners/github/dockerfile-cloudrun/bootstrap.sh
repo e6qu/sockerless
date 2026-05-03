@@ -39,7 +39,12 @@ export SOCKERLESS_GCR_PROJECT=$(curl -sf -H "$HDR" $META/project/project-id)
 export SOCKERLESS_GCR_REGION=$(curl -sf -H "$HDR" $META/instance/region | awk -F/ '{print $NF}')
 export SOCKERLESS_GCP_BUILD_BUCKET="${SOCKERLESS_GCR_PROJECT}-build"
 export SOCKERLESS_GCP_SHARED_VOLUMES="runner-workspace=/tmp/runner-work=${SOCKERLESS_GCR_PROJECT}-runner-workspace,runner-externals=/opt/runner/externals=${SOCKERLESS_GCR_PROJECT}-runner-workspace"
-echo "bootstrap: auto-discovered project=$SOCKERLESS_GCR_PROJECT region=$SOCKERLESS_GCR_REGION"
+# Phase 122f: runner-pattern containers (long-lived) need Cloud Run
+# Service path. UseService=1 + VPC connector required for cross-revision
+# DNS via internal ingress.
+export SOCKERLESS_GCR_USE_SERVICE=1
+export SOCKERLESS_GCR_VPC_CONNECTOR="projects/${SOCKERLESS_GCR_PROJECT}/locations/${SOCKERLESS_GCR_REGION}/connectors/sockerless-connector"
+echo "bootstrap: auto-discovered project=$SOCKERLESS_GCR_PROJECT region=$SOCKERLESS_GCR_REGION use_service=1"
 
 # Sockerless backend in background. -log-level info keeps CloudWatch /
 # CloudLogging output manageable.
