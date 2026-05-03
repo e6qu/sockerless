@@ -121,6 +121,15 @@ func sanitizeGCPLabelValue(v string) string {
 			return ""
 		}
 	}
+	// BUG-930: GCP label values are 63-char limited. gitlab-runner emits
+	// permission-container names like
+	// `runner-<id>-project-<n>-concurrent-<n>-<hash>-cache-<hash>-set-permission-<hash>`
+	// which routinely exceed 130 chars. Truncate to 63 — the full
+	// container ID lives in function annotations; this label is only
+	// used for human-readable filtering.
+	if len(v) > 63 {
+		v = v[:63]
+	}
 	return v
 }
 
