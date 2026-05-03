@@ -947,9 +947,26 @@ func (s *Server) ContainerUnpause(ref string) error {
 	return core.MapPauseErr(core.RunContainerUnpauseViaAgent(s.reverseAgents, cid))
 }
 
-// ImagePull delegates to ImageManager which handles cloud auth and config fetching.
+// ImagePull rewrites the image ref to the Artifact Registry remote
+// proxy (docker-hub for docker.io, gitlab-registry for
+// registry.gitlab.com), then delegates to ImageManager.
+//
+// Without the rewrite, the local docker daemon (= sockerless
+// backend) tries to pull directly from registry-1.docker.io and
+// hits Docker Hub's anonymous-pull rate limit (100/6h per IP) — see
+// cell 7 v28 evidence: "registry returned 429 for
+// https://registry-1.docker.io/v2/library/golang/manifests/1.22-alpine".
+// The AR remote-proxy caches per-(image,tag), so subsequent pulls
+// across all sockerless backends in the project hit AR (not Docker
+// Hub) and bypass the rate limit entirely.
+//
+// Mirrors backends/cloudrun/backend_impl.go::ContainerCreate which
+// already does this rewrite for the container's image. We were doing
+// it on Create but NOT on Pull — gitlab-runner pre-pulls images via
+// /images/create which bypassed the rewrite.
 func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
-	return s.images.Pull(ref, auth)
+	resolved := gcpcommon.ResolveGCPImageURI(ref, s.config.Project, s.config.Region)
+	return s.images.Pull(resolved, auth)
 }
 
 // ImageLoad delegates to ImageManager.
