@@ -65,17 +65,20 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 	}
 
 	if s.config.VPCConnector != "" {
-		// PRIVATE_RANGES_ONLY: only RFC1918 traffic (cross-container
-		// peer-to-peer via VPC) goes through the connector. Public
-		// google APIs (storage.googleapis.com — required by GCSFuse for
-		// GCS volume mounts; cloudrun control plane invokes; etc.) go
-		// via the platform's normal egress so they don't depend on
-		// in-VPC NAT or Private Google Access. Phase 122g BUG-928 —
-		// ALL_TRAFFIC routed GCSFuse through the connector subnet which
-		// has no NAT, breaking every Service-path container start.
+		// ALL_TRAFFIC routes EVERY outbound through the VPC connector.
+		// Required so cross-Cloud-Run calls (gitlab-runner-cloudrun POSTing
+		// to per-step sockerless-svc-* with Ingress=internal) appear as
+		// in-VPC source — Cloud Run rejects same-project Cloud Run
+		// requests as "external" if they go via platform egress (public
+		// .a.run.app DNS resolves to public IP). With ALL_TRAFFIC + Cloud
+		// NAT in the connector subnet, public Google APIs
+		// (storage.googleapis.com for GCSFuse, etc.) stay reachable too.
+		// Cloud NAT provisioned: sockerless-router / sockerless-nat in
+		// sockerless-vpc. See specs/CLOUD_RESOURCE_MAPPING.md § Cloud Run
+		// service-to-service call semantics for the full chain.
 		revTemplate.VpcAccess = &runpb.VpcAccess{
 			Connector: s.config.VPCConnector,
-			Egress:    runpb.VpcAccess_PRIVATE_RANGES_ONLY,
+			Egress:    runpb.VpcAccess_ALL_TRAFFIC,
 		}
 	}
 

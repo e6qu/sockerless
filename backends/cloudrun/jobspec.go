@@ -184,13 +184,13 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 
 	// Add VPC connector if configured
 	if s.config.VPCConnector != "" {
-		// PRIVATE_RANGES_ONLY — see servicespec.go for the full
-		// rationale (BUG-928). Same egress mode for Jobs so a Job that
-		// also has GCS volume mounts doesn't hit the same GCSFuse
-		// connectivity problem as Services did.
+		// ALL_TRAFFIC — see servicespec.go for the full rationale
+		// (Cloud NAT in the connector subnet keeps public APIs reachable;
+		// in-VPC source needed for Cloud Run service-to-service Ingress=
+		// internal acceptance).
 		taskTemplate.VpcAccess = &runpb.VpcAccess{
 			Connector: s.config.VPCConnector,
-			Egress:    runpb.VpcAccess_PRIVATE_RANGES_ONLY,
+			Egress:    runpb.VpcAccess_ALL_TRAFFIC,
 		}
 	}
 

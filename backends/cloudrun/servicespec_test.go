@@ -97,8 +97,8 @@ func TestBuildServiceSpec_Shape(t *testing.T) {
 	if svc.Template.VpcAccess == nil || svc.Template.VpcAccess.Connector != s.config.VPCConnector {
 		t.Errorf("vpc access = %+v, want connector=%q", svc.Template.VpcAccess, s.config.VPCConnector)
 	}
-	if svc.Template.VpcAccess.Egress != runpb.VpcAccess_PRIVATE_RANGES_ONLY {
-		t.Errorf("vpc egress = %v, want PRIVATE_RANGES_ONLY (BUG-928)", svc.Template.VpcAccess.Egress)
+	if svc.Template.VpcAccess.Egress != runpb.VpcAccess_ALL_TRAFFIC {
+		t.Errorf("vpc egress = %v, want ALL_TRAFFIC (Cloud NAT in connector subnet keeps public APIs reachable; in-VPC source needed for cross-Cloud-Run ingress=internal acceptance)", svc.Template.VpcAccess.Egress)
 	}
 	if svc.Template.Timeout == nil || svc.Template.Timeout.AsDuration() != time.Hour {
 		t.Errorf("timeout = %v, want 1h", svc.Template.Timeout)
