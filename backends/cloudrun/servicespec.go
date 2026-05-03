@@ -99,16 +99,27 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 	return &runpb.Service{
 		Labels:      tags.AsGCPLabels(),
 		Annotations: tags.AsGCPAnnotations(),
-		Ingress:     runpb.IngressTraffic_INGRESS_TRAFFIC_INTERNAL_ONLY,
-		// Phase 122g BUG-931: keep the default URL enabled so the
-		// backend can POST envelope payloads to the bootstrap (Path B).
-		// Ingress=internal still restricts who can hit it — only
-		// callers from the same VPC connector. Without this, the
-		// Service has no addressable URL and ContainerWait blocks
-		// forever (BUG-929 v2 evidence: cell 7 v15 logs show
-		// 'sockerless-cloudrun-bootstrap: listening on :8080' but the
-		// invoke goroutine sees status.url empty for the entire
-		// 5-minute waitForServiceURL window).
+		// BUG-933: Ingress=ALL with IAM-required invoke. Cloud Run rejects
+		// cross-project-service-to-service via .a.run.app + Cloud NAT
+		// with HTTP 404 because the NAT'd source IP isn't auto-detected
+		// as same-project Cloud Run (cell 7 v19 evidence:
+		// invokeServiceDefaultCmd POST returned status=404 in 25ms —
+		// edge-rejected, never reached the bootstrap).
+		//
+		// Security stance preserved: NO allUsers→roles/run.invoker
+		// binding (verified via service IAM policy). Only the
+		// sockerless-runner SA can mint a Cloud Run ID token for this
+		// audience — anonymous internet requests get 401 from IAM.
+		// Functionally equivalent to ingress=internal+IAM, with the
+		// trade-off being a publicly-resolvable URL (DNS leak) that
+		// rejects unauthenticated traffic.
+		//
+		// The right end-state is Cloud Run private DNS via Service
+		// Connector + Private Service Connect, which keeps both the
+		// URL un-resolvable AND the IAM gate. Deferred — adds Service
+		// Connector + per-Service PSC endpoint complexity. Tracked as
+		// a follow-up to Phase 122g.
+		Ingress:            runpb.IngressTraffic_INGRESS_TRAFFIC_ALL,
 		DefaultUriDisabled: false,
 		Template:           revTemplate,
 	}, nil
