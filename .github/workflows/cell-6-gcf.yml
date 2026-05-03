@@ -1,0 +1,130 @@
+# Cell 6 — GitHub Actions runner (docker executor) → sockerless gcf backend.
+#
+# Same shape as cell-5-cloudrun but the runner image bakes
+# `sockerless-backend-gcf`; each step container becomes a Cloud Run
+# Function via Phase 118d's pod-overlay materialisation. `services:`
+# (postgres) rides as a sidecar in the merged-rootfs supervisor.
+name: cell-6-gcf
+
+on:
+  workflow_dispatch:
+    inputs:
+      sockerless_ref:
+        description: "sockerless ref to clone for the arithmetic source"
+        required: false
+        default: "main"
+  # Temp trigger — PR #124 is a throwaway that exists only to fire
+  # cell-5/6 against the current branch's content. Removed when PR #124
+  # closes; cells 5+6 then revert to manual workflow_dispatch like 1+2.
+  # `branches` matches the PR's base; `paths` ensures we only fire
+  # when the cell file itself changes.
+  pull_request:
+    branches: [main]
+    paths: [.github/workflows/cell-6-gcf.yml]
+
+jobs:
+  probe-and-compile:
+    runs-on: [self-hosted, sockerless-gcf]
+    container:
+      image: golang:1.22-alpine
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_USER: ci
+          POSTGRES_DB: ci
+    steps:
+      - name: probe-cloud-urls
+        # Cloud Run Functions Gen2 are backed by a Cloud Run service;
+        # the function URL routes through the underlying service. The
+        # platform populates K_SERVICE / K_REVISION / GOOGLE_CLOUD_PROJECT.
+        # Function name lives in K_SERVICE under Gen2.
+        run: |
+          echo "=== Cloud Run env (set by the platform) ==="
+          env | grep -E '^(CLOUD_RUN_|K_SERVICE|K_REVISION|GOOGLE_CLOUD_|FUNCTION_)' | sort || true
+          PROJ="${GOOGLE_CLOUD_PROJECT:-${GCP_PROJECT:-unknown}}"
+          REG="${GOOGLE_CLOUD_REGION:-${CLOUD_RUN_REGION:-us-central1}}"
+          FN="${K_SERVICE:-${FUNCTION_TARGET:-unknown}}"
+          REV="${K_REVISION:-unknown}"
+          echo "=== Cloud console URLs ==="
+          echo "Function:       https://console.cloud.google.com/functions/details/$REG/$FN?project=$PROJ"
+          echo "Backing service: https://console.cloud.google.com/run/detail/$REG/$FN/revisions?project=$PROJ"
+          echo "Cloud Logging:  https://console.cloud.google.com/logs/query;query=resource.type%3D%22cloud_run_revision%22%20resource.labels.service_name%3D%22$FN%22?project=$PROJ"
+          echo "Revision:       $REV"
+      - name: probe-host
+        run: |
+          echo "=== identity ==="
+          hostname; whoami; id
+          echo "=== /etc/os-release ==="
+          cat /etc/os-release 2>/dev/null || true
+          echo "=== /etc/hostname ==="
+          cat /etc/hostname 2>/dev/null || true
+          echo "=== filesystem ==="
+          df -h 2>/dev/null | head -10 || true
+          mount | head -20 || true
+      - name: probe-capabilities
+        run: |
+          echo "=== /proc/self/status caps ==="
+          grep -E '^(Cap|Seccomp|NoNew)' /proc/self/status || true
+          echo "=== sockerless namespace honesty (Phase 118d) ==="
+          # The shim labels for shared-degraded namespaces are visible
+          # via /proc inside the chroot'd subprocess.
+          env | grep -E 'SOCKERLESS_(POD|NAMESPACE)' || true
+      - name: probe-kernel
+        run: |
+          uname -a
+          cat /proc/version || true
+      - name: probe-env
+        run: |
+          env | sort | grep -vE '^(SOCKERLESS_|GCP_|GITHUB_|GITLAB_|CI_|HOME|PATH|HOSTNAME)' | head -50
+      - name: probe-parameters
+        run: |
+          getconf -a 2>/dev/null | head -30 || echo "getconf -a unavailable"
+          echo "ulimit -a:"; ulimit -a
+          echo "nproc: $(nproc)"
+      - name: probe-localhost-peer
+        run: |
+          apk add --no-cache postgresql-client
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if pg_isready -h localhost -p 5432 -t 5 -U ci; then echo "postgres ready"; break; fi
+            echo "postgres not ready yet (attempt $i)"; sleep 3
+          done
+          PGPASSWORD=ci psql "host=localhost user=ci dbname=ci" -c 'SELECT version();'
+      - name: clone-and-compile
+        run: |
+          apk add --no-cache git gcc musl-dev
+          git clone --depth=1 --branch="${{ github.event.inputs.sockerless_ref || 'main' }}" \
+            https://github.com/e6qu/sockerless /work/sockerless
+          cd /work/sockerless/simulators/testdata/eval-arithmetic
+          go build -v -o eval-arithmetic .
+      - name: run-arithmetic
+        run: |
+          cd /work/sockerless/simulators/testdata/eval-arithmetic
+          set -e
+          got1=$(./eval-arithmetic '3 + 4 * 2'); test "$got1" = "11" || { echo "expected 11 got $got1"; exit 1; }
+          got2=$(./eval-arithmetic '(10 - 3) * 2'); test "$got2" = "14" || { echo "expected 14 got $got2"; exit 1; }
+          got3=$(./eval-arithmetic '100 / 5 + 1'); test "$got3" = "21" || { echo "expected 21 got $got3"; exit 1; }
+          got4=$(./eval-arithmetic '2 * (3 + 4) - 1'); test "$got4" = "13" || { echo "expected 13 got $got4"; exit 1; }
+          got5=$(./eval-arithmetic '1.5 + 2.5 * 2'); test "$got5" = "6.5" || { echo "expected 6.5 got $got5"; exit 1; }
+          echo "all arithmetic checks pass"
+
+# trigger: 2026-05-03 BUG-909 cloudrun fix
+
+# trigger: 2026-05-03 BUG-909 gcf runner image rebuilt
+
+# trigger: 2026-05-03 BUG-910 fix
+
+# trigger: BUG-911 task_timeout fix
+
+# trigger: rev 00006 fresh run
+
+# trigger: BUG-918+919 in github runners
+
+# trigger: BUG-921
+
+# trigger: 122f gcf state
+
+# trigger: BUG-923 mit
+
+# trigger: no-defaults revert

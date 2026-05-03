@@ -1,0 +1,151 @@
+# Cell 5 — GitHub Actions runner (docker executor) → sockerless cloudrun backend.
+#
+# Per BUG-862 (backend ↔ host primitive must match), the runner image
+# bakes `sockerless-backend-cloudrun` and runs as a Cloud Run Job (or
+# Service) dispatched via the github-runner-dispatcher-gcp (Phase 122 /
+# 113). The runner's docker calls (container: directive + services:)
+# go through DOCKER_HOST=tcp://localhost:3375 to the in-image
+# sockerless backend, which dispatches each step container as a
+# further Cloud Run Job.
+#
+# Pipeline body: probe caps / kernel / env / params, postgres-sidecar
+# localhost peer reachability, clone sockerless, compile
+# simulators/testdata/eval-arithmetic, run five arithmetic expressions.
+#
+# Cell GREEN gate: all probes return non-error output, postgres
+# reachable via localhost:5432, Go compile produces a working binary,
+# all five arithmetic invocations print the expected result and exit 0.
+name: cell-5-cloudrun
+
+on:
+  workflow_dispatch:
+    inputs:
+      sockerless_ref:
+        description: "sockerless ref to clone for the arithmetic source"
+        required: false
+        default: "main"
+  # Temp trigger — PR #124 is a throwaway that exists only to fire
+  # cell-5/6 against the current branch's content. Removed when PR #124
+  # closes; cells 5+6 then revert to manual workflow_dispatch like 1+2.
+  # `branches` matches the PR's base; `paths` ensures we only fire
+  # when the cell file itself changes.
+  pull_request:
+    branches: [main]
+    paths: [.github/workflows/cell-5-cloudrun.yml]
+
+jobs:
+  probe-and-compile:
+    runs-on: [self-hosted, sockerless-cloudrun]
+    container:
+      image: golang:1.22-alpine
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_USER: ci
+          POSTGRES_DB: ci
+    steps:
+      - name: probe-cloud-urls
+        # Surface the backing Cloud Run Job execution URL + Cloud
+        # Logging URL so the operator can attach them to STATUS.md
+        # alongside the outer GitHub Actions run URL. Cloud Run Jobs
+        # populate CLOUD_RUN_JOB / CLOUD_RUN_EXECUTION / GOOGLE_CLOUD_PROJECT
+        # / GOOGLE_CLOUD_REGION (or CLOUD_RUN_TASK_INDEX for tasks)
+        # automatically; the runner container inherits them and the
+        # step container (this) inherits them again via the
+        # sockerless-backend-cloudrun → Cloud Run Job spawn.
+        run: |
+          echo "=== Cloud Run env (set by the platform) ==="
+          env | grep -E '^(CLOUD_RUN_|K_SERVICE|K_REVISION|GOOGLE_CLOUD_)' | sort || true
+          PROJ="${GOOGLE_CLOUD_PROJECT:-${GCP_PROJECT:-unknown}}"
+          REG="${GOOGLE_CLOUD_REGION:-${CLOUD_RUN_REGION:-us-central1}}"
+          JOB="${CLOUD_RUN_JOB:-${K_SERVICE:-unknown}}"
+          EXEC="${CLOUD_RUN_EXECUTION:-unknown}"
+          echo "=== Cloud console URLs ==="
+          echo "Job execution: https://console.cloud.google.com/run/jobs/executions/details/$REG/$EXEC/tasks?project=$PROJ"
+          echo "Job overview:  https://console.cloud.google.com/run/jobs/details/$REG/$JOB?project=$PROJ"
+          echo "Cloud Logging: https://console.cloud.google.com/logs/query;query=resource.type%3D%22cloud_run_job%22%20resource.labels.job_name%3D%22$JOB%22?project=$PROJ"
+      - name: probe-host
+        run: |
+          echo "=== identity ==="
+          hostname; whoami; id
+          echo "=== /etc/os-release ==="
+          cat /etc/os-release 2>/dev/null || true
+          echo "=== /etc/hostname ==="
+          cat /etc/hostname 2>/dev/null || true
+          echo "=== filesystem ==="
+          df -h 2>/dev/null | head -10 || true
+          mount | head -20 || true
+      - name: probe-capabilities
+        run: |
+          echo "=== /proc/self/status caps ==="
+          grep -E '^(Cap|Seccomp|NoNew)' /proc/self/status || true
+          echo "=== /proc/self/cgroup ==="
+          cat /proc/self/cgroup || true
+      - name: probe-kernel
+        run: |
+          uname -a
+          cat /proc/version || true
+          ls -1 /proc/sys/kernel/ | head -20 || true
+      - name: probe-env
+        run: |
+          env | sort | grep -vE '^(SOCKERLESS_|GCP_|GITHUB_|GITLAB_|CI_|HOME|PATH|HOSTNAME)' | head -50
+          echo "---"
+          env | sort | grep -E '^(SOCKERLESS_)' | head -20 || true
+      - name: probe-parameters
+        run: |
+          getconf -a 2>/dev/null | head -30 || echo "getconf -a unavailable"
+          echo "ulimit -a:"; ulimit -a
+          echo "nproc: $(nproc)"
+          echo "memory: $(free -h 2>/dev/null || cat /proc/meminfo | head -3)"
+      - name: probe-localhost-peer
+        run: |
+          apk add --no-cache postgresql-client
+          # Sub-118d shared-net pod: postgres sidecar reachable on localhost:5432
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if pg_isready -h localhost -p 5432 -t 5 -U ci; then echo "postgres ready"; break; fi
+            echo "postgres not ready yet (attempt $i)"; sleep 3
+          done
+          PGPASSWORD=ci psql "host=localhost user=ci dbname=ci" -c 'SELECT version();'
+      - name: clone-and-compile
+        run: |
+          apk add --no-cache git gcc musl-dev
+          git clone --depth=1 --branch="${{ github.event.inputs.sockerless_ref || 'main' }}" \
+            https://github.com/e6qu/sockerless /work/sockerless
+          cd /work/sockerless/simulators/testdata/eval-arithmetic
+          go build -v -o eval-arithmetic .
+          ls -la eval-arithmetic
+          file eval-arithmetic
+      - name: run-arithmetic
+        run: |
+          cd /work/sockerless/simulators/testdata/eval-arithmetic
+          set -e
+          got1=$(./eval-arithmetic '3 + 4 * 2'); test "$got1" = "11" || { echo "expected 11 got $got1"; exit 1; }
+          got2=$(./eval-arithmetic '(10 - 3) * 2'); test "$got2" = "14" || { echo "expected 14 got $got2"; exit 1; }
+          got3=$(./eval-arithmetic '100 / 5 + 1'); test "$got3" = "21" || { echo "expected 21 got $got3"; exit 1; }
+          got4=$(./eval-arithmetic '2 * (3 + 4) - 1'); test "$got4" = "13" || { echo "expected 13 got $got4"; exit 1; }
+          got5=$(./eval-arithmetic '1.5 + 2.5 * 2'); test "$got5" = "6.5" || { echo "expected 6.5 got $got5"; exit 1; }
+          echo "all arithmetic checks pass"
+
+# trigger: 2026-05-03 BUG-909 cloudrun fix
+
+# trigger: 2026-05-03 BUG-910 fix
+
+# trigger: BUG-911 task_timeout fix
+
+# trigger: rev 00006 fresh run
+
+# trigger: BUG-918+919 in github runners
+
+# trigger: BUG-921
+
+# trigger: 122f UseService
+
+# trigger: BUG-924
+
+# trigger: no-defaults revert
+
+# trigger: BUG-922 no-auto-remove
+
+# trigger: BUG-922 restart cycle
