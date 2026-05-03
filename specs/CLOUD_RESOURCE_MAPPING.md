@@ -863,10 +863,18 @@ The gitlab-runner master polls GitLab for jobs and orchestrates each via the doc
 | 2 | Permission setter | `POST /containers/create` (helper image, `chown` cmd), `POST /containers/<id>/start`, wait for exit, `DELETE /containers/<id>` | One-shot, ~100 ms ideal | Cloud Run Job is acceptable IF /create + /start return in <120 s (gitlab-runner timeout). Today: gcf takes 150-200 s on Cloud Build → BUG-923 |
 | 3 | Service container(s) | `POST /containers/create` (e.g. postgres:16-alpine), `POST /containers/<id>/start`, network attach | **Long-lived** (entire job duration; tens of seconds to hours) | Long-lived primitive: Cloud Run Service (`UseService=1`) or ACA App / EKS Pod / similar. Cloud Run Job (one-shot) does NOT fit |
 | 4 | Build container | `POST /containers/create` (user image, `tail -f /dev/null` cmd) — runs FOREVER until cleanup | **Long-lived** (entire job) | Same as service container — must persist |
-| 5 | Step exec (×N) | `POST /containers/<id>/exec/create` + `POST /exec/<id>/start` for: `prepare_script`, `get_sources`, `download_artifacts`, `step_script`, `after_script`, `upload_artifacts`, `cleanup` | Each exec is a process inside the persistent container; container stays running | `ExecCreate` + `ExecStart` against the running long-lived container. Currently routed via reverse-agent (Cloud Run + ACA) or SSM (ECS) or Invoke-as-handler (Lambda) |
+| 5 | Stage script (×N stages) | `POST /containers/<id>/attach?stream=1&stdin=1&stdout=1&stderr=1` (HIJACKED) + `POST /containers/<id>/start`, then pipe stage script via hijacked stdin, read stdout until EOF (= bash exited), `StopKillWait` (graceful stop, container reused for next stage) | Build container REUSED across all stages — START → SCRIPT-PIPE → STOP cycle per stage; container stays for entire job | **HIJACKED ContainerAttach with bidirectional stdin/stdout** + ContainerStart + sync ContainerStop. Sockerless's read-only `AttachViaCloudLogs` does NOT fit. See "GitLab attach-hijack architectural gap" below. |
 | 6 | Cleanup | `POST /containers/<id>/stop`, `DELETE /containers/<id>` (×all containers including services) | n/a | `ContainerStop` + `ContainerRemove` |
 
-**Critical invariant**: between phases 3-4-5, the SAME container ID must be reachable for `docker exec`. The container exits ONLY at phase 6. Sockerless's current cloudrun-Jobs path (BUG-922) auto-cleans the Cloud Run Job after the first exec completes, breaking phase 5.
+**Critical invariant 1**: between phases 3-4-5, the SAME container ID must be reachable for ContainerAttach + ContainerStart cycling. The container exits only at phase 6.
+
+**Critical invariant 2 (NEW — gitlab-runner v17.5 source verified 2026-05-03)**: gitlab-runner does NOT use the `/exec/...` Docker API path. It uses HIJACKED `ContainerAttach` (`AttachOptions{Stream: true, Stdin: true, Stdout: true, Stderr: true}`) + `ContainerStart` + raw stdin pipe per stage. Source: `executors/docker/internal/exec/exec.go::defaultDocker.Exec`. The container's entrypoint is `/bin/bash` (or shell) which reads commands from stdin until EOF. After EOF, gitlab-runner calls `StopKillWait` (graceful stop with kill fallback) so the container can be RESTARTED for the next stage.
+
+**GitLab attach-hijack architectural gap** (cells 5-8 blocker as of Phase 122g v25):
+- **What gitlab-runner sends per stage**: hijacked TCP connection with `multiplexed-stream` framing carrying the bash script as stdin bytes; expects stdout/stderr back as bytes via the same connection.
+- **What sockerless cloudrun does today**: `ContainerAttach` returns an `AttachViaCloudLogs` reader that's read-only — `Write(p)` is a no-op. The script bytes from gitlab-runner are silently discarded. The container's bash never receives the script. Stage hangs.
+- **What's needed (Phase 122h plan)**: cloudrun's `ContainerAttach` for overlay containers must (a) read stdin bytes from the hijacked connection, (b) POST them as the `Stdin` field of an `execEnvelope` to the Service URL with `argv=["/bin/bash"]`, (c) stream the response (or stdout from a long-poll variant) back to the hijacked connection. Bootstrap on the other end runs `/bin/sh -c "<stdin>"` per request (already supported).
+- **Alternative**: extend the bootstrap to support a streaming "attach mode" where one request opens a long-lived bash subprocess + bidirectional streaming.
 
 **Permission setter quirk**: gitlab-runner spawns one permission container PER mounted volume (e.g. `/cache`, `/builds`, etc.). On each retry it spawns a fresh container. With cache volumes disabled (`disable_cache = true`) the `/cache` setter is skipped, but the build-volume setter still fires. Real fix: speed up sockerless's create+start path so each setter completes in <120 s.
 
@@ -879,12 +887,25 @@ The github-actions-runner runs as the workspace itself. When a workflow specifie
 | 1 | Initialize | `POST /networks/create` (per-job network), `POST /images/<job-image>/create`, `POST /images/<service>/create` | n/a | `ImagePull` + `NetworkCreate` |
 | 2 | Job container | `POST /containers/create` with `--workdir /__w/<repo>/<repo> --network <job-net> -v /tmp/runner-work:/__w -v /opt/runner/externals:/__e:ro --entrypoint tail <image> -f /dev/null` | **Long-lived** (entire job) | Long-lived primitive (Cloud Run Service / ACA App / Fargate task with `tail -f` cmd) |
 | 3 | Service container(s) | `POST /containers/create -v /var/run/docker.sock:/var/run/docker.sock --network <job-net> <image>` | **Long-lived** | Same long-lived primitive |
-| 4 | Step exec (×N) | `POST /containers/<id>/exec/create` + `POST /exec/<id>/start` for each step's `bash -c` | Each exec is a process inside; container stays | `ExecCreate` + `ExecStart` |
+| 4 | Step exec (×N) | `POST /containers/<id>/exec/create` + `POST /exec/<id>/start` for each step's `bash -c` | Each exec is a process inside; container stays | `ExecCreate` + `ExecStart` (Path B HTTP envelope works — see Lesson 8) |
 | 5 | Cleanup | `POST /containers/<id>/stop` + `DELETE /containers/<id>`, `DELETE /networks/<job-net>` | n/a | Standard removal |
+
+**Source verification (2026-05-03)**: `actions/runner` v2.334.0 `src/Runner.Worker/Container/DockerCommandManager.cs` exposes `DockerCreate`, `DockerStart`, `DockerExec`, `DockerInspect`, `DockerStop`, `DockerRemove` as the runner's primitives. Steps run via `DockerExec` (one `docker exec` per step) — **fundamentally different from gitlab-runner's hijacked attach pattern**. Sockerless's `Path B HTTP envelope POST` (Lesson 8) maps directly to `DockerExec`: each `docker exec` call becomes one POST to the Service URL with `execEnvelope{argv,stdin,env,workdir}`.
 
 **Critical invariant**: workspace (`/__w` = `/tmp/runner-work`) must persist across all containers in the same job AND survive container restart. This is BUG-909 (already addressed via `SharedVolume` on cloudrun + gcf with GCS bucket backing).
 
 **`/var/run/docker.sock` mount**: github-runner unconditionally mounts the docker socket on the JOB container so user steps can do nested `docker run`. On Cloud Run there's no docker socket — sockerless drops the mount silently AND the user step cannot do `docker run`. Documented limitation; user code that actually requires nested docker fails at runtime with `cannot connect`.
+
+### gitlab-runner vs github-runner — runner-pattern compatibility matrix
+
+| Pattern | gitlab-runner v17 | github-runner v2.334 | Sockerless cloudrun support |
+|---|---|---|---|
+| Container creation | `ContainerCreate` cmd=`/bin/bash` (with feature flag, else helperImage.Cmd) | `ContainerCreate` cmd=`tail -f /dev/null` (or image's CMD) | ✅ Both work via overlay+Service |
+| Stage / step execution | **HIJACKED** `ContainerAttach`+stdin-pipe per stage; container START→STOP→START cycle | `DockerExec` per step; container stays running | ❌ gitlab attach: missing. ✅ github exec: Path B works |
+| Per-step process supervision | bash reads stdin until EOF | dedicated process per exec | ✅ Both representable |
+| Workspace persistence | mounted volume bind | mounted volume bind | ✅ GCS-bucket SharedVolume |
+| Service containers (postgres etc.) | `--network <job-net>` peer-reachable on `localhost:<port>` | same | ⚠ Multi-container Cloud Run Service template (untested live for runner cells) |
+| Stdout/stderr capture | hijacked stdcopy.StdCopy framing | DockerExec response | gitlab: needs hijack support; github: response body |
 
 ### Comparison table — what each backend can offer
 
