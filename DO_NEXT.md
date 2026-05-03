@@ -11,10 +11,48 @@ Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.
 - Cell 7 v33 confirmed: pull → overlay-build → per-stage Cloud Run Service deploy → bootstrap subprocess all working live.
 - New blocker: **BUG-925 postgres-on-Cloud-Run-Service** — gitlab-runner-helper health-check fails because Cloud Run can't expose TCP :5432 + can't inject `WAIT_FOR_SERVICE_TCP_*` env vars correctly.
 
-### Decisions needed before next session
-1. Pick a path for BUG-925 (Cloud SQL / Cloud Run sidecar / trim postgres from cell-7/8). User input required — this is the architectural fork.
-2. Once cell 7 GREEN, port the same overlay+bootstrap+alias trio to gcf for cell 8.
-3. For cells 5+6: refresh GitHub PAT (rate-limited).
+### Decisions made (2026-05-03 v17)
+- **BUG-925: user picked Option 2 — Cloud Run multi-container sidecar.**
+
+### BUG-925 Implementation plan (Option 2 — Cloud Run sidecar)
+
+Multi-container Service infra ALREADY exists in cloudrun (`startMultiContainerServiceTyped` at start_service.go:265, `buildServiceSpec` walks `[]containerInput`). What's missing is the **gitlab-runner ↔ pod auto-detection** layer.
+
+**The model:** for each gitlab-runner job, deploy ONE Cloud Run Service revision containing:
+- main (ingress on PORT 8080) — BUILD container with overlay + bootstrap
+- sidecar — each `services:` container (postgres in cell 7)
+- All containers share network namespace via Cloud Run sidecars (loopback). `localhost:5432` from BUILD reaches postgres.
+- `/etc/hosts` injection for the alias name (bootstrap writes `127.0.0.1 postgres` before exec).
+
+**Verified gitlab-runner v17.5 contract** (read from `executors/docker/docker.go` + `services.go`):
+
+| Container kind | Label `com.gitlab.gitlab-runner.type` | Other labels | Stdin handling |
+|---|---|---|---|
+| Service (postgres) | `service` | `service=<name>`, `service.version=<v>` | none (foreground default cmd) |
+| Wait/healthcheck | `wait` | `wait=<service-container-id>` | none — env `WAIT_FOR_SERVICE_TCP_ADDR/PORT` |
+| Build | `build` | — | OpenStdin=true AttachStdin=true |
+| Predefined (helper for git/artifact) | `predefined` | — | OpenStdin=true AttachStdin=true |
+
+Service container name: `{getProjectUniqRandomizedName()}-{serviceSlug}-{serviceIndex}` (e.g. `runner-tkopdswuw-project-81023556-concurrent-0-postgres-0`). Wait container name: `{service-container-name}-wait-for-service`.
+
+**The hard parts:**
+1. **Service-container detection** — solved by `Labels["com.gitlab.gitlab-runner.type"] == "service"`.
+2. **Pod assembly** — when a service container is created, hold its ContainerCreate in PendingCreates without deploying. Ditto healthcheck. When BUILD container is created (image differs from helper, name suffix `-build`), gather all pending pod members (same name prefix), deploy as multi-container Service via existing `startMultiContainerServiceTyped`.
+3. **Deferred start semantics** — gitlab-runner expects START postgres to return success and postgres to be running BEFORE it creates the healthcheck. The existing `PodDeferredStart` returns success without deploying. ContainerInspect for the deferred container should report `State.Running = true` (the SIDECAR will be running shortly). This is the only "synthetic" call — but the deferred sidecar IS guaranteed to start shortly under our control, so it's not a fake.
+4. **Healthcheck container handling** — gitlab-runner's healthcheck is `helper-image health-check` with env `WAIT_FOR_SERVICE_TCP_ADDR=postgres`. If we deploy it before postgres + BUILD are bundled, it can't reach postgres. Options: (a) recognize healthcheck via env, short-circuit to "exited 0" without deployment (we will deploy postgres + BUILD together so postgres WILL be ready); (b) defer the healthcheck container into the same pod, run it as a one-shot sidecar with init=true. (a) is simpler.
+5. **/etc/hosts injection** — `sockerless-cloudrun-bootstrap` reads env `SOCKERLESS_HOST_ALIASES=postgres=127.0.0.1,redis=127.0.0.1` and writes them to `/etc/hosts` before exec.
+6. **ExposedPorts surfacing** — postgres image declares `5432/tcp`; `ContainerInspect` for the deferred postgres should return that so gitlab-runner injects WAIT_FOR_SERVICE_TCP_PORT=5432.
+
+**Code touch-list:**
+- `backends/cloudrun/backend_impl.go::ContainerCreate` — name-prefix → pod-id auto-assignment + service container detection + healthcheck short-circuit.
+- `backends/cloudrun/backend_impl.go::ContainerStart` — already calls `PodDeferredStart`; verify deferred path returns success cleanly.
+- `backends/cloudrun/start_service.go::buildServiceSpec` — order containers so BUILD is `IsMain=true` (ingress); set sidecar `StartupProbe.TcpSocket{Port: containerPort}` for postgres so Cloud Run waits for postgres to listen before marking ready.
+- `agent/cmd/sockerless-cloudrun-bootstrap/main.go` — read SOCKERLESS_HOST_ALIASES, append to `/etc/hosts` before exec.
+- New unit tests for the heuristic + the bootstrap /etc/hosts logic.
+
+### Other resume items
+1. Once cell 7 GREEN, port the same overlay+bootstrap+alias trio to gcf for cell 8.
+2. For cells 5+6: refresh GitHub PAT (rate-limited).
 
 **Where we landed (v15)**: Phase 122g + Phase 122h shipped (15+ commits on `phase-118-faas-pods`). Live cell 7 progression confirms the architecture works:
 - Cloud Run Service deploys via overlay+bootstrap ✓
