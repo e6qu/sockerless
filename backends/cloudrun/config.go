@@ -54,6 +54,17 @@ type Config struct {
 	// (spawned as further Cloud Run Jobs) mount the same bucket.
 	// Format: SOCKERLESS_GCP_SHARED_VOLUMES="name=path=bucket,name2=path2=bucket2"
 	SharedVolumes []SharedVolume
+
+	// BootstrapBinaryPath is the on-disk path of the
+	// sockerless-cloudrun-bootstrap binary. Required for the Phase 122g
+	// overlay path: when set, ContainerCreate stages the bootstrap into
+	// every per-image overlay built by Cloud Build so the resulting
+	// Cloud Run Service hosts an HTTP endpoint that the backend's
+	// ContainerExec POSTs envelope payloads against (Path B model —
+	// specs/CLOUD_RESOURCE_MAPPING.md § Lesson 8). Empty ⇒ overlay path
+	// disabled, ContainerCreate stays on the legacy Job path.
+	// Set via `SOCKERLESS_CLOUDRUN_BOOTSTRAP=/opt/sockerless/sockerless-cloudrun-bootstrap`.
+	BootstrapBinaryPath string
 }
 
 // SharedVolume describes a workspace volume mounted via GCS that the
@@ -72,18 +83,19 @@ type SharedVolume struct {
 // ConfigFromEnv loads configuration from environment variables.
 func ConfigFromEnv() Config {
 	return Config{
-		Project:       os.Getenv("SOCKERLESS_GCR_PROJECT"),
-		Region:        envOrDefault("SOCKERLESS_GCR_REGION", "us-central1"),
-		VPCConnector:  os.Getenv("SOCKERLESS_GCR_VPC_CONNECTOR"),
-		LogID:         envOrDefault("SOCKERLESS_GCR_LOG_ID", "sockerless"),
-		BuildBucket:   os.Getenv("SOCKERLESS_GCP_BUILD_BUCKET"),
-		EndpointURL:   os.Getenv("SOCKERLESS_ENDPOINT_URL"),
-		PollInterval:  parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
-		LogTimeout:    parseDuration(os.Getenv("SOCKERLESS_LOG_TIMEOUT"), 30*time.Second),
-		UseService:    os.Getenv("SOCKERLESS_GCR_USE_SERVICE") == "1",
-		CallbackURL:   os.Getenv("SOCKERLESS_CALLBACK_URL"),
-		EnableCommit:  os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
-		SharedVolumes: parseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES")),
+		Project:             os.Getenv("SOCKERLESS_GCR_PROJECT"),
+		Region:              envOrDefault("SOCKERLESS_GCR_REGION", "us-central1"),
+		VPCConnector:        os.Getenv("SOCKERLESS_GCR_VPC_CONNECTOR"),
+		LogID:               envOrDefault("SOCKERLESS_GCR_LOG_ID", "sockerless"),
+		BuildBucket:         os.Getenv("SOCKERLESS_GCP_BUILD_BUCKET"),
+		EndpointURL:         os.Getenv("SOCKERLESS_ENDPOINT_URL"),
+		PollInterval:        parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
+		LogTimeout:          parseDuration(os.Getenv("SOCKERLESS_LOG_TIMEOUT"), 30*time.Second),
+		UseService:          os.Getenv("SOCKERLESS_GCR_USE_SERVICE") == "1",
+		CallbackURL:         os.Getenv("SOCKERLESS_CALLBACK_URL"),
+		EnableCommit:        os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
+		SharedVolumes:       parseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES")),
+		BootstrapBinaryPath: os.Getenv("SOCKERLESS_CLOUDRUN_BOOTSTRAP"),
 	}
 }
 

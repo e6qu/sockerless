@@ -68,6 +68,37 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// Resolve Docker Hub images to Artifact Registry remote repository URIs
 	config.Image = gcpcommon.ResolveGCPImageURI(config.Image, s.config.Project, s.config.Region)
 
+	// Phase 122g: when BootstrapBinaryPath is configured, COPY the
+	// sockerless-cloudrun-bootstrap into the user's image via Cloud
+	// Build and use the overlay URI as the actual image for Cloud Run.
+	// This makes the deployed Service host an HTTP endpoint that
+	// ContainerExec can POST envelope payloads against (Path B). Cache
+	// hits via OverlayContentTag mean the second container of any given
+	// (image, entrypoint, cmd, workdir) tuple skips Cloud Build entirely.
+	originalImage := config.Image
+	if s.useOverlayPath(originalImage) {
+		spec := gcpcommon.OverlayImageSpec{
+			BaseImageRef:        originalImage,
+			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+			UserEntrypoint:      config.Entrypoint,
+			UserCmd:             config.Cmd,
+			UserWorkdir:         config.WorkingDir,
+		}
+		contentTag := gcpcommon.OverlayContentTag("cloudrun-", spec)
+		overlayURI, err := s.ensureOverlayImage(s.ctx(), spec, contentTag)
+		if err != nil {
+			return nil, fmt.Errorf("ensure cloudrun overlay image: %w", err)
+		}
+		config.Image = overlayURI
+		// Bootstrap owns the entrypoint; it parses SOCKERLESS_USER_*
+		// env vars (baked into the overlay at build time) on each
+		// invocation. Drop the user's entrypoint+cmd from the Cloud
+		// Run container spec so Cloud Run doesn't re-override the
+		// bootstrap with the user's argv.
+		config.Entrypoint = nil
+		config.Cmd = nil
+	}
+
 	hostConfig := api.HostConfig{NetworkMode: "default"}
 	if req.HostConfig != nil {
 		hostConfig = *req.HostConfig
