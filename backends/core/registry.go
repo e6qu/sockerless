@@ -251,6 +251,18 @@ func getRegistryToken(rc registryConfig, basicAuth string) (string, error) {
 		return "basic:" + basicAuth, nil
 	}
 
+	// GCP Artifact Registry / GCR: caller already has an OAuth2 access
+	// token (from ARAuthProvider via ADC). AR accepts the access token
+	// directly as `Authorization: Bearer …` on every registry call —
+	// no Www-Authenticate / token-endpoint exchange. ARAuthProvider.GetToken
+	// returns `"Bearer <token>"`; strip the prefix because setRegistryAuth
+	// re-adds it. Without this branch, the standard Bearer-exchange path
+	// re-issues our access token wrapped as `Basic <base64-of-Bearer-…>`,
+	// which AR's token endpoint rejects with 401.
+	if IsGCPRegistry(rc.Registry) && basicAuth != "" {
+		return strings.TrimPrefix(basicAuth, "Bearer "), nil
+	}
+
 	// Try to access the manifests endpoint first to discover auth
 	manifestURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s",
 		rc.Registry, rc.Repository, rc.Tag)

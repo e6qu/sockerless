@@ -966,14 +966,24 @@ func (s *Server) ContainerUnpause(ref string) error {
 // /images/create which bypassed the rewrite.
 func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 	resolved := gcpcommon.ResolveGCPImageURI(ref, s.config.Project, s.config.Region)
-	if resolved != ref {
-		// The caller's auth was scoped to the original registry (Docker
-		// Hub, registry.gitlab.com, etc.) and is invalid for AR. Discard
-		// it so ImageManager.Pull's cloud-auth path mints an AR token
-		// via ARAuthProvider; otherwise AR returns 401.
-		auth = ""
+	if resolved == ref {
+		return s.images.Pull(resolved, auth)
 	}
-	return s.images.Pull(resolved, auth)
+	// The caller's auth was scoped to the original registry (Docker
+	// Hub, registry.gitlab.com, etc.) and is invalid for AR. Discard
+	// it so ImageManager.Pull's cloud-auth path mints an AR token
+	// via ARAuthProvider; otherwise AR returns 401.
+	rc, err := s.images.Pull(resolved, "")
+	if err != nil {
+		return nil, err
+	}
+	// Alias the freshly-pulled image under the caller's original ref
+	// (e.g. registry.gitlab.com/...) — clients (gitlab-runner, github-
+	// runner) inspect by the ref they requested, not the AR rewrite.
+	if img, ok := s.Store.ResolveImage(resolved); ok {
+		core.StoreImageWithAliases(s.Store, ref, img)
+	}
+	return rc, nil
 }
 
 // ImageLoad delegates to ImageManager.

@@ -917,10 +917,17 @@ func (s *Server) ContainerUnpause(ref string) error {
 // AR; ImageManager.Pull's cloud-auth path mints an AR token via ARAuthProvider.
 func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 	resolved := gcpcommon.ResolveGCPImageURI(ref, s.config.Project, s.config.Region)
-	if resolved != ref {
-		auth = ""
+	if resolved == ref {
+		return s.images.Pull(resolved, auth)
 	}
-	return s.images.Pull(resolved, auth)
+	rc, err := s.images.Pull(resolved, "")
+	if err != nil {
+		return nil, err
+	}
+	if img, ok := s.Store.ResolveImage(resolved); ok {
+		core.StoreImageWithAliases(s.Store, ref, img)
+	}
+	return rc, nil
 }
 
 // ImageLoad delegates to ImageManager.
