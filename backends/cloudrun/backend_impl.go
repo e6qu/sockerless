@@ -201,7 +201,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 			}
 		})
 	}
-	container.NetworkSettings.Networks[netName] = &api.EndpointSettings{
+	endpoint := &api.EndpointSettings{
 		NetworkID:   networkID,
 		EndpointID:  core.GenerateID()[:16],
 		Gateway:     "",
@@ -209,6 +209,28 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		IPPrefixLen: 16,
 		MacAddress:  "",
 	}
+	// Capture standard Docker NetworkingConfig.EndpointsConfig.Aliases
+	// so the multi-container Service materialiser can source SOCKERLESS_
+	// HOST_ALIASES from them. No runner-specific code — this is the
+	// docker-CLI / podman-CLI / gitlab-runner / github-runner standard
+	// alias channel.
+	if req.NetworkingConfig != nil {
+		for refName, reqEp := range req.NetworkingConfig.EndpointsConfig {
+			if reqEp == nil {
+				continue
+			}
+			matches := refName == netName
+			if !matches {
+				if net, ok := s.Store.ResolveNetwork(refName); ok && net.ID == networkID {
+					matches = true
+				}
+			}
+			if matches && len(reqEp.Aliases) > 0 {
+				endpoint.Aliases = append(endpoint.Aliases, reqEp.Aliases...)
+			}
+		}
+	}
+	container.NetworkSettings.Networks[netName] = endpoint
 
 	// Pod association is handled by the core HTTP handler layer (query param).
 	s.PendingCreates.Put(id, container)

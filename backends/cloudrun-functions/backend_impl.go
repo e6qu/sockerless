@@ -166,7 +166,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 			}
 		})
 	}
-	container.NetworkSettings.Networks[netName] = &api.EndpointSettings{
+	endpoint := &api.EndpointSettings{
 		NetworkID:   networkID,
 		EndpointID:  core.GenerateID()[:16],
 		Gateway:     "",
@@ -174,6 +174,26 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		IPPrefixLen: 16,
 		MacAddress:  "",
 	}
+	// Capture standard Docker NetworkingConfig.EndpointsConfig.Aliases
+	// so the multi-container materialiser can source SOCKERLESS_HOST_
+	// ALIASES from them. Pure Docker-API signal — no runner-specific code.
+	if req.NetworkingConfig != nil {
+		for refName, reqEp := range req.NetworkingConfig.EndpointsConfig {
+			if reqEp == nil {
+				continue
+			}
+			matches := refName == netName
+			if !matches {
+				if net, ok := s.Store.ResolveNetwork(refName); ok && net.ID == networkID {
+					matches = true
+				}
+			}
+			if matches && len(reqEp.Aliases) > 0 {
+				endpoint.Aliases = append(endpoint.Aliases, reqEp.Aliases...)
+			}
+		}
+	}
+	container.NetworkSettings.Networks[netName] = endpoint
 
 	// Build function name from container ID
 	funcName := "skls-" + id[:12]
@@ -474,6 +494,25 @@ func (s *Server) ContainerStart(ref string) error {
 
 	if c.State.Running {
 		return &api.NotModifiedError{}
+	}
+
+	// Docker-network → multi-member pod auto-detection (mirrors cloudrun).
+	// Pure standard-Docker signal: NetworkingConfig.EndpointsConfig + the
+	// container's Config.OpenStdin. No runner-specific labels.
+	netDefer, netMembers := s.shouldDeferOrMaterializeNetworkPod(c)
+	if netDefer {
+		s.PendingCreates.Update(id, func(pc *api.Container) {
+			pc.State.Status = "running"
+			pc.State.Running = true
+			pc.State.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		})
+		return nil
+	}
+	if len(netMembers) > 1 {
+		exitCh := make(chan struct{})
+		s.Store.WaitChs.Store(id, exitCh)
+		s.PendingCreates.Delete(id)
+		return s.materializePodFunction(id, netMembers, exitCh)
 	}
 
 	// Multi-container pod handling: defer until all members have been

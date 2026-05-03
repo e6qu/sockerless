@@ -129,6 +129,17 @@ func (s *Server) materializePodFunction(mainContainerID string, containers []api
 	if podSpec.MainName != "" {
 		envVars["SOCKERLESS_POD_MAIN"] = podSpec.MainName
 	}
+	// Network-pod sidecars share loopback in the merged-rootfs supervisor.
+	// Surface the standard Docker NetworkingConfig.EndpointsConfig.Aliases
+	// of every member so the bootstrap can write `127.0.0.1 <alias>` lines
+	// to /etc/hosts before exec.
+	netID := ""
+	if id, ok := s.userDefinedNetworkID(containers[0]); ok {
+		netID = id
+	}
+	if aliases := hostAliasesForMembers(containers, netID); len(aliases) > 0 {
+		envVars["SOCKERLESS_HOST_ALIASES"] = strings.Join(aliases, ",")
+	}
 
 	serviceConfig := &functionspb.ServiceConfig{
 		AvailableMemory:      s.config.Memory,
