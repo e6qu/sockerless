@@ -147,3 +147,5 @@ jobs:
 # trigger: no-defaults revert
 
 # trigger: BUG-922 no-auto-remove
+
+# trigger: BUG-922 restart cycle
