@@ -52,6 +52,14 @@ const (
 	// network. Written to /etc/hosts at bootstrap startup so user code
 	// can `pg_isready -h <alias>` etc.
 	envHostAliases = "SOCKERLESS_HOST_ALIASES"
+	// SOCKERLESS_SIDECAR=1 marks this container as a non-ingress sidecar
+	// in a Cloud Run multi-container revision. Sidecars do NOT bind the
+	// PORT HTTP server (only one container per revision can — the
+	// ingress one). Instead the bootstrap just exec's the user CMD as a
+	// foreground subprocess so the sidecar's process is what keeps the
+	// container alive (e.g. postgres). /etc/hosts injection still runs
+	// for sidecars so they can resolve sibling aliases too.
+	envSidecar = "SOCKERLESS_SIDECAR"
 )
 
 // execEnvelopeRequest is the JSON shape the cloudrun backend POSTs for
@@ -87,6 +95,14 @@ var invokeMu sync.Mutex
 func main() {
 	if err := writeHostAliases(os.Getenv(envHostAliases)); err != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: write host aliases: %v\n", err)
+	}
+
+	// Sidecar mode: skip the HTTP server (only ingress container binds
+	// PORT) and just exec the user CMD as a foreground subprocess.
+	if os.Getenv(envSidecar) != "" {
+		fmt.Fprintln(os.Stderr, "sockerless-cloudrun-bootstrap: sidecar mode — exec user CMD")
+		runSidecar()
+		return
 	}
 
 	port := os.Getenv(envPort)
@@ -249,6 +265,37 @@ func parseUserArgv(key string) []string {
 		return nil
 	}
 	return out
+}
+
+// runSidecar exec's the env-baked SOCKERLESS_USER_* command as a
+// foreground subprocess and waits for it to exit. Used in Cloud Run
+// multi-container revisions where this container is NOT the ingress
+// (only the ingress binds PORT 8080). The sidecar's process (e.g.
+// postgres) is what keeps the container alive — its TCP port (5432
+// etc.) is reachable from the ingress container via shared loopback.
+func runSidecar() {
+	argv := append(parseUserArgv(envUserEntrypoint), parseUserArgv(envUserCmd)...)
+	if len(argv) == 0 {
+		fmt.Fprintln(os.Stderr, "sockerless-cloudrun-bootstrap: sidecar has no user entrypoint/cmd configured")
+		os.Exit(1)
+	}
+	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec // operator-controlled argv
+	if wd := os.Getenv(envUserWorkdir); wd != "" {
+		cmd.Dir = wd
+	}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = nil
+	fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: sidecar exec argv=%v workdir=%q\n", argv, cmd.Dir)
+	if err := cmd.Run(); err != nil {
+		exitCode := 1
+		if ee, ok := err.(*exec.ExitError); ok {
+			exitCode = ee.ExitCode()
+		}
+		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: sidecar subprocess exit=%d err=%v\n", exitCode, err)
+		os.Exit(exitCode)
+	}
+	fmt.Fprintln(os.Stderr, "sockerless-cloudrun-bootstrap: sidecar subprocess exit=0")
 }
 
 // writeHostAliases appends `127.0.0.1 <alias>` lines to /etc/hosts for

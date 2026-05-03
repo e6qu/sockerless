@@ -126,7 +126,10 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 	// the standard Cloud Run PORT env (default 8080), regardless of what
 	// the image's Config.ExposedPorts declares. Force-declare 8080 on
 	// the main container so multi-container revisions are accepted.
-	// Sidecars must omit Ports entirely.
+	// Sidecars must omit Ports entirely AND set SOCKERLESS_SIDECAR=1 so
+	// their bootstrap exec's the user CMD as a foreground subprocess
+	// instead of trying to bind PORT (which would conflict with main's
+	// bind).
 	if ci.IsMain {
 		port := imagePort(ci.Container)
 		if port == 0 {
@@ -135,6 +138,11 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 		containerSpec.Ports = []*runpb.ContainerPort{
 			{ContainerPort: int32(port)},
 		}
+	} else {
+		containerSpec.Env = append(containerSpec.Env, &runpb.EnvVar{
+			Name:   "SOCKERLESS_SIDECAR",
+			Values: &runpb.EnvVar_Value{Value: "1"},
+		})
 	}
 
 	if config.WorkingDir != "" {

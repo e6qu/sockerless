@@ -55,6 +55,23 @@ sed -i '/\[runners.docker\]/a\
     helper_image = "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-v17.5.0"' \
     /etc/gitlab-runner/config.toml
 
+# BUG-925: skip the wait-for-services healthcheck container (postgres
+# sidecar will be deployed in the same Cloud Run Function as the BUILD
+# container, so the redundant TCP probe wedge isn't needed).
+sed -i '/\[runners.docker\]/a\
+    wait_for_services_timeout = -1' \
+    /etc/gitlab-runner/config.toml
+
+# BUG-925: enable FF_NETWORK_PER_BUILD so gitlab-runner uses standard
+# Docker user-defined networks (verified in v17.5
+# executors/docker/services.go::createServices). The gcf backend's
+# network-pod auto-detector requires this signal.
+cat >> /etc/gitlab-runner/config.toml <<'EOF'
+
+  [runners.feature_flags]
+    FF_NETWORK_PER_BUILD = true
+EOF
+
 # /cache stays — sockerless gcf backend mounts via Cloud Run Service
 # Volume{Gcs{Bucket}} (gcf is backed by Cloud Run Service per
 # CLOUD_RESOURCE_MAPPING.md). No wedge.
