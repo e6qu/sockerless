@@ -295,6 +295,15 @@ func (s *Server) ContainerStart(ref string) error {
 	// container Service revision"). Pure standard-Docker signal: network
 	// membership + Container.Config.OpenStdin. No runner-specific code.
 	netDefer, netMembers := s.shouldDeferOrMaterializeNetworkPod(c)
+	netID, _ := s.userDefinedNetworkID(c)
+	s.Logger.Info().
+		Str("container", id).
+		Str("image", c.Config.Image).
+		Bool("open_stdin", c.Config.OpenStdin).
+		Str("net_id", netID).
+		Bool("defer", netDefer).
+		Int("members", len(netMembers)).
+		Msg("network-pod: ContainerStart decision")
 	if netDefer {
 		// Service-style sidecar — eventual deploy will be triggered when
 		// a script-runner (OpenStdin=true) on the same network starts.
@@ -1276,6 +1285,13 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	// bootstrap's `execEnvelope.Stdin`. Returns a hijacked-shaped
 	// io.ReadWriteCloser whose Read blocks until the bootstrap's
 	// response is ready.
+	s.Logger.Info().
+		Str("container", c.ID).
+		Str("image", c.Config.Image).
+		Bool("stdin", opts.Stdin).
+		Bool("stdout", opts.Stdout).
+		Bool("overlay", hasSockerlessOverlayRepo(c.Config.Image)).
+		Msg("ContainerAttach: hit")
 	if opts.Stdin && hasSockerlessOverlayRepo(c.Config.Image) {
 		p := newStdinPipe()
 		actual, _ := s.stdinPipes.LoadOrStore(c.ID, p)
