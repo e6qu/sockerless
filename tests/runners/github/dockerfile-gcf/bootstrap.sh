@@ -6,10 +6,16 @@
 # dockerfile-cloudrun/bootstrap.sh, only the backend binary differs.
 set -euo pipefail
 
-# Required env (no fallbacks, no optional vars — fail loudly):
-: "${SOCKERLESS_GCF_PROJECT:?SOCKERLESS_GCF_PROJECT is required (set by github-runner-dispatcher-gcp from the gcp_project label config)}"
-: "${SOCKERLESS_GCF_REGION:?SOCKERLESS_GCF_REGION is required (set by github-runner-dispatcher-gcp from the gcp_region label config)}"
-: "${SOCKERLESS_GCP_BUILD_BUCKET:?SOCKERLESS_GCP_BUILD_BUCKET is required (set by github-runner-dispatcher-gcp from the build_bucket label config)}"
+# Auto-discover sockerless config from GCP instance metadata. See
+# dockerfile-cloudrun/bootstrap.sh for full rationale (dispatcher
+# scope cleanup; runner image owns its config via cloud primitives).
+META=http://metadata.google.internal/computeMetadata/v1
+HDR='Metadata-Flavor: Google'
+export SOCKERLESS_GCF_PROJECT=$(curl -sf -H "$HDR" $META/project/project-id)
+export SOCKERLESS_GCF_REGION=$(curl -sf -H "$HDR" $META/instance/region | awk -F/ '{print $NF}')
+export SOCKERLESS_GCP_BUILD_BUCKET="${SOCKERLESS_GCF_PROJECT}-build"
+export SOCKERLESS_GCP_SHARED_VOLUMES="runner-workspace=/tmp/runner-work=${SOCKERLESS_GCF_PROJECT}-runner-workspace,runner-externals=/opt/runner/externals=${SOCKERLESS_GCF_PROJECT}-runner-workspace"
+echo "bootstrap: auto-discovered project=$SOCKERLESS_GCF_PROJECT region=$SOCKERLESS_GCF_REGION"
 
 nohup /usr/local/bin/sockerless-backend-gcf -addr :3376 -log-level info \
     >/tmp/sockerless-backend.log 2>&1 &

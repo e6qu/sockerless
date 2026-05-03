@@ -974,3 +974,90 @@ For cells 5-8 (gitlab + github runner via docker executor) to GREEN end-to-end, 
 - For backends where user is image-bake-time only (Cloud Run, gcf, AZF): if user explicitly requests non-default user that doesn't match the image's USER directive, fail with a clear "user override requires baking USER in image; use the docker backend for runtime user override".
 
 The runner cells generally do NOT depend on `--cap-add` / `--privileged` / `--user` for their happy path, so this matrix is documented for correctness rather than as an immediate blocker.
+
+## Lessons from ECS + Lambda backends → cloudrun + gcf adjustments
+
+ECS (cells 1+3 GREEN against live AWS) and Lambda (cells 2+4 GREEN) are the existing reference impls for long-lived runner containers. The cloudrun + gcf backends should adopt these proven patterns rather than reinventing them. Each lesson maps to a concrete adjustment.
+
+### Lesson 1 — ECS: pre-registered runner task definition (stable task-def family)
+
+**ECS pattern**: `terraform/modules/ecs/runner.tf` registers a stable `sockerless-runner` task-def family. Sockerless's `Server.ContainerStart` for runner-pattern containers calls `RunTask --task-definition sockerless-runner:LATEST` with per-job container-override env vars (`REG_TOKEN`, `LABELS`, `RUNNER_NAME`). NO dynamic task-def composition for runner containers.
+
+**Why it works**: Fargate task-defs are slow to register (~5-10 s) but cheap to RunTask against (sub-second). Pre-registration moves the slow path to terraform (one-time per terraform apply); the hot path is just a lightweight `RunTask` API call.
+
+**Cloudrun adjustment**: Mirror the pattern with a pre-deployed Cloud Run Service per runner shape (one Service per `runner-image:tag` combo). Sockerless's runner-pattern ContainerStart routes to the existing Service (updates env via revision update OR uses startup-time env injection) instead of creating a fresh Service per container. Avoids the 10-min Cloud Run Service deploy on every container.
+
+**Gcf adjustment**: Same — pre-deploy a Cloud Function with the runner-helper overlay image once per shape. ContainerStart invokes the existing Function rather than creating new ones.
+
+### Lesson 2 — Lambda: warm pool keyed by overlay-content-hash
+
+**Lambda pattern**: Phase 118 sub-118b: when `docker rm` fires, sockerless cleans the function's `sockerless-allocation` label (returning it to a free pool) instead of deleting, up to a `SOCKERLESS_LAMBDA_POOL_MAX` cap. Subsequent `docker create` with matching content hash claims a free pool entry instead of paying CodeBuild + CreateFunction cost (~30-60 s).
+
+**Why it works**: gitlab-runner / github-runner spawn many containers per pipeline (helper, postgres, build, services). Most are repeats of the same image. Pool reuse amortizes the expensive per-container deploy across many uses.
+
+**Gcf adjustment**: Already implemented (gcf has the same pool logic via `sockerless_allocation` label). VERIFY: pool reuse fires for the gitlab-runner-helper image specifically — that's the most-spawned permission container. If pool size is 1 (the helper), the SECOND runner job's helper container should reuse the existing function in <1s instead of paying 150 s Cloud Build.
+
+**Cloudrun adjustment**: NOT directly applicable to Cloud Run Jobs (each Job is one-shot). For Cloud Run **Service** path, the Service IS already long-lived; "pool" concept is just "leave the Service running between invocations". Map ContainerStop → `min_instance_count=0` (suspend), ContainerStart → `min_instance_count=1` (resume).
+
+### Lesson 3 — ECS: SSM Session Manager for `docker exec` semantics
+
+**ECS pattern**: `ecs.ExecuteCommand` against a RUNNING task. Sockerless backend implements `ContainerExec` via SSM AgentMessage protocol (frame capture for stdout/stderr/exit-code). Live-tested in Phase 110b.
+
+**Why it works**: SSM is the AWS-blessed in-task command execution path. Doesn't require a sidecar agent in the container; ECS Exec setup plus the right IAM enables it natively.
+
+**Cloudrun adjustment**: Cloud Run does NOT have a native exec API. Reverse-agent pattern (already in ACA, partial in cloudrun) is the right shape: in-image bootstrap establishes a WebSocket back to backend's `/v1/cloudrun/reverse`; backend multiplexes exec requests. Phase 122f: complete the reverse-agent on cloudrun + gcf.
+
+**Gcf adjustment**: Same as cloudrun — gcf's underlying Cloud Run Service can host the reverse-agent.
+
+### Lesson 4 — Lambda: stdin payload for gitlab-runner stage scripts (BUG-875)
+
+**Lambda pattern**: gitlab-runner's docker executor pipes per-stage scripts via stdin. Phase 117 wired this through Lambda's invoke payload — the in-Lambda bootstrap reads the payload and `bash -c "$body"`. `LogType=Tail` on every invoke surfaces the function's last 4 KB of stderr inline.
+
+**Why it works**: Lambda has no stdin, but Invoke API accepts arbitrary JSON payload. The bootstrap-as-shell-runner pattern bridges the gap.
+
+**Cloudrun adjustment**: Cloud Run Services CAN have stdin via the reverse-agent. Once exec works (Lesson 3), gitlab-runner stdin scripts ride the same channel.
+
+**Gcf adjustment**: Same — Gen2 Function HTTP-POST body is the equivalent of Lambda's invoke payload. Phase 118d's overlay-bootstrap already supports this; just needs to handle gitlab-runner-shape stdin.
+
+### Lesson 5 — ECS: bind-mount → EFS access points (BUG-850)
+
+**ECS pattern**: `SOCKERLESS_ECS_SHARED_VOLUMES="name1=path1=fsap-XXX[=fs-YYY],..."` env tells the backend which host paths to translate into named volumes backed by EFS access points. The runner-task and sub-task share the SAME access points so a `-v /home/runner/_work:/__w` from inside the runner container maps to a sub-task volume mount that hits the same EFS folder.
+
+**Why it works**: Fargate has no host filesystem, but EFS access points provide a shared persistent filesystem at known paths.
+
+**Cloudrun adjustment**: Already implemented (BUG-909). `SharedVolume{Name, ContainerPath, Bucket}` with GCS bucket as the volume backing. Cloud Run Job/Service `Volume.Gcs.Bucket` provides the runtime mount.
+
+**Gcf adjustment**: Same as cloudrun (BUG-909).
+
+### Lesson 6 — Lambda: overlay-image pattern for entrypoint customization
+
+**Lambda pattern**: Each `docker create` triggers a CodeBuild that builds an overlay image bakein the user's `Entrypoint` + `Cmd` + bind-link symlinks. Lambda Function deploys with that overlay. Pool reuse keeps free Functions warm by content-hash.
+
+**Why it works**: Lambda image-mode requires `ENTRYPOINT` baked at deploy time. Overlay decouples user's entrypoint from the base image.
+
+**Cloudrun adjustment**: Cloud Run Service supports `command` + `args` overrides at deploy time — no overlay needed. Use the base image directly + Cloud Run's `Container.command` + `Container.args` fields. Skip CodeBuild for cloudrun Service path entirely.
+
+**Gcf adjustment**: Gen2 Function deploys via Cloud Build automatically (the buildpacks path) — overlay only needed when the user's container can't run as a Gen2 function. For runner-pattern containers (long-lived, custom CMD), use the underlying Cloud Run Service `command` override instead of overlay. The `Run.Services.UpdateService` swap (Phase 118 BUG-884) is the existing escape hatch — generalize for runner-pattern.
+
+### Lesson 7 — ECS + Lambda: tag-based state recovery (no on-disk dispatcher state)
+
+**ECS + Lambda pattern**: Every spawned cloud resource carries `sockerless-managed-by`, `sockerless-container-id`, `sockerless-pod` tags. Restart of the backend rediscovers in-flight containers by listing tagged resources. No persistent local state.
+
+**Why it works**: Cloud APIs are the source of truth. Backend can be killed + restarted at any time; recovery is a single ListTasks/ListFunctions call filtered by managed-by label.
+
+**Cloudrun adjustment**: Already implemented via `core.ResourceRegistry` + `CloudRun` cache + `resolveCloudRunState` cache+cloud-fallback. Verify: the runner-pattern long-lived Cloud Run Services also carry the labels.
+
+**Gcf adjustment**: Already implemented (Phase 118 / BUG-884 era).
+
+### Synthesis — Phase 122f scope (cloudrun + gcf runner unblock)
+
+Combining the lessons, the proper fix path for cells 5-8 is:
+
+1. **Cloudrun**: Switch runner-pattern (long-lived) containers to Cloud Run **Service** path. Pre-deploy one Service per runner-image shape (analogous to ECS pre-registered task-def). Reverse-agent for `docker exec`. Skip overlay-image build (use base image + `command` override).
+2. **Gcf**: For runner-pattern containers, deploy as Cloud Run Service via the gcf backend's existing UpdateService escape hatch (Phase 118 / BUG-884). Pre-deploy one Service per shape. Pool reuse already implemented. Reverse-agent for exec.
+3. **Both**: ContainerStart on runner-pattern → resume Service (`min_instance_count=1`). ContainerStop → suspend (`min_instance_count=0`). ContainerRemove → delete Service.
+
+This avoids the BUG-921/922/923 chain entirely:
+- BUG-921 (RunJob.Wait blocks 105 s): Service path doesn't use Jobs.
+- BUG-922 (container removed after first exec): Service is long-lived; exec doesn't trigger removal.
+- BUG-923 (CreateFunction.Wait blocks 150 s): pre-deployed Service avoids per-container deploy.

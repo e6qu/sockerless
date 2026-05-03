@@ -23,10 +23,23 @@
 #                                    runner-task secret)
 set -euo pipefail
 
-# Required env (no fallbacks, no optional vars — fail loudly):
-: "${SOCKERLESS_GCR_PROJECT:?SOCKERLESS_GCR_PROJECT is required (set by github-runner-dispatcher-gcp from the gcp_project label config)}"
-: "${SOCKERLESS_GCR_REGION:?SOCKERLESS_GCR_REGION is required (set by github-runner-dispatcher-gcp from the gcp_region label config)}"
-: "${SOCKERLESS_GCP_BUILD_BUCKET:?SOCKERLESS_GCP_BUILD_BUCKET is required (set by github-runner-dispatcher-gcp from the build_bucket label config)}"
+# Per CLOUD_RESOURCE_MAPPING.md "Adjustment to dispatcher scope", the
+# dispatcher MUST NOT inject sockerless-shaped env. The runner image
+# auto-discovers its sockerless backend config from the GCP instance
+# metadata server (every Cloud Run instance has access to it via
+# metadata.google.internal). Project + region come from metadata
+# directly; build_bucket + runner_workspace_bucket come from
+# convention (project_id-build, project_id-runner-workspace).
+#
+# This is real cloud primitive use (metadata server is the GCP-blessed
+# config-discovery path), not a synthetic fallback.
+META=http://metadata.google.internal/computeMetadata/v1
+HDR='Metadata-Flavor: Google'
+export SOCKERLESS_GCR_PROJECT=$(curl -sf -H "$HDR" $META/project/project-id)
+export SOCKERLESS_GCR_REGION=$(curl -sf -H "$HDR" $META/instance/region | awk -F/ '{print $NF}')
+export SOCKERLESS_GCP_BUILD_BUCKET="${SOCKERLESS_GCR_PROJECT}-build"
+export SOCKERLESS_GCP_SHARED_VOLUMES="runner-workspace=/tmp/runner-work=${SOCKERLESS_GCR_PROJECT}-runner-workspace,runner-externals=/opt/runner/externals=${SOCKERLESS_GCR_PROJECT}-runner-workspace"
+echo "bootstrap: auto-discovered project=$SOCKERLESS_GCR_PROJECT region=$SOCKERLESS_GCR_REGION"
 
 # Sockerless backend in background. -log-level info keeps CloudWatch /
 # CloudLogging output manageable.
