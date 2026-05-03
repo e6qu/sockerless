@@ -119,9 +119,14 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 	// the container does NOT bind $PORT and is NOT eligible for Service
 	// path — let the caller route it elsewhere or fail loudly. No
 	// defaults, no fallbacks (per project rule).
-	if port := imagePort(ci.Container); port > 0 {
-		containerSpec.Ports = []*runpb.ContainerPort{
-			{ContainerPort: int32(port)},
+	//
+	// Cloud Run multi-container rule: only ONE container per revision
+	// may declare Ports (the ingress one). Sidecars must omit Ports.
+	if ci.IsMain {
+		if port := imagePort(ci.Container); port > 0 {
+			containerSpec.Ports = []*runpb.ContainerPort{
+				{ContainerPort: int32(port)},
+			}
 		}
 	}
 
