@@ -276,19 +276,22 @@ func (s *Server) ContainerStart(ref string) error {
 
 	if len(podContainers) > 1 {
 		// Multi-container pod: build combined resource and run
-		if s.config.UseService && isRunnerPattern(&c) {
+		if s.useServicePath(&c) {
 			return s.startMultiContainerServiceTyped(id, podContainers, exitCh)
 		}
 		return s.startMultiContainerJobTyped(id, podContainers, exitCh)
 	}
 
-	// Phase 122f: Service path ONLY for runner-pattern (long-lived
-	// containers that bind $PORT or run `tail -f /dev/null`-style
-	// hold-open commands). Permission containers (one-shot chown,
-	// alpine `echo hello`, etc.) go via Cloud Run Job — they exit
-	// immediately and don't bind $PORT, which Cloud Run Service
-	// would reject as failed-startup.
-	if s.config.UseService && isRunnerPattern(&c) {
+	// Phase 122g: route to Service path when EITHER:
+	//   - the image was overlay-built with sockerless-cloudrun-bootstrap
+	//     (BootstrapBinaryPath set + image in sockerless-overlay AR
+	//     repo) — bootstrap binds $PORT so Cloud Run Service is happy;
+	//   - OR the image declares ExposedPorts / has the
+	//     sockerless.runner-pattern label (legacy isRunnerPattern path).
+	//
+	// Otherwise (stock images, no overlay, no exposed ports) fall back
+	// to Cloud Run Job — one-shot, container exits when cmd exits.
+	if s.useServicePath(&c) {
 		return s.startSingleContainerService(id, c, crState, exitCh)
 	}
 

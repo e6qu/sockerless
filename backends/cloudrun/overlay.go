@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 	gcpcommon "github.com/sockerless/gcp-common"
 )
@@ -63,6 +64,25 @@ func (s *Server) useOverlayPath(image string) bool {
 		return false
 	}
 	return true
+}
+
+// useServicePath reports whether ContainerStart should route this
+// container to a Cloud Run Service rather than a Cloud Run Job. Phase
+// 122g: route to Service when the container's image is a sockerless
+// overlay (bootstrap binds $PORT — Service health check passes) OR
+// the container matches the legacy runner-pattern signal (ExposedPorts
+// / explicit label). Otherwise (stock one-shot images) stay on Job.
+func (s *Server) useServicePath(c *api.Container) bool {
+	if !s.config.UseService {
+		return false
+	}
+	if c == nil {
+		return false
+	}
+	if hasSockerlessOverlayRepo(c.Config.Image) {
+		return true
+	}
+	return isRunnerPattern(c)
 }
 
 func hasSockerlessOverlayRepo(image string) bool {
