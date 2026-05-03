@@ -113,8 +113,13 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	s.Typed.Logs = core.NewCloudLogsLogsDriver(s.BaseServer, logFactory,
 		core.StreamCloudLogsOptions{},
 		"cloudrun", "CloudLogging")
-	s.Typed.Attach = core.NewCloudLogsAttachDriver(s.BaseServer, logFactory,
-		"cloudrun", "CloudLogsReadOnlyAttach")
+	// Wire ContainerAttach via the legacy adapter so opts.Stdin attaches
+	// route through cloudrun.ContainerAttach (which sets up the stdin
+	// pipe + hijacked attach stream for overlay containers). Read-only
+	// attaches (no Stdin) fall through to AttachViaCloudLogs inside
+	// cloudrun.ContainerAttach.
+	s.Typed.Attach = core.WrapLegacyContainerAttach(s.ContainerAttach,
+		"cloudrun", "ContainerAttach")
 
 	return s
 }
