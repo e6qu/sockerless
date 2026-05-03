@@ -44,6 +44,14 @@ const (
 	envUserEntrypoint = "SOCKERLESS_USER_ENTRYPOINT" // base64(JSON-encoded argv)
 	envUserCmd        = "SOCKERLESS_USER_CMD"        // base64(JSON-encoded argv)
 	envUserWorkdir    = "SOCKERLESS_USER_WORKDIR"    // chdir target (optional)
+	// SOCKERLESS_HOST_ALIASES = comma-separated list of hostnames that
+	// should resolve to 127.0.0.1 (sidecar containers in the same Cloud
+	// Run Service revision share loopback). Sourced by the cloudrun
+	// backend from the standard Docker NetworkingConfig.EndpointsConfig
+	// .Aliases of every sibling container in the same docker user-defined
+	// network. Written to /etc/hosts at bootstrap startup so user code
+	// can `pg_isready -h <alias>` etc.
+	envHostAliases = "SOCKERLESS_HOST_ALIASES"
 )
 
 // execEnvelopeRequest is the JSON shape the cloudrun backend POSTs for
@@ -77,6 +85,10 @@ type execEnvelopeResponse struct {
 var invokeMu sync.Mutex
 
 func main() {
+	if err := writeHostAliases(os.Getenv(envHostAliases)); err != nil {
+		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: write host aliases: %v\n", err)
+	}
+
 	port := os.Getenv(envPort)
 	if port == "" {
 		port = "8080"
@@ -237,6 +249,39 @@ func parseUserArgv(key string) []string {
 		return nil
 	}
 	return out
+}
+
+// writeHostAliases appends `127.0.0.1 <alias>` lines to /etc/hosts for
+// each comma-separated alias in `raw`. This is how the cloudrun backend
+// makes Docker-network DNS aliases resolve to loopback when sibling
+// containers are deployed as Cloud Run multi-container sidecars (sharing
+// the same loopback). Empty raw → no-op. Idempotent across restarts: we
+// only append, but each fresh container has a fresh /etc/hosts.
+func writeHostAliases(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var aliases []string
+	for _, a := range strings.Split(raw, ",") {
+		if a = strings.TrimSpace(a); a != "" {
+			aliases = append(aliases, a)
+		}
+	}
+	if len(aliases) == 0 {
+		return nil
+	}
+	f, err := os.OpenFile("/etc/hosts", os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	line := "127.0.0.1\t" + strings.Join(aliases, " ") + "\n"
+	if _, err := f.WriteString(line); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: /etc/hosts += %q\n", line)
+	return nil
 }
 
 // quoteArgv single-quotes each argv entry so the joined line is safe

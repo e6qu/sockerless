@@ -268,7 +268,30 @@ func (s *Server) ContainerStart(ref string) error {
 
 	s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 
-	// Deferred start: if container is in a multi-container pod, wait for all siblings
+	// Docker-network → Cloud Run multi-container Service mapping
+	// (specs/CLOUD_RESOURCE_MAPPING.md § "User-defined network ↔ multi-
+	// container Service revision"). Pure standard-Docker signal: network
+	// membership + Container.Config.OpenStdin. No runner-specific code.
+	netDefer, netMembers := s.shouldDeferOrMaterializeNetworkPod(c)
+	if netDefer {
+		// Service-style sidecar — eventual deploy will be triggered when
+		// a script-runner (OpenStdin=true) on the same network starts.
+		// Mark the container "running" so subsequent ContainerInspect
+		// reports the eventual state. The Cloud Run Service revision will
+		// run all sidecars in parallel; their startup probes guarantee
+		// they're listening before traffic flows.
+		s.PendingCreates.Update(id, func(pc *api.Container) {
+			pc.State.Status = "running"
+			pc.State.Running = true
+			pc.State.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		})
+		return nil
+	}
+	if len(netMembers) > 1 {
+		return s.startMultiContainerServiceTyped(id, netMembers, exitCh)
+	}
+
+	// Explicit pod (PodCreate API) deferred start.
 	shouldDefer, podContainers := s.PodDeferredStart(id)
 	if shouldDefer {
 		return nil

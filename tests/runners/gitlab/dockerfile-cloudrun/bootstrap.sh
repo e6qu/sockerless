@@ -91,6 +91,21 @@ sed -i '/\[runners.docker\]/a\
     helper_image = "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-v17.5.0"' \
     /etc/gitlab-runner/config.toml
 
+# Skip gitlab-runner's wait-for-services healthcheck container — it
+# spawns a per-service helper container that does TCP probe to the
+# service's published port. On Cloud Run the service container is
+# deployed as a sidecar in the SAME Cloud Run Service revision as
+# the build container; postgres listens on 127.0.0.1:5432 (loopback
+# shared between sidecars) and Cloud Run waits for every container's
+# StartupProbe before serving traffic, so the healthcheck is
+# redundant. wait_for_services_timeout = -1 disables it (verified
+# in gitlab-runner v17.5 executors/docker/services.go::waitForServices).
+# This is a runner-side config knob — the backend has zero awareness
+# of it and continues to speak only the standard Docker API.
+sed -i '/\[runners.docker\]/a\
+    wait_for_services_timeout = -1' \
+    /etc/gitlab-runner/config.toml
+
 # /cache stays in volumes — sockerless cloudrun backend MUST mount it
 # via the cloud resource mapping (GCS bucket per backends/cloudrun/
 # volumes.go::bucketForVolume + Cloud Run Job Volume{Gcs{Bucket}}).

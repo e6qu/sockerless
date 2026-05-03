@@ -3,9 +3,11 @@ package cloudrun
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	runpb "cloud.google.com/go/run/apiv2/runpb"
+	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
@@ -51,6 +53,29 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 				},
 			})
 			volSeen[mp.Name] = struct{}{}
+		}
+	}
+
+	// Multi-container revision: inject SOCKERLESS_HOST_ALIASES into the
+	// main container's env so the bootstrap can write `127.0.0.1 <alias>`
+	// to /etc/hosts. The aliases are aggregated from every sibling's
+	// standard Docker NetworkingConfig.EndpointsConfig.<net>.Aliases —
+	// no runner-specific code (the signal is pure Docker API).
+	if len(containers) > 1 && len(specs) > 0 {
+		members := make([]api.Container, 0, len(containers))
+		for _, ci := range containers {
+			members = append(members, *ci.Container)
+		}
+		netID := ""
+		if id, ok := s.userDefinedNetworkID(*containers[0].Container); ok {
+			netID = id
+		}
+		aliases := hostAliasesForMembers(members, netID)
+		if len(aliases) > 0 {
+			specs[0].Env = append(specs[0].Env, &runpb.EnvVar{
+				Name:   "SOCKERLESS_HOST_ALIASES",
+				Values: &runpb.EnvVar_Value{Value: strings.Join(aliases, ",")},
+			})
 		}
 	}
 

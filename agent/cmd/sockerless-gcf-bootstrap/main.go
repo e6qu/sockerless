@@ -91,6 +91,12 @@ const (
 	// response body. Other members run in the background. Defaults to
 	// the last entry in the manifest if unset.
 	envPodMain = "SOCKERLESS_POD_MAIN"
+	// SOCKERLESS_HOST_ALIASES = comma-separated list of hostnames that
+	// should resolve to 127.0.0.1 (sidecar containers in the same Cloud
+	// Run Service revision share loopback). Sourced by the gcf backend
+	// from the standard Docker NetworkingConfig.EndpointsConfig.Aliases
+	// of every sibling container in the same docker user-defined network.
+	envHostAliases = "SOCKERLESS_HOST_ALIASES"
 )
 
 // PodMember describes one container inside a pod. The supervisor runs
@@ -116,6 +122,10 @@ type PodMember struct {
 var invokeMu sync.Mutex
 
 func main() {
+	if err := writeHostAliases(os.Getenv(envHostAliases)); err != nil {
+		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: write host aliases: %v\n", err)
+	}
+
 	port := os.Getenv(envPort)
 	if port == "" {
 		port = "8080"
@@ -535,4 +545,36 @@ func (p *prefixWriter) Write(b []byte) (int, error) {
 		p.atLineSt = true
 	}
 	return written, nil
+}
+
+// writeHostAliases appends `127.0.0.1 <alias>` lines to /etc/hosts for
+// each comma-separated alias in `raw`. This is how the gcf backend
+// makes Docker-network DNS aliases resolve to loopback when sibling
+// containers are deployed as Cloud Run multi-container sidecars (sharing
+// the same loopback). Empty raw → no-op. Mirrors the cloudrun bootstrap.
+func writeHostAliases(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var aliases []string
+	for _, a := range strings.Split(raw, ",") {
+		if a = strings.TrimSpace(a); a != "" {
+			aliases = append(aliases, a)
+		}
+	}
+	if len(aliases) == 0 {
+		return nil
+	}
+	f, err := os.OpenFile("/etc/hosts", os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	line := "127.0.0.1\t" + strings.Join(aliases, " ") + "\n"
+	if _, err := f.WriteString(line); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: /etc/hosts += %q\n", line)
+	return nil
 }
