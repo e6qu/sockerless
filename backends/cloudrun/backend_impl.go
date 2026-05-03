@@ -233,15 +233,19 @@ func (s *Server) ContainerStart(ref string) error {
 
 	if len(podContainers) > 1 {
 		// Multi-container pod: build combined resource and run
-		if s.config.UseService {
+		if s.config.UseService && isRunnerPattern(&c) {
 			return s.startMultiContainerServiceTyped(id, podContainers, exitCh)
 		}
 		return s.startMultiContainerJobTyped(id, podContainers, exitCh)
 	}
 
-	// — Services path. Separate function so the Jobs branch
-	// below can be deleted when Jobs support is sunset.
-	if s.config.UseService {
+	// Phase 122f: Service path ONLY for runner-pattern (long-lived
+	// containers that bind $PORT or run `tail -f /dev/null`-style
+	// hold-open commands). Permission containers (one-shot chown,
+	// alpine `echo hello`, etc.) go via Cloud Run Job — they exit
+	// immediately and don't bind $PORT, which Cloud Run Service
+	// would reject as failed-startup.
+	if s.config.UseService && isRunnerPattern(&c) {
 		return s.startSingleContainerService(id, c, crState, exitCh)
 	}
 
