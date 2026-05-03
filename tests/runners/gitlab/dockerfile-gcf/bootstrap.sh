@@ -42,9 +42,15 @@ gitlab-runner register \
     --docker-host "tcp://localhost:3376" \
     --docker-pull-policy if-not-present
 
-# BUG-915: post-edit to ensure disable_cache=true (default cache
-# volume name exceeds GCS 63-char limit).
+# BUG-915: post-edit to ensure disable_cache=true.
 sed -i 's/disable_cache = false/disable_cache = true/' /etc/gitlab-runner/config.toml
+
+# BUG-918 wedge: pin helper_image to tag form (avoids sha256: digest
+# refs that sockerless's image-resolve mangles).
+sed -i '/\[runners.docker\]/a\
+    helper_image = "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-v17.5.0"' \
+    /etc/gitlab-runner/config.toml
+
 cat /etc/gitlab-runner/config.toml
 
 exec gitlab-runner run --config /etc/gitlab-runner/config.toml --working-directory /tmp/runner-work

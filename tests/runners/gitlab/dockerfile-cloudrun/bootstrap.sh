@@ -74,6 +74,15 @@ gitlab-runner register \
 # to config.toml. Post-edit to ensure disable_cache=true (the default
 # gitlab-runner cache volume name exceeds GCS's 63-char bucket limit).
 sed -i 's/disable_cache = false/disable_cache = true/' /etc/gitlab-runner/config.toml
+
+# BUG-918 wedge: pin helper_image to the tag-form so gitlab-runner's
+# permission containers don't reference the bare sha256:<digest> form
+# that sockerless's parseDockerRef mangles into a broken AR URL.
+# Insert helper_image line after [runners.docker] section header.
+sed -i '/\[runners.docker\]/a\
+    helper_image = "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-v17.5.0"' \
+    /etc/gitlab-runner/config.toml
+
 echo "bootstrap: gitlab-runner config.toml:"
 cat /etc/gitlab-runner/config.toml
 
