@@ -1061,3 +1061,69 @@ This avoids the BUG-921/922/923 chain entirely:
 - BUG-921 (RunJob.Wait blocks 105 s): Service path doesn't use Jobs.
 - BUG-922 (container removed after first exec): Service is long-lived; exec doesn't trigger removal.
 - BUG-923 (CreateFunction.Wait blocks 150 s): pre-deployed Service avoids per-container deploy.
+
+## Backend ↔ primitive purity (no cross-contamination rule)
+
+User directive 2026-05-03: each backend MUST use ITS OWN cloud's primitives. Where a single primitive doesn't natively fit a docker semantic, sockerless CHAINS or PARALLELS multiple invocations of that primitive to build the right abstraction. NEVER use a different cloud's primitive (e.g. don't deploy ACA from cloudrun backend, don't use Cloud Run Service from gcf backend except where Gen2 inherently IS a Cloud Run Service per Google's own architecture).
+
+### What "underlying cloud abstraction" means per backend
+
+| Backend | Native primitive(s) | Long-lived strategy | Multi-container strategy |
+|---|---|---|---|
+| **ECS** | Fargate task | RUNNING task with `tail -f /dev/null`-style cmd | Multi-container task definition |
+| **Lambda** | Lambda Function (image-mode) | Single Invoke held open via in-image supervisor; chain Invokes for sequential commands | Phase 118d pod-overlay supervisor: ONE Function with chrooted sidecars |
+| **cloudrun** | Cloud Run Job + Cloud Run Service (both ARE Cloud Run) | Service (`min_instance_count=1` + always-on CPU) for long-lived; Job for one-shot user `docker run` | Multi-container Service or Job |
+| **cloudrun-functions (gcf)** | Cloud Function Gen2 (Function resource; backed by Cloud Run Service per GCP architecture, but the resource we create/manage IS the Function) | Chain Function invocations: each `docker exec` = HTTP POST to function URL; in-image overlay-bootstrap HTTP server holds invocation state between commands | Pod-overlay supervisor (Phase 118d) — ONE Function with chrooted sidecars (sequential), OR parallel Function invocations (one Function per pod member) for true parallelism |
+| **ACA** | Container Apps App | App with `min_replicas=1`, native long-lived | Multi-container app template |
+| **AZF** | Azure Function | Same as gcf — chain Function invocations via HTTP triggers | Pod-overlay supervisor (mirror gcf) |
+| **docker** | Local docker daemon | Native | Native |
+
+### Chaining + parallel patterns (FaaS backends specifically)
+
+For backends whose primitive is invocation-based (Lambda, gcf, AZF), sockerless builds long-lived semantics by CHAINING invocations:
+
+1. **Single long-lived container** = ONE Function deployed once + N HTTP invocations over its lifetime. Each invocation runs a single command. State (workspace, environment) survives in the function's filesystem (or shared GCS/EFS for cross-invocation persistence).
+
+2. **`docker exec` against long-lived container** = HTTP POST to the function URL with exec payload `{"cmd": "<argv>", "stdin": "<base64>", "env": {...}}`. Function's overlay-bootstrap parses payload, runs `bash -c "$cmd"`, returns stdout/stderr/exit-code.
+
+3. **Multi-container pod (sequential)** = ONE Function with overlay-bootstrap supervisor that fork+chroot+exec's per non-main pod member as background sidecars. Main member runs in foreground per HTTP invoke. (Phase 118d pattern.)
+
+4. **Multi-container pod (parallel)** = N Functions invoked in parallel via fan-out from the backend, with cross-invocation state via shared GCS bucket OR pubsub message bus. Useful when pod members must scale independently.
+
+5. **Long-running CI pipeline** = many `docker exec` calls = many sequential HTTP invocations against the same Function. Function instance kept warm via `min_instance_count=1` on the underlying Cloud Run Service (Gen2 only).
+
+### What this means for the runner cells
+
+**Cell 5 (GH × cloudrun)**:
+- Runner-task = Cloud Run Job (one-shot dispatcher spawn)
+- Helper container, postgres service, build container = each as Cloud Run **Service** (long-lived, persistent across `docker exec`)
+- `docker exec` = reverse-agent WebSocket from in-image bootstrap
+
+**Cell 6 (GH × gcf)**:
+- Runner-task = Cloud Run Job spawned by dispatcher (the dispatcher itself is invocation-based, not gcf — that's the dispatcher's choice; the dispatcher only spawns runners and isn't a runner itself)
+- Helper container, postgres service, build container = each as Cloud **Function Gen2** (one Function per container; HTTP-POST per `docker exec`; in-image overlay-bootstrap chains invocations)
+- Postgres long-lived = Function `min_instance_count=1` so the postgres process stays warm between exec calls
+
+**Cell 7 (GL × cloudrun)**: same as cell 5 (gitlab-runner master polls for jobs, dispatches to in-runner-image cloudrun backend).
+
+**Cell 8 (GL × gcf)**: same as cell 6 (gcf backend chains Function invocations).
+
+### Concrete implementation per backend (Phase 122f)
+
+**cloudrun backend**:
+- ContainerCreate with runner-pattern detect (`tail -f /dev/null` cmd) → Cloud Run Service path (UseService=1).
+- ContainerCreate without runner-pattern → existing Cloud Run Job path.
+- ContainerStart on Service-path container → ensure Service is `min_instance_count=1` (resume from suspended state).
+- ContainerExec → reverse-agent WebSocket (in-image bootstrap dials back to backend; backend multiplexes exec stdin/stdout).
+- ContainerStop → Service `min_instance_count=0` (suspend).
+- ContainerRemove → DeleteService.
+
+**gcf backend**:
+- ContainerCreate with runner-pattern detect → CreateFunction with overlay-bootstrap image (Phase 118d). Set `min_instance_count=1` on the underlying Cloud Run Service via UpdateService (this is gcf's primitive — the Cloud Run Service IS the Function's runtime; we manage it via the Functions API + the documented escape hatch).
+- ContainerCreate without runner-pattern → existing one-shot Function path.
+- ContainerStart → ensure Function has been deployed (CreateFunction succeeded) + initial HTTP invocation to "warm" the instance.
+- ContainerExec → HTTP POST to function URL with exec payload. Bootstrap inside parses + runs + returns. State (workspace files) survives in the function's local FS for the warm instance lifetime; cross-invocation persistence rides shared GCS (already implemented via SharedVolumes).
+- ContainerStop → UpdateService to set `min_instance_count=0`.
+- ContainerRemove → DeleteFunction.
+
+**No cross-contamination**: gcf NEVER creates standalone Cloud Run Services that aren't function-backed. cloudrun NEVER calls Cloud Functions API. Each backend stays in its lane.
