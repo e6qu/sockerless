@@ -210,6 +210,18 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 	}
 	if !ok {
+		// BUG-922 fix: gitlab-runner does start→wait→stop→start cycling
+		// per stage on the SAME container ID. After first ContainerStart
+		// PendingCreates is cleared, so subsequent restarts must look up
+		// via CloudState. Re-add to PendingCreates so the existing flow
+		// below can re-create the Cloud Run Job (with potentially new cmd).
+		if got, hit := s.ResolveContainerAuto(s.ctx(), ref); hit {
+			c = got
+			ok = true
+			s.PendingCreates.Put(c.ID, c)
+		}
+	}
+	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
 	id := c.ID
