@@ -1029,15 +1029,25 @@ ECS (cells 1+3 GREEN against live AWS) and Lambda (cells 2+4 GREEN) are the exis
 
 **Gcf adjustment**: Same as cloudrun (BUG-909).
 
-### Lesson 6 — Lambda: overlay-image pattern for entrypoint customization
+### Lesson 6 — Lambda: overlay-image pattern for reverse-agent injection (REVISED 2026-05-03 / BUG-927)
 
-**Lambda pattern**: Each `docker create` triggers a CodeBuild that builds an overlay image bakein the user's `Entrypoint` + `Cmd` + bind-link symlinks. Lambda Function deploys with that overlay. Pool reuse keeps free Functions warm by content-hash.
+**Lambda pattern**: `image_inject.go::RenderOverlayDockerfile` produces an overlay Dockerfile that COPYs `sockerless-agent` + `sockerless-lambda-bootstrap` into the user's image. Cloud Build → push to AR (or ECR) → Lambda Function deploys with that overlay. The bootstrap owns the entrypoint and serves the Lambda Runtime API; user's original `ENTRYPOINT`/`CMD` rides as `SOCKERLESS_USER_*` env vars. Pool reuse keys on overlay-content-hash.
 
-**Why it works**: Lambda image-mode requires `ENTRYPOINT` baked at deploy time. Overlay decouples user's entrypoint from the base image.
+**Why it works**: Stock images (`golang:1.22-alpine`, `postgres:16-alpine`) have no sockerless bootstrap. Without injection, there is no in-container endpoint for `docker exec` to dispatch to. Overlay is the prerequisite for ALL reverse-agent / agent-as-handler flows.
 
-**Cloudrun adjustment**: Cloud Run Service supports `command` + `args` overrides at deploy time — no overlay needed. Use the base image directly + Cloud Run's `Container.command` + `Container.args` fields. Skip CodeBuild for cloudrun Service path entirely.
+**Cloudrun adjustment (REVISED — was wrong before)**: cloudrun MUST also overlay-inject for any stock image used as a long-lived runner build container. Without it, Cloud Run Service has no exec endpoint → BUG-927 fake-success (cell 7 reported success but workload never ran because gitlab-runner's `docker exec` returned 409 against a one-shot Cloud Run Job that exited immediately, and the failure didn't propagate). Lift `image_inject.go` to `gcp-common/image_inject.go` so cloudrun + gcf share the renderer + Cloud Build trigger. Bootstrap binary: `sockerless-cloudrun-bootstrap` (parallel to `sockerless-lambda-bootstrap`). Cache key: `OverlayContentTag(BaseImageRef, BootstrapBinaryPath, UserEntrypoint, UserCmd, UserWorkdir)`.
 
-**Gcf adjustment**: Gen2 Function deploys via Cloud Build automatically (the buildpacks path) — overlay only needed when the user's container can't run as a Gen2 function. For runner-pattern containers (long-lived, custom CMD), use the underlying Cloud Run Service `command` override instead of overlay. The `Run.Services.UpdateService` swap (Phase 118 BUG-884) is the existing escape hatch — generalize for runner-pattern.
+**Gcf adjustment**: Already implemented (`backends/cloudrun-functions/image_inject.go`). Verify: same overlay applied for runner-pattern containers; `OverlayContentTag` keying matches Lambda's so per-cloud caches stay coherent.
+
+### Lesson 8 — Lambda: `execStartViaInvoke` (Path B) for invocation-based exec
+
+**Lambda pattern**: `backends/lambda/exec_invoke.go::execStartViaInvoke` — each `docker exec` builds a JSON `execEnvelope{argv, tty, workdir, env, stdin}`, fires `lambda.Invoke(payload=envelope)`, and parses the response `{exitCode, stdout, stderr}` (base64-encoded). The in-image `sockerless-lambda-bootstrap` recognises the envelope shape, runs the cmd, returns the result. NO long-running process needed; pure invoke-per-exec.
+
+**Why it works**: Lambda has no native exec API but has a synchronous Invoke API with arbitrary JSON payload. The bootstrap-as-shell-runner pattern bridges the gap deterministically.
+
+**Gcf adjustment (PRIMARY PATH)**: Cloud Run Function Gen2 = HTTP-invoke-on-demand → identical pattern. ContainerExec → POST to `Function.ServiceConfig.Uri` with `execEnvelope` body → bootstrap parses + runs + returns. NO reverse-agent WebSocket needed; the HTTP request/response IS the bridge. Already partly in place (Phase 118d HTTP invoke for the main cmd); extend to recognise envelope shape for exec.
+
+**Cloudrun adjustment**: Cloud Run Service URL is also HTTP-invokable. Same shape: ContainerExec → POST to Service URL with envelope. The reverse-agent WebSocket pattern (currently in cloudrun for streaming attach) becomes secondary — use it only for interactive exec (TTY+stdin) where HTTP request/response is too coarse.
 
 ### Lesson 7 — ECS + Lambda: tag-based state recovery (no on-disk dispatcher state)
 
@@ -1049,18 +1059,16 @@ ECS (cells 1+3 GREEN against live AWS) and Lambda (cells 2+4 GREEN) are the exis
 
 **Gcf adjustment**: Already implemented (Phase 118 / BUG-884 era).
 
-### Synthesis — Phase 122f scope (cloudrun + gcf runner unblock)
+### Synthesis — Phase 122g scope (cloudrun + gcf runner unblock — REVISED post-BUG-927)
 
 Combining the lessons, the proper fix path for cells 5-8 is:
 
-1. **Cloudrun**: Switch runner-pattern (long-lived) containers to Cloud Run **Service** path. Pre-deploy one Service per runner-image shape (analogous to ECS pre-registered task-def). Reverse-agent for `docker exec`. Skip overlay-image build (use base image + `command` override).
-2. **Gcf**: For runner-pattern containers, deploy as Cloud Run Service via the gcf backend's existing UpdateService escape hatch (Phase 118 / BUG-884). Pre-deploy one Service per shape. Pool reuse already implemented. Reverse-agent for exec.
-3. **Both**: ContainerStart on runner-pattern → resume Service (`min_instance_count=1`). ContainerStop → suspend (`min_instance_count=0`). ContainerRemove → delete Service.
+1. **Lift `image_inject.go` to `gcp-common`**: shared overlay renderer + Cloud Build trigger for cloudrun + gcf. New binary: `sockerless-cloudrun-bootstrap` (parallel to `sockerless-lambda-bootstrap`), recognising the same `execEnvelope` shape.
+2. **Cloudrun**: ALL containers route to Cloud Run **Service** (drop `isRunnerPattern` gating — gitlab-runner's stock images need long-lived host + exec endpoint regardless of ExposedPorts). Service is overlay-imaged (Lesson 6 revised). `docker exec` = Path B HTTP POST to Service URL with `execEnvelope` (Lesson 8). Pre-deploy one Service per runner-image shape via terraform-managed shape pool; per-container deploy is content-hash claim from pool (Lesson 1 + Lesson 2 combined).
+3. **Gcf**: Identical to cloudrun — overlay-imaged Function (`OverlayContentTag` cache); `docker exec` = Path B HTTP POST to `Function.ServiceConfig.Uri` with `execEnvelope`. Pool-reuse already implemented; verify hot path < 10s for second invocation of same content-hash.
+4. **Both**: ContainerStart → claim free pool entry OR overlay-build + deploy. ContainerStop → release back to pool (clear `sockerless_allocation` label) up to pool cap. ContainerRemove → delete from pool above cap.
 
-This avoids the BUG-921/922/923 chain entirely:
-- BUG-921 (RunJob.Wait blocks 105 s): Service path doesn't use Jobs.
-- BUG-922 (container removed after first exec): Service is long-lived; exec doesn't trigger removal.
-- BUG-923 (CreateFunction.Wait blocks 150 s): pre-deployed Service avoids per-container deploy.
+This dissolves BUG-921/922/923/925/927 entirely — the docker-exec lifecycle no longer tries to make Cloud Run Jobs do exec semantics. Cells 5-8 then compile + use eval-arithmetic + probe environment with REAL workload streaming back via the HTTP response body (logged to Cloud Logging by Cloud Run for `docker logs --follow` parity).
 
 ## Backend ↔ primitive purity (no cross-contamination rule)
 

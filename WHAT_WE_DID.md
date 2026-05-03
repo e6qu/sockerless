@@ -6,9 +6,20 @@ See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for
 
 This file keeps narrative / "why we did it" context that doesn't live in BUGS.md or git log. Per-bug detail belongs in [BUGS.md](BUGS.md) — don't duplicate it here.
 
-## Phase 122e — Cells 5-8 live-GCP bug chain + dispatcher cleanup + spec hardening (in flight 2026-05-03)
+## Phase 122f — BUG-927 root-cause discovery; Phase 122g architectural plan locked (2026-05-03)
 
-End of session 2026-05-03 had 4 GCP runner cells in flight against `sockerless-live-46x3zg4imo`. 15+ live-only bugs surfaced + closed (BUG-907..921). Cells still failing on the architectural mismatch between Cloud Run Jobs (one-shot) and runner expectations (long-lived containers persisting across N exec calls). The Phase 122e session ends with this state captured in 4 new spec sections + dispatcher scope cleanup + bootstrap auto-discovery; Phase 122f scope (Cloud Run Service path for runner-pattern containers) is the proper-fix path for the remaining BUG-922 + BUG-923.
+End of session 2026-05-03 v12: cells 5-8 still failing, but the architectural blocker is now precisely diagnosed. Cell 7 reported SUCCESS but Cloud Logging proved ZERO workload markers (no `apk add`, `git clone`, `eval-arithmetic`). Backend trace pattern `attach 200 (216s) → exec 409 'Container not running' → wait 200 → stop 304 × N` confirms gitlab-runner expects a long-lived build container with per-stage `docker exec`; Cloud Run Job (one-shot) cannot host that model and stock images (`golang:1.22-alpine`, `postgres:16-alpine`) have no in-container exec endpoint. BUG-927 captured.
+
+**Phase 122g plan (next session, in DO_NEXT.md)**: lift `backends/lambda/image_inject.go` → `backends/gcp-common/image_inject.go`, new `sockerless-cloudrun-bootstrap` binary, drop `isRunnerPattern` gating, `ContainerExec` = Path B HTTP POST with `execEnvelope` (Lambda's `execStartViaInvoke` analogue) for both cloudrun + gcf. Pre-deploy Service per shape via terraform. This dissolves BUG-921/922/923/925/927.
+
+**Spec doc updates (2026-05-03 v12)**:
+- `specs/CLOUD_RESOURCE_MAPPING.md` Lesson 6 REVISED — overlay IS needed on cloudrun for stock images (was wrongly stated as "skip overlay" before BUG-927).
+- Lesson 8 ADDED — Lambda's `execStartViaInvoke` Path B as the gcf+cloudrun adaptation pattern.
+- Synthesis section rewritten for Phase 122g scope.
+
+## Phase 122e — Cells 5-8 live-GCP bug chain + dispatcher cleanup + spec hardening (closed 2026-05-03)
+
+15+ live-only bugs surfaced + closed (BUG-907..921 + BUG-924). The Phase 122e session captured the architectural state in 4 new spec sections + dispatcher scope cleanup + bootstrap auto-discovery. The "Phase 122f scope" originally framed as "Cloud Run Service path for runner-pattern" turned out to be incomplete — Phase 122g (overlay + Path B exec) is the actual unblock per BUG-927 evidence.
 
 **Spec doc (`specs/CLOUD_RESOURCE_MAPPING.md`) grew from ~840 lines → 1063 lines** with 4 new sections written this session:
 

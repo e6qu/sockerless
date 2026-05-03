@@ -604,20 +604,25 @@ The only documented mapping is the post-create UpdateService image-swap pattern 
 
 **Phase 118 PR rule**: per guiding principle #11, this phase closes only when the sub-118d-gcf + sub-118d-lambda commits land on a branch (`phase-118-faas-pods`), the PR is opened against `main`, and all CI jobs pass green. User merges (workflow rule).
 
-### Phase 122f — Cloud Run Service path for runner-pattern containers (NEXT — open)
+### Phase 122g — Lift `image_inject` to gcp-common + Path B HTTP exec (NEXT — open)
 
-**Why.** Cells 5-8 surfaced live (2026-05-03) that Cloud Run Jobs (one-shot) cannot host the long-lived containers gitlab-runner + github-actions-runner expect. BUG-921/922/923 chain — RunJob.Wait blocks, container removed after first exec, CreateFunction.Wait blocks — are all symptoms of the Job-vs-Service architecture mismatch. The proper fix per `specs/CLOUD_RESOURCE_MAPPING.md` § "Runner job lifecycle" + "Lessons from ECS+lambda → cloudrun+gcf adjustments":
+**Why.** Phase 122f's "Service path for runner-pattern only" plan was incomplete. BUG-927 surfaced the deeper truth (2026-05-03 v12): cell 7 reported SUCCESS while running ZERO workload. Backend trace `attach 200 (216s) → exec 409 'Container not running' → wait 200 → stop 304 × N` proves gitlab-runner needs long-lived build container + per-stage `docker exec`; Cloud Run Job (one-shot) cannot host that, AND stock images (`golang:1.22-alpine`, `postgres:16-alpine`) have no in-container exec endpoint. Without overlay-injection of a bootstrap, `docker exec` against any cloudrun container is structurally impossible.
 
-1. Enable VPC Access on the live project (currently disabled): `gcloud services enable vpcaccess.googleapis.com compute.googleapis.com`.
-2. Apply terraform to provision VPC + subnet + connector (resources already in `terraform/modules/cloudrun/main.tf`).
-3. Set `SOCKERLESS_GCR_USE_SERVICE=1` + `SOCKERLESS_GCR_VPC_CONNECTOR=<auto-discovered>` in the runner image bootstrap.
-4. Implement reverse-agent end-to-end for cloudrun (port from ACA where it works); the in-image bootstrap dials back when `SOCKERLESS_CALLBACK_URL` is set.
-5. ContainerCreate runner-pattern detection: `tail -f /dev/null` cmd OR explicit `sockerless.runner-pattern=true` label → Service path with `Container.command` override (skip overlay-image build per Lesson 6).
-6. Pre-deploy ONE Cloud Run Service per runner-image shape (Lesson 1, ECS task-def pattern). Sub-task ContainerStart updates the existing Service's revision env instead of creating a fresh Service.
-7. Pool reuse via `min_instance_count` toggle: ContainerStop → 0 (suspend), ContainerStart → 1 (resume).
-8. For gcf: same shape via the underlying Cloud Run Service that Functions Gen2 wraps (UpdateService escape hatch, Phase 118 BUG-884 generalization).
+The fix mirrors what Lambda already does. Per `specs/CLOUD_RESOURCE_MAPPING.md` § Lesson 6 (REVISED for BUG-927) + Lesson 8 (`execStartViaInvoke` Path B) + Synthesis — Phase 122g scope:
 
-**Closes**: BUG-921 (no Jobs.RunJob.Wait), BUG-922 (Service is long-lived), BUG-923 (pre-deployed Service avoids per-container deploy). Cells 5-8 should GREEN end-to-end.
+1. **Lift `backends/lambda/image_inject.go` → `backends/gcp-common/image_inject.go`** — shared overlay renderer (Dockerfile generator + Cloud Build trigger) for cloudrun + gcf. Parameterize bootstrap binary path + per-cloud env-var names.
+2. **New `agent/cmd/sockerless-cloudrun-bootstrap`** mirroring `sockerless-lambda-bootstrap`: HTTP server bound to `$PORT`, recognises `execEnvelope{argv,tty,workdir,env,stdin}` request body, runs cmd, returns `{exitCode,stdout,stderr}` (base64) in response. Identical envelope to lambda.
+3. **cloudrun ContainerCreate** — drop `isRunnerPattern` gating (delete `runner_pattern.go`); ALL containers route to Cloud Run Service via overlay. Overlay built once per content-hash, cached in AR.
+4. **cloudrun ExecStart — Path B HTTP POST** to Service URL with `execEnvelope`. Reverse-agent WS reserved only for interactive TTY+stdin (rare). Replaces the half-implemented WS path.
+5. **gcf ExecStart — Path B HTTP POST** to `Function.ServiceConfig.Uri` (same shape; gcf bootstrap already exists, extend to recognise envelope).
+6. **Pre-deploy Service per shape** (Lesson 1, ECS task-def pattern) — terraform-managed catalog seeded for known runner shapes (`golang:1.22-alpine`, `postgres:16-alpine`, gitlab-runner-helper). ContainerStart claims free pool entry by content-hash before paying overlay-build cost.
+7. **Pool semantics** (Lesson 2): ContainerStop releases label `sockerless_allocation`. ContainerRemove deletes function/service above pool cap.
+
+**Closes**: BUG-921, BUG-922, BUG-923, BUG-925, BUG-927. Cells 5-8 GREEN with REAL workload visible in Cloud Logging + streamed via Cloud Run HTTP response (`docker logs --follow` parity).
+
+### Phase 122f — Cloud Run Service path for runner-pattern containers (CLOSED 2026-05-03, INCOMPLETE — superseded by Phase 122g)
+
+In-session ground covered: VPC Access + connector provisioned (`sockerless-vpc` + `sockerless-connector`); cloudrun bootstraps set `SOCKERLESS_GCR_USE_SERVICE=1` + `SOCKERLESS_GCR_VPC_CONNECTOR`; `runner_pattern.go` added with `isRunnerPattern` detection; gcf `MinInstanceCount=1` for runner-pattern (BUG-923 partial mitigation); BUG-922 fix (ContainerStart fallback to ResolveContainerAuto). Misdiagnosis surfaced via BUG-927: gating runner-pattern was insufficient; Phase 122g supersedes by routing ALL containers through overlay+Service+Path-B-exec.
 
 ### Phase 122e — Live-GCP runner unblock chain (CLOSED 2026-05-03, partial)
 
