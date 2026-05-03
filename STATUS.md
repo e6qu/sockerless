@@ -10,25 +10,29 @@
 | 3 GL × ECS | https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 |
 | 4 GL × Lambda | https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943 |
 
-## Cells 5-8 (GCP) — Phase 122e closed 16 live-only bugs; BUG-927 architectural blocker identified; Phase 122g is the unblock
+## Cells 5-8 (GCP) — Phase 122g IN FLIGHT (overlay + Path B exec shipped)
 
-**End-of-session evidence**:
-- Cell 7 https://gitlab.com/e6qu/sockerless/-/pipelines/2496190828 reports SUCCESS — but ZERO workload markers in Cloud Logging (no `apk add`, no `git clone`, no `eval-arithmetic`). FAKE success.
-- Backend trace shows the gitlab-runner pattern: `attach 200 (216s blocking) → exec 409 'Container not running' → wait 200 → stop 304 × N`. Cloud Run Job (one-shot) cannot host the long-lived-build-container + per-stage-exec model.
-- Cell 6 (gh × gcf) + Cell 8 (gl × gcf): blocked by BUG-923 (CreateFunction.Wait > 120s gitlab-runner timeout).
-- Cell 5 (gh × cloudrun): same shape as cell 7 — would fake-succeed.
+**Phase 122g code-complete + deployed live (2026-05-03 v13)** — 7 commits:
+1. `step 1`: lift `OverlayImageSpec` + renderer + tarball logic to `backends/gcp-common/image_inject.go`. gcf imports + sets prefix=`gcf-`; cloudrun uses same renderer with prefix=`cloudrun-`.
+2. `step 2`: new `agent/cmd/sockerless-cloudrun-bootstrap` HTTP server (mirror of gcf bootstrap structure). Recognises envelope shape OR env-baked CMD. 7 unit tests pass. Runner image build pipeline (4 Dockerfiles + Makefiles) updated to bake the binary.
+3. `step 2.5`: shared `ExecEnvelopeRequest/Response` + `PostExecEnvelope` helper in `gcp-common`. 5 unit tests pass.
+4. `step 3a`: cloudrun ContainerCreate overlay-injects bootstrap when `SOCKERLESS_CLOUDRUN_BOOTSTRAP` env points at the binary. config.Image becomes the AR overlay URI; user.Entrypoint+user.Cmd ride as `SOCKERLESS_USER_*` env vars.
+5. `step 3b/4`: cloudrun ExecStart Path B HTTP POST via `idtoken.NewClient` to Service URL. Reverse-agent WS reserved for interactive (TTY+stdin).
+6. `step 5`: ContainerStart routes overlay-imaged containers to Cloud Run Service path (vs Job). New `useServicePath` helper triggers when image URI is in `sockerless-overlay/` AR repo.
+7. `step 6`: gcf bootstrap extended with envelope shape; gcf ExecStart wired to Path B HTTP POST to Function URL.
 
-**Open architectural bugs**: BUG-923 (gcf CreateFunction.Wait), BUG-925 (postgres Service deploy + DNS), BUG-927 (cloudrun fake-success on stock images). All three dissolve under Phase 122g.
+**Live infra updates (2026-05-03 v13)**:
+- AR images pushed: `runner:cloudrun-amd64` (rev `df504cdc…`), `gitlab-runner:cloudrun-amd64` (rev `ad45341c…`), `runner:gcf-amd64` (rev `18601a8e…`), `gitlab-runner:gcf-amd64` (rev `8431c6e7…`).
+- Service redeployed: `gitlab-runner-cloudrun` rev `00023-dgh` + `gitlab-runner-gcf` rev `00020-5g8`.
 
-## Phase 122g unblock plan (next session — see DO_NEXT.md)
-1. Lift `backends/lambda/image_inject.go` → `backends/gcp-common/image_inject.go` (shared overlay renderer).
-2. New `agent/cmd/sockerless-cloudrun-bootstrap` binary mirroring `sockerless-lambda-bootstrap` (HTTP server bound to `$PORT`; recognises `execEnvelope{argv,tty,workdir,env,stdin}` shape; returns `{exitCode,stdout,stderr}` base64).
-3. cloudrun: drop `isRunnerPattern` gating; ALL containers route to Cloud Run Service via overlay. `ContainerExec` = Path B HTTP POST (Lambda `execStartViaInvoke` analogue) to Service URL.
-4. gcf: extend existing bootstrap to recognise the same `execEnvelope` shape; `ContainerExec` = Path B HTTP POST to `Function.ServiceConfig.Uri`.
-5. Pre-deploy Service per shape via terraform (Lesson 1: stable shape catalog).
-6. Pool semantics (Lesson 2): ContainerStop releases label `sockerless_allocation`; ContainerRemove deletes above pool cap.
+**BUG-928 (Phase 122g new, fix shipped)**: cell 7 first 122g run progressed past auto-remove + start-cycle issues — Cloud Run Service WAS deployed for the gitlab-runner-helper permission container — but Cloud Run rejected with `terminated: Application failed to start; STARTUP TCP probe failed for port 8080`. Root cause: `VpcAccess_ALL_TRAFFIC` routes ALL container egress through the VPC connector subnet (10.8.0.0/28), which has no Cloud NAT — GCSFuse can't reach `storage.googleapis.com`, volume mount stalls, bootstrap never gets to bind PORT. Fix: switch to `VpcAccess_PRIVATE_RANGES_ONLY` (only RFC1918 traffic via connector; public Google APIs via platform egress). Shipped in `backends/cloudrun/{servicespec,jobspec}.go`.
 
-This dissolves BUG-921/922/923/925/927.
+**Cell 7 evidence chain**:
+- v11 (pre-Phase-122g, post-BUG-922): pipeline 2496190828 SUCCESS but FAKE — zero workload markers in Cloud Logging.
+- v12 (Phase 122g step 5 deployed): pipeline 2496241337 FAILED — Cloud Run Service deployed, but startup probe failed on port 8080 due to BUG-928 GCSFuse timeout.
+- v13 (BUG-928 PRIVATE_RANGES_ONLY shipped): in flight at https://gitlab.com/e6qu/sockerless/-/pipelines/{TBD-after-monitor-completes}.
+
+**Open architectural bugs**: BUG-923 (gcf CreateFunction.Wait — addressed by overlay pool reuse, awaiting verification), BUG-925 (postgres Service deploy + DNS — partly addressed by 122g, will revisit if cell 7 surfaces new evidence).
 
 ## Architectural state (specs/CLOUD_RESOURCE_MAPPING.md, 1219 lines)
 Authoritative reference. Today's session updated:
