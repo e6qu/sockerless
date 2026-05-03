@@ -94,10 +94,19 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 	}
 
 	return &runpb.Service{
-		Labels:             tags.AsGCPLabels(),
-		Annotations:        tags.AsGCPAnnotations(),
-		Ingress:            runpb.IngressTraffic_INGRESS_TRAFFIC_INTERNAL_ONLY,
-		DefaultUriDisabled: true,
+		Labels:      tags.AsGCPLabels(),
+		Annotations: tags.AsGCPAnnotations(),
+		Ingress:     runpb.IngressTraffic_INGRESS_TRAFFIC_INTERNAL_ONLY,
+		// Phase 122g BUG-931: keep the default URL enabled so the
+		// backend can POST envelope payloads to the bootstrap (Path B).
+		// Ingress=internal still restricts who can hit it — only
+		// callers from the same VPC connector. Without this, the
+		// Service has no addressable URL and ContainerWait blocks
+		// forever (BUG-929 v2 evidence: cell 7 v15 logs show
+		// 'sockerless-cloudrun-bootstrap: listening on :8080' but the
+		// invoke goroutine sees status.url empty for the entire
+		// 5-minute waitForServiceURL window).
+		DefaultUriDisabled: false,
 		Template:           revTemplate,
 	}, nil
 }

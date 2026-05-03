@@ -82,8 +82,8 @@ func TestBuildServiceSpec_Shape(t *testing.T) {
 	if svc.Ingress != runpb.IngressTraffic_INGRESS_TRAFFIC_INTERNAL_ONLY {
 		t.Errorf("ingress = %v, want INGRESS_TRAFFIC_INTERNAL_ONLY", svc.Ingress)
 	}
-	if !svc.DefaultUriDisabled {
-		t.Error("DefaultUriDisabled should be true (Services are peer-reachable only)")
+	if svc.DefaultUriDisabled {
+		t.Error("DefaultUriDisabled should be false (Phase 122g: backend POSTs envelope to Service URL; Ingress=internal still restricts callers)")
 	}
 	if svc.Template == nil || len(svc.Template.Containers) != 1 {
 		t.Fatalf("expected 1 container in template, got %+v", svc.Template)
@@ -97,8 +97,8 @@ func TestBuildServiceSpec_Shape(t *testing.T) {
 	if svc.Template.VpcAccess == nil || svc.Template.VpcAccess.Connector != s.config.VPCConnector {
 		t.Errorf("vpc access = %+v, want connector=%q", svc.Template.VpcAccess, s.config.VPCConnector)
 	}
-	if svc.Template.VpcAccess.Egress != runpb.VpcAccess_ALL_TRAFFIC {
-		t.Errorf("vpc egress = %v, want ALL_TRAFFIC", svc.Template.VpcAccess.Egress)
+	if svc.Template.VpcAccess.Egress != runpb.VpcAccess_PRIVATE_RANGES_ONLY {
+		t.Errorf("vpc egress = %v, want PRIVATE_RANGES_ONLY (BUG-928)", svc.Template.VpcAccess.Egress)
 	}
 	if svc.Template.Timeout == nil || svc.Template.Timeout.AsDuration() != time.Hour {
 		t.Errorf("timeout = %v, want 1h", svc.Template.Timeout)
