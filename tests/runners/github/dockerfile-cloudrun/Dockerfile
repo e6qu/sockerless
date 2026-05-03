@@ -37,11 +37,18 @@ RUN curl -fsSL "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/d
 
 # Pre-built sockerless-backend-cloudrun (cross-compiled linux/amd64).
 COPY sockerless-backend-cloudrun /usr/local/bin/sockerless-backend-cloudrun
-RUN chmod +x /usr/local/bin/sockerless-backend-cloudrun
 
-# Sockerless's cloudrun backend uses Cloud Build for any image
-# overlay — no agent/bootstrap binaries needed at this layer (cloudrun
-# runs the user image directly, unlike lambda's overlay-inject path).
+# Phase 122g: cloudrun overlay-injects sockerless-cloudrun-bootstrap
+# into every per-step Cloud Run Service image so `docker exec` can
+# dispatch via Path B HTTP POST (specs/CLOUD_RESOURCE_MAPPING.md
+# § Lesson 8). The bootstrap binary lives on the runner image's disk
+# so the in-image cloudrun backend can stage it into Cloud Build
+# contexts when building per-image overlays.
+COPY sockerless-cloudrun-bootstrap /opt/sockerless/sockerless-cloudrun-bootstrap
+RUN chmod +x /usr/local/bin/sockerless-backend-cloudrun \
+             /opt/sockerless/sockerless-cloudrun-bootstrap
+
+ENV SOCKERLESS_CLOUDRUN_BOOTSTRAP=/opt/sockerless/sockerless-cloudrun-bootstrap
 
 # actions/runner extracted into /opt/runner.
 RUN mkdir -p /opt/runner && \
