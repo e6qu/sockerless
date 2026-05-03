@@ -921,3 +921,56 @@ The runner image itself is responsible for:
 - The dispatcher just hands the runner-image a registration token + a few GitHub/GitLab-side identifiers; everything sockerless-shaped is inside the image.
 
 This separation matches the AWS dispatcher's original shape (dispatch via `docker run --rm <runner-image>` with no sockerless env injection) and the project rule "**Backend ↔ host primitive must match**".
+
+## Per-backend container concerns — primitives + adapter responsibility
+
+The runner job lifecycle above demands a set of container-level concerns (mounting, caps, users, supervisor, exec, lifecycle, networking). Each backend MUST implement these per its host cloud's available primitives — NO fallbacks, NO synthetic shims, just the real cloud primitive translated through the sockerless API. Where a primitive is genuinely absent on the host cloud, the backend fails loudly with a clear "not supported on <backend>; use <other backend>" error rather than a degraded-mode fake.
+
+| Concern | docker semantic | ECS (Fargate) backend | Lambda backend | Cloud Run **Service** backend | Cloud Run **Functions Gen2** backend | ACA backend | Azure Functions backend |
+|---|---|---|---|---|---|---|---|
+| **Long-lived container** | `docker run -d <image> tail -f /dev/null` | ECS Service or RUNNING Task | Single Invoke held open via reverse-agent supervisor | Cloud Run Service (`min_instance_count=1`, `cpu_always_on`) | ServiceV2 backing the Function (Gen2 IS Cloud Run); same as cloudrun Service | Container App with `min_replicas=1` | Premium plan Function with `alwaysOn` |
+| **Bind mount workspace shared across containers** | `-v /h:/c` | EFS access point on each task; same FSAP across runner-task + sub-task | EFS single-FSC + sub-paths (Lambda only allows 1 FSC; collapse via SOCKERLESS_LAMBDA_SHARED_VOLUMES) | Cloud Run Service `Volume.Gcs` + `VolumeMount` | Same — gcf's UpdateService injects into ServiceV2.Template.Volumes | Azure Files `volume_mount` on Container App | Azure Files mount on Premium plan |
+| **Drop docker.sock bind** | n/a (silently dropped) | ✅ Drop in `backend_impl.go` translator | ✅ Drop in `volumes.go` | ✅ Drop in `backend_impl.go` translator | ✅ Drop | ✅ Drop | ✅ Drop |
+| **Capabilities (CAP_NET_ADMIN, CAP_SYS_ADMIN, etc.)** | `--cap-add=...` | ECS task-def `linuxParameters.capabilities.add` | NOT supported on Lambda — fail loudly if user requests anything beyond default | Cloud Run does not support per-container caps — fail loudly | Same — fail loudly | ACA Container property `capabilities` in container template — supports add/drop | NOT supported — fail loudly |
+| **Privileged mode** | `--privileged` | ECS Fargate does NOT support privileged — fail loudly. EC2-launchtype ECS does, but not in our scope | NOT supported — fail loudly | NOT supported — fail loudly | NOT supported — fail loudly | NOT supported — fail loudly | NOT supported — fail loudly |
+| **Run as user (UID:GID)** | `-u 1000:1000` | ECS task-def container `user` field | Lambda Function `ImageConfig.User` | Cloud Run does not support per-container user override — bake USER in image (BUG-924 workaround) | Same | ACA Container property `runAsUser`/`runAsGroup` not exposed; bake in image | Bake USER in image |
+| **Multi-container pod (shared net+IPC namespace)** | `docker network` + `--network container:<id>` | ECS task with multiple containers, automatic shared netns | NOT supported (Lambda is single-container) — Phase 118d pod-overlay supervisor pattern | Cloud Run Service multi-container (sidecar) | Same as cloudrun Service path | ACA multi-container template | NOT supported |
+| **Supervisor for multi-container pods** | docker compose / podman pod | Native (multi-container task) | Phase 118d: bootstrap supervisor forks chroot'd processes per non-main pod member | Native (Cloud Run multi-container) | Phase 118d on the underlying Cloud Run Service | Native (ACA multi-container) | Phase 118d (mirror gcf shape) |
+| **`docker exec` into running container** | `POST /containers/<id>/exec/create` + `POST /exec/<id>/start` | SSM Session Manager `ExecuteCommand` against the task | Invoke-as-handler: in-Lambda bootstrap reads exec request, runs cmd, returns output | Reverse-agent: in-image supervisor establishes WebSocket back to backend's `/v1/cloudrun/reverse`; exec multiplexed | Same as Cloud Run Service | ACA Container Apps `exec` API (`az containerapp exec`) — natively supported | Reverse-agent (mirror gcf) |
+| **Network isolation per job** | `docker network create` | ECS task gets its own ENI in the task subnet | Lambda Functions in same VPC see each other; no per-Function netns | Cloud Run revision = its own netns; private VPC connector for cross-revision DNS | Same as Cloud Run | ACA App = own netns; Container Apps Environment provides private DNS | Same as cloudrun |
+| **Container lifecycle: create → start → exec → stop → remove** | Standard docker calls | ECS Task lifecycle (PENDING → RUNNING → STOPPED) maps cleanly | Lambda Function deploy-once-invoke-many; container ID = function name + invocation marker | Cloud Run Service revision lifecycle (READY → SERVING → REVISED-OUT) maps to long-lived; cleanup on ContainerRemove deletes the Service | Same as Service path | ACA App revision lifecycle | Function lifecycle |
+| **Auto-remove (`--rm`)** | `HostConfig.AutoRemove=true` | Drop ECS task on exit (Phase 110b) | Delete Lambda Function on exit | Delete Cloud Run Service / Job on exit (BUG-883 implements; BUG-922 is the same shape but for Service) | Same | Delete ACA App on exit | Delete Function on exit |
+| **Image pull-through cache (Docker Hub, gitlab.com, etc.)** | Local docker pulls from configured registry | ECR Pull-Through Cache rule — `docker-hub`, `gitlab-registry`, etc. (BUG-919 pattern, AWS-side) | Same — Lambda pulls images from ECR; ECR pull-through cache backs it | AR Remote Repository — `docker-hub`, `gitlab-registry` (BUG-919) | Same | ACR Cache Rule — `docker-hub` etc. | Same |
+| **Image push (sockerless-built runtime images)** | `docker push` to configured registry | ECR push (CodeBuild output) | Same (Lambda needs container in ECR; CodeBuild) | AR push (Cloud Build output) | Same | ACR push (ACR Tasks output) | Same |
+| **Container resource limits (memory, CPU)** | `--memory=`, `--cpus=` | ECS task-def `memory` + `cpu` (Fargate vCPU table) | Lambda `MemorySize` (CPU scales linearly) | Cloud Run `resources.limits.memory` + `cpu` | Same on Service | ACA Container `resources.cpu`/`memory` (cores + GiB) | Function `memorySize` |
+| **Environment variables** | `-e KEY=VAL` | ECS task-def `containerDefinitions[].environment[]` | Lambda Function `Environment.Variables` (4 KB cap) | Cloud Run Container `env[]` | Same | ACA Container `env[]` | Function `appSettings` |
+| **Working directory** | `--workdir /path` | ECS task-def `containerDefinitions[].workingDirectory` | Bake `WORKDIR` in image (Lambda doesn't expose at deploy time) | Cloud Run Container `workingDir` | Same | ACA Container `workingDir` | Bake in image |
+| **Entrypoint / Cmd override** | `--entrypoint`, `<cmd...>` | ECS task-def `entryPoint` + `command` | Lambda overlay-inject (CMD baked at build time per-container) | Cloud Run Container `command` + `args` | Same | ACA Container `command` + `args` | Bake CMD in overlay |
+| **Stdin attach + interactive (`-it`)** | `POST /containers/<id>/attach`, TTY | SSM Session Manager interactive shell | Lambda has no stdin; gitlab-runner stdin-piped scripts ride payload (BUG-875) | Reverse-agent stdin multiplexing | Same | ACA exec API supports interactive | Reverse-agent stdin |
+| **Container logs streaming** | `POST /containers/<id>/logs?follow=1` | CloudWatch Logs `/aws/ecs/<cluster>/<task>` | CloudWatch Logs `/aws/lambda/<function>` (LogType=Tail for inline) | Cloud Logging `resource.type=cloud_run_revision` follow | Same | Log Analytics Workspace via ACA logging | Application Insights |
+| **Container exit code** | `Container.State.ExitCode` | ECS Task `containers[].exitCode` | Lambda Invoke response status + `X-Sockerless-Exit-Code` header | Cloud Run Job execution `task.exitCode` (Job path) OR overlay-bootstrap exit-code header (Service path) | Same | ACA Job `Properties.template.containers[].exitCode` | Function HTTP response code |
+| **Health check** | `HEALTHCHECK` directive | ECS task-def `healthCheck` | n/a (Lambda invokes are atomic) | Cloud Run startup + liveness probes (TCP/HTTP) | Same | ACA `probes` block | n/a |
+
+### Per-backend concerns the runner cells specifically depend on
+
+For cells 5-8 (gitlab + github runner via docker executor) to GREEN end-to-end, each backend MUST implement (or fail loudly):
+
+1. **cloudrun**: Service path (UseService=1) for runner-pattern containers (long-lived). Cloud Run Job path stays valid for one-shot CI sub-tasks. Reverse-agent for `docker exec`.
+2. **gcf**: UpdateService image swap on the underlying Cloud Run Service for any container the runner expects long-lived. Pod-overlay supervisor for multi-container needs.
+3. **ecs**: Already done in Phase 110b — cells 1+2 GREEN. Reference impl.
+4. **lambda**: Phase 118d pod-overlay supervisor for runner workspace; Phase 117 stdin-piped script delivery.
+5. **aca + azf**: Mirror cloudrun + gcf patterns for Phase 122e.
+
+### "Capabilities" + "users" concerns specifically
+
+`--cap-add` and `--privileged` are the most cloud-restricted concerns. Most cloud serverless primitives FORBID privileged mode and don't expose capability tuning. Sockerless backends MUST:
+
+- Detect `HostConfig.Privileged=true` or non-empty `HostConfig.CapAdd` → fail with `api.InvalidParameterError{Message: "privileged mode / additional capabilities not supported on <backend>; use the docker backend or ECS-EC2-launchtype for kernel-level access"}`.
+- Pass through caps the cloud DOES support (ACA `capabilities`, ECS `linuxParameters.capabilities`).
+
+`--user` is similarly cloud-restricted. Sockerless backends MUST:
+
+- For backends that accept user override at deploy time (ECS, Lambda image config, ACA): translate `Config.User` → cloud field.
+- For backends where user is image-bake-time only (Cloud Run, gcf, AZF): if user explicitly requests non-default user that doesn't match the image's USER directive, fail with a clear "user override requires baking USER in image; use the docker backend for runtime user override".
+
+The runner cells generally do NOT depend on `--cap-add` / `--privileged` / `--user` for their happy path, so this matrix is documented for correctness rather than as an immediate blocker.
