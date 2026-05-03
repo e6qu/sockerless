@@ -56,15 +56,89 @@ func (s *Server) shouldDeferOrMaterializeNetworkPod(c api.Container) (shouldDefe
 		return true, nil
 	}
 
-	// Script-runner: materialize the pod with this container as main
-	// + every pending sibling as sidecar.
-	if len(siblings) == 0 {
-		return false, nil
-	}
-	all := make([]api.Container, 0, len(siblings)+1)
+	// Script-runner. gitlab-runner v17.5 creates a NEW script-runner
+	// container per stage (get_sources / step_script / after_script),
+	// each in the SAME user-defined network as the service container(s).
+	// To keep service containers reachable across stages, also pull in
+	// any service containers tracked under this network ID — even if
+	// they were already deployed in a prior materialization. The cloud-
+	// run multi-container revision per stage redeploys the postgres
+	// sidecar from scratch (postgres is stateless across job stages,
+	// matching the docker-compose scoping that gitlab-runner emulates).
+	pinned := s.serviceMembersOfNetwork(netID)
+	all := make([]api.Container, 0, len(siblings)+len(pinned)+1)
 	all = append(all, c) // main first — startMultiContainerServiceTyped uses index 0 as IsMain
 	all = append(all, siblings...)
+	for _, p := range pinned {
+		// Skip duplicates if a sibling is also in the pinned set.
+		found := false
+		for _, existing := range all {
+			if existing.ID == p.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			all = append(all, p)
+		}
+	}
+	if len(all) <= 1 {
+		return false, nil
+	}
 	return false, all
+}
+
+// serviceMembersOfNetwork returns service-style containers (no
+// OpenStdin) that have ever been members of this network — i.e.
+// containers we *deferred* via shouldDeferOrMaterializeNetworkPod
+// and which are tracked in s.networkServices. These get re-bundled
+// into every script-runner's revision so subsequent stages of the
+// same gitlab-runner job can still reach them on loopback.
+func (s *Server) serviceMembersOfNetwork(netID string) []api.Container {
+	v, ok := s.networkServices.Load(netID)
+	if !ok {
+		return nil
+	}
+	ids := v.([]string)
+	var out []api.Container
+	for _, id := range ids {
+		if c, ok := s.PendingCreates.Get(id); ok {
+			out = append(out, c)
+			continue
+		}
+		// Not in PendingCreates — look up via cloud state.
+		if c, ok := s.ResolveContainerAuto(s.ctx(), id); ok {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// trackNetworkService records a service-style container under the
+// network ID so subsequent script-runners on the same network can
+// re-bundle it as a sidecar.
+func (s *Server) trackNetworkService(netID, containerID string) {
+	if netID == "" || containerID == "" {
+		return
+	}
+	for {
+		var existing []string
+		if v, ok := s.networkServices.Load(netID); ok {
+			existing = v.([]string)
+		}
+		for _, id := range existing {
+			if id == containerID {
+				return
+			}
+		}
+		updated := append([]string{}, existing...)
+		updated = append(updated, containerID)
+		if v, loaded := s.networkServices.LoadOrStore(netID, updated); !loaded {
+			_ = v
+			return
+		}
+		// Race with concurrent writer — retry.
+	}
 }
 
 // userDefinedNetworkID returns the ID of the first user-defined network

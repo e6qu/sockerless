@@ -316,6 +316,10 @@ func (s *Server) ContainerStart(ref string) error {
 			pc.State.Running = true
 			pc.State.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		})
+		// Track this service container under its network so subsequent
+		// script-runners on the same network can re-bundle it (gitlab-
+		// runner v17.5 spawns one script-runner container per stage).
+		s.trackNetworkService(netID, id)
 		return nil
 	}
 	if len(netMembers) > 1 {

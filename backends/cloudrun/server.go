@@ -36,6 +36,14 @@ type Server struct {
 	// per container at a time; gitlab-runner cycles attach→start→stop
 	// per stage and each new attach gets a fresh entry.
 	attachStreams sync.Map
+	// networkServices maps user-defined-network ID → []serviceContainerID
+	// so subsequent script-runner stages joining the same network can
+	// re-bundle service containers (postgres etc.) as Cloud Run
+	// multi-container sidecars in their own revisions. Without this,
+	// only the FIRST script-runner stage would see postgres on loopback;
+	// later stages (gitlab-runner v17.5 creates a new container per
+	// stage) would deploy without the sidecar and lose service access.
+	networkServices sync.Map
 }
 
 // NewServer creates a new Cloud Run backend server.
