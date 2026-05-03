@@ -120,3 +120,5 @@ jobs:
 # trigger: rev 00006 fresh run
 
 # trigger: BUG-918+919 in github runners
+
+# trigger: BUG-921
