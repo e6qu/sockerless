@@ -53,4 +53,3 @@ test-azure:
   script:
     - cd simulators/azure && make test
   when: manual
-# trigger: BUG-918 root
