@@ -315,7 +315,15 @@ func (s *Server) startMultiContainerServiceTyped(_ string, podContainers []api.C
 	})
 
 	for _, pc := range podContainers {
-		s.PendingCreates.Delete(pc.ID)
+		// Keep service-style sidecars in PendingCreates so subsequent
+		// script-runner stages joining the same network can re-bundle
+		// them (gitlab-runner v17.5 spawns a new script-runner per
+		// stage; each stage's revision needs its own copy of the
+		// sidecar). The script-runner itself (OpenStdin=true) gets
+		// deleted normally — it's per-stage and not re-bundled.
+		if pc.Config.OpenStdin {
+			s.PendingCreates.Delete(pc.ID)
+		}
 		s.CloudRun.Update(pc.ID, func(state *CloudRunState) {
 			state.ServiceName = svcFullName
 		})
