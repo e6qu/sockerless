@@ -101,6 +101,14 @@ func (a *legacyContainerAttachAdapter) Attach(dctx DriverContext, tty bool, conn
 	}()
 	go func() {
 		_, _ = io.Copy(rwc, conn)
+		// Caller half-closed their stdin (e.g. gitlab-runner's
+		// hijacked.CloseWrite() after sending the script). Signal
+		// stdin EOF on rwc so the deferred-invoke side knows it can
+		// proceed; otherwise the stdinPipe stays "open" and the
+		// invoke waits its 30s upper-bound timeout per stage.
+		if cw, ok := rwc.(interface{ CloseWrite() error }); ok {
+			_ = cw.CloseWrite()
+		}
 	}()
 	<-done
 	return nil
