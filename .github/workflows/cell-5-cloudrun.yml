@@ -145,3 +145,5 @@ jobs:
 # trigger: BUG-924
 
 # trigger: no-defaults revert
+
+# trigger: BUG-922 no-auto-remove
