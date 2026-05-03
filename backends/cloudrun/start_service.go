@@ -320,6 +320,15 @@ func (s *Server) startMultiContainerServiceTyped(_ string, podContainers []api.C
 			state.ServiceName = svcFullName
 		})
 	}
+
+	// Trigger the bootstrap's default invoke (which drains any pending
+	// stdinPipe captured by ContainerAttach + POSTs an exec envelope).
+	// Mirrors startSingleContainerService — without this, gitlab-runner's
+	// script bytes piped via /attach never reach the bootstrap subprocess
+	// and the BUILD container sits idle until Cloud Run kills it.
+	mainExitCh, _ := s.Store.WaitChs.Load(mainID)
+	exitCh, _ := mainExitCh.(chan struct{})
+	go s.invokeServiceDefaultCmd(mainID, exitCh)
 	return nil
 }
 
