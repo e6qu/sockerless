@@ -174,23 +174,36 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
 
-	// Phase 122g BUG-936 fast-path: if WaitChs has a channel for this
-	// ref AND InvocationResult is already recorded, return immediately
-	// without ResolveContainerIDAuto + CloudState.GetContainer (which
-	// for cloudrun lists ALL Cloud Run Services in the project — minutes
-	// per call with N services). Most /wait callers send the canonical
-	// 64-char hex ID; PendingCreates / WaitChs maps it directly.
+	// Phase 122g BUG-936 fast-path: avoid the slow CloudState.GetContainer
+	// (which for cloudrun lists ALL Cloud Run Services in the project,
+	// taking minutes with N services). Two early-returns:
+	//
+	//   (a) InvocationResult already recorded → container has exited via
+	//       the invoke goroutine; return cached exit code immediately.
+	//       (Goroutine's defer LoadAndDelete-d WaitChs already.)
+	//
+	//   (b) WaitChs has a live channel → container is in flight; wait on
+	//       the channel directly without GetContainer. The channel close
+	//       signals "exit happened, InvocationResult now ready". Most
+	//       callers send the canonical 64-char hex container ID, which
+	//       both tracks key on directly.
+	if inv, ok := s.Store.GetInvocationResult(ref); ok {
+		WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: inv.ExitCode})
+		return
+	}
 	if ch, hasChannel := s.Store.WaitChs.Load(ref); hasChannel {
-		if inv, ok := s.Store.GetInvocationResult(ref); ok {
-			// Container already exited via invoke goroutine — no point
-			// blocking. Drain channel so we drop the entry from WaitChs.
-			select {
-			case <-ch.(chan struct{}):
-			default:
+		flushWaitHeaders(w)
+		select {
+		case <-ch.(chan struct{}):
+			if inv, ok := s.Store.GetInvocationResult(ref); ok {
+				writeWaitBody(w, inv.ExitCode)
+			} else {
+				writeWaitBody(w, 0)
 			}
-			WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: inv.ExitCode})
-			return
+		case <-r.Context().Done():
+			writeWaitBody(w, -1)
 		}
+		return
 	}
 
 	// Try local wait channel first (simulator mode runs containers locally)
