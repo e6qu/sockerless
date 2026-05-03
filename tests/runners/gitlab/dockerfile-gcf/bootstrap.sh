@@ -51,10 +51,9 @@ sed -i '/\[runners.docker\]/a\
     helper_image = "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-v17.5.0"' \
     /etc/gitlab-runner/config.toml
 
-# BUG-920 wedge: drop default ["/cache"] volume → no permission
-# container, no 120s docker timeout. See cloudrun bootstrap for full
-# rationale.
-sed -i 's|volumes = \["/cache"\]|volumes = []|' /etc/gitlab-runner/config.toml
+# /cache stays — sockerless gcf backend mounts via Cloud Run Service
+# Volume{Gcs{Bucket}} (gcf is backed by Cloud Run Service per
+# CLOUD_RESOURCE_MAPPING.md). No wedge.
 
 cat /etc/gitlab-runner/config.toml
 
