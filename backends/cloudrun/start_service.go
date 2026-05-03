@@ -89,7 +89,16 @@ func (s *Server) startSingleContainerService(id string, c api.Container, crState
 	// Phase 122g: kick off the bootstrap's default invoke so the user
 	// CMD actually runs. Mirror of gcf's launch-invoke goroutine in
 	// backends/cloudrun-functions/backend_impl.go::ContainerStart.
-	go s.invokeServiceDefaultCmd(id, svc.Uri, exitCh)
+	//
+	// svc.Uri from createOp.Wait is OFTEN empty even though the LRO
+	// completed — Cloud Run populates Uri only after the first revision
+	// is serving traffic, and createOp.Wait returns once the spec is
+	// stored, not after first-revision-ready. Pass the container ID
+	// alone; the goroutine uses serviceInvokeURL (GetService) which
+	// re-reads the live Service object with Uri populated. Cell 7 v14
+	// (BUG-929 fix attempt 1) regressed because we trusted svc.Uri ==
+	// "" and bailed.
+	go s.invokeServiceDefaultCmd(id, exitCh)
 	return nil
 }
 
@@ -99,7 +108,12 @@ func (s *Server) startSingleContainerService(id string, c api.Container, crState
 // exit code from the X-Sockerless-Exit-Code header in
 // InvocationResults so CloudState reflects exited+ExitCode and
 // closes WaitCh so ContainerWait unblocks.
-func (s *Server) invokeServiceDefaultCmd(id, serviceURL string, exitCh chan struct{}) {
+//
+// Resolves the Service URL via serviceInvokeURL (re-reads via
+// GetService until Uri populates). Polls up to 5 minutes — Cloud Run
+// Service revisions can take 60-90s to reach serving state.
+func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}) {
+	serviceURL := s.waitForServiceURL(id, 5*time.Minute)
 	defer func() {
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
@@ -240,6 +254,22 @@ func (s *Server) startMultiContainerServiceTyped(_ string, podContainers []api.C
 		})
 	}
 	return nil
+}
+
+// waitForServiceURL polls the Service via GetService until Uri is
+// populated (revision serving traffic) or the deadline expires. The
+// LRO returned by CreateService completes BEFORE first-revision-ready,
+// so Uri is often empty at create-completion time. Returns the URL or
+// empty string on timeout — caller should treat empty as failure.
+func (s *Server) waitForServiceURL(containerID string, timeout time.Duration) string {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if url, ok := s.serviceInvokeURL(s.ctx(), containerID); ok && url != "" {
+			return url
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return ""
 }
 
 // deleteService deletes a Cloud Run Service and waits for the LRO to
