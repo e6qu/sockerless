@@ -120,13 +120,20 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 	// path — let the caller route it elsewhere or fail loudly. No
 	// defaults, no fallbacks (per project rule).
 	//
-	// Cloud Run multi-container rule: only ONE container per revision
-	// may declare Ports (the ingress one). Sidecars must omit Ports.
+	// Cloud Run multi-container rule: EXACTLY ONE container per revision
+	// must declare Ports — the ingress one. The bootstrap (which is the
+	// main container's PID 1 in overlay images) listens on the value of
+	// the standard Cloud Run PORT env (default 8080), regardless of what
+	// the image's Config.ExposedPorts declares. Force-declare 8080 on
+	// the main container so multi-container revisions are accepted.
+	// Sidecars must omit Ports entirely.
 	if ci.IsMain {
-		if port := imagePort(ci.Container); port > 0 {
-			containerSpec.Ports = []*runpb.ContainerPort{
-				{ContainerPort: int32(port)},
-			}
+		port := imagePort(ci.Container)
+		if port == 0 {
+			port = 8080
+		}
+		containerSpec.Ports = []*runpb.ContainerPort{
+			{ContainerPort: int32(port)},
 		}
 	}
 
