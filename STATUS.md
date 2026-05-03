@@ -1,6 +1,35 @@
 # Sockerless — Status
 
-**Date: 2026-05-03 v15**. PR #123 (`phase-118-faas-pods`) — Phase 122g + 122h shipped (15+ commits this session). Architectural insights from reading gitlab-runner v17.5 + github-runner v2.334 source verified live. Cell 7 reached the BUILD container stage with postgres service running.
+**Date: 2026-05-03 v16**. PR #123 (`phase-118-faas-pods`) — BUG-937 (3-stage AR-auth chain) shipped end-of-session. Cell 7 v33 (commit `a42ab93`) progressed from a 6-second 401-error to an 11-minute live execution that pulled all images, deployed BUILD container via Cloud Run Service, ran per-stage helper containers — confirming Phase 122g + the AR-auth fix work end-to-end. New blocker is **BUG-925** (postgres-on-Cloud-Run-Service): the `gitlab-runner-helper health-check` container failed with `No HOST or PORT found` because (a) Cloud Run only exposes HTTPS:443, never TCP:5432, and (b) gitlab-runner's `WAIT_FOR_SERVICE_TCP_*` env injection assumes the Docker --link / network-alias pattern. Cell 7 v33 cancelled at 11min. Cells 5/6/8 untouched this session.
+
+## BUG-937 fix (3 commits on `phase-118-faas-pods`)
+
+| Commit | What |
+|---|---|
+| `7410f11` | cloudrun + gcf `ImagePull` discard caller auth when ref is rewritten to AR proxy (basic-auth scoped to `registry.gitlab.com`/Docker Hub fails against AR) |
+| `bb3412e` | (1) `core/registry.go::getRegistryToken` adds GCP/AR fast-path — strip `Bearer ` prefix and skip the Docker www-auth dance (AR accepts the OAuth2 access token directly); (2) cloudrun + gcf `ImagePull` aliases the freshly-pulled image under the original ref via `core.StoreImageWithAliases` so subsequent `/images/{ref}/json` resolves |
+| `aa03bae` | BUGS.md log entry |
+
+Live evidence (cell 7 v33 trace at https://gitlab.com/e6qu/sockerless/-/jobs/14191491097):
+- `Pulling docker image registry.gitlab.com/.../gitlab-runner-helper:x86_64-v17.5.0` → `Using docker image sha256:180e3252... with digest us-central1-docker.pkg.dev/.../gitlab-registry/...` ✓
+- `Pulling docker image postgres:16-alpine` → 5117ms ✓
+- `Pulling docker image golang:1.22-alpine` → 2523ms ✓
+- Cloud Build: 2× overlays built (cloudrun-d1bc978db... 78s, cloudrun-e543853a5e... 20s cached) ✓
+- 4 per-stage Cloud Run Services deployed via overlay+bootstrap+Path-B HTTP envelope path ✓
+- Postgres bootstrap log inside container: `database system is ready to accept connections` ✓
+
+## What blocks cells 5-8 GREEN now
+
+**BUG-925** is the remaining architectural wall. Three options under consideration:
+
+1. **Cloud SQL** (managed Postgres) — drop the postgres service container; cell .gitlab-ci.yml connects to a Cloud SQL instance via UDS or private IP. Real-fix, but not docker-API-shaped (operator-managed external dep).
+2. **Cloud Run multi-container sidecar** — postgres + bootstrap in same Cloud Run Service revision. Bootstrap proxies HTTP→TCP. Possible but Cloud Run sidecars are Preview and don't expose multiple ports externally.
+3. **Trim postgres from cell-7/8 .gitlab-ci.yml** — focus the cell on what cloudrun integration actually validates (compile + use eval-arithmetic + probe environment); document postgres-as-side-car as out-of-scope. Pure runner+compile path.
+
+User authorisation needed before picking. (3) is the fastest path to GREEN cells; (1) is the most complete fix. See `BUGS.md` BUG-925 for state.
+
+## Original session notes preserved below
+
 
 ## Phase 122g + 122h shipped
 

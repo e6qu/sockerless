@@ -2,9 +2,19 @@
 
 Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md); bug log in [BUGS.md](BUGS.md); architecture in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
 
-## Resume pointer (2026-05-03 v15 — end of session)
+## Resume pointer (2026-05-03 v16 — end of session)
 
 **Goal**: cells 5/6/7/8 GREEN with REAL workload (compile + use eval-arithmetic + probe environment) before merging PR #123.
+
+### What's done since v15
+- BUG-937 (3-stage AR-auth-rewrite chain) shipped on `phase-118-faas-pods` (commits `7410f11`, `bb3412e`, `aa03bae`). gitlab-runner-cloudrun rev `00046-qc9` deployed (digest `37bbf207...`).
+- Cell 7 v33 confirmed: pull → overlay-build → per-stage Cloud Run Service deploy → bootstrap subprocess all working live.
+- New blocker: **BUG-925 postgres-on-Cloud-Run-Service** — gitlab-runner-helper health-check fails because Cloud Run can't expose TCP :5432 + can't inject `WAIT_FOR_SERVICE_TCP_*` env vars correctly.
+
+### Decisions needed before next session
+1. Pick a path for BUG-925 (Cloud SQL / Cloud Run sidecar / trim postgres from cell-7/8). User input required — this is the architectural fork.
+2. Once cell 7 GREEN, port the same overlay+bootstrap+alias trio to gcf for cell 8.
+3. For cells 5+6: refresh GitHub PAT (rate-limited).
 
 **Where we landed (v15)**: Phase 122g + Phase 122h shipped (15+ commits on `phase-118-faas-pods`). Live cell 7 progression confirms the architecture works:
 - Cloud Run Service deploys via overlay+bootstrap ✓
