@@ -117,8 +117,10 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}) {
 	serviceURL := s.waitForServiceURL(id, 5*time.Minute)
 	s.Logger.Info().Str("container", id).Str("url", serviceURL).Msg("invokeServiceDefaultCmd: waitForServiceURL returned")
 	defer func() {
+		closed := false
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
+			closed = true
 		} else if exitCh != nil {
 			// Belt-and-suspenders close in case WaitChs was already
 			// drained (e.g. by ContainerStop firing before invoke
@@ -128,8 +130,10 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}) {
 			case <-exitCh:
 			default:
 				close(exitCh)
+				closed = true
 			}
 		}
+		s.Logger.Info().Str("container", id).Bool("waitch_closed", closed).Msg("invokeServiceDefaultCmd: defer ran (goroutine exiting)")
 	}()
 
 	inv := core.InvocationResult{}
