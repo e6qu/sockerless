@@ -141,3 +141,5 @@ jobs:
 # trigger: BUG-921
 
 # trigger: 122f UseService
+
+# trigger: BUG-924
