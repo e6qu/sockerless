@@ -10,6 +10,13 @@ Resume pointer. Updated after every task. Roadmap detail in [PLAN.md](PLAN.md); 
 
 > Cloud Run **Jobs** are one-shot. Runner cells need long-lived containers persisting across N `docker exec` calls. The proper fix is the Cloud Run **Service** path (config flag `SOCKERLESS_GCR_USE_SERVICE=1` already exists) PLUS the reverse-agent for `docker exec` (already in ACA, port to cloudrun + gcf).
 
+## Phase 122f infra in flight (2026-05-03 v10)
+
+- VPC Access API + Compute API + Service Networking API ENABLED on `sockerless-live-46x3zg4imo`.
+- VPC `sockerless-vpc` + subnet `sockerless-connector-subnet` (`10.8.0.0/28`) created in `us-central1`.
+- VPC connector `sockerless-connector` creation submitted (background `bxhes1d50`); ~5-10 min provisioning.
+- Spec doc updated to 1129 lines with backend-↔-primitive-purity rule per user 2026-05-03 directive (no cross-contamination; chain Function invocations for FaaS long-lived).
+
 ## Phase 122f — proper-fix path (next session)
 
 Per `specs/CLOUD_RESOURCE_MAPPING.md` § "Synthesis — Phase 122f scope":
