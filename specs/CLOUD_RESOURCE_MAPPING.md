@@ -1127,3 +1127,63 @@ For backends whose primitive is invocation-based (Lambda, gcf, AZF), sockerless 
 - ContainerRemove → DeleteFunction.
 
 **No cross-contamination**: gcf NEVER creates standalone Cloud Run Services that aren't function-backed. cloudrun NEVER calls Cloud Functions API. Each backend stays in its lane.
+
+## Pods on FaaS = multiple Functions + shared localhost (Phase 122g)
+
+User directive 2026-05-03: pods running on FaaS backends (gcf, lambda, azf) can be CONCEPTUALLY multiple functions; shared-localhost is REQUIRED, shared-PID is best-effort. Helper/init/post containers (gitlab-runner predefined containers, github-actions service containers) are also separate functions driven from the backend "engine".
+
+### Required networking primitive: shared localhost
+
+The docker pod model says "all containers in a pod share a network namespace" — i.e., each member sees the others as `localhost:<port>`. gitlab-runner's `services:` directive AND github-actions's `container: + services:` BOTH depend on this.
+
+| Backend | Native primitive that provides shared localhost | Notes |
+|---|---|---|
+| ECS Fargate | Multi-container task definition (all containers share task ENI = shared netns by default) | Already supported |
+| Cloud Run **Service** (cloudrun) | Multi-container Service template (`Template.Containers[]`) — Cloud Run shares localhost across containers in same Service | Already supported |
+| Cloud Run **Functions Gen2** (gcf) | UpdateService to populate multi-container template on the Function's underlying Cloud Run Service | The Function API only creates a single-container Function; sockerless extends via the UpdateService escape hatch |
+| Lambda | NOT supported natively (one container per Lambda Function); use Phase 118d overlay-supervisor pattern that fork-execs sidecars in shared netns within ONE Lambda invocation | Approximation only (no per-container resource limits, no per-container env separation) |
+| ACA | Multi-container app template | Already supported |
+| Azure Functions | Mirror Lambda — overlay-supervisor pattern | Approximation only |
+
+### Backend "engine" orchestrates the helper chain
+
+For gitlab-runner cells, the runtime sequence is:
+1. Permission containers (init): chown the workspace volume (one-shot, can be parallel per volume).
+2. Service containers (sidecars): postgres / redis / etc. — long-lived, started before build.
+3. Build container: long-lived, exec'd into per stage.
+4. Helper containers (per stage): clone, artifact upload, etc. — chained sequentially after build.
+
+Sockerless backend's "engine" (the in-image sockerless-backend-* binary) orchestrates this by mapping each docker call to its cloud-native primitive:
+
+| docker call | gcf engine action | cloudrun engine action |
+|---|---|---|
+| `docker create -v vol:/path postgres:16` (service container, isRunnerPattern by ExposedPorts) | CreateFunction with min_instance_count=1 + multi-container Cloud Run Service (UpdateService adds postgres as second container in the Function's Service template, shared netns) | Same shape, but on Cloud Run Service directly (no Function API in the way) |
+| `docker create --entrypoint=tail alpine:latest -f /dev/null` (build container, hold-open) | CreateFunction with min_instance_count=1; user-overlay-bootstrap holds one HTTP invocation for the lifetime, exec calls chain via HTTP POST | Cloud Run Service if image declares ExposedPorts; else Cloud Run Job (which stays alive while cmd runs) |
+| `docker exec <id> bash -c "..."` (per-stage step) | HTTP POST to the Function URL with exec payload; bootstrap parses + runs + returns stdout/stderr/exit-code | Reverse-agent WebSocket multiplex (port from ACA) |
+| `docker create gitlab-runner-helper chown ...` (one-shot init) | CreateFunction with min_instance_count=0; one HTTP invocation runs the chown; Function exits | Cloud Run Job, one-shot |
+| `docker stop <id>` | UpdateService to set min_instance_count=0 (suspend) — keeps state for restart | Cloud Run Service min_instance_count=0; or Cloud Run Job's pollExecutionExit terminates |
+| `docker rm <id>` | DeleteFunction | DeleteService / DeleteJob |
+
+### Shared PID — best-effort
+
+Shared PID across pod members requires kernel-level coordination (process namespaces). Cloud Run / Cloud Functions multi-container Services share netns + IPC + UTS by default, but NOT PID — each container has its own PID 1. If PID sharing is genuinely required by the workload (rare), sockerless backend MUST fail loudly with "shared PID not supported on <backend>; use docker backend or ECS-EC2-launchtype which support `shareProcessNamespace`".
+
+Phase 118d's overlay-supervisor pattern (Lambda + AZF approximation) DOES give shared PID — all sidecars run as forked children of the supervisor, so they share PID namespace by definition. But it's a degraded mode (no per-container resource limits etc.); flagged via `Container.HostConfig.PidMode = "shared-degraded"` annotation.
+
+### Implementation status (Phase 122f / 122g)
+
+- **cloudrun**: multi-container Service template ALREADY supported via `startMultiContainerServiceTyped` (`backends/cloudrun/start_service.go`). Phase 122g action: ensure isRunnerPattern routes pod members to Service path correctly.
+- **gcf**: pod-overlay supervisor (Phase 118d) is the existing approximation. Phase 122g action: extend `attachVolumesToFunctionService` to also add multi-container template (multiple `runpb.Container` entries in `svc.Template.Containers`) when the pod has multiple members.
+- **lambda + azf**: Phase 118d already implements overlay-supervisor for shared netns/IPC/PID-degraded.
+
+### What "the backend engine" means
+
+The runner image bundles `sockerless-backend-{cloudrun,gcf,...}`. THAT process IS the "engine" — when gitlab-runner / github-runner make docker calls (create / start / exec / stop / rm), the engine routes each to the appropriate cloud primitive per the table above. The backend engine is responsible for:
+
+1. **Image-pattern detection** (does this image declare ExposedPorts? is it an HTTP service? is it one-shot?).
+2. **Pod-membership tracking** (multi-container groups via `--pod` / `--network container:<id>`).
+3. **Lifecycle orchestration** (init → service → build → exec → cleanup).
+4. **Cross-container DNS** (so `postgres` resolves correctly inside the build container).
+5. **Failure propagation** (return codes from cloud APIs → docker error responses).
+
+Each backend's engine implementation lives in `backends/<backend>/backend_impl.go`. The engine MUST stay backend-pure (no cross-cloud calls) per the no-cross-contamination rule.
