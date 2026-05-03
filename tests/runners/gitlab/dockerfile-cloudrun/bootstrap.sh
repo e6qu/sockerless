@@ -106,6 +106,22 @@ sed -i '/\[runners.docker\]/a\
     wait_for_services_timeout = -1' \
     /etc/gitlab-runner/config.toml
 
+# FF_NETWORK_PER_BUILD: gitlab-runner default uses docker --link for
+# service connectivity (legacy), which doesn't surface as standard
+# user-defined-network membership in the docker /containers/create
+# request. With this feature flag enabled, gitlab-runner POSTs to
+# /networks/create per build and adds containers via NetworkingConfig
+# .EndpointsConfig.<net>.Aliases — the standard Docker user-defined-
+# network model the cloudrun backend's network-pod auto-detector
+# expects. Verified in gitlab-runner v17.5 executors/docker/services.go
+# ::createServices (the `networkMode.UserDefined()` branch returns
+# without setting up --link). Runner-side knob only.
+cat >> /etc/gitlab-runner/config.toml <<'EOF'
+
+  [runners.feature_flags]
+    FF_NETWORK_PER_BUILD = true
+EOF
+
 # /cache stays in volumes — sockerless cloudrun backend MUST mount it
 # via the cloud resource mapping (GCS bucket per backends/cloudrun/
 # volumes.go::bucketForVolume + Cloud Run Job Volume{Gcs{Bucket}}).
