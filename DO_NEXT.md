@@ -24,31 +24,38 @@ Multi-container Service infra ALREADY exists in cloudrun (`startMultiContainerSe
 - All containers share network namespace via Cloud Run sidecars (loopback). `localhost:5432` from BUILD reaches postgres.
 - `/etc/hosts` injection for the alias name (bootstrap writes `127.0.0.1 postgres` before exec).
 
-**Verified gitlab-runner v17.5 contract** (read from `executors/docker/docker.go` + `services.go`):
+**Hard constraint (user directive 2026-05-03 v17):** the backend MUST NOT special-case gitlab-runner / github-runner. The entry API is the standard Docker/Podman libpod API — nothing more. Any signal we use must come from the standard Docker API surface (NetworkingConfig.EndpointsConfig.Aliases, HostConfig.NetworkMode, /networks/create, network membership). The cloud resource mapping CAN be adjusted to add new mappings like "docker network with multi-member alias resolution → Cloud Run multi-container Service revision".
 
-| Container kind | Label `com.gitlab.gitlab-runner.type` | Other labels | Stdin handling |
-|---|---|---|---|
-| Service (postgres) | `service` | `service=<name>`, `service.version=<v>` | none (foreground default cmd) |
-| Wait/healthcheck | `wait` | `wait=<service-container-id>` | none — env `WAIT_FOR_SERVICE_TCP_ADDR/PORT` |
-| Build | `build` | — | OpenStdin=true AttachStdin=true |
-| Predefined (helper for git/artifact) | `predefined` | — | OpenStdin=true AttachStdin=true |
+**Standard-Docker-API signals only (no runner-specific labels):**
+- `POST /networks/create` — gitlab-runner creates a per-build network here.
+- `POST /containers/create` body has `NetworkingConfig.EndpointsConfig[<network-id>] = {Aliases: ["postgres"]}` — registers DNS aliases for a container on a network.
+- Subsequent containers joining the same network resolve sibling containers by alias (Docker's standard behavior).
 
-Service container name: `{getProjectUniqRandomizedName()}-{serviceSlug}-{serviceIndex}` (e.g. `runner-tkopdswuw-project-81023556-concurrent-0-postgres-0`). Wait container name: `{service-container-name}-wait-for-service`.
+**Cloud resource mapping change (to add to specs/CLOUD_RESOURCE_MAPPING.md):**
 
-**The hard parts:**
-1. **Service-container detection** — solved by `Labels["com.gitlab.gitlab-runner.type"] == "service"`.
-2. **Pod assembly** — when a service container is created, hold its ContainerCreate in PendingCreates without deploying. Ditto healthcheck. When BUILD container is created (image differs from helper, name suffix `-build`), gather all pending pod members (same name prefix), deploy as multi-container Service via existing `startMultiContainerServiceTyped`.
-3. **Deferred start semantics** — gitlab-runner expects START postgres to return success and postgres to be running BEFORE it creates the healthcheck. The existing `PodDeferredStart` returns success without deploying. ContainerInspect for the deferred container should report `State.Running = true` (the SIDECAR will be running shortly). This is the only "synthetic" call — but the deferred sidecar IS guaranteed to start shortly under our control, so it's not a fake.
-4. **Healthcheck container handling** — gitlab-runner's healthcheck is `helper-image health-check` with env `WAIT_FOR_SERVICE_TCP_ADDR=postgres`. If we deploy it before postgres + BUILD are bundled, it can't reach postgres. Options: (a) recognize healthcheck via env, short-circuit to "exited 0" without deployment (we will deploy postgres + BUILD together so postgres WILL be ready); (b) defer the healthcheck container into the same pod, run it as a one-shot sidecar with init=true. (a) is simpler.
-5. **/etc/hosts injection** — `sockerless-cloudrun-bootstrap` reads env `SOCKERLESS_HOST_ALIASES=postgres=127.0.0.1,redis=127.0.0.1` and writes them to `/etc/hosts` before exec.
-6. **ExposedPorts surfacing** — postgres image declares `5432/tcp`; `ContainerInspect` for the deferred postgres should return that so gitlab-runner injects WAIT_FOR_SERVICE_TCP_PORT=5432.
+> Docker user-defined network with multiple members + alias-based DNS → Cloud Run multi-container Service revision. The first container that joins a network does NOT immediately deploy; instead it parks in PendingCreates with the network ID. Subsequent containers joining the same network park likewise. Materialization (deploy as one multi-container Cloud Run Service revision) is triggered by the standard Docker lifecycle event "the last container to join the network is started" — heuristic: a container that has no Stdin attach hijack within a short window (e.g. the build/script runner that gitlab-runner attaches to). Need to design the trigger more precisely.
 
-**Code touch-list:**
-- `backends/cloudrun/backend_impl.go::ContainerCreate` — name-prefix → pod-id auto-assignment + service container detection + healthcheck short-circuit.
-- `backends/cloudrun/backend_impl.go::ContainerStart` — already calls `PodDeferredStart`; verify deferred path returns success cleanly.
-- `backends/cloudrun/start_service.go::buildServiceSpec` — order containers so BUILD is `IsMain=true` (ingress); set sidecar `StartupProbe.TcpSocket{Port: containerPort}` for postgres so Cloud Run waits for postgres to listen before marking ready.
-- `agent/cmd/sockerless-cloudrun-bootstrap/main.go` — read SOCKERLESS_HOST_ALIASES, append to `/etc/hosts` before exec.
-- New unit tests for the heuristic + the bootstrap /etc/hosts logic.
+**Open design questions (need to think before implementing):**
+1. **Materialization trigger** — without runner-specific labels, when do we know the pod is "complete"? Options:
+   - `POST /containers/{id}/attach` with stdin opens the hijack — strong signal that this container is the work-doer (BUILD). Materialize when attach occurs on a container in the pending network.
+   - `POST /containers/{id}/exec` — same signal.
+   - Timeout-based: 2-5 seconds of no new joins → deploy.
+   - Explicit `POST /containers/{id}/start` after the network has multiple members — but for a single-service+build flow, BUILD's start IS the trigger.
+2. **Deferred-start semantics for non-attached members (postgres)** — gitlab-runner expects START postgres → "running" before it creates more containers. Deferring the actual deploy means our `/containers/{id}/json` reports `State.Running = true` while no Cloud Run Service exists yet. This is "eventually true" rather than fake (we WILL deploy soon and postgres WILL be running), but it's the closest to a synthetic state we'd allow. Alternative: deploy postgres immediately as its own Cloud Run Service, then later DELETE it and re-deploy as part of the multi-container revision when BUILD attaches. Wasteful but no synthetic state.
+3. **gitlab-runner's `wait` healthcheck** — gitlab-runner v17.5 spawns `helper-image health-check` with `WAIT_FOR_SERVICE_TCP_ADDR=postgres` env. To make this work without backend special-casing, the wait container must successfully TCP-connect to `postgres:5432`. If we use the deferred-start model, postgres isn't actually deployed yet so the connect fails. **Workaround that's standard-Docker-compliant**: configure gitlab-runner-cloudrun with `WaitForServicesTimeout = -1` in its config.toml — gitlab-runner v17.5 source (`executors/docker/services.go::waitForServices`) skips the healthcheck entirely when timeout is negative. This is a runner-side config knob, not a backend special-case. Then our backend never sees the wait container at all.
+4. **Cloud Run revision immutability** — adding a member to an existing pod requires a new revision (restarts all containers). For per-stage exec into BUILD where postgres should NOT restart, the model breaks. Mitigation: per gitlab-runner job, gitlab-runner does NOT restart the build container — it `docker exec`s into it across stages. So one revision suffices for the whole job. Per-job-pod caching aligns with this.
+5. **/etc/hosts injection** — `sockerless-cloudrun-bootstrap` reads the standard Docker network alias info that the backend can extract from NetworkingConfig and writes them to `/etc/hosts` before exec. No runner-specific knowledge — just "if you're in a multi-container Cloud Run Service revision, your siblings' aliases resolve to 127.0.0.1".
+
+**Decision needed before code:** which of (1) and (2) is the right design? My instinct is (1.attach-trigger + 2.eventually-true) is cleanest — but it does have one synthetic-ish moment. (2.deploy-then-redeploy) is wasteful but no synthesis. Both require gitlab-runner config `wait_for_services_timeout = -1` (3) so we don't have to deal with the wait container.
+
+**Code touch-list (after design is settled):**
+- Standard Docker `/networks/create` + NetworkingConfig handling in cloudrun (verify what's already there).
+- `backends/cloudrun/backend_impl.go::ContainerCreate` — record network membership in PendingCreates (no runner labels).
+- `backends/cloudrun/backend_impl.go::ContainerStart` — defer if container is in a pending pod; materialize on the trigger.
+- `backends/cloudrun/start_service.go::buildServiceSpec` — already supports multi-container; verify sidecar StartupProbe configuration.
+- `agent/cmd/sockerless-cloudrun-bootstrap/main.go` — read SOCKERLESS_HOST_ALIASES (sourced from the network's known aliases at deploy time), append to `/etc/hosts` before exec.
+- `tests/runners/gitlab/dockerfile-cloudrun/bootstrap.sh` — set `wait_for_services_timeout = -1` in gitlab-runner config.toml at registration.
+- Update `specs/CLOUD_RESOURCE_MAPPING.md` with the docker-network → multi-container-Service mapping.
 
 ### Other resume items
 1. Once cell 7 GREEN, port the same overlay+bootstrap+alias trio to gcf for cell 8.
