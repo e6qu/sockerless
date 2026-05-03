@@ -207,8 +207,20 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 		if ch, hasChannel := s.Store.WaitChs.Load(id); hasChannel {
 			select {
 			case <-ch.(chan struct{}):
-				// Query CloudState for the actual exit code (Store may be empty in stateless mode)
-				if cc, found, _ := s.CloudState.GetContainer(r.Context(), id); found {
+				// Phase 122g BUG-934: prefer InvocationResult over
+				// CloudState.GetContainer here. CloudState.GetContainer
+				// for cloudrun's Service-path containers calls
+				// queryServices which iterates ALL services in the
+				// project + filters; with even ~50 stale services this
+				// took ~15 minutes (cell 7 v20 evidence: /wait
+				// duration=902811ms despite WaitCh closing in 2s).
+				// The invoke goroutine that closed WaitCh just stored
+				// InvocationResult — that IS the truth for FaaS / Service
+				// path containers; reading cloud state again wastes the
+				// fast-path the channel signal was meant to provide.
+				if inv, ok := s.Store.GetInvocationResult(id); ok {
+					writeWaitBody(w, inv.ExitCode)
+				} else if cc, found, _ := s.CloudState.GetContainer(r.Context(), id); found {
 					writeWaitBody(w, cc.State.ExitCode)
 				} else if lc, lok := s.Store.Containers.Get(id); lok {
 					writeWaitBody(w, lc.State.ExitCode)
