@@ -174,6 +174,25 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
 
+	// Phase 122g BUG-936 fast-path: if WaitChs has a channel for this
+	// ref AND InvocationResult is already recorded, return immediately
+	// without ResolveContainerIDAuto + CloudState.GetContainer (which
+	// for cloudrun lists ALL Cloud Run Services in the project — minutes
+	// per call with N services). Most /wait callers send the canonical
+	// 64-char hex ID; PendingCreates / WaitChs maps it directly.
+	if ch, hasChannel := s.Store.WaitChs.Load(ref); hasChannel {
+		if inv, ok := s.Store.GetInvocationResult(ref); ok {
+			// Container already exited via invoke goroutine — no point
+			// blocking. Drain channel so we drop the entry from WaitChs.
+			select {
+			case <-ch.(chan struct{}):
+			default:
+			}
+			WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: inv.ExitCode})
+			return
+		}
+	}
+
 	// Try local wait channel first (simulator mode runs containers locally)
 	if s.CloudState != nil {
 		id, ok := s.ResolveContainerIDAuto(r.Context(), ref)
