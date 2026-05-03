@@ -112,17 +112,14 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 	}
 
 	// Phase 122f: Cloud Run Service health check probes ContainerPort.
-	// For runner-pattern containers (postgres, redis, nginx, ...) the
-	// container binds a service port (5432, 6379, 80) NOT $PORT/8080.
-	// Set the service port from the image's ExposedPorts so Cloud Run
-	// probes the right port. For job-path containers Cloud Run Jobs
-	// don't probe; this field is harmless.
-	if isRunnerPattern(ci.Container) {
-		port := defaultServicePort(ci.Container)
-		if port > 0 {
-			containerSpec.Ports = []*runpb.ContainerPort{
-				{ContainerPort: int32(port)},
-			}
+	// Read the actual ExposedPorts from the image (real cloud-primitive
+	// data, not a hardcoded heuristic). If the image declares no ports,
+	// the container does NOT bind $PORT and is NOT eligible for Service
+	// path — let the caller route it elsewhere or fail loudly. No
+	// defaults, no fallbacks (per project rule).
+	if port := imagePort(ci.Container); port > 0 {
+		containerSpec.Ports = []*runpb.ContainerPort{
+			{ContainerPort: int32(port)},
 		}
 	}
 
@@ -133,40 +130,17 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 	return containerSpec, mounts
 }
 
-// defaultServicePort returns the container's primary service port
-// from its `Config.ExposedPorts` map, or a known default for known
-// long-lived images (postgres=5432, redis=6379, mysql=3306, etc.),
-// or 0 if no port can be inferred. Used by Cloud Run Service health
-// probes to know which port the container actually binds.
-func defaultServicePort(c *api.Container) int {
+// imagePort returns the first port the image declares via
+// Config.ExposedPorts. Reads the real image metadata; no hardcoded
+// per-image port maps. Returns 0 if image declares none.
+func imagePort(c *api.Container) int {
 	if c == nil {
 		return 0
 	}
 	for portKey := range c.Config.ExposedPorts {
-		// portKey is like "5432/tcp"
 		var port int
 		_, _ = fmt.Sscanf(portKey, "%d", &port)
 		if port > 0 {
-			return port
-		}
-	}
-	imageLower := strings.ToLower(c.Image)
-	for substr, port := range map[string]int{
-		"postgres":      5432,
-		"redis":         6379,
-		"mysql":         3306,
-		"mariadb":       3306,
-		"mongo":         27017,
-		"rabbitmq":      5672,
-		"nginx":         80,
-		"httpd":         80,
-		"apache":        80,
-		"elasticsearch": 9200,
-		"memcached":     11211,
-		"kafka":         9092,
-		"zookeeper":     2181,
-	} {
-		if strings.Contains(imageLower, "/"+substr+":") || strings.Contains(imageLower, "/"+substr+"/") || strings.HasPrefix(imageLower, substr+":") || strings.HasPrefix(imageLower, substr+"/") {
 			return port
 		}
 	}
