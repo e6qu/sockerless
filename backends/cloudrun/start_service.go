@@ -113,7 +113,9 @@ func (s *Server) startSingleContainerService(id string, c api.Container, crState
 // GetService until Uri populates). Polls up to 5 minutes — Cloud Run
 // Service revisions can take 60-90s to reach serving state.
 func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}) {
+	s.Logger.Info().Str("container", id).Msg("invokeServiceDefaultCmd: goroutine entered")
 	serviceURL := s.waitForServiceURL(id, 5*time.Minute)
+	s.Logger.Info().Str("container", id).Str("url", serviceURL).Msg("invokeServiceDefaultCmd: waitForServiceURL returned")
 	defer func() {
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
@@ -263,8 +265,14 @@ func (s *Server) startMultiContainerServiceTyped(_ string, podContainers []api.C
 // empty string on timeout — caller should treat empty as failure.
 func (s *Server) waitForServiceURL(containerID string, timeout time.Duration) string {
 	deadline := time.Now().Add(timeout)
+	attempt := 0
 	for time.Now().Before(deadline) {
-		if url, ok := s.serviceInvokeURL(s.ctx(), containerID); ok && url != "" {
+		attempt++
+		url, ok := s.serviceInvokeURL(s.ctx(), containerID)
+		if attempt%5 == 1 {
+			s.Logger.Debug().Str("container", containerID).Int("attempt", attempt).Bool("ok", ok).Str("url", url).Msg("waitForServiceURL poll")
+		}
+		if ok && url != "" {
 			return url
 		}
 		time.Sleep(2 * time.Second)
