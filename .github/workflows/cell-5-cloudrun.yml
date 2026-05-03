@@ -133,5 +133,3 @@ jobs:
 # trigger: 2026-05-03 BUG-910 fix
 
 # trigger: BUG-911 task_timeout fix
-
-# trigger: BUG-924
