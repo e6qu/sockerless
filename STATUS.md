@@ -1,80 +1,43 @@
 # Sockerless — Status
 
-**LIVE (2026-05-03): cells 5+6 in flight via PR #124 throwaway pull_request trigger; dispatcher serverless on Cloud Run; cells 7+8 not started.** BUG-907 closed (apostrophe — both runner images rebuilt in AR). BUG-908 closed (Cloud Run Jobs.CreateJob nested Job.Name rejected — dispatcher rev 00002). **BUG-909 OPEN** = cloudrun + gcf backends lack bind-mount → managed-volume translation (Phase-110b-equivalent for GCP). Cell 5 surfaced it: https://github.com/e6qu/sockerless/actions/runs/25261423675/job/74069263500 — `Initialize containers` fails with `host bind mounts are not supported on Cloud Run backend ("/var/run/docker.sock:/var/run/docker.sock")`. Phase 122d (BUG-909 fix) is in progress; mirror `backends/ecs/{config,backend_impl}.go` SharedVolumes pattern with GCS bucket as the volume backing. See [DO_NEXT.md](DO_NEXT.md) for the resume sequence.
+**Date: 2026-05-03**. PR #123 (`phase-118-faas-pods`) all standard CI green; runner cells 5-8 LIVE work in flight.
 
-**Live infra deployed (sockerless-live-46x3zg4imo)**: AR `dispatcher:gcp-amd64` (Cloud Build); Secret Manager `github-pat` v1 = `gh auth token`, granted to `sockerless-runner@…iam.gserviceaccount.com`; Cloud Run Service `github-runner-dispatcher-gcp` (us-central1, min=max=1, no-cpu-throttling, REPO=e6qu/sockerless env, GITHUB_TOKEN secret-mounted) at `https://github-runner-dispatcher-gcp-199307773205.us-central1.run.app`.
+## Cells 1-4 (AWS) — GREEN (Phase 110, closed 2026-04-30)
+| Cell | URL |
+|---|---|
+| 1 GH × ECS | https://github.com/e6qu/sockerless/actions/runs/25075259911 |
+| 2 GH × Lambda | https://github.com/e6qu/sockerless/actions/runs/25113565115 |
+| 3 GL × ECS | https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 |
+| 4 GL × Lambda | https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943 |
 
-**105 phases closed. Phase 110 closed — all 4 cells GREEN. PR #123 (`phase-118-faas-pods`) bundles Phase 118 + 120 + 121 + 122 + 122b + 122c — ALL CI GREEN as of 2026-05-02 commit `a646602`. Phase 122c added: universal multi-arch manifest assembly (`backends/core/multiarch.go`) + per-cloud `AssembleMultiArchManifest` on AWS/GCP/Azure builders + bash bootstrap fail-loudly env validation (BUG-907) + dispatcher required-config tightening + terraform-managed cloud builder resources (GCS build context bucket + Cloud Build API + extended runner SA roles on GCP; ECR pull-through cache for docker-hub on AWS; ACR cache rule + AcrPush + Contributor identity roles on Azure). `terraform validate` clean on all 6 modules. Phase 118 (FaaS pod overlays for gcf + lambda) code-complete + integration tests green. Phase 120 (4 GCP runner cells, docker executor — no k8s/GKE/ARC) code-complete; live runs pending operator. Phase 121 (cloud-faithful sim hardening — GCP) closed via BUG-895/896/897/899/900/901/902/903/904/905/906 chain: sim now stands up real OAuth2 mint with HS256 JWT, real GCS-on-disk persistence, Cloud Functions Gen2 ↔ Cloud Run service auto-wiring, proto-JSON enum decoding (`enumString` for LaunchStage + Condition.State), HTTP-invoke of overlay containers (`StartHTTPContainer`/`StopAndRemoveContainer`/`StreamContainerLogs` helpers, cloud-faithful pattern matching real Cloud Run), OCI v1 tar layout support in `parseImageTarFull` (sharing `ociImageConfig` schema with the registry-pull path), Cloud Logging-style label filters on ListFunctions (`labels.X:"v"`, `-labels.X:*` negation+wildcard). Phase 121b (Azure simulator hardening — mirror of GCP work: HTTP container helpers + Azure Functions invocation flow + ListFunctions filter) queued. Phase 122 (per-cloud github-runner-dispatcher: GCP + Azure variants) queued. Phase 119 (k8s shim) discarded.**
-- Cell 1 GH×ECS: https://github.com/e6qu/sockerless/actions/runs/25075259911
-- Cell 2 GH×Lambda: https://github.com/e6qu/sockerless/actions/runs/25113565115 — 7 architectural walls (BUG-862, 869, 870, 871, 872, 873, 874).
-- Cell 3 GL×ECS (2026-04-29): https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 — job 14148678472 ran `echo "hello from sockerless ecs"` + `env | sort` in 270.8 s on 9 sequential per-stage Fargate tasks. Closed in commit `aa2419a`.
-- **Cell 4 GL×Lambda (NEW 2026-04-30): https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943** (status: success) — job 14156021860 ran `echo "hello from sockerless lambda"` + `date -u` in 260.5 s. Closed seven Lambda-primitive bugs across the session culminating in two final fixes:
-  1. **stdinPipe/start race**: `/start`'s Invoke goroutine did a one-shot `stdinPipes.Load()`, missing the standard Docker SDK ordering (/create → /start → /attach). Fix: poll `stdinPipes` for up to 5 s inside the goroutine before deciding to skip stdin. Without this, OpenStdin containers Invoked with empty payload `{}`, which the bootstrap piped to bash, producing `/bin/bash: line 1: {}: command not found` and Lambda `Unhandled` errors on every predefined-helper container.
-  2. **`docker.io/library/<name>` rejection**: `image_resolve.go` rejected `docker.io/library/alpine:latest` as "Docker Hub user/org image" because `repo` retained the `library/` prefix and matched `strings.Contains(repo, "/")`. Fix: strip `library/` prefix before the user/org check.
-  3. Plus diagnostic logging — `LogType=Tail` on every `lambda.Invoke` so the function's last 4 KB of stderr ride back inline; payload preview + log_tail emitted on `FunctionError`. The `{}: command not found` line that pinpointed the race came directly from this tail.
+## Cells 5-8 (GCP) — IN FLIGHT (Phase 122c→f)
 
-See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer), [docs/RUNNERS.md](docs/RUNNERS.md) (runner wiring).
+All 4 cells have failed across 5+ iterations this session. **15+ live-only bugs** surfaced + closed. The remaining failures are architectural — Phase 122f is the proper-fix path documented in `specs/CLOUD_RESOURCE_MAPPING.md`:
+
+- Switch runner-pattern containers from Cloud Run **Jobs** (one-shot) to Cloud Run **Service** (long-lived) — sockerless config flag `SOCKERLESS_GCR_USE_SERVICE=1` exists, needs VPC connector + reverse-agent for `docker exec`.
+- Pre-deploy one Service per runner-image shape (ECS task-def pattern, Lesson 1).
+- Reverse-agent for exec (Lesson 3 — already implemented in ACA, partial in cloudrun).
+
+Current blockers: BUG-921 (cloudrun /start blocked on RunJob.Wait — closed code-side, needs full validation), BUG-922 (cloudrun auto-removes container after first exec — Cloud Run Job lifecycle vs runner expectation), BUG-923 (gcf ContainerCreate blocks 150-200s on Cloud Build + CreateFunction.Wait — same Wait pattern as BUG-921 in CREATE).
+
+Live infra in `sockerless-live-46x3zg4imo`:
+- Dispatcher Cloud Run Service `github-runner-dispatcher-gcp` rev `00006-j4v` (post BUG-907..912 fixes)
+- gitlab-runner-cloudrun rev `00015-mmb` + gitlab-runner-gcf rev `00016-xc2` (post BUG-913..921 fixes)
+- AR repos: `sockerless-live`, `docker-hub` (Docker Hub proxy), `gitlab-registry` (registry.gitlab.com proxy)
+- Secret Manager: `github-pat`, `gitlab-pat`, `gitlab-runner-token-{cloudrun,gcf}`
+- GCS buckets: `sockerless-live-46x3zg4imo-build`, `sockerless-live-46x3zg4imo-runner-workspace`
+
+## Architectural state (specs/CLOUD_RESOURCE_MAPPING.md)
+4 new sections this session (1063 lines total):
+1. Runner job lifecycle (docker executor) — required cloud primitives
+2. Per-backend container concerns matrix (21 concerns × 7 backends)
+3. Lessons from ECS+lambda → cloudrun+gcf adjustments (7 lessons + Phase 122f synthesis)
+4. Dispatcher scope rule (only spawns runners; sockerless config is runner-image-internal)
+
+See [PLAN.md](PLAN.md) for roadmap, [BUGS.md](BUGS.md) for bug log, [WHAT_WE_DID.md](WHAT_WE_DID.md) for narrative, [DO_NEXT.md](DO_NEXT.md) for resume pointer.
 
 ## Branch state
-
-- **`main`** — synced with `origin/main` at PR #121 merge.
-- **`origin-gitlab/main`** — mirror, pre-push hooks now mirror-aware so `git push origin-gitlab main` is a clean fast-forward.
-- **`phase-110-runner-integration`** — active; baseline commit `f5c1ab7` shipped `docs/RUNNERS.md` + the mirror-aware hooks.
-
-## Recent merges
-
-| PR | Summary |
-|---|---|
-| #121 | Phase 109 strict cloud-API fidelity sweep — 19 audit items: AWS Lambda VpcConfig + region/account scoping + Secrets Manager + SSM Parameter Store + KMS + DynamoDB; GCP `compute.firewalls` + `compute.routers`/Cloud NAT + `iam.generateAccessToken` + operations endpoint persistence; Azure IMDS token endpoint + Blob Container ARM CRUD + NSG priority+direction validation + Private DNS AAAA/CNAME/MX/PTR/SRV/TXT records + NAT Gateways + Route Tables + Container Apps/Jobs Azure-AsyncOperation polling + Key Vault ARM+data plane + ARM `SystemData.createdAt` preservation. Test-fixtures no-fakes audit clean. |
-| #120 | Audit + Phase 104 framework migration + cloud-native typed drivers + Phase 105 waves 1-3 + Phase 108 closed + Phase 106/107 harness scaffolding + ImageRef domain type + Phase 109 first-round (BUG-836..844: real ECS lifecycle, real SSM AgentMessage protocol, real subnet-CIDR IP allocation, real Azure per-site hostnames, real kill signal routing) + repo-wide code/doc cleanup. |
-| #119 | Post-PR-#118 state-doc refresh — Phase 104 promoted to active. |
-| #118 | Round-8 + Round-9 live-AWS sweep — 30 bugs (BUG-786..819), per-cloud terragrunt sweep parity. |
-| #117 | Round-7 live-AWS sweep — 16 bugs (BUG-770..785). |
-
-Older PRs (#112–#115) — sim parity, real volumes, FaaS invocation tracking, reverse-agent ops, Phase 91/86/87/88 closures. Detail in [WHAT_WE_DID.md](WHAT_WE_DID.md) and per-bug entries in [BUGS.md](BUGS.md).
-
-## Open work
-
-- **Phase 118 — live-GCP track + cross-FaaS pool/cache + pod design.**
-  - cloudrun (Cloud Run Jobs) bugs BUG-877..885 fixed live.
-  - gcf (Cloud Run Functions Gen2) BUG-884 fixed live: stub-Buildpacks source + post-create `Run.Services.UpdateService` image swap; content-addressed AR cache; stateless reuse pool keyed on `sockerless_overlay_hash` + `sockerless_allocation` labels; idtoken-authenticated invocation (no `allUsers` workaround); fail-loud on user-credential ADC. Tested live end-to-end (`docker run --rm alpine echo` returns clean stdout via gcf).
-  - **Open: BUG-886** — `core.StreamCloudLogs` loses entries from a fast-burst-then-exit container (bundle-O case). Cursor refactor to `>=lastTS` + seen-set dedup didn't catch it. Likely iterator pagination or write-side blocking issue. Next fix.
-  - **Queued in this phase**: Lambda pool reuse (overlay caching exists; needs label-based claim/release on top); AZF live track (greenfield — needs Azure infra setup from operator); FaaS pod implementation (spec done with honest namespace-isolation caveats — net+IPC+UTS shared per podman default, mount+PID isolated per podman default but degraded-shared on FaaS due to no `CAP_SYS_ADMIN`).
-- **Phase 110 — closed 2026-04-30.** All 4 cells GREEN.
-
-### 4-cell matrix
-
-| Cell | State | URL |
-|---|---|---|
-| 1 GH × ECS | ✅ GREEN | https://github.com/e6qu/sockerless/actions/runs/25075259911 |
-| 2 GH × Lambda | ✅ GREEN | https://github.com/e6qu/sockerless/actions/runs/25113565115 |
-| 3 GL × ECS | ✅ GREEN | https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 |
-| 4 GL × Lambda | ✅ GREEN | https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943 |
-
-Detailed unblock plans per cell live in [PLAN.md § Phase 110 — paths forward to GREEN](PLAN.md). Per-bug closure paths in [BUGS.md](BUGS.md). Resume command + sequence in [DO_NEXT.md](DO_NEXT.md). Full runner hurdle catalog (closed + predicted) in [docs/RUNNERS.md § Runner hurdles](docs/RUNNERS.md). Lambda volume primitive translation in [specs/CLOUD_RESOURCE_MAPPING.md § Lambda bind-mount translation](specs/CLOUD_RESOURCE_MAPPING.md).
-- **Phase 110a — github-runner-dispatcher-aws skeleton: shipped** at commit `ba797b6` (originally `github-runner-dispatcher`; renamed for naming consistency 2026-05-02 alongside the GCP + Azure variants). Top-level Go module, sockerless-agnostic (only stdlib + BurntSushi/toml). State recovery via container labels (`sockerless.dispatcher.{job_id,runner_name,managed_by}`); GC sweep every 2 min reaps exited containers + offline GitHub runners; graceful shutdown drains in-flight work bounded to 30 s.
-- **Phase 122 + 122b — `github-runner-dispatcher-gcp` + `github-runner-dispatcher-azure`: shipped 2026-05-02** on PR #123. GCP variant uses `cloud.google.com/go/run/apiv2` to create one Cloud Run Job per queued workflow_job; Azure variant uses `armappcontainers` for ACA Jobs. Both reuse the AWS dispatcher's poller / scopes / registration-token mint via `replace github.com/sockerless/github-runner-dispatcher-aws => ../github-runner-dispatcher-aws` in their go.mod. Live-validation pending operator runs.
-- **Phase 113 (queued)** — production-shape dispatcher (webhook ingress, GitHub App install, multi-repo, deployable). Applies to all three cloud variants. See [PLAN.md § Phase 113].
-- **Phase 104 wrapper-removal pass** — gated on docker getting typed cloud-native drivers OR accepting wrappers as permanent. Once decided: drop unused `WrapLegacyXxx` / `LegacyXxxFn` scaffolding and shrink `api.Backend` correspondingly. Coordinated landing.
-- **Phase 104 interface tightening** — typed `Signal` enum, `ResolveImageReg(ImageRef)` helper, structured `Stats` struct.
-- **Phase 105 wave 4** (lower priority) — events stream, exec start hijack shape, container CRUD beyond list.
-- **Phase 68** (Multi-Tenant Backend Pools) — P68-001 done; 9 sub-tasks remain. Phase 110's 4-cell setup uses Phase-68-v1 (one daemon per backend); Phase 68-v2 collapses to label-based dispatch on a single daemon.
-
-## Test counts (head of `main`)
-
-| Category | Count |
-|---|---|
-| Core unit | 312 |
-| Cloud SDK/CLI | AWS 68+, GCP 64+, Azure 57+ |
-| Sim-backend integration | 77 (parity matrix at 77/77 ✓) |
-| Libpod golden-shape | 8 |
-| External-suite replays | 12 (act + gitlab-ci-local) |
-
-## Operational state
-
-- **AWS creds: ACTIVE** as of 2026-04-30 (root `729079515331`, eu-west-1) — refresh via `source aws.sh`.
-- **Live AWS infra: UP in eu-west-1** — provisioned 2026-04-28; still running. ECS + Lambda live envs as above. NAT Gateway runs ~$0.045/hr — tear down via `terragrunt destroy` from `terraform/environments/{ecs,lambda}/live` when the session ends.
-- **Sockerless daemons:** Lambda backend running on the cell-4-fix binary at `/tmp/sockerless-backend-lambda` (verified live with the GREEN cell 4 pipeline). ECS daemon was last seen on the BUG-859/860 fix binary; cells 3+4 verified GREEN against current code.
-- **Smoke verified** — `DOCKER_HOST=tcp://localhost:3375 docker run --rm alpine:latest echo hi` exits 0 from a Fargate task; verifies the BUG-846 AWS-Public-Gallery routing for Docker Hub library refs.
-- **Podman machine** — running (applehv VM, user-mode networking, 4 CPU / 10 GiB / 100 GiB). Used for local-Podman dispatcher testing in 110a; not used for cell 3+4 (gitlab-runner master is a darwin-native binary).
-- **PAT keychain entries** — `gh` (GitHub) keychain-backed; GitLab PAT in `security(1)` keychain entry `sockerless-gl-pat`.
+- `main` synced with `origin/main` at PR #121.
+- `phase-118-faas-pods` (PR #123) — 17+ commits this session; all CI green; ready for review/merge once cells GREEN.
+- `cell-workflows-on-main` (PR #124, throwaway) — must NOT be merged; closes when cells 5+6 GREEN.
+- `gitlab-cell-7-test` + `gitlab-cell-8-test` on `origin-gitlab` — fire pipelines for cells 7+8.

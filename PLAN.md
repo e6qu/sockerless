@@ -604,6 +604,42 @@ The only documented mapping is the post-create UpdateService image-swap pattern 
 
 **Phase 118 PR rule**: per guiding principle #11, this phase closes only when the sub-118d-gcf + sub-118d-lambda commits land on a branch (`phase-118-faas-pods`), the PR is opened against `main`, and all CI jobs pass green. User merges (workflow rule).
 
+### Phase 122f — Cloud Run Service path for runner-pattern containers (NEXT — open)
+
+**Why.** Cells 5-8 surfaced live (2026-05-03) that Cloud Run Jobs (one-shot) cannot host the long-lived containers gitlab-runner + github-actions-runner expect. BUG-921/922/923 chain — RunJob.Wait blocks, container removed after first exec, CreateFunction.Wait blocks — are all symptoms of the Job-vs-Service architecture mismatch. The proper fix per `specs/CLOUD_RESOURCE_MAPPING.md` § "Runner job lifecycle" + "Lessons from ECS+lambda → cloudrun+gcf adjustments":
+
+1. Enable VPC Access on the live project (currently disabled): `gcloud services enable vpcaccess.googleapis.com compute.googleapis.com`.
+2. Apply terraform to provision VPC + subnet + connector (resources already in `terraform/modules/cloudrun/main.tf`).
+3. Set `SOCKERLESS_GCR_USE_SERVICE=1` + `SOCKERLESS_GCR_VPC_CONNECTOR=<auto-discovered>` in the runner image bootstrap.
+4. Implement reverse-agent end-to-end for cloudrun (port from ACA where it works); the in-image bootstrap dials back when `SOCKERLESS_CALLBACK_URL` is set.
+5. ContainerCreate runner-pattern detection: `tail -f /dev/null` cmd OR explicit `sockerless.runner-pattern=true` label → Service path with `Container.command` override (skip overlay-image build per Lesson 6).
+6. Pre-deploy ONE Cloud Run Service per runner-image shape (Lesson 1, ECS task-def pattern). Sub-task ContainerStart updates the existing Service's revision env instead of creating a fresh Service.
+7. Pool reuse via `min_instance_count` toggle: ContainerStop → 0 (suspend), ContainerStart → 1 (resume).
+8. For gcf: same shape via the underlying Cloud Run Service that Functions Gen2 wraps (UpdateService escape hatch, Phase 118 BUG-884 generalization).
+
+**Closes**: BUG-921 (no Jobs.RunJob.Wait), BUG-922 (Service is long-lived), BUG-923 (pre-deployed Service avoids per-container deploy). Cells 5-8 should GREEN end-to-end.
+
+### Phase 122e — Live-GCP runner unblock chain (CLOSED 2026-05-03, partial)
+
+Phase 122e closed 11 of 12 live-only bugs surfaced while wiring cells 5-8 against `sockerless-live-46x3zg4imo`:
+
+- BUG-907 (bash apostrophe in `${var:?msg}`)
+- BUG-908 (Cloud Run Jobs.CreateJob nested Job.Name rejected)
+- BUG-909 (cloudrun + gcf bind-mount → SharedVolume GCS bucket translation; Phase-110b-equivalent for GCP)
+- BUG-910 (bash `timeout 60s` killed runner mid-job)
+- BUG-911 (Cloud Run Job task_timeout default 600s)
+- BUG-912 (dispatcher RunJob.Wait blocks poll loop)
+- BUG-913 (gitlab-runner crashed on missing /tmp/runner-work)
+- BUG-915 (gitlab-runner cache disable via sed config.toml)
+- BUG-916 (BucketName output exceeded GCS 63-char limit; sha256 hash for >12-char vol names)
+- BUG-918 (cloudrun image-resolve mangled bare sha256:digest refs; partial fix + RepoTag substitution)
+- BUG-919 (AR remote-proxy for registry.gitlab.com; gitlab-runner-helper image)
+- BUG-921 (cloudrun /start blocked on RunJob.Wait — operation Metadata for execution name)
+
+OPEN at end of Phase 122e: BUG-922 (cloudrun container removed after first exec), BUG-923 (gcf ContainerCreate blocks 150-200s on CreateFunction.Wait). Both are addressed by Phase 122f architectural shift to Cloud Run Service path.
+
+Phase 122e also added the dispatcher serverless deployment (Cloud Run Service + Secret Manager + AR + GCS) and dropped the dispatcher's sockerless-config injection per the new dispatcher-scope rule. Bootstrap.sh auto-discovers project + region from GCP instance metadata server.
+
 ### Phase 122d — BUG-909 cloudrun/gcf SharedVolumes (Phase-110b-equivalent for GCP)
 
 **Why.** Cells 5+6 surfaced live (2026-05-03) that the cloudrun + gcf backends reject every host bind mount the github-runner emits. Same shape as the AWS Phase-110b problem; same fix shape with GCS buckets replacing EFS access points. Without this, `runs-on: [self-hosted, sockerless-cloudrun]` workflows can't have a working `container:` directive, which breaks the very thing cells 5+6 exist to demonstrate.

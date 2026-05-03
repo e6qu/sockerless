@@ -6,6 +6,39 @@ See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for
 
 This file keeps narrative / "why we did it" context that doesn't live in BUGS.md or git log. Per-bug detail belongs in [BUGS.md](BUGS.md) — don't duplicate it here.
 
+## Phase 122e — Cells 5-8 live-GCP bug chain + dispatcher cleanup + spec hardening (in flight 2026-05-03)
+
+End of session 2026-05-03 had 4 GCP runner cells in flight against `sockerless-live-46x3zg4imo`. 15+ live-only bugs surfaced + closed (BUG-907..921). Cells still failing on the architectural mismatch between Cloud Run Jobs (one-shot) and runner expectations (long-lived containers persisting across N exec calls). The Phase 122e session ends with this state captured in 4 new spec sections + dispatcher scope cleanup + bootstrap auto-discovery; Phase 122f scope (Cloud Run Service path for runner-pattern containers) is the proper-fix path for the remaining BUG-922 + BUG-923.
+
+**Spec doc (`specs/CLOUD_RESOURCE_MAPPING.md`) grew from ~840 lines → 1063 lines** with 4 new sections written this session:
+
+1. **Runner job lifecycle (docker executor) — required cloud primitives** — formal state machines for both GitLab Runner (6 phases) and GitHub Actions Runner (5 phases). Critical invariant identified: containers MUST persist across N `docker exec` calls between phases 3-5. Cloud Run Job (one-shot) does NOT fit; Cloud Run Service does.
+
+2. **Per-backend container concerns matrix** — 21 concerns × 7 backends. Every container-level concern (long-lived, bind mount, caps, privileged, user, multi-container, supervisor, exec, network isolation, lifecycle, auto-remove, image pull/push, resource limits, env, workdir, cmd, stdin, logs, exit code, health) mapped to its actual cloud primitive — or explicit "NOT supported — fail loudly" where the cloud genuinely lacks it. No fake fallbacks; backends fail with a clear "use <other backend> for this" error where the host cloud forbids the operation.
+
+3. **Lessons from ECS + Lambda backends → cloudrun + gcf adjustments** — 7 lessons synthesized from the ECS (cells 1+3 GREEN) + Lambda (cells 2+4 GREEN) impls into Phase 122f scope:
+   - L1: ECS pre-registered task-def family → cloudrun pre-deploy one Cloud Run Service per runner shape; gcf same.
+   - L2: Lambda warm pool by content-hash → gcf already has, verify firing; cloudrun Service min_instance_count=0/1 toggle.
+   - L3: ECS SSM ExecuteCommand → cloudrun+gcf reverse-agent (already in ACA).
+   - L4: Lambda stdin payload (BUG-875) → cloudrun+gcf reverse-agent stdin.
+   - L5: ECS bind-mount → EFS access points → already done (BUG-909 GCS).
+   - L6: Lambda overlay-image → cloudrun Service uses Container.command override directly, no overlay; gcf same via UpdateService escape.
+   - L7: Tag-based state recovery → already implemented.
+
+4. **Dispatcher scope adjustment** — `github-runner-dispatcher-{aws,gcp,azure}` SHALL only spawn the runner container with RUNNER_REG_TOKEN/REPO/NAME/LABELS. Forbidden: SOCKERLESS_* env, volume mounts, sockerless config injection. The runner image owns its own backend config internally — auto-discovers from GCP instance metadata server (project, region) + convention (build_bucket = `<project>-build`, runner_workspace_bucket = `<project>-runner-workspace`).
+
+**Code changes Phase 122e (12 commits this session)**:
+- `backends/gcp-common/image_resolve.go` — bare `sha256:<digest>` refs returned as-is (BUG-918); `gitlab-registry` AR remote-proxy case (BUG-919).
+- `backends/core/resolve.go` — `Store.ResolveImage` matches digest IDs with/without `sha256:` prefix + RepoDigests (BUG-918).
+- `backends/cloudrun/{config,backend_impl,volumes}.go` — SharedVolumes + bind-mount translator + `Container.command` override (BUG-909, BUG-918 RepoTag substitution, BUG-921 use op.Metadata for execution name).
+- `backends/cloudrun-functions/{config,backend_impl,volumes}.go` — same SharedVolumes pattern (BUG-909).
+- `github-runner-dispatcher-gcp/internal/spawner/spawner.go` — drop nested Job.Name (BUG-908), drop runOp.Wait (BUG-912), set TaskTemplate.Timeout=3600s (BUG-911), strip SOCKERLESS_* env injection (dispatcher scope cleanup).
+- `tests/runners/{github,gitlab}/dockerfile-{cloudrun,gcf}/bootstrap.sh` — fail-loudly env validation (BUG-907), mkdir runner-work (BUG-913), socat $PORT bridge for Cloud Run, sed config.toml for `disable_cache=true` + `helper_image=<full-tag>` (BUG-915 + BUG-918), bash timeout default 3600s (BUG-910), backend logs ride stderr to Cloud Logging, auto-discover sockerless config from GCP metadata server.
+- `terraform/modules/cloudrun/runner.tf` (NEW) — `google_storage_bucket.runner_workspace` (BUG-909).
+- Live infra deployed: dispatcher Cloud Run Service + Secret Manager (`github-pat`, `gitlab-pat`, `gitlab-runner-token-{cloudrun,gcf}`) + AR remote-proxies (`docker-hub`, `gitlab-registry`) + gitlab-runner Cloud Run Services (cloudrun + gcf).
+
+**Open at end of Phase 122e**: BUG-922 (cloudrun container removed after first exec — Cloud Run Job lifecycle vs runner expectation) and BUG-923 (gcf ContainerCreate blocks 150-200s on Cloud Build + CreateFunction.Wait — exceeds gitlab-runner 120s docker timeout). Both addressed by Phase 122f architectural shift to Cloud Run Service path.
+
 ## Phase 122d — Cells 5/6 live-GCP unblock (BUG-907..911) (in flight 2026-05-03)
 
 PR #124 (`cell-workflows-on-main`, throwaway — must NOT merge) lands the cell-5-cloudrun + cell-6-gcf workflow files on `main` so `workflow_dispatch` becomes possible. Carries TEMP `pull_request:` triggers (constrained to `branches: [main]`+`paths: [.github/workflows/cell-{5,6}-*.yml]`) so PR-#124 pushes auto-fire those cells. Closed once cells GREEN — PR #123's cell yamls have only `workflow_dispatch` so the post-merge state is manual-only (matches cells 1+2).
