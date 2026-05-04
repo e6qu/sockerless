@@ -1,55 +1,78 @@
+# Cell 8 — GitLab Runner (docker executor) → sockerless gcf backend.
+#
+# Same pipeline shape as cell-7. Runner image bakes
+# `sockerless-backend-gcf`. Each job's step container becomes a Cloud
+# Run Function via Phase 118d's pod overlay; stage-to-stage reuse
+# rides the gcf overlay-content-tag pool — same image hash across
+# stages = same Function reused (sub-118b-style amortised cold start).
+
+variables:
+  SOCKERLESS_REF: "main"
+
 stages:
-  - test
+  - probe-and-compile
 
-.install-terraform: &install-terraform
-  - curl -fsSL "https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip" -o tf.zip
-  - unzip tf.zip -d /usr/local/bin && rm tf.zip
-
-lint:
-  stage: test
-  image: golang:1.25
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "push"'
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-  before_script:
-    - go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+probe-and-compile:
+  stage: probe-and-compile
+  tags: [sockerless-gcf]
+  image: golang:1.22-alpine
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+      variables:
+        POSTGRES_PASSWORD: ci
+        POSTGRES_USER: ci
+        POSTGRES_DB: ci
+  variables:
+    PGPASSWORD: ci
   script:
-    - make lint
-
-test-aws:
-  stage: test
-  image: golang:1.25
-  before_script:
-    - apt-get update && apt-get install -y unzip curl
-    - curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
-    - unzip awscliv2.zip && ./aws/install && rm -rf awscliv2.zip aws
-    - *install-terraform
-  script:
-    - cd simulators/aws && make test
-  when: manual
-
-test-gcp:
-  stage: test
-  image: golang:1.25
-  before_script:
-    - apt-get update && apt-get install -y curl python3 apt-transport-https gnupg unzip
-    - echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" > /etc/apt/sources.list.d/google-cloud-sdk.list
-    - curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
-    - apt-get update && apt-get install -y google-cloud-cli
-    - *install-terraform
-  script:
-    - cd simulators/gcp && make test
-  when: manual
-
-test-azure:
-  stage: test
-  image: golang:1.25
-  before_script:
-    - apt-get update && apt-get install -y curl gnupg lsb-release unzip
-    - curl -sL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg
-    - echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ $(lsb_release -cs) main" > /etc/apt/sources.list.d/azure-cli.list
-    - apt-get update && apt-get install -y azure-cli
-    - *install-terraform
-  script:
-    - cd simulators/azure && make test
-  when: manual
+    - apk add --no-cache git gcc musl-dev postgresql-client
+    - echo "=== probe-cloud-urls ==="
+    - env | grep -E '^(CLOUD_RUN_|K_SERVICE|K_REVISION|GOOGLE_CLOUD_|FUNCTION_)' | sort || true
+    - |
+      PROJ="${GOOGLE_CLOUD_PROJECT:-${GCP_PROJECT:-unknown}}"
+      REG="${GOOGLE_CLOUD_REGION:-${CLOUD_RUN_REGION:-us-central1}}"
+      FN="${K_SERVICE:-${FUNCTION_TARGET:-unknown}}"
+      REV="${K_REVISION:-unknown}"
+      echo "Function:        https://console.cloud.google.com/functions/details/$REG/$FN?project=$PROJ"
+      echo "Backing service: https://console.cloud.google.com/run/detail/$REG/$FN/revisions?project=$PROJ"
+      echo "Cloud Logging:   https://console.cloud.google.com/logs/query;query=resource.type%3D%22cloud_run_revision%22%20resource.labels.service_name%3D%22$FN%22?project=$PROJ"
+      echo "Revision:        $REV"
+    - echo "=== probe-host ==="
+    - hostname; whoami; id
+    - cat /etc/os-release 2>/dev/null || true
+    - cat /etc/hostname 2>/dev/null || true
+    - df -h 2>/dev/null | head -10 || true
+    - mount | head -20 || true
+    - echo "=== probe-capabilities (Phase 118d shared-degraded honest surface) ==="
+    - grep -E '^(Cap|Seccomp|NoNew)' /proc/self/status || true
+    - env | grep -E 'SOCKERLESS_(POD|NAMESPACE)' || true
+    - echo "=== probe-kernel ==="
+    - uname -a
+    - cat /proc/version || true
+    - echo "=== probe-env ==="
+    - env | sort | grep -vE '^(SOCKERLESS_|CI_|GITLAB_|HOME|PATH|HOSTNAME)' | head -50
+    - echo "=== probe-parameters ==="
+    - getconf -a 2>/dev/null | head -30 || echo "getconf -a unavailable"
+    - ulimit -a
+    - echo "nproc=$(nproc)"
+    - echo "=== probe-localhost-peer (postgres sidecar via Phase 118d gcf pod overlay) ==="
+    - |
+      for i in 1 2 3 4 5 6 7 8 9 10; do
+        if pg_isready -h postgres -p 5432 -t 5 -U ci; then echo "postgres ready"; break; fi
+        echo "postgres not ready yet (attempt $i)"; sleep 3
+      done
+    - psql "host=postgres user=ci dbname=ci" -c 'SELECT version();'
+    - echo "=== clone-and-compile ==="
+    - git clone --depth=1 --branch="$SOCKERLESS_REF" https://github.com/e6qu/sockerless /work/sockerless
+    - cd /work/sockerless/simulators/testdata/eval-arithmetic
+    - go build -v -o eval-arithmetic .
+    - echo "=== run-arithmetic ==="
+    - |
+      set -e
+      got1=$(./eval-arithmetic '3 + 4 * 2'); test "$got1" = "11" || { echo "expected 11 got $got1"; exit 1; }
+      got2=$(./eval-arithmetic '(10 - 3) * 2'); test "$got2" = "14" || { echo "expected 14 got $got2"; exit 1; }
+      got3=$(./eval-arithmetic '100 / 5 + 1'); test "$got3" = "21" || { echo "expected 21 got $got3"; exit 1; }
+      got4=$(./eval-arithmetic '2 * (3 + 4) - 1'); test "$got4" = "13" || { echo "expected 13 got $got4"; exit 1; }
+      got5=$(./eval-arithmetic '1.5 + 2.5 * 2'); test "$got5" = "6.5" || { echo "expected 6.5 got $got5"; exit 1; }
+      echo "all arithmetic checks pass"
