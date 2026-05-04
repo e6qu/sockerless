@@ -1,3 +1,12 @@
+//go:build integration
+
+// Integration tests requiring the in-package TestMain to bring up the
+// sockerless backend, GCP simulator, and a docker client pointed at the
+// backend. TestMain gates execution on `SOCKERLESS_INTEGRATION=1`; this
+// build tag mirrors that gate so `go test ./...` (without -tags
+// integration) doesn't even compile these tests in — previously they
+// would link in but find `dockerClient == nil` and panic.
+
 package cloudrun
 
 import (
