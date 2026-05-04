@@ -195,6 +195,29 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	}
 	container.NetworkSettings.Networks[netName] = endpoint
 
+	// BUG-923 fast-path: when the container joins a user-defined network,
+	// defer the synchronous CreateFunction.Wait (~150-200s) to
+	// ContainerStart's network-pod materialization path. ContainerCreate
+	// returns 201 immediately — gitlab-runner's docker daemon timeout
+	// (120s) won't trip. The function will be deployed when the script-
+	// runner sibling triggers materializePodFunction. Pure standard
+	// Docker signal: NetworkingConfig.EndpointsConfig.<net> with a
+	// non-builtin network ref.
+	for refName := range container.NetworkSettings.Networks {
+		switch strings.ToLower(refName) {
+		case "", "default", "bridge", "host", "none":
+			continue
+		}
+		if _, ok := s.Store.ResolveNetwork(refName); ok {
+			s.PendingCreates.Put(id, container)
+			s.EmitEvent("container", "create", id, map[string]string{
+				"name":  strings.TrimPrefix(name, "/"),
+				"image": config.Image,
+			})
+			return &api.ContainerCreateResponse{ID: id, Warnings: []string{}}, nil
+		}
+	}
+
 	// Build function name from container ID
 	funcName := "skls-" + id[:12]
 
