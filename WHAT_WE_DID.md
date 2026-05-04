@@ -6,27 +6,44 @@ See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for
 
 This file keeps narrative / "why we did it" context that doesn't live in BUGS.md or git log. Per-bug detail belongs in [BUGS.md](BUGS.md) — don't duplicate it here.
 
-## Phase 122i — dispatcher rate-limit + gcf pool quota architecture (2026-05-04)
+## Phase 122i — dispatcher rate-limit + gcf pool quota + 3-layer BUG-944 (2026-05-04)
 
-Long session. Goal: cells 5/6/7/8 GREEN. Outcome: 6 commits, 6 root causes pinned, no cells closed (cell 7 was GREEN at start, all 4 fail at session end). What did move: dispatcher behaviour around GitHub rate limits + GCP CPU quota is now correct, the fundamental architectural blocker (GCS-Fuse mount latency) is identified and isolated.
+Long session — 13 commits, 7 BUG roots pinned, no cells closed (cell 7 was GREEN at session start; lost when `.gitlab-ci.yml` swap reverted). Dispatcher behaviour around GitHub rate limits + GCP CPU quota is now correct. BUG-944 (cell 6 exit 126) traced through three architectural layers; fixes shipped at all three; verification pending image rebuild.
 
-**Root causes pinned this session** (per-bug detail in BUGS.md § Session 2026-05-04):
+**Closed**: BUG-938 (Cloud NAT abuse rotation), BUG-939 (runner-task OOM at 4Gi/2cpu), BUG-940 (cleanup uses Execution state not Definition state), BUG-941 (cleanup ticker re-fires GitHub poll during rate-limit), BUG-943 (poller 1+N call burn → 60s + runSeen + proactive back-off).
 
-- BUG-938: Cloud NAT auto-IP got abuse-flagged by GitHub after dispatcher crashlooped. Pinned to fresh static IP.
-- BUG-939: runner-task default 512Mi/1cpu OOM'd cell-5 Go compile at 230s. Bumped to 4Gi/2cpu.
-- BUG-940: dispatcher cleanup deleted runner-tasks 80s after spawn — read Job.TerminalCondition (definition state) instead of Execution state.
-- BUG-941: dispatcher cleanup ticker re-fired GitHub poll during rate-limit sleep, burning fresh quota tokens every 2 min.
-- BUG-942 (open, fix shipped): parallel cells × 5 services × 1 vCPU exceeds Cloud Run regional `cpu_allocation` per-minute rate. Pool back-off in `claimFreeFunction` lets concurrent caller bursts wait for peers to release.
-- BUG-943: dispatcher poller's 1+N GitHub calls per cycle burns 7440 calls/h with 30 queued runs; exceeds 5000/h PAT cap.
-- BUG-944 (open, NEW): cell 6 SOLO got past CPU quota and deployed services, then hit `docker exec` exit 126 in first script step — GCS-Fuse mount latency means the script file written by github-runner isn't visible inside the container by the time docker exec runs.
+**In-flight verification**: BUG-942 (pool claim back-off `df75d4d`) and BUG-944 layer 1+2+3 (`d85b652` + `ee63dae` + `a7e3b00`). All three layers shipped; cell 6 retest waiting on image rebuild.
 
-**What we tried that did NOT work** (preserve as anti-recipe for future sessions):
+**BUG-944 anatomy — 3 layers peeled**:
 
-1. Lowering gcf default per-function CPU 1 → 0.5 to fit more parallel functions in regional quota — Cloud Run gen2 execution environment rejects fractional CPU below 1 with `Total cpu < 1 is not supported with gen2 execution environment`. Reverted in `71288bf`.
-2. Requesting Google quota increase via `gcloud beta quotas preferences create CpuAllocPerProjectRegion 20000→200000` — user explicitly rejected (`quota increase is the wrong path`). Withdrew via update to grantedValue.
-3. Running 4 cells in parallel — exceeds `cpu_allocation` per-minute window. Solo runs get past CPU quota; parallel needs the BUG-942 pool back-off to amortize.
+| Layer | Symptom | Root cause | Fix |
+|-------|---------|-----------|-----|
+| 1 | exit 126 in first script step | hypothesis: GCS-Fuse cross-execution metadata cache hides freshly-written script | added `MountOptions=[implicit-dirs, ttl-secs=0, negative-ttl-secs=0]` to all 3 GCSVolumeSource constructions (`d85b652`) |
+| 2 | layer-1 fix shipped, still exit 126; deployed function had `volumes: null` | pool-hit branch in `deployFunction` returned early before calling `attachVolumesToFunctionService` — reused functions inherited zero volumes | pool-hit branch now calls attach; idempotent merge by name (`ee63dae`) |
+| 3 | layer-2 fix shipped, still exit 126; deployed function had volumes but no `mountOptions` | idempotent merge by name skipped UpdateService when entries already present, even if MountOptions differed — pool-reused funcs from before MountOptions existed had matching names but stale config | full-shape compare; replace stale entries (`a7e3b00`); purged stale pool to force fresh deploys |
 
-**Strict rate-limit policy adopted** (memory `feedback_strict_rate_limit.md`): when honoring upstream rate-limit headers (GitHub `X-RateLimit-Reset`, `Retry-After`, GCP quota windows), sleep `max(retryAfter, resetIn) * 1.10 + 1s`. The +10% covers clock skew + bunching, +1s covers sub-second rounding. Resuming exactly at the reset boundary triggers immediate re-throttling.
+**Architectural insight — AWS vs GCP shared storage**:
+
+| Backend | Primitive | Consistency | Default behavior |
+|---------|-----------|-------------|-----------------|
+| AWS ECS / Lambda | EFS access points (NFSv4) | Strong | Cross-execution writes immediately visible — "just works" |
+| GCP Cloud Run / Functions | GCS bucket via gcsfuse | Eventual + 60s positive cache + 5s negative cache | Container sees stale "doesn't exist" for 5s; needs explicit MountOptions |
+
+Cells 1-4 were green on AWS partly because EFS hides this class of bug. GCP's object-store-with-FUSE primitive needs explicit opt-out from caching to behave like a shared FS for ephemeral write/read patterns.
+
+**What we tried that did NOT work** (preserve as anti-recipe — these will tempt future sessions):
+
+1. Lowering gcf default per-function CPU 1 → 0.5 to fit more parallel functions — Cloud Run gen2 execution environment rejects fractional CPU below 1 with `Total cpu < 1 is not supported with gen2 execution environment`. Reverted in `71288bf`. **Gen2 is the constraint we keep** (latest stable, no deprecated APIs per user directive).
+2. Requesting Google quota increase via `gcloud beta quotas preferences create CpuAllocPerProjectRegion 20000→200000` — user explicitly rejected ("quota increase is the wrong path"). Withdrew via update to grantedValue.
+3. Running 4 cells in parallel — exceeds `cpu_allocation` per-minute window. Solo runs get past CPU; parallel needs pool back-off + multi-container packing.
+4. Idempotent volume-attach by NAME only — pool-reused volumes have matching names but stale MountOptions. Layer-3 fix uses full-shape compare.
+5. Treating runner image build's `installdependencies.sh` failure as transient retry-loop — actually a real bug (per user directive: "transients and flakiness must be treated as bugs"). Investigation in flight; will name root cause and ship real fix, not loop with retries.
+
+**Strict rules adopted/reinforced this session**:
+
+- **Strict rate-limit policy** (memory `feedback_strict_rate_limit.md`): when honoring upstream rate-limit hints, sleep `max(retryAfter, resetIn) * 1.10 + 1s`. Resuming at reset boundary triggers immediate re-throttle.
+- **Verify deployed state field-by-field** before assuming a fix worked. Layered BUG-944 investigation showed how easy it is to ship a fix and "not actually" fix the deployed result. After every gcf/cloudrun fix, dump `gcloud run services describe <skls-*> --format=json` and verify the relevant fields.
+- **Transient errors are bugs** (user directive 2026-05-04). No retry-loops disguised as fault-tolerance.
 
 ## Phase 122h — gitlab-runner stdin_pipe attempt (2026-05-04, rolled back)
 

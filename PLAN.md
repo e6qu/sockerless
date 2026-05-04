@@ -604,21 +604,27 @@ The only documented mapping is the post-create UpdateService image-swap pattern 
 
 **Phase 118 PR rule**: per guiding principle #11, this phase closes only when the sub-118d-gcf + sub-118d-lambda commits land on a branch (`phase-118-faas-pods`), the PR is opened against `main`, and all CI jobs pass green. User merges (workflow rule).
 
-### Phase 122i — Dispatcher rate-limit + gcf pool quota (IN FLIGHT — partial close 2026-05-04)
+### Phase 122i — Dispatcher rate-limit + gcf pool quota + 3-layer BUG-944 (IN FLIGHT 2026-05-04)
 
-Goal: cells 5-8 GREEN at session end. Outcome: 6 commits shipped, 6 root causes pinned, all 4 cells still fail at session end (cell 7 was GREEN at session start; lost when `.gitlab-ci.yml` swap reverted to standard lint). Architectural blockers now isolated and have fix candidates.
+Goal: cells 5-8 GREEN. Outcome at end of working session: 13 commits shipped, 7 BUG roots pinned + 5 closed, no cells closed (cell 7 was GREEN at session start; lost when `.gitlab-ci.yml` swap reverted to standard lint). Architectural blockers now precisely isolated; fix verification pending image rebuild + retest.
 
-**Closed this session**: BUG-938 (Cloud NAT abuse-flag rotation), BUG-939 (runner-task OOM at 4Gi/2cpu), BUG-940 (cleanup uses Execution state not Definition state), BUG-941 (cleanup ticker re-fires GitHub poll during rate-limit), BUG-943 (poller 1+N call burn → 60s + runSeen + proactive back-off). Pool back-off `df75d4d` shipped for BUG-942 — verification pending.
+**Closed**: BUG-938 (Cloud NAT abuse-flag rotation), BUG-939 (runner-task OOM at 4Gi/2cpu), BUG-940 (cleanup uses Execution state not Definition state), BUG-941 (cleanup ticker re-fires GitHub poll during rate-limit), BUG-943 (poller 1+N call burn — 60s cadence + runSeen TTL + proactive back-off via cached `X-RateLimit-Remaining`).
 
-**Remaining blockers**:
-- BUG-942 (in-flight verification): Cloud Run regional `cpu_allocation` per-minute quota — pool back-off ships, needs end-to-end test.
-- BUG-944 (NEW): GCS-Fuse mount latency causes `docker exec` exit 126 — cell 6 SOLO got past CPU and deployed services successfully, then failed first script step. Three fix candidates documented in DO_NEXT.md.
-- BUG-929: cloudrun startSingleContainerService missing post-deploy invoke — cell 5 hangs Initialize containers 43+ min instead of failing fast.
+**In-flight verification** (fixes shipped, end-to-end test pending):
+- BUG-942 — pool claim back-off `df75d4d` (~5s exponential before falling through to fresh CreateFunction).
+- BUG-944 — peeled in 3 layers: (1) GCS-Fuse `MountOptions=[implicit-dirs, ttl-secs=0, negative-ttl-secs=0]` `d85b652`; (2) pool-hit branch must call `attachVolumesToFunctionService` (was returning early) `ee63dae`; (3) idempotent merge by full shape, not just name — pool-reused funcs had matching names but stale options `a7e3b00`.
+
+**Remaining blocker not yet addressed**:
+- BUG-929: cloudrun `startSingleContainerService` missing post-deploy invoke — cell 5 hangs Initialize containers 43+ min instead of failing fast. Independent of BUG-944; needs separate fix.
 
 **What we tried that did NOT work** (preserve as anti-recipe):
-1. gcf default CPU 0.5 — gen2 rejects fractional. Reverted in `71288bf`.
-2. Cloud Run quota increase request 20000 → 200000 — user rejected as "wrong path"; withdrew.
-3. 4 cells in parallel — exceeds per-minute rate; only solo runs get past quota until pool back-off proves out.
+1. **gcf default CPU=0.5** — Cloud Run gen2 rejects fractional. Reverted in `71288bf`. **Gen2 stays as the constraint** — latest-stable, no deprecated APIs per user directive.
+2. **Cloud Run quota-increase request** (`CpuAllocPerProjectRegion` 20000→200000) — user rejected as "wrong path"; withdrew (preferredValue=grantedValue=20000). Architectural fix only.
+3. **4 cells in parallel** — exceeds `cpu_allocation` per-minute window. Solo + pool-reuse is the path.
+4. **Idempotent attach by name only** — stale config (matching names, different MountOptions) silently passed through. Need full-shape compare.
+5. **Treating runner image build flakiness as transient** — user directive: transients and flakiness are bugs. Investigation in flight.
+
+**Diagnostic discipline established this session**: after every gcf/cloudrun fix, dump deployed Cloud Run service spec (`gcloud run services describe <skls-*> --format=json | jq`) and verify field-by-field BEFORE re-triggering. Don't trust the in-code claim alone.
 
 ### Phase 122g — Lift `image_inject` to gcp-common + Path B HTTP exec (CLOSED 2026-05-03 — cell 7 GREEN)
 
