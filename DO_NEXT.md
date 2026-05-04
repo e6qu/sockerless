@@ -2,6 +2,21 @@
 
 Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md); bug log in [BUGS.md](BUGS.md); architecture in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
 
+## Resume pointer (2026-05-04 v22 — BUG-947 storage-driver pivot)
+
+**v50 of cell 7 (pipeline 2498952453, job 14206439704) under NEW vanilla-runner architecture:**
+- ✅ git fetch over gitlab.com — 2 MB pack downloaded (proves connector min-instances 2→4 fix)
+- ❌ git checkout HUNG → sockerless backend POST timeout → `Job failed: exit code 1`
+- Root cause: GCSFuse `/builds` lacks POSIX hard-link (`fuseops.CreateLinkOp -> "function not implemented"`), weak rename, no flock — git's `index-pack` + `.git/index.lock` operations stall silently
+- Filed as **BUG-947**, root-cause + 3 fix paths catalogued
+
+**Next concrete step (sign-off pending — pick A vs B):**
+- **Path A (recommended):** sockerless cloudrun backend — coalesce all stages of one gitlab-runner job into ONE multi-container Cloud Run Service revision; mount `/builds` as in-memory `emptyDir` (full POSIX, free, fast). Requires backend rework: detect job-lifecycle, swap per-ContainerStart Service for per-job Service.
+- **Path B:** Cloud Filestore (NFS) volume — drop-in change, full POSIX, ~$160/mo BasicHDD floor.
+- Path C (git config workarounds) is forbidden per "no quick fixes" rule.
+
+If A: scope is `backends/cloudrun/{network_pod.go,start_service.go,backend_impl.go}` + bind→volume translation in `containers.go`. If B: only volume spec touched.
+
 ## Resume pointer (2026-05-04 v20 — major architectural reset)
 
 **User directives 2026-05-04 (in order received):**
