@@ -86,6 +86,16 @@ type Config struct {
 	// dispatch to itself recursively) mount the same access point.
 	// Format identical to ECS: SOCKERLESS_LAMBDA_SHARED_VOLUMES=name=path=fsap-XXX[=fs-YYY],...
 	SharedVolumes []SharedVolume
+
+	// PoolMax caps the number of free Lambda functions kept warm per
+	// overlay-content-hash. On `docker rm`, if free count >= PoolMax the
+	// function is deleted; otherwise its `sockerless-allocation` tag is
+	// cleared and it returns to the reuse pool. Set 0 to disable pooling
+	// (every container creates+deletes a fresh function — preserves the
+	// shape but eliminates amortization). Default 10. Set via
+	// SOCKERLESS_LAMBDA_POOL_MAX. See specs/CLOUD_RESOURCE_MAPPING.md
+	// § Stateless image cache + Function/Site reuse pool.
+	PoolMax int
 }
 
 // SharedVolume describes a workspace volume mounted via EFS that the
@@ -133,6 +143,7 @@ func ConfigFromEnv() Config {
 		EnableCommit:         os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
 		Architecture:         os.Getenv("SOCKERLESS_LAMBDA_ARCHITECTURE"),
 		SharedVolumes:        parseSharedVolumes(os.Getenv("SOCKERLESS_LAMBDA_SHARED_VOLUMES")),
+		PoolMax:              envOrDefaultInt("SOCKERLESS_LAMBDA_POOL_MAX", 10),
 	}
 }
 

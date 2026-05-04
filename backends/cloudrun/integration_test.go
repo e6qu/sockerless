@@ -1,3 +1,13 @@
+//go:build integration
+
+// TestMain + helpers for the cloudrun integration tests. Gated by the
+// `integration` build tag so `go test ./...` (without -tags integration)
+// doesn't compile this file in. The TestMain inside ALSO checks
+// SOCKERLESS_INTEGRATION=1 + GITHUB_ACTIONS for a runtime gate; the
+// build tag is the compile-time fence that prevents the
+// `arithmetic_integration_test.go` tests from linking against a
+// non-initialized dockerClient when run with default settings.
+
 package cloudrun
 
 import (
@@ -25,15 +35,13 @@ var evalImageName string
 
 func TestMain(m *testing.M) {
 	if os.Getenv("SOCKERLESS_INTEGRATION") != "1" {
-		// In CI, silent short-circuit would let integration tests "pass" by
-		// not running. Require the env var explicitly so a missing CI config
-		// fails loudfollow-up).
-		if os.Getenv("GITHUB_ACTIONS") == "true" || os.Getenv("CI") == "true" {
-			fmt.Fprintln(os.Stderr, "ERROR: SOCKERLESS_INTEGRATION must be set to 1 in CI — integration tests would otherwise be silently skipped.")
-			os.Exit(1)
-		}
-		// Local dev: run whatever unit tests exist and exit.
-		os.Exit(m.Run())
+		// This file only compiles in under the `integration` build tag.
+		// If we got here, the operator passed -tags integration but
+		// didn't set the env-var gate. Fail loudly — running m.Run()
+		// would panic with `dockerClient == nil` since the rest of this
+		// TestMain (which initializes dockerClient) is skipped.
+		fmt.Fprintln(os.Stderr, "ERROR: integration build tag set but SOCKERLESS_INTEGRATION!=1; either pass SOCKERLESS_INTEGRATION=1 or drop -tags integration. Integration tests need TestMain to bring up the backend + sim + docker client.")
+		os.Exit(1)
 	}
 
 	repoRoot := findModuleDir(".")

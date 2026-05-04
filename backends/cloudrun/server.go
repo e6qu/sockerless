@@ -2,6 +2,7 @@ package cloudrun
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
@@ -23,6 +24,26 @@ type Server struct {
 	// Reverse-agent registry for docker exec / attach through a
 	// bootstrap running inside the CR Job/Service container.
 	reverseAgents *core.ReverseAgentRegistry
+	// stdinPipes buffers stdin bytes written via the hijacked attach
+	// connection (gitlab-runner / `docker run -i` pattern). Each per-
+	// container pipe is read by invokeServiceDefaultCmd at deferred
+	// invoke time and POSTed as the bootstrap's `execEnvelope.Stdin`.
+	// Mirror of backends/ecs/server.go::stdinPipes + lambda equivalent.
+	stdinPipes sync.Map
+	// attachStreams maps containerID -> *attachStream so
+	// invokeServiceDefaultCmd can publish the bootstrap response (mux-
+	// framed stdout/stderr) back to the attached gitlab-runner. One
+	// per container at a time; gitlab-runner cycles attach→start→stop
+	// per stage and each new attach gets a fresh entry.
+	attachStreams sync.Map
+	// networkServices maps user-defined-network ID → []serviceContainerID
+	// so subsequent script-runner stages joining the same network can
+	// re-bundle service containers (postgres etc.) as Cloud Run
+	// multi-container sidecars in their own revisions. Without this,
+	// only the FIRST script-runner stage would see postgres on loopback;
+	// later stages (gitlab-runner v17.5 creates a new container per
+	// stage) would deploy without the sidecar and lose service access.
+	networkServices sync.Map
 }
 
 // NewServer creates a new Cloud Run backend server.
@@ -52,7 +73,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		Auth:   gcpcommon.NewARAuthProvider(s.ctx, logger),
 		Logger: logger,
 	}
-	if svc, err := gcpcommon.NewGCPBuildService(context.Background(), config.Project, config.BuildBucket, "", logger); err == nil && svc != nil {
+	if svc, err := gcpcommon.NewGCPBuildService(context.Background(), config.Project, config.BuildBucket, "", config.EndpointURL, logger); err == nil && svc != nil {
 		s.images.BuildService = svc
 	}
 	s.SetSelf(s)
@@ -100,8 +121,13 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	s.Typed.Logs = core.NewCloudLogsLogsDriver(s.BaseServer, logFactory,
 		core.StreamCloudLogsOptions{},
 		"cloudrun", "CloudLogging")
-	s.Typed.Attach = core.NewCloudLogsAttachDriver(s.BaseServer, logFactory,
-		"cloudrun", "CloudLogsReadOnlyAttach")
+	// Wire ContainerAttach via the legacy adapter so opts.Stdin attaches
+	// route through cloudrun.ContainerAttach (which sets up the stdin
+	// pipe + hijacked attach stream for overlay containers). Read-only
+	// attaches (no Stdin) fall through to AttachViaCloudLogs inside
+	// cloudrun.ContainerAttach.
+	s.Typed.Attach = core.WrapLegacyContainerAttach(s.ContainerAttach,
+		"cloudrun", "ContainerAttach")
 
 	return s
 }

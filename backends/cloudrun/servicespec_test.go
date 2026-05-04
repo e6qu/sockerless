@@ -79,11 +79,11 @@ func TestBuildServiceSpec_Shape(t *testing.T) {
 	ci := demoContainer("abc123456789fffffffff", "/webapp", "gcr.io/proj/app:v1")
 	svc, _ := s.buildServiceSpec(context.Background(), []containerInput{ci})
 
-	if svc.Ingress != runpb.IngressTraffic_INGRESS_TRAFFIC_INTERNAL_ONLY {
-		t.Errorf("ingress = %v, want INGRESS_TRAFFIC_INTERNAL_ONLY", svc.Ingress)
+	if svc.Ingress != runpb.IngressTraffic_INGRESS_TRAFFIC_ALL {
+		t.Errorf("ingress = %v, want INGRESS_TRAFFIC_ALL (BUG-933 — IAM-gated, not allUsers)", svc.Ingress)
 	}
-	if !svc.DefaultUriDisabled {
-		t.Error("DefaultUriDisabled should be true (Services are peer-reachable only)")
+	if svc.DefaultUriDisabled {
+		t.Error("DefaultUriDisabled should be false (Phase 122g: backend POSTs envelope to Service URL; Ingress=internal still restricts callers)")
 	}
 	if svc.Template == nil || len(svc.Template.Containers) != 1 {
 		t.Fatalf("expected 1 container in template, got %+v", svc.Template)
@@ -98,7 +98,7 @@ func TestBuildServiceSpec_Shape(t *testing.T) {
 		t.Errorf("vpc access = %+v, want connector=%q", svc.Template.VpcAccess, s.config.VPCConnector)
 	}
 	if svc.Template.VpcAccess.Egress != runpb.VpcAccess_ALL_TRAFFIC {
-		t.Errorf("vpc egress = %v, want ALL_TRAFFIC", svc.Template.VpcAccess.Egress)
+		t.Errorf("vpc egress = %v, want ALL_TRAFFIC (Cloud NAT in connector subnet keeps public APIs reachable; in-VPC source needed for cross-Cloud-Run ingress=internal acceptance)", svc.Template.VpcAccess.Egress)
 	}
 	if svc.Template.Timeout == nil || svc.Template.Timeout.AsDuration() != time.Hour {
 		t.Errorf("timeout = %v, want 1h", svc.Template.Timeout)

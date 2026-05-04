@@ -165,6 +165,9 @@ jobs:
           noui simulators/gcp .
           noui simulators/azure .
           noui cmd/sockerless-admin .
+          build github-runner-dispatcher-aws ./cmd/github-runner-dispatcher-aws
+          build github-runner-dispatcher-gcp ./cmd/github-runner-dispatcher-gcp
+          build github-runner-dispatcher-azure ./cmd/github-runner-dispatcher-azure
       - name: Cross-compile all binaries (arm64)
         env:
           GOOS: linux
@@ -189,6 +192,9 @@ jobs:
           noui simulators/gcp .
           noui simulators/azure .
           noui cmd/sockerless-admin .
+          build github-runner-dispatcher-aws ./cmd/github-runner-dispatcher-aws
+          build github-runner-dispatcher-gcp ./cmd/github-runner-dispatcher-gcp
+          build github-runner-dispatcher-azure ./cmd/github-runner-dispatcher-azure
 
   smoke:
     runs-on: ubuntu-latest

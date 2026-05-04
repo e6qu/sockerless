@@ -55,7 +55,39 @@ const (
 	envUserCmd        = "SOCKERLESS_USER_CMD"          // base64(JSON-encoded argv)
 	envBindLinks      = "SOCKERLESS_LAMBDA_BIND_LINKS" // CSV of `<dst>=<mnt-target>` pairs
 	envUserWorkdir    = "SOCKERLESS_USER_WORKDIR"      // chdir target for the user subprocess
+	// envPodContainers carries the pod manifest: base64(JSON) of
+	// []PodMember. When set, the bootstrap runs in supervisor mode:
+	// non-main pod members start as long-lived sidecars at init; the
+	// main member runs as the per-invocation foreground subprocess
+	// driven by the Runtime API loop.
+	envPodContainers = "SOCKERLESS_POD_CONTAINERS"
+	// envPodMain identifies which pod member's argv replaces the
+	// single-container SOCKERLESS_USER_ENTRYPOINT/CMD pair as the
+	// foreground per-invocation subprocess. Defaults to the last
+	// entry in the manifest if unset (CI runners start sidecars
+	// first and the main step container last).
+	envPodMain = "SOCKERLESS_POD_MAIN"
 )
+
+// PodMember describes one container inside a pod. The supervisor runs
+// each member as a chroot'd child of the function's PID 1. Per
+// specs/CLOUD_RESOURCE_MAPPING.md § "Podman pods on FaaS backends",
+// mount-ns is degraded to chroot path-isolation and PID-ns is shared
+// (Lambda execution environment doesn't grant CAP_SYS_ADMIN); spec
+// documents this explicitly so operators can detect via `docker inspect`.
+//
+// Mirrors the gcf bootstrap's PodMember exactly so the wire shape is
+// stable across the two FaaS backends.
+type PodMember struct {
+	Name        string   `json:"name"`
+	Root        string   `json:"root"`
+	Entrypoint  []string `json:"entrypoint,omitempty"`
+	Cmd         []string `json:"cmd,omitempty"`
+	Env         []string `json:"env,omitempty"`
+	Workdir     string   `json:"workdir,omitempty"`
+	ContainerID string   `json:"container_id,omitempty"` // unused in bootstrap; carried for backend round-trip
+	Image       string   `json:"image,omitempty"`        // unused in bootstrap; carried for backend round-trip
+}
 
 const (
 	runtimeAPIPath   = "/2018-06-01/runtime/invocation"
@@ -73,6 +105,18 @@ func main() {
 	if err := materialiseBindLinks(os.Getenv(envBindLinks)); err != nil {
 		fmt.Fprintf(os.Stderr, "bootstrap: materialise bind links: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Pod mode: when SOCKERLESS_POD_CONTAINERS is set the bootstrap
+	// runs as a supervisor for the merged-rootfs overlay. Sidecars
+	// (non-main pod members) start ONCE here at function-instance
+	// init — Lambda has no per-request init like HTTP, so the
+	// init-time start is the analogue of gcf's pre-warm. The main
+	// member's argv replaces the standard SOCKERLESS_USER_*
+	// per-invocation argv via getUserArgv() below.
+	if pod, ok := parsePodManifest(); ok {
+		printPodDegradationWarning()
+		startPodSidecars(pod)
 	}
 
 	runtimeAPI := os.Getenv(envRuntimeAPI)
@@ -193,6 +237,17 @@ func runUserInvocation(ctx context.Context, payload []byte) (stdout, stderr []by
 	if env, ok := parseExecEnvelope(payload); ok {
 		return runExecInvocation(ctx, env)
 	}
+
+	// Pod mode: when a pod manifest is configured, the main member's
+	// argv (and chroot/workdir/env) replaces the single-container
+	// SOCKERLESS_USER_* pair as the per-invocation foreground process.
+	// Sidecars are already running from main()'s init-time pre-warm.
+	if pod, ok := parsePodManifest(); ok {
+		if main, found := pickPodMain(pod); found {
+			return runPodMainInvocation(ctx, main, payload)
+		}
+	}
+
 	argv := append(parseUserArgv(envUserEntrypoint), parseUserArgv(envUserCmd)...)
 	if len(argv) == 0 {
 		// Nothing to run; echo the payload as the response (matches the
@@ -545,4 +600,234 @@ func parseUserArgv(key string) []string {
 		return nil
 	}
 	return out
+}
+
+// — Pod supervisor (mirror of gcf bootstrap) —
+
+// parsePodManifest decodes SOCKERLESS_POD_CONTAINERS into a slice of
+// PodMember. Returns (nil, false) when the env var is unset or
+// undecodable so callers fall through to single-container mode.
+func parsePodManifest() ([]PodMember, bool) {
+	raw := os.Getenv(envPodContainers)
+	if raw == "" {
+		return nil, false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "bootstrap: SOCKERLESS_POD_CONTAINERS base64 decode: %v\n", err)
+		return nil, false
+	}
+	var out []PodMember
+	if err := json.Unmarshal(decoded, &out); err != nil {
+		fmt.Fprintf(os.Stderr, "bootstrap: SOCKERLESS_POD_CONTAINERS JSON unmarshal: %v\n", err)
+		return nil, false
+	}
+	if len(out) == 0 {
+		return nil, false
+	}
+	return out, true
+}
+
+// pickPodMain returns the pod member that should run as the
+// per-invocation foreground subprocess. Identified by SOCKERLESS_POD_MAIN
+// (matched against PodMember.Name) or, when unset, the last entry in
+// the manifest — gitlab-runner / github-runner start sidecars first
+// and the main step container last, so the trailing entry is the
+// natural default.
+func pickPodMain(pod []PodMember) (PodMember, bool) {
+	if len(pod) == 0 {
+		return PodMember{}, false
+	}
+	if want := os.Getenv(envPodMain); want != "" {
+		for _, m := range pod {
+			if m.Name == want {
+				return m, true
+			}
+		}
+	}
+	return pod[len(pod)-1], true
+}
+
+// printPodDegradationWarning writes the honest namespace-isolation
+// disclaimer to stderr at startup, per spec § "Podman pods on FaaS
+// backends — Why we don't fake the isolation".
+func printPodDegradationWarning() {
+	fmt.Fprintln(os.Stderr, "bootstrap: WARNING — pod uses degraded namespace isolation:")
+	fmt.Fprintln(os.Stderr, "  mount-ns: shared (chroot only — would require CAP_SYS_ADMIN)")
+	fmt.Fprintln(os.Stderr, "  pid-ns:   shared (would require CAP_SYS_ADMIN)")
+	fmt.Fprintln(os.Stderr, "  net-ns:   shared per podman default")
+	fmt.Fprintln(os.Stderr, "  ipc-ns:   shared per podman default")
+	fmt.Fprintln(os.Stderr, "  uts-ns:   shared per podman default")
+}
+
+// startPodSidecars launches every non-main pod member as a long-lived
+// background subprocess at function-instance init. Lambda's execution
+// model means the function instance stays warm across consecutive
+// invocations, so a single sidecar start lasts the lifetime of the
+// instance — Lambda's own scale-down kills the supervisor + children
+// together. No restart logic; if a sidecar dies its log line records
+// the exit and the next invocation runs against a degraded pod.
+func startPodSidecars(pod []PodMember) {
+	main, _ := pickPodMain(pod)
+	for _, m := range pod {
+		if m.Name == main.Name {
+			continue
+		}
+		go runPodSidecar(m)
+	}
+	// Brief settle window so postgres-style services bind their
+	// localhost ports before the first invocation runs the main
+	// member's argv. The main subprocess can do its own retry; this
+	// just shaves the first-invoke latency.
+	time.Sleep(250 * time.Millisecond)
+}
+
+// runPodSidecar launches a single pod member as a chroot'd child and
+// pipes its stdout/stderr through the supervisor with a per-container
+// `[<name>] ` line prefix. Cloud Logging captures peer output under
+// the function's stream.
+func runPodSidecar(m PodMember) {
+	cmd, err := buildPodMemberCmd(m, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "bootstrap: pod sidecar %q: %v\n", m.Name, err)
+		return
+	}
+	prefix := fmt.Sprintf("[%s] ", m.Name)
+	cmd.Stdout = newPrefixWriter(os.Stdout, prefix)
+	cmd.Stderr = newPrefixWriter(os.Stderr, prefix)
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "bootstrap: pod sidecar %q start failed: %v\n", m.Name, err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "bootstrap: pod sidecar %q started pid=%d\n", m.Name, cmd.Process.Pid)
+	go func() {
+		err := cmd.Wait()
+		fmt.Fprintf(os.Stderr, "bootstrap: pod sidecar %q exited err=%v\n", m.Name, err)
+	}()
+}
+
+// runPodMainInvocation runs the pod's main member as a per-invocation
+// foreground subprocess with the Lambda invoke payload as stdin. The
+// subprocess's stdout becomes the /response body; stderr is teed to
+// the supervisor's stderr (CloudWatch).
+func runPodMainInvocation(ctx context.Context, m PodMember, payload []byte) (stdout, stderr []byte, exitCode int) {
+	cmd, err := buildPodMemberCmd(m, ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "bootstrap: pod main %q: %v\n", m.Name, err)
+		return nil, []byte(err.Error()), 1
+	}
+	cmd.Stdin = bytes.NewReader(payload)
+	prefix := fmt.Sprintf("[%s] ", m.Name)
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = io.MultiWriter(&outBuf, newPrefixWriter(os.Stdout, prefix))
+	cmd.Stderr = io.MultiWriter(&errBuf, newPrefixWriter(os.Stderr, prefix))
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "bootstrap: pod main %q start failed: %v\n", m.Name, err)
+		return nil, []byte(err.Error()), 1
+	}
+	writeMainPIDFile(cmd.Process.Pid)
+	defer removeMainPIDFile()
+	if err := cmd.Wait(); err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return outBuf.Bytes(), errBuf.Bytes(), ee.ExitCode()
+		}
+		return outBuf.Bytes(), errBuf.Bytes(), 1
+	}
+	return outBuf.Bytes(), errBuf.Bytes(), 0
+}
+
+// buildPodMemberCmd assembles the *exec.Cmd that runs a pod member's
+// entrypoint+cmd inside its chroot. Per spec § "Mount-ns approximation
+// via chroot per child", chroot gives path-based isolation only — not
+// a real mount-ns. Surfaced via `docker inspect ... HostConfig.PidMode`
+// + Config.Labels["sockerless.namespace.*"] in the lambda backend's
+// cloud_state path.
+//
+// ctx is optional (sidecars run unbounded; the main subprocess passes
+// the Runtime API deadline context).
+func buildPodMemberCmd(m PodMember, ctx context.Context) (*exec.Cmd, error) {
+	argv := append([]string{}, m.Entrypoint...)
+	argv = append(argv, m.Cmd...)
+	if len(argv) == 0 {
+		return nil, fmt.Errorf("member %q has no entrypoint or cmd", m.Name)
+	}
+	if m.Root == "" {
+		return nil, fmt.Errorf("member %q has no chroot root", m.Name)
+	}
+	// Run via /bin/sh inside the chroot so PATH lookup matches the
+	// container's filesystem. /bin/sh exists in all common base images
+	// (alpine: /bin/sh → busybox; debian: /bin/sh → dash).
+	shellLine := strings.Join(podMemberQuoteArgv(argv), " ")
+	var cmd *exec.Cmd
+	if ctx != nil {
+		cmd = exec.CommandContext(ctx, "/bin/sh", "-c", shellLine) //nolint:gosec // operator-controlled
+	} else {
+		cmd = exec.Command("/bin/sh", "-c", shellLine) //nolint:gosec // operator-controlled
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Chroot: m.Root,
+	}
+	if m.Workdir != "" {
+		cmd.Dir = m.Workdir
+	} else {
+		cmd.Dir = "/"
+	}
+	if len(m.Env) > 0 {
+		cmd.Env = append(append([]string{}, os.Environ()...), m.Env...)
+	}
+	return cmd, nil
+}
+
+// podMemberQuoteArgv single-quotes each argument so the result, joined
+// by spaces, is safe to pass as one command line to /bin/sh -c. Shell
+// metachars in the user's argv stay literal. Renamed from gcf's
+// quoteArgv so the lambda bootstrap doesn't shadow any existing helper.
+func podMemberQuoteArgv(argv []string) []string {
+	out := make([]string, len(argv))
+	for i, a := range argv {
+		out[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+	}
+	return out
+}
+
+// prefixWriter prefixes every line written through it with `prefix`.
+// Used to label per-sidecar log output in the supervisor's combined
+// stream so CloudWatch shows `[postgres] LOG: …` etc.
+type prefixWriter struct {
+	w        io.Writer
+	prefix   string
+	mu       sync.Mutex
+	atLineSt bool
+}
+
+func newPrefixWriter(w io.Writer, prefix string) *prefixWriter {
+	return &prefixWriter{w: w, prefix: prefix, atLineSt: true}
+}
+
+func (p *prefixWriter) Write(b []byte) (int, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	written := 0
+	for len(b) > 0 {
+		if p.atLineSt {
+			if _, err := p.w.Write([]byte(p.prefix)); err != nil {
+				return written, err
+			}
+			p.atLineSt = false
+		}
+		nl := bytes.IndexByte(b, '\n')
+		if nl < 0 {
+			n, err := p.w.Write(b)
+			written += n
+			return written, err
+		}
+		n, err := p.w.Write(b[:nl+1])
+		written += n
+		if err != nil {
+			return written, err
+		}
+		b = b[nl+1:]
+		p.atLineSt = true
+	}
+	return written, nil
 }

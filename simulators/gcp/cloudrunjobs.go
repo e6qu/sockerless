@@ -24,7 +24,7 @@ type Job struct {
 	Annotations            map[string]string   `json:"annotations,omitempty"`
 	CreateTime             string              `json:"createTime"`
 	UpdateTime             string              `json:"updateTime"`
-	LaunchStage            string              `json:"launchStage,omitempty"`
+	LaunchStage            enumString          `json:"launchStage,omitempty"`
 	Template               *ExecutionTemplate  `json:"template"`
 	TerminalCondition      *Condition          `json:"terminalCondition,omitempty"`
 	Conditions             []Condition         `json:"conditions,omitempty"`
@@ -143,13 +143,16 @@ type Execution struct {
 	Reconciling    bool              `json:"reconciling"`
 }
 
-// Condition represents a status condition on a resource.
+// Condition represents a status condition on a resource. State is
+// proto-JSON: real run/apiv2 REST clients serialize the enum as a
+// number on PATCH (e.g. `"state": 2` for CONDITION_SUCCEEDED), so
+// enumString accepts both forms.
 type Condition struct {
-	Type               string `json:"type"`
-	State              string `json:"state"`
-	Message            string `json:"message,omitempty"`
-	LastTransitionTime string `json:"lastTransitionTime,omitempty"`
-	Reason             string `json:"reason,omitempty"`
+	Type               string     `json:"type"`
+	State              enumString `json:"state"`
+	Message            string     `json:"message,omitempty"`
+	LastTransitionTime string     `json:"lastTransitionTime,omitempty"`
+	Reason             string     `json:"reason,omitempty"`
 }
 
 // Operation represents a long-running operation.
@@ -519,8 +522,8 @@ func registerCloudRunJobs(srv *sim.Server) {
 					reason = "NonZeroExitCode"
 				}
 				e.Conditions = []Condition{
-					{Type: "Ready", State: state, LastTransitionTime: completionTime, Reason: reason},
-					{Type: "Completed", State: state, LastTransitionTime: completionTime, Reason: reason},
+					{Type: "Ready", State: enumString(state), LastTransitionTime: completionTime, Reason: reason},
+					{Type: "Completed", State: enumString(state), LastTransitionTime: completionTime, Reason: reason},
 				}
 				e.Reconciling = false
 			})

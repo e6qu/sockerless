@@ -87,6 +87,12 @@ variable "tags" {
   default     = {}
 }
 
+variable "manage_docker_hub_pull_through_cache" {
+  description = "Whether this module owns the docker-hub ECR pull-through cache rule. Pull-through cache rules are singleton per (account, region, prefix); set to false on the ecs module when the lambda module in the same account+region already manages it."
+  type        = bool
+  default     = true
+}
+
 # Optional: use an existing VPC instead of creating one.
 # When vpc_id is set, the module skips VPC/subnet/NAT creation and uses the provided values.
 variable "existing_vpc_id" {

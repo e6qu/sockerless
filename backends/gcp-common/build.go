@@ -13,6 +13,8 @@ import (
 	"cloud.google.com/go/storage"
 	"github.com/rs/zerolog"
 	core "github.com/sockerless/backend-core"
+	"golang.org/x/oauth2/google"
+	"google.golang.org/api/option"
 )
 
 // Compile-time check.
@@ -30,12 +32,37 @@ type GCPBuildService struct {
 
 // NewGCPBuildService creates a Cloud Build-backed build service.
 // Returns nil if project or bucket are empty.
-func NewGCPBuildService(ctx context.Context, project, bucket, arRepo string, logger zerolog.Logger) (*GCPBuildService, error) {
+//
+// endpointURL is a single configuration knob that routes SDK requests:
+// empty → Google's default discovery endpoint; non-empty → the
+// supplied URL. The build service does not know or care what's at
+// the other end of the URL — could be a regional endpoint, a
+// private-service-connect address, a custom proxy, or anything that
+// speaks the Cloud Build REST API.
+//
+// Always uses the REST variant of the Cloud Build client because REST
+// works against any HTTPS endpoint with the same wire format, while
+// `cloudbuild.NewClient` (gRPC) requires `googleapis.com`-shaped HTTP/2
+// gRPC service exposure. Auth is always real ADC; targets that don't
+// validate ignore it.
+//
+// Storage uses the standard `cloud.google.com/go/storage` client. The
+// SDK's native `STORAGE_EMULATOR_HOST` env var routes storage requests
+// at a non-default host when set — operators set that env var on the
+// backend process if they need to (the env-var name is Google's, not
+// a comment on what's at the other end). The build service makes no
+// env-var side effects of its own.
+func NewGCPBuildService(ctx context.Context, project, bucket, arRepo, endpointURL string, logger zerolog.Logger) (*GCPBuildService, error) {
 	if project == "" || bucket == "" {
 		return nil, nil
 	}
 
-	cb, err := cloudbuild.NewClient(ctx)
+	var cbOpts []option.ClientOption
+	if endpointURL != "" {
+		cbOpts = append(cbOpts, option.WithEndpoint(endpointURL))
+	}
+
+	cb, err := cloudbuild.NewRESTClient(ctx, cbOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("create Cloud Build client: %w", err)
 	}
@@ -58,6 +85,25 @@ func NewGCPBuildService(ctx context.Context, project, bucket, arRepo string, log
 
 func (s *GCPBuildService) Available() bool {
 	return s.project != "" && s.bucket != ""
+}
+
+// AssembleMultiArchManifest delegates to the universal helper, with
+// the Artifact Registry bearer token (Application Default Credentials
+// → cloud-platform scope) for the auth callback. AR honours the
+// standard OCI distribution v2 PUT /v2/<repo>/manifests/<tag>
+// request with a Docker manifest-list / OCI image-index media type.
+func (s *GCPBuildService) AssembleMultiArchManifest(ctx context.Context, opts core.MultiArchManifestOptions) error {
+	return core.AssembleMultiArchManifest(ctx, opts, func(_ string) (string, error) {
+		creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
+		if err != nil {
+			return "", fmt.Errorf("ADC: %w", err)
+		}
+		tok, err := creds.TokenSource.Token()
+		if err != nil {
+			return "", fmt.Errorf("ADC token: %w", err)
+		}
+		return tok.AccessToken, nil
+	})
 }
 
 func (s *GCPBuildService) Build(ctx context.Context, opts core.CloudBuildOptions) (*core.CloudBuildResult, error) {

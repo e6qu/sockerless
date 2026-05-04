@@ -2,6 +2,8 @@ package gcf
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
@@ -17,11 +19,43 @@ type Server struct {
 	images    *core.ImageManager
 	ipCounter atomic.Int32
 
-	GCF *core.StateStore[GCFState]
 	gcsVolumeState
 	// Reverse-agent registry for docker top / cp / stat / diff via a
 	// bootstrap running inside the function container.
 	reverseAgents *core.ReverseAgentRegistry
+
+	// deployFutures maps containerID → *deployFuture so ContainerStart can
+	// wait for the asynchronous CreateFunction work that ContainerCreate
+	// kicked off in a goroutine, AND can cancel that goroutine if the
+	// container turns out to be a member of a network-pod that should
+	// materialize as a multi-container Service revision (per
+	// network_pod.go::shouldDeferOrMaterializeNetworkPod). Per BUG-923:
+	// synchronous CreateFunction.Wait + UpdateService swap blocks
+	// 150-200s and exceeds gitlab-runner's 120s docker daemon timeout.
+	// Returning 201 from ContainerCreate immediately and deferring the
+	// wait into ContainerStart keeps the Docker contract honest. The
+	// cancellation context resolves the conflict with BUG-925's deferred
+	// pod materialization: ContainerStart calls future.Cancel() on every
+	// sibling member's deploy when it decides to materialize a pod, then
+	// invokes materializePodFunction; the goroutines respect ctx.Err()
+	// at every cloud-API boundary and unwind (releasing any pool claim).
+	deployFutures sync.Map
+}
+
+// errDeployCancelled is the sentinel sent on a deployFuture when the
+// caller (ContainerStart) cancels the in-flight async deploy because the
+// container turned out to be a member of a network-pod that needs
+// multi-container materialization instead. ContainerStart treats this
+// as success — the materialize path will provision the right thing.
+var errDeployCancelled = fmt.Errorf("deploy cancelled — container is a network-pod member, materializing as multi-container service")
+
+// deployFuture pairs the result channel with the cancellation func that
+// stops the in-flight deployFunctionAsync goroutine. Cancel + drain via
+// awaitOrCancel; LoadAndDelete from s.deployFutures atomically so two
+// callers can't both fire the cancel.
+type deployFuture struct {
+	ch     chan error
+	cancel context.CancelFunc
 }
 
 // NewServer creates a new Cloud Run Functions backend server.
@@ -29,7 +63,6 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	s := &Server{
 		config:         config,
 		gcp:            gcpClients,
-		GCF:            core.NewStateStore[GCFState](),
 		gcsVolumeState: gcsVolumeState{buckets: gcpcommon.NewBucketManager(gcpClients.Storage, config.Project, config.Region)},
 	}
 	s.ipCounter.Store(2)
@@ -50,7 +83,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		Auth:   gcpcommon.NewARAuthProvider(s.ctx, logger),
 		Logger: logger,
 	}
-	if svc, err := gcpcommon.NewGCPBuildService(context.Background(), config.Project, config.BuildBucket, "", logger); err == nil && svc != nil {
+	if svc, err := gcpcommon.NewGCPBuildService(context.Background(), config.Project, config.BuildBucket, "", config.EndpointURL, logger); err == nil && svc != nil {
 		s.images.BuildService = svc
 	}
 	s.CloudState = &gcfCloudState{server: s}

@@ -66,7 +66,7 @@ type ServiceV2 struct {
 	Annotations           map[string]string `json:"annotations,omitempty"`
 	CreateTime            string            `json:"createTime,omitempty"`
 	UpdateTime            string            `json:"updateTime,omitempty"`
-	LaunchStage           string            `json:"launchStage,omitempty"`
+	LaunchStage           enumString        `json:"launchStage,omitempty"`
 	Ingress               enumString        `json:"ingress,omitempty"`
 	DefaultUriDisabled    bool              `json:"defaultUriDisabled,omitempty"`
 	Template              *RevisionTemplate `json:"template,omitempty"`
@@ -116,8 +116,49 @@ type TrafficTarget struct {
 	Tag      string `json:"tag,omitempty"`
 }
 
+// crv2Services is the package-scope handle the cloudfunctions slice
+// uses to auto-create the backing Cloud Run service when a Cloud
+// Functions Gen2 function is created. Real GCP wires the two services
+// together server-side; the sim mirrors that linkage so backends that
+// expect `function.ServiceConfig.Service` to resolve to a real
+// `runpb.Service` (e.g. the gcf overlay-and-swap path) work end-to-end.
+var crv2Services sim.Store[ServiceV2]
+
+// seedServiceV2Defaults stamps the immutable identity + initial-rollout
+// fields onto a freshly-created service. Real Cloud Run does this
+// server-side (UID, generation 1, Ready condition, default URI, first
+// revision); the sim mirrors it for both REST CreateService and the
+// cloudfunctions auto-wire path so a single source of truth controls
+// the shape of "just-created" services.
+func seedServiceV2Defaults(svc ServiceV2, project, location, serviceID string) ServiceV2 {
+	now := nowTimestamp()
+	svc.Name = fmt.Sprintf("projects/%s/locations/%s/services/%s", project, location, serviceID)
+	svc.UID = generateUUID()
+	svc.Generation = 1
+	svc.CreateTime = now
+	svc.UpdateTime = now
+	if svc.LaunchStage == "" {
+		svc.LaunchStage = "GA"
+	}
+	svc.TerminalCondition = &Condition{
+		Type:               "Ready",
+		State:              "CONDITION_SUCCEEDED",
+		LastTransitionTime: now,
+	}
+	svc.Conditions = []Condition{
+		{Type: "Ready", State: "CONDITION_SUCCEEDED", LastTransitionTime: now},
+	}
+	svc.LatestReadyRevision = fmt.Sprintf("%s/revisions/%s-00001-abc", svc.Name, serviceID)
+	svc.LatestCreatedRevision = svc.LatestReadyRevision
+	if !svc.DefaultUriDisabled {
+		svc.URI = fmt.Sprintf("https://%s-%s.run.app", serviceID, project)
+	}
+	return svc
+}
+
 func registerCloudRunServicesV2(srv *sim.Server) {
 	services := sim.MakeStore[ServiceV2](srv.DB(), "crv2_services")
+	crv2Services = services
 
 	// CreateService: POST /v2/projects/{project}/locations/{location}/services?serviceId=<id>
 	srv.HandleFunc("POST /v2/projects/{project}/locations/{location}/services", func(w http.ResponseWriter, r *http.Request) {
@@ -141,32 +182,7 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 			return
 		}
 
-		now := nowTimestamp()
-		svc.Name = name
-		svc.UID = generateUUID()
-		svc.Generation = 1
-		svc.CreateTime = now
-		svc.UpdateTime = now
-		if svc.LaunchStage == "" {
-			svc.LaunchStage = "GA"
-		}
-		// Services come up Ready immediately in the sim — there's no
-		// rollout window, so backend code that calls op.Wait() reads
-		// back a fully-Ready Service the first time.
-		revName := fmt.Sprintf("%s-00001-abc", serviceID)
-		svc.TerminalCondition = &Condition{
-			Type:               "Ready",
-			State:              "CONDITION_SUCCEEDED",
-			LastTransitionTime: now,
-		}
-		svc.Conditions = []Condition{
-			{Type: "Ready", State: "CONDITION_SUCCEEDED", LastTransitionTime: now},
-		}
-		svc.LatestReadyRevision = fmt.Sprintf("%s/revisions/%s", name, revName)
-		svc.LatestCreatedRevision = svc.LatestReadyRevision
-		if !svc.DefaultUriDisabled {
-			svc.URI = fmt.Sprintf("https://%s-%s.run.app", serviceID, project)
-		}
+		svc = seedServiceV2Defaults(svc, project, location, serviceID)
 
 		services.Put(name, svc)
 

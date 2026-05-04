@@ -45,10 +45,29 @@ func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) 
 }
 
 func (s *Server) ContainerInspect(id string) (*api.Container, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	resolvedID, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return s.BaseServer.ContainerInspect(id)
+	c, err := s.BaseServer.ContainerInspect(id)
+	if err != nil {
+		return nil, err
+	}
+	// Phase 122g BUG-935: when InvocationResult is recorded (cmd ran +
+	// exited), override CloudState's "running" status with "exited" so
+	// inspect-poll callers (gitlab-runner cache permission setup uses
+	// this pattern, not ContainerWait) see the real exit. Cloud Run
+	// Service.status stays "Ready" forever — without this override,
+	// State.Status="running" lies and gitlab-runner waits forever.
+	if inv, ok := s.Store.GetInvocationResult(resolvedID); ok {
+		c.State.Status = "exited"
+		c.State.Running = false
+		c.State.ExitCode = inv.ExitCode
+		if c.State.FinishedAt == "" || c.State.FinishedAt == "0001-01-01T00:00:00Z" {
+			c.State.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+	}
+	return c, nil
 }
 
 func (s *Server) ContainerList(opts api.ContainerListOptions) ([]*api.ContainerSummary, error) {

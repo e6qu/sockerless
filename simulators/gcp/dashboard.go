@@ -42,7 +42,7 @@ func handleDashboardCloudRunJobs(w http.ResponseWriter, _ *http.Request) {
 			Name:           j.Name,
 			CreateTime:     j.CreateTime,
 			ExecutionCount: j.ExecutionCount,
-			LaunchStage:    j.LaunchStage,
+			LaunchStage:    string(j.LaunchStage),
 		}
 	}
 	sim.WriteJSON(w, http.StatusOK, out)

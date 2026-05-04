@@ -3,10 +3,13 @@ package cloudrun
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	runpb "cloud.google.com/go/run/apiv2/runpb"
+	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
+	gcpcommon "github.com/sockerless/gcp-common"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
@@ -47,10 +50,36 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 			volumes = append(volumes, &runpb.Volume{
 				Name: mp.Name,
 				VolumeType: &runpb.Volume_Gcs{
-					Gcs: &runpb.GCSVolumeSource{Bucket: bucket},
+					Gcs: &runpb.GCSVolumeSource{
+						Bucket:       bucket,
+						MountOptions: gcpcommon.RunnerWorkspaceMountOptions(),
+					},
 				},
 			})
 			volSeen[mp.Name] = struct{}{}
+		}
+	}
+
+	// Multi-container revision: inject SOCKERLESS_HOST_ALIASES into the
+	// main container's env so the bootstrap can write `127.0.0.1 <alias>`
+	// to /etc/hosts. The aliases are aggregated from every sibling's
+	// standard Docker NetworkingConfig.EndpointsConfig.<net>.Aliases —
+	// no runner-specific code (the signal is pure Docker API).
+	if len(containers) > 1 && len(specs) > 0 {
+		members := make([]api.Container, 0, len(containers))
+		for _, ci := range containers {
+			members = append(members, *ci.Container)
+		}
+		netID := ""
+		if id, ok := s.userDefinedNetworkID(*containers[0].Container); ok {
+			netID = id
+		}
+		aliases := hostAliasesForMembers(members, netID)
+		if len(aliases) > 0 {
+			specs[0].Env = append(specs[0].Env, &runpb.EnvVar{
+				Name:   "SOCKERLESS_HOST_ALIASES",
+				Values: &runpb.EnvVar_Value{Value: strings.Join(aliases, ",")},
+			})
 		}
 	}
 
@@ -65,6 +94,17 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 	}
 
 	if s.config.VPCConnector != "" {
+		// ALL_TRAFFIC routes EVERY outbound through the VPC connector.
+		// Required so cross-Cloud-Run calls (gitlab-runner-cloudrun POSTing
+		// to per-step sockerless-svc-* with Ingress=internal) appear as
+		// in-VPC source — Cloud Run rejects same-project Cloud Run
+		// requests as "external" if they go via platform egress (public
+		// .a.run.app DNS resolves to public IP). With ALL_TRAFFIC + Cloud
+		// NAT in the connector subnet, public Google APIs
+		// (storage.googleapis.com for GCSFuse, etc.) stay reachable too.
+		// Cloud NAT provisioned: sockerless-router / sockerless-nat in
+		// sockerless-vpc. See specs/CLOUD_RESOURCE_MAPPING.md § Cloud Run
+		// service-to-service call semantics for the full chain.
 		revTemplate.VpcAccess = &runpb.VpcAccess{
 			Connector: s.config.VPCConnector,
 			Egress:    runpb.VpcAccess_ALL_TRAFFIC,
@@ -86,10 +126,30 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 	}
 
 	return &runpb.Service{
-		Labels:             tags.AsGCPLabels(),
-		Annotations:        tags.AsGCPAnnotations(),
-		Ingress:            runpb.IngressTraffic_INGRESS_TRAFFIC_INTERNAL_ONLY,
-		DefaultUriDisabled: true,
+		Labels:      tags.AsGCPLabels(),
+		Annotations: tags.AsGCPAnnotations(),
+		// BUG-933: Ingress=ALL with IAM-required invoke. Cloud Run rejects
+		// cross-project-service-to-service via .a.run.app + Cloud NAT
+		// with HTTP 404 because the NAT'd source IP isn't auto-detected
+		// as same-project Cloud Run (cell 7 v19 evidence:
+		// invokeServiceDefaultCmd POST returned status=404 in 25ms —
+		// edge-rejected, never reached the bootstrap).
+		//
+		// Security stance preserved: NO allUsers→roles/run.invoker
+		// binding (verified via service IAM policy). Only the
+		// sockerless-runner SA can mint a Cloud Run ID token for this
+		// audience — anonymous internet requests get 401 from IAM.
+		// Functionally equivalent to ingress=internal+IAM, with the
+		// trade-off being a publicly-resolvable URL (DNS leak) that
+		// rejects unauthenticated traffic.
+		//
+		// The right end-state is Cloud Run private DNS via Service
+		// Connector + Private Service Connect, which keeps both the
+		// URL un-resolvable AND the IAM gate. Deferred — adds Service
+		// Connector + per-Service PSC endpoint complexity. Tracked as
+		// a follow-up to Phase 122g.
+		Ingress:            runpb.IngressTraffic_INGRESS_TRAFFIC_ALL,
+		DefaultUriDisabled: false,
 		Template:           revTemplate,
 	}, nil
 }

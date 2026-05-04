@@ -212,6 +212,9 @@ type stubBuilder struct {
 }
 
 func (b *stubBuilder) Available() bool { return b.available }
+func (b *stubBuilder) AssembleMultiArchManifest(_ context.Context, _ core.MultiArchManifestOptions) error {
+	return nil
+}
 func (b *stubBuilder) Build(_ context.Context, opts core.CloudBuildOptions) (*core.CloudBuildResult, error) {
 	b.called = true
 	b.gotOpts = opts

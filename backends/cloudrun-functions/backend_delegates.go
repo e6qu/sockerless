@@ -182,9 +182,10 @@ func (s *Server) ExecResize(id string, h int, w int) error {
 }
 
 // ExecStart runs the exec inside the function container via the
-// reverse-agent WebSocket. Cloud Run Functions exposes no native exec
-// API; the bootstrap is the only path. If no session is registered,
-// return NotImplementedError with the specific reason.
+// Phase 122g: Path B HTTP POST is preferred (envelope POSTed to the
+// Function URL; bootstrap parses + runs + returns response envelope).
+// Reverse-agent WS is the fallback for interactive (TTY+stdin) execs
+// where streaming is required.
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
 	exec, ok := s.Store.Execs.Get(id)
 	if !ok {
@@ -194,8 +195,18 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 	if !ok {
 		return nil, &api.ConflictError{Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID)}
 	}
+
+	interactive := opts.Tty && exec.OpenStdin
+	if !interactive {
+		if rwc, err := s.execStartViaInvoke(id, exec); err == nil {
+			return rwc, nil
+		} else if _, isNotImpl := err.(*api.NotImplementedError); !isNotImpl {
+			return nil, err
+		}
+	}
+
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
-		return nil, &api.NotImplementedError{Message: "docker exec requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
+		return nil, &api.NotImplementedError{Message: "docker exec requires a Cloud Run Function URL with sockerless-gcf-bootstrap (Phase 122g) OR a reverse-agent (SOCKERLESS_CALLBACK_URL); neither is available for this container"}
 	}
 	return s.BaseServer.ExecStart(id, opts)
 }

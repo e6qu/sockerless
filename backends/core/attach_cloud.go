@@ -29,7 +29,17 @@ func AttachViaCloudLogs(s *BaseServer, ref string, opts api.ContainerAttachOptio
 		ShowStderr: true,
 		Follow:     opts.Stream,
 	}
-	logReader, err := StreamCloudLogs(s, ref, logOpts, fetch, StreamCloudLogsOptions{AllowCreated: true})
+	// CheckLogBuffers: true mirrors the Logs driver — for FaaS backends
+	// the container stdout returns in the HTTP invoke response body and
+	// is stored in `Store.LogBuffers` synchronously. Cloud Logging is the
+	// secondary path (with ingestion lag); LogBuffers is the authoritative
+	// per-invocation source. Without checking it here, attach silently
+	// loses the user output for fast-exit functions whose stdout comes
+	// back in the response BEFORE Cloud Logging has indexed it.
+	logReader, err := StreamCloudLogs(s, ref, logOpts, fetch, StreamCloudLogsOptions{
+		AllowCreated:    true,
+		CheckLogBuffers: true,
+	})
 	if err != nil {
 		return nil, err
 	}

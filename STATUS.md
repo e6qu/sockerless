@@ -1,70 +1,76 @@
 # Sockerless — Status
 
-**104 phases closed. Active branch: `phase-110-runner-integration`. ALL 4 CELLS GREEN.**
-- Cell 1 GH×ECS: https://github.com/e6qu/sockerless/actions/runs/25075259911
-- Cell 2 GH×Lambda: https://github.com/e6qu/sockerless/actions/runs/25113565115 — 7 architectural walls (BUG-862, 869, 870, 871, 872, 873, 874).
-- Cell 3 GL×ECS (2026-04-29): https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 — job 14148678472 ran `echo "hello from sockerless ecs"` + `env | sort` in 270.8 s on 9 sequential per-stage Fargate tasks. Closed in commit `aa2419a`.
-- **Cell 4 GL×Lambda (NEW 2026-04-30): https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943** (status: success) — job 14156021860 ran `echo "hello from sockerless lambda"` + `date -u` in 260.5 s. Closed seven Lambda-primitive bugs across the session culminating in two final fixes:
-  1. **stdinPipe/start race**: `/start`'s Invoke goroutine did a one-shot `stdinPipes.Load()`, missing the standard Docker SDK ordering (/create → /start → /attach). Fix: poll `stdinPipes` for up to 5 s inside the goroutine before deciding to skip stdin. Without this, OpenStdin containers Invoked with empty payload `{}`, which the bootstrap piped to bash, producing `/bin/bash: line 1: {}: command not found` and Lambda `Unhandled` errors on every predefined-helper container.
-  2. **`docker.io/library/<name>` rejection**: `image_resolve.go` rejected `docker.io/library/alpine:latest` as "Docker Hub user/org image" because `repo` retained the `library/` prefix and matched `strings.Contains(repo, "/")`. Fix: strip `library/` prefix before the user/org check.
-  3. Plus diagnostic logging — `LogType=Tail` on every `lambda.Invoke` so the function's last 4 KB of stderr ride back inline; payload preview + log_tail emitted on `FunctionError`. The `{}: command not found` line that pinpointed the race came directly from this tail.
+**Date: 2026-05-04 v21 (vanilla-runner architecture pivot — Phase 122j)**
 
-See [PLAN.md](PLAN.md) (roadmap), [BUGS.md](BUGS.md) (bug log), [WHAT_WE_DID.md](WHAT_WE_DID.md) (narrative), [DO_NEXT.md](DO_NEXT.md) (resume pointer), [docs/RUNNERS.md](docs/RUNNERS.md) (runner wiring).
+## Cell scoreboard
 
-## Branch state
+| Cell | Path | Last result | Active blocker |
+|------|------|-----------|----------------|
+| 1 GH × ECS (AWS) | n/a | ✅ GREEN 2026-04-30 | — |
+| 2 GH × Lambda (AWS) | n/a | ✅ GREEN 2026-04-30 | — |
+| 3 GL × ECS (AWS) | n/a | ✅ GREEN 2026-04-30 | — |
+| 4 GL × Lambda (AWS) | n/a | ✅ GREEN 2026-04-30 | — |
+| 5 GH × cloudrun | sockerless-cloudrun | ❌ — old custom-image architecture being torn down | New shape: vanilla actions/runner + sockerless sidecar in multi-container Cloud Run Job, dispatched by `github-runner-dispatcher-gcp`. Implementation pending after gitlab side is GREEN. |
+| 6 GH × gcf | sockerless-gcf | ❌ same as cell 5 | Same blocker — gcf sidecar version pending. |
+| 7 GL × cloudrun | sockerless-cloudrun | 🟡 in flight on new architecture; gitlab-runner connects to sockerless via DOCKER_HOST; **step-container deploy via Cloud Run Service hangs (BUG-929 + Cloud Run regional CPU quota)** | New shape proven viable at the runner level; downstream backend issues persist. |
+| 8 GL × gcf | sockerless-gcf | ❌ pending — refactor to vanilla `gitlab/gitlab-runner` + gcf sidecar pending. | Same architecture as cell 7, swap sockerless-backend-cloudrun → sockerless-backend-gcf. |
 
-- **`main`** — synced with `origin/main` at PR #121 merge.
-- **`origin-gitlab/main`** — mirror, pre-push hooks now mirror-aware so `git push origin-gitlab main` is a clean fast-forward.
-- **`phase-110-runner-integration`** — active; baseline commit `f5c1ab7` shipped `docs/RUNNERS.md` + the mirror-aware hooks.
+## Architectural pivot — Phase 122j (in flight 2026-05-04)
 
-## Recent merges
+Per user directives (5 messages 2026-05-04 afternoon):
+1. "github runner and gitlab runner unmodified"
+2. "only acceptable thing for github is this dispatcher"
+3. "runners work via docker-like interface of sockerless ... runners need no changes themselves since they already talk docker"
+4. "dispatcher just provisions runners based on the job demand and should not provide any features other than to start the github runner"
+5. "gitlab runner doesn't need a dispatcher because gitlab runner 'docker executor' already behaves like a dispatcher"
 
-| PR | Summary |
-|---|---|
-| #121 | Phase 109 strict cloud-API fidelity sweep — 19 audit items: AWS Lambda VpcConfig + region/account scoping + Secrets Manager + SSM Parameter Store + KMS + DynamoDB; GCP `compute.firewalls` + `compute.routers`/Cloud NAT + `iam.generateAccessToken` + operations endpoint persistence; Azure IMDS token endpoint + Blob Container ARM CRUD + NSG priority+direction validation + Private DNS AAAA/CNAME/MX/PTR/SRV/TXT records + NAT Gateways + Route Tables + Container Apps/Jobs Azure-AsyncOperation polling + Key Vault ARM+data plane + ARM `SystemData.createdAt` preservation. Test-fixtures no-fakes audit clean. |
-| #120 | Audit + Phase 104 framework migration + cloud-native typed drivers + Phase 105 waves 1-3 + Phase 108 closed + Phase 106/107 harness scaffolding + ImageRef domain type + Phase 109 first-round (BUG-836..844: real ECS lifecycle, real SSM AgentMessage protocol, real subnet-CIDR IP allocation, real Azure per-site hostnames, real kill signal routing) + repo-wide code/doc cleanup. |
-| #119 | Post-PR-#118 state-doc refresh — Phase 104 promoted to active. |
-| #118 | Round-8 + Round-9 live-AWS sweep — 30 bugs (BUG-786..819), per-cloud terragrunt sweep parity. |
-| #117 | Round-7 live-AWS sweep — 16 bugs (BUG-770..785). |
+**Resulting architecture:**
 
-Older PRs (#112–#115) — sim parity, real volumes, FaaS invocation tracking, reverse-agent ops, Phase 91/86/87/88 closures. Detail in [WHAT_WE_DID.md](WHAT_WE_DID.md) and per-bug entries in [BUGS.md](BUGS.md).
+- **GitLab side**: pre-deployed multi-container Cloud Run **Service** per cell (deployed via `terraform/cloud-run/gitlab-runner-cloudrun.yaml` + soon `gitlab-runner-gcf.yaml`). Three containers per revision:
+  1. **init** — `gitlab-runner-init` image (alpine + curl + jq + register.sh). Cleans stale offline project_type runners from gitlab project (was hitting GitLab's 50-runner cap from old phase 110 cells), then `POST /api/v4/user/runners` to register a fresh `project_type` runner. Writes `/shared/config.toml` with the auth token + `DOCKER_HOST=tcp://localhost:3375`. Cloud Run requires the dependency container to keep running, so init binds `:8081` after writing config + sleeps. Cloud Run `container-dependencies` annotation makes the runner depend on init's startup probe passing.
+  2. **gitlab-runner** — vanilla `gitlab/gitlab-runner:v17.5.0`. Args: `run --config /shared/config.toml`. `dependsOn: init`. `DOCKER_HOST=tcp://localhost:3375` connects to sibling.
+  3. **sockerless** — `sockerless-backend-cloudrun:latest` (FROM distroless, ~56MB). Cloud Run **ingress** container — Docker daemon HTTP API serves on `:3375`.
 
-## Open work
+- **GitHub side** (still TODO): pre-deployed Cloud Run **Job** per cell label with multi-container TaskTemplate (vanilla `github-runner-vanilla:2.334.0` + sockerless sidecar). Dispatcher's only call: `Executions.RunJob(predefined-job)` with per-execution env override (`RUNNER_REG_TOKEN`, `RUNNER_NAME`, `RUNNER_LABELS`, `RUNNER_REPO`).
 
-- **Phase 110 — all 4 cells GREEN.** Closing summary commit pending. Branch ready for PR.
+**Vanilla runner image source** chosen (option b2 per user): `FROM mcr.microsoft.com/dotnet/runtime-deps:8.0` + `COPY` extracted upstream actions/runner tarball. Microsoft's image is GitHub's documented base for .NET runtime deps actions/runner needs. Image content matches upstream prescription.
 
-### 4-cell matrix
+## Today's commits (Phase 122j)
 
-| Cell | State | URL |
-|---|---|---|
-| 1 GH × ECS | ✅ GREEN | https://github.com/e6qu/sockerless/actions/runs/25075259911 |
-| 2 GH × Lambda | ✅ GREEN | https://github.com/e6qu/sockerless/actions/runs/25113565115 |
-| 3 GL × ECS | ✅ GREEN | https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 |
-| 4 GL × Lambda | ✅ GREEN | https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943 |
+| Commit | Subject |
+|--------|---------|
+| `558511d` | standalone sockerless-backend sidecar images (distroless) |
+| `4b2789c` | gitlab-runner-init image + vanilla github-runner image |
+| `b7aeaf2` | revert MountOptions metadata-cache flags — Cloud Run rejects them |
 
-Detailed unblock plans per cell live in [PLAN.md § Phase 110 — paths forward to GREEN](PLAN.md). Per-bug closure paths in [BUGS.md](BUGS.md). Resume command + sequence in [DO_NEXT.md](DO_NEXT.md). Full runner hurdle catalog (closed + predicted) in [docs/RUNNERS.md § Runner hurdles](docs/RUNNERS.md). Lambda volume primitive translation in [specs/CLOUD_RESOURCE_MAPPING.md § Lambda bind-mount translation](specs/CLOUD_RESOURCE_MAPPING.md).
-- **Phase 110a — github-runner-dispatcher skeleton: shipped** at commit `ba797b6`. Top-level Go module, sockerless-agnostic (only stdlib + BurntSushi/toml). State recovery via container labels (`sockerless.dispatcher.{job_id,runner_name,managed_by}`); GC sweep every 2 min reaps exited containers + offline GitHub runners; graceful shutdown drains in-flight work bounded to 30 s.
-- **Phase 113 (queued)** — production-shape `github-runner-dispatcher` (webhook ingress, GitHub App install, multi-repo, deployable). See [PLAN.md § Phase 113].
-- **Phase 104 wrapper-removal pass** — gated on docker getting typed cloud-native drivers OR accepting wrappers as permanent. Once decided: drop unused `WrapLegacyXxx` / `LegacyXxxFn` scaffolding and shrink `api.Backend` correspondingly. Coordinated landing.
-- **Phase 104 interface tightening** — typed `Signal` enum, `ResolveImageReg(ImageRef)` helper, structured `Stats` struct.
-- **Phase 105 wave 4** (lower priority) — events stream, exec start hijack shape, container CRUD beyond list.
-- **Phase 68** (Multi-Tenant Backend Pools) — P68-001 done; 9 sub-tasks remain. Phase 110's 4-cell setup uses Phase-68-v1 (one daemon per backend); Phase 68-v2 collapses to label-based dispatch on a single daemon.
+## What's working
 
-## Test counts (head of `main`)
+- ✅ Multi-container Cloud Run Service `gitlab-runner-cloudrun` deploys cleanly with [init, vanilla gitlab-runner, sockerless sidecar].
+- ✅ init script runs at every revision spin-up: cleans stale offline runners (deleted 48 stale phase-110 runners, brought project from 50/50 to 2/50), registers fresh runner via gitlab API HTTP 201, writes config.toml.
+- ✅ Vanilla `gitlab/gitlab-runner:v17.5.0` reads config.toml, connects to GitLab as a project runner, polls.
+- ✅ sockerless-backend-cloudrun serves Docker API on `:3375`, gitlab-runner reaches it via `DOCKER_HOST=tcp://localhost:3375`.
+- ✅ Pre-job overlay build via Cloud Build succeeds.
 
-| Category | Count |
-|---|---|
-| Core unit | 312 |
-| Cloud SDK/CLI | AWS 68+, GCP 64+, Azure 57+ |
-| Sim-backend integration | 77 (parity matrix at 77/77 ✓) |
-| Libpod golden-shape | 8 |
-| External-suite replays | 12 (act + gitlab-ci-local) |
+## What's blocking cell 7 v2
 
-## Operational state
+- ❌ Sockerless backend's `startSingleContainerService` for the cache permission helper container hangs at `CreateService.Wait` — no Cloud Run service appears, no error logged, gitlab-runner times out after 13+ min waiting for "running" state.
+- Likely **BUG-929** (`startSingleContainerService missing post-deploy invoke` — known pending) compounded with **Cloud Run regional CPU quota** on the test project (we previously hit "Quota exceeded for total allowable CPU per project per region" repeatedly).
+- The hang isn't logged because Cloud Run's CreateService API call returns immediately (LRO) and `.Wait()` polls without logging. Need either (a) timeout on Wait + explicit error or (b) verbose progress logging.
 
-- **AWS creds: ACTIVE** as of 2026-04-30 (root `729079515331`, eu-west-1) — refresh via `source aws.sh`.
-- **Live AWS infra: UP in eu-west-1** — provisioned 2026-04-28; still running. ECS + Lambda live envs as above. NAT Gateway runs ~$0.045/hr — tear down via `terragrunt destroy` from `terraform/environments/{ecs,lambda}/live` when the session ends.
-- **Sockerless daemons:** Lambda backend running on the cell-4-fix binary at `/tmp/sockerless-backend-lambda` (verified live with the GREEN cell 4 pipeline). ECS daemon was last seen on the BUG-859/860 fix binary; cells 3+4 verified GREEN against current code.
-- **Smoke verified** — `DOCKER_HOST=tcp://localhost:3375 docker run --rm alpine:latest echo hi` exits 0 from a Fargate task; verifies the BUG-846 AWS-Public-Gallery routing for Docker Hub library refs.
-- **Podman machine** — running (applehv VM, user-mode networking, 4 CPU / 10 GiB / 100 GiB). Used for local-Podman dispatcher testing in 110a; not used for cell 3+4 (gitlab-runner master is a darwin-native binary).
-- **PAT keychain entries** — `gh` (GitHub) keychain-backed; GitLab PAT in `security(1)` keychain entry `sockerless-gl-pat`.
+## Live infra in `sockerless-live-46x3zg4imo` (us-central1)
+
+- `github-runner-dispatcher-gcp` rev `00021-fb2` — STILL the OLD architecture (will replace when github side is refactored).
+- `gitlab-runner-cloudrun` rev `00001-x4q` — NEW vanilla architecture, healthy.
+- `gitlab-runner-gcf` rev `00027-jkg` — STILL the OLD architecture (custom image).
+- VPC + connector + Cloud NAT + secrets unchanged.
+- Runner SA granted `roles/dns.admin` (was getting 403 on Cloud DNS zone create — now fixed for cross-container DNS).
+
+## What we tried that did NOT work this session
+
+1. **Custom runner images that bake sockerless backend** — entire architecture rejected by user directives. Old `runner:gcf-amd64`, `runner:cloudrun-amd64`, `gitlab-runner:gcf-amd64`, `gitlab-runner:cloudrun-amd64` images are now obsolete (pending step-4 deletion).
+2. **GCS-Fuse `metadata-cache:ttl-secs=0` / `negative-ttl-secs=0` MountOptions** — Cloud Run rejects with `Unsupported or unrecognized flag for Cloud Storage volume`. Cloud Run wraps gcsfuse and only allows `[implicit-dirs, o=, file-mode, dir-mode, uid, gid]`. Reverted in `b7aeaf2`.
+3. **Init container that exits on completion** — Cloud Run requires the dependency container to be "ready" (startup probe passing), not "exited". Init now binds `:8081` after writing config + sleeps.
+4. **`gcloud run services replace` with `:latest` tag** — Cloud Run doesn't re-resolve `:latest` if the spec is byte-identical. Pin digests when iterating.
+5. **`--working-directory /tmp/runner-work`** override on vanilla gitlab-runner — directory doesn't exist in vanilla image. Removed; let gitlab-runner use its default `/home/gitlab-runner/builds`.
+
+See [BUGS.md](BUGS.md) for per-bug fix shape. See [DO_NEXT.md](DO_NEXT.md) for resume runbook + remaining BUG-929 fix candidates.

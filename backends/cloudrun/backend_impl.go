@@ -40,7 +40,12 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		config = *req.ContainerConfig
 	}
 
-	// Merge image config if available
+	// Merge image config if available + resolve digest refs to RepoTag
+	// (BUG-918: gitlab-runner uses image ID `sha256:<digest>` for create
+	// after pull-by-tag; Cloud Run rejects bare digest refs because it
+	// rewrites them to `mirror.gcr.io/library/sha256:<digest>` which 404s.
+	// Replace `sha256:<digest>` with the first RepoTag from the local
+	// Store entry — the image was pulled by tag, so a tag is available).
 	if img, ok := s.Store.ResolveImage(config.Image); ok {
 		config.Env = core.MergeEnvByKey(img.Config.Env, config.Env)
 		if len(config.Cmd) == 0 && len(config.Entrypoint) == 0 {
@@ -52,6 +57,9 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		if config.WorkingDir == "" {
 			config.WorkingDir = img.Config.WorkingDir
 		}
+		if strings.HasPrefix(config.Image, "sha256:") && len(img.RepoTags) > 0 {
+			config.Image = img.RepoTags[0]
+		}
 	}
 	if config.Labels == nil {
 		config.Labels = make(map[string]string)
@@ -59,6 +67,37 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 
 	// Resolve Docker Hub images to Artifact Registry remote repository URIs
 	config.Image = gcpcommon.ResolveGCPImageURI(config.Image, s.config.Project, s.config.Region)
+
+	// Phase 122g: when BootstrapBinaryPath is configured, COPY the
+	// sockerless-cloudrun-bootstrap into the user's image via Cloud
+	// Build and use the overlay URI as the actual image for Cloud Run.
+	// This makes the deployed Service host an HTTP endpoint that
+	// ContainerExec can POST envelope payloads against (Path B). Cache
+	// hits via OverlayContentTag mean the second container of any given
+	// (image, entrypoint, cmd, workdir) tuple skips Cloud Build entirely.
+	originalImage := config.Image
+	if s.useOverlayPath(originalImage) {
+		spec := gcpcommon.OverlayImageSpec{
+			BaseImageRef:        originalImage,
+			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+			UserEntrypoint:      config.Entrypoint,
+			UserCmd:             config.Cmd,
+			UserWorkdir:         config.WorkingDir,
+		}
+		contentTag := gcpcommon.OverlayContentTag("cloudrun-", spec)
+		overlayURI, err := s.ensureOverlayImage(s.ctx(), spec, contentTag)
+		if err != nil {
+			return nil, fmt.Errorf("ensure cloudrun overlay image: %w", err)
+		}
+		config.Image = overlayURI
+		// Bootstrap owns the entrypoint; it parses SOCKERLESS_USER_*
+		// env vars (baked into the overlay at build time) on each
+		// invocation. Drop the user's entrypoint+cmd from the Cloud
+		// Run container spec so Cloud Run doesn't re-override the
+		// bootstrap with the user's argv.
+		config.Entrypoint = nil
+		config.Cmd = nil
+	}
 
 	hostConfig := api.HostConfig{NetworkMode: "default"}
 	if req.HostConfig != nil {
@@ -70,20 +109,46 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 
 	// Named-volume binds (`volName:/mnt`) map to Cloud Run
 	// `Volume{Gcs{Bucket}}` on the sockerless-owned project. Host-path
-	// binds (`/h:/c`) stay rejected — Cloud Run containers have no
-	// host filesystem to bind from.
+	// binds (`/h:/c`) translate via SharedVolumes (config-driven map
+	// from caller-side mount path → sockerless-managed named-volume +
+	// GCS bucket). Mirrors the ECS + Lambda translators.
+	translatedBinds := make([]string, 0, len(hostConfig.Binds))
 	for _, bind := range hostConfig.Binds {
 		parts := strings.SplitN(bind, ":", 3)
 		if len(parts) < 2 {
 			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("invalid bind mount spec %q", bind)}
 		}
-		if strings.HasPrefix(parts[0], "/") {
+		src, dst := parts[0], parts[1]
+		mode := ""
+		if len(parts) == 3 {
+			mode = parts[2]
+		}
+		// /var/run/docker.sock — silently dropped (no docker socket
+		// on Cloud Run; the github-runner adds this unconditionally).
+		if src == "/var/run/docker.sock" {
+			continue
+		}
+		if strings.HasPrefix(src, "/") {
+			if sv := s.config.LookupSharedVolumeBySourcePath(src); sv != nil {
+				translated := sv.Name + ":" + dst
+				if mode != "" {
+					translated += ":" + mode
+				}
+				translatedBinds = append(translatedBinds, translated)
+				continue
+			}
+			if isSubPathOfSharedVolume(src, s.config.SharedVolumes) {
+				continue
+			}
 			return nil, &api.InvalidParameterError{Message: fmt.Sprintf(
-				"host bind mounts are not supported on Cloud Run backend (%q); use a named volume (`docker volume create <name> && docker run -v <name>:/path`) — volumes are backed by sockerless-managed GCS buckets",
+				"host bind mounts are not supported on Cloud Run backend (%q); use a named volume (`docker volume create <name> && docker run -v <name>:/path`) — volumes are backed by sockerless-managed GCS buckets. Configure SOCKERLESS_GCP_SHARED_VOLUMES to translate runner-task bind mounts to shared GCS buckets.",
 				bind,
 			)}
 		}
+		// Already a named volume — pass through.
+		translatedBinds = append(translatedBinds, bind)
 	}
+	hostConfig.Binds = translatedBinds
 
 	path := ""
 	var args []string
@@ -136,7 +201,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 			}
 		})
 	}
-	container.NetworkSettings.Networks[netName] = &api.EndpointSettings{
+	endpoint := &api.EndpointSettings{
 		NetworkID:   networkID,
 		EndpointID:  core.GenerateID()[:16],
 		Gateway:     "",
@@ -144,6 +209,28 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		IPPrefixLen: 16,
 		MacAddress:  "",
 	}
+	// Capture standard Docker NetworkingConfig.EndpointsConfig.Aliases
+	// so the multi-container Service materialiser can source SOCKERLESS_
+	// HOST_ALIASES from them. No runner-specific code — this is the
+	// docker-CLI / podman-CLI / gitlab-runner / github-runner standard
+	// alias channel.
+	if req.NetworkingConfig != nil {
+		for refName, reqEp := range req.NetworkingConfig.EndpointsConfig {
+			if reqEp == nil {
+				continue
+			}
+			matches := refName == netName
+			if !matches {
+				if net, ok := s.Store.ResolveNetwork(refName); ok && net.ID == networkID {
+					matches = true
+				}
+			}
+			if matches && len(reqEp.Aliases) > 0 {
+				endpoint.Aliases = append(endpoint.Aliases, reqEp.Aliases...)
+			}
+		}
+	}
+	container.NetworkSettings.Networks[netName] = endpoint
 
 	// Pod association is handled by the core HTTP handler layer (query param).
 	s.PendingCreates.Put(id, container)
@@ -176,6 +263,18 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 	}
 	if !ok {
+		// BUG-922 fix: gitlab-runner does start→wait→stop→start cycling
+		// per stage on the SAME container ID. After first ContainerStart
+		// PendingCreates is cleared, so subsequent restarts must look up
+		// via CloudState. Re-add to PendingCreates so the existing flow
+		// below can re-create the Cloud Run Job (with potentially new cmd).
+		if got, hit := s.ResolveContainerAuto(s.ctx(), ref); hit {
+			c = got
+			ok = true
+			s.PendingCreates.Put(c.ID, c)
+		}
+	}
+	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
 	id := c.ID
@@ -191,43 +290,94 @@ func (s *Server) ContainerStart(ref string) error {
 
 	s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 
-	// Deferred start: if container is in a multi-container pod, wait for all siblings
+	// Docker-network → Cloud Run multi-container Service mapping
+	// (specs/CLOUD_RESOURCE_MAPPING.md § "User-defined network ↔ multi-
+	// container Service revision"). Pure standard-Docker signal: network
+	// membership + Container.Config.OpenStdin. No runner-specific code.
+	netDefer, netMembers := s.shouldDeferOrMaterializeNetworkPod(c)
+	netID, _ := s.userDefinedNetworkID(c)
+	s.Logger.Info().
+		Str("container", id).
+		Str("image", c.Config.Image).
+		Bool("open_stdin", c.Config.OpenStdin).
+		Str("net_id", netID).
+		Bool("defer", netDefer).
+		Int("members", len(netMembers)).
+		Msg("network-pod: ContainerStart decision")
+	if netDefer {
+		// Service-style sidecar — eventual deploy will be triggered when
+		// a script-runner (OpenStdin=true) on the same network starts.
+		// Mark the container "running" so subsequent ContainerInspect
+		// reports the eventual state. The Cloud Run Service revision will
+		// run all sidecars in parallel; their startup probes guarantee
+		// they're listening before traffic flows.
+		s.PendingCreates.Update(id, func(pc *api.Container) {
+			pc.State.Status = "running"
+			pc.State.Running = true
+			pc.State.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		})
+		// Track this service container under its network so subsequent
+		// script-runners on the same network can re-bundle it (gitlab-
+		// runner v17.5 spawns one script-runner container per stage).
+		s.trackNetworkService(netID, id)
+		return nil
+	}
+	if len(netMembers) > 1 {
+		return s.startMultiContainerServiceTyped(id, netMembers, exitCh)
+	}
+
+	// Explicit pod (PodCreate API) deferred start.
 	shouldDefer, podContainers := s.PodDeferredStart(id)
 	if shouldDefer {
+		s.Logger.Info().Str("container", id).Msg("ContainerStart: PodDeferredStart=true → returning nil (silent defer)")
 		return nil
 	}
 
 	if len(podContainers) > 1 {
+		s.Logger.Info().Str("container", id).Int("members", len(podContainers)).Bool("useService", s.useServicePath(&c)).Msg("ContainerStart: multi-container pod path")
 		// Multi-container pod: build combined resource and run
-		if s.config.UseService {
+		if s.useServicePath(&c) {
 			return s.startMultiContainerServiceTyped(id, podContainers, exitCh)
 		}
 		return s.startMultiContainerJobTyped(id, podContainers, exitCh)
 	}
 
-	// — Services path. Separate function so the Jobs branch
-	// below can be deleted when Jobs support is sunset.
-	if s.config.UseService {
+	// Phase 122g: route to Service path when EITHER:
+	//   - the image was overlay-built with sockerless-cloudrun-bootstrap
+	//     (BootstrapBinaryPath set + image in sockerless-overlay AR
+	//     repo) — bootstrap binds $PORT so Cloud Run Service is happy;
+	//   - OR the image declares ExposedPorts / has the
+	//     sockerless.runner-pattern label (legacy isRunnerPattern path).
+	//
+	// Otherwise (stock images, no overlay, no exposed ports) fall back
+	// to Cloud Run Job — one-shot, container exits when cmd exits.
+	useSvc := s.useServicePath(&c)
+	s.Logger.Info().Str("container", id).Bool("useServicePath", useSvc).Msg("ContainerStart: single-container path")
+	if useSvc {
 		return s.startSingleContainerService(id, c, crState, exitCh)
 	}
 
 	// Clean up any existing Cloud Run Job from a previous start
 	if crState.JobName != "" {
+		s.Logger.Info().Str("container", id).Str("job", crState.JobName).Msg("ContainerStart: Job path - deleting prior job")
 		s.deleteJob(crState.JobName)
 		s.Registry.MarkCleanedUp(crState.JobName)
 	}
 
 	// Build Cloud Run Job spec
 	jobName := buildJobName(id)
+	s.Logger.Info().Str("container", id).Str("job", jobName).Msg("ContainerStart: Job path - building job spec")
 	jobSpec, err := s.buildJobSpec(s.ctx(), []containerInput{
 		{ID: id, Container: &c, IsMain: true},
 	})
 	if err != nil {
+		s.Logger.Error().Err(err).Str("container", id).Msg("ContainerStart: Job path - buildJobSpec failed")
 		s.Store.WaitChs.Delete(id)
 		return err
 	}
 
 	// Create the Cloud Run Job
+	s.Logger.Info().Str("container", id).Str("job", jobName).Msg("ContainerStart: Job path - calling Run.Jobs.CreateJob")
 	createOp, err := s.gcp.Jobs.CreateJob(s.ctx(), &runpb.CreateJobRequest{
 		Parent: s.buildJobParent(),
 		JobId:  jobName,
@@ -244,6 +394,8 @@ func (s *Server) ContainerStart(ref string) error {
 	if err != nil {
 		s.deleteJob(fmt.Sprintf("%s/jobs/%s", s.buildJobParent(), jobName))
 		s.Store.WaitChs.Delete(id)
+		s.PendingCreates.Delete(id)
+		s.CloudRun.Delete(id)
 		s.Logger.Error().Err(err).Str("job", jobName).Msg("job creation failed")
 		return gcpcommon.MapGCPError(err, "job", id)
 	}
@@ -268,19 +420,34 @@ func (s *Server) ContainerStart(ref string) error {
 		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("failed to run job")
 		s.deleteJob(jobFullName)
 		s.Store.WaitChs.Delete(id)
+		s.PendingCreates.Delete(id)
+		s.CloudRun.Delete(id)
 		return gcpcommon.MapGCPError(err, "execution", id)
 	}
 
-	// Wait for RunJob LRO to return the execution
-	execution, err := runOp.Wait(s.ctx())
-	if err != nil {
-		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("run job failed")
-		s.deleteJob(jobFullName)
-		s.Store.WaitChs.Delete(id)
-		return gcpcommon.MapGCPError(err, "execution", id)
+	// BUG-921: do NOT runOp.Wait — that blocks until execution
+	// COMPLETES (~10-30 min for real CI workloads), holding the docker
+	// /start HTTP handler open and tripping gitlab-runner's 120s docker
+	// connection timeout. Instead, extract the execution name from the
+	// operation's metadata (populated as soon as RunJob is accepted).
+	// Same shape fix as BUG-912 in github-runner-dispatcher-gcp/spawner.
+	executionName := ""
+	if md, mdErr := runOp.Metadata(); mdErr == nil && md != nil {
+		executionName = md.Name
 	}
-
-	executionName := execution.Name
+	if executionName == "" {
+		// Fallback: list executions on the job + take the most recent.
+		// Operation metadata may be empty for very fast initial calls.
+		it := s.gcp.Executions.ListExecutions(s.ctx(), &runpb.ListExecutionsRequest{
+			Parent: jobFullName,
+		})
+		if e, err := it.Next(); err == nil && e != nil {
+			executionName = e.Name
+		}
+	}
+	if executionName == "" {
+		s.Logger.Warn().Str("job", jobFullName).Msg("RunJob accepted but execution name not yet available; pollExecutionExit will rediscover")
+	}
 
 	// Remove from PendingCreates now that the job is launched in the cloud.
 	s.PendingCreates.Delete(id)
@@ -366,17 +533,20 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 		return gcpcommon.MapGCPError(err, "execution", mainID)
 	}
 
-	execution, err := runOp.Wait(s.ctx())
-	if err != nil {
-		s.Logger.Error().Err(err).Str("job", jobFullName).Msg("run job failed")
-		s.deleteJob(jobFullName)
-		for _, pc := range podContainers {
-			s.Store.WaitChs.Delete(pc.ID)
-		}
-		return gcpcommon.MapGCPError(err, "execution", mainID)
+	// BUG-921: extract execution name from operation metadata, don't
+	// block on Wait — see single-container path above for full rationale.
+	executionName := ""
+	if md, mdErr := runOp.Metadata(); mdErr == nil && md != nil {
+		executionName = md.Name
 	}
-
-	executionName := execution.Name
+	if executionName == "" {
+		it := s.gcp.Executions.ListExecutions(s.ctx(), &runpb.ListExecutionsRequest{
+			Parent: jobFullName,
+		})
+		if e, err := it.Next(); err == nil && e != nil {
+			executionName = e.Name
+		}
+	}
 
 	// Remove all pod containers from PendingCreates now that the job is launched.
 	for _, pc := range podContainers {
@@ -598,8 +768,20 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 // buildCloudLogsFetcher returns a CloudLogFetchFunc closure that
 // queries Cloud Logging for the given container's Job (or Service).
 // Shared by ContainerLogs and ContainerAttach.
+//
+// The `logName:"run.googleapis.com"` substring clause restricts the
+// query to Cloud Run runtime logs (stdout / stderr / varlog system).
+// Without it, Cloud Audit Logs (`cloudaudit.googleapis.com/...`) share
+// the same `resource.type="cloud_run_job"` and would be merged into the
+// docker logs stream as multi-KB textproto AuditLog dumps. Substring
+// match is used (instead of exact `logName=` with the canonical
+// `…/logs/run.googleapis.com%2Fstdout` form) because the cloud.google.com/go
+// logadmin client double-encodes `%` in the filter, which makes the
+// canonical form silently match nothing.
 func (s *Server) buildCloudLogsFetcher(ref string) core.CloudLogFetchFunc {
 	id, _ := s.ResolveContainerIDAuto(context.Background(), ref)
+
+	const logNameClause = `logName:"run.googleapis.com"`
 
 	var baseFilter string
 	if s.config.UseService {
@@ -614,8 +796,8 @@ func (s *Server) buildCloudLogsFetcher(ref string) core.CloudLogFetchFunc {
 			shortSvcName = parts[len(parts)-1]
 		}
 		baseFilter = fmt.Sprintf(
-			`resource.type="cloud_run_revision" AND resource.labels.service_name="%s"`,
-			shortSvcName,
+			`resource.type="cloud_run_revision" AND resource.labels.service_name="%s" AND %s`,
+			shortSvcName, logNameClause,
 		)
 	} else {
 		var shortJobName string
@@ -629,30 +811,40 @@ func (s *Server) buildCloudLogsFetcher(ref string) core.CloudLogFetchFunc {
 			shortJobName = parts[len(parts)-1]
 		}
 		baseFilter = fmt.Sprintf(
-			`resource.type="cloud_run_job" AND resource.labels.job_name="%s"`,
-			shortJobName,
+			`resource.type="cloud_run_job" AND resource.labels.job_name="%s" AND %s`,
+			shortJobName, logNameClause,
 		)
 	}
 
 	return s.cloudLoggingFetch(baseFilter)
 }
 
+// cloudLogCursor tracks the cloud-logs follow-mode position. Strict
+// `timestamp>lastTS` cursor causes silent loss when Cloud Logging
+// timestamps multiple entries identically (batched stdout writes from
+// a fast-exit container). The cursor uses `timestamp>=lastTS` plus
+// per-entry `seen` dedup keyed on (timestamp, insertId-or-message-hash)
+// so we never miss a tied entry and never emit a duplicate.
+type cloudLogCursor struct {
+	lastTS time.Time
+	seen   map[string]struct{} // key: <unix-nano>:<message-hash>
+}
+
 // cloudLoggingFetch returns a CloudLogFetchFunc that queries Cloud Logging.
-// cursor is a *time.Time tracking the latest seen timestamp for dedup.
+// Uses `timestamp>=cursor.lastTS` for the next-page query (so tied-timestamp
+// entries are not dropped) plus a `seen` set to prevent duplicate emission.
 func (s *Server) cloudLoggingFetch(baseFilter string) core.CloudLogFetchFunc {
 	return func(ctx context.Context, params core.CloudLogParams, cursor any) ([]core.CloudLogEntry, any, error) {
 		logFilter := baseFilter
 
-		var lastTS time.Time
-		if cursor != nil {
-			lastTS = cursor.(time.Time)
+		c, _ := cursor.(*cloudLogCursor)
+		if c == nil {
+			c = &cloudLogCursor{seen: make(map[string]struct{})}
 		}
 
-		if !lastTS.IsZero() {
-			// Follow mode: only entries after last seen.
-			logFilter += fmt.Sprintf(` AND timestamp>"%s"`, lastTS.UTC().Format(time.RFC3339Nano))
+		if !c.lastTS.IsZero() {
+			logFilter += fmt.Sprintf(` AND timestamp>="%s"`, c.lastTS.UTC().Format(time.RFC3339Nano))
 		} else {
-			// Initial fetch: apply since/until.
 			logFilter += params.CloudLoggingSinceFilter()
 			logFilter += params.CloudLoggingUntilFilter()
 		}
@@ -672,13 +864,18 @@ func (s *Server) cloudLoggingFetch(baseFilter string) core.CloudLogFetchFunc {
 			if line == "" {
 				continue
 			}
+			key := fmt.Sprintf("%d:%s", entry.Timestamp.UnixNano(), line)
+			if _, dup := c.seen[key]; dup {
+				continue
+			}
+			c.seen[key] = struct{}{}
 			entries = append(entries, core.CloudLogEntry{Timestamp: entry.Timestamp, Message: line})
-			if entry.Timestamp.After(lastTS) {
-				lastTS = entry.Timestamp
+			if entry.Timestamp.After(c.lastTS) {
+				c.lastTS = entry.Timestamp
 			}
 		}
 
-		return entries, lastTS, nil
+		return entries, c, nil
 	}
 }
 
@@ -816,9 +1013,43 @@ func (s *Server) ContainerUnpause(ref string) error {
 	return core.MapPauseErr(core.RunContainerUnpauseViaAgent(s.reverseAgents, cid))
 }
 
-// ImagePull delegates to ImageManager which handles cloud auth and config fetching.
+// ImagePull rewrites the image ref to the Artifact Registry remote
+// proxy (docker-hub for docker.io, gitlab-registry for
+// registry.gitlab.com), then delegates to ImageManager.
+//
+// Without the rewrite, the local docker daemon (= sockerless
+// backend) tries to pull directly from registry-1.docker.io and
+// hits Docker Hub's anonymous-pull rate limit (100/6h per IP) — see
+// cell 7 v28 evidence: "registry returned 429 for
+// https://registry-1.docker.io/v2/library/golang/manifests/1.22-alpine".
+// The AR remote-proxy caches per-(image,tag), so subsequent pulls
+// across all sockerless backends in the project hit AR (not Docker
+// Hub) and bypass the rate limit entirely.
+//
+// Mirrors backends/cloudrun/backend_impl.go::ContainerCreate which
+// already does this rewrite for the container's image. We were doing
+// it on Create but NOT on Pull — gitlab-runner pre-pulls images via
+// /images/create which bypassed the rewrite.
 func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
-	return s.images.Pull(ref, auth)
+	resolved := gcpcommon.ResolveGCPImageURI(ref, s.config.Project, s.config.Region)
+	if resolved == ref {
+		return s.images.Pull(resolved, auth)
+	}
+	// The caller's auth was scoped to the original registry (Docker
+	// Hub, registry.gitlab.com, etc.) and is invalid for AR. Discard
+	// it so ImageManager.Pull's cloud-auth path mints an AR token
+	// via ARAuthProvider; otherwise AR returns 401.
+	rc, err := s.images.Pull(resolved, "")
+	if err != nil {
+		return nil, err
+	}
+	// Alias the freshly-pulled image under the caller's original ref
+	// (e.g. registry.gitlab.com/...) — clients (gitlab-runner, github-
+	// runner) inspect by the ref they requested, not the AR rewrite.
+	if img, ok := s.Store.ResolveImage(resolved); ok {
+		core.StoreImageWithAliases(s.Store, ref, img)
+	}
+	return rc, nil
 }
 
 // ImageLoad delegates to ImageManager.
@@ -840,11 +1071,13 @@ func (s *Server) VolumeRemove(name string, force bool) error {
 	return nil
 }
 
-// ExecStart runs the exec inside the container via the reverse-agent
-// WebSocket. Cloud Run Jobs/Services expose no native exec API, so
-// the bootstrap is the only path; if no session is registered for the
-// container, return NotImplementedError with the specific reason
-// instead of falling through to a generic failure.
+// ExecStart runs the exec inside the container. Path B (Phase 122g
+// — see specs/CLOUD_RESOURCE_MAPPING.md § Lesson 8) is preferred when
+// the container is on the Cloud Run Service path with the bootstrap
+// overlay baked in: HTTP POST envelope → bootstrap parses + runs +
+// returns response envelope → backend exposes stdout via the docker
+// exec attach. Reverse-agent WS is the fallback for interactive
+// TTY+stdin.
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
 	exec, ok := s.Store.Execs.Get(id)
 	if !ok {
@@ -854,8 +1087,26 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 	if !ok {
 		return nil, &api.ConflictError{Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID)}
 	}
+
+	// Path B HTTP POST when the container has a Service URL with the
+	// sockerless-cloudrun-bootstrap baked in. Skipped for interactive
+	// (TTY+stdin) execs — those need the WS bridge for streaming.
+	// OpenStdin lives on the stored ExecInstance from ExecCreate
+	// (ExecStartRequest's only fields are Detach + Tty + ConsoleSize).
+	interactive := opts.Tty && exec.OpenStdin
+	if !interactive {
+		if rwc, err := s.execStartViaInvoke(id, exec, opts); err == nil {
+			return rwc, nil
+		} else if _, isNotImpl := err.(*api.NotImplementedError); !isNotImpl {
+			// Real error from the invoke path (network, auth, bootstrap
+			// crash) — surface it loudly instead of silently falling
+			// through to the WS path which would just say "no session".
+			return nil, err
+		}
+	}
+
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
-		return nil, &api.NotImplementedError{Message: "docker exec requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
+		return nil, &api.NotImplementedError{Message: "docker exec requires a Cloud Run Service overlay (Phase 122g — set SOCKERLESS_CLOUDRUN_BOOTSTRAP) OR a reverse-agent bootstrap (SOCKERLESS_CALLBACK_URL); neither is configured for this container"}
 	}
 	return s.BaseServer.ExecStart(id, opts)
 }
@@ -1018,11 +1269,19 @@ func (s *Server) Info() (*api.BackendInfo, error) {
 }
 
 // ContainerAttach bridges stdin/stdout/stderr to the bootstrap process
-// inside the container via the reverse-agent WebSocket when a session
-// is registered. When no agent is registered and the caller doesn't
-// need stdin (read-only attach), fall back to streaming Cloud Logging
-// as the attached output. Interactive attach without an agent has no
-// native Cloud Run surface, so it stays NotImplementedError.
+// inside the container.
+//
+// When the container has a reverse-agent session registered, route
+// through the existing WebSocket bridge. Otherwise:
+//
+//   - opts.Stdin=true (gitlab-runner v17 pattern): wire stdin into a
+//     per-container `stdinPipe` that invokeServiceDefaultCmd consumes
+//     at deferred-invoke time. Read side returns combined stdout/stderr
+//     from the bootstrap's POST response (mux-framed). Mirrors
+//     backends/ecs/attach_driver.go::ecsStdinAttachDriver.
+//
+//   - opts.Stdin=false: fall back to streaming Cloud Logging as the
+//     attached output (read-only, mux-framed). Existing behaviour.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
@@ -1031,8 +1290,29 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
 		return s.BaseServer.ContainerAttach(id, opts)
 	}
+	// Phase 122g attach-via-stdin-pipe: when caller asks for stdin
+	// AND the container has the sockerless-cloudrun-bootstrap overlay,
+	// register a stdinPipe and let the deferred invoke (in
+	// invokeServiceDefaultCmd) replay the captured bytes as the
+	// bootstrap's `execEnvelope.Stdin`. Returns a hijacked-shaped
+	// io.ReadWriteCloser whose Read blocks until the bootstrap's
+	// response is ready.
+	s.Logger.Info().
+		Str("container", c.ID).
+		Str("image", c.Config.Image).
+		Bool("stdin", opts.Stdin).
+		Bool("stdout", opts.Stdout).
+		Bool("overlay", hasSockerlessOverlayRepo(c.Config.Image)).
+		Msg("ContainerAttach: hit")
+	if opts.Stdin && hasSockerlessOverlayRepo(c.Config.Image) {
+		p := newStdinPipe()
+		actual, _ := s.stdinPipes.LoadOrStore(c.ID, p)
+		pipe := actual.(*stdinPipe)
+		pipe.Open()
+		return s.newAttachStream(c.ID, pipe), nil
+	}
 	if opts.Stdin {
-		return nil, &api.NotImplementedError{Message: "interactive docker attach requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
+		return nil, &api.NotImplementedError{Message: "interactive docker attach requires either a reverse-agent (SOCKERLESS_CALLBACK_URL) OR the sockerless-cloudrun-bootstrap overlay (SOCKERLESS_CLOUDRUN_BOOTSTRAP)"}
 	}
 	return core.AttachViaCloudLogs(s.BaseServer, id, opts, s.buildCloudLogsFetcher(id))
 }
