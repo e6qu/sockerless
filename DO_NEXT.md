@@ -2,70 +2,111 @@
 
 Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md); bug log in [BUGS.md](BUGS.md); architecture in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
 
-## Resume pointer (2026-05-04 v19)
+## Resume pointer (2026-05-04 v20 — major architectural reset)
 
-**Goal**: cells 5/6/7/8 GREEN with REAL workload (compile + use eval-arithmetic + probe environment) before merging PR #123.
+**User directives 2026-05-04 (in order received):**
+1. "we should use github runner and gitlab runner unmodified"
+2. "the only acceptable thing for github is this dispatcher"
+3. "the runners should work via docker-like interface of sockerless such that the runners need no changes themselves since they already talk docker"
+4. "the dispatcher should just provision runners based on the job demand and should not provide any features other than to start the github runner"
+5. "gitlab runner doesn't need a dispatcher because gitlab runner 'docker executor' already behaves like a dispatcher"
 
-### Where we are
+These collectively REVERSE the architecture cells 5-8 have been built on (custom runner images that bake `sockerless-backend-XXX` + custom `bootstrap.sh` + actions/runner / gitlab-runner into ONE image). Cell 7 was GREEN under the old architecture; that result will not survive the refactor (the new architecture is incompatible with the current Cloud Run revisions).
 
-Phase 122i shipped 13 commits over multi-iteration debug. Latest at `a7e3b00`. Cell 6 has been the live experiment because gcf is the most contested path (CPU quota + pool reuse + GCS-Fuse). Investigation peeled BUG-944 in 3 layers (see STATUS.md table). All three layers shipped; verification pending after image rebuild + retrigger.
+## New architecture (sign-off pending — verify before I rip code)
 
-### Immediate next actions (in dependency order)
+### GitHub side (cells 5 + 6)
 
-1. **BUG-945: pre-bake runner-base-amd64 image** — replace per-iteration `apt-get install` with `FROM us-central1-docker.pkg.dev/.../runner-base:amd64` in `tests/runners/github/dockerfile-{gcf,cloudrun}/Dockerfile` and `tests/runners/gitlab/dockerfile-{gcf,cloudrun}/Dockerfile`. Per-iteration build only `COPY`s the sockerless backend binary + bootstrap.sh. **Forbidden alternatives** (per user directive 2026-05-04): `--network=host` (security: opens host network during build), retry loops on apt failures (workaround). One use of `--network=host` happened 2026-05-04 to unblock BUG-944 layer-3 verification — MUST NOT recur.
+```
+┌─ github.com (queued workflow_jobs)
+│
+├── github-runner-dispatcher-gcp (sockerless, Cloud Run Service)
+│   • polls GitHub /actions/runs?status=queued
+│   • for each queued workflow_job: Executions.RunJob(<predefined-job>) + per-execution env override
+│   • per-execution overrides allowed: RUNNER_REG_TOKEN, RUNNER_NAME, RUNNER_LABELS, RUNNER_REPO
+│   • NO sockerless-specific env. NO image baking. NO config wiring.
+│
+└── pre-defined Cloud Run Job (one per cell label, defined by terraform)
+    spec.template.template.containers (multi-container TaskTemplate):
+      • [0] vanilla actions/runner image (e.g. ghcr.io/actions/actions-runner:2.334.0,
+            or AR mirror of the upstream tarball deployed once via terraform).
+            ENV: DOCKER_HOST=tcp://localhost:3375 (set in spec, not by dispatcher).
+            ENV: RUNNER_* (per-execution).
+      • [1] sockerless-backend-cloudrun:latest (or sockerless-backend-gcf:latest).
+            ENV: SOCKERLESS_* config from terraform.
+            Exposes Docker API on :3375 / :3376.
+    Both containers share loopback. Runner exits with --once → execution completes.
+```
 
-   Concrete tasks:
-   - new file: `tests/runners/dockerfile-base/Dockerfile.amd64` with all apt deps baked.
-   - one-time `podman build` (using bridge network — slow but won't repeat).
-   - push to `us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/runner-base:amd64`.
-   - update 4 per-runner Dockerfiles to `FROM` the base.
-   - per-iteration rebuild now ~30s (just COPY + ENV).
+### GitLab side (cells 7 + 8)
 
-2. **Verify BUG-944 layer 3 fix** (`a7e3b00`). Process:
-   - Rebuild + push `runner:gcf-amd64` (after #1 lands).
-   - Trigger cell 6 SOLO (`gh workflow run cell-6-gcf.yml ...`).
-   - **BEFORE assuming success**: dump `gcloud run services describe <skls-gcf-*> --format=json | jq .spec.template.spec.volumes` for both deployed services and verify `mountOptions` field is present with the 3 entries.
-   - If exit 126 still, dig into bootstrap.sh (host-side fsync? container-side stat-fresh?) — the chain is: github-runner writes script → host gcsfuse syncs to GCS → container's gcsfuse reads. Each link is a potential cache point.
+```
+┌─ gitlab.com
+│
+└── pre-deployed Cloud Run Service (one per cell label, defined by terraform), 24/7
+    spec.template.containers (multi-container revision):
+      • [0] vanilla gitlab/gitlab-runner:v17.5.0 image.
+            entrypoint: vanilla `gitlab-runner run`.
+            config.toml mounted from a Cloud Run secret (registered with token + URL pre-baked).
+            ENV: DOCKER_HOST=tcp://localhost:3375.
+            gitlab-runner's docker executor polls GitLab itself (it IS the dispatcher).
+      • [1] sockerless-backend-cloudrun:latest (or sockerless-backend-gcf:latest).
+            Same as github side — exposes Docker API on :3375/:3376.
+```
 
-3. **Fix BUG-929 cell 5 hang** (`backends/cloudrun/start_service.go::startSingleContainerService missing post-deploy invoke`). Cell 5 hangs Initialize containers 43+ min instead of failing fast. This is independent of BUG-944. Code-side fix candidates:
-   - Cold-start service needs an explicit POST after deploy to bring up the first instance (otherwise `min-instances=0` keeps it cold and any access blocks).
-   - OR set `min-instances=1` for runner-pattern services (similar to gcf path which already does this).
+### What gets deleted (existing code that contradicts the new shape)
 
-4. **Re-trigger cell 7** via `.gitlab-ci.yml` swap (cell-7-cloudrun.yml content). Cell 7 was GREEN once at the BUG-925 12-step fix; verify nothing this session broke it.
+- `tests/runners/github/dockerfile-{cloudrun,gcf}/Dockerfile` + `Makefile` + `bootstrap.sh` — custom runner images (forbidden).
+- `tests/runners/gitlab/dockerfile-{cloudrun,gcf}/Dockerfile` + `Makefile` + `bootstrap.sh` — custom runner images (forbidden).
+- `tests/runners/dockerfile-base/` — BUG-945 pre-baked-base work (moot, no custom image to base off).
+- The `runner:{cloudrun,gcf}-amd64` AR images stay deletable (they're orphaned by the new architecture).
 
-5. **Cell 8 SOLO**: rebuild gitlab-runner-gcf image with all of `a7e3b00`, trigger via `.gitlab-ci.yml` swap to cell-8-gcf.yml.
+### What stays (and gets adjusted)
 
-### Diagnostic discipline carried forward
+- `github-runner-dispatcher-{aws,gcp,azure}` + `pkg/poller` + `pkg/scopes` — already correct shape; only changes are removing any sockerless-specific env injection from `internal/spawner/spawner.go::Spawn` (must NOT inject SOCKERLESS_*; only RUNNER_*).
+- `backends/cloudrun/cmd/sockerless-backend-cloudrun` + `backends/cloudrun-functions/cmd/sockerless-backend-gcf` — these become the published images that the sidecar references. Need to be pushed to AR independently (one image per backend).
+- `terraform/modules/cloudrun/runner.tf` (or new) — define the multi-container Cloud Run Job (github cells) + Service (gitlab cells) per cell label. Configures sockerless backend sidecar with proper env. Configures vanilla runner with proper env. No bootstrap.sh involved.
+- All the recently-shipped sockerless backend code (BUG-923 cancellation channel, BUG-944 GCS-Fuse MountOptions, pool back-off, etc.) is unaffected — it's cell-step-container behavior, not runner-task behavior.
 
-- After every BUG-944-class fix, **inspect the deployed Cloud Run service spec** (`gcloud run services describe <name> --format=json | jq`) BEFORE re-triggering. Don't trust the in-code claim — verify in production state.
-- Test cells **serially**, not in parallel. Per-minute Cloud Run `cpu_allocation` rate window blows otherwise.
-- Tail backend logs in real time when re-triggering: github-runner bootstrap now tee's stderr to Cloud Logging at debug level (`a07d63b`). Filter by `resource.labels.job_name="gh-..."`.
+## Refactor plan (will execute on sign-off)
 
-### Strict rules carried forward (this session learnings)
+Order, smallest first so we can verify incrementally:
 
-- **Transients and flakiness are bugs** (user directive 2026-05-04). No retry-and-hope. Investigate, name root cause, ship real fix.
-- **No fallbacks, no workarounds, no fakes.** Pool back-off is OK (architectural amortization). Quota increase is NOT (workaround to avoid solving the real over-allocation issue).
-- **Latest stable, no deprecated APIs.** Cloud Run gen2 stays — its ≥1 vCPU floor is a constraint, not a bug.
-- **Don't trust GitHub Actions step "completed/success"** without verifying real workload markers (BUG-927 lesson).
-- **Don't add runner-specific labels in backend code** — coupling is docker/podman libpod HTTP API on entry, cloud primitives on backend. The translator already handles standard Docker shapes.
-- **Don't push images to public registries** — pull via AR remote-proxy only.
-- **Don't cancel cells the agent didn't create** — sandbox blocks; ask user.
+1. **Build + push standalone sockerless-backend images** to AR.
+   - `us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/sockerless-backend-cloudrun:latest`
+   - `us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/sockerless-backend-gcf:latest`
+   - One Dockerfile each: `FROM gcr.io/distroless/static`, `COPY` the binary, `ENTRYPOINT [...]`. No apt, no .NET, no git → no BUG-945 flake.
 
-## Tactical files for resume
+2. **Pivot gitlab side first (simpler — no dispatcher involvement).**
+   - New `terraform/modules/gitlab-runner/main.tf`: deploys a multi-container Cloud Run Service per cell. Container [0] = `gitlab/gitlab-runner:v17.5.0` vanilla. Container [1] = sockerless-backend sidecar.
+   - Cloud Run secret with pre-registered `config.toml` (registration done out-of-band once: `gitlab-runner register --token <gitlab-token> --executor docker --docker-host tcp://localhost:3375 --docker-image alpine --output-config config.toml`).
+   - Apply terraform. Trigger cell 7 — verify GREEN with vanilla gitlab-runner + sockerless sidecar.
+   - Then cell 8 (gcf variant).
 
-- `backends/cloudrun-functions/volumes.go` — full-shape idempotent attach landed `a7e3b00`.
-- `backends/cloudrun-functions/backend_impl.go::deployFunction` — pool-hit path landing `ee63dae`.
-- `backends/gcp-common/gcsfuse_mount.go` — `RunnerWorkspaceMountOptions()` (used by all 3 GCSVolumeSource sites).
-- `backends/cloudrun/start_service.go` — `startSingleContainerService` (BUG-929 fix candidate).
-- `tests/runners/github/dockerfile-{gcf,cloudrun}/Dockerfile` — runner image build (flakiness investigation).
-- `github-runner-dispatcher-aws/pkg/poller/poller.go` — proactive rate-limit + runSeen.
-- `github-runner-dispatcher-gcp/cmd/.../main.go` — `rateLimitedUntil` guard.
+3. **Pivot github side.**
+   - New `terraform/modules/github-runner/main.tf`: deploys ONE Cloud Run Job per cell label with multi-container TaskTemplate (vanilla actions/runner + sockerless sidecar). Stays cold (no execution); dispatcher fires executions on demand.
+   - Vanilla actions/runner image: pull upstream `actions-runner:2.334.0` tarball, push to AR as `runner:vanilla-2.334.0` (this is republishing, not modifying — still vanilla).
+   - Update `github-runner-dispatcher-gcp/internal/spawner/spawner.go::Spawn` to call `Executions.RunJob(<predefined-job>)` with per-execution env overrides. Strip every line that injects SOCKERLESS_* (currently strip).
+   - Trigger cell 5 — verify GREEN. Then cell 6.
 
-## Live infra in `sockerless-live-46x3zg4imo` (us-central1)
+4. **Delete the custom runner images + Dockerfiles + bootstrap.sh files** from `tests/runners/{github,gitlab}/dockerfile-*/`. Also tear down BUG-945 work (`tests/runners/dockerfile-base/`).
 
-See STATUS.md for the canonical list. Key reminders: NAT pinned to `34.31.88.230` (don't auto-rotate), dispatcher rev `00021-fb2`, gitlab-runner-gcf rev `00027-jkg` (needs rebuild with `a7e3b00`), quota preference withdrawn (don't recreate), pool currently empty (force fresh deploys with MountOptions).
+5. **Update specs** (`CLOUD_RESOURCE_MAPPING.md`) to reflect the new architecture: vanilla runner + sockerless sidecar in multi-container revision; dispatcher's only role is execute-on-demand.
 
-## Branch state
+## What carries over from prior work (unchanged + still needed)
 
-- `phase-118-faas-pods` (PR #123) at `a7e3b00` — push fresh fixes here.
-- `cell-workflows-on-main` (PR #124, throwaway) — close after cells GREEN; do NOT merge.
+- BUG-923 cancellation-channel for ContainerCreate→ContainerStart pod materialization (`2b16791`) — this is for the **step containers** sockerless deploys per `docker create` from inside a runner. Unaffected.
+- BUG-944 GCS-Fuse MountOptions + idempotent attach (`a7e3b00`) — same, step-container scope.
+- BUG-946 integration test build tag (`e733d70`) — unrelated to runner architecture.
+- Dispatcher rate-limit/poller fixes (`0f94a53` / `06561dd` / `c6e7dee`) — still correct; dispatcher's poll loop semantics don't change.
+
+## Confirm before I refactor
+
+If this matches your intent, reply "go" and I'll start with step 1 (standalone sockerless-backend images). If anything in the architecture sketch above is wrong, point at it and I'll revise the plan first — no code change until the shape is locked.
+
+## Live infra to leave alone until refactor
+
+- Dispatcher Cloud Run Service `github-runner-dispatcher-gcp` rev `00021-fb2` — keep running, refactor will replace.
+- gitlab-runner-{cloudrun,gcf} Cloud Run Services — keep running, refactor will replace.
+- VPC + connector + Cloud NAT — stay (architecture-agnostic).
+- AR repos + secrets — stay.
