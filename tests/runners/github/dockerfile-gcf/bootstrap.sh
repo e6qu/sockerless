@@ -17,8 +17,8 @@ export SOCKERLESS_GCP_BUILD_BUCKET="${SOCKERLESS_GCF_PROJECT}-build"
 export SOCKERLESS_GCP_SHARED_VOLUMES="runner-workspace=/tmp/runner-work=${SOCKERLESS_GCF_PROJECT}-runner-workspace,runner-externals=/opt/runner/externals=${SOCKERLESS_GCF_PROJECT}-runner-workspace"
 echo "bootstrap: auto-discovered project=$SOCKERLESS_GCF_PROJECT region=$SOCKERLESS_GCF_REGION"
 
-nohup /usr/local/bin/sockerless-backend-gcf -addr :3376 -log-level info \
-    >/tmp/sockerless-backend.log 2>&1 &
+nohup /usr/local/bin/sockerless-backend-gcf -addr :3376 -log-level debug \
+    > >(tee /tmp/sockerless-backend.log >&2) 2>&1 &
 SOCKERLESS_PID=$!
 
 deadline=$((SECONDS + 30))

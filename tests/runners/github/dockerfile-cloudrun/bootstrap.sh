@@ -48,8 +48,8 @@ echo "bootstrap: auto-discovered project=$SOCKERLESS_GCR_PROJECT region=$SOCKERL
 
 # Sockerless backend in background. -log-level info keeps CloudWatch /
 # CloudLogging output manageable.
-nohup /usr/local/bin/sockerless-backend-cloudrun -addr :3375 -log-level info \
-    >/tmp/sockerless-backend.log 2>&1 &
+nohup /usr/local/bin/sockerless-backend-cloudrun -addr :3375 -log-level debug \
+    > >(tee /tmp/sockerless-backend.log >&2) 2>&1 &
 SOCKERLESS_PID=$!
 
 # Wait for /_ping with a 30s budget. Cold-start latency on Cloud Run
