@@ -275,13 +275,17 @@ func (d *dispatchLoop) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-// isTerminalJobState returns true for Cloud Run Job conditions that
-// indicate the execution has ended. State strings come from
-// `runpb.Condition_State.String()` and follow the
-// `CONDITION_<NAME>` format.
+// isTerminalJobState returns true for execution states that indicate
+// the runner-task has finished. State strings come from spawner.
+// executionStateForJob — values are EXECUTION_SUCCEEDED /
+// EXECUTION_FAILED / EXECUTION_RUNNING / NO_EXECUTION. The legacy
+// CONDITION_* strings (Cloud Run Job's TerminalCondition.State,
+// reflecting Job-DEFINITION reconciliation, not execution outcome)
+// are NOT treated as terminal — using them caused BUG-940 (cell 5
+// runner-tasks deleted 80s after spawn while still bootstrapping).
 func isTerminalJobState(state string) bool {
 	switch state {
-	case "CONDITION_SUCCEEDED", "CONDITION_FAILED", "CONDITION_CANCELLED":
+	case "EXECUTION_SUCCEEDED", "EXECUTION_FAILED":
 		return true
 	}
 	return false

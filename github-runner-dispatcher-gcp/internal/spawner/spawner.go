@@ -222,12 +222,55 @@ func ListManaged(ctx context.Context, project, region string) ([]Managed, error)
 			JobName:    j.Name,
 			JobID:      jobID,
 			RunnerName: j.Labels[LabelRunnerName],
-			State:      stringifyJobState(j),
+			State:      executionStateForJob(ctx, j),
 		})
 	}
 	return managed, nil
 }
 
+// executionStateForJob returns the state of the Job's most-recent
+// Execution. A Cloud Run Job's `TerminalCondition` reflects the JOB
+// DEFINITION's reconciliation state (Ready / NotReady), NOT the
+// execution outcome. Cleanup keyed off `TerminalCondition.State` would
+// delete every Job whose DEFINITION is Ready, including jobs whose
+// Execution is still RUNNING — which is what BUG-940 was: cell 5
+// runner-task got deleted 80s after spawn while the github runner was
+// still bootstrapping. Real fix: query the latest Execution.
+func executionStateForJob(ctx context.Context, j *runpb.Job) string {
+	cli, err := run.NewExecutionsRESTClient(ctx)
+	if err != nil {
+		return "UNKNOWN"
+	}
+	defer func() { _ = cli.Close() }()
+	it := cli.ListExecutions(ctx, &runpb.ListExecutionsRequest{Parent: j.Name})
+	var latest *runpb.Execution
+	for {
+		ex, err := it.Next()
+		if err != nil {
+			break
+		}
+		if latest == nil || (ex.CreateTime != nil && latest.CreateTime != nil && ex.CreateTime.AsTime().After(latest.CreateTime.AsTime())) {
+			latest = ex
+		}
+	}
+	if latest == nil {
+		return "NO_EXECUTION"
+	}
+	if latest.CompletionTime != nil {
+		if latest.SucceededCount > 0 {
+			return "EXECUTION_SUCCEEDED"
+		}
+		return "EXECUTION_FAILED"
+	}
+	return "EXECUTION_RUNNING"
+}
+
+// stringifyJobState reports the Job DEFINITION's reconciliation state
+// (Ready/NotReady) — distinct from execution state (use
+// executionStateForJob for that). Currently unused but kept for
+// debug/diagnostic logging of Job-level reconciliation issues.
+//
+//nolint:unused // kept for diagnostics
 func stringifyJobState(j *runpb.Job) string {
 	if j.TerminalCondition != nil {
 		return j.TerminalCondition.State.String()
