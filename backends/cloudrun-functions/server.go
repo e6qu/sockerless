@@ -2,6 +2,7 @@ package gcf
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
@@ -21,6 +22,16 @@ type Server struct {
 	// Reverse-agent registry for docker top / cp / stat / diff via a
 	// bootstrap running inside the function container.
 	reverseAgents *core.ReverseAgentRegistry
+
+	// deployFutures maps containerID → chan error so ContainerStart can
+	// wait for the asynchronous CreateFunction work that ContainerCreate
+	// kicked off in a goroutine. Per BUG-923: synchronous CreateFunction
+	// .Wait + UpdateService swap blocks 150-200s and exceeds gitlab-
+	// runner's 120s docker daemon timeout. Returning 201 from
+	// ContainerCreate immediately and deferring the wait into
+	// ContainerStart (where gitlab-runner naturally polls /containers/
+	// .../wait without a hard timeout) keeps the Docker contract honest.
+	deployFutures sync.Map
 }
 
 // NewServer creates a new Cloud Run Functions backend server.
