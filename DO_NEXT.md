@@ -10,12 +10,13 @@ Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.
 - Root cause: GCSFuse `/builds` lacks POSIX hard-link (`fuseops.CreateLinkOp -> "function not implemented"`), weak rename, no flock — git's `index-pack` + `.git/index.lock` operations stall silently
 - Filed as **BUG-947**, root-cause + 3 fix paths catalogued
 
-**Next concrete step (sign-off pending — pick A vs B):**
-- **Path A (recommended):** sockerless cloudrun backend — coalesce all stages of one gitlab-runner job into ONE multi-container Cloud Run Service revision; mount `/builds` as in-memory `emptyDir` (full POSIX, free, fast). Requires backend rework: detect job-lifecycle, swap per-ContainerStart Service for per-job Service.
-- **Path B:** Cloud Filestore (NFS) volume — drop-in change, full POSIX, ~$160/mo BasicHDD floor.
-- Path C (git config workarounds) is forbidden per "no quick fixes" rule.
+**Path A turned out infeasible** on second analysis: Cloud Run revisions are immutable; every modification spawns a NEW instance with a fresh `emptyDir`, so cross-stage `/builds` content is lost. gitlab-runner adds containers dynamically across stages (helper → postgres → script-runner-stage-1 → script-runner-stage-2 …), so we can't deploy them all in one revision upfront either.
 
-If A: scope is `backends/cloudrun/{network_pod.go,start_service.go,backend_impl.go}` + bind→volume translation in `containers.go`. If B: only volume spec touched.
+**Only practical path: B (Filestore NFS).** Volume swap in `backends/cloudrun/{jobspec.go:191,servicespec.go:50}` from `Volume_Gcs` → `Volume_Nfs` when the bind targets a non-shared (per-job ephemeral) name. New env `SOCKERLESS_GCP_FILESTORE_NFS=10.x.x.x:/share` on the runner Cloud Run Service. Provision: 1 TB Zonal HDD Filestore (~$160/mo while running, ~$5.30/day for spot tests). Same change applies to gcf backend (`backends/cloudrun-functions/volumes.go:127`).
+
+Same code path also unblocks cell 8 (gcf) — root cause is identical.
+
+Awaiting $$ approval to provision Filestore. Will prepare code-only prototype meanwhile.
 
 ## Resume pointer (2026-05-04 v20 — major architectural reset)
 
