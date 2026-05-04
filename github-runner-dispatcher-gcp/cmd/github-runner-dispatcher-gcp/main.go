@@ -164,25 +164,39 @@ func run() error {
 	cleanupTicker := time.NewTicker(2 * time.Minute)
 	defer cleanupTicker.Stop()
 	pollEvery := gh.PollInterval()
+	// rateLimitedUntil tracks the wall-clock time before which Step() must
+	// not be called again. Set when a poll returns a rate-limit error;
+	// honored across BOTH the normal pollEvery tick AND the cleanup tick
+	// so cleanup firing every 2m doesn't re-trigger GitHub calls.
+	var rateLimitedUntil time.Time
 	for {
-		// On rate-limit, sleep until upstream's reset (already buffered
-		// by +10% +1s in WaitFromRateHeaders) instead of the normal
-		// pollEvery cadence. Hammering at the regular cadence while
-		// remaining=0 wastes the dispatcher's quota window and risks
-		// secondary abuse flags.
 		nextPoll := pollEvery
-		if err := loop.Step(ctx); err != nil {
-			if wait, ok := poller.AsRateLimit(err); ok {
-				log.Printf("poll error: rate-limited, sleeping %s (upstream reset + 10%% + 1s): %v", wait, err)
-				nextPoll = wait
-			} else {
-				log.Printf("poll error (continuing): %v", err)
+		if !time.Now().Before(rateLimitedUntil) {
+			if err := loop.Step(ctx); err != nil {
+				if wait, ok := poller.AsRateLimit(err); ok {
+					log.Printf("poll error: rate-limited, sleeping %s (upstream reset + 10%% + 1s): %v", wait, err)
+					nextPoll = wait
+					rateLimitedUntil = time.Now().Add(wait)
+				} else {
+					log.Printf("poll error (continuing): %v", err)
+				}
+			}
+		} else {
+			// Skip Step entirely while we're inside the rate-limit window.
+			// Wait out the remaining time before retrying.
+			nextPoll = time.Until(rateLimitedUntil)
+			if nextPoll < pollEvery {
+				nextPoll = pollEvery
 			}
 		}
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-cleanupTicker.C:
+			// Cleanup queries Cloud Run Jobs API (not GitHub), so it's
+			// safe to run during a GitHub rate-limit window. The loop
+			// re-enters and the rateLimitedUntil guard above prevents
+			// the next Step() from re-firing the GitHub poll.
 			if err := loop.Cleanup(ctx); err != nil {
 				log.Printf("cleanup error (continuing): %v", err)
 			}
