@@ -78,7 +78,7 @@ func ConfigFromEnv() Config {
 		ServiceAccount: os.Getenv("SOCKERLESS_GCF_SERVICE_ACCOUNT"),
 		Timeout:        envOrDefaultInt("SOCKERLESS_GCF_TIMEOUT", 3600),
 		Memory:         envOrDefault("SOCKERLESS_GCF_MEMORY", "1Gi"),
-		CPU:            envOrDefault("SOCKERLESS_GCF_CPU", "1"),
+		CPU:            envOrDefault("SOCKERLESS_GCF_CPU", "0.5"),
 		BuildBucket:    os.Getenv("SOCKERLESS_GCP_BUILD_BUCKET"),
 		EndpointURL:    os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:   parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
@@ -166,7 +166,7 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 		Region:       "us-central1",
 		Timeout:      3600,
 		Memory:       "1Gi",
-		CPU:          "1",
+		CPU:          "0.5",
 		PollInterval: 2 * time.Second,
 		LogTimeout:   30 * time.Second,
 	}
