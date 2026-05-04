@@ -304,7 +304,22 @@ func (s *Server) deployFunction(id string, container api.Container) error {
 
 	// Pool query: try to claim a free pre-built Function with this overlay-hash.
 	if claimed, claimErr := s.claimFreeFunction(s.ctx(), contentTag, id, name); claimErr == nil && claimed != "" {
-		// Pool hit — function already exists with our overlay.
+		// Pool hit — function already exists with our overlay. Still
+		// must attach the caller's volume binds: pool entries are keyed
+		// by overlay-content-hash (image), not by volume requirements,
+		// so a reused function may have stale (or no) volumes from its
+		// prior allocation. attachVolumesToFunctionService is idempotent
+		// — it skips the UpdateService rollout when every requested
+		// volume + mount is already present.
+		if len(hostConfig.Binds) > 0 {
+			reused, err := s.gcp.Functions.GetFunction(s.ctx(), &functionspb.GetFunctionRequest{Name: claimed})
+			if err != nil {
+				return fmt.Errorf("get reused function %q for volume attach: %w", claimed, err)
+			}
+			if err := s.attachVolumesToFunctionService(s.ctx(), reused, hostConfig.Binds); err != nil {
+				return fmt.Errorf("attach volumes to reused function %q: %w", claimed, err)
+			}
+		}
 		s.Registry.Register(core.ResourceEntry{
 			ContainerID:  id,
 			Backend:      "gcf",

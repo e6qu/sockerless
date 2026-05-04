@@ -55,10 +55,21 @@ func (s *Server) listManagedBuckets(ctx context.Context) ([]*storage.BucketAttrs
 // attachVolumesToFunctionService parses a slice of Docker bind specs
 // (`volName:/mnt[:ro]`), provisions a GCS bucket per unique named
 // volume, fetches the underlying Cloud Run Service backing the
-// function, appends the matching Volume + VolumeMount entries to its
-// RevisionTemplate, and UpdateService's the result. Escape hatch
-// because Functions v2's ServiceConfig has no first-class Volumes
-// primitive.
+// function, and ensures the matching Volume + VolumeMount entries are
+// present in its RevisionTemplate. Escape hatch because Functions v2's
+// ServiceConfig has no first-class Volumes primitive.
+//
+// Idempotent: existing volumes/mounts with matching names are kept
+// (not duplicated); missing ones are appended; non-matching entries
+// stay untouched. Required because the pool-reuse path calls this on
+// functions that may already carry volumes from prior allocations —
+// before this change the pool path skipped attach entirely (leaving
+// `volumes: null` on reused functions, which broke /__w bind mounts
+// for the runner-task → spawned container script handoff).
+//
+// Skips the UpdateService call entirely when the existing service
+// already has every requested volume + mount — saves a pointless
+// revision rollout that would only re-confirm the current state.
 func (s *Server) attachVolumesToFunctionService(ctx context.Context, fn *functionspb.Function, binds []string) error {
 	if fn == nil || fn.ServiceConfig == nil || fn.ServiceConfig.Service == "" {
 		return fmt.Errorf("function has no underlying Cloud Run Service — cannot attach volumes")
@@ -67,7 +78,7 @@ func (s *Server) attachVolumesToFunctionService(ctx context.Context, fn *functio
 
 	// Build volume + mount lists from the binds, deduping by volume name.
 	volumesByName := map[string]string{} // volName → bucket
-	var mounts []*runpb.VolumeMount
+	mountsByName := map[string]string{}  // volName → mountPath
 	for _, b := range binds {
 		parts := strings.SplitN(b, ":", 3)
 		if len(parts) < 2 {
@@ -79,14 +90,9 @@ func (s *Server) attachVolumesToFunctionService(ctx context.Context, fn *functio
 			return fmt.Errorf("provision bucket for %q: %w", volName, err)
 		}
 		volumesByName[volName] = bucket
-		mounts = append(mounts, &runpb.VolumeMount{
-			Name:      volName,
-			MountPath: mountPath,
-		})
+		mountsByName[volName] = mountPath
 	}
 
-	// Fetch the underlying CR Service, append Volumes + VolumeMounts to
-	// its RevisionTemplate's first container, update.
 	svc, err := s.gcp.Services.GetService(ctx, &runpb.GetServiceRequest{Name: svcName})
 	if err != nil {
 		return fmt.Errorf("get underlying Cloud Run Service %q: %w", svcName, err)
@@ -94,20 +100,54 @@ func (s *Server) attachVolumesToFunctionService(ctx context.Context, fn *functio
 	if svc.Template == nil {
 		return fmt.Errorf("underlying Cloud Run Service %q has no RevisionTemplate", svcName)
 	}
+
+	// Index existing volumes + mounts by name for idempotent merge.
+	existingVolumes := map[string]bool{}
+	for _, v := range svc.Template.Volumes {
+		existingVolumes[v.Name] = true
+	}
+	existingMounts := map[string]bool{}
+	if len(svc.Template.Containers) > 0 {
+		for _, m := range svc.Template.Containers[0].VolumeMounts {
+			existingMounts[m.Name] = true
+		}
+	}
+
+	added := 0
 	for name, bucket := range volumesByName {
-		svc.Template.Volumes = append(svc.Template.Volumes, &runpb.Volume{
-			Name: name,
-			VolumeType: &runpb.Volume_Gcs{
-				Gcs: &runpb.GCSVolumeSource{
-					Bucket:       bucket,
-					MountOptions: gcpcommon.RunnerWorkspaceMountOptions(),
+		if !existingVolumes[name] {
+			svc.Template.Volumes = append(svc.Template.Volumes, &runpb.Volume{
+				Name: name,
+				VolumeType: &runpb.Volume_Gcs{
+					Gcs: &runpb.GCSVolumeSource{
+						Bucket:       bucket,
+						MountOptions: gcpcommon.RunnerWorkspaceMountOptions(),
+					},
 				},
-			},
-		})
+			})
+			added++
+		}
 	}
 	if len(svc.Template.Containers) > 0 {
-		svc.Template.Containers[0].VolumeMounts = append(svc.Template.Containers[0].VolumeMounts, mounts...)
+		for name, mountPath := range mountsByName {
+			if !existingMounts[name] {
+				svc.Template.Containers[0].VolumeMounts = append(svc.Template.Containers[0].VolumeMounts, &runpb.VolumeMount{
+					Name:      name,
+					MountPath: mountPath,
+				})
+				added++
+			}
+		}
 	}
+	if added == 0 {
+		// Service already has every requested volume + mount. Skip the
+		// UpdateService rollout entirely.
+		return nil
+	}
+
+	// Cloud Run requires a unique revision name for each update; clear
+	// the existing one so a fresh suffix gets auto-generated.
+	svc.Template.Revision = ""
 	updateOp, err := s.gcp.Services.UpdateService(ctx, &runpb.UpdateServiceRequest{Service: svc})
 	if err != nil {
 		return fmt.Errorf("update Cloud Run Service %q: %w", svcName, err)
