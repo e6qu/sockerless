@@ -209,10 +209,43 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		"name":  strings.TrimPrefix(name, "/"),
 		"image": config.Image,
 	})
+	// Cancellation context lets ContainerStart abort the in-flight
+	// async deploy when the container turns out to be a network-pod
+	// member that should materialize as a multi-container Service.
+	// Parent is Background — async deploy lifetime is independent of
+	// the (short-lived) ContainerCreate request handler.
+	deployCtx, cancel := context.WithCancel(context.Background())
 	deployCh := make(chan error, 1)
-	s.deployFutures.Store(id, deployCh)
-	go s.deployFunctionAsync(id, container, deployCh)
+	s.deployFutures.Store(id, &deployFuture{ch: deployCh, cancel: cancel})
+	go s.deployFunctionAsync(deployCtx, id, container, deployCh)
 	return &api.ContainerCreateResponse{ID: id, Warnings: []string{}}, nil
+}
+
+// cancelDeployFuture atomically removes the future for `id` from the
+// futures map, fires its cancel func, and drains its result channel
+// (blocks until the goroutine exits — typically <1s once the next ctx
+// check fires; the deferred unwind in deployFunction releases any
+// claimed function before exit). Safe to call when no future exists
+// (returns immediately). Idempotent: a second call after the first
+// drain is a no-op.
+func (s *Server) cancelDeployFuture(id string) {
+	v, ok := s.deployFutures.LoadAndDelete(id)
+	if !ok {
+		return
+	}
+	f, _ := v.(*deployFuture)
+	if f == nil {
+		return
+	}
+	if f.cancel != nil {
+		f.cancel()
+	}
+	if f.ch != nil {
+		// Drain — the goroutine will close(ch) after sending its result.
+		// We don't care about the value (errDeployCancelled or nil); we
+		// just need to be sure the goroutine has finished its unwind.
+		<-f.ch
+	}
 }
 
 // deployFunctionAsync runs the heavy CreateFunction.Wait + image swap
@@ -220,10 +253,26 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 // error (or nil on success) on `done`. Invoked from a goroutine kicked
 // by ContainerCreate; ContainerStart awaits this channel before going
 // to invoke. Per BUG-923.
-func (s *Server) deployFunctionAsync(id string, container api.Container, done chan<- error) {
-	err := s.deployFunction(id, container)
+//
+// Honours ctx for cancellation: if ContainerStart later decides this
+// container is part of a multi-container pod that should materialize as
+// a single Cloud Run Service revision (per network_pod.go), it calls
+// the future's cancel func, this goroutine returns errDeployCancelled,
+// and the deferred release-pool path unwinds any claim taken so far.
+func (s *Server) deployFunctionAsync(ctx context.Context, id string, container api.Container, done chan<- error) {
+	err := s.deployFunction(ctx, id, container)
 	if err != nil {
-		s.Logger.Error().Err(err).Str("container", id).Msg("BUG-923 async deploy failed")
+		if ctx.Err() != nil {
+			// Cancelled — surface the sentinel so the awaiter knows it's
+			// expected (vs a real error). The deploy may have left a
+			// half-committed pool claim; deployFunction is responsible
+			// for unwinding via its own ctx.Err() checks. If we landed
+			// here without unwinding, log so the inconsistency is visible.
+			s.Logger.Info().Str("container", id).Err(err).Msg("async deploy cancelled — container will be materialized as part of a network-pod Service revision")
+			err = errDeployCancelled
+		} else {
+			s.Logger.Error().Err(err).Str("container", id).Msg("async deploy failed")
+		}
 	}
 	select {
 	case done <- err:
@@ -237,11 +286,46 @@ func (s *Server) deployFunctionAsync(id string, container api.Container, done ch
 // entry or creates a fresh Function, swaps the underlying Service
 // image, and attaches volumes. Mutates s.PendingCreates entry on
 // completion so subsequent reads see fresh state.
-func (s *Server) deployFunction(id string, container api.Container) error {
+//
+// Honours ctx — at every cloud-API boundary checks ctx.Err() and
+// unwinds the partial deploy. If a pool entry was already claimed when
+// cancellation arrives, releases the claim (clears
+// sockerless_allocation label) so the next attempt can reclaim. If a
+// fresh Function was already created, deletes it. Returns the context
+// error directly so deployFunctionAsync can surface errDeployCancelled.
+func (s *Server) deployFunction(ctx context.Context, id string, container api.Container) error {
 	config := container.Config
 	hostConfig := container.HostConfig
 	name := container.Name
 	parent := fmt.Sprintf("projects/%s/locations/%s", s.config.Project, s.config.Region)
+
+	// claimedFunction is set after a successful pool claim or fresh
+	// CreateFunction; the deferred unwind releases/deletes it on cancel.
+	var (
+		claimedFunction string
+		freshFunction   bool
+	)
+	defer func() {
+		if ctx.Err() == nil || claimedFunction == "" {
+			return
+		}
+		// Unwind on cancel.
+		bgCtx := context.Background()
+		if freshFunction {
+			if delOp, delErr := s.gcp.Functions.DeleteFunction(bgCtx, &functionspb.DeleteFunctionRequest{Name: claimedFunction}); delErr == nil {
+				_ = delOp.Wait(bgCtx)
+			}
+			s.Logger.Info().Str("function", claimedFunction).Msg("cancel-unwound: deleted fresh Function")
+			return
+		}
+		// Pool reclaim — clear the allocation label so a subsequent
+		// claim can re-take this entry.
+		if err := s.releaseOrDeleteFunction(bgCtx, claimedFunction, ""); err != nil {
+			s.Logger.Warn().Err(err).Str("function", claimedFunction).Msg("cancel-unwound: pool release failed (orphan possible)")
+		} else {
+			s.Logger.Info().Str("function", claimedFunction).Msg("cancel-unwound: released pool claim")
+		}
+	}()
 
 	// Re-derive envVars exactly as ContainerCreate used to (kept
 	// identical to preserve runtime behaviour pre/post BUG-923).
@@ -297,13 +381,22 @@ func (s *Server) deployFunction(id string, container api.Container) error {
 		UserWorkdir:         config.WorkingDir,
 	}
 	contentTag := OverlayContentTag(overlaySpec)
-	overlayURI, err := s.ensureOverlayImage(s.ctx(), overlaySpec, contentTag)
+	overlayURI, err := s.ensureOverlayImage(ctx, overlaySpec, contentTag)
 	if err != nil {
 		return fmt.Errorf("ensure overlay image: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	// Pool query: try to claim a free pre-built Function with this overlay-hash.
-	if claimed, claimErr := s.claimFreeFunction(s.ctx(), contentTag, id, name); claimErr == nil && claimed != "" {
+	if claimed, claimErr := s.claimFreeFunction(ctx, contentTag, id, name); claimErr == nil && claimed != "" {
+		claimedFunction = claimed
+		// freshFunction stays false — pool reuse path; deferred unwind
+		// will release rather than delete on cancel.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		// Pool hit — function already exists with our overlay. Still
 		// must attach the caller's volume binds: pool entries are keyed
 		// by overlay-content-hash (image), not by volume requirements,
@@ -312,14 +405,18 @@ func (s *Server) deployFunction(id string, container api.Container) error {
 		// — it skips the UpdateService rollout when every requested
 		// volume + mount is already present.
 		if len(hostConfig.Binds) > 0 {
-			reused, err := s.gcp.Functions.GetFunction(s.ctx(), &functionspb.GetFunctionRequest{Name: claimed})
+			reused, err := s.gcp.Functions.GetFunction(ctx, &functionspb.GetFunctionRequest{Name: claimed})
 			if err != nil {
 				return fmt.Errorf("get reused function %q for volume attach: %w", claimed, err)
 			}
-			if err := s.attachVolumesToFunctionService(s.ctx(), reused, hostConfig.Binds); err != nil {
+			if err := s.attachVolumesToFunctionService(ctx, reused, hostConfig.Binds); err != nil {
 				return fmt.Errorf("attach volumes to reused function %q: %w", claimed, err)
 			}
 		}
+		// Successful pool reuse — clear the claimedFunction so the
+		// deferred unwind doesn't release this entry (we want to keep
+		// it allocated to this container).
+		claimedFunction = ""
 		s.Registry.Register(core.ResourceEntry{
 			ContainerID:  id,
 			Backend:      "gcf",
@@ -340,8 +437,11 @@ func (s *Server) deployFunction(id string, container api.Container) error {
 
 	// Pool miss — provision a fresh Function.
 	stubObject := "sockerless-stub/sockerless-gcf-stub.zip"
-	if err := stageStubSourceIfMissing(s.ctx(), s.gcp.Storage, s.config.BuildBucket, stubObject); err != nil {
+	if err := stageStubSourceIfMissing(ctx, s.gcp.Storage, s.config.BuildBucket, stubObject); err != nil {
 		return fmt.Errorf("stage stub source: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	funcName := fmt.Sprintf("skls-%s-%s", contentTag, id[:6])
 	fullFunctionName := fmt.Sprintf("%s/functions/%s", parent, funcName)
@@ -379,33 +479,50 @@ func (s *Server) deployFunction(id string, container api.Container) error {
 	}
 	_ = overlayURI // captured by deferred image swap below; suppress unused-warn until then.
 
-	op, err := s.gcp.Functions.CreateFunction(s.ctx(), createReq)
+	op, err := s.gcp.Functions.CreateFunction(ctx, createReq)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("function", funcName).Msg("failed to create Cloud Run Function")
 		return gcpcommon.MapGCPError(err, "function", funcName)
 	}
-	result, err := op.Wait(s.ctx())
+	// Track the fresh function in case of cancellation.
+	claimedFunction = fullFunctionName
+	freshFunction = true
+	result, err := op.Wait(ctx)
 	if err != nil {
-		if delOp, delErr := s.gcp.Functions.DeleteFunction(s.ctx(), &functionspb.DeleteFunctionRequest{
-			Name: fullFunctionName,
-		}); delErr == nil {
-			_ = delOp.Wait(s.ctx())
+		// Unwind handled by deferred cleanup if ctx cancelled; otherwise
+		// the original explicit delete path runs (preserve old behaviour).
+		if ctx.Err() == nil {
+			if delOp, delErr := s.gcp.Functions.DeleteFunction(context.Background(), &functionspb.DeleteFunctionRequest{
+				Name: fullFunctionName,
+			}); delErr == nil {
+				_ = delOp.Wait(context.Background())
+			}
+			claimedFunction = "" // already deleted, don't double-delete in deferred unwind
 		}
 		s.Logger.Error().Err(err).Str("function", funcName).Msg("failed to wait for Cloud Run Function creation")
 		return gcpcommon.MapGCPError(err, "function", funcName)
 	}
-	if err := s.swapServiceImage(s.ctx(), result, overlayURI); err != nil {
-		if delOp, delErr := s.gcp.Functions.DeleteFunction(s.ctx(), &functionspb.DeleteFunctionRequest{
-			Name: fullFunctionName,
-		}); delErr == nil {
-			_ = delOp.Wait(s.ctx())
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.swapServiceImage(ctx, result, overlayURI); err != nil {
+		if ctx.Err() == nil {
+			if delOp, delErr := s.gcp.Functions.DeleteFunction(context.Background(), &functionspb.DeleteFunctionRequest{
+				Name: fullFunctionName,
+			}); delErr == nil {
+				_ = delOp.Wait(context.Background())
+			}
+			claimedFunction = ""
 		}
 		s.Logger.Error().Err(err).Str("function", funcName).Msg("failed to swap service image")
 		return &api.ServerError{Message: fmt.Sprintf("swap overlay image on %q: %v", funcName, err)}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	// Re-read the function so result reflects post-swap state (URL, etc.).
-	result, err = s.gcp.Functions.GetFunction(s.ctx(), &functionspb.GetFunctionRequest{Name: fullFunctionName})
+	result, err = s.gcp.Functions.GetFunction(ctx, &functionspb.GetFunctionRequest{Name: fullFunctionName})
 	if err != nil {
 		s.Logger.Warn().Err(err).Str("function", funcName).Msg("failed to re-read function after image swap")
 	}
@@ -428,16 +545,26 @@ func (s *Server) deployFunction(id string, container api.Container) error {
 	// other volume must be appended to the backing service's
 	// RevisionTemplate.
 	if len(hostConfig.Binds) > 0 {
-		if err := s.attachVolumesToFunctionService(s.ctx(), result, hostConfig.Binds); err != nil {
-			if delOp, delErr := s.gcp.Functions.DeleteFunction(s.ctx(), &functionspb.DeleteFunctionRequest{
-				Name: fullFunctionName,
-			}); delErr == nil {
-				_ = delOp.Wait(s.ctx())
+		if err := s.attachVolumesToFunctionService(ctx, result, hostConfig.Binds); err != nil {
+			if ctx.Err() == nil {
+				if delOp, delErr := s.gcp.Functions.DeleteFunction(context.Background(), &functionspb.DeleteFunctionRequest{
+					Name: fullFunctionName,
+				}); delErr == nil {
+					_ = delOp.Wait(context.Background())
+				}
+				claimedFunction = ""
 			}
 			s.Logger.Error().Err(err).Str("function", funcName).Msg("failed to attach named-volume binds to underlying Cloud Run Service")
 			return &api.ServerError{Message: fmt.Sprintf("attach volumes to function %q: %v", funcName, err)}
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Successful fresh deploy — clear claimedFunction so deferred unwind
+	// doesn't delete this entry (it now belongs to this container).
+	claimedFunction = ""
+	freshFunction = false
 	s.Registry.Register(core.ResourceEntry{
 		ContainerID:  id,
 		Backend:      "gcf",
@@ -473,26 +600,21 @@ func (s *Server) ContainerStart(ref string) error {
 		return &api.NotModifiedError{}
 	}
 
-	// BUG-923: ContainerCreate kicked the heavy CreateFunction.Wait
-	// work into a goroutine and stored its completion channel here. Wait
-	// for the deploy to finish before invoking — ContainerStart's HTTP
-	// call is gitlab-runner's natural blocking wait, so taking the full
-	// 200 s here is honest (vs taking it inside ContainerCreate which
-	// blew gitlab-runner's 120 s docker-daemon timeout).
-	if v, ok := s.deployFutures.LoadAndDelete(id); ok {
-		ch, _ := v.(chan error)
-		if ch != nil {
-			if deployErr, alive := <-ch; alive && deployErr != nil {
-				return deployErr
-			}
-		}
-	}
-
-	// Docker-network → multi-member pod auto-detection (mirrors cloudrun).
-	// Pure standard-Docker signal: NetworkingConfig.EndpointsConfig + the
-	// container's Config.OpenStdin. No runner-specific labels.
+	// Docker-network → multi-member pod auto-detection FIRST. The
+	// decision is purely Standard-Docker-API: NetworkingConfig.EndpointsConfig
+	// + Container.Config.OpenStdin. Doing this BEFORE the deploy-await
+	// resolves the BUG-923/BUG-925 architectural conflict — if this
+	// container is a network-pod member that should materialize as a
+	// multi-container Service revision, we cancel our own (and siblings')
+	// in-flight async deploys before they complete, then take the
+	// materialize path.
 	netDefer, netMembers := s.shouldDeferOrMaterializeNetworkPod(c)
 	if netDefer {
+		// Cancel our own in-flight deploy — a script-runner sibling will
+		// eventually arrive and trigger materializePodFunction with us as
+		// a member. The single-container deploy goroutine would race that
+		// path and leave an orphan single-container function.
+		s.cancelDeployFuture(id)
 		s.PendingCreates.Update(id, func(pc *api.Container) {
 			pc.State.Status = "running"
 			pc.State.Running = true
@@ -501,10 +623,31 @@ func (s *Server) ContainerStart(ref string) error {
 		return nil
 	}
 	if len(netMembers) > 1 {
+		// Cancel + drain every member's in-flight async deploy before
+		// materializing — a sibling's single-container deploy completing
+		// concurrently with our multi-container Service deploy would leave
+		// an orphan function and (worse) the runner's cross-container
+		// loopback DNS would point at the wrong revision.
+		for _, m := range netMembers {
+			s.cancelDeployFuture(m.ID)
+		}
 		exitCh := make(chan struct{})
 		s.Store.WaitChs.Store(id, exitCh)
 		s.PendingCreates.Delete(id)
 		return s.materializePodFunction(id, netMembers, exitCh)
+	}
+
+	// Single-container fall-through: await OUR own deploy. ContainerCreate
+	// kicked deployFunctionAsync immediately (BUG-923) so this is gitlab-
+	// runner's natural blocking wait point — taking the full 200s here
+	// is within the docker-API contract.
+	if v, ok := s.deployFutures.LoadAndDelete(id); ok {
+		f, _ := v.(*deployFuture)
+		if f != nil && f.ch != nil {
+			if deployErr, alive := <-f.ch; alive && deployErr != nil {
+				return deployErr
+			}
+		}
 	}
 
 	// Multi-container pod handling: defer until all members have been
