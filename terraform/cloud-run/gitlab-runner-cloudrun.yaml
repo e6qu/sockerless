@@ -99,7 +99,7 @@ spec:
         # API responds to /version etc., so Cloud Run's TCP startup probe
         # works against it naturally.
         - name: sockerless
-          image: us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/sockerless-backend-cloudrun@sha256:bffb6f9bb8c4566e30267a9c27e1896584cf1280df23052b4f1dd90cfd15a8de
+          image: us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/sockerless-backend-cloudrun@sha256:c9716fa8ec2177828ed90e2af50e444cc6b71539ff1939e9c92c2157949765d6
           ports:
             - containerPort: 3375
           env:
@@ -113,9 +113,17 @@ spec:
               value: "runner-workspace=/tmp/runner-work=sockerless-live-46x3zg4imo-runner-workspace"
             - name: SOCKERLESS_CLOUDRUN_BOOTSTRAP
               value: "/opt/sockerless/sockerless-cloudrun-bootstrap"
+            # BUG-927/Phase 122g: route step containers to Cloud Run
+            # Service (long-lived, supports docker exec) instead of
+            # Cloud Run Job (one-shot, breaks gitlab-runner's container
+            # reuse pattern). VPC connector for cross-Service DNS.
+            - name: SOCKERLESS_GCR_USE_SERVICE
+              value: "1"
+            - name: SOCKERLESS_GCR_VPC_CONNECTOR
+              value: "projects/sockerless-live-46x3zg4imo/locations/us-central1/connectors/sockerless-connector"
           resources:
             limits:
-              cpu: "2"
+              cpu: "1"
               memory: 2Gi
       volumes:
         - name: shared-config
