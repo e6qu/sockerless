@@ -19,7 +19,13 @@
 
 FROM gcr.io/distroless/static-debian12:nonroot
 
-COPY sockerless-backend-cloudrun /usr/local/bin/sockerless-backend-cloudrun
+COPY sockerless-backend-cloudrun     /usr/local/bin/sockerless-backend-cloudrun
+COPY sockerless-cloudrun-bootstrap   /opt/sockerless/sockerless-cloudrun-bootstrap
+
+# Phase 122g: cloudrun backend bakes this bootstrap into every per-step
+# overlay image it builds via Cloud Build (image-inject path). Set the
+# env var so the backend knows where to find it.
+ENV SOCKERLESS_CLOUDRUN_BOOTSTRAP=/opt/sockerless/sockerless-cloudrun-bootstrap
 
 # DOCKER_HOST clients in the sibling container connect on tcp://localhost:3375.
 EXPOSE 3375

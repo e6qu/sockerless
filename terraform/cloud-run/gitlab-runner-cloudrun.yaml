@@ -1,0 +1,124 @@
+# gitlab-runner cloudrun cell — multi-container Cloud Run Service.
+#
+# Three containers per revision (per architecture sketch in DO_NEXT.md):
+#   1. init           — gitlab-runner-init image. Cleans stale runners,
+#                       registers fresh one, writes /shared/config.toml.
+#                       Marked as init container via container-dependencies
+#                       annotation; runs to completion, exits 0, gitlab-
+#                       runner container then starts.
+#   2. gitlab-runner  — vanilla gitlab/gitlab-runner:v17.5.0 image.
+#                       dependsOn: init. Reads /shared/config.toml,
+#                       polls GitLab, dispatches jobs to localhost:3375
+#                       (DOCKER_HOST → sockerless backend sidecar).
+#                       No ports — pure outbound polling daemon.
+#   3. sockerless     — sockerless-backend-cloudrun:latest. The Cloud
+#                       Run **ingress** container — binds the revision's
+#                       service port. The Docker daemon HTTP API serves
+#                       /info, /version, etc., so Cloud Run's startup
+#                       probe naturally hits it. Listens on :3375.
+#
+# Apply via:
+#   gcloud run services replace terraform/cloud-run/gitlab-runner-cloudrun.yaml \
+#     --project=sockerless-live-46x3zg4imo --region=us-central1
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: gitlab-runner-cloudrun
+  annotations:
+    run.googleapis.com/ingress: internal
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "1"
+        run.googleapis.com/cpu-throttling: "false"
+        run.googleapis.com/vpc-access-connector: projects/sockerless-live-46x3zg4imo/locations/us-central1/connectors/sockerless-connector
+        run.googleapis.com/vpc-access-egress: private-ranges-only
+        run.googleapis.com/container-dependencies: '{"gitlab-runner":["init"]}'
+    spec:
+      serviceAccountName: sockerless-runner@sockerless-live-46x3zg4imo.iam.gserviceaccount.com
+      containers:
+        # init: register runner, write config.toml to shared volume, exit 0.
+        # No ports. Marked as a dependency of gitlab-runner via the
+        # container-dependencies annotation above; Cloud Run waits for
+        # exit 0 before starting gitlab-runner.
+        - name: init
+          image: us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/gitlab-runner-init@sha256:9bc95f69caa84f02bf4c58361b9ff131f5664d1fe972c32563b5c8cc3a2ab2ed
+          env:
+            - name: GITLAB_URL
+              value: "https://gitlab.com"
+            - name: GITLAB_PROJECT_ID
+              value: "81023556"
+            - name: RUNNER_NAME_PREFIX
+              value: "sockerless-cloudrun"
+            - name: RUNNER_TAGS
+              value: "sockerless-cloudrun"
+            - name: SOCKERLESS_PORT
+              value: ":3375"
+            - name: SHARED_CONFIG_PATH
+              value: "/shared/config.toml"
+            - name: GITLAB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gitlab-pat
+                  key: latest
+          volumeMounts:
+            - name: shared-config
+              mountPath: /shared
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          startupProbe:
+            tcpSocket:
+              port: 8081
+            failureThreshold: 60
+            periodSeconds: 1
+        # gitlab-runner: vanilla upstream image. Reads /shared/config.toml.
+        # Pure outbound — polls GitLab, executes via DOCKER_HOST. No ports
+        # exposed; not the ingress container.
+        - name: gitlab-runner
+          image: gitlab/gitlab-runner:v17.5.0
+          args:
+            - "run"
+            - "--config"
+            - "/shared/config.toml"
+          env:
+            - name: DOCKER_HOST
+              value: "tcp://localhost:3375"
+          volumeMounts:
+            - name: shared-config
+              mountPath: /shared
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi
+        # sockerless-backend-cloudrun: ingress container. Cloud Run binds
+        # the service URL → containerPort:3375. The Docker daemon HTTP
+        # API responds to /version etc., so Cloud Run's TCP startup probe
+        # works against it naturally.
+        - name: sockerless
+          image: us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/sockerless-backend-cloudrun@sha256:bffb6f9bb8c4566e30267a9c27e1896584cf1280df23052b4f1dd90cfd15a8de
+          ports:
+            - containerPort: 3375
+          env:
+            - name: SOCKERLESS_GCR_PROJECT
+              value: "sockerless-live-46x3zg4imo"
+            - name: SOCKERLESS_GCR_REGION
+              value: "us-central1"
+            - name: SOCKERLESS_GCP_BUILD_BUCKET
+              value: "sockerless-live-46x3zg4imo-build"
+            - name: SOCKERLESS_GCP_SHARED_VOLUMES
+              value: "runner-workspace=/tmp/runner-work=sockerless-live-46x3zg4imo-runner-workspace"
+            - name: SOCKERLESS_CLOUDRUN_BOOTSTRAP
+              value: "/opt/sockerless/sockerless-cloudrun-bootstrap"
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2Gi
+      volumes:
+        - name: shared-config
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
