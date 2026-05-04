@@ -1,83 +1,55 @@
-# Cell 7 — GitLab Runner (docker executor) → sockerless cloudrun backend.
-#
-# Same pipeline as cells 5/6 (probe + compile + arithmetic) for parity.
-# The runner image bakes `sockerless-backend-cloudrun` and runs as a
-# long-lived sockerless-managed container. gitlab-runner inside polls
-# GitLab and dispatches each job's step containers via DOCKER_HOST →
-# in-image sockerless backend → Cloud Run Job per step (the docker
-# executor's standard "step container" model). `services:` rides
-# alongside as a sockerless pod (Phase 118d).
-#
-# No dispatcher needed — gitlab-runner has its own polling master.
-
-variables:
-  SOCKERLESS_REF: "main"
-
 stages:
-  - probe-and-compile
+  - test
 
-probe-and-compile:
-  stage: probe-and-compile
-  tags: [sockerless-cloudrun]
-  image: golang:1.22-alpine
-  services:
-    - name: postgres:16-alpine
-      alias: postgres
-      variables:
-        POSTGRES_PASSWORD: ci
-        POSTGRES_USER: ci
-        POSTGRES_DB: ci
-  variables:
-    PGPASSWORD: ci
+.install-terraform: &install-terraform
+  - curl -fsSL "https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip" -o tf.zip
+  - unzip tf.zip -d /usr/local/bin && rm tf.zip
+
+lint:
+  stage: test
+  image: golang:1.25
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  before_script:
+    - go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
   script:
-    - apk add --no-cache git gcc musl-dev postgresql-client
-    - echo "=== probe-cloud-urls ==="
-    - env | grep -E '^(CLOUD_RUN_|K_SERVICE|K_REVISION|GOOGLE_CLOUD_)' | sort || true
-    - |
-      PROJ="${GOOGLE_CLOUD_PROJECT:-${GCP_PROJECT:-unknown}}"
-      REG="${GOOGLE_CLOUD_REGION:-${CLOUD_RUN_REGION:-us-central1}}"
-      JOB="${CLOUD_RUN_JOB:-${K_SERVICE:-unknown}}"
-      EXEC="${CLOUD_RUN_EXECUTION:-unknown}"
-      echo "Job execution: https://console.cloud.google.com/run/jobs/executions/details/$REG/$EXEC/tasks?project=$PROJ"
-      echo "Job overview:  https://console.cloud.google.com/run/jobs/details/$REG/$JOB?project=$PROJ"
-      echo "Cloud Logging: https://console.cloud.google.com/logs/query;query=resource.type%3D%22cloud_run_job%22%20resource.labels.job_name%3D%22$JOB%22?project=$PROJ"
-    - echo "=== probe-host ==="
-    - hostname; whoami; id
-    - cat /etc/os-release 2>/dev/null || true
-    - cat /etc/hostname 2>/dev/null || true
-    - df -h 2>/dev/null | head -10 || true
-    - mount | head -20 || true
-    - echo "=== probe-capabilities ==="
-    - grep -E '^(Cap|Seccomp|NoNew)' /proc/self/status || true
-    - cat /proc/self/cgroup || true
-    - echo "=== probe-kernel ==="
-    - uname -a
-    - cat /proc/version || true
-    - echo "=== probe-env ==="
-    - env | sort | grep -vE '^(SOCKERLESS_|CI_|GITLAB_|HOME|PATH|HOSTNAME)' | head -50
-    - echo "=== probe-parameters ==="
-    - getconf -a 2>/dev/null | head -30 || echo "getconf -a unavailable"
-    - ulimit -a
-    - echo "nproc=$(nproc)"
-    - echo "=== probe-localhost-peer (postgres sidecar) ==="
-    - |
-      for i in 1 2 3 4 5 6 7 8 9 10; do
-        if pg_isready -h postgres -p 5432 -t 5 -U ci; then echo "postgres ready"; break; fi
-        echo "postgres not ready yet (attempt $i)"; sleep 3
-      done
-    - psql "host=postgres user=ci dbname=ci" -c 'SELECT version();'
-    - echo "=== clone-and-compile ==="
-    - git clone --depth=1 --branch="$SOCKERLESS_REF" https://github.com/e6qu/sockerless /work/sockerless
-    - cd /work/sockerless/simulators/testdata/eval-arithmetic
-    - go build -v -o eval-arithmetic .
-    - ls -la eval-arithmetic
-    - file eval-arithmetic
-    - echo "=== run-arithmetic ==="
-    - |
-      set -e
-      got1=$(./eval-arithmetic '3 + 4 * 2'); test "$got1" = "11" || { echo "expected 11 got $got1"; exit 1; }
-      got2=$(./eval-arithmetic '(10 - 3) * 2'); test "$got2" = "14" || { echo "expected 14 got $got2"; exit 1; }
-      got3=$(./eval-arithmetic '100 / 5 + 1'); test "$got3" = "21" || { echo "expected 21 got $got3"; exit 1; }
-      got4=$(./eval-arithmetic '2 * (3 + 4) - 1'); test "$got4" = "13" || { echo "expected 13 got $got4"; exit 1; }
-      got5=$(./eval-arithmetic '1.5 + 2.5 * 2'); test "$got5" = "6.5" || { echo "expected 6.5 got $got5"; exit 1; }
-      echo "all arithmetic checks pass"
+    - make lint
+
+test-aws:
+  stage: test
+  image: golang:1.25
+  before_script:
+    - apt-get update && apt-get install -y unzip curl
+    - curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
+    - unzip awscliv2.zip && ./aws/install && rm -rf awscliv2.zip aws
+    - *install-terraform
+  script:
+    - cd simulators/aws && make test
+  when: manual
+
+test-gcp:
+  stage: test
+  image: golang:1.25
+  before_script:
+    - apt-get update && apt-get install -y curl python3 apt-transport-https gnupg unzip
+    - echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" > /etc/apt/sources.list.d/google-cloud-sdk.list
+    - curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+    - apt-get update && apt-get install -y google-cloud-cli
+    - *install-terraform
+  script:
+    - cd simulators/gcp && make test
+  when: manual
+
+test-azure:
+  stage: test
+  image: golang:1.25
+  before_script:
+    - apt-get update && apt-get install -y curl gnupg lsb-release unzip
+    - curl -sL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg
+    - echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ $(lsb_release -cs) main" > /etc/apt/sources.list.d/azure-cli.list
+    - apt-get update && apt-get install -y azure-cli
+    - *install-terraform
+  script:
+    - cd simulators/azure && make test
+  when: manual
