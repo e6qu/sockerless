@@ -101,47 +101,85 @@ func (s *Server) attachVolumesToFunctionService(ctx context.Context, fn *functio
 		return fmt.Errorf("underlying Cloud Run Service %q has no RevisionTemplate", svcName)
 	}
 
-	// Index existing volumes + mounts by name for idempotent merge.
-	existingVolumes := map[string]bool{}
+	// Index existing volumes by name + capture their current GCS bucket +
+	// MountOptions so we can detect "same name but stale config" cases.
+	// Pool-reused functions inherited volumes from a prior deploy may
+	// have outdated mount options (e.g. missing the runner-workspace
+	// strong-consistency opts) — replace those entries so the next
+	// revision picks up the corrected config.
+	wantOpts := gcpcommon.RunnerWorkspaceMountOptions()
+	wantOptsKey := strings.Join(wantOpts, ",")
+	existingByName := map[string]*runpb.Volume{}
 	for _, v := range svc.Template.Volumes {
-		existingVolumes[v.Name] = true
+		existingByName[v.Name] = v
 	}
-	existingMounts := map[string]bool{}
+	existingMountByName := map[string]*runpb.VolumeMount{}
 	if len(svc.Template.Containers) > 0 {
 		for _, m := range svc.Template.Containers[0].VolumeMounts {
-			existingMounts[m.Name] = true
+			existingMountByName[m.Name] = m
 		}
 	}
 
-	added := 0
+	changed := false
 	for name, bucket := range volumesByName {
-		if !existingVolumes[name] {
-			svc.Template.Volumes = append(svc.Template.Volumes, &runpb.Volume{
-				Name: name,
-				VolumeType: &runpb.Volume_Gcs{
-					Gcs: &runpb.GCSVolumeSource{
-						Bucket:       bucket,
-						MountOptions: gcpcommon.RunnerWorkspaceMountOptions(),
-					},
+		want := &runpb.Volume{
+			Name: name,
+			VolumeType: &runpb.Volume_Gcs{
+				Gcs: &runpb.GCSVolumeSource{
+					Bucket:       bucket,
+					MountOptions: wantOpts,
 				},
-			})
-			added++
+			},
+		}
+		existing, ok := existingByName[name]
+		if !ok {
+			svc.Template.Volumes = append(svc.Template.Volumes, want)
+			changed = true
+			continue
+		}
+		// Same name — compare bucket + mount opts to detect stale config.
+		// Either GCS field present (proto union) OR the read-back-as-CSI
+		// shape (Cloud Run server normalises to CSI). For simplicity we
+		// drop+replace if anything observable about the existing entry
+		// doesn't match what we want.
+		matches := false
+		if g := existing.GetGcs(); g != nil {
+			gotKey := strings.Join(g.GetMountOptions(), ",")
+			if g.GetBucket() == bucket && gotKey == wantOptsKey {
+				matches = true
+			}
+		}
+		if !matches {
+			// Replace in-place (preserve order so the diff is minimal).
+			for i, v := range svc.Template.Volumes {
+				if v.Name == name {
+					svc.Template.Volumes[i] = want
+					break
+				}
+			}
+			changed = true
 		}
 	}
 	if len(svc.Template.Containers) > 0 {
 		for name, mountPath := range mountsByName {
-			if !existingMounts[name] {
+			existing, ok := existingMountByName[name]
+			if !ok {
 				svc.Template.Containers[0].VolumeMounts = append(svc.Template.Containers[0].VolumeMounts, &runpb.VolumeMount{
 					Name:      name,
 					MountPath: mountPath,
 				})
-				added++
+				changed = true
+				continue
+			}
+			if existing.GetMountPath() != mountPath {
+				existing.MountPath = mountPath
+				changed = true
 			}
 		}
 	}
-	if added == 0 {
-		// Service already has every requested volume + mount. Skip the
-		// UpdateService rollout entirely.
+	if !changed {
+		// Service already has every requested volume + mount in the right
+		// shape. Skip the UpdateService rollout entirely.
 		return nil
 	}
 
