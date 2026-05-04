@@ -161,6 +161,52 @@ resource "google_vpc_access_connector" "main" {
 }
 
 # ---------------------------------------------------------------------------
+# Cloud Router + Cloud NAT
+# ---------------------------------------------------------------------------
+# Static egress IP for VPC-connector traffic. Required for two things:
+#
+#   1. BUG-928 (VPC egress GCSFuse timeout): when Cloud Run Services
+#      use VpcAccess_ALL_TRAFFIC (the only mode that lets cross-Cloud-
+#      Run service-to-service calls appear as same-VPC source IP),
+#      ALL outbound — including public Google APIs like
+#      storage.googleapis.com that GCSFuse needs — routes through the
+#      VPC connector subnet. Without Cloud NAT on that subnet, external
+#      traffic has no return path. With Cloud NAT, external traffic
+#      egresses through a NAT'd public IP.
+#
+#   2. BUG-941 (dispatcher GitHub abuse-flag): the github-runner-
+#      dispatcher-gcp Service polls api.github.com every 15s. With
+#      default Cloud Run egress (dynamic IPs), each restart picks a new
+#      IP and accumulates abuse flags across the IP block. Static NAT
+#      egress IP gives GitHub a single endpoint to track + lets the
+#      operator request abuse-flag clearance for that IP.
+#
+# Terraform NAT resources mirror what BUG-928 created out-of-band via
+# `gcloud compute routers create / nats create` so a fresh
+# `terragrunt apply` reproduces the same topology.
+
+resource "google_compute_router" "main" {
+  project = var.project_id
+  name    = "${local.name_prefix}-router"
+  region  = var.region
+  network = google_compute_network.main.id
+}
+
+resource "google_compute_router_nat" "main" {
+  project                            = var.project_id
+  name                               = "${local.name_prefix}-nat"
+  router                             = google_compute_router.main.name
+  region                             = var.region
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+
+  log_config {
+    enable = true
+    filter = "ERRORS_ONLY"
+  }
+}
+
+# ---------------------------------------------------------------------------
 # Cloud DNS Private Managed Zone
 # ---------------------------------------------------------------------------
 # Private DNS zone for service discovery. Only resolvable from within the
