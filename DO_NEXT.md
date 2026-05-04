@@ -12,12 +12,14 @@ Phase 122i shipped 13 commits over multi-iteration debug. Latest at `a7e3b00`. C
 
 ### Immediate next actions (in dependency order)
 
-1. **Fix runner image build flakiness** (newly demoted from "transient" to real bug, per user directive). The `installdependencies.sh` step in `tests/runners/github/dockerfile-{gcf,cloudrun}/Dockerfile` fetches Microsoft .NET runtime deps from `packages.microsoft.com`. Failures: intermittent network or apt-get hash-mismatch. Real fix candidates:
-   - Pin to a known-good apt snapshot (use `snapshot.debian.org` style mirror).
-   - Pre-bake the apt-cache layer and skip re-downloading.
-   - Add `--retry-on-error` style to the apt step (last resort — workaround).
+1. **BUG-945: pre-bake runner-base-amd64 image** — replace per-iteration `apt-get install` with `FROM us-central1-docker.pkg.dev/.../runner-base:amd64` in `tests/runners/github/dockerfile-{gcf,cloudrun}/Dockerfile` and `tests/runners/gitlab/dockerfile-{gcf,cloudrun}/Dockerfile`. Per-iteration build only `COPY`s the sockerless backend binary + bootstrap.sh. **Forbidden alternatives** (per user directive 2026-05-04): `--network=host` (security: opens host network during build), retry loops on apt failures (workaround). One use of `--network=host` happened 2026-05-04 to unblock BUG-944 layer-3 verification — MUST NOT recur.
 
-   Investigation in flight (background task `bakyy540j`). After root cause is named, ship a real fix; don't retry-loop.
+   Concrete tasks:
+   - new file: `tests/runners/dockerfile-base/Dockerfile.amd64` with all apt deps baked.
+   - one-time `podman build` (using bridge network — slow but won't repeat).
+   - push to `us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/runner-base:amd64`.
+   - update 4 per-runner Dockerfiles to `FROM` the base.
+   - per-iteration rebuild now ~30s (just COPY + ENV).
 
 2. **Verify BUG-944 layer 3 fix** (`a7e3b00`). Process:
    - Rebuild + push `runner:gcf-amd64` (after #1 lands).
