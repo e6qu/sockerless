@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	functionspb "cloud.google.com/go/functions/apiv2/functionspb"
 	runpb "cloud.google.com/go/run/apiv2/runpb"
@@ -47,7 +48,50 @@ func (s *Server) ensureOverlayImage(ctx context.Context, spec OverlayImageSpec, 
 // label is empty by setting it to the new container ID via UpdateFunction
 // with an etag. Returns the claimed function's full resource name on
 // success, or empty string + nil error if no free function exists.
+//
+// Wraps tryClaimOnce in a short retry loop with poll-and-wait. When a
+// caller burst (e.g., gitlab-runner spawning multiple cache-permission
+// containers concurrently) finds the pool empty because peers haven't
+// released yet, the wait gives those peers time to release their
+// allocations before this call falls back to creating a new function.
+// Each new-function deploy costs ~1 vCPU-min against the regional
+// CpuAllocPerProjectRegion quota, so reuse is the architectural fix to
+// the quota pressure.
 func (s *Server) claimFreeFunction(ctx context.Context, contentTag, containerID, containerName string) (string, error) {
+	const (
+		maxAttempts = 8
+		baseWait    = 250 * time.Millisecond
+	)
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		name, err := s.tryClaimOnce(ctx, contentTag, containerID, containerName)
+		if err != nil {
+			return "", err
+		}
+		if name != "" {
+			return name, nil
+		}
+		if attempt == maxAttempts-1 {
+			break
+		}
+		// Exponential back-off capped at 2s. Total wait across the loop is
+		// ~5s — short enough to keep the docker-create call inside gitlab's
+		// 120s wait, long enough for siblings to finish & release.
+		wait := baseWait * (1 << attempt)
+		if wait > 2*time.Second {
+			wait = 2 * time.Second
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+	return "", nil // no free function in pool after retries
+}
+
+// tryClaimOnce performs a single list-and-claim pass. Returns ("", nil) when
+// no free function exists; ("", err) on API errors; (name, nil) on success.
+func (s *Server) tryClaimOnce(ctx context.Context, contentTag, containerID, containerName string) (string, error) {
 	parent := fmt.Sprintf("projects/%s/locations/%s", s.config.Project, s.config.Region)
 	filter := fmt.Sprintf(
 		`labels.sockerless_managed:"true" AND labels.sockerless_overlay_hash:"%s"`,
@@ -92,7 +136,7 @@ func (s *Server) claimFreeFunction(ctx context.Context, contentTag, containerID,
 		}
 		return fn.GetName(), nil
 	}
-	return "", nil // no free function in pool
+	return "", nil
 }
 
 // proto_clone_function returns a Function reference safe for mutation. Cloud
