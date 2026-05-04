@@ -93,6 +93,9 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 	// — the runner image owns its own backend config + workspace
 	// mounting internally. BUG-911 (TaskTemplate.Timeout 3600s) stays
 	// because it's a Cloud Run resource concern, not runner-internal.
+	// Cloud Run Job default is 512Mi/1cpu — too small for a runner that
+	// compiles real workloads. 4Gi/2cpu fits a Go compile + sidecar
+	// postgres + the runner agent with headroom.
 	containerCfg := &runpb.Container{
 		Image: req.Image,
 		Env: []*runpb.EnvVar{
@@ -100,6 +103,12 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 			{Name: "RUNNER_REPO", Values: &runpb.EnvVar_Value{Value: req.Repo}},
 			{Name: "RUNNER_NAME", Values: &runpb.EnvVar_Value{Value: req.RunnerName}},
 			{Name: "RUNNER_LABELS", Values: &runpb.EnvVar_Value{Value: strings.Join(req.Labels, ",")}},
+		},
+		Resources: &runpb.ResourceRequirements{
+			Limits: map[string]string{
+				"cpu":    "2",
+				"memory": "4Gi",
+			},
 		},
 	}
 

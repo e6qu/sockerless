@@ -106,30 +106,34 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	// Token verification: retry-with-backoff on 403 instead of exiting.
-	// A 403 from GitHub on /user typically means GitHub's secondary
-	// rate-limit / abuse protection is throttling the dispatcher's
-	// egress IP — exiting and crashlooping makes it WORSE because each
-	// container restart re-hits /user. Sleep through the abuse window
-	// (5 min increasing to 30 min cap) until /user returns 200.
+	// Token verification: retry-with-backoff on 403/429. When GitHub
+	// returns rate-limit hints (X-RateLimit-Reset, Retry-After), honor
+	// them strictly with a +10% +1s safety buffer (per
+	// `feedback_strict_rate_limit.md`). Without rate hints, fall back to
+	// exponential backoff (cap 30m). Crashlooping makes the abuse
+	// window WORSE — sleeping wins.
 	verifyBackoff := 30 * time.Second
 	for {
-		if err := scopes.Verify(ctx, http.DefaultClient, *token); err != nil {
-			log.Printf("scope verify failed (sleeping %s before retry): %v", verifyBackoff, err)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(verifyBackoff):
-			}
-			if verifyBackoff < 30*time.Minute {
-				verifyBackoff *= 2
-				if verifyBackoff > 30*time.Minute {
-					verifyBackoff = 30 * time.Minute
-				}
-			}
-			continue
+		err := scopes.Verify(ctx, http.DefaultClient, *token)
+		if err == nil {
+			break
 		}
-		break
+		wait := verifyBackoff
+		if rle, ok := scopes.AsRateLimit(err); ok && rle.Wait > 0 {
+			wait = rle.Wait
+		}
+		log.Printf("scope verify failed (sleeping %s before retry): %v", wait, err)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+		if verifyBackoff < 30*time.Minute {
+			verifyBackoff *= 2
+			if verifyBackoff > 30*time.Minute {
+				verifyBackoff = 30 * time.Minute
+			}
+		}
 	}
 	log.Printf("dispatcher-gcp ready: repo=%s labels=%d once=%v cleanup-only=%v",
 		*repo, len(cfg.Labels), *once, *cleanupOnly)
@@ -157,13 +161,23 @@ func run() error {
 		}
 	}()
 
-	ticker := time.NewTicker(gh.PollInterval())
-	defer ticker.Stop()
 	cleanupTicker := time.NewTicker(2 * time.Minute)
 	defer cleanupTicker.Stop()
+	pollEvery := gh.PollInterval()
 	for {
+		// On rate-limit, sleep until upstream's reset (already buffered
+		// by +10% +1s in WaitFromRateHeaders) instead of the normal
+		// pollEvery cadence. Hammering at the regular cadence while
+		// remaining=0 wastes the dispatcher's quota window and risks
+		// secondary abuse flags.
+		nextPoll := pollEvery
 		if err := loop.Step(ctx); err != nil {
-			log.Printf("poll error (continuing): %v", err)
+			if wait, ok := poller.AsRateLimit(err); ok {
+				log.Printf("poll error: rate-limited, sleeping %s (upstream reset + 10%% + 1s): %v", wait, err)
+				nextPoll = wait
+			} else {
+				log.Printf("poll error (continuing): %v", err)
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -172,7 +186,7 @@ func run() error {
 			if err := loop.Cleanup(ctx); err != nil {
 				log.Printf("cleanup error (continuing): %v", err)
 			}
-		case <-ticker.C:
+		case <-time.After(nextPoll):
 		}
 	}
 }

@@ -15,10 +15,15 @@ package poller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/sockerless/github-runner-dispatcher-aws/pkg/scopes"
 )
 
 // Job is the dispatcher's view of a queued workflow_job.
@@ -154,9 +159,42 @@ func (c *Client) get(ctx context.Context, url string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: %d %s", url, resp.StatusCode, http.StatusText(resp.StatusCode))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		// Surface a typed RateLimitError when the response carries rate
+		// hints — the caller's dispatch loop reads Wait to honor GitHub's
+		// reset window strictly (per `feedback_strict_rate_limit.md`).
+		wait := scopes.WaitFromRateHeaders(resp.Header, time.Now())
+		err := &scopes.RateLimitError{
+			Status:    resp.StatusCode,
+			Body:      strings.TrimSpace(string(body)),
+			Wait:      wait,
+			Remaining: resp.Header.Get("X-RateLimit-Remaining"),
+			Reset:     resp.Header.Get("X-RateLimit-Reset"),
+			Retry:     resp.Header.Get("Retry-After"),
+		}
+		return nil, fmt.Errorf("GET %s: %w", url, err)
 	}
 	return readAll(resp.Body), nil
+}
+
+// asScopesRateLimit unwraps a scopes.RateLimitError if present in err's
+// chain. Re-exported to avoid import cycles in the dispatcher main.
+func asScopesRateLimit(err error) (*scopes.RateLimitError, bool) {
+	var rle *scopes.RateLimitError
+	if errors.As(err, &rle) {
+		return rle, true
+	}
+	return nil, false
+}
+
+// AsRateLimit reports whether err contains a GitHub rate-limit signal
+// and returns the wait derived from upstream headers (already buffered).
+// Caller (dispatch loop) sleeps this wait before the next poll.
+func AsRateLimit(err error) (time.Duration, bool) {
+	if rle, ok := asScopesRateLimit(err); ok && rle.Wait > 0 {
+		return rle.Wait, true
+	}
+	return 0, false
 }
 
 type apiRun struct {
