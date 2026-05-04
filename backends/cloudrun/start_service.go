@@ -38,19 +38,23 @@ import (
 func (s *Server) startSingleContainerService(id string, c api.Container, crState CloudRunState, exitCh chan struct{}) error {
 	// Clean up any existing resources from a previous start.
 	if crState.ServiceName != "" {
+		s.Logger.Info().Str("container", id).Str("service", crState.ServiceName).Msg("startSingleContainerService: deleting prior service")
 		s.deleteService(crState.ServiceName)
 		s.Registry.MarkCleanedUp(crState.ServiceName)
 	}
 
 	svcName := buildServiceName(id)
+	s.Logger.Info().Str("container", id).Str("service", svcName).Str("image", c.Image).Msg("startSingleContainerService: building service spec")
 	svcSpec, err := s.buildServiceSpec(s.ctx(), []containerInput{
 		{ID: id, Container: &c, IsMain: true},
 	})
 	if err != nil {
+		s.Logger.Error().Err(err).Str("container", id).Msg("startSingleContainerService: buildServiceSpec failed")
 		s.Store.WaitChs.Delete(id)
 		return err
 	}
 
+	s.Logger.Info().Str("container", id).Str("service", svcName).Msg("startSingleContainerService: calling Run.Services.CreateService")
 	createOp, err := s.gcp.Services.CreateService(s.ctx(), &runpb.CreateServiceRequest{
 		Parent:    s.buildServiceParent(),
 		ServiceId: svcName,
@@ -61,14 +65,24 @@ func (s *Server) startSingleContainerService(id string, c api.Container, crState
 		s.Store.WaitChs.Delete(id)
 		return gcpcommon.MapGCPError(err, "service", id)
 	}
+	s.Logger.Info().Str("container", id).Str("service", svcName).Msg("startSingleContainerService: CreateService LRO returned, calling .Wait (bounded 4min)")
 
-	svc, err := createOp.Wait(s.ctx())
+	// Bounded Wait — Cloud Run can take up to ~5min to provision a
+	// new revision (CPU quota wait, image pull, startup probe). Cap at
+	// 4min so a stuck deploy fails the docker-create call cleanly
+	// instead of hanging indefinitely. The client (gitlab-runner) has
+	// its own 120s docker-daemon timeout for the original POST; this
+	// limit just keeps the goroutine bounded.
+	waitCtx, waitCancel := context.WithTimeout(s.ctx(), 4*time.Minute)
+	svc, err := createOp.Wait(waitCtx)
+	waitCancel()
 	if err != nil {
+		s.Logger.Error().Err(err).Str("container", id).Str("service", svcName).Dur("waited", 4*time.Minute).Msg("startSingleContainerService: CreateService.Wait timed out or returned error")
 		s.deleteService(fmt.Sprintf("%s/services/%s", s.buildServiceParent(), svcName))
 		s.Store.WaitChs.Delete(id)
-		s.Logger.Error().Err(err).Str("service", svcName).Msg("service creation failed")
 		return gcpcommon.MapGCPError(err, "service", id)
 	}
+	s.Logger.Info().Str("container", id).Str("service", svc.Name).Msg("startSingleContainerService: CreateService.Wait completed, service is Ready")
 	svcFullName := svc.Name
 
 	s.Registry.Register(core.ResourceEntry{
