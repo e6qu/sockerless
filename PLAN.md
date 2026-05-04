@@ -604,21 +604,29 @@ The only documented mapping is the post-create UpdateService image-swap pattern 
 
 **Phase 118 PR rule**: per guiding principle #11, this phase closes only when the sub-118d-gcf + sub-118d-lambda commits land on a branch (`phase-118-faas-pods`), the PR is opened against `main`, and all CI jobs pass green. User merges (workflow rule).
 
-### Phase 122g — Lift `image_inject` to gcp-common + Path B HTTP exec (NEXT — open)
+### Phase 122i — Dispatcher rate-limit + gcf pool quota (IN FLIGHT — partial close 2026-05-04)
 
-**Why.** Phase 122f's "Service path for runner-pattern only" plan was incomplete. BUG-927 surfaced the deeper truth (2026-05-03 v12): cell 7 reported SUCCESS while running ZERO workload. Backend trace `attach 200 (216s) → exec 409 'Container not running' → wait 200 → stop 304 × N` proves gitlab-runner needs long-lived build container + per-stage `docker exec`; Cloud Run Job (one-shot) cannot host that, AND stock images (`golang:1.22-alpine`, `postgres:16-alpine`) have no in-container exec endpoint. Without overlay-injection of a bootstrap, `docker exec` against any cloudrun container is structurally impossible.
+Goal: cells 5-8 GREEN at session end. Outcome: 6 commits shipped, 6 root causes pinned, all 4 cells still fail at session end (cell 7 was GREEN at session start; lost when `.gitlab-ci.yml` swap reverted to standard lint). Architectural blockers now isolated and have fix candidates.
 
-The fix mirrors what Lambda already does. Per `specs/CLOUD_RESOURCE_MAPPING.md` § Lesson 6 (REVISED for BUG-927) + Lesson 8 (`execStartViaInvoke` Path B) + Synthesis — Phase 122g scope:
+**Closed this session**: BUG-938 (Cloud NAT abuse-flag rotation), BUG-939 (runner-task OOM at 4Gi/2cpu), BUG-940 (cleanup uses Execution state not Definition state), BUG-941 (cleanup ticker re-fires GitHub poll during rate-limit), BUG-943 (poller 1+N call burn → 60s + runSeen + proactive back-off). Pool back-off `df75d4d` shipped for BUG-942 — verification pending.
 
-1. **Lift `backends/lambda/image_inject.go` → `backends/gcp-common/image_inject.go`** — shared overlay renderer (Dockerfile generator + Cloud Build trigger) for cloudrun + gcf. Parameterize bootstrap binary path + per-cloud env-var names.
-2. **New `agent/cmd/sockerless-cloudrun-bootstrap`** mirroring `sockerless-lambda-bootstrap`: HTTP server bound to `$PORT`, recognises `execEnvelope{argv,tty,workdir,env,stdin}` request body, runs cmd, returns `{exitCode,stdout,stderr}` (base64) in response. Identical envelope to lambda.
-3. **cloudrun ContainerCreate** — drop `isRunnerPattern` gating (delete `runner_pattern.go`); ALL containers route to Cloud Run Service via overlay. Overlay built once per content-hash, cached in AR.
-4. **cloudrun ExecStart — Path B HTTP POST** to Service URL with `execEnvelope`. Reverse-agent WS reserved only for interactive TTY+stdin (rare). Replaces the half-implemented WS path.
-5. **gcf ExecStart — Path B HTTP POST** to `Function.ServiceConfig.Uri` (same shape; gcf bootstrap already exists, extend to recognise envelope).
-6. **Pre-deploy Service per shape** (Lesson 1, ECS task-def pattern) — terraform-managed catalog seeded for known runner shapes (`golang:1.22-alpine`, `postgres:16-alpine`, gitlab-runner-helper). ContainerStart claims free pool entry by content-hash before paying overlay-build cost.
-7. **Pool semantics** (Lesson 2): ContainerStop releases label `sockerless_allocation`. ContainerRemove deletes function/service above pool cap.
+**Remaining blockers**:
+- BUG-942 (in-flight verification): Cloud Run regional `cpu_allocation` per-minute quota — pool back-off ships, needs end-to-end test.
+- BUG-944 (NEW): GCS-Fuse mount latency causes `docker exec` exit 126 — cell 6 SOLO got past CPU and deployed services successfully, then failed first script step. Three fix candidates documented in DO_NEXT.md.
+- BUG-929: cloudrun startSingleContainerService missing post-deploy invoke — cell 5 hangs Initialize containers 43+ min instead of failing fast.
 
-**Closes**: BUG-921, BUG-922, BUG-923, BUG-925, BUG-927. Cells 5-8 GREEN with REAL workload visible in Cloud Logging + streamed via Cloud Run HTTP response (`docker logs --follow` parity).
+**What we tried that did NOT work** (preserve as anti-recipe):
+1. gcf default CPU 0.5 — gen2 rejects fractional. Reverted in `71288bf`.
+2. Cloud Run quota increase request 20000 → 200000 — user rejected as "wrong path"; withdrew.
+3. 4 cells in parallel — exceeds per-minute rate; only solo runs get past quota until pool back-off proves out.
+
+### Phase 122g — Lift `image_inject` to gcp-common + Path B HTTP exec (CLOSED 2026-05-03 — cell 7 GREEN)
+
+Cell 7 GREEN at pipeline 2496721473 (1020s) with all 5 arithmetic markers verified, postgres SELECT version() returned PostgreSQL 16.13, all 6 environment probes ran. Cells 5/6/8 surfaced subsequent bugs (BUG-925 postgres-on-Cloud-Run-Service shipped 12-step fix; BUG-923 gcf ContainerCreate.Wait > 120s shipped async deploy fix in 122i; BUG-937 3-stage AR-auth chain shipped fix).
+
+7 commits delivered the Phase 122g architecture: lifted `backends/lambda/image_inject.go` → `backends/gcp-common/image_inject.go`; new `agent/cmd/sockerless-cloudrun-bootstrap` HTTP server with `execEnvelope{argv,tty,workdir,env,stdin}`; cloudrun + gcf ContainerCreate route through Cloud Run Service via overlay; ExecStart path B HTTP POST envelope to Service URL with `idtoken.NewClient`. Pool semantics: `claimFreeFunction` by content-hash, ContainerStop releases label, ContainerRemove deletes above pool cap.
+
+**Closes**: BUG-921, BUG-922 (start-cycle), BUG-927 (fake-success).
 
 ### Phase 122f — Cloud Run Service path for runner-pattern containers (CLOSED 2026-05-03, INCOMPLETE — superseded by Phase 122g)
 

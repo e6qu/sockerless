@@ -6,6 +6,38 @@ See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for
 
 This file keeps narrative / "why we did it" context that doesn't live in BUGS.md or git log. Per-bug detail belongs in [BUGS.md](BUGS.md) — don't duplicate it here.
 
+## Phase 122i — dispatcher rate-limit + gcf pool quota architecture (2026-05-04)
+
+Long session. Goal: cells 5/6/7/8 GREEN. Outcome: 6 commits, 6 root causes pinned, no cells closed (cell 7 was GREEN at start, all 4 fail at session end). What did move: dispatcher behaviour around GitHub rate limits + GCP CPU quota is now correct, the fundamental architectural blocker (GCS-Fuse mount latency) is identified and isolated.
+
+**Root causes pinned this session** (per-bug detail in BUGS.md § Session 2026-05-04):
+
+- BUG-938: Cloud NAT auto-IP got abuse-flagged by GitHub after dispatcher crashlooped. Pinned to fresh static IP.
+- BUG-939: runner-task default 512Mi/1cpu OOM'd cell-5 Go compile at 230s. Bumped to 4Gi/2cpu.
+- BUG-940: dispatcher cleanup deleted runner-tasks 80s after spawn — read Job.TerminalCondition (definition state) instead of Execution state.
+- BUG-941: dispatcher cleanup ticker re-fired GitHub poll during rate-limit sleep, burning fresh quota tokens every 2 min.
+- BUG-942 (open, fix shipped): parallel cells × 5 services × 1 vCPU exceeds Cloud Run regional `cpu_allocation` per-minute rate. Pool back-off in `claimFreeFunction` lets concurrent caller bursts wait for peers to release.
+- BUG-943: dispatcher poller's 1+N GitHub calls per cycle burns 7440 calls/h with 30 queued runs; exceeds 5000/h PAT cap.
+- BUG-944 (open, NEW): cell 6 SOLO got past CPU quota and deployed services, then hit `docker exec` exit 126 in first script step — GCS-Fuse mount latency means the script file written by github-runner isn't visible inside the container by the time docker exec runs.
+
+**What we tried that did NOT work** (preserve as anti-recipe for future sessions):
+
+1. Lowering gcf default per-function CPU 1 → 0.5 to fit more parallel functions in regional quota — Cloud Run gen2 execution environment rejects fractional CPU below 1 with `Total cpu < 1 is not supported with gen2 execution environment`. Reverted in `71288bf`.
+2. Requesting Google quota increase via `gcloud beta quotas preferences create CpuAllocPerProjectRegion 20000→200000` — user explicitly rejected (`quota increase is the wrong path`). Withdrew via update to grantedValue.
+3. Running 4 cells in parallel — exceeds `cpu_allocation` per-minute window. Solo runs get past CPU quota; parallel needs the BUG-942 pool back-off to amortize.
+
+**Strict rate-limit policy adopted** (memory `feedback_strict_rate_limit.md`): when honoring upstream rate-limit headers (GitHub `X-RateLimit-Reset`, `Retry-After`, GCP quota windows), sleep `max(retryAfter, resetIn) * 1.10 + 1s`. The +10% covers clock skew + bunching, +1s covers sub-second rounding. Resuming exactly at the reset boundary triggers immediate re-throttling.
+
+## Phase 122h — gitlab-runner stdin_pipe attempt (2026-05-04, rolled back)
+
+Phase 122h ported the ECS+Lambda stdin_pipe.go pattern to cloudrun (~80 lines). Image built (digest `4fc5abd0951729...`). Cloud Run rev `00040-qj6` health probe failed — bootstrap silently dies before binding PORT 8080. Rolled back to `00038-f42` (Phase 122g code). Code committed (`9f9f872`) but not running live; needs local debug of bootstrap startup with full Cloud Run env vars before re-deploy.
+
+## Phase 122g — overlay+Path-B exec for cloudrun + gcf (2026-05-03, GREEN cell 7)
+
+Lifted `backends/lambda/image_inject.go` → `backends/gcp-common/image_inject.go`; new `agent/cmd/sockerless-cloudrun-bootstrap` HTTP server; cloudrun + gcf ContainerCreate route through Cloud Run Service via overlay. `ExecStart` path B HTTP POST envelope to Service URL with `idtoken.NewClient`. **Result: cell 7 GREEN at pipeline 2496721473 (1020s, all 5 arithmetic markers verified, postgres SELECT version() returned PostgreSQL 16.13).**
+
+Cells 5/6/8 not GREEN at end of 122g — surfaced BUG-925 (postgres TCP via Cloud Run multi-container sidecar, fix shipped 12-step), BUG-923 (gcf ContainerCreate.Wait > 120s, fix shipped async deploy in 122i), BUG-937 (3-stage AR-auth chain, fix shipped).
+
 ## Phase 122f — BUG-927 root-cause discovery; Phase 122g architectural plan locked (2026-05-03)
 
 End of session 2026-05-03 v12: cells 5-8 still failing, but the architectural blocker is now precisely diagnosed. Cell 7 reported SUCCESS but Cloud Logging proved ZERO workload markers (no `apk add`, `git clone`, `eval-arithmetic`). Backend trace pattern `attach 200 (216s) → exec 409 'Container not running' → wait 200 → stop 304 × N` confirms gitlab-runner expects a long-lived build container with per-stage `docker exec`; Cloud Run Job (one-shot) cannot host that model and stock images (`golang:1.22-alpine`, `postgres:16-alpine`) have no in-container exec endpoint. BUG-927 captured.
