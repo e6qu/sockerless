@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +47,22 @@ type Client struct {
 	Now      func() time.Time
 	Seen     *seenSet
 	pollWait time.Duration
+
+	// runSeen tracks runIDs whose every job has been Mark()-ed or is no
+	// longer queued — re-fetching their jobs costs API quota but yields
+	// no new work. Entries expire on the same TTL as the per-job seen-set.
+	runSeen *seenSet
+
+	// rlMu/rl* track the latest GitHub rate-limit headers. PollOnce reads
+	// these before issuing new calls; if remaining drops below 5% of the
+	// limit, we back off until reset to avoid blowing the bucket. Updated
+	// on every successful HTTP response by get(). Per
+	// `feedback_strict_rate_limit.md`: honor upstream hints, don't burn
+	// the bucket on speculative polls.
+	rlMu        sync.Mutex
+	rlRemaining int
+	rlReset     time.Time
+	rlLimit     int
 }
 
 // New builds a Client. `repo` is required ("owner/repo"); `token` is
@@ -55,13 +72,19 @@ func New(httpc *http.Client, token, repo string) *Client {
 		httpc = http.DefaultClient
 	}
 	return &Client{
-		HTTP:     httpc,
-		Token:    token,
-		APIBase:  "https://api.github.com",
-		Repo:     repo,
-		Now:      time.Now,
-		Seen:     newSeenSet(5 * time.Minute),
-		pollWait: 15 * time.Second,
+		HTTP:    httpc,
+		Token:   token,
+		APIBase: "https://api.github.com",
+		Repo:    repo,
+		Now:     time.Now,
+		Seen:    newSeenSet(5 * time.Minute),
+		runSeen: newSeenSet(5 * time.Minute),
+		// Default 60s. 15s is too aggressive when many queued runs exist
+		// (each poll costs 1+N GitHub calls; 4 polls/min × 30 runs ≈
+		// 7440 calls/h, exceeds GitHub's 5000/h). PollOnce's proactive
+		// back-off catches the depletion case; this just paces nominal
+		// load.
+		pollWait: 60 * time.Second,
 	}
 }
 
@@ -69,21 +92,40 @@ func New(httpc *http.Client, token, repo string) *Client {
 // not already in the seen-set. Filling the seen-set is the caller's
 // responsibility (call Mark(jobID) after a successful spawn) so a
 // failed spawn lets the next poll retry.
+//
+// Returns a RateLimitError immediately (no API call) when the cached
+// X-RateLimit-Remaining indicates the bucket is depleted — the caller
+// (dispatch loop) sleeps the wait and retries. Skips per-run job
+// fetches for runs already in runSeen (TTL-bounded) to avoid burning
+// quota on dormant queued runs that no dispatcher serves.
 func (c *Client) PollOnce(ctx context.Context) ([]Job, error) {
+	if wait, ok := c.shouldBackOff(); ok {
+		return nil, fmt.Errorf("poller proactive back-off: %w", &scopes.RateLimitError{
+			Status: 429, Body: "client-side: rate-limit headers near depletion",
+			Wait:      wait,
+			Remaining: fmt.Sprintf("%d", c.rlRemaining),
+			Reset:     fmt.Sprintf("%d", c.rlReset.Unix()),
+		})
+	}
 	runs, err := c.listQueuedRuns(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var queuedJobs []Job
 	for _, run := range runs {
+		if c.runSeen.Has(run.ID) {
+			continue
+		}
 		jobs, err := c.listRunJobs(ctx, run.ID)
 		if err != nil {
 			return nil, fmt.Errorf("list jobs for run %d: %w", run.ID, err)
 		}
+		anyQueued := false
 		for _, j := range jobs {
 			if j.Status != "queued" {
 				continue
 			}
+			anyQueued = true
 			if c.Seen.Has(j.ID) {
 				continue
 			}
@@ -97,8 +139,41 @@ func (c *Client) PollOnce(ctx context.Context) ([]Job, error) {
 				QueuedAt: c.Now(),
 			})
 		}
+		// If the run has zero queued jobs (all done or in-flight) OR
+		// every queued job is in the seen-set, mark the run itself so
+		// subsequent polls skip the listRunJobs call until TTL expiry.
+		// New jobs added to the run within TTL are missed; that's an
+		// accepted trade for not blowing the API quota on dormant runs
+		// (e.g., hello-ecs jobs queued without an ECS dispatcher).
+		if !anyQueued {
+			c.runSeen.Add(run.ID, c.Now())
+		}
 	}
 	return queuedJobs, nil
+}
+
+// shouldBackOff returns (wait, true) when the cached rate-limit headers
+// suggest the next API call would exhaust the bucket. Threshold: skip
+// polls when remaining < max(50, 5% of limit). Wait is reset-time + the
+// standard +10% +1s buffer.
+func (c *Client) shouldBackOff() (time.Duration, bool) {
+	c.rlMu.Lock()
+	defer c.rlMu.Unlock()
+	if c.rlLimit <= 0 || c.rlReset.IsZero() {
+		return 0, false
+	}
+	threshold := c.rlLimit / 20
+	if threshold < 50 {
+		threshold = 50
+	}
+	if c.rlRemaining > threshold {
+		return 0, false
+	}
+	until := time.Until(c.rlReset)
+	if until <= 0 {
+		return 0, false
+	}
+	return time.Duration(float64(until)*1.10) + time.Second, true
 }
 
 // Mark records `jobID` so subsequent polls skip it for the seen-set's
@@ -158,6 +233,7 @@ func (c *Client) get(ctx context.Context, url string) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	c.absorbRateHeaders(resp.Header)
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		// Surface a typed RateLimitError when the response carries rate
@@ -239,4 +315,27 @@ func (s *seenSet) Has(id int64) bool {
 	}
 	_, ok := s.m[id]
 	return ok
+}
+
+// absorbRateHeaders updates the cached rate-limit state from the latest
+// HTTP response headers. Called from get() on every request (success or
+// failure) so PollOnce's pre-flight back-off has fresh data.
+func (c *Client) absorbRateHeaders(h http.Header) {
+	c.rlMu.Lock()
+	defer c.rlMu.Unlock()
+	if v := h.Get("X-RateLimit-Limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.rlLimit = n
+		}
+	}
+	if v := h.Get("X-RateLimit-Remaining"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.rlRemaining = n
+		}
+	}
+	if v := h.Get("X-RateLimit-Reset"); v != "" {
+		if epoch, err := strconv.ParseInt(v, 10, 64); err == nil && epoch > 0 {
+			c.rlReset = time.Unix(epoch, 0)
+		}
+	}
 }
