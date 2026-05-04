@@ -98,7 +98,10 @@ func (s *Server) attachVolumesToFunctionService(ctx context.Context, fn *functio
 		svc.Template.Volumes = append(svc.Template.Volumes, &runpb.Volume{
 			Name: name,
 			VolumeType: &runpb.Volume_Gcs{
-				Gcs: &runpb.GCSVolumeSource{Bucket: bucket},
+				Gcs: &runpb.GCSVolumeSource{
+					Bucket:       bucket,
+					MountOptions: gcpcommon.RunnerWorkspaceMountOptions(),
+				},
 			},
 		})
 	}

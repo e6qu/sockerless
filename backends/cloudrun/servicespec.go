@@ -9,6 +9,7 @@ import (
 	runpb "cloud.google.com/go/run/apiv2/runpb"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
+	gcpcommon "github.com/sockerless/gcp-common"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
@@ -49,7 +50,10 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 			volumes = append(volumes, &runpb.Volume{
 				Name: mp.Name,
 				VolumeType: &runpb.Volume_Gcs{
-					Gcs: &runpb.GCSVolumeSource{Bucket: bucket},
+					Gcs: &runpb.GCSVolumeSource{
+						Bucket:       bucket,
+						MountOptions: gcpcommon.RunnerWorkspaceMountOptions(),
+					},
 				},
 			})
 			volSeen[mp.Name] = struct{}{}
