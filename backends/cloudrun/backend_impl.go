@@ -329,10 +329,12 @@ func (s *Server) ContainerStart(ref string) error {
 	// Explicit pod (PodCreate API) deferred start.
 	shouldDefer, podContainers := s.PodDeferredStart(id)
 	if shouldDefer {
+		s.Logger.Info().Str("container", id).Msg("ContainerStart: PodDeferredStart=true → returning nil (silent defer)")
 		return nil
 	}
 
 	if len(podContainers) > 1 {
+		s.Logger.Info().Str("container", id).Int("members", len(podContainers)).Bool("useService", s.useServicePath(&c)).Msg("ContainerStart: multi-container pod path")
 		// Multi-container pod: build combined resource and run
 		if s.useServicePath(&c) {
 			return s.startMultiContainerServiceTyped(id, podContainers, exitCh)
@@ -349,27 +351,33 @@ func (s *Server) ContainerStart(ref string) error {
 	//
 	// Otherwise (stock images, no overlay, no exposed ports) fall back
 	// to Cloud Run Job — one-shot, container exits when cmd exits.
-	if s.useServicePath(&c) {
+	useSvc := s.useServicePath(&c)
+	s.Logger.Info().Str("container", id).Bool("useServicePath", useSvc).Msg("ContainerStart: single-container path")
+	if useSvc {
 		return s.startSingleContainerService(id, c, crState, exitCh)
 	}
 
 	// Clean up any existing Cloud Run Job from a previous start
 	if crState.JobName != "" {
+		s.Logger.Info().Str("container", id).Str("job", crState.JobName).Msg("ContainerStart: Job path - deleting prior job")
 		s.deleteJob(crState.JobName)
 		s.Registry.MarkCleanedUp(crState.JobName)
 	}
 
 	// Build Cloud Run Job spec
 	jobName := buildJobName(id)
+	s.Logger.Info().Str("container", id).Str("job", jobName).Msg("ContainerStart: Job path - building job spec")
 	jobSpec, err := s.buildJobSpec(s.ctx(), []containerInput{
 		{ID: id, Container: &c, IsMain: true},
 	})
 	if err != nil {
+		s.Logger.Error().Err(err).Str("container", id).Msg("ContainerStart: Job path - buildJobSpec failed")
 		s.Store.WaitChs.Delete(id)
 		return err
 	}
 
 	// Create the Cloud Run Job
+	s.Logger.Info().Str("container", id).Str("job", jobName).Msg("ContainerStart: Job path - calling Run.Jobs.CreateJob")
 	createOp, err := s.gcp.Jobs.CreateJob(s.ctx(), &runpb.CreateJobRequest{
 		Parent: s.buildJobParent(),
 		JobId:  jobName,
