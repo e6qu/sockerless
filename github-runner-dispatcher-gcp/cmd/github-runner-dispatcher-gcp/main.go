@@ -106,8 +106,30 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	if err := scopes.Verify(ctx, http.DefaultClient, *token); err != nil {
-		return err
+	// Token verification: retry-with-backoff on 403 instead of exiting.
+	// A 403 from GitHub on /user typically means GitHub's secondary
+	// rate-limit / abuse protection is throttling the dispatcher's
+	// egress IP — exiting and crashlooping makes it WORSE because each
+	// container restart re-hits /user. Sleep through the abuse window
+	// (5 min increasing to 30 min cap) until /user returns 200.
+	verifyBackoff := 30 * time.Second
+	for {
+		if err := scopes.Verify(ctx, http.DefaultClient, *token); err != nil {
+			log.Printf("scope verify failed (sleeping %s before retry): %v", verifyBackoff, err)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(verifyBackoff):
+			}
+			if verifyBackoff < 30*time.Minute {
+				verifyBackoff *= 2
+				if verifyBackoff > 30*time.Minute {
+					verifyBackoff = 30 * time.Minute
+				}
+			}
+			continue
+		}
+		break
 	}
 	log.Printf("dispatcher-gcp ready: repo=%s labels=%d once=%v cleanup-only=%v",
 		*repo, len(cfg.Labels), *once, *cleanupOnly)
