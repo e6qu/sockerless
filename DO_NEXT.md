@@ -2,7 +2,7 @@
 
 Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md); bug log in [BUGS.md](BUGS.md); architecture in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
 
-## Resume pointer (2026-05-05 v27 — quota sim + pool-warming code shipped; BUG-950 blocks claim match)
+## Resume pointer (2026-05-05 v29 — BUG-947/950 closed; BUG-948/951 fixes shipped; cell 8 deployment quota-stalled)
 
 ### What just landed (commits on `phase-118-faas-pods`)
 
@@ -19,9 +19,31 @@ Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.
 
 | Commit | What |
 |---|---|
-| `348e89d` | feat(simulators/gcp): regional CPU quota simulation — sliding-window CPU-min budget, wired into CreateService/UpdateService/CreateFunction; reproduces BUG-942/948 deterministically. SDK tests + unit tests cover the path. |
-| `e8d91c0` | feat(BUG-948): gcf pool-warming via SOCKERLESS_GCF_PREWARM_OVERLAYS — at startup, pre-deploy N free Functions tagged with overlay content-hash. **Code shipped + deployed (gitlab-runner-gcf rev 00029-4c9), but BUG-950 blocks claim match.** |
-| `a23539b` | docs(BUG-949): file pre-existing simulators/gcp arithmetic-test host/Linux mismatch on macOS hosts |
+| `348e89d` | feat(simulators/gcp): regional CPU quota simulation — sliding-window CPU-min budget; reproduces BUG-942/948 deterministically; SDK tests via real Cloud Run / Cloud Functions REST clients. |
+| `e8d91c0` | feat(BUG-948): gcf pool-warming via SOCKERLESS_GCF_PREWARM_OVERLAYS — pre-deploy N free Functions per overlay content-hash. |
+| `a23539b` | docs(BUG-949): pre-existing simulators/gcp arithmetic-test host/Linux mismatch on macOS hosts. |
+| `7eed924` | fix(BUG-950): drop UserEntrypoint/Cmd/Workdir from OverlayContentTag — pool entries reusable across container types. |
+| `dc28676` | fix(BUG-950): apply ResolveGCPImageURI to prewarm refs so prewarm content-hash matches the AR-resolved live workload hash. |
+| `cb4eb6d` | fix(BUG-951): pass user entrypoint+cmd+workdir+env via invoke exec envelope (Path B) instead of UpdateService env-injection — pool entries fully CR-immutable. |
+| `2aaec0d` | deploy(BUG-951): bump gcf digest to ab8891bb. **Stalled — see "Quota stall" below.** |
+
+### Quota stall (cell 8 v3 blocked)
+
+After today's iteration count (cell 7 v51 + 4 cell-8 deploy attempts + 6 prewarm Functions across 3 overlays + 3 cell-8 retry pool claims), the regional `CpuAllocPerProjectRegion` quota is saturated. NEW revisions of `gitlab-runner-gcf` fail the startup probe with "container failed to start and listen on port 3376" even when re-deploying the OLD known-working digest (rev 00033 with sha256:27a3819b confirmed the failure is environmental, not BUG-951).
+
+Cloud Run keeps `gitlab-runner-gcf-00031-q64` serving traffic (existing instances pinned), so the service isn't dead — it just can't roll forward.
+
+**To unblock**: either (a) wait for the per-minute window to refresh — empirically tens of minutes, or (b) free baseline vCPU by deleting orphan Functions:
+
+```sh
+# Orphans worth reclaiming (verify state before delete):
+#   skls-gcf-19eef3119854a1bc-9e2e52  (cell 8 v1 leftover, allocated to dead container)
+#   skls-gcf-5d99d8f755b8da06-pw{00,01,02}  (BUG-950 pre-fix prewarm — wrong content-hash)
+#   skls-gcf-618d86503bb79096-pw{00,01,02}  (BUG-951 pre-fix; allocated by failed cell 8 v2)
+gcloud functions delete <name> --project=sockerless-live-46x3zg4imo --region=us-central1 --quiet
+```
+
+Each Function deleted frees ~1 vCPU baseline. Once the quota loosens, redeploying `gitlab-runner-gcf.yaml` (currently pinned at sha256:ab8891bb) should bring up rev 00034+ with the BUG-951 envelope path active.
 
 ### Next concrete steps (in order)
 
@@ -132,4 +154,4 @@ Per user directives:
 
 ### Single-line summary
 
-> Simulator quota sim + gcf pool-warming code shipped (commits `348e89d`+`e8d91c0`). BUG-950 surfaced: prewarm contentTag ≠ live workload contentTag because `OverlayContentTag` hashes UserEntrypoint/Cmd/Workdir. Next: drop those from contentTag + pass via runtime env on UpdateService; cell 8 v3 retest. Then cells 5+6 GH dispatcher refactor.
+> Cell 7 GREEN. BUG-947/950 closed; BUG-948/951 fixes shipped (commits `348e89d`/`e8d91c0`/`7eed924`/`dc28676`/`cb4eb6d`/`2aaec0d`). Simulator quota faithful (BUG-942/948 reproducible deterministically). Cell 8 redeploy stalled on Cloud Run regional CPU quota — wait for quota window or delete orphan Functions to free baseline vCPU. Then cell 8 v3 against the BUG-951 image, then cells 5+6 GH dispatcher refactor.

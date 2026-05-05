@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**Date: 2026-05-05 v28 — Cell 7 GREEN; BUG-950 fix shipped (drop entrypoint/cmd from contentTag + ResolveGCPImageURI in prewarm); cell 8 v2 retest in flight against rev 00031-q64 with prewarmed pool**
+**Date: 2026-05-05 v29 — Cell 7 GREEN; BUG-947/950 closed; BUG-948/951 fixes shipped in code. Cell 8 deployment stalled — Cloud Run regional CPU quota saturated by today's iteration count (cell 7 + 4 cell-8 attempts + multiple gcf rev rolls + 6 prewarm Functions). NEW revisions of gitlab-runner-gcf can't get past the startup probe even with the OLD known-working digest. Wait for the quota window to refresh OR free baseline vCPU by deleting orphan Functions before retrying.**
 
 ## Cell scoreboard
 
