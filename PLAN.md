@@ -604,6 +604,27 @@ The only documented mapping is the post-create UpdateService image-swap pattern 
 
 **Phase 118 PR rule**: per guiding principle #11, this phase closes only when the sub-118d-gcf + sub-118d-lambda commits land on a branch (`phase-118-faas-pods`), the PR is opened against `main`, and all CI jobs pass green. User merges (workflow rule).
 
+### Phase 122j — Vanilla-runner architecture pivot + BUG-947 GCSFuse-vs-git-checkout (IN FLIGHT 2026-05-04)
+
+User reset cells 5–8 architecture: runners stay UNMODIFIED upstream images; sockerless rides as a sidecar in multi-container Cloud Run Service/Job; gitlab-runner needs no dispatcher (it polls itself); github cells use a thin dispatcher that only calls `Executions.RunJob` with per-execution env override. **Forbidden**: custom runner images that bake sockerless code; `GIT_STRATEGY=none` workarounds; LD_PRELOAD shims; git config workarounds. Required: `GIT_STRATEGY` works for `clone`/`fetch`/`none`.
+
+**GitLab side (cells 7+8)**: pre-deployed multi-container Cloud Run Service per cell. [init: registers fresh project_type runner via gitlab API → writes shared config.toml], [gitlab-runner: vanilla `gitlab/gitlab-runner:v17.5.0`], [sockerless: standalone `sockerless-backend-cloudrun:latest`, ingress on :3375]. Live as `gitlab-runner-cloudrun-00002-8l8`.
+
+**GitHub side (cells 5+6)**: pre-deployed Cloud Run Job per cell label with multi-container TaskTemplate (vanilla actions/runner + sockerless sidecar). Dispatcher's only call: `Executions.RunJob(predefined-job)` with per-execution env override. Implementation pending after gitlab cells GREEN.
+
+**BUG-947 — GCSFuse incompatible with git workspace** (filed 2026-05-04, fix in flight):
+Cell 7 v50 (pipeline 2498952453) git-fetched OK after VPC connector min-instances 2→4, then hung at `git checkout`. Diagnostic confirmed `git clone e6qu/sockerless` is 211 s on GCSFuse vs 1 s on tmpfs — the slowdown is per-file metadata round trips, not bandwidth.
+
+Architectural exploration:
+| Path | Verdict |
+|---|---|
+| A — emptyDir + single Cloud Run Service revision per gitlab-runner job | Infeasible — Cloud Run revisions immutable, can't pre-deploy unknown future containers in one revision |
+| B — Cloud Filestore (NFS) | Workable, $160/mo BASIC_HDD floor, GCP has no pay-per-use NFS analog of AWS EFS, held in reserve |
+| C — git config workarounds | Forbidden quick fix |
+| Tar-pack persist module (CHOSEN) | Bootstrap downloads single tar object per ad-hoc bind volume from GCS at startup; re-uploads after every exec under `invokeMu`. Replaces N per-file gcsfuse round trips with 1 GCS object roundtrip per stage (~2-5 s for sockerless-repo-sized data). No new infra. Bootstrap module + wiring committed (`1f06831`). |
+
+Backend volume-spec change (emit `Volume_EmptyDir{Memory}` for ad-hoc binds + inject `SOCKERLESS_PERSIST_VOLUMES` env) and image rebuild + cell retest are the next steps — see [DO_NEXT.md](DO_NEXT.md).
+
 ### Phase 122i — Dispatcher rate-limit + gcf pool quota + 3-layer BUG-944 (IN FLIGHT 2026-05-04)
 
 Goal: cells 5-8 GREEN. Outcome at end of working session: 13 commits shipped, 7 BUG roots pinned + 5 closed, no cells closed (cell 7 was GREEN at session start; lost when `.gitlab-ci.yml` swap reverted to standard lint). Architectural blockers now precisely isolated; fix verification pending image rebuild + retest.

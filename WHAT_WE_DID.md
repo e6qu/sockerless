@@ -6,6 +6,33 @@ See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for
 
 This file keeps narrative / "why we did it" context that doesn't live in BUGS.md or git log. Per-bug detail belongs in [BUGS.md](BUGS.md) — don't duplicate it here.
 
+## Phase 122j — vanilla-runner architecture pivot + BUG-947 GCSFuse-vs-git-checkout (2026-05-04)
+
+Long autonomous-loop session. User reset cells 5–8 architecture mid-session: runners stay vanilla (no sockerless-baked custom image); sockerless rides as a sidecar in multi-container Cloud Run Service/Job; gitlab-runner needs no dispatcher (it polls itself); github cells use a thin dispatcher that only calls `Executions.RunJob` with per-execution env override. Cell 7 GREEN under OLD architecture (v49, pipeline 2496721473) was acknowledged as "to be lost in the refactor" — and was lost.
+
+**NEW-architecture progression for cell 7:**
+- v5 (today PM, `d82a1cc`+revert): step-Service path (`SOCKERLESS_GCR_USE_SERVICE=1`) routed correctly; git fetch from gitlab.com timed out at 135 s. Root cause: VPC connector min-instances 2 saturated by concurrent step deploys.
+- v50 (today PM, pipeline 2498952453): connector raised 2→4; gitlab project_type runner cap purged 50→2. git fetch succeeded (2 MB pack downloaded). Then `git checkout` HUNG — sockerless backend POST exceeded 10-min HTTP exec timeout. **Diagnostic confirmed (22:42 UTC):** `git clone e6qu/sockerless` on bare Cloud Run Service: GCSFuse 211 s vs tmpfs 1 s. ~200× slowdown is per-file metadata round trips, not bandwidth.
+
+**BUG-947 filed.** Architectural exploration:
+
+| Path | Verdict |
+|---|---|
+| A — emptyDir + single Cloud Run Service revision per gitlab-runner job | **Infeasible.** Cloud Run revisions are immutable; modifying a Service spawns a new instance with fresh emptyDir. gitlab-runner adds containers dynamically across stages; can't deploy them all upfront. |
+| B — Cloud Filestore (NFS) | Workable but $160/mo BASIC_HDD floor (1 TiB minimum even empty). GCP has no pay-per-use NFS analog of AWS EFS. Held in reserve for big-repo workloads where tar-pack roundtrip would dominate. |
+| C — git config workarounds (`core.useHardlinks=false`) | Forbidden quick fix. |
+| `GIT_STRATEGY=none` workaround in cell yml | User explicit reject: must support `clone`/`fetch`/`none`. |
+| `fuse-overlayfs` | Cloud Run gen2 may lack syscall caps; per-file sync at exit still slow. |
+| LD_PRELOAD shim | Image-specific, fragile, breaks "vanilla runner" contract. |
+| Per-job Filestore provisioning on demand | 5-15 min provisioning latency would blow gitlab-runner job timeout. |
+
+**Chosen fix — tar-pack persist module** (`agent/cmd/sockerless-cloudrun-bootstrap/persist.go`, committed `1f06831`): bootstrap downloads single tar object per ad-hoc bind volume from existing per-volume GCS bucket at startup; re-uploads after every exec (under `invokeMu`, so next stage's restore sees fresh data). Replaces N per-file gcsfuse round trips with 1 GCS object roundtrip per stage (~2-5 sec for sockerless-repo-sized data). No new infra; no Filestore; binary grows ~0 MB (raw HTTP + metadata-server token, no GCS SDK dep). Operator-controlled via `SOCKERLESS_PERSIST_VOLUMES=name=path=bucket,...` env injected by the backend on the **main** container only (sidecars marked `SOCKERLESS_SIDECAR=1` skip both restore + save — they share the same kernel tmpfs in a multi-container revision). Backend volume-spec change (emit `Volume_EmptyDir{Memory}` for ad-hoc binds + the env) and image rebuild + cell retest are the next steps — see [DO_NEXT.md](DO_NEXT.md).
+
+**Architectural insight — GCSFuse incompatibility shape:**
+GCSFuse omits POSIX hard-link (`fuseops.CreateLinkOp -> "function not implemented"`), has weak cross-dir rename (best-effort, two-phase), no `flock`/`fcntl` advisory locks. git's `index-pack` uses hardlinks for object-pack publish; `git checkout` updates `.git/index` via `O_EXCL` create + atomic rename + `flock`. Errors are non-fatal at the FUSE log layer but trigger lockfile retries that never resolve. **The 200× slowdown comes from per-file metadata ops** — total bytes moved is small. Tar bundles all metadata into one GCS object → one round trip instead of N.
+
+**Connector + NAT config now stable** (do not regress): `sockerless-connector` e2-micro × 4 min instances; `sockerless-nat` static IP `34.31.88.230` MANUAL_ONLY allocation; `sockerless-vpc` no-firewall-rules (default open egress); cross-cloud-run via `Egress: ALL_TRAFFIC` + Cloud NAT.
+
 ## Phase 122i — dispatcher rate-limit + gcf pool quota + 3-layer BUG-944 (2026-05-04)
 
 Long session — 13 commits, 7 BUG roots pinned, no cells closed (cell 7 was GREEN at session start; lost when `.gitlab-ci.yml` swap reverted). Dispatcher behaviour around GitHub rate limits + GCP CPU quota is now correct. BUG-944 (cell 6 exit 126) traced through three architectural layers; fixes shipped at all three; verification pending image rebuild.
