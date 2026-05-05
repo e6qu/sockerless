@@ -692,6 +692,25 @@ func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, c
 				}
 			}
 		}
+	} else if mainContainer.Config.OpenStdin {
+		// Runner-pattern container (OpenStdin=true) without a captured
+		// stdin: this is a long-lived build container that gitlab-runner
+		// will docker-exec into for each stage's script. The bootstrap
+		// is already up as the HTTP server holding the Service revision
+		// alive. DON'T POST anything — we want the container to stay
+		// "running" indefinitely, NOT exited. gitlab-runner v17's docker
+		// executor expects the build container to persist across stages
+		// so it can issue ContainerExec calls. Posting the user CMD here
+		// (gitlab-runner-build / dumb-init) would exit 0 with no work,
+		// close WaitChs, and make sockerless report the container as
+		// exited — gitlab-runner then waits silently for a container
+		// it thinks is dead. See BUG-955.
+		s.Logger.Info().Str("main", mainID).Msg("invokePodServiceMain: OpenStdin runner-pattern — skipping default-invoke; container stays alive for docker-exec")
+		// invokePodServiceMain returns without closing WaitChs or
+		// PutInvocationResult. ContainerRemove (via gitlab-runner's
+		// cleanup) will eventually delete the Service. Until then the
+		// build container is "running" from sockerless's perspective.
+		return
 	} else {
 		// Default-invoke path: POST with user's entrypoint+cmd. The
 		// bootstrap will exec it as a subprocess. Used for `docker run`
@@ -699,7 +718,7 @@ func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, c
 		argv := append([]string{}, mainContainer.Config.Entrypoint...)
 		argv = append(argv, mainContainer.Config.Cmd...)
 		envSlice := append([]string{}, mainContainer.Config.Env...)
-		s.Logger.Info().Str("main", mainID).Str("url", url).Strs("argv", argv).Msg("invokePodServiceMain: default-invoke (no captured stdin) — posting user entrypoint+cmd")
+		s.Logger.Info().Str("main", mainID).Str("url", url).Strs("argv", argv).Msg("invokePodServiceMain: default-invoke (no captured stdin, not OpenStdin) — posting user entrypoint+cmd")
 		if resp, err := invokeFunction(ctx, url, argv, mainContainer.Config.WorkingDir, envSlice); err != nil {
 			s.Logger.Error().Err(err).Str("main", mainID).Msg("pod service default-invoke failed")
 			inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
