@@ -2,46 +2,39 @@
 
 Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md); bug log in [BUGS.md](BUGS.md); architecture in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
 
-## Resume pointer (2026-05-05 v24 — BUG-947 backend volume_emptydir landed; image rebuild pending)
+## Resume pointer (2026-05-05 v25 — Cell 7 GREEN, cell 8 next)
 
 ### What just landed (commits on `phase-118-faas-pods`)
 
 | Commit | What |
 |---|---|
-| `153f95c` | docs: BUG-947 filed (cell 7 v50 hung at git checkout under GCSFuse) |
-| `bb420ca` | docs: corrected analysis — Cloud Run revision immutability rules out Path A (emptyDir + per-job Service) |
-| `4d7e5d8` | docs: diagnostic — git clone on GCSFuse 211 s vs tmpfs 1 s (200× slower) |
-| `1f06831` | feat: persist module added to `agent/cmd/sockerless-cloudrun-bootstrap/` and wired into `main.go` — tar-pack approach |
-| `b381612` | docs: state save — Phase 122j BUG-947 tar-pack approach in flight; persist module committed, backend + redeploy pending |
-| `f5e52f1` | **feat: backend Volume_EmptyDir + SOCKERLESS_PERSIST_VOLUMES env injection** — `backends/cloudrun/{jobspec,servicespec,volumes}.go` + `backends/cloudrun-functions/volumes.go`. Ad-hoc binds → tmpfs; SharedVolumes keep raw GCSFuse. |
-| `29308e1` | **refactor: bootstrap status codes** — 5xx removed from cloudrun + gcf bootstraps; failures signal via 200 + `X-Sockerless-Exit-Code` header (or envelope `exitCode`). Per user directive 2026-05-05 "500 reserved for unexpected panics". |
+| `1f06831` | feat: persist module in cloudrun-bootstrap (tar-pack restoreAll/saveAll) |
+| `f5e52f1` | feat: backend Volume_EmptyDir for ad-hoc binds + SOCKERLESS_PERSIST_VOLUMES env injection (cloudrun + gcf) |
+| `29308e1` | refactor: bootstrap status codes — 5xx replaced with 200 + X-Sockerless-Exit-Code header (per "500 reserved for panics" user rule) |
+| `687cdb8` | deploy: bump sockerless-backend-cloudrun digest → `sha256:f786c300...`; rev `00003-csp` Ready |
+
+**Cell 7 v51 GREEN** — pipeline 2500209956, job 14213994152, 383 s. Heavy workload verified end-to-end: git fetch + git checkout + apk add file + go build eval-arithmetic + run-with-postgres-sidecar. All 5 arithmetic results correct (11/14/21/13/6.5). BUG-947 closed.
 
 ### Next concrete steps (in order)
 
-Backend code complete; bootstrap code complete. What remains is image rebuild + redeploy + cell trigger:
+#### Cell 8 (GL × gcf) — same fix pattern, but gitlab-runner-gcf still on OLD architecture
 
-1. **Rebuild + push images:**
-   ```sh
-   cd /Users/zardoz/projects/sockerless
-   # Bootstrap binary
-   make -C agent build-cloudrun-bootstrap
-   # Backend images (FROM distroless, embed the bootstrap binary)
-   make -C backends/cloudrun docker-image                 # → sockerless-backend-cloudrun
-   make -C backends/cloudrun-functions docker-image       # → sockerless-backend-gcf
-   # Push to Artifact Registry (or `gcloud builds submit`).
-   ```
-   Capture the resulting `sha256:` digests — they'll be pinned in step 2.
+Cell 8's gcf backend already has the BUG-947 fix in code (`f5e52f1` patches both `backends/cloudrun-functions/volumes.go` and the gcf bootstrap), and the new `sockerless-backend-gcf@sha256:4c84a691...` image is already pushed to AR. What's still needed:
 
-2. **Update `terraform/cloud-run/gitlab-runner-cloudrun.yaml`:**
-   - Bump sockerless sidecar container image digest to the new build (currently pins `sha256:c9716fa8...`).
-   - No env additions in the runner sidecar — the backend injects `SOCKERLESS_PERSIST_VOLUMES` automatically on per-step service containers as of `f5e52f1`.
-   - `gcloud run services replace terraform/cloud-run/gitlab-runner-cloudrun.yaml --project=sockerless-live-46x3zg4imo --region=us-central1`
+1. **Refactor `terraform/cloud-run/gitlab-runner-gcf.yaml`** to the same vanilla 3-container shape as `gitlab-runner-cloudrun.yaml`:
+   - init: gitlab-runner-init image (register + write config.toml with DOCKER_HOST=tcp://localhost:3376)
+   - gitlab-runner: vanilla `gitlab/gitlab-runner:v17.5.0`, dependsOn init
+   - sockerless: `sockerless-backend-gcf@sha256:4c84a691021fed10f6382292df8e8c66cace73a337bc28bcd6b2a89dd6189050`, ports 3376
+   - VPC connector + ALL_TRAFFIC egress (same as cloudrun)
+2. **Deploy:** `gcloud run services replace terraform/cloud-run/gitlab-runner-gcf.yaml --project=sockerless-live-46x3zg4imo --region=us-central1`
+3. **Trigger cell 8** — push a commit to `gitlab-cell-8-test` branch's `.gitlab-ci.yml` line 1; expect arithmetic results.
 
-3. **Trigger cell 7 v51:**
-   - Branch `gitlab-cell-7-test` (push a trigger commit by editing line 1 of the branch's `.gitlab-ci.yml`).
-   - Pipeline should reach `Job succeeded` with all 5 arithmetic results (11/14/21/13/6.5).
+#### Cells 5+6 (GH × cloudrun, GH × gcf) — pivot to vanilla-runner architecture
 
-4. **Cell 8 v_? trigger** once cell 7 is green — same workflow on `gitlab-cell-8-test` branch.
+Per user directives (and STATUS.md's recorded plan):
+- **Cells 5+6 architecture:** pre-deployed Cloud Run **Job** per cell label with multi-container TaskTemplate (vanilla `actions/runner --ephemeral` + sockerless sidecar). Dispatcher's only call = `Executions.RunJob(<predefined-job>)` with per-execution env override (`RUNNER_REG_TOKEN`, `RUNNER_NAME`, `RUNNER_LABELS`, `RUNNER_REPO`).
+- The current `github-runner-dispatcher-gcp` rev `00021-fb2` is OLD architecture (custom image baking sockerless) — needs replacement.
+- Unmodified vanilla `actions/runner` image required (no sockerless code baked in).
 
 ### What was rejected (and why — don't re-propose)
 
@@ -103,4 +96,4 @@ Per user directives:
 
 ### Single-line summary
 
-> Tar-pack persistence for ad-hoc bind volumes — bootstrap (`1f06831`), backend (`f5e52f1`), and bootstrap status-code refactor (`29308e1`) all committed. Remaining: rebuild + push sockerless-backend images, bump digest in `terraform/cloud-run/gitlab-runner-cloudrun.yaml`, retrigger cell 7 v51.
+> Cell 7 GREEN under vanilla-runner architecture (BUG-947 closed via tar-pack persist). Next: refactor `gitlab-runner-gcf.yaml` to same shape, redeploy with `sockerless-backend-gcf@sha256:4c84a691...`, trigger cell 8. Then GH dispatcher refactor for cells 5+6.
