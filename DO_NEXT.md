@@ -6,7 +6,32 @@ Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.
 
 User goal: **all 4 GCP cells (5, 6, 7, 8) GREEN with full workflow + evidence + executing where they're supposed to**. Cell 7 done; cells 5/6/8 outstanding.
 
-### Cell 8 — v18 status: gitlab-runner blocked on internal TCP probe (NOT a docker call)
+### Cell 8 — v20 deployed (VpcAccess fix); pending trigger
+
+**Pipeline TBD, rev TBD, digest `sha256:72d6cd93`**: VpcAccess + ALL_TRAFFIC added to gcf's materializePodService + deployContainerService Service revisions; Config gained `VPCConnector` field; yaml gets `SOCKERLESS_GCF_VPC_CONNECTOR` env. Mirrors cloudrun's BUG-933 fix.
+
+**Quick steps to trigger v20 next session**:
+
+```bash
+git fetch origin-gitlab gitlab-cell-8-test
+git worktree add -B gitlab-cell-8-test /tmp/cell8 origin-gitlab/gitlab-cell-8-test
+cd /tmp/cell8/ui && bun install
+git -C /tmp/cell8 checkout -- ui/bun.lock
+sed -i '' "1s/.*/# Cell 8 v20 - VpcAccess fix/" /tmp/cell8/.gitlab-ci.yml
+git -C /tmp/cell8 add .gitlab-ci.yml
+git -C /tmp/cell8 commit -m "trigger: cell 8 v20"
+git -C /tmp/cell8 push origin-gitlab gitlab-cell-8-test
+```
+
+**Watch for**: if cell 8 v20 progresses past "Preparing environment" (trace bytes > 1990), the VpcAccess fix is correct. If it still hangs identically, then the root cause is a different missing field (compare gcf's materializePodService against cloudrun's startMultiContainerServiceTyped + buildServiceSpec full proto field by field).
+
+**Quota note**: today's many iterations exhausted the regional CPU quota in `sockerless-live-46x3zg4imo`. Cleanup runs are part of the build script. If quota errors persist after the cleanup, wait for the rolling-window reset (~1 hour).
+
+### Cell 8 — historical (resolved by v20 architectural finding)
+
+v9 execStartViaInvoke logs · v10 first attempt at PostExecEnvelope · v11 AR HEAD precheck cuts ~28 s/overlay · v12 PendingCreates Update through materialize · v13 Put fallback · v14 verbose decision logs · v15 ContainerStart ENTRY logs · v16 ContainerInspect/ContainerAttach/ExecCreate/ExecStart ENTRY logs · v17 stdinPipe + attachStream pattern from cloudrun · v18 ContainerAttach overlay-image gate dropped + 5 s pre-check window · v19 OpenStdin=true network-pod main keeps container alive (no default-invoke).
+
+**Old historical (v18 status: gitlab-runner blocked on internal TCP probe — NOT a docker call) — proven wrong by v20 hypothesis**:
 
 **Pipelines 2502018240 (v17) + 2502072794 (v18)** — both hang silently. v18 evidence (rev 00051, digest `sha256:5fc5c398`):
 

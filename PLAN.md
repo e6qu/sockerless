@@ -45,7 +45,7 @@ User goal: **all 4 GCP cells (5/6/7/8) GREEN with full workflow + evidence + exe
 | Sub | Cell | State | Notes |
 |---|---|---|---|
 | 122k.7 | 7 GL × cloudrun | ✅ GREEN | pipeline 2500209956 (BUG-947 closed, vanilla-runner arch). |
-| 122k.8 | 8 GL × gcf | 🟡 v15 in flight | BUG-948/950/951/952 closed; BUG-953 architectural fixes shipped (multi-container Service direct deploy + AR tag-existence precheck + PendingCreates speculative-running marker + resolvePodServiceFromCloud GetService follow-up). v15 adds ContainerStart diagnostic logs to resolve remaining "No such container" failure mode. |
+| 122k.8 | 8 GL × gcf | 🟡 v20 fix shipped, trigger pending | BUG-948/950/951/952 closed. BUG-953 closed by v15-v19 architectural stack (multi-container Service direct deploy + AR tag precheck + PendingCreates speculative-running marker + resolvePodServiceFromCloud GetService follow-up + stdinPipe + attachStream + relaxed ContainerAttach gating + 5s pre-check window + OpenStdin=true keep-alive). **BUG-955 v20 hypothesis: missing VpcAccess + ALL_TRAFFIC** — cloudrun has it (BUG-933), gcf was missing. Cloud Run rejects same-project cross-Service POSTs as external without it. Fix shipped commit e1d6b84 (gcf digest sha256:72d6cd93). Verification pending v20 trigger. |
 | 122k.6 | 6 GH × gcf | ❌ not started but ready to ship | Runner-task image at `tests/runners/github/dockerfile-gcf/` already bundles vanilla actions/runner + sockerless. Just needs rebuild + AR push + TOML config; inherits 122k.8 gcf stack. |
 | 122k.5 | 5 GH × cloudrun | ❌ not started but ready to ship | Same as cell 6 with `dockerfile-cloudrun` image. Dispatcher stays generic per user directive 2026-05-05 — sockerless+runner pairing lives in the runner image, NOT the dispatcher. |
 
