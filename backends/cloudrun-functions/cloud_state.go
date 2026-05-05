@@ -275,10 +275,24 @@ func (p *gcfCloudState) queryPodServiceContainers(ctx context.Context, seen map[
 		if svc.Labels["sockerless_managed"] != "true" {
 			continue
 		}
+		// Pod-mode resources are tagged with sockerless_pod_members
+		// annotation. ListServices may not always populate Annotations
+		// (some gRPC list responses abbreviate fields) — when our
+		// match-by-name returns a Service with empty Annotations and
+		// the labels look pod-shaped (no sockerless_overlay_hash, has
+		// sockerless_allocation), do a GetService follow-up to
+		// retrieve the full proto.
+		members := strings.Split(svc.Annotations["sockerless_pod_members"], ",")
+		if len(members) == 1 && members[0] == "" && strings.HasPrefix(svc.Name, p.server.buildPodServiceParent()) && strings.Contains(svc.Name, "/services/sockerless-svc-") {
+			if full, ferr := p.server.gcp.Services.GetService(ctx, &runpb.GetServiceRequest{Name: svc.Name}); ferr == nil && full != nil {
+				svc = full
+				members = strings.Split(svc.Annotations["sockerless_pod_members"], ",")
+			}
+		}
 		if svc.Labels["sockerless_pod"] == "" && svc.Annotations["sockerless_pod_members"] == "" {
 			continue
 		}
-		members := strings.Split(svc.Annotations["sockerless_pod_members"], ",")
+		p.server.Logger.Info().Str("service", svc.Name).Int("member_count", len(members)).Str("annotation", svc.Annotations["sockerless_pod_members"]).Msg("queryPodServiceContainers: matched pod service")
 		for _, mid := range members {
 			mid = strings.TrimSpace(mid)
 			if mid == "" || seen[mid] {

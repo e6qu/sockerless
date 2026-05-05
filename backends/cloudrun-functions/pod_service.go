@@ -220,6 +220,14 @@ func podServiceName(mainID string) string {
 	return "sockerless-svc-" + mainID[:12]
 }
 
+// buildPodServiceParent returns the Cloud Run parent path for pod-
+// mode Services. Used by cloud_state.queryPodServiceContainers when
+// it needs to detect whether a list-result Service is one of ours
+// before issuing a GetService follow-up.
+func (s *Server) buildPodServiceParent() string {
+	return fmt.Sprintf("projects/%s/locations/%s", s.config.Project, s.config.Region)
+}
+
 // userDefinedNetworkIDOrEmpty is a non-erroring variant for the
 // SOCKERLESS_HOST_ALIASES injection — empty network ID means the
 // hostAliasesForMembers helper falls back to per-container aliases.
