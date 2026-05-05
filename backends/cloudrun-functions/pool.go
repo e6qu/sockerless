@@ -222,13 +222,33 @@ func (s *Server) resolveGCFFromCloud(ctx context.Context, containerID string) (G
 	if err != nil || fn == nil {
 		return GCFState{}, false
 	}
-	full, err := s.gcp.Functions.GetFunction(ctx, &functionspb.GetFunctionRequest{Name: fn.Name})
-	if err == nil && full != nil {
+	full, getErr := s.gcp.Functions.GetFunction(ctx, &functionspb.GetFunctionRequest{Name: fn.Name})
+	if getErr != nil {
+		s.Logger.Warn().Err(getErr).Str("function", fn.Name).Msg("resolveGCFFromCloud: GetFunction failed; falling back to ListFunctions abbreviated result")
+	} else if full != nil {
 		fn = full
 	}
 	url := ""
+	svcName := ""
 	if fn.ServiceConfig != nil {
 		url = fn.ServiceConfig.Uri
+		svcName = fn.ServiceConfig.Service
+	}
+	// Last-resort fallback: derive the URL from the underlying Cloud
+	// Run Service if Cloud Functions still hasn't propagated the URI
+	// onto the Function object. Real GCP populates this synchronously
+	// on Service ACTIVE, but we've observed lag windows where Function
+	// .ServiceConfig.uri is empty even after a successful GetFunction.
+	if url == "" && svcName != "" {
+		if svc, sErr := s.gcp.Services.GetService(ctx, &runpb.GetServiceRequest{Name: svcName}); sErr == nil && svc != nil {
+			url = svc.Uri
+			s.Logger.Info().Str("function", fn.Name).Str("derived_url", url).Msg("resolveGCFFromCloud: derived URL from underlying Cloud Run Service (Function.ServiceConfig.uri was empty)")
+		} else if sErr != nil {
+			s.Logger.Warn().Err(sErr).Str("service", svcName).Msg("resolveGCFFromCloud: GetService fallback failed")
+		}
+	}
+	if url == "" {
+		s.Logger.Warn().Str("function", fn.Name).Bool("has_service_config", fn.ServiceConfig != nil).Str("service", svcName).Msg("resolveGCFFromCloud: returning empty URL — neither Function.ServiceConfig.uri nor Service.uri populated")
 	}
 	short := shortFunctionName(fn.Name)
 	return GCFState{
