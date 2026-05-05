@@ -147,6 +147,16 @@ func main() {
 // handleInvoke dispatches: if the request body parses as an
 // execEnvelope, runs envelope.argv (Path B); otherwise runs the
 // env-baked SOCKERLESS_USER_* cmd (default invoke).
+//
+// BUG-947: when SOCKERLESS_PERSIST_VOLUMES is set, the exec response
+// is buffered, saveAll runs synchronously, and a save failure replaces
+// the buffered response with an exit-code=1 response of the same shape
+// (envelope JSON or default-invoke headers). Hard-fail on the save
+// path so gitlab-runner stages fail cleanly instead of silently losing
+// /builds data that the next stage's restoreAll would surface as
+// missing files. Uses exit-code=1, never HTTP 500 — 500 is reserved
+// for unexpected panics, and the backend already maps non-zero
+// exitCode in either response shape to a Docker-style failure.
 func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	invokeMu.Lock()
 	defer invokeMu.Unlock()
@@ -154,25 +164,70 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	defer r.Body.Close()
 
-	defer func() {
-		// BUG-947: after every exec returns, re-pack persistent
-		// mountpoints to GCS so the next stage (deployed in a fresh
-		// Cloud Run revision instance) restores them at startup.
-		// Save errors are logged but don't change the response — the
-		// exec itself already completed; the next stage's restore
-		// would surface the missing data as an empty mountpoint.
-		if len(persistVols) > 0 {
-			if err := saveAll(context.Background(), persistVols); err != nil {
-				fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: persist save failed: %v\n", err)
-			}
-		}
-	}()
+	buf := newBufferedResponse()
+	env, isEnvelope := parseExecEnvelope(body)
+	if isEnvelope {
+		runExecEnvelope(buf, env)
+	} else {
+		runDefaultInvoke(buf)
+	}
 
-	if env, ok := parseExecEnvelope(body); ok {
-		runExecEnvelope(w, env)
+	if len(persistVols) > 0 {
+		if err := saveAll(context.Background(), persistVols); err != nil {
+			fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: persist save failed: %v\n", err)
+			writeSaveFailure(w, err, isEnvelope)
+			return
+		}
+	}
+	buf.flushTo(w)
+}
+
+// writeSaveFailure overwrites the buffered exec response with a
+// failure shape matching the path that ran. envelope=true → JSON
+// envelope with exitCode=1 + stderr carrying the error; envelope=false
+// → text body with X-Sockerless-Exit-Code=1 header. HTTP status stays
+// 200 in both cases so the backend's ExitCode parsing (envelope JSON
+// or X-Sockerless-Exit-Code header) is the single source of truth.
+func writeSaveFailure(w http.ResponseWriter, err error, envelope bool) {
+	msg := "sockerless-cloudrun-bootstrap: persist save: " + err.Error()
+	if envelope {
+		var res execEnvelopeResponse
+		res.SockerlessExecResult.ExitCode = 1
+		res.SockerlessExecResult.Stderr = base64.StdEncoding.EncodeToString([]byte(msg))
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Sockerless-Exit-Code", "1")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(res)
 		return
 	}
-	runDefaultInvoke(w)
+	w.Header().Set("X-Sockerless-Exit-Code", "1")
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(msg))
+}
+
+// bufferedResponse captures handler output so saveAll can run before
+// the wire response is committed. Implements http.ResponseWriter.
+type bufferedResponse struct {
+	headers http.Header
+	code    int
+	body    bytes.Buffer
+}
+
+func newBufferedResponse() *bufferedResponse {
+	return &bufferedResponse{headers: http.Header{}, code: http.StatusOK}
+}
+
+func (b *bufferedResponse) Header() http.Header         { return b.headers }
+func (b *bufferedResponse) WriteHeader(code int)        { b.code = code }
+func (b *bufferedResponse) Write(p []byte) (int, error) { return b.body.Write(p) }
+
+func (b *bufferedResponse) flushTo(w http.ResponseWriter) {
+	for k, v := range b.headers {
+		w.Header()[k] = v
+	}
+	w.WriteHeader(b.code)
+	_, _ = w.Write(b.body.Bytes())
 }
 
 // parseExecEnvelope returns the parsed envelope when the body is a
@@ -247,8 +302,17 @@ func runExecEnvelope(w http.ResponseWriter, env execEnvelopeExec) {
 func runDefaultInvoke(w http.ResponseWriter) {
 	argv := append(parseUserArgv(envUserEntrypoint), parseUserArgv(envUserCmd)...)
 	if len(argv) == 0 {
+		// Operator misconfiguration (no SOCKERLESS_USER_ENTRYPOINT and no
+		// SOCKERLESS_USER_CMD baked in). Report as exitCode=1 + 200 so the
+		// cloudrun backend's X-Sockerless-Exit-Code reader maps it to a
+		// Docker-style failure. HTTP 5xx is reserved for unexpected
+		// panics — the bootstrap's exit-code transport is the designated
+		// failure-signaling path.
 		fmt.Fprintln(os.Stderr, "sockerless-cloudrun-bootstrap: no user entrypoint/cmd configured")
-		http.Error(w, "no entrypoint configured", http.StatusInternalServerError)
+		w.Header().Set("X-Sockerless-Exit-Code", "1")
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("sockerless-cloudrun-bootstrap: no entrypoint configured\n"))
 		return
 	}
 
@@ -261,24 +325,27 @@ func runDefaultInvoke(w http.ResponseWriter) {
 		cmd.Dir = wd
 	}
 
+	exitCode := 0
 	if err := cmd.Run(); err != nil {
-		exitCode := 1
+		exitCode = 1
 		if ee, ok := err.(*exec.ExitError); ok {
 			exitCode = ee.ExitCode()
 		}
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: subprocess argv=%v exit=%d err=%v\n", argv, exitCode, err)
-		w.Header().Set("X-Sockerless-Exit-Code", strconv.Itoa(exitCode))
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write(stdout.Bytes())
-		_, _ = w.Write(stderr.Bytes())
-		return
+	} else {
+		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: subprocess argv=%v exit=0 stdout=%dB\n", argv, stdout.Len())
 	}
-	fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: subprocess argv=%v exit=0 stdout=%dB\n", argv, stdout.Len())
 
-	w.Header().Set("X-Sockerless-Exit-Code", "0")
+	// Always 200; failure is signalled via the X-Sockerless-Exit-Code
+	// header (the cloudrun backend reads the header preferentially and
+	// only falls back to status mapping when the header is missing).
+	w.Header().Set("X-Sockerless-Exit-Code", strconv.Itoa(exitCode))
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(stdout.Bytes())
+	if exitCode != 0 {
+		_, _ = w.Write(stderr.Bytes())
+	}
 }
 
 // parseUserArgv decodes a base64(JSON) env-var into a []string. Empty

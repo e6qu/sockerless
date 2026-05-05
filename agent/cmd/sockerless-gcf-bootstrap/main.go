@@ -188,7 +188,7 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	if pod, ok := parsePodManifest(); ok {
 		main, found := pickPodMain(pod)
 		if !found {
-			http.Error(w, "no main container in pod manifest", http.StatusInternalServerError)
+			writeBootstrapFailure(w, "no main container in pod manifest")
 			return
 		}
 		runPodMain(w, main)
@@ -198,7 +198,7 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	argv := append(parseUserArgv(envUserEntrypoint), parseUserArgv(envUserCmd)...)
 	if len(argv) == 0 {
 		fmt.Fprintln(os.Stderr, "sockerless-gcf-bootstrap: no user entrypoint/cmd configured")
-		http.Error(w, "no entrypoint configured", http.StatusInternalServerError)
+		writeBootstrapFailure(w, "no entrypoint configured")
 		return
 	}
 
@@ -215,24 +215,38 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 		cmd.Dir = wd
 	}
 
+	exitCode := 0
 	if err := cmd.Run(); err != nil {
-		exitCode := 1
+		exitCode = 1
 		if ee, ok := err.(*exec.ExitError); ok {
 			exitCode = ee.ExitCode()
 		}
 		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: subprocess argv=%v exit=%d err=%v\n", argv, exitCode, err)
-		w.Header().Set("X-Sockerless-Exit-Code", strconv.Itoa(exitCode))
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write(stdout.Bytes())
-		_, _ = w.Write(stderr.Bytes())
-		return
+	} else {
+		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: subprocess argv=%v exit=0 stdout=%dB\n", argv, stdout.Len())
 	}
-	fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: subprocess argv=%v exit=0 stdout=%dB\n", argv, stdout.Len())
 
-	w.Header().Set("X-Sockerless-Exit-Code", "0")
+	// Always 200; the cloudrun/gcf backend reads X-Sockerless-Exit-Code
+	// for failure signaling. HTTP 5xx is reserved for unexpected panics
+	// (no designated 5xx contract here — Docker's exec API maps to the
+	// header pattern we already use).
+	w.Header().Set("X-Sockerless-Exit-Code", strconv.Itoa(exitCode))
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(stdout.Bytes())
+	if exitCode != 0 {
+		_, _ = w.Write(stderr.Bytes())
+	}
+}
+
+// writeBootstrapFailure reports an operator-misconfiguration as a
+// docker-style failed exec (200 + X-Sockerless-Exit-Code=1 + body).
+// 5xx is reserved for unexpected panics.
+func writeBootstrapFailure(w http.ResponseWriter, msg string) {
+	w.Header().Set("X-Sockerless-Exit-Code", "1")
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("sockerless-gcf-bootstrap: " + msg + "\n"))
 }
 
 // parseExecEnvelope returns the parsed envelope when the body is a
@@ -442,26 +456,24 @@ func runPodMain(w http.ResponseWriter, m PodMember) {
 	cmd, err := buildPodMemberCmd(m)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: pod main %q: %v\n", m.Name, err)
-		http.Error(w, "pod main: "+err.Error(), http.StatusInternalServerError)
+		writeBootstrapFailure(w, fmt.Sprintf("pod main %q: %v", m.Name, err))
 		return
 	}
 	prefix := fmt.Sprintf("[%s] ", m.Name)
 	var stdout bytes.Buffer
 	cmd.Stdout = io.MultiWriter(&stdout, newPrefixWriter(os.Stdout, prefix))
 	cmd.Stderr = newPrefixWriter(os.Stderr, prefix)
+	exitCode := 0
 	if err := cmd.Run(); err != nil {
-		exitCode := 1
+		exitCode = 1
 		if ee, ok := err.(*exec.ExitError); ok {
 			exitCode = ee.ExitCode()
 		}
 		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: pod main %q exit=%d err=%v\n", m.Name, exitCode, err)
-		w.Header().Set("X-Sockerless-Exit-Code", strconv.Itoa(exitCode))
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write(stdout.Bytes())
-		return
+	} else {
+		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: pod main %q exit=0 stdout=%dB\n", m.Name, stdout.Len())
 	}
-	fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: pod main %q exit=0 stdout=%dB\n", m.Name, stdout.Len())
-	w.Header().Set("X-Sockerless-Exit-Code", "0")
+	w.Header().Set("X-Sockerless-Exit-Code", strconv.Itoa(exitCode))
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(stdout.Bytes())
