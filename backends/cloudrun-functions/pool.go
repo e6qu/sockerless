@@ -10,6 +10,7 @@ import (
 	functionspb "cloud.google.com/go/functions/apiv2/functionspb"
 	runpb "cloud.google.com/go/run/apiv2/runpb"
 	core "github.com/sockerless/backend-core"
+	gcpcommon "github.com/sockerless/gcp-common"
 	"google.golang.org/api/iterator"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
@@ -345,12 +346,20 @@ func (s *Server) prewarmAllOverlays(ctx context.Context) {
 // image, counts existing free Functions for the content-hash, and
 // deploys (size - existing) new ones. Idempotent: subsequent boots
 // only top up the pool to the configured size.
+//
+// The image ref is run through ResolveGCPImageURI so the BaseImageRef
+// that feeds into OverlayContentTag matches what live ContainerCreate
+// produces (which also resolves Docker Hub / external refs to AR
+// proxy URIs in backend_impl.go::ContainerCreate). Without this,
+// prewarm content-hashes would never match the live workload's
+// content-hash and the warm pool would be invisible.
 func (s *Server) prewarmOverlay(ctx context.Context, entry PrewarmOverlay) error {
 	if entry.Size <= 0 || entry.Image == "" {
 		return nil
 	}
+	resolved := gcpcommon.ResolveGCPImageURI(entry.Image, s.config.Project, s.config.Region)
 	spec := OverlayImageSpec{
-		BaseImageRef:        entry.Image,
+		BaseImageRef:        resolved,
 		BootstrapBinaryPath: s.config.BootstrapBinaryPath,
 	}
 	contentTag := OverlayContentTag(spec)
