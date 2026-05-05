@@ -411,14 +411,15 @@ func (s *Server) deployFunction(ctx context.Context, id string, container api.Co
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		// BUG-950: pool entries share an overlay image but different
-		// containers want different entrypoint/cmd/workdir. Update the
-		// underlying CR Service env vars BEFORE the volume attach so the
-		// next invocation reads the right user command. Idempotent
-		// helper — skips the rollout if env is already current.
-		if err := s.updateFunctionUserEnv(ctx, claimed, envVars); err != nil {
-			return fmt.Errorf("update env on reused function %q: %w", claimed, err)
-		}
+		// BUG-951: do NOT call UpdateService to inject SOCKERLESS_USER_*
+		// env vars on pool claim — that triggers a fresh CR revision
+		// which debits the regional CPU quota and re-introduces the
+		// failure mode pool-warming was supposed to avoid. The user's
+		// entrypoint+cmd+workdir + per-container env flow through the
+		// invoke request body via the exec envelope (containers.go::
+		// invokeFunction). The bootstrap's parseExecEnvelope path runs
+		// argv from the body, so pool entries are immutable from the
+		// CR perspective and any user command works.
 		// Pool hit — function already exists with our overlay. Still
 		// must attach the caller's volume binds: pool entries are keyed
 		// by overlay-content-hash (image), not by volume requirements,
@@ -707,13 +708,23 @@ func (s *Server) ContainerStart(ref string) error {
 	// Invoke function via HTTP trigger asynchronously and capture the
 	// outcome in Store.InvocationResults so CloudState reflects the
 	// container as exited with a real exit code.
+	//
+	// BUG-951: pass user entrypoint+cmd as the exec envelope's argv so
+	// pool-claimed Functions don't need a CR Service env update on
+	// each claim. Bootstrap's parseExecEnvelope reads argv from the
+	// request body and runs Path B; when argv is empty the bootstrap
+	// falls back to the legacy default-invoke path that reads
+	// SOCKERLESS_USER_* from env (still works for fresh deploys).
+	argv := append([]string{}, c.Config.Entrypoint...)
+	argv = append(argv, c.Config.Cmd...)
+	envSlice := append([]string{}, c.Config.Env...)
 	go func() {
 		inv := core.InvocationResult{}
 		if gcfState.FunctionURL == "" {
 			s.Logger.Error().Str("function", gcfState.FunctionName).Msg("no function URL available for invocation")
 			inv.ExitCode = 1
 			inv.Error = "no function URL available"
-		} else if resp, err := invokeFunction(s.ctx(), gcfState.FunctionURL); err != nil {
+		} else if resp, err := invokeFunction(s.ctx(), gcfState.FunctionURL, argv, c.Config.WorkingDir, envSlice); err != nil {
 			s.Logger.Error().Err(err).Str("function", gcfState.FunctionName).Msg("function invocation failed")
 			inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
 			inv.Error = err.Error()

@@ -244,7 +244,7 @@ func (s *Server) invokePodFunction(ctx context.Context, result *functionspb.Func
 		s.Logger.Error().Msg("pod invoke: no function URL")
 		inv.ExitCode = 1
 		inv.Error = "no function URL available"
-	} else if resp, err := invokeFunction(ctx, url); err != nil {
+	} else if resp, err := invokeFunction(ctx, url, nil, "", nil); err != nil {
 		s.Logger.Error().Err(err).Msg("pod function invocation failed")
 		inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
 		inv.Error = err.Error()

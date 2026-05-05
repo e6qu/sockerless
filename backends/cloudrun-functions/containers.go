@@ -1,7 +1,9 @@
 package gcf
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -10,23 +12,36 @@ import (
 	"google.golang.org/api/idtoken"
 )
 
+// execEnvelope mirrors the bootstrap's expected request body for the
+// "Path B" exec route. Sending entrypoint/cmd/workdir/env in the
+// request body lets pool-claimed Functions execute the right user
+// command WITHOUT requiring an UpdateService rollout (BUG-951): the
+// Cloud Run regional CPU quota only debits on revision creation, not
+// on invoke, so envelope-driven dispatch keeps the warm pool warm.
+type execEnvelope struct {
+	Sockerless struct {
+		Exec struct {
+			Argv    []string `json:"argv"`
+			Workdir string   `json:"workdir,omitempty"`
+			Env     []string `json:"env,omitempty"`
+		} `json:"exec"`
+	} `json:"sockerless"`
+}
+
 // invokeFunction does an authenticated HTTPS POST to the function's
 // underlying Cloud Run Service URL. Cloud Run requires a Google ID
 // token in the Authorization header (audience = service URL). idtoken
 // signs the request automatically using ADC. Service-account ADC works;
 // user-account ADC (`gcloud auth application-default login`) does NOT —
-// the Google idtoken library refuses to sign with user creds. Operators
-// must use one of:
-//   - service-account JSON key via GOOGLE_APPLICATION_CREDENTIALS
-//   - workload-identity (when sockerless itself runs on GCP)
-//   - service-account impersonation via gcloud auth login
-//     --impersonate-service-account=<sa@project.iam.gserviceaccount.com>
+// the Google idtoken library refuses to sign with user creds.
 //
-// We deliberately do NOT fall back to unauthenticated invoke or grant
-// allUsers → run.invoker as a workaround: a public function URL that
-// any internet caller could trigger violates the security posture
-// sockerless inherits from the operator's project. Failures are loud.
-func invokeFunction(ctx context.Context, audienceURL string) (*http.Response, error) {
+// When `argv` is non-empty, the request body carries an exec envelope
+// so the bootstrap runs Path B (envelope.argv) instead of Path A
+// (env-baked SOCKERLESS_USER_*). This is the BUG-951 fix: pool-claimed
+// Functions don't need their env updated on each claim — the user's
+// entrypoint+cmd+workdir flow through the request body and an immutable
+// pool entry can serve any user command.
+func invokeFunction(ctx context.Context, audienceURL string, argv []string, workdir string, env []string) (*http.Response, error) {
 	client, err := idtoken.NewClient(ctx, audienceURL)
 	if err != nil {
 		if isUnsupportedCredsErr(err) {
@@ -38,7 +53,29 @@ func invokeFunction(ctx context.Context, audienceURL string) (*http.Response, er
 		return nil, fmt.Errorf("idtoken.NewClient(%s): %w", audienceURL, err)
 	}
 	client.Timeout = 10 * time.Minute
-	req, err := http.NewRequestWithContext(ctx, "POST", audienceURL, nil)
+
+	var body []byte
+	if len(argv) > 0 {
+		var env_ execEnvelope
+		env_.Sockerless.Exec.Argv = argv
+		env_.Sockerless.Exec.Workdir = workdir
+		env_.Sockerless.Exec.Env = env
+		body, err = json.Marshal(&env_)
+		if err != nil {
+			return nil, fmt.Errorf("marshal exec envelope: %w", err)
+		}
+	}
+
+	var reqBody *bytes.Reader
+	if body != nil {
+		reqBody = bytes.NewReader(body)
+	}
+	var req *http.Request
+	if reqBody != nil {
+		req, err = http.NewRequestWithContext(ctx, "POST", audienceURL, reqBody)
+	} else {
+		req, err = http.NewRequestWithContext(ctx, "POST", audienceURL, nil)
+	}
 	if err != nil {
 		return nil, err
 	}
