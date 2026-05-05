@@ -143,8 +143,16 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	s.Typed.Logs = core.NewCloudLogsLogsDriver(s.BaseServer, logFactory,
 		core.StreamCloudLogsOptions{CheckLogBuffers: true},
 		"gcf", "CloudLogging")
-	s.Typed.Attach = core.NewCloudLogsAttachDriver(s.BaseServer, logFactory,
-		"gcf", "CloudLogsReadOnlyAttach")
+	// Route Typed.Attach through gcf's ContainerAttach delegate so
+	// hijacked /containers/{id}/attach calls register a stdinPipe +
+	// attachStream for the gitlab-runner attach pattern (mirror of
+	// cloudrun's GREEN cell 7 architecture). Read-only attaches (no
+	// Stdin) fall through to AttachViaCloudLogs inside the delegate.
+	// BUG-955: gcf was using the read-only NewCloudLogsAttachDriver
+	// which silently dropped gitlab-runner's stdin, causing the build
+	// container's pipe never to be populated.
+	s.Typed.Attach = core.WrapLegacyContainerAttach(s.ContainerAttach,
+		"gcf", "ContainerAttach")
 
 	// Pre-warm the function pool for any operator-configured overlays
 	// (BUG-948). Each entry deploys N free Functions tagged with the
