@@ -205,6 +205,12 @@ func shortFunctionName(fullName string) string {
 // claims/releases happen across instances, and a transient cache would go
 // stale on every concurrent allocation change. Stateless invariant per
 // `feedback_stateless_invariant.md`.
+//
+// Cloud Functions Gen2's ListFunctions response returns an abbreviated
+// Function shape — ServiceConfig.Uri may be empty in list results even
+// when the function is ACTIVE with URI populated. Follow up the
+// list-by-label match with a GetFunction by exact name to retrieve the
+// full ServiceConfig including the URI used for invoke.
 func (s *Server) resolveGCFFromCloud(ctx context.Context, containerID string) (GCFState, bool) {
 	parent := fmt.Sprintf("projects/%s/locations/%s", s.config.Project, s.config.Region)
 	filter := fmt.Sprintf(`labels.sockerless_allocation:"%s"`, shortAllocLabel(containerID))
@@ -215,6 +221,10 @@ func (s *Server) resolveGCFFromCloud(ctx context.Context, containerID string) (G
 	fn, err := it.Next()
 	if err != nil || fn == nil {
 		return GCFState{}, false
+	}
+	full, err := s.gcp.Functions.GetFunction(ctx, &functionspb.GetFunctionRequest{Name: fn.Name})
+	if err == nil && full != nil {
+		fn = full
 	}
 	url := ""
 	if fn.ServiceConfig != nil {
