@@ -50,6 +50,12 @@ import (
 // signature so backend_impl.go's call sites swap cleanly.
 func (s *Server) materializePodService(mainContainerID string, containers []api.Container, exitCh chan struct{}) error {
 	ctx := s.ctx()
+	memberIDsLog := make([]string, len(containers))
+	for i, c := range containers {
+		memberIDsLog[i] = c.ID
+	}
+	s.Logger.Info().Str("main", mainContainerID).Strs("members", memberIDsLog).Msg("materializePodService: entry")
+	defer s.Logger.Info().Str("main", mainContainerID).Msg("materializePodService: exit")
 
 	pod, _ := s.Store.Pods.GetPodForContainer(mainContainerID)
 	podName := ""

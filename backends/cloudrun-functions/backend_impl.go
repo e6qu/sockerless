@@ -342,6 +342,7 @@ func (s *Server) ContainerStart(ref string) error {
 	// in-flight async deploys before they complete, then take the
 	// materialize path.
 	netDefer, netMembers := s.shouldDeferOrMaterializeNetworkPod(c)
+	s.Logger.Info().Str("container", id).Bool("openStdin", c.Config.OpenStdin).Bool("netDefer", netDefer).Int("netMembers", len(netMembers)).Msg("ContainerStart: network-pod decision")
 	if netDefer {
 		// Cancel our own in-flight deploy — a script-runner sibling will
 		// eventually arrive and trigger materializePodFunction with us as
