@@ -13,7 +13,6 @@ import (
 	runpb "cloud.google.com/go/run/apiv2/runpb"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
-	gcpcommon "github.com/sockerless/gcp-common"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
@@ -177,6 +176,7 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 	var specs []*runpb.Container
 	volSeen := make(map[string]struct{})
 	var volumes []*runpb.Volume
+	var persistEntries []string
 	for _, ci := range containers {
 		cs, mounts := s.buildContainerSpec(ci)
 		specs = append(specs, cs)
@@ -184,22 +184,18 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 			if _, done := volSeen[mp.Name]; done {
 				continue
 			}
-			bucket, err := s.bucketForVolume(ctx, mp.Name)
+			vol, persist, err := s.buildVolumeForBind(ctx, mp.Name, mp.MountPath)
 			if err != nil {
-				return nil, fmt.Errorf("provision GCS bucket for volume %q: %w", mp.Name, err)
+				return nil, err
 			}
-			volumes = append(volumes, &runpb.Volume{
-				Name: mp.Name,
-				VolumeType: &runpb.Volume_Gcs{
-					Gcs: &runpb.GCSVolumeSource{
-						Bucket:       bucket,
-						MountOptions: gcpcommon.RunnerWorkspaceMountOptions(),
-					},
-				},
-			})
+			volumes = append(volumes, vol)
+			if persist != "" {
+				persistEntries = append(persistEntries, persist)
+			}
 			volSeen[mp.Name] = struct{}{}
 		}
 	}
+	injectPersistEnv(specs, persistEntries)
 
 	taskTemplate := &runpb.TaskTemplate{
 		Containers: specs,

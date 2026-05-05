@@ -77,8 +77,12 @@ func (s *Server) attachVolumesToFunctionService(ctx context.Context, fn *functio
 	svcName := fn.ServiceConfig.Service
 
 	// Build volume + mount lists from the binds, deduping by volume name.
+	// Track which names are SharedVolume references (operator-pinned)
+	// versus ad-hoc — ad-hoc volumes use Volume_EmptyDir + tar-pack
+	// persistence (BUG-947) instead of raw GCSFuse.
 	volumesByName := map[string]string{} // volName → bucket
 	mountsByName := map[string]string{}  // volName → mountPath
+	sharedByName := map[string]bool{}    // volName → true if SharedVolume
 	for _, b := range binds {
 		parts := strings.SplitN(b, ":", 3)
 		if len(parts) < 2 {
@@ -91,6 +95,7 @@ func (s *Server) attachVolumesToFunctionService(ctx context.Context, fn *functio
 		}
 		volumesByName[volName] = bucket
 		mountsByName[volName] = mountPath
+		sharedByName[volName] = s.config.LookupSharedVolumeByName(volName) != nil
 	}
 
 	svc, err := s.gcp.Services.GetService(ctx, &runpb.GetServiceRequest{Name: svcName})
@@ -122,30 +127,29 @@ func (s *Server) attachVolumesToFunctionService(ctx context.Context, fn *functio
 
 	changed := false
 	for name, bucket := range volumesByName {
-		want := &runpb.Volume{
-			Name: name,
-			VolumeType: &runpb.Volume_Gcs{
-				Gcs: &runpb.GCSVolumeSource{
-					Bucket:       bucket,
-					MountOptions: wantOpts,
-				},
-			},
-		}
+		want := volumeForBind(name, bucket, sharedByName[name], wantOpts)
 		existing, ok := existingByName[name]
 		if !ok {
 			svc.Template.Volumes = append(svc.Template.Volumes, want)
 			changed = true
 			continue
 		}
-		// Same name — compare bucket + mount opts to detect stale config.
-		// Either GCS field present (proto union) OR the read-back-as-CSI
-		// shape (Cloud Run server normalises to CSI). For simplicity we
-		// drop+replace if anything observable about the existing entry
-		// doesn't match what we want.
+		// Same name — compare against want to detect stale config.
+		// SharedVolumes use Volume_Gcs and we compare bucket + mount opts.
+		// Ad-hoc volumes use Volume_EmptyDir{MEMORY} and only the medium
+		// matters (no per-revision data on the volume itself; data lives
+		// in GCS via the bootstrap's tar-pack persistence). For simplicity
+		// drop+replace if anything observable doesn't match.
 		matches := false
-		if g := existing.GetGcs(); g != nil {
-			gotKey := strings.Join(g.GetMountOptions(), ",")
-			if g.GetBucket() == bucket && gotKey == wantOptsKey {
+		if sharedByName[name] {
+			if g := existing.GetGcs(); g != nil {
+				gotKey := strings.Join(g.GetMountOptions(), ",")
+				if g.GetBucket() == bucket && gotKey == wantOptsKey {
+					matches = true
+				}
+			}
+		} else {
+			if e := existing.GetEmptyDir(); e != nil && e.GetMedium() == runpb.EmptyDirVolumeSource_MEMORY {
 				matches = true
 			}
 		}
@@ -176,6 +180,22 @@ func (s *Server) attachVolumesToFunctionService(ctx context.Context, fn *functio
 				changed = true
 			}
 		}
+		// Reconcile SOCKERLESS_PERSIST_VOLUMES on the main container.
+		// Required so the bootstrap's tar-pack module rehydrates ad-hoc
+		// (Volume_EmptyDir) tmpfs mountpoints from GCS at every exec.
+		// SharedVolumes are excluded — they use raw GCSFuse and their
+		// data lives in GCS already.
+		var entries []string
+		for name, bucket := range volumesByName {
+			if sharedByName[name] {
+				continue
+			}
+			entries = append(entries, fmt.Sprintf("%s=%s=%s", name, mountsByName[name], bucket))
+		}
+		want := strings.Join(entries, ",")
+		if setEnvVar(svc.Template.Containers[0], "SOCKERLESS_PERSIST_VOLUMES", want) {
+			changed = true
+		}
 	}
 	if !changed {
 		// Service already has every requested volume + mount in the right
@@ -194,4 +214,56 @@ func (s *Server) attachVolumesToFunctionService(ctx context.Context, fn *functio
 		return fmt.Errorf("wait for Cloud Run Service %q update: %w", svcName, err)
 	}
 	return nil
+}
+
+// volumeForBind returns the runpb.Volume to attach for a bind. Shared
+// volumes use raw GCSFuse (Volume_Gcs); ad-hoc volumes use in-memory
+// tmpfs (Volume_EmptyDir{MEMORY}) with tar-pack persistence handled by
+// the bootstrap's persist module. See BUG-947 for the rationale.
+func volumeForBind(name, bucket string, shared bool, mountOpts []string) *runpb.Volume {
+	if shared {
+		return &runpb.Volume{
+			Name: name,
+			VolumeType: &runpb.Volume_Gcs{
+				Gcs: &runpb.GCSVolumeSource{
+					Bucket:       bucket,
+					MountOptions: mountOpts,
+				},
+			},
+		}
+	}
+	return &runpb.Volume{
+		Name: name,
+		VolumeType: &runpb.Volume_EmptyDir{
+			EmptyDir: &runpb.EmptyDirVolumeSource{
+				Medium: runpb.EmptyDirVolumeSource_MEMORY,
+			},
+		},
+	}
+}
+
+// setEnvVar adds or replaces a literal-value env var on a container
+// (skipping EnvVar_ValueSource entries — those are secret refs and
+// outside our concern). Returns true if the container's Env list was
+// modified. An empty `value` removes the variable entirely.
+func setEnvVar(c *runpb.Container, name, value string) bool {
+	for i, e := range c.Env {
+		if e.Name != name {
+			continue
+		}
+		if value == "" {
+			c.Env = append(c.Env[:i], c.Env[i+1:]...)
+			return true
+		}
+		if v, ok := e.Values.(*runpb.EnvVar_Value); ok && v.Value == value {
+			return false
+		}
+		c.Env[i] = &runpb.EnvVar{Name: name, Values: &runpb.EnvVar_Value{Value: value}}
+		return true
+	}
+	if value == "" {
+		return false
+	}
+	c.Env = append(c.Env, &runpb.EnvVar{Name: name, Values: &runpb.EnvVar_Value{Value: value}})
+	return true
 }
