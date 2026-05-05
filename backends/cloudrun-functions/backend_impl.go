@@ -372,11 +372,22 @@ func (s *Server) ContainerStart(ref string) error {
 		// container instead of NotFound. queryPodServiceContainers takes
 		// over once the Service is queryable; the entry is removed in
 		// invokePodServiceMain when the pod completes.
-		s.PendingCreates.Update(id, func(pc *api.Container) {
+		updated := s.PendingCreates.Update(id, func(pc *api.Container) {
 			pc.State.Status = "running"
 			pc.State.Running = true
 			pc.State.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		})
+		if !updated {
+			// Entry was already removed (race with cancelled async deploy
+			// cleanup); recreate it from the resolved container so the
+			// materialize window has a visible entry for inspect/exec.
+			cCopy := c
+			cCopy.State.Status = "running"
+			cCopy.State.Running = true
+			cCopy.State.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+			s.PendingCreates.Put(id, cCopy)
+		}
+		s.Logger.Info().Str("container", id).Bool("updated", updated).Int("members", len(netMembers)).Msg("network-pod ContainerStart: marked running, entering materialize")
 		err := s.materializePodService(id, netMembers, exitCh)
 		if err != nil {
 			s.PendingCreates.Delete(id)
