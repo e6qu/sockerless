@@ -55,10 +55,23 @@ func (s *Server) materializePodFunction(mainContainerID string, containers []api
 	podSpec := containersToPodOverlaySpec(s.config.BootstrapBinaryPath, podName, mainContainerID, containers)
 	contentTag := PodOverlayContentTag(podSpec)
 
-	overlayURI, err := s.ensurePodOverlayImage(ctx, podSpec, contentTag)
-	if err != nil {
-		return fmt.Errorf("ensure pod overlay image: %w", err)
-	}
+	// BUG-953: kick off the pod overlay Cloud Build CONCURRENTLY with
+	// the per-member Function cleanup + CreateFunction below. The
+	// overlay build takes ~30s; CreateFunction takes ~60s. Running them
+	// in parallel saves ~30s off the materialisation total, which is
+	// the difference between "fits in gitlab-runner's 120s
+	// ContainerExec timeout" and "doesn't" for cell 8.
+	overlayCh := make(chan struct {
+		uri string
+		err error
+	}, 1)
+	go func() {
+		uri, err := s.ensurePodOverlayImage(ctx, podSpec, contentTag)
+		overlayCh <- struct {
+			uri string
+			err error
+		}{uri, err}
+	}()
 
 	// 2. Atomically delete the per-member Functions created by ContainerCreate.
 	//    On any deletion failure, we still proceed with pod-Function creation
@@ -189,6 +202,20 @@ func (s *Server) materializePodFunction(mainContainerID string, containers []api
 		return gcpcommon.MapGCPError(err, "function", funcName)
 	}
 
+	// Wait for the parallel pod overlay Cloud Build (BUG-953
+	// optimization). Most of the time this is already done by the time
+	// CreateFunction finishes (~30s build vs ~60s create), so the join
+	// is non-blocking on the fast path.
+	overlayResult := <-overlayCh
+	if overlayResult.err != nil {
+		if delOp, delErr := s.gcp.Functions.DeleteFunction(ctx, &functionspb.DeleteFunctionRequest{
+			Name: fullFunctionName,
+		}); delErr == nil {
+			_ = delOp.Wait(ctx)
+		}
+		return fmt.Errorf("ensure pod overlay image (parallel): %w", overlayResult.err)
+	}
+	overlayURI := overlayResult.uri
 	if err := s.swapServiceImage(ctx, result, overlayURI); err != nil {
 		if delOp, delErr := s.gcp.Functions.DeleteFunction(ctx, &functionspb.DeleteFunctionRequest{
 			Name: fullFunctionName,
