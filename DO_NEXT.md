@@ -6,7 +6,51 @@ Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.
 
 User goal: **all 4 GCP cells (5, 6, 7, 8) GREEN with full workflow + evidence + executing where they're supposed to**. Cell 7 done; cells 5/6/8 outstanding.
 
-### Cell 8 — v20 deployed (VpcAccess fix); pending trigger
+### Cell 8 — v21 PROVED architecture is correct; blocker is regional CPU quota
+
+**Pipeline 2502514674, rev TBD, digest `sha256:c15da1bf`** (v21):
+
+- HTTP middleware now logs at ENTRY too — captures hijacked `/containers/{id}/attach` connections
+- v21 trace: `POST /v1.44/containers/.../attach` ENTRY at 21:23:36.173 (BEFORE start) — hijacked
+- `POST /v1.44/containers/.../start` ENTRY at 21:23:36.174
+- materializePodService ran in 14 s and returned status=500 with `FailedPrecondition: Quota exceeded for total allowable CPU per project per region`
+- gitlab-runner correctly reported the error and exited
+
+**Conclusion**: the v17-v20 "silent hangs" were the SAME quota error masked by a successful LRO `CreateService.Wait` (returned 204) while the underlying revision health-check kept failing in the background. gitlab-runner's hijacked /attach connection waited for stdout that never came — looking like an internal hang.
+
+Today's full architectural stack works. The remaining blocker is purely quota-availability.
+
+**Quick steps to GREEN cell 8 (once quota recovers)**:
+
+```bash
+# Verify regional CPU quota has freed (give it 1 hour after the last burst)
+gcloud compute regions describe us-central1 --format='value(quotas)' | grep -i cpu
+
+# Trigger v22 (no code changes needed)
+git fetch origin-gitlab gitlab-cell-8-test
+git worktree add -B gitlab-cell-8-test /tmp/cell8 origin-gitlab/gitlab-cell-8-test
+cd /tmp/cell8/ui && bun install
+git -C /tmp/cell8 checkout -- ui/bun.lock
+sed -i '' "1s/.*/# Cell 8 v22 - quota-recovered re-test/" /tmp/cell8/.gitlab-ci.yml
+git -C /tmp/cell8 add .gitlab-ci.yml
+git -C /tmp/cell8 commit -m "trigger: cell 8 v22"
+git -C /tmp/cell8 push origin-gitlab gitlab-cell-8-test
+```
+
+If v22 GREENs end-to-end (probe + git clone + go build + arithmetic), then run cells 7+5+6 sequentially within the same quota budget.
+
+### Cells 5+6 (after cell 8 GREEN)
+
+Runner-task images at `tests/runners/github/dockerfile-{cloudrun,gcf}/` already bundle vanilla actions/runner + sockerless. Steps:
+
+```bash
+make -C tests/runners/github/dockerfile-cloudrun push-amd64
+make -C tests/runners/github/dockerfile-gcf push-amd64
+# Update dispatcher TOML config to point at fresh AR digests
+# Trigger via: gh workflow run cell-5-cloudrun.yml ; gh workflow run cell-6-gcf.yml
+```
+
+### Cell 8 — historical (v17-v20)
 
 **Pipeline TBD, rev TBD, digest `sha256:72d6cd93`**: VpcAccess + ALL_TRAFFIC added to gcf's materializePodService + deployContainerService Service revisions; Config gained `VPCConnector` field; yaml gets `SOCKERLESS_GCF_VPC_CONNECTOR` env. Mirrors cloudrun's BUG-933 fix.
 
