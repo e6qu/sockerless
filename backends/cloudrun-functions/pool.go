@@ -24,6 +24,14 @@ func (s *Server) ensureOverlayImage(ctx context.Context, spec OverlayImageSpec, 
 		"%s-docker.pkg.dev/%s/sockerless-overlay/gcf:%s",
 		s.config.Region, s.config.Project, contentTag,
 	)
+	// AR tag-existence precheck: HEAD /v2/<repo>/manifests/<tag>. On
+	// cache hit (the common case for prewarmed overlays + same-revision
+	// rebuilds) we skip Cloud Build's ~25-30s tag-rebuild overhead. The
+	// HEAD takes well under a second.
+	if gcpcommon.CheckTagExists(ctx, imageURI) {
+		s.Logger.Info().Str("image", imageURI).Msg("ensureOverlayImage: AR tag already present — skipping Cloud Build")
+		return imageURI, nil
+	}
 	if s.images.BuildService == nil {
 		return "", fmt.Errorf("cloud Build service is required for gcf overlay image (set SOCKERLESS_GCP_BUILD_BUCKET)")
 	}

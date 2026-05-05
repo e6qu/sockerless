@@ -31,6 +31,14 @@ func (s *Server) ensureOverlayImage(ctx context.Context, spec gcpcommon.OverlayI
 		"%s-docker.pkg.dev/%s/sockerless-overlay/cloudrun:%s",
 		s.config.Region, s.config.Project, contentTag,
 	)
+	// AR tag-existence precheck: HEAD /v2/<repo>/manifests/<tag>. On
+	// cache hit we skip Cloud Build's ~25-30s tag-rebuild overhead, which
+	// keeps the synchronous deploy path inside gitlab-runner's docker
+	// SDK timeout. Sub-second on miss too.
+	if gcpcommon.CheckTagExists(ctx, imageURI) {
+		s.Logger.Info().Str("image", imageURI).Msg("ensureOverlayImage: AR tag already present — skipping Cloud Build")
+		return imageURI, nil
+	}
 	if s.images.BuildService == nil {
 		return "", fmt.Errorf("cloud Build service is required for cloudrun overlay image (set SOCKERLESS_GCP_BUILD_BUCKET)")
 	}
