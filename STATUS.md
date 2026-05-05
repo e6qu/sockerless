@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**Date: 2026-05-05 v29 — Cell 7 GREEN; BUG-947/950 closed; BUG-948/951 fixes shipped in code. Cell 8 deployment stalled — Cloud Run regional CPU quota saturated by today's iteration count (cell 7 + 4 cell-8 attempts + multiple gcf rev rolls + 6 prewarm Functions). NEW revisions of gitlab-runner-gcf can't get past the startup probe even with the OLD known-working digest. Wait for the quota window to refresh OR free baseline vCPU by deleting orphan Functions before retrying.**
+**Date: 2026-05-05 v30 — Cell 7 GREEN; BUG-947/950/951/952 closed; cell 8 v5 reached prepare_script (huge progress) but hit BUG-953 (pod materialization Cloud Build + Function deploy >120s = gitlab-runner ContainerExec timeout). Cell 8 architecture mismatch: gitlab-runner's `services:` clause triggers gcf network-pod materialization which is too slow.**
 
 ## Cell scoreboard
 
@@ -13,7 +13,7 @@
 | 5 GH × cloudrun | sockerless-cloudrun | ❌ no GREEN under NEW vanilla-runner architecture | github-side dispatcher refactor pending (after gitlab cells GREEN). |
 | 6 GH × gcf | sockerless-gcf | ❌ same as cell 5 | same blocker. |
 | 7 GL × cloudrun | sockerless-cloudrun | ✅ **GREEN 2026-05-05 v51** under vanilla-runner architecture (https://gitlab.com/e6qu/sockerless/-/pipelines/2500209956, job 14213994152, 383 s). Heavy workload verified: `git fetch + git checkout + apk add + go build + eval-arithmetic` all returned correct results (11/14/21/13/6.5). BUG-947 fix end-to-end confirmed. | — |
-| 8 GL × gcf | sockerless-gcf | 🟡 v1 FAILED 2026-05-05 (BUG-948). v2 in flight against rev `00031-q64` (`sockerless-backend-gcf@sha256:27a3819b...`, BUG-950 fix landed). Prewarmed pool: 3 free entries with content-hash `gcf-618d86503bb79096`, matching the AR-resolved gitlab-runner-helper image. Pipeline 2500555632 running. | If GREEN: BUG-948 + BUG-950 closed. If FAIL: investigate where the contentTag mismatch persists (image ID vs tag, etc.). |
+| 8 GL × gcf | sockerless-gcf | 🟡 v5 (rev `00036-dsn`, sha256:160f3f04). PROGRESS: cache-permission via pool reuse ✅; postgres + golang images pulled ✅; prepare_executor ✅; **prepare_script TIMEOUT** at 120s on multi-container pod materialization (BUG-953). Logs confirm BUG-952 URL fallback fired correctly. | Fix BUG-953: avoid pod materialization for gcf in favor of per-container Cloud Run Services with VPC connector (mirror cell 7 architecture); OR prewarm pod overlays. See [BUGS.md](BUGS.md). |
 
 **The "GREEN 2026-04-30" claim for AWS cells covers only the `hello` workload (echo + env), NOT the heavy probe + git-clone + go-build + arithmetic suite that cells 5–8 run.** Cell 7 v51 (2026-05-05) is the **first end-to-end heavy-workload pass on GCP under the vanilla-runner architecture** — confirms BUG-947 fix and unblocks cells 5+6+8.
 

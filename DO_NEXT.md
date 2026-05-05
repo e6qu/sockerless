@@ -2,7 +2,7 @@
 
 Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md); bug log in [BUGS.md](BUGS.md); architecture in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
 
-## Resume pointer (2026-05-05 v29 — BUG-947/950 closed; BUG-948/951 fixes shipped; cell 8 deployment quota-stalled)
+## Resume pointer (2026-05-05 v30 — Cell 7 GREEN; cell 8 reached prepare_script, BUG-953 pod-materialize timeout next)
 
 ### What just landed (commits on `phase-118-faas-pods`)
 
@@ -154,4 +154,4 @@ Per user directives:
 
 ### Single-line summary
 
-> Cell 7 GREEN. BUG-947/950 closed; BUG-948/951 fixes shipped (commits `348e89d`/`e8d91c0`/`7eed924`/`dc28676`/`cb4eb6d`/`2aaec0d`). Simulator quota faithful (BUG-942/948 reproducible deterministically). Cell 8 redeploy stalled on Cloud Run regional CPU quota — wait for quota window or delete orphan Functions to free baseline vCPU. Then cell 8 v3 against the BUG-951 image, then cells 5+6 GH dispatcher refactor.
+> Cell 7 GREEN. BUG-947/950/951/952 closed; cell 8 v5 reached prepare_script (huge progress: cache-permission via pool reuse + image pulls all working). New blocker BUG-953: gitlab-runner's `services:` clause triggers sockerless's network-pod materialization in gcf, which exceeds the 120s ContainerExec timeout (Cloud Build ~30s + Function deploy ~60-90s). Recommended fix: mirror cell 7's architecture — per-container Cloud Run Services with VPC connector instead of multi-container pod materialization.
