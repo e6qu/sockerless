@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**Date: 2026-05-04 v23 — BUG-947 tar-pack persist module mid-flight**
+**Date: 2026-05-05 v24 — BUG-947 backend volume_emptydir landed; image rebuild + redeploy + retest pending**
 
 ## Cell scoreboard
 
@@ -12,7 +12,7 @@
 | 4 GL × Lambda (AWS) | `hello` echo | ✅ GREEN 2026-04-30 (https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943) — trivial workload only | — |
 | 5 GH × cloudrun | sockerless-cloudrun | ❌ no GREEN under NEW vanilla-runner architecture | github-side dispatcher refactor pending (after gitlab cells GREEN). |
 | 6 GH × gcf | sockerless-gcf | ❌ same as cell 5 | same blocker. |
-| 7 GL × cloudrun | sockerless-cloudrun | 🟡 OLD-arch v49 GREEN 2026-05-03 (custom image, **rejected by user pivot**) — pipeline 2496721473. NEW-arch v50 (2498952453) git-fetched OK after connector min-instances 2→4 scale-up, then hung at `git checkout` (BUG-947 — GCSFuse 200× slower than tmpfs for git ops, verified 211 s vs 1 s diagnostic). | Tar-pack persist module committed (`1f06831`). Backend volume-spec change + image rebuild + redeploy + retest pending. See [DO_NEXT.md](DO_NEXT.md). |
+| 7 GL × cloudrun | sockerless-cloudrun | 🟡 OLD-arch v49 GREEN 2026-05-03 (custom image, **rejected by user pivot**) — pipeline 2496721473. NEW-arch v50 (2498952453) git-fetched OK after connector min-instances 2→4 scale-up, then hung at `git checkout` (BUG-947 — GCSFuse 200× slower than tmpfs for git ops, verified 211 s vs 1 s diagnostic). | Tar-pack persist module committed (`1f06831`); backend Volume_EmptyDir + persist-env injection committed (`f5e52f1`); bootstrap 500-status replaced with 200+exit-code header per user directive (`29308e1`). **Image rebuild + redeploy + cell 7 v51 retest pending.** See [DO_NEXT.md](DO_NEXT.md). |
 | 8 GL × gcf | sockerless-gcf | ❌ pending architectural refactor + same BUG-947 fix | Mirror of cell 7. |
 
 **The "GREEN 2026-04-30" claim for AWS cells covers only the `hello` workload (echo + env), NOT the heavy probe + git-clone + go-build + arithmetic suite that cells 5–8 run.** The only end-to-end heavy-workload pass on GCP was cell 7 v49 (OLD architecture, since rejected).
@@ -44,7 +44,7 @@ GitHub side (cells 5+6) is the same shape but uses Cloud Run **Job** + `actions/
 
 GCSFuse-backed `/builds` is **~200× slower than tmpfs for git operations** (diagnostic 2026-05-04 22:42 UTC: `git clone e6qu/sockerless` took 211 s on GCSFuse vs 1 s on tmpfs). git checkout exceeds sockerless backend's 10-min HTTP exec timeout → POST returns `Client.Timeout exceeded while awaiting headers` → gitlab-runner reports `Job failed: exit code 1`.
 
-**Fix in flight: tar-pack persist** (BUG-947 chosen approach). Persist module committed to bootstrap (`1f06831`); backend volume-spec change + image rebuild + redeploy still pending. See [DO_NEXT.md](DO_NEXT.md) for the runbook.
+**Fix in flight: tar-pack persist** (BUG-947 chosen approach). Persist module committed to bootstrap (`1f06831`); backend Volume_EmptyDir + SOCKERLESS_PERSIST_VOLUMES env injection committed (`f5e52f1`); bootstrap 500-status replaced with 200+exit-code header per user directive 2026-05-05 (`29308e1`). Image rebuild + redeploy + retest pending. See [DO_NEXT.md](DO_NEXT.md) for the runbook.
 
 ## Live infra in `sockerless-live-46x3zg4imo` (us-central1)
 
@@ -79,5 +79,8 @@ GCSFuse-backed `/builds` is **~200× slower than tmpfs for git operations** (dia
 | `bb420ca` | docs(BUG-947): correct analysis — Path A infeasible due to Cloud Run revision immutability; Path B (Filestore NFS) is the only practical fix |
 | `4d7e5d8` | docs(BUG-947): empirical confirmation — GCSFuse ~200× slower than tmpfs for git |
 | `1f06831` | feat(BUG-947): wire persist module into bootstrap startup + invoke handler (tar-pack approach replaces Path B as chosen fix) |
+| `b381612` | docs: state save — Phase 122j BUG-947 tar-pack approach in flight; persist module committed, backend + redeploy pending |
+| `f5e52f1` | feat(BUG-947): backend volume_emptydir + SOCKERLESS_PERSIST_VOLUMES injection — both cloudrun + gcf emit Volume_EmptyDir{MEMORY} for ad-hoc binds + inject persist env on main container; SharedVolumes keep raw GCSFuse |
+| `29308e1` | refactor(bootstrap): replace HTTP 500 with 200 + X-Sockerless-Exit-Code — 5xx reserved for unexpected panics; expected failures (subprocess crash, missing entrypoint, persist save) signal via the existing exit-code header/envelope |
 
 See [BUGS.md](BUGS.md) for per-bug fix shape. See [DO_NEXT.md](DO_NEXT.md) for the runbook to finish BUG-947.

@@ -2,7 +2,7 @@
 
 Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md); bug log in [BUGS.md](BUGS.md); architecture in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
 
-## Resume pointer (2026-05-04 v23 — BUG-947 tar-pack persist module in flight)
+## Resume pointer (2026-05-05 v24 — BUG-947 backend volume_emptydir landed; image rebuild pending)
 
 ### What just landed (commits on `phase-118-faas-pods`)
 
@@ -11,40 +11,37 @@ Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.
 | `153f95c` | docs: BUG-947 filed (cell 7 v50 hung at git checkout under GCSFuse) |
 | `bb420ca` | docs: corrected analysis — Cloud Run revision immutability rules out Path A (emptyDir + per-job Service) |
 | `4d7e5d8` | docs: diagnostic — git clone on GCSFuse 211 s vs tmpfs 1 s (200× slower) |
-| `1f06831` | **feat: persist module added to `agent/cmd/sockerless-cloudrun-bootstrap/` and wired into `main.go`** — tar-pack approach (download single tar object per bind-volume from GCS at startup; re-upload after every exec) |
+| `1f06831` | feat: persist module added to `agent/cmd/sockerless-cloudrun-bootstrap/` and wired into `main.go` — tar-pack approach |
+| `b381612` | docs: state save — Phase 122j BUG-947 tar-pack approach in flight; persist module committed, backend + redeploy pending |
+| `f5e52f1` | **feat: backend Volume_EmptyDir + SOCKERLESS_PERSIST_VOLUMES env injection** — `backends/cloudrun/{jobspec,servicespec,volumes}.go` + `backends/cloudrun-functions/volumes.go`. Ad-hoc binds → tmpfs; SharedVolumes keep raw GCSFuse. |
+| `29308e1` | **refactor: bootstrap status codes** — 5xx removed from cloudrun + gcf bootstraps; failures signal via 200 + `X-Sockerless-Exit-Code` header (or envelope `exitCode`). Per user directive 2026-05-05 "500 reserved for unexpected panics". |
 
 ### Next concrete steps (in order)
 
-The bootstrap-side code is committed but NOT yet deployed. Backend volume-spec change is also missing. Sequence to get cell 7 to GREEN with `GIT_STRATEGY=clone`:
+Backend code complete; bootstrap code complete. What remains is image rebuild + redeploy + cell trigger:
 
-1. **Backend change in `backends/cloudrun/jobspec.go` + `servicespec.go`** (≈30 LOC each):
-   - When iterating `HostConfig.Binds` for non-`SharedVolume` names, emit `runpb.Volume_EmptyDir{EmptyDir: {Medium: MEMORY}}` instead of `runpb.Volume_Gcs{...}`.
-   - Still call `bucketForVolume(ctx, volName)` so the bucket exists for tar-pack persistence.
-   - Inject env on the **main** container only: `SOCKERLESS_PERSIST_VOLUMES=name=mountpath=bucket[,...]`.
-   - `SharedVolumes` (operator-configured `SOCKERLESS_GCP_SHARED_VOLUMES`) keep `Volume_Gcs` — they're written out-of-band, not git-heavy.
-
-2. **Same change in `backends/cloudrun-functions/volumes.go:127`** for cell 8 (gcf backend). Single change, both backends fixed.
-
-3. **Rebuild + push images:**
+1. **Rebuild + push images:**
    ```sh
    cd /Users/zardoz/projects/sockerless
-   make -C agent build-cloudrun-bootstrap   # confirm target name in Makefile
-   make -C backends/cloudrun docker-image     # → sockerless-backend-cloudrun
-   make -C backends/cloudrun-functions docker-image   # → sockerless-backend-gcf
-   # Push to AR with new digest. Or use cloud build via gcloud builds submit.
+   # Bootstrap binary
+   make -C agent build-cloudrun-bootstrap
+   # Backend images (FROM distroless, embed the bootstrap binary)
+   make -C backends/cloudrun docker-image                 # → sockerless-backend-cloudrun
+   make -C backends/cloudrun-functions docker-image       # → sockerless-backend-gcf
+   # Push to Artifact Registry (or `gcloud builds submit`).
    ```
-   The runner-cloudrun.yaml currently pins digest sha256:c9716fa8... — that needs to bump to the new build.
+   Capture the resulting `sha256:` digests — they'll be pinned in step 2.
 
-4. **Update `terraform/cloud-run/gitlab-runner-cloudrun.yaml`:**
-   - Bump sockerless container image digest.
-   - (No env additions needed in the runner sidecar — only the step-container sidecars get the new env, and the backend injects that automatically per step 1.)
+2. **Update `terraform/cloud-run/gitlab-runner-cloudrun.yaml`:**
+   - Bump sockerless sidecar container image digest to the new build (currently pins `sha256:c9716fa8...`).
+   - No env additions in the runner sidecar — the backend injects `SOCKERLESS_PERSIST_VOLUMES` automatically on per-step service containers as of `f5e52f1`.
    - `gcloud run services replace terraform/cloud-run/gitlab-runner-cloudrun.yaml --project=sockerless-live-46x3zg4imo --region=us-central1`
 
-5. **Trigger cell 7 v51:**
+3. **Trigger cell 7 v51:**
    - Branch `gitlab-cell-7-test` (push a trigger commit by editing line 1 of the branch's `.gitlab-ci.yml`).
    - Pipeline should reach `Job succeeded` with all 5 arithmetic results (11/14/21/13/6.5).
 
-6. **Cell 8 v_? trigger** once cell 7 is green — same workflow on `gitlab-cell-8-test` branch.
+4. **Cell 8 v_? trigger** once cell 7 is green — same workflow on `gitlab-cell-8-test` branch.
 
 ### What was rejected (and why — don't re-propose)
 
@@ -106,4 +103,4 @@ Per user directives:
 
 ### Single-line summary
 
-> Implement tar-pack persistence for ad-hoc bind volumes — bootstrap module + wiring already committed (`1f06831`), backend volume-spec change still pending; rebuild + push sockerless-backend images, bump digest in runner-cloudrun.yaml, retrigger cell 7 v51.
+> Tar-pack persistence for ad-hoc bind volumes — bootstrap (`1f06831`), backend (`f5e52f1`), and bootstrap status-code refactor (`29308e1`) all committed. Remaining: rebuild + push sockerless-backend images, bump digest in `terraform/cloud-run/gitlab-runner-cloudrun.yaml`, retrigger cell 7 v51.
