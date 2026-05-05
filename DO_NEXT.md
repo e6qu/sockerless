@@ -6,7 +6,28 @@ Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.
 
 User goal: **all 4 GCP cells (5, 6, 7, 8) GREEN with full workflow + evidence + executing where they're supposed to**. Cell 7 done; cells 5/6/8 outstanding.
 
-### Cell 8 — v21 PROVED architecture is correct; blocker is regional CPU quota
+### Cell 8 — v25 reached step_script (GREEN at 4/5 stages); v26 needs architectural fix for multi-image-per-stage
+
+**Pipeline 2502688160 (v25)**: HUGE progress — went from "silent hang at Preparing environment" (v17-v22) to executing real workload across multiple stages. Trace:
+- ✅ prepare_executor (services + image pulls)
+- ✅ prepare_script (`Running on localhost via localhost...`)
+- ✅ get_sources (`Initialized empty Git repository in /builds/e6qu/sockerless/.git/` + `Checking out b8bd17aa as detached HEAD`)
+- ✅ step_script started
+- ❌ step_script: gitlab-runner spawned NEW build container with `image: golang:1.22-alpine` → triggered fresh `materializePodService` with 3 members (new build + postgres + OLD build still in PendingCreates) → "no service URL" on cleanup attach
+
+**Architecture insight pinned**: gitlab-runner v17 docker executor uses DIFFERENT images per stage. Helper image (`gitlab-runner-helper:x86_64-v17.5.0`) for prepare/get_sources/restore_cache/upload_artifacts; user image (`golang:1.22-alpine`) for step_script/after_script. With FF_NETWORK_PER_BUILD=true, all stages join the same per-build network. Each stage's container is a fresh ContainerCreate.
+
+**Fix paths for v26**:
+
+1. **Filter pendingMembersOfNetwork** — exclude containers that are already part of an existing pod-Service. Track `materialized -> serviceName` per main-container-ID. New containers joining the same network DON'T trigger re-materialize; they get a separate per-stage Service that points at the same backing infra.
+
+2. **One-shot helper containers run direct** — when ContainerStart hits a container where the network-pod's pod-Service already exists, route the exec via the existing Service URL (not a new materialize).
+
+3. **Or simplest: in shouldDeferOrMaterializeNetworkPod, only treat the FIRST OpenStdin=true container per network as the materialize trigger; subsequent ones run as one-shots without rematerializing**.
+
+The architecture today works for stages 1-4. The fix is targeted at stage 5+ (step_script with different image). Cells 5/6/7 inherit this fix once it lands.
+
+### Cell 8 — historical v17-v25 (resolved by v26 architectural fix path above)
 
 **Pipeline 2502514674, rev TBD, digest `sha256:c15da1bf`** (v21):
 
