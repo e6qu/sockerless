@@ -40,6 +40,22 @@ type Server struct {
 	// invokes materializePodFunction; the goroutines respect ctx.Err()
 	// at every cloud-API boundary and unwind (releasing any pool claim).
 	deployFutures sync.Map
+
+	// stdinPipes buffers stdin bytes written via the hijacked attach
+	// connection's Write so invokePodServiceMain can replay them as the
+	// bootstrap's exec envelope `Stdin` payload at deferred-invoke
+	// time. Mirror of backends/cloudrun/server.go::stdinPipes — the
+	// gitlab-runner attach pattern (create container with OpenStdin=true
+	// + hijack-attach + start + pipe-script-and-half-close) requires
+	// this because Cloud Run Service has no remote stdin channel.
+	stdinPipes sync.Map
+
+	// attachStreams maps containerID → *attachStream so the deferred
+	// invoke (invokePodServiceMain) can publish the bootstrap response
+	// (mux-framed stdout + stderr) back to the gitlab-runner attach
+	// reader. One stream per container at a time; stage cycle clears
+	// it. Mirror of backends/cloudrun/server.go::attachStreams.
+	attachStreams sync.Map
 }
 
 // errDeployCancelled is the sentinel sent on a deployFuture when the

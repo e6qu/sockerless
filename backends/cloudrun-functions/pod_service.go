@@ -38,6 +38,7 @@ import (
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 	gcpcommon "github.com/sockerless/gcp-common"
+	"google.golang.org/api/idtoken"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
@@ -592,45 +593,125 @@ func injectPodHostAliases(specs []*runpb.Container, members []api.Container, net
 
 // invokePodServiceMain POSTs an exec envelope to the Service's URI
 // and fans the InvocationResult out to every pod member. Mirrors
-// invokePodFunction's behaviour but reads the URL straight off the
-// runpb.Service (no Cloud Functions indirection).
+// cloudrun's invokeServiceDefaultCmd: when an attach-stdin pipe was
+// registered (gitlab-runner attach pattern), waits for stdin EOF
+// before POSTing the captured script bytes as the envelope. Without
+// this wait, gcf POSTed the user's default CMD immediately on
+// materialize completion, which exits 0 with no work and closes
+// WaitChs before gitlab-runner can attach + pipe its script.
+// See BUG-954.
 func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, containers []api.Container, _ chan struct{}) {
-	inv := core.InvocationResult{}
+	mainContainer := containers[0]
+	mainID := mainContainer.ID
+
+	s.Logger.Info().Str("main", mainID).Msg("invokePodServiceMain: goroutine entered")
+
+	// gitlab-runner attach-stdin pattern: when the build container
+	// has a stdinPipe registered (via ContainerAttach), wait for the
+	// caller to half-close (= stdin EOF) so we can replay the captured
+	// bytes as the bootstrap's exec envelope Stdin. Skip if no pipe
+	// (= no attach happened, run env-baked SOCKERLESS_USER_CMD via
+	// default invoke).
+	var capturedStdin []byte
+	if v, ok := s.stdinPipes.LoadAndDelete(mainID); ok {
+		pipe := v.(*stdinPipe)
+		// 30s upper bound mirrors cloudrun's invokeServiceDefaultCmd.
+		// gitlab-runner pipes the script then CloseWrite()s within
+		// milliseconds; the timeout is a belt-and-suspenders against
+		// log-streaming attaches that never half-close.
+		select {
+		case <-pipe.Done():
+		case <-time.After(30 * time.Second):
+			s.Logger.Warn().Str("main", mainID).Msg("invokePodServiceMain: stdin pipe Done timeout — proceeding with whatever was captured")
+		case <-ctx.Done():
+			s.Logger.Warn().Str("main", mainID).Err(ctx.Err()).Msg("invokePodServiceMain: ctx cancelled while waiting on stdinPipe")
+			return
+		}
+		capturedStdin = pipe.Bytes()
+		s.Logger.Info().Str("main", mainID).Int("stdin_bytes", len(capturedStdin)).Msg("invokePodServiceMain: stdin pipe drained")
+	}
+
 	url := ""
 	if svc != nil {
 		url = svc.Uri
 	}
-	mainContainer := containers[0]
-	argv := append([]string{}, mainContainer.Config.Entrypoint...)
-	argv = append(argv, mainContainer.Config.Cmd...)
-	envSlice := append([]string{}, mainContainer.Config.Env...)
+
+	inv := core.InvocationResult{}
+	var stdoutResp, stderrResp []byte
 
 	if url == "" {
-		s.Logger.Error().Msg("pod service invoke: no service URL")
+		s.Logger.Error().Str("main", mainID).Msg("pod service invoke: no service URL")
 		inv.ExitCode = 1
 		inv.Error = "no service URL available"
-	} else if resp, err := invokeFunction(ctx, url, argv, mainContainer.Config.WorkingDir, envSlice); err != nil {
-		s.Logger.Error().Err(err).Msg("pod service invocation failed")
-		inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
-		inv.Error = err.Error()
-	} else {
-		body, _ := readResponseBody(resp.Body)
-		_ = resp.Body.Close()
-		for _, c := range containers {
-			if len(body) > 0 && string(body) != "{}" {
-				s.Store.LogBuffers.Store(c.ID, body)
+	} else if len(capturedStdin) > 0 {
+		// Attach-stdin path: POST the captured script bytes as the
+		// envelope's Stdin. Bootstrap pipes the script into sh.
+		s.Logger.Info().Str("main", mainID).Str("url", url).Int("stdin_bytes", len(capturedStdin)).Msg("invokePodServiceMain: posting envelope with captured stdin")
+		client, err := idtoken.NewClient(ctx, url)
+		if err != nil {
+			s.Logger.Error().Err(err).Str("main", mainID).Msg("idtoken client for pod service invoke")
+			inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
+			inv.Error = err.Error()
+		} else {
+			client.Timeout = 10 * time.Minute
+			res, err := gcpcommon.PostExecEnvelope(ctx, client, url, "", gcpcommon.ExecEnvelopeExec{
+				Argv:  []string{"/bin/sh"},
+				Stdin: gcpcommon.EncodeStdin(capturedStdin),
+			})
+			if err != nil {
+				s.Logger.Error().Err(err).Str("main", mainID).Msg("pod service envelope POST failed")
+				inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
+				inv.Error = err.Error()
+			} else {
+				s.Logger.Info().Str("main", mainID).Int("exit", res.ExitCode).Int("stdout_bytes", len(res.Stdout)).Int("stderr_bytes", len(res.Stderr)).Msg("invokePodServiceMain: bootstrap response")
+				stdoutResp = res.Stdout
+				stderrResp = res.Stderr
+				inv.ExitCode = res.ExitCode
+				if inv.ExitCode != 0 {
+					inv.Error = fmt.Sprintf("subprocess exit %d", inv.ExitCode)
+				}
 			}
 		}
-		inv.ExitCode = core.HTTPStatusToExitCode(resp.StatusCode)
-		if inv.ExitCode != 0 {
-			inv.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
+	} else {
+		// Default-invoke path: POST with user's entrypoint+cmd. The
+		// bootstrap will exec it as a subprocess. Used for `docker run`
+		// semantics on pod-mode containers without a docker-attach.
+		argv := append([]string{}, mainContainer.Config.Entrypoint...)
+		argv = append(argv, mainContainer.Config.Cmd...)
+		envSlice := append([]string{}, mainContainer.Config.Env...)
+		s.Logger.Info().Str("main", mainID).Str("url", url).Strs("argv", argv).Msg("invokePodServiceMain: default-invoke (no captured stdin) — posting user entrypoint+cmd")
+		if resp, err := invokeFunction(ctx, url, argv, mainContainer.Config.WorkingDir, envSlice); err != nil {
+			s.Logger.Error().Err(err).Str("main", mainID).Msg("pod service default-invoke failed")
+			inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
+			inv.Error = err.Error()
+		} else {
+			body, _ := readResponseBody(resp.Body)
+			_ = resp.Body.Close()
+			stdoutResp = body
+			inv.ExitCode = core.HTTPStatusToExitCode(resp.StatusCode)
+			if inv.ExitCode != 0 {
+				inv.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
+			}
 		}
 	}
+
+	// Fan-out to every pod member: invocation result + LogBuffers +
+	// WaitChs close.
 	for _, c := range containers {
+		if len(stdoutResp) > 0 {
+			s.Store.LogBuffers.Store(c.ID, stdoutResp)
+		}
 		s.Store.PutInvocationResult(c.ID, inv)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
 			close(ch.(chan struct{}))
 		}
+	}
+
+	// Fan-out stdout+stderr to the attached gitlab-runner's
+	// attachStream (if any) — the hijacked attach connection's Read
+	// blocks until publishAttachResponse fires.
+	if v, ok := s.attachStreams.LoadAndDelete(mainID); ok {
+		v.(*attachStream).publishAttachResponse(stdoutResp, stderrResp)
 	}
 }
 

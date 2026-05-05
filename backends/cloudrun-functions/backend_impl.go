@@ -955,12 +955,38 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 		s.Logger.Info().Str("id", id).Msg("ContainerAttach: routing to reverse-agent")
 		return s.BaseServer.ContainerAttach(id, opts)
 	}
+	// gitlab-runner attach-stdin pattern (mirror of cloudrun's
+	// ContainerAttach): when the caller wants stdin AND the container
+	// is a sockerless overlay, register a stdinPipe + attachStream so
+	// invokePodServiceMain (the network-pod invoke goroutine) can
+	// wait for the script bytes to land before POSTing to the Service
+	// URL. Without this, gcf's invokePodServiceMain POSTs the user's
+	// default CMD immediately on materialize completion, which exits
+	// 0 with no work and closes WaitChs before gitlab-runner can
+	// attach + pipe its script. See BUG-954.
+	if opts.Stdin && hasSockerlessOverlayRepoGCF(c.Config.Image) {
+		s.Logger.Info().Str("container", c.ID).Str("image", c.Config.Image).Msg("ContainerAttach: registering stdinPipe + attachStream")
+		p := newStdinPipe()
+		actual, _ := s.stdinPipes.LoadOrStore(c.ID, p)
+		pipe := actual.(*stdinPipe)
+		pipe.Open()
+		return s.newAttachStream(c.ID, pipe), nil
+	}
 	if opts.Stdin {
-		s.Logger.Warn().Str("id", id).Msg("ContainerAttach: stdin requested but no reverse-agent — returning NotImplemented")
-		return nil, &api.NotImplementedError{Message: "interactive docker attach requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
+		s.Logger.Warn().Str("id", id).Str("image", c.Config.Image).Msg("ContainerAttach: stdin requested but image is not a sockerless overlay — returning NotImplemented")
+		return nil, &api.NotImplementedError{Message: "interactive docker attach requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL) OR the sockerless-gcf-bootstrap overlay"}
 	}
 	s.Logger.Info().Str("id", id).Msg("ContainerAttach: routing to AttachViaCloudLogs (read-only)")
 	return core.AttachViaCloudLogs(s.BaseServer, id, opts, s.buildCloudLogsFetcher(id))
+}
+
+// hasSockerlessOverlayRepoGCF reports whether the image URI sits in
+// the gcf overlay AR repo (mirror of cloudrun's hasSockerlessOverlayRepo).
+// The image rewrite happens in materializePodService / deployContainerService
+// so once the Service is deployed, the container's resolved image
+// should always be in the overlay repo.
+func hasSockerlessOverlayRepoGCF(image string) bool {
+	return strings.Contains(image, "/sockerless-overlay/gcf:")
 }
 
 // ImageBuild delegates to ImageManager.
