@@ -469,3 +469,73 @@ func (s *Server) deployFreePoolEntry(ctx context.Context, contentTag, overlayURI
 	}
 	return nil
 }
+
+// updateFunctionUserEnv applies a fresh env-var map to a pool-claimed
+// Function's underlying Cloud Run Service. Required because pool
+// entries are keyed by (image, bootstrap) only after BUG-950, so the
+// claim path has to inject the caller's runtime entrypoint/cmd/workdir
+// + container env vars on every reuse. Idempotent: only triggers an
+// UpdateService rollout when at least one variable changed.
+func (s *Server) updateFunctionUserEnv(ctx context.Context, fullName string, want map[string]string) error {
+	fn, err := s.gcp.Functions.GetFunction(ctx, &functionspb.GetFunctionRequest{Name: fullName})
+	if err != nil {
+		return fmt.Errorf("get function %q for env update: %w", fullName, err)
+	}
+	if fn.ServiceConfig == nil || fn.ServiceConfig.Service == "" {
+		return fmt.Errorf("function %q has no underlying service", fullName)
+	}
+	svcName := fn.ServiceConfig.Service
+	svc, err := s.gcp.Services.GetService(ctx, &runpb.GetServiceRequest{Name: svcName})
+	if err != nil {
+		return fmt.Errorf("get service %q for env update: %w", svcName, err)
+	}
+	if svc.Template == nil || len(svc.Template.Containers) == 0 {
+		return fmt.Errorf("service %q has no containers", svcName)
+	}
+	c := svc.Template.Containers[0]
+	have := make(map[string]string)
+	for _, e := range c.Env {
+		if v, ok := e.Values.(*runpb.EnvVar_Value); ok {
+			have[e.Name] = v.Value
+		}
+	}
+	changed := false
+	for k, v := range want {
+		if have[k] != v {
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		return nil
+	}
+	// Replace env list in-place. Keep any non-want entries that the live
+	// service still has — operator-set env (e.g. SOCKERLESS_PERSIST_VOLUMES
+	// for runner workspaces) must survive a claim cycle.
+	wantSet := make(map[string]bool, len(want))
+	for k := range want {
+		wantSet[k] = true
+	}
+	merged := make([]*runpb.EnvVar, 0, len(c.Env)+len(want))
+	for _, e := range c.Env {
+		if !wantSet[e.Name] {
+			merged = append(merged, e)
+		}
+	}
+	for k, v := range want {
+		merged = append(merged, &runpb.EnvVar{
+			Name:   k,
+			Values: &runpb.EnvVar_Value{Value: v},
+		})
+	}
+	svc.Template.Containers[0].Env = merged
+	svc.Template.Revision = ""
+	op, err := s.gcp.Services.UpdateService(ctx, &runpb.UpdateServiceRequest{Service: svc})
+	if err != nil {
+		return fmt.Errorf("update service %q env: %w", svcName, err)
+	}
+	if _, err := op.Wait(ctx); err != nil {
+		return fmt.Errorf("wait service %q env rollout: %w", svcName, err)
+	}
+	return nil
+}

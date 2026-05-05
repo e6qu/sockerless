@@ -336,13 +336,27 @@ func (s *Server) deployFunction(ctx context.Context, id string, container api.Co
 			envVars[parts[0]] = parts[1]
 		}
 	}
+	// BUG-950: pass entrypoint/cmd/workdir at RUNTIME via env (the
+	// bootstrap reads these via os.Getenv at request time) instead of
+	// baking into the overlay image. Lets pool entries with the same
+	// (image, bootstrap) reuse across containers with different
+	// entrypoint/cmd. SOCKERLESS_USER_* are the bootstrap's read keys;
+	// SOCKERLESS_ENTRYPOINT/_CMD (no _USER prefix) preserved for
+	// cloud_state recovery + observability.
 	if len(config.Entrypoint) > 0 {
 		epJSON, _ := json.Marshal(config.Entrypoint)
-		envVars["SOCKERLESS_ENTRYPOINT"] = base64.StdEncoding.EncodeToString(epJSON)
+		encoded := base64.StdEncoding.EncodeToString(epJSON)
+		envVars["SOCKERLESS_ENTRYPOINT"] = encoded
+		envVars["SOCKERLESS_USER_ENTRYPOINT"] = encoded
 	}
 	if len(config.Cmd) > 0 {
 		cmdJSON, _ := json.Marshal(config.Cmd)
-		envVars["SOCKERLESS_CMD"] = base64.StdEncoding.EncodeToString(cmdJSON)
+		encoded := base64.StdEncoding.EncodeToString(cmdJSON)
+		envVars["SOCKERLESS_CMD"] = encoded
+		envVars["SOCKERLESS_USER_CMD"] = encoded
+	}
+	if config.WorkingDir != "" {
+		envVars["SOCKERLESS_USER_WORKDIR"] = config.WorkingDir
 	}
 	envVars["SOCKERLESS_IMG"] = config.Image
 	envVars["SOCKERLESS_CONTAINER_ID"] = id
@@ -396,6 +410,14 @@ func (s *Server) deployFunction(ctx context.Context, id string, container api.Co
 		// will release rather than delete on cancel.
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		// BUG-950: pool entries share an overlay image but different
+		// containers want different entrypoint/cmd/workdir. Update the
+		// underlying CR Service env vars BEFORE the volume attach so the
+		// next invocation reads the right user command. Idempotent
+		// helper — skips the rollout if env is already current.
+		if err := s.updateFunctionUserEnv(ctx, claimed, envVars); err != nil {
+			return fmt.Errorf("update env on reused function %q: %w", claimed, err)
 		}
 		// Pool hit — function already exists with our overlay. Still
 		// must attach the caller's volume binds: pool entries are keyed

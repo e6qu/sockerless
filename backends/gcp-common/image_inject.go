@@ -69,15 +69,13 @@ func RenderOverlayDockerfile(spec OverlayImageSpec) (string, error) {
 	fmt.Fprintf(&b, "FROM %s\n", spec.BaseImageRef)
 	fmt.Fprintf(&b, "COPY %s /opt/sockerless/%s\n", name, name)
 	fmt.Fprintf(&b, "RUN chmod +x /opt/sockerless/%s\n", name)
-	if ep := JoinForEnv(spec.UserEntrypoint); ep != "" {
-		fmt.Fprintf(&b, "ENV SOCKERLESS_USER_ENTRYPOINT=%s\n", ep)
-	}
-	if cmd := JoinForEnv(spec.UserCmd); cmd != "" {
-		fmt.Fprintf(&b, "ENV SOCKERLESS_USER_CMD=%s\n", cmd)
-	}
-	if spec.UserWorkdir != "" {
-		fmt.Fprintf(&b, "ENV SOCKERLESS_USER_WORKDIR=%s\n", spec.UserWorkdir)
-	}
+	// SOCKERLESS_USER_ENTRYPOINT / _CMD / _WORKDIR are intentionally NOT
+	// baked into the image (BUG-950). They're passed at runtime via
+	// ServiceConfig.EnvironmentVariables on each fresh deploy + each
+	// pool claim, so the same overlay image works for any user command
+	// and the pool can be reused across container types with different
+	// entrypoint/cmd. The bootstrap reads these via os.Getenv() at
+	// request time; runtime env wins over any image defaults.
 	fmt.Fprintf(&b, "ENTRYPOINT [\"/opt/sockerless/%s\"]\n", name)
 	return b.String(), nil
 }
@@ -97,21 +95,15 @@ func JoinForEnv(parts []string) string {
 }
 
 // OverlayContentTag returns a stable content-addressed tag for the
-// overlay image. Identical (user-image, bootstrap, entrypoint, cmd,
-// workdir) tuples reuse the already-built overlay. `prefix` lets each
-// caller scope its tag namespace (e.g. `gcf-`, `cloudrun-`) so the
-// per-cloud image cache doesn't collide.
+// overlay image. Identical (user-image, bootstrap) tuples reuse the
+// already-built overlay AND the pool entry — entrypoint/cmd/workdir
+// are runtime env overrides, not image content (BUG-950). `prefix`
+// lets each caller scope its tag namespace (e.g. `gcf-`, `cloudrun-`)
+// so the per-cloud image cache doesn't collide.
 func OverlayContentTag(prefix string, spec OverlayImageSpec) string {
 	h := sha256.New()
 	fmt.Fprintln(h, spec.BaseImageRef)
 	fmt.Fprintln(h, spec.BootstrapBinaryPath)
-	if epb, err := json.Marshal(spec.UserEntrypoint); err == nil {
-		h.Write(epb)
-	}
-	if cmdb, err := json.Marshal(spec.UserCmd); err == nil {
-		h.Write(cmdb)
-	}
-	fmt.Fprintln(h, spec.UserWorkdir)
 	sum := h.Sum(nil)
 	return prefix + hex.EncodeToString(sum[:8])
 }

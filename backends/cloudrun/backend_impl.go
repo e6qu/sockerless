@@ -2,6 +2,8 @@ package cloudrun
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -74,27 +76,30 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// This makes the deployed Service host an HTTP endpoint that
 	// ContainerExec can POST envelope payloads against (Path B). Cache
 	// hits via OverlayContentTag mean the second container of any given
-	// (image, entrypoint, cmd, workdir) tuple skips Cloud Build entirely.
+	// (image, bootstrap) pair skips Cloud Build entirely (BUG-950: tag
+	// no longer depends on entrypoint/cmd/workdir — those are runtime
+	// env vars).
 	originalImage := config.Image
 	if s.useOverlayPath(originalImage) {
 		spec := gcpcommon.OverlayImageSpec{
 			BaseImageRef:        originalImage,
 			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
-			UserEntrypoint:      config.Entrypoint,
-			UserCmd:             config.Cmd,
-			UserWorkdir:         config.WorkingDir,
 		}
 		contentTag := gcpcommon.OverlayContentTag("cloudrun-", spec)
 		overlayURI, err := s.ensureOverlayImage(s.ctx(), spec, contentTag)
 		if err != nil {
 			return nil, fmt.Errorf("ensure cloudrun overlay image: %w", err)
 		}
+		// Inject the user's entrypoint/cmd/workdir as RUNTIME env so
+		// the bootstrap can decode + exec them. Replaces the previous
+		// build-time `ENV SOCKERLESS_USER_*` baking (BUG-950).
+		userEnv := overlayUserEnv(config.Entrypoint, config.Cmd, config.WorkingDir)
+		config.Env = append(config.Env, userEnv...)
 		config.Image = overlayURI
 		// Bootstrap owns the entrypoint; it parses SOCKERLESS_USER_*
-		// env vars (baked into the overlay at build time) on each
-		// invocation. Drop the user's entrypoint+cmd from the Cloud
-		// Run container spec so Cloud Run doesn't re-override the
-		// bootstrap with the user's argv.
+		// env vars on each invocation. Drop the user's entrypoint+cmd
+		// from the Cloud Run container spec so Cloud Run doesn't
+		// re-override the bootstrap with the user's argv.
 		config.Entrypoint = nil
 		config.Cmd = nil
 	}
@@ -1468,4 +1473,27 @@ func (s *Server) inUseVolumeNames() map[string]struct{} {
 		}
 	}
 	return in
+}
+
+// overlayUserEnv returns the SOCKERLESS_USER_* env entries that the
+// cloudrun bootstrap reads at request time to assemble the user's
+// argv + workdir. Replaces the build-time `ENV` baking (BUG-950) so
+// pool entries with the same (image, bootstrap) can be reused across
+// containers with different entrypoint/cmd/workdir tuples.
+func overlayUserEnv(entrypoint, cmd []string, workdir string) []string {
+	var out []string
+	if len(entrypoint) > 0 {
+		if b, err := json.Marshal(entrypoint); err == nil {
+			out = append(out, "SOCKERLESS_USER_ENTRYPOINT="+base64.StdEncoding.EncodeToString(b))
+		}
+	}
+	if len(cmd) > 0 {
+		if b, err := json.Marshal(cmd); err == nil {
+			out = append(out, "SOCKERLESS_USER_CMD="+base64.StdEncoding.EncodeToString(b))
+		}
+	}
+	if workdir != "" {
+		out = append(out, "SOCKERLESS_USER_WORKDIR="+workdir)
+	}
+	return out
 }
