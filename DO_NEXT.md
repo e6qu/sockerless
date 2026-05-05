@@ -2,7 +2,7 @@
 
 Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md); bug log in [BUGS.md](BUGS.md); architecture in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
 
-## Resume pointer (2026-05-05 v26 — Cell 7 GREEN; cell 8 hit BUG-948 quota)
+## Resume pointer (2026-05-05 v27 — quota sim + pool-warming code shipped; BUG-950 blocks claim match)
 
 ### What just landed (commits on `phase-118-faas-pods`)
 
@@ -15,9 +15,42 @@ Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.
 
 **Cell 7 v51 GREEN** — pipeline 2500209956, job 14213994152, 383 s. Heavy workload verified end-to-end: git fetch + git checkout + apk add file + go build eval-arithmetic + run-with-postgres-sidecar. All 5 arithmetic results correct (11/14/21/13/6.5). BUG-947 closed.
 
+### Latest landings
+
+| Commit | What |
+|---|---|
+| `348e89d` | feat(simulators/gcp): regional CPU quota simulation — sliding-window CPU-min budget, wired into CreateService/UpdateService/CreateFunction; reproduces BUG-942/948 deterministically. SDK tests + unit tests cover the path. |
+| `e8d91c0` | feat(BUG-948): gcf pool-warming via SOCKERLESS_GCF_PREWARM_OVERLAYS — at startup, pre-deploy N free Functions tagged with overlay content-hash. **Code shipped + deployed (gitlab-runner-gcf rev 00029-4c9), but BUG-950 blocks claim match.** |
+| `a23539b` | docs(BUG-949): file pre-existing simulators/gcp arithmetic-test host/Linux mismatch on macOS hosts |
+
 ### Next concrete steps (in order)
 
-#### Cell 8 — fix BUG-948 (gcf per-step Function deploy quota + 120s gitlab-runner timeout)
+#### Cell 8 — fix BUG-950 (prewarm contentTag mismatch) so pool-warming actually fires
+
+Discovered while testing pool-warming live: `OverlayContentTag` hashes `UserEntrypoint` + `UserCmd` + `UserWorkdir`. gitlab-runner sets these per-container-type, so prewarmed pool entries (with empty entrypoint/cmd) have a different content-hash than the live workload's containers. Pool deployed, but `claimFreeFunction` filters by content-hash exactly → invisible.
+
+**Recommended fix (BUG-950 path A):** drop entrypoint/cmd/workdir from `OverlayContentTag`. Stop baking `SOCKERLESS_USER_ENTRYPOINT`/`SOCKERLESS_USER_CMD`/`SOCKERLESS_USER_WORKDIR` into the Dockerfile via `ENV`. Pass them at runtime via `ServiceConfig.EnvironmentVariables` on each fresh deploy AND on each pool claim (UpdateService path). The bootstrap already reads `os.Getenv()` at request time, so runtime env wins.
+
+Files:
+- `backends/gcp-common/image_inject.go::OverlayContentTag` — drop the entrypoint/cmd/workdir fields from the hash; renderer also drops the `ENV SOCKERLESS_USER_*` lines.
+- `backends/cloudrun-functions/backend_impl.go::deployFunction` — set entrypoint/cmd/workdir as ServiceConfig env vars on fresh CreateFunction. Same for the pool-claim path (need a new UpdateService call to update env vars on the underlying CR Service).
+- `backends/cloudrun/start_service.go` — same surgery for cloudrun (consistency).
+- Add round-trip test: contentTag stable across different entrypoint/cmd values for the same image.
+
+After fix: cell 8 v3 should hit a warm pool, bypass the quota cascade, and run the heavy workload similar to cell 7.
+
+#### Cells 5+6 (GH × cloudrun, GH × gcf) — pivot to vanilla-runner architecture (still queued)
+
+Per user directives (and STATUS.md's recorded plan):
+- **Cells 5+6 architecture:** pre-deployed Cloud Run **Job** per cell label with multi-container TaskTemplate (vanilla `actions/runner --ephemeral` + sockerless sidecar). Dispatcher's only call = `Executions.RunJob(<predefined-job>)` with per-execution env override (`RUNNER_REG_TOKEN`, `RUNNER_NAME`, `RUNNER_LABELS`, `RUNNER_REPO`).
+- The current `github-runner-dispatcher-gcp` rev `00021-fb2` is OLD architecture (custom image baking sockerless) — needs replacement.
+- Unmodified vanilla `actions/runner` image required (no sockerless code baked in).
+
+Skipping the old "Cell 8 — fix BUG-948" section since BUG-948's blocker is now BUG-950.
+
+#### Old details (kept for context but superseded by the BUG-950 plan above)
+
+The original BUG-948 fix plan:
 
 **Symptom:** cell 8 v1 hit `system_failure` after 6 min. gitlab-runner's docker executor times out at 120 s waiting for `ContainerStart` while sockerless's gcf backend is still deploying the per-step Cloud Function (Cloud Run regional CPU quota saturated). Each retry creates a fresh container ID → fresh Function deploy → same quota failure → cascade.
 
@@ -99,4 +132,4 @@ Per user directives:
 
 ### Single-line summary
 
-> Cell 7 GREEN; cell 8 v1 hit BUG-948 (gcf Function-deploy CPU quota + gitlab-runner 120s timeout). Next: implement pool-warming for the standard gitlab-runner cache-permission overlay so first request hits a hot pool. Then GH dispatcher refactor for cells 5+6.
+> Simulator quota sim + gcf pool-warming code shipped (commits `348e89d`+`e8d91c0`). BUG-950 surfaced: prewarm contentTag ≠ live workload contentTag because `OverlayContentTag` hashes UserEntrypoint/Cmd/Workdir. Next: drop those from contentTag + pass via runtime env on UpdateService; cell 8 v3 retest. Then cells 5+6 GH dispatcher refactor.

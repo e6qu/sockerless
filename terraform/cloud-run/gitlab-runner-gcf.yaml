@@ -76,7 +76,7 @@ spec:
               cpu: "1"
               memory: 1Gi
         - name: sockerless
-          image: us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/sockerless-backend-gcf@sha256:4c84a691021fed10f6382292df8e8c66cace73a337bc28bcd6b2a89dd6189050
+          image: us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/sockerless-backend-gcf@sha256:530b3f8e27e126493d19464a1afed2f818aa26207afc557c5f95cc5b692408e9
           ports:
             - containerPort: 3376
           env:
@@ -90,6 +90,14 @@ spec:
               value: "runner-workspace=/tmp/runner-work=sockerless-live-46x3zg4imo-runner-workspace"
             - name: SOCKERLESS_GCF_BOOTSTRAP
               value: "/opt/sockerless/sockerless-gcf-bootstrap"
+            # BUG-948: pre-deploy free Functions for the gitlab-runner cache
+            # -permission overlay so first ContainerCreate hits a warm pool
+            # instead of paying the regional CPU quota cost of a fresh
+            # deploy. Image is the gitlab-runner-helper used by the docker
+            # executor (cell 7 + cell 8 trace evidence). Size 3 covers
+            # gitlab-runner's typical concurrent-permission-container burst.
+            - name: SOCKERLESS_GCF_PREWARM_OVERLAYS
+              value: "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-v17.5.0:3"
           resources:
             limits:
               cpu: "1"
