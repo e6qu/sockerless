@@ -425,15 +425,20 @@ func (s *BaseServer) RecoverRegistry(ctx context.Context, scanner CloudScanner) 
 	return nil
 }
 
-// LoggingMiddleware logs HTTP requests at Debug level with method, path, status, and duration.
+// LoggingMiddleware logs HTTP requests at Info level with method, path, status, and duration.
+// Skips known noise paths (heartbeats, ping, version, info) to keep the signal high.
 func LoggingMiddleware(logger zerolog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		logger.Debug().
+		path := r.URL.Path
+		if path == "/_ping" || path == "/libpod/_ping" || path == "/version" || path == "/libpod/version" || path == "/info" {
+			return
+		}
+		logger.Info().
 			Str("method", r.Method).
-			Str("path", r.URL.Path).
+			Str("path", path).
 			Int("status", rec.status).
 			Dur("duration", time.Since(start)).
 			Msg("http request")

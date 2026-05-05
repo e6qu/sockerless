@@ -6,7 +6,26 @@ Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.
 
 User goal: **all 4 GCP cells (5, 6, 7, 8) GREEN with full workflow + evidence + executing where they're supposed to**. Cell 7 done; cells 5/6/8 outstanding.
 
-### Cell 8 — v15 results (HUGE progress, new failure mode)
+### Cell 8 — v16 root cause PINNED (port cloudrun stdinPipe pattern to gcf)
+
+**v16 evidence** (pipeline 2501822349, rev `00049-lk4`, digest `sha256:d32c33e4`): with all delegate ENTRY logs added, we can see definitively that gitlab-runner makes ZERO docker calls during the silent window. ContainerStart fires correctly (netDefer=false netMembers=2), materialize completes in 13 s, build container's bootstrap exec'd `[/usr/bin/dumb-init /entrypoint gitlab-runner-build]` → exit=0 stdout=0B stderr=0B (gitlab-runner-helper's `build` subcommand is a no-op without CI env vars).
+
+**Root cause**: `cloudrun-functions/pod_service.go::invokePodServiceMain` is invoked immediately after `materializePodService` completes. It POSTs the build container's user CMD to the Service URL, gets exit=0 back, calls `PutInvocationResult` + closes `WaitChs`. From sockerless's perspective the container "exited" — but gitlab-runner expected the container to STAY ALIVE so it could attach stdin and pipe scripts.
+
+**Fix path — port the cloudrun pattern**:
+
+1. `backends/cloudrun/attach_stream.go` — defines `attachStream` + `stdinPipe`. ContainerAttach returns an `attachStream` that reads from the pipe via `publishAttachResponse`.
+2. `backends/cloudrun/start_service.go::invokeServiceDefaultCmd` — goroutine that BLOCKS until the per-container `stdinPipe` is populated (via attach), then POSTs the captured script bytes as the request envelope, reads response, publishes back via `attachStream.publishAttachResponse`.
+3. `backends/cloudrun/backend_impl.go::ContainerAttach` (around line 1283-1314) — when called for a service-container, registers a `stdinPipe` so invokeServiceDefaultCmd can wait on it.
+
+Mirror this onto `backends/cloudrun-functions/`:
+- Add `gcf` equivalent of `attach_stream.go` (or share with cloudrun via gcp-common)
+- Modify `pod_service.go::invokePodServiceMain` to wait for stdinPipe
+- Modify `cloudrun-functions/backend_impl.go::ContainerAttach` to register stdinPipe like cloudrun does
+
+Also flip `LoggingMiddleware` in `core/server.go` from Debug to Info (already staged in source) to capture every HTTP request hit during the next iteration — confirms whether gitlab-runner is calling Attach or Wait or something else first.
+
+### Cell 8 — v15/v14 historical (resolved by v16 architectural finding)
 
 **Pipeline 2501668159** (gitlab-cell-8-test branch). Rev `00047-45f`, digest `sha256:ee7e5029...`.
 
