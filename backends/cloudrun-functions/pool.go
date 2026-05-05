@@ -220,6 +220,13 @@ func (s *Server) resolveGCFFromCloud(ctx context.Context, containerID string) (G
 	})
 	fn, err := it.Next()
 	if err != nil || fn == nil {
+		// BUG-953: pod-mode resources are Cloud Run Services (not
+		// Functions). When no Function matches the allocation label,
+		// fall through to a Service lookup — pod members live there
+		// after materializePodService runs.
+		if state, ok := s.resolvePodServiceFromCloud(ctx, containerID); ok {
+			return state, true
+		}
 		return GCFState{}, false
 	}
 	full, getErr := s.gcp.Functions.GetFunction(ctx, &functionspb.GetFunctionRequest{Name: fn.Name})
@@ -507,4 +514,64 @@ func (s *Server) deployFreePoolEntry(ctx context.Context, contentTag, overlayURI
 		return fmt.Errorf("swap prewarm function image: %w", err)
 	}
 	return nil
+}
+
+// resolvePodServiceFromCloud finds the multi-container pod Cloud Run
+// Service backing this container ID. Pod members are tracked via:
+//
+//   - Service.labels.sockerless_allocation = short(MAIN container ID)
+//   - Service.annotations.sockerless_pod_members = "<id1>,<id2>,..."
+//
+// MAIN members hit the allocation label (server-side filter); sidecar
+// members hit the annotation match (client-side scan). Both return
+// the same Service URL — gcf invokes only the main bootstrap, which
+// dispatches to sidecars via shared loopback.
+func (s *Server) resolvePodServiceFromCloud(ctx context.Context, containerID string) (GCFState, bool) {
+	if s.gcp == nil || s.gcp.Services == nil {
+		return GCFState{}, false
+	}
+	parent := fmt.Sprintf("projects/%s/locations/%s", s.config.Project, s.config.Region)
+	short := shortAllocLabel(containerID)
+
+	it := s.gcp.Services.ListServices(ctx, &runpb.ListServicesRequest{Parent: parent})
+	for {
+		svc, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return GCFState{}, false
+		}
+		if svc.Labels["sockerless_managed"] != "true" {
+			continue
+		}
+		if svc.Labels["sockerless_allocation"] != short && !annotationContainsContainer(svc.Annotations["sockerless_pod_members"], containerID) {
+			continue
+		}
+		shortName := shortFunctionName(svc.Name)
+		return GCFState{
+			FunctionName: shortName,
+			FunctionURL:  svc.Uri,
+			LogResource:  shortName,
+		}, true
+	}
+	return GCFState{}, false
+}
+
+// annotationContainsContainer returns true if the comma-separated
+// container-ID list in `annotation` contains `containerID` (full or
+// 32-char short form). Used to match sidecar pod members during
+// resolveGCFFromCloud's fallback path.
+func annotationContainsContainer(annotation, containerID string) bool {
+	if annotation == "" || containerID == "" {
+		return false
+	}
+	short := shortAllocLabel(containerID)
+	for _, mid := range strings.Split(annotation, ",") {
+		mid = strings.TrimSpace(mid)
+		if mid == containerID || mid == short {
+			return true
+		}
+	}
+	return false
 }

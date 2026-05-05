@@ -9,6 +9,7 @@ import (
 	"time"
 
 	functionspb "cloud.google.com/go/functions/apiv2/functionspb"
+	runpb "cloud.google.com/go/run/apiv2/runpb"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 	"google.golang.org/api/iterator"
@@ -235,7 +236,112 @@ func (p *gcfCloudState) queryFunctions(ctx context.Context) ([]api.Container, er
 		containers = append(containers, c)
 	}
 
+	// BUG-953: pod-mode resources are now Cloud Run Services (not
+	// Functions) for deploy-speed reasons — see pod_service.go. Query
+	// Services tagged with sockerless_managed=true + sockerless_pod=*
+	// and emit one container row per pod member (same shape as the
+	// pod-Function path above).
+	podContainers, podErr := p.queryPodServiceContainers(ctx, seen)
+	if podErr != nil {
+		// Don't fail the whole listing — Functions-side results stand;
+		// Service-side errors get logged once.
+		p.server.Logger.Debug().Err(podErr).Msg("queryFunctions: pod-Service listing partial failure")
+	}
+	containers = append(containers, podContainers...)
+
 	return containers, nil
+}
+
+// queryPodServiceContainers lists sockerless-managed pod-mode Cloud
+// Run Services (sockerless_pod label set) and reconstructs an
+// api.Container for each pod member listed in the
+// `sockerless_pod_members` annotation. seen is updated in place to
+// avoid double-counting members already covered by the Function path.
+func (p *gcfCloudState) queryPodServiceContainers(ctx context.Context, seen map[string]bool) ([]api.Container, error) {
+	if p.server.gcp == nil || p.server.gcp.Services == nil {
+		return nil, nil
+	}
+	parent := fmt.Sprintf("projects/%s/locations/%s", p.server.config.Project, p.server.config.Region)
+	it := p.server.gcp.Services.ListServices(ctx, &runpb.ListServicesRequest{Parent: parent})
+	var out []api.Container
+	for {
+		svc, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return out, err
+		}
+		if svc.Labels["sockerless_managed"] != "true" {
+			continue
+		}
+		if svc.Labels["sockerless_pod"] == "" && svc.Annotations["sockerless_pod_members"] == "" {
+			continue
+		}
+		members := strings.Split(svc.Annotations["sockerless_pod_members"], ",")
+		for _, mid := range members {
+			mid = strings.TrimSpace(mid)
+			if mid == "" || seen[mid] {
+				continue
+			}
+			seen[mid] = true
+			c := serviceToPodMemberContainer(svc, mid)
+			if inv, ok := p.server.Store.GetInvocationResult(mid); ok {
+				c.State = api.ContainerState{
+					Status:     "exited",
+					Running:    false,
+					ExitCode:   inv.ExitCode,
+					FinishedAt: inv.FinishedAt.UTC().Format(time.RFC3339Nano),
+					Error:      inv.Error,
+				}
+			}
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+// serviceToPodMemberContainer constructs a `docker ps` row for one
+// pod member from its multi-container Cloud Run Service. Per-member
+// fields (image, entrypoint, cmd) are read off the corresponding
+// runpb.Container in the revision template; identity fields come
+// from the Service labels + annotations.
+func serviceToPodMemberContainer(svc *runpb.Service, mid string) api.Container {
+	created := ""
+	if svc.CreateTime != nil {
+		created = svc.CreateTime.AsTime().Format(time.RFC3339Nano)
+	}
+	state := api.ContainerState{Status: "running", Running: true}
+	if svc.TerminalCondition != nil && svc.TerminalCondition.State != runpb.Condition_CONDITION_SUCCEEDED {
+		state = api.ContainerState{Status: "created", Running: false}
+	}
+	name := "/" + mid
+	if len(mid) > 12 {
+		name = "/" + mid[:12]
+	}
+	image := ""
+	if svc.Template != nil && len(svc.Template.Containers) > 0 {
+		image = svc.Template.Containers[0].Image
+	}
+	return api.Container{
+		ID:      mid,
+		Name:    name,
+		Created: created,
+		Image:   image,
+		State:   state,
+		Config: api.ContainerConfig{
+			Image: image,
+		},
+		HostConfig: api.HostConfig{NetworkMode: "default"},
+		NetworkSettings: api.NetworkSettings{
+			Networks: map[string]*api.EndpointSettings{
+				"bridge": {NetworkID: "bridge"},
+			},
+		},
+		Mounts:   []api.MountPoint{},
+		Platform: "linux",
+		Driver:   "cloud-run-service",
+	}
 }
 
 // podMembersFromFunction extracts the per-member manifest from the

@@ -1,0 +1,515 @@
+package gcf
+
+// BUG-953: pod materialization via direct multi-container Cloud Run
+// Service deploy (skipping the slow Cloud Functions wrapper).
+//
+// Cell 8 evidence: the previous implementation (materializePodFunction)
+// did three sequential operations — (1) merged-rootfs Cloud Build for
+// a pod overlay, (2) Functions.CreateFunction with a Buildpacks-Go stub
+// source which itself runs Cloud Build internally + creates the
+// underlying CR Service, and (3) Services.UpdateService to swap the
+// stub image for the pod overlay. Total ~150-180 s, exceeding
+// gitlab-runner's 120 s ContainerExec timeout.
+//
+// The new path mirrors what cloudrun does for pod-mode in cell 7
+// (which is GREEN at 90 s total): build per-container overlay images
+// in parallel, then call Services.CreateService once with a multi-
+// container RevisionTemplate. Cloud Run schedules every member on the
+// same instance — sidecars share loopback with main, so the postgres
+// service is reachable from the build container via 127.0.0.1:5432
+// (the standard `services:` clause behaviour gitlab-runner expects).
+//
+// Track the resulting Service via labels so cloud_state can find pod
+// members through Services.ListServices alongside the existing
+// Functions.ListFunctions path.
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
+	functionspb "cloud.google.com/go/functions/apiv2/functionspb"
+	runpb "cloud.google.com/go/run/apiv2/runpb"
+	"github.com/sockerless/api"
+	core "github.com/sockerless/backend-core"
+	gcpcommon "github.com/sockerless/gcp-common"
+	"google.golang.org/protobuf/types/known/durationpb"
+)
+
+// materializePodService deploys a multi-container pod as a single
+// Cloud Run Service revision (one container per pod member). Returns
+// the Service name; ContainerStart's caller uses it to invoke the
+// pod's main bootstrap.
+//
+// Replaces materializePodFunction's slow Cloud Functions path. Same
+// signature so backend_impl.go's call sites swap cleanly.
+func (s *Server) materializePodService(mainContainerID string, containers []api.Container, exitCh chan struct{}) error {
+	ctx := s.ctx()
+
+	pod, _ := s.Store.Pods.GetPodForContainer(mainContainerID)
+	podName := ""
+	if pod != nil {
+		podName = pod.Name
+	}
+
+	// 1. Build per-member overlay images in parallel. Each member's
+	//    overlay = (member's image, bootstrap binary) tuple — same
+	//    content-hash as the single-container path, so prewarmed
+	//    images already in AR (e.g. gitlab-runner-helper) get cache hits.
+	type overlayResult struct {
+		index int
+		uri   string
+		err   error
+	}
+	resultsCh := make(chan overlayResult, len(containers))
+	var wg sync.WaitGroup
+	for i, c := range containers {
+		wg.Add(1)
+		go func(idx int, container api.Container) {
+			defer wg.Done()
+			imageRef := gcpcommon.ResolveGCPImageURI(container.Config.Image, s.config.Project, s.config.Region)
+			spec := OverlayImageSpec{
+				BaseImageRef:        imageRef,
+				BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+			}
+			tag := OverlayContentTag(spec)
+			uri, err := s.ensureOverlayImage(ctx, spec, tag)
+			resultsCh <- overlayResult{index: idx, uri: uri, err: err}
+		}(i, c)
+	}
+	wg.Wait()
+	close(resultsCh)
+	overlayURIs := make([]string, len(containers))
+	for r := range resultsCh {
+		if r.err != nil {
+			return fmt.Errorf("ensure overlay image for pod member %d: %w", r.index, r.err)
+		}
+		overlayURIs[r.index] = r.uri
+	}
+
+	// 2. Atomically delete any per-member Functions left over from the
+	//    cancelled async deploys (the network-pod path cancels them when
+	//    deferring to materialize). Best-effort — leftovers become
+	//    sweep-able orphans rather than blocking the materialize.
+	for _, c := range containers {
+		state, ok := s.resolveGCFFromCloud(ctx, c.ID)
+		if !ok || state.FunctionName == "" {
+			continue
+		}
+		fullName := fmt.Sprintf("projects/%s/locations/%s/functions/%s",
+			s.config.Project, s.config.Region, state.FunctionName)
+		if delOp, derr := s.gcp.Functions.DeleteFunction(ctx, &functionspb.DeleteFunctionRequest{Name: fullName}); derr == nil {
+			_ = delOp.Wait(ctx)
+			s.Registry.MarkCleanedUp(fullName)
+		}
+	}
+
+	// 3. Build the multi-container Cloud Run Service spec.
+	svcName := podServiceName(mainContainerID)
+	parent := fmt.Sprintf("projects/%s/locations/%s", s.config.Project, s.config.Region)
+	fullSvcName := fmt.Sprintf("%s/services/%s", parent, svcName)
+
+	specs, volumes, persistEntries, err := s.buildPodContainerSpecs(ctx, containers, overlayURIs)
+	if err != nil {
+		return err
+	}
+	injectPodPersistEnv(specs, persistEntries)
+	injectPodHostAliases(specs, containers, s.userDefinedNetworkIDOrEmpty(containers[0]))
+
+	revTemplate := &runpb.RevisionTemplate{
+		Containers: specs,
+		Volumes:    volumes,
+		Scaling: &runpb.RevisionScaling{
+			MinInstanceCount: 1,
+			MaxInstanceCount: 1,
+		},
+		Timeout: durationpb.New(1 * time.Hour),
+	}
+
+	tags := core.TagSet{
+		ContainerID: mainContainerID,
+		Backend:     "gcf",
+		InstanceID:  s.Desc.InstanceID,
+		CreatedAt:   time.Now(),
+		AutoRemove:  false,
+	}
+	gcpLabels := tags.AsGCPLabels()
+	gcpLabels["sockerless_managed"] = "true"
+	gcpLabels["sockerless_allocation"] = shortAllocLabel(mainContainerID)
+	if podName != "" {
+		gcpLabels["sockerless_pod"] = sanitizePodLabelValue(podName)
+	}
+	gcpAnnotations := tags.AsGCPAnnotations()
+	if gcpAnnotations == nil {
+		gcpAnnotations = map[string]string{}
+	}
+	memberIDs := make([]string, 0, len(containers))
+	for _, c := range containers {
+		memberIDs = append(memberIDs, c.ID)
+	}
+	gcpAnnotations["sockerless_pod_members"] = strings.Join(memberIDs, ",")
+
+	svc := &runpb.Service{
+		Labels:             gcpLabels,
+		Annotations:        gcpAnnotations,
+		Ingress:            runpb.IngressTraffic_INGRESS_TRAFFIC_ALL,
+		DefaultUriDisabled: false,
+		Template:           revTemplate,
+	}
+
+	// 4. Deploy directly via Services.CreateService — no Cloud Functions
+	//    wrapper, no buildpacks build, no swap. Same primitive cloudrun
+	//    uses for cell 7's pod-materialize, which deploys in ~30-60 s.
+	createOp, err := s.gcp.Services.CreateService(ctx, &runpb.CreateServiceRequest{
+		Parent:    parent,
+		ServiceId: svcName,
+		Service:   svc,
+	})
+	if err != nil {
+		return gcpcommon.MapGCPError(err, "service", svcName)
+	}
+	result, err := createOp.Wait(ctx)
+	if err != nil {
+		// Best-effort cleanup on partial-create failure.
+		if delOp, delErr := s.gcp.Services.DeleteService(ctx, &runpb.DeleteServiceRequest{Name: fullSvcName}); delErr == nil {
+			_, _ = delOp.Wait(ctx)
+		}
+		return gcpcommon.MapGCPError(err, "service", svcName)
+	}
+
+	s.Registry.Register(core.ResourceEntry{
+		ContainerID:  mainContainerID,
+		Backend:      "gcf",
+		ResourceType: "service",
+		ResourceID:   result.Name,
+		InstanceID:   s.Desc.InstanceID,
+		CreatedAt:    time.Now(),
+		Metadata: map[string]string{
+			"serviceName": svcName,
+			"podName":     podName,
+			"podMembers":  fmt.Sprintf("%d", len(containers)),
+			"role":        "pod-multi-container-service",
+		},
+	})
+	for _, c := range containers {
+		s.EmitEvent("container", "start", c.ID, map[string]string{
+			"name": strings.TrimPrefix(c.Name, "/"),
+			"pod":  podName,
+		})
+	}
+
+	// 5. Invoke the pod's ingress container (main is index 0). The
+	//    bootstrap on main runs the user's argv via the exec envelope
+	//    posted to the Service URL.
+	go s.invokePodServiceMain(ctx, result, containers, exitCh)
+	return nil
+}
+
+// podServiceName returns the Cloud Run Service name for a pod. Same
+// shape as buildServiceName in cloudrun ("sockerless-svc-<id12>") so
+// cloud_state heuristics that match the prefix still find it.
+func podServiceName(mainID string) string {
+	if len(mainID) < 12 {
+		return "sockerless-svc-" + mainID
+	}
+	return "sockerless-svc-" + mainID[:12]
+}
+
+// userDefinedNetworkIDOrEmpty is a non-erroring variant for the
+// SOCKERLESS_HOST_ALIASES injection — empty network ID means the
+// hostAliasesForMembers helper falls back to per-container aliases.
+func (s *Server) userDefinedNetworkIDOrEmpty(c api.Container) string {
+	if id, ok := s.userDefinedNetworkID(c); ok {
+		return id
+	}
+	return ""
+}
+
+// buildPodContainerSpecs builds per-member Cloud Run Container specs
+// for a multi-container Service revision. Each member's image is the
+// caller-built overlay (so the bootstrap is the ENTRYPOINT). Container
+// 0 (main) binds PORT for the Cloud Run ingress probe; the rest run
+// as sidecars (SOCKERLESS_SIDECAR=1, no port).
+//
+// Volume mounts are translated from the caller's HostConfig.Binds:
+// non-shared volumes become Volume_EmptyDir{MEMORY} backed by tar-pack
+// persistence (BUG-947); shared volumes stay as raw GCSFuse.
+func (s *Server) buildPodContainerSpecs(ctx context.Context, containers []api.Container, overlayURIs []string) ([]*runpb.Container, []*runpb.Volume, []string, error) {
+	specs := make([]*runpb.Container, 0, len(containers))
+	volSeen := map[string]struct{}{}
+	var volumes []*runpb.Volume
+	var persistEntries []string
+	for i, c := range containers {
+		isMain := i == 0
+		spec, mounts, err := s.buildPodContainerSpec(c, overlayURIs[i], isMain)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		specs = append(specs, spec)
+		for _, mp := range mounts {
+			if _, done := volSeen[mp.Name]; done {
+				continue
+			}
+			vol, persist, verr := s.buildVolumeForBindGCF(ctx, mp.Name, mp.MountPath)
+			if verr != nil {
+				return nil, nil, nil, verr
+			}
+			volumes = append(volumes, vol)
+			if persist != "" {
+				persistEntries = append(persistEntries, persist)
+			}
+			volSeen[mp.Name] = struct{}{}
+		}
+	}
+	return specs, volumes, persistEntries, nil
+}
+
+// buildPodContainerSpec produces one runpb.Container for a pod member.
+// The bootstrap is already baked in via the overlay image; the
+// caller's entrypoint+cmd+workdir flow through env so the bootstrap
+// reads them at runtime (matching BUG-950 + BUG-951).
+func (s *Server) buildPodContainerSpec(c api.Container, overlayURI string, isMain bool) (*runpb.Container, []*runpb.VolumeMount, error) {
+	cfg := c.Config
+	envVars := make([]*runpb.EnvVar, 0, len(cfg.Env)+8)
+	for _, e := range cfg.Env {
+		parts := strings.SplitN(e, "=", 2)
+		if len(parts) == 2 {
+			envVars = append(envVars, &runpb.EnvVar{
+				Name:   parts[0],
+				Values: &runpb.EnvVar_Value{Value: parts[1]},
+			})
+		}
+	}
+	if len(cfg.Entrypoint) > 0 {
+		if b, err := json.Marshal(cfg.Entrypoint); err == nil {
+			envVars = append(envVars, &runpb.EnvVar{
+				Name:   "SOCKERLESS_USER_ENTRYPOINT",
+				Values: &runpb.EnvVar_Value{Value: base64.StdEncoding.EncodeToString(b)},
+			})
+		}
+	}
+	if len(cfg.Cmd) > 0 {
+		if b, err := json.Marshal(cfg.Cmd); err == nil {
+			envVars = append(envVars, &runpb.EnvVar{
+				Name:   "SOCKERLESS_USER_CMD",
+				Values: &runpb.EnvVar_Value{Value: base64.StdEncoding.EncodeToString(b)},
+			})
+		}
+	}
+	if cfg.WorkingDir != "" {
+		envVars = append(envVars, &runpb.EnvVar{
+			Name:   "SOCKERLESS_USER_WORKDIR",
+			Values: &runpb.EnvVar_Value{Value: cfg.WorkingDir},
+		})
+	}
+	if !isMain {
+		envVars = append(envVars, &runpb.EnvVar{
+			Name:   "SOCKERLESS_SIDECAR",
+			Values: &runpb.EnvVar_Value{Value: "1"},
+		})
+	}
+
+	defName := "main"
+	if !isMain {
+		defName = sanitizeServiceContainerName(c.Name)
+	}
+
+	var mounts []*runpb.VolumeMount
+	for _, bind := range c.HostConfig.Binds {
+		parts := strings.SplitN(bind, ":", 3)
+		if len(parts) < 2 {
+			continue
+		}
+		mounts = append(mounts, &runpb.VolumeMount{
+			Name:      parts[0],
+			MountPath: parts[1],
+		})
+	}
+
+	cs := &runpb.Container{
+		Name:         defName,
+		Image:        overlayURI,
+		Env:          envVars,
+		VolumeMounts: mounts,
+		Resources: &runpb.ResourceRequirements{
+			Limits: map[string]string{
+				"cpu":    s.config.CPU,
+				"memory": s.config.Memory,
+			},
+		},
+	}
+	if isMain {
+		cs.Ports = []*runpb.ContainerPort{{ContainerPort: 8080}}
+	}
+	if cfg.WorkingDir != "" {
+		cs.WorkingDir = cfg.WorkingDir
+	}
+	return cs, mounts, nil
+}
+
+// sanitizeServiceContainerName converts a docker container name to a
+// valid Cloud Run container name (RFC 1123 lowercase + digits + hyphen,
+// must begin/end with letter or digit, < 64 chars).
+func sanitizeServiceContainerName(name string) string {
+	name = strings.TrimPrefix(name, "/")
+	if name == "" {
+		return "sidecar"
+	}
+	var b strings.Builder
+	for _, c := range name {
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+			b.WriteRune(c)
+		case c >= 'A' && c <= 'Z':
+			b.WriteRune(c + 32)
+		case c == '-' || c == '.':
+			b.WriteRune(c)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	out := b.String()
+	for len(out) > 0 && (out[0] < 'a' || out[0] > 'z') && (out[0] < '0' || out[0] > '9') {
+		out = out[1:]
+	}
+	for len(out) > 0 && (out[len(out)-1] < 'a' || out[len(out)-1] > 'z') && (out[len(out)-1] < '0' || out[len(out)-1] > '9') {
+		out = out[:len(out)-1]
+	}
+	if out == "" {
+		return "sidecar"
+	}
+	if len(out) > 50 {
+		out = out[:50]
+	}
+	return out
+}
+
+// buildVolumeForBindGCF mirrors the cloudrun buildVolumeForBind
+// helper. SharedVolume entries (operator-pinned) keep raw GCSFuse;
+// ad-hoc binds get Volume_EmptyDir{MEMORY} + a SOCKERLESS_PERSIST_VOLUMES
+// entry for the bootstrap's tar-pack persistence (BUG-947).
+func (s *Server) buildVolumeForBindGCF(ctx context.Context, volName, mountPath string) (*runpb.Volume, string, error) {
+	bucket, err := s.bucketForVolume(ctx, volName)
+	if err != nil {
+		return nil, "", fmt.Errorf("provision GCS bucket for volume %q: %w", volName, err)
+	}
+	if s.config.LookupSharedVolumeByName(volName) != nil {
+		return &runpb.Volume{
+			Name: volName,
+			VolumeType: &runpb.Volume_Gcs{
+				Gcs: &runpb.GCSVolumeSource{
+					Bucket:       bucket,
+					MountOptions: gcpcommon.RunnerWorkspaceMountOptions(),
+				},
+			},
+		}, "", nil
+	}
+	return &runpb.Volume{
+		Name: volName,
+		VolumeType: &runpb.Volume_EmptyDir{
+			EmptyDir: &runpb.EmptyDirVolumeSource{
+				Medium: runpb.EmptyDirVolumeSource_MEMORY,
+			},
+		},
+	}, fmt.Sprintf("%s=%s=%s", volName, mountPath, bucket), nil
+}
+
+// injectPodPersistEnv appends SOCKERLESS_PERSIST_VOLUMES to the main
+// (index 0) container so the bootstrap's tar-pack module restores +
+// saves bind volumes across exec boundaries (BUG-947).
+func injectPodPersistEnv(specs []*runpb.Container, entries []string) {
+	if len(entries) == 0 || len(specs) == 0 {
+		return
+	}
+	specs[0].Env = append(specs[0].Env, &runpb.EnvVar{
+		Name:   "SOCKERLESS_PERSIST_VOLUMES",
+		Values: &runpb.EnvVar_Value{Value: strings.Join(entries, ",")},
+	})
+}
+
+// injectPodHostAliases sets SOCKERLESS_HOST_ALIASES on the main
+// container so the bootstrap writes `127.0.0.1 <alias>` lines to
+// /etc/hosts. Sidecars share loopback in a multi-container Cloud Run
+// revision, so a postgres sidecar's port 5432 is reachable from main
+// at 127.0.0.1:5432 once the alias is resolvable.
+func injectPodHostAliases(specs []*runpb.Container, members []api.Container, netID string) {
+	if len(specs) == 0 || len(members) <= 1 {
+		return
+	}
+	aliases := hostAliasesForMembers(members, netID)
+	if len(aliases) == 0 {
+		return
+	}
+	specs[0].Env = append(specs[0].Env, &runpb.EnvVar{
+		Name:   "SOCKERLESS_HOST_ALIASES",
+		Values: &runpb.EnvVar_Value{Value: strings.Join(aliases, ",")},
+	})
+}
+
+// invokePodServiceMain POSTs an exec envelope to the Service's URI
+// and fans the InvocationResult out to every pod member. Mirrors
+// invokePodFunction's behaviour but reads the URL straight off the
+// runpb.Service (no Cloud Functions indirection).
+func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, containers []api.Container, _ chan struct{}) {
+	inv := core.InvocationResult{}
+	url := ""
+	if svc != nil {
+		url = svc.Uri
+	}
+	mainContainer := containers[0]
+	argv := append([]string{}, mainContainer.Config.Entrypoint...)
+	argv = append(argv, mainContainer.Config.Cmd...)
+	envSlice := append([]string{}, mainContainer.Config.Env...)
+
+	if url == "" {
+		s.Logger.Error().Msg("pod service invoke: no service URL")
+		inv.ExitCode = 1
+		inv.Error = "no service URL available"
+	} else if resp, err := invokeFunction(ctx, url, argv, mainContainer.Config.WorkingDir, envSlice); err != nil {
+		s.Logger.Error().Err(err).Msg("pod service invocation failed")
+		inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
+		inv.Error = err.Error()
+	} else {
+		body, _ := readResponseBody(resp.Body)
+		_ = resp.Body.Close()
+		for _, c := range containers {
+			if len(body) > 0 && string(body) != "{}" {
+				s.Store.LogBuffers.Store(c.ID, body)
+			}
+		}
+		inv.ExitCode = core.HTTPStatusToExitCode(resp.StatusCode)
+		if inv.ExitCode != 0 {
+			inv.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		}
+	}
+	for _, c := range containers {
+		s.Store.PutInvocationResult(c.ID, inv)
+		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
+			close(ch.(chan struct{}))
+		}
+	}
+}
+
+// readResponseBody is a small helper so this file doesn't pull io.ReadAll
+// from another package as a single-use import.
+func readResponseBody(r interface {
+	Read(p []byte) (int, error)
+}) ([]byte, error) {
+	var buf bytes.Buffer
+	chunk := make([]byte, 4096)
+	for {
+		n, err := r.Read(chunk)
+		if n > 0 {
+			buf.Write(chunk[:n])
+		}
+		if err != nil {
+			break
+		}
+	}
+	return buf.Bytes(), nil
+}

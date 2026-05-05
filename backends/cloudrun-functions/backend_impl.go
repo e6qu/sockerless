@@ -657,7 +657,7 @@ func (s *Server) ContainerStart(ref string) error {
 		exitCh := make(chan struct{})
 		s.Store.WaitChs.Store(id, exitCh)
 		s.PendingCreates.Delete(id)
-		return s.materializePodFunction(id, netMembers, exitCh)
+		return s.materializePodService(id, netMembers, exitCh)
 	}
 
 	// Single-container fall-through: await OUR own deploy. ContainerCreate
@@ -692,7 +692,7 @@ func (s *Server) ContainerStart(ref string) error {
 			return nil
 		}
 		s.PendingCreates.Delete(id)
-		return s.materializePodFunction(id, podContainers, exitCh)
+		return s.materializePodService(id, podContainers, exitCh)
 	}
 
 	gcfState, _ := s.resolveGCFFromCloud(s.ctx(), id)
