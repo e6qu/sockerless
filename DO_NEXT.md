@@ -2,7 +2,7 @@
 
 Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md); bug log in [BUGS.md](BUGS.md); architecture in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
 
-## Resume pointer (2026-05-05 v25 — Cell 7 GREEN, cell 8 next)
+## Resume pointer (2026-05-05 v26 — Cell 7 GREEN; cell 8 hit BUG-948 quota)
 
 ### What just landed (commits on `phase-118-faas-pods`)
 
@@ -17,17 +17,20 @@ Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.
 
 ### Next concrete steps (in order)
 
-#### Cell 8 (GL × gcf) — same fix pattern, but gitlab-runner-gcf still on OLD architecture
+#### Cell 8 — fix BUG-948 (gcf per-step Function deploy quota + 120s gitlab-runner timeout)
 
-Cell 8's gcf backend already has the BUG-947 fix in code (`f5e52f1` patches both `backends/cloudrun-functions/volumes.go` and the gcf bootstrap), and the new `sockerless-backend-gcf@sha256:4c84a691...` image is already pushed to AR. What's still needed:
+**Symptom:** cell 8 v1 hit `system_failure` after 6 min. gitlab-runner's docker executor times out at 120 s waiting for `ContainerStart` while sockerless's gcf backend is still deploying the per-step Cloud Function (Cloud Run regional CPU quota saturated). Each retry creates a fresh container ID → fresh Function deploy → same quota failure → cascade.
 
-1. **Refactor `terraform/cloud-run/gitlab-runner-gcf.yaml`** to the same vanilla 3-container shape as `gitlab-runner-cloudrun.yaml`:
-   - init: gitlab-runner-init image (register + write config.toml with DOCKER_HOST=tcp://localhost:3376)
-   - gitlab-runner: vanilla `gitlab/gitlab-runner:v17.5.0`, dependsOn init
-   - sockerless: `sockerless-backend-gcf@sha256:4c84a691021fed10f6382292df8e8c66cace73a337bc28bcd6b2a89dd6189050`, ports 3376
-   - VPC connector + ALL_TRAFFIC egress (same as cloudrun)
-2. **Deploy:** `gcloud run services replace terraform/cloud-run/gitlab-runner-gcf.yaml --project=sockerless-live-46x3zg4imo --region=us-central1`
-3. **Trigger cell 8** — push a commit to `gitlab-cell-8-test` branch's `.gitlab-ci.yml` line 1; expect arithmetic results.
+**Recommended fix (path A in BUG-948):** pool-warming. At sockerless-backend-gcf startup (or first `ContainerCreate` of a given runner workload), pre-deploy N Functions tagged with the standard gitlab-runner cache-permission overlay hash. `claimFreeFunction` then has a hot pool to draw from, eliminating the per-container deploy cycle for the most common workloads. The gitlab-runner `permission` containers are nearly identical across pipelines (alpine + busybox + chmod fixup), so a single content-tag pool of size ~3-5 covers most parallel concurrency.
+
+**Implementation outline:**
+1. Add `SOCKERLESS_GCF_PREWARM_OVERLAYS` env (comma-separated `imageRef:size` pairs).
+2. New goroutine in `backends/cloudrun-functions/server.go::NewServer` calls `prewarmPool(ctx, overlay, size)` per entry. Each entry calls `ensureOverlayImage` then deploys N Functions with `sockerless_allocation=""` (free).
+3. Health: `prewarmPool` blocks readiness until ≥1 Function per entry is ACTIVE (so the first job dispatch lands on a hot pool).
+4. Reuse: `claimFreeFunction` already handles the claim. No backend-side change needed for the claim path.
+5. Operator config: extend `terraform/cloud-run/gitlab-runner-gcf.yaml` to set `SOCKERLESS_GCF_PREWARM_OVERLAYS=registry.gitlab.com/.../gitlab-runner-helper:x86_64-v17.5.0:3` (or whatever the current cache-permission image is).
+
+**Alternative (path B):** treat in-flight Function creation as claimable in `claimFreeFunction` — wait for the existing creation rather than spawn a new one. Cheaper change but doesn't help the first request after a cold start.
 
 #### Cells 5+6 (GH × cloudrun, GH × gcf) — pivot to vanilla-runner architecture
 
@@ -96,4 +99,4 @@ Per user directives:
 
 ### Single-line summary
 
-> Cell 7 GREEN under vanilla-runner architecture (BUG-947 closed via tar-pack persist). Next: refactor `gitlab-runner-gcf.yaml` to same shape, redeploy with `sockerless-backend-gcf@sha256:4c84a691...`, trigger cell 8. Then GH dispatcher refactor for cells 5+6.
+> Cell 7 GREEN; cell 8 v1 hit BUG-948 (gcf Function-deploy CPU quota + gitlab-runner 120s timeout). Next: implement pool-warming for the standard gitlab-runner cache-permission overlay so first request hits a hot pool. Then GH dispatcher refactor for cells 5+6.

@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**Date: 2026-05-05 v25 — Cell 7 GREEN under vanilla-runner architecture (BUG-947 closed); cell 8 next**
+**Date: 2026-05-05 v26 — Cell 7 GREEN; cell 8 hit BUG-948 (gcf Function-deploy CPU quota timeout); pool-warming fix queued**
 
 ## Cell scoreboard
 
@@ -13,7 +13,7 @@
 | 5 GH × cloudrun | sockerless-cloudrun | ❌ no GREEN under NEW vanilla-runner architecture | github-side dispatcher refactor pending (after gitlab cells GREEN). |
 | 6 GH × gcf | sockerless-gcf | ❌ same as cell 5 | same blocker. |
 | 7 GL × cloudrun | sockerless-cloudrun | ✅ **GREEN 2026-05-05 v51** under vanilla-runner architecture (https://gitlab.com/e6qu/sockerless/-/pipelines/2500209956, job 14213994152, 383 s). Heavy workload verified: `git fetch + git checkout + apk add + go build + eval-arithmetic` all returned correct results (11/14/21/13/6.5). BUG-947 fix end-to-end confirmed. | — |
-| 8 GL × gcf | sockerless-gcf | ❌ pending architectural refactor (gitlab-runner-gcf still on OLD architecture); BUG-947 backend fix already applied to gcf code (`f5e52f1`). | Refactor `gitlab-runner-gcf` to vanilla 3-container shape (init, gitlab-runner, sockerless-backend-gcf) mirroring cell 7. New AR digest already pushed: `sockerless-backend-gcf@sha256:4c84a691...`. |
+| 8 GL × gcf | sockerless-gcf | ❌ v1 FAILED 2026-05-05 (https://gitlab.com/e6qu/sockerless/-/pipelines/2500312481, job 14214568062, `system_failure`). NEW vanilla-runner architecture deployed cleanly (`gitlab-runner-gcf` rev `00028-7jg`); failure is BUG-948 (per-step Function deploy hit Cloud Run regional CPU quota; gitlab-runner timed out at 120s on `ContainerStart` with misleading "Cannot connect to Docker daemon" error). | Pool-warming fix needed: pre-deploy N functions tagged with the standard gitlab-runner cache-permission overlay hash at backend startup. See [BUGS.md](BUGS.md) BUG-948 for analysis + fix candidates. |
 
 **The "GREEN 2026-04-30" claim for AWS cells covers only the `hello` workload (echo + env), NOT the heavy probe + git-clone + go-build + arithmetic suite that cells 5–8 run.** Cell 7 v51 (2026-05-05) is the **first end-to-end heavy-workload pass on GCP under the vanilla-runner architecture** — confirms BUG-947 fix and unblocks cells 5+6+8.
 
@@ -53,6 +53,8 @@ Cell 7 v51 (pipeline 2500209956, 383 s) ran the full heavy workload — git fetc
 
 - `github-runner-dispatcher-gcp` rev `00021-fb2` — OLD architecture (will replace when cells 5+6 refactor).
 - `gitlab-runner-cloudrun` rev `00003-csp` — NEW vanilla architecture with BUG-947 tar-pack persist baked in (sockerless-backend-cloudrun@sha256:f786c300...). Healthy. Cell 7 v51 GREEN against this revision.
+- `gitlab-runner-gcf` rev `00028-7jg` — NEW vanilla 3-container architecture (init + vanilla gitlab-runner + sockerless-backend-gcf@sha256:4c84a691...). Healthy at the Service level; cell 8 v1 hit BUG-948 (per-step gcf Function deploy quota).
+- Orphan function `skls-gcf-19eef3119854a1bc-9e2e52` — left ACTIVE from cell 8 v1; deploy eventually succeeded after gitlab-runner gave up. Will be cleaned up by sockerless pool-prune or operator.
 - `gitlab-runner-gcf` rev `00027-jkg` — OLD architecture (full refactor pending for cell 8).
 - VPC connector `sockerless-connector` — e2-micro × 4 min instances (raised from 2 today).
 - Cloud NAT `sockerless-nat` — static IP `34.31.88.230`.
