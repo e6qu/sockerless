@@ -27,6 +27,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -92,6 +93,11 @@ type execEnvelopeResponse struct {
 // is one-cmd-per-container so we serialize at the bootstrap level.
 var invokeMu sync.Mutex
 
+// persistVols holds the parsed SOCKERLESS_PERSIST_VOLUMES config so
+// handleInvoke can re-pack mountpoints to GCS after each exec. Read
+// once at startup; nil-or-empty means persistence is disabled.
+var persistVols []persistVolume
+
 func main() {
 	if err := writeHostAliases(os.Getenv(envHostAliases)); err != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: write host aliases: %v\n", err)
@@ -103,6 +109,19 @@ func main() {
 		fmt.Fprintln(os.Stderr, "sockerless-cloudrun-bootstrap: sidecar mode — exec user CMD")
 		runSidecar()
 		return
+	}
+
+	// BUG-947 fix: when SOCKERLESS_PERSIST_VOLUMES is set, restore any
+	// pre-existing tarballs into the configured tmpfs mountpoints before
+	// the HTTP listener accepts the first exec. Synchronous so the first
+	// docker exec always sees a fully-rehydrated /builds (or whatever the
+	// operator named it). Empty env var → no-op.
+	persistVols = parsePersistVolumes(os.Getenv(envPersistVolumes))
+	if len(persistVols) > 0 {
+		if err := restoreAll(context.Background(), persistVols); err != nil {
+			fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: persist restore failed: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	port := os.Getenv(envPort)
@@ -134,6 +153,20 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 
 	body, _ := io.ReadAll(r.Body)
 	defer r.Body.Close()
+
+	defer func() {
+		// BUG-947: after every exec returns, re-pack persistent
+		// mountpoints to GCS so the next stage (deployed in a fresh
+		// Cloud Run revision instance) restores them at startup.
+		// Save errors are logged but don't change the response — the
+		// exec itself already completed; the next stage's restore
+		// would surface the missing data as an empty mountpoint.
+		if len(persistVols) > 0 {
+			if err := saveAll(context.Background(), persistVols); err != nil {
+				fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: persist save failed: %v\n", err)
+			}
+		}
+	}()
 
 	if env, ok := parseExecEnvelope(body); ok {
 		runExecEnvelope(w, env)
