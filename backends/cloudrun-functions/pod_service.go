@@ -401,6 +401,7 @@ func (s *Server) userDefinedNetworkIDOrEmpty(c api.Container) string {
 func (s *Server) buildPodContainerSpecs(ctx context.Context, containers []api.Container, overlayURIs []string) ([]*runpb.Container, []*runpb.Volume, []string, error) {
 	specs := make([]*runpb.Container, 0, len(containers))
 	volSeen := map[string]struct{}{}
+	nameSeen := map[string]int{}
 	var volumes []*runpb.Volume
 	var persistEntries []string
 	for i, c := range containers {
@@ -408,6 +409,17 @@ func (s *Server) buildPodContainerSpecs(ctx context.Context, containers []api.Co
 		spec, mounts, err := s.buildPodContainerSpec(c, overlayURIs[i], isMain)
 		if err != nil {
 			return nil, nil, nil, err
+		}
+		// Ensure unique container names across the pod. Sanitization may
+		// collapse two distinct docker container names to the same
+		// Cloud Run name (e.g. two postgres sidecars from prepare-stage
+		// + step-script stage). Cloud Run rejects duplicates with
+		// `template.containers: Containers [N, M] have duplicate container names`.
+		base := spec.Name
+		count := nameSeen[base]
+		nameSeen[base] = count + 1
+		if count > 0 {
+			spec.Name = fmt.Sprintf("%s-%d", base, count)
 		}
 		specs = append(specs, spec)
 		for _, mp := range mounts {
