@@ -292,7 +292,7 @@ func (p *gcfCloudState) queryPodServiceContainers(ctx context.Context, seen map[
 		if svc.Labels["sockerless_pod"] == "" && svc.Annotations["sockerless_pod_members"] == "" {
 			continue
 		}
-		p.server.Logger.Info().Str("service", svc.Name).Int("member_count", len(members)).Str("annotation", svc.Annotations["sockerless_pod_members"]).Msg("queryPodServiceContainers: matched pod service")
+		p.server.Logger.Debug().Str("service", svc.Name).Int("member_count", len(members)).Msg("queryPodServiceContainers: matched pod service")
 		for _, mid := range members {
 			mid = strings.TrimSpace(mid)
 			if mid == "" || seen[mid] {

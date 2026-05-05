@@ -18,8 +18,10 @@ import (
 // consistent. Reserved for non-interactive execs; interactive
 // (TTY+stdin) falls through to the reverse-agent WS path.
 func (s *Server) execStartViaInvoke(execID string, exec api.ExecInstance) (io.ReadWriteCloser, error) {
+	s.Logger.Info().Str("execID", execID).Str("containerID", exec.ContainerID).Msg("execStartViaInvoke: entry")
 	gcfState, ok := s.resolveGCFFromCloud(s.ctx(), exec.ContainerID)
 	if !ok || gcfState.FunctionURL == "" {
+		s.Logger.Warn().Str("execID", execID).Str("containerID", exec.ContainerID).Bool("resolved", ok).Str("url", gcfState.FunctionURL).Msg("execStartViaInvoke: no URL — returning NotImplemented")
 		return nil, &api.NotImplementedError{Message: "docker exec via Path B requires a Cloud Run Function URL; container has no Function URL yet"}
 	}
 
@@ -27,6 +29,7 @@ func (s *Server) execStartViaInvoke(execID string, exec api.ExecInstance) (io.Re
 	if len(argv) == 0 || argv[0] == "" {
 		return nil, &api.InvalidParameterError{Message: "exec command is empty"}
 	}
+	s.Logger.Info().Str("execID", execID).Str("url", gcfState.FunctionURL).Strs("argv", argv).Msg("execStartViaInvoke: posting envelope")
 
 	envelope := gcpcommon.ExecEnvelopeExec{
 		Argv:    argv,
@@ -41,8 +44,10 @@ func (s *Server) execStartViaInvoke(execID string, exec api.ExecInstance) (io.Re
 	}
 	client.Timeout = 10 * time.Minute
 
+	startedAt := time.Now()
 	res, err := gcpcommon.PostExecEnvelope(s.ctx(), client, gcfState.FunctionURL, "", envelope)
 	if err != nil {
+		s.Logger.Warn().Str("execID", execID).Err(err).Dur("duration", time.Since(startedAt)).Msg("execStartViaInvoke: post exec envelope failed")
 		s.Store.Execs.Update(execID, func(e *api.ExecInstance) {
 			e.Running = false
 			e.ExitCode = 1
@@ -50,6 +55,7 @@ func (s *Server) execStartViaInvoke(execID string, exec api.ExecInstance) (io.Re
 		})
 		return nil, fmt.Errorf("post exec envelope: %w", err)
 	}
+	s.Logger.Info().Str("execID", execID).Int("exitCode", res.ExitCode).Dur("duration", time.Since(startedAt)).Int("stdout_bytes", len(res.Stdout)).Int("stderr_bytes", len(res.Stderr)).Msg("execStartViaInvoke: envelope returned")
 
 	s.Store.Execs.Update(execID, func(e *api.ExecInstance) {
 		e.Running = false
