@@ -366,8 +366,22 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 		exitCh := make(chan struct{})
 		s.Store.WaitChs.Store(id, exitCh)
-		s.PendingCreates.Delete(id)
-		return s.materializePodService(id, netMembers, exitCh)
+		// Mark the materializing container "running" in PendingCreates so
+		// concurrent ContainerInspect / cleanup-script docker exec calls
+		// during the 30-60s CreateService.Wait window resolve to a real
+		// container instead of NotFound. queryPodServiceContainers takes
+		// over once the Service is queryable; the entry is removed in
+		// invokePodServiceMain when the pod completes.
+		s.PendingCreates.Update(id, func(pc *api.Container) {
+			pc.State.Status = "running"
+			pc.State.Running = true
+			pc.State.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		})
+		err := s.materializePodService(id, netMembers, exitCh)
+		if err != nil {
+			s.PendingCreates.Delete(id)
+		}
+		return err
 	}
 
 	// Single-container fall-through: await OUR own deploy. ContainerCreate
