@@ -319,3 +319,153 @@ func (s *Server) releaseOrDeleteFunction(ctx context.Context, fullName string, c
 	}
 	return nil
 }
+
+// prewarmAllOverlays materialises the operator-configured prewarm pool
+// (BUG-948). For each PrewarmOverlays entry: build the overlay image,
+// then create up to N free Functions tagged with the overlay's
+// content-hash. Any Functions already in the pool from a prior backend
+// boot are counted, so a restart doesn't re-deploy a full set.
+//
+// Failures are logged + skipped per-entry; one bad image must not abort
+// the whole prewarm. Each Function deploy debits the regional CPU
+// quota — prewarm is a startup cost. Operators size the pool to match
+// expected concurrency for the most common workload (e.g. gitlab-runner
+// cache-permission containers) so the live path never pays the deploy
+// cost on the critical path.
+func (s *Server) prewarmAllOverlays(ctx context.Context) {
+	for _, entry := range s.config.PrewarmOverlays {
+		if err := s.prewarmOverlay(ctx, entry); err != nil {
+			s.Logger.Warn().Str("image", entry.Image).Int("size", entry.Size).Err(err).Msg("prewarm overlay failed; pool will fill lazily")
+			continue
+		}
+	}
+}
+
+// prewarmOverlay materialises one prewarm entry. Builds the overlay
+// image, counts existing free Functions for the content-hash, and
+// deploys (size - existing) new ones. Idempotent: subsequent boots
+// only top up the pool to the configured size.
+func (s *Server) prewarmOverlay(ctx context.Context, entry PrewarmOverlay) error {
+	if entry.Size <= 0 || entry.Image == "" {
+		return nil
+	}
+	spec := OverlayImageSpec{
+		BaseImageRef:        entry.Image,
+		BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+	}
+	contentTag := OverlayContentTag(spec)
+	overlayURI, err := s.ensureOverlayImage(ctx, spec, contentTag)
+	if err != nil {
+		return fmt.Errorf("ensure overlay image: %w", err)
+	}
+	existing := s.countFreePoolEntries(ctx, contentTag)
+	deficit := entry.Size - existing
+	if deficit <= 0 {
+		s.Logger.Info().Str("image", entry.Image).Str("contentTag", contentTag).Int("existing", existing).Int("size", entry.Size).Msg("prewarm: pool already at or above target; skipping")
+		return nil
+	}
+	s.Logger.Info().Str("image", entry.Image).Str("contentTag", contentTag).Int("deficit", deficit).Msg("prewarm: deploying free pool entries")
+	for i := 0; i < deficit; i++ {
+		if err := s.deployFreePoolEntry(ctx, contentTag, overlayURI, i); err != nil {
+			s.Logger.Warn().Str("image", entry.Image).Int("index", i).Err(err).Msg("prewarm: free pool entry deploy failed; aborting remainder of this overlay")
+			return err
+		}
+	}
+	return nil
+}
+
+// countFreePoolEntries counts Functions already in the pool for the
+// content-hash with no allocation. A boot-time count avoids over-provisioning
+// when a previous backend instance left a populated pool.
+func (s *Server) countFreePoolEntries(ctx context.Context, contentTag string) int {
+	parent := fmt.Sprintf("projects/%s/locations/%s", s.config.Project, s.config.Region)
+	filter := fmt.Sprintf(
+		`labels.sockerless_managed:"true" AND labels.sockerless_overlay_hash:"%s" AND -labels.sockerless_allocation:*`,
+		contentTag,
+	)
+	it := s.gcp.Functions.ListFunctions(ctx, &functionspb.ListFunctionsRequest{
+		Parent: parent,
+		Filter: filter,
+	})
+	count := 0
+	for {
+		_, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return count
+		}
+		count++
+	}
+	return count
+}
+
+// deployFreePoolEntry creates one free Function tagged for the overlay
+// content-hash with no allocation. Mirrors the fresh-deploy path in
+// backend_impl.go::deployFunction but skips the volume-attach step (no
+// caller; volumes get attached on claim) and uses a deterministic
+// per-prewarm name suffix ("pw" + index). The function ends up with
+// the overlay image (UpdateService swap) but no allocation, so
+// claimFreeFunction will pick it up on first request.
+func (s *Server) deployFreePoolEntry(ctx context.Context, contentTag, overlayURI string, index int) error {
+	parent := fmt.Sprintf("projects/%s/locations/%s", s.config.Project, s.config.Region)
+	stubObject := "sockerless-stub/sockerless-gcf-stub.zip"
+	if err := stageStubSourceIfMissing(ctx, s.gcp.Storage, s.config.BuildBucket, stubObject); err != nil {
+		return fmt.Errorf("stage stub source: %w", err)
+	}
+	funcName := fmt.Sprintf("skls-%s-pw%02d", contentTag, index)
+	fullFunctionName := fmt.Sprintf("%s/functions/%s", parent, funcName)
+
+	labels := map[string]string{
+		"sockerless_managed":      "true",
+		"sockerless_overlay_hash": contentTag,
+		// No sockerless_allocation — the pool entry is FREE and ready
+		// to be claimed by the next ContainerCreate that wants this
+		// content-hash.
+	}
+	createReq := &functionspb.CreateFunctionRequest{
+		Parent:     parent,
+		FunctionId: funcName,
+		Function: &functionspb.Function{
+			Name:   fullFunctionName,
+			Labels: labels,
+			BuildConfig: &functionspb.BuildConfig{
+				Runtime:    "go124",
+				EntryPoint: "Stub",
+				Source: &functionspb.Source{
+					Source: &functionspb.Source_StorageSource{
+						StorageSource: &functionspb.StorageSource{
+							Bucket: s.config.BuildBucket,
+							Object: stubObject,
+						},
+					},
+				},
+			},
+			ServiceConfig: &functionspb.ServiceConfig{
+				AvailableCpu:    s.config.CPU,
+				AvailableMemory: s.config.Memory,
+				TimeoutSeconds:  int32(s.config.Timeout),
+			},
+		},
+	}
+	op, err := s.gcp.Functions.CreateFunction(ctx, createReq)
+	if err != nil {
+		return fmt.Errorf("create prewarm function: %w", err)
+	}
+	fn, err := op.Wait(ctx)
+	if err != nil {
+		// Best-effort delete; skipping if it fails (sweeper will reclaim later).
+		if delOp, delErr := s.gcp.Functions.DeleteFunction(context.Background(), &functionspb.DeleteFunctionRequest{Name: fullFunctionName}); delErr == nil {
+			_ = delOp.Wait(context.Background())
+		}
+		return fmt.Errorf("wait prewarm function create: %w", err)
+	}
+	if err := s.swapServiceImage(ctx, fn, overlayURI); err != nil {
+		if delOp, delErr := s.gcp.Functions.DeleteFunction(context.Background(), &functionspb.DeleteFunctionRequest{Name: fullFunctionName}); delErr == nil {
+			_ = delOp.Wait(context.Background())
+		}
+		return fmt.Errorf("swap prewarm function image: %w", err)
+	}
+	return nil
+}

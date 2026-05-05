@@ -130,6 +130,17 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	s.Typed.Attach = core.NewCloudLogsAttachDriver(s.BaseServer, logFactory,
 		"gcf", "CloudLogsReadOnlyAttach")
 
+	// Pre-warm the function pool for any operator-configured overlays
+	// (BUG-948). Each entry deploys N free Functions tagged with the
+	// overlay's content-hash so the FIRST ContainerCreate for that
+	// image hits a warm pool, bypassing the regional CPU quota cost
+	// of a fresh per-container deploy. Runs in the background so
+	// NewServer doesn't block on Cloud Build + N CreateFunction
+	// roundtrips at boot.
+	if len(config.PrewarmOverlays) > 0 && s.images.BuildService != nil {
+		go s.prewarmAllOverlays(context.Background())
+	}
+
 	return s
 }
 

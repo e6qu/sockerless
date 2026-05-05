@@ -50,6 +50,19 @@ type Config struct {
 	// SOCKERLESS_GCF_POOL_MAX, default 10.
 	PoolMax int
 
+	// PrewarmOverlays lists overlay images to materialise into hot pool
+	// entries at backend startup. Each entry pre-deploys N free Functions
+	// tagged with the overlay's content-hash, so the FIRST ContainerCreate
+	// for that image hits a warm pool instead of paying the per-deploy
+	// regional CPU quota cost. Targets BUG-948 — gitlab-runner cache-
+	// permission containers all share one image, so a small pool covers
+	// the entire pipeline's parallel concurrency.
+	//
+	// Format: SOCKERLESS_GCF_PREWARM_OVERLAYS="image1:size1,image2:size2"
+	// Example: "registry.gitlab.com/.../gitlab-runner-helper:v17.5.0:3"
+	// Empty → no prewarm; pool fills lazily via the existing release path.
+	PrewarmOverlays []PrewarmOverlay
+
 	// SharedVolumes mirrors cloudrun.SharedVolumes / ecs / lambda.
 	// Cloud Functions Gen2 are backed by Cloud Run Service, which
 	// supports `Volume{Gcs{Bucket}}` on its template. The runner
@@ -68,6 +81,14 @@ type SharedVolume struct {
 	Name          string
 	ContainerPath string
 	Bucket        string
+}
+
+// PrewarmOverlay describes one entry in SOCKERLESS_GCF_PREWARM_OVERLAYS:
+// the user-image to wrap with an overlay + the number of free Functions
+// to keep warm in the pool for that overlay's content-hash.
+type PrewarmOverlay struct {
+	Image string
+	Size  int
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -89,9 +110,48 @@ func ConfigFromEnv() Config {
 			"SOCKERLESS_GCF_BOOTSTRAP",
 			"/opt/sockerless/sockerless-gcf-bootstrap",
 		),
-		PoolMax:       envOrDefaultInt("SOCKERLESS_GCF_POOL_MAX", 10),
-		SharedVolumes: parseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES")),
+		PoolMax:         envOrDefaultInt("SOCKERLESS_GCF_POOL_MAX", 10),
+		PrewarmOverlays: parsePrewarmOverlays(os.Getenv("SOCKERLESS_GCF_PREWARM_OVERLAYS")),
+		SharedVolumes:   parseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES")),
 	}
+}
+
+// parsePrewarmOverlays parses SOCKERLESS_GCF_PREWARM_OVERLAYS. Format:
+// `image:size,image:size,...`. Image references that themselves contain
+// colons (e.g. `host:port/repo:tag`) split on the LAST colon so the
+// `:size` suffix is unambiguous. Malformed entries (non-positive size,
+// missing image) are dropped with a stderr warning so misconfiguration
+// fails loud instead of silently disabling prewarm.
+func parsePrewarmOverlays(s string) []PrewarmOverlay {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	var out []PrewarmOverlay
+	for _, raw := range strings.Split(s, ",") {
+		entry := strings.TrimSpace(raw)
+		if entry == "" {
+			continue
+		}
+		idx := strings.LastIndex(entry, ":")
+		if idx <= 0 || idx == len(entry)-1 {
+			fmt.Fprintf(os.Stderr, "sockerless-gcf: SOCKERLESS_GCF_PREWARM_OVERLAYS entry %q malformed (want image:size)\n", entry)
+			continue
+		}
+		image := strings.TrimSpace(entry[:idx])
+		sizeStr := strings.TrimSpace(entry[idx+1:])
+		size, err := strconv.Atoi(sizeStr)
+		if err != nil || size <= 0 {
+			fmt.Fprintf(os.Stderr, "sockerless-gcf: SOCKERLESS_GCF_PREWARM_OVERLAYS entry %q has invalid size %q\n", entry, sizeStr)
+			continue
+		}
+		if image == "" {
+			fmt.Fprintf(os.Stderr, "sockerless-gcf: SOCKERLESS_GCF_PREWARM_OVERLAYS entry %q has empty image\n", entry)
+			continue
+		}
+		out = append(out, PrewarmOverlay{Image: image, Size: size})
+	}
+	return out
 }
 
 // parseSharedVolumes parses SOCKERLESS_GCP_SHARED_VOLUMES
