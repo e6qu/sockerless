@@ -99,7 +99,7 @@ spec:
         # API responds to /version etc., so Cloud Run's TCP startup probe
         # works against it naturally.
         - name: sockerless
-          image: us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/sockerless-backend-cloudrun@sha256:c9716fa8ec2177828ed90e2af50e444cc6b71539ff1939e9c92c2157949765d6
+          image: us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/sockerless-backend-cloudrun@sha256:f786c3004ffc99f7c5baf4e55081648eb9e974e1a50474db64f49752fe7203cc
           ports:
             - containerPort: 3375
           env:
