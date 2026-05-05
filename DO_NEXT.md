@@ -6,41 +6,50 @@ Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.
 
 User goal: **all 4 GCP cells (5, 6, 7, 8) GREEN with full workflow + evidence + executing where they're supposed to**. Cell 7 done; cells 5/6/8 outstanding.
 
-### Cell 8 — currently in flight (v15)
+### Cell 8 — v15 results (HUGE progress, new failure mode)
 
 **Pipeline 2501668159** (gitlab-cell-8-test branch). Rev `00047-45f`, digest `sha256:ee7e5029...`.
 
-This iteration adds explicit log lines that should reveal why "No such container" fires at runner cleanup time:
+**All architectural fixes verified working via diagnostic logs**:
+- `ContainerStart: ENTRY` ✅ for cache-permission helper, postgres, and build
+- `ContainerStart: resolved` ✅ (running=false, status=created, openStdin=true for build)
+- `ContainerStart: network-pod decision` ✅ — for build: `netDefer=false netMembers=2`
+- `marked running, entering materialize` ✅ updated=true
+- `materializePodService: entry` with both members [build, postgres]
+- `materializePodService: exit` at **13 seconds** (well under 120s budget!)
+- Both Services deployed: `sockerless-svc-b8229d285672` (cache-permission) + `sockerless-svc-ebbcd6541e74` (build/postgres pod, bootstrap listening on :8080, postgres up on :5432)
+- Bootstrap exec'd build's CMD `[/usr/bin/dumb-init /entrypoint gitlab-runner-build]` → exit=0 (expected behavior — bootstrap stays up as HTTP server holding the port)
 
-```
-ContainerStart: ENTRY (every call)
-ContainerStart: NOT FOUND in PendingCreates (early return path)
-ContainerStart: resolved (after PendingCreates.Get success)
-ContainerStart: network-pod decision (after shouldDeferOrMaterializeNetworkPod)
-materializePodService: entry/exit (when materialize runs)
-```
+**New failure mode**: gitlab-runner reaches `Preparing environment` (start of `prepare_script` section) then silently hangs for 30+ minutes. **NO `ExecCreate` / `ExecStart` / `ContainerInspect` calls reach sockerless backend** during this window. trace stuck at 1990 bytes.
 
-If `ContainerStart: ENTRY` doesn't appear for the build container at all → routing issue or gitlab-runner is not calling `/containers/{id}/start` for this container.
+### Next iteration (v16) — instrument frontend HTTP layer
 
-If `ContainerStart: ENTRY` appears but no `resolved` → `PendingCreates.Get(ref)` is missing the entry; ContainerCreate's `Put` either failed or was deleted by some path between `ContainerCreate` and `ContainerStart`.
+Add ENTRY-level logging to:
+- `cloudrun-functions/backend_delegates.go::ExecCreate` — log every call
+- `cloudrun-functions/backend_delegates.go::ExecStart` — log every call
+- `cloudrun-functions/backend_delegates.go::ContainerInspect` — log every call
+- Possibly `core/handle_containers_query.go::handleContainerInspect` — log every HTTP request
+- Possibly the docker frontend's request middleware to log every URL hit
 
-If `ContainerStart: resolved` appears with `running=true` already → some other code path marked it Running.
+The goal: prove whether gitlab-runner is making ANY docker calls that reach sockerless during the silent window. If sockerless sees calls but doesn't progress them, the bug is internal. If sockerless sees zero calls, gitlab-runner is hung internally OR talking to a different DOCKER_HOST.
 
-If everything appears but materialize completes in time → the bug is in `cloud_state.queryPodServiceContainers` not finding the Service mid-materialize (resolvePodServiceFromCloud now does GetService follow-up on abbreviated annotations).
+### Hypothesis to verify
 
-### If cell 8 v15 is GREEN
+`prepareEnvironment` in gitlab-runner v17 docker executor calls `cli.ContainerExecCreate(build, ["sh","-c", prepare_script])` immediately after the "Preparing environment" log. If this hangs, gitlab-runner just waits indefinitely. The hang could be:
+
+1. **HTTP frontend not routing /containers/{id}/exec** — handler missing or returning 404 silently. Check `/Users/zardoz/projects/sockerless/backends/core/handle_docker_api.go` registration: `POST /containers/{id}/exec` is registered (line 86, verified earlier). But maybe gcf's `s.self.ExecCreate` is panicking, eating logs.
+2. **gitlab-runner using a different DOCKER_HOST** — but cache-permission and pod containers DID reach sockerless, so this is unlikely.
+3. **gitlab-runner in a sleep waiting for a TCP probe** — postgres health check might be hanging because the wait container can't be created.
+
+### If cell 8 v15 still fails
+
+Cancel pipeline 2501668159 (it's wedged). Iterate to v16 with the frontend logging above. Then re-trigger.
+
+### If cell 8 GREENs (e.g. trace eventually advances)
 
 1. Mark BUG-953 closed in BUGS.md.
 2. Update STATUS.md / WHAT_WE_DID.md cell 8 row to ✅.
 3. Move to cells 5+6.
-
-### If cell 8 v15 still fails
-
-Diagnose from the new logs. Specific failure modes to expect:
-- ContainerStart never fires → check whether gitlab-runner calls `/containers/{id}/start` (could be using `docker run` semantics that bypass start, or container was already started by a previous deploy)
-- ContainerStart fires for build but PendingCreates lookup misses → check ContainerCreate path; some new deletion was introduced
-- ContainerStart resolves but never reaches network-pod branch → state.Running was already true (some other code path marks running prematurely)
-- Everything looks right but Service-side query fails post-materialize → `resolvePodServiceFromCloud`'s GetService follow-up isn't matching; check whether label `sockerless_allocation` matches `shortAllocLabel(containerID)` exactly
 
 ### Cells 5 + 6 — runner-task images already exist
 

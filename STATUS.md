@@ -9,7 +9,7 @@
 | **5** GH × cloudrun | sockerless-cloudrun | ❌ NOT STARTED | dispatcher stays generic per user directive 2026-05-05 — sockerless+vanilla-runner pairing already lives in `tests/runners/github/dockerfile-cloudrun/`. Just needs rebuild + AR push + dispatcher TOML. |
 | **6** GH × gcf | sockerless-gcf | ❌ NOT STARTED | Same as cell 5 with `dockerfile-gcf` image; inherits cell 8's gcf fixes. |
 | **7** GL × cloudrun | sockerless-cloudrun | ✅ **GREEN heavy workload** 2026-05-05 | https://gitlab.com/e6qu/sockerless/-/pipelines/2500209956 (job 14213994152, 383 s, all 5 arithmetic results 11/14/21/13/6.5). |
-| **8** GL × gcf | sockerless-gcf | 🟡 **v15 in flight** | gitlab-runner reports `No such container: <build-id>` during cleanup-script `docker exec`. Diagnostic logs added in v15 will reveal whether ContainerStart fires for the build container at all. |
+| **8** GL × gcf | sockerless-gcf | 🟡 **v15 silent hang in prepare_script** | All architectural fixes verified working via diagnostic logs: ContainerStart→network-pod decision (netDefer=false, netMembers=2)→materialize entry→exit in 13s. Both Services deployed correctly (cache-permission helper + build/postgres pod). gitlab-runner reaches "Preparing environment" then silently hangs — NO docker exec calls reach sockerless for 30+ minutes. trace stuck at 1990 bytes. Pipeline 2501668159 still running but stalled. |
 
 ## Architecture (cells 5-8 vanilla-runner pattern)
 
@@ -35,7 +35,7 @@ Per user directives 2026-05-04 + reinforced 2026-05-05:
 | v12 | Update `PendingCreates(running)` through materialize, delete only on error | failed (43s) — log "marked running" never appeared |
 | v13 | `Put` fallback when `Update` misses | failed |
 | v14 | network-pod decision log + materializePodService entry/exit logs | failed (43s) — diagnostic logs ALL missing despite binary having strings |
-| **v15** | ContainerStart **ENTRY/resolved/NOT FOUND** logs + `resolvePodServiceFromCloud` GetService follow-up | **awaiting (pipeline 2501668159)** |
+| **v15** | ContainerStart **ENTRY/resolved/NOT FOUND** logs + `resolvePodServiceFromCloud` GetService follow-up | **HUGE PROGRESS, silent hang in new place**: all log lines fire (network-pod decision: netDefer=false, netMembers=2, materialize entry+exit in 13s). Both Services deployed. Bootstrap exec'd build's CMD `[/usr/bin/dumb-init /entrypoint gitlab-runner-build]` → exit=0 (expected — bootstrap stays up as HTTP server). gitlab-runner reaches "Preparing environment" then silently hangs with NO ExecCreate/ExecStart calls reaching sockerless. |
 
 **Working en route, do not regress:**
 - AR HEAD precheck (`backends/gcp-common/registry_check.go`) cuts ~28 s of Cloud Build per overlay when image already in AR
