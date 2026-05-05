@@ -6,7 +6,36 @@ Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.
 
 User goal: **all 4 GCP cells (5, 6, 7, 8) GREEN with full workflow + evidence + executing where they're supposed to**. Cell 7 done; cells 5/6/8 outstanding.
 
-### Cell 8 — v17 status: stdinPipe shipped, gitlab-runner mysteriously silent post-start
+### Cell 8 — v18 status: gitlab-runner blocked on internal TCP probe (NOT a docker call)
+
+**Pipelines 2502018240 (v17) + 2502072794 (v18)** — both hang silently. v18 evidence (rev 00051, digest `sha256:5fc5c398`):
+
+1. ContainerCreate cache-permission helper → ContainerStart → 7s for materialize → exit 0 → DELETE
+2. ContainerCreate postgres → ContainerStart → netDefer
+3. ContainerCreate build (a59f4 in v17, abc31abe in v18) → ContainerStart → network-pod path → materialize 9s → exit
+4. invokePodServiceMain goroutine enters → 5s pre-check window for stdinPipe → **NO stdinPipe registered** → default-invoke fires
+5. **gitlab-runner makes ZERO HTTP calls to sockerless after ContainerStart returns at v18@17:32:36** — heartbeats to gitlab.com only
+
+`/containers/{id}/attach` was NEVER called. So the missing stdinPipe is NOT a race — gitlab-runner is intentionally not calling Attach for this container. After ContainerStart returns, gitlab-runner must be:
+- Doing internal TCP probes for service health (postgres health-check pattern via `WAIT_FOR_SERVICE_TCP_*`)
+- OR computing something CPU-bound (unlikely, would still call docker eventually)
+- OR waiting for a service container's IP that sockerless reports incorrectly
+
+**Most likely root cause**: gitlab-runner's `waitForServices` in v17 docker executor connects via TCP to each service container's IP (resolved via docker network inspect). For our network-pod path, sockerless's `cloud_state.go::serviceToPodMemberContainer` returns `NetworkSettings.Networks["bridge"]` with EMPTY `IPAddress`. gitlab-runner can't TCP-probe an empty address, so it might be retrying forever.
+
+**Next iteration (v19) — investigation steps**:
+
+1. **Compare cell 7 (cloudrun GREEN) cloud_state response for the postgres pod-member**: trigger cell 7 fresh and capture `docker inspect <postgres-id>` output; compare what NetworkSettings.IPAddress / Aliases / Networks the cloudrun backend returns vs what gcf returns.
+
+2. **Inspect gitlab-runner v17's `waitForServices` source**: confirm whether it uses docker network inspect to find the IP, or whether it uses an alias-based connection (like `postgres:5432` resolved via docker DNS).
+
+3. **Possible fix**: in `cloudrun-functions/cloud_state.go::serviceToPodMemberContainer`, populate `NetworkSettings.Networks[network].IPAddress = "127.0.0.1"` (or a per-pod mock IP) for sidecar members. Then gitlab-runner's TCP probe connects to 127.0.0.1:5432 from the build container — which is a sibling in the same Cloud Run revision, so localhost works. But gitlab-runner doesn't run inside the build container; it runs on the runner-task. Hmm, this doesn't quite work.
+
+4. **Architectural alternative**: have gitlab-runner skip `waitForServices` entirely. Set `FF_NETWORK_PER_BUILD=false` or similar feature flag. OR use a "wait container" mechanism where sockerless spawns a probe container inside the pod's revision.
+
+5. **Quickest diagnostic**: add a `/_debug/dump-state` endpoint (or just an SSH to the runner-task) to see what gitlab-runner's process state is during the silent window. `pstack` / `goroutine dump` of gitlab-runner would reveal what it's blocked on.
+
+### Cell 8 — historical v9..v17 (resolved by v18 diagnostic finding)
 
 **Pipeline 2502018240, rev `00050-p25`, digest `sha256:37e65d40`**:
 
