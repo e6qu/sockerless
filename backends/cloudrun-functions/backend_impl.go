@@ -312,6 +312,7 @@ func (s *Server) deployFunction(ctx context.Context, id string, container api.Co
 
 // ContainerStart starts a Cloud Run Function invocation for the container.
 func (s *Server) ContainerStart(ref string) error {
+	s.Logger.Info().Str("ref", ref).Msg("ContainerStart: ENTRY")
 	// Resolve from PendingCreates (containers between create and start)
 	c, ok := s.PendingCreates.Get(ref)
 	if !ok {
@@ -325,11 +326,14 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 	}
 	if !ok {
+		s.Logger.Warn().Str("ref", ref).Msg("ContainerStart: NOT FOUND in PendingCreates")
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
 	id := c.ID
+	s.Logger.Info().Str("container", id).Bool("running", c.State.Running).Str("status", c.State.Status).Bool("openStdin", c.Config.OpenStdin).Msg("ContainerStart: resolved")
 
 	if c.State.Running {
+		s.Logger.Info().Str("container", id).Msg("ContainerStart: already running, returning NotModified")
 		return &api.NotModifiedError{}
 	}
 

@@ -452,7 +452,19 @@ func (s *Server) resolvePodServiceFromCloud(ctx context.Context, containerID str
 		if svc.Labels["sockerless_managed"] != "true" {
 			continue
 		}
-		if svc.Labels["sockerless_allocation"] != short && !annotationContainsContainer(svc.Annotations["sockerless_pod_members"], containerID) {
+		// Match by allocation label first (cheap, server-side filterable).
+		labelMatch := svc.Labels["sockerless_allocation"] == short
+		// ListServices can return abbreviated Annotations in some pagination
+		// modes; if the candidate Service has the right name shape but no
+		// annotation visible, follow up with GetService for the full proto
+		// so the sidecar (annotation-only) lookup doesn't miss.
+		if !labelMatch && svc.Annotations["sockerless_pod_members"] == "" &&
+			strings.Contains(svc.Name, "/services/sockerless-svc-") {
+			if full, ferr := s.gcp.Services.GetService(ctx, &runpb.GetServiceRequest{Name: svc.Name}); ferr == nil && full != nil {
+				svc = full
+			}
+		}
+		if !labelMatch && !annotationContainsContainer(svc.Annotations["sockerless_pod_members"], containerID) {
 			continue
 		}
 		shortName := shortFunctionName(svc.Name)

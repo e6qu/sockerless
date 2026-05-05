@@ -76,7 +76,7 @@ spec:
               cpu: "1"
               memory: 1Gi
         - name: sockerless
-          image: us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/sockerless-backend-gcf@sha256:ee7e50299f458c5d77a579919015aa97802282d10e461bed2c9cc1abc5aa40da
+          image: us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/sockerless-backend-gcf@sha256:1e548c5ce319658ca0491bfe882f90f1955df11c5c94d875e5bc14b78af0e3eb
           ports:
             - containerPort: 3376
           env:
