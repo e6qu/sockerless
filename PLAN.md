@@ -38,19 +38,23 @@ Order is the order of execution unless noted.
 
 ### Phase 122k — All 4 GCP cells GREEN (THE current goal, in flight 2026-05-05)
 
-User goal recorded today: **all 4 GCP cells (5/6/7/8) GREEN with full workflow + evidence + executing where they're supposed to**. Cells 1–4 (AWS) cover only trivial workloads; the GCP cells run the real probe + git-clone + go-build + arithmetic suite. This is the milestone the user has scoped as "consider it done".
+User goal: **all 4 GCP cells (5/6/7/8) GREEN with full workflow + evidence + executing where they're supposed to**. Cells 1–4 (AWS) cover only trivial workloads; the GCP cells run the real probe + git-clone + go-build + arithmetic suite. This is the milestone the user has scoped as "consider it done".
 
-**Sub-task progress:**
+**Sub-task progress (2026-05-05 v32):**
 
 | Sub | Cell | State | Notes |
 |---|---|---|---|
 | 122k.7 | 7 GL × cloudrun | ✅ GREEN | pipeline 2500209956 (BUG-947 closed, vanilla-runner arch). |
-| 122k.8 | 8 GL × gcf | 🟡 8 iterations today; v8 in flight | BUG-948/950/951/952 closed; BUG-953 (pod-materialize) structural fix landed (multi-container CR Service direct deploy mirroring cloudrun); cloud_state lookup of pod-Service members in active debug. |
-| 122k.6 | 6 GH × gcf | ❌ not started | Inherits 122k.8 fixes + needs 122k.dispatcher. |
-| 122k.5 | 5 GH × cloudrun | ❌ not started | Needs 122k.dispatcher. |
-| 122k.dispatcher | github-runner-dispatcher refactor | ❌ not started | Replace single-container custom-runner-image Job with multi-container TaskTemplate (vanilla `actions/runner --ephemeral` + sockerless sidecar). Add `SockerlessImage` + `BackendPort` to `Label` config. Build + push + redeploy `github-runner-dispatcher-gcp`. |
+| 122k.8 | 8 GL × gcf | 🟡 v15 in flight | BUG-948/950/951/952 closed; BUG-953 architectural fixes shipped (multi-container Service direct deploy + AR tag-existence precheck + PendingCreates speculative-running marker + resolvePodServiceFromCloud GetService follow-up). v15 adds ContainerStart diagnostic logs to resolve remaining "No such container" failure mode. |
+| 122k.6 | 6 GH × gcf | ❌ not started but ready to ship | Runner-task image at `tests/runners/github/dockerfile-gcf/` already bundles vanilla actions/runner + sockerless. Just needs rebuild + AR push + TOML config; inherits 122k.8 gcf stack. |
+| 122k.5 | 5 GH × cloudrun | ❌ not started but ready to ship | Same as cell 6 with `dockerfile-cloudrun` image. Dispatcher stays generic per user directive 2026-05-05 — sockerless+runner pairing lives in the runner image, NOT the dispatcher. |
 
-**Bugs closed today (2026-05-05):** BUG-947 (GCSFuse-vs-git → tar-pack persist), BUG-950 (contentTag fragmentation → drop entrypoint/cmd from hash + runtime env injection), BUG-951 (claim env-update quota → invoke envelope replaces UpdateService), BUG-952 (empty Function URL → GetFunction follow-up + Service URL fallback). BUG-948 pool-warming code shipped; works for single-container claims; pod-mode covered by BUG-953.
+**Architectural directives (all 2026-05-05):**
+
+- **Dispatcher stays generic** — provisions vanilla github/gitlab runners on demand based on queued jobs. NOT aware of sockerless. Pairing lives in the runner image. Earlier dispatcher-side `SockerlessImage` + `BackendPort` fields were proposed and reverted; saved as `feedback_dispatcher_generic.md` memory.
+- **HTTP 5xx reserved for unexpected panics** — bootstrap binaries return HTTP 200 + `X-Sockerless-Exit-Code` header / envelope `exitCode` on expected failures.
+
+**Bugs closed today (2026-05-05):** BUG-947, BUG-950, BUG-951, BUG-952. BUG-948 pool-warming code shipped; works for single-container claims; pod-mode covered by BUG-953. BUG-953 partial: 4 architectural fixes shipped, "No such container" cleanup failure remaining.
 
 ### Phase 104 — Cross-backend driver framework (in flight)
 

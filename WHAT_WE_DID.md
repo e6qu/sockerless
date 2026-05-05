@@ -6,9 +6,40 @@ See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for
 
 This file keeps narrative / "why we did it" context that doesn't live in BUGS.md or git log. Per-bug detail belongs in [BUGS.md](BUGS.md) — don't duplicate it here.
 
-## Phase 122k — Cell 7 GREEN heavy-workload + cell 8 architectural deep dive (2026-05-05)
+## Phase 122k continuation (2026-05-05 second session — cell 8 v9..v15)
 
-User goal recorded today: **all 4 GCP cells (5/6/7/8) GREEN with full workflow + evidence + executing where they're supposed to**. Cell 7 GREEN heavy workload achieved; cell 8 close (8 iterations) but final blocker still being verified; cells 5+6 dispatcher refactor not yet started.
+Continuing from the morning's Phase 122k. Cell 7 stayed GREEN (no regressions). Cell 8 went from v9 to v15 driving down the "Cannot connect to Docker daemon" / "No such container" failure modes. Cells 5+6 still not started but the user clarified the architecture: **dispatcher stays generic, sockerless+runner pairing lives in the runner image** — saved as `feedback_dispatcher_generic.md` memory.
+
+**Cell 8 iteration log:**
+
+| Iter | Change | Outcome |
+|------|--------|---------|
+| v9-v10 | execStartViaInvoke entry/exit logs; reduce queryPodServiceContainers from Info to Debug | failed (170s) — runner timeout on docker exec; PostgreSQL+build pod's network-pod path was eating the 120s docker SDK budget across two parallel Cloud Builds (~28s each) + CreateService.Wait (~30-60s) |
+| v11 | **AR HEAD precheck on `/v2/<repo>/manifests/<tag>`** — `gcp-common/registry_check.go` does `HEAD /v2/<repo>/manifests/<tag>` with idtoken-derived bearer; on 200 we return imageURI directly, skipping Cloud Build's ~25-30s tag-rebuild overhead even on layer-cache hit | total job 82s (was 170s); now fails with "No such container" on cleanup `docker exec` |
+| v12 | `PendingCreates.Update(running)` through materialize, delete only on error | failed (43s) — log "marked running" never appeared |
+| v13 | `Put` fallback when `Update` misses; "marked running" log | failed |
+| v14 | network-pod decision log + materializePodService entry/exit logs | failed (43s) — every diagnostic log line MISSING from Cloud Logging despite binary having strings |
+| v15 | ContainerStart **ENTRY/resolved/NOT FOUND** logs at top of handler + resolvePodServiceFromCloud GetService follow-up for abbreviated annotations | **awaiting (pipeline 2501668159)** |
+
+**Working en route, must not regress:**
+
+- AR HEAD precheck: `backends/gcp-common/registry_check.go` — `CheckTagExists(ctx, imageURI)` uses google.FindDefaultCredentials + 5s context timeout. Cuts ~28s of Cloud Build per overlay when image already in AR. Wired into both cloudrun and gcf `ensureOverlayImage`.
+- Multi-container Service direct deploy (`pod_service.go::materializePodService`) replaces the slow Cloud Functions wrapper for pod-mode. Service IS being created correctly post-materialize (verified via `gcloud run services describe sockerless-svc-*`); annotations + labels populated.
+- gcf bootstrap envelope path (BUG-951); Service URL fallback for empty `Function.ServiceConfig.uri` (BUG-952).
+- PendingCreates speculative-running marker through materialize: `Update` if entry exists, `Put` fallback if missing; delete only on error.
+
+**What we tried that did NOT work** (record so future sessions don't redo):
+
+| Attempt | Why it failed |
+|---|---|
+| Adding `SockerlessImage` + `BackendPort` fields to dispatcher's `Label` config + multi-container TaskTemplate in `Spawn()` | User clarification: **dispatcher must stay generic and unaware of sockerless**. Reverted. The runner-task image at `tests/runners/github/dockerfile-{cloudrun,gcf}/` already bundles vanilla runner + sockerless backend; the dispatcher just submits a single image. Memory saved as `feedback_dispatcher_generic.md`. |
+| Cancelling deployFunctionAsync mid-Cloud-Build then expecting cancelled goroutine to skip PendingCreates manipulation | Goroutine receives ctx.Cancel during `Source.upload to GCS` step; cancellation propagates correctly but cells 5/6/8 still hit the materialize-window race. Not the right layer to fix. |
+| HTTP 500 for expected exec failures in bootstrap | User directive: 5xx reserved for unexpected panics. Replaced with HTTP 200 + `X-Sockerless-Exit-Code` header / envelope `exitCode`. Saved as `feedback_no_500_default.md` memory. |
+| Quick-fix proposals (delay-window, polling) alongside structural fixes | Project rule: "always do the right fix, never the quick fix". Structural-only approach. |
+
+## Phase 122k — Cell 7 GREEN heavy-workload + cell 8 architectural deep dive (2026-05-05 morning)
+
+User goal recorded: **all 4 GCP cells (5/6/7/8) GREEN with full workflow + evidence + executing where they're supposed to**. Cell 7 GREEN heavy workload achieved; cell 8 close (8 iterations) but final blocker still being verified; cells 5+6 dispatcher refactor not yet started.
 
 **Cell 7 v51 GREEN** (https://gitlab.com/e6qu/sockerless/-/pipelines/2500209956, job 14213994152, 383 s). Heavy workload verified end-to-end: git fetch + git checkout + apk add file + go build eval-arithmetic + run with PostgreSQL sidecar. All 5 arithmetic results correct (11/14/21/13/6.5).
 
