@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	functionspb "cloud.google.com/go/functions/apiv2/functionspb"
 	runpb "cloud.google.com/go/run/apiv2/runpb"
@@ -58,87 +57,9 @@ func (s *Server) ensureOverlayImage(ctx context.Context, spec OverlayImageSpec, 
 // Each new-function deploy costs ~1 vCPU-min against the regional
 // CpuAllocPerProjectRegion quota, so reuse is the architectural fix to
 // the quota pressure.
-func (s *Server) claimFreeFunction(ctx context.Context, contentTag, containerID, containerName string) (string, error) {
-	const (
-		maxAttempts = 8
-		baseWait    = 250 * time.Millisecond
-	)
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		name, err := s.tryClaimOnce(ctx, contentTag, containerID, containerName)
-		if err != nil {
-			return "", err
-		}
-		if name != "" {
-			return name, nil
-		}
-		if attempt == maxAttempts-1 {
-			break
-		}
-		// Exponential back-off capped at 2s. Total wait across the loop is
-		// ~5s — short enough to keep the docker-create call inside gitlab's
-		// 120s wait, long enough for siblings to finish & release.
-		wait := baseWait * (1 << attempt)
-		if wait > 2*time.Second {
-			wait = 2 * time.Second
-		}
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(wait):
-		}
-	}
-	return "", nil // no free function in pool after retries
-}
 
 // tryClaimOnce performs a single list-and-claim pass. Returns ("", nil) when
 // no free function exists; ("", err) on API errors; (name, nil) on success.
-func (s *Server) tryClaimOnce(ctx context.Context, contentTag, containerID, containerName string) (string, error) {
-	parent := fmt.Sprintf("projects/%s/locations/%s", s.config.Project, s.config.Region)
-	filter := fmt.Sprintf(
-		`labels.sockerless_managed:"true" AND labels.sockerless_overlay_hash:"%s"`,
-		contentTag,
-	)
-	it := s.gcp.Functions.ListFunctions(ctx, &functionspb.ListFunctionsRequest{
-		Parent: parent,
-		Filter: filter,
-	})
-	for {
-		fn, err := it.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			return "", fmt.Errorf("list functions for pool query: %w", err)
-		}
-		// "Free" = sockerless_allocation label absent or empty.
-		if alloc := fn.GetLabels()["sockerless_allocation"]; alloc != "" {
-			continue
-		}
-		// Atomic CAS via UpdateFunction with the function's current Etag.
-		// Cloud Functions Gen2 doesn't expose Etag on Function directly in
-		// the same way some APIs do; the operation is best-effort: if a
-		// concurrent claim wins, our subsequent operation will see
-		// allocation already set on next list and we retry.
-		updated := proto_clone_function(fn)
-		if updated.Labels == nil {
-			updated.Labels = make(map[string]string)
-		}
-		updated.Labels["sockerless_allocation"] = shortAllocLabel(containerID)
-		if containerName != "" {
-			updated.Labels["sockerless_name"] = sanitizeGCPLabelValue(strings.TrimPrefix(containerName, "/"))
-		}
-		_, err = s.gcp.Functions.UpdateFunction(ctx, &functionspb.UpdateFunctionRequest{
-			Function:   updated,
-			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"labels"}},
-		})
-		if err != nil {
-			s.Logger.Debug().Err(err).Str("function", fn.GetName()).Msg("pool claim conflict — retrying")
-			continue
-		}
-		return fn.GetName(), nil
-	}
-	return "", nil
-}
 
 // proto_clone_function returns a Function reference safe for mutation. Cloud
 // Functions' Function proto carries a sync.Mutex (via protoimpl.MessageState)
@@ -155,28 +76,6 @@ func proto_clone_function(fn *functionspb.Function) *functionspb.Function {
 // `[a-z0-9_-]`, else returns the empty string. Sockerless-internal names
 // (container short names like "/abc123") need this filter when written
 // to a GCP label slot — the canonical container ID is on annotations.
-func sanitizeGCPLabelValue(v string) string {
-	for _, r := range v {
-		switch {
-		case r >= 'a' && r <= 'z',
-			r >= '0' && r <= '9',
-			r == '-', r == '_':
-			continue
-		default:
-			return ""
-		}
-	}
-	// BUG-930: GCP label values are 63-char limited. gitlab-runner emits
-	// permission-container names like
-	// `runner-<id>-project-<n>-concurrent-<n>-<hash>-cache-<hash>-set-permission-<hash>`
-	// which routinely exceed 130 chars. Truncate to 63 — the full
-	// container ID lives in function annotations; this label is only
-	// used for human-readable filtering.
-	if len(v) > 63 {
-		v = v[:63]
-	}
-	return v
-}
 
 // shortAllocLabel returns a GCP-label-safe short form of a 64-char Docker
 // container ID. GCP labels are capped at 63 characters; we use the first

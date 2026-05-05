@@ -228,6 +228,131 @@ func (s *Server) buildPodServiceParent() string {
 	return fmt.Sprintf("projects/%s/locations/%s", s.config.Project, s.config.Region)
 }
 
+// deployContainerService creates a single-container Cloud Run Service
+// for a sockerless container. This replaces the slow Cloud Functions
+// path (CreateFunction with stub Buildpacks-Go source + UpdateService
+// swap) with a direct Services.CreateService call, mirroring cloudrun's
+// single-container deploy speed (~30-60 s vs the old ~90-150 s).
+//
+// Used for cell 8's cache-permission helper container (a solo
+// container that arrives before its sibling build/postgres members).
+// Multi-container pods continue through materializePodService.
+//
+// The Service is tagged sockerless_managed=true with sockerless_allocation
+// = short(containerID); resolveGCFFromCloud → resolvePodServiceFromCloud
+// finds it by allocation label.
+func (s *Server) deployContainerService(ctx context.Context, id string, container api.Container) error {
+	imageRef := gcpcommon.ResolveGCPImageURI(container.Config.Image, s.config.Project, s.config.Region)
+	spec := OverlayImageSpec{
+		BaseImageRef:        imageRef,
+		BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+	}
+	tag := OverlayContentTag(spec)
+	overlayURI, err := s.ensureOverlayImage(ctx, spec, tag)
+	if err != nil {
+		return fmt.Errorf("ensure overlay image: %w", err)
+	}
+
+	cs, mounts, err := s.buildPodContainerSpec(container, overlayURI, true)
+	if err != nil {
+		return err
+	}
+	specs := []*runpb.Container{cs}
+
+	volSeen := map[string]struct{}{}
+	var volumes []*runpb.Volume
+	var persistEntries []string
+	for _, mp := range mounts {
+		if _, done := volSeen[mp.Name]; done {
+			continue
+		}
+		vol, persist, verr := s.buildVolumeForBindGCF(ctx, mp.Name, mp.MountPath)
+		if verr != nil {
+			return verr
+		}
+		volumes = append(volumes, vol)
+		if persist != "" {
+			persistEntries = append(persistEntries, persist)
+		}
+		volSeen[mp.Name] = struct{}{}
+	}
+	injectPodPersistEnv(specs, persistEntries)
+
+	revTemplate := &runpb.RevisionTemplate{
+		Containers: specs,
+		Volumes:    volumes,
+		Scaling: &runpb.RevisionScaling{
+			MinInstanceCount: 1,
+			MaxInstanceCount: 1,
+		},
+		Timeout: durationpb.New(1 * time.Hour),
+	}
+
+	tags := core.TagSet{
+		ContainerID: id,
+		Backend:     "gcf",
+		InstanceID:  s.Desc.InstanceID,
+		CreatedAt:   time.Now(),
+		AutoRemove:  container.HostConfig.AutoRemove,
+	}
+	gcpLabels := tags.AsGCPLabels()
+	gcpLabels["sockerless_managed"] = "true"
+	gcpLabels["sockerless_allocation"] = shortAllocLabel(id)
+	gcpAnnotations := tags.AsGCPAnnotations()
+	if gcpAnnotations == nil {
+		gcpAnnotations = map[string]string{}
+	}
+	// Single-container deploys still set sockerless_pod_members with
+	// just this container's ID so cloud_state.queryPodServiceContainers
+	// finds it through the same path multi-container resources use.
+	gcpAnnotations["sockerless_pod_members"] = id
+
+	parent := s.buildPodServiceParent()
+	svcName := podServiceName(id)
+	fullSvcName := fmt.Sprintf("%s/services/%s", parent, svcName)
+
+	svc := &runpb.Service{
+		Labels:             gcpLabels,
+		Annotations:        gcpAnnotations,
+		Ingress:            runpb.IngressTraffic_INGRESS_TRAFFIC_ALL,
+		DefaultUriDisabled: false,
+		Template:           revTemplate,
+	}
+
+	createOp, err := s.gcp.Services.CreateService(ctx, &runpb.CreateServiceRequest{
+		Parent:    parent,
+		ServiceId: svcName,
+		Service:   svc,
+	})
+	if err != nil {
+		return gcpcommon.MapGCPError(err, "service", svcName)
+	}
+	result, err := createOp.Wait(ctx)
+	if err != nil {
+		// Best-effort cleanup on partial-create failure.
+		if delOp, delErr := s.gcp.Services.DeleteService(ctx, &runpb.DeleteServiceRequest{Name: fullSvcName}); delErr == nil {
+			_, _ = delOp.Wait(ctx)
+		}
+		return gcpcommon.MapGCPError(err, "service", svcName)
+	}
+
+	s.Registry.Register(core.ResourceEntry{
+		ContainerID:  id,
+		Backend:      "gcf",
+		ResourceType: "service",
+		ResourceID:   result.Name,
+		InstanceID:   s.Desc.InstanceID,
+		CreatedAt:    time.Now(),
+		Metadata: map[string]string{
+			"image":       container.Image,
+			"name":        container.Name,
+			"serviceName": svcName,
+			"role":        "single-container-service",
+		},
+	})
+	return nil
+}
+
 // userDefinedNetworkIDOrEmpty is a non-erroring variant for the
 // SOCKERLESS_HOST_ALIASES injection — empty network ID means the
 // hostAliasesForMembers helper falls back to per-container aliases.
