@@ -137,6 +137,19 @@ func (s *Server) materializePodService(mainContainerID string, containers []api.
 		},
 		Timeout: durationpb.New(1 * time.Hour),
 	}
+	// VPC connector + ALL_TRAFFIC routes per-step Service POSTs through
+	// the in-VPC source so cross-Cloud-Run calls (gitlab-runner-gcf
+	// invoking sockerless-svc-* over .a.run.app) appear as same-project
+	// to Cloud Run's edge — without it Cloud Run rejects them as
+	// external. Mirror of cloudrun/servicespec.go::buildServiceSpec
+	// VpcAccess block. Required for cell 7 cloudrun GREEN — also needed
+	// for cell 8 gcf network-pod parity.
+	if s.config.VPCConnector != "" {
+		revTemplate.VpcAccess = &runpb.VpcAccess{
+			Connector: s.config.VPCConnector,
+			Egress:    runpb.VpcAccess_ALL_TRAFFIC,
+		}
+	}
 
 	tags := core.TagSet{
 		ContainerID: mainContainerID,
@@ -293,6 +306,12 @@ func (s *Server) deployContainerService(ctx context.Context, id string, containe
 			MaxInstanceCount: 1,
 		},
 		Timeout: durationpb.New(1 * time.Hour),
+	}
+	if s.config.VPCConnector != "" {
+		revTemplate.VpcAccess = &runpb.VpcAccess{
+			Connector: s.config.VPCConnector,
+			Egress:    runpb.VpcAccess_ALL_TRAFFIC,
+		}
 	}
 
 	tags := core.TagSet{

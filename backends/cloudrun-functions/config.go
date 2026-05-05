@@ -72,6 +72,16 @@ type Config struct {
 	// SOCKERLESS_GCP_SHARED_VOLUMES="name=path=bucket,name2=path2=bucket2"
 	// (BUG-909).
 	SharedVolumes []SharedVolume
+
+	// VPCConnector is the Serverless VPC Connector resource path used
+	// for cross-Cloud-Run service communication. Required for the
+	// network-pod path to mirror cloudrun's GREEN architecture: when
+	// gitlab-runner-gcf POSTs to a per-step sockerless-svc-* over the
+	// Cloud Run regional URL, Cloud Run rejects same-project requests
+	// that come from outside the VPC as "external". With VpcAccess +
+	// ALL_TRAFFIC, the call appears as in-VPC source and IAM-gated
+	// invoke succeeds. SOCKERLESS_GCF_VPC_CONNECTOR — empty disables.
+	VPCConnector string
 }
 
 // SharedVolume mirrors `cloudrun.SharedVolume`. GCS bucket backs the
@@ -113,6 +123,7 @@ func ConfigFromEnv() Config {
 		PoolMax:         envOrDefaultInt("SOCKERLESS_GCF_POOL_MAX", 10),
 		PrewarmOverlays: parsePrewarmOverlays(os.Getenv("SOCKERLESS_GCF_PREWARM_OVERLAYS")),
 		SharedVolumes:   parseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES")),
+		VPCConnector:    os.Getenv("SOCKERLESS_GCF_VPC_CONNECTOR"),
 	}
 }
 

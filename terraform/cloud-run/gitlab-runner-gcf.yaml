@@ -76,7 +76,7 @@ spec:
               cpu: "1"
               memory: 1Gi
         - name: sockerless
-          image: us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/sockerless-backend-gcf@sha256:12977bd0bd733b72b2ed9868240e09ac891e37059867e5e26cdbc00d1dbc7cb9
+          image: us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/sockerless-backend-gcf@sha256:72d6cd93517665c77c3f66fe0810dde4308d33ba40005e65dbac25c7abd47530
           ports:
             - containerPort: 3376
           env:
@@ -98,6 +98,13 @@ spec:
             # gitlab-runner's typical concurrent-permission-container burst.
             - name: SOCKERLESS_GCF_PREWARM_OVERLAYS
               value: "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-v17.5.0:3"
+            # VPC connector required for cross-Cloud-Run service communication
+            # — gitlab-runner-gcf POSTs to per-step sockerless-svc-* via the
+            # Cloud Run regional URL; without VpcAccess + ALL_TRAFFIC, Cloud
+            # Run rejects same-project requests as external. Mirrors the
+            # cloudrun YAML's SOCKERLESS_GCR_VPC_CONNECTOR.
+            - name: SOCKERLESS_GCF_VPC_CONNECTOR
+              value: "projects/sockerless-live-46x3zg4imo/locations/us-central1/connectors/sockerless-connector"
           resources:
             limits:
               cpu: "1"
