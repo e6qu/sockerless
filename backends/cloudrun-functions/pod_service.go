@@ -773,6 +773,102 @@ func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, c
 	}
 }
 
+// invokeRunningRunnerStage handles the per-stage attach+start pattern
+// gitlab-runner v17 docker executor uses. After the FIRST stage's
+// invokePodServiceMain goroutine completes, the build container's
+// Cloud Run Service is still alive (bootstrap HTTP server holding the
+// port). gitlab-runner then does `stop`, `attach`, `start` for each
+// subsequent stage. Cloud Run Service revisions are immutable so the
+// stop+start is a no-op at the cloud layer; this function processes
+// the new stdinPipe registered by the new attach and POSTs the
+// captured stage script bytes to the same Service URL.
+//
+// Mirror of invokePodServiceMain's per-stage section, refactored so
+// ContainerStart's already-running branch can call it on each stage.
+// See BUG-955.
+func (s *Server) invokeRunningRunnerStage(mainID string, mainContainer api.Container) {
+	ctx := s.ctx()
+	s.Logger.Info().Str("main", mainID).Msg("invokeRunningRunnerStage: goroutine entered")
+
+	// Block on stdinPipe.Done() (gitlab-runner half-closes after piping
+	// the script). 30s upper bound mirrors invokePodServiceMain.
+	v, ok := s.stdinPipes.LoadAndDelete(mainID)
+	if !ok {
+		s.Logger.Warn().Str("main", mainID).Msg("invokeRunningRunnerStage: no stdinPipe registered (race)")
+		return
+	}
+	pipe := v.(*stdinPipe)
+	select {
+	case <-pipe.Done():
+	case <-time.After(30 * time.Second):
+		s.Logger.Warn().Str("main", mainID).Msg("invokeRunningRunnerStage: stdin pipe Done timeout")
+	case <-ctx.Done():
+		return
+	}
+	capturedStdin := pipe.Bytes()
+	s.Logger.Info().Str("main", mainID).Int("stdin_bytes", len(capturedStdin)).Msg("invokeRunningRunnerStage: stdin pipe drained")
+
+	// Resolve Service URL via the same path invokePodServiceMain uses.
+	// In stage 2+, the underlying Service was created by the first
+	// stage's materializePodService. resolvePodServiceFromCloud finds
+	// it by allocation label or annotation match.
+	state, ok := s.resolveGCFFromCloud(ctx, mainID)
+	if !ok || state.FunctionURL == "" {
+		s.Logger.Error().Str("main", mainID).Msg("invokeRunningRunnerStage: no service URL")
+		if v, ok := s.attachStreams.LoadAndDelete(mainID); ok {
+			v.(*attachStream).publishAttachResponse(nil, []byte("no service URL"))
+		}
+		return
+	}
+	url := state.FunctionURL
+
+	client, err := idtoken.NewClient(ctx, url)
+	if err != nil {
+		s.Logger.Error().Err(err).Str("main", mainID).Msg("invokeRunningRunnerStage: idtoken client")
+		if v, ok := s.attachStreams.LoadAndDelete(mainID); ok {
+			v.(*attachStream).publishAttachResponse(nil, []byte(err.Error()))
+		}
+		return
+	}
+	client.Timeout = 10 * time.Minute
+
+	envelope := gcpcommon.ExecEnvelopeExec{
+		Argv: []string{"/bin/sh"},
+	}
+	if len(capturedStdin) > 0 {
+		envelope.Stdin = gcpcommon.EncodeStdin(capturedStdin)
+	}
+	res, err := gcpcommon.PostExecEnvelope(ctx, client, url, "", envelope)
+	if err != nil {
+		s.Logger.Error().Err(err).Str("main", mainID).Msg("invokeRunningRunnerStage: envelope POST failed")
+		if v, ok := s.attachStreams.LoadAndDelete(mainID); ok {
+			v.(*attachStream).publishAttachResponse(nil, []byte(err.Error()))
+		}
+		return
+	}
+	s.Logger.Info().Str("main", mainID).Int("exit", res.ExitCode).Int("stdout_bytes", len(res.Stdout)).Int("stderr_bytes", len(res.Stderr)).Msg("invokeRunningRunnerStage: bootstrap response")
+
+	if v, ok := s.attachStreams.LoadAndDelete(mainID); ok {
+		v.(*attachStream).publishAttachResponse(res.Stdout, res.Stderr)
+	}
+
+	// Fan-out exit code via WaitChs. gitlab-runner does
+	// /containers/{id}/wait?condition=not-running between stages — we
+	// must close the WaitCh so it returns.
+	inv := core.InvocationResult{
+		ExitCode: res.ExitCode,
+	}
+	if res.ExitCode != 0 {
+		inv.Error = fmt.Sprintf("subprocess exit %d", res.ExitCode)
+	}
+	s.Store.PutInvocationResult(mainID, inv)
+	if ch, ok := s.Store.WaitChs.LoadAndDelete(mainID); ok {
+		close(ch.(chan struct{}))
+	}
+	// Re-register a fresh WaitCh for the next stage's wait/stop cycle.
+	s.Store.WaitChs.Store(mainID, make(chan struct{}))
+}
+
 // readResponseBody is a small helper so this file doesn't pull io.ReadAll
 // from another package as a single-use import.
 func readResponseBody(r interface {

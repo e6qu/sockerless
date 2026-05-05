@@ -333,6 +333,23 @@ func (s *Server) ContainerStart(ref string) error {
 	s.Logger.Info().Str("container", id).Bool("running", c.State.Running).Str("status", c.State.Status).Bool("openStdin", c.Config.OpenStdin).Msg("ContainerStart: resolved")
 
 	if c.State.Running {
+		// Multi-stage gitlab-runner pattern: per stage gitlab-runner does
+		// `stop` then re-`attach` + re-`start`. Cloud Run Service revisions
+		// are immutable so we can't actually restart, but the bootstrap
+		// HTTP server inside the Service is still alive and accepts new
+		// envelope POSTs. When a fresh stdinPipe was just registered (by
+		// the per-stage attach) AND the container has OpenStdin=true,
+		// kick off a NEW invoke goroutine to drain the new pipe + POST
+		// the new stage's script to the bootstrap. Without this, only
+		// the first stage's script runs and gitlab-runner hangs waiting
+		// for stage 2's output.
+		if c.Config.OpenStdin {
+			if _, hasPipe := s.stdinPipes.Load(id); hasPipe {
+				s.Logger.Info().Str("container", id).Msg("ContainerStart: already running but fresh stdinPipe registered — kicking new invoke goroutine for next stage")
+				go s.invokeRunningRunnerStage(id, c)
+				return nil
+			}
+		}
 		s.Logger.Info().Str("container", id).Msg("ContainerStart: already running, returning NotModified")
 		return &api.NotModifiedError{}
 	}
