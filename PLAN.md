@@ -36,6 +36,22 @@ Detail in [WHAT_WE_DID.md](WHAT_WE_DID.md); commit + BUG refs in [BUGS.md](BUGS.
 
 Order is the order of execution unless noted.
 
+### Phase 122k — All 4 GCP cells GREEN (THE current goal, in flight 2026-05-05)
+
+User goal recorded today: **all 4 GCP cells (5/6/7/8) GREEN with full workflow + evidence + executing where they're supposed to**. Cells 1–4 (AWS) cover only trivial workloads; the GCP cells run the real probe + git-clone + go-build + arithmetic suite. This is the milestone the user has scoped as "consider it done".
+
+**Sub-task progress:**
+
+| Sub | Cell | State | Notes |
+|---|---|---|---|
+| 122k.7 | 7 GL × cloudrun | ✅ GREEN | pipeline 2500209956 (BUG-947 closed, vanilla-runner arch). |
+| 122k.8 | 8 GL × gcf | 🟡 8 iterations today; v8 in flight | BUG-948/950/951/952 closed; BUG-953 (pod-materialize) structural fix landed (multi-container CR Service direct deploy mirroring cloudrun); cloud_state lookup of pod-Service members in active debug. |
+| 122k.6 | 6 GH × gcf | ❌ not started | Inherits 122k.8 fixes + needs 122k.dispatcher. |
+| 122k.5 | 5 GH × cloudrun | ❌ not started | Needs 122k.dispatcher. |
+| 122k.dispatcher | github-runner-dispatcher refactor | ❌ not started | Replace single-container custom-runner-image Job with multi-container TaskTemplate (vanilla `actions/runner --ephemeral` + sockerless sidecar). Add `SockerlessImage` + `BackendPort` to `Label` config. Build + push + redeploy `github-runner-dispatcher-gcp`. |
+
+**Bugs closed today (2026-05-05):** BUG-947 (GCSFuse-vs-git → tar-pack persist), BUG-950 (contentTag fragmentation → drop entrypoint/cmd from hash + runtime env injection), BUG-951 (claim env-update quota → invoke envelope replaces UpdateService), BUG-952 (empty Function URL → GetFunction follow-up + Service URL fallback). BUG-948 pool-warming code shipped; works for single-container claims; pod-mode covered by BUG-953.
+
 ### Phase 104 — Cross-backend driver framework (in flight)
 
 Lift sockerless's narrow `core.Drivers{Exec, Stream, Filesystem}` plus the bespoke per-backend ad-hoc paths into one pluggable system: every "perform docker action X against the cloud" decision flows through a typed `Driver` interface. **Interfaces in core; implementations live with the cloud they use.** Each backend constructs its `DriverSet` at startup; operators override per-cloud-per-dimension via `SOCKERLESS_<BACKEND>_<DIMENSION>=<impl>`; sim parity required for the default driver in every dimension.

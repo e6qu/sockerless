@@ -6,6 +6,34 @@ See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for
 
 This file keeps narrative / "why we did it" context that doesn't live in BUGS.md or git log. Per-bug detail belongs in [BUGS.md](BUGS.md) — don't duplicate it here.
 
+## Phase 122k — Cell 7 GREEN heavy-workload + cell 8 architectural deep dive (2026-05-05)
+
+User goal recorded today: **all 4 GCP cells (5/6/7/8) GREEN with full workflow + evidence + executing where they're supposed to**. Cell 7 GREEN heavy workload achieved; cell 8 close (8 iterations) but final blocker still being verified; cells 5+6 dispatcher refactor not yet started.
+
+**Cell 7 v51 GREEN** (https://gitlab.com/e6qu/sockerless/-/pipelines/2500209956, job 14213994152, 383 s). Heavy workload verified end-to-end: git fetch + git checkout + apk add file + go build eval-arithmetic + run with PostgreSQL sidecar. All 5 arithmetic results correct (11/14/21/13/6.5).
+
+**Closed today** (in order):
+
+| Bug | Title | Fix shape |
+|---|---|---|
+| 947 | GCSFuse `/builds` ~200× slower than tmpfs for git ops | Bootstrap tar-pack persist module (`agent/cmd/sockerless-cloudrun-bootstrap/persist.go`) downloads single tar object per ad-hoc bind volume from GCS at startup; re-uploads after every exec. Backend emits `Volume_EmptyDir{MEMORY}` (tmpfs) for ad-hoc binds + injects `SOCKERLESS_PERSIST_VOLUMES=name=path=bucket` env on main. Replaces N per-file GCSFuse round-trips with 1 GCS object roundtrip per stage. Cell 7 v51 verified live. |
+| 948 | gcf per-step Function deploy hits regional CPU quota | Pool-warming via `SOCKERLESS_GCF_PREWARM_OVERLAYS` env. Pre-deploys N free Functions tagged with overlay content-hash at backend startup. Works for single-container claims; pod-mode addressed by BUG-953 separately. |
+| 950 | gcf prewarm contentTag mismatch — pool entries unclaimable | `OverlayContentTag` no longer hashes `UserEntrypoint`/`UserCmd`/`UserWorkdir`; pool entries are reusable across container types with different commands. Runtime entrypoint/cmd/workdir flow through `ServiceConfig.EnvironmentVariables` (or invoke envelope after BUG-951). `RenderOverlayDockerfile` no longer bakes `ENV SOCKERLESS_USER_*`. Also: prewarm refs go through `ResolveGCPImageURI` so prewarm hash matches live workload's AR-resolved hash. |
+| 951 | gcf claim-side env-update via `UpdateService` itself debits CPU quota | Drop `updateFunctionUserEnv` claim-path call. `invokeFunction` now POSTs the exec envelope `{"sockerless":{"exec":{"argv":...,"workdir":...,"env":...}}}` carrying user entrypoint+cmd+workdir+env. Bootstrap's `parseExecEnvelope` reads argv from request body (Path B). Pool entries are CR-immutable; any user command runs without touching CR Service config. |
+| 952 | `resolveGCFFromCloud` returns empty `Function.ServiceConfig.uri` from `ListFunctions` response | Follow up label-match with `GetFunction` by name to fetch full proto. Last-resort fallback derives URL from underlying Cloud Run Service via `Services.GetService`. Cell 8 v5 logs confirmed the fallback fired live: `derived URL from underlying Cloud Run Service`. |
+
+**In-flight (cell 8 v8, BUG-953)**: gcf pod-mode via direct multi-container Cloud Run Service deploy (skip Cloud Functions wrapper). Cell 7 architecturally identical (cloudrun's `Services.CreateService` for multi-container) deploys in ~30-60 s; gcf's old path through `CreateFunction` + `swapServiceImage` was ~150 s and hit gitlab-runner's 120 s `ContainerExec` timeout. New `pod_service.go::materializePodService` builds per-member overlay images in parallel + calls `Services.CreateService` directly with multi-container `RevisionTemplate`. gcf bootstrap got `SOCKERLESS_SIDECAR=1` mode added (mirrors cloudrun). `cloud_state.queryPodServiceContainers` queries Services with the `sockerless_pod_members` annotation; v8 adds `GetService` follow-up since `ListServices` may abbreviate annotations. Verification pending.
+
+**What we tried that did NOT work** (record so future sessions don't redo):
+
+| Attempt | Why it failed |
+|---|---|
+| (Cell 8 v1-v6 iteration log — moved targets, each one an honest reach) | See [BUGS.md](BUGS.md) BUG-942/948/950/951/952/953 entries for per-step diagnosis. |
+| Sequential pod overlay Cloud Build + CreateFunction in gcf | Combined ~150 s exceeded gitlab-runner's 120 s ContainerExec timeout. v6 parallelization saved 30 s; still over budget for >2 members. Replaced wholesale by direct `Services.CreateService`. |
+| HTTP 500 for expected exec failures in bootstrap | User directive: 5xx reserved for unexpected panics. Replaced with HTTP 200 + `X-Sockerless-Exit-Code` header / envelope `exitCode` (commits 29308e1 + envelope failure handling in cb4eb6d). |
+| Quick-fix proposals (delay-window, polling) alongside structural fixes | Project rule: "always do the right fix, never the quick fix". Killed every iteration. |
+| Bumping Cloud Run regional CPU quota via `gcloud beta quotas preferences` | User explicit reject: solve architecturally. Pool-warming + direct Service deploy are the architectural answers. |
+
 ## Phase 122j — vanilla-runner architecture pivot + BUG-947 GCSFuse-vs-git-checkout (2026-05-04)
 
 Long autonomous-loop session. User reset cells 5–8 architecture mid-session: runners stay vanilla (no sockerless-baked custom image); sockerless rides as a sidecar in multi-container Cloud Run Service/Job; gitlab-runner needs no dispatcher (it polls itself); github cells use a thin dispatcher that only calls `Executions.RunJob` with per-execution env override. Cell 7 GREEN under OLD architecture (v49, pipeline 2496721473) was acknowledged as "to be lost in the refactor" — and was lost.
