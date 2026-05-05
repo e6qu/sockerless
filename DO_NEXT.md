@@ -6,7 +6,42 @@ Resume pointer. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.
 
 User goal: **all 4 GCP cells (5, 6, 7, 8) GREEN with full workflow + evidence + executing where they're supposed to**. Cell 7 done; cells 5/6/8 outstanding.
 
-### Cell 8 — v16 root cause PINNED (port cloudrun stdinPipe pattern to gcf)
+### Cell 8 — v17 status: stdinPipe shipped, gitlab-runner mysteriously silent post-start
+
+**Pipeline 2502018240, rev `00050-p25`, digest `sha256:37e65d40`**:
+
+Successfully ported the cloudrun `stdinPipe + attachStream` pattern to gcf:
+- New `backends/cloudrun-functions/{stdin_pipe.go,attach_stream.go}`
+- New `Server.{stdinPipes,attachStreams}` sync.Map fields
+- `ContainerAttach` delegate registers stdinPipe + returns attachStream when caller wants stdin AND image is sockerless overlay
+- `invokePodServiceMain` blocks up to 30s on `pipe.Done()`, POSTs captured stdin via `PostExecEnvelope` with argv=[/bin/sh] + Stdin=base64; falls through to default-invoke if no pipe; publishes stdout+stderr back via `attachStream.publishAttachResponse`
+- `LoggingMiddleware` Debug→Info bump in `backends/core/server.go` so every HTTP request hit gets logged
+
+**v17 evidence with full HTTP middleware visibility**:
+1. ContainerCreate cache-permission helper (single container)
+2. ContainerStart cache-permission → completes 15.6 s, exits 0
+3. DELETE cache-permission container
+4. POST /images/postgres pull
+5. ContainerCreate postgres
+6. ContainerStart postgres → netDefer=true, returns 204 quickly
+7. POST /images/golang pull
+8. ContainerCreate golang build container (a59f4f6e3964)
+9. GET /containers/a59f.../json → ContainerInspect (200)
+10. ContainerStart build → network-pod decision: netDefer=false, netMembers=2 ✅
+11. materialize: 19s (parallel cache-hit overlay builds + Services.CreateService)
+12. ContainerStart returns 204 at 17:15:33
+13. **invokePodServiceMain enters → finds NO stdinPipe → default-invoke fires** (POSTs user CMD `[/usr/bin/dumb-init /entrypoint gitlab-runner-build]`)
+14. **After 17:15:33 — gitlab-runner makes ZERO HTTP calls to sockerless for 15+ min**. Heartbeats to gitlab.com continue.
+
+**Open question for next session**: cell 7 (cloudrun) GREEN has identical stdinPipe code in `backends/cloudrun/start_service.go::invokeServiceDefaultCmd` and the same condition path in `backends/cloudrun/backend_impl.go::ContainerAttach` (with `hasSockerlessOverlayRepo` check). It works there but not in cell 8. Need to either:
+
+(a) Capture cell 7's HTTP request log timeline (re-trigger cell 7 or diff against what's stored) to see if gitlab-runner calls ContainerAttach BEFORE ContainerStart in the cloudrun path.
+
+(b) Inspect what gitlab-runner v17 does internally between ContainerStart return and the next docker call. The trace shows `Preparing environment` (start of `prepare_script` section); after ContainerStart returns, the next stage step should fire ContainerExec or ContainerAttach. Possibly gitlab-runner is waiting on an internal `waitForServicesHealth` TCP probe that we don't proxy.
+
+(c) The `hasSockerlessOverlayRepoGCF` check in our ContainerAttach uses `c.Config.Image` from the BEFORE-materialize state — at attach time the image is still the user-supplied original (golang:1.22-alpine), not the overlay URI. If gitlab-runner attaches BEFORE start, our check returns false and we return NotImplementedError. Fix: drop the overlay check, or use a more permissive condition (e.g. always allow stdin on sockerless-managed containers).
+
+### Cell 8 — historical v9..v16 (resolved by v17 architectural finding)
 
 **v16 evidence** (pipeline 2501822349, rev `00049-lk4`, digest `sha256:d32c33e4`): with all delegate ENTRY logs added, we can see definitively that gitlab-runner makes ZERO docker calls during the silent window. ContainerStart fires correctly (netDefer=false netMembers=2), materialize completes in 13 s, build container's bootstrap exec'd `[/usr/bin/dumb-init /entrypoint gitlab-runner-build]` → exit=0 stdout=0B stderr=0B (gitlab-runner-helper's `build` subcommand is a no-op without CI env vars).
 

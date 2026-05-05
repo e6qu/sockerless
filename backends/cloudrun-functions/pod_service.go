@@ -609,16 +609,34 @@ func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, c
 	// gitlab-runner attach-stdin pattern: when the build container
 	// has a stdinPipe registered (via ContainerAttach), wait for the
 	// caller to half-close (= stdin EOF) so we can replay the captured
-	// bytes as the bootstrap's exec envelope Stdin. Skip if no pipe
-	// (= no attach happened, run env-baked SOCKERLESS_USER_CMD via
-	// default invoke).
+	// bytes as the bootstrap's exec envelope Stdin.
+	//
+	// Race with ContainerStart return: gitlab-runner v17 docker
+	// executor calls ContainerStart, then ContainerAttach. There's a
+	// window where this goroutine has started (after Services.CreateService
+	// completes) but ContainerAttach hasn't hit yet. Without a pre-check
+	// wait we'd LoadAndDelete an empty map and fall through to default-
+	// invoke, racing past gitlab-runner's pipe registration. cloudrun
+	// hides this race behind waitForServiceURL's polling delay; we
+	// replicate it explicitly with a short pre-check window for any
+	// late-arriving attach.
 	var capturedStdin []byte
+	pipeWaitDeadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(pipeWaitDeadline) {
+		if _, ok := s.stdinPipes.Load(mainID); ok {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			s.Logger.Warn().Str("main", mainID).Err(ctx.Err()).Msg("invokePodServiceMain: ctx cancelled while waiting for stdinPipe registration")
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 	if v, ok := s.stdinPipes.LoadAndDelete(mainID); ok {
 		pipe := v.(*stdinPipe)
+		s.Logger.Info().Str("main", mainID).Msg("invokePodServiceMain: stdinPipe registered, waiting for stdin EOF")
 		// 30s upper bound mirrors cloudrun's invokeServiceDefaultCmd.
-		// gitlab-runner pipes the script then CloseWrite()s within
-		// milliseconds; the timeout is a belt-and-suspenders against
-		// log-streaming attaches that never half-close.
 		select {
 		case <-pipe.Done():
 		case <-time.After(30 * time.Second):
@@ -629,6 +647,8 @@ func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, c
 		}
 		capturedStdin = pipe.Bytes()
 		s.Logger.Info().Str("main", mainID).Int("stdin_bytes", len(capturedStdin)).Msg("invokePodServiceMain: stdin pipe drained")
+	} else {
+		s.Logger.Info().Str("main", mainID).Msg("invokePodServiceMain: no stdinPipe registered after 5 s wait — falling through to default-invoke")
 	}
 
 	url := ""
