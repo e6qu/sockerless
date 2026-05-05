@@ -29,7 +29,7 @@ type Function struct {
 	CreateTime    string            `json:"createTime"`
 	UpdateTime    string            `json:"updateTime"`
 	Labels        map[string]string `json:"labels,omitempty"`
-	Environment   string            `json:"environment,omitempty"`
+	Environment   enumString        `json:"environment,omitempty"`
 }
 
 // BuildConfig holds the build configuration for a function.
@@ -46,10 +46,23 @@ type ServiceConfig struct {
 	Service              string            `json:"service,omitempty"` // Underlying Cloud Run service name (Gen2)
 	TimeoutSeconds       int               `json:"timeoutSeconds,omitempty"`
 	AvailableMemory      string            `json:"availableMemory,omitempty"`
+	AvailableCpu         string            `json:"availableCpu,omitempty"` // CPU limit (e.g. "1", "0.5", "2"). Real Cloud Functions Gen2 default: 1.
 	MaxInstanceCount     int               `json:"maxInstanceCount,omitempty"`
 	MinInstanceCount     int               `json:"minInstanceCount,omitempty"`
 	EnvironmentVariables map[string]string `json:"environmentVariables,omitempty"`
 	SimCommand           []string          `json:"simCommand,omitempty"` // Simulator-only: command to execute on invoke
+}
+
+// functionCPUResources returns the ResourceRequirements that should be
+// stamped onto the underlying Cloud Run service's container so the
+// regional quota check sees the real CPU load. ServiceConfig.AvailableCpu
+// is the explicit field; default is "1" (Cloud Functions Gen2 minimum).
+func functionCPUResources(fn Function) *ResourceRequirements {
+	cpu := "1"
+	if fn.ServiceConfig != nil && fn.ServiceConfig.AvailableCpu != "" {
+		cpu = fn.ServiceConfig.AvailableCpu
+	}
+	return &ResourceRequirements{Limits: map[string]string{"cpu": cpu}}
 }
 
 // Package-level store for dashboard access.
@@ -107,11 +120,24 @@ func registerCloudFunctions(srv *sim.Server) {
 		if fn.BuildConfig != nil {
 			stubImage = fn.BuildConfig.DockerRepository
 		}
+		// Compose the backing service spec first so we can charge its CPU
+		// load against the regional quota BEFORE persisting the function.
+		// gcf creates the function; the live cloud creates the underlying
+		// Cloud Run service server-side and that's the deploy that hits
+		// the regional cpu_allocation quota.
 		backingService := seedServiceV2Defaults(ServiceV2{
 			Template: &RevisionTemplate{
-				Containers: []Container{{Name: functionID, Image: stubImage}},
+				Containers: []Container{{
+					Name:      functionID,
+					Image:     stubImage,
+					Resources: functionCPUResources(fn),
+				}},
 			},
 		}, project, location, functionID)
+		if !regionalCPUQuotaInstance.tryDebit(project, location, serviceCPULoad(backingService)) {
+			regionalCPUQuotaErrorJSON(w, project, location, backingService.Name)
+			return
+		}
 		fn.ServiceConfig.Service = backingService.Name
 		crv2Services.Put(backingService.Name, backingService)
 

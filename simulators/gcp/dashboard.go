@@ -61,7 +61,7 @@ func handleDashboardFunctions(w http.ResponseWriter, _ *http.Request) {
 		out[i] = fnSummary{
 			Name:        f.Name,
 			State:       f.State,
-			Environment: f.Environment,
+			Environment: string(f.Environment),
 			CreateTime:  f.CreateTime,
 		}
 	}
