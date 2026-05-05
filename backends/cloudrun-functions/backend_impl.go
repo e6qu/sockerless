@@ -945,16 +945,21 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 // has no native Cloud Run Functions surface and stays
 // NotImplementedError.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
+	s.Logger.Info().Str("id", id).Bool("stdin", opts.Stdin).Bool("stdout", opts.Stdout).Bool("stderr", opts.Stderr).Bool("logs", opts.Logs).Bool("stream", opts.Stream).Msg("ContainerAttach: ENTRY")
 	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
+		s.Logger.Warn().Str("id", id).Msg("ContainerAttach: NOT FOUND")
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
+		s.Logger.Info().Str("id", id).Msg("ContainerAttach: routing to reverse-agent")
 		return s.BaseServer.ContainerAttach(id, opts)
 	}
 	if opts.Stdin {
+		s.Logger.Warn().Str("id", id).Msg("ContainerAttach: stdin requested but no reverse-agent — returning NotImplemented")
 		return nil, &api.NotImplementedError{Message: "interactive docker attach requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
 	}
+	s.Logger.Info().Str("id", id).Msg("ContainerAttach: routing to AttachViaCloudLogs (read-only)")
 	return core.AttachViaCloudLogs(s.BaseServer, id, opts, s.buildCloudLogsFetcher(id))
 }
 

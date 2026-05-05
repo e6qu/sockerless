@@ -68,9 +68,13 @@ func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArch
 }
 
 func (s *Server) ContainerInspect(id string) (*api.Container, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	s.Logger.Info().Str("id", id).Msg("ContainerInspect: ENTRY")
+	resolved, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
+		s.Logger.Warn().Str("id", id).Msg("ContainerInspect: NOT FOUND")
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
+	s.Logger.Info().Str("id", id).Str("resolved", resolved).Msg("ContainerInspect: resolved, calling BaseServer")
 	return s.BaseServer.ContainerInspect(id)
 }
 
@@ -167,10 +171,18 @@ func (s *Server) ContainerWait(id string, condition string) (*api.ContainerWaitR
 // Exec methods
 
 func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*api.ExecCreateResponse, error) {
+	s.Logger.Info().Str("container", containerID).Strs("cmd", req.Cmd).Bool("attachStdin", req.AttachStdin).Bool("attachStdout", req.AttachStdout).Bool("tty", req.Tty).Msg("ExecCreate: ENTRY")
 	if _, ok := s.ResolveContainerIDAuto(context.Background(), containerID); !ok {
+		s.Logger.Warn().Str("container", containerID).Msg("ExecCreate: NOT FOUND")
 		return nil, &api.NotFoundError{Resource: "container", ID: containerID}
 	}
-	return s.BaseServer.ExecCreate(containerID, req)
+	resp, err := s.BaseServer.ExecCreate(containerID, req)
+	if err != nil {
+		s.Logger.Warn().Str("container", containerID).Err(err).Msg("ExecCreate: BaseServer error")
+	} else {
+		s.Logger.Info().Str("container", containerID).Str("execID", resp.ID).Msg("ExecCreate: success")
+	}
+	return resp, err
 }
 
 func (s *Server) ExecInspect(id string) (*api.ExecInstance, error) {
@@ -187,12 +199,15 @@ func (s *Server) ExecResize(id string, h int, w int) error {
 // Reverse-agent WS is the fallback for interactive (TTY+stdin) execs
 // where streaming is required.
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
+	s.Logger.Info().Str("execID", id).Bool("tty", opts.Tty).Bool("detach", opts.Detach).Msg("ExecStart: ENTRY")
 	exec, ok := s.Store.Execs.Get(id)
 	if !ok {
+		s.Logger.Warn().Str("execID", id).Msg("ExecStart: exec instance not found")
 		return nil, &api.NotFoundError{Resource: "exec instance", ID: id}
 	}
 	c, ok := s.ResolveContainerAuto(context.Background(), exec.ContainerID)
 	if !ok {
+		s.Logger.Warn().Str("execID", id).Str("container", exec.ContainerID).Msg("ExecStart: container has been removed")
 		return nil, &api.ConflictError{Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID)}
 	}
 
