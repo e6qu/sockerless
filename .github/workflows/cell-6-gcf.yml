@@ -1,4 +1,4 @@
-# Cell 6 — GitHub Actions runner (docker executor) → sockerless gcf backend.
+# Cell 6 — re-trigger after BUG-957 fix (runner image rebuilt 2026-05-06T09:57Z)
 #
 # Same shape as cell-5-cloudrun but the runner image bakes
 # `sockerless-backend-gcf`; each step container becomes a Cloud Run

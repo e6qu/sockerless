@@ -1,4 +1,4 @@
-# Cell 5 — GitHub Actions runner (docker executor) → sockerless cloudrun backend.
+# Cell 5 — re-trigger after BUG-957/958 fix (runner image rebuilt 2026-05-06T09:57Z)
 #
 # Per BUG-862 (backend ↔ host primitive must match), the runner image
 # bakes `sockerless-backend-cloudrun` and runs as a Cloud Run Job (or
