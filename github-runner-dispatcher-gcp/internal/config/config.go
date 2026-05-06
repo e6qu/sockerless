@@ -45,6 +45,15 @@ type Label struct {
 	Region         string `toml:"gcp_region"`
 	Image          string `toml:"image"`
 	ServiceAccount string `toml:"service_account"`
+	// RunnerWorkspaceBucket (BUG-963) — when set, the dispatcher attaches
+	// a Cloud Run native `Volume{Gcs{Bucket}}` mount at /tmp/runner-work
+	// on the spawned runner-task. Required for GH actions/runner pattern
+	// where step scripts written by the runner agent on the runner-task
+	// need to be visible inside the JOB container's pod-Service via
+	// sockerless's bind-mount → GCS-volume translation. Operator-side
+	// infrastructure config (which bucket); the dispatcher itself stays
+	// sockerless-unaware (it just provisions the mount).
+	RunnerWorkspaceBucket string `toml:"runner_workspace_bucket"`
 }
 
 // Config is the on-disk dispatcher config.

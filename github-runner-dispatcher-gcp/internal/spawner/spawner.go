@@ -53,6 +53,12 @@ type Request struct {
 	Labels         []string
 	JobID          int64  // GitHub workflow_job ID — written to LabelJobID for restart recovery
 	ServiceAccount string // GCP service account email (Job execution identity)
+	// RunnerWorkspaceBucket (BUG-963) — when set, attach a Cloud Run
+	// native `Volume{Gcs{Bucket}}` at /tmp/runner-work on the spawned
+	// runner-task so step-script files written by the runner agent
+	// propagate to the JOB container's pod-Service GCSFuse mount.
+	// Empty = no mount (legacy behaviour).
+	RunnerWorkspaceBucket string
 }
 
 // Spawn calls Cloud Run Jobs CreateJob then RunJob. Returns the Job
@@ -112,9 +118,35 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 		},
 	}
 
+	// BUG-963: optional runner-workspace volume — when the operator-
+	// configured bucket is set, mount it at /tmp/runner-work on the
+	// runner-task. GH actions/runner writes step scripts there; the
+	// JOB container's sockerless-materialized pod-Service then reads
+	// the same bucket via GCSFuse, so `docker exec sh /__w/_temp/X.sh`
+	// finds the file. Cloud Run native `Volume{Gcs{Bucket}}` requires
+	// no in-container privileges and avoids the gcsfuse-CLI path that
+	// needs CAP_SYS_ADMIN (not granted by Cloud Run).
+	var taskVolumes []*runpb.Volume
+	if req.RunnerWorkspaceBucket != "" {
+		const volName = "runner-workspace"
+		taskVolumes = append(taskVolumes, &runpb.Volume{
+			Name: volName,
+			VolumeType: &runpb.Volume_Gcs{
+				Gcs: &runpb.GCSVolumeSource{
+					Bucket: req.RunnerWorkspaceBucket,
+				},
+			},
+		})
+		containerCfg.VolumeMounts = append(containerCfg.VolumeMounts, &runpb.VolumeMount{
+			Name:      volName,
+			MountPath: "/tmp/runner-work",
+		})
+	}
+
 	template := &runpb.ExecutionTemplate{
 		Template: &runpb.TaskTemplate{
 			Containers: []*runpb.Container{containerCfg},
+			Volumes:    taskVolumes,
 			// One-shot: failed job → failed execution, no retries.
 			Retries: &runpb.TaskTemplate_MaxRetries{MaxRetries: 0},
 			// BUG-911: Cloud Run Job task_timeout default 10 min; bump
