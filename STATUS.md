@@ -1,72 +1,55 @@
 # Sockerless — Status
 
-**2026-05-06 — Cells 1+2+3+4+7+8 GREEN (6/8 cells). Cells 5+6 (GitHub × GCP) still need a workflow trigger via PR push.** All required code is on `phase-118-faas-pods` (PR #123).
+**2026-05-06 — 6/8 cells GREEN. Cells 5+6 (GH × GCP) progressed through 8 architectural fixes today; two final layered blockers remain (BUG-964 gcf default-invoke hang, BUG-965 GCSFuse stale-file-handle).**
 
-## Cell scoreboard (8 cells × cloud × runner × backend)
+## Cell scoreboard
 
-| Cell | Path | State | Job / Pipeline URL | Evidence |
-|------|------|-------|--------------------|----------|
-| **1** GH × ECS | sockerless-ecs | ✅ GREEN (2026-04-30) | https://github.com/e6qu/sockerless/actions/runs/25075259911 | Phase 110 closed |
-| **2** GH × Lambda | sockerless-lambda | ✅ GREEN (2026-04-30) | https://github.com/e6qu/sockerless/actions/runs/25113565115 | Phase 110 closed |
-| **3** GL × ECS | sockerless-ecs | ✅ GREEN (2026-04-30) | https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 | Phase 110 closed |
-| **4** GL × Lambda | sockerless-lambda | ✅ GREEN (2026-04-30) | https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943 | Phase 117 closed (BUG-875/876) |
-| **5** GH × cloudrun | sockerless-cloudrun | ❌ FAILING | https://github.com/e6qu/sockerless/actions/runs/25431102860 | After 4 architectural fixes today (BUG-956/957/958/959/960), pod-Service materializes correctly but `execStartViaInvoke` POST never reaches bootstrap → 10 min HTTP timeout → exit 255. **BUG-961**. |
-| **6** GH × gcf | sockerless-gcf | ❌ FAILING | https://github.com/e6qu/sockerless/actions/runs/25431102827 | Same fix stack as cell 5; got past materialize, exec ran, but response not docker-stream-framed → "Unrecognized input header: 115" → exit 1. **BUG-962**. |
-| **7** GL × cloudrun | sockerless-cloudrun | ✅ **GREEN v54** 2026-05-06 09:43 UTC | https://gitlab.com/e6qu/sockerless/-/jobs/14237010667 | `Job succeeded duration_s=178.245`. `all arithmetic checks pass` at `2026-05-06T09:43:11.835` on Service `sockerless-svc-33dbd39babad`. |
-| **8** GL × gcf | sockerless-gcf | ✅ **GREEN v28** 2026-05-06 08:05 UTC | https://gitlab.com/e6qu/sockerless/-/jobs/14234857458 | `Job succeeded duration_s=147.77`. `all arithmetic checks pass` at `2026-05-06T08:05:04.053` on Service `sockerless-svc-c547886ab439`. |
+| Cell | Path | State | Job / Pipeline URL | Notes |
+|------|------|-------|--------------------|------|
+| **1** GH × ECS | sockerless-ecs | ✅ GREEN | https://github.com/e6qu/sockerless/actions/runs/25075259911 | Phase 110 closed |
+| **2** GH × Lambda | sockerless-lambda | ✅ GREEN | https://github.com/e6qu/sockerless/actions/runs/25113565115 | Phase 110 closed |
+| **3** GL × ECS | sockerless-ecs | ✅ GREEN | https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 | Phase 110 closed |
+| **4** GL × Lambda | sockerless-lambda | ✅ GREEN | https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943 | Phase 117 closed |
+| **5** GH × cloudrun | sockerless-cloudrun | ❌ **BUG-965** | https://github.com/e6qu/sockerless/actions/runs/25437444454 | v6 reached `clone-and-compile`, hit GCSFuse `Stale file handle: event.json`. |
+| **6** GH × gcf | sockerless-gcf | ❌ **BUG-964** | https://github.com/e6qu/sockerless/actions/runs/25437444448 | v6 hung 10 min on `docker exec` — gcf needs the cloudrun BUG-961 mirror. |
+| **7** GL × cloudrun | sockerless-cloudrun | ✅ **GREEN v54** | https://gitlab.com/e6qu/sockerless/-/jobs/14237010667 | 178s, `all arithmetic checks pass` at `2026-05-06T09:43:11.835` |
+| **8** GL × gcf | sockerless-gcf | ✅ **GREEN v28** | https://gitlab.com/e6qu/sockerless/-/jobs/14234857458 | 147s, `all arithmetic checks pass` at `2026-05-06T08:05:04.053` |
 
-### Cloud Logging evidence (cells 7 + 8)
+### Cells 5+6 progression today (architectural layers peeled per iteration)
 
-Runner traces in `sockerless-live-46x3zg4imo` (us-central1):
-- Cell 7 (v54): https://console.cloud.google.com/logs/query;query=resource.type%3D%22cloud_run_revision%22%20resource.labels.service_name%3D%22gitlab-runner-cloudrun%22?project=sockerless-live-46x3zg4imo
-- Cell 8 (v28): https://console.cloud.google.com/logs/query;query=resource.type%3D%22cloud_run_revision%22%20resource.labels.service_name%3D%22gitlab-runner-gcf%22?project=sockerless-live-46x3zg4imo
+| Iteration | Failure | Bug filed |
+|-----------|---------|-----------|
+| v1–v3 | early stage failures, container-name RFC 1123 | — |
+| v4 | cell 5 hung 10 min on exec; cell 6 stream framing | BUG-959 (mat) BUG-960 (Typed.Exec) |
+| v5 | cell 5 hung; cell 6 framing | BUG-961 cloudrun skip-default-invoke + BUG-962 stdcopy framing |
+| **v5b** | both reached `probe-cloud-urls` failed `cd: line N: can't open /__w/_temp/X.sh` | BUG-963 dispatcher GCS workspace mount |
+| **v6** (current) | cell 5 deep into `clone-and-compile` → GCSFuse stale-handle; cell 6 → 10 min default-invoke hang on gcf | BUG-964 (gcf mirror of BUG-961) + BUG-965 (GCSFuse) |
 
-Per-stage pod-Service logs (recoverable via service_name filter — services were cleaned up post-run per discipline):
-- Cell 7 v54 step_script: `sockerless-svc-33dbd39babad`
-- Cell 8 v28 step_script: `sockerless-svc-c547886ab439`
+## Today's commits (8 architectural fixes shipped)
 
-Persist module evidence (proves /builds carried across pod-Services per BUG-957):
-- Cell 8 v28: `persist save … 10959360 bytes -> gs://sockerless-volume-sockerless-live-46x3zg4imo-ce82db2431657f69/sockerless-volume.tar` (get_sources stage), then `persist restore … 10959872 bytes -> /builds` (step_script stage on the new Service).
-- Cell 7 v54: same pattern at bucket `sockerless-volume-…-362203bfaa845a82`.
+| Commit | Fixes |
+|--------|-------|
+| `b223ecb` | BUG-956 + BUG-957 (cell 8 architectural close-out) |
+| `e97399c` | BUG-958 (cloudrun multi-stage runner-pattern) |
+| `2ba02f5` | BUG-959 (GH actions/runner materialize on second-arrival) |
+| `e8a85e6` | BUG-960 (Typed.Exec routes through s.ExecStart) |
+| `33e205a` | BUG-961 (cloudrun skip-default-invoke) + BUG-962 (stdcopy framing) |
+| `c01067b` | BUG-963 (dispatcher GCS workspace mount) |
 
-### Each "all arithmetic checks pass" exit gate
+## Live infra (`sockerless-live-46x3zg4imo`, us-central1)
 
-The cell yml asserts five arithmetic results:
-- `3 + 4 * 2 = 11`
-- `(10 - 3) * 2 = 14`
-- `100 / 5 + 1 = 21`
-- `2 * (3 + 4) - 1 = 13`
-- `1.5 + 2.5 * 2 = 6.5`
-
-Five `expected … got …` assertions plus the final `all arithmetic checks pass` line. Both cells 7 + 8 emitted that line — captured above with timestamps.
-
-## Today's architectural stack (15 fixes total, 3 new this session)
-
-| # | Fix | Bug |
-|---|---|---|
-| 1–12 | See WHAT_WE_DID.md § "Phase 122k third session" | 953/954/955 |
-| 13 | `pendingMembersOfNetwork` filters already-materialized OpenStdin=true mains; sidecars (postgres) stay so each stage's pod-Service revision gets its own postgres copy. | **956** ✅ |
-| 14 | gcf bootstrap got `persist.go` (ported from cloudrun); `handleInvoke` wraps subprocess + `saveAll`. New `OverlayImageSpec.BootstrapBinaryHash` + `HashBootstrapBinary` so updating the binary at the same path invalidates AR overlay caches. | **957** ✅ |
-| 15 | cloudrun `ContainerStart` mirrors gcf BUG-955: already-running + OpenStdin=true + fresh stdinPipe → kick `invokeRunningRunnerStage`. cloudrun `ContainerStop` keeps the Service alive when OpenStdin=true. New `invokeRunningRunnerStage` helper. | **958** ✅ |
-
-Detail in BUGS.md and WHAT_WE_DID.md. All 3 new fixes shipped on commits `b223ecb` (BUG-956 + BUG-957) and `e97399c` (BUG-958).
-
-## Live infra in `sockerless-live-46x3zg4imo` (us-central1)
-
-| Service | Rev | Digest |
-|---|---|---|
-| `gitlab-runner-cloudrun` | `00005-qnv` | `sha256:a221956c` ← v54 GREEN |
-| `gitlab-runner-gcf` | `00060-72h` | `sha256:d792e563` ← v28 GREEN |
-| `github-runner-dispatcher-gcp` | `00021-fb2` | unchanged |
-| `runner:cloudrun-amd64` | latest | `sha256:2b4efebf` (rebuilt today with BUG-957/958) |
-| `runner:gcf-amd64` | latest | `sha256:b3b9a9de` (rebuilt today with BUG-957) |
-| VPC connector | `sockerless-connector` | Cloud NAT static IP `34.31.88.230` |
-
-Cleanup discipline applied: every test run ends with `gcloud run services delete sockerless-svc-* / skls-*` + `gcloud run revisions delete <old>`.
+| Resource | Digest |
+|----------|--------|
+| `gitlab-runner-cloudrun` | `sha256:a221956c` (cell 7 v54 GREEN) |
+| `gitlab-runner-gcf` | `sha256:d792e563` (cell 8 v28 GREEN) |
+| `github-runner-dispatcher-gcp` | `sha256:1a3997bb` (BUG-963 wired) |
+| `runner:cloudrun-amd64` | `sha256:4bd9dfa3` |
+| `runner:gcf-amd64` | `sha256:1940ec7d` |
+| VPC connector + Cloud NAT | `34.31.88.230` |
+| GCS bucket | `sockerless-live-46x3zg4imo-runner-workspace` (workspace + JOB pod-Service share via this) |
 
 ## Project state
 
-- **Branch**: `phase-118-faas-pods` at `e97399c`. Pushed.
-- **PR #123**: open. Description needs update once cells 5+6 GREEN.
-- **PR #124**: throwaway — exists to fire `pull_request`-triggered cells 5+6 against the current branch's content.
-- **Live project lifetime**: keep `sockerless-live-46x3zg4imo` alive until cells 5+6 also GREEN.
+- **Branch**: `phase-118-faas-pods @ c01067b` — pushed.
+- **PRs**: #123 (open, all today's code) + #124 (throwaway trigger PR for cells 5+6).
+- **Live project lifetime**: keep `sockerless-live-46x3zg4imo` until cells 5+6 also GREEN.

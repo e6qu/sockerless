@@ -6,6 +6,41 @@ See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for
 
 This file keeps narrative / "why we did it" context that doesn't live in BUGS.md or git log. Per-bug detail belongs in [BUGS.md](BUGS.md) — don't duplicate it here.
 
+## Phase 122m fifth session (2026-05-06 PM — cells 5+6 progressed through 5 architectural blockers)
+
+Continued from the fourth session. Cells 7+8 GREEN at start; goal: close cells 5+6 (GH × GCP). Each iteration peeled the next layered blocker.
+
+### What worked (5 architectural fixes shipped on top of BUG-956/957/958)
+
+1. **BUG-959 — GH actions/runner pattern materializes pod-Service on second-arrival.** GH actions/runner creates the JOB container with `OpenStdin=false` (long-lived `tail -f /dev/null`-style entrypoint, runner does `docker exec` per step) — opposite of gitlab-runner's `OpenStdin=true` script-runner. Our `shouldDeferOrMaterializeNetworkPod` always deferred OpenStdin=false containers waiting for an OpenStdin=true sibling that never arrives → both job + postgres deferred forever, no pod-Service materialized. Fix (gcf + cloudrun, identical shape): when current OpenStdin=false has siblings already deferred, materialize with `siblings[0]` (first-arrived = JOB container) as main + current as sidecar. Pass `netMembers[0].ID` to materialize call as authoritative main so Service naming + allocation labels point at the JOB container.
+
+2. **BUG-960 — `Typed.Exec` routes through `s.ExecStart` so envelope-POST is reachable.** Both gcf + cloudrun's `Typed.Exec` was wired to `WrapLegacyExec(s.Drivers.Exec, ...)` (reverse-agent only), bypassing the `s.ExecStart` override that has the `execStartViaInvoke` envelope-POST fallback. The pod-Service runs in Cloud Run; the runner-task is a Cloud Run Job with no public URL — bootstrap can't dial back to register a reverse-agent. Fix: `Typed.Exec = WrapLegacyExecStart(s.ExecStart, ...)`. Plus a sub-fix in `sanitizeServiceContainerName` — re-trim trailing non-alphanumeric AFTER the 50-char cut so names like `<32hex>-postgres16alpine-` (cut lands on hyphen) become valid RFC-1123.
+
+3. **BUG-961 — cloudrun `invokeServiceDefaultCmd` skip-default-invoke when no stdin captured.** Cell 5 v4 hung 10 min: invokeServiceDefaultCmd POSTed an empty body → bootstrap ran the GH JOB container's long-lived `tail -f /dev/null`-style env CMD as a one-shot subprocess → blocked `invokeMu` forever → subsequent /exec POST sat queued until HTTP timeout. Fix: `skipIfNoStdin bool` param. `startSingleContainerService` passes `false` (single-container `docker run` should default-invoke); `startMultiContainerServiceTyped` passes `true` (pod-Service mode skips default-invoke when no stdinPipe captured, leaving the bootstrap listening for /exec POSTs). gitlab-runner attach-stdin pattern (cell 7) registers `stdinPipe` BEFORE the goroutine fires, so `capturedStdin > 0` → still default-invokes with stdin envelope. Plus: `handleInvoke` ENTRY logging in both gcf + cloudrun bootstraps for diagnosis.
+
+4. **BUG-962 — exec response stdcopy stream framing.** gcf+cloudrun's `execStartViaInvoke` returned plain bytes; docker exec non-TTY expects 8-byte stdcopy stream-frame headers `[stream_type, 0, 0, 0, len_be32]`. Cell 6 v4 reported `Unrecognized input header: 115` (= `'s'` from `sockerless-...` stderr). Fix: wrap stdout in `0x01` frame + stderr in `0x02` frame via existing `writeMuxFrame` helper (already in `attach_stream.go` for the attach path).
+
+5. **BUG-963 — dispatcher attaches `Volume{Gcs}` to runner-task `/tmp/runner-work`.** Both cells v5 reached `docker exec` but failed `sh: can't open /__w/_temp/<uuid>.sh: No such file or directory`. Architecture: GH actions/runner writes step scripts to `$RUNNER_WORK/_temp/<uuid>.sh` (= `/tmp/runner-work/_temp/...`), then `docker exec sh /__w/_temp/...`. Sockerless's bind-mount → GCS-volume translation makes the JOB pod-Service mount `/__w` via GCSFuse on the workspace bucket. But the runner-task's `/tmp/runner-work` was plain tmpfs — writes never reached the bucket. Fix: dispatcher TOML's `Label` gains `runner_workspace_bucket`; `spawner.Spawn` adds `Volume{Gcs{Bucket}}` + `VolumeMount{/tmp/runner-work}` to the runner-task Cloud Run Job spec. Cloud Run native GCSFuse mount avoids gcsfuse-CLI which needs CAP_SYS_ADMIN. Operator-side infra config — dispatcher itself stays sockerless-unaware. Cells v6 evidence: cell 5 reached `clone-and-compile`, cell 6 ran 10 min before BUG-964 timeout.
+
+### What we tried that did NOT work
+
+| Attempt | Why it failed |
+|---|---|
+| **`gh workflow run cell-{5,6}-*.yml --repo e6qu/sockerless`** | HTTP 422 — `workflow_dispatch` only resolves on the default branch (main). Cell 5+6 ymls aren't on main yet. Resume path: PR #124 trigger via `pull_request` event with `paths: [.github/workflows/cell-N-*.yml]`. |
+| **Trigger cells 5+6 in parallel without aggressive cleanup** | Cells v3 hit `Quota exceeded for total allowable CPU per project per region` at materialize time. Cleanup `sockerless-svc-*` + `skls-*` services + cancel stale `gh-*` Cloud Run Job executions before each run. |
+| **Trigger cell 5 alone by editing only cell-5.yml** | Both workflows fired — `pull_request: paths` filters apply to PR cumulative diff, not individual push diff. PR #124's accumulated diff touches both ymls so both fire on every push. Mitigation: live with parallel + aggressive cleanup. |
+| **Pruning docker images via `docker system prune`** | "0B reclaimed" — the `docker` CLI on this Mac is fronted by Podman. `podman system prune -a -f` reclaimed 130 GB after the build hit `no space left on device` mid-iteration. |
+| **BUG-960 sanitize 50-char truncation without trailing trim** | After truncation, the cut sometimes landed on a `-` (e.g. `f6026fc66bd94699a1410de4c96b141e_postgres16alpine_0711a7` → 56 chars → cut to 50 → ends in `-`). Cloud Run RFC 1123 rejected. Added re-trim AFTER the cut. |
+| **Initial BUG-959 fix: filter ALL containers with FunctionURL** | Sent the new stage's container to the single-container path with `netMembers=0`. Single-container path doesn't drain stdinPipe → step_script script never reached the bootstrap → 60s+ hang. Refined to "filter only OpenStdin=true mains" — keeps sidecars in the member list so each stage's pod-Service revision gets its own postgres copy. |
+
+### Lessons learned
+
+1. **Each cell teaches a different fault line.** Cell 7 (gitlab-runner × cloudrun) needed BUG-958. Cell 8 (gitlab-runner × gcf) needed BUG-956 + BUG-957. Cells 5+6 (GH × GCP) needed BUG-959 + BUG-960 + BUG-961 + BUG-962 + BUG-963 (and now BUG-964 + BUG-965). The "cross-cloud parity sweep" rule (file the cross-cloud equivalent as a same-session sub-task) saves rounds — many of these would have been caught earlier if applied consistently.
+
+2. **GH actions/runner has a fundamentally different docker pattern from gitlab-runner.** gitlab-runner uses `OpenStdin=true` + attach-stdin; the build container is the script-runner. GH actions/runner uses `OpenStdin=false` + long-lived JOB container + `docker exec` per step. Sockerless's network-pod logic was originally tuned for gitlab-runner. Each step of the GH-port revealed a different assumption: who's the "main" (BUG-959), where stdin gets handled (BUG-960/961), how the response is framed (BUG-962), and how the workspace propagates (BUG-963).
+
+3. **Layered architectural fixes look like bug whack-a-mole until you map them.** A bug filed today might unmask 2 more. The discipline: file each layer immediately, ship the fix, observe what surfaces next. Today: 8 bugs filed, 6 closed, 2 staged for next session.
+
 ## Phase 122m fourth session (2026-05-06 — cells 7 + 8 GREEN; cells 5 + 6 stack ready)
 
 Continuation of Phase 122k. Cell 8 reached v25 with 4/5 stages GREEN at start of session; final blocker was BUG-956 (multi-image-per-stage materialize race). Today landed three architectural fixes that closed the multi-image-stage gap on both gcf AND cloudrun, plus the bootstrap persist gap that surfaced after the gcf architectural fix landed.

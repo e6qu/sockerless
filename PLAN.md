@@ -40,27 +40,39 @@ Order is the order of execution unless noted.
 
 User goal: **all 4 GCP cells (5/6/7/8) GREEN with full workflow + evidence + executing where they're supposed to**. Cells 1–4 (AWS) cover only trivial workloads; the GCP cells run the real probe + git-clone + go-build + arithmetic suite. This is the milestone the user has scoped as "consider it done".
 
-**Sub-task progress (2026-05-06):**
+**Sub-task progress (2026-05-06 evening):**
 
 | Sub | Cell | State | Evidence |
 |---|---|---|---|
 | 122k.7 | 7 GL × cloudrun | ✅ **GREEN v54** | Job [14237010667](https://gitlab.com/e6qu/sockerless/-/jobs/14237010667), 178s, `all arithmetic checks pass`. |
 | 122k.8 | 8 GL × gcf | ✅ **GREEN v28** | Job [14234857458](https://gitlab.com/e6qu/sockerless/-/jobs/14234857458), 147s, `all arithmetic checks pass`. |
-| 122m.6 | 6 GH × gcf | ❌ not yet triggered | Runner image `runner:gcf-amd64@sha256:b3b9a9de` pushed today with BUG-957 persist module. Trigger via PR #124 push. |
-| 122m.5 | 5 GH × cloudrun | ❌ not yet triggered | Runner image `runner:cloudrun-amd64@sha256:2b4efebf` pushed today with BUG-958 fix. Trigger via PR #124 push. |
+| 122m.6 | 6 GH × gcf | 🟡 deep progress, hung 10 min on default-invoke | v6 run [25437444448](https://github.com/e6qu/sockerless/actions/runs/25437444448) — gcf needs the BUG-961 mirror (BUG-964). |
+| 122m.5 | 5 GH × cloudrun | 🟡 reached `clone-and-compile`; GCSFuse stale-handle | v6 run [25437444454](https://github.com/e6qu/sockerless/actions/runs/25437444454) — BUG-965 GCSFuse on event.json. |
 
-**Architectural fixes shipped this phase (15 total — see WHAT_WE_DID.md for narrative + BUGS.md for per-bug detail):**
+**Architectural fixes shipped this phase (8 today, 20 total counting earlier sessions):**
 
-- BUG-953/954/955: 12 fixes for the gcf network-pod path (AR HEAD precheck, multi-container Service direct deploy, PendingCreates speculative-running, `Typed.Attach` wiring, multi-stage `invokeRunningRunnerStage`, etc.) — see WHAT_WE_DID.md § "Phase 122k third session".
-- BUG-956: `pendingMembersOfNetwork` filters already-materialized OpenStdin=true mains; sidecars stay.
-- BUG-957: gcf bootstrap got the BUG-947 tar-pack persist module + content-hash overlay invalidation (`HashBootstrapBinary` + `OverlayImageSpec.BootstrapBinaryHash`).
-- BUG-958: cloudrun multi-stage runner-pattern (mirror of gcf BUG-955) — `ContainerStart` kicks `invokeRunningRunnerStage` on already-running + fresh stdinPipe; `ContainerStop` keeps Service alive for OpenStdin=true.
+Earlier sessions (BUG-953/954/955 — see WHAT_WE_DID.md § "Phase 122k third session" for the 12 fixes that closed cell 8 v25 4/5 stages GREEN).
 
-**Architectural directives (carried from earlier sessions):**
+Today (commits `b223ecb` → `c01067b`):
+- BUG-956: `pendingMembersOfNetwork` filters already-materialized OpenStdin=true mains.
+- BUG-957: gcf bootstrap tar-pack persist + content-hash overlay invalidation.
+- BUG-958: cloudrun multi-stage runner-pattern (mirror of gcf BUG-955).
+- BUG-959: GH actions/runner pattern materializes pod-Service on second-arrival.
+- BUG-960: `Typed.Exec` routes through `s.ExecStart` so envelope-POST is reachable + sanitize trailing-trim.
+- BUG-961: cloudrun pod-Service `invokeServiceDefaultCmd` skip-default-invoke when no stdin captured.
+- BUG-962: exec response stdcopy stream framing.
+- BUG-963: dispatcher attaches `Volume{Gcs}` to runner-task `/tmp/runner-work`.
 
-- **Dispatcher stays generic** — provisions vanilla github/gitlab runners on demand based on queued jobs. NOT aware of sockerless. Pairing lives in the runner image.
-- **HTTP 5xx reserved for unexpected panics** — bootstrap binaries return HTTP 200 + `X-Sockerless-Exit-Code` header / envelope `exitCode` on expected failures.
-- **Multi-stage runner pattern is two distinct problems** — same container ID across stages (BUG-955/958 fix: kick new goroutine on fresh stdinPipe) AND NEW container per stage with different image (BUG-956 fix: network-pod members filter). Cross-cloud parity check is a same-session sub-task whenever one backend gets a multi-stage fix.
+**Open for next session** (concrete fix shapes in DO_NEXT.md):
+- BUG-964: gcf invokePodServiceMain skip-default-invoke (mirror of BUG-961).
+- BUG-965: GCSFuse stale-file-handle on event.json (try mount options, then Filestore).
+
+**Architectural directives (carried, observed today):**
+
+- **Dispatcher stays generic** — provisions vanilla runners on demand. Operator-side infra config (e.g. `runner_workspace_bucket`) acceptable; sockerless internals go in the runner image.
+- **HTTP 5xx reserved for unexpected panics** — bootstrap binaries use `X-Sockerless-Exit-Code` / envelope `exitCode`.
+- **Multi-stage runner pattern is two distinct problems** — same-container-ID (BUG-955/958) and new-container-per-stage (BUG-956). Cross-cloud parity check is a same-session sub-task.
+- **GH actions/runner ≠ gitlab-runner** — different `OpenStdin` semantics, different docker dispatch shape, different workspace propagation. Each cell-pair (gitlab-runner cells 7+8 vs github-runner cells 5+6) hits its own fault line.
 
 ### Phase 104 — Cross-backend driver framework (in flight)
 

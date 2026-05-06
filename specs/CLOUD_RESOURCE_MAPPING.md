@@ -882,13 +882,21 @@ The gitlab-runner master polls GitLab for jobs and orchestrates each via the doc
 
 **Critical invariant 2 (NEW — gitlab-runner v17.5 source verified 2026-05-03)**: gitlab-runner does NOT use the `/exec/...` Docker API path. It uses HIJACKED `ContainerAttach` (`AttachOptions{Stream: true, Stdin: true, Stdout: true, Stderr: true}`) + `ContainerStart` + raw stdin pipe per stage. Source: `executors/docker/internal/exec/exec.go::defaultDocker.Exec`. The container's entrypoint is `/bin/bash` (or shell) which reads commands from stdin until EOF. After EOF, gitlab-runner calls `StopKillWait` (graceful stop with kill fallback) so the container can be RESTARTED for the next stage.
 
-**GitLab attach-hijack architectural gap** (cells 5-8 blocker as of Phase 122g v25):
-- **What gitlab-runner sends per stage**: hijacked TCP connection with `multiplexed-stream` framing carrying the bash script as stdin bytes; expects stdout/stderr back as bytes via the same connection.
-- **What sockerless cloudrun does today**: `ContainerAttach` returns an `AttachViaCloudLogs` reader that's read-only — `Write(p)` is a no-op. The script bytes from gitlab-runner are silently discarded. The container's bash never receives the script. Stage hangs.
-- **What's needed (Phase 122h plan)**: cloudrun's `ContainerAttach` for overlay containers must (a) read stdin bytes from the hijacked connection, (b) POST them as the `Stdin` field of an `execEnvelope` to the Service URL with `argv=["/bin/bash"]`, (c) stream the response (or stdout from a long-poll variant) back to the hijacked connection. Bootstrap on the other end runs `/bin/sh -c "<stdin>"` per request (already supported).
-- **Alternative**: extend the bootstrap to support a streaming "attach mode" where one request opens a long-lived bash subprocess + bidirectional streaming.
+**GitLab attach-hijack architectural gap — CLOSED 2026-05-06** (cells 7+8 GREEN):
 
-**Permission setter quirk**: gitlab-runner spawns one permission container PER mounted volume (e.g. `/cache`, `/builds`, etc.). On each retry it spawns a fresh container. With cache volumes disabled (`disable_cache = true`) the `/cache` setter is skipped, but the build-volume setter still fires. Real fix: speed up sockerless's create+start path so each setter completes in <120 s.
+The gap was three layered problems, fixed by separate sub-bugs:
+
+1. **Stdin pipe registration (BUG-955, gcf)**: `Typed.Attach` was wired to read-only `NewCloudLogsAttachDriver`. Switched to `WrapLegacyContainerAttach(s.ContainerAttach)` so hijacked attach connections register a `stdinPipe` + `attachStream` and the deferred-invoke goroutine drains them as the envelope's `Stdin`. cloudrun has had this since Phase 122h.
+
+2. **Multi-stage same-container-ID cycling (BUG-955 gcf, BUG-958 cloudrun)**: per stage gitlab-runner does stop → re-attach → re-start on the SAME container ID. `ContainerStart` returned `NotModifiedError` immediately when `c.State.Running` without checking for a freshly-registered stdinPipe → second /start short-circuited → no invoke goroutine → 1h timeout. Fix: when already-running + OpenStdin=true + fresh stdinPipe, kick `invokeRunningRunnerStage` goroutine that drains the new pipe and POSTs a fresh envelope to the existing Service URL. Plus: `ContainerStop` keeps the Service alive for OpenStdin=true (gitlab-runner's /stop is a soft cycle between stages, not real termination).
+
+3. **Multi-image-per-stage materialize race (BUG-956)**: gitlab-runner v17 spawns a NEW build container per stage with a different image (helper for prep/get_sources, user image for step_script). Each one joining the same `FF_NETWORK_PER_BUILD=true` network re-triggered `materializePodService` with all three (new build + postgres + OLD build still in PendingCreates) — chaos. Fix: `pendingMembersOfNetwork` filters containers that are already MAIN of an existing pod-Service (`resolveGCFFromCloud` returns populated FunctionURL → already running). Sidecars (postgres, OpenStdin=false) stay in member list — Cloud Run revision loopback semantics are per-revision so each stage's new pod-Service revision needs its own postgres copy.
+
+4. **Bootstrap upgrade requires AR cache invalidation (BUG-957)**: `OverlayContentTag` originally keyed only on `BootstrapBinaryPath`. Bumping the binary at the same path produced the SAME tag → cached overlay images in AR silently reused the OLD bootstrap. Fix: added `OverlayImageSpec.BootstrapBinaryHash` field + `gcpcommon.HashBootstrapBinary` helper. Server hashes binary at startup, stamps the hex prefix into every overlay spec. Tag formula now varies on binary content; AR busts on upgrade automatically.
+
+5. **Workspace-across-stages persistence (BUG-947 cloudrun, BUG-957 gcf)**: get_sources writes to `/builds` on pod-Service A's tmpfs; step_script reads `/builds` on pod-Service B's fresh tmpfs → empty. Fix: `persist.go` tar-pack module — bootstrap saves volume contents to GCS bucket on each `handleInvoke` exit; restores from same bucket on next instance start. Operator-config buckets via `SOCKERLESS_PERSIST_VOLUMES=name=path=bucket,...`. gitlab-runner stages run sequentially so saves complete before next restore.
+
+**Permission setter quirk**: gitlab-runner spawns one permission container PER mounted volume (e.g. `/cache`, `/builds`, etc.). On each retry it spawns a fresh container. With cache volumes disabled (`disable_cache = true`) the `/cache` setter is skipped, but the build-volume setter still fires. Sockerless gcf+cloudrun's BUG-953-stack got materialize down from 150 s to 9-15 s, well under gitlab-runner's 120 s timeout.
 
 ### GitHub Actions Runner — `container:` directive state machine
 
@@ -904,20 +912,44 @@ The github-actions-runner runs as the workspace itself. When a workflow specifie
 
 **Source verification (2026-05-03)**: `actions/runner` v2.334.0 `src/Runner.Worker/Container/DockerCommandManager.cs` exposes `DockerCreate`, `DockerStart`, `DockerExec`, `DockerInspect`, `DockerStop`, `DockerRemove` as the runner's primitives. Steps run via `DockerExec` (one `docker exec` per step) — **fundamentally different from gitlab-runner's hijacked attach pattern**. Sockerless's `Path B HTTP envelope POST` (Lesson 8) maps directly to `DockerExec`: each `docker exec` call becomes one POST to the Service URL with `execEnvelope{argv,stdin,env,workdir}`.
 
-**Critical invariant**: workspace (`/__w` = `/tmp/runner-work`) must persist across all containers in the same job AND survive container restart. This is BUG-909 (already addressed via `SharedVolume` on cloudrun + gcf with GCS bucket backing).
+**OpenStdin=false + long-lived JOB pattern — distinct architectural shape from gitlab-runner** (BUG-959/960/961, surfaced 2026-05-06 cells 5+6):
+
+The github-runner JOB container is `OpenStdin=false` (no attach-stdin) with a long-lived `tail -f /dev/null`-style entrypoint kept alive for `docker exec`. This breaks four sockerless assumptions originally tuned for gitlab-runner:
+
+| Assumption | Was tuned for | Surfaces as |
+|---|---|---|
+| Pod-Service materialize triggers on first OpenStdin=true sibling | gitlab-runner's script-runner is OpenStdin=true | Both job + postgres deferred forever; pod-Service never materialized → BUG-959. **Fix**: when current OpenStdin=false has deferred siblings, materialize with `siblings[0]` (FIRST-arrived = JOB container) as main + current as sidecar. |
+| `Typed.Exec` driver = reverse-agent | bootstrap dials back via WS to register | Cloud Run JOB runner-task has no public URL → reverse-agent never registers → exec exit 126 → BUG-960. **Fix**: `Typed.Exec = WrapLegacyExecStart(s.ExecStart, ...)` — routes through the override that has the `execStartViaInvoke` envelope-POST fallback. |
+| `invokeServiceDefaultCmd` POSTs empty body to bootstrap → run env-baked CMD | gitlab-runner's helper image has a quick init CMD; for OpenStdin=true main, the path captures stdin and POSTs envelope with stdin | GH JOB CMD is `tail -f /dev/null` — runs forever as the default-invoke subprocess → blocks `invokeMu` → subsequent /exec sits in queue 10 min → BUG-961. **Fix**: `skipIfNoStdin` param on `invokeServiceDefaultCmd`. Multi-container pod-Service mode passes `true` (skip default-invoke when no stdin captured); single-container `docker run` path passes `false` (default-invoke runs CMD as before). |
+| `execStartViaInvoke` returns plain bytes | gitlab-runner attach response uses raw stream (no docker stdcopy framing) | github-runner's `docker exec` non-TTY response demands 8-byte stdcopy stream-frame headers → "Unrecognized input header: 115" → BUG-962. **Fix**: wrap stdout in `0x01` frame + stderr in `0x02` frame via existing `writeMuxFrame` helper. |
+
+**Critical invariant — workspace persistence across the runner-task and the JOB pod-Service** (BUG-963, surfaced 2026-05-06 cells 5+6 v5):
+
+GH actions/runner writes step scripts to `$RUNNER_WORK/_temp/<uuid>.sh` (= `/tmp/runner-work/_temp/...` on the runner-task). It then `docker exec sh /__w/_temp/<uuid>.sh`. Sockerless's bind-mount → GCS-volume translation makes the JOB pod-Service mount `/__w` via GCSFuse on the workspace bucket. But the runner-task's `/tmp/runner-work` was plain tmpfs by default — writes never reached the bucket — JOB container read empty `/__w`.
+
+Fix: dispatcher attaches `Volume{Gcs{Bucket}}` + `VolumeMount{/tmp/runner-work}` to the runner-task Cloud Run Job spec. Operator config: `runner_workspace_bucket = "<project>-runner-workspace"` in the dispatcher TOML's `[[label]]` block. Cloud Run native GCSFuse mount avoids the gcsfuse-CLI path that needs CAP_SYS_ADMIN (Cloud Run Jobs don't grant it). Both runner-task and JOB pod-Service now read/write the same bucket — script files propagate naturally.
+
+**GCSFuse stale-handle on event.json** (BUG-965, OPEN as of 2026-05-06):
+
+GCSFuse invalidates open file handles when an object is rewritten while a holder has it open — happens routinely with GH actions/runner's per-step `_temp/_github_workflow/event.json` rewrites. Cell 5 v6 reached `clone-and-compile` then hit `Stale file handle: '/tmp/runner-work/_temp/_github_workflow/event.json'`. Fix candidates: (a) GCSFuse mount options `--rename-dir-limit=10000 --metadata-cache-ttl-secs=0`; (b) Cloud Filestore (NFSv3, full POSIX, ~$160/mo BasicHDD floor); (c) bind-mount event.json + similar small files into a non-GCSFuse path inside the JOB container with tar-pack persist back to GCS.
 
 **`/var/run/docker.sock` mount**: github-runner unconditionally mounts the docker socket on the JOB container so user steps can do nested `docker run`. On Cloud Run there's no docker socket — sockerless drops the mount silently AND the user step cannot do `docker run`. Documented limitation; user code that actually requires nested docker fails at runtime with `cannot connect`.
 
-### gitlab-runner vs github-runner — runner-pattern compatibility matrix
+### gitlab-runner vs github-runner — runner-pattern compatibility matrix (2026-05-06)
 
-| Pattern | gitlab-runner v17 | github-runner v2.334 | Sockerless cloudrun support |
-|---|---|---|---|
-| Container creation | `ContainerCreate` cmd=`/bin/bash` (with feature flag, else helperImage.Cmd) | `ContainerCreate` cmd=`tail -f /dev/null` (or image's CMD) | ✅ Both work via overlay+Service |
-| Stage / step execution | **HIJACKED** `ContainerAttach`+stdin-pipe per stage; container START→STOP→START cycle | `DockerExec` per step; container stays running | ❌ gitlab attach: missing. ✅ github exec: Path B works |
-| Per-step process supervision | bash reads stdin until EOF | dedicated process per exec | ✅ Both representable |
-| Workspace persistence | mounted volume bind | mounted volume bind | ✅ GCS-bucket SharedVolume |
-| Service containers (postgres etc.) | `--network <job-net>` peer-reachable on `localhost:<port>` | same | ⚠ Multi-container Cloud Run Service template (untested live for runner cells) |
-| Stdout/stderr capture | hijacked stdcopy.StdCopy framing | DockerExec response | gitlab: needs hijack support; github: response body |
+| Pattern | gitlab-runner v17 | github-runner v2.334 | Sockerless cloudrun support | Sockerless gcf support |
+|---|---|---|---|---|
+| Container creation | `OpenStdin=true`, cmd=`/bin/bash` (with feature flag, else helperImage.Cmd) | `OpenStdin=false`, cmd=`tail -f /dev/null` (or image's CMD) | ✅ Both | ✅ Both |
+| Stage / step execution | **HIJACKED** `ContainerAttach`+stdin-pipe per stage; container START→STOP→START cycle | `DockerExec` per step (Path B HTTP envelope); container stays running | ✅ via BUG-958+955 multi-stage runner-pattern + envelope POST | ✅ via BUG-955 `invokeRunningRunnerStage` |
+| Multi-image-per-stage (helper for prep, user image for step_script) | yes | n/a (single image) | ✅ via BUG-956 `pendingMembersOfNetwork` filter (sidecars stay) | ✅ same |
+| pod-Service materialize trigger | OpenStdin=true sibling arrives | first OpenStdin=false JOB container + service container both arrive | ✅ via BUG-959 (siblings[0] = JOB = main) | ✅ same |
+| `Typed.Exec` routing | n/a (no exec; uses attach) | needs envelope-POST fallback | ✅ via BUG-960 `WrapLegacyExecStart(s.ExecStart)` | ✅ same |
+| Default-invoke gating | always invoke (script comes via stdin) | NEVER default-invoke (long-lived `tail -f` would block forever) | ✅ via BUG-961 `skipIfNoStdin=true` for multi-container pod-Service | 🟡 BUG-964 OPEN (mirror BUG-961 to gcf invokePodServiceMain) |
+| Per-step process supervision | bash reads stdin until EOF | dedicated process per exec | ✅ Both representable | ✅ Both representable |
+| Workspace persistence (cross-stage) | `/builds` shared via tar-pack persist (BUG-947 cloudrun, BUG-957 gcf) | `/__w` shared via Cloud Run native `Volume{Gcs}` on both runner-task AND JOB pod-Service (BUG-963) | ✅ Cloudrun cell 7 GREEN | ✅ Gcf cell 8 GREEN |
+| Service containers (postgres etc.) | `--network <job-net>` peer-reachable on `localhost:<port>` | same | ✅ multi-container Cloud Run Service revision (loopback per-revision) | ✅ same |
+| Stdout/stderr capture | hijacked stdcopy.StdCopy framing | DockerExec response (also stdcopy-framed) | ✅ via `writeMuxFrame` helper in `attach_stream.go` | ✅ via BUG-962 same helper applied to `execStartViaInvoke` |
+| GCSFuse stale-handle on per-step rewrites | n/a (single bucket, sequential) | event.json rewrite each step → stale-handle | n/a | 🟡 BUG-965 OPEN (mount options or Filestore) |
 
 ### Comparison table — what each backend can offer
 

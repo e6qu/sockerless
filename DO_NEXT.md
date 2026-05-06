@@ -1,69 +1,99 @@
 # Do Next
 
-Resume pointer for next session. Detail: [STATUS.md](STATUS.md), [PLAN.md](PLAN.md), [WHAT_WE_DID.md](WHAT_WE_DID.md), [BUGS.md](BUGS.md).
+Resume pointer for next session. State: [STATUS.md](STATUS.md) · Bugs: [BUGS.md](BUGS.md) · Narrative: [WHAT_WE_DID.md](WHAT_WE_DID.md) · Roadmap: [PLAN.md](PLAN.md).
 
 ## Today's outcome (2026-05-06)
 
-**6/8 cells GREEN** (cells 1–4 from earlier phases + cells 7+8 today). Cells 5+6 (GH × GCP) still failing — peeled 5 architectural fixes (BUG-956/957/958/959/960) landing them past materialize/persist; surfaced 2 more layered architectural blockers (BUG-961/962) that need a fresh session to fix.
+**6/8 cells GREEN.** Cells 5+6 (GH × GCP) drilled through 8 architectural blockers today (BUG-956 → BUG-963). Both reached deep into the actual workflow on v6. **Two final blockers** remain — fix shapes pinned below.
 
-Code on `phase-118-faas-pods @ e8a85e6` (pushed). Live infra `sockerless-live-46x3zg4imo` is up.
+Branch `phase-118-faas-pods @ c01067b` is pushed. Live infra in `sockerless-live-46x3zg4imo` is up.
 
 ## Resume sequence
 
-### Step 1 — BUG-962: gcf exec response stream framing
+### Step 1 — BUG-964: gcf invokePodServiceMain skip-default-invoke
 
-Cell 6 v4 produced the failure mode: `Unrecognized input header: 115` (byte = `'s'` from `sockerless-...` stderr text). gcf's `execStartViaInvoke` returns plain bytes; docker exec non-TTY response needs 8-byte stream-frame headers `[stream_type, 0, 0, 0, len_be32]` per chunk.
+Cell 6 v6 hit a 10-min HTTP timeout because gcf's `invokePodServiceMain` POSTs the JOB container's long-lived `tail -f /dev/null`-style CMD as a one-shot subprocess (holding `invokeMu` so subsequent `/exec` POSTs queue forever). Same shape as cloudrun BUG-961 (already fixed).
 
 ```go
-// backends/cloudrun-functions/exec_invoke.go (and same shape in cloudrun/)
-// after `res, err := gcpcommon.PostExecEnvelope(...)`:
-var buf bytes.Buffer
-core.WriteFrame(&buf, core.StreamStdout, res.Stdout)
-core.WriteFrame(&buf, core.StreamStderr, res.Stderr)
-return readOnlyRWC(buf.Bytes()), nil
+// backends/cloudrun-functions/pod_service.go
+// Add to invokePodServiceMain right after the captured-stdin path,
+// BEFORE the existing "if len(capturedStdin) > 0" branch:
+
+// BUG-964: GH actions/runner pattern — main is OpenStdin=false with a
+// long-lived `tail -f /dev/null`-style entrypoint kept alive for
+// `docker exec`. Skip default-invoke (would block forever on the
+// long-lived CMD); the bootstrap stays listening on :8080 for /exec.
+// Mirror of cloudrun BUG-961 fix in commit c01067b.
+if len(capturedStdin) == 0 && !mainContainer.Config.OpenStdin {
+    s.Logger.Info().Str("main", mainID).Msg("invokePodServiceMain: no captured stdin + OpenStdin=false (GH actions/runner) — skipping default-invoke")
+    return
+}
 ```
 
-Find `core.WriteFrame` (or equivalent existing helper in `backends/core/`); reverse-agent path frames the same way — mirror it.
-
-### Step 2 — BUG-961: cloudrun exec POST hang
-
-Cell 5 v4 hung 10 min. Pod-Service materialized fine, bootstrap listening on :8080, but the envelope POST never reached the bootstrap (no `handleInvoke` log entry on the receiving side).
-
-Investigation steps:
-1. Add `ENTRY` log at the top of cloudrun bootstrap's `handleInvoke` so we see whether the POST arrives at all.
-2. Re-check `serviceInvokeURL` — make sure it returns the URL of the just-materialized Service, not a stale one.
-3. Check that `idtoken.NewClient(audience=URL)` uses the same audience as the Service URL (a mismatch silently 401s).
-4. Verify VPC connector + ingress: the cloudrun runner-task is a Cloud Run JOB; can it reach a Cloud Run Service URL? It should via the VPC connector.
-
-Note: cell 5 likely also has BUG-962 once BUG-961 is resolved.
-
-### Step 3 — Re-trigger cells 5+6
-
-The PR #124 trigger (`pull_request: paths: [<cell-yml>]`) fires BOTH workflows on every push because the cumulative PR diff includes both files. Quota contention with both running in parallel is a known issue (BUG-942 family). Mitigations:
-
-- Aggressive cleanup before each trigger (delete `sockerless-svc-*` + `skls-*` + cancel stale `gh-*` Cloud Run Job executions).
-- Or: temporarily edit one workflow's `runs-on:` to a label that doesn't match (force only the other to fire).
+`invokePodServiceMain` already has an OpenStdin=true / no-stdin "skip" branch — this adds the OpenStdin=false / no-stdin "skip" branch. Then rebuild + push gcf-backend image + GH gcf runner image:
 
 ```bash
-# Cleanup recipe
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -C backends/cloudrun-functions \
+  -tags noui -o tests/runners/dockerfile-sockerless-backend/sockerless-backend-gcf \
+  ./cmd/sockerless-backend-gcf
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -C agent/cmd/sockerless-gcf-bootstrap \
+  -o tests/runners/dockerfile-sockerless-backend/sockerless-gcf-bootstrap .
+podman build --platform=linux/amd64 \
+  -t us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/sockerless-backend-gcf:latest \
+  -f tests/runners/dockerfile-sockerless-backend/Dockerfile.gcf \
+  tests/runners/dockerfile-sockerless-backend
+gcloud auth print-access-token | podman login -u oauth2accesstoken --password-stdin us-central1-docker.pkg.dev
+podman push us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/sockerless-backend-gcf:latest
+make -C tests/runners/github/dockerfile-gcf push-amd64
+
+DIGEST=$(gcloud artifacts docker images describe \
+  us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/sockerless-backend-gcf:latest \
+  --format='value(image_summary.digest)')
+sed -i '' "s|sockerless-backend-gcf@sha256:[a-f0-9]\{64\}|sockerless-backend-gcf@$DIGEST|" \
+  terraform/cloud-run/gitlab-runner-gcf.yaml
+gcloud run services replace terraform/cloud-run/gitlab-runner-gcf.yaml \
+  --project=sockerless-live-46x3zg4imo --region=us-central1
+```
+
+### Step 2 — BUG-965: GCSFuse stale-file-handle
+
+Cell 5 v6 reached `clone-and-compile` (past 6 probe stages, postgres connectivity confirmed), then `##[error]Stale file handle: '/tmp/runner-work/_temp/_github_workflow/event.json'`. GH actions/runner rewrites `event.json` between steps; GCSFuse stale-handles on rewrite.
+
+Try cheapest fix first — extra GCSFuse mount options on the runner-task volume:
+
+```go
+// github-runner-dispatcher-gcp/internal/spawner/spawner.go
+// In the BUG-963 block, change:
+VolumeType: &runpb.Volume_Gcs{
+    Gcs: &runpb.GCSVolumeSource{
+        Bucket:       req.RunnerWorkspaceBucket,
+        MountOptions: []string{"implicit-dirs", "rename-dir-limit=10000", "metadata-cache-ttl-secs=0"},
+    },
+},
+```
+
+Same on the JOB pod-Service mount (`backends/cloudrun-functions/pod_service.go::buildVolumeForBindGCF`'s SharedVolume branch and `backends/cloudrun/jobspec.go`-equivalent if cloudrun has its own mount path).
+
+If stale-handle persists, fall back to Cloud Filestore (NFSv3) — full POSIX, eliminates eventual consistency, ~$160/mo BasicHDD floor.
+
+### Step 3 — Cleanup + re-trigger cells 5+6 v7
+
+```bash
+# Cleanup
 for svc in $(gcloud run services list --project=sockerless-live-46x3zg4imo --region=us-central1 \
     --format='value(metadata.name)' | grep -E '^(sockerless-svc-|skls-)'); do
   gcloud run services delete "$svc" --project=sockerless-live-46x3zg4imo --region=us-central1 --quiet
 done
-for exec in $(gcloud run jobs executions list --project=sockerless-live-46x3zg4imo --region=us-central1 \
-    --format='value(metadata.name)' | grep '^gh-'); do
-  gcloud run jobs executions cancel "$exec" --project=sockerless-live-46x3zg4imo --region=us-central1 --quiet
-done
 
-# Trigger via PR #124
+# Trigger v7
 git fetch origin cell-workflows-on-main
 git worktree add -B pr124 /tmp/pr124 origin/cell-workflows-on-main
 cd /tmp/pr124/ui && bun install && cd /Users/zardoz/projects/sockerless
 git -C /tmp/pr124 checkout -- ui/bun.lock
-sed -i '' "1s/.*/# Cell 5+6 — re-trigger after BUG-961+962/" /tmp/pr124/.github/workflows/cell-5-cloudrun.yml
-sed -i '' "1s/.*/# Cell 5+6 — re-trigger after BUG-961+962/" /tmp/pr124/.github/workflows/cell-6-gcf.yml
+sed -i '' "1s/.*/# Cell 5 v7 — BUG-964+965/" /tmp/pr124/.github/workflows/cell-5-cloudrun.yml
+sed -i '' "1s/.*/# Cell 6 v7 — BUG-964+965/" /tmp/pr124/.github/workflows/cell-6-gcf.yml
 git -C /tmp/pr124 add .github/workflows/cell-5-cloudrun.yml .github/workflows/cell-6-gcf.yml
-git -C /tmp/pr124 commit -m "trigger: cells 5+6 v5 after BUG-961+962"
+git -C /tmp/pr124 commit -m "trigger: cells 5+6 v7"
 git -C /tmp/pr124 push origin pr124:cell-workflows-on-main
 git -C /Users/zardoz/projects/sockerless worktree remove /tmp/pr124 --force
 git -C /Users/zardoz/projects/sockerless branch -D pr124
@@ -71,24 +101,19 @@ git -C /Users/zardoz/projects/sockerless branch -D pr124
 
 ### Step 4 — Closeout
 
-After cells 5+6 GREEN:
-1. Update STATUS.md cell scoreboard (mark 5+6 ✅).
-2. Update WHAT_WE_DID.md with cells 5+6 outcome.
-3. Update PR #123 description to reflect all 8 cells GREEN.
-4. State save commit. NEVER MERGE — user handles merges.
+After cells 5+6 GREEN: update STATUS.md, WHAT_WE_DID.md, PR #123 description. NEVER MERGE — user handles merges.
 
-## Already-pushed assets (carried into resume)
+## Reference: today's commits
 
-Backend digests deployed:
-- `sockerless-backend-cloudrun@sha256:a221956c` (cell 7 v54 GREEN)
-- `sockerless-backend-gcf@sha256:d792e563` (cell 8 v28 GREEN)
-
-GH runner-task images (carry today's BUG-957/958/959/960 fixes):
-- `runner:cloudrun-amd64@sha256:718e78ad`
-- `runner:gcf-amd64@sha256:451eed70`
-
-These will need rebuilds + push after BUG-961/962 fixes land — `make -C tests/runners/github/dockerfile-{cloudrun,gcf} push-amd64`.
+| Commit | Fix |
+|--------|-----|
+| `b223ecb` | BUG-956 (multi-image-per-stage materialize) + BUG-957 (gcf bootstrap persist + content-hash overlay tag) |
+| `e97399c` | BUG-958 (cloudrun multi-stage runner-pattern) |
+| `2ba02f5` | BUG-959 (GH actions/runner materialize on second-arrival) |
+| `e8a85e6` | BUG-960 (Typed.Exec routes through s.ExecStart) |
+| `33e205a` | BUG-961 (cloudrun skip-default-invoke) + BUG-962 (stdcopy framing) |
+| `c01067b` | BUG-963 (dispatcher GCS workspace mount) |
 
 ## Single-line summary
 
-> 6/8 cells GREEN (1–4 + 7 + 8). Cells 5+6 progressed past 4 architectural blockers today (BUG-956→960). Two new exec-path bugs (BUG-961 cloudrun POST hang, BUG-962 gcf stream framing) need fresh-session attention. Live project still up.
+> 6/8 cells GREEN. Cells 5+6 v6: cell 5 deep into `clone-and-compile` (BUG-965 GCSFuse stale-handle), cell 6 hit 10-min default-invoke hang (BUG-964: mirror BUG-961 to gcf). Both fixes pinned in this file. Live project still up.
