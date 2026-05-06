@@ -1,4 +1,4 @@
-# Cell 5 — re-trigger after BUG-959 (gh actions/runner pattern fix) 1016Z
+# Cell 5 — re-trigger after BUG-960 (Typed.Exec wiring) 1035Z
 #
 # Per BUG-862 (backend ↔ host primitive must match), the runner image
 # bakes `sockerless-backend-cloudrun` and runs as a Cloud Run Job (or
