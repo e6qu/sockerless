@@ -3,10 +3,12 @@ package gcf
 import (
 	"context"
 	"fmt"
+	"io"
 	"sync"
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
+	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 	gcpcommon "github.com/sockerless/gcp-common"
 )
@@ -135,7 +137,21 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	s.Mux.HandleFunc("/v1/gcf/reverse", core.HandleReverseAgentWS(s.reverseAgents, logger))
 	s.Drivers.Exec = &core.ReverseAgentExecDriver{Registry: s.reverseAgents, Logger: logger}
 	s.Drivers.Stream = &core.ReverseAgentStreamDriver{Registry: s.reverseAgents, Logger: logger}
-	s.Typed.Exec = core.WrapLegacyExec(s.Drivers.Exec, "gcf", "ReverseAgentExec")
+	// Typed.Exec wiring (BUG-960): route through s.ExecStart (the gcf
+	// override) rather than the reverse-agent driver directly. The
+	// override's `execStartViaInvoke` POSTs an envelope to the
+	// materialized pod-Service URL — required for GH actions/runner
+	// pattern (cells 5/6) where the bootstrap can't dial back to
+	// register a reverse-agent (the runner-task is a Cloud Run Job
+	// without a public URL). Reverse-agent stays as a fallback inside
+	// s.ExecStart for interactive (TTY+stdin) execs.
+	s.Typed.Exec = core.WrapLegacyExecStart(
+		func(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
+			return s.ExecStart(id, opts)
+		},
+		s.Store,
+		s.Desc.Driver, "gcf-self-dispatch",
+	)
 	s.Typed.ProcList = core.NewReverseAgentProcListDriver(s.reverseAgents, "gcf")
 	s.Typed.FSDiff = core.NewReverseAgentFSDiffDriver(s.reverseAgents, "gcf")
 	s.Typed.FSRead = core.NewReverseAgentFSReadDriver(s.reverseAgents, "gcf")

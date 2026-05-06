@@ -559,6 +559,16 @@ func sanitizeServiceContainerName(name string) string {
 	if len(out) > 50 {
 		out = out[:50]
 	}
+	// Re-trim trailing non-alphanumeric AFTER the truncation — the cut
+	// can land on a hyphen (e.g. GH actions/runner names like
+	// `<32hex>_postgres16alpine_<6hex>` truncate to end in `-`), which
+	// fails Cloud Run's RFC 1123 "must end with letter or digit" check.
+	for len(out) > 0 && (out[len(out)-1] < 'a' || out[len(out)-1] > 'z') && (out[len(out)-1] < '0' || out[len(out)-1] > '9') {
+		out = out[:len(out)-1]
+	}
+	if out == "" {
+		return "sidecar"
+	}
 	return out
 }
 
