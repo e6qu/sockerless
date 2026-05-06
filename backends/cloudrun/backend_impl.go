@@ -285,6 +285,22 @@ func (s *Server) ContainerStart(ref string) error {
 	id := c.ID
 
 	if c.State.Running {
+		// Multi-stage gitlab-runner pattern: per stage gitlab-runner does
+		// stop → re-attach → re-start on the SAME container ID. The
+		// underlying Cloud Run Service is kept alive by ContainerStop's
+		// OpenStdin shortcut (BUG-958), so the bootstrap-as-HTTP-server
+		// is still up. When a fresh stdinPipe was just registered AND
+		// the container has OpenStdin=true, kick a new invoke goroutine
+		// to drain the new pipe + POST the new stage's script. Without
+		// this, only the first stage's script runs and gitlab-runner
+		// hangs waiting for stage 2's output. Mirrors gcf BUG-955.
+		if c.Config.OpenStdin {
+			if _, hasPipe := s.stdinPipes.Load(id); hasPipe {
+				s.Logger.Info().Str("container", id).Msg("ContainerStart: already running but fresh stdinPipe registered — kicking new invoke goroutine for next stage")
+				go s.invokeRunningRunnerStage(id, c)
+				return nil
+			}
+		}
 		return &api.NotModifiedError{}
 	}
 
@@ -588,12 +604,21 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 	// instance; there's no in-flight Execution to cancel. Delete the
 	// Service to stop the container. Restart re-creates via
 	// CreateService in the next ContainerStart.
-	if s.config.UseService {
+	//
+	// Exception (BUG-958): runner-pattern containers (OpenStdin=true)
+	// receive /stop between stages as gitlab-runner's docker executor
+	// cycles the container; deleting the Service would force a slow
+	// re-create on the next /start. Keep the Service alive — the
+	// bootstrap-as-HTTP-server stays up and serves the next stage's
+	// envelope POST. Final teardown happens in ContainerRemove.
+	if s.config.UseService && !c.Config.OpenStdin {
 		if svcState, ok := s.resolveServiceCloudRunState(s.ctx(), id); ok && svcState.ServiceName != "" {
 			s.deleteService(svcState.ServiceName)
 			s.Registry.MarkCleanedUp(svcState.ServiceName)
 			s.CloudRun.Update(id, func(st *CloudRunState) { st.ServiceName = "" })
 		}
+	} else if s.config.UseService {
+		s.Logger.Info().Str("container", id).Msg("ContainerStop: OpenStdin=true (runner-pattern) — keeping Service alive across stages")
 	} else {
 		// cloud-fallback lookup so stop works post-restart.
 		if crState, ok := s.resolveCloudRunState(s.ctx(), id); ok && crState.ExecutionName != "" {

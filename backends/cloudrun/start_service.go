@@ -228,6 +228,87 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}) {
 	}
 }
 
+// invokeRunningRunnerStage drains a freshly-registered stdinPipe + POSTs
+// the captured script to the EXISTING Cloud Run Service URL of an
+// already-running runner-pattern container. Used between gitlab-runner
+// stages: the first stage's invokeServiceDefaultCmd ran + closed WaitChs,
+// then ContainerStop's OpenStdin shortcut kept the underlying Service
+// alive (BUG-958), and gitlab-runner re-attaches with a new script for
+// the next stage. This goroutine is the per-stage equivalent of
+// invokeServiceDefaultCmd. Mirrors gcf invokeRunningRunnerStage. See
+// BUG-958.
+func (s *Server) invokeRunningRunnerStage(id string, c api.Container) {
+	ctx := s.ctx()
+	s.Logger.Info().Str("container", id).Msg("invokeRunningRunnerStage: goroutine entered")
+
+	v, ok := s.stdinPipes.LoadAndDelete(id)
+	if !ok {
+		s.Logger.Warn().Str("container", id).Msg("invokeRunningRunnerStage: no stdinPipe registered (race)")
+		return
+	}
+	pipe := v.(*stdinPipe)
+	select {
+	case <-pipe.Done():
+	case <-time.After(30 * time.Second):
+		s.Logger.Warn().Str("container", id).Msg("invokeRunningRunnerStage: stdin pipe Done timeout")
+	case <-ctx.Done():
+		return
+	}
+	capturedStdin := pipe.Bytes()
+	s.Logger.Info().Str("container", id).Int("stdin_bytes", len(capturedStdin)).Msg("invokeRunningRunnerStage: stdin pipe drained")
+
+	// Resolve the existing Service URL — the underlying Cloud Run Service
+	// was created by the first stage's startSingleContainerService /
+	// startMultiContainerServiceTyped and kept alive by ContainerStop's
+	// OpenStdin shortcut. Re-fetch via GetService (Uri is populated).
+	url, ok := s.serviceInvokeURL(ctx, id)
+	if !ok || url == "" {
+		s.Logger.Error().Str("container", id).Msg("invokeRunningRunnerStage: no service URL")
+		if v, ok := s.attachStreams.LoadAndDelete(id); ok {
+			v.(*attachStream).publishAttachResponse(nil, []byte("no service URL"))
+		}
+		return
+	}
+
+	client, err := idtoken.NewClient(ctx, url)
+	if err != nil {
+		s.Logger.Error().Err(err).Str("container", id).Msg("invokeRunningRunnerStage: idtoken client")
+		if v, ok := s.attachStreams.LoadAndDelete(id); ok {
+			v.(*attachStream).publishAttachResponse(nil, []byte(err.Error()))
+		}
+		return
+	}
+	client.Timeout = 10 * time.Minute
+
+	res, err := s.postBootstrap(client, url, capturedStdin)
+	if err != nil {
+		s.Logger.Error().Err(err).Str("container", id).Msg("invokeRunningRunnerStage: envelope POST failed")
+		if v, ok := s.attachStreams.LoadAndDelete(id); ok {
+			v.(*attachStream).publishAttachResponse(nil, []byte(err.Error()))
+		}
+		return
+	}
+	s.Logger.Info().Str("container", id).Int("exit", res.ExitCode).Int("stdout", len(res.Stdout)).Int("stderr", len(res.Stderr)).Msg("invokeRunningRunnerStage: bootstrap response")
+
+	if v, ok := s.attachStreams.LoadAndDelete(id); ok {
+		v.(*attachStream).publishAttachResponse(res.Stdout, res.Stderr)
+	}
+
+	// Fan-out exit code via WaitChs. gitlab-runner does
+	// /containers/{id}/wait?condition=not-running between stages — close
+	// the WaitCh so it returns. Then re-register a fresh WaitCh for the
+	// next stage's wait/stop cycle.
+	inv := core.InvocationResult{ExitCode: res.ExitCode}
+	if res.ExitCode != 0 {
+		inv.Error = fmt.Sprintf("subprocess exit %d", res.ExitCode)
+	}
+	s.Store.PutInvocationResult(id, inv)
+	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
+		close(ch.(chan struct{}))
+	}
+	s.Store.WaitChs.Store(id, make(chan struct{}))
+}
+
 // postBootstrap dispatches to the appropriate bootstrap call shape
 // based on whether stdin was captured.
 //
