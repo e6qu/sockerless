@@ -1,4 +1,4 @@
-# Cell 6 — re-trigger after BUG-957 fix (runner image rebuilt 2026-05-06T09:57Z)
+# Cell 6 — re-trigger after BUG-959 (gh actions/runner pattern fix) 1016Z
 #
 # Same shape as cell-5-cloudrun but the runner image bakes
 # `sockerless-backend-gcf`; each step container becomes a Cloud Run
