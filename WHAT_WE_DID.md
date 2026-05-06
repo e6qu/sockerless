@@ -6,6 +6,65 @@ See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for
 
 This file keeps narrative / "why we did it" context that doesn't live in BUGS.md or git log. Per-bug detail belongs in [BUGS.md](BUGS.md) — don't duplicate it here.
 
+## Phase 122k third session (2026-05-05 → 2026-05-06 — cell 8 v9..v25, 4/5 stages GREEN)
+
+Long autonomous-loop session. Cell 8 progressed from "silent hang at Preparing environment" (v17-v22) through 12 architectural fixes to **4/5 stages GREEN** in v25 (prepare_executor + prepare_script + get_sources + step_script start). Final blocker BUG-956 (multi-image-per-stage materialize race) pinned with concrete fix path.
+
+### What worked (12 architectural fixes shipped, all verified via traces)
+
+The breakthrough came in v23 with two changes that, taken together, make the gcf network-pod path actually viable for gitlab-runner v17:
+
+1. **AR HEAD precheck** (`backends/gcp-common/registry_check.go`). HEAD `/v2/<repo>/manifests/<tag>` short-circuits Cloud Build's ~28 s tag-rebuild overhead even on layer cache hits. Wired into both cloudrun and gcf's `ensureOverlayImage`. This alone took materialize from 60 s to 9-15 s.
+
+2. **Multi-container Cloud Run Service direct deploy** (`pod_service.go::materializePodService`). Replaces the slow Cloud Functions wrapper path (CreateFunction with stub Buildpacks-Go source + UpdateService swap = 150 s) with `Services.CreateService` directly with multi-container `RevisionTemplate`. Cuts pod materialize to 9-15 s, well under gitlab-runner's 120 s SDK timeout.
+
+3. **`PendingCreates` speculative-running marker through materialize**. ContainerStart marks the network-pod main "running" before calling materializePodService synchronously. Concurrent ContainerInspect / cleanup-script docker exec calls during the 30 s CreateService.Wait window resolve to a real container instead of NotFound. `Update` returns false if the entry was already removed by a cancelled async deploy; we `Put` as fallback to handle the race.
+
+4. **`resolvePodServiceFromCloud` GetService follow-up**. ListServices may return abbreviated `Annotations` in some pagination modes; sidecar pod members (matched via `sockerless_pod_members` annotation) need a GetService follow-up to retrieve the full proto.
+
+5. **`stdinPipe` + `attachStream` pattern ported from cloudrun**. New files `backends/cloudrun-functions/{stdin_pipe.go, attach_stream.go}` mirror `backends/cloudrun/{stdin_pipe.go, attach_stream.go}` verbatim. Captures bytes written via the hijacked attach connection's Write into a per-container pipe, replays as the bootstrap's exec envelope `Stdin` payload at deferred-invoke time. Reads block until invokePodServiceMain publishes the bootstrap response (mux-framed stdout + stderr).
+
+6. **Relaxed `ContainerAttach` overlay-image gate**. The original cloudrun code required `c.Config.Image` to be in the sockerless-overlay AR repo to enable the stdin path. But at attach time the image is the user-supplied original (golang:1.22-alpine), not the overlay URI — the rewrite happens inside materializePodService. Drop the gate.
+
+7. **5 s pre-check window for late-arriving stdinPipe**. invokePodServiceMain's goroutine wait for the stdinPipe to be registered before LoadAndDelete'ing it. Cloudrun's invokeServiceDefaultCmd hides the same race behind `waitForServiceURL`'s 30 s polling delay (which gcf doesn't need because `materializePodService` already returned with the URL). Without the explicit pre-check, gcf raced past pipe registration and fell through to default-invoke.
+
+8. **`OpenStdin=true` runner-pattern: skip default-invoke**. When the network-pod main has `Config.OpenStdin=true` AND no stdin was captured via attach, DO NOT POST a default CMD. Don't close WaitChs. Don't PutInvocationResult. The bootstrap stays alive as the HTTP server holding the Service revision. gitlab-runner expects the build container to STAY ALIVE for `docker exec` (the gitlab-runner-build subcommand is a no-op without CI env vars and would exit 0 immediately if invoked).
+
+9. **VpcAccess + ALL_TRAFFIC on materialize Service revisions**. Cloudrun has this since BUG-933 ('Cloud Run rejects cross-project-service-to-service via .a.run.app + Cloud NAT with HTTP 404 because the NAT'd source IP isn't auto-detected as same-project Cloud Run'). gcf was missing it. Without VpcAccess, gitlab-runner-gcf's IAM-gated POSTs to sockerless-svc-* return 401/403; gitlab-runner's docker SDK retries internally without surfacing the error.
+
+10. **HTTP middleware ENTRY-level logging** (`backends/core/server.go::LoggingMiddleware`). Hijacked /attach connections take over the TCP stream; the post-handler END log only fires when the stream closes (could be hours). Adding ENTRY logging makes every request visible the moment it arrives. This was the diagnostic that finally revealed v22 was making /attach calls all along.
+
+11. **Typed.Attach routes through ContainerAttach delegate** (gcf `server.go`). **The silent-hang root cause** for v17-v22. `core/handle_containers_query.go::handleContainerAttach` calls `s.Typed.Attach.Attach(...)`, NOT `s.self.ContainerAttach`. cloudrun wires `Typed.Attach = WrapLegacyContainerAttach(s.ContainerAttach,...)` (routes through the delegate that registers stdinPipe). gcf was wired to `Typed.Attach = NewCloudLogsAttachDriver(...)` — read-only, silently dropped gitlab-runner's stdin. THAT'S why every cell 8 iteration showed `no stdinPipe registered after 5 s wait` even though `/v1.44/containers/.../attach` ENTRY was logged. Mirror cloudrun's wiring.
+
+12. **Multi-stage `invokeRunningRunnerStage`** + **unique container names in pod RevisionTemplate**. Per stage gitlab-runner does `stop` then re-`attach` + re-`start`. Cloud Run revisions are immutable so the stop+start is a no-op at the cloud layer; this function processes the new stdinPipe registered by the new attach and POSTs the captured stage script bytes to the same Service URL. ContainerStart, when the container is already running AND has OpenStdin=true AND a fresh stdinPipe is registered, kicks off `invokeRunningRunnerStage`. Plus: track sanitized container names and append count suffix on collision (`postgres`, `postgres-1`, `postgres-2`) — Cloud Run rejects duplicates with `template.containers: Containers [N, M] have duplicate container names`.
+
+### What we tried that did NOT work (anti-recipes for future sessions)
+
+| Attempt | Why it failed |
+|---|---|
+| Adding `SockerlessImage` + `BackendPort` fields to dispatcher's `Label` config + multi-container TaskTemplate in `Spawn()` | User clarification: **dispatcher must stay generic and unaware of sockerless**. The runner-task image bundles vanilla runner + sockerless. Dispatcher just submits a single image. Saved as `feedback_dispatcher_generic.md` memory. |
+| HTTP 500 for expected exec failures in bootstrap | User directive: 5xx reserved for unexpected panics. Use HTTP 200 + `X-Sockerless-Exit-Code` header / envelope `exitCode`. Saved as `feedback_no_500_default.md`. |
+| Quick-fix proposals (delay-window, polling alternatives) alongside structural fixes | Project rule: "always do the right fix, never the quick fix". Structural-only approach. |
+| Bumping Cloud Run regional CPU quota via `gcloud beta quotas preferences` | User explicit reject 2026-05-04: solve architecturally. Pool-warming + direct Service deploy + aggressive cleanup are the architectural answers. |
+| First hypothesis for v17-v22 silent hang: TCP probe to postgres from gitlab-runner's process | Disproven by v21 — gitlab-runner's docker SDK hijacked /attach correctly; the issue was sockerless's gcf `Typed.Attach` was the read-only `NewCloudLogsAttachDriver`. |
+| Second hypothesis: missing VpcAccess (BUG-933 mirror) | Shipped as v20; didn't unblock the silent hang. VpcAccess IS still needed (cell 7 has it; gcf was missing) but wasn't the root cause. |
+| Sequential Cloud Builds for pod overlays | Combined ~150 s exceeded gitlab-runner's 120 s ContainerExec timeout. Replaced by parallel goroutines in materializePodService. |
+| `gitlab-runner-helper` baked CMD as the build container's default invoke | The CMD `[/usr/bin/dumb-init /entrypoint gitlab-runner-build]` exits 0 with no work without CI env vars; if invoked it closes WaitChs and gitlab-runner reports the container as exited. Skip default-invoke for OpenStdin=true. |
+
+### Lessons learned
+
+1. **Hijacked HTTP connections need ENTRY logging.** The standard middleware-on-end pattern is misleading — a hijacked /attach connection might run for hours before its END log fires. Ship request-entry logging for any backend that hosts hijacked connections. (BUG-955 was diagnosable in 30 minutes once we had ENTRY logs; before that, three iterations chased phantom theories.)
+
+2. **`Typed.Attach` and `s.self.ContainerAttach` are different code paths.** `core/handle_containers_query.go::handleContainerAttach` routes through `s.Typed.Attach.Attach(...)`. The gcf-specific delegate is only reachable if `Typed.Attach = WrapLegacyContainerAttach(s.ContainerAttach,...)`. cloudrun cell 7 GREEN proves this is the right wiring; gcf was using the read-only cloud-logs driver. **Anywhere a cloud backend needs to register state on attach (stdinPipe, attachStream, reverse-agent), `Typed.Attach` must wrap the delegate, not bypass it.**
+
+3. **Cloud Run revision immutability is a hard invariant.** Each docker `start` for the same container is a no-op at the Cloud Run layer (revision already running). Multi-stage gitlab-runner patterns need explicit per-stage re-invoke goroutines. Don't try to mutate a running revision; create a new one for new images, or run the new stage as a one-shot against the existing Service URL.
+
+4. **Cloud Run regional CPU quota is the dominant operational constraint.** Each materialize burns 1 vCPU-min × N members. With min=1 max=1 scaling, every Service revision holds 1 vCPU until deleted. Aggressive cleanup (delete `sockerless-svc-*` after every test, prune old revisions on long-lived Services) is mandatory to avoid cascading quota failures masquerading as silent hangs (Service LRO returns 204 while underlying revision health-check fails in the background).
+
+5. **gitlab-runner v17 docker executor uses different images per stage.** Helper image (gitlab-runner-helper:x86_64-v17.5.0) for prepare/get_sources/restore_cache/upload_artifacts; user image (`golang:1.22-alpine` etc) for step_script/after_script. With `FF_NETWORK_PER_BUILD=true` all join the same per-build network. Network-pod detection cannot blindly bundle every PendingCreate that happens to share the network — must filter out already-materialized members.
+
+6. **Cloudrun cell 7 GREEN is the architectural reference.** Every gcf network-pod fix we shipped today started with "what does cloudrun do". When a gcf path diverged from cloudrun, that divergence was the bug. Rule: **mirror cloudrun's pattern unless gcf has a documented reason to differ.**
+
 ## Phase 122k continuation (2026-05-05 second session — cell 8 v9..v15)
 
 Continuing from the morning's Phase 122k. Cell 7 stayed GREEN (no regressions). Cell 8 went from v9 to v15 driving down the "Cannot connect to Docker daemon" / "No such container" failure modes. Cells 5+6 still not started but the user clarified the architecture: **dispatcher stays generic, sockerless+runner pairing lives in the runner image** — saved as `feedback_dispatcher_generic.md` memory.

@@ -1,79 +1,56 @@
 # Sockerless — Status
 
-**Date: 2026-05-05 v32 — Cell 7 GREEN; Cell 8 v15 in flight (15 iterations); Cells 5+6 not started but runner-task images already exist.**
+**Date: 2026-05-06 — Cell 8 4/5 stages GREEN; final blocker BUG-956 (multi-image-per-stage materialize race). 12 architectural fixes shipped today.**
 
 ## Cell scoreboard (4 GCP cells = the user's "consider it done" gate)
 
-| Cell | Path | State | Latest |
-|------|------|-------|--------|
-| **5** GH × cloudrun | sockerless-cloudrun | ❌ NOT STARTED | dispatcher stays generic per user directive 2026-05-05 — sockerless+vanilla-runner pairing already lives in `tests/runners/github/dockerfile-cloudrun/`. Just needs rebuild + AR push + dispatcher TOML. |
-| **6** GH × gcf | sockerless-gcf | ❌ NOT STARTED | Same as cell 5 with `dockerfile-gcf` image; inherits cell 8's gcf fixes. |
-| **7** GL × cloudrun | sockerless-cloudrun | ✅ **GREEN heavy workload** 2026-05-05 | https://gitlab.com/e6qu/sockerless/-/pipelines/2500209956 (job 14213994152, 383 s, all 5 arithmetic results 11/14/21/13/6.5). |
-| **8** GL × gcf | sockerless-gcf | 🟡 **v25 reached step_script — only blocker is multi-image stage spawning** | digest `sha256:79621fbe`. **MASSIVE PROGRESS today**: prepare_executor ✅, prepare_script ✅ (`Running on localhost via localhost...`), get_sources ✅ (`Checking out b8bd17aa as detached HEAD`), step_script started ✅. Cells went from "silent hang at Preparing environment" (v17-v22) to executing real workload (v23-v25). **Final blocker**: step_script with `image: golang:1.22-alpine` triggers gitlab-runner to spawn a NEW build container (different image) joining the same per-build network. Our network-pod detection treats it as a new pod-main and triggers a fresh materializePodService with 3 members (new build + postgres + OLD build still in PendingCreates) — Cloud Run revision spec gets duplicate-image-overlay containers, fails. Cleanest fix: gitlab-runner uses different image per stage (helper for prep/get_sources, user image for step_script), so each stage NEEDS a separate Service revision. Track which Service is "current" per network and route exec to that one; don't re-include OLD pod members in new materializes. |
+| Cell | Path | State | Notes |
+|------|------|-------|-------|
+| **5** GH × cloudrun | sockerless-cloudrun | ❌ NOT STARTED | Runner-task image at `tests/runners/github/dockerfile-cloudrun/` already bundles vanilla actions/runner + sockerless. After cell 8 GREEN: `make push-amd64`, update dispatcher TOML, trigger workflow. |
+| **6** GH × gcf | sockerless-gcf | ❌ NOT STARTED | Same shape as cell 5; inherits cell 8's gcf stack. |
+| **7** GL × cloudrun | sockerless-cloudrun | 🟡 GREEN this morning at digest `f786c300`; today's v52 retest hit transient regional CPU quota (8s-fail) — not a code regression | Re-trigger after quota cooldown to confirm today's gcp-common changes (HTTP middleware Info-level, AR HEAD precheck) didn't regress. |
+| **8** GL × gcf | sockerless-gcf | 🟡 **4/5 stages GREEN** at digest `sha256:79621fbe` | prepare_executor + prepare_script + get_sources + step_script start ALL succeeded in v25 trace. Final blocker: BUG-956 (next iteration v26). |
 
-## Architecture (cells 5-8 vanilla-runner pattern)
+## Today's architectural stack (12 fixes shipped, all verified working)
 
-Per user directives 2026-05-04 + reinforced 2026-05-05:
+All in `backends/cloudrun-functions/` unless noted. Order: shipped → impact.
 
-1. github + gitlab runners stay UNMODIFIED (vanilla upstream images).
-2. **Dispatcher is generic** — provisions vanilla runners on demand based on queued jobs; not aware of sockerless. Sockerless+runner pairing lives in the runner IMAGE.
-3. Runners talk to sockerless via `DOCKER_HOST=tcp://localhost:3375` (cloudrun) / `:3376` (gcf); no sockerless code baked into the dispatcher.
-4. `GIT_STRATEGY` must work for `clone`/`fetch`/`none`.
-5. HTTP 5xx is reserved for unexpected panics; failures signal via `X-Sockerless-Exit-Code` header / envelope `exitCode`.
-
-**Cells 7 + 8 (GitLab):** pre-deployed multi-container Cloud Run Service per cell with three containers — `init` (registers fresh runner via gitlab API + writes `/shared/config.toml`), `gitlab-runner` (vanilla `gitlab/gitlab-runner:v17.5.0`, depends on init), and `sockerless` (standalone backend image, ingress on :3375 or :3376).
-
-**Cells 5 + 6 (GitHub):** `github-runner-dispatcher-gcp` polls GitHub for queued workflow_jobs; for each, calls `Jobs.CreateJob + RunJob` with the runner-task image from per-label config. The runner-task IMAGE bundles vanilla actions/runner + sockerless backend with a bootstrap that launches both; image already exists at `tests/runners/github/dockerfile-{cloudrun,gcf}/`. Dispatcher submits a single image; the bundling happens inside.
-
-## Today's progress on cell 8 (2026-05-05 second session)
-
-| Iter | Change | Result |
-|------|--------|--------|
-| v9 | execStartViaInvoke entry/exit logs; reduce queryPodServiceContainers logging from Info to Debug | failed (170s) — runner timeout on docker exec |
-| v10 | (continuation, pre-AR-precheck) | failed |
-| v11 | **AR HEAD precheck on `/v2/<repo>/manifests/<tag>`** — skip Cloud Build on cache hit | total job 82s (was 170s); now fails at `No such container` cleanup |
-| v12 | Update `PendingCreates(running)` through materialize, delete only on error | failed (43s) — log "marked running" never appeared |
-| v13 | `Put` fallback when `Update` misses | failed |
-| v14 | network-pod decision log + materializePodService entry/exit logs | failed (43s) — diagnostic logs ALL missing despite binary having strings |
-| **v15** | ContainerStart **ENTRY/resolved/NOT FOUND** logs + `resolvePodServiceFromCloud` GetService follow-up | **HUGE PROGRESS, silent hang in new place**: all log lines fire (network-pod decision: netDefer=false, netMembers=2, materialize entry+exit in 13s). Both Services deployed. Bootstrap exec'd build's CMD `[/usr/bin/dumb-init /entrypoint gitlab-runner-build]` → exit=0 (expected — bootstrap stays up as HTTP server). gitlab-runner reaches "Preparing environment" then silently hangs with NO ExecCreate/ExecStart calls reaching sockerless. |
-
-**Working en route, do not regress:**
-- AR HEAD precheck (`backends/gcp-common/registry_check.go`) cuts ~28 s of Cloud Build per overlay when image already in AR
-- The Service IS being created correctly post-materialize (verified via `gcloud run services describe sockerless-svc-*`); annotations + labels populated
-- gcf bootstrap envelope path; Service URL fallback for empty `Function.ServiceConfig.uri`
-
-**Key open question driving v15:**
-gitlab-runner's failure mode is "Container not found or removed" during the post-script cleanup `docker exec`. v15 will distinguish:
-- ContainerStart never fires → `ENTRY` log absent → routing/handler issue
-- ContainerStart fires but `PendingCreates.Get(ref)` misses → `NOT FOUND` log → entry was deleted
-- ContainerStart fires + container resolved → `resolved` log + `network-pod decision` log → bug is elsewhere (e.g. Service materialize race with cleanup)
-
-## Bug stack closed today (2026-05-05)
-
-| Bug | Title | Status |
+| # | Fix | What it does |
 |---|---|---|
-| 947 | GCSFuse `/builds` ~200× slower than tmpfs for git ops | ✅ closed (Volume_EmptyDir tmpfs + bootstrap tar-pack persist to GCS) |
-| 950 | gcf `OverlayContentTag` fragmentation across container types | ✅ closed (drop entrypoint/cmd/workdir from contentTag; pass at runtime via env) |
-| 951 | gcf claim-side env-update via UpdateService hits regional CPU quota | ✅ closed (drop env-update; pass user entrypoint via invoke exec envelope) |
-| 952 | gcf `resolveGCFFromCloud` returns empty Function URL | ✅ closed (GetFunction follow-up + Service URL fallback) |
+| 1 | AR HEAD precheck (`backends/gcp-common/registry_check.go`) | HEAD `/v2/<repo>/manifests/<tag>` short-circuits Cloud Build's ~28 s overhead on cache hit |
+| 2 | Multi-container Cloud Run Service direct deploy (`pod_service.go::materializePodService`) | Replaces the slow Cloud Functions wrapper path (was 150 s); now 9-15 s |
+| 3 | PendingCreates speculative-running marker through materialize | Container visible to ContainerInspect during the 30 s CreateService window |
+| 4 | `resolvePodServiceFromCloud` GetService follow-up on abbreviated annotations | Sidecar pod members findable via annotation match when ListServices truncates |
+| 5 | `stdinPipe` + `attachStream` pattern ported from cloudrun | gitlab-runner attach stdin captured for envelope POST replay |
+| 6 | Relaxed ContainerAttach overlay-image gate | At attach time c.Config.Image is the user-supplied original, not the overlay URI |
+| 7 | 5 s pre-check window for late-arriving stdinPipe | Closes the ContainerStart-vs-Attach race in invokePodServiceMain |
+| 8 | OpenStdin=true runner-pattern: skip default-invoke | Don't POST the user's no-op CMD; keep container alive for `docker exec` |
+| 9 | VpcAccess + ALL_TRAFFIC on materialize Service revisions | Cross-Cloud-Run calls (gitlab-runner-gcf → sockerless-svc-*) appear as in-VPC source instead of being rejected as external |
+| 10 | HTTP middleware ENTRY-level logging (`backends/core/server.go`) | Captures hijacked /attach connections (would otherwise only log on END after stream close) |
+| 11 | **Typed.Attach routes through ContainerAttach delegate** | The silent-hang root cause: gcf was using read-only `NewCloudLogsAttachDriver`; cloudrun uses `WrapLegacyContainerAttach` |
+| 12 | Multi-stage `invokeRunningRunnerStage` + unique container names | Per-stage stdinPipe drain + envelope POST against existing Service URL; sanitized names get count suffix on collision |
 
-**Open bugs:**
-- **BUG-953** (Cell 8 pod-mode materialize) — PARTIAL: structural fix landed (multi-container Service direct deploy + AR precheck + PendingCreates speculative running marker). Active debug: "No such container" on cleanup exec. v15 in flight.
-- **BUG-948** pool-warming (works for single-container claims; pod-mode covered by 953)
-- **BUG-949** (pre-existing simulator macOS arithmetic test mismatch — low priority)
-- Older: BUG-923, 925, 929, 942, 944, 945, 946
+## Final remaining blocker: BUG-956
+
+**Symptom**: cell 8 v25 reached step_script (4/5 stages GREEN) then hit `no service URL` during cleanup_file_variables.
+
+**Root cause**: gitlab-runner v17 docker executor uses **different images per stage** — `gitlab-runner-helper:x86_64-v17.5.0` for prepare/get_sources/upload_artifacts; `golang:1.22-alpine` (user image) for step_script/after_script. With `FF_NETWORK_PER_BUILD=true` all stages join the same per-build network. Each stage's new container with `OpenStdin=true` triggers our network-pod detection — `materializePodService` runs again with 3 members (new build + postgres + OLD build still in PendingCreates) → fails or leaves the original pod-Service unreachable.
+
+**Recommended fix (v26)**: in `backends/cloudrun-functions/network_pod.go::pendingMembersOfNetwork`, exclude containers already materialized in an existing pod-Service. Minimal change, preserves the discovery-from-network-membership model.
 
 ## Live infra in `sockerless-live-46x3zg4imo` (us-central1)
 
-- `gitlab-runner-cloudrun` rev `00003-csp` (sockerless-backend-cloudrun@sha256:f786c300...) — cell 7 GREEN against this
-- `gitlab-runner-gcf` rev `00047-45f` (sockerless-backend-gcf@sha256:ee7e5029...) — full BUG-947/948/950/951/952 stack + AR precheck + PendingCreates fix + ContainerStart diagnostic logs
-- `github-runner-dispatcher-gcp` rev `00021-fb2` — GENERIC dispatcher (per user directive); cells 5+6 just need runner-task image rebuild + push to AR + TOML config update
-- VPC connector `sockerless-connector` (e2-micro × 4 min instances), Cloud NAT static IP `34.31.88.230`
-- Filestore not provisioned (held in reserve as Path B alternative for git ops if tar-pack ever proves insufficient)
+| Service | Rev | Digest | Notes |
+|---|---|---|---|
+| `gitlab-runner-cloudrun` | latest | `sha256:db43b1ec` | Cell 7 baseline (today's HTTP middleware Info-level) |
+| `gitlab-runner-gcf` | `00057-6z8` | `sha256:79621fbe` | v25 — 4/5 stages GREEN; v26 will bump |
+| `github-runner-dispatcher-gcp` | `00021-fb2` | unchanged | Generic dispatcher (per directive); cells 5+6 ready |
+| VPC connector | `sockerless-connector` | e2-micro × 4 min instances | Cloud NAT static IP `34.31.88.230` |
 
-## Active deployment images (Artifact Registry)
+**Cleanup discipline**: every build script ends with `gcloud run services delete sockerless-svc-* / skls-*`. Old per-Service revisions pruned to free regional CPU quota. After today's session: 3 active services, 3 active revisions (down from 81+).
 
-| Image | Digest | Notes |
-|---|---|---|
-| sockerless-backend-cloudrun | `sha256:f786c300...` | Cell 7 GREEN against this |
-| sockerless-backend-gcf | `sha256:ee7e5029...` | v15 with ContainerStart ENTRY logs + resolvePodServiceFromCloud GetService follow-up |
+## Project state
+
+- **Branch**: `phase-118-faas-pods` at `f18d7a1`
+- **PR**: #123 (open). Title + description need update to cover today's scope.
+- **Live project lifetime**: keep `sockerless-live-46x3zg4imo` alive until cells 5/6/7/8 all GREEN.
