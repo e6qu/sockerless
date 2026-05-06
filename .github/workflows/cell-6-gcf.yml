@@ -1,4 +1,4 @@
-# Cell 6 — re-trigger after BUG-960 (sanitize + Typed.Exec) 1035Z
+# Cell 6 v5 — BUG-961+962 fix 1241Z
 #
 # Same shape as cell-5-cloudrun but the runner image bakes
 # `sockerless-backend-gcf`; each step container becomes a Cloud Run
