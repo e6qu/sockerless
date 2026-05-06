@@ -44,25 +44,39 @@ func (s *Server) shouldDeferOrMaterializeNetworkPod(c api.Container) (shouldDefe
 
 	siblings := s.pendingMembersOfNetwork(netID, c.ID)
 	if !c.Config.OpenStdin {
-		// Service-style container. Defer if siblings exist (so we can
-		// bundle with a script-runner later) or if the network has been
-		// reserved for multi-container deployment.
-		if len(siblings) > 0 {
+		// Service-style container (postgres, redis, etc.) OR the GH
+		// actions/runner job container which is also OpenStdin=false but
+		// long-lived (entrypoint=`tail -f /dev/null`-style; runner uses
+		// `docker exec` for each step). Two cases:
+		//
+		//  - No siblings yet: defer — we don't know if a script-runner
+		//    (gitlab-runner OpenStdin=true) is coming, or if this IS the
+		//    GH job container that will be materialized when its services
+		//    arrive (BUG-959). Either way, single-container materialize
+		//    is wrong; wait for the second arrival to disambiguate.
+		//  - Siblings exist (BUG-959): GH actions/runner pattern — the
+		//    JOB container was created FIRST (it's siblings[0]), services
+		//    after (this container). Materialize the pod with siblings[0]
+		//    as main + this container as sidecar. The script-runner-with-
+		//    OpenStdin=true gitlab-runner case never lands here because it
+		//    has OpenStdin=true and falls through to the next branch.
+		if len(siblings) == 0 {
 			return true, nil
 		}
-		// Lone service container, no siblings yet. Defer — gitlab/github
-		// runners always create the script-runner AFTER services. If
-		// nothing arrives we'll detect the orphan on network teardown.
-		return true, nil
+		all := make([]api.Container, 0, len(siblings)+1)
+		all = append(all, siblings[0])     // FIRST sibling = main (GH job container)
+		all = append(all, siblings[1:]...) // other siblings (additional services, if any)
+		all = append(all, c)               // self — sidecar (this just-arrived service)
+		return false, all
 	}
 
-	// Script-runner: materialize the pod with this container as main
-	// + every pending sibling as sidecar.
+	// Script-runner (gitlab-runner pattern): materialize the pod with
+	// this container as main + every pending sibling as sidecar.
 	if len(siblings) == 0 {
 		return false, nil
 	}
 	all := make([]api.Container, 0, len(siblings)+1)
-	all = append(all, c) // main first — startMultiContainerServiceTyped uses index 0 as IsMain
+	all = append(all, c) // main first — materializePodService uses members[0].ID
 	all = append(all, siblings...)
 	return false, all
 }

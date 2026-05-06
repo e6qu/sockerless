@@ -44,16 +44,26 @@ func (s *Server) shouldDeferOrMaterializeNetworkPod(c api.Container) (shouldDefe
 
 	siblings := s.pendingMembersOfNetwork(netID, c.ID)
 	if !c.Config.OpenStdin {
-		// Service-style container. Defer if siblings exist (so we can
-		// bundle with a script-runner later) or if the network has been
-		// reserved for multi-container deployment.
-		if len(siblings) > 0 {
+		// Service-style container OR the GH actions/runner job container
+		// (which is also OpenStdin=false but long-lived; the runner uses
+		// `docker exec` per step). Two cases (BUG-959):
+		//
+		//  - No siblings yet: defer — could be a service waiting for a
+		//    script-runner (gitlab-runner, OpenStdin=true) OR the GH job
+		//    container that will be materialized when its services arrive.
+		//  - Siblings exist: GH actions/runner pattern — the JOB container
+		//    was created FIRST (siblings[0]), services after (current).
+		//    Materialize with siblings[0] as main + this container as
+		//    sidecar. The gitlab-runner case never lands here because the
+		//    script-runner has OpenStdin=true and falls through.
+		if len(siblings) == 0 {
 			return true, nil
 		}
-		// Lone service container, no siblings yet. Defer — gitlab/github
-		// runners always create the script-runner AFTER services. If
-		// nothing arrives we'll detect the orphan on network teardown.
-		return true, nil
+		all := make([]api.Container, 0, len(siblings)+1)
+		all = append(all, siblings[0])     // FIRST sibling = main (GH job container)
+		all = append(all, siblings[1:]...) // additional siblings
+		all = append(all, c)               // self — sidecar
+		return false, all
 	}
 
 	// Script-runner. gitlab-runner v17.5 creates a NEW script-runner

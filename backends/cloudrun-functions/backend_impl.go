@@ -386,33 +386,42 @@ func (s *Server) ContainerStart(ref string) error {
 		for _, m := range netMembers {
 			s.cancelDeployFuture(m.ID)
 		}
+		// netMembers[0].ID is the authoritative MAIN per the convention
+		// in shouldDeferOrMaterializeNetworkPod. For gitlab-runner pattern
+		// (OpenStdin=true) that's the current container; for GH actions/
+		// runner pattern (OpenStdin=false service-arrival path, BUG-959)
+		// it's the FIRST sibling — the long-lived job container created
+		// before this service. Use that ID for Service naming and
+		// allocation labels so resolveGCFFromCloud(mainID) finds the
+		// pod-Service afterwards.
+		mainID := netMembers[0].ID
 		exitCh := make(chan struct{})
-		s.Store.WaitChs.Store(id, exitCh)
-		// Mark the materializing container "running" in PendingCreates so
-		// concurrent ContainerInspect / cleanup-script docker exec calls
+		s.Store.WaitChs.Store(mainID, exitCh)
+		// Mark the materializing main container "running" in PendingCreates
+		// so concurrent ContainerInspect / cleanup-script docker exec calls
 		// during the 30-60s CreateService.Wait window resolve to a real
 		// container instead of NotFound. queryPodServiceContainers takes
 		// over once the Service is queryable; the entry is removed in
 		// invokePodServiceMain when the pod completes.
-		updated := s.PendingCreates.Update(id, func(pc *api.Container) {
+		updated := s.PendingCreates.Update(mainID, func(pc *api.Container) {
 			pc.State.Status = "running"
 			pc.State.Running = true
 			pc.State.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		})
 		if !updated {
 			// Entry was already removed (race with cancelled async deploy
-			// cleanup); recreate it from the resolved container so the
+			// cleanup); recreate it from the resolved member so the
 			// materialize window has a visible entry for inspect/exec.
-			cCopy := c
-			cCopy.State.Status = "running"
-			cCopy.State.Running = true
-			cCopy.State.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
-			s.PendingCreates.Put(id, cCopy)
+			mCopy := netMembers[0]
+			mCopy.State.Status = "running"
+			mCopy.State.Running = true
+			mCopy.State.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+			s.PendingCreates.Put(mainID, mCopy)
 		}
-		s.Logger.Info().Str("container", id).Bool("updated", updated).Int("members", len(netMembers)).Msg("network-pod ContainerStart: marked running, entering materialize")
-		err := s.materializePodService(id, netMembers, exitCh)
+		s.Logger.Info().Str("main", mainID).Str("trigger", id).Bool("updated", updated).Int("members", len(netMembers)).Msg("network-pod ContainerStart: marked running, entering materialize")
+		err := s.materializePodService(mainID, netMembers, exitCh)
 		if err != nil {
-			s.PendingCreates.Delete(id)
+			s.PendingCreates.Delete(mainID)
 		}
 		return err
 	}

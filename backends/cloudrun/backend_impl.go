@@ -344,7 +344,13 @@ func (s *Server) ContainerStart(ref string) error {
 		return nil
 	}
 	if len(netMembers) > 1 {
-		return s.startMultiContainerServiceTyped(id, netMembers, exitCh)
+		// netMembers[0].ID is the authoritative MAIN per the convention
+		// in shouldDeferOrMaterializeNetworkPod: gitlab-runner pattern
+		// (OpenStdin=true) places current container at index 0; GH actions/
+		// runner pattern (BUG-959) places the FIRST-arrived sibling
+		// (the long-lived job container) at index 0.
+		mainID := netMembers[0].ID
+		return s.startMultiContainerServiceTyped(mainID, netMembers, exitCh)
 	}
 
 	// Explicit pod (PodCreate API) deferred start.
