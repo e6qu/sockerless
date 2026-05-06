@@ -1,4 +1,4 @@
-# Cell 6 v5 — BUG-961+962 fix 1241Z
+# Cell 6 v6 — BUG-963 dispatcher workspace mount 1310Z
 #
 # Same shape as cell-5-cloudrun but the runner image bakes
 # `sockerless-backend-gcf`; each step container becomes a Cloud Run
