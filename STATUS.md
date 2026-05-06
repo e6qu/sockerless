@@ -10,7 +10,7 @@
 | **2** GH × Lambda | sockerless-lambda | ✅ GREEN | https://github.com/e6qu/sockerless/actions/runs/25113565115 | Phase 110 closed |
 | **3** GL × ECS | sockerless-ecs | ✅ GREEN | https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 | Phase 110 closed |
 | **4** GL × Lambda | sockerless-lambda | ✅ GREEN | https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943 | Phase 117 closed |
-| **5** GH × cloudrun | sockerless-cloudrun | ❌ **BUG-965** | https://github.com/e6qu/sockerless/actions/runs/25437444454 | v6 reached `clone-and-compile`, hit GCSFuse `Stale file handle: event.json`. |
+| **5** GH × cloudrun | sockerless-cloudrun | ❌ **BUG-965** | https://github.com/e6qu/sockerless/actions/runs/25437444454 | v6 reached `clone-and-compile`, hit GCSFuse `Stale file handle: event.json`. **User directive 2026-05-06: no GCSFuse — switch to Cloud Filestore NFSv3.** |
 | **6** GH × gcf | sockerless-gcf | ❌ **BUG-964** | https://github.com/e6qu/sockerless/actions/runs/25437444448 | v6 hung 10 min on `docker exec` — gcf needs the cloudrun BUG-961 mirror. |
 | **7** GL × cloudrun | sockerless-cloudrun | ✅ **GREEN v54** | https://gitlab.com/e6qu/sockerless/-/jobs/14237010667 | 178s, `all arithmetic checks pass` at `2026-05-06T09:43:11.835` |
 | **8** GL × gcf | sockerless-gcf | ✅ **GREEN v28** | https://gitlab.com/e6qu/sockerless/-/jobs/14234857458 | 147s, `all arithmetic checks pass` at `2026-05-06T08:05:04.053` |

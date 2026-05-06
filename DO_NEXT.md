@@ -55,26 +55,60 @@ gcloud run services replace terraform/cloud-run/gitlab-runner-gcf.yaml \
   --project=sockerless-live-46x3zg4imo --region=us-central1
 ```
 
-### Step 2 — BUG-965: GCSFuse stale-file-handle
+### Step 2 — BUG-965: replace GCSFuse with Cloud Filestore (NFSv3)
 
-Cell 5 v6 reached `clone-and-compile` (past 6 probe stages, postgres connectivity confirmed), then `##[error]Stale file handle: '/tmp/runner-work/_temp/_github_workflow/event.json'`. GH actions/runner rewrites `event.json` between steps; GCSFuse stale-handles on rewrite.
+**User directive 2026-05-06: no GCSFuse.** Cell 5 v6 hit `Stale file handle: event.json` because GCSFuse invalidates open handles on object rewrite. Replace with Cloud Run native `Volume{Nfs{Server,Path}}` backed by Cloud Filestore — full POSIX, no stale handles, no eventual consistency.
 
-Try cheapest fix first — extra GCSFuse mount options on the runner-task volume:
+Implementation steps:
+
+```bash
+# 1. Provision Filestore (one-time terragrunt apply)
+# terraform/environments/runner/live/main.tf — add:
+#   resource "google_filestore_instance" "runner_workspace" {
+#     name     = "sockerless-runner-workspace"
+#     tier     = "BASIC_HDD"
+#     location = "us-central1-a"
+#     file_shares { name = "workspace"; capacity_gb = 1024 }
+#     networks { network = "default"; modes = ["MODE_IPV4"] }
+#   }
+# Note: BASIC_HDD minimum 1 TiB ≈ $160/mo. Operator-accepted.
+```
 
 ```go
-// github-runner-dispatcher-gcp/internal/spawner/spawner.go
-// In the BUG-963 block, change:
-VolumeType: &runpb.Volume_Gcs{
-    Gcs: &runpb.GCSVolumeSource{
-        Bucket:       req.RunnerWorkspaceBucket,
-        MountOptions: []string{"implicit-dirs", "rename-dir-limit=10000", "metadata-cache-ttl-secs=0"},
+// 2. github-runner-dispatcher-gcp/internal/config/config.go
+// REPLACE RunnerWorkspaceBucket with:
+RunnerWorkspaceNfsServer string `toml:"runner_workspace_nfs_server"`
+RunnerWorkspaceNfsPath   string `toml:"runner_workspace_nfs_path"`
+
+// 3. github-runner-dispatcher-gcp/internal/spawner/spawner.go
+// In the BUG-963 block, REPLACE Volume_Gcs with:
+VolumeType: &runpb.Volume_Nfs{
+    Nfs: &runpb.NFSVolumeSource{
+        Server:   req.RunnerWorkspaceNfsServer,
+        Path:     req.RunnerWorkspaceNfsPath,
+        ReadOnly: false,
     },
 },
 ```
 
-Same on the JOB pod-Service mount (`backends/cloudrun-functions/pod_service.go::buildVolumeForBindGCF`'s SharedVolume branch and `backends/cloudrun/jobspec.go`-equivalent if cloudrun has its own mount path).
+```go
+// 4. backends/{cloudrun,cloudrun-functions}/{jobspec,pod_service}.go
+// SharedVolume struct gains NfsServer + NfsPath fields. When set,
+// buildVolumeFor* emits Volume{Nfs} instead of Volume{Gcs}. The
+// runner-task and JOB pod-Service then mount the SAME Filestore
+// share — script files propagate atomically.
+```
 
-If stale-handle persists, fall back to Cloud Filestore (NFSv3) — full POSIX, eliminates eventual consistency, ~$160/mo BasicHDD floor.
+Update dispatcher TOML:
+```toml
+[[label]]
+name                       = "sockerless-cloudrun"
+...
+runner_workspace_nfs_server = "10.x.y.z"   # Filestore reserved IP from terraform
+runner_workspace_nfs_path   = "/workspace"
+```
+
+Rebuild + push dispatcher (`gcloud builds submit --config=github-runner-dispatcher-gcp/cloudbuild.yaml .`); update Service. Rebuild + push runner-task images.
 
 ### Step 3 — Cleanup + re-trigger cells 5+6 v7
 

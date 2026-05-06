@@ -929,9 +929,17 @@ GH actions/runner writes step scripts to `$RUNNER_WORK/_temp/<uuid>.sh` (= `/tmp
 
 Fix: dispatcher attaches `Volume{Gcs{Bucket}}` + `VolumeMount{/tmp/runner-work}` to the runner-task Cloud Run Job spec. Operator config: `runner_workspace_bucket = "<project>-runner-workspace"` in the dispatcher TOML's `[[label]]` block. Cloud Run native GCSFuse mount avoids the gcsfuse-CLI path that needs CAP_SYS_ADMIN (Cloud Run Jobs don't grant it). Both runner-task and JOB pod-Service now read/write the same bucket — script files propagate naturally.
 
-**GCSFuse stale-handle on event.json** (BUG-965, OPEN as of 2026-05-06):
+**Workspace storage primitive — NFS via Cloud Filestore, NOT GCSFuse** (user directive 2026-05-06, supersedes earlier GCSFuse-based BUG-963):
 
-GCSFuse invalidates open file handles when an object is rewritten while a holder has it open — happens routinely with GH actions/runner's per-step `_temp/_github_workflow/event.json` rewrites. Cell 5 v6 reached `clone-and-compile` then hit `Stale file handle: '/tmp/runner-work/_temp/_github_workflow/event.json'`. Fix candidates: (a) GCSFuse mount options `--rename-dir-limit=10000 --metadata-cache-ttl-secs=0`; (b) Cloud Filestore (NFSv3, full POSIX, ~$160/mo BasicHDD floor); (c) bind-mount event.json + similar small files into a non-GCSFuse path inside the JOB container with tar-pack persist back to GCS.
+GCSFuse is unsuitable for the GH actions/runner workspace pattern because it invalidates open file handles on object rewrite — GH rewrites `_temp/_github_workflow/event.json` between every step, producing `Stale file handle` errors during `clone-and-compile` (BUG-965). Mount options can mask but not eliminate this.
+
+The correct primitive is **Cloud Filestore (NFSv3)** mounted via Cloud Run's native `Volume{Nfs{Server, Path}}` on both the runner-task (Cloud Run Job) and the JOB pod-Service (Cloud Run Service). NFSv3 is full POSIX with strong consistency — no stale handles, no eventual consistency, atomic rewrites visible to all readers immediately.
+
+Cost: BASIC_HDD tier minimum 1 TiB at ~$0.16/GiB/mo = ~$160/mo floor. Operator-accepted as the architectural cost of running real CI on Cloud Run.
+
+Operator config: `runner_workspace_nfs_server` + `runner_workspace_nfs_path` in dispatcher TOML's `[[label]]` block. SockerlessSharedVolume gains `NfsServer` + `NfsPath` fields; backends emit `Volume{Nfs}` instead of `Volume{Gcs}` when NFS fields are set.
+
+GCSFuse remains valid for the **per-stage tar-pack persist** pattern (BUG-947 cloudrun, BUG-957 gcf) because that path uses GCS as object storage (a single tar object per volume per stage), not as a live filesystem. Sequential gitlab-runner stages produce no concurrent rewrites — GCSFuse doesn't enter the path at all (the bootstrap reads/writes directly via GCS JSON API).
 
 **`/var/run/docker.sock` mount**: github-runner unconditionally mounts the docker socket on the JOB container so user steps can do nested `docker run`. On Cloud Run there's no docker socket — sockerless drops the mount silently AND the user step cannot do `docker run`. Documented limitation; user code that actually requires nested docker fails at runtime with `cannot connect`.
 
@@ -946,7 +954,7 @@ GCSFuse invalidates open file handles when an object is rewritten while a holder
 | `Typed.Exec` routing | n/a (no exec; uses attach) | needs envelope-POST fallback | ✅ via BUG-960 `WrapLegacyExecStart(s.ExecStart)` | ✅ same |
 | Default-invoke gating | always invoke (script comes via stdin) | NEVER default-invoke (long-lived `tail -f` would block forever) | ✅ via BUG-961 `skipIfNoStdin=true` for multi-container pod-Service | 🟡 BUG-964 OPEN (mirror BUG-961 to gcf invokePodServiceMain) |
 | Per-step process supervision | bash reads stdin until EOF | dedicated process per exec | ✅ Both representable | ✅ Both representable |
-| Workspace persistence (cross-stage) | `/builds` shared via tar-pack persist (BUG-947 cloudrun, BUG-957 gcf) | `/__w` shared via Cloud Run native `Volume{Gcs}` on both runner-task AND JOB pod-Service (BUG-963) | ✅ Cloudrun cell 7 GREEN | ✅ Gcf cell 8 GREEN |
+| Workspace persistence (cross-stage) | `/builds` per-stage tar-pack persist via GCS object (BUG-947 cloudrun, BUG-957 gcf) — sequential, no concurrent rewrites | `/__w` shared via Cloud Run native `Volume{Nfs}` (Cloud Filestore) on both runner-task AND JOB pod-Service per user directive 2026-05-06; GCSFuse rejected due to stale-handle on per-step rewrites (BUG-965) | ✅ Cell 7 GREEN | ✅ Cell 8 GREEN |
 | Service containers (postgres etc.) | `--network <job-net>` peer-reachable on `localhost:<port>` | same | ✅ multi-container Cloud Run Service revision (loopback per-revision) | ✅ same |
 | Stdout/stderr capture | hijacked stdcopy.StdCopy framing | DockerExec response (also stdcopy-framed) | ✅ via `writeMuxFrame` helper in `attach_stream.go` | ✅ via BUG-962 same helper applied to `execStartViaInvoke` |
 | GCSFuse stale-handle on per-step rewrites | n/a (single bucket, sequential) | event.json rewrite each step → stale-handle | n/a | 🟡 BUG-965 OPEN (mount options or Filestore) |
