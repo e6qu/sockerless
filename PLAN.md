@@ -36,25 +36,31 @@ Detail in [WHAT_WE_DID.md](WHAT_WE_DID.md); commit + BUG refs in [BUGS.md](BUGS.
 
 Order is the order of execution unless noted.
 
-### Phase 122k — All 4 GCP cells GREEN (THE current goal, in flight 2026-05-05)
+### Phase 122k/m — All 4 GCP cells GREEN (the current goal, in flight 2026-05-06)
 
 User goal: **all 4 GCP cells (5/6/7/8) GREEN with full workflow + evidence + executing where they're supposed to**. Cells 1–4 (AWS) cover only trivial workloads; the GCP cells run the real probe + git-clone + go-build + arithmetic suite. This is the milestone the user has scoped as "consider it done".
 
 **Sub-task progress (2026-05-06):**
 
-| Sub | Cell | State | Notes |
+| Sub | Cell | State | Evidence |
 |---|---|---|---|
-| 122k.7 | 7 GL × cloudrun | 🟡 GREEN this morning at digest `f786c300`; v52 retest hit transient regional quota (8 s fail) | Re-validate after quota cooldown with today's gcp-common changes (digest `sha256:db43b1ec`). |
-| 122k.8 | 8 GL × gcf | 🟡 **4/5 stages GREEN** at digest `sha256:79621fbe` | v25 reached prepare_executor + prepare_script + get_sources + step_script start. 12 architectural fixes shipped (see WHAT_WE_DID.md § "Phase 122k third session"). Final blocker BUG-956 — multi-image-per-stage materialize race. Fix shape pinned in DO_NEXT.md. |
-| 122k.6 | 6 GH × gcf | ❌ not started but ready to ship | Runner-task image at `tests/runners/github/dockerfile-gcf/` already bundles vanilla actions/runner + sockerless. After cell 8: rebuild + AR push + dispatcher TOML; inherits 122k.8 gcf stack. |
-| 122k.5 | 5 GH × cloudrun | ❌ not started but ready to ship | Same as cell 6 with `dockerfile-cloudrun` image. Dispatcher stays generic per user directive 2026-05-05 — sockerless+runner pairing lives in the runner image, NOT the dispatcher. |
+| 122k.7 | 7 GL × cloudrun | ✅ **GREEN v54** | Job [14237010667](https://gitlab.com/e6qu/sockerless/-/jobs/14237010667), 178s, `all arithmetic checks pass`. |
+| 122k.8 | 8 GL × gcf | ✅ **GREEN v28** | Job [14234857458](https://gitlab.com/e6qu/sockerless/-/jobs/14234857458), 147s, `all arithmetic checks pass`. |
+| 122m.6 | 6 GH × gcf | ❌ not yet triggered | Runner image `runner:gcf-amd64@sha256:b3b9a9de` pushed today with BUG-957 persist module. Trigger via PR #124 push. |
+| 122m.5 | 5 GH × cloudrun | ❌ not yet triggered | Runner image `runner:cloudrun-amd64@sha256:2b4efebf` pushed today with BUG-958 fix. Trigger via PR #124 push. |
 
-**Architectural directives (all 2026-05-05):**
+**Architectural fixes shipped this phase (15 total — see WHAT_WE_DID.md for narrative + BUGS.md for per-bug detail):**
 
-- **Dispatcher stays generic** — provisions vanilla github/gitlab runners on demand based on queued jobs. NOT aware of sockerless. Pairing lives in the runner image. Earlier dispatcher-side `SockerlessImage` + `BackendPort` fields were proposed and reverted; saved as `feedback_dispatcher_generic.md` memory.
+- BUG-953/954/955: 12 fixes for the gcf network-pod path (AR HEAD precheck, multi-container Service direct deploy, PendingCreates speculative-running, `Typed.Attach` wiring, multi-stage `invokeRunningRunnerStage`, etc.) — see WHAT_WE_DID.md § "Phase 122k third session".
+- BUG-956: `pendingMembersOfNetwork` filters already-materialized OpenStdin=true mains; sidecars stay.
+- BUG-957: gcf bootstrap got the BUG-947 tar-pack persist module + content-hash overlay invalidation (`HashBootstrapBinary` + `OverlayImageSpec.BootstrapBinaryHash`).
+- BUG-958: cloudrun multi-stage runner-pattern (mirror of gcf BUG-955) — `ContainerStart` kicks `invokeRunningRunnerStage` on already-running + fresh stdinPipe; `ContainerStop` keeps Service alive for OpenStdin=true.
+
+**Architectural directives (carried from earlier sessions):**
+
+- **Dispatcher stays generic** — provisions vanilla github/gitlab runners on demand based on queued jobs. NOT aware of sockerless. Pairing lives in the runner image.
 - **HTTP 5xx reserved for unexpected panics** — bootstrap binaries return HTTP 200 + `X-Sockerless-Exit-Code` header / envelope `exitCode` on expected failures.
-
-**Bugs closed today (2026-05-05):** BUG-947, BUG-950, BUG-951, BUG-952. BUG-948 pool-warming code shipped; works for single-container claims; pod-mode covered by BUG-953. BUG-953 partial: 4 architectural fixes shipped, "No such container" cleanup failure remaining.
+- **Multi-stage runner pattern is two distinct problems** — same container ID across stages (BUG-955/958 fix: kick new goroutine on fresh stdinPipe) AND NEW container per stage with different image (BUG-956 fix: network-pod members filter). Cross-cloud parity check is a same-session sub-task whenever one backend gets a multi-stage fix.
 
 ### Phase 104 — Cross-backend driver framework (in flight)
 
