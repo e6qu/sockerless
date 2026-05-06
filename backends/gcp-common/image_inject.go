@@ -37,6 +37,13 @@ type OverlayImageSpec struct {
 	// it's sockerless-gcf-bootstrap, sockerless-cloudrun-bootstrap,
 	// etc. via where they point this path).
 	BootstrapBinaryPath string
+	// BootstrapBinaryHash is a content-addressed identifier for the
+	// bootstrap binary itself (typically a hex-encoded SHA-256 prefix).
+	// When non-empty, it feeds OverlayContentTag so updating the
+	// bootstrap binary at the same path invalidates cached overlay
+	// images automatically. Empty → tag falls back to BootstrapBinaryPath
+	// only (sufficient for unit tests with synthetic paths).
+	BootstrapBinaryHash string
 	// UserEntrypoint is the original Dockerfile ENTRYPOINT. May be
 	// empty (image default).
 	UserEntrypoint []string
@@ -104,8 +111,28 @@ func OverlayContentTag(prefix string, spec OverlayImageSpec) string {
 	h := sha256.New()
 	fmt.Fprintln(h, spec.BaseImageRef)
 	fmt.Fprintln(h, spec.BootstrapBinaryPath)
+	fmt.Fprintln(h, spec.BootstrapBinaryHash)
 	sum := h.Sum(nil)
 	return prefix + hex.EncodeToString(sum[:8])
+}
+
+// HashBootstrapBinary returns a hex-encoded SHA-256 prefix of the
+// bootstrap binary at `path`, suitable for OverlayImageSpec.BootstrapBinaryHash.
+// Read once at backend startup; updating the binary on disk and restarting
+// the backend yields a fresh hash and invalidates cached overlay images.
+// 16-hex-char prefix (8 bytes) — same width OverlayContentTag itself uses.
+func HashBootstrapBinary(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	sum := h.Sum(nil)
+	return hex.EncodeToString(sum[:8]), nil
 }
 
 // TarOverlayContext packages the Dockerfile + bootstrap binary into a

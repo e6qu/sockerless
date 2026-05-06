@@ -76,6 +76,14 @@ type deployFuture struct {
 
 // NewServer creates a new Cloud Run Functions backend server.
 func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Server {
+	if config.BootstrapBinaryHash == "" && config.BootstrapBinaryPath != "" {
+		if hash, err := gcpcommon.HashBootstrapBinary(config.BootstrapBinaryPath); err == nil {
+			config.BootstrapBinaryHash = hash
+			logger.Info().Str("path", config.BootstrapBinaryPath).Str("hash", hash).Msg("hashed gcf bootstrap binary for overlay-tag invalidation")
+		} else {
+			logger.Warn().Err(err).Str("path", config.BootstrapBinaryPath).Msg("failed to hash gcf bootstrap binary; overlay cache will key on path only")
+		}
+	}
 	s := &Server{
 		config:         config,
 		gcp:            gcpClients,

@@ -305,6 +305,7 @@ func (s *Server) prewarmOverlay(ctx context.Context, entry PrewarmOverlay) error
 	spec := OverlayImageSpec{
 		BaseImageRef:        resolved,
 		BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+		BootstrapBinaryHash: s.config.BootstrapBinaryHash,
 	}
 	contentTag := OverlayContentTag(spec)
 	overlayURI, err := s.ensureOverlayImage(ctx, spec, contentTag)

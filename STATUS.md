@@ -1,19 +1,19 @@
 # Sockerless — Status
 
-**Date: 2026-05-06 — Cell 8 4/5 stages GREEN; final blocker BUG-956 (multi-image-per-stage materialize race). 12 architectural fixes shipped today.**
+**Date: 2026-05-06 — Cell 8 GREEN. 14 architectural fixes shipped over the day; BUG-956 + BUG-957 closed v28.**
 
 ## Cell scoreboard (4 GCP cells = the user's "consider it done" gate)
 
 | Cell | Path | State | Notes |
 |------|------|-------|-------|
-| **5** GH × cloudrun | sockerless-cloudrun | ❌ NOT STARTED | Runner-task image at `tests/runners/github/dockerfile-cloudrun/` already bundles vanilla actions/runner + sockerless. After cell 8 GREEN: `make push-amd64`, update dispatcher TOML, trigger workflow. |
-| **6** GH × gcf | sockerless-gcf | ❌ NOT STARTED | Same shape as cell 5; inherits cell 8's gcf stack. |
-| **7** GL × cloudrun | sockerless-cloudrun | 🟡 GREEN this morning at digest `f786c300`; today's v52 retest hit transient regional CPU quota (8s-fail) — not a code regression | Re-trigger after quota cooldown to confirm today's gcp-common changes (HTTP middleware Info-level, AR HEAD precheck) didn't regress. |
-| **8** GL × gcf | sockerless-gcf | 🟡 **4/5 stages GREEN** at digest `sha256:79621fbe` | prepare_executor + prepare_script + get_sources + step_script start ALL succeeded in v25 trace. Final blocker: BUG-956 (next iteration v26). |
+| **5** GH × cloudrun | sockerless-cloudrun | ❌ NOT STARTED | Runner-task image at `tests/runners/github/dockerfile-cloudrun/` already bundles vanilla actions/runner + sockerless. Next: `make push-amd64`, update dispatcher TOML if digest pinned, trigger workflow. |
+| **6** GH × gcf | sockerless-gcf | ❌ NOT STARTED | Same shape as cell 5; inherits cell 8's gcf stack. Re-build runner image with today's bootstrap (BUG-957 persist) before triggering. |
+| **7** GL × cloudrun | sockerless-cloudrun | 🟡 GREEN at digest `f786c300` (this morning) | Today's v52 retest hit transient regional CPU quota (8s-fail) — not a code regression. Re-trigger to re-confirm after today's gcp-common changes. |
+| **8** GL × gcf | sockerless-gcf | ✅ **GREEN v28** at gcf digest `sha256:d792e563` | Job 14234857458 succeeded in 147s. `all arithmetic checks pass` + persist save 11MB→GCS→restore 11MB across get_sources's pod-Service A → step_script's pod-Service B. |
 
-## Today's architectural stack (12 fixes shipped, all verified working)
+## Today's architectural stack (14 fixes, all verified working)
 
-All in `backends/cloudrun-functions/` unless noted. Order: shipped → impact.
+All in `backends/cloudrun-functions/` + `agent/cmd/sockerless-gcf-bootstrap/` unless noted.
 
 | # | Fix | What it does |
 |---|---|---|
@@ -29,28 +29,29 @@ All in `backends/cloudrun-functions/` unless noted. Order: shipped → impact.
 | 10 | HTTP middleware ENTRY-level logging (`backends/core/server.go`) | Captures hijacked /attach connections (would otherwise only log on END after stream close) |
 | 11 | **Typed.Attach routes through ContainerAttach delegate** | The silent-hang root cause: gcf was using read-only `NewCloudLogsAttachDriver`; cloudrun uses `WrapLegacyContainerAttach` |
 | 12 | Multi-stage `invokeRunningRunnerStage` + unique container names | Per-stage stdinPipe drain + envelope POST against existing Service URL; sanitized names get count suffix on collision |
-
-## Final remaining blocker: BUG-956
-
-**Symptom**: cell 8 v25 reached step_script (4/5 stages GREEN) then hit `no service URL` during cleanup_file_variables.
-
-**Root cause**: gitlab-runner v17 docker executor uses **different images per stage** — `gitlab-runner-helper:x86_64-v17.5.0` for prepare/get_sources/upload_artifacts; `golang:1.22-alpine` (user image) for step_script/after_script. With `FF_NETWORK_PER_BUILD=true` all stages join the same per-build network. Each stage's new container with `OpenStdin=true` triggers our network-pod detection — `materializePodService` runs again with 3 members (new build + postgres + OLD build still in PendingCreates) → fails or leaves the original pod-Service unreachable.
-
-**Recommended fix (v26)**: in `backends/cloudrun-functions/network_pod.go::pendingMembersOfNetwork`, exclude containers already materialized in an existing pod-Service. Minimal change, preserves the discovery-from-network-membership model.
+| 13 | **BUG-956**: `pendingMembersOfNetwork` filters already-materialized OpenStdin=true mains | gitlab-runner v17 spawns NEW build container per stage with different image — new stage's container becomes its OWN pod-Service main + postgres sidecar; old main stays in its own pod-Service for cleanup_file_variables docker exec to resolve |
+| 14 | **BUG-957**: gcf bootstrap persist module + content-hash overlay invalidation | Ports BUG-947 tar-pack persist (`agent/cmd/sockerless-gcf-bootstrap/persist.go`) + adds `BootstrapBinaryHash` to `OverlayImageSpec` so updating the bootstrap binary invalidates AR overlay caches; `/builds` carries naturally across pod-Services because gitlab-runner stages run sequentially |
 
 ## Live infra in `sockerless-live-46x3zg4imo` (us-central1)
 
 | Service | Rev | Digest | Notes |
 |---|---|---|---|
 | `gitlab-runner-cloudrun` | latest | `sha256:db43b1ec` | Cell 7 baseline (today's HTTP middleware Info-level) |
-| `gitlab-runner-gcf` | `00057-6z8` | `sha256:79621fbe` | v25 — 4/5 stages GREEN; v26 will bump |
+| `gitlab-runner-gcf` | `00060-72h` | `sha256:d792e563` | v28 GREEN — final state |
 | `github-runner-dispatcher-gcp` | `00021-fb2` | unchanged | Generic dispatcher (per directive); cells 5+6 ready |
 | VPC connector | `sockerless-connector` | e2-micro × 4 min instances | Cloud NAT static IP `34.31.88.230` |
 
-**Cleanup discipline**: every build script ends with `gcloud run services delete sockerless-svc-* / skls-*`. Old per-Service revisions pruned to free regional CPU quota. After today's session: 3 active services, 3 active revisions (down from 81+).
+**Cleanup discipline**: every build script ends with `gcloud run services delete sockerless-svc-* / skls-*`. Old per-Service revisions pruned to free regional CPU quota.
 
 ## Project state
 
-- **Branch**: `phase-118-faas-pods` at `f18d7a1`
-- **PR**: #123 (open). Title + description need update to cover today's scope.
-- **Live project lifetime**: keep `sockerless-live-46x3zg4imo` alive until cells 5/6/7/8 all GREEN.
+- **Branch**: `phase-118-faas-pods` (commit pending — BUG-956 + BUG-957 architectural fixes + image)
+- **PR**: #123 (open). Title + description need update once cells 5/6/7 join cell 8 GREEN.
+- **Live project lifetime**: keep `sockerless-live-46x3zg4imo` alive until cells 5/6/7 all GREEN.
+
+## Next sequence (per DO_NEXT.md)
+
+1. Re-trigger cell 7 (v53) to re-confirm cloudrun GREEN after today's gcp-common changes.
+2. Rebuild GH runner-task images for cells 5+6 with today's bootstrap (so persist propagates to GH cells too) — `make -C tests/runners/github/dockerfile-{cloudrun,gcf} push-amd64`.
+3. Trigger cells 5+6 via dispatcher.
+4. State save + close PR #123 description once all 4 GREEN.

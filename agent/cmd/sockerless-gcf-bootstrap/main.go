@@ -22,6 +22,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -129,6 +130,14 @@ type PodMember struct {
 // MaxInstanceRequestConcurrency is bumped above 1.
 var invokeMu sync.Mutex
 
+// persistVols holds the parsed SOCKERLESS_PERSIST_VOLUMES config so
+// every handleInvoke can run saveAll without re-parsing. Initialized
+// once at startup; nil-or-empty means persistence is disabled.
+// BUG-957: ports the cloudrun bootstrap's BUG-947 module to gcf so
+// bind volumes carry across the multi-pod-Service stage transitions
+// gitlab-runner v17 docker executor produces with multi-image-per-job.
+var persistVols []persistVolume
+
 func main() {
 	if err := writeHostAliases(os.Getenv(envHostAliases)); err != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: write host aliases: %v\n", err)
@@ -144,6 +153,14 @@ func main() {
 		fmt.Fprintln(os.Stderr, "sockerless-gcf-bootstrap: sidecar mode — exec user CMD")
 		runSidecar()
 		return
+	}
+
+	persistVols = parsePersistVolumes(os.Getenv(envPersistVolumes))
+	if len(persistVols) > 0 {
+		if err := restoreAll(context.Background(), persistVols); err != nil {
+			fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: persist restore failed: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	port := os.Getenv(envPort)
@@ -194,27 +211,60 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	invokeMu.Lock()
 	defer invokeMu.Unlock()
 
-	// Path B exec envelope check (Phase 122g): if the request body
-	// parses as {sockerless:{exec:{argv}}} then we run that envelope's
-	// argv instead of the env-baked SOCKERLESS_USER_* cmd. Used by gcf
-	// backend ContainerExec for `docker exec`.
 	body, _ := io.ReadAll(r.Body)
 	defer r.Body.Close()
-	if env, ok := parseExecEnvelope(body); ok {
-		runExecEnvelope(w, env)
-		return
+
+	// Buffer the response so BUG-957 saveAll can run after the subprocess
+	// completes but before the wire response goes out. A save failure
+	// replaces the buffered response with an exit-code=1 shape — silent
+	// data loss between stages would surface as confusing build errors.
+	buf := newBufferedResponse()
+	env, isEnvelope := parseExecEnvelope(body)
+	switch {
+	case isEnvelope:
+		runExecEnvelope(buf, env)
+	case hasPodManifest():
+		runPodInvoke(buf)
+	default:
+		runDefaultInvoke(buf)
 	}
 
-	if pod, ok := parsePodManifest(); ok {
-		main, found := pickPodMain(pod)
-		if !found {
-			writeBootstrapFailure(w, "no main container in pod manifest")
+	if len(persistVols) > 0 {
+		if err := saveAll(context.Background(), persistVols); err != nil {
+			fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: persist save failed: %v\n", err)
+			writeSaveFailure(w, err, isEnvelope)
 			return
 		}
-		runPodMain(w, main)
+	}
+	buf.flushTo(w)
+}
+
+// hasPodManifest mirrors parsePodManifest()'s presence check without
+// re-parsing — used to route handleInvoke between pod, envelope, and
+// default-invoke paths.
+func hasPodManifest() bool {
+	_, ok := parsePodManifest()
+	return ok
+}
+
+// runPodInvoke runs the pod main member as a foreground subprocess.
+// Wraps runPodMain so handleInvoke's switch can route to it without
+// duplicating the pickPodMain failure-handling boilerplate.
+func runPodInvoke(w http.ResponseWriter) {
+	pod, _ := parsePodManifest()
+	main, found := pickPodMain(pod)
+	if !found {
+		writeBootstrapFailure(w, "no main container in pod manifest")
 		return
 	}
+	runPodMain(w, main)
+}
 
+// runDefaultInvoke runs the env-baked SOCKERLESS_USER_* command via
+// `/bin/sh -c` and writes the response (header + body) to w. Pulled
+// out of handleInvoke so the buffered-response wrapping can sit in
+// one place.
+func runDefaultInvoke(w http.ResponseWriter) {
 	argv := append(parseUserArgv(envUserEntrypoint), parseUserArgv(envUserCmd)...)
 	if len(argv) == 0 {
 		fmt.Fprintln(os.Stderr, "sockerless-gcf-bootstrap: no user entrypoint/cmd configured")
@@ -257,6 +307,54 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	if exitCode != 0 {
 		_, _ = w.Write(stderr.Bytes())
 	}
+}
+
+// bufferedResponse captures handler output so saveAll can run before
+// the wire response is committed. Implements http.ResponseWriter.
+type bufferedResponse struct {
+	headers http.Header
+	code    int
+	body    bytes.Buffer
+}
+
+func newBufferedResponse() *bufferedResponse {
+	return &bufferedResponse{headers: http.Header{}, code: http.StatusOK}
+}
+
+func (b *bufferedResponse) Header() http.Header         { return b.headers }
+func (b *bufferedResponse) WriteHeader(code int)        { b.code = code }
+func (b *bufferedResponse) Write(p []byte) (int, error) { return b.body.Write(p) }
+
+func (b *bufferedResponse) flushTo(w http.ResponseWriter) {
+	for k, v := range b.headers {
+		w.Header()[k] = v
+	}
+	w.WriteHeader(b.code)
+	_, _ = w.Write(b.body.Bytes())
+}
+
+// writeSaveFailure overwrites the buffered exec response with a
+// failure shape matching the path that ran. envelope=true → JSON
+// envelope with exitCode=1 + stderr carrying the error; envelope=false
+// → text body with X-Sockerless-Exit-Code=1 header. HTTP status stays
+// 200 in both cases so the backend's ExitCode parsing (envelope JSON
+// or X-Sockerless-Exit-Code header) is the single source of truth.
+func writeSaveFailure(w http.ResponseWriter, err error, envelope bool) {
+	msg := "sockerless-gcf-bootstrap: persist save: " + err.Error()
+	if envelope {
+		var res execEnvelopeResponse
+		res.SockerlessExecResult.ExitCode = 1
+		res.SockerlessExecResult.Stderr = base64.StdEncoding.EncodeToString([]byte(msg))
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Sockerless-Exit-Code", "1")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(res)
+		return
+	}
+	w.Header().Set("X-Sockerless-Exit-Code", "1")
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(msg))
 }
 
 // writeBootstrapFailure reports an operator-misconfiguration as a

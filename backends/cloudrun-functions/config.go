@@ -41,6 +41,14 @@ type Config struct {
 	// SOCKERLESS_GCF_BOOTSTRAP env var (or /opt/sockerless/sockerless-gcf-bootstrap).
 	BootstrapBinaryPath string
 
+	// BootstrapBinaryHash is a hex-encoded SHA-256 prefix of the bootstrap
+	// binary at BootstrapBinaryPath. Computed once at server start (see
+	// gcpcommon.HashBootstrapBinary) and stamped into every OverlayImageSpec
+	// so updating the binary at the same path invalidates cached overlay
+	// images automatically — required for in-place bootstrap upgrades like
+	// BUG-957's persist module rollout.
+	BootstrapBinaryHash string
+
 	// PoolMax caps the number of free Functions kept warm per
 	// overlay-content-hash. On `docker rm`, if free count >= PoolMax the
 	// function is deleted; otherwise its `sockerless_allocation` label is

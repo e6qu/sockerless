@@ -83,6 +83,7 @@ func (s *Server) materializePodService(mainContainerID string, containers []api.
 			spec := OverlayImageSpec{
 				BaseImageRef:        imageRef,
 				BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+				BootstrapBinaryHash: s.config.BootstrapBinaryHash,
 			}
 			tag := OverlayContentTag(spec)
 			uri, err := s.ensureOverlayImage(ctx, spec, tag)
@@ -266,6 +267,7 @@ func (s *Server) deployContainerService(ctx context.Context, id string, containe
 	spec := OverlayImageSpec{
 		BaseImageRef:        imageRef,
 		BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+		BootstrapBinaryHash: s.config.BootstrapBinaryHash,
 	}
 	tag := OverlayContentTag(spec)
 	overlayURI, err := s.ensureOverlayImage(ctx, spec, tag)

@@ -103,7 +103,22 @@ func isBuiltinNetwork(name string) bool {
 }
 
 // pendingMembersOfNetwork returns every container in PendingCreates that
-// has joined the given network ID, excluding `excludeID`.
+// has joined the given network ID, excluding `excludeID`. Already-materialized
+// MAIN containers (OpenStdin=true with a populated FunctionURL) are filtered
+// out — gitlab-runner v17 spawns a NEW build container per stage with a
+// different image (helper for prep/get_sources, user image for step_script).
+// The new stage's container must materialize as the MAIN of its own pod-Service
+// revision; pulling the previous stage's main into the new revision would
+// either collide on container names or, after the materialize cleanup step
+// runs DeleteFunction on the previous main's allocation, leave the previous
+// pod-Service unreachable for cleanup_file_variables (the v25 "no service
+// URL" failure mode).
+//
+// Sidecars (OpenStdin=false: postgres, redis, etc.) are NOT filtered. Each
+// stage's pod-Service revision needs its own copy of the sidecars — the
+// runner expects them on `127.0.0.1` from inside the build container, which
+// requires they share the same Cloud Run revision (loopback is per-revision).
+// They stay in PendingCreates across stages.
 func (s *Server) pendingMembersOfNetwork(netID, excludeID string) []api.Container {
 	var out []api.Container
 	for _, pc := range s.PendingCreates.List() {
@@ -113,6 +128,11 @@ func (s *Server) pendingMembersOfNetwork(netID, excludeID string) []api.Containe
 		mid, ok := s.userDefinedNetworkID(pc)
 		if !ok || mid != netID {
 			continue
+		}
+		if pc.Config.OpenStdin {
+			if state, ok := s.resolveGCFFromCloud(s.ctx(), pc.ID); ok && state.FunctionURL != "" {
+				continue
+			}
 		}
 		out = append(out, pc)
 	}
