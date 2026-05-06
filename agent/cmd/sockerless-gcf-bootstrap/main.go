@@ -208,11 +208,13 @@ func main() {
 // stdout with a `[<name>]` line prefix so Cloud Logging captures it
 // under the function's log stream.
 func handleInvoke(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: handleInvoke ENTRY method=%s path=%s remote=%s contentLength=%d\n", r.Method, r.URL.Path, r.RemoteAddr, r.ContentLength)
 	invokeMu.Lock()
 	defer invokeMu.Unlock()
 
 	body, _ := io.ReadAll(r.Body)
 	defer r.Body.Close()
+	fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: handleInvoke body_bytes=%d\n", len(body))
 
 	// Buffer the response so BUG-957 saveAll can run after the subprocess
 	// completes but before the wire response goes out. A save failure
@@ -220,6 +222,7 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	// data loss between stages would surface as confusing build errors.
 	buf := newBufferedResponse()
 	env, isEnvelope := parseExecEnvelope(body)
+	fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: handleInvoke isEnvelope=%t argv_count=%d\n", isEnvelope, len(env.Argv))
 	switch {
 	case isEnvelope:
 		runExecEnvelope(buf, env)

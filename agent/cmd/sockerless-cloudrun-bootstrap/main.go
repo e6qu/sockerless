@@ -158,14 +158,17 @@ func main() {
 // for unexpected panics, and the backend already maps non-zero
 // exitCode in either response shape to a Docker-style failure.
 func handleInvoke(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: handleInvoke ENTRY method=%s path=%s remote=%s contentLength=%d\n", r.Method, r.URL.Path, r.RemoteAddr, r.ContentLength)
 	invokeMu.Lock()
 	defer invokeMu.Unlock()
 
 	body, _ := io.ReadAll(r.Body)
 	defer r.Body.Close()
+	fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: handleInvoke body_bytes=%d\n", len(body))
 
 	buf := newBufferedResponse()
 	env, isEnvelope := parseExecEnvelope(body)
+	fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: handleInvoke isEnvelope=%t argv_count=%d\n", isEnvelope, len(env.Argv))
 	if isEnvelope {
 		runExecEnvelope(buf, env)
 	} else {
