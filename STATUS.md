@@ -10,8 +10,8 @@
 | **2** GH × Lambda | sockerless-lambda | ✅ GREEN (2026-04-30) | https://github.com/e6qu/sockerless/actions/runs/25113565115 | Phase 110 closed |
 | **3** GL × ECS | sockerless-ecs | ✅ GREEN (2026-04-30) | https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 | Phase 110 closed |
 | **4** GL × Lambda | sockerless-lambda | ✅ GREEN (2026-04-30) | https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943 | Phase 117 closed (BUG-875/876) |
-| **5** GH × cloudrun | sockerless-cloudrun | ❌ NOT TRIGGERED | (pending PR push) | Runner image pushed `runner:cloudrun-amd64@sha256:2b4efebf`. |
-| **6** GH × gcf | sockerless-gcf | ❌ NOT TRIGGERED | (pending PR push) | Runner image pushed `runner:gcf-amd64@sha256:b3b9a9de`. |
+| **5** GH × cloudrun | sockerless-cloudrun | ❌ FAILING | https://github.com/e6qu/sockerless/actions/runs/25431102860 | After 4 architectural fixes today (BUG-956/957/958/959/960), pod-Service materializes correctly but `execStartViaInvoke` POST never reaches bootstrap → 10 min HTTP timeout → exit 255. **BUG-961**. |
+| **6** GH × gcf | sockerless-gcf | ❌ FAILING | https://github.com/e6qu/sockerless/actions/runs/25431102827 | Same fix stack as cell 5; got past materialize, exec ran, but response not docker-stream-framed → "Unrecognized input header: 115" → exit 1. **BUG-962**. |
 | **7** GL × cloudrun | sockerless-cloudrun | ✅ **GREEN v54** 2026-05-06 09:43 UTC | https://gitlab.com/e6qu/sockerless/-/jobs/14237010667 | `Job succeeded duration_s=178.245`. `all arithmetic checks pass` at `2026-05-06T09:43:11.835` on Service `sockerless-svc-33dbd39babad`. |
 | **8** GL × gcf | sockerless-gcf | ✅ **GREEN v28** 2026-05-06 08:05 UTC | https://gitlab.com/e6qu/sockerless/-/jobs/14234857458 | `Job succeeded duration_s=147.77`. `all arithmetic checks pass` at `2026-05-06T08:05:04.053` on Service `sockerless-svc-c547886ab439`. |
 
