@@ -45,7 +45,7 @@ type Label struct {
 	Region         string `toml:"gcp_region"`
 	Image          string `toml:"image"`
 	ServiceAccount string `toml:"service_account"`
-	// RunnerWorkspaceBucket (BUG-963) — when set, the dispatcher attaches
+	// RunnerWorkspaceBucket — when set, the dispatcher attaches
 	// a Cloud Run native `Volume{Gcs{Bucket}}` mount at /tmp/runner-work
 	// on the spawned runner-task. Required for GH actions/runner pattern
 	// where step scripts written by the runner agent on the runner-task
@@ -54,17 +54,18 @@ type Label struct {
 	// infrastructure config (which bucket); the dispatcher itself stays
 	// sockerless-unaware (it just provisions the mount).
 	RunnerWorkspaceBucket string `toml:"runner_workspace_bucket"`
-	// RunnerWorkspaceBacking (Phase 123) — chooses how the runner-task
-	// shares its workspace with the JOB pod-Service:
+	// RunnerWorkspaceBacking — chooses how the runner-task shares its
+	// workspace with the JOB pod-Service:
 	//   - "gcs-fuse": legacy. Mount the GCS bucket directly on the
 	//     runner-task via Cloud Run native Volume{Gcs}. Fast for
-	//     whole-tar uploads (cells 7+8 tar-pack persist) but breaks GH
-	//     actions/runner per-step rewrites of event.json (BUG-965 stale
-	//     handle on FUSE rewrite). Cells 7+8 only.
+	//     whole-tar uploads (legacy tar-pack persist) but breaks GH
+	//     actions/runner per-step rewrites of event.json — FUSE
+	//     invalidates open handles when the object is rewritten.
 	//   - "gcs-sync": pure GCS SDK, no FUSE. Runner-task keeps tmpfs at
 	//     /tmp/runner-work; sockerless-backend tars + uploads per-exec;
 	//     pod-Service bootstrap restores from GCS pre-subprocess + saves
-	//     post-subprocess. Default for cells 5+6 (avoids BUG-965).
+	//     post-subprocess. Required for the per-step shared-workspace
+	//     pattern.
 	// Required when RunnerWorkspaceBucket is set — no automatic fallback
 	// per the storage-backing no-fallbacks directive.
 	RunnerWorkspaceBacking string `toml:"runner_workspace_backing"`

@@ -3,8 +3,8 @@ package gcf
 // Pod-mode legacy helpers. The previous merged-rootfs supervisor
 // approach (materializePodFunction + invokePodFunction +
 // ensurePodOverlayImage) was replaced by direct multi-container
-// Cloud Run Service deploy in pod_service.go (BUG-953). The helper
-// types + sanitisers below are still used by the new path and by
+// Cloud Run Service deploy in pod_service.go. The helper types +
+// sanitisers below are still used by the new path and by
 // image_inject.go's pod-overlay rendering tests.
 
 import (

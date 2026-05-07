@@ -28,7 +28,6 @@ type Server struct {
 	// available) GCSSyncDriver. The volume_translator.go helpers route
 	// every materialize/exec through this registry — adding a new
 	// backing means registering a driver here, no per-call-site changes.
-	// Phase 123.
 	storageBackings *core.StorageBackingRegistry
 
 	// Reverse-agent registry for docker top / cp / stat / diff via a
@@ -40,13 +39,13 @@ type Server struct {
 	// kicked off in a goroutine, AND can cancel that goroutine if the
 	// container turns out to be a member of a network-pod that should
 	// materialize as a multi-container Service revision (per
-	// network_pod.go::shouldDeferOrMaterializeNetworkPod). Per BUG-923:
-	// synchronous CreateFunction.Wait + UpdateService swap blocks
-	// 150-200s and exceeds gitlab-runner's 120s docker daemon timeout.
-	// Returning 201 from ContainerCreate immediately and deferring the
-	// wait into ContainerStart keeps the Docker contract honest. The
-	// cancellation context resolves the conflict with BUG-925's deferred
-	// pod materialization: ContainerStart calls future.Cancel() on every
+	// network_pod.go::shouldDeferOrMaterializeNetworkPod). Synchronous
+	// CreateFunction.Wait + UpdateService swap blocks 150-200s and exceeds
+	// gitlab-runner's 120s docker daemon timeout, so ContainerCreate
+	// returns 201 immediately and the wait is deferred into ContainerStart
+	// to keep the Docker contract honest. The cancellation context
+	// resolves the conflict with deferred pod materialization:
+	// ContainerStart calls future.Cancel() on every
 	// sibling member's deploy when it decides to materialize a pod, then
 	// invokes materializePodFunction; the goroutines respect ctx.Err()
 	// at every cloud-API boundary and unwind (releasing any pool claim).
@@ -123,11 +122,11 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	}
 	s.CloudState = &gcfCloudState{server: s}
 
-	// Storage backing registry (Phase 123). EmptyDirDriver always
-	// registered; GCSFuseDriver kept for legacy SharedVolumes (cells
-	// 7+8 tar-pack persist); GCSSyncDriver registered when the GCS
-	// client constructs successfully — its absence is logged but not
-	// fatal so backends without GCS access still boot for unit tests.
+	// Storage backing registry. EmptyDirDriver always registered;
+	// GCSFuseDriver kept for legacy SharedVolumes (tar-pack persist);
+	// GCSSyncDriver registered when the GCS client constructs
+	// successfully — its absence is logged but not fatal so backends
+	// without GCS access still boot for unit tests.
 	s.storageBackings = core.NewStorageBackingRegistry()
 	s.storageBackings.Register(&gcpcommon.GCSFuseDriver{
 		MountOptions: gcpcommon.RunnerWorkspaceMountOptions(),
@@ -163,14 +162,14 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	s.Mux.HandleFunc("/v1/gcf/reverse", core.HandleReverseAgentWS(s.reverseAgents, logger))
 	s.Drivers.Exec = &core.ReverseAgentExecDriver{Registry: s.reverseAgents, Logger: logger}
 	s.Drivers.Stream = &core.ReverseAgentStreamDriver{Registry: s.reverseAgents, Logger: logger}
-	// Typed.Exec wiring (BUG-960): route through s.ExecStart (the gcf
-	// override) rather than the reverse-agent driver directly. The
-	// override's `execStartViaInvoke` POSTs an envelope to the
-	// materialized pod-Service URL — required for GH actions/runner
-	// pattern (cells 5/6) where the bootstrap can't dial back to
-	// register a reverse-agent (the runner-task is a Cloud Run Job
-	// without a public URL). Reverse-agent stays as a fallback inside
-	// s.ExecStart for interactive (TTY+stdin) execs.
+	// Typed.Exec wiring: route through s.ExecStart (the gcf override)
+	// rather than the reverse-agent driver directly. The override's
+	// `execStartViaInvoke` POSTs an envelope to the materialized
+	// pod-Service URL — required for the GH actions/runner pattern
+	// where the bootstrap can't dial back to register a reverse-agent
+	// (the runner-task is a Cloud Run Job without a public URL).
+	// Reverse-agent stays as a fallback inside s.ExecStart for
+	// interactive (TTY+stdin) execs.
 	s.Typed.Exec = core.WrapLegacyExecStart(
 		func(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
 			return s.ExecStart(id, opts)
@@ -198,19 +197,18 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	// attachStream for the gitlab-runner attach pattern (mirror of
 	// cloudrun's GREEN cell 7 architecture). Read-only attaches (no
 	// Stdin) fall through to AttachViaCloudLogs inside the delegate.
-	// BUG-955: gcf was using the read-only NewCloudLogsAttachDriver
+	// Previously gcf used the read-only NewCloudLogsAttachDriver
 	// which silently dropped gitlab-runner's stdin, causing the build
 	// container's pipe never to be populated.
 	s.Typed.Attach = core.WrapLegacyContainerAttach(s.ContainerAttach,
 		"gcf", "ContainerAttach")
 
-	// Pre-warm the function pool for any operator-configured overlays
-	// (BUG-948). Each entry deploys N free Functions tagged with the
-	// overlay's content-hash so the FIRST ContainerCreate for that
-	// image hits a warm pool, bypassing the regional CPU quota cost
-	// of a fresh per-container deploy. Runs in the background so
-	// NewServer doesn't block on Cloud Build + N CreateFunction
-	// roundtrips at boot.
+	// Pre-warm the function pool for any operator-configured overlays.
+	// Each entry deploys N free Functions tagged with the overlay's
+	// content-hash so the FIRST ContainerCreate for that image hits a
+	// warm pool, bypassing the regional CPU quota cost of a fresh
+	// per-container deploy. Runs in the background so NewServer doesn't
+	// block on Cloud Build + N CreateFunction roundtrips at boot.
 	if len(config.PrewarmOverlays) > 0 && s.images.BuildService != nil {
 		go s.prewarmAllOverlays(context.Background())
 	}

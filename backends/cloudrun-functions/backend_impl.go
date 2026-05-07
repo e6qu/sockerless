@@ -54,8 +54,8 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		if config.WorkingDir == "" {
 			config.WorkingDir = img.Config.WorkingDir
 		}
-		// BUG-918: replace bare digest ref with first RepoTag — Cloud
-		// Run rewrites bare sha256: refs to mirror.gcr.io/library/...
+		// Replace bare digest ref with first RepoTag — Cloud Run
+		// rewrites bare sha256: refs to mirror.gcr.io/library/...
 		// which 404s. Image was pulled by tag so RepoTag exists.
 		if strings.HasPrefix(config.Image, "sha256:") && len(img.RepoTags) > 0 {
 			config.Image = img.RepoTags[0]
@@ -80,7 +80,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// managed GCS buckets via the underlying Cloud Run Service's
 	// ServiceV2.Template.Volumes. Host-path binds translate via
 	// SharedVolumes (config-driven). Mirror of `cloudrun.ContainerCreate`
-	// translator + `lambda.fileSystemConfigsForBinds` shape (BUG-909).
+	// translator + `lambda.fileSystemConfigsForBinds` shape.
 	translatedBinds := make([]string, 0, len(hostConfig.Binds))
 	for _, b := range hostConfig.Binds {
 		parts := strings.SplitN(b, ":", 3)
@@ -193,10 +193,10 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	}
 	container.NetworkSettings.Networks[netName] = endpoint
 
-	// BUG-923 fast-path: store in PendingCreates immediately and
-	// run the slow CreateFunction + UpdateService work in a background
-	// goroutine. ContainerCreate returns 201 in <100 ms; ContainerStart
-	// waits on s.deployFutures[id] before invoking the function.
+	// Fast-path: store in PendingCreates immediately and run the slow
+	// CreateFunction + UpdateService work in a background goroutine.
+	// ContainerCreate returns 201 in <100 ms; ContainerStart waits on
+	// s.deployFutures[id] before invoking the function.
 	// gitlab-runner's 120 s docker-daemon timeout fires per HTTP call —
 	// returning fast from /containers/create avoids the timeout. The
 	// caller's natural next step is /containers/{id}/start which polls
@@ -250,7 +250,7 @@ func (s *Server) cancelDeployFuture(id string) {
 // work that ContainerCreate used to do synchronously. Sends the final
 // error (or nil on success) on `done`. Invoked from a goroutine kicked
 // by ContainerCreate; ContainerStart awaits this channel before going
-// to invoke. Per BUG-923.
+// to invoke.
 //
 // Honours ctx for cancellation: if ContainerStart later decides this
 // container is part of a multi-container pod that should materialize as
@@ -292,11 +292,11 @@ func (s *Server) deployFunctionAsync(ctx context.Context, id string, container a
 // fresh Function was already created, deletes it. Returns the context
 // error directly so deployFunctionAsync can surface errDeployCancelled.
 //
-// BUG-953 follow-up: route the entire single-container deploy through
-// the fast Cloud Run Services.CreateService path (deployContainerService).
-// Cloud Functions Gen2's CreateFunction + Buildpacks build + UpdateService
-// swap was ~90-150 s (cell 8 v8 evidence — gitlab-runner's permission
-// container hit the 120 s timeout); the direct CR Service deploy is
+// Routes the entire single-container deploy through the fast Cloud
+// Run Services.CreateService path (deployContainerService). Cloud
+// Functions Gen2's CreateFunction + Buildpacks build + UpdateService
+// swap was ~90-150 s — long enough that gitlab-runner's permission
+// container hit the 120 s timeout; the direct CR Service deploy is
 // ~30-60 s. Skips the pool-claim path too — at this speed the pool
 // optimisation is unnecessary, and pool entries are Functions which
 // the cloud_state Services-side path doesn't index.
@@ -357,7 +357,7 @@ func (s *Server) ContainerStart(ref string) error {
 	// Docker-network → multi-member pod auto-detection FIRST. The
 	// decision is purely Standard-Docker-API: NetworkingConfig.EndpointsConfig
 	// + Container.Config.OpenStdin. Doing this BEFORE the deploy-await
-	// resolves the BUG-923/BUG-925 architectural conflict — if this
+	// resolves the deploy/materialize architectural conflict — if this
 	// container is a network-pod member that should materialize as a
 	// multi-container Service revision, we cancel our own (and siblings')
 	// in-flight async deploys before they complete, then take the
@@ -389,7 +389,7 @@ func (s *Server) ContainerStart(ref string) error {
 		// netMembers[0].ID is the authoritative MAIN per the convention
 		// in shouldDeferOrMaterializeNetworkPod. For gitlab-runner pattern
 		// (OpenStdin=true) that's the current container; for GH actions/
-		// runner pattern (OpenStdin=false service-arrival path, BUG-959)
+		// runner pattern (OpenStdin=false service-arrival path)
 		// it's the FIRST sibling — the long-lived job container created
 		// before this service. Use that ID for Service naming and
 		// allocation labels so resolveGCFFromCloud(mainID) finds the
@@ -427,9 +427,9 @@ func (s *Server) ContainerStart(ref string) error {
 	}
 
 	// Single-container fall-through: await OUR own deploy. ContainerCreate
-	// kicked deployFunctionAsync immediately (BUG-923) so this is gitlab-
-	// runner's natural blocking wait point — taking the full 200s here
-	// is within the docker-API contract.
+	// kicked deployFunctionAsync immediately so this is gitlab-runner's
+	// natural blocking wait point — taking the full 200s here is within
+	// the docker-API contract.
 	if v, ok := s.deployFutures.LoadAndDelete(id); ok {
 		f, _ := v.(*deployFuture)
 		if f != nil && f.ch != nil {
@@ -475,7 +475,7 @@ func (s *Server) ContainerStart(ref string) error {
 	// outcome in Store.InvocationResults so CloudState reflects the
 	// container as exited with a real exit code.
 	//
-	// BUG-951: pass user entrypoint+cmd as the exec envelope's argv so
+	// Pass user entrypoint+cmd as the exec envelope's argv so
 	// pool-claimed Functions don't need a CR Service env update on
 	// each claim. Bootstrap's parseExecEnvelope reads argv from the
 	// request body and runs Path B; when argv is empty the bootstrap
@@ -994,7 +994,7 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	// (e.g. golang:1.22-alpine), NOT the overlay URI — the rewrite
 	// happens inside materializePodService. We therefore allow stdin
 	// for ANY container with a registered Cloud Run Service backing
-	// (or about-to-be-created via materialize). See BUG-954.
+	// (or about-to-be-created via materialize).
 	if opts.Stdin {
 		s.Logger.Info().Str("container", c.ID).Str("image", c.Config.Image).Msg("ContainerAttach: registering stdinPipe + attachStream")
 		p := newStdinPipe()

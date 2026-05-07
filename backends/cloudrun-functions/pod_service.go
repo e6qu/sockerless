@@ -1,23 +1,23 @@
 package gcf
 
-// BUG-953: pod materialization via direct multi-container Cloud Run
-// Service deploy (skipping the slow Cloud Functions wrapper).
+// Pod materialization via direct multi-container Cloud Run Service
+// deploy (skipping the slow Cloud Functions wrapper).
 //
-// Cell 8 evidence: the previous implementation (materializePodFunction)
-// did three sequential operations — (1) merged-rootfs Cloud Build for
-// a pod overlay, (2) Functions.CreateFunction with a Buildpacks-Go stub
+// The previous implementation (materializePodFunction) did three
+// sequential operations — (1) merged-rootfs Cloud Build for a pod
+// overlay, (2) Functions.CreateFunction with a Buildpacks-Go stub
 // source which itself runs Cloud Build internally + creates the
 // underlying CR Service, and (3) Services.UpdateService to swap the
 // stub image for the pod overlay. Total ~150-180 s, exceeding
 // gitlab-runner's 120 s ContainerExec timeout.
 //
-// The new path mirrors what cloudrun does for pod-mode in cell 7
-// (which is GREEN at 90 s total): build per-container overlay images
-// in parallel, then call Services.CreateService once with a multi-
-// container RevisionTemplate. Cloud Run schedules every member on the
-// same instance — sidecars share loopback with main, so the postgres
-// service is reachable from the build container via 127.0.0.1:5432
-// (the standard `services:` clause behaviour gitlab-runner expects).
+// The new path mirrors what cloudrun does for pod-mode (~90 s total):
+// build per-container overlay images in parallel, then call
+// Services.CreateService once with a multi-container RevisionTemplate.
+// Cloud Run schedules every member on the same instance — sidecars
+// share loopback with main, so the postgres service is reachable from
+// the build container via 127.0.0.1:5432 (the standard `services:`
+// clause behaviour gitlab-runner expects).
 //
 // Track the resulting Service via labels so cloud_state can find pod
 // members through Services.ListServices alongside the existing
@@ -133,8 +133,8 @@ func (s *Server) materializePodService(mainContainerID string, containers []api.
 		Containers: specs,
 		Volumes:    volumes,
 		Scaling: &runpb.RevisionScaling{
-			// BUG-970: scale to zero between exec POSTs so the regional
-			// CPU quota isn't pinned by always-on revisions. Each ad-hoc
+			// Scale to zero between exec POSTs so the regional CPU
+			// quota isn't pinned by always-on revisions. Each ad-hoc
 			// pod-Service serves a few /exec POSTs over its short lifetime;
 			// keeping a min-1 instance burns ~1-2 vCPUs of regional quota
 			// for the entire pipeline duration even when idle. With the 5+
@@ -143,8 +143,7 @@ func (s *Server) materializePodService(mainContainerID string, containers []api.
 			// pipeline and causes later container deploys to fail with the
 			// misleading "container failed to bind PORT=8080" error. The
 			// cold-start latency on first /exec POST after idle is <5s
-			// (verified locally — bootstrap binds 8080 in ~1.4s on Cloud
-			// Run direct deploy).
+			// (bootstrap binds 8080 in ~1.4s on Cloud Run direct deploy).
 			MinInstanceCount: 0,
 			MaxInstanceCount: 1,
 		},
@@ -239,10 +238,10 @@ func (s *Server) materializePodService(mainContainerID string, containers []api.
 	// 5. Invoke the pod's ingress container (main is index 0). The
 	//    bootstrap on main runs the user's argv via the exec envelope
 	//    posted to the Service URL. skipIfNoStdin=true mirrors the
-	//    cloudrun BUG-961 fix: pod-Service materializes are runner-style
-	//    long-lived containers that must NOT default-invoke when no
-	//    stdinPipe is captured (BUG-964). The bootstrap stays on its
-	//    HTTP listener for the runner's subsequent /exec POSTs instead.
+	//    Pod-Service materializes are runner-style long-lived containers
+	//    that must NOT default-invoke when no stdinPipe is captured.
+	//    The bootstrap stays on its HTTP listener for the runner's
+	//    subsequent /exec POSTs instead.
 	go s.invokePodServiceMain(ctx, result, containers, exitCh, true)
 	return nil
 }
@@ -320,8 +319,8 @@ func (s *Server) deployContainerService(ctx context.Context, id string, containe
 		Containers: specs,
 		Volumes:    volumes,
 		Scaling: &runpb.RevisionScaling{
-			// BUG-970: scale to zero between exec POSTs so the regional
-			// CPU quota isn't pinned by always-on revisions. Each ad-hoc
+			// Scale to zero between exec POSTs so the regional CPU
+			// quota isn't pinned by always-on revisions. Each ad-hoc
 			// pod-Service serves a few /exec POSTs over its short lifetime;
 			// keeping a min-1 instance burns ~1-2 vCPUs of regional quota
 			// for the entire pipeline duration even when idle. With the 5+
@@ -330,8 +329,7 @@ func (s *Server) deployContainerService(ctx context.Context, id string, containe
 			// pipeline and causes later container deploys to fail with the
 			// misleading "container failed to bind PORT=8080" error. The
 			// cold-start latency on first /exec POST after idle is <5s
-			// (verified locally — bootstrap binds 8080 in ~1.4s on Cloud
-			// Run direct deploy).
+			// (bootstrap binds 8080 in ~1.4s on Cloud Run direct deploy).
 			MinInstanceCount: 0,
 			MaxInstanceCount: 1,
 		},
@@ -427,7 +425,7 @@ func (s *Server) userDefinedNetworkIDOrEmpty(c api.Container) string {
 //
 // Volume mounts are translated from the caller's HostConfig.Binds:
 // non-shared volumes become Volume_EmptyDir{MEMORY} backed by tar-pack
-// persistence (BUG-947); shared volumes stay as raw GCSFuse.
+// persistence; shared volumes stay as raw GCSFuse.
 func (s *Server) buildPodContainerSpecs(ctx context.Context, containers []api.Container, overlayURIs []string) ([]*runpb.Container, []*runpb.Volume, []string, error) {
 	specs := make([]*runpb.Container, 0, len(containers))
 	volSeen := map[string]struct{}{}
@@ -473,7 +471,9 @@ func (s *Server) buildPodContainerSpecs(ctx context.Context, containers []api.Co
 // buildPodContainerSpec produces one runpb.Container for a pod member.
 // The bootstrap is already baked in via the overlay image; the
 // caller's entrypoint+cmd+workdir flow through env so the bootstrap
-// reads them at runtime (matching BUG-950 + BUG-951).
+// reads them at runtime — keeping argv out of the image content keeps
+// the overlay tag stable across containers that share the same base
+// image + bootstrap pair.
 func (s *Server) buildPodContainerSpec(c api.Container, overlayURI string, isMain bool) (*runpb.Container, []*runpb.VolumeMount, error) {
 	cfg := c.Config
 	envVars := make([]*runpb.EnvVar, 0, len(cfg.Env)+8)
@@ -531,12 +531,12 @@ func (s *Server) buildPodContainerSpec(c api.Container, overlayURI string, isMai
 			Name:      parts[0],
 			MountPath: parts[1],
 		})
-		// Phase 123: when this bind references a gcs-sync SharedVolume,
-		// record the mount path so the bootstrap-side restore knows where
-		// to untar each per-exec GCS object. The runner-task's PreExec
-		// emits just `name=GCS_URL` (the bind target lives on the JOB
-		// container side, not the runner-task side); the bootstrap joins
-		// the two by name at exec time.
+		// When this bind references a gcs-sync SharedVolume, record the
+		// mount path so the bootstrap-side restore knows where to untar
+		// each per-exec GCS object. The runner-task's PreExec emits just
+		// `name=GCS_URL` (the bind target lives on the JOB container
+		// side, not the runner-task side); the bootstrap joins the two
+		// by name at exec time.
 		// At ContainerCreate time backend_impl rewrites bind sources from
 		// host-path (`/tmp/runner-work`) to SharedVolume.Name
 		// (`runner-workspace`) — see backend_impl.go::overlayHostConfig.
@@ -630,10 +630,10 @@ func sanitizeServiceContainerName(name string) string {
 
 // buildVolumeForBindGCF mirrors the cloudrun buildVolumeForBind
 // helper. Operator-pinned SharedVolume entries route through the
-// Phase 123 storage backing driver (gcs-fuse / gcs-sync per the
+// storage backing driver (gcs-fuse / gcs-sync per the
 // SharedVolume.Backing field); ad-hoc binds (no SharedVolume entry) get
 // Volume_EmptyDir{MEMORY} + a SOCKERLESS_PERSIST_VOLUMES entry for the
-// bootstrap's tar-pack persistence (BUG-947).
+// bootstrap's tar-pack persistence.
 func (s *Server) buildVolumeForBindGCF(ctx context.Context, volName, mountPath string) (*runpb.Volume, string, error) {
 	bucket, err := s.bucketForVolume(ctx, volName)
 	if err != nil {
@@ -668,7 +668,7 @@ func (s *Server) buildVolumeForBindGCF(ctx context.Context, volName, mountPath s
 
 // injectPodPersistEnv appends SOCKERLESS_PERSIST_VOLUMES to the main
 // (index 0) container so the bootstrap's tar-pack module restores +
-// saves bind volumes across exec boundaries (BUG-947).
+// saves bind volumes across exec boundaries.
 func injectPodPersistEnv(specs []*runpb.Container, entries []string) {
 	if len(entries) == 0 || len(specs) == 0 {
 		return
@@ -706,16 +706,15 @@ func injectPodHostAliases(specs []*runpb.Container, members []api.Container, net
 // this wait, gcf POSTed the user's default CMD immediately on
 // materialize completion, which exits 0 with no work and closes
 // WaitChs before gitlab-runner can attach + pipe its script.
-// See BUG-954.
 //
-// `skipIfNoStdin` (BUG-964): when true, also skip the default-invoke
-// POST for OpenStdin=false main containers. The GH actions/runner
-// pattern materializes a long-lived `tail -f /dev/null`-style JOB
-// container that the runner expects to keep alive for `docker exec`.
-// POSTing the default CMD would run that long-lived process as a
-// one-shot subprocess and block forever, holding invokeMu so the
-// subsequent /exec POST never reaches the bootstrap. Mirrors the
-// cloudrun BUG-961 fix (commit 33e205a).
+// `skipIfNoStdin`: when true, also skip the default-invoke POST for
+// OpenStdin=false main containers. The GH actions/runner pattern
+// materializes a long-lived `tail -f /dev/null`-style JOB container
+// that the runner expects to keep alive for `docker exec`. POSTing
+// the default CMD would run that long-lived process as a one-shot
+// subprocess and block forever, holding invokeMu so the subsequent
+// /exec POST never reaches the bootstrap. Mirrors the cloudrun
+// skip-default-invoke path.
 func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, containers []api.Container, _ chan struct{}, skipIfNoStdin bool) {
 	mainContainer := containers[0]
 	mainID := mainContainer.ID
@@ -820,7 +819,7 @@ func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, c
 		// (gitlab-runner-build / dumb-init) would exit 0 with no work,
 		// close WaitChs, and make sockerless report the container as
 		// exited — gitlab-runner then waits silently for a container
-		// it thinks is dead. See BUG-955.
+		// it thinks is dead.
 		s.Logger.Info().Str("main", mainID).Msg("invokePodServiceMain: OpenStdin runner-pattern — skipping default-invoke; container stays alive for docker-exec")
 		// invokePodServiceMain returns without closing WaitChs or
 		// PutInvocationResult. ContainerRemove (via gitlab-runner's
@@ -828,8 +827,8 @@ func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, c
 		// build container is "running" from sockerless's perspective.
 		return
 	} else if skipIfNoStdin {
-		// BUG-964 — GH actions/runner pattern: the runner-task spawns
-		// a JOB container with OpenStdin=false but a long-lived
+		// GH actions/runner pattern: the runner-task spawns a JOB
+		// container with OpenStdin=false but a long-lived
 		// `tail -f /dev/null`-style entrypoint. The runner then issues
 		// `docker exec <job> sh -c <step.sh>` for each step. Like the
 		// OpenStdin path above, we must NOT default-invoke — that would
@@ -893,7 +892,6 @@ func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, c
 //
 // Mirror of invokePodServiceMain's per-stage section, refactored so
 // ContainerStart's already-running branch can call it on each stage.
-// See BUG-955.
 func (s *Server) invokeRunningRunnerStage(mainID string, mainContainer api.Container) {
 	ctx := s.ctx()
 	s.Logger.Info().Str("main", mainID).Msg("invokeRunningRunnerStage: goroutine entered")

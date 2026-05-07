@@ -333,8 +333,8 @@ func (d *dispatchLoop) Cleanup(ctx context.Context) error {
 // EXECUTION_FAILED / EXECUTION_RUNNING / NO_EXECUTION. The legacy
 // CONDITION_* strings (Cloud Run Job's TerminalCondition.State,
 // reflecting Job-DEFINITION reconciliation, not execution outcome)
-// are NOT treated as terminal — using them caused BUG-940 (cell 5
-// runner-tasks deleted 80s after spawn while still bootstrapping).
+// are NOT treated as terminal — using them deletes runner-tasks
+// shortly after spawn while they're still bootstrapping.
 func isTerminalJobState(state string) bool {
 	switch state {
 	case "EXECUTION_SUCCEEDED", "EXECUTION_FAILED":

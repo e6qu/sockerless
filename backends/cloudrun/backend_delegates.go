@@ -53,12 +53,12 @@ func (s *Server) ContainerInspect(id string) (*api.Container, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Phase 122g BUG-935: when InvocationResult is recorded (cmd ran +
-	// exited), override CloudState's "running" status with "exited" so
-	// inspect-poll callers (gitlab-runner cache permission setup uses
-	// this pattern, not ContainerWait) see the real exit. Cloud Run
-	// Service.status stays "Ready" forever — without this override,
-	// State.Status="running" lies and gitlab-runner waits forever.
+	// When InvocationResult is recorded (cmd ran + exited), override
+	// CloudState's "running" status with "exited" so inspect-poll
+	// callers (gitlab-runner cache permission setup uses this pattern,
+	// not ContainerWait) see the real exit. Cloud Run Service.status
+	// stays "Ready" forever — without this override, State.Status="running"
+	// lies and gitlab-runner waits forever.
 	if inv, ok := s.Store.GetInvocationResult(resolvedID); ok {
 		c.State.Status = "exited"
 		c.State.Running = false

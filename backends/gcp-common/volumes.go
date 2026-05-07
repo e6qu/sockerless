@@ -183,14 +183,14 @@ func BucketVolumeName(b *storage.BucketAttrs) string {
 
 // BucketName returns a globally-unique bucket name for a Docker volume.
 // GCS bucket names have tight constraints (3-63 chars, lowercase, digits,
-// dashes, no leading/trailing dashes, no `..`). BUG-916: long volume
-// names (e.g. gitlab-runner cache: `runner-tkopdswuw-project-81023556-
-// concurrent-0-...-cache-...`) overflowed the 63-char limit even with
-// a 30-char safe truncation, AND truncation produced names GCS rejected
-// as "restricted" (truncated tail looks like a project ID prefix).
-// Fix: use a stable sha256 hash for any volume name >12 chars, so
-// total length is always predictable: 18 + project (capped 26) + 1 +
-// hash[:16] = 61 chars max. Round-trip via VolumeNameLabelKey label.
+// dashes, no leading/trailing dashes, no `..`). Long volume names (e.g.
+// gitlab-runner cache: `runner-tkopdswuw-project-81023556-concurrent-0-
+// ...-cache-...`) overflow the 63-char limit even with a 30-char safe
+// truncation, AND truncation produces names GCS rejects as "restricted"
+// (the truncated tail looks like a project ID prefix). Use a stable
+// sha256 hash for any volume name >12 chars, so total length is always
+// predictable: 18 + project (capped 26) + 1 + hash[:16] = 61 chars max.
+// Round-trip via VolumeNameLabelKey label.
 func BucketName(project, volName string) string {
 	proj := SanitiseLabelValue(project)
 	if len(proj) > 26 {

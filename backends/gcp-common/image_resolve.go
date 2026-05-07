@@ -28,8 +28,8 @@ func ResolveGCPImageURI(ref, project, region string) string {
 		return ref
 	}
 
-	// BUG-918: gitlab-runner permission containers reference images by
-	// bare `sha256:<digest>` (no repo). The legacy `parseDockerRef` would
+	// gitlab-runner permission containers reference images by bare
+	// `sha256:<digest>` (no repo). The legacy `parseDockerRef` would
 	// split this on `:` producing repo="sha256" tag="<digest>" → AR URL
 	// `<AR>/docker-hub/library/sha256:<digest>` which Cloud Run rejects.
 	// Bare digest refs can't be rewritten to AR — they must already be
@@ -56,7 +56,7 @@ func ResolveGCPImageURI(ref, project, region string) string {
 			repo = "library/" + repo
 		}
 	case "registry.gitlab.com":
-		// BUG-919: gitlab-runner-helper image lives here; AR remote-proxy
+		// gitlab-runner-helper image lives here; AR remote-proxy
 		// `gitlab-registry` proxies registry.gitlab.com.
 		arRepo = "gitlab-registry"
 	default:

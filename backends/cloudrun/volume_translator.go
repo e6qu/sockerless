@@ -1,4 +1,4 @@
-// Per-backend volume translator (Phase 123 step 3, cloudrun mirror).
+// Per-backend volume translator (cloudrun mirror).
 //
 // Maps a cloud-agnostic core.BackingSpec (produced by a
 // core.StorageBackingDriver) to the cloudrun-specific runpb.Volume
@@ -72,7 +72,8 @@ func runpbVolumeFromBackingSpec(name string, spec core.BackingSpec) (*runpb.Volu
 // preExecHintsForVolumes — mirror of gcf's helper. GCS drivers emit
 // just `name=gs://bucket/object` pairs; the JOB-side bind target is
 // recorded at materialize time as SOCKERLESS_SYNC_MOUNTS. See gcf
-// volume_translator for the full BUG-967 rationale.
+// volume_translator for the rationale around stateless lookups
+// returning empty HostConfig.Binds.
 func (s *Server) preExecHintsForVolumes(ctx context.Context, vols []SharedVolume, binds []string, execID string) (map[string]string, error) {
 	_ = binds
 	merged := map[string][]string{}

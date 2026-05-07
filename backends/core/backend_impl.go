@@ -1684,10 +1684,10 @@ func (s *BaseServer) ImageHistory(name string) ([]*api.ImageHistoryEntry, error)
 
 	// No registry-sourced history for this image (e.g., built
 	// locally without history tracking, or the image predates
-	// Phase 30's history-capture). Return a single top-level entry
-	// describing what we do know — image ID + size + creation time
-	// — rather than fabricating per-layer entries with made-up
-	// `CreatedBy` text that doesn't reflect the actual build.
+	// history-capture). Return a single top-level entry describing
+	// what we do know — image ID + size + creation time — rather
+	// than fabricating per-layer entries with made-up `CreatedBy`
+	// text that doesn't reflect the actual build.
 	created, _ := time.Parse(time.RFC3339Nano, img.Created)
 	return []*api.ImageHistoryEntry{{
 		ID:      img.ID,

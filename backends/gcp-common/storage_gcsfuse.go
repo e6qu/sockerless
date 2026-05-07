@@ -1,14 +1,14 @@
-// Package gcpcommon — gcs-fuse storage backing driver (LEGACY, retain for cells 7+8).
+// Package gcpcommon — gcs-fuse storage backing driver (LEGACY).
 //
 // gcs-fuse exposes a GCS bucket as a Cloud Run native Volume{Gcs}
 // FUSE mount. The driver itself is trivial — just emits a BackingSpec.GCS
 // for the per-backend translator to wrap in runpb.Volume{Gcs{Bucket}}.
 //
-// FUSE-on-object-store has known semantic gaps (BUG-965 stale-handle on
-// per-step rewrites; BUG-947 git-checkout incompatibility). Per user
-// directive 2026-05-07, this driver is retained ONLY for cells 7+8's
-// existing tar-pack persist mounting (sequential whole-tar uploads — the
-// FUSE-safe pattern). New SharedVolumes MUST use the gcs-sync driver
+// FUSE-on-object-store has known semantic gaps: stale handles on
+// per-step rewrites of the same object, and git-checkout
+// incompatibility. This driver is retained ONLY for legacy tar-pack
+// persist mounting (sequential whole-tar uploads — the FUSE-safe
+// pattern). New SharedVolumes MUST use the gcs-sync driver
 // (storage_gcssync.go) instead.
 package gcpcommon
 

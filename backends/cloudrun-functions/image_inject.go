@@ -19,8 +19,8 @@ import (
 
 // OverlayImageSpec, RenderOverlayDockerfile, OverlayContentTag, and
 // TarOverlayContext live in gcp-common so cloudrun + gcf share one
-// renderer (Phase 122g). The gcf-specific aliases below preserve the
-// existing call sites without forcing every callsite to qualify.
+// renderer. The gcf-specific aliases below preserve the existing call
+// sites without forcing every callsite to qualify.
 
 // OverlayImageSpec aliases gcpcommon.OverlayImageSpec for in-package use.
 type OverlayImageSpec = gcpcommon.OverlayImageSpec

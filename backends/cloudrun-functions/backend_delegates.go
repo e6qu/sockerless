@@ -193,11 +193,11 @@ func (s *Server) ExecResize(id string, h int, w int) error {
 	return s.BaseServer.ExecResize(id, h, w)
 }
 
-// ExecStart runs the exec inside the function container via the
-// Phase 122g: Path B HTTP POST is preferred (envelope POSTed to the
-// Function URL; bootstrap parses + runs + returns response envelope).
-// Reverse-agent WS is the fallback for interactive (TTY+stdin) execs
-// where streaming is required.
+// ExecStart runs the exec inside the function container.
+// Path B HTTP POST is preferred (envelope POSTed to the Function URL;
+// bootstrap parses + runs + returns response envelope). Reverse-agent
+// WS is the fallback for interactive (TTY+stdin) execs where streaming
+// is required.
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
 	s.Logger.Info().Str("execID", id).Bool("tty", opts.Tty).Bool("detach", opts.Detach).Msg("ExecStart: ENTRY")
 	exec, ok := s.Store.Execs.Get(id)
@@ -221,7 +221,7 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 	}
 
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
-		return nil, &api.NotImplementedError{Message: "docker exec requires a Cloud Run Function URL with sockerless-gcf-bootstrap (Phase 122g) OR a reverse-agent (SOCKERLESS_CALLBACK_URL); neither is available for this container"}
+		return nil, &api.NotImplementedError{Message: "docker exec requires a Cloud Run Function URL with sockerless-gcf-bootstrap OR a reverse-agent (SOCKERLESS_CALLBACK_URL); neither is available for this container"}
 	}
 	return s.BaseServer.ExecStart(id, opts)
 }

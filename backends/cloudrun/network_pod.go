@@ -46,7 +46,7 @@ func (s *Server) shouldDeferOrMaterializeNetworkPod(c api.Container) (shouldDefe
 	if !c.Config.OpenStdin {
 		// Service-style container OR the GH actions/runner job container
 		// (which is also OpenStdin=false but long-lived; the runner uses
-		// `docker exec` per step). Two cases (BUG-959):
+		// `docker exec` per step). Two cases:
 		//
 		//  - No siblings yet: defer — could be a service waiting for a
 		//    script-runner (gitlab-runner, OpenStdin=true) OR the GH job

@@ -70,7 +70,9 @@ func (s *Server) listManagedBuckets(ctx context.Context) ([]*storage.BucketAttrs
 // volumeForBind returns the runpb.Volume to attach for a bind. Shared
 // volumes use raw GCSFuse (Volume_Gcs); ad-hoc volumes use in-memory
 // tmpfs (Volume_EmptyDir{MEMORY}) with tar-pack persistence handled by
-// the bootstrap's persist module. See BUG-947 for the rationale.
+// the bootstrap's persist module. The split exists because GCSFuse
+// is ~200x slower than tmpfs for git operations, and ad-hoc binds are
+// usually git workspaces.
 
 // setEnvVar adds or replaces a literal-value env var on a container
 // (skipping EnvVar_ValueSource entries — those are secret refs and

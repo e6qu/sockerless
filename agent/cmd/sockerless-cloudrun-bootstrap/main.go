@@ -105,12 +105,11 @@ var persistVols []persistVolume
 var syncMounts map[string]string
 
 func main() {
-	// BUG-970 diagnostic: emit to BOTH stdout and stderr at the very
-	// top of main() so Cloud Logging captures *something* from the
-	// binary even if stderr is being lost. Without this, the failing
-	// pod-Service revisions show only Cloud Run's own "Starting new
-	// instance" system messages, leaving us guessing whether the
-	// binary even runs.
+	// Emit to BOTH stdout and stderr at the very top of main() so
+	// Cloud Logging captures *something* from the binary even if
+	// stderr is being lost. Without this, failing pod-Service revisions
+	// show only Cloud Run's own "Starting new instance" system messages,
+	// leaving us guessing whether the binary even runs.
 	fmt.Fprintf(os.Stdout, "sockerless-cloudrun-bootstrap: MAIN ENTRY pid=%d args=%v PORT=%q SOCKERLESS_SIDECAR=%q\n",
 		os.Getpid(), os.Args, os.Getenv("PORT"), os.Getenv(envSidecar))
 	fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: MAIN ENTRY pid=%d args=%v PORT=%q SOCKERLESS_SIDECAR=%q\n",
@@ -128,10 +127,10 @@ func main() {
 		return
 	}
 
-	// BUG-947 fix: when SOCKERLESS_PERSIST_VOLUMES is set, restore any
-	// pre-existing tarballs into the configured tmpfs mountpoints before
-	// the HTTP listener accepts the first exec. Synchronous so the first
-	// docker exec always sees a fully-rehydrated /builds (or whatever the
+	// When SOCKERLESS_PERSIST_VOLUMES is set, restore any pre-existing
+	// tarballs into the configured tmpfs mountpoints before the HTTP
+	// listener accepts the first exec. Synchronous so the first docker
+	// exec always sees a fully-rehydrated /builds (or whatever the
 	// operator named it). Empty env var → no-op.
 	persistVols = parsePersistVolumes(os.Getenv(envPersistVolumes))
 	if len(persistVols) > 0 {
@@ -141,10 +140,10 @@ func main() {
 		}
 	}
 
-	// Phase 123: parse SOCKERLESS_SYNC_MOUNTS once at startup.
-	// Materializer-side env that maps `volumeName -> mountPath` for
-	// each gcs-sync SharedVolume bound to this container. Empty when
-	// no shared volumes use gcs-sync — handleInvoke just skips sync.
+	// Parse SOCKERLESS_SYNC_MOUNTS once at startup. Materializer-side
+	// env that maps `volumeName -> mountPath` for each gcs-sync
+	// SharedVolume bound to this container. Empty when no shared volumes
+	// use gcs-sync — handleInvoke just skips sync.
 	mounts, syncErr := parseSyncMounts(os.Getenv(envSyncMounts))
 	if syncErr != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: SOCKERLESS_SYNC_MOUNTS parse error: %v\n", syncErr)
@@ -179,8 +178,8 @@ func main() {
 // execEnvelope, runs envelope.argv (Path B); otherwise runs the
 // env-baked SOCKERLESS_USER_* cmd (default invoke).
 //
-// BUG-947: when SOCKERLESS_PERSIST_VOLUMES is set, the exec response
-// is buffered, saveAll runs synchronously, and a save failure replaces
+// When SOCKERLESS_PERSIST_VOLUMES is set, the exec response is
+// buffered, saveAll runs synchronously, and a save failure replaces
 // the buffered response with an exit-code=1 response of the same shape
 // (envelope JSON or default-invoke headers). Hard-fail on the save
 // path so gitlab-runner stages fail cleanly instead of silently losing
@@ -201,11 +200,11 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	env, isEnvelope := parseExecEnvelope(body)
 	fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: handleInvoke isEnvelope=%t argv_count=%d\n", isEnvelope, len(env.Argv))
 
-	// Phase 123 step 5: per-exec gcs-sync restore. Hints come via
-	// envelope.Env (default-invoke path doesn't carry per-exec sync
-	// triples — those are only set by ExecStart). Parse + restore
-	// before running the subprocess so the workspace reflects whatever
-	// the runner-task uploaded for this exec.
+	// Per-exec gcs-sync restore. Hints come via envelope.Env (the
+	// default-invoke path doesn't carry per-exec sync triples — those
+	// are only set by ExecStart). Parse + restore before running the
+	// subprocess so the workspace reflects whatever the runner-task
+	// uploaded for this exec.
 	syncVols, syncErr := parseSyncVolumes(extractSyncVolumesEnv(env.Env), syncMounts)
 	if syncErr != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: SOCKERLESS_SYNC_VOLUMES parse error: %v\n", syncErr)

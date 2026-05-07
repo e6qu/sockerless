@@ -97,12 +97,12 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 			Name:      parts[0],
 			MountPath: parts[1],
 		})
-		// Phase 123: record the bind target for gcs-sync SharedVolumes so
-		// the bootstrap restore knows where to untar each per-exec GCS
-		// object. PreExec emits just `name=GCS_URL` (the runner-task can't
-		// know the bind target on its own); the bootstrap joins by name.
-		// Bind sources are pre-translated to SharedVolume.Name at
-		// ContainerCreate time — see cloudrun/backend_impl.go's
+		// Record the bind target for gcs-sync SharedVolumes so the
+		// bootstrap restore knows where to untar each per-exec GCS
+		// object. PreExec emits just `name=GCS_URL` (the runner-task
+		// can't know the bind target on its own); the bootstrap joins
+		// by name. Bind sources are pre-translated to SharedVolume.Name
+		// at ContainerCreate time — see cloudrun/backend_impl.go's
 		// overlay-bind translator. Look up by name here.
 		if sv := s.config.LookupSharedVolumeByName(parts[0]); sv != nil && core.StorageBacking(sv.Backing) == core.BackingGCSSync {
 			syncMountEntries = append(syncMountEntries, fmt.Sprintf("%s=%s", sv.Name, parts[1]))
@@ -130,12 +130,12 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 		},
 	}
 
-	// Phase 122f: Cloud Run Service health check probes ContainerPort.
-	// Read the actual ExposedPorts from the image (real cloud-primitive
-	// data, not a hardcoded heuristic). If the image declares no ports,
-	// the container does NOT bind $PORT and is NOT eligible for Service
-	// path — let the caller route it elsewhere or fail loudly. No
-	// defaults, no fallbacks (per project rule).
+	// Cloud Run Service health check probes ContainerPort. Read the
+	// actual ExposedPorts from the image (real cloud-primitive data, not
+	// a hardcoded heuristic). If the image declares no ports, the
+	// container does NOT bind $PORT and is NOT eligible for Service path —
+	// let the caller route it elsewhere or fail loudly. No defaults, no
+	// fallbacks (per project rule).
 	//
 	// Cloud Run multi-container rule: EXACTLY ONE container per revision
 	// must declare Ports — the ingress one. The bootstrap (which is the
@@ -268,10 +268,10 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 // mapCPUMemory returns the default Cloud Run resource limits.
 // Cloud Run valid CPU: 1, 2, 4, 8. 1Gi/container matches the gcf
 // backend default; 512Mi was insufficient for multi-container revisions
-// running a postgres service container alongside the JOB main (BUG-969:
-// cells 5+6 v12 hit the port-8080-not-bound timeout because postgres
-// initdb OOM'd in 512Mi, and Cloud Run reports the whole revision as
-// failed even though it's the sidecar that crashed).
+// running a postgres service container alongside the JOB main (postgres
+// initdb OOM'd in 512Mi and Cloud Run reports the whole revision as
+// failed even though it's the sidecar that crashed, manifesting as a
+// port-8080-not-bound timeout on the main container).
 func mapCPUMemory() (string, string) {
 	return "1", "1Gi"
 }

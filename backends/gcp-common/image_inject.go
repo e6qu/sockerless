@@ -77,7 +77,7 @@ func RenderOverlayDockerfile(spec OverlayImageSpec) (string, error) {
 	fmt.Fprintf(&b, "COPY %s /opt/sockerless/%s\n", name, name)
 	fmt.Fprintf(&b, "RUN chmod +x /opt/sockerless/%s\n", name)
 	// SOCKERLESS_USER_ENTRYPOINT / _CMD / _WORKDIR are intentionally NOT
-	// baked into the image (BUG-950). They're passed at runtime via
+	// baked into the image. They're passed at runtime via
 	// ServiceConfig.EnvironmentVariables on each fresh deploy + each
 	// pool claim, so the same overlay image works for any user command
 	// and the pool can be reused across container types with different
@@ -104,7 +104,7 @@ func JoinForEnv(parts []string) string {
 // OverlayContentTag returns a stable content-addressed tag for the
 // overlay image. Identical (user-image, bootstrap) tuples reuse the
 // already-built overlay AND the pool entry — entrypoint/cmd/workdir
-// are runtime env overrides, not image content (BUG-950). `prefix`
+// are runtime env overrides, not image content. `prefix`
 // lets each caller scope its tag namespace (e.g. `gcf-`, `cloudrun-`)
 // so the per-cloud image cache doesn't collide.
 func OverlayContentTag(prefix string, spec OverlayImageSpec) string {

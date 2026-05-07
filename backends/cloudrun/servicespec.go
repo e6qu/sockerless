@@ -83,13 +83,13 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 		Containers: specs,
 		Volumes:    volumes,
 		Scaling: &runpb.RevisionScaling{
-			// BUG-970: scale to zero between exec POSTs so the regional CPU
-			// quota isn't pinned by always-on pod-Service revisions. See
-			// gcf pod_service.go for the full rationale — each ad-hoc
-			// pod-Service serves a few /exec POSTs over its short lifetime,
-			// pinning ~1-2 vCPU of regional quota with min=1 burns enough
-			// quota across a single pipeline that later docker-start calls
-			// fail with the misleading port-bind error.
+			// Scale to zero between exec POSTs so the regional CPU quota
+			// isn't pinned by always-on pod-Service revisions. See gcf
+			// pod_service.go for the full rationale — each ad-hoc pod-Service
+			// serves a few /exec POSTs over its short lifetime; pinning
+			// ~1-2 vCPU of regional quota with min=1 burns enough quota
+			// across a single pipeline that later docker-start calls fail
+			// with the misleading port-bind error.
 			MinInstanceCount: 0,
 			MaxInstanceCount: 1,
 		},
@@ -131,12 +131,11 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 	return &runpb.Service{
 		Labels:      tags.AsGCPLabels(),
 		Annotations: tags.AsGCPAnnotations(),
-		// BUG-933: Ingress=ALL with IAM-required invoke. Cloud Run rejects
+		// Ingress=ALL with IAM-required invoke. Cloud Run rejects
 		// cross-project-service-to-service via .a.run.app + Cloud NAT
 		// with HTTP 404 because the NAT'd source IP isn't auto-detected
-		// as same-project Cloud Run (cell 7 v19 evidence:
-		// invokeServiceDefaultCmd POST returned status=404 in 25ms —
-		// edge-rejected, never reached the bootstrap).
+		// as same-project Cloud Run (the invoke POST is edge-rejected
+		// with status=404 in <30ms — never reaches the bootstrap).
 		//
 		// Security stance preserved: NO allUsers→roles/run.invoker
 		// binding (verified via service IAM policy). Only the
@@ -149,8 +148,7 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 		// The right end-state is Cloud Run private DNS via Service
 		// Connector + Private Service Connect, which keeps both the
 		// URL un-resolvable AND the IAM gate. Deferred — adds Service
-		// Connector + per-Service PSC endpoint complexity. Tracked as
-		// a follow-up to Phase 122g.
+		// Connector + per-Service PSC endpoint complexity.
 		Ingress:            runpb.IngressTraffic_INGRESS_TRAFFIC_ALL,
 		DefaultUriDisabled: false,
 		Template:           revTemplate,

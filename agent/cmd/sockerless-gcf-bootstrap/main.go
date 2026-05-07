@@ -133,9 +133,9 @@ var invokeMu sync.Mutex
 // persistVols holds the parsed SOCKERLESS_PERSIST_VOLUMES config so
 // every handleInvoke can run saveAll without re-parsing. Initialized
 // once at startup; nil-or-empty means persistence is disabled.
-// BUG-957: ports the cloudrun bootstrap's BUG-947 module to gcf so
-// bind volumes carry across the multi-pod-Service stage transitions
-// gitlab-runner v17 docker executor produces with multi-image-per-job.
+// Ports the cloudrun bootstrap's persist module to gcf so bind volumes
+// carry across the multi-pod-Service stage transitions gitlab-runner
+// v17 docker executor produces with multi-image-per-job.
 var persistVols []persistVolume
 
 // syncMounts holds the parsed SOCKERLESS_SYNC_MOUNTS — `volumeName ->
@@ -144,11 +144,11 @@ var persistVols []persistVolume
 var syncMounts map[string]string
 
 func main() {
-	// BUG-970 diagnostic: same shape as cloudrun bootstrap — emit to
-	// BOTH stdout and stderr at the very top of main() so Cloud Logging
-	// captures the binary's first instruction even if one stream is
-	// lost. Sidecar mode triggers below; the second log line proves
-	// post-sidecar-check execution path.
+	// Same shape as cloudrun bootstrap — emit to BOTH stdout and stderr
+	// at the very top of main() so Cloud Logging captures the binary's
+	// first instruction even if one stream is lost. Sidecar mode
+	// triggers below; the second log line proves the post-sidecar-check
+	// execution path.
 	fmt.Fprintf(os.Stdout, "sockerless-gcf-bootstrap: MAIN ENTRY pid=%d args=%v PORT=%q SOCKERLESS_SIDECAR=%q\n",
 		os.Getpid(), os.Args, os.Getenv("PORT"), os.Getenv(envSidecar))
 	fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: MAIN ENTRY pid=%d args=%v PORT=%q SOCKERLESS_SIDECAR=%q\n",
@@ -178,7 +178,7 @@ func main() {
 		}
 	}
 
-	// Phase 123: parse SOCKERLESS_SYNC_MOUNTS once at startup.
+	// Parse SOCKERLESS_SYNC_MOUNTS once at startup.
 	mounts, syncErr := parseSyncMounts(os.Getenv(envSyncMounts))
 	if syncErr != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: SOCKERLESS_SYNC_MOUNTS parse error: %v\n", syncErr)
@@ -242,7 +242,7 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: handleInvoke body_bytes=%d\n", len(body))
 
-	// Buffer the response so BUG-957 saveAll can run after the subprocess
+	// Buffer the response so saveAll can run after the subprocess
 	// completes but before the wire response goes out. A save failure
 	// replaces the buffered response with an exit-code=1 shape — silent
 	// data loss between stages would surface as confusing build errors.
@@ -250,11 +250,11 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	env, isEnvelope := parseExecEnvelope(body)
 	fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: handleInvoke isEnvelope=%t argv_count=%d\n", isEnvelope, len(env.Argv))
 
-	// Phase 123 step 5: per-exec gcs-sync restore. Hints come via
-	// envelope.Env (default-invoke + pod paths don't carry per-exec
-	// sync triples — only ExecStart sets them). Parse + restore before
-	// running the subprocess so the workspace reflects whatever the
-	// runner-task uploaded for this exec.
+	// Per-exec gcs-sync restore. Hints come via envelope.Env (the
+	// default-invoke + pod paths don't carry per-exec sync triples —
+	// only ExecStart sets them). Parse + restore before running the
+	// subprocess so the workspace reflects whatever the runner-task
+	// uploaded for this exec.
 	syncVols, syncErr := parseSyncVolumes(extractSyncVolumesEnv(env.Env), syncMounts)
 	if syncErr != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: SOCKERLESS_SYNC_VOLUMES parse error: %v\n", syncErr)

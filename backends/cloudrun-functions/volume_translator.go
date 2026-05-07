@@ -1,4 +1,4 @@
-// Per-backend volume translator (Phase 123 step 3).
+// Per-backend volume translator.
 //
 // Maps a cloud-agnostic core.BackingSpec (produced by a
 // core.StorageBackingDriver) to the gcf-specific runpb.Volume protobuf
@@ -91,7 +91,7 @@ func runpbVolumeFromBackingSpec(name string, spec core.BackingSpec) (*runpb.Volu
 // `name=gs://bucket/object` pairs under SOCKERLESS_SYNC_VOLUMES; the
 // bind target is NOT included here because the runner-task can't
 // reliably know it (api.HostConfig.Binds is empty after the stateless
-// cloud_state round-trip — BUG-967). Instead, the bind-target map is
+// cloud_state round-trip). Instead, the bind-target map is
 // recorded at materialize time on the JOB container as
 // SOCKERLESS_SYNC_MOUNTS, and the bootstrap joins by volume name.
 //

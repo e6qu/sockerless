@@ -72,8 +72,8 @@ func TestBuildServiceParent(t *testing.T) {
 }
 
 // TestBuildServiceSpec_Shape — Service has internal-only ingress,
-// default URI disabled, MinInstanceCount=0 / MaxInstanceCount=1 (BUG-970:
-// scale to zero between exec POSTs to avoid pinning regional CPU quota
+// default URI disabled, MinInstanceCount=0 / MaxInstanceCount=1 (scale
+// to zero between exec POSTs to avoid pinning regional CPU quota
 // across the lifetime of a single GH actions/runner pipeline), and
 // labels carry the sockerless tag set.
 func TestBuildServiceSpec_Shape(t *testing.T) {
@@ -82,10 +82,10 @@ func TestBuildServiceSpec_Shape(t *testing.T) {
 	svc, _ := s.buildServiceSpec(context.Background(), []containerInput{ci})
 
 	if svc.Ingress != runpb.IngressTraffic_INGRESS_TRAFFIC_ALL {
-		t.Errorf("ingress = %v, want INGRESS_TRAFFIC_ALL (BUG-933 — IAM-gated, not allUsers)", svc.Ingress)
+		t.Errorf("ingress = %v, want INGRESS_TRAFFIC_ALL (IAM-gated, not allUsers)", svc.Ingress)
 	}
 	if svc.DefaultUriDisabled {
-		t.Error("DefaultUriDisabled should be false (Phase 122g: backend POSTs envelope to Service URL; Ingress=internal still restricts callers)")
+		t.Error("DefaultUriDisabled should be false (backend POSTs envelope to Service URL; Ingress=internal still restricts callers)")
 	}
 	if svc.Template == nil || len(svc.Template.Containers) != 1 {
 		t.Fatalf("expected 1 container in template, got %+v", svc.Template)
@@ -94,7 +94,7 @@ func TestBuildServiceSpec_Shape(t *testing.T) {
 		t.Errorf("container image = %q", svc.Template.Containers[0].Image)
 	}
 	if svc.Template.Scaling == nil || svc.Template.Scaling.MinInstanceCount != 0 || svc.Template.Scaling.MaxInstanceCount != 1 {
-		t.Errorf("scaling = %+v, want min=0 max=1 (BUG-970)", svc.Template.Scaling)
+		t.Errorf("scaling = %+v, want min=0 max=1 (scale-to-zero)", svc.Template.Scaling)
 	}
 	if svc.Template.VpcAccess == nil || svc.Template.VpcAccess.Connector != s.config.VPCConnector {
 		t.Errorf("vpc access = %+v, want connector=%q", svc.Template.VpcAccess, s.config.VPCConnector)

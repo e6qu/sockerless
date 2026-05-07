@@ -56,10 +56,10 @@ type Config struct {
 	SharedVolumes []SharedVolume
 
 	// BootstrapBinaryPath is the on-disk path of the
-	// sockerless-cloudrun-bootstrap binary. Required for the Phase 122g
-	// overlay path: when set, ContainerCreate stages the bootstrap into
-	// every per-image overlay built by Cloud Build so the resulting
-	// Cloud Run Service hosts an HTTP endpoint that the backend's
+	// sockerless-cloudrun-bootstrap binary. Required for the overlay
+	// path: when set, ContainerCreate stages the bootstrap into every
+	// per-image overlay built by Cloud Build so the resulting Cloud
+	// Run Service hosts an HTTP endpoint that the backend's
 	// ContainerExec POSTs envelope payloads against (Path B model —
 	// specs/CLOUD_RESOURCE_MAPPING.md § Lesson 8). Empty ⇒ overlay path
 	// disabled, ContainerCreate stays on the legacy Job path.
@@ -73,9 +73,8 @@ type Config struct {
 	// bootstrap binary on disk invalidates cached overlay images
 	// automatically. Without this, OverlayContentTag is computed only
 	// from BaseImageRef + BootstrapBinaryPath — both stable across
-	// bootstrap-only changes — and the AR cache hits forever (BUG-968:
-	// cells 5+6 v11 ran the previous day's bootstrap inside a fresh
-	// container).
+	// bootstrap-only changes — so the AR cache would hit forever and
+	// fresh containers would keep running stale bootstrap code.
 	BootstrapBinaryHash string
 }
 
@@ -87,9 +86,9 @@ type Config struct {
 // + `lambda.SharedVolume`, but using GCS buckets as the volume backing
 // (Cloud Run Jobs natively support `Volume{Gcs{Bucket}}`).
 //
-// Backing (Phase 123) is REQUIRED — no automatic fallback per user
-// directive 2026-05-07. Operators set it to "gcs-sync" / "gcs-fuse" /
-// "emptyDir" via the SOCKERLESS_GCP_SHARED_VOLUMES env's 4-tuple format.
+// Backing is REQUIRED — no automatic fallback. Operators set it to
+// "gcs-sync" / "gcs-fuse" / "emptyDir" via the
+// SOCKERLESS_GCP_SHARED_VOLUMES env's 4-tuple format.
 type SharedVolume struct {
 	Name          string // logical volume name used in spawned sub-tasks
 	ContainerPath string // path inside the calling container (= the bind-mount source)
@@ -130,7 +129,7 @@ func ConfigFromEnv() Config {
 
 // parseSharedVolumes parses SOCKERLESS_GCP_SHARED_VOLUMES.
 //
-// Format (Phase 123): `name=path=bucket=backing,...` 4-tuples.
+// Format: `name=path=bucket=backing,...` 4-tuples.
 // `backing` is REQUIRED — operators MUST explicitly choose
 // `gcs-sync` / `gcs-fuse` / `emptyDir` per the no-fallbacks directive.
 // Legacy 3-tuple format is no longer accepted.

@@ -6,7 +6,7 @@ package main
 // instance. In-memory `emptyDir` volumes don't survive across instances,
 // and Cloud Run's `Volume.Gcs` (gcsfuse) lacks POSIX hard-link / flock /
 // atomic-rename — git checkout times out at ~200x the speed of tmpfs
-// (BUG-947, verified 2026-05-04: 211s vs 1s on the same workload).
+// (measured: 211s vs 1s on the same workload).
 //
 // Workaround that keeps the runner unmodified: at container startup,
 // download a single tar object per bind volume from GCS into the tmpfs

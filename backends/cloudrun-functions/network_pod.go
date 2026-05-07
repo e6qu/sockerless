@@ -52,10 +52,10 @@ func (s *Server) shouldDeferOrMaterializeNetworkPod(c api.Container) (shouldDefe
 		//  - No siblings yet: defer — we don't know if a script-runner
 		//    (gitlab-runner OpenStdin=true) is coming, or if this IS the
 		//    GH job container that will be materialized when its services
-		//    arrive (BUG-959). Either way, single-container materialize
-		//    is wrong; wait for the second arrival to disambiguate.
-		//  - Siblings exist (BUG-959): GH actions/runner pattern — the
-		//    JOB container was created FIRST (it's siblings[0]), services
+		//    arrive. Either way, single-container materialize is wrong;
+		//    wait for the second arrival to disambiguate.
+		//  - Siblings exist: GH actions/runner pattern — the JOB
+		//    container was created FIRST (it's siblings[0]), services
 		//    after (this container). Materialize the pod with siblings[0]
 		//    as main + this container as sidecar. The script-runner-with-
 		//    OpenStdin=true gitlab-runner case never lands here because it

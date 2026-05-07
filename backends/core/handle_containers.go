@@ -174,9 +174,9 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
 
-	// Phase 122g BUG-936 fast-path: avoid the slow CloudState.GetContainer
-	// (which for cloudrun lists ALL Cloud Run Services in the project,
-	// taking minutes with N services). Two early-returns:
+	// Fast-path: avoid the slow CloudState.GetContainer (which for
+	// cloudrun lists ALL Cloud Run Services in the project, taking
+	// minutes with N services). Two early-returns:
 	//
 	//   (a) InvocationResult already recorded → container has exited via
 	//       the invoke goroutine; return cached exit code immediately.
@@ -239,14 +239,13 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 		if ch, hasChannel := s.Store.WaitChs.Load(id); hasChannel {
 			select {
 			case <-ch.(chan struct{}):
-				// Phase 122g BUG-934: prefer InvocationResult over
-				// CloudState.GetContainer here. CloudState.GetContainer
-				// for cloudrun's Service-path containers calls
-				// queryServices which iterates ALL services in the
-				// project + filters; with even ~50 stale services this
-				// took ~15 minutes (cell 7 v20 evidence: /wait
-				// duration=902811ms despite WaitCh closing in 2s).
-				// The invoke goroutine that closed WaitCh just stored
+				// Prefer InvocationResult over CloudState.GetContainer
+				// here. CloudState.GetContainer for cloudrun's
+				// Service-path containers calls queryServices which
+				// iterates ALL services in the project + filters; with
+				// even ~50 stale services this can take 10+ minutes,
+				// even though WaitCh closes within seconds. The invoke
+				// goroutine that closed WaitCh just stored
 				// InvocationResult — that IS the truth for FaaS / Service
 				// path containers; reading cloud state again wastes the
 				// fast-path the channel signal was meant to provide.

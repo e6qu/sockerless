@@ -1,7 +1,7 @@
 package main
 
-// gcs-sync per-exec restore/save (Phase 123). Distinct from persist.go,
-// which handles the legacy SOCKERLESS_PERSIST_VOLUMES tar-pack pattern.
+// gcs-sync per-exec restore/save. Distinct from persist.go, which
+// handles the legacy SOCKERLESS_PERSIST_VOLUMES tar-pack pattern.
 //
 // Two env vars define the data plane:
 //
@@ -21,13 +21,13 @@ package main
 // the modifications back via PostExec.
 //
 // Why split: the runner-task's stateless cloud_state lookup returns
-// api.Container with empty HostConfig.Binds (BUG-967), so the runner-
-// task can't reliably know the JOB-side bind target. The materializer
-// DOES know it (it sets the runpb.VolumeMount), so it bakes the map
-// into the container's startup env.
+// api.Container with empty HostConfig.Binds, so the runner-task can't
+// reliably know the JOB-side bind target. The materializer DOES know
+// it (it sets the runpb.VolumeMount), so it bakes the map into the
+// container's startup env.
 //
 // No-fallbacks: malformed entries fail loudly. This data plane is
-// load-bearing for cells 5+6.
+// load-bearing for the per-step shared-workspace path.
 
 import (
 	"archive/tar"

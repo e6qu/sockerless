@@ -127,10 +127,10 @@ func (s *Server) resolveGCFFromCloud(ctx context.Context, containerID string) (G
 	})
 	fn, err := it.Next()
 	if err != nil || fn == nil {
-		// BUG-953: pod-mode resources are Cloud Run Services (not
-		// Functions). When no Function matches the allocation label,
-		// fall through to a Service lookup — pod members live there
-		// after materializePodService runs.
+		// Pod-mode resources are Cloud Run Services (not Functions).
+		// When no Function matches the allocation label, fall through
+		// to a Service lookup — pod members live there after
+		// materializePodService runs.
 		if state, ok := s.resolvePodServiceFromCloud(ctx, containerID); ok {
 			return state, true
 		}
@@ -265,8 +265,8 @@ func (s *Server) releaseOrDeleteFunction(ctx context.Context, fullName string, c
 	return nil
 }
 
-// prewarmAllOverlays materialises the operator-configured prewarm pool
-// (BUG-948). For each PrewarmOverlays entry: build the overlay image,
+// prewarmAllOverlays materialises the operator-configured prewarm pool.
+// For each PrewarmOverlays entry: build the overlay image,
 // then create up to N free Functions tagged with the overlay's
 // content-hash. Any Functions already in the pool from a prior backend
 // boot are counted, so a restart doesn't re-deploy a full set.

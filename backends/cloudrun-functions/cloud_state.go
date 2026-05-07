@@ -236,11 +236,11 @@ func (p *gcfCloudState) queryFunctions(ctx context.Context) ([]api.Container, er
 		containers = append(containers, c)
 	}
 
-	// BUG-953: pod-mode resources are now Cloud Run Services (not
-	// Functions) for deploy-speed reasons — see pod_service.go. Query
-	// Services tagged with sockerless_managed=true + sockerless_pod=*
-	// and emit one container row per pod member (same shape as the
-	// pod-Function path above).
+	// Pod-mode resources are now Cloud Run Services (not Functions) for
+	// deploy-speed reasons — see pod_service.go. Query Services tagged
+	// with sockerless_managed=true + sockerless_pod=* and emit one
+	// container row per pod member (same shape as the pod-Function path
+	// above).
 	podContainers, podErr := p.queryPodServiceContainers(ctx, seen)
 	if podErr != nil {
 		// Don't fail the whole listing — Functions-side results stand;

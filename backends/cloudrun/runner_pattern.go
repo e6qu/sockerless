@@ -5,7 +5,7 @@ import (
 )
 
 // isRunnerPattern reports whether the container should use the Cloud
-// Run Service path (UseService=1) rather than Cloud Run Job. Phase 122f.
+// Run Service path (UseService=1) rather than Cloud Run Job.
 //
 // Detection — REAL signals only, no hardcoded image lists or cmd
 // patterns (per project no-defaults / no-fallbacks rule):

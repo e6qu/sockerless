@@ -60,19 +60,19 @@ func (s *Server) listManagedBuckets(ctx context.Context) ([]*storage.BucketAttrs
 // keep the raw GCSFuse mount — those buckets are written out-of-band
 // and are not git-heavy. Ad-hoc volume names (gitlab-runner build dirs,
 // docker volume create, ...) get an in-memory tmpfs (Volume_EmptyDir)
-// because GCSFuse is ~200x slower than tmpfs for git operations
-// (BUG-947). Persistence across Cloud Run revision instances is then
-// achieved via the bootstrap's tar-pack module.
+// because GCSFuse is ~200x slower than tmpfs for git operations.
+// Persistence across Cloud Run revision instances is then achieved via
+// the bootstrap's tar-pack module.
 func (s *Server) buildVolumeForBind(ctx context.Context, volName, mountPath string) (*runpb.Volume, string, error) {
 	bucket, err := s.bucketForVolume(ctx, volName)
 	if err != nil {
 		return nil, "", fmt.Errorf("provision GCS bucket for volume %q: %w", volName, err)
 	}
 	if shared := s.config.LookupSharedVolumeByName(volName); shared != nil {
-		// Phase 123: route through the storage backing driver. Empty
-		// Backing fails loudly at Resolve time per the no-fallbacks
-		// directive — operator MUST set `gcs-sync` / `gcs-fuse` /
-		// `emptyDir` in SOCKERLESS_GCP_SHARED_VOLUMES.
+		// Route through the storage backing driver. Empty Backing fails
+		// loudly at Resolve time per the no-fallbacks directive —
+		// operator MUST set `gcs-sync` / `gcs-fuse` / `emptyDir` in
+		// SOCKERLESS_GCP_SHARED_VOLUMES.
 		vol := *shared
 		if vol.Bucket == "" {
 			vol.Bucket = bucket
@@ -85,9 +85,8 @@ func (s *Server) buildVolumeForBind(ctx context.Context, volName, mountPath stri
 	}
 	// Ad-hoc bind (no SharedVolume entry): in-memory tmpfs +
 	// SOCKERLESS_PERSIST_VOLUMES hint for the bootstrap's existing
-	// tar-pack persist module (BUG-947). This path stays unchanged
-	// because ad-hoc volumes don't have an operator-supplied Backing
-	// to honour.
+	// tar-pack persist module. This path stays unchanged because
+	// ad-hoc volumes don't have an operator-supplied Backing to honour.
 	return &runpb.Volume{
 		Name: volName,
 		VolumeType: &runpb.Volume_EmptyDir{

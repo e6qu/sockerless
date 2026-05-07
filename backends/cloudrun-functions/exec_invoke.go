@@ -31,12 +31,12 @@ func (s *Server) execStartViaInvoke(execID string, exec api.ExecInstance) (io.Re
 	}
 	s.Logger.Info().Str("execID", execID).Str("url", gcfState.FunctionURL).Strs("argv", argv).Msg("execStartViaInvoke: posting envelope")
 
-	// Phase 123 step 4: storage backing PreExec hooks. For each
-	// SharedVolume on this server, the backing driver may upload a
-	// snapshot (gcs-sync) or no-op (gcs-fuse, emptyDir). Returned env
-	// hints flow into the envelope so the bootstrap-side handler knows
-	// which GCS object to restore from. Defer PostExec for the response
-	// path so changes propagate back to the caller's local mount.
+	// Storage backing PreExec hooks. For each SharedVolume on this
+	// server, the backing driver may upload a snapshot (gcs-sync) or
+	// no-op (gcs-fuse, emptyDir). Returned env hints flow into the
+	// envelope so the bootstrap-side handler knows which GCS object to
+	// restore from. Defer PostExec for the response path so changes
+	// propagate back to the caller's local mount.
 	preExecEnv := append([]string{}, exec.ProcessConfig.Env...)
 	if len(s.config.SharedVolumes) > 0 {
 		var binds []string
@@ -84,18 +84,18 @@ func (s *Server) execStartViaInvoke(execID string, exec api.ExecInstance) (io.Re
 		e.CanRemove = true
 	})
 
-	// Phase 123 step 4: storage backing PostExec hooks pull any
-	// modifications the bootstrap made during the subprocess back to
-	// the local mount. Errors here are logged but don't fail the exec
-	// response — the data plane already returned to the caller.
+	// Storage backing PostExec hooks pull any modifications the
+	// bootstrap made during the subprocess back to the local mount.
+	// Errors here are logged but don't fail the exec response — the
+	// data plane already returned to the caller.
 	if len(s.config.SharedVolumes) > 0 {
 		if err := s.postExecForVolumes(s.ctx(), s.config.SharedVolumes, execID); err != nil {
 			s.Logger.Warn().Err(err).Str("execID", execID).Msg("storage backing PostExec failed (non-fatal)")
 		}
 	}
 
-	// BUG-962: docker exec non-TTY response expects each chunk wrapped
-	// in an 8-byte stdcopy stream-frame header (stream_id 0x01=stdout,
+	// docker exec non-TTY response expects each chunk wrapped in an
+	// 8-byte stdcopy stream-frame header (stream_id 0x01=stdout,
 	// 0x02=stderr). Returning plain bytes makes the client read the
 	// first byte as a header and reject it as "Unrecognized input
 	// header: NN". Mirror what publishAttachResponse does.

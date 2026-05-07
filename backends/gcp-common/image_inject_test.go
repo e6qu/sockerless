@@ -5,12 +5,12 @@ import (
 	"testing"
 )
 
-// TestOverlayContentTag_IndependentOfEntrypointCmdWorkdir is the core
-// BUG-950 invariant: the content-hash MUST stay stable when only
+// TestOverlayContentTag_IndependentOfEntrypointCmdWorkdir asserts the
+// core invariant: the content-hash MUST stay stable when only
 // entrypoint/cmd/workdir differ. Otherwise pool entries can't be
-// reused across containers with different commands (the cell 8
-// failure mode — gitlab-runner sets distinct entrypoint/cmd per
-// container type, fragmenting the pool).
+// reused across containers with different commands — gitlab-runner
+// sets distinct entrypoint/cmd per container type, which would
+// fragment the pool.
 //
 // The runtime-env-override path (SOCKERLESS_USER_ENTRYPOINT et al,
 // applied per claim by the backend) is what makes this safe — the
@@ -45,7 +45,7 @@ func TestOverlayContentTag_IndependentOfEntrypointCmdWorkdir(t *testing.T) {
 	for i, spec := range cases {
 		got := OverlayContentTag("gcf-", spec)
 		if got != want {
-			t.Errorf("case %d: contentTag = %q, want %q (must be stable across entrypoint/cmd/workdir per BUG-950)", i, got, want)
+			t.Errorf("case %d: contentTag = %q, want %q (must be stable across entrypoint/cmd/workdir)", i, got, want)
 		}
 	}
 }
@@ -72,7 +72,7 @@ func TestOverlayContentTag_DiffersOnImageOrBootstrap(t *testing.T) {
 }
 
 // TestRenderOverlayDockerfile_NoUserEnvBaked — the rendered Dockerfile
-// must NOT bake SOCKERLESS_USER_* env vars (BUG-950). Those are passed
+// must NOT bake SOCKERLESS_USER_* env vars. Those are passed
 // at runtime via ServiceConfig.EnvironmentVariables on each fresh
 // deploy + each pool claim.
 func TestRenderOverlayDockerfile_NoUserEnvBaked(t *testing.T) {
@@ -88,7 +88,7 @@ func TestRenderOverlayDockerfile_NoUserEnvBaked(t *testing.T) {
 	}
 	for _, banned := range []string{"SOCKERLESS_USER_ENTRYPOINT", "SOCKERLESS_USER_CMD", "SOCKERLESS_USER_WORKDIR"} {
 		if strings.Contains(df, banned) {
-			t.Errorf("Dockerfile must not bake %s — BUG-950 requires runtime env injection. Got:\n%s", banned, df)
+			t.Errorf("Dockerfile must not bake %s — runtime env injection is required. Got:\n%s", banned, df)
 		}
 	}
 	if !strings.Contains(df, "ENTRYPOINT [\"/opt/sockerless/sockerless-gcf-bootstrap\"]") {

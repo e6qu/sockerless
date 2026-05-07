@@ -59,9 +59,9 @@ func (s *Server) ensureOverlayImage(ctx context.Context, spec gcpcommon.OverlayI
 }
 
 // useOverlayPath reports whether ContainerCreate should build an overlay
-// image for this container. Phase 122g rule: overlay required when
-// BootstrapBinaryPath is configured (operator opted in) AND the image
-// isn't already a sockerless-built overlay (avoid recursion).
+// image for this container. Overlay is required when BootstrapBinaryPath
+// is configured (operator opted in) AND the image isn't already a
+// sockerless-built overlay (avoid recursion).
 func (s *Server) useOverlayPath(image string) bool {
 	if s.config.BootstrapBinaryPath == "" {
 		return false
@@ -75,11 +75,11 @@ func (s *Server) useOverlayPath(image string) bool {
 }
 
 // useServicePath reports whether ContainerStart should route this
-// container to a Cloud Run Service rather than a Cloud Run Job. Phase
-// 122g: route to Service when the container's image is a sockerless
-// overlay (bootstrap binds $PORT — Service health check passes) OR
-// the container matches the legacy runner-pattern signal (ExposedPorts
-// / explicit label). Otherwise (stock one-shot images) stay on Job.
+// container to a Cloud Run Service rather than a Cloud Run Job. Route
+// to Service when the container's image is a sockerless overlay (the
+// bootstrap binds $PORT — Service health check passes) OR the container
+// matches the legacy runner-pattern signal (ExposedPorts / explicit
+// label). Otherwise (stock one-shot images) stay on Job.
 func (s *Server) useServicePath(c *api.Container) bool {
 	if !s.config.UseService {
 		return false

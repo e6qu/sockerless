@@ -104,8 +104,8 @@ func (s *Server) execStartViaInvoke(execID string, exec api.ExecInstance, _ api.
 		}
 	}
 
-	// BUG-962: docker exec non-TTY response expects each chunk wrapped
-	// in an 8-byte stdcopy stream-frame header (stream_id 0x01=stdout,
+	// docker exec non-TTY response expects each chunk wrapped in an
+	// 8-byte stdcopy stream-frame header (stream_id 0x01=stdout,
 	// 0x02=stderr). Returning plain bytes makes the client read the
 	// first byte as a header and reject it as "Unrecognized input
 	// header: NN". Mirror what publishAttachResponse does.

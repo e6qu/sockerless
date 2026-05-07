@@ -28,8 +28,8 @@ import (
 // revision has a terminal Ready condition (or we give up waiting and
 // return an error with the failed condition message).
 //
-// Phase 122g: spawns a background goroutine that POSTs an empty body to
-// the Service URL — bootstrap's default invoke runs SOCKERLESS_USER_CMD
+// Spawns a background goroutine that POSTs an empty body to the
+// Service URL — bootstrap's default invoke runs SOCKERLESS_USER_CMD
 // as a subprocess and returns combined stdout. On HTTP response (or
 // error) the goroutine records the exit code in InvocationResults and
 // closes the WaitCh so docker-wait unblocks. Without this, the
@@ -100,8 +100,8 @@ func (s *Server) startSingleContainerService(id string, c api.Container, crState
 		state.ServiceName = svcFullName
 	})
 
-	// Phase 122g: kick off the bootstrap's default invoke so the user
-	// CMD actually runs. Mirror of gcf's launch-invoke goroutine in
+	// Kick off the bootstrap's default invoke so the user CMD actually
+	// runs. Mirror of gcf's launch-invoke goroutine in
 	// backends/cloudrun-functions/backend_impl.go::ContainerStart.
 	//
 	// svc.Uri from createOp.Wait is OFTEN empty even though the LRO
@@ -109,9 +109,8 @@ func (s *Server) startSingleContainerService(id string, c api.Container, crState
 	// is serving traffic, and createOp.Wait returns once the spec is
 	// stored, not after first-revision-ready. Pass the container ID
 	// alone; the goroutine uses serviceInvokeURL (GetService) which
-	// re-reads the live Service object with Uri populated. Cell 7 v14
-	// (BUG-929 fix attempt 1) regressed because we trusted svc.Uri ==
-	// "" and bailed.
+	// re-reads the live Service object with Uri populated. Trusting
+	// svc.Uri=="" here would silently skip the invoke.
 	go s.invokeServiceDefaultCmd(id, exitCh, false /* skipIfNoStdin: single-container `docker run` should default-invoke */)
 	return nil
 }
@@ -127,18 +126,18 @@ func (s *Server) startSingleContainerService(id string, c api.Container, crState
 // GetService until Uri populates). Polls up to 5 minutes — Cloud Run
 // Service revisions can take 60-90s to reach serving state.
 //
-// `skipIfNoStdin` (BUG-961): when true, skip the default-invoke POST
-// if no stdinPipe was captured. Multi-container pod-Service mode for
-// the GH actions/runner pattern: the main container is OpenStdin=false
-// with a long-lived `tail -f /dev/null`-style entrypoint that the
-// runner expects to keep alive for `docker exec`. POSTing the default
-// invoke would run that long-lived CMD as a one-shot subprocess and
-// block forever — exactly the BUG-961 hang. The bootstrap stays
-// listening on :8080 for the runner's subsequent /exec POSTs instead.
+// `skipIfNoStdin`: when true, skip the default-invoke POST if no
+// stdinPipe was captured. Multi-container pod-Service mode for the GH
+// actions/runner pattern: the main container is OpenStdin=false with a
+// long-lived `tail -f /dev/null`-style entrypoint that the runner
+// expects to keep alive for `docker exec`. POSTing the default invoke
+// would run that long-lived CMD as a one-shot subprocess and block
+// forever. The bootstrap stays listening on :8080 for the runner's
+// subsequent /exec POSTs instead.
 func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}, skipIfNoStdin bool) {
 	s.Logger.Info().Str("container", id).Msg("invokeServiceDefaultCmd: goroutine entered")
 
-	// Phase 122g attach-via-stdin-pipe: if a stdinPipe was registered
+	// Attach-via-stdin-pipe: if a stdinPipe was registered
 	// (gitlab-runner hijacked attach with OpenStdin), wait for the
 	// caller to half-close (= stdin EOF) so we can replay the captured
 	// bytes as the bootstrap's `execEnvelope.Stdin`. Skip if no pipe
@@ -158,8 +157,8 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}, skipIf
 		s.Logger.Info().Str("container", id).Int("stdin_bytes", len(capturedStdin)).Msg("invokeServiceDefaultCmd: stdin pipe drained")
 	}
 
-	// BUG-961: GH actions/runner pattern — multi-container pod-Service
-	// with OpenStdin=false main + no captured stdin. The main has a
+	// GH actions/runner pattern — multi-container pod-Service with
+	// OpenStdin=false main + no captured stdin. The main has a
 	// long-lived `tail -f /dev/null`-style entrypoint kept alive for
 	// `docker exec`. Default-invoke would run that as a one-shot
 	// subprocess and block forever. Skip the POST and just close
@@ -262,10 +261,9 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}, skipIf
 // already-running runner-pattern container. Used between gitlab-runner
 // stages: the first stage's invokeServiceDefaultCmd ran + closed WaitChs,
 // then ContainerStop's OpenStdin shortcut kept the underlying Service
-// alive (BUG-958), and gitlab-runner re-attaches with a new script for
-// the next stage. This goroutine is the per-stage equivalent of
-// invokeServiceDefaultCmd. Mirrors gcf invokeRunningRunnerStage. See
-// BUG-958.
+// alive, and gitlab-runner re-attaches with a new script for the next
+// stage. This goroutine is the per-stage equivalent of
+// invokeServiceDefaultCmd. Mirrors gcf invokeRunningRunnerStage.
 func (s *Server) invokeRunningRunnerStage(id string, c api.Container) {
 	ctx := s.ctx()
 	s.Logger.Info().Str("container", id).Msg("invokeRunningRunnerStage: goroutine entered")
@@ -460,12 +458,11 @@ func (s *Server) startMultiContainerServiceTyped(_ string, podContainers []api.C
 	// and the BUILD container sits idle until Cloud Run kills it.
 	mainExitCh, _ := s.Store.WaitChs.Load(mainID)
 	exitCh, _ := mainExitCh.(chan struct{})
-	// BUG-961: skip default-invoke when no stdinPipe was captured.
-	// gitlab-runner attach-stdin pattern (cell 7) registers stdinPipe
-	// before this fires → POST envelope with stdin → cell 7 path stays
-	// unchanged. GH actions/runner pattern (cell 5) doesn't attach →
-	// no stdin → skip POST and let the bootstrap serve docker-exec
-	// requests directly.
+	// Skip default-invoke when no stdinPipe was captured. The
+	// gitlab-runner attach-stdin pattern registers stdinPipe before
+	// this fires → POST envelope with stdin → unchanged behaviour. The
+	// GH actions/runner pattern doesn't attach → no stdin → skip POST
+	// and let the bootstrap serve docker-exec requests directly.
 	go s.invokeServiceDefaultCmd(mainID, exitCh, true /* skipIfNoStdin */)
 	return nil
 }

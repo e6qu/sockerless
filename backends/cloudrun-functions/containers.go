@@ -15,9 +15,9 @@ import (
 // execEnvelope mirrors the bootstrap's expected request body for the
 // "Path B" exec route. Sending entrypoint/cmd/workdir/env in the
 // request body lets pool-claimed Functions execute the right user
-// command WITHOUT requiring an UpdateService rollout (BUG-951): the
-// Cloud Run regional CPU quota only debits on revision creation, not
-// on invoke, so envelope-driven dispatch keeps the warm pool warm.
+// command WITHOUT requiring an UpdateService rollout: the Cloud Run
+// regional CPU quota only debits on revision creation, not on invoke,
+// so envelope-driven dispatch keeps the warm pool warm.
 type execEnvelope struct {
 	Sockerless struct {
 		Exec struct {
@@ -37,10 +37,10 @@ type execEnvelope struct {
 //
 // When `argv` is non-empty, the request body carries an exec envelope
 // so the bootstrap runs Path B (envelope.argv) instead of Path A
-// (env-baked SOCKERLESS_USER_*). This is the BUG-951 fix: pool-claimed
-// Functions don't need their env updated on each claim — the user's
-// entrypoint+cmd+workdir flow through the request body and an immutable
-// pool entry can serve any user command.
+// (env-baked SOCKERLESS_USER_*). Pool-claimed Functions don't need
+// their env updated on each claim — the user's entrypoint+cmd+workdir
+// flow through the request body and an immutable pool entry can serve
+// any user command.
 func invokeFunction(ctx context.Context, audienceURL string, argv []string, workdir string, env []string) (*http.Response, error) {
 	client, err := idtoken.NewClient(ctx, audienceURL)
 	if err != nil {

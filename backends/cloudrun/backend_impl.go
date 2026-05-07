@@ -42,12 +42,12 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		config = *req.ContainerConfig
 	}
 
-	// Merge image config if available + resolve digest refs to RepoTag
-	// (BUG-918: gitlab-runner uses image ID `sha256:<digest>` for create
-	// after pull-by-tag; Cloud Run rejects bare digest refs because it
-	// rewrites them to `mirror.gcr.io/library/sha256:<digest>` which 404s.
-	// Replace `sha256:<digest>` with the first RepoTag from the local
-	// Store entry — the image was pulled by tag, so a tag is available).
+	// Merge image config if available + resolve digest refs to RepoTag.
+	// gitlab-runner uses image ID `sha256:<digest>` for create after
+	// pull-by-tag; Cloud Run rejects bare digest refs because it rewrites
+	// them to `mirror.gcr.io/library/sha256:<digest>` which 404s. Replace
+	// `sha256:<digest>` with the first RepoTag from the local Store entry —
+	// the image was pulled by tag, so a tag is available.
 	if img, ok := s.Store.ResolveImage(config.Image); ok {
 		config.Env = core.MergeEnvByKey(img.Config.Env, config.Env)
 		if len(config.Cmd) == 0 && len(config.Entrypoint) == 0 {
@@ -70,15 +70,15 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// Resolve Docker Hub images to Artifact Registry remote repository URIs
 	config.Image = gcpcommon.ResolveGCPImageURI(config.Image, s.config.Project, s.config.Region)
 
-	// Phase 122g: when BootstrapBinaryPath is configured, COPY the
+	// When BootstrapBinaryPath is configured, COPY the
 	// sockerless-cloudrun-bootstrap into the user's image via Cloud
 	// Build and use the overlay URI as the actual image for Cloud Run.
 	// This makes the deployed Service host an HTTP endpoint that
 	// ContainerExec can POST envelope payloads against (Path B). Cache
 	// hits via OverlayContentTag mean the second container of any given
-	// (image, bootstrap) pair skips Cloud Build entirely (BUG-950: tag
-	// no longer depends on entrypoint/cmd/workdir — those are runtime
-	// env vars).
+	// (image, bootstrap) pair skips Cloud Build entirely — the tag does
+	// NOT depend on entrypoint/cmd/workdir, those are passed as runtime
+	// env vars.
 	originalImage := config.Image
 	if s.useOverlayPath(originalImage) {
 		spec := gcpcommon.OverlayImageSpec{
@@ -93,7 +93,9 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		}
 		// Inject the user's entrypoint/cmd/workdir as RUNTIME env so
 		// the bootstrap can decode + exec them. Replaces the previous
-		// build-time `ENV SOCKERLESS_USER_*` baking (BUG-950).
+		// build-time `ENV SOCKERLESS_USER_*` baking — keeping these out
+		// of the image content means the overlay tag stays stable across
+		// containers that share the same base image + bootstrap pair.
 		userEnv := overlayUserEnv(config.Entrypoint, config.Cmd, config.WorkingDir)
 		config.Env = append(config.Env, userEnv...)
 		config.Image = overlayURI
@@ -269,11 +271,11 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 	}
 	if !ok {
-		// BUG-922 fix: gitlab-runner does start→wait→stop→start cycling
-		// per stage on the SAME container ID. After first ContainerStart
-		// PendingCreates is cleared, so subsequent restarts must look up
-		// via CloudState. Re-add to PendingCreates so the existing flow
-		// below can re-create the Cloud Run Job (with potentially new cmd).
+		// gitlab-runner does start→wait→stop→start cycling per stage on
+		// the SAME container ID. After first ContainerStart PendingCreates
+		// is cleared, so subsequent restarts must look up via CloudState.
+		// Re-add to PendingCreates so the existing flow below can re-create
+		// the Cloud Run Job (with potentially new cmd).
 		if got, hit := s.ResolveContainerAuto(s.ctx(), ref); hit {
 			c = got
 			ok = true
@@ -289,12 +291,12 @@ func (s *Server) ContainerStart(ref string) error {
 		// Multi-stage gitlab-runner pattern: per stage gitlab-runner does
 		// stop → re-attach → re-start on the SAME container ID. The
 		// underlying Cloud Run Service is kept alive by ContainerStop's
-		// OpenStdin shortcut (BUG-958), so the bootstrap-as-HTTP-server
-		// is still up. When a fresh stdinPipe was just registered AND
-		// the container has OpenStdin=true, kick a new invoke goroutine
-		// to drain the new pipe + POST the new stage's script. Without
-		// this, only the first stage's script runs and gitlab-runner
-		// hangs waiting for stage 2's output. Mirrors gcf BUG-955.
+		// OpenStdin shortcut, so the bootstrap-as-HTTP-server is still up.
+		// When a fresh stdinPipe was just registered AND the container has
+		// OpenStdin=true, kick a new invoke goroutine to drain the new pipe
+		// and POST the new stage's script. Without this, only the first
+		// stage's script runs and gitlab-runner hangs waiting for stage 2's
+		// output.
 		if c.Config.OpenStdin {
 			if _, hasPipe := s.stdinPipes.Load(id); hasPipe {
 				s.Logger.Info().Str("container", id).Msg("ContainerStart: already running but fresh stdinPipe registered — kicking new invoke goroutine for next stage")
@@ -348,8 +350,8 @@ func (s *Server) ContainerStart(ref string) error {
 		// netMembers[0].ID is the authoritative MAIN per the convention
 		// in shouldDeferOrMaterializeNetworkPod: gitlab-runner pattern
 		// (OpenStdin=true) places current container at index 0; GH actions/
-		// runner pattern (BUG-959) places the FIRST-arrived sibling
-		// (the long-lived job container) at index 0.
+		// runner pattern places the FIRST-arrived sibling (the long-lived
+		// job container) at index 0.
 		mainID := netMembers[0].ID
 		return s.startMultiContainerServiceTyped(mainID, netMembers, exitCh)
 	}
@@ -370,7 +372,7 @@ func (s *Server) ContainerStart(ref string) error {
 		return s.startMultiContainerJobTyped(id, podContainers, exitCh)
 	}
 
-	// Phase 122g: route to Service path when EITHER:
+	// Route to Service path when EITHER:
 	//   - the image was overlay-built with sockerless-cloudrun-bootstrap
 	//     (BootstrapBinaryPath set + image in sockerless-overlay AR
 	//     repo) — bootstrap binds $PORT so Cloud Run Service is happy;
@@ -453,12 +455,12 @@ func (s *Server) ContainerStart(ref string) error {
 		return gcpcommon.MapGCPError(err, "execution", id)
 	}
 
-	// BUG-921: do NOT runOp.Wait — that blocks until execution
-	// COMPLETES (~10-30 min for real CI workloads), holding the docker
-	// /start HTTP handler open and tripping gitlab-runner's 120s docker
-	// connection timeout. Instead, extract the execution name from the
-	// operation's metadata (populated as soon as RunJob is accepted).
-	// Same shape fix as BUG-912 in github-runner-dispatcher-gcp/spawner.
+	// Do NOT runOp.Wait — that blocks until execution COMPLETES (~10-30
+	// min for real CI workloads), holding the docker /start HTTP handler
+	// open and tripping gitlab-runner's 120s docker connection timeout.
+	// Instead, extract the execution name from the operation's metadata
+	// (populated as soon as RunJob is accepted). Same shape as the
+	// dispatcher's spawner.
 	executionName := ""
 	if md, mdErr := runOp.Metadata(); mdErr == nil && md != nil {
 		executionName = md.Name
@@ -561,8 +563,8 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 		return gcpcommon.MapGCPError(err, "execution", mainID)
 	}
 
-	// BUG-921: extract execution name from operation metadata, don't
-	// block on Wait — see single-container path above for full rationale.
+	// Extract execution name from operation metadata, don't block on
+	// Wait — see single-container path above for full rationale.
 	executionName := ""
 	if md, mdErr := runOp.Metadata(); mdErr == nil && md != nil {
 		executionName = md.Name
@@ -612,9 +614,9 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 	// Service to stop the container. Restart re-creates via
 	// CreateService in the next ContainerStart.
 	//
-	// Exception (BUG-958): runner-pattern containers (OpenStdin=true)
-	// receive /stop between stages as gitlab-runner's docker executor
-	// cycles the container; deleting the Service would force a slow
+	// Exception: runner-pattern containers (OpenStdin=true) receive /stop
+	// between stages as gitlab-runner's docker executor cycles the
+	// container; deleting the Service would force a slow
 	// re-create on the next /start. Keep the Service alive — the
 	// bootstrap-as-HTTP-server stays up and serves the next stage's
 	// envelope POST. Final teardown happens in ContainerRemove.
@@ -1108,13 +1110,12 @@ func (s *Server) VolumeRemove(name string, force bool) error {
 	return nil
 }
 
-// ExecStart runs the exec inside the container. Path B (Phase 122g
-// — see specs/CLOUD_RESOURCE_MAPPING.md § Lesson 8) is preferred when
-// the container is on the Cloud Run Service path with the bootstrap
-// overlay baked in: HTTP POST envelope → bootstrap parses + runs +
-// returns response envelope → backend exposes stdout via the docker
-// exec attach. Reverse-agent WS is the fallback for interactive
-// TTY+stdin.
+// ExecStart runs the exec inside the container. Path B (see
+// specs/CLOUD_RESOURCE_MAPPING.md § Lesson 8) is preferred when the
+// container is on the Cloud Run Service path with the bootstrap overlay
+// baked in: HTTP POST envelope → bootstrap parses + runs + returns
+// response envelope → backend exposes stdout via the docker exec
+// attach. Reverse-agent WS is the fallback for interactive TTY+stdin.
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
 	exec, ok := s.Store.Execs.Get(id)
 	if !ok {
@@ -1143,7 +1144,7 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 	}
 
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
-		return nil, &api.NotImplementedError{Message: "docker exec requires a Cloud Run Service overlay (Phase 122g — set SOCKERLESS_CLOUDRUN_BOOTSTRAP) OR a reverse-agent bootstrap (SOCKERLESS_CALLBACK_URL); neither is configured for this container"}
+		return nil, &api.NotImplementedError{Message: "docker exec requires a Cloud Run Service overlay (set SOCKERLESS_CLOUDRUN_BOOTSTRAP) OR a reverse-agent bootstrap (SOCKERLESS_CALLBACK_URL); neither is configured for this container"}
 	}
 	return s.BaseServer.ExecStart(id, opts)
 }
@@ -1327,9 +1328,9 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
 		return s.BaseServer.ContainerAttach(id, opts)
 	}
-	// Phase 122g attach-via-stdin-pipe: when caller asks for stdin
-	// AND the container has the sockerless-cloudrun-bootstrap overlay,
-	// register a stdinPipe and let the deferred invoke (in
+	// Attach-via-stdin-pipe: when caller asks for stdin AND the
+	// container has the sockerless-cloudrun-bootstrap overlay, register
+	// a stdinPipe and let the deferred invoke (in
 	// invokeServiceDefaultCmd) replay the captured bytes as the
 	// bootstrap's `execEnvelope.Stdin`. Returns a hijacked-shaped
 	// io.ReadWriteCloser whose Read blocks until the bootstrap's
@@ -1509,9 +1510,9 @@ func (s *Server) inUseVolumeNames() map[string]struct{} {
 
 // overlayUserEnv returns the SOCKERLESS_USER_* env entries that the
 // cloudrun bootstrap reads at request time to assemble the user's
-// argv + workdir. Replaces the build-time `ENV` baking (BUG-950) so
-// pool entries with the same (image, bootstrap) can be reused across
-// containers with different entrypoint/cmd/workdir tuples.
+// argv + workdir. Replaces the build-time `ENV` baking so pool entries
+// with the same (image, bootstrap) can be reused across containers
+// with different entrypoint/cmd/workdir tuples.
 func overlayUserEnv(entrypoint, cmd []string, workdir string) []string {
 	var out []string
 	if len(entrypoint) > 0 {

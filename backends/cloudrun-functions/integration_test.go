@@ -239,8 +239,8 @@ func TestMain(m *testing.M) {
 	cleanups = append(cleanups, func() { _ = os.Remove(saJSONPath) })
 
 	// Build the sockerless-gcf-bootstrap binary so the backend's
-	// overlay-and-swap path (Phase 118 gcf re-architecture) can stage
-	// it into the Cloud Build context tar. Real deployments install
+	// overlay-and-swap path can stage it into the Cloud Build context
+	// tar. Real deployments install
 	// this binary at /opt/sockerless via the runner image; integration
 	// tests build it on demand. Path must be absolute — the backend
 	// process runs with a different cwd than the test binary, so a

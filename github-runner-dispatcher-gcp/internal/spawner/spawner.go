@@ -53,18 +53,18 @@ type Request struct {
 	Labels         []string
 	JobID          int64  // GitHub workflow_job ID — written to LabelJobID for restart recovery
 	ServiceAccount string // GCP service account email (Job execution identity)
-	// RunnerWorkspaceBucket (BUG-963) — when set, attach a Cloud Run
-	// native `Volume{Gcs{Bucket}}` at /tmp/runner-work on the spawned
+	// RunnerWorkspaceBucket — when set, attach a Cloud Run native
+	// `Volume{Gcs{Bucket}}` at /tmp/runner-work on the spawned
 	// runner-task so step-script files written by the runner agent
 	// propagate to the JOB container's pod-Service GCSFuse mount.
 	// Empty = no mount (legacy behaviour).
 	RunnerWorkspaceBucket string
-	// RunnerWorkspaceBacking (Phase 123) — operator's storage backing
-	// choice. "gcs-fuse" (legacy) attaches the bucket directly to the
+	// RunnerWorkspaceBacking — operator's storage backing choice.
+	// "gcs-fuse" (legacy) attaches the bucket directly to the
 	// runner-task. "gcs-sync" leaves the runner-task tmpfs and lets
-	// sockerless-backend tar/upload per-exec — required for cells 5+6
-	// to avoid GCSFuse stale-handle on per-step event.json rewrites
-	// (BUG-965). Validated by config.Load when bucket is set.
+	// sockerless-backend tar/upload per-exec — required to avoid
+	// GCSFuse stale-handle on per-step event.json rewrites. Validated
+	// by config.Load when bucket is set.
 	RunnerWorkspaceBacking string
 }
 
@@ -104,7 +104,7 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 	// dispatcher scope"): only the runner-side env (GitHub PAT-derived
 	// token, repo, name, labels). NO sockerless-shaped env or volumes
 	// — the runner image owns its own backend config + workspace
-	// mounting internally. BUG-911 (TaskTemplate.Timeout 3600s) stays
+	// mounting internally. The TaskTemplate.Timeout=3600s below stays
 	// because it's a Cloud Run resource concern, not runner-internal.
 	// Cloud Run Job default is 512Mi/1cpu — too small for a runner that
 	// compiles real workloads. 4Gi/2cpu fits a Go compile + sidecar
@@ -128,21 +128,21 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 	// Optional runner-workspace volume on the runner-task. Behaviour
 	// depends on RunnerWorkspaceBacking:
 	//
-	//   - "gcs-fuse" (BUG-963): mount the GCS bucket directly via
-	//     Cloud Run native Volume{Gcs} so the runner agent's writes
-	//     propagate to the bucket the JOB pod-Service reads. Used by
-	//     cells 7+8 (sequential whole-tar uploads, FUSE-safe).
+	//   - "gcs-fuse": mount the GCS bucket directly via Cloud Run
+	//     native Volume{Gcs} so the runner agent's writes propagate to
+	//     the bucket the JOB pod-Service reads. Used by sequential
+	//     whole-tar upload patterns (FUSE-safe).
 	//
-	//   - "gcs-sync" (Phase 123): leave the runner-task tmpfs at
-	//     /tmp/runner-work — no GCS mount on the runner-task side.
-	//     Sockerless-backend on the runner-task tars + uploads to GCS
-	//     per-exec (PreExec hook); the JOB pod-Service bootstrap
-	//     restores from GCS pre-subprocess. Avoids the BUG-965
-	//     stale-handle path entirely (no FUSE in the data plane).
+	//   - "gcs-sync": leave the runner-task tmpfs at /tmp/runner-work —
+	//     no GCS mount on the runner-task side. Sockerless-backend on
+	//     the runner-task tars + uploads to GCS per-exec (PreExec hook);
+	//     the JOB pod-Service bootstrap restores from GCS pre-subprocess.
+	//     Avoids the FUSE stale-handle path entirely (no FUSE in the
+	//     data plane).
 	//
 	// The empty-bucket case = no mount, no validation — legacy
-	// pre-BUG-963 behaviour. config.Load enforces backing when bucket
-	// is set per the no-fallbacks directive.
+	// pre-shared-workspace behaviour. config.Load enforces backing when
+	// bucket is set per the no-fallbacks directive.
 	var taskVolumes []*runpb.Volume
 	if req.RunnerWorkspaceBucket != "" && req.RunnerWorkspaceBacking == "gcs-fuse" {
 		const volName = "runner-workspace"
@@ -166,9 +166,9 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 			Volumes:    taskVolumes,
 			// One-shot: failed job → failed execution, no retries.
 			Retries: &runpb.TaskTemplate_MaxRetries{MaxRetries: 0},
-			// BUG-911: Cloud Run Job task_timeout default 10 min; bump
-			// to 1h to fit a real CI pipeline. This is a Cloud Run
-			// resource limit, not a sockerless-shaped concern.
+			// Cloud Run Job task_timeout default 10 min; bump to 1h to
+			// fit a real CI pipeline. This is a Cloud Run resource
+			// limit, not a sockerless-shaped concern.
 			Timeout: durationpb.New(3600 * time.Second),
 		},
 	}
@@ -198,7 +198,7 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 		return "", fmt.Errorf("CreateJob %s wait: %w", fullName, err)
 	}
 
-	// BUG-912: do NOT runOp.Wait — the operation completes when the
+	// Do NOT runOp.Wait — the operation completes when the
 	// EXECUTION ends (which can take an hour for a CI pipeline), and
 	// blocking here serializes the dispatcher's poll loop. RunJob's
 	// own return is the synchronous "execution accepted" ack we need;
@@ -291,9 +291,9 @@ func ListManaged(ctx context.Context, project, region string) ([]Managed, error)
 // DEFINITION's reconciliation state (Ready / NotReady), NOT the
 // execution outcome. Cleanup keyed off `TerminalCondition.State` would
 // delete every Job whose DEFINITION is Ready, including jobs whose
-// Execution is still RUNNING — which is what BUG-940 was: cell 5
-// runner-task got deleted 80s after spawn while the github runner was
-// still bootstrapping. Real fix: query the latest Execution.
+// Execution is still RUNNING. Doing so caused runner-tasks to be
+// deleted shortly after spawn while the github runner was still
+// bootstrapping. Real fix: query the latest Execution.
 func executionStateForJob(ctx context.Context, j *runpb.Job) string {
 	cli, err := run.NewExecutionsRESTClient(ctx)
 	if err != nil {

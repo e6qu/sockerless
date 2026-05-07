@@ -45,8 +45,9 @@ type Config struct {
 	// binary at BootstrapBinaryPath. Computed once at server start (see
 	// gcpcommon.HashBootstrapBinary) and stamped into every OverlayImageSpec
 	// so updating the binary at the same path invalidates cached overlay
-	// images automatically — required for in-place bootstrap upgrades like
-	// BUG-957's persist module rollout.
+	// images automatically — required so in-place bootstrap upgrades
+	// flow into fresh Function deployments instead of hitting cached
+	// overlays forever.
 	BootstrapBinaryHash string
 
 	// PoolMax caps the number of free Functions kept warm per
@@ -62,9 +63,9 @@ type Config struct {
 	// entries at backend startup. Each entry pre-deploys N free Functions
 	// tagged with the overlay's content-hash, so the FIRST ContainerCreate
 	// for that image hits a warm pool instead of paying the per-deploy
-	// regional CPU quota cost. Targets BUG-948 — gitlab-runner cache-
-	// permission containers all share one image, so a small pool covers
-	// the entire pipeline's parallel concurrency.
+	// regional CPU quota cost. gitlab-runner cache-permission containers
+	// all share one image, so a small pool covers the entire pipeline's
+	// parallel concurrency.
 	//
 	// Format: SOCKERLESS_GCF_PREWARM_OVERLAYS="image1:size1,image2:size2"
 	// Example: "registry.gitlab.com/.../gitlab-runner-helper:v17.5.0:3"
@@ -77,8 +78,7 @@ type Config struct {
 	// inside the function does `docker create -v /tmp/runner-work:/__w`;
 	// sockerless translates the host bind to a named-volume reference
 	// whose GCS bucket is shared with the runner-task. Format:
-	// SOCKERLESS_GCP_SHARED_VOLUMES="name=path=bucket,name2=path2=bucket2"
-	// (BUG-909).
+	// SOCKERLESS_GCP_SHARED_VOLUMES="name=path=bucket,name2=path2=bucket2".
 	SharedVolumes []SharedVolume
 
 	// VPCConnector is the Serverless VPC Connector resource path used
@@ -96,13 +96,13 @@ type Config struct {
 // volume; Cloud Run Service ServiceV2.Template.Volumes is the runtime
 // mount mechanism (Cloud Functions Gen2 builds on Cloud Run).
 //
-// Backing (Phase 123) selects the storage strategy. **Required, no
-// fallback**: empty Backing fails loudly at materialize/exec time per
-// the no-automatic-fallbacks directive (each backing has different
+// Backing selects the storage strategy. **Required, no fallback**:
+// empty Backing fails loudly at materialize/exec time per the
+// no-automatic-fallbacks directive (each backing has different
 // cost/scale/consistency characteristics; silent default selection
 // would mask misconfiguration). Operators choose: "gcs-sync" for the
-// shared workspace pattern (cells 5+6), "gcs-fuse" for legacy tar-
-// pack persist (cells 7+8), or "emptyDir" for non-shared ephemeral.
+// shared workspace pattern, "gcs-fuse" for legacy tar-pack persist,
+// or "emptyDir" for non-shared ephemeral.
 type SharedVolume struct {
 	Name          string
 	ContainerPath string
@@ -197,7 +197,7 @@ func parsePrewarmOverlays(s string) []PrewarmOverlay {
 
 // parseSharedVolumes parses SOCKERLESS_GCP_SHARED_VOLUMES.
 //
-// Format (Phase 123): `name=path=bucket=backing,name=path=bucket=backing,...`
+// Format: `name=path=bucket=backing,name=path=bucket=backing,...`
 // where `backing` is one of `gcs-sync`, `gcs-fuse`, or `emptyDir` (REQUIRED
 // per the no-fallbacks directive). Returns nil for empty input. Malformed
 // entries (wrong arity, empty fields) are skipped — operators see them
@@ -206,8 +206,7 @@ func parsePrewarmOverlays(s string) []PrewarmOverlay {
 //
 // Backwards-compat for the legacy 3-tuple format (`name=path=bucket`,
 // no backing) is INTENTIONALLY removed: every consumer must explicitly
-// declare its storage strategy. Cells 7+8 bootstrap.sh already updated
-// to emit 4-tuples.
+// declare its storage strategy.
 func parseSharedVolumes(s string) []SharedVolume {
 	if s == "" {
 		return nil

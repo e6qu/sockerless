@@ -24,7 +24,7 @@ type Server struct {
 	NetworkState *core.StateStore[NetworkState]
 	gcsVolumeState
 
-	// storageBackings resolves SharedVolume.Backing → driver. Phase 123.
+	// storageBackings resolves SharedVolume.Backing → driver.
 	storageBackings *core.StorageBackingRegistry
 	// Reverse-agent registry for docker exec / attach through a
 	// bootstrap running inside the CR Job/Service container.
@@ -53,11 +53,10 @@ type Server struct {
 
 // NewServer creates a new Cloud Run backend server.
 func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Server {
-	// BUG-968 — hash the bootstrap binary at startup so OverlayContentTag
-	// changes whenever the binary changes. Mirror of gcf's path; without
-	// this, cells 5+6's overlay images cache forever and updates to the
-	// bootstrap (e.g. Phase 123 SOCKERLESS_SYNC_MOUNTS support) never
-	// reach the JOB pod-Service.
+	// Hash the bootstrap binary at startup so OverlayContentTag changes
+	// whenever the binary changes. Mirror of gcf's path; without this,
+	// the AR overlay cache hits forever and updates to the bootstrap
+	// (e.g. SOCKERLESS_SYNC_MOUNTS support) never reach the JOB pod-Service.
 	if config.BootstrapBinaryHash == "" && config.BootstrapBinaryPath != "" {
 		if hash, err := gcpcommon.HashBootstrapBinary(config.BootstrapBinaryPath); err == nil {
 			config.BootstrapBinaryHash = hash
@@ -97,12 +96,12 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	s.SetSelf(s)
 	s.CloudState = &cloudRunCloudState{server: s}
 
-	// Storage backing registry (Phase 123). EmptyDirDriver always
-	// available; GCSFuseDriver kept for legacy SharedVolumes (cells 7+8
-	// tar-pack persist); GCSSyncDriver registered when the GCS client
-	// constructs successfully (cells 5+6 default). No-fallbacks
-	// directive: SharedVolumes with an unrecognized Backing fail at
-	// resolve time rather than silently selecting a default.
+	// Storage backing registry. EmptyDirDriver always available;
+	// GCSFuseDriver kept for legacy SharedVolumes (tar-pack persist);
+	// GCSSyncDriver registered when the GCS client constructs
+	// successfully. No-fallbacks directive: SharedVolumes with an
+	// unrecognized Backing fail at resolve time rather than silently
+	// selecting a default.
 	s.storageBackings = core.NewStorageBackingRegistry()
 	s.storageBackings.Register(&gcpcommon.GCSFuseDriver{
 		MountOptions: gcpcommon.RunnerWorkspaceMountOptions(),
@@ -140,14 +139,14 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	s.Mux.HandleFunc("/v1/cloudrun/reverse", core.HandleReverseAgentWS(s.reverseAgents, logger))
 	s.Drivers.Exec = &core.ReverseAgentExecDriver{Registry: s.reverseAgents, Logger: logger}
 	s.Drivers.Stream = &core.ReverseAgentStreamDriver{Registry: s.reverseAgents, Logger: logger}
-	// Typed.Exec wiring (BUG-960): route through s.ExecStart (the cloudrun
+	// Typed.Exec wiring: route through s.ExecStart (the cloudrun
 	// override) rather than the reverse-agent driver directly. The
 	// override's `execStartViaInvoke` POSTs an envelope to the
-	// materialized pod-Service URL — required for GH actions/runner
-	// pattern (cells 5/6) where the bootstrap can't dial back to
-	// register a reverse-agent (the runner-task is a Cloud Run Job
-	// without a public URL). Reverse-agent stays as a fallback inside
-	// s.ExecStart for interactive (TTY+stdin) execs.
+	// materialized pod-Service URL — required for the GH actions/runner
+	// pattern where the bootstrap can't dial back to register a
+	// reverse-agent (the runner-task is a Cloud Run Job without a public
+	// URL). Reverse-agent stays as a fallback inside s.ExecStart for
+	// interactive (TTY+stdin) execs.
 	s.Typed.Exec = core.WrapLegacyExecStart(
 		func(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
 			return s.ExecStart(id, opts)

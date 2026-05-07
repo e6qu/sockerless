@@ -1,4 +1,4 @@
-// Package gcpcommon — gcs-sync storage backing driver (DEFAULT for shared workspaces, Phase 123).
+// Package gcpcommon — gcs-sync storage backing driver (default for shared workspaces).
 //
 // Architecture: the JOB pod-Service mounts an in-memory emptyDir at the
 // volume's container path. The runner-task's sockerless-backend (the
@@ -11,14 +11,14 @@
 // pick up changes on the runner-task side and deletes the object.
 //
 // Why this and not GCSFuse: GCSFuse invalidates open file handles when
-// an object is rewritten while a holder has it open (BUG-965). GH
-// actions/runner rewrites _temp/event.json every step, hitting that
-// path. gcs-sync sidesteps FUSE entirely — it's pure GCS SDK calls
-// against a single tar object per exec, which has strong consistency.
+// an object is rewritten while a holder has it open. GH actions/runner
+// rewrites _temp/event.json every step, hitting that path. gcs-sync
+// sidesteps FUSE entirely — it's pure GCS SDK calls against a single
+// tar object per exec, which has strong consistency.
 //
 // Why this and not always-on shared FS (NFS/Filestore/JuiceFS+Redis):
-// user directive 2026-05-07 — zero-scaling, no-cost-when-not-in-use.
-// GCS satisfies; persistent hardware does not.
+// project directive — zero-scaling, no-cost-when-not-in-use. GCS
+// satisfies; persistent hardware does not.
 //
 // Cost shape: $0.02/GiB/mo for stored bytes; same-region ingress/egress
 // free. For a CI workspace ≤ 100 MB, that's pennies a month — only
@@ -87,7 +87,7 @@ func (d *GCSSyncDriver) CloudSpec(vol core.SharedVolumeRef) (core.BackingSpec, e
 // in SOCKERLESS_SYNC_MOUNTS (`name=mountpath`); the bootstrap joins
 // the two by name at exec time. The runner-task can't reliably know
 // the bind target itself: the api.Container returned by cloud_state's
-// stateless lookup has empty HostConfig.Binds (BUG-967), so the
+// stateless lookup has empty HostConfig.Binds, so the
 // runner-task only emits the GCS URL and lets the bootstrap resolve
 // the destination from its own boot env.
 //

@@ -1,4 +1,4 @@
-// Package core — storage backing driver abstraction (Phase 123).
+// Package core — storage backing driver abstraction.
 //
 // Replaces the vestigial backends/core/storage_driver.go::StorageDriver +
 // api/drivers.go::VolumeDriver shells, neither of which had a real
@@ -19,7 +19,7 @@
 //     return nil hooks. emptyDir is single-instance so also returns nil
 //     hooks.
 //
-// User directives 2026-05-07 baked in:
+// Project directives baked in:
 //   - Storage MUST be pluggable so we can test multiple options without
 //     re-refactoring each backend.
 //   - Zero-scaling, no-cost-when-not-in-use is the paradigm. Acceptable:
@@ -27,20 +27,19 @@
 //     owns the lifecycle. Rejected: NFS / Filestore / Memorystore /
 //     persistent-mode PDs (all bill idle).
 //   - No FUSE-on-object-store for new SharedVolumes (gcs-fuse retained
-//     ONLY for cells 7+8 legacy tar-pack persist).
-//   - **No automatic fallbacks** (user directive 2026-05-07): every
-//     SharedVolume MUST have an explicitly-set Backing. Resolve()
-//     returns an error for empty or unknown backings rather than
-//     silently selecting a default. Rationale: each backing has
-//     different cost / scale / consistency characteristics; the
-//     operator's choice is load-bearing, and silent fallback masks
-//     misconfiguration that surfaces as confusing runtime failures
-//     (e.g. cells 7+8 expect gcs-fuse for tar-pack persist; cells
-//     5+6 expect gcs-sync for per-step propagation; emptyDir would
-//     "work" for both up to the first cross-Service read, then break).
+//     ONLY for legacy tar-pack persist mounts).
+//   - **No automatic fallbacks**: every SharedVolume MUST have an
+//     explicitly-set Backing. Resolve() returns an error for empty or
+//     unknown backings rather than silently selecting a default.
+//     Rationale: each backing has different cost / scale / consistency
+//     characteristics; the operator's choice is load-bearing, and
+//     silent fallback masks misconfiguration that surfaces as confusing
+//     runtime failures (gcs-fuse expects whole-tar persist semantics;
+//     gcs-sync expects per-step propagation; emptyDir would "work" for
+//     both up to the first cross-Service read, then break).
 //
 // See specs/CLOUD_RESOURCE_MAPPING.md § "Storage backing driver
-// abstraction (PLANNED — Phase 123)" for the full architectural design.
+// abstraction" for the full architectural design.
 package core
 
 import (
