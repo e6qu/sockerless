@@ -95,10 +95,32 @@ type Config struct {
 // SharedVolume mirrors `cloudrun.SharedVolume`. GCS bucket backs the
 // volume; Cloud Run Service ServiceV2.Template.Volumes is the runtime
 // mount mechanism (Cloud Functions Gen2 builds on Cloud Run).
+//
+// Backing (Phase 123) selects the storage strategy. **Required, no
+// fallback**: empty Backing fails loudly at materialize/exec time per
+// the no-automatic-fallbacks directive (each backing has different
+// cost/scale/consistency characteristics; silent default selection
+// would mask misconfiguration). Operators choose: "gcs-sync" for the
+// shared workspace pattern (cells 5+6), "gcs-fuse" for legacy tar-
+// pack persist (cells 7+8), or "emptyDir" for non-shared ephemeral.
 type SharedVolume struct {
 	Name          string
 	ContainerPath string
 	Bucket        string
+	Backing       string // REQUIRED: "gcs-sync" / "gcs-fuse" / "emptyDir"
+}
+
+// AsRef returns the cloud-agnostic SharedVolumeRef the storage backing
+// driver consumes. Empty Backing flows through unchanged so the
+// registry's Resolve fails loudly on it — this is the operator's
+// misconfiguration, not a place to silently default.
+func (v SharedVolume) AsRef() core.SharedVolumeRef {
+	return core.SharedVolumeRef{
+		Name:          v.Name,
+		ContainerPath: v.ContainerPath,
+		Backing:       core.StorageBacking(v.Backing),
+		GCSBucket:     v.Bucket,
+	}
 }
 
 // PrewarmOverlay describes one entry in SOCKERLESS_GCF_PREWARM_OVERLAYS:
@@ -173,8 +195,19 @@ func parsePrewarmOverlays(s string) []PrewarmOverlay {
 	return out
 }
 
-// parseSharedVolumes parses SOCKERLESS_GCP_SHARED_VOLUMES
-// (`name=path=bucket,...`). Returns nil for empty input.
+// parseSharedVolumes parses SOCKERLESS_GCP_SHARED_VOLUMES.
+//
+// Format (Phase 123): `name=path=bucket=backing,name=path=bucket=backing,...`
+// where `backing` is one of `gcs-sync`, `gcs-fuse`, or `emptyDir` (REQUIRED
+// per the no-fallbacks directive). Returns nil for empty input. Malformed
+// entries (wrong arity, empty fields) are skipped — operators see them
+// missing at materialize time and the failure-loud Resolve() call surfaces
+// the misconfiguration with a clear error.
+//
+// Backwards-compat for the legacy 3-tuple format (`name=path=bucket`,
+// no backing) is INTENTIONALLY removed: every consumer must explicitly
+// declare its storage strategy. Cells 7+8 bootstrap.sh already updated
+// to emit 4-tuples.
 func parseSharedVolumes(s string) []SharedVolume {
 	if s == "" {
 		return nil
@@ -186,15 +219,19 @@ func parseSharedVolumes(s string) []SharedVolume {
 			continue
 		}
 		parts := strings.Split(entry, "=")
-		if len(parts) != 3 {
+		if len(parts) != 4 {
+			// Entry malformed — skip silently here; the volume's
+			// absence at materialize time surfaces as a clearer error
+			// than a parse error here would.
 			continue
 		}
 		sv := SharedVolume{
 			Name:          strings.TrimSpace(parts[0]),
 			ContainerPath: strings.TrimSpace(parts[1]),
 			Bucket:        strings.TrimSpace(parts[2]),
+			Backing:       strings.TrimSpace(parts[3]),
 		}
-		if sv.Name == "" || sv.ContainerPath == "" || sv.Bucket == "" {
+		if sv.Name == "" || sv.ContainerPath == "" || sv.Bucket == "" || sv.Backing == "" {
 			continue
 		}
 		out = append(out, sv)

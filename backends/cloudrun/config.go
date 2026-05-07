@@ -74,10 +74,27 @@ type Config struct {
 // named Name backed by the GCS bucket Bucket. Mirror of `ecs.SharedVolume`
 // + `lambda.SharedVolume`, but using GCS buckets as the volume backing
 // (Cloud Run Jobs natively support `Volume{Gcs{Bucket}}`).
+//
+// Backing (Phase 123) is REQUIRED — no automatic fallback per user
+// directive 2026-05-07. Operators set it to "gcs-sync" / "gcs-fuse" /
+// "emptyDir" via the SOCKERLESS_GCP_SHARED_VOLUMES env's 4-tuple format.
 type SharedVolume struct {
 	Name          string // logical volume name used in spawned sub-tasks
 	ContainerPath string // path inside the calling container (= the bind-mount source)
 	Bucket        string // GCS bucket backing this volume (no `gs://` prefix)
+	Backing       string // REQUIRED: "gcs-sync" / "gcs-fuse" / "emptyDir"
+}
+
+// AsRef returns the cloud-agnostic SharedVolumeRef the storage backing
+// driver consumes. Empty Backing flows through unchanged so the
+// registry's Resolve fails loudly on it.
+func (v SharedVolume) AsRef() core.SharedVolumeRef {
+	return core.SharedVolumeRef{
+		Name:          v.Name,
+		ContainerPath: v.ContainerPath,
+		Backing:       core.StorageBacking(v.Backing),
+		GCSBucket:     v.Bucket,
+	}
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -99,9 +116,12 @@ func ConfigFromEnv() Config {
 	}
 }
 
-// parseSharedVolumes parses SOCKERLESS_GCP_SHARED_VOLUMES
-// (`name=path=bucket,name2=path2=bucket2`) into SharedVolume entries.
-// Returns nil for empty input.
+// parseSharedVolumes parses SOCKERLESS_GCP_SHARED_VOLUMES.
+//
+// Format (Phase 123): `name=path=bucket=backing,...` 4-tuples.
+// `backing` is REQUIRED — operators MUST explicitly choose
+// `gcs-sync` / `gcs-fuse` / `emptyDir` per the no-fallbacks directive.
+// Legacy 3-tuple format is no longer accepted.
 func parseSharedVolumes(s string) []SharedVolume {
 	if s == "" {
 		return nil
@@ -113,15 +133,16 @@ func parseSharedVolumes(s string) []SharedVolume {
 			continue
 		}
 		parts := strings.Split(entry, "=")
-		if len(parts) != 3 {
+		if len(parts) != 4 {
 			continue
 		}
 		sv := SharedVolume{
 			Name:          strings.TrimSpace(parts[0]),
 			ContainerPath: strings.TrimSpace(parts[1]),
 			Bucket:        strings.TrimSpace(parts[2]),
+			Backing:       strings.TrimSpace(parts[3]),
 		}
-		if sv.Name == "" || sv.ContainerPath == "" || sv.Bucket == "" {
+		if sv.Name == "" || sv.ContainerPath == "" || sv.Bucket == "" || sv.Backing == "" {
 			continue
 		}
 		out = append(out, sv)

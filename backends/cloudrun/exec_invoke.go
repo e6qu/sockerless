@@ -39,11 +39,28 @@ func (s *Server) execStartViaInvoke(execID string, exec api.ExecInstance, _ api.
 		return nil, &api.InvalidParameterError{Message: "exec command is empty"}
 	}
 
+	// Storage backing PreExec hooks. Each SharedVolume's driver may
+	// upload a snapshot (gcs-sync) or no-op (gcs-fuse, emptyDir).
+	// Returned env hints flow into the envelope so the bootstrap-side
+	// handler knows which GCS object to restore from. PostExec runs
+	// after the bootstrap response so workspace mutations propagate
+	// back to the caller's local mount.
+	preExecEnv := append([]string{}, exec.ProcessConfig.Env...)
+	if len(s.config.SharedVolumes) > 0 {
+		hints, err := s.preExecHintsForVolumes(s.ctx(), s.config.SharedVolumes, execID)
+		if err != nil {
+			return nil, fmt.Errorf("storage backing PreExec: %w", err)
+		}
+		for k, v := range hints {
+			preExecEnv = append(preExecEnv, k+"="+v)
+		}
+	}
+
 	envelope := gcpcommon.ExecEnvelopeExec{
 		Argv:    argv,
 		Tty:     exec.ProcessConfig.Tty,
 		Workdir: exec.ProcessConfig.WorkingDir,
-		Env:     exec.ProcessConfig.Env,
+		Env:     preExecEnv,
 	}
 
 	// idtoken.NewClient mints + auto-attaches a Google ID token whose
@@ -73,6 +90,15 @@ func (s *Server) execStartViaInvoke(execID string, exec api.ExecInstance, _ api.
 		e.ExitCode = res.ExitCode
 		e.CanRemove = true
 	})
+
+	// Storage backing PostExec hooks pull bootstrap-side mutations back
+	// to the local mount. Errors logged but don't fail the response —
+	// the data plane already returned to the caller.
+	if len(s.config.SharedVolumes) > 0 {
+		if err := s.postExecForVolumes(s.ctx(), s.config.SharedVolumes, execID); err != nil {
+			s.Logger.Warn().Err(err).Str("execID", execID).Msg("storage backing PostExec failed (non-fatal)")
+		}
+	}
 
 	// BUG-962: docker exec non-TTY response expects each chunk wrapped
 	// in an 8-byte stdcopy stream-frame header (stream_id 0x01=stdout,

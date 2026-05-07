@@ -133,3 +133,4 @@ tests/runners/*/.runners/
 # Runner-image build artifacts (cross-compiled binaries staged next to Dockerfile)
 tests/runners/*/dockerfile-*/sockerless-backend-*
 tests/runners/*/dockerfile-*/sockerless-gcf-bootstrap*
+tests/runners/*/dockerfile-*/sockerless-cloudrun-bootstrap*

@@ -573,25 +573,33 @@ func sanitizeServiceContainerName(name string) string {
 }
 
 // buildVolumeForBindGCF mirrors the cloudrun buildVolumeForBind
-// helper. SharedVolume entries (operator-pinned) keep raw GCSFuse;
-// ad-hoc binds get Volume_EmptyDir{MEMORY} + a SOCKERLESS_PERSIST_VOLUMES
-// entry for the bootstrap's tar-pack persistence (BUG-947).
+// helper. Operator-pinned SharedVolume entries route through the
+// Phase 123 storage backing driver (gcs-fuse / gcs-sync per the
+// SharedVolume.Backing field); ad-hoc binds (no SharedVolume entry) get
+// Volume_EmptyDir{MEMORY} + a SOCKERLESS_PERSIST_VOLUMES entry for the
+// bootstrap's tar-pack persistence (BUG-947).
 func (s *Server) buildVolumeForBindGCF(ctx context.Context, volName, mountPath string) (*runpb.Volume, string, error) {
 	bucket, err := s.bucketForVolume(ctx, volName)
 	if err != nil {
 		return nil, "", fmt.Errorf("provision GCS bucket for volume %q: %w", volName, err)
 	}
-	if s.config.LookupSharedVolumeByName(volName) != nil {
-		return &runpb.Volume{
-			Name: volName,
-			VolumeType: &runpb.Volume_Gcs{
-				Gcs: &runpb.GCSVolumeSource{
-					Bucket:       bucket,
-					MountOptions: gcpcommon.RunnerWorkspaceMountOptions(),
-				},
-			},
-		}, "", nil
+	if shared := s.config.LookupSharedVolumeByName(volName); shared != nil {
+		// Route through the storage backing driver. The driver's
+		// CloudSpec returns a cloud-agnostic BackingSpec; the
+		// translator emits the runpb.Volume. Empty Backing on a
+		// SharedVolume falls through to gcs-fuse (legacy default for
+		// cells 7+8 — see SharedVolume.AsRef).
+		vol := *shared
+		if vol.Bucket == "" {
+			vol.Bucket = bucket
+		}
+		runVol, err := s.cloudRunVolumeFromBacking(vol)
+		if err != nil {
+			return nil, "", err
+		}
+		return runVol, "", nil
 	}
+	// Ad-hoc bind: in-memory tmpfs + tar-pack persist hint.
 	return &runpb.Volume{
 		Name: volName,
 		VolumeType: &runpb.Volume_EmptyDir{

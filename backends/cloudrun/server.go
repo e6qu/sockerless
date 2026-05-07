@@ -23,6 +23,9 @@ type Server struct {
 	CloudRun     *core.StateStore[CloudRunState]
 	NetworkState *core.StateStore[NetworkState]
 	gcsVolumeState
+
+	// storageBackings resolves SharedVolume.Backing → driver. Phase 123.
+	storageBackings *core.StorageBackingRegistry
 	// Reverse-agent registry for docker exec / attach through a
 	// bootstrap running inside the CR Job/Service container.
 	reverseAgents *core.ReverseAgentRegistry
@@ -80,6 +83,23 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	}
 	s.SetSelf(s)
 	s.CloudState = &cloudRunCloudState{server: s}
+
+	// Storage backing registry (Phase 123). EmptyDirDriver always
+	// available; GCSFuseDriver kept for legacy SharedVolumes (cells 7+8
+	// tar-pack persist); GCSSyncDriver registered when the GCS client
+	// constructs successfully (cells 5+6 default). No-fallbacks
+	// directive: SharedVolumes with an unrecognized Backing fail at
+	// resolve time rather than silently selecting a default.
+	s.storageBackings = core.NewStorageBackingRegistry()
+	s.storageBackings.Register(&gcpcommon.GCSFuseDriver{
+		MountOptions: gcpcommon.RunnerWorkspaceMountOptions(),
+	})
+	if syncDriver, err := gcpcommon.NewGCSSyncDriver(context.Background()); err == nil {
+		s.storageBackings.Register(syncDriver)
+		logger.Info().Str("backing", "gcs-sync").Msg("registered storage backing driver")
+	} else {
+		logger.Warn().Err(err).Msg("gcs-sync driver init failed — operators using `gcs-sync` Backing will see resolve errors")
+	}
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

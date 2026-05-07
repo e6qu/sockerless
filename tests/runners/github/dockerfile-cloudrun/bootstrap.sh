@@ -38,7 +38,12 @@ HDR='Metadata-Flavor: Google'
 export SOCKERLESS_GCR_PROJECT=$(curl -sf -H "$HDR" $META/project/project-id)
 export SOCKERLESS_GCR_REGION=$(curl -sf -H "$HDR" $META/instance/region | awk -F/ '{print $NF}')
 export SOCKERLESS_GCP_BUILD_BUCKET="${SOCKERLESS_GCR_PROJECT}-build"
-export SOCKERLESS_GCP_SHARED_VOLUMES="runner-workspace=/tmp/runner-work=${SOCKERLESS_GCR_PROJECT}-runner-workspace,runner-externals=/opt/runner/externals=${SOCKERLESS_GCR_PROJECT}-runner-workspace"
+# Phase 123: 4-tuple `name=path=bucket=backing`. Cells 5+6 (GH actions/
+# runner) use `gcs-sync` because the runner-task and JOB pod-Service are
+# separate Cloud Run resources writing/reading the same workspace
+# concurrently — GCSFuse stale-handle on per-step rewrites (BUG-965)
+# rules out `gcs-fuse`. `gcs-sync` syncs at exec boundaries via SDK.
+export SOCKERLESS_GCP_SHARED_VOLUMES="runner-workspace=/tmp/runner-work=${SOCKERLESS_GCR_PROJECT}-runner-workspace=gcs-sync,runner-externals=/opt/runner/externals=${SOCKERLESS_GCR_PROJECT}-runner-workspace=gcs-sync"
 # Phase 122f: runner-pattern containers (long-lived) need Cloud Run
 # Service path. UseService=1 + VPC connector required for cross-revision
 # DNS via internal ingress.

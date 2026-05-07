@@ -28,6 +28,16 @@
 //     persistent-mode PDs (all bill idle).
 //   - No FUSE-on-object-store for new SharedVolumes (gcs-fuse retained
 //     ONLY for cells 7+8 legacy tar-pack persist).
+//   - **No automatic fallbacks** (user directive 2026-05-07): every
+//     SharedVolume MUST have an explicitly-set Backing. Resolve()
+//     returns an error for empty or unknown backings rather than
+//     silently selecting a default. Rationale: each backing has
+//     different cost / scale / consistency characteristics; the
+//     operator's choice is load-bearing, and silent fallback masks
+//     misconfiguration that surfaces as confusing runtime failures
+//     (e.g. cells 7+8 expect gcs-fuse for tar-pack persist; cells
+//     5+6 expect gcs-sync for per-step propagation; emptyDir would
+//     "work" for both up to the first cross-Service read, then break).
 //
 // See specs/CLOUD_RESOURCE_MAPPING.md § "Storage backing driver
 // abstraction (PLANNED — Phase 123)" for the full architectural design.
@@ -35,6 +45,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 )
 
 // StorageBacking is the operator-selected workspace storage strategy.
@@ -129,7 +140,7 @@ type StorageBackingRegistry struct {
 }
 
 // NewStorageBackingRegistry returns a registry pre-populated with the
-// EmptyDirDriver (which is cloud-agnostic). Backend wiring adds
+// EmptyDirDriver (cloud-agnostic; always available). Backend wiring adds
 // cloud-specific drivers (gcs-sync, gcs-fuse, etc.) on top.
 func NewStorageBackingRegistry() *StorageBackingRegistry {
 	r := &StorageBackingRegistry{drivers: map[StorageBacking]StorageBackingDriver{}}
@@ -146,14 +157,25 @@ func (r *StorageBackingRegistry) Register(d StorageBackingDriver) {
 	r.drivers[d.Backing()] = d
 }
 
-// Resolve returns the driver for the requested backing. Empty Backing or
-// unknown values fall through to the EmptyDirDriver — the safe default
-// (no persistence, no cross-Service state, no idle cost).
-func (r *StorageBackingRegistry) Resolve(b StorageBacking) StorageBackingDriver {
-	if d, ok := r.drivers[b]; ok {
-		return d
+// Resolve returns the driver for the requested backing, or an error if
+// the backing isn't registered. Per the no-fallbacks directive, empty
+// or unknown values fail loudly — operators MUST explicitly configure
+// SharedVolume.Backing. The empty-Backing case in particular is
+// rejected because every cell has known cost/lifecycle requirements
+// and silent default selection masks operator misconfiguration.
+func (r *StorageBackingRegistry) Resolve(b StorageBacking) (StorageBackingDriver, error) {
+	if b == "" {
+		return nil, fmt.Errorf("storage backing: SharedVolume.Backing is required (no default — set explicitly: %q, %q, or %q)",
+			BackingEmptyDir, BackingGCSSync, BackingGCSFuse)
 	}
-	return r.drivers[BackingEmptyDir]
+	if d, ok := r.drivers[b]; ok {
+		return d, nil
+	}
+	registered := make([]string, 0, len(r.drivers))
+	for k := range r.drivers {
+		registered = append(registered, string(k))
+	}
+	return nil, fmt.Errorf("storage backing %q: no driver registered (registered: %v)", b, registered)
 }
 
 // EmptyDirDriver implements StorageBackingDriver for the in-memory tmpfs

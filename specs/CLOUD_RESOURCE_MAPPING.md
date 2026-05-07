@@ -264,7 +264,8 @@ User directive 2026-05-07: workspace storage MUST be pluggable so we can test mu
 2. **No persistent hardware** (user directive 2026-05-07): no NFS / Filestore / always-on backing storage. Every storage backing must be scale-to-zero, billed per-use, no idle cost. Eliminates Filestore (NFSv3, ~$160/mo always-on) and self-managed NFS-on-VM as candidates.
 3. **No FUSE-on-object-store**: GCSFuse is rejected as the workspace primitive (BUG-965 stale-handle on per-step rewrites). The replacement uses GCS directly via SDK, syncing tar objects at exec boundaries — no FUSE in the data path.
 4. **Cost / scale-to-zero / use-only-when-needed**: GCS object storage is the only cross-Service shared-state primitive that satisfies all three. Per-exec sync via SDK calls beats per-byte FUSE access on consistency, and beats NFS on cost.
-5. **Single source of truth**: replaces the vestigial `backends/core/storage_driver.go::StorageDriver` and `api/drivers.go::VolumeDriver` shells (both unused today).
+5. **No automatic fallbacks** (user directive 2026-05-07): every `SharedVolume` MUST have an explicitly-set `Backing`. `Registry.Resolve(empty)` and `Registry.Resolve(unknown)` return errors rather than silently selecting a default. Rationale: each backing has different cost / scale / consistency characteristics; the operator's choice is load-bearing, and silent fallback masks misconfiguration that would surface as confusing runtime failures (e.g. `emptyDir` "works" until the first cross-Service read, then breaks). Fail loudly at config time, not at the first failed exec.
+6. **Single source of truth**: replaces the vestigial `backends/core/storage_driver.go::StorageDriver` and `api/drivers.go::VolumeDriver` shells (both unused today).
 
 ### Two-layer architecture
 
@@ -329,8 +330,9 @@ The driver abstraction exists so we can swap any of these without backend refact
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Default backing for new SharedVolumes | `gcs-sync` | User directive 2026-05-07: zero-scaling, no-cost-when-not-in-use. GCS satisfies; persistent hardware (NFS/Filestore/PD/Memorystore) does not. |
-| Backwards-compat for unset `Backing` field | resolves to `gcs-fuse` | Avoids breaking cells 7+8 which rely on direct `Volume_Gcs{}`. New configs explicitly set `Backing`. |
+| Default backing for new SharedVolumes | `gcs-sync` (operator MUST set explicitly) | User directive 2026-05-07: zero-scaling, no-cost-when-not-in-use. GCS satisfies; persistent hardware (NFS/Filestore/PD/Memorystore) does not. |
+| Behaviour for unset `Backing` field | **Error at Resolve time** (no fallback) | User directive 2026-05-07: no automatic fallbacks. Backings differ in cost / scale / consistency; silent default selection would mask operator misconfiguration. Fail loudly at config time, not at first failed exec. Cells 7+8 explicitly set `gcs-fuse`; cells 5+6 explicitly set `gcs-sync`. |
+| Behaviour for unknown `Backing` value | **Error at Resolve time** (no fallback) | Same rationale — typo or missing driver registration is operator misconfiguration. |
 | Sync granularity for `gcs-sync` | per-exec (per docker-exec call) | github-runner pattern (cells 5+6) writes per step. gitlab-runner pattern (cells 7+8) writes per stage and uses a separate persist module. |
 | Concurrent-writer safety for `gcs-sync` | ifGenerationMatch precondition on save (TODO; deferred until first concurrent-writer evidence) | Single-writer per job is the common case; precondition check added when we see real conflict. |
 | Lift `NetworkDriver` / `DNSDriver` while we're here | NO — focused on storage | Avoid scope creep. Network abstraction has its own layered concerns; do separately when there's a real need. |

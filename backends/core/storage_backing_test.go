@@ -5,30 +5,42 @@ import (
 	"testing"
 )
 
-func TestStorageBackingRegistry_DefaultEmptyDir(t *testing.T) {
+func TestStorageBackingRegistry_ResolveEmptyDir(t *testing.T) {
 	r := NewStorageBackingRegistry()
-	d := r.Resolve(BackingEmptyDir)
+	d, err := r.Resolve(BackingEmptyDir)
+	if err != nil {
+		t.Fatalf("Resolve(emptyDir) returned error: %v", err)
+	}
 	if d.Backing() != BackingEmptyDir {
 		t.Errorf("Resolve(emptyDir).Backing() = %q, want %q", d.Backing(), BackingEmptyDir)
 	}
 }
 
-func TestStorageBackingRegistry_UnknownFallsBackToEmptyDir(t *testing.T) {
+// TestStorageBackingRegistry_UnknownFailsLoudly enforces the no-fallback
+// architectural choice: silent default selection would mask operator
+// misconfiguration (e.g. cells 7+8 needing gcs-fuse vs cells 5+6 needing
+// gcs-sync — emptyDir "works" until the first cross-Service read).
+func TestStorageBackingRegistry_UnknownFailsLoudly(t *testing.T) {
 	r := NewStorageBackingRegistry()
-	d := r.Resolve(StorageBacking("nonexistent"))
-	if d == nil {
-		t.Fatal("Resolve returned nil for unknown backing; want fallback to emptyDir")
+	d, err := r.Resolve(StorageBacking("nonexistent"))
+	if err == nil {
+		t.Fatal("Resolve(unknown) should return error per no-fallbacks directive")
 	}
-	if d.Backing() != BackingEmptyDir {
-		t.Errorf("Resolve(unknown).Backing() = %q, want emptyDir", d.Backing())
+	if d != nil {
+		t.Errorf("Resolve(unknown) should return nil driver alongside the error, got %v", d)
 	}
 }
 
-func TestStorageBackingRegistry_EmptyResolvesToEmptyDir(t *testing.T) {
+// TestStorageBackingRegistry_EmptyFailsLoudly — same rationale: empty
+// SharedVolume.Backing is operator misconfiguration, not a default.
+func TestStorageBackingRegistry_EmptyFailsLoudly(t *testing.T) {
 	r := NewStorageBackingRegistry()
-	d := r.Resolve("")
-	if d.Backing() != BackingEmptyDir {
-		t.Errorf("Resolve(empty).Backing() = %q, want emptyDir (default for unset Backing field)", d.Backing())
+	d, err := r.Resolve("")
+	if err == nil {
+		t.Fatal("Resolve(empty) should return error per no-fallbacks directive — Backing is operator-required")
+	}
+	if d != nil {
+		t.Errorf("Resolve(empty) should return nil driver, got %v", d)
 	}
 }
 
@@ -36,7 +48,10 @@ func TestStorageBackingRegistry_CustomDriverRegistration(t *testing.T) {
 	r := NewStorageBackingRegistry()
 	mock := &mockDriver{backing: BackingGCSSync}
 	r.Register(mock)
-	got := r.Resolve(BackingGCSSync)
+	got, err := r.Resolve(BackingGCSSync)
+	if err != nil {
+		t.Fatalf("Resolve(gcs-sync) after Register: %v", err)
+	}
 	if got != mock {
 		t.Errorf("Resolve(gcs-sync) returned wrong driver — want the registered mock")
 	}

@@ -22,6 +22,15 @@ type Server struct {
 	ipCounter atomic.Int32
 
 	gcsVolumeState
+
+	// storageBackings resolves SharedVolume.Backing → driver. Populated
+	// at NewServer time with EmptyDirDriver + GCSFuseDriver + (when
+	// available) GCSSyncDriver. The volume_translator.go helpers route
+	// every materialize/exec through this registry — adding a new
+	// backing means registering a driver here, no per-call-site changes.
+	// Phase 123.
+	storageBackings *core.StorageBackingRegistry
+
 	// Reverse-agent registry for docker top / cp / stat / diff via a
 	// bootstrap running inside the function container.
 	reverseAgents *core.ReverseAgentRegistry
@@ -113,6 +122,23 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		s.images.BuildService = svc
 	}
 	s.CloudState = &gcfCloudState{server: s}
+
+	// Storage backing registry (Phase 123). EmptyDirDriver always
+	// registered; GCSFuseDriver kept for legacy SharedVolumes (cells
+	// 7+8 tar-pack persist); GCSSyncDriver registered when the GCS
+	// client constructs successfully — its absence is logged but not
+	// fatal so backends without GCS access still boot for unit tests.
+	s.storageBackings = core.NewStorageBackingRegistry()
+	s.storageBackings.Register(&gcpcommon.GCSFuseDriver{
+		MountOptions: gcpcommon.RunnerWorkspaceMountOptions(),
+	})
+	if syncDriver, err := gcpcommon.NewGCSSyncDriver(context.Background()); err == nil {
+		s.storageBackings.Register(syncDriver)
+		logger.Info().Str("backing", "gcs-sync").Msg("registered storage backing driver")
+	} else {
+		logger.Warn().Err(err).Msg("gcs-sync driver init failed — falling back to gcs-fuse for shared volumes")
+	}
+
 	s.SetSelf(s)
 
 	mode := "cloud"

@@ -68,17 +68,26 @@ func (s *Server) buildVolumeForBind(ctx context.Context, volName, mountPath stri
 	if err != nil {
 		return nil, "", fmt.Errorf("provision GCS bucket for volume %q: %w", volName, err)
 	}
-	if s.config.LookupSharedVolumeByName(volName) != nil {
-		return &runpb.Volume{
-			Name: volName,
-			VolumeType: &runpb.Volume_Gcs{
-				Gcs: &runpb.GCSVolumeSource{
-					Bucket:       bucket,
-					MountOptions: gcpcommon.RunnerWorkspaceMountOptions(),
-				},
-			},
-		}, "", nil
+	if shared := s.config.LookupSharedVolumeByName(volName); shared != nil {
+		// Phase 123: route through the storage backing driver. Empty
+		// Backing fails loudly at Resolve time per the no-fallbacks
+		// directive — operator MUST set `gcs-sync` / `gcs-fuse` /
+		// `emptyDir` in SOCKERLESS_GCP_SHARED_VOLUMES.
+		vol := *shared
+		if vol.Bucket == "" {
+			vol.Bucket = bucket
+		}
+		runVol, err := s.cloudRunVolumeFromBacking(vol)
+		if err != nil {
+			return nil, "", err
+		}
+		return runVol, "", nil
 	}
+	// Ad-hoc bind (no SharedVolume entry): in-memory tmpfs +
+	// SOCKERLESS_PERSIST_VOLUMES hint for the bootstrap's existing
+	// tar-pack persist module (BUG-947). This path stays unchanged
+	// because ad-hoc volumes don't have an operator-supplied Backing
+	// to honour.
 	return &runpb.Volume{
 		Name: volName,
 		VolumeType: &runpb.Volume_EmptyDir{

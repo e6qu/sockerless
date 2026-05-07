@@ -10,7 +10,9 @@ HDR='Metadata-Flavor: Google'
 export SOCKERLESS_GCF_PROJECT=$(curl -sf -H "$HDR" $META/project/project-id)
 export SOCKERLESS_GCF_REGION=$(curl -sf -H "$HDR" $META/instance/region | awk -F/ '{print $NF}')
 export SOCKERLESS_GCP_BUILD_BUCKET="${SOCKERLESS_GCF_PROJECT}-build"
-export SOCKERLESS_GCP_SHARED_VOLUMES="runner-workspace=/tmp/runner-work=${SOCKERLESS_GCF_PROJECT}-runner-workspace,runner-externals=/opt/runner/externals=${SOCKERLESS_GCF_PROJECT}-runner-workspace"
+# Phase 123: 4-tuple `name=path=bucket=backing`. Cells 7+8 stay on
+# `gcs-fuse` (sequential whole-tar uploads via persist module).
+export SOCKERLESS_GCP_SHARED_VOLUMES="runner-workspace=/tmp/runner-work=${SOCKERLESS_GCF_PROJECT}-runner-workspace=gcs-fuse,runner-externals=/opt/runner/externals=${SOCKERLESS_GCF_PROJECT}-runner-workspace=gcs-fuse"
 echo "bootstrap: project=$SOCKERLESS_GCF_PROJECT region=$SOCKERLESS_GCF_REGION"
 
 nohup /usr/local/bin/sockerless-backend-gcf -addr :3376 -log-level debug \

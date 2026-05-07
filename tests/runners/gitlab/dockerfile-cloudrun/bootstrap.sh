@@ -28,7 +28,11 @@ HDR='Metadata-Flavor: Google'
 export SOCKERLESS_GCR_PROJECT=$(curl -sf -H "$HDR" $META/project/project-id)
 export SOCKERLESS_GCR_REGION=$(curl -sf -H "$HDR" $META/instance/region | awk -F/ '{print $NF}')
 export SOCKERLESS_GCP_BUILD_BUCKET="${SOCKERLESS_GCR_PROJECT}-build"
-export SOCKERLESS_GCP_SHARED_VOLUMES="runner-workspace=/tmp/runner-work=${SOCKERLESS_GCR_PROJECT}-runner-workspace,runner-externals=/opt/runner/externals=${SOCKERLESS_GCR_PROJECT}-runner-workspace"
+# Phase 123: 4-tuple `name=path=bucket=backing`. Cells 7+8 (gitlab-runner)
+# stay on `gcs-fuse` because the existing tar-pack persist module handles
+# sequential-stage workspace propagation. New SharedVolumes (cells 5+6)
+# use `gcs-sync` instead — see github bootstrap.sh.
+export SOCKERLESS_GCP_SHARED_VOLUMES="runner-workspace=/tmp/runner-work=${SOCKERLESS_GCR_PROJECT}-runner-workspace=gcs-fuse,runner-externals=/opt/runner/externals=${SOCKERLESS_GCR_PROJECT}-runner-workspace=gcs-fuse"
 # Phase 122f: Cloud Run Service path for runner-pattern containers.
 export SOCKERLESS_GCR_USE_SERVICE=1
 export SOCKERLESS_GCR_VPC_CONNECTOR="projects/${SOCKERLESS_GCR_PROJECT}/locations/${SOCKERLESS_GCR_REGION}/connectors/sockerless-connector"
