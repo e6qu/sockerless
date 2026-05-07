@@ -51,19 +51,36 @@ Same single-PR-per-phase rule as Phase 123.
 
 Live projects torn down end of this session. Next live-cloud session creates a fresh `sockerless-live-<rand>` per `project_gcp_live_setup.md` workflow. **Before bringing the next project online, ship Phase 128 (job timeout) + Phase 129 (cost tracking + stale-resource sweeper) FIRST** — without those, the same regional-CPU-quota debt cycle from today's session repeats.
 
-## Approximate cost report (this session, 2026-05-07)
+## Cost report — 6-day project lifetime (2026-05-01 → 2026-05-07)
 
-No exact figure available — billing export not configured (Phase 129's first deliverable). Best-effort estimate based on resource activity:
+Actual spend reported by user: **~$90**. Initial estimate of $10-15 was wrong because it assumed a single-session footprint; the live projects (`sockerless-live-46x3zg4imo` + `sockerless-live-adi`, both `DELETE_REQUESTED` now) actually existed for 6 days. Best-effort post-hoc breakdown:
 
-| Cause | Estimate |
+| Cost driver | Estimated range |
 |---|---|
-| Cloud Run Services pinned at min_instances=1 (~10 services × ~14 vCPU + 14 GiB across ~6h before BUG-970 fix) | $7-12 |
-| Cloud Build for overlay images (~15 builds × 30-60 s) | $0.50-1.00 |
-| Cloud Storage (workspace bucket, AR repos) | <$0.50 |
-| Egress (mostly same-region) | negligible |
-| **Session total estimate** | **$10-15** |
+| `gitlab-runner-cloudrun` Service (multi-container revision, min_instances=1, ~3 days) | $10 |
+| `gitlab-runner-gcf` Service (multi-container, min=1, ~5 days) | $13 |
+| `github-runner-dispatcher-gcp` Service (single-container, min=1, ~5 days) | $3 |
+| Orphan `sockerless-svc-*` from failed cells-5/6 iterations (10+ services × min=1 across varying intervals — the BUG-970 root cause) | $20-40 |
+| VPC connector `sockerless-connector` (min-instances=4 per BUG-947 fix, 6 days, e2-micro instances) | $5 |
+| Cloud Run Functions / gcf pool warming + per-step deploys | $5-10 |
+| Cloud Build (~80 overlay builds + dispatcher + standalone backend rebuilds) | $1-2 |
+| Artifact Registry storage (100+ overlay tags) | $1-3 |
+| Cloud Logging ingestion (heavy debug logs across 17 cell iterations × multi-container revisions) | $5-15 |
+| Cloud NAT egress (image pulls through proxy) | $1-2 |
+| **Total range** | **$60-100** (consistent with $90 reported) |
 
-The bulk of cost was the `minInstanceCount=1` debt before BUG-970 surfaced. With Phase 128 + 129 in place, similar future sessions should be ~$1-2 (only active-deploy CPU + Cloud Build).
+**Where the money goes** (lessons for cost-tracking):
+1. **`min_instances=1` is the killer**. Always-on multi-container revisions silently run 24/7 across the project lifetime. Three "core infra" services (`gitlab-runner-cloudrun`, `gitlab-runner-gcf`, `github-runner-dispatcher-gcp`) alone are ~$5-7/day. Orphan `sockerless-svc-*` add another $5-10/day across the worst cell-5/6 iteration windows. Phase 129 deploy-hygiene + min_instances=0 (already shipped via BUG-970 fix on pod-Services) covers this — but the dispatcher-side services still need to either drop to min=0 or auto-tear-down between sessions.
+2. **Project lifetime > session length**. We treat live projects as iteration targets retained across sessions. That convenience has a daily-cost floor; per-session teardown (or scheduled overnight teardown) cuts the floor to zero.
+3. **Cloud Logging ingestion** is the second-largest line item. Per-line debug logging across 17 cell iterations × multi-container revisions adds up. A log-level-control env (`SOCKERLESS_LOG_LEVEL=info` instead of `debug` in production) on the dispatcher + backend reduces ingest by 5-10×.
+4. **VPC connector min-instances** is bookmarked overhead — useful for keeping cross-Cloud-Run latency low, but $0.80/day for min=4 across the project's life.
+
+**Action: Phase 129 must ship before the next live-cloud session brings up a fresh project.** Concretely:
+- BigQuery billing export (free at our volumes, gives line-item-by-day visibility).
+- Per-session resource labels (`sockerless_session=<id>`) on every Cloud Run Service / Job / AR repo / GCS bucket / VPC connector.
+- Per-session budget alert ($5 alert, $20 hard cap).
+- Stale-resource sweeper integrated into the dispatcher GC tick (already partially planned for orphan `sockerless-svc-*`; expand to include dispatcher's own siblings + connector idle-min during off-hours).
+- Default the live-project workflow to overnight teardown (`gcloud projects delete` end of session, fresh `sockerless-live-<rand>` next session per `project_gcp_live_setup.md`).
 
 ## Working notes — anything not in the above
 
