@@ -59,6 +59,13 @@ type Request struct {
 	// propagate to the JOB container's pod-Service GCSFuse mount.
 	// Empty = no mount (legacy behaviour).
 	RunnerWorkspaceBucket string
+	// RunnerWorkspaceBacking (Phase 123) — operator's storage backing
+	// choice. "gcs-fuse" (legacy) attaches the bucket directly to the
+	// runner-task. "gcs-sync" leaves the runner-task tmpfs and lets
+	// sockerless-backend tar/upload per-exec — required for cells 5+6
+	// to avoid GCSFuse stale-handle on per-step event.json rewrites
+	// (BUG-965). Validated by config.Load when bucket is set.
+	RunnerWorkspaceBacking string
 }
 
 // Spawn calls Cloud Run Jobs CreateJob then RunJob. Returns the Job
@@ -118,16 +125,26 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 		},
 	}
 
-	// BUG-963: optional runner-workspace volume — when the operator-
-	// configured bucket is set, mount it at /tmp/runner-work on the
-	// runner-task. GH actions/runner writes step scripts there; the
-	// JOB container's sockerless-materialized pod-Service then reads
-	// the same bucket via GCSFuse, so `docker exec sh /__w/_temp/X.sh`
-	// finds the file. Cloud Run native `Volume{Gcs{Bucket}}` requires
-	// no in-container privileges and avoids the gcsfuse-CLI path that
-	// needs CAP_SYS_ADMIN (not granted by Cloud Run).
+	// Optional runner-workspace volume on the runner-task. Behaviour
+	// depends on RunnerWorkspaceBacking:
+	//
+	//   - "gcs-fuse" (BUG-963): mount the GCS bucket directly via
+	//     Cloud Run native Volume{Gcs} so the runner agent's writes
+	//     propagate to the bucket the JOB pod-Service reads. Used by
+	//     cells 7+8 (sequential whole-tar uploads, FUSE-safe).
+	//
+	//   - "gcs-sync" (Phase 123): leave the runner-task tmpfs at
+	//     /tmp/runner-work — no GCS mount on the runner-task side.
+	//     Sockerless-backend on the runner-task tars + uploads to GCS
+	//     per-exec (PreExec hook); the JOB pod-Service bootstrap
+	//     restores from GCS pre-subprocess. Avoids the BUG-965
+	//     stale-handle path entirely (no FUSE in the data plane).
+	//
+	// The empty-bucket case = no mount, no validation — legacy
+	// pre-BUG-963 behaviour. config.Load enforces backing when bucket
+	// is set per the no-fallbacks directive.
 	var taskVolumes []*runpb.Volume
-	if req.RunnerWorkspaceBucket != "" {
+	if req.RunnerWorkspaceBucket != "" && req.RunnerWorkspaceBacking == "gcs-fuse" {
 		const volName = "runner-workspace"
 		taskVolumes = append(taskVolumes, &runpb.Volume{
 			Name: volName,

@@ -54,6 +54,20 @@ type Label struct {
 	// infrastructure config (which bucket); the dispatcher itself stays
 	// sockerless-unaware (it just provisions the mount).
 	RunnerWorkspaceBucket string `toml:"runner_workspace_bucket"`
+	// RunnerWorkspaceBacking (Phase 123) — chooses how the runner-task
+	// shares its workspace with the JOB pod-Service:
+	//   - "gcs-fuse": legacy. Mount the GCS bucket directly on the
+	//     runner-task via Cloud Run native Volume{Gcs}. Fast for
+	//     whole-tar uploads (cells 7+8 tar-pack persist) but breaks GH
+	//     actions/runner per-step rewrites of event.json (BUG-965 stale
+	//     handle on FUSE rewrite). Cells 7+8 only.
+	//   - "gcs-sync": pure GCS SDK, no FUSE. Runner-task keeps tmpfs at
+	//     /tmp/runner-work; sockerless-backend tars + uploads per-exec;
+	//     pod-Service bootstrap restores from GCS pre-subprocess + saves
+	//     post-subprocess. Default for cells 5+6 (avoids BUG-965).
+	// Required when RunnerWorkspaceBucket is set — no automatic fallback
+	// per the storage-backing no-fallbacks directive.
+	RunnerWorkspaceBacking string `toml:"runner_workspace_backing"`
 }
 
 // Config is the on-disk dispatcher config.
@@ -98,6 +112,16 @@ func Load(path string) (Config, error) {
 		}
 		if l.ServiceAccount == "" {
 			return Config{}, fmt.Errorf("label %q: service_account is required", l.Name)
+		}
+		if l.RunnerWorkspaceBucket != "" {
+			switch l.RunnerWorkspaceBacking {
+			case "gcs-fuse", "gcs-sync":
+				// ok
+			case "":
+				return Config{}, fmt.Errorf("label %q: runner_workspace_backing is required when runner_workspace_bucket is set (no fallback — choose %q or %q)", l.Name, "gcs-fuse", "gcs-sync")
+			default:
+				return Config{}, fmt.Errorf("label %q: runner_workspace_backing %q invalid (must be %q or %q)", l.Name, l.RunnerWorkspaceBacking, "gcs-fuse", "gcs-sync")
+			}
 		}
 	}
 	return cfg, nil

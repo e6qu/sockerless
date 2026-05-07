@@ -233,16 +233,17 @@ func (d *dispatchLoop) Step(ctx context.Context) error {
 		}
 		runnerName := fmt.Sprintf("dispatcher-gcp-%d-%d", job.JobID, time.Now().Unix())
 		fullName, err := spawner.Spawn(ctx, spawner.Request{
-			Project:               label.Project,
-			Region:                label.Region,
-			Image:                 label.Image,
-			ServiceAccount:        label.ServiceAccount,
-			RegToken:              regToken,
-			Repo:                  job.Repo,
-			RunnerName:            runnerName,
-			Labels:                job.Labels,
-			JobID:                 job.JobID,
-			RunnerWorkspaceBucket: label.RunnerWorkspaceBucket,
+			Project:                label.Project,
+			Region:                 label.Region,
+			Image:                  label.Image,
+			ServiceAccount:         label.ServiceAccount,
+			RegToken:               regToken,
+			Repo:                   job.Repo,
+			RunnerName:             runnerName,
+			Labels:                 job.Labels,
+			JobID:                  job.JobID,
+			RunnerWorkspaceBucket:  label.RunnerWorkspaceBucket,
+			RunnerWorkspaceBacking: label.RunnerWorkspaceBacking,
 		})
 		if err != nil {
 			log.Printf("skip job %d: spawn (%s/%s): %v", job.JobID, label.Project, label.Region, err)
