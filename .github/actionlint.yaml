@@ -1,0 +1,11 @@
+# Self-hosted runner labels registered operator-side by the
+# github-runner-dispatcher-{aws,gcp,azure} dispatchers. Listed here so
+# actionlint's `runner-label` check stops flagging them as unknown.
+self-hosted-runner:
+  labels:
+    - sockerless-ecs
+    - sockerless-lambda
+    - sockerless-cloudrun
+    - sockerless-gcf
+    - sockerless-aca
+    - sockerless-azf

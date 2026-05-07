@@ -290,7 +290,7 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 		"defaults":             nil,
 		"environmentVariables": nil,
 		"actionsEnvironment":   nil,
-		"fileTable":            []string{".github/workflows/test.yml"},
+		"fileTable":            []string{".github/workflows/ci.yml"},
 	}
 }
 

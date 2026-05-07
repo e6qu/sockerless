@@ -503,6 +503,6 @@ func buildJobMessage(serverURL, jobID, planID, timelineID string, requestID int6
 		"defaults":             nil,
 		"environmentVariables": nil,
 		"actionsEnvironment":   nil,
-		"fileTable":            []string{".github/workflows/test.yml"},
+		"fileTable":            []string{".github/workflows/ci.yml"},
 	}
 }

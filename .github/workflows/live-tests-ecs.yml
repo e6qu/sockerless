@@ -1,0 +1,158 @@
+# live-tests-ecs — sockerless ECS backend, against a real AWS account.
+#
+# Manual only (`workflow_dispatch`). Brings up the shared AWS infra
+# (terraform), runs the ECS smoke, optionally spawns a github / gitlab
+# runner dispatcher (so that `hello-ecs` self-hosted runner-bound jobs
+# can register), then tears everything down. Teardown always runs so a
+# failed earlier job still releases scratch AWS resources. See
+# smoke-tests/aws-live/README.md for the scripts each job runs.
+#
+# REQUIRED REPOSITORY SECRETS (Settings → Secrets and variables →
+# Actions). These MUST be configured before dispatch — the workflow
+# will fail at the first credentials step otherwise:
+#
+#   AWS_LIVE_ROLE_ARN           — IAM role ARN that GitHub OIDC assumes.
+#                                 Trust policy allows
+#                                 token.actions.githubusercontent.com
+#                                 with this repo's ref claim.
+#   AWS_LIVE_GITHUB_PAT         — (optional) PAT for 4-github-runner.sh
+#                                 self-hosted-runner registration.
+#                                 Skip if not running script 4.
+#   AWS_LIVE_GITLAB_RUNNER_TOKEN — (optional) GitLab runner registration
+#                                 token for 5-gitlab-runner.sh. Skip if
+#                                 not running script 5.
+#
+# Why repo secrets and not workflow inputs: workflow_dispatch inputs
+# leak into the run history's Inputs panel and the workflow run REST
+# API, so they're not safe for credentials. Repo secrets are masked in
+# logs and never returned by the API. Mirror the same secret names in
+# the GitLab mirror's CI/CD variables if running this workflow there.
+
+name: live-tests-ecs
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: AWS region (e.g. eu-west-1)
+        required: true
+        default: eu-west-1
+      scripts:
+        description: 'Comma-separated steps: 0=infra,1=ecs-smoke,4=github-runner,5=gitlab-runner,hello,6=teardown ("all" runs the full chain)'
+        required: true
+        default: "all"
+
+concurrency:
+  group: live-tests-ecs
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  infra-up:
+    runs-on: ubuntu-latest
+    if: contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') || contains(inputs.scripts, '0')
+    env:
+      AWS_REGION: ${{ inputs.region }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+      - uses: hashicorp/setup-terraform@v4
+      - run: bash smoke-tests/aws-live/0-infra-up.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ecs-outputs
+          path: /tmp/ecs-out.json
+
+  ecs-smoke:
+    needs: infra-up
+    runs-on: ubuntu-latest
+    if: contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') || contains(inputs.scripts, '1')
+    env:
+      AWS_REGION: ${{ inputs.region }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+      - uses: actions/download-artifact@v8
+        with: { name: ecs-outputs, path: /tmp }
+      - run: (cd backends/ecs && go build -o ../../sockerless-backend-ecs ./cmd/sockerless-backend-ecs)
+      - run: bash smoke-tests/aws-live/1-ecs-smoke.sh
+
+  github-runner:
+    needs: infra-up
+    runs-on: ubuntu-latest
+    if: |
+      contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') ||
+      contains(inputs.scripts, '4')
+    env:
+      AWS_REGION: ${{ inputs.region }}
+      GITHUB_PAT: ${{ secrets.AWS_LIVE_GITHUB_PAT }}
+    steps:
+      - uses: actions/checkout@v6
+      - run: |
+          if [ -z "$GITHUB_PAT" ]; then
+            echo "::warning::github_pat absent; skipping 4-github-runner.sh"
+            exit 0
+          fi
+          bash smoke-tests/aws-live/4-github-runner.sh
+
+  gitlab-runner:
+    needs: infra-up
+    runs-on: ubuntu-latest
+    if: |
+      contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') ||
+      contains(inputs.scripts, '5')
+    env:
+      AWS_REGION: ${{ inputs.region }}
+      GITLAB_RUNNER_TOKEN: ${{ secrets.AWS_LIVE_GITLAB_RUNNER_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+      - run: |
+          if [ -z "$GITLAB_RUNNER_TOKEN" ]; then
+            echo "::warning::gitlab_runner_token absent; skipping 5-gitlab-runner.sh"
+            exit 0
+          fi
+          bash smoke-tests/aws-live/5-gitlab-runner.sh
+
+  hello:
+    # Minimal sanity check that the GH actions/runner + sockerless-ecs
+    # backend wiring works end-to-end. Runs on the self-hosted runner
+    # spawned by `github-runner` above. No repo secrets used directly —
+    # the dispatcher holds the AWS creds + GitHub PAT operator-side.
+    needs: github-runner
+    if: |
+      contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') ||
+      contains(inputs.scripts, 'hello')
+    runs-on: [self-hosted, sockerless-ecs]
+    container:
+      image: alpine:latest
+    steps:
+      - run: echo "hello from sockerless ecs"
+      - run: env | sort
+
+  teardown:
+    needs: [ecs-smoke, github-runner, gitlab-runner, hello]
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ inputs.region }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+      - uses: hashicorp/setup-terraform@v4
+      - run: bash smoke-tests/aws-live/6-teardown.sh

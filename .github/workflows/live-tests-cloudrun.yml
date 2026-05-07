@@ -1,15 +1,32 @@
-# Cell 6 — GitHub Actions runner (docker executor) → sockerless gcf backend.
+# live-tests-cloudrun — GitHub Actions runner (docker executor) → sockerless
+# cloudrun backend, against a real GCP project.
 #
-# Same shape as cell-5-cloudrun but the runner image bakes
-# `sockerless-backend-gcf`; each step container becomes a Cloud Run
-# Function via Phase 118d's pod-overlay materialisation. `services:`
-# (postgres) rides as a sidecar in the merged-rootfs supervisor.
+# Manual only (`workflow_dispatch`). The runner image bakes
+# `sockerless-backend-cloudrun` and runs as a Cloud Run Job (or Service)
+# dispatched via the github-runner-dispatcher-gcp. The runner's docker
+# calls (container: directive + services:) go through
+# DOCKER_HOST=tcp://localhost:3375 to the in-image sockerless backend,
+# which dispatches each step container as a further Cloud Run Job.
 #
-# AUTHENTICATION: same as cell-5-cloudrun — the
-# `github-runner-dispatcher-gcp` holds the GitHub PAT + GCP SA
-# credentials operator-side; this workflow uses NO repo secrets
-# directly. See cell-5-cloudrun.yml for the full setup note.
-name: cell-6-gcf
+# Pipeline body: probe caps / kernel / env / params, postgres-sidecar
+# localhost peer reachability, clone sockerless, compile
+# simulators/testdata/eval-arithmetic, run five arithmetic expressions.
+#
+# GREEN gate: all probes return non-error output, postgres reachable
+# via localhost:5432, Go compile produces a working binary, all five
+# arithmetic invocations print the expected result and exit 0.
+#
+# AUTHENTICATION (no repo secrets used directly by this workflow):
+#   Runs on a self-hosted runner labelled `sockerless-cloudrun`, a
+#   runner-task spawned by `github-runner-dispatcher-gcp` on demand.
+#   The dispatcher holds the GitHub PAT + GCP service account
+#   credentials needed to mint a runner-registration token and spawn
+#   the Cloud Run Job. The dispatcher runs operator-side (long-lived
+#   Cloud Run Service or local laptop) — start it manually before
+#   dispatching this workflow, e.g.
+#   `gh workflow run live-tests-cloudrun.yml`. Tear it down
+#   end-of-session per `docs/GCP_LIVE_TEARDOWN.md`.
+name: live-tests-cloudrun
 
 on:
   workflow_dispatch:
@@ -21,7 +38,7 @@ on:
 
 jobs:
   probe-and-compile:
-    runs-on: [self-hosted, sockerless-gcf]
+    runs-on: [self-hosted, sockerless-cloudrun]
     container:
       image: golang:1.22-alpine
     services:
@@ -33,22 +50,25 @@ jobs:
           POSTGRES_DB: ci
     steps:
       - name: probe-cloud-urls
-        # Cloud Run Functions Gen2 are backed by a Cloud Run service;
-        # the function URL routes through the underlying service. The
-        # platform populates K_SERVICE / K_REVISION / GOOGLE_CLOUD_PROJECT.
-        # Function name lives in K_SERVICE under Gen2.
+        # Surface the backing Cloud Run Job execution URL + Cloud
+        # Logging URL so the operator can attach them to STATUS.md
+        # alongside the outer GitHub Actions run URL. Cloud Run Jobs
+        # populate CLOUD_RUN_JOB / CLOUD_RUN_EXECUTION / GOOGLE_CLOUD_PROJECT
+        # / GOOGLE_CLOUD_REGION (or CLOUD_RUN_TASK_INDEX for tasks)
+        # automatically; the runner container inherits them and the
+        # step container (this) inherits them again via the
+        # sockerless-backend-cloudrun → Cloud Run Job spawn.
         run: |
           echo "=== Cloud Run env (set by the platform) ==="
-          env | grep -E '^(CLOUD_RUN_|K_SERVICE|K_REVISION|GOOGLE_CLOUD_|FUNCTION_)' | sort || true
+          env | grep -E '^(CLOUD_RUN_|K_SERVICE|K_REVISION|GOOGLE_CLOUD_)' | sort || true
           PROJ="${GOOGLE_CLOUD_PROJECT:-${GCP_PROJECT:-unknown}}"
           REG="${GOOGLE_CLOUD_REGION:-${CLOUD_RUN_REGION:-us-central1}}"
-          FN="${K_SERVICE:-${FUNCTION_TARGET:-unknown}}"
-          REV="${K_REVISION:-unknown}"
+          JOB="${CLOUD_RUN_JOB:-${K_SERVICE:-unknown}}"
+          EXEC="${CLOUD_RUN_EXECUTION:-unknown}"
           echo "=== Cloud console URLs ==="
-          echo "Function:       https://console.cloud.google.com/functions/details/$REG/$FN?project=$PROJ"
-          echo "Backing service: https://console.cloud.google.com/run/detail/$REG/$FN/revisions?project=$PROJ"
-          echo "Cloud Logging:  https://console.cloud.google.com/logs/query;query=resource.type%3D%22cloud_run_revision%22%20resource.labels.service_name%3D%22$FN%22?project=$PROJ"
-          echo "Revision:       $REV"
+          echo "Job execution: https://console.cloud.google.com/run/jobs/executions/details/$REG/$EXEC/tasks?project=$PROJ"
+          echo "Job overview:  https://console.cloud.google.com/run/jobs/details/$REG/$JOB?project=$PROJ"
+          echo "Cloud Logging: https://console.cloud.google.com/logs/query;query=resource.type%3D%22cloud_run_job%22%20resource.labels.job_name%3D%22$JOB%22?project=$PROJ"
       - name: probe-host
         run: |
           echo "=== identity ==="
@@ -64,25 +84,28 @@ jobs:
         run: |
           echo "=== /proc/self/status caps ==="
           grep -E '^(Cap|Seccomp|NoNew)' /proc/self/status || true
-          echo "=== sockerless namespace honesty (Phase 118d) ==="
-          # The shim labels for shared-degraded namespaces are visible
-          # via /proc inside the chroot'd subprocess.
-          env | grep -E 'SOCKERLESS_(POD|NAMESPACE)' || true
+          echo "=== /proc/self/cgroup ==="
+          cat /proc/self/cgroup || true
       - name: probe-kernel
         run: |
           uname -a
           cat /proc/version || true
+          ls -1 /proc/sys/kernel/ | head -20 || true
       - name: probe-env
         run: |
           env | sort | grep -vE '^(SOCKERLESS_|GCP_|GITHUB_|GITLAB_|CI_|HOME|PATH|HOSTNAME)' | head -50
+          echo "---"
+          env | sort | grep -E '^(SOCKERLESS_)' | head -20 || true
       - name: probe-parameters
         run: |
           getconf -a 2>/dev/null | head -30 || echo "getconf -a unavailable"
           echo "ulimit -a:"; ulimit -a
           echo "nproc: $(nproc)"
+          echo "memory: $(free -h 2>/dev/null || cat /proc/meminfo | head -3)"
       - name: probe-localhost-peer
         run: |
           apk add --no-cache postgresql-client
+          # Sub-118d shared-net pod: postgres sidecar reachable on localhost:5432
           for i in 1 2 3 4 5 6 7 8 9 10; do
             if pg_isready -h localhost -p 5432 -t 5 -U ci; then echo "postgres ready"; break; fi
             echo "postgres not ready yet (attempt $i)"; sleep 3
@@ -90,13 +113,15 @@ jobs:
           PGPASSWORD=ci psql "host=localhost user=ci dbname=ci" -c 'SELECT version();'
       - name: clone-and-compile
         run: |
-          apk add --no-cache git gcc musl-dev
+          apk add --no-cache git gcc musl-dev file
           git clone --depth=1 --branch="${{ github.event.inputs.sockerless_ref || 'main' }}" \
             https://github.com/e6qu/sockerless /work/sockerless
           cd /work/sockerless/simulators/testdata/eval-arithmetic
           # eval-arithmetic's go.mod requires Go ≥ 1.24 — auto-download
           # via toolchain directive; ignore parent repo's go.work.
           GOTOOLCHAIN=auto GOWORK=off go build -v -o eval-arithmetic .
+          ls -la eval-arithmetic
+          file eval-arithmetic
       - name: run-arithmetic
         run: |
           cd /work/sockerless/simulators/testdata/eval-arithmetic
@@ -109,8 +134,6 @@ jobs:
           echo "all arithmetic checks pass"
 
 # trigger: 2026-05-03 BUG-909 cloudrun fix
-
-# trigger: 2026-05-03 BUG-909 gcf runner image rebuilt
 
 # trigger: 2026-05-03 BUG-910 fix
 

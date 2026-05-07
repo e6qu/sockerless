@@ -51,20 +51,20 @@ func glProject(t *testing.T) string {
 	return v
 }
 
-// TestCell5_GH_Cloudrun dispatches cell-5-cloudrun.yml via `gh
+// TestCell5_GH_Cloudrun dispatches live-tests-cloudrun.yml via `gh
 // workflow run` and waits for completion. Captures the run URL.
 func TestCell5_GH_Cloudrun(t *testing.T) {
 	repo := ghRepo(t)
-	dispatchGHWorkflow(t, repo, "cell-5-cloudrun.yml")
-	url := waitGHRun(t, repo, "cell-5-cloudrun.yml", 25*time.Minute)
+	dispatchGHWorkflow(t, repo, "live-tests-cloudrun.yml")
+	url := waitGHRun(t, repo, "live-tests-cloudrun.yml", 25*time.Minute)
 	t.Logf("CELL 5 GREEN: %s", url)
 }
 
-// TestCell6_GH_Gcf dispatches cell-6-gcf.yml via gh workflow run.
+// TestCell6_GH_Gcf dispatches live-tests-cloudrun-functions.yml via gh workflow run.
 func TestCell6_GH_Gcf(t *testing.T) {
 	repo := ghRepo(t)
-	dispatchGHWorkflow(t, repo, "cell-6-gcf.yml")
-	url := waitGHRun(t, repo, "cell-6-gcf.yml", 25*time.Minute)
+	dispatchGHWorkflow(t, repo, "live-tests-cloudrun-functions.yml")
+	url := waitGHRun(t, repo, "live-tests-cloudrun-functions.yml", 25*time.Minute)
 	t.Logf("CELL 6 GREEN: %s", url)
 }
 
