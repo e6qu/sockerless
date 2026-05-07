@@ -16,6 +16,7 @@ package gcf
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	runpb "cloud.google.com/go/run/apiv2/runpb"
 	core "github.com/sockerless/backend-core"
@@ -86,16 +87,18 @@ func runpbVolumeFromBackingSpec(name string, spec core.BackingSpec) (*runpb.Volu
 }
 
 // preExecHintsForVolumes runs PreExec on each SharedVolume's driver and
-// merges the returned env hints. Backends call this before forwarding
-// an exec POST to the bootstrap; the merged hints flow as part of the
-// envelope's Env slice. Live-filesystem drivers (gcs-fuse, emptyDir)
-// return nil hints and contribute nothing.
+// merges per-key list-valued hints (a single SharedVolume may contribute
+// multiple values per key — e.g. gcs-sync emits one triple per volume
+// under SOCKERLESS_SYNC_VOLUMES; cells 5+6 with two SharedVolumes need
+// both triples joined). Returns one comma-joined env entry per key,
+// ready to append to the envelope's Env slice. Live-filesystem drivers
+// (gcs-fuse, emptyDir) return nil hints and contribute nothing.
 //
 // No-fallbacks: any volume with an unresolvable Backing fails this call
 // loudly — caller surfaces the error to the operator rather than
 // silently dropping the volume.
 func (s *Server) preExecHintsForVolumes(ctx context.Context, vols []SharedVolume, execID string) (map[string]string, error) {
-	merged := map[string]string{}
+	merged := map[string][]string{}
 	for _, v := range vols {
 		driver, err := s.resolveBackingDriver(v)
 		if err != nil {
@@ -105,11 +108,15 @@ func (s *Server) preExecHintsForVolumes(ctx context.Context, vols []SharedVolume
 		if err != nil {
 			return nil, fmt.Errorf("PreExec %s (backing=%q): %w", v.Name, driver.Backing(), err)
 		}
-		for k, val := range hints {
-			merged[k] = val
+		for k, vals := range hints {
+			merged[k] = append(merged[k], vals...)
 		}
 	}
-	return merged, nil
+	out := make(map[string]string, len(merged))
+	for k, vals := range merged {
+		out[k] = strings.Join(vals, ",")
+	}
+	return out, nil
 }
 
 // postExecForVolumes runs PostExec on each SharedVolume's driver. The

@@ -81,14 +81,17 @@ func (d *GCSSyncDriver) CloudSpec(vol core.SharedVolumeRef) (core.BackingSpec, e
 }
 
 // PreExec tars localPath and uploads to gs://<bucket>/<objectName(volName, execID)>.
-// Returns env hints the backend merges into the exec envelope so the
-// bootstrap on the receiving side knows which object to restore from.
+// Returns a list-valued env hint under SOCKERLESS_SYNC_VOLUMES with one
+// per-volume triple (`name=path=gs://bucket/object`). The translator
+// concatenates per-volume hints across multiple SharedVolumes before
+// serialising so multi-volume execs (e.g. cells 5+6 with runner-workspace
+// + runner-externals) don't clobber.
 //
 // localPath is the runner-task's local mount of the SharedVolume (e.g.
 // /tmp/runner-work). If localPath does not exist, an empty tar is
 // uploaded — the bootstrap will see an empty volume on restore, which
 // is the correct behaviour for a job's first exec.
-func (d *GCSSyncDriver) PreExec(ctx context.Context, vol core.SharedVolumeRef, execID, localPath string) (map[string]string, error) {
+func (d *GCSSyncDriver) PreExec(ctx context.Context, vol core.SharedVolumeRef, execID, localPath string) (map[string][]string, error) {
 	if err := validateRefForSync(vol); err != nil {
 		return nil, err
 	}
@@ -104,10 +107,9 @@ func (d *GCSSyncDriver) PreExec(ctx context.Context, vol core.SharedVolumeRef, e
 		return nil, fmt.Errorf("gcs-sync PreExec: finalize gs://%s/%s: %w", vol.GCSBucket, obj, err)
 	}
 
-	return map[string]string{
-		"SOCKERLESS_WORKSPACE_OBJECT": fmt.Sprintf("gs://%s/%s", vol.GCSBucket, obj),
-		"SOCKERLESS_WORKSPACE_PATH":   vol.ContainerPath,
-		"SOCKERLESS_WORKSPACE_VOLUME": vol.Name,
+	triple := fmt.Sprintf("%s=%s=gs://%s/%s", vol.Name, vol.ContainerPath, vol.GCSBucket, obj)
+	return map[string][]string{
+		"SOCKERLESS_SYNC_VOLUMES": {triple},
 	}, nil
 }
 

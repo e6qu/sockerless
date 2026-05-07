@@ -107,7 +107,7 @@ func (m *mockDriver) Backing() StorageBacking { return m.backing }
 func (m *mockDriver) CloudSpec(vol SharedVolumeRef) (BackingSpec, error) {
 	return BackingSpec{Kind: m.backing}, nil
 }
-func (m *mockDriver) PreExec(ctx context.Context, vol SharedVolumeRef, execID, localPath string) (map[string]string, error) {
+func (m *mockDriver) PreExec(ctx context.Context, vol SharedVolumeRef, execID, localPath string) (map[string][]string, error) {
 	return nil, nil
 }
 func (m *mockDriver) PostExec(ctx context.Context, vol SharedVolumeRef, execID, localPath string) error {

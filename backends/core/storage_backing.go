@@ -95,11 +95,12 @@ type StorageBackingDriver interface {
 	CloudSpec(vol SharedVolumeRef) (BackingSpec, error)
 
 	// PreExec runs before forwarding an exec POST to the bootstrap.
-	// Returns environment hints (e.g. SOCKERLESS_WORKSPACE_OBJECT) the
-	// backend merges into the envelope's Env field; the bootstrap reads
-	// them to drive the matching restore/save logic. Live filesystems
-	// (gcs-fuse, emptyDir) return (nil, nil).
-	PreExec(ctx context.Context, vol SharedVolumeRef, execID, localPath string) (envHints map[string]string, err error)
+	// Returns list-valued environment hints (e.g.
+	// SOCKERLESS_SYNC_VOLUMES → [triple]) the backend merges into the
+	// envelope's Env. Multi-volume callers concatenate per-key slices
+	// before serialising so hints from N volumes don't clobber. Live
+	// filesystems (gcs-fuse, emptyDir) return (nil, nil).
+	PreExec(ctx context.Context, vol SharedVolumeRef, execID, localPath string) (envHints map[string][]string, err error)
 
 	// PostExec runs after the exec response returns to the backend.
 	// For sync drivers: pulls the bootstrap's modified state back to
@@ -191,7 +192,7 @@ func (d *EmptyDirDriver) CloudSpec(vol SharedVolumeRef) (BackingSpec, error) {
 	}, nil
 }
 
-func (d *EmptyDirDriver) PreExec(ctx context.Context, vol SharedVolumeRef, execID, localPath string) (map[string]string, error) {
+func (d *EmptyDirDriver) PreExec(ctx context.Context, vol SharedVolumeRef, execID, localPath string) (map[string][]string, error) {
 	return nil, nil
 }
 

@@ -9,6 +9,7 @@ package cloudrun
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	runpb "cloud.google.com/go/run/apiv2/runpb"
 	core "github.com/sockerless/backend-core"
@@ -69,9 +70,12 @@ func runpbVolumeFromBackingSpec(name string, spec core.BackingSpec) (*runpb.Volu
 }
 
 // preExecHintsForVolumes runs PreExec on each SharedVolume's driver and
-// merges env hints. Fails loudly on unresolvable backings.
+// merges per-key list-valued env hints (drivers may emit multiple
+// values per key — e.g. multiple gcs-sync triples). Returns one
+// comma-joined env entry per key, ready to append to the envelope's
+// Env. Fails loudly on unresolvable backings.
 func (s *Server) preExecHintsForVolumes(ctx context.Context, vols []SharedVolume, execID string) (map[string]string, error) {
-	merged := map[string]string{}
+	merged := map[string][]string{}
 	for _, v := range vols {
 		driver, err := s.resolveBackingDriver(v)
 		if err != nil {
@@ -81,11 +85,15 @@ func (s *Server) preExecHintsForVolumes(ctx context.Context, vols []SharedVolume
 		if err != nil {
 			return nil, fmt.Errorf("PreExec %s (backing=%q): %w", v.Name, driver.Backing(), err)
 		}
-		for k, val := range hints {
-			merged[k] = val
+		for k, vals := range hints {
+			merged[k] = append(merged[k], vals...)
 		}
 	}
-	return merged, nil
+	out := make(map[string]string, len(merged))
+	for k, vals := range merged {
+		out[k] = strings.Join(vals, ",")
+	}
+	return out, nil
 }
 
 func (s *Server) postExecForVolumes(ctx context.Context, vols []SharedVolume, execID string) error {

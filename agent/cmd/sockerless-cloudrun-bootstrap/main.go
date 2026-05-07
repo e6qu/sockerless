@@ -169,6 +169,26 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	buf := newBufferedResponse()
 	env, isEnvelope := parseExecEnvelope(body)
 	fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: handleInvoke isEnvelope=%t argv_count=%d\n", isEnvelope, len(env.Argv))
+
+	// Phase 123 step 5: per-exec gcs-sync restore. Hints come via
+	// envelope.Env (default-invoke path doesn't carry per-exec sync
+	// triples — those are only set by ExecStart). Parse + restore
+	// before running the subprocess so the workspace reflects whatever
+	// the runner-task uploaded for this exec.
+	syncVols, syncErr := parseSyncVolumes(extractSyncVolumesEnv(env.Env))
+	if syncErr != nil {
+		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: SOCKERLESS_SYNC_VOLUMES parse error: %v\n", syncErr)
+		writeSaveFailure(w, syncErr, isEnvelope)
+		return
+	}
+	if len(syncVols) > 0 {
+		if err := restoreSyncAll(context.Background(), syncVols); err != nil {
+			fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: sync restore failed: %v\n", err)
+			writeSaveFailure(w, err, isEnvelope)
+			return
+		}
+	}
+
 	if isEnvelope {
 		runExecEnvelope(buf, env)
 	} else {
@@ -182,7 +202,26 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if len(syncVols) > 0 {
+		if err := saveSyncAll(context.Background(), syncVols); err != nil {
+			fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: sync save failed: %v\n", err)
+			writeSaveFailure(w, err, isEnvelope)
+			return
+		}
+	}
 	buf.flushTo(w)
+}
+
+// extractSyncVolumesEnv finds the SOCKERLESS_SYNC_VOLUMES entry in the
+// envelope's Env slice (KEY=value strings). Returns "" if absent.
+func extractSyncVolumesEnv(env []string) string {
+	prefix := envSyncVolumes + "="
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			return e[len(prefix):]
+		}
+	}
+	return ""
 }
 
 // writeSaveFailure overwrites the buffered exec response with a
