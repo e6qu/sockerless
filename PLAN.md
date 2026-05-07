@@ -50,21 +50,18 @@ Sims must serve every cloud API the backends use today + the planned driver work
 - [ ] **SDK + CLI tests** for both, under `simulators/gcp/{sdk-tests,cli-tests}`.
 - [ ] **`specs/SIM_PARITY_MATRIX.md`** — add new rows.
 
-### Phase 130 — bleephub workflow-runs / jobs / runners REST (queued)
+### Phase 130 — bleephub workflow-runs / jobs / runners REST (✅ shipped)
 
-Goal: unmodified `gh` CLI + the existing GitHub-runner-dispatcher work against bleephub end-to-end (so the 8/8 cells could run against bleephub instead of real GitHub for hermetic test coverage).
-
-New file `bleephub/gh_actions_rest.go` registering:
+Shipped on `phase-130` branch. New `bleephub/gh_actions_rest.go` registers all 10 GitHub-shape routes wired from `server.go::registerGHActionsRoutes()`:
 
 - `GET /api/v3/repos/{o}/{r}/actions/runs` (with `?status=`, `?branch=`, `?event=`)
-- `GET /api/v3/repos/{o}/{r}/actions/runs/{run_id}`
-- `GET /api/v3/repos/{o}/{r}/actions/runs/{run_id}/jobs`
-- `GET /api/v3/repos/{o}/{r}/actions/jobs/{job_id}` + `/logs`
-- `POST /api/v3/repos/{o}/{r}/actions/runs/{run_id}/cancel` + `/rerun`
-- `DELETE /api/v3/repos/{o}/{r}/actions/runs/{run_id}`
-- `GET /api/v3/repos/{o}/{r}/actions/runners` + `DELETE .../runners/{id}`
+- `GET .../runs/{run_id}` + `/jobs`
+- `GET .../jobs/{job_id}` + `/logs`
+- `POST .../runs/{run_id}/cancel` + `/rerun` (rerun returns 422 — Phase 131 ships dispatch)
+- `DELETE .../runs/{run_id}`
+- `GET .../runners` + `DELETE .../runners/{id}`
 
-JSON converters bridge `Workflow`/`WorkflowJob`/`Agent` → GitHub-shape JSON. Tests in `bleephub/gh_actions_test.go`.
+JSON converters: `workflowRunJSON`, `workflowJobJSON`, `runnerJSON`. `stableJobID` (FNV-1a 64-bit) maps internal UUIDs to stable int64 GitHub-style IDs. `bleephub/gh_actions_test.go` covers each endpoint shape — 14 new tests PASS; full bleephub suite green.
 
 ### Phase 131 — bleephub workflows REST + UI dispatch (queued)
 

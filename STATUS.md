@@ -19,9 +19,11 @@ Each green run: probe-capabilities/kernel/env/parameters → probe-localhost-pee
 
 ## In flight on `phase-130` (PR #127)
 
-1. **Phase 129 #4** — orphan `sockerless-svc-*` GC via `CLOUD_RUN_JOB` owner-link. Code shipped; live verification deferred.
-2. **Sim parity prep** — GCP `iamcredentials.generateIdToken` (Phase 126); GCP Compute Disks CRUD (Phase 127). In progress.
-3. **Phase 130** — bleephub `actions/runs` + `actions/jobs` + `actions/runners` REST. Survey done; coding next.
+1. **Phase 129 #4** ✅ — orphan `sockerless-svc-*` GC via `CLOUD_RUN_JOB` owner-link. Code shipped; live verification deferred.
+2. **Sim parity prep** ✅ — GCP `iamcredentials.generateIdToken` (Phase 126) + Compute Disks CRUD (Phase 127). 8 new SIM_PARITY_MATRIX rows; 6 SDK tests PASS.
+3. **Phase 130** ✅ — bleephub `actions/runs` + `actions/jobs` + `actions/runners` REST (10 routes). 14 new tests PASS; full bleephub suite green at 22s.
+
+**Next**: Phase 131 (bleephub workflows REST + UI dispatch). Stays on this work branch.
 
 ## Resume
 

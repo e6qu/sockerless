@@ -13,24 +13,11 @@ Single work-branch rule: ALL in-flight work lands here, no side branches. PR #12
 - [x] **SDK tests** (6 new in `simulators/gcp/sdk-tests/`): full disk CRUD; aggregated list; not-found; ID-token audience round-trip; missing-SA 404; missing-audience 400. All PASS.
 - [x] **`specs/SIM_PARITY_MATRIX.md`** — 8 new rows under GCP § "Phase 126/127 forward-looking (no current backend caller; SDK-test-validated)".
 
-### 2. Phase 130 — bleephub workflow-runs REST (next)
+### 2. Phase 130 — bleephub workflow-runs REST (DONE)
 
-Goal: unmodified `gh` CLI + the existing GitHub-runner-dispatcher work against bleephub end-to-end (so the 8/8 runner-integration cells could run against bleephub instead of real GitHub for hermetic test coverage).
+Shipped: `bleephub/gh_actions_rest.go` registers all 10 GitHub-shape routes (runs list/get/jobs/cancel/rerun/delete + jobs get/logs + runners list/delete). `bleephub/gh_actions_test.go` covers each endpoint shape (14 new tests, all PASS; full bleephub suite green at 22s). JSON converters bridge bleephub's internal `Workflow`/`WorkflowJob`/`Agent` → GitHub-shape JSON; FNV-1a 64-bit gives stable int64 GitHub-style job IDs from the internal UUIDs.
 
-New file `bleephub/gh_actions_rest.go` registering:
-
-- `GET /api/v3/repos/{o}/{r}/actions/runs` (with `?status=`, `?branch=`, `?event=`)
-- `GET /api/v3/repos/{o}/{r}/actions/runs/{run_id}`
-- `GET /api/v3/repos/{o}/{r}/actions/runs/{run_id}/jobs`
-- `GET /api/v3/repos/{o}/{r}/actions/jobs/{job_id}`
-- `GET /api/v3/repos/{o}/{r}/actions/jobs/{job_id}/logs`
-- `POST /api/v3/repos/{o}/{r}/actions/runs/{run_id}/cancel`
-- `POST /api/v3/repos/{o}/{r}/actions/runs/{run_id}/rerun`
-- `DELETE /api/v3/repos/{o}/{r}/actions/runs/{run_id}`
-- `GET /api/v3/repos/{o}/{r}/actions/runners`
-- `DELETE /api/v3/repos/{o}/{r}/actions/runners/{runner_id}`
-
-JSON shape converters: `workflowRunJSON(*Workflow, baseURL)`, `workflowJobJSON(*WorkflowJob, *Workflow, *Job, baseURL)`, `runnerJSON(*Agent)`. Wired from `server.go::registerRoutes` via new `registerGHActionsRoutes()`. Tests in `bleephub/gh_actions_test.go` cover each endpoint shape against in-memory store.
+`POST .../runs/{id}/rerun` returns 422 with a clear message pointing at the existing `/api/v3/bleephub/workflow` submit path — Phase 131 ships the proper `/actions/workflows/{id}/dispatches` route.
 
 ### 3. Phase 131 — bleephub workflows REST + UI dispatch (after 130)
 
