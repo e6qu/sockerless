@@ -2,6 +2,10 @@
 
 Tracks what each backend can actually do when driving real CI runners through the Docker API.
 
+## 8/8 cells GREEN (2026-05-07)
+
+The runner-integration milestone closed: every cell-pair (GitHub × {ECS, Lambda, cloudrun, gcf} and GitLab × the same four) runs the full probe + git-clone + go-build + arithmetic suite end-to-end against real cloud infrastructure. Cell URLs in [STATUS.md](../STATUS.md). The capability summary table below remains the canonical answer for the architectural question; the per-pipeline matrices below it stay TBD until a Docker-in-Docker CI job cycles through the combinations.
+
 ## Capability summary (post-PR-#115)
 
 `specs/CLOUD_RESOURCE_MAPPING.md` carries the **architectural** runner-compatibility matrix (long-lived containers vs invocation-scoped FaaS; `tail -f /dev/null` keep-alive; `docker exec` transport). That matrix answers "can this backend ever serve as the docker daemon for a runner?" — summarised here:
@@ -9,11 +13,13 @@ Tracks what each backend can actually do when driving real CI runners through th
 | Backend | Long-lived container? | `docker exec` transport | Suitable for GitLab/GitHub runner? |
 |---|---|---|---|
 | docker | ✅ | native | ✅ |
-| ecs | ✅ Fargate task | SSM ExecuteCommand | ✅ with IAM + SSM enabled |
-| cloudrun (UseService) | ✅ CR Service | reverse-agent via bootstrap | ✅ if bootstrap is baked in |
-| aca (UseApp) | ✅ ACA App | reverse-agent or ACA console exec | ✅ |
-| cloudrun Jobs / aca Jobs | ❌ execution-scoped | — | ❌ use Services/Apps |
-| lambda / gcf / azf | ❌ invocation-scoped | — | ❌ fundamentally incompatible |
+| ecs | ✅ Fargate task | SSM ExecuteCommand | ✅ verified live (cells 1+3 GREEN) |
+| lambda | ✅ image-mode container w/ overlay-inject | reverse-agent OR exec-via-Invoke envelope | ✅ verified live (cells 2+4 GREEN) |
+| cloudrun | ✅ multi-container Service revision (pod-Service materialize) | envelope-POST via overlay HTTP server | ✅ verified live (cells 5+7 GREEN, gcs-sync workspace data plane) |
+| gcf | ✅ multi-container Cloud Run Service via Cloud Functions Gen2 escape hatch | envelope-POST via overlay HTTP server | ✅ verified live (cells 6+8 GREEN) |
+| aca (UseApp) | ✅ ACA App | reverse-agent or ACA console exec | ✅ architecturally; live cells not yet exercised |
+| azf | ✅ image-mode container | reverse-agent | ✅ architecturally; live cells not yet exercised |
+| cloudrun Jobs / aca Jobs | ❌ execution-scoped | — | ❌ use Services/Apps for runner workloads |
 
 This file tracks the **empirical** results of running the `make e2e-*` targets (per-pipeline) against each backend. Cells stay `TBD` until a Docker-in-Docker CI job cycles through the combinations (scripts under `scripts/phase86/*.sh` + `.github/workflows/phase86-aws-live.yml` for live-AWS; `smoke-test-act-*` / `smoke-test-gitlab-*` make targets for sim mode).
 

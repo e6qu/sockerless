@@ -36,81 +36,92 @@ Detail in [WHAT_WE_DID.md](WHAT_WE_DID.md); commit + BUG refs in [BUGS.md](BUGS.
 
 Order is the order of execution unless noted.
 
-### Phase 123 — Storage backing driver abstraction (NEXT, blocking cells 5+6)
+### Phase 123 + 122k/m — CLOSED 2026-05-07 (8/8 cells GREEN)
 
-**User directives 2026-05-07** — absolute constraints driving the design:
-1. **Storage MUST be pluggable** so we can test multiple options without re-refactoring each backend. The driver abstraction is the point of this phase.
-2. **Zero-scaling, no-cost-when-not-in-use is the paradigm.** Acceptable: object storage, in-memory, ephemeral managed FS / disks where sockerless owns the lifecycle (created on job start, deleted at end). Rejected: anything that bills idle (Filestore, Memorystore, persistent-mode PDs, persistent-mode EFS).
-3. **Exploration priority**: object storage first → in-memory next → ephemeral managed filesystem if a workload genuinely needs POSIX.
-4. **No FUSE-on-object-store** for new SharedVolumes (GCSFuse rejected after BUG-965 stale-handle on per-step rewrites). Legacy `gcs-fuse` retained ONLY for cells 7+8's existing tar-pack persist pattern.
+Storage backing driver abstraction shipped + cells 5+6 staged GREEN at v17. The full session narrative + per-bug closeout (BUG-964/966/967/968/969/970/971 + ECS test-regression fix in `handleContainerWait`) lives in [WHAT_WE_DID.md § "2026-05-07 — Phase 123 + 8/8 cells GREEN"](WHAT_WE_DID.md). Cell URLs in [STATUS.md](STATUS.md).
 
-Architectural detail in [specs/CLOUD_RESOURCE_MAPPING.md § Storage backing driver abstraction](specs/CLOUD_RESOURCE_MAPPING.md#storage-backing-driver-abstraction-planned--phase-123).
+**Driver matrix** (canonical reference; details in [specs/CLOUD_RESOURCE_MAPPING.md § Storage backing driver abstraction](specs/CLOUD_RESOURCE_MAPPING.md#storage-backing-driver-abstraction-planned--phase-123)):
 
-**Driver matrix**:
-
-| Driver | Status (Phase 123) | Use case |
+| Driver | Status | Use case |
 |---|---|---|
-| `emptyDir` | implementing | ephemeral per-instance, single-container |
-| `gcs-sync` | implementing | **default** for shared workspaces; per-exec tar+GCS sync; no FUSE |
-| `gcs-fuse` | implementing (legacy retain) | cells 7+8 tar-pack persist (sequential whole-tar; FUSE-safe) |
-| `pd-ephemeral` | bookmarked | sockerless-managed PD lifecycle (create at job start, delete at end); RWO is fine for runner-task → JOB single-writer-at-a-time pattern |
+| `emptyDir` | shipped | ephemeral per-instance, single-container |
+| `gcs-sync` | shipped (default for shared workspaces) | per-exec tar+GCS sync; no FUSE |
+| `gcs-fuse` | shipped (legacy retain) | cells 7+8 tar-pack persist (sequential whole-tar; FUSE-safe) |
+| `pd-ephemeral` | bookmarked | sockerless-managed PD lifecycle |
 | `efs-ephemeral` | bookmarked | AWS cells; per-job access point lifecycle |
 
-**Rejected**: `nfs`, `juicefs+Redis`, `pd-persistent`, `efs-persistent` — all bill idle. See CLOUD_RESOURCE_MAPPING.md for the full table.
+**Rejected** (each violates the zero-scaling / no-cost-when-not-in-use directive): `nfs`, `juicefs+Redis`, `pd-persistent`, `efs-persistent`.
 
-**Implementation order** (~1300 LOC + tests, ~2 days):
-1. `api/storage_backing.go` — `StorageBacking` enum + extended `SharedVolume` struct (60 LOC).
-2. `backends/core/storage_backing.go` — `StorageBackingDriver` interface, `BackingSpec`, `Registry`, `EmptyDirDriver` (150 LOC).
-3. `backends/gcp-common/storage_gcsfuse.go` — legacy direct-FUSE driver for cells 7+8 (~150 LOC).
-4. `backends/gcp-common/storage_gcssync.go` — new sync-at-exec driver for cells 5+6 (~250 LOC).
-5. `backends/{cloudrun,cloudrun-functions}/volume_translator.go` — per-cloud `BackingSpec → runpb.Volume` translators (160 LOC).
-6. Migrate inline `Volume_Gcs{}` / `Volume_EmptyDir{}` literals at the call sites to use the registry + translator (~80 LOC of edits).
-7. Backend ExecStart wrapper: invoke `PreExec` per volume → collect envelope hints → forward → invoke `PostExec` on response (100 LOC × 2 backends).
-8. Bootstrap-side handler: `runExecEnvelope` recognises `WORKSPACE_OBJECT` env hint, restores from GCS pre-subprocess + saves post-subprocess. Reuses existing `persist.go` GCS helpers (80 LOC × 2 bootstraps).
-9. Dispatcher TOML schema: `runner_workspace_backing = "gcs-sync"` + `runner_workspace_bucket = "..."` (60 LOC).
-10. Migrate cells 5+6 to `gcs-sync` via TOML config; verify GREEN.
+**The proven pattern**: cloud-agnostic core interface (`StorageBackingDriver`) + per-cloud impls (`gcp-common.GCSSyncDriver`, `gcp-common.GCSFuseDriver`, `core.EmptyDirDriver`) + operator-pluggable selection at config time (dispatcher TOML `runner_workspace_backing`) + no-fallbacks discipline at registry resolve. Same shape applies to Phases 124-127 (network, DNS, access, storage expansion) below.
 
-**Co-shipped fix**: BUG-964 (gcf `invokePodServiceMain` skip-default-invoke for OpenStdin=false main with no captured stdin — mirror of BUG-961 fix in cloudrun). Trivial change in `backends/cloudrun-functions/pod_service.go`. Lands as part of cells 5+6 v7 stack.
+### Phase 124 — Network driver abstraction (queued)
 
-**Closes**: BUG-963 (replaced by `gcs-sync` driver), BUG-964 (gcf skip-default-invoke), BUG-965 (GCSFuse abandoned for the workspace; `gcs-sync` is the no-FUSE replacement).
+**Why.** How containers in the same user-defined network discover and talk to each other is hardcoded per backend today: ECS uses Cloud Map for cross-task DNS; cloudrun + gcf inject `/etc/hosts` aliases via `SOCKERLESS_HOST_ALIASES` env on the bootstrap; multi-container Cloud Run revisions use loopback. Each backend grew its own ad-hoc path. The same generalization that worked for storage applies here: lift the decision to a `NetworkDriver` interface, supply per-cloud impls, let the operator select via config.
 
-### Phase 122k/m — All 4 GCP cells GREEN (in flight, 2 of 4 GREEN)
+**Driver categories** (initial):
 
-User goal: **all 4 GCP cells (5/6/7/8) GREEN with full workflow + evidence + executing where they're supposed to**. Cells 1–4 (AWS) cover only trivial workloads; the GCP cells run the real probe + git-clone + go-build + arithmetic suite. This is the milestone the user has scoped as "consider it done".
+| Driver | Use case |
+|---|---|
+| `host-aliases` | loopback in same revision (Cloud Run multi-container, ECS multi-container task); inject `/etc/hosts` lines at materialize time |
+| `cloud-dns` | cross-Service Cloud Run via `<service>.run.app` URLs; cross-task ECS via Cloud Map |
+| `service-mesh` | Istio / Linkerd sidecar injection (future; for backends where containers can't share a single revision) |
+| `nat-gateway-only` | egress-only networks; no peer discovery (matches Lambda's network model) |
 
-**Sub-task progress (2026-05-06 evening):**
+**Implementation template** (Phase 123 shape):
+1. `api/network_driver.go` — `NetworkDriver` enum + extended `Network` struct.
+2. `backends/core/network_driver.go` — `NetworkDriver` interface, registry, no-fallback `Resolve`.
+3. `backends/{aws,gcp,azure}-common/network_<impl>.go` — per-cloud impls.
+4. `backends/<cloud-product>/network_translator.go` — per-backend translator from driver output to cloud-native net config.
+5. Operator config: TOML `network_driver` per dispatcher label / env var per backend.
+6. Migration of inline Cloud Map / `/etc/hosts` paths to the registry.
 
-| Sub | Cell | State | Evidence |
-|---|---|---|---|
-| 122k.7 | 7 GL × cloudrun | ✅ **GREEN v54** | Job [14237010667](https://gitlab.com/e6qu/sockerless/-/jobs/14237010667), 178s, `all arithmetic checks pass`. |
-| 122k.8 | 8 GL × gcf | ✅ **GREEN v28** | Job [14234857458](https://gitlab.com/e6qu/sockerless/-/jobs/14234857458), 147s, `all arithmetic checks pass`. |
-| 122m.6 | 6 GH × gcf | 🟡 deep progress, hung 10 min on default-invoke | v6 run [25437444448](https://github.com/e6qu/sockerless/actions/runs/25437444448) — gcf needs the BUG-961 mirror (BUG-964). |
-| 122m.5 | 5 GH × cloudrun | 🟡 reached `clone-and-compile`; GCSFuse stale-handle | v6 run [25437444454](https://github.com/e6qu/sockerless/actions/runs/25437444454) — BUG-965 GCSFuse on event.json. |
+Same single-PR-per-phase rule as Phase 123. Phase 123 is the proven precedent.
 
-**Architectural fixes shipped this phase (8 today, 20 total counting earlier sessions):**
+### Phase 125 — DNS driver abstraction (queued)
 
-Earlier sessions (BUG-953/954/955 — see WHAT_WE_DID.md § "Phase 122k third session" for the 12 fixes that closed cell 8 v25 4/5 stages GREEN).
+**Why.** How `<container-name>.<network>` resolves: ECS uses Cloud Map private DNS namespace; cloudrun uses Cloud DNS managed zones (when configured) + per-revision loopback fallback; ACA uses Azure Private DNS Zone per network. Today these resolutions are scattered across `backends/<cloud>/dns_*.go` and inline calls. A `DNSDriver` interface unifies the contract: given `(name, network)`, return the resolution record(s) the cloud needs.
 
-Today (commits `b223ecb` → `c01067b`):
-- BUG-956: `pendingMembersOfNetwork` filters already-materialized OpenStdin=true mains.
-- BUG-957: gcf bootstrap tar-pack persist + content-hash overlay invalidation.
-- BUG-958: cloudrun multi-stage runner-pattern (mirror of gcf BUG-955).
-- BUG-959: GH actions/runner pattern materializes pod-Service on second-arrival.
-- BUG-960: `Typed.Exec` routes through `s.ExecStart` so envelope-POST is reachable + sanitize trailing-trim.
-- BUG-961: cloudrun pod-Service `invokeServiceDefaultCmd` skip-default-invoke when no stdin captured.
-- BUG-962: exec response stdcopy stream framing.
-- BUG-963: dispatcher attaches `Volume{Gcs}` to runner-task `/tmp/runner-work`.
+**Driver categories** (initial):
 
-**Open for next session** (concrete fix shapes in DO_NEXT.md):
-- BUG-964: gcf invokePodServiceMain skip-default-invoke (mirror of BUG-961).
-- BUG-965: GCSFuse stale-file-handle on event.json (try mount options, then Filestore).
+| Driver | Use case |
+|---|---|
+| `cloud-map` | AWS Service Discovery (current ECS default) |
+| `cloud-dns-zone` | GCP Cloud DNS managed zone (current cloudrun default when cross-Service) |
+| `service-discovery` | Cloud Run native multi-container revision (no DNS needed; loopback) |
+| `private-dns-zone` | Azure Private DNS Zone (current ACA default) |
 
-**Architectural directives (carried, observed today):**
+**Implementation template**: same as Phase 124 (api enum + core interface + per-cloud impls + per-backend translator + operator config + migration).
 
-- **Dispatcher stays generic** — provisions vanilla runners on demand. Operator-side infra config (e.g. `runner_workspace_bucket`) acceptable; sockerless internals go in the runner image.
-- **HTTP 5xx reserved for unexpected panics** — bootstrap binaries use `X-Sockerless-Exit-Code` / envelope `exitCode`.
-- **Multi-stage runner pattern is two distinct problems** — same-container-ID (BUG-955/958) and new-container-per-stage (BUG-956). Cross-cloud parity check is a same-session sub-task.
-- **GH actions/runner ≠ gitlab-runner** — different `OpenStdin` semantics, different docker dispatch shape, different workspace propagation. Each cell-pair (gitlab-runner cells 7+8 vs github-runner cells 5+6) hits its own fault line.
+### Phase 126 — Access driver abstraction (queued)
+
+**Why.** Container-to-container auth, ingress IAM, service-account binding is scattered today: cloudrun uses ID tokens for cross-Service Cloud Run calls (`idtoken.NewClient`); ECS uses task IAM roles + per-network SGs; ACA uses managed identities + per-network NSGs; gcf uses VpcAccess + ALL_TRAFFIC + IAM-gated POSTs. An `AccessDriver` interface captures the policy: given a container and its peer, what access pattern (none, mTLS, ID token, IAM role) governs the call?
+
+**Driver categories** (initial):
+
+| Driver | Use case |
+|---|---|
+| `iam-role` | AWS task / function execution role (current ECS / Lambda default) |
+| `id-token` | GCP `idtoken.NewClient` for cross-Service / Function calls (current cloudrun / gcf default) |
+| `mTLS` | service mesh sidecar verification (future) |
+| `none-internal` | same-revision multi-container loopback (no auth needed) |
+
+**Implementation template**: same as Phase 124. Operator-configurable per backend.
+
+### Phase 127 — Storage driver expansion (NICE-TO-HAVE)
+
+**Why.** Phase 123's `BackingSpec` union is `EmptyDir | GCS` today — Cloud Run / GCF specific. To extend the pattern across clouds without core-package edits, broaden the union to be cloud-agnostic and let new drivers (`pd-ephemeral`, `efs-ephemeral`, `azure-files-ephemeral`) plug in via the existing registry interface.
+
+**New drivers** (per-cloud, sockerless-managed lifecycle):
+
+| Driver | Cloud | Lifecycle |
+|---|---|---|
+| `pd-ephemeral` | GCP | `disks.create` at job start → attach to runner-task + JOB → `disks.delete` at job end |
+| `efs-ephemeral` | AWS | `efs.CreateAccessPoint` per job → `efs.DeleteAccessPoint` at job end |
+| `azure-files-ephemeral` | Azure | per-job Azure Files share lifecycle |
+
+**Why nice-to-have, not blocker**: today's `gcs-sync` covers the working cells (5+6 GREEN). The expansion makes the pattern truly cross-cloud rather than GCP-specific. Useful when an AWS or Azure cell ships and needs a managed-FS shape; before that, this phase sits queued.
+
+**User principle (2026-05-07, verbatim)**: "we want to generalize the approach to using drivers so that we can swap out pieces of backends for each backend since cloud offers a variety of things like networking, DNS, storage and access, but first we just wanted a fully working, minimally, system." 8/8 GREEN cells means the working minimal system is in hand; Phases 124-127 are the generalization on top.
 
 ### Phase 104 — Cross-backend driver framework (in flight)
 
@@ -165,7 +176,12 @@ backends/azure-common/drivers/  # ACR Tasks / Log Analytics / ACR
 
 **Wave 4 remaining** (lower priority): events stream, exec start hijack, container CRUD beyond list. Verify against a real podman client (currently no live podman in CI). Can run in parallel with Phase 104.
 
-### Phase 110 — Real GitHub + GitLab runner integration (in flight; split into 110a + 110b)
+### Phase 110 — CLOSED 2026-04-30 (4 AWS runner cells GREEN)
+
+Real GitHub + GitLab runner integration against live AWS in eu-west-1. Cells 1-4 (GH×ECS, GH×Lambda, GL×ECS, GL×Lambda) all GREEN. Architectural learnings (bind-mount → EFS, runner-as-ECS-task, dispatcher pattern, per-cell unblock paths) preserved in [WHAT_WE_DID.md](WHAT_WE_DID.md); per-bug detail in [BUGS.md](BUGS.md). Cell URLs in [STATUS.md](STATUS.md).
+
+<details>
+<summary>Historical implementation detail (Phase 110a + 110b architecture, kept for reference)</summary>
 
 Phase 110 collapses Phases 106 (GitHub) and 107 (GitLab) into one execution stream against ECS + Lambda backends. Architecture and token strategy live in [`docs/RUNNERS.md`](docs/RUNNERS.md) (canonical) — Phase 106/107 sections below remain as the per-runner reference. Branch: `phase-110-runner-integration` (PR #122) for 110a; subsequent branch for 110b.
 
@@ -316,6 +332,8 @@ go test -v -tags gitlab_runner_live -run TestGitLab_Lambda_Hello -timeout 30m ./
 
 Capture all 4 run/pipeline URLs in DO_NEXT.md. Update `docs/runner-capability-matrix.md` cells from TBD to PASS. Phase 110 closes.
 
+</details>
+
 ### Phase 111 — Workload identity for runner jobs (queued; gated on Phase 110 closure)
 
 Once the Phase 110 4-cell harness runs end-to-end, the next gap is **workload identity inside the per-job container** — making `aws sts get-caller-identity`, `gcloud auth print-identity-token`, and `az account show` resolve to a real cloud identity from inside a sockerless-dispatched container, exactly as they would on a native cloud runner. Without this, runner jobs that touch cloud APIs (the most common real-world pattern: `aws s3 cp`, `gcloud builds submit`, `az acr login`) would either fail or fall back to PAT-style env var creds, which violates the "no fakes, no fallbacks" rule for end-user workloads.
@@ -432,7 +450,12 @@ This phase is *not* a rewrite of the laptop-local dispatcher — the core dispat
 
 Activation gated on whether the laptop-local 110a/b dispatcher proves the architecture and someone wants the production shape.
 
-### Phase 114 — Long-lived helper task + ECS ExecuteCommand for gitlab-runner on ECS (implemented 2026-04-29; live-AWS verification in flight)
+### Phase 114 — Long-lived helper task + ECS ExecuteCommand for gitlab-runner on ECS (CLOSED 2026-04-30, cell 3 GREEN)
+
+Implemented 2026-04-29, verified live by Phase 110 cell-3 GREEN. Replaces per-cycle Fargate `RunTask` with one long-lived task per gitlab-runner job + per-stage `ExecuteCommand` for stdin-script delivery. Closes BUG-868. Per-bug detail in [BUGS.md](BUGS.md); architectural framing in [specs/CLOUD_RESOURCE_MAPPING.md § ECS gitlab-runner script delivery](specs/CLOUD_RESOURCE_MAPPING.md#ecs-gitlab-runner-script-delivery-fargate-has-no-runtime-stdin).
+
+<details>
+<summary>Implementation detail (collapsed; preserved for reference)</summary>
 
 **Implementation landed at commit (pending push)**:
 - New `backends/ecs/long_lived_helper.go` — `helperState`/`helperCycle`, `ensureHelperLaunched` (registers task def with idle-loop entrypoint, RunTask, waits RUNNING + ExecuteCommandAgent ready), `dispatchHelperCycle` (waits stdin EOF → opens SSM session via `RunCommandViaSSM(taskARN, "sh -c '<script>; printf __SOCKEXIT...'", nil)` → mux-frames stdout/stderr to /attach hijacked conn → captures exit code via `extractSSMExitMarker`).
@@ -537,6 +560,23 @@ It does **not** work for the predefined helper container as currently implemente
 
 Closes BUG-868. Cell 3 GREEN gates Phase 114 closure. Cell 4 separately addressed by Phase 117.
 
+</details>
+
+### Phase 115 — CLOSED 2026-04-29 (Lambda overlay-inject; cell 2 GREEN)
+
+Always-on overlay-inject for Lambda CreateFunction. Routes ALL Lambda images through `BuildAndPushOverlayImage` (CodeBuild path when no local docker daemon) so user images are wrapped with `sockerless-lambda-bootstrap` ENTRYPOINT + Docker schema 2 manifest. Closes BUG-873. Detail in [WHAT_WE_DID.md](WHAT_WE_DID.md); per-bug in [BUGS.md](BUGS.md).
+
+### Phase 116 — CLOSED 2026-04-29 (Lambda exec lifecycle; cell 2 GREEN)
+
+Reverse-agent dial-back + Path-B exec-via-Invoke for Lambda. Closes BUG-874. Path A (reverse-agent over WebSocket) and Path B (`lambdaInvokeExecDriver` — JSON exec envelope per `docker exec`) both shipped; choice is per-container at exec time. Detail in [specs/CLOUD_RESOURCE_MAPPING.md § Lambda exec semantics](specs/CLOUD_RESOURCE_MAPPING.md).
+
+### Phase 117 — CLOSED 2026-04-30 (gitlab-runner per-stage script delivery on Lambda; cell 4 GREEN)
+
+Each gitlab-runner stage's stdin-piped script becomes one `lambda.Invoke` carrying a SCRIPT envelope. Closes BUG-868's Lambda half + BUG-875/876. Per-bug detail in [BUGS.md](BUGS.md).
+
+<details>
+<summary>Phase 115 implementation detail (collapsed)</summary>
+
 ### Phase 115 — Always-on overlay-inject for Lambda CreateFunction (queued; cell 2/4 unblock)
 
 **Why.** Lambda image-mode imposes two hard constraints on every function image: (a) manifest must be Docker Image Manifest V2 Schema 2 (OCI rejected with `image manifest, config or layer media type ... is not supported`), and (b) the image's ENTRYPOINT must be a Lambda Runtime API client — it has to poll `/2018-06-01/runtime/invocation/next` and post results to `/response` or `/error`, otherwise the function never serves an invocation. The cell-2 alpine image fails both: alpine on AWS Public Gallery is `application/vnd.oci.image.index.v1+json`, and `tail -f /dev/null` ENTRYPOINT doesn't speak Lambda Runtime API (BUG-873).
@@ -605,6 +645,15 @@ Closes BUG-874. Cell 2 GREEN gates Phase 116 closure (CLOSED 2026-04-29 at workf
 **Not in scope**: long-lived Lambda functions per gitlab-runner job. Lambda's primitive doesn't support that (15-min cap; no "exec into a running invocation" channel). Each stage = fresh invocation. `/tmp` doesn't persist; EFS does. This is documented in `specs/CLOUD_RESOURCE_MAPPING.md` § "ECS gitlab-runner script delivery" already.
 
 Closes BUG-868's Lambda half (cell 4). Phase 117 can land independently of Phase 114 — the Lambda translation doesn't depend on the ECS long-lived-task work.
+
+</details>
+
+### Phase 118 — CLOSED 2026-05-02 (Live-GCP track + gcf re-architecture; PR #123)
+
+Live-GCP cloudrun manual sweep + gcf re-architecture (overlay-and-swap via `Run.Services.UpdateService`) + cross-FaaS pool/cache + FaaS pod overlay design. Code complete on `phase-118-faas-pods` branch. Closes BUG-877..886 + 118a/b/d sub-tasks. Architectural detail in [WHAT_WE_DID.md](WHAT_WE_DID.md) § Phase 118.
+
+<details>
+<summary>Phase 118 implementation detail (collapsed)</summary>
 
 ### Phase 118 — Live-GCP track + gcf re-architecture (in flight 2026-05-02)
 
@@ -680,6 +729,8 @@ The only documented mapping is the post-create UpdateService image-swap pattern 
 
 **Phase 118 PR rule**: per guiding principle #11, this phase closes only when the sub-118d-gcf + sub-118d-lambda commits land on a branch (`phase-118-faas-pods`), the PR is opened against `main`, and all CI jobs pass green. User merges (workflow rule).
 
+</details>
+
 ### Phase 122 (sub-phases 122d through 122m) — CLOSED 2026-05-06
 
 The Phase 122 chain landed all the architectural work to bring cells 7+8 GREEN and stage cells 5+6 deeply into the workflow. Every sub-phase's full narrative + what-failed lives in [WHAT_WE_DID.md](WHAT_WE_DID.md); per-bug detail in [BUGS.md](BUGS.md). Closed bugs roll-up: BUG-907 → 963 (~50 bugs).
@@ -694,6 +745,13 @@ Architectural directives that emerged from these sub-phases (carried forward):
 - HTTP 5xx reserved for unexpected panics; bootstraps use envelope `exitCode` / `X-Sockerless-Exit-Code` for designed failures.
 - Multi-stage runner pattern is two distinct problems: same-container-ID (BUG-955/958) and new-container-per-stage (BUG-956). Cross-cloud parity is a same-session sub-task.
 - GH actions/runner ≠ gitlab-runner — different OpenStdin semantics, different exec routing, different workspace propagation. Each cell-pair has its own fault line.
+
+### Phase 120 — CLOSED 2026-05-07 (Live-GCP runner cells 5/6/7/8 GREEN)
+
+All four GCP runner-integration cells GREEN (cells 5+6 GH × cloudrun/gcf; cells 7+8 GL × cloudrun/gcf). Closed via the Phase 122k/m chain (cells 7+8 GREEN 2026-05-06) and Phase 123 (cells 5+6 GREEN 2026-05-07). Detail in [WHAT_WE_DID.md](WHAT_WE_DID.md). Cell URLs in [STATUS.md](STATUS.md).
+
+<details>
+<summary>Phase 120 implementation detail (collapsed)</summary>
 
 ### Phase 120 — Live-GCP runner cells (4 cells, docker executor, no k8s)
 
@@ -742,6 +800,8 @@ A cell is GREEN when all probes return non-error output, postgres is reachable v
 **Phase 120 PR rule**: lands on the same `phase-118-faas-pods` branch as the rest of Phase 118-120 (per user direction: all work in one PR, even large). PR closes when CI green AND all 4 cell URLs recorded.
 
 **Test workload non-trivialness rationale**: probe-{capabilities,kernel,parameters} expose any cloud-sandbox restrictions early (and confirm sub-118d's "shared-degraded" honesty surface). probe-localhost-peer validates the pod overlay's net-ns sharing. clone-and-compile + run-arithmetic exercises Go compilation in the sandbox (memory + CPU) AND validates the resulting binary actually runs with correct output — catching whole classes of "looked OK but didn't actually work" bugs.
+
+</details>
 
 ### Phase 121 — Cloud-faithful GCP simulator hardening (CLOSED 2026-05-02, PR #123 ALL CI GREEN at `a646602`)
 

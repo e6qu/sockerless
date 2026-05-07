@@ -16,6 +16,8 @@
 
 A Docker-compatible REST API daemon that executes containers on cloud serverless backends instead of a local Docker Engine. Standard Docker clients (`docker run`, Docker SDK, CI runners) connect to Sockerless exactly as they would to a real Docker daemon — but containers run on AWS ECS, Google Cloud Run, Azure Container Apps, and more.
 
+> **2026-05-07 — 8/8 runner-integration cells GREEN.** GitHub × {ECS, Lambda, Cloud Run, GCF} and GitLab × the same four are all running the full probe + git-clone + go-build + arithmetic suite end-to-end against real cloud infrastructure. See [STATUS.md](STATUS.md) for live URLs. The closing milestone shipped Phase 123, the **storage backing driver abstraction** — `gcs-sync` replaces FUSE-on-object-store for shared workspaces. That driver pattern (cloud-agnostic core interface + per-cloud impls + operator-pluggable selection at config time + no-fallbacks discipline) is the proven precedent for a wider driver-generalization plan covering networking, DNS, and access — see [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) and [PLAN.md](PLAN.md) Phases 124-127.
+
 ## Why
 
 No existing project fills this niche. Docker Engine, Podman, Colima, and Rancher Desktop all run containers locally. No cloud service exposes a Docker-compatible REST API. Sockerless bridges this gap: **Docker API on top, cloud serverless capacity on the bottom.**

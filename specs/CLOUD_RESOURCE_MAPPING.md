@@ -171,11 +171,11 @@ Cloud Run Functions Gen2's `CreateFunction` API requires a Buildpacks-compatible
 
 For cells 5/6/8, this manifests as: postgres (sidecar) and golang (main) each get their own gcf function instead of co-deploying as a multi-container Cloud Run Service. Cross-container loopback (`postgres:5432` from golang) breaks because they're in different Cloud Run Services. Cell 7 worked because the cloudrun backend has a different ContainerCreate path that doesn't kick eager deploy.
 
-**Real fix — cancellation-channel architecture (not yet shipped):** ContainerCreate spawns `deployFunctionAsync` with a `context.WithCancel(parent)` and stores the cancel func on the container's PendingCreates entry. ContainerStart's `shouldDeferOrMaterializeNetworkPod` decision, when it returns `materialize`, calls `cancel()` on every sibling member's deploy context BEFORE invoking `materializePodFunction`. The deployFunctionAsync goroutine respects the context: at every cloud-API call boundary (`ensureOverlayImage`, `claimFreeFunction`, `CreateFunction.Wait`, `swapServiceImage`, `attachVolumesToFunctionService`) it checks `ctx.Err()` and unwinds — including releasing any pool claim it took (`UpdateFunction(labels.remove: sockerless_allocation)`) so the next deploy attempt can re-claim. The `deployFutures` channel that ContainerStart awaits returns a sentinel `errDeployCancelled` rather than `nil` so ContainerStart knows to skip the single-container invoke path.
+**Real fix — shipped 2026-05-06 via BUG-956 (`pendingMembersOfNetwork` filter)**: when ContainerStart's `shouldDeferOrMaterializeNetworkPod` evaluates the network's members for materialization, it filters out containers that are already-materialized as OpenStdin=true mains of an existing pod-Service (detected via `resolveGCFFromCloud` returning a populated FunctionURL). Sidecars (OpenStdin=false: postgres, etc.) are NOT filtered, so each stage's pod-Service revision gets its own postgres copy — Cloud Run revision loopback semantics are per-revision, so this is required. With the filter, the new stage's container materializes as its own pod-Service alongside its sidecars, and earlier stage's pod-Services stay running independently.
 
-This is the right architecture for two independent reasons: (1) it preserves BUG-923's fast ContainerCreate (no synthetic delay window), (2) it makes pod-membership decisions purely a ContainerStart concern, where the standard-Docker signal (network membership + OpenStdin) is fully observable. Any "delay window" alternative would race for short-lived sibling sequences.
+This shape avoids the cancellation-channel rewrite that had been considered earlier — the filter at `pendingMembersOfNetwork` is sufficient because the standard-Docker signal (network membership + OpenStdin + already-resolved Function) is fully observable at ContainerStart time without coordinating with in-flight `deployFunctionAsync` goroutines. Cross-cloud parity sweep applies the same filter to cloudrun (BUG-958 mirror).
 
-Quick-fix options like "delay deploy by N seconds" or "ContainerStart polls in-flight goroutine" are forbidden — they add timing dependence to a control-flow problem.
+Quick-fix options like "delay deploy by N seconds" or "ContainerStart polls in-flight goroutine" remain forbidden — they add timing dependence to a control-flow problem.
 
 **Release sequence (`docker rm <containerID>`):**
 
@@ -254,7 +254,13 @@ Rules:
 2. Backends never conflate *function state* with *invocation state*. An `ACTIVE` Lambda / GCF / AZF function with no in-flight invocation still maps to `State.Status=exited` *for a specific container* once that container's invocation is known to have finished — the cloud function resource itself remains `Active` and reusable.
 3. Invocation results that can't be recovered from the cloud (e.g. in-memory `InvocationResults` map lost on backend restart) fall back to the conservative "container is running if its function still exists" view. That's the same invariant `resolveTaskState` already applies for restart-safe state recovery.
 
-## Storage backing driver abstraction (PLANNED — Phase 123)
+## Storage backing driver abstraction (CLOSED 2026-05-07 — Phase 123)
+
+Live-validated: cells 5+6 v17 GREEN end-to-end with `gcs-sync` data plane. The runner-task tars `/tmp/runner-work` to a per-exec GCS object before forwarding the exec POST; the JOB pod-Service bootstrap untars before subprocess + tars after; runner-task untars on response. Pure GCS SDK calls — no FUSE in the data path.
+
+**Outcome**: registry shipped (`backends/core/storage_backing.go`), GCS drivers shipped (`backends/gcp-common/storage_gcssync.go`, `storage_gcsfuse.go`), per-backend translators shipped (`backends/cloudrun/volume_translator.go`, `backends/cloudrun-functions/volume_translator.go`), bootstrap envelope handler shipped (`agent/cmd/sockerless-{cloudrun,gcf}-bootstrap/persist_sync.go`), dispatcher TOML schema extended (`runner_workspace_backing` field), no-fallbacks discipline at registry resolve.
+
+The original design notes are kept below (matrix + rejected backings + rationale) — they remain the canonical reference for which backings are acceptable and why.
 
 User directive 2026-05-07: workspace storage MUST be pluggable so we can test multiple options (gcs-sync, NFS, emptyDir, future) without re-refactoring each backend.
 
@@ -338,6 +344,51 @@ The driver abstraction exists so we can swap any of these without backend refact
 | Lift `NetworkDriver` / `DNSDriver` while we're here | NO — focused on storage | Avoid scope creep. Network abstraction has its own layered concerns; do separately when there's a real need. |
 | Phase 104 driver framework relationship | Independent track | Phase 104 = per-container ops (Exec/Attach/Logs/etc.). Storage backing = per-volume. Different concept, different lifecycle. They co-exist. |
 | NFS / Filestore / always-on shared FS | REJECTED (user directive 2026-05-07) | Persistent hardware violates the zero-scaling paradigm. Single-writer + sync-at-boundary is acceptable for the same workloads NFS would have served. |
+
+## Driver pattern as a generalization target
+
+The storage backing driver pattern (Phase 123, closed 2026-05-07) is the proven precedent for a wider driver-generalization plan. User principle (verbatim, 2026-05-07): "we want to generalize the approach to using drivers so that we can swap out pieces of backends for each backend since cloud offers a variety of things like networking, DNS, storage and access, but first we just wanted a fully working, minimally, system."
+
+8/8 GREEN runner cells means the working minimal system is in hand. The four upcoming driver categories (each a separate phase in [PLAN.md](../PLAN.md)) follow the same shape:
+
+| Phase | Driver category | Today's ad-hoc paths | Driver categories |
+|---|---|---|---|
+| **124** | **Network driver** | ECS Cloud Map; cloudrun/gcf `/etc/hosts` aliases via `SOCKERLESS_HOST_ALIASES`; multi-container revision loopback | `host-aliases`, `cloud-dns`, `service-mesh`, `nat-gateway-only` |
+| **125** | **DNS driver** | ECS Cloud Map private namespace; cloudrun Cloud DNS managed zones; ACA Private DNS Zone | `cloud-map`, `cloud-dns-zone`, `service-discovery`, `private-dns-zone` |
+| **126** | **Access driver** | cloudrun ID tokens; ECS task IAM roles + per-network SGs; ACA managed identities + NSGs; gcf VpcAccess + ALL_TRAFFIC | `iam-role`, `id-token`, `mTLS`, `none-internal` |
+| **127** | **Storage driver expansion** | `BackingSpec` union is `EmptyDir | GCS` (Phase 123); cross-cloud `pd-ephemeral`, `efs-ephemeral`, `azure-files-ephemeral` | sockerless-managed lifecycle for ephemeral managed FS / disks |
+
+**Shared interface shape** (each of the four follows the Phase 123 template):
+
+```go
+// api/<dim>_driver.go
+type <Dim>Driver string  // enum of driver names
+// Extension fields on the relevant config (Network, SharedVolume, ...).
+
+// backends/core/<dim>_driver.go
+type <Dim>DriverImpl interface {
+    Driver() api.<Dim>Driver
+    CloudSpec(...) (BackingSpec, error)        // layer 1: cloud volume / network spec
+    PreExec / PostExec(...) error              // layer 2: data-plane sync (only for backings that need it)
+}
+type <Dim>Registry struct { drivers map[api.<Dim>Driver]<Dim>DriverImpl }
+func (r *Registry) Resolve(d api.<Dim>Driver) <Dim>DriverImpl { ... }
+//   ^ Resolve(unset) and Resolve(unknown) return error — no silent fallback.
+
+// backends/<cloud>-common/<dim>_<impl>.go  → per-cloud impls
+// backends/<cloud-product>/<dim>_translator.go  → per-backend translator (driver output → cloud-native spec)
+// dispatcher TOML / env var: operator-pluggable selection per backend
+```
+
+**Discipline applied across all four** (and inherited from Phase 123):
+
+1. **Cloud-agnostic core interface.** `<Dim>DriverImpl` lives in `backends/core/`; concrete impls live with the cloud they use. Per the three-tier rule from Phase 118: `core` for interfaces + types; `<cloud>-common` for per-cloud shared code; `<cloud-product>` for per-backend specifics.
+2. **Per-cloud impls for every supported cloud.** No backend "doesn't have a driver" for a dimension — the `none-internal` / `nat-gateway-only` / `emptyDir` style of explicit no-op driver is preferred over an empty / nil case.
+3. **Operator-pluggable selection at config time.** Dispatcher TOML or env var per backend. Defaults are explicit, not implicit; today's driver picks become tomorrow's ops choices.
+4. **No-fallbacks at registry resolve.** Unset / unknown driver name returns an error, never silently picks a default. Each driver has different cost / scale / consistency characteristics; silent default selection masks operator misconfiguration.
+5. **One PR per phase.** Same single-PR-per-phase rule that closed Phase 123. Sub-tasks within a phase land as commits on the phase branch; the PR-and-CI-green gate applies at phase boundaries.
+
+When extending a driver category (e.g. adding a new network impl), the change is scoped: a new `backends/<cloud>-common/network_<impl>.go` file + a registry entry. No core-package edits needed once the interface is stable. That's the value the abstraction buys; without it, every new impl forces edits at the call sites of every backend.
 
 ## Volume provisioning per backend
 

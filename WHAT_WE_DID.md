@@ -6,6 +6,84 @@ See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for
 
 This file keeps narrative / "why we did it" context that doesn't live in BUGS.md or git log. Per-bug detail belongs in [BUGS.md](BUGS.md) — don't duplicate it here.
 
+## 2026-05-07 — Phase 123 + 8/8 cells GREEN (milestone closed)
+
+The 17-iteration cells-5+6 saga ended today. Phase 123 (storage backing driver abstraction with `gcs-sync`) shipped, cells 5+6 went GREEN at v17, the 8/8 runner-integration milestone closed. Per-bug fix detail in [BUGS.md](BUGS.md); cell URLs in [STATUS.md](STATUS.md).
+
+### Phase 123 architecture (what landed)
+
+**`gcs-sync` data plane.** Replaces FUSE-on-object-store for shared workspaces. The runner-task tars `/tmp/runner-work` to a per-exec GCS object before forwarding the exec POST; the JOB pod-Service bootstrap untars from the same object before running the subprocess, then tars the modified workspace back; the runner-task untars on response. Pure GCS SDK calls — no FUSE in the data path. Per-step granularity matches GH actions/runner's per-step script pattern.
+
+**The `SOCKERLESS_SYNC_MOUNTS` / `SOCKERLESS_SYNC_VOLUMES` split.** Two distinct env vars carrying two distinct lists, joined by name at the bootstrap:
+- `SOCKERLESS_SYNC_MOUNTS=name=mountpath` — injected at materialize time on the JOB main container's spec; lists which named volumes the bootstrap should sync, paired with where they're mounted in the container.
+- `SOCKERLESS_SYNC_VOLUMES=name=gs://bucket/object` — injected per-exec via the envelope's `Env` field; lists the per-call GCS objects (one per exec).
+
+The materializer looks up each `SharedVolume` by name (binds are friendly-named at ContainerCreate). Earlier iterations of BUG-967 conflated the mount-list with the object-list, which broke the moment runner-externals + runner-workspace co-existed; the split fixes that cleanly.
+
+**No-fallbacks registry.** `core.StorageBackingRegistry.Resolve(unknown)` and `Resolve(empty)` return errors, never silently pick a default. Every `SharedVolume` MUST have an explicitly-set `Backing`. Cells 7+8 explicitly set `gcs-fuse`; cells 5+6 explicitly set `gcs-sync`. This is the no-fallbacks discipline applied at the registry boundary — silent default selection would mask operator misconfiguration.
+
+### Bug-by-bug closeout
+
+Each fix shipped landed in the same session it surfaced (no-defer rule). Most surfaced AFTER Phase 123 landed because the new sync data plane exposed materialize-time spec details that the old GCSFuse path hid.
+
+- **BUG-964** (commit `48d5b37`): gcf `invokePodServiceMain` gained a `skipIfNoStdin` param. When OpenStdin=false runner-pattern containers materialize as a pod-Service main, do NOT default-invoke — that would run the long-lived JOB CMD as a one-shot subprocess and block forever on `invokeMu`. Mirror of cloudrun BUG-961. The bootstrap stays on its HTTP listener for subsequent `/exec` POSTs.
+- **BUG-966** (commit `2591964`): drop `WorkingDir` from the JOB pod-Service container spec. Cloud Run validates `WorkingDir` exists at startup, but under `gcs-sync` the workspace volume is empty until the bootstrap restores from GCS. The bootstrap chdir's per-exec via `envelope.Workdir`; no need to set it at the container level.
+- **BUG-967** (3 iterations: `e286ba8` → `05c0ecd` → `3ca6614`): the `SOCKERLESS_SYNC_MOUNTS` / `SOCKERLESS_SYNC_VOLUMES` split landed only after two earlier shapes failed. v1: single env var conflating mount paths and GCS objects (broke multi-volume). v2: name-keyed env carrying both, but per-exec env couldn't reference materialize-time mount paths. v3: split, with the materializer looking up SharedVolume by name (not source path) so binds + named volumes both work.
+- **BUG-968** (commit `4dc8cdc`): cloudrun's `OverlayContentTag` keyed only on bootstrap PATH, not content — the AR cache hit forever, deploying yesterday's bootstrap inside fresh containers. gcf had been fixed by BUG-957 but cloudrun was missed in that round. Fix: hash the binary at server startup, stamp `BootstrapBinaryHash` into every `OverlayImageSpec`. Same shape as the gcf fix; applied verbatim to `backends/cloudrun/server.go::NewServer`.
+- **BUG-969** (commit `d20cb38`): cloudrun's default `mapCPUMemory` was `512Mi`/container — too small for multi-container revisions where the postgres sidecar's `initdb` OOMs at ~700Mi. Bumped to `1Gi`/container to match gcf's default. Cells 5+6 then progressed to `clone-and-compile`.
+- **BUG-970** (today): Cloud Run multi-container pod-Service startup probe failure. The misleading "container failed to bind PORT=8080" took 4 hypotheses + a manual `gcloud run services replace` of an identical multi-container spec to disprove — the actual root cause was regional CPU quota exhaustion. Failed/cancelled prior runs left orphan `sockerless-svc-*` services with `minInstanceCount=1` (always-on), each pinning 1-2 CPUs of regional quota. Same family as BUG-942. Structural fix: materialize sets `minInstanceCount=0` so failed revisions don't pin CPU. Followup work (orphan GC sweep) tracked in [DO_NEXT.md](DO_NEXT.md).
+- **BUG-971** (today): after BUG-969 bumped per-container memory to 1Gi, cell 5+6 reached `clone-and-compile` where Go compilation alongside the postgres sidecar still OOMed at ~1.5Gi peak. The lesson: in multi-container revisions, the **sum** matters, not the per-container limit. Fix: bump main container to 2Gi (postgres stays at 1Gi); per-cell memory budget set in `materializePodService`.
+
+### ECS test regression caught + fixed (commit `a521ac4`)
+
+Earlier in the branch I had added a `handleContainerWait` fast-path for backends that store `InvocationResult` directly. The fast-path included a fallback: if `WaitChs` was registered but no `InvocationResult` ever showed up, return exit code 0. ECS registers `WaitChs` (per-cycle for the gitlab-runner pattern) but never stores `InvocationResult` — exit codes come from `CloudState.WaitForExit` querying actual cloud-side state. So when the WaitCh closed (cycle done), the fast-path returned 0 instead of querying ECS.
+
+`TestECSArithmeticInvalid` and `TestArithmeticNonZeroExit/ecs` both failed: the binary correctly exited 1, but the `/wait` endpoint reported 0. Fix: drop the WaitCh-only branch from the fast-path entirely. Backends without `InvocationResult` fall through to the existing `CloudState`-driven path which queries actual cloud-side state.
+
+The original fast-path had a hidden silent fallback that violated the no-fallbacks discipline. We **deleted the fallback rather than expanding it** — the right shape per the project rule.
+
+### Things tried that did NOT work (anti-recipes)
+
+Per the user-stated workflow rule, document REJECTED approaches so future sessions don't relitigate:
+
+| Attempt | Why rejected |
+|---|---|
+| **GCSFuse for new SharedVolumes** with extra mount options (`--rename-dir-limit=10000 --metadata-cache-ttl-secs=0`) | BUG-965 stale-handle on per-step `event.json` rewrites by GH actions/runner. Mount options can mask but not eliminate stale-handle on rewrites. User directive 2026-05-07: no FUSE-on-object-store for new SharedVolumes. |
+| **NFS / Filestore / Memorystore / persistent-mode PDs** | All bill idle. User directive 2026-05-07: zero-scaling, no-cost-when-not-in-use is absolute. Filestore = $160/mo always-on; Memorystore Redis = $50/mo; PDs bill ~$0.04/GiB/mo idle. |
+| **`minInstanceCount=1` on pod-Services** | BUG-970 proved this pins regional CPU quota across the entire pipeline lifetime. Failed / cancelled runs leave orphan Services holding 1-2 vCPUs each. After ~6 orphans we'd exhaust regional quota and every subsequent materialize fails with the misleading "PORT=8080" startup error. Structural fix: `minInstanceCount=0`. |
+| **Cloud Run startup-probe debug as the failure root cause** | Red herring. Spent 4 hypotheses + a manual `gcloud run services deploy` of the EXACT failing overlay image (which succeeded in <5s locally) before pinning the actual cause to regional CPU quota. The startup-probe error message Cloud Run returns when CPU is unavailable is identical to the one for genuine bind-port failures. Cost: ~3 hours. |
+| **Single-container memory bump alone** (BUG-969 fix) | Got cells past `initdb` (postgres sidecar) but BUG-971 surfaced because the SUM matters in multi-container revisions, not the per-container limit alone. Need per-container budgets that account for the sidecar mix. |
+| **`handleContainerWait` fast-path with WaitCh-only fallback** | Hidden silent fallback that masked actual exit codes for backends without `InvocationResult` (ECS). Deleted the fallback rather than expanding it — `CloudState.WaitForExit` is the right path for those backends. No-fallbacks discipline at the wait endpoint. |
+
+### Lessons learned
+
+1. **The `gcs-sync` driver pattern is the proven template** for the wider driver-generalization track (Phases 124-127 in PLAN.md). Cloud-agnostic core interface + per-cloud impls + operator-pluggable selection at config time + no-fallbacks discipline at registry resolve. Same shape applies to network, DNS, access drivers.
+
+2. **Misleading error messages cost real time when the actual layer is invisible.** Cloud Run's "PORT=8080" startup error means "container couldn't bind in time" OR "couldn't allocate CPU at all" depending on the underlying cause. Without explicit error differentiation in the cloud's response, only side-channel evidence (manual `gcloud run services replace` of the identical spec; checking quota usage in console) pins the real cause. Lesson: when a "container startup" error doesn't correlate with the container's actual startup behavior locally, suspect a control-plane / quota issue before further bootstrap debugging.
+
+3. **No-fallbacks discipline catches its own violations.** The ECS test regression (BUG: `handleContainerWait` fast-path returning 0 from WaitCh-loaded-but-no-InvocationResult) was a subtle violation that landed silently and surfaced 6 commits later as test failures. Project rule held: delete the fallback, don't expand it. The right path (CloudState-driven wait) was already there; the fast-path just needed to know when not to apply.
+
+4. **Multi-container revision cost is the sum.** BUG-969 + BUG-971 chain showed that per-container memory limits in Cloud Run revisions are individual ceilings, but the sum determines the revision's actual capacity. For our pod-Service shape (golang main + postgres sidecar), the sum got us OOMing during `go build`. Per-cell memory budgets need to factor the sidecar mix.
+
+5. **Cells 5+6 cascade of layered failures** (BUG-959 → 960 → 961 → 962 → 963 → 964 → 965 → 966 → 967 → 968 → 969 → 970 → 971) reinforced the value of the no-fakes / cross-cloud-parity rules: each fix surfaced the next layer immediately because no fallbacks were masking earlier failures. 17 iterations across multiple sessions, 13 architectural fixes, but no rounds were spent re-exploring problems we'd already pinned.
+
+### Multi-day cells-5+6 saga summary
+
+| Iteration | Date | Surfaced | Closed |
+|---|---|---|---|
+| v1-v2 | 2026-05-03 | — | infrastructure-only |
+| v3-v5 | 2026-05-04 | BUG-959/960/961/962/963 | (BUG-959/960/961/962 closed in v5) |
+| v6 | 2026-05-04 | BUG-964/965 | BUG-963 closed |
+| v7-v9 | 2026-05-05 | (no progress; iterating on BUG-964/965 fix shape) | — |
+| v10-v12 | 2026-05-06 | (planning Phase 123 driver abstraction) | — |
+| v13 | 2026-05-07 | BUG-966 | BUG-964 closed |
+| v14 | 2026-05-07 | BUG-967 (3 iters: v14a/b/c) | BUG-966 closed |
+| v15 | 2026-05-07 | BUG-968 | BUG-967 closed |
+| v16 | 2026-05-07 | BUG-969 | BUG-968 closed |
+| v17 | 2026-05-07 | BUG-970/971 | BUG-969/970/971 closed; **cells 5+6 GREEN** |
+
+13 architectural fixes total across the saga. No fixes deferred; no fallbacks introduced. Every layer of failure produced a same-session structural fix, with cross-cloud parity sweeps catching the equivalent-fix-needed-on-the-other-cloud cases (BUG-958 ↔ BUG-955; BUG-961 ↔ BUG-964; BUG-957 ↔ BUG-968).
+
 ## Phase 123 planning session (2026-05-07 — storage backing driver abstraction defined; cells 5+6 staged)
 
 Pivoted from "fix GCSFuse mount options" / "swap to Filestore NFS" to a proper driver abstraction after the user directives.
