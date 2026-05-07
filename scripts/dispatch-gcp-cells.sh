@@ -94,8 +94,8 @@ dispatch_gitlab_cell() {
 }
 
 echo "=== Phase 120 GCP cells dispatcher ==="
-dispatch_github_cell cell-5-cloudrun
-dispatch_github_cell cell-6-gcf
+dispatch_github_cell live-tests-cloudrun
+dispatch_github_cell live-tests-cloudrun-functions
 dispatch_gitlab_cell cell-7-cloudrun tests/runners/gitlab/cell-7-cloudrun.yml
 dispatch_gitlab_cell cell-8-gcf      tests/runners/gitlab/cell-8-gcf.yml
 

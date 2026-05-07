@@ -1,8 +1,10 @@
-name: AWS live
-
-# Workflow-dispatch only — triggered manually when live-AWS validation
-# is needed. Teardown always runs so a failed earlier job still
-# releases scratch AWS resources. See smoke-tests/aws-live/README.md
+# live-tests-lambda — sockerless Lambda backend, against a real AWS account.
+#
+# Manual only (`workflow_dispatch`). Brings up the shared AWS infra
+# (terraform; same script as live-tests-ecs — terraform state is
+# idempotent), runs the Lambda baseline + runtime-API smokes, and
+# tears everything down. Teardown always runs so a failed earlier job
+# still releases scratch AWS resources. See smoke-tests/aws-live/README.md
 # for the scripts each job runs.
 #
 # REQUIRED REPOSITORY SECRETS (Settings → Secrets and variables →
@@ -10,26 +12,18 @@ name: AWS live
 # will fail at the first credentials step otherwise:
 #
 #   AWS_LIVE_ROLE_ARN          — IAM role ARN that GitHub OIDC assumes.
-#                                 Trust policy allows
-#                                 token.actions.githubusercontent.com
-#                                 with this repo's ref claim.
-#   AWS_LIVE_GITHUB_PAT         — (optional) PAT for 4-github-runner.sh
-#                                 self-hosted-runner registration.
-#                                 Skip if not running script 4.
-#   AWS_LIVE_GITLAB_RUNNER_TOKEN — (optional) GitLab runner registration
-#                                 token for 5-gitlab-runner.sh. Skip if
-#                                 not running script 5.
-#   AWS_LIVE_NGROK_AUTHTOKEN    — (optional) ngrok authtoken used by
-#                                 3-lambda-runtime-api.sh to publish a
-#                                 callback URL. Skip if not running
-#                                 script 3.
+#   AWS_LIVE_NGROK_AUTHTOKEN   — (optional) ngrok authtoken used by
+#                                3-lambda-runtime-api.sh to publish a
+#                                callback URL. Skip if not running
+#                                script 3.
+#   AWS_LIVE_GITHUB_PAT        — (optional) PAT for the Lambda-targeted
+#                                self-hosted runner registration used
+#                                by the `hello` job below. Skip if not
+#                                running `hello`.
 #
-# Why repo secrets and not workflow inputs: GitHub Actions
-# workflow_dispatch inputs leak into the run history's Inputs panel
-# and the workflow run REST API, so they're not safe for credentials.
-# Repo secrets are masked in logs and never returned by the API.
-# Mirror the same secret names in the GitLab mirror's CI/CD variables
-# if running this workflow there.
+# Why repo secrets and not workflow inputs: see live-tests-ecs.yml.
+
+name: live-tests-lambda
 
 on:
   workflow_dispatch:
@@ -39,12 +33,12 @@ on:
         required: true
         default: eu-west-1
       scripts:
-        description: Comma-separated script numbers to run (e.g. "0,1,2,6" or "all")
+        description: 'Comma-separated steps: 0=infra,2=lambda-baseline,3=lambda-runtime-api,4=github-runner,hello,6=teardown ("all" runs the full chain)'
         required: true
         default: "all"
 
 concurrency:
-  group: aws-live
+  group: live-tests-lambda
   cancel-in-progress: false
 
 permissions:
@@ -69,27 +63,6 @@ jobs:
         with:
           name: ecs-outputs
           path: /tmp/ecs-out.json
-
-  ecs-smoke:
-    needs: infra-up
-    runs-on: ubuntu-latest
-    if: contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') || contains(inputs.scripts, '1')
-    env:
-      AWS_REGION: ${{ inputs.region }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
-        with:
-          go-version: '1.25'
-          cache: true
-      - uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
-          aws-region: ${{ inputs.region }}
-      - uses: actions/download-artifact@v8
-        with: { name: ecs-outputs, path: /tmp }
-      - run: (cd backends/ecs && go build -o ../../sockerless-backend-ecs ./cmd/sockerless-backend-ecs)
-      - run: bash smoke-tests/aws-live/1-ecs-smoke.sh
 
   lambda-baseline:
     needs: infra-up
@@ -148,26 +121,24 @@ jobs:
           fi
           bash smoke-tests/aws-live/4-github-runner.sh
 
-  gitlab-runner:
-    needs: infra-up
-    runs-on: ubuntu-latest
+  hello:
+    # Minimal sanity check that the GH actions/runner + sockerless-lambda
+    # backend wiring works end-to-end. Runs on the self-hosted runner
+    # spawned by `github-runner` above. No repo secrets used directly —
+    # the dispatcher holds the AWS creds + GitHub PAT operator-side.
+    needs: github-runner
     if: |
       contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') ||
-      contains(inputs.scripts, '5')
-    env:
-      AWS_REGION: ${{ inputs.region }}
-      GITLAB_RUNNER_TOKEN: ${{ secrets.AWS_LIVE_GITLAB_RUNNER_TOKEN }}
+      contains(inputs.scripts, 'hello')
+    runs-on: [self-hosted, sockerless-lambda]
+    container:
+      image: alpine:latest
     steps:
-      - uses: actions/checkout@v6
-      - run: |
-          if [ -z "$GITLAB_RUNNER_TOKEN" ]; then
-            echo "::warning::gitlab_runner_token absent; skipping 5-gitlab-runner.sh"
-            exit 0
-          fi
-          bash smoke-tests/aws-live/5-gitlab-runner.sh
+      - run: echo "hello from sockerless lambda"
+      - run: date -u
 
   teardown:
-    needs: [ecs-smoke, lambda-baseline, lambda-runtime-api, github-runner, gitlab-runner]
+    needs: [lambda-baseline, lambda-runtime-api, github-runner, hello]
     if: always()
     runs-on: ubuntu-latest
     env:

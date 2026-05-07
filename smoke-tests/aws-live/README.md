@@ -5,8 +5,10 @@ ECS + Lambda with real github.com / gitlab.com runners. Each script
 corresponds to one runbook and cleans up on exit (success or failure),
 so a broken run never leaves AWS residue.
 
-Dispatched by `.github/workflows/aws-live.yml` (workflow_dispatch-only)
-or run locally once credentials are exported.
+Dispatched by `.github/workflows/live-tests-ecs.yml` (ECS + runner
+jobs) and `.github/workflows/live-tests-lambda.yml` (Lambda jobs) —
+both workflow_dispatch-only — or run locally once credentials are
+exported.
 
 ## Prerequisites
 

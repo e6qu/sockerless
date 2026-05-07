@@ -49,7 +49,7 @@ const (
 // cluster, with sockerless-backend-ecs baked into the same image and
 // listening on `tcp://localhost:3375` inside the task. The runner's
 // `docker create -v /home/runner/_work:/__w alpine` (from the
-// `container: alpine:latest` directive in `hello-ecs.yml`) flows
+// `container: alpine:latest` directive in `live-tests-ecs.yml`) flows
 // through sockerless, which translates the host bind mount to the
 // shared EFS access point and dispatches the alpine sub-task to ECS
 // with the same EFS volume mounted at `/__w`. Both runner-task and
@@ -70,7 +70,7 @@ func TestGitHub_ECS_Hello(t *testing.T) {
 	}
 	runCell(t, cellConfig{
 		Label:             "sockerless-ecs",
-		WorkflowFile:      "hello-ecs.yml",
+		WorkflowFile:      "live-tests-ecs.yml",
 		ECSTaskDefinition: envOr("SOCKERLESS_ECS_TEST_TASK_DEFINITION", "sockerless-live-runner"),
 		ECSRegion:         envOr("SOCKERLESS_ECS_TEST_REGION", "eu-west-1"),
 		ECSCluster:        envOr("SOCKERLESS_ECS_TEST_CLUSTER", "sockerless-live"),
@@ -99,12 +99,12 @@ func TestGitHub_Lambda_Hello(t *testing.T) {
 	if function == "" {
 		t.Skip("SOCKERLESS_LAMBDA_TEST_FUNCTION not set; runner-Lambda live infra required")
 	}
-	// hello-lambda.yml isn't on main; commit a Lambda-shaped body
-	// to the registered hello-ecs.yml slot on a throwaway branch and
+	// Reuse the live-tests-lambda.yml slot on main and overwrite its
+	// content with a hello-shaped body on a throwaway branch, then
 	// dispatch with ref=<branch>. Same trick the ECS variant uses.
 	runCell(t, cellConfig{
 		Label:        "sockerless-lambda",
-		WorkflowFile: "hello-ecs.yml",
+		WorkflowFile: "live-tests-lambda.yml",
 		WorkflowYAML: `name: hello-lambda
 on:
   workflow_dispatch:

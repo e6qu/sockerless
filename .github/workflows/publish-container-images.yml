@@ -1,9 +1,16 @@
-name: Docker Images
+# Build and publish sockerless container images. Currently pushes to
+# ghcr.io/e6qu/<image>; the workflow can later be extended to publish
+# to other registries (Docker Hub, GAR, ACR) by adding matrix entries
+# or per-registry login steps.
+#
+# Triggers: tag push (`v*`) and manual `workflow_dispatch`. No
+# main-branch auto-publish — every release is gated on a tag.
+name: Publish container images
 
 on:
   push:
-    branches: [main]
     tags: ['v*']
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
