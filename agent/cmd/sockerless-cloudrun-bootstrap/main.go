@@ -105,6 +105,17 @@ var persistVols []persistVolume
 var syncMounts map[string]string
 
 func main() {
+	// BUG-970 diagnostic: emit to BOTH stdout and stderr at the very
+	// top of main() so Cloud Logging captures *something* from the
+	// binary even if stderr is being lost. Without this, the failing
+	// pod-Service revisions show only Cloud Run's own "Starting new
+	// instance" system messages, leaving us guessing whether the
+	// binary even runs.
+	fmt.Fprintf(os.Stdout, "sockerless-cloudrun-bootstrap: MAIN ENTRY pid=%d args=%v PORT=%q SOCKERLESS_SIDECAR=%q\n",
+		os.Getpid(), os.Args, os.Getenv("PORT"), os.Getenv(envSidecar))
+	fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: MAIN ENTRY pid=%d args=%v PORT=%q SOCKERLESS_SIDECAR=%q\n",
+		os.Getpid(), os.Args, os.Getenv("PORT"), os.Getenv(envSidecar))
+
 	if err := writeHostAliases(os.Getenv(envHostAliases)); err != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: write host aliases: %v\n", err)
 	}

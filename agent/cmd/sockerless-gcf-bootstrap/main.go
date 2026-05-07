@@ -144,6 +144,16 @@ var persistVols []persistVolume
 var syncMounts map[string]string
 
 func main() {
+	// BUG-970 diagnostic: same shape as cloudrun bootstrap — emit to
+	// BOTH stdout and stderr at the very top of main() so Cloud Logging
+	// captures the binary's first instruction even if one stream is
+	// lost. Sidecar mode triggers below; the second log line proves
+	// post-sidecar-check execution path.
+	fmt.Fprintf(os.Stdout, "sockerless-gcf-bootstrap: MAIN ENTRY pid=%d args=%v PORT=%q SOCKERLESS_SIDECAR=%q\n",
+		os.Getpid(), os.Args, os.Getenv("PORT"), os.Getenv(envSidecar))
+	fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: MAIN ENTRY pid=%d args=%v PORT=%q SOCKERLESS_SIDECAR=%q\n",
+		os.Getpid(), os.Args, os.Getenv("PORT"), os.Getenv(envSidecar))
+
 	if err := writeHostAliases(os.Getenv(envHostAliases)); err != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: write host aliases: %v\n", err)
 	}
