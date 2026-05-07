@@ -1,3 +1,5 @@
+# E2E runner tests — runs on ubuntu-latest hosted runners, against
+# local simulators (no real cloud). No repo secrets used.
 name: E2E Runner Tests
 on:
   workflow_dispatch:

@@ -4,6 +4,32 @@ name: AWS live
 # is needed. Teardown always runs so a failed earlier job still
 # releases scratch AWS resources. See smoke-tests/aws-live/README.md
 # for the scripts each job runs.
+#
+# REQUIRED REPOSITORY SECRETS (Settings → Secrets and variables →
+# Actions). These MUST be configured before dispatch — the workflow
+# will fail at the first credentials step otherwise:
+#
+#   AWS_LIVE_ROLE_ARN          — IAM role ARN that GitHub OIDC assumes.
+#                                 Trust policy allows
+#                                 token.actions.githubusercontent.com
+#                                 with this repo's ref claim.
+#   AWS_LIVE_GITHUB_PAT         — (optional) PAT for 4-github-runner.sh
+#                                 self-hosted-runner registration.
+#                                 Skip if not running script 4.
+#   AWS_LIVE_GITLAB_RUNNER_TOKEN — (optional) GitLab runner registration
+#                                 token for 5-gitlab-runner.sh. Skip if
+#                                 not running script 5.
+#   AWS_LIVE_NGROK_AUTHTOKEN    — (optional) ngrok authtoken used by
+#                                 3-lambda-runtime-api.sh to publish a
+#                                 callback URL. Skip if not running
+#                                 script 3.
+#
+# Why repo secrets and not workflow inputs: GitHub Actions
+# workflow_dispatch inputs leak into the run history's Inputs panel
+# and the workflow run REST API, so they're not safe for credentials.
+# Repo secrets are masked in logs and never returned by the API.
+# Mirror the same secret names in the GitLab mirror's CI/CD variables
+# if running this workflow there.
 
 on:
   workflow_dispatch:
@@ -16,15 +42,6 @@ on:
         description: Comma-separated script numbers to run (e.g. "0,1,2,6" or "all")
         required: true
         default: "all"
-      github_pat:
-        description: GitHub PAT for 4-github-runner.sh (optional — skip if absent)
-        required: false
-      gitlab_runner_token:
-        description: GitLab runner token for 5-gitlab-runner.sh (optional)
-        required: false
-      ngrok_authtoken:
-        description: ngrok authtoken for 3-lambda-runtime-api.sh callback URL (optional)
-        required: false
 
 concurrency:
   group: aws-live
@@ -103,7 +120,7 @@ jobs:
       contains(inputs.scripts, '3')
     env:
       AWS_REGION: ${{ inputs.region }}
-      NGROK_AUTHTOKEN: ${{ inputs.ngrok_authtoken }}
+      NGROK_AUTHTOKEN: ${{ secrets.AWS_LIVE_NGROK_AUTHTOKEN }}
     steps:
       - uses: actions/checkout@v6
       - run: |
@@ -121,7 +138,7 @@ jobs:
       contains(inputs.scripts, '4')
     env:
       AWS_REGION: ${{ inputs.region }}
-      GITHUB_PAT: ${{ inputs.github_pat }}
+      GITHUB_PAT: ${{ secrets.AWS_LIVE_GITHUB_PAT }}
     steps:
       - uses: actions/checkout@v6
       - run: |
@@ -139,7 +156,7 @@ jobs:
       contains(inputs.scripts, '5')
     env:
       AWS_REGION: ${{ inputs.region }}
-      GITLAB_RUNNER_TOKEN: ${{ inputs.gitlab_runner_token }}
+      GITLAB_RUNNER_TOKEN: ${{ secrets.AWS_LIVE_GITLAB_RUNNER_TOKEN }}
     steps:
       - uses: actions/checkout@v6
       - run: |

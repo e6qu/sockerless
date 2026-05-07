@@ -4,6 +4,11 @@
 # `sockerless-backend-gcf`; each step container becomes a Cloud Run
 # Function via Phase 118d's pod-overlay materialisation. `services:`
 # (postgres) rides as a sidecar in the merged-rootfs supervisor.
+#
+# AUTHENTICATION: same as cell-5-cloudrun — the
+# `github-runner-dispatcher-gcp` holds the GitHub PAT + GCP SA
+# credentials operator-side; this workflow uses NO repo secrets
+# directly. See cell-5-cloudrun.yml for the full setup note.
 name: cell-6-gcf
 
 on:

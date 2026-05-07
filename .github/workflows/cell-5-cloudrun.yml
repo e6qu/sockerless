@@ -15,6 +15,18 @@
 # Cell GREEN gate: all probes return non-error output, postgres
 # reachable via localhost:5432, Go compile produces a working binary,
 # all five arithmetic invocations print the expected result and exit 0.
+#
+# AUTHENTICATION (no repo secrets used directly by this workflow):
+#   This job runs on a self-hosted runner labelled `sockerless-cloudrun`,
+#   which is a runner-task spawned by `github-runner-dispatcher-gcp`
+#   on demand. The dispatcher holds the GitHub PAT + GCP service
+#   account credentials needed to mint a runner-registration token and
+#   spawn the Cloud Run Job. The dispatcher runs operator-side (on a
+#   long-lived Cloud Run Service or local laptop) — start it manually
+#   before dispatching this workflow, e.g.
+#   `gh workflow run cell-5-cloudrun.yml`. Tear it down end-of-session
+#   per `docs/GCP_LIVE_TEARDOWN.md` (TBD; for now `gcloud projects
+#   delete <id>`).
 name: cell-5-cloudrun
 
 on:
