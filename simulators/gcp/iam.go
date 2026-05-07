@@ -119,34 +119,63 @@ func registerIAM(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, map[string]any{})
 	})
 
-	// generateAccessToken — short-lived OAuth 2.0 access token for the
-	// service account. Real GCP path:
+	// IAM Credentials API — short-lived tokens minted on behalf of a
+	// service account. Real GCP paths:
 	//   POST /v1/projects/{p}/serviceAccounts/{email}:generateAccessToken
+	//   POST /v1/projects/{p}/serviceAccounts/{email}:generateIdToken
 	// Sockerless runner setup (gcloud auth application-default,
-	// google-github-actions/auth) calls this to mint scoped tokens
-	// against the workload-identity-federated SA. The simulator returns
-	// a deterministic placeholder token + expiry; real GCP returns a
-	// signed JWT but the SDK tests don't validate the signature.
+	// google-github-actions/auth) calls generateAccessToken to mint
+	// scoped tokens against the workload-identity-federated SA. Phase
+	// 126 (Access driver, `id-token` category) calls generateIdToken
+	// for cross-Service impersonation flows where the runner SA mints
+	// an ID token for a different audience SA. The simulator returns
+	// real-shape responses without validating the signature on the
+	// resulting tokens — sim audience handlers don't validate either.
 	srv.HandleFunc("POST /v1/projects/{project}/serviceAccounts/{emailAction}", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
 		emailAction := sim.PathParam(r, "emailAction")
 		email, action, _ := strings.Cut(emailAction, ":")
-		if action != "generateAccessToken" {
-			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unsupported service-account action %q", action)
-			return
-		}
 		name := fmt.Sprintf("projects/%s/serviceAccounts/%s", project, email)
 		if _, ok := serviceAccounts.Get(name); !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Service account %s not found", email)
 			return
 		}
-		// Real expiry is RFC3339Nano with timezone offset; the SDK
-		// parses it with time.Parse(time.RFC3339).
-		expireTime := time.Now().UTC().Add(1 * time.Hour).Format(time.RFC3339)
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"accessToken": "ya29.sim-" + generateUUID(),
-			"expireTime":  expireTime,
-		})
+		switch action {
+		case "generateAccessToken":
+			// Real expiry is RFC3339Nano with timezone offset; the SDK
+			// parses it with time.Parse(time.RFC3339).
+			expireTime := time.Now().UTC().Add(1 * time.Hour).Format(time.RFC3339)
+			sim.WriteJSON(w, http.StatusOK, map[string]any{
+				"accessToken": "ya29.sim-" + generateUUID(),
+				"expireTime":  expireTime,
+			})
+		case "generateIdToken":
+			// Body: { audience, includeEmail, delegates }. Response: { token }.
+			// Mint a real-shape JWT whose `aud` claim equals the request's
+			// audience so SDKs that pre-decode the token (rare in test
+			// paths, common in cross-Service auth chains) accept it.
+			var req struct {
+				Audience     string   `json:"audience"`
+				IncludeEmail bool     `json:"includeEmail"`
+				Delegates    []string `json:"delegates"`
+			}
+			if err := sim.ReadJSON(r, &req); err != nil {
+				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+				return
+			}
+			if req.Audience == "" {
+				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "audience is required")
+				return
+			}
+			now := time.Now()
+			expires := now.Add(1 * time.Hour)
+			token := mintSimIdToken(idTokenSignKey(), email, req.Audience, req.IncludeEmail, now, expires)
+			sim.WriteJSON(w, http.StatusOK, map[string]any{
+				"token": token,
+			})
+		default:
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unsupported service-account action %q", action)
+		}
 	})
 
 	// List service accounts
