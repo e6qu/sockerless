@@ -523,9 +523,16 @@ func (s *Server) buildPodContainerSpec(c api.Container, overlayURI string, isMai
 	if isMain {
 		cs.Ports = []*runpb.ContainerPort{{ContainerPort: 8080}}
 	}
-	if cfg.WorkingDir != "" {
-		cs.WorkingDir = cfg.WorkingDir
-	}
+	// Deliberately DO NOT set cs.WorkingDir. Cloud Run validates the
+	// WorkingDir exists on the container's mount filesystem before
+	// starting the process — under gcs-sync the workspace mount is an
+	// empty tmpfs at boot (the bootstrap restores from GCS per-exec),
+	// so a workdir like /__w/sockerless/sockerless wouldn't exist yet
+	// and Cloud Run would fail "Application failed to start: failed
+	// to find initial working directory". The bootstrap chdir's per-
+	// exec via envelope.Workdir (runExecEnvelope) and per-default-
+	// invoke via SOCKERLESS_USER_WORKDIR env, so the user's workdir
+	// is still honoured at the right scope.
 	return cs, mounts, nil
 }
 

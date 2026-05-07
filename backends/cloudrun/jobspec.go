@@ -145,9 +145,15 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 		})
 	}
 
-	if config.WorkingDir != "" {
-		containerSpec.WorkingDir = config.WorkingDir
-	}
+	// Deliberately DO NOT set containerSpec.WorkingDir. Cloud Run
+	// validates the WorkingDir exists on the container's mount fs at
+	// startup — under gcs-sync the workspace mount is an empty tmpfs
+	// (bootstrap restores from GCS per-exec), so a workdir like
+	// /__w/sockerless/sockerless wouldn't exist yet and Cloud Run
+	// would fail with "Application failed to start: failed to find
+	// initial working directory". The bootstrap chdir's per-exec via
+	// envelope.Workdir and per-default-invoke via SOCKERLESS_USER_WORKDIR
+	// env, so the user's workdir is honoured at the right scope.
 
 	return containerSpec, mounts
 }
