@@ -6,12 +6,12 @@ Resume pointer. Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · b
 
 Single work-branch rule: ALL in-flight work lands here, no side branches. PR #127 grows as commits land.
 
-### 1. Sim parity prep — finish before resuming bleephub
+### 1. Sim parity prep — DONE
 
-- [x] **GCP `iamcredentials.generateIdToken`** — `simulators/gcp/iam.go` extended; `mintSimIdToken` helper added in `oauth2.go`. Build green.
-- [ ] **GCP Compute Disks CRUD** — `simulators/gcp/compute.go`. Zonal disks (Insert/Get/List/Delete/Resize/SetLabels) + aggregated list. Phase 127 GCP `pd-ephemeral` prep.
-- [ ] **SDK tests** — `simulators/gcp/sdk-tests/`: cover `generateIdToken` (token shape + audience claim) and Compute Disks CRUD round-trip.
-- [ ] **`specs/SIM_PARITY_MATRIX.md`** — add rows for both new APIs.
+- [x] **GCP `iamcredentials.generateIdToken`** — `simulators/gcp/iam.go` extended; `mintSimIdToken` helper in `oauth2.go`.
+- [x] **GCP Compute Disks CRUD** — `simulators/gcp/compute.go::registerComputeDisks`. Zonal Insert/Get/List/Delete/Resize/SetLabels + aggregated-list + zonal-ops endpoint. Phase 127 GCP `pd-ephemeral` prep.
+- [x] **SDK tests** (6 new in `simulators/gcp/sdk-tests/`): full disk CRUD; aggregated list; not-found; ID-token audience round-trip; missing-SA 404; missing-audience 400. All PASS.
+- [x] **`specs/SIM_PARITY_MATRIX.md`** — 8 new rows under GCP § "Phase 126/127 forward-looking (no current backend caller; SDK-test-validated)".
 
 ### 2. Phase 130 — bleephub workflow-runs REST (next)
 

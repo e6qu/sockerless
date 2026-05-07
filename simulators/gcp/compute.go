@@ -152,6 +152,33 @@ type ComputeSubnetwork struct {
 	CreationTimestamp     string `json:"creationTimestamp"`
 }
 
+// ComputeDisk mirrors `compute#disk` — the zonal persistent-disk
+// resource. Phase 127's `pd-ephemeral` storage driver provisions one
+// disk per runner-task and attaches it to the runner's compute
+// instance for the duration of the task. Field set covers what the Go
+// SDK's `compute.NewDisksRESTClient` round-trips for create / get /
+// list / delete / resize / setLabels — the subset terraform's
+// `google_compute_disk` exercises.
+type ComputeDisk struct {
+	Kind              string            `json:"kind,omitempty"`
+	Id                string            `json:"id,omitempty"`
+	Name              string            `json:"name"`
+	SelfLink          string            `json:"selfLink,omitempty"`
+	CreationTimestamp string            `json:"creationTimestamp,omitempty"`
+	Description       string            `json:"description,omitempty"`
+	SizeGb            string            `json:"sizeGb,omitempty"`
+	Zone              string            `json:"zone,omitempty"`
+	Status            string            `json:"status,omitempty"`
+	Type              string            `json:"type,omitempty"`
+	SourceImage       string            `json:"sourceImage,omitempty"`
+	SourceImageId     string            `json:"sourceImageId,omitempty"`
+	SourceSnapshot    string            `json:"sourceSnapshot,omitempty"`
+	Users             []string          `json:"users,omitempty"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	LabelFingerprint  string            `json:"labelFingerprint,omitempty"`
+	PhysicalBlockSize string            `json:"physicalBlockSizeBytes,omitempty"`
+}
+
 func registerCompute(srv *sim.Server) {
 	networks := sim.MakeStore[ComputeNetwork](srv.DB(), "compute_networks")
 	subnetworks := sim.MakeStore[ComputeSubnetwork](srv.DB(), "compute_subnetworks")
@@ -562,6 +589,201 @@ func registerCompute(srv *sim.Server) {
 			"name":     name,
 			"status":   "DONE",
 			"selfLink": fmt.Sprintf("projects/%s/regions/%s/operations/%s", project, region, name),
+			"progress": 100,
+		})
+	})
+
+	registerComputeDisks(srv)
+}
+
+// registerComputeDisks wires the zonal Compute Disks REST surface that
+// Phase 127's `pd-ephemeral` storage driver provisions against. Real
+// GCP exposes Disks via `compute#disk` at
+// `/compute/v1/projects/{p}/zones/{z}/disks` plus an aggregated list
+// across zones at `/compute/v1/projects/{p}/aggregated/disks`. The
+// sim mirrors create / get / list / delete / resize / setLabels +
+// aggregated-list, all returning zonal operations the SDK polls.
+func registerComputeDisks(srv *sim.Server) {
+	disks := sim.MakeStore[ComputeDisk](srv.DB(), "compute_disks")
+
+	zoneOp := func(project, zone, target string) map[string]any {
+		opID := generateUUID()[:8]
+		return map[string]any{
+			"kind":       "compute#operation",
+			"id":         computeNumericID(),
+			"name":       "operation-" + opID,
+			"status":     "DONE",
+			"selfLink":   fmt.Sprintf("projects/%s/zones/%s/operations/operation-%s", project, zone, opID),
+			"targetLink": target,
+			"progress":   100,
+		}
+	}
+
+	// Insert (create disk) — POST .../zones/{zone}/disks
+	srv.HandleFunc("POST /compute/v1/projects/{project}/zones/{zone}/disks", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		var d ComputeDisk
+		if err := sim.ReadJSON(r, &d); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if d.Name == "" {
+			sim.GCPError(w, http.StatusBadRequest, "name is required", "INVALID_ARGUMENT")
+			return
+		}
+		d.Kind = "compute#disk"
+		d.Id = computeNumericID()
+		d.SelfLink = fmt.Sprintf("projects/%s/zones/%s/disks/%s", project, zone, d.Name)
+		d.Zone = fmt.Sprintf("projects/%s/zones/%s", project, zone)
+		d.CreationTimestamp = time.Now().UTC().Format(time.RFC3339)
+		d.Status = "READY"
+		if d.SizeGb == "" {
+			d.SizeGb = "10"
+		}
+		if d.Type == "" {
+			d.Type = fmt.Sprintf("projects/%s/zones/%s/diskTypes/pd-standard", project, zone)
+		}
+		d.LabelFingerprint = generateUUID()[:8]
+		disks.Put(d.SelfLink, d)
+		sim.WriteJSON(w, http.StatusOK, zoneOp(project, zone, d.SelfLink))
+	})
+
+	// Get
+	srv.HandleFunc("GET /compute/v1/projects/{project}/zones/{zone}/disks/{name}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "name")
+		selfLink := fmt.Sprintf("projects/%s/zones/%s/disks/%s", project, zone, name)
+		d, ok := disks.Get(selfLink)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "disk %q not found in zone %q", name, zone)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, d)
+	})
+
+	// List (zonal)
+	srv.HandleFunc("GET /compute/v1/projects/{project}/zones/{zone}/disks", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		prefix := fmt.Sprintf("projects/%s/zones/%s/disks/", project, zone)
+		items := disks.Filter(func(d ComputeDisk) bool {
+			return strings.HasPrefix(d.SelfLink, prefix)
+		})
+		if items == nil {
+			items = []ComputeDisk{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":  "compute#diskList",
+			"items": items,
+		})
+	})
+
+	// Delete
+	srv.HandleFunc("DELETE /compute/v1/projects/{project}/zones/{zone}/disks/{name}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "name")
+		selfLink := fmt.Sprintf("projects/%s/zones/%s/disks/%s", project, zone, name)
+		if _, ok := disks.Get(selfLink); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "disk %q not found in zone %q", name, zone)
+			return
+		}
+		disks.Delete(selfLink)
+		sim.WriteJSON(w, http.StatusOK, zoneOp(project, zone, selfLink))
+	})
+
+	// Resize — POST .../disks/{name}/resize with body {sizeGb}
+	srv.HandleFunc("POST /compute/v1/projects/{project}/zones/{zone}/disks/{name}/resize", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "name")
+		selfLink := fmt.Sprintf("projects/%s/zones/%s/disks/%s", project, zone, name)
+		var req struct {
+			SizeGb string `json:"sizeGb"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		ok := disks.Update(selfLink, func(d *ComputeDisk) {
+			if req.SizeGb != "" {
+				d.SizeGb = req.SizeGb
+			}
+		})
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "disk %q not found in zone %q", name, zone)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, zoneOp(project, zone, selfLink))
+	})
+
+	// SetLabels — POST .../disks/{name}/setLabels with body {labels, labelFingerprint}
+	srv.HandleFunc("POST /compute/v1/projects/{project}/zones/{zone}/disks/{name}/setLabels", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "name")
+		selfLink := fmt.Sprintf("projects/%s/zones/%s/disks/%s", project, zone, name)
+		var req struct {
+			Labels           map[string]string `json:"labels"`
+			LabelFingerprint string            `json:"labelFingerprint"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		ok := disks.Update(selfLink, func(d *ComputeDisk) {
+			d.Labels = req.Labels
+			d.LabelFingerprint = generateUUID()[:8]
+		})
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "disk %q not found in zone %q", name, zone)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, zoneOp(project, zone, selfLink))
+	})
+
+	// Aggregated list — GET /compute/v1/projects/{p}/aggregated/disks.
+	// Real GCP returns map[zone-key]{disks:[…]}; sim groups by zone.
+	srv.HandleFunc("GET /compute/v1/projects/{project}/aggregated/disks", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		prefix := fmt.Sprintf("projects/%s/zones/", project)
+		all := disks.Filter(func(d ComputeDisk) bool {
+			return strings.HasPrefix(d.SelfLink, prefix)
+		})
+		grouped := map[string]map[string]any{}
+		for _, d := range all {
+			rest := strings.TrimPrefix(d.SelfLink, prefix)
+			zone, _, ok := strings.Cut(rest, "/")
+			if !ok {
+				continue
+			}
+			key := "zones/" + zone
+			entry, exists := grouped[key]
+			if !exists {
+				entry = map[string]any{"disks": []ComputeDisk{}}
+				grouped[key] = entry
+			}
+			entry["disks"] = append(entry["disks"].([]ComputeDisk), d)
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":  "compute#diskAggregatedList",
+			"items": grouped,
+		})
+	})
+
+	// Zonal operations endpoint (disks return zonal ops the SDK polls).
+	srv.HandleFunc("GET /compute/v1/projects/{project}/zones/{zone}/operations/{name}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "name")
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":     "compute#operation",
+			"id":       computeNumericID(),
+			"name":     name,
+			"status":   "DONE",
+			"selfLink": fmt.Sprintf("projects/%s/zones/%s/operations/%s", project, zone, name),
 			"progress": 100,
 		})
 	})
