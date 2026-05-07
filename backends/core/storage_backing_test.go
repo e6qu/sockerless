@@ -86,7 +86,7 @@ func TestEmptyDirDriver_CloudSpec(t *testing.T) {
 
 func TestEmptyDirDriver_HooksAreNoop(t *testing.T) {
 	d := &EmptyDirDriver{}
-	hints, err := d.PreExec(context.Background(), SharedVolumeRef{Name: "x"}, "exec1", "/tmp")
+	hints, err := d.PreExec(context.Background(), SharedVolumeRef{Name: "x"}, "exec1", "/tmp", "/tmp")
 	if err != nil {
 		t.Errorf("PreExec returned error: %v", err)
 	}
@@ -107,7 +107,7 @@ func (m *mockDriver) Backing() StorageBacking { return m.backing }
 func (m *mockDriver) CloudSpec(vol SharedVolumeRef) (BackingSpec, error) {
 	return BackingSpec{Kind: m.backing}, nil
 }
-func (m *mockDriver) PreExec(ctx context.Context, vol SharedVolumeRef, execID, localPath string) (map[string][]string, error) {
+func (m *mockDriver) PreExec(ctx context.Context, vol SharedVolumeRef, execID, localPath, remotePath string) (map[string][]string, error) {
 	return nil, nil
 }
 func (m *mockDriver) PostExec(ctx context.Context, vol SharedVolumeRef, execID, localPath string) error {

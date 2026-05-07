@@ -100,7 +100,13 @@ type StorageBackingDriver interface {
 	// envelope's Env. Multi-volume callers concatenate per-key slices
 	// before serialising so hints from N volumes don't clobber. Live
 	// filesystems (gcs-fuse, emptyDir) return (nil, nil).
-	PreExec(ctx context.Context, vol SharedVolumeRef, execID, localPath string) (envHints map[string][]string, err error)
+	//
+	// localPath is the path on the runner-task where the data lives
+	// (the volume source — e.g. /tmp/runner-work). remotePath is the
+	// path on the JOB pod-Service where the bootstrap should restore
+	// to (the bind target — e.g. /__w). The two differ because docker
+	// `-v src:dst` binds: tar from src locally, untar to dst remotely.
+	PreExec(ctx context.Context, vol SharedVolumeRef, execID, localPath, remotePath string) (envHints map[string][]string, err error)
 
 	// PostExec runs after the exec response returns to the backend.
 	// For sync drivers: pulls the bootstrap's modified state back to
@@ -192,7 +198,7 @@ func (d *EmptyDirDriver) CloudSpec(vol SharedVolumeRef) (BackingSpec, error) {
 	}, nil
 }
 
-func (d *EmptyDirDriver) PreExec(ctx context.Context, vol SharedVolumeRef, execID, localPath string) (map[string][]string, error) {
+func (d *EmptyDirDriver) PreExec(ctx context.Context, vol SharedVolumeRef, execID, localPath, remotePath string) (map[string][]string, error) {
 	return nil, nil
 }
 

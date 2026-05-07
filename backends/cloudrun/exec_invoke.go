@@ -47,7 +47,11 @@ func (s *Server) execStartViaInvoke(execID string, exec api.ExecInstance, _ api.
 	// back to the caller's local mount.
 	preExecEnv := append([]string{}, exec.ProcessConfig.Env...)
 	if len(s.config.SharedVolumes) > 0 {
-		hints, err := s.preExecHintsForVolumes(s.ctx(), s.config.SharedVolumes, execID)
+		var binds []string
+		if c, ok, err := s.CloudState.GetContainer(s.ctx(), exec.ContainerID); err == nil && ok {
+			binds = c.HostConfig.Binds
+		}
+		hints, err := s.preExecHintsForVolumes(s.ctx(), s.config.SharedVolumes, binds, execID)
 		if err != nil {
 			return nil, fmt.Errorf("storage backing PreExec: %w", err)
 		}

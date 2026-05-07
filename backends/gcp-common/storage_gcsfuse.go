@@ -44,7 +44,7 @@ func (d *GCSFuseDriver) CloudSpec(vol core.SharedVolumeRef) (core.BackingSpec, e
 
 // PreExec / PostExec: no-op. FUSE handles the data plane live.
 
-func (d *GCSFuseDriver) PreExec(ctx context.Context, vol core.SharedVolumeRef, execID, localPath string) (map[string][]string, error) {
+func (d *GCSFuseDriver) PreExec(ctx context.Context, vol core.SharedVolumeRef, execID, localPath, remotePath string) (map[string][]string, error) {
 	return nil, nil
 }
 

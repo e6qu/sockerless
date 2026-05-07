@@ -70,18 +70,23 @@ func runpbVolumeFromBackingSpec(name string, spec core.BackingSpec) (*runpb.Volu
 }
 
 // preExecHintsForVolumes runs PreExec on each SharedVolume's driver and
-// merges per-key list-valued env hints (drivers may emit multiple
-// values per key — e.g. multiple gcs-sync triples). Returns one
-// comma-joined env entry per key, ready to append to the envelope's
-// Env. Fails loudly on unresolvable backings.
-func (s *Server) preExecHintsForVolumes(ctx context.Context, vols []SharedVolume, execID string) (map[string]string, error) {
+// merges per-key list-valued env hints. Caller passes the docker
+// container's HostConfig.Binds so each volume's source path can be
+// mapped to its bind target (where the JOB pod-Service mounts it).
+// SharedVolumes not referenced by any bind are skipped. See gcf
+// volume_translator's matching helper for the full rationale (BUG-967).
+func (s *Server) preExecHintsForVolumes(ctx context.Context, vols []SharedVolume, binds []string, execID string) (map[string]string, error) {
 	merged := map[string][]string{}
 	for _, v := range vols {
+		remotePath := bindTargetForSourcePath(binds, v.ContainerPath)
+		if remotePath == "" {
+			continue
+		}
 		driver, err := s.resolveBackingDriver(v)
 		if err != nil {
 			return nil, fmt.Errorf("volume %q: %w", v.Name, err)
 		}
-		hints, err := driver.PreExec(ctx, v.AsRef(), execID, v.ContainerPath)
+		hints, err := driver.PreExec(ctx, v.AsRef(), execID, v.ContainerPath, remotePath)
 		if err != nil {
 			return nil, fmt.Errorf("PreExec %s (backing=%q): %w", v.Name, driver.Backing(), err)
 		}
@@ -94,6 +99,17 @@ func (s *Server) preExecHintsForVolumes(ctx context.Context, vols []SharedVolume
 		out[k] = strings.Join(vals, ",")
 	}
 	return out, nil
+}
+
+// bindTargetForSourcePath — see gcf volume_translator's identical helper.
+func bindTargetForSourcePath(binds []string, sourcePath string) string {
+	for _, b := range binds {
+		parts := strings.SplitN(b, ":", 3)
+		if len(parts) >= 2 && parts[0] == sourcePath {
+			return parts[1]
+		}
+	}
+	return ""
 }
 
 func (s *Server) postExecForVolumes(ctx context.Context, vols []SharedVolume, execID string) error {
