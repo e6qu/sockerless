@@ -2,11 +2,7 @@ package gcf
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
-	functionspb "cloud.google.com/go/functions/apiv2/functionspb"
-	runpb "cloud.google.com/go/run/apiv2/runpb"
 	"cloud.google.com/go/storage"
 	gcpcommon "github.com/sockerless/gcp-common"
 )
@@ -35,6 +31,12 @@ type gcsVolumeState struct {
 }
 
 func (s *Server) bucketForVolume(ctx context.Context, volName string) (string, error) {
+	// SharedVolumes (operator-configured via SOCKERLESS_GCP_SHARED_VOLUMES)
+	// pin the GCS bucket directly so the runner-task and sub-task land on
+	// the same pre-created bucket the dispatcher mounted.
+	if sv := s.config.LookupSharedVolumeByName(volName); sv != nil {
+		return sv.Bucket, nil
+	}
 	return s.buckets.ForVolume(ctx, volName)
 }
 
@@ -49,62 +51,30 @@ func (s *Server) listManagedBuckets(ctx context.Context) ([]*storage.BucketAttrs
 // attachVolumesToFunctionService parses a slice of Docker bind specs
 // (`volName:/mnt[:ro]`), provisions a GCS bucket per unique named
 // volume, fetches the underlying Cloud Run Service backing the
-// function, appends the matching Volume + VolumeMount entries to its
-// RevisionTemplate, and UpdateService's the result. Escape hatch
-// because Functions v2's ServiceConfig has no first-class Volumes
-// primitive.
-func (s *Server) attachVolumesToFunctionService(ctx context.Context, fn *functionspb.Function, binds []string) error {
-	if fn == nil || fn.ServiceConfig == nil || fn.ServiceConfig.Service == "" {
-		return fmt.Errorf("function has no underlying Cloud Run Service — cannot attach volumes")
-	}
-	svcName := fn.ServiceConfig.Service
+// function, and ensures the matching Volume + VolumeMount entries are
+// present in its RevisionTemplate. Escape hatch because Functions v2's
+// ServiceConfig has no first-class Volumes primitive.
+//
+// Idempotent: existing volumes/mounts with matching names are kept
+// (not duplicated); missing ones are appended; non-matching entries
+// stay untouched. Required because the pool-reuse path calls this on
+// functions that may already carry volumes from prior allocations —
+// before this change the pool path skipped attach entirely (leaving
+// `volumes: null` on reused functions, which broke /__w bind mounts
+// for the runner-task → spawned container script handoff).
+//
+// Skips the UpdateService call entirely when the existing service
+// already has every requested volume + mount — saves a pointless
+// revision rollout that would only re-confirm the current state.
 
-	// Build volume + mount lists from the binds, deduping by volume name.
-	volumesByName := map[string]string{} // volName → bucket
-	var mounts []*runpb.VolumeMount
-	for _, b := range binds {
-		parts := strings.SplitN(b, ":", 3)
-		if len(parts) < 2 {
-			return fmt.Errorf("invalid bind %q", b)
-		}
-		volName, mountPath := parts[0], parts[1]
-		bucket, err := s.bucketForVolume(ctx, volName)
-		if err != nil {
-			return fmt.Errorf("provision bucket for %q: %w", volName, err)
-		}
-		volumesByName[volName] = bucket
-		mounts = append(mounts, &runpb.VolumeMount{
-			Name:      volName,
-			MountPath: mountPath,
-		})
-	}
+// volumeForBind returns the runpb.Volume to attach for a bind. Shared
+// volumes use raw GCSFuse (Volume_Gcs); ad-hoc volumes use in-memory
+// tmpfs (Volume_EmptyDir{MEMORY}) with tar-pack persistence handled by
+// the bootstrap's persist module. The split exists because GCSFuse
+// is ~200x slower than tmpfs for git operations, and ad-hoc binds are
+// usually git workspaces.
 
-	// Fetch the underlying CR Service, append Volumes + VolumeMounts to
-	// its RevisionTemplate's first container, update.
-	svc, err := s.gcp.Services.GetService(ctx, &runpb.GetServiceRequest{Name: svcName})
-	if err != nil {
-		return fmt.Errorf("get underlying Cloud Run Service %q: %w", svcName, err)
-	}
-	if svc.Template == nil {
-		return fmt.Errorf("underlying Cloud Run Service %q has no RevisionTemplate", svcName)
-	}
-	for name, bucket := range volumesByName {
-		svc.Template.Volumes = append(svc.Template.Volumes, &runpb.Volume{
-			Name: name,
-			VolumeType: &runpb.Volume_Gcs{
-				Gcs: &runpb.GCSVolumeSource{Bucket: bucket},
-			},
-		})
-	}
-	if len(svc.Template.Containers) > 0 {
-		svc.Template.Containers[0].VolumeMounts = append(svc.Template.Containers[0].VolumeMounts, mounts...)
-	}
-	updateOp, err := s.gcp.Services.UpdateService(ctx, &runpb.UpdateServiceRequest{Service: svc})
-	if err != nil {
-		return fmt.Errorf("update Cloud Run Service %q: %w", svcName, err)
-	}
-	if _, err := updateOp.Wait(ctx); err != nil {
-		return fmt.Errorf("wait for Cloud Run Service %q update: %w", svcName, err)
-	}
-	return nil
-}
+// setEnvVar adds or replaces a literal-value env var on a container
+// (skipping EnvVar_ValueSource entries — those are secret refs and
+// outside our concern). Returns true if the container's Env list was
+// modified. An empty `value` removes the variable entirely.

@@ -110,6 +110,211 @@ func RenderOverlayDockerfile(spec OverlayImageSpec) (string, error) {
 	return b.String(), nil
 }
 
+// PodOverlaySpec describes the merged-rootfs pod overlay built when
+// sockerless materialises a multi-container pod into one Lambda
+// Function. Per spec § "Podman pods on FaaS backends — supervisor-in-overlay",
+// each pod member's rootfs is COPY --from'd into a per-name subdir
+// (`/containers/<name>`) of a single image; the bootstrap (PID 1) then
+// chroots and exec's each member.
+//
+// Mirrors the gcf backend's PodOverlaySpec exactly so the design is
+// stable across FaaS backends. See backends/cloudrun-functions/image_inject.go.
+type PodOverlaySpec struct {
+	PodName             string
+	MainName            string
+	AgentBinaryPath     string
+	BootstrapBinaryPath string
+	BindLinks           []string
+	Members             []PodMemberSpec
+}
+
+// PodMemberSpec is one container inside a pod overlay. ContainerID is
+// carried so the lambda backend's cloud_state can reconstruct per-member
+// `docker ps` rows from the pod Function's SOCKERLESS_POD_CONTAINERS env.
+type PodMemberSpec struct {
+	Name         string
+	ContainerID  string
+	BaseImageRef string
+	Entrypoint   []string
+	Cmd          []string
+	Workdir      string
+	Env          []string
+}
+
+// PodMemberJSON is the wire shape the lambda bootstrap consumes via
+// SOCKERLESS_POD_CONTAINERS. ContainerID + Image carry per-member
+// metadata cloud_state needs to reconstruct each member's `docker ps`
+// row after a backend restart; the bootstrap ignores both fields.
+type PodMemberJSON struct {
+	Name        string   `json:"name"`
+	Root        string   `json:"root"`
+	Entrypoint  []string `json:"entrypoint,omitempty"`
+	Cmd         []string `json:"cmd,omitempty"`
+	Env         []string `json:"env,omitempty"`
+	Workdir     string   `json:"workdir,omitempty"`
+	ContainerID string   `json:"container_id,omitempty"`
+	Image       string   `json:"image,omitempty"`
+}
+
+// EncodePodManifest returns the base64(JSON) blob the lambda bootstrap
+// expects in SOCKERLESS_POD_CONTAINERS. Each member's Root is set to
+// the merged-rootfs subdir (`/containers/<name>`).
+func EncodePodManifest(members []PodMemberSpec) (string, error) {
+	out := make([]PodMemberJSON, len(members))
+	for i, m := range members {
+		out[i] = PodMemberJSON{
+			Name:        m.Name,
+			Root:        "/containers/" + m.Name,
+			Entrypoint:  m.Entrypoint,
+			Cmd:         m.Cmd,
+			Env:         m.Env,
+			Workdir:     m.Workdir,
+			ContainerID: m.ContainerID,
+			Image:       m.BaseImageRef,
+		}
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(raw), nil
+}
+
+// DecodePodManifest inverts EncodePodManifest. Used by cloud_state to
+// reconstruct per-member container rows from the pod Function's
+// SOCKERLESS_POD_CONTAINERS env var without holding any local state.
+func DecodePodManifest(b64 string) ([]PodMemberJSON, error) {
+	if b64 == "" {
+		return nil, nil
+	}
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode: %w", err)
+	}
+	var out []PodMemberJSON
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("json unmarshal: %w", err)
+	}
+	return out, nil
+}
+
+// RenderPodOverlayDockerfile returns the Dockerfile content for a pod
+// overlay: first member's image as base + per-member `COPY --from=<image>
+// / /containers/<name>/` for the rest + agent + bootstrap + bind-link
+// symlinks + SOCKERLESS_POD_CONTAINERS env. The bootstrap (PID 1 via
+// ENTRYPOINT) parses the manifest at init and runs in supervisor mode.
+func RenderPodOverlayDockerfile(spec PodOverlaySpec) (string, error) {
+	if spec.AgentBinaryPath == "" {
+		return "", fmt.Errorf("AgentBinaryPath is required")
+	}
+	if spec.BootstrapBinaryPath == "" {
+		return "", fmt.Errorf("BootstrapBinaryPath is required")
+	}
+	if len(spec.Members) == 0 {
+		return "", fmt.Errorf("members must be non-empty")
+	}
+	for i, m := range spec.Members {
+		if m.Name == "" {
+			return "", fmt.Errorf("member %d: Name is required", i)
+		}
+		if m.BaseImageRef == "" {
+			return "", fmt.Errorf("member %q: BaseImageRef is required", m.Name)
+		}
+	}
+	manifest, err := EncodePodManifest(spec.Members)
+	if err != nil {
+		return "", fmt.Errorf("encode pod manifest: %w", err)
+	}
+
+	first := spec.Members[0]
+	var b strings.Builder
+	fmt.Fprintf(&b, "FROM %s\n", first.BaseImageRef)
+	// Snapshot the base rootfs into the first member's chroot subdir
+	// before subsequent COPYs would clobber any shared paths under /.
+	// `cp -a` preserves symlinks/perms/times so the chroot looks
+	// identical to the unwrapped base from the member's perspective.
+	fmt.Fprintf(&b, "RUN mkdir -p /containers/%s && cp -a /. /containers/%s/ 2>/dev/null || true\n", first.Name, first.Name)
+	for _, m := range spec.Members[1:] {
+		fmt.Fprintf(&b, "COPY --from=%s / /containers/%s/\n", m.BaseImageRef, m.Name)
+	}
+	fmt.Fprintf(&b, "COPY %s /opt/sockerless/sockerless-agent\n", overlayAgentContextName)
+	fmt.Fprintf(&b, "COPY %s /opt/sockerless/sockerless-lambda-bootstrap\n", overlayBootstrapContextName)
+	fmt.Fprintln(&b, `RUN chmod +x /opt/sockerless/sockerless-agent /opt/sockerless/sockerless-lambda-bootstrap`)
+	for _, entry := range spec.BindLinks {
+		dst, target, ok := splitBindLink(entry)
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(&b, "RUN mkdir -p %s && ln -sfn %s %s\n", shellQuote(filepath.Dir(dst)), shellQuote(target), shellQuote(dst))
+	}
+	fmt.Fprintf(&b, "ENV %s=%s\n", "SOCKERLESS_POD_CONTAINERS", manifest)
+	if spec.MainName != "" {
+		fmt.Fprintf(&b, "ENV %s=%s\n", "SOCKERLESS_POD_MAIN", spec.MainName)
+	}
+	fmt.Fprintln(&b, `ENTRYPOINT ["/opt/sockerless/sockerless-lambda-bootstrap"]`)
+	return b.String(), nil
+}
+
+// PodOverlayContentTag returns a stable content-addressed tag for the
+// pod overlay image. Identical pod manifests reuse the same ECR image.
+// Format: `overlay-pod-<sha256[:16]>`.
+func PodOverlayContentTag(spec PodOverlaySpec) string {
+	h := sha256.New()
+	fmt.Fprintln(h, spec.AgentBinaryPath)
+	fmt.Fprintln(h, spec.BootstrapBinaryPath)
+	fmt.Fprintln(h, spec.MainName)
+	for _, m := range spec.Members {
+		fmt.Fprintln(h, m.Name)
+		fmt.Fprintln(h, m.BaseImageRef)
+		if epb, err := json.Marshal(m.Entrypoint); err == nil {
+			h.Write(epb)
+		}
+		if cmdb, err := json.Marshal(m.Cmd); err == nil {
+			h.Write(cmdb)
+		}
+		fmt.Fprintln(h, m.Workdir)
+		if envb, err := json.Marshal(m.Env); err == nil {
+			h.Write(envb)
+		}
+	}
+	for _, entry := range spec.BindLinks {
+		fmt.Fprintln(h, entry)
+	}
+	sum := h.Sum(nil)
+	return "overlay-pod-" + hex.EncodeToString(sum[:8])
+}
+
+// TarPodOverlayContext packages the pod-overlay Dockerfile + agent +
+// bootstrap binaries into a gzipped tar archive suitable as the build
+// context for `core.CloudBuildService.Build` (CodeBuild) or local
+// `docker build`. Per-member rootfs is pulled by the build via the
+// Dockerfile's `COPY --from=<image>` references.
+func TarPodOverlayContext(spec PodOverlaySpec) ([]byte, error) {
+	dockerfile, err := RenderPodOverlayDockerfile(spec)
+	if err != nil {
+		return nil, err
+	}
+	var raw bytes.Buffer
+	gz := gzip.NewWriter(&raw)
+	tw := tar.NewWriter(gz)
+	if err := writeTarEntry(tw, "Dockerfile", []byte(dockerfile), 0o644); err != nil {
+		return nil, err
+	}
+	if err := writeTarFile(tw, spec.AgentBinaryPath, overlayAgentContextName); err != nil {
+		return nil, err
+	}
+	if err := writeTarFile(tw, spec.BootstrapBinaryPath, overlayBootstrapContextName); err != nil {
+		return nil, err
+	}
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	if err := gz.Close(); err != nil {
+		return nil, err
+	}
+	return raw.Bytes(), nil
+}
+
 // joinForEnv encodes a []string as base64-wrapped JSON for env-var
 // transport. Empty input returns empty string so the ENV line can be
 // omitted entirely. Base64 produces an alphabet (A-Z a-z 0-9 + / =)

@@ -3,9 +3,11 @@ package cloudrun
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	runpb "cloud.google.com/go/run/apiv2/runpb"
+	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
@@ -33,6 +35,7 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 	var specs []*runpb.Container
 	volSeen := make(map[string]struct{})
 	var volumes []*runpb.Volume
+	var persistEntries []string
 	for _, ci := range containers {
 		cs, mounts := s.buildContainerSpec(ci)
 		specs = append(specs, cs)
@@ -40,17 +43,39 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 			if _, done := volSeen[mp.Name]; done {
 				continue
 			}
-			bucket, err := s.bucketForVolume(ctx, mp.Name)
+			vol, persist, err := s.buildVolumeForBind(ctx, mp.Name, mp.MountPath)
 			if err != nil {
-				return nil, fmt.Errorf("provision GCS bucket for volume %q: %w", mp.Name, err)
+				return nil, err
 			}
-			volumes = append(volumes, &runpb.Volume{
-				Name: mp.Name,
-				VolumeType: &runpb.Volume_Gcs{
-					Gcs: &runpb.GCSVolumeSource{Bucket: bucket},
-				},
-			})
+			volumes = append(volumes, vol)
+			if persist != "" {
+				persistEntries = append(persistEntries, persist)
+			}
 			volSeen[mp.Name] = struct{}{}
+		}
+	}
+	injectPersistEnv(specs, persistEntries)
+
+	// Multi-container revision: inject SOCKERLESS_HOST_ALIASES into the
+	// main container's env so the bootstrap can write `127.0.0.1 <alias>`
+	// to /etc/hosts. The aliases are aggregated from every sibling's
+	// standard Docker NetworkingConfig.EndpointsConfig.<net>.Aliases —
+	// no runner-specific code (the signal is pure Docker API).
+	if len(containers) > 1 && len(specs) > 0 {
+		members := make([]api.Container, 0, len(containers))
+		for _, ci := range containers {
+			members = append(members, *ci.Container)
+		}
+		netID := ""
+		if id, ok := s.userDefinedNetworkID(*containers[0].Container); ok {
+			netID = id
+		}
+		aliases := hostAliasesForMembers(members, netID)
+		if len(aliases) > 0 {
+			specs[0].Env = append(specs[0].Env, &runpb.EnvVar{
+				Name:   "SOCKERLESS_HOST_ALIASES",
+				Values: &runpb.EnvVar_Value{Value: strings.Join(aliases, ",")},
+			})
 		}
 	}
 
@@ -58,13 +83,31 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 		Containers: specs,
 		Volumes:    volumes,
 		Scaling: &runpb.RevisionScaling{
-			MinInstanceCount: 1,
+			// Scale to zero between exec POSTs so the regional CPU quota
+			// isn't pinned by always-on pod-Service revisions. See gcf
+			// pod_service.go for the full rationale — each ad-hoc pod-Service
+			// serves a few /exec POSTs over its short lifetime; pinning
+			// ~1-2 vCPU of regional quota with min=1 burns enough quota
+			// across a single pipeline that later docker-start calls fail
+			// with the misleading port-bind error.
+			MinInstanceCount: 0,
 			MaxInstanceCount: 1,
 		},
 		Timeout: durationpb.New(1 * time.Hour),
 	}
 
 	if s.config.VPCConnector != "" {
+		// ALL_TRAFFIC routes EVERY outbound through the VPC connector.
+		// Required so cross-Cloud-Run calls (gitlab-runner-cloudrun POSTing
+		// to per-step sockerless-svc-* with Ingress=internal) appear as
+		// in-VPC source — Cloud Run rejects same-project Cloud Run
+		// requests as "external" if they go via platform egress (public
+		// .a.run.app DNS resolves to public IP). With ALL_TRAFFIC + Cloud
+		// NAT in the connector subnet, public Google APIs
+		// (storage.googleapis.com for GCSFuse, etc.) stay reachable too.
+		// Cloud NAT provisioned: sockerless-router / sockerless-nat in
+		// sockerless-vpc. See specs/CLOUD_RESOURCE_MAPPING.md § Cloud Run
+		// service-to-service call semantics for the full chain.
 		revTemplate.VpcAccess = &runpb.VpcAccess{
 			Connector: s.config.VPCConnector,
 			Egress:    runpb.VpcAccess_ALL_TRAFFIC,
@@ -86,10 +129,28 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 	}
 
 	return &runpb.Service{
-		Labels:             tags.AsGCPLabels(),
-		Annotations:        tags.AsGCPAnnotations(),
-		Ingress:            runpb.IngressTraffic_INGRESS_TRAFFIC_INTERNAL_ONLY,
-		DefaultUriDisabled: true,
+		Labels:      tags.AsGCPLabels(),
+		Annotations: tags.AsGCPAnnotations(),
+		// Ingress=ALL with IAM-required invoke. Cloud Run rejects
+		// cross-project-service-to-service via .a.run.app + Cloud NAT
+		// with HTTP 404 because the NAT'd source IP isn't auto-detected
+		// as same-project Cloud Run (the invoke POST is edge-rejected
+		// with status=404 in <30ms — never reaches the bootstrap).
+		//
+		// Security stance preserved: NO allUsers→roles/run.invoker
+		// binding (verified via service IAM policy). Only the
+		// sockerless-runner SA can mint a Cloud Run ID token for this
+		// audience — anonymous internet requests get 401 from IAM.
+		// Functionally equivalent to ingress=internal+IAM, with the
+		// trade-off being a publicly-resolvable URL (DNS leak) that
+		// rejects unauthenticated traffic.
+		//
+		// The right end-state is Cloud Run private DNS via Service
+		// Connector + Private Service Connect, which keeps both the
+		// URL un-resolvable AND the IAM gate. Deferred — adds Service
+		// Connector + per-Service PSC endpoint complexity.
+		Ingress:            runpb.IngressTraffic_INGRESS_TRAFFIC_ALL,
+		DefaultUriDisabled: false,
 		Template:           revTemplate,
 	}, nil
 }

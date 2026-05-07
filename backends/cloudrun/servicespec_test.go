@@ -72,18 +72,20 @@ func TestBuildServiceParent(t *testing.T) {
 }
 
 // TestBuildServiceSpec_Shape — Service has internal-only ingress,
-// default URI disabled, MinInstanceCount=MaxInstanceCount=1 (long-running),
-// and labels carry the sockerless tag set.
+// default URI disabled, MinInstanceCount=0 / MaxInstanceCount=1 (scale
+// to zero between exec POSTs to avoid pinning regional CPU quota
+// across the lifetime of a single GH actions/runner pipeline), and
+// labels carry the sockerless tag set.
 func TestBuildServiceSpec_Shape(t *testing.T) {
 	s := newServerForSpec(t, "projects/p/locations/us-central1/connectors/c1")
 	ci := demoContainer("abc123456789fffffffff", "/webapp", "gcr.io/proj/app:v1")
 	svc, _ := s.buildServiceSpec(context.Background(), []containerInput{ci})
 
-	if svc.Ingress != runpb.IngressTraffic_INGRESS_TRAFFIC_INTERNAL_ONLY {
-		t.Errorf("ingress = %v, want INGRESS_TRAFFIC_INTERNAL_ONLY", svc.Ingress)
+	if svc.Ingress != runpb.IngressTraffic_INGRESS_TRAFFIC_ALL {
+		t.Errorf("ingress = %v, want INGRESS_TRAFFIC_ALL (IAM-gated, not allUsers)", svc.Ingress)
 	}
-	if !svc.DefaultUriDisabled {
-		t.Error("DefaultUriDisabled should be true (Services are peer-reachable only)")
+	if svc.DefaultUriDisabled {
+		t.Error("DefaultUriDisabled should be false (backend POSTs envelope to Service URL; Ingress=internal still restricts callers)")
 	}
 	if svc.Template == nil || len(svc.Template.Containers) != 1 {
 		t.Fatalf("expected 1 container in template, got %+v", svc.Template)
@@ -91,14 +93,14 @@ func TestBuildServiceSpec_Shape(t *testing.T) {
 	if svc.Template.Containers[0].Image != "gcr.io/proj/app:v1" {
 		t.Errorf("container image = %q", svc.Template.Containers[0].Image)
 	}
-	if svc.Template.Scaling == nil || svc.Template.Scaling.MinInstanceCount != 1 || svc.Template.Scaling.MaxInstanceCount != 1 {
-		t.Errorf("scaling = %+v, want min=1 max=1", svc.Template.Scaling)
+	if svc.Template.Scaling == nil || svc.Template.Scaling.MinInstanceCount != 0 || svc.Template.Scaling.MaxInstanceCount != 1 {
+		t.Errorf("scaling = %+v, want min=0 max=1 (scale-to-zero)", svc.Template.Scaling)
 	}
 	if svc.Template.VpcAccess == nil || svc.Template.VpcAccess.Connector != s.config.VPCConnector {
 		t.Errorf("vpc access = %+v, want connector=%q", svc.Template.VpcAccess, s.config.VPCConnector)
 	}
 	if svc.Template.VpcAccess.Egress != runpb.VpcAccess_ALL_TRAFFIC {
-		t.Errorf("vpc egress = %v, want ALL_TRAFFIC", svc.Template.VpcAccess.Egress)
+		t.Errorf("vpc egress = %v, want ALL_TRAFFIC (Cloud NAT in connector subnet keeps public APIs reachable; in-VPC source needed for cross-Cloud-Run ingress=internal acceptance)", svc.Template.VpcAccess.Egress)
 	}
 	if svc.Template.Timeout == nil || svc.Template.Timeout.AsDuration() != time.Hour {
 		t.Errorf("timeout = %v, want 1h", svc.Template.Timeout)

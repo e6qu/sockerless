@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"fmt"
@@ -215,10 +216,9 @@ func executeBuild(ctx context.Context, b Build) Build {
 		return fail("source.storageSource is required")
 	}
 
-	// Fetch the tarball from gcsObjects (populated by gcs.go).
-	objKey := b.Source.StorageSource.Bucket + "/" + b.Source.StorageSource.Object
-	obj, ok := gcsObjects.Get(objKey)
-	if !ok {
+	// Fetch the tarball from sim GCS (gcs.go on-disk + sim.Store metadata).
+	data := GCSObjectBytes(b.Source.StorageSource.Bucket, b.Source.StorageSource.Object)
+	if data == nil {
 		return fail(fmt.Sprintf("source object %s not found in bucket %s",
 			b.Source.StorageSource.Object, b.Source.StorageSource.Bucket))
 	}
@@ -230,7 +230,7 @@ func executeBuild(ctx context.Context, b Build) Build {
 	}
 	defer os.RemoveAll(workDir)
 
-	if err := extractTarball(obj.data, workDir); err != nil {
+	if err := extractTarball(data, workDir); err != nil {
 		return fail(fmt.Sprintf("extract source: %v", err))
 	}
 
@@ -269,7 +269,7 @@ func executeBuild(ctx context.Context, b Build) Build {
 // extractTarball unpacks a gzip-compressed tar archive into dir.
 // Cloud Build context uploads use .tar.gz convention.
 func extractTarball(data []byte, dir string) error {
-	var r io.Reader = bytesReader(data)
+	var r io.Reader = bytes.NewReader(data)
 	// Best-effort gzip detection: Cloud Build uploads are typically
 	// gzipped; skip the gzip layer if magic doesn't match.
 	if len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b {
@@ -320,9 +320,29 @@ func extractTarball(data []byte, dir string) error {
 // Args are the docker sub-command args (e.g. ["build","-t","img","."]).
 // secretValues map env-var-name → resolved secret payload; these are
 // added to the subprocess env when the step's secretEnv references them.
+//
+// `docker push` semantics: real Cloud Build pushes the built image to
+// the target registry (Artifact Registry / Container Registry / etc.).
+// The sim's local docker daemon IS the sim's registry — the build step
+// already tagged the image with the target URL via `docker build -t
+// <URL>`, and sim.StartContainerSync uses that local tag directly when
+// the function is invoked. Push is therefore confirmed-local: verify
+// the image exists in the daemon and exit 0. No network egress to real
+// AR/GCR (which would need real GCP credentials).
 func runDockerStep(ctx context.Context, workDir string, step *BuildStep, secretValues map[string]string) error {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return fmt.Errorf("docker CLI not available: %w", err)
+	}
+	if len(step.Args) >= 2 && step.Args[0] == "push" {
+		target := step.Args[1]
+		// Verify the local daemon has the tag the build step produced.
+		check := exec.CommandContext(ctx, "docker", "image", "inspect", target)
+		check.Env = os.Environ()
+		if out, err := check.CombinedOutput(); err != nil {
+			return fmt.Errorf("docker push %s (sim local-only): image not present in local daemon: %v: %s",
+				target, err, strings.TrimSpace(string(out)))
+		}
+		return nil
 	}
 	cmd := exec.CommandContext(ctx, "docker", step.Args...)
 	cmd.Dir = workDir
@@ -344,18 +364,6 @@ func runDockerStep(ctx context.Context, workDir string, step *BuildStep, secretV
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
-}
-
-// bytesReader wraps a byte slice as an io.Reader. Avoids importing
-// bytes just for the NewReader call; a tiny shim.
-type bytesReader []byte
-
-func (b bytesReader) Read(p []byte) (int, error) {
-	if len(b) == 0 {
-		return 0, io.EOF
-	}
-	n := copy(p, b)
-	return n, nil
 }
 
 // structToMap converts a Build to a generic map[string]any for

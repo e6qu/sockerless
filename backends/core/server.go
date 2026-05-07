@@ -425,18 +425,36 @@ func (s *BaseServer) RecoverRegistry(ctx context.Context, scanner CloudScanner) 
 	return nil
 }
 
-// LoggingMiddleware logs HTTP requests at Debug level with method, path, status, and duration.
+// LoggingMiddleware logs HTTP requests at Info level with method, path, status, and duration.
+// Skips known noise paths (heartbeats, ping, version, info) to keep the signal high.
+//
+// Logs on REQUEST ENTRY too — hijacked connections (POST /containers/{id}/attach,
+// POST /exec/{id}/start) take over the TCP stream and may never fire the
+// post-handler logging branch until the stream closes minutes later. The
+// entry log makes it visible which calls reached the backend even if the
+// connection is still alive.
 func LoggingMiddleware(logger zerolog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		isNoise := path == "/_ping" || path == "/libpod/_ping" || path == "/version" || path == "/libpod/version" || path == "/info"
+		if !isNoise {
+			logger.Info().
+				Str("method", r.Method).
+				Str("path", path).
+				Str("query", r.URL.RawQuery).
+				Msg("http request: ENTRY")
+		}
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		logger.Debug().
-			Str("method", r.Method).
-			Str("path", r.URL.Path).
-			Int("status", rec.status).
-			Dur("duration", time.Since(start)).
-			Msg("http request")
+		if !isNoise {
+			logger.Info().
+				Str("method", r.Method).
+				Str("path", path).
+				Int("status", rec.status).
+				Dur("duration", time.Since(start)).
+				Msg("http request: END")
+		}
 	})
 }
 

@@ -82,3 +82,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "create_docker_hub_cache_rule" {
+  description = "Whether to create the docker-hub ACR cache rule. Requires ACR Standard/Premium SKU; set to false on Basic SKU registries."
+  type        = bool
+  default     = false
+}

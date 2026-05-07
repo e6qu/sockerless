@@ -1,0 +1,15 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/dispatcher:gcp-amd64
+      - -f
+      - github-runner-dispatcher-gcp/Dockerfile
+      - .
+images:
+  - us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/dispatcher:gcp-amd64
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+timeout: 900s

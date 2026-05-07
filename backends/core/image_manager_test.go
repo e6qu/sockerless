@@ -20,6 +20,10 @@ type mockBuildService struct {
 
 func (m *mockBuildService) Available() bool { return m.available }
 
+func (m *mockBuildService) AssembleMultiArchManifest(ctx context.Context, opts MultiArchManifestOptions) error {
+	return nil
+}
+
 func (m *mockBuildService) Build(ctx context.Context, opts CloudBuildOptions) (*CloudBuildResult, error) {
 	m.called = true
 	m.opts = opts

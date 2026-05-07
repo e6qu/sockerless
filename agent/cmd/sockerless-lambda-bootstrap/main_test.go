@@ -214,3 +214,109 @@ func TestPostInitError(t *testing.T) {
 		t.Errorf("init/error should be hit once, got %d", called.Load())
 	}
 }
+
+// — Pod supervisor tests (mirror of gcf bootstrap tests) —
+
+func TestParsePodManifestEmpty(t *testing.T) {
+	t.Setenv(envPodContainers, "")
+	if _, ok := parsePodManifest(); ok {
+		t.Fatal("expected unset env to return ok=false")
+	}
+}
+
+func TestParsePodManifestRoundtrip(t *testing.T) {
+	want := []PodMember{
+		{Name: "web", Root: "/containers/web", Entrypoint: []string{"nginx", "-g", "daemon off;"}},
+		{Name: "db", Root: "/containers/db", Cmd: []string{"postgres"}, Env: []string{"POSTGRES_PASSWORD=x"}},
+	}
+	raw, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	t.Setenv(envPodContainers, base64.StdEncoding.EncodeToString(raw))
+	got, ok := parsePodManifest()
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if len(got) != 2 {
+		t.Fatalf("len: got %d want 2", len(got))
+	}
+	if got[0].Name != "web" || got[1].Cmd[0] != "postgres" {
+		t.Errorf("decoded: %+v", got)
+	}
+}
+
+func TestPickPodMainDefaultsToLast(t *testing.T) {
+	pod := []PodMember{{Name: "postgres"}, {Name: "redis"}, {Name: "main"}}
+	t.Setenv(envPodMain, "")
+	got, ok := pickPodMain(pod)
+	if !ok || got.Name != "main" {
+		t.Fatalf("expected last entry, got %+v", got)
+	}
+}
+
+func TestPickPodMainHonoursEnv(t *testing.T) {
+	pod := []PodMember{{Name: "postgres"}, {Name: "redis"}, {Name: "main"}}
+	t.Setenv(envPodMain, "redis")
+	got, ok := pickPodMain(pod)
+	if !ok || got.Name != "redis" {
+		t.Fatalf("expected redis, got %+v", got)
+	}
+}
+
+func TestBuildPodMemberCmdRequiresArgv(t *testing.T) {
+	if _, err := buildPodMemberCmd(PodMember{Name: "x", Root: "/r"}, nil); err == nil {
+		t.Fatal("expected error when no entrypoint or cmd")
+	}
+}
+
+func TestBuildPodMemberCmdRequiresRoot(t *testing.T) {
+	if _, err := buildPodMemberCmd(PodMember{Name: "x", Cmd: []string{"echo", "hi"}}, nil); err == nil {
+		t.Fatal("expected error when no chroot root")
+	}
+}
+
+func TestBuildPodMemberCmdShellWrap(t *testing.T) {
+	cmd, err := buildPodMemberCmd(PodMember{
+		Name:       "x",
+		Root:       "/containers/x",
+		Entrypoint: []string{"/usr/bin/printf"},
+		Cmd:        []string{"%s", "hi there"},
+		Workdir:    "/work",
+	}, nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !strings.HasSuffix(cmd.Path, "/sh") {
+		t.Errorf("expected /bin/sh, got %q", cmd.Path)
+	}
+	if cmd.SysProcAttr == nil || cmd.SysProcAttr.Chroot != "/containers/x" {
+		t.Errorf("expected Chroot=/containers/x, got %+v", cmd.SysProcAttr)
+	}
+	if cmd.Dir != "/work" {
+		t.Errorf("expected Dir=/work, got %q", cmd.Dir)
+	}
+	want := `'/usr/bin/printf' '%s' 'hi there'`
+	if cmd.Args[2] != want {
+		t.Errorf("shell line:\n got: %s\nwant: %s", cmd.Args[2], want)
+	}
+}
+
+func TestPrefixWriterWrapsLines(t *testing.T) {
+	var buf bytes.Buffer
+	w := newPrefixWriter(&buf, "[svc] ")
+	if _, err := w.Write([]byte("line1\nline2\n")); err != nil {
+		t.Fatalf("write1: %v", err)
+	}
+	if _, err := w.Write([]byte("part-a")); err != nil {
+		t.Fatalf("write2: %v", err)
+	}
+	if _, err := w.Write([]byte("part-b\n")); err != nil {
+		t.Fatalf("write3: %v", err)
+	}
+	got := buf.String()
+	want := "[svc] line1\n[svc] line2\n[svc] part-apart-b\n"
+	if got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+}

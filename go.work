@@ -18,6 +18,9 @@ use (
 	./bleephub
 	./cmd/sockerless
 	./cmd/sockerless-admin
-	./github-runner-dispatcher
+	./github-runner-dispatcher-aws
+	./github-runner-dispatcher-gcp
+	./github-runner-dispatcher-azure
 	./tests
+	./tests/runners/gcp-cells
 )

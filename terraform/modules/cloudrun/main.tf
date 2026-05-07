@@ -104,6 +104,22 @@ resource "google_project_service" "storage" {
   disable_on_destroy = false
 }
 
+# Cloud Build is the sockerless-sanctioned image builder for GCP — the
+# cloudrun + gcf backends both call `gcpcommon.GCPBuildService` which
+# drives Cloud Build via the GCS build-context bucket below. Required
+# (no fallback) on every GCP project that runs sockerless.
+resource "google_project_service" "cloudbuild" {
+  project            = var.project_id
+  service            = "cloudbuild.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_project_service" "iam" {
+  project            = var.project_id
+  service            = "iam.googleapis.com"
+  disable_on_destroy = false
+}
+
 # ---------------------------------------------------------------------------
 # VPC Network
 # ---------------------------------------------------------------------------
@@ -142,6 +158,52 @@ resource "google_vpc_access_connector" "main" {
   }
 
   depends_on = [google_project_service.vpcaccess]
+}
+
+# ---------------------------------------------------------------------------
+# Cloud Router + Cloud NAT
+# ---------------------------------------------------------------------------
+# Static egress IP for VPC-connector traffic. Required for two things:
+#
+#   1. BUG-928 (VPC egress GCSFuse timeout): when Cloud Run Services
+#      use VpcAccess_ALL_TRAFFIC (the only mode that lets cross-Cloud-
+#      Run service-to-service calls appear as same-VPC source IP),
+#      ALL outbound — including public Google APIs like
+#      storage.googleapis.com that GCSFuse needs — routes through the
+#      VPC connector subnet. Without Cloud NAT on that subnet, external
+#      traffic has no return path. With Cloud NAT, external traffic
+#      egresses through a NAT'd public IP.
+#
+#   2. BUG-941 (dispatcher GitHub abuse-flag): the github-runner-
+#      dispatcher-gcp Service polls api.github.com every 15s. With
+#      default Cloud Run egress (dynamic IPs), each restart picks a new
+#      IP and accumulates abuse flags across the IP block. Static NAT
+#      egress IP gives GitHub a single endpoint to track + lets the
+#      operator request abuse-flag clearance for that IP.
+#
+# Terraform NAT resources mirror what BUG-928 created out-of-band via
+# `gcloud compute routers create / nats create` so a fresh
+# `terragrunt apply` reproduces the same topology.
+
+resource "google_compute_router" "main" {
+  project = var.project_id
+  name    = "${local.name_prefix}-router"
+  region  = var.region
+  network = google_compute_network.main.id
+}
+
+resource "google_compute_router_nat" "main" {
+  project                            = var.project_id
+  name                               = "${local.name_prefix}-nat"
+  router                             = google_compute_router.main.name
+  region                             = var.region
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+
+  log_config {
+    enable = true
+    filter = "ERRORS_ONLY"
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -193,6 +255,40 @@ resource "google_storage_bucket" "volumes" {
 }
 
 # ---------------------------------------------------------------------------
+# Cloud Build context bucket
+# ---------------------------------------------------------------------------
+# Sockerless backend's runtime image-build path uploads the build
+# context as a tarball to this bucket; Cloud Build downloads it,
+# builds the image (per-arch + manifest list), pushes to AR. This
+# bucket is the GCP analogue of the AWS lambda module's
+# `aws_s3_bucket.build_context`. Lifecycle policy mirrors AWS:
+# build contexts are single-use, expire after 1 day.
+#
+# The dispatcher passes this bucket name on the runner Cloud Run Job
+# as `SOCKERLESS_GCP_BUILD_BUCKET` (required env var; bootstrap.sh
+# fails loudly if missing).
+
+resource "google_storage_bucket" "build_context" {
+  project                     = var.project_id
+  name                        = "${local.name_prefix}-build-context"
+  location                    = var.gcs_location
+  uniform_bucket_level_access = true
+  labels                      = local.common_labels
+  force_destroy               = true
+
+  lifecycle_rule {
+    condition {
+      age = 1
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
+  depends_on = [google_project_service.storage]
+}
+
+# ---------------------------------------------------------------------------
 # Artifact Registry
 # ---------------------------------------------------------------------------
 # Docker repository for the sockerless-agent image and loaded container images.
@@ -212,6 +308,29 @@ resource "google_artifact_registry_repository" "main" {
     condition {
       tag_state  = "UNTAGGED"
       older_than = "604800s" # 7 days
+    }
+  }
+
+  depends_on = [google_project_service.artifactregistry]
+}
+
+# Remote-Docker-Hub-proxy repository named exactly `docker-hub` —
+# `gcpcommon.ResolveGCPImageURI` rewrites Docker Hub refs to
+# `{region}-docker.pkg.dev/{project}/docker-hub/{repo}:{tag}`. Without
+# this repo every `docker run alpine` against real GCP fails with
+# `Image not found`.
+resource "google_artifact_registry_repository" "docker_hub" {
+  project       = var.project_id
+  location      = var.region
+  repository_id = "docker-hub"
+  format        = "DOCKER"
+  mode          = "REMOTE_REPOSITORY"
+  description   = "Docker Hub proxy for sockerless image-resolve"
+
+  remote_repository_config {
+    description = "Proxies docker.io / Docker Hub"
+    docker_repository {
+      public_repository = "DOCKER_HUB"
     }
   }
 
@@ -257,11 +376,56 @@ resource "google_project_iam_member" "runner_dns_admin" {
   member  = "serviceAccount:${google_service_account.runner.email}"
 }
 
-# roles/artifactregistry.reader - Pull images from Artifact Registry
-resource "google_artifact_registry_repository_iam_member" "runner_ar_reader" {
+# roles/artifactregistry.writer - Push runtime-built images to AR.
+# Required because the in-image sockerless backend runs `docker build`
+# at runtime via Cloud Build and pushes to AR (per-arch + manifest list).
+resource "google_artifact_registry_repository_iam_member" "runner_ar_writer" {
   project    = var.project_id
   location   = google_artifact_registry_repository.main.location
   repository = google_artifact_registry_repository.main.repository_id
-  role       = "roles/artifactregistry.reader"
+  role       = "roles/artifactregistry.writer"
   member     = "serviceAccount:${google_service_account.runner.email}"
+}
+
+# roles/cloudbuild.builds.editor - Submit Cloud Build jobs from the
+# in-image sockerless backend (`gcpcommon.GCPBuildService.Build`).
+resource "google_project_iam_member" "runner_cloudbuild_editor" {
+  project = var.project_id
+  role    = "roles/cloudbuild.builds.editor"
+  member  = "serviceAccount:${google_service_account.runner.email}"
+}
+
+# roles/run.admin - Create / start / delete Cloud Run Jobs at runtime
+# (the in-image sockerless cloudrun backend dispatches sub-tasks as
+# Cloud Run Jobs).
+resource "google_project_iam_member" "runner_run_admin" {
+  project = var.project_id
+  role    = "roles/run.admin"
+  member  = "serviceAccount:${google_service_account.runner.email}"
+}
+
+# roles/iam.serviceAccountUser - Allow the runner SA to act as itself
+# when creating Cloud Run Jobs that run under the same SA. Required
+# by the Cloud Run + Cloud Build APIs whenever a service is created
+# that runs as a particular SA.
+resource "google_service_account_iam_member" "runner_act_as_self" {
+  service_account_id = google_service_account.runner.id
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.runner.email}"
+}
+
+# roles/storage.admin (scoped to build_context bucket) - Upload build
+# contexts; Cloud Build downloads them.
+resource "google_storage_bucket_iam_member" "runner_build_bucket_admin" {
+  bucket = google_storage_bucket.build_context.name
+  role   = "roles/storage.admin"
+  member = "serviceAccount:${google_service_account.runner.email}"
+}
+
+# roles/logging.viewer - Read sub-task logs back to surface them via
+# `docker logs` on the in-image backend.
+resource "google_project_iam_member" "runner_logging_viewer" {
+  project = var.project_id
+  role    = "roles/logging.viewer"
+  member  = "serviceAccount:${google_service_account.runner.email}"
 }

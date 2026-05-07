@@ -243,10 +243,17 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		}
 	}
 
+	// contentTag is the pool key. Computed early so we can pool-query
+	// before paying overlay-build + CreateFunction cost. Same shape used
+	// by both the pool and the overlay-AR-tag below.
+	var contentTag string
 	switch {
 	case s.config.PrebuiltOverlayImage != "":
 		// Operator shipped a ready overlay — skip the build, use as-is.
 		imageURI = s.config.PrebuiltOverlayImage
+		// Pool keying for prebuilt-image mode is on the image URI itself
+		// (operator-controlled cache; we trust their content-addressing).
+		contentTag = "prebuilt-" + sanitizeContentTag(s.config.PrebuiltOverlayImage)
 	case s.config.EndpointURL != "":
 		// Custom-endpoint mode (sim Lambda / integration tests). The
 		// sim doesn't enforce real Lambda's Docker-schema-2 +
@@ -257,6 +264,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		if resolveErr != nil {
 			return nil, &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", config.Image, resolveErr)}
 		}
+		contentTag = "sim-" + sanitizeContentTag(imageURI)
 	default:
 		base, err := s.resolveImageURI(s.ctx(), config.Image)
 		if err != nil {
@@ -270,11 +278,25 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 			UserCmd:             config.Cmd,
 			BindLinks:           bindLinks,
 		}
+		contentTag = OverlayContentTag(spec)
+
+		// Pool query first: if a free function exists for this content-hash,
+		// claim it and skip overlay build + CreateFunction entirely. The
+		// claim sets `sockerless-allocation=<containerID>` atomically (per
+		// `pool.go` — race-tolerant, see header). On pool hit, ContainerStart
+		// invokes the existing function; ContainerRemove returns it to the
+		// pool (or deletes if pool is over POOL_MAX).
+		if s.config.PoolMax > 0 {
+			if claimed, claimErr := s.claimFreeFunction(s.ctx(), contentTag, id, name); claimErr == nil && claimed != "" {
+				return s.finishPoolHitContainerCreate(id, container, claimed, contentTag, name, config.Image)
+			}
+		}
+
 		repo, repoErr := s.overlayECRRepo()
 		if repoErr != nil {
 			return nil, &api.ServerError{Message: repoErr.Error()}
 		}
-		destRef := repo + ":" + OverlayContentTag(spec)
+		destRef := repo + ":" + contentTag
 		var builder core.CloudBuildService
 		if s.images != nil {
 			builder = s.images.BuildService
@@ -304,7 +326,17 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		},
 		MemorySize: aws.Int32(int32(s.config.MemorySize)),
 		Timeout:    aws.Int32(int32(s.config.Timeout)),
-		Tags:       func() map[string]string { m := tags.AsMap(); m["sockerless-image"] = config.Image; return m }(),
+		Tags: func() map[string]string {
+			m := tags.AsMap()
+			m["sockerless-image"] = config.Image
+			// Pool labels: overlay-hash for grouping reusable functions
+			// + allocation marker (this container's claim). On
+			// docker rm, releaseOrDeleteFunction either clears the
+			// allocation tag (release back to pool) or deletes the function.
+			m["sockerless-overlay-hash"] = contentTag
+			m["sockerless-allocation"] = shortAllocLabelLambda(id)
+			return m
+		}(),
 	}
 
 	if len(envVars) > 0 {
@@ -394,6 +426,54 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	}, nil
 }
 
+// finishPoolHitContainerCreate handles the post-claim setup for a
+// pool-hit ContainerCreate (gcf-mirror shape; see pool.go header).
+// The function already exists in AWS with the right overlay image; the
+// allocation tag was already CAS-claimed in `claimFreeFunction`. We
+// just need to populate the same Store / Registry / event state as the
+// pool-miss path does AFTER CreateFunction.
+func (s *Server) finishPoolHitContainerCreate(id string, container api.Container, fnName, contentTag, name, originalImage string) (*api.ContainerCreateResponse, error) {
+	functionARN := s.functionARN(fnName)
+	s.PendingCreates.Put(id, container)
+	s.Lambda.Put(id, LambdaState{
+		FunctionName: fnName,
+		FunctionARN:  functionARN,
+		OpenStdin:    container.Config.OpenStdin && container.Config.AttachStdin,
+	})
+	s.Registry.Register(core.ResourceEntry{
+		ContainerID:  id,
+		Backend:      "lambda",
+		ResourceType: "function",
+		ResourceID:   functionARN,
+		InstanceID:   s.Desc.InstanceID,
+		CreatedAt:    time.Now(),
+		Metadata: map[string]string{
+			"image":          container.Image,
+			"name":           container.Name,
+			"functionName":   fnName,
+			"overlayHash":    contentTag,
+			"reusedFromPool": "true",
+		},
+	})
+	s.EmitEvent("container", "create", id, map[string]string{
+		"name":  strings.TrimPrefix(name, "/"),
+		"image": originalImage,
+	})
+	return &api.ContainerCreateResponse{ID: id, Warnings: []string{}}, nil
+}
+
+// sanitizeContentTag returns an AWS-tag-safe form of an arbitrary
+// string. AWS Lambda tag values allow 256 chars across `[a-zA-Z0-9 _.:/=+\-@]`
+// — image URIs already satisfy that charset; the limit is ~256 chars
+// after `prebuilt-` / `sim-` prefix. Truncate to 200 chars to leave
+// margin.
+func sanitizeContentTag(s string) string {
+	if len(s) > 200 {
+		return s[:200]
+	}
+	return s
+}
+
 // ContainerStart starts a Lambda function invocation for the container.
 func (s *Server) ContainerStart(ref string) error {
 	// Resolve from PendingCreates (containers between create and start)
@@ -431,11 +511,25 @@ func (s *Server) ContainerStart(ref string) error {
 		return &api.NotModifiedError{}
 	}
 
-	// Multi-container pods are not supported by FaaS backends
+	// Multi-container pod handling: defer until all members have been
+	// started, then collapse the pod into a single Lambda Function
+	// backed by a merged-rootfs overlay (per spec § "Podman pods on
+	// FaaS backends — supervisor-in-overlay"). The bootstrap (PID 1
+	// of the function container) pre-warms sidecars at init and runs
+	// the main member as the per-invocation foreground subprocess.
 	if pod, inPod := s.Store.Pods.GetPodForContainer(id); inPod && len(pod.ContainerIDs) > 1 {
-		return &api.InvalidParameterError{
-			Message: "multi-container pods are not supported by the lambda backend",
+		exitCh := make(chan struct{})
+		s.Store.WaitChs.Store(id, exitCh)
+		shouldDefer, podContainers := s.PodDeferredStart(id)
+		if shouldDefer {
+			// Earlier pod members wait for the main's start to trigger
+			// the merged-Function build. Their WaitChs stay registered
+			// so `docker wait <member>` blocks until invokePodFunction
+			// fans the result out.
+			return nil
 		}
+		s.PendingCreates.Delete(id)
+		return s.materializePodFunction(id, podContainers, exitCh)
 	}
 
 	lambdaState, _ := s.resolveLambdaState(s.ctx(), id)
@@ -788,12 +882,27 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	s.StopHealthCheck(id)
 
-	// Delete Lambda function (best-effort)
+	// Pool-aware function release. Look up the function's overlay-hash
+	// tag so releaseOrDeleteFunction can decide between returning to the
+	// pool (clear allocation tag) or deleting (pool over POOL_MAX). On
+	// PoolMax=0 we always delete (pre-pool behavior).
 	lambdaState, _ := s.resolveLambdaState(s.ctx(), id)
 	if lambdaState.FunctionName != "" {
-		_, _ = s.aws.Lambda.DeleteFunction(s.ctx(), &awslambda.DeleteFunctionInput{
-			FunctionName: aws.String(lambdaState.FunctionName),
-		})
+		if s.config.PoolMax > 0 {
+			contentTag := ""
+			if lambdaState.FunctionARN != "" {
+				if tags, terr := s.aws.Lambda.ListTags(s.ctx(), &awslambda.ListTagsInput{Resource: aws.String(lambdaState.FunctionARN)}); terr == nil {
+					contentTag = tags.Tags["sockerless-overlay-hash"]
+				}
+			}
+			if err := s.releaseOrDeleteFunction(s.ctx(), lambdaState.FunctionName, contentTag); err != nil {
+				s.Logger.Warn().Err(err).Str("function", lambdaState.FunctionName).Msg("pool release failed; container remove continues")
+			}
+		} else {
+			_, _ = s.aws.Lambda.DeleteFunction(s.ctx(), &awslambda.DeleteFunctionInput{
+				FunctionName: aws.String(lambdaState.FunctionName),
+			})
+		}
 	}
 
 	if lambdaState.FunctionARN != "" {

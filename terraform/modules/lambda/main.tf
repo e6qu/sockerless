@@ -220,3 +220,21 @@ resource "aws_ecr_lifecycle_policy" "main" {
     ]
   })
 }
+
+# =============================================================================
+# ECR Pull-through cache for Docker Hub
+# =============================================================================
+# AWS analogue of the GCP `docker-hub` Artifact Registry remote-proxy.
+# Sockerless rewrites `docker.io/library/alpine:latest` to
+# `<account>.dkr.ecr.<region>.amazonaws.com/docker-hub/library/alpine:latest`;
+# the first pull populates the cache. Required for Lambda + ECS sub-task
+# images that reference any Docker Hub base image (alpine, ubuntu, etc.).
+#
+# Pull-through cache rules are singleton per (account, region, prefix).
+# When both lambda + ecs modules are deployed in the same account+region,
+# set `manage_docker_hub_pull_through_cache = false` on one of them.
+resource "aws_ecr_pull_through_cache_rule" "docker_hub" {
+  count                 = var.manage_docker_hub_pull_through_cache ? 1 : 0
+  ecr_repository_prefix = "docker-hub"
+  upstream_registry_url = "registry-1.docker.io"
+}

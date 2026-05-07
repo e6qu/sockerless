@@ -354,6 +354,23 @@ func registerGCS(srv *sim.Server) {
 		md5Hash := base64.StdEncoding.EncodeToString(hash[:])
 		etag := fmt.Sprintf("%x", hash)
 
+		// Persist the object bytes on disk (real GCS-shape storage —
+		// objects survive sim process restart). Metadata goes through
+		// the SQLite-backed sim.Store; the byte payload doesn't because
+		// the unexported `data` field would be stripped by the JSON
+		// round-trip (sim.Store uses JSON encoding for SQLite). The
+		// on-disk file at `<gcsHostRoot>/<bucket>/<object>` is the
+		// source of truth for object data.
+		objPath := filepath.Join(GCSBucketHostDir(bucketName), objectName)
+		if err := os.MkdirAll(filepath.Dir(objPath), 0o755); err != nil {
+			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "create object dir: %v", err)
+			return
+		}
+		if err := os.WriteFile(objPath, data, 0o644); err != nil {
+			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "write object: %v", err)
+			return
+		}
+
 		obj := GCSObject{
 			Name:        objectName,
 			Bucket:      bucketName,
@@ -403,10 +420,11 @@ func registerGCS(srv *sim.Server) {
 			return
 		}
 
+		body := gcsObjectBytes(obj, bucketName, objectName)
 		w.Header().Set("Content-Type", obj.ContentType)
-		w.Header().Set("Content-Length", strconv.Itoa(len(obj.data)))
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 		w.WriteHeader(http.StatusOK)
-		w.Write(obj.data)
+		w.Write(body)
 	})
 
 	// Download object data (JSON API)
@@ -421,9 +439,37 @@ func registerGCS(srv *sim.Server) {
 			return
 		}
 
+		body := gcsObjectBytes(obj, bucketName, objectName)
 		w.Header().Set("Content-Type", obj.ContentType)
-		w.Header().Set("Content-Length", strconv.Itoa(len(obj.data)))
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 		w.WriteHeader(http.StatusOK)
-		w.Write(obj.data)
+		w.Write(body)
 	})
+}
+
+// gcsObjectBytes returns the object's payload bytes. Prefers the
+// in-memory copy when present (uploaded in the same process lifetime);
+// falls back to the on-disk file at <gcsHostRoot>/<bucket>/<object>
+// (which IS the source of truth — the in-memory `data` field is
+// stripped by the SQLite-backed sim.Store's JSON round-trip on every
+// Get). Returns nil if the disk read fails (caller writes empty body).
+func gcsObjectBytes(obj GCSObject, bucket, object string) []byte {
+	if len(obj.data) > 0 {
+		return obj.data
+	}
+	body, err := os.ReadFile(filepath.Join(GCSBucketHostDir(bucket), object))
+	if err != nil {
+		return nil
+	}
+	return body
+}
+
+// GCSObjectBytes is exported for cross-package callers (e.g.
+// cloudbuild.go's executeBuild source-fetch).
+func GCSObjectBytes(bucket, object string) []byte {
+	obj, ok := gcsObjects.Get(bucket + "/" + object)
+	if !ok {
+		return nil
+	}
+	return gcsObjectBytes(obj, bucket, object)
 }

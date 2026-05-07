@@ -1,272 +1,85 @@
 # Do Next
 
-Resume pointer. Updated after every task. Roadmap detail in [PLAN.md](PLAN.md); narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md); bug log in [BUGS.md](BUGS.md); runner wiring in [docs/RUNNERS.md](docs/RUNNERS.md).
+Resume pointer for next session. State: [STATUS.md](STATUS.md) · Bugs: [BUGS.md](BUGS.md) · Narrative: [WHAT_WE_DID.md](WHAT_WE_DID.md) · Roadmap: [PLAN.md](PLAN.md) · Architecture: [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
 
-## Branch state
+## Milestone closed (2026-05-07)
 
-- `main` synced with `origin/main` at PR #121 merge.
-- `origin-gitlab/main` mirrors `origin/main` (in sync as of 2026-04-27).
-- **`phase-110-runner-integration`** — active, **all 4 cells GREEN as of 2026-04-30**. Tip: `bac59fc`. Ready to push + open PR.
+**8/8 runner-integration cells GREEN.** Phase 123 (storage backing driver abstraction with `gcs-sync`) shipped + 8 supporting fixes (BUG-964 / 966 / 967 / 968 / 969 / 970 / 971 + an ECS test-regression fix from a hidden no-fallbacks violation in the `handleContainerWait` fast-path). Branch `phase-118-faas-pods` is pushed; PR #123 carries the full delta.
 
-## Phase 110 final URLs
+**Live infra TORN DOWN (2026-05-07 evening)**: `sockerless-live-46x3zg4imo` and `sockerless-live-adi` both in `DELETE_REQUESTED`. GCP soft-delete enters a 30-day recovery window (`gcloud projects undelete <id>`); after that, all resources permanently gone and the project name is freed. Next live-cloud session creates a fresh ephemeral project per the `project_gcp_live_setup.md` workflow.
 
-| Cell | URL |
-|---|---|
-| 1 GH × ECS | https://github.com/e6qu/sockerless/actions/runs/25075259911 |
-| 2 GH × Lambda | https://github.com/e6qu/sockerless/actions/runs/25113565115 |
-| 3 GL × ECS | https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 |
-| 4 GL × Lambda | https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943 |
+Cell URLs in [STATUS.md](STATUS.md). Per-bug detail in [BUGS.md](BUGS.md). Day-of narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).
 
-## Next actions
+## Next two architectural threads
 
-1. `git push origin phase-110-runner-integration` (force-with-lease if branch already on remote).
-2. `gh pr create` — body should call out: 4 cells GREEN with URLs, BUG-875 + BUG-876 closed in `5fc3e6b`, BUG-868 closed in `aa2419a`.
-3. Tear down live infra after PR merge: `cd terraform/environments/{ecs,lambda}/live && terragrunt destroy` (NAT Gateway runs ~$0.045/hr).
-4. Phase 111 (workload identity) is queued and gated on Phase 110 closure (now satisfied).
+### 1. Deploy hygiene — orphan `sockerless-svc-*` GC sweep
 
-## Active blockers (none)
+BUG-970's structural fix (set `minInstanceCount=0` on materialized pod-Services so failed revisions don't pin regional Cloud Run CPU quota) closes the worst of the always-on cost. But cancelled / killed pipelines still leave orphan `sockerless-svc-*` Services behind: `ContainerRemove` cleans up the underlying Service for the happy path; nothing cleans up after the runner-task itself dies. Today's session manually deleted ~8 orphans before cells 5+6 v15 could even allocate CPU.
 
-Phase 110 closed; cells stable. Historic blockers retained below for context only.
+**Concrete fix shape**: extend `github-runner-dispatcher-gcp`'s existing 2-minute cleanup ticker. It already iterates Cloud Run **Jobs** and reaps terminal executions. Add a parallel sweep that iterates Cloud Run **Services** filtered to `sockerless_managed=true` AND name prefix `sockerless-svc-`, and deletes any whose `LastUpdateTime` is older than N minutes (e.g. 30) AND whose latest revision has zero traffic / zero recent invocations. The dispatcher already has the right credentials and the right per-region scoping; this is a localized addition to `github-runner-dispatcher-gcp/internal/cleanup/`.
 
-### Historic blockers (all closed)
+Alternative path (also worth considering): `ContainerRemove` already covers happy-path deletion. The orphan source is "runner-task dies before issuing ContainerRemove on its child pod-Services." A sockerless-side fix would be a hint label `sockerless_owner_runner_task=<runner-task-execution-id>`; when the dispatcher's existing cleanup notices the owner runner-task is gone (terminal state in ListExecutions), it deletes the orphan Services in the same sweep. This couples cleanup more tightly to the runner-task lifetime than a flat 30-minute idle check, so it's the better long-term shape.
 
-1. **BUG-868 (Phase 114, substantial) — gitlab-runner stdin-piped per-stage scripts vs Fargate's no-runtime-stdin + non-restartable tasks.** Verified live with `--debug`: cell 3 traces (https://gitlab.com/e6qu/sockerless/-/jobs/14144936826 + 14146329550) show `prepare_script → get_sources → archive_cache_on_failure → upload_artifacts_on_failure → cleanup_file_variables → ERROR exit 1` — gitlab-runner's failure-path cleanup chain. `step_script` is silently skipped because `get_sources` did no real work (stdin script never delivered to predefined helper). **Phase 114 implementation**: launch the predefined helper as a long-lived Fargate task (`Cmd=["while true; do sleep 60; done"]`), cache `(containerID → taskARN)`, dispatch each stage's stdin script via `ecs.ExecuteCommand` (SSM Session Manager) against the live task, capture exit-code marker. Reuses existing SSM frame-capture from Round-8. ~400-600 lines. Detailed implementation plan + gitlab-runner architectural refresher in `PLAN.md § Phase 114`. Doc: `specs/CLOUD_RESOURCE_MAPPING.md § "ECS gitlab-runner script delivery"`.
-2. **Phase 117 — gitlab-runner per-stage script delivery on Lambda (cell 4).** Independent of Phase 114. Each gitlab-runner stage's stdin-piped script becomes one `lambda.Invoke` with a SCRIPT envelope `{"sockerless":{"script":{"body":"<base64>",...}}}`. The bootstrap parses + runs `bash -c "<body>"`. EFS for cross-stage state. ~250-400 lines. See `PLAN.md § Phase 117`.
+### 2. Driver-generalization roadmap (Phases 124-127)
 
-Cells 1 + 2 GREEN. PR #122 CI GREEN at `88aca1e`. Recent pushes:
+Storage backing was the pilot: cloud-agnostic core interface (`StorageBackingDriver`), per-cloud implementations (`emptyDir`, `gcs-sync`, `gcs-fuse`), operator-pluggable selection at config time (TOML `runner_workspace_backing`), and no-fallbacks discipline at registry resolve. That same shape — interface + per-cloud impls + operator-pluggable selection + no-fallbacks — is the template for the next three driver categories.
 
-- `99c8ca0` — BUG-869 + BUG-870 (CodeBuild buildspec → Docker schema 2; EFS access point lookup)
-- `b3be64f` — BUG-871 + BUG-872 (Lambda single-FSC + `/mnt/...` mount path collapse + symlinks; cache prefix mismatch)
-- `d5073b4` — Phase 115 always-on overlay-inject (closes BUG-873)
-- `455c019` — Phase 116 exec-via-Invoke partial (Path B + bind-link bake + workdir off Lambda)
-- `9695341` — Phase 116 wire-up via lambdaInvokeExecDriver in Typed.Exec (closes BUG-874; cell 2 GREEN at workflow run https://github.com/e6qu/sockerless/actions/runs/25113565115)
+User principle (verbatim, 2026-05-07): "we want to generalize the approach to using drivers so that we can swap out pieces of backends for each backend since cloud offers a variety of things like networking, DNS, storage and access, but first we just wanted a fully working, minimally, system." 8/8 GREEN cells means we now have the working minimal system — the generalization can begin.
 
-## Operational state — 2026-04-29 ~00:00 UTC
+Roadmap entries in [PLAN.md](PLAN.md):
 
-- **AWS creds:** ⚠ expired; was active via `aws.sh` (root `729079515331`). Refresh before resuming.
-- **Live AWS infra: UP in eu-west-1.** ECS cluster `sockerless-live` (35 base + 4 runner-extension resources). Lambda live env (8 resources). EFS `fs-069c02e0e8823b64e` with two access points: `runner_workspace=fsap-0f60e569bae585f25`, `runner_externals=fsap-0ff9f9686208c4ed7`.
-- **Runner-task ECS task definition:** `sockerless-live-runner:2` registered in eu-west-1. Single-container Fargate (1024 CPU / 2048 MB, X86_64). Image: `729079515331.dkr.ecr.eu-west-1.amazonaws.com/sockerless-live:runner-amd64` (latest digest pushed to ECR; `LABEL com.sockerless.ecs.task-definition-family=sockerless-runner`). EFS volumes mounted at `/home/runner/_work` and `/home/runner/externals`; entrypoint pre-populates externals on first start (tar pipe).
-- **Sockerless code changes (BUG-850..853 — all on this branch):**
-  1. `Config.SharedVolumes` + bind-mount → EFS translation in `backends/ecs/backend_impl.go`. Sub-path drop. `/var/run/docker.sock` drop.
-  2. `accessPointForVolume` short-circuits to `SharedVolume.AccessPointID` when the named volume matches a configured shared volume.
-  3. ECS server overrides `s.Drivers.Network` with `SyntheticNetworkDriver` (metadata-only — Fargate has its own netns, Linux netns is the wrong abstraction for cloud).
-  4. Sub-tasks include the operator's default SG alongside per-network SG (so EFS mount targets stay reachable).
-  5. `cloudExecStart` waits for `ExecuteCommandAgent.LastStatus == RUNNING` before issuing `ExecuteCommand`.
-- **PR-#122 commits:** working tree has all the above plus state-doc updates; ready to commit + push.
+- **Phase 124 — Network driver abstraction.** How containers in the same user-defined network discover and talk to each other. Today: hardcoded per backend (Cloud Map for ECS, `/etc/hosts` injection via `SOCKERLESS_HOST_ALIASES` for cloudrun/gcf, multi-container revision loopback for pod-Services). Driver categories: `host-aliases`, `cloud-dns`, `service-mesh`, `nat-gateway-only`.
+- **Phase 125 — DNS driver abstraction.** How `<container-name>.<network>` resolves. Today: per-cloud heuristics. Driver categories: `cloud-map`, `cloud-dns-zone`, `service-discovery`, `private-dns-zone`.
+- **Phase 126 — Access driver abstraction.** Container-to-container auth, ingress IAM, service-account binding. Today: scattered. Driver categories: `iam-role`, `id-token`, `mTLS`, `none-internal`.
+- **Phase 127 — Storage driver expansion (NICE-TO-HAVE).** Open up the `BackingSpec` union (currently EmptyDir + GCS) to be cloud-agnostic. New drivers (`pd-ephemeral`, `efs-ephemeral`, `azure-files-ephemeral`) plug in without core-package changes.
+- **Phase 128 — Runner job timeout (configurable).** Hard cap on Cloud Run Job / Lambda / ECS task duration so a hung subprocess can't pin quota indefinitely. Default 1 h; operator override via dispatcher TOML `runner_job_timeout` + bootstrap env `SOCKERLESS_JOB_TIMEOUT_SECONDS`. SIGTERM → 30 s grace → SIGKILL; bootstrap reports exit code 124 (matches GNU `timeout(1)`). Detail in PLAN.md.
+- **Phase 129 — Cost tracking + stale-resource cost-cap.** BigQuery billing export, per-session resource labels (`sockerless_session=<run-id>`), per-session budget alerts ($5 alert / $20 hard cap), and a stale-resource sweeper that extends the dispatcher GC ticker. Detail in PLAN.md. Today's session demonstrated the gap — orphan services from cancelled runs pinned regional CPU quota (BUG-970) without any cost visibility; fixing this is essential before scaling up live-cloud iteration.
 
-## Phase 110b — Cell 1 status: ✅ GREEN
+Each phase follows the Phase 123 template:
 
-**Successful run:** https://github.com/e6qu/sockerless/actions/runs/25052661438 (commit `7362197` pushed 2026-04-28).
+1. `api/<dim>_driver.go` — enum + struct fields on the relevant config (`SharedVolume`, `Network`, etc.).
+2. `backends/core/<dim>_driver.go` — driver interface + registry + `EmptyXxx` (no-op default for backends that don't need the dimension).
+3. `backends/<cloud>-common/<dim>_<impl>.go` — per-cloud driver impls.
+4. `backends/<cloud-product>/<dim>_translator.go` — per-backend translator that maps driver output to that cloud's protobuf.
+5. Operator config: TOML / env var that selects the driver per backend.
+6. **No-fallbacks at resolve**: unset / unknown driver name returns an error, never silently picks a default.
+7. Migration of existing inline calls to use the registry.
 
-All 6 workflow steps passed. `container: alpine:latest` directive flowed through sockerless's bind-mount → EFS translation; sub-task spawned in Fargate with shared EFS access points; `docker exec` succeeded after the new ExecuteCommandAgent-ready wait.
+Same single-PR-per-phase rule as Phase 123.
 
-Iteration history (recorded for future debugging):
-- 25049909614 — Initialize containers failed: bind mount rejection (BUG-850 not yet shipped).
-- 25051339655 — Initialize failed: netns (BUG-851).
-- 25051469196 — Initialize failed: EFS mount timeout from sub-task (BUG-852).
-- 25051866900 — Initialize ✓; Run echo failed exit 255 (BUG-853).
-- 25052043048 — Initialize ✓; exec failed: missing `ecs:ExecuteCommand` IAM perm.
-- 25052216785, 25052362819 — same exec-agent-not-ready failure (BUG-853 confirmed, fix not yet shipped).
-- 25052661438 — **GREEN** — first run with the BUG-853 wait fix shipped.
+## Live-cloud followup
 
-## 4-cell verification status (2026-04-29 ~14:30 UTC)
+Live projects torn down end of this session. Next live-cloud session creates a fresh `sockerless-live-<rand>` per `project_gcp_live_setup.md` workflow. **Before bringing the next project online, ship Phase 128 (job timeout) + Phase 129 (cost tracking + stale-resource sweeper) FIRST** — without those, the same regional-CPU-quota debt cycle from today's session repeats.
 
-| Cell | Status | Latest evidence URL | Next |
-|---|---|---|---|
-| 1 GH × ECS | ✅ PASS | https://github.com/e6qu/sockerless/actions/runs/25075259911 | re-run during sweep once 3/4 verified |
-| 2 GH × Lambda | ✅ PASS | https://github.com/e6qu/sockerless/actions/runs/25113565115 | re-run during sweep once 3/4 verified |
-| 3 GL × ECS | 🟡 step_script skipped (BUG-868) | latest https://gitlab.com/e6qu/sockerless/-/jobs/14144936826 | implement Phase 114 (long-lived BUILD container + SSM ExecuteCommand for stdin-piped script delivery) |
-| 4 GL × Lambda | ⏸ inherits Phase 114 pattern | n/a | adapt Phase 114 to Lambda primitives (Path B exec-via-Invoke from Phase 116 already covers single execs; need gitlab-runner stdin-pipe → lambda.Invoke flow) |
+## Cost report — 6-day project lifetime (2026-05-01 → 2026-05-07)
 
-## CI status
+Actual spend reported by user: **~$90** across `sockerless-live-46x3zg4imo` + `sockerless-live-adi` (both `DELETE_REQUESTED` now).
 
-✅ **PR #122 CI fully GREEN** as of commit `88aca1e` (BUG-866 v2): all 10 jobs PASS — lint, test, test (e2e), sim (aws/gcp/azure), ui, build-check, smoke, terraform.
+**Per-service breakdown is not available programmatically.** Researched (2026-05-07): unlike AWS Cost Explorer (which exposes a real `ce.GetCostAndUsage` API) or Azure Consumption APIs (`ActualCost` / `AmortizedCost`), **Google Cloud has no API endpoint that returns actual cost or usage data**. The Cloud Billing API surface is limited to:
+- Account metadata (`/v1/billingAccounts`)
+- Pricing catalog (services + SKUs — list pricing, not actual spend)
+- Budget management (`/v1/billingAccounts/*/budgets`)
 
-## Bugs shipped this iteration (PR #122)
+The only paths to itemized spend data are:
+1. **BigQuery billing export** — must be enabled in advance (Phase 129's first deliverable). Free at our volume.
+2. **Cloud Console Billing Reports** — manual UI access, no programmatic equivalent.
 
-- BUG-859 (H, ECS attach stdin)
-- BUG-860 (H, Lambda attach stdin)
-- BUG-861 (H, Lambda externals shared-volume entry — symptom of BUG-862)
-- BUG-862 (CRITICAL, runner-Lambda baked wrong backend — codified class-of-bug rule)
-- BUG-863 (M, integration / smoke / test arch env var missing)
-- BUG-864 (L, terraform-test substring-match false positive)
-- BUG-865 (H, image-resolve routes locally-built images through Public Gallery)
-- BUG-866 (H, deferred-stdin path entered too eagerly — v1 fall-through, v2 only-when-pipe-loaded)
-- BUG-869 (H, CodeBuild buildspec produced OCI manifest; Lambda image-mode rejects)
-- BUG-870 (H, EFS access-point ARN lookup filtered by `sockerless-managed` tag — operator-provisioned APs lacked it)
-- BUG-871 (H, Lambda single-FSC + `/mnt/...` mount path constraint — collapse + BIND_LINKS bootstrap symlinks + EFS subpath in SharedVolume)
-- BUG-872 (H, pull-through cache prefix mismatch with ECS — derive prefix the same way both backends do)
+Sources: [Google Cloud Billing API reference](https://docs.cloud.google.com/billing/docs/reference/rest), [Cloud Billing data export to BigQuery docs](https://docs.cloud.google.com/billing/docs/how-to/export-data-bigquery), [Google Developer forum thread on programmatic GCP cost retrieval](https://discuss.google.dev/t/how-to-programmatically-retrieve-gcp-billing-cost-api-vs-bigquery-export/257728).
 
-## Up next on this branch — Phase 116 (BUG-873) and Phase 114 (BUG-868)
+**Implication**: I will not guess at the per-service breakdown — earlier speculative tables in this section were wrong by direction (initial $10-15) and would be wrong by line-item even if the totals reconciled. The honest record is "user-reported $90 total, no per-service detail available without Console or BigQuery export". The speculation has been deleted from this doc rather than left as a future trap.
 
-Phase 116 — Lambda image-mode requires Docker schema 2 manifests AND Runtime API client at the entrypoint. Cell 2's alpine image fails both. Architectural fix: route ALL Lambda CreateFunction calls through `BuildAndPushOverlayImage` overlay-inject, swapping its `os/exec docker build` for `awscommon.CodeBuildService` so it works inside the runner-Lambda. Cache converted images by source-content hash. Implementation steps:
+**Action: Phase 129 must ship before the next live-cloud session brings up a fresh project.** Concretely:
+- **BigQuery billing export** — enable on the live billing account at fresh-project creation time, partitioned by `project_id` + `service` + `sku` + label. Free at our volume; ~MB-scale storage. This is the only programmatic source-of-truth for actual spend.
+- **Per-session resource labels** (`sockerless_session=<run-id>`) on every Cloud Run Service + Job + AR repo + GCS bucket + VPC connector sockerless creates. Billing export inherits these → cost queries can filter by session cleanly.
+- **Per-session budget alert** via Cloud Billing Budget API ($5 alert, $20 hard cap, scoped to label `sockerless_session=<id>`).
+- **Stale-resource sweeper** integrated into the dispatcher GC tick — extend the orphan `sockerless-svc-*` cleanup (already planned) to also cover dispatcher-side `gitlab-runner-cloudrun` / `gitlab-runner-gcf` siblings during off-hours, plus VPC connector min-instance reductions.
+- **Default the live-project workflow to overnight teardown** (`gcloud projects delete` end of session, fresh `sockerless-live-<rand>` next session per `project_gcp_live_setup.md`). GCP's 30-day soft-delete window is the safety net.
 
-1. Refactor `BuildAndPushOverlayImage` in `backends/lambda/image_inject.go`: accept a `core.CloudBuildService` dependency. When available, build via CodeBuild (already wired via `s.images.BuildService` in `server.go:72-76`); else fall back to local docker.
-2. `backend_impl.go` create flow: drop the no-CallbackURL default branch. Always go through overlay-inject.
-3. New ECR repo (`sockerless-live-overlay`) for converted images, tag = sha256 of `BaseImageRef + AgentBinaryPath + BootstrapBinaryPath + UserEntrypoint + UserCmd`. Skip rebuild on cache hit.
-4. `specs/CLOUD_RESOURCE_MAPPING.md` Lambda mapping row: extend with "Lambda images go through overlay-inject; OCI inputs auto-converted to Docker schema 2 by the overlay build."
+**For the *current* $90 attribution**: the user can pull line items from the Cloud Console at `https://console.cloud.google.com/billing/019E9E-AF0BD0-6A6F75/reports` filtered by project IDs `sockerless-live-46x3zg4imo` + `sockerless-live-adi`. The 30-day data window keeps these queryable until ~2026-06-07.
 
-Phase 114 — gitlab-runner `start-attach-script` per-command lifecycle. Each script step does `docker start <helper>` + `docker attach`. On Fargate the task entrypoint runs once and exits — gitlab-runner expects the helper to stay running. Fix: keep the task alive with synthetic `tail -f /dev/null`-style entrypoint, route each /start's script through SSM ExecuteCommand. Implementation steps:
+## Working notes — anything not in the above
 
-1. Add a "long-lived helper" mode to ECS ContainerStart when ECSState.OpenStdin is true and the gitlab-runner -predefined suffix is absent (i.e. user-script container).
-2. First /start: run a task whose entrypoint is `sh -c 'while sleep 60; do :; done'`; record the task ARN.
-3. Subsequent /start cycles for the same container ID: skip RunTask; use SSM ExecuteCommand to run the buffered stdin bytes as a script in the existing task.
-4. /attach reads from SSM session output (already implemented for `docker exec`).
-5. Container stop: `ecs.StopTask`.
-
-After Phases 111 + 112 land, all 4 cells should reach GREEN.
-
-## Original cell-2 unblock recipe (now superseded by Phase 116)
-
-Source-side corrections shipped through commit `b3be64f`. Full runner hurdle catalog (15 closed + 8 predicted) in [docs/RUNNERS.md § Runner hurdles](docs/RUNNERS.md) — that's where future-debugging starts.
-
-The operator-driven runtime steps below remain accurate as the live-infra prep needed for any cell-2 verification run after Phase 116 lands:
-
-### Step 1 — Apply terraform (cells 2 + 4 prep)
-
-```bash
-cd /Users/zardoz/projects/sockerless/terraform/environments/lambda/live
-source aws.sh
-terragrunt apply
-```
-
-Provisions on `sockerless-live`:
-- `sockerless-live-image-builder` CodeBuild project (linux/amd64 standard, privileged docker, inline buildspec)
-- `sockerless-live-build-context` S3 bucket (24-hour lifecycle on `build-context/` prefix)
-- IAM role `sockerless-live-codebuild-role` (S3 read + ECR push + CloudWatch Logs)
-- Updates `sockerless-live-runner` Lambda: ECS dispatch IAM perms → Lambda dispatch perms; env vars all `SOCKERLESS_LAMBDA_*` (workspace + externals SHARED_VOLUMES, plus CODEBUILD_PROJECT + BUILD_BUCKET).
-
-### Step 2 — Rebuild runner-Lambda image (cell 2 unblock)
-
-No local Docker daemon needed:
-
-```bash
-cd /Users/zardoz/projects/sockerless/tests/runners/github/dockerfile-lambda
-make codebuild-update
-```
-
-Pipeline: `make stage` (cross-compile linux/amd64 backend + agent + bootstrap into the build context) → `make upload-context` (tar + S3 upload) → `make codebuild-build` (start CodeBuild + poll every 10 s until SUCCEEDED) → `make update-function` (`aws lambda update-function-code --publish`) → `make wait` (`aws lambda wait function-updated-v2`).
-
-Local-Docker alternative if preferred: `make all`.
-
-### Step 3 — Restart sockerless backends (cells 3 + 4 unblock)
-
-```bash
-kill 75092 70870
-source /Users/zardoz/projects/sockerless/aws.sh
-source /tmp/ecs-env.sh
-nohup /tmp/sockerless-backend-ecs    -addr :3375 -log-level debug \
-    >>/tmp/sockerless-ecs.log    2>&1 &
-source /tmp/lambda-env.sh
-nohup /tmp/sockerless-backend-lambda -addr :3376 -log-level debug \
-    >>/tmp/sockerless-lambda.log 2>&1 &
-curl -s http://localhost:3375/_ping; echo
-curl -s http://localhost:3376/_ping; echo
-```
-
-The macOS-arm64 binaries at `/tmp/sockerless-backend-{ecs,lambda}` were rebuilt this session and contain BUG-859 / BUG-860 fixes.
-
-### Step 3a — Cell-4 prerequisite: agent + bootstrap on disk
-
-The laptop sockerless-backend-lambda's image-inject path needs the agent + bootstrap binaries available locally. Pick one:
-
-```bash
-# Option A: copy the linux/amd64 binaries to /opt/sockerless/
-sudo mkdir -p /opt/sockerless && \
-  sudo cp /Users/zardoz/projects/sockerless/tests/runners/github/dockerfile-lambda/sockerless-agent /opt/sockerless/ && \
-  sudo cp /Users/zardoz/projects/sockerless/tests/runners/github/dockerfile-lambda/sockerless-lambda-bootstrap /opt/sockerless/
-
-# Option B: append env vars to /tmp/lambda-env.sh before re-sourcing it in step 3:
-cat >> /tmp/lambda-env.sh <<'EOF'
-export SOCKERLESS_AGENT_BINARY=/Users/zardoz/projects/sockerless/tests/runners/github/dockerfile-lambda/sockerless-agent
-export SOCKERLESS_LAMBDA_BOOTSTRAP=/Users/zardoz/projects/sockerless/tests/runners/github/dockerfile-lambda/sockerless-lambda-bootstrap
-export SOCKERLESS_CODEBUILD_PROJECT=sockerless-live-image-builder
-export SOCKERLESS_BUILD_BUCKET=sockerless-live-build-context
-EOF
-```
-
-### Step 4 — 4-cell verification sweep
-
-Tell me when steps 1-3 are done and I'll fire all four cells:
-
-```bash
-go test -v -tags github_runner_live -run TestGitHub_ECS_Hello    -timeout 30m ./tests/runners/github
-go test -v -tags github_runner_live -run TestGitHub_Lambda_Hello -timeout 30m ./tests/runners/github
-go test -v -tags gitlab_runner_live -run TestGitLab_ECS_Hello    -timeout 30m ./tests/runners/gitlab
-go test -v -tags gitlab_runner_live -run TestGitLab_Lambda_Hello -timeout 30m ./tests/runners/gitlab
-```
-
-I'll capture all four run / pipeline URLs back into this doc. Phase 110 closes when all four are GREEN with their evidence URLs recorded.
-
-### After all four cells GREEN
-
-5. Update `docs/runner-capability-matrix.md`: TBD → PASS for cells 1-4.
-6. Phase 110b dispatcher wiring: ECR push pipeline for the dispatcher's own runner image; end-to-end harness wiring through the dispatcher binary (vs the current per-cell direct dispatch).
-7. **Tear down live AWS** at session end (`terragrunt destroy` from both `terraform/environments/{ecs,lambda}/live`).
-
-## Sockerless restart command
-
-```bash
-kill 75092 70870
-source /Users/zardoz/projects/sockerless/aws.sh
-source /tmp/ecs-env.sh
-nohup /tmp/sockerless-backend-ecs    -addr :3375 -log-level debug \
-    >>/tmp/sockerless-ecs.log    2>&1 &
-source /tmp/lambda-env.sh
-nohup /tmp/sockerless-backend-lambda -addr :3376 -log-level debug \
-    >>/tmp/sockerless-lambda.log 2>&1 &
-curl -s http://localhost:3375/_ping; echo
-curl -s http://localhost:3376/_ping; echo
-```
-
-The macOS-arm64 binaries at `/tmp/sockerless-backend-{ecs,lambda}` were rebuilt this session and contain BUG-859 / BUG-860 fixes.
-
-## Resume notes
-
-- **Live infra is UP** — re-run `terragrunt destroy` when done with the session.
-- Sockerless ECS backend running locally on `:3375` (laptop), Lambda on `:3376`. Both in `eu-west-1`.
-- Runner image already pushed to ECR; ECS task def revision 2 active.
-- `gh auth token` keychain-backed; GitLab PAT in `security` keychain.
-- The architecture proven by run 25052661438 generalizes to Lambda once SharedVolumes is mirrored. The user said "no fakes / no fallbacks / no workarounds" — Lambda work should follow the same shape.
-
-## Bug log this session (PR #122)
-
-860 fixed (BUG-845..860). 2 open: BUG-861 (Lambda externals shared-volume entry) + BUG-862 (CRITICAL — backend ↔ host primitive mismatch, runner-Lambda baked the ECS backend). Both ship as part of the same cell-2 fix round (rebuild runner-Lambda image with sockerless-backend-lambda + apply new terraform). Class-of-bug rule documented at top of [BUGS.md](BUGS.md): cross-cloud-primitive baking is a P0.
-
-| # | Sev | Area | One-liner |
-|---|-----|------|-----------|
-| 845 | M | terraform | Lambda live env was us-east-1 → realigned to eu-west-1 + sockerless-tf-state. |
-| 846 | M | image-resolve | Docker Hub PAT path replaced with AWS Public Gallery routing. |
-| 847 | L | tests/runners | GH runner asset URL `darwin` → `osx`; bumped 2.319.1 → 2.334.0. |
-| 848 | M | ecs/lambda | `docker info` Architecture from required `SOCKERLESS_*_ARCHITECTURE` env vars. |
-| 849 | M | tests/runners | Drop broken `--add-host host-gateway`; install docker CLI in runner image. |
-| 850 | H | ecs (bind mounts) | `Config.SharedVolumes` + bind-mount → EFS translation; sub-path drop; docker.sock drop. |
-| 851 | M | ecs (network) | Override `s.Drivers.Network` with metadata-only synthetic; netns is wrong for Fargate. |
-| 852 | M | ecs (network) | Sub-tasks need operator default SG too (EFS mount target allow-list). |
-| 853 | H | ecs (exec) | Wait for `ExecuteCommandAgent.LastStatus == RUNNING` before `ExecuteCommand`. |
-| 854 | M | ecs (image-resolve) | sha256-only refs no longer misroute through `public.ecr.aws/docker/library/sha256:...`; resolve via local Store or surface clear error. |
-| 855 | M | aws-common (volumes) | EFS access-point path overflow on long volume names — fall back to `/sockerless/v/<sha256[:16]>`. |
-| 856 | M | terraform / runner-lambda | `SOCKERLESS_ECS_SHARED_VOLUMES` aligned to Lambda's `/tmp/runner-state/...` paths. |
-| 857 | M | tests/runners (gitlab) | gitlab-runner-helper image pre-pushed to ECR + Basic-auth-direct routing for ECR-shaped registries. |
-| 858 | M | ecs (container lifecycle) | `ContainerStart` falls back to `ResolveContainerAuto` for STOPPED-then-restarted containers; PendingCreates preserved through `waitForTaskRunning`. |
-| 859 | H | ecs (attach stdin) | `ecsStdinAttachDriver` captures `docker attach` stdin into a per-cycle `stdinPipe`; `launchAfterStdin` defers RunTask until stdin EOF then bakes the script into the task definition's `Entrypoint=[sh,-c]` + `Cmd=[<script>]`. ECSState gains `OpenStdin` so per-cycle restarts (gitlab-runner reuses container ID across script steps) survive PendingCreates churn. |
-| 860 | H | lambda (attach stdin) | Mirror of BUG-859 for Lambda: `lambdaStdinAttachDriver` captures stdin → buffered → `lambda.Invoke` Payload (the bootstrap pipes Payload to user entrypoint as stdin, so `Cmd=[sh]` runs the script). LambdaState gains `OpenStdin`. |
-| 861 | H | runner-lambda image + lambda backend | ⚠ open. Cell 2 fail surfaced "host bind mounts not supported on ECS backend" for `/tmp/runner-state/externals:/__e:ro`. Root cause was BUG-862 (wrong backend baked in); fix lands together with BUG-862's terraform `SOCKERLESS_LAMBDA_SHARED_VOLUMES` carrying both workspace + externals paths. |
-| 862 | **CRITICAL** | architecture / runner-lambda | ⚠ open. Runner-Lambda image baked `sockerless-backend-ecs` and dispatched `container:` sub-tasks via `ecs.RunTask` to Fargate — backend ↔ host primitive mismatch. Project rule (now top of BUGS.md + MEMORY.md + CLOUD_RESOURCE_MAPPING.md universal rule #9): each backend runs on its own native primitive. Source fixed (Dockerfile, bootstrap, terraform IAM + env vars, agent + bootstrap binaries staged into image); awaits image rebuild + `terragrunt apply`. |
-
-## Cross-links
-
-- Roadmap: [PLAN.md](PLAN.md)
-- Phase roll-up: [STATUS.md](STATUS.md)
-- Narrative: [WHAT_WE_DID.md](WHAT_WE_DID.md)
-- Bug log: [BUGS.md](BUGS.md)
-- Runner wiring: [docs/RUNNERS.md](docs/RUNNERS.md)
-
-## Standing rules (carry forward)
-
-- **No fakes, no fallbacks, no workarounds** — every gap is a real bug with a real fix. (User reaffirmed several times this session.)
-- **Sim parity per commit** — any new SDK call updates `specs/SIM_PARITY_MATRIX.md` + adds the sim handler.
-- **State save after every major piece of work** (PLAN / STATUS / WHAT_WE_DID / DO_NEXT / BUGS) — mandatory at ~80% context.
-- **Never merge PRs** — user handles all merges.
-- **Branch hygiene** — rebase on `origin/main` before push.
-- **`github-runner-dispatcher` is sockerless-agnostic** — pure Docker SDK / CLI client.
+- **Don't merge PRs** (project rule). User handles all merges.
+- **Don't push `main`** — branch `phase-118-faas-pods` is the only PR-bearing branch right now.
+- **Bug discipline**: any new failure surfaced during deploy-hygiene work files in [BUGS.md](BUGS.md) before any fix attempt.
+- **Driver-generalization scoping**: each new phase (124/125/126) MUST start with a CLOUD_RESOURCE_MAPPING.md design pass that catalogs the current ad-hoc paths per backend, then the driver interface, then per-cloud impls, then migration. Same shape that Phase 123 used; the spec doc is the design contract before any code lands.

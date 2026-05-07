@@ -10,6 +10,12 @@ import "strings"
 // repository that proxies Docker Hub. The remote repository ("docker-hub") must
 // be pre-configured at the project level.
 //
+// `endpointURL` carries `Server.config.EndpointURL`. When non-empty the backend
+// is talking to the GCP simulator, which does not provision an AR remote-proxy
+// — rewriting would point sockerless at the real public AR which 403s without
+// GCP creds. In that case return the ref unchanged so the local docker daemon
+// (smoke tests) or the simulator's `ResolveLocalImage` can pull it directly.
+//
 // Examples:
 //
 //	"alpine:latest"        → "{region}-docker.pkg.dev/{project}/docker-hub/library/alpine:latest"
@@ -17,7 +23,13 @@ import "strings"
 //	"myorg/app:v1"         → "{region}-docker.pkg.dev/{project}/docker-hub/myorg/app:v1"
 //	"{region}-docker.pkg.dev/{project}/my-repo/img:tag" → used as-is
 //	"gcr.io/{project}/img:tag"                          → used as-is
-func ResolveGCPImageURI(ref, project, region string) string {
+func ResolveGCPImageURI(ref, project, region, endpointURL string) string {
+	// Simulator mode: no AR proxy provisioned, leave the ref alone so
+	// the pull falls through to the underlying registry / local docker
+	// daemon.
+	if endpointURL != "" {
+		return ref
+	}
 	// Already an Artifact Registry URI — use as-is
 	if strings.Contains(ref, "-docker.pkg.dev/") {
 		return ref
@@ -28,23 +40,46 @@ func ResolveGCPImageURI(ref, project, region string) string {
 		return ref
 	}
 
+	// gitlab-runner permission containers reference images by bare
+	// `sha256:<digest>` (no repo). The legacy `parseDockerRef` would
+	// split this on `:` producing repo="sha256" tag="<digest>" → AR URL
+	// `<AR>/docker-hub/library/sha256:<digest>` which Cloud Run rejects.
+	// Bare digest refs can't be rewritten to AR — they must already be
+	// in the local image store. Return as-is; caller (cloudrun backend)
+	// resolves via Store.ResolveImage before calling us, so this path
+	// only fires when Store lookup missed (genuine error).
+	if strings.HasPrefix(ref, "sha256:") && !strings.Contains(ref, "/") {
+		return ref
+	}
+
 	// Parse the Docker reference
 	registry, repo, tag := parseDockerRef(ref)
 
-	// Only rewrite Docker Hub images
+	// Cloud Run only accepts images from gcr.io / docker.pkg.dev /
+	// docker.io. Other registries must be mirrored via AR remote
+	// repositories named after the registry. Add a mapping per remote
+	// repo created in terraform/modules/cloudrun/main.tf.
+	var arRepo string
 	switch registry {
 	case "", "docker.io", "registry-1.docker.io":
+		arRepo = "docker-hub"
 		// Docker Hub library images: "alpine" → "library/alpine"
 		if !strings.Contains(repo, "/") {
 			repo = "library/" + repo
 		}
+	case "registry.gitlab.com":
+		// gitlab-runner-helper image lives here; AR remote-proxy
+		// `gitlab-registry` proxies registry.gitlab.com.
+		arRepo = "gitlab-registry"
 	default:
-		// Non-Docker Hub registries (ghcr.io, quay.io, etc.) — return as-is
+		// Other registries (ghcr.io, quay.io, etc.) — return as-is.
+		// Cloud Run will reject if not on its allow-list, but that's
+		// the operator's responsibility to set up an AR proxy for.
 		return ref
 	}
 
 	// Rewrite to Artifact Registry remote repository URI
-	return region + "-docker.pkg.dev/" + project + "/docker-hub/" + repo + ":" + tag
+	return region + "-docker.pkg.dev/" + project + "/" + arRepo + "/" + repo + ":" + tag
 }
 
 // parseDockerRef splits a Docker image reference into registry, repo, and tag.

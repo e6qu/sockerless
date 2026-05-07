@@ -1,0 +1,31 @@
+# Standalone sockerless-backend-gcf image. Sidecar in the
+# multi-container Cloud Run Job/Service revision that hosts a vanilla
+# actions/runner or gitlab/gitlab-runner container. Loopback on :3376.
+#
+# Distroless static base for the same reason as Dockerfile.cloudrun.
+# The sockerless-gcf-bootstrap binary is also COPY'd in because the
+# gcf backend's image-inject path stages it into Cloud Build context
+# tarballs when building per-step Cloud Run Function overlay images.
+#
+# Build + push:
+#   GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
+#     -C backends/cloudrun-functions/cmd/sockerless-backend-gcf -tags noui \
+#     -o /path/to/this-dir/sockerless-backend-gcf .
+#   GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
+#     -C agent/cmd/sockerless-gcf-bootstrap \
+#     -o /path/to/this-dir/sockerless-gcf-bootstrap .
+#   podman build --platform=linux/amd64 \
+#     -t us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/sockerless-backend-gcf:latest \
+#     -f tests/runners/dockerfile-sockerless-backend/Dockerfile.gcf \
+#     tests/runners/dockerfile-sockerless-backend
+
+FROM gcr.io/distroless/static-debian12:nonroot
+
+COPY sockerless-backend-gcf       /usr/local/bin/sockerless-backend-gcf
+COPY sockerless-gcf-bootstrap     /opt/sockerless/sockerless-gcf-bootstrap
+
+ENV SOCKERLESS_GCF_BOOTSTRAP=/opt/sockerless/sockerless-gcf-bootstrap
+
+EXPOSE 3376
+
+ENTRYPOINT ["/usr/local/bin/sockerless-backend-gcf", "-addr", ":3376", "-log-level", "info"]

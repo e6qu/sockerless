@@ -2,7 +2,9 @@ package cloudrun
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -85,6 +87,7 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 	cpu, memory := mapCPUMemory()
 
 	var mounts []*runpb.VolumeMount
+	var syncMountEntries []string
 	for _, bind := range ci.Container.HostConfig.Binds {
 		parts := strings.SplitN(bind, ":", 3)
 		if len(parts) < 2 {
@@ -93,6 +96,22 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 		mounts = append(mounts, &runpb.VolumeMount{
 			Name:      parts[0],
 			MountPath: parts[1],
+		})
+		// Record the bind target for gcs-sync SharedVolumes so the
+		// bootstrap restore knows where to untar each per-exec GCS
+		// object. PreExec emits just `name=GCS_URL` (the runner-task
+		// can't know the bind target on its own); the bootstrap joins
+		// by name. Bind sources are pre-translated to SharedVolume.Name
+		// at ContainerCreate time — see cloudrun/backend_impl.go's
+		// overlay-bind translator. Look up by name here.
+		if sv := s.config.LookupSharedVolumeByName(parts[0]); sv != nil && core.StorageBacking(sv.Backing) == core.BackingGCSSync {
+			syncMountEntries = append(syncMountEntries, fmt.Sprintf("%s=%s", sv.Name, parts[1]))
+		}
+	}
+	if ci.IsMain && len(syncMountEntries) > 0 {
+		envVars = append(envVars, &runpb.EnvVar{
+			Name:   "SOCKERLESS_SYNC_MOUNTS",
+			Values: &runpb.EnvVar_Value{Value: strings.Join(syncMountEntries, ",")},
 		})
 	}
 
@@ -106,16 +125,71 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 		Resources: &runpb.ResourceRequirements{
 			Limits: map[string]string{
 				"cpu":    cpu,
-				"memory": memory,
+				"memory": memoryLimitForContainer(memory, ci.IsMain),
 			},
 		},
 	}
 
-	if config.WorkingDir != "" {
-		containerSpec.WorkingDir = config.WorkingDir
+	// Cloud Run Service health check probes ContainerPort. Read the
+	// actual ExposedPorts from the image (real cloud-primitive data, not
+	// a hardcoded heuristic). If the image declares no ports, the
+	// container does NOT bind $PORT and is NOT eligible for Service path —
+	// let the caller route it elsewhere or fail loudly. No defaults, no
+	// fallbacks (per project rule).
+	//
+	// Cloud Run multi-container rule: EXACTLY ONE container per revision
+	// must declare Ports — the ingress one. The bootstrap (which is the
+	// main container's PID 1 in overlay images) listens on the value of
+	// the standard Cloud Run PORT env (default 8080), regardless of what
+	// the image's Config.ExposedPorts declares. Force-declare 8080 on
+	// the main container so multi-container revisions are accepted.
+	// Sidecars must omit Ports entirely AND set SOCKERLESS_SIDECAR=1 so
+	// their bootstrap exec's the user CMD as a foreground subprocess
+	// instead of trying to bind PORT (which would conflict with main's
+	// bind).
+	if ci.IsMain {
+		port := imagePort(ci.Container)
+		if port == 0 {
+			port = 8080
+		}
+		containerSpec.Ports = []*runpb.ContainerPort{
+			{ContainerPort: int32(port)},
+		}
+	} else {
+		containerSpec.Env = append(containerSpec.Env, &runpb.EnvVar{
+			Name:   "SOCKERLESS_SIDECAR",
+			Values: &runpb.EnvVar_Value{Value: "1"},
+		})
 	}
 
+	// Deliberately DO NOT set containerSpec.WorkingDir. Cloud Run
+	// validates the WorkingDir exists on the container's mount fs at
+	// startup — under gcs-sync the workspace mount is an empty tmpfs
+	// (bootstrap restores from GCS per-exec), so a workdir like
+	// /__w/sockerless/sockerless wouldn't exist yet and Cloud Run
+	// would fail with "Application failed to start: failed to find
+	// initial working directory". The bootstrap chdir's per-exec via
+	// envelope.Workdir and per-default-invoke via SOCKERLESS_USER_WORKDIR
+	// env, so the user's workdir is honoured at the right scope.
+
 	return containerSpec, mounts
+}
+
+// imagePort returns the first port the image declares via
+// Config.ExposedPorts. Reads the real image metadata; no hardcoded
+// per-image port maps. Returns 0 if image declares none.
+func imagePort(c *api.Container) int {
+	if c == nil {
+		return 0
+	}
+	for portKey := range c.Config.ExposedPorts {
+		var port int
+		_, _ = fmt.Sscanf(portKey, "%d", &port)
+		if port > 0 {
+			return port
+		}
+	}
+	return 0
 }
 
 // buildJobSpec creates a Cloud Run Job protobuf from one or more
@@ -125,6 +199,7 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 	var specs []*runpb.Container
 	volSeen := make(map[string]struct{})
 	var volumes []*runpb.Volume
+	var persistEntries []string
 	for _, ci := range containers {
 		cs, mounts := s.buildContainerSpec(ci)
 		specs = append(specs, cs)
@@ -132,19 +207,18 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 			if _, done := volSeen[mp.Name]; done {
 				continue
 			}
-			bucket, err := s.bucketForVolume(ctx, mp.Name)
+			vol, persist, err := s.buildVolumeForBind(ctx, mp.Name, mp.MountPath)
 			if err != nil {
-				return nil, fmt.Errorf("provision GCS bucket for volume %q: %w", mp.Name, err)
+				return nil, err
 			}
-			volumes = append(volumes, &runpb.Volume{
-				Name: mp.Name,
-				VolumeType: &runpb.Volume_Gcs{
-					Gcs: &runpb.GCSVolumeSource{Bucket: bucket},
-				},
-			})
+			volumes = append(volumes, vol)
+			if persist != "" {
+				persistEntries = append(persistEntries, persist)
+			}
 			volSeen[mp.Name] = struct{}{}
 		}
 	}
+	injectPersistEnv(specs, persistEntries)
 
 	taskTemplate := &runpb.TaskTemplate{
 		Containers: specs,
@@ -155,6 +229,10 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 
 	// Add VPC connector if configured
 	if s.config.VPCConnector != "" {
+		// ALL_TRAFFIC — see servicespec.go for the full rationale
+		// (Cloud NAT in the connector subnet keeps public APIs reachable;
+		// in-VPC source needed for Cloud Run service-to-service Ingress=
+		// internal acceptance).
 		taskTemplate.VpcAccess = &runpb.VpcAccess{
 			Connector: s.config.VPCConnector,
 			Egress:    runpb.VpcAccess_ALL_TRAFFIC,
@@ -168,6 +246,7 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 		CreatedAt:   time.Now(),
 		Name:        containers[0].Container.Name,
 		Network:     containers[0].Container.HostConfig.NetworkMode,
+		AutoRemove:  containers[0].Container.HostConfig.AutoRemove,
 	}
 	// Propagate pod membership so ListPods can reconstruct docker pods
 	// from the cloud's Job labels after a backend restart.
@@ -187,13 +266,41 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 }
 
 // mapCPUMemory returns the default Cloud Run resource limits.
-// Cloud Run valid CPU: 1, 2, 4, 8. Default: 1 CPU, 512Mi.
+// Cloud Run valid CPU: 1, 2, 4, 8. 1Gi/container matches the gcf
+// backend default; 512Mi was insufficient for multi-container revisions
+// running a postgres service container alongside the JOB main (postgres
+// initdb OOM'd in 512Mi and Cloud Run reports the whole revision as
+// failed even though it's the sidecar that crashed, manifesting as a
+// port-8080-not-bound timeout on the main container).
 func mapCPUMemory() (string, string) {
-	return "1", "512Mi"
+	return "1", "1Gi"
 }
 
-// sanitizeContainerName converts a container name to a valid Cloud Run container name.
-// Strips leading "/" and replaces non-alphanumeric characters with "-".
+// memoryLimitForContainer doubles the per-container memory for the main
+// container in a multi-container revision so go-build / toolchain
+// download workloads still fit alongside a postgres-style sidecar.
+// Cloud Run gen2's revision-level memory cap is the SUM of every
+// container's limit; the symmetric 1Gi/container default OOM'd at
+// 2Gi total when a `go build` pulled go1.24.0 alongside running
+// postgres. Sidecars stay at the original limit since service
+// containers idle at ~200-300Mi.
+func memoryLimitForContainer(base string, isMain bool) string {
+	if !isMain {
+		return base
+	}
+	switch base {
+	case "1Gi":
+		return "2Gi"
+	case "2Gi":
+		return "4Gi"
+	default:
+		return base
+	}
+}
+
+// sanitizeContainerName converts a container name to a valid Cloud Run
+// container name per RFC 1123: lowercase ASCII letters/digits/hyphens
+// and periods, must begin and end with letter or digit, length < 64.
 func sanitizeContainerName(name string) string {
 	name = strings.TrimPrefix(name, "/")
 	if name == "" {
@@ -201,17 +308,44 @@ func sanitizeContainerName(name string) string {
 	}
 	var b strings.Builder
 	for _, c := range name {
-		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-', c == '.':
 			b.WriteRune(c)
-		} else if c >= 'A' && c <= 'Z' {
+		case c >= 'A' && c <= 'Z':
 			b.WriteRune(c + 32) // lowercase
-		} else {
+		default:
 			b.WriteByte('-')
 		}
 	}
 	result := b.String()
+	// Trim leading non-alphanumeric (must begin with letter or digit).
+	for len(result) > 0 && !isAlnum(result[0]) {
+		result = result[1:]
+	}
+	// Cap to 50 chars (leave room for any future suffixes; Cloud Run
+	// limit is 63).
+	if len(result) > 50 {
+		// Keep a stable hash of the original to avoid collisions when
+		// multiple long names share the same 50-char prefix.
+		hash := nameHash(name)
+		result = result[:50-9] + "-" + hash
+	}
+	// Trim trailing non-alphanumeric (must end with letter or digit).
+	for len(result) > 0 && !isAlnum(result[len(result)-1]) {
+		result = result[:len(result)-1]
+	}
 	if result == "" {
 		return "sidecar"
 	}
 	return result
+}
+
+func isAlnum(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9')
+}
+
+// nameHash returns a short 8-char hex hash for use as a name disambiguator.
+func nameHash(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:4])
 }

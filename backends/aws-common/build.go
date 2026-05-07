@@ -27,12 +27,13 @@ type CodeBuildService struct {
 	bucket    string // S3 bucket for context upload
 	ecrRepo   string // ECR repo prefix for output images
 	region    string
+	ecrAuth   *ECRAuthProvider // for AssembleMultiArchManifest token mint
 	logger    zerolog.Logger
 }
 
 // NewCodeBuildService creates a CodeBuild-backed build service.
 // Returns nil if project or bucket are empty (not configured).
-func NewCodeBuildService(cb *codebuild.Client, s3c *s3.Client, project, bucket, ecrRepo, region string, logger zerolog.Logger) *CodeBuildService {
+func NewCodeBuildService(cb *codebuild.Client, s3c *s3.Client, project, bucket, ecrRepo, region string, ecrAuth *ECRAuthProvider, logger zerolog.Logger) *CodeBuildService {
 	if project == "" || bucket == "" {
 		return nil
 	}
@@ -43,12 +44,36 @@ func NewCodeBuildService(cb *codebuild.Client, s3c *s3.Client, project, bucket, 
 		bucket:    bucket,
 		ecrRepo:   ecrRepo,
 		region:    region,
+		ecrAuth:   ecrAuth,
 		logger:    logger,
 	}
 }
 
 func (s *CodeBuildService) Available() bool {
 	return s.project != "" && s.bucket != ""
+}
+
+// AssembleMultiArchManifest delegates to the universal helper, with
+// the ECR bearer token (`ECRAuthProvider.GetToken` returns
+// `Basic <b64>`; the OCI distribution v2 endpoints accept either
+// `Basic` or `Bearer` for this token, but the universal helper sets
+// `Authorization: Bearer <token>` — pass the raw base64 portion so
+// ECR's manifest endpoint authenticates correctly).
+func (s *CodeBuildService) AssembleMultiArchManifest(ctx context.Context, opts core.MultiArchManifestOptions) error {
+	if s.ecrAuth == nil {
+		return fmt.Errorf("AssembleMultiArchManifest: ECRAuthProvider not configured")
+	}
+	return core.AssembleMultiArchManifest(ctx, opts, func(reg string) (string, error) {
+		raw, err := s.ecrAuth.GetToken(reg)
+		if err != nil {
+			return "", err
+		}
+		// ECR returns "Basic <b64>"; strip the prefix so the
+		// universal helper's "Authorization: Bearer <token>" wraps
+		// the base64 portion only. ECR accepts both Basic and Bearer
+		// against the same base64 credential.
+		return strings.TrimPrefix(raw, "Basic "), nil
+	})
 }
 
 func (s *CodeBuildService) Build(ctx context.Context, opts core.CloudBuildOptions) (*core.CloudBuildResult, error) {

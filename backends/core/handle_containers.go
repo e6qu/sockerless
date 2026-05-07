@@ -174,6 +174,25 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
 
+	// Fast-path: when an InvocationResult is already recorded the
+	// container has exited via the invoke goroutine and the cached exit
+	// code is the truth — return it without paying the slow
+	// CloudState.GetContainer round-trip (cloudrun's stateless
+	// implementation lists every Service in the project, which scales
+	// linearly with stale revisions).
+	//
+	// Deliberately we do NOT short-circuit on WaitChs alone: backends
+	// like ECS register a WaitCh but never store an InvocationResult,
+	// so closing the channel without a recorded result would force a
+	// fallback exit code of 0 even when the actual container exited
+	// non-zero. Those backends must fall through to the
+	// CloudState-driven path below, which queries the cloud-side state
+	// for the real exit code.
+	if inv, ok := s.Store.GetInvocationResult(ref); ok {
+		WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: inv.ExitCode})
+		return
+	}
+
 	// Try local wait channel first (simulator mode runs containers locally)
 	if s.CloudState != nil {
 		id, ok := s.ResolveContainerIDAuto(r.Context(), ref)
@@ -207,8 +226,19 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 		if ch, hasChannel := s.Store.WaitChs.Load(id); hasChannel {
 			select {
 			case <-ch.(chan struct{}):
-				// Query CloudState for the actual exit code (Store may be empty in stateless mode)
-				if cc, found, _ := s.CloudState.GetContainer(r.Context(), id); found {
+				// Prefer InvocationResult over CloudState.GetContainer
+				// here. CloudState.GetContainer for cloudrun's
+				// Service-path containers calls queryServices which
+				// iterates ALL services in the project + filters; with
+				// even ~50 stale services this can take 10+ minutes,
+				// even though WaitCh closes within seconds. The invoke
+				// goroutine that closed WaitCh just stored
+				// InvocationResult — that IS the truth for FaaS / Service
+				// path containers; reading cloud state again wastes the
+				// fast-path the channel signal was meant to provide.
+				if inv, ok := s.Store.GetInvocationResult(id); ok {
+					writeWaitBody(w, inv.ExitCode)
+				} else if cc, found, _ := s.CloudState.GetContainer(r.Context(), id); found {
 					writeWaitBody(w, cc.State.ExitCode)
 				} else if lc, lok := s.Store.Containers.Get(id); lok {
 					writeWaitBody(w, lc.State.ExitCode)

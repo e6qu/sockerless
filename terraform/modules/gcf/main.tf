@@ -115,6 +115,50 @@ resource "google_project_service" "run" {
   disable_on_destroy = false
 }
 
+# Cloud Storage for the Cloud Build context bucket below.
+resource "google_project_service" "storage" {
+  project = var.project_id
+  service = "storage.googleapis.com"
+
+  disable_on_destroy = false
+}
+
+resource "google_project_service" "iam" {
+  project            = var.project_id
+  service            = "iam.googleapis.com"
+  disable_on_destroy = false
+}
+
+# =============================================================================
+# Cloud Build context bucket
+# =============================================================================
+# Sockerless backend's runtime image-build path uploads the build
+# context as a tarball to this bucket; Cloud Build downloads it,
+# builds the image, pushes to AR. Same shape as the cloudrun
+# module's build_context bucket. The dispatcher passes this bucket
+# name on the runner Cloud Run Job as `SOCKERLESS_GCP_BUILD_BUCKET`
+# (required env var; bootstrap.sh fails loudly if missing).
+
+resource "google_storage_bucket" "build_context" {
+  project                     = var.project_id
+  name                        = "${local.name_prefix}-gcf-build-context"
+  location                    = var.gcs_location
+  uniform_bucket_level_access = true
+  labels                      = local.common_labels
+  force_destroy               = true
+
+  lifecycle_rule {
+    condition {
+      age = 1
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
+  depends_on = [google_project_service.storage]
+}
+
 # =============================================================================
 # Artifact Registry — Docker Repository
 # =============================================================================
@@ -127,6 +171,30 @@ resource "google_artifact_registry_repository" "main" {
   format        = "DOCKER"
 
   labels = local.common_labels
+
+  depends_on = [google_project_service.artifactregistry]
+}
+
+# Remote-Docker-Hub-proxy repository named exactly `docker-hub` —
+# `gcpcommon.ResolveGCPImageURI` rewrites Docker Hub refs to
+# `{region}-docker.pkg.dev/{project}/docker-hub/{repo}:{tag}`. Without
+# this repo every `docker run alpine` through the gcf backend fails
+# with `Image not found`. Shared with the cloudrun module when both
+# are deployed in the same project.
+resource "google_artifact_registry_repository" "docker_hub" {
+  project       = var.project_id
+  location      = var.region
+  repository_id = "docker-hub"
+  format        = "DOCKER"
+  mode          = "REMOTE_REPOSITORY"
+  description   = "Docker Hub proxy for sockerless image-resolve"
+
+  remote_repository_config {
+    description = "Proxies docker.io / Docker Hub"
+    docker_repository {
+      public_repository = "DOCKER_HUB"
+    }
+  }
 
   depends_on = [google_project_service.artifactregistry]
 }
@@ -160,9 +228,57 @@ resource "google_project_iam_member" "logging_writer" {
   member  = "serviceAccount:${google_service_account.main.email}"
 }
 
-# Allow the service account to read (pull) images from Artifact Registry
-resource "google_project_iam_member" "artifactregistry_reader" {
+# Allow the service account to push runtime-built images to AR
+# (sockerless backend's gcpcommon.GCPBuildService writes here).
+resource "google_project_iam_member" "artifactregistry_writer" {
   project = var.project_id
-  role    = "roles/artifactregistry.reader"
+  role    = "roles/artifactregistry.writer"
+  member  = "serviceAccount:${google_service_account.main.email}"
+}
+
+# Allow the service account to submit Cloud Build jobs (the
+# sockerless-sanctioned image builder for GCP).
+resource "google_project_iam_member" "cloudbuild_editor" {
+  project = var.project_id
+  role    = "roles/cloudbuild.builds.editor"
+  member  = "serviceAccount:${google_service_account.main.email}"
+}
+
+# Allow the service account to deploy / update Cloud Functions (gen2)
+# at runtime — the in-image sockerless gcf backend creates one
+# function per sub-task.
+resource "google_project_iam_member" "cloudfunctions_developer" {
+  project = var.project_id
+  role    = "roles/cloudfunctions.developer"
+  member  = "serviceAccount:${google_service_account.main.email}"
+}
+
+# 2nd-gen Cloud Functions run on Cloud Run, so the SA also needs
+# Cloud Run admin to create the underlying Cloud Run service.
+resource "google_project_iam_member" "run_admin" {
+  project = var.project_id
+  role    = "roles/run.admin"
+  member  = "serviceAccount:${google_service_account.main.email}"
+}
+
+# Allow the SA to act as itself when creating Cloud Functions /
+# Cloud Run services that run under the same SA.
+resource "google_service_account_iam_member" "act_as_self" {
+  service_account_id = google_service_account.main.id
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.main.email}"
+}
+
+# Allow uploads to the Cloud Build context bucket.
+resource "google_storage_bucket_iam_member" "build_bucket_admin" {
+  bucket = google_storage_bucket.build_context.name
+  role   = "roles/storage.admin"
+  member = "serviceAccount:${google_service_account.main.email}"
+}
+
+# Allow reading sub-task logs back via Cloud Logging.
+resource "google_project_iam_member" "logging_viewer" {
+  project = var.project_id
+  role    = "roles/logging.viewer"
   member  = "serviceAccount:${google_service_account.main.email}"
 }

@@ -39,6 +39,13 @@ repos:
         types: [go]
         pass_filenames: false
 
+      - id: no-public-cloud-services
+        name: No public Cloud Run / GCF exposure (Phase 122g rule)
+        entry: bash scripts/check-no-public-cloud-services.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+
       - id: simulator-testing-contract
         name: Simulator testing contract (SDK + CLI + terraform per change)
         entry: bash scripts/check-simulator-tests.sh

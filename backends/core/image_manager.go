@@ -47,6 +47,31 @@ type CloudBuildService interface {
 
 	// Available returns true if the build service is configured and ready.
 	Available() bool
+
+	// AssembleMultiArchManifest creates an OCI image-index / Docker
+	// manifest-list at `opts.Tag` referencing each per-arch image
+	// pushed via Build. The cloud's container-registry HTTP endpoint
+	// (ECR / GAR / ACR — all OCI-distribution-v2-compliant) accepts
+	// the standard PUT /v2/<repo>/manifests/<tag> request with media
+	// type `application/vnd.docker.distribution.manifest.list.v2+json`
+	// (Docker schema 2) or `application/vnd.oci.image.index.v1+json`
+	// (OCI). The shared helper `core.AssembleMultiArchManifest` does
+	// the platform discovery + manifest assembly; per-cloud
+	// implementations route the request through their AuthProvider
+	// for the bearer / basic token.
+	AssembleMultiArchManifest(ctx context.Context, opts MultiArchManifestOptions) error
+}
+
+// MultiArchManifestOptions configures an OCI manifest-list / image-index assembly.
+//
+// The runner-image build flow uses this to produce a single
+// architecture-agnostic tag (`runner-cloudrun`) that resolves to
+// `runner-cloudrun-amd64` on x86 hosts and `runner-cloudrun-arm64`
+// on ARM hosts — same shape any modern multi-arch image (alpine,
+// ubuntu, golang) ships with.
+type MultiArchManifestOptions struct {
+	Tag         string   // base tag, e.g. "us-central1-docker.pkg.dev/proj/repo/runner:cloudrun"
+	PerArchTags []string // per-arch tags already pushed, e.g. ["...:cloudrun-amd64", "...:cloudrun-arm64"]
 }
 
 // CloudBuildOptions configures a cloud build.

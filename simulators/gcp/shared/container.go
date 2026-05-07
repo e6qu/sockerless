@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/docker/go-connections/nat"
 )
 
 // ContainerConfig describes a container to run.
@@ -183,6 +185,114 @@ func StartContainerSync(cfg ContainerConfig, sink LogSink) (*ContainerHandle, er
 		cli:         cli,
 	}
 	return handle, nil
+}
+
+// HTTPContainerConfig describes a container that exposes an HTTP
+// listener on its $PORT (default 8080), to be invoked over HTTP from
+// the host. Used by the FaaS-bootstrap invocation flow (Cloud
+// Functions Gen2, Lambda container mode) where the function image's
+// ENTRYPOINT serves HTTP and the platform POSTs requests to it.
+type HTTPContainerConfig struct {
+	Image    string            // overlay image (must be locally available)
+	HostPort int               // host port to publish container's :8080 to
+	Env      map[string]string // env vars (must include PORT to match the published port-target)
+	Name     string            // container name (optional, auto-generated if empty)
+	Labels   map[string]string // container labels for tracking
+}
+
+// StartHTTPContainer starts a container detached, with its container-
+// internal :8080 published to the requested host port. Returns the
+// container ID; the caller is responsible for stopping/removing the
+// container via StopAndRemoveContainer when done. The image must
+// already be present in the local docker daemon (no pull-from-network
+// fallback — the sim runs entirely on local images so caller failures
+// are surfaced as real "image not present" errors instead of hanging
+// on registry-pull retries).
+func StartHTTPContainer(ctx context.Context, cfg HTTPContainerConfig) (string, error) {
+	cli := DockerClient()
+	if cli == nil {
+		return "", fmt.Errorf("docker client not initialized")
+	}
+
+	// Verify the image is local — surface a clear error rather than
+	// blocking on a pull from a registry that won't accept us.
+	if _, _, err := cli.ImageInspectWithRaw(ctx, cfg.Image); err != nil {
+		return "", fmt.Errorf("image %q not present locally: %w", cfg.Image, err)
+	}
+
+	var env []string
+	for k, v := range cfg.Env {
+		env = append(env, k+"="+v)
+	}
+
+	labels := map[string]string{"sockerless-sim": "true"}
+	for k, v := range cfg.Labels {
+		labels[k] = v
+	}
+
+	exposedPort := nat.Port("8080/tcp")
+	containerCfg := &container.Config{
+		Image:        cfg.Image,
+		Env:          env,
+		Labels:       labels,
+		ExposedPorts: nat.PortSet{exposedPort: struct{}{}},
+	}
+	hostCfg := &container.HostConfig{
+		PortBindings: nat.PortMap{
+			exposedPort: []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: strconv.Itoa(cfg.HostPort)}},
+		},
+	}
+
+	resp, err := cli.ContainerCreate(ctx, containerCfg, hostCfg, nil, nil, cfg.Name)
+	if err != nil {
+		return "", fmt.Errorf("container create: %w", err)
+	}
+
+	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		_ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+		return "", fmt.Errorf("container start: %w", err)
+	}
+
+	managedContainers.Store(resp.ID, true)
+	return resp.ID, nil
+}
+
+// StopAndRemoveContainer stops and removes the container. Idempotent
+// — best-effort cleanup; errors are silenced because callers
+// typically defer this and there's nothing useful to report.
+func StopAndRemoveContainer(containerID string) {
+	cli := DockerClient()
+	if cli == nil {
+		return
+	}
+	managedContainers.Delete(containerID)
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stopCancel()
+	timeout := 5
+	_ = cli.ContainerStop(stopCtx, containerID, container.StopOptions{Timeout: &timeout})
+	_ = cli.ContainerRemove(stopCtx, containerID, container.RemoveOptions{Force: true})
+}
+
+// StreamContainerLogs follows the container's stdout/stderr and
+// writes each line to the provided sink. Returns when the container
+// exits or `ctx` is cancelled. Used by the FaaS-bootstrap invocation
+// flow to forward bootstrap + user-subprocess output into Cloud
+// Logging while the invocation is in flight.
+func StreamContainerLogs(ctx context.Context, containerID string, sink LogSink) {
+	cli := DockerClient()
+	if cli == nil {
+		return
+	}
+	reader, err := cli.ContainerLogs(ctx, containerID, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     true,
+		Timestamps: false,
+	})
+	if err != nil {
+		return
+	}
+	streamDockerLogs(reader, sink)
 }
 
 // StopContainer stops a running container by ID.

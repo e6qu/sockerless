@@ -8,13 +8,15 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-100.3k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-114k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
 [![TypeScript](https://img.shields.io/badge/TypeScript-8.5k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-52.3k_lines-brightgreen)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-55.2k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
 A Docker-compatible REST API daemon that executes containers on cloud serverless backends instead of a local Docker Engine. Standard Docker clients (`docker run`, Docker SDK, CI runners) connect to Sockerless exactly as they would to a real Docker daemon — but containers run on AWS ECS, Google Cloud Run, Azure Container Apps, and more.
+
+> **2026-05-07 — 8/8 runner-integration cells GREEN.** GitHub × {ECS, Lambda, Cloud Run, GCF} and GitLab × the same four are all running the full probe + git-clone + go-build + arithmetic suite end-to-end against real cloud infrastructure. See [STATUS.md](STATUS.md) for live URLs. The closing milestone shipped Phase 123, the **storage backing driver abstraction** — `gcs-sync` replaces FUSE-on-object-store for shared workspaces. That driver pattern (cloud-agnostic core interface + per-cloud impls + operator-pluggable selection at config time + no-fallbacks discipline) is the proven precedent for a wider driver-generalization plan covering networking, DNS, and access — see [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) and [PLAN.md](PLAN.md) Phases 124-127.
 
 ## Why
 
@@ -98,22 +100,22 @@ Each backend, the agent, and the test suite are separate Go modules connected vi
 
 **Go**
 
-![core](https://img.shields.io/badge/core-17.8k-00ADD8)
+![core](https://img.shields.io/badge/core-18.4k-00ADD8)
 ![bleephub](https://img.shields.io/badge/bleephub-14.5k-00ADD8)
 ![sim/aws](https://img.shields.io/badge/sim%2Faws-11k-00ADD8)
-![sim/azure](https://img.shields.io/badge/sim%2Fazure-8.5k-00ADD8)
-![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-7k-00ADD8)
+![sim/azure](https://img.shields.io/badge/sim%2Fazure-8.6k-00ADD8)
+![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-7.8k-00ADD8)
 ![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)
 ![ecs](https://img.shields.io/badge/ecs-6.7k-5BC0DE)
-![cloudrun](https://img.shields.io/badge/cloudrun-3.9k-5BC0DE)
+![cloudrun](https://img.shields.io/badge/cloudrun-6k-5BC0DE)
 ![aca](https://img.shields.io/badge/aca-4.3k-5BC0DE)
 ![docker](https://img.shields.io/badge/docker-2.6k-5BC0DE)
-![agent](https://img.shields.io/badge/agent-2.5k-5BC0DE)
+![agent](https://img.shields.io/badge/agent-5.5k-5BC0DE)
 ![api](https://img.shields.io/badge/api-1.9k-5BC0DE)
 ![azf](https://img.shields.io/badge/azf-2.4k-A0D8EF)
 ![cli](https://img.shields.io/badge/cli-1.6k-A0D8EF)
-![gcf](https://img.shields.io/badge/gcf-2.2k-A0D8EF)
-![lambda](https://img.shields.io/badge/lambda-4k-A0D8EF)
+![gcf](https://img.shields.io/badge/gcf-5.7k-A0D8EF)
+![lambda](https://img.shields.io/badge/lambda-5k-A0D8EF)
 
 **TypeScript**
 

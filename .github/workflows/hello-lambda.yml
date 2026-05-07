@@ -1,3 +1,8 @@
+# hello-lambda — minimal sanity check that the GH actions/runner +
+# sockerless-lambda backend wiring still works end-to-end. Runs on a
+# self-hosted runner spawned by github-runner-dispatcher-aws; this
+# workflow itself uses NO repo secrets directly. See hello-ecs.yml
+# for the full auth setup note.
 name: hello-lambda
 on:
   workflow_dispatch:

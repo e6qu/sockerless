@@ -35,3 +35,9 @@ variable "labels" {
   type        = map(string)
   default     = {}
 }
+
+variable "gcs_location" {
+  description = "Location for the Cloud Build context GCS bucket (e.g., US, EU, ASIA, or a specific region)"
+  type        = string
+  default     = "US"
+}

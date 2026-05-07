@@ -27,6 +27,7 @@ type TagSet struct {
 	Labels       map[string]string // Docker labels
 	Tty          bool              // Allocate a pseudo-TTY
 	RestartCount int               // Number of restarts this container has undergone
+	AutoRemove   bool              // HostConfig.AutoRemove — `docker run --rm`
 }
 
 // AsMap returns tags as map[string]string for AWS.
@@ -61,6 +62,9 @@ func (ts TagSet) AsMap() map[string]string {
 	}
 	if ts.RestartCount > 0 {
 		m["sockerless-restart-count"] = strconv.Itoa(ts.RestartCount)
+	}
+	if ts.AutoRemove {
+		m["sockerless-auto-remove"] = "true"
 	}
 
 	// Docker labels as URL-safe-base64-encoded JSON without padding.

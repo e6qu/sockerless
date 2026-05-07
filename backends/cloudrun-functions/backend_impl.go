@@ -2,8 +2,6 @@ package gcf
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -56,13 +54,19 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		if config.WorkingDir == "" {
 			config.WorkingDir = img.Config.WorkingDir
 		}
+		// Replace bare digest ref with first RepoTag — Cloud Run
+		// rewrites bare sha256: refs to mirror.gcr.io/library/...
+		// which 404s. Image was pulled by tag so RepoTag exists.
+		if strings.HasPrefix(config.Image, "sha256:") && len(img.RepoTags) > 0 {
+			config.Image = img.RepoTags[0]
+		}
 	}
 	if config.Labels == nil {
 		config.Labels = make(map[string]string)
 	}
 
 	// Resolve Docker Hub images to Artifact Registry remote repository URIs
-	config.Image = gcpcommon.ResolveGCPImageURI(config.Image, s.config.Project, s.config.Region)
+	config.Image = gcpcommon.ResolveGCPImageURI(config.Image, s.config.Project, s.config.Region, s.config.EndpointURL)
 
 	hostConfig := api.HostConfig{NetworkMode: "default"}
 	if req.HostConfig != nil {
@@ -72,19 +76,42 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		hostConfig.NetworkMode = "default"
 	}
 
-	// Named-volume binds are allowed (`-v volName:/mnt[:ro]`)
-	// and land on sockerless-managed GCS buckets attached to the
-	// underlying Cloud Run Service. Host-path binds (`/h:/c`) are
-	// rejected — GCF containers have no host filesystem.
+	// Named-volume binds (`-v volName:/mnt[:ro]`) land on sockerless-
+	// managed GCS buckets via the underlying Cloud Run Service's
+	// ServiceV2.Template.Volumes. Host-path binds translate via
+	// SharedVolumes (config-driven). Mirror of `cloudrun.ContainerCreate`
+	// translator + `lambda.fileSystemConfigsForBinds` shape.
+	translatedBinds := make([]string, 0, len(hostConfig.Binds))
 	for _, b := range hostConfig.Binds {
 		parts := strings.SplitN(b, ":", 3)
 		if len(parts) < 2 {
 			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("invalid bind %q: expected src:dst[:mode]", b)}
 		}
-		if strings.HasPrefix(parts[0], "/") || strings.HasPrefix(parts[0], ".") {
-			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("host-path binds are not supported on Cloud Functions; use a named volume (docker volume create + -v name:%s)", parts[1])}
+		src, dst := parts[0], parts[1]
+		mode := ""
+		if len(parts) == 3 {
+			mode = parts[2]
 		}
+		if src == "/var/run/docker.sock" {
+			continue
+		}
+		if strings.HasPrefix(src, "/") || strings.HasPrefix(src, ".") {
+			if sv := s.config.LookupSharedVolumeBySourcePath(src); sv != nil {
+				translated := sv.Name + ":" + dst
+				if mode != "" {
+					translated += ":" + mode
+				}
+				translatedBinds = append(translatedBinds, translated)
+				continue
+			}
+			if isSubPathOfSharedVolume(src, s.config.SharedVolumes) {
+				continue
+			}
+			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("host-path binds are not supported on Cloud Functions (%q); use a named volume (docker volume create + -v name:%s) — volumes are backed by sockerless-managed GCS buckets. Configure SOCKERLESS_GCP_SHARED_VOLUMES to translate runner-task bind mounts.", b, dst)}
+		}
+		translatedBinds = append(translatedBinds, b)
 	}
+	hostConfig.Binds = translatedBinds
 
 	path := ""
 	var args []string
@@ -137,7 +164,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 			}
 		})
 	}
-	container.NetworkSettings.Networks[netName] = &api.EndpointSettings{
+	endpoint := &api.EndpointSettings{
 		NetworkID:   networkID,
 		EndpointID:  core.GenerateID()[:16],
 		Gateway:     "",
@@ -145,174 +172,147 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		IPPrefixLen: 16,
 		MacAddress:  "",
 	}
-
-	// Build function name from container ID
-	funcName := "skls-" + id[:12]
-
-	// Build environment variables
-	envVars := make(map[string]string)
-	for _, e := range config.Env {
-		parts := strings.SplitN(e, "=", 2)
-		if len(parts) == 2 {
-			envVars[parts[0]] = parts[1]
-		}
-	}
-
-	// Build fully qualified function name
-	parent := fmt.Sprintf("projects/%s/locations/%s", s.config.Project, s.config.Region)
-	fullFunctionName := fmt.Sprintf("%s/functions/%s", parent, funcName)
-
-	// Pass entrypoint + cmd SEPARATELY so the simulator preserves
-	// docker's ENTRYPOINT/CMD semantics. Flattening them into one
-	// slice loses the distinction: with image ENTRYPOINT=/usr/local/bin/foo
-	// and user Cmd=["arg"], a flattened slice yields ["arg"] and the
-	// sim would override ENTRYPOINT with "arg" — breaking tests like
-	// eval-arithmetic where the image entrypoint is the actual binary.
-	if len(config.Entrypoint) > 0 {
-		epJSON, _ := json.Marshal(config.Entrypoint)
-		envVars["SOCKERLESS_ENTRYPOINT"] = base64.StdEncoding.EncodeToString(epJSON)
-	}
-	if len(config.Cmd) > 0 {
-		cmdJSON, _ := json.Marshal(config.Cmd)
-		envVars["SOCKERLESS_CMD"] = base64.StdEncoding.EncodeToString(cmdJSON)
-	}
-
-	// Pass the container image so the simulator can run it directly
-	envVars["SOCKERLESS_IMG"] = config.Image
-
-	// Container IDs are 64 chars; GCP labels truncate at 63. Persist the
-	// full ID in an environment variable so CloudState.GetContainer can
-	// match requests by full ID post-start (when PendingCreates is empty).
-	envVars["SOCKERLESS_CONTAINER_ID"] = id
-
-	// Docker labels can contain `{`, `:`, `"` etc. which fail GCP's
-	// label-value charset. Cloud Functions v2's
-	// Function resource has no Annotations field (unlike Cloud Run's
-	// Service resource), so carry the labels as a base64-encoded JSON
-	// env var. CloudState.queryFunctions decodes it back into
-	// container.Config.Labels.
-	if len(config.Labels) > 0 {
-		labelsJSON, _ := json.Marshal(config.Labels)
-		envVars["SOCKERLESS_LABELS"] = base64.StdEncoding.EncodeToString(labelsJSON)
-	}
-
-	// Inject reverse-agent callback URL when configured so a bootstrap
-	// inside the function container can dial back for docker top / exec
-	// / cp. SOCKERLESS_CONTAINER_ID is already set above.
-	if s.config.CallbackURL != "" {
-		envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
-	}
-
-	// Build service config
-	serviceConfig := &functionspb.ServiceConfig{
-		AvailableMemory:      s.config.Memory,
-		AvailableCpu:         s.config.CPU,
-		TimeoutSeconds:       int32(s.config.Timeout),
-		EnvironmentVariables: envVars,
-	}
-
-	if s.config.ServiceAccount != "" {
-		serviceConfig.ServiceAccountEmail = s.config.ServiceAccount
-	}
-
-	// Build resource labels
-	tags := core.TagSet{
-		ContainerID: id,
-		Backend:     "gcf",
-		InstanceID:  s.Desc.InstanceID,
-		CreatedAt:   time.Now(),
-	}
-
-	// Create the Cloud Run Function
-	createReq := &functionspb.CreateFunctionRequest{
-		Parent:     parent,
-		FunctionId: funcName,
-		Function: &functionspb.Function{
-			Name:   fullFunctionName,
-			Labels: tags.AsGCPLabels(),
-			BuildConfig: &functionspb.BuildConfig{
-				Runtime:    "docker",
-				EntryPoint: "",
-			},
-			ServiceConfig: serviceConfig,
-		},
-	}
-
-	op, err := s.gcp.Functions.CreateFunction(s.ctx(), createReq)
-	if err != nil {
-		s.Logger.Error().Err(err).Str("function", funcName).Msg("failed to create Cloud Run Function")
-		return nil, gcpcommon.MapGCPError(err, "function", funcName)
-	}
-
-	result, err := op.Wait(s.ctx())
-	if err != nil {
-		// Best-effort: delete potentially-created function
-		if delOp, delErr := s.gcp.Functions.DeleteFunction(s.ctx(), &functionspb.DeleteFunctionRequest{
-			Name: fullFunctionName,
-		}); delErr == nil {
-			_ = delOp.Wait(s.ctx())
-		}
-		s.Logger.Error().Err(err).Str("function", funcName).Msg("failed to wait for Cloud Run Function creation")
-		return nil, gcpcommon.MapGCPError(err, "function", funcName)
-	}
-
-	// Get function URL from the result
-	functionURL := ""
-	if result.ServiceConfig != nil {
-		functionURL = result.ServiceConfig.Uri
-	}
-
-	// If the request carries named-volume binds, attach them to the
-	// underlying Cloud Run Service via the GetService /
-	// UpdateService escape hatch. GCF's Functions v2 API has no direct
-	// Volumes primitive in ServiceConfig (only SecretVolumes), so every
-	// other volume must be appended to the backing service's
-	// RevisionTemplate.
-	if len(hostConfig.Binds) > 0 {
-		if err := s.attachVolumesToFunctionService(s.ctx(), result, hostConfig.Binds); err != nil {
-			// Best-effort: delete the partially-configured function so
-			// the create appears atomic to the docker client.
-			if delOp, delErr := s.gcp.Functions.DeleteFunction(s.ctx(), &functionspb.DeleteFunctionRequest{
-				Name: fullFunctionName,
-			}); delErr == nil {
-				_ = delOp.Wait(s.ctx())
+	// Capture standard Docker NetworkingConfig.EndpointsConfig.Aliases
+	// so the multi-container materialiser can source SOCKERLESS_HOST_
+	// ALIASES from them. Pure Docker-API signal — no runner-specific code.
+	if req.NetworkingConfig != nil {
+		for refName, reqEp := range req.NetworkingConfig.EndpointsConfig {
+			if reqEp == nil {
+				continue
 			}
-			s.Logger.Error().Err(err).Str("function", funcName).Msg("failed to attach named-volume binds to underlying Cloud Run Service")
-			return nil, &api.ServerError{Message: fmt.Sprintf("attach volumes to function %q: %v", funcName, err)}
+			matches := refName == netName
+			if !matches {
+				if net, ok := s.Store.ResolveNetwork(refName); ok && net.ID == networkID {
+					matches = true
+				}
+			}
+			if matches && len(reqEp.Aliases) > 0 {
+				endpoint.Aliases = append(endpoint.Aliases, reqEp.Aliases...)
+			}
 		}
 	}
+	container.NetworkSettings.Networks[netName] = endpoint
 
+	// Fast-path: store in PendingCreates immediately and run the slow
+	// CreateFunction + UpdateService work in a background goroutine.
+	// ContainerCreate returns 201 in <100 ms; ContainerStart waits on
+	// s.deployFutures[id] before invoking the function.
+	// gitlab-runner's 120 s docker-daemon timeout fires per HTTP call —
+	// returning fast from /containers/create avoids the timeout. The
+	// caller's natural next step is /containers/{id}/start which polls
+	// without a hard timeout, so the deploy can take its full 200 s
+	// without violating the contract.
 	s.PendingCreates.Put(id, container)
-
-	s.GCF.Put(id, GCFState{
-		FunctionName: funcName,
-		FunctionURL:  functionURL,
-		LogResource:  funcName,
-	})
-
-	s.Registry.Register(core.ResourceEntry{
-		ContainerID:  id,
-		Backend:      "gcf",
-		ResourceType: "function",
-		ResourceID:   fullFunctionName,
-		InstanceID:   s.Desc.InstanceID,
-		CreatedAt:    time.Now(),
-		Metadata:     map[string]string{"image": container.Image, "name": container.Name, "functionName": funcName},
-	})
-
 	s.EmitEvent("container", "create", id, map[string]string{
 		"name":  strings.TrimPrefix(name, "/"),
 		"image": config.Image,
 	})
+	// Cancellation context lets ContainerStart abort the in-flight
+	// async deploy when the container turns out to be a network-pod
+	// member that should materialize as a multi-container Service.
+	// Parent is Background — async deploy lifetime is independent of
+	// the (short-lived) ContainerCreate request handler.
+	deployCtx, cancel := context.WithCancel(context.Background())
+	deployCh := make(chan error, 1)
+	s.deployFutures.Store(id, &deployFuture{ch: deployCh, cancel: cancel})
+	go s.deployFunctionAsync(deployCtx, id, container, deployCh)
+	return &api.ContainerCreateResponse{ID: id, Warnings: []string{}}, nil
+}
 
-	return &api.ContainerCreateResponse{
-		ID:       id,
-		Warnings: []string{},
-	}, nil
+// cancelDeployFuture atomically removes the future for `id` from the
+// futures map, fires its cancel func, and drains its result channel
+// (blocks until the goroutine exits — typically <1s once the next ctx
+// check fires; the deferred unwind in deployFunction releases any
+// claimed function before exit). Safe to call when no future exists
+// (returns immediately). Idempotent: a second call after the first
+// drain is a no-op.
+func (s *Server) cancelDeployFuture(id string) {
+	v, ok := s.deployFutures.LoadAndDelete(id)
+	if !ok {
+		return
+	}
+	f, _ := v.(*deployFuture)
+	if f == nil {
+		return
+	}
+	if f.cancel != nil {
+		f.cancel()
+	}
+	if f.ch != nil {
+		// Drain — the goroutine will close(ch) after sending its result.
+		// We don't care about the value (errDeployCancelled or nil); we
+		// just need to be sure the goroutine has finished its unwind.
+		<-f.ch
+	}
+}
+
+// deployFunctionAsync runs the heavy CreateFunction.Wait + image swap
+// work that ContainerCreate used to do synchronously. Sends the final
+// error (or nil on success) on `done`. Invoked from a goroutine kicked
+// by ContainerCreate; ContainerStart awaits this channel before going
+// to invoke.
+//
+// Honours ctx for cancellation: if ContainerStart later decides this
+// container is part of a multi-container pod that should materialize as
+// a single Cloud Run Service revision (per network_pod.go), it calls
+// the future's cancel func, this goroutine returns errDeployCancelled,
+// and the deferred release-pool path unwinds any claim taken so far.
+func (s *Server) deployFunctionAsync(ctx context.Context, id string, container api.Container, done chan<- error) {
+	err := s.deployFunction(ctx, id, container)
+	if err != nil {
+		if ctx.Err() != nil {
+			// Cancelled — surface the sentinel so the awaiter knows it's
+			// expected (vs a real error). The deploy may have left a
+			// half-committed pool claim; deployFunction is responsible
+			// for unwinding via its own ctx.Err() checks. If we landed
+			// here without unwinding, log so the inconsistency is visible.
+			s.Logger.Info().Str("container", id).Err(err).Msg("async deploy cancelled — container will be materialized as part of a network-pod Service revision")
+			err = errDeployCancelled
+		} else {
+			s.Logger.Error().Err(err).Str("container", id).Msg("async deploy failed")
+		}
+	}
+	select {
+	case done <- err:
+	default:
+	}
+	close(done)
+}
+
+// deployFunction performs the original synchronous deploy work
+// extracted from ContainerCreate. Builds the overlay, claims a pool
+// entry or creates a fresh Function, swaps the underlying Service
+// image, and attaches volumes. Mutates s.PendingCreates entry on
+// completion so subsequent reads see fresh state.
+//
+// Honours ctx — at every cloud-API boundary checks ctx.Err() and
+// unwinds the partial deploy. If a pool entry was already claimed when
+// cancellation arrives, releases the claim (clears
+// sockerless_allocation label) so the next attempt can reclaim. If a
+// fresh Function was already created, deletes it. Returns the context
+// error directly so deployFunctionAsync can surface errDeployCancelled.
+//
+// Routes the entire single-container deploy through the fast Cloud
+// Run Services.CreateService path (deployContainerService). Cloud
+// Functions Gen2's CreateFunction + Buildpacks build + UpdateService
+// swap was ~90-150 s — long enough that gitlab-runner's permission
+// container hit the 120 s timeout; the direct CR Service deploy is
+// ~30-60 s. Skips the pool-claim path too — at this speed the pool
+// optimisation is unnecessary, and pool entries are Functions which
+// the cloud_state Services-side path doesn't index.
+func (s *Server) deployFunction(ctx context.Context, id string, container api.Container) error {
+	if err := s.deployContainerService(ctx, id, container); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ContainerStart starts a Cloud Run Function invocation for the container.
 func (s *Server) ContainerStart(ref string) error {
+	s.Logger.Info().Str("ref", ref).Msg("ContainerStart: ENTRY")
 	// Resolve from PendingCreates (containers between create and start)
 	c, ok := s.PendingCreates.Get(ref)
 	if !ok {
@@ -326,22 +326,142 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 	}
 	if !ok {
+		s.Logger.Warn().Str("ref", ref).Msg("ContainerStart: NOT FOUND in PendingCreates")
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
 	id := c.ID
+	s.Logger.Info().Str("container", id).Bool("running", c.State.Running).Str("status", c.State.Status).Bool("openStdin", c.Config.OpenStdin).Msg("ContainerStart: resolved")
 
 	if c.State.Running {
+		// Multi-stage gitlab-runner pattern: per stage gitlab-runner does
+		// `stop` then re-`attach` + re-`start`. Cloud Run Service revisions
+		// are immutable so we can't actually restart, but the bootstrap
+		// HTTP server inside the Service is still alive and accepts new
+		// envelope POSTs. When a fresh stdinPipe was just registered (by
+		// the per-stage attach) AND the container has OpenStdin=true,
+		// kick off a NEW invoke goroutine to drain the new pipe + POST
+		// the new stage's script to the bootstrap. Without this, only
+		// the first stage's script runs and gitlab-runner hangs waiting
+		// for stage 2's output.
+		if c.Config.OpenStdin {
+			if _, hasPipe := s.stdinPipes.Load(id); hasPipe {
+				s.Logger.Info().Str("container", id).Msg("ContainerStart: already running but fresh stdinPipe registered — kicking new invoke goroutine for next stage")
+				go s.invokeRunningRunnerStage(id, c)
+				return nil
+			}
+		}
+		s.Logger.Info().Str("container", id).Msg("ContainerStart: already running, returning NotModified")
 		return &api.NotModifiedError{}
 	}
 
-	// Multi-container pods are not supported by FaaS backends
-	if pod, inPod := s.Store.Pods.GetPodForContainer(id); inPod && len(pod.ContainerIDs) > 1 {
-		return &api.InvalidParameterError{
-			Message: "multi-container pods are not supported by the cloudrun-functions backend",
+	// Docker-network → multi-member pod auto-detection FIRST. The
+	// decision is purely Standard-Docker-API: NetworkingConfig.EndpointsConfig
+	// + Container.Config.OpenStdin. Doing this BEFORE the deploy-await
+	// resolves the deploy/materialize architectural conflict — if this
+	// container is a network-pod member that should materialize as a
+	// multi-container Service revision, we cancel our own (and siblings')
+	// in-flight async deploys before they complete, then take the
+	// materialize path.
+	netDefer, netMembers := s.shouldDeferOrMaterializeNetworkPod(c)
+	s.Logger.Info().Str("container", id).Bool("openStdin", c.Config.OpenStdin).Bool("netDefer", netDefer).Int("netMembers", len(netMembers)).Msg("ContainerStart: network-pod decision")
+	if netDefer {
+		// Cancel our own in-flight deploy — a script-runner sibling will
+		// eventually arrive and trigger materializePodFunction with us as
+		// a member. The single-container deploy goroutine would race that
+		// path and leave an orphan single-container function.
+		s.cancelDeployFuture(id)
+		s.PendingCreates.Update(id, func(pc *api.Container) {
+			pc.State.Status = "running"
+			pc.State.Running = true
+			pc.State.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		})
+		return nil
+	}
+	if len(netMembers) > 1 {
+		// Cancel + drain every member's in-flight async deploy before
+		// materializing — a sibling's single-container deploy completing
+		// concurrently with our multi-container Service deploy would leave
+		// an orphan function and (worse) the runner's cross-container
+		// loopback DNS would point at the wrong revision.
+		for _, m := range netMembers {
+			s.cancelDeployFuture(m.ID)
+		}
+		// netMembers[0].ID is the authoritative MAIN per the convention
+		// in shouldDeferOrMaterializeNetworkPod. For gitlab-runner pattern
+		// (OpenStdin=true) that's the current container; for GH actions/
+		// runner pattern (OpenStdin=false service-arrival path)
+		// it's the FIRST sibling — the long-lived job container created
+		// before this service. Use that ID for Service naming and
+		// allocation labels so resolveGCFFromCloud(mainID) finds the
+		// pod-Service afterwards.
+		mainID := netMembers[0].ID
+		exitCh := make(chan struct{})
+		s.Store.WaitChs.Store(mainID, exitCh)
+		// Mark the materializing main container "running" in PendingCreates
+		// so concurrent ContainerInspect / cleanup-script docker exec calls
+		// during the 30-60s CreateService.Wait window resolve to a real
+		// container instead of NotFound. queryPodServiceContainers takes
+		// over once the Service is queryable; the entry is removed in
+		// invokePodServiceMain when the pod completes.
+		updated := s.PendingCreates.Update(mainID, func(pc *api.Container) {
+			pc.State.Status = "running"
+			pc.State.Running = true
+			pc.State.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		})
+		if !updated {
+			// Entry was already removed (race with cancelled async deploy
+			// cleanup); recreate it from the resolved member so the
+			// materialize window has a visible entry for inspect/exec.
+			mCopy := netMembers[0]
+			mCopy.State.Status = "running"
+			mCopy.State.Running = true
+			mCopy.State.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+			s.PendingCreates.Put(mainID, mCopy)
+		}
+		s.Logger.Info().Str("main", mainID).Str("trigger", id).Bool("updated", updated).Int("members", len(netMembers)).Msg("network-pod ContainerStart: marked running, entering materialize")
+		err := s.materializePodService(mainID, netMembers, exitCh)
+		if err != nil {
+			s.PendingCreates.Delete(mainID)
+		}
+		return err
+	}
+
+	// Single-container fall-through: await OUR own deploy. ContainerCreate
+	// kicked deployFunctionAsync immediately so this is gitlab-runner's
+	// natural blocking wait point — taking the full 200s here is within
+	// the docker-API contract.
+	if v, ok := s.deployFutures.LoadAndDelete(id); ok {
+		f, _ := v.(*deployFuture)
+		if f != nil && f.ch != nil {
+			if deployErr, alive := <-f.ch; alive && deployErr != nil {
+				return deployErr
+			}
 		}
 	}
 
-	gcfState, _ := s.GCF.Get(id)
+	// Multi-container pod handling: defer until all members have been
+	// started, then collapse the pod into a single Cloud Run Function
+	// backed by a merged-rootfs overlay (per spec § "Podman pods on
+	// FaaS backends — supervisor-in-overlay"). The supervisor (PID 1
+	// of the function container) forks one chroot'd subprocess per
+	// pod member; the main member's stdout becomes the HTTP response
+	// body and sidecars run for the lifetime of the invocation.
+	if pod, inPod := s.Store.Pods.GetPodForContainer(id); inPod && len(pod.ContainerIDs) > 1 {
+		exitCh := make(chan struct{})
+		s.Store.WaitChs.Store(id, exitCh)
+		shouldDefer, podContainers := s.PodDeferredStart(id)
+		if shouldDefer {
+			// Earlier pod members wait for the main's start to trigger
+			// the merged-Function build. Their WaitChs stay registered
+			// so `docker wait <member>` blocks until invokePodFunction
+			// fans the result out.
+			return nil
+		}
+		s.PendingCreates.Delete(id)
+		return s.materializePodService(id, podContainers, exitCh)
+	}
+
+	gcfState, _ := s.resolveGCFFromCloud(s.ctx(), id)
 
 	// Remove from PendingCreates now that we're starting.
 	s.PendingCreates.Delete(id)
@@ -354,13 +474,23 @@ func (s *Server) ContainerStart(ref string) error {
 	// Invoke function via HTTP trigger asynchronously and capture the
 	// outcome in Store.InvocationResults so CloudState reflects the
 	// container as exited with a real exit code.
+	//
+	// Pass user entrypoint+cmd as the exec envelope's argv so
+	// pool-claimed Functions don't need a CR Service env update on
+	// each claim. Bootstrap's parseExecEnvelope reads argv from the
+	// request body and runs Path B; when argv is empty the bootstrap
+	// falls back to the legacy default-invoke path that reads
+	// SOCKERLESS_USER_* from env (still works for fresh deploys).
+	argv := append([]string{}, c.Config.Entrypoint...)
+	argv = append(argv, c.Config.Cmd...)
+	envSlice := append([]string{}, c.Config.Env...)
 	go func() {
 		inv := core.InvocationResult{}
 		if gcfState.FunctionURL == "" {
 			s.Logger.Error().Str("function", gcfState.FunctionName).Msg("no function URL available for invocation")
 			inv.ExitCode = 1
 			inv.Error = "no function URL available"
-		} else if resp, err := gcfHTTPClient.Post(gcfState.FunctionURL, "application/json", nil); err != nil {
+		} else if resp, err := invokeFunction(s.ctx(), gcfState.FunctionURL, argv, c.Config.WorkingDir, envSlice); err != nil {
 			s.Logger.Error().Err(err).Str("function", gcfState.FunctionName).Msg("function invocation failed")
 			inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
 			inv.Error = err.Error()
@@ -478,15 +608,35 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	s.StopHealthCheck(id)
 
-	// Delete Cloud Run Function (best-effort)
-	gcfState, _ := s.GCF.Get(id)
+	// Pool-aware release: derive (function-name, overlay-hash) from cloud labels
+	// so the release path is correct after a backend restart (no in-memory state).
+	gcfState, _ := s.resolveGCFFromCloud(s.ctx(), id)
+	fullName := ""
 	if gcfState.FunctionName != "" {
-		fullName := fmt.Sprintf("projects/%s/locations/%s/functions/%s", s.config.Project, s.config.Region, gcfState.FunctionName)
-		op, err := s.gcp.Functions.DeleteFunction(s.ctx(), &functionspb.DeleteFunctionRequest{
-			Name: fullName,
-		})
-		if err == nil {
-			_ = op.Wait(s.ctx()) // best-effort wait
+		// Cache hit
+		if strings.HasPrefix(gcfState.FunctionName, "projects/") {
+			fullName = gcfState.FunctionName
+		} else {
+			fullName = fmt.Sprintf("projects/%s/locations/%s/functions/%s", s.config.Project, s.config.Region, gcfState.FunctionName)
+		}
+	} else {
+		// Recover from cloud labels: list sockerless-managed Functions
+		// allocated to this container.
+		parent := fmt.Sprintf("projects/%s/locations/%s", s.config.Project, s.config.Region)
+		filter := fmt.Sprintf(`labels.sockerless_allocation:"%s"`, shortAllocLabel(id))
+		it := s.gcp.Functions.ListFunctions(s.ctx(), &functionspb.ListFunctionsRequest{Parent: parent, Filter: filter})
+		if fn, err := it.Next(); err == nil && fn != nil {
+			fullName = fn.GetName()
+		}
+	}
+	if fullName != "" {
+		fn, gerr := s.gcp.Functions.GetFunction(s.ctx(), &functionspb.GetFunctionRequest{Name: fullName})
+		contentTag := ""
+		if gerr == nil && fn != nil {
+			contentTag = fn.GetLabels()["sockerless_overlay_hash"]
+		}
+		if err := s.releaseOrDeleteFunction(s.ctx(), fullName, contentTag); err != nil {
+			s.Logger.Warn().Err(err).Str("function", fullName).Msg("pool release failed")
 		}
 		s.Registry.MarkCleanedUp(fullName)
 	}
@@ -503,7 +653,6 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	s.PendingCreates.Delete(id)
-	s.GCF.Delete(id)
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
 	}
@@ -533,32 +682,46 @@ func (s *Server) ContainerLogs(ref string, opts api.ContainerLogsOptions) (io.Re
 // buildCloudLogsFetcher returns a CloudLogFetchFunc closure that
 // queries Cloud Logging for the given function. Shared by
 // ContainerLogs and ContainerAttach.
+//
+// The `logName:"run.googleapis.com"` substring clause restricts the
+// query to Cloud Run runtime logs (Gen2 functions run on Cloud Run).
+// Without it, Cloud Audit Logs (`cloudaudit.googleapis.com/...`) match
+// the same `resource.type="cloud_run_revision"` and would be merged
+// into docker logs as multi-KB textproto AuditLog dumps.
 func (s *Server) buildCloudLogsFetcher(ref string) core.CloudLogFetchFunc {
 	var funcName string
 	if id, ok := s.ResolveContainerIDAuto(context.Background(), ref); ok {
-		gcfState, _ := s.GCF.Get(id)
+		gcfState, _ := s.resolveGCFFromCloud(s.ctx(), id)
 		funcName = gcfState.FunctionName
 	}
 	baseFilter := fmt.Sprintf(
-		`resource.type="cloud_run_revision" AND resource.labels.service_name="%s"`,
+		`resource.type="cloud_run_revision" AND resource.labels.service_name="%s" AND logName:"run.googleapis.com"`,
 		funcName,
 	)
 	return s.cloudLoggingFetch(baseFilter)
 }
 
-// cloudLoggingFetch returns a CloudLogFetchFunc that queries Cloud Logging.
-// cursor is a time.Time tracking the latest seen timestamp for dedup.
+// gcfLogCursor mirrors cloudrun's `cloudLogCursor`: tracks lastTS plus a
+// per-entry seen-set so tied-timestamp Cloud Logging entries (batched
+// stdout writes) are not lost between fetches and not duplicated.
+type gcfLogCursor struct {
+	lastTS time.Time
+	seen   map[string]struct{}
+}
+
+// cloudLoggingFetch returns a CloudLogFetchFunc that queries Cloud Logging
+// using `timestamp>=cursor.lastTS` plus a `seen` set for dedup.
 func (s *Server) cloudLoggingFetch(baseFilter string) core.CloudLogFetchFunc {
 	return func(ctx context.Context, params core.CloudLogParams, cursor any) ([]core.CloudLogEntry, any, error) {
 		logFilter := baseFilter
 
-		var lastTS time.Time
-		if cursor != nil {
-			lastTS = cursor.(time.Time)
+		c, _ := cursor.(*gcfLogCursor)
+		if c == nil {
+			c = &gcfLogCursor{seen: make(map[string]struct{})}
 		}
 
-		if !lastTS.IsZero() {
-			logFilter += fmt.Sprintf(` AND timestamp>"%s"`, lastTS.UTC().Format(time.RFC3339Nano))
+		if !c.lastTS.IsZero() {
+			logFilter += fmt.Sprintf(` AND timestamp>="%s"`, c.lastTS.UTC().Format(time.RFC3339Nano))
 		} else {
 			logFilter += params.CloudLoggingSinceFilter()
 			logFilter += params.CloudLoggingUntilFilter()
@@ -579,13 +742,18 @@ func (s *Server) cloudLoggingFetch(baseFilter string) core.CloudLogFetchFunc {
 			if line == "" {
 				continue
 			}
+			key := fmt.Sprintf("%d:%s", entry.Timestamp.UnixNano(), line)
+			if _, dup := c.seen[key]; dup {
+				continue
+			}
+			c.seen[key] = struct{}{}
 			entries = append(entries, core.CloudLogEntry{Timestamp: entry.Timestamp, Message: line})
-			if entry.Timestamp.After(lastTS) {
-				lastTS = entry.Timestamp
+			if entry.Timestamp.After(c.lastTS) {
+				c.lastTS = entry.Timestamp
 			}
 		}
 
-		return entries, lastTS, nil
+		return entries, c, nil
 	}
 }
 
@@ -646,7 +814,7 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 			spaceReclaimed += uint64(img.Size)
 		}
 		// Clean up Cloud Run Functions cloud resources
-		gcfState, _ := s.GCF.Get(c.ID)
+		gcfState, _ := s.resolveGCFFromCloud(s.ctx(), c.ID)
 		if gcfState.FunctionName != "" {
 			fullName := fmt.Sprintf("projects/%s/locations/%s/functions/%s", s.config.Project, s.config.Region, gcfState.FunctionName)
 			if op, err := s.gcp.Functions.DeleteFunction(s.ctx(), &functionspb.DeleteFunctionRequest{
@@ -668,7 +836,6 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 			s.Store.Pods.RemoveContainer(pod.ID, c.ID)
 		}
 		s.PendingCreates.Delete(c.ID)
-		s.GCF.Delete(c.ID)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
 			close(ch.(chan struct{}))
 		}
@@ -717,8 +884,23 @@ func (s *Server) ContainerUnpause(ref string) error {
 }
 
 // ImagePull delegates to ImageManager which handles cloud auth and config fetching.
+// Rewrites Docker Hub / GitLab Registry refs to the AR remote-proxy so all pulls
+// in the project hit AR (avoids Docker Hub rate limits). When rewriting, discard
+// the caller's auth — it was scoped to the original registry and is invalid for
+// AR; ImageManager.Pull's cloud-auth path mints an AR token via ARAuthProvider.
 func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
-	return s.images.Pull(ref, auth)
+	resolved := gcpcommon.ResolveGCPImageURI(ref, s.config.Project, s.config.Region, s.config.EndpointURL)
+	if resolved == ref {
+		return s.images.Pull(resolved, auth)
+	}
+	rc, err := s.images.Pull(resolved, "")
+	if err != nil {
+		return nil, err
+	}
+	if img, ok := s.Store.ResolveImage(resolved); ok {
+		core.StoreImageWithAliases(s.Store, ref, img)
+	}
+	return rc, nil
 }
 
 // ImageLoad delegates to ImageManager.
@@ -789,16 +971,39 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 // has no native Cloud Run Functions surface and stays
 // NotImplementedError.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
+	s.Logger.Info().Str("id", id).Bool("stdin", opts.Stdin).Bool("stdout", opts.Stdout).Bool("stderr", opts.Stderr).Bool("logs", opts.Logs).Bool("stream", opts.Stream).Msg("ContainerAttach: ENTRY")
 	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
+		s.Logger.Warn().Str("id", id).Msg("ContainerAttach: NOT FOUND")
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
+		s.Logger.Info().Str("id", id).Msg("ContainerAttach: routing to reverse-agent")
 		return s.BaseServer.ContainerAttach(id, opts)
 	}
+	// gitlab-runner attach-stdin pattern (mirror of cloudrun's
+	// ContainerAttach): when the caller wants stdin, register a
+	// stdinPipe + attachStream so invokePodServiceMain (the network-pod
+	// invoke goroutine) can wait for the script bytes to land before
+	// POSTing to the Service URL. Without this, gcf's
+	// invokePodServiceMain POSTs the user's default CMD immediately on
+	// materialize completion, which exits 0 with no work and closes
+	// WaitChs before gitlab-runner can attach + pipe its script.
+	//
+	// Note: c.Config.Image at attach time is the user-supplied original
+	// (e.g. golang:1.22-alpine), NOT the overlay URI — the rewrite
+	// happens inside materializePodService. We therefore allow stdin
+	// for ANY container with a registered Cloud Run Service backing
+	// (or about-to-be-created via materialize).
 	if opts.Stdin {
-		return nil, &api.NotImplementedError{Message: "interactive docker attach requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
+		s.Logger.Info().Str("container", c.ID).Str("image", c.Config.Image).Msg("ContainerAttach: registering stdinPipe + attachStream")
+		p := newStdinPipe()
+		actual, _ := s.stdinPipes.LoadOrStore(c.ID, p)
+		pipe := actual.(*stdinPipe)
+		pipe.Open()
+		return s.newAttachStream(c.ID, pipe), nil
 	}
+	s.Logger.Info().Str("id", id).Msg("ContainerAttach: routing to AttachViaCloudLogs (read-only)")
 	return core.AttachViaCloudLogs(s.BaseServer, id, opts, s.buildCloudLogsFetcher(id))
 }
 

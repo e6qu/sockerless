@@ -1,9 +1,11 @@
+# hello-ecs — minimal sanity check that the GH actions/runner +
+# sockerless-ecs backend wiring still works end-to-end. Runs on a
+# self-hosted runner spawned by github-runner-dispatcher-aws; this
+# workflow itself uses NO repo secrets directly. The dispatcher
+# holds the AWS credentials + GitHub PAT operator-side.
 name: hello-ecs
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - tests/runners/**
 jobs:
   hello:
     runs-on: [self-hosted, sockerless-ecs]

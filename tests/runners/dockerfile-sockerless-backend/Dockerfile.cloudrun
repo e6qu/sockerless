@@ -1,0 +1,33 @@
+# Standalone sockerless-backend-cloudrun image. Sidecar in the
+# multi-container Cloud Run Job/Service revision that hosts a vanilla
+# actions/runner or gitlab/gitlab-runner container. Loopback talks to
+# this binary on :3375 via DOCKER_HOST=tcp://localhost:3375.
+#
+# Distroless static base: no apt, no userland — eliminates BUG-945
+# class of build flake (no network during build past `COPY` of the
+# pre-compiled binary).
+#
+# Build + push:
+#   GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
+#     -C backends/cloudrun/cmd/sockerless-backend-cloudrun -tags noui \
+#     -o /path/to/this-dir/sockerless-backend-cloudrun .
+#   podman build --platform=linux/amd64 \
+#     -t us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/sockerless-backend-cloudrun:latest \
+#     -f tests/runners/dockerfile-sockerless-backend/Dockerfile.cloudrun \
+#     tests/runners/dockerfile-sockerless-backend
+#   podman push us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/sockerless-backend-cloudrun:latest
+
+FROM gcr.io/distroless/static-debian12:nonroot
+
+COPY sockerless-backend-cloudrun     /usr/local/bin/sockerless-backend-cloudrun
+COPY sockerless-cloudrun-bootstrap   /opt/sockerless/sockerless-cloudrun-bootstrap
+
+# Phase 122g: cloudrun backend bakes this bootstrap into every per-step
+# overlay image it builds via Cloud Build (image-inject path). Set the
+# env var so the backend knows where to find it.
+ENV SOCKERLESS_CLOUDRUN_BOOTSTRAP=/opt/sockerless/sockerless-cloudrun-bootstrap
+
+# DOCKER_HOST clients in the sibling container connect on tcp://localhost:3375.
+EXPOSE 3375
+
+ENTRYPOINT ["/usr/local/bin/sockerless-backend-cloudrun", "-addr", ":3375", "-log-level", "info"]

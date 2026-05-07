@@ -42,15 +42,20 @@ func (p *cloudRunCloudState) GetContainer(ctx context.Context, ref string) (api.
 
 func (p *cloudRunCloudState) ListContainers(ctx context.Context, all bool, filters map[string][]string) ([]api.Container, error) {
 	var result []api.Container
+	seen := make(map[string]bool)
 
 	// Include PendingCreates (containers between create and start)
 	for _, c := range p.server.PendingCreates.List() {
+		if seen[c.ID] {
+			continue
+		}
 		if !all && !c.State.Running {
 			continue
 		}
 		if filters != nil && !core.MatchContainerFilters(c, filters) {
 			continue
 		}
+		seen[c.ID] = true
 		result = append(result, c)
 	}
 
@@ -71,14 +76,8 @@ func (p *cloudRunCloudState) ListContainers(ctx context.Context, all bool, filte
 		cloudContainers = append(cloudContainers, services...)
 	}
 
-	// Deduplicate: skip cloud containers that are already in PendingCreates
-	pendingIDs := make(map[string]bool)
-	for _, c := range p.server.PendingCreates.List() {
-		pendingIDs[c.ID] = true
-	}
-
 	for _, c := range cloudContainers {
-		if pendingIDs[c.ID] {
+		if seen[c.ID] {
 			continue
 		}
 		if !all && !c.State.Running {
@@ -87,6 +86,7 @@ func (p *cloudRunCloudState) ListContainers(ctx context.Context, all bool, filte
 		if filters != nil && !core.MatchContainerFilters(c, filters) {
 			continue
 		}
+		seen[c.ID] = true
 		result = append(result, c)
 	}
 
@@ -488,12 +488,31 @@ func (p *cloudRunCloudState) jobToContainer(ctx context.Context, job *runpb.Job)
 		networkName = "bridge"
 	}
 
+	autoRemove := annotations["sockerless_auto_remove"] == "true" ||
+		labels["sockerless_auto_remove"] == "true"
+
+	// docker ps's COMMAND column reads from Container.Path + Container.Args
+	// (NOT from Config.Cmd). Synthesise them from the cloud-side job's
+	// entrypoint+cmd so recovered containers don't surface as `""` after
+	// PendingCreates has cleared.
+	var path string
+	var argv []string
+	if len(entrypoint) > 0 {
+		path = entrypoint[0]
+		argv = append(entrypoint[1:], cmd...)
+	} else if len(cmd) > 0 {
+		path = cmd[0]
+		argv = cmd[1:]
+	}
+
 	return api.Container{
 		ID:      containerID,
 		Name:    name,
 		Created: created,
 		Image:   image,
 		State:   state,
+		Path:    path,
+		Args:    argv,
 		Config: api.ContainerConfig{
 			Image:      image,
 			Cmd:        cmd,
@@ -503,6 +522,7 @@ func (p *cloudRunCloudState) jobToContainer(ctx context.Context, job *runpb.Job)
 		},
 		HostConfig: api.HostConfig{
 			NetworkMode: networkName,
+			AutoRemove:  autoRemove,
 		},
 		NetworkSettings: api.NetworkSettings{
 			Networks: map[string]*api.EndpointSettings{
