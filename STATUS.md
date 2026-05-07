@@ -2,6 +2,8 @@
 
 **2026-05-07 — 8/8 cells GREEN.** The runner-integration milestone is closed: every cell-pair (GitHub × {ECS, Lambda, cloudrun, gcf} and GitLab × the same four) runs the full probe + git-clone + go-build + arithmetic suite end-to-end against real cloud infrastructure. Phase 123 (storage backing driver abstraction with `gcs-sync`) was the architectural pillar that closed cells 5+6. Narrative + what-failed-along-the-way: [WHAT_WE_DID.md](WHAT_WE_DID.md). Per-bug detail: [BUGS.md](BUGS.md). Roadmap (next architectural direction): [PLAN.md](PLAN.md). Resume pointer: [DO_NEXT.md](DO_NEXT.md).
 
+**2026-05-08 — Phase 129 #4 (owner-linked orphan-Service sweep) shipped.** Dispatcher's 2-minute Cleanup now reaps orphan `sockerless-svc-*` pod-Services left behind when a runner-task dies before issuing ContainerRemove. Mechanism: sockerless self-discovers `CLOUD_RUN_JOB` (Cloud-Run-injected; dispatcher stays generic per `feedback_dispatcher_generic.md`) and stamps `sockerless_owner_runner_task` on every pod-Service; cleanup deletes any service whose owner Cloud Run Job is gone or terminal. No live infra running yet — verified at unit-test level (`spawner_test.go`, `owner_label_test.go`) + module build. Live-cloud verification deferred until next live session per `project_gcp_live_setup.md`. Spec: `specs/CLOUD_RESOURCE_MAPPING.md § Orphan pod-Service GC (owner-link pattern)`.
+
 ## Cell scoreboard
 
 | Cell | Path | State | Job / Pipeline URL |

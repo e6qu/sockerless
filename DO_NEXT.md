@@ -10,15 +10,16 @@ Resume pointer for next session. State: [STATUS.md](STATUS.md) · Bugs: [BUGS.md
 
 Cell URLs in [STATUS.md](STATUS.md). Per-bug detail in [BUGS.md](BUGS.md). Day-of narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).
 
-## Next two architectural threads
+## Next architectural threads
 
-### 1. Deploy hygiene — orphan `sockerless-svc-*` GC sweep
+### 1. Deploy hygiene — orphan `sockerless-svc-*` GC sweep ✅ SHIPPED 2026-05-08
 
-BUG-970's structural fix (set `minInstanceCount=0` on materialized pod-Services so failed revisions don't pin regional Cloud Run CPU quota) closes the worst of the always-on cost. But cancelled / killed pipelines still leave orphan `sockerless-svc-*` Services behind: `ContainerRemove` cleans up the underlying Service for the happy path; nothing cleans up after the runner-task itself dies. Today's session manually deleted ~8 orphans before cells 5+6 v15 could even allocate CPU.
+Owner-linked variant landed. Sockerless self-discovers `CLOUD_RUN_JOB` (Cloud-Run-injected env var; no dispatcher-side `SOCKERLESS_*` injection, per dispatcher-generic rule) and stamps `sockerless_owner_runner_task=<jobID>` on every pod-Service it creates (cloudrun + gcf both). Dispatcher's existing 2-minute Cleanup now lists `sockerless-svc-*` Services and deletes any whose owner Cloud Run Job is gone/terminal. Code: `gcp-common/owner_label.go`, `cloudrun/servicespec.go`, `cloudrun-functions/pod_service.go`, `github-runner-dispatcher-gcp/internal/spawner/spawner.go`, `cmd/.../main.go::Cleanup`. Spec: `specs/CLOUD_RESOURCE_MAPPING.md § Orphan pod-Service GC (owner-link pattern)`. Tests + go vet GREEN; live verification deferred to next live-cloud session.
 
-**Concrete fix shape**: extend `github-runner-dispatcher-gcp`'s existing 2-minute cleanup ticker. It already iterates Cloud Run **Jobs** and reaps terminal executions. Add a parallel sweep that iterates Cloud Run **Services** filtered to `sockerless_managed=true` AND name prefix `sockerless-svc-`, and deletes any whose `LastUpdateTime` is older than N minutes (e.g. 30) AND whose latest revision has zero traffic / zero recent invocations. The dispatcher already has the right credentials and the right per-region scoping; this is a localized addition to `github-runner-dispatcher-gcp/internal/cleanup/`.
-
-Alternative path (also worth considering): `ContainerRemove` already covers happy-path deletion. The orphan source is "runner-task dies before issuing ContainerRemove on its child pod-Services." A sockerless-side fix would be a hint label `sockerless_owner_runner_task=<runner-task-execution-id>`; when the dispatcher's existing cleanup notices the owner runner-task is gone (terminal state in ListExecutions), it deletes the orphan Services in the same sweep. This couples cleanup more tightly to the runner-task lifetime than a flat 30-minute idle check, so it's the better long-term shape.
+Remaining hygiene work (not blocking):
+- Time-based sweep of legacy services with empty owner label (only matters once a fleet of pre-rollout services exists in the wild — today's torn-down state means there are none).
+- Cloud Run Jobs older than 1h not RUNNING (separate from the Services sweep).
+- GCS bucket `workspace/` prune via existing `PruneStaleObjects` driver.
 
 ### 2. Driver-generalization roadmap (Phases 124-127)
 

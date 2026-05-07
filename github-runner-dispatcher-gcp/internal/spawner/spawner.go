@@ -41,6 +41,16 @@ const (
 	LabelManagedVal = "github-runner-dispatcher-gcp"
 )
 
+// OwnerRunnerTaskLabel is the GCP label key sockerless writes on every
+// pod-Service it creates. The value is the Cloud Run Job ID from the
+// Cloud-Run-injected `CLOUD_RUN_JOB` env var that sockerless reads
+// inside the runner-task (no dispatcher-side env injection needed —
+// keeps the dispatcher generic per the dispatcher-generic project
+// rule). The dispatcher's orphan sweep reads this label off each
+// listed Service and compares against ListManaged's known live Cloud
+// Run Jobs.
+const OwnerRunnerTaskLabel = "sockerless_owner_runner_task"
+
 // Request is one spawn directive. Every field required (no fallbacks
 // per project rule) — caller validates before invoking Spawn.
 type Request struct {
@@ -334,6 +344,92 @@ func stringifyJobState(j *runpb.Job) string {
 		return j.TerminalCondition.State.String()
 	}
 	return "unknown"
+}
+
+// ManagedService describes a sockerless-managed pod-Service the
+// dispatcher's orphan sweep needs to consider for deletion. The
+// dispatcher does not create these Services itself — sockerless on
+// the runner-task does. The dispatcher's role is GC after the
+// runner-task is gone.
+type ManagedService struct {
+	Name           string // full resource name `projects/.../services/sockerless-svc-<id12>`
+	OwnerRunnerJob string // value of the `sockerless_owner_runner_task` label (Cloud Run Job ID, possibly empty for legacy)
+}
+
+// ListManagedServices returns every Cloud Run Service under (project,
+// region) that is sockerless-managed AND whose name starts with
+// `sockerless-svc-` (the prefix sockerless uses for pod-Services). The
+// `sockerless_owner_runner_task` label is read off each match so the
+// caller can decide whether to keep it or delete it as an orphan.
+//
+// Filters in code rather than a Cloud Run server-side filter because
+// labels in the Cloud Run REST API can only be filtered on Job/Service
+// state (not arbitrary user labels), so we do the prefix + label check
+// client-side.
+func ListManagedServices(ctx context.Context, project, region string) ([]ManagedService, error) {
+	cli, err := run.NewServicesRESTClient(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("new services REST client: %w", err)
+	}
+	defer func() { _ = cli.Close() }()
+	parent := fmt.Sprintf("projects/%s/locations/%s", project, region)
+	it := cli.ListServices(ctx, &runpb.ListServicesRequest{Parent: parent})
+	var out []ManagedService
+	for {
+		svc, err := it.Next()
+		if err != nil {
+			break
+		}
+		if svc.Labels["sockerless_managed"] != "true" {
+			continue
+		}
+		if !strings.Contains(svc.Name, "/services/sockerless-svc-") {
+			continue
+		}
+		out = append(out, ManagedService{
+			Name:           svc.Name,
+			OwnerRunnerJob: svc.Labels[OwnerRunnerTaskLabel],
+		})
+	}
+	return out, nil
+}
+
+// DeleteService removes a Cloud Run Service. Tolerates already-deleted
+// (NOT_FOUND treated as success) — the orphan sweep is best-effort.
+func DeleteService(ctx context.Context, serviceName string) error {
+	cli, err := run.NewServicesRESTClient(ctx)
+	if err != nil {
+		return fmt.Errorf("new services REST client: %w", err)
+	}
+	defer func() { _ = cli.Close() }()
+	op, err := cli.DeleteService(ctx, &runpb.DeleteServiceRequest{Name: serviceName})
+	if err != nil {
+		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "not found") {
+			return nil
+		}
+		return fmt.Errorf("DeleteService %s: %w", serviceName, err)
+	}
+	if _, err := op.Wait(ctx); err != nil {
+		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "not found") {
+			return nil
+		}
+		return fmt.Errorf("DeleteService %s wait: %w", serviceName, err)
+	}
+	return nil
+}
+
+// JobIDFromName extracts the trailing `<jobID>` segment from a Cloud
+// Run Job's full resource name (`projects/.../jobs/<jobID>`). Used by
+// the orphan-Service sweep to compare a Service's
+// `sockerless_owner_runner_task` label (which holds a bare jobID
+// produced by [jobIDFromRunnerName]) against the dispatcher's known
+// list of running Cloud Run Jobs (whose ListManaged returns full
+// resource names).
+func JobIDFromName(jobResourceName string) string {
+	if i := strings.LastIndex(jobResourceName, "/jobs/"); i >= 0 {
+		return jobResourceName[i+len("/jobs/"):]
+	}
+	return jobResourceName
 }
 
 // Delete removes a Cloud Run Job. Tolerates already-deleted (the

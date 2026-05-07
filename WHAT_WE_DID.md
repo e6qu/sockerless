@@ -6,6 +6,37 @@ See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for
 
 This file keeps narrative / "why we did it" context that doesn't live in BUGS.md or git log. Per-bug detail belongs in [BUGS.md](BUGS.md) — don't duplicate it here.
 
+## 2026-05-08 — Phase 129 #4 owner-linked orphan-Service sweep
+
+Picked up the first deploy-hygiene thread from DO_NEXT.md: extend the dispatcher's 2-minute Cleanup ticker to reap orphan `sockerless-svc-*` Services left behind when a runner-task dies before issuing ContainerRemove on its child pod-Services. Today's session shipped the **owner-linked variant** that DO_NEXT.md called out as the better long-term shape — couples cleanup to the runner-task lifetime instead of a flat idle-time check.
+
+### How the owner link works
+
+The dispatcher-generic rule (`feedback_dispatcher_generic.md`) forbids the dispatcher from injecting any `SOCKERLESS_*` env into the runner-task. So the owner identifier sockerless writes on each pod-Service has to be discovered sockerless-side, from an ambient cloud signal — not pushed by the dispatcher.
+
+1. **Cloud Run runtime auto-injects `CLOUD_RUN_JOB`.** Every Cloud Run Job execution gets `CLOUD_RUN_JOB=<jobID>` set automatically (the trailing segment of the Job's resource name, e.g. `gh-abc1234-123456`). No opt-in, no dispatcher cooperation.
+
+2. **Sockerless self-discovers + stamps the label.** Both Cloud Run paths (`backends/cloudrun/servicespec.go::buildServiceSpec` and `backends/cloudrun-functions/pod_service.go::materializePodService` + `deployContainerService`) call the new `gcp-common/owner_label.go::OwnerRunnerTaskLabelValue` helper which reads `CLOUD_RUN_JOB` and sanitizes to GCP label-value charset (`[a-z0-9_-]`, 63 chars). When non-empty, the Service gets `sockerless_owner_runner_task=<jobID>` in its GCP labels. Outside a Cloud Run Job (laptop, sim, regular Service), the env var is unset and no label is written — the dispatcher's sweep then leaves those Services alone.
+
+3. **Dispatcher cleanup reaps orphans whose owners are gone or terminal.** `cmd/github-runner-dispatcher-gcp/main.go::Cleanup` now (a) builds a set of live-owner Job IDs from the existing ListManaged result, (b) calls the new `spawner.ListManagedServices` to enumerate `sockerless-svc-*` Services in each (project,region), (c) reads each Service's `sockerless_owner_runner_task` label, (d) calls `spawner.DeleteService` on any Service whose owner is not in the live set. Services with empty owner labels are deliberately left alone (legacy / non-Cloud-Run-Job sockerless); a flat idle-time sweep is the right tool for those (Phase 129 #4 second deliverable, not yet shipped).
+
+### Why owner-linked, not idle-time
+
+DO_NEXT.md evaluated both:
+- **Flat 30-min idle check** — easier; risks false-positives on real long-running pod-Services with sporadic traffic patterns.
+- **Owner-linked** — strictly correct (a Service whose owner Cloud Run Job is gone is *definitely* orphan); requires plumbing an identifier through dispatcher → runner → sockerless → pod-Service.
+
+The plumbing is small (one env var + one label + one ListServices call) and produces a precise GC signal. The flat-time check is still useful for legacy services that pre-date this label, but doesn't need to be primary.
+
+### Tests + verification
+
+- `backends/gcp-common/owner_label_test.go` — `sanitizeOwnerLabel` charset/length, env-var-unset/set behaviour.
+- `github-runner-dispatcher-gcp/internal/spawner/spawner_test.go` — `JobIDFromName` extraction, deterministic re-derivation of jobID from runner name (the property the cleanup join relies on).
+- `go test ./...` GREEN in: `backends/gcp-common`, `backends/cloudrun`, `backends/cloudrun-functions`, `github-runner-dispatcher-gcp`.
+- `go vet ./...` clean across the same modules.
+
+Live verification deferred until next live-cloud session (per DO_NEXT.md): the live infra was torn down end of 2026-05-07, and Phase 128 (job timeout) + the rest of Phase 129 should ship before the next ephemeral project comes up.
+
 ## 2026-05-07 — Phase 123 + 8/8 cells GREEN (milestone closed)
 
 The 17-iteration cells-5+6 saga ended today. Phase 123 (storage backing driver abstraction with `gcs-sync`) shipped, cells 5+6 went GREEN at v17, the 8/8 runner-integration milestone closed. Per-bug fix detail in [BUGS.md](BUGS.md); cell URLs in [STATUS.md](STATUS.md).

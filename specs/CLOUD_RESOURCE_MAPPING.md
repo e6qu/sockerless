@@ -1127,6 +1127,22 @@ The runner image itself is responsible for:
 
 This separation matches the AWS dispatcher's original shape (dispatch via `docker run --rm <runner-image>` with no sockerless env injection) and the project rule "**Backend ↔ host primitive must match**".
 
+### Orphan pod-Service GC (owner-link pattern, GCP, shipped 2026-05-08)
+
+When a runner-task dies without invoking ContainerRemove on its child pod-Services (cancelled pipeline, runner crash, OOM, network partition), the `sockerless-svc-*` Cloud Run Services it created leak. They burn regional Cloud Run CPU quota until something cleans them up. The dispatcher-generic rule above forbids the dispatcher from injecting any sockerless-shaped env into the runner-task — so the owner identifier the cleanup needs has to be discovered sockerless-side, not pushed dispatcher-side.
+
+Cloud Run automatically injects `CLOUD_RUN_JOB` into every Job execution (the Job's ID, e.g. `gh-abc1234-123456`). Sockerless reads it directly:
+
+| Layer | Action |
+|---|---|
+| Cloud Run runtime | Sets `CLOUD_RUN_JOB=<jobID>` on every Job execution (no opt-in needed). |
+| Sockerless backend (`backends/{cloudrun,cloudrun-functions}`) | At pod-Service create, calls `gcpcommon.OwnerRunnerTaskLabelValue()` → reads `CLOUD_RUN_JOB`, returns sanitized value (or "" outside Cloud Run Jobs). When non-empty, stamps `sockerless_owner_runner_task=<jobID>` on the Service's GCP labels. |
+| Dispatcher (`github-runner-dispatcher-gcp`) | Existing 2-min Cleanup ticker now also calls `spawner.ListManagedServices` per (project,region) → reads each Service's `sockerless_owner_runner_task` label → deletes any Service whose owner Cloud Run Job is gone or in terminal execution state. |
+
+The dispatcher remains fully generic — no sockerless-shaped env on the spawn spec. Sockerless self-discovers its owner from a runtime-injected env var the way it would discover any other ambient cloud signal (project ID, region, etc.).
+
+Services with empty owner labels (legacy from before the rollout, or sockerless instances not running inside a Cloud Run Job) are deliberately left alone by this sweep — a flat idle-time check is the right tool for those (Phase 129 #4 second deliverable, not yet shipped).
+
 ## Per-backend container concerns — primitives + adapter responsibility
 
 The runner job lifecycle above demands a set of container-level concerns (mounting, caps, users, supervisor, exec, lifecycle, networking). Each backend MUST implement these per its host cloud's available primitives — NO fallbacks, NO synthetic shims, just the real cloud primitive translated through the sockerless API. Where a primitive is genuinely absent on the host cloud, the backend fails loudly with a clear "not supported on <backend>; use <other backend>" error rather than a degraded-mode fake.
