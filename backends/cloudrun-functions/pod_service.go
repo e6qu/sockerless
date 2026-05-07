@@ -497,6 +497,7 @@ func (s *Server) buildPodContainerSpec(c api.Container, overlayURI string, isMai
 	}
 
 	var mounts []*runpb.VolumeMount
+	var syncMountEntries []string
 	for _, bind := range c.HostConfig.Binds {
 		parts := strings.SplitN(bind, ":", 3)
 		if len(parts) < 2 {
@@ -505,6 +506,21 @@ func (s *Server) buildPodContainerSpec(c api.Container, overlayURI string, isMai
 		mounts = append(mounts, &runpb.VolumeMount{
 			Name:      parts[0],
 			MountPath: parts[1],
+		})
+		// Phase 123: when this bind references a gcs-sync SharedVolume,
+		// record the mount path so the bootstrap-side restore knows where
+		// to untar each per-exec GCS object. The runner-task's PreExec
+		// emits just `name=GCS_URL` (the bind target lives on the JOB
+		// container side, not the runner-task side); the bootstrap joins
+		// the two by name at exec time.
+		if sv := s.config.LookupSharedVolumeBySourcePath(parts[0]); sv != nil && core.StorageBacking(sv.Backing) == core.BackingGCSSync {
+			syncMountEntries = append(syncMountEntries, fmt.Sprintf("%s=%s", sv.Name, parts[1]))
+		}
+	}
+	if isMain && len(syncMountEntries) > 0 {
+		envVars = append(envVars, &runpb.EnvVar{
+			Name:   "SOCKERLESS_SYNC_MOUNTS",
+			Values: &runpb.EnvVar_Value{Value: strings.Join(syncMountEntries, ",")},
 		})
 	}
 

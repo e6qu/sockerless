@@ -87,6 +87,7 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 	cpu, memory := mapCPUMemory()
 
 	var mounts []*runpb.VolumeMount
+	var syncMountEntries []string
 	for _, bind := range ci.Container.HostConfig.Binds {
 		parts := strings.SplitN(bind, ":", 3)
 		if len(parts) < 2 {
@@ -95,6 +96,19 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 		mounts = append(mounts, &runpb.VolumeMount{
 			Name:      parts[0],
 			MountPath: parts[1],
+		})
+		// Phase 123: record the bind target for gcs-sync SharedVolumes so
+		// the bootstrap restore knows where to untar each per-exec GCS
+		// object. PreExec emits just `name=GCS_URL` (the runner-task can't
+		// know the bind target on its own); the bootstrap joins by name.
+		if sv := s.config.LookupSharedVolumeBySourcePath(parts[0]); sv != nil && core.StorageBacking(sv.Backing) == core.BackingGCSSync {
+			syncMountEntries = append(syncMountEntries, fmt.Sprintf("%s=%s", sv.Name, parts[1]))
+		}
+	}
+	if ci.IsMain && len(syncMountEntries) > 0 {
+		envVars = append(envVars, &runpb.EnvVar{
+			Name:   "SOCKERLESS_SYNC_MOUNTS",
+			Values: &runpb.EnvVar_Value{Value: strings.Join(syncMountEntries, ",")},
 		})
 	}
 

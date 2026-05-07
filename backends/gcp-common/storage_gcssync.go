@@ -81,27 +81,28 @@ func (d *GCSSyncDriver) CloudSpec(vol core.SharedVolumeRef) (core.BackingSpec, e
 }
 
 // PreExec tars localPath and uploads to gs://<bucket>/<objectName(volName, execID)>.
-// Returns a list-valued env hint under SOCKERLESS_SYNC_VOLUMES with one
-// per-volume triple (`name=remotePath=gs://bucket/object`). The
-// translator concatenates per-volume hints across multiple
-// SharedVolumes before serialising so multi-volume execs (e.g. cells
-// 5+6 with runner-workspace + runner-externals) don't clobber.
+// Emits a list-valued env hint under SOCKERLESS_SYNC_VOLUMES with one
+// per-volume PAIR (`name=gs://bucket/object`) — NOT a triple. The bind
+// target on the JOB pod-Service side is recorded at materialize time
+// in SOCKERLESS_SYNC_MOUNTS (`name=mountpath`); the bootstrap joins
+// the two by name at exec time. The runner-task can't reliably know
+// the bind target itself: the api.Container returned by cloud_state's
+// stateless lookup has empty HostConfig.Binds (BUG-967), so the
+// runner-task only emits the GCS URL and lets the bootstrap resolve
+// the destination from its own boot env.
 //
-// localPath is the runner-task's source path (where we tar from —
-// e.g. /tmp/runner-work). remotePath is the JOB pod-Service's bind
-// target (where the bootstrap will untar to — e.g. /__w). The two
-// paths differ because docker `-v src:dst` mounts the runner-task's
-// src at the JOB-side dst; the bootstrap sees only dst.
+// localPath is the runner-task's source (where we tar from). The
+// remotePath argument is intentionally unused here — kept in the
+// interface so backends with different scoping (in-process / non-
+// stateless) can ship a richer hint without forcing a v2 wire format.
 //
 // If localPath does not exist, an empty tar is uploaded — the
 // bootstrap will see an empty volume on restore, which is the correct
 // behaviour for a job's first exec.
 func (d *GCSSyncDriver) PreExec(ctx context.Context, vol core.SharedVolumeRef, execID, localPath, remotePath string) (map[string][]string, error) {
+	_ = remotePath // see comment above — bootstrap resolves via SOCKERLESS_SYNC_MOUNTS
 	if err := validateRefForSync(vol); err != nil {
 		return nil, err
-	}
-	if remotePath == "" {
-		return nil, fmt.Errorf("gcs-sync PreExec: remotePath required for volume %q", vol.Name)
 	}
 	obj := objectName(vol.Name, execID)
 
@@ -115,9 +116,9 @@ func (d *GCSSyncDriver) PreExec(ctx context.Context, vol core.SharedVolumeRef, e
 		return nil, fmt.Errorf("gcs-sync PreExec: finalize gs://%s/%s: %w", vol.GCSBucket, obj, err)
 	}
 
-	triple := fmt.Sprintf("%s=%s=gs://%s/%s", vol.Name, remotePath, vol.GCSBucket, obj)
+	pair := fmt.Sprintf("%s=gs://%s/%s", vol.Name, vol.GCSBucket, obj)
 	return map[string][]string{
-		"SOCKERLESS_SYNC_VOLUMES": {triple},
+		"SOCKERLESS_SYNC_VOLUMES": {pair},
 	}, nil
 }
 

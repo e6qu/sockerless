@@ -138,6 +138,11 @@ var invokeMu sync.Mutex
 // gitlab-runner v17 docker executor produces with multi-image-per-job.
 var persistVols []persistVolume
 
+// syncMounts holds the parsed SOCKERLESS_SYNC_MOUNTS — `volumeName ->
+// mountPath` set by the JOB pod-Service materializer. Used at exec
+// time to resolve where each per-exec gcs-sync object should restore.
+var syncMounts map[string]string
+
 func main() {
 	if err := writeHostAliases(os.Getenv(envHostAliases)); err != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: write host aliases: %v\n", err)
@@ -161,6 +166,17 @@ func main() {
 			fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: persist restore failed: %v\n", err)
 			os.Exit(1)
 		}
+	}
+
+	// Phase 123: parse SOCKERLESS_SYNC_MOUNTS once at startup.
+	mounts, syncErr := parseSyncMounts(os.Getenv(envSyncMounts))
+	if syncErr != nil {
+		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: SOCKERLESS_SYNC_MOUNTS parse error: %v\n", syncErr)
+		os.Exit(1)
+	}
+	syncMounts = mounts
+	if len(syncMounts) > 0 {
+		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: parsed %d sync mounts: %v\n", len(syncMounts), syncMounts)
 	}
 
 	port := os.Getenv(envPort)
@@ -229,7 +245,7 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	// sync triples — only ExecStart sets them). Parse + restore before
 	// running the subprocess so the workspace reflects whatever the
 	// runner-task uploaded for this exec.
-	syncVols, syncErr := parseSyncVolumes(extractSyncVolumesEnv(env.Env))
+	syncVols, syncErr := parseSyncVolumes(extractSyncVolumesEnv(env.Env), syncMounts)
 	if syncErr != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: SOCKERLESS_SYNC_VOLUMES parse error: %v\n", syncErr)
 		writeSaveFailure(w, syncErr, isEnvelope)

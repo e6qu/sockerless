@@ -1,22 +1,33 @@
 package main
 
 // gcs-sync per-exec restore/save (Phase 123). Distinct from persist.go,
-// which handles the legacy SOCKERLESS_PERSIST_VOLUMES tar-pack pattern
-// (boot-once restore + after-each-exec save against a fixed object key).
+// which handles the legacy SOCKERLESS_PERSIST_VOLUMES tar-pack pattern.
 //
-// gcs-sync is per-exec: the runner-task uploads a freshly-tarred snapshot
-// to a unique GCS object before forwarding the exec, then downloads the
-// snapshot back after the bootstrap returns. The bootstrap reads
-// SOCKERLESS_SYNC_VOLUMES from the envelope's Env to know which objects
-// to restore + which paths to write back to.
+// Two env vars define the data plane:
 //
-// Wire shape: SOCKERLESS_SYNC_VOLUMES = "name=path=gs://bucket/object[,...]"
-// — one comma-separated triple per SharedVolume. Object format is .tar.gz
-// (matches GCSSyncDriver.writeTarGzFromDir on the runner-task side).
+//   - SOCKERLESS_SYNC_MOUNTS (set at JOB pod-Service materialize time):
+//     `name=mountpath[,...]` — maps logical SharedVolume name to the
+//     bind target on this container. Read once at startup.
+//
+//   - SOCKERLESS_SYNC_VOLUMES (set per-exec via the envelope.Env from
+//     the runner-task's PreExec hook): `name=gs://bucket/object[,...]`
+//     — for each volume in this exec, where the freshly-tarred
+//     snapshot lives. Object format is .tar.gz (matches
+//     GCSSyncDriver.writeTarGzFromDir on the runner-task side).
+//
+// At restore time the bootstrap joins the two by name: download the
+// GCS object, untar to the mount path. At save time it tars the mount
+// path and uploads to the same GCS object so the runner-task can pull
+// the modifications back via PostExec.
+//
+// Why split: the runner-task's stateless cloud_state lookup returns
+// api.Container with empty HostConfig.Binds (BUG-967), so the runner-
+// task can't reliably know the JOB-side bind target. The materializer
+// DOES know it (it sets the runpb.VolumeMount), so it bakes the map
+// into the container's startup env.
 //
 // No-fallbacks: malformed entries fail loudly. This data plane is
-// load-bearing for cells 5+6 (cross-Service workspace propagation);
-// silent skip would surface as confusing missing-file errors downstream.
+// load-bearing for cells 5+6.
 
 import (
 	"archive/tar"
@@ -33,9 +44,14 @@ import (
 	"strings"
 )
 
-const envSyncVolumes = "SOCKERLESS_SYNC_VOLUMES"
+const (
+	envSyncVolumes = "SOCKERLESS_SYNC_VOLUMES"
+	envSyncMounts  = "SOCKERLESS_SYNC_MOUNTS"
+)
 
-// syncVolume mirrors persistVolume but carries a per-exec object path.
+// syncVolume joins a per-exec SOCKERLESS_SYNC_VOLUMES entry (name + GCS
+// object) with the boot-time SOCKERLESS_SYNC_MOUNTS entry (name +
+// mount path) so each exec knows where to restore to.
 type syncVolume struct {
 	Name      string
 	MountPath string
@@ -43,11 +59,40 @@ type syncVolume struct {
 	Object    string
 }
 
+// parseSyncMounts reads SOCKERLESS_SYNC_MOUNTS — set at materialize
+// time — into a map of `volumeName -> mountPath`. Format: comma-
+// separated `name=path` pairs.
+func parseSyncMounts(env string) (map[string]string, error) {
+	env = strings.TrimSpace(env)
+	if env == "" {
+		return nil, nil
+	}
+	out := map[string]string{}
+	for _, raw := range strings.Split(env, ",") {
+		entry := strings.TrimSpace(raw)
+		if entry == "" {
+			continue
+		}
+		parts := strings.SplitN(entry, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("sync mount entry malformed (want name=path): %q", entry)
+		}
+		name := strings.TrimSpace(parts[0])
+		mp := strings.TrimSpace(parts[1])
+		if name == "" || mp == "" {
+			return nil, fmt.Errorf("sync mount entry has empty field: %q", entry)
+		}
+		out[name] = mp
+	}
+	return out, nil
+}
+
 // parseSyncVolumes reads SOCKERLESS_SYNC_VOLUMES from a string of
-// comma-separated `name=path=gs://bucket/object` triples. Returns an
-// error on malformed entries (rather than skipping) — the gcs-sync data
-// plane is load-bearing.
-func parseSyncVolumes(env string) ([]syncVolume, error) {
+// comma-separated `name=gs://bucket/object` pairs and joins each pair
+// with mounts (from parseSyncMounts) so the bootstrap knows where to
+// restore. Returns an error on any malformed entry or unmatched name —
+// silent skip would mask a configuration mismatch.
+func parseSyncVolumes(env string, mounts map[string]string) ([]syncVolume, error) {
 	env = strings.TrimSpace(env)
 	if env == "" {
 		return nil, nil
@@ -58,19 +103,22 @@ func parseSyncVolumes(env string) ([]syncVolume, error) {
 		if entry == "" {
 			continue
 		}
-		parts := strings.SplitN(entry, "=", 3)
-		if len(parts) != 3 {
-			return nil, fmt.Errorf("sync volume entry malformed (want name=path=gs://bucket/object): %q", entry)
+		parts := strings.SplitN(entry, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("sync volume entry malformed (want name=gs://bucket/object): %q", entry)
 		}
 		name := strings.TrimSpace(parts[0])
-		mp := strings.TrimSpace(parts[1])
-		gs := strings.TrimSpace(parts[2])
-		if name == "" || mp == "" || gs == "" {
+		gs := strings.TrimSpace(parts[1])
+		if name == "" || gs == "" {
 			return nil, fmt.Errorf("sync volume entry has empty field: %q", entry)
 		}
 		bucket, object, err := splitGSURL(gs)
 		if err != nil {
 			return nil, fmt.Errorf("sync volume %q: %w", name, err)
+		}
+		mp, ok := mounts[name]
+		if !ok {
+			return nil, fmt.Errorf("sync volume %q: no mount path in SOCKERLESS_SYNC_MOUNTS (got mounts=%v)", name, mounts)
 		}
 		out = append(out, syncVolume{Name: name, MountPath: mp, Bucket: bucket, Object: object})
 	}

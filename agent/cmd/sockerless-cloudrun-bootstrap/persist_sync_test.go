@@ -9,6 +9,11 @@ import (
 )
 
 func TestParseSyncVolumes(t *testing.T) {
+	mounts := map[string]string{
+		"v1":               "/mnt",
+		"runner-workspace": "/__w",
+		"runner-externals": "/__e",
+	}
 	cases := []struct {
 		name    string
 		input   string
@@ -22,38 +27,38 @@ func TestParseSyncVolumes(t *testing.T) {
 		},
 		{
 			name:  "single",
-			input: "v1=/mnt=gs://b1/o1",
+			input: "v1=gs://b1/o1",
 			want: []syncVolume{
 				{Name: "v1", MountPath: "/mnt", Bucket: "b1", Object: "o1"},
 			},
 		},
 		{
 			name:  "two volumes",
-			input: "runner-workspace=/tmp/runner-work=gs://buck/workspace/runner-workspace/exec1.tar.gz,runner-externals=/opt/externals=gs://buck/workspace/runner-externals/exec1.tar.gz",
+			input: "runner-workspace=gs://buck/workspace/runner-workspace/exec1.tar.gz,runner-externals=gs://buck/workspace/runner-externals/exec1.tar.gz",
 			want: []syncVolume{
-				{Name: "runner-workspace", MountPath: "/tmp/runner-work", Bucket: "buck", Object: "workspace/runner-workspace/exec1.tar.gz"},
-				{Name: "runner-externals", MountPath: "/opt/externals", Bucket: "buck", Object: "workspace/runner-externals/exec1.tar.gz"},
+				{Name: "runner-workspace", MountPath: "/__w", Bucket: "buck", Object: "workspace/runner-workspace/exec1.tar.gz"},
+				{Name: "runner-externals", MountPath: "/__e", Bucket: "buck", Object: "workspace/runner-externals/exec1.tar.gz"},
 			},
 		},
 		{
-			name:    "missing bucket prefix",
-			input:   "v1=/mnt=b1/o1",
+			name:    "missing gs prefix",
+			input:   "v1=b1/o1",
 			wantErr: true,
 		},
 		{
 			name:    "missing object",
-			input:   "v1=/mnt=gs://b1/",
+			input:   "v1=gs://b1/",
 			wantErr: true,
 		},
 		{
-			name:    "missing path",
-			input:   "v1==gs://b1/o1",
+			name:    "unknown name",
+			input:   "vUnknown=gs://b1/o1",
 			wantErr: true,
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := parseSyncVolumes(c.input)
+			got, err := parseSyncVolumes(c.input, mounts)
 			if c.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got nil. result=%v", got)
@@ -65,6 +70,38 @@ func TestParseSyncVolumes(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got, c.want) {
 				t.Errorf("got %+v, want %+v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestParseSyncMounts(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   string
+		want    map[string]string
+		wantErr bool
+	}{
+		{name: "empty", input: "", want: nil},
+		{name: "single", input: "v1=/mnt", want: map[string]string{"v1": "/mnt"}},
+		{name: "multi", input: "runner-workspace=/__w,runner-externals=/__e", want: map[string]string{"runner-workspace": "/__w", "runner-externals": "/__e"}},
+		{name: "malformed", input: "v1", wantErr: true},
+		{name: "empty value", input: "v1=", wantErr: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := parseSyncMounts(c.input)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil. result=%v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Errorf("got %v, want %v", got, c.want)
 			}
 		})
 	}

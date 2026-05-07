@@ -98,6 +98,12 @@ var invokeMu sync.Mutex
 // once at startup; nil-or-empty means persistence is disabled.
 var persistVols []persistVolume
 
+// syncMounts holds the parsed SOCKERLESS_SYNC_MOUNTS config —
+// `volumeName -> mountPath` set by the JOB pod-Service materializer.
+// Used at exec time to resolve where each per-exec gcs-sync object
+// should be restored to.
+var syncMounts map[string]string
+
 func main() {
 	if err := writeHostAliases(os.Getenv(envHostAliases)); err != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: write host aliases: %v\n", err)
@@ -122,6 +128,20 @@ func main() {
 			fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: persist restore failed: %v\n", err)
 			os.Exit(1)
 		}
+	}
+
+	// Phase 123: parse SOCKERLESS_SYNC_MOUNTS once at startup.
+	// Materializer-side env that maps `volumeName -> mountPath` for
+	// each gcs-sync SharedVolume bound to this container. Empty when
+	// no shared volumes use gcs-sync — handleInvoke just skips sync.
+	mounts, syncErr := parseSyncMounts(os.Getenv(envSyncMounts))
+	if syncErr != nil {
+		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: SOCKERLESS_SYNC_MOUNTS parse error: %v\n", syncErr)
+		os.Exit(1)
+	}
+	syncMounts = mounts
+	if len(syncMounts) > 0 {
+		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: parsed %d sync mounts: %v\n", len(syncMounts), syncMounts)
 	}
 
 	port := os.Getenv(envPort)
@@ -175,7 +195,7 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	// triples — those are only set by ExecStart). Parse + restore
 	// before running the subprocess so the workspace reflects whatever
 	// the runner-task uploaded for this exec.
-	syncVols, syncErr := parseSyncVolumes(extractSyncVolumesEnv(env.Env))
+	syncVols, syncErr := parseSyncVolumes(extractSyncVolumesEnv(env.Env), syncMounts)
 	if syncErr != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: SOCKERLESS_SYNC_VOLUMES parse error: %v\n", syncErr)
 		writeSaveFailure(w, syncErr, isEnvelope)
