@@ -4,7 +4,9 @@ Resume pointer for next session. State: [STATUS.md](STATUS.md) · Bugs: [BUGS.md
 
 ## Milestone closed (2026-05-07)
 
-**8/8 runner-integration cells GREEN.** Phase 123 (storage backing driver abstraction with `gcs-sync`) shipped + 8 supporting fixes (BUG-964 / 966 / 967 / 968 / 969 / 970 / 971 + an ECS test-regression fix from a hidden no-fallbacks violation in the `handleContainerWait` fast-path). Branch `phase-118-faas-pods` is pushed; PR #123 carries the full delta. Live infra (`sockerless-live-46x3zg4imo`, us-central1) is retained for the deploy-hygiene work below.
+**8/8 runner-integration cells GREEN.** Phase 123 (storage backing driver abstraction with `gcs-sync`) shipped + 8 supporting fixes (BUG-964 / 966 / 967 / 968 / 969 / 970 / 971 + an ECS test-regression fix from a hidden no-fallbacks violation in the `handleContainerWait` fast-path). Branch `phase-118-faas-pods` is pushed; PR #123 carries the full delta.
+
+**Live infra TORN DOWN (2026-05-07 evening)**: `sockerless-live-46x3zg4imo` and `sockerless-live-adi` both in `DELETE_REQUESTED`. GCP soft-delete enters a 30-day recovery window (`gcloud projects undelete <id>`); after that, all resources permanently gone and the project name is freed. Next live-cloud session creates a fresh ephemeral project per the `project_gcp_live_setup.md` workflow.
 
 Cell URLs in [STATUS.md](STATUS.md). Per-bug detail in [BUGS.md](BUGS.md). Day-of narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).
 
@@ -30,6 +32,8 @@ Roadmap entries in [PLAN.md](PLAN.md):
 - **Phase 125 — DNS driver abstraction.** How `<container-name>.<network>` resolves. Today: per-cloud heuristics. Driver categories: `cloud-map`, `cloud-dns-zone`, `service-discovery`, `private-dns-zone`.
 - **Phase 126 — Access driver abstraction.** Container-to-container auth, ingress IAM, service-account binding. Today: scattered. Driver categories: `iam-role`, `id-token`, `mTLS`, `none-internal`.
 - **Phase 127 — Storage driver expansion (NICE-TO-HAVE).** Open up the `BackingSpec` union (currently EmptyDir + GCS) to be cloud-agnostic. New drivers (`pd-ephemeral`, `efs-ephemeral`, `azure-files-ephemeral`) plug in without core-package changes.
+- **Phase 128 — Runner job timeout (configurable).** Hard cap on Cloud Run Job / Lambda / ECS task duration so a hung subprocess can't pin quota indefinitely. Default 1 h; operator override via dispatcher TOML `runner_job_timeout` + bootstrap env `SOCKERLESS_JOB_TIMEOUT_SECONDS`. SIGTERM → 30 s grace → SIGKILL; bootstrap reports exit code 124 (matches GNU `timeout(1)`). Detail in PLAN.md.
+- **Phase 129 — Cost tracking + stale-resource cost-cap.** BigQuery billing export, per-session resource labels (`sockerless_session=<run-id>`), per-session budget alerts ($5 alert / $20 hard cap), and a stale-resource sweeper that extends the dispatcher GC ticker. Detail in PLAN.md. Today's session demonstrated the gap — orphan services from cancelled runs pinned regional CPU quota (BUG-970) without any cost visibility; fixing this is essential before scaling up live-cloud iteration.
 
 Each phase follows the Phase 123 template:
 
@@ -45,9 +49,21 @@ Same single-PR-per-phase rule as Phase 123.
 
 ## Live-cloud followup
 
-Live project `sockerless-live-46x3zg4imo` (us-central1) is retained for the next session's deploy-hygiene work. Tear it down once the GC sweep ships and is verified — at that point both the structural fix (min_instances=0) and the cleanup safety net are in place, so the project's role as "iteration target with persistent state to debug against" ends.
+Live projects torn down end of this session. Next live-cloud session creates a fresh `sockerless-live-<rand>` per `project_gcp_live_setup.md` workflow. **Before bringing the next project online, ship Phase 128 (job timeout) + Phase 129 (cost tracking + stale-resource sweeper) FIRST** — without those, the same regional-CPU-quota debt cycle from today's session repeats.
 
-Free-trial billing acct, ephemeral-project workflow per [project_gcp_live_setup.md memory](.). SA key path + dispatcher service URL + bucket names all in [STATUS.md](STATUS.md).
+## Approximate cost report (this session, 2026-05-07)
+
+No exact figure available — billing export not configured (Phase 129's first deliverable). Best-effort estimate based on resource activity:
+
+| Cause | Estimate |
+|---|---|
+| Cloud Run Services pinned at min_instances=1 (~10 services × ~14 vCPU + 14 GiB across ~6h before BUG-970 fix) | $7-12 |
+| Cloud Build for overlay images (~15 builds × 30-60 s) | $0.50-1.00 |
+| Cloud Storage (workspace bucket, AR repos) | <$0.50 |
+| Egress (mostly same-region) | negligible |
+| **Session total estimate** | **$10-15** |
+
+The bulk of cost was the `minInstanceCount=1` debt before BUG-970 surfaced. With Phase 128 + 129 in place, similar future sessions should be ~$1-2 (only active-deploy CPU + Cloud Build).
 
 ## Working notes — anything not in the above
 

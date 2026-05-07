@@ -123,6 +123,32 @@ Same single-PR-per-phase rule as Phase 123. Phase 123 is the proven precedent.
 
 **User principle (2026-05-07, verbatim)**: "we want to generalize the approach to using drivers so that we can swap out pieces of backends for each backend since cloud offers a variety of things like networking, DNS, storage and access, but first we just wanted a fully working, minimally, system." 8/8 GREEN cells means the working minimal system is in hand; Phases 124-127 are the generalization on top.
 
+### Phase 128 — Runner job timeout (configurable)
+
+**Why.** Cells 5+6 v17 took 12-14 minutes; Cell 7 v54 was 178s. Without a hard cap, runaway jobs (an unkillable subprocess, a pathological retry loop, a bug that holds an HTTP request open) can pin Cloud Run / Cloud Run Jobs / Lambda invocations + their CPU quota indefinitely. A configurable timeout enforced both at the dispatcher (Cloud Run Jobs `taskTimeout`) and at the runner-bootstrap level (subprocess `context.WithTimeout`) caps the blast radius.
+
+**Default**: 1 hour. **Operator override**: dispatcher TOML `runner_job_timeout` (per-label) + bootstrap env `SOCKERLESS_JOB_TIMEOUT_SECONDS`. Hard upper bound: Cloud Run Jobs allows up to 24 h; Lambda 15 min; ECS Fargate ~unlimited but task-stop kicks in. Document per-cloud max in CLOUD_RESOURCE_MAPPING.md.
+
+**Behaviour at timeout**: SIGTERM → 30s grace → SIGKILL. Bootstrap reports `timeout` exit code (`X-Sockerless-Exit-Code: 124` matches GNU `timeout(1)` convention). Dispatcher sweeps the runner-task's underlying Cloud Run Job state if the bootstrap is unresponsive. Test plan: deliberately-stalling step (`sleep 9999`) → expect 1h timeout → arithmetic-suite resumes on next job.
+
+### Phase 129 — Cost tracking + stale-resource cost-cap
+
+**Why.** Today's session left orphan `sockerless-svc-*` services with `minInstanceCount=1` pinned across multiple iterations of cells 5+6; BUG-970 root cause was regional CPU quota debt from those orphans. Cost was incurred without visibility — no per-session budget, no automatic cleanup of stale runs, no MTD cost report.
+
+**Tracking infrastructure**:
+1. **BigQuery billing export** — enable on the live billing account, partitioned by `project_id` + `service` + `sku` + label. Single query gives "cost per session by project + service" or "stale-resource cost" once labels are wired.
+2. **Resource labels** — extend the existing sockerless `sockerless_managed=true` + `sockerless_session=<run-id>` labels to every Cloud Run Service + Job + AR repo + GCS bucket sockerless creates. Billing export inherits these → cost queries filter cleanly.
+3. **Per-session budget alert** — Cloud Billing Budget API: $5 alert / $20 hard cap per project per day, scoped to label `sockerless_session=<id>`.
+4. **Stale-resource sweeper** (extends Phase 124-127 deploy-hygiene ask in DO_NEXT.md):
+   - Dispatcher periodic GC: every 30 min, list `sockerless-svc-*` Services where `lastUpdateTime < now-30m && no-recent-traffic` → delete.
+   - Same for Cloud Run Jobs older than 1 h that are not RUNNING.
+   - GCS bucket `workspace/` prefix pruning — already shipped as `PruneStaleObjects` in `gcs-sync` driver; wire into dispatcher GC tick.
+5. **Session-end teardown command** — `make teardown-live-gcp` calls `gcloud projects delete <project>` for an end-of-session clean cut. GCP soft-delete with 30-day undo is the safety net. Procedure documented under `docs/GCP_LIVE_TEARDOWN.md`.
+
+**Open questions for next session**:
+- Is the live project per-session (delete-and-recreate every working day) or long-lived with periodic sweeps? Current ad-hoc pattern (per `feedback_teardown_aggressive.md`) leans per-session — Phase 129 codifies this.
+- BigQuery export costs: ~$0.02/GB stored; expected ~10MB/month for a billing-export schema → essentially free.
+
 ### Phase 104 — Cross-backend driver framework (in flight)
 
 Lift sockerless's narrow `core.Drivers{Exec, Stream, Filesystem}` plus the bespoke per-backend ad-hoc paths into one pluggable system: every "perform docker action X against the cloud" decision flows through a typed `Driver` interface. **Interfaces in core; implementations live with the cloud they use.** Each backend constructs its `DriverSet` at startup; operators override per-cloud-per-dimension via `SOCKERLESS_<BACKEND>_<DIMENSION>=<impl>`; sim parity required for the default driver in every dimension.
