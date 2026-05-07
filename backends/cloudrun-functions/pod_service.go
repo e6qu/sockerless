@@ -226,8 +226,12 @@ func (s *Server) materializePodService(mainContainerID string, containers []api.
 
 	// 5. Invoke the pod's ingress container (main is index 0). The
 	//    bootstrap on main runs the user's argv via the exec envelope
-	//    posted to the Service URL.
-	go s.invokePodServiceMain(ctx, result, containers, exitCh)
+	//    posted to the Service URL. skipIfNoStdin=true mirrors the
+	//    cloudrun BUG-961 fix: pod-Service materializes are runner-style
+	//    long-lived containers that must NOT default-invoke when no
+	//    stdinPipe is captured (BUG-964). The bootstrap stays on its
+	//    HTTP listener for the runner's subsequent /exec POSTs instead.
+	go s.invokePodServiceMain(ctx, result, containers, exitCh, true)
 	return nil
 }
 
@@ -651,7 +655,16 @@ func injectPodHostAliases(specs []*runpb.Container, members []api.Container, net
 // materialize completion, which exits 0 with no work and closes
 // WaitChs before gitlab-runner can attach + pipe its script.
 // See BUG-954.
-func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, containers []api.Container, _ chan struct{}) {
+//
+// `skipIfNoStdin` (BUG-964): when true, also skip the default-invoke
+// POST for OpenStdin=false main containers. The GH actions/runner
+// pattern materializes a long-lived `tail -f /dev/null`-style JOB
+// container that the runner expects to keep alive for `docker exec`.
+// POSTing the default CMD would run that long-lived process as a
+// one-shot subprocess and block forever, holding invokeMu so the
+// subsequent /exec POST never reaches the bootstrap. Mirrors the
+// cloudrun BUG-961 fix (commit 33e205a).
+func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, containers []api.Container, _ chan struct{}, skipIfNoStdin bool) {
 	mainContainer := containers[0]
 	mainID := mainContainer.ID
 
@@ -761,6 +774,17 @@ func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, c
 		// PutInvocationResult. ContainerRemove (via gitlab-runner's
 		// cleanup) will eventually delete the Service. Until then the
 		// build container is "running" from sockerless's perspective.
+		return
+	} else if skipIfNoStdin {
+		// BUG-964 — GH actions/runner pattern: the runner-task spawns
+		// a JOB container with OpenStdin=false but a long-lived
+		// `tail -f /dev/null`-style entrypoint. The runner then issues
+		// `docker exec <job> sh -c <step.sh>` for each step. Like the
+		// OpenStdin path above, we must NOT default-invoke — that would
+		// run the long-lived process as a one-shot subprocess and
+		// block invokeMu forever. The bootstrap stays listening on
+		// :8080 for the runner's /exec POSTs.
+		s.Logger.Info().Str("main", mainID).Msg("invokePodServiceMain: skipIfNoStdin + no captured stdin (GH actions/runner pattern) — skipping default-invoke; container stays alive for docker-exec")
 		return
 	} else {
 		// Default-invoke path: POST with user's entrypoint+cmd. The
