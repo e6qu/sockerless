@@ -301,7 +301,7 @@ func (s *Server) prewarmOverlay(ctx context.Context, entry PrewarmOverlay) error
 	if entry.Size <= 0 || entry.Image == "" {
 		return nil
 	}
-	resolved := gcpcommon.ResolveGCPImageURI(entry.Image, s.config.Project, s.config.Region)
+	resolved := gcpcommon.ResolveGCPImageURI(entry.Image, s.config.Project, s.config.Region, s.config.EndpointURL)
 	spec := OverlayImageSpec{
 		BaseImageRef:        resolved,
 		BootstrapBinaryPath: s.config.BootstrapBinaryPath,

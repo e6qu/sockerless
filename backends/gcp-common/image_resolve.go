@@ -10,6 +10,12 @@ import "strings"
 // repository that proxies Docker Hub. The remote repository ("docker-hub") must
 // be pre-configured at the project level.
 //
+// `endpointURL` carries `Server.config.EndpointURL`. When non-empty the backend
+// is talking to the GCP simulator, which does not provision an AR remote-proxy
+// — rewriting would point sockerless at the real public AR which 403s without
+// GCP creds. In that case return the ref unchanged so the local docker daemon
+// (smoke tests) or the simulator's `ResolveLocalImage` can pull it directly.
+//
 // Examples:
 //
 //	"alpine:latest"        → "{region}-docker.pkg.dev/{project}/docker-hub/library/alpine:latest"
@@ -17,7 +23,13 @@ import "strings"
 //	"myorg/app:v1"         → "{region}-docker.pkg.dev/{project}/docker-hub/myorg/app:v1"
 //	"{region}-docker.pkg.dev/{project}/my-repo/img:tag" → used as-is
 //	"gcr.io/{project}/img:tag"                          → used as-is
-func ResolveGCPImageURI(ref, project, region string) string {
+func ResolveGCPImageURI(ref, project, region, endpointURL string) string {
+	// Simulator mode: no AR proxy provisioned, leave the ref alone so
+	// the pull falls through to the underlying registry / local docker
+	// daemon.
+	if endpointURL != "" {
+		return ref
+	}
 	// Already an Artifact Registry URI — use as-is
 	if strings.Contains(ref, "-docker.pkg.dev/") {
 		return ref

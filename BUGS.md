@@ -1,6 +1,6 @@
 # Known Bugs
 
-**971 total — 964 fixed, 6 open. 8/8 cells GREEN 2026-05-07** — the runner-integration milestone closed. Today shipped Phase 123 (storage backing driver abstraction with `gcs-sync` driver) plus 8 supporting fixes (BUG-964 / 966 / 967 / 968 / 969 / 970 / 971 + workflow yaml `file` package). Earlier this week: cell 7 v54 + cell 8 v28 GREEN (BUG-956/957/958), then BUG-961/962/963 unblocked cells 5+6 to deep workflow progression. Remaining open: BUG-923, 925, 929, 942, 945, 946, 949 (low-priority / older). 1 false positive.
+**972 total — 964 fixed, 7 open. 8/8 cells GREEN 2026-05-07** — the runner-integration milestone closed. Today shipped Phase 123 (storage backing driver abstraction with `gcs-sync` driver) plus 8 supporting fixes (BUG-964 / 966 / 967 / 968 / 969 / 970 / 971 + workflow yaml `file` package). Earlier this week: cell 7 v54 + cell 8 v28 GREEN (BUG-956/957/958), then BUG-961/962/963 unblocked cells 5+6 to deep workflow progression. Remaining open: BUG-923, 925, 929, 942, 945, 946, 949 (low-priority / older). 1 false positive.
 
 ## Session 2026-05-04 (Phase 122i — dispatcher rate-limit + pool quota)
 
@@ -45,6 +45,7 @@ Standing workflow rule: every CI / live-cloud failure lands here with a short ro
 
 | ID | Sev | Area | One-liner |
 |----|-----|------|-----------|
+| 972 | H | cloudrun + gcf ImagePull AR-rewrite breaks smoke / simulator mode | BUG-937 made `Server.ImagePull` rewrite `alpine:latest` → `<region>-docker.pkg.dev/<project>/docker-hub/library/alpine:latest` unconditionally to bypass Docker Hub rate limits via the AR remote-proxy. The proxy only exists on real GCP projects (terraformed), not in the simulator — so smoke-cloudrun (CI) hits the real public AR token endpoint without GCP creds → `auth: token endpoint returned 403` and `docker pull alpine` fails. origin/main passes 13/13 smoke tests; HEAD passes 12/13. Reproduced locally. **Fix**: gate the AR rewrite in `Server.ImagePull` (cloudrun + cloudrun-functions) on `s.config.EndpointURL == ""` — when an EndpointURL is configured we are running against the simulator which doesn't have an AR proxy, so leave the ref unchanged. Same applies to `ContainerCreate` and any other site that uses `gcpcommon.ResolveGCPImageURI` for pull-side semantics; the cloud-state side (annotations referencing AR URIs) is unaffected because the simulator's `ResolveLocalImage` already maps those back to docker hub. |
 | 949 | M | simulators/gcp SDK arithmetic tests fail on non-linux hosts because `eval-arithmetic` is built `GOOS=linux` but the gcf simCommand path runs it as a host process | (open, low-priority macOS sim — see "Session 2026-05-04" section below). |
 
 ## Resolved this session (Phase 123 close-out — 8/8 GREEN — 2026-05-07)

@@ -79,7 +79,7 @@ func (s *Server) materializePodService(mainContainerID string, containers []api.
 		wg.Add(1)
 		go func(idx int, container api.Container) {
 			defer wg.Done()
-			imageRef := gcpcommon.ResolveGCPImageURI(container.Config.Image, s.config.Project, s.config.Region)
+			imageRef := gcpcommon.ResolveGCPImageURI(container.Config.Image, s.config.Project, s.config.Region, s.config.EndpointURL)
 			spec := OverlayImageSpec{
 				BaseImageRef:        imageRef,
 				BootstrapBinaryPath: s.config.BootstrapBinaryPath,
@@ -278,7 +278,7 @@ func (s *Server) buildPodServiceParent() string {
 // = short(containerID); resolveGCFFromCloud → resolvePodServiceFromCloud
 // finds it by allocation label.
 func (s *Server) deployContainerService(ctx context.Context, id string, container api.Container) error {
-	imageRef := gcpcommon.ResolveGCPImageURI(container.Config.Image, s.config.Project, s.config.Region)
+	imageRef := gcpcommon.ResolveGCPImageURI(container.Config.Image, s.config.Project, s.config.Region, s.config.EndpointURL)
 	spec := OverlayImageSpec{
 		BaseImageRef:        imageRef,
 		BootstrapBinaryPath: s.config.BootstrapBinaryPath,
