@@ -266,9 +266,14 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 }
 
 // mapCPUMemory returns the default Cloud Run resource limits.
-// Cloud Run valid CPU: 1, 2, 4, 8. Default: 1 CPU, 512Mi.
+// Cloud Run valid CPU: 1, 2, 4, 8. 1Gi/container matches the gcf
+// backend default; 512Mi was insufficient for multi-container revisions
+// running a postgres service container alongside the JOB main (BUG-969:
+// cells 5+6 v12 hit the port-8080-not-bound timeout because postgres
+// initdb OOM'd in 512Mi, and Cloud Run reports the whole revision as
+// failed even though it's the sidecar that crashed).
 func mapCPUMemory() (string, string) {
-	return "1", "512Mi"
+	return "1", "1Gi"
 }
 
 // sanitizeContainerName converts a container name to a valid Cloud Run
