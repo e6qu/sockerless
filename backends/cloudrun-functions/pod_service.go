@@ -561,7 +561,7 @@ func (s *Server) buildPodContainerSpec(c api.Container, overlayURI string, isMai
 		Resources: &runpb.ResourceRequirements{
 			Limits: map[string]string{
 				"cpu":    s.config.CPU,
-				"memory": s.config.Memory,
+				"memory": memoryLimitForContainer(s.config.Memory, isMain),
 			},
 		},
 	}
@@ -977,6 +977,30 @@ func (s *Server) invokeRunningRunnerStage(mainID string, mainContainer api.Conta
 
 // readResponseBody is a small helper so this file doesn't pull io.ReadAll
 // from another package as a single-use import.
+// memoryLimitForContainer doubles the per-container memory for the main
+// (port-bound) container in a multi-container revision so workloads that
+// download a Go toolchain + clone a repo + build still fit alongside a
+// postgres sidecar. Cloud Run gen2's revision-level memory cap is the
+// SUM of every container's limit; the previous symmetric default
+// (1Gi/container, 2Gi total) OOM'd at "Memory limit of 2048 MiB
+// exceeded with 2112 MiB used" during a build that pulled go1.24.0
+// into the same revision running postgres. Sidecars stay at the
+// original limit since postgres / similar service containers idle at
+// ~200-300Mi.
+func memoryLimitForContainer(base string, isMain bool) string {
+	if !isMain {
+		return base
+	}
+	switch base {
+	case "1Gi":
+		return "2Gi"
+	case "2Gi":
+		return "4Gi"
+	default:
+		return base
+	}
+}
+
 func readResponseBody(r interface {
 	Read(p []byte) (int, error)
 }) ([]byte, error) {

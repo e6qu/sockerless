@@ -110,7 +110,7 @@ jobs:
           PGPASSWORD=ci psql "host=localhost user=ci dbname=ci" -c 'SELECT version();'
       - name: clone-and-compile
         run: |
-          apk add --no-cache git gcc musl-dev
+          apk add --no-cache git gcc musl-dev file
           git clone --depth=1 --branch="${{ github.event.inputs.sockerless_ref || 'main' }}" \
             https://github.com/e6qu/sockerless /work/sockerless
           cd /work/sockerless/simulators/testdata/eval-arithmetic

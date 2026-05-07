@@ -125,7 +125,7 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 		Resources: &runpb.ResourceRequirements{
 			Limits: map[string]string{
 				"cpu":    cpu,
-				"memory": memory,
+				"memory": memoryLimitForContainer(memory, ci.IsMain),
 			},
 		},
 	}
@@ -274,6 +274,28 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 // port-8080-not-bound timeout on the main container).
 func mapCPUMemory() (string, string) {
 	return "1", "1Gi"
+}
+
+// memoryLimitForContainer doubles the per-container memory for the main
+// container in a multi-container revision so go-build / toolchain
+// download workloads still fit alongside a postgres-style sidecar.
+// Cloud Run gen2's revision-level memory cap is the SUM of every
+// container's limit; the symmetric 1Gi/container default OOM'd at
+// 2Gi total when a `go build` pulled go1.24.0 alongside running
+// postgres. Sidecars stay at the original limit since service
+// containers idle at ~200-300Mi.
+func memoryLimitForContainer(base string, isMain bool) string {
+	if !isMain {
+		return base
+	}
+	switch base {
+	case "1Gi":
+		return "2Gi"
+	case "2Gi":
+		return "4Gi"
+	default:
+		return base
+	}
 }
 
 // sanitizeContainerName converts a container name to a valid Cloud Run
