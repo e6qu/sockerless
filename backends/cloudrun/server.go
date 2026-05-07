@@ -53,6 +53,19 @@ type Server struct {
 
 // NewServer creates a new Cloud Run backend server.
 func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Server {
+	// BUG-968 — hash the bootstrap binary at startup so OverlayContentTag
+	// changes whenever the binary changes. Mirror of gcf's path; without
+	// this, cells 5+6's overlay images cache forever and updates to the
+	// bootstrap (e.g. Phase 123 SOCKERLESS_SYNC_MOUNTS support) never
+	// reach the JOB pod-Service.
+	if config.BootstrapBinaryHash == "" && config.BootstrapBinaryPath != "" {
+		if hash, err := gcpcommon.HashBootstrapBinary(config.BootstrapBinaryPath); err == nil {
+			config.BootstrapBinaryHash = hash
+			logger.Info().Str("path", config.BootstrapBinaryPath).Str("hash", hash).Msg("hashed cloudrun bootstrap binary for overlay-tag invalidation")
+		} else {
+			logger.Warn().Err(err).Str("path", config.BootstrapBinaryPath).Msg("failed to hash bootstrap binary — overlay images will not invalidate on bootstrap update")
+		}
+	}
 	s := &Server{
 		config:         config,
 		gcp:            gcpClients,

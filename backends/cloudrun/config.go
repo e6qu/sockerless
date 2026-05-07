@@ -65,6 +65,18 @@ type Config struct {
 	// disabled, ContainerCreate stays on the legacy Job path.
 	// Set via `SOCKERLESS_CLOUDRUN_BOOTSTRAP=/opt/sockerless/sockerless-cloudrun-bootstrap`.
 	BootstrapBinaryPath string
+
+	// BootstrapBinaryHash is the SHA-256-prefix hash of the bootstrap
+	// binary at BootstrapBinaryPath. Computed once at server startup
+	// (NewServer hashes via gcpcommon.HashBootstrapBinary) and stamped
+	// into every OverlayImageSpec.BootstrapBinaryHash so updating the
+	// bootstrap binary on disk invalidates cached overlay images
+	// automatically. Without this, OverlayContentTag is computed only
+	// from BaseImageRef + BootstrapBinaryPath — both stable across
+	// bootstrap-only changes — and the AR cache hits forever (BUG-968:
+	// cells 5+6 v11 ran the previous day's bootstrap inside a fresh
+	// container).
+	BootstrapBinaryHash string
 }
 
 // SharedVolume describes a workspace volume mounted via GCS that the

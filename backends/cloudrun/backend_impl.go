@@ -84,6 +84,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		spec := gcpcommon.OverlayImageSpec{
 			BaseImageRef:        originalImage,
 			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+			BootstrapBinaryHash: s.config.BootstrapBinaryHash,
 		}
 		contentTag := gcpcommon.OverlayContentTag("cloudrun-", spec)
 		overlayURI, err := s.ensureOverlayImage(s.ctx(), spec, contentTag)
