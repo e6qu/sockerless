@@ -53,34 +53,29 @@ Live projects torn down end of this session. Next live-cloud session creates a f
 
 ## Cost report — 6-day project lifetime (2026-05-01 → 2026-05-07)
 
-Actual spend reported by user: **~$90**. Initial estimate of $10-15 was wrong because it assumed a single-session footprint; the live projects (`sockerless-live-46x3zg4imo` + `sockerless-live-adi`, both `DELETE_REQUESTED` now) actually existed for 6 days. Best-effort post-hoc breakdown:
+Actual spend reported by user: **~$90** across `sockerless-live-46x3zg4imo` + `sockerless-live-adi` (both `DELETE_REQUESTED` now).
 
-| Cost driver | Estimated range |
-|---|---|
-| `gitlab-runner-cloudrun` Service (multi-container revision, min_instances=1, ~3 days) | $10 |
-| `gitlab-runner-gcf` Service (multi-container, min=1, ~5 days) | $13 |
-| `github-runner-dispatcher-gcp` Service (single-container, min=1, ~5 days) | $3 |
-| Orphan `sockerless-svc-*` from failed cells-5/6 iterations (10+ services × min=1 across varying intervals — the BUG-970 root cause) | $20-40 |
-| VPC connector `sockerless-connector` (min-instances=4 per BUG-947 fix, 6 days, e2-micro instances) | $5 |
-| Cloud Run Functions / gcf pool warming + per-step deploys | $5-10 |
-| Cloud Build (~80 overlay builds + dispatcher + standalone backend rebuilds) | $1-2 |
-| Artifact Registry storage (100+ overlay tags) | $1-3 |
-| Cloud Logging ingestion (heavy debug logs across 17 cell iterations × multi-container revisions) | $5-15 |
-| Cloud NAT egress (image pulls through proxy) | $1-2 |
-| **Total range** | **$60-100** (consistent with $90 reported) |
+**Per-service breakdown is not available programmatically.** Researched (2026-05-07): unlike AWS Cost Explorer (which exposes a real `ce.GetCostAndUsage` API) or Azure Consumption APIs (`ActualCost` / `AmortizedCost`), **Google Cloud has no API endpoint that returns actual cost or usage data**. The Cloud Billing API surface is limited to:
+- Account metadata (`/v1/billingAccounts`)
+- Pricing catalog (services + SKUs — list pricing, not actual spend)
+- Budget management (`/v1/billingAccounts/*/budgets`)
 
-**Where the money goes** (lessons for cost-tracking):
-1. **`min_instances=1` is the killer**. Always-on multi-container revisions silently run 24/7 across the project lifetime. Three "core infra" services (`gitlab-runner-cloudrun`, `gitlab-runner-gcf`, `github-runner-dispatcher-gcp`) alone are ~$5-7/day. Orphan `sockerless-svc-*` add another $5-10/day across the worst cell-5/6 iteration windows. Phase 129 deploy-hygiene + min_instances=0 (already shipped via BUG-970 fix on pod-Services) covers this — but the dispatcher-side services still need to either drop to min=0 or auto-tear-down between sessions.
-2. **Project lifetime > session length**. We treat live projects as iteration targets retained across sessions. That convenience has a daily-cost floor; per-session teardown (or scheduled overnight teardown) cuts the floor to zero.
-3. **Cloud Logging ingestion** is the second-largest line item. Per-line debug logging across 17 cell iterations × multi-container revisions adds up. A log-level-control env (`SOCKERLESS_LOG_LEVEL=info` instead of `debug` in production) on the dispatcher + backend reduces ingest by 5-10×.
-4. **VPC connector min-instances** is bookmarked overhead — useful for keeping cross-Cloud-Run latency low, but $0.80/day for min=4 across the project's life.
+The only paths to itemized spend data are:
+1. **BigQuery billing export** — must be enabled in advance (Phase 129's first deliverable). Free at our volume.
+2. **Cloud Console Billing Reports** — manual UI access, no programmatic equivalent.
+
+Sources: [Google Cloud Billing API reference](https://docs.cloud.google.com/billing/docs/reference/rest), [Cloud Billing data export to BigQuery docs](https://docs.cloud.google.com/billing/docs/how-to/export-data-bigquery), [Google Developer forum thread on programmatic GCP cost retrieval](https://discuss.google.dev/t/how-to-programmatically-retrieve-gcp-billing-cost-api-vs-bigquery-export/257728).
+
+**Implication**: I will not guess at the per-service breakdown — earlier speculative tables in this section were wrong by direction (initial $10-15) and would be wrong by line-item even if the totals reconciled. The honest record is "user-reported $90 total, no per-service detail available without Console or BigQuery export". The speculation has been deleted from this doc rather than left as a future trap.
 
 **Action: Phase 129 must ship before the next live-cloud session brings up a fresh project.** Concretely:
-- BigQuery billing export (free at our volumes, gives line-item-by-day visibility).
-- Per-session resource labels (`sockerless_session=<id>`) on every Cloud Run Service / Job / AR repo / GCS bucket / VPC connector.
-- Per-session budget alert ($5 alert, $20 hard cap).
-- Stale-resource sweeper integrated into the dispatcher GC tick (already partially planned for orphan `sockerless-svc-*`; expand to include dispatcher's own siblings + connector idle-min during off-hours).
-- Default the live-project workflow to overnight teardown (`gcloud projects delete` end of session, fresh `sockerless-live-<rand>` next session per `project_gcp_live_setup.md`).
+- **BigQuery billing export** — enable on the live billing account at fresh-project creation time, partitioned by `project_id` + `service` + `sku` + label. Free at our volume; ~MB-scale storage. This is the only programmatic source-of-truth for actual spend.
+- **Per-session resource labels** (`sockerless_session=<run-id>`) on every Cloud Run Service + Job + AR repo + GCS bucket + VPC connector sockerless creates. Billing export inherits these → cost queries can filter by session cleanly.
+- **Per-session budget alert** via Cloud Billing Budget API ($5 alert, $20 hard cap, scoped to label `sockerless_session=<id>`).
+- **Stale-resource sweeper** integrated into the dispatcher GC tick — extend the orphan `sockerless-svc-*` cleanup (already planned) to also cover dispatcher-side `gitlab-runner-cloudrun` / `gitlab-runner-gcf` siblings during off-hours, plus VPC connector min-instance reductions.
+- **Default the live-project workflow to overnight teardown** (`gcloud projects delete` end of session, fresh `sockerless-live-<rand>` next session per `project_gcp_live_setup.md`). GCP's 30-day soft-delete window is the safety net.
+
+**For the *current* $90 attribution**: the user can pull line items from the Cloud Console at `https://console.cloud.google.com/billing/019E9E-AF0BD0-6A6F75/reports` filtered by project IDs `sockerless-live-46x3zg4imo` + `sockerless-live-adi`. The 30-day data window keeps these queryable until ~2026-06-07.
 
 ## Working notes — anything not in the above
 
