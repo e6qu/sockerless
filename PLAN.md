@@ -36,7 +36,45 @@ Detail in [WHAT_WE_DID.md](WHAT_WE_DID.md); commit + BUG refs in [BUGS.md](BUGS.
 
 Order is the order of execution unless noted.
 
-### Phase 122k/m — All 4 GCP cells GREEN (the current goal, in flight 2026-05-06)
+### Phase 123 — Storage backing driver abstraction (NEXT, blocking cells 5+6)
+
+**User directives 2026-05-07** — absolute constraints driving the design:
+1. **Storage MUST be pluggable** so we can test multiple options without re-refactoring each backend. The driver abstraction is the point of this phase.
+2. **Zero-scaling, no-cost-when-not-in-use is the paradigm.** Acceptable: object storage, in-memory, ephemeral managed FS / disks where sockerless owns the lifecycle (created on job start, deleted at end). Rejected: anything that bills idle (Filestore, Memorystore, persistent-mode PDs, persistent-mode EFS).
+3. **Exploration priority**: object storage first → in-memory next → ephemeral managed filesystem if a workload genuinely needs POSIX.
+4. **No FUSE-on-object-store** for new SharedVolumes (GCSFuse rejected after BUG-965 stale-handle on per-step rewrites). Legacy `gcs-fuse` retained ONLY for cells 7+8's existing tar-pack persist pattern.
+
+Architectural detail in [specs/CLOUD_RESOURCE_MAPPING.md § Storage backing driver abstraction](specs/CLOUD_RESOURCE_MAPPING.md#storage-backing-driver-abstraction-planned--phase-123).
+
+**Driver matrix**:
+
+| Driver | Status (Phase 123) | Use case |
+|---|---|---|
+| `emptyDir` | implementing | ephemeral per-instance, single-container |
+| `gcs-sync` | implementing | **default** for shared workspaces; per-exec tar+GCS sync; no FUSE |
+| `gcs-fuse` | implementing (legacy retain) | cells 7+8 tar-pack persist (sequential whole-tar; FUSE-safe) |
+| `pd-ephemeral` | bookmarked | sockerless-managed PD lifecycle (create at job start, delete at end); RWO is fine for runner-task → JOB single-writer-at-a-time pattern |
+| `efs-ephemeral` | bookmarked | AWS cells; per-job access point lifecycle |
+
+**Rejected**: `nfs`, `juicefs+Redis`, `pd-persistent`, `efs-persistent` — all bill idle. See CLOUD_RESOURCE_MAPPING.md for the full table.
+
+**Implementation order** (~1300 LOC + tests, ~2 days):
+1. `api/storage_backing.go` — `StorageBacking` enum + extended `SharedVolume` struct (60 LOC).
+2. `backends/core/storage_backing.go` — `StorageBackingDriver` interface, `BackingSpec`, `Registry`, `EmptyDirDriver` (150 LOC).
+3. `backends/gcp-common/storage_gcsfuse.go` — legacy direct-FUSE driver for cells 7+8 (~150 LOC).
+4. `backends/gcp-common/storage_gcssync.go` — new sync-at-exec driver for cells 5+6 (~250 LOC).
+5. `backends/{cloudrun,cloudrun-functions}/volume_translator.go` — per-cloud `BackingSpec → runpb.Volume` translators (160 LOC).
+6. Migrate inline `Volume_Gcs{}` / `Volume_EmptyDir{}` literals at the call sites to use the registry + translator (~80 LOC of edits).
+7. Backend ExecStart wrapper: invoke `PreExec` per volume → collect envelope hints → forward → invoke `PostExec` on response (100 LOC × 2 backends).
+8. Bootstrap-side handler: `runExecEnvelope` recognises `WORKSPACE_OBJECT` env hint, restores from GCS pre-subprocess + saves post-subprocess. Reuses existing `persist.go` GCS helpers (80 LOC × 2 bootstraps).
+9. Dispatcher TOML schema: `runner_workspace_backing = "gcs-sync"` + `runner_workspace_bucket = "..."` (60 LOC).
+10. Migrate cells 5+6 to `gcs-sync` via TOML config; verify GREEN.
+
+**Co-shipped fix**: BUG-964 (gcf `invokePodServiceMain` skip-default-invoke for OpenStdin=false main with no captured stdin — mirror of BUG-961 fix in cloudrun). Trivial change in `backends/cloudrun-functions/pod_service.go`. Lands as part of cells 5+6 v7 stack.
+
+**Closes**: BUG-963 (replaced by `gcs-sync` driver), BUG-964 (gcf skip-default-invoke), BUG-965 (GCSFuse abandoned for the workspace; `gcs-sync` is the no-FUSE replacement).
+
+### Phase 122k/m — All 4 GCP cells GREEN (in flight, 2 of 4 GREEN)
 
 User goal: **all 4 GCP cells (5/6/7/8) GREEN with full workflow + evidence + executing where they're supposed to**. Cells 1–4 (AWS) cover only trivial workloads; the GCP cells run the real probe + git-clone + go-build + arithmetic suite. This is the milestone the user has scoped as "consider it done".
 
@@ -642,105 +680,20 @@ The only documented mapping is the post-create UpdateService image-swap pattern 
 
 **Phase 118 PR rule**: per guiding principle #11, this phase closes only when the sub-118d-gcf + sub-118d-lambda commits land on a branch (`phase-118-faas-pods`), the PR is opened against `main`, and all CI jobs pass green. User merges (workflow rule).
 
-### Phase 122j — Vanilla-runner architecture pivot + BUG-947 GCSFuse-vs-git-checkout (IN FLIGHT 2026-05-04)
+### Phase 122 (sub-phases 122d through 122m) — CLOSED 2026-05-06
 
-User reset cells 5–8 architecture: runners stay UNMODIFIED upstream images; sockerless rides as a sidecar in multi-container Cloud Run Service/Job; gitlab-runner needs no dispatcher (it polls itself); github cells use a thin dispatcher that only calls `Executions.RunJob` with per-execution env override. **Forbidden**: custom runner images that bake sockerless code; `GIT_STRATEGY=none` workarounds; LD_PRELOAD shims; git config workarounds. Required: `GIT_STRATEGY` works for `clone`/`fetch`/`none`.
+The Phase 122 chain landed all the architectural work to bring cells 7+8 GREEN and stage cells 5+6 deeply into the workflow. Every sub-phase's full narrative + what-failed lives in [WHAT_WE_DID.md](WHAT_WE_DID.md); per-bug detail in [BUGS.md](BUGS.md). Closed bugs roll-up: BUG-907 → 963 (~50 bugs).
 
-**GitLab side (cells 7+8)**: pre-deployed multi-container Cloud Run Service per cell. [init: registers fresh project_type runner via gitlab API → writes shared config.toml], [gitlab-runner: vanilla `gitlab/gitlab-runner:v17.5.0`], [sockerless: standalone `sockerless-backend-cloudrun:latest`, ingress on :3375]. Live as `gitlab-runner-cloudrun-00002-8l8`.
+Headline outcomes:
+- Cells 7+8 GREEN — see STATUS.md scoreboard for URLs.
+- Cells 5+6 reach deep into the actual workflow (BUG-959 → 963 closed); two final blockers (BUG-964 gcf default-invoke + BUG-965 GCSFuse stale-handle) staged for Phase 123.
 
-**GitHub side (cells 5+6)**: pre-deployed Cloud Run Job per cell label with multi-container TaskTemplate (vanilla actions/runner + sockerless sidecar). Dispatcher's only call: `Executions.RunJob(predefined-job)` with per-execution env override. Implementation pending after gitlab cells GREEN.
-
-**BUG-947 — GCSFuse incompatible with git workspace** (filed 2026-05-04, fix in flight):
-Cell 7 v50 (pipeline 2498952453) git-fetched OK after VPC connector min-instances 2→4, then hung at `git checkout`. Diagnostic confirmed `git clone e6qu/sockerless` is 211 s on GCSFuse vs 1 s on tmpfs — the slowdown is per-file metadata round trips, not bandwidth.
-
-Architectural exploration:
-| Path | Verdict |
-|---|---|
-| A — emptyDir + single Cloud Run Service revision per gitlab-runner job | Infeasible — Cloud Run revisions immutable, can't pre-deploy unknown future containers in one revision |
-| B — Cloud Filestore (NFS) | Workable, $160/mo BASIC_HDD floor, GCP has no pay-per-use NFS analog of AWS EFS, held in reserve |
-| C — git config workarounds | Forbidden quick fix |
-| Tar-pack persist module (CHOSEN) | Bootstrap downloads single tar object per ad-hoc bind volume from GCS at startup; re-uploads after every exec under `invokeMu`. Replaces N per-file gcsfuse round trips with 1 GCS object roundtrip per stage (~2-5 s for sockerless-repo-sized data). No new infra. Bootstrap module + wiring committed (`1f06831`). |
-
-Backend volume-spec change (emit `Volume_EmptyDir{Memory}` for ad-hoc binds + inject `SOCKERLESS_PERSIST_VOLUMES` env) and image rebuild + cell retest are the next steps — see [DO_NEXT.md](DO_NEXT.md).
-
-### Phase 122i — Dispatcher rate-limit + gcf pool quota + 3-layer BUG-944 (IN FLIGHT 2026-05-04)
-
-Goal: cells 5-8 GREEN. Outcome at end of working session: 13 commits shipped, 7 BUG roots pinned + 5 closed, no cells closed (cell 7 was GREEN at session start; lost when `.gitlab-ci.yml` swap reverted to standard lint). Architectural blockers now precisely isolated; fix verification pending image rebuild + retest.
-
-**Closed**: BUG-938 (Cloud NAT abuse-flag rotation), BUG-939 (runner-task OOM at 4Gi/2cpu), BUG-940 (cleanup uses Execution state not Definition state), BUG-941 (cleanup ticker re-fires GitHub poll during rate-limit), BUG-943 (poller 1+N call burn — 60s cadence + runSeen TTL + proactive back-off via cached `X-RateLimit-Remaining`).
-
-**In-flight verification** (fixes shipped, end-to-end test pending):
-- BUG-942 — pool claim back-off `df75d4d` (~5s exponential before falling through to fresh CreateFunction).
-- BUG-944 — peeled in 3 layers: (1) GCS-Fuse `MountOptions=[implicit-dirs, ttl-secs=0, negative-ttl-secs=0]` `d85b652`; (2) pool-hit branch must call `attachVolumesToFunctionService` (was returning early) `ee63dae`; (3) idempotent merge by full shape, not just name — pool-reused funcs had matching names but stale options `a7e3b00`.
-
-**Remaining blocker not yet addressed**:
-- BUG-929: cloudrun `startSingleContainerService` missing post-deploy invoke — cell 5 hangs Initialize containers 43+ min instead of failing fast. Independent of BUG-944; needs separate fix.
-
-**What we tried that did NOT work** (preserve as anti-recipe):
-1. **gcf default CPU=0.5** — Cloud Run gen2 rejects fractional. Reverted in `71288bf`. **Gen2 stays as the constraint** — latest-stable, no deprecated APIs per user directive.
-2. **Cloud Run quota-increase request** (`CpuAllocPerProjectRegion` 20000→200000) — user rejected as "wrong path"; withdrew (preferredValue=grantedValue=20000). Architectural fix only.
-3. **4 cells in parallel** — exceeds `cpu_allocation` per-minute window. Solo + pool-reuse is the path.
-4. **Idempotent attach by name only** — stale config (matching names, different MountOptions) silently passed through. Need full-shape compare.
-5. **Treating runner image build flakiness as transient** — user directive: transients and flakiness are bugs. Investigation in flight.
-
-**Diagnostic discipline established this session**: after every gcf/cloudrun fix, dump deployed Cloud Run service spec (`gcloud run services describe <skls-*> --format=json | jq`) and verify field-by-field BEFORE re-triggering. Don't trust the in-code claim alone.
-
-### Phase 122g — Lift `image_inject` to gcp-common + Path B HTTP exec (CLOSED 2026-05-03 — cell 7 GREEN)
-
-Cell 7 GREEN at pipeline 2496721473 (1020s) with all 5 arithmetic markers verified, postgres SELECT version() returned PostgreSQL 16.13, all 6 environment probes ran. Cells 5/6/8 surfaced subsequent bugs (BUG-925 postgres-on-Cloud-Run-Service shipped 12-step fix; BUG-923 gcf ContainerCreate.Wait > 120s shipped async deploy fix in 122i; BUG-937 3-stage AR-auth chain shipped fix).
-
-7 commits delivered the Phase 122g architecture: lifted `backends/lambda/image_inject.go` → `backends/gcp-common/image_inject.go`; new `agent/cmd/sockerless-cloudrun-bootstrap` HTTP server with `execEnvelope{argv,tty,workdir,env,stdin}`; cloudrun + gcf ContainerCreate route through Cloud Run Service via overlay; ExecStart path B HTTP POST envelope to Service URL with `idtoken.NewClient`. Pool semantics: `claimFreeFunction` by content-hash, ContainerStop releases label, ContainerRemove deletes above pool cap.
-
-**Closes**: BUG-921, BUG-922 (start-cycle), BUG-927 (fake-success).
-
-### Phase 122f — Cloud Run Service path for runner-pattern containers (CLOSED 2026-05-03, INCOMPLETE — superseded by Phase 122g)
-
-In-session ground covered: VPC Access + connector provisioned (`sockerless-vpc` + `sockerless-connector`); cloudrun bootstraps set `SOCKERLESS_GCR_USE_SERVICE=1` + `SOCKERLESS_GCR_VPC_CONNECTOR`; `runner_pattern.go` added with `isRunnerPattern` detection; gcf `MinInstanceCount=1` for runner-pattern (BUG-923 partial mitigation); BUG-922 fix (ContainerStart fallback to ResolveContainerAuto). Misdiagnosis surfaced via BUG-927: gating runner-pattern was insufficient; Phase 122g supersedes by routing ALL containers through overlay+Service+Path-B-exec.
-
-### Phase 122e — Live-GCP runner unblock chain (CLOSED 2026-05-03, partial)
-
-Phase 122e closed 11 of 12 live-only bugs surfaced while wiring cells 5-8 against `sockerless-live-46x3zg4imo`:
-
-- BUG-907 (bash apostrophe in `${var:?msg}`)
-- BUG-908 (Cloud Run Jobs.CreateJob nested Job.Name rejected)
-- BUG-909 (cloudrun + gcf bind-mount → SharedVolume GCS bucket translation; Phase-110b-equivalent for GCP)
-- BUG-910 (bash `timeout 60s` killed runner mid-job)
-- BUG-911 (Cloud Run Job task_timeout default 600s)
-- BUG-912 (dispatcher RunJob.Wait blocks poll loop)
-- BUG-913 (gitlab-runner crashed on missing /tmp/runner-work)
-- BUG-915 (gitlab-runner cache disable via sed config.toml)
-- BUG-916 (BucketName output exceeded GCS 63-char limit; sha256 hash for >12-char vol names)
-- BUG-918 (cloudrun image-resolve mangled bare sha256:digest refs; partial fix + RepoTag substitution)
-- BUG-919 (AR remote-proxy for registry.gitlab.com; gitlab-runner-helper image)
-- BUG-921 (cloudrun /start blocked on RunJob.Wait — operation Metadata for execution name)
-
-OPEN at end of Phase 122e: BUG-922 (cloudrun container removed after first exec), BUG-923 (gcf ContainerCreate blocks 150-200s on CreateFunction.Wait). Both are addressed by Phase 122f architectural shift to Cloud Run Service path.
-
-Phase 122e also added the dispatcher serverless deployment (Cloud Run Service + Secret Manager + AR + GCS) and dropped the dispatcher's sockerless-config injection per the new dispatcher-scope rule. Bootstrap.sh auto-discovers project + region from GCP instance metadata server.
-
-### Phase 122d — BUG-909 cloudrun/gcf SharedVolumes (Phase-110b-equivalent for GCP)
-
-**Why.** Cells 5+6 surfaced live (2026-05-03) that the cloudrun + gcf backends reject every host bind mount the github-runner emits. Same shape as the AWS Phase-110b problem; same fix shape with GCS buckets replacing EFS access points. Without this, `runs-on: [self-hosted, sockerless-cloudrun]` workflows can't have a working `container:` directive, which breaks the very thing cells 5+6 exist to demonstrate.
-
-**Reference impls to mirror**:
-- `backends/ecs/config.go` lines 40-155 — `SharedVolume{Name, ContainerPath, AccessPointID, FileSystemID}` + `parseSharedVolumes` + `LookupSharedVolumeBySourcePath` + `LookupSharedVolumeByName` + `isSubPathOfSharedVolume` (file-internal helper).
-- `backends/ecs/backend_impl.go` lines ~100-170 — bind-mount loop in `ContainerCreate`: `/var/run/docker.sock` drop, named-volume rewrite for matching ContainerPath, sub-path drop, hard-reject everything else with the "host bind mounts are not supported" error.
-- `backends/lambda/` — same shape but Lambda uses single-FSC EFS so the translation collapses both shared volumes onto the workspace-AP via sub-paths (see lambda/backend_impl.go::translateBindsForLambda or equivalent).
-- `terraform/modules/ecs/runner.tf` + `terraform/modules/lambda/runner.tf` — pre-provisioned EFS + access points + IAM bindings.
-
-**GCP-specific design choices**:
-- `SharedVolume{Name, ContainerPath, Bucket}` (no equivalent of AccessPointID; GCS bucket is the unit).
-- Cloud Run Jobs `Volume{Gcs{Bucket, ReadOnly}}` is the runtime mount mechanism. Container `VolumeMounts{Name, MountPath}` references the named volume.
-- gcf path: Cloud Run Functions Gen2 are backed by Cloud Run Service. Check whether Service supports Volume.Gcs — yes per `cloud.google.com/go/run/apiv2/runpb` (`ServiceV2.Template.Volumes`). gcf backend's UpdateService overlay-and-swap path adds the Volume + VolumeMount in the service spec.
-- Dispatcher (`github-runner-dispatcher-gcp/internal/spawner/spawner.go`) adds the GCS Volume + VolumeMount to the **runner** Cloud Run Job AND sets `SOCKERLESS_GCP_SHARED_VOLUMES=runner-workspace=/tmp/runner-work=<bucket>,runner-externals=/opt/runner/externals=<bucket>` env on the runner container so the in-image backend's translation map matches what the runner-task has mounted.
-
-**Sub-tasks**:
-- 122d-a: `backends/cloudrun/config.go` + `backend_impl.go::ContainerCreate` + `containers.go` Cloud Run Job creation (Volume + VolumeMount).
-- 122d-b: same for `backends/cloudrun-functions/` (Service.Template.Volumes path).
-- 122d-c: `github-runner-dispatcher-gcp/internal/{config,spawner}.go` — `runner_workspace_bucket` config field (REQUIRED, fail-loudly), spawner adds Volume + VolumeMount + env on the runner Cloud Run Job.
-- 122d-d: `terraform/modules/cloudrun/runner.tf` (NEW) — `google_storage_bucket.runner_workspace` (force_destroy + 1-day lifecycle, mirrors AWS EFS shape).
-- 122d-e: rebuild + push runner images (cloudrun + gcf), rebuild + redeploy dispatcher.
-- 122d-f: re-fire cells 5+6 via PR #124 push; capture three URLs each.
+Architectural directives that emerged from these sub-phases (carried forward):
+- Backend ↔ host primitive must match (BUG-862; ECS-in-ECS, Lambda-in-Lambda, etc.).
+- Dispatcher stays generic — runner image owns the sockerless backend; dispatcher provides Cloud Run Job spec + operator-config volumes only.
+- HTTP 5xx reserved for unexpected panics; bootstraps use envelope `exitCode` / `X-Sockerless-Exit-Code` for designed failures.
+- Multi-stage runner pattern is two distinct problems: same-container-ID (BUG-955/958) and new-container-per-stage (BUG-956). Cross-cloud parity is a same-session sub-task.
+- GH actions/runner ≠ gitlab-runner — different OpenStdin semantics, different exec routing, different workspace propagation. Each cell-pair has its own fault line.
 
 ### Phase 120 — Live-GCP runner cells (4 cells, docker executor, no k8s)
 

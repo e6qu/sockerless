@@ -254,6 +254,89 @@ Rules:
 2. Backends never conflate *function state* with *invocation state*. An `ACTIVE` Lambda / GCF / AZF function with no in-flight invocation still maps to `State.Status=exited` *for a specific container* once that container's invocation is known to have finished — the cloud function resource itself remains `Active` and reusable.
 3. Invocation results that can't be recovered from the cloud (e.g. in-memory `InvocationResults` map lost on backend restart) fall back to the conservative "container is running if its function still exists" view. That's the same invariant `resolveTaskState` already applies for restart-safe state recovery.
 
+## Storage backing driver abstraction (PLANNED — Phase 123)
+
+User directive 2026-05-07: workspace storage MUST be pluggable so we can test multiple options (gcs-sync, NFS, emptyDir, future) without re-refactoring each backend.
+
+### Goals
+
+1. **Pluggable backings**: a `SharedVolume` declares `Backing: "gcs-sync"|"emptyDir"|"gcs-fuse"`; the backend resolves a driver and emits the right cloud volume spec.
+2. **No persistent hardware** (user directive 2026-05-07): no NFS / Filestore / always-on backing storage. Every storage backing must be scale-to-zero, billed per-use, no idle cost. Eliminates Filestore (NFSv3, ~$160/mo always-on) and self-managed NFS-on-VM as candidates.
+3. **No FUSE-on-object-store**: GCSFuse is rejected as the workspace primitive (BUG-965 stale-handle on per-step rewrites). The replacement uses GCS directly via SDK, syncing tar objects at exec boundaries — no FUSE in the data path.
+4. **Cost / scale-to-zero / use-only-when-needed**: GCS object storage is the only cross-Service shared-state primitive that satisfies all three. Per-exec sync via SDK calls beats per-byte FUSE access on consistency, and beats NFS on cost.
+5. **Single source of truth**: replaces the vestigial `backends/core/storage_driver.go::StorageDriver` and `api/drivers.go::VolumeDriver` shells (both unused today).
+
+### Two-layer architecture
+
+The driver has two responsibilities, separated:
+
+**Layer 1 — cloud volume spec.** Each backing produces a cloud-agnostic `BackingSpec`; per-backend translators convert that to the cloud's actual volume protobuf (`runpb.Volume{EmptyDir|Nfs|Gcs}` for Cloud Run / GCF; `ecs.Volume{EFSVolumeConfiguration}` for ECS; `containerapps.Volume{AzureFile}` for ACA; etc.). The spec is the *only* point each backing needs cloud-specific knowledge — and that knowledge lives in the per-backend translator, not in the driver itself.
+
+**Layer 2 — data-plane sync.** For backings whose volumes are *not* a live shared filesystem (`gcs-sync`), the driver exposes `PreExec` / `PostExec` hooks the backend invokes around `docker exec` forwarding. `PreExec` tars the source-side mount and uploads to GCS, returning an envelope hint (`WORKSPACE_OBJECT=gs://...`). The bootstrap on the receiving side recognises the hint, downloads + untars before running the subprocess, then tars + uploads after. `PostExec` on the source side downloads + untars to pick up changes. Live filesystems (`nfs`, `emptyDir`, `gcs-fuse`) return nil hooks.
+
+### Driver matrix
+
+**User directive 2026-05-07**: zero-scaling, no-cost-when-not-in-use is the paradigm. Acceptable when:
+- Storage scales to zero (no infrastructure left running between jobs)
+- Bills only for actual usage (storage bytes, requests, ephemeral compute time)
+- Sockerless owns the lifecycle (provisioned on demand, deleted when not needed)
+
+**Exploration priority (per user, in order):**
+1. Object storage (GCS / S3 / Azure Blob) — pure pay-per-byte, true scale-to-zero.
+2. In-memory (tmpfs / emptyDir Memory) — free; bounded by Cloud Run instance memory.
+3. Ephemeral managed filesystem — acceptable IF lifecycle is sockerless-managed (created on job start, deleted on job end) AND idle cost is zero.
+
+The driver abstraction exists so we can swap any of these without backend refactor; today's priority is option 1, but the door stays open.
+
+| Driver | Layer-1 cloud spec | Layer-2 sync | Idle cost | Status |
+|---|---|---|---|---|
+| `emptyDir` | tmpfs in-memory volume | none | $0 | **Implemented in Phase 123.** Ephemeral per-instance, single-container. Default fallback for non-shared volumes. |
+| `gcs-sync` (NEW, default for shared workspaces) | tmpfs in-memory volume + envelope hint | tar → GCS object before exec; GCS object → untar after | $0 (only $0.02/GiB/mo for stored bytes; same-region egress free) | **Implementing in Phase 123.** Scale-to-zero. Replaces direct GCSFuse for cells 5+6. |
+| `gcs-fuse` (legacy retain) | Cloud Run `Volume{Gcs{Bucket}}` | none (FUSE handles reads/writes live) | $0 (only stored bytes) | **Implementing in Phase 123.** Kept for cells 7+8's existing tar-pack persist mounting (sequential whole-tar uploads — FUSE-safe). New SharedVolumes MUST use `gcs-sync`. |
+| `pd-ephemeral` (future, acceptable) | Cloud Run native PD mount with sockerless-managed lifecycle: `disks.create` at job start → `disks.attach` to runner-task + JOB pod-Service → `disks.delete` at job end | none (live POSIX) | $0 only if disk is deleted between jobs (otherwise PDs bill ~$0.04/GiB/mo idle) | **Bookmarked.** Adds POSIX semantics for workloads where `gcs-sync` overhead is unacceptable. Single-writer at a time (RWO) is fine for our pattern (runner-task writes script → JOB reads + writes → runner-task reads result; the two never write concurrently). Implement when there's a real workload that needs it. |
+| `efs-ephemeral` (future, AWS-only, acceptable) | ECS task `EFSVolumeConfiguration` with sockerless-managed lifecycle: `efs.CreateAccessPoint` per job → `efs.DeleteAccessPoint` at job end | none (live NFSv4) | $0.30/GiB/mo for stored bytes (bills idle) — operator-evaluated case-by-case | **Bookmarked.** When AWS cells need a managed-FS pattern. EFS without a job-scoped access point would bill mount-target hours; per-job access points scale to zero. |
+
+**Rejected backings (do NOT implement — each violates the directive):**
+
+| Rejected | Why |
+|---|---|
+| `nfs` (Cloud Filestore or self-managed NFS-on-VM) | Filestore: $160/mo always-on. Self-managed NFS: a VM 24/7. Both bill idle. |
+| `juicefs` (POSIX-on-GCS via metadata service) | Requires Memorystore Redis (~$50/mo always-on) or self-managed Redis. Bills idle. |
+| `pd-persistent` (PD mounted across the whole project lifetime) | Disk bills idle. Only acceptable shape is `pd-ephemeral` (sockerless-managed lifecycle, deleted when no jobs running). |
+| `efs-persistent` (EFS file system without per-job access points) | Mount targets bill always-on. Per-job access points bring it back into scope. |
+
+### What this replaces
+
+- `backends/core/storage_driver.go::StorageDriver` (vestigial; only `NoOpStorageDriver` exists, no callers) — DELETE.
+- `api/drivers.go::VolumeDriver` (vestigial; one passthrough field in docker converter, no implementations) — DELETE.
+- Inline `runpb.Volume_Gcs{}` / `runpb.Volume_EmptyDir{}` literals at `backends/cloudrun/volumes.go:74` and `backends/cloudrun-functions/{pod_service.go:587, volumes.go}` — REPLACE with `s.StorageBackings.Resolve(vol.Backing).CloudSpec(vol)` + per-backend translator.
+- `backends/cloudrun-functions/persist.go` (in the bootstrap) — RETAIN as the sync engine; the new `gcs-sync` driver invokes its existing `saveOne` / `restoreOne` helpers via the bootstrap's envelope handler. Same applies to `backends/cloudrun-bootstrap/persist.go`.
+
+### Migration ordering (per Phase 123 task list in PLAN.md)
+
+1. Define `api.StorageBacking` enum (`emptyDir`, `gcs-sync`, `gcs-fuse`) + `SharedVolume.Backing` field. New SharedVolumes default to `gcs-sync`; unset `Backing` resolves to `gcs-fuse` for backwards-compat with cells 7+8.
+2. Define `core.StorageBackingDriver` interface + `BackingSpec` + `EmptyDirDriver` + `Registry`.
+3. Implement `gcs-fuse` (legacy) and `gcs-sync` (new) drivers in `backends/gcp-common/`.
+4. Per-backend translator: `backends/cloudrun-functions/volume_translator.go`, `backends/cloudrun/volume_translator.go`. Replace inline literals with translator calls.
+5. Wire registry into `Server` for both backends; `materializePodService` and friends call `s.StorageBackings.Resolve(...).CloudSpec(...)` then `cloudRunVolumeFromSpec(...)`.
+6. ExecStart wrapper in both backends: iterate volumes, call `PreExec` to collect envelope hints, attach to envelope, dispatch; on response, call `PostExec`.
+7. Bootstrap-side envelope handler: extend `runExecEnvelope` to recognise `WORKSPACE_OBJECT` env hint, restore from GCS pre-subprocess, save to GCS post-subprocess. Reuses `persist.go`'s `gcsGet/gcsPut/tarFrom/untarInto` helpers — no new I/O code.
+8. Dispatcher TOML `[[label]]` gains `runner_workspace_backing` + `runner_workspace_bucket`.
+9. Migrate cells 5+6 to `gcs-sync` backing via TOML config. Verify GREEN.
+10. Cells 7+8: stay on `gcs-fuse` with tar-pack persist (sequential pattern, FUSE-safe because writes are whole-tar uploads). Optionally migrate to `gcs-sync` later for architectural consistency, but not urgent.
+
+### Open architectural decisions resolved
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Default backing for new SharedVolumes | `gcs-sync` | User directive 2026-05-07: zero-scaling, no-cost-when-not-in-use. GCS satisfies; persistent hardware (NFS/Filestore/PD/Memorystore) does not. |
+| Backwards-compat for unset `Backing` field | resolves to `gcs-fuse` | Avoids breaking cells 7+8 which rely on direct `Volume_Gcs{}`. New configs explicitly set `Backing`. |
+| Sync granularity for `gcs-sync` | per-exec (per docker-exec call) | github-runner pattern (cells 5+6) writes per step. gitlab-runner pattern (cells 7+8) writes per stage and uses a separate persist module. |
+| Concurrent-writer safety for `gcs-sync` | ifGenerationMatch precondition on save (TODO; deferred until first concurrent-writer evidence) | Single-writer per job is the common case; precondition check added when we see real conflict. |
+| Lift `NetworkDriver` / `DNSDriver` while we're here | NO — focused on storage | Avoid scope creep. Network abstraction has its own layered concerns; do separately when there's a real need. |
+| Phase 104 driver framework relationship | Independent track | Phase 104 = per-container ops (Exec/Attach/Logs/etc.). Storage backing = per-volume. Different concept, different lifecycle. They co-exist. |
+| NFS / Filestore / always-on shared FS | REJECTED (user directive 2026-05-07) | Persistent hardware violates the zero-scaling paradigm. Single-writer + sync-at-boundary is acceptable for the same workloads NFS would have served. |
+
 ## Volume provisioning per backend
 
 Real per-cloud volume provisioning: ECS + Lambda → EFS access points; Cloud Run + GCF → GCS buckets; ACA + AZF → Azure Files shares. Host-path binds remain rejected (no host filesystem in the cloud).
@@ -923,23 +1006,19 @@ The github-runner JOB container is `OpenStdin=false` (no attach-stdin) with a lo
 | `invokeServiceDefaultCmd` POSTs empty body to bootstrap → run env-baked CMD | gitlab-runner's helper image has a quick init CMD; for OpenStdin=true main, the path captures stdin and POSTs envelope with stdin | GH JOB CMD is `tail -f /dev/null` — runs forever as the default-invoke subprocess → blocks `invokeMu` → subsequent /exec sits in queue 10 min → BUG-961. **Fix**: `skipIfNoStdin` param on `invokeServiceDefaultCmd`. Multi-container pod-Service mode passes `true` (skip default-invoke when no stdin captured); single-container `docker run` path passes `false` (default-invoke runs CMD as before). |
 | `execStartViaInvoke` returns plain bytes | gitlab-runner attach response uses raw stream (no docker stdcopy framing) | github-runner's `docker exec` non-TTY response demands 8-byte stdcopy stream-frame headers → "Unrecognized input header: 115" → BUG-962. **Fix**: wrap stdout in `0x01` frame + stderr in `0x02` frame via existing `writeMuxFrame` helper. |
 
-**Critical invariant — workspace persistence across the runner-task and the JOB pod-Service** (BUG-963, surfaced 2026-05-06 cells 5+6 v5):
+**Critical invariant — workspace state propagation across the runner-task and the JOB pod-Service** (BUG-963 → BUG-965 → Phase 123):
 
-GH actions/runner writes step scripts to `$RUNNER_WORK/_temp/<uuid>.sh` (= `/tmp/runner-work/_temp/...` on the runner-task). It then `docker exec sh /__w/_temp/<uuid>.sh`. Sockerless's bind-mount → GCS-volume translation makes the JOB pod-Service mount `/__w` via GCSFuse on the workspace bucket. But the runner-task's `/tmp/runner-work` was plain tmpfs by default — writes never reached the bucket — JOB container read empty `/__w`.
+GH actions/runner writes step scripts to `$RUNNER_WORK/_temp/<uuid>.sh` (= `/tmp/runner-work/_temp/...` on the runner-task). It then `docker exec sh /__w/_temp/<uuid>.sh`. Both sides need to see the same files.
 
-Fix: dispatcher attaches `Volume{Gcs{Bucket}}` + `VolumeMount{/tmp/runner-work}` to the runner-task Cloud Run Job spec. Operator config: `runner_workspace_bucket = "<project>-runner-workspace"` in the dispatcher TOML's `[[label]]` block. Cloud Run native GCSFuse mount avoids the gcsfuse-CLI path that needs CAP_SYS_ADMIN (Cloud Run Jobs don't grant it). Both runner-task and JOB pod-Service now read/write the same bucket — script files propagate naturally.
+Today's path: **GCS object sync via the new `gcs-sync` storage backing driver** (Phase 123). The runner-task's sockerless-backend tars `/tmp/runner-work` to a GCS object before forwarding the exec POST; the bootstrap on the JOB pod-Service untars from the same object before running the subprocess, then tars + uploads the modified workspace back; sockerless-backend untars on the response side. No FUSE in the data path — pure SDK calls. Per-step granularity matches GH actions/runner's per-step script pattern.
 
-**Workspace storage primitive — NFS via Cloud Filestore, NOT GCSFuse** (user directive 2026-05-06, supersedes earlier GCSFuse-based BUG-963):
+Why this beat the alternatives we tried (in order):
+- **Direct GCSFuse mount** (BUG-963 attempt 2026-05-06): stale-file-handle on `event.json` per-step rewrite (BUG-965). FUSE-on-object-store inherits eventual-consistency and rename-atomicity gaps.
+- **Cloud Filestore NFSv3** (proposed 2026-05-07 morning): rejected by user directive 2026-05-07 — no persistent hardware, no always-on cost.
+- **JuiceFS POSIX-on-GCS with Memorystore Redis metadata**: rejected — Redis is always-on (~$50/mo).
+- **Cloud Run native PD attach**: single-writer (RWO) only; doesn't fit two-Service pattern; PD bills idle.
 
-GCSFuse is unsuitable for the GH actions/runner workspace pattern because it invalidates open file handles on object rewrite — GH rewrites `_temp/_github_workflow/event.json` between every step, producing `Stale file handle` errors during `clone-and-compile` (BUG-965). Mount options can mask but not eliminate this.
-
-The correct primitive is **Cloud Filestore (NFSv3)** mounted via Cloud Run's native `Volume{Nfs{Server, Path}}` on both the runner-task (Cloud Run Job) and the JOB pod-Service (Cloud Run Service). NFSv3 is full POSIX with strong consistency — no stale handles, no eventual consistency, atomic rewrites visible to all readers immediately.
-
-Cost: BASIC_HDD tier minimum 1 TiB at ~$0.16/GiB/mo = ~$160/mo floor. Operator-accepted as the architectural cost of running real CI on Cloud Run.
-
-Operator config: `runner_workspace_nfs_server` + `runner_workspace_nfs_path` in dispatcher TOML's `[[label]]` block. SockerlessSharedVolume gains `NfsServer` + `NfsPath` fields; backends emit `Volume{Nfs}` instead of `Volume{Gcs}` when NFS fields are set.
-
-GCSFuse remains valid for the **per-stage tar-pack persist** pattern (BUG-947 cloudrun, BUG-957 gcf) because that path uses GCS as object storage (a single tar object per volume per stage), not as a live filesystem. Sequential gitlab-runner stages produce no concurrent rewrites — GCSFuse doesn't enter the path at all (the bootstrap reads/writes directly via GCS JSON API).
+`gcs-sync` is the only candidate that satisfies zero-scaling + no-cost-when-not-in-use + cross-Service-state.
 
 **`/var/run/docker.sock` mount**: github-runner unconditionally mounts the docker socket on the JOB container so user steps can do nested `docker run`. On Cloud Run there's no docker socket — sockerless drops the mount silently AND the user step cannot do `docker run`. Documented limitation; user code that actually requires nested docker fails at runtime with `cannot connect`.
 
@@ -954,7 +1033,7 @@ GCSFuse remains valid for the **per-stage tar-pack persist** pattern (BUG-947 cl
 | `Typed.Exec` routing | n/a (no exec; uses attach) | needs envelope-POST fallback | ✅ via BUG-960 `WrapLegacyExecStart(s.ExecStart)` | ✅ same |
 | Default-invoke gating | always invoke (script comes via stdin) | NEVER default-invoke (long-lived `tail -f` would block forever) | ✅ via BUG-961 `skipIfNoStdin=true` for multi-container pod-Service | 🟡 BUG-964 OPEN (mirror BUG-961 to gcf invokePodServiceMain) |
 | Per-step process supervision | bash reads stdin until EOF | dedicated process per exec | ✅ Both representable | ✅ Both representable |
-| Workspace persistence (cross-stage) | `/builds` per-stage tar-pack persist via GCS object (BUG-947 cloudrun, BUG-957 gcf) — sequential, no concurrent rewrites | `/__w` shared via Cloud Run native `Volume{Nfs}` (Cloud Filestore) on both runner-task AND JOB pod-Service per user directive 2026-05-06; GCSFuse rejected due to stale-handle on per-step rewrites (BUG-965) | ✅ Cell 7 GREEN | ✅ Cell 8 GREEN |
+| Workspace persistence (cross-stage) | `/builds` per-stage tar-pack persist via GCS object (BUG-947 cloudrun, BUG-957 gcf) — sequential, no concurrent rewrites | `/__w` per-step sync via `gcs-sync` storage backing driver (Phase 123) — sockerless-backend tars on exec, bootstrap untars + runs + tars, sockerless-backend untars response. No FUSE; user-directive zero-scaling. | ✅ Cell 7 GREEN | ✅ Cell 8 GREEN |
 | Service containers (postgres etc.) | `--network <job-net>` peer-reachable on `localhost:<port>` | same | ✅ multi-container Cloud Run Service revision (loopback per-revision) | ✅ same |
 | Stdout/stderr capture | hijacked stdcopy.StdCopy framing | DockerExec response (also stdcopy-framed) | ✅ via `writeMuxFrame` helper in `attach_stream.go` | ✅ via BUG-962 same helper applied to `execStartViaInvoke` |
 | GCSFuse stale-handle on per-step rewrites | n/a (single bucket, sequential) | event.json rewrite each step → stale-handle | n/a | 🟡 BUG-965 OPEN (mount options or Filestore) |

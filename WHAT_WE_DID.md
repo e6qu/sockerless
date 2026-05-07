@@ -6,6 +6,37 @@ See [STATUS.md](STATUS.md) for the current phase roll-up, [BUGS.md](BUGS.md) for
 
 This file keeps narrative / "why we did it" context that doesn't live in BUGS.md or git log. Per-bug detail belongs in [BUGS.md](BUGS.md) — don't duplicate it here.
 
+## Phase 123 planning session (2026-05-07 — storage backing driver abstraction defined; cells 5+6 staged)
+
+Pivoted from "fix GCSFuse mount options" / "swap to Filestore NFS" to a proper driver abstraction after the user directives.
+
+### What worked (planning + design)
+
+1. **Driver abstraction designed.** `api.StorageBacking` enum + `core.StorageBackingDriver` interface + per-cloud `BackingSpec → cloud Volume` translator. Replaces vestigial `core.StorageDriver` + `api.VolumeDriver` shells (both unused today). Two-layer separation: cloud volume spec (per-cloud translator) + data-plane sync (`PreExec` / `PostExec` hooks for sync-style backings only). See [specs/CLOUD_RESOURCE_MAPPING.md § Storage backing driver abstraction](specs/CLOUD_RESOURCE_MAPPING.md#storage-backing-driver-abstraction-planned--phase-123).
+
+2. **`gcs-sync` chosen as the default backing for shared workspaces.** The runner-task tars `/tmp/runner-work` to a GCS object before forwarding the exec POST; the JOB pod-Service bootstrap untars before subprocess + tars after; runner-task untars on response. Pure GCS SDK calls, no FUSE in the data path, scale-to-zero, $0 idle cost. Implementation reuses existing `persist.go` GCS helpers.
+
+3. **Driver matrix documented with explicit rejection list.** Every option weighed against the directives: `emptyDir` ✓, `gcs-sync` ✓ (new default), `gcs-fuse` ✓ (legacy retain for cells 7+8). Bookmarked: `pd-ephemeral`, `efs-ephemeral` (sockerless-managed lifecycle, scale-to-zero). Rejected: `nfs`, `juicefs+Redis`, `pd-persistent`, `efs-persistent` — all bill idle.
+
+### What we tried that did NOT work (anti-recipes for future)
+
+| Attempt | Why it failed |
+|---|---|
+| **GCSFuse mount with extra options** (`--rename-dir-limit=10000 --metadata-cache-ttl-secs=0`) — proposed earlier as cheap BUG-965 mitigation | User directive 2026-05-07: **no FUSE-on-object-store for new SharedVolumes.** Mount options can mask but not eliminate stale-handle on rewrites. Rejected as the design path. |
+| **Cloud Filestore NFSv3 via `Volume{Nfs}`** — proposed 2026-05-07 morning | User directive 2026-05-07: **zero-scaling, no-cost-when-not-in-use.** Filestore BASIC_HDD ≈ $160/mo always-on. Rejected. |
+| **JuiceFS POSIX-on-GCS with Memorystore Redis metadata** — considered as the "have your cake and eat it" option | Memorystore Redis ≈ $50/mo always-on. Violates the directive. |
+| **Cloud Run native PD (RWO) attach** — single-writer would have been fine for our pattern | Cloud Run mounts the disk for the lifetime of the revision; even idle, the disk bills. Persistent-mode PDs rejected. (Sockerless-managed ephemeral PDs — created at job start, deleted at end — remain on the bookmarked list.) |
+| **GCSFuse extension to use `--implicit-dirs --rename-dir-limit=10000`** | Same root cause as plain GCSFuse; ineffective for `event.json` rewrites. |
+| **Inline NFS swap (~30 LOC) without driver abstraction** — proposed first as faster path | User: "we should also implement a storage driver abstraction of sorts so that we can potentially test out and swap out multiple storage options without refactoring each time." Pivoted to full Phase 123 design. The driver abstraction is the deliverable, not a side effect. |
+
+### Lessons learned
+
+1. **"Zero-scaling, no-cost-when-not-in-use" is a hard architectural constraint, not a preference.** Every backing was forced through the lens "does this bill idle? if yes, reject." That filter eliminated all the FUSE + NFS + always-on alternatives in a single pass and left object storage as the only candidate for cross-Service shared state. Documenting the reject list explicitly in CLOUD_RESOURCE_MAPPING.md prevents future "let's try Filestore" relitigation.
+
+2. **Pluggable driver abstraction beats ad-hoc swap.** The user's instinct to build the abstraction *first* (rather than inline-rewrite the call sites) means future options (`pd-ephemeral`, `efs-ephemeral`, `juicefs` if its cost shape ever changes) become TOML config changes — no Go refactor. The cost is ~1300 LOC + tests today, paid back the first time we swap.
+
+3. **Cells 5+6's cascade of layered failures** (BUG-959 → 960 → 961 → 962 → 963 → 964 → 965) showed the value of the no-fakes / cross-cloud-parity rules: each fix surfaced the next layer immediately because no fallbacks were masking earlier failures, and each layer's fix landed with the same cross-cloud mirror (BUG-958 ↔ BUG-955; BUG-961 ↔ BUG-964 pending). Phase 123 puts storage on the same footing — one abstraction, multiple drivers, swap by config.
+
 ## Phase 122m fifth session (2026-05-06 PM — cells 5+6 progressed through 5 architectural blockers)
 
 Continued from the fourth session. Cells 7+8 GREEN at start; goal: close cells 5+6 (GH × GCP). Each iteration peeled the next layered blocker.

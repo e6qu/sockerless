@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**2026-05-06 — 6/8 cells GREEN. Cells 5+6 (GH × GCP) progressed through 8 architectural fixes today; two final layered blockers remain (BUG-964 gcf default-invoke hang, BUG-965 GCSFuse stale-file-handle).**
+**2026-05-07 — 6/8 cells GREEN. Cells 5+6 (GH × GCP) staged behind Phase 123 (storage backing driver abstraction) + BUG-964 (gcf skip-default-invoke). User directives 2026-05-07: zero-scaling-no-idle-cost paradigm; storage MUST be pluggable. Implementation plan in [DO_NEXT.md](DO_NEXT.md).**
 
 ## Cell scoreboard
 
@@ -10,8 +10,8 @@
 | **2** GH × Lambda | sockerless-lambda | ✅ GREEN | https://github.com/e6qu/sockerless/actions/runs/25113565115 | Phase 110 closed |
 | **3** GL × ECS | sockerless-ecs | ✅ GREEN | https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 | Phase 110 closed |
 | **4** GL × Lambda | sockerless-lambda | ✅ GREEN | https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943 | Phase 117 closed |
-| **5** GH × cloudrun | sockerless-cloudrun | ❌ **BUG-965** | https://github.com/e6qu/sockerless/actions/runs/25437444454 | v6 reached `clone-and-compile`, hit GCSFuse `Stale file handle: event.json`. **User directive 2026-05-06: no GCSFuse — switch to Cloud Filestore NFSv3.** |
-| **6** GH × gcf | sockerless-gcf | ❌ **BUG-964** | https://github.com/e6qu/sockerless/actions/runs/25437444448 | v6 hung 10 min on `docker exec` — gcf needs the cloudrun BUG-961 mirror. |
+| **5** GH × cloudrun | sockerless-cloudrun | ❌ **BUG-965** | https://github.com/e6qu/sockerless/actions/runs/25437444454 | v6 reached `clone-and-compile`, hit GCSFuse `Stale file handle: event.json`. Phase 123 `gcs-sync` driver replaces GCSFuse for the workspace. |
+| **6** GH × gcf | sockerless-gcf | ❌ **BUG-964** | https://github.com/e6qu/sockerless/actions/runs/25437444448 | v6 hung 10 min on `docker exec` — gcf needs the cloudrun BUG-961 mirror in `invokePodServiceMain`. Co-shipped with Phase 123. |
 | **7** GL × cloudrun | sockerless-cloudrun | ✅ **GREEN v54** | https://gitlab.com/e6qu/sockerless/-/jobs/14237010667 | 178s, `all arithmetic checks pass` at `2026-05-06T09:43:11.835` |
 | **8** GL × gcf | sockerless-gcf | ✅ **GREEN v28** | https://gitlab.com/e6qu/sockerless/-/jobs/14234857458 | 147s, `all arithmetic checks pass` at `2026-05-06T08:05:04.053` |
 
@@ -48,8 +48,23 @@
 | VPC connector + Cloud NAT | `34.31.88.230` |
 | GCS bucket | `sockerless-live-46x3zg4imo-runner-workspace` (workspace + JOB pod-Service share via this) |
 
+## Next session
+
+Phase 123 implementation per [DO_NEXT.md](DO_NEXT.md). Driver matrix:
+
+| Driver | Use | Status |
+|---|---|---|
+| `emptyDir` | ephemeral, single-container | implementing |
+| `gcs-sync` (NEW) | shared workspace, per-exec GCS sync, no FUSE | implementing — replaces GCSFuse for cells 5+6 |
+| `gcs-fuse` (legacy) | cells 7+8 tar-pack persist | implementing (retained) |
+| `pd-ephemeral`, `efs-ephemeral` | future | bookmarked — sockerless-managed lifecycle, scale-to-zero |
+
+Rejected (always-on cost): NFS / Filestore / JuiceFS+Redis / persistent-mode PDs.
+
+Co-shipped: BUG-964 (gcf `invokePodServiceMain` skip-default-invoke).
+
 ## Project state
 
-- **Branch**: `phase-118-faas-pods @ c01067b` — pushed.
-- **PRs**: #123 (open, all today's code) + #124 (throwaway trigger PR for cells 5+6).
+- **Branch**: `phase-118-faas-pods @ fbd3d2b` — pushed.
+- **PRs**: #123 (open, today's code) + #124 (throwaway trigger PR for cells 5+6).
 - **Live project lifetime**: keep `sockerless-live-46x3zg4imo` until cells 5+6 also GREEN.
