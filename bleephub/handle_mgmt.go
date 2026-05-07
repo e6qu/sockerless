@@ -9,8 +9,64 @@ func (s *Server) registerMgmtRoutes() {
 	s.mux.HandleFunc("GET /internal/workflows", s.handleListWorkflows)
 	s.mux.HandleFunc("GET /internal/workflows/{workflowId}", s.handleGetWorkflow)
 	s.mux.HandleFunc("GET /internal/workflows/{workflowId}/logs", s.handleGetWorkflowLogs)
+	s.mux.HandleFunc("GET /internal/workflow_files", s.handleListWorkflowFilesInternal)
 	s.mux.HandleFunc("GET /internal/sessions", s.handleListSessions)
 	s.mux.HandleFunc("GET /internal/repos", s.handleListRepos)
+}
+
+// workflowFileView is the operator-facing aggregate shape of every
+// registered WorkflowFile across every repo. The bleephub UI's
+// Workflows tab reads this; the per-repo GitHub-shape endpoints
+// (`/api/v3/repos/{o}/{r}/actions/workflows`) are for the gh CLI +
+// runner-dispatcher.
+type workflowFileView struct {
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	Path         string `json:"path"`
+	State        string `json:"state"`
+	RepoFullName string `json:"repoFullName"`
+	Source       string `json:"source"`
+	CreatedAt    string `json:"createdAt"`
+	UpdatedAt    string `json:"updatedAt"`
+}
+
+func (s *Server) handleListWorkflowFilesInternal(w http.ResponseWriter, r *http.Request) {
+	// Discover from every repo's git storage so files newly pushed
+	// since last poll show up. Cheap — the discovery is idempotent.
+	s.store.mu.RLock()
+	repoNames := make([]string, 0, len(s.store.Repos))
+	for _, repo := range s.store.Repos {
+		repoNames = append(repoNames, repo.FullName)
+	}
+	s.store.mu.RUnlock()
+	for _, name := range repoNames {
+		s.store.DiscoverWorkflowFilesFromGit(name)
+	}
+
+	s.store.mu.RLock()
+	files := make([]workflowFileView, 0, len(s.store.WorkflowFiles))
+	for _, wf := range s.store.WorkflowFiles {
+		files = append(files, workflowFileView{
+			ID:           wf.ID,
+			Name:         wf.Name,
+			Path:         wf.Path,
+			State:        wf.State,
+			RepoFullName: wf.RepoFullName,
+			Source:       wf.Source,
+			CreatedAt:    wf.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			UpdatedAt:    wf.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		})
+	}
+	s.store.mu.RUnlock()
+
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].RepoFullName != files[j].RepoFullName {
+			return files[i].RepoFullName < files[j].RepoFullName
+		}
+		return files[i].Path < files[j].Path
+	})
+
+	writeJSON(w, http.StatusOK, files)
 }
 
 // workflowView is the JSON representation of a workflow for the management API.

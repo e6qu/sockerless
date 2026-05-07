@@ -95,3 +95,21 @@ export interface BleephubHealth {
   status: string;
   service: string;
 }
+
+/** WorkflowFile is the file-level workflow YAML entity (Phase 131). */
+export interface BleephubWorkflowFile {
+  id: number;
+  name: string;
+  path: string;
+  state: string; // "active" | "deleted_file" | "disabled_fork"
+  repoFullName: string;
+  source: string; // "submitted" | "discovered"
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Body for POST /api/v3/repos/{o}/{r}/actions/workflows/{id}/dispatches. */
+export interface BleephubDispatchRequest {
+  ref?: string;
+  inputs?: Record<string, string>;
+}

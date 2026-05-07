@@ -63,14 +63,20 @@ Shipped on `phase-130` branch. New `bleephub/gh_actions_rest.go` registers all 1
 
 JSON converters: `workflowRunJSON`, `workflowJobJSON`, `runnerJSON`. `stableJobID` (FNV-1a 64-bit) maps internal UUIDs to stable int64 GitHub-style IDs. `bleephub/gh_actions_test.go` covers each endpoint shape — 14 new tests PASS; full bleephub suite green.
 
-### Phase 131 — bleephub workflows REST + UI dispatch (queued)
+### Phase 131 — bleephub workflows REST + UI dispatch (✅ shipped)
 
-User chose "more complete": auto-parse `.github/workflows/*.yml` from a repo-on-disk; the bleephub UI gains workflow-dispatch.
+Shipped on `phase-130` branch. Per the "more complete" choice: auto-parse `.github/workflows/*.{yml,yaml}` from the repo-on-disk (via go-git tree walk on each repo's in-memory storer at HEAD) AND auto-register on every `POST /api/v3/bleephub/workflow` submission. New `WorkflowFile` entity (file-level) distinct from the existing run-level `Workflow`.
 
-- `GET /api/v3/repos/{o}/{r}/actions/workflows` (list YAML files from repo-on-disk)
-- `GET /api/v3/repos/{o}/{r}/actions/workflows/{id}` + `/runs`
-- `POST /api/v3/repos/{o}/{r}/actions/workflows/{id}/dispatches` (with `inputs`, `ref`)
-- UI: refactor `WorkflowsPage` into Workflows + Runs tabs; dispatch form.
+REST routes from `server.go::registerGHWorkflowsRoutes()` (in `gh_workflows_rest.go`):
+
+- `GET /api/v3/repos/{o}/{r}/actions/workflows` — list with `total_count + workflows[]`
+- `GET .../workflows/{workflow_id}` — numeric ID, exact path, or filename
+- `GET .../workflows/{workflow_id}/runs` — filtered by `run.Name == workflow.Name`
+- `POST .../workflows/{workflow_id}/dispatches` — `{ref, inputs}` body; replays cached YAML through `submitWorkflow`
+
+Phase 130's `POST .../runs/{id}/rerun` rewired through the WorkflowFile cache: 201 Created when matching cached YAML exists, 422 otherwise.
+
+UI: `WorkflowsPage` refactored into Workflows + Runs tabs; per-workflow "Run workflow" button opens a dispatch dialog (ref + inputs JSON, with error surfacing). New `/internal/workflow_files` aggregator powers the operator-facing Workflows tab. 10 new Go tests + 4 new UI tests PASS.
 
 ### Phase 132 — bleephub apps + oauth completeness (queued)
 

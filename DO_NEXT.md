@@ -19,15 +19,9 @@ Shipped: `bleephub/gh_actions_rest.go` registers all 10 GitHub-shape routes (run
 
 `POST .../runs/{id}/rerun` returns 422 with a clear message pointing at the existing `/api/v3/bleephub/workflow` submit path — Phase 131 ships the proper `/actions/workflows/{id}/dispatches` route.
 
-### 3. Phase 131 — bleephub workflows REST + UI dispatch (after 130)
+### 3. Phase 131 — bleephub workflows REST + UI dispatch (DONE)
 
-User chose "more complete": auto-parse `.github/workflows/*.yml` from a repo-on-disk; the bleephub UI gets workflow-dispatch form.
-
-- `GET /api/v3/repos/{o}/{r}/actions/workflows` (list YAML files)
-- `GET /api/v3/repos/{o}/{r}/actions/workflows/{id}` (read metadata)
-- `GET /api/v3/repos/{o}/{r}/actions/workflows/{id}/runs`
-- `POST /api/v3/repos/{o}/{r}/actions/workflows/{id}/dispatches` (with `inputs`, `ref`)
-- UI: refactor `WorkflowsPage` into Workflows + Runs tabs; dispatch form.
+Shipped: `bleephub/gh_workflows_rest.go` (4 GitHub-shape routes) + `bleephub/store_workflow_files.go` (new `WorkflowFile` entity with FNV-1a int64 IDs + go-git tree-walk discovery from each repo's in-memory storer at HEAD) + auto-register on `/api/v3/bleephub/workflow` submit. Phase 130's `rerun` handler now wires through the WorkflowFile cache. UI: `WorkflowsPage` has Workflows + Runs tabs + dispatch dialog (ref + inputs JSON). 10 new Go tests + 4 new UI tests PASS; full bleephub Go suite green at 23s; UI test suite 17/17 PASS.
 
 ### 4. Phase 132 — apps + oauth completeness (after 131)
 

@@ -464,11 +464,13 @@ func (s *Server) handleCancelWorkflowRun(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// handleRerunWorkflowRun — POST .../actions/runs/{run_id}/rerun
-// Real GitHub: 201 Created. Bleephub doesn't have a re-dispatch path
-// today (workflows are submitted via /api/v3/bleephub/workflow with
-// the YAML body); rerun returns 422 for now with a clear message
-// pointing at the bleephub submit endpoint. Phase 131 ships dispatch.
+// handleRerunWorkflowRun — POST .../actions/runs/{run_id}/rerun.
+// Real GitHub: 201 Created. Bleephub re-submits the run by looking up
+// the matching WorkflowFile (by name + repo) and replaying its cached
+// YAML through submitWorkflow with the original event metadata.
+// Returns 422 if no cached YAML exists (Phase 131-or-later WorkflowFile
+// not registered for this run) — caller should re-submit via
+// /api/v3/bleephub/workflow or push the YAML to git.
 func (s *Server) handleRerunWorkflowRun(w http.ResponseWriter, r *http.Request) {
 	runID, err := strconv.Atoi(r.PathValue("run_id"))
 	if err != nil {
@@ -480,8 +482,47 @@ func (s *Server) handleRerunWorkflowRun(w http.ResponseWriter, r *http.Request) 
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	writeGHError(w, http.StatusUnprocessableEntity,
-		"rerun not implemented in Phase 130 — use POST /api/v3/bleephub/workflow with the YAML to re-submit; Phase 131 ships /actions/workflows/{id}/dispatches")
+	repo := wf.RepoFullName
+	if repo == "" {
+		repo = repoFullName(r)
+	}
+	s.store.DiscoverWorkflowFilesFromGit(repo)
+	var match *WorkflowFile
+	for _, f := range s.store.ListWorkflowFiles(repo) {
+		if f.Name == wf.Name && f.YAML != "" {
+			match = f
+			break
+		}
+	}
+	if match == nil {
+		writeGHError(w, http.StatusUnprocessableEntity,
+			"no cached workflow YAML for this run (push the workflow file to git or POST /api/v3/bleephub/workflow first)")
+		return
+	}
+	def, perr := ParseWorkflow([]byte(match.YAML))
+	if perr != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, "parse cached YAML: "+perr.Error())
+		return
+	}
+	def = expandMatrixJobs(def)
+	if def.Env == nil {
+		def.Env = map[string]string{}
+	}
+	serverURL := s.baseURL(r)
+	def.Env["__serverURL"] = serverURL
+	def.Env["__defaultImage"] = "alpine:latest"
+	meta := WorkflowEventMeta{
+		EventName: eventOf(wf),
+		Ref:       wf.Ref,
+		Sha:       wf.Sha,
+		Repo:      repo,
+		Inputs:    wf.Inputs,
+	}
+	if _, err := s.submitWorkflow(r.Context(), serverURL, def, "alpine:latest", &meta); err != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, "rerun submit: "+err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
 }
 
 // handleDeleteWorkflowRun — DELETE .../actions/runs/{run_id}

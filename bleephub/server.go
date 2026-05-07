@@ -110,6 +110,7 @@ func (s *Server) registerRoutes() {
 	s.registerGHOAuthRoutes()
 	s.registerGHGraphQLRoutes()
 	s.registerGHActionsRoutes()
+	s.registerGHWorkflowsRoutes()
 
 	// Management API (metrics, status, dashboard data)
 	s.mux.HandleFunc("GET /internal/metrics", s.handleInternalMetrics)

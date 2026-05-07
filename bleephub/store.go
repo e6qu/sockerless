@@ -66,7 +66,8 @@ type Store struct {
 	Comments           map[int]*Comment              // id → comment
 	PullRequests       map[int]*PullRequest          // id → PR
 	PRReviews          map[int]*PullRequestReview    // id → review
-	Workflows          map[string]*Workflow          // id → workflow
+	Workflows          map[string]*Workflow          // id → workflow (run-level)
+	WorkflowFiles      map[int64]*WorkflowFile       // id → workflow file (file-level, Phase 131)
 	PendingMessages    []*TaskAgentMessage           // messages awaiting delivery
 	RepoSecrets        map[string]map[string]*Secret // "owner/repo" → name → secret
 	Hooks              map[string][]*Webhook         // "owner/repo" → hooks
@@ -189,6 +190,7 @@ func NewStore() *Store {
 		PullRequests:       make(map[int]*PullRequest),
 		PRReviews:          make(map[int]*PullRequestReview),
 		Workflows:          make(map[string]*Workflow),
+		WorkflowFiles:      make(map[int64]*WorkflowFile),
 		RepoSecrets:        make(map[string]map[string]*Secret),
 		Hooks:              make(map[string][]*Webhook),
 		HookDeliveries:     make(map[int][]*WebhookDelivery),

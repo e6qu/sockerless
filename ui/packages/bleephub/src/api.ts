@@ -1,5 +1,7 @@
 import type {
   BleephubWorkflow,
+  BleephubWorkflowFile,
+  BleephubDispatchRequest,
   BleephubSession,
   BleephubRepo,
   BleephubMetrics,
@@ -36,3 +38,30 @@ export const fetchStatus = () =>
 
 export const fetchHealth = () =>
   fetchJSON<BleephubHealth>("/health");
+
+export const fetchWorkflowFiles = () =>
+  fetchJSON<BleephubWorkflowFile[]>("/internal/workflow_files");
+
+/**
+ * Trigger a workflow_dispatch run. The repo segment of the URL must
+ * match the WorkflowFile's repoFullName; the workflow_id can be the
+ * numeric ID or the YAML's filename.
+ */
+export async function dispatchWorkflow(
+  repoFullName: string,
+  workflowId: number | string,
+  body: BleephubDispatchRequest = {},
+): Promise<void> {
+  const res = await fetch(
+    `/api/v3/repos/${repoFullName}/actions/workflows/${workflowId}/dispatches`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`dispatch ${res.status}: ${text || res.statusText}`);
+  }
+}
