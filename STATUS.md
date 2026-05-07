@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**2026-05-07 — 6/8 cells GREEN. Phase 123 (storage backing driver abstraction) IN-CODE COMPLETE; BUG-964 fix shipped. Only step 8 (live-cloud push + redeploy + retrigger) remains before cells 5+6 v7. Implementation status in [DO_NEXT.md](DO_NEXT.md).**
+**2026-05-07 — 6/8 cells GREEN. Phase 123 fully shipped + 5 follow-up bugs fixed (BUG-964/966/967/968/969). Cells 5+6 v13 still fail at Cloud-Run multi-container port-bind timeout (BUG-970) — local repro of the deployed overlays binds 8080 in <5s, so this is Cloud-Run-side behavior the autonomous loop can't debug. Hypotheses + investigation pointers in [DO_NEXT.md](DO_NEXT.md).**
 
 ## Cell scoreboard
 
