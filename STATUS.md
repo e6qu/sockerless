@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**2026-05-07 — 6/8 cells GREEN. Phase 123 fully shipped + 5 follow-up bugs fixed (BUG-964/966/967/968/969). Cells 5+6 v14 still fail at BUG-970 — Cloud-Run multi-container port-bind timeout WITH ZERO stdio captured, even after instrumenting bootstrap main() with stdout+stderr writes at the absolute first instruction. Same overlay binds 8080 locally in <5s with cgroup limits matching Cloud Run. Issue is Cloud-Run-side behavior the autonomous loop can't debug; investigation hypotheses logged in BUGS.md (BUG-970) and DO_NEXT.md.**
+**🎯 2026-05-07 — 8/8 cells GREEN. Cell 5 v17 + Cell 6 v17 both `all arithmetic checks pass`. Phase 123 (storage backing driver abstraction with gcs-sync) shipped end-to-end. Today's sweep: Phase 123 architecture + 8 supporting bug fixes (BUG-964/966/967/968/969/970 + multi-container memory OOM + workflow-yaml `file` package).**
 
 ## Cell scoreboard
 
@@ -10,8 +10,8 @@
 | **2** GH × Lambda | sockerless-lambda | ✅ GREEN | https://github.com/e6qu/sockerless/actions/runs/25113565115 | Phase 110 closed |
 | **3** GL × ECS | sockerless-ecs | ✅ GREEN | https://gitlab.com/e6qu/sockerless/-/pipelines/2489246177 | Phase 110 closed |
 | **4** GL × Lambda | sockerless-lambda | ✅ GREEN | https://gitlab.com/e6qu/sockerless/-/pipelines/2490478943 | Phase 117 closed |
-| **5** GH × cloudrun | sockerless-cloudrun | ❌ **BUG-965** | https://github.com/e6qu/sockerless/actions/runs/25437444454 | v6 reached `clone-and-compile`, hit GCSFuse `Stale file handle: event.json`. Phase 123 `gcs-sync` driver replaces GCSFuse for the workspace. |
-| **6** GH × gcf | sockerless-gcf | ❌ **BUG-964** | https://github.com/e6qu/sockerless/actions/runs/25437444448 | v6 hung 10 min on `docker exec` — gcf needs the cloudrun BUG-961 mirror in `invokePodServiceMain`. Co-shipped with Phase 123. |
+| **5** GH × cloudrun | sockerless-cloudrun | ✅ **GREEN v17** | https://github.com/e6qu/sockerless/actions/runs/25506792865 | 12m20s, `all arithmetic checks pass` at `2026-05-07T16:08:23` (Phase 123 gcs-sync data plane closed BUG-965; main 2Gi closed mid-build OOM) |
+| **6** GH × gcf | sockerless-gcf | ✅ **GREEN v17** | https://github.com/e6qu/sockerless/actions/runs/25506792937 | 14m30s, `all arithmetic checks pass`. Same fix family as cell 5; gcf-side BUG-964 closed by `invokePodServiceMain` skipIfNoStdin. |
 | **7** GL × cloudrun | sockerless-cloudrun | ✅ **GREEN v54** | https://gitlab.com/e6qu/sockerless/-/jobs/14237010667 | 178s, `all arithmetic checks pass` at `2026-05-06T09:43:11.835` |
 | **8** GL × gcf | sockerless-gcf | ✅ **GREEN v28** | https://gitlab.com/e6qu/sockerless/-/jobs/14234857458 | 147s, `all arithmetic checks pass` at `2026-05-06T08:05:04.053` |
 
