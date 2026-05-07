@@ -513,7 +513,12 @@ func (s *Server) buildPodContainerSpec(c api.Container, overlayURI string, isMai
 		// emits just `name=GCS_URL` (the bind target lives on the JOB
 		// container side, not the runner-task side); the bootstrap joins
 		// the two by name at exec time.
-		if sv := s.config.LookupSharedVolumeBySourcePath(parts[0]); sv != nil && core.StorageBacking(sv.Backing) == core.BackingGCSSync {
+		// At ContainerCreate time backend_impl rewrites bind sources from
+		// host-path (`/tmp/runner-work`) to SharedVolume.Name
+		// (`runner-workspace`) — see backend_impl.go::overlayHostConfig.
+		// So at materialize time parts[0] IS already the SharedVolume
+		// name; look up directly by name.
+		if sv := s.config.LookupSharedVolumeByName(parts[0]); sv != nil && core.StorageBacking(sv.Backing) == core.BackingGCSSync {
 			syncMountEntries = append(syncMountEntries, fmt.Sprintf("%s=%s", sv.Name, parts[1]))
 		}
 	}

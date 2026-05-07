@@ -101,7 +101,10 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 		// the bootstrap restore knows where to untar each per-exec GCS
 		// object. PreExec emits just `name=GCS_URL` (the runner-task can't
 		// know the bind target on its own); the bootstrap joins by name.
-		if sv := s.config.LookupSharedVolumeBySourcePath(parts[0]); sv != nil && core.StorageBacking(sv.Backing) == core.BackingGCSSync {
+		// Bind sources are pre-translated to SharedVolume.Name at
+		// ContainerCreate time — see cloudrun/backend_impl.go's
+		// overlay-bind translator. Look up by name here.
+		if sv := s.config.LookupSharedVolumeByName(parts[0]); sv != nil && core.StorageBacking(sv.Backing) == core.BackingGCSSync {
 			syncMountEntries = append(syncMountEntries, fmt.Sprintf("%s=%s", sv.Name, parts[1]))
 		}
 	}
