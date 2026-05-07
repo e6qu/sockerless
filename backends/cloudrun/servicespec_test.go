@@ -72,8 +72,10 @@ func TestBuildServiceParent(t *testing.T) {
 }
 
 // TestBuildServiceSpec_Shape — Service has internal-only ingress,
-// default URI disabled, MinInstanceCount=MaxInstanceCount=1 (long-running),
-// and labels carry the sockerless tag set.
+// default URI disabled, MinInstanceCount=0 / MaxInstanceCount=1 (BUG-970:
+// scale to zero between exec POSTs to avoid pinning regional CPU quota
+// across the lifetime of a single GH actions/runner pipeline), and
+// labels carry the sockerless tag set.
 func TestBuildServiceSpec_Shape(t *testing.T) {
 	s := newServerForSpec(t, "projects/p/locations/us-central1/connectors/c1")
 	ci := demoContainer("abc123456789fffffffff", "/webapp", "gcr.io/proj/app:v1")
@@ -91,8 +93,8 @@ func TestBuildServiceSpec_Shape(t *testing.T) {
 	if svc.Template.Containers[0].Image != "gcr.io/proj/app:v1" {
 		t.Errorf("container image = %q", svc.Template.Containers[0].Image)
 	}
-	if svc.Template.Scaling == nil || svc.Template.Scaling.MinInstanceCount != 1 || svc.Template.Scaling.MaxInstanceCount != 1 {
-		t.Errorf("scaling = %+v, want min=1 max=1", svc.Template.Scaling)
+	if svc.Template.Scaling == nil || svc.Template.Scaling.MinInstanceCount != 0 || svc.Template.Scaling.MaxInstanceCount != 1 {
+		t.Errorf("scaling = %+v, want min=0 max=1 (BUG-970)", svc.Template.Scaling)
 	}
 	if svc.Template.VpcAccess == nil || svc.Template.VpcAccess.Connector != s.config.VPCConnector {
 		t.Errorf("vpc access = %+v, want connector=%q", svc.Template.VpcAccess, s.config.VPCConnector)

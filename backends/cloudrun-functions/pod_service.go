@@ -133,7 +133,19 @@ func (s *Server) materializePodService(mainContainerID string, containers []api.
 		Containers: specs,
 		Volumes:    volumes,
 		Scaling: &runpb.RevisionScaling{
-			MinInstanceCount: 1,
+			// BUG-970: scale to zero between exec POSTs so the regional
+			// CPU quota isn't pinned by always-on revisions. Each ad-hoc
+			// pod-Service serves a few /exec POSTs over its short lifetime;
+			// keeping a min-1 instance burns ~1-2 vCPUs of regional quota
+			// for the entire pipeline duration even when idle. With the 5+
+			// pod-Services a single GH actions/runner pipeline spawns, that
+			// adds up to >10 vCPU of quota debt that survives across the
+			// pipeline and causes later container deploys to fail with the
+			// misleading "container failed to bind PORT=8080" error. The
+			// cold-start latency on first /exec POST after idle is <5s
+			// (verified locally — bootstrap binds 8080 in ~1.4s on Cloud
+			// Run direct deploy).
+			MinInstanceCount: 0,
 			MaxInstanceCount: 1,
 		},
 		Timeout: durationpb.New(1 * time.Hour),
@@ -308,7 +320,19 @@ func (s *Server) deployContainerService(ctx context.Context, id string, containe
 		Containers: specs,
 		Volumes:    volumes,
 		Scaling: &runpb.RevisionScaling{
-			MinInstanceCount: 1,
+			// BUG-970: scale to zero between exec POSTs so the regional
+			// CPU quota isn't pinned by always-on revisions. Each ad-hoc
+			// pod-Service serves a few /exec POSTs over its short lifetime;
+			// keeping a min-1 instance burns ~1-2 vCPUs of regional quota
+			// for the entire pipeline duration even when idle. With the 5+
+			// pod-Services a single GH actions/runner pipeline spawns, that
+			// adds up to >10 vCPU of quota debt that survives across the
+			// pipeline and causes later container deploys to fail with the
+			// misleading "container failed to bind PORT=8080" error. The
+			// cold-start latency on first /exec POST after idle is <5s
+			// (verified locally — bootstrap binds 8080 in ~1.4s on Cloud
+			// Run direct deploy).
+			MinInstanceCount: 0,
 			MaxInstanceCount: 1,
 		},
 		Timeout: durationpb.New(1 * time.Hour),

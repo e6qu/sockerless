@@ -83,7 +83,14 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 		Containers: specs,
 		Volumes:    volumes,
 		Scaling: &runpb.RevisionScaling{
-			MinInstanceCount: 1,
+			// BUG-970: scale to zero between exec POSTs so the regional CPU
+			// quota isn't pinned by always-on pod-Service revisions. See
+			// gcf pod_service.go for the full rationale — each ad-hoc
+			// pod-Service serves a few /exec POSTs over its short lifetime,
+			// pinning ~1-2 vCPU of regional quota with min=1 burns enough
+			// quota across a single pipeline that later docker-start calls
+			// fail with the misleading port-bind error.
+			MinInstanceCount: 0,
 			MaxInstanceCount: 1,
 		},
 		Timeout: durationpb.New(1 * time.Hour),
