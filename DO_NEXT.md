@@ -2,9 +2,20 @@
 
 Resume pointer for next session. State: [STATUS.md](STATUS.md) · Bugs: [BUGS.md](BUGS.md) · Narrative: [WHAT_WE_DID.md](WHAT_WE_DID.md) · Roadmap: [PLAN.md](PLAN.md) · Architecture: [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
 
-## Today's outcome (2026-05-06 → 2026-05-07)
+## Today's outcome (2026-05-07)
 
-**6/8 cells GREEN** (1–4 + 7 + 8). Cells 5+6 (GH × GCP) drilled through 8 architectural blockers — last attempt v6 reached deep into the actual workflow before two final layered failures (BUG-964 gcf default-invoke hang, BUG-965 GCSFuse stale-handle on `event.json`).
+**Phase 123 steps 1-5 + 7 SHIPPED. Only live-cloud step 8 remains** before retriggering cells 5+6 v7.
+
+What landed today:
+- **Step 1+2** (already in branch from prior session): `core.StorageBackingRegistry` with no-fallback `Resolve(StorageBacking)` + GCSFuse and GCSSync drivers in `gcp-common`.
+- **Step 3+4** (commit `997de12`): cloudrun + gcf volume translators that route SharedVolume → BackingDriver → runpb.Volume; `preExecHintsForVolumes` + `postExecForVolumes` wired into both backends' execStartViaInvoke.
+- **Step 5** (commit `19d09fe`): bootstrap-side `persist_sync.go` in cloudrun + gcf bootstraps. Reads `SOCKERLESS_SYNC_VOLUMES` from envelope.Env, restores tar.gz before subprocess, saves tar.gz after. Driver interface widened to `map[string][]string` so multi-volume hints don't clobber.
+- **Step 7** (commit `48d5b37`): BUG-964 fix — gcf `invokePodServiceMain` gained `skipIfNoStdin` param, skips default-invoke for `OpenStdin=false` JOB containers (mirrors cloudrun BUG-961 fix).
+- **Cross-compile verified locally**: linux/amd64 binaries staged at `tests/runners/github/dockerfile-{cloudrun,gcf}/sockerless-{backend,bootstrap}-amd64` — ready for `make build-amd64 push-amd64 manifest`.
+
+What remains: **step 8 only** — push backend + runner + dispatcher images to AR, redeploy services, retrigger cells 5+6 v7.
+
+> **6/8 cells GREEN**. Cells 5+6 (GH × GCP) drilled through 8 architectural blockers in prior sessions — last attempt v6 reached deep into the actual workflow before two final layered failures (BUG-964 gcf default-invoke hang, BUG-965 GCSFuse stale-handle on `event.json`). BUG-964 fixed in code today; BUG-965 superseded by gcs-sync data plane (Phase 123).
 
 **User directives 2026-05-07** that re-shape the next session:
 1. Storage MUST be pluggable — implement the storage backing driver abstraction (Phase 123) so we can swap options without re-refactoring.
@@ -169,35 +180,36 @@ if len(capturedStdin) == 0 && !mainContainer.Config.OpenStdin {
 
 This unblocks cell 6 independent of Phase 123 — they can land in either order.
 
-### Step 8 — Build, push, redeploy, retrigger
+### Step 8 — Build, push, redeploy, retrigger (ONLY remaining step — live-cloud)
+
+linux/amd64 binaries are already staged from this session's local build. To complete the step run from the repo root:
 
 ```bash
-# Backend binaries
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -C backends/cloudrun-functions \
-  -tags noui -o tests/runners/dockerfile-sockerless-backend/sockerless-backend-gcf \
-  ./cmd/sockerless-backend-gcf
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -C agent/cmd/sockerless-gcf-bootstrap \
-  -o tests/runners/dockerfile-sockerless-backend/sockerless-gcf-bootstrap .
-# (same for cloudrun)
+# 1. GH runner images: build + push the multi-arch manifest list.
+make -C tests/runners/github/dockerfile-gcf manifest
+make -C tests/runners/github/dockerfile-cloudrun manifest
 
-# Container images
-podman build --platform=linux/amd64 -t .../sockerless-backend-gcf:latest -f .../Dockerfile.gcf ...
-podman push .../sockerless-backend-gcf:latest
+# 2. Standalone backend images (sidecar in dispatcher / Cloud Run JOB).
+#    Stages binary first, builds image, pushes.
+make -C tests/runners/dockerfile-sockerless-backend cloudrun-push
+make -C tests/runners/dockerfile-sockerless-backend gcf-push
 
-# GH runner images
-make -C tests/runners/github/dockerfile-gcf push-amd64
-make -C tests/runners/github/dockerfile-cloudrun push-amd64
-
-# Dispatcher
+# 3. Dispatcher (github-runner-dispatcher-gcp) — Cloud Build to AR + redeploy.
 gcloud builds submit --project=sockerless-live-46x3zg4imo \
   --config=github-runner-dispatcher-gcp/cloudbuild.yaml .
 
-# Update gitlab-runner-{cloudrun,gcf} digests in terraform yaml + apply via gcloud run services replace.
-
-# Update github-runner-dispatcher-gcp Service to new dispatcher digest.
-
-# Cleanup + trigger cells 5+6 v7 via PR #124 push.
+# 4. Cleanup any stale runner-tasks, then push PR #124 to retrigger cells 5+6 v7.
+gcloud run jobs list --project=sockerless-live-46x3zg4imo --region=us-central1 \
+  --filter="metadata.labels.sockerless_owner=runner-task" \
+  --format="value(metadata.name)" | xargs -I{} gcloud run jobs delete {} --quiet
+git push origin phase-118-faas-pods
 ```
+
+What to watch for in the cell logs:
+- bootstrap startup line `parsed N sync volumes from SOCKERLESS_SYNC_VOLUMES` (proves env hint flow).
+- bootstrap restore line `sync restore <name>: NN bytes -> /tmp/runner-work` per exec.
+- cell 5 should now progress past `clone-and-compile` (BUG-965 GCSFuse stale handle is gone — pure GCS SDK no FUSE).
+- cell 6 should now progress past the 10-min hang (BUG-964 fix lets the bootstrap stay listening for /exec POSTs).
 
 ### Step 9 — Closeout
 
@@ -207,19 +219,17 @@ After cells 5+6 GREEN:
 3. Update PR #123 description with all 8 cells GREEN.
 4. State save commit. NEVER MERGE — user handles merges.
 
-## Reference: today's commits
+## Reference: this session's commits
 
 | Commit | Fix |
 |--------|-----|
-| `b223ecb` | BUG-956 + BUG-957 (cell 8 architectural close-out) |
-| `e97399c` | BUG-958 (cloudrun multi-stage runner-pattern) |
-| `2ba02f5` | BUG-959 (GH actions/runner materialize on second-arrival) |
-| `e8a85e6` | BUG-960 (Typed.Exec routes through s.ExecStart) |
-| `33e205a` | BUG-961 + BUG-962 (cloudrun skip-default-invoke + stdcopy framing) |
-| `c01067b` | BUG-963 (dispatcher GCS workspace mount — superseded by Phase 123) |
-| `d187cc2` | docs state-save (cells 5+6 v6 evidence + BUG-964/965 staged) |
-| `fbd3d2b` | docs no-GCSFuse directive (now superseded by no-NFS-either + Phase 123 driver abstraction) |
+| `17a688b` | feat(phase-123): storage backing driver abstraction + GCS drivers (steps 1+2) |
+| `997de12` | feat(phase-123): wire storage backing translators + ExecStart hooks (steps 3+4) |
+| `19d09fe` | feat(phase-123): bootstrap-side gcs-sync envelope handler + multi-volume hints (step 5) |
+| `48d5b37` | fix(BUG-964): gcf invokePodServiceMain skipIfNoStdin (mirror of BUG-961) (step 7) |
+
+(Prior session commits b223ecb, e97399c, 2ba02f5, e8a85e6, 33e205a, c01067b, d187cc2, fbd3d2b in branch history.)
 
 ## Single-line summary
 
-> 6/8 cells GREEN. Phase 123 (storage backing driver abstraction) is the next session's work — implement `gcs-sync` driver as the no-FUSE workspace replacement, ship BUG-964 alongside, swap cells 5+6 to `gcs-sync` via TOML config. Expected to close cells 5+6 GREEN.
+> Phase 123 steps 1-5 + 7 IN-CODE complete (lint clean, tests pass, linux/amd64 binaries cross-compile clean). One step left: push images + retrigger cells 5+6 v7. Expected to close cells 5+6 GREEN — closes the 8/8 milestone.

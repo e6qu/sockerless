@@ -1,6 +1,6 @@
 # Sockerless — Status
 
-**2026-05-07 — 6/8 cells GREEN. Cells 5+6 (GH × GCP) staged behind Phase 123 (storage backing driver abstraction) + BUG-964 (gcf skip-default-invoke). User directives 2026-05-07: zero-scaling-no-idle-cost paradigm; storage MUST be pluggable. Implementation plan in [DO_NEXT.md](DO_NEXT.md).**
+**2026-05-07 — 6/8 cells GREEN. Phase 123 (storage backing driver abstraction) IN-CODE COMPLETE; BUG-964 fix shipped. Only step 8 (live-cloud push + redeploy + retrigger) remains before cells 5+6 v7. Implementation status in [DO_NEXT.md](DO_NEXT.md).**
 
 ## Cell scoreboard
 
