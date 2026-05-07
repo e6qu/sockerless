@@ -78,11 +78,24 @@ Phase 130's `POST .../runs/{id}/rerun` rewired through the WorkflowFile cache: 2
 
 UI: `WorkflowsPage` refactored into Workflows + Runs tabs; per-workflow "Run workflow" button opens a dispatch dialog (ref + inputs JSON, with error surfacing). New `/internal/workflow_files` aggregator powers the operator-facing Workflows tab. 10 new Go tests + 4 new UI tests PASS.
 
-### Phase 132 — bleephub apps + oauth completeness (queued)
+### Phase 132 — bleephub apps + oauth completeness (✅ shipped)
 
-- `GET /user/installations`, `GET /user/installations/{id}/repositories`, `DELETE /installation/token`.
-- `GET /login/oauth/authorize` (web flow companion to existing device flow).
-- UI: Apps Manager + OAuth Debug pages. Admin UI gains bleephub admin sub-pages.
+Shipped on `phase-130` branch.
+
+REST routes:
+
+- `GET /api/v3/user/installations` — installations from the authenticated user's perspective (sim returns all; real GitHub scopes by user-app linkage).
+- `GET /api/v3/user/installations/{id}/repositories` — repos accessible via the installation (uses `RepositorySelection=all` default; real GitHub also supports `selected` allow-lists, not modeled today).
+- `DELETE /api/v3/installation/token` — revokes the `ghs_*` token presented in `Authorization: Bearer …`.
+- `GET /login/oauth/authorize` — web-flow authorize page. Renders an HTML form (or auto-approves with `?auto=1`) → 302 to `redirect_uri?code=…&state=…`.
+- `POST /login/oauth/authorize` — form-POST companion that issues the auth code + redirects.
+- `POST /login/oauth/access_token` — extended to handle `authorization_code` grant alongside the existing `device_code` grant. One-time-use code semantics enforced.
+
+UI: `AppsPage` (Apps + Installations tabs + Create App dialog) + `OAuthPage` (flow simulator + active device-codes + auth-codes tables, polled every 3s). Backed by new `/internal/apps`, `/internal/installations`, `/internal/oauth/state` aggregators.
+
+Tests: 14 new Go tests + 6 new UI tests PASS; full bleephub Go suite green at 23s; bleephub UI suite 23/23 PASS.
+
+**Admin UI scoping decision** (recorded so it doesn't get re-asked): bleephub admin lives in bleephub UI itself (the new Apps + OAuth + Workflows pages). The sockerless-admin app stays focused on its existing scope (backend pools, projects, containers, processes, resources, cleanup, contexts) — coupling bleephub-specific admin into sockerless-admin would mix two independently-deployed products.
 
 ## Driver-generalization roadmap (Phases 124–127, queued)
 

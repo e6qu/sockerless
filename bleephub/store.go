@@ -52,6 +52,7 @@ type Store struct {
 	UsersByLogin       map[string]*User
 	Tokens             map[string]*Token
 	DeviceCodes        map[string]*DeviceCode
+	AuthCodes          map[string]*authCode // OAuth web-flow codes (Phase 132)
 	Repos              map[int]*Repo
 	ReposByName        map[string]*Repo              // "owner/name" → repo
 	GitStorages        map[string]*memory.Storage    // "owner/name" → go-git memory storage
@@ -175,6 +176,7 @@ func NewStore() *Store {
 		UsersByLogin:       make(map[string]*User),
 		Tokens:             make(map[string]*Token),
 		DeviceCodes:        make(map[string]*DeviceCode),
+		AuthCodes:          make(map[string]*authCode),
 		Repos:              make(map[int]*Repo),
 		ReposByName:        make(map[string]*Repo),
 		GitStorages:        make(map[string]*memory.Storage),

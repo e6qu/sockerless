@@ -7,12 +7,16 @@ import { WorkflowDetailPage } from "./pages/WorkflowDetailPage.js";
 import { RunnersPage } from "./pages/RunnersPage.js";
 import { ReposPage } from "./pages/ReposPage.js";
 import { MetricsPage } from "./pages/MetricsPage.js";
+import { AppsPage } from "./pages/AppsPage.js";
+import { OAuthPage } from "./pages/OAuthPage.js";
 
 const navItems: NavItem[] = [
   { label: "Overview", to: "/ui/" },
   { label: "Workflows", to: "/ui/workflows" },
   { label: "Runners", to: "/ui/runners" },
   { label: "Repos", to: "/ui/repos" },
+  { label: "Apps", to: "/ui/apps" },
+  { label: "OAuth", to: "/ui/oauth" },
   { label: "Metrics", to: "/ui/metrics" },
 ];
 
@@ -45,6 +49,8 @@ export function App() {
             <Route path="/ui/workflows/:id" element={<WorkflowDetailPage />} />
             <Route path="/ui/runners" element={<RunnersPage />} />
             <Route path="/ui/repos" element={<ReposPage />} />
+            <Route path="/ui/apps" element={<AppsPage />} />
+            <Route path="/ui/oauth" element={<OAuthPage />} />
             <Route path="/ui/metrics" element={<MetricsPage />} />
           </Routes>
         </AppShell>

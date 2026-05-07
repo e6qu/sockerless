@@ -23,11 +23,15 @@ Shipped: `bleephub/gh_actions_rest.go` registers all 10 GitHub-shape routes (run
 
 Shipped: `bleephub/gh_workflows_rest.go` (4 GitHub-shape routes) + `bleephub/store_workflow_files.go` (new `WorkflowFile` entity with FNV-1a int64 IDs + go-git tree-walk discovery from each repo's in-memory storer at HEAD) + auto-register on `/api/v3/bleephub/workflow` submit. Phase 130's `rerun` handler now wires through the WorkflowFile cache. UI: `WorkflowsPage` has Workflows + Runs tabs + dispatch dialog (ref + inputs JSON). 10 new Go tests + 4 new UI tests PASS; full bleephub Go suite green at 23s; UI test suite 17/17 PASS.
 
-### 4. Phase 132 — apps + oauth completeness (after 131)
+### 4. Phase 132 — apps + oauth completeness (DONE)
 
-- `GET /user/installations`, `GET /user/installations/{id}/repositories`, `DELETE /installation/token`.
-- `GET /login/oauth/authorize` (web flow; companion to existing device flow).
-- UI pages: Apps Manager + OAuth Debug. Admin UI gets bleephub admin sub-pages too.
+Shipped: `/api/v3/user/installations` + `/repositories`; `DELETE /api/v3/installation/token`; `GET /login/oauth/authorize` (form + `?auto=1` auto-approve + form-POST companion); `POST /login/oauth/access_token` extended to handle `authorization_code` grants alongside the existing device flow. UI pages: AppsPage (Apps + Installations tabs + Create App dialog) + OAuthPage (flow simulator + active codes tables). 14 new Go tests + 6 new UI tests PASS.
+
+Admin UI scoping decision: bleephub admin lives in bleephub UI itself. The sockerless-admin app stays focused on backend pools / projects / containers / processes / resources — bleephub is independently deployed and gets its own admin views.
+
+## Phase 130 milestone complete
+
+PR #127 carries Phase 129 #4 (orphan-svc GC) + sim parity prep (Phase 126/127) + Phases 130/131/132 (bleephub workflow + apps + oauth REST). Bleephub now offers the full GitHub API footprint the user named: workflows, workflow runs, workflow jobs, runners, apps, app installations, user installations, OAuth web + device flows, orgs (already covered).
 
 ## Blocked
 

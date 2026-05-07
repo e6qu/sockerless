@@ -17,6 +17,11 @@ func (s *Server) registerGHAppsRoutes() {
 	s.mux.HandleFunc("DELETE /api/v3/app/installations/{id}", s.handleDeleteAppInstallation)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/installation", s.handleGetRepoInstallation)
 
+	// Phase 132 — installations from the authenticated user's perspective.
+	s.mux.HandleFunc("GET /api/v3/user/installations", s.handleListUserInstallations)
+	s.mux.HandleFunc("GET /api/v3/user/installations/{id}/repositories", s.handleListUserInstallationRepos)
+	s.mux.HandleFunc("DELETE /api/v3/installation/token", s.handleRevokeInstallationToken)
+
 	// Management endpoints for testing
 	s.mux.HandleFunc("POST /api/v3/bleephub/apps", s.handleCreateApp)
 	s.mux.HandleFunc("POST /api/v3/bleephub/apps/{app_id}/installations", s.handleCreateInstallationMgmt)
@@ -275,4 +280,95 @@ func installationTokenToJSON(token *InstallationToken) map[string]interface{} {
 		"expires_at":  token.ExpiresAt.UTC().Format(time.RFC3339),
 		"permissions": token.Permissions,
 	}
+}
+
+// handleListUserInstallations — GET /api/v3/user/installations.
+// Real GitHub: scoped to installations the authenticated user has
+// access to. Bleephub returns every installation since users are
+// unscoped in the sim. Auth required (must have a user token).
+func (s *Server) handleListUserInstallations(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	s.store.mu.RLock()
+	all := make([]*Installation, 0, len(s.store.Installations))
+	for _, inst := range s.store.Installations {
+		all = append(all, inst)
+	}
+	s.store.mu.RUnlock()
+
+	page := paginateAndLink(w, r, all)
+	installations := make([]map[string]interface{}, 0, len(page))
+	for _, inst := range page {
+		installations = append(installations, installationToJSON(inst))
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"total_count":   len(all),
+		"installations": installations,
+	})
+}
+
+// handleListUserInstallationRepos — GET /api/v3/user/installations/{id}/repositories.
+// Returns repos accessible via this installation. With
+// `RepositorySelection=all` (the default in bleephub's CreateInstallation),
+// this returns every repo owned by the installation's target login.
+// Real GitHub additionally supports `selected` selection — that path
+// would read a per-installation repo allow-list, which bleephub
+// doesn't model today; the response just enumerates all owned repos.
+func (s *Server) handleListUserInstallationRepos(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, "Invalid installation ID")
+		return
+	}
+	inst := s.store.GetInstallation(id)
+	if inst == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	repos := s.store.ListReposByOwner(inst.TargetLogin)
+	page := paginateAndLink(w, r, repos)
+	base := s.baseURL(r)
+	repoJSON := make([]map[string]interface{}, 0, len(page))
+	for _, repo := range page {
+		repoJSON = append(repoJSON, repoToJSON(repo, base))
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"total_count":          len(repos),
+		"repository_selection": inst.RepositorySelection,
+		"repositories":         repoJSON,
+	})
+}
+
+// handleRevokeInstallationToken — DELETE /api/v3/installation/token.
+// Real GitHub: 204 No Content; the token used in the request's
+// Authorization header is revoked. Auth: must be presented as a
+// Bearer ghs_* installation token (the middleware sets ctxInstallation
+// when it recognises the prefix). The bare token string is parsed
+// from the header so we can drop it from the InstallationTokens map.
+func (s *Server) handleRevokeInstallationToken(w http.ResponseWriter, r *http.Request) {
+	auth := r.Header.Get("Authorization")
+	tokenStr := ""
+	switch {
+	case len(auth) > 6 && auth[:6] == "token ":
+		tokenStr = auth[6:]
+	case len(auth) > 7 && auth[:7] == "Bearer ":
+		tokenStr = auth[7:]
+	}
+	if tokenStr == "" || tokenStr[:4] != "ghs_" {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	if !s.store.RevokeInstallationToken(tokenStr) {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
