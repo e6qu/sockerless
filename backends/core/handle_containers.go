@@ -174,35 +174,22 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
 
-	// Fast-path: avoid the slow CloudState.GetContainer (which for
-	// cloudrun lists ALL Cloud Run Services in the project, taking
-	// minutes with N services). Two early-returns:
+	// Fast-path: when an InvocationResult is already recorded the
+	// container has exited via the invoke goroutine and the cached exit
+	// code is the truth — return it without paying the slow
+	// CloudState.GetContainer round-trip (cloudrun's stateless
+	// implementation lists every Service in the project, which scales
+	// linearly with stale revisions).
 	//
-	//   (a) InvocationResult already recorded → container has exited via
-	//       the invoke goroutine; return cached exit code immediately.
-	//       (Goroutine's defer LoadAndDelete-d WaitChs already.)
-	//
-	//   (b) WaitChs has a live channel → container is in flight; wait on
-	//       the channel directly without GetContainer. The channel close
-	//       signals "exit happened, InvocationResult now ready". Most
-	//       callers send the canonical 64-char hex container ID, which
-	//       both tracks key on directly.
+	// Deliberately we do NOT short-circuit on WaitChs alone: backends
+	// like ECS register a WaitCh but never store an InvocationResult,
+	// so closing the channel without a recorded result would force a
+	// fallback exit code of 0 even when the actual container exited
+	// non-zero. Those backends must fall through to the
+	// CloudState-driven path below, which queries the cloud-side state
+	// for the real exit code.
 	if inv, ok := s.Store.GetInvocationResult(ref); ok {
 		WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: inv.ExitCode})
-		return
-	}
-	if ch, hasChannel := s.Store.WaitChs.Load(ref); hasChannel {
-		flushWaitHeaders(w)
-		select {
-		case <-ch.(chan struct{}):
-			if inv, ok := s.Store.GetInvocationResult(ref); ok {
-				writeWaitBody(w, inv.ExitCode)
-			} else {
-				writeWaitBody(w, 0)
-			}
-		case <-r.Context().Done():
-			writeWaitBody(w, -1)
-		}
 		return
 	}
 
