@@ -6,6 +6,18 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* we did each phase, what was surprising, what blocked. Per-bug detail belongs in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-09 — Phase 135 Sim host model + 3-tier coverage (PR #129)
+
+Architectural correction surfaced by user feedback: simulators conflated their own binary's compile arch with the workload's arch. Right model: **services provision hosts; hosts run workloads via Docker honouring the workload's `Architecture` field; sim's primary capacity contract is `linux/arm64`**. Sim binary itself stays host-native (Mac arm64 locally; CI is now linux/arm64 too via native ARM runners).
+
+**135a–e (architectural).** `ContainerConfig.Architecture` field plumbed across all 3 sims to Docker `ImagePull` + `ContainerCreate` Platform; `parsePlatform("")` errors at the shared-lib boundary (no silent fallback). GCP Cloud Functions migrated from `StartProcess` to `StartContainerSync` (closes the literal BUG-949 site). AWS ECS `ExecuteCommand` fallback dropped. Per-product host-metadata services: AWS IMDSv2 + ECS task metadata v4 + instance-identity-document, GCP `metadata.google.internal/computeMetadata/v1/*` (project ID, instance, SA tokens, ID tokens), Azure IMDS `/metadata/instance` + existing identity routes. Workload-host wiring via env (`AWS_EC2_METADATA_SERVICE_ENDPOINT` / `ECS_CONTAINER_METADATA_URI_V4` / `GCE_METADATA_HOST` / `IDENTITY_ENDPOINT`). Static `host_dispatch_test.go` per sim asserts no production code path `os/exec`s a workload (allowlist for sim tooling like cloudbuild's `docker` CLI).
+
+**135f (three-tier coverage).** Per user request: SDK + CLI + Terraform exercising recent sim additions across all 3 clouds. SDK tests via the official cloud-Go-SDK metadata clients (cloud.google.com/go/compute/metadata × 6, aws-sdk-go-v2/feature/ec2/imds × 4 with IMDSv2 token dance, azidentity.NewManagedIdentityCredential × 1). GCP CLI test for Compute Disks via gcloud. GCP Terraform test for `google_compute_disk`. AWS + Azure CLI/TF skipped because their metadata routes have no natural CLI/TF consumers (no `aws ec2 fetch-imds` command; no `azurerm` resource for IMDS).
+
+**12 bugs surfaced + fixed in the same session** (BUG-949/972/975/976/977/978/979/980/981/982/983/984): GCF os/exec-of-workload, AWS ECS ExecuteCommand fallback, IMDS instance-identity-document missing, sdk-tests host-build-then-COPY pattern broke under linux/arm64 force, CI runners missing QEMU, gcloud crashed on incomplete zoneOp shape, ComputeDisk SizeGb rejecting unquoted JSON numbers, gcloud zone existence-probe 404, cli-tests + backend-integration-tests host-build pattern, golang base image too old (1.24→1.25), sim CI 5min timeout too tight under emulation, gcloud x86_64 install URL on ARM runner.
+
+**CI: native ARM runners.** Final move was switching the 4 jobs that run Docker workloads (sim, test, test-e2e, smoke) from `ubuntu-latest` (amd64 + QEMU) to `ubuntu-24.04-arm`. Eliminates emulation overhead + QEMU edge cases, makes host arch == sim's primary capacity == workload arch — no platform-mismatch traps anywhere. Other jobs (ui, terraform, lint, build-check) stay on amd64 since they don't run Docker workloads.
+
 ## 2026-05-08 — Phase 134 Makefile standardization + sim test stability
 
 Single-branch consolidation: `makefile-standardization` (PR #128). All 11 CI checks GREEN at sha a5056a0.

@@ -6,9 +6,9 @@
 
 `docs-streamline` — off `origin/main` at 9169d4b. Single work-branch rule applies; everything stacks here, no side branches. PR #127 + #128 already merged.
 
-## Phase 135 — Sim host model (closing)
+## Phase 135 — Sim host model + 3-tier coverage (PR #129, closing)
 
-5 sub-tasks shipped on `docs-streamline`. Awaiting your merge of the branch (or guidance to PR + push). Detail in [STATUS.md](STATUS.md#in-flight-on-docs-streamline) and [specs/CLOUD_RESOURCE_MAPPING.md § Simulator host model](specs/CLOUD_RESOURCE_MAPPING.md#simulator-host-model-phase-135). Closes BUG-949 + BUG-975.
+6 sub-tasks shipped (135a–f). Detail in [STATUS.md](STATUS.md#in-flight-on-docs-streamline-pr-129) and [specs/CLOUD_RESOURCE_MAPPING.md § Simulator host model](specs/CLOUD_RESOURCE_MAPPING.md#simulator-host-model-phase-135). 12 bugs closed (BUG-949 / 972 / 975 / 976 / 977 / 978 / 979 / 980 / 981 / 982 / 983 / 984). Sim CI runs on native `ubuntu-24.04-arm` runners (no QEMU). Awaiting your merge.
 
 ## Pick next
 
@@ -39,4 +39,4 @@ Mirror of Phase 121 cloud-faithful work for ACA + AZF.
 
 ## Open bugs
 
-None. BUG-949 + BUG-975 closed by Phase 135. BUG-972 was already fixed in PR #123 (bookkeeping closed in this PR). Detail in [BUGS.md](BUGS.md).
+None. Detail in [BUGS.md](BUGS.md).

@@ -6,10 +6,10 @@
 
 | | |
 |---|---|
-| Active branch | `docs-streamline` (off `origin/main` at 9169d4b) |
+| Active branch | `docs-streamline` (off `origin/main` at 9169d4b) — open PR #129 |
 | Last merged | PR #128 — Makefile standardization + sim test stability (2026-05-08) |
-| Milestone | **8/8 runner-integration cells GREEN** (since 2026-05-07) |
-| Bugs | 975 filed · 975 fixed · **0 open** ([BUGS.md](BUGS.md)). Phase 135 closed BUG-949 + BUG-975; BUG-972 was already fixed in PR #123 (bookkeeping closure). |
+| Milestone | **8/8 runner-integration cells GREEN** (since 2026-05-07); **CI fully green on linux/arm64 native runners** (Phase 135f, 2026-05-09). |
+| Bugs | 984 filed · 984 fixed · **0 open** ([BUGS.md](BUGS.md)). Phase 135 (host model + 3-tier coverage) closed BUG-949/972/975/976/977/978/979/980/981/982/983/984. |
 | Sim parity | 77/77 ✓ across current backends (AWS 33, GCP 16, Azure 28) — [specs/SIM_PARITY_MATRIX.md](specs/SIM_PARITY_MATRIX.md) |
 | Live infra | None up. All projects torn down end of 2026-05-07. |
 
@@ -28,15 +28,16 @@
 
 Each green run: probe-capabilities → probe-localhost-peer (postgres sidecar `localhost:5432`) → clone-and-compile (`git clone` + `go build` of `simulators/testdata/eval-arithmetic`) → 5 arithmetic invocations.
 
-## In flight on `docs-streamline`
+## In flight on `docs-streamline` (PR #129)
 
-**Phase 135 — Sim host model** (closing this session). 5 sub-tasks shipped on branch:
+**Phase 135 — Sim host model.** 6 sub-tasks shipped:
 
 - **135a** — `ContainerConfig.Architecture` field across all 3 sims; plumbed to Docker `ImagePull` + `ContainerCreate` Platform.
-- **135b** — Workloads dispatch through Docker (no `os/exec` of workloads). `parsePlatform("")` errors at the shared-lib boundary; every caller passes Architecture explicitly. GCP Cloud Functions migrated from `StartProcess` to `StartContainerSync`; AWS ECS ExecuteCommand fallback dropped. Closes BUG-949 + BUG-975.
-- **135c** — Host-metadata services per execution-service. AWS IMDSv2 + ECS task metadata v4; GCP `metadata.google.internal/computeMetadata/v1/*`; Azure IMDS `/metadata/instance` (managed-identity token already shipped). Workload-host wiring via `GCE_METADATA_HOST` / `AWS_EC2_METADATA_SERVICE_ENDPOINT` / `IDENTITY_ENDPOINT` env + `ExtraHosts: host-gateway`.
-- **135d** — Static no-`os/exec`-of-workload check across all 3 sims (`host_dispatch_test.go` per sim).
-- **135e** — Docs in [specs/CLOUD_RESOURCE_MAPPING.md § Simulator host model](specs/CLOUD_RESOURCE_MAPPING.md#simulator-host-model-phase-135) + simulators/README.md update.
+- **135b** — Workloads dispatch through Docker (no `os/exec` of workloads). `parsePlatform("")` errors at the shared-lib boundary. GCP Cloud Functions migrated from `StartProcess` to `StartContainerSync`; AWS ECS ExecuteCommand fallback dropped.
+- **135c** — Host-metadata services per execution-service. AWS IMDSv2 + ECS task metadata v4 + instance-identity-document; GCP `metadata.google.internal/computeMetadata/v1/*`; Azure IMDS `/metadata/instance` + identity. Workload-host wiring via env (`GCE_METADATA_HOST` / `AWS_EC2_METADATA_SERVICE_ENDPOINT` / `IDENTITY_ENDPOINT`).
+- **135d** — Static no-`os/exec`-of-workload check across all 3 sims.
+- **135e** — Docs in [specs/CLOUD_RESOURCE_MAPPING.md § Simulator host model](specs/CLOUD_RESOURCE_MAPPING.md#simulator-host-model-phase-135) + simulators/README.md.
+- **135f — three-tier coverage** — SDK (cloud.google.com/go/compute/metadata × 6 + aws-sdk-go-v2/feature/ec2/imds × 4 + azidentity ManagedIdentityCredential × 1), CLI (gcloud Compute Disks), Terraform (google_compute_disk). Plus `ubuntu-24.04-arm` native runners for sim/test/test-e2e/smoke (no QEMU needed; sim host == workload arch).
 
 ## Recently shipped (chronological)
 
