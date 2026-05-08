@@ -1,8 +1,10 @@
 # Known Bugs
 
-**974 filed · 972 fixed · 2 open · 1 false positive.** 8/8 cells GREEN since 2026-05-07.
+**974 filed · 972 fixed · 2 open · 1 false positive.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner before any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
+
+Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md).
 
 ## Open
 
