@@ -143,7 +143,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		// BUG-848 made architecture mandatory; integration tests must
 		// declare it (no default — sockerless reports the cloud
 		// workload's arch, not its own host arch).
-		"SOCKERLESS_ECS_CPU_ARCHITECTURE=X86_64",
+		"SOCKERLESS_ECS_CPU_ARCHITECTURE=ARM64",
 		"SOCKERLESS_AGENT_TIMEOUT=2s",
 		"SOCKERLESS_POLL_INTERVAL=500ms",
 	)

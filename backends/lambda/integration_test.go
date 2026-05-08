@@ -25,10 +25,9 @@ var dockerClient *client.Client
 // SOCKERLESS_INTEGRATION=1, consumed by the e2e test that drives
 // the Lambda-backend → simulator → reverse-agent round-trip.
 var (
-	agentBootstrapBinaryPath string
-	agentTestImageName       string
-	lambdaBackendPort        int
-	lambdaBackendWSURL       string
+	agentTestImageName string
+	lambdaBackendPort  int
+	lambdaBackendWSURL string
 )
 
 func skipIfNoIntegration(t *testing.T) {
@@ -112,32 +111,23 @@ func TestMain(m *testing.M) {
 	}
 	cleanups = append(cleanups, func() { os.Remove(backendBinary) })
 
-	// Build the real sockerless-lambda-bootstrap for linux and bake
-	// it into a throw-away test image that the simulator's Lambda
-	// Runtime API slice will invoke as a handler. The backend is
-	// started with PrebuiltOverlayImage pointed at this image so it
-	// doesn't need to run `docker push` against an insecure registry.
-	bootstrapDir := repoRoot + "/agent/cmd/sockerless-lambda-bootstrap"
-	agentBootstrapBinaryPath = bootstrapDir + "/sockerless-lambda-bootstrap"
-	fmt.Println("[sim] Building sockerless-lambda-bootstrap for linux...")
-	bsBuild := exec.Command("go", "build", "-o", "sockerless-lambda-bootstrap", ".")
-	bsBuild.Dir = bootstrapDir
-	bsBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=amd64")
-	bsBuild.Stdout = os.Stderr
-	bsBuild.Stderr = os.Stderr
-	if err := bsBuild.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build sockerless-lambda-bootstrap: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	cleanups = append(cleanups, func() { os.Remove(agentBootstrapBinaryPath) })
-
+	// Build the lambda agent test image — multi-stage Docker build forced
+	// to linux/arm64 (sim's primary capacity per Phase 135b). CI on amd64
+	// hosts uses QEMU.
+	bootstrapModuleDir := repoRoot + "/agent"
 	agentTestImageName = "sockerless-lambda-agent-test:v1"
-	fmt.Printf("[sim] Building %s...\n", agentTestImageName)
-	agentDockerfile := "FROM alpine:latest\n" +
-		"COPY sockerless-lambda-bootstrap /usr/local/bin/sockerless-lambda-bootstrap\n" +
-		"ENTRYPOINT [\"/usr/local/bin/sockerless-lambda-bootstrap\"]\n"
-	agentBuild := exec.Command("docker", "build", "-t", agentTestImageName, "-f", "-", bootstrapDir)
+	fmt.Printf("[sim] Building %s (linux/arm64)...\n", agentTestImageName)
+	agentDockerfile := `FROM golang:1.24-alpine AS build
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 go build -o /sockerless-lambda-bootstrap ./cmd/sockerless-lambda-bootstrap
+FROM alpine:latest
+COPY --from=build /sockerless-lambda-bootstrap /usr/local/bin/sockerless-lambda-bootstrap
+ENTRYPOINT ["/usr/local/bin/sockerless-lambda-bootstrap"]
+`
+	agentBuild := exec.Command("docker", "build",
+		"--platform", "linux/arm64",
+		"-t", agentTestImageName, "-f", "-", bootstrapModuleDir)
 	agentBuild.Stdin = strings.NewReader(agentDockerfile)
 	if out, err := agentBuild.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to build agent test image: %v\n%s", err, out)
@@ -161,7 +151,7 @@ func TestMain(m *testing.M) {
 		"SOCKERLESS_CALLBACK_URL="+lambdaBackendWSURL,
 		"SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE="+agentTestImageName,
 		// BUG-848 made arch mandatory; no default.
-		"SOCKERLESS_LAMBDA_ARCHITECTURE=x86_64",
+		"SOCKERLESS_LAMBDA_ARCHITECTURE=arm64",
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
