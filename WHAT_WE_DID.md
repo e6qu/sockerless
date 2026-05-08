@@ -6,6 +6,18 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* we did each phase, what was surprising, what blocked. Per-bug detail belongs in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-08 — Phase 134 Makefile standardization + sim test stability
+
+Single-branch consolidation: `makefile-standardization` (PR #128). All 11 CI checks GREEN at sha a5056a0.
+
+**Make surface unification.** Every leaf gets its own Makefile, and the top-level Makefile delegates by path (`make backends/ecs/build` runs `$(MAKE) -C backends/ecs build`). Shared recipes live in `make/{help,colors,go-app,go-lib,ui-app,stack}.mk`; each leaf Makefile is 5–10 lines of variables + an `include`. Auto-generated `make help` from `## comment` lines via awk. Stack orchestration via `.stack-pids/` PID files for `make stack-aws-ecs` etc. Per-app `RUN_ENV` for sim-backend wiring without coupling.
+
+The CI lint runner doesn't carry bun, so the original fan-out `lint` target (which hit UI packages whose `lint` recipe shells `bun install`) blew up with `bun: not found`. Split surface: top-level `lint` runs Go-only; new `lint-ui` covers UI packages; `lint-all` runs both. Mirrors what each CI job already had installed.
+
+**README rewrite + 17 doc updates.** Replaced the old Quick Start with the `make stack-aws-ecs` flow; added a comprehensive "Make targets" section. 17 backend / manual-tests / examples/terraform docs migrated from raw `go build -o sockerless-backend-X ...` to `make backends/X/build`.
+
+**BUG-973/974 — sim test stability.** The Makefile work surfaced two real bugs that had been masked by a `Dockerfile.test`-missing build error on main: `TestECS_TaskLogsToCloudWatch` (aws) and `TestContainerApps_JobArithmetic{Invalid,Logs}` (azure) used fixed `time.Sleep(2s)` to wait for container completion before asserting. Slow CI runners exceed 2s on image pull + container start. Both rewritten as `require.Eventually(30s, 250ms)` polling for the actual condition. Per the no-pre-existing rule, both filed in BUGS.md and fixed in the same session.
+
 ## 2026-05-08 — Phase 129 #4 owner-linked orphan-Service sweep
 
 Extended the dispatcher's 2-minute Cleanup ticker to reap orphan `sockerless-svc-*` Services left behind when a runner-task dies before issuing ContainerRemove. The variant DO_NEXT.md called the better long-term shape: couples cleanup to runner-task lifetime instead of a flat idle-time check.
