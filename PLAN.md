@@ -36,29 +36,41 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #128 | 134 | Makefile standardization + per-app leaf Makefiles + stack orchestration; 17 doc updates; sim test stability (BUG-973/974). | 973–974 |
 | #129 | 135 | **Sim host model + 3-tier coverage.** Workloads dispatch through Docker honouring explicit `Architecture` (sim's `linux/arm64` capacity); per-cloud-product host-metadata services (AWS IMDSv2 + ECS task v4 + instance-identity-document; GCP `metadata.google.internal/computeMetadata/v1`; Azure IMDS `/metadata/instance` + identity); static no-`os/exec`-of-workload check; SDK metadata tests (cloud.google.com/go/compute/metadata × 6, aws-sdk-go-v2/feature/ec2/imds × 4, azidentity ManagedIdentityCredential × 1); GCP CLI test for Compute Disks via gcloud; GCP Terraform test (`google_compute_disk`); native `ubuntu-24.04-arm` CI runners (no QEMU). | 949, 972, 975–984 |
 
-## Queued — Live-cloud cost gate (must precede next live session)
+## Roadmap (ordered)
 
-Without these, the regional-CPU-quota debt cycle from 2026-05-07 repeats and live projects burn ~$90/week unmanaged.
+Pick from the top. Each phase's `Pick from the top` rule: don't start the next until the previous closes (or the user explicitly redirects).
 
-### Phase 128 — Runner job timeout (configurable)
+### 1. Phase 128 — Runner job timeout (live-cloud cost gate)
 
-Hard cap on Cloud Run Job / Lambda / ECS task duration so a hung subprocess can't pin quota indefinitely. Default 1 h. Operator override via dispatcher TOML `runner_job_timeout` + bootstrap env `SOCKERLESS_JOB_TIMEOUT_SECONDS`. Per-cloud max: Cloud Run 24 h; Lambda 15 min; ECS Fargate ~unlimited. At timeout: SIGTERM → 30 s grace → SIGKILL; bootstrap reports exit 124 (matches GNU `timeout(1)`). Test: `sleep 9999` step → 1 h timeout → arithmetic-suite resumes on next job.
+Hard cap on Cloud Run Job / Lambda / ECS task duration so a hung subprocess can't pin quota indefinitely. Default 1 h. Operator override via dispatcher TOML `runner_job_timeout` + bootstrap env `SOCKERLESS_JOB_TIMEOUT_SECONDS`. Per-cloud max: Cloud Run 24 h; Lambda 15 min; ECS Fargate ~unlimited. At timeout: SIGTERM → 30 s grace → SIGKILL; bootstrap reports exit 124 (matches GNU `timeout(1)`). Test: `sleep 9999` step → 1 h timeout → arithmetic-suite resumes on next job. **Blocks the next live-cloud session**: without it, a hung subprocess pins quota indefinitely (the failure mode that drove the 2026-05-07 ~$90 burn).
 
-### Phase 129 — Cost tracking + stale-resource cost-cap (remainder)
+### 2. Phase 124 — Network driver
 
-Phase 129 #4 (orphan-svc owner-link GC) shipped on PR #127. Remainder:
+How containers in the same user-defined network discover and talk. Driver categories: `host-aliases` / `cloud-dns` / `service-mesh` / `nat-gateway-only`. Sim prereq: already covered.
 
-1. **BigQuery billing export** — enable on the live billing account at fresh-project creation. Free at our volume.
-2. **Per-session resource labels** (`sockerless_session=<run-id>`) on every Cloud Run Service / Job / AR repo / GCS bucket / VPC connector sockerless creates.
-3. **Per-session budget alert** via Cloud Billing Budget API ($5 alert / $20 hard cap, label-scoped).
-4. **Stale-resource sweeper** — owner-link Service GC ✅; remaining: Cloud Run Jobs older than 1 h not RUNNING; GCS `workspace/` prune via existing `PruneStaleObjects`.
-5. **Session-end teardown** — `make teardown-live-gcp` calls `gcloud projects delete <project>`. GCP soft-delete with 30-day undo is the safety net. Procedure documented in `docs/GCP_LIVE_TEARDOWN.md`.
+### 3. Phase 125 — DNS driver
 
-## Queued — Driver-generalization roadmap (Phases 124–127)
+How `<container-name>.<network>` resolves. Driver categories: `cloud-map` / `cloud-dns-zone` / `service-discovery` / `private-dns-zone`. Sim prereq: already covered. Depends on 124's network primitives.
 
-Storage backing (Phase 123) is the worked pilot: cloud-agnostic core interface, per-cloud impls, operator-pluggable selection, no-fallbacks at registry resolve. Same template for the next four dimensions.
+### 4. Phase 126 — Access driver
 
-Each phase template:
+Container-to-container auth, ingress IAM, service-account binding. Driver categories: `iam-role` / `id-token` / `mTLS` / `none-internal`. Sim prereq: ✅ `generateIdToken` (PR #127).
+
+### 5. Phase 127 — Storage driver expansion
+
+Open up the `BackingSpec` union (currently EmptyDir + GCS) cloud-agnostic. Drivers: `pd-ephemeral` GCP / `efs-ephemeral` AWS (already covered) / `azure-files-ephemeral`. Sim prereq: ✅ Compute Disks (PR #127).
+
+### 6. Phase 121b — Azure sim hardening
+
+Azure-side mirror of Phase 121 (cloud-faithful sim hardening for ACA + AZF). Open question: how much of the GCP-style work (proto-JSON enum decoding, real OAuth2 token endpoints, label-filter syntax) transfers to Azure idioms.
+
+### 7. Phase 78 — UI polish
+
+Dark mode, design tokens, error handling UX, container detail modal, auto-refresh, performance audit, accessibility, E2E smoke, documentation.
+
+## Driver phase template (124–127)
+
+Storage backing (Phase 123) is the worked pilot: cloud-agnostic core interface, per-cloud impls, operator-pluggable selection, no-fallbacks at registry resolve. Each driver phase follows the same 7-step template:
 
 1. `api/<dim>_driver.go` — enum + struct fields on the relevant config.
 2. `backends/core/<dim>_driver.go` — driver interface + registry + no-op default.
@@ -69,13 +81,6 @@ Each phase template:
 7. Migration of existing inline calls to the registry.
 
 Each phase starts with a `specs/CLOUD_RESOURCE_MAPPING.md` design pass cataloging current ad-hoc paths per backend before any code lands.
-
-| Phase | Dimension | Driver categories | Sim prereq |
-|---|---|---|---|
-| 124 | Network | `host-aliases` / `cloud-dns` / `service-mesh` / `nat-gateway-only` | already covered |
-| 125 | DNS | `cloud-map` / `cloud-dns-zone` / `service-discovery` / `private-dns-zone` | already covered |
-| 126 | Access | `iam-role` / `id-token` / `mTLS` / `none-internal` | ✅ `generateIdToken` (PR #127) |
-| 127 | Storage expansion | `pd-ephemeral` GCP / `efs-ephemeral` AWS (covered) / `azure-files-ephemeral` | ✅ Compute Disks (PR #127) |
 
 ## Audit / fidelity tracks (rolling)
 
@@ -91,24 +96,9 @@ Harness scaffold under `tests/runners/github/`. Live cells (1, 2, 5, 6) GREEN; r
 
 Harness scaffold under `tests/runners/gitlab/`. Live cells (3, 4, 7, 8) GREEN; runner-side fidelity work continues.
 
-### Phase 121b — Azure sim hardening
-
-Azure-side mirror of Phase 121 (cloud-faithful sim hardening for ACA + AZF). Open question: how much of the GCP-style work (proto-JSON enum decoding, real OAuth2 token endpoints, label-filter syntax) transfers to Azure idioms.
-
-## Other queued
-
-### Phase 68 — Multi-tenant backend pools
-
-Named pools of backends with scheduling and resource limits. P68-001 done; 9 sub-tasks remain (registry, router, limiter, lifecycle, metrics, scheduling, limits, tests, state save). Fold in Phase 106's label-based-dispatch as the headline use case.
-
-### Phase 78 — UI polish
-
-Dark mode, design tokens, error handling UX, container detail modal, auto-refresh, performance audit, accessibility, E2E smoke, documentation.
-
 ## Future ideas
 
 - GraphQL subscriptions for real-time event streaming.
 - Full GitHub App permission scoping.
 - Webhook delivery UI.
-- Cost controls (per-pool spending limits, auto-shutdown).
 - Sockerless GCE-style backend (would unlock Phase 127 GCP `pd-ephemeral` for real workloads).

@@ -37,7 +37,7 @@ your laptop / runner host                     │   AWS account
 └────────────────┘
 ```
 
-**Why two Sockerless daemons.** Today, each daemon binds to one backend. Until the multi-tenant pool router (PLAN.md § Phase 68 v2) lands, label-based routing is "one Sockerless daemon per `runs-on` label / `tags:` value." Two ports = two daemons = two labels.
+**Why two Sockerless daemons.** Each daemon binds to one backend; label-based routing today is "one Sockerless daemon per `runs-on` label / `tags:` value." Two ports = two daemons = two labels.
 
 **Why one Sockerless daemon serves both runners.** A runner's `DOCKER_HOST` is just a Docker REST API endpoint. The same daemon can simultaneously serve a GitHub `actions/runner` *and* a `gitlab-runner` — they don't see each other's containers (GitHub uses a label-namespaced container name; GitLab uses `runner-<id>-project-<id>-...`). One daemon → two clients = fine.
 

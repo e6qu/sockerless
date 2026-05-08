@@ -44,7 +44,7 @@ Single PR carrying five threads, all stacked on the `phase-130` branch per the s
 
 **Phase 132 — bleephub apps + oauth completeness.** `GET /api/v3/user/installations` + `/repositories`; `DELETE /api/v3/installation/token`; OAuth web flow (`GET /login/oauth/authorize` HTML form + `?auto=1` auto-approve + form-POST companion); `POST /login/oauth/access_token` extended with `authorization_code` grant alongside the existing device flow. UI: `AppsPage` + `OAuthPage`. 14 Go + 6 UI tests.
 
-**Admin UI scoping decision** (recorded so it doesn't get re-asked): bleephub admin lives in bleephub UI itself. The sockerless-admin app stays focused on backend pools / projects / containers / processes / resources / cleanup / contexts — coupling bleephub-specific admin into sockerless-admin would mix two independently-deployed products.
+**Admin UI scoping decision** (recorded so it doesn't get re-asked): bleephub admin lives in bleephub UI itself. The sockerless-admin app stays focused on its existing scope (projects / containers / processes / resources / cleanup / contexts) — coupling bleephub-specific admin into sockerless-admin would mix two independently-deployed products.
 
 ## 2026-05-07 — Phase 123 + 8/8 cells GREEN (milestone closed)
 
