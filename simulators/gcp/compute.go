@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -10,6 +11,35 @@ import (
 
 	sim "github.com/sockerless/simulator"
 )
+
+// gcpInt64 round-trips int64 quoted-as-string (real GCP discovery
+// shape) AND unquoted numbers (terraform-provider shape). Always emits
+// quoted-string on output.
+type gcpInt64 string
+
+func (g gcpInt64) MarshalJSON() ([]byte, error) {
+	if g == "" {
+		return []byte(`""`), nil
+	}
+	return json.Marshal(string(g))
+}
+
+func (g *gcpInt64) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 || string(b) == "null" {
+		*g = ""
+		return nil
+	}
+	if b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		*g = gcpInt64(s)
+		return nil
+	}
+	*g = gcpInt64(string(b))
+	return nil
+}
 
 func computeNumericID() string {
 	b := make([]byte, 8)
@@ -160,13 +190,17 @@ type ComputeSubnetwork struct {
 // list / delete / resize / setLabels — the subset terraform's
 // `google_compute_disk` exercises.
 type ComputeDisk struct {
-	Kind              string            `json:"kind,omitempty"`
-	Id                string            `json:"id,omitempty"`
-	Name              string            `json:"name"`
-	SelfLink          string            `json:"selfLink,omitempty"`
-	CreationTimestamp string            `json:"creationTimestamp,omitempty"`
-	Description       string            `json:"description,omitempty"`
-	SizeGb            string            `json:"sizeGb,omitempty"`
+	Kind              string `json:"kind,omitempty"`
+	Id                string `json:"id,omitempty"`
+	Name              string `json:"name"`
+	SelfLink          string `json:"selfLink,omitempty"`
+	CreationTimestamp string `json:"creationTimestamp,omitempty"`
+	Description       string `json:"description,omitempty"`
+	// SizeGb is int64-as-string in real GCP discovery docs (the SDK's
+	// disk struct uses `int64,string` tag). The terraform provider
+	// sends it as an unquoted number. gcpInt64 accepts both shapes on
+	// input and always emits quoted-string on output (matches real GCP).
+	SizeGb            gcpInt64          `json:"sizeGb,omitempty"`
 	Zone              string            `json:"zone,omitempty"`
 	Status            string            `json:"status,omitempty"`
 	Type              string            `json:"type,omitempty"`
@@ -594,6 +628,48 @@ func registerCompute(srv *sim.Server) {
 	})
 
 	registerComputeDisks(srv)
+	registerComputeZones(srv)
+}
+
+// registerComputeZones serves GET /compute/v1/projects/{project}/zones
+// + .../zones/{zone}. gcloud probes a zone's existence before disk
+// CRUD; without these handlers it gets 404 and crashes during retry.
+// Real GCE returns a list of all zones in the project.
+func registerComputeZones(srv *sim.Server) {
+	zoneJSON := func(project, zone string) map[string]any {
+		return map[string]any{
+			"kind":                  "compute#zone",
+			"id":                    computeNumericID(),
+			"name":                  zone,
+			"description":           zone,
+			"status":                "UP",
+			"selfLink":              fmt.Sprintf("projects/%s/zones/%s", project, zone),
+			"region":                fmt.Sprintf("projects/%s/regions/%s", project, regionFromZone(zone)),
+			"availableCpuPlatforms": []string{"Intel Skylake"},
+		}
+	}
+	srv.HandleFunc("GET /compute/v1/projects/{project}/zones/{zone}", func(w http.ResponseWriter, r *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, zoneJSON(sim.PathParam(r, "project"), sim.PathParam(r, "zone")))
+	})
+	srv.HandleFunc("GET /compute/v1/projects/{project}/zones", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zones := []string{"us-central1-a", "us-central1-b", "us-east1-a", "europe-west1-b", "europe-west1-c"}
+		items := make([]map[string]any, 0, len(zones))
+		for _, z := range zones {
+			items = append(items, zoneJSON(project, z))
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":  "compute#zoneList",
+			"items": items,
+		})
+	})
+}
+
+func regionFromZone(zone string) string {
+	if i := strings.LastIndex(zone, "-"); i > 0 {
+		return zone[:i]
+	}
+	return zone
 }
 
 // registerComputeDisks wires the zonal Compute Disks REST surface that
@@ -606,16 +682,23 @@ func registerCompute(srv *sim.Server) {
 func registerComputeDisks(srv *sim.Server) {
 	disks := sim.MakeStore[ComputeDisk](srv.DB(), "compute_disks")
 
-	zoneOp := func(project, zone, target string) map[string]any {
+	zoneOp := func(project, zone, target, opType string) map[string]any {
 		opID := generateUUID()[:8]
+		now := time.Now().UTC().Format(time.RFC3339)
 		return map[string]any{
-			"kind":       "compute#operation",
-			"id":         computeNumericID(),
-			"name":       "operation-" + opID,
-			"status":     "DONE",
-			"selfLink":   fmt.Sprintf("projects/%s/zones/%s/operations/operation-%s", project, zone, opID),
-			"targetLink": target,
-			"progress":   100,
+			"kind":          "compute#operation",
+			"id":            computeNumericID(),
+			"name":          "operation-" + opID,
+			"operationType": opType,
+			"status":        "DONE",
+			"selfLink":      fmt.Sprintf("projects/%s/zones/%s/operations/operation-%s", project, zone, opID),
+			"targetLink":    target,
+			"targetId":      computeNumericID(),
+			"zone":          fmt.Sprintf("projects/%s/zones/%s", project, zone),
+			"progress":      100,
+			"insertTime":    now,
+			"startTime":     now,
+			"endTime":       now,
 		}
 	}
 
@@ -646,7 +729,7 @@ func registerComputeDisks(srv *sim.Server) {
 		}
 		d.LabelFingerprint = generateUUID()[:8]
 		disks.Put(d.SelfLink, d)
-		sim.WriteJSON(w, http.StatusOK, zoneOp(project, zone, d.SelfLink))
+		sim.WriteJSON(w, http.StatusOK, zoneOp(project, zone, d.SelfLink, "insert"))
 	})
 
 	// Get
@@ -691,7 +774,7 @@ func registerComputeDisks(srv *sim.Server) {
 			return
 		}
 		disks.Delete(selfLink)
-		sim.WriteJSON(w, http.StatusOK, zoneOp(project, zone, selfLink))
+		sim.WriteJSON(w, http.StatusOK, zoneOp(project, zone, selfLink, "delete"))
 	})
 
 	// Resize — POST .../disks/{name}/resize with body {sizeGb}
@@ -701,7 +784,7 @@ func registerComputeDisks(srv *sim.Server) {
 		name := sim.PathParam(r, "name")
 		selfLink := fmt.Sprintf("projects/%s/zones/%s/disks/%s", project, zone, name)
 		var req struct {
-			SizeGb string `json:"sizeGb"`
+			SizeGb gcpInt64 `json:"sizeGb"`
 		}
 		if err := sim.ReadJSON(r, &req); err != nil {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
@@ -716,7 +799,7 @@ func registerComputeDisks(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "disk %q not found in zone %q", name, zone)
 			return
 		}
-		sim.WriteJSON(w, http.StatusOK, zoneOp(project, zone, selfLink))
+		sim.WriteJSON(w, http.StatusOK, zoneOp(project, zone, selfLink, "resize"))
 	})
 
 	// SetLabels — POST .../disks/{name}/setLabels with body {labels, labelFingerprint}
@@ -741,7 +824,7 @@ func registerComputeDisks(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "disk %q not found in zone %q", name, zone)
 			return
 		}
-		sim.WriteJSON(w, http.StatusOK, zoneOp(project, zone, selfLink))
+		sim.WriteJSON(w, http.StatusOK, zoneOp(project, zone, selfLink, "setLabels"))
 	})
 
 	// Aggregated list — GET /compute/v1/projects/{p}/aggregated/disks.

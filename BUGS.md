@@ -1,6 +1,6 @@
 # Known Bugs
 
-**978 filed · 978 fixed · 0 open · 1 false positive.**
+**982 filed · 982 fixed · 0 open · 1 false positive.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner before any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -31,6 +31,10 @@ Per-bug detail in `git log` / linked PR.
 
 | ID | Sev | Area | One-liner |
 |----|-----|------|-----------|
+| 982 | M | simulators/{aws,gcp,azure}/cli-tests | TestMain used the old host-build-then-COPY pattern that broke once Phase 135b forced workloads to `linux/arm64`. Same fix as 977: multi-stage Docker build inside the image with `--platform linux/arm64`. |
+| 981 | M | simulators/gcp Compute | gcloud probes `/compute/v1/projects/{p}/zones/{z}` before any disk CRUD; sim returned 404 → gcloud's retry path crashed with `'NoneType' object has no attribute 'endswith'`. Fix: serve `GET .../zones/{zone}` and `GET .../zones` with `compute#zone` shape. |
+| 980 | M | simulators/gcp Compute | `ComputeDisk.SizeGb` was `string` so terraform-provider's unquoted-number `"sizeGb": 10` failed JSON unmarshal. Real GCP discovery shape is int64-as-string but the provider sends number. Fix: new `gcpInt64` type accepts both shapes on input, emits quoted-string on output. |
+| 979 | M | simulators/gcp Compute | `zoneOp` returned a minimal LRO missing `operationType`, `zone` (full URL), `targetId`, `insertTime/startTime/endTime`. gcloud parsed the response, hit a None field on `endswith`, and crashed (`AttributeError`). Fix: stamp full LRO shape; pass operationType (`insert`/`delete`/`resize`/`setLabels`) per call site. |
 | 978 | H | sim CI workflow | Sim contract is `linux/arm64` (Phase 135b) but ubuntu-latest CI runners are amd64 and don't have QEMU registered. Symptom: alpine workload pulled as arm64, fails `exec /bin/sh: exec format error` on amd64 runner. Surfaced as: sim, test, smoke, test-e2e all fail. Fix: add `docker/setup-qemu-action@v3` to every CI job that runs Docker workloads (sim, test, smoke, test-e2e). |
 | 977 | M | simulators/aws + simulators/azure sdk-tests | `TestMain` built `eval-arithmetic` (and AWS `lambda-runtime-handler`) on the host with `GOOS=linux` then COPYed the binary into alpine. On macOS arm64 the binary is host-arch (matching), but the image manifest claimed alpine's default. Forcing `linux/arm64` at run time → arch mismatch. Fix: switch to multi-stage Docker build (`FROM golang:1.24-alpine AS build … COPY --from=build`) with explicit `--platform linux/arm64`. The build is now self-contained inside the image. Mirrors the GCP fix shipped in 135b. |
 | 976 | M | simulators/aws IMDS | `aws-sdk-go-v2/feature/ec2/imds.GetRegion` queries `/latest/dynamic/instance-identity/document` (a signed JSON document), not `/latest/meta-data/placement/region`. Sim returned 405. Fix: serve a minimal identity-document response (region/availabilityZone/instanceId/imageId/accountId) so SDK routing works. |
