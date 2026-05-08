@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseExecEnvelope(t *testing.T) {
@@ -145,5 +147,86 @@ func TestExpectedBinaryName(t *testing.T) {
 	got := os.Args[0]
 	if !strings.HasSuffix(got, want) && !strings.Contains(got, "/sockerless-cloudrun-bootstrap") && !strings.Contains(got, ".test") {
 		t.Logf("test binary name %q (expected to derive from %q in production)", got, want)
+	}
+}
+
+// Phase 128 — bootstrap timer.
+//
+// runWithTimeout: a subprocess that finishes within budget exits with
+// its own code; one that exceeds budget gets SIGTERM/SIGKILL and the
+// helper returns timedOut=true.
+
+func TestRunWithTimeout_FinishesEarly(t *testing.T) {
+	cmd := exec.Command("sh", "-c", "exit 7")
+	exitCode, timedOut, err := runWithTimeout(cmd, 5, "test")
+	if timedOut {
+		t.Fatalf("expected timedOut=false, got true")
+	}
+	if err == nil {
+		t.Fatalf("expected non-nil err for non-zero exit, got nil")
+	}
+	if exitCode != 7 {
+		t.Errorf("expected exit code 7, got %d", exitCode)
+	}
+}
+
+func TestRunWithTimeout_ZeroExit(t *testing.T) {
+	cmd := exec.Command("true")
+	exitCode, timedOut, err := runWithTimeout(cmd, 5, "test")
+	if timedOut {
+		t.Fatalf("expected timedOut=false, got true")
+	}
+	if err != nil {
+		t.Fatalf("expected nil err, got %v", err)
+	}
+	if exitCode != 0 {
+		t.Errorf("expected exit code 0, got %d", exitCode)
+	}
+}
+
+func TestRunWithTimeout_FiresOnHang(t *testing.T) {
+	// `sleep 9999` will be killed by the timer well before completion.
+	cmd := exec.Command("sleep", "9999")
+	start := time.Now()
+	_, timedOut, _ := runWithTimeout(cmd, 1, "test")
+	elapsed := time.Since(start)
+	if !timedOut {
+		t.Fatalf("expected timedOut=true, got false")
+	}
+	// 1s timer + ~immediate SIGTERM response from sleep. Should be ~1-2s,
+	// not the full 30s grace.
+	if elapsed > 5*time.Second {
+		t.Errorf("expected timer to fire near 1s, took %v", elapsed)
+	}
+}
+
+func TestRunWithTimeout_DisabledByZero(t *testing.T) {
+	// timeoutSeconds=0 → no timer; should run to completion.
+	cmd := exec.Command("sh", "-c", "exit 3")
+	exitCode, timedOut, _ := runWithTimeout(cmd, 0, "test")
+	if timedOut {
+		t.Fatalf("expected timedOut=false with timer disabled, got true")
+	}
+	if exitCode != 3 {
+		t.Errorf("expected exit code 3, got %d", exitCode)
+	}
+}
+
+func TestJobTimeoutFromEnv(t *testing.T) {
+	t.Setenv(envJobTimeoutSeconds, "")
+	if got := jobTimeoutFromEnv(); got != jobTimeoutDefaultSeconds {
+		t.Errorf("empty → %d, want %d", got, jobTimeoutDefaultSeconds)
+	}
+	t.Setenv(envJobTimeoutSeconds, "120")
+	if got := jobTimeoutFromEnv(); got != 120 {
+		t.Errorf("120 → %d, want 120", got)
+	}
+	t.Setenv(envJobTimeoutSeconds, "abc")
+	if got := jobTimeoutFromEnv(); got != jobTimeoutDefaultSeconds {
+		t.Errorf("abc → %d, want default %d", got, jobTimeoutDefaultSeconds)
+	}
+	t.Setenv(envJobTimeoutSeconds, "-1")
+	if got := jobTimeoutFromEnv(); got != 0 {
+		t.Errorf("-1 → %d, want 0 (clamped)", got)
 	}
 }

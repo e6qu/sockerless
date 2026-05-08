@@ -427,6 +427,60 @@ func (r *Registry) Resolve(d api.<Dim>Driver) <Dim>DriverImpl { ... }
 
 When extending a driver category (e.g. adding a new network impl), the change is scoped: a new `backends/<cloud>-common/network_<impl>.go` file + a registry entry. No core-package edits needed once the interface is stable. That's the value the abstraction buys; without it, every new impl forces edits at the call sites of every backend.
 
+## Job lifecycle: timeouts and termination (Phase 128)
+
+Without a hard cap, a hung user subprocess pins cloud quota indefinitely. Phase 128 enforces termination on two layers, belt-and-suspenders:
+
+### Layer 1 — bootstrap-side timer (universal)
+
+Every long-running workload container that sockerless materializes runs a sockerless bootstrap (`sockerless-{cloudrun,gcf,ecs,aca,azf}-bootstrap`) as its entrypoint. The bootstrap reads `SOCKERLESS_JOB_TIMEOUT_SECONDS` from the workload's environment and arms a timer:
+
+| Stage | Action |
+|---|---|
+| t=0 | Bootstrap starts the user subprocess, arms timer for `SOCKERLESS_JOB_TIMEOUT_SECONDS` (default `3600`). |
+| t=timeout | Timer fires. Bootstrap sends `SIGTERM` to the user subprocess group (and any descendants it can identify). |
+| t=timeout+30s | If the subprocess hasn't exited, bootstrap sends `SIGKILL`. |
+| exit | Bootstrap exits with code `124` (matches GNU `timeout(1)`). |
+
+The bootstrap is responsible for emitting a clear log line on each transition (`workload timed out after N seconds; sending SIGTERM` / `... SIGKILL` / `bootstrap exiting 124`).
+
+Lambda is the exception: Lambda's own function timeout (max 900 s) is enforced by AWS Lambda itself; the bootstrap timer is redundant inside Lambda but kept for consistency. If `SOCKERLESS_JOB_TIMEOUT_SECONDS` > 900, Lambda's cap fires first.
+
+### Layer 2 — cloud-native timeout (safety net)
+
+Each cloud-product also gets its native max-duration field set, so a bootstrap crash can't leave the host running forever:
+
+| Cloud-product | Field | Sockerless wiring | Per-cloud cap |
+|---|---|---|---|
+| Cloud Run Jobs | `template.taskTimeout` | Sockerless backend sets to min(requested, 86400). | 24 h. |
+| Cloud Functions Gen2 | (backed by Cloud Run; same as above) | Same. | 24 h. |
+| Lambda | `function.Timeout` | Sockerless backend sets to min(requested, 900). | 15 min. |
+| ECS Fargate | (no native timeout) | Bootstrap timer is the only layer; ECS effectively unlimited. | unlimited. |
+| ACA Jobs | `properties.template.replicaTimeout` | Sockerless backend sets to min(requested, 604800). | 7 d. |
+| Azure Functions | (host-level via `host.json`) | Bootstrap timer is the primary; host config optional. | host-config-bound. |
+
+### Configuration
+
+Two distinct knobs at different layers:
+
+| Knob | Where | Default | Purpose |
+|---|---|---|---|
+| `SOCKERLESS_JOB_TIMEOUT_SECONDS` | env on the workload container | `3600` | Bootstrap timer. Set by sockerless backend at materialize-time; operator can override per-job via `docker run -e`. |
+| `runner_job_timeout` | dispatcher TOML | `3600` | Dispatcher applies as cloud-API timeout on the runner-task itself (not via env — preserves dispatcher-generic rule). |
+
+The two knobs are independent. Sockerless inside the runner-task carries its own per-sub-task timeout via `SOCKERLESS_JOB_TIMEOUT_SECONDS`; the dispatcher's `runner_job_timeout` bounds the runner-task itself via the cloud's native field (not via env, never via `SOCKERLESS_*` env on a runner-task).
+
+### Test contract
+
+The phase ships with sim-tests that:
+
+1. Submit a workload with `SOCKERLESS_JOB_TIMEOUT_SECONDS=2` and a `sleep 9999` command.
+2. Wait ≤ 5 s (2 s timeout + 30 s grace cap, but grace doesn't actually fire because sleep responds to SIGTERM immediately).
+3. Assert workload exit code is `124`.
+4. Assert log lines include "workload timed out after 2 seconds" and "bootstrap exiting 124".
+
+Per cloud: ECS, Cloud Run Jobs, Cloud Functions, ACA. Lambda is tested separately (Lambda's own 15-min cap; sim tests use a smaller value via `function.Timeout`).
+
 ## Volume provisioning per backend
 
 Real per-cloud volume provisioning: ECS + Lambda → EFS access points; Cloud Run + GCF → GCS buckets; ACA + AZF → Azure Files shares. Host-path binds remain rejected (no host filesystem in the cloud).
