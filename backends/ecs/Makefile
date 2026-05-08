@@ -1,22 +1,11 @@
-BINARY := sockerless-backend-ecs
-CMD_DIR := ./cmd/sockerless-backend-ecs
+# Standardized Makefile for sockerless-backend-ecs — see docs/MAKEFILE_STANDARD.md.
 
-.PHONY: build test integration-test clean fmt vet
+APP_NAME      := sockerless-backend-ecs
+GO_PACKAGE    := ./cmd/sockerless-backend-ecs
+UI_PACKAGE    := backend-ecs
+DEFAULT_PORT  := 3375
+RUN_FLAGS     := --addr :3375
+RUN_ENV       := SOCKERLESS_ENDPOINT_URL=http://localhost:4566
+REPO_ROOT_REL := ../..
 
-build:
-	CGO_ENABLED=0 go build -o $(BINARY) $(CMD_DIR)
-
-test:
-	go test -v -timeout 2m ./...
-
-integration-test:
-	SOCKERLESS_INTEGRATION=1 go test -v -timeout 5m ./...
-
-clean:
-	rm -f $(BINARY)
-
-fmt:
-	go fmt ./...
-
-vet:
-	go vet ./...
+include $(REPO_ROOT_REL)/make/go-app.mk

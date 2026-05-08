@@ -1,49 +1,11 @@
-BINARY  := simulator-azure
-IMAGE   := sockerless-simulator-azure
-PORT    := 4568
+# Standardized Makefile for simulator-azure — see docs/MAKEFILE_STANDARD.md.
 
-.PHONY: build clean run docker-build docker-run test shared-test sdk-test cli-test terraform-test docker-test-build docker-test fmt vet
+APP_NAME      := simulator-azure
+GO_PACKAGE    := .
+UI_PACKAGE    := simulator-azure
+DEFAULT_PORT  := 4568
+RUN_FLAGS     := -addr :4568
+GO_ENV        := GOWORK=off
+REPO_ROOT_REL := ../..
 
-build:
-	CGO_ENABLED=0 go build -tags noui -ldflags="-s -w" -o $(BINARY) .
-
-clean:
-	rm -f $(BINARY)
-
-run: build
-	SIM_LISTEN_ADDR=:$(PORT) ./$(BINARY)
-
-docker-build:
-	docker build -t $(IMAGE) .
-
-docker-run: docker-build
-	docker run --rm -p $(PORT):$(PORT) \
-		-e SIM_LISTEN_ADDR=:$(PORT) \
-		-e SIM_LOG_LEVEL=info \
-		$(IMAGE)
-
-shared-test:
-	cd shared && GOWORK=off go test -v -count=1 ./...
-
-sdk-test: build
-	cd sdk-tests && go test -v -count=1 ./...
-
-cli-test: build
-	cd cli-tests && go test -v -count=1 -timeout 120s ./...
-
-terraform-test: build
-	cd terraform-tests && go test -v -count=1 -timeout 300s ./...
-
-test: shared-test sdk-test cli-test terraform-test
-
-docker-test-build:
-	docker build -t sockerless-test-azure -f Dockerfile.test .
-
-docker-test: docker-test-build
-	docker run --rm -v $(CURDIR):/src -w /src sockerless-test-azure make test
-
-fmt:
-	go fmt ./...
-
-vet:
-	go vet ./...
+include $(REPO_ROOT_REL)/make/go-app.mk

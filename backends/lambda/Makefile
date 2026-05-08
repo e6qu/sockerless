@@ -1,22 +1,11 @@
-BINARY := sockerless-backend-lambda
-CMD_DIR := ./cmd/sockerless-backend-lambda
+# Standardized Makefile for sockerless-backend-lambda — see docs/MAKEFILE_STANDARD.md.
 
-.PHONY: build test integration-test clean fmt vet
+APP_NAME      := sockerless-backend-lambda
+GO_PACKAGE    := ./cmd/sockerless-backend-lambda
+UI_PACKAGE    := backend-lambda
+DEFAULT_PORT  := 3375
+RUN_FLAGS     := --addr :3375
+RUN_ENV       := SOCKERLESS_ENDPOINT_URL=http://localhost:4566
+REPO_ROOT_REL := ../..
 
-build:
-	CGO_ENABLED=0 go build -o $(BINARY) $(CMD_DIR)
-
-test:
-	go test -v -timeout 2m ./...
-
-integration-test:
-	SOCKERLESS_INTEGRATION=1 go test -v -timeout 5m ./...
-
-clean:
-	rm -f $(BINARY)
-
-fmt:
-	go fmt ./...
-
-vet:
-	go vet ./...
+include $(REPO_ROOT_REL)/make/go-app.mk

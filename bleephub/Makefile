@@ -1,19 +1,12 @@
-BINARY := bleephub
-CMD_DIR := ./cmd/
+# Standardized Makefile for bleephub-server — see docs/MAKEFILE_STANDARD.md.
 
-.PHONY: build test clean fmt vet
+APP_NAME      := bleephub-server
+GO_PACKAGE    := ./cmd
+UI_PACKAGE    := bleephub
+DEFAULT_PORT  := 5555
+RUN_FLAGS     := -addr :5555
+GO_ENV        := CGO_ENABLED=0
 
-build:
-	CGO_ENABLED=0 go build -o $(BINARY) $(CMD_DIR)
+REPO_ROOT_REL := ..
 
-test:
-	go test -v -timeout 3m ./...
-
-clean:
-	rm -f $(BINARY)
-
-fmt:
-	go fmt ./...
-
-vet:
-	go vet ./...
+include $(REPO_ROOT_REL)/make/go-app.mk

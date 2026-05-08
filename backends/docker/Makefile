@@ -1,19 +1,11 @@
-BINARY := sockerless-backend-docker
-CMD_DIR := ./cmd/
+# Standardized Makefile for sockerless-backend-docker — see docs/MAKEFILE_STANDARD.md.
 
-.PHONY: build test clean fmt vet
+APP_NAME      := sockerless-backend-docker
+GO_PACKAGE    := ./cmd
+UI_PACKAGE    := backend-docker
+DEFAULT_PORT  := 3375
+RUN_FLAGS     := --addr :3375
 
-build:
-	CGO_ENABLED=0 go build -o $(BINARY) $(CMD_DIR)
+REPO_ROOT_REL := ../..
 
-test:
-	go test -v -timeout 2m ./...
-
-clean:
-	rm -f $(BINARY)
-
-fmt:
-	go fmt ./...
-
-vet:
-	go vet ./...
+include $(REPO_ROOT_REL)/make/go-app.mk
