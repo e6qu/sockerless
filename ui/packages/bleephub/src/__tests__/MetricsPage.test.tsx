@@ -63,7 +63,7 @@ describe("MetricsPage", () => {
     mockEndpoints();
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Metrics")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /runtime/i })).toBeInTheDocument();
     });
   });
 
@@ -71,12 +71,14 @@ describe("MetricsPage", () => {
     mockEndpoints();
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Workflow Submissions")).toBeInTheDocument();
+      expect(screen.getByText(/workflow submissions/i)).toBeInTheDocument();
       expect(screen.getByText("15")).toBeInTheDocument();
-      expect(screen.getByText("Job Dispatches")).toBeInTheDocument();
+      expect(screen.getByText(/job dispatches/i)).toBeInTheDocument();
       expect(screen.getByText("30")).toBeInTheDocument();
-      expect(screen.getByText("Goroutines")).toBeInTheDocument();
-      expect(screen.getByText("50")).toBeInTheDocument();
+      // Goroutines + heap moved into the PageHeading meta line in the
+      // redesign — they appear as part of the meta string, not as
+      // standalone MetricsCard titles.
+      expect(screen.getByText(/50 goroutines/i)).toBeInTheDocument();
     });
   });
 
@@ -84,7 +86,7 @@ describe("MetricsPage", () => {
     mockEndpoints();
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Job Completions")).toBeInTheDocument();
+      expect(screen.getByText(/job completions/i)).toBeInTheDocument();
     });
   });
 
@@ -92,7 +94,7 @@ describe("MetricsPage", () => {
     mockEndpoints();
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Jobs by Status")).toBeInTheDocument();
+      expect(screen.getByText(/jobs by status/i)).toBeInTheDocument();
     });
   });
 });

@@ -94,7 +94,9 @@ describe("ProjectDetailPage", () => {
     });
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Connection Info")).toBeInTheDocument();
+      // "connection" appears in the section heading and the field
+      // labels (docker_host etc.); accept multiple matches.
+      expect(screen.getAllByText(/connection/i).length).toBeGreaterThan(0);
     });
   });
 
@@ -104,7 +106,7 @@ describe("ProjectDetailPage", () => {
     );
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("View Logs")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /view logs/i })).toBeInTheDocument();
     });
   });
 

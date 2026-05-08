@@ -1,12 +1,17 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { StatusBadge, Spinner } from "@sockerless/ui-core/components";
+import {
+  Button,
+  PageHeading,
+  Spinner,
+  StatusBadge,
+} from "@sockerless/ui-core/components";
 import { Link } from "react-router";
 import { AdminApiClient, type ProcessInfo } from "../api.js";
+import { ErrorPanel } from "../components/ErrorPanel.js";
 
 const api = new AdminApiClient();
 
 function statusLabel(status: string): string {
-  // Map process status to StatusBadge-compatible status string
   switch (status) {
     case "running":
       return "running";
@@ -41,125 +46,166 @@ export function ProcessesPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["processes"] }),
   });
 
-  if (isLoading) return <Spinner />;
-  if (isError)
-    return (
-      <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">
-        Error: {error?.message ?? "Failed to load"}
-      </div>
-    );
-  if (!processes) return <Spinner />;
+  if (isLoading) return <Spinner label="loading processes" />;
+  if (isError) return <ErrorPanel message={error?.message} />;
+  if (!processes) return <Spinner label="loading processes" />;
 
   return (
-    <div className="space-y-6">
-      <h2 className="text-xl font-semibold">Processes</h2>
+    <div>
+      <PageHeading
+        kicker="admin · processes"
+        title={<>Managed processes</>}
+        meta={`${processes.length} process${processes.length === 1 ? "" : "es"} configured`}
+      />
 
-      {processes.length === 0 ? (
-        <p className="text-sm text-gray-500 dark:text-gray-400">
-          No managed processes configured. Add process definitions to
-          admin.json.
-        </p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-            <thead>
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
-                  Name
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
-                  Binary
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
-                  Status
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
-                  PID
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
-                  Address
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
-                  Uptime
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-              {processes.map((proc: ProcessInfo) => (
-                <tr key={proc.name}>
-                  <td className="whitespace-nowrap px-4 py-3 text-sm font-medium">
-                    <Link
-                      to={`/ui/processes/${encodeURIComponent(proc.name)}`}
-                      className="text-blue-600 hover:underline dark:text-blue-400"
-                    >
-                      {proc.name}
-                    </Link>
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
-                    {proc.binary}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-sm">
-                    <StatusBadge status={statusLabel(proc.status)} />
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
-                    {proc.pid || "-"}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
-                    {proc.addr || "-"}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
-                    {proc.started_at ? formatUptime(proc.started_at) : "-"}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-sm">
-                    {proc.status === "running" ? (
-                      <button
-                        onClick={() => stop.mutate(proc.name)}
-                        disabled={
-                          stop.isPending && stop.variables === proc.name
-                        }
-                        className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
-                      >
-                        Stop
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => start.mutate(proc.name)}
-                        disabled={
-                          (start.isPending && start.variables === proc.name) ||
-                          proc.status === "starting" ||
-                          proc.status === "stopping"
-                        }
-                        className="rounded-md bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
-                      >
-                        Start
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {start.error && (
+        <div className="mb-3">
+          <ErrorPanel kicker="start failed" message={(start.error as Error)?.message} />
+        </div>
+      )}
+      {stop.error && (
+        <div className="mb-3">
+          <ErrorPanel kicker="stop failed" message={(stop.error as Error)?.message} />
         </div>
       )}
 
-      {[start.error, stop.error].filter(Boolean).map((e, i) => (
-        <div
-          key={i}
-          className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400"
+      {processes.length === 0 ? (
+        <p
+          className="font-mono uppercase tracking-[0.18em] py-6 text-center"
+          style={{ color: "var(--color-fg-subtle)", fontSize: "0.7rem" }}
         >
-          {(e as Error)?.message}
+          — no managed processes (add to admin.json) —
+        </p>
+      ) : (
+        <div
+          style={{
+            background: "var(--color-surface)",
+            border: "1px solid var(--color-border)",
+            borderRadius: "var(--radius-sm)",
+            overflow: "hidden",
+          }}
+        >
+          <div className="overflow-x-auto">
+            <table
+              className="min-w-full font-mono"
+              style={{ fontSize: "0.78rem", borderCollapse: "collapse" }}
+            >
+              <thead style={{ background: "var(--color-bg-subtle)" }}>
+                <tr>
+                  <Th>Name</Th>
+                  <Th>Binary</Th>
+                  <Th>Status</Th>
+                  <Th>PID</Th>
+                  <Th>Address</Th>
+                  <Th>Uptime</Th>
+                  <Th>Actions</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {processes.map((proc: ProcessInfo, i) => (
+                  <tr
+                    key={proc.name}
+                    style={{
+                      background:
+                        i % 2 === 0
+                          ? "var(--color-surface)"
+                          : "var(--color-bg-subtle)",
+                      borderBottom:
+                        "1px solid color-mix(in oklch, var(--color-border) 60%, transparent)",
+                    }}
+                  >
+                    <Td>
+                      <Link
+                        to={`/ui/processes/${encodeURIComponent(proc.name)}`}
+                        style={{
+                          color: "var(--color-accent)",
+                          fontWeight: 500,
+                          textDecoration: "none",
+                        }}
+                      >
+                        {proc.name}
+                      </Link>
+                    </Td>
+                    <Td muted>{proc.binary}</Td>
+                    <Td>
+                      <StatusBadge status={statusLabel(proc.status)} />
+                    </Td>
+                    <Td muted>{proc.pid || "—"}</Td>
+                    <Td muted>{proc.addr || "—"}</Td>
+                    <Td muted>{proc.started_at ? formatUptime(proc.started_at) : "—"}</Td>
+                    <Td>
+                      {proc.status === "running" ? (
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={() => stop.mutate(proc.name)}
+                          disabled={
+                            stop.isPending && stop.variables === proc.name
+                          }
+                        >
+                          Stop
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={() => start.mutate(proc.name)}
+                          disabled={
+                            (start.isPending && start.variables === proc.name) ||
+                            proc.status === "starting" ||
+                            proc.status === "stopping"
+                          }
+                        >
+                          Start
+                        </Button>
+                      )}
+                    </Td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      ))}
+      )}
     </div>
+  );
+}
+
+function Th({ children }: { children: React.ReactNode }) {
+  return (
+    <th
+      className="px-3 py-2 text-left uppercase tracking-[0.15em]"
+      style={{
+        fontSize: "0.62rem",
+        fontWeight: 500,
+        color: "var(--color-fg-subtle)",
+        borderBottom: "1px solid var(--color-border)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {children}
+    </th>
+  );
+}
+
+function Td({ children, muted }: { children: React.ReactNode; muted?: boolean }) {
+  return (
+    <td
+      className="px-3 py-1.5"
+      style={{
+        whiteSpace: "nowrap",
+        color: muted ? "var(--color-fg-muted)" : "var(--color-fg)",
+      }}
+    >
+      {children}
+    </td>
   );
 }
 
 function formatUptime(startedAt: string): string {
   const start = new Date(startedAt);
   const seconds = Math.floor((Date.now() - start.getTime()) / 1000);
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
   if (seconds < 60) return `${seconds}s`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
   return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;

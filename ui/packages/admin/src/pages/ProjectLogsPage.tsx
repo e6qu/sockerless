@@ -1,8 +1,13 @@
 import { useState } from "react";
 import { useParams, Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { LogViewer, Spinner } from "@sockerless/ui-core/components";
+import {
+  LogViewer,
+  PageHeading,
+  Spinner,
+} from "@sockerless/ui-core/components";
 import { AdminApiClient } from "../api.js";
+import { ErrorPanel } from "../components/ErrorPanel.js";
 
 const api = new AdminApiClient();
 
@@ -29,41 +34,67 @@ export function ProjectLogsPage() {
     refetchInterval: 2000,
   });
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-4">
-        <Link
-          to={`/ui/projects/${encodeURIComponent(name!)}`}
-          className="text-sm text-blue-600 hover:underline dark:text-blue-400"
-        >
-          Back to {name}
-        </Link>
-        <h2 className="text-xl font-semibold">Logs</h2>
-      </div>
+  if (!name) {
+    return <ErrorPanel message="missing project name in route" />;
+  }
 
-      {/* Component selector */}
-      <div className="flex gap-1">
-        {components.map((c) => (
-          <button
-            key={c.value}
-            onClick={() => setComponent(c.value)}
-            className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-              component === c.value
-                ? "bg-blue-600 text-white"
-                : "bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-            }`}
-          >
-            {c.label}
-          </button>
-        ))}
+  return (
+    <div>
+      <PageHeading
+        kicker={`admin · project · ${name}`}
+        title={<>Logs</>}
+        meta={
+          <span className="inline-flex items-center gap-3">
+            <Link
+              to={`/ui/projects/${encodeURIComponent(name)}`}
+              style={{
+                color: "var(--color-accent)",
+                textDecoration: "none",
+              }}
+            >
+              ← back to project
+            </Link>
+            <span>tail 200</span>
+          </span>
+        }
+      />
+
+      <div
+        className="mb-4 inline-flex"
+        style={{
+          background: "var(--color-bg-subtle)",
+          border: "1px solid var(--color-border)",
+          borderRadius: "var(--radius-sm)",
+          padding: "2px",
+        }}
+      >
+        {components.map((c) => {
+          const active = component === c.value;
+          return (
+            <button
+              key={c.value}
+              type="button"
+              onClick={() => setComponent(c.value)}
+              className="px-3 py-1 font-mono uppercase tracking-[0.12em]"
+              style={{
+                fontSize: "0.7rem",
+                background: active ? "var(--color-accent)" : "transparent",
+                color: active ? "var(--color-accent-fg)" : "var(--color-fg-muted)",
+                border: 0,
+                borderRadius: "2px",
+                transition: "all 0.12s var(--ease-out-quint)",
+              }}
+            >
+              {c.label}
+            </button>
+          );
+        })}
       </div>
 
       {isLoading ? (
-        <Spinner />
+        <Spinner label="loading logs" />
       ) : isError ? (
-        <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">
-          Error: {error?.message ?? "Failed to load logs"}
-        </div>
+        <ErrorPanel message={error?.message} />
       ) : (
         <LogViewer lines={logs ?? []} />
       )}

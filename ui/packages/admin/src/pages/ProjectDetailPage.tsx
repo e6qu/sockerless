@@ -2,11 +2,14 @@ import { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  StatusBadge,
+  Button,
   MetricsCard,
+  PageHeading,
   Spinner,
+  StatusBadge,
 } from "@sockerless/ui-core/components";
 import { AdminApiClient } from "../api.js";
+import { ErrorPanel } from "../components/ErrorPanel.js";
 
 const api = new AdminApiClient();
 
@@ -76,14 +79,9 @@ export function ProjectDetailPage() {
     },
   });
 
-  if (isLoading) return <Spinner />;
-  if (isError)
-    return (
-      <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">
-        Error: {error?.message ?? "Failed to load project"}
-      </div>
-    );
-  if (!project) return <Spinner />;
+  if (isLoading) return <Spinner label="loading project" />;
+  if (isError) return <ErrorPanel message={error?.message} />;
+  if (!project) return <Spinner label="loading project" />;
 
   const handleDelete = () => {
     if (
@@ -107,158 +105,190 @@ export function ProjectDetailPage() {
     },
   ];
 
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-4">
-        <h2 className="text-xl font-semibold">{project.name}</h2>
-        <StatusBadge status={statusLabel(project.status)} />
-      </div>
+  const running = project.status === "running" || project.status === "partial";
 
-      {/* Info grid */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+  return (
+    <div>
+      <PageHeading
+        kicker={`admin · ${cloudLabels[project.cloud] || project.cloud} project`}
+        title={project.name}
+        meta={
+          <span className="inline-flex items-center gap-3">
+            <StatusBadge status={statusLabel(project.status)} />
+            <span>{project.backend}</span>
+            {project.created_at && (
+              <span>created {new Date(project.created_at).toLocaleDateString()}</span>
+            )}
+          </span>
+        }
+        actions={
+          <span className="inline-flex gap-2">
+            {running ? (
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => stop.mutate()}
+                disabled={stop.isPending}
+              >
+                {stop.isPending ? "Stopping…" : "Stop ⏹"}
+              </Button>
+            ) : (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => start.mutate()}
+                disabled={
+                  start.isPending ||
+                  project.status === "starting" ||
+                  project.status === "stopping"
+                }
+              >
+                {start.isPending ? "Starting…" : "Start ▶"}
+              </Button>
+            )}
+            <Link
+              to={`/ui/projects/${encodeURIComponent(name!)}/logs`}
+              style={{ textDecoration: "none" }}
+            >
+              <Button variant="secondary" size="sm">
+                View logs
+              </Button>
+            </Link>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={handleDelete}
+              disabled={
+                remove.isPending ||
+                project.status === "starting" ||
+                project.status === "stopping"
+              }
+            >
+              {remove.isPending ? "Deleting…" : "Delete"}
+            </Button>
+          </span>
+        }
+      />
+
+      {start.error && (
+        <div className="mb-3">
+          <ErrorPanel kicker="start failed" message={(start.error as Error)?.message} />
+        </div>
+      )}
+      {stop.error && (
+        <div className="mb-3">
+          <ErrorPanel kicker="stop failed" message={(stop.error as Error)?.message} />
+        </div>
+      )}
+      {remove.error && (
+        <div className="mb-3">
+          <ErrorPanel kicker="delete failed" message={(remove.error as Error)?.message} />
+        </div>
+      )}
+
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <MetricsCard
           title="Cloud"
           value={cloudLabels[project.cloud] || project.cloud}
         />
         <MetricsCard title="Backend" value={project.backend} />
-        <MetricsCard title="Log Level" value={project.log_level || "default"} />
+        <MetricsCard title="Log level" value={project.log_level || "default"} />
         <MetricsCard
           title="Created"
           value={
             project.created_at
               ? new Date(project.created_at).toLocaleDateString()
-              : "-"
+              : "—"
           }
         />
       </div>
 
-      {/* Actions */}
-      <div className="flex gap-2">
-        {project.status === "running" || project.status === "partial" ? (
-          <button
-            onClick={() => stop.mutate()}
-            disabled={stop.isPending}
-            className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+      <h3
+        className="mb-3 text-[10px] uppercase tracking-[0.22em]"
+        style={{ color: "var(--color-fg-subtle)" }}
+      >
+        Components
+      </h3>
+      <div className="mb-6 grid gap-3 sm:grid-cols-3">
+        {components.map((comp) => (
+          <div
+            key={comp.label}
+            className="px-4 py-4"
+            style={{
+              background: "var(--color-surface)",
+              border: "1px solid var(--color-border)",
+              borderLeft:
+                comp.status === "running"
+                  ? "3px solid var(--color-status-ok)"
+                  : "3px solid var(--color-border)",
+              borderRadius: "var(--radius-sm)",
+            }}
           >
-            {stop.isPending ? "Stopping..." : "Stop"}
-          </button>
-        ) : (
-          <button
-            onClick={() => start.mutate()}
-            disabled={
-              start.isPending ||
-              project.status === "starting" ||
-              project.status === "stopping"
-            }
-            className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
-          >
-            {start.isPending ? "Starting..." : "Start"}
-          </button>
-        )}
-        <Link
-          to={`/ui/projects/${encodeURIComponent(name!)}/logs`}
-          className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
-        >
-          View Logs
-        </Link>
-        <button
-          onClick={handleDelete}
-          disabled={
-            remove.isPending ||
-            project.status === "starting" ||
-            project.status === "stopping"
-          }
-          className="rounded-md border border-red-300 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/30"
-        >
-          {remove.isPending ? "Deleting..." : "Delete"}
-        </button>
-      </div>
-
-      {[start.error, stop.error, remove.error].filter(Boolean).map((e, i) => (
-        <div
-          key={i}
-          className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400"
-        >
-          {(e as Error)?.message}
-        </div>
-      ))}
-
-      {/* Components */}
-      <div>
-        <h3 className="mb-3 text-lg font-medium">Components</h3>
-        <div className="grid gap-4 sm:grid-cols-3">
-          {components.map((comp) => (
-            <div
-              key={comp.label}
-              className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800"
-            >
-              <div className="mb-2 flex items-center justify-between">
-                <span className="font-medium">{comp.label}</span>
-                <StatusBadge status={statusLabel(comp.status || "stopped")} />
-              </div>
-              <div className="text-sm text-gray-500 dark:text-gray-400">
-                Port: {comp.port}
-              </div>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span
+                className="font-mono uppercase tracking-[0.12em]"
+                style={{ fontSize: "0.7rem", color: "var(--color-fg)" }}
+              >
+                {comp.label}
+              </span>
+              <StatusBadge status={statusLabel(comp.status || "stopped")} />
             </div>
-          ))}
-        </div>
+            <div
+              className="font-mono text-[12px]"
+              style={{ color: "var(--color-fg-muted)" }}
+            >
+              port :{comp.port}
+            </div>
+          </div>
+        ))}
       </div>
 
-      {/* Connection Info */}
       {connection && (
-        <div>
-          <h3 className="mb-3 text-lg font-medium">Connection Info</h3>
-          <div className="space-y-3">
+        <section
+          className="px-4 py-4"
+          style={{
+            background: "var(--color-surface)",
+            border: "1px solid var(--color-border)",
+            borderLeft: "3px solid var(--color-accent)",
+            borderRadius: "var(--radius-sm)",
+          }}
+        >
+          <h3
+            className="mb-3 text-[10px] uppercase tracking-[0.22em]"
+            style={{ color: "var(--color-fg-subtle)" }}
+          >
+            Connection
+          </h3>
+          <div className="space-y-2">
+            <ConnectionField label="docker_host" value={connection.docker_host} />
+            <ConnectionField label="env_export" value={connection.env_export} />
             <ConnectionField
-              label="Docker Host"
-              value={connection.docker_host}
-            />
-            <ConnectionField
-              label="Export Command"
-              value={connection.env_export}
-            />
-            <ConnectionField
-              label="Podman Connection"
+              label="podman_connection"
               value={connection.podman_connection}
             />
           </div>
-          <div className="mt-4 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
-            <div>
-              <span className="font-medium text-gray-700 dark:text-gray-300">
-                Simulator:
-              </span>{" "}
-              <span className="text-gray-500 dark:text-gray-400">
-                {connection.simulator_addr}
-              </span>
-            </div>
-            <div>
-              <span className="font-medium text-gray-700 dark:text-gray-300">
-                Backend:
-              </span>{" "}
-              <span className="text-gray-500 dark:text-gray-400">
-                {connection.backend_addr}
-              </span>
-            </div>
-            <div>
-              <span className="font-medium text-gray-700 dark:text-gray-300">
-                Frontend:
-              </span>{" "}
-              <span className="text-gray-500 dark:text-gray-400">
-                {connection.frontend_addr}
-              </span>
-            </div>
-            <div>
-              <span className="font-medium text-gray-700 dark:text-gray-300">
-                Mgmt:
-              </span>{" "}
-              <span className="text-gray-500 dark:text-gray-400">
-                {connection.frontend_mgmt_addr}
-              </span>
-            </div>
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 font-mono text-[12px]">
+            <KV k="simulator" v={connection.simulator_addr} />
+            <KV k="backend" v={connection.backend_addr} />
+            <KV k="frontend" v={connection.frontend_addr} />
+            <KV k="mgmt" v={connection.frontend_mgmt_addr} />
           </div>
-        </div>
+        </section>
       )}
+    </div>
+  );
+}
+
+function KV({ k, v }: { k: string; v: string }) {
+  return (
+    <div>
+      <div
+        className="text-[10px] uppercase tracking-[0.18em] mb-0.5"
+        style={{ color: "var(--color-fg-subtle)" }}
+      >
+        {k}
+      </div>
+      <div style={{ color: "var(--color-fg)" }}>{v}</div>
     </div>
   );
 }
@@ -272,24 +302,33 @@ function ConnectionField({ label, value }: { label: string; value: string }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Clipboard API may fail in insecure contexts
+      // Clipboard API may fail in insecure contexts; quietly no-op.
     }
   };
 
   return (
-    <div className="flex items-center gap-2">
-      <span className="w-40 shrink-0 text-sm font-medium text-gray-700 dark:text-gray-300">
-        {label}:
+    <div className="flex items-center gap-3">
+      <span
+        className="w-32 shrink-0 text-[10px] uppercase tracking-[0.18em] font-mono"
+        style={{ color: "var(--color-fg-subtle)" }}
+      >
+        {label}
       </span>
-      <code className="flex-1 rounded bg-gray-100 px-2 py-1 text-sm dark:bg-gray-700">
+      <code
+        className="flex-1 px-2 py-1 font-mono"
+        style={{
+          background: "var(--color-bg-subtle)",
+          border: "1px solid var(--color-border)",
+          color: "var(--color-fg)",
+          fontSize: "0.78rem",
+          overflow: "auto",
+        }}
+      >
         {value}
       </code>
-      <button
-        onClick={copy}
-        className="shrink-0 rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
-      >
-        {copied ? "Copied!" : "Copy"}
-      </button>
+      <Button variant="ghost" size="sm" onClick={copy}>
+        {copied ? "✓ copied" : "copy"}
+      </Button>
     </div>
   );
 }

@@ -1,17 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
-import { MetricsCard, StatusBadge, Spinner, AppShell, type NavItem } from "@sockerless/ui-core/components";
+import {
+  AppShell,
+  MetricsCard,
+  NavLinkButton,
+  PageHeading,
+  Spinner,
+  StatusBadge,
+  type NavItem,
+} from "@sockerless/ui-core/components";
 import { fetchHealth, fetchStatus, fetchMetrics } from "./api.js";
 
-const navItems: NavItem[] = [
-  { label: "Overview", to: "/ui/" },
-];
+const navItems: NavItem[] = [{ label: "Overview", to: "/ui/" }];
 
 function renderLink(item: NavItem) {
-  return (
-    <span className="block rounded-md px-3 py-2 text-sm font-medium bg-blue-50 text-blue-700 dark:bg-blue-900 dark:text-blue-200">
-      {item.label}
-    </span>
-  );
+  return <NavLinkButton active>{item.label}</NavLinkButton>;
 }
 
 export function App() {
@@ -32,17 +34,31 @@ export function App() {
   });
 
   return (
-    <AppShell title="Docker Frontend" navItems={navItems} renderLink={renderLink}>
+    <AppShell
+      kicker="docker · frontend"
+      title="docker.frontend"
+      navItems={navItems}
+      renderLink={renderLink}
+    >
       {isLoading ? (
-        <Spinner />
+        <Spinner label="loading frontend" />
       ) : (
-        <div className="space-y-6">
-          <h2 className="text-xl font-semibold">Frontend Overview</h2>
+        <div>
+          <PageHeading
+            kicker="docker · proxy"
+            title={<>Docker frontend</>}
+            meta={
+              status
+                ? `${status.docker_addr} → ${status.backend_addr} · uptime ${formatUptime(status.uptime_seconds)}`
+                : undefined
+            }
+          />
 
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <MetricsCard
-              title="Docker Requests"
+              title="Docker requests"
               value={metrics?.docker_requests ?? 0}
+              emphasized={(metrics?.docker_requests ?? 0) > 0}
             />
             <MetricsCard title="Goroutines" value={metrics?.goroutines ?? 0} />
             <MetricsCard
@@ -56,20 +72,36 @@ export function App() {
           </div>
 
           {status && (
-            <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
-              <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">Configuration</h3>
-              <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                <dt className="text-gray-500 dark:text-gray-400">Docker Address</dt>
-                <dd className="font-mono text-xs">{status.docker_addr}</dd>
-                <dt className="text-gray-500 dark:text-gray-400">Backend Address</dt>
-                <dd className="font-mono text-xs">{status.backend_addr}</dd>
+            <div
+              className="px-4 py-4 mb-4"
+              style={{
+                background: "var(--color-surface)",
+                border: "1px solid var(--color-border)",
+                borderLeft: "3px solid var(--color-accent)",
+                borderRadius: "var(--radius-sm)",
+              }}
+            >
+              <div
+                className="mb-3 text-[10px] uppercase tracking-[0.22em]"
+                style={{ color: "var(--color-fg-subtle)" }}
+              >
+                Configuration
+              </div>
+              <dl className="grid grid-cols-[8rem_1fr] gap-x-4 gap-y-2 text-[13px] font-mono">
+                <dt style={{ color: "var(--color-fg-subtle)" }}>docker_addr</dt>
+                <dd style={{ color: "var(--color-fg)" }}>{status.docker_addr}</dd>
+                <dt style={{ color: "var(--color-fg-subtle)" }}>backend_addr</dt>
+                <dd style={{ color: "var(--color-fg)" }}>{status.backend_addr}</dd>
               </dl>
             </div>
           )}
 
           {health && (
-            <p className="text-xs text-gray-400">
-              Health: <StatusBadge status={health.status} /> | Component: {health.component}
+            <p
+              className="font-mono text-[11px] inline-flex items-center gap-2"
+              style={{ color: "var(--color-fg-subtle)" }}
+            >
+              health: <StatusBadge status={health.status} /> · component: {health.component}
             </p>
           )}
         </div>
@@ -79,6 +111,7 @@ export function App() {
 }
 
 function formatUptime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
   if (seconds < 60) return `${seconds}s`;
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;

@@ -1,27 +1,21 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
+import { Button, PageHeading } from "@sockerless/ui-core/components";
 import {
   AdminApiClient,
   type CloudType,
   type BackendType,
   type CreateProjectRequest,
 } from "../api.js";
+import { ErrorPanel } from "../components/ErrorPanel.js";
 
 const api = new AdminApiClient();
 
 const clouds: { value: CloudType; label: string; description: string }[] = [
-  { value: "aws", label: "AWS", description: "ECS / Lambda + AWS Simulator" },
-  {
-    value: "gcp",
-    label: "GCP",
-    description: "Cloud Run / GCF + GCP Simulator",
-  },
-  {
-    value: "azure",
-    label: "Azure",
-    description: "ACA / AZF + Azure Simulator",
-  },
+  { value: "aws", label: "AWS", description: "ECS / Lambda + AWS simulator" },
+  { value: "gcp", label: "GCP", description: "Cloud Run / GCF + GCP simulator" },
+  { value: "azure", label: "Azure", description: "ACA / AZF + Azure simulator" },
 ];
 
 const backendsByCloud: Record<
@@ -29,40 +23,16 @@ const backendsByCloud: Record<
   { value: BackendType; label: string; description: string }[]
 > = {
   aws: [
-    {
-      value: "ecs",
-      label: "ECS",
-      description: "Container-based (Elastic Container Service)",
-    },
-    {
-      value: "lambda",
-      label: "Lambda",
-      description: "Function-based (AWS Lambda)",
-    },
+    { value: "ecs", label: "ECS", description: "Container-based (Elastic Container Service)" },
+    { value: "lambda", label: "Lambda", description: "Function-based (AWS Lambda)" },
   ],
   gcp: [
-    {
-      value: "cloudrun",
-      label: "Cloud Run",
-      description: "Container-based (Cloud Run)",
-    },
-    {
-      value: "gcf",
-      label: "GCF",
-      description: "Function-based (Google Cloud Functions)",
-    },
+    { value: "cloudrun", label: "Cloud Run", description: "Container-based (Cloud Run)" },
+    { value: "gcf", label: "GCF", description: "Function-based (Google Cloud Functions)" },
   ],
   azure: [
-    {
-      value: "aca",
-      label: "ACA",
-      description: "Container-based (Azure Container Apps)",
-    },
-    {
-      value: "azf",
-      label: "AZF",
-      description: "Function-based (Azure Functions)",
-    },
+    { value: "aca", label: "ACA", description: "Container-based (Azure Container Apps)" },
+    { value: "azf", label: "AZF", description: "Function-based (Azure Functions)" },
   ],
 };
 
@@ -107,7 +77,7 @@ export function ProjectCreatePage() {
 
   const nameError =
     name.length > 0 && !validNameRE.test(name)
-      ? "Must start with a-z/0-9 and contain only lowercase, digits, hyphens, or underscores"
+      ? "must start with a-z/0-9; lowercase letters, digits, hyphens, underscores only"
       : "";
 
   const handleSubmit = (e?: { preventDefault(): void }) => {
@@ -127,224 +97,312 @@ export function ProjectCreatePage() {
   };
 
   return (
-    <div className="space-y-6">
-      <h2 className="text-xl font-semibold">New Project</h2>
+    <div>
+      <PageHeading
+        kicker="admin · new project"
+        title={<>Create project</>}
+        meta="3-step wizard: pick cloud → pick backend → configure ports + name."
+      />
 
-      {/* Step indicator */}
-      <div className="flex gap-2 text-sm">
-        <span
-          className={
-            step === "cloud"
-              ? "font-bold text-blue-600 dark:text-blue-400"
-              : "text-gray-500 dark:text-gray-400"
-          }
-        >
-          1. Cloud
-        </span>
-        <span className="text-gray-400">/</span>
-        <span
-          className={
-            step === "backend"
-              ? "font-bold text-blue-600 dark:text-blue-400"
-              : "text-gray-500 dark:text-gray-400"
-          }
-        >
-          2. Backend
-        </span>
-        <span className="text-gray-400">/</span>
-        <span
-          className={
-            step === "config"
-              ? "font-bold text-blue-600 dark:text-blue-400"
-              : "text-gray-500 dark:text-gray-400"
-          }
-        >
-          3. Configure
-        </span>
-      </div>
+      <Stepper step={step} />
 
-      {/* Step 1: Cloud selection */}
       {step === "cloud" && (
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-3">
           {clouds.map((c) => (
-            <button
+            <ChoiceCard
               key={c.value}
+              selected={cloud === c.value}
               onClick={() => selectCloud(c.value)}
-              className={`rounded-lg border-2 p-6 text-left transition-colors ${
-                cloud === c.value
-                  ? "border-blue-500 bg-blue-50 dark:bg-blue-900/30"
-                  : "border-gray-200 hover:border-blue-300 dark:border-gray-700 dark:hover:border-blue-600"
-              }`}
-            >
-              <div className="text-lg font-semibold">{c.label}</div>
-              <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                {c.description}
-              </div>
-            </button>
+              title={c.label}
+              description={c.description}
+            />
           ))}
         </div>
       )}
 
-      {/* Step 2: Backend selection */}
       {step === "backend" && cloud && (
         <div>
           <button
+            type="button"
             onClick={() => setStep("cloud")}
-            className="mb-4 text-sm text-blue-600 hover:underline dark:text-blue-400"
+            className="mb-4 font-mono uppercase tracking-[0.12em]"
+            style={{
+              fontSize: "0.7rem",
+              color: "var(--color-fg-muted)",
+              background: "transparent",
+              border: 0,
+            }}
           >
-            Back to cloud selection
+            ← back to cloud
           </button>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-2">
             {backendsByCloud[cloud].map((b) => (
-              <button
+              <ChoiceCard
                 key={b.value}
+                selected={backend === b.value}
                 onClick={() => selectBackend(b.value)}
-                className={`rounded-lg border-2 p-6 text-left transition-colors ${
-                  backend === b.value
-                    ? "border-blue-500 bg-blue-50 dark:bg-blue-900/30"
-                    : "border-gray-200 hover:border-blue-300 dark:border-gray-700 dark:hover:border-blue-600"
-                }`}
-              >
-                <div className="text-lg font-semibold">{b.label}</div>
-                <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                  {b.description}
-                </div>
-              </button>
+                title={b.label}
+                description={b.description}
+              />
             ))}
           </div>
         </div>
       )}
 
-      {/* Step 3: Configuration */}
       {step === "config" && cloud && backend && (
         <div>
           <button
+            type="button"
             onClick={() => setStep("backend")}
-            className="mb-4 text-sm text-blue-600 hover:underline dark:text-blue-400"
+            className="mb-4 font-mono uppercase tracking-[0.12em]"
+            style={{
+              fontSize: "0.7rem",
+              color: "var(--color-fg-muted)",
+              background: "transparent",
+              border: 0,
+            }}
           >
-            Back to backend selection
+            ← back to backend
           </button>
 
-          <form onSubmit={handleSubmit} className="max-w-md space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                Project Name
-              </label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="my-project"
-                maxLength={64}
-                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
-              />
-              {nameError && (
-                <p className="mt-1 text-xs text-red-600 dark:text-red-400">
-                  {nameError}
-                </p>
-              )}
-            </div>
+          <form onSubmit={handleSubmit} className="max-w-md space-y-5">
+            <Field
+              label="Project name"
+              error={nameError}
+              input={
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="my-project"
+                  maxLength={64}
+                  className="w-full"
+                />
+              }
+            />
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                Log Level
-              </label>
-              <select
-                value={logLevel}
-                onChange={(e) => setLogLevel(e.target.value)}
-                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
-              >
-                <option value="debug">Debug</option>
-                <option value="info">Info</option>
-                <option value="warn">Warn</option>
-                <option value="error">Error</option>
-              </select>
-            </div>
+            <Field
+              label="Log level"
+              input={
+                <select
+                  value={logLevel}
+                  onChange={(e) => setLogLevel(e.target.value)}
+                  className="w-full"
+                >
+                  <option value="debug">debug</option>
+                  <option value="info">info</option>
+                  <option value="warn">warn</option>
+                  <option value="error">error</option>
+                </select>
+              }
+            />
 
-            <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
                 id="auto-assign"
                 checked={autoAssign}
                 onChange={(e) => setAutoAssign(e.target.checked)}
-                className="rounded border-gray-300"
               />
-              <label
-                htmlFor="auto-assign"
-                className="text-sm text-gray-700 dark:text-gray-300"
+              <span
+                className="font-mono"
+                style={{ fontSize: "0.78rem", color: "var(--color-fg)" }}
               >
                 Auto-assign all ports
-              </label>
-            </div>
+              </span>
+            </label>
 
             {!autoAssign && (
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Simulator Port
-                  </label>
-                  <input
-                    type="number"
-                    value={simPort}
-                    onChange={(e) => setSimPort(Number(e.target.value))}
-                    className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Backend Port
-                  </label>
-                  <input
-                    type="number"
-                    value={backendPort}
-                    onChange={(e) => setBackendPort(Number(e.target.value))}
-                    className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Frontend Port
-                  </label>
-                  <input
-                    type="number"
-                    value={frontendPort}
-                    onChange={(e) => setFrontendPort(Number(e.target.value))}
-                    className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Frontend Mgmt Port
-                  </label>
-                  <input
-                    type="number"
-                    value={frontendMgmtPort}
-                    onChange={(e) =>
-                      setFrontendMgmtPort(Number(e.target.value))
-                    }
-                    className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
-                  />
-                </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field
+                  label="Simulator port"
+                  input={
+                    <input
+                      type="number"
+                      value={simPort}
+                      onChange={(e) => setSimPort(Number(e.target.value))}
+                      className="w-full"
+                    />
+                  }
+                />
+                <Field
+                  label="Backend port"
+                  input={
+                    <input
+                      type="number"
+                      value={backendPort}
+                      onChange={(e) => setBackendPort(Number(e.target.value))}
+                      className="w-full"
+                    />
+                  }
+                />
+                <Field
+                  label="Frontend port"
+                  input={
+                    <input
+                      type="number"
+                      value={frontendPort}
+                      onChange={(e) => setFrontendPort(Number(e.target.value))}
+                      className="w-full"
+                    />
+                  }
+                />
+                <Field
+                  label="Frontend mgmt port"
+                  input={
+                    <input
+                      type="number"
+                      value={frontendMgmtPort}
+                      onChange={(e) =>
+                        setFrontendMgmtPort(Number(e.target.value))
+                      }
+                      className="w-full"
+                    />
+                  }
+                />
               </div>
             )}
 
             {create.isError && (
-              <p className="text-sm text-red-600 dark:text-red-400">
-                {create.error instanceof Error
-                  ? create.error.message
-                  : "Failed to create project"}
-              </p>
+              <ErrorPanel
+                kicker="create failed"
+                message={
+                  create.error instanceof Error
+                    ? create.error.message
+                    : "request failed"
+                }
+              />
             )}
 
-            <button
+            <Button
               type="submit"
+              variant="primary"
+              size="md"
               disabled={!name || !!nameError || create.isPending}
-              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
-              {create.isPending ? "Creating..." : "Create Project"}
-            </button>
+              {create.isPending ? "Creating…" : "Create project →"}
+            </Button>
           </form>
         </div>
+      )}
+    </div>
+  );
+}
+
+function Stepper({ step }: { step: Step }) {
+  const steps: { key: Step; n: string; label: string }[] = [
+    { key: "cloud", n: "01", label: "Cloud" },
+    { key: "backend", n: "02", label: "Backend" },
+    { key: "config", n: "03", label: "Configure" },
+  ];
+  return (
+    <div className="mb-6 flex items-center gap-3">
+      {steps.map((s, i) => {
+        const active = step === s.key;
+        const done =
+          (step === "backend" && s.key === "cloud") ||
+          (step === "config" && (s.key === "cloud" || s.key === "backend"));
+        return (
+          <div key={s.key} className="flex items-center gap-3">
+            <div
+              className="flex items-center gap-2 px-3 py-1.5 font-mono uppercase tracking-[0.12em]"
+              style={{
+                fontSize: "0.7rem",
+                background: active ? "var(--color-accent)" : "transparent",
+                color: active
+                  ? "var(--color-accent-fg)"
+                  : done
+                    ? "var(--color-fg)"
+                    : "var(--color-fg-subtle)",
+                border: `1px solid ${active ? "var(--color-accent)" : "var(--color-border)"}`,
+              }}
+            >
+              <span style={{ opacity: 0.7 }}>{s.n}</span>
+              <span>{s.label}</span>
+            </div>
+            {i < steps.length - 1 && (
+              <span style={{ color: "var(--color-fg-subtle)" }}>→</span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ChoiceCard({
+  title,
+  description,
+  selected,
+  onClick,
+}: {
+  title: string;
+  description: string;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="text-left p-5"
+      style={{
+        background: "var(--color-surface)",
+        border: `1px solid ${selected ? "var(--color-accent)" : "var(--color-border)"}`,
+        borderLeft: `3px solid ${selected ? "var(--color-accent)" : "var(--color-border)"}`,
+        borderRadius: "var(--radius-sm)",
+        cursor: "pointer",
+        transition: "border-color 0.12s var(--ease-out-quint)",
+      }}
+    >
+      <div
+        className="font-display"
+        style={{
+          fontStyle: "italic",
+          fontWeight: 600,
+          fontSize: "1.4rem",
+          letterSpacing: "-0.02em",
+          lineHeight: 1.05,
+          color: "var(--color-fg)",
+        }}
+      >
+        {title}
+      </div>
+      <div
+        className="mt-2 font-mono text-[12px]"
+        style={{ color: "var(--color-fg-muted)" }}
+      >
+        {description}
+      </div>
+    </button>
+  );
+}
+
+function Field({
+  label,
+  input,
+  error,
+}: {
+  label: string;
+  input: React.ReactNode;
+  error?: string;
+}) {
+  return (
+    <div>
+      <label
+        className="mb-1 block text-[10px] uppercase tracking-[0.18em]"
+        style={{ color: "var(--color-fg-subtle)" }}
+      >
+        {label}
+      </label>
+      {input}
+      {error && (
+        <p
+          className="mt-1 font-mono"
+          style={{ color: "var(--color-status-error)", fontSize: "0.7rem" }}
+        >
+          {error}
+        </p>
       )}
     </div>
   );

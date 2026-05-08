@@ -58,7 +58,7 @@ describe("WorkflowDetailPage", () => {
     renderPage();
     await waitFor(() => {
       expect(screen.getByText("CI Build")).toBeInTheDocument();
-      expect(screen.getByText("Run #42")).toBeInTheDocument();
+      expect(screen.getByText(/run #42/i)).toBeInTheDocument();
     });
   });
 

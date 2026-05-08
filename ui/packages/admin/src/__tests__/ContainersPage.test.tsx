@@ -56,7 +56,7 @@ describe("ContainersPage", () => {
     mockFetch.mockResolvedValue(jsonResponse(containersData));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Containers (2)")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /containers/i })).toBeInTheDocument();
     });
   });
 
@@ -73,7 +73,7 @@ describe("ContainersPage", () => {
     mockFetch.mockResolvedValue(jsonResponse([]));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("No containers found.")).toBeInTheDocument();
+      expect(screen.getByText(/no containers/i)).toBeInTheDocument();
     });
   });
 });

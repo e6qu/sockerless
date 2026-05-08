@@ -87,7 +87,7 @@ describe("ProjectsPage", () => {
     mockFetch.mockResolvedValue(jsonResponse(projectData));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Start")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /start/i })).toBeInTheDocument();
     });
   });
 
@@ -95,7 +95,7 @@ describe("ProjectsPage", () => {
     mockFetch.mockResolvedValue(jsonResponse(projectData));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Stop")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /stop/i })).toBeInTheDocument();
     });
   });
 
@@ -103,7 +103,7 @@ describe("ProjectsPage", () => {
     mockFetch.mockResolvedValue(jsonResponse([]));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText(/No projects configured/)).toBeInTheDocument();
+      expect(screen.getByText(/no projects configured/i)).toBeInTheDocument();
     });
   });
 
@@ -111,7 +111,7 @@ describe("ProjectsPage", () => {
     mockFetch.mockResolvedValue(jsonResponse([]));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("New Project")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /new project/i })).toBeInTheDocument();
     });
   });
 });

@@ -1,7 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { StatusBadge, Spinner } from "@sockerless/ui-core/components";
-import { Link } from "react-router";
+import {
+  Button,
+  PageHeading,
+  Spinner,
+  StatusBadge,
+} from "@sockerless/ui-core/components";
+import { Link, useNavigate } from "react-router";
 import { AdminApiClient, type ProjectStatus } from "../api.js";
+import { ErrorPanel } from "../components/ErrorPanel.js";
 
 const api = new AdminApiClient();
 
@@ -28,6 +34,7 @@ function statusLabel(status: string): string {
 
 export function ProjectsPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   const {
     data: projects,
@@ -50,93 +57,141 @@ export function ProjectsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["projects"] }),
   });
 
-  if (isLoading) return <Spinner />;
-  if (isError)
-    return (
-      <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">
-        Error: {error?.message ?? "Failed to load"}
-      </div>
-    );
-  if (!projects) return <Spinner />;
+  if (isLoading) return <Spinner label="loading projects" />;
+  if (isError) return <ErrorPanel message={error?.message} />;
+  if (!projects) return <Spinner label="loading projects" />;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">Projects</h2>
-        <Link
-          to="/ui/projects/new"
-          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-        >
-          New Project
-        </Link>
-      </div>
+    <div>
+      <PageHeading
+        kicker="admin · projects"
+        title={<>Projects</>}
+        meta={`${projects.length} project${projects.length === 1 ? "" : "s"} configured`}
+        actions={
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => navigate("/ui/projects/new")}
+          >
+            + new project
+          </Button>
+        }
+      />
 
-      {[start.error, stop.error].filter(Boolean).map((e, i) => (
-        <div
-          key={i}
-          className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400"
-        >
-          {(e as Error)?.message}
+      {start.error && (
+        <div className="mb-3">
+          <ErrorPanel kicker="start failed" message={(start.error as Error)?.message} />
         </div>
-      ))}
+      )}
+      {stop.error && (
+        <div className="mb-3">
+          <ErrorPanel kicker="stop failed" message={(stop.error as Error)?.message} />
+        </div>
+      )}
 
       {projects.length === 0 ? (
-        <p className="text-sm text-gray-500 dark:text-gray-400">
-          No projects configured. Create a project to get started with a
-          simulator + backend + frontend environment.
+        <p
+          className="font-mono uppercase tracking-[0.18em] py-6 text-center"
+          style={{ color: "var(--color-fg-subtle)", fontSize: "0.7rem" }}
+        >
+          — no projects configured —
         </p>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {projects.map((proj: ProjectStatus) => (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {projects.map((proj: ProjectStatus, i) => (
             <div
               key={proj.name}
-              className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800"
+              className="reveal flex flex-col"
+              style={{
+                background: "var(--color-surface)",
+                border: "1px solid var(--color-border)",
+                borderLeft:
+                  proj.status === "running"
+                    ? "3px solid var(--color-status-ok)"
+                    : proj.status === "failed"
+                      ? "3px solid var(--color-status-error)"
+                      : "3px solid var(--color-border)",
+                borderRadius: "var(--radius-sm)",
+                "--reveal-delay": `${i * 30}ms`,
+              } as React.CSSProperties}
             >
-              <div className="mb-3 flex items-center justify-between">
-                <Link
-                  to={`/ui/projects/${encodeURIComponent(proj.name)}`}
-                  className="text-lg font-medium text-blue-600 hover:underline dark:text-blue-400"
+              <div
+                className="px-4 py-3"
+                style={{ borderBottom: "1px solid var(--color-border)" }}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <Link
+                    to={`/ui/projects/${encodeURIComponent(proj.name)}`}
+                    className="font-display"
+                    style={{
+                      fontStyle: "italic",
+                      fontWeight: 600,
+                      fontSize: "1.2rem",
+                      letterSpacing: "-0.02em",
+                      color: "var(--color-fg)",
+                      textDecoration: "none",
+                    }}
+                  >
+                    {proj.name}
+                  </Link>
+                  <StatusBadge status={statusLabel(proj.status)} />
+                </div>
+                <div
+                  className="mt-1 text-[10px] uppercase tracking-[0.2em]"
+                  style={{ color: "var(--color-fg-subtle)" }}
                 >
-                  {proj.name}
-                </Link>
-                <StatusBadge status={statusLabel(proj.status)} />
-              </div>
-
-              <div className="mb-3 space-y-1 text-sm text-gray-500 dark:text-gray-400">
-                <div>
-                  <span className="font-medium text-gray-700 dark:text-gray-300">
-                    Cloud:
-                  </span>{" "}
-                  {cloudLabels[proj.cloud] || proj.cloud}
-                </div>
-                <div>
-                  <span className="font-medium text-gray-700 dark:text-gray-300">
-                    Backend:
-                  </span>{" "}
-                  {proj.backend}
-                </div>
-                <div>
-                  <span className="font-medium text-gray-700 dark:text-gray-300">
-                    Ports:
-                  </span>{" "}
-                  {proj.frontend_port} / {proj.backend_port} / {proj.sim_port}
+                  {cloudLabels[proj.cloud] || proj.cloud} · {proj.backend}
                 </div>
               </div>
 
-              <div className="flex gap-2">
+              <div
+                className="px-4 py-3 font-mono text-[12px] flex-1"
+                style={{ color: "var(--color-fg-muted)" }}
+              >
+                <div>
+                  <span style={{ color: "var(--color-fg-subtle)" }}>
+                    frontend
+                  </span>
+                  <span className="ml-2" style={{ color: "var(--color-fg)" }}>
+                    :{proj.frontend_port}
+                  </span>
+                </div>
+                <div>
+                  <span style={{ color: "var(--color-fg-subtle)" }}>
+                    backend
+                  </span>
+                  <span className="ml-2" style={{ color: "var(--color-fg)" }}>
+                    :{proj.backend_port}
+                  </span>
+                </div>
+                <div>
+                  <span style={{ color: "var(--color-fg-subtle)" }}>sim</span>
+                  <span className="ml-2" style={{ color: "var(--color-fg)" }}>
+                    :{proj.sim_port}
+                  </span>
+                </div>
+              </div>
+
+              <div
+                className="px-4 py-3 flex justify-end"
+                style={{ borderTop: "1px solid var(--color-border)" }}
+              >
                 {proj.status === "running" || proj.status === "partial" ? (
-                  <button
+                  <Button
+                    variant="danger"
+                    size="sm"
                     onClick={(e) => {
                       e.preventDefault();
                       stop.mutate(proj.name);
                     }}
                     disabled={stop.isPending && stop.variables === proj.name}
-                    className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
                   >
-                    Stop
-                  </button>
+                    Stop ⏹
+                  </Button>
                 ) : (
-                  <button
+                  <Button
+                    variant="primary"
+                    size="sm"
                     onClick={(e) => {
                       e.preventDefault();
                       start.mutate(proj.name);
@@ -146,10 +201,9 @@ export function ProjectsPage() {
                       proj.status === "starting" ||
                       proj.status === "stopping"
                     }
-                    className="rounded-md bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
                   >
-                    Start
-                  </button>
+                    Start ▶
+                  </Button>
                 )}
               </div>
             </div>

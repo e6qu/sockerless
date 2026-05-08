@@ -69,9 +69,11 @@ describe("ProcessDetailPage", () => {
     });
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Binary")).toBeInTheDocument();
-      expect(screen.getByText("simulator-aws")).toBeInTheDocument();
-      expect(screen.getByText("PID")).toBeInTheDocument();
+      expect(screen.getByText(/binary/i)).toBeInTheDocument();
+      // The binary "simulator-aws" appears in both the page heading
+      // and the binary card; assert at least one occurrence.
+      expect(screen.getAllByText("simulator-aws").length).toBeGreaterThan(0);
+      expect(screen.getByText(/pid/i)).toBeInTheDocument();
     });
   });
 
@@ -82,7 +84,7 @@ describe("ProcessDetailPage", () => {
     });
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Stop")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /stop/i })).toBeInTheDocument();
     });
   });
 });
