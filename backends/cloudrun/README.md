@@ -44,8 +44,8 @@ environments:
 ## Quick Start
 
 ```sh
-go build -o sockerless-backend-cloudrun ./backends/cloudrun/cmd/sockerless-backend-cloudrun
-./sockerless-backend-cloudrun -addr :3375 -log-level info
+make backends/cloudrun/build
+make backends/cloudrun/run
 ```
 
 Flags: `-addr` (default `:3375`), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).

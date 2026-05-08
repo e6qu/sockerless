@@ -37,8 +37,8 @@ Cloud backends override specific `api.Backend` methods (create, start, stop, kil
 Each backend is a separate Go module with its own `go.mod`. Build from the backend directory:
 
 ```sh
-cd backends/ecs
-go build -o sockerless-backend-ecs ./cmd/sockerless-backend-ecs
+make backends/ecs/build
+# binary lands at backends/ecs/sockerless-backend-ecs
 ```
 
 Or use the top-level Makefile targets.

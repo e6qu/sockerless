@@ -64,7 +64,7 @@ export SOCKERLESS_ECS_LOG_GROUP=$(terraform output -raw log_group_name)
 
 ```bash
 # Build the backend binary (serves the Docker API directly)
-go build -tags noui -o sockerless-backend-ecs ./backends/ecs
+make backends/ecs/build-noui
 
 # Run the backend (listens on port 2375 by default)
 ./sockerless-backend-ecs

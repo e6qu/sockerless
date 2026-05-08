@@ -87,12 +87,12 @@ Live env queued — needs subscription + managed environment with VNet integrati
 
 ```bash
 # Build backends.
-cd backends/ecs    && go build -o sockerless-backend-ecs    ./cmd/sockerless-backend-ecs
-cd backends/lambda && go build -o sockerless-backend-lambda ./cmd/sockerless-backend-lambda
+make backends/ecs/build
+make backends/lambda/build
 
 # ECS backend on :3375.
 source aws.sh && source /tmp/ecs-env.sh
-./sockerless-backend-ecs -addr :3375 &
+make backends/ecs/run
 
 # Lambda backend on :9200 (shares VPC from ECS).
 export SOCKERLESS_LAMBDA_ROLE_ARN=$LAMBDA_ROLE

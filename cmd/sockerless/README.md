@@ -9,9 +9,7 @@ The CLI manages named contexts (backend configurations), starts and stops backen
 ## Building
 
 ```sh
-cd cmd/sockerless
-go build -o sockerless .
-```
+make cmd/sockerless/build```
 
 ## Commands
 

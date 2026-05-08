@@ -146,14 +146,36 @@ For terraform operations:
 ## Quick Start
 
 ```bash
-# Build the CLI and ECS backend
-go build -o sockerless ./cmd/sockerless
-go build -o sockerless-backend-ecs ./backends/ecs/cmd/sockerless-backend-ecs
+# Bring up a full local dev stack (sim + backend + admin) for any
+# cloud × backend combination. Sim runs on its native port (4566 /
+# 4567 / 4568); backend on :3375; admin UI on :9090/ui/.
+make stack-aws-ecs            # AWS ECS
+make stack-gcp-cloudrun       # GCP Cloud Run
+make stack-azure-aca          # Azure Container Apps
+# (other combos: stack-aws-lambda, stack-gcp-gcf, stack-azure-azf)
 
-# Option 1: config.yaml (preferred)
+# Use with Docker CLI
+export DOCKER_HOST=tcp://localhost:3375
+docker version
+docker run --rm alpine echo "hello from sockerless"
+docker ps -a
+
+# Browse the operator UI:
+#   admin       http://localhost:9090/ui/
+#   sim AWS     http://localhost:4566 (or :4567 GCP / :4568 Azure)
+
+# Tear down when done:
+make stack-down               # stops sim + backend + admin
+```
+
+For real cloud deployment (instead of the local sim), use the `sockerless` CLI to register a context and start the backend pointing at real cloud:
+
+```bash
+make cmd/sockerless/build     # build the CLI
+
 cat > ~/.sockerless/config.yaml <<EOF
 environments:
-  ecs-dev:
+  ecs-prod:
     backend: ecs
     aws:
       region: us-east-1
@@ -162,85 +184,255 @@ environments:
         subnets: [subnet-abc123]
         execution_role_arn: arn:aws:iam::123456789012:role/ecsExec
 EOF
-sockerless context use ecs-dev
-sockerless server start
+./cmd/sockerless/sockerless context use ecs-prod
+./cmd/sockerless/sockerless server start
 
-# Option 2: context commands
-sockerless context create ecs-dev --backend ecs \
-  --set AWS_REGION=us-east-1 \
-  --set SOCKERLESS_ECS_CLUSTER=sockerless \
-  --set SOCKERLESS_ECS_SUBNETS=subnet-abc123 \
-  --set SOCKERLESS_ECS_EXECUTION_ROLE_ARN=arn:aws:iam::123456789012:role/ecsExec
-sockerless server start
-
-# Use with Docker CLI
 export DOCKER_HOST=tcp://localhost:3375
-docker version
-docker run --rm alpine echo "hello from sockerless"
-docker ps -a
+docker run --rm alpine echo "hello from cloud sockerless"
 ```
 
 See [`cmd/sockerless/README.md`](cmd/sockerless/README.md) for the full `config.yaml` format and all CLI commands.
 
+## Make targets
+
+Sockerless uses a uniform Makefile layout across all 33 leaf apps (Go binaries, UI packages, test directories) plus a thin top-level orchestrator. Every leaf implements the same 7-target surface; the top-level fans out and adds a `stack-<cloud>-<backend>` orchestration layer.
+
+Specification: [`docs/MAKEFILE_STANDARD.md`](docs/MAKEFILE_STANDARD.md).
+
+### Standardized target surface (every app)
+
+```
+make help               # list this app's targets
+make install            # fetch deps (go mod download / bun install)
+make build              # build the artefact (UI embedded if present)
+make build-noui         # build the binary without embedded UI (Go apps)
+make test               # unit tests
+make test-integration   # integration tests (build-tag + env-var gated)
+make lint               # go vet (or tsc --noEmit) + gofmt + golangci-lint when available
+make run                # run the binary in the foreground
+make dev                # Go server (no UI) + Vite dev server (UI apps)
+make embed              # copy UI dist into local dist/ (Go-with-UI apps)
+make clean              # remove build artefacts
+```
+
+### Top-level fan-out
+
+Run any standardized target across every app:
+
+```bash
+make build              # build all 17 binaries + 14 UI bundles
+make test               # run every unit-test suite (admin + bleephub + core all green; backends + sims as configured)
+make lint               # lint every Go module + tsc --noEmit every UI package
+make clean              # remove every build artefact
+make install            # install deps everywhere
+```
+
+### Path-based delegation
+
+Run any standardized target on a single app via its directory path:
+
+```bash
+make backends/ecs/build         # build one backend
+make backends/ecs/test          # test one backend
+make backends/ecs/run           # foreground; defaults --addr :3375 + sim env-var
+make backends/ecs/clean         # clean one backend
+
+make ui/packages/admin/run      # vite dev server for admin UI
+make ui/packages/bleephub/test  # vitest for bleephub UI
+
+make simulators/aws/run         # foreground sim on :4566
+make simulators/aws/sdk-test    # SDK tests against the sim (sim-specific target)
+```
+
+The pattern works for any app + any standardized target.
+
+### Stack orchestration
+
+`make stack-<cloud>-<backend>` builds and starts simulator + backend + admin in concert, recording PIDs in `.stack-pids/` for clean teardown:
+
+| Target | Stack |
+|---|---|
+| `make stack-aws-ecs` | sim-aws (:4566) + backend-ecs (:3375) + admin (:9090) |
+| `make stack-aws-lambda` | sim-aws + backend-lambda + admin |
+| `make stack-gcp-cloudrun` | sim-gcp (:4567) + backend-cloudrun + admin |
+| `make stack-gcp-gcf` | sim-gcp + backend-gcf + admin |
+| `make stack-azure-aca` | sim-azure (:4568) + backend-aca + admin |
+| `make stack-azure-azf` | sim-azure + backend-azf + admin |
+| `make stack-bleephub-up` | also start bleephub on :5555 (run after a stack-X-Y) |
+| `make stack-status` | show running components |
+| `make stack-down` | stop all running components, clean PIDs |
+
+Logs land in `.stack-pids/{sim,backend,admin,bleephub}.log`.
+
+### Per-app shortcuts
+
+Every app's own Makefile is the source of truth. To work on a single app, `cd` into it and use the standardized targets directly — no top-level needed:
+
+```bash
+cd backends/ecs
+make help                # shows everything available
+make build               # builds with embedded UI if dist/ available, else falls back
+make run                 # foreground server with sensible defaults
+make test                # go test ./...
+```
+
+This works for any of the 17 Go-binary apps, 14 UI packages, and the test-category dirs.
+
+### Apps inventory
+
+**Go binaries with optional embedded UI (12)** — each has the full target surface plus `build-noui` and `embed`:
+
+```
+cmd/sockerless-admin                 # admin server, port :9090
+bleephub                             # GitHub-API simulator, port :5555
+backends/{docker,ecs,lambda}         # AWS-side + local Docker
+backends/{cloudrun,cloudrun-functions}  # GCP-side
+backends/{aca,azure-functions}       # Azure-side
+simulators/{aws,gcp,azure}           # Per-cloud REST simulators (ports :4566/:4567/:4568)
+```
+
+**Go-only binaries (5)**:
+
+```
+cmd/sockerless                       # The CLI (no UI to embed)
+agent                                # Sockerless-agent + 3 cloud bootstrap binaries
+github-runner-dispatcher-{aws,gcp,azure}  # Per-cloud runner dispatcher daemons
+```
+
+The agent module also exposes `make build-bootstraps` to cross-compile the three Lambda / Cloud Run / GCF bootstrap binaries (linux/amd64).
+
+**UI packages (14)** — Vite + Bun, all in one Bun workspace:
+
+```
+ui/packages/admin                    # Operator dashboard
+ui/packages/bleephub                 # GitHub-API simulator UI
+ui/packages/backend-{docker,ecs,lambda,cloudrun,gcf,aca,azf}
+ui/packages/simulator-{aws,gcp,azure}
+ui/packages/frontend-docker          # Docker frontend proxy UI
+ui/packages/core                     # Shared library (no own dist)
+```
+
+**Test categories (10)** — each has `make test`, `make lint`, `make clean`:
+
+```
+tests                                # Cross-backend e2e suite
+smoke-tests                          # Per-cloud Docker-in-Docker smoke
+simulators/{aws,gcp,azure}/{sdk-tests,cli-tests,terraform-tests}
+tests/runners/{github,gitlab,gcp-cells,internal}
+```
+
+### Sim-specific extra targets
+
+Each `simulators/<cloud>/Makefile` keeps the historical test breakdown CI relies on:
+
+```bash
+cd simulators/aws
+make sdk-test           # go test in sdk-tests/ (own go.mod)
+make cli-test           # go test in cli-tests/ (own go.mod)
+make terraform-test     # go test in terraform-tests/ (own go.mod)
+make shared-test        # go test in shared/ (own go.mod)
+make test-all           # all four
+make docker-build       # build the docker image
+make docker-run         # docker run with port + env wired
+make docker-test        # run all tests inside docker
+```
+
+### Legacy aliases (preserved at top level)
+
+For backward-compat with existing CI workflows and developer muscle memory:
+
+```bash
+make sim-test-{ecs,lambda,cloudrun,gcf,aca,azf}      # per-backend integration tests
+make sim-test-{aws,gcp,azure,all}                    # per-cloud aggregates
+make smoke-test-{act,act-ecs,act-cloudrun,act-aca,act-all}
+make smoke-test-{gitlab,gitlab-ecs,gitlab-cloudrun,gitlab-aca,gitlab-all}
+make tf-int-test-{ecs,lambda,cloudrun,gcf,aca,azf,aws,gcp,azure,all}
+make e2e-github-{ecs,lambda,cloudrun,gcf,aca,azf,all}
+make e2e-gitlab-{ecs,lambda,cloudrun,gcf,aca,azf,all}
+make upstream-test-{act,act-individual,act-{ecs,lambda,cloudrun,gcf,aca,azf,all}}
+make upstream-test-gcl-{ecs,lambda,cloudrun,gcf,aca,azf,all}
+make bleephub-test bleephub-gh-test
+make test-{unit,e2e,agent,core,bleephub}
+make check-backend-coverage{,-enforce}
+```
+
+These delegate to the appropriate per-app or test-category Makefile, or keep their inline Docker-build form for the smoke / e2e / upstream families.
+
 ## Development
 
-### Running Tests
+The Make-target reference above covers most workflows. This section is the working-developer cheatsheet.
+
+### One-shot: clean rebuild + run
 
 ```bash
-# Core unit/integration tests
-cd backends/core && go test -v ./...
-
-# Simulator integration tests — all 6 cloud backends (~170s)
-# Builds simulators, starts them, runs backends against them
-make sim-test-all
-
-# Individual backend
-make sim-test-ecs
-make sim-test-lambda
-make sim-test-cloudrun
-make sim-test-gcf
-make sim-test-aca
-make sim-test-azf
-
-# Per cloud
-make sim-test-aws      # ECS + Lambda
-make sim-test-gcp      # CloudRun + GCF
-make sim-test-azure    # ACA + AZF
+make clean                        # remove every build artefact
+make build                        # rebuild every binary + UI bundle
+make stack-aws-ecs                # ready in seconds
 ```
 
-### Simulator Tests
-
-Each simulator (`simulators/{aws,gcp,azure}/`) has its own test suite covering SDK, CLI, and Terraform compatibility:
+### Iterating on a single backend
 
 ```bash
-cd simulators/aws && make test          # SDK + CLI + Terraform tests
-cd simulators/aws && make docker-test   # Same, inside Docker (includes CLI)
+cd backends/ecs
+make build && make run            # standalone, no sim
+# Or, with a simulator running on :4566 already:
+make run                          # already env-wired via the Makefile (SOCKERLESS_ENDPOINT_URL=http://localhost:4566)
+make test                         # unit tests
+make test-integration             # build-tag + env-var gated tests (against sim)
 ```
 
-### Smoke Tests
-
-Validate that real, unmodified CI runners complete jobs through Sockerless:
+### Iterating on UI
 
 ```bash
-# GitHub Actions (act)
-make smoke-test-act-ecs          # ECS via simulator
-make smoke-test-act-cloudrun     # Cloud Run via simulator
-make smoke-test-act-aca          # ACA via simulator
-
-# GitLab Runner
-make smoke-test-gitlab-ecs       # ECS via simulator
+cd ui/packages/admin
+make run                          # vite dev server on :5173 with hot reload
+                                  # (proxies /api → :9090, so admin Go server must be running)
 ```
 
-### Terraform Integration Tests
+In another terminal:
+```bash
+cd cmd/sockerless-admin
+make build-noui && make run       # admin Go server with no embedded UI
+```
 
-Run the full terraform modules against local simulators (Docker-only):
+Or build a single UI package + embed it into its consuming Go app:
+```bash
+cd ui/packages/bleephub && make build
+cd bleephub && make build         # picks up ../ui/packages/bleephub/dist
+```
+
+### Running test suites
 
 ```bash
-make tf-int-test-all     # All 6 backends (~10-15 min)
-make tf-int-test-aws     # ECS (21 resources) + Lambda (5 resources)
-make tf-int-test-gcp     # CloudRun (13) + GCF (7)
-make tf-int-test-azure   # ACA (18) + AZF (11)
+make test                         # unit tests across every app
+
+# Per-app:
+make backends/ecs/test
+make ui/packages/admin/test
+
+# Sim-specific test categories (CI uses these):
+cd simulators/aws
+make sdk-test                     # SDK-driven tests against the sim
+make cli-test                     # CLI-driven tests against the sim
+make terraform-test               # terraform-driven tests against the sim
+make test-all                     # all four (sdk + cli + terraform + shared)
+
+# Cross-backend e2e:
+make tests/test                   # delegates to tests/Makefile
+
+# Smoke (Docker-in-Docker):
+make smoke-test-act-ecs           # GitHub Actions (act) → ECS via sim
+make smoke-test-gitlab-ecs        # GitLab Runner → ECS via sim
 ```
+
+### Lint
+
+```bash
+make lint                         # every Go module + every UI package
+make backends/ecs/lint            # one app
+```
+
+`make lint` runs `go vet`, `gofmt -l`, and (if installed) `golangci-lint run`. UI packages run `tsc --noEmit`. Lint passes `-tags noui` for Go modules that embed a UI, so missing `dist/` doesn't trip `//go:embed`.
 
 ### Terraform
 
@@ -254,15 +446,24 @@ make plan-ecs-simulator   # Plan against local simulator
 make apply-ecs-simulator  # Apply against local simulator
 ```
 
-### Adding a New Backend
+### Adding a new app
 
-1. Create `backends/<name>/` as a new Go module
-2. Import `backends/core`, embed `core.BaseServer`, and implement the `api.Backend` interface — only override methods that need cloud-specific logic
-3. Add an entry point `main.go` that creates and starts the server
-4. Add the module to `go.work`
-5. Add integration tests in `tests/`
-6. Add a simulator in `simulators/` if targeting a new cloud
-7. Add a terraform module in `terraform/modules/`
+The Makefile system was designed so adding a new backend / simulator / dispatcher takes one file:
+
+1. Drop a `Makefile` in the new app's directory (5–10 lines — see [`docs/MAKEFILE_STANDARD.md`](docs/MAKEFILE_STANDARD.md) for the template per app kind).
+2. Add the app's path to one of `GO_UI_APPS`, `GO_APPS`, or `UI_APPS` in the top-level `Makefile`.
+3. Run `make <new-app>/help` to verify the standardized target surface picked up.
+
+For a new backend specifically:
+
+1. Create `backends/<name>/` as a new Go module.
+2. Import `backends/core`, embed `core.BaseServer`, implement the `api.Backend` interface — only override methods that need cloud-specific logic.
+3. Add an entry point `main.go` that creates and starts the server.
+4. Add the module to `go.work`.
+5. Add a Makefile (using the go-app.mk template) with `APP_NAME`, `GO_PACKAGE`, `UI_PACKAGE`, `DEFAULT_PORT`, `RUN_FLAGS`, `RUN_ENV`, `REPO_ROOT_REL := ../..`.
+6. Add integration tests in `tests/`.
+7. Add a simulator in `simulators/` if targeting a new cloud (with its own Makefile).
+8. Add a terraform module in `terraform/modules/`.
 
 ## Deploying to Cloud
 

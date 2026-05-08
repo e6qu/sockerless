@@ -63,7 +63,7 @@ export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:3375
 
 ```bash
 # Build the backend binary (serves the Docker API directly)
-go build -tags noui -o sockerless-backend-lambda ./backends/lambda
+make backends/lambda/build-noui
 
 # Run the backend
 ./sockerless-backend-lambda

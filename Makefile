@@ -105,8 +105,13 @@ test: ## unit-test every app
 test-integration: ## run integration tests across every Go app
 	@$(MAKE) -s _fanout TARGET=test-integration APPS="$(GO_UI_APPS) $(GO_APPS) $(TEST_DIRS)"
 
-lint: ## lint every app
-	@$(MAKE) -s _fanout TARGET=lint APPS="$(ALL_APPS)"
+lint: ## lint every Go app (CI lint runner has no bun — use lint-ui separately)
+	@$(MAKE) -s _fanout TARGET=lint APPS="$(GO_UI_APPS) $(GO_APPS)"
+
+lint-ui: ## lint every UI package (requires bun)
+	@$(MAKE) -s _fanout TARGET=lint APPS="$(UI_APPS)"
+
+lint-all: lint lint-ui ## lint every app (Go + UI)
 
 clean: ## clean every app's artefacts
 	@$(MAKE) -s _fanout TARGET=clean APPS="$(ALL_APPS)"

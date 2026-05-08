@@ -46,8 +46,8 @@ environments:
 ## Quick Start
 
 ```sh
-go build -o sockerless-backend-aca ./backends/aca/cmd/sockerless-backend-aca
-./sockerless-backend-aca -addr :3375 -log-level info
+make backends/aca/build
+make backends/aca/run
 ```
 
 Flags: `-addr` (default `:3375`), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).
