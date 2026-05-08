@@ -6,7 +6,7 @@
 
 | | |
 |---|---|
-| Active branch | `plan-next-phases` (off `origin/main` at 7b35d90) |
+| Active branch | `phase-128-job-timeout` (off `origin/main` at 7b35d90) |
 | Last merged | PR #129 — Phase 135 sim host model + 3-tier coverage + ARM-native CI (2026-05-09) |
 | Milestone | **8/8 runner-integration cells GREEN** (since 2026-05-07); **sim host model shipped, CI fully green on native arm64** (Phase 135, 2026-05-09). |
 | Bugs | 984 filed · 984 fixed · **0 open** ([BUGS.md](BUGS.md)). |
@@ -28,9 +28,18 @@
 
 Each green run: probe-capabilities → probe-localhost-peer (postgres sidecar `localhost:5432`) → clone-and-compile (`git clone` + `go build` of `simulators/testdata/eval-arithmetic`) → 5 arithmetic invocations.
 
-## Up next on `plan-next-phases`
+## Up next on `phase-128-job-timeout`
 
-Active: **Phase 128 — Runner job timeout** (live-cloud cost gate; blocks next live session). Then Phase 124 → 125 → 126 → 127 → 121b → 78. See [DO_NEXT.md](DO_NEXT.md) and [PLAN.md § Roadmap (ordered)](PLAN.md#roadmap-ordered).
+In flight: **Phase 128 — Runner job timeout**. 4/4 sub-tasks shipped:
+
+- **128a** — Bootstrap timer (`runWithTimeout`, `jobTimeoutFromEnv`) in cloudrun + gcf bootstraps. SIGTERM → 30s grace → SIGKILL → exit 124. 5 unit tests.
+- **128b** — `backends/core/job_timeout.go` shared helpers (`JobTimeoutEnvName`, `DefaultJobTimeoutSeconds=3600`, `JobTimeoutDefault()`, `JobTimeoutEnvIfUnset()`). Wired into cloudrun + gcf backend env injection (per-job override wins).
+- **128c** — Cloud-native cap: cloudrun TaskTemplate.Timeout + ACA ReplicaTimeout derived from `core.JobTimeoutDefault()`, clamped to per-cloud max. Lambda already at 900s cap.
+- **128d** — Integration test (alpine + sleep 9999 + SOCKERLESS_JOB_TIMEOUT_SECONDS=2; expects exit 124 + log line).
+
+Spec: [specs/CLOUD_RESOURCE_MAPPING.md § Job lifecycle](specs/CLOUD_RESOURCE_MAPPING.md#job-lifecycle-timeouts-and-termination-phase-128).
+
+Then Phase 124 → 125 → 126 → 127 → 121b → 78 per [PLAN.md § Roadmap (ordered)](PLAN.md#roadmap-ordered).
 
 ## Recently shipped (chronological)
 

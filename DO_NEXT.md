@@ -4,7 +4,7 @@
 
 ## Branch
 
-`plan-next-phases` — off `origin/main` at 7b35d90 (PR #129 merged 2026-05-09). Single work-branch rule: everything stacks here, no side branches.
+`phase-128-job-timeout` — off `origin/main` at 7b35d90 (PR #129 merged 2026-05-09). Single work-branch rule: everything stacks here, no side branches.
 
 ## Ordered roadmap (do them in this order)
 
@@ -18,15 +18,18 @@
 
 Driver phases (124–127) follow the 7-step template from [PLAN.md § Driver phase template](PLAN.md#driver-phase-template-124127). Each phase starts with a `specs/CLOUD_RESOURCE_MAPPING.md` design pass before code.
 
-## Active — Phase 128 (job timeout)
+## Active — Phase 128 (job timeout, ready for PR + CI)
 
-Sub-tasks (in implementation order):
+4/4 sub-tasks shipped:
 
-1. **Spec design** — `specs/CLOUD_RESOURCE_MAPPING.md` section: per-cloud max timeout (Cloud Run 24 h, Lambda 15 min, ECS Fargate effectively unlimited), bootstrap timer ownership, signal-handling shape (SIGTERM → 30 s grace → SIGKILL), exit-code 124 contract.
-2. **Config plumbing** — `runner_job_timeout` in dispatcher TOML; `SOCKERLESS_JOB_TIMEOUT_SECONDS` env on bootstrap; default 1 h with operator override.
-3. **Bootstrap timer** — implemented in agent bootstrap (where the workload runs). Per-cloud bootstrap variants: `cmd/sockerless-cloudrun-bootstrap`, `cmd/sockerless-gcf-bootstrap`, `cmd/sockerless-lambda-bootstrap` (and ACA / AZF equivalents).
-4. **Test** — sim test that submits a `sleep 9999` step, expects 1 h timeout (configurable to seconds for the test), then asserts exit 124 + arithmetic-suite resumes on the next job.
-5. **Bug-rule sweep** — every CI / live failure surfaced lands in BUGS.md with one-liner before fix.
+- **128a** — Bootstrap timer (`runWithTimeout`, `jobTimeoutFromEnv`) in `agent/cmd/sockerless-{cloudrun,gcf}-bootstrap`. SIGTERM → 30s grace → SIGKILL → exit 124. 5 unit tests.
+- **128b** — `backends/core/job_timeout.go` shared helpers; cloudrun + gcf backends inject `SOCKERLESS_JOB_TIMEOUT_SECONDS` on every workload container (per-job override wins).
+- **128c** — Cloud-native safety net: cloudrun `TaskTemplate.Timeout` + ACA `ReplicaTimeout` derived from `core.JobTimeoutDefault()`, clamped per cloud max. Lambda already at 900s cap.
+- **128d** — Integration test in `backends/cloudrun/arithmetic_integration_test.go::TestCloudRunJobTimeout`.
+
+Spec: [specs/CLOUD_RESOURCE_MAPPING.md § Job lifecycle](specs/CLOUD_RESOURCE_MAPPING.md#job-lifecycle-timeouts-and-termination-phase-128).
+
+Next: open PR, watch CI, merge, then start Phase 124 (Network driver).
 
 ## Standing rules
 

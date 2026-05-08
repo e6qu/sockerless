@@ -6,6 +6,24 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* we did each phase, what was surprising, what blocked. Per-bug detail belongs in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-09 — Phase 128 Runner job timeout (PR pending)
+
+First of the post-Phase-135 ordered roadmap. Hard cap on workload containers so a hung subprocess can't pin cloud quota indefinitely. Two layers, belt-and-suspenders:
+
+**Layer 1 — bootstrap timer.** New helpers `runWithTimeout` + `jobTimeoutFromEnv` in `agent/cmd/sockerless-cloudrun-bootstrap` and `agent/cmd/sockerless-gcf-bootstrap`. Reads `SOCKERLESS_JOB_TIMEOUT_SECONDS` (default 3600, negative → 0/disabled), starts the user subprocess, arms a timer; on fire sends SIGTERM, waits 30s, SIGKILLs, returns exit code 124 (matches GNU `timeout(1)`). Wired in 3 exec sites per bootstrap (sidecar mode, default-invoke, exec-envelope) — covers Cloud Run multi-container revisions + the Path B docker-exec round-trip.
+
+**Layer 2 — cloud-native cap.** Sockerless backends set the cloud's native max-duration field as a safety net for bootstrap crashes:
+- Cloud Run `TaskTemplate.Timeout`: derived from `core.JobTimeoutDefault()`, clamped to 24 h.
+- ACA `ReplicaTimeout`: derived likewise, clamped to 7 d.
+- Lambda `function.Timeout`: already defaults to 900 s (Lambda's hard cap; nothing to add).
+- ECS Fargate has no native timeout — Layer 1 is the only path; sockerless doesn't yet inject a bootstrap into ECS workloads, so ECS is documented as effectively unlimited until a follow-up adds an ECS-side bootstrap.
+
+**Shared config.** `backends/core/job_timeout.go` exposes `JobTimeoutEnvName`, `DefaultJobTimeoutSeconds=3600`, `JobTimeoutDefault()` (operator override via process env), and `JobTimeoutEnvIfUnset(env)` which respects per-job operator overrides via `docker run -e`. Both cloudrun + gcf backends use these for env injection on every workload container.
+
+Tests: 5 unit tests in `agent/cmd/sockerless-cloudrun-bootstrap/main_test.go` (timer fires-on-hang, finishes-early, zero-exit, disabled-by-zero, env parse). 2 unit tests in `backends/core/job_timeout_test.go`. 1 integration test (`TestCloudRunJobTimeout`) submits alpine + `sleep 9999` with `SOCKERLESS_JOB_TIMEOUT_SECONDS=2`, expects exit 124 + log line.
+
+Branch carries a small upfront doc reshuffle (drops Phase 68 multi-tenant pools and Phase 129 cost-tracking remainder per user direction; ordered roadmap 128 → 124 → 125 → 126 → 127 → 121b → 78 in PLAN.md and DO_NEXT.md).
+
 ## 2026-05-09 — Phase 135 Sim host model + 3-tier coverage (PR #129)
 
 Architectural correction surfaced by user feedback: simulators conflated their own binary's compile arch with the workload's arch. Right model: **services provision hosts; hosts run workloads via Docker honouring the workload's `Architecture` field; sim's primary capacity contract is `linux/arm64`**. Sim binary itself stays host-native (Mac arm64 locally; CI is now linux/arm64 too via native ARM runners).
