@@ -117,7 +117,7 @@ func TestMain(m *testing.M) {
 	bootstrapModuleDir := repoRoot + "/agent"
 	agentTestImageName = "sockerless-lambda-agent-test:v1"
 	fmt.Printf("[sim] Building %s (linux/arm64)...\n", agentTestImageName)
-	agentDockerfile := `FROM golang:1.24-alpine AS build
+	agentDockerfile := `FROM golang:1.25-alpine AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -o /sockerless-lambda-bootstrap ./cmd/sockerless-lambda-bootstrap

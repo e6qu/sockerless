@@ -45,7 +45,7 @@ func TestMain(m *testing.M) {
 	// Multi-stage Docker build forced to linux/arm64. Phase 135.
 	evalDir, _ := filepath.Abs("../../testdata/eval-arithmetic")
 	evalImageName = "sockerless-eval-arithmetic:test"
-	dockerfile := `FROM golang:1.24-alpine AS build
+	dockerfile := `FROM golang:1.25-alpine AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -o /eval-arithmetic .

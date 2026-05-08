@@ -133,12 +133,14 @@ jobs:
         run: curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
       - name: Run SDK tests
         run: cd simulators/${{ matrix.cloud }} && make sdk-test
-        timeout-minutes: 5
+        # 15min budget covers QEMU-emulated linux/arm64 workloads on
+        # amd64 runners (Phase 135b sim primary capacity contract).
+        timeout-minutes: 15
         env:
           GOWORK: "off"
       - name: Run CLI tests
         run: cd simulators/${{ matrix.cloud }} && make cli-test
-        timeout-minutes: 5
+        timeout-minutes: 15
         env:
           GOWORK: "off"
 
