@@ -227,6 +227,7 @@ type HTTPContainerConfig struct {
 	Env          map[string]string // env vars (must include PORT to match the published port-target)
 	Name         string            // container name (optional, auto-generated if empty)
 	Labels       map[string]string // container labels for tracking
+	ExtraHosts   []string          // --add-host entries (e.g., "metadata.google.internal:host-gateway")
 }
 
 // StartHTTPContainer starts a container detached, with its container-
@@ -270,6 +271,7 @@ func StartHTTPContainer(ctx context.Context, cfg HTTPContainerConfig) (string, e
 		PortBindings: nat.PortMap{
 			exposedPort: []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: strconv.Itoa(cfg.HostPort)}},
 		},
+		ExtraHosts: cfg.ExtraHosts,
 	}
 
 	platform, err := parsePlatform(cfg.Architecture)

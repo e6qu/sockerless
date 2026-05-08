@@ -373,9 +373,10 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 		Architecture: simArch,
 		Command:      entrypoint,
 		Args:         userCmd,
-		Env:          cmdEnv,
+		Env:          mergeEnv(cmdEnv, hostMetadataEnv()),
 		Timeout:      timeout,
 		Labels:       map[string]string{"sockerless-sim-function": functionID},
+		ExtraHosts:   hostMetadataExtraHosts(),
 	}, collectSink)
 	if err != nil {
 		injectCloudFunctionLog(project, functionID,
@@ -556,13 +557,14 @@ func invokeOverlayContainerHTTP(image, functionID string, timeout time.Duration,
 		Image:        localImage,
 		Architecture: "linux/arm64",
 		HostPort:     hostPort,
-		Env: map[string]string{
+		Env: mergeEnv(map[string]string{
 			"PORT": "8080",
-		},
+		}, hostMetadataEnv()),
 		Name: containerName,
 		Labels: map[string]string{
 			"sockerless-sim-function": functionID,
 		},
+		ExtraHosts: hostMetadataExtraHosts(),
 	})
 	if err != nil {
 		return nil, -1, fmt.Errorf("start overlay container: %w", err)
