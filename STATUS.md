@@ -9,7 +9,7 @@
 | Active branch | `docs-streamline` (off `origin/main` at 9169d4b) |
 | Last merged | PR #128 — Makefile standardization + sim test stability (2026-05-08) |
 | Milestone | **8/8 runner-integration cells GREEN** (since 2026-05-07) |
-| Bugs | 975 filed · 974 fixed · 1 open ([BUGS.md](BUGS.md)). BUG-949 + BUG-975 closed by Phase 135. |
+| Bugs | 975 filed · 975 fixed · **0 open** ([BUGS.md](BUGS.md)). Phase 135 closed BUG-949 + BUG-975; BUG-972 was already fixed in PR #123 (bookkeeping closure). |
 | Sim parity | 77/77 ✓ across current backends (AWS 33, GCP 16, Azure 28) — [specs/SIM_PARITY_MATRIX.md](specs/SIM_PARITY_MATRIX.md) |
 | Live infra | None up. All projects torn down end of 2026-05-07. |
 
@@ -49,8 +49,6 @@ Each green run: probe-capabilities → probe-localhost-peer (postgres sidecar `l
 
 Older PRs in [WHAT_WE_DID.md](WHAT_WE_DID.md).
 
-## Open bugs (1)
+## Open bugs (0)
 
-| ID | Sev | Area | Hook |
-|---|---|---|---|
-| 972 | H | cloudrun + gcf | `ImagePull` rewrites Docker Hub refs to AR proxy unconditionally; sim has no AR proxy → 403. Gate on `s.config.EndpointURL == ""`. |
+All filed bugs closed. New CI / live-cloud failures land in [BUGS.md](BUGS.md) per the standing rule.

@@ -1,6 +1,6 @@
 # Known Bugs
 
-**975 filed · 974 fixed · 1 open · 1 false positive.**
+**975 filed · 975 fixed · 0 open · 1 false positive.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner before any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -10,7 +10,6 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md).
 
 | ID | Sev | Area | One-liner |
 |----|-----|------|-----------|
-| 972 | H | cloudrun + gcf | `ImagePull` rewrites Docker Hub refs to AR proxy unconditionally; sim has no AR proxy → 403. Fix: gate the rewrite on `s.config.EndpointURL == ""` (real GCP only). Same site applies to `ContainerCreate` + every other `gcpcommon.ResolveGCPImageURI` caller. |
 
 ## False positives
 
@@ -33,6 +32,7 @@ Per-bug detail in `git log` / linked PR.
 | ID | Sev | Area | One-liner |
 |----|-----|------|-----------|
 | 975 | M | simulators/aws ECS | `ECS::ExecuteCommand` had a "fallback to local process" path that `os/exec`'d on the sim host when no Docker container was found. Violation of host model + no-fallbacks rule. Fix: drop fallback; return WS close with explicit error if no Docker container. |
+| 972 | H | cloudrun + gcf | `ImagePull` rewrites Docker Hub refs to AR proxy unconditionally; sim has no AR proxy → 403. Already fixed in PR #123 by gating `gcpcommon.ResolveGCPImageURI` on `endpointURL != ""` (image_resolve.go:30); `TestResolveGCPImageURI_SimulatorPassthrough` proves it. Bookkeeping closure only. |
 | 949 | M | simulators/gcp gcf | `cloudfunctions::invokeCloudFunctionProcess` `os/exec`'d the workload binary on the sim host, ignoring workload arch. Fix: route through `sim.StartContainerSync` honouring `serviceConfig.simImage` + `simArchitecture`. SDK tests migrated to a multi-stage Docker build (binary built inside the image, not on the sim host). Closes the original macOS/arm64 break. |
 
 ### 2026-05-08 — Sim test stability (PR #128)
