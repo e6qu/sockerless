@@ -30,15 +30,14 @@ Each green run: probe-capabilities → probe-localhost-peer (postgres sidecar `l
 
 ## Up next on `phase-124-network-driver`
 
-In flight: **Phase 124 — Network discovery driver**. Foundation shipped:
+In flight: **Phase 124 — Network discovery driver**. All 4 sub-tasks shipped:
 
 - **124a** — `api/network_discovery.go`: `NetworkDiscoveryKind` enum + `IsValid()` + `AllNetworkDiscoveryKinds`. 4 categories: host-aliases, cloud-dns, service-mesh, nat-gateway-only.
 - **124b** — `backends/core/network_discovery_driver.go`: `NetworkDiscoveryDriver` interface, registry, no-op default (nat-gateway-only), `ParseNetworkDiscoveryEnv()` (no-fallback semantics).
 - **124c** — `backends/core/network_discovery_hostaliases.go`: in-process host-aliases impl (Register/Resolve/Deregister + `PeersOnNetwork()` helper for backend env materialization).
+- **124d** — Per-backend adapters + wiring: cloudrun cloud-DNS, ECS service-mesh, ACA cloud-DNS, GCF host-aliases. `BaseServer.NetworkDiscovery` field defaults to no-op; backend startup overrides with the cloud-specific adapter. Cloudrun `NetworkConnect` register-A-record callsite migrated to driver-mediated call (end-to-end wire).
 
 Spec: [specs/CLOUD_RESOURCE_MAPPING.md § Network discovery driver](specs/CLOUD_RESOURCE_MAPPING.md#network-discovery-driver-phase-124).
-
-Cloud-DNS + service-mesh impls + per-backend migration deferred — each backend's discovery code migrates when its inline call sites are touched.
 
 Then Phase 125 → 126 → 127 → 121b → 78 per [PLAN.md § Roadmap (ordered)](PLAN.md#roadmap-ordered).
 

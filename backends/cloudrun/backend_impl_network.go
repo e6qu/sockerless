@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/sockerless/api"
+	core "github.com/sockerless/backend-core"
 )
 
 // NetworkCreate creates a Docker network with Cloud DNS backing.
@@ -78,7 +79,15 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID == net.ID && ep.IPAddress != "" {
-			if err := s.cloudServiceRegister(containerID, hostname, ep.IPAddress, net.ID); err != nil {
+			// Phase 124: route through the network-discovery driver
+			// instead of calling cloudServiceRegister directly. The
+			// driver wraps the same impl today (cloud-DNS adapter
+			// delegates to cloudServiceRegister); the indirection
+			// lets operators swap the driver via configuration.
+			if err := s.NetworkDiscovery.RegisterContainer(s.ctx(), net.ID, hostname, &core.CloudEndpoint{
+				IPAddress: ep.IPAddress,
+				Metadata:  map[string]string{"container-id": containerID},
+			}); err != nil {
 				s.Logger.Warn().Err(err).Msg("failed to register in Cloud DNS")
 			}
 			break

@@ -18,7 +18,15 @@ Second of the post-Phase-135 ordered roadmap. Adds the abstraction layer for "ho
 - `backends/core/network_discovery_hostaliases.go` — in-process host-aliases impl with `PeersOnNetwork()` helper for backend env materialization.
 - 8 unit tests (api enum + core registry + host-aliases CRUD + parse env).
 
-**Deferred to follow-ups** (each migrates as its backend's discovery code is touched): cloud-dns impl in `gcp-common` (existing Cloud DNS code) + `azure-common` (existing Private DNS Zone code); service-mesh impl in `aws-common` (existing Cloud Map code); per-backend translator wiring at startup.
+**Per-backend adapters + wiring** (124d): Each backend ships a thin adapter that satisfies `NetworkDiscoveryDriver` by delegating to its existing `cloudServiceRegister/Deregister/Resolve` methods (no SDK refactoring needed; the adapters live in the backend, not -common, because they close over per-backend state). `core.BaseServer` gains a `NetworkDiscovery` field that defaults to `NoOpNetworkDiscovery{}` and is overridden at backend startup with the cloud-specific adapter:
+
+- cloudrun → `cloudDNSDiscovery` (cloud-dns kind).
+- ECS → `cloudMapDiscovery` (service-mesh kind).
+- ACA → `acaCloudDNSDiscovery` (cloud-dns kind).
+- gcf → `core.HostAliasesDiscovery` (host-aliases kind, in-process).
+- Lambda + AZF → no-op default (nat-gateway-only).
+
+Cloudrun's `NetworkConnect` A-record callsite migrated to the driver-mediated call as the proof-of-wire end-to-end. The CNAME path (`UseService` flow) and ECS/ACA inline call sites stay on direct method calls for now — the driver wraps the same impl, so flipping them to driver-mediated calls is a mechanical follow-up.
 
 ## 2026-05-09 — Phase 128 Runner job timeout (PR #130, merged)
 

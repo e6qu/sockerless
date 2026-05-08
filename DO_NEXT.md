@@ -20,15 +20,14 @@ Driver phases (124–127) follow the 7-step template from [PLAN.md § Driver pha
 
 ## Active — Phase 124 (network discovery driver, ready for PR + CI)
 
-Foundation shipped (3/3 sub-tasks):
+4/4 sub-tasks shipped:
 
 - **124a** — `api/network_discovery.go`: `NetworkDiscoveryKind` enum + `IsValid()` + `AllNetworkDiscoveryKinds`. 4 categories: host-aliases, cloud-dns, service-mesh, nat-gateway-only.
 - **124b** — `backends/core/network_discovery_driver.go`: interface, registry, no-op default (nat-gateway-only), `ParseNetworkDiscoveryEnv()` (no-fallback semantics).
-- **124c** — `backends/core/network_discovery_hostaliases.go`: in-process host-aliases impl; ships with the abstraction.
+- **124c** — `backends/core/network_discovery_hostaliases.go`: in-process host-aliases impl.
+- **124d** — Per-backend adapters + wiring: cloudrun cloud-DNS, ECS service-mesh, ACA cloud-DNS, GCF host-aliases. `BaseServer.NetworkDiscovery` field defaults to no-op; backend startup overrides. Cloudrun `NetworkConnect` register-A-record callsite migrated to driver-mediated call.
 
 Spec: [specs/CLOUD_RESOURCE_MAPPING.md § Network discovery driver](specs/CLOUD_RESOURCE_MAPPING.md#network-discovery-driver-phase-124).
-
-**Deferred to follow-up phases:** cloud-dns + service-mesh impls (live in per-cloud-common pkgs requiring real GCP/AWS/Azure SDK calls), per-backend translator wiring, migration of inline calls (e.g. `cloudServiceRegisterCNAME`, ECS Cloud Map register paths). Each backend migrates as its inline discovery code is touched.
 
 Next: open PR, watch CI, merge, then start Phase 125 (DNS driver).
 

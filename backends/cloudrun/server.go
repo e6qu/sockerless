@@ -95,6 +95,10 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	}
 	s.SetSelf(s)
 	s.CloudState = &cloudRunCloudState{server: s}
+	// Phase 124: cloud-DNS network-discovery driver wraps the existing
+	// cloudServiceRegister/Deregister/Resolve methods so callers can
+	// migrate to the driver-mediated path incrementally.
+	s.NetworkDiscovery = newCloudDNSDiscovery(s)
 
 	// Storage backing registry. EmptyDirDriver always available;
 	// GCSFuseDriver kept for legacy SharedVolumes (tar-pack persist);
