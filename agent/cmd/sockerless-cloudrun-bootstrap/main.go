@@ -38,6 +38,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 )
 
 const (
@@ -61,6 +63,27 @@ const (
 	// container alive (e.g. postgres). /etc/hosts injection still runs
 	// for sidecars so they can resolve sibling aliases too.
 	envSidecar = "SOCKERLESS_SIDECAR"
+	// SOCKERLESS_JOB_TIMEOUT_SECONDS — Phase 128. Hard cap on a single
+	// workload subprocess (sidecar mode) or a single exec-envelope call
+	// (default-invoke mode). Default: 3600 (1 h). At timeout: SIGTERM
+	// → 30 s grace → SIGKILL; bootstrap reports exit code 124 to match
+	// GNU `timeout(1)`. Set to 0 or empty to disable. See
+	// specs/CLOUD_RESOURCE_MAPPING.md § Job lifecycle.
+	envJobTimeoutSeconds = "SOCKERLESS_JOB_TIMEOUT_SECONDS"
+)
+
+const (
+	// jobTimeoutDefaultSeconds is the bootstrap default when
+	// SOCKERLESS_JOB_TIMEOUT_SECONDS is unset. Cloud-side caps
+	// (Cloud Run Jobs 24 h, ACA 7 d, ECS unlimited, Lambda 15 min)
+	// are enforced separately at the backend layer.
+	jobTimeoutDefaultSeconds = 3600
+	// jobTimeoutGracePeriod is the SIGTERM → SIGKILL window. Matches
+	// GNU `timeout(1)`'s default.
+	jobTimeoutGracePeriod = 30
+	// jobTimeoutExitCode is the bootstrap's exit code on timeout.
+	// Matches GNU `timeout(1)`.
+	jobTimeoutExitCode = 124
 )
 
 // execEnvelopeRequest is the JSON shape the cloudrun backend POSTs for
@@ -345,12 +368,13 @@ func runExecEnvelope(w http.ResponseWriter, env execEnvelopeExec) {
 	cmd.Stdout = io.MultiWriter(&stdout, os.Stdout)
 	cmd.Stderr = io.MultiWriter(&stderr, os.Stderr)
 
-	exitCode := 0
-	if err := cmd.Run(); err != nil {
-		exitCode = 1
-		if ee, ok := err.(*exec.ExitError); ok {
-			exitCode = ee.ExitCode()
-		}
+	timeout := jobTimeoutFromEnv()
+	exitCode, timedOut, err := runWithTimeout(cmd, timeout, "exec")
+	if timedOut {
+		exitCode = jobTimeoutExitCode
+		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: exec argv=%v timed out after %ds; exit=%d\n",
+			env.Argv, timeout, exitCode)
+	} else if err != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: exec argv=%v exit=%d err=%v\n", env.Argv, exitCode, err)
 	} else {
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: exec argv=%v exit=0 stdout=%dB stderr=%dB\n", env.Argv, stdout.Len(), stderr.Len())
@@ -397,12 +421,13 @@ func runDefaultInvoke(w http.ResponseWriter) {
 		cmd.Dir = wd
 	}
 
-	exitCode := 0
-	if err := cmd.Run(); err != nil {
-		exitCode = 1
-		if ee, ok := err.(*exec.ExitError); ok {
-			exitCode = ee.ExitCode()
-		}
+	timeout := jobTimeoutFromEnv()
+	exitCode, timedOut, err := runWithTimeout(cmd, timeout, "default-invoke")
+	if timedOut {
+		exitCode = jobTimeoutExitCode
+		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: subprocess argv=%v timed out after %ds; exit=%d\n",
+			argv, timeout, exitCode)
+	} else if err != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: subprocess argv=%v exit=%d err=%v\n", argv, exitCode, err)
 	} else {
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: subprocess argv=%v exit=0 stdout=%dB\n", argv, stdout.Len())
@@ -445,6 +470,9 @@ func parseUserArgv(key string) []string {
 // (only the ingress binds PORT 8080). The sidecar's process (e.g.
 // postgres) is what keeps the container alive — its TCP port (5432
 // etc.) is reachable from the ingress container via shared loopback.
+//
+// Phase 128: arms a job-timeout timer reading SOCKERLESS_JOB_TIMEOUT_SECONDS
+// (default 3600). Timer firing → SIGTERM → 30s grace → SIGKILL → exit 124.
 func runSidecar() {
 	argv := append(parseUserArgv(envUserEntrypoint), parseUserArgv(envUserCmd)...)
 	if len(argv) == 0 {
@@ -459,15 +487,104 @@ func runSidecar() {
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = nil
 	fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: sidecar exec argv=%v workdir=%q\n", argv, cmd.Dir)
-	if err := cmd.Run(); err != nil {
-		exitCode := 1
-		if ee, ok := err.(*exec.ExitError); ok {
-			exitCode = ee.ExitCode()
-		}
+
+	timeout := jobTimeoutFromEnv()
+	exitCode, timedOut, err := runWithTimeout(cmd, timeout, "sidecar")
+	if timedOut {
+		// runWithTimeout already logged the timeout transitions.
+		os.Exit(jobTimeoutExitCode)
+	}
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: sidecar subprocess exit=%d err=%v\n", exitCode, err)
 		os.Exit(exitCode)
 	}
 	fmt.Fprintln(os.Stderr, "sockerless-cloudrun-bootstrap: sidecar subprocess exit=0")
+}
+
+// jobTimeoutFromEnv parses SOCKERLESS_JOB_TIMEOUT_SECONDS into a
+// duration in seconds. Empty/0/invalid → default (jobTimeoutDefaultSeconds).
+// Negative is clamped to 0 (effectively disabled).
+func jobTimeoutFromEnv() int {
+	raw := strings.TrimSpace(os.Getenv(envJobTimeoutSeconds))
+	if raw == "" {
+		return jobTimeoutDefaultSeconds
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: %s=%q invalid; using default %d\n",
+			envJobTimeoutSeconds, raw, jobTimeoutDefaultSeconds)
+		return jobTimeoutDefaultSeconds
+	}
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+// runWithTimeout runs `cmd` enforcing `timeoutSeconds`. If the
+// subprocess exceeds the budget, sends SIGTERM, waits jobTimeoutGracePeriod
+// seconds for graceful exit, then SIGKILLs. Returns (exitCode, timedOut,
+// err). When timedOut is true the caller should exit with jobTimeoutExitCode.
+// `label` is included in log lines for context (e.g. "sidecar", "exec").
+//
+// timeoutSeconds <= 0 disables the timer (cmd runs indefinitely).
+func runWithTimeout(cmd *exec.Cmd, timeoutSeconds int, label string) (exitCode int, timedOut bool, err error) {
+	if err := cmd.Start(); err != nil {
+		return -1, false, err
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	if timeoutSeconds <= 0 {
+		err := <-done
+		return extractExitCode(err), false, err
+	}
+
+	timer := time.NewTimer(time.Duration(timeoutSeconds) * time.Second)
+	defer timer.Stop()
+
+	select {
+	case err := <-done:
+		return extractExitCode(err), false, err
+	case <-timer.C:
+		fmt.Fprintf(os.Stderr,
+			"sockerless-cloudrun-bootstrap: %s workload timed out after %d seconds; sending SIGTERM\n",
+			label, timeoutSeconds)
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+
+		grace := time.NewTimer(time.Duration(jobTimeoutGracePeriod) * time.Second)
+		defer grace.Stop()
+		select {
+		case <-done:
+			fmt.Fprintf(os.Stderr,
+				"sockerless-cloudrun-bootstrap: %s workload exited within grace period; bootstrap exiting %d\n",
+				label, jobTimeoutExitCode)
+		case <-grace.C:
+			fmt.Fprintf(os.Stderr,
+				"sockerless-cloudrun-bootstrap: %s workload did not exit after %ds grace; sending SIGKILL\n",
+				label, jobTimeoutGracePeriod)
+			_ = cmd.Process.Kill()
+			<-done
+			fmt.Fprintf(os.Stderr,
+				"sockerless-cloudrun-bootstrap: %s bootstrap exiting %d\n",
+				label, jobTimeoutExitCode)
+		}
+		return jobTimeoutExitCode, true, nil
+	}
+}
+
+// extractExitCode pulls the exit code from a *exec.ExitError, defaulting
+// to 0 (success) when err is nil and 1 (generic failure) for non-exit
+// errors.
+func extractExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	if ee, ok := err.(*exec.ExitError); ok {
+		return ee.ExitCode()
+	}
+	return 1
 }
 
 // writeHostAliases appends `127.0.0.1 <alias>` lines to /etc/hosts for

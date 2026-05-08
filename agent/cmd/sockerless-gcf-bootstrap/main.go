@@ -106,6 +106,18 @@ const (
 	// container alive (e.g. postgres). /etc/hosts injection still runs
 	// for sidecars so they can resolve sibling aliases too.
 	envSidecar = "SOCKERLESS_SIDECAR"
+	// SOCKERLESS_JOB_TIMEOUT_SECONDS — Phase 128. Hard cap on a single
+	// workload subprocess (sidecar/default-invoke mode) or a single
+	// exec-envelope call. Default: 3600 (1 h). At timeout: SIGTERM →
+	// 30s grace → SIGKILL; bootstrap reports exit code 124. See
+	// specs/CLOUD_RESOURCE_MAPPING.md § Job lifecycle.
+	envJobTimeoutSeconds = "SOCKERLESS_JOB_TIMEOUT_SECONDS"
+)
+
+const (
+	jobTimeoutDefaultSeconds = 3600
+	jobTimeoutGracePeriod    = 30
+	jobTimeoutExitCode       = 124
 )
 
 // PodMember describes one container inside a pod. The supervisor runs
@@ -353,12 +365,13 @@ func runDefaultInvoke(w http.ResponseWriter) {
 		cmd.Dir = wd
 	}
 
-	exitCode := 0
-	if err := cmd.Run(); err != nil {
-		exitCode = 1
-		if ee, ok := err.(*exec.ExitError); ok {
-			exitCode = ee.ExitCode()
-		}
+	timeout := jobTimeoutFromEnv()
+	exitCode, timedOut, err := runWithTimeout(cmd, timeout, "default-invoke")
+	if timedOut {
+		exitCode = jobTimeoutExitCode
+		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: subprocess argv=%v timed out after %ds; exit=%d\n",
+			argv, timeout, exitCode)
+	} else if err != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: subprocess argv=%v exit=%d err=%v\n", argv, exitCode, err)
 	} else {
 		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: subprocess argv=%v exit=0 stdout=%dB\n", argv, stdout.Len())
@@ -479,12 +492,13 @@ func runExecEnvelope(w http.ResponseWriter, env execEnvelopeExec) {
 	cmd.Stdout = io.MultiWriter(&stdout, os.Stdout)
 	cmd.Stderr = io.MultiWriter(&stderr, os.Stderr)
 
-	exitCode := 0
-	if err := cmd.Run(); err != nil {
-		exitCode = 1
-		if ee, ok := err.(*exec.ExitError); ok {
-			exitCode = ee.ExitCode()
-		}
+	timeout := jobTimeoutFromEnv()
+	exitCode, timedOut, err := runWithTimeout(cmd, timeout, "exec")
+	if timedOut {
+		exitCode = jobTimeoutExitCode
+		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: exec argv=%v timed out after %ds; exit=%d\n",
+			env.Argv, timeout, exitCode)
+	} else if err != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: exec argv=%v exit=%d err=%v\n", env.Argv, exitCode, err)
 	} else {
 		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: exec argv=%v exit=0 stdout=%dB stderr=%dB\n", env.Argv, stdout.Len(), stderr.Len())
@@ -797,13 +811,90 @@ func runSidecar() {
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = nil
 	fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: sidecar exec argv=%v workdir=%q\n", argv, cmd.Dir)
-	if err := cmd.Run(); err != nil {
-		exitCode := 1
-		if ee, ok := err.(*exec.ExitError); ok {
-			exitCode = ee.ExitCode()
-		}
+	timeout := jobTimeoutFromEnv()
+	exitCode, timedOut, err := runWithTimeout(cmd, timeout, "sidecar")
+	if timedOut {
+		os.Exit(jobTimeoutExitCode)
+	}
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: sidecar subprocess exit=%d err=%v\n", exitCode, err)
 		os.Exit(exitCode)
 	}
 	fmt.Fprintln(os.Stderr, "sockerless-gcf-bootstrap: sidecar subprocess exit=0")
+}
+
+// jobTimeoutFromEnv parses SOCKERLESS_JOB_TIMEOUT_SECONDS into a
+// duration in seconds. Empty/invalid → default. Negative → 0 (disabled).
+// Phase 128.
+func jobTimeoutFromEnv() int {
+	raw := strings.TrimSpace(os.Getenv(envJobTimeoutSeconds))
+	if raw == "" {
+		return jobTimeoutDefaultSeconds
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: %s=%q invalid; using default %d\n",
+			envJobTimeoutSeconds, raw, jobTimeoutDefaultSeconds)
+		return jobTimeoutDefaultSeconds
+	}
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+// runWithTimeout runs cmd with the configured job timeout. On timeout:
+// SIGTERM → grace period → SIGKILL → returns timedOut=true. Caller
+// should set exit code to jobTimeoutExitCode. timeoutSeconds<=0 disables.
+// Phase 128.
+func runWithTimeout(cmd *exec.Cmd, timeoutSeconds int, label string) (exitCode int, timedOut bool, err error) {
+	if err := cmd.Start(); err != nil {
+		return -1, false, err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	if timeoutSeconds <= 0 {
+		err := <-done
+		return extractExitCode(err), false, err
+	}
+	timer := time.NewTimer(time.Duration(timeoutSeconds) * time.Second)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return extractExitCode(err), false, err
+	case <-timer.C:
+		fmt.Fprintf(os.Stderr,
+			"sockerless-gcf-bootstrap: %s workload timed out after %d seconds; sending SIGTERM\n",
+			label, timeoutSeconds)
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		grace := time.NewTimer(time.Duration(jobTimeoutGracePeriod) * time.Second)
+		defer grace.Stop()
+		select {
+		case <-done:
+			fmt.Fprintf(os.Stderr,
+				"sockerless-gcf-bootstrap: %s workload exited within grace period; bootstrap exiting %d\n",
+				label, jobTimeoutExitCode)
+		case <-grace.C:
+			fmt.Fprintf(os.Stderr,
+				"sockerless-gcf-bootstrap: %s workload did not exit after %ds grace; sending SIGKILL\n",
+				label, jobTimeoutGracePeriod)
+			_ = cmd.Process.Kill()
+			<-done
+			fmt.Fprintf(os.Stderr,
+				"sockerless-gcf-bootstrap: %s bootstrap exiting %d\n",
+				label, jobTimeoutExitCode)
+		}
+		return jobTimeoutExitCode, true, nil
+	}
+}
+
+func extractExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	if ee, ok := err.(*exec.ExitError); ok {
+		return ee.ExitCode()
+	}
+	return 1
 }

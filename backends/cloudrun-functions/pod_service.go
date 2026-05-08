@@ -520,6 +520,15 @@ func (s *Server) buildPodContainerSpec(c api.Container, overlayURI string, isMai
 			Values: &runpb.EnvVar_Value{Value: "1"},
 		})
 	}
+	// Phase 128: SOCKERLESS_JOB_TIMEOUT_SECONDS for the bootstrap timer.
+	// User's per-job override (carried through cfg.Env above) wins.
+	if jt := core.JobTimeoutEnvIfUnset(cfg.Env); jt != "" {
+		parts := strings.SplitN(jt, "=", 2)
+		envVars = append(envVars, &runpb.EnvVar{
+			Name:   parts[0],
+			Values: &runpb.EnvVar_Value{Value: parts[1]},
+		})
+	}
 
 	defName := "main"
 	if !isMain {

@@ -4,30 +4,37 @@
 
 ## Branch
 
-`docs-streamline` — off `origin/main` at 9169d4b. Single work-branch rule applies; everything stacks here, no side branches. PR #127 + #128 already merged.
+`phase-128-job-timeout` — off `origin/main` at 7b35d90 (PR #129 merged 2026-05-09). Single work-branch rule: everything stacks here, no side branches.
 
-## Phase 135 — Sim host model + 3-tier coverage (PR #129, closing)
+## Ordered roadmap (do them in this order)
 
-6 sub-tasks shipped (135a–f). Detail in [STATUS.md](STATUS.md#in-flight-on-docs-streamline-pr-129) and [specs/CLOUD_RESOURCE_MAPPING.md § Simulator host model](specs/CLOUD_RESOURCE_MAPPING.md#simulator-host-model-phase-135). 12 bugs closed (BUG-949 / 972 / 975 / 976 / 977 / 978 / 979 / 980 / 981 / 982 / 983 / 984). Sim CI runs on native `ubuntu-24.04-arm` runners (no QEMU). Awaiting your merge.
+1. **Phase 128 — Runner job timeout** (live-cloud cost gate). Hard cap on Cloud Run / Lambda / ECS task duration; default 1 h; SIGTERM → 30 s → SIGKILL; bootstrap reports exit 124. Operator override via dispatcher TOML `runner_job_timeout` + bootstrap env `SOCKERLESS_JOB_TIMEOUT_SECONDS`. **Must precede the next live-cloud session** — without it, hung subprocesses pin quota and burn money.
+2. **Phase 124 — Network driver** (`host-aliases` / `cloud-dns` / `service-mesh` / `nat-gateway-only`).
+3. **Phase 125 — DNS driver** (`cloud-map` / `cloud-dns-zone` / `service-discovery` / `private-dns-zone`). Depends on 124.
+4. **Phase 126 — Access driver** (`iam-role` / `id-token` / `mTLS` / `none-internal`). Sim prereq `generateIdToken` ✅.
+5. **Phase 127 — Storage driver expansion** (`pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral`). Sim prereq Compute Disks ✅.
+6. **Phase 121b — Azure sim hardening** (cloud-faithful for ACA + AZF; mirror of Phase 121).
+7. **Phase 78 — UI polish** (dark mode, design tokens, error UX, container detail modal, accessibility).
 
-## Pick next
+Driver phases (124–127) follow the 7-step template from [PLAN.md § Driver phase template](PLAN.md#driver-phase-template-124127). Each phase starts with a `specs/CLOUD_RESOURCE_MAPPING.md` design pass before code.
 
-### Track A — Live-cloud cost gate (must precede next live session)
+## Active — Phase 128 (job timeout, ready for PR + CI)
 
-Phase 128 (job timeout) + Phase 129 remainder (BigQuery export, per-session labels, budget alert, session-end teardown). Without this, the regional-CPU-quota debt cycle from 2026-05-07 repeats. Detail in [PLAN.md](PLAN.md).
+4/4 sub-tasks shipped:
 
-### Track B — Driver generalization (Phases 124–127)
+- **128a** — Bootstrap timer (`runWithTimeout`, `jobTimeoutFromEnv`) in `agent/cmd/sockerless-{cloudrun,gcf}-bootstrap`. SIGTERM → 30s grace → SIGKILL → exit 124. 5 unit tests.
+- **128b** — `backends/core/job_timeout.go` shared helpers; cloudrun + gcf backends inject `SOCKERLESS_JOB_TIMEOUT_SECONDS` on every workload container (per-job override wins).
+- **128c** — Cloud-native safety net: cloudrun `TaskTemplate.Timeout` + ACA `ReplicaTimeout` derived from `core.JobTimeoutDefault()`, clamped per cloud max. Lambda already at 900s cap.
+- **128d** — Integration test in `backends/cloudrun/arithmetic_integration_test.go::TestCloudRunJobTimeout`.
 
-Sim prereqs already shipped (PR #127): `generateIdToken` + Compute Disks. 124 Network · 125 DNS · 126 Access · 127 Storage expansion. Each phase: design pass in `specs/CLOUD_RESOURCE_MAPPING.md` first, then 7-step template (api enum → core registry → per-cloud-common impl → per-backend translator → operator config → no-fallbacks at resolve → migrate inline).
+Spec: [specs/CLOUD_RESOURCE_MAPPING.md § Job lifecycle](specs/CLOUD_RESOURCE_MAPPING.md#job-lifecycle-timeouts-and-termination-phase-128).
 
-### Track C — Phase 121b Azure sim hardening
-
-Mirror of Phase 121 cloud-faithful work for ACA + AZF.
+Next: open PR, watch CI, merge, then start Phase 124 (Network driver).
 
 ## Standing rules
 
 - **Never merge PRs** — user handles all merges. Push only.
-- **Never push `main`.** Create branch off `origin/main`, PR it.
+- **Never push `main`.** Branch off `origin/main`, PR it.
 - **Single work-branch rule** — everything stacks here; no side branches.
 - **State save after every task** — STATUS / PLAN / WHAT_WE_DID / DO_NEXT / BUGS.
 - **Bugs file before fix** — every CI / live failure lands in BUGS.md as a one-liner before any analysis or fix attempt. Header counts updated in the same edit.
