@@ -27,12 +27,15 @@ test: ## run unit tests
 test-integration: ## run integration tests (build-tag + env-var gated)
 	$(GO_ENV) SOCKERLESS_INTEGRATION=1 go test -tags integration ./...
 
-lint: ## go vet + gofmt check
+lint: ## go vet + gofmt check (golangci-lint when available)
 	$(GO_ENV) go vet ./...
 	@unformatted=$$(gofmt -l .); \
 	if [ -n "$$unformatted" ]; then \
 	  printf "$(COLOR_RED)gofmt -l .$(COLOR_RESET)\n%s\n" "$$unformatted"; \
 	  exit 1; \
+	fi
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+	  $(GO_ENV) golangci-lint run ./...; \
 	fi
 
 clean: ## clean go test cache

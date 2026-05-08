@@ -40,16 +40,21 @@ include $(REPO_ROOT)/make/colors.mk
 install: ## install Go module deps
 	$(GO_ENV) go mod download
 
+# GO_LDFLAGS is set by leaves that want stripped binaries
+# (e.g. simulators set GO_LDFLAGS := -s -w). Passed to go build as
+# `-ldflags="$(GO_LDFLAGS)"` so the recipe quotes it correctly.
+GO_LDFLAGS_ARG := $(if $(GO_LDFLAGS),-ldflags="$(GO_LDFLAGS)",)
+
 build: ## build the binary (with UI when available, else falls back to build-noui)
 ifndef UI_PACKAGE
 	$(call STEP,$(APP_NAME): building (no UI configured))
-	$(GO_ENV) go build $(GO_BUILD_FLAGS) -o $(APP_NAME) $(GO_PACKAGE)
+	$(GO_ENV) go build $(GO_BUILD_FLAGS) $(GO_LDFLAGS_ARG) -o $(APP_NAME) $(GO_PACKAGE)
 else
 	@if [ -d "$(UI_DIST_SRC)" ]; then \
 	  printf "$(COLOR_CYAN)▸ %s: embedding UI from %s$(COLOR_RESET)\n" \
 	    "$(APP_NAME)" "$(UI_DIST_SRC)" ; \
 	  rm -rf $(LOCAL_DIST) && cp -r $(UI_DIST_SRC) $(LOCAL_DIST) ; \
-	  $(GO_ENV) go build $(GO_BUILD_FLAGS) -o $(APP_NAME) $(GO_PACKAGE) ; \
+	  $(GO_ENV) go build $(GO_BUILD_FLAGS) $(GO_LDFLAGS_ARG) -o $(APP_NAME) $(GO_PACKAGE) ; \
 	else \
 	  printf "$(COLOR_YEL)▸ %s: no UI dist at %s — falling back to build-noui$(COLOR_RESET)\n" \
 	    "$(APP_NAME)" "$(UI_DIST_SRC)" ; \
@@ -59,7 +64,7 @@ endif
 
 build-noui: ## build the binary with -tags noui (no embedded UI)
 	$(call STEP,$(APP_NAME): building -tags noui)
-	$(GO_ENV) go build -tags noui $(GO_BUILD_FLAGS) -o $(APP_NAME) $(GO_PACKAGE)
+	$(GO_ENV) go build -tags noui $(GO_BUILD_FLAGS) $(GO_LDFLAGS_ARG) -o $(APP_NAME) $(GO_PACKAGE)
 
 # `embed` is exposed as a stand-alone target so a top-level orchestrator
 # can sequence ui-build → embed → go-build deterministically. It does
@@ -100,12 +105,24 @@ test: ## run unit tests
 test-integration: ## run integration tests (build-tag + env-var gated)
 	$(GO_ENV) SOCKERLESS_INTEGRATION=1 go test -tags integration ./...
 
-lint: ## go vet + gofmt check
+lint: ## go vet + gofmt check (golangci-lint when available)
+ifdef UI_PACKAGE
+	$(GO_ENV) go vet -tags noui ./...
+else
 	$(GO_ENV) go vet ./...
+endif
 	@unformatted=$$(gofmt -l .); \
 	if [ -n "$$unformatted" ]; then \
 	  printf "$(COLOR_RED)gofmt -l .$(COLOR_RESET)\n%s\n" "$$unformatted"; \
 	  exit 1; \
+	fi
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+	  printf "$(COLOR_DIM)$(APP_NAME): golangci-lint$(COLOR_RESET)\n"; \
+	  if [ -n "$(UI_PACKAGE)" ]; then \
+	    $(GO_ENV) golangci-lint run --build-tags noui ./...; \
+	  else \
+	    $(GO_ENV) golangci-lint run ./...; \
+	  fi; \
 	fi
 
 clean: ## remove built binary + dist
