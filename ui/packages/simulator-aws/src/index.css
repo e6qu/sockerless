@@ -1,1 +1,13 @@
 @import "tailwindcss";
+@import "@sockerless/ui-core/styles";
+
+/* Per-app accent — see ui/packages/core/src/styles/tokens.css for the
+ * full token surface this overrides. */
+:root {
+  --color-accent: oklch(0.78 0.18 55);
+  --color-accent-fg: oklch(0.18 0.04 55);
+  --color-accent-soft: oklch(0.94 0.07 55);
+}
+.dark {
+  --color-accent-soft: oklch(0.32 0.08 55);
+}

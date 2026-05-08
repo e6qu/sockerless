@@ -2,14 +2,56 @@ export interface MetricsCardProps {
   title: string;
   value: string | number;
   subtitle?: string;
+  /** Optional emphasis — pulls the number into the accent colour. */
+  emphasized?: boolean;
 }
 
-export function MetricsCard({ title, value, subtitle }: MetricsCardProps) {
+/**
+ * Editorial metric panel. The label is small monospace caps, the
+ * number is the serif display voice — pulled large to sit like a pull
+ * quote. A 2-px accent bar runs down the left side of the panel
+ * (mimics the AppShell rail at smaller scale, ties everything together).
+ */
+export function MetricsCard({ title, value, subtitle, emphasized }: MetricsCardProps) {
   return (
-    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
-      <p className="text-sm text-gray-500 dark:text-gray-400">{title}</p>
-      <p className="mt-1 text-2xl font-semibold">{value}</p>
-      {subtitle && <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">{subtitle}</p>}
+    <div
+      className="relative px-4 py-4"
+      style={{
+        background: "var(--color-surface)",
+        border: "1px solid var(--color-border)",
+        borderLeft: emphasized
+          ? "3px solid var(--color-accent)"
+          : "1px solid var(--color-border)",
+        borderRadius: "var(--radius-sm)",
+      }}
+    >
+      <div
+        className="text-[10px] uppercase tracking-[0.2em]"
+        style={{ color: "var(--color-fg-subtle)" }}
+      >
+        {title}
+      </div>
+      <div
+        className="mt-2 font-display tabular-nums"
+        style={{
+          fontSize: "1.85rem",
+          fontWeight: 600,
+          fontStyle: "italic",
+          letterSpacing: "-0.02em",
+          lineHeight: 1,
+          color: emphasized ? "var(--color-accent)" : "var(--color-fg)",
+        }}
+      >
+        {value}
+      </div>
+      {subtitle && (
+        <div
+          className="mt-2 text-[11px] font-mono"
+          style={{ color: "var(--color-fg-muted)" }}
+        >
+          {subtitle}
+        </div>
+      )}
     </div>
   );
 }

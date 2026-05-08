@@ -58,9 +58,11 @@ describe("OAuthPage", () => {
     mockFetch.mockResolvedValue(jsonResponse(oauthState));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Flow simulator")).toBeInTheDocument();
-      expect(screen.getByText(/Active device codes/)).toBeInTheDocument();
-      expect(screen.getByText(/Active authorization codes/)).toBeInTheDocument();
+      // The simulator section header is rendered with uppercase via CSS;
+      // multiple buttons mention "flow", so anchor on the section label.
+      expect(screen.getAllByText(/flow simulator/i).length).toBeGreaterThan(0);
+      expect(screen.getByText(/active device codes/i)).toBeInTheDocument();
+      expect(screen.getByText(/active authorization codes/i)).toBeInTheDocument();
     });
   });
 

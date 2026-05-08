@@ -1,5 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { DataTable, Spinner, StatusBadge } from "@sockerless/ui-core/components";
+import {
+  Button,
+  DataTable,
+  PageHeading,
+  Spinner,
+  StatusBadge,
+} from "@sockerless/ui-core/components";
 import { createColumnHelper } from "@tanstack/react-table";
 import { useNavigate } from "react-router";
 import { useState } from "react";
@@ -18,17 +24,36 @@ type Tab = "workflows" | "runs";
 export function WorkflowsPage() {
   const [tab, setTab] = useState<Tab>("workflows");
   return (
-    <div className="space-y-4">
-      <h2 className="text-xl font-semibold">Workflows</h2>
-      <div className="flex gap-2 border-b border-gray-200">
+    <div>
+      <PageHeading
+        kicker="actions · workflows"
+        title={<>Workflows &amp; runs</>}
+        meta={
+          tab === "workflows"
+            ? "YAML files discovered from git + bleephub-submitted definitions."
+            : "Run-level history. Click a row for the per-job timeline."
+        }
+      />
+      <TabRow>
         <TabButton active={tab === "workflows"} onClick={() => setTab("workflows")}>
           Workflows (files)
         </TabButton>
         <TabButton active={tab === "runs"} onClick={() => setTab("runs")}>
           Runs
         </TabButton>
-      </div>
+      </TabRow>
       {tab === "workflows" ? <WorkflowsTab /> : <RunsTab />}
+    </div>
+  );
+}
+
+function TabRow({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="mb-5 flex gap-1 -mx-1"
+      style={{ borderBottom: "1px solid var(--color-border)" }}
+    >
+      {children}
     </div>
   );
 }
@@ -42,11 +67,19 @@ function TabButton({
   onClick: () => void;
   children: React.ReactNode;
 }) {
-  const cls = active
-    ? "px-4 py-2 border-b-2 border-blue-600 text-blue-600 font-medium"
-    : "px-4 py-2 border-b-2 border-transparent text-gray-600 hover:text-gray-900";
   return (
-    <button type="button" onClick={onClick} className={cls}>
+    <button
+      type="button"
+      onClick={onClick}
+      className="px-4 py-2 font-mono uppercase tracking-[0.12em]"
+      style={{
+        fontSize: "0.7rem",
+        color: active ? "var(--color-fg)" : "var(--color-fg-muted)",
+        borderBottom: `2px solid ${active ? "var(--color-accent)" : "transparent"}`,
+        marginBottom: "-1px",
+        transition: "all 0.12s var(--ease-out-quint)",
+      }}
+    >
       {children}
     </button>
   );
@@ -62,12 +95,24 @@ function WorkflowsTab() {
   });
   const [dispatchTarget, setDispatchTarget] = useState<BleephubWorkflowFile | null>(null);
 
-  if (isLoading || !data) return <Spinner />;
+  if (isLoading || !data) return <Spinner label="loading workflows" />;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const columns: any[] = [
-    filesCol.accessor("name", { header: "Name" }),
-    filesCol.accessor("path", { header: "Path" }),
+    filesCol.accessor("name", {
+      header: "Name",
+      cell: (info) => (
+        <span style={{ color: "var(--color-fg)", fontWeight: 500 }}>
+          {info.getValue()}
+        </span>
+      ),
+    }),
+    filesCol.accessor("path", {
+      header: "Path",
+      cell: (info) => (
+        <span style={{ color: "var(--color-fg-muted)" }}>{info.getValue()}</span>
+      ),
+    }),
     filesCol.accessor("repoFullName", { header: "Repo" }),
     filesCol.accessor("state", {
       header: "State",
@@ -76,38 +121,50 @@ function WorkflowsTab() {
     filesCol.accessor("source", {
       header: "Source",
       cell: (info) => (
-        <span className="text-xs text-gray-500">{info.getValue()}</span>
+        <span
+          className="font-mono uppercase tracking-[0.1em]"
+          style={{
+            color: "var(--color-fg-subtle)",
+            fontSize: "0.65rem",
+          }}
+        >
+          {info.getValue()}
+        </span>
       ),
     }),
     filesCol.accessor("updatedAt", {
       header: "Updated",
-      cell: (info) => new Date(info.getValue()).toLocaleString(),
+      cell: (info) => (
+        <span style={{ color: "var(--color-fg-muted)" }}>
+          {new Date(info.getValue()).toLocaleString()}
+        </span>
+      ),
     }),
     filesCol.display({
       id: "actions",
-      header: "Actions",
+      header: "",
       cell: (info) => (
-        <button
-          type="button"
-          className="text-blue-600 hover:text-blue-800 text-sm font-medium"
-          onClick={() => setDispatchTarget(info.row.original)}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={(e: React.MouseEvent) => {
+            e.stopPropagation();
+            setDispatchTarget(info.row.original);
+          }}
         >
-          Run workflow
-        </button>
+          Run →
+        </Button>
       ),
     }),
   ];
 
   return (
     <>
-      <div className="text-sm text-gray-600">
-        {data.length} workflow file{data.length === 1 ? "" : "s"}. Discovered from
-        repo-on-disk and from <code>POST /api/v3/bleephub/workflow</code> submissions.
-      </div>
       <DataTable
         data={data}
         columns={columns}
-        filterPlaceholder="Filter workflow files..."
+        filterPlaceholder="Filter workflow files…"
+        emptyMessage="No workflow files yet. Push a .github/workflows/*.yml or POST /api/v3/bleephub/workflow."
       />
       {dispatchTarget && (
         <DispatchDialog
@@ -129,12 +186,24 @@ function RunsTab() {
     refetchInterval: 3000,
   });
 
-  if (isLoading || !data) return <Spinner />;
+  if (isLoading || !data) return <Spinner label="loading runs" />;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const columns: any[] = [
-    runsCol.accessor("name", { header: "Name" }),
-    runsCol.accessor("runId", { header: "Run ID" }),
+    runsCol.accessor("name", {
+      header: "Name",
+      cell: (info) => (
+        <span style={{ color: "var(--color-fg)", fontWeight: 500 }}>
+          {info.getValue()}
+        </span>
+      ),
+    }),
+    runsCol.accessor("runId", {
+      header: "Run #",
+      cell: (info) => (
+        <span style={{ color: "var(--color-fg-muted)" }}>#{info.getValue()}</span>
+      ),
+    }),
     runsCol.accessor("status", {
       header: "Status",
       cell: (info) => <StatusBadge status={info.getValue()} />,
@@ -142,11 +211,21 @@ function RunsTab() {
     runsCol.accessor("result", {
       header: "Result",
       cell: (info) => {
-        const val = info.getValue();
-        return val ? <StatusBadge status={val} /> : null;
+        const v = info.getValue();
+        return v ? <StatusBadge status={v} /> : null;
       },
     }),
-    runsCol.accessor("eventName", { header: "Event" }),
+    runsCol.accessor("eventName", {
+      header: "Event",
+      cell: (info) => (
+        <span
+          className="font-mono uppercase tracking-[0.1em]"
+          style={{ color: "var(--color-fg-subtle)", fontSize: "0.65rem" }}
+        >
+          {info.getValue()}
+        </span>
+      ),
+    }),
     runsCol.accessor("repoFullName", { header: "Repo" }),
     runsCol.accessor("createdAt", {
       header: "Created",
@@ -155,23 +234,25 @@ function RunsTab() {
     runsCol.display({
       id: "jobCount",
       header: "Jobs",
-      cell: (info) => Object.keys(info.row.original.jobs).length,
+      cell: (info) => (
+        <span
+          className="tabular-nums"
+          style={{ color: "var(--color-fg-muted)" }}
+        >
+          {Object.keys(info.row.original.jobs).length}
+        </span>
+      ),
     }),
   ];
 
   return (
-    <div
-      onClick={(e) => {
-        const row = (e.target as HTMLElement).closest("tr");
-        if (!row) return;
-        const idx = row.dataset.rowIndex ?? row.rowIndex - 1;
-        const wf = data[Number(idx)];
-        if (wf) navigate(`/ui/workflows/${wf.id}`);
-      }}
-    >
-      <div className="text-sm text-gray-600 mb-2">{data.length} run{data.length === 1 ? "" : "s"}</div>
-      <DataTable data={data} columns={columns} filterPlaceholder="Filter runs..." />
-    </div>
+    <DataTable
+      data={data}
+      columns={columns}
+      filterPlaceholder="Filter runs…"
+      emptyMessage="No runs yet. Submit a workflow via /api/v3/bleephub/workflow or dispatch one from the Workflows tab."
+      onRowClick={(row) => navigate(`/ui/workflows/${row.id}`)}
+    />
   );
 }
 
@@ -192,81 +273,118 @@ function DispatchDialog({
       let inputs: Record<string, string> = {};
       try {
         inputs = JSON.parse(inputsJSON || "{}");
-      } catch (e) {
+      } catch {
         throw new Error("inputs must be valid JSON");
       }
       await dispatchWorkflow(target.repoFullName, target.id, { ref, inputs });
     },
     onSuccess: () => {
-      // Refresh the runs list so the new run appears.
       queryClient.invalidateQueries({ queryKey: ["workflows"] });
       onClose();
     },
-    onError: (err: Error) => {
-      setError(err.message);
-    },
+    onError: (err: Error) => setError(err.message),
   });
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full space-y-4">
-        <div>
-          <h3 className="text-lg font-semibold">Run workflow</h3>
-          <div className="text-sm text-gray-600">
-            <code>{target.path}</code> · {target.repoFullName}
-          </div>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: "color-mix(in oklch, var(--color-fg) 60%, transparent)" }}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md p-6"
+        style={{
+          background: "var(--color-surface-raised)",
+          border: "1px solid var(--color-border-strong)",
+          borderRadius: "var(--radius-sm)",
+          boxShadow: "8px 8px 0 var(--color-accent)",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          className="mb-1 text-[10px] uppercase tracking-[0.22em]"
+          style={{ color: "var(--color-fg-subtle)" }}
+        >
+          dispatch workflow
         </div>
-        <div>
-          <label htmlFor="dispatch-ref" className="block text-sm font-medium text-gray-700">
-            Ref
-          </label>
-          <input
-            id="dispatch-ref"
-            type="text"
-            value={ref}
-            onChange={(e) => setRef(e.target.value)}
-            className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm font-mono text-sm"
-            placeholder="refs/heads/main"
-          />
+        <h3
+          className="font-display"
+          style={{
+            fontStyle: "italic",
+            fontWeight: 600,
+            fontSize: "1.6rem",
+            letterSpacing: "-0.025em",
+            lineHeight: 1.05,
+          }}
+        >
+          {target.name}
+        </h3>
+        <div
+          className="mt-1 mb-5 font-mono text-xs"
+          style={{ color: "var(--color-fg-muted)" }}
+        >
+          {target.path} · {target.repoFullName}
         </div>
-        <div>
-          <label htmlFor="dispatch-inputs" className="block text-sm font-medium text-gray-700">
-            Inputs (JSON)
-          </label>
-          <textarea
-            id="dispatch-inputs"
-            value={inputsJSON}
-            onChange={(e) => setInputsJSON(e.target.value)}
-            rows={4}
-            className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm font-mono text-sm"
-            placeholder='{"key":"value"}'
-          />
-        </div>
+
+        <label
+          htmlFor="dispatch-ref"
+          className="mb-1 block text-[10px] uppercase tracking-[0.18em]"
+          style={{ color: "var(--color-fg-subtle)" }}
+        >
+          Ref
+        </label>
+        <input
+          id="dispatch-ref"
+          type="text"
+          value={ref}
+          onChange={(e) => setRef(e.target.value)}
+          className="mb-4 w-full"
+        />
+
+        <label
+          htmlFor="dispatch-inputs"
+          className="mb-1 block text-[10px] uppercase tracking-[0.18em]"
+          style={{ color: "var(--color-fg-subtle)" }}
+        >
+          Inputs (JSON)
+        </label>
+        <textarea
+          id="dispatch-inputs"
+          value={inputsJSON}
+          onChange={(e) => setInputsJSON(e.target.value)}
+          rows={5}
+          className="mb-4 w-full"
+          style={{ resize: "vertical" }}
+        />
+
         {error && (
-          <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+          <div
+            className="mb-4 px-3 py-2 font-mono text-xs"
+            style={{
+              background: "var(--color-status-error-soft)",
+              color: "var(--color-status-error)",
+              border: "1px solid var(--color-status-error)",
+              borderRadius: "var(--radius-sm)",
+            }}
+          >
             {error}
           </div>
         )}
+
         <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
-            disabled={mutation.isPending}
-          >
+          <Button onClick={onClose} disabled={mutation.isPending} variant="ghost">
             Cancel
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
             onClick={() => {
               setError(null);
               mutation.mutate();
             }}
-            className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
             disabled={mutation.isPending}
+            variant="primary"
           >
-            {mutation.isPending ? "Dispatching…" : "Dispatch"}
-          </button>
+            {mutation.isPending ? "Dispatching…" : "Dispatch ⚡"}
+          </Button>
         </div>
       </div>
     </div>

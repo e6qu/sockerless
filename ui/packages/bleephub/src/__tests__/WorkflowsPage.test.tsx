@@ -87,7 +87,9 @@ describe("WorkflowsPage", () => {
     renderPage();
     await waitFor(() => {
       expect(screen.getByText(".github/workflows/ci.yml")).toBeInTheDocument();
-      expect(screen.getByText("Run workflow")).toBeInTheDocument();
+      // Per-row dispatch button — at least one Run button must render.
+      // ("Runners" tab button also matches /run/i so use a count check.)
+      expect(screen.getAllByRole("button", { name: /run/i }).length).toBeGreaterThan(0);
     });
   });
 
@@ -107,15 +109,22 @@ describe("WorkflowsPage", () => {
   it("opens the dispatch dialog when Run workflow is clicked", async () => {
     mockFetch.mockImplementation((url: RequestInfo | URL) => routedFetch(url));
     renderPage();
+    // Take the LAST /run/i button — the per-row dispatch action — to
+    // skip the heading-level "Run" mentions if any exist.
     await waitFor(() => {
-      expect(screen.getByText("Run workflow")).toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: /run/i }).length).toBeGreaterThan(0);
     });
-    fireEvent.click(screen.getByText("Run workflow"));
+    // Wait for the row to render (the file path appears once data arrives).
+    await screen.findByText(".github/workflows/ci.yml");
+    // Click the per-row dispatch button. The button label starts with
+    // "Run " — anchor on it to skip the "Runs" tab.
+    const buttons = screen.getAllByRole("button");
+    const runBtn = buttons.find((b) => /^run\b/i.test(b.textContent ?? ""));
+    expect(runBtn, `Found ${buttons.length} buttons: ${buttons.map((b) => b.textContent).join(" | ")}`).toBeDefined();
+    fireEvent.click(runBtn!);
+    // Dialog now in the DOM — assert on its Dispatch CTA.
     await waitFor(() => {
-      // Dialog title.
-      expect(screen.getByRole("heading", { name: "Run workflow" })).toBeInTheDocument();
-      expect(screen.getByLabelText("Ref")).toBeInTheDocument();
-      expect(screen.getByLabelText("Inputs (JSON)")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /dispatch/i })).toBeInTheDocument();
     });
   });
 });

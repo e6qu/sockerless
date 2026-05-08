@@ -75,7 +75,9 @@ describe("DashboardPage", () => {
     mockFetch.mockResolvedValue(jsonResponse(overviewData));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("System Overview")).toBeInTheDocument();
+      // Editorial design renders the title in a serif <h2>; case-
+      // insensitive match keeps the test resilient to copy tweaks.
+      expect(screen.getByRole("heading", { name: /system overview/i })).toBeInTheDocument();
     });
   });
 

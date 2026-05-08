@@ -1,3 +1,5 @@
+import { Button } from "./Button.js";
+
 export interface RefreshButtonProps {
   onClick: () => void;
   loading?: boolean;
@@ -5,25 +7,28 @@ export interface RefreshButtonProps {
 
 export function RefreshButton({ onClick, loading }: RefreshButtonProps) {
   return (
-    <button
+    <Button
       onClick={onClick}
       disabled={loading}
-      className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+      variant="secondary"
+      size="sm"
+      aria-label="Refresh"
     >
       <svg
-        className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
-        fill="none"
+        className={loading ? "animate-spin" : ""}
+        width="11"
+        height="11"
         viewBox="0 0 24 24"
+        fill="none"
         stroke="currentColor"
+        strokeWidth={2.4}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden
       >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-        />
+        <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
       </svg>
       Refresh
-    </button>
+    </Button>
   );
 }

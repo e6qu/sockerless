@@ -1,5 +1,5 @@
-import { BrowserRouter, Routes, Route, NavLink } from "react-router";
-import { AppShell, type NavItem } from "./AppShell.js";
+import { BrowserRouter, NavLink, Route, Routes } from "react-router";
+import { AppShell, NavLinkButton, type NavItem } from "./AppShell.js";
 import { ErrorBoundary } from "./ErrorBoundary.js";
 import { OverviewPage } from "../pages/OverviewPage.js";
 import { ContainersPage } from "../pages/ContainersPage.js";
@@ -15,31 +15,28 @@ const navItems: NavItem[] = [
 
 function renderNavLink(item: NavItem) {
   return (
-    <NavLink
-      to={item.to}
-      end={item.to === "/ui/"}
-      className={({ isActive }) =>
-        `block rounded-md px-3 py-2 text-sm font-medium ${
-          isActive
-            ? "bg-blue-50 text-blue-700 dark:bg-blue-900 dark:text-blue-200"
-            : "text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
-        }`
-      }
-    >
-      {item.label}
+    <NavLink to={item.to} end={item.to === "/ui/"}>
+      {({ isActive }) => <NavLinkButton active={isActive}>{item.label}</NavLinkButton>}
     </NavLink>
   );
 }
 
 export interface BackendAppProps {
   title: string;
+  /** Optional kicker — defaults to "sockerless · backend". */
+  kicker?: string;
 }
 
-export function BackendApp({ title }: BackendAppProps) {
+export function BackendApp({ title, kicker = "sockerless · backend" }: BackendAppProps) {
   return (
     <ErrorBoundary>
       <BrowserRouter>
-        <AppShell title={title} navItems={navItems} renderLink={renderNavLink}>
+        <AppShell
+          title={title}
+          kicker={kicker}
+          navItems={navItems}
+          renderLink={renderNavLink}
+        >
           <Routes>
             <Route path="/ui/" element={<OverviewPage />} />
             <Route path="/ui/containers" element={<ContainersPage />} />

@@ -93,13 +93,13 @@ describe("AppsPage", () => {
   it("opens the Create App dialog", async () => {
     mockFetch.mockImplementation((url: RequestInfo | URL) => routedFetch(url));
     renderPage();
+    // The header CTA is "+ new app" in the new editorial design.
+    const cta = await screen.findByRole("button", { name: /new app/i });
+    fireEvent.click(cta);
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Create App" })).toBeInTheDocument();
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Create App" }));
-    await waitFor(() => {
-      expect(screen.getByLabelText("Name")).toBeInTheDocument();
-      expect(screen.getByLabelText("Description")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /create app/i })).toBeInTheDocument();
+      expect(screen.getByLabelText(/name/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/description/i)).toBeInTheDocument();
     });
   });
 });

@@ -35,6 +35,7 @@ describe("BackendInfoCard", () => {
     };
     const { container } = render(<BackendInfoCard status={status} />);
     expect(container.textContent).toContain("us-east-1");
-    expect(container.textContent).toContain("Context");
+    // Field labels are lowercase monospace in the operator-tool theme.
+    expect(container.textContent?.toLowerCase()).toContain("context");
   });
 });

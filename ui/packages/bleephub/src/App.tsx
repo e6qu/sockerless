@@ -1,6 +1,10 @@
 import { BrowserRouter, Routes, Route, NavLink } from "react-router";
-import { AppShell, type NavItem } from "@sockerless/ui-core/components";
-import { ErrorBoundary } from "@sockerless/ui-core/components";
+import {
+  AppShell,
+  ErrorBoundary,
+  NavLinkButton,
+  type NavItem,
+} from "@sockerless/ui-core/components";
 import { OverviewPage } from "./pages/OverviewPage.js";
 import { WorkflowsPage } from "./pages/WorkflowsPage.js";
 import { WorkflowDetailPage } from "./pages/WorkflowDetailPage.js";
@@ -22,18 +26,8 @@ const navItems: NavItem[] = [
 
 function renderNavLink(item: NavItem) {
   return (
-    <NavLink
-      to={item.to}
-      end={item.to === "/ui/"}
-      className={({ isActive }) =>
-        `block rounded-md px-3 py-2 text-sm font-medium ${
-          isActive
-            ? "bg-blue-50 text-blue-700 dark:bg-blue-900 dark:text-blue-200"
-            : "text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
-        }`
-      }
-    >
-      {item.label}
+    <NavLink to={item.to} end={item.to === "/ui/"}>
+      {({ isActive }) => <NavLinkButton active={isActive}>{item.label}</NavLinkButton>}
     </NavLink>
   );
 }
@@ -42,7 +36,12 @@ export function App() {
   return (
     <ErrorBoundary>
       <BrowserRouter>
-        <AppShell title="bleephub" navItems={navItems} renderLink={renderNavLink}>
+        <AppShell
+          kicker="github · simulator"
+          title="bleephub"
+          navItems={navItems}
+          renderLink={renderNavLink}
+        >
           <Routes>
             <Route path="/ui/" element={<OverviewPage />} />
             <Route path="/ui/workflows" element={<WorkflowsPage />} />

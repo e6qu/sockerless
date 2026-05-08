@@ -15,9 +15,24 @@ export interface DataTableProps<T> {
   columns: ColumnDef<T, any>[];
   filterPlaceholder?: string;
   onRowClick?: (row: T) => void;
+  /** Optional empty-state body when no rows match. */
+  emptyMessage?: string;
 }
 
-export function DataTable<T>({ data, columns, filterPlaceholder, onRowClick }: DataTableProps<T>) {
+/**
+ * Operator-grade data table. Dense, monospace, sticky headers,
+ * subtle row striping, no shadows, sharp corners. Filter input lives
+ * inside the table chrome — single composed unit, no floating bar.
+ * Hover background pulls the per-app accent in lightly so the row
+ * announces itself without screaming.
+ */
+export function DataTable<T>({
+  data,
+  columns,
+  filterPlaceholder,
+  onRowClick,
+  emptyMessage = "No rows match.",
+}: DataTableProps<T>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
 
@@ -32,50 +47,145 @@ export function DataTable<T>({ data, columns, filterPlaceholder, onRowClick }: D
     getFilteredRowModel: getFilteredRowModel(),
   });
 
+  const rows = table.getRowModel().rows;
+
   return (
-    <div>
-      <input
-        type="text"
-        value={globalFilter}
-        onChange={(e) => setGlobalFilter(e.target.value)}
-        placeholder={filterPlaceholder ?? "Search..."}
-        aria-label="Filter table"
-        className="mb-3 w-full max-w-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm placeholder:text-gray-400"
-      />
-      <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
-        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-          <thead className="bg-gray-50 dark:bg-gray-800">
+    <div
+      style={{
+        background: "var(--color-surface)",
+        border: "1px solid var(--color-border)",
+        borderRadius: "var(--radius-sm)",
+      }}
+    >
+      <div
+        className="flex items-center justify-between gap-4 px-3 py-2"
+        style={{ borderBottom: "1px solid var(--color-border)" }}
+      >
+        <input
+          type="text"
+          value={globalFilter}
+          onChange={(e) => setGlobalFilter(e.target.value)}
+          placeholder={filterPlaceholder ?? "Search…"}
+          aria-label="Filter table"
+          className="w-full max-w-sm"
+          style={{
+            background: "transparent",
+            border: "none",
+            padding: "0.25rem 0",
+            fontSize: "0.78rem",
+          }}
+        />
+        <div
+          className="font-mono text-[10px] uppercase tracking-[0.18em]"
+          style={{ color: "var(--color-fg-subtle)" }}
+        >
+          {rows.length} / {data.length} rows
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table
+          className="min-w-full font-mono"
+          style={{ fontSize: "0.78rem", borderCollapse: "collapse" }}
+        >
+          <thead style={{ background: "var(--color-bg-subtle)" }}>
             {table.getHeaderGroups().map((hg) => (
               <tr key={hg.id}>
-                {hg.headers.map((header) => (
-                  <th
-                    key={header.id}
-                    onClick={header.column.getToggleSortingHandler()}
-                    className="cursor-pointer select-none px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400"
-                  >
-                    {header.isPlaceholder
-                      ? null
-                      : flexRender(header.column.columnDef.header, header.getContext())}
-                    {{ asc: " ↑", desc: " ↓" }[header.column.getIsSorted() as string] ?? ""}
-                  </th>
-                ))}
+                {hg.headers.map((header) => {
+                  const sort = header.column.getIsSorted();
+                  return (
+                    <th
+                      key={header.id}
+                      onClick={header.column.getToggleSortingHandler()}
+                      className="cursor-pointer select-none px-3 py-2 text-left uppercase tracking-[0.15em]"
+                      style={{
+                        fontSize: "0.62rem",
+                        fontWeight: 500,
+                        color: sort
+                          ? "var(--color-accent)"
+                          : "var(--color-fg-subtle)",
+                        borderBottom: "1px solid var(--color-border)",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        {header.isPlaceholder
+                          ? null
+                          : flexRender(
+                              header.column.columnDef.header,
+                              header.getContext(),
+                            )}
+                        <span
+                          aria-hidden
+                          style={{ opacity: sort ? 1 : 0.25, fontSize: "0.7em" }}
+                        >
+                          {sort === "asc" ? "↑" : sort === "desc" ? "↓" : "↕"}
+                        </span>
+                      </span>
+                    </th>
+                  );
+                })}
               </tr>
             ))}
           </thead>
-          <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-900">
-            {table.getRowModel().rows.map((row) => (
-              <tr
-                key={row.id}
-                onClick={onRowClick ? () => onRowClick(row.original) : undefined}
-                className={`hover:bg-gray-50 dark:hover:bg-gray-800${onRowClick ? " cursor-pointer" : ""}`}
-              >
-                {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id} className="whitespace-nowrap px-4 py-2 text-sm">
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </td>
-                ))}
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={columns.length}
+                  className="px-3 py-8 text-center font-mono uppercase tracking-[0.2em]"
+                  style={{
+                    fontSize: "0.7rem",
+                    color: "var(--color-fg-subtle)",
+                  }}
+                >
+                  {emptyMessage}
+                </td>
               </tr>
-            ))}
+            ) : (
+              rows.map((row, i) => (
+                <tr
+                  key={row.id}
+                  onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                  data-row-index={i}
+                  className="reveal"
+                  style={{
+                    background:
+                      i % 2 === 0
+                        ? "var(--color-surface)"
+                        : "var(--color-bg-subtle)",
+                    cursor: onRowClick ? "pointer" : undefined,
+                    transition: "background-color 0.1s var(--ease-out-quint)",
+                    "--reveal-delay": `${Math.min(i * 16, 240)}ms`,
+                  } as React.CSSProperties}
+                  onMouseEnter={(e) =>
+                    (e.currentTarget.style.background =
+                      "color-mix(in oklch, var(--color-accent-soft) 55%, var(--color-surface))")
+                  }
+                  onMouseLeave={(e) =>
+                    (e.currentTarget.style.background =
+                      i % 2 === 0
+                        ? "var(--color-surface)"
+                        : "var(--color-bg-subtle)")
+                  }
+                >
+                  {row.getVisibleCells().map((cell) => (
+                    <td
+                      key={cell.id}
+                      className="px-3 py-1.5"
+                      style={{
+                        borderBottom:
+                          "1px solid color-mix(in oklch, var(--color-border) 60%, transparent)",
+                        whiteSpace: "nowrap",
+                        color: "var(--color-fg)",
+                      }}
+                    >
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </td>
+                  ))}
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>

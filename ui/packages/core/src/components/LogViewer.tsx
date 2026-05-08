@@ -55,22 +55,54 @@ function ansiToHtml(text: string): string {
 export function LogViewer({ lines, maxHeight = "24rem" }: LogViewerProps) {
   if (lines.length === 0) {
     return (
-      <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-500">
-        No log output
+      <div
+        className="px-4 py-6 font-mono uppercase tracking-[0.2em] text-center"
+        style={{
+          background: "var(--color-bg-subtle)",
+          border: "1px solid var(--color-border)",
+          borderRadius: "var(--radius-sm)",
+          color: "var(--color-fg-subtle)",
+          fontSize: "0.7rem",
+        }}
+      >
+        — no log output —
       </div>
     );
   }
 
   return (
     <div
-      className="overflow-auto rounded-lg border border-gray-200 bg-gray-950 dark:border-gray-700"
-      style={{ maxHeight }}
+      className="overflow-auto"
+      style={{
+        maxHeight,
+        background: "oklch(0.13 0.01 60)",
+        border: "1px solid var(--color-border)",
+        borderRadius: "var(--radius-sm)",
+      }}
     >
-      <pre className="p-3 text-xs leading-5 text-gray-200">
+      <pre
+        className="font-mono"
+        style={{
+          padding: "0.85rem 1rem",
+          fontSize: "0.72rem",
+          lineHeight: 1.55,
+          color: "oklch(0.92 0.005 80)",
+          margin: 0,
+        }}
+      >
         {lines.map((line, i) => (
           <div key={i} className="flex">
-            <span className="mr-3 inline-block w-8 select-none text-right text-gray-600">
-              {i + 1}
+            <span
+              className="mr-4 inline-block select-none text-right"
+              style={{
+                width: "2.5rem",
+                color: "oklch(0.45 0.005 60)",
+                borderRight: "1px solid oklch(0.25 0.01 60)",
+                paddingRight: "0.5rem",
+                marginRight: "0.6rem",
+              }}
+            >
+              {String(i + 1).padStart(3, " ")}
             </span>
             <span dangerouslySetInnerHTML={{ __html: ansiToHtml(line) }} />
           </div>

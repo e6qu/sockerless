@@ -1,0 +1,182 @@
+/*
+ * Sockerless design system — editorial brutalism for operators.
+ *
+ * Each app imports this file via its own index.css (after @import
+ * "tailwindcss";). The :root + .dark class selectors here override
+ * Tailwind 4's default tokens via @theme, so utilities like bg-bg,
+ * text-fg, border-border, font-display, font-mono pick up the
+ * design system automatically.
+ *
+ * Per-app accent: each app sets `--color-accent` + `--color-accent-fg`
+ * in its own index.css *after* importing this file. Defaults below.
+ */
+
+/* Font loading happens via <link rel="preconnect"> + <link rel="stylesheet">
+ * in each app's index.html (Vite emits the right CSP-safe snippets +
+ * keeps @import-ordering rules happy). The font-family declarations
+ * below resolve to the loaded faces. */
+
+@theme {
+  /* Surfaces — warm zinc / stone, NEVER blue-slate. */
+  --color-bg: oklch(0.99 0.005 80);            /* near-cream page background */
+  --color-bg-subtle: oklch(0.965 0.005 80);    /* striped row, subtle panel */
+  --color-surface: oklch(0.99 0.004 80);       /* card / panel base */
+  --color-surface-raised: oklch(1 0 0);        /* dialogs, popovers */
+  --color-fg: oklch(0.18 0.01 60);             /* primary text */
+  --color-fg-muted: oklch(0.45 0.012 60);      /* secondary text */
+  --color-fg-subtle: oklch(0.6 0.01 60);       /* tertiary, captions */
+  --color-border: oklch(0.85 0.008 60);        /* default border */
+  --color-border-strong: oklch(0.5 0.012 60);  /* emphasized border / divider */
+
+  /* Accent — overridden per app. Default is a flame orange. */
+  --color-accent: oklch(0.7 0.21 45);
+  --color-accent-fg: oklch(0.16 0.04 45);
+  --color-accent-soft: oklch(0.93 0.07 45);
+
+  /* Status — semantic colors used by StatusBadge etc. */
+  --color-status-ok: oklch(0.7 0.18 145);
+  --color-status-ok-soft: oklch(0.95 0.06 145);
+  --color-status-warn: oklch(0.78 0.15 90);
+  --color-status-warn-soft: oklch(0.95 0.07 90);
+  --color-status-error: oklch(0.62 0.22 25);
+  --color-status-error-soft: oklch(0.94 0.07 25);
+  --color-status-info: oklch(0.65 0.13 240);
+  --color-status-info-soft: oklch(0.94 0.05 240);
+  --color-status-neutral: oklch(0.65 0.01 60);
+  --color-status-neutral-soft: oklch(0.94 0.005 60);
+
+  /* Typography. Two voices: a serif display (editorial, italicizable)
+   * and a monospace body (technical, dense, confident). NEVER Inter,
+   * NEVER Roboto, NEVER system-ui. */
+  --font-display: "Fraunces", "Georgia", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-sans: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Sharp corners — brutalist. Round only when the element is small
+   * enough that sharpness reads as bug. */
+  --radius-none: 0px;
+  --radius-sm: 2px;
+  --radius-md: 4px;
+
+  /* Motion — operator UI shouldn't bounce. Subtle, fast, mechanical. */
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out-strong: cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+/* Dark theme — warm zinc black, NOT blue-slate. Apply by adding
+ * `class="dark"` to <html> (most apps just default to dark for the
+ * operator-tool feel — set it in their index.html). */
+.dark {
+  --color-bg: oklch(0.16 0.01 60);
+  --color-bg-subtle: oklch(0.2 0.01 60);
+  --color-surface: oklch(0.21 0.01 60);
+  --color-surface-raised: oklch(0.26 0.01 60);
+  --color-fg: oklch(0.96 0.005 80);
+  --color-fg-muted: oklch(0.74 0.008 60);
+  --color-fg-subtle: oklch(0.55 0.008 60);
+  --color-border: oklch(0.32 0.012 60);
+  --color-border-strong: oklch(0.55 0.012 60);
+
+  --color-accent-soft: oklch(0.32 0.08 var(--accent-hue, 45));
+  --color-status-ok-soft: oklch(0.32 0.06 145);
+  --color-status-warn-soft: oklch(0.34 0.07 90);
+  --color-status-error-soft: oklch(0.32 0.07 25);
+  --color-status-info-soft: oklch(0.32 0.05 240);
+  --color-status-neutral-soft: oklch(0.3 0.005 60);
+}
+
+/* Global page rules. */
+html, body, #root {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-mono);
+  font-feature-settings: "ss01", "ss02", "calt", "cv01", "cv02";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Display headings get the serif voice. */
+h1, h2, h3, .font-display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  font-optical-sizing: auto;
+}
+
+/* Subtle grid background — atmosphere without noise. Each app can
+ * disable by setting `--bg-grid: none;` on body. */
+body {
+  background-image:
+    var(--bg-grid,
+      linear-gradient(to right, color-mix(in oklch, var(--color-border) 35%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in oklch, var(--color-border) 35%, transparent) 1px, transparent 1px)
+    );
+  background-size: 56px 56px;
+  background-position: -1px -1px;
+}
+
+/* Selection should use accent. */
+::selection {
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+}
+
+/* Focus rings — accent, no soft halo. */
+:where(button, a, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 0;
+}
+
+/* Native form controls — match the system. */
+input[type="text"], input[type="search"], input[type="email"],
+input[type="number"], input[type="password"], textarea, select {
+  background: var(--color-surface);
+  color: var(--color-fg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  padding: 0.5rem 0.65rem;
+  transition: border-color 0.12s var(--ease-out-quint),
+              background-color 0.12s var(--ease-out-quint);
+}
+
+input:hover, textarea:hover, select:hover {
+  border-color: var(--color-border-strong);
+}
+
+input:focus-visible, textarea:focus-visible, select:focus-visible {
+  border-color: var(--color-accent);
+  outline-offset: -1px;
+}
+
+/* Buttons — operators want them obvious + tactile. */
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+/* Subtle staggered-reveal animation: any element with .reveal gets
+ * a quick fade-up. Composes with --reveal-delay for staggering. */
+@keyframes reveal-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.reveal {
+  animation: reveal-up 0.5s var(--ease-out-quint) backwards;
+  animation-delay: var(--reveal-delay, 0ms);
+}
+
+/* Scrollbars — thin, accent on thumb when hovered. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 0;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-accent);
+}
