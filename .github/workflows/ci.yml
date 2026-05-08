@@ -25,7 +25,9 @@ jobs:
         run: make lint
 
   test:
-    runs-on: ubuntu-latest
+    # Native linux/arm64 runner — matches sim's primary capacity contract
+    # (Phase 135b). Avoids QEMU emulation overhead + flake modes on amd64.
+    runs-on: ubuntu-24.04-arm
     env:
       # Every backend's TestMain builds+runs its simulator binary, starts
       # the backend process, and exercises real Docker containers pulled
@@ -39,12 +41,6 @@ jobs:
         with:
           go-version: '1.25'
           cache: true
-      # Workloads dispatch through Docker honouring linux/arm64
-      # (sim's primary capacity); QEMU lets amd64 runners run them.
-      - name: Set up QEMU for linux/arm64 workload images
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: linux/arm64
       - name: Verify docker available
         run: docker version && docker info
       - name: Tests (unit + per-backend integration)
@@ -88,7 +84,8 @@ jobs:
           run_work simulators/azure/shared
 
   test-e2e:
-    runs-on: ubuntu-latest
+    # Native linux/arm64 — same rationale as `test`.
+    runs-on: ubuntu-24.04-arm
     name: test (e2e)
     steps:
       - uses: actions/checkout@v6
@@ -96,15 +93,13 @@ jobs:
         with:
           go-version: '1.25'
           cache: true
-      - name: Set up QEMU for linux/arm64 workload images
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: linux/arm64
       - name: Run tests
         run: cd tests && go test -v -timeout 5m ./...
 
   sim:
-    runs-on: ubuntu-latest
+    # Native linux/arm64 runner — sim's primary capacity (Phase 135b).
+    # Avoids QEMU emulation; matches Apple Silicon dev hosts.
+    runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
       matrix:
@@ -116,31 +111,24 @@ jobs:
         with:
           go-version: '1.25'
           cache: true
-      # Workloads dispatch through Docker honouring the workload's
-      # Architecture (sim's primary capacity is linux/arm64). Ubuntu
-      # runners are amd64; QEMU lets Docker run linux/arm64 images.
-      - name: Set up QEMU for linux/arm64 workload images
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: linux/arm64
       - name: Install gcloud CLI
         if: matrix.cloud == 'gcp'
         run: |
-          curl -sSL https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz | tar -xz -C $HOME
+          curl -sSL https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-arm.tar.gz | tar -xz -C $HOME
           echo "$HOME/google-cloud-sdk/bin" >> $GITHUB_PATH
       - name: Install Azure CLI
         if: matrix.cloud == 'azure'
         run: curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
       - name: Run SDK tests
         run: cd simulators/${{ matrix.cloud }} && make sdk-test
-        # 15min budget covers QEMU-emulated linux/arm64 workloads on
-        # amd64 runners (Phase 135b sim primary capacity contract).
-        timeout-minutes: 15
+        # Native arm64 — workloads run without emulation; 10min covers
+        # image build + container start.
+        timeout-minutes: 10
         env:
           GOWORK: "off"
       - name: Run CLI tests
         run: cd simulators/${{ matrix.cloud }} && make cli-test
-        timeout-minutes: 15
+        timeout-minutes: 10
         env:
           GOWORK: "off"
 
@@ -218,14 +206,10 @@ jobs:
           build github-runner-dispatcher-azure ./cmd/github-runner-dispatcher-azure
 
   smoke:
-    runs-on: ubuntu-latest
+    # Native linux/arm64 — sim's primary capacity (Phase 135b).
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v6
-      # Smoke harnesses spawn linux/arm64 workloads; QEMU enables them.
-      - name: Set up QEMU for linux/arm64 workload images
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: linux/arm64
       - name: Smoke test (ecs)
         run: |
           docker build -t smoke-ecs -f smoke-tests/Dockerfile.ecs .
