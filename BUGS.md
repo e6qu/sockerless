@@ -11,7 +11,7 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md).
 | ID | Sev | Area | One-liner |
 |----|-----|------|-----------|
 | 972 | H | cloudrun + gcf | `ImagePull` rewrites Docker Hub refs to AR proxy unconditionally; sim has no AR proxy → 403. Fix: gate the rewrite on `s.config.EndpointURL == ""` (real GCP only). Same site applies to `ContainerCreate` + every other `gcpcommon.ResolveGCPImageURI` caller. |
-| 949 | M | simulators/gcp SDK tests | `eval-arithmetic` is built `GOOS=linux` but gcf's `simCommand` execs the same binary as a host process — fails on macOS / arm64 hosts. Fix: build host-native + linux/amd64 separately in TestMain. Pre-existing on main; surfaces only on local non-Linux dev hosts. |
+| 949 | M | simulators/gcp gcf | `gcf::simCommand` `os/exec`s the workload binary as a host process, ignoring the workload's architecture. Symptom on macOS/arm64 dev hosts: `linux/amd64` workload binary fails to exec. Wrong-axis fix would be "build two binaries"; correct fix is to dispatch workloads through Docker honouring the workload's `Architecture` field (default `linux/arm64`). Sim binary itself stays host-native. See `feedback_sim_workload_arch.md`. |
 
 ## False positives
 

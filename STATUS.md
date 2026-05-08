@@ -28,6 +28,10 @@
 
 Each green run: probe-capabilities → probe-localhost-peer (postgres sidecar `localhost:5432`) → clone-and-compile (`git clone` + `go build` of `simulators/testdata/eval-arithmetic`) → 5 arithmetic invocations.
 
+## Next up
+
+**Phase 135 — Sim host model.** Architectural fix on the active branch: services-that-execute provision **hosts**, hosts run workloads through Docker honouring the workload's `Architecture` field (default `linux/arm64`). Today's `os/exec` workload pattern in `simulators/<cloud>/shared/process.go` is the BUG-949 anti-pattern. Bundles host-runner interface + per-product host adaptation + per-product host-metadata services + tests + docs. Detail in [PLAN.md](PLAN.md). Resume in [DO_NEXT.md](DO_NEXT.md).
+
 ## Recently shipped (chronological)
 
 | Date | PR | Headline |
@@ -44,4 +48,4 @@ Older PRs in [WHAT_WE_DID.md](WHAT_WE_DID.md).
 | ID | Sev | Area | Hook |
 |---|---|---|---|
 | 972 | H | cloudrun + gcf | `ImagePull` rewrites Docker Hub refs to AR proxy unconditionally; sim has no AR proxy → 403. Gate on `s.config.EndpointURL == ""`. |
-| 949 | M | sim/gcp | `eval-arithmetic` built `GOOS=linux` but gcf execs as host process — fails on macOS / arm64. Build host-native + linux/amd64 separately. |
+| 949 | M | sim/gcp | `gcf::simCommand` execs workload binary as a host process, ignoring workload arch. Fix: dispatch through Docker honouring workload `Architecture` (default `linux/arm64`); sim binary stays host-native. |

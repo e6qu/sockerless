@@ -35,6 +35,33 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #127 | 129#4 + 130–132 | Orphan pod-Service GC (owner-link via `CLOUD_RUN_JOB`); sim parity prep (GCP `generateIdToken` + Compute Disks); bleephub workflow runs / workflows / apps + oauth REST + UI dispatch + AppsPage + OAuthPage. | n/a |
 | #128 | 134 | Makefile standardization + per-app leaf Makefiles + stack orchestration; 17 doc updates; sim test stability (BUG-973/974). | 973–974 |
 
+## Queued — **Phase 135 — Sim host model (top priority; ships first)**
+
+Architectural fix: the simulator must model "services that offer execution" as services that provision **hosts**, where each host runs the workload through Docker (honouring the workload's `Architecture` field, default `linux/arm64`). Today's `simulators/<cloud>/shared/process.go::StartProcess` `os/exec`s workload binaries directly from sim handlers — that's the BUG-949 anti-pattern. See `feedback_sim_host_model.md` + `feedback_sim_workload_arch.md`.
+
+### Sub-tasks
+
+1. **135a — `HostRunner` interface in shared sim lib.** `RunWorkload(spec)` where `spec` carries `Image`, `Command`, `Architecture` (default `linux/arm64`), `Env`, `WorkingDir`, `ResourceLimits`, `LogSink`. Default impl `DockerHost` translates spec → Docker run; arch comes from spec, never the host. Keep room for future remote-host federation (`HostRunner` is just an interface).
+2. **135b — Migrate every cloud-product host adaptation.** Per-product translator from cloud primitive → `HostRunner` spec:
+   - AWS Lambda host (Runtime-API micro-VM shape; `lambda_runtime.go` keeps the Runtime API layer, but the workload runs in a Docker host).
+   - AWS ECS host (Fargate-shaped task).
+   - GCP Cloud Run host (HTTP-fronted container).
+   - GCP Cloud Functions host (Cloud-Run-host with Functions wrapper).
+   - GCP Cloud Run Jobs host (one-shot container).
+   - Azure ACA host (container-app-job-shaped).
+   - Azure App Service / AZF host (WebApp-shaped).
+3. **135c — Host-metadata services per execution-service.** Workloads SDKs expect a metadata endpoint on their host:
+   - AWS IMDSv2 at `169.254.169.254/latest/meta-data/...` (EC2/ECS hosts).
+   - AWS ECS task metadata v4 at `${ECS_CONTAINER_METADATA_URI_V4}/task`.
+   - AWS Lambda Runtime API — already implemented in `lambda_runtime.go`; keep.
+   - GCP `metadata.google.internal/computeMetadata/v1/...` — project, SA tokens, audience-scoped ID tokens (GCE/Cloud Run/GCF hosts).
+   - Azure expand existing `managedidentity.go` IMDS to full `/metadata/instance` + `/metadata/identity/oauth2/token` (App Service / ACA / AZF hosts).
+   - Pure data services (S3, GCS, Storage, DynamoDB, KMS, Key Vault data plane) do NOT need host metadata — they're clients of metadata-bound credentials, not workload hosts.
+4. **135d — Tests.** (a) static check that no sim handler outside the host layer calls `os/exec` on a workload; (b) per-product positive test that workloads honour `Architecture=linux/arm64` and `linux/amd64`; (c) per-product metadata-service test (region/project/SA-token/ID-token round-trips); (d) reproduce BUG-949 scenario on host-arch ≠ workload-arch and prove it works.
+5. **135e — Docs.** New `specs/SIM_HOST_MODEL.md` (or section in `specs/CLOUD_RESOURCE_MAPPING.md`) covering: services → hosts → workloads; per-product host shapes; arch handling; metadata-service contract; future remote-host federation.
+
+Closes BUG-949 (real fix, not the wrong-axis "build two binaries" framing).
+
 ## Queued — Live-cloud cost gate (must precede next live session)
 
 Without these, the regional-CPU-quota debt cycle from 2026-05-07 repeats and live projects burn ~$90/week unmanaged.
