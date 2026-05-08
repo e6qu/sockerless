@@ -47,7 +47,11 @@ FROM alpine:latest
 COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
 ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 `
-	dockerBuild := exec.Command("docker", "build", "-t", evalImageName, "-f", "-", evalDir)
+	// Build for linux/arm64 explicitly — sim's primary capacity contract.
+	// Requires QEMU on amd64 hosts (CI sets it up via docker/setup-qemu-action).
+	dockerBuild := exec.Command("docker", "build",
+		"--platform", "linux/arm64",
+		"-t", evalImageName, "-f", "-", evalDir)
 	dockerBuild.Stdin = strings.NewReader(dockerfile)
 	if out, err := dockerBuild.CombinedOutput(); err != nil {
 		log.Fatalf("Failed to build eval-arithmetic Docker image: %v\n%s", err, out)

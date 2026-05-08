@@ -1,6 +1,6 @@
 # Known Bugs
 
-**975 filed · 975 fixed · 0 open · 1 false positive.**
+**978 filed · 978 fixed · 0 open · 1 false positive.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner before any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -31,6 +31,9 @@ Per-bug detail in `git log` / linked PR.
 
 | ID | Sev | Area | One-liner |
 |----|-----|------|-----------|
+| 978 | H | sim CI workflow | Sim contract is `linux/arm64` (Phase 135b) but ubuntu-latest CI runners are amd64 and don't have QEMU registered. Symptom: alpine workload pulled as arm64, fails `exec /bin/sh: exec format error` on amd64 runner. Surfaced as: sim, test, smoke, test-e2e all fail. Fix: add `docker/setup-qemu-action@v3` to every CI job that runs Docker workloads (sim, test, smoke, test-e2e). |
+| 977 | M | simulators/aws + simulators/azure sdk-tests | `TestMain` built `eval-arithmetic` (and AWS `lambda-runtime-handler`) on the host with `GOOS=linux` then COPYed the binary into alpine. On macOS arm64 the binary is host-arch (matching), but the image manifest claimed alpine's default. Forcing `linux/arm64` at run time → arch mismatch. Fix: switch to multi-stage Docker build (`FROM golang:1.24-alpine AS build … COPY --from=build`) with explicit `--platform linux/arm64`. The build is now self-contained inside the image. Mirrors the GCP fix shipped in 135b. |
+| 976 | M | simulators/aws IMDS | `aws-sdk-go-v2/feature/ec2/imds.GetRegion` queries `/latest/dynamic/instance-identity/document` (a signed JSON document), not `/latest/meta-data/placement/region`. Sim returned 405. Fix: serve a minimal identity-document response (region/availabilityZone/instanceId/imageId/accountId) so SDK routing works. |
 | 975 | M | simulators/aws ECS | `ECS::ExecuteCommand` had a "fallback to local process" path that `os/exec`'d on the sim host when no Docker container was found. Violation of host model + no-fallbacks rule. Fix: drop fallback; return WS close with explicit error if no Docker container. |
 | 972 | H | cloudrun + gcf | `ImagePull` rewrites Docker Hub refs to AR proxy unconditionally; sim has no AR proxy → 403. Already fixed in PR #123 by gating `gcpcommon.ResolveGCPImageURI` on `endpointURL != ""` (image_resolve.go:30); `TestResolveGCPImageURI_SimulatorPassthrough` proves it. Bookkeeping closure only. |
 | 949 | M | simulators/gcp gcf | `cloudfunctions::invokeCloudFunctionProcess` `os/exec`'d the workload binary on the sim host, ignoring workload arch. Fix: route through `sim.StartContainerSync` honouring `serviceConfig.simImage` + `simArchitecture`. SDK tests migrated to a multi-stage Docker build (binary built inside the image, not on the sim host). Closes the original macOS/arm64 break. |

@@ -130,6 +130,29 @@ func registerHostMetadata(srv *sim.Server) {
 			time.Now().UTC().Format(time.RFC3339), exp)
 	})
 
+	// /latest/dynamic/instance-identity/document — signed JSON document
+	// describing the instance. The AWS Go SDK's `imds.GetRegion()` reads
+	// this rather than /latest/meta-data/placement/region. Real EC2
+	// includes a base64 signature; sim omits the signature (workloads
+	// running in the sim don't validate it).
+	srv.HandleFunc("GET /latest/dynamic/instance-identity/document", func(w http.ResponseWriter, r *http.Request) {
+		if !mustToken(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		region := defaultIMDSRegion(r)
+		_, _ = fmt.Fprintf(w, `{
+			"accountId": "000000000000",
+			"architecture": "arm64",
+			"availabilityZone": %q,
+			"imageId": "ami-0123456789abcdef0",
+			"instanceId": "i-0abcdef1234567890",
+			"instanceType": "t3.micro",
+			"region": %q,
+			"version": "2017-09-30"
+		}`, region+"a", region)
+	})
+
 	// ECS task metadata v4. Real ECS sets ECS_CONTAINER_METADATA_URI_V4
 	// to a per-task local URL like http://169.254.170.2/v4/<id>. Sim
 	// serves /v4/<id>/task on its main listener; cloud-product translator
