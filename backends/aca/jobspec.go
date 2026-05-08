@@ -132,7 +132,13 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 		}
 	}
 
-	replicaTimeout := int32(3600 * 4) // 4 hours max
+	// Phase 128: cloud-side ACA cap on top of any bootstrap timer.
+	// ACA's ReplicaTimeout caps at 7 days (604800s); we honour the
+	// shared sockerless intent (default 3600 = 1h) and clamp.
+	replicaTimeout := int32(core.JobTimeoutDefault())
+	if replicaTimeout <= 0 || replicaTimeout > 604800 {
+		replicaTimeout = 604800
+	}
 
 	environmentID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/managedEnvironments/%s",
 		s.config.SubscriptionID, s.config.ResourceGroup, s.config.Environment)

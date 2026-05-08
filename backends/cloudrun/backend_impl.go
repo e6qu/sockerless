@@ -98,6 +98,12 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		// containers that share the same base image + bootstrap pair.
 		userEnv := overlayUserEnv(config.Entrypoint, config.Cmd, config.WorkingDir)
 		config.Env = append(config.Env, userEnv...)
+		// Phase 128: inject SOCKERLESS_JOB_TIMEOUT_SECONDS so the
+		// bootstrap arms its timeout timer. User's per-job override
+		// (`docker run -e SOCKERLESS_JOB_TIMEOUT_SECONDS=…`) wins.
+		if jt := core.JobTimeoutEnvIfUnset(config.Env); jt != "" {
+			config.Env = append(config.Env, jt)
+		}
 		config.Image = overlayURI
 		// Bootstrap owns the entrypoint; it parses SOCKERLESS_USER_*
 		// env vars on each invocation. Drop the user's entrypoint+cmd

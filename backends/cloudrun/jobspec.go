@@ -220,11 +220,18 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 	}
 	injectPersistEnv(specs, persistEntries)
 
+	// Phase 128: cloud-side cap on top of the bootstrap-side timer.
+	// Both layers share the same intent value (core.JobTimeoutDefault).
+	// Cloud Run Jobs cap at 24 h regardless of requested value.
+	timeoutSec := core.JobTimeoutDefault()
+	if timeoutSec <= 0 || timeoutSec > 24*3600 {
+		timeoutSec = 24 * 3600
+	}
 	taskTemplate := &runpb.TaskTemplate{
 		Containers: specs,
 		Volumes:    volumes,
 		Retries:    &runpb.TaskTemplate_MaxRetries{MaxRetries: 0},
-		Timeout:    durationpb.New(4 * time.Hour),
+		Timeout:    durationpb.New(time.Duration(timeoutSec) * time.Second),
 	}
 
 	// Add VPC connector if configured
