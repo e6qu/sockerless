@@ -34,7 +34,7 @@ func NewHostAliasesDiscovery() *HostAliasesDiscovery {
 	return &HostAliasesDiscovery{registry: map[string]map[string]*CloudEndpoint{}}
 }
 
-func (h *HostAliasesDiscovery) RegisterContainer(_ context.Context, networkID, name string, endpoint *CloudEndpoint) error {
+func (h *HostAliasesDiscovery) RegisterContainer(_ context.Context, networkID, name, containerID string, endpoint *CloudEndpoint) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.registry[networkID] == nil {
@@ -44,7 +44,7 @@ func (h *HostAliasesDiscovery) RegisterContainer(_ context.Context, networkID, n
 	return nil
 }
 
-func (h *HostAliasesDiscovery) DeregisterContainer(_ context.Context, networkID, name string) error {
+func (h *HostAliasesDiscovery) DeregisterContainer(_ context.Context, networkID, name, containerID string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if peers, ok := h.registry[networkID]; ok {

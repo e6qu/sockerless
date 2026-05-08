@@ -25,23 +25,17 @@ func newCloudMapDiscovery(s *Server) *cloudMapDiscovery {
 	return &cloudMapDiscovery{s: s}
 }
 
-func (d *cloudMapDiscovery) RegisterContainer(ctx context.Context, networkID, name string, endpoint *core.CloudEndpoint) error {
+func (d *cloudMapDiscovery) RegisterContainer(ctx context.Context, networkID, name, containerID string, endpoint *core.CloudEndpoint) error {
 	if endpoint == nil {
 		return nil
-	}
-	containerID := ""
-	if endpoint.Metadata != nil {
-		containerID = endpoint.Metadata["container-id"]
 	}
 	return d.s.cloudServiceRegister(containerID, name, endpoint.IPAddress, networkID)
 }
 
-func (d *cloudMapDiscovery) DeregisterContainer(ctx context.Context, networkID, name string) error {
-	// ECS deregister works by container-id (the Cloud Map instance
-	// keyed off the registered ID); we don't know it from name alone
-	// at this layer. Use empty container-id; the underlying method
-	// uses cloud-state lookup to find the right service+instance.
-	return d.s.cloudServiceDeregister("", networkID)
+// DeregisterContainer uses the explicit containerID (Cloud Map keys
+// instances by container-ID at register time, not by hostname).
+func (d *cloudMapDiscovery) DeregisterContainer(ctx context.Context, networkID, name, containerID string) error {
+	return d.s.cloudServiceDeregister(containerID, networkID)
 }
 
 func (d *cloudMapDiscovery) ResolveName(ctx context.Context, networkID, name string) (*core.CloudEndpoint, error) {

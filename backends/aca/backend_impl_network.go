@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/sockerless/api"
+	core "github.com/sockerless/backend-core"
 )
 
 // NetworkCreate creates a Docker network and its Azure cloud
@@ -76,7 +77,12 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 	// internal FQDNs inside the managed environment, unlike Jobs.
 	if s.config.UseApp {
 		if appState, ok := s.resolveAppACAState(s.ctx(), containerID); ok && appState.AppName != "" {
-			if err := s.cloudServiceRegisterCNAME(s.ctx(), containerID, hostname, appState.AppName, net.ID); err != nil {
+			if err := s.NetworkDiscovery.RegisterContainer(s.ctx(), net.ID, hostname, containerID, &core.CloudEndpoint{
+				Metadata: map[string]string{
+					"kind":         "cname",
+					"service-name": appState.AppName,
+				},
+			}); err != nil {
 				s.Logger.Warn().Err(err).Msg("failed to register CNAME in Private DNS")
 			}
 		}
@@ -85,7 +91,9 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID == net.ID && ep.IPAddress != "" {
-			if err := s.cloudServiceRegister(containerID, hostname, ep.IPAddress, net.ID); err != nil {
+			if err := s.NetworkDiscovery.RegisterContainer(s.ctx(), net.ID, hostname, containerID, &core.CloudEndpoint{
+				IPAddress: ep.IPAddress,
+			}); err != nil {
 				s.Logger.Warn().Err(err).Msg("failed to register service in Private DNS")
 			}
 			break
@@ -107,10 +115,15 @@ func (s *Server) NetworkDisconnect(id string, req *api.NetworkDisconnectRequest)
 			if cOk {
 				hostname = strings.TrimPrefix(c.Name, "/")
 			}
-			if s.config.UseApp {
-				_ = s.cloudServiceDeregisterCNAME(s.ctx(), containerID, hostname, net.ID)
+			// Phase 124: route through driver. UseApp → CNAME, else A.
+			if cd, ok := s.NetworkDiscovery.(*acaCloudDNSDiscovery); ok {
+				if s.config.UseApp {
+					_ = cd.DeregisterContainerCNAME(s.ctx(), net.ID, hostname)
+				} else {
+					_ = cd.DeregisterContainerARecord(net.ID, hostname)
+				}
 			} else {
-				_ = s.cloudServiceDeregister(containerID, hostname, net.ID)
+				_ = s.NetworkDiscovery.DeregisterContainer(s.ctx(), net.ID, hostname, containerID)
 			}
 		}
 	}

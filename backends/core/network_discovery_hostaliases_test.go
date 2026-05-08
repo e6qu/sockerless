@@ -14,10 +14,10 @@ func TestHostAliasesDiscovery_RegisterResolveDeregister(t *testing.T) {
 	ep1 := &CloudEndpoint{IPAddress: "10.0.0.1", Metadata: map[string]string{"fqdn": "alpha.local"}}
 	ep2 := &CloudEndpoint{IPAddress: "10.0.0.2", Metadata: map[string]string{"fqdn": "beta.local"}}
 
-	if err := d.RegisterContainer(ctx, "net1", "alpha", ep1); err != nil {
+	if err := d.RegisterContainer(ctx, "net1", "alpha", "cid-alpha", ep1); err != nil {
 		t.Fatalf("register alpha: %v", err)
 	}
-	if err := d.RegisterContainer(ctx, "net1", "beta", ep2); err != nil {
+	if err := d.RegisterContainer(ctx, "net1", "beta", "cid-beta", ep2); err != nil {
 		t.Fatalf("register beta: %v", err)
 	}
 
@@ -41,7 +41,7 @@ func TestHostAliasesDiscovery_RegisterResolveDeregister(t *testing.T) {
 		t.Errorf("resolve cross-network: got %+v, err %v; want nil, nil", got, err)
 	}
 
-	if err := d.DeregisterContainer(ctx, "net1", "alpha"); err != nil {
+	if err := d.DeregisterContainer(ctx, "net1", "alpha", "cid-alpha"); err != nil {
 		t.Fatalf("deregister: %v", err)
 	}
 	got, _ = d.ResolveName(ctx, "net1", "alpha")
@@ -50,7 +50,7 @@ func TestHostAliasesDiscovery_RegisterResolveDeregister(t *testing.T) {
 	}
 
 	// Idempotent: deregister twice succeeds.
-	if err := d.DeregisterContainer(ctx, "net1", "alpha"); err != nil {
+	if err := d.DeregisterContainer(ctx, "net1", "alpha", "cid-alpha"); err != nil {
 		t.Errorf("deregister twice: %v", err)
 	}
 }
@@ -58,9 +58,9 @@ func TestHostAliasesDiscovery_RegisterResolveDeregister(t *testing.T) {
 func TestHostAliasesDiscovery_PeersOnNetwork(t *testing.T) {
 	d := NewHostAliasesDiscovery()
 	ctx := context.Background()
-	d.RegisterContainer(ctx, "net1", "alpha", &CloudEndpoint{IPAddress: "10.0.0.1"})
-	d.RegisterContainer(ctx, "net1", "beta", &CloudEndpoint{IPAddress: "10.0.0.2"})
-	d.RegisterContainer(ctx, "net2", "gamma", &CloudEndpoint{IPAddress: "10.0.0.3"})
+	d.RegisterContainer(ctx, "net1", "alpha", "cid-1", &CloudEndpoint{IPAddress: "10.0.0.1"})
+	d.RegisterContainer(ctx, "net1", "beta", "cid-2", &CloudEndpoint{IPAddress: "10.0.0.2"})
+	d.RegisterContainer(ctx, "net2", "gamma", "cid-3", &CloudEndpoint{IPAddress: "10.0.0.3"})
 
 	peers := d.PeersOnNetwork("net1")
 	if len(peers) != 2 {

@@ -457,7 +457,9 @@ func (s *Server) ContainerStart(ref string) error {
 		if netName == "bridge" || netName == "host" || netName == "none" {
 			continue
 		}
-		if err := s.cloudServiceRegister(id, hostname, taskIP, ep.NetworkID); err != nil {
+		if err := s.NetworkDiscovery.RegisterContainer(context.Background(), ep.NetworkID, hostname, id, &core.CloudEndpoint{
+			IPAddress: taskIP,
+		}); err != nil {
 			s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to register in Cloud Map")
 		}
 	}
@@ -726,10 +728,13 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		s.Store.Pods.RemoveContainer(pod.ID, id)
 	}
 
-	// Deregister from Cloud Map
+	// Deregister from Cloud Map via the network-discovery driver.
+	// Phase 124: ECS adapter uses containerID (Cloud Map keys instances
+	// by container-id); name passed for symmetry but not used by ECS.
+	hostname := strings.TrimPrefix(c.Name, "/")
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID != "" {
-			if err := s.cloudServiceDeregister(id, ep.NetworkID); err != nil {
+			if err := s.NetworkDiscovery.DeregisterContainer(context.Background(), ep.NetworkID, hostname, id); err != nil {
 				s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to deregister from Cloud Map")
 			}
 		}
@@ -1437,7 +1442,9 @@ func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, 
 		if netName == "bridge" || netName == "host" || netName == "none" {
 			continue
 		}
-		if err := s.cloudServiceRegister(id, hostname, taskIP, ep.NetworkID); err != nil {
+		if err := s.NetworkDiscovery.RegisterContainer(context.Background(), ep.NetworkID, hostname, id, &core.CloudEndpoint{
+			IPAddress: taskIP,
+		}); err != nil {
 			s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("deferred-stdin: failed to register in Cloud Map")
 		}
 	}

@@ -30,11 +30,18 @@ import (
 // must succeed; deregistering an already-gone name must succeed; resolving
 // an unknown name returns (nil, nil) without error.
 type NetworkDiscoveryDriver interface {
-	// RegisterContainer makes `name` reachable on `networkID` at `endpoint`.
-	RegisterContainer(ctx context.Context, networkID, name string, endpoint *CloudEndpoint) error
+	// RegisterContainer makes the container reachable on `networkID`.
+	// `name` is the discoverable hostname (peers query it). `containerID`
+	// is sockerless's internal container ID (used by adapters like AWS
+	// Cloud Map that key instances by container-ID rather than hostname).
+	// `endpoint` carries the IP and per-cloud metadata (e.g.
+	// metadata["kind"]="cname" for cloudrun's UseService flow).
+	RegisterContainer(ctx context.Context, networkID, name, containerID string, endpoint *CloudEndpoint) error
 
-	// DeregisterContainer removes name's discoverability entry.
-	DeregisterContainer(ctx context.Context, networkID, name string) error
+	// DeregisterContainer removes the discoverability entry. Adapters
+	// may use either `name` or `containerID` depending on how their
+	// underlying cloud primitive keys instances.
+	DeregisterContainer(ctx context.Context, networkID, name, containerID string) error
 
 	// ResolveName looks up a peer's endpoint by name. Returns (nil, nil)
 	// if the name is unknown; the caller may fall through to other
@@ -89,10 +96,10 @@ func ResolveNetworkDiscoveryDriver(kind api.NetworkDiscoveryKind, deps map[strin
 // reach the internet via NAT but don't address each other by name).
 type NoOpNetworkDiscovery struct{}
 
-func (NoOpNetworkDiscovery) RegisterContainer(ctx context.Context, networkID, name string, endpoint *CloudEndpoint) error {
+func (NoOpNetworkDiscovery) RegisterContainer(ctx context.Context, networkID, name, containerID string, endpoint *CloudEndpoint) error {
 	return nil
 }
-func (NoOpNetworkDiscovery) DeregisterContainer(ctx context.Context, networkID, name string) error {
+func (NoOpNetworkDiscovery) DeregisterContainer(ctx context.Context, networkID, name, containerID string) error {
 	return nil
 }
 func (NoOpNetworkDiscovery) ResolveName(ctx context.Context, networkID, name string) (*CloudEndpoint, error) {

@@ -31,25 +31,50 @@ func newCloudDNSDiscovery(s *Server) *cloudDNSDiscovery {
 	return &cloudDNSDiscovery{s: s}
 }
 
-func (d *cloudDNSDiscovery) RegisterContainer(ctx context.Context, networkID, name string, endpoint *core.CloudEndpoint) error {
+// RegisterContainer dispatches to either the A-record path or the
+// CNAME path based on endpoint.Metadata["kind"]:
+//
+//   - "a-record" (default): cloudServiceRegister with endpoint.IPAddress.
+//   - "cname":              cloudServiceRegisterCNAME with the underlying
+//     Cloud Run service URI from
+//     endpoint.Metadata["service-name"].
+//
+// container-id passes through endpoint.Metadata["container-id"].
+func (d *cloudDNSDiscovery) RegisterContainer(ctx context.Context, networkID, name, containerID string, endpoint *core.CloudEndpoint) error {
 	if endpoint == nil {
 		return nil
 	}
-	// Delegate to the existing A-record path. The CNAME path
-	// (cloudServiceRegisterCNAME) is reserved for the UseService flow
-	// and is invoked separately at materialize time when the backend
-	// has the underlying Cloud Run service name in hand — that
-	// remains a direct call site for now.
-	containerID := ""
-	if endpoint.Metadata != nil {
-		containerID = endpoint.Metadata["container-id"]
+	if endpoint.Metadata != nil && endpoint.Metadata["kind"] == "cname" {
+		serviceName := endpoint.Metadata["service-name"]
+		return d.s.cloudServiceRegisterCNAME(ctx, containerID, name, serviceName, networkID)
 	}
 	return d.s.cloudServiceRegister(containerID, name, endpoint.IPAddress, networkID)
 }
 
-func (d *cloudDNSDiscovery) DeregisterContainer(ctx context.Context, networkID, name string) error {
-	// Container ID is not strictly needed for delete (cloudServiceDeregister
-	// uses hostname + networkID to locate the record); pass empty.
+// DeregisterContainer mirrors RegisterContainer's dispatch via
+// metadata["kind"]. Caller passes the same kind used at register time.
+// When metadata is nil, the A-record path is used (which is the
+// most common register shape).
+func (d *cloudDNSDiscovery) DeregisterContainer(ctx context.Context, networkID, name, containerID string) error {
+	// On deregister we don't have the original endpoint, so we try
+	// the CNAME-aware deregister path which is a no-op when no CNAME
+	// exists, then the A-record deregister. Both are idempotent.
+	if err := d.s.cloudServiceDeregisterCNAME(ctx, containerID, name, networkID); err != nil {
+		_ = d.s.cloudServiceDeregister(containerID, name, networkID)
+		return err
+	}
+	return d.s.cloudServiceDeregister(containerID, name, networkID)
+}
+
+// DeregisterContainerCNAME is an explicit-kind variant that callers
+// holding the original metadata can use to skip the A-record fallback
+// path. Lives outside the interface to keep the contract simple.
+func (d *cloudDNSDiscovery) DeregisterContainerCNAME(ctx context.Context, networkID, name string) error {
+	return d.s.cloudServiceDeregisterCNAME(ctx, "", name, networkID)
+}
+
+// DeregisterContainerARecord is the explicit A-record-only variant.
+func (d *cloudDNSDiscovery) DeregisterContainerARecord(networkID, name string) error {
 	return d.s.cloudServiceDeregister("", name, networkID)
 }
 

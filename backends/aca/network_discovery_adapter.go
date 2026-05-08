@@ -24,18 +24,37 @@ func newACACloudDNSDiscovery(s *Server) *acaCloudDNSDiscovery {
 	return &acaCloudDNSDiscovery{s: s}
 }
 
-func (d *acaCloudDNSDiscovery) RegisterContainer(ctx context.Context, networkID, name string, endpoint *core.CloudEndpoint) error {
+// RegisterContainer dispatches to A-record or CNAME based on
+// endpoint.Metadata["kind"] (default: a-record). For "cname",
+// metadata["service-name"] holds the underlying ACA app name that
+// the CNAME target resolves to.
+func (d *acaCloudDNSDiscovery) RegisterContainer(ctx context.Context, networkID, name, containerID string, endpoint *core.CloudEndpoint) error {
 	if endpoint == nil {
 		return nil
 	}
-	containerID := ""
-	if endpoint.Metadata != nil {
-		containerID = endpoint.Metadata["container-id"]
+	if endpoint.Metadata != nil && endpoint.Metadata["kind"] == "cname" {
+		appName := endpoint.Metadata["service-name"]
+		return d.s.cloudServiceRegisterCNAME(ctx, containerID, name, appName, networkID)
 	}
 	return d.s.cloudServiceRegister(containerID, name, endpoint.IPAddress, networkID)
 }
 
-func (d *acaCloudDNSDiscovery) DeregisterContainer(ctx context.Context, networkID, name string) error {
+func (d *acaCloudDNSDiscovery) DeregisterContainer(ctx context.Context, networkID, name, containerID string) error {
+	if err := d.s.cloudServiceDeregisterCNAME(ctx, containerID, name, networkID); err != nil {
+		_ = d.s.cloudServiceDeregister(containerID, name, networkID)
+		return err
+	}
+	return d.s.cloudServiceDeregister(containerID, name, networkID)
+}
+
+// DeregisterContainerCNAME is the CNAME-only variant for callers that
+// know the original register kind.
+func (d *acaCloudDNSDiscovery) DeregisterContainerCNAME(ctx context.Context, networkID, name string) error {
+	return d.s.cloudServiceDeregisterCNAME(ctx, "", name, networkID)
+}
+
+// DeregisterContainerARecord is the A-record-only variant.
+func (d *acaCloudDNSDiscovery) DeregisterContainerARecord(networkID, name string) error {
 	return d.s.cloudServiceDeregister("", name, networkID)
 }
 

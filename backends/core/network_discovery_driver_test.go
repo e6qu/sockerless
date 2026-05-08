@@ -19,10 +19,10 @@ func TestResolveNetworkDiscoveryDriver_NATDefault(t *testing.T) {
 
 	// All methods on the no-op driver succeed without side effects.
 	ctx := context.Background()
-	if err := d.RegisterContainer(ctx, "net1", "peer", nil); err != nil {
+	if err := d.RegisterContainer(ctx, "net1", "peer", "cid-peer", nil); err != nil {
 		t.Errorf("RegisterContainer: %v", err)
 	}
-	if err := d.DeregisterContainer(ctx, "net1", "peer"); err != nil {
+	if err := d.DeregisterContainer(ctx, "net1", "peer", "cid-peer"); err != nil {
 		t.Errorf("DeregisterContainer: %v", err)
 	}
 	if got, err := d.ResolveName(ctx, "net1", "peer"); err != nil || got != nil {
