@@ -801,17 +801,21 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				// Architecture: sim's primary capacity is linux/arm64.
 				// Future sub-phase: derive from
 				// taskDef.RuntimePlatform.CpuArchitecture when set.
+				// Host metadata: AWS SDK respects
+				// AWS_EC2_METADATA_SERVICE_ENDPOINT + ECS_CONTAINER_METADATA_URI_V4.
+				envWithMetadata := mergeEnv(cmdEnv, hostMetadataEnv(id))
 				handle, err := sim.StartContainerSync(sim.ContainerConfig{
 					Image:        sim.ResolveLocalImage(imageURI),
 					Architecture: "linux/arm64",
 					Command:      entrypoint,
 					Args:         args,
-					Env:          cmdEnv,
+					Env:          envWithMetadata,
 					Name:         fmt.Sprintf("sockerless-sim-aws-task-%s", id[:12]),
 					Labels:       map[string]string{"sockerless-sim-task": id},
 					Tty:          wantTTY,
 					OpenStdin:    wantTTY,
 					Binds:        binds,
+					ExtraHosts:   hostMetadataExtraHosts(),
 				}, sink)
 				if err != nil {
 					stoppedAt := time.Now().Unix()
