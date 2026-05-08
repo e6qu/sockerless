@@ -1,19 +1,24 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Spinner } from "@sockerless/ui-core/components";
+import {
+  Button,
+  PageHeading,
+  Spinner,
+} from "@sockerless/ui-core/components";
 import {
   AdminApiClient,
   type CleanupItem,
   type CleanupScanResult,
 } from "../api.js";
+import { ErrorPanel } from "../components/ErrorPanel.js";
 
 const api = new AdminApiClient();
 
 const categoryLabels: Record<string, string> = {
-  process: "Orphaned Processes",
-  tmp: "Stale Temp Files",
-  container: "Stopped Containers",
-  resource: "Stale Resources",
+  process: "Orphaned processes",
+  tmp: "Stale temp files",
+  container: "Stopped containers",
+  resource: "Stale resources",
 };
 
 export function CleanupPage() {
@@ -42,162 +47,199 @@ export function CleanupPage() {
   const categories = scanResult ? groupByCategory(scanResult.items) : {};
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">Cleanup</h2>
-        <button
-          onClick={() => scan.mutate()}
-          disabled={scan.isPending}
-          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-        >
-          {scan.isPending ? "Scanning..." : "Scan"}
-        </button>
-      </div>
+    <div>
+      <PageHeading
+        kicker="admin · cleanup"
+        title={<>Stale-resource sweep</>}
+        meta={
+          scanResult
+            ? `scanned ${new Date(scanResult.scanned_at).toLocaleString()} · ${scanResult.items.length} item${scanResult.items.length === 1 ? "" : "s"}`
+            : "Click Scan to enumerate stale resources across processes, tmp files, and containers."
+        }
+        actions={
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => scan.mutate()}
+            disabled={scan.isPending}
+          >
+            {scan.isPending ? "Scanning…" : "Scan"}
+          </Button>
+        }
+      />
 
-      {scan.isPending && <Spinner />}
-
-      {scan.isError && (
-        <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">
-          Scan failed: {scan.error?.message ?? "Unknown error"}
-        </div>
-      )}
-
+      {scan.isPending && <Spinner label="scanning" />}
+      {scan.isError && <ErrorPanel kicker="scan failed" message={scan.error?.message} />}
       {cleanProcesses.isError && (
-        <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">
-          Clean processes failed:{" "}
-          {cleanProcesses.error?.message ?? "Unknown error"}
-        </div>
+        <ErrorPanel kicker="clean processes failed" message={cleanProcesses.error?.message} />
       )}
-
       {cleanTmp.isError && (
-        <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">
-          Clean tmp failed: {cleanTmp.error?.message ?? "Unknown error"}
-        </div>
+        <ErrorPanel kicker="clean tmp failed" message={cleanTmp.error?.message} />
       )}
-
       {cleanContainers.isError && (
-        <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">
-          Clean containers failed:{" "}
-          {cleanContainers.error?.message ?? "Unknown error"}
-        </div>
+        <ErrorPanel kicker="clean containers failed" message={cleanContainers.error?.message} />
       )}
 
       {scanResult && (
-        <div className="space-y-6">
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            Scanned at {new Date(scanResult.scanned_at).toLocaleString()} —{" "}
-            {scanResult.items.length} items found
-          </p>
-
+        <div className="space-y-6 mt-4">
           {scanResult.items.length === 0 && (
-            <p className="text-sm text-green-600 dark:text-green-400">
-              No stale resources found.
-            </p>
+            <div
+              className="px-4 py-3 font-mono"
+              style={{
+                background: "var(--color-status-ok-soft)",
+                color: "var(--color-status-ok)",
+                border: "1px solid var(--color-status-ok)",
+                borderLeft: "3px solid var(--color-status-ok)",
+                borderRadius: "var(--radius-sm)",
+                fontSize: "0.78rem",
+              }}
+            >
+              <div
+                className="text-[10px] uppercase tracking-[0.22em] mb-0.5"
+                style={{ opacity: 0.85 }}
+              >
+                clean
+              </div>
+              no stale resources found.
+            </div>
           )}
 
           {Object.entries(categories).map(([category, items]) => (
-            <div key={category} className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-medium">
-                  {categoryLabels[category] ?? category} ({items.length})
-                </h3>
-                {category === "process" && (
-                  <button
-                    onClick={() => {
-                      if (
-                        window.confirm(
-                          "Clean orphaned processes? This cannot be undone.",
-                        )
-                      )
-                        cleanProcesses.mutate();
-                    }}
-                    disabled={cleanProcesses.isPending}
-                    className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
-                  >
-                    Clean
-                  </button>
-                )}
-                {category === "tmp" && (
-                  <button
-                    onClick={() => {
-                      if (
-                        window.confirm(
-                          "Delete stale temp files? This cannot be undone.",
-                        )
-                      )
-                        cleanTmp.mutate();
-                    }}
-                    disabled={cleanTmp.isPending}
-                    className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
-                  >
-                    Clean
-                  </button>
-                )}
-                {category === "container" && (
-                  <button
-                    onClick={() => {
-                      if (
-                        window.confirm(
-                          "Prune stopped containers? This cannot be undone.",
-                        )
-                      )
-                        cleanContainers.mutate();
-                    }}
-                    disabled={cleanContainers.isPending}
-                    className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
-                  >
-                    Prune
-                  </button>
-                )}
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                  <thead>
-                    <tr>
-                      <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
-                        Name
-                      </th>
-                      <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
-                        Description
-                      </th>
-                      <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
-                        Age
-                      </th>
-                      {category === "tmp" && (
-                        <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
-                          Size
-                        </th>
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                    {items.map((item, i) => (
-                      <tr key={i}>
-                        <td className="whitespace-nowrap px-4 py-2 text-sm font-medium">
-                          {item.name}
-                        </td>
-                        <td className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">
-                          {item.description}
-                        </td>
-                        <td className="whitespace-nowrap px-4 py-2 text-sm text-gray-500 dark:text-gray-400">
-                          {item.age}
-                        </td>
-                        {category === "tmp" && (
-                          <td className="whitespace-nowrap px-4 py-2 text-sm text-gray-500 dark:text-gray-400">
-                            {item.size ? formatBytes(item.size) : "-"}
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            <CategorySection
+              key={category}
+              category={category}
+              items={items}
+              onClean={() => {
+                if (category === "process") cleanProcesses.mutate();
+                else if (category === "tmp") cleanTmp.mutate();
+                else if (category === "container") cleanContainers.mutate();
+              }}
+              cleanPending={
+                (category === "process" && cleanProcesses.isPending) ||
+                (category === "tmp" && cleanTmp.isPending) ||
+                (category === "container" && cleanContainers.isPending)
+              }
+            />
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+function CategorySection({
+  category,
+  items,
+  onClean,
+  cleanPending,
+}: {
+  category: string;
+  items: CleanupItem[];
+  onClean: () => void;
+  cleanPending: boolean;
+}) {
+  const cleanable = category === "process" || category === "tmp" || category === "container";
+  const cleanLabel =
+    category === "process"
+      ? "Clean orphaned processes? This cannot be undone."
+      : category === "tmp"
+        ? "Delete stale temp files? This cannot be undone."
+        : "Prune stopped containers? This cannot be undone.";
+
+  return (
+    <div
+      style={{
+        background: "var(--color-surface)",
+        border: "1px solid var(--color-border)",
+        borderRadius: "var(--radius-sm)",
+      }}
+    >
+      <div
+        className="flex items-center justify-between px-4 py-3"
+        style={{ borderBottom: "1px solid var(--color-border)" }}
+      >
+        <h3
+          className="font-mono uppercase tracking-[0.15em]"
+          style={{ fontSize: "0.72rem", color: "var(--color-fg)" }}
+        >
+          {categoryLabels[category] ?? category}
+          <span
+            className="ml-2"
+            style={{ color: "var(--color-fg-subtle)" }}
+          >
+            ({items.length})
+          </span>
+        </h3>
+        {cleanable && (
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={() => {
+              if (window.confirm(cleanLabel)) onClean();
+            }}
+            disabled={cleanPending}
+          >
+            {cleanPending ? "Cleaning…" : category === "container" ? "Prune" : "Clean"}
+          </Button>
+        )}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full font-mono" style={{ fontSize: "0.78rem", borderCollapse: "collapse" }}>
+          <thead style={{ background: "var(--color-bg-subtle)" }}>
+            <tr>
+              <Th>Name</Th>
+              <Th>Description</Th>
+              <Th>Age</Th>
+              {category === "tmp" && <Th>Size</Th>}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item, i) => (
+              <tr
+                key={i}
+                style={{
+                  background: i % 2 === 0 ? "var(--color-surface)" : "var(--color-bg-subtle)",
+                  borderBottom:
+                    "1px solid color-mix(in oklch, var(--color-border) 60%, transparent)",
+                }}
+              >
+                <td className="px-3 py-1.5" style={{ color: "var(--color-fg)" }}>
+                  {item.name}
+                </td>
+                <td className="px-3 py-1.5" style={{ color: "var(--color-fg-muted)" }}>
+                  {item.description}
+                </td>
+                <td className="px-3 py-1.5" style={{ color: "var(--color-fg-muted)" }}>
+                  {item.age}
+                </td>
+                {category === "tmp" && (
+                  <td className="px-3 py-1.5" style={{ color: "var(--color-fg-muted)" }}>
+                    {item.size ? formatBytes(item.size) : "—"}
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function Th({ children }: { children: React.ReactNode }) {
+  return (
+    <th
+      className="px-3 py-2 text-left uppercase tracking-[0.15em]"
+      style={{
+        fontSize: "0.62rem",
+        fontWeight: 500,
+        color: "var(--color-fg-subtle)",
+        borderBottom: "1px solid var(--color-border)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {children}
+    </th>
   );
 }
 

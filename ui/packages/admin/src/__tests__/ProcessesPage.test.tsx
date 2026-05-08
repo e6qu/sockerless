@@ -60,7 +60,7 @@ describe("ProcessesPage", () => {
     mockFetch.mockResolvedValue(jsonResponse(processData));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Processes")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /processes/i })).toBeInTheDocument();
     });
   });
 

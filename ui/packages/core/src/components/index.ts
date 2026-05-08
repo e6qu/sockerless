@@ -1,5 +1,9 @@
-export { AppShell } from "./AppShell.js";
-export type { NavItem, AppShellProps } from "./AppShell.js";
+export { AppShell, NavLinkButton } from "./AppShell.js";
+export type { NavItem, AppShellProps, NavLinkButtonProps } from "./AppShell.js";
+export { PageHeading } from "./PageHeading.js";
+export type { PageHeadingProps } from "./PageHeading.js";
+export { Button } from "./Button.js";
+export type { ButtonProps } from "./Button.js";
 export { StatusBadge } from "./StatusBadge.js";
 export type { StatusBadgeProps } from "./StatusBadge.js";
 export { MetricsCard } from "./MetricsCard.js";

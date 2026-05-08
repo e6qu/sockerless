@@ -191,6 +191,17 @@ func (s *Server) handleSubmitWorkflow(w http.ResponseWriter, r *http.Request) {
 		repo = "bleephub/test"
 	}
 
+	// Auto-register the WorkflowFile so /api/v3/repos/{o}/{r}/actions/
+	// workflows lists this submission. Path defaults to the conventional
+	// `.github/workflows/<name>.yml` shape; the YAML body is cached so
+	// the dispatch + rerun endpoints can replay it later.
+	wfName := wfDef.Name
+	if wfName == "" {
+		wfName = "workflow"
+	}
+	wfPath := ".github/workflows/" + wfName + ".yml"
+	s.store.RegisterWorkflowFile(repo, wfPath, wfName, req.Workflow, "submitted")
+
 	// Expand matrix strategies
 	expandedDef := expandMatrixJobs(wfDef)
 

@@ -53,7 +53,7 @@ describe("ContextsPage", () => {
     mockFetch.mockResolvedValue(jsonResponse(contextsData));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("CLI Contexts")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /contexts/i })).toBeInTheDocument();
     });
   });
 
@@ -70,7 +70,7 @@ describe("ContextsPage", () => {
     mockFetch.mockResolvedValue(jsonResponse([]));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("No contexts found.")).toBeInTheDocument();
+      expect(screen.getByText(/no contexts/i)).toBeInTheDocument();
     });
   });
 });

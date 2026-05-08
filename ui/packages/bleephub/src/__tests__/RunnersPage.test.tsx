@@ -56,7 +56,7 @@ describe("RunnersPage", () => {
     mockFetch.mockResolvedValue(jsonResponse(sessionsData));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Runners (1)")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /connected runners/i })).toBeInTheDocument();
     });
   });
 
@@ -72,7 +72,7 @@ describe("RunnersPage", () => {
     mockFetch.mockResolvedValue(jsonResponse(sessionsData));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Pending Messages")).toBeInTheDocument();
+      expect(screen.getAllByText(/pending messages/i).length).toBeGreaterThan(0);
       expect(screen.getByText("2")).toBeInTheDocument();
     });
   });

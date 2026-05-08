@@ -1,31 +1,60 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   DataTable,
-  StatusBadge,
+  PageHeading,
   Spinner,
+  StatusBadge,
 } from "@sockerless/ui-core/components";
 import { type ColumnDef } from "@tanstack/react-table";
 import { AdminApiClient, type ContextInfo } from "../api.js";
+import { ErrorPanel } from "../components/ErrorPanel.js";
 
 const api = new AdminApiClient();
 
 const columns: ColumnDef<ContextInfo, string>[] = [
-  { accessorKey: "name", header: "Name" },
-  { accessorKey: "backend", header: "Backend" },
+  {
+    accessorKey: "name",
+    header: "Name",
+    cell: ({ getValue }) => (
+      <span style={{ color: "var(--color-fg)", fontWeight: 500 }}>
+        {getValue() as string}
+      </span>
+    ),
+  },
+  {
+    accessorKey: "backend",
+    header: "Backend",
+    cell: ({ getValue }) => (
+      <span style={{ color: "var(--color-accent)" }}>{getValue() as string}</span>
+    ),
+  },
   {
     accessorKey: "active",
     header: "Active",
-    cell: ({ getValue }) => (getValue() ? <StatusBadge status="ok" /> : "-"),
+    cell: ({ getValue }) =>
+      getValue() ? (
+        <StatusBadge status="active" />
+      ) : (
+        <span style={{ color: "var(--color-fg-subtle)" }}>—</span>
+      ),
   },
   {
     accessorKey: "backend_addr",
-    header: "Backend Address",
-    cell: ({ getValue }) => (getValue() as string) || "-",
+    header: "Backend address",
+    cell: ({ getValue }) => (
+      <span className="font-mono" style={{ color: "var(--color-fg-muted)" }}>
+        {(getValue() as string) || "—"}
+      </span>
+    ),
   },
   {
     accessorKey: "frontend_addr",
-    header: "Frontend Address",
-    cell: ({ getValue }) => (getValue() as string) || "-",
+    header: "Frontend address",
+    cell: ({ getValue }) => (
+      <span className="font-mono" style={{ color: "var(--color-fg-muted)" }}>
+        {(getValue() as string) || "—"}
+      </span>
+    ),
   },
 ];
 
@@ -35,29 +64,23 @@ export function ContextsPage() {
     queryFn: () => api.contexts(),
   });
 
-  if (isLoading) return <Spinner />;
-  if (isError)
-    return (
-      <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">
-        Error: {error?.message ?? "Failed to load"}
-      </div>
-    );
-  if (!data) return <Spinner />;
+  if (isLoading) return <Spinner label="loading contexts" />;
+  if (isError) return <ErrorPanel message={error?.message} />;
+  if (!data) return <Spinner label="loading contexts" />;
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-xl font-semibold">CLI Contexts</h2>
-      {data.length === 0 ? (
-        <p className="text-sm text-gray-500 dark:text-gray-400">
-          No contexts found.
-        </p>
-      ) : (
-        <DataTable
-          data={data}
-          columns={columns}
-          filterPlaceholder="Filter contexts..."
-        />
-      )}
+    <div>
+      <PageHeading
+        kicker="admin · cli contexts"
+        title={<>CLI contexts</>}
+        meta={`${data.length} context${data.length === 1 ? "" : "s"} configured`}
+      />
+      <DataTable
+        data={data}
+        columns={columns}
+        filterPlaceholder="Filter contexts…"
+        emptyMessage="No contexts configured. Run `sockerless context create <name>`."
+      />
     </div>
   );
 }

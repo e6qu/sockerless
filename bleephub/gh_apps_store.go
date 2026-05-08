@@ -204,6 +204,19 @@ func (st *Store) CreateInstallationToken(installationID, appID int, perms map[st
 	return token
 }
 
+// RevokeInstallationToken drops the token from the store. Returns
+// true if the token existed (so the caller can return 204) and false
+// if it didn't (so the caller can return 401 for unknown tokens).
+func (st *Store) RevokeInstallationToken(tokenStr string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if _, ok := st.InstallationTokens[tokenStr]; !ok {
+		return false
+	}
+	delete(st.InstallationTokens, tokenStr)
+	return true
+}
+
 // LookupInstallationToken returns the token and its installation, or nil if not found/expired.
 func (st *Store) LookupInstallationToken(tokenStr string) (*InstallationToken, *Installation) {
 	st.mu.RLock()

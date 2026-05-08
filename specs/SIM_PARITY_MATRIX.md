@@ -56,7 +56,7 @@ Backends: ECS (Fargate), Lambda. Sim: `simulators/aws/`. **33/33 ✓.**
 
 ## GCP
 
-Backends: Cloud Run Jobs (cloudrun), Cloud Run Functions (cloudrun-functions). Sim: `simulators/gcp/`. **16/16 ✓.**
+Backends: Cloud Run Jobs (cloudrun), Cloud Run Functions (cloudrun-functions). Sim: `simulators/gcp/`. **16/16 ✓ (current backends) + 8 forward-looking rows for Phase 126/127 prep, all ✓.**
 
 | Service | Method | Used by | Sim status | Notes |
 |---|---|---|---|---|
@@ -76,6 +76,19 @@ Backends: Cloud Run Jobs (cloudrun), Cloud Run Functions (cloudrun-functions). S
 | Cloud Logging | LogAdmin.Entries | cloudrun, cloudrun-functions | ✓ | (logging.go:151) — REST ListLogEntries with filter + pageSize |
 | Cloud DNS | ManagedZones | cloudrun, cloudrun-functions | ✓ | (dns.go:44/96/114/128) — Create/Get/List/Delete + Docker network backing for private zones |
 | Cloud DNS | ResourceRecordSets | cloudrun, cloudrun-functions | ✓ | (dns.go:159/190/236) — List/Create/Delete + Docker network connection for A records |
+
+### Phase 126/127 forward-looking (no current backend caller; SDK-test-validated)
+
+| Service | Method | Phase | Sim status | Notes |
+|---|---|---|---|---|
+| IAM Credentials | ServiceAccounts.GenerateIdToken | 126 (Access driver `id-token`) | ✓ | `simulators/gcp/iam.go` — `:emailAction` switch handles `:generateIdToken` alongside existing `:generateAccessToken`. Mints HS256 JWT via `mintSimIdToken` in `oauth2.go`; `aud` claim equals request audience; `email` claim included when `includeEmail=true`. SDK test: `iam_test.go::TestIAMCredentials_GenerateIdToken*`. |
+| Compute | Disks.Insert | 127 (Storage `pd-ephemeral`) | ✓ | `simulators/gcp/compute.go::registerComputeDisks`. Default Type `pd-standard` when unset. Returns zonal LRO. |
+| Compute | Disks.Get | 127 | ✓ | (compute.go) |
+| Compute | Disks.List | 127 | ✓ | (compute.go) — zonal |
+| Compute | Disks.Delete | 127 | ✓ | (compute.go) — 404 on missing |
+| Compute | Disks.Resize | 127 | ✓ | (compute.go) — `DisksResizeRequest{SizeGb}` |
+| Compute | Disks.SetLabels | 127 | ✓ | (compute.go) — refreshes `LabelFingerprint` |
+| Compute | Disks.AggregatedList | 127 | ✓ | (compute.go) — `compute#diskAggregatedList` shape with `zones/<zone>` keys |
 
 ## Azure
 
@@ -114,4 +127,4 @@ Backends: Container Apps (aca), Azure Functions (azure-functions). Sim: `simulat
 
 ## Closure tracking
 
-All 77 rows (33 AWS + 16 GCP + 28 Azure) ship ✓. Standing rule: any new SDK call added to a backend must update this matrix and add a sim handler in the same commit (PLAN.md principle #10).
+All 77 current-backend rows (33 AWS + 16 GCP + 28 Azure) ship ✓. Plus 8 forward-looking GCP rows for Phase 126/127 driver work (no current backend caller — validated by SDK tests today; backend caller lands when those phases ship). Standing rule: any new SDK call added to a backend must update this matrix and add a sim handler in the same commit (PLAN.md principle #10). Forward-looking rows are sim-side prep only — they don't violate the rule because no backend uses them yet.

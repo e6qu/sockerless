@@ -300,6 +300,16 @@ func (d *dispatchLoop) RecoverState(ctx context.Context) {
 // the project accumulates one Job resource per workflow_job. Same
 // shape as the docker dispatcher's cleanup, just at the Cloud Run
 // resource layer instead of `docker rm`.
+//
+// Cleanup also sweeps orphan `sockerless-svc-*` Services — sockerless
+// on the runner-task creates one pod-Service per docker pod and
+// normally deletes them via ContainerRemove. When the runner-task
+// dies before issuing ContainerRemove (cancelled pipeline, runner
+// crash, etc.) the Services leak and pin regional Cloud Run CPU
+// quota. The dispatcher's owner-link approach: every spawn injects
+// SOCKERLESS_OWNER_RUNNER_TASK=<jobID> into the runner-task; sockerless
+// stamps the resulting label on every pod-Service; here we delete any
+// pod-Service whose owner is gone or terminal.
 func (d *dispatchLoop) Cleanup(ctx context.Context) error {
 	seen := map[string]bool{}
 	for _, label := range d.cfg.Labels {
@@ -313,6 +323,18 @@ func (d *dispatchLoop) Cleanup(ctx context.Context) error {
 			log.Printf("cleanup: list managed on %s failed: %v", key, err)
 			continue
 		}
+		// Build the set of Cloud Run Job IDs whose runner-tasks are
+		// still running so the orphan-Service sweep below knows which
+		// owners are alive vs. gone. A Job whose Execution is terminal
+		// (succeeded / failed) is NOT a live owner — its pod-Services
+		// should be reaped.
+		liveOwners := map[string]bool{}
+		for _, m := range managed {
+			if isTerminalJobState(m.State) {
+				continue
+			}
+			liveOwners[spawner.JobIDFromName(m.JobName)] = true
+		}
 		for _, m := range managed {
 			if !isTerminalJobState(m.State) {
 				continue
@@ -322,6 +344,32 @@ func (d *dispatchLoop) Cleanup(ctx context.Context) error {
 				continue
 			}
 			log.Printf("cleanup: deleted terminated Cloud Run Job %s", m.JobName)
+		}
+		// Orphan pod-Service sweep. List all sockerless-managed
+		// `sockerless-svc-*` Services and delete those whose owner
+		// label points to a non-live (gone or terminal) runner-task.
+		// Services without an owner label are legacy (pre-owner-label
+		// rollout) — leave them alone here so a stale label doesn't
+		// reap an active pod-Service from a dispatcher version skew.
+		// A separate idle-time sweep (Phase 129) will handle legacy
+		// orphans once the rollout is past the inflection point.
+		services, err := spawner.ListManagedServices(ctx, label.Project, label.Region)
+		if err != nil {
+			log.Printf("cleanup: list managed services on %s failed: %v", key, err)
+			continue
+		}
+		for _, s := range services {
+			if s.OwnerRunnerJob == "" {
+				continue
+			}
+			if liveOwners[s.OwnerRunnerJob] {
+				continue
+			}
+			if err := spawner.DeleteService(ctx, s.Name); err != nil {
+				log.Printf("cleanup: delete orphan service %s (owner=%s) failed: %v", s.Name, s.OwnerRunnerJob, err)
+				continue
+			}
+			log.Printf("cleanup: deleted orphan pod-Service %s (owner=%s gone/terminal)", s.Name, s.OwnerRunnerJob)
 		}
 	}
 	return nil

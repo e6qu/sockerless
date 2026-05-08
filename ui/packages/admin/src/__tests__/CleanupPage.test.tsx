@@ -76,9 +76,9 @@ describe("CleanupPage", () => {
     renderPage();
     fireEvent.click(screen.getByText("Scan"));
     await waitFor(() => {
-      expect(screen.getByText(/Orphaned Processes/)).toBeInTheDocument();
-      expect(screen.getByText(/Stale Temp Files/)).toBeInTheDocument();
-      expect(screen.getByText(/Stopped Containers/)).toBeInTheDocument();
+      expect(screen.getByText(/orphaned processes/i)).toBeInTheDocument();
+      expect(screen.getByText(/stale temp files/i)).toBeInTheDocument();
+      expect(screen.getByText(/stopped containers/i)).toBeInTheDocument();
     });
   });
 
@@ -100,7 +100,7 @@ describe("CleanupPage", () => {
     renderPage();
     fireEvent.click(screen.getByText("Scan"));
     await waitFor(() => {
-      expect(screen.getByText("No stale resources found.")).toBeInTheDocument();
+      expect(screen.getByText(/no stale resources/i)).toBeInTheDocument();
     });
   });
 });

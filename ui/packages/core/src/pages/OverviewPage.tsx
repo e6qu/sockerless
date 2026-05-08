@@ -1,5 +1,6 @@
 import { useStatus, useHealth, useInfo, useCheck } from "../hooks/index.js";
 import { MetricsCard } from "../components/MetricsCard.js";
+import { PageHeading } from "../components/PageHeading.js";
 import { StatusBadge } from "../components/StatusBadge.js";
 import { Spinner } from "../components/Spinner.js";
 import { BackendInfoCard } from "../components/BackendInfoCard.js";
@@ -10,51 +11,87 @@ export function OverviewPage() {
   const { data: info } = useInfo();
   const { data: checks } = useCheck();
 
-  if (statusLoading) return <Spinner />;
+  if (statusLoading) return <Spinner label="loading overview" />;
 
   return (
-    <div className="space-y-6">
-      <h2 className="text-xl font-semibold">Overview</h2>
+    <div>
+      <PageHeading
+        kicker="backend · overview"
+        title={<>System status</>}
+        meta={
+          status
+            ? `${status.backend_type} · uptime ${formatUptime(status.uptime_seconds)}`
+            : undefined
+        }
+      />
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <MetricsCard title="Containers" value={status?.containers ?? 0} />
-        <MetricsCard title="Active Resources" value={status?.active_resources ?? 0} />
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <MetricsCard
-          title="Uptime"
-          value={formatUptime(status?.uptime_seconds ?? 0)}
+          title="Containers"
+          value={status?.containers ?? 0}
+          emphasized={(status?.containers ?? 0) > 0}
         />
+        <MetricsCard title="Active resources" value={status?.active_resources ?? 0} />
+        <MetricsCard title="Uptime" value={formatUptime(status?.uptime_seconds ?? 0)} />
         <MetricsCard title="Backend" value={status?.backend_type ?? "—"} />
       </div>
 
-      {status && <BackendInfoCard status={status} />}
+      <div className="grid gap-3 md:grid-cols-2 mb-6">
+        {status && <BackendInfoCard status={status} />}
 
-      {info && (
-        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
-          <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">System Info</h3>
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-            <dt className="text-gray-500 dark:text-gray-400">Name</dt>
-            <dd>{info.Name}</dd>
-            <dt className="text-gray-500 dark:text-gray-400">Version</dt>
-            <dd>{info.ServerVersion}</dd>
-            <dt className="text-gray-500 dark:text-gray-400">Driver</dt>
-            <dd>{info.Driver}</dd>
-            <dt className="text-gray-500 dark:text-gray-400">OS / Arch</dt>
-            <dd>{info.OperatingSystem} ({info.Architecture})</dd>
-            <dt className="text-gray-500 dark:text-gray-400">Images</dt>
-            <dd>{info.Images}</dd>
-          </dl>
-        </div>
-      )}
+        {info && (
+          <div
+            className="px-4 py-4"
+            style={{
+              background: "var(--color-surface)",
+              border: "1px solid var(--color-border)",
+              borderLeft: "3px solid var(--color-accent)",
+              borderRadius: "var(--radius-sm)",
+            }}
+          >
+            <div
+              className="mb-3 text-[10px] uppercase tracking-[0.22em]"
+              style={{ color: "var(--color-fg-subtle)" }}
+            >
+              System info
+            </div>
+            <dl className="grid grid-cols-[7rem_1fr] gap-x-4 gap-y-2 text-[13px] font-mono">
+              <DLPair label="name" value={info.Name} />
+              <DLPair label="version" value={info.ServerVersion} />
+              <DLPair label="driver" value={info.Driver} />
+              <DLPair
+                label="os / arch"
+                value={`${info.OperatingSystem} (${info.Architecture})`}
+              />
+              <DLPair label="images" value={String(info.Images)} />
+            </dl>
+          </div>
+        )}
+      </div>
 
       {checks && checks.checks.length > 0 && (
-        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
-          <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">Health Checks</h3>
-          <ul className="space-y-2">
+        <div
+          className="px-4 py-4 mb-4"
+          style={{
+            background: "var(--color-surface)",
+            border: "1px solid var(--color-border)",
+            borderRadius: "var(--radius-sm)",
+          }}
+        >
+          <div
+            className="mb-3 text-[10px] uppercase tracking-[0.22em]"
+            style={{ color: "var(--color-fg-subtle)" }}
+          >
+            Health checks
+          </div>
+          <ul className="space-y-2 font-mono" style={{ fontSize: "0.78rem" }}>
             {checks.checks.map((c) => (
-              <li key={c.name} className="flex items-center gap-2 text-sm">
+              <li key={c.name} className="flex items-center gap-2">
                 <StatusBadge status={c.status} />
-                <span className="font-medium">{c.name}</span>
-                {c.detail && <span className="text-gray-400">— {c.detail}</span>}
+                <span style={{ color: "var(--color-fg)", fontWeight: 500 }}>{c.name}</span>
+                {c.detail && (
+                  <span style={{ color: "var(--color-fg-subtle)" }}>— {c.detail}</span>
+                )}
               </li>
             ))}
           </ul>
@@ -62,15 +99,30 @@ export function OverviewPage() {
       )}
 
       {health && (
-        <p className="text-xs text-gray-400">
-          Health: {health.status} | Component: {health.component}
+        <p
+          className="font-mono text-[11px]"
+          style={{ color: "var(--color-fg-subtle)" }}
+        >
+          health: <StatusBadge status={health.status} /> · component: {health.component}
         </p>
       )}
     </div>
   );
 }
 
+function DLPair({ label, value }: { label: string; value: string }) {
+  return (
+    <>
+      <dt style={{ color: "var(--color-fg-subtle)" }}>{label}</dt>
+      <dd className="truncate" style={{ color: "var(--color-fg)" }} title={value}>
+        {value}
+      </dd>
+    </>
+  );
+}
+
 function formatUptime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
   if (seconds < 60) return `${seconds}s`;
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, cleanup, screen, waitFor } from "@testing-library/react";
+import { render, cleanup, screen, waitFor, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router";
 import { WorkflowsPage } from "../pages/WorkflowsPage.js";
@@ -32,7 +32,23 @@ function renderPage() {
   );
 }
 
-const workflowsData = [
+// Phase 131 — UI now has two tabs:
+// - Workflows (files) — backed by GET /internal/workflow_files
+// - Runs           — backed by GET /internal/workflows
+const workflowFilesData = [
+  {
+    id: 1234,
+    name: "CI Build",
+    path: ".github/workflows/ci.yml",
+    state: "active",
+    repoFullName: "admin/test",
+    source: "submitted",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+  },
+];
+
+const workflowRunsData = [
   {
     id: "wf-1",
     name: "CI Build",
@@ -44,36 +60,71 @@ const workflowsData = [
     repoFullName: "admin/test",
     jobs: {
       build: { key: "build", jobId: "j1", displayName: "Build", status: "running", result: "" },
-      test: { key: "test", jobId: "j2", displayName: "Test", status: "pending", result: "" },
     },
   },
 ];
 
+// Route the mocked fetch by URL so the two tabs see distinct payloads.
+function routedFetch(url: RequestInfo | URL): Promise<Response> {
+  const u = typeof url === "string" ? url : url.toString();
+  if (u.includes("/internal/workflow_files")) return Promise.resolve(jsonResponse(workflowFilesData));
+  if (u.includes("/internal/workflows")) return Promise.resolve(jsonResponse(workflowRunsData));
+  return Promise.resolve(jsonResponse([]));
+}
+
 describe("WorkflowsPage", () => {
-  it("renders the workflows heading", async () => {
-    mockFetch.mockResolvedValue(jsonResponse(workflowsData));
+  it("renders both tabs", async () => {
+    mockFetch.mockImplementation((url: RequestInfo | URL) => routedFetch(url));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Workflows (1)")).toBeInTheDocument();
+      expect(screen.getByText("Workflows (files)")).toBeInTheDocument();
+      expect(screen.getByText("Runs")).toBeInTheDocument();
     });
   });
 
-  it("renders DataTable columns", async () => {
-    mockFetch.mockResolvedValue(jsonResponse(workflowsData));
+  it("Workflows tab renders the file listing with a Run-workflow action", async () => {
+    mockFetch.mockImplementation((url: RequestInfo | URL) => routedFetch(url));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Name")).toBeInTheDocument();
-      expect(screen.getByText("Status")).toBeInTheDocument();
-      expect(screen.getByText("Result")).toBeInTheDocument();
-      expect(screen.getByText("Event")).toBeInTheDocument();
+      expect(screen.getByText(".github/workflows/ci.yml")).toBeInTheDocument();
+      // Per-row dispatch button — at least one Run button must render.
+      // ("Runners" tab button also matches /run/i so use a count check.)
+      expect(screen.getAllByRole("button", { name: /run/i }).length).toBeGreaterThan(0);
     });
   });
 
-  it("renders workflow status badges", async () => {
-    mockFetch.mockResolvedValue(jsonResponse(workflowsData));
+  it("Runs tab shows the run-level workflows", async () => {
+    mockFetch.mockImplementation((url: RequestInfo | URL) => routedFetch(url));
     renderPage();
+    await waitFor(() => {
+      // Default tab is Workflows (files); switch to Runs.
+      fireEvent.click(screen.getByText("Runs"));
+    });
     await waitFor(() => {
       expect(screen.getByText("running")).toBeInTheDocument();
+      expect(screen.getByText("push")).toBeInTheDocument();
+    });
+  });
+
+  it("opens the dispatch dialog when Run workflow is clicked", async () => {
+    mockFetch.mockImplementation((url: RequestInfo | URL) => routedFetch(url));
+    renderPage();
+    // Take the LAST /run/i button — the per-row dispatch action — to
+    // skip the heading-level "Run" mentions if any exist.
+    await waitFor(() => {
+      expect(screen.getAllByRole("button", { name: /run/i }).length).toBeGreaterThan(0);
+    });
+    // Wait for the row to render (the file path appears once data arrives).
+    await screen.findByText(".github/workflows/ci.yml");
+    // Click the per-row dispatch button. The button label starts with
+    // "Run " — anchor on it to skip the "Runs" tab.
+    const buttons = screen.getAllByRole("button");
+    const runBtn = buttons.find((b) => /^run\b/i.test(b.textContent ?? ""));
+    expect(runBtn, `Found ${buttons.length} buttons: ${buttons.map((b) => b.textContent).join(" | ")}`).toBeDefined();
+    fireEvent.click(runBtn!);
+    // Dialog now in the DOM — assert on its Dispatch CTA.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /dispatch/i })).toBeInTheDocument();
     });
   });
 });

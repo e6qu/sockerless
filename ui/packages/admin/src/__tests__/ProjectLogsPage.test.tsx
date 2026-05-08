@@ -58,7 +58,7 @@ describe("ProjectLogsPage", () => {
     mockFetch.mockResolvedValue(jsonResponse([]));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Back to test-aws")).toBeInTheDocument();
+      expect(screen.getByText(/back to project/i)).toBeInTheDocument();
     });
   });
 });

@@ -142,3 +142,99 @@ func TestCompute_Firewall_DefaultsToIngressPriority1000(t *testing.T) {
 	assert.Equal(t, "INGRESS", got.Direction, "default direction must match real GCP")
 	assert.Equal(t, int64(1000), got.Priority, "default priority must match real GCP")
 }
+
+// TestCompute_Disks_CRUD covers the Phase 127 GCP `pd-ephemeral`
+// storage driver prereq: zonal Compute Disks insert / get / list /
+// resize / setLabels / delete + aggregated list across zones. Real
+// GCP returns zonal operations for every mutation; the sim's ops
+// endpoint always reports DONE so the SDK's polling loop completes
+// in one round.
+func TestCompute_Disks_CRUD(t *testing.T) {
+	svc := computeService(t)
+	const project = "test-project"
+	const zone = "us-central1-a"
+
+	d := &compute.Disk{
+		Name:        "ephemeral-1",
+		SizeGb:      20,
+		Description: "phase-127 pd-ephemeral test disk",
+	}
+	_, err := svc.Disks.Insert(project, zone, d).Context(ctx).Do()
+	require.NoError(t, err)
+
+	got, err := svc.Disks.Get(project, zone, "ephemeral-1").Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "ephemeral-1", got.Name)
+	assert.Equal(t, int64(20), got.SizeGb)
+	assert.Equal(t, "READY", got.Status)
+	assert.Contains(t, got.Type, "diskTypes/pd-standard", "default type when unset")
+
+	list, err := svc.Disks.List(project, zone).Context(ctx).Do()
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(list.Items), 1)
+
+	_, err = svc.Disks.Resize(project, zone, "ephemeral-1",
+		&compute.DisksResizeRequest{SizeGb: 50}).Context(ctx).Do()
+	require.NoError(t, err)
+	resized, err := svc.Disks.Get(project, zone, "ephemeral-1").Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, int64(50), resized.SizeGb, "resize must update size")
+
+	_, err = svc.Disks.SetLabels(project, zone, "ephemeral-1",
+		&compute.ZoneSetLabelsRequest{
+			Labels:           map[string]string{"sockerless_session": "abc123"},
+			LabelFingerprint: resized.LabelFingerprint,
+		}).Context(ctx).Do()
+	require.NoError(t, err)
+	labelled, err := svc.Disks.Get(project, zone, "ephemeral-1").Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "abc123", labelled.Labels["sockerless_session"], "setLabels round-trip")
+
+	_, err = svc.Disks.Delete(project, zone, "ephemeral-1").Context(ctx).Do()
+	require.NoError(t, err)
+	_, err = svc.Disks.Get(project, zone, "ephemeral-1").Context(ctx).Do()
+	require.Error(t, err, "get after delete must fail")
+}
+
+// TestCompute_Disks_AggregatedList covers the cross-zone aggregated
+// surface terraform's `data "google_compute_disks"` uses. Real GCP
+// groups by `zones/<zone>` keys; sim mirrors that shape.
+func TestCompute_Disks_AggregatedList(t *testing.T) {
+	svc := computeService(t)
+	const project = "test-project"
+
+	for _, z := range []string{"us-central1-a", "us-east1-b"} {
+		_, err := svc.Disks.Insert(project, z, &compute.Disk{
+			Name:   "agg-" + z,
+			SizeGb: 10,
+		}).Context(ctx).Do()
+		require.NoError(t, err)
+	}
+
+	agg, err := svc.Disks.AggregatedList(project).Context(ctx).Do()
+	require.NoError(t, err)
+	require.NotEmpty(t, agg.Items)
+
+	foundCentral := false
+	foundEast := false
+	for key, scoped := range agg.Items {
+		for _, d := range scoped.Disks {
+			if d.Name == "agg-us-central1-a" {
+				assert.Equal(t, "zones/us-central1-a", key)
+				foundCentral = true
+			}
+			if d.Name == "agg-us-east1-b" {
+				assert.Equal(t, "zones/us-east1-b", key)
+				foundEast = true
+			}
+		}
+	}
+	assert.True(t, foundCentral, "us-central1-a disk must appear in aggregated list")
+	assert.True(t, foundEast, "us-east1-b disk must appear in aggregated list")
+}
+
+func TestCompute_Disks_Get_NotFound(t *testing.T) {
+	svc := computeService(t)
+	_, err := svc.Disks.Get("test-project", "us-central1-a", "does-not-exist").Context(ctx).Do()
+	require.Error(t, err, "get on missing disk must 404")
+}

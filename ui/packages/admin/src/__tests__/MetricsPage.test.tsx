@@ -54,7 +54,7 @@ describe("MetricsPage", () => {
     mockFetch.mockResolvedValue(jsonResponse(componentsData));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Metrics")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /metrics/i })).toBeInTheDocument();
     });
   });
 
@@ -71,7 +71,7 @@ describe("MetricsPage", () => {
     mockFetch.mockResolvedValue(jsonResponse([]));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("No components found.")).toBeInTheDocument();
+      expect(screen.getByText(/no components/i)).toBeInTheDocument();
     });
   });
 });

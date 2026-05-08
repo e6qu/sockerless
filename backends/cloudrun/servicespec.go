@@ -9,6 +9,7 @@ import (
 	runpb "cloud.google.com/go/run/apiv2/runpb"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
+	gcpcommon "github.com/sockerless/gcp-common"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
@@ -128,8 +129,13 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 		tags.Pod = pod.Name
 	}
 
+	gcpLabels := tags.AsGCPLabels()
+	if owner := gcpcommon.OwnerRunnerTaskLabelValue(); owner != "" {
+		gcpLabels[gcpcommon.OwnerRunnerTaskLabel] = owner
+	}
+
 	return &runpb.Service{
-		Labels:      tags.AsGCPLabels(),
+		Labels:      gcpLabels,
 		Annotations: tags.AsGCPAnnotations(),
 		// Ingress=ALL with IAM-required invoke. Cloud Run rejects
 		// cross-project-service-to-service via .a.run.app + Cloud NAT

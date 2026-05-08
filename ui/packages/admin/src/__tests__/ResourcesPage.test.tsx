@@ -60,7 +60,7 @@ describe("ResourcesPage", () => {
     mockFetch.mockResolvedValue(jsonResponse(resourcesData));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Cloud Resources (2)")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /resources/i })).toBeInTheDocument();
     });
   });
 
@@ -77,7 +77,7 @@ describe("ResourcesPage", () => {
     mockFetch.mockResolvedValue(jsonResponse([]));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("No resources found.")).toBeInTheDocument();
+      expect(screen.getByText(/no cloud resources/i)).toBeInTheDocument();
     });
   });
 });

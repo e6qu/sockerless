@@ -71,7 +71,7 @@ describe("OverviewPage", () => {
     mockAllEndpoints();
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Overview")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /system status/i })).toBeInTheDocument();
     });
   });
 
@@ -87,9 +87,9 @@ describe("OverviewPage", () => {
     mockAllEndpoints();
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Active Workflows")).toBeInTheDocument();
+      expect(screen.getByText(/active workflows/i)).toBeInTheDocument();
       expect(screen.getByText("2")).toBeInTheDocument();
-      expect(screen.getByText("Connected Runners")).toBeInTheDocument();
+      expect(screen.getByText(/connected runners/i)).toBeInTheDocument();
       expect(screen.getByText("3")).toBeInTheDocument();
       expect(screen.getByText("Submissions")).toBeInTheDocument();
       expect(screen.getByText("10")).toBeInTheDocument();
@@ -100,7 +100,7 @@ describe("OverviewPage", () => {
     mockAllEndpoints();
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Recent Workflows")).toBeInTheDocument();
+      expect(screen.getByText(/recent workflows/i)).toBeInTheDocument();
       expect(screen.getByText("CI Build")).toBeInTheDocument();
     });
   });

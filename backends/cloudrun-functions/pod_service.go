@@ -176,6 +176,9 @@ func (s *Server) materializePodService(mainContainerID string, containers []api.
 	if podName != "" {
 		gcpLabels["sockerless_pod"] = sanitizePodLabelValue(podName)
 	}
+	if owner := gcpcommon.OwnerRunnerTaskLabelValue(); owner != "" {
+		gcpLabels[gcpcommon.OwnerRunnerTaskLabel] = owner
+	}
 	gcpAnnotations := tags.AsGCPAnnotations()
 	if gcpAnnotations == nil {
 		gcpAnnotations = map[string]string{}
@@ -352,6 +355,9 @@ func (s *Server) deployContainerService(ctx context.Context, id string, containe
 	gcpLabels := tags.AsGCPLabels()
 	gcpLabels["sockerless_managed"] = "true"
 	gcpLabels["sockerless_allocation"] = shortAllocLabel(id)
+	if owner := gcpcommon.OwnerRunnerTaskLabelValue(); owner != "" {
+		gcpLabels[gcpcommon.OwnerRunnerTaskLabel] = owner
+	}
 	gcpAnnotations := tags.AsGCPAnnotations()
 	if gcpAnnotations == nil {
 		gcpAnnotations = map[string]string{}

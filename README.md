@@ -8,9 +8,9 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-114k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
-[![TypeScript](https://img.shields.io/badge/TypeScript-8.5k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-55.2k_lines-brightgreen)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-116.1k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![TypeScript](https://img.shields.io/badge/TypeScript-11.6k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-56.4k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
@@ -101,13 +101,13 @@ Each backend, the agent, and the test suite are separate Go modules connected vi
 **Go**
 
 ![core](https://img.shields.io/badge/core-18.4k-00ADD8)
-![bleephub](https://img.shields.io/badge/bleephub-14.5k-00ADD8)
+![bleephub](https://img.shields.io/badge/bleephub-16k-00ADD8)
 ![sim/aws](https://img.shields.io/badge/sim%2Faws-11k-00ADD8)
 ![sim/azure](https://img.shields.io/badge/sim%2Fazure-8.6k-00ADD8)
-![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-7.8k-00ADD8)
+![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-8.1k-00ADD8)
 ![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)
 ![ecs](https://img.shields.io/badge/ecs-6.7k-5BC0DE)
-![cloudrun](https://img.shields.io/badge/cloudrun-6k-5BC0DE)
+![cloudrun](https://img.shields.io/badge/cloudrun-6.1k-5BC0DE)
 ![aca](https://img.shields.io/badge/aca-4.3k-5BC0DE)
 ![docker](https://img.shields.io/badge/docker-2.6k-5BC0DE)
 ![agent](https://img.shields.io/badge/agent-5.5k-5BC0DE)
@@ -119,13 +119,13 @@ Each backend, the agent, and the test suite are separate Go modules connected vi
 
 **TypeScript**
 
-![ui/admin](https://img.shields.io/badge/ui%2Fadmin-3.9k-3178C6)
-![ui/core](https://img.shields.io/badge/ui%2Fcore-1.5k-3178C6)
-![ui/bleephub](https://img.shields.io/badge/ui%2Fbleephub-1.1k-3178C6)
+![ui/admin](https://img.shields.io/badge/ui%2Fadmin-4.5k-3178C6)
+![ui/core](https://img.shields.io/badge/ui%2Fcore-2.3k-3178C6)
+![ui/bleephub](https://img.shields.io/badge/ui%2Fbleephub-2.8k-3178C6)
 ![ui/sim-aws](https://img.shields.io/badge/ui%2Fsim--aws-391-6295D2)
 ![ui/sim-gcp](https://img.shields.io/badge/ui%2Fsim--gcp-372-6295D2)
 ![ui/sim-azure](https://img.shields.io/badge/ui%2Fsim--azure-366-6295D2)
-![ui/frontend-docker](https://img.shields.io/badge/ui%2Ffrontend--docker-230-6295D2)
+![ui/frontend-docker](https://img.shields.io/badge/ui%2Ffrontend--docker-263-6295D2)
 
 ### Coverage
 

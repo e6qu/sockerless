@@ -95,3 +95,68 @@ export interface BleephubHealth {
   status: string;
   service: string;
 }
+
+/** WorkflowFile is the file-level workflow YAML entity (Phase 131). */
+export interface BleephubWorkflowFile {
+  id: number;
+  name: string;
+  path: string;
+  state: string; // "active" | "deleted_file" | "disabled_fork"
+  repoFullName: string;
+  source: string; // "submitted" | "discovered"
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Body for POST /api/v3/repos/{o}/{r}/actions/workflows/{id}/dispatches. */
+export interface BleephubDispatchRequest {
+  ref?: string;
+  inputs?: Record<string, string>;
+}
+
+/** App row from /internal/apps. */
+export interface BleephubApp {
+  id: number;
+  slug: string;
+  name: string;
+  description: string;
+  ownerId: number;
+  createdAt: string;
+}
+
+/** Installation row from /internal/installations. */
+export interface BleephubInstallation {
+  id: number;
+  appId: number;
+  appSlug: string;
+  targetType: string;
+  targetLogin: string;
+  repositorySelection: string;
+  createdAt: string;
+}
+
+/** Device-flow code from /internal/oauth/state. */
+export interface BleephubDeviceCode {
+  code: string;
+  userCode: string;
+  scopes: string;
+  userId: number;
+  expiresAt: string;
+}
+
+/** Authorization-code flow entry from /internal/oauth/state. */
+export interface BleephubAuthCode {
+  code: string;
+  clientId: string;
+  redirectUri: string;
+  scopes: string;
+  state: string;
+  userId: number;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface BleephubOAuthState {
+  deviceCodes: BleephubDeviceCode[];
+  authCodes: BleephubAuthCode[];
+}

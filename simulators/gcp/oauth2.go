@@ -61,6 +61,55 @@ func registerOAuth2(srv *sim.Server) {
 	srv.HandleFunc("POST /oauth2/v4/token", handler)
 }
 
+// idTokenKey is the per-process HMAC key shared by every ID token the
+// sim mints (oauth2 endpoint id_token + iamcredentials.generateIdToken).
+// Real Google rotates the signing key; the sim is process-scoped so a
+// restart issues fresh tokens regardless.
+var idTokenKey []byte
+
+func idTokenSignKey() []byte {
+	if idTokenKey == nil {
+		idTokenKey = make([]byte, 32)
+		_, _ = rand.Read(idTokenKey)
+	}
+	return idTokenKey
+}
+
+// mintSimIdToken mints a real-shape Google ID token JWT for the given
+// service-account email + audience. Used by iamcredentials.generateIdToken
+// (`POST .../serviceAccounts/{email}:generateIdToken`). Audience is the
+// target service URL the caller will invoke with this token. `email`
+// claim is set when the caller requests includeEmail=true (matches real
+// GCP behaviour). Signature is HS256 against the sim's per-process key
+// — the sim's audience handlers don't validate, but SDKs that pre-decode
+// the token expect a parseable structure.
+func mintSimIdToken(signKey []byte, email, audience string, includeEmail bool, issuedAt, expiresAt time.Time) string {
+	headerJSON, _ := json.Marshal(map[string]string{
+		"alg": "HS256",
+		"typ": "JWT",
+	})
+	claims := map[string]any{
+		"iss": "https://accounts.google.com",
+		"sub": email,
+		"aud": audience,
+		"iat": issuedAt.Unix(),
+		"exp": expiresAt.Unix(),
+		"azp": email,
+	}
+	if includeEmail {
+		claims["email"] = email
+		claims["email_verified"] = true
+	}
+	payloadJSON, _ := json.Marshal(claims)
+	headerB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
+	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadJSON)
+	signingInput := headerB64 + "." + payloadB64
+	mac := hmac.New(sha256.New, signKey)
+	mac.Write([]byte(signingInput))
+	sigB64 := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return signingInput + "." + sigB64
+}
+
 // mintSimJWT produces a real-shape JWT (`header.payload.signature`)
 // signed with HS256 against the sim's per-process key. Real Google
 // JWTs use RS256 with rotated keys; HS256 is sufficient here because
