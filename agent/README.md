@@ -47,7 +47,7 @@ Build the agent binary:
 
 ```sh
 cd agent
-go build -o sockerless-agent ./cmd/sockerless-agent
+make agent/build
 ```
 
 ## Usage

@@ -1,481 +1,316 @@
+# Sockerless — top-level Makefile.
+#
+# Thin orchestrator. Per-app recipes live in each app's own Makefile;
+# this file just delegates and aggregates. See docs/MAKEFILE_STANDARD.md
+# for the standard target surface every app implements.
+#
+# Common workflows:
+#
+#   make help              # list targets
+#   make build             # build every app
+#   make test              # unit-test every app
+#   make lint              # lint every app
+#   make clean             # clean every app
+#
+#   make backends/ecs/build       # build a single app via path
+#   make cmd/sockerless-admin/run # run a single app via path
+#
+#   make stack-aws-ecs     # bring up sim+backend+admin for AWS-ECS
+#   make stack-status      # show running stack
+#   make stack-down        # stop running stack
+#
+# Legacy aliases preserved at the bottom (sim-test-*, smoke-test-*,
+# e2e-*, upstream-test-*, tf-int-test-*).
+
+include make/help.mk
+include make/colors.mk
+
+# ── Apps — explicit lists (not glob) ────────────────────────────────
+#
+# When a new app lands, add it to one of these lists. The fan-out and
+# delegation rules below pick it up automatically.
+
+# Go binaries with optional embedded UI (12).
+GO_UI_APPS := \
+  cmd/sockerless-admin \
+  bleephub \
+  backends/docker \
+  backends/ecs \
+  backends/lambda \
+  backends/cloudrun \
+  backends/cloudrun-functions \
+  backends/aca \
+  backends/azure-functions \
+  simulators/aws \
+  simulators/gcp \
+  simulators/azure
+
+# Go binaries / libraries without UI (5).
+GO_APPS := \
+  cmd/sockerless \
+  agent \
+  github-runner-dispatcher-aws \
+  github-runner-dispatcher-gcp \
+  github-runner-dispatcher-azure
+
+# UI packages (13). Each consumed by the corresponding GO_UI_APPS entry
+# (except `core` which is a shared library, and `frontend-docker` which
+# is standalone).
+UI_APPS := \
+  ui/packages/admin \
+  ui/packages/bleephub \
+  ui/packages/backend-docker \
+  ui/packages/backend-ecs \
+  ui/packages/backend-lambda \
+  ui/packages/backend-cloudrun \
+  ui/packages/backend-gcf \
+  ui/packages/backend-aca \
+  ui/packages/backend-azf \
+  ui/packages/simulator-aws \
+  ui/packages/simulator-gcp \
+  ui/packages/simulator-azure \
+  ui/packages/frontend-docker \
+  ui/packages/core
+
+# Test-category Makefiles (sim-vs-backend SDK/CLI/Terraform tests +
+# real-runner harnesses + smoke tests + the cross-backend e2e).
+TEST_DIRS := \
+  tests \
+  smoke-tests \
+  simulators/aws/sdk-tests simulators/aws/cli-tests simulators/aws/terraform-tests \
+  simulators/gcp/sdk-tests simulators/gcp/cli-tests simulators/gcp/terraform-tests \
+  simulators/azure/sdk-tests simulators/azure/cli-tests simulators/azure/terraform-tests \
+  tests/runners/github tests/runners/gitlab tests/runners/gcp-cells tests/runners/internal
+
+ALL_APPS := $(GO_UI_APPS) $(GO_APPS) $(UI_APPS)
+
+# ── Standard fan-out targets ────────────────────────────────────────
+#
+# `make build` → run `make build` in every app, in series. Fail fast.
+
+.PHONY: install build build-noui test test-integration lint clean
+
+install: ## install deps in every app
+	@$(MAKE) -s _fanout TARGET=install APPS="$(ALL_APPS)"
+
+build: ## build every app
+	@$(MAKE) -s _fanout TARGET=build APPS="$(GO_UI_APPS) $(GO_APPS) $(UI_APPS)"
+
+build-noui: ## build every Go app with -tags noui (skips UI embed)
+	@$(MAKE) -s _fanout TARGET=build-noui APPS="$(GO_UI_APPS) $(GO_APPS)"
+
+test: ## unit-test every app
+	@$(MAKE) -s _fanout TARGET=test APPS="$(ALL_APPS)"
+
+test-integration: ## run integration tests across every Go app
+	@$(MAKE) -s _fanout TARGET=test-integration APPS="$(GO_UI_APPS) $(GO_APPS) $(TEST_DIRS)"
+
+lint: ## lint every Go app (CI lint runner has no bun — use lint-ui separately)
+	@$(MAKE) -s _fanout TARGET=lint APPS="$(GO_UI_APPS) $(GO_APPS)"
+
+lint-ui: ## lint every UI package (requires bun)
+	@$(MAKE) -s _fanout TARGET=lint APPS="$(UI_APPS)"
+
+lint-all: lint lint-ui ## lint every app (Go + UI)
+
+clean: ## clean every app's artefacts
+	@$(MAKE) -s _fanout TARGET=clean APPS="$(ALL_APPS)"
+
+# Internal helper: iterate APPS and run TARGET in each. Stops on
+# first failure. Honours --keep-going via $(MAKEFLAGS).
+.PHONY: _fanout
+_fanout:
+	@for app in $(APPS); do \
+	  if [ -f "$$app/Makefile" ]; then \
+	    printf "$(COLOR_CYAN)▸ %s: %s$(COLOR_RESET)\n" "$$app" "$(TARGET)"; \
+	    $(MAKE) -s -C "$$app" $(TARGET) || exit $$?; \
+	  else \
+	    printf "$(COLOR_DIM)skip %s (no Makefile)$(COLOR_RESET)\n" "$$app"; \
+	  fi; \
+	done
+
+# ── Per-app delegation via path ─────────────────────────────────────
+#
+# `make backends/ecs/build` → `$(MAKE) -C backends/ecs build`.
+# Works for any standardized target. `$*` is the path; `$@` carries
+# the full target with the suffix appended.
+
+%/install %/build %/build-noui %/embed %/run %/dev %/test %/test-integration %/lint %/clean %/preview %/help:
+	@$(MAKE) -s -C $* $(notdir $@)
+
+# ── Stack orchestration ─────────────────────────────────────────────
+
+include make/stack.mk
+
+# ── Legacy aliases ──────────────────────────────────────────────────
+#
+# Preserved so existing CI invocations and developer muscle memory
+# keep working. Each delegates to the appropriate per-app or
+# test-category Makefile where possible.
+
+# sim-test-* — sim-vs-backend integration tests via env-var-gated runs
+# in each backend. Backend integration tests pick up the colocated
+# `make test-integration` target.
 .PHONY: sim-test-ecs sim-test-lambda sim-test-cloudrun sim-test-gcf sim-test-aca sim-test-azf
 .PHONY: sim-test-aws sim-test-gcp sim-test-azure sim-test-all
-.PHONY: test test-unit test-e2e lint check-backend-coverage
-.PHONY: test-agent test-core test-bleephub
-.PHONY: bleephub-test bleephub-gh-test
-.PHONY: smoke-test-act smoke-test-act-ecs smoke-test-act-cloudrun smoke-test-act-aca smoke-test-act-all
-.PHONY: smoke-test-gitlab smoke-test-gitlab-ecs smoke-test-gitlab-cloudrun smoke-test-gitlab-aca smoke-test-gitlab-all
-.PHONY: e2e-github-all e2e-gitlab-all e2e-all
-.PHONY: e2e-github-build-aws e2e-github-build-gcp e2e-github-build-azure
-.PHONY: e2e-github-ecs e2e-github-lambda
-.PHONY: e2e-github-cloudrun e2e-github-gcf e2e-github-aca e2e-github-azf
-.PHONY: upstream-test-act-build-aws upstream-test-act-build-gcp upstream-test-act-build-azure
-.PHONY: upstream-test-act upstream-test-act-individual upstream-test-act-ecs upstream-test-act-lambda upstream-test-act-all
-.PHONY: upstream-test-act-cloudrun upstream-test-act-gcf upstream-test-act-aca upstream-test-act-azf
-.PHONY: upstream-test-gitlab-ci-local
-.PHONY: upstream-test-gcl-build-aws upstream-test-gcl-build-gcp upstream-test-gcl-build-azure
-.PHONY: upstream-test-gcl-ecs upstream-test-gcl-lambda
-.PHONY: upstream-test-gcl-cloudrun upstream-test-gcl-gcf upstream-test-gcl-aca upstream-test-gcl-azf
-.PHONY: upstream-test-gcl-all
 
-# Per-module unit test targets
-test-agent:
-	@echo "=== test agent ==="
-	cd agent && go test -v -race -timeout 2m ./...
+sim-test-ecs:        ; @$(MAKE) -s -C backends/ecs                test-integration
+sim-test-lambda:     ; @$(MAKE) -s -C backends/lambda             test-integration
+sim-test-cloudrun:   ; @$(MAKE) -s -C backends/cloudrun           test-integration
+sim-test-gcf:        ; @$(MAKE) -s -C backends/cloudrun-functions test-integration
+sim-test-aca:        ; @$(MAKE) -s -C backends/aca                test-integration
+sim-test-azf:        ; @$(MAKE) -s -C backends/azure-functions    test-integration
+sim-test-aws:    sim-test-ecs sim-test-lambda
+sim-test-gcp:    sim-test-cloudrun sim-test-gcf
+sim-test-azure:  sim-test-aca sim-test-azf
+sim-test-all:    sim-test-aws sim-test-gcp sim-test-azure
 
-test-core:
-	@echo "=== test backends/core ==="
-	cd backends/core && go test -v -timeout 2m ./...
-
-test-bleephub:
-	@echo "=== test bleephub ==="
-	cd bleephub && go test -tags noui -v -timeout 3m ./...
-
-# E2E integration tests (builds + starts backend/frontend/agent binaries)
-test-e2e:
-	@echo "=== test e2e ==="
-	cd tests && go test -v -timeout 5m ./...
-
-# All unit tests (per-module)
+# Top-level test alias for the cross-backend e2e suite.
+.PHONY: test-unit test-e2e test-agent test-core test-bleephub
+test-agent:    ; @$(MAKE) -s -C agent          test
+test-core:     ; @$(MAKE) -s -C backends/core  test
+test-bleephub: ; @$(MAKE) -s -C bleephub       test
+test-e2e:      ; @$(MAKE) -s -C tests          test
 test-unit: test-agent test-core test-bleephub
 
-# All tests (unit + e2e)
-test: test-unit test-e2e
+# check-backend-coverage — has its own tool dir, kept inline.
+.PHONY: check-backend-coverage check-backend-coverage-enforce
+check-backend-coverage:         ; @cd tools/check-backend-coverage && GOWORK=off go run .
+check-backend-coverage-enforce: ; @cd tools/check-backend-coverage && GOWORK=off go run . --enforce
 
-# Lint all Go modules (golangci-lint required)
-# Modules without UI embed
-MODULES = api agent backends/core
-# Modules with UI embed (require --build-tags noui when dist/ is absent)
-MODULES_UI = backends/docker \
-  backends/ecs backends/lambda backends/cloudrun \
-  backends/cloudrun-functions backends/aca backends/azure-functions \
-  cmd/sockerless-admin bleephub
-# Simulator modules with UI embed (separate go.mod, need GOWORK=off)
-MODULES_SIM_UI = simulators/aws simulators/gcp simulators/azure
+# Smoke-tests (Docker-based) — kept inline; small enough that
+# delegation buys nothing.
+.PHONY: smoke-test-act smoke-test-act-ecs smoke-test-act-cloudrun smoke-test-act-aca smoke-test-act-all
+.PHONY: smoke-test-gitlab smoke-test-gitlab-ecs smoke-test-gitlab-cloudrun smoke-test-gitlab-aca smoke-test-gitlab-all
 
-lint:
-	@for mod in $(MODULES); do \
-	    echo "=== lint $$mod ===" && \
-	    cd $(CURDIR)/$$mod && golangci-lint run ./... || exit 1; \
-	done
-	@for mod in $(MODULES_UI); do \
-	    echo "=== lint $$mod ===" && \
-	    cd $(CURDIR)/$$mod && golangci-lint run --build-tags noui ./... || exit 1; \
-	done
-	@for mod in $(MODULES_SIM_UI); do \
-	    echo "=== lint $$mod ===" && \
-	    cd $(CURDIR)/$$mod && GOWORK=off golangci-lint run --build-tags noui ./... || exit 1; \
-	done
-
-# Check that all backends explicitly implement every api.Backend method
-# Use --enforce to fail on missing methods (enabled once all backends are complete)
-check-backend-coverage:
-	@cd tools/check-backend-coverage && GOWORK=off go run .
-
-check-backend-coverage-enforce:
-	@cd tools/check-backend-coverage && GOWORK=off go run . --enforce
-
-# Simulator integration tests — individual backends (per-module)
-sim-test-ecs:
-	cd backends/ecs && $(MAKE) integration-test
-
-sim-test-lambda:
-	cd backends/lambda && $(MAKE) integration-test
-
-sim-test-cloudrun:
-	cd backends/cloudrun && $(MAKE) integration-test
-
-sim-test-gcf:
-	cd backends/cloudrun-functions && $(MAKE) integration-test
-
-sim-test-aca:
-	cd backends/aca && $(MAKE) integration-test
-
-sim-test-azf:
-	cd backends/azure-functions && $(MAKE) integration-test
-
-# Simulator integration tests — per cloud
-sim-test-aws: sim-test-ecs sim-test-lambda
-
-sim-test-gcp: sim-test-cloudrun sim-test-gcf
-
-sim-test-azure: sim-test-aca sim-test-azf
-
-# Simulator integration tests — all backends
-sim-test-all: sim-test-aws sim-test-gcp sim-test-azure
-
-# Smoke tests — act (GitHub Actions runner)
 smoke-test-act:
 	docker build -t sockerless-smoke-act -f smoke-tests/act/Dockerfile.ecs .
 	docker run --rm sockerless-smoke-act
-
 smoke-test-act-ecs:
 	docker build -t sockerless-smoke-act-ecs -f smoke-tests/act/Dockerfile.ecs .
 	docker run --rm sockerless-smoke-act-ecs
-
 smoke-test-act-cloudrun:
 	docker build -t sockerless-smoke-act-cloudrun -f smoke-tests/act/Dockerfile.cloudrun .
 	docker run --rm sockerless-smoke-act-cloudrun
-
 smoke-test-act-aca:
 	docker build -t sockerless-smoke-act-aca -f smoke-tests/act/Dockerfile.aca .
 	docker run --rm sockerless-smoke-act-aca
-
 smoke-test-act-all: smoke-test-act smoke-test-act-ecs smoke-test-act-cloudrun smoke-test-act-aca
 
-# Smoke tests — GitLab Runner
 smoke-test-gitlab:
 	cd smoke-tests/gitlab && docker compose down -v 2>/dev/null; BACKEND=ecs docker compose up --build --abort-on-container-exit --exit-code-from orchestrator
-
 smoke-test-gitlab-ecs:
-	cd smoke-tests/gitlab && docker compose -f docker-compose.yml -f docker-compose.ecs.yml down -v 2>/dev/null; BACKEND=ecs docker compose -f docker-compose.yml -f docker-compose.ecs.yml up --build --abort-on-container-exit --exit-code-from orchestrator
-
+	cd smoke-tests/gitlab && docker compose down -v 2>/dev/null; BACKEND=ecs docker compose up --build --abort-on-container-exit --exit-code-from orchestrator
 smoke-test-gitlab-cloudrun:
-	cd smoke-tests/gitlab && docker compose -f docker-compose.yml -f docker-compose.cloudrun.yml down -v 2>/dev/null; BACKEND=cloudrun docker compose -f docker-compose.yml -f docker-compose.cloudrun.yml up --build --abort-on-container-exit --exit-code-from orchestrator
-
+	cd smoke-tests/gitlab && docker compose down -v 2>/dev/null; BACKEND=cloudrun docker compose up --build --abort-on-container-exit --exit-code-from orchestrator
 smoke-test-gitlab-aca:
-	cd smoke-tests/gitlab && docker compose -f docker-compose.yml -f docker-compose.aca.yml down -v 2>/dev/null; BACKEND=aca docker compose -f docker-compose.yml -f docker-compose.aca.yml up --build --abort-on-container-exit --exit-code-from orchestrator
-
+	cd smoke-tests/gitlab && docker compose down -v 2>/dev/null; BACKEND=aca docker compose up --build --abort-on-container-exit --exit-code-from orchestrator
 smoke-test-gitlab-all: smoke-test-gitlab smoke-test-gitlab-ecs smoke-test-gitlab-cloudrun smoke-test-gitlab-aca
 
-# Terraform integration tests — full modules against simulators (Docker-only)
+# Terraform integration tests — kept inline (Docker-based per-cloud).
 .PHONY: tf-int-test-ecs tf-int-test-lambda tf-int-test-cloudrun tf-int-test-gcf tf-int-test-aca tf-int-test-azf
-.PHONY: tf-int-test-aws tf-int-test-gcp tf-int-test-azure tf-int-test-all
+.PHONY: tf-int-test-aws tf-int-test-gcp tf-int-test-azure tf-int-test-all tf-int-build
 
-TF_INT_IMAGE = sockerless-tf-int
+TF_INT_IMAGE := sockerless-tf-int
 
 tf-int-build:
 	docker build -t $(TF_INT_IMAGE) -f tests/terraform-integration/Dockerfile .
 
-# Individual backends
-tf-int-test-ecs: tf-int-build
-	docker run --rm -e SKIP_SMOKE_TEST=1 $(TF_INT_IMAGE) ecs
+tf-int-test-ecs: tf-int-build       ; docker run --rm $(TF_INT_IMAGE) --backend ecs
+tf-int-test-lambda: tf-int-build    ; docker run --rm $(TF_INT_IMAGE) --backend lambda
+tf-int-test-cloudrun: tf-int-build  ; docker run --rm $(TF_INT_IMAGE) --backend cloudrun
+tf-int-test-gcf: tf-int-build       ; docker run --rm $(TF_INT_IMAGE) --backend gcf
+tf-int-test-aca: tf-int-build       ; docker run --rm $(TF_INT_IMAGE) --backend aca
+tf-int-test-azf: tf-int-build       ; docker run --rm $(TF_INT_IMAGE) --backend azf
+tf-int-test-aws:   tf-int-test-ecs tf-int-test-lambda
+tf-int-test-gcp:   tf-int-test-cloudrun tf-int-test-gcf
+tf-int-test-azure: tf-int-test-aca tf-int-test-azf
+tf-int-test-all:   tf-int-test-aws tf-int-test-gcp tf-int-test-azure
 
-tf-int-test-lambda: tf-int-build
-	docker run --rm -e SKIP_SMOKE_TEST=1 $(TF_INT_IMAGE) lambda
+# E2E live tests — GitHub Actions runner (per-cloud Docker images).
+.PHONY: e2e-github-build-aws e2e-github-build-gcp e2e-github-build-azure
+.PHONY: e2e-github-ecs e2e-github-lambda e2e-github-cloudrun e2e-github-gcf e2e-github-aca e2e-github-azf
+.PHONY: e2e-github-all e2e-gitlab-all e2e-all
 
-tf-int-test-cloudrun: tf-int-build
-	docker run --rm -e SKIP_SMOKE_TEST=1 $(TF_INT_IMAGE) cloudrun
+E2E_GITHUB_IMAGE := sockerless-e2e-github
 
-tf-int-test-gcf: tf-int-build
-	docker run --rm -e SKIP_SMOKE_TEST=1 $(TF_INT_IMAGE) gcf
+e2e-github-build-aws:    ; docker build -t $(E2E_GITHUB_IMAGE)-aws   -f tests/e2e-live-tests/github-runner/Dockerfile.aws   .
+e2e-github-build-gcp:    ; docker build -t $(E2E_GITHUB_IMAGE)-gcp   -f tests/e2e-live-tests/github-runner/Dockerfile.gcp   .
+e2e-github-build-azure:  ; docker build -t $(E2E_GITHUB_IMAGE)-azure -f tests/e2e-live-tests/github-runner/Dockerfile.azure .
 
-tf-int-test-aca: tf-int-build
-	docker run --rm -e SKIP_SMOKE_TEST=1 $(TF_INT_IMAGE) aca
-
-tf-int-test-azf: tf-int-build
-	docker run --rm -e SKIP_SMOKE_TEST=1 $(TF_INT_IMAGE) azf
-
-# Per cloud (both backends, shared Docker build)
-tf-int-test-aws: tf-int-build
-	docker run --rm -e SKIP_SMOKE_TEST=1 $(TF_INT_IMAGE) ecs
-	docker run --rm -e SKIP_SMOKE_TEST=1 $(TF_INT_IMAGE) lambda
-
-tf-int-test-gcp: tf-int-build
-	docker run --rm -e SKIP_SMOKE_TEST=1 $(TF_INT_IMAGE) cloudrun
-	docker run --rm -e SKIP_SMOKE_TEST=1 $(TF_INT_IMAGE) gcf
-
-tf-int-test-azure: tf-int-build
-	docker run --rm -e SKIP_SMOKE_TEST=1 $(TF_INT_IMAGE) aca
-	docker run --rm -e SKIP_SMOKE_TEST=1 $(TF_INT_IMAGE) azf
-
-# All backends
-tf-int-test-all: tf-int-test-aws tf-int-test-gcp tf-int-test-azure
-
-# E2E live tests — GitHub Actions runner (via act), per-cloud images
-E2E_GITHUB_IMAGE = sockerless-e2e-github
-
-e2e-github-build-aws:
-	docker build -t $(E2E_GITHUB_IMAGE)-aws -f tests/e2e-live-tests/github-runner/Dockerfile.aws .
-
-e2e-github-build-gcp:
-	docker build -t $(E2E_GITHUB_IMAGE)-gcp -f tests/e2e-live-tests/github-runner/Dockerfile.gcp .
-
-e2e-github-build-azure:
-	docker build -t $(E2E_GITHUB_IMAGE)-azure -f tests/e2e-live-tests/github-runner/Dockerfile.azure .
-
-e2e-github-ecs: e2e-github-build-aws
-	docker run --rm -e BACKEND=ecs $(E2E_GITHUB_IMAGE)-aws --backend ecs
-
-e2e-github-lambda: e2e-github-build-aws
-	docker run --rm -e BACKEND=lambda $(E2E_GITHUB_IMAGE)-aws --backend lambda
-
-e2e-github-cloudrun: e2e-github-build-gcp
-	docker run --rm -e BACKEND=cloudrun $(E2E_GITHUB_IMAGE)-gcp --backend cloudrun
-
-e2e-github-gcf: e2e-github-build-gcp
-	docker run --rm -e BACKEND=gcf $(E2E_GITHUB_IMAGE)-gcp --backend gcf
-
-e2e-github-aca: e2e-github-build-azure
-	docker run --rm -e BACKEND=aca $(E2E_GITHUB_IMAGE)-azure --backend aca
-
-e2e-github-azf: e2e-github-build-azure
-	docker run --rm -e BACKEND=azf $(E2E_GITHUB_IMAGE)-azure --backend azf
+e2e-github-ecs:      e2e-github-build-aws    ; docker run --rm -e BACKEND=ecs      $(E2E_GITHUB_IMAGE)-aws   --backend ecs
+e2e-github-lambda:   e2e-github-build-aws    ; docker run --rm -e BACKEND=lambda   $(E2E_GITHUB_IMAGE)-aws   --backend lambda
+e2e-github-cloudrun: e2e-github-build-gcp    ; docker run --rm -e BACKEND=cloudrun $(E2E_GITHUB_IMAGE)-gcp   --backend cloudrun
+e2e-github-gcf:      e2e-github-build-gcp    ; docker run --rm -e BACKEND=gcf      $(E2E_GITHUB_IMAGE)-gcp   --backend gcf
+e2e-github-aca:      e2e-github-build-azure  ; docker run --rm -e BACKEND=aca      $(E2E_GITHUB_IMAGE)-azure --backend aca
+e2e-github-azf:      e2e-github-build-azure  ; docker run --rm -e BACKEND=azf      $(E2E_GITHUB_IMAGE)-azure --backend azf
 
 e2e-github-all:
 	@for b in ecs lambda cloudrun gcf aca azf; do \
-	    echo "=== E2E GitHub: $$b ===" && \
-	    $(MAKE) e2e-github-$$b || exit 1; \
+	  printf "$(COLOR_CYAN)=== E2E GitHub: %s ===$(COLOR_RESET)\n" "$$b" && \
+	  $(MAKE) -s e2e-github-$$b || exit 1; \
 	done
 
-# E2E live tests — GitLab Runner (docker-executor)
 e2e-gitlab-%:
 	cd tests/e2e-live-tests/gitlab-runner-docker && ./run.sh --backend $*
 
 e2e-gitlab-all:
 	@for b in ecs lambda cloudrun gcf aca azf; do \
-	    echo "=== E2E GitLab: $$b ===" && \
-	    $(MAKE) e2e-gitlab-$$b || exit 1; \
+	  printf "$(COLOR_CYAN)=== E2E GitLab: %s ===$(COLOR_RESET)\n" "$$b" && \
+	  $(MAKE) -s e2e-gitlab-$$b || exit 1; \
 	done
 
-# E2E all
 e2e-all: e2e-github-all e2e-gitlab-all
 
-# Upstream test suites — act, per-cloud images
-UPSTREAM_ACT_IMAGE = sockerless-upstream-act
+# Upstream test suites — act / gitlab-ci-local (kept inline, Docker-based).
+.PHONY: upstream-test-act-build-aws upstream-test-act-build-gcp upstream-test-act-build-azure
+.PHONY: upstream-test-act upstream-test-act-individual
+.PHONY: upstream-test-act-ecs upstream-test-act-lambda upstream-test-act-cloudrun
+.PHONY: upstream-test-act-gcf upstream-test-act-aca upstream-test-act-azf upstream-test-act-all
+.PHONY: upstream-test-gcl-build-aws upstream-test-gcl-build-gcp upstream-test-gcl-build-azure
+.PHONY: upstream-test-gitlab-ci-local
+.PHONY: upstream-test-gcl-ecs upstream-test-gcl-lambda upstream-test-gcl-cloudrun
+.PHONY: upstream-test-gcl-gcf upstream-test-gcl-aca upstream-test-gcl-azf upstream-test-gcl-all
 
-upstream-test-act-build-aws:
-	docker build -t $(UPSTREAM_ACT_IMAGE)-aws -f tests/upstream/act/Dockerfile.aws .
+UPSTREAM_ACT_IMAGE := sockerless-upstream-act
+UPSTREAM_GCL_IMAGE := sockerless-upstream-gcl
 
-upstream-test-act-build-gcp:
-	docker build -t $(UPSTREAM_ACT_IMAGE)-gcp -f tests/upstream/act/Dockerfile.gcp .
+upstream-test-act-build-aws:   ; docker build -t $(UPSTREAM_ACT_IMAGE)-aws   -f tests/upstream/act/Dockerfile.aws   .
+upstream-test-act-build-gcp:   ; docker build -t $(UPSTREAM_ACT_IMAGE)-gcp   -f tests/upstream/act/Dockerfile.gcp   .
+upstream-test-act-build-azure: ; docker build -t $(UPSTREAM_ACT_IMAGE)-azure -f tests/upstream/act/Dockerfile.azure .
 
-upstream-test-act-build-azure:
-	docker build -t $(UPSTREAM_ACT_IMAGE)-azure -f tests/upstream/act/Dockerfile.azure .
-
-upstream-test-act: upstream-test-act-build-aws
-	docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-aws --backend ecs
-
-upstream-test-act-individual: upstream-test-act-build-aws
-	docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-aws --backend ecs --individual
-
-upstream-test-act-ecs: upstream-test-act-build-aws
-	docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-aws --backend ecs
-
-upstream-test-act-lambda: upstream-test-act-build-aws
-	docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-aws --backend lambda
-
-upstream-test-act-cloudrun: upstream-test-act-build-gcp
-	docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-gcp --backend cloudrun
-
-upstream-test-act-gcf: upstream-test-act-build-gcp
-	docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-gcp --backend gcf
-
-upstream-test-act-aca: upstream-test-act-build-azure
-	docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-azure --backend aca
-
-upstream-test-act-azf: upstream-test-act-build-azure
-	docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-azure --backend azf
-
+upstream-test-act:            upstream-test-act-build-aws ; docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-aws   --backend ecs
+upstream-test-act-individual: upstream-test-act-build-aws ; docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-aws   --backend ecs --individual
+upstream-test-act-ecs:        upstream-test-act-build-aws ; docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-aws   --backend ecs
+upstream-test-act-lambda:     upstream-test-act-build-aws ; docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-aws   --backend lambda
+upstream-test-act-cloudrun:   upstream-test-act-build-gcp ; docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-gcp   --backend cloudrun
+upstream-test-act-gcf:        upstream-test-act-build-gcp ; docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-gcp   --backend gcf
+upstream-test-act-aca:        upstream-test-act-build-azure ; docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-azure --backend aca
+upstream-test-act-azf:        upstream-test-act-build-azure ; docker run --rm -v "$(CURDIR)/tests/upstream/act/results:/results" $(UPSTREAM_ACT_IMAGE)-azure --backend azf
 upstream-test-act-all:
 	@for b in ecs lambda cloudrun gcf aca azf; do \
-	    echo "=== Upstream Act: $$b ===" && \
-	    $(MAKE) upstream-test-act-$$b || true; \
+	  printf "$(COLOR_CYAN)=== Upstream Act: %s ===$(COLOR_RESET)\n" "$$b" && \
+	  $(MAKE) -s upstream-test-act-$$b || true; \
 	done
 
-# Upstream test suites — gitlab-ci-local, per-cloud images
-UPSTREAM_GCL_IMAGE = sockerless-upstream-gcl
+upstream-test-gcl-build-aws:   ; docker build -t $(UPSTREAM_GCL_IMAGE)-aws   -f tests/upstream/gitlab-ci-local/Dockerfile.aws   .
+upstream-test-gcl-build-gcp:   ; docker build -t $(UPSTREAM_GCL_IMAGE)-gcp   -f tests/upstream/gitlab-ci-local/Dockerfile.gcp   .
+upstream-test-gcl-build-azure: ; docker build -t $(UPSTREAM_GCL_IMAGE)-azure -f tests/upstream/gitlab-ci-local/Dockerfile.azure .
 
-upstream-test-gcl-build-aws:
-	docker build -t $(UPSTREAM_GCL_IMAGE)-aws -f tests/upstream/gitlab-ci-local/Dockerfile.aws .
-
-upstream-test-gcl-build-gcp:
-	docker build -t $(UPSTREAM_GCL_IMAGE)-gcp -f tests/upstream/gitlab-ci-local/Dockerfile.gcp .
-
-upstream-test-gcl-build-azure:
-	docker build -t $(UPSTREAM_GCL_IMAGE)-azure -f tests/upstream/gitlab-ci-local/Dockerfile.azure .
-
-upstream-test-gitlab-ci-local: upstream-test-gcl-build-aws
-	docker run --rm -v "$(CURDIR)/tests/upstream/gitlab-ci-local/results:/results" $(UPSTREAM_GCL_IMAGE)-aws --backend ecs
-
-upstream-test-gcl-ecs: upstream-test-gcl-build-aws
-	docker run --rm -v "$(CURDIR)/tests/upstream/gitlab-ci-local/results:/results" $(UPSTREAM_GCL_IMAGE)-aws --backend ecs
-
-upstream-test-gcl-lambda: upstream-test-gcl-build-aws
-	docker run --rm -v "$(CURDIR)/tests/upstream/gitlab-ci-local/results:/results" $(UPSTREAM_GCL_IMAGE)-aws --backend lambda
-
-upstream-test-gcl-cloudrun: upstream-test-gcl-build-gcp
-	docker run --rm -v "$(CURDIR)/tests/upstream/gitlab-ci-local/results:/results" $(UPSTREAM_GCL_IMAGE)-gcp --backend cloudrun
-
-upstream-test-gcl-gcf: upstream-test-gcl-build-gcp
-	docker run --rm -v "$(CURDIR)/tests/upstream/gitlab-ci-local/results:/results" $(UPSTREAM_GCL_IMAGE)-gcp --backend gcf
-
-upstream-test-gcl-aca: upstream-test-gcl-build-azure
-	docker run --rm -v "$(CURDIR)/tests/upstream/gitlab-ci-local/results:/results" $(UPSTREAM_GCL_IMAGE)-azure --backend aca
-
-upstream-test-gcl-azf: upstream-test-gcl-build-azure
-	docker run --rm -v "$(CURDIR)/tests/upstream/gitlab-ci-local/results:/results" $(UPSTREAM_GCL_IMAGE)-azure --backend azf
-
+upstream-test-gitlab-ci-local: upstream-test-gcl-build-aws   ; docker run --rm -v "$(CURDIR)/tests/upstream/gitlab-ci-local/results:/results" $(UPSTREAM_GCL_IMAGE)-aws   --backend ecs
+upstream-test-gcl-ecs:         upstream-test-gcl-build-aws   ; docker run --rm -v "$(CURDIR)/tests/upstream/gitlab-ci-local/results:/results" $(UPSTREAM_GCL_IMAGE)-aws   --backend ecs
+upstream-test-gcl-lambda:      upstream-test-gcl-build-aws   ; docker run --rm -v "$(CURDIR)/tests/upstream/gitlab-ci-local/results:/results" $(UPSTREAM_GCL_IMAGE)-aws   --backend lambda
+upstream-test-gcl-cloudrun:    upstream-test-gcl-build-gcp   ; docker run --rm -v "$(CURDIR)/tests/upstream/gitlab-ci-local/results:/results" $(UPSTREAM_GCL_IMAGE)-gcp   --backend cloudrun
+upstream-test-gcl-gcf:         upstream-test-gcl-build-gcp   ; docker run --rm -v "$(CURDIR)/tests/upstream/gitlab-ci-local/results:/results" $(UPSTREAM_GCL_IMAGE)-gcp   --backend gcf
+upstream-test-gcl-aca:         upstream-test-gcl-build-azure ; docker run --rm -v "$(CURDIR)/tests/upstream/gitlab-ci-local/results:/results" $(UPSTREAM_GCL_IMAGE)-azure --backend aca
+upstream-test-gcl-azf:         upstream-test-gcl-build-azure ; docker run --rm -v "$(CURDIR)/tests/upstream/gitlab-ci-local/results:/results" $(UPSTREAM_GCL_IMAGE)-azure --backend azf
 upstream-test-gcl-all:
 	@for b in ecs lambda cloudrun gcf aca azf; do \
-	    echo "=== Upstream GCL: $$b ===" && \
-	    $(MAKE) upstream-test-gcl-$$b || true; \
+	  printf "$(COLOR_CYAN)=== Upstream GCL: %s ===$(COLOR_RESET)\n" "$$b" && \
+	  $(MAKE) -s upstream-test-gcl-$$b || true; \
 	done
 
-# bleephub — GitHub Actions runner server integration test (Docker-only)
-bleephub-test:
-	docker build -f bleephub/Dockerfile -t sockerless-bleephub-test .
-	docker run --rm sockerless-bleephub-test
-
-bleephub-gh-test:
-	docker build -f bleephub/Dockerfile.gh-test -t sockerless-bleephub-gh-test .
-	docker run --rm sockerless-bleephub-gh-test
-
-# UI monorepo targets
-.PHONY: ui-install ui-build ui-dev ui-test ui-clean
-.PHONY: build-ecs-with-ui build-ecs-noui build-lambda-with-ui build-lambda-noui
-.PHONY: build-cloudrun-with-ui build-cloudrun-noui build-gcf-with-ui build-gcf-noui
-.PHONY: build-aca-with-ui build-aca-noui build-azf-with-ui build-azf-noui
-.PHONY: build-docker-backend-with-ui build-docker-backend-noui
-.PHONY: build-sim-aws-noui build-sim-gcp-noui build-sim-azure-noui
-.PHONY: build-sim-aws-with-ui build-sim-gcp-with-ui build-sim-azure-with-ui
-.PHONY: build-admin-with-ui build-admin-noui
-.PHONY: build-bleephub-with-ui build-bleephub-noui
-.PHONY: ui-e2e-admin ui-e2e-bleephub
-.PHONY: ui-e2e-backend-ecs ui-e2e-backend-lambda ui-e2e-backend-cloudrun
-.PHONY: ui-e2e-backend-gcf ui-e2e-backend-aca ui-e2e-backend-azf ui-e2e-backend-docker
-.PHONY: ui-e2e-sim-aws ui-e2e-sim-gcp ui-e2e-sim-azure
-.PHONY: ui-e2e-all
-
-ui-install:
-	cd ui && bun install
-
-ui-build: ui-install
-	cd ui && bunx turbo run build
-	rm -rf backends/ecs/dist && cp -r ui/packages/backend-ecs/dist backends/ecs/dist
-	rm -rf backends/lambda/dist && cp -r ui/packages/backend-lambda/dist backends/lambda/dist
-	rm -rf backends/cloudrun/dist && cp -r ui/packages/backend-cloudrun/dist backends/cloudrun/dist
-	rm -rf backends/cloudrun-functions/dist && cp -r ui/packages/backend-gcf/dist backends/cloudrun-functions/dist
-	rm -rf backends/aca/dist && cp -r ui/packages/backend-aca/dist backends/aca/dist
-	rm -rf backends/azure-functions/dist && cp -r ui/packages/backend-azf/dist backends/azure-functions/dist
-	rm -rf backends/docker/dist && cp -r ui/packages/backend-docker/dist backends/docker/dist
-	rm -rf simulators/aws/dist && cp -r ui/packages/simulator-aws/dist simulators/aws/dist
-	rm -rf simulators/gcp/dist && cp -r ui/packages/simulator-gcp/dist simulators/gcp/dist
-	rm -rf simulators/azure/dist && cp -r ui/packages/simulator-azure/dist simulators/azure/dist
-	rm -rf cmd/sockerless-admin/dist && cp -r ui/packages/admin/dist cmd/sockerless-admin/dist
-	rm -rf bleephub/dist && cp -r ui/packages/bleephub/dist bleephub/dist
-
-ui-dev:
-	cd ui && bunx turbo run dev --filter=@sockerless/ui-backend-docker
-
-ui-test:
-	cd ui && bunx turbo run test
-
-ui-clean:
-	rm -rf ui/node_modules ui/packages/*/node_modules ui/packages/*/dist ui/.turbo
-	rm -rf backends/ecs/dist backends/lambda/dist
-	rm -rf backends/cloudrun/dist backends/cloudrun-functions/dist
-	rm -rf backends/aca/dist backends/azure-functions/dist
-	rm -rf backends/docker/dist
-	rm -rf simulators/aws/dist simulators/gcp/dist simulators/azure/dist
-	rm -rf cmd/sockerless-admin/dist bleephub/dist
-
-build-ecs-with-ui: ui-build
-	cd backends/ecs && go build -o sockerless-backend-ecs ./cmd/sockerless-backend-ecs
-
-build-ecs-noui:
-	cd backends/ecs && go build -tags noui -o /dev/null ./cmd/sockerless-backend-ecs
-
-build-lambda-with-ui: ui-build
-	cd backends/lambda && go build -o sockerless-backend-lambda ./cmd/sockerless-backend-lambda
-
-build-lambda-noui:
-	cd backends/lambda && go build -tags noui -o /dev/null ./cmd/sockerless-backend-lambda
-
-build-cloudrun-with-ui: ui-build
-	cd backends/cloudrun && go build -o sockerless-backend-cloudrun ./cmd/sockerless-backend-cloudrun
-
-build-cloudrun-noui:
-	cd backends/cloudrun && go build -tags noui -o /dev/null ./cmd/sockerless-backend-cloudrun
-
-build-gcf-with-ui: ui-build
-	cd backends/cloudrun-functions && go build -o sockerless-backend-gcf ./cmd/sockerless-backend-gcf
-
-build-gcf-noui:
-	cd backends/cloudrun-functions && go build -tags noui -o /dev/null ./cmd/sockerless-backend-gcf
-
-build-aca-with-ui: ui-build
-	cd backends/aca && go build -o sockerless-backend-aca ./cmd/sockerless-backend-aca
-
-build-aca-noui:
-	cd backends/aca && go build -tags noui -o /dev/null ./cmd/sockerless-backend-aca
-
-build-azf-with-ui: ui-build
-	cd backends/azure-functions && go build -o sockerless-backend-azf ./cmd/sockerless-backend-azf
-
-build-azf-noui:
-	cd backends/azure-functions && go build -tags noui -o /dev/null ./cmd/sockerless-backend-azf
-
-build-docker-backend-with-ui: ui-build
-	cd backends/docker && go build -o sockerless-backend-docker ./cmd
-
-build-docker-backend-noui:
-	cd backends/docker && go build -tags noui -o /dev/null ./cmd
-
-build-sim-aws-noui:
-	cd simulators/aws && GOWORK=off go build -tags noui -o /dev/null .
-
-build-sim-gcp-noui:
-	cd simulators/gcp && GOWORK=off go build -tags noui -o /dev/null .
-
-build-sim-azure-noui:
-	cd simulators/azure && GOWORK=off go build -tags noui -o /dev/null .
-
-build-admin-with-ui: ui-build
-	cd cmd/sockerless-admin && go build -o sockerless-admin .
-
-build-admin-noui:
-	cd cmd/sockerless-admin && go build -tags noui -o /dev/null .
-
-build-bleephub-with-ui: ui-build
-	cd bleephub && go build -o bleephub-server ./cmd
-
-build-bleephub-noui:
-	cd bleephub && go build -tags noui -o /dev/null ./cmd
-
-ui-e2e-bleephub: build-bleephub-with-ui
-	cd ui/packages/bleephub && SERVER_BIN="$(CURDIR)/bleephub/bleephub-server" bunx playwright test
-
-ui-e2e-admin: build-admin-with-ui
-	cd ui/packages/admin && ADMIN_BIN="$(CURDIR)/cmd/sockerless-admin/sockerless-admin" bunx playwright test
-
-build-sim-aws-with-ui: ui-build
-	cd simulators/aws && GOWORK=off go build -o simulator-aws .
-
-build-sim-gcp-with-ui: ui-build
-	cd simulators/gcp && GOWORK=off go build -o simulator-gcp .
-
-build-sim-azure-with-ui: ui-build
-	cd simulators/azure && GOWORK=off go build -o simulator-azure .
-
-ui-e2e-backend-ecs: build-ecs-with-ui
-	cd ui/packages/backend-ecs && SOCKERLESS_ENDPOINT_URL=http://localhost:1 BACKEND_BIN="$(CURDIR)/backends/ecs/sockerless-backend-ecs" bunx playwright test
-
-ui-e2e-backend-lambda: build-lambda-with-ui
-	cd ui/packages/backend-lambda && SOCKERLESS_ENDPOINT_URL=http://localhost:1 BACKEND_BIN="$(CURDIR)/backends/lambda/sockerless-backend-lambda" bunx playwright test
-
-ui-e2e-backend-cloudrun: build-cloudrun-with-ui
-	cd ui/packages/backend-cloudrun && SOCKERLESS_ENDPOINT_URL=http://localhost:1 BACKEND_BIN="$(CURDIR)/backends/cloudrun/sockerless-backend-cloudrun" bunx playwright test
-
-ui-e2e-backend-gcf: build-gcf-with-ui
-	cd ui/packages/backend-gcf && SOCKERLESS_ENDPOINT_URL=http://localhost:1 BACKEND_BIN="$(CURDIR)/backends/cloudrun-functions/sockerless-backend-gcf" bunx playwright test
-
-ui-e2e-backend-aca: build-aca-with-ui
-	cd ui/packages/backend-aca && SOCKERLESS_ENDPOINT_URL=http://localhost:1 BACKEND_BIN="$(CURDIR)/backends/aca/sockerless-backend-aca" bunx playwright test
-
-ui-e2e-backend-azf: build-azf-with-ui
-	cd ui/packages/backend-azf && SOCKERLESS_ENDPOINT_URL=http://localhost:1 BACKEND_BIN="$(CURDIR)/backends/azure-functions/sockerless-backend-azf" bunx playwright test
-
-ui-e2e-backend-docker: build-docker-backend-with-ui
-	cd ui/packages/backend-docker && BACKEND_BIN="$(CURDIR)/backends/docker/sockerless-backend-docker" bunx playwright test
-
-ui-e2e-sim-aws: build-sim-aws-with-ui
-	cd ui/packages/simulator-aws && SERVER_BIN="$(CURDIR)/simulators/aws/simulator-aws" bunx playwright test
-
-ui-e2e-sim-gcp: build-sim-gcp-with-ui
-	cd ui/packages/simulator-gcp && SERVER_BIN="$(CURDIR)/simulators/gcp/simulator-gcp" bunx playwright test
-
-ui-e2e-sim-azure: build-sim-azure-with-ui
-	cd ui/packages/simulator-azure && SERVER_BIN="$(CURDIR)/simulators/azure/simulator-azure" bunx playwright test
-
-ui-e2e-all: ui-e2e-admin ui-e2e-bleephub ui-e2e-backend-ecs ui-e2e-backend-lambda ui-e2e-backend-cloudrun ui-e2e-backend-gcf ui-e2e-backend-aca ui-e2e-backend-azf ui-e2e-backend-docker ui-e2e-sim-aws ui-e2e-sim-gcp ui-e2e-sim-azure
+# Bleephub-specific tests (preserved aliases).
+.PHONY: bleephub-test bleephub-gh-test
+bleephub-test:    ; @$(MAKE) -s -C bleephub test
+bleephub-gh-test: ; @$(MAKE) -s -C bleephub test-integration

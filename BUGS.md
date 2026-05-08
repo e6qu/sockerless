@@ -1,6 +1,6 @@
 # Known Bugs
 
-**972 filed · 970 fixed · 2 open · 1 false positive.** 8/8 cells GREEN since 2026-05-07.
+**974 filed · 972 fixed · 2 open · 1 false positive.** 8/8 cells GREEN since 2026-05-07.
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner before any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -26,6 +26,13 @@ Standing rule: every CI / live-cloud failure lands here with a one-liner before 
 ## Resolved (compressed history)
 
 Per-bug detail in `git log` / linked PR.
+
+### 2026-05-08 — Sim test stability (PR #128)
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| 974 | M | simulators/azure SDK tests | `TestContainerApps_JobArithmeticInvalid` + `JobArithmeticLogs` used fixed `time.Sleep(2s)` to wait for ACA job execution. Slow CI runners exceed 2s on container pull/start → flake. Fix: replaced both with `require.Eventually(30s, 250ms)` polling for terminal status / log presence. |
+| 973 | M | simulators/aws SDK tests | `TestECS_TaskLogsToCloudWatch` used fixed `time.Sleep(2s)` to wait for alpine `echo` stdout to reach CloudWatch. Slow CI runners exceed 2s → "Running" / empty events flake. Fix: `require.Eventually(30s, 250ms)` polling for the expected log line. Surfaced once Makefile standardization unbroke the sim docker build (was masking the test on main). |
 
 ### 2026-05-07 — Phase 123 close-out (8/8 GREEN, PR #123)
 

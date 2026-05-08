@@ -53,8 +53,8 @@ environments:
 ## Quick Start
 
 ```sh
-go build -o sockerless-backend-ecs ./backends/ecs/cmd/sockerless-backend-ecs
-./sockerless-backend-ecs -addr :3375 -log-level info
+make backends/ecs/build
+make backends/ecs/run
 ```
 
 Flags: `-addr` (default `:3375`), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).

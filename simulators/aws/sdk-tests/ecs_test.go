@@ -322,34 +322,34 @@ func TestECS_TaskLogsToCloudWatch(t *testing.T) {
 		},
 	})
 
-	// Wait for process to complete and logs to be written
-	time.Sleep(2 * time.Second)
-
 	cw := cwLogsClient()
-	out, err := cw.GetLogEvents(ctx, &cloudwatchlogs.GetLogEventsInput{
-		LogGroupName:  aws.String("/ecs/exec-logs"),
-		LogStreamName: aws.String("ecs/app/" + "exec-logs-cluster"), // approximate; use filter
-	})
-	// If exact stream name doesn't work, try listing streams
-	if err != nil {
+
+	// Poll until the process stdout reaches CloudWatch. Image pull +
+	// container start latency on slow CI runners can exceed any fixed sleep.
+	var messages []string
+	require.Eventually(t, func() bool {
 		streams, serr := cw.DescribeLogStreams(ctx, &cloudwatchlogs.DescribeLogStreamsInput{
 			LogGroupName: aws.String("/ecs/exec-logs"),
 		})
-		require.NoError(t, serr)
-		require.NotEmpty(t, streams.LogStreams)
-		out, err = cw.GetLogEvents(ctx, &cloudwatchlogs.GetLogEventsInput{
+		if serr != nil || len(streams.LogStreams) == 0 {
+			return false
+		}
+		out, err := cw.GetLogEvents(ctx, &cloudwatchlogs.GetLogEventsInput{
 			LogGroupName:  aws.String("/ecs/exec-logs"),
 			LogStreamName: streams.LogStreams[0].LogStreamName,
 		})
-	}
-	require.NoError(t, err)
-
-	// Should have at least the initial log event + real process output
-	var messages []string
-	for _, e := range out.Events {
-		messages = append(messages, *e.Message)
-	}
-	assert.Contains(t, messages, "hello from process", "process stdout should appear in CloudWatch logs")
+		if err != nil {
+			return false
+		}
+		messages = messages[:0]
+		for _, e := range out.Events {
+			messages = append(messages, *e.Message)
+			if *e.Message == "hello from process" {
+				return true
+			}
+		}
+		return false
+	}, 30*time.Second, 250*time.Millisecond, "process stdout should reach CloudWatch logs; saw=%v", messages)
 }
 
 func TestECS_TaskNoCommandStaysRunning(t *testing.T) {

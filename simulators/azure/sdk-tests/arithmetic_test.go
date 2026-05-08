@@ -134,11 +134,16 @@ func TestContainerApps_JobArithmeticInvalid(t *testing.T) {
 	acaCreateJobWithImageAndCommand(t, rg, jobName, evalImageName, []string{"3 +"})
 	execName := acaStartExecution(t, rg, jobName)
 
-	time.Sleep(2 * time.Second)
-
-	exec := acaGetExecution(t, rg, jobName, execName)
-	execProps := exec["properties"].(map[string]any)
-	assert.Equal(t, "Failed", execProps["status"])
+	// Poll for terminal status — container start latency on slow CI
+	// can exceed any fixed sleep.
+	var lastStatus string
+	require.Eventually(t, func() bool {
+		exec := acaGetExecution(t, rg, jobName, execName)
+		execProps := exec["properties"].(map[string]any)
+		lastStatus, _ = execProps["status"].(string)
+		return lastStatus == "Failed" || lastStatus == "Succeeded"
+	}, 30*time.Second, 250*time.Millisecond, "execution should reach terminal status; last=%s", lastStatus)
+	assert.Equal(t, "Failed", lastStatus)
 }
 
 func TestContainerApps_JobArithmeticLogs(t *testing.T) {
@@ -146,28 +151,30 @@ func TestContainerApps_JobArithmeticLogs(t *testing.T) {
 	acaCreateJobWithImageAndCommand(t, rg, jobName, evalImageName, []string{"10 / 3"})
 	_ = acaStartExecution(t, rg, jobName)
 
-	time.Sleep(2 * time.Second)
-
 	kql := `ContainerAppConsoleLogs_CL | where ContainerGroupName_s == "arith-aca-log-job"`
-	result := queryWorkspace(t, "default", kql)
 
-	require.Len(t, result.Tables, 1)
-	table := result.Tables[0]
-
-	logIdx := -1
-	for i, col := range table.Columns {
-		if col.Name == "Log_s" {
-			logIdx = i
-			break
+	var allLogs string
+	require.Eventually(t, func() bool {
+		result := queryWorkspace(t, "default", kql)
+		if len(result.Tables) != 1 {
+			return false
 		}
-	}
-	require.GreaterOrEqual(t, logIdx, 0)
-
-	var logs []string
-	for _, row := range table.Rows {
-		logs = append(logs, row[logIdx].(string))
-	}
-	allLogs := strings.Join(logs, "\n")
-	assert.Contains(t, allLogs, "3.333", "expected result '3.333...' in Log Analytics")
-	assert.Contains(t, allLogs, "Parsing expression:", "expected parsing log in Log Analytics")
+		table := result.Tables[0]
+		logIdx := -1
+		for i, col := range table.Columns {
+			if col.Name == "Log_s" {
+				logIdx = i
+				break
+			}
+		}
+		if logIdx < 0 {
+			return false
+		}
+		var logs []string
+		for _, row := range table.Rows {
+			logs = append(logs, row[logIdx].(string))
+		}
+		allLogs = strings.Join(logs, "\n")
+		return strings.Contains(allLogs, "3.333") && strings.Contains(allLogs, "Parsing expression:")
+	}, 30*time.Second, 250*time.Millisecond, "expected '3.333' + 'Parsing expression:' in Log Analytics; saw=%q", allLogs)
 }

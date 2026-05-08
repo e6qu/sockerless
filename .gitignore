@@ -134,3 +134,16 @@ tests/runners/*/.runners/
 tests/runners/*/dockerfile-*/sockerless-backend-*
 tests/runners/*/dockerfile-*/sockerless-gcf-bootstrap*
 tests/runners/*/dockerfile-*/sockerless-cloudrun-bootstrap*
+
+# Build outputs from the standardized per-app Makefiles (make build).
+# Each app's Makefile writes its binary alongside the Makefile.
+github-runner-dispatcher-aws/github-runner-dispatcher-aws
+github-runner-dispatcher-gcp/github-runner-dispatcher-gcp
+github-runner-dispatcher-azure/github-runner-dispatcher-azure
+cmd/sockerless/sockerless
+agent/sockerless-cloudrun-bootstrap
+agent/sockerless-gcf-bootstrap
+agent/sockerless-lambda-bootstrap
+backends/*/dist/
+simulators/*/dist/
+.stack-pids/

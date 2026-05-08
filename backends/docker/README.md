@@ -27,8 +27,8 @@ All standard Docker client environment variables are respected.
 ## Quick Start
 
 ```sh
-go build -o sockerless-backend-docker ./backends/docker/cmd
-./sockerless-backend-docker -addr :3375 -log-level info
+make backends/docker/build
+make backends/docker/run
 ```
 
 Flags: `-addr` (default `:3375`), `-docker-host` (default auto-detect), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).

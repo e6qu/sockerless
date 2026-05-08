@@ -58,7 +58,7 @@ export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:3375
 
 ```bash
 # Build the backend binary (serves the Docker API directly)
-go build -tags noui -o sockerless-backend-gcf ./backends/cloudrun-functions
+make backends/cloudrun-functions/build-noui
 
 # Run the backend
 ./sockerless-backend-gcf

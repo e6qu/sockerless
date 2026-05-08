@@ -46,8 +46,8 @@ environments:
 ## Quick Start
 
 ```sh
-go build -o sockerless-backend-azf ./backends/azure-functions/cmd/sockerless-backend-azf
-./sockerless-backend-azf -addr :3375 -log-level info
+make backends/azure-functions/build
+make backends/azure-functions/run
 ```
 
 Flags: `-addr` (default `:3375`), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).

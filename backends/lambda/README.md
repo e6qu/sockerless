@@ -44,8 +44,8 @@ environments:
 ## Quick Start
 
 ```sh
-go build -o sockerless-backend-lambda ./backends/lambda/cmd/sockerless-backend-lambda
-./sockerless-backend-lambda -addr :3375 -log-level info
+make backends/lambda/build
+make backends/lambda/run
 ```
 
 Flags: `-addr` (default `:3375`), `-tls-cert`, `-tls-key`, `-log-level` (default `info`).
