@@ -50,7 +50,9 @@ type ServiceConfig struct {
 	MaxInstanceCount     int               `json:"maxInstanceCount,omitempty"`
 	MinInstanceCount     int               `json:"minInstanceCount,omitempty"`
 	EnvironmentVariables map[string]string `json:"environmentVariables,omitempty"`
-	SimCommand           []string          `json:"simCommand,omitempty"` // Simulator-only: command to execute on invoke
+	SimCommand           []string          `json:"simCommand,omitempty"`      // Simulator-only: command to execute on invoke (passed as Cmd to the sim image)
+	SimImage             string            `json:"simImage,omitempty"`        // Simulator-only: Docker image hosting the workload; required when SimCommand is set
+	SimArchitecture      string            `json:"simArchitecture,omitempty"` // Simulator-only: workload arch (e.g. "linux/arm64"); empty = image default
 }
 
 // functionCPUResources returns the ResourceRequirements that should be
@@ -310,9 +312,10 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 		return body, exitCode
 	}
 
-	// Process path: SimCommand-based (SDK tests). Decode any user
-	// entrypoint/cmd from base64-JSON env vars first; fall back to
-	// SimCommand if neither is set.
+	// Sim path: dispatch through Docker, never os/exec a workload on the
+	// sim host. The function spec's SimImage carries the image; SimCommand
+	// is the entrypoint+args override; SimArchitecture (default empty =
+	// image default) carries the workload's arch. Closes BUG-949.
 	var entrypoint, userCmd []string
 	if fn.ServiceConfig != nil {
 		if epB64, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_USER_ENTRYPOINT"]; ok {
@@ -335,9 +338,25 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 		return []byte("{}"), 0
 	}
 
+	var simImage, simArch string
 	var cmdEnv map[string]string
-	if fn.ServiceConfig != nil && fn.ServiceConfig.EnvironmentVariables != nil {
+	if fn.ServiceConfig != nil {
+		simImage = fn.ServiceConfig.SimImage
+		simArch = fn.ServiceConfig.SimArchitecture
 		cmdEnv = fn.ServiceConfig.EnvironmentVariables
+	}
+	if simArch == "" {
+		// Sim policy: linux/arm64 capacity contract.
+		simArch = "linux/arm64"
+	}
+	if simImage == "" {
+		// No image to host the workload — the sim no longer os/exec's
+		// workload binaries on the host process. Tests must set
+		// serviceConfig.simImage to a Docker image carrying the
+		// workload (and optionally simArchitecture).
+		injectCloudFunctionLog(project, functionID,
+			"Function invocation error: serviceConfig.simImage required (set to a Docker image hosting the workload)")
+		return []byte(`{"error":"simImage required"}`), 1
 	}
 
 	var stdout bytes.Buffer
@@ -349,18 +368,25 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 		}
 	})
 
-	procCmd := append([]string{}, entrypoint...)
-	procCmd = append(procCmd, userCmd...)
-	handle := sim.StartProcess(sim.ProcessConfig{
-		Command: procCmd,
-		Env:     cmdEnv,
-		Timeout: timeout,
+	handle, err := sim.StartContainerSync(sim.ContainerConfig{
+		Image:        sim.ResolveLocalImage(simImage),
+		Architecture: simArch,
+		Command:      entrypoint,
+		Args:         userCmd,
+		Env:          cmdEnv,
+		Timeout:      timeout,
+		Labels:       map[string]string{"sockerless-sim-function": functionID},
 	}, collectSink)
+	if err != nil {
+		injectCloudFunctionLog(project, functionID,
+			fmt.Sprintf("Function invocation error: %v", err))
+		return []byte(fmt.Sprintf(`{"error":%q}`, err.Error())), 1
+	}
 	result := handle.Wait()
 
 	if result.ExitCode != 0 {
 		injectCloudFunctionLog(project, functionID,
-			fmt.Sprintf("Function execution error: process exited with code %d", result.ExitCode))
+			fmt.Sprintf("Function execution error: container exited with code %d", result.ExitCode))
 	}
 
 	output := strings.TrimRight(stdout.String(), "\n")
@@ -525,9 +551,11 @@ func invokeOverlayContainerHTTP(image, functionID string, timeout time.Duration,
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
+	// Architecture: sim's primary capacity is linux/arm64.
 	containerID, err := sim.StartHTTPContainer(ctx, sim.HTTPContainerConfig{
-		Image:    localImage,
-		HostPort: hostPort,
+		Image:        localImage,
+		Architecture: "linux/arm64",
+		HostPort:     hostPort,
 		Env: map[string]string{
 			"PORT": "8080",
 		},

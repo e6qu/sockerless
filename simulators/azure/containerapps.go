@@ -496,13 +496,15 @@ func registerContainerApps(srv *sim.Server) {
 				}
 
 				sink := &acaLogSink{jobName: jobShortName}
+				// Architecture: sim's primary capacity is linux/arm64.
 				handle, err := sim.StartContainerSync(sim.ContainerConfig{
-					Image:   sim.ResolveLocalImage(containerImage),
-					Command: containerCmd,
-					Args:    containerArgs,
-					Env:     cmdEnv,
-					Timeout: timeout,
-					Name:    containerName,
+					Image:        sim.ResolveLocalImage(containerImage),
+					Architecture: "linux/arm64",
+					Command:      containerCmd,
+					Args:         containerArgs,
+					Env:          cmdEnv,
+					Timeout:      timeout,
+					Name:         containerName,
 					Labels: map[string]string{
 						"sockerless-sim-type": "aca-job-execution",
 						"sockerless-exec-id":  id,

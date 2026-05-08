@@ -480,15 +480,17 @@ func registerCloudRunJobs(srv *sim.Server) {
 					}
 				}
 				localImage := sim.ResolveLocalImage(image)
+				// Architecture: sim's primary capacity is linux/arm64.
 				handle, err := sim.StartContainerSync(sim.ContainerConfig{
-					Image:   localImage,
-					Command: entrypoint,
-					Args:    args,
-					Env:     cmdEnv,
-					Timeout: timeout,
-					Name:    fmt.Sprintf("sockerless-sim-gcp-job-%s", execShort),
-					Labels:  map[string]string{"sockerless-sim-execution": id},
-					Binds:   binds,
+					Image:        localImage,
+					Architecture: "linux/arm64",
+					Command:      entrypoint,
+					Args:         args,
+					Env:          cmdEnv,
+					Timeout:      timeout,
+					Name:         fmt.Sprintf("sockerless-sim-gcp-job-%s", execShort),
+					Labels:       map[string]string{"sockerless-sim-execution": id},
+					Binds:        binds,
 				}, sink)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "ERROR: failed to start container for execution: image=%s err=%v\n", image, err)

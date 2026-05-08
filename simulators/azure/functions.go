@@ -444,13 +444,15 @@ func invokeAzureFunctionProcess(site *Site) ([]byte, int) {
 
 	containerName := fmt.Sprintf("sockerless-sim-azure-func-%s-%d", site.Name, time.Now().UnixNano())
 
+	// Architecture: sim's primary capacity is linux/arm64.
 	handle, err := sim.StartContainerSync(sim.ContainerConfig{
-		Image:   sim.ResolveLocalImage(containerImage),
-		Command: entrypoint,
-		Args:    cmd,
-		Env:     cmdEnv,
-		Timeout: timeout,
-		Name:    containerName,
+		Image:        sim.ResolveLocalImage(containerImage),
+		Architecture: "linux/arm64",
+		Command:      entrypoint,
+		Args:         cmd,
+		Env:          cmdEnv,
+		Timeout:      timeout,
+		Name:         containerName,
 		Labels: map[string]string{
 			"sockerless-sim-type": "azure-function-invocation",
 			"sockerless-site":     site.Name,

@@ -51,4 +51,4 @@ Mirror of Phase 121 cloud-faithful work for ACA + AZF.
 
 ## Open bugs
 
-`BUG-972` (H, cloudrun+gcf — sim AR-proxy gate) and `BUG-949` (M, sim/gcp — gcf execs workload as host process; should dispatch via Docker honouring workload arch — closed by Phase 135). Detail in [BUGS.md](BUGS.md). Neither blocks Phase 135.
+`BUG-972` (H, cloudrun+gcf — sim AR-proxy gate). BUG-949 closed by Phase 135b (gcf workload now dispatched through Docker). Detail in [BUGS.md](BUGS.md).

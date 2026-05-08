@@ -1,6 +1,6 @@
 # Known Bugs
 
-**974 filed · 972 fixed · 2 open · 1 false positive.**
+**975 filed · 974 fixed · 1 open · 1 false positive.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner before any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -11,7 +11,6 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md).
 | ID | Sev | Area | One-liner |
 |----|-----|------|-----------|
 | 972 | H | cloudrun + gcf | `ImagePull` rewrites Docker Hub refs to AR proxy unconditionally; sim has no AR proxy → 403. Fix: gate the rewrite on `s.config.EndpointURL == ""` (real GCP only). Same site applies to `ContainerCreate` + every other `gcpcommon.ResolveGCPImageURI` caller. |
-| 949 | M | simulators/gcp gcf | `gcf::simCommand` `os/exec`s the workload binary as a host process, ignoring the workload's architecture. Symptom on macOS/arm64 dev hosts: `linux/amd64` workload binary fails to exec. Wrong-axis fix would be "build two binaries"; correct fix is to dispatch workloads through Docker honouring the workload's `Architecture` field (default `linux/arm64`). Sim binary itself stays host-native. See `feedback_sim_workload_arch.md`. |
 
 ## False positives
 
@@ -28,6 +27,13 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md).
 ## Resolved (compressed history)
 
 Per-bug detail in `git log` / linked PR.
+
+### 2026-05-08 — Phase 135 sim host model (in flight on `docs-streamline`)
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| 975 | M | simulators/aws ECS | `ECS::ExecuteCommand` had a "fallback to local process" path that `os/exec`'d on the sim host when no Docker container was found. Violation of host model + no-fallbacks rule. Fix: drop fallback; return WS close with explicit error if no Docker container. |
+| 949 | M | simulators/gcp gcf | `cloudfunctions::invokeCloudFunctionProcess` `os/exec`'d the workload binary on the sim host, ignoring workload arch. Fix: route through `sim.StartContainerSync` honouring `serviceConfig.simImage` + `simArchitecture`. SDK tests migrated to a multi-stage Docker build (binary built inside the image, not on the sim host). Closes the original macOS/arm64 break. |
 
 ### 2026-05-08 — Sim test stability (PR #128)
 

@@ -20,22 +20,21 @@ import (
 )
 
 // parsePlatform splits an "os/arch" or "os/arch/variant" string into an
-// ocispec.Platform. Empty input returns nil (Docker uses image default,
-// which on a multi-arch image is the daemon's native arch). Unknown
-// shapes return nil rather than erroring — the caller is the cloud-
-// product translator and is expected to pass a vetted value.
-func parsePlatform(s string) *ocispec.Platform {
+// ocispec.Platform. Returns an error on empty or malformed input —
+// every caller must be explicit per `feedback_sim_host_model.md`. No
+// silent fallback to "image default / host arch".
+func parsePlatform(s string) (*ocispec.Platform, error) {
 	if s == "" {
-		return nil
+		return nil, fmt.Errorf("ContainerConfig.Architecture is required (e.g. \"linux/arm64\")")
 	}
 	parts := strings.Split(s, "/")
 	switch len(parts) {
 	case 2:
-		return &ocispec.Platform{OS: parts[0], Architecture: parts[1]}
+		return &ocispec.Platform{OS: parts[0], Architecture: parts[1]}, nil
 	case 3:
-		return &ocispec.Platform{OS: parts[0], Architecture: parts[1], Variant: parts[2]}
+		return &ocispec.Platform{OS: parts[0], Architecture: parts[1], Variant: parts[2]}, nil
 	default:
-		return nil
+		return nil, fmt.Errorf("ContainerConfig.Architecture %q must be \"os/arch\" or \"os/arch/variant\"", s)
 	}
 }
 
@@ -317,7 +316,10 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 		}
 	}
 
-	platform := parsePlatform(cfg.Architecture)
+	platform, err := parsePlatform(cfg.Architecture)
+	if err != nil {
+		return "", err
+	}
 	resp, err := cli.ContainerCreate(ctx, containerCfg, hostCfg, networkCfg, platform, cfg.Name)
 	if err != nil {
 		return "", fmt.Errorf("container create: %w", err)

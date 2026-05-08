@@ -25,7 +25,12 @@ func gcpCreateFunction(t *testing.T, fnID string, simCommand []string) {
 		},
 	}
 	if len(simCommand) > 0 {
+		// Phase 135: workloads dispatch through Docker — never os/exec on
+		// the sim host. Tests carry the image alongside the command.
+		// evalImageName is built in TestMain and contains eval-arithmetic
+		// at /usr/local/bin/eval-arithmetic as ENTRYPOINT.
 		fn["serviceConfig"] = map[string]any{
+			"simImage":   evalImageName,
 			"simCommand": simCommand,
 		}
 	}
@@ -87,21 +92,21 @@ func gcpFunctionLogMessages(t *testing.T, fnID string) []string {
 
 func TestCloudFunctions_InvokeArithmetic(t *testing.T) {
 	fnID := "arith-basic-cf"
-	gcpCreateFunction(t, fnID, []string{evalBinaryPath, "3 + 4 * 2"})
+	gcpCreateFunction(t, fnID, []string{"3 + 4 * 2"})
 	body := gcpInvokeFunction(t, fnID)
 	assert.Contains(t, body, "11")
 }
 
 func TestCloudFunctions_InvokeArithmeticParentheses(t *testing.T) {
 	fnID := "arith-paren-cf"
-	gcpCreateFunction(t, fnID, []string{evalBinaryPath, "(3 + 4) * 2"})
+	gcpCreateFunction(t, fnID, []string{"(3 + 4) * 2"})
 	body := gcpInvokeFunction(t, fnID)
 	assert.Contains(t, body, "14")
 }
 
 func TestCloudFunctions_InvokeArithmeticInvalid(t *testing.T) {
 	fnID := "arith-invalid-cf"
-	gcpCreateFunction(t, fnID, []string{evalBinaryPath, "3 +"})
+	gcpCreateFunction(t, fnID, []string{"3 +"})
 	gcpInvokeFunctionExpectError(t, fnID)
 
 	messages := gcpFunctionLogMessages(t, fnID)
@@ -116,7 +121,7 @@ func TestCloudFunctions_InvokeArithmeticInvalid(t *testing.T) {
 
 func TestCloudFunctions_InvokeArithmeticLogs(t *testing.T) {
 	fnID := "arith-logs-cf"
-	gcpCreateFunction(t, fnID, []string{evalBinaryPath, "((2+3)*4-1)/3"})
+	gcpCreateFunction(t, fnID, []string{"((2+3)*4-1)/3"})
 	body := gcpInvokeFunction(t, fnID)
 	assert.Contains(t, body, "6.333")
 
