@@ -40,6 +40,43 @@ This document is the source of truth for the stateless-backend invariant.
 
 ---
 
+## Simulator host model (Phase 135)
+
+The simulator implements multiple cloud services. Services that offer program execution (Lambda, ECS, Cloud Run, Cloud Functions, ACA, App Service / AZF) provision **hosts** — units of compute capacity that run a workload. The model has three explicit layers; conflating any two of them is the architectural failure that BUG-949 tracked:
+
+| Layer | What it is | What it isn't |
+|---|---|---|
+| **Sim binary** | Whatever the host machine is. Mac arm64 locally; linux/amd64 or linux/arm64 in CI depending on runner. | Not the workload's arch. Never derives anything from the workload's spec. |
+| **Host** | The compute primitive that runs the workload. Today: Docker container shaped per cloud-product (Fargate-shape, Lambda micro-VM-shape, Cloud Run-shape, GCF-shape, ACA-shape, AZF-shape). Tomorrow: optionally a remote machine (the sim could federate hosts to other machines — interfaces stay open). | Not the sim binary. Not the workload binary. The host runs *on behalf of* the workload, exposing the cloud's expected primitives (network, env, metadata service). |
+| **Workload** | The user code the platform runs — typically a container image plus an Architecture spec. Sockerless's primary simulated capacity contract is **`linux/arm64`** (Docker on Apple Silicon native, QEMU on x86). | Not constrained to the host's arch. The workload's spec carries `Architecture` and that's what the host must honour. |
+
+### Invariants
+
+- **Workloads always run on Docker hosts.** No sim handler may `os/exec` a workload as a host process of the sim itself. Enforcing test: `simulators/<cloud>/sdk-tests/host_dispatch_test.go` (each sim ships one).
+- **`ContainerConfig.Architecture` is required.** Empty errors at the shared-lib boundary; no silent fallback to "image default / host arch". Cloud-product translators set it explicitly (today: `"linux/arm64"`; future sub-phase will derive from cloud-API arch fields like `taskDef.RuntimePlatform.CpuArchitecture`).
+- **Sim infrastructure tooling is exempt.** The Cloud Build sim shells out to the `docker` CLI for build steps — that's tooling, not workload execution. Allowlisted in the static check.
+- **Host shapes differ per product.** ECS-host = Fargate-shaped container (RuntimePlatform / Cpu / Memory mapped from task def); Lambda-host = micro-VM-shaped container with Runtime API sidecar (`lambda_runtime.go`); Cloud Run-host = HTTP-fronted container; GCF-host = Cloud-Run-host with Functions wrapper; ACA-host = container-app-job-shaped container; AZF-host = WebApp-shaped container. Each translator owns the per-product shape.
+
+### Host metadata services
+
+Every execution-service host exposes the metadata service its real-world counterpart exposes. The sim serves these on its main listener; cloud-product translators inject env vars on the workload host so SDKs route metadata reads to the sim:
+
+| Cloud | Endpoint | Sim handlers | Workload-host env | Status |
+|---|---|---|---|---|
+| AWS EC2/ECS | IMDSv2 at `169.254.169.254/latest/meta-data/...` | `simulators/aws/metadata.go::registerHostMetadata` | `AWS_EC2_METADATA_SERVICE_ENDPOINT` | ✅ 135c-2 |
+| AWS ECS task | `${ECS_CONTAINER_METADATA_URI_V4}/task` | `simulators/aws/metadata.go` (`/v4/{id}/task`) | `ECS_CONTAINER_METADATA_URI_V4` | ✅ 135c-2 |
+| AWS Lambda | Runtime API `${AWS_LAMBDA_RUNTIME_API}/2018-06-01/runtime/...` | `simulators/aws/lambda_runtime.go` (per-invocation sidecar) | `AWS_LAMBDA_RUNTIME_API` | ✅ pre-existing |
+| GCP GCE/CR/GCF | `metadata.google.internal/computeMetadata/v1/...` | `simulators/gcp/metadata.go::registerComputeMetadata` | `GCE_METADATA_HOST/IP/ROOT` | ✅ 135c-1 |
+| Azure App Service / ACA / AZF | IMDS `169.254.169.254/metadata/instance` + `/metadata/identity/oauth2/token` | `simulators/azure/metadata.go` + `simulators/azure/managedidentity.go` | `IDENTITY_ENDPOINT` + `IDENTITY_HEADER` + `AZURE_INSTANCE_METADATA_ENDPOINT` | ✅ 135c-3 |
+
+Pure data services (S3, GCS, Storage, DynamoDB, KMS, Key Vault data plane) are *clients* of metadata-bound credentials — they don't run workloads, so they don't need host metadata.
+
+### Workload reachability — Docker bridge
+
+Workloads in Docker reach the sim's listener via `host.docker.internal:<sim-port>`. On Linux Docker the sim translates this via `ExtraHosts: "host.docker.internal:host-gateway"`. Real-cloud link-local addresses (`169.254.169.254`, `metadata.google.internal`) are also mapped to host-gateway so workloads that hard-code those addresses reach the sim's metadata endpoints without code changes.
+
+---
+
 ## Mapping per cloud
 
 ### AWS ECS (backend `ecs`)

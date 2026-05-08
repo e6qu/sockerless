@@ -6,23 +6,11 @@
 
 `docs-streamline` — off `origin/main` at 9169d4b. Single work-branch rule applies; everything stacks here, no side branches. PR #127 + #128 already merged.
 
-## Active — Phase 135 — Sim host model (ships first)
+## Phase 135 — Sim host model (closing)
 
-Architectural fix: services-that-execute provision **hosts** that run workloads through Docker, honouring the workload's `Architecture` field (default `linux/arm64`). Today's `simulators/<cloud>/shared/process.go::StartProcess` `os/exec`s workload binaries directly — the BUG-949 anti-pattern.
+5 sub-tasks shipped on `docs-streamline`. Awaiting your merge of the branch (or guidance to PR + push). Detail in [STATUS.md](STATUS.md#in-flight-on-docs-streamline) and [specs/CLOUD_RESOURCE_MAPPING.md § Simulator host model](specs/CLOUD_RESOURCE_MAPPING.md#simulator-host-model-phase-135). Closes BUG-949 + BUG-975.
 
-References: `feedback_sim_host_model.md`, `feedback_sim_workload_arch.md`, full sub-tasks in [PLAN.md](PLAN.md) § Phase 135.
-
-Sub-task order:
-
-1. **135a** — `HostRunner` interface + `DockerHost` impl in shared sim lib (cross-cloud).
-2. **135b** — Migrate each cloud-product (Lambda, ECS, Cloud Run, GCF, Cloud Run Jobs, ACA, App Service/AZF) from `StartProcess` to `HostRunner` with per-product spec translator.
-3. **135c** — Host-metadata services per execution-service: AWS IMDSv2 + ECS task v4; GCP `metadata.google.internal`; Azure IMDS expansion (`/metadata/instance` + identity). Lambda Runtime API stays as-is.
-4. **135d** — Tests: static "no-os/exec-of-workload" check; per-product arch round-trip (`linux/arm64` + `linux/amd64`); per-product metadata-service round-trip; BUG-949 reproduction case.
-5. **135e** — Docs: `specs/SIM_HOST_MODEL.md` (or `CLOUD_RESOURCE_MAPPING.md` section); update `simulators/README.md` § "container-oriented services" (it currently says "execute real OS processes").
-
-Closes BUG-949 (real fix). New BUGS-tagged work files inline as the migration surfaces gaps.
-
-## Queued (after Phase 135)
+## Pick next
 
 ### Track A — Live-cloud cost gate (must precede next live session)
 

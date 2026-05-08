@@ -129,9 +129,11 @@ Example store hierarchy for AWS:
 - `tasks: StateStore[ECSTask]`
 - `logGroups: StateStore[LogGroup]`
 
-### Process execution
+### Workload execution — host model
 
-The container-oriented services (ECS, Cloud Run Jobs, Container Apps) execute real OS processes from the container `command`/`entrypoint` fields via the shared `sim.StartProcess()` helper. Process stdout/stderr is captured in real time and injected into the cloud-native log sink:
+Every execution-service (ECS, Lambda, Cloud Run, Cloud Functions, Cloud Run Jobs, ACA, App Service / AZF) runs the workload on a **Docker host** shaped per cloud-product. Workloads never run as `os/exec` host processes of the simulator binary itself — that distinction is enforced by `simulators/<cloud>/sdk-tests/host_dispatch_test.go`. The workload's `Architecture` field (default `linux/arm64`) flows through `ContainerConfig.Architecture` to Docker's image-pull + container-create Platform option. Full host-model spec: [`specs/CLOUD_RESOURCE_MAPPING.md § Simulator host model`](../specs/CLOUD_RESOURCE_MAPPING.md#simulator-host-model-phase-135).
+
+The container's stdout/stderr is captured in real time and injected into the cloud-native log sink:
 
 | Service | Log sink | API for retrieval |
 |---------|----------|-------------------|

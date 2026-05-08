@@ -9,7 +9,7 @@
 | Active branch | `docs-streamline` (off `origin/main` at 9169d4b) |
 | Last merged | PR #128 — Makefile standardization + sim test stability (2026-05-08) |
 | Milestone | **8/8 runner-integration cells GREEN** (since 2026-05-07) |
-| Bugs | 975 filed · 974 fixed · 1 open ([BUGS.md](BUGS.md)) |
+| Bugs | 975 filed · 974 fixed · 1 open ([BUGS.md](BUGS.md)). BUG-949 + BUG-975 closed by Phase 135. |
 | Sim parity | 77/77 ✓ across current backends (AWS 33, GCP 16, Azure 28) — [specs/SIM_PARITY_MATRIX.md](specs/SIM_PARITY_MATRIX.md) |
 | Live infra | None up. All projects torn down end of 2026-05-07. |
 
@@ -28,9 +28,15 @@
 
 Each green run: probe-capabilities → probe-localhost-peer (postgres sidecar `localhost:5432`) → clone-and-compile (`git clone` + `go build` of `simulators/testdata/eval-arithmetic`) → 5 arithmetic invocations.
 
-## Next up
+## In flight on `docs-streamline`
 
-**Phase 135 — Sim host model.** Architectural fix on the active branch: services-that-execute provision **hosts**, hosts run workloads through Docker honouring the workload's `Architecture` field (default `linux/arm64`). Today's `os/exec` workload pattern in `simulators/<cloud>/shared/process.go` is the BUG-949 anti-pattern. Bundles host-runner interface + per-product host adaptation + per-product host-metadata services + tests + docs. Detail in [PLAN.md](PLAN.md). Resume in [DO_NEXT.md](DO_NEXT.md).
+**Phase 135 — Sim host model** (closing this session). 5 sub-tasks shipped on branch:
+
+- **135a** — `ContainerConfig.Architecture` field across all 3 sims; plumbed to Docker `ImagePull` + `ContainerCreate` Platform.
+- **135b** — Workloads dispatch through Docker (no `os/exec` of workloads). `parsePlatform("")` errors at the shared-lib boundary; every caller passes Architecture explicitly. GCP Cloud Functions migrated from `StartProcess` to `StartContainerSync`; AWS ECS ExecuteCommand fallback dropped. Closes BUG-949 + BUG-975.
+- **135c** — Host-metadata services per execution-service. AWS IMDSv2 + ECS task metadata v4; GCP `metadata.google.internal/computeMetadata/v1/*`; Azure IMDS `/metadata/instance` (managed-identity token already shipped). Workload-host wiring via `GCE_METADATA_HOST` / `AWS_EC2_METADATA_SERVICE_ENDPOINT` / `IDENTITY_ENDPOINT` env + `ExtraHosts: host-gateway`.
+- **135d** — Static no-`os/exec`-of-workload check across all 3 sims (`host_dispatch_test.go` per sim).
+- **135e** — Docs in [specs/CLOUD_RESOURCE_MAPPING.md § Simulator host model](specs/CLOUD_RESOURCE_MAPPING.md#simulator-host-model-phase-135) + simulators/README.md update.
 
 ## Recently shipped (chronological)
 
