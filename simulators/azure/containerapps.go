@@ -497,12 +497,13 @@ func registerContainerApps(srv *sim.Server) {
 
 				sink := &acaLogSink{jobName: jobShortName}
 				// Architecture: sim's primary capacity is linux/arm64.
+				// Host metadata: route IMDS + identity reads via env.
 				handle, err := sim.StartContainerSync(sim.ContainerConfig{
 					Image:        sim.ResolveLocalImage(containerImage),
 					Architecture: "linux/arm64",
 					Command:      containerCmd,
 					Args:         containerArgs,
-					Env:          cmdEnv,
+					Env:          mergeEnv(cmdEnv, hostMetadataEnv()),
 					Timeout:      timeout,
 					Name:         containerName,
 					Labels: map[string]string{
@@ -512,6 +513,7 @@ func registerContainerApps(srv *sim.Server) {
 					Network:        netName,
 					NetworkAliases: netAliases,
 					Binds:          binds,
+					ExtraHosts:     hostMetadataExtraHosts(),
 				}, sink)
 				if err != nil {
 					succeeded = false
