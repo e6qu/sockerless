@@ -1,46 +1,42 @@
 # Do Next
 
-Resume pointer. Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BUGS.md) · narrative [WHAT_WE_DID.md](WHAT_WE_DID.md) · architecture [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
+**Resume pointer for the next session.** Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BUGS.md) · narrative [WHAT_WE_DID.md](WHAT_WE_DID.md) · architecture [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
 
-## Active work branch — `phase-130` (PR #127)
+## Branch
 
-Single work-branch rule: ALL in-flight work lands here, no side branches. PR #127 grows as commits land.
+`docs-streamline` — off `origin/main` at 9169d4b. Single work-branch rule applies; everything stacks here, no side branches. PR #127 + #128 already merged.
 
-### 1. Sim parity prep — DONE
+## Phase 135 — Sim host model + 3-tier coverage (PR #129, closing)
 
-- [x] **GCP `iamcredentials.generateIdToken`** — `simulators/gcp/iam.go` extended; `mintSimIdToken` helper in `oauth2.go`.
-- [x] **GCP Compute Disks CRUD** — `simulators/gcp/compute.go::registerComputeDisks`. Zonal Insert/Get/List/Delete/Resize/SetLabels + aggregated-list + zonal-ops endpoint. Phase 127 GCP `pd-ephemeral` prep.
-- [x] **SDK tests** (6 new in `simulators/gcp/sdk-tests/`): full disk CRUD; aggregated list; not-found; ID-token audience round-trip; missing-SA 404; missing-audience 400. All PASS.
-- [x] **`specs/SIM_PARITY_MATRIX.md`** — 8 new rows under GCP § "Phase 126/127 forward-looking (no current backend caller; SDK-test-validated)".
+6 sub-tasks shipped (135a–f). Detail in [STATUS.md](STATUS.md#in-flight-on-docs-streamline-pr-129) and [specs/CLOUD_RESOURCE_MAPPING.md § Simulator host model](specs/CLOUD_RESOURCE_MAPPING.md#simulator-host-model-phase-135). 12 bugs closed (BUG-949 / 972 / 975 / 976 / 977 / 978 / 979 / 980 / 981 / 982 / 983 / 984). Sim CI runs on native `ubuntu-24.04-arm` runners (no QEMU). Awaiting your merge.
 
-### 2. Phase 130 — bleephub workflow-runs REST (DONE)
+## Pick next
 
-Shipped: `bleephub/gh_actions_rest.go` registers all 10 GitHub-shape routes (runs list/get/jobs/cancel/rerun/delete + jobs get/logs + runners list/delete). `bleephub/gh_actions_test.go` covers each endpoint shape (14 new tests, all PASS; full bleephub suite green at 22s). JSON converters bridge bleephub's internal `Workflow`/`WorkflowJob`/`Agent` → GitHub-shape JSON; FNV-1a 64-bit gives stable int64 GitHub-style job IDs from the internal UUIDs.
+### Track A — Live-cloud cost gate (must precede next live session)
 
-`POST .../runs/{id}/rerun` returns 422 with a clear message pointing at the existing `/api/v3/bleephub/workflow` submit path — Phase 131 ships the proper `/actions/workflows/{id}/dispatches` route.
+Phase 128 (job timeout) + Phase 129 remainder (BigQuery export, per-session labels, budget alert, session-end teardown). Without this, the regional-CPU-quota debt cycle from 2026-05-07 repeats. Detail in [PLAN.md](PLAN.md).
 
-### 3. Phase 131 — bleephub workflows REST + UI dispatch (DONE)
+### Track B — Driver generalization (Phases 124–127)
 
-Shipped: `bleephub/gh_workflows_rest.go` (4 GitHub-shape routes) + `bleephub/store_workflow_files.go` (new `WorkflowFile` entity with FNV-1a int64 IDs + go-git tree-walk discovery from each repo's in-memory storer at HEAD) + auto-register on `/api/v3/bleephub/workflow` submit. Phase 130's `rerun` handler now wires through the WorkflowFile cache. UI: `WorkflowsPage` has Workflows + Runs tabs + dispatch dialog (ref + inputs JSON). 10 new Go tests + 4 new UI tests PASS; full bleephub Go suite green at 23s; UI test suite 17/17 PASS.
+Sim prereqs already shipped (PR #127): `generateIdToken` + Compute Disks. 124 Network · 125 DNS · 126 Access · 127 Storage expansion. Each phase: design pass in `specs/CLOUD_RESOURCE_MAPPING.md` first, then 7-step template (api enum → core registry → per-cloud-common impl → per-backend translator → operator config → no-fallbacks at resolve → migrate inline).
 
-### 4. Phase 132 — apps + oauth completeness (DONE)
+### Track C — Phase 121b Azure sim hardening
 
-Shipped: `/api/v3/user/installations` + `/repositories`; `DELETE /api/v3/installation/token`; `GET /login/oauth/authorize` (form + `?auto=1` auto-approve + form-POST companion); `POST /login/oauth/access_token` extended to handle `authorization_code` grants alongside the existing device flow. UI pages: AppsPage (Apps + Installations tabs + Create App dialog) + OAuthPage (flow simulator + active codes tables). 14 new Go tests + 6 new UI tests PASS.
+Mirror of Phase 121 cloud-faithful work for ACA + AZF.
 
-Admin UI scoping decision: bleephub admin lives in bleephub UI itself. The sockerless-admin app stays focused on backend pools / projects / containers / processes / resources — bleephub is independently deployed and gets its own admin views.
+## Standing rules
 
-## Phase 130 milestone complete
+- **Never merge PRs** — user handles all merges. Push only.
+- **Never push `main`.** Create branch off `origin/main`, PR it.
+- **Single work-branch rule** — everything stacks here; no side branches.
+- **State save after every task** — STATUS / PLAN / WHAT_WE_DID / DO_NEXT / BUGS.
+- **Bugs file before fix** — every CI / live failure lands in BUGS.md as a one-liner before any analysis or fix attempt. Header counts updated in the same edit.
+- **No fakes / no fallbacks** — every gap is a real bug; cross-cloud sweep on every find.
+- **Sim parity per commit** — any new SDK call adds a sim handler + matrix row in the same commit.
+- **Backend ↔ host primitive must match** — ECS in ECS, Lambda in Lambda, Cloud Run in Cloud Run, etc.
+- **Sim binary arch ≠ workload arch** — sim runs host-native; workloads carry arch config (default `linux/arm64`); never `os/exec` workloads from a sim handler. (`feedback_sim_workload_arch.md` + `feedback_sim_host_model.md`)
+- **Driver phase entry** — start with a `specs/CLOUD_RESOURCE_MAPPING.md` design pass before code.
 
-PR #127 carries Phase 129 #4 (orphan-svc GC) + sim parity prep (Phase 126/127) + Phases 130/131/132 (bleephub workflow + apps + oauth REST). Bleephub now offers the full GitHub API footprint the user named: workflows, workflow runs, workflow jobs, runners, apps, app installations, user installations, OAuth web + device flows, orgs (already covered).
+## Open bugs
 
-## Blocked
-
-**Live-cloud verification of Phase 129 #4** requires a fresh ephemeral GCP project per `project_gcp_live_setup.md`. Don't bring up new live infra until Phase 128 (job timeout) + the rest of Phase 129 (BigQuery billing export, per-session labels, budget alert, session-end teardown) ship — without those, the regional-CPU-quota debt cycle from 2026-05-07 repeats. 6-day project cost was ~$90 (no per-service breakdown without Console / BigQuery export).
-
-## Project rules
-
-- Never merge PRs — user handles all merges.
-- Never push `main`.
-- Single work-branch rule — everything stacks on `phase-130`; no side branches.
-- New failures during this work file in [BUGS.md](BUGS.md) before any fix attempt.
-- Each new driver phase (124–127) starts with a `specs/CLOUD_RESOURCE_MAPPING.md` design pass before code.
+None. Detail in [BUGS.md](BUGS.md).

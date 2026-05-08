@@ -37,6 +37,11 @@ func main() {
 		cfg.ListenAddr = ":" + port
 	}
 
+	// Stash the listen addr so cloud-product translators can wire
+	// AWS_EC2_METADATA_SERVICE_ENDPOINT + ECS_CONTAINER_METADATA_URI_V4
+	// onto workload containers.
+	simListenAddr = cfg.ListenAddr
+
 	srv := sim.NewServer(cfg)
 
 	// Register AWS JSON services (X-Amz-Target header routing)
@@ -73,6 +78,7 @@ func main() {
 	registerEFS(srv)
 	registerLambda(srv)
 	registerS3(srv)
+	registerHostMetadata(srv)
 
 	// Dashboard summary endpoints for UI
 	registerDashboard(srv)

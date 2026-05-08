@@ -20,7 +20,6 @@ import (
 )
 
 var dockerClient *client.Client
-var evalBinaryPath string
 var evalImageName string
 
 func TestMain(m *testing.M) {
@@ -44,28 +43,22 @@ func TestMain(m *testing.M) {
 		}
 	}
 
-	// Build eval-arithmetic binary (static linux/amd64, to be embedded
-	// in a Docker image the container runtime can actually execute).
+	// Multi-stage Docker build forced to linux/arm64 — sim's primary
+	// capacity contract (Phase 135b). CI on amd64 hosts uses QEMU.
 	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
-	evalBinaryPath = evalDir + "/eval-arithmetic"
-	fmt.Println("[sim] Building eval-arithmetic (linux/amd64)...")
-	evalBuild := exec.Command("go", "build", "-o", "eval-arithmetic", ".")
-	evalBuild.Dir = evalDir
-	evalBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=amd64")
-	evalBuild.Stdout = os.Stderr
-	evalBuild.Stderr = os.Stderr
-	if err := evalBuild.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic: %v\n", err)
-		os.Exit(1)
-	}
-	cleanups = append(cleanups, func() { os.Remove(evalBinaryPath) })
-
-	// Bake the binary into a local Docker image so the container can
-	// actually run it. Matches the pattern in simulators/aws/sdk-tests.
 	evalImageName = "sockerless-eval-arithmetic:test"
-	fmt.Printf("[sim] Building %s...\n", evalImageName)
-	evalDockerfile := "FROM alpine:latest\nCOPY eval-arithmetic /usr/local/bin/eval-arithmetic\nENTRYPOINT [\"/usr/local/bin/eval-arithmetic\"]\n"
-	evalImageBuild := exec.Command("docker", "build", "-t", evalImageName, "-f", "-", evalDir)
+	fmt.Printf("[sim] Building %s (linux/arm64)...\n", evalImageName)
+	evalDockerfile := `FROM golang:1.25-alpine AS build
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 go build -o /eval-arithmetic .
+FROM alpine:latest
+COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
+ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
+`
+	evalImageBuild := exec.Command("docker", "build",
+		"--platform", "linux/arm64",
+		"-t", evalImageName, "-f", "-", evalDir)
 	evalImageBuild.Stdin = strings.NewReader(evalDockerfile)
 	if out, err := evalImageBuild.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic image: %v\n%s", err, out)
@@ -155,7 +148,7 @@ func TestMain(m *testing.M) {
 		"SOCKERLESS_ECS_SUBNETS=subnet-0123456789abcdef0",
 		"SOCKERLESS_ECS_EXECUTION_ROLE_ARN=arn:aws:iam::000000000000:role/sim",
 		// BUG-848 made arch mandatory; no default.
-		"SOCKERLESS_ECS_CPU_ARCHITECTURE=X86_64",
+		"SOCKERLESS_ECS_CPU_ARCHITECTURE=ARM64",
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr

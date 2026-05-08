@@ -77,6 +77,7 @@ func TestCloudFunctions_InvokeExecutesCommand(t *testing.T) {
 			"entryPoint": "Handler",
 		},
 		"serviceConfig": map[string]any{
+			"simImage":   "alpine:latest",
 			"simCommand": []string{"echo", "hello-from-cf"},
 		},
 	}
@@ -111,6 +112,7 @@ func TestCloudFunctions_InvokeNonZeroExit(t *testing.T) {
 			"entryPoint": "Handler",
 		},
 		"serviceConfig": map[string]any{
+			"simImage":   "alpine:latest",
 			"simCommand": []string{"sh", "-c", "exit 1"},
 		},
 	}
@@ -167,6 +169,7 @@ func TestCloudFunctions_InvokeLogsRealOutput(t *testing.T) {
 			"entryPoint": "Handler",
 		},
 		"serviceConfig": map[string]any{
+			"simImage":   "alpine:latest",
 			"simCommand": []string{"echo", "real-cf-output"},
 		},
 	}

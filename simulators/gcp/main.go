@@ -40,6 +40,10 @@ func main() {
 		cfg.ListenAddr = ":" + port
 	}
 
+	// Stash the listen addr so cloud-product host translators can wire
+	// GCE_METADATA_HOST + sidecar URLs onto workload containers.
+	simListenAddr = cfg.ListenAddr
+
 	srv := sim.NewServer(cfg)
 
 	// Initialise the regional CPU quota tracker before route registration —
@@ -67,6 +71,7 @@ func main() {
 	registerVPCAccess(srv)
 	registerIAM(srv)
 	registerOAuth2(srv)
+	registerComputeMetadata(srv)
 
 	// Dashboard summary endpoints for UI
 	registerDashboard(srv)

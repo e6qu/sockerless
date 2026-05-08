@@ -15,11 +15,10 @@ import (
 )
 
 var (
-	dockerClient   *client.Client
-	serverAddr     string
-	evalBinaryPath string
-	evalImageName  string
-	ctx            = context.Background()
+	dockerClient  *client.Client
+	serverAddr    string
+	evalImageName string
+	ctx           = context.Background()
 )
 
 func TestMain(m *testing.M) {
@@ -37,24 +36,22 @@ func TestMain(m *testing.M) {
 		os.Exit(m.Run())
 	}
 
-	// Build eval-arithmetic binary
+	// Multi-stage Docker build forced to linux/arm64 — sim's primary
+	// capacity contract. CI on amd64 hosts uses QEMU. Phase 135.
 	evalDir := findModuleDir("simulators/testdata/eval-arithmetic")
-	evalBinaryPath = evalDir + "/eval-arithmetic"
-	fmt.Println("Building eval-arithmetic...")
-	evalBuild := exec.Command("go", "build", "-o", "eval-arithmetic", ".")
-	evalBuild.Dir = evalDir
-	evalBuild.Env = append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux")
-	evalBuild.Stdout = os.Stderr
-	evalBuild.Stderr = os.Stderr
-	if err := evalBuild.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Build Docker image containing the eval binary
+	fmt.Println("Building eval-arithmetic Docker image (linux/arm64)...")
 	evalImageName = "sockerless-eval-arithmetic:test"
-	dockerfile := "FROM alpine:latest\nCOPY eval-arithmetic /usr/local/bin/eval-arithmetic\nENTRYPOINT [\"/usr/local/bin/eval-arithmetic\"]\n"
-	dockerBuild := exec.Command("docker", "build", "-t", evalImageName, "-f", "-", evalDir)
+	dockerfile := `FROM golang:1.25-alpine AS build
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 go build -o /eval-arithmetic .
+FROM alpine:latest
+COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
+ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
+`
+	dockerBuild := exec.Command("docker", "build",
+		"--platform", "linux/arm64",
+		"-t", evalImageName, "-f", "-", evalDir)
 	dockerBuild.Stdin = strings.NewReader(dockerfile)
 	if out, err := dockerBuild.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic Docker image: %v\n%s", err, out)
@@ -146,7 +143,7 @@ func TestMain(m *testing.M) {
 		// BUG-848 made architecture mandatory; integration tests must
 		// declare it (no default — sockerless reports the cloud
 		// workload's arch, not its own host arch).
-		"SOCKERLESS_ECS_CPU_ARCHITECTURE=X86_64",
+		"SOCKERLESS_ECS_CPU_ARCHITECTURE=ARM64",
 		"SOCKERLESS_AGENT_TIMEOUT=2s",
 		"SOCKERLESS_POLL_INTERVAL=500ms",
 	)

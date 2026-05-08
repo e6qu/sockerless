@@ -16,22 +16,50 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
+// parsePlatform splits an "os/arch" or "os/arch/variant" string into an
+// ocispec.Platform. Returns an error on empty or malformed input —
+// every caller must be explicit per `feedback_sim_host_model.md`. No
+// silent fallback to "image default / host arch".
+func parsePlatform(s string) (*ocispec.Platform, error) {
+	if s == "" {
+		return nil, fmt.Errorf("ContainerConfig.Architecture is required (e.g. \"linux/arm64\")")
+	}
+	parts := strings.Split(s, "/")
+	switch len(parts) {
+	case 2:
+		return &ocispec.Platform{OS: parts[0], Architecture: parts[1]}, nil
+	case 3:
+		return &ocispec.Platform{OS: parts[0], Architecture: parts[1], Variant: parts[2]}, nil
+	default:
+		return nil, fmt.Errorf("ContainerConfig.Architecture %q must be \"os/arch\" or \"os/arch/variant\"", s)
+	}
+}
+
 // ContainerConfig describes a container to run.
+//
+// Architecture carries the workload's target arch (e.g. "linux/arm64",
+// "linux/amd64"). The simulator never derives this from the host —
+// the workload's spec carries the field; cloud-product translators
+// pass it through. Empty string means "use the image's default" which
+// in practice resolves to the host arch via Docker (treat that as a
+// not-yet-migrated caller).
 type ContainerConfig struct {
-	Image      string            // container image (e.g., "alpine:latest")
-	Command    []string          // entrypoint override (empty = use image default)
-	Args       []string          // command/args (empty = use image default)
-	Env        map[string]string // environment variables
-	Timeout    time.Duration     // max execution time (0 = no limit)
-	Labels     map[string]string // container labels for tracking
-	Network    string            // Docker network to join (optional)
-	Name       string            // container name (optional, auto-generated if empty)
-	Tty        bool              // allocate a pseudo-TTY
-	OpenStdin  bool              // keep stdin open
-	Binds      []string          // bind mounts (e.g., "vol:/path")
-	ExtraHosts []string          // --add-host entries (e.g., "host.docker.internal:host-gateway")
+	Image        string            // container image (e.g., "alpine:latest")
+	Architecture string            // OS/arch (e.g. "linux/arm64"); see field-level docstring above
+	Command      []string          // entrypoint override (empty = use image default)
+	Args         []string          // command/args (empty = use image default)
+	Env          map[string]string // environment variables
+	Timeout      time.Duration     // max execution time (0 = no limit)
+	Labels       map[string]string // container labels for tracking
+	Network      string            // Docker network to join (optional)
+	Name         string            // container name (optional, auto-generated if empty)
+	Tty          bool              // allocate a pseudo-TTY
+	OpenStdin    bool              // keep stdin open
+	Binds        []string          // bind mounts (e.g., "vol:/path")
+	ExtraHosts   []string          // --add-host entries (e.g., "host.docker.internal:host-gateway")
 }
 
 // ContainerHandle manages a running container.
@@ -235,7 +263,7 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 	}
 
 	if shouldPull {
-		reader, err := cli.ImagePull(ctx, cfg.Image, image.PullOptions{})
+		reader, err := cli.ImagePull(ctx, cfg.Image, image.PullOptions{Platform: cfg.Architecture})
 		if err != nil {
 			return "", fmt.Errorf("image pull %s: %w", cfg.Image, err)
 		}
@@ -288,7 +316,11 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 		}
 	}
 
-	resp, err := cli.ContainerCreate(ctx, containerCfg, hostCfg, networkCfg, nil, cfg.Name)
+	platform, err := parsePlatform(cfg.Architecture)
+	if err != nil {
+		return "", err
+	}
+	resp, err := cli.ContainerCreate(ctx, containerCfg, hostCfg, networkCfg, platform, cfg.Name)
 	if err != nil {
 		return "", fmt.Errorf("container create: %w", err)
 	}

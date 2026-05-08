@@ -16,12 +16,11 @@ import (
 )
 
 var (
-	baseURL        string
-	simCmd         *exec.Cmd
-	binaryPath     string
-	evalBinaryPath string
-	evalImageName  string
-	tmpDir         string
+	baseURL       string
+	simCmd        *exec.Cmd
+	binaryPath    string
+	evalImageName string
+	tmpDir        string
 
 	project  = "test-project"
 	location = "us-central1"
@@ -44,20 +43,21 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Failed to build simulator: %v\n%s", err, out)
 	}
 
-	// Build eval-arithmetic binary
+	// Multi-stage Docker build forced to linux/arm64 — sim's primary
+	// capacity contract. CI on amd64 hosts uses QEMU. Phase 135.
 	evalDir, _ := filepath.Abs("../../testdata/eval-arithmetic")
-	evalBinaryPath = filepath.Join(evalDir, "eval-arithmetic")
-	evalBuild := exec.Command("go", "build", "-o", evalBinaryPath, ".")
-	evalBuild.Dir = evalDir
-	evalBuild.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOWORK=off")
-	if out, err := evalBuild.CombinedOutput(); err != nil {
-		log.Fatalf("Failed to build eval-arithmetic: %v\n%s", err, out)
-	}
-
-	// Build Docker image for eval-arithmetic
 	evalImageName = "sockerless-eval-arithmetic:test"
-	dockerfile := fmt.Sprintf("FROM alpine:latest\nCOPY %s /usr/local/bin/eval-arithmetic\nENTRYPOINT [\"/usr/local/bin/eval-arithmetic\"]\n", "eval-arithmetic")
-	dockerBuild := exec.Command("docker", "build", "-t", evalImageName, "-f", "-", evalDir)
+	dockerfile := `FROM golang:1.25-alpine AS build
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 go build -o /eval-arithmetic .
+FROM alpine:latest
+COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
+ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
+`
+	dockerBuild := exec.Command("docker", "build",
+		"--platform", "linux/arm64",
+		"-t", evalImageName, "-f", "-", evalDir)
 	dockerBuild.Stdin = strings.NewReader(dockerfile)
 	if out, err := dockerBuild.CombinedOutput(); err != nil {
 		log.Fatalf("Failed to build eval-arithmetic Docker image: %v\n%s", err, out)
@@ -138,6 +138,7 @@ func gcloudCLI(args ...string) *exec.Cmd {
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_CLOUDFUNCTIONS="+baseURL+"/",
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_SERVICEUSAGE="+baseURL+"/",
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_VPCACCESS="+baseURL+"/",
+		"CLOUDSDK_API_ENDPOINT_OVERRIDES_COMPUTE="+baseURL+"/",
 	)
 	return cmd
 }

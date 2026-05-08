@@ -3,9 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"fmt"
-	"io"
 	"net/http"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -800,16 +798,24 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
+				// Architecture: sim's primary capacity is linux/arm64.
+				// Future sub-phase: derive from
+				// taskDef.RuntimePlatform.CpuArchitecture when set.
+				// Host metadata: AWS SDK respects
+				// AWS_EC2_METADATA_SERVICE_ENDPOINT + ECS_CONTAINER_METADATA_URI_V4.
+				envWithMetadata := mergeEnv(cmdEnv, hostMetadataEnv(id))
 				handle, err := sim.StartContainerSync(sim.ContainerConfig{
-					Image:     sim.ResolveLocalImage(imageURI),
-					Command:   entrypoint,
-					Args:      args,
-					Env:       cmdEnv,
-					Name:      fmt.Sprintf("sockerless-sim-aws-task-%s", id[:12]),
-					Labels:    map[string]string{"sockerless-sim-task": id},
-					Tty:       wantTTY,
-					OpenStdin: wantTTY,
-					Binds:     binds,
+					Image:        sim.ResolveLocalImage(imageURI),
+					Architecture: "linux/arm64",
+					Command:      entrypoint,
+					Args:         args,
+					Env:          envWithMetadata,
+					Name:         fmt.Sprintf("sockerless-sim-aws-task-%s", id[:12]),
+					Labels:       map[string]string{"sockerless-sim-task": id},
+					Tty:          wantTTY,
+					OpenStdin:    wantTTY,
+					Binds:        binds,
+					ExtraHosts:   hostMetadataExtraHosts(),
 				}, sink)
 				if err != nil {
 					stoppedAt := time.Now().Unix()
@@ -1472,91 +1478,14 @@ func handleECSExecWebSocket(sessionID string) http.HandlerFunc {
 			}
 		}
 
-		// Fallback: local process (only if no Docker container — should not happen)
-		var cmd *exec.Cmd
-		if strings.Contains(sess.command, " ") {
-			cmd = exec.Command("sh", "-c", sess.command)
-		} else {
-			cmd = exec.Command(sess.command)
-		}
-
-		stdin, err := cmd.StdinPipe()
-		if err != nil {
-			_ = conn.WriteMessage(websocket.CloseMessage,
-				websocket.FormatCloseMessage(websocket.CloseInternalServerErr, err.Error()))
-			return
-		}
-
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			_ = conn.WriteMessage(websocket.CloseMessage,
-				websocket.FormatCloseMessage(websocket.CloseInternalServerErr, err.Error()))
-			return
-		}
-
-		stderr, err := cmd.StderrPipe()
-		if err != nil {
-			_ = conn.WriteMessage(websocket.CloseMessage,
-				websocket.FormatCloseMessage(websocket.CloseInternalServerErr, err.Error()))
-			return
-		}
-
-		if err := cmd.Start(); err != nil {
-			_ = conn.WriteMessage(websocket.CloseMessage,
-				websocket.FormatCloseMessage(websocket.CloseInternalServerErr, err.Error()))
-			return
-		}
-
-		// Bridge stdout → WebSocket
-		done := make(chan struct{}, 2)
-		writeMu := sync.Mutex{}
-
-		sendWS := func(data []byte) {
-			writeMu.Lock()
-			defer writeMu.Unlock()
-			_ = conn.WriteMessage(websocket.BinaryMessage, data)
-		}
-
-		pipeToWS := func(reader io.Reader) {
-			defer func() { done <- struct{}{} }()
-			buf := make([]byte, 4096)
-			for {
-				n, err := reader.Read(buf)
-				if n > 0 {
-					sendWS(buf[:n])
-				}
-				if err != nil {
-					return
-				}
-			}
-		}
-
-		go pipeToWS(stdout)
-		go pipeToWS(stderr)
-
-		// Bridge WebSocket → stdin
-		go func() {
-			defer stdin.Close()
-			for {
-				_, msg, err := conn.ReadMessage()
-				if err != nil {
-					return
-				}
-				if _, err := stdin.Write(msg); err != nil {
-					return
-				}
-			}
-		}()
-
-		// Wait for stdout and stderr to drain
-		<-done
-		<-done
-
-		// Wait for process to finish
-		_ = cmd.Wait()
-
+		// No fallback: ExecuteCommand requires the task's Docker
+		// container. The sim never `os/exec`s the command on the sim
+		// host — that would run against the wrong "host" entirely
+		// (sim-binary host, not the Fargate-shaped task container).
+		// See feedback_sim_host_model.md.
 		_ = conn.WriteMessage(websocket.CloseMessage,
-			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+			websocket.FormatCloseMessage(websocket.CloseInternalServerErr,
+				"ECS ExecuteCommand requires a running Docker container for the task"))
 	}
 }
 

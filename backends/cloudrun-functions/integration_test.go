@@ -38,7 +38,6 @@ import (
 )
 
 var dockerClient *client.Client
-var evalBinaryPath string
 var evalImageName string
 
 func TestMain(m *testing.M) {
@@ -89,29 +88,23 @@ func TestMain(m *testing.M) {
 	step := func(label string) { fmt.Fprintf(os.Stderr, "[testmain] %s\n", label) }
 	step("entered TestMain (SOCKERLESS_INTEGRATION=1)")
 
-	// Build eval-arithmetic binary (static linux/amd64, to be embedded
-	// in a Docker image the container runtime can actually execute).
+	// Multi-stage Docker build forced to linux/arm64 — sim's primary
+	// capacity contract (Phase 135b). CI on amd64 hosts uses QEMU.
 	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
-	evalBinaryPath = evalDir + "/eval-arithmetic"
-	step("building eval-arithmetic (linux/amd64)")
-	fmt.Println("[sim] Building eval-arithmetic (linux/amd64)...")
-	evalBuild := exec.Command("go", "build", "-o", "eval-arithmetic", ".")
-	evalBuild.Dir = evalDir
-	evalBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=amd64")
-	evalBuild.Stdout = os.Stderr
-	evalBuild.Stderr = os.Stderr
-	if err := evalBuild.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Bake the binary into a local Docker image so the container can
-	// actually run it.
 	evalImageName = "sockerless-eval-arithmetic:test"
-	step("docker build " + evalImageName)
-	fmt.Printf("[sim] Building %s...\n", evalImageName)
-	evalDockerfile := "FROM alpine:latest\nCOPY eval-arithmetic /usr/local/bin/eval-arithmetic\nENTRYPOINT [\"/usr/local/bin/eval-arithmetic\"]\n"
-	evalImageBuild := exec.Command("docker", "build", "-t", evalImageName, "-f", "-", evalDir)
+	step("docker build " + evalImageName + " (linux/arm64)")
+	fmt.Printf("[sim] Building %s (linux/arm64)...\n", evalImageName)
+	evalDockerfile := `FROM golang:1.25-alpine AS build
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 go build -o /eval-arithmetic .
+FROM alpine:latest
+COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
+ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
+`
+	evalImageBuild := exec.Command("docker", "build",
+		"--platform", "linux/arm64",
+		"-t", evalImageName, "-f", "-", evalDir)
 	evalImageBuild.Stdin = strings.NewReader(evalDockerfile)
 	if out, err := evalImageBuild.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic image: %v\n%s", err, out)
@@ -255,7 +248,10 @@ func TestMain(m *testing.M) {
 	defer buildCancel3()
 	bootstrapBuild := exec.CommandContext(buildCtx3, "go", "build", "-o", gcfBootstrapPath, "./cmd/sockerless-gcf-bootstrap")
 	bootstrapBuild.Dir = repoRoot + "/agent"
-	bootstrapBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=amd64")
+	// Bootstrap runs inside the workload container (linux/arm64 — sim
+	// primary capacity per Phase 135b). Build with matching GOARCH so
+	// the binary executes on the workload host.
+	bootstrapBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=arm64")
 	bootstrapBuild.Stdout = os.Stderr
 	bootstrapBuild.Stderr = os.Stderr
 	if err := bootstrapBuild.Run(); err != nil {

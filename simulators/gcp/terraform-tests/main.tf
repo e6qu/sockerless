@@ -44,3 +44,14 @@ resource "google_dns_managed_zone" "private_xjob" {
   visibility  = "private"
   description = "Phase 86 cross-job DNS (BUG-701 on GCP)"
 }
+
+# Phase 127 + 135f: terraform-provider coverage of the Compute Disks
+# CRUD added in Phase 127. Exercises the same wire shape gcloud uses
+# (zoneOp with operationType, full zone URL, kind=compute#operation)
+# from a third consumer.
+resource "google_compute_disk" "tf_disk" {
+  name = "tf-test-disk"
+  zone = "us-central1-a"
+  size = 10
+  type = "pd-balanced"
+}

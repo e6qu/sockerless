@@ -18,11 +18,39 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
+// parsePlatform splits an "os/arch" or "os/arch/variant" string into an
+// ocispec.Platform. Returns an error on empty or malformed input —
+// every caller must be explicit per `feedback_sim_host_model.md`. No
+// silent fallback to "image default / host arch".
+func parsePlatform(s string) (*ocispec.Platform, error) {
+	if s == "" {
+		return nil, fmt.Errorf("ContainerConfig.Architecture is required (e.g. \"linux/arm64\")")
+	}
+	parts := strings.Split(s, "/")
+	switch len(parts) {
+	case 2:
+		return &ocispec.Platform{OS: parts[0], Architecture: parts[1]}, nil
+	case 3:
+		return &ocispec.Platform{OS: parts[0], Architecture: parts[1], Variant: parts[2]}, nil
+	default:
+		return nil, fmt.Errorf("ContainerConfig.Architecture %q must be \"os/arch\" or \"os/arch/variant\"", s)
+	}
+}
+
 // ContainerConfig describes a container to run.
+//
+// Architecture carries the workload's target arch (e.g. "linux/arm64",
+// "linux/amd64"). The simulator never derives this from the host —
+// the workload's spec carries the field; cloud-product translators
+// pass it through. Empty string means "use the image's default" which
+// in practice resolves to the host arch via Docker (treat that as a
+// not-yet-migrated caller).
 type ContainerConfig struct {
 	Image          string            // container image (e.g., "alpine:latest")
+	Architecture   string            // OS/arch (e.g. "linux/arm64"); see field-level docstring above
 	Command        []string          // entrypoint override (empty = use image default)
 	Args           []string          // command/args (empty = use image default)
 	Env            map[string]string // environment variables
@@ -195,11 +223,12 @@ func StartContainerSync(cfg ContainerConfig, sink LogSink) (*ContainerHandle, er
 // the function image's ENTRYPOINT serves HTTP and the platform POSTs
 // requests to it. Mirror of `simulators/gcp/shared/container.go`.
 type HTTPContainerConfig struct {
-	Image    string            // overlay image (must be locally available)
-	HostPort int               // host port to publish container's :8080 to
-	Env      map[string]string // env vars (must include PORT to match the published port-target)
-	Name     string            // container name (optional, auto-generated if empty)
-	Labels   map[string]string // container labels for tracking
+	Image        string            // overlay image (must be locally available)
+	Architecture string            // OS/arch (e.g. "linux/arm64"); workload's spec — never derived from host
+	HostPort     int               // host port to publish container's :8080 to
+	Env          map[string]string // env vars (must include PORT to match the published port-target)
+	Name         string            // container name (optional, auto-generated if empty)
+	Labels       map[string]string // container labels for tracking
 }
 
 // StartHTTPContainer starts a container detached, with its container-
@@ -243,7 +272,11 @@ func StartHTTPContainer(ctx context.Context, cfg HTTPContainerConfig) (string, e
 		},
 	}
 
-	resp, err := cli.ContainerCreate(ctx, containerCfg, hostCfg, nil, nil, cfg.Name)
+	platform, err := parsePlatform(cfg.Architecture)
+	if err != nil {
+		return "", err
+	}
+	resp, err := cli.ContainerCreate(ctx, containerCfg, hostCfg, nil, platform, cfg.Name)
 	if err != nil {
 		return "", fmt.Errorf("container create: %w", err)
 	}
@@ -347,7 +380,7 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 	}
 
 	if shouldPull {
-		reader, err := cli.ImagePull(ctx, cfg.Image, image.PullOptions{})
+		reader, err := cli.ImagePull(ctx, cfg.Image, image.PullOptions{Platform: cfg.Architecture})
 		if err != nil {
 			return "", fmt.Errorf("image pull %s: %w", cfg.Image, err)
 		}
@@ -400,7 +433,11 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 		}
 	}
 
-	resp, err := cli.ContainerCreate(ctx, containerCfg, hostCfg, networkCfg, nil, cfg.Name)
+	platform, err := parsePlatform(cfg.Architecture)
+	if err != nil {
+		return "", err
+	}
+	resp, err := cli.ContainerCreate(ctx, containerCfg, hostCfg, networkCfg, platform, cfg.Name)
 	if err != nil {
 		return "", fmt.Errorf("container create: %w", err)
 	}

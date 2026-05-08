@@ -33,6 +33,10 @@ func main() {
 		cfg.ListenAddr = ":" + port
 	}
 
+	// Stash listen addr so cloud-product translators can wire
+	// IDENTITY_ENDPOINT + IMDS env onto workload containers.
+	simListenAddr = cfg.ListenAddr
+
 	srv := sim.NewServer(cfg)
 
 	// Clean double slashes in request paths. The azurerm v3 provider (via
