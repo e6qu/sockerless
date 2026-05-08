@@ -6,8 +6,8 @@
 
 | | |
 |---|---|
-| Active branch | `phase-128-job-timeout` (off `origin/main` at 7b35d90) |
-| Last merged | PR #129 — Phase 135 sim host model + 3-tier coverage + ARM-native CI (2026-05-09) |
+| Active branch | `phase-124-network-driver` (off `origin/main` at d2d9e55) |
+| Last merged | PR #130 — Phase 128 runner job timeout (2026-05-09) |
 | Milestone | **8/8 runner-integration cells GREEN** (since 2026-05-07); **sim host model shipped, CI fully green on native arm64** (Phase 135, 2026-05-09). |
 | Bugs | 984 filed · 984 fixed · **0 open** ([BUGS.md](BUGS.md)). |
 | Sim parity | 77/77 ✓ across current backends (AWS 33, GCP 16, Azure 28) — [specs/SIM_PARITY_MATRIX.md](specs/SIM_PARITY_MATRIX.md) |
@@ -28,23 +28,25 @@
 
 Each green run: probe-capabilities → probe-localhost-peer (postgres sidecar `localhost:5432`) → clone-and-compile (`git clone` + `go build` of `simulators/testdata/eval-arithmetic`) → 5 arithmetic invocations.
 
-## Up next on `phase-128-job-timeout`
+## Up next on `phase-124-network-driver`
 
-In flight: **Phase 128 — Runner job timeout**. 4/4 sub-tasks shipped:
+In flight: **Phase 124 — Network discovery driver**. Foundation shipped:
 
-- **128a** — Bootstrap timer (`runWithTimeout`, `jobTimeoutFromEnv`) in cloudrun + gcf bootstraps. SIGTERM → 30s grace → SIGKILL → exit 124. 5 unit tests.
-- **128b** — `backends/core/job_timeout.go` shared helpers (`JobTimeoutEnvName`, `DefaultJobTimeoutSeconds=3600`, `JobTimeoutDefault()`, `JobTimeoutEnvIfUnset()`). Wired into cloudrun + gcf backend env injection (per-job override wins).
-- **128c** — Cloud-native cap: cloudrun TaskTemplate.Timeout + ACA ReplicaTimeout derived from `core.JobTimeoutDefault()`, clamped to per-cloud max. Lambda already at 900s cap.
-- **128d** — Integration test (alpine + sleep 9999 + SOCKERLESS_JOB_TIMEOUT_SECONDS=2; expects exit 124 + log line).
+- **124a** — `api/network_discovery.go`: `NetworkDiscoveryKind` enum + `IsValid()` + `AllNetworkDiscoveryKinds`. 4 categories: host-aliases, cloud-dns, service-mesh, nat-gateway-only.
+- **124b** — `backends/core/network_discovery_driver.go`: `NetworkDiscoveryDriver` interface, registry, no-op default (nat-gateway-only), `ParseNetworkDiscoveryEnv()` (no-fallback semantics).
+- **124c** — `backends/core/network_discovery_hostaliases.go`: in-process host-aliases impl (Register/Resolve/Deregister + `PeersOnNetwork()` helper for backend env materialization).
 
-Spec: [specs/CLOUD_RESOURCE_MAPPING.md § Job lifecycle](specs/CLOUD_RESOURCE_MAPPING.md#job-lifecycle-timeouts-and-termination-phase-128).
+Spec: [specs/CLOUD_RESOURCE_MAPPING.md § Network discovery driver](specs/CLOUD_RESOURCE_MAPPING.md#network-discovery-driver-phase-124).
 
-Then Phase 124 → 125 → 126 → 127 → 121b → 78 per [PLAN.md § Roadmap (ordered)](PLAN.md#roadmap-ordered).
+Cloud-DNS + service-mesh impls + per-backend migration deferred — each backend's discovery code migrates when its inline call sites are touched.
+
+Then Phase 125 → 126 → 127 → 121b → 78 per [PLAN.md § Roadmap (ordered)](PLAN.md#roadmap-ordered).
 
 ## Recently shipped (chronological)
 
 | Date | PR | Headline |
 |------|----|----|
+| 2026-05-09 | #130 | Phase 128 runner job timeout (bootstrap timer + cloud-native cap; SOCKERLESS_JOB_TIMEOUT_SECONDS contract). |
 | 2026-05-09 | #129 | Phase 135 sim host model + 3-tier coverage + native arm64 CI runners. 12 bugs closed (BUG-949/972/975-984). |
 | 2026-05-08 | #128 | Makefile standardization + per-app leaf Makefiles + stack orchestration; 17 doc updates; BUG-973/974 sim test stability (`Eventually` polling). |
 | 2026-05-08 | #127 | Phase 129 #4 orphan pod-Service GC (owner-link via `CLOUD_RUN_JOB`); sim parity prep (GCP `generateIdToken` + Compute Disks); Phases 130/131/132 (bleephub workflow runs / workflows / apps + oauth REST + UI dispatch + AppsPage + OAuthPage). |

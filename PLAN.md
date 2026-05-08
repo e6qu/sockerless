@@ -35,6 +35,7 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #127 | 129#4 + 130–132 | Orphan pod-Service GC (owner-link via `CLOUD_RUN_JOB`); sim parity prep (GCP `generateIdToken` + Compute Disks); bleephub workflow runs / workflows / apps + oauth REST + UI dispatch + AppsPage + OAuthPage. | n/a |
 | #128 | 134 | Makefile standardization + per-app leaf Makefiles + stack orchestration; 17 doc updates; sim test stability (BUG-973/974). | 973–974 |
 | #129 | 135 | **Sim host model + 3-tier coverage.** Workloads dispatch through Docker honouring explicit `Architecture` (sim's `linux/arm64` capacity); per-cloud-product host-metadata services (AWS IMDSv2 + ECS task v4 + instance-identity-document; GCP `metadata.google.internal/computeMetadata/v1`; Azure IMDS `/metadata/instance` + identity); static no-`os/exec`-of-workload check; SDK metadata tests (cloud.google.com/go/compute/metadata × 6, aws-sdk-go-v2/feature/ec2/imds × 4, azidentity ManagedIdentityCredential × 1); GCP CLI test for Compute Disks via gcloud; GCP Terraform test (`google_compute_disk`); native `ubuntu-24.04-arm` CI runners (no QEMU). | 949, 972, 975–984 |
+| #130 | 128 | Runner job timeout. Bootstrap timer (`runWithTimeout` in cloudrun + gcf bootstraps; SIGTERM → 30s grace → SIGKILL → exit 124) + cloud-native cap (cloudrun TaskTemplate.Timeout, ACA ReplicaTimeout, Lambda 900s) derived from `core.JobTimeoutDefault()`. `SOCKERLESS_JOB_TIMEOUT_SECONDS` contract; per-job override via `docker run -e` wins. | n/a |
 
 ## Roadmap (ordered)
 

@@ -4,7 +4,7 @@
 
 ## Branch
 
-`phase-128-job-timeout` — off `origin/main` at 7b35d90 (PR #129 merged 2026-05-09). Single work-branch rule: everything stacks here, no side branches.
+`phase-124-network-driver` — off `origin/main` at d2d9e55 (PR #130 merged 2026-05-09). Single work-branch rule: everything stacks here, no side branches.
 
 ## Ordered roadmap (do them in this order)
 
@@ -18,18 +18,19 @@
 
 Driver phases (124–127) follow the 7-step template from [PLAN.md § Driver phase template](PLAN.md#driver-phase-template-124127). Each phase starts with a `specs/CLOUD_RESOURCE_MAPPING.md` design pass before code.
 
-## Active — Phase 128 (job timeout, ready for PR + CI)
+## Active — Phase 124 (network discovery driver, ready for PR + CI)
 
-4/4 sub-tasks shipped:
+Foundation shipped (3/3 sub-tasks):
 
-- **128a** — Bootstrap timer (`runWithTimeout`, `jobTimeoutFromEnv`) in `agent/cmd/sockerless-{cloudrun,gcf}-bootstrap`. SIGTERM → 30s grace → SIGKILL → exit 124. 5 unit tests.
-- **128b** — `backends/core/job_timeout.go` shared helpers; cloudrun + gcf backends inject `SOCKERLESS_JOB_TIMEOUT_SECONDS` on every workload container (per-job override wins).
-- **128c** — Cloud-native safety net: cloudrun `TaskTemplate.Timeout` + ACA `ReplicaTimeout` derived from `core.JobTimeoutDefault()`, clamped per cloud max. Lambda already at 900s cap.
-- **128d** — Integration test in `backends/cloudrun/arithmetic_integration_test.go::TestCloudRunJobTimeout`.
+- **124a** — `api/network_discovery.go`: `NetworkDiscoveryKind` enum + `IsValid()` + `AllNetworkDiscoveryKinds`. 4 categories: host-aliases, cloud-dns, service-mesh, nat-gateway-only.
+- **124b** — `backends/core/network_discovery_driver.go`: interface, registry, no-op default (nat-gateway-only), `ParseNetworkDiscoveryEnv()` (no-fallback semantics).
+- **124c** — `backends/core/network_discovery_hostaliases.go`: in-process host-aliases impl; ships with the abstraction.
 
-Spec: [specs/CLOUD_RESOURCE_MAPPING.md § Job lifecycle](specs/CLOUD_RESOURCE_MAPPING.md#job-lifecycle-timeouts-and-termination-phase-128).
+Spec: [specs/CLOUD_RESOURCE_MAPPING.md § Network discovery driver](specs/CLOUD_RESOURCE_MAPPING.md#network-discovery-driver-phase-124).
 
-Next: open PR, watch CI, merge, then start Phase 124 (Network driver).
+**Deferred to follow-up phases:** cloud-dns + service-mesh impls (live in per-cloud-common pkgs requiring real GCP/AWS/Azure SDK calls), per-backend translator wiring, migration of inline calls (e.g. `cloudServiceRegisterCNAME`, ECS Cloud Map register paths). Each backend migrates as its inline discovery code is touched.
+
+Next: open PR, watch CI, merge, then start Phase 125 (DNS driver).
 
 ## Standing rules
 
