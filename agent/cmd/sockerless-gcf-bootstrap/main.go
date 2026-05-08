@@ -106,11 +106,10 @@ const (
 	// container alive (e.g. postgres). /etc/hosts injection still runs
 	// for sidecars so they can resolve sibling aliases too.
 	envSidecar = "SOCKERLESS_SIDECAR"
-	// SOCKERLESS_JOB_TIMEOUT_SECONDS — Phase 128. Hard cap on a single
+	// SOCKERLESS_JOB_TIMEOUT_SECONDS sets the hard cap on a single
 	// workload subprocess (sidecar/default-invoke mode) or a single
 	// exec-envelope call. Default: 3600 (1 h). At timeout: SIGTERM →
-	// 30s grace → SIGKILL; bootstrap reports exit code 124. See
-	// specs/CLOUD_RESOURCE_MAPPING.md § Job lifecycle.
+	// 30s grace → SIGKILL; bootstrap reports exit code 124.
 	envJobTimeoutSeconds = "SOCKERLESS_JOB_TIMEOUT_SECONDS"
 )
 
@@ -825,7 +824,6 @@ func runSidecar() {
 
 // jobTimeoutFromEnv parses SOCKERLESS_JOB_TIMEOUT_SECONDS into a
 // duration in seconds. Empty/invalid → default. Negative → 0 (disabled).
-// Phase 128.
 func jobTimeoutFromEnv() int {
 	raw := strings.TrimSpace(os.Getenv(envJobTimeoutSeconds))
 	if raw == "" {
@@ -846,7 +844,6 @@ func jobTimeoutFromEnv() int {
 // runWithTimeout runs cmd with the configured job timeout. On timeout:
 // SIGTERM → grace period → SIGKILL → returns timedOut=true. Caller
 // should set exit code to jobTimeoutExitCode. timeoutSeconds<=0 disables.
-// Phase 128.
 func runWithTimeout(cmd *exec.Cmd, timeoutSeconds int, label string) (exitCode int, timedOut bool, err error) {
 	if err := cmd.Start(); err != nil {
 		return -1, false, err

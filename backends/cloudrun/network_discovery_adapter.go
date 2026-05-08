@@ -1,15 +1,12 @@
-// Phase 124 — cloud-DNS network-discovery driver for the Cloud Run
-// backend. Adapter that satisfies core.NetworkDiscoveryDriver by
-// delegating to the existing cloudServiceRegister*/Deregister*/Resolve
-// methods on *Server (which already speak the GCP DNS + Cloud Run
-// Services SDKs against the resolved network state).
+// Cloud-DNS network-discovery driver for the Cloud Run backend.
+// Adapter that satisfies core.NetworkDiscoveryDriver by delegating to
+// the cloudServiceRegister*/Deregister*/Resolve methods on *Server
+// (which speak the GCP DNS + Cloud Run Services SDKs against the
+// resolved network state).
 //
 // Lives in the backend (not gcp-common) because the implementation
 // closes over per-backend state (s.gcp clients, s.NetworkState,
-// s.config.Project, s.Logger). A future refactor could extract a
-// minimal "DNS registrar" struct into gcp-common; for now the adapter
-// keeps the driver-interface surface stable while reusing the
-// already-tested code paths.
+// s.config.Project, s.Logger).
 
 package cloudrun
 

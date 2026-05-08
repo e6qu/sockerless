@@ -1,11 +1,9 @@
-// Phase 124 — network discovery driver registry.
+// Network discovery driver registry.
 //
 // Distinct from CloudNetworkDriver in network_driver.go (which owns
 // VPC/subnet/IP allocation). This dimension answers the "name → reachable
 // peer" question — how containers in the same user-defined network
 // discover each other.
-//
-// Spec: specs/CLOUD_RESOURCE_MAPPING.md § Network discovery driver.
 
 package core
 

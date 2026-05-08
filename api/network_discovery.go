@@ -1,4 +1,4 @@
-// Phase 124 — network discovery driver categories.
+// Network discovery driver categories.
 //
 // Distinct from api.NetworkDriver (which owns network create/list/remove,
 // the Docker network REST API). This driver dimension answers "how do
@@ -6,10 +6,9 @@
 // other by name?" — separate from VPC/subnet plumbing.
 //
 // Each backend selects exactly one NetworkDiscoveryKind at startup,
-// defaulting to a per-backend value (table in
-// specs/CLOUD_RESOURCE_MAPPING.md § Network discovery driver). Operator
-// override via SOCKERLESS_<BACKEND>_NETWORK_DISCOVERY env. Empty or
-// unknown name → backend startup error (no silent fallback).
+// defaulting to a per-backend value. Operator override via
+// SOCKERLESS_<BACKEND>_NETWORK_DISCOVERY env. Empty or unknown name →
+// backend startup error (no silent fallback).
 
 package api
 

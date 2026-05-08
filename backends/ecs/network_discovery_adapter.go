@@ -1,12 +1,11 @@
-// Phase 124 — service-mesh network-discovery driver for the ECS
-// backend. Adapter that satisfies core.NetworkDiscoveryDriver by
-// delegating to the existing cloudServiceRegister/Deregister/Resolve
-// methods on *Server (which already speak AWS Cloud Map via the
-// servicediscovery client held on the Server).
+// Service-mesh network-discovery driver for the ECS backend. Adapter
+// that satisfies core.NetworkDiscoveryDriver by delegating to the
+// cloudServiceRegister/Deregister/Resolve methods on *Server (which
+// speak AWS Cloud Map via the servicediscovery client held on the
+// Server).
 //
 // Lives in the backend (not aws-common) because the implementation
-// closes over per-backend state. The driver-interface surface lets
-// callers migrate to driver-mediated registration incrementally.
+// closes over per-backend state.
 
 package ecs
 

@@ -60,7 +60,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	}
 	s.SetSelf(s)
 	s.CloudState = &acaCloudState{server: s}
-	// Phase 124: cloud-DNS network-discovery driver wraps Azure Private DNS.
+	// Cloud-DNS network-discovery driver wraps Azure Private DNS.
 	s.NetworkDiscovery = newACACloudDNSDiscovery(s)
 
 	mode := "cloud"

@@ -1,4 +1,4 @@
-// Phase 124 — host-aliases network-discovery driver.
+// Host-aliases network-discovery driver.
 //
 // Tracks (network, name) → endpoint mappings in process memory.
 // The backend reads the mapping at workload-host materialize time and

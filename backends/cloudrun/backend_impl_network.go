@@ -84,7 +84,6 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID == net.ID && ep.IPAddress != "" {
-			// Phase 124: route through the network-discovery driver.
 			if err := s.NetworkDiscovery.RegisterContainer(s.ctx(), net.ID, hostname, containerID, &core.CloudEndpoint{
 				IPAddress: ep.IPAddress,
 			}); err != nil {
@@ -106,9 +105,9 @@ func (s *Server) NetworkDisconnect(id string, req *api.NetworkDisconnectRequest)
 		if containerID != "" {
 			c, _ := s.ResolveContainerAuto(context.Background(), containerID)
 			hostname := strings.TrimPrefix(c.Name, "/")
-			// Phase 124: route through the driver. Caller knows the
-			// register kind (UseService → CNAME, else A-record), so use
-			// the kind-specific helper to avoid double-attempting both.
+			// Caller knows the register kind (UseService → CNAME, else
+			// A-record); use the kind-specific helper to avoid double-
+			// attempting both paths.
 			if cd, ok := s.NetworkDiscovery.(*cloudDNSDiscovery); ok {
 				if s.config.UseService {
 					if err := cd.DeregisterContainerCNAME(s.ctx(), net.ID, hostname); err != nil {

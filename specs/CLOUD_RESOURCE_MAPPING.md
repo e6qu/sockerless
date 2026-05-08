@@ -427,9 +427,9 @@ func (r *Registry) Resolve(d api.<Dim>Driver) <Dim>DriverImpl { ... }
 
 When extending a driver category (e.g. adding a new network impl), the change is scoped: a new `backends/<cloud>-common/network_<impl>.go` file + a registry entry. No core-package edits needed once the interface is stable. That's the value the abstraction buys; without it, every new impl forces edits at the call sites of every backend.
 
-## Job lifecycle: timeouts and termination (Phase 128)
+## Job lifecycle: timeouts and termination
 
-Without a hard cap, a hung user subprocess pins cloud quota indefinitely. Phase 128 enforces termination on two layers, belt-and-suspenders:
+Without a hard cap, a hung user subprocess pins cloud quota indefinitely. Termination is enforced on two layers, belt-and-suspenders:
 
 ### Layer 1 — bootstrap-side timer (universal)
 
@@ -481,7 +481,7 @@ The phase ships with sim-tests that:
 
 Per cloud: ECS, Cloud Run Jobs, Cloud Functions, ACA. Lambda is tested separately (Lambda's own 15-min cap; sim tests use a smaller value via `function.Timeout`).
 
-## Network discovery driver (Phase 124)
+## Network discovery driver
 
 How containers in the same user-defined network discover and talk to each other. Distinct from the existing `CloudNetworkDriver` (which owns VPC/subnet/IP allocation) — this driver owns the *name → reachable peer* layer.
 
@@ -496,7 +496,7 @@ How containers in the same user-defined network discover and talk to each other.
 
 ### Today's per-backend discovery model
 
-| Backend | Today | Phase 124 driver mapping |
+| Backend | Today | Driver mapping |
 |---|---|---|
 | ECS | Cloud Map namespace + service + instance via `servicediscovery` API. Backend code: `backends/ecs/service_discovery_cloud.go`, `backends/ecs/backend_impl_network.go`. | `service-mesh` (default) |
 | Lambda | Single-container, no inter-container discovery. | `nat-gateway-only` (default) |

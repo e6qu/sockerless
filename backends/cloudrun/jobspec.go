@@ -220,9 +220,9 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 	}
 	injectPersistEnv(specs, persistEntries)
 
-	// Phase 128: cloud-side cap on top of the bootstrap-side timer.
-	// Both layers share the same intent value (core.JobTimeoutDefault).
-	// Cloud Run Jobs cap at 24 h regardless of requested value.
+	// Cloud-side cap on top of the bootstrap-side timer. Both layers
+	// share the same intent value (core.JobTimeoutDefault). Cloud Run
+	// Jobs cap at 24 h regardless of requested value.
 	timeoutSec := core.JobTimeoutDefault()
 	if timeoutSec <= 0 || timeoutSec > 24*3600 {
 		timeoutSec = 24 * 3600

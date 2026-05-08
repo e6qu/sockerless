@@ -60,7 +60,7 @@ type BaseServer struct {
 	StatsProvider    StatsProvider              // real container metrics (nil = zeros)
 	CloudState       CloudStateProvider         // cloud-as-truth queries (nil = use local Store)
 	PendingCreates   *StateStore[api.Container] // containers between create and start (not yet in cloud)
-	NetworkDiscovery NetworkDiscoveryDriver     // Phase 124: name → reachable peer (defaults to NoOp/nat-gateway-only when unset)
+	NetworkDiscovery NetworkDiscoveryDriver     // name → reachable peer (defaults to NoOp/nat-gateway-only when unset)
 	self             api.Backend                // virtual dispatch target for overrideable methods
 }
 

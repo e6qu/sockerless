@@ -1,8 +1,8 @@
-// Phase 124 — cloud-DNS network-discovery driver for the ACA backend.
-// Adapter that satisfies core.NetworkDiscoveryDriver by delegating to
-// the existing cloudServiceRegister/Deregister/Resolve methods on
-// *Server (which already speak Azure Private DNS Zones via the
-// privatedns client held on the Server).
+// Cloud-DNS network-discovery driver for the ACA backend. Adapter that
+// satisfies core.NetworkDiscoveryDriver by delegating to the
+// cloudServiceRegister/Deregister/Resolve methods on *Server (which
+// speak Azure Private DNS Zones via the privatedns client held on the
+// Server).
 //
 // Lives in the backend (not azure-common) for the same reason as the
 // cloudrun adapter: the implementation closes over per-backend state.

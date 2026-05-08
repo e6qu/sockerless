@@ -139,11 +139,11 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	}
 
 	s.SetSelf(s)
-	// Phase 124: gcf uses /etc/hosts injection within multi-container
-	// revisions (SOCKERLESS_HOST_ALIASES); the host-aliases in-process
-	// driver tracks peer registrations so the pod-Service materializer
-	// can read them at container-create time. Cloud-DNS is not used by
-	// gcf today (Cloud Functions Gen2 invocations are HTTP-fronted, not
+	// gcf uses /etc/hosts injection within multi-container revisions
+	// (SOCKERLESS_HOST_ALIASES); the host-aliases in-process driver
+	// tracks peer registrations so the pod-Service materializer can
+	// read them at container-create time. Cloud-DNS is not used by gcf
+	// (Cloud Functions Gen2 invocations are HTTP-fronted, not
 	// CNAME-discovered).
 	s.NetworkDiscovery = core.NewHostAliasesDiscovery()
 

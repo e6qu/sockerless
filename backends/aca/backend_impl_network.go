@@ -115,7 +115,8 @@ func (s *Server) NetworkDisconnect(id string, req *api.NetworkDisconnectRequest)
 			if cOk {
 				hostname = strings.TrimPrefix(c.Name, "/")
 			}
-			// Phase 124: route through driver. UseApp → CNAME, else A.
+			// Route through the network-discovery driver. UseApp → CNAME,
+			// else A-record.
 			if cd, ok := s.NetworkDiscovery.(*acaCloudDNSDiscovery); ok {
 				if s.config.UseApp {
 					_ = cd.DeregisterContainerCNAME(s.ctx(), net.ID, hostname)

@@ -546,7 +546,8 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		if ep == nil || ep.NetworkID == "" {
 			continue
 		}
-		// Phase 124: route through driver. UseApp → CNAME, else A-record.
+		// Route through the network-discovery driver. UseApp → CNAME,
+		// else A-record.
 		if cd, ok := s.NetworkDiscovery.(*acaCloudDNSDiscovery); ok {
 			if s.config.UseApp {
 				_ = cd.DeregisterContainerCNAME(s.ctx(), ep.NetworkID, hostname)

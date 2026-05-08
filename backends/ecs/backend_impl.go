@@ -729,8 +729,8 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	// Deregister from Cloud Map via the network-discovery driver.
-	// Phase 124: ECS adapter uses containerID (Cloud Map keys instances
-	// by container-id); name passed for symmetry but not used by ECS.
+	// The ECS adapter uses containerID (Cloud Map keys instances by
+	// container-id); name is passed for symmetry but not used.
 	hostname := strings.TrimPrefix(c.Name, "/")
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID != "" {
