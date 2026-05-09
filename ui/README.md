@@ -39,18 +39,56 @@ TanStack Query polls each endpoint at a fixed interval (5–10s). `refetchInterv
 
 ## Build / test
 
-- `bun install` from this directory.
-- `bunx turbo run build` builds every package; outputs go to each backend's `dist/` for embed by the Go binary (`go:embed all:dist`).
-- `bunx turbo run test` runs vitest across every package.
-- `bunx turbo run typecheck` runs `tsc --noEmit` across every package.
+From this directory (`ui/`):
 
-## Per-app quick start
+- `bun install` — install workspace dependencies.
+- `bunx turbo run build` — build every package; outputs go to each backend's `dist/` for embed by the Go binary (`go:embed all:dist`).
+- `bunx turbo run test` — run vitest across every package.
+- `bunx turbo run typecheck` — `tsc --noEmit` across every package.
 
-Each backend app is a Vite project under `packages/backend-<name>/`. To work on one in isolation:
+## Starting and stopping a full dev stack (recommended)
+
+The repo's root Makefile bundles the simulator + backend + admin UI as a single stack. From the **repo root** (one directory above this one):
+
+```sh
+make stack-aws-ecs        # sim-aws + backend-ecs + admin
+make stack-aws-lambda     # sim-aws + backend-lambda + admin
+make stack-gcp-cloudrun   # sim-gcp + backend-cloudrun + admin
+make stack-gcp-gcf        # sim-gcp + backend-gcf + admin
+make stack-azure-aca      # sim-azure + backend-aca + admin
+make stack-azure-azf      # sim-azure + backend-azf + admin
+
+make stack-status         # show which components are running + their PIDs
+make stack-down           # stop every running stack process and clean up .stack-pids/
+```
+
+Each `stack-*-*` target builds the three components, starts them as background processes, and writes their PIDs to `.stack-pids/` so `stack-down` can find them later. Logs land in `.stack-pids/sim.log`, `.stack-pids/backend.log`, `.stack-pids/admin.log`.
+
+Default ports (overridable via env in `make/stack.mk`):
+- AWS sim `:4566`, GCP sim `:4567`, Azure sim `:4568`
+- Backend `:3375`
+- Admin UI `:9090`
+- bleephub `:5555` (separate target: `make stack-bleephub-up`)
+
+Open the admin UI at `http://localhost:9090/ui/` once `stack-status` reports it green.
+
+## Working on a single UI package (vite hot reload)
+
+When you only want to iterate on one backend's UI without booting the full stack, run that package's Vite dev server. It assumes the backend is already running on `:3375` (start it via `make stack-X-Y` from the root).
 
 ```sh
 cd ui/packages/backend-ecs
-bun run dev   # vite dev server, hot reload, hits the live backend API at localhost:3375
+bun run dev      # vite serves on :5173 by default; proxies API calls to :3375
+# Ctrl-C to stop the dev server.
 ```
 
-The Go backend serves the built UI at `/ui/` via `go:embed`.
+The Go backend serves the *built* UI at `/ui/` via `go:embed`; the dev server is only for hot-reload-during-development.
+
+## Just the UI build (no backend)
+
+```sh
+cd ui
+bun install
+bunx turbo run build           # all packages
+# or one package: bun --filter '@sockerless/ui-admin' run build
+```

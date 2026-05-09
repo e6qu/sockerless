@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, cleanup, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router";
+import { ToastProvider } from "@sockerless/ui-core/components";
 import { ProjectsPage } from "../pages/ProjectsPage.js";
 
 const mockFetch = vi.fn();
@@ -25,9 +26,11 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <ProjectsPage />
-      </BrowserRouter>
+      <ToastProvider>
+        <BrowserRouter>
+          <ProjectsPage />
+        </BrowserRouter>
+      </ToastProvider>
     </QueryClientProvider>,
   );
 }

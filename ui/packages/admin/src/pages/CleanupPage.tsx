@@ -4,13 +4,14 @@ import {
   Button,
   PageHeading,
   Spinner,
+  useToast,
+  useReportError,
 } from "@sockerless/ui-core/components";
 import {
   AdminApiClient,
   type CleanupItem,
   type CleanupScanResult,
 } from "../api.js";
-import { ErrorPanel } from "../components/ErrorPanel.js";
 
 const api = new AdminApiClient();
 
@@ -23,25 +24,40 @@ const categoryLabels: Record<string, string> = {
 
 export function CleanupPage() {
   const [scanResult, setScanResult] = useState<CleanupScanResult | null>(null);
+  const { push } = useToast();
+  const reportError = useReportError();
 
   const scan = useMutation({
     mutationFn: () => api.cleanupScan(),
     onSuccess: (data) => setScanResult(data),
+    onError: (err) => reportError(err, "Scan failed"),
   });
 
   const cleanProcesses = useMutation({
     mutationFn: () => api.cleanupProcesses(),
-    onSuccess: () => scan.mutate(),
+    onSuccess: () => {
+      push({ tone: "success", title: "Cleaned orphaned processes" });
+      scan.mutate();
+    },
+    onError: (err) => reportError(err, "Clean processes failed"),
   });
 
   const cleanTmp = useMutation({
     mutationFn: () => api.cleanupTmp(),
-    onSuccess: () => scan.mutate(),
+    onSuccess: () => {
+      push({ tone: "success", title: "Cleaned stale temp files" });
+      scan.mutate();
+    },
+    onError: (err) => reportError(err, "Clean tmp failed"),
   });
 
   const cleanContainers = useMutation({
     mutationFn: () => api.cleanupContainers(),
-    onSuccess: () => scan.mutate(),
+    onSuccess: () => {
+      push({ tone: "success", title: "Cleaned stopped containers" });
+      scan.mutate();
+    },
+    onError: (err) => reportError(err, "Clean containers failed"),
   });
 
   const categories = scanResult ? groupByCategory(scanResult.items) : {};
@@ -69,16 +85,8 @@ export function CleanupPage() {
       />
 
       {scan.isPending && <Spinner label="scanning" />}
-      {scan.isError && <ErrorPanel kicker="scan failed" message={scan.error?.message} />}
-      {cleanProcesses.isError && (
-        <ErrorPanel kicker="clean processes failed" message={cleanProcesses.error?.message} />
-      )}
-      {cleanTmp.isError && (
-        <ErrorPanel kicker="clean tmp failed" message={cleanTmp.error?.message} />
-      )}
-      {cleanContainers.isError && (
-        <ErrorPanel kicker="clean containers failed" message={cleanContainers.error?.message} />
-      )}
+      {/* Errors and successes for scan / cleanup mutations are surfaced
+          via toasts (top-right notification stack) rather than inline. */}
 
       {scanResult && (
         <div className="space-y-6 mt-4">

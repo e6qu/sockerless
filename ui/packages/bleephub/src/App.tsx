@@ -3,6 +3,7 @@ import {
   AppShell,
   ErrorBoundary,
   NavLinkButton,
+  ToastProvider,
   type NavItem,
 } from "@sockerless/ui-core/components";
 import { OverviewPage } from "./pages/OverviewPage.js";
@@ -35,25 +36,27 @@ function renderNavLink(item: NavItem) {
 export function App() {
   return (
     <ErrorBoundary>
-      <BrowserRouter>
-        <AppShell
-          kicker="github · simulator"
-          title="bleephub"
-          navItems={navItems}
-          renderLink={renderNavLink}
-        >
-          <Routes>
-            <Route path="/ui/" element={<OverviewPage />} />
-            <Route path="/ui/workflows" element={<WorkflowsPage />} />
-            <Route path="/ui/workflows/:id" element={<WorkflowDetailPage />} />
-            <Route path="/ui/runners" element={<RunnersPage />} />
-            <Route path="/ui/repos" element={<ReposPage />} />
-            <Route path="/ui/apps" element={<AppsPage />} />
-            <Route path="/ui/oauth" element={<OAuthPage />} />
-            <Route path="/ui/metrics" element={<MetricsPage />} />
-          </Routes>
-        </AppShell>
-      </BrowserRouter>
+      <ToastProvider>
+        <BrowserRouter>
+          <AppShell
+            kicker="github · simulator"
+            title="bleephub"
+            navItems={navItems}
+            renderLink={renderNavLink}
+          >
+            <Routes>
+              <Route path="/ui/" element={<OverviewPage />} />
+              <Route path="/ui/workflows" element={<WorkflowsPage />} />
+              <Route path="/ui/workflows/:id" element={<WorkflowDetailPage />} />
+              <Route path="/ui/runners" element={<RunnersPage />} />
+              <Route path="/ui/repos" element={<ReposPage />} />
+              <Route path="/ui/apps" element={<AppsPage />} />
+              <Route path="/ui/oauth" element={<OAuthPage />} />
+              <Route path="/ui/metrics" element={<MetricsPage />} />
+            </Routes>
+          </AppShell>
+        </BrowserRouter>
+      </ToastProvider>
     </ErrorBoundary>
   );
 }
