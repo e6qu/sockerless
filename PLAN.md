@@ -39,15 +39,60 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 
 ## Roadmap (ordered)
 
-### 1. Phase 78 — UI polish
+### 1. Phase 78 — UI polish (in flight, PR #137)
 
-Dark mode, design tokens, error handling UX, container detail modal, auto-refresh, performance audit, accessibility, E2E smoke, documentation. Touches the 12 UI packages (core + 6 cloud backends + docker backend + docker frontend + admin + bleephub).
+Dark mode, design tokens, error handling UX, container detail modal, auto-refresh, performance audit, accessibility, E2E smoke, documentation. Touches the 12 UI packages (core + 6 cloud backends + docker backend + docker frontend + admin + bleephub). PR #137 then grows to cover Phases 79–86 below (admin orchestration), per user direction.
 
-### 2. Phases 91–94 — Real per-cloud volume provisioning
+### 2. Phase 79 — Topology + admin config service (PR #137)
+
+**Invariant — components stay decoupled from admin / UI.** Every sim, backend, bleephub, and frontend remains independently configurable (its own env vars / Config.Validate), independently buildable (`make -C <dir> build`), independently executable (run the binary directly with normal env), and usable without any UI. Admin orchestration is purely additive — admin owns its own metadata about what it started, but components never know admin exists. Concretely: no admin-required env vars on components, no startup registration, no "I'm being managed" hooks. Anything admin needs from a component goes through the public surface that component already exposes (`/v1/health`, `/v1/info`, env vars).
+
+Admin owns the source of truth for "what instances exist". `sockerless.yaml` at repo root carries `projects[]`, each with `instances[]` (sim / backend / bleephub / frontend-docker, 0..N of each). Project model is preserved (each project = isolated topology). Existing per-project JSONs migrate to the new shape on first start.
+
+- Topology schema + parser + writer.
+- Admin REST endpoints: `GET/PUT /v1/admin/topology`, `GET /v1/admin/instances`, `POST /v1/admin/instances/{key}/{start|stop|rebuild}`.
+- New make targets: `make start-component KIND=… NAME=… PORT=…` etc; existing `stack-X-Y` become wrappers.
+- Free-port helper + auto-allocation from configured pools (`ports.ranges` per kind).
+
+### 3. Phase 80 — Admin UI: topology page + per-instance lifecycle (PR #137)
+
+Replace ProjectsPage with a project + instance tree:
+- Per-project drawer; per-instance Start/Stop/Rebuild controls.
+- "Add instance" form (kind + name + port + per-component config).
+- Edit / delete instance.
+- Port registry view (allocated + free ranges).
+
+### 4. Phase 81 — Per-instance logs + live troubleshooting console (PR #137)
+
+- Live log tail per instance via SSE from admin (reads `.stack-pids/<name>.log`).
+- Combined-timeline view (sim + backend interleaved, colour-coded).
+- API console panel: send arbitrary HTTP requests against an instance, inspect request/response (the "live envelope" view).
+
+### 5. Phase 82 — Cloud-resources rollup in admin (PR #137)
+
+AdminCloudResources page aggregates resources across all running backend + sim instances. Group by cloud / by service product / by sockerless instance.
+
+### 6. Phase 83 — Sim UI parity (PR #137)
+
+Lift sim UIs to match backend UIs: Containers/Resources/Metrics pages, ToastProvider, ErrorBoundary, ThemeToggle, log tailer, API console. Refactor sim Apps onto the same shell shape `BackendApp` uses.
+
+### 7. Phase 84 — Per-instance state isolation + persistence (PR #137)
+
+Sims gain optional persistent state under `./.sockerless-state/<project>/<instance>/`. Multiple sim instances of the same cloud coexist with isolated, durable state across restarts. Closes the "separation between sims" requirement.
+
+### 8. Phase 85 — Config edit + hot reload (PR #137)
+
+Per-config-key annotation: hot-reloadable vs restart-required. Admin UI edits write back to `sockerless.yaml`; admin triggers reload or restart based on annotation.
+
+### 9. Phase 86 — Health + supervision surface (PR #137)
+
+Mark instance unhealthy on (process exit | `/v1/health` non-2xx | no response within 5s). Admin UI shows the failing signal + last-N log lines + diagnostic links. No auto-restart (operator-driven recovery).
+
+### 10. Phases 91–94 — Real per-cloud volume provisioning
 
 Queued. Designs in `specs/CLOUD_RESOURCE_MAPPING.md` § Volume provisioning per backend. Today's path is the `core.StorageBackingRegistry` + per-cloud drivers shipped in #134 (`pd-ephemeral`, `efs-ephemeral`, `azure-files-ephemeral`); 91–94 lift the real-workload provisioning that those drivers describe (versus the `emptyDir` fallback for the runner-task pattern).
 
-### 3. Live-cloud validation track
+### 11. Live-cloud validation track
 
 Per-backend live-cloud sweeps separate from the unit/sim CI. Live-AWS ECS validated 2026-04-20. Outstanding:
 - Lambda live track (deferred from Phase 86).
