@@ -4,6 +4,8 @@ import { MetricsCard } from "../components/MetricsCard.js";
 import { PageHeading } from "../components/PageHeading.js";
 import { Spinner } from "../components/Spinner.js";
 import { RefreshButton } from "../components/RefreshButton.js";
+import { InlineError } from "../components/InlineError.js";
+import { Button } from "../components/Button.js";
 import { createColumnHelper } from "@tanstack/react-table";
 
 interface RequestRow {
@@ -17,10 +19,27 @@ interface RequestRow {
 const col = createColumnHelper<RequestRow>();
 
 export function MetricsPage() {
-  const { data: metrics, isLoading, refetch, isFetching } = useMetrics();
+  const { data: metrics, isLoading, refetch, isFetching, isError, error } = useMetrics();
   const { data: status } = useStatus();
 
   if (isLoading) return <Spinner label="loading metrics" />;
+
+  if (isError) {
+    return (
+      <div>
+        <PageHeading
+          kicker="backend · metrics"
+          title={<>Throughput &amp; latency</>}
+          actions={<RefreshButton onClick={() => refetch()} loading={isFetching} />}
+        />
+        <InlineError
+          title="Failed to load metrics"
+          detail={error}
+          action={<Button variant="ghost" onClick={() => refetch()}>Retry</Button>}
+        />
+      </div>
+    );
+  }
 
   const rows: RequestRow[] = metrics
     ? Object.entries(metrics.requests)

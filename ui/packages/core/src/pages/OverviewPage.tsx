@@ -4,14 +4,29 @@ import { PageHeading } from "../components/PageHeading.js";
 import { StatusBadge } from "../components/StatusBadge.js";
 import { Spinner } from "../components/Spinner.js";
 import { BackendInfoCard } from "../components/BackendInfoCard.js";
+import { InlineError } from "../components/InlineError.js";
+import { Button } from "../components/Button.js";
 
 export function OverviewPage() {
-  const { data: status, isLoading: statusLoading } = useStatus();
+  const { data: status, isLoading: statusLoading, isError, error, refetch } = useStatus();
   const { data: health } = useHealth();
   const { data: info } = useInfo();
   const { data: checks } = useCheck();
 
   if (statusLoading) return <Spinner label="loading overview" />;
+
+  if (isError) {
+    return (
+      <div>
+        <PageHeading kicker="backend · overview" title={<>System status</>} />
+        <InlineError
+          title="Failed to load backend status"
+          detail={error}
+          action={<Button variant="ghost" onClick={() => refetch()}>Retry</Button>}
+        />
+      </div>
+    );
+  }
 
   return (
     <div>

@@ -1,4 +1,13 @@
 import "@testing-library/jest-dom/vitest";
+import { cleanup } from "@testing-library/react";
+import { afterEach } from "vitest";
+
+// Tear down rendered components between tests so DOM queries don't see
+// leftovers from prior renders. (No `globals: true` in vitest config so
+// this isn't auto-wired by testing-library.)
+afterEach(() => {
+  cleanup();
+});
 
 // Bun's runtime injects a `localStorage` object that lacks getItem /
 // setItem methods (it expects a `--localstorage-file` flag). vitest's

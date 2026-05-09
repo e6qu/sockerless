@@ -1,6 +1,7 @@
 import { BrowserRouter, NavLink, Route, Routes } from "react-router";
 import { AppShell, NavLinkButton, type NavItem } from "./AppShell.js";
 import { ErrorBoundary } from "./ErrorBoundary.js";
+import { ToastProvider } from "./Toast.js";
 import { OverviewPage } from "../pages/OverviewPage.js";
 import { ContainersPage } from "../pages/ContainersPage.js";
 import { ResourcesPage } from "../pages/ResourcesPage.js";
@@ -30,21 +31,23 @@ export interface BackendAppProps {
 export function BackendApp({ title, kicker = "sockerless · backend" }: BackendAppProps) {
   return (
     <ErrorBoundary>
-      <BrowserRouter>
-        <AppShell
-          title={title}
-          kicker={kicker}
-          navItems={navItems}
-          renderLink={renderNavLink}
-        >
-          <Routes>
-            <Route path="/ui/" element={<OverviewPage />} />
-            <Route path="/ui/containers" element={<ContainersPage />} />
-            <Route path="/ui/resources" element={<ResourcesPage />} />
-            <Route path="/ui/metrics" element={<MetricsPage />} />
-          </Routes>
-        </AppShell>
-      </BrowserRouter>
+      <ToastProvider>
+        <BrowserRouter>
+          <AppShell
+            title={title}
+            kicker={kicker}
+            navItems={navItems}
+            renderLink={renderNavLink}
+          >
+            <Routes>
+              <Route path="/ui/" element={<OverviewPage />} />
+              <Route path="/ui/containers" element={<ContainersPage />} />
+              <Route path="/ui/resources" element={<ResourcesPage />} />
+              <Route path="/ui/metrics" element={<MetricsPage />} />
+            </Routes>
+          </AppShell>
+        </BrowserRouter>
+      </ToastProvider>
     </ErrorBoundary>
   );
 }
