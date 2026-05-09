@@ -90,19 +90,19 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 				return azurecommon.PrivateDNSNetworkState{DNSZoneName: state.DNSZoneName}, true
 			},
 		})
+		s.DNS = &azurecommon.PrivateDNSZoneDNS{
+			LookupZoneName: func(ctx context.Context, networkID string) (string, error) {
+				state, ok := s.resolveNetworkState(ctx, networkID)
+				if !ok {
+					return "", nil
+				}
+				return state.DNSZoneName, nil
+			},
+		}
 	case api.NetworkDiscoveryHostAliases:
 		s.NetworkDiscovery = core.NewHostAliasesDiscovery()
 	case api.NetworkDiscoveryNATGatewayOnly:
 		s.NetworkDiscovery = core.NoOpNetworkDiscovery{}
-	}
-	s.DNS = &azurecommon.PrivateDNSZoneDNS{
-		LookupZoneName: func(ctx context.Context, networkID string) (string, error) {
-			state, ok := s.resolveNetworkState(ctx, networkID)
-			if !ok {
-				return "", nil
-			}
-			return state.DNSZoneName, nil
-		},
 	}
 	// Access driver. Selected via Config.Access (env: SOCKERLESS_ACA_ACCESS).
 	// none-internal (default) leaves ingress auth to the network layer

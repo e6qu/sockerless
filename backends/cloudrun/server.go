@@ -120,19 +120,19 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 				return gcpcommon.CloudDNSNetworkState{ManagedZoneName: state.ManagedZoneName, DNSName: state.DNSName}, true
 			},
 		})
+		s.DNS = &gcpcommon.CloudDNSZoneDNS{
+			LookupZoneDNSName: func(ctx context.Context, networkID string) (string, error) {
+				state, ok := s.resolveNetworkState(ctx, networkID)
+				if !ok {
+					return "", nil
+				}
+				return state.DNSName, nil
+			},
+		}
 	case api.NetworkDiscoveryHostAliases:
 		s.NetworkDiscovery = core.NewHostAliasesDiscovery()
 	case api.NetworkDiscoveryNATGatewayOnly:
 		s.NetworkDiscovery = core.NoOpNetworkDiscovery{}
-	}
-	s.DNS = &gcpcommon.CloudDNSZoneDNS{
-		LookupZoneDNSName: func(ctx context.Context, networkID string) (string, error) {
-			state, ok := s.resolveNetworkState(ctx, networkID)
-			if !ok {
-				return "", nil
-			}
-			return state.DNSName, nil
-		},
 	}
 	s.Access = gcpcommon.NewIDTokenAccess(config.ServiceAccount)
 

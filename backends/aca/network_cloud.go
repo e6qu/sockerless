@@ -9,28 +9,30 @@ import (
 )
 
 // cloudNetworkCreate sets up cloud networking state for a Docker
-// network: a per-network Azure Private DNS zone for service discovery,
-// a per-network Azure NSG for cross-container isolation, and state
-// tracking tying the two together.
-// The zone name is `skls-<name>.local`, matching the convention used
-// by the ECS + Cloud Run backends for parity.
-func (s *Server) cloudNetworkCreate(name, networkID string) error {
-	zoneName := fmt.Sprintf("skls-%s.local", name)
+// network. The NSG is always provisioned (cross-container isolation
+// is independent of DNS); the per-network Private DNS zone is only
+// provisioned when `provisionDNSZone` is true (i.e. when cloud-dns
+// NetworkDiscovery is selected). Zone name `skls-<name>.local`
+// matches the ECS + Cloud Run backends for parity.
+func (s *Server) cloudNetworkCreate(name, networkID string, provisionDNSZone bool) error {
+	zoneName := ""
 	nsgName := fmt.Sprintf("nsg-%s-%s", s.config.Environment, name)
 
-	// Private DNS zone.
-	zonePoller, err := s.azure.PrivateDNSZones.BeginCreateOrUpdate(
-		s.ctx(),
-		s.config.ResourceGroup,
-		zoneName,
-		armprivatedns.PrivateZone{Location: to.Ptr("global")},
-		nil,
-	)
-	if err != nil {
-		return fmt.Errorf("create Private DNS zone %s: %w", zoneName, err)
-	}
-	if _, err := zonePoller.PollUntilDone(s.ctx(), nil); err != nil {
-		return fmt.Errorf("wait Private DNS zone %s: %w", zoneName, err)
+	if provisionDNSZone {
+		zoneName = fmt.Sprintf("skls-%s.local", name)
+		zonePoller, err := s.azure.PrivateDNSZones.BeginCreateOrUpdate(
+			s.ctx(),
+			s.config.ResourceGroup,
+			zoneName,
+			armprivatedns.PrivateZone{Location: to.Ptr("global")},
+			nil,
+		)
+		if err != nil {
+			return fmt.Errorf("create Private DNS zone %s: %w", zoneName, err)
+		}
+		if _, err := zonePoller.PollUntilDone(s.ctx(), nil); err != nil {
+			return fmt.Errorf("wait Private DNS zone %s: %w", zoneName, err)
+		}
 	}
 
 	// NSG. Create an empty NSG; rules are added via
@@ -60,7 +62,7 @@ func (s *Server) cloudNetworkCreate(name, networkID string) error {
 		Str("networkID", networkID).
 		Str("nsg", nsgName).
 		Str("zone", zoneName).
-		Msg("created cloud network state with Private DNS zone + NSG")
+		Msg("created cloud network state")
 
 	return nil
 }

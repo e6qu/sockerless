@@ -21,7 +21,8 @@ func (s *Server) NetworkCreate(req *api.NetworkCreateRequest) (*api.NetworkCreat
 	}
 
 	var warnings []string
-	if err := s.cloudNetworkCreate(req.Name, resp.ID); err != nil {
+	provisionDNSZone := s.config.NetworkDiscovery == api.NetworkDiscoveryCloudDNS
+	if err := s.cloudNetworkCreate(req.Name, resp.ID, provisionDNSZone); err != nil {
 		s.Logger.Warn().Err(err).Str("network", req.Name).Msg("failed to create cloud network resources")
 		warnings = append(warnings, "Azure cloud network resources: "+err.Error())
 	}

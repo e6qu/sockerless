@@ -110,20 +110,20 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 				})
 			},
 		})
+		s.DNS = &awscommon.CloudMapDNS{
+			Client: awsClients.ServiceDiscovery,
+			LookupNamespaceID: func(ctx context.Context, networkID string) (string, error) {
+				state, ok := s.NetworkState.Get(networkID)
+				if !ok {
+					return "", nil
+				}
+				return state.NamespaceID, nil
+			},
+		}
 	case api.NetworkDiscoveryHostAliases:
 		s.NetworkDiscovery = core.NewHostAliasesDiscovery()
 	case api.NetworkDiscoveryNATGatewayOnly:
 		s.NetworkDiscovery = core.NoOpNetworkDiscovery{}
-	}
-	s.DNS = &awscommon.CloudMapDNS{
-		Client: awsClients.ServiceDiscovery,
-		LookupNamespaceID: func(ctx context.Context, networkID string) (string, error) {
-			state, ok := s.NetworkState.Get(networkID)
-			if !ok {
-				return "", nil
-			}
-			return state.NamespaceID, nil
-		},
 	}
 	s.Access = awscommon.NewIAMRoleAccess(config.TaskRoleARN)
 	s.CloudState = &ecsCloudState{
