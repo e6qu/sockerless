@@ -1,13 +1,17 @@
 package aca
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/sockerless/api"
+)
 
 // TestConfig_Validate_UseAppRequiresEnvironment —.
 // UseApp=true needs a managed environment: the whole point of the
 // Apps path is peer-reachable internal FQDNs inside an environment
 // with VNet integration. Without one we have nothing to bind to.
 func TestConfig_Validate_UseAppRequiresEnvironment(t *testing.T) {
-	c := Config{SubscriptionID: "s", ResourceGroup: "rg", UseApp: true}
+	c := Config{SubscriptionID: "s", ResourceGroup: "rg", UseApp: true, NetworkDiscovery: api.NetworkDiscoveryCloudDNS}
 	if err := c.Validate(); err == nil {
 		t.Fatal("expected Validate to reject UseApp=true without Environment")
 	}
