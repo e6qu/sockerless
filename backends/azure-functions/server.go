@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
+	"github.com/sockerless/api"
 	azurecommon "github.com/sockerless/azure-common"
 	core "github.com/sockerless/backend-core"
 )
@@ -63,6 +64,18 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	s.CloudState = &azfCloudState{server: s}
 	s.SetSelf(s)
 	s.Access = core.NoneInternalAccess{}
+
+	// Network-discovery driver. Selected via Config.NetworkDiscovery
+	// (env: SOCKERLESS_AZF_NETWORK_DISCOVERY). Validated to one of
+	// nat-gateway-only / host-aliases by Config.Validate. cloud-dns
+	// (private-dns-zone) requires the AZF NetworkState model + zone
+	// creation flow queued under 121b-finish-C.
+	switch config.NetworkDiscovery {
+	case api.NetworkDiscoveryNATGatewayOnly:
+		s.NetworkDiscovery = core.NoOpNetworkDiscovery{}
+	case api.NetworkDiscoveryHostAliases:
+		s.NetworkDiscovery = core.NewHostAliasesDiscovery()
+	}
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

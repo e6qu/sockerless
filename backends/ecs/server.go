@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
+	"github.com/sockerless/api"
 	awscommon "github.com/sockerless/aws-common"
 	core "github.com/sockerless/backend-core"
 )
@@ -81,32 +82,39 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	}
 	s.SetSelf(s)
 	s.StatsProvider = &ecsStatsProvider{server: s}
-	// Service-mesh network-discovery driver — pattern B, lives in
-	// aws-common. Backend supplies SDK client + state-lookup callbacks;
-	// the driver owns the AWS Cloud Map (servicediscovery) invoke logic.
-	s.NetworkDiscovery = awscommon.NewCloudMapDiscovery(awscommon.CloudMapDiscoveryConfig{
-		ServiceDiscovery: awsClients.ServiceDiscovery,
-		Logger:           logger,
-		GetNetworkNamespaceID: func(networkID string) (string, bool) {
-			state, ok := s.NetworkState.Get(networkID)
-			if !ok {
-				return "", false
-			}
-			return state.NamespaceID, true
-		},
-		GetContainerServiceID: func(containerID string) (string, bool) {
-			state, ok := s.ECS.Get(containerID)
-			if !ok {
-				return "", false
-			}
-			return state.ServiceID, true
-		},
-		SetContainerServiceID: func(containerID, serviceID string) {
-			s.ECS.Update(containerID, func(state *ECSState) {
-				state.ServiceID = serviceID
-			})
-		},
-	})
+	// Network-discovery driver. Selected via Config.NetworkDiscovery
+	// (env: SOCKERLESS_ECS_NETWORK_DISCOVERY). Validated to one of
+	// service-mesh / host-aliases / nat-gateway-only by Config.Validate.
+	switch config.NetworkDiscovery {
+	case api.NetworkDiscoveryServiceMesh:
+		s.NetworkDiscovery = awscommon.NewCloudMapDiscovery(awscommon.CloudMapDiscoveryConfig{
+			ServiceDiscovery: awsClients.ServiceDiscovery,
+			Logger:           logger,
+			GetNetworkNamespaceID: func(networkID string) (string, bool) {
+				state, ok := s.NetworkState.Get(networkID)
+				if !ok {
+					return "", false
+				}
+				return state.NamespaceID, true
+			},
+			GetContainerServiceID: func(containerID string) (string, bool) {
+				state, ok := s.ECS.Get(containerID)
+				if !ok {
+					return "", false
+				}
+				return state.ServiceID, true
+			},
+			SetContainerServiceID: func(containerID, serviceID string) {
+				s.ECS.Update(containerID, func(state *ECSState) {
+					state.ServiceID = serviceID
+				})
+			},
+		})
+	case api.NetworkDiscoveryHostAliases:
+		s.NetworkDiscovery = core.NewHostAliasesDiscovery()
+	case api.NetworkDiscoveryNATGatewayOnly:
+		s.NetworkDiscovery = core.NoOpNetworkDiscovery{}
+	}
 	s.DNS = &awscommon.CloudMapDNS{
 		Client: awsClients.ServiceDiscovery,
 		LookupNamespaceID: func(ctx context.Context, networkID string) (string, error) {

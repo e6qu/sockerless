@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
+	"github.com/sockerless/api"
 	azurecommon "github.com/sockerless/azure-common"
 	core "github.com/sockerless/backend-core"
 )
@@ -64,30 +65,36 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	}
 	s.SetSelf(s)
 	s.CloudState = &acaCloudState{server: s}
-	// Private DNS network-discovery driver — pattern B, lives in
-	// azure-common. Backend supplies SDK clients + state-lookup
-	// callbacks; the driver owns the Azure Private DNS + ContainerApps
-	// invoke logic.
-	s.NetworkDiscovery = azurecommon.NewPrivateDNSDiscovery(azurecommon.PrivateDNSDiscoveryConfig{
-		PrivateDNSRecords: azureClients.PrivateDNSRecords,
-		ContainerApps:     azureClients.ContainerApps,
-		ResourceGroup:     config.ResourceGroup,
-		Logger:            logger,
-		LookupNetwork: func(ctx context.Context, networkID string) (azurecommon.PrivateDNSNetworkState, bool) {
-			state, ok := s.resolveNetworkState(ctx, networkID)
-			if !ok {
-				return azurecommon.PrivateDNSNetworkState{}, false
-			}
-			return azurecommon.PrivateDNSNetworkState{DNSZoneName: state.DNSZoneName}, true
-		},
-		GetNetwork: func(networkID string) (azurecommon.PrivateDNSNetworkState, bool) {
-			state, ok := s.NetworkState.Get(networkID)
-			if !ok {
-				return azurecommon.PrivateDNSNetworkState{}, false
-			}
-			return azurecommon.PrivateDNSNetworkState{DNSZoneName: state.DNSZoneName}, true
-		},
-	})
+	// Network-discovery driver. Selected via Config.NetworkDiscovery
+	// (env: SOCKERLESS_ACA_NETWORK_DISCOVERY). Validated to one of
+	// cloud-dns / host-aliases / nat-gateway-only by Config.Validate.
+	switch config.NetworkDiscovery {
+	case api.NetworkDiscoveryCloudDNS:
+		s.NetworkDiscovery = azurecommon.NewPrivateDNSDiscovery(azurecommon.PrivateDNSDiscoveryConfig{
+			PrivateDNSRecords: azureClients.PrivateDNSRecords,
+			ContainerApps:     azureClients.ContainerApps,
+			ResourceGroup:     config.ResourceGroup,
+			Logger:            logger,
+			LookupNetwork: func(ctx context.Context, networkID string) (azurecommon.PrivateDNSNetworkState, bool) {
+				state, ok := s.resolveNetworkState(ctx, networkID)
+				if !ok {
+					return azurecommon.PrivateDNSNetworkState{}, false
+				}
+				return azurecommon.PrivateDNSNetworkState{DNSZoneName: state.DNSZoneName}, true
+			},
+			GetNetwork: func(networkID string) (azurecommon.PrivateDNSNetworkState, bool) {
+				state, ok := s.NetworkState.Get(networkID)
+				if !ok {
+					return azurecommon.PrivateDNSNetworkState{}, false
+				}
+				return azurecommon.PrivateDNSNetworkState{DNSZoneName: state.DNSZoneName}, true
+			},
+		})
+	case api.NetworkDiscoveryHostAliases:
+		s.NetworkDiscovery = core.NewHostAliasesDiscovery()
+	case api.NetworkDiscoveryNATGatewayOnly:
+		s.NetworkDiscovery = core.NoOpNetworkDiscovery{}
+	}
 	s.DNS = &azurecommon.PrivateDNSZoneDNS{
 		LookupZoneName: func(ctx context.Context, networkID string) (string, error) {
 			state, ok := s.resolveNetworkState(ctx, networkID)

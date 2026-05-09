@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 )
 
@@ -33,6 +35,16 @@ type Config struct {
 	// See backends/core.CommitContainerViaAgent. Set via
 	// `SOCKERLESS_ENABLE_COMMIT=1`.
 	EnableCommit bool
+
+	// NetworkDiscovery selects the per-backend driver wired into
+	// s.NetworkDiscovery. AZF's native is nat-gateway-only — Azure
+	// Functions don't expose per-invocation IPs. Operators may
+	// override to host-aliases (in-process registry) for the
+	// multi-container pattern. cloud-dns (private-dns-zone) requires
+	// the AZF NetworkState model + zone creation flow queued under
+	// 121b-finish-C.
+	// Set via SOCKERLESS_AZF_NETWORK_DISCOVERY.
+	NetworkDiscovery api.NetworkDiscoveryKind
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -52,7 +64,19 @@ func ConfigFromEnv() Config {
 		PollInterval:          parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 		CallbackURL:           os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		EnableCommit:          os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
+		NetworkDiscovery:      networkDiscoveryFromEnv("SOCKERLESS_AZF_NETWORK_DISCOVERY", api.NetworkDiscoveryNATGatewayOnly),
 	}
+}
+
+// networkDiscoveryFromEnv reads the operator's chosen kind from env or
+// returns `def`. Validation against the per-backend supported set
+// happens in Config.Validate.
+func networkDiscoveryFromEnv(envVar string, def api.NetworkDiscoveryKind) api.NetworkDiscoveryKind {
+	v := strings.TrimSpace(os.Getenv(envVar))
+	if v == "" {
+		return def
+	}
+	return api.NetworkDiscoveryKind(v)
 }
 
 // ConfigFromEnvironment creates Config from a unified config environment.
@@ -87,6 +111,7 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 	if sim != nil && sim.Port > 0 {
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
 	}
+	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_AZF_NETWORK_DISCOVERY", api.NetworkDiscoveryNATGatewayOnly)
 	return c
 }
 
@@ -100,6 +125,12 @@ func (c Config) Validate() error {
 	}
 	if c.StorageAccount == "" {
 		return fmt.Errorf("SOCKERLESS_AZF_STORAGE_ACCOUNT is required")
+	}
+	switch c.NetworkDiscovery {
+	case api.NetworkDiscoveryNATGatewayOnly, api.NetworkDiscoveryHostAliases:
+		// supported
+	default:
+		return fmt.Errorf("SOCKERLESS_AZF_NETWORK_DISCOVERY=%q not supported by azf (one of nat-gateway-only, host-aliases required; cloud-dns wiring lives in 121b-finish-C)", c.NetworkDiscovery)
 	}
 	return nil
 }

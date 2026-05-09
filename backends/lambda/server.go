@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
+	"github.com/sockerless/api"
 	awscommon "github.com/sockerless/aws-common"
 	core "github.com/sockerless/backend-core"
 )
@@ -83,6 +84,18 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	s.SetSelf(s)
 	s.CloudState = &lambdaCloudState{server: s}
 	s.Access = awscommon.NewIAMRoleAccess(config.RoleARN)
+
+	// Network-discovery driver. Selected via Config.NetworkDiscovery
+	// (env: SOCKERLESS_LAMBDA_NETWORK_DISCOVERY). Validated to one of
+	// nat-gateway-only / host-aliases by Config.Validate. service-mesh
+	// (cloud-map) requires the lambda VPC-mode wiring queued under
+	// 121b-finish-K.
+	switch config.NetworkDiscovery {
+	case api.NetworkDiscoveryNATGatewayOnly:
+		s.NetworkDiscovery = core.NoOpNetworkDiscovery{}
+	case api.NetworkDiscoveryHostAliases:
+		s.NetworkDiscovery = core.NewHostAliasesDiscovery()
+	}
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

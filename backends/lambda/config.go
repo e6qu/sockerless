@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 )
 
@@ -96,6 +97,15 @@ type Config struct {
 	// SOCKERLESS_LAMBDA_POOL_MAX. See specs/CLOUD_RESOURCE_MAPPING.md
 	// § Stateless image cache + Function/Site reuse pool.
 	PoolMax int
+
+	// NetworkDiscovery selects the per-backend driver wired into
+	// s.NetworkDiscovery. Lambda's native is nat-gateway-only —
+	// per-invocation IPs aren't reachable from peers. Operators may
+	// override to host-aliases (in-process registry) for the
+	// multi-container-revision pattern. service-mesh (cloud-map)
+	// requires Lambda VPC-mode wiring queued under 121b-finish-K.
+	// Set via SOCKERLESS_LAMBDA_NETWORK_DISCOVERY.
+	NetworkDiscovery api.NetworkDiscoveryKind
 }
 
 // SharedVolume describes a workspace volume mounted via EFS that the
@@ -144,7 +154,19 @@ func ConfigFromEnv() Config {
 		Architecture:         os.Getenv("SOCKERLESS_LAMBDA_ARCHITECTURE"),
 		SharedVolumes:        parseSharedVolumes(os.Getenv("SOCKERLESS_LAMBDA_SHARED_VOLUMES")),
 		PoolMax:              envOrDefaultInt("SOCKERLESS_LAMBDA_POOL_MAX", 10),
+		NetworkDiscovery:     networkDiscoveryFromEnv("SOCKERLESS_LAMBDA_NETWORK_DISCOVERY", api.NetworkDiscoveryNATGatewayOnly),
 	}
+}
+
+// networkDiscoveryFromEnv reads the operator's chosen kind from env or
+// returns `def`. Validation against the per-backend supported set
+// happens in Config.Validate.
+func networkDiscoveryFromEnv(envVar string, def api.NetworkDiscoveryKind) api.NetworkDiscoveryKind {
+	v := strings.TrimSpace(os.Getenv(envVar))
+	if v == "" {
+		return def
+	}
+	return api.NetworkDiscoveryKind(v)
 }
 
 // parseSharedVolumes parses the SOCKERLESS_LAMBDA_SHARED_VOLUMES
@@ -265,6 +287,7 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 	if sim != nil && sim.Port > 0 {
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
 	}
+	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_LAMBDA_NETWORK_DISCOVERY", api.NetworkDiscoveryNATGatewayOnly)
 	return c
 }
 
@@ -278,6 +301,12 @@ func (c Config) Validate() error {
 		// ok
 	default:
 		return fmt.Errorf("SOCKERLESS_LAMBDA_ARCHITECTURE must be set to x86_64 or arm64 (no default — sockerless reports the cloud workload's architecture, not its own host arch); got %q", c.Architecture)
+	}
+	switch c.NetworkDiscovery {
+	case api.NetworkDiscoveryNATGatewayOnly, api.NetworkDiscoveryHostAliases:
+		// supported
+	default:
+		return fmt.Errorf("SOCKERLESS_LAMBDA_NETWORK_DISCOVERY=%q not supported by lambda (one of nat-gateway-only, host-aliases required; service-mesh wiring lives in 121b-finish-K)", c.NetworkDiscovery)
 	}
 	return nil
 }

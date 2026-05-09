@@ -3,8 +3,10 @@ package aca
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 )
 
@@ -42,6 +44,13 @@ type Config struct {
 	// See backends/core.CommitContainerViaAgent. Set via
 	// `SOCKERLESS_ENABLE_COMMIT=1`.
 	EnableCommit bool
+
+	// NetworkDiscovery selects the per-backend driver wired into
+	// s.NetworkDiscovery. ACA's native is cloud-dns (Azure Private
+	// DNS zones). Operators may override to host-aliases (in-process
+	// registry) or nat-gateway-only (no peer discovery).
+	// Set via SOCKERLESS_ACA_NETWORK_DISCOVERY.
+	NetworkDiscovery api.NetworkDiscoveryKind
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -61,7 +70,19 @@ func ConfigFromEnv() Config {
 		UseApp:                os.Getenv("SOCKERLESS_ACA_USE_APP") == "1",
 		CallbackURL:           os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		EnableCommit:          os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
+		NetworkDiscovery:      networkDiscoveryFromEnv("SOCKERLESS_ACA_NETWORK_DISCOVERY", api.NetworkDiscoveryCloudDNS),
 	}
+}
+
+// networkDiscoveryFromEnv reads the operator's chosen kind from env or
+// returns `def`. Validation against the per-backend supported set
+// happens in Config.Validate.
+func networkDiscoveryFromEnv(envVar string, def api.NetworkDiscoveryKind) api.NetworkDiscoveryKind {
+	v := strings.TrimSpace(os.Getenv(envVar))
+	if v == "" {
+		return def
+	}
+	return api.NetworkDiscoveryKind(v)
 }
 
 // ConfigFromEnvironment creates Config from a unified config environment.
@@ -95,6 +116,7 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 	if sim != nil && sim.Port > 0 {
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
 	}
+	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_ACA_NETWORK_DISCOVERY", api.NetworkDiscoveryCloudDNS)
 	return c
 }
 
@@ -108,6 +130,12 @@ func (c Config) Validate() error {
 	}
 	if c.UseApp && c.Environment == "" {
 		return fmt.Errorf("SOCKERLESS_ACA_USE_APP=1 requires SOCKERLESS_ACA_ENVIRONMENT — Apps need an existing managed environment with VNet integration for peer-reachable internal FQDNs")
+	}
+	switch c.NetworkDiscovery {
+	case api.NetworkDiscoveryCloudDNS, api.NetworkDiscoveryHostAliases, api.NetworkDiscoveryNATGatewayOnly:
+		// supported
+	default:
+		return fmt.Errorf("SOCKERLESS_ACA_NETWORK_DISCOVERY=%q not supported by aca (one of cloud-dns, host-aliases, nat-gateway-only required)", c.NetworkDiscovery)
 	}
 	return nil
 }
