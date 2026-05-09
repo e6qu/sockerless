@@ -11,3 +11,5 @@ export {
 } from "./queries.js";
 export { useSimHealth, useSimSummary } from "./simulator-queries.js";
 export type { SimHealth, SimSummary } from "./simulator-queries.js";
+export { useTheme } from "./useTheme.js";
+export type { Theme } from "./useTheme.js";

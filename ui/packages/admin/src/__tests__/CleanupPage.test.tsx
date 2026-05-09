@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router";
+import { ToastProvider } from "@sockerless/ui-core/components";
 import { CleanupPage } from "../pages/CleanupPage.js";
 
 const mockFetch = vi.fn();
@@ -31,9 +32,11 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <CleanupPage />
-      </BrowserRouter>
+      <ToastProvider>
+        <BrowserRouter>
+          <CleanupPage />
+        </BrowserRouter>
+      </ToastProvider>
     </QueryClientProvider>,
   );
 }

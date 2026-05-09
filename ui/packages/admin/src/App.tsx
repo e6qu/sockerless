@@ -3,6 +3,7 @@ import {
   AppShell,
   ErrorBoundary,
   NavLinkButton,
+  ToastProvider,
   type NavItem,
 } from "@sockerless/ui-core/components";
 import { DashboardPage } from "./pages/DashboardPage.js";
@@ -43,7 +44,8 @@ function renderNavLink(item: NavItem) {
 export function App() {
   return (
     <ErrorBoundary>
-      <BrowserRouter>
+      <ToastProvider>
+        <BrowserRouter>
         <AppShell
           kicker="sockerless · operator"
           title="Admin"
@@ -84,7 +86,8 @@ export function App() {
             />
           </Routes>
         </AppShell>
-      </BrowserRouter>
+        </BrowserRouter>
+      </ToastProvider>
     </ErrorBoundary>
   );
 }

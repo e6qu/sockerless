@@ -57,6 +57,15 @@ export function DataTable<T>({
         borderRadius: "var(--radius-sm)",
       }}
     >
+      <style>{`
+        .dt-row { transition: background-color 0.1s var(--ease-out-quint); }
+        .dt-row[data-row-stripe="even"] { background: var(--color-surface); }
+        .dt-row[data-row-stripe="odd"]  { background: var(--color-bg-subtle); }
+        .dt-row[data-clickable="true"]:hover,
+        .dt-row[data-clickable="true"]:focus-visible {
+          background: color-mix(in oklch, var(--color-accent-soft) 55%, var(--color-surface));
+        }
+      `}</style>
       <div
         className="flex items-center justify-between gap-4 px-3 py-2"
         style={{ borderBottom: "1px solid var(--color-border)" }}
@@ -93,11 +102,15 @@ export function DataTable<T>({
               <tr key={hg.id}>
                 {hg.headers.map((header) => {
                   const sort = header.column.getIsSorted();
+                  const canSort = header.column.getCanSort();
+                  const ariaSort: React.AriaAttributes["aria-sort"] =
+                    sort === "asc" ? "ascending" : sort === "desc" ? "descending" : canSort ? "none" : undefined;
                   return (
                     <th
                       key={header.id}
-                      onClick={header.column.getToggleSortingHandler()}
-                      className="cursor-pointer select-none px-3 py-2 text-left uppercase tracking-[0.15em]"
+                      scope="col"
+                      aria-sort={ariaSort}
+                      className="select-none px-3 py-2 text-left uppercase tracking-[0.15em]"
                       style={{
                         fontSize: "0.62rem",
                         fontWeight: 500,
@@ -108,20 +121,35 @@ export function DataTable<T>({
                         whiteSpace: "nowrap",
                       }}
                     >
-                      <span className="inline-flex items-center gap-1">
-                        {header.isPlaceholder
-                          ? null
-                          : flexRender(
-                              header.column.columnDef.header,
-                              header.getContext(),
-                            )}
-                        <span
-                          aria-hidden
-                          style={{ opacity: sort ? 1 : 0.25, fontSize: "0.7em" }}
+                      {header.isPlaceholder ? null : canSort ? (
+                        <button
+                          type="button"
+                          onClick={header.column.getToggleSortingHandler()}
+                          className="inline-flex items-center gap-1"
+                          style={{
+                            background: "transparent",
+                            border: "none",
+                            padding: 0,
+                            color: "inherit",
+                            font: "inherit",
+                            letterSpacing: "inherit",
+                            textTransform: "inherit",
+                            cursor: "pointer",
+                          }}
                         >
-                          {sort === "asc" ? "↑" : sort === "desc" ? "↓" : "↕"}
+                          {flexRender(header.column.columnDef.header, header.getContext())}
+                          <span
+                            aria-hidden
+                            style={{ opacity: sort ? 1 : 0.25, fontSize: "0.7em" }}
+                          >
+                            {sort === "asc" ? "↑" : sort === "desc" ? "↓" : "↕"}
+                          </span>
+                        </button>
+                      ) : (
+                        <span className="inline-flex items-center gap-1">
+                          {flexRender(header.column.columnDef.header, header.getContext())}
                         </span>
-                      </span>
+                      )}
                     </th>
                   );
                 })}
@@ -147,27 +175,27 @@ export function DataTable<T>({
                 <tr
                   key={row.id}
                   onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                  onKeyDown={
+                    onRowClick
+                      ? (e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            onRowClick(row.original);
+                          }
+                        }
+                      : undefined
+                  }
+                  tabIndex={onRowClick ? 0 : undefined}
+                  role={onRowClick ? "button" : undefined}
+                  aria-label={onRowClick ? "Open row detail" : undefined}
                   data-row-index={i}
-                  className="reveal"
+                  data-clickable={onRowClick ? "true" : undefined}
+                  data-row-stripe={i % 2 === 0 ? "even" : "odd"}
+                  className="dt-row reveal"
                   style={{
-                    background:
-                      i % 2 === 0
-                        ? "var(--color-surface)"
-                        : "var(--color-bg-subtle)",
                     cursor: onRowClick ? "pointer" : undefined,
-                    transition: "background-color 0.1s var(--ease-out-quint)",
                     "--reveal-delay": `${Math.min(i * 16, 240)}ms`,
                   } as React.CSSProperties}
-                  onMouseEnter={(e) =>
-                    (e.currentTarget.style.background =
-                      "color-mix(in oklch, var(--color-accent-soft) 55%, var(--color-surface))")
-                  }
-                  onMouseLeave={(e) =>
-                    (e.currentTarget.style.background =
-                      i % 2 === 0
-                        ? "var(--color-surface)"
-                        : "var(--color-bg-subtle)")
-                  }
                 >
                   {row.getVisibleCells().map((cell) => (
                     <td

@@ -1,4 +1,5 @@
 import { type ReactNode } from "react";
+import { ThemeToggle } from "./ThemeToggle.js";
 
 export interface NavItem {
   label: string;
@@ -27,7 +28,25 @@ export function AppShell({ title, kicker, navItems, renderLink, children }: AppS
       className="grid h-screen w-full"
       style={{ gridTemplateColumns: "minmax(220px, 16rem) 4px 1fr" }}
     >
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only"
+        style={{
+          position: "absolute",
+          top: 8,
+          left: 8,
+          padding: "0.4rem 0.75rem",
+          background: "var(--color-accent)",
+          color: "var(--color-accent-fg)",
+          fontSize: "0.78rem",
+          zIndex: 100,
+          borderRadius: "var(--radius-sm)",
+        }}
+      >
+        Skip to main content
+      </a>
       <aside
+        aria-label="Sidebar"
         className="flex h-full flex-col overflow-hidden border-r"
         style={{
           background: "color-mix(in oklch, var(--color-bg) 80%, var(--color-surface))",
@@ -60,7 +79,7 @@ export function AppShell({ title, kicker, navItems, renderLink, children }: AppS
           </h1>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-3 py-4">
+        <nav aria-label="Primary" className="flex-1 overflow-y-auto px-3 py-4">
           <ul className="space-y-0.5">
             {navItems.map((item, i) => (
               <li
@@ -75,13 +94,14 @@ export function AppShell({ title, kicker, navItems, renderLink, children }: AppS
         </nav>
 
         <div
-          className="border-t px-5 py-3 text-[10px] uppercase tracking-[0.2em]"
+          className="flex items-center justify-between gap-2 border-t px-5 py-3 text-[10px] uppercase tracking-[0.2em]"
           style={{
             borderColor: "var(--color-border)",
             color: "var(--color-fg-subtle)",
           }}
         >
-          sockerless · operator
+          <span>sockerless · operator</span>
+          <ThemeToggle />
         </div>
       </aside>
 
@@ -91,6 +111,8 @@ export function AppShell({ title, kicker, navItems, renderLink, children }: AppS
       <div style={{ background: "var(--color-accent)" }} aria-hidden />
 
       <main
+        id="main-content"
+        tabIndex={-1}
         className="overflow-auto px-8 py-8"
         style={{
           background: "var(--color-bg)",

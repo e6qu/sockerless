@@ -4,6 +4,8 @@ import {
   PageHeading,
   Spinner,
   StatusBadge,
+  useToast,
+  useReportError,
 } from "@sockerless/ui-core/components";
 import { Link, useNavigate } from "react-router";
 import { AdminApiClient, type ProjectStatus } from "../api.js";
@@ -35,6 +37,8 @@ function statusLabel(status: string): string {
 export function ProjectsPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { push } = useToast();
+  const reportError = useReportError();
 
   const {
     data: projects,
@@ -49,12 +53,20 @@ export function ProjectsPage() {
 
   const start = useMutation({
     mutationFn: (name: string) => api.projectStart(name),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["projects"] }),
+    onSuccess: (_data, name) => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      push({ tone: "success", title: `Started ${name}` });
+    },
+    onError: (err, name) => reportError(err, `Failed to start ${name}`),
   });
 
   const stop = useMutation({
     mutationFn: (name: string) => api.projectStop(name),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["projects"] }),
+    onSuccess: (_data, name) => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      push({ tone: "success", title: `Stopped ${name}` });
+    },
+    onError: (err, name) => reportError(err, `Failed to stop ${name}`),
   });
 
   if (isLoading) return <Spinner label="loading projects" />;
@@ -77,17 +89,6 @@ export function ProjectsPage() {
           </Button>
         }
       />
-
-      {start.error && (
-        <div className="mb-3">
-          <ErrorPanel kicker="start failed" message={(start.error as Error)?.message} />
-        </div>
-      )}
-      {stop.error && (
-        <div className="mb-3">
-          <ErrorPanel kicker="stop failed" message={(stop.error as Error)?.message} />
-        </div>
-      )}
 
       {projects.length === 0 ? (
         <p

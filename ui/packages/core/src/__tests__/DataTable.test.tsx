@@ -42,18 +42,18 @@ describe("DataTable", () => {
     const { container } = render(<DataTable data={data} columns={columns} />);
 
     const headers = container.querySelectorAll("th");
-    const ageHeader = headers[1];
+    // Sort is on a child <button> for keyboard activation; the <th>
+    // wrapper carries aria-sort.
+    const ageSortButton = headers[1].querySelector("button")!;
 
-    // First click sorts (desc for numeric columns by default)
-    fireEvent.click(ageHeader);
+    fireEvent.click(ageSortButton);
     let rows = container.querySelectorAll("tbody tr");
     let ageValues = Array.from(rows).map(
       (row) => row.querySelectorAll("td")[1].textContent,
     );
     expect(ageValues).toEqual(["35", "30", "25"]);
 
-    // Second click reverses sort
-    fireEvent.click(ageHeader);
+    fireEvent.click(ageSortButton);
     rows = container.querySelectorAll("tbody tr");
     ageValues = Array.from(rows).map(
       (row) => row.querySelectorAll("td")[1].textContent,

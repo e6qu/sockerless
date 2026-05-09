@@ -5,6 +5,8 @@ import { PageHeading } from "../components/PageHeading.js";
 import { StatusBadge } from "../components/StatusBadge.js";
 import { Spinner } from "../components/Spinner.js";
 import { RefreshButton } from "../components/RefreshButton.js";
+import { InlineError } from "../components/InlineError.js";
+import { Button } from "../components/Button.js";
 import type { ResourceEntry } from "../api/index.js";
 
 const col = createColumnHelper<ResourceEntry>();
@@ -61,9 +63,26 @@ const columns: any[] = [
 ];
 
 export function ResourcesPage() {
-  const { data, isLoading, refetch, isFetching } = useResources();
+  const { data, isLoading, refetch, isFetching, isError, error } = useResources();
 
   if (isLoading) return <Spinner label="loading resources" />;
+
+  if (isError) {
+    return (
+      <div>
+        <PageHeading
+          kicker="backend · resources"
+          title={<>Cloud resources</>}
+          actions={<RefreshButton onClick={() => refetch()} loading={isFetching} />}
+        />
+        <InlineError
+          title="Failed to load resources"
+          detail={error}
+          action={<Button variant="ghost" onClick={() => refetch()}>Retry</Button>}
+        />
+      </div>
+    );
+  }
 
   const rows = data ?? [];
 

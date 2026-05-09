@@ -2,6 +2,7 @@ import { type ReactNode } from "react";
 import { BrowserRouter, NavLink, Routes } from "react-router";
 import { AppShell, NavLinkButton, type NavItem } from "./AppShell.js";
 import { ErrorBoundary } from "./ErrorBoundary.js";
+import { ToastProvider } from "./Toast.js";
 
 function renderNavLink(item: NavItem) {
   return (
@@ -22,16 +23,18 @@ export interface SimulatorAppProps {
 export function SimulatorApp({ title, kicker, navItems, children }: SimulatorAppProps) {
   return (
     <ErrorBoundary>
-      <BrowserRouter>
-        <AppShell
-          title={title}
-          kicker={kicker ?? "cloud · simulator"}
-          navItems={navItems}
-          renderLink={renderNavLink}
-        >
-          <Routes>{children}</Routes>
-        </AppShell>
-      </BrowserRouter>
+      <ToastProvider>
+        <BrowserRouter>
+          <AppShell
+            title={title}
+            kicker={kicker ?? "cloud · simulator"}
+            navItems={navItems}
+            renderLink={renderNavLink}
+          >
+            <Routes>{children}</Routes>
+          </AppShell>
+        </BrowserRouter>
+      </ToastProvider>
     </ErrorBoundary>
   );
 }
