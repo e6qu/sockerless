@@ -12,7 +12,6 @@ import (
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 	gcpcommon "github.com/sockerless/gcp-common"
-	"google.golang.org/api/idtoken"
 )
 
 // — single- and multi-container start paths for the Services
@@ -209,17 +208,17 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}, skipIf
 		return
 	}
 
-	s.Logger.Info().Str("container", id).Msg("invokeServiceDefaultCmd: minting idtoken client")
-	client, err := idtoken.NewClient(s.ctx(), serviceURL)
+	s.Logger.Info().Str("container", id).Msg("invokeServiceDefaultCmd: minting access client")
+	client, err := s.Access.AuthenticatedClient(s.ctx(), serviceURL)
 	if err != nil {
-		s.Logger.Error().Err(err).Str("container", id).Msg("idtoken client for service invoke")
+		s.Logger.Error().Err(err).Str("container", id).Msg("access client for service invoke")
 		inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
 		inv.Error = err.Error()
 		s.Store.PutInvocationResult(id, inv)
 		return
 	}
 	client.Timeout = 10 * time.Minute
-	s.Logger.Info().Str("container", id).Msg("invokeServiceDefaultCmd: idtoken client ready")
+	s.Logger.Info().Str("container", id).Msg("invokeServiceDefaultCmd: access client ready")
 
 	// Two POST shapes:
 	//   - capturedStdin nil: empty body, bootstrap runs env-baked
@@ -297,9 +296,9 @@ func (s *Server) invokeRunningRunnerStage(id string, c api.Container) {
 		return
 	}
 
-	client, err := idtoken.NewClient(ctx, url)
+	client, err := s.Access.AuthenticatedClient(ctx, url)
 	if err != nil {
-		s.Logger.Error().Err(err).Str("container", id).Msg("invokeRunningRunnerStage: idtoken client")
+		s.Logger.Error().Err(err).Str("container", id).Msg("invokeRunningRunnerStage: access client")
 		if v, ok := s.attachStreams.LoadAndDelete(id); ok {
 			v.(*attachStream).publishAttachResponse(nil, []byte(err.Error()))
 		}

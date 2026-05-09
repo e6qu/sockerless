@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"google.golang.org/api/idtoken"
 )
 
 // execEnvelope mirrors the bootstrap's expected request body for the
@@ -41,8 +39,8 @@ type execEnvelope struct {
 // their env updated on each claim — the user's entrypoint+cmd+workdir
 // flow through the request body and an immutable pool entry can serve
 // any user command.
-func invokeFunction(ctx context.Context, audienceURL string, argv []string, workdir string, env []string) (*http.Response, error) {
-	client, err := idtoken.NewClient(ctx, audienceURL)
+func (s *Server) invokeFunction(ctx context.Context, audienceURL string, argv []string, workdir string, env []string) (*http.Response, error) {
+	client, err := s.Access.AuthenticatedClient(ctx, audienceURL)
 	if err != nil {
 		if isUnsupportedCredsErr(err) {
 			return nil, fmt.Errorf(
@@ -50,7 +48,7 @@ func invokeFunction(ctx context.Context, audienceURL string, argv []string, work
 				err,
 			)
 		}
-		return nil, fmt.Errorf("idtoken.NewClient(%s): %w", audienceURL, err)
+		return nil, err
 	}
 	client.Timeout = 10 * time.Minute
 

@@ -6,8 +6,8 @@
 
 | | |
 |---|---|
-| Active branch | `phase-125-dns-driver` (off `origin/main` at 4905be4) |
-| Last merged | PR #131 — Phase 124 network discovery driver (2026-05-09) |
+| Active branch | `phase-126-access-driver` (off `origin/main` at 6875aa1) |
+| Last merged | PR #132 — Phase 125 DNS driver (2026-05-09) |
 | Milestone | **8/8 runner-integration cells GREEN** (since 2026-05-07); **sim host model shipped, CI fully green on native arm64** (Phase 135, 2026-05-09). |
 | Bugs | 984 filed · 984 fixed · **0 open** ([BUGS.md](BUGS.md)). |
 | Sim parity | 77/77 ✓ across current backends (AWS 33, GCP 16, Azure 28) — [specs/SIM_PARITY_MATRIX.md](specs/SIM_PARITY_MATRIX.md) |
@@ -28,23 +28,24 @@
 
 Each green run: probe-capabilities → probe-localhost-peer (postgres sidecar `localhost:5432`) → clone-and-compile (`git clone` + `go build` of `simulators/testdata/eval-arithmetic`) → 5 arithmetic invocations.
 
-## Up next on `phase-125-dns-driver`
+## Up next on `phase-126-access-driver`
 
-In flight: **Phase 125 — DNS driver**. All sub-tasks shipped:
+In flight: **Phase 126 — Access driver**. All sub-tasks shipped:
 
-- **125a** — `api/dns_driver.go`: `DNSMechanism` enum + `IsValid()` + `AllDNSMechanisms`. 5 mechanisms: cloud-map, cloud-dns-zone, service-discovery, private-dns-zone, none.
-- **125b** — `backends/core/dns_driver.go`: `DNSDriver` interface (`SearchDomain` + `Mechanism`), registry, no-op default (`none`), `ParseDNSMechanismEnv()` (no-fallback semantics), `DNSSearchDomainEnvIfSet()` helper.
-- **125c** — Per-backend adapters + wiring: cloudrun cloud-dns-zone, ECS cloud-map, ACA private-dns-zone. `BaseServer.DNS` field defaults to no-op; backend startup overrides with the cloud-specific adapter. FaaS backends (cloudrun-functions, lambda, azure-functions) keep the no-op default until per-cloud DNS adapters land.
-- **125d** — `SOCKERLESS_DNS_SEARCH_DOMAIN` injected at every `ContainerCreate` callsite (cloudrun, ECS, ACA, GCF, Lambda, AZF) via `s.DNS.SearchDomain` + `core.DNSSearchDomainEnvIfSet`. Cloudrun + GCF bootstraps read the env var and append `search <suffix>` to `/etc/resolv.conf`.
+- **126a** — `api/access_driver.go`: `AccessMechanism` enum + `IsValid()` + `AllAccessMechanisms`. 4 mechanisms: iam-role, id-token, mTLS, none-internal.
+- **126b** — `backends/core/access_driver.go`: `AccessDriver` interface (`Mechanism` + `WorkloadPrincipal` + `AuthenticatedClient`), registry, `NoneInternalAccess` default, `ParseAccessMechanismEnv()` (no-fallback semantics).
+- **126c** — Per-backend adapters + wiring: cloudrun + cloudrun-functions `idTokenAccess` (id-token), ECS + Lambda `iamRoleAccess` (iam-role), ACA + AZF `noneInternalAccess` (none-internal). `BaseServer.Access` field defaults to `NoneInternalAccess{}`; backend startup overrides.
+- **126d** — All `idtoken.NewClient` callsites migrated through `s.Access.AuthenticatedClient` (cloudrun: `exec_invoke.go`, `start_service.go` × 2; cloudrun-functions: `exec_invoke.go`, `containers.go`, `pod_service.go` × 2). `idtoken` import removed from cloudrun + cloudrun-functions backends.
 
-Spec: [specs/CLOUD_RESOURCE_MAPPING.md § DNS driver](specs/CLOUD_RESOURCE_MAPPING.md#dns-driver).
+Spec: [specs/CLOUD_RESOURCE_MAPPING.md § Access driver](specs/CLOUD_RESOURCE_MAPPING.md#access-driver).
 
-Then Phase 126 → 127 → 121b → 78 per [PLAN.md § Roadmap (ordered)](PLAN.md#roadmap-ordered).
+Then Phase 127 → 121b → 78 per [PLAN.md § Roadmap (ordered)](PLAN.md#roadmap-ordered).
 
 ## Recently shipped (chronological)
 
 | Date | PR | Headline |
 |------|----|----|
+| 2026-05-09 | #132 | Phase 125 DNS driver (cloud-map / cloud-dns-zone / private-dns-zone / service-discovery / none; per-backend adapters; SOCKERLESS_DNS_SEARCH_DOMAIN env wired through every ContainerCreate; cloudrun + GCF bootstraps write /etc/resolv.conf). |
 | 2026-05-09 | #131 | Phase 124 network discovery driver (host-aliases / cloud-dns / service-mesh / nat-gateway-only; per-backend adapters; all callsites migrated). |
 | 2026-05-09 | #130 | Phase 128 runner job timeout (bootstrap timer + cloud-native cap; SOCKERLESS_JOB_TIMEOUT_SECONDS contract). |
 | 2026-05-09 | #129 | Phase 135 sim host model + 3-tier coverage + native arm64 CI runners. 12 bugs closed (BUG-949/972/975-984). |

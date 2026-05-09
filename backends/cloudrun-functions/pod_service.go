@@ -38,7 +38,6 @@ import (
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 	gcpcommon "github.com/sockerless/gcp-common"
-	"google.golang.org/api/idtoken"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
@@ -797,9 +796,9 @@ func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, c
 		// Attach-stdin path: POST the captured script bytes as the
 		// envelope's Stdin. Bootstrap pipes the script into sh.
 		s.Logger.Info().Str("main", mainID).Str("url", url).Int("stdin_bytes", len(capturedStdin)).Msg("invokePodServiceMain: posting envelope with captured stdin")
-		client, err := idtoken.NewClient(ctx, url)
+		client, err := s.Access.AuthenticatedClient(ctx, url)
 		if err != nil {
-			s.Logger.Error().Err(err).Str("main", mainID).Msg("idtoken client for pod service invoke")
+			s.Logger.Error().Err(err).Str("main", mainID).Msg("access client for pod service invoke")
 			inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
 			inv.Error = err.Error()
 		} else {
@@ -860,7 +859,7 @@ func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, c
 		argv = append(argv, mainContainer.Config.Cmd...)
 		envSlice := append([]string{}, mainContainer.Config.Env...)
 		s.Logger.Info().Str("main", mainID).Str("url", url).Strs("argv", argv).Msg("invokePodServiceMain: default-invoke (no captured stdin, not OpenStdin) — posting user entrypoint+cmd")
-		if resp, err := invokeFunction(ctx, url, argv, mainContainer.Config.WorkingDir, envSlice); err != nil {
+		if resp, err := s.invokeFunction(ctx, url, argv, mainContainer.Config.WorkingDir, envSlice); err != nil {
 			s.Logger.Error().Err(err).Str("main", mainID).Msg("pod service default-invoke failed")
 			inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
 			inv.Error = err.Error()
@@ -943,9 +942,9 @@ func (s *Server) invokeRunningRunnerStage(mainID string, mainContainer api.Conta
 	}
 	url := state.FunctionURL
 
-	client, err := idtoken.NewClient(ctx, url)
+	client, err := s.Access.AuthenticatedClient(ctx, url)
 	if err != nil {
-		s.Logger.Error().Err(err).Str("main", mainID).Msg("invokeRunningRunnerStage: idtoken client")
+		s.Logger.Error().Err(err).Str("main", mainID).Msg("invokeRunningRunnerStage: access client")
 		if v, ok := s.attachStreams.LoadAndDelete(mainID); ok {
 			v.(*attachStream).publishAttachResponse(nil, []byte(err.Error()))
 		}

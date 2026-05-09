@@ -100,6 +100,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	// resolve flow.
 	s.NetworkDiscovery = newCloudDNSDiscovery(s)
 	s.DNS = newCloudDNSZoneDNS(s)
+	s.Access = newIDTokenAccess(s)
 
 	// Storage backing registry. EmptyDirDriver always available;
 	// GCSFuseDriver kept for legacy SharedVolumes (tar-pack persist);

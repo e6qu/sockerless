@@ -80,6 +80,7 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	// Service-mesh network-discovery driver wraps AWS Cloud Map.
 	s.NetworkDiscovery = newCloudMapDiscovery(s)
 	s.DNS = newCloudMapDNS(s)
+	s.Access = newIAMRoleAccess(s)
 	s.CloudState = &ecsCloudState{
 		ecs:      awsClients.ECS,
 		ecr:      awsClients.ECR,

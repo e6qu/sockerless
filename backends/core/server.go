@@ -62,6 +62,7 @@ type BaseServer struct {
 	PendingCreates   *StateStore[api.Container] // containers between create and start (not yet in cloud)
 	NetworkDiscovery NetworkDiscoveryDriver     // name → reachable peer (defaults to NoOp/nat-gateway-only when unset)
 	DNS              DNSDriver                  // workload resolver config (defaults to NoOp/none when unset)
+	Access           AccessDriver               // ingress auth + caller-side signer (defaults to NoneInternal when unset)
 	self             api.Backend                // virtual dispatch target for overrideable methods
 }
 
@@ -112,6 +113,7 @@ func NewBaseServer(store *Store, desc BackendDescriptor, logger zerolog.Logger) 
 		PendingCreates:   NewStateStore[api.Container](),
 		NetworkDiscovery: NoOpNetworkDiscovery{},
 		DNS:              NoOpDNS{},
+		Access:           NoneInternalAccess{},
 	}
 	s.self = s
 	s.InitDrivers()

@@ -76,6 +76,13 @@ type Config struct {
 	// bootstrap-only changes — so the AR cache would hit forever and
 	// fresh containers would keep running stale bootstrap code.
 	BootstrapBinaryHash string
+
+	// ServiceAccount is the GCP service-account email the deployed
+	// Cloud Run Service / Job runs as. Empty ⇒ Cloud Run's default
+	// runtime service account. Operators set this when they need a
+	// non-default principal for workload IAM bindings.
+	// Set via `SOCKERLESS_CLOUDRUN_SERVICE_ACCOUNT`.
+	ServiceAccount string
 }
 
 // SharedVolume describes a workspace volume mounted via GCS that the
@@ -124,6 +131,7 @@ func ConfigFromEnv() Config {
 		EnableCommit:        os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
 		SharedVolumes:       parseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES")),
 		BootstrapBinaryPath: os.Getenv("SOCKERLESS_CLOUDRUN_BOOTSTRAP"),
+		ServiceAccount:      os.Getenv("SOCKERLESS_CLOUDRUN_SERVICE_ACCOUNT"),
 	}
 }
 

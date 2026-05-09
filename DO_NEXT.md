@@ -4,29 +4,28 @@
 
 ## Branch
 
-`phase-125-dns-driver` — off `origin/main` at 4905be4 (PR #131 merged 2026-05-09). Single work-branch rule: everything stacks here, no side branches.
+`phase-126-access-driver` — off `origin/main` at 6875aa1 (PR #132 merged 2026-05-09). Single work-branch rule: everything stacks here, no side branches.
 
 ## Ordered roadmap (do them in this order)
 
-1. **Phase 126 — Access driver** (`iam-role` / `id-token` / `mTLS` / `none-internal`). Sim prereq `generateIdToken` ✅.
-2. **Phase 127 — Storage driver expansion** (`pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral`). Sim prereq Compute Disks ✅.
-3. **Phase 121b — Azure sim hardening** (cloud-faithful for ACA + AZF; mirror of Phase 121).
-4. **Phase 78 — UI polish** (dark mode, design tokens, error UX, container detail modal, accessibility).
+1. **Phase 127 — Storage driver expansion** (`pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral`). Sim prereq Compute Disks ✅.
+2. **Phase 121b — Azure sim hardening** (cloud-faithful for ACA + AZF; mirror of Phase 121).
+3. **Phase 78 — UI polish** (dark mode, design tokens, error UX, container detail modal, accessibility).
 
-Driver phases (126–127) follow the 7-step template from [PLAN.md § Driver phase template](PLAN.md#driver-phase-template-124127). Each phase starts with a `specs/CLOUD_RESOURCE_MAPPING.md` design pass before code.
+Driver phases (127) follow the 7-step template from [PLAN.md § Driver phase template](PLAN.md#driver-phase-template-124127). Each phase starts with a `specs/CLOUD_RESOURCE_MAPPING.md` design pass before code.
 
-## Active — Phase 125 (DNS driver, ready for PR + CI)
+## Active — Phase 126 (Access driver, ready for PR + CI)
 
 All sub-tasks shipped:
 
-- **125a** — `api/dns_driver.go`: `DNSMechanism` enum + `IsValid()` + `AllDNSMechanisms`. 5 mechanisms: cloud-map, cloud-dns-zone, service-discovery, private-dns-zone, none.
-- **125b** — `backends/core/dns_driver.go`: `DNSDriver` interface (`SearchDomain` + `Mechanism`), registry, no-op default (`none`), `ParseDNSMechanismEnv()` (no-fallback semantics), `DNSSearchDomainEnvIfSet()` helper.
-- **125c** — Per-backend adapters + wiring: cloudrun cloud-dns-zone, ECS cloud-map, ACA private-dns-zone. `BaseServer.DNS` field defaults to no-op; backend startup overrides. FaaS backends (cloudrun-functions, lambda, azure-functions) keep no-op until per-cloud DNS adapters land.
-- **125d** — `SOCKERLESS_DNS_SEARCH_DOMAIN` env wired through every `ContainerCreate` callsite (cloudrun, ECS, ACA, GCF, Lambda, AZF). Cloudrun + GCF bootstraps read the env var and append `search <suffix>` to `/etc/resolv.conf`.
+- **126a** — `api/access_driver.go`: `AccessMechanism` enum + `IsValid()` + `AllAccessMechanisms`. 4 mechanisms: iam-role, id-token, mTLS, none-internal.
+- **126b** — `backends/core/access_driver.go`: `AccessDriver` interface (`Mechanism` + `WorkloadPrincipal` + `AuthenticatedClient`), registry, `NoneInternalAccess` default, `ParseAccessMechanismEnv()` (no-fallback semantics).
+- **126c** — Per-backend adapters + wiring: cloudrun + cloudrun-functions `idTokenAccess` (wraps `idtoken.NewClient`), ECS + Lambda `iamRoleAccess` (returns `http.DefaultClient`; SigV4 happens at SDK layer), ACA + AZF `noneInternalAccess`. `BaseServer.Access` field defaults to `NoneInternalAccess{}`; backend startup overrides.
+- **126d** — Every `idtoken.NewClient(ctx, url)` callsite migrated through `s.Access.AuthenticatedClient(ctx, url)`. `idtoken` import removed from cloudrun + cloudrun-functions backends. `cloudrun.Config.ServiceAccount` (sourced from `SOCKERLESS_CLOUDRUN_SERVICE_ACCOUNT`) added so the workload principal is configurable.
 
-Spec: [specs/CLOUD_RESOURCE_MAPPING.md § DNS driver](specs/CLOUD_RESOURCE_MAPPING.md#dns-driver).
+Spec: [specs/CLOUD_RESOURCE_MAPPING.md § Access driver](specs/CLOUD_RESOURCE_MAPPING.md#access-driver).
 
-Next: open PR, watch CI, merge, then start Phase 126 (Access driver).
+Next: open PR, watch CI, merge, then start Phase 127 (Storage driver expansion).
 
 ## Standing rules
 
