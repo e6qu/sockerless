@@ -558,11 +558,11 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		}
 		// Route through the network-discovery driver. UseApp → CNAME,
 		// else A-record.
-		if cd, ok := s.NetworkDiscovery.(*acaCloudDNSDiscovery); ok {
+		if cd, ok := s.NetworkDiscovery.(*azurecommon.PrivateDNSDiscovery); ok {
 			if s.config.UseApp {
 				_ = cd.DeregisterContainerCNAME(s.ctx(), ep.NetworkID, hostname)
 			} else {
-				_ = cd.DeregisterContainerARecord(ep.NetworkID, hostname)
+				_ = cd.DeregisterContainerARecord(s.ctx(), ep.NetworkID, hostname)
 			}
 		} else {
 			_ = s.NetworkDiscovery.DeregisterContainer(s.ctx(), ep.NetworkID, hostname, id)

@@ -6,6 +6,7 @@ import (
 
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
+	gcpcommon "github.com/sockerless/gcp-common"
 )
 
 // NetworkCreate creates a Docker network with Cloud DNS backing.
@@ -108,7 +109,7 @@ func (s *Server) NetworkDisconnect(id string, req *api.NetworkDisconnectRequest)
 			// Caller knows the register kind (UseService → CNAME, else
 			// A-record); use the kind-specific helper to avoid double-
 			// attempting both paths.
-			if cd, ok := s.NetworkDiscovery.(*cloudDNSDiscovery); ok {
+			if cd, ok := s.NetworkDiscovery.(*gcpcommon.CloudDNSDiscovery); ok {
 				if s.config.UseService {
 					if err := cd.DeregisterContainerCNAME(s.ctx(), net.ID, hostname); err != nil {
 						s.Logger.Warn().Err(err).Msg("failed to deregister CNAME from Cloud DNS")

@@ -1,4 +1,4 @@
-package cloudrun
+package gcpcommon
 
 import "testing"
 

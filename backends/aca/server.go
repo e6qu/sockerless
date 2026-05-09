@@ -64,8 +64,30 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	}
 	s.SetSelf(s)
 	s.CloudState = &acaCloudState{server: s}
-	// Cloud-DNS network-discovery driver wraps Azure Private DNS.
-	s.NetworkDiscovery = newACACloudDNSDiscovery(s)
+	// Private DNS network-discovery driver — pattern B, lives in
+	// azure-common. Backend supplies SDK clients + state-lookup
+	// callbacks; the driver owns the Azure Private DNS + ContainerApps
+	// invoke logic.
+	s.NetworkDiscovery = azurecommon.NewPrivateDNSDiscovery(azurecommon.PrivateDNSDiscoveryConfig{
+		PrivateDNSRecords: azureClients.PrivateDNSRecords,
+		ContainerApps:     azureClients.ContainerApps,
+		ResourceGroup:     config.ResourceGroup,
+		Logger:            logger,
+		LookupNetwork: func(ctx context.Context, networkID string) (azurecommon.PrivateDNSNetworkState, bool) {
+			state, ok := s.resolveNetworkState(ctx, networkID)
+			if !ok {
+				return azurecommon.PrivateDNSNetworkState{}, false
+			}
+			return azurecommon.PrivateDNSNetworkState{DNSZoneName: state.DNSZoneName}, true
+		},
+		GetNetwork: func(networkID string) (azurecommon.PrivateDNSNetworkState, bool) {
+			state, ok := s.NetworkState.Get(networkID)
+			if !ok {
+				return azurecommon.PrivateDNSNetworkState{}, false
+			}
+			return azurecommon.PrivateDNSNetworkState{DNSZoneName: state.DNSZoneName}, true
+		},
+	})
 	s.DNS = &azurecommon.PrivateDNSZoneDNS{
 		LookupZoneName: func(ctx context.Context, networkID string) (string, error) {
 			state, ok := s.resolveNetworkState(ctx, networkID)

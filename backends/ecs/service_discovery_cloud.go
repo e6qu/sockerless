@@ -10,9 +10,6 @@ import (
 	"github.com/sockerless/api"
 )
 
-// Ensure resolve methods are available for DNS lookup integration.
-var _ = (*Server).cloudServiceResolve
-
 // cloudNamespaceCreate creates a Cloud Map private DNS namespace for a
 // Docker network. Services within the namespace are created on demand,
 // one per container hostname, so other containers can resolve each
@@ -124,123 +121,6 @@ func (s *Server) cloudNamespaceDelete(networkID string) error {
 	return nil
 }
 
-// cloudServiceRegister registers a container instance in Cloud Map so
-// other containers on the same network can resolve it by hostname.
-// A Cloud Map service per hostname is created on demand — service name
-// "postgres" in namespace "skls-foo.local" gives DNS name
-// "postgres.skls-foo.local" → instance IP. Containers add the namespace
-// as a DNS search domain (see DnsSearchDomains on the task def), so a
-// bare "postgres" lookup resolves.
-func (s *Server) cloudServiceRegister(containerID, hostname, ip, networkID string) error {
-	ns, ok := s.NetworkState.Get(networkID)
-	if !ok || ns.NamespaceID == "" {
-		return fmt.Errorf("network %s has no Cloud Map namespace", networkID)
-	}
-
-	serviceID, err := s.findOrCreateServiceForHostname(ns.NamespaceID, hostname)
-	if err != nil {
-		return err
-	}
-
-	_, err = s.aws.ServiceDiscovery.RegisterInstance(s.ctx(),
-		&servicediscovery.RegisterInstanceInput{
-			ServiceId:  aws.String(serviceID),
-			InstanceId: aws.String(containerID[:12]),
-			Attributes: map[string]string{
-				"AWS_INSTANCE_IPV4": ip,
-			},
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to register instance %s: %w", hostname, err)
-	}
-
-	s.ECS.Update(containerID, func(state *ECSState) {
-		state.ServiceID = serviceID
-	})
-
-	s.Logger.Debug().
-		Str("hostname", hostname).
-		Str("ip", ip).
-		Str("container", containerID[:12]).
-		Str("service", serviceID).
-		Msg("registered container in Cloud Map")
-
-	return nil
-}
-
-// cloudServiceDeregister removes a container's Cloud Map instance and,
-// if the service has no other instances, deletes the service itself.
-func (s *Server) cloudServiceDeregister(containerID, networkID string) error {
-	ecsState, ok := s.ECS.Get(containerID)
-	if !ok || ecsState.ServiceID == "" {
-		return nil
-	}
-
-	serviceID := ecsState.ServiceID
-
-	_, err := s.aws.ServiceDiscovery.DeregisterInstance(s.ctx(),
-		&servicediscovery.DeregisterInstanceInput{
-			ServiceId:  aws.String(serviceID),
-			InstanceId: aws.String(containerID[:12]),
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to deregister instance %s: %w", containerID[:12], err)
-	}
-
-	s.ECS.Update(containerID, func(state *ECSState) {
-		state.ServiceID = ""
-	})
-
-	// Best-effort: delete the service if empty so the DNS name is reclaimed.
-	if empty, err := s.serviceHasNoInstances(serviceID); err == nil && empty {
-		_, _ = s.aws.ServiceDiscovery.DeleteService(s.ctx(),
-			&servicediscovery.DeleteServiceInput{Id: aws.String(serviceID)},
-		)
-	}
-
-	s.Logger.Debug().
-		Str("container", containerID[:12]).
-		Str("service", serviceID).
-		Msg("deregistered container from Cloud Map")
-
-	return nil
-}
-
-// cloudServiceResolve discovers IPs for a service name within a network's
-// Cloud Map namespace.
-func (s *Server) cloudServiceResolve(serviceName, networkID string) ([]string, error) {
-	ns, ok := s.NetworkState.Get(networkID)
-	if !ok || ns.NamespaceID == "" {
-		return nil, fmt.Errorf("network %s has no Cloud Map namespace", networkID)
-	}
-
-	nsName, err := s.getNamespaceName(ns.NamespaceID)
-	if err != nil {
-		return nil, fmt.Errorf("resolve namespace for network %s: %w", networkID, err)
-	}
-
-	result, err := s.aws.ServiceDiscovery.DiscoverInstances(s.ctx(),
-		&servicediscovery.DiscoverInstancesInput{
-			NamespaceName: aws.String(nsName),
-			ServiceName:   aws.String(serviceName),
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to discover instances for %s: %w", serviceName, err)
-	}
-
-	var ips []string
-	for _, inst := range result.Instances {
-		if ip, ok := inst.Attributes["AWS_INSTANCE_IPV4"]; ok {
-			ips = append(ips, ip)
-		}
-	}
-
-	return ips, nil
-}
-
 // findNamespaceByName looks up a Cloud Map namespace by exact name and
 // returns its ID, or "" if not found. Used for idempotent creation
 func (s *Server) findNamespaceByName(name string) (string, error) {
@@ -325,63 +205,6 @@ func pollOperation(
 		sleep(interval)
 	}
 	return "", fmt.Errorf("timeout waiting for operation %s after %s", operationID, time.Duration(maxAttempts)*interval)
-}
-
-// findOrCreateServiceForHostname returns the service ID for the given
-// hostname in the namespace, creating a new Cloud Map service if none
-// exists. Each hostname gets its own A-record service so cross-container
-// DNS resolves per-name.
-func (s *Server) findOrCreateServiceForHostname(namespaceID, hostname string) (string, error) {
-	listOut, err := s.aws.ServiceDiscovery.ListServices(s.ctx(),
-		&servicediscovery.ListServicesInput{
-			Filters: []sdtypes.ServiceFilter{
-				{
-					Name:      sdtypes.ServiceFilterNameNamespaceId,
-					Values:    []string{namespaceID},
-					Condition: sdtypes.FilterConditionEq,
-				},
-			},
-		},
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to list services in namespace: %w", err)
-	}
-	for _, svc := range listOut.Services {
-		if aws.ToString(svc.Name) == hostname {
-			return aws.ToString(svc.Id), nil
-		}
-	}
-
-	svcOut, err := s.aws.ServiceDiscovery.CreateService(s.ctx(),
-		&servicediscovery.CreateServiceInput{
-			Name:        aws.String(hostname),
-			NamespaceId: aws.String(namespaceID),
-			DnsConfig: &sdtypes.DnsConfig{
-				DnsRecords: []sdtypes.DnsRecord{
-					{Type: sdtypes.RecordTypeA, TTL: aws.Int64(10)},
-				},
-			},
-		},
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to create Cloud Map service %s: %w", hostname, err)
-	}
-	return aws.ToString(svcOut.Service.Id), nil
-}
-
-// serviceHasNoInstances reports whether a Cloud Map service has zero
-// registered instances (used to decide whether to delete a service on
-// the last deregistration).
-func (s *Server) serviceHasNoInstances(serviceID string) (bool, error) {
-	out, err := s.aws.ServiceDiscovery.ListInstances(s.ctx(),
-		&servicediscovery.ListInstancesInput{
-			ServiceId: aws.String(serviceID),
-		},
-	)
-	if err != nil {
-		return false, err
-	}
-	return len(out.Instances) == 0, nil
 }
 
 // searchDomainsForContainer collects the Cloud Map namespace names

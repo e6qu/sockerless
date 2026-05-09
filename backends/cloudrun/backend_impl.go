@@ -779,7 +779,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		// Route through the network-discovery driver. Caller knows the
 		// kind (UseService → CNAME, else A-record); use kind-specific
 		// helpers to avoid double-attempting both paths.
-		if cd, ok := s.NetworkDiscovery.(*cloudDNSDiscovery); ok {
+		if cd, ok := s.NetworkDiscovery.(*gcpcommon.CloudDNSDiscovery); ok {
 			if s.config.UseService {
 				if err := cd.DeregisterContainerCNAME(s.ctx(), ep.NetworkID, hostname); err != nil {
 					s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to deregister CNAME from Cloud DNS")
