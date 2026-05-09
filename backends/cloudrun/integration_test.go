@@ -112,6 +112,25 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		failClean("ERROR: docker build eval-arithmetic image: %v\n%s", err, out)
 	}
 
+	// AR-tag the image so the sim's Cloud Build executor's `FROM`
+	// resolves locally (the cloudrun backend rewrites unqualified
+	// docker.io refs to AR URLs via gcpcommon.ResolveGCPImageURI).
+	// Production deployments would have the image already in AR; the
+	// local tag is the equivalent for tests.
+	arTag := "us-central1-docker.pkg.dev/sim-project/docker-hub/library/" + evalImageName
+	if out, err := exec.Command("docker", "tag", evalImageName, arTag).CombinedOutput(); err != nil {
+		failClean("ERROR: docker tag eval-arithmetic AR-form: %v\n%s", err, out)
+	}
+	// Same for alpine — tests that don't use eval-arithmetic still
+	// pass plain "alpine:latest" which the backend rewrites to AR.
+	if out, err := exec.Command("docker", "pull", "alpine:latest").CombinedOutput(); err != nil {
+		failClean("ERROR: docker pull alpine: %v\n%s", err, out)
+	}
+	alpineARTag := "us-central1-docker.pkg.dev/sim-project/docker-hub/library/alpine:latest"
+	if out, err := exec.Command("docker", "tag", "alpine:latest", alpineARTag).CombinedOutput(); err != nil {
+		failClean("ERROR: docker tag alpine AR-form: %v\n%s", err, out)
+	}
+
 	var endpointURL, project, bootstrapPath, buildBucket, saJSONPath string
 	switch target {
 	case "sim":
