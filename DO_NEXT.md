@@ -8,20 +8,24 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Resume here
 
-**Phase 79 step 2: `sockerless.yaml` topology store.**
+**Phase 79 step 4: granular `make` targets.**
 
-State of play after #137:
-- `cmd/sockerless-admin/instance.go` — `Instance` type + per-kind `Validate` + `DeriveLegacyInstances`.
-- Existing `ProjectConfig` still uses one-JSON-per-project at `~/.sockerless/admin/projects/*.json` and the SimPort + BackendPort tuple shape.
+State of play on this branch:
+- ✓ Step 1: `Instance` type (in #137).
+- ✓ Step 2: `Topology` struct + YAML store + `MigrateLegacyProjects`.
+- ✓ Step 3: `TopologyManager` singleton + REST endpoints (`GET /api/v1/topology`, `PUT /api/v1/topology`, `GET /api/v1/topology/instances`, `GET /api/v1/topology/projects/{project}/instances/{instance}`). Bootstrap calls `LoadOrMigrate` so admin reads the yaml or migrates from legacy on first start.
 
-Next:
+Next (step 4):
 
-1. Add `Topology` struct (`{ Projects []ProjectConfig; Ports PortConfig }`) and YAML marshaller in `cmd/sockerless-admin/topology_store.go`.
-2. Each `ProjectConfig` gains `Instances []Instance` (additive — old SimPort/BackendPort fields stay for back-compat).
-3. Loader logic: if `./sockerless.yaml` exists → use it. Else if `~/.sockerless/admin/projects/*.json` exist → read them, derive instances via `DeriveLegacyInstances`, write `./sockerless.yaml`, leave the JSONs alone for now.
-4. Tests: round-trip YAML, legacy-migration produces expected instance list.
+1. Add `make/components.mk` with granular targets:
+   - `make start-component KIND=sim CLOUD=aws NAME=my-sim PORT=4500`
+   - `make stop-component NAME=my-sim`
+   - `make rebuild-component KIND=sim CLOUD=aws`
+   - `make logs-component NAME=my-sim`
+2. Existing `make stack-X-Y` targets in `make/stack.mk` rewrite as wrappers that compose `start-component` calls.
+3. PID + log files keyed by component name in `.stack-pids/<name>.{pid,log}`.
 
-Then phases 79.3–79.6 (REST endpoints, make targets, port allocator, migration) per [PLAN.md](PLAN.md).
+Then 79.5 (free-port helper + auto-allocation) and 79.6 (admin lifecycle endpoints invoke the new make targets) per [PLAN.md](PLAN.md).
 
 ## Invariants (re-state on every commit)
 
