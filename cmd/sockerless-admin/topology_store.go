@@ -45,10 +45,9 @@ type PortRange struct {
 // make/stack.mk so day-1 behaviour is unchanged.
 func DefaultPortRanges() map[InstanceKind]PortRange {
 	return map[InstanceKind]PortRange{
-		InstanceKindSim:            {From: 4500, To: 4999},
-		InstanceKindBackend:        {From: 3300, To: 3399},
-		InstanceKindBleephub:       {From: 5500, To: 5599},
-		InstanceKindFrontendDocker: {From: 9300, To: 9399},
+		InstanceKindSim:      {From: 4500, To: 4999},
+		InstanceKindBackend:  {From: 3300, To: 3399},
+		InstanceKindBleephub: {From: 5500, To: 5599},
 	}
 }
 

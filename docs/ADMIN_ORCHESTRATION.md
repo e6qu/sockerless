@@ -2,7 +2,7 @@
 
 How `sockerless-admin` controls multiple sims / backends / bleephubs across multiple projects, declaratively from `sockerless.yaml` at the repo root.
 
-> **Invariant:** sims, backends, bleephub, frontend-docker remain independently configurable, buildable, runnable. Admin reads only `/v1/health`, `/v1/info`, env vars they already document. No admin-required env vars on components, no startup registration, no "I'm being managed" hooks. A component started via admin behaves identically to one started by hand.
+> **Invariant:** sims, backends, bleephub remain independently configurable, buildable, runnable. Admin reads only `/v1/health`, `/v1/info`, env vars they already document. No admin-required env vars on components, no startup registration, no "I'm being managed" hooks. A component started via admin behaves identically to one started by hand.
 
 ## sockerless.yaml schema
 
@@ -25,10 +25,9 @@ projects:
 
 ports:
   ranges:
-    sim:             { from: 4500, to: 4999 }
-    backend:         { from: 3300, to: 3399 }
-    bleephub:        { from: 5500, to: 5599 }
-    frontend-docker: { from: 9300, to: 9399 }
+    sim:      { from: 4500, to: 4999 }
+    backend:  { from: 3300, to: 3399 }
+    bleephub: { from: 5500, to: 5599 }
 ```
 
 ### Field rules
@@ -40,7 +39,6 @@ ports:
   - `sim`: requires `cloud` ∈ {aws, gcp, azure}.
   - `backend`: requires `cloud` + `backend` ∈ valid pair (e.g. cloud=aws + backend=ecs|lambda).
   - `bleephub`: just `port`.
-  - `frontend-docker`: just `port`.
 - **Validation is fail-loud.** Duplicate names, unknown kinds, port collisions, missing sim refs → admin refuses to load / refuses the PUT. No silent fallback.
 
 ## Migration from legacy per-project JSONs
@@ -66,7 +64,7 @@ All under `/api/v1/topology`:
 | `POST   /api/v1/topology/projects/{project}/instances/{instance}/start` | shells `make start-component` |
 | `POST   /api/v1/topology/projects/{project}/instances/{instance}/stop` | shells `make stop-component` |
 | `POST   /api/v1/topology/projects/{project}/instances/{instance}/rebuild` | shells `make rebuild-component` |
-| `POST   /api/v1/topology/allocate-port?kind=<sim|backend|bleephub|frontend-docker>` | next free port from the configured pool |
+| `POST   /api/v1/topology/allocate-port?kind=<sim|backend|bleephub>` | next free port from the configured pool |
 
 Status codes:
 - 400 — invalid JSON body or validation failure (renames in `PUT instance`, port collisions, etc).

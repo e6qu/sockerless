@@ -16,7 +16,7 @@ State [STATUS.md](STATUS.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md
 8. **Sim parity per commit** — any new SDK call adds a sim handler + matrix row in the same commit.
 9. **Single work-branch rule** — all in-flight work lands on one branch. User handles every merge.
 10. **Cross-cloud is permanently off the table** — cloud-specific drivers extend the generic shape; cross-cloud duplication is fine, in-cloud duplication consolidates into `*-common`.
-11. **Components stay decoupled from admin / UI.** Sims, backends, bleephub, frontend-docker remain independently configurable, buildable, runnable. Admin reads only what they already expose (`/v1/health`, `/v1/info`, env vars). No admin-required env vars on components, no startup registration, no "I'm being managed" hooks.
+11. **Components stay decoupled from admin / UI.** Sims, backends, bleephub remain independently configurable, buildable, runnable. Admin reads only what they already expose (`/v1/health`, `/v1/info`, env vars). No admin-required env vars on components, no startup registration, no "I'm being managed" hooks.
 
 ## Closed phases (PR index)
 
@@ -45,7 +45,7 @@ Dark mode, error UX, Container detail modal, accessibility, perf, documentation.
 
 ### Phase 79 — Topology + admin config service ✓ complete (PR #138)
 
-Admin owns the source of truth for "what instances exist". `sockerless.yaml` at repo root carries `projects[]`, each with `instances[]` (sim / backend / bleephub / frontend-docker, 0..N of each). Project model preserved. Existing per-project JSONs auto-migrate.
+Admin owns the source of truth for "what instances exist". `sockerless.yaml` at repo root carries `projects[]`, each with `instances[]` (sim / backend / bleephub, 0..N of each). Project model preserved. Existing per-project JSONs auto-migrate.
 
 - ✓ Step 1: `Instance` type + per-kind validate + legacy derivation (#137).
 - ✓ Step 2: `sockerless.yaml` topology store + `MigrateLegacyProjects` (#138).
@@ -85,7 +85,7 @@ Mark instance unhealthy on ANY of: process exit, `/v1/health` non-2xx, no `/v1/h
 
 ### Phase 87 — Centralized observability (logs + traces) — Stack A
 
-**Goal:** every sockerless component (sim, backend, bleephub, admin, frontend-docker) emits structured logs + traces to a local OpenTelemetry pipeline. Admin UI deep-links to per-instance log + trace queries.
+**Goal:** every sockerless component (sim, backend, bleephub, admin) emits structured logs + traces to a local OpenTelemetry pipeline. Admin UI deep-links to per-instance log + trace queries.
 
 **Stack A — Apache 2.0 throughout, three binaries:**
 - **OpenTelemetry Collector** (Apache 2.0) receives OTLP at `localhost:4317`, fans out: logs → VictoriaLogs OTLP HTTP, traces → Jaeger OTLP, optional metrics → VictoriaMetrics.

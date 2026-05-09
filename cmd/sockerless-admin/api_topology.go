@@ -16,7 +16,7 @@ import (
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/start
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/stop
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/rebuild
-//	POST   /api/v1/topology/allocate-port?kind=<sim|backend|bleephub|frontend-docker>
+//	POST   /api/v1/topology/allocate-port?kind=<sim|backend|bleephub>
 //
 // Lifecycle endpoints shell `make {start|stop|rebuild}-component` (see
 // make/components.mk). Components stay decoupled — the make targets
@@ -198,7 +198,7 @@ func handleAllocatePort(mgr *TopologyManager) http.HandlerFunc {
 		kind := InstanceKind(r.URL.Query().Get("kind"))
 		if !IsValidInstanceKind(kind) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{
-				"error": "kind query param must be one of sim, backend, bleephub, frontend-docker",
+				"error": "kind query param must be one of sim, backend, bleephub",
 			})
 			return
 		}
