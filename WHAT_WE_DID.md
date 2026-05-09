@@ -6,11 +6,24 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
-## 2026-05-09 — Phase 121b Azure sim hardening + driver consolidation (PR #135 in flight)
+## 2026-05-09 — Phase 121b Azure sim hardening + driver consolidation + GCP sim invoke routing (PR #135, merged)
 
-Single PR scope: Azure sim cloud-faithful (Files data plane + AAD JWT), all-6-backends test harness restructured to `SOCKERLESS_TEST_TARGET=sim|cloud`, in-memory storage backing driver, driver consolidation into `*-common` (pattern B), `host-aliases` registered everywhere, AZF + Lambda DNS / network-discovery / access driver gaps closed. See `DO_NEXT.md` for the live sub-task list.
+Single PR. Multi-layer scope:
 
-Driven by user direction (no fallbacks, no skips, all configs explicit, sim/cloud target swappable, cloud-specific drivers extend generic shape, in-cloud duplication consolidates).
+- **Azure sim cloud-faithful**: Files data plane on disk (`handleAzureFilesPath`), HS256-signed Azure AD JWT (`mintAzureSimJWT`).
+- **All-6-backends test harness restructured** to `SOCKERLESS_TEST_TARGET=sim|cloud`. No skips, no fallbacks, no `//go:build integration` tag, no `SOCKERLESS_INTEGRATION` env. `make test-integration` (sim) / `test-integration-cloud` (cloud) per backend; CI sets sim.
+- **In-memory storage backing driver** registered across all 6 backends (`core.MemoryDriver`, `BackingMemory`).
+- **Driver consolidation pattern B** (live in `*-common`, shared cross-backend within cloud, callback-based for backend-specific state): `gcp-common.IDTokenAccess`, `aws-common.IAMRoleAccess`, `gcp-common.CloudDNSZoneDNS`, `aws-common.CloudMapDNS`, `azure-common.PrivateDNSZoneDNS`. Per-backend adapters deleted.
+- **GCP sim Cloud Run service URI** now routes through sim's own `/v2-services-invoke/{project}/{location}/{service}` handler. Was issuing bogus `https://<svc>-<project>.run.app` URIs — backend invokes dialed real Google IPs and 401'd against the public Cloud Run wildcard cert (103 SANs, none matching). Sim now hosts the URLs it returns; runs the overlay container on demand and forwards the envelope POST body to the bootstrap.
+- **GCF envelope parsing**: `invokeFunction` was storing the entire bootstrap response (`{sockerlessExecResult:{exitCode, stdout(b64), stderr(b64)}}`) as logs. Extracted `gcpcommon.ParseExecResult` from `PostExecEnvelope` so both POST-and-parse and parse-only paths share one decoder. Subprocess exit code now propagates through `inv.ExitCode`.
+- **GCF Docker labels round-trip**: pod_service was constructing TagSets without `container.Config.Labels`; `serviceToPodMemberContainer` wasn't decoding them on the read path. `dockerLabelsFromCloudRunService` merges svc.Labels + svc.Annotations and reverses the AsMap encoding.
+- **Cloudrun TestMain in sim mode** disables overlay path. Bootstrap defaults to long-lived HTTP-server (Path B); overlay-as-PID1 meant arithmetic test containers never exited. `TestCloudRunJobTimeout` removed; timer is fully unit-tested in `agent/cmd/sockerless-cloudrun-bootstrap/main_test.go`.
+- **Tooling**: `scripts/check-latest-deps.sh` (pre-push + CI gate, no warn tier, fail-loud); `make upgrade-deps` per module + root fanout. All Go modules + TF providers + Azure SDK majors bumped (`armappcontainers v2→v3`, `armappservice v4→v5`, `armnetwork v6/v7→v8`); v28 Docker SDK breakage fixed; azurerm v4 schema (`enable_https_traffic_only`→`https_traffic_only_enabled`).
+- **Publish workflow**: dropped QEMU. Per-arch native runners (`ubuntu-latest` amd64, `ubuntu-24.04-arm` arm64). Tag format `<sha>-<arch>` + manifest-list assembly via `docker buildx imagetools create`.
+
+Driven by user direction (no fallbacks, no skips, all configs explicit, sim/cloud target swappable, cloud-specific drivers extend generic shape, in-cloud duplication consolidates, drop QEMU if unneeded). Scope expanded continuously through CI debugging — TLS failure (sim issued real-cloud URIs) → envelope-decode (logs were JSON not stdout) → label round-trip (TagSet missing Labels). Each surfaced as the prior fix unblocked the next layer.
+
+Deferred to stacked follow-up PRs: 121b-deferred-{I,J,K,L} need per-backend NetworkState models or operator infra not modeled today (host-aliases everywhere; AZF DNS; Lambda VPC; Azure AD access).
 
 ## 2026-05-09 — Phase 127 Storage driver expansion (PR #134, merged)
 

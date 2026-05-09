@@ -37,13 +37,19 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 
 ## Roadmap (ordered)
 
-### 1. Phase 121b — Azure sim hardening + driver consolidation (in flight, PR #135)
-
-See [DO_NEXT.md](DO_NEXT.md) for the full sub-task list. Headline: Azure sim cloud-faithful (Files data plane + AAD JWT), all-6-backends test harness restructured to `SOCKERLESS_TEST_TARGET=sim|cloud` (no skips, no fallbacks, no build tags), in-memory storage backing driver, driver consolidation into `*-common` (pattern B), `host-aliases` registered everywhere, AZF + Lambda DNS / network-discovery / access driver gaps closed.
-
-### 2. Phase 78 — UI polish
+### 1. Phase 78 — UI polish (next)
 
 Dark mode, design tokens, error handling UX, container detail modal, auto-refresh, performance audit, accessibility, E2E smoke, documentation.
+
+### 2. Phase 121b deferred follow-ups (queued, stacked PRs)
+
+Each its own mini-phase — needs per-backend NetworkState model or operator infra not modeled today:
+
+- **121b-deferred-I** Register `host-aliases` discovery as opt-in on every backend (env-var selection across 6 backends).
+- **121b-deferred-J** AZF DNS adapter → `private-dns-zone` — needs AZF NetworkState model + zone creation flow.
+- **121b-deferred-K** Lambda DNS + network discovery → `cloud-map` — needs Lambda VPC-mode wiring.
+- **121b-deferred-L** AZF + ACA `id-token` access via Azure AD — needs `azure-common.AzureADAccess` type + Easy Auth integration design.
+- Network discovery adapter consolidation — pass-through methods on `*Server`; consolidating requires moving the underlying methods.
 
 ## Driver phase template
 
