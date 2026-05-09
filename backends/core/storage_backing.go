@@ -68,6 +68,24 @@ const (
 	// (sequential whole-tar uploads — FUSE-safe). New SharedVolumes MUST
 	// use BackingGCSSync.
 	BackingGCSFuse StorageBacking = "gcs-fuse"
+
+	// BackingPDEphemeral — Compute Engine Persistent Disk attached to a
+	// Cloud Run / Cloud Run Jobs instance as an ephemeral volume. The
+	// underlying PD is sockerless-managed (parent cost = $/GiB-stored);
+	// the per-task attachment lives only for the task's lifecycle.
+	BackingPDEphemeral StorageBacking = "pd-ephemeral"
+
+	// BackingEFSEphemeral — EFS access point on a sockerless-managed
+	// filesystem, attached to an ECS task / Lambda function as an
+	// ephemeral mount. Parent EFS bills per-GiB-stored; the access-point
+	// attachment is task-scoped.
+	BackingEFSEphemeral StorageBacking = "efs-ephemeral"
+
+	// BackingAzureFilesEphemeral — Azure Files share on a
+	// sockerless-managed storage account, attached to an ACA job /
+	// Azure Function App as an ephemeral mount. Parent share bills
+	// per-GiB-stored; the per-task attachment is task-scoped.
+	BackingAzureFilesEphemeral StorageBacking = "azure-files-ephemeral"
 )
 
 // SharedVolumeRef is the cloud-agnostic volume reference passed to drivers.
@@ -77,7 +95,22 @@ type SharedVolumeRef struct {
 	Name          string         // logical volume name
 	ContainerPath string         // mount path inside the consumer container
 	Backing       StorageBacking // resolves a driver in the Registry
-	GCSBucket     string         // for gcs-sync + gcs-fuse drivers
+	ReadOnly      bool           // read-only mount
+
+	// GCS-family fields (gcs-sync, gcs-fuse)
+	GCSBucket string
+
+	// pd-ephemeral fields
+	PDDiskSizeGB int
+	PDZone       string
+
+	// efs-ephemeral fields
+	EFSFileSystemID  string
+	EFSAccessPointID string
+
+	// azure-files-ephemeral fields
+	AzureStorageAccount string
+	AzureShareName      string
 }
 
 // StorageBackingDriver is the pluggable interface. Each driver knows how
@@ -116,11 +149,14 @@ type StorageBackingDriver interface {
 // BackingSpec is the cloud-agnostic mount description. Per-backend
 // volume translators consume this and emit the cloud's actual volume
 // protobuf (runpb.Volume for Cloud Run, ECS Volume{} for AWS, etc.).
-// Exactly one of EmptyDir / GCS / Ephemeral is set.
+// Exactly one payload field is set; Kind says which.
 type BackingSpec struct {
-	Kind     StorageBacking
-	EmptyDir *EmptyDirSpec // emptyDir + gcs-sync (which uses emptyDir as the local mount)
-	GCS      *GCSSpec      // gcs-fuse (direct FUSE mount)
+	Kind                StorageBacking
+	EmptyDir            *EmptyDirSpec            // emptyDir + gcs-sync (which uses emptyDir as the local mount)
+	GCS                 *GCSSpec                 // gcs-fuse (direct FUSE mount)
+	PDEphemeral         *PDEphemeralSpec         // pd-ephemeral (Compute Engine PD ephemeral attach)
+	EFSEphemeral        *EFSEphemeralSpec        // efs-ephemeral (EFS access point on managed FS)
+	AzureFilesEphemeral *AzureFilesEphemeralSpec // azure-files-ephemeral (Azure Files share on managed account)
 }
 
 // EmptyDirSpec describes an in-memory tmpfs volume.
@@ -135,6 +171,33 @@ type GCSSpec struct {
 	Bucket       string
 	MountOptions []string // e.g. ["implicit-dirs", "metadata-cache:ttl-secs=0"]
 	ReadOnly     bool
+}
+
+// PDEphemeralSpec describes a Compute Engine Persistent Disk attached
+// as an ephemeral volume to a Cloud Run / Cloud Run Jobs instance.
+// Lifecycle = task lifecycle. Translators map this to the cloud's
+// per-instance disk attach API.
+type PDEphemeralSpec struct {
+	DiskSizeGB int    // requested disk size; cloud rounds up to next valid quantum
+	Zone       string // zone for the underlying PD; empty = backend-region default
+}
+
+// EFSEphemeralSpec describes an EFS access point on a sockerless-managed
+// filesystem, attached as an ephemeral mount to an ECS task / Lambda
+// function. Lifecycle = task lifecycle.
+type EFSEphemeralSpec struct {
+	FileSystemID  string // EFS filesystem ID (fs-...)
+	AccessPointID string // EFS access point ID (fsap-...)
+	ReadOnly      bool
+}
+
+// AzureFilesEphemeralSpec describes an Azure Files share on a
+// sockerless-managed storage account, attached as an ephemeral mount
+// to an ACA job / Azure Function App. Lifecycle = task lifecycle.
+type AzureFilesEphemeralSpec struct {
+	StorageAccount string // storage account hosting the share
+	ShareName      string // share name within the account
+	ReadOnly       bool
 }
 
 // StorageBackingRegistry resolves a StorageBacking to its driver. Backends
@@ -171,8 +234,9 @@ func (r *StorageBackingRegistry) Register(d StorageBackingDriver) {
 // and silent default selection masks operator misconfiguration.
 func (r *StorageBackingRegistry) Resolve(b StorageBacking) (StorageBackingDriver, error) {
 	if b == "" {
-		return nil, fmt.Errorf("storage backing: SharedVolume.Backing is required (no default — set explicitly: %q, %q, or %q)",
-			BackingEmptyDir, BackingGCSSync, BackingGCSFuse)
+		return nil, fmt.Errorf("storage backing: SharedVolume.Backing is required (no default — set explicitly: %q, %q, %q, %q, %q, or %q)",
+			BackingEmptyDir, BackingGCSSync, BackingGCSFuse,
+			BackingPDEphemeral, BackingEFSEphemeral, BackingAzureFilesEphemeral)
 	}
 	if d, ok := r.drivers[b]; ok {
 		return d, nil

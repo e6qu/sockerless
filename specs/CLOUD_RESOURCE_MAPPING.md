@@ -662,6 +662,63 @@ The driver does NOT mint workload-side credentials (the workload picks those up 
 4. `BaseServer.Access` field; defaults to `NoneInternalAccess{}`; backend startup overrides.
 5. Every existing `idtoken.NewClient(ctx, url)` callsite (cloudrun: `exec_invoke.go`, `start_service.go`; cloudrun-functions: `exec_invoke.go`, `pod_service.go`, `containers.go`) migrated to `s.Access.AuthenticatedClient(ctx, url)`.
 
+## Storage backing — ephemeral managed FS expansion
+
+Phase 123 shipped `emptyDir` / `gcs-sync` / `gcs-fuse` against the GCP backends. This phase opens the `BackingSpec` union to the other clouds' equivalent zero-idle-cost ephemeral managed FS primitives:
+
+| Backing | Cloud | Resource | Backend wiring |
+|---|---|---|---|
+| `pd-ephemeral` | GCP | Compute Engine Persistent Disk attached as a Cloud Run / Cloud Run Jobs ephemeral volume (lifecycle = task lifecycle) | cloudrun, cloudrun-functions |
+| `efs-ephemeral` | AWS | EFS access point on a sockerless-managed filesystem (lifecycle = task lifecycle) | ecs, lambda |
+| `azure-files-ephemeral` | Azure | Azure Files share on a sockerless-managed storage account (lifecycle = task lifecycle) | aca, azure-functions |
+
+All three follow the project's no-idle-cost directive: the sockerless-managed parent resource (PD, EFS filesystem, Azure Files share) bills per-GiB-stored, but the per-task ephemeral attachment has zero idle cost when no work is happening. None of them require a long-lived NFS / Filestore / Memorystore.
+
+### Driver shape (extends `core.StorageBacking` + `core.BackingSpec`)
+
+```go
+const (
+    BackingPDEphemeral         StorageBacking = "pd-ephemeral"
+    BackingEFSEphemeral        StorageBacking = "efs-ephemeral"
+    BackingAzureFilesEphemeral StorageBacking = "azure-files-ephemeral"
+)
+
+type BackingSpec struct {
+    Kind                StorageBacking
+    EmptyDir            *EmptyDirSpec
+    GCS                 *GCSSpec
+    PDEphemeral         *PDEphemeralSpec         // pd-ephemeral
+    EFSEphemeral        *EFSEphemeralSpec        // efs-ephemeral
+    AzureFilesEphemeral *AzureFilesEphemeralSpec // azure-files-ephemeral
+}
+
+type PDEphemeralSpec         struct{ DiskSizeGB int; Zone string }
+type EFSEphemeralSpec        struct{ FileSystemID string; AccessPointID string; ReadOnly bool }
+type AzureFilesEphemeralSpec struct{ StorageAccount string; ShareName string; ReadOnly bool }
+```
+
+The drivers do NOT replace `gcs-sync` (which remains the default for shared workspaces under cell-7+8 patterns). `pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral` are the *cloud-native ephemeral mount* path: when an operator wants the workload to see a real POSIX filesystem (e.g. for build caches that don't survive the task) without paying for an always-on NFS.
+
+### Per-cloud driver locations
+
+- `backends/gcp-common/storage_pdephemeral.go` — `PDEphemeralDriver`.
+- `backends/aws-common/storage_efsephemeral.go` — `EFSEphemeralDriver`.
+- `backends/azure-common/storage_azurefilesephemeral.go` — `AzureFilesEphemeralDriver`.
+
+Each driver's `CloudSpec` returns a `BackingSpec` populated with the corresponding payload. `PreExec` / `PostExec` are no-ops (live filesystem; nothing to sync).
+
+### Operator selection
+
+Each backend's `SharedVolume.Backing` field gates which driver runs. New backends (and ECS / Lambda / ACA / AZF migrations) require explicit `Backing` values per the no-fallbacks directive.
+
+### Migration
+
+1. Extend `core.storage_backing.go` constants + `BackingSpec` union.
+2. Add 3 per-cloud driver impls.
+3. Backend startup wires the appropriate driver into the per-backend `StorageBackingRegistry`.
+4. Per-backend volume translators consume the new `BackingSpec.{PDEphemeral,EFSEphemeral,AzureFilesEphemeral}` payloads and emit the cloud's actual volume protobuf.
+5. Each backend's `SharedVolume` config struct gains a `Backing` field (uniform with cloudrun/gcf precedent).
+
 ## Volume provisioning per backend
 
 Real per-cloud volume provisioning: ECS + Lambda → EFS access points; Cloud Run + GCF → GCS buckets; ACA + AZF → Azure Files shares. Host-path binds remain rejected (no host filesystem in the cloud).
