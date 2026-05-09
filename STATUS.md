@@ -6,15 +6,26 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | none — `main` clean |
+| Active branch | `docs/state-save-post-121b-finish` (PR #137) — Phase 78 UI polish in flight |
 | Last merged | PR #136 — Phase 121b finish: driver consolidation, host-aliases everywhere, AZF/Lambda DNS, Azure AD access (2026-05-10) |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
 | Bugs | 0 open. |
 | Live infra | None up. |
 
-## Next — Phase 78 (UI polish)
+## In flight — Phase 78 UI polish (PR #137)
 
-Phase 121b complete (#135 + #136 merged). Next queued: Phase 78 (UI polish across the 12 UI packages). After that: Phases 91–94 (real per-cloud volume provisioning), live-cloud validation track. See [PLAN.md](PLAN.md) for the ordered list.
+Across the 12 UI packages (core + 6 cloud backends + docker backend + docker frontend + admin + bleephub):
+
+- ✓ **Dark mode + design tokens.** `useTheme` hook (localStorage + prefers-color-scheme + dark default) + `ThemeToggle` wired into `AppShell` sidebar footer. Tokens already existed in `core/src/styles/tokens.css`; the toggle activates them.
+- ✓ **Error UX.** `ToastProvider` mounts inside every `BackendApp` / `SimulatorApp`; `useToast` / `useReportError` / `useToastQueryErrors` push transient notifications. `InlineError` covers in-page operation failures. Wired into ContainersPage / OverviewPage / MetricsPage / ResourcesPage with a Retry button.
+- ✓ **Container detail modal.** `Modal` wraps native `<dialog>` (focus trap + ESC + backdrop). `ContainerDetailModal` opens from row click on the Containers page.
+- ✓ **Auto-refresh.** TanStack Query `refetchInterval` already set; `refetchIntervalInBackground` defaults to false so polling pauses when the tab is hidden. Validated, no code change needed.
+- ✓ **Accessibility.** DataTable sort headers as real `<button>`s + `aria-sort`; clickable rows get `tabIndex` + `role=button` + Enter/Space handler; AppShell skip-to-main link + `<aside aria-label>` + `<nav aria-label>` + `<main id tabIndex={-1}>`; Spinner gets `role="status"`.
+- ✓ **Performance.** DataTable hover moved from inline mouseEnter/mouseLeave to CSS attribute selectors; bundle sizes verified (100–400 KB gzipped per app, mostly framework).
+- ✓ **Documentation.** `ui/README.md` (workspace map) + `ui/packages/core/README.md` (exports + dev/test commands).
+- E2E (Playwright) — existing tests still pass; deferred adding more since the scaffolding already exists per-package and isn't part of CI.
+
+After 121b finish: live-cloud validation track + Phases 91–94 (real per-cloud volume provisioning).
 
 Initial scope shipped in PR #135:
 

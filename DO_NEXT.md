@@ -4,20 +4,21 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Branch
 
-`main` clean. PR #136 merged 2026-05-10 (Phase 121b finish).
+`docs/state-save-post-121b-finish` (PR #137). Started as a docs state-save after Phase 121b finish (#136); user re-scoped the same PR to carry Phase 78 (UI polish) so the branch carries both.
 
-## Next — Phase 78 (UI polish)
+## Active — Phase 78 UI polish (PR #137)
 
 Across the 12 UI packages (core + 6 cloud backends + docker backend + docker frontend + admin + bleephub):
 
-- Dark mode + design tokens (currently light-only, no token system).
-- Error handling UX (toast/inline banners; today errors hit the console).
-- Container detail modal (today inline expansion; modal lets users open multiple).
-- Auto-refresh (manual refresh today; needs interval + visibility-aware cadence).
-- Performance audit (TanStack Query hit-rate; bundle size per package).
-- Accessibility (focus order, ARIA roles, keyboard nav, screen-reader labels).
-- E2E smoke (Playwright on the Vite dev server against a sim-mode backend).
-- Documentation (per-package README; component story for each shared piece).
+- ✓ **Dark mode + design tokens.** `useTheme` + `ThemeToggle` (sidebar footer).
+- ✓ **Error UX.** `ToastProvider` (top-right stack) + `useToast` + `useReportError`; `InlineError` (in-page banner) wired into every list page with Retry.
+- ✓ **Container detail modal.** Native `<dialog>`-backed `Modal` + row-click on the Containers page.
+- ✓ **Auto-refresh.** TanStack Query polling already set; visibility-pause was already correct (default).
+- ✓ **Accessibility.** DataTable sort headers as buttons + `aria-sort`, clickable rows keyboard-activatable, AppShell skip-link + landmark labels, Spinner role.
+- ✓ **Performance.** DataTable hover via CSS selectors, not inline handlers; bundle sizes verified.
+- ✓ **Documentation.** Workspace + core READMEs.
+
+CI green pending; PR ready for merge once it passes.
 
 ## Queued (after 78)
 
@@ -43,9 +44,9 @@ Initial scope (#135):
 - Publish workflow: dropped QEMU; per-arch native runners; `<sha>-<arch>` + manifest-list.
 
 Finish (#136):
-- Network-discovery adapter consolidation into `*-common` (cloudMapDiscovery, cloudDNSDiscovery, acaCloudDNSDiscovery + their underlying *Server methods).
-- Host-aliases discovery opt-in on every backend (`Config.NetworkDiscovery` typed field; `SOCKERLESS_<X>_NETWORK_DISCOVERY` env).
-- AZF NetworkState model + per-network Private DNS zone provisioning + cloud-dns case.
-- Lambda NetworkState + EC2/ServiceDiscovery clients + Cloud Map namespace lifecycle + service-mesh case.
-- New `api.AccessMechanismAzureAD` + `azurecommon.AzureADAccess` (DefaultAzureCredential, per-request bearer token).
-- DNS driver + cloud-side resource provisioning gated on matching NetworkDiscovery selection (no dead provisioning).
+- Network-discovery adapter consolidation into `*-common`.
+- Host-aliases discovery opt-in on every backend.
+- AZF NetworkState model + per-network Private DNS zone.
+- Lambda NetworkState + EC2/ServiceDiscovery clients + Cloud Map namespace lifecycle.
+- New `api.AccessMechanismAzureAD` + `azurecommon.AzureADAccess`.
+- DNS driver + cloud-side resource provisioning gated on matching NetworkDiscovery.
