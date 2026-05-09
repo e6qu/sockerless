@@ -57,6 +57,15 @@ export function DataTable<T>({
         borderRadius: "var(--radius-sm)",
       }}
     >
+      <style>{`
+        .dt-row { transition: background-color 0.1s var(--ease-out-quint); }
+        .dt-row[data-row-stripe="even"] { background: var(--color-surface); }
+        .dt-row[data-row-stripe="odd"]  { background: var(--color-bg-subtle); }
+        .dt-row[data-clickable="true"]:hover,
+        .dt-row[data-clickable="true"]:focus-visible {
+          background: color-mix(in oklch, var(--color-accent-soft) 55%, var(--color-surface));
+        }
+      `}</style>
       <div
         className="flex items-center justify-between gap-4 px-3 py-2"
         style={{ borderBottom: "1px solid var(--color-border)" }}
@@ -180,26 +189,13 @@ export function DataTable<T>({
                   role={onRowClick ? "button" : undefined}
                   aria-label={onRowClick ? "Open row detail" : undefined}
                   data-row-index={i}
-                  className="reveal"
+                  data-clickable={onRowClick ? "true" : undefined}
+                  data-row-stripe={i % 2 === 0 ? "even" : "odd"}
+                  className="dt-row reveal"
                   style={{
-                    background:
-                      i % 2 === 0
-                        ? "var(--color-surface)"
-                        : "var(--color-bg-subtle)",
                     cursor: onRowClick ? "pointer" : undefined,
-                    transition: "background-color 0.1s var(--ease-out-quint)",
                     "--reveal-delay": `${Math.min(i * 16, 240)}ms`,
                   } as React.CSSProperties}
-                  onMouseEnter={(e) =>
-                    (e.currentTarget.style.background =
-                      "color-mix(in oklch, var(--color-accent-soft) 55%, var(--color-surface))")
-                  }
-                  onMouseLeave={(e) =>
-                    (e.currentTarget.style.background =
-                      i % 2 === 0
-                        ? "var(--color-surface)"
-                        : "var(--color-bg-subtle)")
-                  }
                 >
                   {row.getVisibleCells().map((cell) => (
                     <td
