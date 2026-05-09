@@ -11,7 +11,7 @@ import (
 // Apps path is peer-reachable internal FQDNs inside an environment
 // with VNet integration. Without one we have nothing to bind to.
 func TestConfig_Validate_UseAppRequiresEnvironment(t *testing.T) {
-	c := Config{SubscriptionID: "s", ResourceGroup: "rg", UseApp: true, NetworkDiscovery: api.NetworkDiscoveryCloudDNS}
+	c := Config{SubscriptionID: "s", ResourceGroup: "rg", UseApp: true, NetworkDiscovery: api.NetworkDiscoveryCloudDNS, Access: api.AccessMechanismNoneInternal}
 	if err := c.Validate(); err == nil {
 		t.Fatal("expected Validate to reject UseApp=true without Environment")
 	}
