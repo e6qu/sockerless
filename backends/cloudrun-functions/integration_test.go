@@ -770,7 +770,7 @@ func preloadImageIntoBackend(ref string) error {
 	}
 	loadCtx, loadCancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer loadCancel()
-	resp, err := dockerClient.ImageLoad(loadCtx, stdout, true)
+	resp, err := dockerClient.ImageLoad(loadCtx, stdout)
 	if err != nil {
 		_ = save.Wait()
 		return fmt.Errorf("dockerClient.ImageLoad: %w", err)
