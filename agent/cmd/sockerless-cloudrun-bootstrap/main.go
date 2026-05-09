@@ -63,12 +63,11 @@ const (
 	// container alive (e.g. postgres). /etc/hosts injection still runs
 	// for sidecars so they can resolve sibling aliases too.
 	envSidecar = "SOCKERLESS_SIDECAR"
-	// SOCKERLESS_JOB_TIMEOUT_SECONDS — Phase 128. Hard cap on a single
+	// SOCKERLESS_JOB_TIMEOUT_SECONDS sets the hard cap on a single
 	// workload subprocess (sidecar mode) or a single exec-envelope call
 	// (default-invoke mode). Default: 3600 (1 h). At timeout: SIGTERM
 	// → 30 s grace → SIGKILL; bootstrap reports exit code 124 to match
-	// GNU `timeout(1)`. Set to 0 or empty to disable. See
-	// specs/CLOUD_RESOURCE_MAPPING.md § Job lifecycle.
+	// GNU `timeout(1)`. Set to 0 or empty to disable.
 	envJobTimeoutSeconds = "SOCKERLESS_JOB_TIMEOUT_SECONDS"
 )
 
@@ -471,7 +470,7 @@ func parseUserArgv(key string) []string {
 // postgres) is what keeps the container alive — its TCP port (5432
 // etc.) is reachable from the ingress container via shared loopback.
 //
-// Phase 128: arms a job-timeout timer reading SOCKERLESS_JOB_TIMEOUT_SECONDS
+// Arms a job-timeout timer reading SOCKERLESS_JOB_TIMEOUT_SECONDS
 // (default 3600). Timer firing → SIGTERM → 30s grace → SIGKILL → exit 124.
 func runSidecar() {
 	argv := append(parseUserArgv(envUserEntrypoint), parseUserArgv(envUserCmd)...)

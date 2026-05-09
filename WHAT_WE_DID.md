@@ -6,7 +6,29 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* we did each phase, what was surprising, what blocked. Per-bug detail belongs in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
-## 2026-05-09 — Phase 128 Runner job timeout (PR pending)
+## 2026-05-09 — Phase 124 Network discovery driver foundation (PR pending)
+
+Second of the post-Phase-135 ordered roadmap. Adds the abstraction layer for "how do containers in the same user-defined network discover and reach each other by name?" — distinct from the existing `CloudNetworkDriver` (VPC/IP allocation).
+
+**Categories** (4): `host-aliases` (`/etc/hosts` injection at materialize-time), `cloud-dns` (per-container A/CNAME records in a managed DNS zone), `service-mesh` (cloud-native service-discovery primitives like AWS Cloud Map), `nat-gateway-only` (no peer discovery; outbound-only).
+
+**Shipped on this PR:**
+- `api/network_discovery.go` — `NetworkDiscoveryKind` enum + `IsValid()` + `AllNetworkDiscoveryKinds` set.
+- `backends/core/network_discovery_driver.go` — interface (Register / Deregister / Resolve / Kind), registry with init-time constructor map, `NoOpNetworkDiscovery` default for `nat-gateway-only`, `ParseNetworkDiscoveryEnv()` with strict no-fallback semantics (empty → backend default; unknown → error).
+- `backends/core/network_discovery_hostaliases.go` — in-process host-aliases impl with `PeersOnNetwork()` helper for backend env materialization.
+- 8 unit tests (api enum + core registry + host-aliases CRUD + parse env).
+
+**Per-backend adapters + wiring** (124d): Each backend ships a thin adapter that satisfies `NetworkDiscoveryDriver` by delegating to its existing `cloudServiceRegister/Deregister/Resolve` methods (no SDK refactoring needed; the adapters live in the backend, not -common, because they close over per-backend state). `core.BaseServer` gains a `NetworkDiscovery` field that defaults to `NoOpNetworkDiscovery{}` and is overridden at backend startup with the cloud-specific adapter:
+
+- cloudrun → `cloudDNSDiscovery` (cloud-dns kind).
+- ECS → `cloudMapDiscovery` (service-mesh kind).
+- ACA → `acaCloudDNSDiscovery` (cloud-dns kind).
+- gcf → `core.HostAliasesDiscovery` (host-aliases kind, in-process).
+- Lambda + AZF → no-op default (nat-gateway-only).
+
+Cloudrun's `NetworkConnect` A-record callsite migrated to the driver-mediated call as the proof-of-wire end-to-end. The CNAME path (`UseService` flow) and ECS/ACA inline call sites stay on direct method calls for now — the driver wraps the same impl, so flipping them to driver-mediated calls is a mechanical follow-up.
+
+## 2026-05-09 — Phase 128 Runner job timeout (PR #130, merged)
 
 First of the post-Phase-135 ordered roadmap. Hard cap on workload containers so a hung subprocess can't pin cloud quota indefinitely. Two layers, belt-and-suspenders:
 

@@ -98,8 +98,8 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		// containers that share the same base image + bootstrap pair.
 		userEnv := overlayUserEnv(config.Entrypoint, config.Cmd, config.WorkingDir)
 		config.Env = append(config.Env, userEnv...)
-		// Phase 128: inject SOCKERLESS_JOB_TIMEOUT_SECONDS so the
-		// bootstrap arms its timeout timer. User's per-job override
+		// Inject SOCKERLESS_JOB_TIMEOUT_SECONDS so the bootstrap arms
+		// its timeout timer. User's per-job override
 		// (`docker run -e SOCKERLESS_JOB_TIMEOUT_SECONDS=…`) wins.
 		if jt := core.JobTimeoutEnvIfUnset(config.Env); jt != "" {
 			config.Env = append(config.Env, jt)
@@ -766,12 +766,19 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		if ep == nil || ep.NetworkID == "" {
 			continue
 		}
-		if s.config.UseService {
-			if err := s.cloudServiceDeregisterCNAME(s.ctx(), id, hostname, ep.NetworkID); err != nil {
-				s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to deregister CNAME from Cloud DNS")
+		// Route through the network-discovery driver. Caller knows the
+		// kind (UseService → CNAME, else A-record); use kind-specific
+		// helpers to avoid double-attempting both paths.
+		if cd, ok := s.NetworkDiscovery.(*cloudDNSDiscovery); ok {
+			if s.config.UseService {
+				if err := cd.DeregisterContainerCNAME(s.ctx(), ep.NetworkID, hostname); err != nil {
+					s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to deregister CNAME from Cloud DNS")
+				}
+			} else if err := cd.DeregisterContainerARecord(ep.NetworkID, hostname); err != nil {
+				s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to deregister from Cloud DNS")
 			}
-		} else if err := s.cloudServiceDeregister(id, hostname, ep.NetworkID); err != nil {
-			s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to deregister from Cloud DNS")
+		} else if err := s.NetworkDiscovery.DeregisterContainer(s.ctx(), ep.NetworkID, hostname, id); err != nil {
+			s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to deregister from network discovery")
 		}
 	}
 

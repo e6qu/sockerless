@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/sockerless/api"
+	core "github.com/sockerless/backend-core"
 )
 
 // NetworkCreate creates a Docker network with Cloud DNS backing.
@@ -69,7 +70,12 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 	// URL over the VPC connector.
 	if s.config.UseService {
 		if svcState, ok := s.resolveServiceCloudRunState(s.ctx(), containerID); ok && svcState.ServiceName != "" {
-			if err := s.cloudServiceRegisterCNAME(s.ctx(), containerID, hostname, svcState.ServiceName, net.ID); err != nil {
+			if err := s.NetworkDiscovery.RegisterContainer(s.ctx(), net.ID, hostname, containerID, &core.CloudEndpoint{
+				Metadata: map[string]string{
+					"kind":         "cname",
+					"service-name": svcState.ServiceName,
+				},
+			}); err != nil {
 				s.Logger.Warn().Err(err).Msg("failed to register CNAME in Cloud DNS")
 			}
 		}
@@ -78,7 +84,9 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID == net.ID && ep.IPAddress != "" {
-			if err := s.cloudServiceRegister(containerID, hostname, ep.IPAddress, net.ID); err != nil {
+			if err := s.NetworkDiscovery.RegisterContainer(s.ctx(), net.ID, hostname, containerID, &core.CloudEndpoint{
+				IPAddress: ep.IPAddress,
+			}); err != nil {
 				s.Logger.Warn().Err(err).Msg("failed to register in Cloud DNS")
 			}
 			break
@@ -97,12 +105,19 @@ func (s *Server) NetworkDisconnect(id string, req *api.NetworkDisconnectRequest)
 		if containerID != "" {
 			c, _ := s.ResolveContainerAuto(context.Background(), containerID)
 			hostname := strings.TrimPrefix(c.Name, "/")
-			if s.config.UseService {
-				if err := s.cloudServiceDeregisterCNAME(s.ctx(), containerID, hostname, net.ID); err != nil {
-					s.Logger.Warn().Err(err).Msg("failed to deregister CNAME from Cloud DNS")
+			// Caller knows the register kind (UseService → CNAME, else
+			// A-record); use the kind-specific helper to avoid double-
+			// attempting both paths.
+			if cd, ok := s.NetworkDiscovery.(*cloudDNSDiscovery); ok {
+				if s.config.UseService {
+					if err := cd.DeregisterContainerCNAME(s.ctx(), net.ID, hostname); err != nil {
+						s.Logger.Warn().Err(err).Msg("failed to deregister CNAME from Cloud DNS")
+					}
+				} else if err := cd.DeregisterContainerARecord(net.ID, hostname); err != nil {
+					s.Logger.Warn().Err(err).Msg("failed to deregister from Cloud DNS")
 				}
-			} else if err := s.cloudServiceDeregister(containerID, hostname, net.ID); err != nil {
-				s.Logger.Warn().Err(err).Msg("failed to deregister from Cloud DNS")
+			} else if err := s.NetworkDiscovery.DeregisterContainer(s.ctx(), net.ID, hostname, containerID); err != nil {
+				s.Logger.Warn().Err(err).Msg("failed to deregister from network discovery")
 			}
 		}
 	}

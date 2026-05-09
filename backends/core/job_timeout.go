@@ -1,4 +1,4 @@
-// Phase 128 — runner job timeout helpers shared across backends.
+// Runner job timeout helpers shared across backends.
 //
 // Sockerless backends inject SOCKERLESS_JOB_TIMEOUT_SECONDS on every
 // workload container they materialize so the in-container bootstrap
@@ -18,8 +18,6 @@
 // effectively unlimited) are enforced separately by the backend at
 // the cloud-API layer; this helper is the bootstrap-side timer's
 // configuration.
-//
-// See specs/CLOUD_RESOURCE_MAPPING.md § Job lifecycle.
 
 package core
 

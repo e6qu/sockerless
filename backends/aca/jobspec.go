@@ -132,9 +132,9 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 		}
 	}
 
-	// Phase 128: cloud-side ACA cap on top of any bootstrap timer.
-	// ACA's ReplicaTimeout caps at 7 days (604800s); we honour the
-	// shared sockerless intent (default 3600 = 1h) and clamp.
+	// Cloud-side ACA cap on top of any bootstrap timer. ACA's
+	// ReplicaTimeout caps at 7 days (604800s); we honour the shared
+	// sockerless intent (default 3600 = 1h) and clamp.
 	replicaTimeout := int32(core.JobTimeoutDefault())
 	if replicaTimeout <= 0 || replicaTimeout > 604800 {
 		replicaTimeout = 604800

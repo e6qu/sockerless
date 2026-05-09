@@ -427,9 +427,9 @@ func (r *Registry) Resolve(d api.<Dim>Driver) <Dim>DriverImpl { ... }
 
 When extending a driver category (e.g. adding a new network impl), the change is scoped: a new `backends/<cloud>-common/network_<impl>.go` file + a registry entry. No core-package edits needed once the interface is stable. That's the value the abstraction buys; without it, every new impl forces edits at the call sites of every backend.
 
-## Job lifecycle: timeouts and termination (Phase 128)
+## Job lifecycle: timeouts and termination
 
-Without a hard cap, a hung user subprocess pins cloud quota indefinitely. Phase 128 enforces termination on two layers, belt-and-suspenders:
+Without a hard cap, a hung user subprocess pins cloud quota indefinitely. Termination is enforced on two layers, belt-and-suspenders:
 
 ### Layer 1 — bootstrap-side timer (universal)
 
@@ -480,6 +480,64 @@ The phase ships with sim-tests that:
 4. Assert log lines include "workload timed out after 2 seconds" and "bootstrap exiting 124".
 
 Per cloud: ECS, Cloud Run Jobs, Cloud Functions, ACA. Lambda is tested separately (Lambda's own 15-min cap; sim tests use a smaller value via `function.Timeout`).
+
+## Network discovery driver
+
+How containers in the same user-defined network discover and talk to each other. Distinct from the existing `CloudNetworkDriver` (which owns VPC/subnet/IP allocation) — this driver owns the *name → reachable peer* layer.
+
+### Driver categories
+
+| Category | Mechanism | Where it works |
+|---|---|---|
+| `host-aliases` | `/etc/hosts` injection at workload-host materialize time. Each container's bootstrap writes `127.0.0.1 <peer-name>` lines (when peers share loopback in a multi-container revision) or `<peer-IP> <peer-name>` lines. | Cloud Run multi-container revision (peers on same loopback); any backend with stable peer IPs known at materialize time. |
+| `cloud-dns` | Cloud-managed DNS zone with per-container A/CNAME records. The cloud's DNS server resolves `<peer-name>.<network>.<dns-suffix>` at runtime. | GCP Cloud DNS (private zone). Azure Private DNS Zones. AWS Route 53 PrivateHostedZone (less common; sockerless uses Cloud Map instead). |
+| `service-mesh` | Cloud-native service-discovery primitives — namespace + service + instance records the cloud resolves via DNS or SDK lookup. | AWS Cloud Map (ECS). |
+| `nat-gateway-only` | Containers reach the internet but cannot discover or address each other. Used for one-shot workloads (Lambda, Cloud Run Jobs without sibling containers). | Lambda, single-container Cloud Run Jobs/Services. |
+
+### Today's per-backend discovery model
+
+| Backend | Today | Driver mapping |
+|---|---|---|
+| ECS | Cloud Map namespace + service + instance via `servicediscovery` API. Backend code: `backends/ecs/service_discovery_cloud.go`, `backends/ecs/backend_impl_network.go`. | `service-mesh` (default) |
+| Lambda | Single-container, no inter-container discovery. | `nat-gateway-only` (default) |
+| Cloud Run | Multi-container revisions: `/etc/hosts` injection via `SOCKERLESS_HOST_ALIASES` env. Cross-instance: Cloud DNS managed zone (`backends/cloudrun/servicespec.go::seedServiceV2Defaults` + `backends/gcp-common/cloud_dns_*.go`). | `host-aliases` (intra-revision); `cloud-dns` (cross-revision) |
+| Cloud Functions (gcf) | Same as Cloud Run via shared pod-Service materializer. | `host-aliases` + `cloud-dns` |
+| ACA | Azure Private DNS Zones (`backends/aca/private_dns.go`). NSG provides isolation. | `cloud-dns` (default) |
+| Azure Functions | Single-container; no discovery. | `nat-gateway-only` |
+
+### Interface (`backends/core/network_discovery_driver.go`)
+
+```go
+type NetworkDiscoveryDriver interface {
+    // RegisterContainer makes container `name` discoverable on `networkID` at `endpoint`.
+    // Implementations: write /etc/hosts, upsert DNS record, register Cloud Map instance, or no-op.
+    RegisterContainer(ctx context.Context, networkID, name string, endpoint *CloudEndpoint) error
+
+    // DeregisterContainer removes a container's discoverability entry.
+    DeregisterContainer(ctx context.Context, networkID, name string) error
+
+    // ResolveName looks up a peer's endpoint by name on a network. Returns (nil, nil)
+    // if name is unknown (caller can fall through to other resolution).
+    ResolveName(ctx context.Context, networkID, name string) (*CloudEndpoint, error)
+
+    // DriverName returns one of: "host-aliases", "cloud-dns", "service-mesh", "nat-gateway-only".
+    DriverName() string
+}
+```
+
+### Operator selection
+
+`SOCKERLESS_<BACKEND>_NETWORK_DISCOVERY=<host-aliases|cloud-dns|service-mesh|nat-gateway-only>`. Per-backend override; sockerless ships per-backend defaults that match the table above. Unset / unknown name returns an error at backend startup (no fallback).
+
+### Migration steps
+
+1. New `api/network_discovery_driver.go` — enum constant set + per-backend config field.
+2. New `backends/core/network_discovery_driver.go` — interface + registry + no-op default (`nat-gateway-only`).
+3. `backends/{aws,gcp,azure}-common/network_discovery_*.go` — per-cloud impls (cloud-dns lives in gcp-common + azure-common; service-mesh in aws-common; host-aliases in core).
+4. Per-backend translator: each backend constructs the driver at startup, passes to the BaseServer's TypedDriverSet.
+5. Operator config: `SOCKERLESS_<BACKEND>_NETWORK_DISCOVERY` parsed at backend startup.
+6. **No-fallbacks at resolve** — the existing inline calls (e.g. `cloudServiceRegisterCNAME`, `cloud_map_register_instance`) get migrated behind the driver registry.
+7. Migration sweep — replace direct calls in `backends/ecs/*.go`, `backends/cloudrun/*.go`, etc. with `s.networkDiscovery.RegisterContainer(...)`.
 
 ## Volume provisioning per backend
 
