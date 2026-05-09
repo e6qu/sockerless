@@ -196,6 +196,8 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	backendAddr := fmt.Sprintf(":%d", backendPort)
 	fmt.Printf("[backend] Starting sockerless-backend-cloudrun on %s (target=%s endpoint=%s)\n", backendAddr, target, endpointURL)
 	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
+	storageHost := strings.TrimPrefix(endpointURL, "http://")
+	storageHost = strings.TrimPrefix(storageHost, "https://")
 	backendCmd.Env = append(os.Environ(),
 		"SOCKERLESS_ENDPOINT_URL="+endpointURL,
 		"SOCKERLESS_POLL_INTERVAL=500ms",
@@ -203,6 +205,12 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		"SOCKERLESS_GCR_PROJECT="+project,
 		"SOCKERLESS_CLOUDRUN_BOOTSTRAP="+bootstrapPath,
 		"SOCKERLESS_GCP_BUILD_BUCKET="+buildBucket,
+		// STORAGE_EMULATOR_HOST routes the backend's GCS client to the
+		// sim's storage endpoint instead of storage.googleapis.com.
+		// Without this, NewGCPBuildService fails to construct the
+		// storage client and BuildService stays nil → overlay path
+		// fails at ContainerCreate.
+		"STORAGE_EMULATOR_HOST="+storageHost,
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
