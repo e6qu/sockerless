@@ -1,12 +1,7 @@
-//go:build integration
-
-// TestMain + helpers for the cloudrun integration tests. Gated by the
-// `integration` build tag so `go test ./...` (without -tags integration)
-// doesn't compile this file in. The TestMain inside ALSO checks
-// SOCKERLESS_INTEGRATION=1 + GITHUB_ACTIONS for a runtime gate; the
-// build tag is the compile-time fence that prevents the
-// `arithmetic_integration_test.go` tests from linking against a
-// non-initialized dockerClient when run with default settings.
+// TestMain + helpers for the cloudrun integration tests. Drives the
+// docker SDK against a running sockerless-backend-cloudrun pointed at
+// a SOCKERLESS_TEST_TARGET-selected endpoint. No fallbacks, no skips —
+// every config option is mandatory.
 
 package cloudrun
 
@@ -32,16 +27,51 @@ import (
 var dockerClient *client.Client
 var evalImageName string
 
-func TestMain(m *testing.M) {
-	if os.Getenv("SOCKERLESS_INTEGRATION") != "1" {
-		// This file only compiles in under the `integration` build tag.
-		// If we got here, the operator passed -tags integration but
-		// didn't set the env-var gate. Fail loudly — running m.Run()
-		// would panic with `dockerClient == nil` since the rest of this
-		// TestMain (which initializes dockerClient) is skipped.
-		fmt.Fprintln(os.Stderr, "ERROR: integration build tag set but SOCKERLESS_INTEGRATION!=1; either pass SOCKERLESS_INTEGRATION=1 or drop -tags integration. Integration tests need TestMain to bring up the backend + sim + docker client.")
+// requireEnv reads a required env var or dies loud.
+func requireEnv(name string) string {
+	v := os.Getenv(name)
+	if v == "" {
+		fmt.Fprintf(os.Stderr, "ERROR: required env var %s is not set.\n", name)
+		fmt.Fprintln(os.Stderr, "       The integration test harness has no fallbacks — every config option is mandatory.")
+		fmt.Fprintln(os.Stderr, "       Use `make test-integration` from this directory; it sets up the sim target.")
 		os.Exit(1)
 	}
+	return v
+}
+
+func requireExe(name string) {
+	if _, err := exec.LookPath(name); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: required tool %q not found on PATH (%v).\n", name, err)
+		os.Exit(1)
+	}
+}
+
+// TestMain wires the docker SDK to a running sockerless-backend-cloudrun
+// pointed at a SOCKERLESS_TEST_TARGET-selected endpoint. There is no
+// implicit default and no skip — every config option is mandatory and
+// every required prereq must be present, otherwise the harness exits
+// non-zero with an explanatory message.
+//
+// SOCKERLESS_TEST_TARGET = sim   → harness builds + starts simulator-gcp on a
+//
+//	free port and runs the backend against it.
+//	Project is a sim fixture (`sim-project`).
+//
+// SOCKERLESS_TEST_TARGET = cloud → harness reads explicit env vars
+//
+//	(SOCKERLESS_ENDPOINT_URL,
+//	SOCKERLESS_GCR_PROJECT) and fails loud
+//	on any missing.
+//
+// The Test* functions don't know which target they're running against.
+func TestMain(m *testing.M) {
+	target := requireEnv("SOCKERLESS_TEST_TARGET")
+	if target != "sim" && target != "cloud" {
+		fmt.Fprintf(os.Stderr, "ERROR: SOCKERLESS_TEST_TARGET=%q is invalid (want \"sim\" or \"cloud\").\n", target)
+		os.Exit(1)
+	}
+	requireExe("docker")
+	requireExe("go")
 
 	repoRoot := findModuleDir(".")
 	var cleanups []func()
@@ -50,12 +80,15 @@ func TestMain(m *testing.M) {
 			cleanups[i]()
 		}
 	}
+	failClean := func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, format, args...)
+		cleanup()
+		os.Exit(1)
+	}
 
-	// Multi-stage Docker build forced to linux/arm64 — sim's primary
-	// capacity contract (Phase 135b). CI on amd64 hosts uses QEMU.
 	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
 	evalImageName = "sockerless-eval-arithmetic:test"
-	fmt.Printf("[sim] Building %s (linux/arm64)...\n", evalImageName)
+	fmt.Printf("[setup] Building %s (linux/arm64)...\n", evalImageName)
 	evalDockerfile := `FROM golang:1.25-alpine AS build
 WORKDIR /src
 COPY . .
@@ -69,106 +102,96 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		"-t", evalImageName, "-f", "-", evalDir)
 	evalImageBuild.Stdin = strings.NewReader(evalDockerfile)
 	if out, err := evalImageBuild.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic image: %v\n%s", err, out)
-		os.Exit(1)
+		failClean("ERROR: docker build eval-arithmetic image: %v\n%s", err, out)
 	}
 
-	// Build simulator
-	simDir := repoRoot + "/simulators/gcp"
-	simBinary := simDir + "/simulator-gcp"
-	fmt.Println("[sim] Building simulator-gcp...")
-	build := exec.Command("go", "build", "-tags", "noui", "-o", "simulator-gcp", ".")
-	build.Dir = simDir
-	build.Env = filterBuildEnv(os.Environ(), "GOWORK=off")
-	build.Stdout = os.Stderr
-	build.Stderr = os.Stderr
-	if err := build.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build simulator-gcp: %v\n", err)
-		os.Exit(1)
-	}
-	cleanups = append(cleanups, func() { os.Remove(simBinary) })
+	var endpointURL, project string
+	switch target {
+	case "sim":
+		simDir := repoRoot + "/simulators/gcp"
+		simBinary := simDir + "/simulator-gcp"
+		fmt.Println("[sim] Building simulator-gcp...")
+		build := exec.Command("go", "build", "-tags", "noui", "-o", "simulator-gcp", ".")
+		build.Dir = simDir
+		build.Env = filterBuildEnv(os.Environ(), "GOWORK=off")
+		build.Stdout = os.Stderr
+		build.Stderr = os.Stderr
+		if err := build.Run(); err != nil {
+			failClean("ERROR: build simulator-gcp: %v\n", err)
+		}
+		cleanups = append(cleanups, func() { os.Remove(simBinary) })
 
-	// Start simulator
-	simPort := findFreePort()
-	simAddr := fmt.Sprintf(":%d", simPort)
-	simURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
-	fmt.Printf("[sim] Starting simulator-gcp on %s...\n", simAddr)
-	simCmd := exec.Command(simBinary)
-	simCmd.Env = append(os.Environ(),
-		"SIM_LISTEN_ADDR="+simAddr,
-		"PATH="+os.Getenv("PATH"),
-	)
-	simCmd.Stdout = os.Stderr
-	simCmd.Stderr = os.Stderr
-	if err := simCmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to start simulator-gcp: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	cleanups = append(cleanups, func() { simCmd.Process.Kill(); simCmd.Wait() })
+		simPort := findFreePort()
+		simAddr := fmt.Sprintf(":%d", simPort)
+		simURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
+		fmt.Printf("[sim] Starting simulator-gcp on %s...\n", simAddr)
+		simCmd := exec.Command(simBinary)
+		simCmd.Env = append(os.Environ(),
+			"SIM_LISTEN_ADDR="+simAddr,
+			"PATH="+os.Getenv("PATH"),
+		)
+		simCmd.Stdout = os.Stderr
+		simCmd.Stderr = os.Stderr
+		if err := simCmd.Start(); err != nil {
+			failClean("ERROR: start simulator-gcp: %v\n", err)
+		}
+		cleanups = append(cleanups, func() { simCmd.Process.Kill(); simCmd.Wait() })
 
-	if err := waitForReady(simURL+"/health", 10*time.Second); err != nil {
-		fmt.Fprintf(os.Stderr, "simulator-gcp not ready: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	fmt.Printf("[sim] simulator-gcp is ready at %s\n", simURL)
+		if err := waitForReady(simURL+"/health", 10*time.Second); err != nil {
+			failClean("ERROR: simulator-gcp not ready: %v\n", err)
+		}
+		fmt.Printf("[sim] simulator-gcp ready at %s\n", simURL)
 
-	// Build backend
+		endpointURL = simURL
+		project = "sim-project"
+
+	case "cloud":
+		endpointURL = requireEnv("SOCKERLESS_ENDPOINT_URL")
+		project = requireEnv("SOCKERLESS_GCR_PROJECT")
+	}
+
 	backendDir := repoRoot + "/backends/cloudrun"
 	backendBinary := backendDir + "/sockerless-backend-cloudrun"
-	fmt.Println("[sim] Building sockerless-backend-cloudrun...")
+	fmt.Println("[backend] Building sockerless-backend-cloudrun...")
 	buildBackend := exec.Command("go", "build", "-tags", "noui", "-o", "sockerless-backend-cloudrun", "./cmd/sockerless-backend-cloudrun")
 	buildBackend.Dir = backendDir
 	buildBackend.Stdout = os.Stderr
 	buildBackend.Stderr = os.Stderr
 	if err := buildBackend.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build backend: %v\n", err)
-		cleanup()
-		os.Exit(1)
+		failClean("ERROR: build sockerless-backend-cloudrun: %v\n", err)
 	}
 	cleanups = append(cleanups, func() { os.Remove(backendBinary) })
 
-	// Start backend
 	backendPort := findFreePort()
 	backendAddr := fmt.Sprintf(":%d", backendPort)
-	fmt.Printf("[sim] Starting sockerless-backend-cloudrun on %s...\n", backendAddr)
+	fmt.Printf("[backend] Starting sockerless-backend-cloudrun on %s (target=%s endpoint=%s)\n", backendAddr, target, endpointURL)
 	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
 	backendCmd.Env = append(os.Environ(),
-		"SOCKERLESS_ENDPOINT_URL="+simURL,
+		"SOCKERLESS_ENDPOINT_URL="+endpointURL,
 		"SOCKERLESS_POLL_INTERVAL=500ms",
 		"SOCKERLESS_LOG_TIMEOUT=2s",
-		"SOCKERLESS_GCR_PROJECT=sim-project",
+		"SOCKERLESS_GCR_PROJECT="+project,
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
 	if err := backendCmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to start backend: %v\n", err)
-		cleanup()
-		os.Exit(1)
+		failClean("ERROR: start sockerless-backend-cloudrun: %v\n", err)
 	}
 	cleanups = append(cleanups, func() { backendCmd.Process.Kill(); backendCmd.Wait() })
 
 	backendURL := fmt.Sprintf("http://localhost:%d/internal/v1/info", backendPort)
 	if err := waitForReady(backendURL, 15*time.Second); err != nil {
-		fmt.Fprintf(os.Stderr, "backend not ready: %v\n", err)
-		cleanup()
-		os.Exit(1)
+		failClean("ERROR: sockerless-backend-cloudrun not ready: %v\n", err)
 	}
-	fmt.Printf("[sim] backend is ready on %s\n", backendAddr)
+	fmt.Printf("[backend] ready on %s\n", backendAddr)
 
-	// The Cloud Run backend serves the Docker API directly (no separate
-	// frontend binary — in-process wiring per post-P67 architecture).
-	// Point the docker SDK at the backend's TCP address.
 	var err error
 	dockerClient, err = client.NewClientWithOpts(
 		client.WithHost(fmt.Sprintf("tcp://localhost:%d", backendPort)),
 		client.WithAPIVersionNegotiation(),
 	)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create docker client: %v\n", err)
-		cleanup()
-		os.Exit(1)
+		failClean("ERROR: docker client: %v\n", err)
 	}
 
 	code := m.Run()

@@ -39,7 +39,6 @@ func readContainerLogs(t *testing.T, id string) string {
 }
 
 func TestECSArithmeticSuccess(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
@@ -74,7 +73,6 @@ func TestECSArithmeticSuccess(t *testing.T) {
 }
 
 func TestECSArithmeticParentheses(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
@@ -109,7 +107,6 @@ func TestECSArithmeticParentheses(t *testing.T) {
 }
 
 func TestECSArithmeticInvalid(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
@@ -144,7 +141,6 @@ func TestECSArithmeticInvalid(t *testing.T) {
 }
 
 func TestECSArithmeticDivision(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
@@ -179,7 +175,6 @@ func TestECSArithmeticDivision(t *testing.T) {
 }
 
 func TestECSArithmeticWithLabels(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
@@ -234,7 +229,6 @@ func TestECSArithmeticWithLabels(t *testing.T) {
 }
 
 func TestECSArithmeticEnvVar(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{

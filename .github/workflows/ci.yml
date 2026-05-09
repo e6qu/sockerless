@@ -29,17 +29,12 @@ jobs:
     # (Phase 135b). Avoids QEMU emulation overhead + flake modes on amd64.
     runs-on: ubuntu-24.04-arm
     env:
-      # Every backend's TestMain builds+runs its simulator binary, starts
-      # the backend process, and exercises real Docker containers pulled
-      # from Docker Hub. Ubuntu runners ship with dockerd running, so the
-      # integration tests work without extra setup. Set uniformly so no
-      # test is silently skipped (per the no-skip principle).
-      #
-      # ACA + AZF backends use the new SOCKERLESS_TEST_TARGET=sim|cloud
-      # contract (no skips, no fallbacks, explicit config). Other backends
-      # still gate on SOCKERLESS_INTEGRATION until they migrate to the
-      # same shape. Both vars are set so neither path silently skips.
-      SOCKERLESS_INTEGRATION: "1"
+      # Every backend's TestMain builds + runs its simulator binary,
+      # starts the backend process, and exercises real Docker containers
+      # against the docker SDK. Ubuntu runners ship with dockerd running,
+      # so the integration tests work without extra setup. SOCKERLESS_TEST_TARGET
+      # is required by every backend's TestMain (no fallbacks, no skips,
+      # explicit config); CI sets sim.
       SOCKERLESS_TEST_TARGET: "sim"
     steps:
       - uses: actions/checkout@v6

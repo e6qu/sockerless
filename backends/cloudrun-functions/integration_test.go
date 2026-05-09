@@ -1,12 +1,7 @@
-//go:build integration
-
-// TestMain + helpers for the gcf integration tests. Gated by the
-// `integration` build tag so `go test ./...` (without -tags integration)
-// doesn't compile this file in. The TestMain inside ALSO checks
-// SOCKERLESS_INTEGRATION=1 + GITHUB_ACTIONS for a runtime gate; the
-// build tag is the compile-time fence that prevents the
-// `arithmetic_integration_test.go` tests from linking against a
-// non-initialized dockerClient when run with default settings.
+// TestMain + helpers for the gcf integration tests. Drives the docker
+// SDK against a running sockerless-backend-gcf pointed at a
+// SOCKERLESS_TEST_TARGET-selected endpoint. No fallbacks, no skips —
+// every config option is mandatory.
 
 package gcf
 
@@ -40,16 +35,58 @@ import (
 var dockerClient *client.Client
 var evalImageName string
 
-func TestMain(m *testing.M) {
-	if os.Getenv("SOCKERLESS_INTEGRATION") != "1" {
-		// This file only compiles in under the `integration` build tag.
-		// If we got here, the operator passed -tags integration but
-		// didn't set the env-var gate. Fail loudly — running m.Run()
-		// would panic with `dockerClient == nil` since the rest of this
-		// TestMain (which initializes dockerClient) is skipped.
-		fmt.Fprintln(os.Stderr, "ERROR: integration build tag set but SOCKERLESS_INTEGRATION!=1; either pass SOCKERLESS_INTEGRATION=1 or drop -tags integration. Integration tests need TestMain to bring up the backend + sim + docker client.")
+// requireEnv reads a required env var or dies loud.
+func requireEnv(name string) string {
+	v := os.Getenv(name)
+	if v == "" {
+		fmt.Fprintf(os.Stderr, "ERROR: required env var %s is not set.\n", name)
+		fmt.Fprintln(os.Stderr, "       The integration test harness has no fallbacks — every config option is mandatory.")
+		fmt.Fprintln(os.Stderr, "       Use `make test-integration` from this directory; it sets up the sim target.")
 		os.Exit(1)
 	}
+	return v
+}
+
+func requireExe(name string) {
+	if _, err := exec.LookPath(name); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: required tool %q not found on PATH (%v).\n", name, err)
+		os.Exit(1)
+	}
+}
+
+// TestMain wires the docker SDK to a running sockerless-backend-gcf
+// pointed at a SOCKERLESS_TEST_TARGET-selected endpoint. There is no
+// implicit default and no skip — every config option is mandatory and
+// every required prereq must be present, otherwise the harness exits
+// non-zero with an explanatory message.
+//
+// SOCKERLESS_TEST_TARGET = sim   → harness builds + starts simulator-gcp on a
+//
+//	free port, pre-creates the GCS build
+//	bucket, generates a fake SA JSON, builds
+//	sockerless-gcf-bootstrap, builds the
+//	backend, and pre-loads eval-arithmetic
+//	into the backend's image store. Project +
+//	build bucket are sim fixtures.
+//
+// SOCKERLESS_TEST_TARGET = cloud → harness reads explicit env vars
+//
+//	(SOCKERLESS_ENDPOINT_URL,
+//	SOCKERLESS_GCF_PROJECT,
+//	SOCKERLESS_GCP_BUILD_BUCKET,
+//	GOOGLE_APPLICATION_CREDENTIALS,
+//	SOCKERLESS_GCF_BOOTSTRAP) and fails loud
+//	on any missing.
+//
+// The Test* functions don't know which target they're running against.
+func TestMain(m *testing.M) {
+	target := requireEnv("SOCKERLESS_TEST_TARGET")
+	if target != "sim" && target != "cloud" {
+		fmt.Fprintf(os.Stderr, "ERROR: SOCKERLESS_TEST_TARGET=%q is invalid (want \"sim\" or \"cloud\").\n", target)
+		os.Exit(1)
+	}
+	requireExe("docker")
+	requireExe("go")
 
 	// Watchdog: if TestMain hasn't reached `m.Run()` within 5 minutes
 	// something has hung. Force a SIGABRT via `runtime/pprof` goroutine
@@ -86,7 +123,7 @@ func TestMain(m *testing.M) {
 	// would be `go: downloading <module>` from the outer `go test`.
 	// Writing to os.Stderr is unbuffered and surfaces progress live.
 	step := func(label string) { fmt.Fprintf(os.Stderr, "[testmain] %s\n", label) }
-	step("entered TestMain (SOCKERLESS_INTEGRATION=1)")
+	step("entered TestMain (target=" + target + ")")
 
 	// Multi-stage Docker build forced to linux/arm64 — sim's primary
 	// capacity contract (Phase 135b). CI on amd64 hosts uses QEMU.
@@ -142,58 +179,107 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		os.Exit(1)
 	}
 
-	// Build simulator
-	simDir := repoRoot + "/simulators/gcp"
-	simBinary := simDir + "/simulator-gcp"
-	step("go build simulator-gcp")
-	fmt.Println("[sim] Building simulator-gcp...")
-	buildCtx1, buildCancel1 := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer buildCancel1()
-	build := exec.CommandContext(buildCtx1, "go", "build", "-tags", "noui", "-o", "simulator-gcp", ".")
-	build.Dir = simDir
-	build.Env = filterBuildEnv(os.Environ(), "GOWORK=off")
-	build.Stdout = os.Stderr
-	build.Stderr = os.Stderr
-	if err := build.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build simulator-gcp: %v\n", err)
-		os.Exit(1)
-	}
-	cleanups = append(cleanups, func() { os.Remove(simBinary) })
+	// Per-target endpoint + ARM identifiers + auth/bootstrap paths.
+	var endpointURL, project, buildBucket, saJSONPath, gcfBootstrapPath string
+	switch target {
+	case "sim":
+		// Build simulator
+		simDir := repoRoot + "/simulators/gcp"
+		simBinary := simDir + "/simulator-gcp"
+		step("go build simulator-gcp")
+		fmt.Println("[sim] Building simulator-gcp...")
+		buildCtx1, buildCancel1 := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer buildCancel1()
+		build := exec.CommandContext(buildCtx1, "go", "build", "-tags", "noui", "-o", "simulator-gcp", ".")
+		build.Dir = simDir
+		build.Env = filterBuildEnv(os.Environ(), "GOWORK=off")
+		build.Stdout = os.Stderr
+		build.Stderr = os.Stderr
+		if err := build.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to build simulator-gcp: %v\n", err)
+			os.Exit(1)
+		}
+		cleanups = append(cleanups, func() { os.Remove(simBinary) })
 
-	// Start simulator
-	simPort := findFreePort()
-	simAddr := fmt.Sprintf(":%d", simPort)
-	simURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
-	step("starting simulator-gcp")
-	fmt.Printf("[sim] Starting simulator-gcp on %s...\n", simAddr)
-	simCmd := exec.Command(simBinary)
-	simCmd.Env = append(os.Environ(), "SIM_LISTEN_ADDR="+simAddr)
-	simCmd.Stdout = os.Stderr
-	simCmd.Stderr = os.Stderr
-	if err := simCmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to start simulator-gcp: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	cleanups = append(cleanups, func() { simCmd.Process.Kill(); simCmd.Wait() })
+		// Start simulator
+		simPort := findFreePort()
+		simAddr := fmt.Sprintf(":%d", simPort)
+		simURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
+		step("starting simulator-gcp")
+		fmt.Printf("[sim] Starting simulator-gcp on %s...\n", simAddr)
+		simCmd := exec.Command(simBinary)
+		simCmd.Env = append(os.Environ(), "SIM_LISTEN_ADDR="+simAddr)
+		simCmd.Stdout = os.Stderr
+		simCmd.Stderr = os.Stderr
+		if err := simCmd.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to start simulator-gcp: %v\n", err)
+			cleanup()
+			os.Exit(1)
+		}
+		cleanups = append(cleanups, func() { simCmd.Process.Kill(); simCmd.Wait() })
 
-	step("waiting for simulator-gcp /health")
-	if err := waitForReady(simURL+"/health", 10*time.Second); err != nil {
-		fmt.Fprintf(os.Stderr, "simulator-gcp not ready: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	fmt.Printf("[sim] simulator-gcp is ready at %s\n", simURL)
+		step("waiting for simulator-gcp /health")
+		if err := waitForReady(simURL+"/health", 10*time.Second); err != nil {
+			fmt.Fprintf(os.Stderr, "simulator-gcp not ready: %v\n", err)
+			cleanup()
+			os.Exit(1)
+		}
+		fmt.Printf("[sim] simulator-gcp is ready at %s\n", simURL)
 
-	// Pre-create the GCS bucket the backend uses for Cloud Build context
-	// uploads. Real GCS doesn't auto-create buckets; the backend doesn't
-	// either (operator infrastructure — terraform creates the bucket in
-	// production deployments). Tests stand in for terraform here.
-	step("create GCS bucket sockerless-test-build")
-	if err := createGCSBucket(simURL, "sockerless-test", "sockerless-test-build"); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create sockerless-test-build: %v\n", err)
-		cleanup()
-		os.Exit(1)
+		endpointURL = simURL
+		project = "sockerless-test"
+		buildBucket = "sockerless-test-build"
+
+		// Pre-create the GCS bucket the backend uses for Cloud Build
+		// context uploads. Real GCS doesn't auto-create buckets; the
+		// backend doesn't either (operator infrastructure — terraform
+		// creates the bucket in production deployments). Tests stand in
+		// for terraform here.
+		step("create GCS bucket " + buildBucket)
+		if err := createGCSBucket(simURL, project, buildBucket); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to create %s: %v\n", buildBucket, err)
+			cleanup()
+			os.Exit(1)
+		}
+
+		// Stage a fake SA JSON pointing at the sim's token endpoint.
+		step("staging fake SA JSON")
+		var saErr error
+		saJSONPath, saErr = writeFakeServiceAccountJSON(simURL + "/token")
+		if saErr != nil {
+			fmt.Fprintf(os.Stderr, "failed to stage fake SA JSON: %v\n", saErr)
+			cleanup()
+			os.Exit(1)
+		}
+		cleanups = append(cleanups, func() { _ = os.Remove(saJSONPath) })
+
+		// Build the sockerless-gcf-bootstrap binary.
+		gcfBootstrapPath = repoRoot + "/agent/sockerless-gcf-bootstrap-test"
+		if abs, absErr := filepath.Abs(gcfBootstrapPath); absErr == nil {
+			gcfBootstrapPath = abs
+		}
+		step("go build sockerless-gcf-bootstrap")
+		fmt.Println("[sim] Building sockerless-gcf-bootstrap...")
+		buildCtx3, buildCancel3 := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer buildCancel3()
+		bootstrapBuild := exec.CommandContext(buildCtx3, "go", "build", "-o", gcfBootstrapPath, "./cmd/sockerless-gcf-bootstrap")
+		bootstrapBuild.Dir = repoRoot + "/agent"
+		bootstrapBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=arm64")
+		bootstrapBuild.Stdout = os.Stderr
+		bootstrapBuild.Stderr = os.Stderr
+		if err := bootstrapBuild.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to build sockerless-gcf-bootstrap: %v\n", err)
+			cleanup()
+			os.Exit(1)
+		}
+		cleanups = append(cleanups, func() { _ = os.Remove(gcfBootstrapPath) })
+
+	case "cloud":
+		endpointURL = requireEnv("SOCKERLESS_ENDPOINT_URL")
+		project = requireEnv("SOCKERLESS_GCF_PROJECT")
+		buildBucket = requireEnv("SOCKERLESS_GCP_BUILD_BUCKET")
+		saJSONPath = requireEnv("GOOGLE_APPLICATION_CREDENTIALS")
+		gcfBootstrapPath = requireEnv("SOCKERLESS_GCF_BOOTSTRAP")
 	}
 
 	// Build backend
@@ -214,82 +300,28 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	}
 	cleanups = append(cleanups, func() { os.Remove(backendBinary) })
 
-	// Stage a fake service-account JSON with a real RSA keypair so the
-	// backend's `idtoken.NewClient` (called from `invokeFunction`) can
-	// sign JWTs locally. idtoken refuses user-credentials ADC and
-	// requires service-account creds; the keypair is generated fresh
-	// per test run. The sim's invocation handler doesn't validate the
-	// signed token (token validation is a real-Cloud-Run concern, not
-	// a sim concern) — but the AUTH HEADER PRESENCE is the same wire
-	// shape as production, so the backend code path stays identical.
-	step("staging fake SA JSON")
-	saJSONPath, err := writeFakeServiceAccountJSON(simURL + "/token")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to stage fake SA JSON: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	cleanups = append(cleanups, func() { _ = os.Remove(saJSONPath) })
-
-	// Build the sockerless-gcf-bootstrap binary so the backend's
-	// overlay-and-swap path can stage it into the Cloud Build context
-	// tar. Real deployments install
-	// this binary at /opt/sockerless via the runner image; integration
-	// tests build it on demand. Path must be absolute — the backend
-	// process runs with a different cwd than the test binary, so a
-	// relative path resolves wrong inside the backend.
-	gcfBootstrapPath := repoRoot + "/agent/sockerless-gcf-bootstrap-test"
-	if abs, absErr := filepath.Abs(gcfBootstrapPath); absErr == nil {
-		gcfBootstrapPath = abs
-	}
-	step("go build sockerless-gcf-bootstrap")
-	fmt.Println("[sim] Building sockerless-gcf-bootstrap...")
-	buildCtx3, buildCancel3 := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer buildCancel3()
-	bootstrapBuild := exec.CommandContext(buildCtx3, "go", "build", "-o", gcfBootstrapPath, "./cmd/sockerless-gcf-bootstrap")
-	bootstrapBuild.Dir = repoRoot + "/agent"
-	// Bootstrap runs inside the workload container (linux/arm64 — sim
-	// primary capacity per Phase 135b). Build with matching GOARCH so
-	// the binary executes on the workload host.
-	bootstrapBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=arm64")
-	bootstrapBuild.Stdout = os.Stderr
-	bootstrapBuild.Stderr = os.Stderr
-	if err := bootstrapBuild.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build sockerless-gcf-bootstrap: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	cleanups = append(cleanups, func() { _ = os.Remove(gcfBootstrapPath) })
-
 	// Start backend
 	backendPort := findFreePort()
 	backendAddr := fmt.Sprintf(":%d", backendPort)
 	step("starting sockerless-backend-gcf")
-	fmt.Printf("[sim] Starting sockerless-backend-gcf on %s...\n", backendAddr)
+	fmt.Printf("[backend] Starting sockerless-backend-gcf on %s (target=%s endpoint=%s)\n", backendAddr, target, endpointURL)
 	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
 	// urlHost extracts host:port from http://host:port for STORAGE_EMULATOR_HOST.
-	storageHost := strings.TrimPrefix(simURL, "http://")
+	storageHost := strings.TrimPrefix(endpointURL, "http://")
 	storageHost = strings.TrimPrefix(storageHost, "https://")
 	backendCmd.Env = append(os.Environ(),
-		"SOCKERLESS_ENDPOINT_URL="+simURL,
+		"SOCKERLESS_ENDPOINT_URL="+endpointURL,
 		"SOCKERLESS_POLL_INTERVAL=500ms",
 		"SOCKERLESS_LOG_TIMEOUT=2s",
-		"SOCKERLESS_GCF_PROJECT=sockerless-test",
-		// Real Cloud Functions Gen2 requires a GCS bucket for the
-		// stub-Buildpacks-Go source archive.
-		"SOCKERLESS_GCP_BUILD_BUCKET=sockerless-test-build",
-		// idtoken.NewClient ADC source. Generated fresh per test run.
+		"SOCKERLESS_GCF_PROJECT="+project,
+		"SOCKERLESS_GCP_BUILD_BUCKET="+buildBucket,
 		"GOOGLE_APPLICATION_CREDENTIALS="+saJSONPath,
-		// Path to the sockerless-gcf-bootstrap binary the backend stages
-		// into Cloud Build context tarballs (overlay image build).
 		"SOCKERLESS_GCF_BOOTSTRAP="+gcfBootstrapPath,
 		// STORAGE_EMULATOR_HOST is Google's SDK-side name for "where
-		// to route storage API requests" (not a description of what's
-		// at the other end — the sockerless GCP simulator implements
-		// real GCS-shape storage backed by real on-disk files, not an
-		// emulation). Operators set this env var when their storage
-		// SDK should target a non-default host. Production sets nothing
-		// and uses the default storage.googleapis.com discovery.
+		// to route storage API requests". Set so the backend's GCS
+		// client targets the test endpoint instead of the default
+		// storage.googleapis.com. Cloud target sets it to the real
+		// endpoint host (operator's storage endpoint).
 		"STORAGE_EMULATOR_HOST="+storageHost,
 	)
 	backendCmd.Stdout = os.Stderr
@@ -313,6 +345,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	// The GCF backend serves the Docker API directly (no separate
 	// frontend binary — in-process wiring per post-P67 architecture).
 	// Point the docker SDK at the backend's TCP address.
+	var err error
 	dockerClient, err = client.NewClientWithOpts(
 		client.WithHost(fmt.Sprintf("tcp://localhost:%d", backendPort)),
 		client.WithAPIVersionNegotiation(),

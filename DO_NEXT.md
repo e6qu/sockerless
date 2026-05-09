@@ -16,16 +16,15 @@ Mirror of Phase 121 GCP sim hardening, plus a no-fallback / no-skip / explicit-c
 
 - **121b-A — Azure Files data plane on disk.** `simulators/azure/files.go` previously returned mock XML for every file/directory operation. New `handleAzureFilesPath` services the real Azure Files REST verbs (PUT directory, PUT file, PUT range, GET, HEAD, DELETE) and persists everything under `FileShareHostDir(account, share)`. End-to-end consistency between data-plane writers and ACA / AZF workload mounts.
 - **121b-B — HS256-signed Azure AD JWT.** `simulators/azure/auth.go` previously emitted `alg:none` tokens. New `mintAzureSimJWT` produces a real-shape Azure AD access token (HS256 + `kid` header + full claim set). JWKS publishes the `kid`.
-- **121b-C — ACA + AZF integration test harness restructured.** No `SOCKERLESS_INTEGRATION` gate, no skip, no fallback. `TestMain` requires `SOCKERLESS_TEST_TARGET=sim|cloud` + `docker` + `go` on PATH; sim path builds + starts simulator-azure on a free port and pre-creates fixed sim resources; cloud path requires explicit `SOCKERLESS_ENDPOINT_URL` + per-backend ARM env vars. Test functions are target-agnostic.
+- **121b-C — All 6 backends' integration test harness restructured.** No `SOCKERLESS_INTEGRATION` gate, no skip, no fallback, no `//go:build integration` build tag. Every backend's `TestMain` (ACA, AZF, ECS, Lambda, Cloud Run, Cloud Run Functions) requires `SOCKERLESS_TEST_TARGET=sim|cloud` + `docker` + `go` on PATH; sim path builds + starts the per-cloud simulator on a free port and pre-creates fixed sim fixtures; cloud path requires explicit `SOCKERLESS_ENDPOINT_URL` + per-backend ARM/IAM env vars. Per-test `skipIfNoIntegration` helpers deleted across the board.
 - **121b-D — Azure terraform-test darwin fail-loud.** No more macOS skip — `t.Fatal` with a clear explanation. Run via Linux container or in CI.
-- **121b-E — Makefile + CI updates.** `make/go-app.mk` ships `test-integration` (sets `SOCKERLESS_TEST_TARGET=sim`) + `test-integration-cloud` (sets `=cloud`). CI sets `SOCKERLESS_TEST_TARGET=sim` alongside the legacy `SOCKERLESS_INTEGRATION` for now (the other backends still gate on the legacy env until their own restructure).
+- **121b-E — Makefile + CI updates.** `make/go-app.mk` + `make/go-lib.mk` ship `test-integration` (`=sim`) + `test-integration-cloud` (`=cloud`). CI sets only `SOCKERLESS_TEST_TARGET=sim`; the legacy `SOCKERLESS_INTEGRATION` env is removed entirely from the codebase.
 
-5 new in-binary tests (`files_test.go` × 3 + `auth_test.go` × 2); all azure sim + sdk + cli + terraform-tests green locally.
+5 new in-binary unit tests (`files_test.go` × 3 + `auth_test.go` × 2); all azure sim + sdk + cli + terraform-tests green locally.
 
 ## Follow-up phases (queued)
 
-1. **TestMain restructure for ECS / Lambda / Cloud Run / Cloud Run Functions** — apply the same `SOCKERLESS_TEST_TARGET` / no-fallback / no-skip pattern. Drop `SOCKERLESS_INTEGRATION` from the codebase and from CI once all 6 backends are migrated.
-2. **In-memory storage backing driver** (user request 2026-05-09) — add a `core.StorageBacking` that uses the execution environment's memory as the backing for Docker/Podman volume translation. Sibling to `pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral` (Phase 127). Available across all 6 backends as the no-cost test path; persists nothing across container lifecycles.
+1. **In-memory storage backing driver** (user request 2026-05-09) — add a `core.StorageBacking` that uses the execution environment's memory as the backing for Docker/Podman volume translation. Sibling to `pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral` (Phase 127). Available across all 6 backends as the no-cost test path; persists nothing across container lifecycles.
 
 ## Standing rules
 

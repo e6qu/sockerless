@@ -1,11 +1,7 @@
-//go:build integration
-
-// Integration tests requiring the in-package TestMain to bring up the
-// sockerless backend, GCP simulator, and a docker client pointed at the
-// backend. TestMain gates execution on `SOCKERLESS_INTEGRATION=1`; this
-// build tag mirrors that gate so `go test ./...` (without -tags
-// integration) doesn't even compile these tests in — previously they
-// would link in but find `dockerClient == nil` and panic.
+// Integration tests for the gcf backend. TestMain (in
+// integration_test.go) brings up the sockerless backend, GCP simulator,
+// and the docker client pointed at the backend. SOCKERLESS_TEST_TARGET
+// (sim or cloud) is required; harness fails loud on missing config.
 
 package gcf
 

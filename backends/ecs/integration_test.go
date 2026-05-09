@@ -22,18 +22,56 @@ import (
 var dockerClient *client.Client
 var evalImageName string
 
-func TestMain(m *testing.M) {
-	if os.Getenv("SOCKERLESS_INTEGRATION") != "1" {
-		// In CI, silent short-circuit would let integration tests "pass" by
-		// not running. Require the env var explicitly so a missing CI config
-		// fails loudfollow-up).
-		if os.Getenv("GITHUB_ACTIONS") == "true" || os.Getenv("CI") == "true" {
-			fmt.Fprintln(os.Stderr, "ERROR: SOCKERLESS_INTEGRATION must be set to 1 in CI — integration tests would otherwise be silently skipped.")
-			os.Exit(1)
-		}
-		// Local dev: run whatever unit tests exist and exit.
-		os.Exit(m.Run())
+// requireEnv reads a required env var or dies loud.
+func requireEnv(name string) string {
+	v := os.Getenv(name)
+	if v == "" {
+		fmt.Fprintf(os.Stderr, "ERROR: required env var %s is not set.\n", name)
+		fmt.Fprintln(os.Stderr, "       The integration test harness has no fallbacks — every config option is mandatory.")
+		fmt.Fprintln(os.Stderr, "       Use `make test-integration` from this directory; it sets up the sim target.")
+		os.Exit(1)
 	}
+	return v
+}
+
+func requireExe(name string) {
+	if _, err := exec.LookPath(name); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: required tool %q not found on PATH (%v).\n", name, err)
+		os.Exit(1)
+	}
+}
+
+// TestMain wires the docker SDK to a running sockerless-backend-ecs
+// pointed at a SOCKERLESS_TEST_TARGET-selected endpoint. There is no
+// implicit default and no skip — every config option is mandatory and
+// every required prereq must be present, otherwise the harness exits
+// non-zero with an explanatory message.
+//
+// SOCKERLESS_TEST_TARGET = sim   → harness builds + starts simulator-aws on a
+//
+//	free port, creates the fixed sim ECS
+//	cluster, and runs the backend against it.
+//	Cluster + subnet + execution role + CPU
+//	arch are sim fixtures.
+//
+// SOCKERLESS_TEST_TARGET = cloud → harness reads explicit env vars
+//
+//	(SOCKERLESS_ENDPOINT_URL,
+//	SOCKERLESS_ECS_CLUSTER,
+//	SOCKERLESS_ECS_SUBNETS,
+//	SOCKERLESS_ECS_EXECUTION_ROLE_ARN,
+//	SOCKERLESS_ECS_CPU_ARCHITECTURE) and fails
+//	loud on any missing.
+//
+// The Test* functions don't know which target they're running against.
+func TestMain(m *testing.M) {
+	target := requireEnv("SOCKERLESS_TEST_TARGET")
+	if target != "sim" && target != "cloud" {
+		fmt.Fprintf(os.Stderr, "ERROR: SOCKERLESS_TEST_TARGET=%q is invalid (want \"sim\" or \"cloud\").\n", target)
+		os.Exit(1)
+	}
+	requireExe("docker")
+	requireExe("go")
 
 	repoRoot := findModuleDir(".")
 	var cleanups []func()
@@ -42,12 +80,15 @@ func TestMain(m *testing.M) {
 			cleanups[i]()
 		}
 	}
+	failClean := func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, format, args...)
+		cleanup()
+		os.Exit(1)
+	}
 
-	// Multi-stage Docker build forced to linux/arm64 — sim's primary
-	// capacity contract (Phase 135b). CI on amd64 hosts uses QEMU.
 	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
 	evalImageName = "sockerless-eval-arithmetic:test"
-	fmt.Printf("[sim] Building %s (linux/arm64)...\n", evalImageName)
+	fmt.Printf("[setup] Building %s (linux/arm64)...\n", evalImageName)
 	evalDockerfile := `FROM golang:1.25-alpine AS build
 WORKDIR /src
 COPY . .
@@ -61,123 +102,116 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		"-t", evalImageName, "-f", "-", evalDir)
 	evalImageBuild.Stdin = strings.NewReader(evalDockerfile)
 	if out, err := evalImageBuild.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic image: %v\n%s", err, out)
-		os.Exit(1)
+		failClean("ERROR: docker build eval-arithmetic image: %v\n%s", err, out)
 	}
 
-	// Build simulator
-	simDir := repoRoot + "/simulators/aws"
-	simBinary := simDir + "/simulator-aws"
-	fmt.Println("[sim] Building simulator-aws...")
-	build := exec.Command("go", "build", "-tags", "noui", "-o", "simulator-aws", ".")
-	build.Dir = simDir
-	build.Env = filterBuildEnv(os.Environ(), "GOWORK=off")
-	build.Stdout = os.Stderr
-	build.Stderr = os.Stderr
-	if err := build.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build simulator-aws: %v\n", err)
-		os.Exit(1)
-	}
-	cleanups = append(cleanups, func() { os.Remove(simBinary) })
+	var endpointURL, cluster, subnets, executionRoleARN, cpuArch string
+	switch target {
+	case "sim":
+		simDir := repoRoot + "/simulators/aws"
+		simBinary := simDir + "/simulator-aws"
+		fmt.Println("[sim] Building simulator-aws...")
+		build := exec.Command("go", "build", "-tags", "noui", "-o", "simulator-aws", ".")
+		build.Dir = simDir
+		build.Env = filterBuildEnv(os.Environ(), "GOWORK=off")
+		build.Stdout = os.Stderr
+		build.Stderr = os.Stderr
+		if err := build.Run(); err != nil {
+			failClean("ERROR: build simulator-aws: %v\n", err)
+		}
+		cleanups = append(cleanups, func() { os.Remove(simBinary) })
 
-	// Start simulator
-	simPort := findFreePort()
-	simAddr := fmt.Sprintf(":%d", simPort)
-	simURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
-	fmt.Printf("[sim] Starting simulator-aws on %s...\n", simAddr)
-	simCmd := exec.Command(simBinary)
-	simCmd.Env = append(os.Environ(),
-		"SIM_LISTEN_ADDR="+simAddr,
-		"PATH="+os.Getenv("PATH"),
-	)
-	simCmd.Stdout = os.Stderr
-	simCmd.Stderr = os.Stderr
-	if err := simCmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to start simulator-aws: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	cleanups = append(cleanups, func() { simCmd.Process.Kill(); simCmd.Wait() })
+		simPort := findFreePort()
+		simAddr := fmt.Sprintf(":%d", simPort)
+		simURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
+		fmt.Printf("[sim] Starting simulator-aws on %s...\n", simAddr)
+		simCmd := exec.Command(simBinary)
+		simCmd.Env = append(os.Environ(),
+			"SIM_LISTEN_ADDR="+simAddr,
+			"PATH="+os.Getenv("PATH"),
+		)
+		simCmd.Stdout = os.Stderr
+		simCmd.Stderr = os.Stderr
+		if err := simCmd.Start(); err != nil {
+			failClean("ERROR: start simulator-aws: %v\n", err)
+		}
+		cleanups = append(cleanups, func() { simCmd.Process.Kill(); simCmd.Wait() })
 
-	if err := waitForReady(simURL+"/health", 10*time.Second); err != nil {
-		fmt.Fprintf(os.Stderr, "simulator-aws not ready: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	fmt.Printf("[sim] simulator-aws is ready at %s\n", simURL)
+		if err := waitForReady(simURL+"/health", 10*time.Second); err != nil {
+			failClean("ERROR: simulator-aws not ready: %v\n", err)
+		}
+		fmt.Printf("[sim] simulator-aws ready at %s\n", simURL)
 
-	// Create ECS cluster in simulator
-	clusterName := "sim-cluster"
-	body := fmt.Sprintf(`{"clusterName":"%s"}`, clusterName)
-	req, _ := http.NewRequest("POST", simURL+"/", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
-	req.Header.Set("X-Amz-Target", "AmazonEC2ContainerServiceV20141113.CreateCluster")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create ECS cluster: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	resp.Body.Close()
-	fmt.Printf("[sim] Created ECS cluster %q in simulator\n", clusterName)
+		endpointURL = simURL
+		cluster = "sim-cluster"
+		subnets = "subnet-0123456789abcdef0"
+		executionRoleARN = "arn:aws:iam::000000000000:role/sim"
+		cpuArch = "ARM64"
 
-	// Build backend
+		// Create ECS cluster in simulator (sim fixture).
+		body := fmt.Sprintf(`{"clusterName":"%s"}`, cluster)
+		req, _ := http.NewRequest("POST", simURL+"/", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+		req.Header.Set("X-Amz-Target", "AmazonEC2ContainerServiceV20141113.CreateCluster")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			failClean("ERROR: create sim ECS cluster: %v\n", err)
+		}
+		resp.Body.Close()
+		fmt.Printf("[sim] Created ECS cluster %q\n", cluster)
+
+	case "cloud":
+		endpointURL = requireEnv("SOCKERLESS_ENDPOINT_URL")
+		cluster = requireEnv("SOCKERLESS_ECS_CLUSTER")
+		subnets = requireEnv("SOCKERLESS_ECS_SUBNETS")
+		executionRoleARN = requireEnv("SOCKERLESS_ECS_EXECUTION_ROLE_ARN")
+		cpuArch = requireEnv("SOCKERLESS_ECS_CPU_ARCHITECTURE")
+	}
+
 	backendDir := repoRoot + "/backends/ecs"
 	backendBinary := backendDir + "/sockerless-backend-ecs"
-	fmt.Println("[sim] Building sockerless-backend-ecs...")
+	fmt.Println("[backend] Building sockerless-backend-ecs...")
 	buildBackend := exec.Command("go", "build", "-tags", "noui", "-o", "sockerless-backend-ecs", "./cmd/sockerless-backend-ecs")
 	buildBackend.Dir = backendDir
 	buildBackend.Stdout = os.Stderr
 	buildBackend.Stderr = os.Stderr
 	if err := buildBackend.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build backend: %v\n", err)
-		cleanup()
-		os.Exit(1)
+		failClean("ERROR: build sockerless-backend-ecs: %v\n", err)
 	}
 	cleanups = append(cleanups, func() { os.Remove(backendBinary) })
 
-	// Start backend
 	backendPort := findFreePort()
 	backendAddr := fmt.Sprintf(":%d", backendPort)
-	fmt.Printf("[sim] Starting sockerless-backend-ecs on %s...\n", backendAddr)
+	fmt.Printf("[backend] Starting sockerless-backend-ecs on %s (target=%s endpoint=%s)\n", backendAddr, target, endpointURL)
 	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
 	backendCmd.Env = append(os.Environ(),
-		"SOCKERLESS_ENDPOINT_URL="+simURL,
+		"SOCKERLESS_ENDPOINT_URL="+endpointURL,
 		"SOCKERLESS_POLL_INTERVAL=500ms",
-		"SOCKERLESS_ECS_CLUSTER=sim-cluster",
-		"SOCKERLESS_ECS_SUBNETS=subnet-0123456789abcdef0",
-		"SOCKERLESS_ECS_EXECUTION_ROLE_ARN=arn:aws:iam::000000000000:role/sim",
-		// BUG-848 made arch mandatory; no default.
-		"SOCKERLESS_ECS_CPU_ARCHITECTURE=ARM64",
+		"SOCKERLESS_ECS_CLUSTER="+cluster,
+		"SOCKERLESS_ECS_SUBNETS="+subnets,
+		"SOCKERLESS_ECS_EXECUTION_ROLE_ARN="+executionRoleARN,
+		"SOCKERLESS_ECS_CPU_ARCHITECTURE="+cpuArch,
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
 	if err := backendCmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to start backend: %v\n", err)
-		cleanup()
-		os.Exit(1)
+		failClean("ERROR: start sockerless-backend-ecs: %v\n", err)
 	}
 	cleanups = append(cleanups, func() { backendCmd.Process.Kill(); backendCmd.Wait() })
 
 	backendURL := fmt.Sprintf("http://localhost:%d/internal/v1/info", backendPort)
 	if err := waitForReady(backendURL, 15*time.Second); err != nil {
-		fmt.Fprintf(os.Stderr, "backend not ready: %v\n", err)
-		cleanup()
-		os.Exit(1)
+		failClean("ERROR: sockerless-backend-ecs not ready: %v\n", err)
 	}
-	fmt.Printf("[sim] backend is ready on %s\n", backendAddr)
+	fmt.Printf("[backend] ready on %s\n", backendAddr)
 
-	// The ECS backend serves the Docker API directly (no separate
-	// frontend binary — in-process wiring per post-P67 architecture).
-	// Point the docker SDK at the backend's TCP address.
+	var err error
 	dockerClient, err = client.NewClientWithOpts(
 		client.WithHost(fmt.Sprintf("tcp://localhost:%d", backendPort)),
 		client.WithAPIVersionNegotiation(),
 	)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create docker client: %v\n", err)
-		cleanup()
-		os.Exit(1)
+		failClean("ERROR: docker client: %v\n", err)
 	}
 
 	code := m.Run()
@@ -185,15 +219,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	os.Exit(code)
 }
 
-func skipIfNoIntegration(t *testing.T) {
-	t.Helper()
-	if os.Getenv("SOCKERLESS_INTEGRATION") != "1" {
-		t.Skip("skipping integration test (SOCKERLESS_INTEGRATION != 1)")
-	}
-}
-
 func TestECSContainerLifecycle(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	// Pull image
@@ -249,7 +275,6 @@ func TestECSContainerLifecycle(t *testing.T) {
 }
 
 func TestECSContainerLogs(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	pullRC, _ := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
@@ -301,7 +326,6 @@ func TestECSContainerLogs(t *testing.T) {
 }
 
 func TestECSContainerExec(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	pullRC, _ := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
@@ -356,7 +380,6 @@ func TestECSContainerExec(t *testing.T) {
 }
 
 func TestECSContainerList(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	pullRC, _ := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
@@ -407,7 +430,6 @@ func TestECSContainerList(t *testing.T) {
 }
 
 func TestECSNetworkOperations(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	// Create network
@@ -452,7 +474,6 @@ func TestECSNetworkOperations(t *testing.T) {
 // deletes it. The simulator's EFS slice backs each access point with
 // a host-side directory so tasks bind-mount a real path.
 func TestECSVolumeOperations(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	volName := "ecs-test-vol-" + generateTestID()
