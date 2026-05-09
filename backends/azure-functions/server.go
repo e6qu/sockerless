@@ -62,7 +62,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	}
 	s.CloudState = &azfCloudState{server: s}
 	s.SetSelf(s)
-	s.Access = newNoneInternalAccess(s)
+	s.Access = core.NoneInternalAccess{}
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

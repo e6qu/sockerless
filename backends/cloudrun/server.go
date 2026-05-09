@@ -99,8 +99,16 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	// Services SDK paths used by the network-connect / disconnect /
 	// resolve flow.
 	s.NetworkDiscovery = newCloudDNSDiscovery(s)
-	s.DNS = newCloudDNSZoneDNS(s)
-	s.Access = newIDTokenAccess(s)
+	s.DNS = &gcpcommon.CloudDNSZoneDNS{
+		LookupZoneDNSName: func(ctx context.Context, networkID string) (string, error) {
+			state, ok := s.resolveNetworkState(ctx, networkID)
+			if !ok {
+				return "", nil
+			}
+			return state.DNSName, nil
+		},
+	}
+	s.Access = gcpcommon.NewIDTokenAccess(config.ServiceAccount)
 
 	// Storage backing registry. EmptyDirDriver always available;
 	// GCSFuseDriver kept for legacy SharedVolumes (tar-pack persist);

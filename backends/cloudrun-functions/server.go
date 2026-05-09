@@ -148,7 +148,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	// (Cloud Functions Gen2 invocations are HTTP-fronted, not
 	// CNAME-discovered).
 	s.NetworkDiscovery = core.NewHostAliasesDiscovery()
-	s.Access = newIDTokenAccess(s)
+	s.Access = gcpcommon.NewIDTokenAccess(config.ServiceAccount)
 
 	mode := "cloud"
 	if config.EndpointURL != "" {
