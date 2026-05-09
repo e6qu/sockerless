@@ -617,6 +617,204 @@ func handleStorageDataPlane(w http.ResponseWriter, r *http.Request, serviceType,
 		return
 	}
 
+	// Directory + file paths within a share (no restype, or restype=directory).
+	// Real Azure Files REST API:
+	//   PUT  /{share}/{path}?restype=directory                      → create directory
+	//   PUT  /{share}/{path}                                         → create empty file (x-ms-type: file)
+	//   PUT  /{share}/{path}?comp=range, Content-Range: bytes=A-B/* → write file range
+	//   GET  /{share}/{path}                                         → read file
+	//   DELETE /{share}/{path}                                       → delete file/dir
+	//
+	// Persisted to disk under FileShareHostDir(account, share) so an
+	// ACA Job/App that mounts the share via Volume{StorageType:
+	// AzureFile} sees the same bytes as the data-plane caller.
+	if serviceType == "file" {
+		shareName, relPath := splitSharePath(r.URL.Path)
+		if shareName == "" || relPath == "" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		shareKey := accountName + "/" + shareName
+		if _, ok := shares.Get(shareKey); !ok {
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `<?xml version="1.0" encoding="utf-8"?><Error><Code>ShareNotFound</Code><Message>The specified share does not exist.</Message></Error>`)
+			return
+		}
+		hostPath := filepath.Join(FileShareHostDir(accountName, shareName), filepath.FromSlash(relPath))
+		if err := handleAzureFilesPath(w, r, hostPath, restype, comp); err != nil {
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, `<?xml version="1.0" encoding="utf-8"?><Error><Code>InternalError</Code><Message>%s</Message></Error>`, err.Error())
+			return
+		}
+		return
+	}
+
 	// Default: 200 OK (some operations just need a success response)
 	w.WriteHeader(http.StatusOK)
+}
+
+// splitSharePath splits a request path like "/share-1/dir/file.txt"
+// into ("share-1", "dir/file.txt"). Returns empty strings if the path
+// doesn't have the expected shape.
+func splitSharePath(p string) (share, rel string) {
+	p = strings.TrimPrefix(p, "/")
+	idx := strings.Index(p, "/")
+	if idx <= 0 {
+		return "", ""
+	}
+	return p[:idx], p[idx+1:]
+}
+
+// handleAzureFilesPath services the Azure Files data-plane verbs that
+// touch a path within a share. Persists everything under hostPath so
+// the on-disk view matches what an ACA / AZF workload mounting the
+// share sees through Volume{StorageType: AzureFile}.
+func handleAzureFilesPath(w http.ResponseWriter, r *http.Request, hostPath, restype, comp string) error {
+	switch r.Method {
+	case http.MethodPut:
+		if restype == "directory" {
+			if err := os.MkdirAll(hostPath, 0o777); err != nil {
+				return err
+			}
+			w.Header().Set("Content-Type", "application/xml")
+			w.Header().Set("ETag", `"0x8DAZUREFILESDIR"`)
+			w.WriteHeader(http.StatusCreated)
+			return nil
+		}
+		if comp == "range" {
+			return handleAzureFilesPutRange(w, r, hostPath)
+		}
+		// Create file: empty placeholder of x-ms-content-length bytes.
+		if err := os.MkdirAll(filepath.Dir(hostPath), 0o777); err != nil {
+			return err
+		}
+		size := int64(0)
+		if v := r.Header.Get("x-ms-content-length"); v != "" {
+			fmt.Sscanf(v, "%d", &size)
+		}
+		f, err := os.Create(hostPath)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		if size > 0 {
+			if err := f.Truncate(size); err != nil {
+				return err
+			}
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		w.Header().Set("ETag", `"0x8DAZUREFILEEMPTY"`)
+		w.WriteHeader(http.StatusCreated)
+		return nil
+
+	case http.MethodGet, http.MethodHead:
+		body, err := os.ReadFile(hostPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				w.Header().Set("Content-Type", "application/xml")
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, `<?xml version="1.0" encoding="utf-8"?><Error><Code>ResourceNotFound</Code><Message>The specified resource does not exist.</Message></Error>`)
+				return nil
+			}
+			return err
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
+		w.Header().Set("x-ms-type", "File")
+		w.WriteHeader(http.StatusOK)
+		if r.Method == http.MethodGet {
+			_, _ = w.Write(body)
+		}
+		return nil
+
+	case http.MethodDelete:
+		if err := os.Remove(hostPath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		w.WriteHeader(http.StatusAccepted)
+		return nil
+	}
+	w.WriteHeader(http.StatusOK)
+	return nil
+}
+
+// handleAzureFilesPutRange writes the request body into hostPath at
+// the offset declared by Content-Range. Real Azure Files supports
+// Content-Range: bytes=A-B/*; we honour A as the offset and write
+// (B-A+1) bytes from the body.
+func handleAzureFilesPutRange(w http.ResponseWriter, r *http.Request, hostPath string) error {
+	cr := r.Header.Get("Content-Range")
+	if cr == "" {
+		// Some clients PUT range with only x-ms-range; fall through and
+		// treat as a write at offset 0.
+		cr = r.Header.Get("x-ms-range")
+	}
+	var start, end int64
+	if cr != "" {
+		// Parse "bytes=A-B/*" or "bytes A-B/*"
+		s := strings.TrimPrefix(cr, "bytes=")
+		s = strings.TrimPrefix(s, "bytes ")
+		if i := strings.Index(s, "/"); i >= 0 {
+			s = s[:i]
+		}
+		parts := strings.SplitN(s, "-", 2)
+		if len(parts) == 2 {
+			fmt.Sscanf(parts[0], "%d", &start)
+			fmt.Sscanf(parts[1], "%d", &end)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(hostPath), 0o777); err != nil {
+		return err
+	}
+	body, err := readAllRequest(r)
+	if err != nil {
+		return err
+	}
+	want := int64(len(body))
+	if cr != "" {
+		want = end - start + 1
+		if want < 0 {
+			want = int64(len(body))
+		}
+	}
+	f, err := os.OpenFile(hostPath, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	n := want
+	if n > int64(len(body)) {
+		n = int64(len(body))
+	}
+	if _, err := f.WriteAt(body[:n], start); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/xml")
+	w.Header().Set("ETag", `"0x8DAZUREFILERANGE"`)
+	w.WriteHeader(http.StatusCreated)
+	return nil
+}
+
+func readAllRequest(r *http.Request) ([]byte, error) {
+	defer r.Body.Close()
+	const max = 1024 * 1024 * 64 // 64 MiB cap per request
+	buf := make([]byte, 0, 4096)
+	tmp := make([]byte, 4096)
+	for {
+		n, err := r.Body.Read(tmp)
+		if n > 0 {
+			buf = append(buf, tmp[:n]...)
+			if int64(len(buf)) > max {
+				return nil, fmt.Errorf("request body exceeds %d bytes", max)
+			}
+		}
+		if err != nil {
+			if err.Error() == "EOF" {
+				return buf, nil
+			}
+			return buf, err
+		}
+	}
 }

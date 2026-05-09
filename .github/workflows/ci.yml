@@ -34,7 +34,13 @@ jobs:
       # from Docker Hub. Ubuntu runners ship with dockerd running, so the
       # integration tests work without extra setup. Set uniformly so no
       # test is silently skipped (per the no-skip principle).
+      #
+      # ACA + AZF backends use the new SOCKERLESS_TEST_TARGET=sim|cloud
+      # contract (no skips, no fallbacks, explicit config). Other backends
+      # still gate on SOCKERLESS_INTEGRATION until they migrate to the
+      # same shape. Both vars are set so neither path silently skips.
       SOCKERLESS_INTEGRATION: "1"
+      SOCKERLESS_TEST_TARGET: "sim"
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6

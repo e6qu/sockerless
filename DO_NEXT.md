@@ -4,25 +4,28 @@
 
 ## Branch
 
-`phase-127-storage-driver-expansion` — off `origin/main` at f1818b6 (PR #133 merged 2026-05-09). Single work-branch rule: everything stacks here, no side branches.
+`phase-121b-azure-sim-hardening` — off `origin/main` at 3e39e3a (PR #134 merged 2026-05-09). Single work-branch rule: everything stacks here, no side branches.
 
 ## Ordered roadmap (do them in this order)
 
-1. **Phase 121b — Azure sim hardening** (cloud-faithful for ACA + AZF; mirror of Phase 121).
-2. **Phase 78 — UI polish** (dark mode, design tokens, error UX, container detail modal, accessibility).
+1. **Phase 78 — UI polish** (dark mode, design tokens, error UX, container detail modal, accessibility).
 
-## Active — Phase 127 (Storage driver expansion, ready for PR + CI)
+## Active — Phase 121b (Azure sim hardening + Azure backend test-harness restructure, ready for PR + CI)
 
-All sub-tasks shipped:
+Mirror of Phase 121 GCP sim hardening, plus a no-fallback / no-skip / explicit-config restructure of the Azure backend integration test harnesses. All sub-tasks shipped:
 
-- **127a** — `core.storage_backing.go` extended with 3 new constants (`pd-ephemeral`, `efs-ephemeral`, `azure-files-ephemeral`) + 3 new `BackingSpec` payload structs (`PDEphemeralSpec`, `EFSEphemeralSpec`, `AzureFilesEphemeralSpec`). `SharedVolumeRef` carries the per-backing fields (PD size/zone, EFS FS+AP, Azure account+share, ReadOnly).
-- **127b** — Per-cloud driver impls: `gcp-common.PDEphemeralDriver`, `aws-common.EFSEphemeralDriver`, `azure-common.AzureFilesEphemeralDriver`. Each is a `core.StorageBackingDriver` with a `CloudSpec` translator and no-op `PreExec`/`PostExec` (live filesystem; no sockerless-side data sync).
-- **127c** — Per-backend registry wiring: cloudrun + cloudrun-functions register `pd-ephemeral`; ECS + Lambda gain a `storageBackings` registry pre-populated with `efs-ephemeral` (sharing the existing `EFSManager`); ACA + AZF gain a `storageBackings` registry pre-populated with `azure-files-ephemeral` (defaulting to the configured storage account).
-- **127d** — 15 unit tests (5 per driver) covering Backing(), CloudSpec defaults + overrides + required-field rejection, PreExec/PostExec no-ops.
+- **121b-A — Azure Files data plane on disk.** `simulators/azure/files.go` previously returned mock XML for every file/directory operation. New `handleAzureFilesPath` services the real Azure Files REST verbs (PUT directory, PUT file, PUT range, GET, HEAD, DELETE) and persists everything under `FileShareHostDir(account, share)`. End-to-end consistency between data-plane writers and ACA / AZF workload mounts.
+- **121b-B — HS256-signed Azure AD JWT.** `simulators/azure/auth.go` previously emitted `alg:none` tokens. New `mintAzureSimJWT` produces a real-shape Azure AD access token (HS256 + `kid` header + full claim set). JWKS publishes the `kid`.
+- **121b-C — ACA + AZF integration test harness restructured.** No `SOCKERLESS_INTEGRATION` gate, no skip, no fallback. `TestMain` requires `SOCKERLESS_TEST_TARGET=sim|cloud` + `docker` + `go` on PATH; sim path builds + starts simulator-azure on a free port and pre-creates fixed sim resources; cloud path requires explicit `SOCKERLESS_ENDPOINT_URL` + per-backend ARM env vars. Test functions are target-agnostic.
+- **121b-D — Azure terraform-test darwin fail-loud.** No more macOS skip — `t.Fatal` with a clear explanation. Run via Linux container or in CI.
+- **121b-E — Makefile + CI updates.** `make/go-app.mk` ships `test-integration` (sets `SOCKERLESS_TEST_TARGET=sim`) + `test-integration-cloud` (sets `=cloud`). CI sets `SOCKERLESS_TEST_TARGET=sim` alongside the legacy `SOCKERLESS_INTEGRATION` for now (the other backends still gate on the legacy env until their own restructure).
 
-Spec: [specs/CLOUD_RESOURCE_MAPPING.md § Storage backing — ephemeral managed FS expansion](specs/CLOUD_RESOURCE_MAPPING.md#storage-backing--ephemeral-managed-fs-expansion).
+5 new in-binary tests (`files_test.go` × 3 + `auth_test.go` × 2); all azure sim + sdk + cli + terraform-tests green locally.
 
-Next: open PR, watch CI, merge, then start Phase 121b (Azure sim hardening).
+## Follow-up phases (queued)
+
+1. **TestMain restructure for ECS / Lambda / Cloud Run / Cloud Run Functions** — apply the same `SOCKERLESS_TEST_TARGET` / no-fallback / no-skip pattern. Drop `SOCKERLESS_INTEGRATION` from the codebase and from CI once all 6 backends are migrated.
+2. **In-memory storage backing driver** (user request 2026-05-09) — add a `core.StorageBacking` that uses the execution environment's memory as the backing for Docker/Podman volume translation. Sibling to `pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral` (Phase 127). Available across all 6 backends as the no-cost test path; persists nothing across container lifecycles.
 
 ## Standing rules
 

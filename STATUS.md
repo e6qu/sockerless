@@ -6,8 +6,8 @@
 
 | | |
 |---|---|
-| Active branch | `phase-127-storage-driver-expansion` (off `origin/main` at f1818b6) |
-| Last merged | PR #133 — Phase 126 access driver (2026-05-09) |
+| Active branch | `phase-121b-azure-sim-hardening` (off `origin/main` at 3e39e3a) |
+| Last merged | PR #134 — Phase 127 storage driver expansion (2026-05-09) |
 | Milestone | **8/8 runner-integration cells GREEN** (since 2026-05-07); **sim host model shipped, CI fully green on native arm64** (Phase 135, 2026-05-09). |
 | Bugs | 984 filed · 984 fixed · **0 open** ([BUGS.md](BUGS.md)). |
 | Sim parity | 77/77 ✓ across current backends (AWS 33, GCP 16, Azure 28) — [specs/SIM_PARITY_MATRIX.md](specs/SIM_PARITY_MATRIX.md) |
@@ -28,23 +28,27 @@
 
 Each green run: probe-capabilities → probe-localhost-peer (postgres sidecar `localhost:5432`) → clone-and-compile (`git clone` + `go build` of `simulators/testdata/eval-arithmetic`) → 5 arithmetic invocations.
 
-## Up next on `phase-127-storage-driver-expansion`
+## Up next on `phase-121b-azure-sim-hardening`
 
-In flight: **Phase 127 — Storage driver expansion**. All sub-tasks shipped:
+In flight: **Phase 121b — Azure simulator hardening** (mirror of Phase 121 GCP work). Two cloud-faithful upgrades shipped:
 
-- **127a** — `core.storage_backing.go` extended with 3 new constants (`pd-ephemeral`, `efs-ephemeral`, `azure-files-ephemeral`) + 3 new `BackingSpec` payloads (`PDEphemeralSpec`, `EFSEphemeralSpec`, `AzureFilesEphemeralSpec`). `SharedVolumeRef` carries the per-backing fields (PD size/zone, EFS FS+AP, Azure account+share, ReadOnly).
-- **127b** — Per-cloud driver impls: `gcp-common.PDEphemeralDriver`, `aws-common.EFSEphemeralDriver`, `azure-common.AzureFilesEphemeralDriver`. Each is a `core.StorageBackingDriver` with a `CloudSpec` translator and no-op `PreExec`/`PostExec` (live filesystem, no sync needed).
-- **127c** — Per-backend registry wiring: cloudrun + cloudrun-functions register `pd-ephemeral`; ECS + Lambda gain a `storageBackings` registry pre-populated with `efs-ephemeral` (sharing the existing `EFSManager`); ACA + AZF gain a `storageBackings` registry pre-populated with `azure-files-ephemeral` (defaulting to the configured storage account).
-- **127d** — Tests across `gcp-common`, `aws-common`, `azure-common` (5/5/5 unit tests covering Backing(), CloudSpec defaults + overrides + required-field rejection, PreExec/PostExec no-ops).
+- **121b-A — Azure Files data plane on disk.** `simulators/azure/files.go`'s data-plane handler previously returned mock XML for every file/directory operation. New `handleAzureFilesPath` services the real Azure Files REST verbs (PUT directory, PUT file, PUT range, GET, HEAD, DELETE) and persists everything under `FileShareHostDir(account, share)` — the same on-disk root the ACA Jobs/Apps executor uses for `Volume{StorageType: AzureFile}`. End-to-end consistency between data-plane writers and workload mounts.
+- **121b-B — HS256-signed Azure AD JWT.** `simulators/azure/auth.go` previously emitted `alg:none` tokens. New `mintAzureSimJWT` produces a real-shape Azure AD access token (HS256 + `kid` header + `tid`/`oid`/`sub`/`aud`/`iss`/`iat`/`exp`/`nbf`/`ver`/`appid` claims). JWKS publishes the `kid`. Mirrors GCP sim's HS256 approach.
+- **121b-C — ACA + AZF integration test harness restructured.** No more `SOCKERLESS_INTEGRATION` env-var gate, no skip, no fallback. `TestMain` requires `SOCKERLESS_TEST_TARGET=sim|cloud` and `docker` + `go` on PATH; sim path builds + starts simulator-azure on a free port + pre-creates fixed sim resources; cloud path requires explicit `SOCKERLESS_ENDPOINT_URL` + per-backend ARM env vars. The `Test*` functions are target-agnostic — they hit the docker SDK regardless. Fix for the prior nil-dockerClient panic on local-dev `go test`.
+- **121b-D — Azure terraform-test darwin fail-loud.** `simulators/azure/terraform-tests/apply_test.go` no longer skips on darwin — it `t.Fatal`s with a clear explanation (Go's cgo `crypto/x509.SystemCertPool()` reads from the macOS Security framework keychain and ignores `SSL_CERT_FILE`; run via Linux container or in CI).
+- **121b-E — Makefile + CI updates.** `make/go-app.mk` ships `test-integration` (sets `SOCKERLESS_TEST_TARGET=sim`) + `test-integration-cloud` (sets `=cloud`). CI sets `SOCKERLESS_TEST_TARGET=sim` alongside the legacy `SOCKERLESS_INTEGRATION` (kept for the other backends until they migrate to the same shape — follow-up phase).
 
-Spec: [specs/CLOUD_RESOURCE_MAPPING.md § Storage backing — ephemeral managed FS expansion](specs/CLOUD_RESOURCE_MAPPING.md#storage-backing--ephemeral-managed-fs-expansion).
+Tests: 5 new in-binary tests (`files_test.go` × 3, `auth_test.go` × 2). All `simulators/azure` + `azure/sdk-tests` + `azure/cli-tests` + `azure/terraform-tests` green locally; ACA + AZF integration tests build cleanly and fail loud on missing config.
 
-Then Phase 121b → 78 per [PLAN.md § Roadmap (ordered)](PLAN.md#roadmap-ordered).
+Follow-up: apply the same `SOCKERLESS_TEST_TARGET` / no-fallback / no-skip restructure to ECS / Lambda / Cloud Run / Cloud Run Functions integration tests, plus add an in-memory storage backing driver per user request 2026-05-09.
+
+Then Phase 78 per [PLAN.md § Roadmap (ordered)](PLAN.md#roadmap-ordered).
 
 ## Recently shipped (chronological)
 
 | Date | PR | Headline |
 |------|----|----|
+| 2026-05-09 | #134 | Phase 127 Storage driver expansion (pd-ephemeral / efs-ephemeral / azure-files-ephemeral; per-cloud drivers + per-backend storageBackings registry wiring across all 6 cloud backends). |
 | 2026-05-09 | #133 | Phase 126 Access driver (iam-role / id-token / mTLS / none-internal; per-backend adapters; every idtoken.NewClient callsite migrated through s.Access.AuthenticatedClient). |
 | 2026-05-09 | #132 | Phase 125 DNS driver (cloud-map / cloud-dns-zone / private-dns-zone / service-discovery / none; per-backend adapters; SOCKERLESS_DNS_SEARCH_DOMAIN env wired through every ContainerCreate; cloudrun + GCF bootstraps write /etc/resolv.conf). |
 | 2026-05-09 | #131 | Phase 124 network discovery driver (host-aliases / cloud-dns / service-mesh / nat-gateway-only; per-backend adapters; all callsites migrated). |

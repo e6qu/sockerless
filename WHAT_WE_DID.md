@@ -6,7 +6,25 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* we did each phase, what was surprising, what blocked. Per-bug detail belongs in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
-## 2026-05-09 — Phase 127 Storage driver expansion (PR pending)
+## 2026-05-09 — Phase 121b Azure sim hardening + Azure backend test harness restructure (PR pending)
+
+Sixth of the post-Phase-135 ordered roadmap. Two cloud-faithful upgrades to the Azure simulator (mirror of Phase 121's GCP work), plus a no-fallback / no-skip / explicit-config restructure of the Azure backend integration test harnesses.
+
+**Sim hardening:**
+- `simulators/azure/files.go` — Azure Files data plane previously returned mock XML for every file/dir verb. New `handleAzureFilesPath` services PUT directory, PUT file, PUT range, GET, HEAD, DELETE and persists everything under `FileShareHostDir(account, share)` — same on-disk root the ACA Jobs/Apps executor uses for `Volume{StorageType: AzureFile}`. End-to-end consistency.
+- `simulators/azure/auth.go` — JWT was `alg:none`. New `mintAzureSimJWT` is HS256 with `kid` + full claim set (`tid`/`oid`/`sub`/`aud`/`iss`/`iat`/`exp`/`nbf`/`ver`/`appid`). JWKS publishes the `kid`.
+
+**Azure backend test harness restructure** (driven by user direction 2026-05-09: "no fallbacks, no skipping, all configs explicit, integration tests should be swappable sim↔cloud"):
+- `backends/aca/integration_test.go` + `backends/azure-functions/integration_test.go` — `TestMain` requires `SOCKERLESS_TEST_TARGET=sim|cloud` + `docker` + `go` on PATH. Sim path builds + starts simulator-azure on a free port + pre-creates fixed sim resources; cloud path requires explicit `SOCKERLESS_ENDPOINT_URL` + per-backend ARM env vars. Test functions are target-agnostic — they hit the docker SDK regardless. Replaces the prior `SOCKERLESS_INTEGRATION=1` gate that fell through to a nil-`dockerClient` panic on local-dev runs.
+- `simulators/azure/terraform-tests/apply_test.go` — no longer skips on darwin. `t.Fatal`s with a clear explanation (Go's cgo `crypto/x509.SystemCertPool()` reads from the macOS Security framework keychain and ignores `SSL_CERT_FILE`; run via Linux container or in CI).
+
+**Tooling:**
+- `make/go-app.mk` — replaces the old `test-integration` (SOCKERLESS_INTEGRATION=1 + `-tags integration`) with two targets: `test-integration` sets `SOCKERLESS_TEST_TARGET=sim`; `test-integration-cloud` sets `SOCKERLESS_TEST_TARGET=cloud`.
+- `.github/workflows/ci.yml` — sets `SOCKERLESS_TEST_TARGET=sim` alongside the legacy `SOCKERLESS_INTEGRATION` (kept until ECS/Lambda/Cloud Run/Cloud Run Functions migrate to the same shape).
+
+5 new in-binary unit tests (`files_test.go` × 3, `auth_test.go` × 2). The other 4 cloud backends still use the legacy `SOCKERLESS_INTEGRATION` shape — that migration is queued as a follow-up phase. The user-requested in-memory storage backing driver is also queued as the follow-up to Phase 127's expansion work.
+
+## 2026-05-09 — Phase 127 Storage driver expansion (PR #134, merged)
 
 Fifth of the post-Phase-135 ordered roadmap. Opens the `BackingSpec` union (until now `emptyDir` + `gcs-sync` + `gcs-fuse`, GCP-only) to the AWS + Azure equivalents. The point is a uniform cross-cloud abstraction for "ephemeral managed FS attached to a task" so operator selection (`SharedVolume.Backing`) works identically across the 6 cloud backends.
 
