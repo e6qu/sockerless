@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -130,7 +134,12 @@ var crv2Services sim.Store[ServiceV2]
 // revision); the sim mirrors it for both REST CreateService and the
 // cloudfunctions auto-wire path so a single source of truth controls
 // the shape of "just-created" services.
-func seedServiceV2Defaults(svc ServiceV2, project, location, serviceID string) ServiceV2 {
+//
+// `host` is the simulator's HTTP host (Request.Host) so the URI we hand
+// back routes invocations to the sim's own /v2-services-invoke handler
+// rather than to the real *.run.app domain (which doesn't exist for
+// fake project IDs and would 401 on TLS even if it did).
+func seedServiceV2Defaults(svc ServiceV2, host, project, location, serviceID string) ServiceV2 {
 	now := nowTimestamp()
 	svc.Name = fmt.Sprintf("projects/%s/locations/%s/services/%s", project, location, serviceID)
 	svc.UID = generateUUID()
@@ -151,7 +160,7 @@ func seedServiceV2Defaults(svc ServiceV2, project, location, serviceID string) S
 	svc.LatestReadyRevision = fmt.Sprintf("%s/revisions/%s-00001-abc", svc.Name, serviceID)
 	svc.LatestCreatedRevision = svc.LatestReadyRevision
 	if !svc.DefaultUriDisabled {
-		svc.URI = fmt.Sprintf("https://%s-%s.run.app", serviceID, project)
+		svc.URI = fmt.Sprintf("http://%s/v2-services-invoke/%s/%s/%s", host, project, location, serviceID)
 	}
 	return svc
 }
@@ -192,7 +201,7 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 			return
 		}
 
-		svc = seedServiceV2Defaults(svc, project, location, serviceID)
+		svc = seedServiceV2Defaults(svc, r.Host, project, location, serviceID)
 
 		services.Put(name, svc)
 
@@ -297,5 +306,49 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 		services.Put(name, update)
 		lro := newLRO(project, location, update, "type.googleapis.com/google.cloud.run.v2.Service")
 		sim.WriteJSON(w, http.StatusOK, lro)
+	})
+
+	// Invoke handler. Real Cloud Run hosts the service URI as
+	// `https://<service>-<project>.run.app`; the sim's seedServiceV2Defaults
+	// hands back `http://<sim>/v2-services-invoke/<project>/<location>/<service>`
+	// instead so backends invoke the sim directly. The handler runs the
+	// overlay container on demand and forwards the request envelope to
+	// the bootstrap's HTTP listener — same flow as Cloud Functions Gen2
+	// (`/v2-functions-invoke/`).
+	srv.HandleFunc("POST /v2-services-invoke/{project}/{location}/{service}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		location := sim.PathParam(r, "location")
+		serviceID := sim.PathParam(r, "service")
+		name := fmt.Sprintf("projects/%s/locations/%s/services/%s", project, location, serviceID)
+		svc, ok := services.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "service %q not found", name)
+			return
+		}
+		if svc.Template == nil || len(svc.Template.Containers) == 0 || svc.Template.Containers[0].Image == "" {
+			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "service %q has no container image", name)
+			return
+		}
+		image := svc.Template.Containers[0].Image
+		bodyBytes, _ := io.ReadAll(r.Body)
+		_ = r.Body.Close()
+		ct := r.Header.Get("Content-Type")
+		var body io.Reader
+		if len(bodyBytes) > 0 {
+			body = bytes.NewReader(bodyBytes)
+		}
+		sink := &cfLogSink{project: project, functionName: serviceID}
+		respBody, exitCode, err := invokeOverlayContainerHTTPWithBody(image, serviceID, 5*time.Minute, sink, body, ct)
+		if err != nil {
+			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "invoke service %q: %v", name, err)
+			return
+		}
+		if exitCode != 0 {
+			w.Header().Set("X-Sockerless-Exit-Code", strconv.Itoa(exitCode))
+			w.WriteHeader(http.StatusInternalServerError)
+		} else {
+			w.WriteHeader(http.StatusOK)
+		}
+		_, _ = w.Write(respBody)
 	})
 }
