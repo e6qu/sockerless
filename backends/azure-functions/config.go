@@ -40,9 +40,9 @@ type Config struct {
 	// s.NetworkDiscovery. AZF's native is nat-gateway-only — Azure
 	// Functions don't expose per-invocation IPs. Operators may
 	// override to host-aliases (in-process registry) for the
-	// multi-container pattern. cloud-dns (private-dns-zone) requires
-	// the AZF NetworkState model + zone creation flow queued under
-	// 121b-finish-C.
+	// multi-container pattern, or cloud-dns (Azure Private DNS) for
+	// proper cross-app peer resolution backed by the per-network zone
+	// created at NetworkCreate time.
 	// Set via SOCKERLESS_AZF_NETWORK_DISCOVERY.
 	NetworkDiscovery api.NetworkDiscoveryKind
 }
@@ -127,10 +127,10 @@ func (c Config) Validate() error {
 		return fmt.Errorf("SOCKERLESS_AZF_STORAGE_ACCOUNT is required")
 	}
 	switch c.NetworkDiscovery {
-	case api.NetworkDiscoveryNATGatewayOnly, api.NetworkDiscoveryHostAliases:
+	case api.NetworkDiscoveryNATGatewayOnly, api.NetworkDiscoveryHostAliases, api.NetworkDiscoveryCloudDNS:
 		// supported
 	default:
-		return fmt.Errorf("SOCKERLESS_AZF_NETWORK_DISCOVERY=%q not supported by azf (one of nat-gateway-only, host-aliases required; cloud-dns wiring lives in 121b-finish-C)", c.NetworkDiscovery)
+		return fmt.Errorf("SOCKERLESS_AZF_NETWORK_DISCOVERY=%q not supported by azf (one of nat-gateway-only, host-aliases, cloud-dns required)", c.NetworkDiscovery)
 	}
 	return nil
 }

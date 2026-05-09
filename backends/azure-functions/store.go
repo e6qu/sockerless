@@ -37,3 +37,11 @@ type AZFState struct {
 	FunctionURL  string
 	FunctionHost string
 }
+
+// NetworkState tracks cloud networking state for a Docker network.
+// Only the per-network Private DNS zone today (AZF doesn't need
+// per-network NSG rules — function apps egress through Azure's
+// managed plane, not through caller-controlled NSGs).
+type NetworkState struct {
+	DNSZoneName string // Azure Private DNS zone backing this network
+}

@@ -11,6 +11,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/monitor/azquery"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v5"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 )
 
@@ -32,6 +33,13 @@ type AzureClients struct {
 	// rotated keys take effect without a restart.
 	FileShares      *armstorage.FileSharesClient
 	StorageAccounts *armstorage.AccountsClient
+
+	// Private DNS plumbing for the cloud-dns NetworkDiscovery driver.
+	// Mirrors the ACA backend — same per-network-zone shape, with the
+	// zone created by NetworkCreate and per-container A/CNAME records
+	// written by azurecommon.PrivateDNSDiscovery.
+	PrivateDNSZones   *armprivatedns.PrivateZonesClient
+	PrivateDNSRecords *armprivatedns.RecordSetsClient
 }
 
 // NewAzureClients initializes Azure SDK clients.
@@ -82,13 +90,23 @@ func newAzureClientsWithEndpoint(subscriptionID string, endpointURL string) (*Az
 	if err != nil {
 		return nil, err
 	}
+	privateZones, err := armprivatedns.NewPrivateZonesClient(subscriptionID, cred, opts)
+	if err != nil {
+		return nil, err
+	}
+	privateRecords, err := armprivatedns.NewRecordSetsClient(subscriptionID, cred, opts)
+	if err != nil {
+		return nil, err
+	}
 
 	return &AzureClients{
-		WebApps:         webAppsClient,
-		Logs:            logsClient,
-		Cred:            cred,
-		FileShares:      fileShares,
-		StorageAccounts: storageAccounts,
+		WebApps:           webAppsClient,
+		Logs:              logsClient,
+		Cred:              cred,
+		FileShares:        fileShares,
+		StorageAccounts:   storageAccounts,
+		PrivateDNSZones:   privateZones,
+		PrivateDNSRecords: privateRecords,
 	}, nil
 }
 
@@ -116,12 +134,22 @@ func newAzureClientsDefault(subscriptionID string) (*AzureClients, error) {
 	if err != nil {
 		return nil, err
 	}
+	privateZones, err := armprivatedns.NewPrivateZonesClient(subscriptionID, cred, nil)
+	if err != nil {
+		return nil, err
+	}
+	privateRecords, err := armprivatedns.NewRecordSetsClient(subscriptionID, cred, nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return &AzureClients{
-		WebApps:         webAppsClient,
-		Logs:            logsClient,
-		Cred:            cred,
-		FileShares:      fileShares,
-		StorageAccounts: storageAccounts,
+		WebApps:           webAppsClient,
+		Logs:              logsClient,
+		Cred:              cred,
+		FileShares:        fileShares,
+		StorageAccounts:   storageAccounts,
+		PrivateDNSZones:   privateZones,
+		PrivateDNSRecords: privateRecords,
 	}, nil
 }

@@ -19,7 +19,8 @@ type Server struct {
 	storageBackings *core.StorageBackingRegistry
 	ipCounter       atomic.Int32
 
-	AZF *core.StateStore[AZFState]
+	AZF          *core.StateStore[AZFState]
+	NetworkState *core.StateStore[NetworkState]
 	azfVolumeState
 	// Reverse-agent registry for docker top / cp / stat via a
 	// bootstrap running inside the function app container.
@@ -32,6 +33,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		config:         config,
 		azure:          azureClients,
 		AZF:            core.NewStateStore[AZFState](),
+		NetworkState:   core.NewStateStore[NetworkState](),
 		azfVolumeState: azfVolumeState{shares: azurecommon.NewFileShareManager(azureClients.FileShares, config.ResourceGroup, config.StorageAccount)},
 	}
 	s.ipCounter.Store(2)
@@ -67,14 +69,42 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 
 	// Network-discovery driver. Selected via Config.NetworkDiscovery
 	// (env: SOCKERLESS_AZF_NETWORK_DISCOVERY). Validated to one of
-	// nat-gateway-only / host-aliases by Config.Validate. cloud-dns
-	// (private-dns-zone) requires the AZF NetworkState model + zone
-	// creation flow queued under 121b-finish-C.
+	// nat-gateway-only / host-aliases / cloud-dns by Config.Validate.
 	switch config.NetworkDiscovery {
 	case api.NetworkDiscoveryNATGatewayOnly:
 		s.NetworkDiscovery = core.NoOpNetworkDiscovery{}
 	case api.NetworkDiscoveryHostAliases:
 		s.NetworkDiscovery = core.NewHostAliasesDiscovery()
+	case api.NetworkDiscoveryCloudDNS:
+		s.NetworkDiscovery = azurecommon.NewPrivateDNSDiscovery(azurecommon.PrivateDNSDiscoveryConfig{
+			PrivateDNSRecords: azureClients.PrivateDNSRecords,
+			ContainerApps:     nil, // AZF has no per-container CNAME path; ContainerApps client is unused.
+			ResourceGroup:     config.ResourceGroup,
+			Logger:            logger,
+			LookupNetwork: func(ctx context.Context, networkID string) (azurecommon.PrivateDNSNetworkState, bool) {
+				state, ok := s.resolveNetworkState(ctx, networkID)
+				if !ok {
+					return azurecommon.PrivateDNSNetworkState{}, false
+				}
+				return azurecommon.PrivateDNSNetworkState{DNSZoneName: state.DNSZoneName}, true
+			},
+			GetNetwork: func(networkID string) (azurecommon.PrivateDNSNetworkState, bool) {
+				state, ok := s.NetworkState.Get(networkID)
+				if !ok {
+					return azurecommon.PrivateDNSNetworkState{}, false
+				}
+				return azurecommon.PrivateDNSNetworkState{DNSZoneName: state.DNSZoneName}, true
+			},
+		})
+		s.DNS = &azurecommon.PrivateDNSZoneDNS{
+			LookupZoneName: func(ctx context.Context, networkID string) (string, error) {
+				state, ok := s.resolveNetworkState(ctx, networkID)
+				if !ok {
+					return "", nil
+				}
+				return state.DNSZoneName, nil
+			},
+		}
 	}
 
 	mode := "cloud"
