@@ -45,6 +45,21 @@ type Config struct {
 	// created at NetworkCreate time.
 	// Set via SOCKERLESS_AZF_NETWORK_DISCOVERY.
 	NetworkDiscovery api.NetworkDiscoveryKind
+
+	// Access selects the ingress-auth + caller-side signer mechanism
+	// wired into s.Access. AZF's native is none-internal (function
+	// app keys gate access at the platform layer). Operators may
+	// override to azure-ad to gate ingress with an Easy Auth (AAD
+	// provider) on the function app; the caller-side signer mints
+	// OAuth2 bearer tokens via DefaultAzureCredential.
+	// Set via SOCKERLESS_AZF_ACCESS.
+	Access api.AccessMechanism
+
+	// AccessPrincipal is the workload's MSI client ID or service
+	// principal AppId reported via WorkloadPrincipal. Informational —
+	// the actual signing identity comes from azidentity.
+	// Set via SOCKERLESS_AZF_ACCESS_PRINCIPAL.
+	AccessPrincipal string
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -65,6 +80,8 @@ func ConfigFromEnv() Config {
 		CallbackURL:           os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		EnableCommit:          os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
 		NetworkDiscovery:      networkDiscoveryFromEnv("SOCKERLESS_AZF_NETWORK_DISCOVERY", api.NetworkDiscoveryNATGatewayOnly),
+		Access:                accessFromEnv("SOCKERLESS_AZF_ACCESS", api.AccessMechanismNoneInternal),
+		AccessPrincipal:       os.Getenv("SOCKERLESS_AZF_ACCESS_PRINCIPAL"),
 	}
 }
 
@@ -77,6 +94,17 @@ func networkDiscoveryFromEnv(envVar string, def api.NetworkDiscoveryKind) api.Ne
 		return def
 	}
 	return api.NetworkDiscoveryKind(v)
+}
+
+// accessFromEnv reads the operator's chosen access mechanism from env
+// or returns `def`. Validation against the per-backend supported set
+// happens in Config.Validate.
+func accessFromEnv(envVar string, def api.AccessMechanism) api.AccessMechanism {
+	v := strings.TrimSpace(os.Getenv(envVar))
+	if v == "" {
+		return def
+	}
+	return api.AccessMechanism(v)
 }
 
 // ConfigFromEnvironment creates Config from a unified config environment.
@@ -112,6 +140,8 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
 	}
 	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_AZF_NETWORK_DISCOVERY", api.NetworkDiscoveryNATGatewayOnly)
+	c.Access = accessFromEnv("SOCKERLESS_AZF_ACCESS", api.AccessMechanismNoneInternal)
+	c.AccessPrincipal = os.Getenv("SOCKERLESS_AZF_ACCESS_PRINCIPAL")
 	return c
 }
 
@@ -131,6 +161,12 @@ func (c Config) Validate() error {
 		// supported
 	default:
 		return fmt.Errorf("SOCKERLESS_AZF_NETWORK_DISCOVERY=%q not supported by azf (one of nat-gateway-only, host-aliases, cloud-dns required)", c.NetworkDiscovery)
+	}
+	switch c.Access {
+	case api.AccessMechanismNoneInternal, api.AccessMechanismAzureAD:
+		// supported
+	default:
+		return fmt.Errorf("SOCKERLESS_AZF_ACCESS=%q not supported by azf (one of none-internal, azure-ad required)", c.Access)
 	}
 	return nil
 }

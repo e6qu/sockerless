@@ -104,7 +104,17 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 			return state.DNSZoneName, nil
 		},
 	}
-	s.Access = core.NoneInternalAccess{}
+	// Access driver. Selected via Config.Access (env: SOCKERLESS_ACA_ACCESS).
+	// none-internal (default) leaves ingress auth to the network layer
+	// (managed environment isolation). azure-ad signs each invoke with
+	// an OAuth2 bearer token via DefaultAzureCredential — paired with
+	// an Easy Auth (AAD provider) on the ACA app at deploy time.
+	switch config.Access {
+	case api.AccessMechanismNoneInternal:
+		s.Access = core.NoneInternalAccess{}
+	case api.AccessMechanismAzureAD:
+		s.Access = azurecommon.NewAzureADAccess(azureClients.Cred, config.AccessPrincipal)
+	}
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

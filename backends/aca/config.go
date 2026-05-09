@@ -51,6 +51,22 @@ type Config struct {
 	// registry) or nat-gateway-only (no peer discovery).
 	// Set via SOCKERLESS_ACA_NETWORK_DISCOVERY.
 	NetworkDiscovery api.NetworkDiscoveryKind
+
+	// Access selects the ingress-auth + caller-side signer mechanism
+	// wired into s.Access. ACA's native is none-internal (managed
+	// environment isolates traffic at the network layer). Operators
+	// may override to azure-ad to gate ACA app ingress with an Easy
+	// Auth (AAD) provider; the caller-side signer mints OAuth2 bearer
+	// tokens via DefaultAzureCredential.
+	// Set via SOCKERLESS_ACA_ACCESS.
+	Access api.AccessMechanism
+
+	// AccessPrincipal is the workload's MSI client ID or service
+	// principal AppId reported via WorkloadPrincipal. Informational —
+	// the actual signing identity comes from azidentity. Empty when
+	// the workload uses the platform-default identity.
+	// Set via SOCKERLESS_ACA_ACCESS_PRINCIPAL.
+	AccessPrincipal string
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -71,7 +87,20 @@ func ConfigFromEnv() Config {
 		CallbackURL:           os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		EnableCommit:          os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
 		NetworkDiscovery:      networkDiscoveryFromEnv("SOCKERLESS_ACA_NETWORK_DISCOVERY", api.NetworkDiscoveryCloudDNS),
+		Access:                accessFromEnv("SOCKERLESS_ACA_ACCESS", api.AccessMechanismNoneInternal),
+		AccessPrincipal:       os.Getenv("SOCKERLESS_ACA_ACCESS_PRINCIPAL"),
 	}
+}
+
+// accessFromEnv reads the operator's chosen access mechanism from env
+// or returns `def`. Validation against the per-backend supported set
+// happens in Config.Validate.
+func accessFromEnv(envVar string, def api.AccessMechanism) api.AccessMechanism {
+	v := strings.TrimSpace(os.Getenv(envVar))
+	if v == "" {
+		return def
+	}
+	return api.AccessMechanism(v)
 }
 
 // networkDiscoveryFromEnv reads the operator's chosen kind from env or
@@ -117,6 +146,8 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
 	}
 	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_ACA_NETWORK_DISCOVERY", api.NetworkDiscoveryCloudDNS)
+	c.Access = accessFromEnv("SOCKERLESS_ACA_ACCESS", api.AccessMechanismNoneInternal)
+	c.AccessPrincipal = os.Getenv("SOCKERLESS_ACA_ACCESS_PRINCIPAL")
 	return c
 }
 
@@ -136,6 +167,12 @@ func (c Config) Validate() error {
 		// supported
 	default:
 		return fmt.Errorf("SOCKERLESS_ACA_NETWORK_DISCOVERY=%q not supported by aca (one of cloud-dns, host-aliases, nat-gateway-only required)", c.NetworkDiscovery)
+	}
+	switch c.Access {
+	case api.AccessMechanismNoneInternal, api.AccessMechanismAzureAD:
+		// supported
+	default:
+		return fmt.Errorf("SOCKERLESS_ACA_ACCESS=%q not supported by aca (one of none-internal, azure-ad required)", c.Access)
 	}
 	return nil
 }

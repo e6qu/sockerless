@@ -65,7 +65,18 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	}
 	s.CloudState = &azfCloudState{server: s}
 	s.SetSelf(s)
-	s.Access = core.NoneInternalAccess{}
+
+	// Access driver. Selected via Config.Access (env: SOCKERLESS_AZF_ACCESS).
+	// none-internal (default) leaves ingress auth to function app keys.
+	// azure-ad signs each invoke with an OAuth2 bearer token via
+	// DefaultAzureCredential — paired with an Easy Auth (AAD provider)
+	// on the function app at deploy time.
+	switch config.Access {
+	case api.AccessMechanismNoneInternal:
+		s.Access = core.NoneInternalAccess{}
+	case api.AccessMechanismAzureAD:
+		s.Access = azurecommon.NewAzureADAccess(azureClients.Cred, config.AccessPrincipal)
+	}
 
 	// Network-discovery driver. Selected via Config.NetworkDiscovery
 	// (env: SOCKERLESS_AZF_NETWORK_DISCOVERY). Validated to one of
