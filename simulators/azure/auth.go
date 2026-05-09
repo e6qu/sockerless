@@ -1,14 +1,37 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
 )
+
+// azureSimSignKey is the per-process HS256 key used to sign Azure AD
+// tokens the sim mints. Generated lazily on first call so tests that
+// don't invoke handleMockToken aren't affected. Real Azure AD signs
+// with rotated RSA keys; HS256 is sufficient here because the sim
+// doesn't verify inbound tokens — the only requirement is that SDKs
+// that parse the token (e.g. azure-identity's confidential-client
+// path) accept the structure.
+var (
+	azureSimSignKeyOnce sync.Once
+	azureSimSignKeyVal  []byte
+)
+
+func azureSimSignKey() []byte {
+	azureSimSignKeyOnce.Do(func() {
+		azureSimSignKeyVal = []byte(fmt.Sprintf("sockerless-sim-azure-%d", time.Now().UnixNano()))
+	})
+	return azureSimSignKeyVal
+}
 
 // CleanPathMiddleware removes double slashes from request paths.
 // The azurerm v3 provider (go-azure-sdk) constructs URLs by joining
@@ -59,9 +82,19 @@ func AzureAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// JWKS endpoint
+		// JWKS endpoint — publish the kid the sim stamps into freshly
+		// minted tokens. Body is intentionally minimal: real Azure
+		// publishes RS256 public keys, the sim signs with HS256, so
+		// the kid is the only field clients can usefully cross-check.
 		if r.Method == http.MethodGet && (strings.HasSuffix(path, "/discovery/v2.0/keys") || strings.HasSuffix(path, "/discovery/keys")) {
-			sim.WriteJSON(w, http.StatusOK, map[string]any{"keys": []any{}})
+			sim.WriteJSON(w, http.StatusOK, map[string]any{
+				"keys": []map[string]any{{
+					"kid": "sockerless-sim-key-1",
+					"kty": "oct",
+					"alg": "HS256",
+					"use": "sig",
+				}},
+			})
 			return
 		}
 
@@ -80,16 +113,8 @@ func extractTenantFromPath(path string) string {
 
 func handleMockToken(w http.ResponseWriter, r *http.Request, path string) {
 	tenantId := extractTenantFromPath(path)
-
-	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
-	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(
-		`{"tid":"%s","oid":"test-oid","sub":"test-sub","aud":"https://management.azure.com/","iss":"https://sts.windows.net/%s/","iat":%d,"exp":%d,"nbf":%d}`,
-		tenantId, tenantId,
-		time.Now().Unix(),
-		time.Now().Add(1*time.Hour).Unix(),
-		time.Now().Unix(),
-	)))
-	token := header + "." + payload + "."
+	now := time.Now()
+	token := mintAzureSimJWT(tenantId, now, now.Add(1*time.Hour))
 
 	w.Header().Set("Content-Type", "application/json")
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
@@ -98,4 +123,36 @@ func handleMockToken(w http.ResponseWriter, r *http.Request, path string) {
 		"expires_in":     3600,
 		"ext_expires_in": 3600,
 	})
+}
+
+// mintAzureSimJWT produces a real-shape Azure AD access token JWT
+// (`header.payload.signature`) signed with HS256 against the sim's
+// per-process key. The claims set matches what azure-identity / the
+// Azure SDK round-trip on token introspection (tid, oid, sub, aud,
+// iss, iat, exp, nbf, ver, appid).
+func mintAzureSimJWT(tenantId string, issuedAt, expiresAt time.Time) string {
+	headerJSON, _ := json.Marshal(map[string]string{
+		"alg": "HS256",
+		"typ": "JWT",
+		"kid": "sockerless-sim-key-1",
+	})
+	payloadJSON, _ := json.Marshal(map[string]any{
+		"tid":   tenantId,
+		"oid":   "test-oid",
+		"sub":   "test-sub",
+		"aud":   "https://management.azure.com/",
+		"iss":   fmt.Sprintf("https://sts.windows.net/%s/", tenantId),
+		"iat":   issuedAt.Unix(),
+		"exp":   expiresAt.Unix(),
+		"nbf":   issuedAt.Unix(),
+		"ver":   "1.0",
+		"appid": "sockerless-sim",
+	})
+	headerB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
+	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadJSON)
+	signingInput := headerB64 + "." + payloadB64
+	mac := hmac.New(sha256.New, azureSimSignKey())
+	mac.Write([]byte(signingInput))
+	sigB64 := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return signingInput + "." + sigB64
 }

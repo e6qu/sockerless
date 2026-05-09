@@ -21,7 +21,7 @@ import (
 // jobs in the same env resolve each other via Docker's embedded DNS.
 func TestContainerApps_CrossJobDNS(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker CLI required for cross-job DNS test")
+		t.Fatalf("docker CLI required for cross-job DNS test (no fallback): %v", err)
 	}
 
 	rg := "xjob-aca-rg"

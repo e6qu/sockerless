@@ -5,8 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v4"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v5"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 	azurecommon "github.com/sockerless/azure-common"
 )
@@ -81,13 +80,11 @@ func (s *Server) attachVolumesToFunctionSite(ctx context.Context, siteName strin
 		if err != nil {
 			return fmt.Errorf("provision share for %q: %w", volName, err)
 		}
-		dict[volName] = &armappservice.AzureStorageInfoValue{
-			Type:        to.Ptr(armappservice.AzureStorageTypeAzureFiles),
-			AccountName: to.Ptr(s.config.StorageAccount),
-			ShareName:   to.Ptr(shareName),
-			AccessKey:   to.Ptr(accessKey),
-			MountPath:   to.Ptr(mountPath),
+		info, err := s.resolveStorageInfoForVolume(volName, mountPath, shareName, accessKey)
+		if err != nil {
+			return err
 		}
+		dict[volName] = info
 	}
 
 	_, err = s.azure.WebApps.UpdateAzureStorageAccounts(ctx, s.config.ResourceGroup, siteName,

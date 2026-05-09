@@ -15,7 +15,7 @@ import (
 // The simulator tag storage is validated via the ECS/Lambda structs accepting tags.
 func TestResourceTaggingIntegration(t *testing.T) {
 	if dockerClient == nil {
-		t.Skip("dockerClient not set")
+		t.Fatal("dockerClient must be initialised by TestMain (no fallback)")
 	}
 	ctx := context.Background()
 

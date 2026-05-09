@@ -98,6 +98,57 @@ func TestEmptyDirDriver_HooksAreNoop(t *testing.T) {
 	}
 }
 
+func TestMemoryDriver_BackingMatches(t *testing.T) {
+	d := NewMemoryDriver(64)
+	if d.Backing() != BackingMemory {
+		t.Errorf("Backing() = %q, want %q", d.Backing(), BackingMemory)
+	}
+}
+
+func TestMemoryDriver_CloudSpec_UsesDefault(t *testing.T) {
+	d := NewMemoryDriver(64)
+	spec, err := d.CloudSpec(SharedVolumeRef{Name: "x"})
+	if err != nil {
+		t.Fatalf("unexpected err %v", err)
+	}
+	if spec.Kind != BackingMemory || spec.Memory == nil {
+		t.Fatalf("kind/payload mismatch: %#v", spec)
+	}
+	if spec.Memory.SizeMB != 64 {
+		t.Errorf("default size = %d, want 64", spec.Memory.SizeMB)
+	}
+}
+
+func TestMemoryDriver_CloudSpec_OverrideWins(t *testing.T) {
+	d := NewMemoryDriver(64)
+	spec, err := d.CloudSpec(SharedVolumeRef{Name: "x", MemorySizeMB: 256})
+	if err != nil {
+		t.Fatalf("unexpected err %v", err)
+	}
+	if spec.Memory.SizeMB != 256 {
+		t.Errorf("override = %d, want 256", spec.Memory.SizeMB)
+	}
+}
+
+func TestMemoryDriver_CloudSpec_RejectsZero(t *testing.T) {
+	d := NewMemoryDriver(0)
+	_, err := d.CloudSpec(SharedVolumeRef{Name: "x"})
+	if err == nil {
+		t.Fatal("zero size should error")
+	}
+}
+
+func TestMemoryDriver_PreExecPostExec_NoOps(t *testing.T) {
+	d := NewMemoryDriver(64)
+	hints, err := d.PreExec(context.Background(), SharedVolumeRef{}, "x", "/l", "/r")
+	if err != nil || hints != nil {
+		t.Errorf("PreExec: got %v, %v; want nil, nil", hints, err)
+	}
+	if err := d.PostExec(context.Background(), SharedVolumeRef{}, "x", "/l"); err != nil {
+		t.Errorf("PostExec: got %v; want nil", err)
+	}
+}
+
 // mockDriver is a minimal StorageBackingDriver used for registry tests.
 type mockDriver struct {
 	backing StorageBacking

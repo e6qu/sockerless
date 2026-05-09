@@ -392,7 +392,7 @@ func (s *Server) ImageInspect(name string) (*api.Image, error) {
 
 // ImageLoad loads an image from a tar archive.
 func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
-	resp, err := s.docker.ImageLoad(context.Background(), r, false)
+	resp, err := s.docker.ImageLoad(context.Background(), r)
 	if err != nil {
 		return nil, mapDockerError(err)
 	}

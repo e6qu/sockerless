@@ -213,6 +213,20 @@ func PortSetToMap(ports nat.PortSet) map[string]struct{} {
 	return result
 }
 
+// StringSetToMap is the docker/docker v28 variant of PortSetToMap —
+// ImageInspect.Config.ExposedPorts is map[string]struct{} (keys are
+// raw `port/proto` strings) instead of nat.PortSet.
+func StringSetToMap(ports map[string]struct{}) map[string]struct{} {
+	if len(ports) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(ports))
+	for k := range ports {
+		out[k] = struct{}{}
+	}
+	return out
+}
+
 func PortMapToBindings(pm nat.PortMap) map[string][]api.PortBinding {
 	if len(pm) == 0 {
 		return nil

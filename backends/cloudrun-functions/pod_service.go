@@ -168,6 +168,7 @@ func (s *Server) materializePodService(mainContainerID string, containers []api.
 		InstanceID:  s.Desc.InstanceID,
 		CreatedAt:   time.Now(),
 		AutoRemove:  false,
+		Labels:      containers[0].Config.Labels,
 	}
 	gcpLabels := tags.AsGCPLabels()
 	gcpLabels["sockerless_managed"] = "true"
@@ -350,6 +351,7 @@ func (s *Server) deployContainerService(ctx context.Context, id string, containe
 		InstanceID:  s.Desc.InstanceID,
 		CreatedAt:   time.Now(),
 		AutoRemove:  container.HostConfig.AutoRemove,
+		Labels:      container.Config.Labels,
 	}
 	gcpLabels := tags.AsGCPLabels()
 	gcpLabels["sockerless_managed"] = "true"

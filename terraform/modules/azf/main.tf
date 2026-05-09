@@ -109,7 +109,7 @@ resource "azurerm_storage_account" "main" {
   account_replication_type = var.storage_replication_type
 
   # Security: enforce HTTPS-only access
-  enable_https_traffic_only = true
+  https_traffic_only_enabled = true
 
   tags = merge(local.common_tags, {
     purpose = "azure-functions-runtime"

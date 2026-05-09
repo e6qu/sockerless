@@ -78,7 +78,7 @@ type cellConfig struct {
 
 func runCell(t *testing.T, c cellConfig) {
 	if _, err := exec.LookPath("gitlab-runner"); err != nil {
-		t.Skipf("gitlab-runner not installed (brew install gitlab-runner): %v", err)
+		t.Fatalf("gitlab-runner required (no fallback; install via `brew install gitlab-runner`): %v", err)
 	}
 	projectPath := envOr("SOCKERLESS_GL_PROJECT", defaultGLProject)
 	dockerHost := envOr("SOCKERLESS_DOCKER_HOST", c.DefaultDockerHost)
@@ -88,7 +88,7 @@ func runCell(t *testing.T, c cellConfig) {
 
 	pat, err := runnersinternal.GitLabPAT()
 	if err != nil {
-		t.Skipf("GitLab PAT unavailable: %v", err)
+		t.Fatalf("GitLab PAT required for live-runner test (no fallback): %v", err)
 	}
 	defer zero(pat)
 

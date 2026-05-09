@@ -12,74 +12,55 @@ State [STATUS.md](STATUS.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md
 4. **No new frontend abstractions** — Docker REST API is the only interface.
 5. **Driver-first handlers** — handler code routes through driver interfaces.
 6. **LLM-editable files** — source files under 400 lines.
-7. **GitHub API fidelity** — bleephub works with unmodified `gh` CLI.
-8. **State persistence** — every task ends with a state save (PLAN / STATUS / WHAT_WE_DID / DO_NEXT / BUGS / memory).
-9. **No fallbacks, no defers** — every functional gap is a real bug; every bug gets a real fix in the same session it surfaces; cross-cloud sweep on every find.
-10. **Sim parity per commit** — any new SDK call added to a backend updates [specs/SIM_PARITY_MATRIX.md](specs/SIM_PARITY_MATRIX.md) and adds the sim handler in the same commit.
-11. **Single work-branch rule** — all in-flight work lands on one branch; no side branches that risk abandonment. User handles every merge.
+7. **State persistence** — every task ends with a state save (PLAN / STATUS / WHAT_WE_DID / DO_NEXT / BUGS / memory).
+8. **No fallbacks, no skips, no defers, no fakes** — every functional gap is a real bug; every bug gets a real fix in the same session it surfaces; cross-cloud sweep on every find.
+9. **Sim parity per commit** — any new SDK call adds a sim handler + matrix row in the same commit.
+10. **Single work-branch rule** — all in-flight work lands on one branch. User handles every merge.
+11. **Cross-cloud is permanently off the table** — cloud-specific drivers extend the generic shape; cross-cloud duplication is fine, in-cloud duplication consolidates into `*-common`.
 
 ## Closed phases (PR index)
 
 Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).
 
-| PR | Phases | Headline | Bug range |
-|---|---|---|---|
-| #112–115 | 86–102 | Sim parity; stateless backends; real volumes; FaaS invocation tracking; reverse-agent exec/cp/diff/commit/pause; Docker pod synthesis; ACA console exec; ECS SSM ops; OCI push; log fidelity. | 661–769 |
-| #117 | Round-7 | Live-AWS bug sweep. | 770–785 |
-| #118 | Round-8 / 9 | Stateless invariant; real layer mirror; sync `docker stop`; per-network SG isolation; live SSM frame capture → exit-code marker; `sh -c` exec wrap; busybox-compat find/stat; Lambda invoke waiter; tag-based InvocationResult persistence; per-cloud terragrunt sweep. | 786–819 |
-| #120 | 104 / 105 / 108 | Driver framework migration (13 typed adapters); cloud-native typed drivers (44/91 cells); `core.ImageRef` typed domain object; libpod-shape golden tests; sim-parity matrix audit; real-runner harnesses. | 802; 820–844 |
-| #121 | 109 | Strict cloud-API fidelity audit (19 items): Lambda VpcConfig from real subnet CIDR; AWS Secrets Manager + SSM + KMS + DynamoDB; GCP firewalls + Cloud NAT + IAM tokens + operations persistence; Azure IMDS + Blob ARM + NSG + Private DNS records + NAT Gateways + Route Tables + ACA Async-Op + Key Vault; ARM SystemData. | (audit) |
-| #122 | 110 | Runner integration — 4 AWS cells GREEN. | 845–876 |
-| #123 | 118 + 120–123 | FaaS pod overlays (gcf + lambda); 4 GCP runner cells GREEN; cloud-faithful GCP sim; storage-backing driver (`emptyDir` / `gcs-sync` / `gcs-fuse`). **8/8 GREEN end-state.** | 877–971 |
-| #125 | CI reorg | Workflows reorganized: zero auto-fire on main; live-tests-{cloud}. | n/a |
-| #127 | 129#4 + 130–132 | Orphan pod-Service GC (owner-link via `CLOUD_RUN_JOB`); sim parity prep (GCP `generateIdToken` + Compute Disks); bleephub workflow runs / workflows / apps + oauth REST + UI dispatch + AppsPage + OAuthPage. | n/a |
-| #128 | 134 | Makefile standardization + per-app leaf Makefiles + stack orchestration; 17 doc updates; sim test stability (BUG-973/974). | 973–974 |
-| #129 | 135 | **Sim host model + 3-tier coverage.** Workloads dispatch through Docker honouring explicit `Architecture` (sim's `linux/arm64` capacity); per-cloud-product host-metadata services (AWS IMDSv2 + ECS task v4 + instance-identity-document; GCP `metadata.google.internal/computeMetadata/v1`; Azure IMDS `/metadata/instance` + identity); static no-`os/exec`-of-workload check; SDK metadata tests (cloud.google.com/go/compute/metadata × 6, aws-sdk-go-v2/feature/ec2/imds × 4, azidentity ManagedIdentityCredential × 1); GCP CLI test for Compute Disks via gcloud; GCP Terraform test (`google_compute_disk`); native `ubuntu-24.04-arm` CI runners (no QEMU). | 949, 972, 975–984 |
-| #130 | 128 | Runner job timeout. Bootstrap timer (`runWithTimeout` in cloudrun + gcf bootstraps; SIGTERM → 30s grace → SIGKILL → exit 124) + cloud-native cap (cloudrun TaskTemplate.Timeout, ACA ReplicaTimeout, Lambda 900s) derived from `core.JobTimeoutDefault()`. `SOCKERLESS_JOB_TIMEOUT_SECONDS` contract; per-job override via `docker run -e` wins. | n/a |
+| PR | Phases | Headline |
+|---|---|---|
+| #112–123 | 86–123 | Sim parity; stateless backends; FaaS pod overlays; storage-backing driver pilot; **8/8 runner cells GREEN.** |
+| #125 | CI reorg | Workflows reorganized: zero auto-fire on main; live-tests-{cloud}. |
+| #127 | 129#4 + 130–132 | Orphan pod-Service GC; sim parity prep (`generateIdToken` + Compute Disks); bleephub workflows + oauth REST + UI. |
+| #128 | 134 | Makefile standardization + per-app leaf Makefiles + stack orchestration. |
+| #129 | 135 | Sim host model + 3-tier coverage + native arm64 CI runners. |
+| #130 | 128 | Runner job timeout (bootstrap timer + cloud-native cap; SIGTERM → 30s → SIGKILL → exit 124). |
+| #131 | 124 | Network discovery driver (host-aliases / cloud-dns / service-mesh / nat-gateway-only). |
+| #132 | 125 | DNS driver (cloud-map / cloud-dns-zone / private-dns-zone / service-discovery / none). |
+| #133 | 126 | Access driver (iam-role / id-token / mTLS / none-internal). |
+| #134 | 127 | Storage driver expansion (pd-ephemeral / efs-ephemeral / azure-files-ephemeral). |
 
 ## Roadmap (ordered)
 
-Pick from the top. Each phase's `Pick from the top` rule: don't start the next until the previous closes (or the user explicitly redirects).
+### 1. Phase 121b — Azure sim hardening + driver consolidation (in flight, PR #135)
 
-### 1. Phase 121b — Azure sim hardening
-
-Azure-side mirror of Phase 121 (cloud-faithful sim hardening for ACA + AZF). Open question: how much of the GCP-style work (proto-JSON enum decoding, real OAuth2 token endpoints, label-filter syntax) transfers to Azure idioms.
+See [DO_NEXT.md](DO_NEXT.md) for the full sub-task list. Headline: Azure sim cloud-faithful (Files data plane + AAD JWT), all-6-backends test harness restructured to `SOCKERLESS_TEST_TARGET=sim|cloud` (no skips, no fallbacks, no build tags), in-memory storage backing driver, driver consolidation into `*-common` (pattern B), `host-aliases` registered everywhere, AZF + Lambda DNS / network-discovery / access driver gaps closed.
 
 ### 2. Phase 78 — UI polish
 
 Dark mode, design tokens, error handling UX, container detail modal, auto-refresh, performance audit, accessibility, E2E smoke, documentation.
 
-## Driver phase template (124–127)
+## Driver phase template
 
-Storage backing (Phase 123) is the worked pilot: cloud-agnostic core interface, per-cloud impls, operator-pluggable selection, no-fallbacks at registry resolve. Each driver phase follows the same 7-step template:
+Storage backing (Phase 123) is the pilot. Each driver phase follows:
 
 1. `api/<dim>_driver.go` — enum + struct fields on the relevant config.
 2. `backends/core/<dim>_driver.go` — driver interface + registry + no-op default.
-3. `backends/<cloud>-common/<dim>_<impl>.go` — per-cloud impls.
-4. `backends/<cloud-product>/<dim>_translator.go` — per-backend translator to that cloud's protobuf.
-5. Operator config: TOML / env var that selects the driver per backend.
+3. `backends/<cloud>-common/<dim>_<impl>.go` — per-cloud impl (pattern B: shared by both backends in that cloud).
+4. `backends/<cloud-product>/server.go` — wires the per-cloud driver into the backend's registry at startup.
+5. Operator config: env var selects the driver per backend.
 6. **No-fallbacks at resolve** — unset / unknown driver name returns an error.
 7. Migration of existing inline calls to the registry.
 
-Each phase starts with a `specs/CLOUD_RESOURCE_MAPPING.md` design pass cataloging current ad-hoc paths per backend before any code lands.
-
-## Audit / fidelity tracks (rolling)
-
-### Phase 105 — Libpod-shape conformance
-
-Golden-file tests pinning bleephub responses to libpod's exact JSON shape. Continues as new endpoints land.
-
-### Phase 106 — Real GitHub Actions runner integration
-
-Harness scaffold under `tests/runners/github/`. Live cells (1, 2, 5, 6) GREEN; runner-side fidelity work continues.
-
-### Phase 107 — Real GitLab runner integration
-
-Harness scaffold under `tests/runners/gitlab/`. Live cells (3, 4, 7, 8) GREEN; runner-side fidelity work continues.
+Each phase starts with a `specs/CLOUD_RESOURCE_MAPPING.md` design pass.
 
 ## Future ideas
 
 - GraphQL subscriptions for real-time event streaming.
 - Full GitHub App permission scoping.
-- Webhook delivery UI.
 - Sockerless GCE-style backend (would unlock Phase 127 GCP `pd-ephemeral` for real workloads).

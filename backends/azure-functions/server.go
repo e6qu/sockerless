@@ -53,6 +53,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	}
 	s.storageBackings = core.NewStorageBackingRegistry()
 	s.storageBackings.Register(azurecommon.NewAzureFilesEphemeralDriver(config.StorageAccount))
+	s.storageBackings.Register(core.NewMemoryDriver(64))
 	if svc, err := azurecommon.NewACRBuildService(
 		azureClients.Cred, config.SubscriptionID, config.ResourceGroup,
 		config.Registry, config.BuildStorageAccount, config.BuildContainer, logger,
@@ -61,7 +62,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	}
 	s.CloudState = &azfCloudState{server: s}
 	s.SetSelf(s)
-	s.Access = newNoneInternalAccess(s)
+	s.Access = core.NoneInternalAccess{}
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

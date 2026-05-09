@@ -507,13 +507,30 @@ func (s *Server) ContainerStart(ref string) error {
 		} else {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
+			// Bootstrap responses are wrapped in
+			// `{"sockerlessExecResult":{"exitCode":N,"stdout":"<b64>","stderr":"<b64>"}}`.
+			// Parse the envelope so LogBuffers carries decoded subprocess
+			// output and the recorded exit code reflects the subprocess,
+			// not the HTTP wrapper status.
 			if len(body) > 0 && string(body) != "{}" {
-				s.Store.LogBuffers.Store(id, body)
+				if execResult, perr := gcpcommon.ParseExecResult(body); perr == nil {
+					var combined []byte
+					combined = append(combined, execResult.Stdout...)
+					combined = append(combined, execResult.Stderr...)
+					if len(combined) > 0 {
+						s.Store.LogBuffers.Store(id, combined)
+					}
+					inv.ExitCode = execResult.ExitCode
+				} else {
+					s.Store.LogBuffers.Store(id, body)
+					inv.ExitCode = core.HTTPStatusToExitCode(resp.StatusCode)
+				}
+			} else {
+				inv.ExitCode = core.HTTPStatusToExitCode(resp.StatusCode)
 			}
-			inv.ExitCode = core.HTTPStatusToExitCode(resp.StatusCode)
 			if inv.ExitCode != 0 {
-				inv.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
-				s.Logger.Warn().Int("status", resp.StatusCode).Str("function", gcfState.FunctionName).Msg("function returned error status")
+				inv.Error = fmt.Sprintf("HTTP %d exit=%d", resp.StatusCode, inv.ExitCode)
+				s.Logger.Warn().Int("status", resp.StatusCode).Int("exit", inv.ExitCode).Str("function", gcfState.FunctionName).Msg("function returned non-zero")
 			}
 		}
 		s.Store.PutInvocationResult(id, inv)

@@ -7,8 +7,32 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
+	dockerocispec "github.com/moby/docker-image-spec/specs-go/v1"
 	"github.com/sockerless/api"
 )
+
+// dockerOCIToContainerConfig narrows v28's DockerOCIImageConfig (the
+// new shape returned by ImageInspect.Config) into the older
+// container.Config shape that ConvertContainerConfig expects. The two
+// types share semantically-equivalent fields; this helper copies them
+// straight across.
+func dockerOCIToContainerConfig(c dockerocispec.DockerOCIImageConfig) container.Config {
+	cfg := container.Config{
+		User:        c.User,
+		Env:         c.Env,
+		Entrypoint:  c.Entrypoint,
+		Cmd:         c.Cmd,
+		WorkingDir:  c.WorkingDir,
+		Labels:      c.Labels,
+		StopSignal:  c.StopSignal,
+		ArgsEscaped: c.ArgsEscaped,
+		OnBuild:     c.OnBuild,
+		Shell:       c.Shell,
+		Healthcheck: c.Healthcheck,
+		Volumes:     c.Volumes,
+	}
+	return cfg
+}
 
 // conv is the singleton generated converter instance.
 // Initialized via initConverter() in converter_init.go (build tag !goverter).
@@ -163,8 +187,8 @@ func ConvertImageInspect(info types.ImageInspect) api.Image {
 	img := conv.ConvertImageBase(info)
 
 	if info.Config != nil {
-		img.Config = conv.ConvertContainerConfig(*info.Config)
-		img.Config.ExposedPorts = PortSetToMap(info.Config.ExposedPorts)
+		img.Config = conv.ConvertContainerConfig(dockerOCIToContainerConfig(*info.Config))
+		img.Config.ExposedPorts = StringSetToMap(info.Config.ExposedPorts)
 		if info.Config.Healthcheck != nil {
 			hc := conv.ConvertHealthcheckConfig(*info.Config.Healthcheck)
 			img.Config.Healthcheck = &hc
@@ -205,7 +229,8 @@ func ConvertNetworkResource(n network.Inspect) api.Network {
 }
 
 // ConvertNetworkSummary converts a Docker network list entry to api.Network.
-func ConvertNetworkSummary(n types.NetworkResource) api.Network {
+// docker/docker v28 renamed types.NetworkResource → network.Summary.
+func ConvertNetworkSummary(n network.Summary) api.Network {
 	net := api.Network{
 		Name:       n.Name,
 		ID:         n.ID,

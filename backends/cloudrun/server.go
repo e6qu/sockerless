@@ -99,8 +99,16 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	// Services SDK paths used by the network-connect / disconnect /
 	// resolve flow.
 	s.NetworkDiscovery = newCloudDNSDiscovery(s)
-	s.DNS = newCloudDNSZoneDNS(s)
-	s.Access = newIDTokenAccess(s)
+	s.DNS = &gcpcommon.CloudDNSZoneDNS{
+		LookupZoneDNSName: func(ctx context.Context, networkID string) (string, error) {
+			state, ok := s.resolveNetworkState(ctx, networkID)
+			if !ok {
+				return "", nil
+			}
+			return state.DNSName, nil
+		},
+	}
+	s.Access = gcpcommon.NewIDTokenAccess(config.ServiceAccount)
 
 	// Storage backing registry. EmptyDirDriver always available;
 	// GCSFuseDriver kept for legacy SharedVolumes (tar-pack persist);
@@ -119,6 +127,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		logger.Warn().Err(err).Msg("gcs-sync driver init failed — operators using `gcs-sync` Backing will see resolve errors")
 	}
 	s.storageBackings.Register(gcpcommon.NewPDEphemeralDriver(config.Region+"-a", 10))
+	s.storageBackings.Register(core.NewMemoryDriver(64))
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

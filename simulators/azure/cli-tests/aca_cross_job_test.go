@@ -21,7 +21,7 @@ import (
 // alias path works regardless of invocation surface.
 func TestContainerApps_CrossJobDNS_CLI(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker CLI required for cross-job DNS test")
+		t.Fatalf("docker CLI required for cross-job DNS test (no fallback): %v", err)
 	}
 
 	rg := "cli-xjob-rg"

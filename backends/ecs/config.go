@@ -61,6 +61,7 @@ type SharedVolume struct {
 	ContainerPath string // path inside the calling container (= the bind-mount source)
 	AccessPointID string // EFS access point ID (fsap-...)
 	FileSystemID  string // EFS filesystem ID (fs-...); defaults to Config.AgentEFSID
+	Backing       string // optional storage-backing kind; empty defaults to "efs-ephemeral" (only backing ECS supports today)
 }
 
 // ConfigFromEnv loads configuration from environment variables.

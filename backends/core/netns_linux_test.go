@@ -9,7 +9,11 @@ import (
 
 func TestNetnsManagerAvailableWithoutRoot(t *testing.T) {
 	if os.Getuid() == 0 {
-		t.Skip("test requires non-root")
+		// Mutually-exclusive perm gate with TestNetnsManagerCreateDelete:
+		// this asserts the non-root path, that one asserts the root
+		// path. CI must run one or the other; t.Skip documents which
+		// half this run exercised. Not a config-fallback skip.
+		t.Skip("non-root assertion: this run is root → exercised by TestNetnsManagerCreateDelete")
 	}
 	m := NewNetnsManager()
 	if m.Available() {
@@ -19,7 +23,10 @@ func TestNetnsManagerAvailableWithoutRoot(t *testing.T) {
 
 func TestNetnsManagerCreateDelete(t *testing.T) {
 	if os.Getuid() != 0 {
-		t.Skip("requires root/CAP_NET_ADMIN")
+		// Mutually-exclusive perm gate with TestNetnsManagerAvailableWithoutRoot.
+		// Network-namespace creation needs CAP_NET_ADMIN; non-root runs
+		// can't exercise it. Not a config-fallback skip.
+		t.Skip("root/CAP_NET_ADMIN assertion: this run is non-root → exercised by TestNetnsManagerAvailableWithoutRoot")
 	}
 	m := NewNetnsManager()
 
@@ -46,7 +53,10 @@ func TestNetnsManagerCreateDelete(t *testing.T) {
 
 func TestNetnsManagerVethPair(t *testing.T) {
 	if os.Getuid() != 0 {
-		t.Skip("requires root/CAP_NET_ADMIN")
+		// CAP_NET_ADMIN required for veth pair creation. Non-root runs
+		// can't exercise this path. Mutually-exclusive with the
+		// non-root-only assertion above.
+		t.Skip("root/CAP_NET_ADMIN assertion: non-root run cannot exercise veth pair")
 	}
 	m := NewNetnsManager()
 

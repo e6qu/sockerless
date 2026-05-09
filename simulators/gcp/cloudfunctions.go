@@ -135,7 +135,7 @@ func registerCloudFunctions(srv *sim.Server) {
 					Resources: functionCPUResources(fn),
 				}},
 			},
-		}, project, location, functionID)
+		}, r.Host, project, location, functionID)
 		if !regionalCPUQuotaInstance.tryDebit(project, location, serviceCPULoad(backingService)) {
 			regionalCPUQuotaErrorJSON(w, project, location, backingService.Name)
 			return
@@ -533,6 +533,15 @@ func injectCloudFunctionLog(project, functionName, text string) {
 // container start, networking). Subprocess non-zero exit is NOT an
 // error — it surfaces via the `exitCode` return value.
 func invokeOverlayContainerHTTP(image, functionID string, timeout time.Duration, sink sim.LogSink) (responseBody []byte, exitCode int, err error) {
+	return invokeOverlayContainerHTTPWithBody(image, functionID, timeout, sink, nil, "application/json")
+}
+
+// invokeOverlayContainerHTTPWithBody is the body-aware variant. The
+// Cloud Run Services invoke handler uses it to forward the
+// envelope-style POST body the gcf backend sends to the overlay
+// bootstrap. Cloud Functions Gen2 invocations have no useful body so
+// invokeOverlayContainerHTTP delegates here with `body=nil`.
+func invokeOverlayContainerHTTPWithBody(image, functionID string, timeout time.Duration, sink sim.LogSink, body io.Reader, contentType string) (responseBody []byte, exitCode int, err error) {
 	cli := sim.DockerClient()
 	if cli == nil {
 		return nil, -1, fmt.Errorf("docker client not initialized")
@@ -589,21 +598,25 @@ func invokeOverlayContainerHTTP(image, functionID string, timeout time.Duration,
 		return nil, -1, fmt.Errorf("bootstrap not ready at %s: %w", bootstrapURL, err)
 	}
 
-	// POST the invocation. Empty body matches what the gcf backend's
-	// invokeFunction sends (it calls POST with nil body).
+	// POST the invocation. Body is forwarded from the caller (the gcf
+	// backend's exec envelope) when present. Cloud Functions Gen2
+	// invocations pass nil here.
 	httpClient := &http.Client{Timeout: timeout}
-	req, err := http.NewRequestWithContext(ctx, "POST", bootstrapURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", bootstrapURL, body)
 	if err != nil {
 		return nil, -1, fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	req.Header.Set("Content-Type", contentType)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, -1, fmt.Errorf("invoke bootstrap: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	respBytes, _ := io.ReadAll(resp.Body)
 
 	// Exit code propagation: bootstrap sets X-Sockerless-Exit-Code on
 	// non-zero exit so the calling docker-shell perceives the
@@ -621,7 +634,7 @@ func invokeOverlayContainerHTTP(image, functionID string, timeout time.Duration,
 		exitCode = 1
 	}
 
-	return body, exitCode, nil
+	return respBytes, exitCode, nil
 }
 
 // pickFreeTCPPort opens a transient TCP listener to discover a

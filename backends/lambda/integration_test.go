@@ -21,34 +21,62 @@ import (
 
 var dockerClient *client.Client
 
-// State shared with the agent-e2e test. Populated by TestMain when
-// SOCKERLESS_INTEGRATION=1, consumed by the e2e test that drives
-// the Lambda-backend → simulator → reverse-agent round-trip.
+// State shared with the agent-e2e test. Populated by TestMain.
 var (
 	agentTestImageName string
 	lambdaBackendPort  int
 	lambdaBackendWSURL string
 )
 
-func skipIfNoIntegration(t *testing.T) {
-	t.Helper()
-	if os.Getenv("SOCKERLESS_INTEGRATION") != "1" {
-		t.Skip("skipping integration test (SOCKERLESS_INTEGRATION != 1)")
+// requireEnv reads a required env var or dies loud.
+func requireEnv(name string) string {
+	v := os.Getenv(name)
+	if v == "" {
+		fmt.Fprintf(os.Stderr, "ERROR: required env var %s is not set.\n", name)
+		fmt.Fprintln(os.Stderr, "       The integration test harness has no fallbacks — every config option is mandatory.")
+		fmt.Fprintln(os.Stderr, "       Use `make test-integration` from this directory; it sets up the sim target.")
+		os.Exit(1)
+	}
+	return v
+}
+
+func requireExe(name string) {
+	if _, err := exec.LookPath(name); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: required tool %q not found on PATH (%v).\n", name, err)
+		os.Exit(1)
 	}
 }
 
+// TestMain wires the docker SDK to a running sockerless-backend-lambda
+// pointed at a SOCKERLESS_TEST_TARGET-selected endpoint. There is no
+// implicit default and no skip — every config option is mandatory and
+// every required prereq must be present, otherwise the harness exits
+// non-zero with an explanatory message.
+//
+// SOCKERLESS_TEST_TARGET = sim   → harness builds + starts simulator-aws on a
+//
+//	free port, builds the lambda-bootstrap test
+//	image, and runs the backend against it.
+//	Role ARN, prebuilt overlay image, and arch
+//	are sim fixtures.
+//
+// SOCKERLESS_TEST_TARGET = cloud → harness reads explicit env vars
+//
+//	(SOCKERLESS_ENDPOINT_URL,
+//	SOCKERLESS_LAMBDA_ROLE_ARN,
+//	SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE,
+//	SOCKERLESS_LAMBDA_ARCHITECTURE) and fails
+//	loud on any missing.
+//
+// The Test* functions don't know which target they're running against.
 func TestMain(m *testing.M) {
-	if os.Getenv("SOCKERLESS_INTEGRATION") != "1" {
-		// In CI, silent short-circuit would let integration tests "pass" by
-		// not running. Require the env var explicitly so a missing CI config
-		// fails loudfollow-up).
-		if os.Getenv("GITHUB_ACTIONS") == "true" || os.Getenv("CI") == "true" {
-			fmt.Fprintln(os.Stderr, "ERROR: SOCKERLESS_INTEGRATION must be set to 1 in CI — integration tests would otherwise be silently skipped.")
-			os.Exit(1)
-		}
-		// Local dev: run whatever unit tests exist and exit.
-		os.Exit(m.Run())
+	target := requireEnv("SOCKERLESS_TEST_TARGET")
+	if target != "sim" && target != "cloud" {
+		fmt.Fprintf(os.Stderr, "ERROR: SOCKERLESS_TEST_TARGET=%q is invalid (want \"sim\" or \"cloud\").\n", target)
+		os.Exit(1)
 	}
+	requireExe("docker")
+	requireExe("go")
 
 	repoRoot := findModuleDir(".")
 	var cleanups []func()
@@ -57,67 +85,51 @@ func TestMain(m *testing.M) {
 			cleanups[i]()
 		}
 	}
-
-	// Build simulator
-	simDir := repoRoot + "/simulators/aws"
-	simBinary := simDir + "/simulator-aws"
-	fmt.Println("[sim] Building simulator-aws...")
-	build := exec.Command("go", "build", "-tags", "noui", "-o", "simulator-aws", ".")
-	build.Dir = simDir
-	build.Env = filterBuildEnv(os.Environ(), "GOWORK=off")
-	build.Stdout = os.Stderr
-	build.Stderr = os.Stderr
-	if err := build.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build simulator-aws: %v\n", err)
-		os.Exit(1)
-	}
-	cleanups = append(cleanups, func() { os.Remove(simBinary) })
-
-	// Start simulator
-	simPort := findFreePort()
-	simAddr := fmt.Sprintf(":%d", simPort)
-	simURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
-	fmt.Printf("[sim] Starting simulator-aws on %s...\n", simAddr)
-	simCmd := exec.Command(simBinary)
-	simCmd.Env = append(os.Environ(), "SIM_LISTEN_ADDR="+simAddr)
-	simCmd.Stdout = os.Stderr
-	simCmd.Stderr = os.Stderr
-	if err := simCmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to start simulator-aws: %v\n", err)
+	failClean := func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, format, args...)
 		cleanup()
 		os.Exit(1)
 	}
-	cleanups = append(cleanups, func() { simCmd.Process.Kill(); simCmd.Wait() })
 
-	if err := waitForReady(simURL+"/health", 10*time.Second); err != nil {
-		fmt.Fprintf(os.Stderr, "simulator-aws not ready: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	fmt.Printf("[sim] simulator-aws is ready at %s\n", simURL)
+	var endpointURL, roleARN, overlayImage, arch string
+	switch target {
+	case "sim":
+		simDir := repoRoot + "/simulators/aws"
+		simBinary := simDir + "/simulator-aws"
+		fmt.Println("[sim] Building simulator-aws...")
+		build := exec.Command("go", "build", "-tags", "noui", "-o", "simulator-aws", ".")
+		build.Dir = simDir
+		build.Env = filterBuildEnv(os.Environ(), "GOWORK=off")
+		build.Stdout = os.Stderr
+		build.Stderr = os.Stderr
+		if err := build.Run(); err != nil {
+			failClean("ERROR: build simulator-aws: %v\n", err)
+		}
+		cleanups = append(cleanups, func() { os.Remove(simBinary) })
 
-	// Build backend
-	backendDir := repoRoot + "/backends/lambda"
-	backendBinary := backendDir + "/sockerless-backend-lambda"
-	fmt.Println("[sim] Building sockerless-backend-lambda...")
-	buildBackend := exec.Command("go", "build", "-tags", "noui", "-o", "sockerless-backend-lambda", "./cmd/sockerless-backend-lambda")
-	buildBackend.Dir = backendDir
-	buildBackend.Stdout = os.Stderr
-	buildBackend.Stderr = os.Stderr
-	if err := buildBackend.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build backend: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	cleanups = append(cleanups, func() { os.Remove(backendBinary) })
+		simPort := findFreePort()
+		simAddr := fmt.Sprintf(":%d", simPort)
+		simURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
+		fmt.Printf("[sim] Starting simulator-aws on %s...\n", simAddr)
+		simCmd := exec.Command(simBinary)
+		simCmd.Env = append(os.Environ(), "SIM_LISTEN_ADDR="+simAddr)
+		simCmd.Stdout = os.Stderr
+		simCmd.Stderr = os.Stderr
+		if err := simCmd.Start(); err != nil {
+			failClean("ERROR: start simulator-aws: %v\n", err)
+		}
+		cleanups = append(cleanups, func() { simCmd.Process.Kill(); simCmd.Wait() })
 
-	// Build the lambda agent test image — multi-stage Docker build forced
-	// to linux/arm64 (sim's primary capacity per Phase 135b). CI on amd64
-	// hosts uses QEMU.
-	bootstrapModuleDir := repoRoot + "/agent"
-	agentTestImageName = "sockerless-lambda-agent-test:v1"
-	fmt.Printf("[sim] Building %s (linux/arm64)...\n", agentTestImageName)
-	agentDockerfile := `FROM golang:1.25-alpine AS build
+		if err := waitForReady(simURL+"/health", 10*time.Second); err != nil {
+			failClean("ERROR: simulator-aws not ready: %v\n", err)
+		}
+		fmt.Printf("[sim] simulator-aws ready at %s\n", simURL)
+
+		// Build the lambda-bootstrap test image as the sim's prebuilt overlay.
+		bootstrapModuleDir := repoRoot + "/agent"
+		agentTestImageName = "sockerless-lambda-agent-test:v1"
+		fmt.Printf("[sim] Building %s (linux/arm64)...\n", agentTestImageName)
+		agentDockerfile := `FROM golang:1.25-alpine AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -o /sockerless-lambda-bootstrap ./cmd/sockerless-lambda-bootstrap
@@ -125,63 +137,73 @@ FROM alpine:latest
 COPY --from=build /sockerless-lambda-bootstrap /usr/local/bin/sockerless-lambda-bootstrap
 ENTRYPOINT ["/usr/local/bin/sockerless-lambda-bootstrap"]
 `
-	agentBuild := exec.Command("docker", "build",
-		"--platform", "linux/arm64",
-		"-t", agentTestImageName, "-f", "-", bootstrapModuleDir)
-	agentBuild.Stdin = strings.NewReader(agentDockerfile)
-	if out, err := agentBuild.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build agent test image: %v\n%s", err, out)
-		cleanup()
-		os.Exit(1)
+		agentBuild := exec.Command("docker", "build",
+			"--platform", "linux/arm64",
+			"-t", agentTestImageName, "-f", "-", bootstrapModuleDir)
+		agentBuild.Stdin = strings.NewReader(agentDockerfile)
+		if out, err := agentBuild.CombinedOutput(); err != nil {
+			failClean("ERROR: build lambda-bootstrap test image: %v\n%s", err, out)
+		}
+
+		endpointURL = simURL
+		roleARN = "arn:aws:iam::000000000000:role/sim"
+		overlayImage = agentTestImageName
+		arch = "arm64"
+
+	case "cloud":
+		endpointURL = requireEnv("SOCKERLESS_ENDPOINT_URL")
+		roleARN = requireEnv("SOCKERLESS_LAMBDA_ROLE_ARN")
+		overlayImage = requireEnv("SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE")
+		arch = requireEnv("SOCKERLESS_LAMBDA_ARCHITECTURE")
+		agentTestImageName = overlayImage
 	}
 
-	// Start backend
+	backendDir := repoRoot + "/backends/lambda"
+	backendBinary := backendDir + "/sockerless-backend-lambda"
+	fmt.Println("[backend] Building sockerless-backend-lambda...")
+	buildBackend := exec.Command("go", "build", "-tags", "noui", "-o", "sockerless-backend-lambda", "./cmd/sockerless-backend-lambda")
+	buildBackend.Dir = backendDir
+	buildBackend.Stdout = os.Stderr
+	buildBackend.Stderr = os.Stderr
+	if err := buildBackend.Run(); err != nil {
+		failClean("ERROR: build sockerless-backend-lambda: %v\n", err)
+	}
+	cleanups = append(cleanups, func() { os.Remove(backendBinary) })
+
 	backendPort := findFreePort()
 	backendAddr := fmt.Sprintf(":%d", backendPort)
 	lambdaBackendPort = backendPort
-	// Callback URL the container inside Docker will dial back to —
-	// host.docker.internal resolves to the host where the backend lives.
 	lambdaBackendWSURL = fmt.Sprintf("ws://host.docker.internal:%d/v1/lambda/reverse", backendPort)
-	fmt.Printf("[sim] Starting sockerless-backend-lambda on %s (callback=%s)...\n", backendAddr, lambdaBackendWSURL)
+	fmt.Printf("[backend] Starting sockerless-backend-lambda on %s (target=%s endpoint=%s callback=%s)\n", backendAddr, target, endpointURL, lambdaBackendWSURL)
 	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
 	backendCmd.Env = append(os.Environ(),
-		"SOCKERLESS_ENDPOINT_URL="+simURL,
+		"SOCKERLESS_ENDPOINT_URL="+endpointURL,
 		"SOCKERLESS_POLL_INTERVAL=500ms",
-		"SOCKERLESS_LAMBDA_ROLE_ARN=arn:aws:iam::000000000000:role/sim",
+		"SOCKERLESS_LAMBDA_ROLE_ARN="+roleARN,
 		"SOCKERLESS_CALLBACK_URL="+lambdaBackendWSURL,
-		"SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE="+agentTestImageName,
-		// BUG-848 made arch mandatory; no default.
-		"SOCKERLESS_LAMBDA_ARCHITECTURE=arm64",
+		"SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE="+overlayImage,
+		"SOCKERLESS_LAMBDA_ARCHITECTURE="+arch,
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
 	if err := backendCmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to start backend: %v\n", err)
-		cleanup()
-		os.Exit(1)
+		failClean("ERROR: start sockerless-backend-lambda: %v\n", err)
 	}
 	cleanups = append(cleanups, func() { backendCmd.Process.Kill(); backendCmd.Wait() })
 
 	backendURL := fmt.Sprintf("http://localhost:%d/internal/v1/info", backendPort)
 	if err := waitForReady(backendURL, 15*time.Second); err != nil {
-		fmt.Fprintf(os.Stderr, "backend not ready: %v\n", err)
-		cleanup()
-		os.Exit(1)
+		failClean("ERROR: sockerless-backend-lambda not ready: %v\n", err)
 	}
-	fmt.Printf("[sim] backend is ready on %s\n", backendAddr)
+	fmt.Printf("[backend] ready on %s\n", backendAddr)
 
-	// The Lambda backend serves the Docker API directly (no separate
-	// frontend binary — in-process wiring per post-P67 architecture).
-	// Point the docker SDK at the backend's TCP address.
 	var err error
 	dockerClient, err = client.NewClientWithOpts(
 		client.WithHost(fmt.Sprintf("tcp://localhost:%d", backendPort)),
 		client.WithAPIVersionNegotiation(),
 	)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create docker client: %v\n", err)
-		cleanup()
-		os.Exit(1)
+		failClean("ERROR: docker client: %v\n", err)
 	}
 
 	code := m.Run()
@@ -190,7 +212,6 @@ ENTRYPOINT ["/usr/local/bin/sockerless-lambda-bootstrap"]
 }
 
 func TestLambdaContainerLogs(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
@@ -241,7 +262,6 @@ func TestLambdaContainerLogs(t *testing.T) {
 }
 
 func TestLambdaContainerList(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	testID := generateTestID()
@@ -274,7 +294,6 @@ func TestLambdaContainerList(t *testing.T) {
 }
 
 func TestLambdaContainerExec(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
@@ -318,7 +337,6 @@ func TestLambdaContainerExec(t *testing.T) {
 }
 
 func TestLambdaNetworkOperations(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	testID := generateTestID()
@@ -350,7 +368,6 @@ func TestLambdaNetworkOperations(t *testing.T) {
 // + VolumeList surface it; VolumeRemove deletes it. Mount attach to
 // the function happens at ContainerCreate time via Function.FileSystemConfigs.
 func TestLambdaVolumeOperations(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	volName := "lambda_vol_" + generateTestID()
@@ -446,7 +463,6 @@ func generateTestID(parts ...string) string {
 // records outcomes in Store.InvocationResults so CloudState reports
 // `exited` + the real exit code.
 func TestLambdaContainerLifecycle(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
@@ -504,7 +520,6 @@ func TestLambdaContainerLifecycle(t *testing.T) {
 // invocation tracker ensures the follow loop knows when the
 // invocation finished so it can stop.
 func TestLambdaContainerLogsFollowLazyStream(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
@@ -578,7 +593,6 @@ func TestLambdaContainerLogsFollowLazyStream(t *testing.T) {
 // channel, so a concurrent ContainerWait unblocks immediately
 // instead of waiting for the sleep-30 invocation to complete.
 func TestLambdaContainerStopUnblocksWait(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})

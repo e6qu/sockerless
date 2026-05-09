@@ -24,8 +24,19 @@ build: ## compile-check (no binary output for libraries)
 test: ## run unit tests
 	$(GO_ENV) go test ./...
 
-test-integration: ## run integration tests (build-tag + env-var gated)
-	$(GO_ENV) SOCKERLESS_INTEGRATION=1 go test -tags integration ./...
+test-integration: ## run integration tests against the local simulator
+	$(GO_ENV) SOCKERLESS_TEST_TARGET=sim go test -v -timeout 15m ./...
+
+test-integration-cloud: ## run integration tests against the operator-supplied real cloud (requires SOCKERLESS_ENDPOINT_URL + per-backend env vars)
+	$(GO_ENV) SOCKERLESS_TEST_TARGET=cloud go test -v -timeout 30m ./...
+
+upgrade-deps: ## bump every direct require in go.mod to its latest (excluding github.com/sockerless/* in-repo modules)
+	@deps=$$(awk '/^require \(/{b=1;next} /^\)/&&b{b=0} b&&!/\/\/ indirect/&&!/github.com\/sockerless\//{sub(/^[ \t]+/,"");sub(/[ \t]*\/\/.*$$/,"");if(NF>=2)print $$1}' go.mod); \
+	for d in $$deps; do \
+	  printf "▸ go get -u %s@latest\n" "$$d"; \
+	  $(GO_ENV) go get -u "$$d@latest"; \
+	done; \
+	$(GO_ENV) go mod tidy
 
 lint: ## go vet + gofmt check (golangci-lint when available)
 	$(GO_ENV) go vet ./...

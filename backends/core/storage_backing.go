@@ -86,6 +86,16 @@ const (
 	// Azure Function App as an ephemeral mount. Parent share bills
 	// per-GiB-stored; the per-task attachment is task-scoped.
 	BackingAzureFilesEphemeral StorageBacking = "azure-files-ephemeral"
+
+	// BackingMemory — pure RAM-backed mount inside the workload
+	// container. Cloud-agnostic; no cloud-side resource is provisioned.
+	// Each backend translates this to its cloud-native tmpfs primitive
+	// (EmptyDir{Medium: MEMORY} on Cloud Run / GCF / ACA, tmpfs mount
+	// on ECS task definition, /tmp scratch on Lambda). Sibling to the
+	// ephemeral managed-FS backings — use this when the workload only
+	// needs scratch space the cloud's RAM can hold and no parent
+	// resource (PD, EFS, Azure Files) is required.
+	BackingMemory StorageBacking = "memory"
 )
 
 // SharedVolumeRef is the cloud-agnostic volume reference passed to drivers.
@@ -111,6 +121,9 @@ type SharedVolumeRef struct {
 	// azure-files-ephemeral fields
 	AzureStorageAccount string
 	AzureShareName      string
+
+	// memory backing fields
+	MemorySizeMB int
 }
 
 // StorageBackingDriver is the pluggable interface. Each driver knows how
@@ -157,6 +170,7 @@ type BackingSpec struct {
 	PDEphemeral         *PDEphemeralSpec         // pd-ephemeral (Compute Engine PD ephemeral attach)
 	EFSEphemeral        *EFSEphemeralSpec        // efs-ephemeral (EFS access point on managed FS)
 	AzureFilesEphemeral *AzureFilesEphemeralSpec // azure-files-ephemeral (Azure Files share on managed account)
+	Memory              *MemorySpec              // memory (RAM-backed tmpfs in workload container)
 }
 
 // EmptyDirSpec describes an in-memory tmpfs volume.
@@ -200,6 +214,15 @@ type AzureFilesEphemeralSpec struct {
 	ReadOnly       bool
 }
 
+// MemorySpec describes a RAM-backed tmpfs mount inside the workload
+// container. SizeMB is the requested upper bound; backends translate
+// to the cloud's native memory-backed primitive (EmptyDir{Medium:
+// MEMORY}, ECS tmpfs, Lambda /tmp scratch). Lifecycle = container
+// lifecycle; nothing persists past container exit.
+type MemorySpec struct {
+	SizeMB int // requested cap; backend may round up to the next valid quantum
+}
+
 // StorageBackingRegistry resolves a StorageBacking to its driver. Backends
 // build the registry at server startup (NewStorageBackingRegistry +
 // Register per driver) and look up by SharedVolume.Backing at materialize
@@ -234,9 +257,10 @@ func (r *StorageBackingRegistry) Register(d StorageBackingDriver) {
 // and silent default selection masks operator misconfiguration.
 func (r *StorageBackingRegistry) Resolve(b StorageBacking) (StorageBackingDriver, error) {
 	if b == "" {
-		return nil, fmt.Errorf("storage backing: SharedVolume.Backing is required (no default — set explicitly: %q, %q, %q, %q, %q, or %q)",
+		return nil, fmt.Errorf("storage backing: SharedVolume.Backing is required (no default — set explicitly: %q, %q, %q, %q, %q, %q, or %q)",
 			BackingEmptyDir, BackingGCSSync, BackingGCSFuse,
-			BackingPDEphemeral, BackingEFSEphemeral, BackingAzureFilesEphemeral)
+			BackingPDEphemeral, BackingEFSEphemeral, BackingAzureFilesEphemeral,
+			BackingMemory)
 	}
 	if d, ok := r.drivers[b]; ok {
 		return d, nil
@@ -266,6 +290,55 @@ func (d *EmptyDirDriver) PreExec(ctx context.Context, vol SharedVolumeRef, execI
 }
 
 func (d *EmptyDirDriver) PostExec(ctx context.Context, vol SharedVolumeRef, execID, localPath string) error {
+	return nil
+}
+
+// MemoryDriver implements StorageBackingDriver for the RAM-backed
+// tmpfs mount. Cloud-agnostic; no cloud SDK call. Each backend's
+// volume translator emits the cloud-native memory primitive
+// (EmptyDir{Medium: MEMORY} on Cloud Run / GCF / ACA, tmpfs mount
+// on ECS task definition, /tmp scratch on Lambda).
+//
+// Use this when the workload only needs scratch space the cloud's
+// RAM can hold and no parent resource (PD, EFS, Azure Files) is
+// required — e.g. small build caches, temporary artifacts, IPC
+// scratch. Distinct from emptyDir in that the operator opts in
+// explicitly to RAM-backed (not disk-backed) ephemeral storage,
+// and the SizeMB cap is surfaced in the cloud-native materializer.
+type MemoryDriver struct {
+	// DefaultSizeMB applies when SharedVolumeRef.MemorySizeMB is zero.
+	// Set by backend startup; conservative default = 64 MiB.
+	DefaultSizeMB int
+}
+
+// NewMemoryDriver returns a driver with the given default size cap.
+// A zero default leaves the cap unset; the per-volume override is
+// then required at CloudSpec time.
+func NewMemoryDriver(defaultSizeMB int) *MemoryDriver {
+	return &MemoryDriver{DefaultSizeMB: defaultSizeMB}
+}
+
+func (d *MemoryDriver) Backing() StorageBacking { return BackingMemory }
+
+func (d *MemoryDriver) CloudSpec(vol SharedVolumeRef) (BackingSpec, error) {
+	size := vol.MemorySizeMB
+	if size == 0 {
+		size = d.DefaultSizeMB
+	}
+	if size <= 0 {
+		return BackingSpec{}, fmt.Errorf("memory: size must be > 0 MiB (vol=%q)", vol.Name)
+	}
+	return BackingSpec{
+		Kind:   BackingMemory,
+		Memory: &MemorySpec{SizeMB: size},
+	}, nil
+}
+
+func (d *MemoryDriver) PreExec(ctx context.Context, vol SharedVolumeRef, execID, localPath, remotePath string) (map[string][]string, error) {
+	return nil, nil
+}
+
+func (d *MemoryDriver) PostExec(ctx context.Context, vol SharedVolumeRef, execID, localPath string) error {
 	return nil
 }
 

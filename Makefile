@@ -88,7 +88,7 @@ ALL_APPS := $(GO_UI_APPS) $(GO_APPS) $(UI_APPS)
 #
 # `make build` → run `make build` in every app, in series. Fail fast.
 
-.PHONY: install build build-noui test test-integration lint clean
+.PHONY: install build build-noui test test-integration lint clean upgrade-deps check-deps
 
 install: ## install deps in every app
 	@$(MAKE) -s _fanout TARGET=install APPS="$(ALL_APPS)"
@@ -115,6 +115,12 @@ lint-all: lint lint-ui ## lint every app (Go + UI)
 
 clean: ## clean every app's artefacts
 	@$(MAKE) -s _fanout TARGET=clean APPS="$(ALL_APPS)"
+
+upgrade-deps: ## bump every Go module's direct deps to latest (per-module independence preserved — each app runs its own upgrade-deps)
+	@$(MAKE) -s _fanout TARGET=upgrade-deps APPS="$(GO_UI_APPS) $(GO_APPS)"
+
+check-deps: ## fail if any Go module / Terraform provider is behind its latest published version
+	@bash scripts/check-latest-deps.sh
 
 # Internal helper: iterate APPS and run TARGET in each. Stops on
 # first failure. Honours --keep-going via $(MAKEFLAGS).

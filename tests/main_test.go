@@ -37,7 +37,7 @@ func TestMain(m *testing.M) {
 	}
 
 	// Multi-stage Docker build forced to linux/arm64 — sim's primary
-	// capacity contract. CI on amd64 hosts uses QEMU. Phase 135.
+	// capacity contract. Phase 135.
 	evalDir := findModuleDir("simulators/testdata/eval-arithmetic")
 	fmt.Println("Building eval-arithmetic Docker image (linux/arm64)...")
 	evalImageName = "sockerless-eval-arithmetic:test"

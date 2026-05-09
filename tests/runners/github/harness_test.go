@@ -66,7 +66,7 @@ func TestGitHub_ECS_Hello(t *testing.T) {
 	subnets := os.Getenv("SOCKERLESS_ECS_TEST_SUBNETS")
 	sgs := os.Getenv("SOCKERLESS_ECS_TEST_SECURITY_GROUPS")
 	if subnets == "" || sgs == "" {
-		t.Skip("SOCKERLESS_ECS_TEST_SUBNETS / SOCKERLESS_ECS_TEST_SECURITY_GROUPS not set; live ECS infra required. Run `terragrunt output` and export them.")
+		t.Fatal("SOCKERLESS_ECS_TEST_SUBNETS + SOCKERLESS_ECS_TEST_SECURITY_GROUPS required (no fallback); run `terragrunt output` and export them, or do not invoke this live-cloud test target")
 	}
 	runCell(t, cellConfig{
 		Label:             "sockerless-ecs",
@@ -97,7 +97,7 @@ func TestGitHub_Lambda_Hello(t *testing.T) {
 	region := envOr("SOCKERLESS_LAMBDA_TEST_REGION", "eu-west-1")
 	function := envOr("SOCKERLESS_LAMBDA_TEST_FUNCTION", "sockerless-live-runner")
 	if function == "" {
-		t.Skip("SOCKERLESS_LAMBDA_TEST_FUNCTION not set; runner-Lambda live infra required")
+		t.Fatal("SOCKERLESS_LAMBDA_TEST_FUNCTION required (no fallback); deploy the runner-Lambda via terraform/modules/lambda/runner.tf and export it")
 	}
 	// Reuse the live-tests-lambda.yml slot on main and overwrite its
 	// content with a hello-shaped body on a throwaway branch, then
@@ -169,7 +169,7 @@ func runCell(t *testing.T, c cellConfig) {
 
 	pat, err := runnersinternal.GitHubPAT()
 	if err != nil {
-		t.Skipf("GitHub PAT unavailable: %v", err)
+		t.Fatalf("GitHub PAT required for live-runner test (no fallback): %v", err)
 	}
 	defer zero(pat)
 
@@ -178,7 +178,7 @@ func runCell(t *testing.T, c cellConfig) {
 		// Desktop). The cloud-mode paths (ECS RunTask / Lambda Invoke)
 		// don't need a local docker daemon.
 		if _, err := exec.LookPath("docker"); err != nil {
-			t.Skipf("docker CLI required to run the runner container: %v", err)
+			t.Fatalf("docker CLI required to run the runner container (no fallback): %v", err)
 		}
 		dockerHost := envOr("SOCKERLESS_DOCKER_HOST", c.DefaultDockerHost)
 		pingDocker(t, dockerHost)

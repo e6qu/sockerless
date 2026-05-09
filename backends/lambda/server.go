@@ -67,6 +67,7 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	})}
 	s.storageBackings = core.NewStorageBackingRegistry()
 	s.storageBackings.Register(awscommon.NewEFSEphemeralDriver(s.efs))
+	s.storageBackings.Register(core.NewMemoryDriver(64))
 	ecrAuth := awscommon.NewECRAuthProvider(awsClients.ECR, logger, s.ctx)
 	s.images = &core.ImageManager{
 		Base:   s.BaseServer,
@@ -81,7 +82,7 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	}
 	s.SetSelf(s)
 	s.CloudState = &lambdaCloudState{server: s}
-	s.Access = newIAMRoleAccess(s)
+	s.Access = awscommon.NewIAMRoleAccess(config.RoleARN)
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

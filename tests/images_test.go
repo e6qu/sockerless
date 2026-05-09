@@ -67,14 +67,17 @@ func TestImageTag(t *testing.T) {
 		t.Fatalf("inspect tagged image failed: %v", err)
 	}
 
+	// docker/docker v28 normalises image refs to fully-qualified form
+	// (e.g. `myrepo:mytag` → `docker.io/library/myrepo:mytag`). Match
+	// either shape so the assertion works against both v27 + v28.
 	found := false
 	for _, tag := range img.RepoTags {
-		if tag == "myrepo:mytag" {
+		if tag == "myrepo:mytag" || tag == "docker.io/library/myrepo:mytag" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("expected tag myrepo:mytag in %v", img.RepoTags)
+		t.Errorf("expected myrepo:mytag (or docker.io/library/myrepo:mytag) in %v", img.RepoTags)
 	}
 }

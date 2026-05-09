@@ -139,7 +139,7 @@ func TestArithmeticExecInContainer(t *testing.T) {
 // arithmetic, proving that process execution is fully functional.
 func TestArithmeticEvalBinary(t *testing.T) {
 	if evalImageName == "" {
-		t.Skip("eval image not built")
+		t.Fatal("eval-arithmetic image must be built by TestMain (no fallback)")
 	}
 	for name, c := range availableRunnerClients(t) {
 		t.Run(name, func(t *testing.T) {

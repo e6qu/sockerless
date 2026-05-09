@@ -21,10 +21,10 @@ import (
 // PrebuiltOverlayImage so ContainerCreate uses the test image
 // directly).
 //
-// Gated on SOCKERLESS_INTEGRATION=1 since it requires a real docker
-// daemon + reachable host.docker.internal.
+// Requires the integration TestMain to have brought up the backend +
+// docker client (SOCKERLESS_TEST_TARGET=sim|cloud). Needs a real
+// docker daemon and a reachable host.docker.internal.
 func TestLambdaAgentE2E_ReverseAgent(t *testing.T) {
-	skipIfNoIntegration(t)
 	ctx := context.Background()
 
 	if agentTestImageName == "" {

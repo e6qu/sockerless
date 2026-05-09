@@ -55,6 +55,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	}
 	s.storageBackings = core.NewStorageBackingRegistry()
 	s.storageBackings.Register(azurecommon.NewAzureFilesEphemeralDriver(config.StorageAccount))
+	s.storageBackings.Register(core.NewMemoryDriver(64))
 	if svc, err := azurecommon.NewACRBuildService(
 		azureClients.Cred, config.SubscriptionID, config.ResourceGroup,
 		config.ACRName, config.BuildStorageAccount, config.BuildContainer, logger,
@@ -65,8 +66,16 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	s.CloudState = &acaCloudState{server: s}
 	// Cloud-DNS network-discovery driver wraps Azure Private DNS.
 	s.NetworkDiscovery = newACACloudDNSDiscovery(s)
-	s.DNS = newPrivateDNSZoneDNS(s)
-	s.Access = newNoneInternalAccess(s)
+	s.DNS = &azurecommon.PrivateDNSZoneDNS{
+		LookupZoneName: func(ctx context.Context, networkID string) (string, error) {
+			state, ok := s.resolveNetworkState(ctx, networkID)
+			if !ok {
+				return "", nil
+			}
+			return state.DNSZoneName, nil
+		},
+	}
+	s.Access = core.NoneInternalAccess{}
 
 	mode := "cloud"
 	if config.EndpointURL != "" {
