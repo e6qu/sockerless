@@ -55,7 +55,7 @@ for mod_file in $mods; do
     if [[ "$name" == github.com/sockerless/* ]]; then continue; fi
     latest=$(GOFLAGS='' GOWORK=off go list -m -versions "$name" 2>/dev/null \
       | tr ' ' '\n' | tail -n +2 \
-      | grep -vE '\-(beta|alpha|rc|dev)' | tail -1 || true)
+      | grep -vE '\-(beta|alpha|rc|dev|preview)' | tail -1 || true)
     if [[ -z "$latest" ]]; then continue; fi
     if [[ "$pinned" != "$latest" ]]; then
       echo "  FAIL  $mod_dir: $name pinned $pinned (latest $latest)"
@@ -68,21 +68,25 @@ done
 # 2. Terraform providers ---------------------------------------------
 echo
 echo "=== Terraform provider freshness ==="
-tf_files=$(find . -name versions.tf -not -path '*/node_modules/*' -not -path '*/.terraform/*' | sort)
+tf_files=$(find . -name versions.tf \
+  -not -path '*/node_modules/*' \
+  -not -path '*/.terraform/*' \
+  -not -path '*/.terragrunt-cache/*' \
+  | sort)
 
 for tf in $tf_files; do
   # Parse required_providers block. Output lines: "<name>|<source>|<constraint>"
   parsed=$(awk '
     /required_providers/ { in_rp=1; next }
-    in_rp && /^\s*}\s*$/ { in_rp=0 }
+    in_rp && /^[[:space:]]*}[[:space:]]*$/ { in_rp=0 }
     in_rp && /[a-zA-Z_][a-zA-Z0-9_-]*[[:space:]]*=[[:space:]]*\{/ {
       n=$1; gsub("=","",n); gsub("[[:space:]]","",n); name=n; src=""; ver=""; next
     }
-    in_rp && /source/ {
-      gsub("\"",""); src=$3
+    in_rp && /source[[:space:]]*=/ {
+      match($0, /"[^"]+"/); src=substr($0, RSTART+1, RLENGTH-2)
     }
-    in_rp && /version/ {
-      gsub("\"",""); ver=$3
+    in_rp && /version[[:space:]]*=/ {
+      match($0, /"[^"]+"/); ver=substr($0, RSTART+1, RLENGTH-2)
       if (name != "" && src != "" && ver != "") {
         print name "|" src "|" ver
         name=""; src=""; ver=""
