@@ -21,7 +21,6 @@ Across the 12 UI packages (core + 6 cloud backends + docker backend + docker fro
 
 ## Queued (after 78)
 
-- **Phase 68 — Multi-tenant backend pools.** P68-001 done; P68-002 → P68-010 pending. Pools of warm backends per (project, region) so multi-tenant deployments don't pay cold-start cost per tenant.
 - **Phases 91–94 — Real per-cloud volume provisioning.** Lifts the runner-task `emptyDir` fallback to real-workload provisioning of pd-ephemeral / efs-ephemeral / azure-files-ephemeral. Designs in `specs/CLOUD_RESOURCE_MAPPING.md` § Volume provisioning per backend.
 - **Live-cloud validation track.** Per-backend live-cloud sweeps:
   - Lambda live (deferred from Phase 86).

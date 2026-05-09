@@ -1,4 +1,5 @@
 import { type ReactNode } from "react";
+import { ThemeToggle } from "./ThemeToggle.js";
 
 export interface NavItem {
   label: string;
@@ -75,13 +76,14 @@ export function AppShell({ title, kicker, navItems, renderLink, children }: AppS
         </nav>
 
         <div
-          className="border-t px-5 py-3 text-[10px] uppercase tracking-[0.2em]"
+          className="flex items-center justify-between gap-2 border-t px-5 py-3 text-[10px] uppercase tracking-[0.2em]"
           style={{
             borderColor: "var(--color-border)",
             color: "var(--color-fg-subtle)",
           }}
         >
-          sockerless · operator
+          <span>sockerless · operator</span>
+          <ThemeToggle />
         </div>
       </aside>
 

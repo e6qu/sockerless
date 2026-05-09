@@ -14,7 +14,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 ## Next — Phase 78 (UI polish)
 
-Phase 121b complete (#135 + #136 merged). Next queued: Phase 78 (UI polish across the 12 UI packages). After that: Phase 68 (multi-tenant backend pools), Phases 91–94 (real per-cloud volume provisioning), live-cloud validation track. See [PLAN.md](PLAN.md) for the ordered list.
+Phase 121b complete (#135 + #136 merged). Next queued: Phase 78 (UI polish across the 12 UI packages). After that: Phases 91–94 (real per-cloud volume provisioning), live-cloud validation track. See [PLAN.md](PLAN.md) for the ordered list.
 
 Initial scope shipped in PR #135:
 

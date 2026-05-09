@@ -43,15 +43,11 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 
 Dark mode, design tokens, error handling UX, container detail modal, auto-refresh, performance audit, accessibility, E2E smoke, documentation. Touches the 12 UI packages (core + 6 cloud backends + docker backend + docker frontend + admin + bleephub).
 
-### 2. Phase 68 — Multi-tenant backend pools
-
-P68-001 done; P68-002 → P68-010 pending. Pools of warm backends per (project, region) so multi-tenant deployments don't pay cold-start cost per tenant.
-
-### 3. Phases 91–94 — Real per-cloud volume provisioning
+### 2. Phases 91–94 — Real per-cloud volume provisioning
 
 Queued. Designs in `specs/CLOUD_RESOURCE_MAPPING.md` § Volume provisioning per backend. Today's path is the `core.StorageBackingRegistry` + per-cloud drivers shipped in #134 (`pd-ephemeral`, `efs-ephemeral`, `azure-files-ephemeral`); 91–94 lift the real-workload provisioning that those drivers describe (versus the `emptyDir` fallback for the runner-task pattern).
 
-### 4. Live-cloud validation track
+### 3. Live-cloud validation track
 
 Per-backend live-cloud sweeps separate from the unit/sim CI. Live-AWS ECS validated 2026-04-20. Outstanding:
 - Lambda live track (deferred from Phase 86).

@@ -22,3 +22,4 @@ export { SimulatorApp } from "./SimulatorApp.js";
 export type { SimulatorAppProps } from "./SimulatorApp.js";
 export { LogViewer } from "./LogViewer.js";
 export type { LogViewerProps } from "./LogViewer.js";
+export { ThemeToggle } from "./ThemeToggle.js";
