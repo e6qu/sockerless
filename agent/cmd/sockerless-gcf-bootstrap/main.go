@@ -98,6 +98,12 @@ const (
 	// from the standard Docker NetworkingConfig.EndpointsConfig.Aliases
 	// of every sibling container in the same docker user-defined network.
 	envHostAliases = "SOCKERLESS_HOST_ALIASES"
+	// SOCKERLESS_DNS_SEARCH_DOMAIN = single DNS suffix appended to the
+	// `search` line of /etc/resolv.conf at bootstrap startup. Empty →
+	// no /etc/resolv.conf write. Lets short hostnames in the same
+	// network resolve to per-name A records the network-discovery driver
+	// registers under the same suffix.
+	envDNSSearchDomain = "SOCKERLESS_DNS_SEARCH_DOMAIN"
 	// SOCKERLESS_SIDECAR=1 marks this container as a non-ingress sidecar
 	// in a Cloud Run multi-container revision. Sidecars do NOT bind the
 	// PORT HTTP server (only one container per revision can — the
@@ -167,6 +173,9 @@ func main() {
 
 	if err := writeHostAliases(os.Getenv(envHostAliases)); err != nil {
 		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: write host aliases: %v\n", err)
+	}
+	if err := writeDNSSearchDomain(os.Getenv(envDNSSearchDomain)); err != nil {
+		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: write dns search domain: %v\n", err)
 	}
 
 	// Sidecar mode: skip the HTTP server (only the ingress container
@@ -787,6 +796,49 @@ func writeHostAliases(raw string) error {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: /etc/hosts += %q\n", line)
+	return nil
+}
+
+// writeDNSSearchDomain appends the given suffix to the `search` line of
+// /etc/resolv.conf so short-name lookups within the network resolve. If
+// the file already has a `search` line we extend it with the suffix; if
+// not we add a fresh `search <suffix>` line. Empty raw → no-op.
+func writeDNSSearchDomain(raw string) error {
+	suffix := strings.TrimSpace(raw)
+	if suffix == "" {
+		return nil
+	}
+	const path = "/etc/resolv.conf"
+	body, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	lines := strings.Split(string(body), "\n")
+	updated := false
+	for i, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == "search" {
+			for _, f := range fields[1:] {
+				if f == suffix {
+					return nil
+				}
+			}
+			lines[i] = strings.TrimRight(line, " \t") + " " + suffix
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		lines = append(lines, "search "+suffix)
+	}
+	out := strings.Join(lines, "\n")
+	if !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: /etc/resolv.conf search += %q\n", suffix)
 	return nil
 }
 

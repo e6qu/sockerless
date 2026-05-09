@@ -229,6 +229,16 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		MacAddress:  "",
 	}
 
+	// Inject SOCKERLESS_DNS_SEARCH_DOMAIN so the agent / bootstrap can
+	// append a `search` line to /etc/resolv.conf and short-name lookups
+	// within the network resolve. User's per-job override wins.
+	if suffix, err := s.DNS.SearchDomain(s.ctx(), networkID); err == nil {
+		if env := core.DNSSearchDomainEnvIfSet(config.Env, suffix); env != "" {
+			config.Env = append(config.Env, env)
+			container.Config.Env = config.Env
+		}
+	}
+
 	s.PendingCreates.Put(id, container)
 
 	// Store ECS state without task definition — defer registration to ContainerStart.

@@ -4,32 +4,29 @@
 
 ## Branch
 
-`phase-124-network-driver` — off `origin/main` at d2d9e55 (PR #130 merged 2026-05-09). Single work-branch rule: everything stacks here, no side branches.
+`phase-125-dns-driver` — off `origin/main` at 4905be4 (PR #131 merged 2026-05-09). Single work-branch rule: everything stacks here, no side branches.
 
 ## Ordered roadmap (do them in this order)
 
-1. **Phase 128 — Runner job timeout** (live-cloud cost gate). Hard cap on Cloud Run / Lambda / ECS task duration; default 1 h; SIGTERM → 30 s → SIGKILL; bootstrap reports exit 124. Operator override via dispatcher TOML `runner_job_timeout` + bootstrap env `SOCKERLESS_JOB_TIMEOUT_SECONDS`. **Must precede the next live-cloud session** — without it, hung subprocesses pin quota and burn money.
-2. **Phase 124 — Network driver** (`host-aliases` / `cloud-dns` / `service-mesh` / `nat-gateway-only`).
-3. **Phase 125 — DNS driver** (`cloud-map` / `cloud-dns-zone` / `service-discovery` / `private-dns-zone`). Depends on 124.
-4. **Phase 126 — Access driver** (`iam-role` / `id-token` / `mTLS` / `none-internal`). Sim prereq `generateIdToken` ✅.
-5. **Phase 127 — Storage driver expansion** (`pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral`). Sim prereq Compute Disks ✅.
-6. **Phase 121b — Azure sim hardening** (cloud-faithful for ACA + AZF; mirror of Phase 121).
-7. **Phase 78 — UI polish** (dark mode, design tokens, error UX, container detail modal, accessibility).
+1. **Phase 126 — Access driver** (`iam-role` / `id-token` / `mTLS` / `none-internal`). Sim prereq `generateIdToken` ✅.
+2. **Phase 127 — Storage driver expansion** (`pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral`). Sim prereq Compute Disks ✅.
+3. **Phase 121b — Azure sim hardening** (cloud-faithful for ACA + AZF; mirror of Phase 121).
+4. **Phase 78 — UI polish** (dark mode, design tokens, error UX, container detail modal, accessibility).
 
-Driver phases (124–127) follow the 7-step template from [PLAN.md § Driver phase template](PLAN.md#driver-phase-template-124127). Each phase starts with a `specs/CLOUD_RESOURCE_MAPPING.md` design pass before code.
+Driver phases (126–127) follow the 7-step template from [PLAN.md § Driver phase template](PLAN.md#driver-phase-template-124127). Each phase starts with a `specs/CLOUD_RESOURCE_MAPPING.md` design pass before code.
 
-## Active — Phase 124 (network discovery driver, ready for PR + CI)
+## Active — Phase 125 (DNS driver, ready for PR + CI)
 
-4/4 sub-tasks shipped:
+All sub-tasks shipped:
 
-- **124a** — `api/network_discovery.go`: `NetworkDiscoveryKind` enum + `IsValid()` + `AllNetworkDiscoveryKinds`. 4 categories: host-aliases, cloud-dns, service-mesh, nat-gateway-only.
-- **124b** — `backends/core/network_discovery_driver.go`: interface, registry, no-op default (nat-gateway-only), `ParseNetworkDiscoveryEnv()` (no-fallback semantics).
-- **124c** — `backends/core/network_discovery_hostaliases.go`: in-process host-aliases impl.
-- **124d** — Per-backend adapters + wiring: cloudrun cloud-DNS, ECS service-mesh, ACA cloud-DNS, GCF host-aliases. `BaseServer.NetworkDiscovery` field defaults to no-op; backend startup overrides. Cloudrun `NetworkConnect` register-A-record callsite migrated to driver-mediated call.
+- **125a** — `api/dns_driver.go`: `DNSMechanism` enum + `IsValid()` + `AllDNSMechanisms`. 5 mechanisms: cloud-map, cloud-dns-zone, service-discovery, private-dns-zone, none.
+- **125b** — `backends/core/dns_driver.go`: `DNSDriver` interface (`SearchDomain` + `Mechanism`), registry, no-op default (`none`), `ParseDNSMechanismEnv()` (no-fallback semantics), `DNSSearchDomainEnvIfSet()` helper.
+- **125c** — Per-backend adapters + wiring: cloudrun cloud-dns-zone, ECS cloud-map, ACA private-dns-zone. `BaseServer.DNS` field defaults to no-op; backend startup overrides. FaaS backends (cloudrun-functions, lambda, azure-functions) keep no-op until per-cloud DNS adapters land.
+- **125d** — `SOCKERLESS_DNS_SEARCH_DOMAIN` env wired through every `ContainerCreate` callsite (cloudrun, ECS, ACA, GCF, Lambda, AZF). Cloudrun + GCF bootstraps read the env var and append `search <suffix>` to `/etc/resolv.conf`.
 
-Spec: [specs/CLOUD_RESOURCE_MAPPING.md § Network discovery driver](specs/CLOUD_RESOURCE_MAPPING.md#network-discovery-driver-phase-124).
+Spec: [specs/CLOUD_RESOURCE_MAPPING.md § DNS driver](specs/CLOUD_RESOURCE_MAPPING.md#dns-driver).
 
-Next: open PR, watch CI, merge, then start Phase 125 (DNS driver).
+Next: open PR, watch CI, merge, then start Phase 126 (Access driver).
 
 ## Standing rules
 

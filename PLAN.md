@@ -41,31 +41,19 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 
 Pick from the top. Each phase's `Pick from the top` rule: don't start the next until the previous closes (or the user explicitly redirects).
 
-### 1. Phase 128 — Runner job timeout (live-cloud cost gate)
-
-Hard cap on Cloud Run Job / Lambda / ECS task duration so a hung subprocess can't pin quota indefinitely. Default 1 h. Operator override via dispatcher TOML `runner_job_timeout` + bootstrap env `SOCKERLESS_JOB_TIMEOUT_SECONDS`. Per-cloud max: Cloud Run 24 h; Lambda 15 min; ECS Fargate ~unlimited. At timeout: SIGTERM → 30 s grace → SIGKILL; bootstrap reports exit 124 (matches GNU `timeout(1)`). Test: `sleep 9999` step → 1 h timeout → arithmetic-suite resumes on next job. **Blocks the next live-cloud session**: without it, a hung subprocess pins quota indefinitely (the failure mode that drove the 2026-05-07 ~$90 burn).
-
-### 2. Phase 124 — Network driver
-
-How containers in the same user-defined network discover and talk. Driver categories: `host-aliases` / `cloud-dns` / `service-mesh` / `nat-gateway-only`. Sim prereq: already covered.
-
-### 3. Phase 125 — DNS driver
-
-How `<container-name>.<network>` resolves. Driver categories: `cloud-map` / `cloud-dns-zone` / `service-discovery` / `private-dns-zone`. Sim prereq: already covered. Depends on 124's network primitives.
-
-### 4. Phase 126 — Access driver
+### 1. Phase 126 — Access driver
 
 Container-to-container auth, ingress IAM, service-account binding. Driver categories: `iam-role` / `id-token` / `mTLS` / `none-internal`. Sim prereq: ✅ `generateIdToken` (PR #127).
 
-### 5. Phase 127 — Storage driver expansion
+### 2. Phase 127 — Storage driver expansion
 
 Open up the `BackingSpec` union (currently EmptyDir + GCS) cloud-agnostic. Drivers: `pd-ephemeral` GCP / `efs-ephemeral` AWS (already covered) / `azure-files-ephemeral`. Sim prereq: ✅ Compute Disks (PR #127).
 
-### 6. Phase 121b — Azure sim hardening
+### 3. Phase 121b — Azure sim hardening
 
 Azure-side mirror of Phase 121 (cloud-faithful sim hardening for ACA + AZF). Open question: how much of the GCP-style work (proto-JSON enum decoding, real OAuth2 token endpoints, label-filter syntax) transfers to Azure idioms.
 
-### 7. Phase 78 — UI polish
+### 4. Phase 78 — UI polish
 
 Dark mode, design tokens, error handling UX, container detail modal, auto-refresh, performance audit, accessibility, E2E smoke, documentation.
 

@@ -539,6 +539,60 @@ type NetworkDiscoveryDriver interface {
 6. **No-fallbacks at resolve** — the existing inline calls (e.g. `cloudServiceRegisterCNAME`, `cloud_map_register_instance`) get migrated behind the driver registry.
 7. Migration sweep — replace direct calls in `backends/ecs/*.go`, `backends/cloudrun/*.go`, etc. with `s.networkDiscovery.RegisterContainer(...)`.
 
+## DNS driver
+
+Sibling to `NetworkDiscoveryDriver`. The discovery driver answers *which container holds which name* (registration); the DNS driver answers *how the workload's resolver finds them at runtime* — the search domain on `/etc/resolv.conf`, the resolver host, and the cloud-product-specific mechanism the suffix depends on.
+
+### Mechanisms
+
+| Mechanism | Suffix shape | Resolver |
+|---|---|---|
+| `cloud-map` | `<service>.<namespace>` (Cloud Map private namespace name) | VPC's `.2` resolver forwards to Route 53 PrivateHostedZone backing Cloud Map |
+| `cloud-dns-zone` | `<container>.<zone-dns-name>` (GCP Cloud DNS managed-zone DNS name) | Cloud DNS via VPC connector / native Cloud Run DNS |
+| `service-discovery` | implementation-defined (`<container>.<network>` on Cloud Map, etc.) | platform default |
+| `private-dns-zone` | `<container>.<zone-name>` (Azure Private DNS Zone name) | Azure-provided DNS in the managed environment |
+| `none` | no suffix injected | no-op (single-container backends like Lambda / AZF) |
+
+### Today's per-backend mapping
+
+| Backend | Mechanism | Suffix source |
+|---|---|---|
+| ECS | `cloud-map` | Cloud Map namespace name (`<network>.local`) |
+| Cloud Run | `cloud-dns-zone` | resolved network state's `DNSName` (`<network>.<region>.internal`) |
+| Cloud Functions (gcf) | `none` | intra-revision `/etc/hosts` covers peers; no suffix |
+| ACA | `private-dns-zone` | per-network Private DNS zone name |
+| Lambda + AZF | `none` | single-container; no inter-container resolver config |
+
+### Interface (`backends/core/dns_driver.go`)
+
+```go
+type DNSDriver interface {
+    // SearchDomain returns the DNS suffix that should be placed on the
+    // workload's /etc/resolv.conf `search` line for `networkID`. Empty
+    // string means "no suffix" (no-op).
+    SearchDomain(ctx context.Context, networkID string) (string, error)
+
+    // Mechanism returns the cloud-product-specific mechanism this driver
+    // uses (cloud-map / cloud-dns-zone / private-dns-zone / service-discovery / none).
+    Mechanism() api.DNSMechanism
+}
+```
+
+The driver does NOT replace `NetworkDiscoveryDriver.ResolveName` — that's the *registry* read path. `DNSDriver.SearchDomain` is the *workload-resolver-config* read path. They serve different layers of the same flow.
+
+### Operator selection
+
+`SOCKERLESS_<BACKEND>_DNS_MECHANISM=<cloud-map|cloud-dns-zone|service-discovery|private-dns-zone|none>`. Empty → backend default (table above); unknown → backend startup error (no silent fallback).
+
+### Migration
+
+1. New `api/dns_driver.go` — `DNSMechanism` enum.
+2. New `backends/core/dns_driver.go` — interface + registry + no-op default (`none`).
+3. Per-backend adapter (lives next to the corresponding `network_discovery_adapter.go` since both close over the same per-`*Server` cloud state).
+4. `BaseServer.DNS` field; defaults to `NoOpDNS{}`; backend startup overrides.
+5. Workload-host materializer reads `s.DNS.SearchDomain(networkID)` for each network the container joins; sets `SOCKERLESS_DNS_SEARCH_DOMAIN` env on the container.
+6. Bootstrap (`agent/cmd/sockerless-{cloudrun,gcf}-bootstrap`) reads `SOCKERLESS_DNS_SEARCH_DOMAIN` and writes the `search` line to `/etc/resolv.conf` at startup.
+
 ## Volume provisioning per backend
 
 Real per-cloud volume provisioning: ECS + Lambda → EFS access points; Cloud Run + GCF → GCS buckets; ACA + AZF → Azure Files shares. Host-path binds remain rejected (no host filesystem in the cloud).
