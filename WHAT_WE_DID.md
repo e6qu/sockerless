@@ -6,7 +6,29 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* we did each phase, what was surprising, what blocked. Per-bug detail belongs in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
-## 2026-05-09 — Phase 126 Access driver (PR pending)
+## 2026-05-09 — Phase 127 Storage driver expansion (PR pending)
+
+Fifth of the post-Phase-135 ordered roadmap. Opens the `BackingSpec` union (until now `emptyDir` + `gcs-sync` + `gcs-fuse`, GCP-only) to the AWS + Azure equivalents. The point is a uniform cross-cloud abstraction for "ephemeral managed FS attached to a task" so operator selection (`SharedVolume.Backing`) works identically across the 6 cloud backends.
+
+**3 new backings** (added to `core.StorageBacking`):
+- `pd-ephemeral` (GCP) — Compute Engine Persistent Disk attached to a Cloud Run / Cloud Run Jobs instance for the task lifecycle.
+- `efs-ephemeral` (AWS) — EFS access point on a sockerless-managed filesystem, attached to an ECS task / Lambda function.
+- `azure-files-ephemeral` (Azure) — Azure Files share on a sockerless-managed storage account, attached to an ACA job / Azure Function App.
+
+All three honor the project's no-idle-cost directive: the underlying parent (PD / EFS / Azure Files share) bills per-GiB-stored, the per-task attachment is task-scoped.
+
+**Shipped on this PR:**
+- `core.storage_backing.go` extended with the 3 constants, 3 new `BackingSpec` payload structs (`PDEphemeralSpec`, `EFSEphemeralSpec`, `AzureFilesEphemeralSpec`), and the corresponding fields on `SharedVolumeRef` (PD size/zone, EFS FS+AP, Azure account+share, ReadOnly).
+- `gcp-common.PDEphemeralDriver` — defaults to `<region>-a` zone + 10 GiB; rejects zero size at `CloudSpec` time. Backend wiring: cloudrun + cloudrun-functions register on startup with `config.Region+"-a"` as the zone default.
+- `aws-common.EFSEphemeralDriver` — wraps the existing `EFSManager`; `CloudSpec` rejects empty AccessPointID / FileSystemID. Backend wiring: ECS + Lambda gain `storageBackings` registries and register the driver with their existing EFS manager.
+- `azure-common.AzureFilesEphemeralDriver` — defaults `StorageAccount` to the operator's configured value; rejects empty share. Backend wiring: ACA + AZF gain `storageBackings` registries and register the driver with `config.StorageAccount` as the default.
+- 15 unit tests (5 per driver) covering Backing(), CloudSpec defaults + overrides + required-field rejection, PreExec/PostExec no-ops.
+
+**No-fallbacks discipline preserved**: `Resolve("")` error message updated to enumerate all six valid backings. Each driver rejects missing required fields at `CloudSpec` time.
+
+**What's NOT in this PR**: existing volume-materialization paths in ECS taskdef.go (direct EFS), ACA jobspec.go (direct Azure Files), AZF volumes.go are unchanged. The new drivers register the abstraction and are reachable through `s.storageBackings.Resolve(BackingEFSEphemeral)` etc., but the existing per-backend translators don't yet flow through the registry. That migration is a separate consolidation phase.
+
+## 2026-05-09 — Phase 126 Access driver (PR #133, merged)
 
 Fourth of the post-Phase-135 ordered roadmap. Adds the abstraction for "what cloud-native principal does the workload run as, and what credential does a caller mint to invoke it?" Both halves are bound by IAM at the cloud platform layer; this driver wraps them so the HTTP invocation paths stay uniform across clouds.
 

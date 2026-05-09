@@ -4,28 +4,25 @@
 
 ## Branch
 
-`phase-126-access-driver` — off `origin/main` at 6875aa1 (PR #132 merged 2026-05-09). Single work-branch rule: everything stacks here, no side branches.
+`phase-127-storage-driver-expansion` — off `origin/main` at f1818b6 (PR #133 merged 2026-05-09). Single work-branch rule: everything stacks here, no side branches.
 
 ## Ordered roadmap (do them in this order)
 
-1. **Phase 127 — Storage driver expansion** (`pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral`). Sim prereq Compute Disks ✅.
-2. **Phase 121b — Azure sim hardening** (cloud-faithful for ACA + AZF; mirror of Phase 121).
-3. **Phase 78 — UI polish** (dark mode, design tokens, error UX, container detail modal, accessibility).
+1. **Phase 121b — Azure sim hardening** (cloud-faithful for ACA + AZF; mirror of Phase 121).
+2. **Phase 78 — UI polish** (dark mode, design tokens, error UX, container detail modal, accessibility).
 
-Driver phases (127) follow the 7-step template from [PLAN.md § Driver phase template](PLAN.md#driver-phase-template-124127). Each phase starts with a `specs/CLOUD_RESOURCE_MAPPING.md` design pass before code.
-
-## Active — Phase 126 (Access driver, ready for PR + CI)
+## Active — Phase 127 (Storage driver expansion, ready for PR + CI)
 
 All sub-tasks shipped:
 
-- **126a** — `api/access_driver.go`: `AccessMechanism` enum + `IsValid()` + `AllAccessMechanisms`. 4 mechanisms: iam-role, id-token, mTLS, none-internal.
-- **126b** — `backends/core/access_driver.go`: `AccessDriver` interface (`Mechanism` + `WorkloadPrincipal` + `AuthenticatedClient`), registry, `NoneInternalAccess` default, `ParseAccessMechanismEnv()` (no-fallback semantics).
-- **126c** — Per-backend adapters + wiring: cloudrun + cloudrun-functions `idTokenAccess` (wraps `idtoken.NewClient`), ECS + Lambda `iamRoleAccess` (returns `http.DefaultClient`; SigV4 happens at SDK layer), ACA + AZF `noneInternalAccess`. `BaseServer.Access` field defaults to `NoneInternalAccess{}`; backend startup overrides.
-- **126d** — Every `idtoken.NewClient(ctx, url)` callsite migrated through `s.Access.AuthenticatedClient(ctx, url)`. `idtoken` import removed from cloudrun + cloudrun-functions backends. `cloudrun.Config.ServiceAccount` (sourced from `SOCKERLESS_CLOUDRUN_SERVICE_ACCOUNT`) added so the workload principal is configurable.
+- **127a** — `core.storage_backing.go` extended with 3 new constants (`pd-ephemeral`, `efs-ephemeral`, `azure-files-ephemeral`) + 3 new `BackingSpec` payload structs (`PDEphemeralSpec`, `EFSEphemeralSpec`, `AzureFilesEphemeralSpec`). `SharedVolumeRef` carries the per-backing fields (PD size/zone, EFS FS+AP, Azure account+share, ReadOnly).
+- **127b** — Per-cloud driver impls: `gcp-common.PDEphemeralDriver`, `aws-common.EFSEphemeralDriver`, `azure-common.AzureFilesEphemeralDriver`. Each is a `core.StorageBackingDriver` with a `CloudSpec` translator and no-op `PreExec`/`PostExec` (live filesystem; no sockerless-side data sync).
+- **127c** — Per-backend registry wiring: cloudrun + cloudrun-functions register `pd-ephemeral`; ECS + Lambda gain a `storageBackings` registry pre-populated with `efs-ephemeral` (sharing the existing `EFSManager`); ACA + AZF gain a `storageBackings` registry pre-populated with `azure-files-ephemeral` (defaulting to the configured storage account).
+- **127d** — 15 unit tests (5 per driver) covering Backing(), CloudSpec defaults + overrides + required-field rejection, PreExec/PostExec no-ops.
 
-Spec: [specs/CLOUD_RESOURCE_MAPPING.md § Access driver](specs/CLOUD_RESOURCE_MAPPING.md#access-driver).
+Spec: [specs/CLOUD_RESOURCE_MAPPING.md § Storage backing — ephemeral managed FS expansion](specs/CLOUD_RESOURCE_MAPPING.md#storage-backing--ephemeral-managed-fs-expansion).
 
-Next: open PR, watch CI, merge, then start Phase 127 (Storage driver expansion).
+Next: open PR, watch CI, merge, then start Phase 121b (Azure sim hardening).
 
 ## Standing rules
 

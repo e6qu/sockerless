@@ -41,15 +41,11 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 
 Pick from the top. Each phase's `Pick from the top` rule: don't start the next until the previous closes (or the user explicitly redirects).
 
-### 1. Phase 127 — Storage driver expansion
-
-Open up the `BackingSpec` union (currently EmptyDir + GCS) cloud-agnostic. Drivers: `pd-ephemeral` GCP / `efs-ephemeral` AWS (already covered) / `azure-files-ephemeral`. Sim prereq: ✅ Compute Disks (PR #127).
-
-### 2. Phase 121b — Azure sim hardening
+### 1. Phase 121b — Azure sim hardening
 
 Azure-side mirror of Phase 121 (cloud-faithful sim hardening for ACA + AZF). Open question: how much of the GCP-style work (proto-JSON enum decoding, real OAuth2 token endpoints, label-filter syntax) transfers to Azure idioms.
 
-### 3. Phase 78 — UI polish
+### 2. Phase 78 — UI polish
 
 Dark mode, design tokens, error handling UX, container detail modal, auto-refresh, performance audit, accessibility, E2E smoke, documentation.
 

@@ -15,12 +15,13 @@ import (
 // Server is the Lambda backend server.
 type Server struct {
 	*core.BaseServer
-	config        Config
-	aws           *AWSClients
-	images        *core.ImageManager
-	Lambda        *core.StateStore[LambdaState]
-	reverseAgents *reverseAgentRegistry // reverse-agent session registry
-	ipCounter     atomic.Int32
+	config          Config
+	aws             *AWSClients
+	images          *core.ImageManager
+	Lambda          *core.StateStore[LambdaState]
+	reverseAgents   *reverseAgentRegistry // reverse-agent session registry
+	storageBackings *core.StorageBackingRegistry
+	ipCounter       atomic.Int32
 	volumeState
 	// stdinPipes buffers stdin bytes written via the hijacked attach
 	// connection for containers created with OpenStdin && AttachStdin.
@@ -64,6 +65,8 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		PollInterval:   config.PollInterval,
 		InstanceID:     s.Desc.InstanceID,
 	})}
+	s.storageBackings = core.NewStorageBackingRegistry()
+	s.storageBackings.Register(awscommon.NewEFSEphemeralDriver(s.efs))
 	ecrAuth := awscommon.NewECRAuthProvider(awsClients.ECR, logger, s.ctx)
 	s.images = &core.ImageManager{
 		Base:   s.BaseServer,

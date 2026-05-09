@@ -6,8 +6,8 @@
 
 | | |
 |---|---|
-| Active branch | `phase-126-access-driver` (off `origin/main` at 6875aa1) |
-| Last merged | PR #132 — Phase 125 DNS driver (2026-05-09) |
+| Active branch | `phase-127-storage-driver-expansion` (off `origin/main` at f1818b6) |
+| Last merged | PR #133 — Phase 126 access driver (2026-05-09) |
 | Milestone | **8/8 runner-integration cells GREEN** (since 2026-05-07); **sim host model shipped, CI fully green on native arm64** (Phase 135, 2026-05-09). |
 | Bugs | 984 filed · 984 fixed · **0 open** ([BUGS.md](BUGS.md)). |
 | Sim parity | 77/77 ✓ across current backends (AWS 33, GCP 16, Azure 28) — [specs/SIM_PARITY_MATRIX.md](specs/SIM_PARITY_MATRIX.md) |
@@ -28,23 +28,24 @@
 
 Each green run: probe-capabilities → probe-localhost-peer (postgres sidecar `localhost:5432`) → clone-and-compile (`git clone` + `go build` of `simulators/testdata/eval-arithmetic`) → 5 arithmetic invocations.
 
-## Up next on `phase-126-access-driver`
+## Up next on `phase-127-storage-driver-expansion`
 
-In flight: **Phase 126 — Access driver**. All sub-tasks shipped:
+In flight: **Phase 127 — Storage driver expansion**. All sub-tasks shipped:
 
-- **126a** — `api/access_driver.go`: `AccessMechanism` enum + `IsValid()` + `AllAccessMechanisms`. 4 mechanisms: iam-role, id-token, mTLS, none-internal.
-- **126b** — `backends/core/access_driver.go`: `AccessDriver` interface (`Mechanism` + `WorkloadPrincipal` + `AuthenticatedClient`), registry, `NoneInternalAccess` default, `ParseAccessMechanismEnv()` (no-fallback semantics).
-- **126c** — Per-backend adapters + wiring: cloudrun + cloudrun-functions `idTokenAccess` (id-token), ECS + Lambda `iamRoleAccess` (iam-role), ACA + AZF `noneInternalAccess` (none-internal). `BaseServer.Access` field defaults to `NoneInternalAccess{}`; backend startup overrides.
-- **126d** — All `idtoken.NewClient` callsites migrated through `s.Access.AuthenticatedClient` (cloudrun: `exec_invoke.go`, `start_service.go` × 2; cloudrun-functions: `exec_invoke.go`, `containers.go`, `pod_service.go` × 2). `idtoken` import removed from cloudrun + cloudrun-functions backends.
+- **127a** — `core.storage_backing.go` extended with 3 new constants (`pd-ephemeral`, `efs-ephemeral`, `azure-files-ephemeral`) + 3 new `BackingSpec` payloads (`PDEphemeralSpec`, `EFSEphemeralSpec`, `AzureFilesEphemeralSpec`). `SharedVolumeRef` carries the per-backing fields (PD size/zone, EFS FS+AP, Azure account+share, ReadOnly).
+- **127b** — Per-cloud driver impls: `gcp-common.PDEphemeralDriver`, `aws-common.EFSEphemeralDriver`, `azure-common.AzureFilesEphemeralDriver`. Each is a `core.StorageBackingDriver` with a `CloudSpec` translator and no-op `PreExec`/`PostExec` (live filesystem, no sync needed).
+- **127c** — Per-backend registry wiring: cloudrun + cloudrun-functions register `pd-ephemeral`; ECS + Lambda gain a `storageBackings` registry pre-populated with `efs-ephemeral` (sharing the existing `EFSManager`); ACA + AZF gain a `storageBackings` registry pre-populated with `azure-files-ephemeral` (defaulting to the configured storage account).
+- **127d** — Tests across `gcp-common`, `aws-common`, `azure-common` (5/5/5 unit tests covering Backing(), CloudSpec defaults + overrides + required-field rejection, PreExec/PostExec no-ops).
 
-Spec: [specs/CLOUD_RESOURCE_MAPPING.md § Access driver](specs/CLOUD_RESOURCE_MAPPING.md#access-driver).
+Spec: [specs/CLOUD_RESOURCE_MAPPING.md § Storage backing — ephemeral managed FS expansion](specs/CLOUD_RESOURCE_MAPPING.md#storage-backing--ephemeral-managed-fs-expansion).
 
-Then Phase 127 → 121b → 78 per [PLAN.md § Roadmap (ordered)](PLAN.md#roadmap-ordered).
+Then Phase 121b → 78 per [PLAN.md § Roadmap (ordered)](PLAN.md#roadmap-ordered).
 
 ## Recently shipped (chronological)
 
 | Date | PR | Headline |
 |------|----|----|
+| 2026-05-09 | #133 | Phase 126 Access driver (iam-role / id-token / mTLS / none-internal; per-backend adapters; every idtoken.NewClient callsite migrated through s.Access.AuthenticatedClient). |
 | 2026-05-09 | #132 | Phase 125 DNS driver (cloud-map / cloud-dns-zone / private-dns-zone / service-discovery / none; per-backend adapters; SOCKERLESS_DNS_SEARCH_DOMAIN env wired through every ContainerCreate; cloudrun + GCF bootstraps write /etc/resolv.conf). |
 | 2026-05-09 | #131 | Phase 124 network discovery driver (host-aliases / cloud-dns / service-mesh / nat-gateway-only; per-backend adapters; all callsites migrated). |
 | 2026-05-09 | #130 | Phase 128 runner job timeout (bootstrap timer + cloud-native cap; SOCKERLESS_JOB_TIMEOUT_SECONDS contract). |

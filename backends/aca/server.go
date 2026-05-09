@@ -12,10 +12,11 @@ import (
 // Server is the ACA backend server.
 type Server struct {
 	*core.BaseServer
-	config    Config
-	azure     *AzureClients
-	images    *core.ImageManager
-	ipCounter atomic.Int32
+	config          Config
+	azure           *AzureClients
+	images          *core.ImageManager
+	storageBackings *core.StorageBackingRegistry
+	ipCounter       atomic.Int32
 
 	ACA          *core.StateStore[ACAState]
 	NetworkState *core.StateStore[NetworkState]
@@ -52,6 +53,8 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		Auth:   azurecommon.NewACRAuthProvider(logger),
 		Logger: logger,
 	}
+	s.storageBackings = core.NewStorageBackingRegistry()
+	s.storageBackings.Register(azurecommon.NewAzureFilesEphemeralDriver(config.StorageAccount))
 	if svc, err := azurecommon.NewACRBuildService(
 		azureClients.Cred, config.SubscriptionID, config.ResourceGroup,
 		config.ACRName, config.BuildStorageAccount, config.BuildContainer, logger,
