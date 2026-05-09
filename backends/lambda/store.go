@@ -14,4 +14,18 @@ type LambdaState struct {
 	// entrypoint as stdin, so `Cmd=[sh]` + Payload=script naturally
 	// runs the buffered script.
 	OpenStdin bool
+	// ServiceID is the per-hostname Cloud Map service ID this
+	// invocation registered against (when service-mesh
+	// NetworkDiscovery is enabled). Empty for nat-gateway-only and
+	// host-aliases. Set via awscommon.CloudMapDiscovery's
+	// SetContainerServiceID callback at register time.
+	ServiceID string
+}
+
+// NetworkState maps sockerless network IDs to AWS resources. Lambda
+// uses Cloud Map private DNS namespaces tied to the configured VPC for
+// service-mesh peer discovery; the per-network namespace is created
+// at NetworkCreate time.
+type NetworkState struct {
+	NamespaceID string
 }

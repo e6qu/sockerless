@@ -102,8 +102,11 @@ type Config struct {
 	// s.NetworkDiscovery. Lambda's native is nat-gateway-only —
 	// per-invocation IPs aren't reachable from peers. Operators may
 	// override to host-aliases (in-process registry) for the
-	// multi-container-revision pattern. service-mesh (cloud-map)
-	// requires Lambda VPC-mode wiring queued under 121b-finish-K.
+	// multi-container-revision pattern, or service-mesh (AWS Cloud
+	// Map) for read-only peer resolution from inside Lambda
+	// invocations attached to a configured VPC. service-mesh requires
+	// SOCKERLESS_LAMBDA_SUBNETS to be set (Cloud Map namespaces are
+	// VPC-bound).
 	// Set via SOCKERLESS_LAMBDA_NETWORK_DISCOVERY.
 	NetworkDiscovery api.NetworkDiscoveryKind
 }
@@ -303,10 +306,13 @@ func (c Config) Validate() error {
 		return fmt.Errorf("SOCKERLESS_LAMBDA_ARCHITECTURE must be set to x86_64 or arm64 (no default — sockerless reports the cloud workload's architecture, not its own host arch); got %q", c.Architecture)
 	}
 	switch c.NetworkDiscovery {
-	case api.NetworkDiscoveryNATGatewayOnly, api.NetworkDiscoveryHostAliases:
+	case api.NetworkDiscoveryNATGatewayOnly, api.NetworkDiscoveryHostAliases, api.NetworkDiscoveryServiceMesh:
 		// supported
 	default:
-		return fmt.Errorf("SOCKERLESS_LAMBDA_NETWORK_DISCOVERY=%q not supported by lambda (one of nat-gateway-only, host-aliases required; service-mesh wiring lives in 121b-finish-K)", c.NetworkDiscovery)
+		return fmt.Errorf("SOCKERLESS_LAMBDA_NETWORK_DISCOVERY=%q not supported by lambda (one of nat-gateway-only, host-aliases, service-mesh required)", c.NetworkDiscovery)
+	}
+	if c.NetworkDiscovery == api.NetworkDiscoveryServiceMesh && len(c.SubnetIDs) == 0 {
+		return fmt.Errorf("SOCKERLESS_LAMBDA_NETWORK_DISCOVERY=service-mesh requires SOCKERLESS_LAMBDA_SUBNETS — Cloud Map private DNS namespaces are bound to a VPC, resolved from the first configured subnet")
 	}
 	return nil
 }

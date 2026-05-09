@@ -248,7 +248,17 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 }
 
 func (s *Server) NetworkCreate(req *api.NetworkCreateRequest) (*api.NetworkCreateResponse, error) {
-	return s.BaseServer.NetworkCreate(req)
+	resp, err := s.BaseServer.NetworkCreate(req)
+	if err != nil || resp == nil {
+		return resp, err
+	}
+	if s.config.NetworkDiscovery == api.NetworkDiscoveryServiceMesh {
+		if cerr := s.cloudNamespaceCreate(s.ctx(), req.Name, resp.ID); cerr != nil {
+			s.Logger.Warn().Err(cerr).Str("network", req.Name).Msg("Cloud Map namespace provisioning failed; cross-invocation discovery will not work on this network")
+			resp.Warning = cerr.Error()
+		}
+	}
+	return resp, nil
 }
 
 func (s *Server) NetworkDisconnect(id string, req *api.NetworkDisconnectRequest) error {
@@ -268,6 +278,11 @@ func (s *Server) NetworkPrune(filters map[string][]string) (*api.NetworkPruneRes
 }
 
 func (s *Server) NetworkRemove(id string) error {
+	if s.config.NetworkDiscovery == api.NetworkDiscoveryServiceMesh {
+		if err := s.cloudNamespaceDelete(s.ctx(), id); err != nil {
+			s.Logger.Warn().Err(err).Str("network", id).Msg("Cloud Map namespace teardown failed; orphaned namespace")
+		}
+	}
 	return s.BaseServer.NetworkRemove(id)
 }
 
