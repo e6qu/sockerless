@@ -4,13 +4,15 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Branch
 
-`docs/state-save-post-121b-finish` (PR #137). Per user direction this PR keeps growing — Phase 78 (UI polish, complete) + Phase 79+ (admin orchestration, in progress) all land here.
+`phase-79-topology-store`. PR #137 merged 2026-05-10 (Phase 78 polish + Phase 79 step 1 — Instance type). New branch carries Phase 79 step 2 onward.
 
 ## Resume here
 
 **Phase 79 step 2: `sockerless.yaml` topology store.**
 
-Where we are: `Instance` type + tests landed (`cmd/sockerless-admin/instance.go`, `instance_test.go`). Existing `ProjectConfig` still uses one-JSON-per-project at `~/.sockerless/admin/projects/*.json` and the SimPort + BackendPort tuple shape.
+State of play after #137:
+- `cmd/sockerless-admin/instance.go` — `Instance` type + per-kind `Validate` + `DeriveLegacyInstances`.
+- Existing `ProjectConfig` still uses one-JSON-per-project at `~/.sockerless/admin/projects/*.json` and the SimPort + BackendPort tuple shape.
 
 Next:
 
@@ -23,14 +25,17 @@ Then phases 79.3–79.6 (REST endpoints, make targets, port allocator, migration
 
 ## Invariants (re-state on every commit)
 
-- **Components stay decoupled.** No admin-required env vars on sims/backends/bleephub. Admin reads only what they already expose (`/v1/health`, `/v1/info`, env vars).
+- **Components stay decoupled.** No admin-required env vars on sims/backends/bleephub. Admin reads only what they already expose (`/v1/health`, `/v1/info`, env vars). For Phase 87 observability: components emit OTLP only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set in their env. Unset = today's stdout behaviour.
 - **No fallbacks.** Unknown config values fail-loud. No silent defaults.
-- **CI green per commit.** Each commit on PR #137 must be independently testable.
+- **CI green per commit.** Each commit must be independently testable.
 - **Test target gating.** All backend integration tests require `SOCKERLESS_TEST_TARGET=sim|cloud` (no skip).
+- **No docs-only PRs.** Pair docs updates with implementation work on the same branch / PR.
 
-## After PR #137
+## Roadmap on this branch
+
+Phases 79.2 → 80 → 81 → 82 → 83 → 84 → 85 → 86 → 87. See [PLAN.md](PLAN.md) for sub-steps. Will likely split into multiple PRs once the natural seam appears (e.g. after Phase 86 ships, Phase 87 — observability — is independent and can land as its own PR).
+
+## After this branch
 
 - Phases 91–94 — real per-cloud volume provisioning (lifts `emptyDir` → real `pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral`).
 - Live-cloud validation track — Lambda live, Cloud Run Services + ACA Apps live, AZF cloud-dns + Lambda service-mesh + ACA/AZF Azure AD live.
-
-See [PLAN.md](PLAN.md) for full sub-task lists.
