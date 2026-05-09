@@ -337,6 +337,10 @@ func serviceToPodMemberContainer(svc *runpb.Service, mid string) api.Container {
 	if svc.Template != nil && len(svc.Template.Containers) > 0 {
 		image = svc.Template.Containers[0].Image
 	}
+	// Decode Docker labels stamped by pod_service via TagSet.AsGCPLabels.
+	// They land under sockerless_labels_b64{,-N} keys (or in Annotations
+	// when too long for label values). Read both, prefer labels.
+	dockerLabels := dockerLabelsFromCloudRunService(svc)
 	return api.Container{
 		ID:      mid,
 		Name:    name,
@@ -344,7 +348,8 @@ func serviceToPodMemberContainer(svc *runpb.Service, mid string) api.Container {
 		Image:   image,
 		State:   state,
 		Config: api.ContainerConfig{
-			Image: image,
+			Image:  image,
+			Labels: dockerLabels,
 		},
 		HostConfig: api.HostConfig{NetworkMode: "default"},
 		NetworkSettings: api.NetworkSettings{
@@ -356,6 +361,29 @@ func serviceToPodMemberContainer(svc *runpb.Service, mid string) api.Container {
 		Platform: "linux",
 		Driver:   "cloud-run-service",
 	}
+}
+
+// dockerLabelsFromCloudRunService re-assembles the Docker label map
+// stamped onto a Cloud Run Service by pod_service via
+// TagSet.AsGCPLabels / AsGCPAnnotations. Labels carry the b64-encoded
+// JSON when it fits inside GCP's 63-char label-value cap; longer blobs
+// land in annotations with the same key naming convention. Returns
+// nil when no Docker labels were carried.
+func dockerLabelsFromCloudRunService(svc *runpb.Service) map[string]string {
+	merged := map[string]string{}
+	for k, v := range svc.Labels {
+		merged[k] = v
+	}
+	for k, v := range svc.Annotations {
+		if _, exists := merged[k]; !exists {
+			merged[k] = v
+		}
+	}
+	hyphen := gcpLabelsToHyphenMap(merged)
+	if parsed := core.ParseLabelsFromTags(hyphen); len(parsed) > 0 {
+		return parsed
+	}
+	return nil
 }
 
 // podMembersFromFunction extracts the per-member manifest from the
