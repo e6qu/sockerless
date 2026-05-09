@@ -6,37 +6,45 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | none — `main` clean |
-| Last merged | PR #135 — Phase 121b Azure sim hardening + harness restructure + drivers + sim invoke routing (2026-05-09) |
+| Active branch | `docs/state-save-post-121b` (PR #136) — scope expanded to *finish* Phase 121b (formerly-deferred items folded in) |
+| Last merged | PR #135 — Phase 121b initial scope: Azure sim hardening + harness restructure + drivers + sim invoke routing (2026-05-09) |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
 | Bugs | 0 open. |
 | Live infra | None up. |
 
-## Next — Phase 78 (UI polish)
+## In flight — Phase 121b finish (PR #136)
 
-Phase 121b shipped. The work delivered in PR #135:
+PR #136 started as a docs state-save after PR #135 merged; user pulled the deferred 121b items back into it so Phase 121b lands in one PR (initial #135 + finish #136). Sub-task list:
+
+- **121b-finish-A** Network discovery adapter consolidation — move `cloudMapDiscovery` / `cloudDNSDiscovery` / `acaCloudDNSDiscovery` into `*-common` (callback-based, pattern B). They're pass-throughs to `*Server` methods today; consolidating requires moving the underlying methods too.
+- **121b-finish-B** Register `host-aliases` discovery as opt-in on every backend with env-var-driven selection (`SOCKERLESS_<X>_NETWORK_DISCOVERY = cloud-map|cloud-dns|host-aliases|none`) across all 6 backends.
+- **121b-finish-C** AZF DNS adapter → `private-dns-zone` — needs AZF NetworkState model + zone creation flow first.
+- **121b-finish-D** Lambda DNS + network discovery → `cloud-map` — needs Lambda VPC-mode wiring first (config field for VPC subnets + security group).
+- **121b-finish-E** AZF + ACA `id-token` access via Azure AD — needs `azure-common.AzureADAccess` type + Easy Auth integration design.
+
+Order: A → B (depends on A's consolidation), then C, D, E in parallel where the per-backend NetworkState lifts allow.
+
+After 121b finish: Phase 78 (UI polish).
+
+Initial scope shipped in PR #135:
 
 - ✓ **121b-A** Azure Files data plane on disk (`simulators/azure/files.go` `handleAzureFilesPath`).
 - ✓ **121b-B** HS256-signed Azure AD JWT (`simulators/azure/auth.go` `mintAzureSimJWT`).
-- ✓ **121b-C** All 6 backends' integration `TestMain` requires `SOCKERLESS_TEST_TARGET=sim|cloud`. No skips, no fallbacks, no `//go:build integration` tag, no `SOCKERLESS_INTEGRATION` env.
+- ✓ **121b-C** All 6 backends' integration `TestMain` requires `SOCKERLESS_TEST_TARGET=sim|cloud`.
 - ✓ **121b-D** Azure terraform-test darwin fail-loud.
-- ✓ **121b-E** `make/go-app.mk` + `make/go-lib.mk`: `test-integration` (sim) / `test-integration-cloud` (cloud). CI sets `SOCKERLESS_TEST_TARGET=sim`.
-- ✓ **121b-F** In-memory storage backing driver (`core.MemoryDriver`, `BackingMemory`, registered across all 6 backends).
-- ✓ **121b-G** Cloudrun TestMain disables overlay path in sim mode (overlay would activate bootstrap-as-PID1 in long-lived HTTP-server mode → containers never exit). `TestCloudRunJobTimeout` removed; timer is fully unit-tested in `agent/cmd/sockerless-cloudrun-bootstrap/main_test.go`.
-- ✓ **121b-H** Driver consolidation (pattern B — live in `*-common`).
-- ✓ **121b-I** GCP sim Cloud Run service URI now routes through sim's own `/v2-services-invoke/{project}/{location}/{service}` handler instead of bogus `*.run.app` (which 401'd against public Google's wildcard cert). Sim runs the overlay container on demand, forwards the envelope POST body to the bootstrap.
-- ✓ **121b-J** GCF `invokeFunction` parses bootstrap envelope before storing logs (extracted `gcpcommon.ParseExecResult`). Subprocess exit code now propagates through `inv.ExitCode`.
-- ✓ **121b-K** GCF pod-Service propagates Docker labels via `TagSet.Labels`; `serviceToPodMemberContainer` reverses the encoding via `dockerLabelsFromCloudRunService`.
-- ✓ Tooling: `scripts/check-latest-deps.sh` (pre-push + CI gate, no warn tier), `make upgrade-deps` per module + root fanout, all Go modules + TF providers + Azure SDK majors bumped.
-- ✓ Publish workflow: dropped QEMU; per-arch native runners (`ubuntu-latest` + `ubuntu-24.04-arm`); tag format `<sha>-<arch>` + manifest-list assembly.
-- **Deferred to stacked follow-up PRs** (each its own mini-phase, requires per-backend NetworkState model that doesn't exist yet on the target backends):
-  - 121b-deferred-I Register `host-aliases` discovery as opt-in on every backend (env-var-driven selection across 6 backends).
-  - 121b-deferred-J AZF DNS adapter → `private-dns-zone` — needs AZF NetworkState model + zone creation flow first.
-  - 121b-deferred-K Lambda DNS + network discovery → `cloud-map` — needs Lambda VPC-mode wiring first.
-  - 121b-deferred-L AZF + ACA `id-token` access via Azure AD — needs `azure-common.AzureADAccess` type + Easy Auth integration design.
-  - Network discovery adapter consolidation (`cloudMapDiscovery`, `cloudDNSDiscovery`, `acaCloudDNSDiscovery`) — they're pass-throughs to `*Server` methods; consolidating requires moving the underlying methods too.
+- ✓ **121b-E** `make/go-app.mk` + `make/go-lib.mk` integration targets; CI sets `SOCKERLESS_TEST_TARGET=sim`.
+- ✓ **121b-F** In-memory storage backing driver across all 6 backends.
+- ✓ **121b-G** Cloudrun TestMain disables overlay path in sim mode; `TestCloudRunJobTimeout` removed (timer unit-tested).
+- ✓ **121b-H** Driver consolidation (pattern B — live in `*-common`): IDTokenAccess, IAMRoleAccess, CloudDNSZoneDNS, CloudMapDNS, PrivateDNSZoneDNS.
+- ✓ **121b-I** GCP sim Cloud Run service URI routes through sim's own `/v2-services-invoke/` handler.
+- ✓ **121b-J** GCF `invokeFunction` parses bootstrap envelope; `gcpcommon.ParseExecResult` extracted.
+- ✓ **121b-K** GCF pod-Service propagates Docker labels via `TagSet.Labels`; `dockerLabelsFromCloudRunService` reverses encoding.
+- ✓ Tooling: `scripts/check-latest-deps.sh` (pre-push + CI gate); `make upgrade-deps` fanout; Azure SDK majors bumped.
+- ✓ Publish workflow: dropped QEMU; per-arch native runners; tag format `<sha>-<arch>` + manifest-list.
 
-After 121b: Phase 78 (UI polish).
+Phase 121b finish (PR #136 — in flight) covers the formerly-deferred items: see "In flight" section above.
+
+After 121b finish: Phase 78 (UI polish).
 
 ## Recently shipped
 
