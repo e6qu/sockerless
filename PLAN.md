@@ -34,22 +34,31 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #132 | 125 | DNS driver (cloud-map / cloud-dns-zone / private-dns-zone / service-discovery / none). |
 | #133 | 126 | Access driver (iam-role / id-token / mTLS / none-internal). |
 | #134 | 127 | Storage driver expansion (pd-ephemeral / efs-ephemeral / azure-files-ephemeral). |
+| #135 | 121b (initial) | Azure sim hardening, all-6-backends test harness restructure, in-memory storage, driver consolidation pattern B, GCP sim Cloud Run invoke routing, GCF envelope decode + label round-trip, drop QEMU. |
+| #136 | 121b (finish) | Network-discovery adapter consolidation; host-aliases opt-in everywhere; AZF cloud-dns + Lambda service-mesh wiring; Azure AD access driver; pair DNS + cloud-side provisioning to NetworkDiscovery. |
 
 ## Roadmap (ordered)
 
-### 1. Phase 121b finish (in flight, PR #136)
+### 1. Phase 78 — UI polish
 
-The formerly-deferred follow-ups are now in scope for PR #136. See [DO_NEXT.md](DO_NEXT.md) for the live sub-task list. Headline:
+Dark mode, design tokens, error handling UX, container detail modal, auto-refresh, performance audit, accessibility, E2E smoke, documentation. Touches the 12 UI packages (core + 6 cloud backends + docker backend + docker frontend + admin + bleephub).
 
-- 121b-finish-A network discovery adapter consolidation into `*-common` (pattern B).
-- 121b-finish-B host-aliases discovery opt-in on every backend (env-var selection across 6 backends).
-- 121b-finish-C AZF DNS adapter → `private-dns-zone` (lifts AZF NetworkState model first).
-- 121b-finish-D Lambda DNS + network discovery → `cloud-map` (lifts Lambda VPC-mode wiring first).
-- 121b-finish-E AZF + ACA id-token access via Azure AD (new `azure-common.AzureADAccess` + Easy Auth design).
+### 2. Phase 68 — Multi-tenant backend pools
 
-### 2. Phase 78 — UI polish
+P68-001 done; P68-002 → P68-010 pending. Pools of warm backends per (project, region) so multi-tenant deployments don't pay cold-start cost per tenant.
 
-Dark mode, design tokens, error handling UX, container detail modal, auto-refresh, performance audit, accessibility, E2E smoke, documentation.
+### 3. Phases 91–94 — Real per-cloud volume provisioning
+
+Queued. Designs in `specs/CLOUD_RESOURCE_MAPPING.md` § Volume provisioning per backend. Today's path is the `core.StorageBackingRegistry` + per-cloud drivers shipped in #134 (`pd-ephemeral`, `efs-ephemeral`, `azure-files-ephemeral`); 91–94 lift the real-workload provisioning that those drivers describe (versus the `emptyDir` fallback for the runner-task pattern).
+
+### 4. Live-cloud validation track
+
+Per-backend live-cloud sweeps separate from the unit/sim CI. Live-AWS ECS validated 2026-04-20. Outstanding:
+- Lambda live track (deferred from Phase 86).
+- Cloud Run Services / ACA Apps (closed in code 2026-04-21 behind `UseService`/`UseApp` flags; live-cloud pending).
+- AZF + cloud-dns on Azure live (new in #136).
+- Lambda + service-mesh on AWS live (new in #136).
+- ACA / AZF + Azure AD access on Azure live (new in #136).
 
 ## Driver phase template
 

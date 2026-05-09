@@ -6,7 +6,20 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
-## 2026-05-09 — Phase 121b Azure sim hardening + driver consolidation + GCP sim invoke routing (PR #135, merged)
+## 2026-05-10 — Phase 121b finish (PR #136, merged)
+
+Completes Phase 121b with the items the initial PR (#135) deferred. Cross-cutting work delivered:
+
+- **Network-discovery adapter consolidation** — `cloudMapDiscovery` (ecs), `cloudDNSDiscovery` (cloudrun), `acaCloudDNSDiscovery` (aca) moved into `aws-common` / `gcp-common` / `azure-common` as pattern-B drivers (callback-based, backend-specific state passed through callbacks). Underlying `*Server` register/deregister/resolve methods + their helpers moved alongside; per-backend `network_discovery_adapter.go` + `service_discovery_cloud.go` files deleted. Pattern: backends construct the driver with SDK clients + `LookupNetwork`/`GetNetwork` callbacks; the driver owns the cloud-API calls.
+- **Host-aliases discovery opt-in everywhere** — every backend's `Config` gains a typed `NetworkDiscovery api.NetworkDiscoveryKind` field, populated from `SOCKERLESS_<X>_NETWORK_DISCOVERY` env. `Validate` enforces the per-backend allowed set (fail-loud on unsupported values, no fallback to default).
+- **AZF DNS adapter** — AZF gains a `NetworkState{DNSZoneName}` model + per-network Azure Private DNS zone provisioning at `NetworkCreate` time + `cloud-dns` case in the discovery switch. Mirrors ACA's zone shape (`skls-<name>.local`); no NSG layer because AZF function apps egress through Azure's managed plane. New `PrivateDNSZones` + `PrivateDNSRecords` clients in `AzureClients`.
+- **Lambda DNS + service-mesh** — Lambda gains `NetworkState{NamespaceID}` + `LambdaState.ServiceID` + `EC2` and `ServiceDiscovery` clients + `cloudNamespaceCreate/Delete` + `service-mesh` case. The per-invocation IP isn't peer-reachable (Lambda hyperplane ENIs are shared), so the existing `awscommon.CloudMapDiscovery` register-IP gate (originally for cloudrun-jobs) skips automatically; ResolveName works for the read direction. Validate requires `SOCKERLESS_LAMBDA_SUBNETS` when service-mesh is selected (Cloud Map private DNS namespaces are VPC-bound).
+- **Azure AD access driver** — new `api.AccessMechanismAzureAD` + `azurecommon.AzureADAccess` (wraps `azcore.TokenCredential`; per-request `Authorization: Bearer <token>` whose scope is `<audience>/.default`). ACA + AZF gain `Config.Access` + `Config.AccessPrincipal` fields populated from `SOCKERLESS_<X>_ACCESS` / `SOCKERLESS_<X>_ACCESS_PRINCIPAL` env vars (default: `none-internal`). Pairs with operator-side Easy Auth (AAD provider) on the ACA app or function app.
+- **DNS↔NetworkDiscovery gating cleanup** — DNS drivers + cloud-side network resources (Cloud Map namespace, Cloud DNS zone, Private DNS zone) were previously wired unconditionally even when the operator picked host-aliases or nat-gateway-only — wasted provisioning + lookups against zones no register path was populating. Now folded into the matching discovery case in `NewServer`, and per-backend `cloudNamespaceCreate`/`cloudNetworkCreate` gated on the matching `NetworkDiscovery` kind. ACA's `cloudNetworkCreate` takes a `provisionDNSZone` bool — NSG always created (cross-container security is independent of discovery), zone only when cloud-dns selected.
+
+Pre-existing GCF `invokeFunction` envelope fallback removed during this PR (per the no-fallbacks directive — bootstrap MUST return the exec envelope; non-envelope is a bug, not a downgrade path).
+
+## 2026-05-09 — Phase 121b initial scope + driver consolidation + GCP sim invoke routing (PR #135, merged)
 
 Single PR. Multi-layer scope:
 

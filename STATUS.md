@@ -6,25 +6,15 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `docs/state-save-post-121b` (PR #136) — scope expanded to *finish* Phase 121b (formerly-deferred items folded in) |
-| Last merged | PR #135 — Phase 121b initial scope: Azure sim hardening + harness restructure + drivers + sim invoke routing (2026-05-09) |
+| Active branch | none — `main` clean |
+| Last merged | PR #136 — Phase 121b finish: driver consolidation, host-aliases everywhere, AZF/Lambda DNS, Azure AD access (2026-05-10) |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
 | Bugs | 0 open. |
 | Live infra | None up. |
 
-## In flight — Phase 121b finish (PR #136)
+## Next — Phase 78 (UI polish)
 
-PR #136 started as a docs state-save after PR #135 merged; user pulled the deferred 121b items back into it so Phase 121b lands in one PR (initial #135 + finish #136). Sub-tasks:
-
-- ✓ **121b-finish-A** Network discovery adapter consolidation — moved `cloudMapDiscovery` / `cloudDNSDiscovery` / `acaCloudDNSDiscovery` into `*-common` (callback-based, pattern B). Underlying `*Server` methods (cloudServiceRegister/Deregister/Resolve + helpers) moved alongside.
-- ✓ **121b-finish-B** Registered `host-aliases` discovery as opt-in on every backend. `Config.NetworkDiscovery` typed field per backend; `SOCKERLESS_<X>_NETWORK_DISCOVERY` env var selects; Validate fails loud on unsupported kinds.
-- ✓ **121b-finish-C** AZF DNS adapter → `private-dns-zone`. AZF gained NetworkState{DNSZoneName} + per-network zone provisioning at NetworkCreate time + cloud-dns supported in the discovery switch.
-- ✓ **121b-finish-D** Lambda DNS + network discovery → `cloud-map`. Lambda gained NetworkState{NamespaceID} + LambdaState.ServiceID + EC2 + ServiceDiscovery clients + cloudNamespaceCreate/Delete + service-mesh case in the discovery switch. Validate requires `SOCKERLESS_LAMBDA_SUBNETS` when service-mesh is selected.
-- ✓ **121b-finish-E** AZF + ACA `id-token` access via Azure AD. New `api.AccessMechanismAzureAD`, `azurecommon.AzureADAccess` (DefaultAzureCredential + per-request bearer token whose scope is `<audience>/.default`). ACA + AZF gain `Config.Access` + `Config.AccessPrincipal` fields with env-var selection.
-
-CI green pending; PR ready for merge once it passes.
-
-After 121b finish: Phase 78 (UI polish).
+Phase 121b complete (#135 + #136 merged). Next queued: Phase 78 (UI polish across the 12 UI packages). After that: Phase 68 (multi-tenant backend pools), Phases 91–94 (real per-cloud volume provisioning), live-cloud validation track. See [PLAN.md](PLAN.md) for the ordered list.
 
 Initial scope shipped in PR #135:
 
@@ -50,6 +40,7 @@ After 121b finish: Phase 78 (UI polish).
 
 | Date | PR | Headline |
 |---|---|---|
+| 2026-05-10 | #136 | Phase 121b finish — driver consolidation, host-aliases everywhere, AZF cloud-dns + Lambda service-mesh, Azure AD access driver, DNS↔NetworkDiscovery gating. |
 | 2026-05-09 | #135 | Phase 121b Azure sim hardening + cross-cutting test harness restructure + driver consolidation + GCP sim Cloud Run invoke routing + envelope parsing + label round-trip. |
 | 2026-05-09 | #134 | Phase 127 storage driver expansion (pd-ephemeral / efs-ephemeral / azure-files-ephemeral). |
 | 2026-05-09 | #133 | Phase 126 Access driver (iam-role / id-token / mTLS / none-internal). |
